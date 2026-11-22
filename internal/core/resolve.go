@@ -350,31 +350,49 @@ func (a *App) ResolveConv(ctx context.Context, id string) (Conv, bool) {
 	}
 	var c *slack.Conversation
 	// onceCtx: a caller joining another's lookup (History's side read on
-	// a popup's) waits only while its own ctx lasts
+	// a popup's) waits only while its own ctx lasts. The caller that runs
+	// the lookup stores the answer inside it, before the joiners wake: a
+	// joiner reads the conversation from the store, and it used to wake
+	// between the answer and its store, find nothing and report the
+	// conversation unknown. The UI's lookup (backend.resolved), joining
+	// History's side read for a channel opened from a link, then marked it
+	// failed and drew the composer in a channel the viewer isn't in until
+	// the next resnapshot (TestPreviewFooterMembershipUnknownAtOpen, α.135).
 	err := a.onceCtx(ctx, "ci:"+id, func() error {
-		var err error
-		c, err = a.C.ConversationInfo(ctx, id)
-		return err
+		got, err := a.C.ConversationInfo(ctx, id)
+		if err != nil || got == nil {
+			return err
+		}
+		if got.ID == "" {
+			got.ID = id
+		}
+		if _, member := a.S.Conv(id); member {
+			a.S.PutConv(*got)
+		} else {
+			a.S.PutExtConv(*got)
+		}
+		c = got
+		return nil
 	})
 	if isCode(err, "channel_not_found") {
 		a.S.SetChannelAccess(id, richtext.ChannelHidden)
 	}
 	if err != nil || c == nil {
-		if v, ok := a.Conv(id); ok && (named(v) || err != nil) { // a concurrent caller stored it, or it stays partial
+		// a joiner (the lookup was another caller's: its answer is in the
+		// store, and an IM's partner is fetched as the owner fetches it),
+		// or the lookup failed and a partial copy stays
+		v, ok := a.Conv(id)
+		if ok && err == nil && v.Kind == "im" && v.User != "" {
+			a.EnsureUsers(ctx, []string{v.User})
+			v, ok = a.Conv(id)
+		}
+		if ok {
 			return v, true
 		}
 		return Conv{}, false
 	}
-	if c.ID == "" {
-		c.ID = id
-	}
 	if c.IsIM && c.User != "" {
 		a.EnsureUsers(ctx, []string{c.User})
-	}
-	if _, member := a.S.Conv(id); member {
-		a.S.PutConv(*c)
-	} else {
-		a.S.PutExtConv(*c)
 	}
 	if id == a.selectedID() && !c.IsIM {
 		a.emit(Event{Type: "sidebar_changed"}) // the open channel's row (preview.go)

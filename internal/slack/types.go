@@ -87,6 +87,14 @@ type Message struct {
 	// getCanvasRootLastSeen, isDocumentCommentVisible; thrK most_recent_editor;
 	// v+tj authors).
 	DocumentComment *MessageDocumentComment `json:"document_comment,omitempty"`
+	// What getMsgSenderEntity (hVKV) reads for a sender besides user: a
+	// legacy file_comment's comment.user, a list_edit's
+	// list_edit.created_by, a channel_tab_added's tab_added_user_id and a
+	// folder_item_added's item_added_user_id.
+	Comment         *MessageComment  `json:"comment,omitempty"`
+	ListEdit        *MessageListEdit `json:"list_edit,omitempty"`
+	TabAddedUserID  string           `json:"tab_added_user_id,omitempty"`
+	ItemAddedUserID string           `json:"item_added_user_id,omitempty"`
 	// DocumentMention is a canvas mention (subtype document_mention, in
 	// the canvas's file channel): Slack's msg.document_mention {file_id,
 	// section_id, mentioning_user_ids}, which its jump to the message
@@ -325,11 +333,16 @@ type File struct {
 	AudioWaveSamples []int      `json:"audio_wave_samples"`
 	Subtype          string     `json:"subtype"`
 	FileAccess       string     `json:"file_access,omitempty"`
-	// InitialComment is whether the file carries an initial_comment (an
-	// old file_share's comment), which a notification's meta line reads
-	// (chooseFileMetaTemplate: "uploaded and commented on this file"). The
-	// comment itself isn't kept.
-	InitialComment Present `json:"initial_comment,omitempty"`
+	// InitialComment is the file's initial_comment (an old file_share's
+	// comment object) as Slack sent it: Taut's mirror hands plugins
+	// Slack's own value, and a notification's meta line reads whether
+	// there is one (chooseFileMetaTemplate's !!initial_comment, Truthy:
+	// "uploaded and commented on this file").
+	InitialComment json.RawMessage `json:"initial_comment,omitempty"`
+	// BotID is the bot that posted the file (the email bot's forward,
+	// whose message Slackbot sends): getMsgSenderEntity's E.bot_id, and
+	// getFileEntityId's.
+	BotID string `json:"bot_id,omitempty"`
 	// What getFileStatus (SRWA) reads besides mode and file_access: a
 	// deleted file, one hidden by the free plan's storage limit, one DLP
 	// tombstoned. IsSkill marks a skill canvas, FolderType a folder's kind
@@ -717,6 +730,29 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 type MessageAIContext struct {
 	ResultStatus    string `json:"result_status,omitempty"`
 	StoppedByUserID string `json:"stopped_by_user_id,omitempty"`
+	// Type "slackbot_ai" marks Slackbot AI's reply (X1VC
+	// isSlackbotAiMessage); Summary.Type "huddle" an AI huddle summary
+	// (getMsgSenderEntity's isAiHuddleSummary).
+	Type    string            `json:"type,omitempty"`
+	Summary *MessageAISummary `json:"summary,omitempty"`
+}
+
+// MessageAISummary is ai_context.summary.
+type MessageAISummary struct {
+	Type string `json:"type,omitempty"`
+}
+
+// MessageComment is a legacy file_comment message's comment: its author
+// is the message's sender when the message has no user (getMsgSenderEntity:
+// t.user || t.comment.user).
+type MessageComment struct {
+	User string `json:"user,omitempty"`
+}
+
+// MessageListEdit is a list_edit message's list_edit: who made the edit
+// (getMsgSenderEntity's isListEditMsg sender).
+type MessageListEdit struct {
+	CreatedBy string `json:"created_by,omitempty"`
 }
 
 // AgentChannelUnfurl is an attachment's agent_channel_unfurl: the code

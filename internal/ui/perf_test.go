@@ -90,6 +90,26 @@ type perfEnv struct {
 	// frozen: the ops the last frame submitted when it was a frozen
 	// inspect session's (inspectFirst), nil when it was laid out
 	frozen *op.Ops
+	// deco is Gio's own title bar, as app.Window's decorate leaves it on
+	// Wayland without server-side decorations: the frame is laid out under
+	// op.Offset(deco) and the router's pointer events are that far off
+	// (move, scroll, click take frame coordinates). Zero: none.
+	deco image.Point
+}
+
+// decorate wraps a frame's layout as app.Window's processFrame does
+// (op.Offset(w.lastFrame.off)); the returned func pops it.
+func (e *perfEnv) decorate(gtx layout.Context) func() {
+	if e.deco == (image.Point{}) {
+		return func() {}
+	}
+	return op.Offset(e.deco).Push(gtx.Ops).Pop
+}
+
+// surface is p, in frame coordinates, as the router's pointer events
+// carry it (deco).
+func (e *perfEnv) surface(p f32.Point) f32.Point {
+	return p.Add(f32.Pt(float32(e.deco.X), float32(e.deco.Y)))
 }
 
 // newPerfEnv starts the client against the fake. warm reuses (or creates)
@@ -310,11 +330,15 @@ func (e *perfEnv) frame() {
 	gtx := e.context()
 	before := a.router.Current()
 	a.beginFullFrame() // as App.Run: the images a quiet frame draws again (quiet.go)
+	undeco := e.decorate(gtx)
 	a.frame(gtx)
+	undeco()
 	if a.router.Current() != before {
 		gtx = e.context()
 		a.beginFullFrame()
+		undeco = e.decorate(gtx)
 		a.frame(gtx)
+		undeco()
 	}
 	a.noteFullFrame(e.size, gtx.Metric, app.Insets{}, false) // what quietFrame shows again
 	e.r.Frame(&e.ops)
@@ -383,7 +407,7 @@ func (e *perfEnv) typeText(s string) {
 }
 
 func (e *perfEnv) click(p image.Point) {
-	pt := f32.Pt(float32(p.X), float32(p.Y))
+	pt := e.surface(f32.Pt(float32(p.X), float32(p.Y)))
 	e.r.Queue(
 		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt},
 		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt},
@@ -392,7 +416,7 @@ func (e *perfEnv) click(p image.Point) {
 }
 
 func (e *perfEnv) scroll(p image.Point, dy float32) {
-	pt := f32.Pt(float32(p.X), float32(p.Y))
+	pt := e.surface(f32.Pt(float32(p.X), float32(p.Y)))
 	e.r.Queue(
 		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt},
 		pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: pt, Scroll: f32.Pt(0, dy)},

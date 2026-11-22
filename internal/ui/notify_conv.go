@@ -446,12 +446,18 @@ func (b *backend) noteMembers(m *core.Message) []string {
 
 // noteFresh is ev with its message converted again from the store's copy
 // (core.HeldMessage), now that the people it names are in: core converted
-// it before they were, and the body would name a mention by its id.
+// it before they were, and the body would name a mention by its id. It
+// keeps the event's upload: Slack's showNotification builds the text
+// from the message it was handed (Eley's message: a), and the store's
+// copy may have been replaced since by one without upload (a
+// message_changed copy, a page read), which would turn "uploaded this
+// file" into "shared this file".
 func (b *backend) noteFresh(ev core.Event) core.Event {
 	if b.core == nil || ev.Msg == nil {
 		return ev
 	}
 	if m, ok := b.core.HeldMessage(ev.Channel, ev.TS); ok {
+		m.Upload = ev.Msg.Upload
 		ev.Msg = &m
 	}
 	return ev
