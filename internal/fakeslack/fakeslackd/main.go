@@ -28,6 +28,7 @@ func main() {
 	latency := flag.Duration("latency", 0, "added to every API call (a network round trip), e.g. 150ms")
 	imgLatency := flag.Duration("img-latency", 0, "added to every image download")
 	iaTheme := flag.String("ia-theme", "", "the account's users.prefs ia_theme (JSON), instead of Slack's default")
+	emojiN := flag.Int("emoji", 0, "this many custom emoji instead of the size's (launch.py: 77000, the Hack Club account's 6.6 MB packed in meta.json)")
 	flag.Parse()
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -42,6 +43,9 @@ func main() {
 	}
 	sz.Gallery = *gallery
 	sz.GIFs = *gifs
+	if *emojiN > 0 {
+		sz.Emoji = *emojiN
+	}
 	s := fakeslack.Serve(ln, sz)
 	s.Latency, s.ImgLatency = *latency, *imgLatency // before the first request
 	if *iaTheme != "" {

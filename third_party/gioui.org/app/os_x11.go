@@ -1028,6 +1028,7 @@ func newX11Window(gioWin *callbacks, options []Option) error {
 
 	// make the window visible on the screen
 	C.XMapWindow(dpy, win)
+	startupWindowShown.mark() // Clack patch (CLACK_PATCHES.md §56)
 	w.Configure(options)
 	w.ProcessEvent(X11ViewEvent{Display: unsafe.Pointer(dpy), Window: uintptr(win)})
 	return nil

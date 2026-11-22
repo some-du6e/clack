@@ -90,11 +90,11 @@ func TestListRecordsSavedFromListAndEvents(t *testing.T) {
 	if _, ok := a.ListRecordSaved("F1", "Rec2"); !ok {
 		t.Error("saved record missing")
 	}
-	a.handle(rtm("saved_deleted", map[string]any{"saved": map[string]any{"item_id": "F1", "item_type": "list_record", "ts": "Rec2"}}))
+	a.handleNow(t, rtm("saved_deleted", map[string]any{"saved": map[string]any{"item_id": "F1", "item_type": "list_record", "ts": "Rec2"}}))
 	if _, ok := a.ListRecordSaved("F1", "Rec2"); ok {
 		t.Error("saved_deleted left the record saved")
 	}
-	a.handle(rtm("saved_added", map[string]any{"saved": map[string]any{"item_id": "F2", "item_type": "list_record", "ts": "Rec9",
+	a.handleNow(t, rtm("saved_added", map[string]any{"saved": map[string]any{"item_id": "F2", "item_type": "list_record", "ts": "Rec9",
 		"todo_state": "to_do", "date_created": 300, "date_due": 400}}))
 	if m, ok := a.ListRecordSaved("F2", "Rec9"); !ok || m.DateDue != 400 {
 		t.Errorf("saved_added: %+v %v", m, ok)

@@ -38,14 +38,14 @@ func (a *App) handle(ev slack.Event) {
 			Value string `json:"value"`
 		}
 		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" {
-			_ = a.LoadFrecencyPrefs(ctx)
+			a.pumpLater(func(ctx context.Context) { _ = a.LoadFrecencyPrefs(ctx) }) // pump_later.go
 		}
 	case "search_recents": // handleSearchRecentsPrefsUpdate (search_recents.go)
 		var e struct {
 			Value string `json:"value"`
 		}
 		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" && a.RecentsReadEnabled() {
-			_ = a.LoadRecentsPrefs(ctx)
+			a.pumpLater(func(ctx context.Context) { _ = a.LoadRecentsPrefs(ctx) }) // pump_later.go
 		}
 	case "reaction_added", "reaction_removed":
 		var e struct {
@@ -221,7 +221,10 @@ func (a *App) handle(ev slack.Event) {
 		if e.User != a.S.SelfID() {
 			return
 		}
-		a.refreshConv(ctx, ch)
+		// off the pump (pump_later.go); a leave the pump applies meanwhile
+		// stands (refreshConvSince)
+		since := a.S.Seq()
+		a.pumpLater(func(ctx context.Context) { a.refreshConvSince(ctx, ch, since) })
 	case "member_left_channel":
 		a.membershipChanged(ch) // anyone's leave, as a join
 	case "channel_joined", "group_joined", "im_created", "mpim_joined", "channel_created", "channel_rename",
@@ -244,7 +247,12 @@ func (a *App) handle(ev slack.Event) {
 			// a code channel no longer counts (codechannel_close.go)
 			a.forgetCodeChannelClosed(id)
 		}
-		a.refreshConv(ctx, id)
+		// the conversation as the event has it, now (noteJoinedConv); its
+		// conversations.info after, off the pump, unless the pump changes
+		// it meanwhile (a leave, an archive: refreshConvSince)
+		a.noteJoinedConv(ev.Type, e.Channel, id)
+		since := a.S.Seq()
+		a.pumpLater(func(ctx context.Context) { a.refreshConvSince(ctx, id, since) }) // pump_later.go
 	case "record_channel_close": // channelClosed for a record (code) channel (codechannel_close.go)
 		a.onRecordChannelClose(ch)
 	case "record_channel_open": // recordChannelOpened
@@ -260,7 +268,8 @@ func (a *App) handle(ev slack.Event) {
 		if e.ConvertedTo != "" { // group DM turned into a private channel
 			a.S.DropConv(ch)
 			a.emit(Event{Type: "conv_removed", Channel: ch})
-			a.refreshConv(ctx, e.ConvertedTo)
+			to, since := e.ConvertedTo, a.S.Seq()
+			a.pumpLater(func(ctx context.Context) { a.refreshConvSince(ctx, to, since) }) // pump_later.go
 			return
 		}
 		a.emit(Event{Type: "sidebar_changed"})
@@ -310,7 +319,13 @@ func (a *App) handle(ev slack.Event) {
 	case "thread_marked", "update_thread_state", "dnd_updated", "dnd_updated_user", "pref_change", "badge_counts_updated",
 		"channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
 		if ev.Type == "dnd_updated" {
-			a.onDNDUpdated(ctx, ev.Raw) // before the UI hears of it
+			a.onDNDUpdated(nil, ev.Raw) // the event's status, before the UI hears of it
+			if raw := ev.Raw; a.dndUpdateLoads(raw) {
+				// then dnd.info (pump_later.go), whose answer gives way to a
+				// newer dnd_updated (loadDNDAfter)
+				gen := a.dndEvents()
+				a.pumpLater(func(ctx context.Context) { _ = a.loadDNDAfter(ctx, gen) })
+			}
 		}
 		if ev.Type == "dnd_updated_user" {
 			a.onDNDUpdatedUser(ev.Raw) // stale: the next presence read asks dnd.teamInfo again
@@ -328,18 +343,43 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
 		case "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
-			since := a.S.Seq()
-			if secs, err := a.C.SectionsAll(ctx); err == nil && a.S.SetSectionsSince(secs, since) {
-				a.emit(Event{Type: "sidebar_changed"})
-			}
+			// read off the pump (pump_later.go), one reread at a time, each
+			// as of when it starts: a section write this session makes
+			// while it is out stays (SetSectionsSince). Taken when the event
+			// came, the journal position was older than the install of the
+			// reread queued before it, and a second sections event's newer
+			// list was always thrown away
+			a.pumpLater(func(ctx context.Context) {
+				since := a.S.Seq()
+				if secs, err := a.C.SectionsAll(ctx); err == nil && a.S.SetSectionsSince(secs, since) {
+					a.emit(Event{Type: "sidebar_changed"})
+				}
+			})
 		case "thread_marked", "update_thread_state", "badge_counts_updated":
 			a.refreshCountsSoon()
 		case "pref_change":
 			var pc struct {
-				Name string `json:"name"`
+				Name  string          `json:"name"`
+				Value json.RawMessage `json:"value"`
 			}
 			_ = json.Unmarshal(ev.Raw, &pc)
-			if raw, err := a.C.Prefs(ctx); err == nil {
+			if pc.Name != "" && len(pc.Value) > 0 && pc.Name != prefFrecency && pc.Name != prefEmojiUse && pc.Name != prefChannelSections {
+				// Slack's prefChange sets the event's value at once: the
+				// messages right behind it notify and draw with it, not
+				// with the prefs from before users.prefs answers. The
+				// frecency and the sections' collapse state wait for the
+				// read, which keeps a frecency only a named fetch carries
+				// (keepFrecency) and a collapse write still out
+				// (sectionCollapsePending)
+				a.mergePrefs(map[string]json.RawMessage{pc.Name: pc.Value})
+				p := a.Prefs()
+				a.emit(Event{Type: "prefs", Prefs: &p})
+			}
+			a.pumpLater(func(ctx context.Context) { // pump_later.go
+				raw, err := a.C.Prefs(ctx)
+				if err != nil {
+					return
+				}
 				a.installPrefs(raw)
 				if pc.Name == prefFrecency || pc.Name == prefEmojiUse {
 					// Slack upserts the event's value; the full map keeps
@@ -350,7 +390,7 @@ func (a *App) handle(ev slack.Event) {
 				}
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
-			}
+			})
 		}
 	case "subteam_created", "subteam_updated", "subteam_members_changed", "subteam_self_added", "subteam_self_removed":
 		var e struct {
@@ -372,7 +412,12 @@ func (a *App) handle(ev slack.Event) {
 			a.noteUsergroupEvent(ev.Raw, ev.Type == "subteam_created")
 		}
 	case "saved_added", "saved_updated", "saved_deleted":
-		a.onSavedEvent(ctx, ev.Type, ev.Raw)
+		// the store's saved state now, on the pump; its message's lookup
+		// and the event after it, in order with the saved events before
+		// (pump_later.go)
+		typ, raw := ev.Type, ev.Raw
+		it := a.noteSavedEvent(typ, raw)
+		a.pumpLater(func(ctx context.Context) { a.announceSaved(ctx, typ, raw, it) })
 	case "draft_create", "draft_update", "draft_delete", "draft_send":
 		a.onDraftEvent(ev.Type, ev.Raw)
 	case "activity":
@@ -461,9 +506,14 @@ func (a *App) handle(ev slack.Event) {
 	}
 }
 
-func (a *App) emitUpdate(ch string, m *slack.Message) {
+func (a *App) emitUpdate(ch string, m *slack.Message) { a.emitUpdateWith(ch, m, false) }
+
+// emitUpdateWith is emitUpdate; removes: the update removes the Activity
+// entries about the message (Event.Removes: an edit took the viewer's
+// mention out).
+func (a *App) emitUpdateWith(ch string, m *slack.Message, removes bool) {
 	v := a.message(ch, m)
-	a.emit(Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v, Ahead: a.S.IsAhead(ch, m.TS)})
+	a.emit(Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v, Ahead: a.S.IsAhead(ch, m.TS), Removes: removes})
 }
 
 // openStreams remembers the messages last seen with streaming_state
@@ -502,10 +552,13 @@ func (o *openStreams) seen(ch, ts string, open bool) bool {
 
 // emitStreamDone is emitUpdate for the message_changed that ends a chat
 // stream, with what a message event carries for its notification.
-func (a *App) emitStreamDone(ch string, m *slack.Message) {
+func (a *App) emitStreamDone(ch string, m *slack.Message) { a.emitStreamDoneWith(ch, m, false) }
+
+// emitStreamDoneWith is emitStreamDone; removes as emitUpdateWith's.
+func (a *App) emitStreamDoneWith(ch string, m *slack.Message, removes bool) {
 	v := a.message(ch, m)
 	self := a.S.SelfID()
-	ev := Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, StreamDone: true,
+	ev := Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, StreamDone: true, Removes: removes,
 		Reply:    m.ThreadTS != "" && m.ThreadTS != m.TS,
 		Mention:  mentionsSelf(m, self) || (m.User != self && keywordMention(m, a.S.HighlightWords())),
 		ConvKind: a.kindOf(ch)}
@@ -538,6 +591,68 @@ func (a *App) refreshConv(ctx context.Context, id string) {
 	a.emit(Event{Type: "conv", Channel: id, Conv: &v})
 }
 
+// refreshConvSince is refreshConv for a lookup queued off the event pump
+// (pump_later.go) at journal position since: the answer stays out when the
+// pump changed the conversation after since (a channel_left's or an
+// archive's DropConv, a join's PutConvLocal: store PutInfoSince). Read
+// before a leave the pump applied meanwhile, it put the left channel back
+// in the member set: its sidebar row, the composer, not_in_channel on send.
+func (a *App) refreshConvSince(ctx context.Context, id string, since uint64) {
+	if id == "" {
+		return
+	}
+	c, err := a.C.ConversationInfo(ctx, id)
+	if err != nil {
+		return
+	}
+	if c.ID == "" {
+		c.ID = id
+	}
+	if !a.S.PutInfoSince(*c, since) {
+		return
+	}
+	v := a.conv(c)
+	a.emit(Event{Type: "conv", Channel: id, Conv: &v})
+}
+
+// noteJoinedConv puts the conversation a join or an open names into the
+// member set now, ahead of its conversations.info (refreshConvSince): the
+// event's own channel object for channel_joined, group_joined, im_created
+// and mpim_joined (Slack's channelJoined upserts it), or for im_open and
+// mpim_open the closed DM the store keeps outside the sidebar. On ui the
+// lookup ran on the pump before the next event; queued, the messages right
+// behind it came first, and a new group DM's first message counted as a
+// channel's (no badge: NoteMessage) and waited for its own lookup. A
+// conversation the member set holds already stays as it is until the lookup
+// answers.
+func (a *App) noteJoinedConv(typ string, c slack.Conversation, id string) {
+	switch typ {
+	case "channel_joined", "group_joined":
+		c.IsMember = true
+	case "im_created":
+		c.IsIM = true
+	case "mpim_joined":
+		c.IsMPIM = true
+	case "im_open", "mpim_open":
+		x, ok := a.S.ExtConv(id)
+		if !ok || !x.IsIM && !x.IsMPIM {
+			return
+		}
+		c = *x
+	default:
+		return
+	}
+	if c.ID == "" || c.ID != id {
+		return
+	}
+	if _, member := a.S.Conv(c.ID); member {
+		return
+	}
+	a.S.PutConvLocal(c)
+	v := a.conv(&c)
+	a.emit(Event{Type: "conv", Channel: c.ID, Conv: &v})
+}
+
 // putInfo stores a conversations.info answer. Its is_member is the
 // membership (Slack's store keeps the object as fetched, and Opi6
 // isPreview reads is_member off it): a channel the viewer isn't in stays
@@ -568,101 +683,28 @@ func (a *App) knownNonMember(ch string) bool {
 }
 
 func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
-	var e struct {
-		Subtype   string         `json:"subtype"`
-		Message   *slack.Message `json:"message"`
-		Previous  *slack.Message `json:"previous_message"`
-		DeletedTS string         `json:"deleted_ts"`
-	}
+	var e msgSubEvent
 	if json.Unmarshal(ev.Raw, &e) != nil {
 		return
 	}
 	switch e.Subtype {
-	case "message_changed":
-		if e.Message == nil {
-			return
-		}
-		m := *e.Message // its rows ask for its people as they draw (lazy_users.go)
-		// Slack's messageChanged is replaceMessages (replace: true, client-boot
-		// z+/K processAndMergeMessages): the event's message replaces the
-		// stored one wholesale, thread metadata included. When a thread's
-		// last reply is deleted the parent's message_changed has no
-		// reply_count, and the reply bar goes; a deleted parent with
-		// replies arrives here as subtype "tombstone".
-		// the earlier copy was an open chat stream: the stored one, or one
-		// seen in a thread that isn't cached (Slack's store keeps every
-		// message the socket brings)
-		streamed := a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
-		if old, ok := a.S.FindHeld(ch, m.TS); ok { // a copy fetched by id too (store/fetched.go)
-			keepFiles(&m, &old)
-			streamed = streamed || old.StreamingState == "in_progress"
-			// Slack's store keeps a thread's replies apart from the
-			// messages (the thread's reply list), so a replaced reply
-			// stays in its thread whatever the copy says: one without
-			// thread_ts must not become a channel message here, nor miss
-			// the open thread pane.
-			if m.ThreadTS == "" && old.ThreadTS != "" && old.ThreadTS != old.TS {
-				m.ThreadTS, m.ParentUser = old.ThreadTS, firstNonEmpty(m.ParentUser, old.ParentUser)
-			}
-			// a root's thread subscription isn't the message's: Slack's
-			// replaceMessages swaps the message, and only a copy with a
-			// "subscribed" field of its own changes the subscription
-			// (store/thread_subs.go), so the cached copies keep theirs
-			if !m.SubscribedSet {
-				sub := a.S.ThreadSubOf(ch, &old)
-				m.Subscribed, m.LastRead = sub.Subscribed, sub.LastRead
-			}
-		}
-		a.S.SlurpSub(ch, &m)
-		a.forgetMsgThread(ch, m.TS) // its thread_ts as this copy has it, not as a lookup found it
-		// every stored copy takes it, a copy fetched by id included (an
-		// Activity entry's message from a conversation nobody opened:
-		// store/fetched.go), and a read out now keeps it (store/live.go),
-		// noted with the write so no read lands between; a window or a
-		// cached thread that holds none gets it inside its range
-		// (putChanged)
-		if _, found := a.S.NoteMutate(ch, m.TS, &m, func(x *slack.Message) { *x = m }); !found || !a.S.Holds(ch, m.TS, "") {
-			a.putChanged(ch, m) // a reply goes to its (cached) thread, never the channel
-		}
-		if m.ThreadTS == "" || m.ThreadTS == m.TS {
-			// a root's copy replaces the stored root: its broadcasts'
-			// root copies take its reply metadata (broadcast_footer.go)
-			a.syncBroadcastRoots(ch, m.TS, func(x *slack.Message) {
-				x.ThreadTS, x.ReplyCount, x.ReplyUsers, x.ReplyUsersN, x.LatestReply = m.ThreadTS, m.ReplyCount, m.ReplyUsers, m.ReplyUsersN, m.LatestReply
+	case "message_changed", "message_deleted", "message_locked", "message_replied":
+		// A change to a message of a conversation whose messages wait for
+		// its lookup (holdForConv) waits behind them, as Slack's
+		// preprocessRtmMessage holds each of the conversation's message
+		// events until it is fetched: applied at once, a deletion came
+		// before the reply it deleted, whose late announcement put it back
+		// in the open thread, and an edit before the copy announced as it
+		// was (pump_later.go)
+		if a.holdBehindConv(ch) {
+			raw := ev.Raw
+			a.convLater(ch, func(ctx context.Context) {
+				defer a.releaseConv(ch)
+				a.onMessageChange(ctx, ch, &e, raw)
 			})
-		}
-		if needsFileInfo(&m) {
-			go a.fillFiles(ch, m.TS)
-		}
-		a.woMessageUpdated(ch, &m) // a work object's refreshed unfurl (workobjects.go)
-		if a.removesActivity(e.Previous, &m) {
-			a.removesNext(ch, m.TS) // its update says so (activity_removes.go)
-		}
-		if streamed && m.StreamingState != "in_progress" {
-			a.emitStreamDone(ch, &m)
 			return
 		}
-		a.emitUpdate(ch, &m)
-		return
-	case "message_deleted":
-		// Slack's setMessageDeleted just removes the message; the parent's
-		// reply_count / latest_reply come with the parent's message_changed.
-		thread := ""
-		if e.Previous != nil && e.Previous.ThreadTS != e.DeletedTS {
-			thread = e.Previous.ThreadTS
-		} else if old, ok := a.S.FindHeld(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
-			thread = old.ThreadTS
-		}
-		// noted with the copies going: a fetch landing after leaves it out
-		// (store/live.go)
-		a.S.NoteRemove(ch, e.DeletedTS)
-		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
-		return
-	case "message_locked":
-		a.onMessageLocked(ch, ev.Raw)
-		return
-	case "message_replied":
-		a.onMessageReplied(ctx, ch, ev.Raw) // thread_meta.go
+		a.onMessageChange(ctx, ch, &e, ev.Raw)
 		return
 	}
 	var m slack.Message
@@ -739,9 +781,37 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	} else if m.User != self {
 		a.refreshCountsSoon() // thread unread state lives server-side
 	}
-	if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
-		a.refreshConv(ctx, ch)
+	// a conversation core doesn't know yet is looked up first
+	// (conversations.info), as Slack's preprocessRtmMessage fetches an
+	// unknown channel before the message: off the pump, so no other
+	// conversation's events wait for it, and the later messages and changes
+	// of the same conversation wait behind it in order (pump_later.go). The
+	// store holds the message already (above): only its announcement waits
+	if a.holdForConv(ch) {
+		mm, since := m, a.S.Seq()
+		countedDM := mention || a.S.CountsAsDM(ch) // as NoteMessage counted it, above
+		a.convLater(ch, func(ctx context.Context) {
+			defer a.releaseConv(ch)
+			if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
+				a.refreshConvSince(ctx, ch, since)
+			}
+			if !countedDM && (!isReply || mm.Subtype == "thread_broadcast") {
+				// counted before the store knew ch: a group DM's message
+				// counts as one (NoteLateDM), as it would have on ui, where
+				// the lookup ran first
+				a.S.NoteLateDM(ch, &mm)
+			}
+			a.announceMessage(ch, &mm, isReply, mention, ahead)
+		})
+		return
 	}
+	a.announceMessage(ch, &m, isReply, mention, ahead)
+}
+
+// announceMessage is onMessage's last part: the message event, once its
+// conversation is known.
+func (a *App) announceMessage(ch string, mp *slack.Message, isReply, mention, ahead bool) {
+	m := *mp
 	if !isReply || m.Subtype == "thread_broadcast" {
 		if a.reopenActive() { // a new message brings a closed DM back
 			a.emit(Event{Type: "sidebar_changed"})
@@ -764,6 +834,109 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		ev2.User = &u
 	}
 	a.emit(ev2)
+}
+
+// msgSubEvent is a message event's fields for its change subtypes.
+type msgSubEvent struct {
+	Subtype   string         `json:"subtype"`
+	Message   *slack.Message `json:"message"`
+	Previous  *slack.Message `json:"previous_message"`
+	DeletedTS string         `json:"deleted_ts"`
+}
+
+// onMessageChange is onMessage for the subtypes that change a message the
+// store may hold: an edit, a deletion, a thread's lock or its replies.
+func (a *App) onMessageChange(ctx context.Context, ch string, e *msgSubEvent, raw json.RawMessage) {
+	switch e.Subtype {
+	case "message_changed":
+		if e.Message == nil {
+			return
+		}
+		m := *e.Message // its rows ask for its people as they draw (lazy_users.go)
+		// Slack's messageChanged is replaceMessages (replace: true, client-boot
+		// z+/K processAndMergeMessages): the event's message replaces the
+		// stored one wholesale, thread metadata included. When a thread's
+		// last reply is deleted the parent's message_changed has no
+		// reply_count, and the reply bar goes; a deleted parent with
+		// replies arrives here as subtype "tombstone".
+		// the earlier copy was an open chat stream: the stored one, or one
+		// seen in a thread that isn't cached (Slack's store keeps every
+		// message the socket brings)
+		streamed := a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
+		if old, ok := a.S.FindHeld(ch, m.TS); ok { // a copy fetched by id too (store/fetched.go)
+			keepFiles(&m, &old)
+			streamed = streamed || old.StreamingState == "in_progress"
+			// Slack's store keeps a thread's replies apart from the
+			// messages (the thread's reply list), so a replaced reply
+			// stays in its thread whatever the copy says: one without
+			// thread_ts must not become a channel message here, nor miss
+			// the open thread pane.
+			if m.ThreadTS == "" && old.ThreadTS != "" && old.ThreadTS != old.TS {
+				m.ThreadTS, m.ParentUser = old.ThreadTS, firstNonEmpty(m.ParentUser, old.ParentUser)
+			}
+			// a root's thread subscription isn't the message's: Slack's
+			// replaceMessages swaps the message, and only a copy with a
+			// "subscribed" field of its own changes the subscription
+			// (store/thread_subs.go), so the cached copies keep theirs
+			if !m.SubscribedSet {
+				sub := a.S.ThreadSubOf(ch, &old)
+				m.Subscribed, m.LastRead = sub.Subscribed, sub.LastRead
+			}
+		}
+		a.S.SlurpSub(ch, &m)
+		a.forgetMsgThread(ch, m.TS) // its thread_ts as this copy has it, not as a lookup found it
+		// every stored copy takes it, a copy fetched by id included (an
+		// Activity entry's message from a conversation nobody opened:
+		// store/fetched.go), and a read out now keeps it (store/live.go),
+		// noted with the write so no read lands between; a window or a
+		// cached thread that holds none gets it inside its range
+		// (putChanged)
+		if _, found := a.S.NoteMutate(ch, m.TS, &m, func(x *slack.Message) { *x = m }); !found || !a.S.Holds(ch, m.TS, "") {
+			a.putChanged(ch, m) // a reply goes to its (cached) thread, never the channel
+		}
+		if m.ThreadTS == "" || m.ThreadTS == m.TS {
+			// a root's copy replaces the stored root: its broadcasts'
+			// root copies take its reply metadata (broadcast_footer.go)
+			a.syncBroadcastRoots(ch, m.TS, func(x *slack.Message) {
+				x.ThreadTS, x.ReplyCount, x.ReplyUsers, x.ReplyUsersN, x.LatestReply = m.ThreadTS, m.ReplyCount, m.ReplyUsers, m.ReplyUsersN, m.LatestReply
+			})
+		}
+		if needsFileInfo(&m) {
+			go a.fillFiles(ch, m.TS)
+		}
+		a.woMessageUpdated(ch, &m) // a work object's refreshed unfurl (workobjects.go)
+		// the update says it removes the Activity entries about the message
+		// (activity_removes.go) on itself: through one slot App-wide, a
+		// held conversation's edit and another's, applied at once on two
+		// goroutines, could take each other's
+		removes := a.removesActivity(e.Previous, &m)
+		if streamed && m.StreamingState != "in_progress" {
+			a.emitStreamDoneWith(ch, &m, removes)
+			return
+		}
+		a.emitUpdateWith(ch, &m, removes)
+		return
+	case "message_deleted":
+		// Slack's setMessageDeleted just removes the message; the parent's
+		// reply_count / latest_reply come with the parent's message_changed.
+		thread := ""
+		if e.Previous != nil && e.Previous.ThreadTS != e.DeletedTS {
+			thread = e.Previous.ThreadTS
+		} else if old, ok := a.S.FindHeld(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
+			thread = old.ThreadTS
+		}
+		// noted with the copies going: a fetch landing after leaves it out
+		// (store/live.go)
+		a.S.NoteRemove(ch, e.DeletedTS)
+		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
+		return
+	case "message_locked":
+		a.onMessageLocked(ch, raw)
+		return
+	case "message_replied":
+		a.onMessageReplied(ctx, ch, raw) // thread_meta.go
+		return
+	}
 }
 
 // mentionsSelf reports whether m mentions the viewer directly or via

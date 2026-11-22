@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"runtime/cgo"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -1486,8 +1487,40 @@ func gio_onCloseRequest(h C.uintptr_t) C.int {
 	return 1
 }
 
+// gio_onStartupPoint is gio_main's and the app delegate's startup points
+// (Clack patch, CLACK_PATCHES.md §56): 0 NSApplication made, 1 its run
+// loop about to start, 2 applicationWillFinishLaunching, where the screens
+// are read for the launch's first displays.
+//
+//export gio_onStartupPoint
+func gio_onStartupPoint(p C.int) {
+	switch p {
+	case 0:
+		startupAppKitApp.mark()
+	case 1:
+		startupAppKitRun.mark()
+	case 2:
+		startupWillFinish.mark()
+		snapshotLaunchScreens() // the launch's first displays (clack_bounds_macos.go)
+	}
+}
+
+// gio_onQuit is the stub menu's Quit (Clack patch, CLACK_PATCHES.md §56):
+// 1 when the app's SetQuitHandler took it (on its own goroutine: never
+// the main thread's wait), 0 for terminate:.
+//
+//export gio_onQuit
+func gio_onQuit() C.int {
+	if f := quitHook.Load(); f != nil {
+		go (*f)()
+		return 1
+	}
+	return 0
+}
+
 //export gio_onFinishLaunching
 func gio_onFinishLaunching() {
+	startupLaunched.mark() // Clack patch (CLACK_PATCHES.md §56)
 	close(launched)
 }
 
@@ -1501,11 +1534,50 @@ func gio_onOpenURI(uri C.CFTypeRef) {
 	processGlobalEvent(evt)
 }
 
+// Windows asked for before NSApplication finished launching open in its
+// applicationDidFinishLaunching (Clack patch, CLACK_PATCHES.md §56), the
+// moment the launch is done and the app active, instead of after the main
+// thread's queue gets to them (AppKit serves it only once its post-launch
+// work is done: 30-50 ms on CI).
+var (
+	launchMu      sync.Mutex
+	launchWindows []func()
+	launchOpened  bool // applicationDidFinishLaunching ran
+)
+
+// openAtLaunch queues f for applicationDidFinishLaunching; false once that
+// ran (then f is the caller's to run).
+func openAtLaunch(f func()) bool {
+	launchMu.Lock()
+	defer launchMu.Unlock()
+	if launchOpened {
+		return false
+	}
+	launchWindows = append(launchWindows, f)
+	return true
+}
+
+// gio_onLaunchActivated runs at the end of the app delegate's
+// applicationDidFinishLaunching (after the activation): the windows
+// waiting for the launch. Main thread.
+//
+//export gio_onLaunchActivated
+func gio_onLaunchActivated() {
+	startupActivated.mark()
+	launchMu.Lock()
+	fs := launchWindows
+	launchWindows, launchOpened = nil, true
+	launchMu.Unlock()
+	for _, f := range fs {
+		f()
+	}
+}
+
 func newWindow(win *callbacks, options []Option) {
-	<-launched
 	res := make(chan struct{})
-	runOnMain(func() {
-		setCaretBlinkFromOS() // Clack patch (CLACK_PATCHES.md §47)
+	open := func() {
+		startupWindowCreate.mark() // Clack patch (CLACK_PATCHES.md §56)
+		setCaretBlinkFromOS()      // Clack patch (CLACK_PATCHES.md §47)
 		w := &window{
 			redraw: make(chan struct{}, 1),
 			w:      win,
@@ -1519,6 +1591,7 @@ func newWindow(win *callbacks, options []Option) {
 			w.ProcessEvent(DestroyEvent{Err: err})
 			return
 		}
+		startupWindowView.mark() // Clack patch (CLACK_PATCHES.md §56)
 		panel := C.int(0)
 		if cnf.panel {
 			panel = 1
@@ -1527,6 +1600,7 @@ func newWindow(win *callbacks, options []Option) {
 		// start, so the content is the size asked for.
 		hiddenTitlebar := boolInt(cnf.Decorated && cnf.hiddenTitleBar)
 		window := C.gio_createWindow(w.view, C.CGFloat(cnf.Size.X), C.CGFloat(cnf.Size.Y), panel, hiddenTitlebar)
+		startupWindowNS.mark() // Clack patch (CLACK_PATCHES.md §56)
 		// Release our reference now that the NSWindow has it.
 		C.CFRelease(w.view)
 		w.Configure(options)
@@ -1547,7 +1621,12 @@ func newWindow(win *callbacks, options []Option) {
 		} else {
 			C.makeKeyAndOrderFront(window)
 		}
-	})
+		startupWindowShown.mark() // Clack patch (CLACK_PATCHES.md §56)
+	}
+	if !openAtLaunch(open) { // Clack patch (CLACK_PATCHES.md §56)
+		<-launched
+		runOnMain(open)
+	}
 	<-res
 }
 

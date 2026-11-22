@@ -230,7 +230,7 @@ func TestSavedStarsAndEvents(t *testing.T) {
 	evs, stop := a.Subscribe()
 	defer stop()
 	f.reply["messages.list"] = `{"ok":true,"messages":{}}`
-	a.handle(rtm("saved_deleted", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001"}}))
+	a.handleNow(t, rtm("saved_deleted", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001"}}))
 	if e := next(t, evs, "update"); e.Msg.Saved {
 		t.Error("saved_deleted did not clear Saved")
 	}

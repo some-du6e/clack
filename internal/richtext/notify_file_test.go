@@ -92,6 +92,29 @@ func TestNoteFilesOf(t *testing.T) {
 	}
 }
 
+// TestNoteFilesOfStoreCopy: with the file store's copy of the first file
+// (Eley's getFileById), the title, uploader, pretty_type, kind and
+// comment come from it, the clips from the message's own files (Qre6
+// reads t.files).
+func TestNoteFilesOfStoreCopy(t *testing.T) {
+	var fs []slack.File
+	if err := json.Unmarshal([]byte(`[{"id":"F1","file_access":"check_file_info","user":"U1"},{"id":"F2","subtype":"slack_audio"}]`), &fs); err != nil {
+		t.Fatal(err)
+	}
+	var held slack.File
+	if err := json.Unmarshal([]byte(`{"id":"F1","title":"Q3 report","user":"U2","pretty_type":"PNG","mimetype":"image/png","filetype":"png","mode":"hosted",`+
+		`"url_private":"https://files.example.invalid/f","thumb_360":"https://files.example.invalid/t360.png","initial_comment":{"comment":"c"},"subtype":"slack_video"}`), &held); err != nil {
+		t.Fatal(err)
+	}
+	want := NoteFiles{Title: "Q3 report", User: "U2", PrettyType: "PNG", Kind: "image", Commented: true, Clips: 1, AudioClip: true}
+	if n := noteFilesFrom(fs, &held); n == nil || *n != want {
+		t.Errorf("the store's copy: %+v, want %+v", n, want)
+	}
+	if n := noteFilesFrom(fs, nil); n == nil || n.Title != "" || n.User != "U1" || n.Kind != "generic" {
+		t.Errorf("the message's own copy: %+v, want its stub's", n)
+	}
+}
+
 // TestNoteFileTitle: getFileTitle unescapes lodash's five entities and
 // trims JavaScript's whitespace (U+FEFF and no-break spaces go, U+0085
 // stays: String.prototype.trim in node).

@@ -50,7 +50,7 @@ func hcShot(t *testing.T, e *perfEnv, name string) {
 }
 
 func (e *perfEnv) move(p f32.Point) {
-	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p})
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: e.surface(p)})
 	e.frame()
 }
 
