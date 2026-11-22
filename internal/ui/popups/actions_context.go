@@ -608,10 +608,7 @@ func ConfirmDeleteFile(h Host, f *richtext.File) {
 // DownloadFile saves f to the Downloads folder, like the lightbox's
 // Download button.
 func DownloadFile(h Host, f *richtext.File) {
-	src := f.URL
-	if src == "" {
-		src = f.Download
-	}
+	src := downloadSource(f)
 	if src == "" {
 		h.Toast("This file can't be downloaded")
 		return
@@ -621,6 +618,20 @@ func DownloadFile(h Host, f *richtext.File) {
 		name = f.Title
 	}
 	saveDownload(h, src, name, true, nil)
+}
+
+// downloadSource is what a file's Download fetches: its url_private (or
+// url_private_download); an audio file's url_private_download first, as
+// Slack's download does, never the aac rendition its player plays
+// (richtext.File.MediaURL).
+func downloadSource(f *richtext.File) string {
+	if f.IsAudio && f.Download != "" {
+		return f.Download
+	}
+	if f.URL != "" {
+		return f.URL
+	}
+	return f.Download
 }
 
 // saveDownload fetches src (through core when viaCore or on Slack's

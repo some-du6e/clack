@@ -138,6 +138,9 @@ func (z *zones) volumeAt(p image.Point) float64 {
 // LayoutMedia is richview.Media's: the tile's player and overlay, in
 // gtx.Constraints (exactly the tile).
 func (r *Row) LayoutMedia(gtx layout.Context, s richview.MediaSlot) layout.Dimensions {
+	if s.File != nil && s.File.IsAudio {
+		return r.layoutAudio(gtx, s) // audio.go
+	}
 	c := r.c
 	sz := gtx.Constraints.Max
 	if s.File == nil || sz.X <= 0 || sz.Y <= 0 {

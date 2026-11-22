@@ -451,6 +451,18 @@ type File struct {
 	// player start there or at 0 (xnwb).
 	MediaOffsetMS int
 	MediaWatched  bool
+	// A playable audio file's (IsAudio, Slack's fileIsPlayableAudio):
+	// MediaURL is its aac rendition, which FileAudio plays first
+	// (getMediaURL's aac || url_private; a build that can't decode AAC
+	// plays URL, the upload, as do Download, Open in new tab and the
+	// plugins' url_private). Transcript is its transcription's status ("",
+	// none, processing, complete, failed, fatal), TranscriptRegion
+	// is_transcription_region_supported and VTT its captions' URL
+	// (MediaTranscriptPopoverButton).
+	MediaURL         string
+	Transcript       string
+	TranscriptRegion bool
+	VTT              string
 	// Salesforce is is_salesforce_file: its progress is never sent (9NKl)
 	Salesforce bool
 	// Pending: the viewer's own upload, not finished yet (drawn at .5
