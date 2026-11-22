@@ -164,7 +164,7 @@ func TestWindowsToastPrivateChannel(t *testing.T) {
 	const ch = "C0NOTEPRIV1"
 	name := "secret-plans-" + nonce
 	ca.S.PutConv(slack.Conversation{ID: ch, Name: name, IsGroup: true, IsPrivate: true, IsMember: true})
-	msg := noteMsg("1762520199.000100", "", "private "+nonce)
+	msg := noteMsg("1762520199.000100", "", "<!here> private "+nonce) // a mention: the channel's level is Mentions
 	a.data.handle(a, core.Event{Type: "message", Channel: ch, TS: msg.TS, ConvKind: "private", Msg: msg, Mention: true})
 	tag := team + "_" + msg.TS
 	deadline := time.Now().Add(10 * time.Second)
