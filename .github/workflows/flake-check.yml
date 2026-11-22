@@ -4823,8 +4823,14 @@ jobs:
           rc=$?
           kill $(jobs -p) 2>/dev/null
           echo "== TestMFSeekAndPause: $(grep -c -- '^--- FAIL: TestMFSeekAndPause' "$RUNNER_TEMP/seek.log") of $COUNT failed"
-          grep -E 'mf_windows_test.go:[0-9]+: (seeked to|light grey)' "$RUNNER_TEMP/seek.log" | sort | uniq -c | sort -rn | head -5
+          grep -E -B2 -A12 -- '^--- FAIL' "$RUNNER_TEMP/seek.log" | head -60
           exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: fl1122-win-logs
+          path: ${{ runner.temp }}/seek.log
+          retention-days: 7
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
