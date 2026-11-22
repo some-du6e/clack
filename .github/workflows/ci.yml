@@ -84,6 +84,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: gofmt
@@ -150,6 +151,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: test (${{ matrix.shard }})
@@ -213,6 +215,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: test
@@ -260,6 +263,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: runner tests
@@ -293,6 +297,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       # Gio patch 11 (third_party/gioui.org/CLACK_PATCHES.md): OS file-drop
@@ -462,6 +467,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: the flight recorder (internal/tracerec)
         env:
           GOTOOLCHAIN: local
@@ -484,6 +490,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: plugins start in parallel with boot (race detector; the JS engine is one wasm instance)
@@ -509,6 +516,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: sign-out stops all traffic (50 runs, race detector)
@@ -533,6 +541,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       # Idle: the client left alone for 10 s per surface (channel, thread,
@@ -621,6 +630,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: resources (icon #1, manifest, version info)
         run: |
           go install github.com/tc-hib/go-winres@v0.3.3
@@ -661,6 +671,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: applog tests
         run: go test -count=1 -v ./internal/applog
       # Gio patches 37-44 on Direct3D 11 (WARP): the state caches change no
@@ -855,6 +866,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: slack:// handler (HKCU registration, the shell's list of slack:// handlers, the hand-off over the instance socket)
         if: ${{ !cancelled() }}
         env:
@@ -1269,13 +1281,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       # Wheel scrolling on Windows: frame times while synthetic mouse-wheel
       # notches scroll a long fakeslack channel at 60 Hz (layout, and the
       # Direct3D 11 render when the runner has a device). The numbers are
       # in the log; nothing fails on them.
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
       - name: wheel scrolling frame times (internal/ui TestWheelFrameProbe)
         if: ${{ !cancelled() }}
         env:
@@ -1316,10 +1329,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # The idle-frame budget on Windows (see linux-idle: four processes).
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      # The idle-frame budget on Windows (see linux-idle: four processes).
       - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
         if: ${{ !cancelled() }}
         shell: bash # every go test counts (pwsh steps fail only on the last command)
@@ -1434,6 +1448,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: macOS-only tests (system fonts, AppKit glue, the menu bar)
         run: |
           go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
@@ -1741,6 +1756,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"

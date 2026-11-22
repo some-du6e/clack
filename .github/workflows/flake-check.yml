@@ -290,6 +290,17 @@ on:
       - "internal/store/taut_mirror.go"
       - "internal/ui/views/adapt.go"
       - "internal/ui/views/activity_rows.go"
+      # the preview-footer job's own
+      - "internal/core/resolve.go"
+      - "internal/core/resolve_join_test.go"
+      - "internal/ui/preview_membership_test.go"
+      - "internal/ui/joinpane.go"
+      # the menu-click job's own
+      - "internal/ui/slackc/view.go"
+      - "internal/ui/slackc/events.go"
+      - "internal/ui/slackc/rerender_click_test.go"
+      - "internal/ui/popups/slick_menu.go"
+      - "internal/ui/popups/slick_mamenu_pick_test.go"
 
 permissions:
   contents: read
@@ -320,6 +331,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core (create channel, stars/saved kept across the boot fetch)
@@ -359,6 +371,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: media and videoplayer under -race
@@ -391,6 +404,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: store, core, slack (race detector)
@@ -421,6 +435,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: views (the Members tab over fakeslack's rosters), one verbose run then COUNT
@@ -447,6 +462,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: composer (an image sent on its own; its tile uploading from the first frame)
@@ -474,6 +490,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core (recents loaded once, whichever trigger comes first)
@@ -508,6 +525,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core (writes on the warm window while Boot's answers are out), race detector
@@ -555,6 +573,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: popups (Copy image, the viewer, the GIF picker)
@@ -593,6 +612,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps, Xvfb, Mesa llvmpipe, python-xlib
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
       - name: imgcache (timeline, budget, stalls, loop count, live ops, quiet frames)
@@ -641,6 +661,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps, Xvfb and Mesa (internal/huddle's X11 screen share needs the headers)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "huddle: Opus frames don't depend on the caller's goroutine stack"
@@ -706,6 +727,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps, Xvfb and Mesa
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "huddleui: the bar after the huddle window closes"
@@ -731,6 +753,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "huddleui: the bar after the huddle window closes (WM_CLOSE)"
         shell: bash
         env:
@@ -762,6 +785,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps (internal/huddle's X11 screen share needs the headers)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: huddle (no logging after Leave)
@@ -783,6 +807,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: GPU tests (Mesa llvmpipe; packages in parallel, as in ci.yml before -p 1)
@@ -834,6 +859,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "kit + messages: the row's layout and pixels (light and dark), OwlMode's own Save in Taut, the composer button, the reaction ring, COUNT runs"
@@ -892,6 +918,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: MessageLogger threads (and the logger next to it)
@@ -946,6 +973,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: wrapped mention pills in rows, COUNT runs
@@ -1001,6 +1029,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1057,6 +1086,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1086,6 +1116,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "TestOLEFileDrop, drag loop late by ${{ matrix.late }} ms, every run counted"
         shell: bash
         env:
@@ -1113,6 +1144,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "TestCloseToTrayWindow, every run counted"
         shell: bash
         env:
@@ -1140,6 +1172,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "TestTaskbarWindow, every run counted"
         shell: bash
         env:
@@ -1171,6 +1204,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps (internal/huddle's X11 screen share needs the headers)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1206,6 +1240,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1248,6 +1283,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       # flake-count prints its own lines and the log's tail: the failures'
@@ -1296,6 +1332,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1327,6 +1364,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1362,6 +1400,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: Show after Do not disturb switches and a platform restart
         env:
           CGO_ENABLED: "0"
@@ -1390,6 +1429,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "TestToastInNotificationCenter, once on a fresh runner"
         shell: bash
         env:
@@ -1424,6 +1464,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: TestOccludedWindowPausesMac, every run counted
         if: ${{ !cancelled() }}
         env:
@@ -1484,6 +1525,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "${{ matrix.test }}, every run counted"
         shell: bash
         env:
@@ -1522,6 +1564,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }} ${{ matrix.flags }}, every run counted"
@@ -1555,6 +1598,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }} ${{ matrix.flags }}, every run counted"
@@ -1588,6 +1632,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: go test ./...
@@ -1620,6 +1665,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "OS file drops, typed text, the title bar (Gio's, Clack's window): COUNT rounds"
         shell: bash
         env:
@@ -1676,6 +1722,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "messages: the vote buttons under ThreadReplyGeneric+Message (free-running and lockstep), COUNT runs"
@@ -1717,6 +1764,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "slackc: patched roots age by their own window's frames, COUNT runs"
@@ -1754,6 +1802,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "Gio patch 34: the focus answers, COUNT runs"
@@ -1788,6 +1837,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "jsrt: release bursts count their own handles, COUNT runs"
@@ -1843,6 +1893,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: Activity's, Threads' and Saved's live messages (one verbose run, then COUNT)"
@@ -1898,6 +1949,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: Activity's order (one verbose run, then COUNT, then 3 under -race)"
@@ -1936,6 +1988,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: each edit to the frame that draws it, per surface (one verbose run, then COUNT)"
@@ -1973,6 +2026,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: a reply to the open thread, socket to the pane's frame (one verbose run, then COUNT)"
@@ -2004,6 +2058,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core, richview, messages, blockkit: the agent tests, COUNT times"
@@ -2044,6 +2099,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: a toast's mention of a member the store didn't hold (one verbose run, then COUNT)"
@@ -2074,6 +2130,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: an entry whose message goes while it waits (one verbose run, then COUNT)"
@@ -2104,6 +2161,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: senders nothing on screen shows are asked for by no one (one verbose run, then COUNT)"
@@ -2140,6 +2198,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: other people's reactions, socket to frame (one verbose run, then COUNT)"
@@ -2172,6 +2231,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core, store, views: reaction urls, malformed events, the Pins tab under a slice patch (COUNT runs)"
@@ -2206,6 +2266,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: each edit to the Activity row's frame (one verbose run, then COUNT)"
@@ -2240,6 +2301,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: a newly shown row's first frame, and each edit's rewritten view, under a slice patch (COUNT runs)"
@@ -2280,6 +2342,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: rewritten views through a reaction while JS is busy (COUNT runs)"
@@ -2313,6 +2376,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core: the DM badges' rules, the DMs tab's rows, COUNT runs"
@@ -2344,6 +2408,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "store: client.counts' IM and group DM unread count, COUNT runs"
@@ -2376,6 +2441,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "slackc + jsrt + taut + core: panes, same-output commits, refresh, conversion refs, COUNT runs"
@@ -2424,6 +2490,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: the inline player on the real window (TestRealWindowVideoFrames)
         shell: bash
         env:
@@ -2466,6 +2533,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: the backends play the fixtures (internal/media/...)
         shell: bash
         env:
@@ -2501,6 +2569,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -2576,6 +2645,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -2668,6 +2738,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "the freeze's reset and edges, COUNT runs"
@@ -2704,6 +2775,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "the pen and the review, COUNT runs"
@@ -2733,6 +2805,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "theme + css, COUNT runs"
@@ -2790,6 +2863,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: taut, slick (one verbose run, then COUNT)
@@ -2828,6 +2902,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: slack, taut (one verbose run, then COUNT)
@@ -2862,6 +2937,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: DM senders on every path (one verbose run, then COUNT)"
@@ -2896,6 +2972,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: message links in a DM, the thread pane and a toast (one verbose run, then COUNT)"
@@ -2928,6 +3005,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "the hover card's roles, name, presence and status, COUNT runs"
@@ -2974,6 +3052,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -3019,6 +3098,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: ui, views (COUNT runs each)
@@ -3057,6 +3137,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: imgcache, store, core, popups, ui (COUNT runs)
@@ -3102,6 +3183,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -3151,6 +3233,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -3196,6 +3279,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: slack, store, core, messages, ui (one verbose run, then COUNT)
@@ -3250,6 +3334,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: jsrt, taut, composer, slackc (one verbose run, then COUNT)
@@ -3291,6 +3376,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: ui (one verbose run, then COUNT)
@@ -3326,6 +3412,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: ui (one verbose run, then COUNT)
@@ -3360,6 +3447,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: patched reaction pills against the native ones, COUNT runs
@@ -3406,6 +3494,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: the system DM's toast (one verbose run, then COUNT)"
@@ -3437,6 +3526,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "ui: the system DM's toast in Notification Center (COUNT runs)"
         shell: bash # $COUNT is the job's env (pwsh would read its own variable)
         env:
@@ -3471,6 +3561,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "store, core and ui: the huge thread's pages, COUNT runs (one verbose)"
@@ -3509,6 +3600,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core, messages, listview and ui: the threads-ship blockers, COUNT runs"
@@ -3559,6 +3651,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: ui (links, deep links, panes and toasts open a message's thread as Slack's jumpToMessage does)
@@ -3611,6 +3704,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: reactions on a jump window after leaving it (one verbose run, then COUNT)"
@@ -3651,6 +3745,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core, ui (one verbose run, then COUNT)
@@ -3693,6 +3788,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: Clack.app (perfharness, made and signed as release.yml makes it) and fakeslackd
         run: |
           set -eu
@@ -3751,6 +3847,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: launch budget (Clack.app through LaunchServices, within one Dock bounce)
         run: .github/perf/launch-budget.sh "$RUNNER_TEMP/launch"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -3776,6 +3873,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps, Xvfb
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: clack (perfharness) and fakeslackd
@@ -3824,6 +3922,7 @@ jobs:
       - uses: ./.github/actions/expect-fail
         with:
           tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: Clack.exe (perfharness) and fakeslackd
         shell: bash
         run: |
@@ -3853,10 +3952,103 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+
+  # preview-footer-race (2026-11-21): a ResolveConv joining another
+  # caller's conversations.info read the store before the owner stored the
+  # answer, and answered "unknown". The UI's lookup, joining History's side
+  # read for a channel opened from a link, then stopped waiting on its
+  # membership and drew the composer in a channel the viewer isn't in
+  # (TestPreviewFooterMembershipUnknownAtOpen: threads-ship, files-filters,
+  # alpha.135's release test job). The DM test holds the gap open (the
+  # owner's partner fetch) and failed every run on the old code; the
+  # channel test stresses the few-instruction gap the UI hit. Dispatch
+  # with only=preview-footer.
+  preview-footer:
+    if: ${{ !inputs.only || startsWith('preview-footer', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    env:
+      CORE_TESTS: '^(TestResolveConvJoinerGetsTheAnswer|TestResolveConvJoinersOfAChannel)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: core's joiners (plain, -race), then the ui footer test (COUNT each)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 6m -run "$CORE_TESTS" ./internal/core || rc=1
+          go test -race -count=$COUNT -timeout 6m -run "$CORE_TESTS" ./internal/core || rc=1
+          go test -count=$COUNT -timeout 12m -run '^TestPreviewFooterMembershipUnknownAtOpen$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+
+
+  # menu-click-rerender (2026-11-21): a new tree from JS dropped every
+  # slackc sub scope, and with it the pointer tag of the scope a press was
+  # in: a re-render between a press and its release sent the release to
+  # the outer scope, which clicked an ancestor. A plugin's row in the
+  # patched Menu lost its click (TestMessageMenuOldMenuRows, alpha.135's
+  # release test job, 2 of 59 runs under load in the DIAG run).
+  # TestClickSurvivesReRender re-renders between the two every run; the
+  # menu test runs alone and under load beside the popups package. Dispatch
+  # with only=menu-click.
+  menu-click:
+    if: ${{ !inputs.only || startsWith('menu-click', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: slackc (plain, -race), then the menu test alone and under load (COUNT each)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 6m -run '^TestClickSurvivesReRender$' ./internal/ui/slackc || rc=1
+          go test -race -count=$COUNT -timeout 6m -run '^TestClickSurvivesReRender$' ./internal/ui/slackc || rc=1
+          go test -c -o "$RUNNER_TEMP/popups.test" ./internal/ui/popups || exit 1
+          cd internal/ui/popups
+          T='^TestMessageMenuOldMenuRows$'
+          "$RUNNER_TEMP/popups.test" -test.count=$COUNT -test.timeout 12m -test.run "$T" > "$RUNNER_TEMP/alone.log" 2>&1 || rc=1
+          for i in 1 2 3 4; do (while :; do :; done) & done
+          ( "$RUNNER_TEMP/popups.test" -test.count=1 -test.timeout 15m > "$RUNNER_TEMP/pkg.log" 2>&1 ) &
+          "$RUNNER_TEMP/popups.test" -test.count=$COUNT -test.timeout 15m -test.run "$T" > "$RUNNER_TEMP/load.log" 2>&1 || rc=1
+          kill $(jobs -p) 2>/dev/null
+          for f in alone load; do
+            echo "== $f: $(grep -c -- '^--- FAIL' "$RUNNER_TEMP/$f.log") of $COUNT failed"
+            grep -E -- '^\s*--- FAIL|_test.go:[0-9]+:' "$RUNNER_TEMP/$f.log" | head -20
+          done
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
-  # in its needs (tools/expectfail's TestWorkflowsWireExpectFail says so).
+  # in its needs (.github/scripts/expect_fail_wire.py adds it).
   expect-fail:
     needs:
       - go
@@ -3947,6 +4139,8 @@ jobs:
       - launch-budget
       - launch-speed-linux
       - launch-speed-windows
+      - preview-footer
+      - menu-click
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
