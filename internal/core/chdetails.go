@@ -271,7 +271,7 @@ type hiddenState struct {
 	unhidden map[string]string
 }
 
-var hiddenIndex sync.Map // *App → *hiddenState
+var hiddenIndex = newPerApp() // *App → *hiddenState
 
 func (a *App) hidden() *hiddenState {
 	v, _ := hiddenIndex.LoadOrStore(a, &hiddenState{})

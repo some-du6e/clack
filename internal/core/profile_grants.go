@@ -47,7 +47,7 @@ type profileGrantCache struct {
 	at      time.Time
 }
 
-var profileGrantIndex sync.Map // *App → *profileGrantCache
+var profileGrantIndex = newPerApp() // *App → *profileGrantCache
 
 func (a *App) profileGrantCache() *profileGrantCache {
 	if v, ok := profileGrantIndex.Load(a); ok {

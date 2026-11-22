@@ -211,7 +211,14 @@ type attachments struct {
 
 	picking atomic.Bool
 	pasting atomic.Bool
-	browser *attBrowser // UI goroutine only
+	browser *attBrowser  // UI goroutine only
+	plus    *popups.Menu // the + menu last opened (UI goroutine only)
+	// plusOpen is ShortcutsMenuTriggerButton's S, the + drawn open: set
+	// when its menu opens (onPopoverOpen), cleared when it closes
+	// (onPopoverClose) or by a double click, but not when a click on the
+	// + toggles the menu shut, which never calls onPopoverClose (so the
+	// + stays turned then, as Slack's does). UI goroutine only.
+	plusOpen, plusToggling bool
 
 	// insertLink puts text linked to url at the owning composer's caret
 	// (the + menu's Workflow row, WorkflowItem)
@@ -738,7 +745,20 @@ type plusMenu struct {
 	snippet func()                // Text snippet: the snippet dialog
 	gif     func(image.Rectangle) // GIF: the GIF picker at the menu's target (nil: no GIF picker)
 	anchor  image.Rectangle       // the + button, window coordinates (Menu sets it)
+	// blocked is slackConnectFileSharingBlocked (rscm O, the + button's
+	// N): Upload from your computer is disabled, and the menu's scrim
+	// is up at once. restricted is isRestrictedExternalHuddle (uu7O f):
+	// no GIF and no Upload from your computer.
+	blocked, restricted bool
 }
+
+// plusScrimDelay is how long the + menu's scrim stays down once it opens:
+// ShortcutsMenuTriggerButton's effect sets the overlay
+// (.c-popover--shortcuts_menu_trigger_button, the window-wide layer a
+// click outside the menu hits) to height 0 for 250 ms when the menu
+// opens, unless N, so the second click of a double click reaches the
+// button. The menu itself shows and takes clicks meanwhile.
+const plusScrimDelay = 250 * time.Millisecond
 
 // gifNewBadge is how often the GIF row shows its "New" tag
 // (seen_gif_new_badge < 3).
@@ -752,7 +772,7 @@ func (a *attachments) plusMenuItems(pm plusMenu) []popups.MenuItem {
 	// "Ctrl+O" / "⌘O"
 	snippetKey, uploadKey := shortcut.FormatAsWritten("Mod+Shift+Enter"), shortcut.Format("Mod+O")
 	var items []popups.MenuItem
-	if pm.gif != nil {
+	if pm.gif != nil && !pm.restricted {
 		// nativeGifPickerEnabled: "GIF" (svgIcon gif) with EducationTag's
 		// micro "New" until seen_gif_new_badge reaches 3
 		it := popups.MenuItem{Label: i18n.T("menu_file", "GIF"), Icon: "gif", Do: func() { pm.gif(pm.anchor) }}
@@ -769,8 +789,17 @@ func (a *attachments) plusMenuItems(pm plusMenu) []popups.MenuItem {
 			items = append(items, *it)
 		}
 	}
-	return append(items, popups.MenuItem{Label: i18n.T("menu_file", "Upload from your computer"), Icon: "laptop", Hint: uploadKey, Do: a.Pick})
+	if pm.restricted {
+		return items
+	}
+	return append(items, popups.MenuItem{Label: i18n.T("menu_file", "Upload from your computer"), Icon: "laptop", Hint: uploadKey,
+		Disabled: pm.blocked, Do: func() { uploadFromComputer(a) }})
 }
+
+// uploadFromComputer is what Upload from your computer and the + button's
+// double click both run (onUploadFromComputerClick and E click the same
+// hidden file input): the file chooser. Tests hook it.
+var uploadFromComputer = (*attachments).Pick
 
 // Menu opens the + menu above the button; anchor is the button in window
 // coordinates.
@@ -791,7 +820,32 @@ func (a *attachments) Menu(anchor image.Rectangle, pm plusMenu) {
 		}
 	}
 	// the shortcuts menu's template menu is 360 wide
-	a.h.ShowOverlay(popups.NewMenuOpts(a.h, items, popups.MenuOpts{Anchor: anchor, Side: popups.Above, Width: 360}))
+	var m *popups.Menu
+	o := popups.MenuOpts{Anchor: anchor, Side: popups.Above, Width: 360, OnClose: func() {
+		if !a.plusToggling && (a.plus == nil || a.plus == m) {
+			a.plusOpen = false // onPopoverClose (D): x(false)
+		}
+	}}
+	if !pm.blocked {
+		o.ScrimAfter = plusScrimDelay
+	}
+	m = popups.NewMenuOpts(a.h, items, o)
+	a.plus, a.plusOpen = m, true // onPopoverOpen (L): x(true)
+	a.h.ShowOverlay(m)
+}
+
+// closePlusMenu closes the + menu if it's open and reports whether it
+// was: the trigger's toggle, which leaves plusOpen as it is.
+func (a *attachments) closePlusMenu() bool {
+	m := a.plus
+	a.plus = nil
+	if m == nil || m.Dismissed() {
+		return false
+	}
+	a.plusToggling = true
+	m.Dismiss()
+	a.plusToggling = false
+	return true
 }
 
 // ---- picking files ----

@@ -302,18 +302,11 @@ func (f *Files) update(gtx C) {
 		f.tpls.load(f.h, false, func(ctx context.Context) ([]core.ListTemplate, error) { return a.ListTemplates(ctx) })
 	}
 	if a := f.h.Core(); a != nil {
-		// the sidebar's mount: maybeFetchCollections under
-		// custom_file_sections, else maybeFetchStarredUnifiedFiles
+		// the sidebar's mount: maybeFetchCollections (the starred files
+		// come with the collections since Slack dropped
+		// custom_file_sections: maybeFetchStarredUnifiedFiles is a no-op)
 		if a.FileSectionsOn() {
-			if !f.collAsked {
-				f.collAsked = true
-				go func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					a.FetchFileCollections(ctx)
-					f.h.Invalidate()
-				}()
-			}
+			f.askCollections()
 		} else if !f.starAsked {
 			f.starAsked = true
 			f.loadStarred()

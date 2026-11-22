@@ -97,7 +97,13 @@ func (q *draftQueue) run(key string) {
 			return
 		}
 		op := q.ops[0]
+		// the slice's array kept every op run (and the session its api is),
+		// for as long as the key's queue: for good
+		q.ops[0] = draftOp{}
 		q.ops = q.ops[1:]
+		if len(q.ops) == 0 {
+			q.ops = nil
+		}
 		q.mu.Unlock()
 		runDraftOp(key, op)
 	}

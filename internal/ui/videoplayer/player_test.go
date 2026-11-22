@@ -3,8 +3,11 @@ package videoplayer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"io"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -67,6 +70,38 @@ func fakeEnvExp(t *testing.T, exp func(string) string) (*Controller, *prefs) {
 	return c, p
 }
 
+// fakeEnvSlow is fakeEnv with a source of its own per file, each file's
+// reads waiting slow[its id] (a network, or a runner, that slow).
+func fakeEnvSlow(t *testing.T, slow map[string]time.Duration) *Controller {
+	t.Helper()
+	var mu sync.Mutex
+	openers := map[string]*mediatest.Opener{}
+	p := &prefs{vals: map[string]json.RawMessage{}}
+	c := New(Env{
+		Manager: media.NewManager(media.NewFake(media.FakeOptions{Log: func(string, ...any) {}})),
+		Open: func(ctx context.Context, u string, off int64) (io.ReadCloser, media.Info, error) {
+			mu.Lock()
+			o := openers[u]
+			if o == nil {
+				_, o = mediatest.Source("FVP", mediatest.GreyGreyRed, false)
+				for id, d := range slow {
+					if strings.Contains(u, "-"+id+"/") {
+						o.Delay = d
+					}
+				}
+				openers[u] = o
+			}
+			mu.Unlock()
+			return o.Open(ctx, off)
+		},
+		Pref:       p.get,
+		SetPref:    p.set,
+		Experiment: func(string) string { return "on" },
+	})
+	t.Cleanup(c.CloseAll)
+	return c
+}
+
 func videoFile(id string) *richtext.File {
 	return &richtext.File{ID: id, Name: "clip.mp4", Type: "mp4", Mime: "video/mp4", IsVideo: true, DurationMS: 83000,
 		URL: "https://files.slack.com/files-pri/T1-" + id + "/clip.mp4"}
@@ -111,6 +146,61 @@ func waitFor(t *testing.T, what string, d time.Duration, ok func() bool) {
 	}
 }
 
+// strictWaits (CLACK_VP_STRICT_WAITS=1) gives waitForTile the plain wall
+// time it replaced: the red side of its proof under load.
+var strictWaits = os.Getenv("CLACK_VP_STRICT_WAITS") != ""
+
+// waitForTile is waitFor for r's tile of f, on the tile's own progress
+// rather than a span of wall time: d is how long it may go neither loading
+// nor ok. While it loads (the spinner, or its player waiting for data) the
+// wait goes on, up to a minute for a hang. A player starts once it has read
+// its file's metadata, on the runner's CPU, and on a loaded runner that
+// went past 5 s (train-143's TestOnePlaysAtATime, α.133's
+// TestCornerDockButton). A failure says what the tile and its player were
+// doing.
+func waitForTile(t *testing.T, c *Controller, r *Row, f *richtext.File, what string, d time.Duration, ok func() bool) {
+	t.Helper()
+	start := time.Now()
+	var still time.Time // since the tile last loaded
+	for !ok() {
+		st := state(t, c, r, f)
+		switch {
+		case strictWaits:
+			if time.Since(start) > d {
+				t.Fatalf("no %s within %v (strict): %s", what, d, tileReport(st))
+			}
+		case tileLoading(st):
+			still = time.Time{}
+		case still.IsZero():
+			still = time.Now()
+		case time.Since(still) > d:
+			t.Fatalf("no %s: %v without it, the video not loading: %s", what, d, tileReport(st))
+		}
+		if time.Since(start) > time.Minute {
+			t.Fatalf("no %s within a minute, the video loading all along: %s", what, tileReport(st))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// tileLoading is whether st's video is still coming: the spinner, or its
+// player waiting for data to play.
+func tileLoading(st State) bool {
+	return st.Loading || st.Player != nil && st.Player.State().Waiting
+}
+
+// tileReport is a tile's state and its player's, for a failure.
+func tileReport(st State) string {
+	s := fmt.Sprintf("the tile mounted %v, playing %v, loading %v, played %v, error %d, at %v of %v",
+		st.Mounted, st.Playing, st.Loading, st.Played, st.Err, st.Elapsed, st.Duration)
+	if p := st.Player; p != nil {
+		ps, x := p.State(), p.Stats()
+		s += fmt.Sprintf("; its player paused %v, waiting %v, ended %v, ready %d, error %d, at %v; %d requests, %d bytes read, %d events dropped, %d frames, %d ticks",
+			ps.Paused, ps.Waiting, ps.Ended, ps.Ready, ps.Err, ps.Pos, x.Requests, x.BytesRead, x.Dropped, x.Frames, x.Ticks)
+	}
+	return s
+}
+
 // A lone playable video plays in place; a gallery's tiles and the "+ N"
 // tile stay as they were (their click opens the media viewer in Slack).
 func TestMediaTile(t *testing.T) {
@@ -147,32 +237,49 @@ func TestClickMountsAndToggles(t *testing.T) {
 	if st := state(t, c, r, f); !st.Mounted || !st.Loading {
 		t.Fatalf("after the click: %+v, want mounted with the spinner", st)
 	}
-	waitFor(t, "playing", 5*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
+	waitForTile(t, c, r, f, "playing", 5*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
 	if d := state(t, c, r, f).Duration; d < 2950*time.Millisecond || d > 3050*time.Millisecond {
 		t.Errorf("duration %v, want the fixture's 3 s (not duration_ms's 1:23) once its metadata came", d)
 	}
 	click(c, r, f)
-	waitFor(t, "paused", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "paused", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
 	at := state(t, c, r, f).Elapsed
 	click(c, r, f)
-	waitFor(t, "playing again", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "playing again", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
 	if st := state(t, c, r, f); st.Elapsed < at {
 		t.Errorf("played on from %v, after pausing at %v", st.Elapsed, at)
 	}
 }
 
 // One video plays at a time (MediaPlaybackCoordinator): the second's play
-// pauses the first.
+// pauses the first. The first plays once its data is in: its play event
+// comes at once, and the spinner goes when it plays. Waiting only for the
+// play event, the test clicked the second while the first still loaded,
+// and when the first's data came its start paused the second, as Slack's
+// coordinator does (an autoplay's start pauses the others): the second,
+// paused while it waited, never played. A loaded runner's metadata came
+// that late (train-143, 44970400272: "no the second playing within 5s");
+// "late" gives that order every time.
 func TestOnePlaysAtATime(t *testing.T) {
-	c, _ := fakeEnv(t)
-	r1, r2 := c.Row("channel", "C1", "1.0", nil), c.Row("channel", "C1", "2.0", nil)
-	f := videoFile("F1")
-	frame(c, [2]any{r1, f}, [2]any{r2, f})
-	click(c, r1, f)
-	waitFor(t, "the first playing", 5*time.Second, func() bool { return state(t, c, r1, f).Playing })
-	click(c, r2, f)
-	waitFor(t, "the second playing", 5*time.Second, func() bool { return state(t, c, r2, f).Playing })
-	waitFor(t, "the first paused", 5*time.Second, func() bool { return !state(t, c, r1, f).Playing })
+	for _, tc := range []struct {
+		name         string
+		first, other time.Duration // each Read of the file's body waits this
+	}{
+		{"at once", 0, 0},
+		{"the first's data late", 300 * time.Millisecond, 600 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f1, f2 := videoFile("F1"), videoFile("F2")
+			c := fakeEnvSlow(t, map[string]time.Duration{f1.ID: tc.first, f2.ID: tc.other})
+			r1, r2 := c.Row("channel", "C1", "1.0", nil), c.Row("channel", "C1", "2.0", nil)
+			frame(c, [2]any{r1, f1}, [2]any{r2, f2})
+			click(c, r1, f1)
+			waitForTile(t, c, r1, f1, "the first playing", 5*time.Second, func() bool { st := state(t, c, r1, f1); return st.Playing && !st.Loading })
+			click(c, r2, f2)
+			waitForTile(t, c, r2, f2, "the second playing", 5*time.Second, func() bool { st := state(t, c, r2, f2); return st.Playing && !st.Loading })
+			waitForTile(t, c, r1, f1, "the first paused", 5*time.Second, func() bool { return !state(t, c, r1, f1).Playing })
+		})
+	}
 }
 
 // Without clips_pip (no mini player), a playing video the list shows
@@ -192,7 +299,7 @@ func TestOffscreenPausesThenCloses(t *testing.T) {
 	f := videoFile("F1")
 	frame(c, [2]any{r, f})
 	click(c, r, f)
-	waitFor(t, "playing", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "playing", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
 	r.MediaVisible(f, 0.5)
 	r.MediaVisible(f, 0.05)
 	time.Sleep(100 * time.Millisecond)
@@ -201,7 +308,7 @@ func TestOffscreenPausesThenCloses(t *testing.T) {
 	}
 	time.Sleep(300 * time.Millisecond)
 	frame(c) // a layout that doesn't draw it: another conversation
-	waitFor(t, "paused off the screen", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "paused off the screen", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
 	at := state(t, c, r, f).Elapsed
 	waitFor(t, "closed", 5*time.Second, func() bool { return c.Mounted() == 0 })
 	if p, ok := c.Progress(f.ID); !ok || p < at-50*time.Millisecond || p <= 0 {

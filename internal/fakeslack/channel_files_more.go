@@ -54,7 +54,7 @@ type cfMore struct {
 	hasShares bool
 }
 
-var cfMores sync.Map // *Server -> *cfMore
+var cfMores = newPerServer() // *Server -> *cfMore
 
 func (s *Server) cfmore() *cfMore {
 	v, _ := cfMores.LoadOrStore(s, &cfMore{})

@@ -81,8 +81,7 @@ jobs:
           bash "$RUNNER_TEMP/dump-before-budget.sh" 35 & wd=$!
           bash "$RUNNER_TEMP/runner-load.sh" 60 & rl=$!
           trap 'kill $wd $rl 2>/dev/null' EXIT
-          # as ci's full-test: the suite reached 15.7 of the runner's 16 GB
-          GOMEMLIMIT=11GiB go test -timeout 30m ./...
+          go test -timeout 30m ./... # no GOMEMLIMIT since ci-speed-3, as ci's full-test
 
   linux:
     name: linux-${{ matrix.arch }}

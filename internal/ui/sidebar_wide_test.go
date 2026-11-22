@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/gesture"
+
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -122,7 +124,7 @@ func TestWideSidebarResizeLikeSlack(t *testing.T) {
 		e.rzMove(image.Pt(to, y))
 		e.rzRelease(image.Pt(to, y))
 		e.frame()
-		st.rz.lastPress = time.Time{} // the next press is no double click
+		st.rz.click = gesture.ClickRun{} // the next press is no double click
 	}
 
 	edge := rail + 519
@@ -135,7 +137,7 @@ func TestWideSidebarResizeLikeSlack(t *testing.T) {
 	drawn(s, sbWideMin, "out of the window on the left")
 	e.rzMove(image.Pt(edge+100, y))
 	e.rzRelease(image.Pt(edge+100, y))
-	s.rz.lastPress = time.Time{}
+	s.rz.click = gesture.ClickRun{}
 	if s.rz.dragging() || s.intent != 619 || s.mode != "manual" {
 		t.Errorf("released 100px right: dragging %v, %d %q; want a manual 619", s.rz.dragging(), s.intent, s.mode)
 	}

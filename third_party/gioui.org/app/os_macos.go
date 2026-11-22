@@ -1170,6 +1170,7 @@ func gio_onMouse(h C.uintptr_t, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x
 		Position:  pos,
 		Scroll:    f32.Point{X: dxf, Y: dyf},
 		Modifiers: convertMods(mods),
+		Clicks:    int(clicks), // Clack patch 48: AppKit's count, as Chromium's (CLACK_PATCHES.md §48)
 	})
 }
 
