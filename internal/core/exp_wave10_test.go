@@ -134,3 +134,31 @@ func TestRemoveMemberFacts(t *testing.T) {
 		t.Errorf("public channel, experiments unassigned: %+v", f)
 	}
 }
+
+// agentConfigLocked is kzB8 r: a channel whose agent only its managers may
+// manage locks Agentforce's removal for everyone else, under
+// enable_native_channel_expert. Slack renamed the gate from
+// ncea_allow_channel_managers_to_lock_configuration (build 8f19be21ed7e,
+// the 2026-11-21 drift), so the old name turns nothing on.
+func TestAgentConfigLockedFollowsNativeChannelExpert(t *testing.T) {
+	a, _ := testApp(t)
+	c := &slack.Conversation{ID: "C7", Name: "agents", IsChannel: true, IsMember: true,
+		Properties: []byte(`{"who_can_manage_channel_agent":"channel_managers"}`)}
+	a.SetExperimentGroup("ncea_allow_channel_managers_to_lock_configuration", "on")
+	if a.agentConfigLocked(c) {
+		t.Error("the old gate name locks the configuration")
+	}
+	a.SetExperimentGroup(ExpNativeChannelExpert, "on")
+	if !a.agentConfigLocked(c) {
+		t.Error("enable_native_channel_expert on: not locked for a viewer who isn't a manager")
+	}
+	everyone := &slack.Conversation{ID: "C8", Name: "open", IsChannel: true, IsMember: true,
+		Properties: []byte(`{"who_can_manage_channel_agent":"everyone"}`)}
+	if a.agentConfigLocked(everyone) {
+		t.Error("a channel anyone may configure is locked")
+	}
+	a.SetExperimentGroup(ExpNativeChannelExpert, "")
+	if a.agentConfigLocked(c) {
+		t.Error("unassigned (Slack's null): locked")
+	}
+}

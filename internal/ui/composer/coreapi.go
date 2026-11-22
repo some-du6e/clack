@@ -51,10 +51,12 @@ func (c coreAPI) plainTextMode() bool { return c.a.Prefs().PlainTextMode }
 // messages" switch, read when the Accessibility choice is unset).
 func (c coreAPI) upToBrowse() bool { return c.a.PrefBool("up_to_browse_kb_shortcut", false) }
 
-// smartSymbols is getSmartSymbolsEnabled: composer_smart_symbols on and
-// disable_smart_symbols unset (smart_symbols.go).
+// smartSymbols is getSmartSymbolsEnabled: disable_smart_symbols unset
+// (smart_symbols.go). Slack dropped the composer_smart_symbols gate in
+// front of it and kept its on path (boot-shared rNCs, Vc4u; build
+// 8f19be21ed7e, the 2026-11-21 drift).
 func (c coreAPI) smartSymbols() bool {
-	return c.a.Experiment("composer_smart_symbols") == "on" && !c.a.PrefBool("disable_smart_symbols", false)
+	return !c.a.PrefBool("disable_smart_symbols", false)
 }
 
 // resolver names users, channels and emoji for the mrkdwn parser.

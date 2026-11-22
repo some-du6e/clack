@@ -135,7 +135,7 @@ type profileState struct {
 	elements map[string]map[string]json.RawMessage // user → element id → element
 }
 
-var profileStates sync.Map // *Server -> *profileState
+var profileStates = newPerServer() // *Server -> *profileState
 
 func (s *Server) profile() *profileState {
 	v, _ := profileStates.LoadOrStore(s, &profileState{elements: map[string]map[string]json.RawMessage{}})

@@ -46,7 +46,7 @@ type commentStore struct {
 	next    int
 }
 
-var commentStores sync.Map // *Server -> *commentStore
+var commentStores = newPerServer() // *Server -> *commentStore
 
 func (s *Server) comments() *commentStore {
 	if v, ok := commentStores.Load(s); ok {

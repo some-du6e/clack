@@ -733,6 +733,13 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	default:
 		st.Mode = modeChannel
 	}
+	if st.Mode != modeField && c.api.a != nil {
+		// the + button's N: its tooltip drops the double click tip (and a
+		// Slack Connect conversation's list prefs load as Slack's do when
+		// the button renders)
+		st.UploadBlocked = c.api.a.SlackConnectFileSharingBlocked(c.ch)
+	}
+	st.PlusOpen = c.att.plusOpen
 	if cv, ok := c.api.conv(c.ch); ok {
 		st.ChannelName = cv.Name
 		switch cv.Kind {
@@ -915,7 +922,7 @@ func (c *Composer) handleActions(gtx layout.Context) {
 			c.toggleShowFormatting()
 			c.ed.Focus(gtx)
 		case caAttach:
-			c.att.Menu(a.Anchor, c.plusMenu())
+			c.plusClick(a)
 		case caEmoji:
 			c.openEmojiPicker(a.Anchor) // gifs.go: picked GIFs go into the draft
 		case caMention:
@@ -949,11 +956,48 @@ func (c *Composer) handleActions(gtx layout.Context) {
 	}
 }
 
+// plusClick is a click on the + (ShortcutsMenuTrigger's MenuTrigger:
+// BasePopoverTrigger's onTrigger toggles the menu, so a click while it's
+// open closes it, with no onPopoverClose). The menu's scrim stays down
+// for its first 250 ms (attachments.Menu), so the second click of a
+// double click lands on the button: it closes the menu the first opened,
+// and as the double click's second click it is also the button's
+// onDoubleClick (plusDoubleClick).
+func (c *Composer) plusClick(a chromeAction) {
+	if !c.att.closePlusMenu() {
+		c.att.Menu(a.Anchor, c.plusMenu())
+	}
+	if a.Clicks == 2 {
+		c.plusDoubleClick()
+	}
+}
+
+// plusDoubleClick is ShortcutsMenuTriggerButton's onDoubleClick (R):
+// x(false) drops the button's open state (the toggle already closed the
+// menu) and E({action: DOUBLE_CLICK}) clicks the hidden file input, the
+// one Upload from your computer clicks (onUploadFromComputerClick),
+// unless N (core.SlackConnectFileSharingBlocked) or M
+// (core.RestrictedExternalHuddle). Its j() only resets
+// forceFileMenuOpen, which Clack's composers never set.
+func (c *Composer) plusDoubleClick() {
+	c.att.plusOpen = false // x(false)
+	if app := c.api.a; app != nil && (app.SlackConnectFileSharingBlocked(c.ch) || app.RestrictedExternalHuddle(c.ch)) {
+		return
+	}
+	uploadFromComputer(c.att)
+}
+
 // plusMenu is the + menu's composer side: the conversation and the
 // Text snippet row's snippet dialog (create-text-snippet, the same dialog
 // Ctrl+Shift+Enter opens with the message).
 func (c *Composer) plusMenu() plusMenu {
 	pm := plusMenu{ch: c.ch}
+	if app := c.api.a; app != nil {
+		// the formatter's slackConnectFileSharingBlocked (rscm O) and
+		// isRestrictedExternalHuddle (uu7O f)
+		pm.blocked = app.SlackConnectFileSharingBlocked(c.ch)
+		pm.restricted = app.RestrictedExternalHuddle(c.ch)
+	}
 	if c.edit == nil {
 		// useComposerIAFormatter: no Text snippet (nor Workflow) when
 		// isMessageEdited && isEditMessageShortcutsButton

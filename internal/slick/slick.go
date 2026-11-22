@@ -244,6 +244,7 @@ func (s *Slick) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	defer s.closeSubscribers()
 	s.markStartDone() // never started (DeferStart): nothing waits for it
 	close(s.stopTimer)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*s.opts.LifecycleTimeout+time.Second)
@@ -431,10 +432,27 @@ func (s *Slick) Subscribe() (<-chan struct{}, func()) {
 	s.changeCh[c] = struct{}{}
 	s.changeMu.Unlock()
 	return c, func() {
+		// whoever takes c out closes it (changed sends under changeMu): its
+		// range loop ends whether stop or Close comes first
 		s.changeMu.Lock()
-		delete(s.changeCh, c)
+		if _, live := s.changeCh[c]; live {
+			delete(s.changeCh, c)
+			close(c)
+		}
 		s.changeMu.Unlock()
 	}
+}
+
+// closeSubscribers closes every Subscribe channel (their range loops
+// end) and keeps no more: Close's, the Slick is done. Their goroutines
+// kept it, and the App they repainted, reachable for good (ci-speed-3).
+func (s *Slick) closeSubscribers() {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	for c := range s.changeCh {
+		close(c)
+	}
+	clear(s.changeCh)
 }
 
 func (s *Slick) changed() {

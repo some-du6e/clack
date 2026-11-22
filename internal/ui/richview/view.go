@@ -1745,8 +1745,9 @@ func (v *View) clickLink(gtx layout.Context, t int16, anchor image.Point, e poin
 	l.Rect = v.targetBounds(t).Add(v.Origin)
 	l.Text = text
 	l.Key = fmt.Sprintf("%p/%d/%s%s", v, t, tg.id, tg.url)
-	// the click count Slack's event carries (detail)
-	if t == v.clickT && e.Time-v.clickAt < 500*time.Millisecond {
+	// the click count Slack's event carries (detail), within the
+	// platform's double-click time (gio_patch48.go)
+	if t == v.clickT && e.Time-v.clickAt <= doubleClickTime() {
 		v.clickN++
 	} else {
 		v.clickN = 1

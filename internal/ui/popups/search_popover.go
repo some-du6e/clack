@@ -91,7 +91,7 @@ type srRow struct {
 	segs  []srSeg
 	toks  []srTok
 	tokW  int
-	// plain is the quick message row omni_quick_message_results off draws
+	// plain is the quick message row the quick message results off (a free team) draw
 	// (the text first, then "name • date"); else the card.
 	plain bool
 }
@@ -832,15 +832,16 @@ func (p *SearchPopover) srExactFactsFor(q string) func(srCand) srExactFacts {
 	}
 }
 
-// srQuickOn is omni_quick_message_results "on".
+// srQuickOn is Y/3h E, which replaced omni_quick_message_results
+// (core.QuickMessageResultsOn: a paid or enterprise team).
 func (p *SearchPopover) srQuickOn() bool {
 	c := p.h.Core()
-	return c != nil && c.Experiment("omni_quick_message_results") == "on"
+	return c != nil && c.QuickMessageResultsOn()
 }
 
 func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRow {
 	// reorderSuggestionsForActiveQuery: with quick messages the places are
-	// cut to 5 (omni_quick_message_results on) or 8, else to 15
+	// cut to 5 (quick message results on) or 8, else to 15
 	total := 15
 	if len(p.msgs) > 0 {
 		total = 8
@@ -942,7 +943,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 }
 
 // srQuickWhere is the quick message card's location (SuggestionQuickMessage
-// with omni_quick_message_results on): a DM reads "Direct Message with
+// with quick message results on): a DM reads "Direct Message with
 // {name}" ("Direct Message with you" in your own; an app's DM message only
 // names the app in a thread), else the conversation.
 func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
@@ -976,7 +977,7 @@ func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
 // srQuickArgs is suggestionsQuickMessages' search.inline call for the
 // typed text, ok=false when Slack shows no quick messages: the text must
 // be words only (one STRING token), or words and one in: filter, and the
-// words at least 3 characters. With omni_quick_message_results on the
+// words at least 3 characters. With quick message results on the
 // search covers your recent conversations (from_me, with_me), an in:
 // filter its conversation; off, only the channel you're in.
 func (p *SearchPopover) srQuickArgs(text string) (core.InlineOpts, bool) {
@@ -2354,8 +2355,8 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	})
 }
 
-// msgRowPlain is SuggestionQuickMessage with omni_quick_message_results
-// off: a --multiline suggestion item (padding 4px 16px, the 36px avatar
+// msgRowPlain is SuggestionQuickMessage with the quick message results
+// off (a free team, core.QuickMessageResultsOn): a --multiline suggestion item (padding 4px 16px, the 36px avatar
 // 12px before the text) with the extract on top (15px, one line, …
 // where Slack cut it) and the metadata under it (13px at 70%: the
 // sender, "• " or "⟳ Reply in a thread • ", the date). The picked row is

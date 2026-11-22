@@ -12,7 +12,6 @@ func init() {
 		"force_native_notifications": on,
 		// canvases (ui/canvasview; docs/EXPERIMENTS.md, Canvases)
 		"canvas_table_of_contents": on, // TableOfContentsDrawer and Quip's 64px outline gutter
-		"canvas_blockquote_layout": on, // the toolbars' blockquote layout (M6vS zk, foOi)
 		"slackified_checkbox":      on, // Quip's useSlackCheckboxes
 		"canvas_comment_only_mode": on, // QuipAccessIndicator's "Comment only" (CQK3)
 		// lists (core/lists.go, ui/listview)
@@ -24,7 +23,6 @@ func init() {
 		"ai_channel_exclusions":                             on,
 		"draft_management_in_composer":                      {"treatment"},
 		"enable_new_channel_settings":                       on,
-		"mcp_ai_channel_exclusions":                         on,
 		"move_channel_tabs_settings":                        on,
 		"mpdm_default_exclude_history_clients_webapp":       on,
 		"rich_text_headers_and_dividers":                    on,
@@ -46,9 +44,13 @@ func init() {
 		// the channel details rosters' "…" menu and RemoveMemberDialog
 		// (core/exp_wave10.go, views/details_agents_menu.go,
 		// popups/remove_member.go)
-		"agent_channel_header":                              on,
-		"sc_remove_full_access_user":                        on,
-		"ncea_allow_channel_managers_to_lock_configuration": on,
+		"agent_channel_header":       on,
+		"sc_remove_full_access_user": on,
+		ExpNativeChannelExpert:       on,
+		// Later's Delete clears a to-do at once, with no Undo (ui/views
+		// later.go clearTodo: PxoD clearSavedItemImmediately; new in build
+		// 8f19be21ed7e, on for the test account on 2026-11-21)
+		ExpLaterTodosImmediateClear: on,
 		// the menu's Make Channel Manager skips channel visitors
 		// (core/channel_managers_edit.go: 3Wpu Oh); not assigned to the
 		// account
@@ -57,3 +59,9 @@ func init() {
 		experimentReads[name] = groups
 	}
 }
+
+// ExpLaterTodosImmediateClear is client-boot GAJO nz
+// (isLaterTodosImmediateClearEnabled): clearing a saved item skips the
+// deferred, undoable clear (PxoD clearSavedItemWithUndo) for
+// clearSavedItemImmediately.
+const ExpLaterTodosImmediateClear = "later_todos_immediate_clear"

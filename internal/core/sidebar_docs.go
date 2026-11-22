@@ -99,7 +99,7 @@ type sidebarDocState struct {
 	files map[string]*sidebarFile // file id
 }
 
-var sidebarDocStates sync.Map // *App -> *sidebarDocState
+var sidebarDocStates = newPerApp() // *App -> *sidebarDocState
 
 func (a *App) sidebarDocs() *sidebarDocState {
 	if v, ok := sidebarDocStates.Load(a); ok {

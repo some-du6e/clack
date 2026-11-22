@@ -1166,34 +1166,25 @@ var (
 	fmtDivider   = blockFormat{}
 )
 
+// The blockquote has its own button (the floating bar's blockquote-layout)
+// and an Insert menu item; neither block-style menu lists it. Slack shipped
+// that layout to everyone and dropped canvas_blockquote_layout (LlXB
+// InsertionToolbarFormattingMenu's fixed list, 27hg's /blockquote; build
+// 8f19be21ed7e, the 2026-11-21 drift).
+
+// blockFormats are every block format with its icon: the block-style
+// menu trigger draws the current one's, a quote's included.
+var blockFormats = []blockFormat{fmtParagraph, fmtH1, fmtH2, fmtH3, fmtCheck, fmtOrdered, fmtBullet, fmtCodeBlock, fmtQuote}
+
 // selectionMenu is the floating bar's block-style menu (zk's menuItems:
 // paragraph, h1, h2, h3, ─, check-list, ordered-list, bullet-list, ─,
-// code-block, then blockquote unless canvas_blockquote_layout is on,
-// when the blockquote is a button of its own).
-var selectionMenu = []blockFormat{fmtParagraph, fmtH1, fmtH2, fmtH3, fmtDivider, fmtCheck, fmtOrdered, fmtBullet, fmtDivider, fmtCodeBlock, fmtQuote}
+// code-block).
+var selectionMenu = []blockFormat{fmtParagraph, fmtH1, fmtH2, fmtH3, fmtDivider, fmtCheck, fmtOrdered, fmtBullet, fmtDivider, fmtCodeBlock}
 
 // formattingMenu is the bottom toolbar's Aa menu
-// (InsertionToolbarFormattingMenu, which opens upwards: blockquote, code
-// block, ─, bulleted, ordered, check list, ─, h3, h2, h1, paragraph).
-// Under canvas_blockquote_layout the menu drops the blockquote and the
-// separator after code block; the blockquote moves to the insert menu.
-var formattingMenu = []blockFormat{fmtQuote, fmtCodeBlock, fmtDivider, fmtBullet, fmtOrdered, fmtCheck, fmtDivider, fmtH3, fmtH2, fmtH1, fmtParagraph}
-
-// selectionMenuFor and formattingMenuFor are the two menus in the
-// viewer's canvas_blockquote_layout group (bq: on).
-func selectionMenuFor(bq bool) []blockFormat {
-	if !bq {
-		return selectionMenu
-	}
-	return selectionMenu[:len(selectionMenu)-1]
-}
-
-func formattingMenuFor(bq bool) []blockFormat {
-	if !bq {
-		return formattingMenu
-	}
-	return append([]blockFormat{fmtCodeBlock}, formattingMenu[3:]...)
-}
+// (InsertionToolbarFormattingMenu, which opens upwards: code block,
+// bulleted, ordered, check list, ─, h3, h2, h1, paragraph).
+var formattingMenu = []blockFormat{fmtCodeBlock, fmtBullet, fmtOrdered, fmtCheck, fmtDivider, fmtH3, fmtH2, fmtH1, fmtParagraph}
 
 // current is the session's block format key.
 func (s *session) current() string {
@@ -1221,7 +1212,7 @@ func (s *session) current() string {
 }
 
 func (s *session) icon() string {
-	for _, f := range selectionMenu {
+	for _, f := range blockFormats {
 		if f.key == s.current() {
 			return f.icon
 		}
@@ -1256,10 +1247,9 @@ func (e *editState) openFormatMenu(v *View, formats []blockFormat) {
 // "![name](permalink)") and a file ("![](permalink)", a file unfurl).
 // Date and Callout have no canvas markdown, and Slack's Canvas item is a
 // canvas search Clack doesn't have yet: those three are drawn in Slack's
-// disabled state (.c-menu_item__button--disabled, opacity .5). Under
-// canvas_blockquote_layout the menu has Blockquote after Callout
-// (BLOCKQUOTE_LAYOUT, hidden otherwise): a new quote after the insert
-// point (insertSection("blockquote-layout")).
+// disabled state (.c-menu_item__button--disabled, opacity .5). Blockquote
+// follows Callout (BLOCKQUOTE_LAYOUT): a new quote after the insert point
+// (insertSection("blockquote-layout")).
 func (e *editState) openInsertMenu(v *View) {
 	if v.act.Menu == nil {
 		return
@@ -1270,15 +1260,11 @@ func (e *editState) openInsertMenu(v *View) {
 		{Label: nsCanvas.T("Date"), Icon: "calendar", Disabled: true},
 		{Label: nsCanvas.T("Profile"), Icon: "user", Do: func() { v.post(func() { e.insertProfile(v) }) }},
 		{Label: nsCanvas.T("Callout"), Icon: "callout", Disabled: true},
+		{Label: nsCanvas.T("Blockquote"), Icon: "quote", Do: func() { v.post(func() { e.insertQuote(v) }) }},
+		{Label: nsCanvas.T("Canvas"), Icon: "canvas", Disabled: true},
+		{Label: nsCanvas.T("Image"), Icon: "image", Do: func() { v.post(func() { e.insertUpload(v, true) }) }},
+		{Label: nsCanvas.T("File"), Icon: "attach", Do: func() { v.post(func() { e.insertUpload(v, false) }) }},
 	}
-	if v.exp("canvas_blockquote_layout") {
-		items = append(items, MenuItem{Label: nsCanvas.T("Blockquote"), Icon: "quote", Do: func() { v.post(func() { e.insertQuote(v) }) }})
-	}
-	items = append(items,
-		MenuItem{Label: nsCanvas.T("Canvas"), Icon: "canvas", Disabled: true},
-		MenuItem{Label: nsCanvas.T("Image"), Icon: "image", Do: func() { v.post(func() { e.insertUpload(v, true) }) }},
-		MenuItem{Label: nsCanvas.T("File"), Icon: "attach", Do: func() { v.post(func() { e.insertUpload(v, false) }) }},
-	)
 	v.act.Menu(items)
 }
 
@@ -1393,7 +1379,7 @@ func (e *editState) insertion(v *View, k string, anchor image.Point) {
 	case "insert":
 		e.openInsertMenu(v)
 	case "formatting":
-		e.openFormatMenu(v, formattingMenuFor(v.exp("canvas_blockquote_layout")))
+		e.openFormatMenu(v, formattingMenu)
 	case "file":
 		e.insertUpload(v, false)
 	case "table":
@@ -1423,20 +1409,11 @@ type selButton struct {
 var selGroups = [][]selButton{
 	{{key: "menu", menu: true}},
 	{{key: "bold", icon: "bold"}, {key: "italic", icon: "italic"}, {key: "underline", icon: "underline"}, {key: "strike", icon: "strike"}},
+	// zk's [blockquote-layout] (the "quote" icon, getDerivedFormatSvgIcon's
+	// BLOCKQUOTE_LAYOUT)
+	{{key: "bqlayout", icon: "quote"}},
 	{{key: "code", icon: "code"}},
 	{{key: "link", icon: "link"}, {key: "callout", icon: "callout"}},
-}
-
-// selGroupsFor is the bar in the viewer's canvas_blockquote_layout group:
-// on, zk adds [blockquote-layout] between the text styles and [code]
-// (the "quote" icon, getDerivedFormatSvgIcon's BLOCKQUOTE_LAYOUT).
-func selGroupsFor(bq bool) [][]selButton {
-	if !bq {
-		return selGroups
-	}
-	out := append([][]selButton{}, selGroups[:2]...)
-	out = append(out, []selButton{{key: "bqlayout", icon: "quote"}})
-	return append(out, selGroups[2:]...)
 }
 
 // selEnabled: canvases.edit's markdown has no underline, and Clack can't
@@ -1464,8 +1441,7 @@ func (e *editState) layoutSelectionBar(gtx layout.Context, v *View, s *session, 
 	}
 	lo, hi := min(a, b), max(a, b)
 	r1, r2 := s.ed.PosRect(lo), s.ed.PosRect(hi)
-	bq := v.exp("canvas_blockquote_layout")
-	groups := selGroupsFor(bq)
+	groups := selGroups
 	bh := gtx.Dp(28) + 2*gtx.Dp(2) + 2*gtx.Dp(2) // buttons, their margins, the body's padding
 	bw := 2 * gtx.Dp(2)
 	for gi, g := range groups {
@@ -1565,7 +1541,7 @@ func (e *editState) layoutSelectionBar(gtx layout.Context, v *View, s *session, 
 				})
 				if hit && on {
 					if sb.menu {
-						e.openFormatMenu(v, selectionMenuFor(bq))
+						e.openFormatMenu(v, selectionMenu)
 					} else {
 						e.apply(v, sb.key, image.Point{})
 					}

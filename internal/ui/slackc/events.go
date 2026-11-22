@@ -453,7 +453,7 @@ func (v *View) click(s *scope, t *box, pe *pointer.Event) {
 	}
 	now := int64(pe.Time / time.Millisecond)
 	k := t.k()
-	if v.lastClk.k == k && now-v.lastClk.t < 500 {
+	if v.lastClk.k == k && time.Duration(now-v.lastClk.t)*time.Millisecond <= doubleClickTime() { // the platform's (gio_patch48.go)
 		v.lastClk.n++
 	} else {
 		v.lastClk.n = 1

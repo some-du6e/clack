@@ -32,7 +32,7 @@ type recordSaves struct {
 	seeded bool
 }
 
-var recordSavesOf sync.Map // *Server -> *recordSaves
+var recordSavesOf = newPerServer() // *Server -> *recordSaves
 
 func (s *Server) recordSaves() *recordSaves {
 	v, _ := recordSavesOf.LoadOrStore(s, &recordSaves{items: map[string]map[string]any{}})

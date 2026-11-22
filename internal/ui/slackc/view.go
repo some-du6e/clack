@@ -39,7 +39,17 @@ type View struct {
 	ns    map[int64]*nodeState
 	main  scope
 	subs  map[any]*scope
-	extra map[*Node]*extraTree
+	// prevSubs holds the sub scopes of the tree setTree replaced, by
+	// their nodes' stable ids (subStable): the new tree's scope for the
+	// same host and nodes takes the old one's place, so its Gio pointer
+	// tag (&scope.ptag) lives on. A press under way keeps its release
+	// then; a new tag got a Cancel instead, and the release went to the
+	// outer scope, which hit-tested an ancestor and clicked that: a JS
+	// re-render between a press and its release (the patched Menu's, a
+	// mousedown's) lost the click on a plugin's menu row
+	// (TestMessageMenuOldMenuRows, alpha.135's release test job).
+	prevSubs map[subStable]*scope
+	extra    map[*Node]*extraTree
 
 	topEl     css.Element
 	topKey    uint64
@@ -339,6 +349,17 @@ func (v *View) setTree(nodes []*Node) {
 	v.main.boxes = v.top
 	v.main.root.lk = v.top
 	v.main.ok = false
+	v.prevSubs = nil
+	for key, sc := range v.subs {
+		if st, ok := key.(subKey); ok {
+			if id, ok := st.stable(); ok {
+				if v.prevSubs == nil {
+					v.prevSubs = map[subStable]*scope{}
+				}
+				v.prevSubs[id] = sc
+			}
+		}
+	}
 	v.subs = nil
 	v.extra = nil
 	v.svgCSS = nil
@@ -392,6 +413,7 @@ func (v *View) Close() {
 	clear(v.byK)
 	clear(v.ns)
 	v.subs = nil
+	v.prevSubs = nil
 	v.extra = nil
 	v.hover = nil
 	v.main = scope{v: v}
@@ -858,13 +880,48 @@ type subKey struct {
 	ptr  any
 }
 
+// subStable is a subKey by the stable host-instance ids (Node.K) of its
+// host and first node, which a new tree from JS keeps for the same
+// elements (React's reconciliation) while its boxes and nodes are new.
+type subStable struct {
+	host, first int64
+	kind        uint8
+}
+
+func (k subKey) stable() (subStable, bool) {
+	id := subStable{kind: k.kind}
+	if k.b != nil {
+		id.host = k.b.k()
+	}
+	if n, ok := k.ptr.(*Node); ok && n != nil {
+		id.first = n.K
+	}
+	switch k.kind {
+	case 1: // a host's own children: the host's id
+		return id, id.host != 0
+	case 2: // nodes a native lays out: those nodes' id
+		return id, id.first != 0
+	}
+	return id, false // text: nothing to click, keyed by its content
+}
+
 func (v *View) sub(key subKey, host *box, st *css.Style) *scope {
 	if v.subs == nil {
 		v.subs = map[any]*scope{}
 	}
 	s := v.subs[key]
 	if s == nil {
-		s = &scope{v: v, host: host}
+		if id, ok := key.stable(); ok && v.prevSubs[id] != nil {
+			// the replaced tree's scope for these elements, as new but
+			// at its address: its pointer tag stays the handler Gio
+			// routes the pointer's press, drag and release to
+			s = v.prevSubs[id]
+			delete(v.prevSubs, id)
+			*s = scope{}
+		} else {
+			s = &scope{}
+		}
+		s.v, s.host = v, host
 		s.root.kind = kAnon
 		s.root.v = v
 		v.subs[key] = s
