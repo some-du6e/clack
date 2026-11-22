@@ -18,6 +18,7 @@ import (
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -389,6 +390,7 @@ func (b *backend) stop() <-chan struct{} {
 		// ci-speed-3)
 		messages.ForgetCore(b.core)
 		blockkit.ForgetCore(b.core)
+		composer.ForgetCore(b.core)
 		forgetCreditNames(b.core.S)
 	}()
 	return done

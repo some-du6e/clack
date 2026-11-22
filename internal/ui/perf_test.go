@@ -234,21 +234,25 @@ func pinNetwork(c *core.App) {
 // ci-speed-3 nothing of a test's session was, and ui.test held 9 GB live
 // by its end. Each call after the first does nothing.
 func (e *perfEnv) shutdown() {
-	if e.a == nil || e.a.data == nil || e.stopped {
+	if e.a == nil || e.stopped {
 		return
 	}
 	e.stopped = true
-	if e.a.data.cancel != nil {
-		e.a.data.cancel()
-	}
-	if c, ok := any(e.a.data.core).(interface{ Shutdown() }); ok { // core.App.Shutdown (absent in the baseline tree)
-		c.Shutdown()
-	}
-	if b, ok := any(e.a.data).(interface{ stop() <-chan struct{} }); ok {
-		select {
-		case <-b.stop():
-		case <-time.After(20 * time.Second):
-			e.tb.Logf("the session's stop didn't finish within 20 s")
+	// a test that signed out or switched accounts has no session left (its
+	// own stop ran); the App is let go all the same
+	if e.a.data != nil {
+		if e.a.data.cancel != nil {
+			e.a.data.cancel()
+		}
+		if c, ok := any(e.a.data.core).(interface{ Shutdown() }); ok { // core.App.Shutdown (absent in the baseline tree)
+			c.Shutdown()
+		}
+		if b, ok := any(e.a.data).(interface{ stop() <-chan struct{} }); ok {
+			select {
+			case <-b.stop():
+			case <-time.After(20 * time.Second):
+				e.tb.Logf("the session's stop didn't finish within 20 s")
+			}
 		}
 	}
 	if r, ok := any(e.a).(interface{ release() }); ok { // absent in the baseline tree

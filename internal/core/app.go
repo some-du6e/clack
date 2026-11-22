@@ -49,6 +49,9 @@ type App struct {
 	subs  map[*sub]struct{}
 	evSeq uint64 // the last event's EmitSeq (subMu)
 
+	// released: Release ran (perapp.go); the App is done
+	released atomic.Bool
+
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
 
 	thrUnread threadsMarkedUnread // ThreadsMarkedUnread (message_menu.go)
@@ -488,6 +491,11 @@ const SubscriberBuffer = 1024
 func (a *App) Subscribe() (<-chan Event, func()) {
 	s := &sub{ch: make(chan Event, SubscriberBuffer)}
 	a.subMu.Lock()
+	if a.released.Load() { // Release closed the others: nothing would close it
+		a.subMu.Unlock()
+		close(s.ch)
+		return s.ch, func() {}
+	}
 	a.subs[s] = struct{}{}
 	a.subMu.Unlock()
 	var once sync.Once

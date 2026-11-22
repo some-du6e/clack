@@ -281,6 +281,11 @@ func (ix *Interactive) start() {
 func (ix *Interactive) Subscribe() (<-chan ViewEvent, func()) {
 	c := make(chan ViewEvent, 64)
 	ix.mu.Lock()
+	if ix.a.released.Load() { // Release closed the others: nothing would close it
+		ix.mu.Unlock()
+		close(c)
+		return c, func() {}
+	}
 	ix.subs[c] = struct{}{}
 	ix.mu.Unlock()
 	var once sync.Once

@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/some-du6e/clack/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/views"
@@ -18,7 +19,13 @@ import (
 // process, call it at each one's end, after its session's stop
 // (perfEnv.shutdown). ci-speed-3: ui.test held 9 GB live by its end.
 func (a *App) release() {
-	for _, m := range []*sync.Map{&wfRunStates, &tabCtxTags, &tabsMoreState, &tabDrags, &canvasJumps, &canvasTabs, &listTabs, &agentTasksTabs} {
+	if a.insp != nil {
+		a.insp.Close() // a tool left on stays among the shooter's wanters (inspect/shooter.go)
+	}
+	// every package map keyed by *App (TestReleaseCoversAppMaps reads the
+	// package's files for them)
+	for _, m := range []*sync.Map{&wfRunStates, &wfTabs, &wfTabPending, &tabCtxTags, &tabsMoreState, &tabDrags, &canvasJumps, &canvasTabs,
+		&listTabs, &agentTasksTabs, &pinsTabs, &folderTabs, &filesTabs, &tabLinkWant} {
 		m.Delete(a)
 	}
 	// the UI goroutine's
@@ -29,9 +36,12 @@ func (a *App) release() {
 	popups.ForgetHost(a)
 	views.ForgetHost(a)
 	blockkit.ForgetHost(a)
+	a.closeVideos()      // its players and their goroutines (video.go)
+	clear(lastClickMods) // keyed by its widgets (widgets.go; one App at a time here)
 	if a.data != nil && a.data.core != nil {
 		messages.ForgetCore(a.data.core)
 		blockkit.ForgetCore(a.data.core)
+		composer.ForgetCore(a.data.core)
 	}
 	if a.th != nil {
 		a.th.ForgetShapers()

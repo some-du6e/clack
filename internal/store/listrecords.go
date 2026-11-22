@@ -31,6 +31,9 @@ func (s *Store) listRecordRefs() *listRecordRefs {
 		return v.(*listRecordRefs)
 	}
 	v, _ := listRecordRefsOf.LoadOrStore(s, &listRecordRefs{recs: map[string]listRecordName{}, seen: map[string]bool{}})
+	if s.released.Load() { // Release ran meanwhile, or before
+		listRecordRefsOf.CompareAndDelete(s, v)
+	}
 	return v.(*listRecordRefs)
 }
 

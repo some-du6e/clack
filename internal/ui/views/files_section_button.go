@@ -23,11 +23,17 @@ import (
 var sectionHelpers sync.Map // Host -> *Files
 
 // ForgetHost drops h's entries in the package's maps keyed by Host or by
-// a view of h's (sectionHelpers, cdManage, cdAutoStates): for a host
+// a view of h's (sectionHelpers, liveEls, cdManage, cdAutoStates): for a host
 // that's done (internal/ui's tests, at a session's end). An entry kept
 // the host reachable for good (ci-speed-3).
 func ForgetHost(h Host) {
 	sectionHelpers.Delete(h)
+	// the UI goroutine's: release runs on it
+	for k := range liveEls {
+		if any(k.h) == any(h) {
+			delete(liveEls, k)
+		}
+	}
 	for _, m := range []*sync.Map{&cdManage, &cdAutoStates} {
 		m.Range(func(k, _ any) bool {
 			if d, ok := k.(*ChannelDetails); ok && d.h == h {

@@ -70,7 +70,7 @@ func (a *App) SubscribeRaw() (<-chan slack.Event, func()) {
 		return c, func() {}
 	}
 	t.mu.Lock()
-	if t.subs == nil { // likewise
+	if t.subs == nil || a.released.Load() { // likewise, or Release is under way
 		close(c)
 	} else {
 		t.subs[c] = struct{}{}

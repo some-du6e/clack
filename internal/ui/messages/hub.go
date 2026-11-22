@@ -293,6 +293,7 @@ func ForgetCore(app *core.App) {
 	hubsMu.Lock()
 	delete(hubs, app)
 	hubsMu.Unlock()
+	forgottenCores.Add(1) // and its lists, at the next one drawn
 }
 
 const maxModels = 40

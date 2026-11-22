@@ -23,12 +23,36 @@ func newPerApp() *perApp {
 	return m
 }
 
+// LoadOrStore is sync.Map's, but a released App's entry isn't kept: a
+// lookup after Release (a goroutine finishing after Close) used to put
+// the App back, and with it its session, for good (ci-speed-3: a heap
+// dump found finished tests' sessions in teamPrefIndex, codeOpenStates
+// and listStates). The caller still gets the state, kept nowhere.
+func (m *perApp) LoadOrStore(key, value any) (actual any, loaded bool) {
+	actual, loaded = m.Map.LoadOrStore(key, value)
+	if a, ok := key.(*App); ok && a.released.Load() {
+		m.Map.CompareAndDelete(key, actual)
+	}
+	return actual, loaded
+}
+
 // Release drops a finished App's process-wide state: its entries in the
 // per-App maps and appsByStore, and its store's (store.Release). Close
 // ends with it. Call it only once the App is done for good: an App that
 // runs on after it starts those maps' state over.
 func (a *App) Release() {
+	// first: the maps' LoadOrStore keeps nothing of the App from here, and
+	// a subscriber from here gets a closed channel
+	a.released.Store(true)
 	a.closeSubscribers()
+	// a temporary mute's expiry: its timer kept the App until then (hours
+	// on; the runtime's timer heap is a root)
+	a.mu.Lock()
+	if a.tempMuteTimer != nil {
+		a.tempMuteTimer.Stop()
+		a.tempMuteTimer = nil
+	}
+	a.mu.Unlock()
 	for _, m := range perAppMaps {
 		m.Delete(a)
 	}
