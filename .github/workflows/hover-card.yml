@@ -18,6 +18,8 @@ on:
       - "internal/ui/hover_card*.go"
       - "internal/ui/popups/profile_card.go"
       - "internal/ui/popups/app_card.go"
+      - "internal/ui/popups/app_card_loading_test.go"
+      - "internal/ui/popups/infinite_spinner.go"
       - "internal/ui/popups/channel_card*.go"
       - "internal/ui/popups/code_card*.go"
       - "internal/core/code_card*.go"
@@ -95,6 +97,8 @@ jobs:
           go test -count=1 -v ./internal/ui/hovercard
           go test -count=1 -v -run 'TestLocality|TestAppCardAndExternal|TestChannelCard|TestChannelTabSlugPeek' ./internal/core
           go test -count=1 -v -run 'TestHoverCard|TestHoverTrigger|TestLocalTimeLabel' ./internal/ui/popups
+          # a bot's and an app's card from its first frame to the loaded one, Slack's loading card (app-card-loading.png, app-card-loaded.png)
+          CLACK_PIXEL_TESTS=1 CLACK_SHOTS="$HOVER_SHOTS_DIR" xvfb-run -a go test -count=1 -v -run '^TestAppHoverCard' ./internal/ui/popups
           xvfb-run -a go test -count=1 -v -run 'TestChannelHoverCard|TestComposerMemberTip' ./internal/ui/popups
           xvfb-run -a go test -count=1 -v -run 'TestSlugChannelCardAndAppTipLikeSlack|TestSlugProfileCardLikeSlack' ./internal/ui/composer
           go test -count=1 -v -run 'TestHoverTrigger' ./internal/ui/views

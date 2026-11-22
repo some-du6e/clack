@@ -100,6 +100,10 @@ type Size struct {
 	// app's bot_message posts with no user (system_dm.go, SystemDMID;
 	// PostSystemDMQuiet posts another).
 	SystemDM bool
+	// NewBots adds bot users and apps in the shapes of Hack Club's
+	// #new-bots: a stale profile.bot_id, an app posting with a newer bot
+	// than its member's, a live bot (new_bots.go).
+	NewBots bool
 	// Embeds adds #embeds-gallery: one message per way Slack draws a
 	// link preview (embeds.go).
 	Embeds bool
@@ -327,7 +331,7 @@ func (s *Server) variants() []slack.User {
 		{ID: AppUserID, TeamID: TeamID, Name: "deploybot", RealName: "Deploy Bot", IsBot: true, Profile: ap, Presence: "active"},
 		{ID: ExternalID, TeamID: ExternalTeamID, Name: "sam.partner", RealName: "Sam Partner", TZ: "Asia/Tokyo", TZOffset: 32400, Profile: x, Presence: "active"},
 		{ID: ExternalAppUserID, TeamID: ExternalTeamID, Name: "partnerbot", RealName: "Partner Bot", IsBot: true, Profile: xap},
-	}, s.roleUsers(prof)...) // roles.go
+	}, append(s.roleUsers(prof), s.newBotsUsers(prof)...)...) // roles.go, new_bots.go
 }
 
 // appProfile is apps.profile.get's app_profile for the fixed apps (the
@@ -1500,6 +1504,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	// the Files browser's searches, for FilesBrowserSearches (files_view.go)
 	s.recordFilesBrowserSearch(method, f)
 	if out, handled := s.handleHugeThread(method, f); handled { // huge_thread.go
+		return out
+	}
+	if out, handled := s.handleNewBots(method, f); handled { // new_bots.go
 		return out
 	}
 	if out, handled := s.handleSystemDM(method, f); handled { // system_dm.go

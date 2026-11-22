@@ -133,10 +133,15 @@ type row struct {
 	pinnedHov          hovercard.Trigger
 	addReact           widget.Clickable
 	groups             []reactGroup // getReactionGroups over m.Reactions (reaction_groups.go), one pill each
-	pills              []reactPill
-	reactExpand        widget.Clickable // ReactionBar's "N more" / "Show less"
-	reactExpanded      bool             // the bar's isExpanded (Slack keeps it per message)
-	expandTip          popups.TipState
+	// pills are the groups' pills in group order, each kept by its
+	// group's emoji (pillBy) as Slack keys its Reaction elements: a pill
+	// pressed while another group comes or goes stays that emoji's, at
+	// the same address, so its release is its own click
+	pills         []*reactPill
+	pillBy        map[string]*reactPill
+	reactExpand   widget.Clickable // ReactionBar's "N more" / "Show less"
+	reactExpanded bool             // the bar's isExpanded (Slack keeps it per message)
+	expandTip     popups.TipState
 
 	// the broadcast's root preview (rootPreview), looked up once per list
 	// snapshot
@@ -537,11 +542,26 @@ func (r *row) dimPending() bool {
 
 func (r *row) growPills() {
 	r.groups = groupReactions(r.groups, r.m.Reactions)
-	if n := len(r.groups); len(r.pills) < n {
-		r.pills = append(r.pills, make([]reactPill, n-len(r.pills))...)
+	if r.pillBy == nil {
+		r.pillBy = map[string]*reactPill{}
 	}
-	for i := range r.pills {
-		r.pills[i].r, r.pills[i].i = r, i
+	r.pills = r.pills[:0]
+	for i := range r.groups {
+		name := r.groups[i].name
+		pl := r.pillBy[name]
+		if pl == nil {
+			pl = &reactPill{}
+			r.pillBy[name] = pl
+		}
+		pl.r, pl.i = r, i
+		r.pills = append(r.pills, pl)
+	}
+	if len(r.pillBy) > len(r.pills) { // a group went: its pill goes with it
+		for name, pl := range r.pillBy {
+			if pl.i >= len(r.groups) || r.groups[pl.i].name != name {
+				delete(r.pillBy, name)
+			}
+		}
 	}
 }
 
@@ -990,7 +1010,7 @@ func (r *row) reactionBarProps() slackc.Props {
 	m := &r.m
 	kids := make([]any, 0, len(r.groups)+1)
 	for i := range r.groups {
-		pl := &r.pills[i]
+		pl := r.pills[i]
 		kids = append(kids, slackc.Child("Reaction", pl.props(), pl.layout))
 	}
 	kids = append(kids, slackc.Child("ReactionAddButton", r.addButtonProps(), r.layoutAddButton))
@@ -2639,7 +2659,7 @@ func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 	return r.flowPills(gtx, shown+extra+1, func(gtx layout.Context, i int) layout.Dimensions {
 		switch {
 		case i < shown:
-			pl := &r.pills[i]
+			pl := r.pills[i]
 			return slackc.Component(gtx, "Reaction", pl, (*reactPill).props, (*reactPill).layout)
 		case i < shown+extra:
 			return r.expandButton(gtx, more, n-shown, sel)
@@ -2715,7 +2735,7 @@ func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel 
 		return n, reactLess, false
 	}
 	for i := target; i < n; i++ {
-		if (&r.pills[i]).reacted() {
+		if r.pills[i].reacted() {
 			sel = true
 			break
 		}
