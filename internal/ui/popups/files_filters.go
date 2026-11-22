@@ -154,7 +154,7 @@ func OpenFilesFilters(h Host, cur FilesFilters, o FilesFiltersOpts) *FilesFilter
 		FooterPad:  24, // c-sk-modal_footer: 84px, padding 24px 28px
 		FooterLeft: m.helpLink,
 		// an open From or In list takes Escape first (onEscape)
-		OnEscape: func() bool { return m.from.CloseList() || m.in.CloseList() },
+		OnEscape: ugEscape(m.from, m.in),
 		FocusStops: func() []event.Tag {
 			stops := []event.Tag{&m.in.ed, &m.dateBtn, &m.help}
 			if !o.HideFrom {

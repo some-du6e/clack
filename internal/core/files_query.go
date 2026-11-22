@@ -37,7 +37,8 @@ var filesModifiers = []string{"has", "-has", "type", "-type", "from", "-from", "
 // modifier and its value (one space allowed after the colon), a mention
 // (@… or <…>), or a word. Slack's regex also captures the rest, `(.*)$`,
 // and runs again on it; this one matches the token alone at an advancing
-// offset, so a long paste costs its length once, not once per token.
+// offset over a bounded span (filesSpans), so a long paste costs its
+// length once, not once per token, whatever it holds.
 var filesTokenRe = func() *regexp.Regexp {
 	mods := make([]string, len(filesModifiers))
 	for i, m := range filesModifiers {
@@ -73,11 +74,12 @@ func filesRawTokens(ctx context.Context, q string) []filesRawToken {
 		}
 	}
 	rest := strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(q)
+	sp := newFilesSpans(rest)
 	for off, n := 0, 0; off < len(rest); n++ {
 		if n%256 == 255 && ctx.Err() != nil {
 			break
 		}
-		m := filesTokenRe.FindStringSubmatchIndex(rest[off:])
+		m := filesTokenRe.FindStringSubmatchIndex(rest[off:sp.end(off)])
 		if m == nil || m[1] == 0 {
 			break
 		}
@@ -107,6 +109,94 @@ func filesRawTokens(ctx context.Context, q string) []filesRawToken {
 	}
 	flush()
 	return out
+}
+
+// filesSpans bounds what the token regex is handed at each offset, so a
+// branch that looks ahead for its closer (a quote, a smart quote, the ">"
+// of <…>) can't scan the rest of the query again for every token: the
+// next ">", '"' and “ or ” after each position come from one backward
+// pass, and a token can reach no further than its run of non-spaces, the
+// value run after "mod: ", or the closer its opening needs.
+type filesSpans struct {
+	s             string
+	gt, dq, smart []int32 // the next '>', '"', “ or ” at or after i (-1: none)
+}
+
+func newFilesSpans(s string) *filesSpans {
+	sp := &filesSpans{s: s}
+	next := func(at func(i int) bool) []int32 {
+		out := make([]int32, len(s)+1)
+		out[len(s)] = -1
+		for i := len(s) - 1; i >= 0; i-- {
+			if at(i) {
+				out[i] = int32(i)
+			} else {
+				out[i] = out[i+1]
+			}
+		}
+		return out
+	}
+	if strings.IndexByte(s, '>') >= 0 {
+		sp.gt = next(func(i int) bool { return s[i] == '>' })
+	}
+	if strings.IndexByte(s, '"') >= 0 {
+		sp.dq = next(func(i int) bool { return s[i] == '"' })
+	}
+	if strings.Contains(s, "“") || strings.Contains(s, "”") {
+		sp.smart = next(func(i int) bool { return strings.HasPrefix(s[i:], "“") || strings.HasPrefix(s[i:], "”") })
+	}
+	return sp
+}
+
+func filesSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r' } // RE2's \s
+
+// end is how far the token at off can reach.
+func (sp *filesSpans) end(off int) int {
+	s := sp.s
+	p := off
+	for p < len(s) && filesSpace(s[p]) {
+		p++
+	}
+	if p == len(s) {
+		return p
+	}
+	run := func(i int) int {
+		for i < len(s) && !filesSpace(s[i]) {
+			i++
+		}
+		return i
+	}
+	e := run(p)
+	closer := func(arr []int32, from, w int) {
+		if arr != nil && from <= len(s) {
+			if j := arr[from]; j >= 0 {
+				e = max(e, int(j)+w)
+			}
+		}
+	}
+	switch {
+	case s[p] == '"': // "…"
+		closer(sp.dq, p+1, 1)
+	case strings.HasPrefix(s[p:], "“"): // “…”
+		closer(sp.smart, p+len("“"), len("”"))
+	}
+	runEnd := e
+	if i := strings.IndexByte(s[p:runEnd], '<'); i >= 0 { // <…>: a mention, or a modifier's value
+		closer(sp.gt, p+i+1, 1)
+	}
+	// "mod: value": the one space \s? may take (even before no value),
+	// then the value's run (or its <…>)
+	if s[runEnd-1] == ':' && runEnd < len(s) && filesSpace(s[runEnd]) {
+		e = max(e, runEnd+1)
+	}
+	if s[runEnd-1] == ':' && runEnd+1 < len(s) && filesSpace(s[runEnd]) && !filesSpace(s[runEnd+1]) {
+		v := runEnd + 1
+		e = max(e, run(v))
+		if s[v] == '<' {
+			closer(sp.gt, v+1, 1)
+		}
+	}
+	return e
 }
 
 var (

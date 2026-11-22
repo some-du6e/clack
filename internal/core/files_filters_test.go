@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -152,9 +153,63 @@ func TestFilesViewQueryLongPaste(t *testing.T) {
 		t.Errorf("long query's tokens: %d bytes, %d <@U2>, %d type:pdfs, ends %q", len(q), strings.Count(q, "<@U2>"),
 			strings.Count(q, "type:pdfs"), q[max(0, len(q)-40):])
 	}
+	// openings whose closer never comes (`<` with no later `>`, a lone
+	// quote or smart quote) each looked ahead to the end of the query
+	all := " " + fileTypesAll
+	for _, c := range []struct{ name, unit, want string }{
+		{"x < y", "x < y ", "words"},
+		{"<a <b", "<a <b <c ", "words"},
+		{`lone "`, `" a `, ""},
+		{"lone \u201c", "\u201c a ", "words"},
+		{"from: <", "from: <x ", ""},
+	} {
+		q := strings.Repeat(c.unit, 30<<10/len(c.unit))
+		best := time.Hour
+		var got string
+		for range 3 {
+			t0 := time.Now()
+			got = filesQuery(t.Context(), FilesOpts{Query: q}, a.S.SelfID(), newFilesLookup(a))
+			best = min(best, time.Since(t0))
+		}
+		if best > 250*time.Millisecond {
+			t.Errorf("%s: tokenizing %d bytes took %v (fastest of 3)", c.name, len(q), best)
+		}
+		if c.want == "words" && got != strings.Join(strings.Fields(q), " ")+all {
+			t.Errorf("%s: the words changed: %d bytes out of %d", c.name, len(got), len(q))
+		}
+	}
+}
+
+// A cancelled search stops tokenizing at its first check (within 256
+// tokens) and sends nothing.
+func TestFilesViewQueryCancelled(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["search.modules.files"] = `{"ok":true,"items":[],"pagination":{"total_count":0,"page":1,"page_count":1}}`
+	q := strings.Repeat("@x a ", 6000) // a mention and a word each time: tokens that don't join
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := a.Files(ctx, FilesOpts{Query: b.String()}); err == nil {
-		t.Error("a cancelled search went out")
+	if n := len(filesRawTokens(ctx, q)); n > 256 {
+		t.Errorf("a cancelled tokenizing went on to %d tokens", n)
+	}
+	if n := len(filesRawTokens(t.Context(), q)); n != 12000 {
+		t.Errorf("tokens %d, want 12000", n)
+	}
+	calls := func() int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		n := 0
+		for _, m := range f.calls {
+			if m == "search.modules.files" {
+				n++
+			}
+		}
+		return n
+	}
+	before := calls()
+	if _, err := a.Files(ctx, FilesOpts{Query: q}); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled search: %v", err)
+	}
+	if calls() != before {
+		t.Error("a cancelled search reached the server")
 	}
 }

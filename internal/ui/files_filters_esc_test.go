@@ -49,3 +49,50 @@ func TestFilesFiltersEscapeThroughShell(t *testing.T) {
 		t.Error("the second Escape left the modal open")
 	}
 }
+
+// Edit User Group through the real shell: Escape with the Channels list
+// open closes only the list (its MultiSelectInput's onEscape), the dialog
+// stays with the caret in Channels and no speed bump; with the list
+// closed, Escape asks the CloseGuard (the speed bump) and the dialog stays
+// drawn. On f0835733 the select claimed Escape for a dialog that didn't
+// ask it, so the modal's own Escape dismissed into the guard and drew
+// nothing that frame.
+func TestUserGroupEditEscapeThroughShell(t *testing.T) {
+	e, fs := sectionEnv(t)
+	a := e.a
+	c := a.data.core
+	fs.UsergroupEditor = true
+	gs, err := c.C.Usergroups(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.S.SetUsergroups(gs)
+	g, err := c.UsergroupProfile(t.Context(), fakeslack.WorkspaceGroupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prefix string
+	for _, cv := range c.RecentSnapshot().Convs {
+		if cv.Kind == "channel" && !cv.IsArchived && len(cv.Name) >= 3 {
+			prefix = cv.Name[:3]
+			break
+		}
+	}
+	if prefix == "" {
+		t.Fatal("no channel to search for")
+	}
+	m := popups.OpenUserGroupEdit(a, g, "channels")
+	sel := m.Channels()
+	e.until("the Channels focus", 10*time.Second, func() bool { return e.r.Source().Focused(sel.Tag()) })
+	sel.Type(prefix)
+	e.until("the Channels list", 10*time.Second, func() bool { return sel.Expanded() })
+	e.press(key.NameEscape, 0)
+	if m.Dismissed() || m.SpeedBump() || sel.Expanded() || !e.r.Source().Focused(sel.Tag()) {
+		t.Fatalf("first Escape: dismissed %v, speed bump %v, list open %v, caret in Channels %v",
+			m.Dismissed(), m.SpeedBump(), sel.Expanded(), e.r.Source().Focused(sel.Tag()))
+	}
+	e.press(key.NameEscape, 0)
+	if m.Dismissed() || !m.SpeedBump() {
+		t.Errorf("second Escape: dismissed %v, speed bump %v", m.Dismissed(), m.SpeedBump())
+	}
+}

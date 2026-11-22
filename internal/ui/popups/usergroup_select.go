@@ -79,6 +79,28 @@ type ugSelect struct {
 	// escaped: Escape closed the list; it stays closed while the input
 	// keeps the focus, until typing, ↓ or a click opens it again
 	escaped bool
+	// escWired: the host's dialog sends Escape to CloseList (ugEscape), so
+	// the expanded select may claim it from the shell
+	escWired bool
+}
+
+// ugEscape wires sels to their dialog's Escape (ModalOpts.OnEscape):
+// MultiSelectInput's onEscape closes an expanded list and stops the event,
+// so the dialog stays. Only a wired select claims Escape from the shell:
+// one whose dialog doesn't ask it would hand Escape to a modal that
+// closes.
+func ugEscape(sels ...*ugSelect) func() bool {
+	for _, s := range sels {
+		s.escWired = true
+	}
+	return func() bool {
+		for _, s := range sels {
+			if s.CloseList() {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // ugOption is one option: a member or a channel.
@@ -112,6 +134,9 @@ func (s *ugSelect) IDs() []string {
 	}
 	return out
 }
+
+// Tag is the select's input, the focus target (tests).
+func (s *ugSelect) Tag() event.Tag { return &s.ed }
 
 // Labels are the picked options' labels, in order (tests).
 func (s *ugSelect) Labels() []string {
@@ -392,10 +417,10 @@ func (s *ugSelect) tokenW(gtx layout.Context, th *theme.Theme, o ugOption) int {
 // the options list goes on top of everything (op.Defer).
 func (s *ugSelect) layout(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	s.events(gtx)
-	if s.Expanded() {
+	if s.escWired && s.Expanded() {
 		// the expanded list has plain Escape first (onEscape): the shell's
 		// Close binding, read before the overlays next frame, leaves it to
-		// the dialog, whose OnEscape closes the list
+		// the dialog, whose OnEscape (ugEscape) closes the list
 		shortcut.OwnEscape(&s.ed)
 	}
 	w := gtx.Constraints.Max.X
