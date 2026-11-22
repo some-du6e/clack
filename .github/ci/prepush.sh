@@ -144,14 +144,30 @@ vet() { # vet GOOS warn ENV... -- pkgs...
 		hasfiles "$p" GOOS="$goos" "${envs[@]}" && pkgs+=("$p")
 	done
 	[ ${#pkgs[@]} -gt 0 ] || return 0
-	echo "prepush: go vet ($goos): ${pkgs[*]}"
-	if ! env GOOS="$goos" "${envs[@]}" go vet "${pkgs[@]}"; then
-		if [ "$warn" = warn ]; then
-			echo "prepush: the $goos vet above needs a $goos cgo toolchain this machine lacks: a warning only (CI's macos jobs build it)"
-		else
-			rc=1
+	# ci's vet is the main module's (go vet ./...): third_party's packages
+	# get a type check of them and their tests (one analyzer that never
+	# fires on them), not the analyzers ci never runs there (os_x11.go's
+	# unkeyed key.Range, os_windows.go's unsafe.Pointer)
+	local own=() third=()
+	for p in "${pkgs[@]}"; do
+		case $p in ./*) own+=("$p") ;; *) third+=("$p") ;; esac
+	done
+	local args
+	for args in own third; do
+		local -n grp=$args
+		[ ${#grp[@]} -gt 0 ] || continue
+		local flags=()
+		[ $args = third ] && flags=(-nilfunc)
+		echo "prepush: go vet ${flags[*]} ($goos): ${grp[*]}"
+		if ! env GOOS="$goos" "${envs[@]}" go vet "${flags[@]}" "${grp[@]}"; then
+			if [ "$warn" = warn ]; then
+				echo "prepush: the $goos vet above needs a $goos cgo toolchain this machine lacks: a warning only (CI's macos jobs build it)"
+			else
+				rc=1
+			fi
 		fi
-	fi
+		unset -n grp
+	done
 }
 [ ${#linux[@]} -gt 0 ] && vet linux fail CGO_ENABLED=1 -- "${!linux[@]}"
 if [ ${#windows[@]} -gt 0 ]; then
