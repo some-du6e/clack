@@ -3,7 +3,6 @@ package messages
 import (
 	"context"
 	"image"
-	"strings"
 
 	"gioui.org/f32"
 	"gioui.org/io/pointer"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/popups"
-	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // Right-click menus on messages. The list (an ancestor of every row) sees
@@ -112,51 +110,8 @@ func (s *listState) contextMenuFor(h Host, r *row, i int, p f32.Point, at image.
 	}
 	local := p.Sub(f32.Pt(float32(r.bodyRect.Min.X), float32(s.pos[i]+r.bodyRect.Min.Y)))
 	if local.X >= 0 && local.Y >= 0 && int(local.X) < r.bodyRect.Dx() && int(local.Y) < r.bodyRect.Dy() {
-		if ah, ok := r.rv.AttachmentAt(local); ok && ah.Att != nil {
-			// renderV3Attachment's onContextMenu: the attachment's own
-			// menu, wherever in the card (popups.NewAttachmentMenu)
-			return popups.NewAttachmentMenu(h, at, popups.AttachmentMenu{CanRemove: ah.CanRemove,
-				Channel: m.Channel, TS: m.TS, ID: ah.Att.ID, CopyURL: ah.CopyURL})
-		}
-		hit := r.rv.HitAt(local)
-		if code, block, ok := r.rv.CodeAt(local); ok && hit.Kind == richview.HitNone && hit.EmojiURL == "" {
-			// BaseCopyCodeBlockContextMenuTrigger: the shell's menu with
-			// Slack's one item (popups.NewCodeMenu)
-			return popups.NewCodeMenu(h, at, code, block)
-		}
-		switch hit.Kind {
-		case richview.HitLink:
-			url := hit.URL
-			return popups.NewLinkMenu(h, at, popups.LinkMenu{URL: url, Image: hit.EmojiURL,
-				Open: func() { r.handler.OpenURL(url) }})
-		case richview.HitUser:
-			if isMemberID(hit.ID) {
-				return popups.NewMemberMenu(h, at, hit.ID)
-			}
-		case richview.HitChannel:
-			if hit.ID != "" {
-				return popups.NewChannelContextMenu(h, at, hit.ID)
-			}
-		case richview.HitUsergroup:
-			return popups.NewLinkMenu(h, at, popups.LinkMenu{URL: popups.UsergroupLink(h)})
-		case richview.HitImage:
-			if hit.Link != "" {
-				// AttachmentImage: the image is its <a href>'s CSS
-				// background, so the shell's link menu, no image items
-				link := hit.Link
-				return popups.NewLinkMenu(h, at, popups.LinkMenu{URL: link, Open: func() { r.handler.OpenURL(link) }})
-			}
-			if hit.Image != nil && hit.Image.URL != "" {
-				return popups.NewImageMenu(h, at, hit.Image.URL, hit.Image.Proxy)
-			}
-		case richview.HitFile:
-			if hit.File != nil {
-				return popups.NewFileMenu(h, at, m, hit.File)
-			}
-		case richview.HitNone:
-			if hit.EmojiURL != "" {
-				return popups.NewImageMenu(h, at, hit.EmojiURL, false)
-			}
+		if o, ok := popups.ContentMenu(h, at, r.rv, local, m, r.handler.OpenURL); ok {
+			return o
 		}
 	}
 	return s.messageMenu(h, r, at)
@@ -177,12 +132,6 @@ func (s *listState) messageMenu(h Host, r *row, at image.Point) *popups.Menu {
 		OnReply: func() { h.OpenThread(m.Channel, threadRoot(&m)) },
 		OnTodo:  func() { s.toggleTodo(h, m) },
 	})
-}
-
-// isMemberID reports whether id is a user (not a broadcast: here,
-// channel, everyone).
-func isMemberID(id string) bool {
-	return len(id) > 1 && (strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W"))
 }
 
 // noMenuOn takes the context presses on tag without opening a menu: a

@@ -26,6 +26,14 @@ import (
 // unrFake boots a core.App on the Unreads fixtures with realtime on.
 func unrFake(t *testing.T, log *callLog) (*core.App, *fakeslack.Server) {
 	t.Helper()
+	return unrFakeWith(t, log, nil)
+}
+
+// unrFakeWith is unrFake with before run on the fake before the app
+// boots (a frame ends at boot's client.counts latest: a message added
+// after boot is a realtime one, under "1 new message").
+func unrFakeWith(t *testing.T, log *callLog, before func(*fakeslack.Server)) (*core.App, *fakeslack.Server) {
+	t.Helper()
 	sz := fakeslack.Small
 	sz.Unreads = true
 	fs, err := fakeslack.Start(sz)
@@ -38,6 +46,9 @@ func unrFake(t *testing.T, log *callLog) (*core.App, *fakeslack.Server) {
 			log.rec(method, f)
 			return nil, false
 		})
+	}
+	if before != nil {
+		before(fs)
 	}
 	app := core.New(slack.New(fs.Creds()), store.New(t.TempDir()))
 	t.Cleanup(app.Shutdown)

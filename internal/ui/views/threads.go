@@ -1622,14 +1622,18 @@ func (v *Threads) newLine(gtx C, w int, key string, ghost bool) {
 func (v *Threads) msg(gtx C, s *thrMsg, m *core.Message, top unit.Dp) D {
 	hv := &s.hv
 	hovered := hv.Update(gtx.Source)
+	menu := false // opened once the body laid out: it may be the body's (content_menu.go)
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &s.ctx, Kinds: pointer.Press})
 		if !ok {
 			break
 		}
 		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
-			v.messageMenu(*m)
+			menu = true
 		}
+	}
+	if menu {
+		defer v.messageMenu(gtx, *m)
 	}
 	name, av := v.authorOf(m)
 	stamp, next := thrTime(tsTime(m.TS), gtx.Now)
@@ -1673,20 +1677,25 @@ func (v *Threads) msg(gtx C, s *thrMsg, m *core.Message, top unit.Dp) D {
 	if hovered {
 		fill(gtx, r, cs.Background(v.msgHover()))
 	}
-	call.Add(gtx.Ops)
+	// the row's hover and right-click target are the content's parent:
+	// every area the content pushed (the body's links and images, the
+	// reactions) is hit first, and the row stays hovered over them, as
+	// :hover on the message's element does (a sibling on top would take
+	// the pointer from all of them)
 	st := clip.Rect(r).Push(gtx.Ops)
 	hv.Add(gtx.Ops)
-	pass := pointer.PassOp{}.Push(gtx.Ops)
 	event.Op(gtx.Ops, &s.ctx)
-	pass.Pop()
+	call.Add(gtx.Ops)
 	st.Pop()
 	return d
 }
 
-// messageMenu opens m's message actions menu at the pointer, as Slack's
-// Threads view list does on a right-click (MessageActionsContextMenu with
-// messageContainerType threads_view: "View thread").
-func (v *Threads) messageMenu(m core.Message) {
+// messageMenu is a right-click on m in the Threads view (duay's thread
+// list): what it was on in the body (an image, a link, a mention, a file:
+// popups.ContentMenu), else m's message actions menu at the pointer
+// (MessageActionsContextMenu with messageContainerType threads_view:
+// "View thread").
+func (v *Threads) messageMenu(gtx C, m core.Message) {
 	ph, ok := v.h.(popups.Host)
 	if !ok {
 		v.h.OpenMessageMenu(image.Point{}, m)
@@ -1695,6 +1704,10 @@ func (v *Threads) messageMenu(m core.Message) {
 	var at image.Point
 	if pp, ok := v.h.(interface{ PointerPos() image.Point }); ok {
 		at = pp.PointerPos()
+	}
+	if o, ok := v.contentMenu(gtx, ph, at, m); ok {
+		ph.ShowOverlay(o)
+		return
 	}
 	ph.ShowOverlay(popups.NewMessageContextMenu(ph, at, m, popups.InThreadsView, popups.MessageMenuOpts{}))
 }
