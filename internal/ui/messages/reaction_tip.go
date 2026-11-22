@@ -12,6 +12,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -162,8 +163,12 @@ func (gt *groupTip) text() string { return strings.Join(gt.lines, "\n") }
 // reactions in a group of several tones each line names its first ten
 // (getTip's isOverflow then: that reaction's count past 10).
 func (r *row) groupTip(h Host, k int, selfID string) groupTip {
-	g := &r.groups[k]
-	rs := r.m.Reactions
+	return groupTipOf(h, r.m.Reactions, &r.groups[k], selfID)
+}
+
+// groupTipOf is ReactionTip for group g of rs (row.groupTip; the views'
+// pills, NewReactionGroupTooltip).
+func groupTipOf(h TipHost, rs []core.Reaction, g *reactGroup, selfID string) groupTip {
 	gt := groupTip{wide: g.count > 9 || len(g.idx) > 4}
 	for _, i := range g.idx {
 		re := &rs[i]

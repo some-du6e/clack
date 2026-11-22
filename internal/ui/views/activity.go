@@ -39,6 +39,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -2293,6 +2294,11 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// BUTTON target)
 	onActions := v.agentActionsClicked(gtx, r)
 	clicked := r.click.Clicked(gtx) && !onActions
+	if clicked && (pressedOn(&r.click, v.ctlPress) || pressedOn(&r.click, v.pillPress)) {
+		// ControlledClick: a link, mention, button or reaction pill took
+		// the click (content_menu.go)
+		clicked = false
+	}
 	if onActions && v.isUnread(it, key) {
 		v.markRead(it, key)
 	}
@@ -4171,53 +4177,59 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
 }
 
-// actPill is one reaction: 24px pill, 16px emoji, 11px bold count; blue
-// tint and border when the viewer reacted.
-func (b *base) actPill(gtx C, r *core.Reaction) D {
+// actPill is one reaction group's native pill (Reaction unpatched): a
+// 24px pill, the group's 16px emoji (ten, then "…"), the 11px bold count;
+// blue tint and border when the viewer reacted, the hover ring when hov.
+func (b *base) actPill(gtx C, m *core.Message, g messages.ReactionGroup, self, hov bool) D {
+	a := &actReact{b: b, m: m, g: g}
 	h := gtx.Dp(24)
-	cnt := strconv.Itoa(r.Count)
-	tw := b.th.Measure(gtx, 11, wBold, cnt)
-	es := gtx.Dp(16)
-	padL, gap, padR := gtx.Dp(6), gtx.Dp(4), gtx.Dp(8)
-	w := padL + es + gap + tw + padR
-	_, fg := b.actPillColors(r)
-	b.actPillBox(gtx, r, image.Pt(w, h))
-	st := op.Offset(image.Pt(padL, (h-es)/2)).Push(gtx.Ops)
-	b.emojiImg(gtx, r.URL, 16)
+	padL, padR := gtx.Dp(6), gtx.Dp(8)
+	rec := op.Record(gtx.Ops)
+	cg := gtx
+	cg.Constraints = layout.Constraints{Max: image.Pt(max(gtx.Constraints.Max.X-padL-padR, 0), h)}
+	cd := a.content(cg, slackc.Styled{})
+	call := rec.Stop()
+	size := image.Pt(padL+cd.Size.X+padR, h)
+	b.actPillBoxStyled(gtx, self, hov, size, slackc.Styled{})
+	st := op.Offset(image.Pt(padL, 0)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
 	st.Pop()
-	st = op.Offset(image.Pt(padL+es+gap, 0)).Push(gtx.Ops)
-	g := gtx
-	g.Constraints = layout.Exact(image.Pt(tw, h))
-	layout.W.Layout(g, func(gtx C) D { return b.label(gtx, 11, wBold, fg, cnt) })
-	st.Pop()
-	return D{Size: image.Pt(w, h)}
+	return D{Size: size}
 }
 
 // actPillColors are a pill's fill and text: blue when the viewer reacted.
-func (b *base) actPillColors(r *core.Reaction) (bg, fg color.NRGBA) {
-	if r.Self {
+func (b *base) actPillColors(self bool) (bg, fg color.NRGBA) {
+	if self {
 		return argb(0x1a1d9bd1), b.p.Link
 	}
 	return b.p.Chip, b.p.Muted
 }
 
-// actPillBox draws a pill's rounded fill (and the reacted border) at size.
-func (b *base) actPillBox(gtx C, r *core.Reaction, size image.Point) {
-	b.actPillBoxStyled(gtx, r, size, slackc.Styled{})
-}
-
-// actPillBoxStyled is actPillBox for the pill styled st: a rule's
-// background replaces the fill and its box-shadow the reacted border
-// (OwlMode rings every pill in its colour), painted once by st's
-// WrapRounded; filled here again, a translucent one showed twice as
-// strong.
-func (b *base) actPillBoxStyled(gtx C, r *core.Reaction, size image.Point, st slackc.Styled) {
+// actPillBoxStyled draws a pill's rounded fill (and the reacted border)
+// at size, for the pill styled st: a rule's background replaces the fill
+// and its box-shadow the border (OwlMode rings every pill in its colour),
+// painted once by st's WrapRounded; filled here again, a translucent one
+// showed twice as strong. Hovered (.c-reaction:hover) a pill the viewer
+// didn't react with is the add button's hover: no fill, a 1px ring
+// (box-shadow 0 0 0 1px otl-pry); a reacted one keeps its look
+// (.c-reaction--reacted:hover).
+func (b *base) actPillBoxStyled(gtx C, self, hov bool, size image.Point, st slackc.Styled) {
 	rect := image.Rectangle{Max: size}
-	bg, _ := b.actPillColors(r)
+	bg, _ := b.actPillColors(self)
+	if hov && !self {
+		if !st.Has("box-shadow") {
+			hb := rgb(0x7c7a7f)
+			if b.th.Dark {
+				hb = argb(0x4de8e8e8)
+			}
+			border(gtx, rect, size.Y/2, max(1, gtx.Dp(1)), hb)
+		}
+		return
+	}
 	if !st.Has("background-color") {
 		rrect(gtx, rect, size.Y/2, bg)
 	}
-	if r.Self && !st.Has("box-shadow") {
+	if self && !st.Has("box-shadow") {
 		border(gtx, rect, size.Y/2, max(1, gtx.Dp(1)), rgb(0x1d9bd1))
 	}
 }

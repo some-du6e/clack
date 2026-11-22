@@ -282,7 +282,9 @@ func (v *ChannelPins) update(gtx C) {
 				v.toolbar(it, i, r.tbRects[i])
 			}
 		}
-		if r.row.Clicked(gtx) && !took {
+		// a reaction pill's click stops there; a link's opens the pin too
+		// (content_menu.go pressedOn)
+		if r.row.Clicked(gtx) && !took && !pressedOn(&r.row, v.pillPress) {
 			v.open(it)
 		}
 		for {
@@ -586,7 +588,8 @@ func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 							layout.Rigid(func(gtx C) D { return v.para(gtx, 12, 17.6, wReg, v.p.Meta, 1, stamp) }),
 						)
 					}),
-					layout.Rigid(func(gtx C) D { return v.actPaneBody(gtx, m) }),
+					// the pin's unfurl is cursor: pointer (handBody)
+					layout.Rigid(func(gtx C) D { return v.handBody(gtx, func(gtx C) D { return v.actPaneBody(gtx, m) }) }),
 					layout.Rigid(func(gtx C) D {
 						if len(m.Reactions) == 0 {
 							return D{}
