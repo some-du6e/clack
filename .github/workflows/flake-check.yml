@@ -3410,7 +3410,9 @@ jobs:
   # gesture rules everywhere; on Windows SendInput clicks 400 ms apart at
   # SetDoubleClickTime 500 and 300; on macOS AppKit's own counts through a
   # real window; on Linux the composer's double clicks (the +'s file
-  # chooser at 300 ms, a word at 400 ms) and the +'s open state.
+  # chooser at 300 ms, a word at 400 ms), the +'s open state and the
+  # handles' double clicks after a drag. Taps by Chromium's gesture
+  # detector, in the gesture step everywhere.
   dblclick:
     if: ${{ !inputs.only || startsWith('dblclick', inputs.only) }}
     name: "dblclick (${{ matrix.os }})"
@@ -3459,3 +3461,12 @@ jobs:
       - name: "the composer's double clicks and open +"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: go test -v -count=$COUNT -timeout 30m -run '^(TestPlusDoubleClick.*|TestEditorDoubleClickAt400ms|TestPlusOpenState)$' ./internal/ui/composer
+      # a drag ends the click run on the column edges and the mini player's
+      # handles (gesture.ClickRun), and a null can_upload_files allows
+      - name: "the handles' double clicks after a drag, the null upload pref"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          rc=0
+          go test -v -count=$COUNT -timeout 30m -run '^(TestResizerDragEndsDoubleClick|TestPipDragEndsDoubleClick)$' ./internal/ui || rc=1
+          go test -v -count=$COUNT -timeout 10m -run '^TestSlackConnectNullPrefAllowsUploads$' ./internal/core || rc=1
+          exit $rc
