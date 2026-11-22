@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
@@ -379,106 +378,5 @@ func TestProfilePhotoLikeSlack(t *testing.T) {
 	}
 	if a.HasCustomPhoto(fakeslack.SelfID) {
 		t.Error("custom photo after deletePhoto")
-	}
-}
-
-// The name recording in handleSubmit: a new recording's id goes into the
-// HEADER section's Name Recording element (setProfileHeaderFields: file
-// {fileId}); one that replaces the profile's first deletes the old file
-// (e5(ea), not awaited); a removed one is null. The recording unchanged,
-// a pronunciation edit leaves the element as the section has it.
-func TestSaveProfileFormNameRecording(t *testing.T) {
-	a, _, calls := pwEnv(t)
-	ctx := context.Background()
-	ps, err := a.ProfileSections(ctx, fakeslack.SelfID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := HeaderOf(ps)
-	if h.Record == nil || h.Record.ElementID != "PeRECORD" {
-		t.Fatalf("no Name Recording element: %+v", h)
-	}
-	def := a.ProfileFormDefaults(fakeslack.SelfID)
-	base := ProfileFormSave{UserID: fakeslack.SelfID, Defaults: def, Changes: map[string]string{}, Header: h,
-		Title: def["title"], TitleWas: def["title"]}
-	record := func(t *testing.T, n int) string {
-		t.Helper()
-		ss := calls.get("users.profile.setSections")
-		if len(ss) != n {
-			t.Fatalf("%d setSections, want %d", len(ss), n)
-		}
-		var els []map[string]any
-		if err := json.Unmarshal([]byte(ss[n-1].Get("elements")), &els); err != nil {
-			t.Fatal(err)
-		}
-		for _, e := range els {
-			if e["element_id"] == "PeRECORD" {
-				b, _ := json.Marshal(e)
-				return string(b)
-			}
-		}
-		return ""
-	}
-	deleted := func(t *testing.T, id string) {
-		t.Helper()
-		for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(10 * time.Millisecond) {
-			for _, d := range calls.get("files.delete") {
-				if d.Get("file") == id {
-					return
-				}
-			}
-		}
-		t.Errorf("no files.delete of %s: %v", id, calls.get("files.delete"))
-	}
-
-	s := base
-	s.Recording = "F0NEWREC0001"
-	if !s.Dirty() {
-		t.Fatal("a new recording isn't a change")
-	}
-	if r, err := a.SaveProfileForm(ctx, s); err != nil || !r.Closed {
-		t.Fatalf("save: %+v %v", r, err)
-	}
-	if got := record(t, 1); got != `{"element_id":"PeRECORD","file":{"fileId":"F0NEWREC0001"}}` {
-		t.Errorf("new recording: %s", got)
-	}
-	if d := calls.get("files.delete"); len(d) != 0 {
-		t.Errorf("deleted %v with nothing replaced", d)
-	}
-
-	s = base
-	s.Recording, s.RecordingWas = "F0NEWREC0002", "F0NEWREC0001"
-	if _, err := a.SaveProfileForm(ctx, s); err != nil {
-		t.Fatal(err)
-	}
-	if got := record(t, 2); got != `{"element_id":"PeRECORD","file":{"fileId":"F0NEWREC0002"}}` {
-		t.Errorf("replacing recording: %s", got)
-	}
-	deleted(t, "F0NEWREC0001")
-
-	s = base
-	s.Recording, s.RecordingWas = "", "F0NEWREC0002"
-	if _, err := a.SaveProfileForm(ctx, s); err != nil {
-		t.Fatal(err)
-	}
-	if got := record(t, 3); got != `{"element_id":"PeRECORD","file":null}` {
-		t.Errorf("removed recording: %s", got)
-	}
-	deleted(t, "F0NEWREC0002")
-
-	// the recording unchanged: a pronunciation edit leaves it be
-	s = base
-	s.Recording, s.RecordingWas = "F0SAMEREC001", "F0SAMEREC001"
-	s.Pronunciation = "AY-duh"
-	if _, err := a.SaveProfileForm(ctx, s); err != nil {
-		t.Fatal(err)
-	}
-	if got := record(t, 4); got != `{"element_id":"PeRECORD","file":null}` { // the section's own (fakeslack serves fileId null)
-		t.Errorf("unchanged recording rewritten: %s", got)
-	}
-	for _, d := range calls.get("files.delete") {
-		if d.Get("file") == "F0SAMEREC001" {
-			t.Error("an unchanged recording was deleted")
-		}
 	}
 }

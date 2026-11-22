@@ -25,18 +25,6 @@ package core
 //     elements as convertSectionToProfileInput (AT18) makes them, edited,
 //     with empty values sent as null and the Contact section's email left
 //     out, through users.profile.setSections (useSetUserProfileSection).
-//   - The name recording (build 9f450b8ad3db, 2026-11-22: EditProfileFormPane
-//     6cSZ, EditAudioButton and NamePronunciationAudioRecorder rguE, the
-//     header hook O0Pg): the HEADER section's "Name Recording" file element.
-//     The recording uploads as a private file (useAudioWaveformRecorder's
-//     finishUpload with no draft: files.getUploadURL {filename
-//     audio_name_pronunciation.m4a, length, subtype
-//     slack_name_pronunciation}, the bytes, files.completeUpload {files:
-//     [{id, title, subtype}]}), and the form's Save writes its id into the
-//     header section (setProfileHeaderFields: file {fileId}, or null once
-//     removed) after it deleted the recording it replaced (files.delete,
-//     not awaited); Cancel, and removing a recording not saved yet, delete
-//     that new file.
 //   - The photo (eNqz processUpload, EditProfileCropPane,
 //     EditProfileRemovePane): users.preparePhoto {image} (oYHX) answers an
 //     id and a url once the file passes the checks (GIF, PNG or JPEG, 36
@@ -356,14 +344,11 @@ type ProfileFormSave struct {
 	// fields the user typed in (key → value, "" for cleared), tz among
 	// them when it was picked.
 	Defaults, Changes map[string]string
-	// Header, when found, gets the name pronunciation, the title and the
-	// name recording written (setProfileHeaderFields) when one changed.
+	// Header, when found, gets the name pronunciation and title written
+	// (setProfileHeaderFields) when either changed.
 	Header                     ProfileHeader
 	Pronunciation, Title       string
 	PronunciationWas, TitleWas string
-	// Recording is the name recording's file id now ("" for none: removed,
-	// or never recorded), RecordingWas the profile's when the form opened.
-	Recording, RecordingWas string
 }
 
 // Dirty is the form's e4: a field differs from its default (both empty
@@ -374,7 +359,7 @@ func (s ProfileFormSave) Dirty() bool {
 			return true
 		}
 	}
-	return s.Pronunciation != s.PronunciationWas || s.Title != s.TitleWas || s.Recording != s.RecordingWas
+	return s.Pronunciation != s.PronunciationWas || s.Title != s.TitleWas
 }
 
 // ProfileFormResult is what Save did: Closed when the form closes, else
@@ -390,24 +375,8 @@ func (a *App) SaveProfileForm(ctx context.Context, s ProfileFormSave) (ProfileFo
 	if !s.Dirty() {
 		return ProfileFormResult{Closed: true}, nil
 	}
-	if s.RecordingWas != "" && s.Recording != s.RecordingWas {
-		// handleSubmit's e5(ea): the recording it replaces goes, not awaited
-		was := s.RecordingWas
-		go func() {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-			defer cancel()
-			if err := a.DeleteFile(ctx, was); err != nil {
-				log.Printf("profile: deleting the replaced name recording: %v", err)
-			}
-		}()
-	}
-	if s.Header.Found && (s.Pronunciation != s.PronunciationWas || s.Title != s.TitleWas || s.Recording != s.RecordingWas) {
-		var rec *string
-		if s.Header.Record != nil && s.Recording != s.RecordingWas {
-			r := s.Recording
-			rec = &r
-		}
-		if err := a.SetProfileHeaderFields(ctx, s.UserID, s.Header, s.Pronunciation, s.Title, rec); err != nil {
+	if s.Header.Found && (s.Pronunciation != s.PronunciationWas || s.Title != s.TitleWas) {
+		if err := a.SetProfileHeaderFields(ctx, s.UserID, s.Header, s.Pronunciation, s.Title); err != nil {
 			return ProfileFormResult{}, err
 		}
 	}
@@ -712,47 +681,20 @@ func (a *App) SetProfileSection(ctx context.Context, user, section string, els [
 	return a.C.Call(ctx, "users.profile.setSections", p, nil)
 }
 
-// SetProfileHeaderFields is the header hook's setProfileHeaderFields (O0Pg,
-// 9N9Y before): the header section's elements with the pronunciation's
-// and the title's text replaced, and the name recording's file when
-// recording is set (its id, or "" for null: removed); nil leaves the
-// recording as it is.
-func (a *App) SetProfileHeaderFields(ctx context.Context, user string, h ProfileHeader, pronunciation, title string, recording *string) error {
+// SetProfileHeaderFields is 9N9Y's setProfileHeaderFields with the
+// recording left as it is (Clack doesn't record): the header section's
+// elements with the pronunciation's and the title's text replaced.
+func (a *App) SetProfileHeaderFields(ctx context.Context, user string, h ProfileHeader, pronunciation, title string) error {
 	els := SectionInput(h.Section)
 	for i := range els {
 		switch {
 		case h.Pronunciation != nil && els[i].ElementID == h.Pronunciation.ElementID:
 			els[i].Kind, els[i].Text, els[i].Null = "text", pronunciation, false
-		case h.Record != nil && els[i].ElementID == h.Record.ElementID && recording != nil:
-			els[i].Kind, els[i].FileID, els[i].Null = "file", *recording, *recording == ""
 		case h.Title != nil && els[i].ElementID == h.Title.ElementID:
 			els[i].Kind, els[i].Text, els[i].Null = "text", title, false
 		}
 	}
 	return a.SetProfileSection(ctx, user, SectionIDOf(h.Section), els)
-}
-
-// ProfileRecordingFile is a name recording's file (files.info), once per
-// id: what NamePronunciationAudioPlayer and the form's recording play
-// (its url_private).
-func (a *App) ProfileRecordingFile(ctx context.Context, id string) (*slack.File, error) {
-	if v, ok := a.recFiles.Load(id); ok {
-		return v.(*slack.File), nil
-	}
-	f, err := a.fileInfo(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	a.recFiles.Store(id, &f)
-	return &f, nil
-}
-
-// NoteProfileRecordingFile keeps an uploaded recording's file (the
-// upload's files.info) for ProfileRecordingFile.
-func (a *App) NoteProfileRecordingFile(f *slack.File) {
-	if f != nil && f.ID != "" {
-		a.recFiles.Store(f.ID, f)
-	}
 }
 
 // ---- the photo ----

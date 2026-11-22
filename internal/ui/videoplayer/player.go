@@ -376,9 +376,6 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 	if t.startAt > 0 {
 		start, t.startAt = t.startAt, 0
 	}
-	if t.au != nil && t.au.name {
-		start = 0 // NamePronunciationAudioPlayer: currentTime = 0, play()
-	}
 	t.elapsed, t.sentMS, t.hasPlayed = start, start.Milliseconds(), false
 	c.applyLocked(t)
 	if !t.viewer && !f.IsAudio && c.loops(f) {
@@ -404,8 +401,8 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 // after the time last sent, or when it went back; never for a Salesforce
 // file (9NKl). forceMS, when set, is the time to save.
 func (c *Controller) reportLocked(t *tile, forced bool, forceMS int64) {
-	if t.f == nil || t.au != nil && t.au.name {
-		return // a name recording's plain Audio element keeps no progress
+	if t.f == nil {
+		return
 	}
 	if t.playing {
 		t.hasPlayed = true

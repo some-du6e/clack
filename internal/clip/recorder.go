@@ -69,14 +69,6 @@ type Options struct {
 	BitRate int
 	// TimeLimit (0: TimeLimit) stops and attaches the recording.
 	TimeLimit time.Duration
-	// TimeWarning (0: TimeWarning) is how long before the limit the timer
-	// and the waveform turn red (timeWarningSeconds).
-	TimeWarning time.Duration
-	// FileName and Subtype are the File's (0: FileName and Subtype, the
-	// composer's voice clip): the hook's fileName and fileSubtype, which
-	// the profile's name recorder sets to audio_name_pronunciation.m4a and
-	// slack_name_pronunciation.
-	FileName, Subtype string
 }
 
 // Recorder is one recording: the popover's StreamManager and
@@ -114,15 +106,6 @@ func Start(o Options) *Recorder {
 	}
 	if o.TimeLimit == 0 {
 		o.TimeLimit = TimeLimit
-	}
-	if o.TimeWarning == 0 {
-		o.TimeWarning = TimeWarning
-	}
-	if o.FileName == "" {
-		o.FileName = FileName
-	}
-	if o.Subtype == "" {
-		o.Subtype = Subtype
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &Recorder{o: o, wave: NewWaveform(), cancel: cancel}
@@ -286,13 +269,12 @@ func (r *Recorder) Elapsed() time.Duration {
 	return r.elapsed
 }
 
-// Warning is warningHighlight: no file yet and the limit TimeWarning or
-// less away (10 s for a clip, 5 s for a name recording). The timer and
-// the waveform turn red.
+// Warning is warningHighlight: no file yet and the limit 10 s or less
+// away. The timer and the waveform turn red.
 func (r *Recorder) Warning() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.state != Stopped && r.o.TimeLimit-r.elapsed <= r.o.TimeWarning
+	return r.state != Stopped && r.o.TimeLimit-r.elapsed <= TimeWarning
 }
 
 // Dots is the waveform strip (Waveform.Dots).
@@ -349,7 +331,7 @@ func (r *Recorder) Stop() {
 			data = d
 		}
 	}
-	f := File{Name: r.o.FileName, Mime: Mime, Subtype: r.o.Subtype, Data: data, Duration: dur.Seconds(), WaveSamples: r.wave.Samples()}
+	f := File{Name: FileName, Mime: Mime, Subtype: Subtype, Data: data, Duration: dur.Seconds(), WaveSamples: r.wave.Samples()}
 	r.mu.Lock()
 	r.stopping = false
 	if r.state == Recording {
