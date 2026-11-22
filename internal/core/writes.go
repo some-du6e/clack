@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -37,9 +38,55 @@ func isCode(err error, codes ...string) bool {
 	return false
 }
 
-// Edit replaces a message's text (and optional blocks).
+// Edit replaces a message's text (and optional blocks), as Slack's
+// saveMessageEdit (boot-shared IHC0) does: editMessage (wVuW u_) puts the
+// edit into the store first, so the list and anything reading the store
+// (Up, /s) see it at once. Like the reducer it sets the blocks when there
+// are any, else the text, and drops edited (the call passes no editTs:
+// "(edited)" comes back with message_changed). chat.update goes out next,
+// and a failure puts the message back as it was (text, blocks, edited,
+// files).
 func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
-	return a.C.Update(ctx, ch, ts, text, blocks)
+	prev, had := a.S.Find(ch, ts)
+	if had && !editUnchanged(&prev, text, blocks) {
+		if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) {
+			if len(blocks) > 0 {
+				x.Blocks = blocks
+			} else {
+				x.Text = text
+			}
+			x.Edited = nil
+		}); ok {
+			a.emitUpdate(ch, &upd)
+		}
+	}
+	err := a.C.Update(ctx, ch, ts, text, blocks)
+	if err != nil && had {
+		if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) {
+			x.Text, x.Blocks, x.Edited, x.Files = prev.Text, prev.Blocks, prev.Edited, prev.Files
+		}); ok {
+			a.emitUpdate(ch, &upd)
+		}
+	}
+	return err
+}
+
+// editUnchanged is editMessage's no-op: the same blocks (or, with none,
+// the same text) as the message has.
+func editUnchanged(m *slack.Message, text string, blocks json.RawMessage) bool {
+	if len(blocks) > 0 {
+		return bytes.Equal(bytes.TrimSpace(blocks), bytes.TrimSpace(m.Blocks))
+	}
+	return m.Text == text
+}
+
+// EndStale reports whether ch's window stops short of the conversation's
+// end: a slow connect's catch-up hasn't joined it to what the socket
+// brought (reached_end.go). Slack's getTimestampsByChannelId with no start
+// is empty until reachedEnd, so its edit-last selectors find nothing then.
+func (a *App) EndStale(ch string) bool {
+	t := a.S.Timeline(ch)
+	return t != nil && t.EndStale
 }
 
 // EditWithFiles saves an edit whose files changed (Slack's

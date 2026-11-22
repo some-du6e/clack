@@ -47,6 +47,11 @@ on:
       - ".github/scripts/threads_ref.py"
       - ".github/workflows/threads-audit.yml"
   workflow_dispatch:
+    inputs:
+      expect_fail:
+        description: "proof runs: the tests that must fail, comma-separated (TestA,TestB/sub); the run passes only if each fails and nothing else does (docs/CI-SPEED.md, Proof runs)"
+        required: false
+        default: ""
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
@@ -72,6 +77,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS fonts-lato
       - name: core, the pane and the reply bar
@@ -104,3 +113,34 @@ jobs:
         with:
           name: threads-audit-shots
           path: dist/shots
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (tools/expectfail's TestWorkflowsWireExpectFail says so).
+  expect-fail:
+    needs:
+      - threads-audit
+    if: ${{ always() && inputs.expect_fail != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/expectfail
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: expect-fail-*
+          path: ${{ runner.temp }}/xf
+      - name: every listed test failed, nothing else did
+        env:
+          EXPECT_FAIL: ${{ inputs.expect_fail }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"

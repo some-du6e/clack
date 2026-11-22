@@ -30,7 +30,7 @@ const tipPending = "\x00pending"
 // reactionTooltip is Slack's ReactionTip (boot-shared Qvn6) in its
 // Tooltip (F2XN, position "top") for one reaction: txt is reactionTip's
 // (whose count picks the width: tipCountFor), url its emoji.
-func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt, url string, pill, bounds image.Rectangle) {
+func reactionTooltip(gtx layout.Context, h TipHost, th *theme.Theme, c *colors, txt, url string, pill, bounds image.Rectangle) {
 	reactionGroupTooltip(gtx, h, th, c, &groupTip{lines: []string{txt}, urls: []string{url}, wide: tipCountFor(txt) > 9}, pill, bounds)
 }
 
@@ -54,7 +54,7 @@ func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt
 //     ("reacted with :name:", regular weight, inverse.secondary) inline,
 //     wrapped as one paragraph. Where the subtitle sits is the locale's
 //     (getTip's rich strings: ja-JP's follows the name with no space).
-func reactionGroupTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, gt *groupTip, pill, bounds image.Rectangle) {
+func reactionGroupTooltip(gtx layout.Context, h TipHost, th *theme.Theme, c *colors, gt *groupTip, pill, bounds image.Rectangle) {
 	padX, padY := dp(gtx, 12), dp(gtx, 8)
 	maxW := dp(gtx, 200)
 	if gt.wide {

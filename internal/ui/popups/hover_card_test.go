@@ -317,3 +317,20 @@ func TestBotCardNoLocalTime(t *testing.T) {
 		}
 	}
 }
+
+// A person posting through an app (a /giphy post, a user-token post): the
+// message carries the app's bot, but the member is human, so the hover
+// card is the member's (useProfileHoverApp: no app for a human), never
+// the app's.
+func TestHoverCardHumanPostingThroughApp(t *testing.T) {
+	h := hcEnv(t)
+	anchor := image.Rect(300, 600, 400, 620)
+	p := NewHoverCard(h, anchor, fakeslack.ProfileID, fakeslack.AppBotID)
+	r := hcLayout(t, p)
+	if p.IsApp() {
+		t.Fatal("a person posting through an app got the app card")
+	}
+	if r.Dx() != 340 {
+		t.Errorf("the card is %v, want the member card (340 wide)", r)
+	}
+}

@@ -186,6 +186,10 @@ on:
         description: "run only the jobs whose id starts with this (empty: all)"
         required: false
         default: ""
+      expect_fail:
+        description: "proof runs: the tests that must fail, comma-separated (TestA,TestB/sub); the run passes only if each fails and nothing else does (docs/CI-SPEED.md, Proof runs)"
+        required: false
+        default: ""
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run flake-check.yml --ref <branch>)
     paths:
@@ -311,6 +315,8 @@ on:
       - "internal/ui/slackc/rerender_click_test.go"
       - "internal/ui/popups/slick_menu.go"
       - "internal/ui/popups/slick_mamenu_pick_test.go"
+      # the mf-late job's own
+      - "internal/media/mf/**"
 
 permissions:
   contents: read
@@ -323,7 +329,7 @@ env:
 # queued or running, so stale pushes don't pile up in the shared queue.
 # A dispatch with other inputs gets its own group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.count }}-${{ inputs.only }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.count }}-${{ inputs.only }}-${{ inputs.expect_fail }}
   cancel-in-progress: true
 
 jobs:
@@ -338,6 +344,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core (create channel, stars/saved kept across the boot fetch)
@@ -353,6 +363,8 @@ jobs:
           go test -cpu 1 -count=$COUNT -run 'TestCreateChannel$|TestExtrasKeepEditsMadeMeanwhile$' ./internal/core
           go test -cpu 1 -count=$COUNT -run 'TestDraftKeepsAttachedFiles$' ./internal/ui/composer
           go test -cpu 1 -count=$COUNT -timeout 30m -run 'TestGalleryElementPayloads$' ./internal/ui/blockkit
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # The video players' concurrency under the race detector (round 3's
   # review: Handle.loop's onEvent taking the controller's lock across the
@@ -372,6 +384,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: media and videoplayer under -race
@@ -383,6 +399,8 @@ jobs:
         run: |
           n=$COUNT; [ "$n" -gt 3 ] && n=3
           go test -race -count=$n -timeout 40m -run '^TestVideo' ./internal/ui/
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # the members cache (store/members.go) and its unknown member fetcher
   # (core/members.go): eviction order, the pass's schedule, users/info's
@@ -399,6 +417,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: store, core, slack (race detector)
@@ -407,6 +429,8 @@ jobs:
         run: |
           go test -count=1 -v -timeout 20m -run 'TestEvictedMembersComeBack$' ./internal/ui
           go test -count=$COUNT -timeout 60m -run 'TestEvictedMembersComeBack$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # members-tab: channel details' Members tab after someone joins or leaves
   # (core/membership_counts.go, views/details.go remountMembers): the tab's
@@ -424,6 +448,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: views (the Members tab over fakeslack's rosters), one verbose run then COUNT
@@ -433,6 +461,8 @@ jobs:
           go test -count=1 -v -timeout 10m -run '^TestMembersTab' ./internal/ui/views || rc=1
           go test -count=$COUNT -timeout 40m -run '^TestMembersTab' ./internal/ui/views || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   image-send:
     if: ${{ !inputs.only || startsWith('image-send', inputs.only) }}
@@ -445,6 +475,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: composer (an image sent on its own; its tile uploading from the first frame)
@@ -455,6 +489,8 @@ jobs:
       - name: composer, slow runner (one CPU)
         if: ${{ !cancelled() }}
         run: go test -cpu 1 -count=$COUNT -run 'TestImageOnlySendFlow$' ./internal/ui/composer
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   search-recents:
     if: ${{ !inputs.only || startsWith('search-recents', inputs.only) }}
@@ -467,6 +503,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core (recents loaded once, whichever trigger comes first)
@@ -477,6 +517,8 @@ jobs:
       - name: core, slow runner (one CPU)
         if: ${{ !cancelled() }}
         run: go test -cpu 1 -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # 2026-11-21's flakes, fixed on ci-speed: TestWarmWindowWritesSurviveBoot
   # (core) wrote before Boot's sections call reached the fake, so
@@ -503,6 +545,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: internal/ui alone, its peak and what it holds at its end
@@ -530,6 +576,8 @@ jobs:
             ${{ runner.temp }}/heap-report.txt
             ${{ runner.temp }}/heap.pprof
             ${{ runner.temp }}/ui.log
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
   flakes-1121:
     if: ${{ !inputs.only || startsWith('flakes-1121', inputs.only) }}
     runs-on: ubuntu-latest
@@ -541,6 +589,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core (writes on the warm window while Boot's answers are out), race detector
@@ -565,6 +617,8 @@ jobs:
             wait "$p" || { rc=1; echo "== process $i failed"; tail -n 80 "$RUNNER_TEMP/peek-$i.log"; }
           done
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # imgcache's decode memory (emoji-load-6): Copy image copies the
   # original however long it takes and its thumbnail only when the original
@@ -583,6 +637,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: popups (Copy image, the viewer, the GIF picker)
@@ -590,6 +648,8 @@ jobs:
       - name: imgcache and its budget
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestBig|TestSmallLane|TestContextEndsWaits|TestFreeGivesBack|TestHeldBytesInCacheBudget|TestBusyRetryDoesntRefetch|TestPressureEndsInALoad|TestSustainedPressureNoEndlessSpinner)' ./internal/imgcache ./internal/imgcache/internal/budget
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # The animated custom emoji (:explodes:, Karim's "so choppy and laggy"
   # on α.98; branch emoji-anim-smooth): webptest.Explodes' frames on its
@@ -616,6 +676,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps, Xvfb, Mesa llvmpipe, python-xlib
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
       - name: imgcache (timeline, budget, stalls, loop count, live ops, quiet frames)
@@ -642,6 +706,8 @@ jobs:
       - name: richview (the custom emoji draws live)
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^TestCustomEmojiAnimatedWebPDraws$' ./internal/ui/richview
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # huddle-polish (2026-11-19, Karim's α.112 huddle report): the static
   # (the transpiled libopus on a goroutine whose stack moves mid-call),
@@ -659,6 +725,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps, Xvfb and Mesa (internal/huddle's X11 screen share needs the headers)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "huddle: Opus frames don't depend on the caller's goroutine stack"
@@ -705,6 +775,8 @@ jobs:
           name: huddle-polish-shots
           path: dist/shots
           if-no-files-found: ignore
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # and the docked bar after you close the huddle window, on a real
   # window (Xvfb here, the runner's desktop below)
@@ -719,6 +791,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps, Xvfb and Mesa
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "huddleui: the bar after the huddle window closes"
@@ -727,6 +803,8 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a go test -count=$COUNT -v -run '^(TestDockAfterHuddleWindowCloses|TestDockAfterAnUnseenHuddleWindowCloses)$' ./internal/ui/huddleui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   huddle-bar-win:
     if: ${{ !inputs.only || startsWith('huddle-bar-win', inputs.only) }}
@@ -739,6 +817,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "huddleui: the bar after the huddle window closes (WM_CLOSE)"
         shell: bash
         env:
@@ -753,6 +835,8 @@ jobs:
           CLACK_HUDDLE_WINDOW_TESTS: "1"
           CLACK_REAL_WINDOW_TESTS: "1"
         run: go test -count=$COUNT -v -timeout 20m -run '^TestRealWindowHuddleBarAfterClose$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   huddle:
     if: ${{ !inputs.only || startsWith('huddle', inputs.only) }}
@@ -765,10 +849,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps (internal/huddle's X11 screen share needs the headers)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: huddle (no logging after Leave)
         run: go test -race -gcflags=all=-d=checkptr=0 -count=$COUNT -run 'TestCameraUnsupported$|TestNoLogAfterLeave$|TestFakeChime$' ./internal/huddle
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   pixel:
     if: ${{ !inputs.only || startsWith('pixel', inputs.only) }}
@@ -781,6 +871,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: GPU tests (Mesa llvmpipe; packages in parallel, as in ci.yml before -p 1)
@@ -793,6 +887,8 @@ jobs:
           mkdir -p "$CLACK_SHOTS"
           xvfb-run -a go test -count=$COUNT -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws|TestHuddleShotsTiles' \
             ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/huddleui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # A plugin's Block Kit-style button row (OwlMode's Save in Taut and
   # Forget) as Slack lays it out and draws it: the row's flex rules, the
@@ -827,6 +923,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # this job runs third-party code; never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "kit + messages: the row's layout and pixels (light and dark), OwlMode's own Save in Taut, the composer button, the reaction ring, COUNT runs"
@@ -842,6 +942,8 @@ jobs:
           xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/messages || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestTautViewOwlSaveButton$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   slick:
     if: ${{ !inputs.only || startsWith('slick', inputs.only) }}
@@ -880,6 +982,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # this job runs third-party code (Slick main); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: MessageLogger threads (and the logger next to it)
@@ -888,6 +994,8 @@ jobs:
         run: |
           go test -count=$COUNT -timeout 30m -run 'TestSlickViewMessageLoggerThreads$|TestSlickViewMessageLogger$' ./internal/ui/messages
           go test -race -cpu 1 -count=$COUNT -timeout 30m -run 'TestSlickViewMessageLoggerThreads$' ./internal/ui/messages
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # mention-pill-wrap: a mention pill that wraps, MentionProfiles' picture
   # at the start of its first line, in channel and thread rows: the rule
@@ -929,6 +1037,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # this job runs third-party code (Slick main); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: wrapped mention pills in rows, COUNT runs
@@ -949,6 +1061,8 @@ jobs:
         with:
           name: pill-wrap-shots
           path: dist/shots
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flakes-1111:
     if: ${{ !inputs.only || startsWith('flakes-1111', inputs.only) }}
@@ -979,6 +1093,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1003,6 +1121,8 @@ jobs:
           awk '/^WARNING: DATA RACE/,/^==================$/' "$log" | head -400
           tail -5 "$log"
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flakes-1112:
     if: ${{ !inputs.only || startsWith('flakes-1112', inputs.only) }}
@@ -1030,6 +1150,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1037,6 +1161,8 @@ jobs:
           TEST: ${{ matrix.test }}
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flakes-1112-ole:
     if: ${{ !inputs.only || startsWith('flakes-1112-ole', inputs.only) }}
@@ -1054,6 +1180,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "TestOLEFileDrop, drag loop late by ${{ matrix.late }} ms, every run counted"
         shell: bash
         env:
@@ -1063,6 +1193,8 @@ jobs:
           TEST: TestOLEFileDrop
           PKG: gioui.org/app
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flakes-1112b-tray:
     if: ${{ !inputs.only || startsWith('flakes-1112b-tray', inputs.only) }}
@@ -1076,6 +1208,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "TestCloseToTrayWindow, every run counted"
         shell: bash
         env:
@@ -1085,6 +1221,8 @@ jobs:
           PKG: ./internal/ui
           FLAKE_TAIL: "300"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flakes-1114-taskbar:
     if: ${{ !inputs.only || startsWith('flakes-1114-taskbar', inputs.only) }}
@@ -1098,6 +1236,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "TestTaskbarWindow, every run counted"
         shell: bash
         env:
@@ -1107,6 +1249,8 @@ jobs:
           PKG: ./internal/ui
           FLAKE_TAIL: "300"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flakes-1112b-share:
     if: ${{ !inputs.only || startsWith('flakes-1112b-share', inputs.only) }}
@@ -1124,6 +1268,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps (internal/huddle's X11 screen share needs the headers)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1131,6 +1279,8 @@ jobs:
           TEST: ${{ matrix.test }}
           PKG: ./internal/huddle
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race -gcflags=all=-d=checkptr=0
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flakes-1112b-views:
     if: ${{ !inputs.only || startsWith('flakes-1112b-views', inputs.only) }}
@@ -1154,6 +1304,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1161,6 +1315,8 @@ jobs:
           TEST: ${{ matrix.test }}
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # The Threads view's live tests (dogfood-fixes-1: its reads, marks,
   # reconnects, gaps and reloads), every run counted, then once under the
@@ -1191,6 +1347,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       # flake-count prints its own lines and the log's tail: the failures'
@@ -1215,6 +1375,8 @@ jobs:
           sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race; rc=$?
           grep -E -- '--- FAIL|_test\.go:[0-9]+: |^panic: |DATA RACE' "$RUNNER_TEMP/flake.log" | head -300
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flakes-1113:
     if: ${{ !inputs.only || startsWith('flakes-1113', inputs.only) }}
@@ -1234,6 +1396,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1241,6 +1407,8 @@ jobs:
           TEST: ${{ matrix.test }}
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flakes-1113c:
     if: ${{ !inputs.only || startsWith('flakes-1113c', inputs.only) }}
@@ -1260,6 +1428,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }}, race detector, every run counted"
@@ -1267,6 +1439,8 @@ jobs:
           TEST: ${{ matrix.test }}
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # TestToastInNotificationCenter's banner Show failing with 0x803e0105
   # (the notification platform is unavailable) right after the test turns
@@ -1290,12 +1464,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: Show after Do not disturb switches and a platform restart
         env:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_TOAST_TESTS: "1"
           CLACK_WINDOWS_TOAST_PROBE: "1"
         run: go test -count=1 -v -timeout 15m -run '^TestToastPlatformProbe$' ./internal/desktop
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   toast-1113-count:
     if: ${{ !inputs.only || startsWith('toast-1113-count', inputs.only) }}
@@ -1313,6 +1493,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "TestToastInNotificationCenter, once on a fresh runner"
         shell: bash
         env:
@@ -1323,6 +1507,8 @@ jobs:
           PKG: ./internal/desktop
           FLAKE_TAIL: "60"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # flake-fix (2026-11-14): each test that failed a first ci attempt, on two
   # fresh runners (a first attempt's state: the cursor where ci's earlier
@@ -1342,6 +1528,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: TestOccludedWindowPausesMac, every run counted
         if: ${{ !cancelled() }}
         env:
@@ -1366,6 +1556,8 @@ jobs:
           PKG: gioui.org/app
           FLAKE_TAIL: "200"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flake-fix-windows:
     if: ${{ !inputs.only || startsWith('flake-fix-windows', inputs.only) }}
@@ -1397,6 +1589,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "${{ matrix.test }}, every run counted"
         shell: bash
         env:
@@ -1409,6 +1605,8 @@ jobs:
           PKG: ${{ matrix.pkg }}
           FLAKE_TAIL: "300"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flake-fix-linux:
     if: ${{ !inputs.only || startsWith('flake-fix-linux', inputs.only) }}
@@ -1430,6 +1628,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }} ${{ matrix.flags }}, every run counted"
@@ -1437,6 +1639,8 @@ jobs:
           TEST: ${{ matrix.test }}
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" ${{ matrix.flags }}
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   flake-fix-2-views:
     if: ${{ !inputs.only || startsWith('flake-fix-2-views', inputs.only) }}
@@ -1458,6 +1662,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.test }} ${{ matrix.flags }}, every run counted"
@@ -1465,6 +1673,8 @@ jobs:
           TEST: ${{ matrix.test }}
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" ${{ matrix.flags }}
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # the release's test job (release.yml) as it is: the whole suite in one
   # job on a clean cache, on three fresh runners at once. Timing races
@@ -1486,10 +1696,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # as release.yml: a clean module/build cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: go test ./...
         run: go test -timeout 30m ./...
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # flake-fix: the title bar tests after the gioui.org/app steps ci's
   # windows-applog runs before them (the OLE drops move the cursor and run
@@ -1513,6 +1729,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "OS file drops, typed text, the title bar (Gio's, Clack's window): COUNT rounds"
         shell: bash
         env:
@@ -1547,6 +1767,8 @@ jobs:
           done
           echo "::notice title=windows-applog's window steps::the title bar tests failed $titlebar times in $COUNT rounds; the drops and typed text $other times"
           exit $(( titlebar > 0 ))
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # patched-tree-clicks: Block Kit clicks and redraws on rows under a
   # plugin patching Message / ThreadReplyGeneric, whose own msg override
@@ -1564,6 +1786,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "messages: the vote buttons under ThreadReplyGeneric+Message (free-running and lockstep), COUNT runs"
@@ -1582,6 +1808,8 @@ jobs:
           go test -count=1 -v -run '^TestChannelFilesSuggestionsSurviveMeasurePass$' ./internal/ui/views || rc=1
           go test -count=1 -v -timeout 15m -run '^TestSidebarTextFilterMeasurePassKeepsFocus$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # slackc-sweep: a window's patched roots age by its own frames (one idle
   # 5 s came back to every root unmounted and mounted again; the huddle
@@ -1600,6 +1828,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "slackc: patched roots age by their own window's frames, COUNT runs"
@@ -1610,6 +1842,8 @@ jobs:
       - name: "messages: Message gets MessageWrapper's very msg, 3 runs"
         if: ${{ !cancelled() }}
         run: go test -count=3 -v -run '^TestMessagePatchGetsWrappersExactMsg$' ./internal/ui/messages
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # plugin-escape: one overlay stack per window (slackc layers.go). The
   # shell's overlays keep the shell's Escape (its binding closes the
@@ -1632,6 +1866,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "Gio patch 34: the focus answers, COUNT runs"
@@ -1645,6 +1883,8 @@ jobs:
       - name: "ui: Escape and the focus in each stacking in the main window, 3 runs"
         if: ${{ !cancelled() }}
         run: go test -count=3 -v -timeout 30m -run '^(TestEscapeClosesPluginPopoverFirst|TestEscapeWithThePumpUp|TestPopoverInsideEditProfile|TestPopoverInViewsModal|TestDialogOverPopover|TestEscapeOwners|TestEscapeClosesWhatChannelDetailsOpenedFirst|TestEscapeClosesPreferencesColourPopoverFirst|TestEscapeClosesMenuOverEditProfileFirst|TestEscapeKeepsGuardedModal|TestHoverPeekGivesNoFocus|TestModalFromMenuGivesFocusBackToThreadComposer|TestReplayIntroClosesGuardedModal|TestEscapeKeepsDirtyEditProfile|TestW28NavigateFocusesComposer)$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # 2026-11-16: the jsrt release-burst tests counted the runtime's own
   # garbage's frees too (20018 of 20000 once), and TestHuddlesLinkInvites
@@ -1661,6 +1901,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "jsrt: release bursts count their own handles, COUNT runs"
@@ -1674,6 +1918,8 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a go test -count=5 -v -timeout 40m -run '^TestHuddlesLinkInvites$' ./internal/ui/
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # Activity's rows draw their messages as they are now
   # (views/activity_msgs.go; Karim's vote counts "up and down like crazy"
@@ -1711,6 +1957,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: Activity's, Threads' and Saved's live messages (one verbose run, then COUNT)"
@@ -1736,6 +1986,8 @@ jobs:
           go test -race -count=3 -run "$CORE_TESTS" ./internal/core || rc=1
           xvfb-run -a go test -race -count=3 -run "$HUB_TESTS" ./internal/ui/messages || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # activity-order: Activity's rows in Slack's order (views/activity_order.go,
   # tsND's upserts; Karim 2026-11-21: a thread's new reply left its row where
@@ -1761,6 +2013,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: Activity's order (one verbose run, then COUNT, then 3 under -race)"
@@ -1771,6 +2027,8 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 40m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
           xvfb-run -a go test -race -count=3 -timeout 40m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # edit-latency: an app's message edited every 500 ms over the socket
   # (Karim's uptime monitor, 2026-11-18: a plan block whose title is the
@@ -1794,6 +2052,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: each edit to the frame that draws it, per surface (one verbose run, then COUNT)"
@@ -1804,6 +2066,8 @@ jobs:
           CLACK_SLICE_TEXT=1 xvfb-run -a go test -count=1 -v -timeout 25m -run '^(TestEditLatency|TestSliceFirstDraw)$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 50m -run '^TestEditLatency$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # thread-replies: a reply posted to the thread open in the pane draws
   # there in the frame after the socket brings it, and no later than
@@ -1826,6 +2090,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: a reply to the open thread, socket to the pane's frame (one verbose run, then COUNT)"
@@ -1836,6 +2104,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestThreadReplyLatency$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestThreadReplyLatency$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # agent-blocks: the agent block and label tests (app-tasks-tab rounds
   # 2-3): plan and task content cut with Show more, MCP cards closing,
@@ -1852,6 +2122,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core, richview, messages, blockkit: the agent tests, COUNT times"
@@ -1860,6 +2134,8 @@ jobs:
           go test -count=$COUNT -timeout 30m -run 'TestAgent' ./internal/core ./internal/ui/richview || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 30m -run 'TestAgent' ./internal/ui/messages ./internal/ui/blockkit || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # toast-names: a toast names the members its message mentions, those the
   # store didn't hold when the message came too (α.110's review: "@U07DANA
@@ -1887,6 +2163,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: a toast's mention of a member the store didn't hold (one verbose run, then COUNT)"
@@ -1895,6 +2175,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestNotify(Names|Drops|Members)' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestNotify(Names|Drops|Members)' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # activity-stamp: an activity entry whose message is deleted, or edited
   # to drop the viewer's mention, while the entry waits behind another
@@ -1912,6 +2194,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: an entry whose message goes while it waits (one verbose run, then COUNT)"
@@ -1920,6 +2206,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestActivityEntryLeavesWhenItsMessageGoesWhileItWaits$' ./internal/ui/views || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestActivityEntryLeavesWhenItsMessageGoesWhileItWaits$' ./internal/ui/views || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # sender-lookups: socket messages and thread replies from people the
   # client never fetched, in a channel nothing on screen shows, ask
@@ -1937,6 +2225,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: senders nothing on screen shows are asked for by no one (one verbose run, then COUNT)"
@@ -1947,6 +2239,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestSocketSendersAskedForNoOne$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestSocketSendersAskedForNoOne$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # reactions-live: other people's reactions in a channel draw as they
   # come (Karim, 2026-11-19: "reactions are not syncing", "in a channel
@@ -1968,6 +2262,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: other people's reactions, socket to frame (one verbose run, then COUNT)"
@@ -1978,6 +2276,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestChannelReactionsLive$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestChannelReactionsLive$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # reactions-more: a live reaction_added keeps the event's url (a Slack
   # Connect partner's custom emoji: cBAo's h.url) and a fetch's replay
@@ -1995,6 +2295,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core, store, views: reaction urls, malformed events, the Pins tab under a slice patch (COUNT runs)"
@@ -2004,6 +2308,8 @@ jobs:
           go test -count=$COUNT -v -run '^TestReactionURLSurvivesAFetch$' ./internal/store || rc=1
           xvfb-run -a go test -count=$COUNT -v -run '^TestPinsTabReactionsAreCoresUnderSlicePatch$' ./internal/ui/views || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # activity-edits: an edit of an Activity entry's message draws in its
   # row in the frame after the socket brings it (Slack's Activity row reads
@@ -2024,6 +2330,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: each edit to the Activity row's frame (one verbose run, then COUNT)"
@@ -2034,6 +2344,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestActivityEditLatency$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestActivityEditLatency$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # slice-gaps: known gaps, run only on request (only=slice-gaps, never on
   # a push): under a plugin rewriting messages through the messages slice,
@@ -2053,6 +2365,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: a newly shown row's first frame, and each edit's rewritten view, under a slice patch (COUNT runs)"
@@ -2067,6 +2383,8 @@ jobs:
           xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestEditLatency$/^slice-text$' ./internal/ui 2>&1 | tee "$RUNNER_TEMP/slice-text.log" || rc=1
           grep -q "slice-text, channel:" "$RUNNER_TEMP/slice-text.log" || { echo "the slice-text mode ran nothing"; rc=1; }
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # views-rewrites: a view a plugin rewrites outside the text (Censorship's
   # mask in blocks, ShowRealUser's sender) stands while the plugins' JS is
@@ -2088,6 +2406,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: rewritten views through a reaction while JS is busy (COUNT runs)"
@@ -2096,6 +2418,8 @@ jobs:
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveVoteSlicePatchHeldReaction|TestViewsKeepARewrittenAuthorWhileJSIsBusy|TestActivityLiveVoteSlicePatch|TestActivityLiveSlicePatchReachesFetchedMessages|TestActivityFetchedViewWithoutTheSweep|TestViewsEditBringingAMaskedWordNeverShowsIt|TestViewsEditUnderASenderPatchDrawsAtOnce)$' ./internal/ui/views || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestFetchedMessageStaysOutOfTheList|TestEditBringingAMaskedWordNeverShowsIt|TestEditHoldEndsAtEditHold|TestEditUnderASenderPatchDrawsNextFrame)$' ./internal/ui/messages || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
   # pings"): Slack's rHEx dmsBadgeCount leaves out the bot DMs the DMs page
@@ -2116,6 +2440,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core: the DM badges' rules, the DMs tab's rows, COUNT runs"
@@ -2123,6 +2451,8 @@ jobs:
       - name: "ui: the DM badges, the DMs page, the classic Activity and app badges over fakeslack's DMs, COUNT runs"
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -timeout 30m -run '^(TestDMsBadgeLikeSlack|TestDMBadgesClassicLikeSlack|TestDMBadgeMemberLoadsLate|TestTitleDockTaskbarAgreeLikeSlack|TestActivityRailBadgeLikeSlack)$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # The Slack system user's DM (Karim's 2026-11-21 "got a message from
   # system slack and didnt notice until i opened normal slack"): its
@@ -2142,6 +2472,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "store: client.counts' IM and group DM unread count, COUNT runs"
@@ -2149,6 +2483,8 @@ jobs:
       - name: "ui: the system DM's row and counts over fakeslack's Size.SystemDM, COUNT runs"
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -timeout 30m -run '^(TestSystemDMRowLikeSlack|TestSystemDMUnreadWithoutMentionsLikeSlack)$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # plugin-render-2: a reply also sent to the channel, in the channel's list
   # and its thread pane, gets a plugin root per pane (one shared root got
@@ -2169,6 +2505,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "slackc + jsrt + taut + core: panes, same-output commits, refresh, conversion refs, COUNT runs"
@@ -2189,6 +2529,8 @@ jobs:
           go test -count=$COUNT -v -timeout 10m -run '^(TestComposersForOneThreadSendTheirOwn|TestComposerVanishRemountsInItsPane)$' ./internal/ui/composer || rc=1
           go test -count=$COUNT -v -timeout 20m -run '^(TestComposersDrawInTheirListsPanes|TestPatchedViewShowsUnderQuietFrames)$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # The inline video player on Clack's real window (internal/ui
   # TestRealWindowVideoFrames): Media Foundation on windows-latest,
@@ -2212,6 +2554,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: the inline player on the real window (TestRealWindowVideoFrames)
         shell: bash
         env:
@@ -2226,6 +2572,8 @@ jobs:
             CLACK_REAL_WINDOW_TESTS=1 CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-video.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowVideoFrames$' || rc=1
           done
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # Video playback's backends (internal/media/mf, internal/media/avf): the
   # fixtures played by the OS's own decoder into a headless Gio window,
@@ -2249,6 +2597,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: the backends play the fixtures (internal/media/...)
         shell: bash
         env:
@@ -2257,6 +2609,8 @@ jobs:
         run: |
           n=$COUNT; [ "$n" -gt 3 ] && n=3
           go test -count=$n -v -timeout 30m ./internal/media/...
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # What one frame costs the GPU (branch gpu-frame-cost): Clack's window
   # rendered by each backend (Mesa llvmpipe's GL on Linux, WARP's Direct3D
@@ -2279,6 +2633,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -2326,6 +2684,8 @@ jobs:
         with:
           name: gpu-cost-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-shots
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
   # Gio patch 46 (partial frames): a partial frame is the whole frame's
   # pixels (gpu/headless TestClackPartial*), what a caret's blink, the
   # typing indicator, a spinner's turn and an animated emoji's frame cost
@@ -2349,6 +2709,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -2419,6 +2783,8 @@ jobs:
           name: gpu-cost-damage-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-damage-shots
           if-no-files-found: ignore
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # inspect-freeze (round 2, 2026-11-18): the inspect freeze's pointer
   # reset (Gio patch 49) on every kind of hover Clack has, with Windows'
@@ -2436,6 +2802,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "the freeze's reset and edges, COUNT runs"
@@ -2449,6 +2819,8 @@ jobs:
           go test -count=$COUNT -v -run '^(TestFreeze\w*|TestCaptureOpensReview)$' ./internal/ui/inspect || rc=1
           go test -count=$COUNT -v -timeout 40m -run '^(TestInspectFreeze\w*|TestInspectSessionEndsAtSignIn|TestInspectFileDropsIgnored|TestInspectFrozenReportDescribesFrozenFrame|TestInspectReactionPill)$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # inspect-draw (2026-11-21): the inspect review's pen (draw.go): lines
   # burned into the copy where and as wide as they were drawn at 1x and
@@ -2467,6 +2839,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "the pen and the review, COUNT runs"
@@ -2475,6 +2851,8 @@ jobs:
           go test -count=$COUNT -v -run '^(TestPen\w*|TestDragGrabsRegion|TestCaptureOpensReview|TestClickStillPicksAndEscDrops|TestFreezeCapturesTheFrozenFrame|TestComposeRegionAsIs|TestComposeRedactKeepsNothingInside)$' ./internal/ui/inspect || rc=1
           go test -race -count=$COUNT -run '^TestPen\w*$' ./internal/ui/inspect || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # theme-contrast round 4: the fade's continuity, the cascade per variable,
   # the DMs rows drawn (activity_inbox on and off, the peek card's scope),
@@ -2491,6 +2869,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "theme + css, COUNT runs"
@@ -2521,6 +2903,8 @@ jobs:
           go test -race -count=1 -run '^TestRootTokensDeclares$' ./internal/ui/slackc/css || rc=1
           go test -race -count=1 -run '^(TestDMsPeekCardTokens|TestThemeTokensCascadePerVariable|TestDMsListHoverByMode)$' ./internal/ui/views || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # Plugins' Slack API calls settle the way Slack's API request does
   # (client-boot 0hZc apiCall, QCxN, Umoo, 7quX; build 35b42de8b870): the
@@ -2543,6 +2927,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: taut, slick (one verbose run, then COUNT)
@@ -2554,6 +2942,8 @@ jobs:
           go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
           go test -count=$COUNT -run "$SLICK_TESTS" ./internal/slick || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # Session-cookie GETs stay on Slack's file paths (slack.FileURL): a file
   # host's pages (files.slack.com/ssb/redirect), dot segments however many
@@ -2576,6 +2966,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: slack, taut (one verbose run, then COUNT)
@@ -2586,6 +2980,8 @@ jobs:
           go test -count=$COUNT -run "$SLACK_TESTS" ./internal/slack || rc=1
           go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # dm-senders: a DM's rows name their senders as Slack's do (Karim,
   # 2026-11-19: "unknown author for dms"). A DM opened by its route, by a
@@ -2605,6 +3001,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: DM senders on every path (one verbose run, then COUNT)"
@@ -2613,6 +3013,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestDMSendersLikeSlack$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 30m -run '^TestDMSendersLikeSlack$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # dm-senders-slugs: a DM's message links ("💬" pills) name the linked
   # message's own sender as Slack's getMessageSlugAttributes does, read
@@ -2634,6 +3036,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: message links in a DM, the thread pane and a toast (one verbose run, then COUNT)"
@@ -2642,6 +3048,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 10m -run '^(TestDMMessageSlugsLikeSlack|TestNotifyWritesMessageSlugsLikeSlack)$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 30m -run '^(TestDMMessageSlugsLikeSlack|TestNotifyWritesMessageSlugsLikeSlack)$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # profile-role-band (2026-11-21): the member hover card against Slack's
   # MemberProfileHoverCard for every role fakeslack serves (roles.go): no
@@ -2661,6 +3069,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "the hover card's roles, name, presence and status, COUNT runs"
@@ -2671,6 +3083,8 @@ jobs:
           go test -count=$COUNT -v -run '^(TestEmojiDisplayInfoLikeSlack|TestStatusTextPartsLikeSlack|TestUserStatusEmojiByName|TestMemberDND|TestMemberDNDOmittedAnswerIsFresh|TestMemberDNDStaleAfterSlowReconnect)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^(TestIconCoverage|TestAllIconsParse)$' ./internal/ui/icons || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # inspect-blur-fast (2026-11-18, round 2 2026-11-19): the inspect tool's
   # pick-to-review path at 1918x1080 (Karim's Windows window) at 1x and 2x,
@@ -2702,6 +3116,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -2722,6 +3140,8 @@ jobs:
           go test -count=$COUNT -v -timeout 15m -run '^(TestInspectHuddleWindow|TestInspectScreensharePopout|TestInspectPresenterPanel|TestInspectInviteWindow|TestInspectJoinPreview)$' ./internal/ui/huddleui || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 40m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast|TestInspectSubWindowsGate)$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # canvas-mention: the timing tests of a navigation into a canvas's or a
   # list's file channel (ui/canvas_open.go): files.info and messages.list
@@ -2742,6 +3162,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: ui, views (COUNT runs each)
@@ -2755,6 +3179,8 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 20m -run "$VIEWS_TESTS" ./internal/ui/views || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # system-dm-avatar (2026-11-21): the Slack system user (USLACK) drawn as
   # Slack's bundled logo (getMemberProfileImage 6Knt: n8qp) everywhere:
@@ -2775,6 +3201,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: imgcache, store, core, popups, ui (COUNT runs)
@@ -2791,6 +3221,8 @@ jobs:
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSlackSystemUserCard$' ./internal/ui/popups || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestSlackSystemDMAvatar|TestSidebarSystemUserPresence|TestSidebarAvatarSystemUserNoPresence)$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # caret-align (2026-11-20): the caret in Clack's inputs against their
   # placeholders and text, by Blink's rules (internal/ui/theme/carettest:
@@ -2815,6 +3247,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -2838,6 +3274,8 @@ jobs:
           # they are skipped here
           if [ "$RUNNER_OS" = Linux ]; then "${x[@]}" go test -count=1 -timeout 15m -skip '^(TestNoFilterAllocs|TestIndexPositionRunes)$' gioui.org/widget || rc=1; fi
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # 2026-11-20 (Karim, α.113): "i swear i just saw the [/] icon flicker
   # like crazy" in a thread composer under OwlMode's patches. The footer's
@@ -2859,6 +3297,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -2872,6 +3314,8 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
           "${x[@]}" go test -count=$COUNT -v -timeout 20m -run '^TestComposerToolbar' ./internal/ui/composer
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # A socket gap leaves no hole (Karim's #clack on α.112, 2026-11-20: 6:54
   # PM, then 9:53 PM, the three hours between missing): a socket that goes
@@ -2899,6 +3343,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: slack, store, core, messages, ui (one verbose run, then COUNT)
@@ -2923,6 +3371,8 @@ jobs:
           go test -race -count=1 -timeout 15m -run "$CORE_TESTS" ./internal/core || rc=1
           go test -race -count=1 -run "$SLACK_TESTS|$STORE_TESTS" ./internal/slack ./internal/store || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # msg-latency-2's lanes (jsrt UserBlocking, UserChain, the in-order lane,
   # CallThen): a send's checks, transforms and thunk run ahead of the
@@ -2948,6 +3398,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: jsrt, taut, composer, slackc (one verbose run, then COUNT)
@@ -2963,6 +3417,8 @@ jobs:
           go test -count=$COUNT -timeout 30m -run "$COMPOSER_TESTS" ./internal/ui/composer || rc=1
           go test -count=$COUNT -run "$SLACKC_TESTS" ./internal/ui/slackc || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # msg-latency-2's notifications in order: a burst notifies in the order
   # its messages came (nothing to wait for, or each waiting for its
@@ -2984,6 +3440,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: ui (one verbose run, then COUNT)
@@ -2993,6 +3453,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 10m -run "$UI_TESTS" ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # msg-latency-2's harness: a socket event (or Enter) to the frame that
   # draws its row, the whole client over the fake's socket with frames
@@ -3014,6 +3476,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: ui (one verbose run, then COUNT)
@@ -3023,6 +3489,8 @@ jobs:
           go test -count=1 -v -timeout 20m -run '^TestMessageLatency$' ./internal/ui || rc=1
           go test -count=$COUNT -timeout 60m -run '^TestMessageLatency$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # plugin-reaction-pill: reaction pills under a patched ReactionBar (a
   # pass-through patch with no CSS, and OwlMode's shape with its rules)
@@ -3043,6 +3511,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: patched reaction pills against the native ones, COUNT runs
@@ -3063,6 +3535,8 @@ jobs:
         with:
           name: reaction-pill-shots
           path: dist/shots
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # system-dm-toast (2026-11-21): the toast for an app's post in the DM
   # with Slack's system user (ui/notify_dm.go, notify_system_dm_test.go):
@@ -3084,6 +3558,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: the system DM's toast (one verbose run, then COUNT)"
@@ -3099,6 +3577,8 @@ jobs:
           go test -count=$COUNT -timeout 5m -run '^(TestTruthy|TestFileInitialCommentKept)$' ./internal/slack || rc=1
           go test -count=$COUNT -timeout 10m -run '^TestMirrorFileInitialComment$' ./internal/taut || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
   system-dm-toast-windows:
     if: ${{ inputs.only != '' && startsWith('system-dm-toast-windows', inputs.only) }}
     runs-on: windows-latest
@@ -3110,12 +3590,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: "ui: the system DM's toast in Notification Center (COUNT runs)"
         shell: bash # $COUNT is the job's env (pwsh would read its own variable)
         env:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_WINDOWS_TOAST_TESTS: "1"
         run: go test -count=$COUNT -v -timeout 25m -run '^(TestWindowsToastSystemDM|TestSystemDMToastLikeSlack)$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # thread-load: a thread of 1,078,423 synthetic replies (Karim, 2026-11-20:
@@ -3139,6 +3625,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "store, core and ui: the huge thread's pages, COUNT runs (one verbose)"
@@ -3151,6 +3641,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # threads-ship (2026-11-21): the review of thread-load-speed's blockers
   # (wf_15e6e96d-4f5): a List item's comments page like the thread pane,
@@ -3172,6 +3664,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core, messages, listview and ui: the threads-ship blockers, COUNT runs"
@@ -3183,6 +3679,8 @@ jobs:
           go test -count=$COUNT -v -timeout 10m -run '^TestItemCommentsPageLikeSlack$' ./internal/ui/listview || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 25m -run '^(TestThreadPaneClosedWhilePageLoads|TestThreadPaneHiddenAndShownKeepsPaging|TestThreadReopenAfterJumpStartsAtItsStart|TestThreadPaneRefreshesAtPoll|TestUndoAndEditLastReadTheNewestSlice)$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # thread-open-root (2026-11-17, round 2 2026-11-18): a thread pane never
   # shows a reply as its root (Karim, α.105: a link to a reply in a bot's
@@ -3217,6 +3715,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: ui (links, deep links, panes and toasts open a message's thread as Slack's jumpToMessage does)
@@ -3247,6 +3749,8 @@ jobs:
       - name: gio (patch 50, List.ScrollDelta)
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestListScrollDelta|TestListStopScroll)$' gioui.org/layout
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # jump-reactions: reactions on a jump window's messages draw after the
   # list left the conversation for old messages elsewhere and came back to
@@ -3264,6 +3768,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: reactions on a jump window after leaving it (one verbose run, then COUNT)"
@@ -3274,6 +3782,8 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 15m -run '^TestJumpWindowReactionsAfterLeaving$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 30m -run '^TestJumpWindowReactionsAfterLeaving$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # msg-latency-3: the socket events' lookups run off the event pump
   # (core pump_later.go): users.prefs after a pref_change or a
@@ -3299,6 +3809,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core, ui (one verbose run, then COUNT)
@@ -3312,6 +3826,8 @@ jobs:
           exit $rc
       - name: core, -race
         run: go test -race -count=1 -timeout 15m -run "$CORE_TESTS" ./internal/core
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # launch-speed (Karim, 2026-11-21: "Make launching the app take less
@@ -3336,6 +3852,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: Clack.app (perfharness, made and signed as release.yml makes it) and fakeslackd
         run: |
           set -eu
@@ -3371,6 +3891,8 @@ jobs:
         with:
           name: launch-mac
           path: ${{ runner.temp }}/launch/out
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # ci's macos launch budget alone (.github/perf/launch-budget.sh), for a
@@ -3389,6 +3911,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: launch budget (Clack.app through LaunchServices, within one Dock bounce)
         run: .github/perf/launch-budget.sh "$RUNNER_TEMP/launch"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -3396,6 +3922,8 @@ jobs:
         with:
           name: launch-budget
           path: ${{ runner.temp }}/launch/out
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   launch-speed-linux:
     if: ${{ inputs.only != '' && startsWith('launch-speed-linux', inputs.only) }}
@@ -3409,6 +3937,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps, Xvfb
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: clack (perfharness) and fakeslackd
@@ -3439,6 +3971,8 @@ jobs:
         with:
           name: launch-linux
           path: ${{ runner.temp }}/launch/out
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   launch-speed-windows:
     if: ${{ inputs.only != '' && startsWith('launch-speed-windows', inputs.only) }}
@@ -3452,6 +3986,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: Clack.exe (perfharness) and fakeslackd
         shell: bash
         run: |
@@ -3478,6 +4016,8 @@ jobs:
         with:
           name: launch-windows
           path: ${{ runner.temp }}/launch/out
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # preview-footer-race (2026-11-21): a ResolveConv joining another
@@ -3504,6 +4044,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core's joiners (plain, -race), then the ui footer test (COUNT each)
@@ -3514,6 +4058,8 @@ jobs:
           go test -race -count=$COUNT -timeout 6m -run "$CORE_TESTS" ./internal/core || rc=1
           go test -count=$COUNT -timeout 12m -run '^TestPreviewFooterMembershipUnknownAtOpen$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
 
@@ -3538,6 +4084,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: slackc (plain, -race), then the menu test alone and under load (COUNT each)
@@ -3559,6 +4109,8 @@ jobs:
             grep -E -- '^\s*--- FAIL|_test.go:[0-9]+:' "$RUNNER_TEMP/$f.log" | head -20
           done
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # dm-slugs-load (2026-11-22): TestDMMessageSlugsLikeSlack under CPU
@@ -3581,6 +4133,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: build the test binary before the burners start"
@@ -3598,6 +4154,8 @@ jobs:
           rc=$?
           kill "${burners[@]}"
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # Gio patch 48 (third_party/gioui.org/CLACK_PATCHES.md): a run of clicks
@@ -3624,6 +4182,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
@@ -3655,7 +4217,7 @@ jobs:
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - name: "the composer's double clicks and open +"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
-        run: go test -v -count=$COUNT -timeout 30m -run '^(TestPlusDoubleClick.*|TestEditorDoubleClickAt400ms|TestPlusOpenState)$' ./internal/ui/composer
+        run: go test -v -count=$COUNT -timeout 30m -run '^(TestPlusDoubleClick.*|TestEditorDoubleClickAt400ms|TestPlusOpenState|TestPlusAfterScrimClickIsNoDoubleClick|TestEditorTripleClickTakesParagraphBreak|TestEditorTrailingSpaceOnWindows|TestAttBrowserDoubleClickNeedsOneEntry)$' ./internal/ui/composer
       # a drag ends the click run on the column edges and the mini player's
       # handles (gesture.ClickRun), and a null can_upload_files allows
       - name: "the handles' double clicks after a drag, the null upload pref"
@@ -3663,8 +4225,31 @@ jobs:
         run: |
           rc=0
           go test -v -count=$COUNT -timeout 30m -run '^(TestResizerDragEndsDoubleClick|TestPipDragEndsDoubleClick)$' ./internal/ui || rc=1
-          go test -v -count=$COUNT -timeout 10m -run '^TestSlackConnectNullPrefAllowsUploads$' ./internal/core || rc=1
+          go test -v -count=$COUNT -timeout 10m -run '^(TestSlackConnectNullPrefAllowsUploads|TestSlackConnectGateAllocs)$' ./internal/core || rc=1
           exit $rc
+      # clicks in text select as Blink's SelectionController does: a
+      # message's and a rich text view's words (Chromium's ICU word
+      # breaks), paragraphs, drags after a double press, taps, Windows'
+      # trailing whitespace, an emoji whole, a wrapped line's last word; a
+      # link acts on every click; a plugin click's detail is the window's
+      # count, a keyboard's 0
+      - name: "selection by click count (messages, richview, plugin clicks)"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          rc=0
+          go test -v -count=$COUNT -timeout 15m -run '^(TestView(DoubleClickByPlatformTime|TripleClickTakesParagraphBreak|DoubleClickDragExtendsByWord|DoubleClickOnSpaceSelectsIt|TouchDoubleTapSelectsNoWord|FourthClickIsSingleOnLinux|TrailingSpaceOnWindows|DoubleClickEmojiRightHalf|DoubleClickWrappedLineEnd|LinkOpensOnEveryClick)|TestWordRangeLikeChromium)$' ./internal/ui/richview || rc=1
+          go test -v -count=$COUNT -timeout 10m -run '^(TestPluginClickDetailIsWindowCount|TestPluginKeyboardClickDetailZero)$' ./internal/ui/slackc || rc=1
+          go test -v -count=$COUNT -timeout 15m -run '^TestSelection(DoubleClickByPlatformTime|TripleClickTakesParagraphBreak|DoubleClickDragExtendsByWord|DoubleClickOnSpaceSelectsIt|TouchDoubleTapSelectsNoWord|FourthClickIsSingleOnLinux|TrailingSpaceOnWindows|WordsLikeChromium)$' ./internal/ui/messages || rc=1
+          exit $rc
+      # an Editor's double and triple clicks, everywhere
+      - name: "Gio Editor's multi-clicks"
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          go test -v -count=$COUNT -timeout 10m -run '^(TestClackEditor|TestClackWordRange)' gioui.org/widget
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # thread-reply-toast (2026-11-22): a reply by someone else in a thread
@@ -3696,6 +4281,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "ui: a reply in the viewer's own thread toasts and reaches Activity (COUNT runs)"
@@ -3793,6 +4382,8 @@ jobs:
           TEST: TestReplyUnreadMarkInTheReplysFrame
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # tb-click (thread-header-hover, 2026-11-22; Karim α.136: "i click and
@@ -3804,7 +4395,9 @@ jobs:
   # and mouseup, and Taut's OwlMode itself: each action runs, the row stays
   # hovered with its bar, the emoji picker and the More actions menu hold
   # it (Slack's setPopoverHold); and the thread header's channel name links
-  # with the pane's slice away from the root. Dispatch with only=tb-click.
+  # with the pane's slice away from the root, and drops it with the deleted
+  # root; a closed picker the hold let go; a GIF tile's click through the
+  # grid's changes. Dispatch with only=tb-click.
   tb-click:
     if: ${{ !inputs.only || startsWith('tb-click', inputs.only) }}
     runs-on: ubuntu-latest
@@ -3829,13 +4422,26 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # this job runs third-party code; never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: the bar's clicks and the header's link, COUNT runs
         env:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
         run: |
-          xvfb-run -a go test -count="$COUNT" -v -timeout 30m -run '^(TestToolbarClicksKeepHover|TestThreadHeaderLinkAwayFromRoot)$' ./internal/ui
+          set +e
+          rc=0
+          xvfb-run -a go test -count="$COUNT" -v -timeout 20m -run '^(TestToolbarClicksKeepHover|TestThreadHeaderLinkAwayFromRoot|TestClosedEmojiPickerReleasedFromToolbar)$' ./internal/ui || rc=1
+          # the header after its root is deleted; a GIF tile held while the grid changes (thread-header-hover-2)
+          go test -count="$COUNT" -timeout 5m -run '^(TestThreadHeaderRootDeleted|TestThreadHeaderTombstoneRootDeleted|TestReactionPillStaleTreeAfterRemoval|TestRowHoverTarget)$' ./internal/ui/messages || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestGifTileClickSurvivesGridChanges$' ./internal/ui/popups || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
 
 
   # karim-1118 (2026-11-18): a restored draft's attachment card drew its
@@ -3855,10 +4461,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "TestDraftFileArrivesLate, TestDraftFileInfoFails, TestDraftFileRetriesTimeouts, COUNT runs"
         run: go test -count=$COUNT -v -timeout 20m -run '^(TestDraftFileArrivesLate|TestDraftFileInfoFails|TestDraftFileRetriesTimeouts|TestDraftFromAnotherDevice)$' ./internal/ui/composer
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # Preferences > Plugins > Plugin library scrolled by mouse-wheel notches
   # (Karim, α.112 on Windows: "laggy?", "it feels capped"): each frame's
@@ -3882,6 +4494,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
@@ -3912,6 +4528,8 @@ jobs:
           path: |
             ${{ runner.temp }}/scroll-shots
             ${{ runner.temp }}/scroll-prof
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # The composer's bottom right (Karim, α.112 on Windows: "this is maybe
   # missing smth"): Slack's drafts button left of the send button under
@@ -3932,6 +4550,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: the drafts button and the hint bar, COUNT runs, then their shots
@@ -3952,6 +4574,8 @@ jobs:
         with:
           name: composer-drafts-shots
           path: ${{ runner.temp }}/composer-shots
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # karim-1118's review (2026-11-22): "Save as draft" and picking a draft
   # with Slack unreachable keep the composer's text, a thread draft brings
@@ -3971,6 +4595,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: the drafts offline, the email converter's bounds, the email links
@@ -3981,6 +4609,8 @@ jobs:
           go test -count=$COUNT -v -timeout 10m -run '^(TestEmailBlocks|TestEmailFields)' ./internal/richtext || rc=1
           go test -count=$COUNT -v -timeout 10m -run '^(TestEmailBodyLinksOpenNoURLCard|TestEmailFile|TestEmailLegacy|TestEmailRecipients)' ./internal/ui/richview || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # lost-click (2026-11-22, the lost-click sweep): TestJoinBanner's close
@@ -4001,6 +4631,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: the join banner's close and a pill's click, COUNT runs each
@@ -4010,3 +4644,186 @@ jobs:
           xvfb-run -a go test -count="$COUNT" -timeout 20m -run '^TestJoinBanner$' ./internal/ui || rc=1
           go test -count="$COUNT" -timeout 10m -run '^TestReactionPillClickSurvivesOtherReactions$' ./internal/ui/messages || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # mf-first-frame (2026-11-21): on windows-idle the first frame came 1 to
+  # 1.65 s after the engine played (software decoding on the Basic Render
+  # Driver, under load), and TestMFRGBA and TestMFPlaysFixture counted
+  # the seconds before it; TestMFColdStart held the platform's start
+  # (MFStartup, Direct3D, no audio output) to its budget. Each process
+  # runs TestMFLateFirstTransfer (the hook holds the first transfer
+  # 1.5 s) and the three, under two CPU burners (four of the runner's four
+  # CPUs starved the tests' own draws, a WARP screenshot each, to 4 a
+  # second: too few for a 0.4 s window), COUNT times, a fresh process each
+  # so ColdStart is cold. Dispatch with only=mf-late.
+  mf-late:
+    if: ${{ !inputs.only || startsWith('mf-late', inputs.only) }}
+    runs-on: windows-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: Media Foundation's first frames under load (COUNT processes)
+        shell: bash
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          go test -c -o "$RUNNER_TEMP/mf.test.exe" ./internal/media/mf || exit 1
+          for i in 1 2; do (while :; do :; done) & done
+          cd internal/media/mf
+          for i in $(seq 1 "$COUNT"); do
+            "$RUNNER_TEMP/mf.test.exe" -test.count=1 -test.v -test.timeout 3m -test.run '^(TestMFColdStart|TestMFLateFirstTransfer|TestMFRGBA|TestMFPlaysFixture)$' > "$RUNNER_TEMP/mf-$i.log" 2>&1 || rc=1
+            echo "== process $i: $(grep -c -- '--- FAIL' "$RUNNER_TEMP/mf-$i.log") FAIL lines"
+            grep -E -- '--- FAIL|mf_(late_)?windows_test.go:[0-9]+: .*(want|second [0-9]: (no|[0-2]) |frames drawn in the three|after the engine was made|hook)' "$RUNNER_TEMP/mf-$i.log" | head -12
+          done
+          kill $(jobs -p) 2>/dev/null
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: mf-late-logs
+          path: ${{ runner.temp }}/mf-*.log
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (.github/scripts/expect_fail_wire.py adds it).
+  expect-fail:
+    needs:
+      - go
+      - race-video
+      - members
+      - members-tab
+      - image-send
+      - search-recents
+      - ui-heap
+      - flakes-1121
+      - decode-memory
+      - emoji-anim
+      - huddle-polish
+      - huddle-bar
+      - huddle-bar-win
+      - huddle
+      - pixel
+      - owl-save
+      - slick
+      - pill-wrap
+      - flakes-1111
+      - flakes-1112
+      - flakes-1112-ole
+      - flakes-1112b-tray
+      - flakes-1114-taskbar
+      - flakes-1112b-share
+      - flakes-1112b-views
+      - threads-live
+      - flakes-1113
+      - flakes-1113c
+      - toast-1113-probe
+      - toast-1113-count
+      - mac-wake
+      - flake-fix-windows
+      - flake-fix-linux
+      - flake-fix-2-views
+      - release-suite
+      - flake-fix-gio-sequence
+      - patched-clicks
+      - patched-clicks-roots
+      - plugin-escape
+      - flakes-1116
+      - activity-live-msg
+      - activity-order
+      - edit-latency
+      - thread-replies
+      - agent-blocks
+      - toast-names
+      - activity-stamp
+      - sender-lookups
+      - reactions-live
+      - reactions-more
+      - activity-edits
+      - slice-gaps
+      - views-rewrites
+      - dm-badges
+      - system-dm-row
+      - plugin-render
+      - rw-video
+      - video
+      - gpu-cost
+      - gpu-cost-damage
+      - inspect-freeze
+      - inspect-draw
+      - theme-contrast-4
+      - plugin-api
+      - fileurl-dotdot
+      - dm-senders
+      - dm-senders-slugs
+      - profile-role-band
+      - inspect-blur-fast
+      - canvas-jumps
+      - system-dm-avatar
+      - caret-align
+      - composer-toolbar
+      - history-gap
+      - msg-lanes
+      - notify-order
+      - msg-latency
+      - reaction-pill
+      - system-dm-toast-linux
+      - system-dm-toast-windows
+      - thread-load
+      - thread-load-ship
+      - thread-open-root
+      - jump-reactions
+      - pump-lookups
+      - launch-speed-mac
+      - launch-budget
+      - launch-speed-linux
+      - launch-speed-windows
+      - preview-footer
+      - menu-click
+      - dm-slugs-load
+      - dblclick
+      - thread-reply-toast
+      - tb-click
+      - karim-1118-drafts
+      - karim-1118-r3-scroll
+      - karim-1118-r3-composer
+      - karim-1118-r4-review
+      - lost-click
+      - mf-late
+    if: ${{ always() && inputs.expect_fail != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/expectfail
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: expect-fail-*
+          path: ${{ runner.temp }}/xf
+      - name: every listed test failed, nothing else did
+        env:
+          EXPECT_FAIL: ${{ inputs.expect_fail }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"

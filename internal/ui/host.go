@@ -638,6 +638,30 @@ func (a *App) OpenProfile(anchor image.Point, userID string) {
 	a.OpenUserProfile(userID)
 }
 
+// OpenSender is a message sender's click (messages.SenderOpener;
+// BaseMessageSender onClick → openProfile {memberId, serviceId}): botID is
+// the bot the sender's hover card asks for (core.App.SenderBot), so the
+// click opens the same app. A member that is an app's or a bot
+// (getBotIdFromMember finds its bot, as OpenProfile reads it) opens App
+// details for that bot; a bot with no member opens its App details; a
+// person, an Agentforce agent or a member the store doesn't hold yet opens
+// the profile.
+func (a *App) OpenSender(anchor image.Point, userID, botID string) {
+	if userID == "" {
+		if botID != "" {
+			a.OpenAppDetails("", botID)
+		}
+		return
+	}
+	if c := a.Core(); c != nil {
+		if u, ok := c.User(userID); ok && memberBotID(u) != "" && !u.Agentforce {
+			a.OpenAppDetails(userID, firstNonEmptyStr(botID, memberBotID(u)))
+			return
+		}
+	}
+	a.OpenUserProfile(userID)
+}
+
 // memberBotID is getBotIdFromMember: an app or bot member's
 // profile.bot_id ("" for a person).
 func memberBotID(u core.User) string {

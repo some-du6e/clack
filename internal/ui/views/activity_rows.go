@@ -227,6 +227,8 @@ func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 	case "thread_v2", "dm", "channel", "bot_dm_bundle":
 		if d, ok := c.DraftFor(it.Channel, it.ThreadTS); ok && (strings.TrimSpace(d.Text) != "" || d.Files > 0) {
 			tip := nsActivity.T("Draft")
+			// d.Text is already the plain text of the draft's document (not
+			// mrkdwn, as a message's text is)
 			if t := actTrunc(oneLine(d.Text), 60); t != "" {
 				tip = nsActivity.T(`Draft: "{message}"`, "message", t)
 			}
@@ -237,7 +239,7 @@ func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 		tip := nsActivity.T("You replied") // RepliedBadge
 		// the reply YouRepliedTS found, a copy fetched by id too
 		if m, ok := c.S.FindHeld(it.Channel, ts); ok {
-			if t := actTrunc(oneLine(m.Text), 60); t != "" {
+			if t := actTrunc(oneLine(actMrkdwnPlain(c, m.Text)), 60); t != "" {
 				tip += "\n“" + t + "”"
 			}
 		}
@@ -1285,7 +1287,7 @@ func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub 
 // message changes.
 func (b *base) actPreviewDoc(m *core.Message) richtext.Doc {
 	c := b.h.Core()
-	if c == nil || len(m.Blocks) == 0 {
+	if c == nil || len(m.Blocks) == 0 && len(m.Attachments) <= 2 { // no blocks: the attachments' text, not the cards (PreviewDoc)
 		return m.Doc
 	}
 	ver := b.msgVerOf(m)
@@ -1650,4 +1652,14 @@ func (v *Activity) afterChannelAccept(ph popups.Host, inv core.ActivityInvite, i
 		v.h.Invalidate()
 		return err
 	}, func() {})
+}
+
+// actMrkdwnPlain is a message's mrkdwn as the badges' tooltips
+// show it (their Mrkdwn): mentions and channel links as @name and #name,
+// not the raw <@U…> and <#C…> tokens, emoji as their text.
+func actMrkdwnPlain(c *core.App, s string) string {
+	if c == nil || c.S == nil || !strings.ContainsAny(s, "<&:") {
+		return s
+	}
+	return richtext.PlainText(richtext.Doc{Blocks: richtext.FromMrkdwn(c.S, s)})
 }

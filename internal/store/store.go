@@ -1263,6 +1263,7 @@ type BotInfo struct {
 	Icon     string `json:"icon,omitempty"`
 	AppID    string `json:"app_id,omitempty"`
 	Workflow bool   `json:"is_workflow_bot,omitempty"` // a Workflow Builder bot (badged WORKFLOW)
+	TeamID   string `json:"team_id,omitempty"`         // bots.info team_id (the hover card's bot_home_team)
 }
 
 func (s *Store) PutBot(id string, b BotInfo) {

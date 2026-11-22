@@ -297,7 +297,11 @@ func TestAppHoverCardNewBotsShapes(t *testing.T) {
 	}{
 		{"stale profile bot", fakeslack.NewBotsStaleUserID, "", fakeslack.NewBotsStaleBotID, false, true},
 		{"two bots, the member", fakeslack.NewBotsTwoUserID, "", fakeslack.NewBotsTwoOldBotID, false, true},
-		{"two bots, a message's", fakeslack.NewBotsTwoUserID, fakeslack.NewBotsTwoBotID, fakeslack.NewBotsTwoBotID, true, true},
+		// a message row's trigger: the member and the message's bot
+		// (messages row.hoverBot, Slack's MessageSender botId), the app's
+		// installed, active card, as Slack's useProfileHoverApp asks for
+		// the message's bot
+		{"two bots, a message row", fakeslack.NewBotsTwoUserID, fakeslack.NewBotsTwoBotID, fakeslack.NewBotsTwoBotID, true, true},
 		{"two bots, a message's with no member", "", fakeslack.NewBotsTwoBotID, fakeslack.NewBotsTwoBotID, true, true},
 		{"live bot", fakeslack.NewBotsLiveUserID, "", fakeslack.NewBotsLiveBotID, true, true},
 	} {
