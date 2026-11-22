@@ -202,16 +202,15 @@ jobs:
         # runner-load.sh logs the runner's memory and load each minute (two
         # full-test jobs lost their runner on 2026-11-21 with no word on why:
         # it showed the suite at 15.7 of the runner's 16 GB, ui.test's live
-        # heap ~9 GB by its end, every test's App kept). GOMEMLIMIT: the GC
-        # keeps each test binary under 11 GiB until the ui tests stop
-        # keeping them. Not lower: under ui.test's live heap the GC runs back
-        # to back at half the CPU (7 GiB: TestJoinBanner's 10 s wait ran
-        # out, run 44939446171)
+        # heap ~9 GB by its end, every test's App kept). The ui tests let
+        # each finished App go since ci-speed-3 (TestFinishedSessionIsCollected
+        # guards it), so the GOMEMLIMIT=11GiB stopgap went: docs/CI-SPEED.md
+        # has the peaks
         run: |
           .github/scripts/dump-before-budget.sh 35 & wd=$!
           .github/scripts/runner-load.sh 60 & rl=$!
           trap 'kill $wd $rl 2>/dev/null' EXIT
-          GOMEMLIMIT=11GiB go test -timeout 30m ./...
+          go test -timeout 30m ./...
 
   # Report-only (docs/PARITY.md): tools/parity.py runs the Slack-parity
   # tests (tools/parity_checks.json) against Slack's committed output and
