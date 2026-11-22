@@ -28,6 +28,7 @@ import (
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -547,6 +548,10 @@ func (lb *Lightbox) pointerEvents(gtx layout.Context) bool {
 		}
 		switch pe.Kind {
 		case pointer.Press:
+			if ctxclick.Press(pe) {
+				lb.imageMenu(image.Pt(int(pe.Position.X), int(pe.Position.Y)))
+				continue
+			}
 			lb.dragging = true
 			lb.dragFrom, lb.panFrom = pe.Position, lb.pan
 		case pointer.Drag:
@@ -1149,4 +1154,31 @@ func lbClampF(v, lo, hi float32) float32 {
 		return hi
 	}
 	return v
+}
+
+// imageMenu is a right-click on the image: ImageViewer's <img
+// class="p-image_viewer__image"> (boot-shared sMCK, in FileViewer's
+// renderImageViewer and the media viewer) has no context menu of its own,
+// so it is the desktop shell's image menu: Copy Image copies what the
+// viewer shows, Copy Image URL the <img>'s src (a file's image; for an
+// image that isn't a file, image.src through Slack's image proxy).
+// Videos have their own player.
+func (lb *Lightbox) imageMenu(at image.Point) {
+	it := lb.cur()
+	if it.file != nil && it.file.IsVideo {
+		return
+	}
+	shown := it.displayURL()
+	if shown == "" {
+		return
+	}
+	src := shown
+	if !it.hosted() {
+		src = it.windowURL()
+	}
+	alt := "" // the thumbnail the viewer shows when the original can't be
+	if it.img.URL != shown {
+		alt = it.img.URL
+	}
+	lb.h.ShowOverlay(NewImageMenuFrom(lb.h, at, shown, src, alt, it.hosted()))
 }

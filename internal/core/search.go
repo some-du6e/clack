@@ -375,6 +375,7 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 	// the markers, before they go: compactCardBlocks' first highlighted
 	// block (exp_wave7.go)
 	marked := searchHitBlocks(raw)
+	matches := searchMatches(raw) // the card's attachments and files (search_matches.go)
 	if err := json.Unmarshal(stripHighlightJSON(raw), &res); err != nil {
 		return SearchResult{}, err
 	}
@@ -398,6 +399,7 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 		link    string
 		replied bool
 		hitAt   int
+		matches SearchMatches
 	}
 	var hits []hit
 	chans := map[string]bool{}
@@ -421,7 +423,7 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 			}
 			_ = json.Unmarshal(mr, &aux)
 			msgs = append(msgs, m)
-			hits = append(hits, hit{ch, m, aux.Permalink, aux.RequestorReplied, marked[[2]int{i, j}]})
+			hits = append(hits, hit{ch, m, aux.Permalink, aux.RequestorReplied, marked[[2]int{i, j}], matches[[2]int{i, j}]})
 		}
 	}
 	// the results' people are asked for as their rows draw (lazy_users.go)
@@ -429,6 +431,8 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 		v := a.message(hits[i].ch, &hits[i].m)
 		v.Permalink = hits[i].link
 		v.RequestorReplied, v.SearchHitBlock = hits[i].replied, hits[i].hitAt
+		sm := hits[i].matches
+		v.SearchMatches = &sm
 		out.Messages = append(out.Messages, v)
 	}
 	out.Convs = a.convRefs(chans)

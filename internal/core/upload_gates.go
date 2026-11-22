@@ -44,11 +44,12 @@ package core
 // _maybeResetState).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
 	"net/url"
-	"regexp"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -72,13 +73,32 @@ type listPrefsState struct {
 var listPrefsStates = newPerApp() // *App → *listPrefsState
 
 func (a *App) listPrefs() *listPrefsState {
+	if v, ok := listPrefsStates.Load(a); ok { // the composer reads it every frame: no allocation
+		return v.(*listPrefsState)
+	}
 	v, _ := listPrefsStates.LoadOrStore(a, &listPrefsState{prefs: map[string]map[string]json.RawMessage{},
 		fresh: map[string]bool{}, pending: map[string]bool{}})
 	return v.(*listPrefsState)
 }
 
-// looksLikeChannelID is jh4t looksLikeChannelId.
-var looksLikeChannelID = regexp.MustCompile(`^(C|G|D|Z)[A-Z0-9]{8,}$`).MatchString
+// looksLikeChannelID is jh4t looksLikeChannelId, /^(C|G|D|Z)[A-Z0-9]{8,}$/,
+// without a regexp: the composer reads the gate every frame.
+func looksLikeChannelID(s string) bool {
+	if len(s) < 9 {
+		return false
+	}
+	switch s[0] {
+	case 'C', 'G', 'D', 'Z':
+	default:
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if c := s[i]; !(c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
+}
 
 // listPrefsRefetchGap is _refetchPendingObjects' spacing between fetches.
 const listPrefsRefetchGap = 200 * time.Millisecond
@@ -239,23 +259,24 @@ func (a *App) SlackConnectFileSharingBlocked(ch string) bool {
 }
 
 // jsonTruthy is JavaScript's truthiness for a JSON value (null, false, 0,
-// "" and NaN are falsy).
+// "" and NaN are falsy), read from the raw bytes: the composer reads the
+// gate every frame, and decoding allocated.
 func jsonTruthy(v json.RawMessage) bool {
-	var x any
-	if json.Unmarshal(v, &x) != nil {
+	b := bytes.TrimSpace(v)
+	switch {
+	case len(b) == 0:
 		return false
-	}
-	switch x := x.(type) {
-	case nil:
+	case string(b) == "true":
+		return true
+	case string(b) == "false", string(b) == "null":
 		return false
-	case bool:
-		return x
-	case float64:
-		return x != 0
-	case string:
-		return x != ""
+	case b[0] == '"':
+		return len(b) > 2
+	case b[0] == '{', b[0] == '[':
+		return true
 	}
-	return true
+	f, err := strconv.ParseFloat(string(b), 64)
+	return err == nil && f != 0
 }
 
 // RestrictedExternalHuddle is uu7O f for ch (the + menu's

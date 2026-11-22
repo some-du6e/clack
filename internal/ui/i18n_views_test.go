@@ -40,7 +40,7 @@ var i18nViews = []i18nView{
 	{"drafts-scheduled", "drafts?tab=scheduled", nil},
 	{"directories-people", "directories", nil},
 	{"directories-channels", "directories?tab=channels", nil},
-	{"directories-groups", "directories?tab=groups", nil},
+	{"directories-groups", "directories?tab=groups", []string{"Admins"}}, // the fake directory's Admins user group, drawn by its name
 	{"huddles", "huddles", nil},
 	{"canvas", "docs/" + fakeslack.CanvasChannel, nil},
 	{"list", "lists/" + fakeslack.ListKitchen, []string{ // the kitchen-sink list's columns, options and view

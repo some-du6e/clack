@@ -153,6 +153,9 @@ func (a *App) liveMessage(ch, ts string) (*Message, bool) {
 var slowConnections = newPerApp() // *App → *atomic.Int64
 
 func (a *App) slowConnectionCount() *atomic.Int64 {
+	if v, ok := slowConnections.Load(a); ok { // read every frame (the + button's gate): no allocation
+		return v.(*atomic.Int64)
+	}
 	v, _ := slowConnections.LoadOrStore(a, new(atomic.Int64))
 	return v.(*atomic.Int64)
 }

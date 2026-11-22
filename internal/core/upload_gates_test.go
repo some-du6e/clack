@@ -73,6 +73,29 @@ func listPrefsFresh(a *App, ch string) bool {
 // rscm O: an externally shared conversation whose list prefs turn
 // can_upload_files off. The read fetches the prefs once (maybeRefetch)
 // and reads them after the answer; other conversations never ask.
+// The composer reads the + button's gate on every frame (chromeState),
+// in every Slack Connect conversation's composer, thread pane and Threads
+// row: once the conversation's list prefs are fresh, a read allocates
+// nothing, and nor does a conversation that isn't shared.
+func TestSlackConnectGateAllocs(t *testing.T) {
+	a, f := testApp(t)
+	const shared, internal = "C0SHARED05", "C0INTERNA2"
+	a.S.PutConv(slack.Conversation{ID: shared, Name: "partners-allocs", IsChannel: true, IsMember: true, IsExtShared: true})
+	a.S.PutConv(slack.Conversation{ID: internal, Name: "internal-allocs", IsChannel: true, IsMember: true})
+	setListPrefs(f, `{"ok":true,"prefs":{"can_upload_files":false}}`)
+	a.SlackConnectFileSharingBlocked(shared)
+	listPrefsSettled(t, a, shared)
+	if !a.SlackConnectFileSharingBlocked(shared) {
+		t.Fatal("can_upload_files false: not blocked")
+	}
+	if n := testing.AllocsPerRun(200, func() { a.SlackConnectFileSharingBlocked(shared) }); n != 0 {
+		t.Errorf("a read of a Slack Connect conversation's gate allocated %v times, want none", n)
+	}
+	if n := testing.AllocsPerRun(200, func() { a.SlackConnectFileSharingBlocked(internal) }); n != 0 {
+		t.Errorf("a read of a conversation that isn't shared allocated %v times, want none", n)
+	}
+}
+
 // can_upload_files null reads as allowed, as Slack's `?? true` reads it
 // (rscm O: !(Q(e, "can_upload_files", t) ?? !0)): a null pref is no pref,
 // and only false (or 0, "") blocks.

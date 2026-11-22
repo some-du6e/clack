@@ -332,6 +332,9 @@ type Attachment struct {
 	AuthorSubname  string // e.g. "@handle" next to the author name in unfurls
 	ShareChannelID string // shared message's channel id
 	VideoURL       string // video block: the playable/embeddable URL
+	// AppUnfurlURL is app_unfurl_url: an app's unfurl, the link
+	// getExternalSourceUrl falls back to after title_link and original_url.
+	AppUnfurlURL string
 
 	// MsgCard is a message permalink unfurl (is_msg_unfurl) drawn as
 	// Slack's MessageAttachmentSlackMessageCard: 36px avatar, author,
@@ -355,8 +358,12 @@ type Attachment struct {
 	// Hidden is attachment.hidden.
 	// Legacy: made from a message's attachments array (not a video or
 	// call block, a huddle card or a file).
-	Legacy      bool
-	ID          string
+	Legacy bool
+	ID     string
+	// Index is the attachment's place in the message's attachments array
+	// (the search answer's order: core.AttachmentKey keys an attachment
+	// without an id by it).
+	Index       int
 	OriginalURL string
 	ServiceURL  string
 	VideoHTML   bool
