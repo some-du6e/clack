@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 	"gioui.org/font"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -44,22 +46,31 @@ func TestDesktopNotificationWithoutTSLikeSlack(t *testing.T) {
 	}
 }
 
-// shouldSuppressNotificationInActiveChannel: a message of the
-// conversation open in the focused window, showing its messages, stays
-// quiet (16); one whose text holds an at-command, a thread reply the
-// conversation's view doesn't show (one mentioning the viewer), and any
-// message while the conversation shows another tab notify. Clack kept all
-// four quiet.
+// shouldSuppressNotificationInActiveChannel: a message mentioning the
+// viewer in the conversation open in the focused window, showing its
+// messages, stays quiet (16); one whose text holds an at-command, a thread
+// reply the conversation's view doesn't show (one mentioning the viewer),
+// and one while the conversation shows another tab notify. Clack kept the
+// last three quiet too.
 func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	t.Setenv("CLACK_HOME", t.TempDir())
-	fs, err := fakeslack.Start(fakeslack.Small)
+	sz := fakeslack.Small
+	sz.Files = true // #files-gallery and its gallery tabs (tabs_edit_test)
+	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
 	ch := fakeslack.FilesChannelID
-	fs.SetGalleryTabList(fakeslack.GalleryTab(fakeslack.FilesTabID, "files", "", "", ""))
+	// tabs_edit_test's conversation: its gallery's tabs past Messages
+	fs.Permissions = map[string][]string{ch: {core.PermManageChannelTabs}}
+	fs.SetGalleryTabList(
+		fakeslack.GalleryTab(fakeslack.FilesTabID, "files", "", "", ""),
+		fakeslack.GalleryTab(tbCanvasTab, "canvas", "", fakeslack.CanvasChannel, ""),
+		fakeslack.GalleryTab(tbListTab, "list", "", fakeslack.ListTodos, ""),
+	)
 	e := startEnv(t, fs, t.TempDir())
+	e.size = image.Pt(1400, 800)
 	e.waitReady()
 	c := e.a.data.core
 	c.SetRealtime(true)
@@ -68,9 +79,14 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	e.a.notify = rec
 	logs := captureLog(t)
 	e.openChannel(ch)
-	e.until("the conversation and its tabs", 15*time.Second, func() bool {
-		return e.channelView(ch) != nil && e.a.data.tabsDone[ch] && len(e.a.channelTabs(ch)) > 1
-	})
+	e.until("the conversation's view", 15*time.Second, func() bool { return e.channelView(ch) != nil })
+	if !e.untilSoft(20*time.Second, func() bool { return e.a.data.tabsDone[ch] && len(e.a.channelTabs(ch)) > 1 }) {
+		var keys []string
+		for _, tb := range e.a.channelTabs(ch) {
+			keys = append(keys, tb.key+":"+tb.typ)
+		}
+		t.Fatalf("setup: the conversation's tabs never came (tabsDone %v, tabs %q, route %q)", e.a.data.tabsDone[ch], keys, e.a.router.Current())
+	}
 	e.a.focused = true
 	sender := fs.UserIDs()[3]
 	line := func(ts string) string {
@@ -90,7 +106,9 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 		e.until("its decision line", 10*time.Second, func() bool { return line(ts) != "" })
 		return ts
 	}
-	quiet := post("a synthetic plain line", nil)
+	// mentions: the conversation notifies on mentions only (1 before 16)
+	me := "<@" + fakeslack.SelfID + "> "
+	quiet := post(me+"a synthetic plain line", nil)
 	if l := line(quiet); !strings.HasPrefix(l, "notify: skip 16 ") {
 		t.Errorf("a plain message in the open conversation: %q, want skip 16", l)
 	}
@@ -111,7 +129,7 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	}
 	e.a.chTab[ch] = 1 // the Files tab, not its messages
 	e.frame()
-	other := post("a synthetic line while another tab shows", nil)
+	other := post(me+"a synthetic line while another tab shows", nil)
 	if l := line(other); !strings.HasPrefix(l, "notify: show ") {
 		t.Errorf("a message while the conversation shows its Files tab: %q, want it shown (the Messages tab isn't on screen)", l)
 	}
@@ -278,7 +296,21 @@ func TestSlickFiltersSeeTheToast(t *testing.T) {
 // channel's activity again on each change of its unread thread count, so
 // the reply drew first and its mark came a round trip later.
 func TestReplyUnreadMarkInTheReplysFrame(t *testing.T) {
-	e, fs, c, rec := followEnv(t)
+	t.Setenv("CLACK_HOME", t.TempDir())
+	sz := fakeslack.Small
+	sz.Views = true // activity.feed answers from the feed, the live entries with it (fetchActivitiesForChannel)
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	c := e.a.data.core
+	c.SetRealtime(true)
+	e.until("the socket", 20*time.Second, func() bool { return c.RTM != nil && c.RTM.Connected() })
+	rec := &timedNotes{}
+	e.a.notify = rec
 	c.SetExperimentGroup("unread_thread_indication_in_replybar", "on")
 	e.a.focused = false
 	ch := fs.ChannelIDs()[2]
@@ -303,8 +335,19 @@ func TestReplyUnreadMarkInTheReplysFrame(t *testing.T) {
 		return ok1 && ok2
 	})
 	cv := e.channelView(ch)
+	// the threads' state with nothing unread first: the first reply's moves
+	// the channel's unread thread count from 0
+	fs.Push(map[string]any{"type": "update_thread_state", "has_unreads": false, "mention_count": 0,
+		"unread_count_by_channel": map[string]int{}, "mention_count_by_channel": map[string]int{}, "org_wide": c.IsEnterprise()})
+	e.until("no unread threads", 10*time.Second, func() bool { return c.ThreadsUnreadIn(ch) == 0 && !c.ThreadsState().Unread })
+	e.settle(100 * time.Millisecond)
+	feeds := fs.CallCount("activity.feed")
 	fs.PushFollowedReplyLive(ch, root1, replier, "a synthetic answer to the first", false)
-	e.until("the first reply's Unread mark", 20*time.Second, func() bool { _, u, _ := cv.ReplyBarState(root1); return u })
+	if !e.untilSoft(20*time.Second, func() bool { _, u, _ := cv.ReplyBarState(root1); return u }) {
+		n, u, ok := cv.ReplyBarState(root1)
+		t.Fatalf("setup: the first reply's Unread mark never came (its reply bar: %d avatars, unread %v, laid out %v; ThreadsUnreadIn %d; experiment %q; activity.feed calls %d, %d before the reply; the view is the one drawn: %v)",
+			n, u, ok, c.ThreadsUnreadIn(ch), c.Experiment("unread_thread_indication_in_replybar"), fs.CallCount("activity.feed"), feeds, e.channelView(ch) == cv)
+	}
 
 	evs, stop := c.Subscribe()
 	defer stop()
