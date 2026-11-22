@@ -125,7 +125,21 @@ func TestMessageTimeIsAPermalink(t *testing.T) {
 	})
 	p = e.timePoint(t, "", pub, root, reply)
 	e.timeClick(p, 0, 5*time.Second)
-	e.waitParentThread(t, "a click on the reply's time", pub, root, reply)
+	// openPermalink's jumpToMessage: the thread at the reply; its
+	// highlight is jumpToThreadReply's (client-boot 6IaZ): under the
+	// nested view none when the navigation came from the thread's own
+	// conversation, as it does here (openThreadAt's flash)
+	e.until("the thread at the reply", 10*time.Second, func() bool {
+		e.frame()
+		s := e.a.secondary
+		return s.kind == secThread && s.channel == pub && s.ts == root && s.at == reply
+	})
+	if r := e.a.router.Current(); r != Route("c/"+pub+"/t/"+root) {
+		t.Errorf("a click on the reply's time: route %q, want the thread c/%s/t/%s", r, pub, root)
+	}
+	if lit(e.paneRows("", pub, root), reply) && e.a.nestedSecondary() {
+		t.Errorf("a click on the reply's time in its own conversation's thread highlighted it; jumpToThreadReply doesn't under the nested view")
+	}
 
 	// Cmd on a reply's time: its thread in the split view (shouldOpenInTile)
 	p = e.timePoint(t, "", pub, root, reply)

@@ -98,7 +98,7 @@ it. A right-click is a link's: the shell's link menu. Clack:
 | Where | Slack | Clack | Test |
 |---|---|---|---|
 | Channel: header time, gutter time | MessageTimestamp, link + handleTimestampClick | yes | `TestMessageTimeIsAPermalink` |
-| Thread pane: a reply's time (highlights it in its thread) | same | yes | `TestMessageTimeIsAPermalink` |
+| Thread pane: a reply's time | same: the thread at the reply; highlighted per jumpToThreadReply (`6IaZ`: not under the nested view when the navigation came from the thread's own conversation) | yes | `TestMessageTimeIsAPermalink` |
 | Threads view | ThreadSenderAndTimestampGeneric's MessageTimestamp | yes | `TestThreadsTimeIsALink` |
 | Search results | SearchMessage's renderTimestamp: link, `full` (no tooltip), onTimestampClick only prevents the navigation (the card's click opens the result) | yes | `TestSearchCardTimeIsALink` |
 | Activity rows | ActivityTimestamp (`Jsmq`): a plain `<span>`, no link, no tooltip | unchanged (plain) | — |
