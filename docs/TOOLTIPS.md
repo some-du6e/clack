@@ -80,3 +80,30 @@ rendered through slackc).
 
 Not drawn means Clack doesn't draw the control at all; that's a missing
 feature rather than a missing tooltip.
+
+## A message's time is a link
+
+Slack's `Timestamp` with a link (boot-shared `JO00`) is an `<a>` (`CFnj`)
+to the message's permalink (`getPermalinkForMessage`, `1PIM`), class
+`c-timestamp`: the hand cursor, the label underlined under the pointer,
+TimestampTooltip after 300 ms. `MessageTimestamp` (`azta`) makes its click
+`handleTimestampClick` (`Gi27`): with Cmd (Ctrl off macOS, `isCmdKey`) on
+a reply, or on a message the view isn't showing, the message's thread
+opens in a tile, highlighted; any other click focuses the message list at
+it and opens the permalink, which routes to the message and highlights
+it. A right-click is a link's: the shell's link menu. Clack:
+`popups.TimeLink`, `App.OpenMessageTime` (jump.go), the menu through
+`popups.NewLinkMenu` (`TimeLinkMenu`).
+
+| Where | Slack | Clack | Test |
+|---|---|---|---|
+| Channel: header time, gutter time | MessageTimestamp, link + handleTimestampClick | yes | `TestMessageTimeIsAPermalink` |
+| Thread pane: a reply's time (highlights it in its thread) | same | yes | `TestMessageTimeIsAPermalink` |
+| Threads view | ThreadSenderAndTimestampGeneric's MessageTimestamp | yes | `TestThreadsTimeIsALink` |
+| Search results | SearchMessage's renderTimestamp: link, `full` (no tooltip), onTimestampClick only prevents the navigation (the card's click opens the result) | yes | `TestSearchCardTimeIsALink` |
+| Activity rows | ActivityTimestamp (`Jsmq`): a plain `<span>`, no link, no tooltip | unchanged (plain) | — |
+| Activity's opened message | the channel or thread pane's | yes (those panes') | — |
+
+Keyboard: the `<a>` takes Tab focus and Enter in Slack. Clack's message
+list has no per-link tab stops yet, so the time is reached with the
+pointer only.
