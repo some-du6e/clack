@@ -160,6 +160,20 @@ name: flake-check
 #                                            fails every run)
 #   TestDetailsCallButtonLikeSlack,          the same read against the call
 #   TestDetailsCallMenuStartsCall (ui/views) tooltip's name
+# and dm-slugs-flake's (2026-11-22: composer-plus-dblclick's push ci,
+# linux-test 3/4; the race forced every run):
+#   TestDMMessageSlugsLikeSlack (ui)         the second link's sender was
+#                                            picked while the launch
+#                                            channel's header read of its
+#                                            members (edge users/list, sent
+#                                            as waitReady returns) was out;
+#                                            its answer named them with
+#                                            their users/info held, and the
+#                                            pill read their name, not
+#                                            "Unknown author". The test
+#                                            holds that read 300 ms and
+#                                            picks after it (the old order
+#                                            fails every run)
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -3404,3 +3418,41 @@ jobs:
         with:
           name: launch-windows
           path: ${{ runner.temp }}/launch/out
+
+  # dm-slugs-load (2026-11-22): TestDMMessageSlugsLikeSlack under CPU
+  # burners, two per core, as on the loaded runner where it flaked
+  # (composer-plus-dblclick's push ci, linux-test 3/4). The test picks the
+  # second link's sender after the launch channel's header read of its
+  # members (edge users/list), which it holds 300 ms: picked while that
+  # read was out, the sender was one of the members it brings, and the
+  # pill read their name with their users/info held. Dispatch with
+  # only=dm-slugs-load.
+  dm-slugs-load:
+    if: ${{ !inputs.only || startsWith('dm-slugs-load', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: build the test binary before the burners start"
+        run: go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
+      - name: "ui: TestDMMessageSlugsLikeSlack under CPU burners, COUNT runs"
+        env:
+          TEST: TestDMMessageSlugsLikeSlack
+          PKG: ./internal/ui
+        run: |
+          burners=()
+          for _ in $(seq $(( $(nproc) * 2 ))); do sh -c 'while :; do :; done' & burners+=("$!"); done
+          echo "$(nproc) cores, ${#burners[@]} burners"
+          set +e
+          xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+          rc=$?
+          kill "${burners[@]}"
+          exit $rc
