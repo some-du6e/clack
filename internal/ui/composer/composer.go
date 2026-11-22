@@ -1276,6 +1276,17 @@ func (c *Composer) submit() {
 		return
 	}
 
+	// handleSlashCommand's parseEditLastMessageCommand, ahead of every
+	// command: "/s/old/new" edits the viewer's last message here and is
+	// neither sent nor run (edit_last.go). The draft goes now; a failure
+	// puts it back (sendDraftMessage's restoreDraftOnFailure).
+	if cmd, ok := editLastFromDoc(doc); ok {
+		c.cmdPick = core.Command{}
+		c.clearAfterSend()
+		c.editLast(cmd, d)
+		return
+	}
+
 	// Slash commands (only when the message starts with a known command
 	// or any /word; Slack sends unknown /words as commands too).
 	if c.att.Len() == 0 {
