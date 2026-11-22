@@ -57,16 +57,12 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"gioui.org/f32"
 	"gioui.org/layout"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
-	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -83,35 +79,23 @@ func srExplore(h Host) bool {
 	return app != nil && app.SearchCardExplore()
 }
 
-// srDense is a result's density body: on when the message has blocks
-// (renderBlocks); segs, compactCardBlocks' text highlighted; heur,
-// isCardBodyClipped.
+// srDense is what renderBlocks needs of a result (search_card_rich.go
+// draws it): on when the message has blocks; heur, isCardBodyClipped's
+// heuristic (compactCardBlocks kept fewer blocks than the message has, or
+// their text fields are longer than 600 characters).
 type srDense struct {
 	on   bool
-	segs []srSeg
 	heur bool
 }
 
-// srDenseOf builds m's density body for the search's terms.
-func srDenseOf(h Host, m *core.Message, terms []string) srDense {
+// srDenseOf is m's srDense.
+func srDenseOf(m *core.Message) srDense {
 	var blocks []json.RawMessage
 	if len(m.Blocks) == 0 || json.Unmarshal(m.Blocks, &blocks) != nil || blocks == nil {
 		return srDense{}
 	}
 	kept := srCompactBlocks(blocks, m.SearchHitBlock)
-	d := srDense{on: true, heur: len(kept) < len(blocks) || srTextFieldsLen(kept) > 600}
-	body := srBody(m)
-	if len(kept) < len(blocks) {
-		if app := h.Core(); app != nil && app.S != nil {
-			raw, _ := json.Marshal(kept)
-			doc := richtext.FromMessage(app.S, &slack.Message{Type: "message", TS: m.TS, User: m.User, Text: m.Text, Blocks: raw})
-			if s := richtext.SearchText(doc); strings.TrimSpace(s) != "" {
-				body = s
-			}
-		}
-	}
-	d.segs = srHighlight(strings.TrimSpace(body), terms)
-	return d
+	return srDense{on: true, heur: len(kept) < len(blocks) || srTextFieldsLen(kept) > 600}
 }
 
 // srCompactBlocks is compactCardBlocks: up to three blocks keep whole;
@@ -163,74 +147,9 @@ func srTextLen(v any) int {
 	return 0
 }
 
-// srDenseBody lays out the density body of card c at (tx, y), bw wide,
-// lines lh apart, over bg: it returns the height it takes, "... Show
-// more" included.
-func (v *SearchView) srDenseBody(gtx layout.Context, th *theme.Theme, cl *Colors, c *srCard, tx, y, bw, lh int, bg color.NRGBA) int {
-	lines, clipped := v.srDenseWrap(gtx, th, c, bw)
-	bodyH := lines * lh
-	at(gtx, image.Pt(tx, y), func(gtx layout.Context) layout.Dimensions {
-		srDrawToks(gtx, th, cl, c.dToks, lh, cl.Fg)
-		return layout.Dimensions{}
-	})
-	if !clipped {
-		return bodyH
-	}
-	// mask-image: linear-gradient(#000 60%, #0000) over the clamped box
-	from := float32(y) + float32(bodyH)*0.6
-	to := float32(y + bodyH)
-	paint.LinearGradientOp{Stop1: f32.Pt(0, from), Stop2: f32.Pt(0, to),
-		Color1: color.NRGBA{R: bg.R, G: bg.G, B: bg.B}, Color2: bg}.Add(gtx.Ops)
-	st := clip.Rect(image.Rect(tx, int(from), tx+bw, y+bodyH)).Push(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
-	st.Pop()
-	// renderExpandButton on the line under it
-	at(gtx, image.Pt(tx+dp(gtx, 4), y+bodyH), func(gtx layout.Context) layout.Dimensions {
-		return clickBox(gtx, &c.more, nil, func(gtx layout.Context) layout.Dimensions {
-			fg := cl.Muted // --sk_foreground_max_solid
-			if c.more.Hovered() {
-				fg = cl.Link // --sk_highlight
-			}
-			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, fg, srShowMoreLabel())
-			})
-		})
-	})
-	return bodyH + lh
-}
-
 // srShowMoreLabel is renderExpandButton's c-search__expand_ellipsis:
 // "... " and search's "Show more".
 func srShowMoreLabel() string { return "... " + nsSearch.T("Show more") }
-
-// srDenseWrap wraps c's density body to bw: the lines drawn (six at most
-// while collapsed) and whether it is clipped (the expand button shows).
-func (v *SearchView) srDenseWrap(gtx layout.Context, th *theme.Theme, c *srCard, bw int) (int, bool) {
-	if c.dW != bw || c.dExp != c.expanded {
-		c.dW, c.dExp = bw, c.expanded
-		if c.expanded {
-			c.dToks, c.dLines, _ = srWrapFit(gtx, th, c.full, bw, 0, 0)
-			c.dOver = false
-		} else {
-			c.dToks, c.dLines, c.dOver = srWrapFit(gtx, th, c.dense.segs, bw, srClampLines, 0)
-		}
-	}
-	lines := maxInt(1, c.dLines)
-	if c.expanded {
-		return lines, false
-	}
-	return min(lines, srClampLines), c.dense.heur || c.dOver
-}
-
-// srDenseHeight is the density body's height before it is drawn.
-func (v *SearchView) srDenseHeight(gtx layout.Context, th *theme.Theme, c *srCard, bw, lh int) int {
-	lines, clipped := v.srDenseWrap(gtx, th, c, bw)
-	h := lines * lh
-	if clipped {
-		h += lh
-	}
-	return h
-}
 
 // ---- the count pills ----
 

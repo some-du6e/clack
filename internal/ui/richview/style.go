@@ -50,6 +50,17 @@ type EmailLinkHandler interface {
 	OpenEmailLink(url string)
 }
 
+// PlainClicker is optional on a Handler: a primary click on the view's
+// text or empty space rather than on a link, mention, button or other
+// target, released within 4px of the press (a longer drag selects text)
+// and without Shift. A search result card opens its message for it, as
+// SearchResult's onClick does for any click on the card that isn't on a
+// mention, button or link, a drag ((dx²+dy²) > 16) or a Shift+click
+// (boot-shared vVRo, CDN build 35b42de8b870).
+type PlainClicker interface {
+	PlainClick()
+}
+
 // AttachmentRemover is a Handler that can remove a message's link
 // preview (the unfurl's remove button): Slack's "Remove preview?" dialog,
 // then chat.deleteAttachment.

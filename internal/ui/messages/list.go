@@ -2250,7 +2250,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		case tbAddReact:
 			_ = rc
 			o := popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil)
-			s.holdHover(o)
+			holdHover(s, o)
 			h.ShowOverlay(o)
 		case tbReply:
 			// RwAt.onComment: the comment thunk with threadTs =
@@ -2289,7 +2289,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 				Where:   where,
 				Trigger: trigger,
 			})
-			s.holdHover(o) // onMoreActionsMenuOpen: onPopoverOpen
+			holdHover(s, o) // onMoreActionsMenuOpen: onPopoverOpen
 			h.ShowOverlay(o)
 		}
 	}

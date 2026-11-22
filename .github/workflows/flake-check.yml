@@ -4314,7 +4314,9 @@ jobs:
   # and mouseup, and Taut's OwlMode itself: each action runs, the row stays
   # hovered with its bar, the emoji picker and the More actions menu hold
   # it (Slack's setPopoverHold); and the thread header's channel name links
-  # with the pane's slice away from the root. Dispatch with only=tb-click.
+  # with the pane's slice away from the root, and drops it with the deleted
+  # root; a closed picker the hold let go; a GIF tile's click through the
+  # grid's changes. Dispatch with only=tb-click.
   tb-click:
     if: ${{ !inputs.only || startsWith('tb-click', inputs.only) }}
     runs-on: ubuntu-latest
@@ -4349,9 +4351,16 @@ jobs:
         env:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
         run: |
-          xvfb-run -a go test -count="$COUNT" -v -timeout 30m -run '^(TestToolbarClicksKeepHover|TestThreadHeaderLinkAwayFromRoot)$' ./internal/ui
+          set +e
+          rc=0
+          xvfb-run -a go test -count="$COUNT" -v -timeout 20m -run '^(TestToolbarClicksKeepHover|TestThreadHeaderLinkAwayFromRoot|TestClosedEmojiPickerReleasedFromToolbar)$' ./internal/ui || rc=1
+          # the header after its root is deleted; a GIF tile held while the grid changes (thread-header-hover-2)
+          go test -count="$COUNT" -timeout 5m -run '^(TestThreadHeaderRootDeleted|TestThreadHeaderTombstoneRootDeleted|TestReactionPillStaleTreeAfterRemoval|TestRowHoverTarget)$' ./internal/ui/messages || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestGifTileClickSurvivesGridChanges$' ./internal/ui/popups || rc=1
+          exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
+
 
 
   # karim-1118 (2026-11-18): a restored draft's attachment card drew its

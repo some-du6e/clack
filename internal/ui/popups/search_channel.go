@@ -517,7 +517,7 @@ func (v *SearchInChannel) row(gtx layout.Context, th *theme.Theme, cl *Colors, i
 	pad := dp(gtx, 16)
 	name, av := srAuthor(v.h, m)
 	terms := srParse(v.query).Highlights()
-	segs := srHighlight(srFlatten(srBody(m)), terms)
+	segs := srRunSegs(srBodyRuns(v.h, m), terms, true)
 	cw := w - 2*pad
 	tx := dp(gtx, 12) + dp(gtx, 36) + dp(gtx, 8)
 	// a hidden sender's card (SearchResult's isMsgFromHiddenSender,

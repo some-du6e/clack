@@ -935,7 +935,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 			m := &p.msgs[i]
 			name, av := srAuthor(p.h, m)
 			r := srRow{kind: srRMsg, id: m.Channel + "/" + m.TS, msg: m, name: name, avatar: av,
-				when: srShortDay(tsTime(m.TS), now), segs: srHighlight(srFlatten(srBody(m)), terms), plain: !on}
+				when: srShortDay(tsTime(m.TS), now), segs: srRunSegs(srBodyRuns(p.h, m), terms, true), plain: !on}
 			if on {
 				r.where = p.srQuickWhere(m)
 			}
@@ -2608,10 +2608,382 @@ func srAvatarNative(gtx layout.Context, h Host, m *core.Message, url string, siz
 // srBody is a message's plain text (the unsupported-block card adds
 // none: search previews suppress it).
 func srBody(m *core.Message) string {
-	if s := richtext.SearchText(m.Doc); strings.TrimSpace(s) != "" {
+	if s := richtext.SearchText(richtext.Doc{Blocks: srBodyBlocks(m.Doc.Blocks)}); strings.TrimSpace(s) != "" {
 		return s
 	}
 	return m.Text
+}
+
+// srBodyBlocks are a message's body blocks: not its attachments (link
+// unfurls, shared messages) or files. Slack's search rows draw the text
+// (the server's extract of it); the result card draws matched
+// attachments and files apart (search_card_rich.go). They used to be
+// flattened into the text (an X unfurl's author and post under the
+// message).
+func srBodyBlocks(bs []richtext.Block) []richtext.Block {
+	var out []richtext.Block
+	for _, b := range bs {
+		switch {
+		case b.Kind == richtext.FileBlock, b.Kind == richtext.FileStatus:
+		case b.Kind == richtext.AttachmentBlock && b.Att != nil && b.Att.Huddle == nil:
+		default:
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// srRun is a piece of a row's text: plain text (with its newlines) or a
+// mention (mention: srMentionOther, or srMentionSelf for the viewer and
+// @here-style broadcasts), which draws as Slack's mention slug
+// (c-member_slug--mention) as the Mrkdwn the rows render does.
+type srRun struct {
+	text    string
+	mention uint8
+}
+
+const (
+	srMentionNone uint8 = iota
+	srMentionOther
+	srMentionSelf
+)
+
+// srBodyRuns are m's text line (the quick message rows, Search in channel,
+// the original-density card) as text and mention runs: its body
+// (srBodyBlocks) as the plain text path writes it, less the "can't be
+// fully displayed" card (search previews suppress it, richtext.SearchText);
+// when that says nothing (a caption-less upload, an attachment-only bot
+// post), its files and attachments; when they say nothing either, its
+// text read as mrkdwn.
+func srBodyRuns(h Host, m *core.Message) []srRun {
+	w := srNewRunWriter(h, false)
+	w.blocks(srBodyBlocks(m.Doc.Blocks))
+	if !w.says() {
+		w.out = nil
+		w.blocks(srRestBlocks(m.Doc.Blocks))
+	}
+	return w.done(h, m)
+}
+
+// srPreviewRuns are the dialogs' message preview (Forward, Share file,
+// Delete, Unsend, Remove from channel) as runs: the whole message as the
+// plain text path writes it, its files and attachments after its text,
+// as ShareDialogPreview draws the message as its unfurl (8DKN, CDN build
+// a09b625d90aa: the text, filesOnMessage, the attachments as children);
+// its text read as mrkdwn when nothing in it says anything.
+func srPreviewRuns(h Host, m *core.Message) []srRun {
+	w := srNewRunWriter(h, true)
+	w.blocks(m.Doc.Blocks)
+	return w.done(h, m)
+}
+
+// srRestBlocks are the blocks srBodyBlocks leaves out: files, their
+// upload status and attachments, in the message's order.
+func srRestBlocks(bs []richtext.Block) []richtext.Block {
+	var out []richtext.Block
+	for _, b := range bs {
+		switch {
+		case b.Kind == richtext.FileBlock, b.Kind == richtext.FileStatus:
+		case b.Kind == richtext.AttachmentBlock && b.Att != nil && b.Att.Huddle == nil:
+		default:
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// srRunWriter writes blocks as runs the way richtext.PlainText writes
+// them as text: a line per block, empty ones skipped, a quote's lines
+// after "> ", list items after "• " or "1. ", table cells joined by tabs,
+// a file's title or name, an attachment's pretext, title, text, fields
+// and children; mentions are mention runs.
+type srRunWriter struct {
+	self  string
+	cards bool // write the unsupported-block card's text (SearchText drops it)
+	out   []srRun
+}
+
+func srNewRunWriter(h Host, cards bool) *srRunWriter {
+	w := &srRunWriter{cards: cards}
+	if c := h.Core(); c != nil {
+		w.self = c.Self().ID
+	}
+	return w
+}
+
+// srAddText appends s to runs as text.
+func srAddText(runs []srRun, s string) []srRun {
+	if s == "" {
+		return runs
+	}
+	if n := len(runs); n > 0 && runs[n-1].mention == srMentionNone {
+		runs[n-1].text += s
+		return runs
+	}
+	return append(runs, srRun{text: s})
+}
+
+// spans are ss as runs, as spansText writes them: a line break "\n",
+// inline images nothing, mentions their slugs.
+func (w *srRunWriter) spans(ss []richtext.Span) []srRun {
+	var out []srRun
+	for _, sp := range ss {
+		switch sp.Kind {
+		case richtext.Break:
+			out = srAddText(out, "\n")
+		case richtext.InlineImage:
+		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
+			k := srMentionOther
+			if sp.Kind == richtext.Broadcast || (sp.Kind == richtext.User && sp.ID == w.self && w.self != "") {
+				k = srMentionSelf
+			}
+			out = append(out, srRun{text: sp.Text, mention: k})
+		default:
+			out = srAddText(out, sp.Text)
+		}
+	}
+	return out
+}
+
+func (w *srRunWriter) add(rs []srRun) {
+	for _, r := range rs {
+		if r.mention != srMentionNone {
+			w.out = append(w.out, r)
+		} else {
+			w.out = srAddText(w.out, r.text)
+		}
+	}
+}
+
+// line writes rs and a newline, unless rs is empty (PlainText's line).
+func (w *srRunWriter) line(rs []srRun) {
+	if len(rs) == 0 {
+		return
+	}
+	w.add(rs)
+	w.out = srAddText(w.out, "\n")
+}
+
+// srRunLines splits runs at the newlines in their text.
+func srRunLines(rs []srRun) [][]srRun {
+	lines := [][]srRun{nil}
+	for _, r := range rs {
+		if r.mention != srMentionNone {
+			lines[len(lines)-1] = append(lines[len(lines)-1], r)
+			continue
+		}
+		for j, part := range strings.Split(r.text, "\n") {
+			if j > 0 {
+				lines = append(lines, nil)
+			}
+			lines[len(lines)-1] = srAddText(lines[len(lines)-1], part)
+		}
+	}
+	return lines
+}
+
+func (w *srRunWriter) blocks(bs []richtext.Block) {
+	for i := range bs {
+		w.block(&bs[i])
+	}
+}
+
+func (w *srRunWriter) block(b *richtext.Block) {
+	switch b.Kind {
+	case richtext.UnknownBlock:
+		if w.cards {
+			w.line(w.spans(b.Spans))
+		}
+	case richtext.Quote:
+		for _, ln := range srRunLines(w.spans(b.Spans)) {
+			w.out = srAddText(w.out, "> ")
+			w.add(ln)
+			w.out = srAddText(w.out, "\n")
+		}
+	case richtext.List:
+		for i, it := range b.Items {
+			bullet := "• "
+			if b.Ordered {
+				bullet = strconv.Itoa(richtext.ListNumber(b, i)) + ". "
+			}
+			w.out = srAddText(w.out, strings.Repeat("    ", b.Indent)+bullet)
+			w.add(w.spans(it))
+			w.out = srAddText(w.out, "\n")
+		}
+	case richtext.Table:
+		for _, row := range b.Rows {
+			var cells []srRun
+			for j, cell := range row {
+				if j > 0 {
+					cells = srAddText(cells, "\t")
+				}
+				for _, r := range w.spans(cell) {
+					if r.mention == srMentionNone {
+						cells = srAddText(cells, strings.ReplaceAll(r.text, "\n", " "))
+					} else {
+						cells = append(cells, r)
+					}
+				}
+			}
+			// trailing empty cells add nothing (PlainText trims them)
+			if n := len(cells); n > 0 && cells[n-1].mention == srMentionNone {
+				if cells[n-1].text = strings.TrimRight(cells[n-1].text, "\t"); cells[n-1].text == "" {
+					cells = cells[:n-1]
+				}
+			}
+			w.line(cells)
+		}
+	case richtext.Divider, richtext.Actions:
+	case richtext.ImageBlock:
+		if img := b.Image; img != nil {
+			w.line(srAddText(nil, firstNonEmptyStr(img.Title, img.Alt)))
+		}
+	case richtext.FileBlock:
+		if f := b.File; f != nil {
+			w.line(srAddText(nil, firstNonEmptyStr(f.Title, f.Name)))
+		}
+	case richtext.CallBlock:
+		if c := b.Call; c != nil {
+			w.line(srAddText(nil, c.Title))
+			w.line(srAddText(nil, c.Status))
+		}
+	case richtext.AttachmentBlock:
+		if a := b.Att; a != nil {
+			w.line(w.spans(a.Pretext))
+			if a.IsShare {
+				w.line(srAddText(nil, a.AuthorName))
+			}
+			w.line(w.spans(a.Title))
+			w.blocks(a.Text)
+		}
+		for _, f := range b.Fields {
+			w.line(w.spans(f))
+		}
+		w.blocks(b.Children)
+	default: // Paragraph, Preformatted, Header, Context, Section, Tombstone…
+		w.line(w.spans(b.Spans))
+		w.blocks(b.Children)
+		for _, f := range b.Fields {
+			w.line(w.spans(f))
+		}
+	}
+}
+
+// says reports whether the runs hold a mention or any text but spaces.
+func (w *srRunWriter) says() bool {
+	for _, r := range w.out {
+		if r.mention != srMentionNone || strings.TrimSpace(r.text) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// done is the runs written, or m's text read as mrkdwn when they say
+// nothing (a block that draws nothing here), so a raw <@U…> or <url|label>
+// token never shows; m's text as it is without a resolver.
+func (w *srRunWriter) done(h Host, m *core.Message) []srRun {
+	if !w.says() && strings.TrimSpace(m.Text) != "" {
+		w.out = nil
+		if c := h.Core(); c != nil && c.S != nil {
+			w.blocks(richtext.FromMrkdwn(c.S, m.Text))
+		}
+		if !w.says() {
+			return []srRun{{text: m.Text}}
+		}
+	}
+	if n := len(w.out); n > 0 && w.out[n-1].mention == srMentionNone {
+		if w.out[n-1].text = strings.TrimRight(w.out[n-1].text, "\n"); w.out[n-1].text == "" {
+			w.out = w.out[:n-1]
+		}
+	}
+	return w.out
+}
+
+// srRunSegs are runs as highlighted segments: the text runs' terms
+// highlighted, the mentions whole. flat joins the lines with " … " as
+// srFlatten does (blank lines dropped), else the text keeps its lines,
+// trimmed at both ends.
+func srRunSegs(runs []srRun, terms []string, flat bool) []srSeg {
+	var out []srSeg
+	text := func(s string) {
+		if s != "" {
+			out = append(out, srHighlight(s, terms)...)
+		}
+	}
+	if !flat {
+		for i, r := range runs {
+			s := r.text
+			if i == 0 {
+				s = strings.TrimLeft(s, " \t\r\n")
+			}
+			if i == len(runs)-1 {
+				s = strings.TrimRight(s, " \t\r\n")
+			}
+			if r.mention != srMentionNone {
+				out = append(out, srSeg{Text: s, Mention: r.mention})
+				continue
+			}
+			text(s)
+		}
+		return out
+	}
+	// flat: lines of pieces, empty ones dropped
+	type piece struct {
+		s       string
+		mention uint8
+	}
+	var lines [][]piece
+	cur := []piece{}
+	for _, r := range runs {
+		if r.mention != srMentionNone {
+			cur = append(cur, piece{r.text, r.mention})
+			continue
+		}
+		parts := strings.Split(r.text, "\n")
+		for j, p := range parts {
+			if j > 0 {
+				lines = append(lines, cur)
+				cur = []piece{}
+			}
+			if p != "" {
+				cur = append(cur, piece{p, srMentionNone})
+			}
+		}
+	}
+	lines = append(lines, cur)
+	first := true
+	for _, ln := range lines {
+		// trim the line's ends
+		for len(ln) > 0 && ln[0].mention == srMentionNone && strings.TrimSpace(ln[0].s) == "" {
+			ln = ln[1:]
+		}
+		for len(ln) > 0 && ln[len(ln)-1].mention == srMentionNone && strings.TrimSpace(ln[len(ln)-1].s) == "" {
+			ln = ln[:len(ln)-1]
+		}
+		if len(ln) == 0 {
+			continue
+		}
+		if ln[0].mention == srMentionNone {
+			ln[0].s = strings.TrimLeft(ln[0].s, " \t\r")
+		}
+		if l := len(ln) - 1; ln[l].mention == srMentionNone {
+			ln[l].s = strings.TrimRight(ln[l].s, " \t\r")
+		}
+		if !first {
+			out = append(out, srSeg{Text: " … "})
+		}
+		first = false
+		for _, p := range ln {
+			if p.mention != srMentionNone {
+				out = append(out, srSeg{Text: p.s, Mention: p.mention})
+				continue
+			}
+			text(p.s)
+		}
+	}
+	return out
 }
 
 // srAuthor returns a message's display name and avatar.
@@ -2754,4 +3126,13 @@ func srShowResultsFor() string {
 		t += " "
 	}
 	return t
+}
+
+// srSegsText is segs' text joined.
+func srSegsText(segs []srSeg) string {
+	var b strings.Builder
+	for _, s := range segs {
+		b.WriteString(s.Text)
+	}
+	return b.String()
 }

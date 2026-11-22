@@ -235,7 +235,7 @@ func (a *App) resolveBots(ctx context.Context, ids []string) []string {
 			}
 			got[b.ID] = true
 			a.S.PutBot(b.ID, store.BotInfo{Name: b.Name, Icon: firstNonEmpty(b.Icons.Image72, b.Icons.Image48, b.Icons.Image36),
-				AppID: b.AppID, Workflow: b.IsWorkflowBot})
+				AppID: b.AppID, Workflow: b.IsWorkflowBot, TeamID: b.TeamID})
 			out = append(out, b.ID)
 		}
 	}
