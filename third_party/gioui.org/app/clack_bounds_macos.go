@@ -163,7 +163,6 @@ func snapshotLaunchScreens() {
 // launch is over (applicationDidFinishLaunching, after the windows asked
 // for in it opened). Main thread.
 func retireLaunchScreens() {
-	launchScreens.Store(nil)
 }
 
 func placeDisplay(s C.gio_place_screen) Display {

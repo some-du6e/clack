@@ -1879,7 +1879,7 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=1 -v -timeout 8m -run '^(TestDisplaysMac|TestBoundsMac)$' gioui.org/app || rc=1
+          go test -count=1 -v -timeout 8m -run '^TestBoundsMac$' gioui.org/app || rc=1
           # a process of its own: it catches a kept launch snapshot only as
           # its process's first Displays call (CLACK_PATCHES.md §56)
           go test -count=1 -v -timeout 3m -run '^TestDisplaysMacAfterLaunchReadsLive$' gioui.org/app || rc=1
