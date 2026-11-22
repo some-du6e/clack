@@ -134,7 +134,7 @@ func (s *listState) selPointer(gtx layout.Context, h Host, e pointer.Event, size
 		s.sel.gran = selGranChar
 		switch {
 		case s.sel.taps == 2:
-			a, b := r.rv.WordAt(off)
+			a, b := r.rv.WordAtPoint(local) // an emoji whole; a wrapped line's last word past its end
 			s.sel.a, s.sel.b = selPoint{k, a}, selPoint{k, b}
 			s.sel.gran = selGranWord
 		case s.sel.taps >= 3:

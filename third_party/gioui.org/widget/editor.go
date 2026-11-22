@@ -377,6 +377,8 @@ func (e *Editor) processPointerEvent(gtx layout.Context, ev event.Event) (Editor
 				gran := clackGranWord
 				if evt.NumClicks >= 3 {
 					gran = clackGranParagraph
+				} else {
+					pos = e.clackWordPos(evt.Position, pos, rs) // ChooseWordSide at a wrapped line's end
 				}
 				lo, hi := clackGranRange(rs, pos, gran)
 				e.text.SetCaret(hi, lo)

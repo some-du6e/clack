@@ -20,11 +20,12 @@ import (
 type Run struct {
 	clicks int
 	src    pointer.Source
-	// the last press: its time, place and modifiers; runPos is the run's
-	// first press's place
+	// the last press: its time, place, modifiers and buttons; runPos is
+	// the run's first press's place
 	pressAt          time.Duration
 	pressPos, runPos f32.Point
 	mods             key.Modifiers
+	buttons          pointer.Buttons
 	// rule is the mouse's rule the last mouse press counted by
 	rule Rule
 	// broken: a move ended the run since the last press
@@ -38,7 +39,12 @@ type Run struct {
 
 // Press counts press e, in a window of pxPerDp pixels per dp (0 is 1),
 // and returns its place in its run: 1 for a single click, 2 for a double
-// click's second press, 3 for a triple click's third.
+// click's second press, 3 for a triple click's third. A mouse press of
+// other buttons than the last starts a new run, as Chromium counts: Linux's
+// ui::MouseEvent::IsRepeatedClickEvent compares the presses' flags (the
+// buttons down and the modifiers), Windows' WebMouseEventBuilder counts on
+// only for the same button (s_last_click_button). A right click on a spot,
+// then a left click there, is a single left click.
 func (r *Run) Press(e pointer.Event, pxPerDp float32) int {
 	if pxPerDp <= 0 {
 		pxPerDp = 1
@@ -65,8 +71,8 @@ func (r *Run) Press(e pointer.Event, pxPerDp float32) int {
 		if rule.FromFirst {
 			ref = r.runPos
 		}
-		if r.clicks > 0 && r.src == pointer.Mouse && !r.broken && e.Time-r.pressAt <= rule.Interval && rule.Within(ref, e.Position) &&
-			(!rule.SameModifiers || e.Modifiers == r.mods) && (rule.Cycle == 0 || r.clicks < rule.Cycle) {
+		if r.clicks > 0 && r.src == pointer.Mouse && !r.broken && e.Buttons == r.buttons && e.Time-r.pressAt <= rule.Interval &&
+			rule.Within(ref, e.Position) && (!rule.SameModifiers || e.Modifiers == r.mods) && (rule.Cycle == 0 || r.clicks < rule.Cycle) {
 			r.clicks++
 		} else {
 			r.clicks = 1
@@ -76,7 +82,7 @@ func (r *Run) Press(e pointer.Event, pxPerDp float32) int {
 	if r.clicks == 1 {
 		r.runPos = e.Position
 	}
-	r.src, r.pressAt, r.pressPos, r.mods, r.broken, r.pxPerDp = e.Source, e.Time, e.Position, e.Modifiers, false, pxPerDp
+	r.src, r.pressAt, r.pressPos, r.mods, r.buttons, r.broken, r.pxPerDp = e.Source, e.Time, e.Position, e.Modifiers, e.Buttons, false, pxPerDp
 	return r.clicks
 }
 

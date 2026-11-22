@@ -2496,7 +2496,15 @@ the double-click time made the + see a double click and open the file
 chooser, where Slack sees a triple click (detail 3, no dblclick) and only
 opens the menu again (composer-plus-dblclick review, 2026-11-22).
 `Click` no longer asks for `Move` and `Drag` on Windows: the router's run
-sees every move.
+sees every move. A press of other buttons than the last starts a new run
+(`Run` keeps the buttons): Linux's `ui::MouseEvent::IsRepeatedClickEvent`
+compares the presses' flags, the buttons down with the modifiers, and
+Windows' `WebMouseEventBuilder` counts on only while `result.button ==
+s_last_click_button`. The run used to count any button's press, so a
+right (middle, back) click on a spot then a left click there was the left
+button's double click: the composer's + opened its file chooser, a column
+edge reset, a plugin element got a dblclick and message text selected a
+word (dblclick-relatives review, 2026-11-22).
 
 `ClickRun` gives the count to widgets that read their own pointer events
 (the window's, or for a press that comes without one its own by the
@@ -2513,11 +2521,29 @@ handle taken again after a drag snapped back to its default width.
 
 An `Editor`'s clicks select as Blink's `SelectionController` does in an
 `<input>` or a `<textarea>` (`widget/clack_words.go`): 2 the word, its
-punctuation a word of its own (ICU's word breaks, roughly: letters, digits,
-marks and connectors, joined over one apostrophe, period or colon between
-letters and one period, apostrophe, comma or semicolon between digits), a
-run of whitespace, or another character; on Windows a word takes the
-whitespace after it (`settings.json5` `selectTrailingWhitespaceEnabled`).
+punctuation a word of its own, a run of spaces, or another character with
+its marks: the segment of ICU's word break iterator with Chromium's rules
+(`clackWordSegment`, UAX #29's WB3 to WB16 from `third_party/icu`'s
+`source/data/brkitr/rules/word.txt`): letters, digits, marks and
+connectors make words, joined over one apostrophe, curly quote, middle dot
+or other MidLetter or MidNumLet mark between letters and one period,
+comma, semicolon, apostrophe or other MidNum mark between digits. A period
+between letters doesn't join them (Chromium's `patches/wordbrk.patch`
+moves the full stops from MidNumLet to MidNum "so that FQDN labels can be
+split at '.'"), nor does a colon (ICU takes it out of MidLetter; Blink's
+`WordBreakSwedish`: "k:a" is two words in English): `fmt.Println`,
+`TODO:fix` and `www.google.com` are words apart. The first version joined
+both, by UAX #29's defaults (dblclick-relatives review). Kana and
+ideographs make runs of their own; ICU's dictionaries split those further
+and Gio has none. On Windows a word takes the whitespace after it
+(`settings.json5` `selectTrailingWhitespaceEnabled`). `ClackWordRange` is
+exported for Clack's rich text, which selects by the same rules. After the
+last word of a line that wraps (the caret at the line's end, or past it,
+where Gio puts the caret at the next line's start), a double click takes
+that word, as Blink's `ChooseWordSide` picks `kPreviousWordIfOnBoundary`
+at the end of a line that isn't its paragraph's (`selection_adjuster.cc`:
+"If the caret is after the last word in a soft-wrapped line ... select
+that last word"); it took the next line's first word.
 3 and more the paragraph with its break (`kParagraph`, "Include the
 paragraph break"), not the visual line. A drag after either extends by that
 granule, keeping the first (`ExtendSelectionAsDirectional`). Upstream
@@ -2540,8 +2566,11 @@ px per dp), `TestClackClickRunDrag` (jitter inside the slop, a drag past
 it, AppKit's count after a drag, a tap's drag); in Clack,
 `TestResizerDragEndsDoubleClick` and `TestPipDragEndsDoubleClick`;
 `TestClackClickWindowCount` (+, scrim, + on one spot: 1, 2, 3);
-`widget` `TestClackEditorDoubleClickWord`, `TestClackEditorDoubleClickDragByWord`,
-`TestClackEditorTripleClickParagraph`, `TestClackEditorTrailingSpaceOnWindows`;
+`TestClackClickRunButtons` (right, middle or back, then left: a single;
+left, right, left: two singles); `widget` `TestClackEditorDoubleClickWord`,
+`TestClackEditorDoubleClickDragByWord`, `TestClackEditorTripleClickParagraph`,
+`TestClackEditorTrailingSpaceOnWindows`, `TestClackWordRangeLikeChromium`,
+`TestClackEditorDoubleClickWrappedLineEnd`;
 `io/input`'s `TestPartialEvent` expects its presses' count; on real
 windows, `TestClackDoubleClickWindows` (SendInput clicks 400 ms apart at
 `SetDoubleClickTime` 500 and 300; `CLACK_WINDOWS_DBLCLICK_TESTS`, ci's

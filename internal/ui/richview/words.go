@@ -1,9 +1,11 @@
 package richview
 
 import (
+	"bytes"
 	"runtime"
-	"unicode"
 	"unicode/utf8"
+
+	"gioui.org/widget"
 )
 
 // What a double or triple click selects, as Blink's SelectionController
@@ -16,13 +18,12 @@ import (
 var SelectTrailingSpace = runtime.GOOS == "windows"
 
 // wordRange is what a double click at byte offset off of pl selects: the
-// word there, a run of whitespace, or another character (a grapheme), as
-// Blink's word granularity takes them from ICU's word breaks (UAX #29,
-// roughly: letters, digits, marks and connectors make words, joined over
-// one apostrophe, period or colon between letters, and one period,
-// apostrophe, comma or semicolon between digits; each punctuation or
-// symbol is a word of its own). On Windows a word takes the whitespace
-// after it (SelectTrailingSpace).
+// word there, a run of spaces, or another character with its marks, as
+// Blink's word granularity takes them from ICU's word breaks with
+// Chromium's rules (Gio's widget.ClackWordRange, patch 48: a period joins
+// only digits, a colon nothing), over the paragraph off is in. A press on
+// a line's break takes the line's last word; on Windows a word takes the
+// whitespace after it (SelectTrailingSpace).
 func wordRange(pl []byte, off int) (int, int) {
 	n := len(pl)
 	if n == 0 {
@@ -32,90 +33,27 @@ func wordRange(pl []byte, off int) (int, int) {
 	for off > 0 && !utf8.RuneStart(pl[off]) {
 		off--
 	}
-	r, sz := utf8.DecodeRune(pl[off:])
-	if r == '\n' && off > 0 {
-		if pr, psz := utf8.DecodeLastRune(pl[:off]); pr != '\n' {
-			off, r, sz = off-psz, pr, psz // the end of a line: its last word
-		}
+	// the paragraph with its break: word breaks never cross one
+	a := bytes.LastIndexByte(pl[:off], '\n') + 1
+	b := n
+	if i := bytes.IndexByte(pl[off:], '\n'); i >= 0 {
+		b = off + i + 1
 	}
-	a, b := off, off+sz
-	switch {
-	case wordRune(r):
-		for a > 0 {
-			pr, psz := utf8.DecodeLastRune(pl[:a])
-			if wordRune(pr) {
-				a -= psz
-				continue
-			}
-			if a-psz > 0 {
-				ppr, ppsz := utf8.DecodeLastRune(pl[:a-psz])
-				nr, _ := utf8.DecodeRune(pl[a:])
-				if midJoins(ppr, pr, nr) {
-					a -= psz + ppsz
-					continue
-				}
-			}
-			break
+	var rs []rune
+	var at []int // each rune's byte offset in pl, then b
+	pos := 0
+	for i := a; i < b; {
+		r, sz := utf8.DecodeRune(pl[i:])
+		if i == off {
+			pos = len(rs)
 		}
-		for b < n {
-			nr, nsz := utf8.DecodeRune(pl[b:])
-			if wordRune(nr) {
-				b += nsz
-				continue
-			}
-			if b+nsz < n {
-				nnr, nnsz := utf8.DecodeRune(pl[b+nsz:])
-				pr, _ := utf8.DecodeLastRune(pl[:b])
-				if midJoins(pr, nr, nnr) {
-					b += nsz + nnsz
-					continue
-				}
-			}
-			break
-		}
-		if SelectTrailingSpace {
-			for b < n {
-				nr, nsz := utf8.DecodeRune(pl[b:])
-				if !hSpace(nr) {
-					break
-				}
-				b += nsz
-			}
-		}
-	case hSpace(r):
-		for a > 0 {
-			pr, psz := utf8.DecodeLastRune(pl[:a])
-			if !hSpace(pr) {
-				break
-			}
-			a -= psz
-		}
-		for b < n {
-			nr, nsz := utf8.DecodeRune(pl[b:])
-			if !hSpace(nr) {
-				break
-			}
-			b += nsz
-		}
-	default:
-		for a > 0 {
-			pr, psz := utf8.DecodeLastRune(pl[:a])
-			cur, _ := utf8.DecodeRune(pl[a:])
-			if !graphemeExtends(pr, cur) {
-				break
-			}
-			a -= psz
-		}
-		for b < n {
-			pr, _ := utf8.DecodeLastRune(pl[:b])
-			nr, nsz := utf8.DecodeRune(pl[b:])
-			if !graphemeExtends(pr, nr) {
-				break
-			}
-			b += nsz
-		}
+		rs = append(rs, r)
+		at = append(at, i)
+		i += sz
 	}
-	return a, b
+	at = append(at, b)
+	lo, hi := widget.ClackWordRange(rs, pos, SelectTrailingSpace)
+	return at[lo], at[hi]
 }
 
 // paragraphRange is what a triple click at byte offset off of pl selects:
@@ -135,46 +73,6 @@ func paragraphRange(pl []byte, off int) (int, int) {
 		b++
 	}
 	return a, b
-}
-
-func wordRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r) ||
-		unicode.Is(unicode.Me, r) || unicode.Is(unicode.Pc, r)
-}
-
-func hSpace(r rune) bool { return r != '\n' && unicode.IsSpace(r) }
-
-// midJoins reports whether m between a and b keeps them one word (UAX #29
-// WB6/7, WB11/12).
-func midJoins(a, m, b rune) bool {
-	letters := unicode.IsLetter(a) && unicode.IsLetter(b)
-	digits := unicode.IsDigit(a) && unicode.IsDigit(b)
-	switch m {
-	case '\'', '.', 0x2018, 0x2019, 0x2024, 0xfe52, 0xff07, 0xff0e: // MidNumLet, Single_Quote
-		return letters || digits
-	case ':', 0xb7, 0x387, 0x5f4, 0x2027, 0xfe13, 0xfe55, 0xff1a: // MidLetter
-		return letters
-	case ',', ';', 0x37e, 0x589, 0x60c, 0x60d, 0x66c, 0x7f8, 0x2044, 0xfe10, 0xfe14, 0xfe50, 0xfe54, 0xff0c, 0xff1b: // MidNum
-		return digits
-	}
-	return false
-}
-
-// graphemeExtends reports whether r continues the grapheme of prev:
-// marks, variation selectors, ZWJ sequences, skin tones, tags and flag
-// pairs.
-func graphemeExtends(prev, r rune) bool {
-	switch {
-	case r == 0x200d || prev == 0x200d:
-		return true
-	case r >= 0xfe00 && r <= 0xfe0f, r >= 0x1f3fb && r <= 0x1f3ff, r >= 0xe0020 && r <= 0xe007f:
-		return true
-	case unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) || unicode.Is(unicode.Mc, r):
-		return true
-	case r >= 0x1f1e6 && r <= 0x1f1ff && prev >= 0x1f1e6 && prev <= 0x1f1ff:
-		return true
-	}
-	return false
 }
 
 // A selection's granule: what a press selected by and a drag after it
