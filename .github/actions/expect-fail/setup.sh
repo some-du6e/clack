@@ -4,7 +4,8 @@
 set -euo pipefail
 ref=${GITHUB_REF_NAME:-}
 if [ -z "${XF_TESTS//[[:space:],]/}" ]; then
-	if [[ "$ref" =~ -(red|mut)[0-9]*$ ]]; then
+	# -red, -red4, -red13c, -r3red5, -mut1, -r3mut1 (2026-11-21's proofs)
+	if [[ "$ref" =~ -(r[0-9]+)?(red|mut)([0-9]+[a-z]?)?$ ]]; then
 		echo "::error title=expect_fail::$ref is an evidence branch: its run must name the tests it proves fail, or it ends red and pings Karim's phone. Dispatch with -f expect_fail=TestA,TestB/sub (docs/CI-SPEED.md, \"Proof runs\")."
 		exit 1
 	fi

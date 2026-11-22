@@ -147,7 +147,7 @@ func TestEvidenceBranchesSkipPushRuns(t *testing.T) {
 		text := readWorkflow(t, name)
 		on := text[strings.Index(text, "\non:\n"):]
 		on = on[:strings.Index(on, "\n  pull_request:")]
-		for _, want := range []string{`branches-ignore: ["**-red", "**-red[0-9]*", "**-mut", "**-mut[0-9]*"]`, `tags: ["**"]`} {
+		for _, want := range []string{`branches-ignore: ["**-red", "**-red[0-9]*", "**-mut", "**-mut[0-9]*", "**-r[0-9]*red", "**-r[0-9]*red[0-9]*", "**-r[0-9]*mut", "**-r[0-9]*mut[0-9]*"]`, `tags: ["**"]`} {
 			if !strings.Contains(on, want) {
 				t.Errorf("%s: push lacks %s", name, want)
 			}
@@ -164,14 +164,17 @@ func TestEvidenceBranchPattern(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `=~ -(red|mut)[0-9]*$ ]]`) {
+	const rule = `-(r[0-9]+)?(red|mut)([0-9]+[a-z]?)?$`
+	if !strings.Contains(string(b), `=~ `+rule+` ]]`) {
 		t.Fatal("setup.sh's evidence-branch rule changed: keep it and the push filters alike")
 	}
-	re := regexp.MustCompile(`-(red|mut)[0-9]*$`)
+	re := regexp.MustCompile(rule)
 	for _, c := range []struct {
 		ref string
 		ev  bool
-	}{{"thread-load-speed-red4", true}, {"caret-align-mut1", true}, {"ci-speed-3-red", true}, {"quiet-ci", false}, {"ci-speed-2-grn8", false}, {"redraw-fix", false}, {"red-team", false}} {
+	}{{"thread-load-speed-red4", true}, {"caret-align-mut1", true}, {"ci-speed-3-red", true},
+		{"ci-speed-3-red13c", true}, {"ci-speed-2-red9b", true}, {"blockkit-coverage-r3red5", true}, {"blockkit-coverage-r3mut1", true},
+		{"msg-latency-3-red-minors", false}, {"red-badge", false}, {"quiet-ci", false}, {"ci-speed-2-grn8", false}, {"redraw-fix", false}, {"red-team", false}} {
 		if re.MatchString(c.ref) != c.ev {
 			t.Errorf("%s: evidence %v, want %v", c.ref, !c.ev, c.ev)
 		}

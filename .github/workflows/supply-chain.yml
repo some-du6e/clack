@@ -12,7 +12,7 @@ on:
     # evidence branches (-redN, -mutN) prove a failure: their runs are
     # dispatched with expect_fail, and a push run would only end red
     # (docs/CI-SPEED.md, "Proof runs")
-    branches-ignore: ["**-red", "**-red[0-9]*", "**-mut", "**-mut[0-9]*"]
+    branches-ignore: ["**-red", "**-red[0-9]*", "**-mut", "**-mut[0-9]*", "**-r[0-9]*red", "**-r[0-9]*red[0-9]*", "**-r[0-9]*mut", "**-r[0-9]*mut[0-9]*"]
     tags: ["**"]
   pull_request:
   workflow_dispatch:
