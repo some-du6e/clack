@@ -30,6 +30,23 @@ func sameScreen(d, p Display) bool {
 	return d.Bounds == p.Bounds && d.Primary == p.Primary && d.Scale == p.Scale && d.WorkArea.In(d.Bounds)
 }
 
+// macAfterLaunch waits until NSApplication finished launching: its
+// applicationDidFinishLaunching ran (launchOpened) and returned (a
+// main-thread round trip after it). A test can start while the launch is
+// still going on, and a Displays call then takes the launch's screens, as
+// it should (CLACK_PATCHES.md §56): TestDisplaysMacAfterLaunchReadsLive
+// did once in 10 processes (flakes-1122c's fl1122c-s-displays
+// 45056626963).
+func macAfterLaunch(t *testing.T) {
+	t.Helper()
+	macWaitUntil(t, "the launch's end", func() bool {
+		launchMu.Lock()
+		defer launchMu.Unlock()
+		return launchOpened
+	})
+	cocoatest.OnMain(func() {})
+}
+
 func (h *macTestWindow) config() Config {
 	if c := h.cfg.Load(); c != nil {
 		return *c
@@ -44,6 +61,7 @@ func TestDisplaysMac(t *testing.T) {
 	if !macWindowTestsEnabled() {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
 	}
+	macAfterLaunch(t) // this tests the reads after it
 	// Displays and NSScreen are two reads, and the runner's Dock may move
 	// the visible frame between them: compare a read of Displays taken
 	// between two NSScreen reads that agree. The steady misses (a work
@@ -95,6 +113,7 @@ func TestDisplaysMacAfterLaunchReadsLive(t *testing.T) {
 	if !macWindowTestsEnabled() {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
 	}
+	macAfterLaunch(t)
 	held, release := make(chan struct{}), make(chan struct{})
 	go cocoatest.OnMain(func() {
 		close(held)
