@@ -132,6 +132,10 @@ type Size struct {
 	// ThreadsAudit adds #th-audit: one thread per way the thread pane
 	// marks unread replies, opens and counts (threads_audit.go).
 	ThreadsAudit bool
+	// ThreadOpen adds #open-top: a long channel with long threads,
+	// followed and read, unread past their first page, or not followed,
+	// for where a thread opens (thread_open.go).
+	ThreadOpen bool
 	// TombstoneThread adds an archived public channel the viewer is in,
 	// its history several pages long both ways around a thread whose root
 	// was deleted: a tombstone with TombstoneReplies replies
@@ -373,6 +377,9 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 
 // Server is a running fake.
 type Server struct {
+	// client.counts' threads.unread_count_by_channel (threads_by_channel.go)
+	threadsByChan map[string]int
+
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
@@ -793,6 +800,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.ThreadsAudit {
 		s.addThreadsAudit() // threads_audit.go
+	}
+	if sz.ThreadOpen {
+		s.addThreadOpen() // thread_open.go
 	}
 	if sz.TombstoneThread {
 		s.addTombstoneThread() // tombstone.go
@@ -1598,6 +1608,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleThreadsAudit(method, f); handled { // threads_audit.go
 		return out
 	}
+	if out, handled := s.handleThreadOpen(method, f); handled { // thread_open.go
+		return out
+	}
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
 		return out
 	}
@@ -1657,6 +1670,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if l, ok := s.codeLatest(c.ID); ok { // codechannels.go: read, at its fixture's latest message
 				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
 			}
+			if s.Size.ThreadOpen && c.ID == ThreadOpenChannel { // thread_open.go: read, at its newest message
+				l := ThreadOpenMsg(ThreadOpenMsgs - 1)
+				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
+			}
 			if closedDM(c) { // closed_dms.go: read
 				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
 			}
@@ -1670,7 +1687,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				chans = append(chans, e)
 			}
 		}
-		out := ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
+		threads := map[string]any{"has_unreads": true, "mention_count": 2}
+		if by := s.threadsByChannel(); by != nil {
+			threads["unread_count_by_channel"] = by // SetThreadsByChannel
+		}
+		out := ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", threads)
 		if av := s.activityV2(); av != nil { // activity_badges.go
 			out["activity_v2"] = av
 		}

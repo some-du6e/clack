@@ -619,7 +619,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 		}
 		m.Sections = append(m.Sections, ss)
 	}
-	m.threadsUnread = s.Threads.Unread
+	m.threadsUnread, m.threadMentions = b.core.ThreadsLink()
 	b.recount()
 	m.version++
 	a.Invalidate()
@@ -824,8 +824,9 @@ func (b *backend) handle(a *App, ev core.Event) {
 	case "activity_badges": // badge_counts_updated or a mark read (core activity_badges.go)
 		changed = b.activityBadgeMoved()
 	case "threads_state": // update_thread_state taken at once: the reply bars' Unread mark (core thread_unreads.go)
-		m.threadsUnread = b.core.ThreadsState().Unread
 		changed = true
+	case "thread_activity": // a channel's unread thread activity: its reply bars' Unread marks (core channel_thread_activity.go)
+		a.Invalidate()
 	case "presence":
 		for _, c := range m.Convs {
 			if c.Kind == "im" && (c.User == ev.UserID || contains(ev.Users, c.User)) {
@@ -924,6 +925,15 @@ func (b *backend) handle(a *App, ev core.Event) {
 		a.Invalidate()
 	case "list_prefs": // a conversation's list prefs: the composer's + reads can_upload_files (core/upload_gates.go)
 		a.Invalidate()
+	}
+	switch ev.Type {
+	case "threads_state", "counts", "marked", "activity_badges":
+		// the Threads link reads the threads' state and channel_badges'
+		// thread_mentions (core ThreadsLink)
+		if u, n := b.core.ThreadsLink(); u != m.threadsUnread || n != m.threadMentions {
+			m.threadsUnread, m.threadMentions = u, n
+			changed = true
+		}
 	}
 	if changed {
 		b.recount()
@@ -1130,8 +1140,13 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 // user's lane, which is for input), and the natives run in the order the
 // plugins' patches call them, or the order of the calls with none
 // (taut.DispatchSeq). A goroutine each (App.dispatch) could show two in
-// reverse. However late its JS runs, its native still shows it.
+// reverse. However late its JS runs, its native still shows it. Slick's
+// filters ask the toast it shows as it's about to go to the system, with
+// its title and body (sendNote's slickAllows), so their patch of the thunk
+// lets it by (_clackToast; slick js 30_main.js), where they ask any other
+// dispatch over its arguments.
 func (a *App) showNotification(args map[string]any, native func(context.Context, map[string]any) (any, error)) {
+	args["_clackToast"] = true
 	taut.DispatchSeq(context.Background(), a.Taut(), "showNotification", args, native, func(_ any, err error) {
 		if err != nil {
 			log.Printf("ui: showNotification: %v", err)

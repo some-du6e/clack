@@ -114,6 +114,9 @@ type Slick struct {
 	opts          Options
 	t             *taut.Taut
 	dir           string
+	// noteFilters counts the main halves' notifications.filter predicates
+	// (js 30_main.js tells it): with none, a toast asks no JS
+	noteFilters atomic.Int32
 
 	mu      sync.Mutex
 	cfg     *storedConfig
@@ -294,6 +297,7 @@ func (s *Slick) js() (*jsrt.Runtime, error) {
 	if s.rt != rt {
 		// a fresh runtime (the first, or after a crash): nothing is loaded in it
 		s.rt = rt
+		s.noteFilters.Store(0)
 		for _, p := range s.plugins {
 			p.inJS, p.mainInJS = false, false
 		}
