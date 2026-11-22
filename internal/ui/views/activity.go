@@ -181,10 +181,13 @@ type actRow struct {
 	// up while it is open (ActionsOverflowMenu's setActionsVisible)
 	btnTips [actBtnCount]popups.TipState
 	menu    interface{ Dismissed() bool }
-	ctx     struct{} // the row's context-menu press target
-	d       actDesc
-	built   bool
-	gen     uint64 // i18n.Gen d was described in
+	// clickLater is a click whose press came in the same frame, decided
+	// in the next (ControlledClick's marks are this frame's layout's)
+	clickLater bool
+	ctx        struct{} // the row's context-menu press target
+	d          actDesc
+	built      bool
+	gen        uint64 // i18n.Gen d was described in
 
 	// This frame's row context, read by the Slack boundaries
 	// (ActivityItem and its parts) through method expressions.
@@ -2300,7 +2303,17 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// marks the row read and doesn't open it (ControlledClick skips a
 	// BUTTON target)
 	onActions := v.agentActionsClicked(gtx, r)
+	late := r.clickLater
+	r.clickLater = false
 	clicked := r.click.Clicked(gtx) && !onActions
+	if h := r.click.History(); clicked && len(h) > 0 && h[len(h)-1].Start.Equal(gtx.Now) {
+		// pressed and released in this frame: what took the press (a
+		// pill, a link) marks it as this frame lays the row out, so the
+		// click is decided in the next
+		r.clickLater, clicked = true, false
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	clicked = clicked || late
 	if clicked && (pressedOn(&r.click, v.ctlPress) || pressedOn(&r.click, v.pillPress)) {
 		// ControlledClick: a link, mention, button or reaction pill took
 		// the click (content_menu.go)

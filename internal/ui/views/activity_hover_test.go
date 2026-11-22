@@ -92,7 +92,7 @@ func TestActivityHoverBarLikeSlack(t *testing.T) {
 	if mr.Dx() != 300 {
 		t.Errorf("the menu is %dpx wide, want 300", mr.Dx())
 	}
-	if mr.Min.Y < more.Max.Y+6 || mr.Min.Y > more.Max.Y+8 {
+	if mr.Min.Y < more.Max.Y+5 || mr.Min.Y > more.Max.Y+7 { // 6, the press's sub-pixel aside
 		t.Errorf("the menu's top at %d, want 6px under the button (bottom %d)", mr.Min.Y, more.Max.Y)
 	}
 	if mr.Max.X > more.Max.X+1 || mr.Max.X < more.Max.X-1 {

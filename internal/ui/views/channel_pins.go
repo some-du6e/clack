@@ -122,6 +122,9 @@ type ChannelPins struct {
 	list widget.List
 	kb   *vkList
 	rows map[string]*cpRow
+	// clicked are this frame's row clicks, opened after the layout
+	// (openClicked)
+	clicked []core.PinsTabItem
 
 	items  []core.PinsTabItem
 	loaded bool
@@ -269,6 +272,19 @@ func (v *ChannelPins) pointer() image.Point {
 	return image.Point{}
 }
 
+// openClicked opens the rows clicked this frame (update), but for one
+// whose press was a reaction pill's.
+func (v *ChannelPins) openClicked() {
+	cs := v.clicked
+	v.clicked = nil
+	for _, it := range cs {
+		if r := v.rows[it.Key()]; r != nil && pressedOn(&r.row, v.pillPress) {
+			continue
+		}
+		v.open(it)
+	}
+}
+
 func (v *ChannelPins) update(gtx C) {
 	for _, it := range v.items {
 		r := v.rows[it.Key()]
@@ -282,10 +298,11 @@ func (v *ChannelPins) update(gtx C) {
 				v.toolbar(it, i, r.tbRects[i])
 			}
 		}
-		// a reaction pill's click stops there; a link's opens the pin too
-		// (content_menu.go pressedOn)
-		if r.row.Clicked(gtx) && !took && !pressedOn(&r.row, v.pillPress) {
-			v.open(it)
+		// a reaction pill's click stops there, a link's opens the pin too
+		// (content_menu.go pressedOn): decided once the frame laid the
+		// pills out, which mark a press of theirs this frame
+		if r.row.Clicked(gtx) && !took {
+			v.clicked = append(v.clicked, it)
 		}
 		for {
 			ev, ok := gtx.Event(pointer.Filter{Target: &r.ctx, Kinds: pointer.Press})
@@ -347,6 +364,7 @@ func (v *ChannelPins) Layout(gtx C) D {
 	v.cf.frame()
 	v.refresh()
 	v.update(gtx)
+	defer v.openClicked()
 	sz := gtx.Constraints.Max
 	if v.preview {
 		fill(gtx, image.Rectangle{Max: sz}, v.p.Surface)

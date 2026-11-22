@@ -339,6 +339,8 @@ func (a *actReact) hovered() bool { return a.can && a.btn().Hovered() }
 // button is the pill's UnstyledButton around w: its click toggles the
 // group (a macOS Ctrl+click is the pill's context click, not a toggle),
 // it shows the hand, and it has the pill's ReactionTip; disabled, w alone.
+// w draws unclipped (a plugin's box-shadow ring is outside the pill, and
+// a Clickable clips what it lays out), with the button's area over it.
 func (a *actReact) button(gtx C, w layout.Widget) D {
 	if !a.can {
 		return w(gtx)
@@ -350,11 +352,13 @@ func (a *actReact) button(gtx C, w layout.Widget) D {
 	if h := btn.History(); len(h) > 0 && h[len(h)-1].Start.Equal(gtx.Now) {
 		a.b.pillPress = gtx.Now // Reaction's click stops there (pressedOn)
 	}
-	d := btn.Layout(gtx, func(gtx C) D {
-		d := w(gtx)
+	d := w(gtx)
+	g := gtx
+	g.Constraints = layout.Exact(d.Size)
+	btn.Layout(g, func(gtx C) D {
 		defer clip.Rect{Max: d.Size}.Push(gtx.Ops).Pop()
 		pointer.CursorPointer.Add(gtx.Ops)
-		return d
+		return D{Size: d.Size}
 	})
 	a.b.reactTip(gtx, a.key, a.m, a.g, d.Size)
 	return d
