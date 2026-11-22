@@ -22,14 +22,17 @@ package ui
 //
 // Each mode runs on fakeslack's thread header fixtures (#th-launch-notes,
 // a root with two replies; synthetic, nothing talks to Slack): no plugin;
-// a plugin wrapping both components (OwlMode's shape); and one whose
-// wrapper renders again on every mousedown and mouseup, so a new tree
-// from JS lands between each press and its release.
+// a plugin wrapping both components (OwlMode's shape); one whose wrapper
+// renders again on every mousedown and mouseup, so a new tree from JS
+// lands between each press and its release; and Taut's OwlMode itself
+// (TAUT_PLUGINS_DIR), which Karim runs.
 
 import (
 	"context"
 	"fmt"
 	"image"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +90,14 @@ func newTCEnv(t *testing.T, mode string) *tcEnv {
 	// the plugin runtime's state (and its plugin ids) stay in the test's
 	// own home
 	t.Setenv("CLACK_HOME", t.TempDir())
+	owl := ""
+	if mode == "owl" {
+		dir := os.Getenv("TAUT_PLUGINS_DIR")
+		if dir == "" {
+			t.Skip("TAUT_PLUGINS_DIR not set: flake-check's tb-click job builds Taut's OwlMode and runs this")
+		}
+		owl = filepath.Join(dir, "OwlMode.js")
+	}
 	sz := fakeslack.Small
 	sz.ThreadHeader = true
 	fs, err := fakeslack.Start(sz)
@@ -100,7 +111,11 @@ func newTCEnv(t *testing.T, mode string) *tcEnv {
 	for n := 0; n < 3; n++ {
 		fs.PostQuiet(r.ch, users[n%len(users)], fmt.Sprintf("a synthetic message after the root %d", n))
 	}
-	r.perfEnv = startEnv(t, fs, t.TempDir())
+	creds := fs.Creds()
+	if owl != "" {
+		creds.EnterpriseID = "E09V59WQY1E" // taut.HackClubIDs: OwlMode is hackClubOnly
+	}
+	r.perfEnv = startEnvCreds(t, fs, t.TempDir(), creds)
 	t.Cleanup(func() {
 		if r.a.data != nil {
 			r.a.data.stopTaut()
@@ -119,8 +134,13 @@ func newTCEnv(t *testing.T, mode string) *tcEnv {
 	tt := x.a.Taut()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	id := "TbClick" + strings.ToUpper(mode[:1]) + mode[1:]
-	got, err := tt.Import(ctx, []byte(tbClickPlugin(id, mode == "rerender")), "")
+	code := []byte(tbClickPlugin("TbClick"+strings.ToUpper(mode[:1])+mode[1:], mode == "rerender"))
+	if owl != "" { // Karim's: Taut's OwlMode, which patches both
+		if code, err = os.ReadFile(owl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := tt.Import(ctx, code, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +150,10 @@ func newTCEnv(t *testing.T, mode string) *tcEnv {
 	x.until("the bar's patches", 30*time.Second, func() bool {
 		return slackc.Patched("MessageActions") && slackc.Patched("MessageActionButtonReaction")
 	})
+	if owl != "" {
+		x.settle(300 * time.Millisecond)
+		return x
+	}
 	x.renders = func() int {
 		rt, err := tt.JS()
 		if err != nil || rt == nil {
@@ -243,22 +267,30 @@ func (x *tcEnv) noOverlay() bool {
 	return !x.openOverlay(func(Overlay) bool { return true })
 }
 
-// wantBar checks that l draws the bar over row ts with p on it.
+// wantBar checks that l draws row ts hovered, its bar shown, with p on
+// the bar or the row (a row that grew, a to-do's label added over it,
+// takes its bar along).
 func (x *tcEnv) wantBar(l toolbarLister, what, ts string, p image.Point) {
 	x.t.Helper()
 	tts, tb, ok := l.ToolbarRect()
+	var row image.Rectangle
+	for _, r := range l.RowRects() {
+		if r.TS == ts {
+			row = r.R
+		}
+	}
 	switch {
 	case !ok:
 		x.t.Errorf("%s: the bar went, the pointer still on it at %v (Slack's row stays hovered)", what, p)
 	case tts != ts:
 		x.t.Errorf("%s: the bar is over %q, want the row it was clicked on (%s)", what, tts, ts)
-	case !p.In(tb):
-		x.t.Errorf("%s: the bar %v moved off the pointer at %v", what, tb, p)
+	case !p.In(tb) && !p.In(row):
+		x.t.Errorf("%s: the bar %v and its row %v moved off the pointer at %v", what, tb, row, p)
 	}
 }
 
 func TestToolbarClicksKeepHover(t *testing.T) {
-	for _, mode := range []string{"native", "patched", "rerender"} {
+	for _, mode := range []string{"native", "patched", "rerender", "owl"} {
 		t.Run(mode, func(t *testing.T) { toolbarClicks(t, mode) })
 	}
 }
