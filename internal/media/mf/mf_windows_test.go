@@ -540,16 +540,22 @@ func TestMFSeekAndPause(t *testing.T) {
 	if d := seeked.Sub(t0); d > 2*time.Second {
 		t.Errorf("seeked %v after Seek(1.5 s), want within 2 s", d)
 	}
+	// drawn is its own flag: at is 0 when the frame is there at the first
+	// draw, within one tick of Windows' monotonic clock (0.5-15.6 ms):
+	// "light grey 0s after seeked" with {192 192 192} drawn failed as never
+	// drawn (fl1122-s-win 45031306261, flakes-1122b's push ci 45034453742;
+	// TestMFSeekAndPause's 1 in 25, flakes-1122)
 	var at time.Duration
 	var c color.RGBA
+	drawn := false
 	for time.Since(seeked) < 2*time.Second {
 		if c = r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
-			at = time.Since(seeked)
+			at, drawn = time.Since(seeked), true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if at == 0 {
+	if !drawn {
 		t.Errorf("no light grey within 2 s of seeked (Seek(1.5 s) %v before; seeked at %v): %v drawn", seeked.Sub(t0), sk.State.Pos, c)
 	} else if at > 250*time.Millisecond {
 		t.Errorf("light grey %v after seeked (Seek(1.5 s) %v before; seeked at %v), want within 250 ms", at, seeked.Sub(t0), sk.State.Pos)
