@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 	"gioui.org/font"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -58,8 +60,15 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	ch := fakeslack.FilesChannelID
-	fs.SetGalleryTabList(fakeslack.GalleryTab(fakeslack.FilesTabID, "files", "", "", ""))
+	// tabs_edit_test's conversation: its gallery's tabs past Messages
+	fs.Permissions = map[string][]string{ch: {core.PermManageChannelTabs}}
+	fs.SetGalleryTabList(
+		fakeslack.GalleryTab(fakeslack.FilesTabID, "files", "", "", ""),
+		fakeslack.GalleryTab(tbCanvasTab, "canvas", "", fakeslack.CanvasChannel, ""),
+		fakeslack.GalleryTab(tbListTab, "list", "", fakeslack.ListTodos, ""),
+	)
 	e := startEnv(t, fs, t.TempDir())
+	e.size = image.Pt(1400, 800)
 	e.waitReady()
 	c := e.a.data.core
 	c.SetRealtime(true)
@@ -68,9 +77,14 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	e.a.notify = rec
 	logs := captureLog(t)
 	e.openChannel(ch)
-	e.until("the conversation and its tabs", 15*time.Second, func() bool {
-		return e.channelView(ch) != nil && e.a.data.tabsDone[ch] && len(e.a.channelTabs(ch)) > 1
-	})
+	e.until("the conversation's view", 15*time.Second, func() bool { return e.channelView(ch) != nil })
+	if !e.untilSoft(20*time.Second, func() bool { return e.a.data.tabsDone[ch] && len(e.a.channelTabs(ch)) > 1 }) {
+		var keys []string
+		for _, tb := range e.a.channelTabs(ch) {
+			keys = append(keys, tb.key+":"+tb.typ)
+		}
+		t.Fatalf("setup: the conversation's tabs never came (tabsDone %v, tabs %q, route %q)", e.a.data.tabsDone[ch], keys, e.a.router.Current())
+	}
 	e.a.focused = true
 	sender := fs.UserIDs()[3]
 	line := func(ts string) string {
@@ -303,8 +317,19 @@ func TestReplyUnreadMarkInTheReplysFrame(t *testing.T) {
 		return ok1 && ok2
 	})
 	cv := e.channelView(ch)
+	// the threads' state with nothing unread first: the first reply's moves
+	// the channel's unread thread count from 0
+	fs.Push(map[string]any{"type": "update_thread_state", "has_unreads": false, "mention_count": 0,
+		"unread_count_by_channel": map[string]int{}, "mention_count_by_channel": map[string]int{}, "org_wide": c.IsEnterprise()})
+	e.until("no unread threads", 10*time.Second, func() bool { return c.ThreadsUnreadIn(ch) == 0 && !c.ThreadsState().Unread })
+	e.settle(100 * time.Millisecond)
+	feeds := fs.CallCount("activity.feed")
 	fs.PushFollowedReplyLive(ch, root1, replier, "a synthetic answer to the first", false)
-	e.until("the first reply's Unread mark", 20*time.Second, func() bool { _, u, _ := cv.ReplyBarState(root1); return u })
+	if !e.untilSoft(20*time.Second, func() bool { _, u, _ := cv.ReplyBarState(root1); return u }) {
+		n, u, ok := cv.ReplyBarState(root1)
+		t.Fatalf("setup: the first reply's Unread mark never came (its reply bar: %d avatars, unread %v, laid out %v; ThreadsUnreadIn %d; experiment %q; activity.feed calls %d, %d before the reply; the view is the one drawn: %v)",
+			n, u, ok, c.ThreadsUnreadIn(ch), c.Experiment("unread_thread_indication_in_replybar"), fs.CallCount("activity.feed"), feeds, e.channelView(ch) == cv)
+	}
 
 	evs, stop := c.Subscribe()
 	defer stop()
