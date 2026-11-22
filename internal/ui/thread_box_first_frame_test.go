@@ -63,7 +63,8 @@ func TestThreadReplyBoxWithFirstReplies(t *testing.T) {
 		e := threadsAuditEnv(t, false)
 		e.openChannel(ch)
 		e.settle(500 * time.Millisecond)
-		// the pane's bottom: where a thread taller than the pane has its box
+		// the pane's bottom: where a thread taller than the pane ends its
+		// box, scrolled to its end (the box is its list's last row)
 		e.a.OpenThread(ch, fakeslack.ThreadsAuditLong)
 		long := e.a.convoFor(ch, fakeslack.ThreadsAuditLong)
 		e.until("the long thread's box", 15*time.Second, func() bool {
@@ -74,6 +75,7 @@ func TestThreadReplyBoxWithFirstReplies(t *testing.T) {
 			_, _, root := tv.RowText(fakeslack.ThreadsAuditLong)
 			return root && tv.ContentHeight() == 0 && !replyBoxRect(long).Empty()
 		})
+		e.threadView(ch, fakeslack.ThreadsAuditLong).ScrollToBottom()
 		e.settle(300 * time.Millisecond)
 		bottom := long.compRect.Max.Y
 		e.a.OpenThread(ch, fakeslack.ThreadsAuditRead)

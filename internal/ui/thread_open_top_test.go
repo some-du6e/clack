@@ -431,9 +431,10 @@ func TestThreadsAuditOpenFromToast(t *testing.T) {
 // thread's; maybeSaveThreadScrollmarks runs as the pane unmounts). The
 // thread was marked read as it showed, to the newest reply it held, so the
 // new list starts at that reply (bracketed at the end of what it holds):
-// the first frame shows it, and no frame the root. The page after it is
-// held meanwhile: as it lands the reply box comes under Clack's list,
-// where Slack's input row is the list's own last row.
+// the first frame shows it, and no frame the root. Then the page past it
+// lands with the thread's end, and the reply box's row comes below the
+// replies, in the list: the reply stays drawn where it was (setKeys keeps
+// the rows), never under the box.
 func TestThreadsAuditOpenAgainAfterAnother(t *testing.T) {
 	x := openTopEnv(t)
 	x.root = fakeslack.ThreadOpenUnread
@@ -474,13 +475,9 @@ func TestThreadsAuditOpenAgainAfterAnother(t *testing.T) {
 			read = m.TS // the reply the pane marked it read to
 		}
 	}
-	// the page past it (loadPost) waits until the start has been looked at
-	// (a poll's read may come first: the next three wait)
-	x.fs.SetFault("conversations.replies", fakeslack.Fault{Delay: 2500 * time.Millisecond, Times: 3})
-	t.Cleanup(func() { x.fs.SetFault("conversations.replies", fakeslack.Fault{}) })
 	x.click(x.replyBar())
 	dl := time.Now().Add(20 * time.Second)
-	var since time.Time
+	var since, ended time.Time // the first frame that drew the thread; the first with its end in
 	for {
 		x.frame()
 		got := x.paneTops()
@@ -488,19 +485,129 @@ func TestThreadsAuditOpenAgainAfterAnother(t *testing.T) {
 			if _, ok := got[x.root]; ok {
 				t.Fatalf("opened again after another thread, the pane drew the thread from its root (%s); Slack's list mounts afresh at the reply it was read to", x.drawnTops(got))
 			}
-			if since.IsZero() {
-				if _, ok := got[read]; !ok {
-					t.Fatalf("opened again after another thread, the first frame that drew the thread drew it without %s, the reply it was read to, where Slack's new list starts (%s)", x.otLabel(read), x.drawnTops(got))
+			if _, ok := got[read]; !ok {
+				when := "the first frame that drew the thread"
+				if !since.IsZero() {
+					when = fmt.Sprintf("%v after the first frame, the end in %v", time.Since(since).Round(time.Millisecond), !ended.IsZero())
 				}
+				t.Fatalf("opened again after another thread, %s drew it without %s, the reply it was read to, where Slack's new list starts and keeps it (%s)", when, x.otLabel(read), x.drawnTops(got))
+			}
+			if since.IsZero() {
 				since = time.Now()
 			}
-			if time.Since(since) >= 1500*time.Millisecond {
+			if tv := x.threadView(x.ch, x.root); ended.IsZero() && tv != nil && !tv.HidesComposer() {
+				ended = time.Now() // the page past the slice brought the thread's end, and its reply box
+			}
+			if !ended.IsZero() && time.Since(ended) >= time.Second {
 				return
 			}
 		}
 		if time.Now().After(dl) {
-			t.Fatalf("opened again after another thread, the pane never drew the thread (%s)", x.drawnTops(got))
+			t.Fatalf("opened again after another thread, the pane never drew the thread with its end in (%s)", x.drawnTops(got))
 		}
 		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// toastAt clicks a reply's notification for x.root's thread (a fake
+// Notification Center, notify_mac.go): jumpToMessage, toThread with the
+// reply and highlightRoot.
+func (x *rfEnv) toastAt(reply string) {
+	x.t.Helper()
+	a := x.a
+	fc := newFakeCenter()
+	a.notify = newMacNotifier(fc)
+	n := a.messageNote(x.ch, reply, x.root)
+	n.Title, n.Body = "New reply in #open-top", "A reply"
+	_ = a.notify.(noteNotifier).NotifyNote(n)
+	u := fc.waitShown(x.t, a, 1)
+	fc.respond(a, desktop.UserNotificationEvent{ID: u.ID, Kind: "click", Index: -1})
+}
+
+// TestThreadsAuditOpenAgainAfterJump: a reply's notification opens a
+// followed thread at the reply (Slack's jumpToThreadReply sets the thread
+// metadata's startTs and highlightTs to it), and the pane reads the thread
+// to its end; another thread opens in the pane, then the first again from
+// its reply bar (toThread with no highlightTs: jumpToThreadReply sets
+// nothing). The metadata's startTs is still the reply, which only the
+// pane's unmount clears (clearStartTs), so the new list starts at the
+// reply, not at the read position. getThreadStartPosition gives it no
+// offset: it isn't past pendingBoundaryLastRead (no initialLastRead now,
+// the thread read), so it is at the top; its flash ended with the first
+// list (MessageBackground's unmount clears the highlight).
+func TestThreadsAuditOpenAgainAfterJump(t *testing.T) {
+	x := openTopEnv(t)
+	x.root = fakeslack.ThreadOpenUnread
+	reply := fakeslack.ThreadOpenReply(x.root, 59) // reply 60, past the last read (50)
+	x.toastAt(reply)
+	x.paneStart("the reply's notification", otStart{key: reply, y: x.px(100)}, 500*time.Millisecond)
+	last := fakeslack.ThreadOpenReply(x.root, fakeslack.ThreadOpenReplies-1)
+	x.until("the thread marked read to its end", 10*time.Second, func() bool {
+		for _, m := range x.fs.ThreadOpenMarks() {
+			if m.ThreadTS == x.root && m.TS == last {
+				return true // the slice around the reply reaches the end
+			}
+		}
+		return false
+	})
+	x.until("the reply's flash over", 10*time.Second, func() bool {
+		tv := x.threadView(x.ch, x.root)
+		return tv != nil && tv.Highlighted() == ""
+	})
+	first := x.root
+	x.root = fakeslack.ThreadOpenEarly
+	x.a.OpenThread(x.ch, x.root)
+	x.paneStart("the other thread", otStart{key: fakeslack.ThreadOpenReply(x.root, 10), y: x.px(100)}, 500*time.Millisecond)
+	x.root = first
+	x.click(x.replyBar())
+	x.paneStart("opened again from its reply bar", otStart{key: reply, y: 0}, 1500*time.Millisecond)
+	if h := x.threadView(x.ch, x.root).Highlighted(); h != "" {
+		t.Errorf("opened again, the pane flashes %s; the reply's flash ended with the first list", x.otLabel(h))
+	}
+}
+
+// TestThreadsAuditJumpFlashAfterSwitch: a reply's notification opens a
+// thread at the reply, and another thread opens in the pane before the
+// reply could be placed (its replies' reads held); then the first again
+// from its reply bar. No row drew the reply, so nothing cleared the thread
+// metadata's highlightTs, and the new list's row for it flashes from the
+// start (MessageBackground's componentDidMount): the reply highlighted as
+// the pane draws it, more than the flash's 3 s after the jump.
+func TestThreadsAuditJumpFlashAfterSwitch(t *testing.T) {
+	x := openTopEnv(t)
+	x.root = fakeslack.ThreadOpenUnread
+	reply := fakeslack.ThreadOpenReply(x.root, 59)
+	// the reads around the reply wait (a poll's read may come first: the
+	// next three wait)
+	x.fs.SetFault("conversations.replies", fakeslack.Fault{Delay: 4 * time.Second, Times: 3})
+	t.Cleanup(func() { x.fs.SetFault("conversations.replies", fakeslack.Fault{}) })
+	x.toastAt(reply)
+	jumped := time.Now()
+	x.until("the pane at the reply, loading", 10*time.Second, func() bool {
+		s := x.a.secondary
+		tv := x.threadView(x.ch, x.root)
+		return s.kind == secThread && s.ts == x.root && tv != nil && tv.JumpPending() == reply
+	})
+	x.frame()
+	if got := x.paneTops(); len(got) > 0 {
+		t.Fatalf("the pane drew the thread while its reads were held (%s)", x.drawnTops(got))
+	}
+	first := x.root
+	x.root = fakeslack.ThreadOpenEarly
+	x.a.OpenThread(x.ch, x.root)
+	x.paneStart("the other thread", otStart{key: fakeslack.ThreadOpenReply(x.root, 10), y: x.px(100)}, 500*time.Millisecond)
+	// past the flash's 3 s and the held reads' 4 s
+	for time.Since(jumped) < 5*time.Second {
+		x.settle(200 * time.Millisecond)
+	}
+	x.root = first
+	x.click(x.replyBar())
+	x.paneStart("opened again from its reply bar", otStart{key: reply, y: x.px(100)}, 300*time.Millisecond)
+	if h := x.threadView(x.ch, x.root).Highlighted(); h != reply {
+		t.Fatalf("opened again, the reply no row drew before flashes %q, want %s from the start as the new list draws it", h, x.otLabel(reply))
+	}
+	x.settle(time.Second)
+	if h := x.threadView(x.ch, x.root).Highlighted(); h != reply {
+		t.Errorf("a second on, the reply's flash is over (%q): it ran from the jump, not from its row's mount", h)
 	}
 }
