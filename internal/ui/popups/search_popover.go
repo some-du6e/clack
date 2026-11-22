@@ -2867,7 +2867,9 @@ func (w *srRunWriter) done(h Host, m *core.Message) []srRun {
 		}
 	}
 	if n := len(w.out); n > 0 && w.out[n-1].mention == srMentionNone {
-		w.out[n-1].text = strings.TrimRight(w.out[n-1].text, "\n")
+		if w.out[n-1].text = strings.TrimRight(w.out[n-1].text, "\n"); w.out[n-1].text == "" {
+			w.out = w.out[:n-1]
+		}
 	}
 	return w.out
 }
