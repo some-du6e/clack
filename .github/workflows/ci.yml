@@ -393,10 +393,12 @@ jobs:
         run: go test -count=1 -v -run 'TestCaptionHit|TestHiddenTitleBarOption|TestTitlebarDoubleClickAction' gioui.org/app
       # Gio patch 48: a run of clicks counts by the platform's rule, as
       # Chromium's does (500 ms and 2 px here; the Windows and macOS rules
-      # with their settings stood in), not a fixed 200 ms
+      # with their settings stood in), not a fixed 200 ms, for the window
+      # whatever widget a press lands on; an Editor's double and triple
+      # clicks select as Blink's do
       - name: Gio click counts (vendored gioui.org/gesture)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestMouseClicks|TestClackClick' gioui.org/gesture
+        run: go test -count=1 -v -run 'TestMouseClicks|TestClackClick|TestClackEditor' gioui.org/gesture gioui.org/widget
       # the X11 path on a real X server: python-xlib plays a file manager's
       # XDND source against a Gio window (enter, positions, drop, leave).
       # Gio patch 35: on the X11 window, a frame only Window.Invalidate

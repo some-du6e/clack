@@ -67,7 +67,10 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_startup.go`, `io/input/clack_follow.go`,
 `io/input/clack_follow_test.go`,
 `internal/clickrule/clickrule.go`, `gesture/clack_dblclick*.go`,
-`gesture/clack_clickrun_test.go`, `gesture/gesture_test.go`,
+`gesture/clack_clickrun_test.go`, `gesture/clack_windowcount_test.go`,
+`gesture/gesture_test.go`, `internal/clickrule/run.go`,
+`io/input/clack_clicks.go`, `io/input/pointer_test.go`,
+`widget/clack_words.go`, `widget/clack_editor_clicks*_test.go`,
 `app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
 `app/clack_titlebar_darwin_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
@@ -2413,11 +2416,15 @@ and `TestCaretBlinkWatcherX11`. Not in `UPSTREAM.patch`.
 ## 48. gesture, io/pointer, app: a run of clicks counts by the platform's rule, as Chromium's does
 
 `internal/clickrule/clickrule.go` (new: `Rule`, `Tap`, `PxPerDp`),
-`gesture/gesture.go` (`Click`, `Click.Update`), `gesture/clack_dblclick.go`
-(`ClickRun`, `DoubleClickTime`), `io/pointer/pointer.go` (`Event.Clicks`),
-`app/os_macos.go` (`gio_onMouse`), `app/window.go` (the window's px per dp
-for the tap rule), `app/clack_dblclick_windows.go`,
-`app/internal/windows/clack_dblclick.go`, `app/clack_dblclick_macos.go`.
+`internal/clickrule/run.go` (new: `Run`, the counting), `io/input/clack_clicks.go`
+(new: `Router.countClick`) with a `clicks` field and its call in `Queue` in
+`io/input/router.go`, `gesture/gesture.go` (`Click`, `Click.Update`),
+`gesture/clack_dblclick.go` (`ClickRun`, `DoubleClickTime`),
+`io/pointer/pointer.go` (`Event.Clicks`), `app/os_macos.go` (`gio_onMouse`),
+`app/window.go` (the window's px per dp for the tap rule),
+`app/clack_dblclick_windows.go`, `app/internal/windows/clack_dblclick.go`,
+`app/clack_dblclick_macos.go`, `widget/editor.go` (multi-clicks, drags) with
+`widget/clack_words.go` (new).
 
 Upstream makes a press the next click of a run (`NumClicks` 2, 3, …) when
 it comes less than a fixed 200 ms after the last press, wherever it lands.
@@ -2474,8 +2481,34 @@ on a word in the composer placed the caret (composer-plus-dblclick review,
 px per dp in its router's values (patch 15, `clickrule.PxPerDp`); a router
 without one (a test's) counts 1.
 
-`ClickRun` is the counting, exported for widgets that read their own
-pointer events: `Click` gives it its presses, releases, cancels, moves and
+The count is the window's, whatever widget each press lands on. Blink
+takes a press's count from the platform's event
+(`EventHandler::HandleMousePressEvent`: `SetClickCount(mouse_event.click_count)`)
+and resets it for no element, and the platform counts by time and place
+alone (Windows' and X11's counters are process-wide statics, AppKit's per
+window). So the router keeps the window's run (`clickrule.Run`, fed every
+pointer event `Queue` gets, not the state replays) and stamps every press
+with its count in `pointer.Event.Clicks`, and every release with its
+press's, as AppKit does on macOS, where the backend's count stays. The
+first version counted per `Click`: on Linux and Windows the composer's +
+pressed, its menu's scrim pressed on the same spot, then the + again inside
+the double-click time made the + see a double click and open the file
+chooser, where Slack sees a triple click (detail 3, no dblclick) and only
+opens the menu again (composer-plus-dblclick review, 2026-11-22).
+`Click` no longer asks for `Move` and `Drag` on Windows: the router's run
+sees every move. A press of other buttons than the last starts a new run
+(`Run` keeps the buttons): Linux's `ui::MouseEvent::IsRepeatedClickEvent`
+compares the presses' flags, the buttons down with the modifiers, and
+Windows' `WebMouseEventBuilder` counts on only while `result.button ==
+s_last_click_button`. The run used to count any button's press, so a
+right (middle, back) click on a spot then a left click there was the left
+button's double click: the composer's + opened its file chooser, a column
+edge reset, a plugin element got a dblclick and message text selected a
+word (dblclick-relatives review, 2026-11-22).
+
+`ClickRun` gives the count to widgets that read their own pointer events
+(the window's, or for a press that comes without one its own by the
+platform's rule): `Click` gives it its presses, releases, cancels and
 leaves, and a widget that drags (Clack's column resizer, the video
 picture-in-picture's handles) also gives it its drags (`Dragged`). A drag
 past the platform's slop from the press (a tap's: 15 dp) ends the run, so
@@ -2485,6 +2518,37 @@ when the pointer leaves its box, Linux and AppKit count only a press near
 the last). The handles' first version counted any press within the
 double-click time of the last as a double click, and with a slow setting a
 handle taken again after a drag snapped back to its default width.
+
+An `Editor`'s clicks select as Blink's `SelectionController` does in an
+`<input>` or a `<textarea>` (`widget/clack_words.go`): 2 the word, its
+punctuation a word of its own, a run of spaces, or another character with
+its marks: the segment of ICU's word break iterator with Chromium's rules
+(`clackWordSegment`, UAX #29's WB3 to WB16 from `third_party/icu`'s
+`source/data/brkitr/rules/word.txt`): letters, digits, marks and
+connectors make words, joined over one apostrophe, curly quote, middle dot
+or other MidLetter or MidNumLet mark between letters and one period,
+comma, semicolon, apostrophe or other MidNum mark between digits. A period
+between letters doesn't join them (Chromium's `patches/wordbrk.patch`
+moves the full stops from MidNumLet to MidNum "so that FQDN labels can be
+split at '.'"), nor does a colon (ICU takes it out of MidLetter; Blink's
+`WordBreakSwedish`: "k:a" is two words in English): `fmt.Println`,
+`TODO:fix` and `www.google.com` are words apart. The first version joined
+both, by UAX #29's defaults (dblclick-relatives review). Kana and
+ideographs make runs of their own; ICU's dictionaries split those further
+and Gio has none. On Windows a word takes the whitespace after it
+(`settings.json5` `selectTrailingWhitespaceEnabled`). `ClackWordRange` is
+exported for Clack's rich text, which selects by the same rules. After the
+last word of a line that wraps (the caret at the line's end, or past it,
+where Gio puts the caret at the next line's start), a double click takes
+that word, as Blink's `ChooseWordSide` picks `kPreviousWordIfOnBoundary`
+at the end of a line that isn't its paragraph's (`selection_adjuster.cc`:
+"If the caret is after the last word in a soft-wrapped line ... select
+that last word"); it took the next line's first word.
+3 and more the paragraph with its break (`kParagraph`, "Include the
+paragraph break"), not the visual line. A drag after either extends by that
+granule, keeping the first (`ExtendSelectionAsDirectional`). Upstream
+selected the non-space run around the caret, then the visual line, and
+stopped the drag.
 
 Presses at the same time still count on: Chromium skips those as one
 native event processed twice, but in Gio they're a test's, and upstream
@@ -2500,7 +2564,14 @@ again after the setting changes), `TestClackClickOSCount`,
 single, a mouse click after a tap), `TestClackClickTapScale` (the router's
 px per dp), `TestClackClickRunDrag` (jitter inside the slop, a drag past
 it, AppKit's count after a drag, a tap's drag); in Clack,
-`TestResizerDragEndsDoubleClick` and `TestPipDragEndsDoubleClick`; on real
+`TestResizerDragEndsDoubleClick` and `TestPipDragEndsDoubleClick`;
+`TestClackClickWindowCount` (+, scrim, + on one spot: 1, 2, 3);
+`TestClackClickRunButtons` (right, middle or back, then left: a single;
+left, right, left: two singles); `widget` `TestClackEditorDoubleClickWord`,
+`TestClackEditorDoubleClickDragByWord`, `TestClackEditorTripleClickParagraph`,
+`TestClackEditorTrailingSpaceOnWindows`, `TestClackWordRangeLikeChromium`,
+`TestClackEditorDoubleClickWrappedLineEnd`;
+`io/input`'s `TestPartialEvent` expects its presses' count; on real
 windows, `TestClackDoubleClickWindows` (SendInput clicks 400 ms apart at
 `SetDoubleClickTime` 500 and 300; `CLACK_WINDOWS_DBLCLICK_TESTS`, ci's
 windows-applog job) and `TestClackClickCountMac` (AppKit's counts through

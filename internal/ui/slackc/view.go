@@ -90,6 +90,10 @@ type View struct {
 		t int64
 		n int
 	}
+	// clickDetail is the click (or dblclick) being dispatched's detail: the
+	// mouse click's count, 0 for a keyboard's (Blink's simulated click)
+	clickDetail int
+
 	dragK    int64
 	rangeK   int64
 	chainBuf []*box

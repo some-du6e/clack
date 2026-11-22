@@ -4217,7 +4217,7 @@ jobs:
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - name: "the composer's double clicks and open +"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
-        run: go test -v -count=$COUNT -timeout 30m -run '^(TestPlusDoubleClick.*|TestEditorDoubleClickAt400ms|TestPlusOpenState)$' ./internal/ui/composer
+        run: go test -v -count=$COUNT -timeout 30m -run '^(TestPlusDoubleClick.*|TestEditorDoubleClickAt400ms|TestPlusOpenState|TestPlusAfterScrimClickIsNoDoubleClick|TestEditorTripleClickTakesParagraphBreak|TestEditorTrailingSpaceOnWindows|TestAttBrowserDoubleClickNeedsOneEntry)$' ./internal/ui/composer
       # a drag ends the click run on the column edges and the mini player's
       # handles (gesture.ClickRun), and a null can_upload_files allows
       - name: "the handles' double clicks after a drag, the null upload pref"
@@ -4225,8 +4225,29 @@ jobs:
         run: |
           rc=0
           go test -v -count=$COUNT -timeout 30m -run '^(TestResizerDragEndsDoubleClick|TestPipDragEndsDoubleClick)$' ./internal/ui || rc=1
-          go test -v -count=$COUNT -timeout 10m -run '^TestSlackConnectNullPrefAllowsUploads$' ./internal/core || rc=1
+          go test -v -count=$COUNT -timeout 10m -run '^(TestSlackConnectNullPrefAllowsUploads|TestSlackConnectGateAllocs)$' ./internal/core || rc=1
           exit $rc
+      # clicks in text select as Blink's SelectionController does: a
+      # message's and a rich text view's words (Chromium's ICU word
+      # breaks), paragraphs, drags after a double press, taps, Windows'
+      # trailing whitespace, an emoji whole, a wrapped line's last word; a
+      # link acts on every click; a plugin click's detail is the window's
+      # count, a keyboard's 0
+      - name: "selection by click count (messages, richview, plugin clicks)"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          rc=0
+          go test -v -count=$COUNT -timeout 15m -run '^(TestView(DoubleClickByPlatformTime|TripleClickTakesParagraphBreak|DoubleClickDragExtendsByWord|DoubleClickOnSpaceSelectsIt|TouchDoubleTapSelectsNoWord|FourthClickIsSingleOnLinux|TrailingSpaceOnWindows|DoubleClickEmojiRightHalf|DoubleClickWrappedLineEnd|LinkOpensOnEveryClick)|TestWordRangeLikeChromium)$' ./internal/ui/richview || rc=1
+          go test -v -count=$COUNT -timeout 10m -run '^(TestPluginClickDetailIsWindowCount|TestPluginKeyboardClickDetailZero)$' ./internal/ui/slackc || rc=1
+          go test -v -count=$COUNT -timeout 15m -run '^TestSelection(DoubleClickByPlatformTime|TripleClickTakesParagraphBreak|DoubleClickDragExtendsByWord|DoubleClickOnSpaceSelectsIt|TouchDoubleTapSelectsNoWord|FourthClickIsSingleOnLinux|TrailingSpaceOnWindows|WordsLikeChromium)$' ./internal/ui/messages || rc=1
+          exit $rc
+      # an Editor's double and triple clicks, everywhere
+      - name: "Gio Editor's multi-clicks"
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          go test -v -count=$COUNT -timeout 10m -run '^(TestClackEditor|TestClackWordRange)' gioui.org/widget
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

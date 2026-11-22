@@ -1,12 +1,12 @@
 package richview
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/color"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"gioui.org/f32"
@@ -88,9 +88,16 @@ type View struct {
 	selA     int32
 	selB     int32
 	focused  bool
-	lastTap  time.Duration
-	tapCount int
+	// clicks counts the view's presses (the window's count, Gio patch 48;
+	// gio_patch48.go), tapCount the last press's, and gran the granule it
+	// selected by (a double click's word, a triple's paragraph), granA and
+	// granB that first granule, which a drag extends by gran
+	clicks       clickCounter
+	tapCount     int
+	gran         uint8
+	granA, granB int32
 	// clicks on a link target sent to the DOM (clickLink): its click count
+	// on stock Gio, which has no window count
 	clickT   int16
 	clickAt  time.Duration
 	clickN   int
@@ -184,6 +191,12 @@ func (v *View) WordAt(off int32) (int32, int32) {
 	v.selA, v.selB = sa, sb
 	return a, b
 }
+
+// WordAtPoint returns what a double click at p selects (the message
+// list's): the image or emoji under p whole, else the word around p's
+// offset, the last word of a line that wraps when p is at or past its end
+// (wordAtPoint).
+func (v *View) WordAtPoint(p f32.Point) (int32, int32) { return v.wordAtPoint(p) }
 
 // LineAt returns the line (paragraph) range around off (triple-click).
 func (v *View) LineAt(off int32) (int32, int32) {
@@ -1130,35 +1143,7 @@ func (v *View) offsetAt(p f32.Point) int32 {
 		return 0
 	}
 	x, y := p.X, int(p.Y)
-	best := -1
-	bestD := 1 << 30
-	for i, ln := range lines {
-		if ln.f1 <= ln.f0 {
-			continue
-		}
-		var dy int
-		switch {
-		case y < ln.top:
-			dy = ln.top - y
-		case y >= ln.bot:
-			dy = y - ln.bot + 1
-		}
-		// Prefer lines whose horizontal span contains x (side-by-side fields).
-		f0, f1 := &v.d.frags[ln.f0], &v.d.frags[ln.f1-1]
-		dx := 0
-		if x < f0.x {
-			dx = int(f0.x - x)
-		} else if x > f1.x+f1.w {
-			dx = int(x - f1.x - f1.w)
-		}
-		d := dy*4 + dx/8
-		if dy == 0 {
-			d = dx / 8
-		}
-		if d < bestD {
-			bestD, best = d, i
-		}
-	}
+	best := v.lineAt(p)
 	if best < 0 {
 		return 0
 	}
@@ -1188,6 +1173,42 @@ func (v *View) offsetAt(p f32.Point) int32 {
 	return v.d.frags[ln.f1-1].p1
 }
 
+// lineAt is the line a point is on, or nearest to (-1 without lines).
+func (v *View) lineAt(p f32.Point) int {
+	lines := v.d.lines
+	x, y := p.X, int(p.Y)
+	best := -1
+	bestD := 1 << 30
+	for i, ln := range lines {
+		if ln.f1 <= ln.f0 {
+			continue
+		}
+		var dy int
+		switch {
+		case y < ln.top:
+			dy = ln.top - y
+		case y >= ln.bot:
+			dy = y - ln.bot + 1
+		}
+		// Prefer lines whose horizontal span contains x (side-by-side fields).
+		f0, f1 := &v.d.frags[ln.f0], &v.d.frags[ln.f1-1]
+		dx := 0
+		if x < f0.x {
+			dx = int(f0.x - x)
+		} else if x > f1.x+f1.w {
+			dx = int(x - f1.x - f1.w)
+		}
+		d := dy*4 + dx/8
+		if dy == 0 {
+			d = dx / 8
+		}
+		if d < bestD {
+			bestD, best = d, i
+		}
+	}
+	return best
+}
+
 func bytesForRunes(s string, r int) int {
 	b := 0
 	for i := 0; i < r && b < len(s); i++ {
@@ -1215,26 +1236,86 @@ func (v *View) targetAt(p f32.Point) int16 {
 	return -1
 }
 
+// selectWord selects what a double click at off does (HandleDoubleClick):
+// an image's or emoji's frag whole, else the word, whitespace or
+// character there (wordRange, words.go).
 func (v *View) selectWord(off int32) {
-	pl := v.d.plain
-	off = min(max(off, 0), int32(len(pl)))
-	a, b := int(off), int(off)
-	isW := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '\'' }
-	for a > 0 {
-		r, sz := utf8.DecodeLastRune(pl[:a])
-		if !isW(r) {
-			break
+	off = min(max(off, 0), int32(len(v.d.plain)))
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.kind != fText && f.p0 >= 0 && f.p0 <= off && off < f.p1 {
+			v.selA, v.selB = f.p0, f.p1
+			return
 		}
-		a -= sz
 	}
-	for b < len(pl) {
-		r, sz := utf8.DecodeRune(pl[b:])
-		if !isW(r) {
-			break
-		}
-		b += sz
-	}
+	a, b := wordRange(v.d.plain, int(off))
 	v.selA, v.selB = int32(a), int32(b)
+}
+
+// wordAtPoint is what a double click at p selects: the image or emoji
+// under p whole, whichever half the press lands on (Blink's word around
+// an image takes the image; the right half's caret offset is after it),
+// else the word around p's offset (selectWord), the line's last word when
+// p is after the last word of a line that wraps (lineEndWord).
+func (v *View) wordAtPoint(p f32.Point) (int32, int32) {
+	pt := image.Pt(int(p.X), int(p.Y))
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.kind != fText && f.p0 >= 0 && f.p1 > f.p0 && pt.In(fragRect(f)) {
+			return f.p0, f.p1
+		}
+	}
+	off := v.offsetAt(p)
+	if w, ok := v.lineEndWord(p, off); ok {
+		off = w
+	}
+	sa, sb := v.selA, v.selB
+	v.selectWord(off)
+	a, b := v.selA, v.selB
+	v.selA, v.selB = sa, sb
+	return a, b
+}
+
+// lineEndWord is the offset whose word a double click at p takes when p's
+// offset off is after the last word of a line that wraps (its paragraph
+// goes on on the next line): that word's last byte, as Blink's
+// ChooseWordSide picks kPreviousWordIfOnBoundary at the end of a line
+// that isn't its paragraph's ("If the caret is after the last word in a
+// soft-wrapped line ... select that last word", selection_adjuster.cc),
+// not the space the line wraps at nor the next line's first word.
+func (v *View) lineEndWord(p f32.Point, off int32) (int32, bool) {
+	li := v.lineAt(p)
+	if li < 0 || li+1 >= len(v.d.lines) {
+		return 0, false
+	}
+	textEnd := func(ln lineInfo) int32 {
+		for fi := ln.f1 - 1; fi >= ln.f0; fi-- {
+			if f := &v.d.frags[fi]; f.p0 >= 0 {
+				return f.p1
+			}
+		}
+		return -1
+	}
+	textStart := func(ln lineInfo) int32 {
+		for fi := ln.f0; fi < ln.f1; fi++ {
+			if f := &v.d.frags[fi]; f.p0 >= 0 {
+				return f.p0
+			}
+		}
+		return -1
+	}
+	ln, next := v.d.lines[li], v.d.lines[li+1]
+	start, end, nextStart := textStart(ln), textEnd(ln), textStart(next)
+	pl := v.d.plain
+	if start < 0 || end <= start || nextStart < end || int(nextStart) > len(pl) || bytes.IndexByte(pl[end:nextStart], '\n') >= 0 {
+		return 0, false // not a soft wrap: the line ends its paragraph
+	}
+	wordEnd := end
+	for wordEnd > start && (pl[wordEnd-1] == ' ' || pl[wordEnd-1] == '\t') {
+		wordEnd--
+	}
+	if wordEnd == start || off < wordEnd {
+		return 0, false
+	}
+	return wordEnd - 1, true
 }
 
 func (v *View) selectLine(off int32) {
@@ -1244,13 +1325,7 @@ func (v *View) selectLine(off int32) {
 		v.selA, v.selB = a, b
 		return
 	}
-	a, b := int(off), int(off)
-	for a > 0 && pl[a-1] != '\n' {
-		a--
-	}
-	for b < len(pl) && pl[b] != '\n' {
-		b++
-	}
+	a, b := paragraphRange(pl, int(off)) // with its break (words.go)
 	v.selA, v.selB = int32(a), int32(b)
 }
 
@@ -1362,22 +1437,27 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 					continue
 				}
 				off := v.offsetAt(e.Position)
-				if e.Time-v.lastTap < 400*time.Millisecond {
-					v.tapCount++
-				} else {
+				// the press's count (the window's, Gio patch 48); taps take
+				// no multi-click selection in text that isn't editable
+				// (Blink's mouse_down_allows_multi_click_)
+				v.tapCount = v.clicks.press(gtx.Source, e)
+				if e.Source != pointer.Mouse {
 					v.tapCount = 1
 				}
-				v.lastTap = e.Time
+				v.gran = granChar
 				switch {
 				case v.tapCount == 2:
-					v.selectWord(off)
+					v.selA, v.selB = v.wordAtPoint(e.Position)
+					v.gran = granWord
 				case v.tapCount >= 3:
 					v.selectLine(off)
+					v.gran = granParagraph
 				case e.Modifiers.Contain(key.ModShift) && v.HasSelection():
 					v.selB = off
 				default:
 					v.selA, v.selB = off, off
 				}
+				v.granA, v.granB = v.selA, v.selB
 				v.dragging = true
 				gtx.Execute(key.FocusCmd{Tag: v})
 			case pointer.Drag:
@@ -1387,7 +1467,11 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if d := e.Position.Sub(v.pressPos); d.X*d.X+d.Y*d.Y > 9 {
 					v.moved = true
 				}
-				if v.moved && v.tapCount == 1 && !v.External {
+				switch {
+				case !v.moved || v.External:
+				case v.gran != granChar:
+					v.extendBy(v.offsetAt(e.Position))
+				case v.tapCount == 1:
 					v.selB = v.offsetAt(e.Position)
 				}
 			case pointer.Release:
@@ -1428,10 +1512,13 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if !wasDrag {
 					continue
 				}
-				if !v.moved && v.tapCount == 1 {
-					if !v.External {
+				if !v.moved {
+					if v.tapCount == 1 && !v.External {
 						v.selA, v.selB = 0, 0
 					}
+					// every click acts, the second of a double click too
+					// (Blink's click: a link's default handler doesn't look
+					// at the detail)
 					if t := v.targetAt(e.Position); t >= 0 && t == v.press && h != nil {
 						anchor := image.Pt(int(e.Position.X), int(e.Position.Y)).Add(v.Origin)
 						if !v.clickLink(gtx, t, anchor, e, h) {
@@ -1758,15 +1845,20 @@ func (v *View) clickLink(gtx layout.Context, t int16, anchor image.Point, e poin
 	l.Rect = v.targetBounds(t).Add(v.Origin)
 	l.Text = text
 	l.Key = fmt.Sprintf("%p/%d/%s%s", v, t, tg.id, tg.url)
-	// the click count Slack's event carries (detail), within the
-	// platform's double-click time (gio_patch48.go)
+	// the click count Slack's event carries (detail): the window's (Gio
+	// patch 48, gio_patch48.go), on stock Gio this target's within the
+	// double-click time
 	if t == v.clickT && e.Time-v.clickAt <= doubleClickTime() {
 		v.clickN++
 	} else {
 		v.clickN = 1
 	}
 	v.clickT, v.clickAt = t, e.Time
-	return slackc.ClickLink(l, v.clickN, e.Modifiers, gtx.Metric.PxPerDp, func() { v.activateTarget(&tg, text, anchor, h) })
+	n := clicksOf(e)
+	if n <= 0 {
+		n = v.clickN
+	}
+	return slackc.ClickLink(l, n, e.Modifiers, gtx.Metric.PxPerDp, func() { v.activateTarget(&tg, text, anchor, h) })
 }
 
 func (v *View) activate(t int16, anchor image.Point, h Handler) {

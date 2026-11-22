@@ -263,15 +263,15 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	media := func() {
 		if a.Image != nil && !a.Legacy {
 			cy += l.dp(6)
-			// AttachmentImage's <a href>: externalSourceUrl || url
-			tg := l.d.addTarget(target{kind: tImage, img: a.Image, href: firstNonEmpty(externalSourceURL(a), a.Image.URL)})
+			tg := l.d.addTarget(target{kind: tImage, img: a.Image})
 			row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
 			l.imageControls(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r) // AttachmentImage (animated.go)
 		} else if a.Image != nil && mediaExpanded() {
 			// AttachmentMedia (BAnD): getAdjustedImageDimensions at max
 			// 360x360, floored; 5px over the image container
 			cy += l.dp(5)
-			tg := l.d.addTarget(target{kind: tImage, img: a.Image})
+			// AttachmentImage's <a href>: externalSourceUrl || url
+			tg := l.d.addTarget(target{kind: tImage, img: a.Image, href: firstNonEmpty(externalSourceURL(a), a.Image.URL)})
 			iw, ih := adjustedDims(a.Image.W, a.Image.H, 360, 360)
 			if a.Image.W <= 0 || a.Image.H <= 0 {
 				row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))

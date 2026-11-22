@@ -35,14 +35,14 @@ func (e *Editor) HitPos(pt image.Point) int {
 // WordRange is the word around pos (a double click's selection).
 func (e *Editor) WordRange(pos int) (lo, hi int) {
 	e.init()
-	return edWordAt(e.doc, min(max(pos, 0), e.doc.Len()))
+	return edClickWord(e.doc, min(max(pos, 0), e.doc.Len()))
 }
 
-// LineRange is the line around pos (a triple click's selection).
+// LineRange is the paragraph around pos and its break (a triple click's
+// selection).
 func (e *Editor) LineRange(pos int) (lo, hi int) {
 	e.init()
-	l := e.doc.LineOf(min(max(pos, 0), e.doc.Len()))
-	return e.doc.LineStart(l), e.doc.LineEnd(l)
+	return edClickParagraph(e.doc, min(max(pos, 0), e.doc.Len()))
 }
 
 // SeedClick tells the editor about a click its host handled before the
