@@ -198,7 +198,7 @@ func (r *Row) keyAction(gtx layout.Context, t *tile, s richview.MediaSlot, more 
 	if more {
 		win := image.Rectangle{}
 		if full, _, ok := gtx.Source.AreaBounds(t); ok {
-			win = btn.Sub(s.At).Add(full.Min)
+			win = btn.Sub(s.At).Add(full.Min.Sub(c.frameOrigin()))
 		}
 		if mo, ok := r.h.(MenuOpener); ok {
 			c.mu.Lock()
@@ -312,7 +312,7 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 		c.mu.Unlock()
 		if more && r.h != nil { // VideoActionsButton's menu
 			if full, _, ok := gtx.Source.AreaBounds(t); ok {
-				win = btn.Sub(s.At).Add(full.Min)
+				win = btn.Sub(s.At).Add(full.Min.Sub(c.frameOrigin()))
 			}
 			if mo, ok := r.h.(MenuOpener); ok {
 				c.mu.Lock()

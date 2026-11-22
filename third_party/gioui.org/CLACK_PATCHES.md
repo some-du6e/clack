@@ -64,7 +64,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gpu/headless/clack_external_test.go`, `gpu/headless/clack_size.go`,
 `gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go`,
 `io/input/clack_bounds.go`, `io/input/clack_bounds_test.go`,
-`app/clack_startup.go` and
+`app/clack_startup.go`, `io/input/clack_follow.go`,
+`io/input/clack_follow_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2838,3 +2839,49 @@ one is set (Clack's Quit: the window closes, the session and logs flush),
 
 Read by `.github/perf/launch.py` (flake-check's `launch-speed-*` jobs and
 ci's macos launch budget). Not in `UPSTREAM.patch`.
+
+## 57. io/input: a frame when an area a widget follows moves
+
+`io/input/clack_follow.go` (new: `Router.FollowArea`, `Source.FollowArea`,
+`Router.followFrame`), `io/input/router.go` (the `follow` field; `Frame`
+calls `followFrame` once the frame's areas are collected). An addition:
+nothing changes for a program that doesn't call `FollowArea`.
+
+A canvas's channel card follows its mention, as Quip's positioners do:
+they measure the bubble's anchor again after every DOM change and
+scroll. In Clack the mention learns its window position from patch 53's
+`AreaBounds`, the only place Gio keeps where a list put its rows, and that
+answers with the last frame's area. A collaborator's edit that inserts a
+block above the mention moves it in one frame, and nothing asks for the
+next: the pointer rests on the card, so no pointer event comes, and the
+card would stay where the mention was until the pointer moved.
+
+- `FollowArea(tag)` is `AreaBounds(tag)`, and notes where it said the
+  area was (or that it had none).
+- `Frame`, given the ops that layout produced, compares each noted tag's
+  new area with the noted one. When it moved, came or went, the router
+  asks for a frame at once (`WakeupTime`'s zero time, as an
+  `InvalidateCmd` with no `At`). The notes last one frame: the next layout
+  reads again, so an area that stays put asks for nothing, and the
+  widget's next read sees where it went. The wake goes through patch 10's
+  `ExecuteHook` as an `op.InvalidateCmd{}`, so the idle probe names
+  `followFrame` as that frame's asker.
+
+Like `AreaBounds`, `FollowArea` answers in the router's coordinates:
+those of the ops the window hands the router, which wrap the client's
+frame in `op.Offset(w.lastFrame.off)`. Under Gio's own decorations
+(Wayland with no xdg-decoration, such as GNOME's Mutter) that is the
+title bar's height, and FrameEvent coordinates leave it out. Clack
+subtracts the frame root's own area origin (`App.FrameOrigin`: the root
+pointer tag's `AreaBounds`) wherever it mixes the two.
+
+A widget could ask for a frame after each of its reads instead, with no
+patch. That costs a frame after every frame while it follows, and still
+misses a move made in the frame that answers it (the change and the
+widget's frame coalesce into one, which then reads the old place).
+
+Tests: `TestClackFollowArea` (an area that stays put, moves, goes and
+comes back; a move nothing read, another tag's area), in every job that
+runs `io/input`'s tests. In Clack: richview's canvas-card follow
+(`internal/ui/richview/gio_patch57.go`) and `internal/ui`'s
+`TestHoverCardAnchorCanvas*`. Not in `UPSTREAM.patch`.

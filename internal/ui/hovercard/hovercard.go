@@ -90,12 +90,28 @@
 // (quip-collab-webapp) shows a bubble whose anchorBoundsFn is measured
 // by the window's positioner registry (qsRV), which measures and places
 // every bubble again on resize, scroll, transitionend, visibilitychange,
-// any DOM mutation and font loads: that card follows its mention
-// (Frame takes a canvas trigger's rect as it reports it).
+// any DOM mutation and font loads: that card follows its mention.
+// HovercardImpl hands the bubble its mention's element (an Anchor whose
+// boundsInViewport is measured each time), and BubbleImpl's measure
+// dismisses the card only when that element has left the document, or
+// has measured 0x0 for 30 tries in a row. A mention that moves or scrolls
+// out of the canvas's view keeps its card, placed by it (shifted into the
+// window only when no side fits): the card goes with it, and once it has
+// slid out from under a resting pointer, the bubble's mouseleave starts
+// dismissDelayMs (250). So Frame takes a canvas trigger's rect as it
+// reports it while the pointer is on the mention, and as its layout puts
+// it (Follow) while the pointer rests on the card. A wheel that begins
+// on the card scrolls nothing: the bubble is in the document's body,
+// outside the canvas's scroller; one already scrolling the canvas keeps
+// scrolling it when the card slides under the pointer, as Chromium keeps
+// a wheel gesture on the scroller it began on (CardArea). Clack's canvas lays out only the rows it
+// shows, so a mention whose row scrolls out entirely is unmounted, and
+// closes its card at once as any trigger's does.
 package hovercard
 
 import (
 	"image"
+	"math"
 	"time"
 
 	"gioui.org/f32"
@@ -180,6 +196,12 @@ type Controller struct {
 	// Pointer returns the last pointer position in window coordinates. It
 	// converts a trigger's local bounds to window bounds.
 	Pointer func() image.Point
+	// Origin returns the frame's origin in the router's coordinates (the
+	// App's FrameOrigin): the rectangles Gio's AreaBounds and FollowArea
+	// answer include Gio's own title bar (Wayland without server-side
+	// decorations), the FrameEvent coordinates Pointer, the card and its
+	// area use don't. nil: none.
+	Origin func() image.Point
 
 	rep    Request // the trigger reported this frame
 	hasRep bool
@@ -197,6 +219,15 @@ type Controller struct {
 	card     image.Rectangle // the drawn card, window coordinates
 	overCard bool
 	cardTag  int
+
+	fol    image.Rectangle // the open canvas card's mention, laid out this frame (Follow)
+	hasFol bool
+
+	// the wheel gesture a canvas card sees (CardArea): when its last event
+	// came, and whether it began on the card
+	wheelTag  int
+	wheelAt   time.Time
+	wheelCard bool
 
 	spent any // a trigger pressed while hovered: ignored until it is left
 
@@ -306,6 +337,33 @@ func (c *Controller) ReportCanvasMention(key any, channelID, file, section strin
 	if c.hasRep && c.rep.Key == key {
 		c.rep.Canvas, c.rep.Buttons, c.rep.Delay = true, false, CanvasShowDelay
 		c.rep.CanvasFile, c.rep.CanvasSection = file, section
+	}
+}
+
+// FrameOrigin is Origin's answer (zero without one).
+func (c *Controller) FrameOrigin() image.Point {
+	if c.Origin == nil {
+		return image.Point{}
+	}
+	return c.Origin()
+}
+
+// Follows reports whether key's card is open and follows its mention
+// while the pointer rests on the card (Request.Canvas: Quip's
+// positioners; see the package comment). Its trigger then says where it
+// is each frame it is laid out (Follow).
+func (c *Controller) Follows(key any) bool {
+	return key != nil && c.isOpen && c.open.Canvas && c.open.Key == key
+}
+
+// Follow says where key's mention is this frame, in window coordinates,
+// as its layout put it (not as a pointer event paired it): a
+// collaborator's edit moves a mention while the pointer rests on its
+// card, with no pointer event on the mention. A report (the pointer on
+// the mention) wins over it.
+func (c *Controller) Follow(key any, r image.Rectangle) {
+	if c.Follows(key) {
+		c.fol, c.hasFol = r, true
 	}
 }
 
@@ -464,6 +522,8 @@ func (c *Controller) closeCard() {
 func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 	rep, has := c.rep, c.hasRep
 	c.hasRep = false
+	fol, hasFol := c.fol, c.hasFol
+	c.hasFol = false
 	c.seq++
 	mounted := c.mounted
 	c.mounted = false
@@ -479,8 +539,13 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 	if c.isOpen && c.tracks && !mounted && !(has && rep.Key == c.open.Key) {
 		c.closeCard() // its trigger unmounted (a recycled row, another tab or page)
 	}
-	if c.isOpen && c.open.Canvas && has && rep.Key == c.open.Key {
-		c.open.Anchor = rep.Anchor // Quip's positioners: the bubble follows its mention
+	if c.isOpen && c.open.Canvas {
+		// Quip's positioners: the bubble follows its mention
+		if has && rep.Key == c.open.Key {
+			c.open.Anchor = rep.Anchor
+		} else if hasFol {
+			c.open.Anchor = fol
+		}
 	}
 	onOpen := c.isOpen && (c.overCard || has && rep.Key == c.open.Key)
 	switch {
@@ -546,12 +611,54 @@ func (c *Controller) Opacity(now time.Time) float32 {
 	return float32(d) / float32(Fade)
 }
 
+// WheelLatch is how long a wheel gesture stays on the scroller it began
+// on after its last event: Chromium's MouseWheelPhaseHandler ends a
+// phaseless wheel's scroll sequence after kDefaultMouseWheelLatchingTransaction
+// (500ms) without one, and until then sends every event of it, momentum
+// included, to the scroller it latched at its first.
+const WheelLatch = 500 * time.Millisecond
+
 // CardArea registers the drawn card's bounds r (window coordinates, gtx at
 // the window origin) so the pointer resting on the card keeps it open. It
 // is pass-through: the card's own buttons sit under it.
+//
+// A canvas card takes a wheel gesture that begins on it: Quip's bubble is
+// in the document's body, outside the canvas's scroller, so such a wheel
+// scrolls nothing (and the canvas scrolling under the card would carry
+// it off with its mention). A gesture that began elsewhere stays where
+// Chromium latched it (WheelLatch): a canvas scrolled with the pointer on
+// a mention keeps scrolling when the card, following the mention, slides
+// under the resting pointer. A pass-through area over the window that
+// takes none of the scroll sees each wheel event first, to tell.
 func (c *Controller) CardArea(gtx layout.Context, r image.Rectangle) {
+	f := pointer.Filter{Target: &c.cardTag, Kinds: pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel}
+	canvas := c.isOpen && c.open.Canvas
+	if canvas {
+		for {
+			e, ok := gtx.Event(pointer.Filter{Target: &c.wheelTag, Kinds: pointer.Scroll}) // no range: it takes none
+			if !ok {
+				break
+			}
+			if pe, ok := e.(pointer.Event); ok && pe.Kind == pointer.Scroll {
+				if gtx.Now.Sub(c.wheelAt) >= WheelLatch {
+					c.wheelCard = image.Pt(int(pe.Position.X), int(pe.Position.Y)).In(c.card) // a new gesture
+				}
+				c.wheelAt = gtx.Now
+			}
+		}
+		latched := gtx.Now.Sub(c.wheelAt) < WheelLatch
+		if !latched || c.wheelCard {
+			all := pointer.ScrollRange{Min: math.MinInt32, Max: math.MaxInt32}
+			f.Kinds |= pointer.Scroll
+			f.ScrollX, f.ScrollY = all, all
+		} else {
+			// a gesture on the canvas: the card takes the next one, from
+			// when this one ends
+			gtx.Execute(op.InvalidateCmd{At: c.wheelAt.Add(WheelLatch)})
+		}
+	}
 	for {
-		e, ok := gtx.Event(pointer.Filter{Target: &c.cardTag, Kinds: pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel})
+		e, ok := gtx.Event(f)
 		if !ok {
 			break
 		}
@@ -572,9 +679,16 @@ func (c *Controller) CardArea(gtx layout.Context, r image.Rectangle) {
 		}
 	}
 	c.card = r
-	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-	defer clip.Rect(r).Push(gtx.Ops).Pop()
-	event.Op(gtx.Ops, &c.cardTag)
+	func() {
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		defer clip.Rect(r).Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, &c.cardTag)
+	}()
+	if canvas {
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, &c.wheelTag)
+	}
 }
 
 // OverCard reports whether the pointer is on the drawn card.

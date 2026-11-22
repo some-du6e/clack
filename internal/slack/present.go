@@ -1,19 +1,22 @@
 package slack
 
-import "bytes"
+import (
+	"bytes"
+	"encoding/json"
+)
 
-// Present is a field read only for whether it is there, as JavaScript's
-// !!value reads it: true for any value but null, false, "" and 0. What
-// the value says isn't kept.
-type Present bool
-
-// UnmarshalJSON records whether data is a truthy value.
-func (p *Present) UnmarshalJSON(data []byte) error {
-	switch string(bytes.TrimSpace(data)) {
-	case "null", "false", `""`, "0":
-		*p = false
+// Truthy is JavaScript's !!value for a JSON value as sent: false for a
+// missing one, null, false, "" and 0, true for anything else (an object,
+// an array, a non-empty string, a non-zero number).
+func Truthy(v json.RawMessage) bool {
+	switch s := string(bytes.TrimSpace(v)); s {
+	case "", "null", "false", `""`:
+		return false
 	default:
-		*p = true
+		var f float64
+		if json.Unmarshal([]byte(s), &f) == nil && f == 0 { // 0, -0, 0.0, 0e5
+			return false
+		}
+		return true
 	}
-	return nil
 }

@@ -42,6 +42,7 @@ func (a *App) hoverBegin(gtx layout.Context) {
 	h := &a.hover
 	if h.ctl.Pointer == nil {
 		h.ctl.Pointer = a.PointerPos
+		h.ctl.Origin = a.FrameOrigin
 		a.installAppCardHooks()
 	}
 	hovercard.SetDefault(&h.ctl)
