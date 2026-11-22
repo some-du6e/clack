@@ -1,9 +1,10 @@
 {
   "schema": 1,
-  "generated": "2026-11-09T21:03:23Z",
-  "run": "https://github.com/some-du6e/clack/actions/runs/42697545499",
+  "generated": "2026-11-22T17:09:16Z",
+  "run": "https://github.com/some-du6e/clack/actions/runs/45047330535",
   "sources": [
     "slick 34f2c25",
+    "slick b582605",
     "taut 6fe5123"
   ],
   "plugins": [
@@ -85,7 +86,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully, 4.6x faster to load, 3.5x less JS memory"
+      "reason": "works fully, 4.6x faster to load, 3.5x less JS memory",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Admin Backend",
@@ -166,7 +168,74 @@
         }
       ],
       "winner": "slick",
-      "reason": "works fully in both; costs within noise, smaller bundle (7.1 KB vs 9.1 KB)"
+      "reason": "works fully in both; costs within noise, smaller bundle (7.1 KB vs 9.1 KB)",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
+    },
+    {
+      "name": "Anonymize Filenames",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "AnonymizeFilenames",
+          "sha256": "2f533b7fef6817a6683955b45838536054c1ed1aafbb289beceac39e9dc0c308",
+          "size": 1177,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "roots": 0,
+          "initMs": 2.315,
+          "frameUs": 1288,
+          "frameP95Us": 2108,
+          "baseFrameUs": 1257,
+          "scrollCpuMs": 593.142,
+          "baseCpuMs": 616.098,
+          "allocsFrame": 896.1333333333333,
+          "baseAllocs": 872.3066666666666,
+          "jsHeapKb": 12.708984375,
+          "goHeapKb": 4862.953125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.731,
+          "baseIdleCpuMs": 0.7585,
+          "idleWakeups": 172,
+          "baseWakeups": 115,
+          "shot": "bench-anonymizefilenames-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "AnonymiseFileNames",
+          "sha256": "34982cff4df6b438c750e6f97f9ff4cffc0635ea83d8e689e24f9b0940cb44ec",
+          "size": 11198,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "patched": [
+            "EditFileDialogTitle",
+            "FileFieldset",
+            "MultiFileUploadItem"
+          ],
+          "roots": 0,
+          "initMs": 8.174,
+          "frameUs": 1361,
+          "frameP95Us": 2649,
+          "baseFrameUs": 1251,
+          "scrollCpuMs": 654.378,
+          "baseCpuMs": 597.176,
+          "allocsFrame": 1024.4633333333334,
+          "baseAllocs": 877.4266666666666,
+          "jsHeapKb": 107.8857421875,
+          "goHeapKb": 12048.9140625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.668,
+          "baseIdleCpuMs": 0.749,
+          "idleWakeups": 171,
+          "baseWakeups": 115,
+          "shot": "bench-anonymisefilenames-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 3.5x faster to load, 3.5x less frame overhead"
     },
     {
       "name": "Better Typing Indicator",
@@ -249,7 +318,72 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully in both; costs within noise, smaller bundle (5.4 KB vs 12.4 KB)"
+      "reason": "works fully in both; costs within noise, smaller bundle (5.4 KB vs 12.4 KB)",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
+    },
+    {
+      "name": "Bring Back Slackbot",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "BringBackSlackbot",
+          "sha256": "df6c2038345e32a4e5312b942fd95c5ffa8ebe9d23cbee90c1f9b4416738f0fb",
+          "size": 421,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "roots": 0,
+          "initMs": 5.834,
+          "frameUs": 933,
+          "frameP95Us": 1648,
+          "baseFrameUs": 916,
+          "scrollCpuMs": 454.813,
+          "baseCpuMs": 471.635,
+          "allocsFrame": 909.32,
+          "baseAllocs": 977.62,
+          "jsHeapKb": 55.6943359375,
+          "goHeapKb": 4889.7109375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5225,
+          "baseIdleCpuMs": 0.4835,
+          "idleWakeups": 175,
+          "baseWakeups": 117,
+          "shot": "bench-bringbackslackbot-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "CustomSlackbot",
+          "sha256": "cf21b48ff67c9e420d2851304ff5d22ba467c3ddd6c5c199eda38b6fdb7f30c5",
+          "size": 4783,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "patched": [
+            "ReplyBarAvatar"
+          ],
+          "roots": 34,
+          "initMs": 4.133,
+          "frameUs": 1032,
+          "frameP95Us": 2082,
+          "baseFrameUs": 907,
+          "scrollCpuMs": 573.461,
+          "baseCpuMs": 449.995,
+          "allocsFrame": 1089.0733333333333,
+          "baseAllocs": 890.74,
+          "jsHeapKb": 276.67578125,
+          "goHeapKb": 12207.4765625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.471,
+          "baseIdleCpuMs": 0.3865,
+          "idleWakeups": 174,
+          "baseWakeups": 116,
+          "shot": "bench-customslackbot-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 7.4x less frame overhead, scroll CPU 0.0 ms vs 123 ms"
     },
     {
       "name": "Censorship",
@@ -328,7 +462,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully, 2.0x faster to load, 2.6x less frame overhead"
+      "reason": "works fully, 2.0x faster to load, 2.6x less frame overhead",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Clear URLs",
@@ -400,7 +535,8 @@
       ],
       "winner": "taut",
       "reason": "works fully, 3.5x faster to load, 1.5x less JS memory",
-      "notes": "The rules come from ClearURLs/Rules on GitHub at start, so this check needs the network."
+      "notes": "The rules come from ClearURLs/Rules on GitHub at start, so this check needs the network.",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Click to Load",
@@ -477,7 +613,8 @@
       ],
       "winner": "taut",
       "reason": "works fully, 4.2x faster to load, 5.4x less JS memory",
-      "notes": "Clack draws link unfurls natively and never loads third-party frames, so there is no embed for either variant to hold; the check only sees that the hook is in place."
+      "notes": "Clack draws link unfurls natively and never loads third-party frames, so there is no embed for either variant to hold; the check only sees that the hook is in place.",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Copy Reacted",
@@ -556,7 +693,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully in both; costs within noise, smaller bundle (3.8 KB vs 5.7 KB)"
+      "reason": "works fully in both; costs within noise, smaller bundle (3.8 KB vs 5.7 KB)",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Custom Name Recording",
@@ -634,7 +772,8 @@
       ],
       "winner": "taut",
       "reason": "works fully in both; costs within noise, smaller bundle (3.4 KB vs 5.4 KB)",
-      "notes": "Its button lives in Edit profile, behind a file picker; the bench checks the patch only."
+      "notes": "Its button lives in Edit profile, behind a file picker; the bench checks the patch only.",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Experiments",
@@ -707,7 +846,8 @@
         }
       ],
       "winner": "slick",
-      "reason": "works fully, 3.6x less frame overhead"
+      "reason": "works fully, 3.6x less frame overhead",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Haiku Warning",
@@ -793,7 +933,8 @@
       ],
       "winner": "slick",
       "reason": "works fully (Taut passes 1/2 checks), frame overhead 0.0 µs vs 313 µs, scroll CPU 0.0 ms vs 933 ms",
-      "notes": "Taut's warns only in channels Orpheus is in unless \"Warn even if Orpheus doesn't respond\" is on; the bench turns that on, as Orpheus isn't in the fake workspace."
+      "notes": "Taut's warns only in channels Orpheus is in unless \"Warn even if Orpheus doesn't respond\" is on; the bench turns that on, as Orpheus isn't in the fake workspace.",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Human Count",
@@ -872,7 +1013,77 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully in both; costs within noise, smaller bundle (0.9 KB vs 3.1 KB)"
+      "reason": "works fully in both; costs within noise, smaller bundle (0.9 KB vs 3.1 KB)",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
+    },
+    {
+      "name": "IDV Status",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "IdvStatus",
+          "sha256": "65b02b15a467134b0202733579ca04c52b55fc312c5d70e659797e3834bd432d",
+          "size": 2410,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "patched": [
+            "BaseMessageSender"
+          ],
+          "roots": 145,
+          "initMs": 3.431,
+          "frameUs": 1341,
+          "frameP95Us": 3086,
+          "baseFrameUs": 1145,
+          "scrollCpuMs": 910.551,
+          "baseCpuMs": 579.248,
+          "allocsFrame": 1385.3033333333333,
+          "baseAllocs": 870.7366666666667,
+          "jsHeapKb": 1100.857421875,
+          "goHeapKb": 14951.9140625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.7255,
+          "baseIdleCpuMs": 0.7125,
+          "idleWakeups": 164,
+          "baseWakeups": 111,
+          "shot": "bench-idvstatus-taut.png",
+          "pixelDiff": 0.00001388888888888889
+        },
+        {
+          "system": "slick",
+          "id": "HcaStatus",
+          "sha256": "343c65a5a44c6f97b3168276d1110842539750ec8d081c72c3f9ae50796001da",
+          "size": 6337,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "patched": [
+            "BaseMessageSender"
+          ],
+          "roots": 145,
+          "initMs": 7.756,
+          "frameUs": 1363,
+          "frameP95Us": 2994,
+          "baseFrameUs": 1163,
+          "scrollCpuMs": 961.594,
+          "baseCpuMs": 572.747,
+          "allocsFrame": 1386.4966666666667,
+          "baseAllocs": 875.8633333333333,
+          "jsHeapKb": 1129.3515625,
+          "goHeapKb": 12298.7109375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.753,
+          "baseIdleCpuMs": 0.682,
+          "idleWakeups": 164,
+          "baseWakeups": 111,
+          "shot": "bench-hcastatus-slick.png",
+          "pixelDiff": 0.00001388888888888889
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully in both; costs within noise, smaller bundle (2.4 KB vs 6.2 KB)"
     },
     {
       "name": "Last Seen",
@@ -958,7 +1169,8 @@
         }
       ],
       "winner": "slick",
-      "reason": "works fully, 3.3x faster to load, 2.5x less JS memory"
+      "reason": "works fully, 3.3x faster to load, 2.5x less JS memory",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Nicknames",
@@ -1051,7 +1263,69 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully in both; costs within noise, smaller bundle (5.8 KB vs 10.0 KB)"
+      "reason": "works fully in both; costs within noise, smaller bundle (5.8 KB vs 10.0 KB)",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
+    },
+    {
+      "name": "No Tracking",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "NoTrack",
+          "sha256": "126c768a80360b5834f555e41126a9ddcf4bd5685f11487eabc20ef6b2e853c8",
+          "size": 3238,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "roots": 0,
+          "initMs": 5.028,
+          "frameUs": 1303,
+          "frameP95Us": 2139,
+          "baseFrameUs": 1251,
+          "scrollCpuMs": 600.813,
+          "baseCpuMs": 597.9,
+          "allocsFrame": 896.08,
+          "baseAllocs": 877.3333333333334,
+          "jsHeapKb": 33.6767578125,
+          "goHeapKb": 4862.625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.7525,
+          "baseIdleCpuMs": 0.9685,
+          "idleWakeups": 169,
+          "baseWakeups": 112,
+          "shot": "bench-notracking-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "NoTrack",
+          "sha256": "5c53f406db246d3c0cf8fa54b58133438694c10decd6068c17e493bb456ba235",
+          "size": 9680,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "roots": 0,
+          "initMs": 12.396,
+          "frameUs": 1312,
+          "frameP95Us": 2191,
+          "baseFrameUs": 1264,
+          "scrollCpuMs": 605.799,
+          "baseCpuMs": 606.536,
+          "allocsFrame": 895.9,
+          "baseAllocs": 874.2466666666667,
+          "jsHeapKb": 113.33984375,
+          "goHeapKb": 4320.5625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.996,
+          "baseIdleCpuMs": 0.9175,
+          "idleWakeups": 168,
+          "baseWakeups": 114,
+          "shot": "bench-notrack-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 2.5x faster to load, 3.4x less JS memory"
     },
     {
       "name": "Office Hours",
@@ -1124,7 +1398,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully, 6.7x less frame overhead, scroll CPU 0.0 ms vs 77 ms"
+      "reason": "works fully, 6.7x less frame overhead, scroll CPU 0.0 ms vs 77 ms",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Oneko",
@@ -1205,7 +1480,80 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully, 5.1x less idle CPU"
+      "reason": "works fully, 5.1x less idle CPU",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
+    },
+    {
+      "name": "Private Channel",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "PrivateChannel",
+          "sha256": "bb7bde9bd47ea47dafd4599ff9565f0f6fdc611e53a307ce54caad549771d7bb",
+          "size": 10508,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "patched": [
+            "BaseMessageAttachmentSlackMessage",
+            "BaseMrkdwnChannel",
+            "HuddleLinkJoinGate",
+            "ListChannelEntity",
+            "MessageAttachmentHuddleLink"
+          ],
+          "roots": 13,
+          "initMs": 9.414,
+          "frameUs": 1022,
+          "frameP95Us": 1759,
+          "baseFrameUs": 926,
+          "scrollCpuMs": 496.228,
+          "baseCpuMs": 453.998,
+          "allocsFrame": 1129.1033333333332,
+          "baseAllocs": 883.1533333333333,
+          "jsHeapKb": 309.3974609375,
+          "goHeapKb": 4611.203125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5795,
+          "baseIdleCpuMs": 0.485,
+          "idleWakeups": 174,
+          "baseWakeups": 117,
+          "shot": "bench-privatechannel-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "PrivateChannelMapper",
+          "sha256": "cc8315acef5fe39af26c3e58528829d219a53530de858fa969d4eacf8c46a68d",
+          "size": 23083,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "patched": [
+            "BaseMrkdwnChannel",
+            "ListChannelEntity"
+          ],
+          "roots": 13,
+          "initMs": 13.623,
+          "frameUs": 1028,
+          "frameP95Us": 1776,
+          "baseFrameUs": 917,
+          "scrollCpuMs": 492.887,
+          "baseCpuMs": 449.928,
+          "allocsFrame": 1133.12,
+          "baseAllocs": 896.0766666666667,
+          "jsHeapKb": 474.314453125,
+          "goHeapKb": 4604.2421875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5035,
+          "baseIdleCpuMs": 0.4655,
+          "idleWakeups": 174,
+          "baseWakeups": 117,
+          "shot": "bench-privatechannelmapper-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 1.5x less JS memory"
     },
     {
       "name": "Quick Join",
@@ -1282,7 +1630,69 @@
       ],
       "winner": "taut",
       "reason": "works fully, 6.5x less frame overhead, 6.9x less JS memory",
-      "notes": "Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in a message (Clack draws the link natively and sends the click to the document's listeners at the link's element)."
+      "notes": "Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in a message (Clack draws the link natively and sends the click to the document's listeners at the link's element).",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
+    },
+    {
+      "name": "Real Markdown",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "RealMarkdown",
+          "sha256": "743b42426857021041671a0e389ed1817746da4c83f85174d2cd96364d808da9",
+          "size": 2634,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "roots": 0,
+          "initMs": 2.461,
+          "frameUs": 933,
+          "frameP95Us": 1669,
+          "baseFrameUs": 911,
+          "scrollCpuMs": 457.603,
+          "baseCpuMs": 464.757,
+          "allocsFrame": 918.5,
+          "baseAllocs": 891.1566666666666,
+          "jsHeapKb": 22.5107421875,
+          "goHeapKb": 4869.6328125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.662,
+          "baseIdleCpuMs": 0.64,
+          "idleWakeups": 170,
+          "baseWakeups": 114,
+          "shot": "bench-realmarkdown-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "NotShitMarkdown",
+          "sha256": "fbb13d0dfa20aa3e105ee6e988c190ea32be3259aab7eea7aa08c842518401a7",
+          "size": 7766,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": null,
+          "roots": 0,
+          "initMs": 4.931,
+          "frameUs": 951,
+          "frameP95Us": 1672,
+          "baseFrameUs": 915,
+          "scrollCpuMs": 465.834,
+          "baseCpuMs": 457.947,
+          "allocsFrame": 904.17,
+          "baseAllocs": 892.4266666666666,
+          "jsHeapKb": 47.73046875,
+          "goHeapKb": 4318.6328125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5185,
+          "baseIdleCpuMs": 0.5465,
+          "idleWakeups": 171,
+          "baseWakeups": 115,
+          "shot": "bench-notshitmarkdown-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully in both; costs within noise, smaller bundle (2.6 KB vs 7.6 KB)"
     },
     {
       "name": "Restricted Channel Warning",
@@ -1361,7 +1771,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully, scroll CPU 70 ms vs 1828 ms, 2.9x less JS memory"
+      "reason": "works fully, scroll CPU 70 ms vs 1828 ms, 2.9x less JS memory",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Show Real User",
@@ -1448,7 +1859,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully in both; costs within noise, smaller bundle (3.7 KB vs 8.3 KB)"
+      "reason": "works fully in both; costs within noise, smaller bundle (3.7 KB vs 8.3 KB)",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Show Sending Bot",
@@ -1545,7 +1957,8 @@
         }
       ],
       "winner": "slick",
-      "reason": "works fully, 2.6x faster to load"
+      "reason": "works fully, 2.6x faster to load",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Shut Up Slackbot",
@@ -1626,7 +2039,8 @@
         }
       ],
       "winner": "slick",
-      "reason": "works fully, 2.4x less frame overhead"
+      "reason": "works fully, 2.4x less frame overhead",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Silent Typing",
@@ -1717,7 +2131,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully, 5.2x less frame overhead, 3.1x less JS memory"
+      "reason": "works fully, 5.2x less frame overhead, 3.1x less JS memory",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Slim Message Box",
@@ -1799,7 +2214,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully in both; costs within noise, smaller bundle (7.3 KB vs 10.8 KB)"
+      "reason": "works fully in both; costs within noise, smaller bundle (7.3 KB vs 10.8 KB)",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Streamer Mode",
@@ -1889,7 +2305,8 @@
         }
       ],
       "winner": "slick",
-      "reason": "works fully, 9.8x faster to load"
+      "reason": "works fully, 9.8x faster to load",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "User Pronouns",
@@ -1978,7 +2395,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.8 KB)"
+      "reason": "works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.8 KB)",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     },
     {
       "name": "Who Reacted",
@@ -2067,7 +2485,8 @@
         }
       ],
       "winner": "taut",
-      "reason": "works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.4 KB)"
+      "reason": "works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.4 KB)",
+      "run": "https://github.com/some-du6e/clack/actions/runs/42697545499"
     }
   ]
 }
