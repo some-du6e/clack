@@ -43,6 +43,7 @@ import (
 // headerExtra is the channel header's state beyond its clickables.
 type headerExtra struct {
 	nameTip popups.TipState // EditMpdmNameButton's tooltip
+	bellTip popups.TipState // NotificationsButton's tooltip (popups.NotifyButtonTip)
 	// the wide topic's hover card (channel_topic.go)
 	card      *richview.View
 	cardKey   string

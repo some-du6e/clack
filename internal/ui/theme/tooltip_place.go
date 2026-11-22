@@ -299,3 +299,19 @@ func WindowBounds(org image.Point) image.Rectangle {
 	}
 	return image.Rectangle{Max: sz}.Sub(org)
 }
+
+// ---- the TooltipManager ----
+
+// tipGen is the TooltipManager's generation (UI goroutine only).
+var tipGen uint64
+
+// HideTooltips is Slack's hideVisibleTooltip (client-boot HzHE's
+// TooltipManager.hideActive, CDN build 36d315d11944): the tooltip up, or
+// waiting its delay, goes, and comes back only once the pointer has left
+// its target and come back. Slack calls it when a modal or a menu opens;
+// BaseTooltip hides itself on Escape while hovered (hoverEscHide).
+func HideTooltips() { tipGen++ }
+
+// TipGen is the TooltipManager's generation: a tooltip's hover that began
+// in an older one was hidden (HideTooltips).
+func TipGen() uint64 { return tipGen }

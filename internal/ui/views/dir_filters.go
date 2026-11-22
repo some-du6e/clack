@@ -578,13 +578,13 @@ func mergeFacets(a, b []core.Facet) []core.Facet {
 // FilterText is the selected tab's filter pill text for filter label
 // ("Workspaces", "Organizations", "Title", "Location").
 func (d *Directories) FilterText(label string) string {
-	text, _, _ := d.pickTrigger(d.tab.Sel, label)
+	text, _, _ := d.pickTrigger(d.cur(), label)
 	return text
 }
 
 // OpenFilter opens the popover behind filter label on the selected tab.
 func (d *Directories) OpenFilter(label string) bool {
-	p := d.pickFor(d.tab.Sel, label)
+	p := d.pickFor(d.cur(), label)
 	if p == nil {
 		return false
 	}
@@ -597,7 +597,7 @@ func (d *Directories) OpenFilter(label string) bool {
 
 // FilterOptions lists the option labels of filter label's popover.
 func (d *Directories) FilterOptions(label string) []string {
-	opts, _ := d.pickOpts(d.tab.Sel, label)
+	opts, _ := d.pickOpts(d.cur(), label)
 	out := make([]string, len(opts))
 	for i, o := range opts {
 		out[i] = o.label
@@ -608,7 +608,7 @@ func (d *Directories) FilterOptions(label string) []string {
 // PickFilter picks the option with value in filter label's popover, as a
 // click on it does.
 func (d *Directories) PickFilter(label, value string) bool {
-	t := d.tab.Sel
+	t := d.cur()
 	p := d.pickFor(t, label)
 	if p == nil {
 		return false

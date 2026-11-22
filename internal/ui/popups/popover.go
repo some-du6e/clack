@@ -227,6 +227,10 @@ func cubicBezierY(x1, y1, x2, y2, x float64) float64 {
 type TipState struct {
 	since   time.Time
 	hovered bool
+	// gen is the TooltipManager generation the hover began in; shut, that
+	// HideTooltips ended it (it stays hidden until the pointer leaves)
+	gen  uint64
+	shut bool
 
 	// Delay overrides TipDelay for this tooltip (Slack's BaseTooltip
 	// defaults to delay 150; some callers pass longer ones).
@@ -237,6 +241,11 @@ type TipState struct {
 	// Texty is a TextyTooltip Popover (Texty's mouseover opens it): no
 	// delay, allowance 0 and no tryOppositePosition (theme.TextyTip).
 	Texty bool
+	// Wake, when set, asks the owner for the frame at the end of the hover
+	// delay (now is the frame's clock) instead of executing an
+	// op.InvalidateCmd mid-layout, which replays later handlers' unread
+	// input in Gio's router.
+	Wake func(now, at time.Time)
 	// org is the target's window origin, so the tooltip keeps inside the
 	// window (theme.PlaceTooltip); last is where it was drawn (tests).
 	org  theme.TipOrigin
@@ -249,14 +258,15 @@ type TipState struct {
 // Placed is where the tooltip last drew, in its widget's coordinates.
 func (st *TipState) Placed() theme.TipPlace { return st.last }
 
-// Showing reports whether the tooltip is up at now: hovered for its delay.
+// Showing reports whether the tooltip is up at now: hovered for its
+// delay, and not hidden since (HideTooltips).
 func (st *TipState) Showing(now time.Time) bool {
-	return st.hovered && !now.Before(st.since.Add(st.delay()))
+	return st.hovered && !st.shut && st.gen == theme.TipGen() && !now.Before(st.since.Add(st.delay()))
 }
 
 // Reset ends the hover: the next one waits the delay again (a target
 // that wasn't drawn this frame).
-func (st *TipState) Reset() { st.hovered = false }
+func (st *TipState) Reset() { st.hovered, st.shut = false, false }
 
 // delay is the tooltip's hover delay.
 func (st *TipState) delay() time.Duration {
@@ -269,8 +279,14 @@ func (st *TipState) delay() time.Duration {
 	return TipDelay
 }
 
-// TipDelay is how long the pointer must rest before a tooltip shows.
-const TipDelay = 450 * time.Millisecond
+// TipDelay is how long the pointer must rest before a tooltip shows:
+// BaseTooltip's default delay (client-boot HzHE, CDN build 36d315d11944:
+// delay 150). A site that passes its own (the composer's 500, a
+// message's time 300, the hover bar's 60) sets TipState.Delay.
+const TipDelay = 150 * time.Millisecond
+
+// HideTooltips is Slack's hideVisibleTooltip (theme.HideTooltips).
+func HideTooltips() { theme.HideTooltips() }
 
 // Tooltip shows a Slack tooltip for a widget of size sz laid out at the
 // current origin, while hovered. Call it right after laying the widget out.
@@ -315,15 +331,25 @@ func TooltipBox(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool,
 func tooltipWith(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz image.Point, side Side, box func(gtx layout.Context) layout.Dimensions) {
 	st.org.Track(gtx, image.Rectangle{Max: sz})
 	if !hovered {
-		st.hovered = false
+		st.hovered, st.shut = false, false
 		return
 	}
 	if !st.hovered {
-		st.hovered = true
+		st.hovered, st.gen, st.shut = true, theme.TipGen(), false
 		st.since = gtx.Now
 	}
+	if st.gen != theme.TipGen() {
+		st.shut = true // HideTooltips: hidden until the pointer leaves
+	}
+	if st.shut {
+		return
+	}
 	if wait := st.since.Add(st.delay()); gtx.Now.Before(wait) {
-		gtx.Execute(op.InvalidateCmd{At: wait})
+		if st.Wake != nil {
+			st.Wake(gtx.Now, wait)
+		} else {
+			gtx.Execute(op.InvalidateCmd{At: wait})
+		}
 		return
 	}
 	call, d := record(gtx, box)

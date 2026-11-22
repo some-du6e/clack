@@ -491,6 +491,10 @@ type Server struct {
 	// org ones (the org dashboard's Groups page). Set them before the
 	// calls.
 	UsergroupEditor, UsergroupOrgAdmin bool
+	// OffGrid makes Creds a plain workspace's (no enterprise id or token):
+	// core then takes the off-grid paths, such as the user group
+	// directory's search.team. Set it before Creds.
+	OffGrid bool
 	// TeamPrefs is team.prefs.get's prefs (nil: none; Slack's client then
 	// never warns before @channel and has no large-channel limit), and
 	// ChannelPrefs channels.prefs.get's pref_value by channel and pref
@@ -863,6 +867,9 @@ const (
 // Creds returns credentials pointing every host (team, enterprise, edge) at
 // the fake.
 func (s *Server) Creds() slack.Creds {
+	if s.OffGrid {
+		return slack.Creds{Token: TeamToken, Cookie: "xoxd-fake", Team: TeamID, UserID: SelfID, TeamURL: s.URL}
+	}
 	c := slack.Creds{Token: TeamToken, Cookie: "xoxd-fake", Team: TeamID, EnterpriseToken: OrgToken,
 		EnterpriseID: EnterpriseID, UserID: SelfID, TeamURL: s.URL, EnterpriseURL: s.URL}
 	if s.Size.FreeTeam {
@@ -1535,6 +1542,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleFilesView(method, f); handled { // files_view.go
+		return out
+	}
+	if out, handled := s.handleSlackConnectHub(method, f, edge); handled { // slack_connect_hub.go (before activity.go's connectInvites.list)
 		return out
 	}
 	if out, handled := s.handleInvites(method, f); handled { // invites.go

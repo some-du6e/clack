@@ -1645,7 +1645,7 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	dy := strutBaseline(gtx) - (d.Size.Y - d.Baseline)
 	t := op.Offset(image.Pt(box.X-sz.X, dy)).Push(gtx.Ops)
 	call.Add(gtx.Ops)
-	r.compactTip.layout(gtx, r, d.Size)
+	r.compactTip.layout(gtx, r, d, s.col)
 	t.Pop()
 	r.compactBL = dy + d.Size.Y - d.Baseline
 	return layout.Dimensions{Size: box}
@@ -2381,7 +2381,7 @@ func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensi
 	} else {
 		d = label(gtx, r.rc.th, tsS, tsText)
 	}
-	r.tsTip.layout(gtx, r, d.Size)
+	r.tsTip.layout(gtx, r, d, tsS.col)
 	return d
 }
 

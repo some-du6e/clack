@@ -287,7 +287,8 @@ type srCard struct {
 	laid               srRichParts  // their last frame's layout
 	expanded           bool
 	click, more, chip  widget.Clickable
-	hov                bool // hovered, last frame: its background and hover bar
+	time               TimeLink // the result's time: its permalink's link (time_link.go)
+	hov                bool     // hovered, last frame: its background and hover bar
 	toks               []srTok
 	tokW               int
 	tokExp             bool
@@ -1896,7 +1897,25 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		ww := textW(gtx, th, 13, theme.Regular, c.when)
 		at(gtx, image.Pt(right-ww, padT), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, nameH, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg3, c.when)
+				d := text(gtx, th, 13, theme.Regular, cl.Fg3, c.when)
+				// SearchMessage's renderTimestamp: Timestamp full (no
+				// tooltip) with the message's permalink as its link,
+				// whose onTimestampClick only prevents the navigation: the
+				// click is the card's (open the result); a right-click,
+				// the link's menu
+				lc := c.time.Layout(gtx, th, d.Size, d.Size.Y-d.Baseline, cl.Fg3, "")
+				if lc.Clicked {
+					RecordRecentConversation(m.Channel)
+					openResult(v.h, *m)
+				}
+				if lc.Menu {
+					var at image.Point
+					if pp, ok := v.h.(interface{ PointerPos() image.Point }); ok {
+						at = pp.PointerPos()
+					}
+					v.h.ShowOverlay(TimeLinkMenu(v.h, at, m.Channel, m.TS, m.ThreadTS))
+				}
+				return d
 			})
 		})
 		right -= ww + dp(gtx, 12)
