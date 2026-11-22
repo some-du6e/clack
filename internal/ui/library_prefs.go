@@ -108,6 +108,25 @@ type libraryPage struct {
 	hosts func(system string) (libraryHost, bool)
 	// bench overrides the baked-in plugin bench data (tests)
 	bench *pluginbench.Data
+
+	// states are the entries' install states by libKey, read through their
+	// hosts (each read opens the plugin's files and hashes them) once, and
+	// again only when statesFor moves: a plugin system starts or stops, or
+	// its installed plugins change (an install, an update, a removal:
+	// PluginsGen). A frame reads every row's state several times;
+	// scrolling read the files of all 71 every frame.
+	states    map[string]pluginlib.State
+	statesFor libStatesKey
+	// groups is libraryGroups of groupsOf's entries, built once an index
+	groups   []libGroup
+	groupsOf *pluginlib.Index
+}
+
+// libStatesKey is what the install states were read under.
+type libStatesKey struct {
+	up        [2]bool // Taut, Slick running
+	taut, sli uint64  // their PluginsGens
+	ix        *pluginlib.Index
 }
 
 func newLibraryPage(a *App, openTab func(id string)) *libraryPage {
@@ -203,14 +222,51 @@ func (v *libraryPage) host(system string) (libraryHost, bool) {
 }
 
 // state is an entry's install state in its system (NotInstalled when the
-// system isn't running).
+// system isn't running), read once until the systems change (states).
 func (v *libraryPage) state(e pluginlib.Entry) pluginlib.State {
-	h, ok := v.host(e.System)
-	if !ok {
-		return pluginlib.NotInstalled
+	if k := v.statesKey(); k != v.statesFor || v.states == nil {
+		v.states, v.statesFor = map[string]pluginlib.State{}, k
 	}
-	c, m := h.installed(e.ID)
-	return pluginlib.StateOf(e, c, m)
+	key := libKey(e)
+	if st, ok := v.states[key]; ok {
+		return st
+	}
+	st := pluginlib.NotInstalled
+	if h, ok := v.host(e.System); ok {
+		c, m := h.installed(e.ID)
+		st = pluginlib.StateOf(e, c, m)
+	}
+	v.states[key] = st
+	return st
+}
+
+// statesKey is libStatesKey now.
+func (v *libraryPage) statesKey() libStatesKey {
+	k := libStatesKey{ix: v.ix}
+	if v.hosts != nil {
+		_, k.up[0] = v.hosts(pluginlib.Taut)
+		_, k.up[1] = v.hosts(pluginlib.Slick)
+	} else {
+		k.up = [2]bool{v.a.Taut() != nil, v.a.Slick() != nil}
+	}
+	if t := v.a.Taut(); t != nil {
+		k.taut = t.PluginsGen()
+	}
+	if s := v.a.Slick(); s != nil {
+		k.sli = s.PluginsGen()
+	}
+	return k
+}
+
+// forgetStates reads the install states again at their next use.
+func (v *libraryPage) forgetStates() { v.states = nil }
+
+// allGroups is libraryGroups(libraryEntries(v.ix)), built once an index.
+func (v *libraryPage) allGroups() []libGroup {
+	if v.groupsOf != v.ix || v.groups == nil && v.ix != nil {
+		v.groups, v.groupsOf = libraryGroups(libraryEntries(v.ix)), v.ix
+	}
+	return v.groups
 }
 
 func (v *libraryPage) load(refresh bool) {
@@ -225,6 +281,7 @@ func (v *libraryPage) load(refresh bool) {
 	}
 	if v.ix == nil {
 		v.ix = lib.Cached()
+		v.groups, v.states = nil, nil
 	}
 	v.loading, v.loadErr = true, ""
 	go func() {
@@ -237,6 +294,7 @@ func (v *libraryPage) load(refresh bool) {
 				v.loadErr = err.Error()
 			} else {
 				v.ix = ix
+				v.groups, v.states = nil, nil // read again, even from the same index
 			}
 			a.Invalidate()
 		})
@@ -273,6 +331,7 @@ func (v *libraryPage) installEntry(e pluginlib.Entry, update bool) {
 		}
 		a.Post(func() {
 			delete(v.busy, k)
+			v.forgetStates() // the system's PluginsGen moves too; a failed install may have left files
 			switch {
 			case err != nil:
 				v.status[k], v.failed[k] = err.Error(), true
@@ -372,7 +431,7 @@ func (v *libraryPage) installChoices(g libGroup) []pluginlib.Entry {
 // chips are the Browse filter chips: All, Taut, Slick, Installed, and
 // Updates while there are some, counting rows.
 func (v *libraryPage) chips() []slick.Filter {
-	gs := libraryGroups(libraryEntries(v.ix))
+	gs := v.allGroups()
 	n := map[string]int{"all": len(gs)}
 	for _, g := range gs {
 		seen := map[string]bool{}
@@ -562,7 +621,10 @@ func (v *libraryPage) sourceLine() string {
 // body draws the Library under Plugins > Plugin library (libraryScreen
 // draws its search box and chips above): its head (Refresh, Update all),
 // the intro, and the rows by category. words is the shared search.
-func (v *libraryPage) body(f *flow, words []string) {
+// head is the library's section head (its title, Update all and
+// Refresh), its intro and its notices, drawn into f; the cards follow
+// (cards).
+func (v *libraryPage) head(f *flow) {
 	p := v.s
 	k := p.k
 	k.gtxNow = f.gtx
@@ -570,7 +632,7 @@ func (v *libraryPage) body(f *flow, words []string) {
 	if v.ix == nil && !v.loading && v.loadErr == "" {
 		v.load(false)
 	}
-	groups := libraryGroups(libraryEntries(v.ix))
+	groups := v.allGroups()
 	var updates []pluginlib.Entry
 	for _, g := range groups {
 		_, u := v.groupStates(g)
@@ -626,11 +688,23 @@ func (v *libraryPage) body(f *flow, words []string) {
 	if v.loadErr != "" {
 		p.notice(f, v.loadErr, true)
 	}
+	if v.ix == nil && v.loading {
+		p.hint(f, "Loading the plugin library...")
+	}
+}
+
+// libCard is one category's card: its title and its rows.
+type libCard struct {
+	label, icon string
+	rows        []libGroup
+}
+
+// cards are the rows the chip and the search words leave, by category
+// (a search's best matches first within one), and the empty state's
+// text when none are left ("" while the index loads).
+func (v *libraryPage) cards(words []string) (cards []libCard, empty string) {
 	if v.ix == nil {
-		if v.loading {
-			p.hint(f, "Loading the plugin library...")
-		}
-		return
+		return nil, ""
 	}
 	var group []libGroup
 	label, shown := "", 0
@@ -641,15 +715,11 @@ func (v *libraryPage) body(f *flow, words []string) {
 		if len(words) > 0 { // a search: the best matches of a category first
 			group = rankGroups(group, words, nil)
 		}
-		rows := make([]func(gtx layout.Context, w int) layout.Dimensions, len(group))
-		for i, g := range group {
-			rows[i] = func(gtx layout.Context, w int) layout.Dimensions { return v.row(gtx, w, g) }
-		}
 		c := libCategory(group[0].first())
-		p.card(f, c.Label, c.Icon, nil, rows)
+		cards = append(cards, libCard{label: c.Label, icon: c.Icon, rows: group})
 		group = nil
 	}
-	for _, g := range groups {
+	for _, g := range v.allGroups() {
 		if !v.matches(g, words) {
 			continue
 		}
@@ -663,11 +733,11 @@ func (v *libraryPage) body(f *flow, words []string) {
 	flush()
 	if shown == 0 {
 		if len(words) > 0 {
-			p.empty(f, "No plugins match “"+strings.Join(words, " ")+"”.")
-		} else {
-			p.empty(f, "No plugins in this view.")
+			return nil, "No plugins match \u201c" + strings.Join(words, " ") + "\u201d."
 		}
+		return nil, "No plugins in this view."
 	}
+	return cards, ""
 }
 
 // libAction is what a row's button does; menu, when set, is the chevron

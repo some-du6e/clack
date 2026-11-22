@@ -2986,3 +2986,63 @@ comes back; a move nothing read, another tag's area), in every job that
 runs `io/input`'s tests. In Clack: richview's canvas-card follow
 (`internal/ui/richview/gio_patch57.go`) and `internal/ui`'s
 `TestHoverCardAnchorCanvas*`. Not in `UPSTREAM.patch`.
+
+## 58. app: macOS's terminate: asks the program first (TerminateEvent)
+
+`app/os_macos.m` (`GioAppDelegate`'s `applicationShouldTerminate:`,
+`gio_replyToTerminate`), `app/clack_exit_macos.go` (new:
+`gio_onShouldTerminate`, `replyToTerminate`), `app/clack_exit.go` (new:
+`TerminateEvent`).
+
+The Dock's Quit, logging out, restarting and shutting down, and a quit
+Apple Event (`osascript -e 'quit app "Clack"'`, Activity Monitor's Quit)
+all reach `-[NSApplication terminate:]`. Gio's delegate had no
+`applicationShouldTerminate:`, so AppKit answered for it (terminate now)
+and called `exit()`: no Go code ran, and Clack ended with no exit line,
+no session flush and no window teardown; the next start blamed a kill or
+a crash (review of karim-1118, 2026-11-19). Electron, Slack's shell,
+overrides `terminate:` so the app's own quit runs
+(shell/browser/mac/electron_application.mm).
+
+Now the delegate asks the program: a program ranging over `app.Events`
+gets a `TerminateEvent` (delivered on the main thread, inside the
+callback, as `URLEvent`s are) and AppKit waits for it
+(`NSTerminateLater`), running the main run loop in its modal panel mode,
+which still serves the main dispatch queue (`runOnMain`, so
+`Window.Perform` and frames go on). The program quits as its own Quit
+does and the process ends when it exits; `replyToTerminate` answers
+AppKit for a program that carries on. One that took the event and
+neither ends nor answers within 15 s (a program ranging over `Events`
+that ignores it) is terminated then. A program that doesn't range over
+`Events` (`app.Main`) is terminated now, as before. Clack's main loop
+logs the reason and records it first, then quits (cmd/clack/main.go).
+
+Tests: `app/clack_exit_darwin_test.go` (`TestTerminateEventMac`,
+CLACK_MACOS_WINDOW_TESTS on ci's macos job): AppKit's `terminate:`
+(`cocoatest.Terminate`) brings a `TerminateEvent`, the main thread runs
+work while AppKit waits, and after `replyToTerminate(false)` a second
+`terminate:` asks again. Clack's end to end: ci's macos step "macOS quit
+Apple Event (Gio patch 58)" quits a signed-out Clack.app with
+`osascript` and finds its exit line in clack.log and in its run record.
+Not in `UPSTREAM.patch`.
+
+## 59. app: X11's IO error handler lets the program say why it ends (X11ConnectionLost)
+
+`app/clack_exit_x11.c` (new: `gio_x11IOError`,
+`gio_x11SetIOErrorHandler`), `app/clack_exit_x11.go` (new:
+`gio_onX11IOError`), `app/os_x11.go` (the handler installed after
+`XOpenDisplay`), `app/clack_exit.go` (new: `X11ConnectionLost`).
+
+With no handler of its own, a Gio program whose X server connection
+breaks (the X session ends before any SIGTERM comes, the server crashes
+or is killed, xkill) goes through Xlib's `_XDefaultIOError`, which
+prints "X connection … broken" and calls `exit(1)`: Clack ended with no
+exit line (review of karim-1118). Now Xlib's IO error handler calls
+`X11ConnectionLost` when it's set, then exits with status 1 as the
+default handler does: an IO error handler must not return. Clack logs
+and records its exit line there, flushing at most a second.
+
+Tests: `app/clack_exit_x11_test.go` (`TestX11ConnectionLost`,
+CLACK_X11_ASKED_TESTS on ci's linux-gio job): a helper process draws a
+window on a private Xvfb, the test kills that Xvfb, and the helper calls
+`X11ConnectionLost` and exits with status 1. Not in `UPSTREAM.patch`.

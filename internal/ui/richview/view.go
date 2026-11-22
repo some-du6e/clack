@@ -1573,13 +1573,14 @@ func (v *View) isChannelCard(t int16) bool {
 // shows a tooltip (rich text's Link passes showTooltip for every valid
 // URL; mrkdwn's renderLink its showTooltips) in UrlHoverCardTrigger with
 // truncated_url_hover_card on (URLHoverCard). A canvas's links are
-// Quip's, not BaseMrkdwnLink.
+// Quip's, not BaseMrkdwnLink, and an email body's are the email's
+// (EmailIframe: no hover card, and an http(s) one asks first).
 func (v *View) isURLCard(t int16) bool {
 	if t < 0 || int(t) >= len(v.d.targets) || URLHoverCard == nil || v.opts.Canvas {
 		return false
 	}
 	tg := &v.d.targets[t]
-	return tg.kind == tLink && tg.urlCard && tg.url != "" && URLHoverCard(tg.url)
+	return tg.kind == tLink && tg.urlCard && !tg.emailLink && tg.url != "" && URLHoverCard(tg.url)
 }
 
 // URLHoverCard, set by the ui root, reports whether a message link to
@@ -1784,6 +1785,12 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 			}
 		}
 		if tg.url == "" {
+			break
+		}
+		// an email body's links (laid out as mrkdwn links, then marked)
+		// go through EmailIframe's onMessage, not BaseMrkdwnLink
+		if eh, ok := h.(EmailLinkHandler); ok && tg.emailLink {
+			eh.OpenEmailLink(tg.url)
 			break
 		}
 		if mh, ok := h.(MrkdwnLinkHandler); ok && tg.kind == tLink && tg.mrkdwn {

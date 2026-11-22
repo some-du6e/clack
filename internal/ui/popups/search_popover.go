@@ -146,12 +146,15 @@ type SearchPopover struct {
 	clicks  []widget.Clickable
 	sel     int  // the row Enter opens: the picked row, else the first one
 	picked  bool // a row is selected (Slack's selectedIndex isn't null)
-	hover   int
 	ensure  bool
 	query   string
 	lastKey string
 	listHov gesture.Hover // the list (onMouseLeave resets the selection)
 	inList  bool
+	// listMove's address is the tag that hears the pointer move over the
+	// list (the rows' onMouseMove); not zero-size, so no other tag shares
+	// it
+	listMove byte
 
 	// local data (snapshot taken once when core is ready, again when a
 	// member it couldn't name is in: unnamed)
@@ -226,7 +229,7 @@ func NewQuickSwitcher(h Host) *SearchPopover {
 // NewSearchPopover opens the popover over the top-nav search pill (pill is
 // the pill's rect in window coords; empty = centered at the top).
 func NewSearchPopover(h Host, query string, pill image.Rectangle) *SearchPopover {
-	p := &SearchPopover{h: h, pill: pill, sel: -1, hover: -1, sess: core.NewSearchSession()}
+	p := &SearchPopover{h: h, pill: pill, sel: -1, sess: core.NewSearchSession()}
 	p.ed.SingleLine = true
 	p.ed.Submit = true
 	p.list.Axis = layout.Vertical
@@ -1291,6 +1294,11 @@ func (p *SearchPopover) activate(i int) {
 	case srRConv, srRChan:
 		p.open("c/"+r.id, r.id)
 	case srRUser:
+		// searchAutocompleteSuggestionAccept (client-boot-render Gdrn)
+		// for a member: their DM (getDMIdForMember), else openDM
+		// (conversations.open) and then the DM; a DM Slack won't start
+		// (cannot_initiate_dm) shows the member's profile instead. Only
+		// a member-profile suggestion opens the profile otherwise.
 		if r.conv != "" {
 			p.open("c/"+r.conv, r.conv)
 			return
@@ -1304,6 +1312,12 @@ func (p *SearchPopover) activate(i int) {
 		pickedConversation()
 		p.Dismiss()
 		run(h, func(ctx context.Context) (core.Conv, error) { return c.OpenDM(ctx, uid) }, func(cv core.Conv, err error) {
+			if slackCode(err) == "cannot_initiate_dm" {
+				// searchAutocompleteSuggestionAccept: a DM Slack won't
+				// start shows the member's profile
+				pfOpenFull(h, uid)
+				return
+			}
 			if err != nil {
 				h.Toast("Couldn't open that conversation: " + errText(err))
 				return
@@ -1551,19 +1565,31 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 			}
 		}
 	}
-	// onMouseMove picks the row under the pointer; leaving the list
-	// (onMouseLeaveList) goes back to nothing selected.
-	hov := -1
-	for i := range p.rows {
-		if p.rows[i].selectable() && p.clicks[i].Hovered() {
-			hov = i
+	// A row's onMouseMove picks it (SuggestionItem, client-boot-shared
+	// XPKo: selectedIndex, setText false, navigationMethod "mouse"), so
+	// only the pointer moving picks a row: one that comes under a still
+	// pointer (results arriving, the list scrolling to a keyboard pick,
+	// the popover opening over it) gets no mousemove and stays unpicked,
+	// and Enter opens what the keys picked, else the top hit. Gio hit
+	// tests the still pointer again each frame (an Enter, no Move), so the
+	// row the pointer is over is the one hovered when a Move came.
+	// Leaving the list (onMouseLeaveList) goes back to nothing selected.
+	moved := false
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &p.listMove, Kinds: pointer.Move})
+		if !ok {
+			break
+		}
+		if pe, ok := ev.(pointer.Event); ok && pe.Kind == pointer.Move {
+			moved = true
 		}
 	}
-	if hov != p.hover {
-		if hov >= 0 {
-			p.pick(hov)
+	if moved {
+		for i := range p.rows {
+			if p.rows[i].selectable() && p.clicks[i].Hovered() && !(p.picked && p.sel == i) {
+				p.pick(i)
+			}
 		}
-		p.hover = hov
 	}
 	if in := p.listHov.Update(gtx.Source); in != p.inList {
 		p.inList = in
@@ -1665,6 +1691,7 @@ func (p *SearchPopover) layoutCard(gtx layout.Context, th *theme.Theme, cl *Colo
 			p.applySuggestions(pp)
 			defer clip.Rect{Max: image.Pt(w, listH)}.Push(gtx.Ops).Pop()
 			p.listHov.Add(gtx.Ops)
+			event.Op(gtx.Ops, &p.listMove)
 			return p.list.Layout(gtx, len(p.rows), func(gtx layout.Context, i int) layout.Dimensions {
 				return p.row(gtx, th, cl, i, w)
 			})

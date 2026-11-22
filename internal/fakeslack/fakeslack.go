@@ -106,6 +106,9 @@ type Size struct {
 	// Files adds #files-gallery: one message per way Slack draws shared
 	// files (files.go).
 	Files bool
+	// Emails adds #email-inbox: the Email app's email files, plain, HTML
+	// and with attachments (emails.go).
+	Emails bool
 	// ThreadHeader adds one thread in a conversation of each kind the
 	// thread pane's header names differently (threadheader.go).
 	ThreadHeader bool
@@ -764,6 +767,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Files {
 		s.addFilesChannel() // files.go
+	}
+	if sz.Emails {
+		s.addEmailsChannel() // emails.go
 	}
 	if sz.Embeds {
 		s.addEmbedsChannel() // embeds.go
@@ -1564,6 +1570,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleFiles(method, f); handled { // files.go
+		return out
+	}
+	if out, handled := s.handleEmails(method, f); handled { // emails.go
 		return out
 	}
 	if out, handled := s.handleThreadHeader(method, f); handled { // threadheader.go
