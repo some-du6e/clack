@@ -1835,7 +1835,8 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 	overRich := explore && (c.rich.body != nil && c.rich.body.Pointer() || c.rich.extra != nil && c.rich.extra.Pointer())
 	hovered := c.click.Hovered() || c.more.Hovered() || c.chip.Hovered() || c.bar.Hovered() ||
 		c.reacts.Hovered() || c.atts.Hovered() || overRich ||
-		c.fwd.Hovered() || c.jump.Hovered() || c.kebab.Hovered() || v.menuCard == i
+		c.fwd.Hovered() || c.jump.Hovered() || c.kebab.Hovered() || v.menuCard == i ||
+		c.time.Hovered() // the time's link is the card's too (SearchResult's onMouseMove on its root); the bar, drawn after, sits above it
 	c.hov = hovered
 	bg := cl.Bg
 	if hovered {
@@ -1869,7 +1870,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 				// whose onTimestampClick only prevents the navigation: the
 				// click is the card's (open the result); a right-click,
 				// the link's menu
-				lc := c.time.Layout(gtx, th, d.Size, d.Size.Y-d.Baseline, cl.Fg3, "")
+				lc := c.time.Layout(gtx, th, d.Size, d.Size.Y-d.Baseline, cl.Fg3, nil)
 				if lc.Clicked {
 					RecordRecentConversation(m.Channel)
 					openResult(v.h, *m)

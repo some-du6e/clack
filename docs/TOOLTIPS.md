@@ -28,9 +28,7 @@ Slack's `Tooltip` is `BaseTooltip` (client-boot `HzHE`):
   `HideTooltips`) on every Escape press, whoever takes it
   (`inspect_wire.go`, Gio patch 28's key log), and on `ShowOverlay` for
   anything but a hover peek. A hidden tooltip comes back only after the
-  pointer leaves and returns. `popups.TipState` tooltips, the message
-  list's reaction, status and hover-bar tips, and richview's emoji,
-  edited, copy and file-action tips all honour it.
+  pointer leaves and returns. `popups.TipState` tooltips, the message list's reaction, status and hover-bar tips, richview's emoji, edited, copy and file-action tips, the Threads, Unreads and Activity views' reaction pills and a plugin's Slack Kit `Tooltip` all honour it. The huddle window's toolbar tips (a window of its own, its tips drawn at once by `hudTip`) don't: its Escape and menus aren't the shell's.
 - **Shortcut hints:** `KeyboardShortcut` chips through `shortcut.Format`
   (never ⌘ literals: `TestNoHardCodedHints`).
 

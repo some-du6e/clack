@@ -38,17 +38,17 @@ type tsTipper struct {
 // hovered reports whether the pointer is on the time.
 func (t *tsTipper) hovered() bool { return t.link.Hovered() }
 
+// begin starts the row's frame (popups.TimeLink.Begin).
+func (t *tsTipper) begin() { t.link.Begin() }
+
 // skip is a frame the time isn't drawn in: its hover and tooltip end.
 func (t *tsTipper) skip() { t.link.Skip() }
 
 // layout makes the label laid out at the current offset (d, in col) the
 // link to r's message.
 func (t *tsTipper) layout(gtx layout.Context, r *row, d layout.Dimensions, col color.NRGBA) {
-	txt := ""
-	if t.link.Hovered() {
-		txt = richview.FullTimestampSeconds(r.m.TS, r.rc.now)
-	}
-	if c := t.link.Layout(gtx, r.rc.th, d.Size, d.Size.Y-d.Baseline, col, txt); c.Clicked {
+	tip := func() string { return richview.FullTimestampSeconds(r.m.TS, r.rc.now) }
+	if c := t.link.Layout(gtx, r.rc.th, d.Size, d.Size.Y-d.Baseline, col, tip); c.Clicked {
 		m := &r.src
 		popups.OpenMessageTime(r.rc.h, m.Channel, m.TS, m.ThreadTS, c.Cmd)
 	}

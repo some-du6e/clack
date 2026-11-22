@@ -1771,6 +1771,8 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	}
 	gtx.Constraints.Min.X = w
 	r.statusDrawn = false
+	r.tsTip.begin() // a time this frame doesn't draw holds no hover (popups.TimeLink.Begin)
+	r.compactTip.begin()
 	d := r.layout(gtx, rc)
 	// the sender status's tooltip: the icon's box is where the pointer
 	// is, back by its place in the icon
