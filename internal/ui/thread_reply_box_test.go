@@ -147,9 +147,11 @@ func TestThreadsAuditReplyBoxArrivesInPlace(t *testing.T) {
 	// slice's end (a poll's read may come first: the next three wait)
 	x.fs.SetFault("conversations.replies", fakeslack.Fault{Delay: 4 * time.Second, Times: 3})
 	t.Cleanup(func() { x.fs.SetFault("conversations.replies", fakeslack.Fault{}) })
-	asked := len(x.fs.ThreadOpenRequests())
+	// CallCount counts a call as it comes in, before the fault's wait
+	// (ThreadOpenRequests records it as it is answered)
+	asked := x.fs.CallCount("conversations.replies")
 	tv.ScrollToBottom() // the jump-to-bottom button: the slice's end, its "loading" row
-	x.until("the page past the slice asked for", 10*time.Second, func() bool { return len(x.fs.ThreadOpenRequests()) > asked })
+	x.until("the page past the slice asked for", 10*time.Second, func() bool { return x.fs.CallCount("conversations.replies") > asked })
 	x.settle(400 * time.Millisecond)
 	before := x.paneTops()
 	sliceEnd := fakeslack.ThreadOpenReply(x.root, 76) // reply 77: the around read's last
