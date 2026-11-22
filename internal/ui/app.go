@@ -6,6 +6,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"log"
@@ -309,33 +310,37 @@ type App struct {
 	jump             jumpKey                    // what the jump list was last made from
 	resetPending     bool                       // a reset-window waits for the window
 	quitting         atomic.Bool                // Quit: the next close isn't runFromTray's (Slack's app.isQuitting)
+	exitWhy          atomic.Pointer[string]     // why Run is ending, for the exit line (ExitReason)
 	winMode          app.WindowMode             // the last ConfigEvent's (runFromTray leaves full screen first)
 	winPlace         bool                       // Gio places the window here (Windows, macOS): mainWindowSettings keeps its bounds (winbounds.go)
 	winSaveDue       bool                       // mainWindowSettings changed since ui.json was last written
 	winOpened        image.Rectangle            // where mainWindowPlace opened the window (logs, tests)
 	hideHook         func() bool                // tests: replaces Window.Hide (runfromtray.go)
 	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
-	update           updateState                // "Update available" banner
-	updatesOff       atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
-	updNow           chan struct{}              // Check now → updateLoop (cap 1)
-	updWake          chan struct{}              // focus came back: is a check due? (cap 1)
-	updProgressEvery time.Duration              // tests: the progress throttle (default updateProgressEvery)
-	hud              *huddleui.Controller       // the native huddle (huddle_wire.go)
-	hudOrigin        map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
-	ccStopping       map[string]bool            // code channels whose agent is being stopped (codechannel.go)
-	ccPending        map[string]bool            // context bar actions in flight, "channel:key"
-	starOrigin       map[string]*originTracker  // headers' star buttons by channel (the Move to… menu)
-	skipBody         int                        // tests: frames drawViewBody leaves the body out
-	skipAt           time.Time                  // tests: the frame being skipped
-	noKeepBody       bool                       // tests: no keepBody (KeepFocus alone)
-	body             bodyDraw                   // the primary body's last live draw (keepBody)
-	standIn          bool                       // keepBody's draw is running
-	standIns         int                        // keepBody draws so far
-	missedFrameLog   focusLog                   // the missed-frame log line (focus_log.go)
-	shownConvos      shownConvos                // the conversations the last frame showed (composer_release.go)
-	sw               startupWatch               // the startup timeline (startup.go)
-	rv               revealState                // the cover until the window is ready (reveal.go)
-	panelOrigin      image.Point                // the primary panel's window origin this frame
+	invalDone        chan struct{}              // closed by release: invalidator returns
+	invalStop        sync.Once
+	unhooks          unhooks                   // the process-wide listeners New and Run registered: release removes them
+	update           updateState               // "Update available" banner
+	updatesOff       atomic.Bool               // prefs.NoUpdateCheck, for updateLoop
+	updNow           chan struct{}             // Check now → updateLoop (cap 1)
+	updWake          chan struct{}             // focus came back: is a check due? (cap 1)
+	updProgressEvery time.Duration             // tests: the progress throttle (default updateProgressEvery)
+	hud              *huddleui.Controller      // the native huddle (huddle_wire.go)
+	hudOrigin        map[string]*originTracker // headers' huddle buttons by channel (caret menus)
+	ccStopping       map[string]bool           // code channels whose agent is being stopped (codechannel.go)
+	ccPending        map[string]bool           // context bar actions in flight, "channel:key"
+	starOrigin       map[string]*originTracker // headers' star buttons by channel (the Move to… menu)
+	skipBody         int                       // tests: frames drawViewBody leaves the body out
+	skipAt           time.Time                 // tests: the frame being skipped
+	noKeepBody       bool                      // tests: no keepBody (KeepFocus alone)
+	body             bodyDraw                  // the primary body's last live draw (keepBody)
+	standIn          bool                      // keepBody's draw is running
+	standIns         int                       // keepBody draws so far
+	missedFrameLog   focusLog                  // the missed-frame log line (focus_log.go)
+	shownConvos      shownConvos               // the conversations the last frame showed (composer_release.go)
+	sw               startupWatch              // the startup timeline (startup.go)
+	rv               revealState               // the cover until the window is ready (reveal.go)
+	panelOrigin      image.Point               // the primary panel's window origin this frame
 
 	// quiet frames (quiet.go): an Invalidate since the last frame (layout
 	// to do), an animation repaint since then, what the last full frame
@@ -386,14 +391,15 @@ func New(opts Options, images *imgcache.Cache) *App {
 		opts.Started = time.Now()
 	}
 	a := &App{
-		opts:    opts,
-		th:      theme.Bare(opts.Dark),
-		images:  images,
-		clicks:  clickables{},
-		views:   map[Route]View{},
-		inval:   make(chan struct{}, 1),
-		updNow:  make(chan struct{}, 1),
-		updWake: make(chan struct{}, 1),
+		opts:      opts,
+		th:        theme.Bare(opts.Dark),
+		images:    images,
+		clicks:    clickables{},
+		views:     map[Route]View{},
+		inval:     make(chan struct{}, 1),
+		invalDone: make(chan struct{}),
+		updNow:    make(chan struct{}, 1),
+		updWake:   make(chan struct{}, 1),
 	}
 	go a.invalidator()
 	theme.SetPrimary(a.th) // the text model follows this window's mode (theme/textgamma.go)
@@ -495,9 +501,14 @@ var invalidateHook func(*App)
 // invalidator forwards Invalidate requests to the window from a goroutine that
 // is never the main thread (see Invalidate).
 func (a *App) invalidator() {
-	for range a.inval {
-		if w := a.winLive.Load(); w != nil {
-			w.Invalidate()
+	for {
+		select {
+		case <-a.inval:
+			if w := a.winLive.Load(); w != nil {
+				w.Invalidate()
+			}
+		case <-a.invalDone: // release: the App is done
+			return
 		}
 	}
 }
@@ -595,6 +606,9 @@ func (a *App) Run() error {
 		nativemenu.NoteEvent(ev) // the window's HWND / NSView for native context menus
 		switch e := ev.(type) {
 		case app.DestroyEvent:
+			if e.Err != nil {
+				a.noteExit(fmt.Sprintf("the window ended with an error: %v", e.Err))
+			}
 			wd.end()
 			wd.stop()
 			a.closeVideos()   // no sound after the window is gone (video.go)
@@ -602,16 +616,19 @@ func (a *App) Run() error {
 			if a.hud != nil {
 				a.hud.Close() // leave the huddle cleanly (Chime LEAVE)
 			}
+			if a.winSaveDue { // a move or resize savePrefsSoon hasn't written yet
+				a.savePrefs()
+			}
+			// ui.json before the stop's wait: Windows ending the session
+			// gives the quit 3 s (cmd/clack's OnSessionEnd)
+			a.flushPrefs()
 			if a.data != nil {
 				select { // plugins' stop hooks, the metadata cache
 				case <-a.data.stop():
 				case <-time.After(5 * time.Second):
 				}
 			}
-			if a.winSaveDue { // a move or resize savePrefsSoon hasn't written yet
-				a.savePrefs()
-			}
-			a.flushPrefs() // the window is gone: nothing waits on this
+			a.flushPrefs() // what the stop changed; the window is gone: nothing waits on this
 			return e.Err
 		case *app.ClosingEvent:
 			// the close button, Alt+F4: Slack's MAIN_WINDOW_CLOSE keeps the

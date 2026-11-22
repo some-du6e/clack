@@ -54,7 +54,7 @@ type bmState struct {
 	seen map[string]bool
 }
 
-var bmStates sync.Map // *App -> *bmState
+var bmStates = newPerApp() // *App -> *bmState
 
 func (a *App) bmState() *bmState {
 	v, _ := bmStates.LoadOrStore(a, &bmState{chs: map[string]map[string]Bookmark{}, seen: map[string]bool{}})

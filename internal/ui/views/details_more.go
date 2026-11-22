@@ -1189,6 +1189,14 @@ func (d *ChannelDetails) cdDlgButton(c *widget.Clickable, kind btnKind, label st
 	}
 }
 
+// cdAIUsers are AiExclusionsModal's "used by" bullets. The Slack MCP
+// Server is there for everyone since Slack dropped mcp_ai_channel_exclusions
+// (build 8f19be21ed7e, the 2026-11-21 drift); Today and AI steps in
+// Workflow Builder need features Clack doesn't have.
+func cdAIUsers() []string {
+	return []string{"Slackbot", "Search AI answers", "Canvas AI", "Slack MCP Server"}
+}
+
 // layoutDialog draws the open stacked dialog, if any.
 func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelDetails) {
 	dl := &d.x.dlg
@@ -1229,10 +1237,7 @@ func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelD
 		if dl.err != "" {
 			body = append(body, d.cdAlert(dl.err, false), cdSpace(12))
 		}
-		users := []string{"Slackbot", "Search AI answers", "Canvas AI"}
-		if d.h.Core().Experiment("mcp_ai_channel_exclusions") == "on" {
-			users = append(users, "Slack MCP Server")
-		}
+		users := cdAIUsers()
 		body = append(body,
 			func(gtx C) D {
 				return row(gtx, layout.Baseline,
@@ -2273,9 +2278,9 @@ func (d *ChannelDetails) addPeopleResults(gtx C) {
 }
 
 // settingsVisible is isSettingsVisible for the tab strip: channels always
-// have the permissions section, group DMs Copy members (on a paid team),
-// 1:1 DMs only Message history or Export (details_retention.go); guests
-// never see the tab.
+// have the permissions section; a DM or group DM shows it when
+// settingsSections has any (Copy members on a paid team, Message history,
+// Export: details_retention.go); guests never see the tab.
 func (d *ChannelDetails) settingsVisible() bool {
 	c := d.h.Core()
 	if c == nil {
@@ -2284,13 +2289,11 @@ func (d *ChannelDetails) settingsVisible() bool {
 	if u, ok := c.User(d.selfID()); ok && u.Guest {
 		return false
 	}
-	switch cdGroup(d.kind) {
-	case "im":
+	if cdGroup(d.kind) != "channel" {
+		// isSettingsVisible: the sections aren't empty, so the tab never
+		// opens on a blank body
 		inf, _, _ := d.info.get()
-		return d.historyShown(inf) || d.exportShown(inf)
-	case "mpim":
-		inf, _, _ := d.info.get()
-		return c.C != nil && c.C.Creds.EnterpriseID != "" || d.historyShown(inf) || d.exportShown(inf)
+		return len(d.settingsSections(inf)) > 0
 	}
 	return true
 }

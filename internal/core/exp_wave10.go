@@ -45,9 +45,13 @@ const (
 	PermManagePrivateChannels    = "MANAGE_PRIVATE_CHANNELS"
 )
 
-// ExpNceaLockConfiguration is zrjN r's experiment: channel managers may
-// lock who manages a channel's agent.
-const ExpNceaLockConfiguration = "ncea_allow_channel_managers_to_lock_configuration"
+// ExpNativeChannelExpert is kzB8 r's experiment (zrjN r's before): a
+// channel's agent configuration can be locked to channel managers. The
+// check read ncea_allow_channel_managers_to_lock_configuration until Slack
+// renamed its gate to enable_native_channel_expert (build 8f19be21ed7e,
+// the 2026-11-21 drift; about-channel-modal's
+// isChannelAgentConfigRestrictedToManagers reads the same).
+const ExpNativeChannelExpert = "enable_native_channel_expert"
 
 // removeConv is the stored conversation ch (the viewer's, or one read
 // from conversations.info).
@@ -135,12 +139,12 @@ func (a *App) canRemoveAppFromChannel(c *slack.Conversation, mem *slack.User) bo
 	return true
 }
 
-// agentConfigLocked is zrjN r: ncea_allow_channel_managers_to_lock_configuration
-// on and the channel's who_can_manage_channel_agent is channel managers,
+// agentConfigLocked is kzB8 r: enable_native_channel_expert on and the
+// channel's who_can_manage_channel_agent is channel managers,
 // for a viewer who can't manage the channel (hWVz C: a channel manager
 // here, or an org admin).
 func (a *App) agentConfigLocked(c *slack.Conversation) bool {
-	if a.experiment(ExpNceaLockConfiguration) != "on" {
+	if a.experiment(ExpNativeChannelExpert) != "on" {
 		return false
 	}
 	var p struct {

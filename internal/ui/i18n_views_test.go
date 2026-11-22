@@ -29,7 +29,11 @@ var i18nViews = []i18nView{
 	{"activity", "activity", nil},
 	{"unreads", "unreads", nil},
 	{"dms", "dms", nil},
-	{"files", "files", nil},
+	// the starred collection's header is files.collections.list's name
+	// (LMEP createSidebarCollectionHeaderRow: label e.name), which the fake
+	// names in English; file sections are everyone's since the 2026-11-21
+	// drift
+	{"files", "files", []string{"Starred"}},
 	{"todos", "later", nil},
 	{"saved", "saved", nil},
 	{"drafts", "drafts", nil},

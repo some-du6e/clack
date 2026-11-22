@@ -592,6 +592,9 @@ func (a *App) Usergroups(ctx context.Context, query string, limit int) ([]Usergr
 	a.S.RLock()
 	out := make([]Usergroup, 0, len(a.S.Groups))
 	for _, g := range a.S.Groups {
+		if g.DateDelete != 0 {
+			continue // a deactivated group the directory or subteam_updated stored: nothing to mention
+		}
 		if needle != "" && !strings.Contains(strings.ToLower(g.Handle), needle) && !strings.Contains(strings.ToLower(g.Name), needle) {
 			continue
 		}

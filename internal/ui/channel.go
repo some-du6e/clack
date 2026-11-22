@@ -445,10 +445,8 @@ func (a *App) headerBellIcon(ch string, conv *convInfo) string {
 }
 
 // canSetTopic is canUserSetTopicForChannelWithReasonById (boot-shared
-// xjwB, core.CanSetTopic): permission data from permissions/info
-// (SET_CHANNEL_TOPIC) and, under
-// channel_topic_purpose_setting_restrict_to_channel_managers, only that
-// grant outside 1:1 DMs. A preview or a code channel never offers it.
+// iJOl, core.CanSetTopic): outside 1:1 DMs only permissions/info's
+// SET_CHANNEL_TOPIC grant. A preview or a code channel never offers it.
 func (a *App) canSetTopic(ch string, conv *convInfo) bool {
 	if conv == nil || conv.Archived || conv.Preview || conv.Code != nil {
 		return false

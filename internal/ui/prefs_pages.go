@@ -792,10 +792,10 @@ func (p *prefsModal) privacyPage(f *prefsForm) {
 func (p *prefsModal) advancedPage(f *prefsForm) {
 	a := p.a
 	f.subheading("Input options")
-	if c := a.Core(); c != nil && c.Experiment("composer_smart_symbols") == "on" { // iZ.w gates the row
-		// the composer's TextSubstitutions (composer/smart_symbols.go)
-		f.check("disable_smart_symbols", "Enable smart quotes and symbols", "Type quotation marks \" \" to create curly ones “ ”. Type -- to create an em-dash —. Type ... to create an ellipsis …. Type - and >, or < and - to create arrows → ←", false, true)
-	}
+	// the composer's TextSubstitutions (composer/smart_symbols.go); v/We
+	// draws the row for everyone since Slack dropped composer_smart_symbols
+	// (2026-11-21 drift)
+	f.check("disable_smart_symbols", "Enable smart quotes and symbols", "Type quotation marks \" \" to create curly ones “ ”. Type -- to create an em-dash —. Type ... to create an ellipsis …. Type - and >, or < and - to create arrows → ←", false, true)
 	f.check("enter_is_special_in_tbt", "When typing code with ```, Enter should not send the message.", "With this checked use Shift+Enter to send.", false, false)
 	// the composer's own toggle (prefs.go): live markup follows it
 	f.option("plaintext", "Format messages with markup", "The text formatting toolbar won’t show in the composer.", a.plainTextOn(), false, a.togglePlainText)

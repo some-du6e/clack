@@ -328,6 +328,9 @@ func (c *builder) fileBlock(f *slack.File) Block {
 	out := convertFile(f)
 	c.canvasFile(f, out) // canvasfile.go
 	c.expandable(out)
+	if out.Email != nil {
+		c.emailNames(out.Email)
+	}
 	if f.User != "" && c.sender != "" && f.User != c.sender {
 		out.UploaderID = f.User
 		if mn, ok := c.r.(MemberNamer); ok {
@@ -408,7 +411,83 @@ func convertFile(f *slack.File) *File {
 		out.LinesMore, out.PreviewTruncated = f.LinesMore, f.PreviewIsTruncated
 	}
 	out.EditLink, out.ExternalType = SafeURL(f.EditLink), f.ExternalType
+	if f.Mode == "email" && !out.IsImage && !out.IsVideo && !out.IsAudio {
+		out.Email = convertEmail(f)
+	}
 	return out
+}
+
+// EmailFile is f, an email file from files.info, as a message's file
+// block has it, its senders and recipients named through r (the email's
+// FileDetails view, which reads the whole file).
+func EmailFile(f *slack.File, r Resolver) *File {
+	out := convertFile(f)
+	if out.Email != nil && r != nil {
+		(&builder{r: r}).emailNames(out.Email)
+	}
+	return out
+}
+
+// emailNames names an email's senders and recipients as EmailRecipient
+// shows them: a member by their name (EmailUserEntity's token), a channel
+// id with no address (the email went to a channel's address) by the
+// channel's name (looksLikeChannelId, nQiy).
+func (c *builder) emailNames(e *Email) {
+	for _, list := range [][]EmailAddress{e.From, e.To, e.Cc} {
+		for i := range list {
+			a := &list[i]
+			switch {
+			case a.UserID != "":
+				if mn, ok := c.r.(MemberNamer); ok {
+					if n, ok := mn.MemberName(a.UserID); ok && n != "" {
+						a.Name = n
+					}
+				}
+			case a.Address == "" && looksLikeChannelID(a.Name):
+				if n := c.r.ChannelName(a.Name); n != "" && n != a.Name {
+					a.Name = n
+				}
+			}
+		}
+	}
+}
+
+// looksLikeChannelID is looksLikeChannelId (nQiy): /^(C|G|D|Z)[A-Z0-9]{8,}$/.
+func looksLikeChannelID(s string) bool {
+	if len(s) < 9 || !strings.ContainsRune("CGDZ", rune(s[0])) {
+		return false
+	}
+	for _, r := range s[1:] {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// convertEmail is an email file's message (getFileType "email": mode
+// "email", after images, audio and video).
+func convertEmail(f *slack.File) *Email {
+	addrs := func(in []slack.EmailAddress) []EmailAddress {
+		var out []EmailAddress
+		for _, a := range in {
+			out = append(out, EmailAddress{Name: a.Name, Address: a.Address, UserID: a.SlackUserID})
+		}
+		return out
+	}
+	e := &Email{From: addrs(f.From), To: addrs(f.To), Cc: addrs(f.Cc), Subject: f.Subject,
+		HTML: firstNonEmpty(f.SimplifiedHTML, f.Preview), PlainText: f.PlainText, Preview: f.PreviewPlainText,
+		Timestamp: f.Timestamp, AppID: f.AppID, AppName: f.AppName}
+	if n := len(f.EmailAttachments) + f.InlineAttachmentCount; f.OriginalAttachmentCount > 0 && f.OriginalAttachmentCount != n {
+		e.Removed = f.OriginalAttachmentCount - n // renderAttachments' "{count} attachments removed"
+	}
+	if s := f.EmailSecurity; s != nil && s.HasValidDMARC != nil && !*s.HasValidDMARC {
+		e.Unverified = true
+	}
+	for _, a := range f.EmailAttachments {
+		e.Attachments = append(e.Attachments, EmailAttachment{Name: a.Filename, Mime: a.Mimetype, URL: SafeURL(a.URL), FileID: a.SlackFileID, Size: a.Size})
+	}
+	return e
 }
 
 // FileExpander is an optional Resolver extension (store.Store): a message
@@ -423,7 +502,7 @@ type FileExpander interface {
 // expandable fills a snippet's expandable state and fetched content.
 func (c *builder) expandable(out *File) {
 	fe, ok := c.r.(FileExpander)
-	if !ok || !out.IsSnippet || out.ID == "" {
+	if !ok || !out.IsSnippet && out.Email == nil || out.ID == "" {
 		return
 	}
 	out.Expanded, out.Expanding = fe.FileExpansion(c.msgCh, c.msgTS, out.ID)
@@ -643,7 +722,11 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		att.ServiceIcon = SafeImage(a.ServiceIcon)
 		att.Pretext = flatten(FromMrkdwn(c.r, a.Pretext))
 		if a.Title != "" {
-			att.Title = emojify(c.r, unescape(a.Title), 0)
+			// AttachmentTitle (boot-shared yvlf): Mrkdwn with noSpecials
+			// (TSF's NOMRKDWN): its <links>, mentions and :emoji:, no
+			// *bold* or `code`. A title that is one <url|label> token
+			// (GitHub's "#4045 Update record for …") is that link.
+			att.Title = c.plainLinked(a.Title)
 		}
 		att.TitleLink = SafeURL(a.TitleLink)
 		att.Text = c.attachmentText(a)

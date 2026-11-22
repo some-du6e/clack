@@ -1,9 +1,11 @@
 package listview
 
-// custom_file_sections in the list header (section_button.go, more.go):
-// on, FileSectionDropdownButton before the list's icon and title (a
-// click opens its menu), the More menu without the star row (a channel
-// tab's with Move to section ▸); off, neither. Light and dark shots with
+// File sections in the list header (section_button.go, more.go):
+// FileSectionDropdownButton before the list's icon and title (a click
+// opens its menu), the More menu without the star row (a channel tab's
+// with Move to section ▸), in every group: Slack dropped
+// custom_file_sections and kept its on path (the 2026-11-21 drift), so
+// the old gate forced off changes nothing. Light and dark shots with
 // the file in the starred collection and in an emoji section
 // (list-section-button-*.png).
 
@@ -47,9 +49,7 @@ func sectionLook(h *testHost, id string) (int, string, bool) {
 func TestSectionButton(t *testing.T) {
 	h, fs := newEnv(t, false)
 	a := h.a
-	if a.FileSectionsOn() {
-		t.Fatal("custom_file_sections is assigned in fakeslack; the test expects it unassigned (off)")
-	}
+	a.SetExperimentGroup("custom_file_sections", "off")
 	var menus []image.Rectangle
 	act := Actions{SideView: func() {}, Copy: func(string) {}, Menu: func([]MenuItem) {},
 		SectionButton: func() (int, string, bool) { return sectionLook(h, fakeslack.ListKitchen) },
@@ -84,20 +84,7 @@ func TestSectionButton(t *testing.T) {
 		frame()
 	}
 
-	// off: no button, the star row
-	if v.sectionButtonShown() {
-		t.Error("off: the header draws the section button")
-	}
-	click()
-	if len(menus) != 0 {
-		t.Errorf("off: a click there opened the section menu %v", menus)
-	}
-	if got := moreLabels(v.moreItems()); !strings.HasPrefix(got, "Add to starred, ─, Save for later") {
-		t.Errorf("off: More menu %s", got)
-	}
-
-	// on: the button and its menu; the menu drops the star row
-	a.SetExperimentGroup("custom_file_sections", "on")
+	// the button and its menu; the menu drops the star row
 	frame()
 	if !v.sectionButtonShown() {
 		t.Fatal("on: no section button")
@@ -131,7 +118,7 @@ func TestSectionButton(t *testing.T) {
 
 	// the faces, as the shell picks them: in Starred, in an emoji section
 	ctx := context.Background()
-	if err := a.FetchFileCollections(ctx); err != nil {
+	if err := a.ForceFetchFileCollections(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.MoveFileToCollection(ctx, fakeslack.ListKitchen, fakeslack.StarredCollectionID); err != nil {
@@ -145,8 +132,7 @@ func TestSectionButton(t *testing.T) {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		hh, fs2 := newEnv(t, dark)
 		launch := fs2.AddFileCollection("Launch", ":rocket:")
-		hh.a.SetExperimentGroup("custom_file_sections", "on")
-		if err := hh.a.FetchFileCollections(ctx); err != nil {
+		if err := hh.a.ForceFetchFileCollections(ctx); err != nil {
 			t.Fatal(err)
 		}
 		sact := act

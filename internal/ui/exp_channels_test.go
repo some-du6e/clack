@@ -299,40 +299,47 @@ func TestHeaderTopicHoverCard(t *testing.T) {
 	e.shot("channel-header-narrow")
 }
 
-// With channel_topic_purpose_setting_restrict_to_channel_managers on the
-// header's topic is read-only without SET_CHANNEL_TOPIC
-// (permissions/info), and details' Topic and Description are disabled;
-// the grants bring Edit back.
+// The header's topic is read-only without SET_CHANNEL_TOPIC
+// (permissions/info), and details' Topic and Description are disabled,
+// in every group: Slack dropped
+// channel_topic_purpose_setting_restrict_to_channel_managers and kept its
+// on path (2026-11-21 drift), so forcing the old gate off changes
+// nothing. fakeslack's default answer grants both, and the header offers
+// Edit.
 func TestTopicRestrictedToManagers(t *testing.T) {
-	var ch string
+	var ch, granted string
 	e, _ := gdmEnv(t, func(fs *fakeslack.Server) {
-		ch = fs.ChannelIDs()[1]
-		fs.Permissions = map[string][]string{ch: {"CAN_AT_CHANNEL"}}
+		ch, granted = fs.ChannelIDs()[1], fs.ChannelIDs()[2]
+		fs.Permissions = map[string][]string{ch: {"CAN_AT_CHANNEL"}, granted: {"SET_CHANNEL_TOPIC", "SET_CHANNEL_PURPOSE"}}
 	})
 	c := e.a.Core()
 	e.openChannel(ch)
 	e.settle(200 * time.Millisecond)
 	conv := e.a.model().conv(ch)
-	if !e.a.canSetTopic(ch, conv) {
-		t.Fatal("unassigned: a member can't set the topic")
-	}
-	c.SetExperimentGroup("channel_topic_purpose_setting_restrict_to_channel_managers", "on")
-	e.settle(100 * time.Millisecond)
 	if e.a.canSetTopic(ch, conv) {
-		t.Error("on, no grant: the header offers Edit")
+		t.Error("no grant: the header offers Edit")
 	}
 	e.a.OpenDetails(ch)
 	e.settle(400 * time.Millisecond)
 	d := topDetails(t, e)
 	if f := d.AboutFields(); f["Topic"] || f["Description"] {
-		t.Errorf("on, no grant: details fields %v", f)
+		t.Errorf("no grant: details fields %v", f)
 	}
 	e.shot("details-topic-restricted")
 	c.SetExperimentGroup("channel_topic_purpose_setting_restrict_to_channel_managers", "off")
 	e.settle(50 * time.Millisecond)
-	if f := d.AboutFields(); !f["Topic"] || !f["Description"] {
-		t.Errorf("off: details fields %v", f)
+	if f := d.AboutFields(); f["Topic"] || f["Description"] {
+		t.Errorf("the dropped gate forced off: details fields %v", f)
 	}
+	if e.a.canSetTopic(ch, conv) {
+		t.Error("the dropped gate forced off: the header offers Edit")
+	}
+	c.ClearExperimentGroup("channel_topic_purpose_setting_restrict_to_channel_managers")
+
+	e.openChannel(granted)
+	e.settle(200 * time.Millisecond)
+	gconv := e.a.model().conv(granted)
+	e.until("the grants", 5*time.Second, func() bool { return e.a.canSetTopic(granted, gconv) })
 }
 
 // ChannelNotificationPrefMenu tags the checked radio "Customized" when the

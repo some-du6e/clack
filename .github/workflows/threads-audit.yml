@@ -20,6 +20,8 @@ on:
       - "internal/ui/richview/blocks.go"
       - "internal/ui/messages/reply_bar.go"
       - "internal/ui/messages/list.go"
+      - "internal/ui/messages/toolbar_hold.go"
+      - "internal/ui/toolbar_click_test.go"
       - "internal/ui/messages/row.go"
       - "internal/ui/messages/util.go"
       - "internal/ui/secondary.go"
@@ -84,7 +86,7 @@ jobs:
       - name: core, the pane and the reply bar
         run: |
           go test -count=1 -v -run 'TestThreadLastRead|TestDesktopNotificationForwarded|TestThreadLocked|TestHideRepliesExperiment' ./internal/core
-          go test -count=1 -v -run 'TestThreadsAudit|TestReplyBar|TestThreadHeader|TestThreadPane|TestThreadLoadingRepliesRow|TestThreadJumpToUnread|TestThreadReactionChangesOnlyItsMessage|TestReactionPillClickDrawsAtOnce|TestReactionPickDrawsAtOnce|TestToolbarReplyInBootedChannel|TestToolbarThreadAndShareLikeSlack' ./internal/ui/messages
+          go test -count=1 -v -run 'TestThreadsAudit|TestReplyBar|TestThreadHeader|TestThreadPane|TestThreadLoadingRepliesRow|TestThreadJumpToUnread|TestThreadReactionChangesOnlyItsMessage|TestReactionPillClickDrawsAtOnce|TestReactionPillClickSurvivesOtherReactions|TestReactionPickDrawsAtOnce|TestToolbarReplyInBootedChannel|TestToolbarThreadAndShareLikeSlack' ./internal/ui/messages
       - name: notifications, width, Escape, with screenshots
         env:
           THREADS_AUDIT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -93,6 +95,8 @@ jobs:
         run: |
           mkdir -p "$THREADS_AUDIT_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestThreadsAudit' ./internal/ui
+          # the message actions bar clicked as a hand does: the row stays hovered (thread-header-hover)
+          xvfb-run -a go test -count=1 -v -run '^TestToolbarClicksKeepHover$' ./internal/ui
           # Block Kit in the thread pane next to the channel (bk-vote-*)
           CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -run 'TestThreadsAuditBlockKit|TestThreadsAuditStatesShots' ./internal/ui/messages
           ls -la "$THREADS_AUDIT_SHOTS_DIR"

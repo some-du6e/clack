@@ -166,6 +166,12 @@ func TestWorkObjectExperiments(t *testing.T) {
 	if a.WorkObjectFlags().Rearrange {
 		t.Error("rearrangement still on after forcing off")
 	}
+	// search's work objects are everyone's: Slack dropped
+	// work_objects_message_search_xp_v2 (the 2026-11-21 drift)
+	a.SetExperimentGroup("work_objects_message_search_xp_v2", "off")
+	if !a.WorkObjectFlags().Search {
+		t.Error("the dropped work_objects_message_search_xp_v2 forced off turned search's work objects off")
+	}
 }
 
 // searchWorkObjects groups search.modules.workObjects' items by app.
