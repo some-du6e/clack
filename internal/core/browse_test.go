@@ -427,7 +427,9 @@ func TestSearchUsergroupsMergesStored(t *testing.T) {
 	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if g := a.StoredUsergroup("S1"); g.AutoType != "" || g.IsSection || g.Updated != 7 || g.UserCount != 3 {
+	// user_count is parseInt(user_count) || 0 whether or not the answer
+	// has it: 0 here
+	if g := a.StoredUsergroup("S1"); g.AutoType != "" || g.IsSection || g.Updated != 7 || g.UserCount != 0 {
 		t.Errorf("after usergroups.search: %+v", g)
 	}
 }
