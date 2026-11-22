@@ -42,6 +42,18 @@ func (m *Manager) Available() error {
 	return m.err
 }
 
+// Takes reports whether the manager can make a player of src: its
+// backend takes that kind of source (Taker), or takes any.
+func (m *Manager) Takes(src Source) bool {
+	if m.Available() != nil {
+		return false
+	}
+	if t, ok := m.backend.(Taker); ok {
+		return t.Takes(src)
+	}
+	return true
+}
+
 // Backend is the backend's name, "" for none.
 func (m *Manager) Backend() string {
 	if m.backend == nil {

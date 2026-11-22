@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,20 @@ type Source struct {
 	// a seekable answer (a 206), the whole file from byte 0 on one that
 	// isn't (a 200). RangeSource calls it, at most one body open at once.
 	Open func(ctx context.Context, off int64) (io.ReadCloser, Info, error)
+}
+
+// IsAudio reports whether a source is an audio file (a message's audio
+// player's): an audio/* type, or an audio extension. A backend plays it
+// with no picture: no frames, no device of Gio's.
+func IsAudio(src Source) bool {
+	if strings.HasPrefix(strings.ToLower(src.Mime), "audio/") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimPrefix(src.Ext, ".")) {
+	case "m4a", "mp3", "wav", "ogg", "oga", "opus", "aac":
+		return true
+	}
+	return false
 }
 
 // Info is what the file's server answered.

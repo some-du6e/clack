@@ -1572,6 +1572,7 @@ func gio_onLaunchActivated() {
 	for _, f := range fs {
 		f()
 	}
+	retireLaunchScreens() // the launch is over: later displays read afresh (clack_bounds_macos.go)
 }
 
 func newWindow(win *callbacks, options []Option) {
