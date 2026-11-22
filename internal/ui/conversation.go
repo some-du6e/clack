@@ -54,6 +54,13 @@ func (t *originTracker) get(fallback image.Point) image.Point {
 // of a frame, so origin trackers laid out later in the frame pair each local
 // event with the same event's window position.
 func (a *App) readRootPointer(gtx layout.Context) {
+	// where the last frame's root was in the router's coordinates: Gio's
+	// own title bar (Wayland with no server-side decorations, GNOME's
+	// Mutter) draws the frame below it, and the router's areas include
+	// that offset where FrameEvent coordinates don't (FrameOrigin)
+	if full, _, ok := gtx.Source.AreaBounds(&a.ptrTag); ok {
+		a.frameOrg = full.Min
+	}
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &a.ptrTag, Kinds: pointer.Move | pointer.Enter | pointer.Press | pointer.Drag | pointer.Release})
 		if !ok {
@@ -83,6 +90,13 @@ func (a *App) rootPointer(gtx layout.Context) {
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, &a.ptrTag)
 }
+
+// FrameOrigin is the frame's origin in the router's coordinates, as the
+// last frame put it: subtract it from an AreaBounds rectangle (Gio patch
+// 53, and 57's FollowArea) to get the FrameEvent coordinates everything
+// else uses. Nonzero only under Gio's own decorations (app.Window's
+// decorate: a title bar decoHeight tall).
+func (a *App) FrameOrigin() image.Point { return a.frameOrg }
 
 // PointerPos is the last pointer position in window coordinates (popup
 // anchors; messages.PointerHost).

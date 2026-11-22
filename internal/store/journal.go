@@ -207,6 +207,31 @@ func (s *Store) PutConvsSince(cs []slack.Conversation, since uint64) int {
 	return skip
 }
 
+// PutInfoSince stores a conversations.info answer for a lookup asked for at
+// journal position since (core's lookups queued off the event pump), in the
+// member set when it is there already or the answer says the viewer is in it
+// (an IM, a group DM), else outside it (PutExtConv), unless this session
+// changed the conversation after since (DropConv, PutConvLocal): read before
+// a channel_left that the pump applied meanwhile, the answer put the left
+// channel back in the member set. One critical section, as PutConvsSince. It
+// reports whether it stored the answer.
+func (s *Store) PutInfoSince(c slack.Conversation, since uint64) bool {
+	if c.ID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jr.convs[c.ID] > since {
+		return false
+	}
+	if _, member := s.Convs[c.ID]; member || c.IsMember || c.IsIM || c.IsMPIM {
+		s.putConvLocked(c)
+		return true
+	}
+	s.putExtConvLocked(c)
+	return true
+}
+
 // SetSections installs a section list (a fresh users.channelSections.list,
 // realtime's) and moves the journal.
 func (s *Store) SetSections(secs []slack.Section) {

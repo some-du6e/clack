@@ -68,9 +68,10 @@ type Message struct {
 	BotProfile  *BotProfile     // bot_profile of bot messages
 	// NoteFiles is what a notification's text reads of the files
 	// (richtext.NoteFilesOf: the first one's title, kind and uploader,
-	// the clips), nil with none; Upload is msg.upload (the sender
-	// uploaded the files with it), which picks the file meta line's
-	// "uploaded" over "shared".
+	// the sender it's compared with, the clips; note_files.go), nil with
+	// none; a toast reads them again from the store (NoteFilesNow).
+	// Upload is msg.upload (the sender uploaded the files with it), which
+	// picks the file meta line's "uploaded" over "shared".
 	NoteFiles *richtext.NoteFiles
 	Upload    bool
 	// StreamingState is an app's chat stream (chat.startStream /

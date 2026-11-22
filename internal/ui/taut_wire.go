@@ -67,7 +67,7 @@ func (b *backend) startTaut(a *App) {
 	if b.core == nil || b.taut != nil || a.inert {
 		return
 	}
-	t, s := b.buildTaut(a, a.th.Dark, b.teamID, a.router.Current().Channel())
+	t, s := b.buildTaut(a, a.th.Dark, b.teamID, a.router.Current().Channel(), false)
 	b.installTaut(a, t, s)
 }
 
@@ -85,9 +85,10 @@ func (b *backend) startTautAsync(a *App) {
 		team = b.core.C.Creds.Team
 	}
 	dark, ch := a.th.Dark, a.router.Current().Channel()
+	deferJS := b.tautDeferJS // the plugins start later (startDeferredTaut)
 	go func() {
 		t0 := time.Now()
-		t, s := b.buildTaut(a, dark, team, ch)
+		t, s := b.buildTaut(a, dark, team, ch, deferJS)
 		go func() { // the plugins enabled at start started (reveal.go's slots)
 			if t != nil {
 				<-t.StartDone()
@@ -109,6 +110,9 @@ func (b *backend) startTautAsync(a *App) {
 				return
 			}
 			b.installTaut(a, t, s)
+			if deferJS && !b.tautDeferJS {
+				startRuntimes(t, s) // the launch's first real frame came while they were being made
+			}
 		})
 	}()
 }
@@ -125,7 +129,7 @@ func (a *App) inertPluginDir(name string) string {
 }
 
 // buildTaut makes the plugin runtimes (any goroutine). nil on error.
-func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut, *slick.Slick) {
+func (b *backend) buildTaut(a *App, dark bool, team, channel string, deferJS bool) (*taut.Taut, *slick.Slick) {
 	t0 := time.Now()
 	// The runtime's patched names, kept so the reset Attached posts can't
 	// lose them: a plugin may register its patches (SetPatched) before the
@@ -136,6 +140,7 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 	// patched names reach slackc only while it's tautOwner
 	var bound atomic.Pointer[taut.Bridge]
 	t, err := taut.New(taut.Options{
+		DeferStart:     deferJS,
 		Dir:            a.inertPluginDir("taut"), // "": Taut's own (clackHome)
 		CredsPath:      a.inertPluginDir("creds.json"),
 		App:            b.core,
@@ -186,6 +191,9 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 				if f := styleTap; f != nil {
 					f(key, src)
 				}
+				if key != "user" && !strings.HasPrefix(key, "slick:") {
+					b.pluginStyled.Store(true) // a plugin's own CSS, not the user's or Slick's theme (prefs.PluginStyled)
+				}
 				slackc.SetStyle(key, src)
 			},
 			RemoveStyle: func(key string) {
@@ -218,6 +226,9 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 				if f := documentTap; f != nil {
 					f(body)
 				}
+				if len(css) > 0 {
+					b.pluginStyled.Store(true) // a page's style tags (prefs.PluginStyled)
+				}
 				if err := slackc.SetDocument(body, css); err != nil {
 					log.Printf("slackc: document: %v", err)
 				}
@@ -238,7 +249,7 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 	if envFlag("TIMING") {
 		log.Printf("timing: taut.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
 	}
-	return t, b.buildSlick(a, t, dark, team, channel)
+	return t, b.buildSlick(a, t, dark, team, channel, deferJS)
 }
 
 // installTaut hooks the runtimes into the UI (UI goroutine).
@@ -460,10 +471,11 @@ func argStr(args map[string]any, k string) string {
 // slick.New reads settings.json, themes and cached plugin metadata only;
 // with no plugin on, no JS starts (themes and custom CSS are converted in
 // Go).
-func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel string) *slick.Slick {
+func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel string, deferJS bool) *slick.Slick {
 	t0 := time.Now()
 	s, err := slick.New(slick.Options{Dir: a.inertPluginDir("slick"), Taut: t, OpenURL: openURL, OpenFile: a.openFilePath,
-		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: a.setSessionSpellChecker})
+		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: a.setSessionSpellChecker,
+		DeferStart: deferJS, Dark: dark})
 	if err != nil {
 		log.Printf("slick: %v", err)
 		return nil

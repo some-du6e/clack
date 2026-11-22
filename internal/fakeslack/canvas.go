@@ -162,6 +162,23 @@ func (s *Server) EditCanvasAsOther(id, markdown string) {
 	s.pushDocumentUpdate(id)
 }
 
+// InsertCanvasAsOther is EditCanvasAsOther for blocks another user
+// inserts before the canvas's top-level block at (its end past the last):
+// the blocks after them keep their sections and move down.
+func (s *Server) InsertCanvasAsOther(id string, at int, markdown string) {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	if c, ok := cs.byID[id]; ok {
+		at = max(0, min(at, len(c.Doc.Blocks)))
+		bs := append([]canvas.Block(nil), c.Doc.Blocks[:at]...)
+		bs = append(bs, canvas.ParseMarkdown(markdown, s.names())...)
+		c.Doc.Blocks, c.HTML = append(bs, c.Doc.Blocks[at:]...), ""
+		c.Updated = time.Now().Unix()
+	}
+	cs.mu.Unlock()
+	s.pushDocumentUpdate(id)
+}
+
 // ViewCanvasAsOther pushes file_opened (open) or file_closed for user, as
 // Slack does when someone else opens or leaves a canvas.
 func (s *Server) ViewCanvasAsOther(id, user string, open bool) {

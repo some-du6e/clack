@@ -92,6 +92,14 @@ type App struct {
 	actLaterMu sync.Mutex
 	actLaterQ  []func(context.Context)
 	actLaterOn bool
+	// the other socket events' lookups, off the event pump (pump_later.go)
+	pumpQ laterQueue
+	// convQs order the events held for their conversation's lookup, one
+	// queue per conversation, and convHold counts them (pump_later.go
+	// holdForConv)
+	convHoldMu sync.Mutex
+	convQs     map[string]*laterQueue
+	convHold   map[string]int
 
 	pending   map[string]*pendingSend // client_msg_id -> optimistic send
 	fileEvs   *fileEvents             // file_created seen / awaited (upload_send.go)
@@ -193,6 +201,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		s.Unlock()
 	}
 	a.warm.dataReady, a.warm.done = make(chan struct{}), make(chan struct{})
+	a.warm.restReady = make(chan struct{})
 	a.bg, a.stopBG = context.WithCancel(context.Background())
 	c.OnAuthFailed(a.onAuthFailed)
 	a.RTM = c.NewRTM()
@@ -613,18 +622,24 @@ func (a *App) Boot(ctx context.Context) error {
 	defer a.markDataReady() // a cold start's data is in (or Boot failed: what core holds is all there is)
 	t0 := time.Now()
 	// meta.json (the user directory, 65k emoji, usergroups) decodes
-	// alongside the calls instead of before them; the steps that depend
-	// on it wait for cacheDone.
-	cacheDone := make(chan struct{})
+	// alongside the calls instead of before them, in two parts
+	// (store.LoadCacheBase): what the first frame reads (the users, prefs,
+	// names, bots, experiments; cacheBase), then the custom emoji and the
+	// user groups (cacheDone), after the window's first real frame when
+	// the UI asked for that (DeferCacheRest), as Slack loads custom emoji
+	// after its first render. The steps that depend on it wait for the
+	// part they read.
+	cacheBase, cacheDone := make(chan struct{}), make(chan struct{})
 	var tCache time.Duration
 	go func() {
 		s := time.Now()
-		a.S.LoadCache()
+		store.SetCacheLoadLog(func(line string) { applog.Debugf("%s", line) })
+		rest := a.S.LoadCacheBase()
 		a.notePrefsInstalled()       // the cached prefs (msg_refs.go)
 		a.installCachedExperiments() // Slack's persisted experiments store (experiments.go)
 		a.loadCodeChannelState()     // the closed code channels, before the first sidebar (codechannel_close.go)
 		tCache = time.Since(s)
-		close(cacheDone)
+		close(cacheBase)
 		// The unknown member fetcher and the channel and bot name resolver
 		// start once the persisted store is in, as Slack's first lookup
 		// comes only after it loaded (renderApp waits for dataSetupStore).
@@ -642,11 +657,20 @@ func (a *App) Boot(ctx context.Context) error {
 		// step), or for good when boot failed.
 		go a.resolveLoop(a.bg) // unresolved channel/bot names
 		go a.memberLoop(a.bg)  // members lookups missed (members.go)
+		// the custom emoji and the user groups: after the window's first real
+		// frame when the UI asked (waitCacheRest), then the steps reading
+		// them (the emoji step) go on
+		if rest != nil {
+			a.waitCacheRest(ctx)
+			rest()
+		}
+		close(cacheDone)
 	}()
 	// The warm boot: boot_data.json and headers.json load alongside, and
-	// once meta.json is in too the cached sidebar is installed and
-	// DataReady closes, long before the calls below answer (warmboot.go).
-	go a.loadWarm(cacheDone)
+	// once meta.json's first part is in too (the users, prefs and names:
+	// LoadCacheBase) the cached sidebar is installed and DataReady closes,
+	// long before the calls below answer (warmboot.go).
+	go a.loadWarm(cacheBase)
 	var (
 		wg       sync.WaitGroup
 		tmu      sync.Mutex
@@ -714,7 +738,7 @@ func (a *App) Boot(ctx context.Context) error {
 			open = dmsOpen // nil when it failed: every DM is a row then
 		}
 		ids := a.bootDMPeople(convs, open)
-		<-cacheDone
+		<-cacheBase // the cached users
 		tu := time.Now()
 		a.EnsureUsers(ctx, ids)
 		tDMUsers = time.Since(tu)
@@ -830,7 +854,7 @@ func (a *App) Boot(ctx context.Context) error {
 	// self, then the rail's workspace icon (which on Grid depends on the
 	// viewer's workspaces): in the batch, so the icon doesn't change later
 	step("self", func() error {
-		<-cacheDone
+		<-cacheBase // the cached users
 		a.EnsureUsers(ctx, []string{a.C.Creds.UserID})
 		a.refreshTeamIcon(ctx)
 		return nil
@@ -841,7 +865,7 @@ func (a *App) Boot(ctx context.Context) error {
 	// messages draw them as images from their first frame.
 	step("emoji", func() error {
 		<-cacheDone
-		if a.S.CustomEmoji.Len() == 0 {
+		if a.S.CustomEmoji.Len() == 0 || a.S.EmojiPartial() { // none, or the boot data's few only
 			return a.loadEmoji(ctx)
 		}
 		if a.S.EmojiAge() > EmojiMaxAge {
@@ -1000,7 +1024,16 @@ func (a *App) loadUsergroups(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a.S.SetUsergroups(gs)
+	if a.S.SetUsergroups(gs) {
+		// meta.json keeps them now, as loadEmoji's list: they load 5 s
+		// after boot, and only the 5 minute save or Quit's would write
+		// them (the Dock's Quit and a kill skip that)
+		a.saves.Add(1)
+		go func() {
+			defer a.saves.Done()
+			_ = a.S.SaveCache()
+		}()
+	}
 	// updateUserGroups: the viewer's groups (usergroups.membership), what
 	// a group mention's highlight follows (UserGroup fg3x isUserInGroup)
 	if mine, err := a.C.UsergroupMembership(ctx); err == nil && a.S.SetMyUsergroups(mine) {
@@ -1583,7 +1616,7 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	}
 	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
 	v.ReplyUserIcons = m.ReplyUserIcons
-	v.NoteFiles, v.Upload = richtext.NoteFilesOf(m.Files), m.Upload
+	v.NoteFiles, v.Upload = a.noteFiles(m, false), m.Upload // note_files.go
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState

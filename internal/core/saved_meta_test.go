@@ -61,12 +61,12 @@ func TestSavedMetaFromListAndEvents(t *testing.T) {
 		t.Error("an unsaved message has metadata")
 	}
 	f.reply["messages.list"] = `{"ok":true,"messages":{}}`
-	a.handle(rtm("saved_updated", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001",
+	a.handleNow(t, rtm("saved_updated", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001",
 		"todo_state": "completed", "date_created": 100, "date_completed": 6000}}))
 	if m, _ := a.SavedMeta("C1", "1.000001"); !m.Completed() || m.TodoState != "completed" || m.DateDue != 0 {
 		t.Errorf("after saved_updated: %+v", m)
 	}
-	a.handle(rtm("saved_deleted", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001"}}))
+	a.handleNow(t, rtm("saved_deleted", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001"}}))
 	if _, ok := a.SavedMeta("C1", "1.000001"); ok {
 		t.Error("saved_deleted kept the metadata")
 	}

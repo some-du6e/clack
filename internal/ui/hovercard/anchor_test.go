@@ -354,3 +354,172 @@ func TestStickySideLastsWhileMounted(t *testing.T) {
 		t.Error("a remounted trigger's card starts from the opposite side")
 	}
 }
+
+// With the pointer resting on the card, a canvas card follows its
+// mention as the mention's layout puts it (Follow): a collaborator's
+// block inserted above moves it with no pointer event. A report (the
+// pointer back on the mention) wins; another trigger's Follow, and a
+// message card's, move nothing.
+func TestCanvasCardFollowsLayout(t *testing.T) {
+	r1, r2, r3 := image.Rect(100, 300, 160, 320), image.Rect(100, 340, 160, 360), image.Rect(100, 380, 160, 400)
+	for _, canvas := range []bool{true, false} {
+		c := &Controller{}
+		now := t0
+		rep := func(r image.Rectangle) {
+			if canvas {
+				c.ReportCanvasChannel("k", "C1", r, f32.Point{})
+			} else {
+				c.ReportChannel("k", "C1", r, f32.Point{})
+			}
+		}
+		frame := func() {
+			c.Mounted("k")
+			c.Frame(now, false, false)
+			now = now.Add(10 * time.Millisecond)
+		}
+		rep(r1)
+		frame()
+		now = now.Add(time.Second)
+		rep(r1)
+		frame()
+		if _, _, open := c.Open(); !open {
+			t.Fatalf("canvas %v: no card", canvas)
+		}
+		if c.Follows("k") != canvas {
+			t.Errorf("canvas %v: Follows %v", canvas, c.Follows("k"))
+		}
+		c.overCard = true // the pointer rests on the card: no reports
+		c.Follow("k", r2)
+		c.Follow("other", r3)
+		frame()
+		req, _, open := c.Open()
+		if !open {
+			t.Fatalf("canvas %v: the card closed with the pointer on it", canvas)
+		}
+		want := r1
+		if canvas {
+			want = r2
+		}
+		if req.Anchor != want {
+			t.Errorf("canvas %v: anchor %v after the mention moved to %v, want %v", canvas, req.Anchor, r2, want)
+		}
+		// no Follow this frame: the card stays where it was told last
+		frame()
+		if req, _, _ := c.Open(); req.Anchor != want {
+			t.Errorf("canvas %v: anchor %v with no Follow, want %v", canvas, req.Anchor, want)
+		}
+		// the pointer back on the mention: its report wins
+		c.overCard = false
+		rep(r3)
+		c.Follow("k", r2)
+		frame()
+		if req, _, _ := c.Open(); canvas && req.Anchor != r3 {
+			t.Errorf("canvas: anchor %v with a report at %v and a Follow at %v, want the report", req.Anchor, r3, r2)
+		}
+	}
+}
+
+// A canvas card takes the wheel (Quip's bubble is outside the canvas's
+// scroller); a message card's area passes it to the list under it.
+func TestCanvasCardTakesWheel(t *testing.T) {
+	for _, canvas := range []bool{true, false} {
+		var r input.Router
+		var ops op.Ops
+		var list int
+		c := &Controller{}
+		card := image.Rect(100, 100, 422, 260)
+		c.Show(Request{Key: "k", ChannelID: "C1", Canvas: canvas}, t0)
+		scrolled := 0
+		frame := func() {
+			ops.Reset()
+			gtx := layout.Context{Ops: &ops, Now: t0, Constraints: layout.Exact(image.Pt(1000, 800)), Source: r.Source()}
+			for {
+				e, ok := gtx.Event(pointer.Filter{Target: &list, Kinds: pointer.Scroll, ScrollY: pointer.ScrollRange{Min: -1000, Max: 1000}})
+				if !ok {
+					break
+				}
+				if pe, ok := e.(pointer.Event); ok && pe.Kind == pointer.Scroll {
+					scrolled++
+				}
+			}
+			bg := clip.Rect{Max: image.Pt(1000, 800)}.Push(gtx.Ops)
+			event.Op(gtx.Ops, &list)
+			bg.Pop()
+			c.CardArea(gtx, card)
+			r.Frame(&ops)
+		}
+		frame()
+		frame()
+		at := f32.Pt(200, 180)
+		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: at},
+			pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: at, Scroll: f32.Pt(0, 120)})
+		frame()
+		frame()
+		if canvas && scrolled != 0 {
+			t.Errorf("a wheel on the canvas card scrolled the list under it (%d events)", scrolled)
+		}
+		if !canvas && scrolled == 0 {
+			t.Error("a wheel on a message card didn't reach the list under it")
+		}
+	}
+}
+
+// A wheel gesture that began off the card (on its mention) stays on the
+// list under it when the card, following the mention, slides under the
+// pointer: Chromium latches a gesture to the scroller it began on. Once
+// it has ended (500ms without an event), a gesture that begins on the
+// card is the card's.
+func TestCanvasCardWheelLatch(t *testing.T) {
+	var r input.Router
+	var ops op.Ops
+	var list int
+	c := &Controller{}
+	c.Show(Request{Key: "k", ChannelID: "C1", Canvas: true}, t0)
+	now := t0
+	card := image.Rect(100, 100, 422, 180) // flush under a mention at y 80-100
+	scrolled := 0
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: &ops, Now: now, Constraints: layout.Exact(image.Pt(1000, 800)), Source: r.Source()}
+		for {
+			e, ok := gtx.Event(pointer.Filter{Target: &list, Kinds: pointer.Scroll, ScrollY: pointer.ScrollRange{Min: -1000, Max: 1000}})
+			if !ok {
+				break
+			}
+			if pe, ok := e.(pointer.Event); ok && pe.Kind == pointer.Scroll {
+				scrolled++
+			}
+		}
+		bg := clip.Rect{Max: image.Pt(1000, 800)}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &list)
+		bg.Pop()
+		c.CardArea(gtx, card)
+		r.Frame(&ops)
+		now = now.Add(16 * time.Millisecond)
+	}
+	at := f32.Pt(200, 95) // on the mention
+	wheel := func() {
+		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: at},
+			pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: at, Scroll: f32.Pt(0, 4)})
+		frame()
+	}
+	frame()
+	frame()
+	wheel()
+	if scrolled != 1 {
+		t.Fatalf("a wheel on the mention reached the list %d times, want 1", scrolled)
+	}
+	card = card.Sub(image.Pt(0, 10)) // the canvas scrolled: the card follows its mention under the pointer
+	frame()
+	wheel()
+	wheel()
+	if scrolled != 3 {
+		t.Errorf("the gesture that began on the mention reached the list %d times of 3 once the card slid under the pointer", scrolled)
+	}
+	now = now.Add(600 * time.Millisecond) // the gesture ends
+	frame()
+	wheel()
+	if scrolled != 3 {
+		t.Errorf("a gesture that began on the card reached the list under it (%d)", scrolled)
+	}
+}

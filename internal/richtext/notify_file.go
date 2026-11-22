@@ -10,14 +10,23 @@ import (
 
 // NoteFiles is what a notification's text reads of a message's files
 // (boot-shared Eley extractTextFromMessage): its first file (lodash head,
-// 7RVK), for the title or the meta line (MXE2 getFileMetaTextForMessage),
-// and its clips (Qre6 findClips), for the clips line. The message keeps
-// it in place of the files themselves (core.Message.NoteFiles).
+// 7RVK) as the file store holds it (4ZwG getFileById), for the title or
+// the meta line (MXE2 getFileMetaTextForMessage), and its clips (Qre6
+// findClips over the message's own files), for the clips line. The
+// message keeps it in place of the files themselves
+// (core.Message.NoteFiles).
 type NoteFiles struct {
 	// The first file's title as sent, its uploader (file.user), its
 	// pretty_type, and its kind (FileType, 2grX getFileType).
 	Title, User, PrettyType, Kind string
-	// Commented: the first file carries an initial_comment.
+	// Sender is the message's sender as getFileMetaTextForMessage reads
+	// it (hVKV getMsgSenderEntity's userId, core's noteSender), which
+	// chooseFileMetaTemplate compares file.user with: "" for a sender
+	// without a member id (a huddle's, Slack's system messages', the
+	// Slackbot email bot's for Slackbot's own file).
+	Sender string
+	// Commented: the first file carries an initial_comment (any value
+	// JavaScript reads as true).
 	Commented bool
 	// Clips counts the files whose subtype is a clip's (e+f5 Y1:
 	// slack_audio, slack_video); AudioClip is whether the first of them
@@ -27,13 +36,17 @@ type NoteFiles struct {
 }
 
 // NoteFilesOf is fs's NoteFiles, nil for a message with no files (Eley's
-// head(t.files) is undefined for an empty list too).
-func NoteFilesOf(fs []slack.File) *NoteFiles {
+// head(t.files) is undefined for an empty list too). first is the file
+// store's copy of fs[0] (getFileById), nil for the message's own.
+func NoteFilesOf(fs []slack.File, first *slack.File) *NoteFiles {
 	if len(fs) == 0 {
 		return nil
 	}
-	f := &fs[0]
-	n := &NoteFiles{Title: f.Title, User: f.User, PrettyType: f.PrettyType, Kind: FileType(f), Commented: bool(f.InitialComment)}
+	f := first
+	if f == nil {
+		f = &fs[0]
+	}
+	n := &NoteFiles{Title: f.Title, User: f.User, PrettyType: f.PrettyType, Kind: FileType(f), Commented: slack.Truthy(f.InitialComment)}
 	for i := range fs {
 		switch fs[i].Subtype {
 		case "slack_audio", "slack_video":

@@ -47,6 +47,11 @@ type cdTestServer struct {
 	props   string // conversations.info properties (JSON)
 	org     string // enterprise.prefs.get org_prefs (JSON)
 	canSet  string // conversations.canSetProperties props (JSON list; "" the default)
+	// replies answer these methods as written, before the cases below
+	replies map[string]string
+	// self is JSON fields added to the viewer's edge users/list record
+	// (`"is_owner":true`), which the members read puts in the store
+	self string
 	// recorded, when set, runs after newW14Env's extra answered a call
 	// and it was recorded
 	recorded func(cdTestCall)
@@ -80,7 +85,16 @@ func (s *cdTestServer) handler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.calls = append(s.calls, call)
 	people, allowed, props, org, canSet := s.people, s.allowed, s.props, s.org, s.canSet
+	reply, overridden := s.replies[call.method]
+	self := s.self
 	s.mu.Unlock()
+	if self != "" {
+		self = "," + self
+	}
+	if overridden {
+		_, _ = w.Write([]byte(reply))
+		return
+	}
 	if org == "" {
 		org = "{}"
 	}
@@ -113,7 +127,7 @@ func (s *cdTestServer) handler(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(map[string]any{"ok": true, "counts": map[string]int{"people": people, "everyone": people}})
 		_, _ = w.Write(b)
 	case "edge/users/list":
-		write(`{"ok":true,"results":[{"id":"USELF","name":"self","real_name":"Test Self","profile":{"email":"self@example.test"}},` +
+		write(`{"ok":true,"results":[{"id":"USELF","name":"self","real_name":"Test Self","profile":{"email":"self@example.test"}` + self + `},` +
 			`{"id":"U2","name":"bob","real_name":"Bob Example","profile":{"email":"bob@example.test"}}],"next_marker":""}`)
 	case "permissions.info":
 		write(`{"ok":true,"allowed":` + allowed + `}`)

@@ -136,11 +136,13 @@ func (a *App) Quit() {
 }
 
 func (a *App) perform(act system.Action) {
-	if w := a.winLive.Load(); w != nil {
+	if w := a.winLive.Load(); w != nil && a.winEvented.Load() {
 		w.Perform(act) // runs on the window's event loop
 		return
 	}
-	a.Post(func() { a.win.Perform(act) }) // before Run: on the first frame
+	// before the window's first event (Window.init still running: a
+	// slack:// launch's Raise), on the UI goroutine at the next one
+	a.Post(func() { a.win.Perform(act) })
 }
 
 // ---- updates ----

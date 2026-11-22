@@ -65,6 +65,9 @@ func noteT(ns i18n.NS, src string, args ...string) string {
 // subtype is a file subtype. ok false leaves text to speak.
 func noteFilesText(r richtext.Resolver, m *core.Message, text string) (string, bool) {
 	f := m.NoteFiles
+	if s, ok := r.(noteFileStore); ok {
+		f = s.NoteFilesNow(m)
+	}
 	if f == nil {
 		return "", false
 	}
@@ -120,19 +123,38 @@ func pick4(reply, with bool, sent, sentWith, replied, repliedWith string) string
 	return sent
 }
 
+// noteFileStore is core.App's NoteFilesNow, through the toast's resolver
+// (noteNames): the files as Slack's extractTextFromMessage reads them
+// when the toast is built, the first one from the file store
+// (getFileById, core note_files.go).
+type noteFileStore interface {
+	NoteFilesNow(m *core.Message) *richtext.NoteFiles
+}
+
+// NoteFilesNow is noteFileStore.
+func (r noteNames) NoteFilesNow(m *core.Message) *richtext.NoteFiles {
+	if r.b == nil || r.b.core == nil {
+		return m.NoteFiles
+	}
+	return r.b.core.NoteFilesNow(m)
+}
+
 // noteFileMeta is getFileMetaTextForMessage (MXE2): the template set by
 // the file's kind (getFileMetaTemplate: snippet, email, post, image, else
 // file) and the line in it by chooseFileMetaTemplate: someone else's file
 // the message didn't upload (file.user isn't the sender:
-// getMsgSenderEntity's userId, the message's user) is "shared {name’s}
+// getMsgSenderEntity's userId, NoteFiles.Sender) is "shared {name’s}
 // …"; an upload "uploaded this …" ("added this … snippet" for a
 // snippet), "… and commented on …" when the file has an initial_comment;
 // any other "shared this …". The name is memberNameFromFile
-// (getPrefCompliantMemberName of file.user, "" for one the store doesn't
-// hold) with its possessive affix (ajnp), and the kind's word for a
-// snippet is the file's pretty_type, else "file". (Not ported:
-// getMsgSenderEntity's senders without a user id: a huddle's, Slack's
-// system messages', an email bot's.)
+// (getPrefCompliantMemberName of getMemberById(file.user), "" for one
+// the store doesn't hold) with its possessive affix (ajnp), and the
+// kind's word for a snippet is the file's pretty_type, else "file".
+// getMemberById asks for a member it doesn't hold (fetchIfMissing, the
+// UnknownFetchManager), and ensureModelsArePresent never asked for the
+// uploader (its members are the mentions, msg.user and the DM's people),
+// so the toast names what the store holds and the ask goes out from here
+// (store.MemberName: a miss is noted for the members pass).
 func noteFileMeta(r richtext.Resolver, m *core.Message, f *richtext.NoteFiles) string {
 	var set noteMetaSet
 	switch f.Kind {
@@ -149,10 +171,10 @@ func noteFileMeta(r richtext.Resolver, m *core.Message, f *richtext.NoteFiles) s
 	}
 	var src string
 	switch {
-	case !m.Upload && f.User != m.User:
+	case !m.Upload && f.User != f.Sender:
 		name := ""
-		if n, ok := r.(heldMemberNamer); ok {
-			name, _ = n.MemberNameHeld(f.User)
+		if n, ok := r.(noteMemberNamer); ok {
+			name, _ = n.MemberName(f.User)
 		}
 		possessive := noteT(nsMessageNote, "{uploader_name}{uploader_name_affix}",
 			"uploader_name", name, "uploader_name_affix", notePossessive(name, i18n.Locale()))
@@ -175,11 +197,11 @@ func noteFileMeta(r richtext.Resolver, m *core.Message, f *richtext.NoteFiles) s
 	return noteT(nsMessageNote, src)
 }
 
-// heldMemberNamer is store.Store's MemberNameHeld: getPrefCompliantMemberName
-// ("Name hidden" for a member the viewer hid) for a member the store
-// holds, nothing asked.
-type heldMemberNamer interface {
-	MemberNameHeld(id string) (string, bool)
+// noteMemberNamer is store.Store's MemberName: getPrefCompliantMemberName
+// ("Name hidden" for a member the viewer hid) of getMemberById, a member
+// the store doesn't hold asked for.
+type noteMemberNamer interface {
+	MemberName(id string) (string, bool)
 }
 
 // notePrettyType is getFileMetaTextForMessage's file_pretty_name: the

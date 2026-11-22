@@ -13,25 +13,31 @@ import (
 // (useUnifiedFilesExplorer, the canvases explorer, the lists NUX header).
 func TestFilesEmptyCopy(t *testing.T) {
 	for _, tc := range []struct {
-		kind           string
-		search, all    bool
-		title, desc    string
-		icon, button   string
-		descHasRecents bool
+		kind             string
+		search, adv, all bool
+		title, desc      string
+		icon, button     string
 	}{
-		{"", false, true, "No files yet", "Your recently viewed or updated files will be shown here.", "", "", true},
-		{"", true, true, "No results", "Your recently viewed or updated files will be shown here.", "", "", true},
-		{"", true, false, "No results", "You may want to try adjusting your filters.", "", "Clear Filters", false},
-		{"", false, false, "No files found", "It may be that you don’t have any files yet, or that there aren’t any that fit your current filters.", "", "Clear Filters", false},
-		{"canvases", false, true, "No canvases yet", "Your recently viewed or updated canvases will show up here.", "plus", "New Canvas", false},
-		{"canvases", true, true, "No results", "You may want to try adjusting your filters.", "", "", false},
-		{"lists", false, true, "No lists yet", "Your recently viewed or updated lists will be shown here.", "plus", "New List", false},
-		{"lists", true, true, "No results", "You may want to try adjusting your filters.", "", "", false},
+		{"", false, false, true, "No files yet", "Your recently viewed or updated files will be shown here.", "", ""},
+		{"", true, false, true, "No results", "Your recently viewed or updated files will be shown here.", "", ""},
+		{"", true, false, false, "No results", "You may want to try adjusting your filters.", "", "Clear Filters"},
+		{"", false, false, false, "No files found", "It may be that you don’t have any files yet, or that there aren’t any that fit your current filters.", "", "Clear Filters"},
+		// advanced filters (hasAdvancedFiltersSet) count as filtering
+		// with every type on, with or without a search
+		{"", false, true, true, "No results", "You may want to try adjusting your filters.", "", "Clear Filters"},
+		{"", true, true, true, "No results", "You may want to try adjusting your filters.", "", "Clear Filters"},
+		{"", false, true, false, "No results", "You may want to try adjusting your filters.", "", "Clear Filters"},
+		{"canvases", false, false, true, "No canvases yet", "Your recently viewed or updated canvases will show up here.", "plus", "New Canvas"},
+		{"canvases", true, false, true, "No results", "You may want to try adjusting your filters.", "", ""},
+		{"canvases", false, true, true, "No results", "You may want to try adjusting your filters.", "", ""},
+		{"lists", false, false, true, "No lists yet", "Your recently viewed or updated lists will be shown here.", "plus", "New List"},
+		{"lists", true, false, true, "No results", "You may want to try adjusting your filters.", "", ""},
+		{"lists", false, true, true, "No results", "You may want to try adjusting your filters.", "", ""},
 	} {
-		got := filesEmptyCopy(tc.kind, tc.search, tc.all)
+		got := filesEmptyCopy(tc.kind, tc.search, tc.adv, tc.all)
 		want := filesEmptyState{tc.title, tc.desc, tc.icon, tc.button}
 		if got != want {
-			t.Errorf("%q search=%v all=%v:\n got %+v\nwant %+v", tc.kind, tc.search, tc.all, got, want)
+			t.Errorf("%q search=%v adv=%v all=%v:\n got %+v\nwant %+v", tc.kind, tc.search, tc.adv, tc.all, got, want)
 		}
 	}
 	// Starred's empty row: Slack's sentence, the star a character between

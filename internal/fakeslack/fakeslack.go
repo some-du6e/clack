@@ -1493,6 +1493,8 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	// the Files browser's searches, for FilesBrowserSearches (files_view.go)
+	s.recordFilesBrowserSearch(method, f)
 	if out, handled := s.handleHugeThread(method, f); handled { // huge_thread.go
 		return out
 	}
@@ -2068,6 +2070,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleChannels(method, f); handled {
+		return out
+	}
+	if out, handled := s.handleChannelManage(method, f); handled { // channel_manage.go
 		return out
 	}
 	if method == "messages.list" { // what no fixture answered: any message the fake holds (messages_list.go)
