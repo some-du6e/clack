@@ -174,10 +174,12 @@ func TestThreadsAuditReplyBoxArrivesInPlace(t *testing.T) {
 		t.Errorf("as the end loaded and the reply box came, replies moved or went under the box: %s; Slack's rows stay where they were and the box comes below them. Before: %s; after: %s",
 			strings.Join(moved, ", "), x.drawnTops(before), x.drawnTops(after))
 	}
+	// the drawn replies' lowest visible edge (a row the list's view cuts
+	// shows down to the view's bottom)
 	low, list := 0, tv.ListRect()
 	for _, r := range tv.RowRects() {
-		if r.R.Overlaps(list) && r.R.Max.Y > low {
-			low = r.R.Max.Y
+		if b := min(r.R.Max.Y, list.Max.Y); r.R.Overlaps(list) && b > low {
+			low = b
 		}
 	}
 	if box := replyBoxRect(c); box.Min.Y < low {
