@@ -193,6 +193,7 @@ type App struct {
 	chAgents        map[string]*agentApps  // channels' agents and apps (agent_count.go)
 	agentCountRect  image.Rectangle        // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
+	frameOrg        image.Point                // FrameOrigin
 	rzOverlayTag    int                        // .p-resizer-overlay (resizer.go)
 	sbWide          sbWideState                // Activity's and the DMs list's column (sidebar_wide.go)
 	sbXWide         sbWideState                // the activity_inbox Activity column (sidebar_wide.go)

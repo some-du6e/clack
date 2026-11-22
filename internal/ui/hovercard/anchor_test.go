@@ -463,3 +463,63 @@ func TestCanvasCardTakesWheel(t *testing.T) {
 		}
 	}
 }
+
+// A wheel gesture that began off the card (on its mention) stays on the
+// list under it when the card, following the mention, slides under the
+// pointer: Chromium latches a gesture to the scroller it began on. Once
+// it has ended (500ms without an event), a gesture that begins on the
+// card is the card's.
+func TestCanvasCardWheelLatch(t *testing.T) {
+	var r input.Router
+	var ops op.Ops
+	var list int
+	c := &Controller{}
+	c.Show(Request{Key: "k", ChannelID: "C1", Canvas: true}, t0)
+	now := t0
+	card := image.Rect(100, 100, 422, 180) // flush under a mention at y 80-100
+	scrolled := 0
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: &ops, Now: now, Constraints: layout.Exact(image.Pt(1000, 800)), Source: r.Source()}
+		for {
+			e, ok := gtx.Event(pointer.Filter{Target: &list, Kinds: pointer.Scroll, ScrollY: pointer.ScrollRange{Min: -1000, Max: 1000}})
+			if !ok {
+				break
+			}
+			if pe, ok := e.(pointer.Event); ok && pe.Kind == pointer.Scroll {
+				scrolled++
+			}
+		}
+		bg := clip.Rect{Max: image.Pt(1000, 800)}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &list)
+		bg.Pop()
+		c.CardArea(gtx, card)
+		r.Frame(&ops)
+		now = now.Add(16 * time.Millisecond)
+	}
+	at := f32.Pt(200, 95) // on the mention
+	wheel := func() {
+		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: at},
+			pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: at, Scroll: f32.Pt(0, 4)})
+		frame()
+	}
+	frame()
+	frame()
+	wheel()
+	if scrolled != 1 {
+		t.Fatalf("a wheel on the mention reached the list %d times, want 1", scrolled)
+	}
+	card = card.Sub(image.Pt(0, 10)) // the canvas scrolled: the card follows its mention under the pointer
+	frame()
+	wheel()
+	wheel()
+	if scrolled != 3 {
+		t.Errorf("the gesture that began on the mention reached the list %d times of 3 once the card slid under the pointer", scrolled)
+	}
+	now = now.Add(600 * time.Millisecond) // the gesture ends
+	frame()
+	wheel()
+	if scrolled != 3 {
+		t.Errorf("a gesture that began on the card reached the list under it (%d)", scrolled)
+	}
+}

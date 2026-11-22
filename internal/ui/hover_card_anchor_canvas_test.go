@@ -46,12 +46,16 @@ type hccEnv struct {
 	body  *richview.View             // the mention's
 	card  image.Rectangle            // the open card, as it first drew
 	gen   int
+	ptr   f32.Point // where the pointer opened it: the #channel's middle
 }
 
 // newHCCEnv opens a long canvas full-page with a channel mention near its
 // top, over a live socket (a collaborator's edit is document_update), and
 // opens the mention's card from a real hover.
-func newHCCEnv(t *testing.T) *hccEnv {
+func newHCCEnv(t *testing.T) *hccEnv { return newHCCEnvDeco(t, image.Point{}) }
+
+// newHCCEnvDeco is newHCCEnv under Gio's own title bar, deco tall (perfEnv.deco).
+func newHCCEnvDeco(t *testing.T, deco image.Point) *hccEnv {
 	t.Setenv("CLACK_REDUCE_MOTION", "1") // wheel scrolls land at once
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
@@ -59,6 +63,7 @@ func newHCCEnv(t *testing.T) *hccEnv {
 	}
 	t.Cleanup(func() { fs.Close() })
 	e := &hccEnv{perfEnv: startEnv(t, fs, t.TempDir()), t: t, views: map[*richview.View]painted{}}
+	e.deco = deco
 	richview.PaintedHook = func(v *richview.View) { e.views[v] = painted{v.TextRange(0, v.PlainLen()), time.Now()} }
 	t.Cleanup(func() { richview.PaintedHook = nil })
 	e.waitReady()
@@ -85,7 +90,8 @@ func newHCCEnv(t *testing.T) *hccEnv {
 	e.settle(500 * time.Millisecond)
 	e.body = e.find(hccMark) // names that came late may have made it anew
 	m := e.mention()
-	e.move(f32.Pt(float32(m.Min.X+m.Dx()/2), float32(m.Min.Y+m.Dy()/2)))
+	e.ptr = f32.Pt(float32(m.Min.X+m.Dx()/2), float32(m.Min.Y+m.Dy()/2))
+	e.move(e.ptr)
 	e.until("the canvas card", 5*time.Second, func() bool {
 		req, _, open := e.ctl.Open()
 		return open && req.Canvas && req.ChannelID == hccChannel && e.a.hover.cvc != nil && !e.a.hover.cvc.Rect().Empty()
@@ -110,13 +116,14 @@ func (e *hccEnv) find(text string) *richview.View {
 	return got
 }
 
-// at is the mention's body in the window, as the last frame laid it out.
+// at is the mention's body in the frame, as the last frame laid it out
+// (the router's rectangles include Gio's title bar).
 func (e *hccEnv) at() image.Rectangle {
 	full, _, ok := e.r.AreaBounds(e.body)
 	if !ok {
 		e.t.Fatal("the mention's paragraph wasn't drawn")
 	}
-	return full
+	return full.Sub(e.deco)
 }
 
 // mention is the #channel's window box (its first line), learned from a
@@ -144,18 +151,45 @@ func (e *hccEnv) mention() image.Rectangle {
 // rest puts the pointer on the card, dy below its top, and checks the card
 // stays (no trigger reports there: the card is what holds it). e.card is
 // where it is then, placed by its mention's layout (Follow).
+//
+// The card must not move when the pointer leaves its mention for it: the
+// mention's place from its layout (Follow) is the place its report gave.
 func (e *hccEnv) rest(dy int) f32.Point {
+	e.t.Helper()
 	p := f32.Pt(float32(e.card.Min.X+40), float32(e.card.Min.Y+dy))
 	e.move(p)
-	e.settle(400 * time.Millisecond)
+	e.settle(100 * time.Millisecond) // the Follow frames, before any 250ms close
+	if e.open() {
+		if r := e.a.hover.cvc.Rect(); r != e.card {
+			e.t.Errorf("the card went from %v to %v when the pointer left its mention for it", e.card, r)
+			e.card = r
+		}
+	}
+	e.settle(300 * time.Millisecond)
 	if !e.ctl.OverCard() || !e.open() {
 		e.t.Fatalf("the card closed with the pointer resting on it at %v (card %v)", p, e.card)
 	}
-	if r := e.a.hover.cvc.Rect(); r != e.card {
-		e.t.Logf("the card went from %v to %v when the pointer left its mention", e.card, r)
-		e.card = r
-	}
 	return p
+}
+
+// idle runs frames with nothing changing and fails when they keep asking
+// for frames at once: a followed mention that doesn't move asks for none
+// (Gio patch 57).
+func (e *hccEnv) idle() {
+	e.t.Helper()
+	e.frame()
+	e.r.WakeupTime() // what the last change asked for
+	wakes := 0
+	for i := 0; i < 30; i++ {
+		e.frame()
+		if at, ok := e.r.WakeupTime(); ok && !at.After(e.now) {
+			wakes++
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if wakes >= 5 {
+		e.t.Errorf("%d of 30 frames on a still canvas, with the pointer resting on the card, asked for another at once", wakes)
+	}
 }
 
 // open reports whether the card that opened is still open (not closed,
@@ -188,6 +222,7 @@ func (e *hccEnv) insert(n int) image.Point {
 func TestHoverCardAnchorCanvasFollowsEdit(t *testing.T) {
 	e := newHCCEnv(t)
 	e.rest(e.card.Dy() * 3 / 4) // low on the card: it moves down under the pointer
+	e.idle()
 	d := e.insert(1)
 	e.settle(300 * time.Millisecond)
 	if !e.open() {
@@ -253,5 +288,50 @@ func TestHoverCardAnchorCanvasTakesWheel(t *testing.T) {
 	e.settle(400 * time.Millisecond)
 	if full, _, ok := e.r.AreaBounds(e.body); ok && full == before {
 		t.Errorf("a wheel on the canvas at %v didn't scroll it", off)
+	}
+}
+
+// Under Gio's own title bar (GNOME's Mutter offers no server-side
+// decorations), the router's areas sit the title bar's height below the
+// frame: the card must stay where its mention's report put it when the
+// pointer moves onto it, and follow the mention in the frame's coordinates.
+func TestHoverCardAnchorCanvasDecorated(t *testing.T) {
+	e := newHCCEnvDeco(t, image.Pt(0, 40))
+	e.rest(e.card.Dy() * 3 / 4)
+	d := e.insert(1)
+	e.settle(300 * time.Millisecond)
+	if !e.open() {
+		t.Fatal("the card closed when the mention moved under it")
+	}
+	if got, want := e.a.hover.cvc.Rect(), e.card.Add(d); got != want {
+		t.Errorf("card %v after the mention moved by %v, want %v", got, d, want)
+	}
+}
+
+// A wheel gesture that began on the mention keeps scrolling the canvas
+// when the card, following the mention, slides under the resting pointer
+// (Chromium latches the gesture to the scroller it began on); once it has
+// ended (500ms), a wheel that begins on the card scrolls nothing.
+func TestHoverCardAnchorCanvasScrollFromMention(t *testing.T) {
+	e := newHCCEnv(t)
+	p := image.Pt(int(e.ptr.X), int(e.ptr.Y))
+	before := e.at()
+	for i := 0; i < 10; i++ {
+		e.scroll(p, 4)
+		e.frame()
+	}
+	e.settle(100 * time.Millisecond)
+	if moved := before.Min.Y - e.at().Min.Y; moved != 40 {
+		t.Errorf("ten 4px scrolls from the mention moved its paragraph %dpx, want 40 (the card under the pointer took the rest)", moved)
+	}
+	if !e.open() || !e.ctl.OverCard() {
+		t.Fatalf("the card isn't open under the pointer at %v after the scroll (open %v)", p, e.open())
+	}
+	e.settle(hovercard.HideDelay + 400*time.Millisecond) // the gesture ends; the card stays under the pointer
+	still := e.at()
+	e.scroll(p, 4)
+	e.settle(200 * time.Millisecond)
+	if got := e.at(); got != still {
+		t.Errorf("a wheel that began on the card scrolled the canvas: its paragraph went from %v to %v", still, got)
 	}
 }

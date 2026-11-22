@@ -1468,7 +1468,9 @@ func (v *View) follow(gtx layout.Context, c *hovercard.Controller, k mentionKey,
 		event.Op(gtx.Ops, &v.origin)
 	}()
 	if org, ok := areaOrigin(gtx, &v.origin); ok {
-		c.Follow(k, v.targetBounds(k.t).Add(org))
+		// the router's coordinates include Gio's own title bar; the
+		// card's are the frame's
+		c.Follow(k, v.targetBounds(k.t).Add(org.Sub(c.FrameOrigin())))
 	}
 }
 

@@ -2770,7 +2770,17 @@ card would stay where the mention was until the pointer moved.
   asks for a frame at once (`WakeupTime`'s zero time, as an
   `InvalidateCmd` with no `At`). The notes last one frame: the next layout
   reads again, so an area that stays put asks for nothing, and the
-  widget's next read sees where it went.
+  widget's next read sees where it went. The wake goes through patch 10's
+  `ExecuteHook` as an `op.InvalidateCmd{}`, so the idle probe names
+  `followFrame` as that frame's asker.
+
+Like `AreaBounds`, `FollowArea` answers in the router's coordinates:
+those of the ops the window hands the router, which wrap the client's
+frame in `op.Offset(w.lastFrame.off)`. Under Gio's own decorations
+(Wayland with no xdg-decoration, such as GNOME's Mutter) that is the
+title bar's height, and FrameEvent coordinates leave it out. Clack
+subtracts the frame root's own area origin (`App.FrameOrigin`: the root
+pointer tag's `AreaBounds`) wherever it mixes the two.
 
 A widget could ask for a frame after each of its reads instead, with no
 patch. That costs a frame after every frame while it follows, and still

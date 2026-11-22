@@ -100,9 +100,11 @@
 // slid out from under a resting pointer, the bubble's mouseleave starts
 // dismissDelayMs (250). So Frame takes a canvas trigger's rect as it
 // reports it while the pointer is on the mention, and as its layout puts
-// it (Follow) while the pointer rests on the card. A wheel on the card
-// scrolls nothing: the bubble is in the document's body, outside the
-// canvas's scroller (CardArea). Clack's canvas lays out only the rows it
+// it (Follow) while the pointer rests on the card. A wheel that begins
+// on the card scrolls nothing: the bubble is in the document's body,
+// outside the canvas's scroller; one already scrolling the canvas keeps
+// scrolling it when the card slides under the pointer, as Chromium keeps
+// a wheel gesture on the scroller it began on (CardArea). Clack's canvas lays out only the rows it
 // shows, so a mention whose row scrolls out entirely is unmounted, and
 // closes its card at once as any trigger's does.
 package hovercard
@@ -194,6 +196,12 @@ type Controller struct {
 	// Pointer returns the last pointer position in window coordinates. It
 	// converts a trigger's local bounds to window bounds.
 	Pointer func() image.Point
+	// Origin returns the frame's origin in the router's coordinates (the
+	// App's FrameOrigin): the rectangles Gio's AreaBounds and FollowArea
+	// answer include Gio's own title bar (Wayland without server-side
+	// decorations), the FrameEvent coordinates Pointer, the card and its
+	// area use don't. nil: none.
+	Origin func() image.Point
 
 	rep    Request // the trigger reported this frame
 	hasRep bool
@@ -214,6 +222,12 @@ type Controller struct {
 
 	fol    image.Rectangle // the open canvas card's mention, laid out this frame (Follow)
 	hasFol bool
+
+	// the wheel gesture a canvas card sees (CardArea): when its last event
+	// came, and whether it began on the card
+	wheelTag  int
+	wheelAt   time.Time
+	wheelCard bool
 
 	spent any // a trigger pressed while hovered: ignored until it is left
 
@@ -324,6 +338,14 @@ func (c *Controller) ReportCanvasMention(key any, channelID, file, section strin
 		c.rep.Canvas, c.rep.Buttons, c.rep.Delay = true, false, CanvasShowDelay
 		c.rep.CanvasFile, c.rep.CanvasSection = file, section
 	}
+}
+
+// FrameOrigin is Origin's answer (zero without one).
+func (c *Controller) FrameOrigin() image.Point {
+	if c.Origin == nil {
+		return image.Point{}
+	}
+	return c.Origin()
 }
 
 // Follows reports whether key's card is open and follows its mention
@@ -589,18 +611,51 @@ func (c *Controller) Opacity(now time.Time) float32 {
 	return float32(d) / float32(Fade)
 }
 
+// WheelLatch is how long a wheel gesture stays on the scroller it began
+// on after its last event: Chromium's MouseWheelPhaseHandler ends a
+// phaseless wheel's scroll sequence after kDefaultMouseWheelLatchingTransaction
+// (500ms) without one, and until then sends every event of it, momentum
+// included, to the scroller it latched at its first.
+const WheelLatch = 500 * time.Millisecond
+
 // CardArea registers the drawn card's bounds r (window coordinates, gtx at
 // the window origin) so the pointer resting on the card keeps it open. It
-// is pass-through: the card's own buttons sit under it. A canvas card
-// takes the wheel: Quip's bubble is in the document's body, outside the
-// canvas's scroller, so a wheel on it scrolls nothing, and the canvas
-// scrolling under it would carry it off with its mention.
+// is pass-through: the card's own buttons sit under it.
+//
+// A canvas card takes a wheel gesture that begins on it: Quip's bubble is
+// in the document's body, outside the canvas's scroller, so such a wheel
+// scrolls nothing (and the canvas scrolling under the card would carry
+// it off with its mention). A gesture that began elsewhere stays where
+// Chromium latched it (WheelLatch): a canvas scrolled with the pointer on
+// a mention keeps scrolling when the card, following the mention, slides
+// under the resting pointer. A pass-through area over the window that
+// takes none of the scroll sees each wheel event first, to tell.
 func (c *Controller) CardArea(gtx layout.Context, r image.Rectangle) {
 	f := pointer.Filter{Target: &c.cardTag, Kinds: pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel}
-	if c.isOpen && c.open.Canvas {
-		all := pointer.ScrollRange{Min: math.MinInt32, Max: math.MaxInt32}
-		f.Kinds |= pointer.Scroll
-		f.ScrollX, f.ScrollY = all, all
+	canvas := c.isOpen && c.open.Canvas
+	if canvas {
+		for {
+			e, ok := gtx.Event(pointer.Filter{Target: &c.wheelTag, Kinds: pointer.Scroll}) // no range: it takes none
+			if !ok {
+				break
+			}
+			if pe, ok := e.(pointer.Event); ok && pe.Kind == pointer.Scroll {
+				if gtx.Now.Sub(c.wheelAt) >= WheelLatch {
+					c.wheelCard = image.Pt(int(pe.Position.X), int(pe.Position.Y)).In(c.card) // a new gesture
+				}
+				c.wheelAt = gtx.Now
+			}
+		}
+		latched := gtx.Now.Sub(c.wheelAt) < WheelLatch
+		if !latched || c.wheelCard {
+			all := pointer.ScrollRange{Min: math.MinInt32, Max: math.MaxInt32}
+			f.Kinds |= pointer.Scroll
+			f.ScrollX, f.ScrollY = all, all
+		} else {
+			// a gesture on the canvas: the card takes the next one, from
+			// when this one ends
+			gtx.Execute(op.InvalidateCmd{At: c.wheelAt.Add(WheelLatch)})
+		}
 	}
 	for {
 		e, ok := gtx.Event(f)
@@ -624,9 +679,16 @@ func (c *Controller) CardArea(gtx layout.Context, r image.Rectangle) {
 		}
 	}
 	c.card = r
-	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-	defer clip.Rect(r).Push(gtx.Ops).Pop()
-	event.Op(gtx.Ops, &c.cardTag)
+	func() {
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		defer clip.Rect(r).Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, &c.cardTag)
+	}()
+	if canvas {
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, &c.wheelTag)
+	}
 }
 
 // OverCard reports whether the pointer is on the drawn card.

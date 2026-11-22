@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gioui.org/io/event"
+	"gioui.org/op"
 )
 
 // Clack patch 57: FollowArea is AreaBounds (patch 53) for a widget that
@@ -47,6 +48,9 @@ func (q *Router) followFrame() {
 	for tag, f := range q.follow {
 		full, _, ok := q.AreaBounds(tag)
 		if ok != f.ok || ok && full != f.full {
+			if h := ExecuteHook; h != nil {
+				h(op.InvalidateCmd{}) // patch 10: the idle probe names this frame's asker (followFrame)
+			}
 			q.wakeup, q.wakeupTime = true, time.Time{}
 		}
 	}
