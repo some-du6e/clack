@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"gioui.org/f32"
@@ -168,8 +169,95 @@ func (v *View) rebuild(d *core.CanvasDoc) {
 		v.title = nil
 	}
 	v.shown = d
+	v.nameMentions(d)
 	v.blocks = v.makeBlocks(d, d.Doc.Blocks, old)
 	v.edit.docChanged(v)
+}
+
+// nameMentions names the document's user, channel and group mentions from
+// the store, in place (core.NameCanvasMention): the export holds only
+// their ids, and Slack's canvas draws each from its model. A mention
+// whose model is still loading is Pending (Quip's skeleton); its lookup
+// is out, and mentionsMoved notices the answer. The table of contents and
+// the editor read the same spans.
+func (v *View) nameMentions(d *core.CanvasDoc) {
+	v.mentions = v.mentions[:0]
+	a := v.h.Core()
+	if a == nil {
+		return
+	}
+	// the title's emoji the store couldn't name when files.info's
+	// title_blocks were converted (richtext.TitleBlocks keeps them as
+	// Emoji spans without an image): its image once the map has it, as
+	// Slack's QuipTitleParsedId reads the emoji store on every render
+	v.emojiVer = a.EmojiVersion()
+	for i := range d.Info.TitleSpans {
+		s := &d.Info.TitleSpans[i]
+		if !s.KeptEmoji() {
+			continue
+		}
+		if u, _, ok := a.Emoji(s.ID); ok && u != "" {
+			s.URL = u
+			v.title = nil
+		}
+	}
+	d.Doc.Walk(func(b *canvas.Block) bool {
+		for i := range b.Spans {
+			s := &b.Spans[i]
+			switch s.Kind {
+			case richtext.User, richtext.Channel, richtext.Usergroup:
+				if s.ID != "" {
+					a.NameCanvasMention(s)
+					v.mentions = append(v.mentions, s)
+				}
+			}
+		}
+		return true
+	})
+}
+
+// mentionsMoved reports whether a mention the blocks were built with
+// would read differently now: a channel's lookup or a member answered,
+// a name changed. It reads each mention's model on every frame, as
+// Quip's views do on every render.
+func (v *View) mentionsMoved() bool {
+	a := v.h.Core()
+	if a == nil {
+		return false
+	}
+	if a.EmojiVersion() != v.emojiVer {
+		return true // a title emoji may have its image now (nameMentions)
+	}
+	for _, s := range v.mentions {
+		n := *s
+		if a.NameCanvasMention(&n) {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionKey is what a block's mentions read (their text and states), so
+// a block lays out again when one of them gets its name.
+func mentionKey(b *canvas.Block) string {
+	var sb strings.Builder
+	for i := range b.Spans {
+		s := &b.Spans[i]
+		switch s.Kind {
+		case richtext.User, richtext.Channel, richtext.Usergroup:
+			sb.WriteString("\x00")
+			sb.WriteString(s.Text)
+			for _, f := range []struct {
+				on bool
+				c  byte
+			}{{s.Pending, 'p'}, {s.Off, 'o'}, {s.Lock, 'l'}, {s.Self, 's'}} {
+				if f.on {
+					sb.WriteByte(f.c)
+				}
+			}
+		}
+	}
+	return sb.String()
 }
 
 func sameSpans(a, b []richtext.Span) bool {
@@ -188,7 +276,7 @@ func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*
 	out := make([]*blk, 0, len(bs))
 	for i := range bs {
 		b := &bs[i]
-		key := b.ID + "\x00" + string(rune('A'+b.Kind)) + "\x00" + canvas.Markdown(*b) + fileKey(d, b)
+		key := b.ID + "\x00" + string(rune('A'+b.Kind)) + "\x00" + canvas.Markdown(*b) + fileKey(d, b) + mentionKey(b)
 		if o, ok := old[key]; ok && len(b.Children) == 0 && len(b.Columns) == 0 && b.Kind != canvas.Table {
 			o.b = b
 			o.edOK, o.edWhy = canvas.Editable(*b)
@@ -772,10 +860,22 @@ func (r *handler) OpenURL(u string) {
 		v.act.Canvas(id)
 		return
 	}
-	if ch, ts, ok := archivesLink(u); ok {
-		if ts != "" {
-			v.h.Navigate("c/" + ch + "/t/" + ts)
-		} else {
+	if lf, ok := v.h.(interface{ FollowLink(string, bool) bool }); ok {
+		// Slack's Link (the ui root's App): openPermalink's jumpToMessage, a
+		// reply in its thread; a canvas's links don't open a thread's
+		// parent in its thread (no BaseMrkdwnLink here)
+		if !lf.FollowLink(u, false) && v.act.OpenURL != nil {
+			v.act.OpenURL(u)
+		}
+		return
+	}
+	if ch, ts, thread, ok := archivesLink(u); ok {
+		switch {
+		case thread != "":
+			v.h.Navigate("c/" + ch + "/t/" + thread) // a reply's link: its thread
+		case ts != "":
+			v.h.Navigate("c/" + ch + "/m/" + ts) // the message in its conversation, never a thread's root
+		default:
 			v.h.Navigate("c/" + ch)
 		}
 		return
@@ -859,20 +959,28 @@ func isID(s string, first byte) bool {
 	return true
 }
 
-// archivesLink recognizes message/channel links.
-func archivesLink(raw string) (ch, ts string, ok bool) {
+// archivesLink recognizes message/channel links: the conversation, the
+// message's ts and the thread a reply's link names (?thread_ts=, only a
+// message timestamp).
+func archivesLink(raw string) (ch, ts, thread string, ok bool) {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.HasSuffix(u.Host, ".slack.com") {
-		return "", "", false
+		return "", "", "", false
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] != "archives" {
-		return "", "", false
+		return "", "", "", false
 	}
 	ch = parts[1]
 	if len(parts) >= 3 && strings.HasPrefix(parts[2], "p") && len(parts[2]) > 7 {
 		p := parts[2][1:]
 		ts = p[:len(p)-6] + "." + p[len(p)-6:]
 	}
-	return ch, ts, true
+	if t := u.Query().Get("thread_ts"); messageTSRE.MatchString(t) && ts != "" {
+		thread = t
+	}
+	return ch, ts, thread, true
 }
+
+// messageTSRE is a message timestamp as Slack writes one.
+var messageTSRE = regexp.MustCompile(`^\d{10}\.\d{6}$`)

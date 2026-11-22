@@ -21,6 +21,7 @@ import (
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -174,6 +175,7 @@ func (a *App) codeHeaderTile(gtx layout.Context) layout.Dimensions {
 // ---- the agent context bar (ContextBarAgentChannelContent) ----
 
 func init() {
+	blockkit.IndicatorActive = windowActive.Load // agent plans' spinners (blockkit agent.go)
 	composer.ContextBar = func(gtx layout.Context, h composer.Host, ch, ts string) layout.Dimensions {
 		a, ok := h.(*App)
 		if !ok {
@@ -412,7 +414,9 @@ func (a *App) ccItem(gtx layout.Context, ch string, it core.ContextBarItem, p cc
 	}
 	switch {
 	case link:
-		a.OpenURL(it.URL)
+		if !a.FollowLink(it.URL, false) { // Slack's Link: in the client, else the browser
+			openURL(it.URL)
+		}
 	case act && !off && a.data != nil && a.data.core != nil:
 		if a.ccPending == nil {
 			a.ccPending = map[string]bool{}

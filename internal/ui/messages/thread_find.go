@@ -148,6 +148,9 @@ func (v *ThreadView) openFind(restore bool) {
 		f.restore = restore
 	}
 	f.active, f.focus = true, true
+	if fi, ok := v.h.(popups.ThreadFocusInput); ok {
+		fi.ClearThreadFocusInput() // openThreadSearch resets focusInput
+	}
 	f.ed.SetText("")
 	v.setFindQuery("", time.Time{})
 	v.h.Invalidate()
@@ -267,7 +270,22 @@ func (v *ThreadView) findGo(gtx layout.Context, i int) {
 	}
 	f.index = i
 	ts := f.results[i]
-	v.s.scrollToFind(ts, dp(gtx, 200))
+	v.s.tl.findPend = ""
+	if !v.s.scrollToFind(ts, dp(gtx, 200)) {
+		// a result the slice doesn't hold: the slice at it, as a jump to a
+		// reply reads it (jumpThread: the store's slice there, else two
+		// pages of 28 around it), then the scroll and the flash once its
+		// row is in (thread_load.go threadPaging). Slack's loadAndScrollToTs
+		// pages older from the slice's start until the row shows or the
+		// thread's start is reached (boot-shared l6n6
+		// loadMoreForPendingScroll, checkPendingScrollToTs): a result newer
+		// than the slice never lands there, and an old one in Karim's
+		// 1,078,423-reply thread is thousands of pages away
+		v.s.hb.jumpThread(v.s.m, ts)
+		v.s.snap.rev = 0 // the model at ts, even where its slice holds it: re-read
+		v.s.tl.findPend, v.s.tl.findOff = ts, dp(gtx, 200)
+		return
+	}
 	v.s.findFlash, v.s.findFlashAt = ts, gtx.Now
 }
 
@@ -544,6 +562,17 @@ func findSpinner(gtx layout.Context, d int, track, arc color.NRGBA) {
 	ring(q+2*math.Pi*cubicBez(.25, .29, .54, .86, t), arc, math.Pi/2)
 	ring(q+2*math.Pi*cubicBez(.41, .24, .64, .69, t), arc, math.Pi/2)
 	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+}
+
+// highlightFor is c-message_kit__background--highlight's animation, a
+// jump's highlight (client-boot-styles: 3s forwards).
+const highlightFor = 3 * time.Second
+
+// highlightAlpha is c-message_kit--highlight at el: #f2c74433 (the
+// palettes' Highlight, the same in dark mode) at its 20% and 60%
+// keyframes, eased in from none and back out, the find flash's shape.
+func highlightAlpha(el time.Duration) float32 {
+	return findFlashAlpha(time.Duration(float64(el) * float64(findFlashFor) / float64(highlightFor)))
 }
 
 // findFlashAlpha is the flash's background at el into its 3s: the

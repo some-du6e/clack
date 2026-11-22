@@ -285,7 +285,17 @@ func (w *window) update() {
 		w.config.Mode = Windowed
 	}
 	w.ProcessEvent(ConfigEvent{Config: w.config})
-	w.draw(true)
+	// Clack patch (CLACK_PATCHES.md §46): a hidden window draws nothing, as
+	// runLoop's rule (patch 13) has it; showing it paints it. Its sync
+	// frame, delivered once the event that hid it returns (Window.Hide in
+	// a ClosingEvent, close to the tray), would make again the frame
+	// texture hide let go of.
+	if windows.IsWindowVisible(w.hwnd) {
+		w.draw(true)
+	}
+	if p.IsMinimized() {
+		w.w.ClackGPUIdle() // Clack patch (CLACK_PATCHES.md §46): no frames for now
+	}
 }
 
 func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
@@ -1149,6 +1159,7 @@ func (w *window) Configure(options []Option) {
 		showMode = windows.SW_SHOWNOACTIVATE // Clack patch (CLACK_PATCHES.md §8)
 	}
 	windows.ShowWindow(w.hwnd, showMode)
+	startupWindowShown.mark() // Clack patch (CLACK_PATCHES.md §56)
 }
 
 func (w *window) WriteClipboard(mime string, s []byte) {
@@ -1329,7 +1340,11 @@ func (w *window) hide() bool {
 	windows.SetWindowPos(w.hwnd, 0, 0, 0, 0, 0,
 		windows.SWP_HIDEWINDOW|windows.SWP_NOACTIVATE|windows.SWP_NOMOVE|
 			windows.SWP_NOOWNERZORDER|windows.SWP_NOSIZE|windows.SWP_NOZORDER)
-	return !windows.IsWindowVisible(w.hwnd)
+	hidden := !windows.IsWindowVisible(w.hwnd)
+	if hidden {
+		w.w.ClackGPUIdle() // Clack patch (CLACK_PATCHES.md §46): no frames for now
+	}
+	return hidden
 }
 
 // setCaretBlinkFromOS is Chromium's OsSettingsProviderWin::CaretBlinkInterval

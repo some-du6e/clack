@@ -41,7 +41,8 @@ import (
 // ("Name hidden", "This message is hidden"), and for a non-existent member
 // when nothing names them. A huddle message's or a custom response's
 // sender is a username (getMsgSenderEntity, 33X/: no userId), never a
-// member's bar. The id is never drawn.
+// member's bar. A message with no user is its bot's stub, or the stub
+// when nothing names it at all (userlessMiss). The id is never drawn.
 
 // missingBarW is MissingText's width: BaseMissingMember passes no size,
 // so medium (sSUQ: small 80, medium 120, large 160).
@@ -99,6 +100,29 @@ func missingName(gtx layout.Context, s textStyle, gone bool, c *colors) layout.D
 type missingTipState struct {
 	hovered bool
 	tip     popups.TipState
+}
+
+// userlessMiss is the connected MessageSender's (boot-shared JA+h)
+// isUnknown and isNonExistent for a message with no user, which
+// getMsgSenderEntity (client-boot hVKV) hands it as {botId, username}: a
+// username without a bot names the sender; a bot's message is the bot's
+// state (core.MissingBot: getBotById's stub while bots.info is out,
+// non-existent once nothing returned it) unless its username or its
+// bot_profile names it; and with neither a bot nor a username isUnknown
+// keeps its !0, whatever else the message carries. BaseMessageSender
+// draws BaseMissingMember for them; Clack wrote "Unknown" in the name's
+// place.
+func userlessMiss(app *core.App, m *core.Message) core.MemberState {
+	switch {
+	case m.BotID != "":
+		if m.Username != "" || m.BotProfile != nil || app == nil {
+			return core.MemberKnown
+		}
+		return app.MissingBot(m.BotID)
+	case m.Username != "":
+		return core.MemberKnown
+	}
+	return core.MemberUnknown
 }
 
 // senderMiss is what BaseMessageSender draws instead of the sender, if
@@ -186,6 +210,16 @@ type SenderView struct {
 	// slots (an agent block's is its whole block), as laid out.
 	Body  image.Rectangle
 	Slots []image.Rectangle
+	// Highlight is the jump highlight's strength the row painted in the
+	// last frame (0 none, 1 Slack's #f2c74433 at full)
+	Highlight float32
+	// Top is the row's top edge in the list, px under the list's top
+	// (negative: cut off above it), and ViewH the list's height, as the
+	// last frame laid them out.
+	Top, ViewH int
+	// Avatar is the picture the row drew (its URL; "" for a row without
+	// one), Badge the app badge after the name ("" for none).
+	Avatar, Badge string
 }
 
 // Senders lists the senders of the visible messages as of the last frame.
@@ -204,7 +238,10 @@ func (s *listState) senders() []SenderView {
 		if r == nil {
 			continue
 		}
-		sv := SenderView{TS: r.src.TS, User: r.m.User, Name: r.nameShown}
+		sv := SenderView{TS: r.src.TS, User: r.m.User, Name: r.nameShown, Highlight: r.hlDrawn, ViewH: s.size.Y}
+		if i < len(s.pos) {
+			sv.Top = s.pos[i]
+		}
 		if sv.Name == "" {
 			sv.Missing = r.senderMiss()
 		}
@@ -214,6 +251,7 @@ func (s *listState) senders() []SenderView {
 			sv.Slots = r.rv.ElementSlots()
 		}
 		sv.Body = r.bodyRect
+		sv.Avatar, sv.Badge = r.avDrawn, r.badge
 		out = append(out, sv)
 	}
 	return out

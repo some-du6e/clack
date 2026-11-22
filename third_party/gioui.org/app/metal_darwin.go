@@ -21,11 +21,22 @@ import (
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <stdbool.h>
 
 static CFTypeRef createMetalDevice(void) {
 	@autoreleasepool {
 		id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
 		return CFBridgingRetain(dev);
+	}
+}
+
+// Clack patch (CLACK_PATCHES.md §46), tests only: drawables a blit can
+// read back (ClackReadableDrawables, gpu.ClackVerifyCopy), or the
+// framebufferOnly ones a window has.
+static void setFramebufferOnly(CFTypeRef layerRef, bool only) {
+	@autoreleasepool {
+		CAMetalLayer *layer = (__bridge CAMetalLayer *)layerRef;
+		layer.framebufferOnly = only;
 	}
 }
 
@@ -100,7 +111,19 @@ type mtlContext struct {
 	skipped                   int
 	skipSince                 time.Time
 	slowDrawable, slowPresent slowWaits
+	// readable: the layer's drawables aren't framebufferOnly
+	// (ClackReadableDrawables)
+	readable bool
 }
+
+// clackReadable is ClackReadableDrawables' switch.
+var clackReadable atomic.Bool
+
+// ClackReadableDrawables makes the Metal layers' drawables readable from
+// their next frame (not framebufferOnly, as a window's are), for tests
+// that read a window back (gpu.ClackVerifyCopy). Clack patch
+// (CLACK_PATCHES.md §46).
+func ClackReadableDrawables(on bool) { clackReadable.Store(on) }
 
 // slowMetalWait is a wait on the Metal layer long enough to log (Clack
 // patch, CLACK_PATCHES.md §32): the main thread does nothing else.
@@ -156,6 +179,10 @@ func newMtlContext(w *window) (*mtlContext, error) {
 func (c *mtlContext) RenderTarget() (gpu.RenderTarget, error) {
 	if c.drawable != 0 || c.texture != 0 {
 		return nil, errors.New("metal:a previous RenderTarget wasn't Presented")
+	}
+	if r := clackReadable.Load(); r != c.readable {
+		C.setFramebufferOnly(c.layer, C.bool(!r))
+		c.readable = r
 	}
 	start := time.Now()
 	c.drawable = C.nextDrawable(c.layer)

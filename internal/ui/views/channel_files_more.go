@@ -120,9 +120,10 @@ func sugLocalMatch(it *fileItem, words []string) bool {
 }
 
 // isMediaFile is the searcher's Photos and videos filter (JG8Q:
-// fileIsImage || fileIsPlayableVideo); an image without thumbs is a file.
+// fileIsImage || fileIsPlayableVideo); an image without thumbs, or a
+// video that won't play, is a file.
 func isMediaFile(it *fileItem) bool {
-	return it.isImage() || strings.HasPrefix(it.Mime, "video/")
+	return it.isImage() || it.IsVideo
 }
 
 // sugKeep is searcherOptions' filter for the Attachment type.
@@ -428,9 +429,12 @@ func (v *ChannelFiles) openShare(it fileItem) {
 	m := popups.NewShareFileModal(ph, popups.ShareFileOpts{ID: it.ID, Title: it.title(), Permalink: it.Permalink,
 		Preview: func(gtx C) D { return v.sharePreview(gtx, &tile) },
 		Shared: func(ch, ts string) {
-			// navigate to the destination at the share (same team)
+			// navigate to the destination at the share (same team):
+			// jumpToMessage({ts, channelId}) after shareMessageOrFile
+			// (boot-shared RybN), the conversation at the new message,
+			// never a thread with the share as its root
 			if ts != "" {
-				v.h.Navigate("c/" + ch + "/t/" + ts)
+				v.h.Navigate("c/" + ch + "/m/" + ts)
 			} else {
 				v.h.Navigate("c/" + ch)
 			}
@@ -504,13 +508,19 @@ func (v *ChannelFiles) openLinkDetails(l core.ChannelLink) {
 // ---- the media viewer ----
 
 // openMedia is the media cell's handleFileContainerClick with
-// fileChannelMediaInfo: images open in the viewer with the media
-// browser's loaded images to page through, videos on their page.
+// fileChannelMediaInfo: images and playable videos open in the viewer
+// with the media browser's loaded ones to page through (videos on their
+// page where they don't play).
 func (v *ChannelFiles) openMedia(it fileItem) {
 	g, ok := v.h.(interface {
 		OpenMediaGallery(items []popups.GalleryItem, idx int)
 	})
-	if !ok || !it.isImage() || it.URL == "" {
+	vp, _ := v.h.(interface{ VideosPlay() bool }) // where videos play in place, the viewer plays them
+	videos := ok && vp != nil && vp.VideosPlay()
+	viewable := func(m *fileItem) bool { // fileIsViewableInMediaViewer, as far as Clack's viewer goes
+		return m.URL != "" && (m.isImage() || videos && m.IsVideo)
+	}
+	if !ok || !viewable(&it) {
 		v.open(it)
 		return
 	}
@@ -518,13 +528,18 @@ func (v *ChannelFiles) openMedia(it fileItem) {
 	idx := 0
 	for i := range v.media.items {
 		m := &v.media.items[i]
-		if !m.isImage() || m.URL == "" { // fileIsViewableInMediaViewer, as far as Clack's viewer goes
+		if !viewable(m) {
 			continue
 		}
 		if m.ID == it.ID {
 			idx = len(items)
 		}
-		f := cfRich(m)
+		f := cfPlayable(m)
+		if m.IsVideo {
+			im := richtext.Image{URL: m.Thumb, Alt: m.title(), Title: m.title(), Proxy: true}
+			items = append(items, popups.GalleryItem{File: f, Img: im})
+			continue
+		}
 		items = append(items, popups.GalleryItem{File: f, Img: richtext.Image{URL: m.URL, Alt: m.title(), W: m.ThumbW,
 			H: m.ThumbH, Title: m.title(), Proxy: true}})
 	}

@@ -12,8 +12,8 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"maps"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -205,6 +205,29 @@ type actRow struct {
 	ovText string
 	ovMsg  core.Message
 
+	// The item as the row draws it (activity_msgs.go rowItem): its
+	// message and thread root the newest copies Activity has, where they
+	// came from (liSrc: 0 the feed's), and where the copies d was
+	// described from came from (dSrc).
+	li          core.ActivityItem
+	liSrc, dSrc [2]uint64
+	// msgGone: there's no message to draw (deleted, or Slack has none:
+	// isNonExistent), so no body and no shimmer
+	msgGone bool
+	// what the row sent ActivityItem and ActivityThread of its message,
+	// each level apart (a plugin's rewrite in ActivityItem is what the
+	// row hands the components inside it, not props it sent ActivityItem:
+	// activity_msgs.go sentSet)
+	itemSent, threadSent sentSet
+	// threadRev is the revision of the ActivityThread props, new with
+	// each messageTs (threadRevTS), unique across rows (actThreadRevs): a
+	// tree carrying another one was rendered from props before the
+	// item's; revSent is the msg ts each of the latest ones sent
+	// (slick.go threadOverride)
+	threadRev   uint64
+	threadRevTS string
+	revSent     []actRevSent
+
 	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
 	// (ActivityItemMember in "X reacted to your message").
 	nameHov hovercard.Trigger
@@ -324,6 +347,9 @@ type Activity struct {
 	// "New activity" banner announces.
 	newUnreadTS string
 	bannerNew   widget.Clickable
+	// msgs are the page's messages as the socket and the message lists
+	// on screen have them now (activity_msgs.go)
+	msgs actMsgs
 
 	unread    toggle
 	filterBtn widget.Clickable
@@ -353,11 +379,18 @@ type Activity struct {
 	showCleared bool
 	plusC       []widget.Clickable // the "+" menu's rows (plusItems)
 
-	data     async[core.ActivityPage]
+	data async[core.ActivityPage]
+	// live is the keys realtime entries upserted since the latest load
+	// went out (liveUpsert writes them, that load's merge reads them)
+	live struct {
+		mu   sync.Mutex
+		keys map[string]bool
+	}
 	list     widget.List
 	pk       actPeek // the rail's Activity peek (activity_peek.go)
 	rows     map[string]*actRow
-	override map[string]bool // local read state: true = read, false = unread
+	rowsPrev map[string]*actRow // the rows before a fresh load, for what they sent (rowFor)
+	override map[string]bool    // local read state: true = read, false = unread
 	cleared  map[string]bool
 	// visSel is the opened row the latest rebuild kept under Unreads
 	// (actUnreadsHides): a new selection or none rebuilds the list.
@@ -367,6 +400,7 @@ type Activity struct {
 	// shown: whether the page or its peek drew in the latest frame; its
 	// realtime watcher redraws only then (watchItems)
 	shown    shownTracker
+	shimmers int             // the loading shimmers drawn so far (shimmerLine)
 	wmu      sync.Mutex      // serializes core activity writes
 	listsReq map[string]bool // lists asked for so list rows can name their item
 	// densityReq: the saved layout was asked for (activity.views);
@@ -377,6 +411,17 @@ type Activity struct {
 	// activity.views.update, except for All): views by tab, their density.
 	views     [len(actTabIDs)]core.ActivityView
 	viewDense [len(actTabIDs)]bool
+
+	// zeroRead are the rows the badges' zero marked read (readAllLocal),
+	// each with the loads started by then: an answer of a load started
+	// later that lists the row has the server's state, which wins
+	// (settle); the rows it doesn't list (older pages a refresh keeps, a
+	// page after) keep the mark. fresh is the latest load's answer's keys,
+	// written by its goroutine (freshMu).
+	zeroRead map[string]uint64
+	loads    uint64
+	freshMu  sync.Mutex
+	fresh    actAnswered
 
 	// Reminder rows' saved items (saved.get), by compound key: known,
 	// non-existent, asked for; the files reminder footers name.
@@ -417,6 +462,8 @@ type Activity struct {
 	showAll      widget.Clickable
 
 	sel      core.ActivityItem
+	selLive  actRow // liveCopy's buffers: sel's (previewBody), the focused row's (focusedItem)
+	keyLive  actRow
 	selKey   string
 	selOK    bool
 	selSec   bool // the item opened in the app's secondary column (activity_panel.go)
@@ -426,6 +473,13 @@ type Activity struct {
 	nameBtn  widget.Clickable
 	closeBtn widget.Clickable
 	prevList widget.List
+
+	// paneFileKey is the item whose click the persistent detail panel's
+	// pane opened as a canvas or list (activity_canvas.go paneFileJump);
+	// paneLast is what the pane drew last, which it keeps drawing while a
+	// jump resolves (nil: ActivityEmptyView, or the preview it can't keep)
+	paneFileKey string
+	paneLast    layout.Widget
 
 	locGen uint64 // i18n.Gen the rows were built in
 
@@ -478,6 +532,16 @@ func (v *Activity) watchItems() {
 				// the status column's typing indicator (rZx3 z8), for the
 				// rows on screen
 				if v.typing.apply(ev, v.h.Core().Self().ID) && v.shown.shown(v.h) {
+					v.h.Invalidate()
+				}
+				continue
+			}
+			if v.msgs.wakes(ev) {
+				// a message on the page changed (an edit, a vote's
+				// chat.update, a reaction, a deletion): the next frame
+				// reads it from core's log, no feed reload
+				// (activity_msgs.go)
+				if v.shown.shown(v.h) {
 					v.h.Invalidate()
 				}
 				continue
@@ -556,6 +620,21 @@ func (v *Activity) watchItems() {
 				}
 				continue
 			}
+			if ev.Type == "activity_badges" && ev.Name == core.ActivityBadgesZero {
+				// badge_counts_updated summing to 0: the unread rows are
+				// read, locally (readAllLocal), in order with the
+				// realtime entries around it, and once however many come
+				// before the next draw
+				v.notes.mu.Lock()
+				if n := len(v.notes.items); n == 0 || !v.notes.items[n-1].zero {
+					v.notes.items = append(v.notes.items, actPatch{zero: true})
+				}
+				v.notes.mu.Unlock()
+				if shown {
+					v.h.Invalidate()
+				}
+				continue
+			}
 			if ev.Type != "activity" {
 				continue
 			}
@@ -580,7 +659,7 @@ func (v *Activity) watchItems() {
 				raw := ev.Raw
 				v.notes.fns = append(v.notes.fns, func() { v.viewsEvent(raw) })
 			case ev.Activity != nil:
-				v.notes.items = append(v.notes.items, *ev.Activity)
+				v.notes.items = append(v.notes.items, actPatch{it: *ev.Activity})
 			}
 			v.notes.mu.Unlock()
 			v.h.Invalidate()
@@ -589,9 +668,13 @@ func (v *Activity) watchItems() {
 }
 
 // actConvIDs reports whether ids hold a conversation's (a "names" event
-// after a channel lookup; the member fetcher's carry users).
+// after a channel lookup; the member fetcher's carry users, a message
+// slug's answer "channel/ts": the slug reads it as it draws).
 func actConvIDs(ids []string) bool {
 	for _, id := range ids {
+		if core.IsMessageKey(id) {
+			continue
+		}
 		if strings.HasPrefix(id, "C") || strings.HasPrefix(id, "G") || strings.HasPrefix(id, "D") {
 			return true
 		}
@@ -624,8 +707,9 @@ func (v *Activity) membersIn(ids []string) {
 	}
 }
 
-// applyPatches updates loaded rows from realtime activity items: the
-// server's read state replaces any local override for that row.
+// applyPatches updates loaded rows from realtime activity items, and the
+// badges' zero, in the order the socket brought them: the server's read
+// state replaces any local override for that row.
 func (v *Activity) applyPatches() {
 	v.notes.mu.Lock()
 	items, gone := v.notes.items, v.notes.gone
@@ -649,7 +733,11 @@ func (v *Activity) applyPatches() {
 			p.Items = kept
 		}
 		for _, in := range items {
-			v.liveUpsert(p, in) // activity_live.go
+			if in.zero {
+				v.readAllLocal(p)
+			} else {
+				v.liveUpsert(p, in.it) // activity_live.go
+			}
 		}
 	})
 	v.dirty = true
@@ -666,6 +754,7 @@ func (v *Activity) Layout(gtx C) D {
 	}
 	v.notes.drain(v.h)
 	v.applyPatches()
+	v.applyMsgs(gtx) // activity_msgs.go
 	if v.viewsLoaded {
 		v.syncTabs()
 	}
@@ -914,6 +1003,18 @@ func (v *Activity) settle() {
 	}
 	v.wasBusy = false
 	page, _, err := v.data.get()
+	if err == nil {
+		// the rows the answer lists, from a load started after the
+		// badges' zero marked them, are as the server has them now
+		v.freshMu.Lock()
+		f := v.fresh
+		v.freshMu.Unlock()
+		for k := range f.keys {
+			if at, ok := v.zeroRead[k]; ok && f.load > at {
+				delete(v.zeroRead, k)
+			}
+		}
+	}
 	v.unbuildChanged(v.loadedFrom, page)
 	v.loadedFrom = core.ActivityPage{}
 	v.dirty = true
@@ -928,6 +1029,7 @@ func (v *Activity) settle() {
 
 func (v *Activity) load(mode actLoad) {
 	c := v.h.Core()
+	v.startMsgs() // the page's messages change from here on (activity_msgs.go)
 	types, none := v.types()
 	opts := core.ActivityOpts{View: "all", Types: types, Unread: v.unread.Value, Archived: v.showCleared, Limit: actLimit,
 		Priority: v.vip, SectionIDs: v.sections, ChannelIDs: v.channels, Mode: v.feedMode(),
@@ -947,21 +1049,48 @@ func (v *Activity) load(mode actLoad) {
 		v.pageCursor = old.Next
 	}
 	if mode == actFresh {
+		// the rows start over, what each sent its patched components
+		// aside: slackc keeps a same-$key root's tree a few seconds, and
+		// a tree from before is judged by what the row sent then (rowFor)
+		v.rowsPrev = v.rows
 		v.rows = map[string]*actRow{}
 		v.list.Position = layout.Position{}
 		v.failedCursor = ""
 		v.vis = v.vis[:0]
 		v.dirty = true
 	}
-	sticky := opts.Unread
-	unreadMarks := map[string]bool{} // pendingUnreadMarkKeys: rows you marked unread here
-	for k, read := range v.override {
-		if !read {
-			unreadMarks[k] = true
+	// how the answer joins the list (tsND O upsertActivityItems,
+	// activity_order.go), as it is when the answer lands: a page is merged
+	// in, the page's copies winning (but a realtime entry's newer one), and
+	// the list sorted. A reload keeps actReloadKeeps' rows besides the page
+	// (the list's keys now: keysBeforeRefresh; under Unreads the rows you
+	// marked unread here: pendingUnreadMarkKeys). A fresh list starts
+	// empty, so it keeps only what came in on the socket while the request
+	// was out.
+	up := actUpsertOpts{reload: mode == actRefresh, sticky: opts.Unread, vip: v.sortVIP()}
+	if mode == actRefresh {
+		up.before = make(map[string]bool, len(old.Items))
+		for i := range old.Items {
+			up.before[actKey(&old.Items[i])] = true
+		}
+		if opts.Unread {
+			up.unreadMarks = map[string]bool{}
+			for k, read := range v.override {
+				if !read {
+					up.unreadMarks[k] = true
+				}
+			}
 		}
 	}
+	// the keys a realtime entry upserts from here on (liveUpsert): newer
+	// than this request's answer
+	v.live.mu.Lock()
+	clear(v.live.keys)
+	v.live.mu.Unlock()
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
-	v.data.load(v.h, mode != actFresh, func(ctx context.Context) (core.ActivityPage, error) {
+	v.loads++ // zeroRead: what this load's answer lists is the server's state from now
+	load := v.loads
+	v.data.loadMerge(v.h, mode != actFresh, func(ctx context.Context) (core.ActivityPage, error) {
 		if none {
 			return core.ActivityPage{}, nil
 		}
@@ -969,123 +1098,36 @@ func (v *Activity) load(mode actLoad) {
 		if err != nil {
 			return p, err
 		}
-		switch mode {
-		case actMore:
-			return actAppend(old, p), nil
-		case actRefresh:
-			if sticky {
-				// Unreads: the fresh unread page, plus the rows Slack keeps
-				// on a refresh (getItemsRetainedOnRefresh)
-				return actRetained(p, old, unreadMarks), nil
-			}
-			return actMerge(p, old, opts.Mode == ""), nil // "": chrono_v1, newest first; the VIP sort isn't in time order
-		}
+		v.noteFresh(load, p.Items)
 		return p, nil
+	}, func(cur, p core.ActivityPage) core.ActivityPage {
+		v.live.mu.Lock()
+		if len(v.live.keys) > 0 {
+			up.touched = maps.Clone(v.live.keys)
+		}
+		v.live.mu.Unlock()
+		return actUpsertPage(p, cur, up)
 	})
 }
 
-// actAppend adds the next page after old, skipping duplicates.
-func actAppend(old, p core.ActivityPage) core.ActivityPage {
-	seen := make(map[string]bool, len(old.Items))
-	items := make([]core.ActivityItem, 0, len(old.Items)+len(p.Items))
-	for i := range old.Items {
-		seen[actKey(&old.Items[i])] = true
-		items = append(items, old.Items[i])
-	}
-	for i := range p.Items {
-		if !seen[actKey(&p.Items[i])] {
-			items = append(items, p.Items[i])
-		}
-	}
-	return core.ActivityPage{Items: items, Next: p.Next, Convs: actRefs(old.Convs, p.Convs)}
+// actAnswered is a load's answer's keys: the rows it read from the server.
+type actAnswered struct {
+	load uint64
+	keys map[string]bool
 }
 
-// actMerge replaces the first page with fresh and keeps the older pages
-// already loaded, so a refresh (realtime, the peek's) doesn't lose the
-// scroll position: the old rows after the one fresh ends with, in the old
-// list's order, and the old cursor. Where fresh ends is found by key, not
-// by time: the feed isn't always in time order (the VIP sort lists VIP
-// unreads first, then the rest by time), and a time cutoff dropped later
-// pages' rows while keeping the cursor past them. When the old list
-// doesn't hold fresh's last row (more new rows than a page), the later
-// pages go and the cursor is fresh's, so the next page continues right
-// after fresh with nothing skipped.
-//
-// In time order a row of the old first page that fresh doesn't hold is
-// gone (deleted, cleared): a row only moves up, with newer activity. Out
-// of it (timeOrder false: the VIP sort) a row can move down too: one the
-// viewer just read leaves the VIP unreads for the rest, a page further on,
-// possibly past the cursor. Then the later pages go and the cursor is
-// fresh's, so paging brings it back where it now belongs.
-func actMerge(fresh, old core.ActivityPage, timeOrder bool) core.ActivityPage {
-	if len(fresh.Items) == 0 || len(old.Items) <= len(fresh.Items) {
-		return fresh
+// noteFresh records the keys load's answer lists (its goroutine), for
+// settle: a later load's answer replaces an earlier one's.
+func (v *Activity) noteFresh(load uint64, items []core.ActivityItem) {
+	keys := make(map[string]bool, len(items))
+	for i := range items {
+		keys[actKey(&items[i])] = true
 	}
-	lastKey := actKey(&fresh.Items[len(fresh.Items)-1])
-	end := -1
-	for i := range old.Items {
-		if actKey(&old.Items[i]) == lastKey {
-			end = i
-			break
-		}
+	v.freshMu.Lock()
+	if load >= v.fresh.load {
+		v.fresh = actAnswered{load: load, keys: keys}
 	}
-	if end < 0 {
-		return fresh
-	}
-	seen := make(map[string]bool, len(fresh.Items))
-	items := make([]core.ActivityItem, 0, len(old.Items)+len(fresh.Items))
-	for i := range fresh.Items {
-		seen[actKey(&fresh.Items[i])] = true
-		items = append(items, fresh.Items[i])
-	}
-	if !timeOrder {
-		for i := 0; i < end; i++ {
-			if !seen[actKey(&old.Items[i])] { // moved down (or gone): page again from fresh
-				return fresh
-			}
-		}
-	}
-	for i := end + 1; i < len(old.Items); i++ {
-		if it := &old.Items[i]; !seen[actKey(it)] {
-			items = append(items, *it)
-		}
-	}
-	return core.ActivityPage{Items: items, Next: old.Next, Convs: actRefs(old.Convs, fresh.Convs)}
-}
-
-// actRetained is the Unreads refresh, P0K2's refreshItems upsert
-// (build c07ab895506f): the fresh unread page, then the rows loaded
-// before that getItemsRetainedOnRefresh keeps: newer than the page's
-// newest row, or marked unread here (pendingUnreadMarkKeys) and still
-// unread. The rest, read rows included, goes with the old list; its
-// cursor is the fresh page's.
-func actRetained(fresh, old core.ActivityPage, unreadMarks map[string]bool) core.ActivityPage {
-	newest := ""
-	for i := range fresh.Items {
-		if ts := fresh.Items[i].FeedTS; newest == "" || actTSLess(newest, ts) {
-			newest = ts
-		}
-	}
-	seen := make(map[string]bool, len(fresh.Items))
-	items := make([]core.ActivityItem, 0, len(fresh.Items))
-	for i := range fresh.Items {
-		seen[actKey(&fresh.Items[i])] = true
-		items = append(items, fresh.Items[i])
-	}
-	for i := range old.Items {
-		it := &old.Items[i]
-		k := actKey(it)
-		if seen[k] {
-			continue
-		}
-		// unreadMarks holds the rows whose local state is unread (the
-		// store's isUnread after the optimistic mark)
-		if unreadMarks[k] || newest != "" && actTSLess(newest, it.FeedTS) {
-			items = append(items, *it)
-		}
-	}
-	sort.SliceStable(items, func(i, j int) bool { return actTSLess(items[j].FeedTS, items[i].FeedTS) })
-	return core.ActivityPage{Items: items, Next: fresh.Next, Convs: actRefs(old.Convs, fresh.Convs)}
+	v.freshMu.Unlock()
 }
 
 // actTSLess compares Slack timestamps ("1730000000.123456") numerically.
@@ -1196,6 +1238,11 @@ func (v *Activity) rowFor(key string) *actRow {
 	r := v.rows[key]
 	if r == nil {
 		r = &actRow{}
+		if old := v.rowsPrev[key]; old != nil { // before a fresh load (load)
+			r.itemSent, r.threadSent = old.itemSent, old.threadSent
+			r.threadRev, r.threadRevTS, r.revSent = old.threadRev, old.threadRevTS, old.revSent
+			delete(v.rowsPrev, key)
+		}
 		v.rows[key] = r
 	}
 	return r
@@ -1204,6 +1251,9 @@ func (v *Activity) rowFor(key string) *actRow {
 func (v *Activity) isUnread(it *core.ActivityItem, key string) bool {
 	if read, ok := v.override[key]; ok {
 		return !read
+	}
+	if _, ok := v.zeroRead[key]; ok {
+		return false // the badges' zero, newer than the answer the row came from
 	}
 	return it.Unread
 }
@@ -1236,6 +1286,17 @@ func (v *Activity) describeItem(it *core.ActivityItem, refs map[string]core.Conv
 			// row is described again once it's in (namesIn)
 			ref.ID = it.Channel
 			d.ent, d.entOn = v.refEnt(ref), true
+			if fid, ok, pending := v.canvasChannel(it); ok || pending {
+				// a canvas's file channel is its canvas (chanent.Canvas):
+				// the row is described again when files.info names it
+				// (core's "names" with the file id: membersIn)
+				if ent, known := v.canvasEnt(fid, it.Channel); known {
+					d.ent = ent
+				} else {
+					d.ent = chanent.Ent{Bar: chanent.BarWidth(fid)}
+					v.noteWait(fid)
+				}
+			}
 			d.title = d.ent.Title()
 		}
 		if c, ok := v.h.Core().Conv(it.Channel); ok {
@@ -1491,16 +1552,20 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		it := &page.Items[i]
 		key := actKey(it)
 		r := v.rowFor(key)
-		if !r.built || r.gen != i18n.Gen() || patchedViews {
-			r.d, r.built, r.gen = v.describe(it, page.Convs), true, i18n.Gen()
+		// the row's message as it is now (activity_msgs.go); a store copy
+		// to take past the change table's floor waits for the row to draw,
+		// unless the search filters on the text
+		li := v.rowItemAdopt(r, it, v.searchOn && v.query.text() != "")
+		if !r.built || r.gen != i18n.Gen() || patchedViews || r.dSrc != r.liSrc {
+			r.d, r.built, r.gen, r.dSrc = v.describe(li, page.Convs), true, i18n.Gen(), r.liSrc
 			if v.selOK && key == v.selKey {
 				v.selDesc = r.d // the preview's header names the channel too
 			}
 		}
 		// the store-backed marks (drafts, your replies and reactions,
 		// the reminder's saved item) follow every rebuild
-		r.mark, r.markOK = v.readMark(it)
-		r.agent, r.agentUntil = c.ActivityAgentStatus(it, now) // activity_rows.go agentStatus
+		r.mark, r.markOK = v.readMark(li)
+		r.agent, r.agentUntil = c.ActivityAgentStatus(li, now) // activity_rows.go agentStatus
 		// cleared: true = cleared here (hide from the inbox), false =
 		// restored here (hide from the archive).
 		if c, ok := v.cleared[key]; ok && c != v.showCleared {
@@ -1536,6 +1601,16 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		v.vis = v.vis[:0]
 	}
 	v.visN, v.dirty = len(page.Items), false
+}
+
+// OpenedItem is the opened row's key ("" while none is): the --selected
+// row, its item beside the list or in the view's own pane. (Not
+// Selected: bbm's breadcrumb reads a view's Selected as a conversation.)
+func (v *Activity) OpenedItem() string {
+	if v.selOK {
+		return v.selKey
+	}
+	return ""
 }
 
 // unreadsSel is the opened row's key while Unreads is on ("" otherwise),
@@ -2195,6 +2270,24 @@ func (v *Activity) footer(gtx C, failed bool) D {
 func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	key := actKey(it)
 	r := v.rowFor(key)
+	// the row's message as a list on screen draws it this frame, else the
+	// newest copy Activity has (activity_msgs.go)
+	v.pollLists(it)
+	it = v.rowItem(r, it)
+	if r.built && r.dSrc != r.liSrc {
+		// a newer copy than the row was described from: its text and
+		// marks follow in this frame
+		page, _, _ := v.data.get()
+		hay := r.d.hay
+		r.d, r.gen, r.dSrc = v.describe(it, page.Convs), i18n.Gen(), r.liSrc
+		r.mark, r.markOK = v.readMark(it)
+		if v.selOK && v.selKey == key {
+			v.selDesc = r.d
+		}
+		if v.searchOn && v.query.text() != "" && r.d.hay != hay {
+			v.dirty = true // the search filters on the text
+		}
+	}
 	// a click on an agent entry's action button (activity_leftovers.go)
 	// marks the row read and doesn't open it (ControlledClick skips a
 	// BUTTON target)
@@ -2388,7 +2481,7 @@ func (r *actRow) density() string {
 // itemProps: ActivityItem {activityItem, msg, className, isRead, density}.
 func (r *actRow) itemProps() slackc.Props {
 	v := r.v
-	return slackc.Props{"$key": r.key, "activityItem": r.itemShape(), "msg": msgProps(r.it.Msg),
+	return slackc.Props{"$key": r.key, "activityItem": r.itemShape(), "msg": r.itemSent.send(r.it.Msg),
 		"className": "", "isRead": !r.unread, "isSelected": v.selOK && v.selKey == r.key,
 		"density": r.density(), "showAsCard": false, "inTriageMode": false, "isDmTab": v.dmOnly()}
 }
@@ -2408,8 +2501,16 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 	if p != nil {
 		mods = classMods(p.StrOr("className", ""), actItemMods)
 		r.om = nil
-		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil {
-			r.om = r.textOverride(it.Msg, mp)
+		// a tree of another message (the item's latest reply before a new
+		// one landed, JS not having drawn it again) says nothing of this
+		// one: neither its text nor its sender
+		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil && mp.StrOr("ts", it.Msg.TS) == it.Msg.TS {
+			// a tree JS hasn't drawn since the message changed hands back
+			// a revision before: that's the props the row sent, not the
+			// plugin's text (activity_msgs.go echoed)
+			if !r.itemSent.echoed(mp) {
+				r.om = r.textOverride(it.Msg, mp)
+			}
 			om := msgOverride(it.Msg, mp)
 			r.pd = r.d
 			if n, av := v.authorOf(&om); n != "" {
@@ -2657,6 +2758,56 @@ func (v *Activity) markRead(it *core.ActivityItem, key string) {
 	})
 }
 
+// Search opens the list's search field with q in it, as typing q there
+// does (the ui tests' idle window with the search open).
+func (v *Activity) Search(q string) {
+	v.searchOn = true
+	v.query.ed.SetText(q)
+	v.dirty = true
+}
+
+// readAllLocal is badge_counts_updated with its counts at 0 (VxbD
+// handleBadgeCountsUpdatedRTMEvent): each unread row of p is marked read
+// here alone, with no activity.markRead (Japw m$ with isLocalOnlyUpdate),
+// but for the reactions' and the rows whose message the store doesn't
+// hold (m$ reads getMessageByTimestamp of the row's latestTs under the
+// inbox, else its messageTs, and stops without one). The badges are the
+// event's, already 0. The mark is a write to the page Activity holds, as
+// Slack's is to its store's item: a load that went out after it brings
+// the server's state, which replaces it (zeroRead).
+func (v *Activity) readAllLocal(p *core.ActivityPage) {
+	c := v.h.Core()
+	if c == nil {
+		return
+	}
+	inbox := c.ActivityInbox()
+	for i := range p.Items {
+		it := &p.Items[i]
+		key := actKey(it)
+		if it.Type == "message_reaction" || !v.isUnread(it, key) {
+			continue
+		}
+		ts := actMessageTS(it)
+		if inbox && it.LatestTS != "" {
+			ts = it.LatestTS
+		}
+		if it.Channel == "" || ts == "" {
+			continue
+		}
+		if _, ok := c.S.FindHeld(it.Channel, ts); !ok {
+			continue
+		}
+		if read, ok := v.override[key]; ok && !read {
+			delete(v.override, key) // a row marked unread here: the zero is newer
+		}
+		if v.zeroRead == nil {
+			v.zeroRead = map[string]uint64{}
+		}
+		v.zeroRead[key] = v.loads
+		v.dirty = true
+	}
+}
+
 // markUnread is the hover bar's "Mark as unread" (activity.markUnread).
 func (v *Activity) markUnread(it *core.ActivityItem, key string) {
 	v.setRead(key, false, *it, "Couldn’t mark as unread: ", func(ctx context.Context, c *core.App, item core.ActivityItem) error {
@@ -2846,9 +2997,9 @@ func (v *Activity) undoBar(gtx C) {
 type actNotes struct {
 	mu    sync.Mutex
 	msgs  []string
-	fns   []func()            // reverts of failed writes (Activity)
-	items []core.ActivityItem // realtime activity items (Activity)
-	gone  []string            // keys of realtime activity_deleted items
+	fns   []func()   // reverts of failed writes (Activity)
+	items []actPatch // realtime activity items and the badges' zero, in socket order (Activity)
+	gone  []string   // keys of realtime activity_deleted items
 	// the realtime watcher's pending passes (Activity): one each in fns
 	// however many events come before a draw
 	dirtyQueued, namesQueued bool
@@ -2857,6 +3008,13 @@ type actNotes struct {
 	// (Activity.noteStale): members, conversations, or everything
 	staleQueued, staleAll  bool
 	staleUsers, staleConvs map[string]bool
+}
+
+// actPatch is a realtime activity item, or (zero) a badge_counts_updated
+// summing to 0 (Activity.readAllLocal).
+type actPatch struct {
+	it   core.ActivityItem
+	zero bool
 }
 
 func (n *actNotes) add(h Host, s string) {
@@ -3452,7 +3610,11 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		return v.para(gtx, 15, 22, wReg, col, lines, d.body)
 	}
 	if r.msg() == nil {
-		if r.it.Channel == "" {
+		if r.it.Channel == "" || r.msgGone {
+			// ActivityRowContentDetails draws no body for a message the
+			// store doesn't have (deleted since: activity_msgs.go; or none
+			// at all: isNonExistent, MsgGone), the shimmer only for one
+			// it's still fetching (isUnknown)
 			return D{}
 		}
 		return v.shimmerLine(gtx, 240)
@@ -3538,6 +3700,7 @@ func (v *Activity) reactPrefix(gtx C, d *actDesc, col color.NRGBA) D {
 // shimmerLine is Slack's loading placeholder (applyShimmer) for a body
 // whose message hasn't loaded: one rounded bar.
 func (v *Activity) shimmerLine(gtx C, width unit.Dp) D {
+	v.shimmers++
 	w := min(gtx.Constraints.Max.X, gtx.Dp(width))
 	h := gtx.Dp(22)
 	bar := image.Rect(0, gtx.Dp(5), w, h-gtx.Dp(5))
@@ -3648,11 +3811,29 @@ func (v *Activity) pointerAt() image.Point {
 func (v *Activity) pane(gtx C) D {
 	defer clipMax(gtx).Pop()
 	fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, v.p.Bg)
-	if ps, ok := v.h.(Panes); ok && v.sel.Channel != "" {
-		if v.selDesc.thread != "" {
-			return ps.ThreadPane(v.sel.Channel, v.selDesc.thread)(gtx)
+	// a canvas's or list's file channel: the file (activity_canvas.go).
+	// While its jump resolves the pane keeps what it drew, as Slack's
+	// Primary keeps its view until openDoc navigates it
+	fid, wait := v.paneFileOf()
+	if wait {
+		if v.paneLast != nil {
+			return v.paneLast(gtx)
 		}
-		return ps.ChannelPane(v.sel.Channel)(gtx)
+		return v.activityEmpty(gtx)
+	}
+	var w layout.Widget
+	if fo, ok := v.h.(FileOpener); ok && fid != "" {
+		w = fo.FilePane(fid)
+	} else if ps, ok := v.h.(Panes); ok && v.sel.Channel != "" {
+		if v.selDesc.thread != "" {
+			w = ps.ThreadPane(v.sel.Channel, v.selDesc.thread)
+		} else {
+			w = ps.ChannelPane(v.sel.Channel)
+		}
+	}
+	v.paneLast = w
+	if w != nil {
+		return w(gtx)
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(v.previewHead),
@@ -3712,7 +3893,7 @@ func (v *Activity) previewHead(gtx C) D {
 }
 
 func (v *Activity) previewBody(gtx C) D {
-	d, it := &v.selDesc, &v.sel
+	d, it := &v.selDesc, v.liveCopy(&v.sel, &v.selLive) // its message as it is now (activity_msgs.go)
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return v.scrollList(gtx, &v.prevList, 5, func(gtx C, i int) D {
 		switch i {
@@ -3987,8 +4168,7 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	if len(m.Doc.Blocks) == 0 {
 		return b.body(gtx, m.Doc, m.Text, 0)
 	}
-	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
-	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, ver, m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
+	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
 }
 
 // actPill is one reaction: 24px pill, 16px emoji, 11px bold count; blue
@@ -4023,10 +4203,21 @@ func (b *base) actPillColors(r *core.Reaction) (bg, fg color.NRGBA) {
 
 // actPillBox draws a pill's rounded fill (and the reacted border) at size.
 func (b *base) actPillBox(gtx C, r *core.Reaction, size image.Point) {
+	b.actPillBoxStyled(gtx, r, size, slackc.Styled{})
+}
+
+// actPillBoxStyled is actPillBox for the pill styled st: a rule's
+// background replaces the fill and its box-shadow the reacted border
+// (OwlMode rings every pill in its colour), painted once by st's
+// WrapRounded; filled here again, a translucent one showed twice as
+// strong.
+func (b *base) actPillBoxStyled(gtx C, r *core.Reaction, size image.Point, st slackc.Styled) {
 	rect := image.Rectangle{Max: size}
 	bg, _ := b.actPillColors(r)
-	rrect(gtx, rect, size.Y/2, bg)
-	if r.Self {
+	if !st.Has("background-color") {
+		rrect(gtx, rect, size.Y/2, bg)
+	}
+	if r.Self && !st.Has("box-shadow") {
 		border(gtx, rect, size.Y/2, max(1, gtx.Dp(1)), rgb(0x1d9bd1))
 	}
 }

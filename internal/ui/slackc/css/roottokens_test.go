@@ -1,7 +1,10 @@
 package css
 
 import (
+	"fmt"
 	"image/color"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -100,6 +103,117 @@ func TestParseColorTriple(t *testing.T) {
 	for _, in := range []string{"", "var(--x)", "1px solid", "12px"} {
 		if _, ok := ParseColor(in); ok {
 			t.Errorf("ParseColor(%q) ok", in)
+		}
+	}
+}
+
+// Declares is per variable and per element: a sheet's own declaration,
+// not one its var() chain reaches; in dark mode, for Slack's names, only
+// one matching body or below, since Slack's body.sk-client-theme--dark
+// block shadows a :root-only declaration for everything in the client. A
+// sheet's own variables and light mode's :root declarations count.
+func TestRootTokensDeclares(t *testing.T) {
+	e := NewEngine()
+	e.Set("slick:user", ":root{--sk_foreground_low:255,0,0;--my-var:#123456}\n"+
+		themeSel+"{--dt_color-plt-aubergine-0:0,0,0 !important}\n"+
+		"body{--dt_color-theme-base-imp:#3b4252}")
+	dark := e.RootTokens(Env{Dark: true})
+	for name, want := range map[string]bool{
+		"--sk_foreground_low":          false, // :root only: Slack's body block shadows it
+		"--my-var":                     true,  // not Slack's: nothing on body redeclares it
+		"--dt_color-plt-aubergine-0":   true,  // the theme selector matches body too
+		"--dt_color-theme-base-imp":    true,  // declared on body
+		"--dt_color-theme-content-imp": false, // only its ramp is
+	} {
+		if got := dark.Declares(name); got != want {
+			t.Errorf("dark: Declares(%s) = %v, want %v", name, got, want)
+		}
+	}
+	if !e.RootTokens(Env{}).Declares("--sk_foreground_low") {
+		t.Error("light: a :root declaration of --sk_foreground_low doesn't count; Slack's light tokens live on :root")
+	}
+	// Color's own still follows the chain
+	if _, own, ok := dark.Color("var(--dt_color-theme-content-imp)"); !ok || !own {
+		t.Errorf("content-imp over the declared ramp: own=%v ok=%v", own, ok)
+	}
+}
+
+// The main window's theme hands its tokens to the huddle windows (huddleui
+// window_theme.go, invitewin.go, preview.go), which resolve them on their
+// own goroutines while the main window goes on resolving them on its own.
+// A lookup fills the memo, so two goroutines' first lookups wrote one map
+// at once: "fatal error: concurrent map writes" takes the whole client
+// down, and -race reports it. Every goroutine gets every token right.
+func TestRootTokensConcurrentColor(t *testing.T) {
+	const names = 600
+	e, want := concurrentSheet(names)
+	concurrently(t, func() *RootTokens { return e.RootTokens(Env{Dark: true}) }, func(tk *RootTokens, g int) string {
+		for i := 0; i < names; i++ {
+			n := (i*7 + g*names/concurrentGoroutines) % names // each goroutine starts elsewhere
+			if c, own, ok := tk.Color(fmt.Sprintf("var(--clack-x%d)", n)); !ok || !own || c != want {
+				return fmt.Sprintf("--clack-x%d = %v own=%v ok=%v, want %v", n, c, own, ok, want)
+			}
+		}
+		return ""
+	})
+}
+
+// Background and Scope build the root chain's computed styles once, on
+// whichever goroutine asks first; another goroutine read the chain while
+// it was being built (an empty one: "index out of range [-1]").
+func TestRootTokensConcurrentBackground(t *testing.T) {
+	e, want := concurrentSheet(1)
+	concurrently(t, func() *RootTokens { return e.RootTokens(Env{Dark: true}) }, func(tk *RootTokens, g int) string {
+		if g%2 == 1 {
+			tk.Scope("p-view_contents p-view_contents--sidebar")
+		}
+		if c, ok := tk.Background("p-theme_background"); !ok || c != want {
+			return fmt.Sprintf("the window background is %v %v, want %v", c, ok, want)
+		}
+		return ""
+	})
+}
+
+const concurrentGoroutines = 8
+
+// concurrentSheet is a Slick theme's shape with n tokens of its own, each
+// over the overridden --dt_color-base-pry (want).
+func concurrentSheet(n int) (*Engine, color.NRGBA) {
+	var sheet strings.Builder
+	sheet.WriteString(themeSel + "{--dt_color-base-pry:#2e3440 !important;")
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&sheet, "--clack-x%d:var(--dt_color-base-pry);", i)
+	}
+	sheet.WriteString("}\n.p-theme_background{background:#2e3440 !important;}\n.p-view_contents--sidebar{--dt_color-content-pry:#aa0000}")
+	e := NewEngine()
+	e.Set("slick:theme", sheet.String())
+	return e, color.NRGBA{0x2e, 0x34, 0x40, 0xff}
+}
+
+// concurrently runs use on concurrentGoroutines goroutines at once over
+// one fresh RootTokens, a dozen rounds; use returns what went wrong.
+func concurrently(t *testing.T, fresh func() *RootTokens, use func(tk *RootTokens, g int) string) {
+	t.Helper()
+	for r := 0; r < 12; r++ {
+		tk := fresh() // a fresh memo and chain each round
+		start := make(chan struct{})
+		errs := make(chan string, concurrentGoroutines)
+		var wg sync.WaitGroup
+		for g := 0; g < concurrentGoroutines; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				if msg := use(tk, g); msg != "" {
+					errs <- msg
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+		for msg := range errs {
+			t.Fatalf("round %d: %s", r, msg)
 		}
 	}
 }

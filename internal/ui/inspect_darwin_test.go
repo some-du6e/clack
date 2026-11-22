@@ -24,9 +24,13 @@ import (
 //  2. The Konami code, ↑ ↑ ↓ ↓ ← → ← → B A, turns the tool on at once and
 //     writes inspect_tool to ui.json.
 //  3. Hyper+D starts a session and again ends it; Esc ends one too.
-//  4. ⌘⌥⇧D, the old shortcut, starts none and leaves the sidebar (the
+//  4. In a session F freezes the window on its frame (inspect/freeze.go)
+//     and F again unfreezes it; Esc unfreezes too, the session on, and
+//     Esc again ends it. Frozen, App.Run draws the frame on screen again
+//     through Metal with nothing laid out.
+//  5. ⌘⌥⇧D, the old shortcut, starts none and leaves the sidebar (the
 //     menu's Hide Sidebar is ⌘⇧D).
-//  5. The code again turns the tool off, in ui.json too.
+//  6. The code again turns the tool off, in ui.json too.
 //
 // Before Gio patch 29 no ⌘ press with ⌥ held reached the window: the
 // view got ⌥⇧⌘D's and ⌃⌥⇧⌘D's keyDown:, its interpretKeyEvents: called
@@ -53,6 +57,25 @@ func TestMacInspectKeys(t *testing.T) {
 	tool := func() (on, active bool) {
 		ma.onUI(t, func() { on, active = ma.a.insp != nil, ma.a.insp != nil && ma.a.insp.Active() })
 		return on, active
+	}
+	frozen := func() (f bool) {
+		ma.onUI(t, func() { f = ma.a.insp != nil && ma.a.insp.Frozen() })
+		return f
+	}
+	laidOut := func() (n uint64) {
+		ma.onUI(t, func() { n = ma.a.frameSeq.Load() })
+		return n
+	}
+	// draft is the open conversation's composer text, ok false without one
+	draft := func() (s string, ok bool) {
+		ma.onUI(t, func() {
+			if c := ma.a.convoFor(ma.a.router.Current().Channel(), ""); c != nil {
+				if cb, isBox := c.comp.(composerBox); isBox {
+					s, ok = cb.DocText(), true
+				}
+			}
+		})
+		return s, ok
 	}
 	sidebarHidden := func() (h bool) {
 		ma.onUI(t, func() { h = ma.a.sidebar.hidden })
@@ -126,7 +149,33 @@ func TestMacInspectKeys(t *testing.T) {
 	press("Esc", cocoatest.KeyEscape, 0)
 	eventually("the session ended by Esc", func() bool { _, a := tool(); return !a })
 
-	// 4. the old shortcut starts none, and isn't the menu's ⌘⇧D
+	// 4. F freezes and unfreezes; Esc unfreezes, then ends the session
+	active := func() bool { _, a := tool(); return a }
+	hyper()
+	eventually("a session after Hyper+D", active)
+	press("F", cocoatest.KeyF, 0)
+	eventually("frozen after F", frozen)
+	seq := laidOut()
+	before, hasDraft := draft()
+	onMain(func() { cocoatest.PostKey(ma.view, cocoatest.KeyX, 0) }) // a key the tool doesn't take
+	time.Sleep(300 * time.Millisecond)
+	if n := laidOut(); n != seq {
+		t.Errorf("%d frames laid out while frozen", n-seq)
+	}
+	press("F", cocoatest.KeyF, 0)
+	eventually("unfrozen by F again, the session on", func() bool { return !frozen() && active() })
+	time.Sleep(300 * time.Millisecond) // frames laid out again
+	if after, ok := draft(); hasDraft && ok && after != before {
+		t.Errorf("the X typed while frozen reached the composer: %q, was %q", after, before)
+	}
+	press("F", cocoatest.KeyF, 0)
+	eventually("frozen after F", frozen)
+	press("Esc", cocoatest.KeyEscape, 0)
+	eventually("unfrozen by Esc, the session on", func() bool { return !frozen() && active() })
+	press("Esc", cocoatest.KeyEscape, 0)
+	eventually("the session ended by Esc again", func() bool { return !active() })
+
+	// 5. the old shortcut starts none, and isn't the menu's ⌘⇧D
 	sb := sidebarHidden()
 	press("⌥⇧⌘D", cocoatest.KeyD, cmd|opt|shift)
 	time.Sleep(time.Second)
@@ -137,7 +186,7 @@ func TestMacInspectKeys(t *testing.T) {
 		t.Errorf("⌘⌥⇧D toggled the sidebar (hidden %v → %v)", sb, now)
 	}
 
-	// 5. the code again turns it off
+	// 6. the code again turns it off
 	konami()
 	eventually("the tool off after the code again", func() bool { on, _ := tool(); return !on })
 	eventually("inspect_tool gone from ui.json", func() bool { return !saved() })

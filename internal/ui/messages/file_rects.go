@@ -41,6 +41,36 @@ func (s *listState) fileRects() []FileRect {
 	return out
 }
 
+// reportMedia tells the rows' video players how much of each of their
+// tiles the list shows, as this layout placed them (against the list's
+// own box): a playing video scrolled under 10% visible pauses.
+func (s *listState) reportMedia() {
+	view := image.Rectangle{Min: s.origin, Max: s.origin.Add(s.size)}
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if s.items[i].kind != itMsg || i >= len(s.heights) || s.heights[i] <= 0 || i >= len(s.pos) {
+			continue
+		}
+		r := s.rows[s.items[i].key]
+		if r == nil || r.rv == nil || r.media == nil {
+			continue
+		}
+		mv, ok := r.media.(mediaVisibility)
+		if !ok {
+			continue
+		}
+		off := s.origin.Add(image.Pt(r.bodyRect.Min.X, s.pos[i]+r.bodyRect.Min.Y))
+		for _, mr := range r.rv.MediaRects() {
+			tr := mr.R.Add(off)
+			a := tr.Dx() * tr.Dy()
+			if a <= 0 {
+				continue
+			}
+			in := tr.Intersect(view)
+			mv.MediaVisible(mr.File, float64(in.Dx()*in.Dy())/float64(a))
+		}
+	}
+}
+
 // FileActionRect is a shown FileActions button on screen (the hovered
 // file's), in window coordinates.
 type FileActionRect struct {
@@ -183,6 +213,25 @@ func (v *ChannelView) CardRects() []CardRect {
 	return out
 }
 
+// SlotRect is a Block Kit element slot on screen (window coordinates):
+// an agent block's, or a code channel card's.
+type SlotRect struct {
+	TS string // the message
+	R  image.Rectangle
+}
+
+// ElementSlotRects lists the visible messages' element slots as of the
+// last frame, in window coordinates.
+func (v *ChannelView) ElementSlotRects() []SlotRect {
+	var out []SlotRect
+	v.s.eachBody(func(ts string, off image.Point, rv *richview.View) {
+		for _, r := range rv.ElementSlots() {
+			out = append(out, SlotRect{TS: ts, R: r.Add(off)})
+		}
+	})
+	return out
+}
+
 // WorkObjectRect is a work object card's box on screen (window
 // coordinates).
 type WorkObjectRect struct {
@@ -235,4 +284,34 @@ func (s *listState) eachBody(f func(ts string, off image.Point, rv *richview.Vie
 		}
 		f(r.src.TS, s.origin.Add(image.Pt(r.bodyRect.Min.X, s.pos[i]+r.bodyRect.Min.Y)), r.rv)
 	}
+}
+
+// ToolbarRect is the hover toolbar (MessageActions) as the last frame drew
+// it over the hovered message, in window coordinates, and that message's
+// ts; ok false when the frame drew none.
+func (v *ChannelView) ToolbarRect() (ts string, r image.Rectangle, ok bool) {
+	return v.s.toolbarRect()
+}
+
+func (s *listState) toolbarRect() (string, image.Rectangle, bool) {
+	if s.tbFor < 0 || s.tbFor >= len(s.items) {
+		return "", image.Rectangle{}, false
+	}
+	ts := ""
+	if r := s.rows[s.items[s.tbFor].key]; r != nil {
+		ts = r.src.TS
+	}
+	return ts, s.tbRect.Add(s.origin), true
+}
+
+// BodyPointer reports whether the body of message ts counts the pointer
+// as over it (richview View.Pointer: what its hover states, tooltips and
+// hover card follow), as the last frame left it; ok false when the
+// message has no body on screen.
+func (v *ChannelView) BodyPointer(ts string) (over, ok bool) {
+	r := v.s.rows[ts]
+	if r == nil || r.rv == nil {
+		return false, false
+	}
+	return r.rv.Pointer(), true
 }

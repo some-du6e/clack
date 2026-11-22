@@ -26,13 +26,32 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/imgcache"
+	_ "github.com/some-du6e/clack/internal/media/avf" // video on macOS: AVFoundation
+	_ "github.com/some-du6e/clack/internal/media/mf"  // video on Windows: Media Foundation (cgo builds)
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui"
 )
 
-var started = time.Now()
+// mainAt is when package main's variables were set: the loader, the Go
+// runtime and every package's init had run by then.
+var mainAt = time.Now()
+
+// started is the startup timeline's zero: when the OS started the process
+// (applog.ProcessStart), so every milestone counts what a launch waits
+// for, the time before main included; mainAt where the OS doesn't say.
+var started = processStarted()
+
+func processStarted() time.Time {
+	if t, ok := applog.ProcessStart(); ok && !t.After(mainAt) {
+		// mainAt's monotonic reading, moved back by the wall-clock gap:
+		// durations from it stay monotonic (a clock step in the first
+		// minute moves neither the timeline nor its timeouts)
+		return mainAt.Add(t.Sub(mainAt))
+	}
+	return mainAt
+}
 
 // version is set at release builds (-ldflags "-X main.version=v0.1.0").
 var version = "dev"
@@ -175,6 +194,10 @@ func main() {
 	// The startup timeline (applog/startup.go) counts from the process
 	// start; its debug lines are on for the first minute.
 	applog.StartTimeline(started)
+	applog.MarkAt("main", mainAt, "")
+	// Gio's own startup points: macOS's finished launching (the Dock's
+	// bounce ends), the window on screen, the GPU's first frame
+	app.SetStartupMark(func(name string, at time.Time) { go applog.MarkAt(name, at, "") }) // never the log on AppKit's main thread
 	// Go panics nothing recovers and the runtime's fatal errors go to fd 2
 	// only; the runtime also writes them to crash.log next to clack.log,
 	// and the next start copies the trace, redacted, into clack.log. That
@@ -252,6 +275,9 @@ func main() {
 	}
 
 	log.Printf("clack %s starting (%s/%s, %s)", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+	// the launch harness (.github/perf/launch.py) reads the process and its
+	// start from this line
+	log.Printf("startup: process %d started at unix ms %d, main after %v", os.Getpid(), started.UnixMilli(), mainAt.Sub(started).Round(100*time.Microsecond))
 	if crashNote != "" {
 		log.Print(crashNote)
 	}
@@ -282,6 +308,7 @@ func main() {
 		}
 		return
 	}
+	applog.Mark("single-instance", "")
 	// The image cache's disk tier is the signed-in account's (build sets it).
 	images := imgcache.New(imgcache.PublicFetch, "", nil)
 	croot := cacheRoot(cfg)
@@ -348,8 +375,13 @@ func main() {
 		keep = store.AccountDir(croot, firstNonEmpty(creds.Team, creds.EnterpriseID), creds.UserID)
 	}
 	store.SweepAccounts(croot, keep)
+	applog.Mark("creds", "")
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
+	applog.Mark("ui-new", "")
+	// macOS: Cmd+Q in the stub menu (before Clack's menu bar installs,
+	// after the first frame) quits as Clack's own Quit does
+	app.SetQuitHandler(a.Quit)
 	// A slack:// link is a navigation, except a magic-login link, which
 	// is Slack's browser handing "the Slack app" a sign-in: that signs in
 	// (on the sign-in screen only; see ui.App.SignInWithLink).
@@ -403,20 +435,17 @@ func main() {
 		if err := c.EnableDPoP(filepath.Dir(*credsPath)); err != nil {
 			log.Printf("slack: %v", err)
 		}
-		images.SetFetcher(func(ctx context.Context, raw string) ([]byte, error) {
-			// https slack.com hosts (files.slack.com, …) need the session
-			// cookie and stay in memory (core.Fetch). Everything else is
-			// fetched with no credentials (imgcache.PublicFetch): https only,
-			// Slack's CDNs directly, any other host (unfurls, attachment and
-			// block images, bot icons, plugin CSS) through Slack's image
-			// proxy so a sender never sees your IP address, and never from a
-			// private address.
-			if c.CredentialsOK(raw) {
-				b, _, err := svc.Fetch(ctx, raw)
-				return b, err
-			}
-			return imgcache.PublicFetch(ctx, raw)
-		})
+		// https slack.com hosts (files.slack.com, …) need the session
+		// cookie and stay in memory (core.Fetch). Everything else is
+		// fetched with no credentials (imgcache.PublicFetch): https on
+		// Slack's CDNs directly, any other host and any http URL (unfurls,
+		// attachment and block images, bot icons, plugin CSS) through
+		// Slack's image proxy so a sender never sees your IP address, and
+		// never from a private address.
+		images.SetFetcher(imgcache.SessionFetch(c.CredentialsOK, func(ctx context.Context, raw string) ([]byte, error) {
+			b, _, err := svc.Fetch(ctx, raw)
+			return b, err
+		}))
 		return svc
 	}
 	connect := func(creds slack.Creds) { a.Attach(build(creds), cacheDir) }
@@ -446,6 +475,7 @@ func main() {
 	} else {
 		a.SetLogin(login)
 	}
+	applog.Mark("attached", "")
 	if link != "" {
 		log.Printf("desktop: started with a slack:// %s", linkKind(link))
 		openLink(link)
@@ -508,6 +538,7 @@ func main() {
 	// queues work for the main thread and waits for it, so calling it here
 	// deadlocked: Clack beachballed when a browser handed it a sign-in link
 	// while it was running (2026-11-08). Do nothing here but hand off.
+	applog.Mark("app-main", "")
 	for e := range app.Events {
 		if u, ok := e.(app.URLEvent); ok && u.URL != nil {
 			link := u.URL.String()

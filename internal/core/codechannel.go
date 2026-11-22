@@ -15,6 +15,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"strconv"
 	"strings"
@@ -476,6 +477,37 @@ func (a *App) CodeChannelAction(ctx context.Context, ch, key string) error {
 // agents.sessions.stop {channel, reason: "stopped-by-user"}.
 func (a *App) StopAgent(ctx context.Context, ch string) error {
 	return a.C.Call(ctx, "agents.sessions.stop", url.Values{"channel": {ch}, "reason": {"stopped-by-user"}}, nil)
+}
+
+// JoinCodeChannel is joinCodeChannel (boot-shared kR8w e0, "Join a code
+// channel from an origin the user can see"), the Join of a private code
+// channel's card in a message: client.codeChannels.join {channel_id,
+// origin_channel_id}, the origin being the channel the agent_channel_unfurl
+// says it may be joined from (joinable_from_channel_id). A channel the
+// viewer is already in asks nothing. The answer's channel, when there is
+// one, goes in the store as it came (upsertChannel) and the sidebar hears
+// of it, so the channel opens on what Slack returned. Each Join is the
+// viewer's own click, sent whatever failed just before (slack.NoBackoff:
+// Slack's "Please try again" does send again).
+func (a *App) JoinCodeChannel(ctx context.Context, ch, origin string) error {
+	if ch == "" || origin == "" {
+		return errors.New(`core: JoinCodeChannel needs the channel and the origin channel`)
+	}
+	if cv, ok := a.Conv(ch); ok && cv.Member {
+		return nil
+	}
+	var res struct {
+		Channel *slack.Conversation `json:"channel"`
+	}
+	if err := a.C.Call(slack.NoBackoff(ctx), "client.codeChannels.join", url.Values{"channel_id": {ch}, "origin_channel_id": {origin}}, &res); err != nil {
+		return err
+	}
+	if c := res.Channel; c != nil && c.ID != "" {
+		a.S.PutConvLocal(*c)
+		v := a.conv(c)
+		a.emit(Event{Type: "conv", Channel: c.ID, Conv: &v})
+	}
+	return nil
 }
 
 // CodeChannelBlockKitView fetches a block_kit view (CodeChannelBlockKitView):

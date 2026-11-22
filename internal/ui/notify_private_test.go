@@ -31,8 +31,22 @@ import (
 // the next snapshot.
 func privNoteApp(t *testing.T) (*App, *core.App, *noteRec) {
 	t.Helper()
+	a, ca, _, rec := privNoteAppFS(t)
+	// noteMsg's sender, held as a toast's sender is once it waited for
+	// them (noteMembers): "{sender}: " is the member's name
+	// (getPrefCompliantMemberNameById), never the message's own name
+	ca.S.PutUsers([]slack.User{{ID: "U0FAKEUSER1", Name: "ada", Profile: slack.Profile{DisplayName: "Ada", RealName: "Ada Lovelace"}}})
+	return a, ca, rec
+}
+
+// privNoteAppFS is privNoteApp with its fakeslack.
+func privNoteAppFS(t *testing.T, opts ...func(*fakeslack.Size)) (*App, *core.App, *fakeslack.Server, *noteRec) {
+	t.Helper()
 	sz := fakeslack.Small
 	sz.ThreadHeader = true
+	for _, o := range opts {
+		o(&sz)
+	}
 	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +70,7 @@ func privNoteApp(t *testing.T) (*App, *core.App, *noteRec) {
 	storeTeam(ca)
 	rec := &noteRec{}
 	a.notify = rec
-	return a, ca, rec
+	return a, ca, fs, rec
 }
 
 // fixtureConv is id's conversation as fakeslack serves it.

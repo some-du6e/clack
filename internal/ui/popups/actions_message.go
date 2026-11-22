@@ -146,7 +146,11 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	markUnread := MenuItem{Key: "mark_unread", Action: "mark_unread", Label: nsMessage.T("Mark unread"), Icon: "mark-unread", Hint: nsMessage.T("U"), Keys: KeyMarkUnread, Do: func() {
 		actDo(h, "", func(ctx context.Context, a *core.App) error {
 			if inThread {
-				return a.MarkThreadUnread(ctx, ch, root, ts)
+				origin := core.MarkedInThread // the markOrigin: its messageContainerType
+				if o.Where == InThreadsView {
+					origin = core.MarkedInThreadsView
+				}
+				return a.MarkThreadUnreadFrom(ctx, ch, root, ts, origin)
 			}
 			_, err := a.MarkUnread(ctx, ch, ts)
 			return err
@@ -353,6 +357,12 @@ func actWorkflowBot(h Host, m core.Message) bool {
 // view (Slack's WorkflowDetails, viewType WorkflowDetails) for a trigger
 // seen in channel ch.
 var OpenWorkflowDetails func(triggerID, ch string)
+
+// WorkflowCardMenu, set by the ui root, opens a share_shortcut card's
+// More actions menu (MoreActionsMenu, boot-shared 9mPk) from anchor (the
+// ⋮ button, window coordinates) for the card c in message ts of channel
+// ch.
+var WorkflowCardMenu func(h Host, anchor image.Rectangle, c *richtext.ShortcutCard, ch, ts string)
 
 // fetchTriggerPreview asks for a trigger's preview unless it is known
 // (getTriggerPreviews: fetchObjectWithId for the missing ones).
@@ -583,8 +593,14 @@ func copyMessage(gtx layout.Context, m core.Message) {
 	if t := richclip.TextyDelta(m.Doc); t != "" {
 		c.Custom = map[string]string{"slack/texty": t}
 	}
-	go func() { _ = richclip.Write(context.Background(), c) }()
+	write := writeRich
+	go func() { _ = write(context.Background(), c) }()
 }
+
+// writeRich is richclip.Write: the copy goes to the system clipboard off
+// the UI goroutine, not through Gio's clipboard, so the menu tests read
+// Copy message's copy through this (menu_keys_test.go's newMkEnv).
+var writeRich = richclip.Write
 
 func actMsgText(m core.Message) string {
 	if s := richtext.PlainText(m.Doc); strings.TrimSpace(s) != "" {

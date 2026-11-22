@@ -44,6 +44,9 @@ func (a *App) mountChannel(ch string) View {
 // mountThread is the secondary-pane thread: the thread list with its
 // composer, on a floating card.
 func (a *App) mountThread(ch, ts string) View {
+	if c := a.convos[ch+"/"+ts]; c != nil {
+		c.inputShown = false // a new pane: its input row mounts again (thread_focus_input.go)
+	}
 	return &threadPane{a: a, ch: ch, ts: ts}
 }
 
@@ -204,12 +207,15 @@ type MenuItem struct {
 	LabelText func(gtx layout.Context, c color.NRGBA) layout.Dimensions
 }
 
-func (a *App) menu(anchor image.Point, items []MenuItem) {
+func (a *App) menu(anchor image.Point, items []MenuItem) Overlay {
+	var o Overlay
 	if mkMenu != nil {
-		a.ShowOverlay(mkMenu(a, anchor, items))
-		return
+		o = mkMenu(a, anchor, items)
+	} else {
+		o = newShellMenu(a, anchor, items)
 	}
-	a.ShowOverlay(newShellMenu(a, anchor, items))
+	a.ShowOverlay(o)
+	return o
 }
 
 func (a *App) openSwitcher() {
@@ -236,5 +242,7 @@ type threadPane struct {
 
 func (p *threadPane) Layout(gtx layout.Context) layout.Dimensions {
 	c := p.a.convoFor(p.ch, p.ts)
-	return p.a.layoutConvo(gtx, c, p.a.secondaryOrigin)
+	d := p.a.layoutConvo(gtx, c, p.a.secondaryOrigin)
+	p.a.recordThreadVisit(p.ch, p.ts, c)
+	return d
 }

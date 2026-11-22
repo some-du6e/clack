@@ -22,6 +22,20 @@ import (
 // the UA rules (b, i) are :where() so any author rule beats them, as the
 // user-agent origin does. It's installed as the engine's base sheet, so it
 // never makes the CSS engine non-empty (no cost while no CSS is set).
+//
+// The rules with values are Slack's own (client-boot-styles, 2026-11:
+// cf726c4f2eaecc74) for elements natives draw and lay plugin content out
+// in: the top nav's right container and the thread header's row (a
+// patched component's tree under them, ClassDef.FlexItems), and the
+// reaction pill's button (.c-reaction: the children a patched
+// ReactionBar hands back, ClassDef.LayoutChildren), reduced there to what
+// lays its children out and the text they inherit (its box, its 8px
+// padding, 24px height, fill and radius, the native draws). They are the
+// natives' own (nativeSets): they never make a widget Active. A plugin's
+// own element with one of these classes gets Slack's whole rule from the
+// host base sheet (pluginElementCSS: .c-reaction), later in source order
+// and with the same values for the properties kept here, so it looks as
+// in Slack and not as this reduced part of it.
 const nativeCSS = `
 :where(b, strong) { font-weight: N }
 :where(i, em) { font-style: N }
@@ -50,6 +64,8 @@ const nativeCSS = `
 .p-ia4_client .p-ia4_top_nav__right_container{flex:1 0 auto;justify-content:flex-end;align-items:center;margin-right:4px;display:flex}
 .p-flexpane_header__primary{font-size:18px;line-height:1.33334;font-weight:var(--custom-font-weight-black,900);letter-spacing:var(--custom-font-tracking-subtitle,inherit);align-items:center;gap:8px;display:flex}
 .p-flexpane--ia_details_popover .p-flexpane_header.p-flexpane_header--smaller .p-flexpane_header__primary{gap:4px}
+.c-reaction{justify-content:center;align-items:center;gap:4px;font-size:12px;line-height:1;display:inline-flex}
+.c-reaction--reacted{font-weight:var(--custom-font-weight-bold,700)}
 `
 
 // pluginElementCSS is Slack's own rules (client-boot-styles, 2026-11:
@@ -57,7 +73,12 @@ const nativeCSS = `
 // render themselves, so a plugin's banner or button looks like Slack's:
 // the context bar above the composer (HaikuWarning's and OwlMode's
 // BaseContextBarV2), the reaction bar's add-reaction pill (CopyReacted's
-// copy chip, button.c-button-unstyled.c-reaction_add), Slack Kit's icon
+// copy chip, button.c-button-unstyled.c-reaction_add) and reaction pill
+// (a plugin's own .c-reaction: Slack's whole look, the 24px round box,
+// 8px padding, fill, hover and reacted rings, where the base sheet's
+// .c-reaction is only the part the native pill's children lay out under,
+// ClassDef.LayoutChildren; the sidebar Activity's inverse colours too),
+// Slack Kit's icon
 // button in the thread header (ThreadJump's Jump in thread,
 // c-icon_button c-icon_button--size_medium c-icon_button--default
 // p-flexpane_header__control) and the top nav's help button
@@ -66,16 +87,30 @@ const nativeCSS = `
 // an unfurl's media with the legacy icon font's play glyph (ClickToLoad's
 // placeholder: c-message_attachment__audio > __video_thumb >
 // __video_buttons > button.c-message_attachment__video_play >
-// i.c-deprecated-icon.c-icon--play; legacy_icons.go draws the glyph).
+// i.c-deprecated-icon.c-icon--play; legacy_icons.go draws the glyph),
+// and the actions row a plugin builds like a Block Kit actions block
+// around Slack's Button (OwlMode's Save in Taut and Forget:
+// .p-actions_block > .p-actions_block_elements > .p-actions_block__action
+// > Button.p-block_kit_button_element), whose flex rows keep each button
+// as wide as its content.
 // It is the engine's host base
 // sheet: its rules match only host-tree elements, never a native that
 // carries the same class (the native add-reaction button, the thread
-// pane's close button), which draws its own look. Rules are verbatim, in
-// Slack's source order and cascade layers (sk.foundation, sk.components,
-// sk.core, as the file first names them); only those whose subject is a
-// class here.
+// pane's close button), which draws its own look. The exception is a host
+// component that declares the element it is (RegisterHostElement): kit's
+// Button is Slack's button.c-button, so these rules style its box as they
+// do Slack's. Rules are verbatim, in Slack's source order and cascade
+// layers (sk.foundation, sk.components, sk.core, as the file first names
+// them); only those whose subject is a class here. One is reduced:
+// .c-button keeps only what lays out its children (an inline-flex row,
+// centred and unwrapped, as Slack's Button lays out an icon and a label),
+// because kit's Button draws the rest of Slack's c-button look itself and
+// takes any padding, border colour or colour a rule sets as an override.
+// A plugin's own <button class="c-button …"> gets the rest from
+// pluginButtonCSS.
 const pluginElementCSS = `
 @layer sk.foundation, sk.components, sk.core;
+.c-button{-webkit-user-select:none;user-select:none;text-align:center;white-space:nowrap;justify-content:center;align-items:center;display:inline-flex}
 @layer sk.foundation{.c-button-unstyled{color:inherit;font-family:inherit;font-size:inherit;font-stretch:inherit;font-style:inherit;font-variant:inherit;font-weight:inherit;line-height:inherit;overflow:initial;text-align:initial;vertical-align:initial;cursor:pointer;background:0 0;border:0;margin:0;padding:0}.c-button-unstyled:hover,.c-button-unstyled:focus,.c-button-unstyled:active{outline:none}}
 @layer sk.core{.c-icon_button{--sk_button-styles-radius:8px;border-radius:var(--sk_button-styles-radius);height:var(--sk_button-size);width:var(--sk_button-size);font-size:calc(.5 * var(--sk_button-size) + 2px);justify-content:center;align-items:center;transition-property:color,background-color,border-color;transition-duration:80ms;transition-timing-function:cubic-bezier(.36,.19,.29,1);display:inline-flex;position:relative}.c-icon_button:link{text-decoration:none}.c-icon_button--size_small{--sk_button-size:28px}.c-icon_button--size_smedium{--sk_button-size:32px}.c-icon_button--size_medium{--sk_button-size:36px}.c-icon_button--size_large{--sk_button-size:44px}.c-icon_button.c-button--disabled{opacity:.5}.c-icon_button--default,.c-icon_button--ghost,.c-icon_button--default:link,.c-icon_button--ghost:link{color:var(--dt_color-content-sec)}.c-icon_button--default:hover,.c-icon_button--ghost:hover,.c-icon_button--default:link:hover,.c-icon_button--ghost:link:hover{color:var(--dt_color-content-pry);background-color:var(--dt_color-base-ter)}.c-icon_button--default:active,.c-icon_button--ghost:active,.c-icon_button--default:link:active,.c-icon_button--ghost:link:active{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-ter-pressed), var(--dt_color-base-ter-pressed))}}
 .c-deprecated-icon:before{vertical-align:middle;font-family:Slack v2;font-size:20px;font-style:normal;font-weight:400;display:inline-block}
@@ -83,6 +118,10 @@ const pluginElementCSS = `
 .c-icon--play:before{content:"\e134 "}
 .c-icon_button--default.c-button--disabled,.c-icon_button--ghost.c-button--disabled,.c-icon_button--themeGhost.c-button--disabled,.c-icon_button--light.c-button--disabled,.c-icon_button--dark.c-button--disabled,.c-icon_button--outline.c-button--disabled{background-color:#0000}
 .c-message_attachment__image,.c-message_attachment__thumb,.c-message_attachment__video_thumb{box-shadow:0 0 0 1px var(--dt_color-otl-ter) inset;background-position:50%;background-repeat:no-repeat;background-size:contain;border-radius:8px}
+.p-block_kit_button_element{padding:0 8px 1px;display:block}
+.p-actions_block{align-items:center;margin-bottom:8px;display:flex;position:relative}
+.p-actions_block_elements{flex-wrap:wrap;align-items:end;display:flex}
+.p-actions_block__action{margin:8px 8px 0 0}
 .c-message_attachment__video_thumb{justify-content:center;align-items:center;width:100%;height:100%;display:flex;overflow:hidden}
 .c-message_attachment__video_buttons{text-align:center;background-color:#0006;border-radius:.7rem;width:100%;min-width:150px;max-width:225px}
 .c-message_attachment__video_play{text-align:center;vertical-align:initial}
@@ -90,6 +129,21 @@ const pluginElementCSS = `
 .c-message_attachment__video_play:is(:focus,:hover),.c-message_attachment__video_link:is(:focus,:hover){color:var(--dt_color-constants-white);opacity:1}
 .c-message_attachment__audio{margin-top:5px}
 .p-activity_ia4_page__item__reactions_bar--add_button_hidden .c-reaction_add{display:none}
+.c-reaction{cursor:pointer;vertical-align:top;background-color:var(--dt_color-surf-pry);width:fit-content;height:24px;color:var(--dt_color-content-pry);border:0;border-radius:9999px;justify-content:center;align-items:center;gap:4px;margin-bottom:4px;margin-right:4px;padding-inline:8px;font-size:12px;line-height:1;display:inline-flex}
+.p-view_contents--sidebar .p-activity_ia4_page:not(.p-activity_ia4_page--activity_inbox) .c-reaction{background-color:var(--dt_color-theme-surf-inv-pry);color:var(--dt_color-theme-content-inv-pry)}
+.p-view_contents--sidebar .p-activity_ia4_page:not(.p-activity_ia4_page--activity_inbox) .c-reaction:hover{box-shadow:0 0 0 1px var(--dt_color-theme-content-inv-ter);background-color:#0000}
+.c-reaction:hover{box-shadow:0 0 0 1px var(--dt_color-otl-pry);background-color:#0000}
+.c-reaction:focus{border-radius:9999px}
+.c-reaction:active{transform:scale(.94)}
+.c-reaction:disabled{pointer-events:none}
+.c-reaction--reacted{font-weight:var(--custom-font-weight-bold,700)}
+.c-reaction--reacted,.c-reaction--reacted:is(:hover,:focus){color:var(--dt_color-content-hgl-1);background-color:var(--dt_color-base-hgl-1)}
+.c-reaction--reacted,.c-reaction--reacted:hover{box-shadow:0 0 0 1px var(--dt_color-base-inv-hgl-1)}
+.c-reaction--reacted:focus{border-radius:9999px}
+.sk-client-theme--dark .c-reaction--reacted{background-color:var(--dt_color-base-inv-hgl-1);box-shadow:none;color:var(--dt_color-content-pry)}
+.p-view_contents--sidebar .p-activity_ia4_page:not(.p-activity_ia4_page--activity_inbox) .c-reaction--reacted{box-shadow:0 0 0 1px var(--dt_color-theme-content-inv-ter)}
+.p-view_contents--sidebar .p-activity_ia4_page:not(.p-activity_ia4_page--activity_inbox) .c-reaction--reacted:hover{background-color:var(--dt_color-theme-surf-inv-pry)}
+.c-reaction--zero{opacity:.5}
 .c-reaction_add,.c-reaction_expand{cursor:pointer;vertical-align:top;background-color:var(--dt_color-surf-pry);width:fit-content;height:24px;color:var(--dt_color-content-pry);border:0;border-radius:9999px;justify-content:center;align-items:center;gap:4px;margin-bottom:4px;margin-right:4px;padding-inline:8px;font-size:12px;line-height:1;display:inline-flex}
 .c-reaction_add:hover,.c-reaction_expand:hover{box-shadow:0 0 0 1px var(--dt_color-otl-pry);background-color:#0000}
 .c-reaction_add:focus,.c-reaction_expand:focus{border-radius:9999px}
@@ -112,19 +166,74 @@ const pluginElementCSS = `
 .p-top_nav__windows_controls_container{position:relative}
 `
 
+// pluginButtonCSS is Slack's c-button look (client-boot-styles, 2026-11:
+// cf726c4f2eaecc74), verbatim and in Slack's source order, for the
+// buttons plugins render as elements of their own: SlickMCP's toolbars
+// (button.c-button.c-button--primary|outline.c-button--small) and
+// SelfCare's submit (c-button--primary c-button--medium) draw as Slack's
+// 28 px outline and green buttons, not as bare text. It is the engine's
+// host element sheet: its rules skip kit's Button (a host component that
+// draws its own box, OwnBox), which draws this look itself and would take
+// them as a plugin's overrides. It comes before pluginElementCSS, as
+// these rules come before the Block Kit and actions-row ones in Slack's
+// file (.p-block_kit_button_element's 8px sides beat .c-button--small's
+// 12px). Left out: the kinds' :after (an invisible, absolutely placed
+// overlay) and the grouped-button rules (selectors of a grouped toolbar
+// no plugin builds).
+const pluginButtonCSS = `
+.c-button{--sk_button-styles-radius:4px;-webkit-user-select:none;user-select:none;cursor:pointer;border-radius:var(--sk_button-styles-radius);text-align:center;white-space:nowrap;appearance:none;-webkit-tap-highlight-color:transparent;border:none;outline:none;justify-content:center;align-items:center;text-decoration:none;transition-property:color,background-color,border-color;transition-duration:80ms;transition-timing-function:cubic-bezier(.36,.19,.29,1);display:inline-flex;position:relative}
+.c-button:is(:hover,:active,:focus){text-decoration:none}
+.c-button--primary{background-color:var(--dt_color-base-inv-hgl-2);color:var(--dt_color-constants-white);font-weight:var(--custom-font-weight-bold,700);box-shadow:none}
+.c-button--primary:any-link{color:var(--dt_color-constants-white)}
+.c-button--primary:hover{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-inv-hgl-2-hover), var(--dt_color-base-inv-hgl-2-hover));color:var(--dt_color-constants-white);box-shadow:0 1px 3px #00000019,0 1px 2px -1px #00000019}
+.c-button--primary:active{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-inv-hgl-2-pressed), var(--dt_color-base-inv-hgl-2-pressed));box-shadow:none}
+.c-button--danger{background-color:var(--dt_color-base-inv-imp);color:var(--dt_color-constants-white);font-weight:var(--custom-font-weight-bold,700);box-shadow:none}
+.c-button--danger:any-link{color:var(--dt_color-constants-white)}
+.c-button--danger:hover{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-inv-imp-hover), var(--dt_color-base-inv-imp-hover));color:var(--dt_color-constants-white);box-shadow:0 1px 3px #00000019,0 1px 2px -1px #00000019}
+.c-button--danger:active{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-inv-imp-pressed), var(--dt_color-base-inv-imp-pressed));box-shadow:none}
+.c-button--ghost{color:var(--dt_color-content-pry);font-weight:var(--custom-font-weight-bold,700);box-shadow:none;background-color:#0000}
+.c-button--ghost:any-link{color:var(--dt_color-content-pry)}
+.c-button--ghost:hover{background-color:var(--dt_color-base-sec);color:var(--dt_color-content-pry)}
+.c-button--ghost:active{background-color:var(--dt_color-surf-pry)}
+.c-button--outline{background-color:var(--dt_color-base-pry);border:1px solid var(--dt_color-otl-sec);color:var(--dt_color-content-pry);font-weight:var(--custom-font-weight-bold,700);background-clip:padding-box}
+.c-button--outline:any-link{color:var(--dt_color-content-pry)}
+.c-button--outline:hover{background-color:var(--dt_color-base-sec);box-shadow:0 1px 3px #00000019,0 1px 2px -1px #00000019}
+.c-button--outline:active{background-color:var(--dt_color-base-sec);box-shadow:none}
+.c-button--outline.c-button--focus-visible:focus,.c-button--outline.focus-ring:focus:not(:hover){background-clip:initial;border:1px solid #0000}
+.c-button--small{min-width:56px;height:28px;padding:0 12px 1px;font-size:13px}
+.c-button--medium{--sk_button-styles-radius:8px;min-width:80px;height:36px;padding:0 12px 1px;font-size:15px}
+.c-button--large{--sk_button-styles-radius:12px;font-size:18px;font-weight:var(--custom-font-weight-bold,700);min-width:96px;height:44px;padding:0 16px 3px}
+.c-button--disabled{box-shadow:none;background-color:var(--dt_color-base-ter);color:var(--dt_color-content-sec);cursor:default;pointer-events:none;text-shadow:none;background-clip:initial;border-color:#0000}
+.c-button--disabled:is(:hover,:active,:focus){box-shadow:none;background-color:var(--dt_color-base-ter);color:var(--dt_color-content-sec);background-blend-mode:normal;background-image:none}
+.c-button--icon{min-width:0;padding:0}
+.c-button--icon .c-deprecated-icon:before{line-height:1;display:block}
+.c-button--icon.c-button--small{width:20px;height:20px}
+.c-button--icon.c-button--small .c-deprecated-icon:before{font-size:12px}
+.c-button--icon.c-button--medium{width:28px;height:28px}
+.c-button--icon.c-button--medium .c-deprecated-icon:before{font-size:16px}
+.c-button--icon.c-button--large{width:32px;height:32px}
+.c-button--icon.c-button--large .c-deprecated-icon:before{font-size:20px}
+`
+
 func init() {
 	Styles.SetBase(strings.ReplaceAll(nativeCSS, ": N", ": "+css.NativeValue) + NativeTransitionsCSS)
+	Styles.SetHostElementBase(pluginButtonCSS)
 	Styles.SetHostBase(pluginElementCSS)
 }
 
 // stripNative drops the base sheet's NativeValue winners from a host
 // node's cascade: a plugin's own element with a Slack class has no native
 // look to keep, so for it they are as if absent (the property inherits or
-// takes its initial value, as before, and UA defaults still apply).
-func stripNative(c *css.Cascaded) {
+// takes its initial value, as before, and UA defaults still apply). From
+// a Slack component's "@" node (comp) it drops every base-sheet winner:
+// Slack's own rules there are for the element the component's native
+// draws, which keeps them (ClassDef.LayoutChildren lays the children it
+// is handed out under them), not for the box around the native.
+func stripNative(c *css.Cascaded, comp bool) {
+	drop := func(d *css.Decl) bool { return d.Value == css.NativeValue || comp && d.Base }
 	n := 0
 	for i := range c.Decls {
-		if c.Decls[i].Value == css.NativeValue {
+		if drop(&c.Decls[i]) {
 			n++
 		}
 	}
@@ -132,9 +241,9 @@ func stripNative(c *css.Cascaded) {
 		return
 	}
 	out := make(css.Decls, 0, len(c.Decls)-n)
-	for _, d := range c.Decls {
-		if d.Value != css.NativeValue {
-			out = append(out, d)
+	for i := range c.Decls {
+		if !drop(&c.Decls[i]) {
+			out = append(out, c.Decls[i])
 		}
 	}
 	c.Decls = out

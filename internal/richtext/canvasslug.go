@@ -47,6 +47,16 @@ type CanvasRef struct {
 	// Kind is the file's kind as files.info said: "canvas", "list" or ""
 	// (search_file_channel_messages reads a file channel as its file).
 	Kind string
+	// Name, Filetype, Mode and Subtype are the file's own (an inline
+	// rich_text file's slug: its name and icon, fileslug.go); FolderType
+	// is a folder's kind, IsSkill a skill canvas (which draws no slug).
+	Name, Filetype, Mode, Subtype string
+	FolderType                    string
+	IsSkill                       bool
+	// Blocked is a canvas Slack Connect keeps from the viewer (Slack's
+	// mode canvas_slack_connect_blocked): a jump opens it
+	// (isBlockedExternalCanvas), RedirectFileChannel doesn't (fileIsCanvas).
+	Blocked bool
 }
 
 // CanvasResolver is an optional Resolver extension (store.Store). ok and
@@ -98,7 +108,7 @@ func (c *builder) canvasName(fileID string) (name []Span, status string, ok, fro
 			if ref.Status != "" && ref.Status != "normal" {
 				return nil, ref.Status, true, false
 			}
-			if bs := c.blocks(parseBlocks(ref.TitleBlocks)); len(bs) > 0 {
+			if bs := c.titleBlocks(ref.TitleBlocks); len(bs) > 0 {
 				if sp := firstLine(flatten(bs)); len(sp) > 0 {
 					return sp, "normal", true, true
 				}
@@ -112,6 +122,63 @@ func (c *builder) canvasName(fileID string) (name []Span, status string, ok, fro
 		return titleSpans(c.r, t), "normal", true, false
 	}
 	return nil, "", false, false
+}
+
+// KeptEmoji reports whether s is an emoji TitleBlocks kept for its
+// surface to resolve (no image yet, its Text ":name:"). A hidden emoji
+// (richEmoji's Unicode 17 one with emoji_v17 off, drawn as its
+// characters) has no image either, by design, and is not one.
+func (s Span) KeptEmoji() bool {
+	return s.Kind == Emoji && s.URL == "" && s.ID != "" && s.Text == ":"+s.ID+":"
+}
+
+// TitleBlocks is a canvas title's title_blocks as Slack's
+// QuipTitleParsedId (renderQuipTitle) draws them: the first block's
+// spans; nil without blocks. An emoji element the resolver can't name yet
+// (the emoji map still loading, a custom emoji newer than the cached map)
+// stays an Emoji span with no URL and Text ":name:", which the surface
+// resolves from the store when it draws, as Slack's Emoji component reads
+// the emoji store on every render; it is never baked in as text.
+func TitleBlocks(r Resolver, title string, blocks json.RawMessage) []Span {
+	bs := parseBlocks(blocks)
+	if len(bs) == 0 {
+		return nil
+	}
+	c := &builder{r: r, keepEmoji: true}
+	out := c.blocks(bs)
+	if len(out) == 0 {
+		return nil
+	}
+	return out[0].Spans
+}
+
+// CanvasTitle is a canvas's title as its slug, the Activity entity and
+// the tab bar draw it: title_blocks (TitleBlocks), else the title string
+// with its :emoji: (FormatTextWithEmoji); nil for no title.
+func CanvasTitle(r Resolver, title string, blocks json.RawMessage) []Span {
+	if sp := TitleBlocks(r, title, blocks); len(sp) > 0 {
+		return sp
+	}
+	if title == "" {
+		return nil
+	}
+	return titleSpans(r, title)
+}
+
+// maxTitleDepth is how many canvas titles deep a slug's title_blocks are
+// followed: a title naming a canvas (itself, or one whose title names it
+// back) draws that canvas by its title string past it.
+const maxTitleDepth = 2
+
+// titleBlocks converts a canvas's title_blocks for a slug's name, or
+// nothing maxTitleDepth titles deep.
+func (c *builder) titleBlocks(raw json.RawMessage) []Block {
+	if c.titles >= maxTitleDepth || len(raw) == 0 {
+		return nil
+	}
+	c.titles++
+	defer func() { c.titles-- }()
+	return c.blocks(parseBlocks(raw))
 }
 
 func titleSpans(r Resolver, s string) []Span {

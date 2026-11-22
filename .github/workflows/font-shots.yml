@@ -29,7 +29,9 @@ name: font-shots
 # run TestRailShots (internal/ui/rail_shots_test.go) and
 # .github/scripts/rail_ref.py: every tab rail button idle, hovered, selected,
 # after a mouse click (and Slack's keyboard focus) against Slack's tab rail
-# markup, with the badge's ring measured.
+# markup, with the badge's ring measured, at 1x also under account themes
+# (Karim's #FED4BE, a dark custom colour) with Slack's tokens for them
+# (internal/ui/testdata/theme-oracle.json, from Slack's own code).
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run font-shots.yml --ref <branch>)
@@ -52,6 +54,7 @@ on:
       - "internal/ui/rail_shots_test.go"
       - "internal/ui/chrome.go"
       - ".github/scripts/rail_ref.py"
+      - "internal/ui/testdata/theme-oracle.json"
       - ".github/scripts/sidebar_rows_ref.py"
       - ".github/scripts/text_render_compare.py"
       - ".github/workflows/font-shots.yml"
@@ -68,10 +71,18 @@ env:
 permissions:
   contents: read
 
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
+# A dispatch with other inputs gets its own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.only }}
+  cancel-in-progress: true
+
 jobs:
   font-shots:
     if: ${{ inputs.only != 'text-render' && inputs.only != 'sidebar-rows' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (5.4 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -98,7 +109,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$FONT_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -timeout 15m -v -run 'TestFontShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -timeout 6m -v -run 'TestFontShots$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -108,6 +119,7 @@ jobs:
   text-render-linux:
     if: ${{ inputs.only != 'sidebar-rows' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (2.5 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -159,6 +171,7 @@ jobs:
   text-render-windows:
     if: ${{ inputs.only != 'sidebar-rows' }}
     runs-on: windows-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (3.0 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -227,6 +240,7 @@ jobs:
   sidebar-rows-linux:
     if: ${{ inputs.only != 'text-render' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget: 1.5 x p95 (15.5 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -263,6 +277,7 @@ jobs:
   sidebar-rows-windows:
     if: ${{ inputs.only != 'text-render' }}
     runs-on: windows-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (7.8 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -278,7 +293,7 @@ jobs:
           RAIL_SHOTS_DIR: ${{ github.workspace }}\dist\sidebar-rows
         run: |
           New-Item -ItemType Directory -Force -Path $env:SIDEBAR_ROWS_DIR | Out-Null
-          go test -count=1 -v -timeout 20m -run 'TestSidebarRowShots$|TestRailShots$' ./internal/ui/
+          go test -count=1 -v -timeout 10m -run 'TestSidebarRowShots$|TestRailShots$' ./internal/ui/
       - name: Slack's rows in Chrome, measured
         shell: pwsh
         run: |

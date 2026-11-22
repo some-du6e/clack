@@ -21,8 +21,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/some-du6e/clack/internal/slack/tlsfp"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Creds is the on-disk credential file (~/.config/clack/creds.json).
@@ -260,10 +262,36 @@ func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 	// A file download redirected to a Slack page (sign-in, /ssb/…): stop.
 	// Loading Slack's web pages with the cookie from outside the browser
 	// can end the session.
-	if (req.Method == "" || req.Method == http.MethodGet) && cookieURL(req.URL) && !FileURL(req.URL) {
-		return ErrNotAFile
+	if cookieURL(req.URL) {
+		if req.Method == "" || req.Method == http.MethodGet {
+			if !FileURL(req.URL) {
+				return ErrNotAFile
+			}
+		} else if !EndpointHop(req.URL, via) {
+			// A 307 or 308 keeps a POST (an API call, an upload) and the
+			// cookie Go copies to the hop: it may only move to another
+			// Web API method or the same path, never to a page.
+			return ErrNotAFile
+		}
 	}
 	return nil
+}
+
+// EndpointHop reports whether a non-GET redirect hop to u that keeps the
+// session cookie stays on an endpoint, not a page: a plain path
+// (plainPath) that is a Web API method (/api/…) other than the ones that
+// end the session (SignOutURL), or the path the first request went to.
+// Client.checkRedirect follows a 307 or 308 that keeps a POST only when it
+// holds, and so does Taut's plugin fetch.
+func EndpointHop(u *url.URL, via []*http.Request) bool {
+	if u == nil || !plainPath(u) || SignOutURL(u) {
+		return false
+	}
+	wire := u.EscapedPath()
+	if strings.HasPrefix(wire, "/api/") {
+		return true
+	}
+	return len(via) > 0 && via[0].URL != nil && wire == via[0].URL.EscapedPath()
 }
 
 // CredentialsOK reports whether raw may be fetched with the session cookie
@@ -300,7 +328,11 @@ type HTTPError struct {
 	// RetryAfter is the answer's Retry-After in whole seconds (0: none or
 	// not a number), as Slack's BaseRequest reads it.
 	RetryAfter int
-	text       string
+	// Body is the answer (memory only, never logged) when the call's
+	// observer asked for answers (ObserveAttempts): Slack's request hands
+	// it on as the error's response.
+	Body []byte
+	text string
 }
 
 func (e *HTTPError) Error() string { return e.text }
@@ -479,6 +511,42 @@ func refusedMethod(method string) bool {
 		}
 	}
 	return forbiddenMethods[strings.ToLower(method)]
+}
+
+// SignOutURL reports whether u calls one of the methods that end the
+// session (forbiddenMethods), its path read every way bannedPage reads it
+// (readForms): /api/auth.signout, /API/Auth.Revoke;x, /api//auth.signout/,
+// /api/%2561uth.signout, a fullwidth "a" (U+FF41) in /api/auth.signout and
+// the like. A
+// path plainPath refuses could be read as one, so it counts. The method
+// name ends at the first character it can't hold (methodPrefix), so
+// "auth.signout%3fx" is auth.signout.
+func SignOutURL(u *url.URL) bool {
+	if u == nil {
+		return false
+	}
+	if !plainPath(u) {
+		return true
+	}
+	forms, _ := readForms(u) // ok: plainPath already checked it
+	for _, f := range forms {
+		if segs := pathSegments(f); len(segs) >= 2 && segs[0] == "api" && forbiddenMethods[methodPrefix(segs[1])] {
+			return true
+		}
+	}
+	return false
+}
+
+// methodPrefix is the method name a path segment starts with: up to the
+// first character a method name can't hold ("auth.signout%3fx" is
+// auth.signout).
+func methodPrefix(seg string) string {
+	for i, r := range seg {
+		if !(r == '.' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			return seg[:i]
+		}
+	}
+	return seg
 }
 
 func (c *Client) callOn(ctx context.Context, method string, ent bool, params url.Values, out any) error {
@@ -673,15 +741,17 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		HonestHeaders(req.Header) // no Origin, no client hints (ua.go)
 		resp, err := c.do(req, method, body)
 		if err != nil {
+			unanswered(ctx, u, err)
 			return &transportError{scrubErr(err)}
 		}
 		if resp.StatusCode == http.StatusTooManyRequests && slackRetrying(ctx) {
-			resp.Body.Close() // Slack's queue's schedule, in post
-			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")),
+			b := observedBody(ctx, resp) // Slack's queue's schedule, in post
+			answered(ctx, u, resp, b)
+			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: b,
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
-			resp.Body.Close()
+			answered(ctx, u, resp, observedBody(ctx, resp))
 			if attempt >= 4 {
 				return RateLimited
 			}
@@ -700,10 +770,12 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		data, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
+			unanswered(ctx, u, err) // cut off before the whole answer came
 			return &transportError{scrubErr(err)}
 		}
+		answered(ctx, u, resp, data)
 		if resp.StatusCode >= 400 && resp.StatusCode != 200 {
-			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")),
+			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: kept(ctx, data),
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		// {"ok":true…: no need to parse the whole body (7 MB for
@@ -714,7 +786,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 				Error string `json:"error"`
 			}
 			if err := json.Unmarshal(data, &head); err != nil {
-				return fmt.Errorf("slack %s: bad json: %w", method, err)
+				return &ParseError{Method: method, Body: kept(ctx, data), Err: err}
 			}
 			if head.OK != nil && !*head.OK {
 				return &Error{Method: method, Code: head.Error, Body: data, Status: resp.StatusCode}
@@ -759,6 +831,16 @@ func (c *Client) do(req *http.Request, method string, body []byte) (*http.Respon
 // Download fetches an authenticated URL (files.slack.com etc) with the session
 // cookie. It refuses any URL credsOK rejects (ErrUntrustedHost).
 func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, error) {
+	req, err := c.fileRequest(ctx, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	return c.fileResponse(req)
+}
+
+// fileRequest is a GET of a file URL with the session cookie, or Download's
+// refusal: signed out, a host that doesn't get credentials, a Slack page.
+func (c *Client) fileRequest(ctx context.Context, rawURL string) (*http.Request, error) {
 	if c.SignedOut() {
 		return nil, ErrSignedOut
 	}
@@ -774,7 +856,45 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 	}
 	req.Header.Set("Cookie", c.cookieHeader())
 	HonestHeaders(req.Header)
-	resp, err := c.HTTP.Do(req)
+	return req, nil
+}
+
+// idleBody cuts a streaming body that brings nothing for its timer's
+// length, and ends the request when closed.
+type idleBody struct {
+	io.ReadCloser
+	timer  *time.Timer
+	cancel context.CancelFunc
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.timer.Reset(StreamIdleTimeout)
+	}
+	return n, err
+}
+
+func (b *idleBody) Close() error {
+	b.timer.Stop()
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
+// RetryAfterDuration is the answer's Retry-After, 0 for none.
+func (e *HTTPError) RetryAfterDuration() time.Duration {
+	return time.Duration(e.RetryAfter) * time.Second
+}
+
+// fileResponse sends a fileRequest (checkRedirect refuses hops off Slack
+// and to its pages) and refuses an answer that is a page.
+func (c *Client) fileResponse(req *http.Request) (*http.Response, error) {
+	return c.fileResponseWith(c.HTTP, req)
+}
+
+func (c *Client) fileResponseWith(hc *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := hc.Do(req)
 	if err != nil {
 		return resp, scrubErr(err)
 	}
@@ -788,28 +908,403 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 	return resp, nil
 }
 
+// RangeInfo is what a ranged download was answered (DownloadRange).
+type RangeInfo struct {
+	// Status is the answer's HTTP status: 206 for the range, 200 for the
+	// whole file.
+	Status int
+	// Start is the answer's first byte: the offset asked for on a 206, 0
+	// on a 200.
+	Start int64
+	// Total is the file's size, from Content-Range on a 206 and
+	// Content-Length on a 200; -1 when the answer doesn't say.
+	Total int64
+	// Seekable is whether the server answers ranges (a 206): another offset
+	// can be asked for.
+	Seekable bool
+	// ETag and LastModified are the answer's validators: a later answer
+	// with others is another version of the file.
+	ETag, LastModified string
+}
+
+// The streaming GET's timers (DownloadRange): the client's RequestTimeout
+// would cut a body that plays for more than a minute, so a ranged
+// download has none; it waits at most StreamHeaderTimeout for its answer
+// and is cut when its body brings nothing for StreamIdleTimeout.
+var (
+	StreamHeaderTimeout = RequestTimeout
+	StreamIdleTimeout   = 30 * time.Second
+)
+
+// DownloadRange is Download with Range: bytes=off- (end < 0) or
+// bytes=off-end. It keeps every guard of Download (signed out, credsOK,
+// FileURL, the text/html refusal, checkRedirect refusing /ssb/ and hops
+// off Slack) and returns the total from Content-Range. A 200 is the whole
+// file from byte 0: not seekable. Any other status is an *HTTPError (a
+// 416's RangeInfo still has the total), and the body is closed. Media
+// requests ask for no content coding, as Chromium's media loader does: the
+// offsets are the file's.
+func (c *Client) DownloadRange(ctx context.Context, rawURL string, off, end int64) (*http.Response, RangeInfo, error) {
+	info := RangeInfo{Total: -1}
+	if off < 0 || (end >= 0 && end < off) {
+		return nil, info, fmt.Errorf("slack: DownloadRange: bad range %d-%d", off, end)
+	}
+	req, err := c.fileRequest(ctx, rawURL)
+	if err != nil {
+		return nil, info, err
+	}
+	rng := "bytes=" + strconv.FormatInt(off, 10) + "-"
+	if end >= 0 {
+		rng += strconv.FormatInt(end, 10)
+	}
+	req.Header.Set("Range", rng)
+	req.Header.Set("Accept-Encoding", "identity;q=1, *;q=0")
+	// the client's transport and redirect checks, without its timeout
+	stream := &http.Client{Transport: c.HTTP.Transport, CheckRedirect: c.HTTP.CheckRedirect, Jar: c.HTTP.Jar}
+	sctx, cancel := context.WithCancel(ctx)
+	timer := time.AfterFunc(StreamHeaderTimeout, cancel)
+	resp, err := c.fileResponseWith(stream, req.WithContext(sctx))
+	if err != nil {
+		timer.Stop()
+		cancel()
+		return nil, info, err
+	}
+	timer.Reset(StreamIdleTimeout)
+	resp.Body = &idleBody{ReadCloser: resp.Body, timer: timer, cancel: cancel}
+	info.Status = resp.StatusCode
+	info.ETag, info.LastModified = resp.Header.Get("ETag"), resp.Header.Get("Last-Modified")
+	switch resp.StatusCode {
+	case http.StatusPartialContent:
+		start, _, total, ok := parseContentRange(resp.Header.Get("Content-Range"))
+		if !ok || start != off {
+			resp.Body.Close()
+			return nil, info, fmt.Errorf("slack: DownloadRange: answered %q for bytes %d-", resp.Header.Get("Content-Range"), off)
+		}
+		info.Start, info.Total, info.Seekable = start, total, true
+		return resp, info, nil
+	case http.StatusOK:
+		info.Total = resp.ContentLength
+		return resp, info, nil
+	case http.StatusRequestedRangeNotSatisfiable:
+		if _, _, total, ok := parseContentRange(resp.Header.Get("Content-Range")); ok {
+			info.Total = total
+		}
+	}
+	resp.Body.Close()
+	he := NewHTTPError(resp.StatusCode, fmt.Sprintf("slack: DownloadRange: http %d", resp.StatusCode))
+	he.RetryAfter = retryAfterSecs(resp.Header.Get("Retry-After"))
+	return nil, info, he
+}
+
+// parseContentRange reads "bytes first-last/total" (total -1 for "*"), or
+// a 416's "bytes */total" (first and last -1).
+func parseContentRange(v string) (first, last, total int64, ok bool) {
+	unit, rest, found := strings.Cut(strings.TrimSpace(v), " ")
+	if !found || !strings.EqualFold(unit, "bytes") {
+		return 0, 0, 0, false
+	}
+	span, size, found := strings.Cut(rest, "/")
+	if !found {
+		return 0, 0, 0, false
+	}
+	total = -1
+	if size != "*" {
+		n, err := strconv.ParseInt(size, 10, 64)
+		if err != nil || n < 0 {
+			return 0, 0, 0, false
+		}
+		total = n
+	}
+	if span == "*" {
+		return -1, -1, total, total >= 0
+	}
+	a, b, found := strings.Cut(span, "-")
+	if !found {
+		return 0, 0, 0, false
+	}
+	first, err1 := strconv.ParseInt(a, 10, 64)
+	last, err2 := strconv.ParseInt(b, 10, 64)
+	if err1 != nil || err2 != nil || first < 0 || last < first || (total >= 0 && last >= total) {
+		return 0, 0, 0, false
+	}
+	return first, last, total, true
+}
+
 // ErrNotAFile is returned by Download for a slack.com URL that isn't a file
 // (a workspace web page, /ssb/…, /signin, a permalink). Clack never loads
 // Slack's web pages with the session cookie: fetching them from outside the
 // browser can end the session everywhere (see README "Sign in").
 var ErrNotAFile = errors.New("slack: not a file URL; refusing to load a Slack page with the session cookie")
 
-// FileURL reports whether u is one of Slack's file hosts or file paths,
-// the only slack.com GETs that carry the session cookie (Download).
+// filePaths are the path prefixes Slack serves files under, on its file
+// hosts (files.slack.com, files-origin.slack.com, …) and on a workspace's
+// own host: url_private and its downloads (/files-pri/), thumbnails
+// (/files-tmb/), video streams (/files-preview/video-stream, the
+// preview_url Slack's file viewer plays) and the safe and origin variants.
+var filePaths = []string{"/files-pri/", "/files-tmb/", "/files-pri-safe/", "/files-origin/", "/files-preview/"}
+
+// FileURL reports whether u is one of Slack's file paths, the only
+// slack.com GETs that carry the session cookie (Download). The path
+// decides on every host, the file hosts too: files.slack.com/ssb/redirect
+// is a page like any other. The prefix is matched as it goes on the wire
+// (EscapedPath, what RequestURI sends), so /%66iles-pri/… isn't one. A
+// path a normalising server could read as another path (plainPath: dot
+// segments however they are encoded) is never one either: Go sends
+// /files-pri/../ssb/redirect as written, and a server that normalises it
+// would answer the sign-out redirect to a cookie-bearing request. Slack's
+// own file URLs never have them.
 func FileURL(u *url.URL) bool {
-	if u == nil {
+	if u == nil || !plainPath(u) {
 		return false
 	}
-	h := strings.ToLower(u.Hostname())
-	if h == "files.slack.com" || (strings.HasPrefix(h, "files-") && strings.HasSuffix(h, ".slack.com")) {
-		return true
-	}
-	for _, p := range []string{"/files-pri/", "/files-tmb/", "/files-pri-safe/", "/files-origin/"} {
-		if strings.HasPrefix(u.Path, p) {
+	wire := u.EscapedPath()
+	for _, p := range filePaths {
+		if strings.HasPrefix(wire, p) {
 			return true
 		}
 	}
 	return false
+}
+
+// dotLike is "." and the characters Unicode compatibility normalisation
+// (NFKC) folds to one or more dots: the fullwidth and small full stops, the
+// one- and two-dot leaders, the ellipsis and the vertical presentation
+// forms of the ellipsis and the two-dot leader, plus the space a segment
+// like ". ." pads with, and U+FFFD, which a byte that isn't UTF-8 reads as
+// (plainForm). readForm's NFKC already folds the look-alikes to '.' (and
+// NBSP and the other compatibility spaces to ' '); they're listed too so
+// the test doesn't rest on the tables alone. Written as code points so no
+// look-alike sits in source.
+var dotLike = ". " + string(rune(0xFF0E)) + string(rune(0xFE52)) + string(rune(0x2024)) + string(rune(0x2025)) +
+	string(rune(0x2026)) + string(rune(0xFE19)) + string(rune(0xFE30)) + string(utf8.RuneError)
+
+// maxDecodes is how many times plainPath decodes a path the way a lenient
+// server might. A path that still changes after that many decodes is no
+// path Slack makes, so it's refused.
+const maxDecodes = 4
+
+// plainPath reports whether u's path can't be read as another path by a
+// server that normalises it, however many times it decodes and
+// NFKC-normalises. Two checks, each over its own set of forms:
+//   - The raw decode chain (lenientUnescape from the wire path, up to
+//     maxDecodes) holds, at every stage, no byte a lenient UTF-8 decoder
+//     could read as '.', '/' or '\' (plainBytes: an overlong lead, or
+//     0xAE/0xAF/0xDC), no backslash, NUL or control byte.
+//   - No form a normalising server reads (readForms) has a dot segment
+//     (hasDotSegment). readForm folds the separators, so a '\' or a
+//     fullwidth solidus there is a separator, not a refusal; only the wire
+//     bytes are held to the stricter rule above. What each of those forms
+//     decodes to is still checked for smuggled and control bytes
+//     (plainDecoded), because NFKC can turn a fullwidth percent into an
+//     escape the raw chain never decoded.
+//
+// An encoded slash that decodes to a real one only adds a segment, so a
+// file named "uploads%2F2024.jpg" still works; what it decodes to is
+// checked like the rest.
+func plainPath(u *url.URL) bool {
+	p := u.EscapedPath()
+	for i := 0; ; i++ {
+		if !plainBytes(p) {
+			return false
+		}
+		next := lenientUnescape(p)
+		if next == p {
+			break
+		}
+		if i == maxDecodes {
+			return false
+		}
+		p = next
+	}
+	forms, ok := readForms(u)
+	if !ok {
+		return false
+	}
+	for _, s := range forms {
+		if hasDotSegment(s) {
+			return false
+		}
+	}
+	return true
+}
+
+// plainBytes checks one raw decode form for plainPath: a byte that isn't
+// part of valid UTF-8 is refused when a lenient decoder could read it as
+// '.', '/' or '\' (smuggles); any other reads as U+FFFD elsewhere. No
+// backslash, NUL or other control byte. So a name with a literal "%"
+// before two hex digits that aren't UTF-8 (100%Beef.jpg, a Latin-1
+// caf%E9.pdf typed as it was saved) still works, and "..%BE" doesn't.
+func plainBytes(p string) bool {
+	for i := 0; i < len(p); {
+		r, n := utf8.DecodeRuneInString(p[i:])
+		if r == utf8.RuneError && n == 1 && smuggles(p, i) {
+			return false
+		}
+		if r == '\\' || r < 0x20 || r == 0x7f {
+			return false
+		}
+		i += n
+	}
+	return true
+}
+
+// readForms returns the forms a server that normalises Unicode could read
+// u's path in: readForm (NFKC, invalid bytes as U+FFFD, separators folded)
+// of the wire path, then of each further decode, until it stops changing
+// or maxDecodes. ok is false if it still changes after that. NFKC folds a
+// fullwidth or small percent (U+FF05, U+FE6A) to '%', so decoding must
+// continue over readForm's output and not only over the raw escapes:
+// "%EF%BC%852e" reads as "%2e", then as ".". These are the forms the dot,
+// bannedPage and SignOutURL checks all compare, so each catches a path a
+// decode→NFKC→decode server would resolve to a dot segment, /ssb/redirect
+// or a sign-out method.
+func readForms(u *url.URL) (forms []string, ok bool) {
+	s := readForm(u.EscapedPath())
+	for i := 0; ; i++ {
+		forms = append(forms, s)
+		dec := lenientUnescape(s)
+		if !plainDecoded(dec) {
+			return forms, false
+		}
+		next := readForm(dec)
+		if next == s {
+			return forms, true
+		}
+		if i == maxDecodes {
+			return forms, false
+		}
+		s = next
+	}
+}
+
+// plainDecoded checks one stage readForms decoded, before readForm reads
+// its invalid bytes as U+FFFD. NFKC can make a '%' (U+FF05, U+FE6A), so a
+// decode→NFKC→decode server meets bytes the raw chain never held:
+// "%EF%BC%85c0%EF%BC%85af" reads as "%c0%af", the overlong '/'. A byte a
+// lenient decoder could read as '.', '/' or '\' (smuggles) or a control
+// byte is refused there as on the raw chain. A backslash isn't: readForm
+// folds the fullwidth reverse solidi to one, and hasDotSegment splits on
+// it, so a name drawn with the fullwidth solidi (the (^o^) smiley the
+// tests use) keeps working.
+func plainDecoded(p string) bool {
+	for i := 0; i < len(p); {
+		r, n := utf8.DecodeRuneInString(p[i:])
+		if r == utf8.RuneError && n == 1 && smuggles(p, i) {
+			return false
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+		i += n
+	}
+	return true
+}
+
+// hasDotSegment reports whether s, a form readForms already NFKC-read, has
+// a path segment — split on '/' and '\', a ";…" parameter cut — made only
+// of dots, dot look-alikes, padding spaces or U+FFFD (dotLike).
+func hasDotSegment(s string) bool {
+	for _, seg := range strings.FieldsFunc(s, pathSep) {
+		if i := strings.IndexByte(seg, ';'); i >= 0 {
+			seg = seg[:i]
+		}
+		if seg != "" && strings.Trim(seg, dotLike) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// readForm is form p as a server that normalises Unicode could read it:
+// each byte that isn't UTF-8 as U+FFFD, then NFKC, which folds the
+// fullwidth solidus U+FF0F to '/', the fullwidth and small reverse solidi
+// U+FF3C and U+FE68 to '\', the fullwidth and small percent U+FF05 and
+// U+FE6A to '%', the dot look-alikes to dots and NBSP and the other
+// compatibility spaces to ' '. So "..%EF%BC%8Fssb" reads as "../ssb".
+// Names keep working: NFKC composes an NFD "cafe" + U+0301 to the NFC one,
+// and Japanese and the like are unchanged.
+func readForm(p string) string {
+	return norm.NFKC.String(strings.ToValidUTF8(p, string(utf8.RuneError)))
+}
+
+// pathSegments is a form readForms produced as bannedPage and SignOutURL
+// compare it: lower-cased, split on '/' and '\', ";…" parameters cut,
+// empty segments dropped.
+func pathSegments(p string) []string {
+	var segs []string
+	for _, s := range strings.FieldsFunc(strings.ToLower(p), pathSep) {
+		if i := strings.IndexByte(s, ';'); i >= 0 {
+			s = s[:i]
+		}
+		if s != "" {
+			segs = append(segs, s)
+		}
+	}
+	return segs
+}
+
+// pathSep reports whether r separates segments for a server that reads a
+// backslash as a slash, as some do.
+func pathSep(r rune) bool { return r == '/' || r == '\\' }
+
+// smuggles reports whether p[i], a byte that isn't part of valid UTF-8,
+// is one a lenient decoder could read as an ASCII '.', '/' or '\': the
+// lead of an overlong form (C0 and C1, E0 before 80-9F, F0 before 80-8F)
+// or of a sequence longer than UTF-8 allows (F5-FF, when a continuation
+// byte follows: the 5- and 6-byte overlongs of RFC 2279 and Perl's
+// extended forms all need one, so a literal "%Fe" in 10%Fee.pdf is only
+// an invalid byte), or 0xAE, 0xAF and 0xDC, which are '.', '/' and '\'
+// with the high bit set, for a decoder that strips it.
+func smuggles(p string, i int) bool {
+	c, next := p[i], byte(0)
+	if i+1 < len(p) {
+		next = p[i+1]
+	}
+	switch {
+	case c == 0xC0 || c == 0xC1:
+		return true
+	case c == 0xE0:
+		return 0x80 <= next && next <= 0x9F
+	case c == 0xF0:
+		return 0x80 <= next && next <= 0x8F
+	case c >= 0xF5:
+		return 0x80 <= next && next <= 0xBF
+	}
+	return c == 0xAE || c == 0xAF || c == 0xDC
+}
+
+// lenientUnescape decodes every valid %XX escape in s and leaves any other
+// "%" as it is, as the most permissive server would.
+func lenientUnescape(s string) string {
+	if strings.IndexByte(s, '%') < 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]) {
+			b.WriteByte(unhex(s[i+1])<<4 | unhex(s[i+2]))
+			i += 2
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func isHex(c byte) bool {
+	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
+}
+
+func unhex(c byte) byte {
+	switch {
+	case '0' <= c && c <= '9':
+		return c - '0'
+	case 'a' <= c && c <= 'f':
+		return c - 'a' + 10
+	default:
+		return c - 'A' + 10
+	}
 }
 
 // UploadBytes sends file contents to an upload URL from

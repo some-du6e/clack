@@ -9,6 +9,7 @@ package views
 
 import (
 	"image"
+	"time"
 
 	"gioui.org/layout"
 
@@ -63,6 +64,22 @@ type Panes interface {
 	ChannelPane(channelID string) layout.Widget
 	// ThreadPane returns the widget for a thread (root + replies + composer).
 	ThreadPane(channelID, threadTS string) layout.Widget
+}
+
+// LiveMessages is optionally implemented by the Host: a message as the
+// message lists on screen hold it (the ui root's message models, which
+// the channel list and the thread pane draw). Slack's Activity rows read
+// the messages store those read (getMessageByTimestamp), so a message
+// open in Activity and in the thread pane shows one revision in every
+// commit; a row reading this draws a new revision in the frame the list
+// draws it.
+type LiveMessages interface {
+	// LiveMessage is ch/ts as a list drawn at or after since holds it
+	// (threadTS: the thread a reply is in, or a root's own ts; "" for a
+	// channel message), with its revision there. have is the revision
+	// the caller holds: the same one comes back without a copy (m zero).
+	// ok is false when no such list holds it.
+	LiveMessage(ch, ts, threadTS string, since time.Time, have uint64) (m core.Message, rev uint64, ok bool)
 }
 
 // PaneChooser is optionally implemented by the Host: a view calls

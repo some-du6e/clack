@@ -42,8 +42,15 @@ var (
 	// mods: the viewer reacted.
 	reactionClass    = slackc.Class("c-button-unstyled c-reaction", "data-qa", "reactji").Tag("button").Mods("c-reaction--reacted")
 	reactionAddClass = slackc.Class("c-button-unstyled c-reaction_add", "data-qa", "add_reaction_button").Tag("button")
+	// the pill's count and "…" (Reaction: span.c-reaction__count, the
+	// truncation span), drawn inside the pill's button
+	reactionCountClass = slackc.Class("c-reaction__count").Tag("span")
+	reactionTruncClass = slackc.Class("c-reaction__truncation", "data-qa", "reaction-truncation").Tag("span")
 
-	actionsClass   = slackc.Class("c-message_kit__actions c-message_kit__actions--default c-message_actions__container c-message__actions")
+	// MessageActions; mods: its position (actsDefault, actsAbove,
+	// actsInside: list.go actionsAt)
+	actionsClass = slackc.Class("c-message_kit__actions c-message_actions__container c-message__actions").
+			Mods("c-message_kit__actions--default", "c-message_kit__actions--above", "c-message_kit__actions--inside")
 	actionBtnClass = slackc.Class("c-button-unstyled c-icon_button c-icon_button--size_small c-message_actions__button c-icon_button--default").Tag("button")
 
 	flexHeaderClass  = slackc.Class("p-flexpane_header")

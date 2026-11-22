@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/some-du6e/clack/internal/logtag"
 )
 
 // ExperimentGroups returns the viewer's experiment assignments
@@ -273,7 +275,7 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
-			log.Printf("messages.list: %d channels: %v (%s)", len(g), err, strings.Join(chans, " "))
+			log.Printf("messages.list: %d channels: %v (%s)", len(g), err, logtag.IDs(chans))
 			errs = append(errs, err)
 			return
 		}
@@ -649,6 +651,15 @@ func (c *Client) Prefs(ctx context.Context) (map[string]json.RawMessage, error) 
 // serialized.
 func (c *Client) SetPref(ctx context.Context, name, value string) error {
 	return c.Call(ctx, "users.prefs.set", url.Values{"name": {name}, "value": {value}}, nil)
+}
+
+// MediaProgressUpdate is media.progress.update (mediaProgressUpdateFetcher,
+// /AqV, which gnNF's saveMediaProgress calls): where the viewer is in a
+// video, offset_ms of duration_ms. The generated fetcher snake-cases its
+// arguments; Clack leaves out its _x_reason (media-progress-updated).
+func (c *Client) MediaProgressUpdate(ctx context.Context, file string, offsetMS, durationMS int64) error {
+	return c.Call(ctx, "media.progress.update", url.Values{"file": {file},
+		"offset_ms": {strconv.FormatInt(offsetMS, 10)}, "duration_ms": {strconv.FormatInt(durationMS, 10)}}, nil)
 }
 
 // Command is a slash command from commands.list.

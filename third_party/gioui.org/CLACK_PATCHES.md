@@ -11,7 +11,7 @@ To see the whole diff against the release:
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
 It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
-`widget/text.go`, `widget/label.go`, `widget/clack_spans.go`,
+`widget/text.go`, `widget/label.go`, `widget/clack_spans.go`, `widget/clack_scale.go`,
 `text/shaper.go`, `text/gotext.go`, `text/lru.go`, `op/op.go`, `internal/ops/ops.go`, `app/os_x11.go`,
 `app/clack_gpu.go`, `app/clack_panel.go`, `app/os.go`, `app/os_macos.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
@@ -22,7 +22,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_bounds*.go`, `app/internal/windows/clack_bounds.go`,
 `app/cocoatest/`, `app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
 `app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go`,
-`internal/ops/clack_size.go`, `op/clack_size.go`, `op/clip/clack_size.go`, `op/clack_whole.go`,
+`internal/ops/clack_size.go`, `internal/ops/reader.go`, `op/clack_size.go`, `op/clip/clack_size.go`, `op/clack_whole.go`,
 `io/input/clack_hover.go`, `io/input/clack_hover_test.go`,
 `font/opentype/opentype.go`, `io/input/pointer.go`, `io/input/key.go`,
 `io/input/clack_release_test.go`, `gpu/clack_release_test.go`,
@@ -44,8 +44,28 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_replay.go`, `io/input/clack_replay_test.go`,
 `op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
 `gpu/headless/clack_live_test.go`, `layout/list.go`,
-`layout/clack_list_test.go`, `internal/clickrule/clickrule.go`,
-`gesture/clack_dblclick*.go`, `gesture/gesture_test.go`,
+`layout/clack_list_test.go`, `gpu/clack_partial.go`, `gpu/clack_sticky.go`,
+`gpu/clack_floor.go`,
+`gpu/pack.go`, `gpu/clack_partial_test.go`, `gpu/headless/clack_partial_test.go`,
+`gpu/internal/driver/clack_partial.go`, `internal/d3d11/d3d11_windows.go`,
+`internal/gl/gl.go`, `app/clack_caret_macos.go`, `app/clack_caret_macos.m`,
+`app/clack_caret_darwin_test.go`, `app/clack_xsettings_x11.go`,
+`app/clack_xsettings_nox11.go`, `app/clack_xsettings_x11_test.go`,
+`app/clack_unmap_x11_test.go`, `app/clack_keytext_windows_test.go`,
+`gpu/clack_opcache_test.go`, `io/input/clack_focus.go`,
+`io/input/clack_focus_test.go`, `io/input/clack_inputidle.go`,
+`io/input/clack_inputidle_test.go`,
+`io/input/clack_reset.go`, `io/input/clack_reset_test.go`,
+`gesture/clack_reset_test.go`, `op/paint/clack_external.go`,
+`gpu/clack_external.go`, `gpu/clack_external_test.go`,
+`gpu/internal/driver/clack_external.go`,
+`gpu/internal/d3d11/clack_external_windows.go`,
+`gpu/internal/metal/clack_external_darwin.go`,
+`gpu/headless/clack_external_test.go`, `gpu/headless/clack_size.go`,
+`gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go`,
+`io/input/clack_bounds.go`, `io/input/clack_bounds_test.go`,
+`app/clack_startup.go`,
+`internal/clickrule/clickrule.go`, `gesture/clack_dblclick*.go`, `gesture/gesture_test.go`,
 `app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
 `app/clack_titlebar_darwin_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
@@ -130,6 +150,26 @@ in place.
 Test: `internal/ui/canvasview` `TestLayoutPanicRecovered` (a panic with
 pushed transforms, clips and an open macro inside a recording parent; the
 parent then pops and stops cleanly).
+
+Rollback's op keys (2026-11-19, inspect-blur-fast round 2; also
+`internal/ops/reader.go`). An op's key is its Ops, its offset there and
+the Ops' version, which only Reset bumps, and the GPU caches a path's
+vertices, bounds and hash by it. Clack's inspect tool draws each frozen
+frame as the frame's ops rolled back to their checkpoint with the tool's
+drawing appended: what it appends sits at the offsets the frame before's
+did, so a path there (a rounded rect, a stroke) would have been drawn as
+the one before it, cached by the same key (latent: the tool drew only
+plain rects, which aren't cached). Rollback now counts an epoch and keeps
+the lowest offset it went back to since the last Reset; the reader gives
+an op at or past that offset a key of the current epoch. Ops before it
+(the frozen frame itself) keep their keys and cache entries. canvasview's
+rollbacks never reached the GPU, so nothing changes for them.
+
+Test: `gpu/headless` `TestClackRollbackKeys` (a rounded rect and a stroke
+drawn at three places, each after a rollback to the same checkpoint, pixel
+for pixel what a new window draws; after each rollback only the overlay's
+two paths are built again, the content's path before the checkpoint stays
+cached: `ClackFrameStats().PathsBuilt` is 3 in the first frame, 2 after).
 
 ## 4. app: IgnoreGPUBlocklist
 
@@ -389,8 +429,9 @@ nothing while nothing changes.
   for 10 s and then showed a solid caret. The interval is Chromium's
   default, `OsSettingsProvider::kDefaultCaretBlinkInterval` (500 ms,
   `ui/native_theme/os_settings_provider.h`). Windows' `GetCaretBlinkTime`
-  overrides it since patch 13; GTK's `gtk-cursor-blink-time` / 2 does
-  in Chromium, not here yet.
+  overrides it since patch 13 and macOS's insertion point period since
+  patch 47; on Linux Clack sets GTK's `gtk-cursor-blink-time` / 2, as
+  Chromium does (`internal/ui/caretblink_linux.go`).
   When the window loses the focus Gio keeps the key focus and sends the
   editor `FocusEvent{Focus: false}`; upstream restarted the blink on it,
   so a background window kept drawing for 10 s. Chromium disables the
@@ -518,7 +559,8 @@ Tests: `internal/ui/theme` `TestLetterSpacingShaper` and
 (`IsWindowVisible`, `GetCaretBlinkTime`, `SWP_HIDEWINDOW`) and
 `widget/editor.go` (`CaretBlinkInterval`, `SetCaretBlinkInterval`, the
 caret in `Editor.Layout`). Additions: nothing hides unless the app calls
-`Hide`, and outside Windows the blink stays 500 ms.
+`Hide`, and outside Windows the blink stays 500 ms (since patch 47,
+macOS reads its own; Clack reads GTK's on Linux).
 
 Slack's desktop keeps running in the notification area when its window is
 closed (the `runFromTray` setting, on by default; `main.bundle.cjs`
@@ -2078,6 +2120,294 @@ the list's end, fifteen end at the bottom, and without the field three are
 end aligned) and `internal/ui` `TestThreadReplyBoxWithFirstReplies`. Not
 in `UPSTREAM.patch`.
 
+## 46. gpu, app: partial frames (a frame drawn again only where it changed)
+
+`gpu/clack_partial.go` (new: `ClackPartialFrames`, `ClackPartialTextures`,
+`ClackFrameTexture`, `ClackPartialWhole`, `ClackPartialReset`, `sigOps`,
+`damage`, the diff, the frame texture), `gpu/clack_sticky.go` (new: the
+coverage atlas's sticky places), `gpu/gpu.go` (`frame`: everything the
+passes draw from is decided before them; `packStencils`, `stencilClips`,
+`intersect`, `drawLayers`, `drawOps` and `buildPaths` take the damage;
+`pathOp.hash`, `material.texID`, `texture.id`; `collectOps` hashes each
+clip path's geometry, and a path's tessellation waits for its upload:
+`pathOp.raw`; `renderer.drawCopy`), `gpu/caches.go` (`opCacheValue.hash`,
+`textureCache.nextID`), `gpu/pack.go` (`packer.work`), `gpu/clack_stats.go`
+(`FrameStats.Partial`, `DamageRects`, `DamagePx`, `CopyPx`, `PackWork`,
+`StickySlots`, `StickyHoles`, `PathsTessellated`),
+`gpu/internal/driver/clack_partial.go` (new: `ClackPartial`), the OpenGL,
+Direct3D 11 and Metal backends (`ClackScissor`, `ClackCopyToTarget`,
+`ClackCopyDraws`, `ClackPartialOK`, `TextureFormatOutput` textures),
+`internal/gl` (`SCISSOR_TEST`, `ClackBlitFramebufferLoaded`),
+`internal/d3d11` (`RSSetScissorRects`, `RenderTargetView.GetResource`,
+`Texture2D.GetDesc`, `RECT`), `app/clack_gpu.go` (`SetGPUFrameHook`,
+`ClackGPUIdle`), `app/window.go`, and `app/os_windows.go`,
+`app/os_macos.go`, `app/os_x11.go` (a hidden, minimized, occluded or
+unmapped window lets the frame texture go).
+
+Gio drew every frame whole. A caret's blink, a spinner's turn or an
+animated emoji's next frame cost the stencil, cover and API calls of a
+frame where everything changed: on llvmpipe, Clack's focused composer
+cost 55% of a core for its blinks alone (α.105, 1440×900). Chromium
+repaints only the damaged rectangle and composites cached layers. Now a
+window's frame is compared with the last, op by op, and drawn again only
+where they differ:
+
+- Every op the frame draws gets a signature (`sigOps`): a 128-bit hash
+  of everything that decides its pixels (material, colours, gradient and
+  texture transforms, the texture's image, each clip path it's drawn
+  through: the path's geometry as its vertices are built from it, its
+  offset, its stencil region and place in the atlas and the page's size,
+  an intersection's place, the opacity layers around it and their
+  places), and its clip, the only pixels its quad touches. An opacity
+  layer's composite is an entry of its own over the layer's bounds. A
+  texture's image is named by an id the cache hands out, never by its
+  address (a texture made again can come back at the same one).
+- The last frame's signatures and this one's are diffed (Myers, past
+  their common start and end, at most 128 edits). The ops one has and
+  the other doesn't are the damage: everywhere else the same ops cover
+  each pixel in the same order with the same inputs, so the pixel is
+  what the last frame left.
+- The damage, merged into at most 8 disjoint rectangles, is drawn again
+  with every pass exactly as a whole frame draws it (the same atlas
+  places, viewports and quads), each draw scissored to the damage. A
+  scissor discards fragments and changes nothing in the ones it keeps,
+  so the result is the whole frame's pixels, bit for bit. Only the atlas
+  and layer texels a damaged pixel reads are cleared (a fill with blending
+  off: 0 coverage, 1 for an intersection, transparent for a layer, exact
+  in every format) and drawn; the pages are loaded, not cleared, and only
+  the paths the damage stencils are built.
+- Sticky places (`clack_sticky.go`): a path's coverage depends by a
+  rounding on where its region lands in the atlas (§39), and the packer
+  placed every region after the ones before it, so a path added or
+  dropped (the typing indicator's text, a toolbar's icons) moved every
+  later one and the frame was all damage. With partial frames the last
+  frame's packing sequence is replayed (the packer places the same sizes
+  in the same order the same way): a region that was there (the same
+  geometry, region and offset) takes its own slot; a new region takes a
+  slot nobody took of exactly its size, else the smallest that holds it,
+  keeping the slot's size, so no other place moves; the regions no slot
+  holds come after, and a slot nobody takes is a hole. A path that
+  changes every frame (a working agent's spinner every 33 ms, the
+  LoadingButton's every 16 ms, a huddle's speaking bars) so takes back the
+  slots its last frames left: before, each frame left its regions' old
+  slots as holes the replay packed ever after (the sequence grew from 702
+  slots to 4,302 in 1,800 spinner frames, the packer's work 55 times over,
+  the page wider, until the holes outgrew the regions minutes later).
+  Everything is packed afresh in the frame's order (a frame drawn whole)
+  when the holes outnumber the live slots or 256; when the slots, holes
+  and the slack of bigger slots included, cover more than 1.5 times the
+  regions' own area (after a lower scale or a smaller window every region
+  fits an old, bigger slot, and the page stayed up to 4 times Gio's); or
+  when the sequence needs more pages than the last fresh packing did
+  (comparing with one page instead repacked 61-92% of a spinner's frames
+  once the atlas needed two, at 4K). A frame with more paths of new
+  geometry than a partial frame can add (a scroll's, a live resize's, a
+  channel switch's) is whole however it's packed, so it's packed afresh
+  at once, with no holes matched and no sequence replayed (a scroll had
+  every moved region scan every hole: 2.2-2.6 times Gio's packing in the
+  scan alone). `FrameStats.PackWork` counts the holes looked through, and
+  `StickyRepacks` the fresh packings. A page's regions aren't together in
+  the ops' order, so the stencil pass goes page by page.
+- A window's frame draws into the frame texture (`TextureFormatOutput`,
+  the swap chain's or the layer's own format), which keeps its pixels: a
+  window's buffers come back undefined (DXGI's blit model discards them,
+  Metal flips through several drawables, EGL's swap destroys them). It is
+  copied whole into the target after the frame, byte for byte:
+  `glBlitFramebuffer`, `CopySubresourceRegion` into the buffer behind the
+  render target view (no further than that buffer goes), and on Metal a
+  draw (one quad over the viewport sampling the texture at its texels'
+  centres, blending off: exact for 8-bit sRGB), so the layer stays
+  `framebufferOnly`, as Apple asks for the display's sake. A partial
+  frame's damage starts from the clear colour, copied in from a small
+  texture a clear of the same format made (made before the passes: without
+  it the frame is whole), so no colour conversion can differ from the
+  whole frame's load action.
+- Whole frames in a row (a scroll, an animation over most of the window)
+  draw straight into the target, without the frame texture or its copy,
+  and leave the frame texture stale: the first small change after them
+  (a still frame inside a scroll) draws straight in too, the second fills
+  the frame texture again, and partial frames go on from the third. A
+  frame at a new size (a live resize) draws straight in too, and the
+  frame texture is made at the size the window stays at. A hidden,
+  minimized or occluded window (Windows' minimize and hide, AppKit's
+  occlusion and orderOut, X11's unmap) lets the frame texture and the
+  clear texture go (`ClackGPUIdle`); its next frame is whole. Nothing
+  makes them again while it stays so: Windows doesn't draw a hidden
+  window's sync frame (the one Window.Hide's own WM_WINDOWPOSCHANGED
+  queued, delivered once a close to the tray returned), and an unmapped
+  X11 window draws no animation frames until it's mapped again.
+  `ClackFrameTexturesHeld` counts the frame textures held, for tests.
+  Windows has no occlusion tracker yet (Chromium's
+  NativeWindowOcclusionTrackerWin): a window covered by others keeps its
+  frame texture and draws what it's asked to.
+- A path's vertices are built (tessellated on the CPU) when the frame
+  uploads them: a partial frame uploads only the paths its damage
+  stencils, and the rest keep their path data in the cache (`raw`), so
+  the quiet frames after it (the same ops again) build nothing. Before,
+  such a path's vertices were built again every frame until a whole
+  frame, which after a cache restart could be every pen path on screen,
+  for hours of idle.
+- A frame is drawn whole when there's no last frame to start from (the
+  first, a new frame texture or size, another target), the clear colour
+  changed, the damage covers more than half the viewport or needs more
+  than 128 edits, partial frames are off (`ClackPartialFrames(false)`;
+  Clack's `CLACK_FULL_FRAMES=1`) or the device can't scissor and copy
+  (Vulkan, which X11 tries first when Gio's GPU blocklist is ignored, as
+  Slick's Snappy defaults do; an OpenGL context shared with others or
+  without `glBlitFramebuffer`; the window logs it once). A frame drawn into a texture target (gpu/headless)
+  is drawn whole, packed as before, unless a test asks
+  (`ClackPartialTextures`: into the texture itself; `ClackFrameTexture`:
+  through the frame texture and its copy, as a window's), so screenshot
+  tests draw what they drew.
+
+"The whole frame's pixels" is the frame the same GPU draws whole at that
+point (`ClackPartialWhole`: partial frames' state goes on, every frame is
+drawn whole). With sticky places, the frame Gio would draw afresh can
+differ from it by the placement rounding (TestClackPlacementNoise's
+floor), as any change earlier in a frame already made it.
+
+What the frame still costs: the layout, collecting the ops and their
+signatures, packing, loading the atlas pages and copying the frame
+texture into the target (on a real GPU a copy of the window's pixels; on
+llvmpipe a memcpy). `SetGPUFrameHook` reports every window frame's stats
+(partial or whole, its damage, draws and API calls), for tests. A scroll
+(whole frames in a row, drawn straight into the window) costs what it cost
+without partial frames on llvmpipe and WARP (94-100% of the CPU a frame)
+and about 0.7 ms more a frame on a Mac's GPU, the signatures and the diff
+(`TestRealWindowCaretCost`).
+
+Tests: `gpu/clack_partial_test.go` (ci's linux-gio Gio frame cost step:
+`TestClackDamageEdits`, the edit script is valid and shortest against an
+LCS on random sequences; `TestClackDamageRects`, disjoint and covering;
+`TestClackDamage`; `TestClackStickyNoOverlap`, sticky places never
+overlap or leave their page under random churn, and a region keeps its
+place unless the sequence is packed afresh, with 30 fresh packings in 600
+frames at most (8 in the port); `TestClackStickySpinnerBounded`, 3,000
+frames of a spinner's two arcs among 700 regions, on one page and on two,
+keep the sequence within 64 slots of the regions, the packer's work
+within 3 times the first frame's, the pages and no fresh packing;
+`TestClackStickyShrink`, the regions at half, 0.6 and 0.75 of their size
+bring the pages back within 1.25 times Gio's own; `TestClackStickyScroll`,
+a busy list's scroll packs at Gio's own cost and a sparse one's within
+1.5 times, the pages within 1.5 times, and a busy list's end within 3 and
+2.5),
+`gpu/headless/clack_partial_test.go` on llvmpipe, Metal and WARP (ci's
+linux-gio, macos and windows-applog jobs, and flake-check's gpu-cost and
+gpu-cost-damage): `TestClackPartialFrames` draws 48 frames of changes a
+window sees (a caret's blink, a spinner, an animated emoji, a ring's
+colour, a fade, ops moved, added, dropped and swapped, a path growing
+before every other, a new clear colour, a scale and a fraction of a pixel,
+then a random walk) whole, partial into the target and partial through the
+frame texture, and requires every frame's pixels to be the whole frame's
+exactly (through the frame texture: its copy, Metal's draw included, bit
+for bit the frame drawn straight into the target), the small changes to be
+partial frames of small damage, the caret's and the emoji's to take a
+tenth of the draws and a fifth of the API calls, whole frames in a row to
+draw straight into the target, and the sticky whole frames to be within
+the placement floor of Gio's own (packed afresh; the floor: the same
+frames with a transparent path first or after the shadow rings, max(6,
+floor+2) levels in twice the floor's pixels and 1,024 more);
+`TestClackPartialSameOps` (the same ops again draw nothing; a live image's
+next frame damages only it; the quiet frames after a partial frame of new
+ops tessellate and build nothing); `TestClackPartialSpinner` (3,000
+spinner frames: the sequence's holes, the packer's work, the frames
+partial, the last the whole frame's pixels); `TestClackPartialDamageRects`.
+In `app`: `TestUnmappedStopsFramesX11` (ci's linux-gio Xvfb step: an
+animating window unmapped by another client draws no frames and holds no
+frame texture until it's mapped again) and the Windows hide tests'
+`TestHideAndRaise` (a window hidden from inside its ClosingEvent holds no
+frame texture). In Clack: `internal/ui` `TestFrameCostDamage` (flake-check's
+gpu-cost-damage: the caret's blink, the typing indicator, a spinner's turn
+and an animated emoji's frame over Clack's window at 1440×900, Karim's
+1918×1080 and 1280×800 at 2x, each whole and partial, pixels and costs, the
+quiet frames after each partial frame, and the sticky whole frame within
+TestFrameCostWindow's placement floor of Gio's own) and
+`TestRealWindowCaretCost` (ci's linux-idle, macos, windows-idle and
+flake-check's gpu-cost-damage, count=N runs: App.Run's real window, 6 s of
+blinks partial and whole in turns of 3 s, their draws and the process's
+CPU; a scroll in four turns of 1.5 s, partial frames on and off, what
+its frames cost and copied and the coverage atlas, the median turn's CPU
+a frame within 1.25 times CLACK_FULL_FRAMES' on every OS (the Mac's ran
+110-129% a turn); on Xvfb the window's pixels read back with python3-xlib, the
+caret's toggling between blinks and a partial frame's window bit for bit
+a whole frame's; on macOS each blink's drawable read back after the frame
+texture's draw into it, bit for bit the frame texture: `ClackVerifyCopy`,
+`FrameStats.CopyChecked` and `CopyMismatchPx`, with the layer's drawables
+made readable for that part alone by `app.ClackReadableDrawables`; the
+blinks and the scroll are measured on the framebufferOnly drawables a
+window has).
+
+What a window's GPU holds, in bytes: Direct3D 11 counts the textures and
+buffers it made and hasn't released (`driver.ClackResources`, the
+backend's `ClackResourceBytes`: every mip level's texels at the format's
+size, each buffer's size), and `FrameStats.DeviceTextureBytes` and
+`DeviceBufferBytes` report them after each frame (-1 on the other
+backends); `FrameStats.FrameTextureBytes` is the share partial frames
+keep, the frame texture and the clear texture. internal/ui's
+`TestRealWindowMemory` (ci's windows-idle, the runner's display at
+1920x1080) measures Karim's window, a client area of 1918x1080 with a
+thread open and the caret blinking, in three pairs of processes, partial
+frames then `CLACK_FULL_FRAMES=1` (Gio's own whole frames and atlas
+packing): each process's private working set and commit, its Go heap, and
+what the device holds. The pairs' median difference in commit must be no
+more than the frame and clear textures and 4 MB.
+
+`gpu/clack_floor.go` has two switches for the pixel tests that hold a
+change in packing to Gio's own placement rounding. `ClackPackOrder` packs
+the coverage atlas in a seeded order instead of the ops' (every path's
+coverage on other texels: the noise of any packing change, where a
+transparent probe path moves only the paths after it), and
+`ClackCanaryTexels` writes coverage one half into the centre texel of a
+whole frame's largest stencil regions (pixels a renderer error gets
+wrong). internal/ui's `TestFrameCostWindow` takes its new-against-old floor
+from both kinds of move, and requires the bound to reject the new way with
+16 such texels in every scene. Its karim 1x light thread scene had fit the
+probes' floor with 2% to spare (5,260 px against 5,380, ui a3f8d0b0), and
+went past it when ui 556c6251's theme colours made one probe move 18%
+fewer pixels (5,282 against 5,116) with the difference itself unchanged.
+Not in `UPSTREAM.patch`.
+
+## 47. app: the caret's blink period from the OS (macOS's, X11's XSETTINGS)
+
+`app/clack_caret_macos.go`, `app/clack_caret_macos.m` (new),
+`app/os_macos.go` (`newWindow`) and `app/clack_xsettings_x11.go`,
+`app/clack_xsettings_nox11.go` (new: `ClackXSettings`).
+
+Gio's editor blinked at 500 ms on macOS (patch 13 read the OS's interval
+on Windows only). Chromium's `OsSettingsProviderMac::CaretBlinkInterval`
+(`ui/native_theme/os_settings_provider_mac.mm`, main 2026-11-17) doesn't
+blink at all when the user asked for a non-blinking insertion point
+(macOS 15's `AXPrefersNonBlinkingTextInsertionIndicator`), and otherwise
+blinks at what AppKit's `NSTextView` does
+(`ui/base/cocoa/defaults_utils.mm`): the average of the
+`NSTextInsertionPointBlinkPeriodOn` and `...Off` user defaults when
+either is set, never when the on period is over a minute, 500 ms when
+neither is set or either is negative. It reads them again when the app
+becomes active and when the accessibility preference changes. Gio now
+does the same as a window opens (`setCaretBlinkFromOS`, into
+`widget.SetCaretBlinkInterval`) and on those two notifications.
+
+On Linux Chromium's caret blinks at half of GTK's gtk-cursor-blink-time,
+which GTK's X11 backend takes from the X settings manager (XSETTINGS'
+Net/CursorBlink and Net/CursorBlinkTime; gsd-xsettings, xfsettingsd).
+`ClackXSettings` reads that manager's `_XSETTINGS_SETTINGS` property on a
+display connection of its own (the server grabbed while it looks, as the
+XSETTINGS spec has clients do: the manager's window can't go between
+finding and reading it, which Xlib's default error handler would make the
+process's end; Xlib's threads are made safe through Gio's own once);
+Clack reads it once, as Chromium reads the interval (it never polls it),
+parses it and does the rest (`internal/ui/caretblink_linux.go`).
+
+Tests: `app/clack_caret_darwin_test.go` `TestCaretBlinkFromOSMac` (ci's
+macOS window step: a window opens with the average of the two periods
+set in the process's own defaults; the app becoming active reads them
+again: one period alone, an on period over a minute, a negative one, both
+0, neither); `app/clack_xsettings_x11_test.go` `TestClackXSettingsX11`
+(ci's linux-gio Xvfb step: python-xlib plays a settings manager, and
+`ClackXSettings` reads its property byte for byte, again after it changes,
+and nothing once the manager is gone); `internal/ui` `TestXSettingsBlink`
+and `TestCaretBlinkWatcherX11`. Not in `UPSTREAM.patch`.
+
 ## 48. gesture, io/pointer, app: a run of clicks counts by the platform's rule, as Chromium's does
 
 `internal/clickrule/clickrule.go` (new), `gesture/gesture.go` (`Click`,
@@ -2136,3 +2466,437 @@ windows, `TestClackDoubleClickWindows` (SendInput clicks 400 ms apart at
 windows-applog job) and `TestClackClickCountMac` (AppKit's counts through
 `gio_onMouse`; `CLACK_MACOS_WINDOW_TESTS`, ci's macos job, with a click
 area added to the title bar tests' window).
+
+## 49. io/input: every handler caught up with where the pointer is
+
+`io/input/clack_reset.go` (new: `Source.ResetPointers`, its command,
+`pointerQueue.resetPointers`, `noteMouse`, `notePointerRead`),
+`io/input/pointer.go` (`pointerHandler.seen`/`seenID`, `pointerQueue.mouse`,
+`Push` notes the mouse) and `io/input/router.go` (`Event` notes what a
+handler read; `execute` runs the command at once, `executeCommand` runs
+it). An addition: nothing upstream behaves differently unless asked, and
+what's noted costs a field write per event read.
+
+Clack's inspect tool (`internal/ui/inspect` freeze.go) freezes the window
+on the frame on screen, so a hover state can be picked and captured
+after the pointer leaves it: until the freeze ends the window draws that
+frame's ops again and lays nothing out. Gio's router routes the pointer
+over the frozen frame's areas, which are still in the ops, but no widget
+asks for events in those frames (the frames' `Event` calls are the
+tool's), so nothing is routed to the widgets and nothing reads what was.
+The router's idea of what the pointer is over (`pointerInfo.entered`)
+moves on with the pointer; the widgets' stays at the freeze. When the
+freeze ended, a widget the pointer had left never got its Leave: the
+router no longer counted it as entered.
+
+The first version gave every handler a `pointer.Cancel` and the ones
+under the pointer an Enter. That left two kinds of hover stuck (the
+inspect-freeze review, 2026-11-18). Clack's message bodies (richview),
+plugin trees (slackc), the message scrollbar, Lists' rows, the canvas
+outline and the prefs reorder list clear their hover only on a Leave,
+and a Cancel to them ends only a press: a message's emoji tooltip, a
+link's underline, a plugin element's :hover stayed after the freeze. And
+the Cancel carried pointer id 0. On Windows Gio numbers the mouse 1
+(`EnableMouseInPointer`, GET_POINTERID_WPARAM), and `gesture.Hover`
+drops a Cancel or a Leave of another pointer, so every Hover there (a
+sidebar heading's ⋯ and +, the thread title's tooltip, the Activity,
+Later, Threads and Unreads rows) stayed hovered.
+
+`Source.ResetPointers()` now sends what the router would have sent had
+the widgets been reading:
+
+- every handler gets a Cancel, which ends a press, a drag or a grab;
+- a handler that last read an Enter or a Move, with no Leave or Cancel
+  read since (`notePointerRead` in `Router.Event`), and isn't under the
+  mouse gets a Leave;
+- every handler under the mouse gets an Enter and a Move there (the Move
+  for trackers that ask only for Move, as Lists' rows do), whatever filter
+  it asked for in the last frame.
+
+Each event carries the mouse's own id (the id a handler's Enter carried,
+for its Cancel and Leave), from the mouse's last event, which `Push`
+keeps after the router stops tracking it (`noteMouse`). A mouse whose
+last event was a Leave (it left the window) gets no Enter anywhere; Gio
+sends that Leave only on Windows (patch 22), so elsewhere a mouse that
+left is entered again where it was last seen in the window, as upstream
+leaves that widget hovered. Touches end with the Cancel. The router
+counts the handlers under the mouse as entered from there. It runs at
+once, before the rest of the frame reads its events, even when a handler
+already read its own in that frame (the tool read its input before the
+frame was laid out). Upstream's `execute` would defer such a command to
+the frame's end, and the frame would show the stale hovers once more.
+The inspect tool calls it first in the frame that lays out again after a
+freeze.
+
+Tests: `io/input/clack_reset_test.go` (`TestResetPointers`): three
+handlers and the tool's pass-through area over them; frames in which only
+the tool reads let the pointer go from a to b and c unheard. Without the
+reset a never gets its Leave, nor b its Enter. With it, for mouse ids 1
+and 0, after the tool read its events in that frame: a reads a Cancel and
+a Leave, b a Cancel and an Enter, c (Move and Leave only) a Move, the
+tool a Cancel, an Enter and a Move, every one with the mouse's id; no
+second Enter comes at the frame's end, and going back to a is a Leave and
+an Enter as usual. A mouse pressed over b that left the window gets b no
+Enter and a its Leave. `gesture/clack_reset_test.go`
+(`TestHoverResetPointers`): the same freeze read through two real
+`gesture.Hover`s, for mouse ids 1 and 0. In Clack: richview's
+`TestResetPointersClearsBodyHover`, slackc's `TestResetPointersLeavesTree`
+and `internal/ui`'s `TestInspectFreezeResetsHover`. On ci's linux-gio,
+windows-applog and macos jobs. Not in `UPSTREAM.patch`.
+
+## 50. layout: what the list's own scrolling moved it, and ending it
+
+`layout/list.go` (`List.ScrollDelta`, `List.StopScroll`). Accessors:
+nothing upstream behaves differently.
+
+Slack's message list keeps the row on its anchor line (AnchorLayout's
+`ANCHOR_OFFSET`: 64px in a conversation, the top in a thread) where it is
+while rows above it change height: `setHeight` moves the scroll by what
+such a row grew. Clack's message list does the same each frame
+(`internal/ui/messages` `lineRow`), and in a frame where the reader also
+scrolled it has to tell the two apart: the row should be where the
+reader's scroll put it, and only the rest is a height change to make up
+for. `ScrollDelta` is the distance `List.update` took from the gesture (a
+wheel notch's curve, a precise delta, a drag, a fling, middle-click
+autoscroll) in the last `Layout`; comparing positions can't, since the
+rows' sizes and the end clamps move `Position` too.
+
+`StopScroll` ends a running wheel curve or fling. A jump writes the
+scroll (Slack's `scrollToOffset` sets `scrollTop`), and a browser cancels
+the reader's running scroll animation on such a write; without it, a
+jump made while a notch's curve or a fling was still running landed and
+then slid on with the rest of it.
+
+Tests: `layout/clack_list_test.go` `TestListScrollDelta` (0 on the first
+layout, 7 for a 7px precise wheel, 0 when `Position` and the children's
+sizes changed) and `TestListStopScroll` (a notch's curve moves the list
+over two frames, and not after `StopScroll`), on ci's linux-gio job, and
+`internal/ui` `TestJumpHoldsThroughRowsGrowingAbove`. Not in
+`UPSTREAM.patch`.
+
+## 51. op/paint, gpu, gpu/internal: external images (a texture something else made, drawn in the frame)
+
+`op/paint/clack_external.go` (new: `ExternalImage`, `ExternalDevice`,
+`ExternalTexture`, `NewExternalImageOp`), `gpu/clack_external.go` (new:
+`resolveExternal`, `clearTexture`), `gpu/gpu.go` (`texHandle` asks an
+external image first; `renderer.clear1x1`), `gpu/clack_stats.go`
+(`FrameStats.Externals`, `ExternalWraps`),
+`gpu/internal/driver/clack_external.go` (new: `ClackExternal`,
+`ClackExternalTest`), `gpu/internal/d3d11/clack_external_windows.go` (new)
+and `d3d11_windows.go` (`Texture.external`, `Backend.extSamplers`,
+`Release`), `gpu/internal/metal/clack_external_darwin.go` (new) and
+`metal_darwin.go` (`Texture.external`, `Release`). Additions: no op that
+isn't an external image draws differently.
+
+Slack plays a message's video in place with Chromium's `<video>`, under
+its own controls. Clack plays it with the OS's decoder (Media Foundation,
+AVFoundation), whose frames are GPU textures; Gio could draw only the
+`*image.RGBA` of an `ImageOp`, and its Direct3D and Metal backends took a
+texture they didn't make only as a render target (releasing one
+panicked). Uploading every frame through the CPU, as huddle video does,
+makes each a new mipmapped texture, an upload and a mip generation.
+
+- `NewExternalImageOp(e, size, still)` is an `ImageOp` whose source is a
+  header with no pixels, `size` big: only its bounds are read, so clips,
+  opacity layers and transforms work on it as on any image. Its handle is
+  an `externalHandle`; `texHandle` asks it (`ClackExternal`, plain types,
+  as patch 35's `liveImage`) for the texture on the device drawing the
+  frame, once for each paint the frame shows (in `uploadImages`, after
+  `collect` dropped the paints outside the viewport and their clips), on
+  the goroutine drawing the frame. The device and API come from the
+  backend's `ClackDevice`; after the ask the backend forgets its state
+  cache (`ClackForgetState`: patch 37 trusts the context's state, and the
+  ask may have used the immediate context).
+- The ask hands out the texture with a reference of its own (AddRef'd,
+  `CFRetain`ed), taken under the image's lock: a producer closing on
+  another thread can't free the texture between the ask and Gio's use of
+  it (round 1's review). A texture is wrapped (`ClackWrap`: no upload, no
+  mipmaps, linear or nearest), which takes that reference over, and
+  cached under its native handle and `Key`: the same key draws the frame
+  before's wrapper and drops the ask's reference (`ClackDrop`), a new key
+  wraps again, and the old wrapper goes at the end of the first frame
+  that doesn't draw it (`textureCache.frame`), after the GPU finished the
+  frame that drew it last (Metal's `BeginFrame` waits for the previous
+  command buffer). Direct3D 11 samples the view with one of the
+  backend's two clamped samplers (MinLOD and MaxLOD 0: the view's first
+  level, whatever its count), releasing only the view; Metal samples the
+  texture with patch 37's shared sampler.
+- No texture (`ok` false, or a device that can't draw external textures:
+  OpenGL, Vulkan, which never ask) draws the still, stretched over the
+  op's size the same way. A still that is itself external, or live and
+  showing an external image (a viewer's player over the inline player's
+  last frame), is resolved in turn, at most four deep (`resolveImage`); a
+  zero or uniform still, one nested deeper, and any source whose pixels
+  are shorter than its bounds (an external op's header) draw nothing: a
+  1×1 transparent texture the renderer keeps (every image paint needs a
+  texture to bind), never an upload of the header.
+- The ask may copy, sync and query on the device's immediate context
+  (Media Foundation's ring is a `CopyResource` and keyed-mutex calls), and
+  must leave its pipeline state as it found it: `ClackForgetState` resets
+  patch 37's cache, not the rasterizer state Gio sets once.
+- The texture must be of an sRGB format (`R8G8B8A8_UNORM_SRGB`,
+  `BGRA8Unorm_sRGB`): Gio samples images decoded to linear light, as the
+  textures it makes are.
+
+`FrameStats.Externals` counts the asks and `ExternalWraps` the wrappers a
+frame made. `ClackExternalTest` lets tests make a texture on the device,
+see its handle (`ClackNative`), hand out a reference (`ClackRetain`), read
+its reference count (`ClackRefs`) and the wrappers held (`ClackWrapped`).
+Under patch 46's partial frames each wrapper has a texture id of its own
+for the ops' signatures (`cache.nextID` when it's made, the entry's on a
+hit, `clearID` for the 1×1): a new key (the decoder's next frame) damages
+only its op's rectangle, a frame drawn again with the same key nothing.
+
+Clack's callers are behind `internal/media`'s `gio_patch51.go` /
+`gio_patch51_stock.go` pair; a stock Gio build draws the still (the
+poster). Tests: `gpu/clack_external_test.go` (`TestDrawOpsExternalImage`:
+the renderer's own `uploadImages`/`texHandle` against a device that counts
+wraps, releases, drops, forgets and every native reference: one ask per
+paint shown and none outside the viewport, one wrap per key, each ask's
+reference kept by a wrapper or dropped, the old wrapper released, the
+still without a texture, nothing for a zero or uniform still, no ask on a
+device without the interface; `TestDrawOpsExternalNestedStill`: external
+and live stills resolved in turn, too deep drawing nothing), on ci's
+linux-gio job; `gpu/headless/clack_external_test.go`
+(`TestClackExternalImage`: a texture the device made, drawn through its
+native handle under a rounded clip, an opacity layer and a rotating,
+magnifying transform, gives every pixel of an `ImageOp` of the same image;
+`TestClackExternalKeys`: the same key wraps nothing, a new key once, new
+pixels under a new key show, no texture draws the still, a zero or uniform
+still nothing; both check the texture's native reference count is back
+where it was once the wrappers go; `TestClackExternalPartial`: with partial
+frames, the same ops and key again damage nothing, a new key only the op's
+rectangle, and that frame is the whole frame's pixels), on ci's
+windows-applog (Direct3D 11, WARP) and macos (Metal) jobs; on llvmpipe
+(linux-gio) they check that the op draws its still and never asks (the
+partial test skips there). Not in `UPSTREAM.patch`.
+
+## 52. gpu/headless: a window's framebuffer takes a new size
+
+`gpu/headless/clack_size.go` (new: `Window.SetSize`).
+
+A headless window had one size for its life: its framebuffer texture
+was made with it. Clack's inspect tool renders one shot per pick, each
+its own size, and made a window (a context, a device and a GPU) for
+every shot: 4 to 35 ms on WARP and llvmpipe, 1.2 s for the first in a
+process on llvmpipe (its shaders compiled), with its glyph paths and
+images uploaded afresh every time. `SetSize(width, height)` makes a
+framebuffer texture of that size on the window's device and lets the old
+one go; the context, the device and the GPU, with its caches, stay. A
+session of the tool makes its window as it starts, off the UI goroutine,
+and its one shot gives it the shot's size (`internal/ui/inspect`
+shooter.go): what the shot saves is the context made in the pick's wait.
+The kept caches would matter only to a session taking several shots, and
+a session takes one.
+
+Tests: `gpu/headless/clack_size_test.go` (`TestClackSetSize`: frames of
+three sizes through one window are pixel for pixel what new windows of
+those sizes draw, on the same GPU; the two paths drawn in every frame are
+built once, not again after a SetSize: `ClackFrameStats().PathsBuilt` is 1
+after each, the frame's own path; an empty size is refused), on ci's
+linux-gio (llvmpipe), windows-applog (WARP) and macos (Metal) jobs. Not
+in `UPSTREAM.patch`.
+
+Merging (2026-11-19). Patches 50 (thread-open-root), 51 (video-playback)
+and 52 were made side by side from the same ui, so the second branch to
+merge conflicts in this file (the file list at the top, and the sections
+at the end) and, with 51, on ci.yml's three `-run '^(…)$'
+gioui.org/gpu/headless` lists (linux-gio, windows-applog, macos), where 51
+adds `TestClackExternal*` and 52 `TestClackSetSize|TestClackRollbackKeys`.
+Keep both sides: both file lists' names, the sections in number order,
+and on each `-run` line the union of both alternations. Taking one side
+of a `-run` line leaves every job green with one patch's tests no longer
+run anywhere; `.github/scripts/headless-tests.py` (ci's linux-build)
+fails the push instead: every `TestClack` function in `gpu/headless`
+must be in all three lists, and the lists must match.
+
+As the branches stood on 2026-11-19: video-playback also carries §53
+(io/input, a tag's area: `io/input/clack_bounds*.go` in its file list),
+so its side of the closing hunk holds §51 and §53; split it to put §52
+between them (51, 52, 53). With thread-open-root, CLACK_PATCHES.md
+conflicts only in the closing sections, and flake-check.yml conflicts
+where both branches add jobs after the same one: the hunks interleave
+this branch's `inspect-blur-fast` job with thread-open-root's
+`thread-open-root` and `jump-reactions`, and keeping both sides hunk by
+hunk gives a workflow file GitHub rejects. Keep each job whole (each
+with its own `steps:` and `exit $rc`): the simplest way is one side's
+file with the other side's jobs appended whole, as this branch did with
+ui's `theme-contrast-4` and `fileurl-dotdot` in round 2.
+
+## 53. io/input: a tag's area, and what of it its clip areas show
+
+`io/input/clack_bounds.go` (new: `Router.AreaBounds`, `Source.AreaBounds`),
+`io/input/clack_bounds_test.go` (new). Additions only.
+
+A widget can't learn where Gio drew it: its ops don't know their
+transform, and a list positions its children with offsets they don't
+see. Clack's video tiles need their share of the scrolling list they're
+in, wherever that list is (the channel, a thread pane, the Threads and
+Unreads views, Later): Slack's useScrollDockTrigger docks a playing video
+scrolled under 10% visible (Clack pauses it until the mini player comes).
+The router already holds every frame's clip areas as a tree, with their
+transforms, for hit testing.
+
+- `AreaBounds(tag)` is the window rectangle of the clip area `tag` was
+  registered on with `event.Op` in the last frame, and that rectangle
+  clipped to each clip area above it (`ClipFor`): what of it showed. false
+  for a tag that had no area. A rounded or path clip counts as its
+  bounding rectangle, as in hit testing.
+- `Source.AreaBounds` is the router's, so a widget asks it through
+  `gtx.Source` during its layout (one frame late, which a scroll's pause
+  doesn't mind).
+
+Tested by `TestClackAreaBounds` (a tile half out of a scrolled viewport),
+in every job that runs `io/input`'s tests. Not in `UPSTREAM.patch`.
+
+## 54. widget: a single-line editor centres its line, and the caret is Blink's
+
+`widget/text.go` (`textView.lineShift`, `caretRect`; `Layout`,
+`ScrollBounds`, `Dimensions` and `PaintCaret` use them),
+`widget/clack_scale.go` (`SetDeviceScale`, `DeviceScale`).
+
+Karim, 2026-11-20 (Windows, alpha.112): channel details' "Add agents and
+apps to #clack" modal drew its search's caret from near the input's top
+padding down to the placeholder's x-height. The picker gives its editor
+a 28 dp row (`layout.W` keeps the minimum height), and Gio drew the line
+at the top of the view, so text and caret sat 5 px (1x) above the
+placeholder centred in the box. Every input that hands its editor a box
+taller than its line did the same.
+
+- A single-line view taller than its line now draws the line lower, by
+  `lineShift`: the baseline goes `(height - ascent - descent)/2 + ascent`
+  from the top, ascent and descent each rounded, the half-leading
+  floored. That is where Blink puts it: a single-line input centres its
+  inner editor (html.css,
+  `input::-webkit-textfield-decoration-container`, `align-items:
+  center`), its line puts the font's content area in the middle with
+  the leading floored (`CalculateLeadingSpace`,
+  core/layout/inline/inline_box_state.cc), and the placeholder takes the
+  editor's first baseline (`BlockLayoutAlgorithm::
+  HandleTextControlPlaceholder`, core/layout/block_layout_algorithm.cc).
+  The shift is the view's vertical scroll offset (negative), so text,
+  selection, `Regions`, the caret, the IME and pointer hits all move with
+  it; `ScrollBounds` pins it, and `Dimensions().Baseline` reports the
+  moved baseline. A view no taller than its text is as before.
+- The caret is Blink's bar caret (`ComputeLocalCaretRectAtTextOffset`,
+  core/layout/inline/caret_rect.cc; `LocalCaretRectForEmptyElement`,
+  core/layout/layout_box_model_object.cc): the font's height on the
+  baseline, ascent and descent each rounded (`FontMetrics`,
+  platform/fonts/font_metrics.cc: 18 px for Lato at 15 px, where Gio's
+  rounded-up 19), `LocalFrameView::BarCaretWidth` wide (max(1, device
+  scale) device px, pixel-snapped: 1 px at 1x, where Gio drew 2, and 2 at
+  1.5x and 2x), its left edge the caret's x less half its width, rounded
+  and kept inside the line box in the text's own coordinates
+  (`ClampAndRound`: from 0 to the wider of the view and the text), then
+  scrolled, so at the start of a line it starts there and a caret
+  scrolled out of the view is clipped, never pulled onto its edge (Gio's was centred on x and cut in half by the view's
+  left edge: 1 px at 2x). `caretWidth`, the narrowest a view is, is that
+  whole width (Gio's was half of it), so an empty field laid out at its
+  natural width holds the whole caret.
+
+The device scale is the screen's alone: `BarCaretWidth` is
+`WindowToViewportScalar(1)` (local_frame_view.cc), and page zoom (Slack's
+View > Zoom) never widens the caret. Clack zooms by scaling the window's
+Metric, so its window records the unzoomed `PxPerDp` each frame with
+`widget.SetDeviceScale` (a value on the window's router, patch 15), and
+`DeviceScale` reads it back, falling back to `PxPerDp`. At 2x zoomed to
+125% or 150% the caret is 2 px, not 3.
+
+Clack's composer draws its own caret (internal/ui/composer) and takes
+the same rules there: rounded metrics, the device scale's width, its
+left edge from the pen's unrounded x.
+
+Tests: `internal/ui/views` `TestCaretAlignViewsInputs` (the agents
+invite and posting permissions pickers, the line centred in their 28 dp
+row, and the views' search box) and `internal/ui/popups`
+`TestCaretAlignPopupsField` (popups' `field`, 36/15 with an icon and
+44/18), at 1x, 1.5x and 2x in both themes, measure the caret's top,
+bottom, width and x against the placeholder's and the typed text's ink
+(`internal/ui/theme/carettest`, whose `TestCaretAlignEditorBox`,
+`TestCaretAlignZoomedWidth` and `TestCaretScrolledOutOfView` cover the
+centred line's exact place, the zoomed width and a caret swiped out of
+view), on llvmpipe, WARP and Metal:
+flake-check's `caret-align` job (dispatch with `only=caret-align`).
+Not in `UPSTREAM.patch`.
+
+## 55. internal/egl: EGL_DEFAULT_DISPLAY stays initialized for the process
+
+Every headless window (`gpu/headless` on Linux and the BSDs) opens its
+context on `EGL_DEFAULT_DISPLAY`, one display for the whole process, and
+`Context.Release` ended with `eglTerminate` on it. So releasing one window
+took the display away from every other one (their next frame failed with
+`eglMakeCurrent` 0x3008: the inspect tool's per-shot window took a test's
+long-lived window down, 2026-11-14), and each new window brought the
+display up again, a new connection to the X server and a new driver load
+each time (train-129's linux-gio job 136849179543 had Mesa fail one of
+them, `eglInitialize` 0x3001, in `TestClackRollbackKeys`). A context on
+`EGL_DEFAULT_DISPLAY` (asked for, or fallen back to) now leaves it
+initialized on Release; a second `eglInitialize` of an initialized display
+is a no-op in EGL. Contexts on a window's own native display (the app's
+X11 and Wayland windows) still terminate it.
+
+Tests: `gpu/headless` `TestClackWindowOutlivesAnother` (two windows, the
+second released, the first still draws: red before the patch). Not in
+`UPSTREAM.patch`.
+
+## 56. app: the driver's startup points, for the app's launch timeline
+
+`app/clack_startup.go` (new: `SetStartupMark`), `app/window.go`
+(`init`, `validateAndProcess`), `app/os_macos.go`
+(`gio_onStartupPoint`, `gio_onFinishLaunching`, `newWindow`),
+`app/os_macos.m` (`gio_main`, `GioAppDelegate`'s
+`applicationWillFinishLaunching:` and `applicationDidFinishLaunching:`),
+`app/clack_bounds_macos.go`
+(`displays`, `readScreens`, `snapshotLaunchScreens`), `app/os_windows.go`
+(`Configure`), `app/os_x11.go` (`newX11Window`); `SetQuitHandler` and
+the stub menu's Window items (`gio_main`, `gioQuit:`).
+
+Karim, 2026-11-21: "Make launching the app take less than a Mac app
+bounce." macOS bounces an app's Dock icon from the launch until it
+finishes launching, so a launch's timeline needs the points only the
+driver sees: when NSApplication finished launching, when the window
+went on screen, when the GPU's first context and pipelines were made and
+the first frame presented. `SetStartupMark(f)` makes `f(name, at)` hear
+each of them once per process, the first time any window reaches it:
+`gio-init` (Window.init done), on macOS `appkit-app` (NSApplication
+made, its delegate set), `appkit-run` (`[NSApp run]` about to start),
+`will-finish-launching` (the delegate's
+`applicationWillFinishLaunching:`), `launched`
+(`NSApplicationDidFinishLaunchingNotification`), `activated` (the end of
+the delegate's `applicationDidFinishLaunching:`), `window-create`,
+`window-view` and `window-ns` (newWindow's main-thread block starting,
+its view with the Metal layer and display link, its NSWindow), then
+`window-shown` (`makeKeyAndOrderFront:`, `ShowWindow` or `XMapWindow`
+returned), `gpu-context` (the first `NewContext`), `gpu` (the first
+`gpu.New`) and `presented` (the first `Present` that didn't fail). Each
+point is an atomic flag; the hook runs on the thread that reached it (the
+AppKit main thread for the macOS points) and must not block. cmd/clack
+sets it to a goroutine calling `applog.MarkAt`; nothing else does.
+
+The launch's first `displays()` (macOS) no longer waits for the main
+thread's queue, which AppKit serves only once NSApplication finished
+launching: `applicationWillFinishLaunching:` reads the screens
+(`snapshotLaunchScreens`, on the main thread, once) and `displays()`
+takes them when they come before its own main-thread read does (once;
+later calls read afresh). Clack reads the displays for the main window's
+place (winbounds.go), so the window is created the moment the launch
+finishes instead of one main-queue round trip later (15-70 ms on CI).
+
+A window asked for before the launch finished (newWindow, which waited
+for `launched` and then queued its main-thread block) now opens inside
+the delegate's `applicationDidFinishLaunching:`, after it made the app
+regular and active (`openAtLaunch`, `gio_onLaunchActivated`): the
+canonical place for an app's first window. The queued block waited for
+AppKit's post-launch work, 30-50 ms on CI. A window asked for later opens
+as before.
+
+The stub menu `gio_main` makes (until an app installs its own; Clack's
+installs after its first frame) has, besides Hide, a Window menu with
+Minimize (Cmd+M, `performMiniaturize:`) and Close (Cmd+W,
+`performClose:`, the red button's path), and its Quit (Cmd+Q) is
+`gioQuit:`: the app's `SetQuitHandler` function on its own goroutine when
+one is set (Clack's Quit: the window closes, the session and logs flush),
+`terminate:` otherwise.
+
+Read by `.github/perf/launch.py` (flake-check's `launch-speed-*` jobs and
+ci's macos launch budget). Not in `UPSTREAM.patch`.

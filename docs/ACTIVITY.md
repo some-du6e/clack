@@ -531,17 +531,49 @@ them read and clears them. Alt+Up / Down open the previous / next row,
 Shift+Alt the previous / next unread, ⌘. closes the detail pane, ⌘Z undoes
 the last clear or read change.
 
-**Live updates** (sD/F handleActivityRTMEvent with the inbox,
-activityUpdatedV2 → 46Vh pushActivityItemToStore): `activity_updated`
-replaces a listed entry, or inserts a new one at its feed_ts unless the
-view can't show it (reminders / DMs off in Activity, cleared vs Cleared
-items, a reaction under Unreads, a non-VIP under VIP, another type than
-the view's, a conversation outside its channels and sections); a cleared
-one leaves. `activity_invalidated` fetches the feed again;
-`activity_deleted` drops the entry. A new unread entry while scrolled
-down raises "New activity ↑" (ActivityUnreadsBanner: 28px `#1264a3` pill
-12px from the top). Clack no longer reloads the feed on mention and count
-events (Slack doesn't).
+**Order and live updates** (activity_order.go; build 35b42de8b870:
+boot-shared Gfjq handleActivityRTMEvent with the inbox, activityUpdatedV2 →
+client-boot PY/r pushActivityItemToStore → tsND upsertActivityRtmItem /
+upsertActivityItems). Every list is sorted by um/L Y: feed_ts newest first,
+then the key (localeCompare), whatever the entry's type. `activity_updated`
+takes a listed entry out and puts the new copy back at its feed_ts
+(getUpsertedActivityRtmItems' binary insert): the server sends a thread's
+thread_v2 bundle again, same key, with each new reply's ts as its feed_ts,
+so the thread goes to the top (Karim, 2026-11-21: Clack replaced it in
+place, "Just now" on the last row). A new entry goes in at its feed_ts,
+the end too, unless the view can't show it (reminders / DMs off in
+Activity, cleared vs Cleared items, a reaction under Unreads, a non-VIP
+under VIP, another type than the view's, a conversation outside its
+channels and sections); a cleared one leaves. The thread_reply entries the
+server pushes next to each bundle are dropped (Gfjq's allow-list), as
+Clack logs. Both upserts deduplicate with 1Cyf v first: a thread_v2 whose
+feed_ts is a mention's, and a dm or channel entry whose latest_ts is one,
+stay out (the mention stands for them). Feed pages are merged into the
+list as it is when they land, the page's copies winning (but a copy a
+realtime entry brought while the request was out, when its read state
+differs or its feed_ts is newer), and the list sorted, with the page's
+cursor. Slack's reloads keep every row of the plain list and
+getItemsRetainedOnRefresh's of a filtered one, and take rows out locally
+(removeBulkItems, the invitations' tombstones, wJvP's restore); Clack's
+flows read the reload instead (the peek, Undo and ⌘Z after a Clear, the
+invitation answers, Clear all before this, which also marks the rows it
+took), so a reload keeps ui's rows (actReloadKeeps): the page's span is
+the page's (a row it no longer lists is gone, the newest too), what came
+in or changed on the socket meanwhile stays, and but under Unreads the
+later pages loaded stay with their cursor when the page reaches them
+(the page's last row the list can hold, past a thread twin the mention
+dedupe keeps out); under the VIP sort, read in the feed's order (VIP
+unreads first), a row that moved down sends paging back to the page.
+`activity_invalidated` fetches the feed again;
+`activity_deleted` drops the entry. An unread entry newer than the last
+one while scrolled down, a thread's new reply included, raises "New
+activity ↑" (ActivityUnreadsBanner: 28px `#1264a3` pill 12px from the
+top). Clack no longer reloads the feed on mention and count events (Slack
+doesn't). Tests: TestActivityOrderLikeSlack (Karim's sequence over the
+socket, then a reload and a restart), TestActivityOrderMatchesSlacksReducer
+(the port against Slack's own upserts), TestActivityPlainReload,
+TestActivityMergeKeepsLaterPagesOutOfTimeOrder and the reload tests in
+activity_order_reload_test.go / activity_order_reload_live_test.go.
 
 **Tests and screenshots.** `TestActivityViewsRoundTrip`,
 `TestActivityViewsEvent`, `TestActivityBulkAndFilters` (core, fakeslack);
@@ -995,6 +1027,400 @@ activity-create-view-in-suggestions, activity-tabs-more / -menu /
 -selected, activity-discard and activity-sort-new / -open / -after, each
 `-light` and `-dark`, plus activity-bulk-tooltip-light and
 activity-plus-tooltip-light.
+
+## Live messages (2026-11-17, branch `activity-live-msg`)
+
+Slack's Activity rows keep no copy of their message. Each row reads it
+from the messages store as it renders: getMessageFromActivityItem
+(boot-shared Gjwd `uU`) calls getMessageByTimestamp (client-boot iR00
+`Ld`) with the entry's channel and feed_ts, a reaction's message_ts or a
+reminder's message, and ActivityThread, ActivityDM, ActivityMention and
+ActivityReaction call `Ld` the same way. activity.feed only names the
+messages. messages.list fetches them by id into that store
+(fetchObjectWithId), the store the channel list and the thread pane read,
+so a socket change shows in all three in one commit. Nothing fetches the
+feed again for it.
+
+- message_changed (boot-render messageChanged, replaceMessages) replaces
+  the copy. When the new copy is a tombstone, a moderated or a
+  thread_hidden message, messageChanged removes the entries about it
+  ("ActivityIA4: Remove activity item" {channelId, messageTs} in P0K2). An
+  edit that takes the viewer's mention out does the same
+  (checkForMentionInMessage, c+16, on previous_message and the new copy).
+- reaction_added and reaction_removed change the stored message's
+  reactions.
+- message_deleted removes the message and dispatches the same Remove
+  activity item. A row about another message that only drew this one (a
+  thread's latest reply) keeps its header and draws no body:
+  ActivityRowContentDetails draws nothing for a missing message and the
+  shimmer only while one is still being fetched.
+
+Clack kept the copy the feed was hydrated with until the next load. It
+also cached a row's body layout on the text's length, and an app's
+chat.update keeps the length, so a reloaded vote could still show its old
+counts. Round 1 drew the socket's copies, but a mix of feed, socket and
+list copies drifted from Slack's single store: closing the thread pane
+put a row back a revision (Karim's "up and down"), a reload no longer
+refreshed a row that had changed once, an entry pushed while the page was
+off screen missed the changes before it was drawn, and a busy socket
+overflowed the 256-entry log the page read. Now:
+
+- core keeps each message's latest change in a table (msg_changes.go):
+  its place in core's order of changes, whether it was deleted, and
+  whether it removed the Activity entries about it. Every "update" and
+  "delete" carries its place (Event.Seq). A view asks what changed since
+  its last frame (MessageChangedSince) and looks a message up by key
+  (MessageChange), however many changes went by. Activity items carry the
+  place they were read at (ActivityItem.MsgSeq, before the feed request
+  or the realtime entry's lookups), so an item that lands late takes what
+  changed after it was read, and an entry removed meanwhile stays out.
+- Slack's removal rules run where Slack runs them: on message_changed
+  (activity_removes.go), with c+16's default options on the event's
+  previous_message and the new copy, and on message_deleted. Rich text
+  keywords follow lxEU's processChunk (one text per section, a line per
+  list item, link text or URL, a space for other elements, color and
+  emoji matches). A message with a blocks list, even an empty one, is
+  read from its blocks alone.
+- Activity keeps one copy per message, the newest by that order:
+  the feed's, a change core made later, or the store's copy when a
+  message list stops drawing it (activity_msgs.go). While a list on
+  screen draws the message, the row draws the list's revision, so the
+  two never show two revisions in one frame. No source going away puts a
+  row on an older revision. A message messages.list doesn't have draws no
+  body and no shimmer (isNonExistent: MsgGone).
+- The store keeps what messages.list fetched for Activity and Saved, and
+  what getView brought for the Threads view (store/fetched.go), also for a
+  message a window holds, since core evicts windows Activity still
+  draws. The copies are evicted by last use, within 2048 messages and
+  4 MB. A fetch merges with what the socket changed meanwhile, the way
+  SetLatestSince merges a window: a message the socket changed keeps the
+  held copy, and the reactions the socket brought are replayed on the
+  answer (store/reacts.go), each person counted once.
+- A patched component's tree that JS hasn't drawn since the message
+  changed hands back an older revision's props. The row tells them apart
+  by content: the fingerprints of the last 16 msgs it sent each level
+  (actRow.itemSent for ActivityItem, threadSent for ActivityThread, as
+  the message lists' row.sentFor keeps a set per level). A plugin's
+  rewrite in ActivityItem (Slick Censorship's mask) is then never taken
+  for props the row sent, also when another plugin patches the components
+  inside it (BetterBlock). Under a patch of the messages slice (Message
+  Logger's text mark, Censorship's mask, ShowRealUser's sender), the
+  views drawn from viewMsg (Activity, Threads, Saved, Pins, Unreads) take
+  the plugins' view as the lists' applyView does (views/taut.go). A
+  revision JS hasn't answered draws core's copy only when the plugins'
+  last view drew the same (viewDraws: the text, the sender's fields, the
+  edited stamp, the reply fields, the blocks' text); a view that rewrote
+  any of them stands until JS answers, so a reaction's or a reply's mark
+  never brings the relay bot's name or the masked word back. The
+  plugins' messages slice holds the messages fetched by id too
+  (Activity's and Saved's hydration, the Threads view's getView), as
+  Slack's one messages store does (taut/mirror.go bucket), so those
+  views' messages get the plugins' view at all. One the store held no
+  copy of is marked for the plugins as it lands (core SetFetchedHook),
+  so its view comes a JS round trip later, not at the mirror's next
+  sweep; and none of them is a message a plugin injected: a
+  conversation's list draws its history, which a message fetched by id
+  never joins (store MessageKeys, Held).
+- The Threads view and the Saved page take each change into their data
+  once (threads_live.go, later_live.go), with no per-frame copies, and a
+  load that lands takes what changed after its request went out. A
+  thread's stamp is the point its load was current at, and each message
+  the batch names takes its latest change against it, so a later change
+  to one message never hides an earlier change to another. While they're
+  off screen a change draws no frame.
+- msgVer is worked out once per message copy (msgVerOf), and a Threads
+  card's older and latest replies stay one slice until they change.
+
+Round 3 (2026-11-17) closed what was left of Slack's single store:
+
+- Every read writes one revision for all copies (store/read_revisions.go,
+  core/read_changes.go). A window page, a replies answer, messages.list
+  or a card's older replies that bring a revision of a message the store
+  held another of give it to the window's, the cached threads' and the
+  fetched copies, and core announces it as an "update". After a socket
+  gap a thread read for the first time had its root's new revision while
+  the window kept the old one, and closing the pane put an Activity row
+  back on it; now the change table has the read's revision too.
+- Activity describes a row from the list copy it will draw (the last
+  frame's until it polls), and a search redraws only when a row's text
+  changed: with search open and an item beside the page, the window no
+  longer drew every frame.
+- A reaction and its note for the fetches are one write
+  (ApplyReactionNoted), and a deletion is noted before the copies go.
+  Window pages replay the reactions the socket brought while they were
+  out. The replay and the reducer follow Slack's (8o8l, 6Dm2): a person a
+  reaction doesn't list changes nothing (a big reaction's answer lists
+  only some), and a reaction goes once nobody it lists is left.
+- A failed messages.list group leaves its messages as the store has them,
+  and an item with no copy no longer outranks one Activity holds. Drawn
+  messages count as uses in the fetched store, a change whose copy the
+  store let go is fetched again by id, and past the change table's floor
+  Activity takes the store's copies on every page.
+
+Round 4 (2026-11-17) fixed what round 3's read announcements broke, and
+Karim's deleted-reply report:
+
+- A read's revision of a message an open channel list never loaded (an
+  Activity row's copy, a Threads root, a refetch, message_replied for a
+  root fetched by id) changes the list only where it holds the message,
+  or inside the range it loaded. Taken in above the oldest loaded
+  message, it moved load-older's cursor past the days between. A model
+  that hasn't loaded (its first load, or the first after a whole
+  eviction) keeps nothing from before it and takes hasMore from its page,
+  and an update during that load lands on the page's copy alone
+  (ui/messages/hub.go).
+- A window read keeps what the socket changed or deleted while the page
+  was out, before its hooks run (store liveReadLocked, readWindowLocked):
+  a vote's chat.update during History no longer spread the older count to
+  every copy. Older pages go through the same hooks (PrependOlderSince).
+  message_replied, a broadcast's root merge, message_locked and the
+  optimistic writes note the write under the lock that makes it
+  (store.MutateNoted), so a thread read that went out before them keeps
+  them, and message_changed and message_deleted note with theirs.
+- A read's revision goes out as the store holds the message at that
+  moment, checked against its live stamp under the subscribers' lock
+  (core announceHeld, emitIf). A later edit, reaction or deletion whose
+  update went out first is never undone.
+- A message fetched again by id asks once per channel a frame, waits
+  after a failure (2 s doubling to a minute, past the client's own refusal
+  of an identical failed request), then core asks again by itself, up to
+  five times, and it settles on "gone" when Slack answers without it: the
+  row draws no body (isNonExistent) and no entry is removed. A row whose
+  messages.list group failed fetches again the same way instead of
+  shimmering until the next load.
+- Activity polls each message once a frame, with the thread its drawn copy
+  names, and a lookup that misses doesn't let go of the copy another
+  row's found (expireLists does, a frame later). A mention of a root
+  hydrated before its first reply, beside the thread_v2 row of that
+  thread with the pane open, redrew the window every frame. Past the
+  change table's floor each row takes the store's copy when it draws.
+- An ActivityThread tree rendered from earlier props (its `$rev` prop) is
+  no projection: with JS busy a new reply drew the previous one, and its
+  sender. BetterBlock's projection rewrites messageTs, so the row tells
+  them apart by the revision of the props it sent.
+- Threads and Saved fetch again a change whose copy is gone and keep their
+  messages in the store. Past the floor Threads takes the store's copies
+  on every page it loaded, with no getView. Threads' unread count leaves
+  out a reply deleted while getView was out.
+- A reply's deletion takes out the thread_v2 entry whose messageTs it was
+  (min_unread_ts, else latest_ts: Slack's /29I), as messageDeleted's
+  "Remove activity item" does, and so does an edit that drops the
+  viewer's mention. badge_counts_updated with activity_v2 summing to 0
+  marks the loaded unread rows read here only (VxbD
+  handleBadgeCountsUpdatedRTMEvent through Japw m$ isLocalOnlyUpdate),
+  leaving a row whose message the store doesn't hold.
+- The content fingerprints moved to slackc (ContentFP, SentFPs, FPMemo)
+  for the message lists to share, and msgVer is memoed per revision, not
+  per copy.
+
+Round 5 (2026-11-18):
+
+- A message_changed of a message no window or cached thread holds (one
+  Activity, Threads or Saved fetched by id: a poll's vote 80 messages
+  back, a root's count after one of its replies is deleted) goes into the
+  window only inside the range it holds (store.UpsertInRange, core
+  putChanged): taken in above a HasMore window's oldest message, the open
+  list drew it right above the newest page at its next load, and
+  load-older read from it, skipping everything between. Slack's invH keeps
+  such a ts a slice of its own. The live note and the fetched copies keep
+  every view current all the same.
+- The hub's range starts at the list's oldest message from Slack, not at a
+  local copy (a kept failed send), and an answer that starts the list over
+  takes back only the noted changes it holds or covers (keepLive).
+- A messages.list answer that leaves out a message it was asked for drops
+  the store's fetched copy in the same write (PutFetchedAsked): an older
+  copy drew the deleted message again past the floor.
+- Refetches by id go out in rounds, one at a time across every channel,
+  200 ms apart (Slack's UnknownFetchManager), so messages.list's own split
+  (ten channels a call, two at a time) bounds them; after a rate limit the
+  next try waits its Retry-After.
+- The badges' zero marks rows read in the page Activity holds, stamped
+  with the loads started by then: the answer of a load that went out after
+  it brings the server's state for the rows it lists, which wins, while
+  rows it doesn't list (older pages a refresh keeps) and the answer of a
+  load out when the zero came keep the mark. It's queued with the realtime entries, in socket order, once
+  however many come between draws. Without the inbox, Slack's rule over
+  counts and alerts (all present and 0) marks the rows the same way.
+- A thread tree from earlier props that projected away from what the row
+  sent with its revision (BetterBlock hiding a blocked person's reply)
+  keeps its projection until JS draws the new revision; a pass-through's
+  draws the new reply at once. Revisions are unique across rows, and a
+  fresh load keeps what each row sent its components, so a tree slackc
+  kept across the reset is judged right.
+- Past the floor, a rebuild describes undrawn rows from the copies
+  Activity holds; only drawing converts (unless the search filters on
+  text). A list's copy expiring (a row scrolled away) becomes the same lazy
+  store adoption, with no conversion and no page re-describe.
+- Read revisions are announced after SyncPins and SyncSubs, a new reply is
+  added and noted under one lock (AddReplyNoted), and History hands the
+  list the older page's kept copies as the window holds them.
+
+Merging msg-latency (each with the test that fails if it's dropped):
+
+- SetLatestSince and RefreshRange call `s.readWindowLocked(ch, out,
+  since)` once their merge has built `out`, before the window is
+  replaced: msg-latency's empty `mergedLocked(ch, out, since)` hook in
+  store/live.go is that place. store TestRefreshRangeRead (fails if
+  SetLatestSince lands without RefreshRange) and
+  TestWindowReadKeepsFetchedRevision (by reflection), core
+  TestWindowReadAnnouncesRevision and TestWindowReadKeepsReactions.
+- fetchLatest and fetchThread announce (`a.announceReads()`) after
+  SetLatestSince or SetThreadSince and after SyncPins and SyncSubs;
+  refreshOlder announces after each RefreshRange, before any return: core
+  TestReadsAnnounce (its list has PrependOlderAt and RefreshRange),
+  TestReadRevisionKeepsPinDuringRead.
+- History's older pages: PrependOlderAt (msg-latency's epoch and before
+  guard) runs liveKeepLocked and readWindowLocked over the page and
+  returns what it kept, and keeps nothing without a window (msg-latency's
+  rule wins over PrependOlderSince's); History hands the list those copies
+  as the window holds them, and in the gapView case runs the same live
+  merge without writing the window: core TestOlderPageRead checks the page
+  History returns.
+- The reaction handler keeps ApplyReactionNoted alone: msg-latency's
+  NoteLive after it auto-merges and must go (a live record makes a read
+  keep the held copy, older text and all): core
+  TestWindowReadKeepsPageRevisionWithReaction, TestOlderPageRead.
+- onMessageReplied keeps MutateNoted, message_changed keeps NoteMutate and
+  putChanged (msg-latency's events.go still calls putLocal there): core
+  TestThreadReadKeepsSocketWrites, TestChangedOldMessageStaysOutOfWindow.
+- hub.go: startPastGap first, then the inRange switch; covers is
+  msg-latency's oldestFromSlack rule already, and keepLive's covers check
+  applies after takeNewest: messages TestHubUpdateAfterLocalCopyAtTop,
+  TestHubKeepLiveAfterStartOver (both by hand; landNewest's order is
+  takeLive, takeNewest, keepLive).
+- SetLatestRead goes.
+
+Merging plugin-render-3: Event.Seq is the change table's position (update,
+delete and gone only); plugin-render-3's count of every event becomes
+Event.EmitSeq. emit returns the Event, emitIf returns (Event, bool) and
+stamps EmitSeq after its check, hub.apply passes ev.EmitSeq to upsert, and
+notePlace keeps the update's EmitSeq for keepLive's place upsert (never 0).
+core TestMessageChangeTable and the build guard it.
+
+Slack's Saved rows read `Ld` too (LaterItemRow), and its Threads viewSlack's Saved rows read `Ld` too (LaterItemRow), and its Threads view
+draws its threads with the thread pane's components over the same store.
+A deleted saved message draws Later's "no longer available", and a
+deleted reply leaves its card. Search results keep the search answer's
+body, as Slack's do: SearchResult draws the result's text and reads only
+its actions and reactions from the store.
+
+Left as is: a reaction that lands before a message's first fetch is
+replayed on the answer here, where Slack's slurpReactions would lose it.
+Clack still asks messages.list again for a message it holds only as a
+fetched copy, where Slack never fetches a message its store has; without
+the socket nothing else would bring the change.
+
+**Tests.** TestActivityLiveVoteCounts (native, patched with a text-preview
+vote, patched in lockstep, patched blocks, then a reload after an unheard
+change), TestActivityLiveVoteJSHeld, TestActivityLiveEditsJSHeld,
+TestActivityLiveThreadEditsJSHeld, TestActivityLiveMaskedWithInnerPatches,
+TestActivityLiveSlicePatchNoReconvert, TestActivityLiveRootVoteAfterGap,
+TestActivityLiveSearchIdle, TestActivityLiveFailedGroup,
+TestActivityLiveEvictedRefetch,
+TestActivityLiveVoteSlicePatch, TestActivityLiveVoteBesideThread (in step,
+then the pane closing), TestActivityLiveEdit (the edit, and the removals:
+an edited-out mention, @channel, @here, a tombstone, moderated,
+thread_hidden), TestActivityLiveDelete, TestActivityLiveMissingMessage,
+TestActivityLiveReaction, TestActivityLiveWindowEvicted,
+TestActivityLiveEntryWhileHidden, TestActivityLiveManyChangesHidden,
+TestActivityLiveRemovedDuringLoad, TestActivityLivePreview,
+TestActivityLiveRootRowsBesidePane, TestActivityLiveCopylessRefetch,
+TestActivityLiveThreadNewReplyJSHeld,
+TestActivityLiveMaskedThreadWithInnerPatches,
+TestActivityThreadLeavesWithItsDeletedReply,
+TestActivityThreadLeavesWhenItsReplyDropsTheMention,
+TestActivityBadgesZeroReadLocally, TestActivityBadgesZeroThenLoad,
+TestActivityBadgesZeroInSocketOrder, TestActivityBadgesZeroClassic,
+TestActivityLiveThreadProjectionJSHeld,
+TestActivityLiveThreadNewReplyFreshJSHeld,
+TestActivityFloorConvertsDrawnRows, TestThreadsLiveMessages,
+TestThreadsLiveVote, TestThreadsLiveBatch (older replies too),
+TestThreadsLiveEvictedRefetch, TestThreadsLiveFloor,
+TestSavedLiveMessages, TestSavedLiveBotUpdate and
+TestSavedLiveEvictedRefetch (views, fakeslack);
+TestHubUpdateOutsideLoadedHistory, TestHubUpdateAfterWholeEviction,
+TestHubUpdateDuringFirstLoad, TestHubUpdateAfterLocalCopyAtTop,
+TestHubKeepLiveAfterStartOver and TestHubReloadKeepsRangeAfterOldChange
+(messages);
+TestFetchedMessagesTakeSocketChanges, TestFetchedMessagesKeepReactions,
+TestFetchedMessagesBounded, TestFetchedReplayTruncatedUsers,
+TestApplyReactionLastListed, TestFetchedSizeAfterMutate,
+TestRefreshRangeRead and TestWindowReadKeepsFetchedRevision (store); TestMessageChangeTable,
+TestMessageChangeTableForgets, TestReactionReachesFetchedMessage,
+TestHydrateKeepsReactionsDuringFetch, TestMessageChangedRemoves,
+TestMentionsViewerRichKeywords, TestFetchedRootAnnounced,
+TestReadRevisionAnnounced, TestWindowReadKeepsReactions,
+TestOlderRepliesStored, TestRemovesNotTakenByReactions,
+TestWindowReadKeepsSocketRevision, TestWindowReadAnnouncesRevision,
+TestThreadReadKeepsSocketWrites, TestReadRevisionOrderedWithSocket,
+TestOlderPageRead, TestThreadsUnreadLeavesDeleted, TestReadsAnnounce,
+TestRefetchBatch, TestRefetchGone, TestRefetchBackoff,
+TestRefetchRetriesByItself, TestChangedOldMessageStaysOutOfWindow,
+TestHydrateDropsMissingFetched, TestReadRevisionKeepsPinDuringRead,
+TestWindowReadKeepsPageRevisionWithReaction and TestClassicBadgesZero
+(core).
+flake-check's activity-live-msg job runs them COUNT times, then three
+times under -race. TestIdleFrames has Activity on the views fixtures'
+feed with its search open and an item open beside it.
+
+## Canvas mentions (2026-11-18, branch `canvas-mention`)
+
+Karim (α.102): "kinda messed up on canvas pings". The Dense row's location read "🔒 :pet-i10: :pet-tyson-final:…", and a click "put me in a limbo esque channel where the canvas contents are messages??". Builds 2c0d02ca130f and 548618a2169f2a90, read from the public CDN chunks:
+
+- **What the item is.** An `at_user` entry whose message (subtype `document_mention`, `document_mention {file_id, section_id, mentioning_user_ids}`) sits in the canvas's hidden file channel: the file id with F swapped for C, `is_file`, private, named after the title with its :shortcodes:. A list has one too, holding its records' comment threads (a record's root carries `slack_list {list_id, list_record_id}`).
+- **Its destination, in every layout** (ActivityRowContentDense and -Detailed with `activity_entry_layout_revisions_2` off, ActivityRowContentSingleLine and -MultiLine with it on; all draw VeYL's destination): the file channel's InlineChannelEntity (X3qV). Its icon is getChannelIconType's file channel case (/HhV: `canvas` for a canvas, `lists` for a list, `file` while the file is unknown), and its name ChannelName's swap (g5tH: `renderQuipTitle` over the canvas's title_blocks at caption size, 13px with 16px emoji, `p-quip_title__blocks_simple` making mentions plain text). No lock, no shortcode. Clack: `chanent.Canvas` from the canvas's files.info (core `CanvasTitleOf`, the store's CanvasRef; a row waiting for it is described again when "names" brings the file id).
+- **Slack's two rules for a file channel** (`ui/canvas_open.go`, core `FileChannelKind`):
+  - **Direct navigations** go through RedirectFileChannel (client-boot AOkh `aW`, a navigation middleware over every container: Sidebar, Primary, Secondary, Split). It rewrites a Channel view of a file channel whose file is in the store (Tac1 `uz(getFileById)`). A Thread view (toThread) is never touched.
+
+    | Navigation | Canvas | List |
+    |---|---|---|
+    | toMessage (Activity's inbox click, LaterLabel's View to-dos, Later's menu's Open in Home and Open in split view, the split view's `c/<C>/m/<ts>`) | toQuipCommentThreadFromThreadIds: the thread view on the message (below) | toListRecordByThreadTs: the list at the record whose thread the message is |
+    | toChannel (the column, the split view, the main view's `c/<C>`) | toCanvas | toList |
+
+    Clack: the column's `OpenMessageSecondary` and `OpenChannelSecondary`, `OpenSplit`, and Navigate's plain `c/<C>` route (`redirectInstead`).
+  - **Jumps** are jumpToMessage (wc0P: a link, a search result, a notification's click on a reply, the persistent panel's click). They open in the container the click came from: getTargetContainer (client-boot jWzy) keeps a split-eligible view (Canvas, QuipCommentThread, List, ListRecordDetails) in the split view when the jump starts there. So from the split view a comment root's thread goes on the split view's back stack, and a canvas or a list goes in the side panel, Clack's split stand-in (`views.FileInSplit`, `jumpWhere`). The split modifier click on such a link is the same plain jump: openPermalinkInClient's "message" case doesn't pass shouldOpenInSplitView on. For a canvas (`isSpaceship`) it reads the message at the jump's thread, else at its message. A mention opens the canvas at its section (zsuR openDoc's focusSection). A comment root with replies opens the canvas with its comment thread beside it (`commentThreadId` → showQuipCommentThread; a root without replies opens just the canvas). Anything else opens just the canvas. For a list (`isList`) it opens the list at the record its thread's root names. A message the store doesn't hold is fetched first (fetchMessagesByIds, messages.list, reason `quip-root-comment-not-loaded`; the List view's `load-list-record-root-message`). Without it, nothing opens for a canvas, as in Slack, and the list opens without a record. Clack: Navigate's `c/<C>/m|t/<ts>` routes and `jumpToMessage` (`jumpInstead`). A list reply's own thread_ts names the record's thread (getThreadTsToOpen's isReply), so a link to it opens the record.
+  - **A notification's click** on a canvas's file channel message without a thread opens the canvas itself, unfocused: notificationClickedInVisitOrigin calls openDoc with no section before any jumpToMessage (boot-shared ~2073252). A reply's click is the jump above. A list's goes the jump's way too: openDoc there is the canvas viewer's.
+- **Later** (`views/later_beside.go`, `later_peek.go`, `later_menu.go`; client-boot 548 and boot-shared 1ea0c0b850226339).
+  - **Rows:** a To-dos or Saved row and the rail peek's row run jumpToSavedMessage (vh7T: openDocWithThreadTs for a document comment root, else jumpToMessage), a jump. For a file channel's message that's the canvas, at a mention's section or with a comment's thread, or the list at the record. It lands beside the list: getTargetContainer (jWzy) puts it in the Secondary on the Later tab, and from the Saved page under hq. Without hq it takes the page's place. The peek opens the To-dos tab first. Clack: `SavedJumper.JumpToSaved`.
+  - **The direct toMessages:** only LaterLabel's View to-dos (wRj5 R9) and the menu are direct, so they get the thread view. Open in Home (e6) is R9 toMessage with forceTab Home, a file channel's reply too: the Home tab with the thread view beside it, or the list at the record (`OpenSavedInHome`). Open in split view (ta) is openInSplitView of the message's R9: the thread view in the split view. For any other channel Open in Home now opens the conversation at the message (R9), and a reply's thread as before.
+- **The thread view on a mention.** Slack draws the ordinary threads flexpane (EpRl → W5jpp QuipCommentThreadView → qhQX QuipPopoutThread → A23K ThreadsFlexpane) on (file channel, mention ts): the title "Thread", the canvas as its subtitle, the mention as the highlighted root, its replies and the reply composer. "Thread for {title}" is only its aria label, single-column breadcrumb and child-window title (0wmm getLabelForQuipCommentThreadView). A document_mention root has no `document_comment.thread_id`, so this isn't a comment thread (n1tk isQuipCommentThread). Clack opens the thread pane on the mention, its root highlighted (`openFileThread`, and `openSplitFileThread` in the split view).
+- **A file channel's thread header** (A23K ThreadSubtitle → O+gL Header; `messages/thread_file.go`).
+  - **A canvas's file channel, its file known** (`canvasFileId`): ku69 SmallFileEntity with `useLeadingEmojiAsIcon`, no detail text and no emoji tooltips. That's the title's leading emoji as its icon (16px, c-emoji__small), else `canvas-content` at 1em of the subtitle's 13px (SvgIcon's size inherit) (a deleted canvas `trash`, one the viewer can't see `eye-closed`), in the 20px `c-file_entity__icon` box with 8px after it, then the title in bold 13px on a 20px line (`c-base_entity--small`, `c-file_entity__text`). It links to the canvas at the thread (getFilePermalink with `focus_thread_ts`) once the file is known, the root needn't be: Clack's `c/<C>/m/<root>` jump.
+  - **Any other file channel**: the channel entity with the file channel icon (`lists`, or `file` while the file is unknown), never a lock, and ChannelName's name with its emoji (FormatText, 16px).
+  - **When nothing is drawn**: hideChannelName hides the subtitle beside a canvas in Primary, for any thread: the full view, or the persistent panel's pane showing one (`PrimaryCanvas`). The split view never hides it.
+- **The click** (GMkG handleOnClickActivityItem).
+  - **In the inbox** (`activity_inbox_remove_persistent_detail_panel`) a mention dispatches toMessage (jpad R9) to the column: the thread view above. The row stays the opened one while the column shows it, including a view that opened late or the conversation a wait gave up on (`secondaryShows`, `followSecondary`).
+  - **A comment's items** keep their thread: a thread_v2 opens its comment thread (toQuipCommentThread) and an @-mention in a reply its thread (toThread), in the column as any thread does.
+  - **A reply in a list record's thread** whose root names its record (`slack_list`) opens the record with its thread, before any thread rule (GMkG's `el.C`, `defaultContentType: "thread"`; Clack: the record's item pane, `selListRecord`).
+  - **With the persistent detail panel** every other item jumps to its message, which opens the canvas (or the list at the record) in Primary while the inbox stays in the Sidebar. Clack draws it in the Activity view's own pane (`views.FileInPane`): the canvas at the mention's section or with the comment's thread beside it, or the list record's details (Slack's `itemDetailsInPrimary`). While the jump resolves, the pane keeps what it drew, as Slack's Primary does until openDoc runs (ActivityEmptyView for a first click). A thread_v2 opens its comment thread in the pane.
+- **The item menu** (ITY6 renderMenuPlaceholderItem): a file channel's items, a canvas's or a list's (`isCanvasRelated`, gxWy isFileChannelById: core `IsFileChannelID`), have neither Remind me about this (`remind_submenu: if(f||k)return[]`) nor Open in home (`open_in_home: if(!s||f||k)return[]`).
+- **The split view.** Open in split view and the ⌘⌥ row click open toThread, or toChannel without a thread, in the split view, with no isSpaceship check. There RedirectFileChannel turns toChannel into the canvas or the list, toMessage into the thread view, and leaves a Thread view alone. A navigation that waited for files.info ends in the split view it started in, on top of its back stack (`inSplitIf`).
+- **The file must be known.**
+  - **Slack doesn't wait.** Both rules read the file from Slack's store, which has it by then (the row's entity fetch, boot-render maybePrefetchCanvasFromNotification). With no file, the middleware mounts the conversation.
+  - **Clack waits.** Its store may not have files.info yet (canvas refs live in memory). Then a navigation waits for the "names" with the file id, at most `canvasWaitLimit` (4 s, Clack's own: a transport error brings none). After that it opens the conversation, as Slack would without the file, and as Clack does for a file that's gone or of another kind. A held message's own document_mention names its canvas before files.info.
+  - **What drops a wait.** Any navigation drops one still waiting: Navigate, Back and Forward, a view opened in the column, the split view and its back button, the column's back button, a canvas, list, record or comment thread opened, another Activity item, and the Activity item let go (a deselect, a tab switch). One that started in a split view closed since is dropped, never reopening it.
+  - **Errors are known files.** files.info's errors keep a known file, as fetchFileById's catch does (client-boot 548 20Mt), so nothing waits on it again:
+    - file_not_found, file_deleted: gone, the conversation.
+    - access_denied, not_visible: a hidden canvas or list by the error's filetype (not_visible's title too, make_not_visible), which the redirect and the jumps open.
+    - hidden_by_limit, a list's Slack Connect blocks: no canvas, the conversation.
+    - A canvas Slack Connect blocks (slack_connect_team_blocked, slack_connect_canvas_sharing_blocked): a jump opens it (isBlockedExternalCanvas), the redirect doesn't (fileIsCanvas).
+  - **One file store.** The sidebar's own files.info answer goes in the same store (Slack's one store), so a row's click doesn't ask again.
+- **A file channel's entity everywhere** (core InlineChannel's Doc and Spans, chanent.Of): Activity's rows, the Threads view's card headers, the channel entities. It's getChannelIconType's file channel case (the canvas icon and title, the lists icon, `file` while the file is unknown; archived first) and ChannelName's emoji, never a private channel's lock.
+- **The sidebar.** A file channel's document row opens its document (core sidebar_docs.go). A canvas that stays a private channel row (`lists_pin_to_sidebar` without `programmable_sidebar`) opens the canvas too once its file is known: the row's toChannel goes through RedirectFileChannel.
+- **Divergences from Slack** (Karim's α.102 report: "kinda messed up on canvas pings", then "it put me in a limbo esque channel where the canvas contents are messages??"; Clack showed the file channel's messages, which Slack never shows once it has the file): the split view's canvas and list (toChannel there, and a list's toMessage) go in the side panel, because Clack's split view holds conversations only. Slack shows them in the split view.
+- **Known differences.**
+  - **Lists.** A list record's details are Clack's item pane in the side panel. Slack's jump puts them in Primary (`itemDetailsInPrimary`), so Clack opens the list's full view with the item pane beside it. Neither the item pane nor the list highlights the reply (`highlightTs`). A record whose root can't be had opens the list alone.
+  - **Comments.** A comment's jump doesn't scroll the canvas to the commented section (openDoc's `scroll_to_section`: Clack's canvas document has no comment anchors), and the comment thread doesn't highlight the reply (`replyTs`).
+  - **The header.** A thread share file's thread (fileIsThreadShare) still names its file: Clack's files.info read doesn't keep that flag.
+  - **Later.** Open in Home on a reply in a file channel opens the thread at its root with the reply highlighted; Slack's QuipCommentThread is keyed on the reply's own ts.
+  - **Slack Connect blocks.** Clack maps only the four Slack Connect error codes the bundle spells out; IqFK lists three more canvas codes (globally disabled, disabled for the user's or the file's team) by enum name only, and those still count as a failed lookup.
+  - **Joining.** Clack doesn't join the viewer to the file channel first (lFpV's `s.ND`).
+- **Tests.**
+  - **views:** `TestActivityCanvasMentionRow` (Dense and Detailed, revisions_2 on and off, native and under a pass-through ActivityItem patch; the drawn canvas icon and the emoji drawn at 16px through `iconDrawn` / `emojiDrawn`, and in the shots run its pixels), `-RowLateFilesInfo`, `-ClickInbox` (toMessage, the row following the thread view), `-ClickPersistent`, `-TitleSpans`, `TestActivityCanvasItemMenu` (a list's item too), `TestActivityCanvasCommentItems`, `TestActivityCanvasTitleHiddenEmoji`, `TestActivityFileItemFollowsLateView`, `TestActivityListCommentOpensRecord` (the row's lists icon too), `TestLaterFileChannelRowsJumpLikeSlack`, `TestLaterFileChannelMenuLikeSlack`, `TestThreadsFileChannelCardsLikeSlack`.
+  - **ui:** `TestActivityCanvasMentionOpensThread` (the thread view, its root highlighted, the canvas as its subtitle, whose click opens the canvas at the mention's section), `TestActivityCanvasMentionThreadCloses`, `TestCanvasMentionMessageOpensThread` (LaterLabel, Open in Home, the split view), `TestLaterRowOpensSavedCanvasMention`, `TestFileChannelThreadHeader`, `TestFileChannelThreadHeaderLeadingEmoji`, `TestCommentThreadBesidePaneCanvas`, `TestListFileChannelOpensList` (a reply's link too), `TestFileLinkInSplitStaysInSplit`, `TestSplitFileWaitKeepsBackStack`, `TestNotificationOpensCanvasUnfocused`, `TestNavigationWaitDropped`, `TestHiddenFilesDontWait`, `TestFileChannelOpeners`, `TestActivityPaneKeepsViewWhileJumpResolves`, `TestActivityPaneJumpDropped`, `TestActivityPaneKeepsListWhileJumpWaits`, `TestActivityCanvasMentionPersistentPane`, `TestActivityCanvasCommentClicks`, `TestCanvasMentionMessageJumpOpensCanvas`, `TestCanvasMentionSplitClickOpensCanvas`, `TestCanvasCommentSplitOpensThread`, `TestCanvasJumpWaitsForFilesInfo`, `TestCanvasJumpWaitEnds`, `TestCanvasJumpFetchFailureOpensNothing`, `TestCanvasJumpDroppedByAnotherOpen`, `TestCanvasCommentJumpOpensCanvas`, `TestSidebarDocsListsPinOnly`, `TestCanvasTabTitleEmojiLate` (with a leading emoji), `TestResolveEmojiKeepsHiddenEmoji`.
+  - **Other packages:** popups `TestSearchCanvasTitleEmojiLate`; canvasview `TestHeaderTitleEmojiLate` (section focus: `canvasview.Focus`); core `TestCanvasJumpOf`, `TestCanvasOfJumpAndCanvasJump`, `TestFileChannelKind`.
+  - **Fixtures:** fakeslack `AddCanvasMention` (a canvas long enough that the mention sits below the fold), `AddCanvasCommentActivity` and `AddListCommentActivity`.
+  - **Shots (activity-shots):** `activity-canvas-mention-*` (views, drawn with the fake's pictures: the harness's own host has no image cache; the title's emoji is a solid magenta fixture image), `shell-canvas-mention-thread-light.png` (the thread view beside the inbox) and `shell-canvas-mention-pane-light.png` (the persistent panel's pane, scrolled to the mention).
 
 ## Not done
 

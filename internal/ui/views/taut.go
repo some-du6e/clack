@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/taut"
 )
 
@@ -38,6 +39,7 @@ type memoEntry struct {
 	mem taut.MemberFields
 	ch  taut.ChannelFields
 	msg core.Message
+	src bool // viewMsg: draw core's copy, JS's not yet of its revision
 }
 
 func (b *base) memo(key string) (*memoEntry, bool) {
@@ -116,14 +118,118 @@ func (b *base) viewMsg(m *core.Message) *core.Message {
 	if m == nil || !b.tt.SlicePatched("messages") || m.TS == "" {
 		return m
 	}
-	e, hit := b.memo("m:" + m.Channel + "/" + m.TS)
+	key := m.Channel + "/" + m.TS
+	e, hit := b.memo("m:" + key)
 	if !hit {
-		e.msg, e.ok = b.tt.MessageView(m.Channel, m.TS)
+		fresh := false
+		if b.vsrc == nil || len(b.vsrc) > 4000 {
+			b.vsrc, b.vneed = map[string]viewRev{}, map[string]uint64{}
+			b.vready, b.vconv, b.vdiff = map[string]viewRev{}, map[string]uint64{}, map[string]bool{}
+			b.vheld, b.vwake = map[string]time.Time{}, map[string]bool{}
+		}
+		cur := viewRevOf(m)
+		if rev := cur; b.vsrc[key] != rev {
+			// a new revision of the message: its view is converted again
+			// now, as the message lists' rows have it (applyView's
+			// MessageViewConv fresh), and the view follows the plugins'
+			// slice as theirs do. Told by what the copy says, not where it
+			// is: a row hands over a fresh copy every frame (authorOf's
+			// override, a root's), which converted the plugins' message
+			// in every frame.
+			b.vsrc[key] = rev
+			fresh = true
+			b.vheld[key] = time.Now()
+			delete(b.vwake, key)
+			if c := b.h.Core(); c != nil {
+				b.vneed[key] = c.EmitSeq() // the event that brought it is no later
+			}
+		}
+		var ready bool
+		var conv uint64
+		e.msg, conv, ready, e.ok = b.tt.MessageViewState(m.Channel, m.TS, fresh, b.vneed[key])
+		// its reactions are core's, not the view's: Slack draws them from
+		// the reactions store by the message's reaction key, never from
+		// the messages slice (messages.applyView)
+		e.msg.Reactions = m.Reactions
+		e.src = false
+		answered, seen := b.vready[key]
+		switch {
+		case !e.ok:
+		case ready:
+			b.vready[key] = cur
+			if b.vconv[key] != conv {
+				b.vconv[key] = conv
+				b.vdiff[key] = !viewDraws(&e.msg, m)
+				if e.msg.Text != m.Text {
+					b.tt.NoteTextRewrite() // the plugins rewrite text (messages.applyView)
+				}
+			}
+		case !seen || answered == cur:
+			// a view JS gave for this very revision (a reaction, a reply
+			// count or a sweep marked the message since: not ready, but
+			// nothing it draws moved), or the one it had when the message
+			// first showed: the view stands, the plugins' rewrite with it
+		case b.vdiff[key]:
+			// a revision JS hasn't answered for, an edit, of a message a
+			// plugin rewrites: its view stands while JS answers, however
+			// long, as a viewed row's does (messages.applyView): what it
+			// masks never shows, a rewritten author never flashes back
+		case b.tt.TextRewrites():
+			// one the plugins left alone, under plugins that rewrite text
+			// (one rewrote a message's text: an edit may bring what they
+			// mask into it, which Slack's patched selector draws masked in
+			// the render after the edit): the view of the revision before
+			// stands while JS answers, at most taut.EditHold; then core's
+			// copy of the edit
+			held := time.Since(b.vheld[key])
+			switch {
+			case held >= taut.EditHold:
+				e.src = true
+			case !b.vwake[key]:
+				b.vwake[key] = true
+				time.AfterFunc(taut.EditHold-held, b.h.Invalidate) // the hold's end draws core's copy if JS hasn't answered
+			}
+		default:
+			// a revision JS hasn't answered for of a message the plugins
+			// leave as it is, under plugins that rewrite no text (a
+			// pass-through patch, ShowRealUser's sender): core's new copy
+			// until JS's is of it, as the message lists' rows draw their new
+			// source (applyView's viewWait), in the frame after the edit as
+			// Slack's Activity row reads the live message
+			e.src = true
+		}
 	}
-	if !e.ok {
+	if !e.ok || e.src {
 		return m
 	}
 	return &e.msg
+}
+
+// viewDraws reports whether a view of a message draws as core's copy does
+// in the views: its text and its doc's (blocks, attachments), its sender
+// (a relay bot's post a plugin credits to the member, ShowRealUser's
+// sentBy), its edit and its replies (messages.applyView's sameView and
+// Doc compare).
+func viewDraws(v, src *core.Message) bool {
+	return v.Text == src.Text && v.User == src.User && v.BotID == src.BotID && v.Username == src.Username &&
+		v.Name == src.Name && v.Avatar == src.Avatar && v.EditedTS == src.EditedTS &&
+		v.ReplyCount == src.ReplyCount && v.LatestReply == src.LatestReply &&
+		richtext.PlainText(v.Doc) == richtext.PlainText(src.Doc)
+}
+
+// viewRev is what tells one revision of a message from another for its
+// plugins' view (viewMsg): its text, edit, blocks and attachments, the
+// slices by their first bytes (a copy of a copy shares them; a new
+// revision brings new ones).
+type viewRev struct {
+	text, edited string
+	blocks, atts *byte
+	nb, na       int
+}
+
+func viewRevOf(m *core.Message) viewRev {
+	return viewRev{text: m.Text, edited: m.EditedTS, blocks: firstByte(m.Blocks), atts: firstByte(m.Attachments),
+		nb: len(m.Blocks), na: len(m.Attachments)}
 }
 
 // viewsPatched reports whether plugins patch any slice the views draw

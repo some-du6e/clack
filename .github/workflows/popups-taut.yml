@@ -28,9 +28,17 @@ env:
 permissions:
   contents: read
 
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
+# A dispatch with other inputs gets its own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
 jobs:
   popups-taut:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (2.4 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -73,4 +81,4 @@ jobs:
       - name: popups Taut tests
         env:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
-        run: go test -count=1 -timeout 10m -v -run 'TestTaut' ./internal/ui/popups/
+        run: go test -count=1 -timeout 9m -v -run 'TestTaut' ./internal/ui/popups/

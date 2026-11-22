@@ -117,6 +117,20 @@ func activityAgentEntry() map[string]any {
 			"payload": map[string]any{"dm_entry": map[string]any{"latest_message": map[string]any{"ts": ActivityAgentTS, "channel": ActivityAgentDM}}}}}}
 }
 
+// AddActivityMention puts an unread at_user entry key about ch's message
+// ts by user at the top of the feed (newest first, newer than the
+// fixture's): post the message first (PostQuiet) so messages.list
+// answers it. activity_invalidated makes a client read the feed again.
+func (s *Server) AddActivityMention(key, ch, ts, user string) {
+	v := s.views()
+	v.mu.Lock()
+	st := v.act()
+	st.extra = append([]map[string]any{{"key": key, "feed_ts": ts, "is_unread": true, "is_bot": false,
+		"item": map[string]any{"type": "at_user", "message": map[string]any{"ts": ts, "channel": ch, "author_user_id": user}}}}, st.extra...)
+	sort.SliceStable(st.extra, func(i, j int) bool { return st.extra[i]["feed_ts"].(string) > st.extra[j]["feed_ts"].(string) })
+	v.mu.Unlock()
+}
+
 // SetActivityAgentActions puts the agent entry (fa-agent) at the top of
 // the feed.
 func (s *Server) SetActivityAgentActions(on bool) {
@@ -218,6 +232,12 @@ type activityState struct {
 	inviteIDs bool            // external invites' item.invite is the id string (SetActivityInviteIDs)
 	bulk      int             // extra unread mentions, and a paged feed (SetActivityBulk)
 	agent     bool            // the agent entry first (SetActivityAgentActions)
+	// extra are entries a test added (AddCanvasMention), which
+	// activity.feed answers with the fixture's (newest feed_ts first);
+	// extraMsgs the messages messages.list answers for them
+	extra     []map[string]any
+	extraMsgs []slack.Message
+	live      []map[string]any // UpsertActivity's entries, one per key (activity_live.go)
 
 	// the channel invite's accept: the eligibility answer a test set (nil:
 	// eligible), the name and privacy it was accepted with, and whether
@@ -352,10 +372,14 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		if st.agent {
 			entries = append([]map[string]any{activityAgentEntry()}, entries...)
 		}
+		if len(st.extra) > 0 {
+			entries = append(append([]map[string]any(nil), st.extra...), entries...)
+		}
 		bulk := st.bulk
 		if bulk > 0 {
 			entries = append(entries, activityBulk(bulk)...)
 		}
+		entries = activityWithLive(entries, st.live) // activity_live.go: newest first
 		for _, e := range entries {
 			key := e["key"].(string)
 			typ := e["item"].(map[string]any)["type"].(string)
@@ -389,6 +413,11 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			items = append(items, e)
 		}
 		v.mu.Unlock()
+		if f.Get("mode") == "priority_unreads_first_v1" {
+			// the VIP sort: the unread entries from a VIP first, each
+			// part newest first (activity_live.go activityVIPFirst)
+			sort.SliceStable(items, func(i, j int) bool { return activityVIPFirst(items[i]) && !activityVIPFirst(items[j]) })
+		}
 		next := ""
 		if bulk > 0 {
 			// pages of limit, the cursor an offset
@@ -414,10 +443,24 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			return nil, false
 		}
 		out := map[string][]slack.Message{}
+		v.mu.Lock()
+		msgs := append(append([]slack.Message(nil), activityMsgs...), v.act().extraMsgs...)
+		v.mu.Unlock()
 		for _, w := range want {
 			for _, ts := range w.Timestamps {
-				for _, m := range activityMsgs {
+				found := false
+				for _, m := range msgs {
 					if m.Channel == w.Channel && m.TS == ts {
+						out[w.Channel] = append(out[w.Channel], m)
+						found = true
+					}
+				}
+				if !found { // a canvas's comment (a jump's root, a thread_v2's messages), a list record's, else any message of the fake's, by ts, as Slack's: a live reply's too
+					if m, ok := s.commentAt(w.Channel, ts); ok {
+						out[w.Channel] = append(out[w.Channel], m)
+					} else if m, ok := s.listCommentAt(w.Channel, ts); ok { // a list record's thread
+						out[w.Channel] = append(out[w.Channel], m)
+					} else if m, ok := s.messageByTS(w.Channel, ts); ok {
 						out[w.Channel] = append(out[w.Channel], m)
 					}
 				}

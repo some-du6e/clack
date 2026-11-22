@@ -49,12 +49,72 @@ import (
 
 // honestFetch makes plugin and account requests to Slack say they are
 // Clack, like every other request Clack makes there: no browser User-Agent,
-// client hints, Origin or Referer, whatever a plugin set.
+// client hints, Origin or Referer, whatever a plugin set. Plugins are
+// trusted code (docs/SECURITY.md P-13) and may load Slack's pages with a
+// cookie they set, except the ones that end the session: a request with a
+// Cookie or Authorization header to a Slack host is refused before it is
+// sent when its path is the sign-out redirect page (slack.BannedPage) or a
+// Web API method that signs you out (slack.SignOutURL), however the path
+// is encoded. Redirect hops are fetchRedirect's.
 func honestFetch(fetch func(context.Context, *http.Request) (*http.Response, error)) func(context.Context, *http.Request) (*http.Response, error) {
 	return func(ctx context.Context, req *http.Request) (*http.Response, error) {
+		if endsSession(req) {
+			return nil, errEndsSession
+		}
 		honestToSlack(req)
 		return fetch(ctx, req)
 	}
+}
+
+var errEndsSession = errors.New("taut: refusing to send Slack credentials to a page or method that ends the session")
+
+// endsSession reports whether req carries credentials (a Cookie or
+// Authorization header) to a Slack host's sign-out page or method.
+func endsSession(req *http.Request) bool {
+	if req == nil || req.URL == nil || (req.Header.Get("Cookie") == "" && req.Header.Get("Authorization") == "") {
+		return false
+	}
+	return slack.CookieHost(req.URL.Hostname()) && (slack.BannedPage(req.URL) || slack.SignOutURL(req.URL))
+}
+
+// fetchRedirect is the default fetch client's redirect policy. Go copies a
+// hand-set Cookie or Authorization header (checkAuth's d cookie, a
+// plugin's own) to a hop whose host name is the same or a subdomain,
+// whatever its scheme, port or userinfo, and turns a POST into a GET on
+// 301-303. So a hop that would carry them to a Slack host keeps them only
+// as slack.Client's own redirects do (credentialedHop): an https URL on
+// the default port, and a file path for a GET, another Web API method or
+// the same path for a 307 or 308 that keeps a POST. Any other such hop (a
+// page such as /ssb/redirect, whose load with the cookie can end the
+// session; plain http; another port; userinfo) has them removed and isn't
+// followed. A hop to a host that isn't Slack's keeps what Go copied.
+func fetchRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if (req.Header.Get("Cookie") != "" || req.Header.Get("Authorization") != "") &&
+		slack.CookieHost(req.URL.Hostname()) && !credentialedHop(req, via) {
+		req.Header.Del("Cookie")
+		req.Header.Del("Authorization")
+		return errors.New("taut: refusing to follow a redirect to a Slack page with credentials")
+	}
+	honestToSlack(req) // a hop onto Slack carries the hop's copied headers
+	return nil
+}
+
+// credentialedHop is slack.Client.checkRedirect's rule for a hop that
+// keeps the cookie: https on the default port (slack.CookieURL), then a
+// file path for a GET (slack.FileURL), or for any other method an
+// endpoint (slack.EndpointHop: a Web API method or the first request's
+// path).
+func credentialedHop(req *http.Request, via []*http.Request) bool {
+	if !slack.CookieURL(req.URL.String()) {
+		return false
+	}
+	if req.Method == "" || req.Method == http.MethodGet {
+		return slack.FileURL(req.URL)
+	}
+	return slack.EndpointHop(req.URL, via)
 }
 
 // honestToSlack gives a request to one of Slack's hosts Clack's own
@@ -104,11 +164,17 @@ type Options struct {
 	LifecycleTimeout time.Duration
 	// NoAutoStart keeps New from starting enabled plugins (tests).
 	NoAutoStart bool
+	// DeferStart: New does everything but start the enabled plugins (and
+	// so the JS engine): Start does, later. The user CSS is installed by
+	// New either way (the UI's launch shows it from its first frame and
+	// starts the plugins after it, internal/ui/backend.go).
+	DeferStart bool
 }
 
 // Taut is the plugin system. All methods are safe for concurrent use.
 type Taut struct {
 	startDone chan struct{} // closed when the start-up StartEnabled returned (StartDone)
+	startOnce sync.Once     // Start's (and Close's, for a Taut never started)
 	opts      Options
 	app       *core.App
 	dir       string
@@ -160,13 +226,7 @@ func New(o Options) (*Taut, error) {
 		o.LifecycleTimeout = 5 * time.Second
 	}
 	if o.Fetch == nil {
-		client := &http.Client{Transport: tlsfp.Mixed, Timeout: 60 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("stopped after 10 redirects")
-			}
-			honestToSlack(req) // a hop onto Slack carries the hop's copied headers
-			return nil
-		}}
+		client := &http.Client{Transport: tlsfp.Mixed, Timeout: 60 * time.Second, CheckRedirect: fetchRedirect}
 		o.Fetch = func(ctx context.Context, req *http.Request) (*http.Response, error) {
 			return client.Do(req.WithContext(ctx))
 		}
@@ -204,20 +264,38 @@ func New(o Options) (*Taut, error) {
 		o.UI.SetStyle("user", t.userCSS)
 	}
 	t.stopWatch = make(chan struct{})
-	if !o.NoAutoStart {
+	switch {
+	case o.NoAutoStart:
+		t.startOnce.Do(func() { close(t.startDone) })
+	case o.DeferStart: // Start, later
+	default:
+		t.Start()
+	}
+	return t, nil
+}
+
+// Start starts the plugins enabled at start in the background and
+// watches the plugin folder (once). New calls it unless
+// Options.NoAutoStart or DeferStart; StartDone closes when they started.
+func (t *Taut) Start() {
+	t.startOnce.Do(func() {
+		if t.closed.Load() {
+			close(t.startDone)
+			return
+		}
 		go func() {
 			t0 := time.Now()
 			t.StartEnabled(context.Background())
 			applog.Mark("taut-started", fmt.Sprintf("%d running, in %s", t.running.Load(), time.Since(t0).Round(time.Millisecond)))
 			close(t.startDone)
 		}()
-		if len(t.plugins) > 0 {
+		t.mu.Lock()
+		has := len(t.plugins) > 0
+		t.mu.Unlock()
+		if has {
 			t.startWatch()
 		}
-	} else {
-		close(t.startDone)
-	}
-	return t, nil
+	})
 }
 
 // StartDone is closed once the plugins enabled at start have started (or
@@ -230,6 +308,7 @@ func (t *Taut) Close() error {
 	if !t.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	t.startOnce.Do(func() { close(t.startDone) }) // never started (DeferStart): nothing waits for it
 	ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 	defer cancel()
 	t.mu.Lock()

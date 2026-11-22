@@ -230,6 +230,19 @@ func (c *Custom) Set(m map[string]string) {
 	c.mu.Unlock()
 }
 
+// SetIfEmpty installs m only while the map is empty (nothing loaded yet)
+// and reports whether it did: a fuller map installed meanwhile stays.
+func (c *Custom) SetIfEmpty(m map[string]string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.m) > 0 {
+		return false
+	}
+	c.m = m
+	c.ver++
+	return true
+}
+
 func (c *Custom) clone(extra int) map[string]string {
 	n := make(map[string]string, len(c.m)+extra)
 	for k, v := range c.m {
@@ -270,6 +283,22 @@ func (c *Custom) Snapshot() map[string]string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.m
+}
+
+// AliasChain is the names an alias name resolves through (its target,
+// the target's target…, as Resolve follows them), nil for one that isn't
+// an alias.
+func (c *Custom) AliasChain(name string) []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	var out []string
+	v, has := c.m[name]
+	for i := 0; has && strings.HasPrefix(v, "alias:") && i < 5; i++ {
+		target := strings.TrimPrefix(v, "alias:")
+		out = append(out, target)
+		v, has = c.m[target]
+	}
+	return out
 }
 
 // Resolve returns an image URL (custom or standard) and unicode text for name.

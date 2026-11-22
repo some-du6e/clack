@@ -125,7 +125,7 @@ func newBKEnv(t *testing.T, dark bool, shots bool) *bkEnv {
 	}
 	// element hosts are cached per message across hosts; start clean
 	msgsMu.Lock()
-	msgs, order = map[string]*Message{}, nil
+	msgs, cur, revs = map[string]*Message{}, map[string]string{}, map[string][]string{}
 	msgsMu.Unlock()
 	h := &bkHost{a: a, th: theme.New(dark)}
 	h.img = imgcache.New(func(ctx context.Context, u string) ([]byte, error) {
@@ -233,7 +233,7 @@ func (e *bkEnv) layoutMessage(gtx layout.Context) []slotRect {
 	cl := colorsOf(th)
 	var out []slotRect
 	y := e.origin.Y
-	for _, b := range m.Doc.Blocks {
+	for _, b := range flatBlocks(m.Doc.Blocks) {
 		text := plainOf(b)
 		if len(b.Buttons) == 0 {
 			if text != "" {
@@ -262,6 +262,26 @@ func (e *bkEnv) layoutMessage(gtx layout.Context) []slotRect {
 		at(gtx, p, func(gtx C) D { return me.LayoutElements(fixed(gtx, sz), b.Buttons[:1], true) })
 		out = append(out, slotRect{b.Buttons[0].BlockID, p})
 		y += max(sz.Y, 22) + 12
+	}
+	return out
+}
+
+// flatBlocks is bs with a container's or a callout's children after it,
+// the blocks richview draws inside them, a card's buttons as a run, and
+// an attachment's blocks.
+func flatBlocks(bs []richtext.Block) []richtext.Block {
+	var out []richtext.Block
+	for _, b := range bs {
+		out = append(out, b)
+		if b.Kind == richtext.ContainerBlock || b.Kind == richtext.CalloutBlock {
+			out = append(out, flatBlocks(b.Children)...)
+		}
+		if cb := cardButtons(b); len(cb) > 0 {
+			out = append(out, richtext.Block{Kind: richtext.Actions, Buttons: cb})
+		}
+		if b.Kind == richtext.AttachmentBlock && b.Att != nil { // an attachment's blocks
+			out = append(out, flatBlocks(b.Att.Text)...)
+		}
 	}
 	return out
 }
@@ -884,12 +904,80 @@ func TestGalleryElementPayloads(t *testing.T) {
 	if len(me.errs) == 0 {
 		t.Fatal("expected the earlier error on the buttons message")
 	}
-	m := e.msgs["buttons"]
+	orig := e.msgs["buttons"]
+	m := orig
 	m.Blocks = json.RawMessage(strings.Replace(string(m.Blocks), "Default", "Done", 1))
 	e.msgs["buttons"] = m
+	// the new blocks' host (one per blocks: a row still drawing the old
+	// ones keeps theirs) starts idle
 	me2 := e.message()
-	if me2 != me || len(me2.errs) != 0 || len(me2.busy) != 0 {
+	if me2 == nil || len(me2.errs) != 0 || len(me2.busy) != 0 {
 		t.Errorf("replaced message kept errors %v", me2.errs)
+	}
+	if me2 == me {
+		t.Error("the replaced message's blocks share the old blocks' host")
+	}
+	if len(me.errs) == 0 {
+		t.Error("the old blocks' host, which a row may still draw, lost its state to the replacement")
+	}
+
+	// and the app puts the old blocks back: Slack's resetKey moved again,
+	// so they start over too (idle, their initial values), whatever their
+	// host held when the message last had them
+	e.frame()
+	e.frame() // the replacement drawn, the old blocks not
+	e.msgs["buttons"] = orig
+	back := e.message()
+	e.frame()
+	if len(back.errs) != 0 || len(back.busy) != 0 {
+		t.Errorf("the old blocks back, the message draws their errors %v and busy %v from before the replacement", back.errs, back.busy)
+	}
+	// a select's value
+	e.show("selects")
+	sel := e.msgs["selects"]
+	fresh := &Message{h: e.h}
+	fresh.setMessage(&sel, blocksSig(&sel))
+	if picked := e.message(); reflect.DeepEqual(picked.vals, fresh.vals) {
+		t.Fatal("the selects message holds its initial values: nothing to start over from")
+	}
+	repl := sel
+	repl.Blocks = json.RawMessage(strings.Replace(string(sel.Blocks), "Choose a fruit", "Pick a fruit", 1))
+	if string(repl.Blocks) == string(sel.Blocks) {
+		t.Fatal("the selects message has no placeholder to replace")
+	}
+	e.msgs["selects"] = repl
+	e.frame()
+	e.frame()
+	e.msgs["selects"] = sel
+	back = e.message()
+	e.frame()
+	if !reflect.DeepEqual(back.vals, fresh.vals) {
+		t.Error("the old blocks back, the selects draw the values picked before the replacement, not their initial ones")
+	}
+}
+
+// A host a row draws frame after frame stays the message's host however
+// many hosts other messages' blocks make (a busy vote message makes one
+// per vote): evicted by creation order, it went while drawn, the next
+// lookup made another, and its state (an error, a spinner, a picked
+// value) went with it.
+func TestDrawnHostOutlivesNewerHosts(t *testing.T) {
+	e := newBKEnv(t, false, false)
+	me := e.show("buttons")
+	me.errs["bk_buttons"] = "kept"
+	for i := 0; i < 500; i++ {
+		m := core.Message{Channel: fakeslack.GalleryChannelID, TS: fmt.Sprintf("1790000000.%06d", i),
+			Blocks: json.RawMessage(fmt.Sprintf(`[{"type":"actions","block_id":"vote","elements":[{"type":"button","action_id":"up","text":{"type":"plain_text","text":"%d"}}]}]`, i))}
+		if MessageElements(e.h, &m) == nil {
+			t.Fatal("a vote message isn't interactive")
+		}
+		if i%10 == 0 {
+			e.frame()
+		}
+	}
+	e.frame()
+	if got := e.message(); got != me || got.errs["bk_buttons"] != "kept" {
+		t.Error("the host the list draws every frame was evicted by newer hosts: its next lookup made another, its state gone")
 	}
 }
 

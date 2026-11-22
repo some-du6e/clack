@@ -1,8 +1,10 @@
 name: ch-header
 # The channel header's topic Edit link and "Edit topic" dialog, the bell's
 # per-setting icon and the bell menu's Advanced settings modal (Slack's
-# ChannelNotificationsPrefsModal), rendered headlessly at 1440x900 against
-# internal/fakeslack, with the pref writes checked there. Synthetic only:
+# ChannelNotificationsPrefsModal), and the topic / description inputs'
+# mentions (TestTopicEditMentions, TestTextyMrkdwnSlackOracle), rendered
+# headlessly at 1440x900 against internal/fakeslack, with the pref writes
+# checked there. Synthetic only:
 # nothing here talks to Slack.
 on:
   push:
@@ -14,6 +16,17 @@ on:
       - "internal/ui/popups/notify_menu.go"
       - "internal/ui/popups/channel_notify_modal.go"
       - "internal/ui/popups/topic_dialog.go"
+      - "internal/ui/topic_mentions_test.go"
+      - "internal/ui/composer/texty_*.go"
+      - "internal/ui/composer/editor_keys.go"
+      - "internal/ui/composer/editor.go"
+      - "internal/ui/composer/paste.go"
+      - "internal/ui/composer/chrome.go"
+      - "internal/ui/composer/texty_tip.go"
+      - "internal/ui/composer/group_tip.go"
+      - "internal/ui/composer/emoticon.go"
+      - "internal/ui/views/details.go"
+      - "internal/fakeslack/fakeslack.go"
       - "internal/core/manage.go"
       - "internal/store/store.go"
       - "internal/fakeslack/sections.go"
@@ -26,9 +39,16 @@ env:
 permissions:
   contents: read
 
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ch-header:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (3.1 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -45,7 +65,9 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestChannelNotifyAdvancedSettings$|TestHeaderBellIcon$|TestHeaderTopicEdit$|TestChannelBellMenu$|TestChannelTopicEditModal$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelNotifyAdvancedSettings$|TestHeaderBellIcon$|TestHeaderTopicEdit$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestTopicEditMentions$|TestEditDescriptionTooLong$' ./internal/ui/
+      - name: topic and description text (Slack's oracle cases)
+        run: go test -count=1 -v -run 'TestTextyMrkdwnSlackOracle$|TestTextyLinksSlackOracle$|TestTexty(PasteURLOverSelection|UndoWhenEmpty|Keys|OverLimit|PillCutPaste|FiveLines|PasteLimitDialog)$' ./internal/ui/composer/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

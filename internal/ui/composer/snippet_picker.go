@@ -57,8 +57,9 @@ type convPicker struct {
 	due    time.Time
 	done   bool
 	focus  bool
-	block  int // the card's pointer shield tag
-	bg     int // the outside-click tag
+	block  int             // the card's pointer shield tag
+	rect   image.Rectangle // the card as last laid out (Rect)
+	bg     int             // the outside-click tag
 }
 
 func (p *convPicker) Dismissed() bool { return p.done }
@@ -173,6 +174,9 @@ func (p *convPicker) pick(i int) {
 	p.d.h.Invalidate()
 }
 
+// Rect is the card as last laid out (window coords).
+func (p *convPicker) Rect() image.Rectangle { return p.rect }
+
 func (p *convPicker) Layout(gtx layout.Context) layout.Dimensions {
 	if p.done {
 		return layout.Dimensions{}
@@ -264,6 +268,7 @@ func (p *convPicker) Layout(gtx layout.Context) layout.Dimensions {
 		y = p.anchor.Max.Y + gtx.Dp(4)
 	}
 	r := image.Rect(x, y, x+w, y+h)
+	p.rect = r
 	rad := gtx.Dp(6)
 	popups.CardRing(gtx, r, rad, cl.Ring, th.C.Bg) // a box-shadow spread
 	fillRRect(gtx, r, rad, th.C.Bg)

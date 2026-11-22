@@ -95,3 +95,17 @@ func (s *Server) edgeChannelsInfo(ids map[string]int) any {
 	}
 	return ok("results", res, "failed_ids", failed)
 }
+
+// genericInfo is conversations.genericInfo {updated_channels: {id: ts}},
+// Slack's fallback for the ids flannel's channels/info fails
+// (fetchRawChannelsFromAPI): the channels the viewer can see, as edge
+// channels/info answers; the rest are left out.
+func (s *Server) genericInfo(ids map[string]int) any {
+	res := []slack.Conversation{}
+	for id := range ids {
+		if c, ok := s.conv(id); ok && (!c.IsPrivate || c.IsMember) {
+			res = append(res, c)
+		}
+	}
+	return ok("channels", res, "unchanged_channel_ids", []string{})
+}

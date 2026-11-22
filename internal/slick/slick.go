@@ -94,6 +94,14 @@ type Options struct {
 	LifecycleTimeout time.Duration
 	// NoAutoStart keeps New from starting enabled plugins (tests).
 	NoAutoStart bool
+	// DeferStart: New does everything but start the enabled plugins and
+	// the update check: Start does, later. The theme and the user CSS are
+	// installed by New either way (the UI's launch shows them from its
+	// first frame, internal/ui/backend.go).
+	DeferStart bool
+	// Dark is the window's mode at start (SetDark later): New applies the
+	// theme for it, once.
+	Dark bool
 	// NoUpdates turns off the URL-installed plugins' update checks.
 	NoUpdates bool
 }
@@ -102,6 +110,7 @@ type Options struct {
 type Slick struct {
 	startDone     chan struct{} // closed when the start-up StartEnabled returned (StartDone)
 	startDoneOnce sync.Once
+	startOnce     sync.Once // Start's
 	opts          Options
 	t             *taut.Taut
 	dir           string
@@ -169,6 +178,7 @@ func New(o Options) (*Slick, error) {
 		s.cfgErr = err
 	}
 	s.cfg = cfg
+	s.dark.Store(o.Dark)
 	if b, err := os.ReadFile(s.path("user.css")); err == nil {
 		s.userCSS = string(b)
 	}
@@ -176,6 +186,9 @@ func New(o Options) (*Slick, error) {
 	readJSONFile(s.path("plugins", "prefs.json"), &s.prefs)
 	s.themes = bundledThemes(o.Dir)
 	s.loadInstalled()
+	// the theme and the user CSS first: Go only, and the UI's launch waits
+	// for them (Extend may wait for a JS runtime already starting)
+	s.applyStyles()
 	if err := s.t.Extend(taut.Extension{
 		Name:             "slick",
 		Install:          s.installHost,
@@ -186,22 +199,35 @@ func New(o Options) (*Slick, error) {
 	}); err != nil {
 		return nil, err
 	}
-	s.applyStyles()
-	if !o.NoAutoStart {
+	switch {
+	case o.NoAutoStart:
+		s.markStartDone()
+	case o.DeferStart: // Start, later
+	default:
+		s.Start()
+	}
+	return s, nil
+}
+
+// Start starts the plugins enabled at start and the update check in the
+// background (once). New calls it unless Options.NoAutoStart or
+// DeferStart; StartDone closes when they started.
+func (s *Slick) Start() {
+	s.startOnce.Do(func() {
+		if s.closed.Load() {
+			s.markStartDone()
+			return
+		}
 		go func() {
 			t0 := time.Now()
 			s.StartEnabled(context.Background())
 			applog.Mark("slick-started", "in "+time.Since(t0).Round(time.Millisecond).String())
 			s.markStartDone()
 		}()
-		if !o.NoUpdates {
+		if !s.opts.NoUpdates {
 			go s.autoUpdate()
 		}
-	}
-	if o.NoAutoStart {
-		s.markStartDone()
-	}
-	return s, nil
+	})
 }
 
 func (s *Slick) markStartDone() {
@@ -218,6 +244,7 @@ func (s *Slick) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	s.markStartDone() // never started (DeferStart): nothing waits for it
 	close(s.stopTimer)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*s.opts.LifecycleTimeout+time.Second)
 	defer cancel()
@@ -356,13 +383,17 @@ func (s *Slick) call(ctx context.Context, rt *jsrt.Runtime, fn string, out any, 
 }
 
 func (s *Slick) post(rt *jsrt.Runtime, fn string, args ...any) {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if _, err := rt.Call(ctx, "__slick."+fn, args...); err != nil {
+	// queued now, on the caller's goroutine, in order with the user's
+	// later input (jsrt.InOrder): a click in the conversation the user
+	// just opened reads the new route, as a browser handles the
+	// navigation before the input after it
+	ctx, cancel := context.WithTimeout(jsrt.InOrder(context.Background()), 5*time.Second)
+	rt.CallThen(ctx, "__slick."+fn, func(_ json.RawMessage, err error) {
+		cancel()
+		if err != nil {
 			log.Printf("slick: %s: %v", fn, err)
 		}
-	}()
+	}, args...)
 }
 
 // SetRoute tells plugins which workspace, conversation and thread the

@@ -14,6 +14,7 @@ import (
 	syscall "golang.org/x/sys/windows"
 
 	"gioui.org/app/internal/windows"
+	"gioui.org/gpu"
 	"gioui.org/io/system"
 	"gioui.org/op"
 	"gioui.org/widget"
@@ -150,10 +151,12 @@ func TestHideAndRaise(t *testing.T) {
 			if maximized {
 				opts = append(opts, Maximized.Option())
 			}
+			held0 := gpu.ClackFrameTexturesHeld()
 			h := newHideTestWindow(t, abort.Load, opts...)
 			if maximized {
 				waitUntil(t, "maximized", func() bool { r, _, _ := testIsZoomed.Call(uintptr(h.hwnd)); return r != 0 })
 			}
+			held := gpu.ClackFrameTexturesHeld()
 			h.closeWindow(t)
 			if h.visible() {
 				t.Fatal("still visible after Hide")
@@ -172,6 +175,11 @@ func TestHideAndRaise(t *testing.T) {
 			}
 			if h.wakeups.Load() == w0 {
 				t.Error("hidden: Invalidate delivered no event to the app")
+			}
+			// Clack patch (CLACK_PATCHES.md §46): the hidden window let its
+			// frame texture go, and drew no frame that made it again
+			if n := gpu.ClackFrameTexturesHeld(); n != held-1 || held != held0+1 {
+				t.Errorf("hidden: %d frame textures held (%d before the window, %d while it showed), want the window's let go", n, held0, held)
 			}
 
 			h.w.Perform(system.ActionRaise)

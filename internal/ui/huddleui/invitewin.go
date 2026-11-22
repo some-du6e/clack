@@ -18,6 +18,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/inspect"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -208,6 +209,7 @@ type inviteWindow struct {
 	soon     widget.Clickable
 	join     widget.Clickable
 	lastNote string
+	insp     *winInspect // the inspect tool in this window (inspect.go)
 }
 
 // openInviteWindow shows inv's window.
@@ -264,6 +266,7 @@ func (w *inviteWindow) run() {
 		th.Images, th.EmojiStyle, th.Tokens = main.Images, main.EmojiStyle, main.Tokens
 	}
 	w.th = th
+	w.insp = w.newInspect()
 	w.mu.Lock()
 	w.w = ww
 	closed := w.closed
@@ -291,6 +294,7 @@ func (w *inviteWindow) run() {
 		caption.sync(ev, ww, look)
 		switch e := ev.(type) {
 		case app.DestroyEvent:
+			w.insp.close()
 			tick.Stop()
 			close(done)
 			w.mu.Lock()
@@ -301,12 +305,31 @@ func (w *inviteWindow) run() {
 			}
 			return
 		case app.FrameEvent:
-			gtx := app.NewContext(&ops, e)
-			w.th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
-			w.layout(gtx)
-			e.Frame(gtx.Ops)
+			w.frameEvent(e, &ops)
 		}
 	}
+}
+
+// frameEvent draws one frame (run; tests drive it with a router's frame
+// events), the window's inspect tool around it (inspect.go).
+func (w *inviteWindow) frameEvent(e app.FrameEvent, ops *op.Ops) {
+	w.insp.frame(e, ops, func(gtx C) {
+		w.th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
+		w.layout(gtx)
+	})
+}
+
+// newInspect makes the window's inspect tool (run, after w.th).
+func (w *inviteWindow) newInspect() *winInspect {
+	wi := w.c.newWinInspect("huddle invite", "account", w.th, w.invalidate)
+	wi.regions = inviteRegions
+	return wi
+}
+
+// inviteRegions are the invite window's areas for the inspect tool: its
+// title bar (.p-huddle_invite_window_titlebar, 32px; layoutInviteWindow).
+func inviteRegions(sz image.Point, s float32) []inspect.Region {
+	return []inspect.Region{{Name: "title bar", Rect: image.Rect(0, 0, sz.X, int(32*s+.5))}}
 }
 
 func (w *inviteWindow) layout(gtx C) {

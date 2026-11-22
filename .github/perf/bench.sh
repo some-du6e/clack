@@ -47,12 +47,17 @@ run core BenchmarkLoadCache 10x
 run ui BenchmarkStartup 5x
 run ui BenchmarkBootCold 3x
 run ui BenchmarkChannelSwitch 200x
-run ui BenchmarkScroll500 400x
 run ui BenchmarkEmojiPickerOpen 20x
 run ui BenchmarkEmojiSearch 60x
 run ui BenchmarkQuickSwitcher 20x
-run ui BenchmarkTypingFrame 300x
-run ui BenchmarkIdleFrame 300x
+# the frames perf.yml's gate reads (gate.py), three times a side,
+# interleaved: each side's number is its median of three, so a slow
+# stretch of the runner lands in one of them, not in one side's only run
+for _ in 1 2 3; do
+  run ui BenchmarkScroll500 400x
+  run ui BenchmarkTypingFrame 300x
+  run ui BenchmarkIdleFrame 300x
+done
 run ui BenchmarkSessionMemory 1x
 
 for s in "${sides[@]}"; do

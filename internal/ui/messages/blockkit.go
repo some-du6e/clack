@@ -40,6 +40,30 @@ func (r *row) elements(h Host) *blockkit.Message {
 	return r.bk.el
 }
 
+// withMedia hands the row's video players (MediaHost) to the body's
+// richview: a lone playable video plays in place.
+func (r *row) withMedia(rc *rowCtx) {
+	mh, ok := rc.h.(MediaHost)
+	if !ok || r.rv == nil {
+		return
+	}
+	pane := "channel"
+	if rc.thread {
+		pane = "thread"
+	}
+	if rc.list != nil && rc.list.container != "" {
+		pane += ":" + rc.list.container
+	}
+	k := pane + "\x00" + r.m.Channel + "\x00" + r.m.TS
+	if r.media == nil || r.mediaKey != k {
+		r.media, r.mediaKey = mh.MessageMedia(pane, r.m.Channel, r.m.TS, &r.handler), k
+	}
+	if o := r.rv.Options(); o.Media != r.media {
+		o.Media = r.media
+		r.rv.SetOptions(o)
+	}
+}
+
 // withElements hands the element host to the body's richview.
 func (r *row) withElements(h Host) {
 	el := r.elements(h)
@@ -47,7 +71,54 @@ func (r *row) withElements(h Host) {
 		return
 	}
 	o := r.rvOpts()
-	o.Elements = el
+	if r.bkView == 0 {
+		r.bkView = blockkit.NewViewID()
+	}
+	o.Elements = blockkit.InView(el, r.bkView)
+	r.rv.SetOptions(o)
+}
+
+// elMemo is the element host made of one plugin msg (held, so its
+// address can't be another map's).
+type elMemo struct {
+	m  slackc.Props
+	el richview.Elements
+}
+
+// withElementsFor hands the body's richview the element host of what it
+// draws: a plugin's msg when that is the body (MessageText's rewrite, a
+// Blocks patch's), else the row's message. Made from the row's message
+// while the body drew a MessageText tree's (JS's of the revision before,
+// an update's first frames), the host had no buttons for the blocks
+// drawn, and their rows went for a frame. One host per message
+// (blockkit.MessageElements): the row's takes its message back when the
+// body does.
+func (r *row) withElementsFor(h Host, msg slackc.Props) {
+	if msg == nil {
+		if r.ovEl.m != nil {
+			r.ovEl = elMemo{}
+			r.bk.done = false // the host holds the plugin's msg: the row's again
+		}
+		r.withElements(h)
+		return
+	}
+	if propsID(r.ovEl.m) != propsID(msg) {
+		var app *core.App
+		if h != nil {
+			app = h.Core()
+		}
+		r.ovEl = elMemo{m: msg, el: hostElements(h, app, msg)}
+		r.bk.done = false
+	}
+	if r.ovEl.el == nil {
+		r.withElements(h)
+		return
+	}
+	o := r.rvOpts()
+	if r.bkView == 0 {
+		r.bkView = blockkit.NewViewID()
+	}
+	o.Elements = blockkit.InView(r.ovEl.el, r.bkView) // the row's own drawing, as withElements'
 	r.rv.SetOptions(o)
 }
 

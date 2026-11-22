@@ -40,6 +40,7 @@ type composerBox struct{ *composer.Composer }
 func (c composerBox) SetOrigin(p image.Point)                     { c.Origin = p }
 func (c composerBox) SetOnEditLast(f func())                      { c.OnEditLast = f }
 func (c composerBox) SetOnFocusList(f func())                     { c.OnFocusList = f }
+func (c composerBox) SetOnPageKeyEmpty(f func(name string))       { c.OnPageKeyEmpty = f }
 func (c composerBox) SetOnSend(f func(cid string, files bool))    { c.OnSend = f }
 func (c composerBox) Layout(gtx layout.Context) layout.Dimensions { return c.Composer.Layout(gtx) }
 
@@ -47,7 +48,17 @@ func init() {
 	// each view container (the split view: split.go) lists with its own state
 	mkChannelView = func(a *App, ch string) View { return channelList{messages.NewChannelViewIn(a, ch, a.pane)} }
 	mkThreadView = func(a *App, ch, ts string) View { return threadList{messages.NewThreadViewIn(a, ch, ts, a.pane)} }
-	mkComposer = func(a *App, ch, ts string) View { return composerBox{composer.New(a, ch, ts)} }
+	mkComposer = func(a *App, ch, ts string) View {
+		c := composer.New(a, ch, ts)
+		if ts != "" { // a thread's reply box: onFooterInputFocus lets the thread go from the marked-unread threads
+			c.OnFocus = func() {
+				if app := a.Core(); app != nil {
+					app.ForgetThreadMarkedUnread(ch, ts)
+				}
+			}
+		}
+		return composerBox{c}
+	}
 	mkEditComposer = func(a *App, m core.Message, onDone func()) composerView {
 		return composerBox{composer.NewEdit(a, m, onDone)}
 	}
@@ -189,6 +200,9 @@ func init() {
 		}
 		popups.OpenScheduleDialog = func(h popups.Host, ch string, pick func(time.Time)) { composer.ShareScheduleDialog(h, ch, pick) }
 		popups.OpenWorkflowDetails = func(trigger, ch string) { a.OpenWorkflowDetails(trigger, ch) } // workflow_details.go
+		popups.WorkflowCardMenu = func(h popups.Host, anchor image.Rectangle, c *richtext.ShortcutCard, ch, ts string) {
+			a.workflowCardMenu(h, anchor, c, ch, ts) // workflow_details.go
+		}
 		// the search page's work object cards draw with the rows' style (workobject_pane.go)
 		popups.RichStyle = func(h popups.Host) *richview.Style { return messages.RichStyle(h) }
 	}
@@ -239,6 +253,9 @@ func (o detailsOverlay) Dismiss() {
 func (o detailsOverlay) Layout(gtx layout.Context) layout.Dimensions { return o.d.Layout(gtx) }
 func (o detailsOverlay) Dismissed() bool                             { return o.d.Closed() }
 
+// Rect is the dialog's (the inspect tool boxes the layer with it).
+func (o detailsOverlay) Rect() image.Rectangle { return o.d.Rect() }
+
 func toPopupItems(items []MenuItem) []popups.MenuItem {
 	out := make([]popups.MenuItem, 0, len(items))
 	for i, it := range items {
@@ -275,6 +292,16 @@ func (a *App) ThreadPane(ch, ts string) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
 		return a.layoutConvo(gtx, a.convoFor(ch, ts), a.ptrWin)
 	}
+}
+
+// ---- views.LiveMessages: Activity's rows draw what the lists draw ----
+
+var _ views.LiveMessages = (*App)(nil)
+
+// LiveMessage is ch/ts as a message list drawn since `since` holds it
+// (messages.Live): the thread pane or the channel list beside Activity.
+func (a *App) LiveMessage(ch, ts, threadTS string, since time.Time, have uint64) (core.Message, uint64, bool) {
+	return messages.Live(a.Core(), ch, ts, threadTS, since, have)
 }
 
 // directoriesTab maps directories?tab= to the Directories tab index.

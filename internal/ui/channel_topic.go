@@ -98,7 +98,10 @@ func (a *App) topicCardView(ch string, fg color.NRGBA) (*richview.View, *richvie
 		st.SetPalette(pal)
 		x.cardStyle, x.cardDark, x.cardFg, x.card = st, a.th.Dark, fg, nil
 	}
-	key := ch + "\x00" + cv.Topic
+	// keyed on what the topic reads too: a channel it mentions that was
+	// looked up after the card was made (a "names" resnapshot converts
+	// the topic again) reads #name, not its id
+	key := ch + "\x00" + cv.Topic + "\x00" + richtext.PlainText(richtext.Doc{Blocks: cv.TopicDoc})
 	if x.card == nil || x.cardKey != key {
 		blocks := cv.TopicDoc
 		if len(blocks) == 0 {
@@ -169,10 +172,24 @@ func (a *App) layoutTopicCard(gtx layout.Context, ch string, conv *convInfo, org
 	}
 }
 
-// cardHandler opens what the topic card's links point at.
+// cardHandler opens what the topic card's links point at: Slack's Link,
+// in the client, else the browser.
 type cardHandler struct{ a *App }
 
-func (h cardHandler) OpenURL(u string)                  { h.a.OpenURL(u) }
+func (h cardHandler) OpenURL(u string) {
+	if !h.a.FollowLink(u, false) {
+		openURL(u)
+	}
+}
+
+// OpenMrkdwnLink is a link in the topic's mrkdwn: BaseMrkdwnLink's
+// openThreadForRootMessage, so a link to a thread's parent opens its
+// thread.
+func (h cardHandler) OpenMrkdwnLink(u, _ string) {
+	if !h.a.FollowLink(u, true) {
+		openURL(u)
+	}
+}
 func (h cardHandler) OpenUser(id string, _ image.Point) { h.a.OpenProfile(h.a.PointerPos(), id) }
 func (h cardHandler) OpenChannel(id string)             { h.a.Navigate("c/" + id) }
 func (cardHandler) OpenUsergroup(string, image.Point)   {}

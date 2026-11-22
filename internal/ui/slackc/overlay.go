@@ -135,6 +135,7 @@ func LayoutOverlays(gtx layout.Context) {
 		v     *View
 		nodes []*Node
 		layer bool
+		modal bool // an open modal <dialog>
 	}
 	items := make([]item, 0, len(ids))
 	for _, id := range ids {
@@ -147,7 +148,7 @@ func LayoutOverlays(gtx layout.Context) {
 		// a window layer (layers.go): a modal, a menu; the body only while
 		// it holds an open modal dialog (a cat that follows the pointer
 		// isn't a layer, and the shell's Escape stays the shell's)
-		items = append(items, item{v, overlays.m[id], id != OverlayBody || overlays.modal[id]})
+		items = append(items, item{v, overlays.m[id], id != OverlayBody || overlays.modal[id], overlays.modal[id]})
 	}
 	overlays.Unlock()
 	for _, it := range items {
@@ -158,7 +159,15 @@ func LayoutOverlays(gtx layout.Context) {
 			it.v.Layout(g, it.nodes, "", nil, nil)
 			continue
 		}
+		// a popup layer of the inspect tool's record, as the shell's
+		// overlays are: what the tree draws reports it as its region
+		name := "plugin overlay"
+		if it.modal {
+			name = "plugin dialog"
+		}
+		lm := InspectOverlay(name)
 		DrawLayer(g, &it.v.layer, it.v.layer.spec(), func(g layout.Context) { it.v.Layout(g, it.nodes, "", nil, nil) })
+		lm.EndCard(g)
 	}
 }
 

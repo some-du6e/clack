@@ -134,7 +134,10 @@ func (a *App) closeToTray() bool {
 		}
 		log.Print("ui: attempted to close the window, hiding due to run from tray")
 	}
-	a.focused = false // no ConfigEvent may come before the next notification
+	a.loseFocus() // no ConfigEvent may come before the next notification
+	// an inspect session (a frozen one holds the huddle window's animated
+	// images too) ends with the window: nothing it inspects is on screen
+	a.closeInspectSession()
 	var title, content string
 	switch {
 	case keep && !a.prefs.HasExplainedWindowFlash:

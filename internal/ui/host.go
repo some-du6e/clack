@@ -46,6 +46,31 @@ func (a *App) UserAttention() bool {
 	return true
 }
 
+// AttentionLost counts the times UserAttention went false: the window
+// lost the focus, or an overlay that counts opened. A view comparing the
+// attention of the frames it draws learns of a change it drew no frame
+// for (a minimized or hidden window draws none), as Slack's
+// componentDidUpdate sees every change of isUserAttentionOnThreadsView.
+func (a *App) AttentionLost() uint64 { return a.attLost }
+
+// setFocused is the window's focus as a ConfigEvent has it (a loss
+// counts: AttentionLost).
+func (a *App) setFocused(on bool) {
+	if on {
+		a.focused = true
+		return
+	}
+	a.loseFocus()
+}
+
+// loseFocus is the window losing the focus (AttentionLost).
+func (a *App) loseFocus() {
+	if a.focused {
+		a.attLost++
+	}
+	a.focused = false
+}
+
 // Images returns the shared image cache.
 func (a *App) Images() *imgcache.Cache { return a.images }
 
@@ -55,10 +80,34 @@ func (a *App) Navigate(route string) {
 	if r == "" {
 		return
 	}
-	// a conversation opened from inside the split view stays there, as one
-	// opened with Slack's split modifier click goes there (split.go)
-	if r.Channel() != "" && (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
+	a.canvasNavigated() // a navigation still waiting for its file or message is dropped (canvas_open.go)
+	split := r.Channel() != "" && a.SplitViewOK()
+	// a jump to a message or thread of a file channel (a link, a search
+	// result, a notification) is Slack's jumpToMessage (canvas_open.go): a
+	// canvas's opens the canvas (a mention at its section, a comment with
+	// its thread), a list's the list at the record, in the container the
+	// click came from (getTargetContainer: from the split view, its own
+	// stand-ins). The split modifier click on such a link is the same
+	// jump: openPermalinkInClient's "message" case doesn't pass
+	// shouldOpenInSplitView on
+	if ch, th, ts := r.Channel(), r.Thread(), r.Message(); ch != "" && (th != "" || ts != "") &&
+		a.jumpInstead(ch, th, ts, a.jumpWhere(), func() { a.Navigate(route) }) {
+		return
+	}
+	// Slack's split modifier click (maybeOpenInSurface) opens the route
+	// in the split view, a file channel's toChannel as the split view's
+	// RedirectFileChannel says (OpenSplit); a conversation opened from
+	// inside the split view stays there
+	if split && (a.splitClick() || a.pane == paneSplit) {
 		a.OpenSplit(route)
+		return
+	}
+	// the main view's toChannel into a file channel is its canvas or its
+	// list (RedirectFileChannel's toCanvas, toList)
+	if ch := r.Channel(); ch != "" && r.Thread() == "" && r.Message() == "" && a.redirectInstead(ch, "", fileTo{
+		canvas: a.OpenCanvasFull,
+		list:   a.OpenListFull,
+	}, func() { a.Navigate(route) }, nil) {
 		return
 	}
 	if r.Page() == "search" {
@@ -94,6 +143,7 @@ func (a *App) openDefault() {
 
 // Back goes back in history.
 func (a *App) Back() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	prev := a.router.Current()
 	for {
 		r, ok := a.router.Back()
@@ -112,6 +162,7 @@ func (a *App) Back() {
 
 // Forward goes forward in history.
 func (a *App) Forward() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	prev := a.router.Current()
 	for {
 		r, ok := a.router.Forward()
@@ -170,6 +221,14 @@ func (a *App) afterRoute(prev, r Route) {
 		if a.secondary.kind != secNone && a.secondary.channel != ch {
 			w := a.secondary.width
 			a.secondary = secondaryState{width: w}
+		}
+	}
+	if ch != "" && r.Message() == "" && prev.Channel() != ch && !a.navHasStart {
+		// entered with no message to start at (a sidebar click, Back):
+		// Slack's determineTimestamps, the newest messages when there are
+		// unreads, else where the conversation was left (ChannelView.Entered)
+		if e, ok := a.convoFor(ch, "").list.(interface{ Entered() }); ok {
+			e.Entered()
 		}
 	}
 	if ts := r.Thread(); ts != "" {

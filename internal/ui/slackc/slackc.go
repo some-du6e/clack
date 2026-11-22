@@ -77,6 +77,11 @@ type Env struct {
 	OpenURL func(url string)
 	// Navigate follows a Clack route ("c/<id>", …) for Slack-internal links.
 	Navigate func(route string)
+	// FollowLink is Slack's Link click for a plugin-drawn href: a slack:
+	// link to handleDeepLink, a link to a message or a conversation
+	// through openPermalink (jumpToMessage: a reply opens in its thread);
+	// false for any other link (the browser's).
+	FollowLink func(href string) bool
 	// Core is the in-process Slack service (users, channels, emoji).
 	Core *core.App
 	// PointerWin is the last pointer position in window coordinates
@@ -97,6 +102,9 @@ var (
 	envVal Env
 
 	bridgeVal atomic.Pointer[Bridge]
+	// bridgeGen counts SetBridge calls: a new bridge is a JS runtime that
+	// hasn't heard the window's viewport yet (Frame).
+	bridgeGen atomic.Uint64
 
 	// patched is nil until a plugin patches something: the fast path is
 	// one atomic load and a nil check.
@@ -128,6 +136,7 @@ func invalidate() {
 
 // SetBridge installs (or with nil removes) the JS side.
 func SetBridge(b Bridge) {
+	bridgeGen.Add(1)
 	if b == nil {
 		bridgeVal.Store(nil)
 		return
@@ -191,7 +200,7 @@ func Patched(name string) bool {
 // value passed here is heap-allocated on every call. Hot widgets use
 // Component, which is allocation-free when unpatched.
 func Render(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
-	if patched.Load() == nil && !inspecting.Load() { // inlined: two atomic loads
+	if patched.Load() == nil && expected.Load() == nil && !inspecting.Load() { // inlined: three atomic loads
 		return native(gtx, props)
 	}
 	return renderSlow(gtx, name, props, native)
@@ -209,6 +218,9 @@ func renderSlow(gtx layout.Context, name string, props Props, native Native) lay
 
 func renderSlow0(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
 	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
+		if unpatched == 0 {
+			noteExpected(name, false) // a launch's expected patch drawn native (expect.go)
+		}
 		return native(gtx, props)
 	}
 	return renderPatched(gtx, name, props, props, native)
@@ -216,7 +228,7 @@ func renderSlow0(gtx layout.Context, name string, props Props, native Native) la
 
 // RenderLazy is Render with props built only when name is patched.
 func RenderLazy(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
-	if patched.Load() == nil && !inspecting.Load() {
+	if patched.Load() == nil && expected.Load() == nil && !inspecting.Load() {
 		return native(gtx, nil)
 	}
 	return renderLazySlow(gtx, name, props, native)
@@ -236,6 +248,9 @@ func renderLazySlow(gtx layout.Context, name string, props func() Props, native 
 
 func renderLazySlow0(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
 	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
+		if unpatched == 0 {
+			noteExpected(name, false) // expect.go
+		}
 		return native(gtx, nil)
 	}
 	return renderPatched(gtx, name, props(), nil, native)
@@ -250,47 +265,63 @@ func renderLazySlow0(gtx layout.Context, name string, props func() Props, native
 // props may be nil (no props). native's Props argument is nil when
 // unpatched.
 func Component[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
-	if patched.Load() == nil && reserved.Load() == nil && !inspecting.Load() { // inlined: the native becomes a direct call
+	if patched.Load() == nil && reserved.Load() == nil && expected.Load() == nil && !inspecting.Load() { // inlined: the native becomes a direct call
 		return native(recv, gtx, nil)
 	}
-	return componentSlow(gtx, name, recv, props, native)
+	return componentSlow(gtx, name, recv, props, native, false)
 }
 
-func componentSlow[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+// ComponentBox is Component for a native that draws its element's box
+// itself, as ChildBox is Child for one (Slot.OwnBox): patched, the root
+// "@" box its tree renders it as leaves the fill, ring, borders and
+// padding a rule gives the element to the native, which paints them
+// once and round. The reaction pill's UnstyledButton under an
+// UnstyledButton patch that adds a class: painted by the "@" box as well,
+// the class's ring was a square one round the round one.
+func ComponentBox[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+	if patched.Load() == nil && reserved.Load() == nil && expected.Load() == nil && !inspecting.Load() {
+		return native(recv, gtx, nil)
+	}
+	return componentSlow(gtx, name, recv, props, native, true)
+}
+
+func componentSlow[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions, own bool) layout.Dimensions {
 	if f := CurrentInspectFrame(); f != nil { // the inspect tool (inspect.go)
 		var pf func() Props
 		if props != nil {
 			pf = func() Props { return props(recv) }
 		}
 		i := f.beginComponent(name, pf)
-		d := componentSlow0(gtx, name, recv, props, native)
+		d := componentSlow0(gtx, name, recv, props, native, own)
 		f.endComponent(gtx, i, d)
 		return d
 	}
-	return componentSlow0(gtx, name, recv, props, native)
+	return componentSlow0(gtx, name, recv, props, native, own)
 }
 
-func componentSlow0[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+func componentSlow0[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions, own bool) layout.Dimensions {
 	if unpatched > 0 { // drawn without plugins (guard.go)
 		return native(recv, gtx, nil)
 	}
 	if m := patched.Load(); m == nil || !(*m)[name] {
 		if ins, ok := reservedFor(name); ok { // a plugin's slot kept free until it renders (reserve.go)
+			noteExpected(name, reserveCovers(gtx)) // expect.go
 			return drawReserved(gtx, ins, func(g layout.Context) layout.Dimensions { return native(recv, g, nil) })
 		}
+		noteExpected(name, false) // expect.go
 		return native(recv, gtx, nil)
 	}
-	return componentPatched(gtx, name, recv, props, native)
+	return componentPatched(gtx, name, recv, props, native, own)
 }
 
-func componentPatched[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+func componentPatched[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions, own bool) layout.Dimensions {
 	var p Props
 	if props != nil {
 		p = props(recv)
 	}
-	return renderPatched(gtx, name, p, nil, func(gtx layout.Context, p Props) layout.Dimensions {
+	return renderPatchedBox(gtx, name, p, nil, func(gtx layout.Context, p Props) layout.Dimensions {
 		return native(recv, gtx, p)
-	})
+	}, own)
 }
 
 // --- patched instances (UI goroutine) ---
@@ -330,6 +361,10 @@ func Pane(id string) (outer string) {
 
 // EndPane ends the pane Pane started; outer is what Pane returned.
 func EndPane(outer string) { curPane = outer }
+
+// CurrentPane is the pane being drawn ("" outside one): what the
+// instances drawn now are keyed by (RemountKeyedIn). UI goroutine.
+func CurrentPane() string { return curPane }
 
 // ResultBridge is implemented by bridges that report what JS did with an
 // event: done gets, on any goroutine, whether a listener stopped its
@@ -423,8 +458,15 @@ func now(gtx layout.Context) time.Time {
 // inside the insets, ClientPrimaryView learns its origin from the pointer
 // as under a patch.
 func renderPatched(gtx layout.Context, name string, props, pre Props, native Native) layout.Dimensions {
+	return renderPatchedBox(gtx, name, props, pre, native, false)
+}
+
+// renderPatchedBox is renderPatched; own: the native draws its element's
+// box itself (ComponentBox).
+func renderPatchedBox(gtx layout.Context, name string, props, pre Props, native Native, own bool) layout.Dimensions {
 	b := bridge()
 	if b == nil {
+		noteExpected(name, false) // expect.go
 		return native(gtx, pre)
 	}
 	pump()
@@ -454,6 +496,7 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 	if created {
 		in = &inst{root: newRoot(), name: name, key: k, slots: map[string]int64{}}
 		in.view = NewView(in.root)
+		in.view.ownRoot = own
 		insts[k] = in
 		rootsMu.Lock()
 		roots[in.root] = in
@@ -479,10 +522,12 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 	nodes := in.tree.Load()
 	if nodes == nil {
 		if ins, ok := reservedFor(name); ok { // its slot stays free until the tree arrives (reserve.go)
+			noteExpected(name, reserveCovers(gtx)) // expect.go
 			return drawReserved(gtx, ins, func(g layout.Context) layout.Dimensions {
 				return probeNative(name, func() layout.Dimensions { return native(g, props) })
 			})
 		}
+		noteExpected(name, false) // expect.go
 		return probeNative(name, func() layout.Dimensions { return native(gtx, pre) })
 	}
 	unreserve(name)
@@ -715,10 +760,16 @@ func Reset() {
 // positioning and SetViewport).
 var windowSize image.Point
 
+// lastViewport is what Frame last reported to JS, and to which bridge
+// (bridgeGen): a runtime started after it (plugins turned off and on
+// again) is told the viewport at its first frame, rather than keeping
+// its document's defaults (1280x800 at 1x, light: <body> without
+// sk-client-theme--dark) until the window changes.
 var lastViewport struct {
 	size image.Point
 	dpr  float32
 	dark bool
+	gen  uint64
 }
 
 // Frame is the ui root's per-frame hook, called before laying out the
@@ -738,8 +789,9 @@ func Frame(gtx layout.Context) {
 	}
 	pump()
 	dark := env().Theme != nil && env().Theme.Dark
-	if windowSize != lastViewport.size || gtx.Metric.PxPerDp != lastViewport.dpr || dark != lastViewport.dark {
-		lastViewport.size, lastViewport.dpr, lastViewport.dark = windowSize, gtx.Metric.PxPerDp, dark
+	gen := bridgeGen.Load()
+	if windowSize != lastViewport.size || gtx.Metric.PxPerDp != lastViewport.dpr || dark != lastViewport.dark || gen != lastViewport.gen {
+		lastViewport.size, lastViewport.dpr, lastViewport.dark, lastViewport.gen = windowSize, gtx.Metric.PxPerDp, dark, gen
 		s := gtx.Metric.PxPerDp
 		if s == 0 {
 			s = 1

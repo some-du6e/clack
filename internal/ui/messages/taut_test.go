@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -137,6 +138,22 @@ func frameFn(v interface {
 	}
 }
 
+// prepFrameFn is frameFn for a view the ui root prepares before laying
+// it out (ThreadView.Prepare: layoutConvo calls it first in the frame), as
+// the window's frames go.
+func prepFrameFn(v interface {
+	Layout(gtx layout.Context) layout.Dimensions
+	Prepare(gtx layout.Context)
+}) func() {
+	ops := new(op.Ops)
+	return func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(900, 700)), Now: time.Now()}
+		v.Prepare(gtx)
+		v.Layout(gtx)
+	}
+}
+
 // until runs frames until cond holds.
 func until(t *testing.T, d time.Duration, what string, frame func(), cond func() bool) {
 	t.Helper()
@@ -201,11 +218,16 @@ func listFrame(t testing.TB) func() {
 }
 
 // With a plugin system attached but nothing patched, a frame costs the
-// same as without one: no JS engine, no extra allocations.
+// same as without one: no JS engine, no extra allocations. Each side is
+// the fewest of five counts: testing.AllocsPerRun counts the whole
+// process's allocations, so a burst elsewhere (a goroutine an earlier test
+// left, the runtime) during one count raises its integer mean (51 vs 50,
+// topic-edit-mentions' full-test, run 44828300746), and a frame's own
+// allocations are in every count.
 func TestTautZeroCost(t *testing.T) {
 	SetTaut(nil)
 	f := listFrame(t)
-	base := testing.AllocsPerRun(100, f)
+	base := fewestAllocs(f)
 
 	app, _ := newTestApp(t)
 	tt := newTaut(t, app, taut.UIHooks{})
@@ -214,7 +236,7 @@ func TestTautZeroCost(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		f()
 	}
-	with := testing.AllocsPerRun(100, f)
+	with := fewestAllocs(f)
 	t.Logf("list frame: %v allocs without taut, %v with taut and no plugins", base, with)
 	if with > base {
 		t.Errorf("an idle plugin system costs %v allocs/frame (none: %v)", with, base)
@@ -222,6 +244,16 @@ func TestTautZeroCost(t *testing.T) {
 	if tt.Started() {
 		t.Error("the JS engine started without an enabled plugin")
 	}
+}
+
+// fewestAllocs is the fewest allocations a call of f made, over five
+// counts of testing.AllocsPerRun(100, f).
+func fewestAllocs(f func()) float64 {
+	least := testing.AllocsPerRun(100, f)
+	for range 4 {
+		least = min(least, testing.AllocsPerRun(100, f))
+	}
+	return least
 }
 
 func BenchmarkListFrame(b *testing.B) {
@@ -370,8 +402,17 @@ func (u *pluginUI) hooks() taut.UIHooks {
 		SetStyle:    slackc.SetStyle,
 		RemoveStyle: slackc.RemoveStyle,
 		ThreadPane:  ThreadPane,
+		Invalidate: func() {
+			if f := tautInvalidate.Load(); f != nil {
+				(*f)()
+			}
+		},
 	}
 }
+
+// tautInvalidate is what taut's Invalidate calls in these tests (the
+// window's: a test that draws frames only when asked sets it).
+var tautInvalidate atomic.Pointer[func()]
 
 func (u *pluginUI) anyTree(sub string) bool {
 	u.mu.Lock()

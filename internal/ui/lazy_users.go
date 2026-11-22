@@ -13,7 +13,10 @@ import (
 // on render (core/lazy_users.go): richview's MemberRead reads the store
 // for every mention it draws, asking for a missing member, draws
 // BaseMissingMember's bar until it is known (never its id), and lays the
-// text out again once the name arrives.
+// text out again once the name arrives. A message slug's label is read
+// the same way (SlugRead: the linked message and its sender, each asked
+// for when the store lacks it, as MessageMention's
+// getMessageSlugAttributes reads them on render).
 
 var memberReadOwner struct {
 	mu sync.Mutex
@@ -42,6 +45,21 @@ func installMemberRead(c *core.App) {
 		}
 		return "", richview.MemberLoading // the unknown stub until "names"
 	})
+	// message slugs read their label as they draw, asking for the linked
+	// message and its sender (core/msg_slug.go)
+	richview.SetSlugRead(func(ch, ts string) (string, bool, int, bool) { return c.MessageSlugLabel(ch, ts, true) })
+	richview.SetMemberPeek(func(id string) (string, richview.MemberMiss) {
+		u, ok := c.S.RawUser(id) // getRawMemberById: no access, nothing asked for
+		switch {
+		case ok && u != nil:
+			return store.DisplayName(u), richview.MemberLoaded
+		case !core.LooksLikeMemberID(id):
+			return "", richview.MemberLoaded
+		case c.MissingMember(id) == core.MemberNonExistent:
+			return "", richview.MemberGone
+		}
+		return "", richview.MemberLoading
+	})
 }
 
 // uninstallMemberRead removes the hook if c's backend installed it last.
@@ -51,5 +69,7 @@ func uninstallMemberRead(c *core.App) {
 	if memberReadOwner.c == c {
 		memberReadOwner.c = nil
 		richview.SetMemberRead(nil)
+		richview.SetMemberPeek(nil)
+		richview.SetSlugRead(nil)
 	}
 }

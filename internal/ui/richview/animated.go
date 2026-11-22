@@ -140,7 +140,9 @@ func getImg(st *Style, im *imgPrim, px int) (paint.ImageOp, bool) {
 func (v *View) drawImg(ops *op.Ops, st *Style, i int, static bool) {
 	im := &v.d.imgs[i]
 	if im.url == "" {
-		fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		if !im.bare {
+			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		}
 		return
 	}
 	if name, ok := strings.CutPrefix(im.url, iconURL); ok { // a vector icon (unfurl footers, placeholders)
@@ -148,6 +150,9 @@ func (v *View) drawImg(ops *op.Ops, st *Style, i int, static bool) {
 		return
 	}
 	img, ok := getImg(st, im, im.px)
+	if !ok && im.onFail != "" && st.Images != nil && imgFailed(st.Images, im.url, im.px) {
+		img, ok = st.Images.Get(im.onFail, im.px) // its own failed: the fallback
+	}
 	if ok && !im.fit {
 		if px := coverPx(img.Size(), im.r.Size(), im.px); px > im.px {
 			// cover: the copy scaled to px by its larger side is short of
@@ -165,13 +170,21 @@ func (v *View) drawImg(ops *op.Ops, st *Style, i int, static bool) {
 		}
 	}
 	if !ok {
-		fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		if !im.bare {
+			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		}
 		if static {
 			v.pending = append(v.pending, int32(i))
 		}
 		return
 	}
-	if im.fit {
+	if im.noUp > 0 {
+		if r, small := noUpRect(im.r, img.Size(), im.noUp); small {
+			drawImage(ops, img, r, [4]int{}, false)
+			return
+		}
+	}
+	if im.fit && !im.bare {
 		fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
 	}
 	if im.alpha > 0 && im.alpha < 1 {

@@ -96,6 +96,7 @@ type ChannelHoverCard struct {
 	texty   bool
 
 	rect image.Rectangle
+	keep hovercard.Keep // where it sits: placed once, again only when its size changes
 	done bool
 
 	resolving, missing bool
@@ -117,6 +118,10 @@ type ChannelHoverCard struct {
 	faceHover gesture.Hover
 	faceTip   TipState
 	pile      image.Rectangle // the facepile, card coordinates
+	// the joinable card (code_card.go joinableCard)
+	joinBtn   widget.Clickable
+	joining   bool // Join is loading: the join runs
+	joinAsked bool // the agent asked for
 }
 
 // NewChannelHoverCard is the card for the channel id over anchor (window
@@ -129,6 +134,10 @@ func NewChannelHoverCard(h Host, anchor image.Rectangle, id string, buttons, tex
 
 // Rect is the drawn card (window coordinates).
 func (p *ChannelHoverCard) Rect() image.Rectangle { return p.rect }
+
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *ChannelHoverCard) Placement() *hovercard.Keep { return &p.keep }
 
 // Dismissed reports whether an action on it closed it (View Channel).
 func (p *ChannelHoverCard) Dismissed() bool { return p.done }
@@ -322,9 +331,12 @@ func (p *ChannelHoverCard) Layout(gtx layout.Context) layout.Dimensions {
 	sz := image.Pt(w, d.Size.Y)
 	var pos image.Point
 	if p.texty {
-		pos, _ = theme.KeepInBounds(p.anchor, sz, image.Rectangle{Max: win}, theme.TipTop, 0, -dp(gtx, hovercard.OffsetY), 0, 0, false)
+		pos = p.keep.At(sz, func() image.Point {
+			pos, _ := theme.KeepInBounds(p.anchor, sz, image.Rectangle{Max: win}, theme.TipTop, 0, -dp(gtx, hovercard.OffsetY), 0, 0, false)
+			return pos
+		})
 	} else {
-		pos = hovercard.PlaceTop(p.anchor, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
+		pos = p.keep.PlaceTop(p.anchor, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
 	}
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
 	rad := dp(gtx, 8)
@@ -562,9 +574,27 @@ func topicSpans(b richtext.Block) []richtext.Span {
 
 // topicHandler routes clicks in the topic: links open, a member opens
 // their profile, a channel goes there.
+// openBrowser opens a link in the browser (the links Slack's Link opens
+// in a new tab); a var so tests catch it.
+var openBrowser = func(u string) { _ = openurl.Open(u) }
+
 type topicHandler struct{ h Host }
 
-func (t topicHandler) OpenURL(u string)                  { _ = openurl.Open(u) }
+// OpenURL is Slack's Link for a link in the topic or purpose: in the
+// client when it's one (the ui root's FollowLink), else the browser.
+func (t topicHandler) OpenURL(u string) { t.follow(u, false) }
+
+// OpenMrkdwnLink is a link in the topic's mrkdwn (BaseMrkdwnLink: a link
+// to a thread's parent opens its thread).
+func (t topicHandler) OpenMrkdwnLink(u, _ string) { t.follow(u, true) }
+
+func (t topicHandler) follow(u string, openRoot bool) {
+	if lf, ok := t.h.(LinkFollower); ok && lf.FollowLink(u, openRoot) {
+		return
+	}
+	openBrowser(u)
+}
+
 func (t topicHandler) OpenUser(id string, a image.Point) { t.h.OpenProfile(a, id) }
 func (t topicHandler) OpenChannel(id string)             { t.h.Navigate("c/" + id) }
 func (t topicHandler) OpenUsergroup(string, image.Point) {}

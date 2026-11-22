@@ -102,22 +102,40 @@ type commitEditArgs struct {
 // file_ids.
 func commitEdit(ctx context.Context, app *core.App, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
 	t := tautOf()
+	_, err := taut.Dispatch(ctx, t, "commitMessageEdit", commitArgs(ch, ts, text, blocks, fileIDs), commitNative(t, app))
+	return err
+}
+
+// commitEditThen is commitEdit queuing its JS call before it returns
+// (taut.DispatchThen: the UI goroutine's, at Enter, ahead of a plugin
+// click after it); done hears the outcome on another goroutine.
+func commitEditThen(ctx context.Context, app *core.App, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {
+	t := tautOf()
+	taut.DispatchThen(ctx, t, "commitMessageEdit", commitArgs(ch, ts, text, blocks, fileIDs), commitNative(t, app),
+		func(_ any, err error) { done(err) })
+}
+
+func commitArgs(ch, ts, text string, blocks json.RawMessage, fileIDs []string) commitEditArgs {
 	args := commitEditArgs{ChannelID: ch, TS: ts, Blocks: blocks, Text: text}
 	if fileIDs != nil {
 		args.FileIDs = &fileIDs
 	}
-	_, err := taut.Dispatch(ctx, t, "commitMessageEdit", args,
-		func(ctx context.Context, a commitEditArgs) (any, error) {
-			b := a.Blocks
-			if t != nil && len(b) > 0 && t.HasSendTransforms() {
-				b = t.TransformSendBlocks(ctx, b)
-			}
-			if a.FileIDs != nil {
-				return nil, app.EditWithFiles(ctx, a.ChannelID, a.TS, a.Text, b, *a.FileIDs)
-			}
-			return nil, app.Edit(ctx, a.ChannelID, a.TS, a.Text, b)
-		})
-	return err
+	return args
+}
+
+// commitNative is commitMessageEdit's native: the plugins' send
+// transforms, then core's edit.
+func commitNative(t *taut.Taut, app *core.App) func(context.Context, commitEditArgs) (any, error) {
+	return func(ctx context.Context, a commitEditArgs) (any, error) {
+		b := a.Blocks
+		if t != nil && len(b) > 0 && t.HasSendTransforms() {
+			b = t.TransformSendBlocks(ctx, b)
+		}
+		if a.FileIDs != nil {
+			return nil, app.EditWithFiles(ctx, a.ChannelID, a.TS, a.Text, b, *a.FileIDs)
+		}
+		return nil, app.Edit(ctx, a.ChannelID, a.TS, a.Text, b)
+	}
 }
 
 // deleteArgs is Slack's chatDeleteFetcher {channel, ts}.
@@ -239,29 +257,68 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	if r.edit != nil || r.m.Pending || r.m.Failed {
 		return // the message being edited stays as the user wrote it
 	}
-	if now.Sub(r.viewAt) < viewRefresh && r.viewRev == r.rev {
+	// re-read when taut's views changed since (a value fetched, a
+	// conversion to be made again: ViewEpoch), else at most every
+	// viewRefresh: the frame that came for a change within 250 ms of the
+	// row's last read skipped it, and an idle window drew no other
+	ep := t.ViewEpoch()
+	if now.Sub(r.viewAt) < viewRefresh && r.viewRev == r.rev && r.viewEpoch == ep && (r.heldTil.IsZero() || now.Before(r.heldTil)) {
 		return
 	}
 	// taut keeps each view converted until something it reads changes;
 	// when core just changed the row's message, convert it again now
 	// rather than show the old state until the mirror sees the event
 	changed := r.viewRev != 0 && r.viewRev != r.rev
-	r.viewAt, r.viewRev = now, r.rev
+	first := r.viewRev == 0
+	r.viewAt, r.viewRev, r.viewEpoch = now, r.rev, ep
 	if changed {
 		r.viewConv = 0 // a new revision: compared afresh
 	}
-	mv, conv, ok := t.MessageViewConv(r.src.Channel, r.src.TS, changed)
+	if (first || changed) && !r.viewed {
+		// the new source, until JS's copy is of it (ready): a row's first
+		// read too. A row made within a JS round trip of an update (the
+		// thread pane opened on the vote message just voted on, a list
+		// rebuilt) took JS's copy of the revision before, its pane a vote
+		// behind the channel's, and the two rows' Block Kit host held the
+		// old blocks. So what a filter plugin makes of an edit (a word
+		// Censorship masks) shows one JS round trip late, as it does for a
+		// new message; ready is the message's own, so that's one round
+		// trip however busy the rest of the channel is
+		r.viewWait = true
+	}
+	mv, conv, ready, ok := t.MessageViewState(r.src.Channel, r.src.TS, changed, r.need)
+	wasReady := r.viewReady
+	r.viewReady = ready && ok
 	if !ok {
 		if r.viewed {
-			r.viewed = false
-			r.m = r.src
-			r.setDoc()
+			r.viewed, r.vmsg = false, nil
+			r.recompose()
 		}
 		r.viewConv = 0
 		return
 	}
 	// keep what only the native knows (pending state, resolved author)
 	mv.Pending, mv.Failed, mv.ClientMsgID = r.src.Pending, r.src.Failed, r.src.ClientMsgID
+	// and the reactions, core's: Slack keeps them out of the messages
+	// slice, in the reactions store under the message's reaction key
+	// (client-boot slurpReactions moves a fetched message's there, and
+	// reaction_added / reaction_removed change them there: boot-shared
+	// cBAo addReaction, yzJf removeReaction), and its ReactionBar reads
+	// them from that store by the key (its connect: reactions = bk(state,
+	// reactionKey)), not from the message. A plugin patching the messages
+	// slice never touches them, and the view, converted from the mirror a
+	// moment after core's change, can't hold one back: the row drew the
+	// view's old reactions until something else asked for a frame after
+	// it caught up (Karim, 2026-11-19: "reactions are not syncing", "in a
+	// channel for another")
+	mv.Reactions = r.src.Reactions
+	if ready && mv.Text != r.src.Text && !t.TextRewrites() {
+		// JS's copy of this revision says another text: the plugins rewrite
+		// text. The text alone, which a rewrite changes (Censorship's mask
+		// is in it, Message Logger's marks): the Doc of a view converted at
+		// another moment can name a mention otherwise and say nothing
+		t.NoteTextRewrite()
+	}
 	// A row drawing the view takes one converted again (or the fresh one
 	// of a new revision) that differs only in its Doc, past what sameView
 	// compares: a name in it (a file's uploader, a tab slug), which taut
@@ -273,25 +330,98 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// sent its components new props, after each "names").
 	again := r.viewConv != 0 && conv != r.viewConv
 	r.viewConv = conv
-	if r.viewed && sameView(&r.m, &mv) && r.m.Text == mv.Text && (!again && !changed || reflect.DeepEqual(r.m.Doc, mv.Doc)) {
+	if r.viewed && r.vmsg != nil {
+		// The view it draws over (vmsg, not what it draws: that has the
+		// components' overrides laid over it), unless a conversion made
+		// since says anything else: all of it, not only what a plugin's
+		// change shows in. What core works out at each conversion (a
+		// broadcast's "View newer replies", reply users, a pin's author)
+		// changes with no change to the plugins' JSON, and a row that kept
+		// its view whenever text, blocks and the sameView fields matched
+		// never showed it.
+		// a ready read after one that wasn't is looked at whatever its
+		// conversion: JS's answer of the same bytes as the copy it took
+		// while not ready makes no new conversion, and the row stayed
+		// viewed, its next update drawn late from JS's old copy
+		// An edit of a message the plugins rewrite keeps its view of the
+		// revision before while JS answers, however long (what it masks
+		// never shows, a rewritten author never flashes back: the rows'
+		// trade-off, held through a stalled JS). One the plugins left alone,
+		// held for its old text under plugins that rewrite text (below),
+		// holds for EditHold at most, then draws core's copy of the edit.
+		switch {
+		case ready:
+			r.heldTil = time.Time{}
+		case !r.heldTil.IsZero() && !now.Before(r.heldTil):
+			r.heldTil = time.Time{}
+			r.viewed, r.vmsg = false, nil
+			r.recompose()
+			return
+		}
+		turned := ready && !wasReady
+		if !again && !changed && !turned {
+			return
+		}
+		if ready && sameView(&r.src, &mv) && r.src.Text == mv.Text && reflect.DeepEqual(r.src.Doc.Blocks, mv.Doc.Blocks) {
+			// JS's copy of this very revision draws as its source: the
+			// plugins leave it as it is now, and the row draws its source,
+			// so its next update draws at once
+			r.viewed, r.vmsg = false, nil
+			r.recompose()
+			return
+		}
+		if sameDrawn(r.vmsg, &mv) {
+			return
+		}
+		r.vmsg = &mv
+		r.recompose()
 		return
 	}
-	if !r.viewed && sameView(&r.src, &mv) && r.src.Text == mv.Text {
+	if sameView(&r.src, &mv) && r.src.Text == mv.Text {
+		if ready {
+			r.viewWait = false
+		}
 		return
 	}
-	r.viewed = true
-	r.m = mv
-	r.msg = nil
-	r.setDoc()
+	if r.viewWait && !ready {
+		// JS's copy may be from before the row's update (asked again, or a
+		// change to it still queued for JS): the row draws its new source
+		// until JS's copy of it comes, on every read, not the revision
+		// before. On the read after the update only, a first reaction
+		// showed, went, and came back; a vote's count went N, N-1, N.
+		// Unless the plugins rewrite text (one rewrote a message's text:
+		// taut TextRewrites): an edit may bring in what they rewrite (a word
+		// Censorship masks) to a message they left alone, which Slack's
+		// patched selector draws already rewritten in the render after the
+		// edit. Its row draws JS's copy of the revision before, the text it
+		// drew, until JS's copy of the edit comes or EditHold passes. A
+		// patch that rewrites no text (ShowRealUser's sender) holds
+		// nothing: the edit draws in the next frame
+		if changed && t.TextRewrites() {
+			r.viewed, r.vmsg, r.heldTil = true, &mv, now.Add(taut.EditHold)
+			r.recompose()
+		}
+		return
+	}
+	r.viewWait = false
+	r.viewed, r.vmsg = true, &mv
+	r.recompose()
+}
+
+// sameDrawn reports whether two conversions of a message draw the same:
+// all of them but the refs a conversion read.
+func sameDrawn(a, b *core.Message) bool {
+	x, y := *a, *b
+	x.Refs, y.Refs = core.MsgRefs{}, core.MsgRefs{}
+	return reflect.DeepEqual(x, y)
 }
 
 // clearViews drops patched views once no plugin patches messages.
 func (s *listState) clearViews() {
 	for _, r := range s.rows {
 		if r.viewed {
-			r.viewed = false
-			r.m = r.src
-			r.setDoc()
+			r.viewed, r.vmsg = false, nil
+			r.recompose()
 		}
 	}
 }
@@ -299,11 +429,12 @@ func (s *listState) clearViews() {
 // injected merges messages plugins inject (messages.injectMessages) into
 // the snapshot, re-checking at most every viewRefresh.
 type injState struct {
-	at   time.Time
-	keys string
-	msgs []core.Message
-	revs map[string]uint32 // each message's rev (refreshInjected)
-	n    uint32
+	at    time.Time
+	epoch uint64 // taut's ViewEpoch at the last check
+	keys  string
+	msgs  []core.Message
+	revs  map[string]uint32 // each message's rev (refreshInjected)
+	n     uint32
 }
 
 // rev is injected message ts's rev.
@@ -315,10 +446,11 @@ func (in *injState) rev(ts string) uint32 {
 }
 
 func (s *listState) refreshInjected(t *taut.Taut, now time.Time) (changed bool) {
-	if now.Sub(s.inj.at) < viewRefresh {
+	ep := t.ViewEpoch()
+	if now.Sub(s.inj.at) < viewRefresh && s.inj.epoch == ep {
 		return false
 	}
-	s.inj.at = now
+	s.inj.at, s.inj.epoch = now, ep
 	all := t.InjectedMessages(s.ch)
 	msgs := all[:0:0]
 	for i := range all {
@@ -405,10 +537,22 @@ func (s *listState) injVisible(m *core.Message) bool {
 }
 
 // mergeInjected inserts the injected messages into s.snap.msgs in ts order,
-// skipping any the snapshot already has (same ts or client_msg_id).
+// skipping any the snapshot already has (same ts or client_msg_id). A
+// jump's window takes only the ones its slice covers, as injectMessages'
+// withTimestamps adds an injected ts to a channelHistory slice (05_slack.js):
+// from its first message on (anywhere before once it has no older
+// messages) up to its last (anywhere after once it met the newest). A
+// deletion Message Logger kept today came under a window from months ago.
 func (s *listState) mergeInjected() {
 	if len(s.inj.msgs) == 0 {
 		return
+	}
+	first, last, ok := s.ends()
+	covers := func(ts string) bool {
+		if s.win == nil || s.m != s.win {
+			return true
+		}
+		return ok && (!s.snap.hasMore || !tsLess(ts, first)) && (!s.snap.newestMissing || !tsLess(last, ts))
 	}
 	have := make(map[string]bool, len(s.snap.msgs))
 	for i := range s.snap.msgs {
@@ -420,7 +564,7 @@ func (s *listState) mergeInjected() {
 	}
 	inj := make([]core.Message, 0, len(s.inj.msgs))
 	for _, m := range s.inj.msgs {
-		if have[m.TS] || m.ClientMsgID != "" && have["c:"+m.ClientMsgID] {
+		if have[m.TS] || m.ClientMsgID != "" && have["c:"+m.ClientMsgID] || !covers(m.TS) {
 			continue
 		}
 		inj = append(inj, m)

@@ -551,8 +551,26 @@ func (p *parser) inlineNode(n *html.Node, st richtext.Style, link string, depth 
 	return out
 }
 
-// control is Quip's inline object: a mention (<a>@name</a>, <a>#channel</a>),
-// an emoji (<img alt=name src=…>) or a date (plain text).
+// Quip's export writes a mention control as the id its model holds, with
+// no name and no link: <control><a>#C0123ABCD</a></control> for a
+// channel, <a>@U0123ABCD</a> for a person (read from Hack Club canvases'
+// exports, 2026-11-18, shapes only: every mention of seven canvases had
+// this form). The ids follow the editor's own control patterns
+// (quip-collab-editor: /#([CDG][A-Z0-9]{8,})/ for CONTROL_SLACK_CHANNEL,
+// /@([UW][A-Z0-9]{8,})/ for CONTROL_SLACK_USER). A user group lives in a
+// user control too (its mention view takes an id starting with S for a
+// group), so "@S…" is one. Slack's canvas draws every mention from its
+// model by that id, never from the export, so the reader names them
+// (core's NameCanvasMention); Text keeps what the export says.
+var (
+	exportChannelID = regexp.MustCompile(`^#([CDG][A-Z0-9]{8,})$`)
+	exportUserID    = regexp.MustCompile(`^@([UW][A-Z0-9]{8,})$`)
+	exportGroupID   = regexp.MustCompile(`^@(S[A-Z0-9]{8,})$`)
+)
+
+// control is Quip's inline object: a mention (<a>#C…</a>, <a>@U…</a>; an
+// older export's <a>@name</a>, <a>#channel</a>), an emoji (<img alt=name
+// src=…>) or a date (plain text).
 func (p *parser) control(n *html.Node, st richtext.Style, depth int) []richtext.Span {
 	if im := findAtom(n, atom.Img, depth); im != nil {
 		name := strings.Trim(attr(im, "alt"), ":")
@@ -569,6 +587,12 @@ func (p *parser) control(n *html.Node, st richtext.Style, depth int) []richtext.
 	switch {
 	case t == "@here" || t == "@channel" || t == "@everyone":
 		return []richtext.Span{{Kind: richtext.Broadcast, Text: t, ID: t[1:], Self: true, Style: st}}
+	case exportChannelID.MatchString(t):
+		return []richtext.Span{{Kind: richtext.Channel, Text: t, ID: t[1:], Style: st}}
+	case exportUserID.MatchString(t):
+		return []richtext.Span{{Kind: richtext.User, Text: t, ID: t[1:], Style: st}}
+	case exportGroupID.MatchString(t):
+		return []richtext.Span{{Kind: richtext.Usergroup, Text: t, ID: t[1:], Style: st}}
 	case strings.HasPrefix(t, "@"):
 		return []richtext.Span{{Kind: richtext.User, Text: t, Style: st}}
 	case strings.HasPrefix(t, "#"):

@@ -4,11 +4,13 @@
 // inspect_tool turns it on) starts an inspect session, like a browser's
 // inspect element: the Slack component under the pointer gets an outline
 // and a label, ↑ and ↓ pick its parent or go back, Esc ends the session,
-// and a click copies a report of the element at once. A Shift+click, or
-// a drag past dragSlop (which grabs the region dragged out instead, for
-// what the picker can't reach), shows the shot for review first
-// (review.go): rects dragged over it are blurred out of the image
-// (Redact), Enter copies it and Esc drops it. The copy is one image on the clipboard: the element as it was drawn, outlined,
+// and a click shows the element's shot for review first (review.go):
+// rects dragged over it are blurred out of the image (Redact), Enter
+// copies it and Esc drops it. A drag past dragSlop (which grabs the
+// region dragged out instead, for what the picker can't reach) is
+// reviewed the same way, and a Shift+click copies the report at once,
+// with no review (Karim, 2026-11-17: "just flip it around", so every
+// plain pick can be blurred). The copy is one image on the clipboard: the element as it was drawn, outlined,
 // with a small blurred margin and nothing else of the window (or the
 // region, as it was), over a panel with a report (which component and
 // element, its classes, its rect, the colours drawn there, the theme,
@@ -20,7 +22,11 @@
 // While a session runs the window is laid out with a hover-only input
 // source (Gio patch 21): hover states, scrolling, carets and animations
 // stay, and no button, editor or shortcut reacts; the tool alone reads
-// the clicks and keys. Where things are comes from slackc's inspect
+// the clicks and keys. The freeze key (FreezeKey, freeze.go) holds the
+// window on the frame on screen, for what only shows while the pointer is
+// on it (a message's hover toolbar, a tooltip, a button's hover colour):
+// the window draws that frame's ops again and lays nothing out, and the
+// picker and the captures work on it. Where things are comes from slackc's inspect
 // records (slackc/inspect.go): each component boundary gets a
 // pass-through pointer area, and Gio's own hit test says which are under
 // the pointer. Plugins' host trees go down to their boxes, and the
@@ -36,7 +42,10 @@ import (
 	"image/color"
 	"math"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
@@ -66,9 +75,11 @@ type Region struct {
 type Host interface {
 	// Theme draws the session's label and banner.
 	Theme() *theme.Theme
-	// Describe fills the report's window and page fields; id-bearing
-	// fields go through red (UI goroutine).
-	Describe(r *Report, red *Redactor)
+	// Describer reads the window and the page as they are now, and
+	// returns what fills a report's window and page fields with them
+	// (id-bearing ones through red) later: a frozen capture's report
+	// describes the frozen frame (UI goroutine).
+	Describer() func(r *Report, red *Redactor)
 	// ConvKind is "public", "private", "dm", "mpdm" or "" for a channel
 	// id: what kind of conversation, never which.
 	ConvKind(id string) string
@@ -76,13 +87,17 @@ type Host interface {
 	Regions() []Region
 	// Toast shows a short note at the bottom of the window.
 	Toast(text string)
-	// CopyText puts text on the clipboard.
-	CopyText(text string)
 	// Post runs f on the UI goroutine; Invalidate asks for a frame.
 	Post(f func())
 	Invalidate()
 	// ConfigDir is where reports are saved ("": nowhere).
 	ConfigDir() string
+	// Frozen says a freeze began (true: the window draws the frame on
+	// screen again, frame after frame, and holds its animated images) or
+	// ended (false: at its next frame, before anything reads input, the
+	// window starts every widget's pointer state over, Gio patch 49's
+	// Source.ResetPointers, and lays out again).
+	Frozen(on bool)
 }
 
 type state uint8
@@ -98,7 +113,7 @@ const (
 	dragging
 	// picked: the release's frame (laid out hover-only, so no widget saw
 	// the button) is shot in AfterFrame, which copies the report (a
-	// plain click) or starts the review (a Shift+click, a region).
+	// Shift+click) or starts the review (a plain click, a region).
 	picked
 	// reviewing: the shot is shown for blurring (review.go).
 	reviewing
@@ -128,8 +143,8 @@ type Tool struct {
 	hist  [32]ptrAt
 	histN int
 	from  f32.Point   // where the primary button went down (window px)
-	win   image.Point // the window's size (px), at the last Begin
-	scale float32     // px per dp, at the last Begin
+	win   image.Point // the window's size (px), at the last input read
+	scale float32     // px per dp, at the last input read
 
 	hover    *pick
 	up       int           // ↑ presses: how many components out from the innermost
@@ -138,8 +153,43 @@ type Tool struct {
 	rev      *review       // reviewing
 	lastDone chan struct{} // the last report's delivery (Wait)
 	lastRep  *Report       // the last report delivered (tests, after Wait)
-	lastNow  time.Time     // the frame Begin last read input for
-	upKey    string        // the innermost element t.up counts from (innerKey)
+	texts    textCopies    // text copies on their way to the clipboard (textcopy.go)
+	// observing: this tool's session observes experiments (observe)
+	observing bool
+	// held is a copy key (Return and Enter as one, or C) dropped because a
+	// guarded capture's review wasn't armed, until its release is read:
+	// its auto-repeats (presses with no release between them on Windows
+	// and macOS) copy nothing; heldAt is its last press
+	held   key.Name
+	heldAt time.Time
+	upNow  []key.Name // copy keys released in this frame (pickKeys holds no key already up)
+	inAt   time.Time  // the frame whose input was read (Frame, Begin)
+	recAt  time.Time  // the frame recorded into frames[cur]
+	upKey  string     // the innermost element t.up counts from (innerKey)
+	// grabNow: P came in this frame's keys, the whole window to be
+	// grabbed to draw on (grabWindow) once input has read the pointer
+	grabNow bool
+	// the last press of FreezeKey and of Esc while it's down (repeat)
+	freezeDown, escDown time.Time
+	frameN              int // frames whose input was read (a capture's stage times count them)
+	// afterPick are the frame's keys held for after its release (readKeys)
+	afterPick []key.Event
+
+	// content is what the last laid-out frame drew, the tool's own
+	// drawing left out (End), and contentOK that it is the frame on
+	// screen: no frame reset its ops since. A freeze draws it again.
+	content    op.CallOp
+	contentOK  bool
+	contentAt  frameKey
+	contentOps *op.Ops       // the window's ops End finished
+	contentCP  op.Checkpoint // their end after content
+	fz         *freeze       // the frozen frame (freeze.go), nil while none is
+}
+
+// frameKey is what a frame was laid out for: its size and scale.
+type frameKey struct {
+	size   image.Point
+	metric unit.Metric
 }
 
 type ptrAt struct {
@@ -194,6 +244,13 @@ func (t *Tool) Hovered() (label string, rect image.Rectangle, ok bool) {
 // Close ends a session, a pick waiting for its frame included, before
 // the window drops the tool.
 func (t *Tool) Close() {
+	// every capture logs its line, whatever ends it (sign-out, the tool
+	// turned off, hide to tray)
+	if r := t.rev; r != nil && r.c != nil {
+		r.c.tm.outcome = "dropped: the tool closed"
+		logTimes(r.c)
+	}
+	t.dropCapture("dropped: the tool closed")
 	if t.state != off {
 		t.stop()
 	}
@@ -215,39 +272,100 @@ func (t *Tool) start() {
 	t.state = inspecting
 	t.hover, t.up, t.rec, t.pend, t.capture, t.rev = nil, 0, false, nil, nil, nil
 	t.frames[0].Nodes, t.frames[1].Nodes = t.frames[0].Nodes[:0], t.frames[1].Nodes[:0]
-	core.ObserveExperiments(observeExperiment)
+	t.observe(true)
+	if ownShoot() {
+		shots.wantFor(t, true) // the shots' GPU, ready for the first pick (shooter.go)
+	}
 }
 
 func (t *Tool) stop() {
+	t.dropCapture("dropped: the session ended before its shot")
 	t.state = off
+	t.held, t.grabNow = "", false
 	t.pend, t.rev = nil, nil
+	t.contentOK = false
+	t.unfreeze()
 	t.release()
+	if ownShoot() {
+		shots.wantFor(t, false)
+	}
+}
+
+// dropCapture lets go of a pick not shot yet, its stage times logged with
+// outcome (unless it has one): no later frame's AfterFrame shoots it and
+// opens a review after its session ended.
+func (t *Tool) dropCapture(outcome string) {
+	c := t.capture
+	if c == nil {
+		return
+	}
+	t.capture = nil
+	if c.tm.outcome == "" {
+		c.tm.outcome = outcome
+	}
+	logTimes(c)
 }
 
 // release stops recording frames: no outline, no experiments observed,
 // and the last frames' nodes (widgets, props funcs, scopes) let go of.
 func (t *Tool) release() {
 	t.hover, t.rec = nil, false
-	core.ObserveExperiments(nil)
+	t.observe(false)
 	for i := range t.frames {
-		clear(t.frames[i].Nodes)
-		t.frames[i].Nodes = t.frames[i].Nodes[:0]
+		t.frames[i].Release()
 	}
 }
 
 // backToInspecting ends a press or a drag that grabbed nothing: the
-// session goes on, recording afresh.
+// session goes on, recording afresh (or, frozen, on the frozen frame).
 func (t *Tool) backToInspecting() {
+	if t.fz != nil {
+		// the frozen frame's record stayed (release0): the next frame's
+		// hits outline it again
+		t.state, t.pend, t.hover = inspecting, nil, nil
+		return
+	}
 	// no outline until a frame is recorded again: the one shown was the
 	// press's, whose nodes are let go of
 	t.state, t.pend, t.rec, t.hover = inspecting, nil, false, nil
-	core.ObserveExperiments(observeExperiment)
+	t.observe(true)
 }
 
-// observeExperiment gives an experiment read on the UI goroutine to the
-// node drawing.
+// observers counts the tools whose sessions observe experiments: each of
+// Clack's windows runs a tool of its own (the main window's, huddleui's
+// windows'), and the observer stays while any of their sessions wants it.
+var observers struct {
+	mu sync.Mutex
+	n  int
+}
+
+// observe says t's session observes experiments (on) or no longer does.
+func (t *Tool) observe(on bool) {
+	if t.observing == on {
+		return
+	}
+	t.observing = on
+	observers.mu.Lock()
+	defer observers.mu.Unlock()
+	if on {
+		if observers.n++; observers.n == 1 {
+			core.ObserveExperiments(observeExperiment)
+		}
+	} else if observers.n--; observers.n == 0 {
+		core.ObserveExperiments(nil)
+	}
+}
+
+// recorder is the goroutine whose window's frame is being recorded (Begin
+// to End, under slackc's frame lock), 0 between: each window runs its
+// frames on its own goroutine, and only that one's experiment reads are
+// the frame's.
+var recorder atomic.Int64
+
+// observeExperiment gives an experiment read in the frame being recorded,
+// on the goroutine recording it, to the node drawing.
 func observeExperiment(name, group string) {
-	if !uiguard.OnUI() {
+	if g := recorder.Load(); g == 0 || g != uiguard.Goroutine() {
 		return
 	}
 	if f := slackc.CurrentInspectFrame(); f != nil {
@@ -258,47 +376,83 @@ func observeExperiment(name, group string) {
 const pointerKinds = pointer.Move | pointer.Enter | pointer.Leave | pointer.Press | pointer.Release | pointer.Drag | pointer.Cancel
 
 // Begin starts a frame. Call it first in the window's frame, before
-// anything reads input; lay the window out with the context it returns
-// (gtx itself while no session runs) and call End last.
+// anything reads input (after Frame, which reads the frame's input when
+// a session runs); lay the window out with the context it returns (gtx
+// itself while no session runs) and call End last.
 func (t *Tool) Begin(gtx layout.Context) layout.Context {
+	t.flushTexts(gtx) // a session or not: a delivery's text copy
 	if t.state == off {
 		return gtx
 	}
-	src := gtx.Source
-	hover := gtx
-	hover.Source = src.HoverOnly()
-	if !gtx.Now.IsZero() && gtx.Now.Equal(t.lastNow) {
-		// the same frame laid out again (a click navigated mid-frame):
-		// its input is read, record it afresh
-		if t.state == inspecting {
-			slackc.InspectBegin(&t.frames[t.cur], src)
+	t.contentOK = false // the window's ops were reset for this frame
+	if gtx.Now.IsZero() || !gtx.Now.Equal(t.inAt) {
+		// no Frame read this frame's input (the session started in it)
+		t.input(gtx)
+		if t.state == off {
+			return gtx
 		}
-		return hover
 	}
-	t.lastNow = gtx.Now
+	hover := gtx
+	hover.Source = gtx.Source.HoverOnly()
+	if t.state == inspecting && t.fz == nil {
+		if gtx.Now.IsZero() || !gtx.Now.Equal(t.recAt) {
+			t.cur = 1 - t.cur // the record of the frame on screen stays for the outline
+			t.recAt = gtx.Now
+		}
+		// recorded afresh when the frame is laid out again (a click
+		// navigated mid-frame)
+		slackc.InspectBegin(&t.frames[t.cur], gtx.Source)
+		recorder.Store(uiguard.Goroutine())
+		t.rec = true
+	}
+	return hover
+}
+
+// input reads a frame's input (Frame, or Begin in the frame a session
+// starts): the pointer's events and the keys, what the pointer is over in
+// the last frame's record (the frozen frame's, while frozen), and what a
+// press, a drag or a release did.
+func (t *Tool) input(gtx layout.Context) {
+	src := gtx.Source
+	t.frameN++
+	t.inAt = gtx.Now
 	t.win = gtx.Constraints.Max
 	t.scale = gtx.Metric.PxPerDp
 	if t.scale <= 0 {
 		t.scale = 1
 	}
 	last := &t.frames[t.cur] // the frame before recorded into frames[cur]
+	if r := t.rev; t.state == reviewing && r != nil && r.drawnFrames > 0 && r.shownAt.IsZero() {
+		// a frame drew the review and went out before this one began: on
+		// screen now, armed armDelay from here (armed)
+		r.shownAt = t.inAt
+	}
 	in := t.readPointer(gtx)
-	t.readKeys(gtx)
+	t.readKeys(gtx, in.released)
+	defer t.pickKeys(gtx) // the keys after this frame's release, once it's known what it picked
 	switch t.state {
-	case off:
-		return gtx
-	case reviewing:
-		return hover
+	case off, reviewing:
+		return
 	case picked:
 		// a new frame and the capture's wasn't shot (AfterFrame doesn't
 		// run for a frame under the boot placeholder): give up, don't
-		// leave the window taking no clicks
+		// leave the window taking no clicks; the capture goes with the
+		// session (stop)
+		t.dropCapture("dropped: its frame wasn't drawn")
 		t.stop()
 		t.host.Toast("Inspect: the capture's frame wasn't drawn, try again")
-		return gtx
+		return
+	}
+	var hits []slackc.InspectHit
+	if t.rec && (t.state == inspecting || t.fz != nil) {
+		// frozen, the frozen frame's areas are read whatever the state, so
+		// what each one says the pointer is over stays current (Hold)
+		hits = last.ReadHits(src, t.winAt)
+		if t.fz != nil && !last.Held() {
+			last.Hold(hits) // the freeze began this frame
+		}
 	}
 	if t.state == inspecting && t.rec {
-		hits := last.ReadHits(src, t.winAt)
 		t.hover = t.pickFrom(last, hits)
 	}
 	if t.state == inspecting && in.pressed {
@@ -308,7 +462,7 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 		t.state, t.pend = pressing, nil
 		if t.hover != nil {
 			t.pend = t.newCapture(gtx, t.hover)
-			t.pend.review = in.shift
+			t.pend.review = !in.shift // Shift copies at once
 		}
 		t.release0()
 	}
@@ -322,30 +476,38 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 				t.backToInspecting() // nothing under the pointer
 				break
 			}
-			t.pend.review = t.pend.review || in.shift
+			t.pend.review = t.pend.review && !in.shift // Shift at the press or the release
 			t.capture, t.pend, t.state = t.pend, nil, picked
+			if !t.capture.review {
+				t.capture.tm.kind, t.capture.tm.atOnce = "shift-click", true
+			}
+			t.capture.tm.pick, t.capture.tm.pickN, t.capture.tm.win = time.Now(), t.frameN, t.win
 		case dragging:
 			r := t.dragRect(in.releaseAt)
 			if min := int(minRegion*t.scale + .5); r.Dx() < min || r.Dy() < min {
 				t.backToInspecting()
-				t.host.Toast("Inspect: drag a bigger region to grab it")
+				t.say("drag a bigger region to grab it")
 				break
 			}
 			at := image.Pt(int(in.releaseAt.X+.5), int(in.releaseAt.Y+.5))
 			t.capture, t.state = t.newRegionCapture(gtx, r, at), picked
+			t.capture.tm.pick, t.capture.tm.pickN, t.capture.tm.win = time.Now(), t.frameN, t.win
 		}
 	}
-	if t.state == inspecting {
-		t.cur = 1 - t.cur
-		slackc.InspectBegin(&t.frames[t.cur], src)
-		t.rec = true
+	if t.grabNow {
+		t.grabNow = false
+		if t.state == inspecting { // not mid-press: a press goes on as it was
+			t.grabWindow(gtx)
+		}
 	}
-	return hover
 }
 
 // release0 stops recording for a press (its report is built): the
 // outline stays where it was until the release says what the press was.
 func (t *Tool) release0() {
+	if t.fz != nil {
+		return // frozen: the frozen frame's record is all there is to pick from
+	}
 	h := t.hover
 	t.release()
 	t.hover = h
@@ -360,16 +522,28 @@ func (t *Tool) dragRect(p f32.Point) image.Rectangle {
 // End finishes the frame Begin started (gtx: the frame's own context, at
 // the window's origin, not Begin's): the outline and label, the banner,
 // and the window-wide pointer area the tool reads, all deferred so they
-// sit over every popup.
+// sit over every popup. What the window drew before them is the frame a
+// freeze holds.
 func (t *Tool) End(gtx layout.Context) {
 	if slackc.Inspecting() {
 		slackc.InspectEnd()
+		recorder.Store(0)
 	}
 	if t.state == off {
 		return
 	}
-	// this frame's filters: the session's keys and the area's pointer
-	// kinds (their events come in the next frame's Begin)
+	t.content, t.contentOK = gtx.Ops.Whole(), true
+	t.contentOps, t.contentCP = gtx.Ops, gtx.Ops.Checkpoint()
+	t.contentAt = frameKey{gtx.Constraints.Max, gtx.Metric}
+	t.overlay(gtx)
+}
+
+// overlay is what the tool draws over a frame, the frame End finishes or
+// the frozen one: this frame's filters (the session's keys and the
+// area's pointer kinds, whose events come in the next frame's input), the
+// outline, label and banner or the review, and the window-wide pointer
+// area, deferred.
+func (t *Tool) overlay(gtx layout.Context) {
 	src := gtx.Source
 	for {
 		if _, ok := src.Event(t.keyFilters()...); !ok {
@@ -408,8 +582,59 @@ func (t *Tool) keyFilters() []event.Filter {
 		key.Filter{Name: key.NameDeleteForward},
 		key.Filter{Name: "Z", Required: key.ModShortcut},
 		key.Filter{Name: "C", Required: key.ModShortcut},
+		key.Filter{Name: FreezeKey},
+		// the pen's (draw.go): no modifier, so Mod+Z and Mod+C stay the
+		// filters' above
+		key.Filter{Name: PenKey},
+		key.Filter{Name: "Z"},
+		key.Filter{Name: "A"},
+		key.Filter{Name: "1"},
+		key.Filter{Name: "2"},
+		key.Filter{Name: "3"},
 		t.combo,
+		// frozen, no widget asks for keys: every other press is the
+		// tool's too, so none goes unhandled (macOS beeps for one)
+		t.anyKey(),
 	}
+}
+
+// anyKey is a filter for every key while frozen (a catch-all: Gio leaves
+// out the keys it moves the focus with, which the Tab filter takes), and
+// the freeze key's again otherwise, which adds nothing: in a session that
+// isn't frozen the window's widgets still ask for theirs.
+func (t *Tool) anyKey() key.Filter {
+	if t.fz == nil {
+		return key.Filter{Name: FreezeKey} // already asked for
+	}
+	return key.Filter{Optional: key.ModCtrl | key.ModCommand | key.ModShift | key.ModAlt | key.ModSuper}
+}
+
+// repeat reports a press of FreezeKey or Esc while that key is still down
+// (no release read since its last press, which came less than a second
+// ago): a held key's auto-repeat, which would toggle the freeze on every
+// repeat, or unfreeze and then end the session. It notes those two keys'
+// presses and releases.
+func (t *Tool) repeat(ke key.Event) bool {
+	var down *time.Time
+	switch ke.Name {
+	case FreezeKey:
+		down = &t.freezeDown
+	case key.NameEscape:
+		down = &t.escDown
+	default:
+		return false
+	}
+	now := t.inAt
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if ke.State != key.Press {
+		*down = time.Time{}
+		return false
+	}
+	held := !down.IsZero() && now.Sub(*down) < time.Second
+	*down = now
+	return held
 }
 
 // comboPress reports that e is the shortcut f: its key, its required
@@ -421,7 +646,7 @@ func comboPress(f key.Filter, e key.Event) bool {
 // ptrRead is what a frame's pointer events did to a press: a primary
 // press came (at t.from), the pointer went past dragSlop from it, the
 // button came up (at releaseAt), and Shift was held at the press or the
-// release (a click to review before copying).
+// release (a click that copies at once, with no review).
 type ptrRead struct {
 	pressed, far, released bool
 	shift                  bool
@@ -443,6 +668,21 @@ func (t *Tool) readPointer(gtx layout.Context) ptrRead {
 		if !ok {
 			continue
 		}
+		if pe.Kind == pointer.Cancel {
+			// the window lost the focus, or a freeze's end started the
+			// pointer state over (Gio patch 49): a Cancel has no position,
+			// so the pointer stays where it was, only not known to be over
+			// anything until it moves (the outline goes, not to 0,0)
+			t.ptrIn = false
+			t.held = "" // the window lost the focus: the key's release goes elsewhere
+			if t.state == reviewing {
+				t.reviewPointer(pe)
+			} else if held || in.pressed {
+				t.backToInspecting()
+				held, in = false, ptrRead{}
+			}
+			continue
+		}
 		t.hist[t.histN%len(t.hist)] = ptrAt{pe.Time, pe.Position}
 		t.histN++
 		t.ptr = pe.Position
@@ -453,11 +693,6 @@ func (t *Tool) readPointer(gtx layout.Context) ptrRead {
 		switch pe.Kind {
 		case pointer.Leave:
 			t.ptrIn = false
-		case pointer.Cancel:
-			if held || in.pressed {
-				t.backToInspecting()
-				held, in = false, ptrRead{}
-			}
 		case pointer.Press:
 			t.ptrIn = true
 			if pe.Buttons&pointer.ButtonPrimary != 0 && t.state == inspecting && !in.pressed {
@@ -510,35 +745,131 @@ func (t *Tool) SeedPointer(p image.Point) {
 	t.ptrIn = true
 }
 
-func (t *Tool) readKeys(gtx layout.Context) {
+// readKeys reads the frame's key presses. In a frame whose pointer events
+// released the button (released: a pick or a region, maybe), Enter and
+// Mod+C wait for the release to be read (pickKeys): they came after it,
+// and anyone fast enough to press one before the capture's frame was drawn
+// means the capture (keys come after the pointer's events in a frame:
+// Gio's order). Esc and the shortcut act at once, as they always have: Esc
+// while pressing or dragging drops only that press (its release is then
+// ignored, nothing is shot), and the shortcut ends the session.
+func (t *Tool) readKeys(gtx layout.Context, released bool) {
+	t.upNow = t.upNow[:0]
 	for {
 		e, ok := gtx.Event(t.keyFilters()...)
 		if !ok {
 			break
 		}
 		ke, ok := e.(key.Event)
-		if !ok || ke.State != key.Press {
+		if !ok || t.repeat(ke) {
 			continue
 		}
-		switch {
-		case t.state == reviewing:
-			t.reviewKey(ke)
-		case t.state == picked:
-			// the shot comes at this frame's end: the review takes keys
-		case comboPress(t.combo, ke):
-			t.stop()
-		case ke.Name == key.NameEscape && t.state == dragging:
-			t.backToInspecting() // only the drag; its release is ignored
-		case ke.Name == key.NameEscape:
-			t.stop()
-		case t.state != inspecting:
-		case ke.Name == key.NameUpArrow:
-			t.up++
-		case ke.Name == key.NameDownArrow:
-			t.up = max(t.up-1, 0)
+		if t.held != "" && heldName(ke) == t.held {
+			switch {
+			case ke.State != key.Press:
+				t.held = "" // up: its next press is a press
+				continue
+			case t.inAt.Sub(t.heldAt) < heldGap:
+				t.heldAt = t.inAt // an auto-repeat
+				continue
+			}
+			t.held = "" // a press long after the last (its release went elsewhere)
+		}
+		if ke.State != key.Press {
+			t.upNow = append(t.upNow, heldName(ke))
+			continue
+		}
+		if released && t.state != reviewing && enterKey(ke) {
+			t.afterPick = append(t.afterPick, ke)
+			continue
+		}
+		t.key(gtx, ke)
+	}
+}
+
+// enterKey is Enter, Return or Mod+C: what copies in the review.
+func enterKey(ke key.Event) bool {
+	return ke.Name == key.NameReturn || ke.Name == key.NameEnter || ke.Modifiers.Contain(key.ModShortcut) && ke.Name == "C"
+}
+
+// heldName names a copy key for Tool.held: Return and Enter as one key.
+func heldName(ke key.Event) key.Name {
+	if ke.Name == key.NameEnter {
+		return key.NameReturn
+	}
+	return ke.Name
+}
+
+// hold drops copy key ke for a guarded capture not armed yet: it and its
+// auto-repeats copy nothing until it comes up.
+func (t *Tool) hold(ke key.Event) {
+	t.held, t.heldAt = heldName(ke), t.inAt
+}
+
+// heldGap is longer than any wait between a held key's auto-repeats (at
+// the slowest settings macOS repeats after about 1.8 s and then as often,
+// Windows after 1 s): a press of it later than that came after a release
+// the window didn't get (it went to another window).
+const heldGap = 2500 * time.Millisecond
+
+// pickKeys acts on the keys readKeys held for after this frame's release
+// (Enter, Mod+C): an element's pick waiting for its shot is copied as soon
+// as it's shot, with no review (AfterFrame: the image the review's Enter
+// copies with nothing marked; its margin is blurred anyway). A dragged
+// region still opens its review, the only place it can be blurred: the
+// Enter that came before it is dropped. With no capture they act as ever.
+func (t *Tool) pickKeys(gtx layout.Context) {
+	keys := t.afterPick
+	t.afterPick = t.afterPick[:0]
+	for _, ke := range keys {
+		switch c := t.capture; {
+		case t.state == picked && c != nil && !c.guarded():
+			c.copyNow, c.tm.atOnce = true, true
+			c.tm.kind += " (Enter in its frame)"
+		case t.state == picked && c != nil:
+			// a region, or a region's size: reviewed first, and the key
+			// held until it comes up (its auto-repeats would copy once the
+			// review armed), unless it came up in this frame already
+			if !slices.Contains(t.upNow, heldName(ke)) {
+				t.hold(ke)
+			}
+		default:
+			t.key(gtx, ke)
 		}
 		t.host.Invalidate()
 	}
+}
+
+// key acts on one key press.
+func (t *Tool) key(gtx layout.Context, ke key.Event) {
+	switch {
+	case t.state == reviewing:
+		t.reviewKey(ke)
+	case t.state == picked:
+		// the shot comes at this frame's end: the review takes keys
+	case comboPress(t.combo, ke):
+		t.stop()
+	case ke.Name == key.NameEscape && (t.state == dragging || t.state == pressing):
+		t.backToInspecting() // only the drag or the press; its release is ignored
+	case ke.Name == key.NameEscape && t.fz != nil && t.state == inspecting:
+		t.unfreeze() // the session goes on; Esc again ends it
+	case ke.Name == key.NameEscape:
+		t.stop()
+	case t.state != inspecting:
+	case ke.Name == FreezeKey: // its filter takes no modifier
+		if t.fz != nil {
+			t.unfreeze()
+		} else if !t.freeze(gtx) {
+			t.host.Toast("Inspect: nothing to freeze yet, try again")
+		}
+	case ke.Name == PenKey:
+		t.grabNow = true // once input has dealt with the last frame's capture
+	case ke.Name == key.NameUpArrow:
+		t.up++
+	case ke.Name == key.NameDownArrow:
+		t.up = max(t.up-1, 0)
+	}
+	t.host.Invalidate()
 }
 
 // pickFrom chooses what the pointer is over among the last frame's hits:
@@ -548,7 +879,8 @@ func (t *Tool) readKeys(gtx layout.Context) {
 func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick {
 	ptr := image.Pt(int(t.ptr.X+.5), int(t.ptr.Y+.5))
 	p := &pick{frame: f, node: -1, inner: -1, tree: -1}
-	for _, r := range t.host.Regions() {
+	regions := t.regions()
+	for _, r := range regions {
 		if ptr.In(r.Rect) {
 			p.region = r.Name
 		}
@@ -558,6 +890,7 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	}
 	origin := map[int]slackc.InspectHit{}
 	best := -1
+	bestOver := false // best is in a layer drawn over everything (a tooltip)
 	var tb treeBox
 	for _, h := range hits {
 		origin[h.Node] = h
@@ -568,9 +901,17 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 			}
 			continue
 		}
-		best = max(best, h.Node) // a component, or an element with a size
+		// a component, an element with a size, or a popup's layer: the
+		// one drawn last, and before all one in a tooltip, drawn over
+		// everything whatever was recorded after it
+		switch o := drawnOver(f, h.Node); {
+		case o && !bestOver:
+			best, bestOver = h.Node, true
+		case o == bestOver:
+			best = max(best, h.Node)
+		}
 	}
-	if p.tree >= 0 && best < p.tree {
+	if p.tree >= 0 && best < p.tree && !bestOver {
 		// the tree was drawn after the natives inside it: one of them
 		// under the pointer still wins; the component the plugin patches
 		// (the tree's parent) and a native elsewhere don't
@@ -580,7 +921,7 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	}
 	if best < 0 {
 		// no component: the shell's area
-		for _, r := range t.host.Regions() {
+		for _, r := range regions {
 			if ptr.In(r.Rect) {
 				p.rect = r.Rect
 			}
@@ -626,7 +967,55 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	if p.label == "" {
 		p.label = t.labelFor(f, node)
 	}
+	if l := layerOf(f, node); l != "" {
+		p.region = l // a popup's (slackc.InspectOverlay): not the window's area under it
+	}
 	return p
+}
+
+// RecordedLayers lists the popup layers of the record the picker reads
+// (the last frame's, the frozen frame's while frozen): each one's name,
+// with its box when it has one (tests).
+func (t *Tool) RecordedLayers() []string {
+	f := &t.frames[t.cur]
+	var out []string
+	for i := range f.Nodes {
+		if n := &f.Nodes[i]; n.Kind == slackc.InspectLayer {
+			parent := "none"
+			if n.Parent >= 0 {
+				pn := &f.Nodes[n.Parent]
+				parent = pn.Name
+				if pn.Kind == slackc.InspectElement {
+					parent = selector(pn, nil, 2)
+				}
+			}
+			out = append(out, fmt.Sprintf("%s %v sized %v (node %d of %d, in %s)", n.Name, n.Size, n.Sized(), i, len(f.Nodes), parent))
+		}
+	}
+	return out
+}
+
+// drawnOver reports that node i is drawn in a layer drawn over
+// everything else (slackc.InspectNode.Over: a tooltip).
+func drawnOver(f *slackc.InspectFrame, i int) bool {
+	for _, j := range f.Chain(i) {
+		if n := &f.Nodes[j]; n.Kind == slackc.InspectLayer {
+			return n.Over
+		}
+	}
+	return false
+}
+
+// layerOf is the name of the innermost popup layer node i is drawn in
+// (slackc.InspectLayer: an overlay, a submenu, a tooltip), "" for the
+// window's own.
+func layerOf(f *slackc.InspectFrame, i int) string {
+	for _, j := range f.Chain(i) {
+		if n := &f.Nodes[j]; n.Kind == slackc.InspectLayer {
+			return n.Name
+		}
+	}
+	return ""
 }
 
 // treeBox is the innermost box of a plugin tree under the pointer, to
@@ -687,8 +1076,11 @@ func descends(f *slackc.InspectFrame, i, anc int) bool {
 // the element.
 func (t *Tool) labelFor(f *slackc.InspectFrame, i int) string {
 	n := &f.Nodes[i]
-	if n.Kind == slackc.InspectElement {
+	switch n.Kind {
+	case slackc.InspectElement:
 		return selector(n, nil, 3)
+	case slackc.InspectLayer:
+		return n.Name
 	}
 	s := n.Name
 	if el := rootElement(f, i); el >= 0 {
@@ -775,13 +1167,15 @@ func (t *Tool) drawHover(gtx layout.Context) {
 		}
 	}
 	if th != nil && th.Shaper != nil {
-		t.banner(gtx, th, HintInspect)
+		t.banner(gtx, th, t.sessionHint(gtx))
 	}
 }
 
-// The banner's hints: a session's, a drag's.
+// The banner's hints: a session's, a frozen session's (freeze.go), a
+// drag's.
 const (
-	HintInspect = "Inspect: click to copy a report · shift-click or drag to blur first · ↑ ↓ parent · Esc to stop"
+	HintInspect = "Inspect: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · F freezes · P draws · Esc to stop"
+	HintFrozen  = "Frozen: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · P draws · F or Esc unfreezes"
 	HintDrag    = "Inspect: release to grab this region · Esc cancels the drag"
 )
 

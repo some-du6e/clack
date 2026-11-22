@@ -18,6 +18,9 @@ type Context struct {
 	disp    _EGLDisplay
 	eglCtx  *eglContext
 	eglSurf _EGLSurface
+	// keep: disp is EGL_DEFAULT_DISPLAY's, which stays initialized for the
+	// process (Clack patch 55): every headless window is on it
+	keep bool
 }
 
 type eglContext struct {
@@ -61,7 +64,14 @@ func (c *Context) Release() {
 		eglDestroyContext(c.disp, c.eglCtx.ctx)
 		c.eglCtx = nil
 	}
-	eglTerminate(c.disp)
+	// EGL_DEFAULT_DISPLAY is one display for the whole process, shared by
+	// every context on it: terminating it here took every other one's
+	// display away (eglMakeCurrent 0x3008), and the next context brought
+	// it up again, a new connection to the X server each time (Clack patch
+	// 55). Initializing it again is a no-op in EGL.
+	if !c.keep {
+		eglTerminate(c.disp)
+	}
 	c.disp = nilEGLDisplay
 }
 
@@ -77,11 +87,13 @@ func NewContext(disp NativeDisplayType) (*Context, error) {
 		return nil, err
 	}
 	eglDisp := eglGetDisplay(disp)
+	keep := disp == EGL_DEFAULT_DISPLAY
 	// eglGetDisplay can return EGL_NO_DISPLAY yet no error
 	// (EGL_SUCCESS), in which case a default EGL display might be
 	// available.
 	if eglDisp == nilEGLDisplay {
 		eglDisp = eglGetDisplay(EGL_DEFAULT_DISPLAY)
+		keep = true
 	}
 	if eglDisp == nilEGLDisplay {
 		return nil, fmt.Errorf("eglGetDisplay failed: 0x%x", eglGetError())
@@ -93,6 +105,7 @@ func NewContext(disp NativeDisplayType) (*Context, error) {
 	c := &Context{
 		disp:   eglDisp,
 		eglCtx: eglCtx,
+		keep:   keep,
 	}
 	return c, nil
 }

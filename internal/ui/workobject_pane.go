@@ -705,7 +705,9 @@ func (p *woPane) layoutComposer(gtx layout.Context, e *workobject.Entity, y, w i
 	}
 	at(gtx, image.Pt(in.X, in.Y+(h-gtx.Dp(22))/2), image.Pt(iw, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = iw
-		return th.Editor(gtx, &p.editor, 15, c.Fg, c.Accent)
+		// the browser's own selection, as the composer's: Slack styles
+		// no ::selection here (an opaque Accent hid the selected text)
+		return th.Editor(gtx, &p.editor, 15, c.Fg, c.Selection)
 	})
 	for {
 		ev, ok := p.editor.Update(gtx)

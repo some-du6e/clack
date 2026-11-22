@@ -211,22 +211,14 @@ func (a *App) focusButton(gtx layout.Context, org image.Point, cs int) {
 	}
 	at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
 		// :hover and buttonContainer's onMouseEnter; while the toggle's
-		// view transition runs its pseudo-elements take the pointer
+		// view transition runs its pseudo-elements take the pointer. The
+		// transform wraps the button, so it takes the hover the last frame
+		// left; the colours read the Clickable inside clickArea's content,
+		// after its update, so a press shows :active in the frame that
+		// delivers it (Gio asks for no other while it's held)
 		hov := f.btn.Hovered() && !fading
 		nonIdle := hov || fading // idle__FcMfs off
 		base := a.chromeBase(org.Add(image.Pt(cs/2, cs/2)))
-		var bgT, fgT color.NRGBA
-		switch {
-		case active: // --active: base-pry, content-ter
-			bgT, fgT = c.Bg, c.FgSubtle
-		case hov: // :hover: content-inv-pry
-			bgT, fgT = theme.Over(c.SearchHover, base), c.ChromeText
-		default: // surf-inv-pry, content-inv-sec
-			bgT = theme.Over(c.ChromeActive, base) // the rail scope's surf-inv-pry
-			fgT = theme.Over(c.ChromeTextDim, bgT)
-		}
-		bg := p.bg.value(now, bgT, 125*time.Millisecond, stripEase, false)
-		fg := p.fg.value(now, fgT, 125*time.Millisecond, stripEase, false)
 		scaleT := 1.0
 		if hov {
 			scaleT = 1.1
@@ -238,19 +230,45 @@ func (a *App) focusButton(gtx layout.Context, org image.Point, cs int) {
 		scale := p.scale.value(now, scaleT, 125*time.Millisecond, stripEase, reduce)
 		tilt := p.tilt.value(now, tiltT, 200*time.Millisecond, cssEaseInOut, reduce)
 		stars := p.stars.value(now, tiltT, 200*time.Millisecond, cssEaseInOut, false)
-		if p.bg.running(now) || p.fg.running(now) || p.scale.running(now) || p.tilt.running(now) || p.stars.running(now) {
+		if p.scale.running(now) || p.tilt.running(now) || p.stars.running(now) {
 			gtx.Execute(op.InvalidateCmd{}) // the transitions' frames, then none
 		}
 		ctr := f32.Pt(float32(cs)/2, float32(cs)/2)
 		tr := f32.Affine2D{}.Rotate(ctr, float32(-15*tilt*math.Pi/180)).Mul(f32.Affine2D{}.Scale(ctr, f32.Pt(float32(scale), float32(scale))))
 		ts := op.Affine(tr).Push(gtx.Ops) // the button only: its tooltip stays upright
+		var bg, bgT color.NRGBA
+		var on, hovNow bool
 		d := clickArea(gtx, &f.btn, func(gtx layout.Context, sz image.Point, _ bool) {
-			if !active && bg == bgT && !hov { // settled: the strip's own chrome composite
+			if !on && bg == bgT && !hovNow { // settled: the strip's own chrome composite
 				a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, c.ChromeActive)
 				return
 			}
 			theme.RRect(gtx, image.Rectangle{Max: sz}, sz.X/2, bg)
 		}, func(gtx layout.Context) layout.Dimensions {
+			hovNow = f.btn.Hovered() && !fading
+			on = active || f.btn.Pressed()
+			var fgT color.NRGBA
+			switch {
+			case on:
+				// --active (focus mode on) and :active: the rail scope's
+				// theme-base-pry with theme-content-ter; hovered, :hover's
+				// blended surf-inv-pry-hover layer stays over the base-pry
+				// (the rule sets only color and background-color)
+				bgT, fgT = c.ChromeBasePry, c.ChromeContentTer
+				if hovNow {
+					bgT = c.ChromeBasePryHover
+				}
+			case hovNow: // :hover: content-inv-pry over surf-inv-pry and its blended -hover layer
+				bgT, fgT = theme.Over(c.ChromeHoverTint, theme.Over(c.ChromeActive, base)), c.ChromeText
+			default: // surf-inv-pry, content-inv-sec
+				bgT = theme.Over(c.ChromeActive, base) // the rail scope's surf-inv-pry
+				fgT = theme.Over(c.ChromeTextDim, bgT)
+			}
+			bg = p.bg.value(now, bgT, 125*time.Millisecond, stripEase, false)
+			fg := p.fg.value(now, fgT, 125*time.Millisecond, stripEase, false)
+			if p.bg.running(now) || p.fg.running(now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 			icon := "moon"
 			if active {
 				icon = "moon-filled"

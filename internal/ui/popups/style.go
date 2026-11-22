@@ -335,7 +335,9 @@ func ApplyTokens(c *Colors, th *theme.Theme) {
 		switch p {
 		case &c.Bg: // first in popupTokens: the rest mix over it
 			*p = theme.Over(*p, th.C.Bg)
-		case &c.Divider, &c.Backdrop, &c.BtnBorder, &c.FocusRing, &c.InputBorder:
+		case &c.Backdrop: // the scrim covers the app: its alpha holds over the pane
+			*p = linearAlpha(*p, th.C.Bg)
+		case &c.Divider, &c.BtnBorder, &c.FocusRing, &c.InputBorder:
 			*p = linearAlpha(*p, c.Bg)
 		case &c.BtnHover:
 			*p = theme.Over(*p, c.BtnBg)
@@ -715,9 +717,11 @@ func buttonGrp(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind Bt
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
-	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+	d := st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		return buttonNative(gtx, th, st, c, kind, size, label, iconName, minW, ring, grp)
 	})
+	slackc.InspectAreaInLayer(gtx, image.Rectangle{Max: d.Size}) // a popup's button, for the inspect tool
+	return d
 }
 
 // focusRing draws Slack's keyboard focus ring around r (radius rad):
@@ -969,13 +973,17 @@ func linearAlpha(c, bg color.NRGBA) color.NRGBA { return theme.LinearAlpha(c, bg
 
 func init() {
 	for _, p := range []struct {
-		c  *Colors
-		bg color.NRGBA
-	}{{&lightColors, rgb(0xffffff)}, {&darkColors, rgb(0x222529)}} {
+		c    *Colors
+		bg   color.NRGBA
+		pane color.NRGBA // the message pane: what a modal's scrim covers
+	}{{&lightColors, rgb(0xffffff), rgb(0xffffff)}, {&darkColors, rgb(0x222529), rgb(0x1a1d21)}} {
 		c := p.c
-		for _, f := range []*color.NRGBA{&c.Ring, &c.Divider, &c.Shadow, &c.ModalShadow, &c.Backdrop,
+		for _, f := range []*color.NRGBA{&c.Ring, &c.Divider, &c.Shadow, &c.ModalShadow,
 			&c.BtnBorder, &c.MatchBg, &c.EmojiHover, &c.EmojiSelect, &c.FocusRing, &c.InputBorder, &c.Lightbox} {
 			*f = linearAlpha(*f, p.bg)
 		}
+		// Slack's dark rgba(0,0,0,.7) over the #1a1d21 pane is #08090a;
+		// held over the #222529 card it drew #050708
+		c.Backdrop = linearAlpha(c.Backdrop, p.pane)
 	}
 }

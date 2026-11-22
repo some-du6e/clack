@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -79,11 +80,18 @@ var tbIcons = [tbCount]string{"add-reaction", "comment-lines", "forward-msg", "t
 // views. It is cached across view instances (UI goroutine only), so
 // switching back to a conversation keeps its rows and scroll position.
 type listState struct {
-	hb     *hub
-	m      *model
-	thread bool
-	ch     string
-	ts     string // thread ts
+	hb *hub
+	m  *model // what the list shows: chm, or its window
+	// chm is a channel list's conversation model (the newest messages,
+	// every list's); win is the window it shows instead, its own (hub.go
+	// newWindow), nil when it shows chm
+	chm, win *model
+	// highlightReq is the message the list was last asked to highlight
+	// (Highlight), whether or not it holds it
+	highlightReq string
+	thread       bool
+	ch           string
+	ts           string // thread ts
 	// container is the view container the list is in ("" main, "split";
 	// see stateIn)
 	container string
@@ -107,6 +115,12 @@ type listState struct {
 	openLastRead string // the "New" line position, fixed while open
 	opened       bool
 	thr          threadRead // the thread pane's read state (thread_unread.go)
+	// rootHandedOn: the thread's root turned out to be a reply and the
+	// Host was told (ReplyRootRedirector); cleared each time the pane
+	// opens again (ThreadView.Reopen) and when the list lets go of its
+	// messages (releaseEvicted)
+	rootHandedOn bool
+	tl           threadList // the thread list's paging (thread_load.go)
 	positioned   bool
 	markedTS     string
 	lastMark     time.Time
@@ -115,11 +129,18 @@ type listState struct {
 	pointerIn bool
 	ctx       ctxPress // this frame's context-menu press (context.go)
 	hoverIdx  int
+	// laid is the message rows the last layout put on screen, by key:
+	// the hover is found in them (layoutList), so a rebuild that moved
+	// items to other indices since (older messages paged in above, a day
+	// divider, a joins summary forming) can't hand the hover, and its
+	// toolbar, to whatever message took the old index
+	laid []laidRow
 
 	tb           [tbCount]widget.Clickable
 	pbtn         map[string]*widget.Clickable // persistent "Message actions" buttons (persist.go)
 	tbRect       image.Rectangle
-	tbFor        int
+	tbFor        int    // the item the toolbar was drawn for this frame, -1 none
+	tbKey        string // its key, for the next frame's hover (laid)
 	jump         widget.Clickable
 	retryBtn     widget.Clickable
 	helpLink     widget.Clickable // ThreadsError's "drop us a line." (thread.go)
@@ -143,11 +164,19 @@ type listState struct {
 	pend        pendingEdit  // an edit waiting for taut's actionable message
 	viewsOn     bool         // rows may show plugin views
 	openUnread  bool         // the server said "unread" when the view opened (e.g. marked unread)
-	jumpPages   int
-	origin      image.Point // view origin in window coordinates
+	jumpPages   int          // pages a day pill's "Jump to…" loaded (banners.go)
+	aroundFor   string       // the jump the window around was loaded for (loadAround)
+	origin      image.Point  // view origin in window coordinates
+	size        image.Point  // the list's size in the last frame
 	lastOlder   time.Time
+	lastNewer   time.Time
 	highlight   string
 	highlightAt time.Time
+	// hlSeen: the highlighted row has been drawn (its unmount ends the
+	// flash: MessageBackground's componentWillUnmount); hlRestart: the
+	// placement starts the flash (not a repeat jump to a ts still flashing,
+	// whose highlight prop never turns from false to true)
+	hlSeen, hlRestart bool
 	// find in thread (thread_find.go): the highlight words (the query of
 	// the last results), the current result and the result flashing
 	findWords, findTS string
@@ -156,6 +185,33 @@ type listState struct {
 	sel               selection
 	sb                scrollbar
 	pendingJump       string
+	// jumpLazy: the pending jump is highlightRoot's (highlightLazy) or a
+	// re-highlight in an open thread pane: a message whose top is already
+	// on screen isn't scrolled to
+	jumpLazy bool
+	// thrOpening: the thread pane just opened (ThreadView.Reopen), so a jump
+	// starts it at getThreadStartPosition's message
+	thrOpening bool
+	// thrMark: the scrollmark the pane saved as it unmounted (CloseThread),
+	// for its first positioning (threadStartPosition)
+	thrMark threadMark
+	// place is a jump's placement, made in the next layout: the item keyed
+	// place.key place.off under the list's top (placeJump). Nothing holds
+	// it there after: Slack's anchor drops at its own scroll's echo, and
+	// AnchorLayout's own anchoring keeps the row on the anchor line.
+	place jumpPlace
+	// the anchor line under the list's top and STICKY_EPSILON, px, as the
+	// last layout had them (lineOff)
+	linePx, stickyPx int
+	// endGap is how far the content ran on past the list's bottom in the
+	// last layout: 0 at its end, math.MaxInt32 when its last item wasn't
+	// laid out
+	endGap int
+	// handAsked: a window that met the newest messages asked the
+	// conversation's model to read them again (handOver); handWant is the
+	// first of its reads that began after the join
+	handAsked bool
+	handWant  uint64
 	// sendCID is the client_msg_id of the viewer's message from the
 	// composer beside the list, which the list jumps to once it's in
 	// (ChannelView.JumpToOwnSend); sendAt is when it went out.
@@ -167,6 +223,10 @@ type listState struct {
 	laidOut   bool
 	laidPos   layout.Position
 	laidBuilt uint64
+	laidAt    time.Time      // the frame (gtx.Now) of that layout
+	laidH     int            // its height (setContainerHeight)
+	pageH     int            // a PageUp's or PageDown's scroll, px (pageKey)
+	tailH     map[string]int // the last tailItems items' heights as last laid out, by key (gapToEnd)
 	// preparedAt is the frame (gtx.Now) prepare synced the list for:
 	// layoutList draws that copy and doesn't sync again in that frame
 	preparedAt time.Time
@@ -176,6 +236,7 @@ type listState struct {
 	// hover toolbar state for its natives (MessageActions)
 	tbRow   *row
 	tbSize  image.Point
+	tbAt    int             // tbRow's MessageActions position (actionsAt)
 	tbHov   int             // hovered toolbar button, -1 none
 	tbBtns  []int           // the buttons tbRow's toolbar has, in order (actions_rules.go)
 	tbLabel [tbCount]string // their labels (aria-label and tooltip) for tbRow
@@ -193,6 +254,8 @@ type listState struct {
 	// the floating banners and the day pills' menu (banners.go)
 	ub          unreadBannerState
 	pendingDate time.Time                    // jumpToTimestamp's time, paged back to
+	dateFor     string                       // the date jump's ts a window was opened around (pendingDateJump)
+	own         [2]string                    // the model's first and last message, before plugins' injected ones (ends)
 	dayReq      *dayMenuReq                  // a day pill clicked this frame
 	dayBtns     map[string]*widget.Clickable // the dividers' pills, by day
 	stickyDay   widget.Clickable             // the sticky pill
@@ -238,6 +301,17 @@ func sweepRows(now time.Time) {
 		}
 		for _, r := range s.rows {
 			if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > rowIdle {
+				// the trees' msgs it remembered and laid over its message
+				// (slackc's sweep has let their roots go, and a remount
+				// hands the natives none until JS draws them again): not
+				// kept alive for the row's lifetime
+				r.textMemo, r.blocksMemo, r.filesMemo, r.attsMemo = fpMemo{}, fpMemo{}, fpMemo{}, fpMemo{}
+				r.ovEl = elMemo{}
+				if r.textOv != nil || r.filesOv != nil || r.attsOv != nil || r.wrapMsg != nil || r.inMsg != nil {
+					r.textOv, r.filesOv, r.attsOv = nil, nil, nil
+					r.wrapOv, r.msgOv, r.wrapMsg, r.inMsg = 0, 0, nil, nil
+					r.recompose()
+				}
 				r.rv.Release()
 			}
 		}
@@ -264,6 +338,8 @@ func (s *listState) releaseEvicted() bool {
 	s.snap.rev = 0
 	s.list.Position = layout.Position{}
 	s.positioned, s.laidOut = false, false
+	s.place, s.pendingJump, s.laid = jumpPlace{}, "", s.laid[:0]
+	s.rootHandedOn = false // a reply-rooted pane hands on again when it next loads
 	return true
 }
 
@@ -309,6 +385,7 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 		s.m = hb.threadModel(ch, ts)
 	} else {
 		s.m = hb.channel(ch)
+		s.chm = s.m
 	}
 	s.list.Axis = layout.Vertical
 	s.list.ScrollToEnd = true
@@ -317,22 +394,242 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 	// still keeps to its end once the thread outgrows it (Gio patch 45)
 	s.list.StartAligned = ts != ""
 	if len(listCache) > 2*maxModels {
-		for k := range listCache {
-			delete(listCache, k)
-			break
-		}
+		evictList()
 	}
 	listCache[key] = s
 	return s
+}
+
+// evictList lets the least recently drawn list go from the cache: one
+// that isn't on screen and drew in neither of the latest frames, and only
+// its window goes (dropWindow: it takes no more live changes). Its view
+// may still be mounted in the ui root's LRU; drawn again, the list takes
+// its window back (adopt). Map order picked any list, the one on screen
+// too, and its window stopped taking reactions, edits and deletes.
+func evictList() {
+	victim, at := "", time.Time{}
+	for k, s := range listCache {
+		if s.onScreen() || s.mounted() {
+			continue
+		}
+		if victim == "" || s.laidAt.Before(at) {
+			victim, at = k, s.laidAt
+		}
+	}
+	if old := listCache[victim]; old != nil {
+		old.hb.dropWindow(old.win)
+		delete(listCache, victim)
+	}
+}
+
+// ensure is the list's load. A channel list opened at a message the
+// conversation hasn't loaded (its newest messages aren't loaded or
+// loading, and core's don't reach it) loads only the window around it:
+// Slack's pane mounted at startTs requests around it, two calls, never
+// the newest page first. Else its model's load (ensureLoaded).
+func (s *listState) ensure() {
+	if !s.thread && s.chm != nil && s.win == nil && s.pendingJump != "" && s.aroundFor != s.pendingJump {
+		s.chm.mu.Lock()
+		cold := !s.chm.loaded && !s.chm.loading
+		s.chm.mu.Unlock()
+		if app := s.hb.app; cold && app != nil && !app.S.TimelineHolds(s.ch, s.pendingJump) {
+			s.aroundFor = s.pendingJump
+			s.openWindow(s.pendingJump)
+			return
+		}
+	}
+	s.hb.ensureLoaded(s.m)
+}
+
+// openWindow shows the window around message ts in the list: a window
+// model of its own (the conversation's model, every list's, keeps the
+// newest messages), loaded from the window core holds that has it, else
+// Slack's two calls (hub.loadWindow). The list draws it as it lands.
+func (s *listState) openWindow(ts string) {
+	if s.chm == nil { // a channel list from stateIn only
+		return
+	}
+	s.hb.dropWindow(s.win)
+	w := s.hb.newWindow(s.ch)
+	s.win = w
+	s.useModel(w)
+	s.place, s.handAsked = jumpPlace{}, false
+	s.hb.loadWindow(w, ts)
+}
+
+// reloadAt is where the list's window reloads when the list takes it back
+// (adopt): the message on the anchor line when the list last drew, so
+// the reader's rows come back, else the window's first message.
+func (s *listState) reloadAt() string {
+	key, _ := s.lineRow(s.linePx)
+	ts := strings.TrimPrefix(key, "g") // a group row: its first message
+	w := s.win
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if ts != "" && w.find(ts) >= 0 {
+		return ts
+	}
+	if len(w.msgs) > 0 {
+		return w.msgs[0].m.TS
+	}
+	return s.aroundFor
+}
+
+// leaveWindow shows the conversation's newest messages again (its model,
+// which took every live message meanwhile).
+func (s *listState) leaveWindow() {
+	if s.win == nil {
+		return
+	}
+	s.hb.dropWindow(s.win)
+	s.win = nil
+	s.useModel(s.chm)
+	// the newest messages: the list keeps to their end from now on, so a
+	// Position{} written for them (jumpToLatest, Entered) is their end in
+	// the next sync too (its stick test reads the value from before it)
+	s.list.ScrollToEnd = true
+	s.handAsked = false
+	s.hb.ensureLoaded(s.m)
+}
+
+// jumpToLatest is the pane's jumpToMostRecent (ArchivesBanner's "Latest
+// messages", a send): jumpToTimestamp({ts: null}), which clears the
+// channel's scrollmark, so the conversation's newest messages show, at
+// their end.
+func (s *listState) jumpToLatest() {
+	if s.win == nil {
+		return
+	}
+	s.leaveWindow()
+	s.pendingJump, s.aroundFor, s.place = "", "", jumpPlace{}
+	s.list.Position = layout.Position{BeforeEnd: false}
+	s.stopScroll()
+	s.positioned = true
+}
+
+// handOver: the window met the conversation's newest messages and core
+// joined it to their timeline, so the list shows them, read again from
+// core (Slack's union of the two slices, in the state the pane reads).
+// The window stays on screen until the conversation's model has read
+// them in a read begun after the join (one in flight then began before
+// it, and a failed one holds nothing: the window stays until a later read
+// lands), then the rebuild keeps the reader's row where it was, or a
+// pending jump places its message. Reports whether it went.
+func (s *listState) handOver() bool {
+	m := s.chm
+	m.mu.Lock()
+	if !s.handAsked {
+		s.handAsked = true
+		s.handWant = m.readGen + 1 // the next read: it begins after the join
+	}
+	ok, idle := m.readOK >= s.handWant, !m.loading
+	m.mu.Unlock()
+	if ok {
+		s.leaveWindow()
+		return true
+	}
+	if idle {
+		s.hb.refresh(m) // starts the read, unless it's backing off a failure
+	}
+	return false
+}
+
+// newestHold reports whether the conversation's newest messages hold ts
+// (loaded from its first message on, or its whole history).
+func (s *listState) newestHold(ts string) bool {
+	m := s.chm
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.loaded && len(m.msgs) > 0 && (!m.hasMore || !tsLess(ts, m.msgs[0].m.TS))
 }
 
 // prepare is layoutList's load and sync, earlier in the frame at frame
 // (ThreadView.Prepare): what the ui root decides from the list before it
 // lays the list out (the reply box) is then what the list draws.
 func (s *listState) prepare(h Host, frame time.Time) {
-	s.hb.ensureLoaded(s.m)
+	s.endUnmountedFlash()
+	s.adopt(frame)
+	s.ensure()
 	s.sync(h, time.Now())
 	s.preparedAt = frame
+}
+
+// endUnmountedFlash ends a jump's flash whose list missed a frame since
+// its row was drawn: off screen, its rows unmounted, and Slack's
+// MessageBackground clears the highlight on unmount. Before the frame
+// marks the list drawn (adopt).
+func (s *listState) endUnmountedFlash() {
+	if latest, before := s.hb.latestFrames(); s.hlSeen && s.laidOut && !s.laidAt.Equal(latest) && !s.laidAt.Equal(before) {
+		s.highlight, s.hlSeen = "", false
+	}
+}
+
+// adopt marks the list's model drawn in the frame at (the hub's eviction
+// keeps the conversations drawn last; a model it dropped while the list
+// was off screen is taken back here) and, when another list made the hub
+// a model for the conversation meanwhile, switches to that one: the one
+// core's events change. It runs before the frame's load and sync, in
+// prepare or in layoutList's own, so a prepared frame (ThreadView.Prepare)
+// syncs from the right model and every frame marks its model drawn.
+// Revisions count per model, and a model's first load numbers its
+// messages as the dropped one's did, so a row whose message changed while
+// the model was out kept its copy (the same number) and skipped the
+// updates whose numbers the old model had used: every row takes the new
+// model's entries again, with the caches keyed on those numbers (its view
+// read, its huddle, its hidden-sender check), and evictions count from
+// the new model's own.
+//
+// A list showing a jump's window draws the window (its own model) and
+// keeps the conversation's model the hub's too (chm, which takes the live
+// messages it goes back to). A list the cache let go (evictList) and a
+// view still draws is cached again, and takes its window back.
+func (s *listState) adopt(at time.Time) {
+	if _, ok := listCache[s.paneID]; !ok && s.paneID != "" {
+		listCache[s.paneID] = s // unless a new list took its key
+	}
+	if s.win != nil {
+		if s.hb.wantsWindowBack(s.win) {
+			s.hb.takeBackWindow(s.win, s.reloadAt())
+		}
+		s.hb.markDrawn(s.win, at)
+		if s.chm != nil {
+			s.chm = s.hb.markDrawn(s.chm, at)
+		}
+		return
+	}
+	m := s.hb.markDrawn(s.m, at)
+	if s.chm == s.m && s.chm != nil {
+		s.chm = m
+	}
+	if m != s.m {
+		s.useModel(m)
+	}
+}
+
+// useModel has the list draw model m: the one the hub made for the
+// conversation meanwhile (adopt), a jump's window (openWindow), or the
+// conversation's model again (leaveWindow). Revisions count per model, a
+// window's from its own first load as much as a new model's, so a row
+// could hold the number m gave its message's copy and skip that copy:
+// every row takes m's entries again, with the caches keyed on those
+// numbers (its view read, its huddle, its hidden-sender check). And
+// evictions count from m's own: switched to a window with the
+// conversation's count of evictions, a list that had let its rows go for
+// one let them go again the first time the sweep found it off screen (the
+// window, never evicted, counted none), and lost its place and its jump.
+func (s *listState) useModel(m *model) {
+	s.m, s.snap.rev = m, 0
+	for _, r := range s.rows {
+		r.rev, r.viewRev, r.viewConv = 0, 0, 0
+		// a viewed row's first ready read compares JS's view (turned): one
+		// that changed while the list was off the model (an edit the
+		// dropped model missed, a nickname) otherwise stayed drawn
+		r.viewReady = false
+		r.hmOK, r.hidChecked = false, false
+	}
+	m.mu.Lock()
+	s.evictSeen = m.evictGen
+	m.mu.Unlock()
 }
 
 // sync copies the model and rebuilds items if anything changed.
@@ -382,6 +679,29 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.snap.rev = 0
 	}
 	changed := s.m.snapshot(&s.snap)
+	handed := false
+	if s.win != nil && s.m == s.win && s.snap.merged && s.handOver() {
+		changed, handed = s.m.snapshot(&s.snap), true
+	}
+	if changed {
+		s.own = [2]string{}
+		if n := len(s.snap.msgs); n > 0 {
+			s.own = [2]string{s.snap.msgs[0].m.TS, s.snap.msgs[n-1].m.TS}
+		}
+	}
+	// stickToBottom is reachedEnd (MessageList.componentDidUpdate): a
+	// window short of the newest messages never keeps to its end, so a
+	// newer page lands under the reader rather than pulling the list on.
+	// componentDidUpdate sets it after the children's setKeys (AEjl:1163),
+	// so the keys' change in this sync reads the flag from before
+	// (wasEnd): the page that meets the newest messages lands under the
+	// reader too, and only later changes stick.
+	wasEnd := s.list.ScrollToEnd
+	// a thread's slice short of the thread's end never keeps to its end
+	// either (thread_load.go: setStickToBottom(reachedEnd)), so a newer
+	// page lands under the reader; kept there, the list read page after
+	// page on its own
+	s.list.ScrollToEnd = !s.snap.newestMissing && (!s.thread || s.snap.th.reachedEnd)
 	if changed {
 		s.sysUsers, s.sysHidden = s.hb.usersRev(), hk
 		s.sysMissing = s.adjustSystem(h, sysOn)
@@ -389,10 +709,7 @@ func (s *listState) sync(h Host, now time.Time) {
 	if changed && len(s.inj.msgs) > 0 {
 		s.mergeInjected()
 	}
-	if s.snap.jump != "" {
-		s.highlight, s.highlightAt = s.snap.jump, now
-		s.pendingJump, s.snap.jump = s.snap.jump, ""
-	}
+	s.takeJump(now)
 	if m := s.pend.take(); m != nil {
 		s.openEdit(h, *m)
 	}
@@ -425,16 +742,35 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.placeJump(now)
 		return
 	}
-	// Scroll anchoring: remember the first visible message and its y (not
-	// while a jump is pending: it places the list itself)
-	anchorTS, anchorY := "", 0
-	if s.list.Position.BeforeEnd && s.positioned && s.pendingJump == "" {
-		for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
-			if s.items[i].kind == itMsg && i < len(s.pos) {
-				// items still index the previous snapshot; key is the ts
-				anchorTS, anchorY = s.items[i].key, s.pos[i]
-				break
+	// AnchorLayout.setKeys (client-boot dxC+): as items come and go the
+	// row on the anchor line keeps its place (findAnchor: the first row
+	// ending below the line that's still there), and a list within
+	// STICKY_EPSILON of its end stays at its end while it shows the newest
+	// messages (stickToBottom). A window short of the newest never sticks,
+	// and one handed over keeps its row even at its end (the window's end
+	// isn't the newest messages'). Not while a jump is pending or placed:
+	// it places the list itself.
+	var anchors []laidRow
+	stick, keep := false, false
+	// a place written since the last layout (the page keys, the
+	// scrollbar, ScrollPx) is where the list is: the last layout's rows
+	// on the line are where it was, and keeping one there took the list
+	// back. Its first item keeps the place, by key ("" with the place at
+	// the end: drawn back from the new last item).
+	written, writtenKey := false, ""
+	if s.laidOut && s.positioned && s.pendingJump == "" && s.place.key == "" {
+		p := s.list.Position
+		switch {
+		case !handed && wasEnd && (!p.BeforeEnd || s.gapNow() <= s.stickyPx):
+			stick = true
+		case !samePos(p, s.laidPos):
+			written, keep = true, true
+			if p.First < len(s.items) {
+				writtenKey = s.items[max(0, p.First)].key
 			}
+		default:
+			anchors = s.lineRows(s.linePx) // items still index the previous snapshot; the key is the ts
+			keep = true
 		}
 	}
 	s.build(h, now)
@@ -442,9 +778,32 @@ func (s *listState) sync(h Host, now time.Time) {
 	s.built = s.snap.rev
 	s.dayKey = dk
 	s.dense = dense
-	if i := s.anchorItem(anchorTS); i >= 0 {
-		s.list.Position.First = i
-		s.list.Position.Offset = -anchorY
+	anchored := false
+	if written {
+		if writtenKey == "" {
+			s.list.Position.First, anchored = len(s.items), true
+		} else if i := s.itemOfKey(writtenKey); i >= 0 {
+			s.list.Position.First, anchored = i, true
+		}
+		s.list.Position.BeforeEnd = true
+	}
+	if !stick {
+		// findAnchor: the first of the rows from the line down that's
+		// still there keeps its place (a row deleted off the line: the one
+		// after it, where the rows above would have moved down)
+		for _, a := range anchors {
+			if i := s.anchorItem(a.key); i >= 0 {
+				s.list.Position, anchored = layout.Position{BeforeEnd: true, First: i, Offset: -a.y}, true
+				break
+			}
+		}
+	}
+	if stick {
+		s.list.Position = layout.Position{} // bracketScrollTop(Infinity)
+	} else if !anchored && keep {
+		// no row on the line came through: the list keeps its place, where
+		// Gio would take one at its end to the new end (ScrollToEnd)
+		s.list.Position.BeforeEnd = true
 	}
 	s.placeJump(now)
 	// Confirmed sends keep their row (and its layout) under the real ts.
@@ -542,6 +901,11 @@ func (s *listState) build(h Host, now time.Time) {
 	unreadPlaced := false
 	if s.thread {
 		s.decideThreadRead()
+		// getThreadRowsAndKeys' "loading-start-<first reply>" row over a
+		// slice short of the thread's start (thread_load.go)
+		if len(msgs) > 0 && s.snap.loaded && !s.snap.th.reachedStart {
+			s.items = append(s.items, item{kind: itLoading, key: "loading-start-" + msgs[0].m.TS})
+		}
 	}
 	for i := 0; i < len(msgs); i++ {
 		m := &msgs[i].m
@@ -612,12 +976,26 @@ func (s *listState) build(h Host, now time.Time) {
 		s.items = append(s.items, item{kind: itMsg, idx: i, header: header, key: m.TS})
 		prev, prevT = m, t
 	}
-	if !s.thread && s.snap.loaded { // reachedEnd: Clack always holds the newest page
+	// getListProps: the bottom spacer only at reachedEnd (a window short of
+	// the newest messages has none), and the loading spinner at the end
+	// while its newer page is out (isLoading, !isLoadingOlder, !reachedEnd)
+	if !s.thread && s.snap.loaded && !s.snap.newestMissing {
 		s.items = append(s.items, item{kind: itBottom, key: "bottomSpacer"})
 	}
-	if s.thread && !s.snap.loaded && len(msgs) > 0 && s.snap.err == nil {
+	if !s.thread && s.snap.newer {
+		s.items = append(s.items, item{kind: itLoading, key: "loading-newer"})
+	}
+	if s.thread && len(msgs) > 0 && (!s.snap.loaded && s.snap.err == nil ||
+		s.snap.loaded && !s.snap.th.reachedEnd && !s.snap.th.prevReachedEnd && !s.snap.th.endGap) {
 		// getThreadRowsAndKeys' "loading-end" row: some messages are in
-		// (the root, a live reply) before the replies are (thread.go)
+		// (the root, a live reply) before the replies are (thread.go), or
+		// the slice stops short of the thread's end (thread_load.go). A
+		// pane that was at the end when a slow connect made it stale keeps
+		// the reply box (endGap) until its read past the old end lands,
+		// even once a reply the socket brought makes the store's slice for
+		// it no longer the last (prevReachedEnd false): Slack's input is
+		// one of the list's rows, scrolled away with it, but Clack's box
+		// is drawn under the list and may hold what's being typed
 		s.items = append(s.items, item{kind: itLoading, key: "loading-end"})
 	}
 	if cap(s.heights) < len(s.items) {
@@ -684,10 +1062,11 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	now := time.Now()
 	lastHost = h
 	if gtx.Now.IsZero() || !gtx.Now.Equal(s.preparedAt) { // else prepare did, this frame
-		s.hb.ensureLoaded(s.m)
+		s.endUnmountedFlash()
+		s.adopt(gtx.Now)
+		s.ensure()
 		s.sync(h, now)
 	}
-	s.hb.markDrawn(s.m, gtx.Now)
 	s.placeSendJump(gtx, now)
 	sweepRows(now)
 	size := gtx.Constraints.Max
@@ -718,6 +1097,21 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.kbKeys(gtx, h)
 	event.Op(gtx.Ops, s)
 
+	if root := s.replyRoot(); root != "" {
+		// the thread was opened with a reply's ts: never drawn as its
+		// root, the pane is handed on to the reply's thread and stays
+		// loading meanwhile (ReplyRootRedirector)
+		if !s.rootHandedOn {
+			s.rootHandedOn = true
+			if r, ok := h.(ReplyRootRedirector); ok {
+				r.ReplyAsThreadRoot(s.ch, s.ts, root)
+			}
+		}
+		s.flexpaneLoading(gtx, h, c, size)
+		area.Pop()
+		return layout.Dimensions{Size: size}
+	}
+
 	if !s.snap.loaded && len(s.snap.msgs) == 0 {
 		if s.thread && s.threadPending(gtx, h, c, size) { // FlexpaneLoading, ThreadsError (thread.go)
 			area.Pop()
@@ -741,34 +1135,45 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if s.thread {
 		s.pendAt = time.Time{}
 		s.checkThreadUnreads(gtx, h, now) // thread_unread.go
+		s.placeThreadJump(now)            // after the thread's last read is known
 	}
-	// first positioning: at the unread line if there are many unread
+	// first positioning: a conversation opens at its newest messages,
+	// however many are unread. determineTimestamps adds no startTs with
+	// Mark as read's default prefs (client-boot eCxs, dYJr gives one only
+	// with start_scroll_at_oldest and mark_msgs_read_immediately), so the
+	// pane anchors at the end (dxC+ getOffsetForKey(null)); the unread
+	// banner jumps up to the "New" line. A thread opens at
+	// getThreadStartPosition's message.
 	if !s.positioned && s.snap.loaded {
 		s.positioned = true
 		if s.thread {
 			// getThreadStartPosition: the first unread reply, the reply
 			// last read to, or the root (thread_unread.go)
 			s.list.Position = s.threadStartPosition(gtx, "")
-		} else if u := s.unreadIndex(); u >= 0 && len(s.items)-u > 12 {
-			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, u-1)}
 		} else {
-			s.list.Position = layout.Position{}
+			s.toEnd()
 		}
 	}
 
-	// hover from last frame's positions
+	// hover from last frame's rows: the message under the pointer, or the
+	// one whose toolbar it is on (Slack's toolbar is inside its row, so
+	// the row stays hovered over it), found by key in this frame's items
 	s.hoverIdx = -1
 	if s.pointerIn {
-		py := int(s.pointer.Y)
-		if s.tbFor >= 0 && image.Pt(int(s.pointer.X), py).In(s.tbRect) {
-			s.hoverIdx = s.tbFor
+		p := image.Pt(int(s.pointer.X), int(s.pointer.Y))
+		key := ""
+		if s.tbKey != "" && p.In(s.tbRect) {
+			key = s.tbKey
 		} else {
-			for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
-				if s.items[i].kind == itMsg && py >= s.pos[i] && py < s.pos[i]+s.heights[i] {
-					s.hoverIdx = i
+			for _, r := range s.laid {
+				if p.Y >= r.y && p.Y < r.y+r.h {
+					key = r.key
 					break
 				}
 			}
+		}
+		if i, ok := s.sel.keyIdx[key]; ok && key != "" {
+			s.hoverIdx = i
 		}
 	}
 	if k := s.kbIndex(); k >= 0 {
@@ -777,20 +1182,54 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 
 	// the wheel over the message actions (toolbar_scroll.go)
 	actD := s.actionsScroll(gtx)
-
-	// The anchor: the first message wholly on screen last frame, while
-	// nothing has moved the list since (no rebuild, no jump).
-	akey, ay := "", 0
-	if s.laidOut && s.built == s.laidBuilt && samePos(s.list.Position, s.laidPos) && s.list.Position.BeforeEnd {
-		for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
-			if s.items[i].kind == itMsg && s.pos[i] >= 0 {
-				akey, ay = s.items[i].key, s.pos[i]
-				break
-			}
+	line := s.lineOff(gtx)
+	if s.place.key != "" {
+		// a jump's placement: a programmatic scroll, which ends the
+		// reader's running one (Chromium cancels a wheel animation or a
+		// fling on a scrollTop write)
+		if i := s.itemOfKey(s.place.key); i >= 0 {
+			s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -gtx.Dp(s.place.off)}
+			s.list.StopScroll()
+			s.actScroll.Stop()
 		}
+		s.place = jumpPlace{}
+	}
+
+	// setContainerHeight (dxC+): the list's height changed (the composer
+	// grew a line, the window resized) while it was within STICKY_EPSILON
+	// of the newest messages' end: it stays at the end; else it keeps its
+	// top (Gio keeps First and Offset)
+	if s.laidOut && size.Y != s.laidH && s.list.ScrollToEnd && s.list.Position.BeforeEnd && s.endGap <= s.stickyPx &&
+		samePos(s.list.Position, s.laidPos) {
+		s.list.Position = layout.Position{}
+	}
+	// a page for PageUp and PageDown (getPageHeight)
+	s.pageH = size.Y - gtx.Dp(21)
+
+	// AnchorLayout.setHeight (dxC+): a row above the anchor line that
+	// grows or shrinks moves the list by as much, so the row on the line
+	// stays where it was (the reader's own scrolling in this frame aside:
+	// ScrollDelta); a list within 2px of its end (STICKY_EPSILON_SETHEIGHT)
+	// that shows the newest messages stays at its end instead. Only while
+	// nothing else moved the list since the last layout (a placement, the
+	// keys, the scrollbar: they say where it is).
+	akey, ay, nearEnd := "", 0, false
+	if s.laidOut && s.built == s.laidBuilt && samePos(s.list.Position, s.laidPos) && (s.list.Position.BeforeEnd || !s.list.ScrollToEnd) {
+		akey, ay = s.lineRow(line)
+		nearEnd = s.list.ScrollToEnd && s.endGap <= gtx.Dp(2)
 	}
 	for i := range s.heights {
 		s.heights[i] = 0
+	}
+	if len(s.tailH) > 4*tailItems || s.tailH == nil {
+		// the last items' heights only: keys of items no longer last go
+		keep := make(map[string]int, tailItems)
+		for i := max(0, len(s.items)-tailItems); i < len(s.items); i++ {
+			if h, ok := s.tailH[s.items[i].key]; ok {
+				keep[s.items[i].key] = h
+			}
+		}
+		s.tailH = keep
 	}
 	selfID := ""
 	if h.Core() != nil {
@@ -807,7 +1246,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	}
 	rc := &s.rc
 	s.activeTS = activeThreadIn(h, s.ch, s.thread)
-	s.origin = origin
+	s.origin, s.size = origin, size
 	s.tip = ""
 	ls := listClass.Enter(gtx, 0, 0)
 	defer ls.Leave()
@@ -816,37 +1255,79 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.list.Layout(gtx, len(s.items), func(gtx layout.Context, i int) layout.Dimensions {
 			d := s.layoutItem(gtx, h, rc, i)
 			s.heights[i] = d.Size.Y
+			if i >= len(s.items)-tailItems {
+				s.tailH[s.items[i].key] = d.Size.Y
+			}
 			return d
 		})
 		return m.Stop()
 	}
-	before := s.list.Position
 	call := lay()
-	// Nothing scrolled, yet the anchor moved: a row above it changed height
-	// (a channel name or a picture arriving, a plugin's tree). Keep what
-	// the reader is looking at where it was, in this frame: lay out again
+	// The row on the line moved by more than the reader scrolled: a row
+	// above it changed height (a channel name or a picture arriving, a
+	// plugin's tree). Keep it where it was, in this frame: lay out again
 	// with the offset corrected and draw only that.
-	if akey != "" && samePos(s.list.Position, before) {
-		if y, ok := s.yOfKey(akey, size.Y); ok && y != ay {
+	if akey != "" {
+		d := s.list.ScrollDelta()
+		if y, ok := s.yOfKey(akey, size.Y); ok && y != ay-d {
 			for i := range s.heights {
 				s.heights[i] = 0
 			}
-			s.list.Position.Offset += y - ay
+			if nearEnd && d == 0 {
+				s.list.Position = layout.Position{} // within 2px of the end: it stays at the end
+			} else {
+				s.list.Position.Offset += y - (ay - d)
+			}
+			call = lay()
+		} else if p := s.list.Position; nearEnd && d == 0 && p.First+p.Count >= len(s.items) && -p.OffsetLast > gtx.Dp(2) {
+			// setHeight sticks before any row's compensation
+			// (shouldStickToBottom(n, 2)): a row below the line that grew
+			// left the list short of its end
+			for i := range s.heights {
+				s.heights[i] = 0
+			}
+			s.list.Position = layout.Position{}
 			call = lay()
 		}
 	}
 	call.Add(gtx.Ops)
-	s.laidOut, s.laidPos, s.laidBuilt = true, s.list.Position, s.built
+	s.endGap = s.gapToEnd(s.list.Position)
+	s.laidOut, s.laidPos, s.laidBuilt, s.laidAt, s.laidH = true, s.list.Position, s.built, gtx.Now, size.Y
+	if s.thread && s.snap.loaded {
+		s.thrOpening = false // the pane shows its thread: a jump now is a re-highlight
+	}
+	defer s.pageSelect() // after the positions below (kbnav.go)
 	s.actionsScrollEnd(actD)
 
 	// positions of visible items
 	p := s.list.Position
 	y := -p.Offset
 	s.visible = [2]int{p.First, p.First}
+	s.laid = s.laid[:0]
 	for i := p.First; i < len(s.items) && y < size.Y; i++ {
 		s.pos[i] = y
+		if s.items[i].kind == itMsg && s.heights[i] > 0 {
+			s.laid = append(s.laid, laidRow{key: s.items[i].key, y: y, h: s.heights[i]})
+		}
 		y += s.heights[i]
 		s.visible[1] = i + 1
+	}
+	// MessageBackground's componentWillUnmount: the highlighted row leaving
+	// the drawn rows (scrolled out of the virtual list) ends its flash
+	if s.highlight != "" {
+		drawn := false
+		for _, r := range s.laid {
+			if r.key == s.highlight {
+				drawn = true
+				break
+			}
+		}
+		switch {
+		case drawn:
+			s.hlSeen = true
+		case s.hlSeen:
+			s.highlight, s.hlSeen = "", false
+		}
 	}
 	// contentH is the total item height when every item was laid out (the
 	// ui root puts a short thread's reply box under it), else 0.
@@ -864,35 +1345,61 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.overlays(gtx, h, rc, size)
 	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()
+	s.reportMedia() // the video tiles' share on screen (file_rects.go)
 
-	// jumping to a message older than what's loaded: page back until found
-	// (bounded), then sync() positions on it.
-	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older {
-		if s.snap.hasMore && len(s.snap.msgs) > 0 && tsLess(s.pendingJump, s.snap.msgs[0].m.TS) && s.jumpPages < 20 && now.Sub(s.lastOlder) > 300*time.Millisecond {
-			s.jumpPages++
-			s.lastOlder = now
-			s.hb.loadOlder(s.m)
-		} else if !s.snap.hasMore || s.jumpPages >= 20 {
-			s.pendingJump = "" // not in this conversation (or too far back)
+	// jumping to a message what the list shows doesn't reach: Slack's pane
+	// at startTs shows the slice holding it (windows.go): older than its
+	// start (or past a window's end), the window around it, once
+	// (openWindow), the conversation's newest messages when they hold it;
+	// sync() places it, or the first message after it, once they cover it
+	// (placeJump). One whose window gave way has nowhere to land.
+	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older && !s.snap.loading && s.snap.around == "" {
+		first, last, ok := s.ends()
+		older := ok && s.snap.hasMore && tsLess(s.pendingJump, first)
+		newer := s.win != nil && ok && tsLess(last, s.pendingJump)
+		switch {
+		case newer && s.newestHold(s.pendingJump):
+			s.leaveWindow() // the conversation's newest messages hold it
+		case (older || newer) && s.aroundFor != s.pendingJump:
+			s.aroundFor = s.pendingJump
+			s.openWindow(s.pendingJump)
+		case (older || newer) && s.win == nil && s.built == s.snap.rev:
+			// its window gave way (it failed, or came back empty) and the
+			// newest messages don't reach it: nothing to land on
+			s.pendingJump = ""
 		}
 	}
 	if s.pendingJump != "" && s.thread && s.snap.loaded && !s.snap.loading && s.built == s.snap.rev {
-		// a thread loads whole (ThreadView.JumpTo): sync() placed the
-		// jump if the thread holds it, so it isn't coming
+		// the slice the jump moved the pane to is in (ThreadView.JumpTo,
+		// thread_load.go): sync() placed the jump if the slice holds it,
+		// so it isn't coming
 		s.pendingJump = ""
 	}
 	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
+	if s.thread {
+		s.threadPaging(gtx, h, size, now) // pages before and after the slice (thread_load.go)
+	}
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
-		s.lastOlder = now
-		s.hb.loadOlder(s.m)
+		if s.hb.loadOlder(s.m) {
+			s.lastOlder = now
+		}
+	}
+	// a window short of the newest message: its end in view loads the
+	// next page (requestNewer)
+	if !s.thread && s.snap.newestMissing && !s.snap.newer && s.snap.around == "" && s.snap.loaded &&
+		s.visible[1] >= len(s.items)-2 && now.Sub(s.lastNewer) > time.Second {
+		s.lastNewer = now
+		s.hb.loadNewer(s.m)
 	}
 	// Mark as read: mark_msgs_read_immediately marks as soon as the
 	// conversation shows; Slack's default leaves unseen messages unread,
 	// so the newest must be on screen and the "New" line must have been.
 	pf := uipref.Get()
 	seen := pf.MarkReadImmediately || (!p.BeforeEnd && s.unreadSeen)
-	if !s.thread && !s.noMark && s.snap.loaded && seen && len(s.snap.msgs) > 0 {
+	// a window short of the newest message never marks read: its last
+	// message isn't the conversation's
+	if !s.thread && !s.noMark && s.snap.loaded && !s.snap.newestMissing && seen && len(s.snap.msgs) > 0 {
 		latest := s.snap.msgs[len(s.snap.msgs)-1].m.TS
 		app := h.Core()
 		if latest != s.markedTS && app != nil && tsLess(app.Count(s.ch).LastRead, latest) && now.Sub(s.lastMark) > 1500*time.Millisecond {
@@ -908,6 +1415,13 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 	return layout.Dimensions{Size: size}
+}
+
+// laidRow is a message row as a layout put it on screen: its item's key,
+// its top and height in the list.
+type laidRow struct {
+	key  string
+	y, h int
 }
 
 // samePos reports two list positions at the same place.
@@ -946,28 +1460,30 @@ func (s *listState) react(h Host, r *row, name string, add bool, self string) {
 		s.reactNow(h, app, key, name, add, self)
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		// Slack: the reaction button dispatches changeReactionFromUserAction,
-		// whose native submits submitAddOrRemoveReaction (plugins may wrap
-		// either; with none this is just core.React).
-		_, err := taut.Dispatch(ctx, tautOf(), "changeReactionFromUserAction", rxnUserArgs{Key: key, Name: name, Add: &add},
-			func(ctx context.Context, a rxnUserArgs) (any, error) {
-				on := !s.hasOwnReaction(a.Key, a.Name)
-				if a.Add != nil {
-					on = *a.Add
-				}
-				if on && !a.SkipFrecencyRecord {
-					// recordEmojiFrecencyEvent {emojiName, text: ""}
-					app.RecordEmojiFrecency(a.Name, "")
-				}
-				return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
-			})
-		if err != nil {
-			h.Toast("Couldn't update reaction")
-		}
-	}()
+	// Slack: the reaction button dispatches changeReactionFromUserAction,
+	// whose native submits submitAddOrRemoveReaction (plugins may wrap
+	// either; with none this is just core.React). The click's: its JS
+	// call is queued now, on the UI goroutine, on the user's lane
+	// (UserAction, DispatchThen), so a plugin click after it can't go
+	// ahead (OwlMode reads its mode in the reaction's patch).
+	ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), 20*time.Second)
+	taut.DispatchThen(ctx, tautOf(), "changeReactionFromUserAction", rxnUserArgs{Key: key, Name: name, Add: &add},
+		func(ctx context.Context, a rxnUserArgs) (any, error) {
+			on := !s.hasOwnReaction(a.Key, a.Name)
+			if a.Add != nil {
+				on = *a.Add
+			}
+			if on && !a.SkipFrecencyRecord {
+				// recordEmojiFrecencyEvent {emojiName, text: ""}
+				app.RecordEmojiFrecency(a.Name, "")
+			}
+			return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
+		}, func(_ any, err error) {
+			cancel()
+			if err != nil {
+				h.Toast("Couldn't update reaction")
+			}
+		})
 }
 
 // reactNow is a pill's click with neither reaction thunk wrapped:
@@ -1137,6 +1653,9 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	}
 	if s.viewsOn && len(it.group) == 0 {
 		s.applyView(tautOf(), r, rc.now)
+		if !r.heldTil.IsZero() {
+			gtx.Execute(op.InvalidateCmd{At: r.heldTil}) // the hold's end draws core's copy if JS hasn't answered
+		}
 	}
 	r.rv.External = true
 	r.drawn = rc.now
@@ -1153,11 +1672,8 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	rc.hiddenUser, rc.unhidden = hiddenSender(h, &e.m, s.ch)
 	rc.highlight = 0
 	if s.highlight == e.m.TS {
-		if el := rc.now.Sub(s.highlightAt); el < 4*time.Second {
-			rc.highlight = 1
-			if el > 2*time.Second {
-				rc.highlight = float32(4*time.Second-el) / float32(2*time.Second)
-			}
+		if el := rc.now.Sub(s.highlightAt); el < highlightFor {
+			rc.highlight = highlightAlpha(el)
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
@@ -1376,11 +1892,13 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		}
 	}
 
-	// hover toolbar (the simplified layout's persistent menu instead)
-	s.tbFor = -1
+	// hover toolbar (the simplified layout's persistent menu instead), for
+	// a row this layout put on screen: one that left it took its toolbar
+	// along (Slack's is in the row)
+	s.tbFor, s.tbKey = -1, ""
 	if rc.persist {
 		s.persistentActions(gtx, h, rc, size)
-	} else if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
+	} else if s.hoverIdx >= s.visible[0] && s.hoverIdx < s.visible[1] && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
 		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed && !r.m.Tombstone {
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
@@ -1471,20 +1989,17 @@ func tooltipBox(gtx layout.Context, th *theme.Theme, c *colors, tip slackc.Style
 func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx int, size image.Point) {
 	c := rc.c
 	th := h.Theme()
-	// MessageActions' position: "above" (top -28) for a grouped row, and
-	// for every channel row under Compact (Message: w||a ? "above" :
-	// "default"); a thread reply's is above only when grouped
-	// (ThreadReplyGeneric: isCompact||adjacent, isCompact being the
-	// Threads view's).
-	top := mt.toolbarTop
-	if !s.items[idx].header || (rc.dense && !s.thread) {
-		top = -28
-	}
-	y := s.pos[idx] + dp(gtx, top)
-	if y < dp(gtx, 4) {
-		y = dp(gtx, 4)
-	}
-	s.tbRow, s.tbSize, s.tbHov = r, size, -1
+	// MessageActions' position (actionsAt) puts the card at the row's top
+	// plus the position's offset, and only there: Slack's card is
+	// position: absolute in the row, inside the list's scroller
+	// (.c-virtual_list, overflow-y scroll), so it moves with the row and the
+	// list clips it. A row whose top is at the list's top edge has its card
+	// cut off, one scrolled above it its card out of view; nothing moves it
+	// into view (an older Clack kept it 4px under the list's top, so a tall
+	// message scrolled up had its toolbar there, far above the pointer).
+	at := s.actionsAt(idx, rc.dense)
+	y := s.pos[idx] + dp(gtx, actionsTop[at])
+	s.tbRow, s.tbSize, s.tbHov, s.tbAt = r, size, -1, at
 	s.tilt.mount(r)
 	s.quick.prepare(h, s.ch, r)
 	s.prepareButtons(h.Core(), r)
@@ -1513,7 +2028,7 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	t := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
 	call.Add(gtx.Ops)
 	t.Pop()
-	s.tbRect, s.tbFor = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}, idx
+	s.tbRect, s.tbFor, s.tbKey = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}, idx, s.items[idx].key
 	// the hovered button's tooltip (the card's top is 4px over the button)
 	bs, pad := dp(gtx, mt.toolbarBtn), dp(gtx, mt.toolbarPad)
 	key, tip, cx := "", "", 0
@@ -1534,6 +2049,43 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		btn := image.Rect(cx-bs/2, y+pad, cx-bs/2+bs, y+pad+bs)
 		tooltip(gtx, th, c, tip, btn, theme.WindowBounds(s.origin), a)
 	}
+}
+
+// MessageActions' positions (actions_MessageActions' position prop: its
+// wrapper is c-message_kit__actions--{position}, the card's
+// .c-message__actions top follows it).
+const (
+	actsDefault = iota // top -16px
+	actsAbove          // .c-message_kit__actions--above: top -28px
+	actsInside         // .c-message_kit__actions--inside: top 4px
+)
+
+// actionsTop is each position's top (dp) from the row's top, and
+// actionsPos its name (the position prop).
+var (
+	actionsTop = [...]float32{actsDefault: mt.toolbarTop, actsAbove: -28, actsInside: 4}
+	actionsPos = [...]string{actsDefault: "default", actsAbove: "above", actsInside: "inside"}
+)
+
+// actionsAt is item idx's MessageActions position:
+//
+//   - the thread pane's root: "inside" (ThreadRoot: actionPosition
+//     "inside" outside the Threads view, which ThreadRootGeneric hands
+//     MessageActions), so the card sits 4px inside the root's top;
+//   - "above" for a grouped row and for every channel row under Compact
+//     (Message: w||a ? "above" : "default"); a thread reply's is above
+//     only when grouped (ThreadReplyGeneric: isCompact||adjacent,
+//     isCompact being the Threads view's);
+//   - "default" otherwise.
+func (s *listState) actionsAt(idx int, dense bool) int {
+	it := &s.items[idx]
+	switch {
+	case s.thread && it.idx < len(s.snap.msgs) && len(it.group) == 0 && s.snap.msgs[it.idx].m.TS == s.ts:
+		return actsInside
+	case !it.header || (dense && !s.thread):
+		return actsAbove
+	}
+	return actsDefault
 }
 
 // prepareButtons picks r's toolbar buttons and their labels: the thread
@@ -1571,7 +2123,7 @@ func (s *listState) prepareButtons(app *core.App, r *row) {
 func (s *listState) actionsProps() slackc.Props {
 	r := s.tbRow
 	return s.paneProps(slackc.Props{"$key": r.ts, "msg": r.message(), "ts": r.src.TS, "channelId": r.src.Channel, "hover": true,
-		"isEditing": false, "position": "default", "messageContainerType": "message", "viewContext": r.viewContext(), "windowId": "main"})
+		"isEditing": false, "position": actionsPos[s.tbAt], "messageContainerType": "message", "viewContext": r.viewContext(), "windowId": "main"})
 }
 
 func (s *listState) reactionButtonProps() slackc.Props {
@@ -1582,7 +2134,7 @@ func (s *listState) reactionButtonProps() slackc.Props {
 // layoutActions is MessageActions, the hover toolbar (the one OwlMode
 // wraps; Slack's other MessageActions wraps the whole message).
 func (s *listState) layoutActions(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	st := actionsClass.Enter(gtx, css.StateHover, 0)
+	st := actionsClass.Enter(gtx, css.StateHover, 1<<s.tbAt) // c-message_kit__actions--{position}
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
@@ -1646,6 +2198,10 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			_ = rc
 			h.ShowOverlay(popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil))
 		case tbReply:
+			// RwAt.onComment: the comment thunk with threadTs =
+			// msg.thread_ts, so the key is the thread's even for a
+			// broadcast reply, and its box takes the focus as it mounts
+			popups.SetThreadFocusInput(h, m.Channel, threadRoot(&m))
 			h.OpenThread(m.Channel, threadRoot(&m))
 		case tbForward:
 			h.ShowOverlay(popups.NewForwardModal(h, m))
@@ -1790,7 +2346,8 @@ func (s *listState) startEdit(h Host, ts string) {
 	if t := tautOf(); t != nil && t.ActionablePatched() {
 		src, app := r.src, h.Core()
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// the user's ↑: on their lane, ahead of the queued renders
+			ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), 5*time.Second)
 			defer cancel()
 			m := src
 			if sm, ok := t.ActionableMessage(ctx, src.Channel, src.TS); ok && app != nil {
@@ -1831,6 +2388,9 @@ func (s *listState) openEdit(h Host, m core.Message) {
 		h.Invalidate()
 	})
 	app := h.Core()
+	r.edit.SaveEditThen = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {
+		commitEditThen(ctx, app, ch, ts, text, blocks, fileIDs, done)
+	}
 	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
 		return commitEdit(ctx, app, ch, ts, text, blocks, fileIDs)
 	}
@@ -1863,13 +2423,16 @@ func (s *listState) scrollTo(ts string) {
 	for i, it := range s.items {
 		if it.kind == itMsg && it.key == ts {
 			if i == s.newestItem() {
-				s.list.Position = layout.Position{} // newest: stay anchored at the bottom
+				// newest: the end, which a list showing the newest messages
+				// keeps to (a window keeps to none, and Position{} is its top)
+				s.toEnd()
 				return
 			}
 			if i >= s.visible[0] && i < s.visible[1]-1 {
 				return
 			}
 			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
+			s.stopScroll()
 			return
 		}
 	}
@@ -1882,6 +2445,7 @@ func (s *listState) scrollToFind(ts string, off int) bool {
 	for i, it := range s.items {
 		if it.kind == itMsg && it.key == ts {
 			s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -off}
+			s.stopScroll()
 			return true
 		}
 	}
@@ -2007,22 +2571,318 @@ func (s *listState) editComposer() *composer.Composer {
 	return nil
 }
 
-// placeJump puts a pending jump's message near the top of the view
-// (two rows above it) once the built items hold it, and flashes it from
-// then.
+// placeJump places a pending jump's message once the built items hold
+// it, and flashes it from then. Slack's message list scrolls the startTs
+// message to the anchor line, ANCHOR_OFFSET under its top, for a message
+// it holds (scrollToKey: AnchorLayout.getOffsetForKey) as for one it
+// loads (the layout's anchor), bracketed by the content's ends. The
+// anchor drops at that scroll's echo (MessageList.onScroll), so nothing
+// holds the message after: AnchorLayout's own anchoring keeps the row on
+// the line through height and item changes (lineRow). highlightRoot's
+// highlightLazy scrolls only to a message whose top isn't on screen
+// (scrollToKey's lazy: isItemInView).
 func (s *listState) placeJump(now time.Time) {
-	if s.pendingJump == "" {
+	if s.pendingJump == "" || s.thread { // a thread's: placeThreadJump
 		return
 	}
 	for i, it := range s.items {
 		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == s.pendingJump {
-			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
+			if !s.jumpLazy || !s.topOnScreen(it.key) {
+				s.placeAt(i, anchorOffset)
+			}
+			s.jumpLazy = false
 			s.positioned = true
+			if s.highlight == s.pendingJump && s.hlRestart {
+				s.highlightAt = now // the flash starts as its message is placed
+			}
 			s.pendingJump = ""
-			s.highlightAt = now
 			return
 		}
 	}
+	// No row has it (a message deleted since, a reply the history never
+	// holds, a join folded into a group): once what the list shows covers
+	// it, the jump is to the first message at or after it, Slack's
+	// findTimestampClosestToStartTs (find(timestamps, t => t >= startTs)),
+	// with nothing to flash (its highlightTs names no row); with nothing at
+	// or after it, the end (getOffsetForKey(undefined)). Nothing stays
+	// pending.
+	if s.thread || !s.jumpCovered() {
+		return
+	}
+	if i := s.firstItemFrom(s.pendingJump); i >= 0 {
+		s.placeAt(i, anchorOffset)
+	} else {
+		s.toEnd() // a window's end too (Position{} is its top)
+	}
+	s.jumpLazy = false
+	s.positioned = true
+	s.pendingJump = ""
+}
+
+// placeThreadJump is a thread pane's jump (ThreadView.JumpTo) once the
+// slice it asked for is in (jumpThread: the store's slice at the reply,
+// read around it when the store has none; thread_load.go): a pane that
+// just opened starts at getThreadStartPosition's message (threadStart:
+// the reply 100px under the top, or at the top when it's an unread one at
+// or before the last read), and one already showing the thread scrolls
+// that message's top to the list's top unless its top is on screen
+// (scrollToKey lazy, the thread list's anchor line at the top). A ts the
+// slice doesn't hold starts it at the newest message at or before it,
+// else at its top.
+func (s *listState) placeThreadJump(now time.Time) {
+	if s.pendingJump == "" || !s.snap.loaded || s.snap.loading || s.built != s.snap.rev {
+		return
+	}
+	key, offset := s.threadStart(s.pendingJump)
+	i := s.itemOfKey(key)
+	switch {
+	case i < 0:
+		s.list.Position = layout.Position{BeforeEnd: true} // getOffsetForKey of a ts it doesn't hold: 0
+		s.stopScroll()
+	case s.jumpLazy && s.topOnScreen(key):
+	case s.jumpLazy || !offset:
+		s.placeAt(i, 0)
+	default:
+		s.placeAt(i, 100) // getThreadStartPosition's startOffset
+	}
+	if s.highlight == s.pendingJump && s.hlRestart {
+		s.highlightAt = now // the flash starts as its message is placed
+	}
+	s.pendingJump, s.jumpLazy = "", false
+}
+
+// mounted reports whether the list was drawn in the latest frame lists
+// drew (or the one before, when another list drew first this frame): its
+// rows are mounted, so a repeat jump finds its flash running. A list off
+// screen since mounts its rows anew, and their flash starts over.
+func (s *listState) mounted() bool {
+	latest, before := s.hb.latestFrames()
+	return s.laidOut && (s.laidAt.Equal(latest) || s.laidAt.Equal(before))
+}
+
+// tailItems is how many of the last items' heights the list keeps
+// (tailH): enough for the gap to its end past what a layout reached.
+const tailItems = 8
+
+// gapToEnd is how far the list sits above its end at p, px: past its
+// last laid-out item's bottom, the items after it at the heights they
+// last laid out at (the 24px bottom spacer under a list 35px from its
+// end: the layout stops at the viewport). MaxInt32 when that's more than
+// tailItems or one hasn't laid out yet. It counted only a list whose last
+// item was in view, so STICKY_EPSILON reached no further than the spacer.
+func (s *listState) gapToEnd(p layout.Position) int {
+	last := p.First + p.Count
+	if last >= len(s.items) {
+		return max(0, -p.OffsetLast)
+	}
+	if len(s.items)-last > tailItems {
+		return math.MaxInt32
+	}
+	gap := -p.OffsetLast
+	for i := last; i < len(s.items); i++ {
+		h, ok := s.tailH[s.items[i].key]
+		if !ok {
+			return math.MaxInt32
+		}
+		gap += h
+	}
+	return max(0, gap)
+}
+
+// gapNow is how far the list sits above its end where it is now: the last
+// layout's gap (endGap), moved by as much as a place written since then
+// moved it (the page keys, the scrollbar, ScrollPx), by the heights the
+// last layout measured; MaxInt32 when they don't reach. setKeys's
+// stickToBottom reads the scrollTop such a write just set (dxC+): a new
+// message in the frame after PageUp from the end took the list back down.
+func (s *listState) gapNow() int {
+	p, q := s.list.Position, s.laidPos
+	if samePos(p, q) || s.endGap == math.MaxInt32 {
+		return s.endGap
+	}
+	if !p.BeforeEnd {
+		return 0 // a ScrollToEnd list's end
+	}
+	up := q.Offset - p.Offset // how much higher p sits than the last layout
+	for i := p.First; i < q.First; i++ {
+		if i >= len(s.heights) || s.heights[i] <= 0 {
+			return math.MaxInt32
+		}
+		up += s.heights[i]
+	}
+	for i := q.First; i < p.First; i++ {
+		if i >= len(s.heights) || s.heights[i] <= 0 {
+			return math.MaxInt32
+		}
+		up -= s.heights[i]
+	}
+	return max(0, s.endGap+up)
+}
+
+// stopScroll ends the reader's running scroll (a wheel curve, a fling)
+// where code writes the list's place: Chromium cancels a scroll animation
+// on a scrollTop write, so the rest of the curve doesn't move the list off
+// it (an upward notch, then End inside its curve, left the list short of
+// its end).
+func (s *listState) stopScroll() {
+	s.list.StopScroll()
+	s.actScroll.Stop()
+}
+
+// toEnd puts the list at its end, whether or not it keeps to it.
+func (s *listState) toEnd() {
+	s.stopScroll()
+	s.list.Position = layout.Position{} // a ScrollToEnd list: its end
+	if !s.list.ScrollToEnd {
+		s.list.Position = layout.Position{BeforeEnd: true, First: len(s.items)} // drawn back from the last item
+	}
+}
+
+// placeAt places item i off under the list's top in the next layout.
+func (s *listState) placeAt(i int, off unit.Dp) {
+	s.place = jumpPlace{key: s.items[i].key, off: off}
+	s.list.Position = layout.Position{BeforeEnd: true, First: i} // until the layout places it
+}
+
+// jumpCovered reports whether the messages the list shows cover the
+// pending jump's ts: loaded, no load out for it, and the ts within them
+// (from their first message on, or anywhere before it when nothing is
+// older; up to their last, or past it when they end at the newest).
+func (s *listState) jumpCovered() bool {
+	first, last, ok := s.ends()
+	if !s.snap.loaded || s.snap.loading || s.snap.around != "" || !ok || s.built != s.snap.rev {
+		return false
+	}
+	ts := s.pendingJump
+	return (!s.snap.hasMore || !tsLess(ts, first)) && (!s.snap.newestMissing || !tsLess(last, ts))
+}
+
+// takeJump takes a plugin's jumpToReply from the snapshot (the model's
+// jump): the jump, and a new flash, as highlight and JumpTo start one. It
+// kept an earlier flash's hlSeen, and the unmount rule ended this flash in
+// the first layout that didn't draw its message yet.
+func (s *listState) takeJump(now time.Time) {
+	if s.snap.jump == "" {
+		return
+	}
+	s.highlight, s.highlightAt, s.hlSeen, s.hlRestart = s.snap.jump, now, false, true
+	s.pendingJump, s.snap.jump = s.snap.jump, ""
+}
+
+// ends is the first and last message of the list's model (ok: it has
+// any): the range a jump or a date reads. Plugins' injected messages
+// (mergeInjected) don't widen it: one from today under a window from
+// months ago counted as the window's end, and a jump past the window
+// landed on it.
+func (s *listState) ends() (first, last string, ok bool) {
+	return s.own[0], s.own[1], s.own[0] != ""
+}
+
+// firstItemFrom is the first message item holding a message at or after
+// ts (a join group by its last), -1 for none.
+func (s *listState) firstItemFrom(ts string) int {
+	for i, it := range s.items {
+		if it.kind == itMsg && it.idx < len(s.snap.msgs) && !tsLess(s.snap.msgs[it.idx].m.TS, ts) {
+			return i
+		}
+	}
+	return -1
+}
+
+// jumpPlace is a jump's placement (placeJump): the item keyed key, off
+// under the list's top.
+type jumpPlace struct {
+	key string
+	off unit.Dp
+}
+
+// lineOff is the list's anchor line under its top, px, and it notes it and
+// STICKY_EPSILON for the next sync: AnchorLayout's ANCHOR_OFFSET and
+// STICKY_EPSILON as getMessageListLayout makes them (IY25/5cnQ: 64, and
+// half the default row height, 80 for the "light" messages theme and 60
+// for "dense", so 40 Clean and 30 Compact) in a conversation, and the
+// thread list's own AnchorLayout's (Twp/: new AnchorLayout(), the line at
+// the top, 2) in a thread. The theme getMessageListLayout reads is
+// MessagePane's (xp33: "dense" === messages_theme ? "dense" : "light"),
+// not the color mode.
+func (s *listState) lineOff(gtx layout.Context) int {
+	line, eps := 0, unit.Dp(2)
+	if !s.thread {
+		line, eps = gtx.Dp(anchorOffset), 40
+		if uipref.Get().Dense {
+			eps = 30
+		}
+	}
+	s.linePx, s.stickyPx = line, gtx.Dp(eps)
+	return line
+}
+
+// lineRow is the row on the anchor line, line px under the list's top, in
+// the last layout, and its top: findAnchor's row, the first message row
+// ending below the line ("" for none).
+func (s *listState) lineRow(line int) (string, int) {
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items) && i < len(s.pos) && i < len(s.heights); i++ {
+		if s.items[i].kind == itMsg && s.pos[i]+s.heights[i] > line {
+			return s.items[i].key, s.pos[i]
+		}
+	}
+	return "", 0
+}
+
+// lineRows is the message rows from the one on the anchor line (lineRow)
+// down to the last in view, with their tops as the last layout drew them:
+// findAnchor's candidates when the keys change (setKeys walks the old
+// keys to the first row ending below the line that's still there).
+func (s *listState) lineRows(line int) []laidRow {
+	var out []laidRow
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items) && i < len(s.pos) && i < len(s.heights); i++ {
+		if s.items[i].kind == itMsg && (len(out) > 0 || s.pos[i]+s.heights[i] > line) {
+			out = append(out, laidRow{key: s.items[i].key, y: s.pos[i], h: s.heights[i]})
+		}
+	}
+	return out
+}
+
+// itemOfKey is the item keyed key, -1 for none.
+func (s *listState) itemOfKey(key string) int {
+	if i, ok := s.sel.keyIdx[key]; ok && i < len(s.items) && s.items[i].key == key {
+		return i
+	}
+	for i := range s.items {
+		if s.items[i].key == key {
+			return i
+		}
+	}
+	return -1
+}
+
+// topOnScreen reports whether the list draws message item key's top
+// inside it (isItemInView, which reads the live scroll): from its last
+// layout, only when that laid out these very items in the latest frame
+// lists drew (or the one before, when another list already drew this
+// frame). A list off screen since, or rebuilt since, doesn't know.
+func (s *listState) topOnScreen(key string) bool {
+	latest, before := s.hb.latestFrames()
+	if !s.laidOut || s.laidBuilt != s.built || s.laidAt.IsZero() || !s.laidAt.Equal(latest) && !s.laidAt.Equal(before) {
+		return false
+	}
+	for _, r := range s.laid {
+		if r.key == key {
+			return r.y >= 0 && r.y <= s.size.Y
+		}
+	}
+	return false
+}
+
+// firstVisibleMsg is the first message the list showed last frame ("" for
+// none).
+func (s *listState) firstVisibleMsg() string {
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if s.items[i].kind == itMsg {
+			return s.items[i].key
+		}
+	}
+	return ""
 }
 
 // Sending from the composer under a channel (Slack's sendMessage thunk,
@@ -2048,7 +2908,10 @@ func (s *listState) placeJump(now time.Time) {
 // through sendDraftFiles, whose appendPlaceholderMessage has no
 // jumpToTimestamp, and a thread reply (thread_ts) skips it.
 const (
-	sendJumpOffset = 64               // ANCHOR_OFFSET, dp
+	// anchorOffset is ANCHOR_OFFSET (getMessageListLayout, IY25: 64, 120
+	// for the degraded list), dp: the anchor line under the list's top
+	anchorOffset   = 64
+	sendJumpOffset = anchorOffset     // dp
 	sendJumpWait   = 10 * time.Second // the copy is in at once; this only drops a send that never reached core
 )
 
@@ -2072,6 +2935,7 @@ func (s *listState) placeSendJump(gtx layout.Context, now time.Time) {
 			// Gio's List clamps an offset past the end the way
 			// bracketScrollTop does: the end then sits at the bottom
 			s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -gtx.Dp(sendJumpOffset)}
+			s.stopScroll()
 			s.positioned = true
 			s.sendCID = ""
 			return

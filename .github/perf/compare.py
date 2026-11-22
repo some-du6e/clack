@@ -43,6 +43,8 @@ def fmt(v, unit):
         return f"{v:,.0f} ms" if v >= 100 else f"{v:.1f} ms"
     if unit == "MB":
         return f"{v:.1f} MB"
+    if unit == "ms/s":
+        return f"{v:.1f} ms/s"
     return num(v)
 
 

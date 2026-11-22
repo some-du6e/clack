@@ -50,12 +50,29 @@ type dndState struct {
 	mu     sync.Mutex
 	known  bool
 	status DNDStatus
+	at     time.Time // when status was set
+	asked  time.Time // the last refetch DNDHeld started
+	// events counts the viewer's dnd_updated events applied
+	// (onDNDUpdated): a dnd.info read queued before the last one gives way
+	// to it (loadDNDAfter)
+	events uint64
 }
 
-// SetDNDStatus replaces the viewer's DND status (tests, the demo).
+// dndMaxAge is how long the viewer's DND status stays fresh: Slack keeps
+// it in a conditional fetch manager (client-boot Z/ON, storeKey dndV2)
+// whose maxAge is 600 s, and getDndStatusByMemberId's read refetches an
+// older one in the background (maybeRefetch). A dnd_updated the socket
+// missed (it was down) is caught that way.
+const dndMaxAge = 10 * time.Minute
+
+// dndRetry spaces DNDHeld's refetches while dnd.info fails.
+const dndRetry = time.Minute
+
+// SetDNDStatus replaces the viewer's DND status (dnd.info, dnd_updated;
+// tests, the demo).
 func (a *App) SetDNDStatus(d DNDStatus) {
 	a.dnd.mu.Lock()
-	a.dnd.known, a.dnd.status = true, d
+	a.dnd.known, a.dnd.status, a.dnd.at = true, d, time.Now()
 	a.dnd.mu.Unlock()
 }
 
@@ -84,6 +101,32 @@ func (a *App) DNDProfile() (DNDProfileStatus, bool) {
 		return DNDProfileStatus{}, false
 	}
 	return *a.dnd.status.ProfileStatus, true
+}
+
+// DNDHeld is getCurrentMemberDndStatus (client-boot d4YN ux) as the store
+// holds it: whether the viewer's notifications are paused now, without
+// waiting (false until dnd.info or dnd_updated brought a status, as
+// Slack's store reads before its dnd.info answers). A status older than
+// dndMaxAge, or none, is asked for again in the background (dndRetry
+// apart), as Slack's read refetches one. Any goroutine: the notification
+// decisions read it on the UI goroutine.
+func (a *App) DNDHeld() bool {
+	now := time.Now()
+	a.dnd.mu.Lock()
+	known, st := a.dnd.known, a.dnd.status
+	refetch := (!known || now.Sub(a.dnd.at) > dndMaxAge) && now.Sub(a.dnd.asked) > dndRetry
+	if refetch {
+		a.dnd.asked = now
+	}
+	a.dnd.mu.Unlock()
+	if refetch && a.C != nil {
+		go func() { // maybeRefetch: this read takes the status as held
+			ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
+			defer cancel()
+			_ = a.LoadDND(ctx)
+		}()
+	}
+	return known && st.Active(now)
 }
 
 // DNDActive reports whether the viewer's notifications are paused now,
@@ -128,10 +171,45 @@ func (a *App) onDNDUpdated(ctx context.Context, raw json.RawMessage) {
 	if st.ProfileStatus == nil {
 		st.ProfileStatus = prev // until dnd.info answers
 	}
-	a.SetDNDStatus(st)
+	a.dnd.mu.Lock()
+	a.dnd.known, a.dnd.status, a.dnd.at = true, st, time.Now()
+	a.dnd.events++
+	a.dnd.mu.Unlock()
 	if ctx != nil {
 		_ = a.LoadDND(ctx)
 	}
+}
+
+// dndEvents is how many of the viewer's dnd_updated events onDNDUpdated has
+// applied.
+func (a *App) dndEvents() uint64 {
+	a.dnd.mu.Lock()
+	defer a.dnd.mu.Unlock()
+	return a.dnd.events
+}
+
+// loadDNDAfter is LoadDND for the read a dnd_updated queued off the event
+// pump (pump_later.go) when gen of them had been applied: its answer
+// stands unless a newer dnd_updated came after the read was asked for,
+// whose own read follows it. An older answer landing late put back a
+// snooze the viewer had ended, and with the later read failing the toasts
+// stayed held until DNDHeld's refetch (dndMaxAge).
+func (a *App) loadDNDAfter(ctx context.Context, gen uint64) error {
+	raw, err := a.DND(ctx)
+	if err != nil {
+		return err
+	}
+	var st DNDStatus
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return err
+	}
+	a.dnd.mu.Lock()
+	defer a.dnd.mu.Unlock()
+	if a.dnd.events != gen {
+		return nil
+	}
+	a.dnd.known, a.dnd.status, a.dnd.at = true, st, time.Now()
+	return nil
 }
 
 // SelfStatusEmoji is the status emoji the control strip's user button

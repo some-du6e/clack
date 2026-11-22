@@ -488,6 +488,34 @@ func (a *App) loadFeatures(ctx context.Context) {
 	}
 }
 
+// onFeatureAccessUpdated is boot-render's featureAccessUpdate: the
+// event's feature_access_policies (the list's shape) go into the policies
+// at once, so what reads them (the Tasks tab's agent_tasks__write) follows
+// a plan change without waiting for the hourly read. They merge, as
+// updateFeatureAccessStore's reducer does (zxoU: {...state, ...event}): a
+// policy the event leaves out keeps its value, and the hourly read keeps
+// its time (and still runs first when the boot read hasn't).
+func (a *App) onFeatureAccessUpdated(raw json.RawMessage) {
+	var e struct {
+		Policies map[string]struct {
+			Enabled bool `json:"is_enabled"`
+		} `json:"feature_access_policies"`
+	}
+	if json.Unmarshal(raw, &e) != nil || e.Policies == nil {
+		return
+	}
+	f := a.features()
+	f.mu.Lock()
+	if f.on == nil {
+		f.on = map[string]bool{}
+	}
+	for k, v := range e.Policies {
+		f.on[k] = v.Enabled
+	}
+	f.mu.Unlock()
+	a.emit(Event{Type: "features"})
+}
+
 // The experiments the posting permissions read (TestExperimentReadsListed):
 // PostingPermissions' frontline label and the Standard-plan upsell.
 func init() {

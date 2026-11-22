@@ -21,6 +21,7 @@
 package imgcache
 
 import (
+	"bytes"
 	"container/list"
 	"context"
 	"crypto/sha256"
@@ -52,6 +53,7 @@ import (
 	"github.com/some-du6e/clack/internal/imgcache/internal/webp"
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/slackasset"
 )
 
 // WebP is decoded by the vendored, budget-charging decoder in
@@ -144,8 +146,11 @@ type Cache struct {
 	wake, animWake waker
 	animInvalidate func() // nil: invalidate
 	// liveOps: Get hands out an animated image as a live ImageOp (anim.go
-	// SetLiveOps)
-	liveOps bool
+	// SetLiveOps); liveHeld: the live images show the frame they showed
+	// when hold holdGen began (HoldLive)
+	liveOps  bool
+	liveHeld bool
+	holdGen  uint32
 
 	// animations (anim.go): whether Get plays them (SetAnimate), the
 	// entries with a player playing, and the sweep that stops them once
@@ -604,6 +609,11 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 		e.gen = c.gen
 		c.genEls = append(c.genEls, el)
 	}
+	if c.liveHeld && c.liveOps && e.frames > 1 && (c.animate || forced) {
+		// HoldLive (anim.go): its live op shows the held frame; nothing
+		// moves on and nothing asks for a repaint, whichever window Gets
+		return c.liveOpLocked(e, forced), true
+	}
 	op := c.frameLocked(e, now, forced)
 	if c.liveOps && e.frames > 1 && (c.animate || forced) {
 		return c.liveOpLocked(e, forced), true
@@ -691,6 +701,7 @@ type Stats struct {
 	Advances              uint64      // frames the players have moved on, ever
 	Skipped               uint64      // frames their timelines passed over to catch up, ever
 	LargestFrame          image.Point // the largest frame a player plays now
+	LiveHeld              bool        // the live images are held (HoldLive)
 }
 
 // Stats reports the memory tier.
@@ -700,7 +711,7 @@ func (c *Cache) Stats() Stats {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s := Stats{Entries: len(c.entries), Bytes: c.bytes, Limit: c.maxBytes, Advances: c.advances, Skipped: c.skipped}
+	s := Stats{Entries: len(c.entries), Bytes: c.bytes, Limit: c.maxBytes, Advances: c.advances, Skipped: c.skipped, LiveHeld: c.liveHeld}
 	for el := c.lru.Front(); el != nil; el = el.Next() {
 		e := el.Value.(*entry)
 		if e.frames > 1 {
@@ -1235,6 +1246,18 @@ func (c *Cache) loadFrom(k key, h held) (paint.ImageOp, image.Point, int, *gifSo
 func (c *Cache) decodeLoad(k key, data []byte, save func()) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
 	b := NewBudget()
 	defer b.Release()
+	if slackasset.IsSVG(k.url) {
+		// a bundled SVG (svg.go), drawn at the size asked for; only the
+		// shipped bytes, never ones fetched for that URL
+		if want, _ := slackasset.Get(k.url); !bytes.Equal(data, want) {
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(errUnsupported)
+		}
+		rgba, err := rasterSVG(data, k.size, b)
+		if err != nil {
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
+		}
+		return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil, []*image.RGBA{rgba}, nil
+	}
 	if isAnim(data) {
 		fail := func(err error) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
 			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(budgetErr(err))
@@ -1387,6 +1410,9 @@ func (c *Cache) raw(u string) ([]byte, func(), error) {
 			return b, nop, nil
 		}
 		return nil, nop, errors.New("imgcache: local image gone")
+	}
+	if b, ok := slackasset.Get(u); ok { // one of Slack's bundled assets: shipped
+		return b, nop, nil
 	}
 	c.mu.Lock()
 	dir := c.dir

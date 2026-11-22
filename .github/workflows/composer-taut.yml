@@ -26,9 +26,17 @@ env:
 permissions:
   contents: read
 
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
+# A dispatch with other inputs gets its own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
 jobs:
   composer-taut:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (4.3 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -51,7 +59,7 @@ jobs:
         working-directory: /tmp/taut
         run: |
           mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
-          for name in SilentTyping InvisibleForward ClearURLs RealMarkdown AnonymizeFilenames NativeAtChannel SlimMessageBox; do
+          for name in SilentTyping InvisibleForward ClearURLs RealMarkdown AnonymizeFilenames NativeAtChannel SlimMessageBox OwlMode; do
             f=$(ls plugins/$name.ts plugins/$name.tsx 2>/dev/null | head -1)
             npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$name.js"
           done

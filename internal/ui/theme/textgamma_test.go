@@ -151,3 +151,70 @@ func TestTextInk(t *testing.T) {
 		t.Errorf("legacy GlyphEmbolden(0.33) = %.2f", e)
 	}
 }
+
+// The light-text fade is continuous on a dark background, the chrome scope
+// or a dark primary theme: it stopped at once below y=.6, from alpha .55
+// to 1, so a muted DM row drew its #958a9d timestamp (y=.56, unfaded)
+// brighter than its bold #9a9b9e name (y=.61, faded), the reverse of
+// Slack's #9a9b9e over #958a9d. Greys on white stay unfaded.
+func TestLightTextFadeContinuous(t *testing.T) {
+	if LightTextFade <= 0 {
+		t.Skip("CLACK_LABEL_TEXT_FADE turns the fade off")
+	}
+	defer SetTextModel(CurrentTextModel())
+	SetTextModel(TextModelLegacy)
+	prev := primaryTheme.Load()
+	defer SetPrimary(prev)
+	SetPrimary(New(true))
+	alpha := func(c color.NRGBA, bold, chrome bool) float64 {
+		w := Regular
+		if bold {
+			w = Bold
+		}
+		return float64(lightTextColor(c, 1, w, chrome).A) / 255
+	}
+	for _, chrome := range []bool{false, true} {
+		for _, bold := range []bool{false, true} {
+			for v := uint32(0x60); v < 0xf0; v++ {
+				a0, a1 := alpha(rgb(v*0x010101), bold, chrome), alpha(rgb((v+1)*0x010101), bold, chrome)
+				if math.Abs(a1-a0) > 0.02 {
+					t.Errorf("chrome=%v bold=%v: the fade jumps from alpha %.3f at #%06x to %.3f at #%06x", chrome, bold, a0, v*0x010101, a1, (v+1)*0x010101)
+				}
+			}
+		}
+	}
+	// the muted DM row on the dark card, as Gio blends it (linear light)
+	card := rgb(0x212428)
+	drawn := func(c color.NRGBA, bold bool) float64 {
+		a := alpha(c, bold, false)
+		lum := func(c color.NRGBA) float64 {
+			return 0.2126*srgbLin(c.R) + 0.7152*srgbLin(c.G) + 0.0722*srgbLin(c.B)
+		}
+		return a*lum(c) + (1-a)*lum(card)
+	}
+	if name, ts := drawn(rgb(0x9a9b9e), true), drawn(rgb(0x958a9d), false); name <= ts {
+		t.Errorf("a muted DM's name (#9a9b9e bold) draws at luminance %.3f, its timestamp (#958a9d) at %.3f: Slack's name is the brighter", name, ts)
+	}
+	SetPrimary(New(false))
+	for _, v := range []uint32{0x868686, 0x9a9b9e - 0x060606, 0x737373} {
+		if a := alpha(rgb(v), false, false); a != 1 {
+			t.Errorf("light mode fades #%06x on white to alpha %.3f", v, a)
+		}
+	}
+	// an account theme's light sidebar (Karim's #FED4BE as the picker
+	// stores it: #1c0901 ink): its muted rows (#1c0901 at .5 over the
+	// near-white sidebar, y≈.52) are dark ink on light, so unfaded
+	ia := mustTheme(t, slackInkCases[0].ia)
+	lsb := New(false)
+	lsb.Restyle = func(th *Theme, p *Palette) { ApplyIATheme(p, ia, th.Dark, true) }
+	lsb.Refresh()
+	SetPrimary(lsb)
+	muted := Over(color.NRGBA{R: 0x1c, G: 0x09, B: 0x01, A: 0x80}, rgb(0xfdf7fa))
+	if a := alpha(muted, false, true); a != 1 {
+		t.Errorf("a light sidebar's muted row (%v) fades to alpha %.3f", muted, a)
+	}
+	SetPrimary(New(false)) // the default theme: its inverted sidebar is dark
+	if a := alpha(muted, false, true); a == 1 {
+		t.Errorf("the dark sidebar's grey %v (y≈.52) is unfaded", muted)
+	}
+}

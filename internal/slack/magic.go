@@ -330,16 +330,39 @@ func magicRedirect(req *http.Request, via []*http.Request) error {
 		return fmt.Errorf("slack: refusing redirect off Slack to %q", req.URL.Hostname())
 	}
 	if bannedPage(req.URL) {
-		return errors.New("slack: Slack redirected sign-in to its /ssb/redirect page, which Clack never loads with a session cookie (docs/SIGNOUT-AUDIT.md)")
+		return errors.New("slack: Slack redirected sign-in to its /ssb/redirect page (or a path a server could read as it), which Clack never loads with a session cookie (docs/SIGNOUT-AUDIT.md)")
 	}
 	return nil
 }
 
 // bannedPage reports whether u is a team's /ssb/redirect page, which Clack
-// never loads with a session cookie, even when a redirect points there.
+// never loads with a session cookie, even when a redirect points there. The
+// path is read every way plainPath reads it. A path plainPath refuses (a
+// dot segment however it is encoded, a byte that could decode to a dot or
+// a separator) counts as banned. Otherwise each form a normalising server
+// reads (readForms: as sent, after each decode up to maxDecodes, and
+// NFKC-normalised, so a fullwidth slash U+FF0F or a fullwidth percent
+// U+FF05 that decodes to one is folded) is compared lower-cased, split on
+// '/' and '\', with ";…" segment parameters cut and empty segments
+// dropped: /ssb//redirect, /ssb;x/redirect, /ssb/%252fredirect,
+// /ssb/%2572edirect, /%2573sb/redirect and /ssb%EF%BC%852fredirect are all
+// the page.
 func bannedPage(u *url.URL) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimRight(u.Path, "/")), "/ssb/redirect")
+	if !plainPath(u) {
+		return true
+	}
+	forms, _ := readForms(u) // ok: plainPath already checked it
+	for _, f := range forms {
+		if strings.HasPrefix("/"+strings.Join(pathSegments(f), "/"), "/ssb/redirect") {
+			return true
+		}
+	}
+	return false
 }
+
+// BannedPage is bannedPage for requests outside this package that carry a
+// session cookie or token, such as a Taut plugin's fetch.
+func BannedPage(u *url.URL) bool { return u != nil && bannedPage(u) }
 
 func magicExchange(ctx context.Context, hc *http.Client, s MagicTokenSet, key *dpopKey) (*magicResult, error) {
 	u := "https://" + s.BaseDomain + "/api/auth.loginMagicBulk?magic_tokens=" + strings.Join(s.Tokens, ",") + "&ssb=1"

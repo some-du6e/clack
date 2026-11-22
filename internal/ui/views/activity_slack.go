@@ -665,6 +665,10 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 	}
 	conv, _ := c.Conv(it.Channel)
 	isDM := conv.Kind == "im" || strings.HasPrefix(it.Channel, "D") && conv.Kind == ""
+	// ITY6's isCanvasRelated: the message's conversation is a file channel
+	// (a canvas's or a list's, gxWy isFileChannelById), whose items have
+	// neither Remind me about this nor Open in home
+	canvasRelated := c.IsFileChannelID(ch) || actDocMention(&it) != nil
 	muted := it.Channel != "" && popups.IsMuted(ph, it.Channel)
 	var groups [][]popups.MenuItem
 
@@ -719,7 +723,7 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 	groups = append(groups, g1)
 
 	var g2 []popups.MenuItem
-	if m != nil && ch != "" && ts != "" {
+	if m != nil && ch != "" && ts != "" && !canvasRelated { // remind_submenu: if(f||k)return[]
 		var sub []popups.MenuItem
 		for _, p := range laterPresets {
 			p := p
@@ -813,15 +817,26 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		if thread != "" {
 			route += "/t/" + thread
 		}
-		// open_in_home ends with maybeClosePeek: from the rail's peek the
-		// card closes too
-		closePeek := v.peekCloser()
-		g := []popups.MenuItem{{Key: "open_in_home", Label: nsActivity.T("Open in home"), Icon: "home", Do: func() {
-			closePeek()
-			v.h.Navigate(route)
-		}}}
-		// open_in_split_view (not in Simplified layout mode): the thread or
-		// the channel, with the ⌘⌥-click hint
+		var g []popups.MenuItem
+		if !canvasRelated { // open_in_home: if(!s||f||k)return[]
+			// open_in_home ends with maybeClosePeek: from the rail's peek
+			// the card closes too
+			closePeek := v.peekCloser()
+			ch, ts := it.Channel, it.TS
+			g = append(g, popups.MenuItem{Key: "open_in_home", Label: nsActivity.T("Open in home"), Icon: "home", Do: func() {
+				closePeek()
+				// WabB: toThread({threadTs, replyTs: ts, highlightRoot}), else
+				// toMessage(ch, ts, ts)
+				if o, ok := v.h.(popups.MessageOpener); ok {
+					o.OpenAtMessage(ch, ts, thread, true)
+					return
+				}
+				v.h.Navigate(route)
+			}})
+		}
+		// open_in_split_view (not in Simplified layout mode): toThread or
+		// toChannel in the split view (a canvas's file channel there is its
+		// canvas, or its comment thread: ui/split.go), with the ⌘⌥-click hint
 		if split, ok := popups.SplitViewItem(ph, route, true); ok {
 			g = append(g, split)
 		}
@@ -922,9 +937,15 @@ func (v *Activity) clearAllBefore(ph popups.Host, before string) {
 					if err := c.ClearActivityBefore(ctx, before, f); err != nil {
 						return err
 					}
-					// reload on the UI goroutine
+					// the rows it cleared leave, the later pages' too (a
+					// reload keeps those: actReloadKeeps), then the reload,
+					// on the UI goroutine
+					unreadOnly := f != nil && f.UnreadOnly
 					v.notes.mu.Lock()
-					v.notes.fns = append(v.notes.fns, func() { v.load(actRefresh) })
+					v.notes.fns = append(v.notes.fns, func() {
+						v.clearedBefore(before, unreadOnly)
+						v.load(actRefresh)
+					})
 					v.notes.mu.Unlock()
 					v.h.Invalidate()
 					return nil
@@ -933,6 +954,23 @@ func (v *Activity) clearAllBefore(ph popups.Host, before string) {
 			}},
 		},
 	}))
+}
+
+// clearedBefore marks cleared here the loaded rows activity.clearBefore
+// {before_ts} took: older than before (its unread ones under Unreads; the
+// list holds the view's types and channels only).
+func (v *Activity) clearedBefore(before string, unreadOnly bool) {
+	if v.showCleared {
+		return
+	}
+	page, _, _ := v.data.get()
+	for i := range page.Items {
+		it := &page.Items[i]
+		if k := actKey(it); it.FeedTS != "" && actTSLess(it.FeedTS, before) && (!unreadOnly || v.isUnread(it, k)) {
+			v.cleared[k] = true
+			v.dirty = true
+		}
+	}
 }
 
 // clearFilters is uby+ o: the view's filters as activity.clearBefore takes

@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +30,14 @@ const (
 	ListKitchen = "F0LIST00001" // every column type, four views (table, board, filtered table, grouped table)
 	ListTodos   = "F0LIST00002" // a to-do list, C0FAKE00001's list tab
 	ListTabChan = "C0FAKE00001" // the channel whose tab bar has ListTodos
+	// ListKitchenRecord is the kitchen list's first record, whose comment
+	// thread is ListKitchenThread in the list's file channel (FileChanKitchen)
+	ListKitchenRecord = "Rec0ITEM001"
+	ListKitchenThread = "1762500000.000300"
+	// ListCommentKey is AddListCommentActivity's item, a reply in that
+	// thread that mentions the viewer (ListCommentTS)
+	ListCommentKey = "fa-list-comment"
+	ListCommentTS  = "1762500300.000100"
 )
 
 // FakeList is one list the fake holds.
@@ -70,8 +80,8 @@ func (s *Server) listStore() *listStore {
 	t := todoList(now)
 	ls.byID[t.ID] = t
 	ls.order = []string{k.ID, t.ID}
-	root := slack.Message{Type: "message", Subtype: "list_record_comment", User: "U0FAKE00001", TS: "1762500000.000300",
-		ThreadTS: "1762500000.000300", Text: ""}
+	root := slack.Message{Type: "message", Subtype: "list_record_comment", User: "U0FAKE00001", TS: ListKitchenThread,
+		ThreadTS: ListKitchenThread, Text: "", SlackList: &slack.MessageSlackList{ListID: ListKitchen, ListRecordID: ListKitchenRecord}}
 	ch := ListCommentsChannelOf(ListKitchen)
 	ls.comments[ch+"/"+root.TS] = []slack.Message{root,
 		{Type: "message", User: "U0FAKE00002", TS: "1762500100.000100", ThreadTS: root.TS, Text: "Can we get the screenshots in by Friday?"},
@@ -83,6 +93,49 @@ func (s *Server) listStore() *listStore {
 
 // ListCommentsChannelOf is a list's comments channel (C + the id's tail).
 func ListCommentsChannelOf(id string) string { return "C" + strings.TrimPrefix(id, "F") }
+
+// listCommentAt is message ts of a list's comments channel ch (a
+// record's thread root or a reply), as messages.list finds it by id.
+func (s *Server) listCommentAt(ch, ts string) (slack.Message, bool) {
+	ls := s.listStore()
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	for k, msgs := range ls.comments {
+		if !strings.HasPrefix(k, ch+"/") {
+			continue
+		}
+		for _, m := range msgs {
+			if m.TS == ts {
+				m.Channel = ch
+				return m, true
+			}
+		}
+	}
+	return slack.Message{}, false
+}
+
+// AddListCommentActivity adds an Activity item in the kitchen list's file
+// channel: a reply in its first record's comment thread that mentions the
+// viewer (ListCommentKey), which messages.list answers.
+func (s *Server) AddListCommentActivity() {
+	ch := ListCommentsChannelOf(ListKitchen)
+	reply := slack.Message{Type: "message", User: "U0FAKE00002", TS: ListCommentTS, ThreadTS: ListKitchenThread,
+		Text: "<@" + SelfID + "> can you add the screenshots to this one?"}
+	ls := s.listStore()
+	ls.mu.Lock()
+	ls.comments[ch+"/"+ListKitchenThread] = append(ls.comments[ch+"/"+ListKitchenThread], reply)
+	ls.mu.Unlock()
+	reply.Channel = ch
+	v := s.views()
+	v.mu.Lock()
+	st := v.act()
+	st.extra = append(st.extra,
+		map[string]any{"key": ListCommentKey, "feed_ts": ListCommentTS, "is_unread": true, "is_bot": false,
+			"item": map[string]any{"type": "at_user", "message": map[string]any{"ts": ListCommentTS, "channel": ch,
+				"thread_ts": ListKitchenThread, "author_user_id": "U0FAKE00002"}}})
+	st.extraMsgs = append(st.extraMsgs, reply)
+	v.mu.Unlock()
+}
 
 func sp(s string) *string { return &s }
 func bp(b bool) *bool     { return &b }
@@ -829,7 +882,7 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 					l.Records[i].ThreadTS = root
 					ls.comments[ch+"/"+root] = []slack.Message{{Type: "message", Subtype: "list_record_comment", User: SelfID, TS: root, ThreadTS: root}}
 				}
-				return ok("messages", ls.comments[ch+"/"+l.Records[i].ThreadTS][:1], "has_more", false), true
+				return ok("messages", withReplyMeta(ls.comments[ch+"/"+l.Records[i].ThreadTS], l.Records[i].ThreadTS)[:1], "has_more", false), true
 			}
 			return map[string]any{"ok": false, "error": "thread_not_found"}, true
 		}
@@ -837,7 +890,9 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 		if !okc {
 			return map[string]any{"ok": false, "error": "thread_not_found"}, true
 		}
-		return ok("messages", msgs, "has_more", false), true
+		// a page at a time, as live Slack answers (replies_paging.go)
+		page, more, next := pageReplies(withReplyMeta(msgs, ts), f)
+		return ok("messages", page, "has_more", more, "response_metadata", map[string]any{"next_cursor": next}), true
 	case "chat.postMessage":
 		ch := f.Get("channel")
 		if !strings.HasPrefix(ch, "C0LIST") || f.Get("thread_ts") == "" {
@@ -856,4 +911,71 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 		return ok("ts", ts, "channel", ch, "message", m), true
 	}
 	return nil, false
+}
+
+// withReplyMeta is a comment thread (root first) as the server answers
+// it: the root carries the thread's reply_count, latest_reply,
+// reply_users and reply_users_count, what the item's comment button
+// reads.
+func withReplyMeta(msgs []slack.Message, root string) []slack.Message {
+	out := append([]slack.Message(nil), msgs...)
+	var users []string
+	n, latest := 0, ""
+	for _, m := range out {
+		if m.TS == root {
+			continue
+		}
+		n++
+		latest = m.TS
+		if !slices.Contains(users, m.User) {
+			users = append(users, m.User)
+		}
+	}
+	for i := range out {
+		if out[i].TS == root {
+			out[i].ReplyCount, out[i].LatestReply = n, latest
+			out[i].ReplyUsers, out[i].ReplyUsersN = users, len(users)
+		}
+	}
+	return out
+}
+
+// AddListRecordComments adds n synthetic comments by users in turn to
+// record recID of list listID, after its thread's newest message (the
+// record's thread made first when it has none), and returns their ts,
+// oldest first.
+func (s *Server) AddListRecordComments(listID, recID string, n int, users ...string) []string {
+	ls := s.listStore()
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	l := ls.byID[listID]
+	if l == nil || len(users) == 0 {
+		return nil
+	}
+	ch := ListCommentsChannelOf(listID)
+	for i := range l.Records {
+		if l.Records[i].ID != recID {
+			continue
+		}
+		root := l.Records[i].ThreadTS
+		if root == "" {
+			ls.next++
+			root = fmt.Sprintf("%d.%06d", time.Now().Unix()-int64(n)-3600, 900+ls.next)
+			l.Records[i].ThreadTS = root
+			ls.comments[ch+"/"+root] = []slack.Message{{Type: "message", Subtype: "list_record_comment", User: SelfID, TS: root,
+				ThreadTS: root, SlackList: &slack.MessageSlackList{ListID: listID, ListRecordID: recID}}}
+		}
+		k := ch + "/" + root
+		th := ls.comments[k]
+		sec, _ := strconv.ParseInt(strings.SplitN(th[len(th)-1].TS, ".", 2)[0], 10, 64)
+		var out []string
+		for j := range n {
+			ts := fmt.Sprintf("%d.%06d", sec+1+int64(j), 100)
+			ls.comments[k] = append(ls.comments[k], slack.Message{Type: "message", User: users[j%len(users)], TS: ts, ThreadTS: root,
+				Text: fmt.Sprintf("synthetic comment %d", j+1)})
+			out = append(out, ts)
+		}
+		return out
+	}
+	return nil
 }

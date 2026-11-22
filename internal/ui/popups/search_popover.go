@@ -1322,7 +1322,7 @@ func (p *SearchPopover) activate(i int) {
 	case srRMsg:
 		RecordRecentConversation(r.msg.Channel)
 		p.Dismiss()
-		p.h.Navigate(msgRoute(*r.msg))
+		openResult(p.h, *r.msg)
 	case srRFile:
 		f := p.fileByID[r.id]
 		p.Dismiss()
@@ -1440,6 +1440,9 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 }
 
 // ---- layout ----
+
+// Rect is the card as last laid out (window coords).
+func (p *SearchPopover) Rect() image.Rectangle { return p.rect }
 
 // Layout draws the popover.
 func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
@@ -1618,6 +1621,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	p.rect = image.Rect(x, y, x+w, y+h)
 	rad := dp(gtx, 8)
 	card(gtx, cl, p.rect, rad)
+	slackc.InspectCard(gtx, p.rect) // the inspect tool: the card is the switcher's box
 	p.block.Layout(gtx, p.rect)
 	p.layoutCard(gtx, th, cl, w, h, inputH, padT, footH, listH, rad, acOpen)
 	p.tbRunPending(gtx)
@@ -2573,9 +2577,10 @@ func srAvatarNative(gtx layout.Context, h Host, m *core.Message, url string, siz
 
 // ---- shared helpers (popover and results view) ----
 
-// srBody is a message's plain text.
+// srBody is a message's plain text (the unsupported-block card adds
+// none: search previews suppress it).
 func srBody(m *core.Message) string {
-	if s := richtext.PlainText(m.Doc); strings.TrimSpace(s) != "" {
+	if s := richtext.SearchText(m.Doc); strings.TrimSpace(s) != "" {
 		return s
 	}
 	return m.Text

@@ -118,6 +118,9 @@ func (e *textView) Changed() bool {
 // Dimensions returns the dimensions of the visible text.
 func (e *textView) Dimensions() layout.Dimensions {
 	basePos := e.dims.Size.Y - e.dims.Baseline
+	if e.SingleLine {
+		basePos -= e.scrollOff.Y // the line's shift (Clack patch 54)
+	}
 	return layout.Dimensions{Size: e.viewSize, Baseline: e.viewSize.Y - basePos}
 }
 
@@ -318,6 +321,38 @@ func (e *textView) Layout(gtx layout.Context, lt *text.Shaper, font font.Font, s
 		e.invalidate()
 	}
 	e.makeValid()
+	if e.SingleLine {
+		e.scrollOff.Y = -e.lineShift() // Clack patch 54
+	}
+}
+
+// lineShift is how far down a single-line view taller than its line
+// draws the line (Clack patch 54). Gio drew it at the view's top, so an
+// input that gave its editor a taller box (layout.W keeps the minimum
+// height) drew its text and caret above the placeholder centred beside
+// it. Blink centres a single-line input's inner editor in the field
+// (html.css: input::-webkit-textfield-decoration-container is a flex
+// box with align-items: center), and the editor's line puts the font's
+// content area (ascent and descent, each rounded:
+// platform/fonts/font_metrics.cc) in the middle of the line box with
+// the half-leading floored (CalculateLeadingSpace,
+// core/layout/inline/inline_box_state.cc): the baseline is
+// (height - ascent - descent)/2 + ascent from the top. The placeholder
+// takes that same baseline (BlockLayoutAlgorithm::
+// HandleTextControlPlaceholder). A view no taller than its text keeps
+// it where it was.
+func (e *textView) lineShift() int {
+	if len(e.index.lines) == 0 {
+		return 0
+	}
+	free := e.viewSize.Y - e.dims.Size.Y
+	if free <= 0 {
+		return 0
+	}
+	l := e.index.lines[0]
+	asc, desc := l.ascent.Round(), l.descent.Round()
+	target := (e.viewSize.Y-asc-desc)/2 + asc
+	return min(max(target-l.yOff, 0), free)
 }
 
 // PaintSelection clips and paints the visible text selection rectangles using
@@ -372,22 +407,17 @@ func (e *textView) PaintText(gtx layout.Context, material op.CallOp) {
 }
 
 // caretWidth returns the width occupied by the caret for the current
-// gtx.
+// gtx: Blink's (Clack patch 54, caretRect), so an empty view laid out at
+// its natural width holds the whole caret (Gio's was half of it: an
+// empty field's caret was cut to 1 px at 2x).
 func (e *textView) caretWidth(gtx layout.Context) int {
-	carWidth2 := max(gtx.Dp(1)/2, 1)
-	return carWidth2
+	return int(math.Floor(max(1, float64(DeviceScale(gtx))) + .5))
 }
 
 // PaintCaret clips and paints the caret rectangle, adding material immediately
 // before painting to set the appropriate paint material.
 func (e *textView) PaintCaret(gtx layout.Context, material op.CallOp) {
-	carWidth2 := e.caretWidth(gtx)
-	caretPos, carAsc, carDesc := e.CaretInfo()
-
-	carRect := image.Rectangle{
-		Min: caretPos.Sub(image.Pt(carWidth2, carAsc)),
-		Max: caretPos.Add(image.Pt(carWidth2, carDesc)),
-	}
+	carRect := e.caretRect(gtx)
 	cl := image.Rectangle{Max: e.viewSize}
 	carRect = cl.Intersect(carRect)
 	if !carRect.Empty() {
@@ -395,6 +425,34 @@ func (e *textView) PaintCaret(gtx layout.Context, material op.CallOp) {
 		material.Add(gtx.Ops)
 		paint.PaintOp{}.Add(gtx.Ops)
 	}
+}
+
+// caretRect is the caret Blink draws (Clack patch 54), in the view.
+// Gio's was the font's ascent and descent each rounded up, so a pixel
+// taller than Chromium's at most sizes (19 px for Lato at 15 px, not
+// 18), and 2*max(Dp(1)/2, 1) px wide, centred: 2 px at 1x, and half of it
+// cut off at the view's left edge (1 px at 2x there). Blink's bar caret
+// (ComputeLocalCaretRectAtTextOffset, core/layout/inline/caret_rect.cc;
+// LocalCaretRectForEmptyElement, core/layout/layout_box_model_object.cc,
+// for an empty field) is the font's height, each of ascent and descent
+// rounded (platform/fonts/font_metrics.cc), on the text's baseline;
+// LocalFrameView::BarCaretWidth wide, max(1, device scale) device px,
+// pixel-snapped (1 px at 1x, 2 at 1.5x and 2x); and its left edge the
+// caret's x less half that width, rounded and kept inside the line
+// (ClampAndRound), so at the start of a line it starts at the line's
+// left.
+func (e *textView) caretRect(gtx layout.Context) image.Rectangle {
+	caretStart := e.closestToRune(e.caret.start)
+	w := max(1, float64(DeviceScale(gtx)))
+	wpx := e.caretWidth(gtx)
+	// clamped in the text's own coordinates, inside its line box (from
+	// 0 to the wider of the view and the text), then scrolled: a caret
+	// scrolled out of the view is clipped, not pulled onto its edge
+	left := int(math.Floor(float64(caretStart.x)/64 - w/2 + .5))
+	left = max(min(left, max(e.viewSize.X, e.dims.Size.X)-wpx), 0)
+	left -= e.scrollOff.X
+	y := caretStart.y - e.scrollOff.Y
+	return image.Rect(left, y-caretStart.ascent.Round(), left+wpx, y+caretStart.descent.Round())
 }
 
 func (e *textView) CaretInfo() (pos image.Point, ascent, descent int) {
@@ -446,6 +504,9 @@ func (e *textView) ScrollBounds() image.Rectangle {
 			b.Min.X = min(line.xOff.Floor(), 0)
 		}
 		b.Max.X = e.dims.Size.X + b.Min.X - e.viewSize.X
+		// the line stays where lineShift puts it (Clack patch 54)
+		b.Min.Y = -e.lineShift()
+		b.Max.Y = b.Min.Y
 	} else {
 		b.Max.Y = e.dims.Size.Y - e.viewSize.Y
 	}

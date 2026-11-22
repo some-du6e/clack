@@ -47,20 +47,27 @@ type View struct {
 	shown   *core.CanvasDoc // the doc the blocks were built from
 	crashed error           // a recovered layout panic: the error state until Try again
 	blocks  []*blk
-	title   *richview.View
-	list    layout.List
-	btns    map[string]*widget.Clickable
-	retry   widget.Clickable
-	styles  styleSet
-	handler *handler
-	edit    *editState
-	phView  *richview.View // the empty canvas's placeholder
-	phText  string
-	tphView *richview.View // the empty title's placeholder
-	toc     *tocState      // the table of contents (toc.go)
-	access  accessState    // the View only / Comment only pill (access.go)
-	cover   coverState     // the header's Add cover (cover.go)
-	focus   string         // a section to scroll to once drawn (FocusSection)
+	// mentions are shown's user, channel and group mentions, named from
+	// the store when the blocks were built (nameMentions, render.go)
+	mentions []*richtext.Span
+	// emojiVer is the emoji map's version shown's title emoji were
+	// resolved with (nameMentions)
+	emojiVer uint64
+	title    *richview.View
+	list     layout.List
+	btns     map[string]*widget.Clickable
+	retry    widget.Clickable
+	styles   styleSet
+	handler  *handler
+	edit     *editState
+	phView   *richview.View // the empty canvas's placeholder
+	phText   string
+	tphView  *richview.View // the empty title's placeholder
+	toc      *tocState      // the table of contents (toc.go)
+	access   accessState    // the View only / Comment only pill (access.go)
+	cover    coverState     // the header's Add cover (cover.go)
+	focus    string         // a section to scroll to once drawn (FocusSection)
+	focused  string         // the section the view last scrolled to (Focus)
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
@@ -340,6 +347,13 @@ func (v *View) layout(gtx layout.Context) layout.Dimensions {
 	theme.Fill(gtx, image.Rectangle{Max: sz}, th.C.Bg)
 	v.styles.sync(th, v.h)
 	if d != nil && d != v.shown {
+		v.rebuild(d)
+	} else if d != nil && v.edit.saving == 0 && v.mentionsMoved() {
+		// a mention's model answered (a channel looked up, a member
+		// loaded): its block lays out again in this frame, as Quip's
+		// views re-render on their model's change. Not while an edit is
+		// saving: its blocks are shown ahead of the document
+		// (replaceLocal), and the refetch after it names everything.
 		v.rebuild(d)
 	}
 	top := 0
@@ -758,6 +772,7 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 	if v.focus != "" && v.shown != nil {
 		if i := rowOf(rows, v.focus); i >= 0 {
 			v.list.Position = layout.Position{First: i + 1} // row 0 is the header
+			v.focused = v.focus
 		}
 		v.focus = "" // a section no longer in the canvas: it opens at the top
 	}
@@ -808,8 +823,13 @@ func (v *View) FocusSection(id string) {
 		return
 	}
 	v.focus = id
+	v.focused = "" // Focus reports this jump's scroll, not an earlier one's
 	v.h.Invalidate()
 }
+
+// Focus is the section the view scrolls to once its canvas is drawn
+// (FocusSection) and the one it last scrolled to ("" for none).
+func (v *View) Focus() (pending, applied string) { return v.focus, v.focused }
 
 // rowOf is the index of the row holding section id (the row itself, or a
 // quote's, callout's or layout's section inside it), or -1.

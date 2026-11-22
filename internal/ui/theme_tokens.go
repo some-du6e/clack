@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image/color"
 
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -55,6 +56,8 @@ func (t paneTokens) Color(expr string) (color.NRGBA, bool, bool) {
 
 func (t paneTokens) Overridden() bool { return true }
 
+func (t paneTokens) Declares(name string) bool { return theme.Declares(t.Tokens, name) }
+
 func (t paneTokens) Key() uint64 {
 	var k uint64
 	if t.Tokens != nil {
@@ -72,8 +75,24 @@ func (a *App) syncThemeTokens() {
 	}
 	if v := slackc.Styles.Version(); v != a.styleVer {
 		a.styleVer = v
+		was := a.th.C
 		a.th.Refresh()
+		if c := a.th.C; c.ChromeA != was.ChromeA || c.SidebarBg != was.SidebarBg || c.Bg != was.Bg {
+			// a sheet recoloured the client after it showed: the startup
+			// timeline counts it (a launch whose first frame missed the
+			// theme repaints the whole window here)
+			a.relayout("palette")
+		}
 	}
+}
+
+// paletteNote is the startup timeline's real-frame detail: the colours a
+// theme sets (the window's gradient, the sidebar, the pane), so a launch
+// that showed its client in the wrong theme says so (launch.py).
+func (a *App) paletteNote() string {
+	hex := func(c color.NRGBA) string { return fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B) }
+	c := a.th.C
+	return "chrome " + hex(c.ChromeA) + " sidebar " + hex(c.SidebarBg) + " pane " + hex(c.Bg)
 }
 
 // restyleFromSheets is theme.Theme.Restyle: it lays the active sheets'

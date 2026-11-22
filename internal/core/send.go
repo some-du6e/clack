@@ -91,6 +91,20 @@ func (a *App) putLocal(ch string, m slack.Message) {
 	}
 }
 
+// putChanged is putLocal for the socket's message_changed of a message no
+// window or cached thread held: a top-level message goes into the window
+// only inside the range the window holds (store.UpsertInRange: one older
+// than a window with more history beyond it stays out, as Slack's invH
+// keeps it a slice of its own), a reply to its cached thread.
+func (a *App) putChanged(ch string, m slack.Message) {
+	if isTopLevel(&m) {
+		a.S.UpsertInRange(ch, m)
+	}
+	if m.ThreadTS != "" && m.ThreadTS != m.TS {
+		a.S.AddReply(ch, m)
+	}
+}
+
 // Send posts a message optimistically (see above). It blocks until Slack
 // answers and returns the confirmed message.
 func (a *App) Send(ctx context.Context, o SendOpts) (Message, error) {
@@ -117,7 +131,7 @@ func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error)
 		ClientMsgID: cid, Reply: !isTopLevel(&local), ConvKind: a.kindOf(o.Channel)})
 
 	m, err := a.C.Post(ctx, slack.PostOpts{Channel: o.Channel, Text: o.Text, ThreadTS: o.ThreadTS,
-		Broadcast: o.Broadcast, Blocks: o.Blocks, Attachments: o.Attachments, ClientMsgID: cid})
+		Broadcast: o.Broadcast, Blocks: o.Blocks, Attachments: o.Attachments, ClientMsgID: cid, BlocksOnly: o.BlocksOnly})
 	if err != nil {
 		a.mu.Lock()
 		confirmed := p.confirmed
@@ -130,7 +144,16 @@ func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error)
 				return a.message(o.Channel, &got), nil
 			}
 		}
-		if fm, ok := a.S.Find(o.Channel, p.ts); ok {
+		fm, ok := a.S.Find(o.Channel, p.ts)
+		if !ok {
+			// its copy went meanwhile (a newest page that started the
+			// window over, an eviction): Slack's sendMessage puts the
+			// failed message back at the end (addMsgToEnd) so it can be
+			// retried
+			a.putLocal(o.Channel, local)
+			fm, ok = a.S.Find(o.Channel, p.ts)
+		}
+		if ok {
 			fv := a.message(o.Channel, &fm)
 			a.emit(Event{Type: "update", Channel: o.Channel, TS: p.ts, ThreadTS: o.ThreadTS, Msg: &fv, ClientMsgID: cid})
 		}
