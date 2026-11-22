@@ -212,9 +212,14 @@ func inOrder(got, want []media.EventKind) bool {
 	return i == len(want)
 }
 
+// sample is a drawn frame: at is the clock's position when it was drawn,
+// pts the frame's own presentation time (the transfer's), which its
+// colour is checked at. They part where the first frame came late: the
+// first one transferred then can be the engine's first frame (grey, pts 0)
+// with the clock already 1.6 s on (mf-first-frame's runs, 2 in 10).
 type sample struct {
-	at time.Duration
-	c  color.RGBA
+	at, pts time.Duration
+	c       color.RGBA
 }
 
 // playThrough plays to the end, drawing every new frame, and returns what
@@ -245,7 +250,12 @@ func (r *rig) playThrough() ([]sample, time.Duration) {
 			if first == 0 {
 				first = time.Since(start)
 			}
-			samples = append(samples, sample{r.p.State().Pos, c})
+			pos := r.p.State().Pos
+			pts := pos
+			if v := r.p.framePts.Load(); v >= 0 {
+				pts = time.Duration(v)
+			}
+			samples = append(samples, sample{pos, pts, c})
 		}
 	}
 	r.t.Fatalf("no end within 15 s; events %v; state %+v; stats %+v; the engine's events %s", r.kinds(), r.p.State(), r.p.Stats(), traceOf(r.id))
@@ -266,17 +276,17 @@ func checkColors(t *testing.T, samples []sample) {
 	if len(samples) == 0 {
 		t.Fatal("no frame drawn")
 	}
-	from := samples[0].at
+	from := samples[0].pts
 	for i, w := range colorWindows {
 		n, bad := 0, 0
 		for _, s := range samples {
-			if s.at < w[0] || s.at > w[1] {
+			if s.pts < w[0] || s.pts > w[1] {
 				continue
 			}
 			n++
-			if !mediatest.Matches(s.at, s.c) {
+			if !mediatest.Matches(s.pts, s.c) {
 				if bad < 3 {
-					t.Errorf("at %v the frame drawn was %v, want %s", s.at, s.c, mediatest.Want(s.at))
+					t.Errorf("the frame of %v (drawn at %v) was %v, want %s", s.pts, s.at, s.c, mediatest.Want(s.pts))
 				}
 				bad++
 			}
@@ -642,11 +652,11 @@ func checkRGBA(t *testing.T, samples []sample) {
 	if len(samples) == 0 {
 		t.Fatal("no frame drawn")
 	}
-	from := samples[0].at
+	from := samples[0].pts
 	var by [3][]color.RGBA
 	for _, s := range samples {
 		for i, w := range colorWindows {
-			if s.at > w[0] && s.at < w[1] {
+			if s.pts > w[0] && s.pts < w[1] {
 				by[i] = append(by[i], s.c)
 			}
 		}

@@ -104,6 +104,7 @@ func (b backend) New(src media.Source, frameReady func()) (media.Player, error) 
 	p := &player{src: src, frameReady: frameReady, wake: make(chan struct{}, 1), mfEv: make(chan mfEvent, 256),
 		bind: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{}), volume: 1, rate: 1, born: time.Now()}
 	p.Init()
+	p.framePts.Store(-1)
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	p.rs = media.NewRangeSource(src, media.RangeOptions{})
 	p.frames = media.NewFrameHandle(p)
@@ -206,6 +207,10 @@ type mfEvent struct {
 // Gio's render thread, under askMu (which the ring's changes and Close
 // take too).
 type player struct {
+	// framePts is the presentation time of the frame transferred last
+	// (any goroutine; -1 before one): the tests check a drawn frame's
+	// colour at its own time, not at the clock's position
+	framePts atomic.Int64
 	media.Base
 	src        media.Source
 	rs         *media.RangeSource
@@ -814,6 +819,7 @@ func (p *player) tick() {
 		p.emptyTicks = 0
 		if pts >= 0 { // a forced transfer's frame is the one presented
 			p.lastPts = time.Duration(pts) * 100
+			p.framePts.Store(int64(p.lastPts))
 		}
 		p.NTransfers.Add(1)
 		p.NFrames.Add(1)
