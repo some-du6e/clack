@@ -35,6 +35,13 @@ import (
 //
 // The legacy c-button only; nothing draws a v2 Button loading yet.
 
+// LoadingButton is a lone c-button of size drawn loading, at least minW
+// dp wide (the user group browser's Load More: ExplorerLoadMoreButton's
+// loading).
+func LoadingButton(gtx layout.Context, th *theme.Theme, c *widget.Clickable, size BtnSize, minW float32) layout.Dimensions {
+	return loadingButtonGrp(gtx, th, c, size, minW, grpNone)
+}
+
 // loadingButtonGrp draws a c-button of size as LoadingButton draws it
 // loading, at least minW dp wide; grp as buttonGrp's.
 func loadingButtonGrp(gtx layout.Context, th *theme.Theme, c *widget.Clickable, size BtnSize, minW float32, grp grpSide) layout.Dimensions {

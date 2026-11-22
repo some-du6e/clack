@@ -355,10 +355,10 @@ func (v *UserGroupView) loadMembers(term, cursor string) {
 	})
 }
 
-// Layout fills the constraints with the pane.
 // GroupID is the group the pane shows.
 func (v *UserGroupView) GroupID() string { return v.id }
 
+// Layout fills the constraints with the pane.
 func (v *UserGroupView) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
 	th := v.h.Theme()

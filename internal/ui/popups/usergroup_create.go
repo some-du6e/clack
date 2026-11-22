@@ -5,6 +5,7 @@ import (
 	"errors"
 	"image"
 	"strings"
+	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/layout"
@@ -131,7 +132,8 @@ func OpenUserGroupCreate(h Host) *UserGroupEditModal {
 			e.bump = true
 			return false
 		},
-		Over: e.over,
+		OnEscape: ugEscape(e.chans, e.members), // MultiSelectInput onEscape: the open list first (Channels, then the members)
+		Over:     e.over,
 	}).OldDialog()
 	e.sync()
 	h.ShowOverlay(e)
@@ -188,21 +190,38 @@ func (e *UserGroupEditModal) createGo() {
 		return
 	}
 	e.pending = true
-	name, handle, team := e.name.Text(), e.handle.Text(), e.team
+	// getFormValues at the click: what validate checks and what
+	// setDetailsFormValues keeps for MEMBERS' create and for Back. Edits
+	// made while validate runs don't reach either (the form unmounts).
+	snap := ugDetails{name: e.name.Text(), handle: e.handle.Text(), purpose: e.purpose.Text(),
+		chans: append([]ugOption(nil), e.chans.picked...), section: e.section}
+	team := e.team
 	type res struct{ nameErr, handleErr string }
 	run(e.h, func(ctx context.Context) (res, error) {
-		return res{ugValidateName(ctx, c, name, "", team), ugValidateHandle(ctx, c, handle, "", team)}, nil
+		return res{ugValidateName(ctx, c, snap.name, "", team), ugValidateHandle(ctx, c, snap.handle, "", team)}, nil
 	}, func(r res, _ error) {
 		e.pending = false // validate's finally
 		e.nameErr, e.handleErr = r.nameErr, r.handleErr
 		if r.nameErr != "" || r.handleErr != "" {
 			return
 		}
-		e.step = 1 // setDetailsFormValues, setDialogStep(MEMBERS)
+		e.details = snap // setDetailsFormValues, setDialogStep(MEMBERS)
+		e.step = 1
+		e.nameAt, e.handleAt = time.Time{}, time.Time{} // the unmounted form's pending checks
+		e.nameGen++
+		e.handleGen++
 		e.sync()
 		e.members.Focus() // focusOnMount
 		e.h.Invalidate()
 	})
+}
+
+// ugDetails is the dialog's detailsFormValues: the DETAILS form as Next
+// took it.
+type ugDetails struct {
+	name, handle, purpose string
+	chans                 []ugOption
+	section               bool
 }
 
 // back is MEMBERS' Back: DETAILS again, the form remounted with the
@@ -210,6 +229,13 @@ func (e *UserGroupEditModal) createGo() {
 func (e *UserGroupEditModal) back() {
 	e.step = 0
 	e.focused = false
+	d := e.details // the form's constructor: its state from detailsFormValues
+	e.name.SetText(d.name)
+	e.handle.SetText(d.handle)
+	e.purpose.SetText(d.purpose)
+	e.chans.SetPicked(d.chans)
+	e.section = d.section
+	e.nameQ, e.handleQ = d.name, d.handle
 	e.seenSectionBadge()
 	e.sync()
 }
@@ -225,8 +251,13 @@ func (e *UserGroupEditModal) submitCreate() {
 		return
 	}
 	e.pending = true
-	in := core.UsergroupCreate{TeamID: e.team, Name: e.name.Text(), Handle: e.handle.Text(), Description: e.purpose.Text(),
-		Channels: e.chans.IDs(), EnableSection: e.section, Users: ids}
+	d := e.details
+	chans := make([]string, len(d.chans))
+	for i, o := range d.chans {
+		chans[i] = o.ID
+	}
+	in := core.UsergroupCreate{TeamID: e.team, Name: d.name, Handle: d.handle, Description: d.purpose,
+		Channels: chans, EnableSection: d.section, Users: ids}
 	run(e.h, func(ctx context.Context) (core.Usergroup, error) { return c.CreateUsergroup(ctx, in) }, func(g core.Usergroup, err error) {
 		e.pending = false
 		if err != nil { // onSubmitFailure: setApiError(e.name ?? e)

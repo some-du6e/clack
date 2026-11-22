@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -45,6 +46,8 @@ type flingEnv struct {
 	scale float32
 	shots string // CLACK_FLING_SHOTS: a PNG per frame
 	nshot int
+	app   *core.App
+	fs    *fakeslack.Server
 }
 
 func newFlingEnv(t *testing.T, ch string, scale float32) *flingEnv {
@@ -80,7 +83,7 @@ func newFlingEnvHook(t *testing.T, ch string, scale float32, hook func(method st
 	app.ServeOffline()
 	th := theme.New(false)
 	h := identityHost{coreHost: coreHost{app: app, th: th}, imgs: imgcache.New(fs.Fetch, "", nil)}
-	e := &flingEnv{t: t, ops: new(op.Ops), now: time.Now(), size: image.Pt(int(900*scale), int(700*scale)), th: th, scale: scale}
+	e := &flingEnv{t: t, ops: new(op.Ops), now: time.Now(), size: image.Pt(int(900*scale), int(700*scale)), th: th, scale: scale, app: app, fs: fs}
 	e.v = NewChannelView(h, ch)
 	e.v.Preview = true
 	e.shots = os.Getenv("CLACK_FLING_SHOTS")
@@ -242,6 +245,21 @@ func (e *flingEnv) release() {
 
 func flingThrough(t *testing.T, e *flingEnv) {
 	until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.items) > 3 })
+	// the page's senders first: the store starts with the viewer alone,
+	// and their names land while the rows are drawn. A guess at
+	// files-filters-3's push ci 44980164338 (a row moved 22 px at frame 2,
+	// the users/info asks just answered), not proven: holding the names
+	// didn't move a row (flakes-1122's red3). EnsureUsers returns once they
+	// are all in, the asks already out too.
+	var ids []string
+	for _, en := range e.v.s.snap.msgs {
+		if en.m.User != "" {
+			ids = append(ids, en.m.User)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	e.app.EnsureUsers(ctx, ids)
+	cancel()
 	for i := 0; i < 5; i++ {
 		e.frame()
 	}

@@ -70,6 +70,20 @@ func TestFilesTabHideAndLinkDetails(t *testing.T) {
 		t.Fatalf("menu %+v", items)
 	}
 	m.Dismiss()
+	// a header read already out when the tab goes (a tab click's, a
+	// retry's), slow to post: its members call held. It read the bar with
+	// the tab; the hide's own read, after, reads it without and answers
+	// first (files-filters-3's push ci 44980164338: the old read landed
+	// last and kept the hidden tab)
+	fs.SetFault("edge/users/list", fakeslack.Fault{Delay: 1500 * time.Millisecond, Times: 1})
+	info, members := fs.CallCount("conversations.info"), fs.CallCount("edge/users/list")
+	delete(e.a.data.fetched, ch)
+	e.a.data.opened(ch)
+	// its tabs and info read the bar as it is now (the fake answers what
+	// it holds when the request comes), its members call is held
+	e.until("the header read out", 5*time.Second, func() bool {
+		return fs.CallCount("conversations.info") >= info+2 && fs.CallCount("edge/users/list") > members
+	})
 	items[0].Do()
 	e.until("conversations.removeTab", 10*time.Second, func() bool {
 		g := fs.GalleryTabs()
@@ -81,6 +95,11 @@ func TestFilesTabHideAndLinkDetails(t *testing.T) {
 	if e.a.chTab[ch] != 0 {
 		t.Errorf("the hidden tab stayed open (tab %d)", e.a.chTab[ch])
 	}
+	// every header read out has answered, the held one too: the bar is
+	// what the last read of it says, not a moment between two
+	e.until("every header read answered", 10*time.Second, func() bool {
+		return e.a.data.headerAnswered == e.a.data.headerStarted
+	})
 	e.until("the bar without the tab", 10*time.Second, func() bool {
 		for _, tb := range e.a.channelTabs(ch) {
 			if isFilesTab(tb) {
