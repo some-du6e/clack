@@ -6,7 +6,6 @@ import (
 	"image/color"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"gioui.org/f32"
@@ -84,9 +83,16 @@ type View struct {
 	selA     int32
 	selB     int32
 	focused  bool
-	lastTap  time.Duration
-	tapCount int
+	// clicks counts the view's presses (the window's count, Gio patch 48;
+	// gio_patch48.go), tapCount the last press's, and gran the granule it
+	// selected by (a double click's word, a triple's paragraph), granA and
+	// granB that first granule, which a drag extends by gran
+	clicks       clickCounter
+	tapCount     int
+	gran         uint8
+	granA, granB int32
 	// clicks on a link target sent to the DOM (clickLink): its click count
+	// on stock Gio, which has no window count
 	clickT   int16
 	clickAt  time.Duration
 	clickN   int
@@ -1208,25 +1214,18 @@ func (v *View) targetAt(p f32.Point) int16 {
 	return -1
 }
 
+// selectWord selects what a double click at off does (HandleDoubleClick):
+// an image's or emoji's frag whole, else the word, whitespace or
+// character there (wordRange, words.go).
 func (v *View) selectWord(off int32) {
-	pl := v.d.plain
-	off = min(max(off, 0), int32(len(pl)))
-	a, b := int(off), int(off)
-	isW := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '\'' }
-	for a > 0 {
-		r, sz := utf8.DecodeLastRune(pl[:a])
-		if !isW(r) {
-			break
+	off = min(max(off, 0), int32(len(v.d.plain)))
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.kind != fText && f.p0 >= 0 && f.p0 <= off && off < f.p1 {
+			v.selA, v.selB = f.p0, f.p1
+			return
 		}
-		a -= sz
 	}
-	for b < len(pl) {
-		r, sz := utf8.DecodeRune(pl[b:])
-		if !isW(r) {
-			break
-		}
-		b += sz
-	}
+	a, b := wordRange(v.d.plain, int(off))
 	v.selA, v.selB = int32(a), int32(b)
 }
 
@@ -1237,13 +1236,7 @@ func (v *View) selectLine(off int32) {
 		v.selA, v.selB = a, b
 		return
 	}
-	a, b := int(off), int(off)
-	for a > 0 && pl[a-1] != '\n' {
-		a--
-	}
-	for b < len(pl) && pl[b] != '\n' {
-		b++
-	}
+	a, b := paragraphRange(pl, int(off)) // with its break (words.go)
 	v.selA, v.selB = int32(a), int32(b)
 }
 
@@ -1355,22 +1348,27 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 					continue
 				}
 				off := v.offsetAt(e.Position)
-				if e.Time-v.lastTap < 400*time.Millisecond {
-					v.tapCount++
-				} else {
+				// the press's count (the window's, Gio patch 48); taps take
+				// no multi-click selection in text that isn't editable
+				// (Blink's mouse_down_allows_multi_click_)
+				v.tapCount = v.clicks.press(gtx.Source, e)
+				if e.Source != pointer.Mouse {
 					v.tapCount = 1
 				}
-				v.lastTap = e.Time
+				v.gran = granChar
 				switch {
 				case v.tapCount == 2:
 					v.selectWord(off)
+					v.gran = granWord
 				case v.tapCount >= 3:
 					v.selectLine(off)
+					v.gran = granParagraph
 				case e.Modifiers.Contain(key.ModShift) && v.HasSelection():
 					v.selB = off
 				default:
 					v.selA, v.selB = off, off
 				}
+				v.granA, v.granB = v.selA, v.selB
 				v.dragging = true
 				gtx.Execute(key.FocusCmd{Tag: v})
 			case pointer.Drag:
@@ -1380,7 +1378,11 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if d := e.Position.Sub(v.pressPos); d.X*d.X+d.Y*d.Y > 9 {
 					v.moved = true
 				}
-				if v.moved && v.tapCount == 1 && !v.External {
+				switch {
+				case !v.moved || v.External:
+				case v.gran != granChar:
+					v.extendBy(v.offsetAt(e.Position))
+				case v.tapCount == 1:
 					v.selB = v.offsetAt(e.Position)
 				}
 			case pointer.Release:
@@ -1745,15 +1747,20 @@ func (v *View) clickLink(gtx layout.Context, t int16, anchor image.Point, e poin
 	l.Rect = v.targetBounds(t).Add(v.Origin)
 	l.Text = text
 	l.Key = fmt.Sprintf("%p/%d/%s%s", v, t, tg.id, tg.url)
-	// the click count Slack's event carries (detail), within the
-	// platform's double-click time (gio_patch48.go)
+	// the click count Slack's event carries (detail): the window's (Gio
+	// patch 48, gio_patch48.go), on stock Gio this target's within the
+	// double-click time
 	if t == v.clickT && e.Time-v.clickAt <= doubleClickTime() {
 		v.clickN++
 	} else {
 		v.clickN = 1
 	}
 	v.clickT, v.clickAt = t, e.Time
-	return slackc.ClickLink(l, v.clickN, e.Modifiers, gtx.Metric.PxPerDp, func() { v.activateTarget(&tg, text, anchor, h) })
+	n := clicksOf(e)
+	if n <= 0 {
+		n = v.clickN
+	}
+	return slackc.ClickLink(l, n, e.Modifiers, gtx.Metric.PxPerDp, func() { v.activateTarget(&tg, text, anchor, h) })
 }
 
 func (v *View) activate(t int16, anchor image.Point, h Handler) {
