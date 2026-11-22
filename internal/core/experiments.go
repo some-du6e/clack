@@ -325,7 +325,7 @@ var experimentReads = map[string][]string{
 	"invite_slash_command_in_threads":                          on,
 	"ia4_slash_command_fe":                                     on,
 	"unarchive_channel_banner_polish":                          on,
-	ExpExternalHuddles:                                         on, // the + button's and menu's upload gates (upload_gates.go)
+	ExpExternalHuddles:                                         on, // the + button's and menu's upload gates (upload_gates.go), and the audio clip button (clips.go)
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on,
 	"session_channels_inline_diff": on, "code_channels_naming": on, "session_channel_views": on,
@@ -341,9 +341,6 @@ var experimentReads = map[string][]string{
 	"huddles_switch_microphone_helper": on, "huddles_noise_suppression_awareness": on, "huddles_screenshare_share_audio": on,
 	"huddles_new_grids":    on,
 	"huddles_status_ultra": on, // the rail's status emoji drops the huddle's headphones (dnd.go SelfStatusEmoji)
-	// voice clips: external huddles keep them out of huddle channels and
-	// from external guests (clips.go, M8Ke)
-	"external_huddles": on,
 	// search and the switcher (search*.go, popups/search_*)
 	"desktop_search_recents_read": on, "desktop_search_recents_write": on,
 	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},

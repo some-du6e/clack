@@ -22,7 +22,7 @@ func (a *App) AudioClipsAllowed(ch string) bool {
 	if c != nil && c.IsExtShared && !a.teamPrefOn("allow_audio_clip_sharing_slack_connect") {
 		return false
 	}
-	if a.experiment("external_huddles") == "on" {
+	if a.experiment(ExpExternalHuddles) == "on" {
 		self := a.inviteSelf()
 		if self.IsRestricted && self.RestrictedUserType == "external_guest" {
 			return false
