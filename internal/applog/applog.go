@@ -91,8 +91,9 @@ func dirFor(goos string, getenv func(string) string, home string) (string, error
 // Logger is the on-disk log. Its methods are safe from any goroutine; a
 // nil Logger does nothing.
 type Logger struct {
-	dir string // "" when there is no log directory
-	w   *Async
+	dir  string // "" when there is no log directory
+	w    *Async
+	exit exitState // the run record and the one exit line (exitreason.go)
 }
 
 // Start sends the standard logger's output to stderr (through

@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/io/key"
+
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -20,23 +23,32 @@ const filesAllTypes = "type:lists type:quip type:documents type:spreadsheets typ
 // filesFiltersPerson is the person the tests pick in From.
 const filesFiltersPerson = "U0FAKE00002"
 
-// lastFilesSearch waits for a Files browser search after the first n
-// whose query ends with suffix (the list's own, not another part's) and
-// returns the newest such.
-func lastFilesSearch(t *testing.T, e *vaEnv, fs *fakeslack.Server, n int, suffix string) url.Values {
+// waitFilesSearch waits for a Files browser search after the first n
+// whose query is want and returns the newest such. The match is exact:
+// a search started earlier (the list's reload after a segment click or a
+// filter change) can reach fakeslack after n was counted on a loaded
+// runner, and it must not stand in for the one the test waits on. On
+// timeout it fails with the queries that came.
+func waitFilesSearch(t *testing.T, e *vaEnv, fs *fakeslack.Server, n int, want string) url.Values {
 	t.Helper()
-	var got url.Values
-	e.until(t, "a new search.modules.files ending "+suffix, func() bool {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
 		ss := fs.FilesBrowserSearches()
 		for i := len(ss) - 1; i >= n; i-- {
-			if strings.HasSuffix(ss[i].Get("query"), suffix) {
-				got = ss[i]
-				return true
+			if ss[i].Get("query") == want {
+				return ss[i]
 			}
 		}
-		return false
-	})
-	return got
+		if time.Now().After(deadline) {
+			var got []string
+			for _, f := range ss[min(n, len(ss)):] {
+				got = append(got, f.Get("query"))
+			}
+			t.Fatalf("no search for %q; after it the browser searched %q", want, got)
+		}
+		e.frame()
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // openFiltersModal clicks the Filters button and returns the modal.
@@ -129,11 +141,8 @@ func TestFilesViewFilters(t *testing.T) {
 	}
 	now := time.Now()
 	tomorrow, week := now.AddDate(0, 0, 1).Format("2006-01-02"), now.AddDate(0, 0, -7).Format("2006-01-02")
-	p := lastFilesSearch(t, e, fs, n, filesAllTypes)
 	want := "from:<@" + filesFiltersPerson + "> before:" + tomorrow + " after:" + week + " " + filesAllTypes
-	if got := p.Get("query"); got != want {
-		t.Errorf("query\n got %q\nwant %q", got, want)
-	}
+	p := waitFilesSearch(t, e, fs, n, want)
 	if p.Get("sort") != "timestamp" || p.Get("module") != "files" || p.Get("page") != "1" {
 		t.Errorf("params %v", p)
 	}
@@ -168,9 +177,9 @@ func TestFilesViewFilters(t *testing.T) {
 		t.Fatalf("Clear Filters: dismissed %v, count %d", m.Modal().Dismissed(), m.Count())
 	}
 	m.Modal().Press("Done")
-	p = lastFilesSearch(t, e, fs, n, filesAllTypes)
-	if got := p.Get("query"); got != filesAllTypes || p.Get("sort") != "last_engaged" {
-		t.Errorf("cleared: query %q sort %q", got, p.Get("sort"))
+	p = waitFilesSearch(t, e, fs, n, filesAllTypes)
+	if p.Get("sort") != "last_engaged" {
+		t.Errorf("cleared: sort %q", p.Get("sort"))
 	}
 	if v.filtersLabel() != "" || v.adv.Set() {
 		t.Errorf("cleared: label %q, filters %+v", v.filtersLabel(), v.adv)
@@ -181,19 +190,19 @@ func TestFilesViewFilters(t *testing.T) {
 // filters stay through the segment change.
 func TestFilesViewFiltersCreatedByYou(t *testing.T) {
 	v, _, e, fs := filesView(t)
+	self := "creator:<@" + fakeslack.SelfID + ">"
+	n := len(fs.FilesBrowserSearches())
 	v.segClicks[1].Click()
 	e.frame()
-	n := len(fs.FilesBrowserSearches())
+	waitFilesSearch(t, e, fs, n, "type:lists type:quip type:documents "+self) // the segment's own search
+	n = len(fs.FilesBrowserSearches())
 	m := openFiltersModal(t, v, e)
 	pickDate(t, m, "Yesterday")
 	m.Modal().Press("Done")
 	now := time.Now()
-	p := lastFilesSearch(t, e, fs, n, "creator:<@"+fakeslack.SelfID+">")
 	want := "before:" + now.Format("2006-01-02") + " after:" + now.AddDate(0, 0, -2).Format("2006-01-02") +
-		" type:lists type:quip type:documents creator:<@" + fakeslack.SelfID + ">"
-	if got := p.Get("query"); got != want {
-		t.Errorf("query\n got %q\nwant %q", got, want)
-	}
+		" type:lists type:quip type:documents " + self
+	waitFilesSearch(t, e, fs, n, want)
 	if len(m.Filters().From) != 0 {
 		t.Errorf("From under Created by you: %v", m.Filters().From)
 	}
@@ -302,5 +311,114 @@ func TestFilesViewFiltersExcludeBotsCount(t *testing.T) {
 	}
 	if !h.Core().PrefBool("search_exclude_bots", false) {
 		t.Error("Clear Filters changed the pref")
+	}
+}
+
+// searchFiles types q into the browser's search (the debounce fires at
+// once) and returns the list's request, whose query is want.
+func searchFiles(t *testing.T, v *Files, e *vaEnv, fs *fakeslack.Server, q, want string) url.Values {
+	t.Helper()
+	n := len(fs.FilesBrowserSearches())
+	v.deb.set(q, time.Time{})
+	e.frame()
+	return waitFilesSearch(t, e, fs, n, want)
+}
+
+// Clearing the search (onResetSearch, t8): Most relevant goes back to
+// Recently viewed with no filters, but stays, listed and sent, while
+// advanced filters are set.
+func TestFilesViewFiltersSearchClear(t *testing.T) {
+	v, _, e, fs := filesView(t)
+	if p := searchFiles(t, v, e, fs, "plan", "plan "+filesAllTypes); p.Get("sort") != "score" {
+		t.Fatalf("search sort %q", p.Get("sort"))
+	}
+	p := searchFiles(t, v, e, fs, "", filesAllTypes)
+	if p.Get("sort") != "last_engaged" || v.sortBy != "" || v.sortLabel() != "Recently viewed" {
+		t.Errorf("no filters, cleared: sort %q, sortBy %q, label %q", p.Get("sort"), v.sortBy, v.sortLabel())
+	}
+	n := len(fs.FilesBrowserSearches())
+	m := openFiltersModal(t, v, e)
+	pickDate(t, m, "Last 7 days")
+	m.Modal().Press("Done")
+	now := time.Now()
+	dates := "before:" + now.AddDate(0, 0, 1).Format("2006-01-02") + " after:" + now.AddDate(0, 0, -7).Format("2006-01-02") + " "
+	// the filter's reload first: the cleared search has the same query
+	if p := waitFilesSearch(t, e, fs, n, dates+filesAllTypes); p.Get("sort") != "timestamp" {
+		t.Errorf("the filter's reload sort %q", p.Get("sort"))
+	}
+	searchFiles(t, v, e, fs, "plan", "plan "+dates+filesAllTypes)
+	p = searchFiles(t, v, e, fs, "", dates+filesAllTypes)
+	if p.Get("sort") != "score" || v.sortBy != "score" || v.sortLabel() != "Most relevant" {
+		t.Errorf("filters set, cleared: sort %q, sortBy %q, label %q", p.Get("sort"), v.sortBy, v.sortLabel())
+	}
+}
+
+// A From set under All files stays under Created by you: the modal hides
+// it, counts it (aI) and Done keeps it (onSave's fromSelections).
+func TestFilesViewFiltersCreatedByYouKeepsFrom(t *testing.T) {
+	v, _, e, fs := filesView(t)
+	m := openFiltersModal(t, v, e)
+	pickFrom(t, v, e, m, filesFiltersPerson)
+	m.Modal().Press("Done")
+	e.frame()
+	self := "creator:<@" + fakeslack.SelfID + ">"
+	n := len(fs.FilesBrowserSearches())
+	v.segClicks[1].Click()
+	e.frame()
+	waitFilesSearch(t, e, fs, n, "from:<@"+filesFiltersPerson+"> type:lists type:quip type:documents "+self) // the segment's own search
+	n = len(fs.FilesBrowserSearches())
+	m = openFiltersModal(t, v, e)
+	if m.Count() != 1 {
+		t.Errorf("count with the hidden From: %d", m.Count())
+	}
+	pickDate(t, m, "Last 7 days")
+	m.Modal().Press("Done")
+	now := time.Now()
+	want := "from:<@" + filesFiltersPerson + "> before:" + now.AddDate(0, 0, 1).Format("2006-01-02") + " after:" +
+		now.AddDate(0, 0, -7).Format("2006-01-02") + " type:lists type:quip type:documents " + self
+	waitFilesSearch(t, e, fs, n, want)
+	if got := v.filtersLabel(); got != "2 Filters" || v.adv.Count() != 2 {
+		t.Errorf("label %q, filters %+v", got, v.adv)
+	}
+}
+
+// A picked group DM reopens under the name its option row had (the
+// members, as getDisplayNameForChannel gives it), not its mpdm- name.
+func TestFilesViewFiltersGroupDMName(t *testing.T) {
+	v, h, e, _ := filesView(t)
+	const g = "G0FFMPIM001"
+	h.Core().S.PutConv(slack.Conversation{ID: g, Name: "mpdm-ada--grace--self-1", IsMPIM: true, IsGroup: true,
+		Members: []string{fakeslack.SelfID, "U0FAKE00001", "U0FAKE00002"}})
+	v.applyFilters(popups.FilesFilters{In: []string{g}}, 1)
+	e.frame()
+	m := openFiltersModal(t, v, e)
+	got := m.In().Labels()
+	if len(got) != 1 || strings.HasPrefix(got[0], "mpdm-") || !strings.Contains(got[0], "Ada") {
+		t.Errorf("group DM token %q", got)
+	}
+}
+
+// Escape with From's list open closes the list (MultiSelectInput's
+// onEscape stops the event); a second Escape closes the modal.
+func TestFilesViewFiltersEscapeClosesListFirst(t *testing.T) {
+	v, _, e, _ := filesView(t)
+	m := openFiltersModal(t, v, e)
+	m.From().Focus()
+	e.frame()
+	u, _ := v.h.Core().User(filesFiltersPerson)
+	m.From().Type(u.Name[:min(len(u.Name), 5)])
+	e.until(t, "From's list", func() bool { return m.From().Expanded() })
+	esc := func() {
+		e.r.Queue(key.Event{Name: key.NameEscape, State: key.Press}, key.Event{Name: key.NameEscape, State: key.Release})
+		e.frame()
+		e.frame()
+	}
+	esc()
+	if m.Modal().Dismissed() || m.From().Expanded() {
+		t.Fatalf("first Escape: modal dismissed %v, list open %v", m.Modal().Dismissed(), m.From().Expanded())
+	}
+	esc()
+	if !m.Modal().Dismissed() {
+		t.Error("second Escape left the modal open")
 	}
 }

@@ -758,13 +758,33 @@ func (a *App) ModuleCount(ctx context.Context, module, query string, s SearchSes
 	return 0, nil
 }
 
+// QuickMessageResultsOn is boot-shared Y/3h E, what replaced the
+// omni_quick_message_results experiment (build 8f19be21ed7e, the
+// 2026-11-21 drift; every reader moved to it: 4Rqi
+// omniswitcher_suggestions, PBTK, ZPUF SuggestionQuickMessage): not a
+// GovSlack team (/fn6 isSelfTeamGovSlack; Clack only signs in to
+// commercial Slack), and the current team is paid (DZwJ isPaidTeam: a
+// plan) or an enterprise or one of its workspaces (t5X0
+// isEnterpriseOrEnterpriseWorkspace: an enterprise_id). On, Recent
+// messages searches the viewer's recent conversations as cards; off, only
+// the open channel, as plain rows.
+func (a *App) QuickMessageResultsOn() bool {
+	if a.C.Creds.EnterpriseID != "" {
+		return true
+	}
+	t := a.teamPlan()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.plan != "" || t.enterpriseID != ""
+}
+
 // InlineOpts is a search.inline call (the popover's Recent messages,
 // Slack's searchInline thunk as suggestionsQuickMessages calls it).
 type InlineOpts struct {
 	Query string
 	Count int // 3
 	// Channel / User limit the search to a conversation (an in: filter,
-	// or the open channel with omni_quick_message_results off).
+	// or the open channel when QuickMessageResultsOn is false).
 	Channel, User string
 	// RecentChannels is recent_channels (nil: not sent).
 	RecentChannels []string

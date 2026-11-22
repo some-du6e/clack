@@ -98,51 +98,84 @@ func noteIsDM(ev core.Event, c *convInfo) bool {
 	return ev.ConvKind == "im" || c != nil && (c.Kind == "im" || c.Kind == "app")
 }
 
-// noteQuietSubtypes are the subtypes both rules hold back: a channel
-// canvas's update (30, isChannelCanvasUpdateMessage), a tab canvas's
-// (31), a tab added (34) and a folder's item added (35), with their
-// _unread_ignore forms (BiCp).
-var noteQuietSubtypes = map[string]bool{
-	"channel_canvas_updated": true, "channel_canvas_updated_unread_ignore": true,
-	"tabbed_canvas_updated": true, "tabbed_canvas_updated_unread_ignore": true,
-	"channel_tab_added": true, "channel_tab_added_unread_ignore": true,
-	"folder_item_added": true, "folder_item_added_unread_ignore": true,
+// noteQuietSubtypes are the subtypes both rules hold back, with their
+// reasons: a channel canvas's update (30, isChannelCanvasUpdateMessage), a
+// tab canvas's (31), a tab added (34) and a folder's item added (35), with
+// their _unread_ignore forms (BiCp).
+var noteQuietSubtypes = map[string]noteSkip{
+	"channel_canvas_updated": noteSkipCanvasUpd, "channel_canvas_updated_unread_ignore": noteSkipCanvasUpd,
+	"tabbed_canvas_updated": noteSkipTabCanvas, "tabbed_canvas_updated_unread_ignore": noteSkipTabCanvas,
+	"channel_tab_added": noteSkipTabAdded, "channel_tab_added_unread_ignore": noteSkipTabAdded,
+	"folder_item_added": noteSkipFolder, "folder_item_added_unread_ignore": noteSkipFolder,
 }
 
-// noteDMHolds is RM for a DM's message: whether Slack holds its
-// notification back. ignoreDND: a dnd_override asked for it.
-func (b *backend) noteDMHolds(a *App, ev core.Event, c *convInfo, ignoreDND bool) bool {
+// noteDMReason is RM for a DM's message: why Slack holds its notification
+// back (noteShow: it doesn't), in RM's order. ignoreDND: a dnd_override
+// asked for it.
+func (b *backend) noteDMReason(a *App, ev core.Event, c *convInfo, ignoreDND bool) noteSkip {
 	m := ev.Msg
 	switch {
-	case m.NoDisplay, ev.Reply, b.noteOnScreen(a, ev.Channel), m.User != "" && m.User == b.selfID,
-		c != nil && c.Muted, m.NoNotifications, b.noteDNDHolds(ev, c, ignoreDND):
-		return true
+	case m.NoDisplay:
+		return noteSkipNoDisplay
+	case ev.Reply:
+		return noteSkipReply
+	case b.noteOnScreen(a, ev.Channel):
+		return noteSkipOnScreen
+	case m.User != "" && m.User == b.selfID:
+		return noteSkipOwn
+	case c != nil && c.Muted:
+		return noteSkipMuted
+	case m.NoNotifications:
+		return noteSkipNoNotify
+	case b.noteDNDHolds(ev, c, ignoreDND):
+		return noteSkipDND
+	}
+	if why, ok := noteQuietSubtypes[m.Subtype]; ok {
+		return why
 	}
 	// isAiAssistantRootMsg, isAiAssistantInitialMsg (32): a DM's only
-	return noteQuietSubtypes[m.Subtype] || m.Subtype == "assistant_app_thread" || m.Subtype == "assistant_app_initial_thread"
+	if m.Subtype == "assistant_app_thread" || m.Subtype == "assistant_app_initial_thread" {
+		return noteSkipAssistant
+	}
+	return noteShow
 }
 
-// noteChannelHolds is rr for any other conversation's message: its
-// level (a channel's wantsNotify, a group DM's noteGroupDMLevel), a reply
-// only when it mentions the viewer (notify_threads.go), and the holds RM
-// shares with it.
-func (b *backend) noteChannelHolds(a *App, ev core.Event, c *convInfo, ignoreDND bool) bool {
+// noteChannelReason is rr for any other conversation's message: its level
+// (a channel's wantsNotify, a group DM's noteGroupDMLevel), a reply only
+// when it mentions the viewer (notify_threads.go), and the holds RM shares
+// with it, in rr's order.
+func (b *backend) noteChannelReason(a *App, ev core.Event, c *convInfo, ignoreDND bool) noteSkip {
 	m := ev.Msg
+	if m.NoDisplay {
+		return noteSkipNoDisplay
+	}
+	if !replyNotifies(b.core, ev) {
+		return noteSkipReply
+	}
 	wants := ev.Mention
 	if ev.ConvKind == "mpim" || c != nil && c.Kind == "mpim" {
 		wants = wants || b.noteGroupDMLevel(ev.Channel) == "everything"
 	} else {
 		wants = b.wantsNotify(ev.Channel, ev.Mention)
 	}
-	if !wants || !replyNotifies(b.core, ev) {
-		return true
-	}
 	switch {
-	case m.NoDisplay, b.noteOnScreen(a, ev.Channel), m.User != "" && m.User == b.selfID, m.NoNotifications,
-		c != nil && c.Muted, b.noteDNDHolds(ev, c, ignoreDND):
-		return true
+	case !wants:
+		return noteSkipNoMention
+	case b.noteOnScreen(a, ev.Channel):
+		return noteSkipOnScreen
+	case m.User != "" && m.User == b.selfID:
+		return noteSkipOwn
+	case m.NoNotifications:
+		return noteSkipNoNotify
+	case c != nil && c.Muted:
+		return noteSkipMuted
+	case b.noteDNDHolds(ev, c, ignoreDND):
+		return noteSkipDND
 	}
-	return noteQuietSubtypes[m.Subtype]
+	if why, ok := noteQuietSubtypes[m.Subtype]; ok {
+		return why
+	}
+	return noteShow
 }
 
 // noteGroupDMLevel is getCalculatedDesktopNotifySetting for group DM ch,

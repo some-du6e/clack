@@ -29,6 +29,9 @@ func (s *Store) canvasRefs() *canvasRefs {
 	}
 	v, _ := canvasRefsOf.LoadOrStore(s, &canvasRefs{refs: map[string]richtext.CanvasRef{},
 		secs: map[string]json.RawMessage{}, prev: map[string][]richtext.Block{}, seen: map[string]bool{}})
+	if s.released.Load() { // Release ran meanwhile, or before
+		canvasRefsOf.CompareAndDelete(s, v)
+	}
 	return v.(*canvasRefs)
 }
 

@@ -219,7 +219,8 @@ func (s *Store) BootEmoji(names []string) map[string]string {
 // conversation and each conversation's unread state (a mark made before
 // the disk read finished keeps its own, every other cached count still
 // installs), the sections, and the threads' state (client.counts
-// answered). It returns the conversations it added, for DropBootConvs.
+// answered, or an update_thread_state taken: SetThreadState). It returns
+// the conversations it added, for DropBootConvs.
 func (s *Store) InstallBootData(d *BootData) map[string]*slack.Conversation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -244,7 +245,7 @@ func (s *Store) InstallBootData(d *BootData) map[string]*slack.Conversation {
 			s.Counts[e.ID] = &e
 		}
 	}
-	if !s.countsLive {
+	if !s.countsLive && s.jr.threads == 0 { // live state is newer than the disk's
 		s.ThreadsUnread, s.ThreadMentions = d.ThreadsUnread, d.ThreadMentions
 		s.ThreadsUnreadByChannel = d.ThreadsByChan
 	}

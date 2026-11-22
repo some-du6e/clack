@@ -1,0 +1,25 @@
+name: expect_fail
+description: >-
+  Proof runs (docs/CI-SPEED.md, "Proof runs"). With tests set, every go test
+  in the job runs its binary through tools/expectfail (GOFLAGS -exec): the
+  job passes only if each listed test that runs fails and nothing else does.
+  Without, an evidence branch (-redN, -mutN) fails here: its run must name
+  the tests it proves fail. Goes right after setup-go; the job ends with
+  expect-fail-report.
+inputs:
+  tests:
+    description: the tests that must fail, comma-separated (TestA,TestB/sub)
+    required: false
+    default: ""
+  leg:
+    description: the job's leg, its id and strategy.job-index (a rerun's records replace that leg's)
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        XF_TESTS: ${{ inputs.tests }}
+        XF_LEG_IN: ${{ inputs.leg }}
+      run: bash "$GITHUB_ACTION_PATH/setup.sh"

@@ -238,6 +238,22 @@ func sidebarShows(fl core.File) bool { return fl.ID != "" && fl.Mode != "tombsto
 // fileFor is the file store's getFileById for the sidebar: the files the
 // browser, Starred or files.info loaded; an unknown id is fetched
 // (files.info) and false until it answers.
+// askCollections is maybeFetchCollections, once per view: the Files tab's
+// sidebar and the peek's mounts.
+func (f *Files) askCollections() {
+	a := f.h.Core()
+	if a == nil || f.collAsked {
+		return
+	}
+	f.collAsked = true
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		a.FetchFileCollections(ctx)
+		f.h.Invalidate()
+	}()
+}
+
 func (f *Files) fileFor(id string) (core.File, bool) {
 	if fl, ok := f.known[id]; ok {
 		return fl, fl.ID != ""

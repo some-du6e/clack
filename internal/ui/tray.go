@@ -241,7 +241,7 @@ func (a *App) trayMenu(k trayMenuKey) []desktop.TrayMenuItem {
 		}})
 	}
 	items = append(items, sep, a.trayTroubleshooting(), sep,
-		desktop.TrayMenuItem{Label: ns.T("&Quit"), Accel: trayAccel("Q"), Do: a.Quit})
+		desktop.TrayMenuItem{Label: ns.T("&Quit"), Accel: trayAccel("Q"), Do: func() { a.QuitBecause("Quit in the tray menu") }})
 	return items
 }
 
@@ -435,7 +435,7 @@ func appAction(uri string) string {
 func (a *App) runAppAction(action string) bool {
 	switch action {
 	case "quit":
-		a.Quit()
+		a.QuitBecause("a slack://app/?action=quit link")
 	case "reset-window":
 		a.Post(a.resetWindow)
 	default:

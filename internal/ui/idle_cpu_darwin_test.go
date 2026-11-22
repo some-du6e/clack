@@ -199,11 +199,15 @@ func TestMacIdleCPU(t *testing.T) {
 		if blink := widget.CaretBlinkInterval(); caret && blink > 0 {
 			maxBlinks = int(idleFor/blink) + 1
 		}
+		// on a failure, every frame of the pass: when it came and what asked
+		// for it (one failure, "channel again", 11-21, said only how many)
 		if blinks > maxBlinks {
-			t.Errorf("%s: %d caret frames in %v idle, want at most %d", name, blinks, idleFor, maxBlinks)
+			t.Errorf("%s: %d caret frames in %v idle, want at most %d (the caret blinks every %v); the frames:\n%s",
+				name, blinks, idleFor, maxBlinks, widget.CaretBlinkInterval(), strings.Join(frameTimeline(rep.Result, 60), "\n"))
 		}
 		if other > idleOtherFrames {
-			t.Errorf("%s: %d frames in %v idle besides the caret's %d, want at most %d:\n%s", name, other, idleFor, blinks, idleOtherFrames, strings.Join(firstCauses(rep.Result, 8), "\n"))
+			t.Errorf("%s: %d frames in %v idle besides the caret's %d, want at most %d:\n%s\nthe frames:\n%s", name, other, idleFor, blinks, idleOtherFrames,
+				strings.Join(firstCauses(rep.Result, 8), "\n"), strings.Join(frameTimeline(rep.Result, 60), "\n"))
 		}
 		return rep
 	}

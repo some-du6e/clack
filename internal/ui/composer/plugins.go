@@ -32,6 +32,12 @@ var pluginsPrelude string
 // runs again after an account switch).
 var extended sync.Map // *taut.Taut → struct{}
 
+// ForgetTaut drops t from extended: for a Taut that's closed. Its entry
+// kept the plugin system reachable for good (ci-speed-3).
+func ForgetTaut(t *taut.Taut) {
+	extended.Delete(t)
+}
+
 func extendTaut(t *taut.Taut) {
 	if t == nil {
 		return

@@ -842,7 +842,24 @@ void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle) {
 		gio_onOpenURI((__bridge CFTypeRef)url.absoluteString);
 	}
 }
+// applicationShouldTerminate: is a Clack patch (CLACK_PATCHES.md §58):
+// AppKit's terminate: (the Dock's Quit, log out, restart and shut down,
+// a quit Apple Event) asks first. A program ranging over Events gets a
+// TerminateEvent and quits on its own while AppKit waits (NSTerminateLater,
+// AppKit running the main run loop in its modal panel mode, which still
+// serves the main queue); one that doesn't is terminated now, as before.
+// Electron overrides terminate: to the same end (electron_application.mm:
+// Browser::Quit, the app's own quit).
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+	return gio_onShouldTerminate() ? NSTerminateLater : NSTerminateNow;
+}
 @end
+
+// gio_replyToTerminate answers the terminate: AppKit waits on (Clack
+// patch, CLACK_PATCHES.md §58).
+void gio_replyToTerminate(int quit) {
+	[NSApp replyToApplicationShouldTerminate:quit ? YES : NO];
+}
 
 // GioWorkspaceObserver is a Clack patch (CLACK_PATCHES.md §32): the
 // computer's and the screens' sleep and wake (gio_onPowerEvent), observed

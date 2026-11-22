@@ -37,10 +37,14 @@ type textView struct {
 	lastFG uint32 // theme.FontGen of lastH
 }
 
+// docOfText is a text object as a doc. A mrkdwn one is formatted whatever
+// its verbatim: Slack's MrkdwnElement (boot-shared WoLU) hands the text to
+// Mrkdwn and TSF as it is, ``` blocks and all; verbatim only tells Slack's
+// server not to link the names and URLs in it.
 func docOfText(h Host, t Text) richtext.Doc {
 	c := h.Core()
 	s := t.Text
-	if t.Type == "mrkdwn" && !t.Verbatim && c != nil {
+	if t.Type == "mrkdwn" && c != nil {
 		return richtext.Doc{Blocks: c.Mrkdwn(s)}
 	}
 	// plain_text: emoji shortcodes still render (emoji: true), nothing else

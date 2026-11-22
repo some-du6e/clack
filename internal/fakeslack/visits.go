@@ -30,7 +30,7 @@ type visitStore struct {
 	gen    int
 }
 
-var visitStores sync.Map // *Server -> *visitStore
+var visitStores = newPerServer() // *Server -> *visitStore
 
 func (s *Server) vstore() *visitStore {
 	v, _ := visitStores.LoadOrStore(s, &visitStore{forms: map[string][]url.Values{}})

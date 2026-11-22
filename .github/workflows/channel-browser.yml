@@ -2,8 +2,9 @@ name: channel-browser
 # The channel browser and sidebar rows of docs/CHANNELS-AUDIT.md rendered
 # headlessly at 1440x900 against internal/fakeslack: the Directories tab
 # icons, the Workspaces / Organizations / Title / Location filter popovers
-# and pills, and a sidebar row's draft pencil. Synthetic only: nothing here
-# talks to Slack.
+# and pills, a sidebar row's draft pencil, and the User Groups browser
+# (usergroups.search pages, the banner and Create User Group). Synthetic
+# only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run channel-browser.yml --ref <branch>)
@@ -12,6 +13,8 @@ on:
       - "internal/ui/views/dir_filters*.go"
       - "internal/ui/channel_browser_test.go"
       - "internal/ui/people_invite_test.go"
+      - "internal/ui/usergroup_browser_test.go"
+      - "internal/fakeslack/usergroups.go"
       - "internal/ui/directories_wire.go"
       - "internal/ui/sidebar.go"
       - "internal/ui/icons/directory.go"
@@ -51,11 +54,11 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          go test -count=1 -v -run 'TestBrowseFilterParams|TestConnectedOrgsAndEnterpriseTeams' ./internal/core
-          go test -count=1 -v -run 'TestDir' ./internal/ui/views
+          go test -count=1 -v -run 'TestBrowseFilterParams|TestConnectedOrgsAndEnterpriseTeams|TestSearchUsergroups|TestCreateUsergroup' ./internal/core
+          go test -count=1 -v -run 'TestDir|TestNoUnsupportedToast' ./internal/ui/views
           go test -count=1 -v -run 'TestCleanTextKeepsHangulFillers' ./internal/ui/theme
           xvfb-run -a go test -count=1 -v -run 'TestMaybeLeaveChannel' ./internal/ui/popups
-          xvfb-run -a go test -count=1 -v -run 'TestChannelBrowserFilters$|TestPeopleBrowserFacetFilters$|TestSidebarDraftPencil$|TestChannelBrowserShot$|TestPeopleBrowserInvite$|TestPeopleBrowserLowResultsBanner$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelBrowserFilters$|TestPeopleBrowserFacetFilters$|TestSidebarDraftPencil$|TestChannelBrowserShot$|TestPeopleBrowserInvite$|TestPeopleBrowserLowResultsBanner$|TestUserGroupBrowser' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

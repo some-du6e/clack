@@ -1,6 +1,7 @@
 package popups
 
-// Work objects on the results page (work_objects_message_search_xp_v2)
+// Work objects on the results page (everyone's since Slack dropped
+// work_objects_message_search_xp_v2, the 2026-11-21 drift)
 // against internal/fakeslack's #work-objects (synthetic data, nothing
 // talks to Slack): a messages search also asks search.modules.workObjects,
 // each app with matches becomes a source in the [Messages ▾] menu with its

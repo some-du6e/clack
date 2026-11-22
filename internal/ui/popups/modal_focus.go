@@ -147,8 +147,17 @@ func (m *Modal) keys(gtx layout.Context) bool {
 		}
 		switch ke.Name {
 		case key.NameEscape:
+			if m.o.OnEscape != nil && m.o.OnEscape() {
+				m.h.Invalidate()
+				continue
+			}
 			m.Dismiss()
-			return true
+			if m.Dismissed() {
+				return true
+			}
+			// CloseGuard kept it open (its speed bump is up): it draws
+			// this frame and the next one comes
+			m.h.Invalidate()
 		case key.NameTab:
 			m.tab(gtx, ke.Modifiers.Contain(key.ModShift))
 		case key.NameReturn, key.NameEnter:

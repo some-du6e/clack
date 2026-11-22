@@ -70,7 +70,7 @@ type listPrefsState struct {
 	slow int
 }
 
-var listPrefsStates sync.Map // *App → *listPrefsState
+var listPrefsStates = newPerApp() // *App → *listPrefsState
 
 func (a *App) listPrefs() *listPrefsState {
 	if v, ok := listPrefsStates.Load(a); ok { // the composer reads it every frame: no allocation

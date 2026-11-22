@@ -101,7 +101,8 @@ func TestSearchModuleParams(t *testing.T) {
 		map[string]string{"search_session_id": s.ID, "client_req_id": s.ReqID, "max_ts": "1794199974", "count": "3",
 			"page": "1", "query": "test", "thread_replies": "", "extract_len": "110", "recent_channels": "C1,D2",
 			"from_me": "true", "with_me": "true"})
-	// omni_quick_message_results off: only the open channel, from/with me false
+	// QuickMessageResultsOn false (a free team): only the open channel,
+	// from/with me false
 	wantForm(t, "inline (off)", inlineParams(InlineOpts{Query: "test", Channel: "C1", Session: s, Now: now}),
 		map[string]string{"search_session_id": s.ID, "client_req_id": s.ReqID, "max_ts": "1794199974", "count": "3",
 			"page": "1", "query": "test", "thread_replies": "", "extract_len": "110", "channel": "C1",
@@ -395,5 +396,32 @@ func TestStripHighlightJSON(t *testing.T) {
 		if got := hasHighlightStart([]byte(c.in)); got != c.want {
 			t.Errorf("hasHighlightStart(%s) = %v", c.in, got)
 		}
+	}
+}
+
+// QuickMessageResultsOn is Y/3h E, which replaced omni_quick_message_results
+// (build 8f19be21ed7e, the 2026-11-21 drift): a team with a plan, or an
+// enterprise's, whatever the old experiment's group.
+func TestQuickMessageResultsFollowPlan(t *testing.T) {
+	a, _ := testApp(t)
+	a.C.Creds.EnterpriseID = ""
+	a.SetExperimentGroup("omni_quick_message_results", "on") // the dropped gate: no effect
+	a.setTeamPlan("", "")
+	if a.QuickMessageResultsOn() {
+		t.Error("a free team has quick message results")
+	}
+	a.SetExperimentGroup("omni_quick_message_results", "off")
+	a.setTeamPlan("std", "")
+	if !a.QuickMessageResultsOn() {
+		t.Error("a paid team has none")
+	}
+	a.setTeamPlan("", "E1")
+	if !a.QuickMessageResultsOn() {
+		t.Error("an enterprise workspace has none")
+	}
+	a.setTeamPlan("", "")
+	a.C.Creds.EnterpriseID = "E1" // signed in to a grid: true before team.info says so
+	if !a.QuickMessageResultsOn() {
+		t.Error("a grid sign-in has none")
 	}
 }

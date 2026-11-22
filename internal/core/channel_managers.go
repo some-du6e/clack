@@ -54,7 +54,7 @@ type chManagersState struct {
 	m      map[string][]string
 }
 
-var chManagersIndex sync.Map // *App → *chManagersState
+var chManagersIndex = newPerApp() // *App → *chManagersState
 
 func (a *App) chManagers() *chManagersState {
 	v, _ := chManagersIndex.LoadOrStore(a, &chManagersState{m: map[string][]string{}})

@@ -53,6 +53,23 @@ func attachmentsFor(key string, h Host) *attachments {
 	return a
 }
 
+// ForgetCore drops what the package keeps of a finished session: its
+// conversations' attachments (attStore: each holds its Host and core, and
+// a later session starts afresh anyway). Each kept the session reachable
+// after a sign-out or a switch; in internal/ui's tests, most finished
+// tests' Apps (ci-speed-3, a heap dump's commonest root).
+func ForgetCore(c *core.App) {
+	attStore.Lock()
+	for k, a := range attStore.m {
+		if a.core == c {
+			delete(attStore.m, k)
+		}
+	}
+	attStore.Unlock()
+	forgetLive(c)  // its open composers (liveComposers)
+	forgetLater(c) // what it queued for the UI (restoreQ)
+}
+
 // storedFiles reports whether key's conversation has files attached
 // (HasDraft).
 func storedFiles(key string) bool {
@@ -107,6 +124,7 @@ func (a *attachments) restoreFiles(fs []core.DraftFile) {
 		}
 	}
 	added := false
+	var load []*attChip
 	for _, f := range fs {
 		if f.ID == "" || have[f.ID] || len(a.chips) >= attMaxFiles {
 			continue
@@ -115,14 +133,26 @@ func (a *attachments) restoreFiles(fs []core.DraftFile) {
 		title := firstNonEmpty(f.Title, name)
 		c := &attChip{id: int(attNextID.Add(1)), name: name, title: title, kind: attKindOf(name, nil), thumbURL: f.Thumb,
 			prepared: &core.PreparedUpload{ID: f.ID, Name: name, Title: title, Size: f.Size}}
+		if f.PrettyType != "" {
+			c.kind.Label = f.PrettyType // PendingFile's getFileTypeDescription
+		}
 		if f.Thumb != "" {
 			c.kind.Image = true // Slack made a thumbnail: draw it like the image it is
+		}
+		if f.Name == "" && f.Title == "" {
+			// the draft named the file by id alone: the store has no
+			// file to show yet (draft_meta.go)
+			c.loading = true
+			load = append(load, c)
 		}
 		a.chips = append(a.chips, c)
 		have[f.ID] = true
 		added = true
 	}
 	a.mu.Unlock()
+	for _, c := range load {
+		go a.loadMeta(c)
+	}
 	if added {
 		a.h.Invalidate()
 		pendingChanged()
