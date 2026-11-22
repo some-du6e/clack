@@ -95,6 +95,11 @@ func TestFilesTabHideAndLinkDetails(t *testing.T) {
 	if e.a.chTab[ch] != 0 {
 		t.Errorf("the hidden tab stayed open (tab %d)", e.a.chTab[ch])
 	}
+	// every header read out has answered, the held one too: the bar is
+	// what the last read of it says, not a moment between two
+	e.until("every header read answered", 10*time.Second, func() bool {
+		return e.a.data.headerAnswered == e.a.data.headerStarted
+	})
 	e.until("the bar without the tab", 10*time.Second, func() bool {
 		for _, tb := range e.a.channelTabs(ch) {
 			if isFilesTab(tb) {

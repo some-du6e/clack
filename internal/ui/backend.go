@@ -103,6 +103,10 @@ type backend struct {
 	// after the read the hide asked for (files-filters-3's push ci, run
 	// 44980164338: reads of 1 tab, then 0 and 0, and the bar kept 1).
 	headerGen map[string]int
+	// headerStarted and headerAnswered count the header reads opened
+	// started and the answers that came back to the UI goroutine (landed
+	// or dropped): tests wait for every read out to have answered
+	headerStarted, headerAnswered int
 	// side is what opened() read for a conversation's header (facepile,
 	// member count, topic), kept here so it lands whenever the
 	// conversation's row exists: the restored channel's read usually
@@ -1257,6 +1261,7 @@ func (b *backend) opened(ch string) {
 	}
 	b.headerGen[ch]++
 	gen := b.headerGen[ch]
+	b.headerStarted++
 	go func() {
 		ctx, cancel := context.WithTimeout(b.ctx, 20*time.Second)
 		defer cancel()
@@ -1321,6 +1326,7 @@ func (b *backend) opened(ch string) {
 			return
 		}
 		a.Post(func() {
+			b.headerAnswered++
 			if b.headerGen[ch] != gen {
 				return // a newer read of this header is out: its answer wins
 			}

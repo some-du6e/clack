@@ -115,13 +115,12 @@ func TestLeftComposerLetsGoOfFocus(t *testing.T) {
 
 	// another thread in the pane: the first thread's composer lets go,
 	// and what is typed meanwhile isn't replayed into it when it's back
-	// the reopen reads the thread's newer replies again: held here, so the
-	// reply box waits on that read every run, as a loaded runner's did
-	fs.SetFault("conversations.replies", fakeslack.Fault{Delay: 800 * time.Millisecond})
+	// the reopened pane draws its reply box once its thread is in
+	// (mf-first-frame's full-test: focused a frame after the reopen, the
+	// box wasn't drawn yet)
 	e.a.OpenThread(ch, root)
 	e.frame()
 	replyBox("the reopened thread's reply box")
-	fs.SetFault("conversations.replies", fakeslack.Fault{})
 	e.focusComposer(ch, root)
 	if !focused(ch, root) {
 		t.Fatal("the thread's composer didn't take the focus again")
