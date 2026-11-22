@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -24,7 +25,7 @@ import (
 func TestNotifyFileToastReadsTheStore(t *testing.T) {
 	_, ca, _ := fakePrefsApp(t)
 	b := &backend{core: ca}
-	const ada, robin, nobody, dm = "U0SYNTH0001", "U0SYNTH0002", "U0SYNTH0099", "D0SYNTH0001"
+	const ada, robin, dm = "U0SYNTH0001", "U0SYNTH0002", "D0SYNTH0001"
 	ca.S.PutUsers([]slack.User{{ID: ada, Name: "ada", Profile: slack.Profile{DisplayName: "Ada"}},
 		{ID: robin, Name: "robin", Profile: slack.Profile{DisplayName: "Robin"}}})
 	conv := &convInfo{Kind: "im", Name: "Ada", User: ada}
@@ -65,20 +66,24 @@ func TestNotifyFileToastReadsTheStore(t *testing.T) {
 		t.Errorf("an uploaded stub of an image the store holds whole: %q, Slack %q", got, want)
 	}
 
-	// the uploader the store doesn't hold: no name, and asked for by the
-	// toast's own read (the message's conversion asks too, for its file
-	// header's name: converted first, its asks taken)
-	const unk = "1762520000.000400"
-	um, ok := ca.HeldMessage(dm, unk)
-	if !ok {
-		t.Fatalf("%s isn't held", unk)
-	}
-	ca.S.TakeMissingUsers()
-	if got, want := b.notifyBody(core.Event{Type: "message", Channel: dm, TS: unk, Msg: &um}, conv), "shared ’s file"; got != want {
+	// the uploader the store doesn't hold: no name
+	if got, want := body("1762520000.000400"), "shared ’s file"; got != want {
 		t.Errorf("an unknown uploader's file: %q, Slack %q", got, want)
 	}
-	if asked := ca.S.TakeMissingUsers(); !slices.Contains(asked, nobody) {
-		t.Errorf("the unknown uploader isn't asked for (getMemberById fetchIfMissing): %v", asked)
+	// and the toast's read asks for them (getMemberById's
+	// fetchIfMissing). The message's conversion asks for its file
+	// header's uploader too, and the store notes a miss once, so the
+	// toast's own read is seen on a message nothing converted, whose
+	// uploader nothing asked for yet.
+	const unseen = "U0SYNTH0098"
+	ca.S.TakeMissingUsers()
+	hand := core.Message{Channel: dm, TS: "1762520000.000500", User: ada,
+		NoteFiles: &richtext.NoteFiles{User: unseen, Sender: ada, Kind: "generic", PrettyType: "Binary"}}
+	if got, want := b.notifyBody(core.Event{Type: "message", Channel: dm, TS: hand.TS, Msg: &hand}, conv), "shared ’s file"; got != want {
+		t.Errorf("an unseen uploader's file: %q, Slack %q", got, want)
+	}
+	if asked := ca.S.TakeMissingUsers(); !slices.Contains(asked, unseen) {
+		t.Errorf("the toast doesn't ask for the uploader (getMemberById fetchIfMissing): %v", asked)
 	}
 
 	// the toast's message says upload; the stored copy loses it before
