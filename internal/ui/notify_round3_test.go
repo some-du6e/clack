@@ -54,7 +54,9 @@ func TestDesktopNotificationWithoutTSLikeSlack(t *testing.T) {
 // four quiet.
 func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	t.Setenv("CLACK_HOME", t.TempDir())
-	fs, err := fakeslack.Start(fakeslack.Small)
+	sz := fakeslack.Small
+	sz.Files = true // #files-gallery and its gallery tabs (tabs_edit_test)
+	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +294,21 @@ func TestSlickFiltersSeeTheToast(t *testing.T) {
 // channel's activity again on each change of its unread thread count, so
 // the reply drew first and its mark came a round trip later.
 func TestReplyUnreadMarkInTheReplysFrame(t *testing.T) {
-	e, fs, c, rec := followEnv(t)
+	t.Setenv("CLACK_HOME", t.TempDir())
+	sz := fakeslack.Small
+	sz.Views = true // activity.feed answers from the feed, the live entries with it (fetchActivitiesForChannel)
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	c := e.a.data.core
+	c.SetRealtime(true)
+	e.until("the socket", 20*time.Second, func() bool { return c.RTM != nil && c.RTM.Connected() })
+	rec := &timedNotes{}
+	e.a.notify = rec
 	c.SetExperimentGroup("unread_thread_indication_in_replybar", "on")
 	e.a.focused = false
 	ch := fs.ChannelIDs()[2]
