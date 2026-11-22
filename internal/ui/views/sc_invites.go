@@ -35,6 +35,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slackasset"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -89,12 +90,19 @@ func (v *scInvites) start() {
 }
 
 // fetch is useConnectInvitations' fetchInvitations: fetchAndResetAllConnectInvites.
-func (v *scInvites) fetch() {
+// Try again (retry) always sends it, past the client's backoff of a
+// request that just failed the same way (slack.NoBackoff).
+func (v *scInvites) fetch() { v.fetchWith(false) }
+
+func (v *scInvites) fetchWith(retry bool) {
 	c := v.d.h.Core()
 	if c == nil {
 		return
 	}
 	v.data.load(v.d.h, false, func(ctx context.Context) (scInvData, error) {
+		if retry {
+			ctx = slack.NoBackoff(ctx)
+		}
 		in, out, err := c.ConnectInvites(ctx)
 		return scInvData{in: in, out: out}, err
 	})
@@ -176,7 +184,7 @@ func (d *Directories) SCInviteAct(id, act string) {
 }
 
 // SCInvitesRetry is the error state's Try again.
-func (d *Directories) SCInvitesRetry() { d.inv.fetch() }
+func (d *Directories) SCInvitesRetry() { d.inv.fetchWith(true) }
 
 func (v *scInvites) state() string {
 	st, loaded, err := v.data.get()
@@ -312,7 +320,7 @@ func (v *scInvites) layout(gtx C) D {
 		})
 	case "error":
 		if v.retry.Clicked(gtx) {
-			v.fetch()
+			v.fetchWith(true)
 		}
 		return layout.Center.Layout(gtx, func(gtx C) D {
 			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,

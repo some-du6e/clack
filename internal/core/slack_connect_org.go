@@ -55,7 +55,7 @@ func (a *App) ExternalOrgInfo(ctx context.Context, teamID string) (ExternalTeam,
 		}
 	}
 	if len(need) > 0 {
-		a.resolveChannels(ctx, need)
+		a.fetchChannelsByID(ctx, need)
 	}
 	var out []Conv
 	for _, id := range res.ChannelIDs {
@@ -84,7 +84,7 @@ func (a *App) SearchExternalOrg(ctx context.Context, teamID, query string, limit
 		}
 	}
 	if len(ids) > 0 {
-		a.resolveChannels(ctx, ids)
+		a.fetchChannelsByID(ctx, ids)
 	}
 	for _, id := range ids {
 		if c, ok := a.Conv(id); ok && named(c) && !c.IsArchived {
@@ -221,4 +221,33 @@ func (a *App) SelfTeamIDs() []string {
 		}
 	}
 	return out
+}
+
+// fetchChannelsByID is fetchChannelsById (pX): Flannel channels/info
+// {check_membership, updated_ids}, 100 at a time; a channel the viewer
+// isn't in is kept beside the sidebar's (the store's other
+// conversations), so the page's rows can read it.
+func (a *App) fetchChannelsByID(ctx context.Context, ids []string) {
+	for i := 0; i < len(ids); i += 100 {
+		j := min(i+100, len(ids))
+		up := map[string]int{}
+		for _, id := range ids[i:j] {
+			up[id] = 0
+		}
+		var r struct {
+			Results []slack.Conversation `json:"results"`
+		}
+		if err := a.C.Edge(ctx, "channels/info", map[string]any{"check_membership": true, "updated_ids": up}, &r); err != nil {
+			continue
+		}
+		for _, c := range r.Results {
+			if c.ID == "" {
+				continue
+			}
+			a.S.PutName(c.ID, c.Name)
+			if _, ok := a.S.Conv(c.ID); !ok {
+				a.S.PutExtConv(c)
+			}
+		}
+	}
 }
