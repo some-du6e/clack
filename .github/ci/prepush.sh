@@ -24,7 +24,7 @@ mapfile -t files < <({
 	git diff --name-only --diff-filter=ACMR HEAD
 	git ls-files --others --exclude-standard
 } | grep -E '\.go$' | grep -v '/testdata/' | sort -u)
-if [ ${#files[@]} -eq 0 ]; then
+if [ ${#files[@]} -eq 0 ] && ! git rev-parse -q --verify HEAD^2 >/dev/null; then
 	echo "prepush: no Go files changed since $(git rev-parse --short "$base")"
 	exit 0
 fi

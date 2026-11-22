@@ -324,6 +324,8 @@ on:
       - "internal/permapguard/**"
       - "internal/core/perapp.go"
       - "internal/fakeslack/perserver.go"
+      - "internal/core/lists.go"
+      - "internal/core/lists_refetch_test.go"
       - "internal/media/avf/avf_darwin_test.go"
       - "internal/ui/caret_window_test.go"
       - "internal/ui/messages/scroll_gaps_test.go"
@@ -4652,7 +4654,9 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
-  # flakes-1122: the per-App and per-Server map guards (permapguard).
+  # flakes-1122: the per-App and per-Server map guards (permapguard), and
+  # core's list refetch across an applied event (TestListRefetchKeepsALaterEdit
+  # holds the read; TestListEditRoundTrip, the flake it found), COUNT each.
   fl1122-r-guard:
     if: ${{ !inputs.only || startsWith('fl1122-r-guard', inputs.only) }}
     runs-on: ubuntu-latest
@@ -4676,6 +4680,7 @@ jobs:
           go test -count=1 ./internal/permapguard || rc=1
           go test -count=1 -run '^TestReleaseCoversAppMaps$' ./internal/core || rc=1
           go test -count=1 -run '^TestForgetCoversServerMaps$' ./internal/fakeslack || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestListRefetchKeepsALaterEdit|TestListEditRoundTrip)$' ./internal/core || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
