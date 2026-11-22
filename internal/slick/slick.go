@@ -139,6 +139,8 @@ type Slick struct {
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
+	// pluginsGen counts changes to the installed plugins (PluginsGen)
+	pluginsGen atomic.Uint64
 
 	updating  sync.Mutex
 	stopTimer chan struct{}
@@ -442,6 +444,12 @@ func (s *Slick) Subscribe() (<-chan struct{}, func()) {
 		s.changeMu.Unlock()
 	}
 }
+
+// PluginsGen counts the changes to the installed plugins' files: one
+// read from disk, installed, replaced or removed (not one started,
+// stopped or set up). A reader that keeps what it read of them (the
+// plugin library's install states) reads again when it moves.
+func (s *Slick) PluginsGen() uint64 { return s.pluginsGen.Load() }
 
 // closeSubscribers closes every Subscribe channel (their range loops
 // end) and keeps no more: Close's, the Slick is done. Their goroutines

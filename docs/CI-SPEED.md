@@ -560,3 +560,161 @@ Slick goroutine still running. That's a handful of Apps, not the package.
 | TestRealWindowCaretCost at 1440x900, "no blink's partial frame in 2.4s" | The readback started right after partial frames came back on. The window takes a few frames to settle: a fresh frame texture fills, the sticky atlas's first repack makes the next frame's damage too big (straight into the window), and two more fill the texture again. At 1440x900 that took four blinks, the whole wait. `gpu.FrameStats.Whole` (new) says why each frame was whole | the readback waits for the first partial frame first | 44960352218: 2 of 25; 44963639630: 1 of 25, with the four reasons. The earlier 0 of 35 (44950757123, 44952864910) ran the 800x600 mode | 44965770262: 0 of 25 |
 | TestPatchedReactionPillLikeNative/dark/cls (train-138, 44960329088) | Not EGL. linux-test has no display, so every pixel subtest gets `eglInitialize` 0x3001 and skips (all eight did). This one failed because its TempDir cleanup raced Taut's debounced data flush, "directory not empty". The timer's flush took the dirty data under the lock and wrote it after, so Close's last flush found nothing and returned while storage/ was still being written | Taut's flushes run one at a time, writes included, so Close returns with its data on disk. It also stops an older flush's rename from landing over a newer one's | 44963637245, the mutant: "a flush returned while another was still writing" | 44963637245: 20 times under -race |
 | TestMacIdleCPU | not reproduced | the count failures print the pass's frame timeline: each frame, when it came, what asked for it, and the caret's blink interval | | |
+
+## Round 3 (quiet-ci): red only when something is wrong
+
+Every run here starts from Karim's account, so every failed run is a push
+notification on their phone: 194 in the 24 h to 2026-11-21 23:40Z. Most were
+red by design (proofs) or not about the change (flakes, a base that was red).
+
+### Proof runs (expect_fail)
+
+A proof (a red or mutant branch, the tests on the old code) names the tests
+it proves fail, and the run passes only if each of them fails and nothing
+else does:
+
+```sh
+# flake-check, one job: the usual proof
+gh workflow run flake-check.yml --repo some-du6e/clack --ref <branch>-red1 -f only=<job> -f count=1 -f expect_fail=TestA,TestB/sub
+# an area workflow that takes it (threads-audit, files-view, hover-card, bk-gallery-shots,
+# ui-taut, ch-details-shots, ui-slick, composer-taut, bk-agent-shots)
+gh workflow run threads-audit.yml --repo some-du6e/clack --ref <branch>-red1 -f expect_fail=TestA
+# ci: any of its only= jobs (linux-test runs the whole suite in its five shards)
+gh workflow run ci.yml --repo some-du6e/clack --ref <branch>-red1 -f only=linux-test -f expect_fail=TestA
+```
+
+- The names are as `go test -json` reports them: `TestA`, a subtest
+  `TestA/sub` (spaces become `_`), comma-separated. A listed test covers its
+  subtests; a listed subtest's failure also fails its parents, which is fine
+  unless a parent printed lines of its own (its own `t.Error`, or a `t.Log`:
+  test2json can't tell them apart): then list the parent too.
+- Each job that sets up Go runs `.github/actions/expect-fail` right after
+  setup-go: it builds `tools/expectfail` and sets `GOFLAGS=-exec=<it>`, so
+  every `go test` in the job (text or `-json`, `xvfb-run`, test-shard.py)
+  runs its binary through it. It judges each binary: listed failures exit 0;
+  a listed test that passes or is skipped (in any of its `-count` runs), any
+  other failed test, a crash or timeout outside a listed test, or a binary
+  that fails with no failed test (TestMain) keeps it red. Build and vet
+  errors stop `go test` before the binary, so they stay red too: a proof
+  that doesn't compile proves nothing.
+- Each job ends with `.github/actions/expect-fail-report` (its summary lists
+  each listed test it ran with the first lines of its failure, and uploads
+  its records), and an `expect-fail` job, needing every job, checks across
+  them: every listed test failed somewhere and passed nowhere, every job
+  that ran succeeded. Its summary is the proof, readable without the log.
+  A step without `-v` shows an expected failure only there: to `go test`
+  the package passed, so it prints nothing of it.
+- Not judged: binaries a job builds with `go test -c` and runs itself
+  (flake-check's Windows fanouts, some stress jobs), and a step that sets
+  `XF_OFF=1` because it needs a binary's real status (gio-layer-fix.sh's
+  tests that must panic on stock Gio, in linux-gio and macos-idle). A
+  listed failure there stays red, never a false pass.
+- Rerunning a proof run's failed jobs: each record carries its leg (job and
+  matrix index) and the run's attempt, and the check keeps each leg's
+  latest, so the failed attempt's records don't count.
+- A new job in one of these workflows needs the two steps and an entry in
+  `expect-fail`'s needs; `tools/expectfail`'s TestWorkflowsWireExpectFail
+  fails ci until it has them. After a merge (a train taking a branch made
+  before quiet-ci), wire them with the script, which needs only Python:
+
+  ```sh
+  python3 -I .github/scripts/expect_fail_wire.py --check .github/workflows/flake-check.yml  # what's missing, exit 1
+  python3 -I .github/scripts/expect_fail_wire.py .github/workflows/flake-check.yml          # add it, in place
+  ```
+
+  It adds the input, the setup step after setup-go, the report step last
+  and the check job's needs, exactly as the guard wants them, and leaves a
+  wired file byte for byte as it was. It refuses (exit 2) a file not laid
+  out like the repo's (jobs at 2 spaces, steps at 6).
+
+Proven on quiet-ci (throwaway branches, deleted): the listed test failing
+alone was green (flake-check 44974452814; ci only=linux-test over the whole
+suite 44976014400); a listed test that passed was red (44974455267,
+"TestXFProofPasses passed (1 of 1 runs)"); an unlisted failure was red
+(44974458023, "TestXFProofExtra failed, and expect_fail doesn't list it").
+
+### The evidence-branch rule
+
+A branch named like a proof, ending `-red`, `-redN`, `-redNx`, `-mutN`,
+`-rNredN` or `-rNmutN` (`thread-load-speed-red4`, `ci-speed-3-red13c`,
+`blockkit-coverage-r3red5`):
+
+- starts no ci or supply-chain run on push (`branches-ignore`): its push run
+  would only be red;
+- fails at once, in the expect-fail setup step, when dispatched without
+  `expect_fail`, with a message saying to pass it (44974460708). So every
+  proof names what it expects to fail.
+
+`expect_fail` on ui, main or a tag fails the same way: those pass only when
+nothing fails. Diagnostic branches (`-probeN`, `-dbgN`) aren't covered: a
+probe that is meant to fail is a proof, so name it `-redN` and list its
+tests.
+
+### Before a push (prepush.sh)
+
+```sh
+.github/ci/prepush.sh            # changed since the merge base with origin/ui
+.github/ci/prepush.sh <base>     # or since <base>
+```
+
+It runs `gofmt -l` on the Go files changed since the base (and the working
+tree's), then `go vet` on their packages, with the GOOS their `_windows` and
+`_darwin` files need (Windows with cgo where mingw is installed). On swiss
+vet goes through the go gate, so a package like internal/ui takes minutes.
+Of the 24 h's agent-branch failures it would have caught 3, all of them
+compile or vet errors (`method Modal.Rect already declared`, `not enough
+arguments in call to a.jumpToMessage` in a test, vet's `unreachable code`);
+gofmt had none.
+
+### The release's test job
+
+release.yml's test job is ci's full-test step for step (the same
+`go test ./...` on the same runner image, a clean cache). On a tree that
+already passed it, it adds no coverage, only another roll of the flakes:
+alpha.135's tree had passed full-test on its squash source (409e358f, run
+44955419010), and the release lost two attempts to flakes. It now looks for
+a successful ci full-test on a commit with the tag's tree (prior-full-test.sh,
+ci's runs of the last 3 days) and, finding one, skips the suite with a
+summary linking that run; otherwise it runs as before. The tree, not the
+sha: ui squashes a branch whose pre-merge full-test ran on the branch's
+commit, and ui's own full-test is often cancelled. A proof run's green
+full-test doesn't count (its expect-fail job ran: the listed failures exit
+0, and a listed test that panics ends its package early), and any API
+error runs the suite. It asks the server for ci's green dispatches and
+ui and main pushes of the 3 days (a branch's push run skips full-test).
+Not covered: nothing keeps ci's full-test and this job step for step
+alike; a change to one should go to both.
+
+### The 24 h of failures, classified
+
+194 failed runs to 2026-11-21 23:40Z. Of the 104 not on an evidence branch
+by the old naming: 4 on ui and main (menu-keys' macOS clipboard reads,
+fixed on ui at a913a1fe; code-channels' TestTautZeroCost, fixed at
+821a5101; the runs after both were cancelled), 5 on trains, 27 on proof or
+diagnostic branches the old naming missed (`-red13c`, `-r3red5`, `-probe2`,
+`-dbg1`, `-slow3`, `-nolimit`), and 68 on agent branches:
+
+| class | runs | what |
+|---|---|---|
+| real, fixed later | 38 | the branch's own tests or jobs, passing on a later push |
+| real | 8 | the branch's own tests, not passing again inside the window (quote-paste-crash's TestWinQuotePaste ×5, ci-speed-3's heap test, acrows-race, threads-ship) |
+| flake | 19 | below |
+| broken push | 3 | build or vet errors: prepush.sh |
+
+The flakes, by test:
+
+| test | runs | state |
+|---|---|---|
+| TestMenuKeysMessageActions, TestMenuTypeAhead (menu-keys, macOS) | 6 | red on every branch until ui a913a1fe |
+| thread-open-root's own tests, the same sha green later | 4 | |
+| TestThreadsRefreshGapLikeSlack | 2 | open: the next to fix (it also failed alpha.114's release) |
+| TestPreviewFooterMembershipUnknownAtOpen, TestPreviewFooterUnderComposerPlugin | 2 | a real race, fixed: preview-footer-race (ResolveConv's joiners) |
+| launch-budget (launch-speed), the same sha green later | 2 | |
+| TestJoinBanner | 1 | GOMEMLIMIT=7GiB's GC (ci-speed-2 kept 11 GiB) |
+| TestSnapshotsWhileBusy (jsrt) | 1 | |
+| TestInspectPicksToast (windows-applog) | 1 | |
+
+Fixed alongside, from the releases: TestMessageMenuOldMenuRows
+(menu-click-rerender: slackc dropped a press's scope on a re-render) and
+Media Foundation's first-frame timing in TestMFRGBA, TestMFPlaysFixture and
+TestMFColdStart (mf-first-frame).

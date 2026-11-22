@@ -32,8 +32,11 @@ type Message struct {
 	// replied in the thread) and the index of the first block that held a
 	// highlight marker (0 when none), compactCardBlocks' start
 	// (exp_wave7.go).
-	RequestorReplied      bool
-	SearchHitBlock        int
+	RequestorReplied bool
+	SearchHitBlock   int
+	// SearchMatches: which attachments and files held a match (search
+	// results only, nil elsewhere; search_matches.go).
+	SearchMatches         *SearchMatches
 	ClientMsgID           string
 	PinnedBy              string // who pinned it (when Pinned)
 	IsBot, Edited, Pinned bool
@@ -837,6 +840,7 @@ type Draft struct {
 	FileIDs               []string
 	FileInfo              []DraftFile // the attached files as drafts.list describes them (by FileIDs order when known)
 	FromComposer          bool        // is_from_composer
+	DateStashed           int64       // date_stashed (ms): when the composer's "Save as draft" saved it
 	// Attachments are the draft's message attachments (the composer's GIFs).
 	Attachments json.RawMessage
 }
@@ -859,6 +863,9 @@ type DraftOpts struct {
 	Blocks                json.RawMessage
 	FileIDs               []string
 	DateScheduled         int64 // set when editing a scheduled draft (keeps it scheduled)
+	// DateStashed (ms) saves a composer draft (is_from_composer, with
+	// date_stashed): the composer's "Save as draft"
+	DateStashed int64
 	// Attachments are the draft's message attachments (drafts.create's
 	// attachments: the composer's GIFs); nil sends "[]".
 	Attachments json.RawMessage

@@ -117,6 +117,7 @@ func OpenAddAgentToChannels(h Host, memberID, prefill string) *addAgentChannels 
 		Buttons: []*ModalButton{{Label: nsAppDetails.T("Cancel"), Kind: BtnOutline,
 			Do: func() bool { return true }}, d.add},
 		FocusStops: func() []event.Tag { return []event.Tag{&d.sel.ed} },
+		OnEscape:   ugEscape(d.sel), // MultiSelectInput onEscape: the list first
 	})
 	h.ShowOverlay(d.modal)
 	return d

@@ -31,6 +31,7 @@ const (
 	SurfReplyTS   = "1762515240.000100"
 	SurfEditedTS  = "1762515300.000100"
 	SurfAppUnfTS  = "1762515360.000100"
+	SurfPRTS      = "1762515420.000100"
 	surfThreadTS  = "1762515000.000100"
 	surfReplyMsTS = "1762515030.000200"
 )
@@ -161,6 +162,27 @@ func surfMessages(s *Server) []slack.Message {
 		})}
 	edited := surfBot(s, SurfEditedTS, "Deploy 4213 finished in 3m 58s", richText(map[string]any{"type": "text", "text": "Deploy 4213 finished in 3m 58s"}), nil)
 	edited.Edited = &slack.Edited{User: AppBotID, TS: "1762515330.000000"}
+	// a code host's "Pull request opened" notification, shaped like the one
+	// Karim saw drawn wrong (2026-11-18; synthetic text): no blocks, one
+	// legacy attachment whose title is one <url|label> token, mrkdwn text
+	// in paragraphs past the five newlines Show more allows, a short field,
+	// a footer link with its icon and ts, one legacy button; edited, with
+	// a reply
+	pr := surfBot(s, SurfPRTS, "", nil, []slack.Attachment{{
+		ID: 1, Color: "6f42c1", Fallback: "[example/dns] Pull request opened by someone",
+		Pretext: "Pull request opened by <https://code.example.com/someone|someone>",
+		Title:   "<https://code.example.com/example/dns/pull/42|#42 Update record for demo.example.com>",
+		Text: "*DNS Editor submission*\n\nOpened by <@" + other.ID + "> via <https://code.example.com/apps/dns-editor|dns-editor[bot]>.\n\n" +
+			"*Edit*\n\nReplacing existing `CNAME a.ingress.example.com.` under `demo.example.com`.\n\n*Updated record*\n\n" +
+			"```demo.example.com. 300 IN CNAME b.ingress.example.com.```\n\n*Notes*\n\nNone.",
+		Fields: []slack.AttachmentField{{Title: "Reviewers",
+			Value: "<https://code.example.com/orgs/example/teams/infra|@example/infra>, <https://code.example.com/orgs/example/teams/dns|@example/dns>", Short: true}},
+		Footer: "<https://code.example.com/example/dns|example/dns>", FooterIcon: s.imgURL(16, 16, "code"), TS: json.RawMessage(`1762515418`),
+		MrkdwnIn: []string{"text"},
+		Actions:  rawJSON([]map[string]any{{"id": "1", "name": "comment", "text": "Comment", "type": "button", "value": `{"pr":42}`, "style": ""}}),
+	}})
+	pr.Edited = &slack.Edited{User: AppUserID, TS: "1762515530.000000"}
+	pr.ThreadTS, pr.ReplyCount, pr.ReplyUsers, pr.LatestReply = SurfPRTS, 1, []string{other.ID}, "1762515530.583979"
 	return []slack.Message{
 		surfBot(s, SurfLegacyTS, "A new deploy finished", nil, legacy),
 		surfBot(s, SurfThumbTS, "", nil, thumb),
@@ -176,6 +198,7 @@ func surfMessages(s *Server) []slack.Message {
 			Attachments: []slack.Attachment{reply, dm}},
 		edited,
 		{Type: "message", TS: SurfAppUnfTS, User: other.ID, Text: "<https://ci.example.com/builds/4211>", Attachments: []slack.Attachment{appUnfurl}},
+		pr,
 	}
 }
 
@@ -272,6 +295,22 @@ func SurfQuickCheck() map[string]any {
 	})
 }
 
+// SurfInspectView is an "Inspect message" modal like the one Karim saw
+// (2026-11-18; the JSON is synthetic): one section whose mrkdwn text,
+// verbatim, puts a message's JSON in a ``` block after a line of text.
+// Message shortcut SURFA6.
+const SurfInspectView = "VSURF00006"
+
+// SurfInspect is that view.
+func SurfInspect() map[string]any {
+	js := "{\n  \"type\": \"message\",\n  \"user\": \"U0FAKE00001\",\n  \"ts\": \"" + SurfLegacyTS +
+		"\",\n  \"text\": \"A synthetic *gallery* message\",\n  \"blocks\": []\n}"
+	return surfView(SurfInspectView, SurfInspectView, "", "Inspect message", "", "Done", "x1", []any{
+		map[string]any{"type": "section", "block_id": "json", "text": map[string]any{"type": "mrkdwn", "verbatim": true,
+			"text": "Here's the raw JSON from that message: ```" + js + "```"}},
+	})
+}
+
 func surfConfirm(updated bool) map[string]any {
 	if updated {
 		return surfView("VSURF00002", SurfTicketView, SurfTicketView, "Ticket created", "Finish", "Back", "h3", []any{
@@ -359,6 +398,8 @@ func surfAPI(s *Server, method string, f url.Values) (any, bool) {
 			v := SurfInputs()
 			s.openSurfView(f.Get("client_token"), v)
 			s.emit(map[string]any{"type": "view_updated", "view_id": SurfInputsView, "app_id": AppAppID, "view": v})
+		case "SURFA6":
+			s.openSurfView(f.Get("client_token"), SurfInspect())
 		default:
 			s.openSurfView(f.Get("client_token"), surfTicket())
 		}

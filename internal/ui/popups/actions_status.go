@@ -203,6 +203,11 @@ func actKeepLabel(exp int64, now time.Time) string {
 	return nsStatus.T("Until {expirationDate}", "expirationDate", date)
 }
 
+// StatusUntil is BaseCustomStatusExpiration's "Until {expirationDate}"
+// for a status expiring at exp (unix seconds): the custom status
+// tooltip's subtitle (messages/status_tip.go).
+func StatusUntil(exp int64, now time.Time) string { return actKeepLabel(exp, now) }
+
 // actDurLabel is a duration's label in the locale (current_status).
 func actDurLabel(d actDur) string { return nsStatus.T(actDurLabels[d]) }
 

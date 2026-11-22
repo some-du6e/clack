@@ -43,6 +43,24 @@ type Handler interface {
 	Button(b richtext.Button)
 }
 
+// EmailLinkHandler is a Handler that opens a link from an email's body
+// as Slack's EmailIframe does: an http(s) link through the "Open Link"
+// confirmation (openLinkRedirectModal), any other straight away.
+type EmailLinkHandler interface {
+	OpenEmailLink(url string)
+}
+
+// PlainClicker is optional on a Handler: a primary click on the view's
+// text or empty space rather than on a link, mention, button or other
+// target, released within 4px of the press (a longer drag selects text)
+// and without Shift. A search result card opens its message for it, as
+// SearchResult's onClick does for any click on the card that isn't on a
+// mention, button or link, a drag ((dx²+dy²) > 16) or a Shift+click
+// (boot-shared vVRo, CDN build 35b42de8b870).
+type PlainClicker interface {
+	PlainClick()
+}
+
 // AttachmentRemover is a Handler that can remove a message's link
 // preview (the unfurl's remove button): Slack's "Remove preview?" dialog,
 // then chat.deleteAttachment.
@@ -311,6 +329,9 @@ type Style struct {
 
 	// flatHeadings is Slack's p-header_block--flat_scale (SetFlatHeadings).
 	flatHeadings bool
+	// emailV1 is new_email_rendering off (SetNewEmailRendering): email
+	// files draw as the legacy FileEmail.
+	emailV1 bool
 	// woFlags are the work object cards' experiments (SetWorkObjects);
 	// WorkObjects, if set, is their live state (refreshes, comments).
 	woFlags     WorkObjectFlags
@@ -345,6 +366,16 @@ func NewStyle(sh *text.Shaper, imgs Images, p Palette) *Style {
 func (s *Style) SetPalette(p Palette) {
 	s.Palette = p
 	s.gen = styleGens.Add(1)
+}
+
+// SetNewEmailRendering is new_email_rendering (Slack's
+// experimentNewEmailRenderingGroupOn): off, email files draw as the
+// legacy FileEmail pillow (email.go). On unless set.
+func (s *Style) SetNewEmailRendering(on bool) {
+	if s.emailV1 != !on {
+		s.emailV1 = !on
+		s.gen = styleGens.Add(1)
+	}
 }
 
 // SetFlatHeadings switches header blocks to Slack's flat heading scale
@@ -453,6 +484,9 @@ type Options struct {
 	// Details tab (WorkObjectDetails: the full layout's fields and the
 	// "Updated …" line) instead of the card (workobject.go).
 	WorkObjectDetails bool
+	// EmailDetails lays the doc's email file out as Slack's
+	// EmailFileDetailsContent (the secondary view's FileDetails; email.go).
+	EmailDetails bool
 	// WorkObjectSearch lays the doc's work object out as a search result
 	// (WorkObjectSearchResult: source WORK_OBJECT_SEARCH, no width cap,
 	// no meta line), at WorkObjectSize ("compact" for the dense view,

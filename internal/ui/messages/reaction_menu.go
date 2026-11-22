@@ -46,7 +46,7 @@ func (s *listState) reactionMenu(h Host, r *row, i int, p f32.Point, at image.Po
 		if k >= len(r.pills) || !pt.In(rect) {
 			continue
 		}
-		pl := &r.pills[k]
+		pl := r.pills[k]
 		in := pt.Sub(rect.Min)
 		for _, e := range pl.emojiAt {
 			if in.In(e.r) && e.url != "" {

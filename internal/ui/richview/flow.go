@@ -257,6 +257,9 @@ type target struct {
 	// cardless: a channel target that opens no hover card (a work
 	// object's channel field)
 	cardless bool
+	// emailLink: a link in an email's body (EmailIframe's onMessage): an
+	// http(s) one asks first (EmailLinkHandler's Open Link modal)
+	emailLink bool
 	// urlCard: a link in message text (rich text's Link, mrkdwn's
 	// renderLink), BaseMrkdwnLink's renderDefaultLink: its hover is
 	// UrlHoverCard under truncated_url_hover_card (View.isURLCard)

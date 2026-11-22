@@ -380,89 +380,35 @@ func (a *App) filePage(ctx context.Context, raws []browseFileRaw) []File {
 }
 
 // filesQuery is the browser's request query (client-boot nzlP
-// querySuggestionFromQueryAndFilter, then toString().trim()): the typed
-// query's tokens first, then the filters' tokens in Slack's order: from:,
-// in:, before:, after:, the type: tokens, creator:. in is how an in: value
-// is written (filesInValue; nil writes ids bare).
-func filesQuery(o FilesOpts, self string, in func(id string) string) string {
-	types := fileTypesAll
+// querySuggestionFromQueryAndFilter, then toString().trim();
+// files_query.go): the typed query's tokens first, those of a filter's
+// kind only when the filter holds them, then the filters' tokens in
+// Slack's order: from:, in:, before:, after:, the type: tokens, creator:.
+// lk resolves the typed tokens and the in: values (nil: none resolve).
+func filesQuery(ctx context.Context, o FilesOpts, self string, lk filesLookup) string {
+	var types []string
 	switch {
 	case o.Kind == "canvases":
-		types = "type:quip"
+		types = []string{"quip"}
 	case o.Kind == "lists":
-		types = "type:lists"
+		types = []string{"lists"}
 	case len(o.Types) > 0:
-		ts := make([]string, 0, len(o.Types))
-		for _, t := range o.Types {
-			ts = append(ts, "type:"+t)
-		}
-		types = strings.Join(ts, " ")
+		types = o.Types
 	case o.Mine || o.SharedWithMe:
-		types = fileTypesOwned
+		types = strings.Fields(strings.ReplaceAll(fileTypesOwned, "type:", ""))
+	default:
+		types = strings.Fields(strings.ReplaceAll(fileTypesAll, "type:", ""))
 	}
-	var parts []string
-	if q := strings.TrimSpace(o.Query); q != "" {
-		parts = append(parts, q)
-	}
-	for _, id := range o.From { // MemberFilterQuerySuggestionToken: from:<@U…>
-		parts = append(parts, "from:<@"+id+">")
-	}
-	for _, id := range o.In { // InQuerySuggestionToken
-		v := filesInBare(id)
-		if in != nil {
-			v = in(id)
-		}
-		parts = append(parts, "in:"+v)
-	}
-	if o.Before != "" { // DateQuerySuggestionToken: before: then after:
-		parts = append(parts, "before:"+o.Before)
-	}
-	if o.After != "" {
-		parts = append(parts, "after:"+o.After)
-	}
-	parts = append(parts, types)
+	var creator []string
 	if o.Mine {
-		parts = append(parts, "creator:<@"+self+">")
+		creator = []string{self}
 	}
-	return strings.Join(parts, " ")
-}
-
-// filesInBare is an in: value with nothing known about id: <@U…> for a
-// person, <#…> for a conversation.
-func filesInBare(id string) string {
-	if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
-		return "<@" + id + ">"
-	}
-	return "<#" + id + ">"
-}
-
-// filesInValue is InQuerySuggestionToken's toString for id
-// (_toStringInternal): a DM is its member, <@U…> (formatMember); a group
-// DM <#G…> (formatMpim); a channel <#C…|name>, its name with any ">"
-// taken out (sanitizeChannelRefName), or <#C…> without one; a person
-// <@U…>.
-func (a *App) filesInValue(id string) string {
-	if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
-		return "<@" + id + ">"
-	}
-	r := a.ConvRef(id)
-	switch r.Kind {
-	case "im":
-		if r.User != "" {
-			return "<@" + r.User + ">"
-		}
-	case "mpim":
-		return "<#" + id + ">"
-	}
-	if name := strings.ReplaceAll(r.Name, ">", ""); name != "" {
-		return "<#" + id + "|" + name + ">"
-	}
-	return "<#" + id + ">"
+	return filesQueryTokens(ctx, o.Query, o, types, creator, lk)
 }
 
 // filesParams builds search.modules.files params for the Files browser
-// (in: as filesQuery).
-func filesParams(o FilesOpts, self string, in func(id string) string) url.Values {
+// (the query as filesQuery; ctx stops a long query's tokenizing).
+func filesParams(ctx context.Context, o FilesOpts, self string, lk filesLookup) url.Values {
 	page := o.Page
 	if page < 1 {
 		page = 1
@@ -478,7 +424,7 @@ func filesParams(o FilesOpts, self string, in func(id string) string) url.Values
 	if o.Sort != "" {
 		sortBy = o.Sort
 	}
-	p := url.Values{"module": {"files"}, "query": {filesQuery(o, self, in)}, "page": {strconv.Itoa(page)},
+	p := url.Values{"module": {"files"}, "query": {filesQuery(ctx, o, self, lk)}, "page": {strconv.Itoa(page)},
 		"count": {"50"}, "sort": {sortBy}, "search_context": {"desktop_files_browser"},
 		"include_files_shares": {"1"}, "extracts": {"1"}, "highlight": {"1"}, "max_extract_len": {"200"},
 		"extra_message_data": {"1"}, "no_user_profile": {"1"}, "file_title_only": {"false"},
@@ -496,7 +442,10 @@ func filesParams(o FilesOpts, self string, in func(id string) string) url.Values
 // unified files view calls it).
 func (a *App) Files(ctx context.Context, o FilesOpts) (FilePage, error) {
 	t0 := time.Now()
-	p := filesParams(o, a.S.SelfID(), a.filesInValue)
+	p := filesParams(ctx, o, a.S.SelfID(), newFilesLookup(a))
+	if err := ctx.Err(); err != nil { // the query's tokenizing stopped short
+		return FilePage{}, err
+	}
 	var res struct {
 		Pagination searchPagination `json:"pagination"`
 		Items      []browseFileRaw  `json:"items"`

@@ -133,6 +133,7 @@ What TestRealWindowVideoFrames measured in those runs, playing the 320×180 fixt
 - Two copies of the same file don't sync their position while paused (fIJO's effect on `er`), and there's no Shift fine scrub with the mouse.
 - Audio still opens the file's page (no in-message audio player).
 - The visibility share comes from Gio patch 53 (io/input's Router.AreaBounds: the clipped area of a tag in the last frame), for every list.
+- A jump to a reply in a thread still puts two rows above it; Slack's thread list wasn't checked.
 
 ## Not changed, or still open
 
@@ -374,14 +375,32 @@ the same filters with pYM5's token toString code.
 | The count | aI: the search_exclude_bots pref (mapStateToProps' excludeBots) counts as a filter with From, In and the date; Clear Filters turns it off for that save only | — | the same, so with the pref on a date alone shows "2 Filters" |
 | Empty states | hasAdvancedFiltersSet (the filters differ from the browser's initial ones): All files "No results" / "You may want to try adjusting your filters." with Clear Filters even with every type on; Canvases and Lists leave their zero states for "No results" (th) | the empty states looked at the types and the search only | the same; Clear Filters (clearAdvancedFiltersAndShowAllFileTypes) also clears the filters and the count |
 
+Round 2 (files-filters-2, 2026-11-21; the review's findings, same build):
+
+| Area | Slack (source) | Clack before | Clack now |
+|---|---|---|---|
+| Clearing the search | onResetSearch (lbOJ t8). Without hasBrowseFilesSorts (agentic_ia and agentic_ia_browse_toolbar_search, neither in the account's groups): `eL !== RELEVANT \|\| et \|\| setSort(LAST_ENGAGED)`, so Most relevant goes back to Recently viewed only with no advanced filters, and any other sort stays. (With hasBrowseFilesSorts it moves to NEWEST when filters are set.) | always back to "": with filters set, sort=last_engaged went out under a "Most relevant" label no row matched | Slack's rule (`ui/views/files.go`) |
+| From under Created by you | onSave (te+0 aO) passes fromSelections whatever filtersExcluded says, and aI counts it | Done dropped the hidden From but the count kept it ("2 Filters", one applied) | From stays in the request and the count |
+| The typed query | the fetch tokenizes it (pYM5 rawTokensFromString / getTokenRegex, tokenListFromString, each token's fromString) and nzlP runs every pass with the browser's lists, so a typed from:, -from:, in:, -in:, before:, after:, on:, type:, -type:, has:, hasmy:, is:, -is:, with:, creator:, -creator: stays only when the filter holds the same value (then in its typed place, written as a token), the rest are dropped; what doesn't resolve (an unknown name, a bad date, `is:bogus`) stays as text; @name and <#C…> mentions resolve to ids; words join with one space | the typed text went first as it was, beside the filters' tokens | the same (`core/files_query.go`); `TestFilesViewTypedTokensQuery`'s values are Slack's tokenizer and nzlP run in node |
+| A picked group DM, reopened | the token is the option's entity: getDisplayNameForChannel (the custom name, else the members) | the raw mpdm- name | the option row's name |
+| Escape in From / In | MultiSelectInput onEscape: with the list expanded it closes it and stops the event; otherwise Escape reaches the modal | the modal took Escape first and closed with the picks unsaved; ugSelect also reopened a list it had closed on the next frame | the list closes first and stays closed until typing, ↓ or a click; a second Escape closes the modal. Round 3: the select claims plain Escape while expanded (shortcut.OwnEscape), so the shell's Close binding, read before the overlays, leaves it to the modal's OnEscape (`TestFilesFiltersEscapeThroughShell` drives the real shell); Enter picks only from a list that shows. Round 4: a select claims Escape only when its dialog sends Escape to it (ugEscape wires ModalOpts.OnEscape: Files filters, Edit members, Edit User Group's Channels, Add agent to channels), so a dialog that doesn't is left to the shell; and a modal whose CloseGuard keeps it open on Escape draws on (`TestUserGroupEditEscapeThroughShell`) |
+| Long queries (round 3, round 4) | rawTokensFromString re-runs its regex on the rest, `(.*)$` | the port did the same: quadratic in the query's length, and no ctx | the token regex at an advancing offset over a bounded span: the token's run of non-spaces, the value after "mod: ", and the closer its opening needs (the next `>`, `"`, “ or ”, from one backward pass), so an opening whose closer never comes (`x < y`, `<a <b`, a lone quote) costs its run, not the rest of the query; a word run joined once, the name indexes built once per query, ctx checked. `TestFilesViewQueryLongPaste` holds 30 KB pastes of each to 250 ms |
+| List pickers' typed tokens (round 3) | useListExplorer's query goes through the same tokenizer against the store | SearchLists resolved nothing (no lookup): typed from:, with: and @name stayed as text | the store lookup: from: / with: / in: go, @name becomes <@U…> |
+
 Not done:
 
-- **The search box's tokens.** Slack parses the typed query into tokens
-  and drops typed from:, in:, before:, after: and type: tokens the filters
-  don't hold (queryTokenListForFromFilter and the rest keep only the
-  filters' own), and the modal starts from the omniswitcher's from: / in:
-  tokens when it has some. Clack sends the typed text as it is and starts
-  the modal from the browser's filters.
+- **The search reset's other half.** t8 also runs resetFiltersForContentType
+  (the Types back to the view's default, Created by you / Shared with you
+  back to All) when the search is reset. Clack's box has no separate reset
+  event (an emptied box is a cleared search), so it doesn't do that.
+- **The omniswitcher's tokens.** The modal starts from the top search
+  box's from: / in: tokens when it has some; Clack starts it from the
+  browser's filters.
+- **Typed dates dayjs reads freely.** A typed before: / after: / on: is a
+  token for a year, an ISO date, today, yesterday, a weekday, week, month,
+  year, a month's name or a CJK date (7Nox); other strings dayjs would
+  parse (`Jan 5`) stay as text in Clack. -type: is always dropped (the
+  browser's handlers all set excludedFileType to []).
 - **A channel the client doesn't know.** InQuerySuggestionToken writes
   `in:` with no value for one; Clack writes `in:<#C…>`. A picked channel
   is always known.

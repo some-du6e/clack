@@ -68,6 +68,7 @@ const (
 	caCancel                       // edit mode
 	caParagraph                    // ¶▾ button
 	caDivider                      // divider button: insert a divider line
+	caDrafts                       // the drafts button (DraftManagementButton): its menu
 )
 
 // chromeAction is something the user did in the chrome.
@@ -154,8 +155,19 @@ type chromeState struct {
 	// OverLimit is how many characters the message is past the 12,000
 	// limit (TextyLengthWarning's numCharsOverLimit; charlimit.go).
 	OverLimit int
-	SelLo     int // selection start (TextyInput's quill.getSelection)
-	SelN      int // selected characters
+	// Drafts is the drafts button's count (DraftManagementButton,
+	// draft_button.go; 0: no button). DraftsBusy: a file still uploads
+	// (the button is aria-disabled).
+	Drafts     int
+	DraftsBusy bool
+	// Online is NotificationBar's wasRecentlyOnline (connected, or the
+	// connection changed under 10s ago; until OnlineUntil when it was
+	// lost) and MoreThanTwo its hasMoreThanTwoCharacters (the message is
+	// past 2 characters as Slack counts them): the hint bar's (hint_bar.go).
+	Online, MoreThanTwo bool
+	OnlineUntil         time.Time
+	SelLo               int // selection start (TextyInput's quill.getSelection)
+	SelN                int // selected characters
 	// TypingIDs / TypingNames: who Typing names, sorted by name.
 	TypingIDs, TypingNames []string
 	// TypingStatus is an app's assistant status (Typing is then
@@ -198,6 +210,7 @@ const (
 	crCancel
 	crSave
 	crBroadcast
+	crDrafts // DraftManagementButton, left of the send button (draft_button.go)
 	crNumBtn
 )
 
@@ -239,6 +252,7 @@ var crInfo = [crNumBtn]crBtnInfo{
 	crCancel:    {kind: caCancel},
 	crSave:      {kind: caSave},
 	crBroadcast: {kind: caBroadcast},
+	crDrafts:    {kind: caDrafts},
 }
 
 var crIcChevron, crIcPara, crIcAa = icons.Get("chevron-down"), icons.Get("paragraph"), icons.Get("format")
@@ -418,6 +432,7 @@ type chrome struct {
 	suf      []crSuf
 	inlOne   [1]*slackc.Node // layoutInline's (it may run inside a row item)
 	inl      []crSuf
+	hint     crHint // the hint bar's formatting tip (hint_bar.go)
 }
 
 var crSpaceSizes = [3]unit.Sp{15, 12, 10.5}
@@ -484,6 +499,9 @@ func (c *chrome) disabled(st *chromeState, id crBtn) bool {
 	case crShortcut:
 		// SlashCommandsButton isDisabled: !isTextyInputEmpty
 		return !st.InputEmpty
+	case crDrafts:
+		// MenuTrigger isDisabled while a file uploads
+		return st.DraftsBusy
 	}
 	return false
 }
@@ -1739,17 +1757,25 @@ func placeholderText(name string) (text, pre, post string) {
 	return i18n.Plain(parts), pre, post
 }
 
-// layoutHint draws the 24px bar under the box (.p-notification_bar: 24px,
-// 12px left padding, inside the pane): the typing indicator on the left
-// (.p-notification_bar__section: .7em = 10.5px, 1rem line height,
-// sk_foreground_max_solid), or "Shift + Enter to add a new line" on the
-// right (bold keys, 70% ink, ending 8px inside) once there's something to
-// send. A plugin's TypingNames (BetterTypingIndicator) is laid out in that
-// section's text style, as it is in Slack's DOM.
+// layoutHint draws the 24px bar under the box: Slack's NotificationBar
+// (boot-shared V6lB; .p-notification_bar: 24px, 12px left padding and 8px
+// right, inside the pane). Its left section (.7em = 10.5px, 1rem line
+// height, sk_foreground_max_solid) has, in this order: while Slack isn't
+// recently online, "Slack is trying to connect." and the
+// cloud-offline-filled icon; or the typing line. With nothing there, the
+// right section has the formatting tip (hint_bar.go). A plugin's
+// TypingNames (BetterTypingIndicator) is laid out in the left section's
+// text style, as it is in Slack's DOM.
 func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, box image.Rectangle) {
 	ty := box.Max.Y + (gtx.Dp(24)-gtx.Dp(16))/2
 	maxW := box.Dx() - gtx.Dp(20)
+	if !st.Online {
+		c.hint.unmount()
+		c.layoutOffline(gtx, th, p, st, image.Pt(box.Min.X+gtx.Dp(12), ty), maxW)
+		return
+	}
 	if st.Typing != "" {
+		c.hint.unmount()
 		t := op.Offset(image.Pt(box.Min.X+gtx.Dp(12), ty)).Push(gtx.Ops)
 		g := gtx
 		g.Constraints = layout.Constraints{Max: image.Pt(max(maxW, 0), gtx.Dp(16))}
@@ -1769,50 +1795,7 @@ func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 		t.Pop()
 		return
 	}
-	if !st.CanSend {
-		return
-	}
-	// rt("<b>Shift + Enter</b> to add a new line") (SyrM, the
-	// notification_bar I18n): the keys bold, wherever the locale has them
-	pref := uipref.Get()
-	src := hintSource(shortcut.GOOS, pref.SendOnModEnter, pref.EnterIsSpecial, st.HintInPre)
-	type seg struct {
-		call op.CallOp
-		w    int
-		gap  bool // a space before it
-	}
-	var segs []seg
-	total, space := 0, false
-	for _, pt := range notificationBarNS.RT(src) {
-		txt := strings.TrimSpace(pt.Text)
-		gap := space || strings.HasPrefix(pt.Text, " ")
-		space = strings.HasSuffix(pt.Text, " ")
-		if txt == "" {
-			space = space || gap
-			continue
-		}
-		s := textStyle{Size: 10.5, LineHeight: 16, Color: p.hint, MaxLines: 1}
-		if pt.Tag == "b" {
-			s.Weight = theme.Bold
-		}
-		call, d := crRec(gtx, th.Shaper, maxW, s, txt)
-		gap = gap && len(segs) > 0
-		segs = append(segs, seg{call, d.Size.X, gap})
-		total += d.Size.X
-		if gap {
-			total += c.space(gtx, th.Shaper, 2)
-		}
-	}
-	x := box.Max.X - gtx.Dp(8) - total
-	for _, sg := range segs {
-		if sg.gap {
-			x += c.space(gtx, th.Shaper, 2)
-		}
-		t := op.Offset(image.Pt(x, ty)).Push(gtx.Ops)
-		sg.call.Add(gtx.Ops)
-		t.Pop()
-		x += sg.w
-	}
+	c.layoutFormattingTip(gtx, th, p, st, box, ty, maxW)
 }
 
 // hintSource is NotificationBar's renderFormattingTips (SyrM): Windows

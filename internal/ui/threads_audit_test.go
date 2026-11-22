@@ -152,6 +152,9 @@ func TestThreadsAuditDesktopNotification(t *testing.T) {
 	const ch, root, rep = "C0THAUDIT01", "1762700000.000100", "1762700300.000100"
 	b.m.Convs = map[string]*convInfo{ch: {ID: ch, Kind: "channel", Name: "th-audit"}}
 	push := func(ts, thread string) {
+		// the reply's own message came first, as the server sends them: the
+		// notifications' maxTs took it (store/notifications_maxts.go, reason 19)
+		ca.S.NoteAdded(ts)
 		raw, _ := json.Marshal(map[string]any{"type": "desktop_notification", "channel": ch, "ts": ts, "msg": ts, "thread_ts": thread,
 			"content": "Robin Example: a synthetic reply", "title": "Thread in #th-audit"})
 		b.desktopNotification(a, core.Event{Type: "desktop_notification", Channel: ch, Raw: raw})

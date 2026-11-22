@@ -142,6 +142,7 @@ func (t *Taut) loadInstalled() {
 			p.meta = readMeta(t.dir, id, p.hash)
 		}
 		t.plugins[id] = p
+		t.pluginsGen.Add(1)
 	}
 }
 
@@ -718,6 +719,7 @@ func (t *Taut) Import(ctx context.Context, code []byte, replacing string) (strin
 	t.mu.Lock()
 	t.plugins[id] = p
 	t.mu.Unlock()
+	t.pluginsGen.Add(1)
 	if err := t.registerLocked(ctx, id); err != nil {
 		t.rollback(ctx, id, old, snap)
 		return "", err
@@ -742,6 +744,7 @@ func (t *Taut) rollback(ctx context.Context, id string, old *plugin, snap map[st
 		t.mu.Lock()
 		delete(t.plugins, id)
 		t.mu.Unlock()
+		t.pluginsGen.Add(1)
 		t.unloadJS(ctx, id)
 		t.changed()
 		return
@@ -755,6 +758,7 @@ func (t *Taut) rollback(ctx context.Context, id string, old *plugin, snap map[st
 	t.mu.Lock()
 	t.plugins[id] = old
 	t.mu.Unlock()
+	t.pluginsGen.Add(1)
 	_ = t.registerLocked(ctx, id)
 }
 
@@ -872,6 +876,7 @@ func (t *Taut) Remove(ctx context.Context, id string) error {
 	t.mu.Lock()
 	delete(t.plugins, id)
 	t.mu.Unlock()
+	t.pluginsGen.Add(1)
 	t.changed()
 	return nil
 }

@@ -75,7 +75,7 @@ func TestContextMenuOnPatchedReaction(t *testing.T) {
 		return row != nil && len(row.reactRects) >= 3 && len(row.pills) >= 3 && len(row.pills[0].emojiAt) > 0 && !row.pills[0].countAt.Empty()
 	})
 	row := v.s.rows[rpCustom]
-	pill, pl := row.reactRects[0], &row.pills[0]
+	pill, pl := row.reactRects[0], row.pills[0]
 	mid := func(r image.Rectangle) image.Point { return r.Min.Add(r.Size().Div(2)) }
 	emojiPt, countPt := pill.Min.Add(mid(pl.emojiAt[0].r)), pill.Min.Add(mid(pl.countAt))
 	wantURL := pl.emojiAt[0].url

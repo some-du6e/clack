@@ -36,6 +36,9 @@ on:
       - "internal/core/usergroup_members*.go"
       - "internal/core/usergroup_edit*.go"
       - "internal/ui/popups/usergroup_*.go"
+      - "internal/ui/popups/modal_focus.go"
+      - "internal/ui/popups/add_agent_channels.go"
+      - "internal/ui/files_filters_esc_test.go"
       - ".github/workflows/own-profile.yml"
   workflow_dispatch:
 
@@ -77,6 +80,8 @@ jobs:
           go test -count=1 -v -run 'TestProfileSections|TestPeopleBrowseCustomFields|TestProfileActionCalls|TestVIPError|TestValidateProfileFieldLikeSlack|TestPhotoCropLikeSlack|TestCheckPhoto|TestSaveProfileForm|TestSetProfileSectionLikeSlack|TestProfilePhoto|TestUsergroupMembersByKind|TestProfileGrantsLikeSlack|TestUsergroupRightsLikeSlack|TestUsergroupWritesLikeSlack' ./internal/core
           go test -count=1 -v -run 'TestEmojiTofu' ./internal/ui/richview ./internal/ui/slackc
           xvfb-run -a go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane|TestProfileNameIsRealName|TestProfileMoreMenu|TestProfilePresenceColor|TestProfileDate|TestProfileVIPToggle|TestProfileMenuViewFiles|TestProfileFieldLink|TestProfileOpenFullWithoutHooks|TestProfileViewAs|TestAppAddToChannel|TestUserGroupPane|TestUserGroupCreate|TestProfilePaneBackButton|TestEditProfile|TestCropImageLikeChromium' ./internal/ui/popups
+          # the user group dialogs' selects through the real shell (Escape)
+          go test -count=1 -v -run 'TestUserGroupEditEscapeThroughShell' ./internal/ui
           ls -la "$PROFILE_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

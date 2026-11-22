@@ -357,6 +357,10 @@ func (c *chrome) overflowProps() slackc.Props {
 		sp := slackc.Props{"isDisabled": c.cur.sendOff(), "isEditing": c.cur.Mode == modeEdit}
 		if c.cur.Mode != modeEdit && c.cur.Hide&(1<<crSend) == 0 {
 			sp["children"] = []any{slackc.Child("SendButton", c.sendButtonProps(), c.layoutSendButton)}
+			if c.cur.Drafts > 0 { // WysiwygContainer's suffix: the drafts button, then the send button
+				sp["children"] = []any{slackc.Child("DraftManagementButton", c.draftButtonProps(), c.layoutDraftButton),
+					slackc.Child("SendButton", c.sendButtonProps(), c.layoutSendButton)}
+			}
 		}
 		kids = append(kids, slackc.Child(crSubmitName, sp, func(gtx layout.Context, p slackc.Props) layout.Dimensions {
 			return c.layoutSubmit(gtx, p)
@@ -736,8 +740,10 @@ func (c *chrome) dividerOn(which uint8) bool {
 }
 
 // layoutSubmit is the submit group: the send split button (SendButton),
-// or Cancel and Save while editing. p is TextySubmitButton's props under
-// a patch (nil otherwise).
+// after the drafts button (DraftManagementButton, draft_button.go) while
+// there are drafts, 4px apart and bottom-aligned (.c-wysiwyg_container__
+// suffix: gap 4, align-items flex-end); or Cancel and Save while
+// editing. p is TextySubmitButton's props under a patch (nil otherwise).
 func (c *chrome) layoutSubmit(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if c.cur.Mode == modeEdit {
 		return c.layoutEditButtons(gtx, c.f.h.Theme(), &c.cur)
@@ -748,10 +754,41 @@ func (c *chrome) layoutSubmit(gtx layout.Context, p slackc.Props) layout.Dimensi
 	if c.hidden(crSend) {
 		return layout.Dimensions{}
 	}
-	if e, patched := kid(p, "SendButton"); patched {
-		return c.layoutInline(gtx, e)
+	send := func(gtx layout.Context) layout.Dimensions {
+		if e, patched := kid(p, "SendButton"); patched {
+			return c.layoutInline(gtx, e)
+		}
+		return slackc.Component(gtx, "SendButton", c, (*chrome).sendButtonProps, (*chrome).layoutSendButton)
 	}
-	return slackc.Component(gtx, "SendButton", c, (*chrome).sendButtonProps, (*chrome).layoutSendButton)
+	if c.cur.Drafts <= 0 {
+		return send(gtx)
+	}
+	var parts [2]crSuf
+	for i, f := range [2]layout.Widget{func(gtx layout.Context) layout.Dimensions {
+		if e, patched := kid(p, "DraftManagementButton"); patched {
+			return c.layoutInline(gtx, e)
+		}
+		return slackc.Component(gtx, "DraftManagementButton", c, (*chrome).draftButtonProps, (*chrome).layoutDraftButton)
+	}, send} {
+		before := c.shown
+		m := op.Record(gtx.Ops)
+		d := f(gtx)
+		parts[i] = crSuf{call: m.Stop(), size: d.Size, ids: c.shown &^ before}
+	}
+	h := max(parts[0].size.Y, parts[1].size.Y)
+	x := 0
+	for _, s := range parts {
+		if s.size.X <= 0 {
+			c.shown &^= s.ids
+			continue
+		}
+		if x > 0 {
+			x += gtx.Dp(4)
+		}
+		c.place(gtx, s.call, image.Pt(x, h-s.size.Y), s.ids)
+		x += s.size.X
+	}
+	return layout.Dimensions{Size: image.Pt(x, h)}
 }
 
 // ---- SendButton: the send split button ----

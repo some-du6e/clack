@@ -119,6 +119,21 @@ type ListOpener interface {
 	OpenListLink(url string) bool
 }
 
+// newEmailRendering is new_email_rendering: off, Slack's EmailFileDetails
+// draws nothing (FkQ0), so an email file opens no email pane.
+func newEmailRendering(h Host) bool {
+	app := h.Core()
+	return app == nil || app.NewEmailRendering()
+}
+
+// EmailOpener is optional: an email file's header (MessageFileHeader's
+// onEmailHeaderClick) and its View file details open Slack's
+// EmailFileDetails in the secondary view (toFileDetails), for the
+// message ch/ts that shares it.
+type EmailOpener interface {
+	OpenEmailFile(f *richtext.File, ch, ts string)
+}
+
 // PaneBack is optional: the back stack of the view container being laid
 // out (Slack's view.prev, which the split view keeps when it navigates in
 // place). While PaneBack reports true the thread header draws Slack's
@@ -196,7 +211,8 @@ func styleFor(h Host) *richview.Style {
 	st := styleForTheme(h.Theme(), h.Images())
 	if app := h.Core(); app != nil {
 		st.SetFlatHeadings(flatHeadings(app))
-		st.SetWorkObjects(woStyleFlags(h, app)) // work object cards (workobjects.go)
+		st.SetNewEmailRendering(app.NewEmailRendering()) // email files (richview email.go)
+		st.SetWorkObjects(woStyleFlags(h, app))          // work object cards (workobjects.go)
 		st.WorkObjects = woSource{app}
 		st.PrivateForwarding = func() bool { v, _ := app.TeamPref("private_message_forwarding"); return string(v) == "true" }
 	}
@@ -394,6 +410,10 @@ func (r *richHandler) OpenImage(img richtext.Image) {
 	r.h.OpenLightbox(img, *r.m)
 }
 func (r *richHandler) OpenFile(f *richtext.File) {
+	if eo, ok := r.h.(EmailOpener); ok && f.ID != "" && f.Email != nil && r.m != nil && newEmailRendering(r.h) {
+		eo.OpenEmailFile(f, r.m.Channel, r.m.TS)
+		return
+	}
 	if co, ok := r.h.(CanvasOpener); ok && f.ID != "" && core.IsCanvasFile(f.Type, "", f.PrettyType) {
 		co.OpenCanvas(f.ID)
 		return
@@ -424,6 +444,17 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 	} else if f.URL != "" {
 		openURL(f.URL)
 	}
+}
+
+// OpenEmailLink is a link in an email's body (richview.EmailLinkHandler):
+// the Host's Open Link confirmation (EmailIframe's openLinkRedirectModal),
+// else the link.
+func (r *richHandler) OpenEmailLink(u string) {
+	if o, ok := r.h.(interface{ OpenEmailLink(string) }); ok {
+		o.OpenEmailLink(u)
+		return
+	}
+	r.OpenURL(u)
 }
 
 // FileSectionMenuOpener is optional on the Host: a message file card's
@@ -506,6 +537,10 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 			openURL(u)
 		}
 	case richview.FileEditWindow, richview.FileDetails:
+		if eo, ok := r.h.(EmailOpener); ok && a == richview.FileDetails && f.Email != nil && f.ID != "" && newEmailRendering(r.h) {
+			eo.OpenEmailFile(f, m.Channel, m.TS)
+			return
+		}
 		if f.Permalink != "" {
 			openURL(f.Permalink)
 		}

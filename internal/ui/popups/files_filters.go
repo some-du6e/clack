@@ -130,10 +130,10 @@ func OpenFilesFilters(h Host, cur FilesFilters, o FilesFiltersOpts) *FilesFilter
 	m.in.fetch = func(ctx context.Context, q string) (func(), error) { return m.fetch(ctx, q, true) }
 	var from, in []ugOption
 	for _, id := range cur.From {
-		from = append(from, ffOption(c, id))
+		from = append(from, ffOption(h, id))
 	}
 	for _, id := range cur.In {
-		in = append(in, ffOption(c, id))
+		in = append(in, ffOption(h, id))
 	}
 	m.from.SetPicked(from)
 	m.in.SetPicked(in)
@@ -153,6 +153,8 @@ func OpenFilesFilters(h Host, cur FilesFilters, o FilesFiltersOpts) *FilesFilter
 		Buttons:    []*ModalButton{m.clear, m.done},
 		FooterPad:  24, // c-sk-modal_footer: 84px, padding 24px 28px
 		FooterLeft: m.helpLink,
+		// an open From or In list takes Escape first (onEscape)
+		OnEscape: ugEscape(m.from, m.in),
 		FocusStops: func() []event.Tag {
 			stops := []event.Tag{&m.in.ed, &m.dateBtn, &m.help}
 			if !o.HideFrom {
@@ -166,7 +168,11 @@ func OpenFilesFilters(h Host, cur FilesFilters, o FilesFiltersOpts) *FilesFilter
 }
 
 // ffOption is a picked id as an option: a person or a conversation.
-func ffOption(c *core.App, id string) ugOption {
+// A group DM is named as its option row was (the Searcher's
+// getDisplayNameForChannel: the custom name, else its members), not by its
+// raw mpdm- name.
+func ffOption(h Host, id string) ugOption {
+	c := h.Core()
 	if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
 		if c != nil {
 			if u, ok := c.User(id); ok {
@@ -174,6 +180,12 @@ func ffOption(c *core.App, id string) ugOption {
 			}
 		}
 		return ugOption{ID: id, Label: id, User: true}
+	}
+	if c != nil {
+		if cv, ok := c.Conv(id); ok && cv.Kind == "mpim" {
+			name := convTitle(h, cv)
+			return ugOption{ID: id, Label: name, Conv: core.Conv{ID: id, Name: name, Kind: "mpim"}}
+		}
 	}
 	return ugChannelOption(c, id)
 }
@@ -185,12 +197,12 @@ func (m *FilesFiltersModal) Modal() *Modal { return m.modal }
 func (m *FilesFiltersModal) From() *ugSelect { return m.from }
 func (m *FilesFiltersModal) In() *ugSelect   { return m.in }
 
-// Filters are the modal's filters now.
+// Filters are the modal's filters now. From goes with them even while
+// the modal hides it (onSave passes fromSelections whatever
+// filtersExcluded says): a From set under All files stays under Created
+// by you.
 func (m *FilesFiltersModal) Filters() FilesFilters {
-	f := FilesFilters{In: m.in.IDs(), After: m.after, Before: m.before}
-	if !m.o.HideFrom {
-		f.From = m.from.IDs()
-	}
+	f := FilesFilters{From: m.from.IDs(), In: m.in.IDs(), After: m.after, Before: m.before}
 	if len(f.From) == 0 {
 		f.From = nil
 	}

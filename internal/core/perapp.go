@@ -62,6 +62,12 @@ func (a *App) Release() {
 	store.Release(a.S)
 }
 
+// Released reports whether Release ran: the App is done for good, and
+// work for it that ends later (a call's answer, a timer) has nothing to
+// update. The UI drops such work rather than keep it, and the App with it,
+// for a frame that may never come.
+func (a *App) Released() bool { return a.released.Load() }
+
 // closeSubscribers closes every channel the App handed out to
 // subscribers, Subscribe's, SubscribeRaw's and its Interactive's, so the
 // goroutines ranging over them end. Each such goroutine kept the App, and

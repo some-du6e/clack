@@ -22,9 +22,11 @@ import (
 // App wires the Slack client, the store and the realtime connection.
 // All methods are safe for concurrent use.
 type App struct {
-	C   *slack.Client
-	S   *store.Store
-	RTM *slack.RTM
+	// botProfileTeams: bot id -> its messages' bot_profile.team_id (botHomeTeam)
+	botProfileTeams sync.Map
+	C               *slack.Client
+	S               *store.Store
+	RTM             *slack.RTM
 
 	usersAsked usersAsked // ids users/info was asked for (lazy_users.go)
 	usersOut   usersOut   // the members users/info has out (members.go)
@@ -646,9 +648,10 @@ func (a *App) Boot(ctx context.Context) error {
 		s := time.Now()
 		store.SetCacheLoadLog(func(line string) { applog.Debugf("%s", line) })
 		rest := a.S.LoadCacheBase()
-		a.notePrefsInstalled()       // the cached prefs (msg_refs.go)
-		a.installCachedExperiments() // Slack's persisted experiments store (experiments.go)
-		a.loadCodeChannelState()     // the closed code channels, before the first sidebar (codechannel_close.go)
+		a.notePrefsInstalled()           // the cached prefs (msg_refs.go)
+		a.installCachedExperiments()     // Slack's persisted experiments store (experiments.go)
+		a.installCachedEnterprisePrefs() // Slack's persisted enterprisePrefs store (enterprise_prefs.go)
+		a.loadCodeChannelState()         // the closed code channels, before the first sidebar (codechannel_close.go)
 		tCache = time.Since(s)
 		close(cacheBase)
 		// The unknown member fetcher and the channel and bot name resolver
@@ -1660,6 +1663,7 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 		v.Attachments, _ = json.Marshal(m.Attachments)
 	}
 	if bp := m.BotProfile; bp != nil {
+		a.noteBotProfileTeam(bp.ID, bp.TeamID)
 		v.BotProfile = &BotProfile{ID: bp.ID, Name: bp.Name, AppID: bp.AppID, UserID: bp.UserID, TeamID: bp.TeamID,
 			Icon: firstNonEmpty(bp.Icons.Image72, bp.Icons.Image48, bp.Icons.Image36), Deleted: bp.Deleted}
 	}
