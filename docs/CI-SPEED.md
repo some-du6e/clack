@@ -468,7 +468,9 @@ gh workflow run ci.yml --repo some-du6e/clack --ref <branch>-red1 -f only=linux-
 
 - The names are as `go test -json` reports them: `TestA`, a subtest
   `TestA/sub` (spaces become `_`), comma-separated. A listed test covers its
-  subtests; a listed subtest's failure also fails its parents, which is fine.
+  subtests; a listed subtest's failure also fails its parents, which is fine
+  unless a parent printed lines of its own (its own `t.Error`, or a `t.Log`:
+  test2json can't tell them apart): then list the parent too.
 - Each job that sets up Go runs `.github/actions/expect-fail` right after
   setup-go: it builds `tools/expectfail` and sets `GOFLAGS=-exec=<it>`, so
   every `go test` in the job (text or `-json`, `xvfb-run`, test-shard.py)
@@ -486,11 +488,27 @@ gh workflow run ci.yml --repo some-du6e/clack --ref <branch>-red1 -f only=linux-
   A step without `-v` shows an expected failure only there: to `go test`
   the package passed, so it prints nothing of it.
 - Not judged: binaries a job builds with `go test -c` and runs itself
-  (flake-check's Windows fanouts, some stress jobs). A listed failure there
-  stays red, never a false pass.
+  (flake-check's Windows fanouts, some stress jobs), and a step that sets
+  `XF_OFF=1` because it needs a binary's real status (gio-layer-fix.sh's
+  tests that must panic on stock Gio, in linux-gio and macos-idle). A
+  listed failure there stays red, never a false pass.
+- Rerunning a proof run's failed jobs: each record carries its leg (job and
+  matrix index) and the run's attempt, and the check keeps each leg's
+  latest, so the failed attempt's records don't count.
 - A new job in one of these workflows needs the two steps and an entry in
   `expect-fail`'s needs; `tools/expectfail`'s TestWorkflowsWireExpectFail
-  fails ci until it has them.
+  fails ci until it has them. After a merge (a train taking a branch made
+  before quiet-ci), wire them with the script, which needs only Python:
+
+  ```sh
+  python3 -I .github/scripts/expect_fail_wire.py --check .github/workflows/flake-check.yml  # what's missing, exit 1
+  python3 -I .github/scripts/expect_fail_wire.py .github/workflows/flake-check.yml          # add it, in place
+  ```
+
+  It adds the input, the setup step after setup-go, the report step last
+  and the check job's needs, exactly as the guard wants them, and leaves a
+  wired file byte for byte as it was. It refuses (exit 2) a file not laid
+  out like the repo's (jobs at 2 spaces, steps at 6).
 
 Proven on quiet-ci (throwaway branches, deleted): the listed test failing
 alone was green (flake-check 44974452814; ci only=linux-test over the whole
@@ -542,7 +560,13 @@ a successful ci full-test on a commit with the tag's tree (prior-full-test.sh,
 ci's runs of the last 3 days) and, finding one, skips the suite with a
 summary linking that run; otherwise it runs as before. The tree, not the
 sha: ui squashes a branch whose pre-merge full-test ran on the branch's
-commit, and ui's own full-test is often cancelled.
+commit, and ui's own full-test is often cancelled. A proof run's green
+full-test doesn't count (its expect-fail job ran: the listed failures exit
+0, and a listed test that panics ends its package early), and any API
+error runs the suite. It asks the server for ci's green dispatches and
+ui and main pushes of the 3 days (a branch's push run skips full-test).
+Not covered: nothing keeps ci's full-test and this job step for step
+alike; a change to one should go to both.
 
 ### The 24 h of failures, classified
 
