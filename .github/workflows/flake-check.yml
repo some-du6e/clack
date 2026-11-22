@@ -286,6 +286,8 @@ on:
       - "internal/store/taut_mirror.go"
       - "internal/ui/views/adapt.go"
       - "internal/ui/views/activity_rows.go"
+      # the mf-late job's own
+      - "internal/media/mf/**"
 
 permissions:
   contents: read
@@ -3404,3 +3406,41 @@ jobs:
         with:
           name: launch-windows
           path: ${{ runner.temp }}/launch/out
+
+  # mf-first-frame (2026-11-21): on windows-idle the first frame came 1 to
+  # 1.65 s after the engine played (software decoding on the Basic Render
+  # Driver, under load), and TestMFRGBA and TestMFPlaysFixture counted
+  # the seconds before it; TestMFColdStart held the platform's start
+  # (MFStartup, Direct3D, no audio output) to its budget. Each process
+  # runs TestMFLateFirstTransfer (the hook holds the first transfer
+  # 1.5 s) and the three, under four CPU burners, COUNT times, a fresh
+  # process each so ColdStart is cold. Dispatch with only=mf-late.
+  mf-late:
+    if: ${{ !inputs.only || startsWith('mf-late', inputs.only) }}
+    runs-on: windows-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Media Foundation's first frames under load (COUNT processes)
+        shell: bash
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          go test -c -o "$RUNNER_TEMP/mf.test.exe" ./internal/media/mf || exit 1
+          for i in 1 2 3 4; do (while :; do :; done) & done
+          cd internal/media/mf
+          for i in $(seq 1 "$COUNT"); do
+            "$RUNNER_TEMP/mf.test.exe" -test.count=1 -test.v -test.timeout 3m -test.run '^(TestMFColdStart|TestMFLateFirstTransfer|TestMFRGBA|TestMFPlaysFixture)$' > "$RUNNER_TEMP/mf-$i.log" 2>&1 || rc=1
+            echo "== process $i: $(grep -c -- '--- FAIL' "$RUNNER_TEMP/mf-$i.log") FAIL lines"
+            grep -E -- '--- FAIL|mf_(late_)?windows_test.go:[0-9]+: .*(want|second [0-9]: (no|[0-2]) |frames drawn in the three|after the engine was made|hook)' "$RUNNER_TEMP/mf-$i.log" | head -12
+          done
+          kill $(jobs -p) 2>/dev/null
+          exit $rc

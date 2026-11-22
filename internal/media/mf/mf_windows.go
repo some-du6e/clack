@@ -175,6 +175,12 @@ func otherFormat(f uint32) uint32 {
 // format fallback).
 var forceTransferFailures atomic.Int32
 
+// delayFirstTransfer holds a player's first transfer until this long
+// (nanoseconds) after its loadeddata (tests: a runner's first frame that
+// came 1 to 1.65 s after the engine played, so the clock ran through the
+// video's first second with nothing drawn).
+var delayFirstTransfer atomic.Int64
+
 // forceAudioRenderer makes engines with their audio renderer even where
 // there's no audio output (tests: the 2.2 s to the metadata, muted or not).
 var forceAudioRenderer atomic.Bool
@@ -777,6 +783,9 @@ func (p *player) tick() {
 	p.NTicks.Add(1)
 	if time.Since(p.lastRefresh) > media.TimeUpdateEvery {
 		p.refresh()
+	}
+	if d := delayFirstTransfer.Load(); d > 0 && p.okTransfers == 0 && !p.tData.IsZero() && time.Since(p.tData) < time.Duration(d) {
+		return
 	}
 	var hr C.int32_t
 	var pts C.int64_t
