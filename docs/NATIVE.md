@@ -110,6 +110,7 @@ func (*App) Conv(id string) (Conv, bool)
 func (*App) ConvRef(id string) ConvRef
 func (*App) Count(ch string) Count
 func (*App) Counts() map[string]Count
+func (*App) CreateUsergroup(ctx context.Context, c UsergroupCreate) (Usergroup, error)
 func (*App) CustomEmoji() map[string]string { return a.S.CustomEmoji.Snapshot() }
 func (*App) Delete(ctx context.Context, ch, ts string) error { return a.C.Delete(ctx, ch, ts) }
 func (*App) DeletedFiles(ctx context.Context) (FilePage, error)
@@ -166,7 +167,7 @@ func (*App) ScheduledMessages(ctx context.Context, ch string) ([]ScheduledMessag
 func (*App) ScheduleMessage(ctx context.Context, o SendOpts, postAt int64) (ScheduledMessage, error)
 func (*App) SearchChannels(ctx context.Context, query string, count int) ([]ChannelHit, error)
 func (*App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, error)
-func (*App) SearchUsergroups(ctx context.Context, o UsergroupOpts) ([]Usergroup, error)
+func (*App) SearchUsergroups(ctx context.Context, o UsergroupOpts) (UsergroupPage, error)
 func (*App) SearchUsers(ctx context.Context, query string, count int) ([]User, error)
 func (*App) Self() User
 func (*App) Send(ctx context.Context, o SendOpts) (Message, error)

@@ -347,15 +347,13 @@ func TestRealWindowCaretCost(t *testing.T) {
 	// a scroll's frames are whole: partial frames' signatures, diff and
 	// sticky places must cost them little (on a Mac's GPU the CPU's part
 	// of a frame is a few ms, so their share shows there most: 10% in
-	// most runs). The median turn of each, so one turn's background work
-	// (a load landing, a collection) doesn't decide it.
+	// most runs). The fastest turn of each: what else runs on a shared
+	// runner only ever adds CPU to a turn (one turn's frames cost 3.5 ms,
+	// another's 7.2, in one run), so the least is each side's own cost.
+	// The median turns flipped it: 131% on train-151's macos-idle, where
+	// the fastest turns were 3.53 ms and 3.54 ms.
 	if sWhole.frames > 0 && sPart.frames > 0 {
-		mid := func(v []time.Duration) time.Duration {
-			v = slices.Clone(v)
-			slices.Sort(v)
-			return (v[len(v)/2-1] + v[len(v)/2]) / 2
-		}
-		pp, pw := mid(pTurns), mid(wTurns)
+		pp, pw := slices.Min(pTurns), slices.Min(wTurns)
 		ratio := float64(pp) / float64(max(pw, 1))
 		t.Logf("a scroll's frame costs %v of CPU with partial frames, %v without (%.0f%%; the turns' %v and %v)", pp.Round(10*time.Microsecond), pw.Round(10*time.Microsecond), 100*ratio, pTurns, wTurns)
 		if ratio > scrollCPUMax {
@@ -365,6 +363,9 @@ func TestRealWindowCaretCost(t *testing.T) {
 }
 
 // scrollCPUMax bounds a scroll frame's CPU with partial frames against
-// without (TestRealWindowCaretCost): what they add to whole frames, with
-// the runners' noise (the Mac's turns ran 110% to 129%).
-const scrollCPUMax = 1.25
+// without (TestRealWindowCaretCost): what they add to whole frames, each
+// side's fastest turn. The measured spread on macos-latest under two CPU
+// burners (flakes-1122's fl1122-s-mac) ran 97% to 136% across six runs
+// (the median turns, before, 110% to 131% unloaded), so 150%: what partial
+// frames add (about 10%) still shows past it if it grows by half.
+const scrollCPUMax = 1.5

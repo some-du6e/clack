@@ -59,6 +59,14 @@ func (a *App) Release() {
 	if v, ok := appsByStore.Load(a.S); ok && v.(*App) == a {
 		appsByStore.Delete(a.S)
 	}
+	// its catch-ups' keys (catchUpKey holds the App): a catch-up still
+	// reading when the App is released would keep it until it ends
+	catchingUp.Range(func(k, _ any) bool {
+		if k.(catchUpKey).a == a {
+			catchingUp.Delete(k)
+		}
+		return true
+	})
 	store.Release(a.S)
 }
 

@@ -651,7 +651,9 @@ func (a *App) Boot(ctx context.Context) error {
 		a.notePrefsInstalled()           // the cached prefs (msg_refs.go)
 		a.installCachedExperiments()     // Slack's persisted experiments store (experiments.go)
 		a.installCachedEnterprisePrefs() // Slack's persisted enterprisePrefs store (enterprise_prefs.go)
-		a.loadCodeChannelState()         // the closed code channels, before the first sidebar (codechannel_close.go)
+		a.installCachedFeatures()        // Slack's persisted featureAccess store, then its blocking boot read (chposting.go)
+		a.startFeatures()
+		a.loadCodeChannelState() // the closed code channels, before the first sidebar (codechannel_close.go)
 		tCache = time.Since(s)
 		close(cacheBase)
 		// The unknown member fetcher and the channel and bot name resolver

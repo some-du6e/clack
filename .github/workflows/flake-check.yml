@@ -317,6 +317,20 @@ on:
       - "internal/ui/popups/slick_mamenu_pick_test.go"
       # the mf-late job's own
       - "internal/media/mf/**"
+      # the fl1122 jobs' own
+      - "internal/ui/composer_release_test.go"
+      - "internal/ui/files_tab_more_test.go"
+      - "internal/ui/theme/pixeltest/**"
+      - "internal/permapguard/**"
+      - "internal/core/perapp.go"
+      - "internal/fakeslack/perserver.go"
+      - "internal/core/lists.go"
+      - "internal/core/lists_refetch_test.go"
+      - "internal/media/avf/avf_darwin_test.go"
+      - "internal/ui/caret_window_test.go"
+      - "internal/ui/messages/scroll_gaps_test.go"
+      - "internal/ui/messages/compact_test.go"
+      - "third_party/gioui.org/app/clack_bounds_darwin_test.go"
 
 permissions:
   contents: read
@@ -4639,6 +4653,224 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # flakes-1122: TestLeftComposerLetsGoOfFocus (the reopened thread's reply
+  # box) and TestFilesTabHideAndLinkDetails (a header read out across a
+  # Hide tab, its members call held: its race forced every run).
+  # Dispatch with only=fl1122.
+  fl1122-r-ui:
+    if: ${{ !inputs.only || startsWith('fl1122-r-ui', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: ui, then messages' late names (COUNT each)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 20m -run '^(TestLeftComposerLetsGoOfFocus|TestFilesTabHideAndLinkDetails)$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122: the per-App and per-Server map guards (permapguard), and
+  # core's list refetch across an applied event (TestListRefetchKeepsALaterEdit
+  # holds the read; TestListEditRoundTrip, the flake it found), COUNT each.
+  fl1122-r-guard:
+    if: ${{ !inputs.only || startsWith('fl1122-r-guard', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: guards
+        run: |
+          set +e
+          rc=0
+          go test -count=1 ./internal/permapguard || rc=1
+          go test -count=1 -run '^TestReleaseCoversAppMaps$' ./internal/core || rc=1
+          go test -count=1 -run '^TestForgetCoversServerMaps$' ./internal/fakeslack || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestListRefetchKeepsALaterEdit|TestListEditRoundTrip)$' ./internal/core || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122: pixeltest.Render retries a flaky eglInitialize (0x3001) in a
+  # process whose GPU worked (TestRenderRetriesAFlakyEGL injects it), and
+  # the two reaction pill tests it ended halfway.
+  fl1122-r-pixel:
+    if: ${{ !inputs.only || startsWith('fl1122-r-pixel', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: pixeltest (COUNT), then the pill tests (3 each)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=$COUNT -timeout 5m -run '^TestRenderRetriesAFlakyEGL$' ./internal/ui/theme/pixeltest || rc=1
+          xvfb-run -a go test -count=3 -timeout 10m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=3 -timeout 10m -run '^TestViewsPatchedReactionPillLikeNative$' ./internal/ui/views || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122, stress: TestFilesViewFiltersCreatedByYou,
+  # TestThreadsRefreshGapLikeSlack and TestFlingScrollNoGapsCompact, COUNT
+  # each under two CPU burners (each failed only under load).
+  fl1122-s-views:
+    if: ${{ !inputs.only || startsWith('fl1122-s-views', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: under load (COUNT each)
+        run: |
+          set +e
+          rc=0
+          for i in 1 2; do (while :; do :; done) & done
+          xvfb-run -a go test -count=$COUNT -timeout 12m -run '^(TestFilesViewFiltersCreatedByYou|TestThreadsRefreshGapLikeSlack)$' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 12m -run '^TestFlingScrollNoGapsCompact$' ./internal/ui/messages || rc=1
+          kill $(jobs -p) 2>/dev/null
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122, stress on macOS: TestDisplaysMac (between two NSScreen
+  # reads that agree), TestRealWindowCaretCost (each side's fastest turn;
+  # 5 runs under two CPU burners) and TestAVFPlaysFixture (the seconds
+  # the test drew through).
+  fl1122-s-mac:
+    if: ${{ !inputs.only || startsWith('fl1122-s-mac', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: macOS (COUNT, 3 and COUNT)
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 8m -run '^TestDisplaysMac$' gioui.org/app > "$RUNNER_TEMP/displays.log" 2>&1 || rc=1
+          echo "== TestDisplaysMac: $(grep -c -- '^--- FAIL: TestDisplaysMac' "$RUNNER_TEMP/displays.log") of $COUNT failed"
+          CLACK_MEDIA_TESTS=1 go test -count=$COUNT -v -timeout 14m -run '^TestAVFPlaysFixture$' ./internal/media/avf > "$RUNNER_TEMP/avf.log" 2>&1 || rc=1
+          echo "== TestAVFPlaysFixture: $(grep -c -- '^--- FAIL: TestAVFPlaysFixture' "$RUNNER_TEMP/avf.log") of $COUNT failed"
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui || exit 1
+          for i in 1 2; do (while :; do :; done) & done
+          cd internal/ui
+          for i in 1 2 3 4 5; do
+            "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' > "$RUNNER_TEMP/caret-$i.log" 2>&1 || rc=1
+            grep -E 'caret_window_test.go:[0-9]+: a scroll.s frame costs|--- (PASS|FAIL)' "$RUNNER_TEMP/caret-$i.log"
+          done
+          cd "$GITHUB_WORKSPACE"
+          kill $(jobs -p) 2>/dev/null
+          grep -hE -- '--- FAIL|_test.go:[0-9]+: .*want' "$RUNNER_TEMP"/*.log | head -20
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: fl1122-mac-logs
+          path: ${{ runner.temp }}/*.log
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122, stress on Windows: TestMFSeekAndPause (Clack's part, from
+  # seeked) COUNT times under two CPU burners.
+  fl1122-s-win:
+    if: ${{ !inputs.only || startsWith('fl1122-s-win', inputs.only) }}
+    runs-on: windows-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: Media Foundation (COUNT)
+        shell: bash
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: |
+          set +e
+          for i in 1 2; do (while :; do :; done) & done
+          go test -count=$COUNT -v -timeout 15m -run '^TestMFSeekAndPause$' ./internal/media/mf > "$RUNNER_TEMP/seek.log" 2>&1
+          rc=$?
+          kill $(jobs -p) 2>/dev/null
+          echo "== TestMFSeekAndPause: $(grep -c -- '^--- FAIL: TestMFSeekAndPause' "$RUNNER_TEMP/seek.log") of $COUNT failed"
+          grep -E -B2 -A12 -- '^--- FAIL' "$RUNNER_TEMP/seek.log" | head -60
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: fl1122-win-logs
+          path: ${{ runner.temp }}/seek.log
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -4746,6 +4978,12 @@ jobs:
       - karim-1118-r4-review
       - lost-click
       - mf-late
+      - fl1122-r-ui
+      - fl1122-r-guard
+      - fl1122-r-pixel
+      - fl1122-s-views
+      - fl1122-s-mac
+      - fl1122-s-win
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

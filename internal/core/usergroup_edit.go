@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/url"
 	"slices"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/frecency"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -218,7 +220,7 @@ func (a *App) featuresNow(ctx context.Context) {
 		if known {
 			return
 		}
-		if !loading {
+		if !loading { // one read, then go on with what the store holds
 			a.loadFeatures(ctx)
 			return
 		}
@@ -351,16 +353,19 @@ func (a *App) CreateUsergroup(ctx context.Context, c UsergroupCreate) (Usergroup
 	if err := a.C.Call(ctx, "usergroups.create", p, &res); err != nil {
 		return Usergroup{}, err
 	}
-	g := res.Usergroup.usergroup()
-	if g.ID == "" {
+	if res.Usergroup.ID == "" {
 		return Usergroup{}, errors.New("usergroups.create: no usergroup in the answer")
 	}
-	a.S.PutUsergroup(g)
+	g := a.S.MergeUsergroup(res.Usergroup.ID, res.Usergroup.over)
 	if len(c.Channels) > 0 {
 		a.S.SetGroupChannels(g.ID, c.Channels)
 	}
 	if len(c.Users) > 0 {
-		_ = a.SetUsergroupUsers(ctx, Usergroup{ID: g.ID}, c.Users)
+		// Slack dispatches it without waiting or a catch: a failure shows
+		// nothing (the group stays, without members); it is only logged
+		if err := a.SetUsergroupUsers(ctx, Usergroup{ID: g.ID}, c.Users); err != nil {
+			log.Printf("user groups: create %s: usergroups.users.update: %v", logtag.ID(g.ID), err)
+		}
 	}
 	return usergroupOf(g), nil
 }
