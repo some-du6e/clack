@@ -87,11 +87,14 @@ func TestUserGroupBrowserErrorsLikeSlack(t *testing.T) {
 				return nil, false
 			}
 			mu.Lock()
-			ff, fm, h := failFirst, failMore, held
+			h := held
 			mu.Unlock()
 			if f.Has("cursor_mark") && h {
 				<-hold
 			}
+			mu.Lock()
+			ff, fm := failFirst, failMore // read after the hold: the test flips them while it waits
+			mu.Unlock()
 			if ff && !f.Has("cursor_mark") || fm {
 				return map[string]any{"ok": false, "error": "internal_error"}, true
 			}
