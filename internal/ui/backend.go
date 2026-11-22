@@ -1133,8 +1133,13 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 // user's lane, which is for input), and the natives run in the order the
 // plugins' patches call them, or the order of the calls with none
 // (taut.DispatchSeq). A goroutine each (App.dispatch) could show two in
-// reverse. However late its JS runs, its native still shows it.
+// reverse. However late its JS runs, its native still shows it. Slick's
+// filters ask the toast it shows as it's about to go to the system, with
+// its title and body (sendNote's slickAllows), so their patch of the thunk
+// lets it by (_clackToast; slick js 30_main.js), where they ask any other
+// dispatch over its arguments.
 func (a *App) showNotification(args map[string]any, native func(context.Context, map[string]any) (any, error)) {
+	args["_clackToast"] = true
 	taut.DispatchSeq(context.Background(), a.Taut(), "showNotification", args, native, func(_ any, err error) {
 		if err != nil {
 			log.Printf("ui: showNotification: %v", err)

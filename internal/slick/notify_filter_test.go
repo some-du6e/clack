@@ -1,8 +1,11 @@
 package slick
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // A main half's notifications.filter runs over the toast about to show,
@@ -46,4 +49,49 @@ func TestAllowNotificationRunsTheFilters(t *testing.T) {
 	if !h.s.AllowNotification(h.ctx(), toast) {
 		t.Error("with the plugin off a toast was kept")
 	}
+}
+
+// A showNotification dispatch is filtered as it comes, as Slick's patch
+// sees every notification Slack shows: one a filter doesn't permit never
+// reaches its native (Streamer Mode, Shut Up Slackbot), and with no
+// filter the thunk isn't patched. Clack's own toasts (_clackToast) pass
+// the thunk: they're asked as they're about to show, with the title and
+// body they show (AllowNotification). Round 3 asked only there, and a
+// dispatch with a native of its own skipped the filters.
+func TestShowNotificationDispatchRunsTheFilters(t *testing.T) {
+	h := newHarness(t)
+	mustImport(t, h, probePlugin("HushProbe", `{}`, ""))
+	mustImport(t, h, probeMain("HushProbe", `["notifications"]`, `
+  async ready(ctx) {
+    return ctx.notifications.filter((o) => !String(o.body).includes("hush"));
+  }`))
+	if err := h.s.SetEnabled(h.ctx(), "HushProbe", true); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 10*time.Second, "the filter registered", func() bool { return h.s.noteFilters.Load() == 1 })
+	eventually(t, 10*time.Second, "the thunk patched", func() bool { return h.tt.ThunkPatched("showNotification") })
+	shown := 0
+	native := func(context.Context, map[string]any) (any, error) { shown++; return nil, nil }
+	dispatch := func(args map[string]any) {
+		t.Helper()
+		if _, err := taut.Dispatch(h.ctx(), h.tt, "showNotification", args, native); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dispatch(map[string]any{"title": "someone", "message": "hush now"})
+	if shown != 0 {
+		t.Error("a showNotification the filter doesn't permit reached its native")
+	}
+	dispatch(map[string]any{"title": "someone", "message": "a synthetic line"})
+	if shown != 1 {
+		t.Errorf("a permitted showNotification reached its native %d times, want once", shown)
+	}
+	dispatch(map[string]any{"title": "someone", "message": "hush now", "_clackToast": true})
+	if shown != 2 {
+		t.Error("Clack's own toast was filtered at the thunk: it's asked as it's about to show")
+	}
+	if err := h.s.SetEnabled(h.ctx(), "HushProbe", false); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 10*time.Second, "the thunk unpatched", func() bool { return !h.tt.ThunkPatched("showNotification") })
 }
