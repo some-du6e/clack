@@ -4871,6 +4871,44 @@ jobs:
           retention-days: 7
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
+
+  # the Threads, Unreads and Pins rows reach their bodies and hover actions
+  # (the row's hover is the content's parent), and the invite modal's email
+  # chip takes a click on its remove button (icm-relatives)
+  row-hit:
+    if: ${{ !inputs.only || startsWith('row-hit', inputs.only) }}
+    name: "row-hit ${{ matrix.test }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { test: TestThreadsRowReachesTheBody, pkg: ./internal/ui/views }
+          - { test: TestUnreadsRowReachesTheBody, pkg: ./internal/ui/views }
+          - { test: TestPinsRowReachesItsActions, pkg: ./internal/ui/views }
+          - { test: TestInviteChipRemoveClick, pkg: ./internal/ui/popups }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.test }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -4984,6 +5022,7 @@ jobs:
       - fl1122-s-views
       - fl1122-s-mac
       - fl1122-s-win
+      - row-hit
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

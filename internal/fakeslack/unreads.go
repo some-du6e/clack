@@ -228,6 +228,30 @@ func (s *Server) PostUnread(ch, user, text string) string {
 	return ts
 }
 
+// PutUnreadMessage adds m to fixture channel ch's history as its newest
+// message, unread, without a realtime event: for a test that wants a
+// message of its own shape (blocks, reactions) in place before the app
+// boots (an Unreads frame ends at boot's client.counts latest). m.TS is
+// set when empty; it returns m's ts.
+func (s *Server) PutUnreadMessage(ch string, m slack.Message) string {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	h := s.hist[ch]
+	if m.TS == "" {
+		var sec int64 = unreadsBase + 3*86400
+		if len(h) > 0 {
+			fmt.Sscanf(h[0].TS, "%d.", &sec)
+			sec += 60
+		}
+		m.TS = unreadsTS(sec, len(h))
+	}
+	if m.Type == "" {
+		m.Type = "message"
+	}
+	s.hist[ch] = append([]slack.Message{m}, h...)
+	return m.TS
+}
+
 func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 	if !s.Size.Unreads {
 		// SetNewBadges answers the boot load's generic_new_badge in any fake
