@@ -304,9 +304,6 @@ func NewDirectories(h Host) *Directories {
 	for i := range d.srch {
 		d.srch[i] = newSearchIn(dirPlaceholderNS[i], dirPlaceholders[i])
 		d.sorts[i].labels, d.sorts[i].ns = dirSortLabels[i], nsSearch
-		if i == dirTabGroups { // useUserGroupExplorer's sorts are the browsers strings (HF/B L)
-			d.sorts[i].ns = nsBrowsers
-		}
 		d.wsPick[i] = newDirPickIn(nsSearch, "Ex. Acme Inc", false)
 	}
 	d.orgPick = newDirPickIn(nsActivity, "Ex. #project-unicorn", true)
@@ -1080,13 +1077,7 @@ func (d *Directories) body(gtx C) D {
 							return D{}
 						}
 						return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D {
-							label := nsBrowsers.T(dirActions[t])
-							if t == dirTabGroups {
-								// CreateUserGroupButton: browsers' "Create User Group" by its
-								// fallbackHash (17a27b9), the user_groups string
-								label = i18n.NS("user_groups").T(dirActions[t])
-							}
-							return d.button(gtx, &d.action[t], btnOutline, false, label)
+							return d.button(gtx, &d.action[t], btnOutline, false, nsBrowsers.T(dirActions[t]))
 						})
 					}),
 				)
@@ -1961,7 +1952,7 @@ func (d *Directories) groupsTab(gtx C) D {
 						if busy {
 							return popups.LoadingButton(gtx, d.th, &d.more, popups.BtnMedium, 80)
 						}
-						return d.button(gtx, &d.more, btnOutline, false, i18n.NS("shortcuts_gallery").T("Load More")) // ExplorerLoadMoreButton's (NQBk aJ); medium: 36px
+						return d.button(gtx, &d.more, btnOutline, false, nsBrowsers.T("Load More")) // medium: 36px
 					})
 				})
 			}
@@ -2071,7 +2062,7 @@ func (d *Directories) groupRow(gtx C, g core.Usergroup, first, last bool) D {
 					)
 				}),
 				layout.Rigid(func(gtx C) D {
-					return d.label(gtx, 13, wReg, d.p.Muted, dirJoin("\u00a0\u00a0·\u00a0\u00a0", nsSearch.T("{count, plural, =1 {# member} other {# members}}", "count", g.UserCount), oneLine(g.Description)))
+					return d.label(gtx, 13, wReg, d.p.Muted, dirJoin("\u00a0\u00a0·\u00a0\u00a0", dirMembers(g.UserCount), oneLine(g.Description)))
 				}),
 			)
 		})

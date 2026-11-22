@@ -40,9 +40,7 @@ var i18nViews = []i18nView{
 	{"drafts-scheduled", "drafts?tab=scheduled", nil},
 	{"directories-people", "directories", nil},
 	{"directories-channels", "directories?tab=channels", nil},
-	// the fake's auto-generated admins group (AdminsGroupID): a group's
-	// name is the server's, drawn as stored (0dhJ getUserGroupName: e.name)
-	{"directories-groups", "directories?tab=groups", []string{"Admins"}},
+	{"directories-groups", "directories?tab=groups", nil},
 	{"huddles", "huddles", nil},
 	{"canvas", "docs/" + fakeslack.CanvasChannel, nil},
 	{"list", "lists/" + fakeslack.ListKitchen, []string{ // the kitchen-sink list's columns, options and view
