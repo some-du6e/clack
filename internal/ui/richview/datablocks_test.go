@@ -48,13 +48,13 @@ func (h *dtHandler) ChartAction(v *rt.DataViz, btn image.Rectangle) {
 	h.btns = append(h.btns, btn)
 }
 
-func rectCenter(r image.Rectangle) f32.Point {
+func dtCenter(r image.Rectangle) f32.Point {
 	return f32.Pt(float32(r.Min.X+r.Max.X)/2, float32(r.Min.Y+r.Max.Y)/2)
 }
 
 // clickRect clicks r's centre at time at.
 func (hs *harness) clickRect(r image.Rectangle, at time.Duration) {
-	p := rectCenter(r)
+	p := dtCenter(r)
 	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p, Time: at}, press(p, at), release(p, at+20*time.Millisecond))
 }
 

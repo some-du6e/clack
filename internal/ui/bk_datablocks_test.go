@@ -7,7 +7,9 @@ package ui
 // messages' fallback text. The table pages from its footer there.
 
 import (
+	"fmt"
 	"image"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,19 +58,36 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 	})
 
 	e.a.OpenThread(ch, ts)
+	e.until("the thread's reply", 30*time.Second, func() bool {
+		msgs, _ := e.a.data.core.S.Thread(ch, ts)
+		return len(msgs) >= 2
+	})
 	var tbl *messages.DataBlockRect
-	e.until("the chart and the table in the thread", 30*time.Second, func() bool {
+	var seen string
+	dl := time.Now().Add(30 * time.Second)
+	for {
+		e.frame()
 		charts := 0
 		tbl = nil
+		var sb strings.Builder
 		for _, d := range e.threadDataBlocks(ch, ts) {
 			d := d
 			charts += len(d.Charts)
+			fmt.Fprintf(&sb, "[%s root=%v charts=%d tables=%d] ", d.TS, d.TS == ts, len(d.Charts), len(d.Tables))
 			if len(d.Tables) == 1 && d.TS != ts {
 				tbl = &d
 			}
 		}
-		return charts == 1 && tbl != nil
-	})
+		seen = sb.String()
+		if charts == 1 && tbl != nil {
+			break
+		}
+		if time.Now().After(dl) {
+			tv := e.threadView(ch, ts)
+			t.Fatalf("the thread pane (view %v) shows %q, want the root's chart and the reply's table", tv != nil, seen)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	tr := tbl.Tables[0]
 	if tr.Block == nil || tr.Block.Caption != "Full points leaderboard" || len(tr.Block.Body) != 110 || len(tr.Rows) != 5 {
 		t.Fatalf("thread table: %+v (%d rows shown)", tr.Block, len(tr.Rows))
