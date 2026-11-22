@@ -14,7 +14,16 @@ on:
       - "internal/ui/channel_browser_test.go"
       - "internal/ui/people_invite_test.go"
       - "internal/ui/usergroup_browser_test.go"
+      - "internal/ui/views/stub_guard_test.go"
+      - "internal/ui/views/kit.go"
+      - "internal/ui/popups/usergroup_*.go"
+      - "internal/ui/popups/profile_usergroup.go"
+      - "internal/ui/popups/loading_button.go"
       - "internal/fakeslack/usergroups.go"
+      - "internal/core/usergroup_edit*.go"
+      - "internal/core/chposting.go"
+      - "internal/store/store.go"
+      - "internal/store/metacache.go"
       - "internal/ui/directories_wire.go"
       - "internal/ui/sidebar.go"
       - "internal/ui/icons/directory.go"
@@ -54,7 +63,8 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          go test -count=1 -v -run 'TestBrowseFilterParams|TestConnectedOrgsAndEnterpriseTeams|TestSearchUsergroups|TestCreateUsergroup' ./internal/core
+          go test -count=1 -v -run 'TestBrowseFilterParams|TestConnectedOrgsAndEnterpriseTeams|TestSearchUsergroups|TestCreateUsergroup|TestFeatureAccessFromCache' ./internal/core
+          go test -count=1 -v -run 'TestMergeUsergroup|TestFeatureAccessRoundTrip' ./internal/store
           go test -count=1 -v -run 'TestDir|TestNoUnsupportedToast' ./internal/ui/views
           go test -count=1 -v -run 'TestCleanTextKeepsHangulFillers' ./internal/ui/theme
           xvfb-run -a go test -count=1 -v -run 'TestMaybeLeaveChannel' ./internal/ui/popups

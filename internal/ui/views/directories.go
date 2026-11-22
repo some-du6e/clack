@@ -297,6 +297,7 @@ func NewDirectories(h Host) *Directories {
 		wantFocus: 3,
 	}
 	d.rowMenu.sel = -1
+	d.tab.Hidden = d.tabHidden
 	d.chanScope.labels, d.chanScope.ns = dirScopeLabels, nsSearch
 	d.chanType.labels, d.chanType.ns = dirTypeLabels, nsSearch
 	d.acct.labels, d.acct.ns = dirAcctLabels, nsSearch
@@ -322,8 +323,50 @@ func (d *Directories) ShowTab(i int) {
 	d.closeMenus()
 }
 
-// Tab is the selected tab's label ("Channels").
-func (d *Directories) Tab() string { return dirTabLabels[d.tab.Sel] }
+// Tab is the shown tab's label ("Channels").
+func (d *Directories) Tab() string { return dirTabLabels[d.cur()] }
+
+// tabHidden is UnifiedDirectoryTabs' list: User Groups only with
+// isUserGroupsTabVisible (Va2n fB: not a guest, the user_groups__manage
+// feature), External and Invitations only with isSlackConnectHubEnabled
+// (HE3L: not a guest). Neither waits on the network as Slack has them:
+// the viewer's is_restricted comes with the self user, and the
+// featureAccess store is persisted (core.FeatureAccess reads last
+// launch's answer until this one's), so the strip doesn't jump.
+func (d *Directories) tabHidden(i int) bool {
+	c := d.h.Core()
+	if c == nil {
+		return false
+	}
+	switch i {
+	case dirTabGroups:
+		if c.ViewerRestricted() {
+			return true
+		}
+		// with neither this launch's answer nor a persisted one the tab is
+		// drawn, and a later answer takes it away only for a viewer it
+		// doesn't apply to (Slack's blocking boot read never draws the
+		// strip without one)
+		on, known := c.FeatureState(core.FeatureUserGroupsManage)
+		return known && !on
+	case dirTabExternal, dirTabInvites:
+		return c.ViewerRestricted()
+	}
+	return false
+}
+
+// cur is the tab whose content shows: the selected one, or People when
+// that one isn't in the strip (UnifiedDirectoryTabsContent's fallback;
+// the selection stays, so the tab's content comes once it is allowed).
+func (d *Directories) cur() int {
+	if d.tabHidden(d.tab.Sel) {
+		return dirTabPeople
+	}
+	return d.tab.Sel
+}
+
+// TabShown reports whether tab i is in the strip.
+func (d *Directories) TabShown(i int) bool { return i >= 0 && i < len(d.tab.Labels) && !d.tabHidden(i) }
 
 func (d *Directories) closeMenus() {
 	for i := range d.sorts {
@@ -371,7 +414,7 @@ func (d *Directories) titleRow(gtx C) D {
 
 // update runs searches (debounced), first loads, menus and pending writes.
 func (d *Directories) update(gtx C) {
-	t := d.tab.Sel
+	t := d.cur()
 	if t != d.lastTab {
 		if d.lastTab == dirTabPeople { // BrowsePeopleView unmounted: a new visit next time
 			d.pHero, d.heroOff[dirTabPeople] = dirPeopleHero{}, false
@@ -524,7 +567,7 @@ func (d *Directories) InvitePeople(hero bool) {
 // PeopleHero reports whether the People banner is up, and whether it has
 // its "Invite people" button.
 func (d *Directories) PeopleHero() (shown, button bool) {
-	if d.tab.Sel != dirTabPeople || !d.showPeopleHero() {
+	if d.cur() != dirTabPeople || !d.showPeopleHero() {
 		return false, false
 	}
 	return true, d.canSeeInvite()
@@ -578,6 +621,7 @@ type dirPeopleHero struct {
 	started bool // the visit read the pref
 	seen    bool // browsers_seen_initial_people_education at the visit's start
 	wrote   bool
+	up      bool // the banner was drawn last time the rule was read (User Groups)
 }
 
 func (p *dirPeopleHero) markSeen(h Host, pref string) {
@@ -638,8 +682,22 @@ const (
 // banner not dismissed. The banner is BrowseUserGroupsView's
 // ExplorerEducationBanner (view_once, prefName
 // SEEN_INITIAL_USER_GROUPS_BROWSER_EDUCATION), so like People's it writes
-// the pref the first time it shows and stays for the rest of the visit.
+// the pref the first time it shows. Slack reads the rule on every render
+// and the banner writes the pref as it unmounts: the first fetch after
+// it shows (Load More, a sort, a filter) takes it down, and with the pref
+// now seen it doesn't come back unless the low-results case holds.
 func (d *Directories) showGroupsHero() bool {
+	h := &d.gHero
+	live := d.groupsHeroLive()
+	if h.up && !live { // ExplorerEducationBanner's unmount: view_once writes the pref
+		h.seen = true
+		h.markSeen(d.h, dirPrefSeenGroupsEdu)
+	}
+	h.up = live
+	return live
+}
+
+func (d *Directories) groupsHeroLive() bool {
 	if d.heroOff[dirTabGroups] || !d.canCreateGroups() {
 		return false
 	}
@@ -670,7 +728,7 @@ func (d *Directories) groupsInitial() bool {
 }
 
 // GroupsHero reports whether the User Groups banner is up.
-func (d *Directories) GroupsHero() bool { return d.tab.Sel == dirTabGroups && d.showGroupsHero() }
+func (d *Directories) GroupsHero() bool { return d.cur() == dirTabGroups && d.showGroupsHero() }
 
 // CloseGroupsHero is the User Groups banner's close button.
 func (d *Directories) CloseGroupsHero() {
@@ -726,19 +784,30 @@ func (d *Directories) load(tab int, q string) {
 	case dirTabGroups:
 		d.groupsQ = q
 		d.groupL.Position = layout.Position{}
-		d.loadGroups(q, "")
+		d.loadGroups(q, "", false)
 	}
 }
 
 // loadGroups fetches a page of the user group directory (core.
-// SearchUsergroups: 50 a page; cursor "" the first, else the previous
-// page's next_cursor_mark, whose groups this page joins). A failed fetch
-// is the browser's error state, never another list.
-func (d *Directories) loadGroups(q, cursor string) {
+// SearchUsergroups, 50 a page), as getResults does for it (HKCz h):
+//
+//   - a new query, sort or filter (more false) starts from nothing: the
+//     results reset (uEfq), so the loading rows show until it answers;
+//   - Load More (more true) asks from the last answer's cursorMark (none
+//     if it had none: the first page again) and adds its groups to the
+//     ones shown (updateResultsAndPagination prepends results[page]).
+//
+// Slack's user group searcher never fails a fetch: on a grid
+// userGroupsForSearcher returns the error as its answer, which has no
+// items and no totalCount, and off a grid fetchPaginatedUserGroupsWithQuery
+// answers an empty page (core does that). So a failed fetch keeps what is
+// shown and drops Load More (no totalCount), and with nothing shown it is
+// "No results"; there is no error state.
+func (d *Directories) loadGroups(q, cursor string, more bool) {
 	gs := dirGroupSorts[min(d.sorts[dirTabGroups].sel, len(dirGroupSorts)-1)]
 	o := core.UsergroupOpts{Query: q, Sort: gs.sort, Desc: gs.desc, ExcludeDisabled: d.exclDisabled, Team: d.team[dirTabGroups], Cursor: cursor}
 	var prev []core.Usergroup
-	if cursor != "" {
+	if more {
 		cur, _, _ := d.groups.get()
 		prev = append([]core.Usergroup(nil), cur.list...)
 	}
@@ -746,10 +815,13 @@ func (d *Directories) loadGroups(q, cursor string) {
 	if c == nil {
 		return
 	}
-	d.groups.load(d.h, true, func(ctx context.Context) (dirGroups, error) {
+	d.groups.load(d.h, more, func(ctx context.Context) (dirGroups, error) {
 		pg, err := c.SearchUsergroups(ctx, o)
 		if err != nil {
-			return dirGroups{}, err
+			if ctx.Err() != nil {
+				return dirGroups{}, err // superseded: async drops it
+			}
+			return dirGroups{list: prev, q: q}, nil
 		}
 		return dirGroups{list: append(prev, pg.Groups...), total: pg.Total, next: pg.Next, q: q}, nil
 	})
@@ -990,7 +1062,7 @@ func (d *Directories) eff(h core.ChannelHit) core.ChannelHit {
 // with the hero banner, the filter bar and the results.
 func (d *Directories) body(gtx C) D {
 	fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, d.p.ReadFill)
-	t := d.tab.Sel
+	t := d.cur()
 	switch t {
 	case dirTabExternal:
 		return d.emptyState(gtx, "globe", "External", "Connecting with people and channels outside "+d.teamName()+" isn’t available in "+appName+" yet.", nil, "")
@@ -1858,15 +1930,16 @@ func dirMembers(n int) string {
 // controls, a loading list while nothing has come, the groups, then
 // "No results" (no user groups at all: "No user groups have been
 // created yet"; else "You may want to try adjusting your filters."), and
-// Load More (ExplorerLoadMoreButton) while fewer than num_found are in.
+// Load More (ExplorerLoadMoreButton) while fewer than num_found are in,
+// its spinner (Button loading) while that page loads.
 func (d *Directories) groupsTab(gtx C) D {
-	st, loaded, err := d.groups.get()
+	st, loaded, _ := d.groups.get()
 	head := d.heads(dirTabGroups)
 	list := st.list
 	n := len(list)
 	busy := d.groups.busy()
-	if d.more.Clicked(gtx) && !busy && n < st.total && st.next != "" { // onLoadMore: totalCount && results < totalCount
-		d.loadGroups(st.q, st.next)
+	if d.more.Clicked(gtx) && !busy && n < st.total { // onLoadMore: totalCount && results < totalCount
+		d.loadGroups(st.q, st.next, true)
 		busy = true
 	}
 	body := max(n, 1)
@@ -1878,11 +1951,15 @@ func (d *Directories) groupsTab(gtx C) D {
 		i -= len(head)
 		switch {
 		case i == body:
-			if loaded && err == nil && n > 0 && n < st.total {
+			if loaded && n > 0 && n < st.total {
 				// p-explorer_pagination margin_top_50: a centered outline
-				// medium button, 4px under the list
+				// medium button, 4px under the list; loading, Slack's
+				// LoadingButton (the spinner alone, 80px wide)
 				return layout.Inset{Top: 4, Bottom: 24}.Layout(gtx, func(gtx C) D {
 					return layout.Center.Layout(gtx, func(gtx C) D {
+						if busy {
+							return popups.LoadingButton(gtx, d.th, &d.more, popups.BtnMedium, 80)
+						}
 						return d.button(gtx, &d.more, btnOutline, false, nsBrowsers.T("Load More")) // medium: 36px
 					})
 				})
@@ -1890,11 +1967,6 @@ func (d *Directories) groupsTab(gtx C) D {
 			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(24))}
 		case !loaded || n == 0 && busy:
 			return layout.Inset{Left: dirPad - 20, Right: dirPad - 20}.Layout(gtx, func(gtx C) D { return d.skeleton(gtx, 6, 36) })
-		case err != nil && n == 0:
-			if d.retry.Clicked(gtx) {
-				d.load(dirTabGroups, d.groupsQ)
-			}
-			return dirListState(gtx, func(gtx C) D { return d.errorState(gtx, err, &d.retry) })
 		case n == 0:
 			desc := nsBrowsers.T("You may want to try adjusting your filters.")
 			if d.groupsInitial() { // isZeroState
@@ -1909,11 +1981,30 @@ func (d *Directories) groupsTab(gtx C) D {
 // GroupsShown is the user group browser's rows (tests): the groups in
 // order, num_found, and whether Load More is drawn.
 func (d *Directories) GroupsShown() (ids []string, total int, more bool) {
-	st, loaded, err := d.groups.get()
+	st, loaded, _ := d.groups.get()
 	for _, g := range st.list {
 		ids = append(ids, g.ID)
 	}
-	return ids, st.total, loaded && err == nil && len(st.list) > 0 && len(st.list) < st.total
+	return ids, st.total, loaded && len(st.list) > 0 && len(st.list) < st.total
+}
+
+// GroupsLoadingMore reports Load More drawn loading.
+func (d *Directories) GroupsLoadingMore() bool {
+	_, _, more := d.GroupsShown()
+	return more && d.groups.busy()
+}
+
+// GroupsEmpty is the empty state's description when nothing is shown and
+// nothing loads ("" otherwise).
+func (d *Directories) GroupsEmpty() string {
+	st, loaded, _ := d.groups.get()
+	if !loaded || d.groups.busy() || len(st.list) > 0 {
+		return ""
+	}
+	if d.groupsInitial() {
+		return nsBrowsers.T("No user groups have been created yet")
+	}
+	return nsBrowsers.T("You may want to try adjusting your filters.")
 }
 
 // GroupsLoaded reports the browser's last fetch in, not loading.
@@ -1925,8 +2016,8 @@ func (d *Directories) GroupsLoaded() bool {
 // LoadMoreGroups is Load More's onClick.
 func (d *Directories) LoadMoreGroups() {
 	st, loaded, _ := d.groups.get()
-	if loaded && !d.groups.busy() && len(st.list) < st.total && st.next != "" {
-		d.loadGroups(st.q, st.next)
+	if loaded && !d.groups.busy() && len(st.list) < st.total {
+		d.loadGroups(st.q, st.next, true)
 	}
 }
 
@@ -2128,6 +2219,9 @@ func dirTabStrip(b *base, gtx C, t *tabs, icons, counts []string) D {
 func dirTabStripSel(b *base, gtx C, t *tabs, icons, selIcons, counts []string) D {
 	ch := make([]layout.FlexChild, 0, len(t.Labels))
 	for i := range t.Labels {
+		if t.Hidden != nil && t.Hidden(i) {
+			continue
+		}
 		ch = append(ch, layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 8, Right: 20}.Layout(gtx, func(gtx C) D {
 				return t.clicks[i].Layout(gtx, func(gtx C) D {

@@ -201,10 +201,17 @@ func (a *App) listRecords(ctx context.Context, id string, archived bool) ([]list
 
 // listState is per-App list bookkeeping (kept off App's struct).
 type listState struct {
-	mu       sync.Mutex
-	docs     map[string]*ListDoc // last loaded (and live-updated) lists
-	open     map[string]int      // views showing each list
-	pending  map[string]bool     // a refetch is scheduled
+	mu      sync.Mutex
+	docs    map[string]*ListDoc // last loaded (and live-updated) lists
+	open    map[string]int      // views showing each list
+	pending map[string]bool     // a refetch is scheduled
+	// applied counts the realtime events applied to each cached list: a
+	// fetch that saw it change while out doesn't replace the cached doc
+	// (List). A refetch read the list before someone else's edit and
+	// landed after its list_cells_updated, putting the old cell back
+	// (TestListEditRoundTrip: the cache's OptPROG0001 against the
+	// server's OptBLOK0001, thread-reply-toast-3's full-test 45010174728)
+	applied  map[string]int
 	watching bool
 	node     string // this client's HLC node (lists.records.create's updated_timestamp)
 	hlcMS    int64
@@ -219,7 +226,7 @@ func (a *App) lists() *listState {
 	}
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
-	v, _ := listStates.LoadOrStore(a, &listState{docs: map[string]*ListDoc{}, open: map[string]int{}, pending: map[string]bool{},
+	v, _ := listStates.LoadOrStore(a, &listState{docs: map[string]*ListDoc{}, open: map[string]int{}, pending: map[string]bool{}, applied: map[string]int{},
 		node: hex.EncodeToString(b)})
 	return v.(*listState)
 }
@@ -228,6 +235,10 @@ func (a *App) lists() *listState {
 // result is cached, and kept current by realtime events while the list is
 // open (OpenList).
 func (a *App) List(ctx context.Context, id string) (*ListDoc, error) {
+	st0 := a.lists()
+	st0.mu.Lock()
+	seen := st0.applied[id]
+	st0.mu.Unlock()
 	var (
 		f    *listFileJSON
 		recs []lists.Record
@@ -266,6 +277,14 @@ func (a *App) List(ctx context.Context, id string) (*ListDoc, error) {
 	a.EnsureUsers(ctx, users)
 	st := a.lists()
 	st.mu.Lock()
+	if old := st.docs[id]; old != nil && st.applied[id] != seen {
+		// events changed the cached list while this read was out: it may
+		// predate them, so it doesn't replace it, and a read after them
+		// does
+		st.mu.Unlock()
+		a.listRefetch(id)
+		return d.Clone(), nil
+	}
 	if old := st.docs[id]; old != nil {
 		d.PinnedViews = old.PinnedViews
 	}
@@ -409,6 +428,7 @@ func (a *App) applyListEvent(id string, ev slack.Event) bool {
 	if d == nil {
 		return false
 	}
+	st.applied[id]++ // a fetch out now may predate this event (List)
 	remove := func(rid string) {
 		for i := range d.Records {
 			if d.Records[i].ID == rid {
