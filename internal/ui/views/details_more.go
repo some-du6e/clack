@@ -78,6 +78,9 @@ const (
 	cdDlgToPrivate // ConvertChannelToPrivateModal
 	cdDlgArchive   // ArchiveChannelModal
 	cdDlgDelete    // DeleteChannelModal
+	// Message history and Export (details_retention.go)
+	cdDlgRetention // MessageRetentionModal
+	cdDlgExport    // ExportChannelHistoryModal
 )
 
 // cdExtra is the dialog state behind the Slack parts above.
@@ -96,16 +99,20 @@ type cdExtra struct {
 	// managing-this-channel's other rows (details_managing.go)
 	toPrivateRow, archiveRow widget.Clickable
 	unarchiveRow, deleteRow  widget.Clickable
-	teamPerms                async[map[string]bool] // the team's CREATE_PRIVATE_CHANNEL
-	unarch                   async[bool]            // submitUnarchive
-	unarchiving              bool
-	inviteAsk                bool             // InviteOnOpen: Add people once loaded
-	inviteUsers              []string         // its picked people
-	hidePrefs                widget.Clickable // HideUserConfirmationModal's "preferences"
-	mpdmName                 widget.Clickable // About's "Conversation name" Edit (details_mpdm.go)
-	postRow, postLearn       widget.Clickable // Posting permissions (details_posting.go)
-	postSub                  async[core.PostingPrefs]
-	helpTips                 map[string]*cdTip
+	// Message history and Export (details_retention.go)
+	retRow, exportRow  widget.Clickable
+	retention          async[core.Retention]  // the row's getDataRetention
+	exportOp           async[bool]            // submitChannelExport
+	teamPerms          async[map[string]bool] // the team's CREATE_PRIVATE_CHANNEL
+	unarch             async[bool]            // submitUnarchive
+	unarchiving        bool
+	inviteAsk          bool             // InviteOnOpen: Add people once loaded
+	inviteUsers        []string         // its picked people
+	hidePrefs          widget.Clickable // HideUserConfirmationModal's "preferences"
+	mpdmName           widget.Clickable // About's "Conversation name" Edit (details_mpdm.go)
+	postRow, postLearn widget.Clickable // Posting permissions (details_posting.go)
+	postSub            async[core.PostingPrefs]
+	helpTips           map[string]*cdTip
 
 	suggestOp      async[bool]
 	suggestPending bool
@@ -161,7 +168,8 @@ type cdDialog struct {
 	checks                  map[string]*widget.Clickable
 	userID, userName, dmID  string // cdDlgHide
 	add                     *cdAddPeople
-	post                    *cdPosting // cdDlgPosting
+	post                    *cdPosting   // cdDlgPosting
+	rt                      *cdRetention // cdDlgRetention (details_retention.go)
 	addOp                   async[core.Conv]
 	ptr                     int
 	focusIn                 int
@@ -230,6 +238,11 @@ func (d *ChannelDetails) settingsSections(inf core.ChannelDetails) []string {
 		if inf.IsMember {
 			out = append(out, cdSecMemberSuggest)
 		}
+	} else if d.historyShown(inf) { // i+kN: the permissions section for dataRetention alone
+		out = append(out, cdSecPermissions)
+	}
+	if d.exportShown(inf) { // exportHistory (details_retention.go)
+		out = append(out, cdSecExport)
 	}
 	// copy-members: public/private channels and group DMs, on a paid team
 	// (CopyMembers' isPaidTeam; every Enterprise Grid org is)
@@ -357,6 +370,8 @@ func (d *ChannelDetails) slackSettingsItems(inf core.ChannelDetails, name W) []W
 			}
 		case cdSecMemberSuggest:
 			card(d.memberSuggestField)
+		case cdSecExport:
+			card(d.exportRows()...)
 		case cdSecCopyMembers:
 			card(d.copyMembersRows()...)
 		case cdSecManaging:
@@ -370,11 +385,18 @@ func (d *ChannelDetails) slackSettingsItems(inf core.ChannelDetails, name W) []W
 }
 
 // permissionsRows is the "permissions" field group: Posting permissions
-// (details_posting.go), AI use, Guest access, Huddles. (Message history
-// needs a modal Clack doesn't have: docs/CHANNELS-AUDIT.md.)
+// (details_posting.go), AI use, Guest access, Huddles, Message history
+// (details_retention.go). A DM or group DM has the section only for
+// Message history, its other rows being channels'.
 func (d *ChannelDetails) permissionsRows(inf core.ChannelDetails) []W {
 	c := d.h.Core()
 	var rows []W
+	if d.cdConvType() != "channel" {
+		if d.historyShown(inf) {
+			rows = append(rows, d.retentionRow(inf))
+		}
+		return rows
+	}
 	if vis := d.postingVisibility(inf); vis.Show {
 		rows = append(rows, func(gtx C) D { return d.postingField(gtx, inf, vis) })
 	}
@@ -388,6 +410,9 @@ func (d *ChannelDetails) permissionsRows(inf core.ChannelDetails) []W {
 		rows = append(rows, func(gtx C) D { return d.sharingField(gtx, inf, st) })
 	}
 	rows = append(rows, d.huddlesField)
+	if d.historyShown(inf) {
+		rows = append(rows, d.retentionRow(inf))
+	}
 	return rows
 }
 
@@ -1282,6 +1307,15 @@ func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelD
 			[]W{cancel, d.cdDlgButton(&dl.ok, btnDanger, nsChannelDetails.T("Archive Channel"), dl.pending)})
 	case cdDlgDelete:
 		d.skModal(gtx, full, nsChannelDetails.T("Delete this channel?"), true, d.deleteBody(inf), d.deleteFooter())
+	case cdDlgRetention:
+		rname := name // ChannelName draws nothing for a DM or group DM
+		if cdGroup(d.kind) != "channel" {
+			rname = ""
+		}
+		d.retentionDialog(gtx, full, rname, cancel)
+	case cdDlgExport:
+		d.skModal(gtx, full, nsChannelDetails.T("Export this channel’s messages"), true, d.exportBody(),
+			[]W{cancel, d.cdDlgButton(&dl.ok, btnPrimary, nsChannelDetails.T("Export Messages"), false)})
 	}
 }
 
@@ -1430,6 +1464,16 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 	}
 	if dl.kind == cdDlgPosting {
 		d.updatePosting(gtx, inf)
+		return
+	}
+	if dl.kind == cdDlgRetention {
+		d.updateRetention(gtx) // details_retention.go
+		return
+	}
+	if dl.kind == cdDlgExport {
+		if dl.ok.Clicked(gtx) {
+			d.exportNow()
+		}
 		return
 	}
 	if dl.kind == cdDlgDelete {
@@ -2230,7 +2274,8 @@ func (d *ChannelDetails) addPeopleResults(gtx C) {
 
 // settingsVisible is isSettingsVisible for the tab strip: channels always
 // have the permissions section, group DMs Copy members (on a paid team),
-// 1:1 DMs none of Clack's sections; guests never see the tab.
+// 1:1 DMs only Message history or Export (details_retention.go); guests
+// never see the tab.
 func (d *ChannelDetails) settingsVisible() bool {
 	c := d.h.Core()
 	if c == nil {
@@ -2241,9 +2286,11 @@ func (d *ChannelDetails) settingsVisible() bool {
 	}
 	switch cdGroup(d.kind) {
 	case "im":
-		return false
+		inf, _, _ := d.info.get()
+		return d.historyShown(inf) || d.exportShown(inf)
 	case "mpim":
-		return c.C != nil && c.C.Creds.EnterpriseID != ""
+		inf, _, _ := d.info.get()
+		return c.C != nil && c.C.Creds.EnterpriseID != "" || d.historyShown(inf) || d.exportShown(inf)
 	}
 	return true
 }
@@ -2329,6 +2376,11 @@ func (d *ChannelDetails) Press(name string) {
 		// delete modal's checkbox and "archive a channel instead"
 		"to-private": &d.x.toPrivateRow, "archive": &d.x.archiveRow, "unarchive": &d.x.unarchiveRow,
 		"delete": &d.x.deleteRow, "delete-confirm": &d.x.dlg.confirmAll, "archive-instead": &d.x.dlg.back,
+		// Message history and Export (details_retention.go)
+		"message-history": &d.x.retRow, "export": &d.x.exportRow,
+	}
+	if rt := d.x.dlg.rt; rt != nil {
+		cs["retention-default"], cs["retention-custom"] = &rt.radios[0], &rt.radios[1]
 	}
 	if name == "add-people" {
 		if cdGroup(d.kind) == "im" {
@@ -2381,6 +2433,10 @@ func (d *ChannelDetails) Dialog() string {
 		return "archive"
 	case cdDlgDelete:
 		return "delete"
+	case cdDlgRetention:
+		return "retention"
+	case cdDlgExport:
+		return "export"
 	case cdDlgAddPeople:
 		if d.x.dlg.add != nil && d.x.dlg.add.step == 1 {
 			return "add-people-history"

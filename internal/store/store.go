@@ -1814,6 +1814,45 @@ func (s *Store) WithFile(id string) []MsgRef {
 	return out
 }
 
+// HeldFile is a complete copy (not a FileStub) of file id that a cached
+// message carries: Slack keeps files in one store by id, which merges
+// every copy it gets (4OY3 processFile: {...held, ...copy}), so a
+// message's stub reads the whole file there; Clack keeps the copies in
+// the messages (core keepFiles). It reads each held message (timelines,
+// threads, messages fetched by id) until it finds one: for a stub only.
+func (s *Store) HeldFile(id string) (slack.File, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	find := func(m *slack.Message) (slack.File, bool) {
+		for i := range m.Files {
+			if f := &m.Files[i]; f.ID == id && !FileStub(f) {
+				return *f, true
+			}
+		}
+		return slack.File{}, false
+	}
+	for _, t := range s.timelines {
+		for i := range t.Msgs {
+			if f, ok := find(&t.Msgs[i]); ok {
+				return f, true
+			}
+		}
+	}
+	for _, th := range s.threads {
+		for i := range th {
+			if f, ok := find(&th[i]); ok {
+				return f, true
+			}
+		}
+	}
+	for _, m := range s.fetched {
+		if f, ok := find(m); ok {
+			return f, true
+		}
+	}
+	return slack.File{}, false
+}
+
 // ClientMsgIDs lists the client_msg_ids of ch's cached messages (timeline
 // and threads).
 func (s *Store) ClientMsgIDs(ch string) map[string]bool {

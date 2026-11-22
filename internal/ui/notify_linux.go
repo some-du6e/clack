@@ -18,6 +18,10 @@ type dbusNotifier struct {
 
 	sigOnce sync.Once
 	on      map[uint32]func(string) // notification id -> its buttons' handler
+
+	// send stands in for the bus's Notify call (tests): the title and
+	// body as the shell made them, and the actions.
+	send func(title, body string, actions []string) (uint32, error)
 }
 
 func newNotifier() notifier { return &dbusNotifier{} }
@@ -28,7 +32,17 @@ func (n *dbusNotifier) Notify(title, body string) error {
 
 const notifyIface = "org.freedesktop.Notifications"
 
+// NotifyActions shows the notification as Slack's Linux shell does: its
+// title and body through gX's caps and unescape first (shellTitle,
+// shellBody: the Linux build's E5 feeds every notification to Electron's
+// Notification), so a body Slack's i18n escaped ("don&#39;t", a clip
+// line's message) shows its characters, as on Windows and macOS.
 func (n *dbusNotifier) NotifyActions(title, body string, actions []string, on func(string)) error {
+	title, body = shellTitle(title), shellBody(body)
+	if n.send != nil {
+		_, err := n.send(title, body, actions)
+		return err
+	}
 	n.once.Do(func() { n.conn, n.err = dbus.ConnectSessionBus() })
 	if n.err != nil {
 		return n.err
