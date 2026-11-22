@@ -3509,8 +3509,10 @@ jobs:
   # the seconds before it; TestMFColdStart held the platform's start
   # (MFStartup, Direct3D, no audio output) to its budget. Each process
   # runs TestMFLateFirstTransfer (the hook holds the first transfer
-  # 1.5 s) and the three, under four CPU burners, COUNT times, a fresh
-  # process each so ColdStart is cold. Dispatch with only=mf-late.
+  # 1.5 s) and the three, under two CPU burners (four of the runner's four
+  # CPUs starved the tests' own draws, a WARP screenshot each, to 4 a
+  # second: too few for a 0.4 s window), COUNT times, a fresh process each
+  # so ColdStart is cold. Dispatch with only=mf-late.
   mf-late:
     if: ${{ !inputs.only || startsWith('mf-late', inputs.only) }}
     runs-on: windows-latest
@@ -3531,7 +3533,7 @@ jobs:
           set +e
           rc=0
           go test -c -o "$RUNNER_TEMP/mf.test.exe" ./internal/media/mf || exit 1
-          for i in 1 2 3 4; do (while :; do :; done) & done
+          for i in 1 2; do (while :; do :; done) & done
           cd internal/media/mf
           for i in $(seq 1 "$COUNT"); do
             "$RUNNER_TEMP/mf.test.exe" -test.count=1 -test.v -test.timeout 3m -test.run '^(TestMFColdStart|TestMFLateFirstTransfer|TestMFRGBA|TestMFPlaysFixture)$' > "$RUNNER_TEMP/mf-$i.log" 2>&1 || rc=1
