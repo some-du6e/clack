@@ -148,6 +148,8 @@ func (m *metaDecoder) value(key string) error {
 		err = dec.Decode(&d.UserSeen)
 	case "experiments":
 		err = dec.Decode(&d.Experiments)
+	case "features":
+		err = dec.Decode(&d.Features)
 	case "enterprise_prefs":
 		err = dec.Decode(&d.EnterprisePrefs)
 	case "notifications_max_ts":
@@ -220,6 +222,10 @@ func writeDiskCache(w io.Writer, d *diskCache, users []*slack.User) error {
 	if d.Experiments != nil {
 		put(`,"experiments":`)
 		val(d.Experiments)
+	}
+	if d.Features != nil {
+		put(`,"features":`)
+		val(d.Features)
 	}
 	if len(d.EnterprisePrefs) > 0 { // before the first frame, as Slack's persisted store
 		put(`,"enterprise_prefs":`)

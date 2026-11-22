@@ -96,3 +96,37 @@ func TestUserGroupEditEscapeThroughShell(t *testing.T) {
 		t.Errorf("second Escape: dismissed %v, speed bump %v", m.Dismissed(), m.SpeedBump())
 	}
 }
+
+// Create User Group's MEMBERS step through the real shell: with the
+// members list open, Escape closes only the list (MultiSelectInput's
+// onEscape) and the dialog stays on MEMBERS with the caret in the select;
+// with the list closed, Escape closes the dialog, which asks nothing on
+// MEMBERS (getShouldShowSpeedBump).
+func TestUserGroupCreateEscapeThroughShell(t *testing.T) {
+	e, fs := sectionEnv(t)
+	a := e.a
+	fs.UsergroupEditor = true
+	m := popups.OpenUserGroupCreate(a)
+	if m == nil {
+		t.Fatal("Create User Group didn't open")
+	}
+	e.until("the rights", 10*time.Second, func() bool { return !m.FieldsDisabled() })
+	m.SetName("Escape crew")
+	m.SetHandle("escapecrew")
+	e.until("Next on", 10*time.Second, func() bool { return m.CanSave() })
+	m.Save()
+	e.until("the MEMBERS step", 10*time.Second, func() bool { return m.Step() == 1 })
+	sel := m.Members()
+	e.until("the members caret", 10*time.Second, func() bool { return e.r.Source().Focused(sel.Tag()) })
+	sel.Type("a") // the fake matches usernames
+	e.until("the members list", 10*time.Second, func() bool { return sel.Expanded() })
+	e.press(key.NameEscape, 0)
+	if m.Dismissed() || sel.Expanded() || m.Step() != 1 || !e.r.Source().Focused(sel.Tag()) {
+		t.Fatalf("first Escape: dismissed %v, list open %v, step %d, caret in the select %v",
+			m.Dismissed(), sel.Expanded(), m.Step(), e.r.Source().Focused(sel.Tag()))
+	}
+	e.press(key.NameEscape, 0)
+	if !m.Dismissed() || m.SpeedBump() {
+		t.Errorf("second Escape: dismissed %v, speed bump %v", m.Dismissed(), m.SpeedBump())
+	}
+}
