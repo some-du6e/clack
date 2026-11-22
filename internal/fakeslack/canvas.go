@@ -805,6 +805,10 @@ func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 	if serveAudio(w, r, id, tail) { // the gallery's audio files (files.go)
 		return
 	}
+	if id == NameRecordingID { // Robin's name recording (profile.go)
+		mediatest.AudioHandler(mediatest.TonesOpusFrag, "audio/mp4").ServeHTTP(w, r)
+		return
+	}
 	if id == CanvasFile {
 		w.Header().Set("Content-Type", "application/pdf")
 		w.Write([]byte("%PDF-1.4\n% fake\n"))

@@ -103,8 +103,9 @@ func (f *UploadedFile) object(base string) map[string]any {
 		"pretty_type": strings.ToUpper(strings.TrimPrefix(extOf(f.Name), ".")), "user": SelfID,
 		"is_external": false, "is_public": false, "file_access": "visible",
 		"url_private": base + "files-pri/" + f.ID + "/" + f.Name, "permalink": base + "files/" + SelfID + "/" + f.ID + "/" + f.Name}
-	if sub := firstSet(f.CompleteSubtype, f.Subtype); sub == "slack_audio" {
-		// a processed voice clip: Slack's transcode keeps it audio/mp4
+	if sub := firstSet(f.CompleteSubtype, f.Subtype); sub == "slack_audio" || sub == "slack_name_pronunciation" {
+		// a processed voice clip or name recording: Slack's transcode keeps
+		// it audio/mp4
 		o["subtype"], o["media_display_type"] = sub, "audio"
 		o["mimetype"], o["filetype"], o["pretty_type"] = "audio/mp4", "m4a", "MPEG 4 Audio"
 		if ms := mp4DurationMS(f.data); ms > 0 {

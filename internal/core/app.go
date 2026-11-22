@@ -24,9 +24,11 @@ import (
 type App struct {
 	// botProfileTeams: bot id -> its messages' bot_profile.team_id (botHomeTeam)
 	botProfileTeams sync.Map
-	C               *slack.Client
-	S               *store.Store
-	RTM             *slack.RTM
+	// recFiles: name recordings' files by id (ProfileRecordingFile)
+	recFiles sync.Map
+	C        *slack.Client
+	S        *store.Store
+	RTM      *slack.RTM
 
 	usersAsked usersAsked // ids users/info was asked for (lazy_users.go)
 	usersOut   usersOut   // the members users/info has out (members.go)

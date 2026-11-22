@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/some-du6e/clack/internal/media/mediatest"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Own-profile fixture (popups.ProfileView): the viewer has an emoji title
@@ -20,6 +23,21 @@ const (
 	SelfTitle = "Fixture Wrangler 😱😱😱 — msgs expire in 72hrs unless they end with //"
 	SelfEmail = "self@fakeclub.example"
 )
+
+// NameRecordingID is Robin's (ProfileID) name recording: the HEADER
+// section's Name Recording file, audio_name_pronunciation.m4a as Slack's
+// recorder makes it (subtype slack_name_pronunciation, Opus in MP4 in
+// Chromium's fragments: mediatest.TonesOpusFrag).
+const NameRecordingID = "F0NAMEREC001"
+
+// nameRecording is NameRecordingID's file object.
+func (s *Server) nameRecording() slack.File {
+	return slack.File{ID: NameRecordingID, Name: "audio_name_pronunciation.m4a", Title: "audio_name_pronunciation.m4a",
+		Mimetype: "audio/mp4", Filetype: "m4a", PrettyType: "MPEG 4 Audio", Subtype: "slack_name_pronunciation",
+		Size: int64(len(mediatest.TonesOpusFrag)), Mode: "hosted", DurationMS: 3000, User: ProfileID,
+		URLPrivate: s.URL + "files-pri/" + TeamID + "-" + NameRecordingID + "/audio_name_pronunciation.m4a",
+		Permalink:  s.URL + "files/" + ProfileID + "/" + NameRecordingID + "/audio_name_pronunciation.m4a"}
+}
 
 // setupSelfProfile fills the viewer's profile fields (after the random
 // directory is built, so no fixture shifts).
@@ -71,9 +89,14 @@ func (s *Server) profileSections(f url.Values) any {
 		e["isFilterable"] = true
 		hdr = append(hdr, e)
 	}
-	if self {
+	switch {
+	case self:
 		hdr = append(hdr,
 			fsElement(id, "PsHEADER", "PeRECORD", "ProfileFileElement", "FILE", "Name Recording", "Name Recording", true, map[string]any{"fileId": nil}),
+			fsElement(id, "PsHEADER", "PePRONOUNCE", "ProfileTextElement", "TEXT", "Name Pronunciation", "Name Pronunciation", true, text("")))
+	case id == ProfileID: // Robin has recorded their name (NameRecordingID)
+		hdr = append(hdr,
+			fsElement(id, "PsHEADER", "PeRECORD", "ProfileFileElement", "FILE", "Name Recording", "Name Recording", false, map[string]any{"fileId": NameRecordingID}),
 			fsElement(id, "PsHEADER", "PePRONOUNCE", "ProfileTextElement", "TEXT", "Name Pronunciation", "Name Pronunciation", true, text("")))
 	}
 	sections = append(sections, fsSection(id, "PsHEADER", "HEADER", "Header", false, hdr...))
@@ -182,6 +205,11 @@ func (s *Server) handleProfileWrites(method string, f url.Values) (any, bool) {
 		prof := u.Profile
 		ps.mu.Unlock()
 		return ok("profile", prof), true
+	case "files.info":
+		if f.Get("file") != NameRecordingID {
+			return nil, false
+		}
+		return ok("file", s.nameRecording(), "comments", []any{}), true
 	case "users.profile.setSections":
 		user := f.Get("user")
 		var els []map[string]json.RawMessage
