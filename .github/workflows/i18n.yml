@@ -33,6 +33,7 @@ concurrency:
 jobs:
   i18n:
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget: 1.5 x p95 (15.4 min) + 3, docs/CI-SPEED.md
     env:
       CLACK_I18N_NET: "1"
       CLACK_I18N_CACHE: ${{ github.workspace }}/.i18n-cache

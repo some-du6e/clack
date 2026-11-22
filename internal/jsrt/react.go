@@ -1,6 +1,7 @@
 package jsrt
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"sync/atomic"
@@ -104,19 +105,135 @@ type Rect struct{ X, Y, W, H float32 }
 // the document, for window-level keys). ev is the event JSON from
 // docs/PLUGINS.md. Capture and bubble run in JS like a browser. Async, any
 // goroutine.
+// A discrete event (a click, a key, a change: React's
+// DiscreteEventPriority) is the user's input and runs on the user-blocking
+// lane, in order with the user's other input and the sends after it
+// (UserBlocking); a continuous one (a mouse move, a scroll) waits its
+// turn, though never behind a later discrete one (PostInOrder: a browser
+// dispatches input in order).
 func (r *Runtime) DispatchEvent(target int, ev []byte) {
-	r.Post(func(js *Ctx) { _, _ = js.dispatch(target, ev) })
+	if discreteEvent(ev) {
+		r.post(true, func(js *Ctx) { _, _ = js.dispatch(target, ev) })
+		return
+	}
+	r.postMove(target, ev)
+}
+
+// moveKey is a continuous event's target and type (postMove).
+type moveKey struct {
+	target int
+	typ    string
+}
+
+// queuedMove is the newest continuous event of its key waiting in its
+// task (postMove).
+type queuedMove struct {
+	ev  []byte
+	seq uint64 // enqN when its task was queued; 0 until then (movesMu)
+}
+
+// coalescedEvents are the continuous events a newer one of the same target
+// and type may stand in for while its task waits: the pointer's moves and
+// a scroller's scroll, whose newest says all an older one did. The
+// boundary events (mouseover, mouseout, mouseenter, mouseleave and the
+// pointer ones) never are: each says the pointer crossed a box, and a later
+// one doesn't undo an earlier one (leave, enter, leave merged into leave,
+// enter left a box hovered with the pointer outside it, and nothing more
+// came to clear it); nor is a wheel event, whose delta adds to the ones
+// before it (Chromium sums them), so each goes out with its own.
+var coalescedEvents = map[string]bool{
+	"mousemove": true, "pointermove": true, "touchmove": true, "drag": true, "dragover": true, "scroll": true,
+}
+
+// postMove queues a continuous event (a move, a scroll, a hover, a wheel)
+// in order with the user's input. While the JS thread is behind, a move or
+// a scroll replaces the event its target's task waits with, but only while
+// that task is the newest queued, as Chromium coalesces an event only with
+// the last one queued: each used to queue a task of its own, 60 a second,
+// and the user's next key or send ran behind them all. Coalesced across
+// anything queued since (another target's move, a boundary event, the
+// user's input), the newer event ran ahead of what came before it: A at
+// p1, B at p2, A at p3 reached JS as A at p3, then B at p2, and a drag
+// ended at p2.
+func (r *Runtime) postMove(target int, ev []byte) {
+	typ := eventType(ev)
+	k := moveKey{target, typ}
+	merge := coalescedEvents[typ]
+	r.movesMu.Lock()
+	if q := r.movesQ[k]; merge && q != nil && q.seq != 0 && q.seq == r.enqN.Load() {
+		q.ev = ev // its task is still the newest queued: nothing came between
+		r.movesMu.Unlock()
+		return
+	}
+	q := &queuedMove{ev: ev}
+	if merge {
+		if r.movesQ == nil {
+			r.movesQ = map[moveKey]*queuedMove{}
+		}
+		r.movesQ[k] = q
+	}
+	r.movesMu.Unlock()
+	n := r.enqueue(task{kind: "Post", what: typ, pc: callerPC(1), ordered: true, f: func() {
+		r.movesMu.Lock()
+		ev := q.ev
+		if r.movesQ[k] == q {
+			delete(r.movesQ, k)
+		}
+		r.movesMu.Unlock()
+		_, _ = r.js.dispatch(target, ev)
+	}})
+	r.movesMu.Lock()
+	if r.movesQ[k] == q {
+		q.seq = n // not yet run: a newer move may join it while nothing is queued after it
+	}
+	r.movesMu.Unlock()
+}
+
+// eventType is the event JSON's type ("" for none).
+func eventType(ev []byte) string {
+	i := bytes.Index(ev, []byte(`"type":`))
+	if i < 0 {
+		return ""
+	}
+	rest := bytes.TrimLeft(ev[i+len(`"type":`):], " ")
+	if len(rest) == 0 || rest[0] != '"' {
+		return ""
+	}
+	rest = rest[1:]
+	if j := bytes.IndexByte(rest, '"'); j >= 0 {
+		return string(rest[:j])
+	}
+	return ""
 }
 
 // DispatchEventThen is DispatchEvent telling done, on the JS goroutine,
 // what JS did with the event: whether a listener stopped its propagation
 // or prevented its default. done doesn't run if the runtime closes first.
 func (r *Runtime) DispatchEventThen(target int, ev []byte, done func(EventResult, error)) {
-	r.Post(func(js *Ctx) {
+	r.post(discreteEvent(ev), func(js *Ctx) {
 		v, err := js.dispatch(target, ev)
 		done(v, err)
 	})
 }
+
+// discreteEvents are React's DiscreteEventPriority events (ReactDOM's
+// getEventPriority): the user's input, which a browser handles in order
+// ahead of rendering.
+var discreteEvents = map[string]bool{
+	"beforetoggle": true, "cancel": true, "click": true, "close": true, "contextmenu": true, "copy": true, "cut": true,
+	"auxclick": true, "dblclick": true, "dragend": true, "dragstart": true, "drop": true, "focusin": true, "focusout": true,
+	"input": true, "invalid": true, "keydown": true, "keypress": true, "keyup": true, "mousedown": true, "mouseup": true,
+	"paste": true, "pause": true, "play": true, "pointercancel": true, "pointerdown": true, "pointerup": true,
+	"ratechange": true, "reset": true, "resize": true, "seeked": true, "submit": true, "toggle": true, "touchcancel": true,
+	"touchend": true, "touchstart": true, "volumechange": true, "change": true, "selectionchange": true, "textInput": true,
+	"compositionstart": true, "compositionend": true, "compositionupdate": true, "beforeblur": true, "afterblur": true,
+	"beforeinput": true, "blur": true, "fullscreenchange": true, "focus": true, "hashchange": true, "popstate": true,
+	"select": true, "selectstart": true,
+}
+
+// discreteEvent reports whether the event JSON's type is a discrete
+// event's.
+func discreteEvent(ev []byte) bool { return discreteEvents[eventType(ev)] }
 
 // DispatchEventSync is DispatchEvent waiting for the result (e.g. to learn
 // whether a key was preventDefault'ed). Bounded by ctx and Options.Timeout.
@@ -126,7 +243,7 @@ func (r *Runtime) DispatchEventSync(ctx context.Context, target int, ev []byte) 
 		err error
 	}
 	ch := make(chan res, 1)
-	r.Post(func(js *Ctx) {
+	r.post(discreteEvent(ev), func(js *Ctx) {
 		v, err := js.dispatch(target, ev)
 		ch <- res{v, err}
 	})
@@ -157,8 +274,14 @@ func (c *Ctx) dispatch(target int, ev []byte) (EventResult, error) {
 
 // CallFn invokes a function prop that was serialized as {"$fn":id} inside a
 // native ("@") node, with JSON args. Async, any goroutine.
-func (r *Runtime) CallFn(id int, args []byte) {
-	r.Post(func(js *Ctx) {
+func (r *Runtime) CallFn(id int, args []byte) { r.callFn(false, id, args) }
+
+// CallFnUserBlocking is CallFn for the user's input (a control's onClick
+// or onChange): it runs on the user-blocking lane (PostUserBlocking).
+func (r *Runtime) CallFnUserBlocking(id int, args []byte) { r.callFn(true, id, args) }
+
+func (r *Runtime) callFn(urgent bool, id int, args []byte) {
+	r.post(urgent, func(js *Ctx) {
 		fn := js.Global().Get("__clack").Get("callFn")
 		var a Value
 		if len(args) > 0 {
@@ -169,16 +292,48 @@ func (r *Runtime) CallFn(id int, args []byte) {
 }
 
 // SetRects reports laid-out boxes of host nodes by "k" (feeds
-// getBoundingClientRect, offsetWidth & co. and ResizeObserver). Async.
+// getBoundingClientRect, offsetWidth & co. and ResizeObserver). Async; in
+// order with the user's input (PostInOrder): a click's handler reads the
+// layout the click was made on, as in a browser. One task at a time: a
+// newer layout joins the boxes the queued one waits with (setRects takes
+// each box as it is, so the newest of each wins), until the user's next
+// input; each frame that moved a box (every frame while scrolling) queued
+// a task of its own.
 func (r *Runtime) SetRects(rects map[int]Rect) {
-	b, _ := json.Marshal(rectsJSON(rects))
-	r.Post(func(js *Ctx) {
+	gen := r.coalesce.Load()
+	r.rectsMu.Lock()
+	if q := r.rectsQ; q != nil && q.gen == gen {
+		for k, x := range rects {
+			q.m[k] = x
+		}
+		r.rectsMu.Unlock()
+		return
+	}
+	q := &rectsBatch{m: make(map[int]Rect, len(rects)), gen: gen}
+	for k, x := range rects {
+		q.m[k] = x
+	}
+	r.rectsQ = q
+	r.rectsMu.Unlock()
+	r.PostInOrder(func(js *Ctx) {
+		r.rectsMu.Lock()
+		if r.rectsQ == q {
+			r.rectsQ = nil
+		}
+		b, _ := json.Marshal(rectsJSON(q.m))
+		r.rectsMu.Unlock()
 		fn := js.Global().Get("__clack").Get("setRects")
 		v, err := js.ParseJSON(b)
 		if err == nil {
 			_, _ = fn.Call(v)
 		}
 	})
+}
+
+// rectsBatch is the boxes a queued setRects task carries (SetRects).
+type rectsBatch struct {
+	m   map[int]Rect
+	gen uint64
 }
 
 func rectsJSON(rects map[int]Rect) map[int][4]float32 {
@@ -190,9 +345,10 @@ func rectsJSON(rects map[int]Rect) map[int][4]float32 {
 }
 
 // SetViewport sets window.innerWidth/innerHeight, devicePixelRatio and
-// prefers-color-scheme (dark); fires resize / matchMedia change. Async.
+// prefers-color-scheme (dark); fires resize / matchMedia change. Async; in
+// order with the user's input (PostInOrder).
 func (r *Runtime) SetViewport(w, h, dpr float32, dark bool) {
-	r.Post(func(js *Ctx) {
+	r.PostInOrder(func(js *Ctx) {
 		fn := js.Global().Get("__clack").Get("setViewport")
 		_, _ = fn.Call(w, h, dpr, dark)
 	})
@@ -243,9 +399,11 @@ func (r *Runtime) flushRender() {
 }
 
 // SetHidden reports window visibility / focus (document.hidden,
-// visibilitychange, window focus/blur). Async.
+// visibilitychange, window focus/blur). Async; in order with the user's
+// input (PostInOrder): a key after the window gained focus comes after
+// its focus event.
 func (r *Runtime) SetHidden(hidden bool) {
-	r.Post(func(js *Ctx) {
+	r.PostInOrder(func(js *Ctx) {
 		_, _ = js.Global().Get("__clack").Get("setHidden").Call(hidden)
 	})
 }

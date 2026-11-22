@@ -236,7 +236,13 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		}
 		l.expandAt = k
 		ct := l.enter(attTextClass)
+		if a.IsShare {
+			l.filled++
+		}
 		row(l.blocks(text, cx, cy, cw, false))
+		if a.IsShare {
+			l.filled--
+		}
 		l.leave(ct)
 		l.expandAt = nil
 		l.plainAdd("\n")
@@ -392,7 +398,7 @@ func (l *lay) addSpansPlain(spans []richtext.Span, fs *flowStyle) {
 	for _, sp := range spans {
 		switch sp.Kind {
 		case richtext.Link: // a mrkdwn link (data-stringify-link)
-			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true})
+			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, mrkdwn: true})
 			k := l.faceFor(fs.face, fs.size, sp.Style)
 			l.addTextPart(&sp, fs, k, tg)
 		default:
@@ -932,6 +938,7 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 	rad := l.dp(8)
 	radii := [4]int{rad, rad, rad, rad}
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: rad, fill: p.Placeholder, target: -1})
+	poster, posterRadii := r, radii // where the poster sits (a video draws there)
 	if f.Thumb != nil && f.Thumb.URL != "" {
 		sc := float64(l.scale)
 		if sc <= 0 {
@@ -962,6 +969,7 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 		if ir.Empty() {
 			ir = r
 		}
+		poster, posterRadii = ir, radii
 		src := l.fileStill(f) // animations off: the deanimated still (animated.go)
 		l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: src.URL, radii: radii, target: tg, px: max(ir.Dx(), ir.Dy())})
 		l.fileControls(f, len(l.d.imgs)-1, r)
@@ -972,7 +980,11 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 	l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: p.Border, bw: l.dp(1), target: -1, layer: 1})
 	l.plainAdd(fileName(f))
-	if f.IsVideo && !overflow {
+	// a playable video's VideoPlayer (Options.Media) draws its own pill,
+	// and the rest of its overlay, over the poster; the "+ N" tile stays
+	// as it is
+	media := !overflow && l.mediaTile(f, r, poster, posterRadii, n, overflow)
+	if f.IsVideo && !overflow && !media {
 		l.videoPill(f, r)
 	}
 	if !overflow { // FileGallery: the overflow tile's showActions is off
@@ -1194,7 +1206,7 @@ func (l *lay) waveform(samples []int, x, y, w, h int) {
 
 func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	p := &l.st.Palette
-	bg, fg := p.FileIconBg, p.FileIconText
+	bg, fg, see := p.FileIconBg, p.FileIconText, p.raw.FileIconBg
 	label := strings.ToUpper(f.Type)
 	if tile, glyph, ok := svgFileIcon(f.Type); ok {
 		l.svgIconTile(x, y, s, tile, glyph)
@@ -1209,9 +1221,9 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: sr, radius: l.dp(2), fill: rgb(255, 255, 255), target: -1})
 		return
 	case "pdf":
-		bg, fg = p.FileIconPDF, rgb(255, 255, 255)
+		bg, fg, see = p.FileIconPDF, rgb(255, 255, 255), color.NRGBA{}
 	case "zip", "gzip", "tar", "rar", "7z":
-		bg, fg = p.FileIconZip, rgb(255, 255, 255)
+		bg, fg, see = p.FileIconZip, rgb(255, 255, 255), color.NRGBA{}
 	}
 	if len(label) > 4 {
 		label = label[:4]
@@ -1220,7 +1232,7 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 		label = "FILE"
 	}
 	r := image.Rect(x, y, x+s, y+s)
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, target: -1})
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, see: see, target: -1})
 	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(10), lineH: l.dp(12), col: fg, emoji: l.dp(12), maxLines: 1, noSelect: true}
 	k := l.faceFor(fs.face, fs.size, 0)
 	tw := int(l.measure(label, k) + 0.5)

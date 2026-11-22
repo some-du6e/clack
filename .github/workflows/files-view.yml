@@ -60,6 +60,11 @@ on:
       - "internal/slack/file_is_image.go"
       - "internal/core/file_is_image_test.go"
       - "internal/ui/views/files_unthumbed_test.go"
+      - "internal/ui/views/files_filters_test.go"
+      - "internal/ui/popups/files_filters.go"
+      - "internal/ui/popups/usergroup_select.go"
+      - "internal/core/browse.go"
+      - "internal/core/files_filters_test.go"
       - ".github/workflows/files-view.yml"
   workflow_dispatch:
 
@@ -78,6 +83,7 @@ concurrency:
 jobs:
   files-view:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (4.8 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

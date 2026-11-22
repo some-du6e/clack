@@ -78,7 +78,7 @@ func TestClosedDMReappearsOnNewMessage(t *testing.T) {
 	evs, cancel := a.Subscribe()
 	defer cancel()
 	// realtime: a new message in closed D2 reopens it
-	a.handle(rtm("message", map[string]any{"channel": "D2", "user": "U2", "ts": tsAgo(-time.Minute), "text": "hi"}))
+	a.handleNow(t, rtm("message", map[string]any{"channel": "D2", "user": "U2", "ts": tsAgo(-time.Minute), "text": "hi"}))
 	next(t, evs, "sidebar_changed")
 	if got := sectionsByType(a)["direct_messages"]; got != "D2,D1,D3" { // newest first (dm_recency_sort_rollout)
 		t.Fatalf("after a message: %q", got)
@@ -110,7 +110,7 @@ func TestClosedDMReappearsOnNewMessage(t *testing.T) {
 func TestDMOpenCloseEvents(t *testing.T) {
 	a, f := dmApp(t)
 	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"D5","is_im":true,"user":"U5"}}`
-	a.handle(rtm("im_open", map[string]any{"channel": "D5", "user": "U5"}))
+	a.handleNow(t, rtm("im_open", map[string]any{"channel": "D5", "user": "U5"}))
 	if got := sectionsByType(a)["direct_messages"]; got != "D1,D3,D5" {
 		t.Fatalf("after im_open: %q", got)
 	}

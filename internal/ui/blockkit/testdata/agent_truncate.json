@@ -1,0 +1,906 @@
+{
+ "source": "Slack's BLFT truncateRichTextElements (build 9685e6ce144b) run in node with its lodash/predicate imports stubbed; round2/oracle in clack-ops scratch",
+ "cases": [
+  {
+   "name": "short",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "Searched the repository for the failing helper."
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "Searched the repository for the failing helper."
+       }
+      ]
+     }
+    ],
+    "isTruncated": false,
+    "charsConsumed": 47,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "long-paragraph",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "Read the three failing tests and the stack traces from the last CI run, then traced each failure back to the helper that builds the fake workspace; the fixture's clock starts a year early, so every relative date in the assertions is off by twelve months. Read the three failing tests and the stack traces from the last CI run, then traced each failure back to the helper that builds the fake workspace; the fixture's clock starts a year early, so every relative date in the assertions is off by twelve months. "
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "Read the three failing tests and the stack traces from the last CI run, then traced each failure back to the helper that builds the fake workspace; the fixture's clock starts a year early, so every relative date in the assertions is off by twelve mon"
+       },
+       {
+        "type": "truncation",
+        "isMessageTruncation": true
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 510,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "five-lines",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "line one\nline two\nline three\nline four\nline five"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "line one\nline two\nline three"
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 28,
+    "linesConsumed": 3
+   }
+  },
+  {
+   "name": "trailing-newline",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "one\ntwo\n"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "one\ntwo\n"
+       }
+      ]
+     }
+    ],
+    "isTruncated": false,
+    "charsConsumed": 8,
+    "linesConsumed": 1
+   }
+  },
+  {
+   "name": "two-sections",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "First section."
+      }
+     ]
+    },
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "Second section."
+      }
+     ]
+    },
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "Third section."
+      }
+     ]
+    },
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "Fourth section."
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "First section."
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "Second section."
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "Third section."
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 43,
+    "linesConsumed": 3
+   }
+  },
+  {
+   "name": "list",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "Steps:"
+      }
+     ]
+    },
+    {
+     "type": "rich_text_list",
+     "style": "bullet",
+     "indent": 0,
+     "elements": [
+      {
+       "type": "rich_text_section",
+       "elements": [
+        {
+         "type": "text",
+         "text": "a"
+        }
+       ]
+      },
+      {
+       "type": "rich_text_section",
+       "elements": [
+        {
+         "type": "text",
+         "text": "b"
+        }
+       ]
+      },
+      {
+       "type": "rich_text_section",
+       "elements": [
+        {
+         "type": "text",
+         "text": "c"
+        }
+       ]
+      },
+      {
+       "type": "rich_text_section",
+       "elements": [
+        {
+         "type": "text",
+         "text": "d"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "Steps:"
+       }
+      ]
+     },
+     {
+      "type": "rich_text_list",
+      "style": "bullet",
+      "indent": 0,
+      "elements": [
+       {
+        "type": "rich_text_section",
+        "elements": [
+         {
+          "type": "text",
+          "text": "a"
+         }
+        ]
+       },
+       {
+        "type": "rich_text_section",
+        "elements": [
+         {
+          "type": "text",
+          "text": "b"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 8,
+    "linesConsumed": 3
+   }
+  },
+  {
+   "name": "bold-link-emoji",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "Opened "
+      },
+      {
+       "type": "link",
+       "url": "https://example.com/a/very/long/path",
+       "text": "the design doc"
+      },
+      {
+       "type": "text",
+       "text": " and "
+      },
+      {
+       "type": "emoji",
+       "name": "white_check_mark"
+      },
+      {
+       "type": "text",
+       "text": " marked it done.",
+       "style": {
+        "bold": true
+       }
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "Opened "
+       },
+       {
+        "type": "link",
+        "url": "https://example.com/a/very/long/path",
+        "text": "the design doc"
+       },
+       {
+        "type": "text",
+        "text": " and "
+       },
+       {
+        "type": "emoji",
+        "name": "white_check_mark"
+       },
+       {
+        "type": "text",
+        "text": " marked it done.",
+        "style": {
+         "bold": true
+        }
+       }
+      ]
+     }
+    ],
+    "isTruncated": false,
+    "charsConsumed": 43,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "code",
+   "elements": [
+    {
+     "type": "rich_text_preformatted",
+     "elements": [
+      {
+       "type": "text",
+       "text": "x := compute(y)\nx := compute(y)\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_preformatted",
+      "elements": [
+       {
+        "type": "text",
+        "text": "x := compute(y)\nx := compute(y)\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+       },
+       {
+        "type": "truncation",
+        "isMessageTruncation": true
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 332,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "quote",
+   "elements": [
+    {
+     "type": "rich_text_quote",
+     "elements": [
+      {
+       "type": "text",
+       "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_quote",
+      "elements": [
+       {
+        "type": "text",
+        "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+       },
+       {
+        "type": "truncation",
+        "isMessageTruncation": true
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 300,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "exact-250",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+       }
+      ]
+     }
+    ],
+    "isTruncated": false,
+    "charsConsumed": 250,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "251",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+       },
+       {
+        "type": "truncation",
+        "isMessageTruncation": true
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 251,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "punct-trim",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb... and more words after the cut"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+       },
+       {
+        "type": "truncation",
+        "isMessageTruncation": true
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 278,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "surrogate",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\ud83d\ude00tail"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+       },
+       {
+        "type": "truncation",
+        "isMessageTruncation": true
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 255,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "link-cut",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      {
+       "type": "link",
+       "url": "https://e.com",
+       "text": "a link whose text runs past the budget"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+       },
+       {
+        "type": "link",
+        "url": "https://e.com",
+        "text": "a link who"
+       },
+       {
+        "type": "truncation",
+        "isMessageTruncation": true
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 278,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "user-mention",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "user",
+       "user_id": "U0123456789"
+      },
+      {
+       "type": "text",
+       "text": " wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "user",
+        "user_id": "U0123456789"
+       },
+       {
+        "type": "text",
+        "text": " wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+       },
+       {
+        "type": "truncation",
+        "isMessageTruncation": true
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 258,
+    "linesConsumed": 0
+   }
+  },
+  {
+   "name": "divider",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "top"
+      }
+     ]
+    },
+    {
+     "type": "rich_text_divider"
+    },
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "mid"
+      }
+     ]
+    },
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "bottom"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "top"
+       }
+      ]
+     },
+     {
+      "type": "rich_text_divider"
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "mid"
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "bottom"
+       }
+      ]
+     }
+    ],
+    "isTruncated": false,
+    "charsConsumed": 12,
+    "linesConsumed": 2
+   }
+  },
+  {
+   "name": "lines-and-chars",
+   "elements": [
+    {
+     "type": "rich_text_section",
+     "elements": [
+      {
+       "type": "text",
+       "text": "one\ndddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+     ]
+    }
+   ],
+   "maxChars": 250,
+   "maxLines": 3,
+   "expected": {
+    "elements": [
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "text",
+        "text": "one\ndddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+       },
+       {
+        "type": "truncation",
+        "isMessageTruncation": true
+       }
+      ]
+     },
+     {
+      "type": "rich_text_section",
+      "elements": [
+       {
+        "type": "_truncation_expand_button",
+        "isMessageTruncation": true
+       }
+      ]
+     }
+    ],
+    "isTruncated": true,
+    "charsConsumed": 304,
+    "linesConsumed": 0
+   }
+  }
+ ]
+}

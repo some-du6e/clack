@@ -50,30 +50,33 @@ func (l *lay) addIcon(name string, px int, k faceKey, col color.NRGBA, dc, tg in
 // (content-hgl-1 on surf-hgl-1, 3px radius, 1px 2px padding; hovered
 // #0b4c8c on #1d9bd133; never underlined: .p-rich_text_slug .c-link and
 // its :hover are text-decoration none, Slack's bv1-13 CSS), the
-// "message" icon (4px gap), the label; a private channel's lock icon goes
-// before its name. Disabled ("Private message"): content-pry on
-// foreground_soft .06, no link.
+// "message" icon (4px gap), the label as it reads now (slugs.go: the
+// linked message's sender); a private channel's lock icon goes before
+// its name. Disabled ("Private message": the message isn't there, or
+// can't be): content-pry on foreground_soft .06, no link.
 func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
 	p := &l.st.Palette
-	bg, fg := p.MentionBg, p.MentionText
+	txt, lock, pre, off := l.slugLabel(sp)
+	bg, fg, see := p.MentionBg, p.MentionText, p.raw.MentionBg
 	var tg int16 = -1
-	if sp.Off {
-		bg, fg = rgba(p.Text.R, p.Text.G, p.Text.B, 0.06), p.Text
-	} else if sp.URL != "" {
-		tg = l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true})
+	if off {
+		bg, fg, see = rgba(p.Text.R, p.Text.G, p.Text.B, 0.06), p.Text, color.NRGBA{} // drawn translucent
+	} else if sp.URL != "" || sp.Chan != "" && sp.ID != "" {
+		// MessageMention's click: jumpToMessage with the element's own
+		// channel_id, message_ts and thread_ts (p9lB)
+		tg = l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, id: sp.ID, msgCh: sp.Chan, msgThread: sp.ThreadTS})
 	}
 	pad, padV := l.dpf(2), l.dpf(1)
-	l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Off, part: pt})
+	l.decos = append(l.decos, deco{kind: 1, bg: bg, see: see, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: off, part: pt})
 	dc := int16(len(l.decos) - 1)
 	ip := fs.size
 	l.addOpen(pad, dc, k)
 	l.addIcon("message", ip, k, fg, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // icon margin-right 4 (the icon item ends with 1px)
-	txt := sp.Text
-	if sp.Lock && sp.Pre > 0 && sp.Pre <= len(txt) {
-		l.addText(txt[:sp.Pre], fs, k, fg, sp.Style, dc, tg)
+	if lock && pre > 0 && pre <= len(txt) {
+		l.addText(txt[:pre], fs, k, fg, sp.Style, dc, tg)
 		l.addIcon("lock-filled", ip, k, fg, dc, tg)
-		txt = txt[sp.Pre:]
+		txt = txt[pre:]
 	}
 	l.addText(txt, fs, k, fg, sp.Style, dc, tg)
 	l.addClose(pad, dc, k)
@@ -90,9 +93,9 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 // click opens the URL.
 func (l *lay) truncatedLink(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
 	p := &l.st.Palette
-	tg := l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, urlCard: true})
+	tg := l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, urlCard: true, mrkdwn: true})
 	pad, padV := l.dpf(2), l.dpf(1)
-	l.decos = append(l.decos, deco{kind: 1, bg: p.MentionBg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
+	l.decos = append(l.decos, deco{kind: 1, bg: p.MentionBg, see: p.raw.MentionBg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
 	dc := int16(len(l.decos) - 1)
 	l.addOpen(pad, dc, k)
 	l.addIcon("link", fs.size, k, p.MentionText, dc, tg)

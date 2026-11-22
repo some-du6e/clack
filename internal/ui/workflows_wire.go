@@ -23,6 +23,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/composer"
@@ -114,7 +115,7 @@ func (a *App) addWorkflowBookmark(ch string, t core.WorkflowTrigger, link string
 		_, err := c.AddWorkflowBookmark(ctx, ch, t, link)
 		a.Post(func() {
 			if err != nil {
-				log.Printf("workflows: add %s to %s: %v", t.ID, ch, err)
+				log.Printf("workflows: add %s to %s: %v", t.ID, logtag.ID(ch), err)
 				return
 			}
 			a.Navigate("c/" + ch)
@@ -197,7 +198,7 @@ func (m *wfMentions) slug(id string) (richtext.WorkflowSlug, bool) {
 		return s, ok
 	}
 	if t, ok := m.c.Interactive().Trigger(id); ok && t.Error == "" {
-		s = richtext.WorkflowSlug{Title: t.WorkflowTitle}
+		s = richtext.WorkflowSlug{Title: t.WorkflowTitle, Icon: t.Icon}
 		m.mu.Lock()
 		m.got[id] = s
 		m.mu.Unlock()
@@ -211,7 +212,7 @@ func (m *wfMentions) fetch(id string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	t, err := m.c.Interactive().TriggerInfo(ctx, id)
-	s := richtext.WorkflowSlug{Title: t.WorkflowTitle}
+	s := richtext.WorkflowSlug{Title: t.WorkflowTitle, Icon: t.Icon}
 	if err != nil {
 		if s.Error = core.ErrCode(err); s.Error == "" {
 			s.Error = "error"

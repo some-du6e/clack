@@ -12,7 +12,7 @@ import (
 	"gioui.org/io/event"
 )
 
-// Clack patch (CLACK_PATCHES.md §50) on a real macOS desktop
+// Clack patch (CLACK_PATCHES.md §58) on a real macOS desktop
 // (CLACK_MACOS_WINDOW_TESTS, ci's macos job). AppKit's terminate:, which
 // the Dock's Quit, log out, restart and a quit Apple Event all reach,
 // asks the program first: one ranging over Events gets a TerminateEvent

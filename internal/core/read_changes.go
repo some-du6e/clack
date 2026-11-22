@@ -27,6 +27,53 @@ func (a *App) announceReads() {
 	for _, r := range a.S.TakeReadRevisions() {
 		a.announceHeld(r.Channel, r.Msg.TS)
 	}
+	a.tellFetched()
+}
+
+// tellFetched tells the fetched hook (SetFetchedHook) of the messages
+// fetches by id brought that the store held no copy of
+// (store.TakeFetchedNew), by channel. A new revision of a message the
+// store held goes out as an "update"; one it held nowhere has no change to
+// announce, and taut's mirror, which marks the plugins' copies of a
+// conversation's messages from core's events, drew its plugins' view only
+// at its next sweep (Slack's fetchObjectWithId puts the message in its
+// one store, and the patched selector reads it in the same render). Called
+// on the fetching goroutine before the fetch's answer goes to its caller,
+// so a view of one never reads the plugins' copy as ready before the mark.
+func (a *App) tellFetched() {
+	refs := a.S.TakeFetchedNew()
+	if len(refs) == 0 {
+		return
+	}
+	f := a.fetchedHook.Load()
+	if f == nil {
+		return
+	}
+	by := map[string][]string{}
+	var order []string
+	for _, r := range refs {
+		if _, ok := by[r.Channel]; !ok {
+			order = append(order, r.Channel)
+		}
+		by[r.Channel] = append(by[r.Channel], r.TS)
+	}
+	for _, ch := range order {
+		(*f)(ch, by[ch])
+	}
+}
+
+// SetFetchedHook makes f hear of the messages each fetch by id brings that
+// the store held no copy of (Activity's and Saved's hydration, the Threads
+// view's getView, a thread's replies), by channel, on the fetching
+// goroutine: taut's mirror marks them for the plugins. nil removes it;
+// restore puts back the hook it replaced.
+func (a *App) SetFetchedHook(f func(ch string, tss []string)) (restore func()) {
+	var p *func(ch string, tss []string)
+	if f != nil {
+		p = &f
+	}
+	prev := a.fetchedHook.Swap(p)
+	return func() { a.fetchedHook.CompareAndSwap(p, prev) }
 }
 
 // announceHeld emits an "update" of ch/ts as the store holds it now, in
@@ -60,6 +107,9 @@ type refetch struct {
 	out   bool
 	fails int
 	retry time.Time
+	// waiters are closed once the message has an answer, or core stops
+	// asking by itself (EnsureMessages)
+	waiters []chan struct{}
 }
 
 const (
@@ -233,22 +283,48 @@ func (a *App) refetchRound() {
 	at := time.Now()
 	var again []MsgKey
 	var retry []time.Time
+	var slugs []string // the answered messages a message slug asked for (msg_slug.go)
 	l.mu.Lock()
 	for _, k := range keys {
 		if _, ok := got[k.Channel+"/"+k.TS]; ok || answered[k.Channel] {
+			closeAll(l.refetching[k].waiters)
 			delete(l.refetching, k)
+			if l.slugAsked[k] {
+				delete(l.slugAsked, k)
+				slugs = append(slugs, k.String())
+			}
 			continue
 		}
 		r := l.refetching[k]
 		r.fails++
 		r.retry = at.Add(max(refetchBackoff(r.fails), wait))
 		r.out = r.fails < refetchTries // still waiting for core's own next try
+		if !r.out {
+			closeAll(r.waiters) // core asks no more: a view's next call does
+			r.waiters = nil
+			if l.slugAsked[k] {
+				// a slug asks on every frame: it keeps the non-existent
+				// stub instead (msg_slug.go)
+				delete(l.slugAsked, k)
+				if l.slugGone == nil || len(l.slugGone) >= maxRefetchKeys {
+					l.slugGone = map[MsgKey]bool{}
+				}
+				l.slugGone[k] = true
+			}
+		}
 		l.refetching[k] = r
 		if r.out {
 			again, retry = append(again, k), append(retry, r.retry)
 		}
 	}
 	l.mu.Unlock()
+	if len(slugs) > 0 {
+		// the slugs linking to them draw again (and their conversions
+		// are made again: MsgRefs.Messages), as Slack's MessageMention
+		// renders again once the fetch upserts the message or its
+		// non-existent stub
+		a.emit(Event{Type: "names", Users: slugs})
+	}
 	q.mu.Lock()
 	for i, k := range again {
 		q.pending[k] = retry[i]
@@ -256,6 +332,36 @@ func (a *App) refetchRound() {
 	q.busy, q.last = false, time.Now()
 	a.scheduleRefetchLocked(q.last)
 	q.mu.Unlock()
+}
+
+// refetchWaiters registers a wait on each of keys that RefetchMessages
+// has out: a channel closed once its answer is in, or once core stops
+// asking for it by itself (a key not out has nothing to wait for).
+func (a *App) refetchWaiters(keys []MsgKey) []chan struct{} {
+	if len(keys) == 0 {
+		return nil
+	}
+	l := &a.msgLog
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []chan struct{}
+	for _, k := range keys {
+		r, ok := l.refetching[k]
+		if !ok || !r.out {
+			continue
+		}
+		ch := make(chan struct{})
+		r.waiters = append(r.waiters, ch)
+		l.refetching[k] = r
+		out = append(out, ch)
+	}
+	return out
+}
+
+func closeAll(chs []chan struct{}) {
+	for _, ch := range chs {
+		close(ch)
+	}
 }
 
 // refetchWaitAfter is the least wait err asks for: a rate limit's

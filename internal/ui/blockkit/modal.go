@@ -65,8 +65,9 @@ type Stack struct {
 	ptr   int
 	wasUp bool
 	// bodyR is the body's visible box in window coordinates as last
-	// drawn (ModalFields)
+	// drawn (ModalFields); card, the card's (Rect)
 	bodyR image.Rectangle
+	card  image.Rectangle
 }
 
 func newStack(h Host, v *core.View) *Stack {
@@ -533,10 +534,15 @@ func (s *Stack) Layout(gtx C) D {
 	bodyH := min(max(content, dp(gtx, 90)), max(maxBody, dp(gtx, 90)))
 	mh := headH + bannerH + bodyH + footH
 	pos := image.Pt((win.X-mw)/2, max((win.Y-mh)/2, 0))
+	s.card = image.Rectangle{Min: pos, Max: pos.Add(image.Pt(mw, mh))}
 
 	// the card: Slack's c-sk-modal (role dialog), so a theme's
 	// [role=dialog] background and border land on it as in Slack
 	defer s.pointerSeen(gtx)
+	// Slack's BlockKitModal, for the inspect tool: its box is the card
+	// (InspectCard); inspect_parts.go names its parts
+	bk := slackc.InspectAs("BlockKitModal")
+	defer bk.EndCard(gtx)
 	st := popups.ModalClass.Enter(gtx, 0, 0)
 	defer st.Leave()
 	if st.Hidden() {
@@ -550,9 +556,15 @@ func (s *Stack) Layout(gtx C) D {
 			event.Op(gtx.Ops, &s.tag)
 		}()
 		// header
+		hm := bkHeaderClass.Inspect(0)
 		s.header(gtx, mw, headH, v)
+		hm.EndAt(gtx, image.Rect(0, 0, mw, headH))
 		y := headH
 		if s.banner != "" {
+			if slackc.Inspecting() {
+				eb := slackc.InspectAs("BlockKitModalError")
+				eb.EndAt(gtx, image.Rect(pad, y, mw-pad, y+dp(gtx, 36)))
+			}
 			at(gtx, image.Pt(pad, y), func(gtx C) D {
 				w := mw - 2*pad
 				rr := image.Rect(0, 0, w, dp(gtx, 36))
@@ -576,6 +588,7 @@ func (s *Stack) Layout(gtx C) D {
 			y += bannerH
 		}
 		// body (scrolls)
+		bm := bkBodyClass.Inspect(0)
 		at(gtx, image.Pt(0, y), func(gtx C) D {
 			defer clip.Rect{Max: image.Pt(mw, bodyH)}.Push(gtx.Ops).Pop()
 			gtx.Constraints = layout.Exact(image.Pt(mw, bodyH))
@@ -596,16 +609,25 @@ func (s *Stack) Layout(gtx C) D {
 			}
 			return d
 		})
+		bm.EndAt(gtx, image.Rect(0, y, mw, y+bodyH))
 		y += bodyH
 		// footer
 		if hasFooter {
 			// .p-block_kit_modal .c-dialog__footer: always a 1px top border
 			rrect(gtx, image.Rect(0, y, mw, y+max(1, dp(gtx, 1))), 0, cl.FooterBorder)
+			fm, wm := bkFooterClass.Inspect(0), bkWizardFooter.Inspect(0)
 			s.footer(gtx, image.Pt(0, y), mw, footH, v)
+			wm.EndAt(gtx, image.Rect(0, y, mw, y+footH))
+			fm.EndAt(gtx, image.Rect(0, y, mw, y+footH))
 		}
 	})
+	slackc.InspectCard(gtx, image.Rectangle{Min: pos, Max: pos.Add(image.Pt(mw, mh))}) // the inspect tool: the card is the modal's box
 	return D{Size: win}
 }
+
+// Rect is the card's last laid-out rectangle (window coords): its body's
+// width, from the header's top to the footer's bottom.
+func (s *Stack) Rect() image.Rectangle { return s.card }
 
 func (s *Stack) header(gtx C, mw, hh int, v *core.View) {
 	th := s.h.Theme()
@@ -620,12 +642,18 @@ func (s *Stack) header(gtx C, mw, hh int, v *core.View) {
 			}
 			at(gtx, image.Pt((bs-dp(gtx, 20))/2, (bs-dp(gtx, 20))/2), func(gtx C) D { return icon(gtx, "back", 20, cl.Text2) })
 			s.backTap.add(gtx, image.Pt(bs, bs))
+			bkIconBtnClass.Inspect(0).End(gtx, image.Pt(bs, bs))
 			return D{}
 		})
 		x = dp(gtx, 16) + bs + dp(gtx, 8)
 	}
 	is := dp(gtx, 36)
+	cs := dp(gtx, 36)
+	// the h1 and BlockKitModal's title in it, for the inspect tool
+	h1, ts := bkTitleClass.Inspect(0), bkTitleDiv.Inspect(0)
+	tx := x
 	if u := s.appIcon(v); u != "" {
+		bkTitleIcon.Inspect(0).EndAt(gtx, image.Rect(x, (hh-is)/2, x+is, (hh-is)/2+is))
 		if img, ok := s.h.Images().Get(u, is); ok {
 			at(gtx, image.Pt(x, (hh-is)/2), func(gtx C) D { return theme.Image(gtx, img, image.Pt(is, is), dp(gtx, 4)) })
 		} else {
@@ -637,11 +665,21 @@ func (s *Stack) header(gtx C, mw, hh int, v *core.View) {
 	if s.dialog != nil {
 		title = s.dialog.Title
 	}
-	cs := dp(gtx, 36)
+	tw := mw - x - dp(gtx, 24) - cs - dp(gtx, 8)
+	var td D
 	at(gtx, image.Pt(x, 0), func(gtx C) D {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(mw-x-dp(gtx, 24)-cs-dp(gtx, 8), hh)}
-		return vcenter(gtx, hh, func(gtx C) D { return label(gtx, th, 22, theme.Black, cl.Text, title) })
+		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, hh)}
+		return vcenter(gtx, hh, func(gtx C) D {
+			td = label(gtx, th, 22, theme.Black, cl.Text, title)
+			return td
+		})
 	})
+	if slackc.Inspecting() {
+		ty := (hh - td.Size.Y) / 2
+		bkTitleText.Inspect(0).EndAt(gtx, image.Rect(x, ty, x+max(td.Size.X, 1), ty+max(td.Size.Y, 1)))
+	}
+	ts.EndAt(gtx, image.Rect(tx, 0, x+tw, hh))
+	h1.EndAt(gtx, image.Rect(tx, 0, x+tw, hh))
 	at(gtx, image.Pt(mw-dp(gtx, 16)-cs, (hh-cs)/2), func(gtx C) D {
 		s.ringAt(gtx, &s.closeTap, image.Rect(0, 0, cs, cs))
 		if s.closeTap.g.Hovered() {
@@ -649,6 +687,7 @@ func (s *Stack) header(gtx C, mw, hh int, v *core.View) {
 		}
 		at(gtx, image.Pt((cs-dp(gtx, 20))/2, (cs-dp(gtx, 20))/2), func(gtx C) D { return icon(gtx, "close", 20, cl.Text2) })
 		s.closeTap.add(gtx, image.Pt(cs, cs))
+		bkCloseClass.Inspect(0).End(gtx, image.Pt(cs, cs))
 		return D{}
 	})
 }
@@ -718,6 +757,16 @@ func (s *Stack) footer(gtx C, org image.Point, mw, fh int, v *core.View) {
 			drawButton(gtx, th, sz, style, txt, 8, 15, t.g.Hovered(), false, disabled)
 			if !disabled {
 				t.add(gtx, sz)
+			}
+			// WizardModal's next or back button, for the inspect tool
+			if style == "primary" {
+				var mods uint64
+				if disabled {
+					mods = 1
+				}
+				bkNextClass.Inspect(mods).End(gtx, sz)
+			} else {
+				bkBackClass.Inspect(0).End(gtx, sz)
 			}
 			return D{}
 		})

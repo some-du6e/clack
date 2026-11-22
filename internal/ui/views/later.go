@@ -859,6 +859,7 @@ type Later struct {
 // NewLater builds the To-dos page.
 func NewLater(h Host) *Later {
 	l := &Later{savedBase: newSavedBase(h)}
+	l.mediaPane = "later"
 	l.todos = true
 	l.feed.filter = core.SavedFilterTodos
 	l.feeds = []*savedFeed{&l.feed}

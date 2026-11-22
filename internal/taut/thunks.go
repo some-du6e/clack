@@ -1,6 +1,7 @@
 package taut
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,8 @@ import (
 	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/jsrt"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Slack's named thunks are where plugins hook actions: SilentTyping wraps
@@ -82,8 +85,8 @@ var ThunkCatalogue = []ThunkSpec{
 	{"blocksFormatFetcher", "{blocks, reason}", "ui/composer (markdown mode)", "blocks.format"},
 	{"executeAppAction", "{actionId, appId, channelId, …}", "ui/popups (shortcuts)", "running an app shortcut"},
 	{"submitView", "{viewId, values, …}", "ui/popups (app modals)", "submitting an app modal"},
-	{"apiCall", "{method, args}", "taut", "a Slack API call"},
-	{"apiCallExpedited", "{method, args}", "taut", "a Slack API call"},
+	{"apiCall", "{method, args, …}", "taut", "a Slack API call, settled as Slack's SlackApiRequest settles (05_slack.js apiCallThunk)"},
+	{"apiCallExpedited", "{method, args, …}", "taut", "apiCall with EXPEDITED, through apiCall's creator"},
 	// used by Slick's plugins (docs/PLUGINS-slick.md)
 	{"handleDeepLink", "{uri}", "ui (shell)", "opening a slack:// deep link (UIHooks.DeepLink)"},
 	{"navigate", "{id, viewType, params?, uiState?, options?}", "ui (shell)", "Slack's multi-view navigation: a Channel, Thread or Profile view through its deep link (UIHooks.DeepLink); resolves undefined, as Slack's"},
@@ -91,6 +94,8 @@ var ThunkCatalogue = []ThunkSpec{
 	{"openEditProfileModal", "{}", "ui/popups (profile)", "opening the edit-profile dialog"},
 	{"showSavedItemNotification", "{message, …}", "ui (notifications)", "a saved-item reminder notification"},
 	{"startHuddle", "{channelId, …}", "ui/views (huddles)", "starting a huddle (Clack has no huddle media)"},
+	{"addMemberToPresenceSubscription", "memberId", "taut", "Slack's presence manager (client-boot 4hlf): counts a subscriber of the member's presence (core.AddPresenceSubscription)"},
+	{"removeMemberFromPresenceSubscription", "memberId", "taut", "one subscriber fewer (core.RemovePresenceSubscription)"},
 }
 
 // SyncThunks return their result synchronously in Slack (plugins call the
@@ -112,13 +117,55 @@ type thunkTable struct {
 	patched atomic.Pointer[map[string]bool]
 
 	mu      sync.Mutex
-	natives map[string]NativeFunc // defaults for plugin-initiated dispatches
-	calls   map[int64]NativeFunc  // in-flight native cores of a Dispatch
+	natives map[string]NativeFunc  // defaults for plugin-initiated dispatches
+	calls   map[int64]NativeFunc   // in-flight native cores of a Dispatch
+	seq     map[int64]bool         // the calls whose natives run in JS's order (DispatchSeq)
+	checks  map[int64]*atomic.Bool // CheckThenDispatch's: its checks passed (checksPassed)
 	next    int64
+	// seqGo runs DispatchSeq's natives with no plugin, in the order they
+	// came
+	seqGo seqRunner
 }
 
+// seqRunner runs funcs one after another on a goroutine of its own, in the
+// order they came.
+type seqRunner struct {
+	mu sync.Mutex
+	q  []func()
+	on bool
+}
+
+func (s *seqRunner) run(f func()) {
+	s.mu.Lock()
+	s.q = append(s.q, f)
+	start := !s.on
+	s.on = true
+	s.mu.Unlock()
+	if !start {
+		return
+	}
+	go func() {
+		for {
+			s.mu.Lock()
+			if len(s.q) == 0 {
+				s.on, s.q = false, nil
+				s.mu.Unlock()
+				return
+			}
+			f := s.q[0]
+			s.q[0] = nil
+			s.q = s.q[1:]
+			s.mu.Unlock()
+			f()
+		}
+	}()
+}
+
+// noTautSeq is seqGo for DispatchSeq with no plugin system at all.
+var noTautSeq seqRunner
+
 func newThunkTable(t *Taut) *thunkTable {
-	tt := &thunkTable{t: t, natives: map[string]NativeFunc{}, calls: map[int64]NativeFunc{}}
+	tt := &thunkTable{t: t, natives: map[string]NativeFunc{}, calls: map[int64]NativeFunc{}, seq: map[int64]bool{}}
 	tt.installDefaults()
 	return tt
 }
@@ -195,7 +242,17 @@ func Dispatch[A, R any](ctx context.Context, t *Taut, name string, args A, nativ
 		return native(ctx, args)
 	}
 	var zero R
-	core := func(ctx context.Context, raw []json.RawMessage) (any, error) {
+	out, err := t.dispatchJS(ctx, name, []any{args}, nativeCore(name, native))
+	if err != nil {
+		return zero, err
+	}
+	return decodeDispatch[R](name, out)
+}
+
+// nativeCore is Dispatch's native as JS calls it back (callNative): its
+// args decoded from JSON.
+func nativeCore[A, R any](name string, native func(ctx context.Context, args A) (R, error)) NativeFunc {
+	return func(ctx context.Context, raw []json.RawMessage) (any, error) {
 		var a A
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw[0], &a); err != nil {
@@ -204,18 +261,93 @@ func Dispatch[A, R any](ctx context.Context, t *Taut, name string, args A, nativ
 		}
 		return native(ctx, a)
 	}
-	out, err := t.dispatchJS(ctx, name, []any{args}, core)
-	if err != nil {
-		return zero, err
-	}
-	if len(out) == 0 || string(out) == "null" {
-		return zero, nil
-	}
+}
+
+// decodeDispatch is a dispatch's JSON result as R.
+func decodeDispatch[R any](name string, out json.RawMessage) (R, error) {
 	var r R
+	if len(out) == 0 || string(out) == "null" {
+		return r, nil
+	}
 	if err := json.Unmarshal(out, &r); err != nil {
+		var zero R
 		return zero, fmt.Errorf("taut: %s result: %w", name, err)
 	}
 	return r, nil
+}
+
+// DispatchThen is Dispatch without the wait, for the user's input (a
+// keystroke's typing report): with the runtime running its JS call is
+// queued before DispatchThen returns, on the caller's goroutine, in order
+// with what the caller queues after it (the send at Enter: the typing
+// report a keystroke dispatched from a goroutine of its own could come
+// after the message). done (nil for none) hears the result on another
+// goroutine; unpatched, native runs on one.
+func DispatchThen[A, R any](ctx context.Context, t *Taut, name string, args A, native func(ctx context.Context, args A) (R, error), done func(R, error)) {
+	dispatchThen(ctx, t, name, args, native, done, false)
+}
+
+// DispatchSeq is DispatchThen for dispatches that each go out without
+// waiting for the ones before (Slack's messageReceived dispatches
+// showNotification for every message without awaiting the last), whose
+// natives run in the order their dispatches call them: in JS's order, one
+// after another, as Slack runs them in its one JS thread, and in the order
+// DispatchSeq was called with no plugin. A goroutine each could run two
+// in reverse. For natives that never wait long.
+func DispatchSeq[A, R any](ctx context.Context, t *Taut, name string, args A, native func(ctx context.Context, args A) (R, error), done func(R, error)) {
+	dispatchThen(ctx, t, name, args, native, done, true)
+}
+
+func dispatchThen[A, R any](ctx context.Context, t *Taut, name string, args A, native func(ctx context.Context, args A) (R, error), done func(R, error), seq bool) {
+	if done == nil {
+		done = func(R, error) {}
+	}
+	if !t.ThunkPatched(name) {
+		run := func() { done(native(ctx, args)) }
+		switch {
+		case seq && t != nil:
+			t.thunks.seqGo.run(run)
+		case seq:
+			noTautSeq.run(run)
+		default:
+			go run()
+		}
+		return
+	}
+	rt := t.liveRuntime()
+	if rt == nil {
+		run := func() { done(Dispatch(ctx, t, name, args, native)) }
+		if seq {
+			// in order with the dispatches around it while the runtime
+			// is down too: a goroutine each could show two toasts in
+			// reverse (the dispatch waits for a runtime that starts)
+			t.thunks.seqGo.run(run)
+		} else {
+			go run()
+		}
+		return
+	}
+	ctx = inOrder(ctx)
+	tt := t.thunks
+	id := tt.add(ctx, nativeCore(name, native))
+	if seq {
+		tt.mu.Lock()
+		tt.seq[id] = true
+		tt.mu.Unlock()
+	}
+	// the call waits for its JS whatever the caller's deadline (a toast
+	// behind a 30 s backlog still shows), and the native stays registered
+	// until that JS has run: one dropped at the deadline was gone when JS
+	// called it
+	rt.rt.CallThen(context.WithoutCancel(ctx), "__taut.dispatchThunk", func(out json.RawMessage, err error) {
+		tt.drop(id)
+		if err != nil {
+			var zero R
+			done(zero, err)
+			return
+		}
+		done(decodeDispatch[R](name, out))
+	}, name, []any{args}, id, SyncThunks[name])
 }
 
 // DispatchJSON is Dispatch with JSON in and out.
@@ -243,18 +375,104 @@ func (t *Taut) dispatchJS(ctx context.Context, name string, args []any, native N
 	if err != nil {
 		return nil, err
 	}
+	ctx = inOrder(ctx)
 	tt := t.thunks
+	id := tt.add(ctx, native)
+	defer tt.drop(id)
+	return rt.rt.Call(ctx, "__taut.dispatchThunk", name, args, id, SyncThunks[name])
+}
+
+// inOrder is ctx for a dispatch: the user's (UserAction) as it is, any
+// other in order with the user's later input (jsrt.InOrder). What the
+// native UI dispatches is the user's doing (a reaction, a draft sync, a
+// menu), and a plugin click after it went ahead of it when it waited in
+// the queue: OwlMode reads its mode in the reaction's patch, and a
+// reaction meant for Owl went out under the user's name.
+func inOrder(ctx context.Context) context.Context {
+	if jsrt.IsUserBlocking(ctx) || jsrt.IsInOrder(ctx) {
+		return ctx
+	}
+	return jsrt.InOrder(ctx)
+}
+
+// add registers an in-flight dispatch's native core for JS to call back
+// (callNative) and returns its id. JS calls it with a context of its own:
+// with a user-blocking ctx, the native's JS work (a send's transforms, the
+// thunks it dispatches in turn) is the user's too, ahead of the renders
+// queued meanwhile; with an in-order one, in order with the user's later
+// input.
+func (tt *thunkTable) add(ctx context.Context, native NativeFunc) int64 {
+	// the native's work is the user's (a post, a reaction): it outlives the
+	// plugin runtime that called it, which may close meanwhile (plugins
+	// turned off, the watchdog), keeping the chain it goes on with
+	inner := native
+	mark := func(c context.Context) context.Context { return c }
+	switch {
+	case jsrt.IsUserChain(ctx):
+		noHold := jsrt.IsNoChain(ctx)
+		mark = func(c context.Context) context.Context {
+			c = jsrt.UserChain(c)
+			if noHold {
+				c = jsrt.NoChain(c)
+			}
+			return c
+		}
+	case jsrt.IsUserBlocking(ctx):
+		mark = jsrt.UserBlocking
+	case jsrt.IsInOrder(ctx):
+		mark = jsrt.InOrder
+	}
+	native = func(c context.Context, raw []json.RawMessage) (any, error) {
+		return inner(mark(context.WithoutCancel(c)), raw)
+	}
 	tt.mu.Lock()
 	tt.next++
 	id := tt.next
 	tt.calls[id] = native
 	tt.mu.Unlock()
-	defer func() {
-		tt.mu.Lock()
-		delete(tt.calls, id)
-		tt.mu.Unlock()
-	}()
-	return rt.rt.Call(ctx, "__taut.dispatchThunk", name, args, id, SyncThunks[name])
+	return id
+}
+
+// drop forgets a finished dispatch's native core: JS calling it after
+// that fails ("that dispatch already finished").
+func (tt *thunkTable) drop(id int64) {
+	tt.mu.Lock()
+	delete(tt.calls, id)
+	delete(tt.seq, id)
+	delete(tt.checks, id)
+	tt.mu.Unlock()
+}
+
+// watchChecks is the flag checksPassed sets for dispatch id (a
+// CheckThenDispatch's call): its send checks let the message go, and what
+// follows is the dispatch.
+func (tt *thunkTable) watchChecks(id int64) *atomic.Bool {
+	f := new(atomic.Bool)
+	tt.mu.Lock()
+	if tt.checks == nil {
+		tt.checks = map[int64]*atomic.Bool{}
+	}
+	tt.checks[id] = f
+	tt.mu.Unlock()
+	return f
+}
+
+// checksPassed is JS saying dispatch id's checks passed (JS thread).
+func (tt *thunkTable) checksPassed(id int64) {
+	tt.mu.Lock()
+	f := tt.checks[id]
+	tt.mu.Unlock()
+	if f != nil {
+		f.Store(true)
+	}
+}
+
+// inSeq reports whether dispatch id's native runs in JS's order
+// (DispatchSeq; JS thread).
+func (tt *thunkTable) inSeq(id int64) bool {
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	return tt.seq[id]
 }
 
 // callNative runs the native core of an in-flight Dispatch (JS → Go).
@@ -462,6 +680,17 @@ func (tt *thunkTable) installDefaults() {
 		"saveMessageEdit": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			return nil, t.saveEdit(ctx, argObj(a))
 		},
+		// Slack's presence manager (client-boot 4hlf): the argument is the
+		// member's id; presence_sub follows a member's first subscriber
+		// and its last one leaving (core/presence_subs.go)
+		"addMemberToPresenceSubscription": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			t.app.AddPresenceSubscription(strArg(a, 0))
+			return nil, nil
+		},
+		"removeMemberFromPresenceSubscription": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			t.app.RemovePresenceSubscription(strArg(a, 0))
+			return nil, nil
+		},
 		"joinChannel": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			_, err := t.app.Join(ctx, argObj(a).str("channelId"))
 			return nil, err
@@ -596,26 +825,83 @@ func (r *appRef) membershipInfo(ctx context.Context, a []json.RawMessage) (any, 
 	return found, nil
 }
 
+// apiCall sends the request of Slack's apiCall thunk, which 05_slack.js
+// (apiCallThunk) builds as Slack's does (client-boot 0hZc, build
+// 35b42de8b870): the form fields getFormData makes of its args, its file
+// parts, and BaseRequest's maxAttempts (1 for the methods apiCall never
+// retries). It is tried the way Slack's API queue tries a SlackApiRequest
+// (slack.SlackRetriesUpTo), and the answer is the last try, whole, for JS
+// to settle the thunk from as Slack's request settles (the response with
+// its request ids, or Slack's rejection with the answer's JSON as
+// err.data): {attempts, status, reqId, retryAfter, body}, status being
+// the HTTP status, "TIMEOUT" (no answer within RequestTimeout) or 0 (no
+// answer). A request Clack won't send (the session ended, a method that
+// would sign you out) rejects with Clack's reason.
 func (r *appRef) apiCall(ctx context.Context, a []json.RawMessage) (any, error) {
-	o := argObj(a)
-	method := o.str("method")
-	var args map[string]any
-	_ = json.Unmarshal(o["args"], &args)
-	vals := url.Values{}
-	for k, v := range args {
-		switch x := v.(type) {
-		case string:
-			vals.Set(k, x)
-		default:
-			b, _ := json.Marshal(x)
-			vals.Set(k, string(b))
+	var req struct {
+		Method string            `json:"method"`
+		Fields map[string]string `json:"fields"`
+		Files  []struct {
+			Field string `json:"field"`
+			File  File   `json:"file"`
+		} `json:"files"`
+		MaxAttempts int `json:"maxAttempts"`
+	}
+	if len(a) > 0 {
+		if err := json.Unmarshal(a[0], &req); err != nil {
+			return nil, fmt.Errorf("taut: apiCall: %w", err)
 		}
 	}
-	raw, err := r.t.app.C.Raw(ctx, method, vals)
-	if err != nil {
-		return nil, err
+	if req.MaxAttempts == 0 {
+		req.MaxAttempts = slack.SlackMaxAttempts
 	}
-	return json.RawMessage(raw), nil
+	if len(req.Files) > 1 {
+		return nil, errors.New("taut: apiCall: Clack sends one file part per call")
+	}
+	vals := url.Values{}
+	for k, v := range req.Fields {
+		vals.Set(k, v)
+	}
+	var last *slack.Attempt
+	tries := 0
+	ctx = slack.ObserveAttempts(slack.SlackRetriesUpTo(ctx, req.MaxAttempts), func(at slack.Attempt) {
+		if last != nil && last.URL != at.URL {
+			tries = 0 // Call sent it on to the other host: a request of its own
+		}
+		tries++
+		last = &at
+	})
+	var err error
+	if len(req.Files) == 0 {
+		_, err = r.t.app.C.Raw(ctx, req.Method, vals)
+	} else {
+		f := req.Files[0]
+		var out json.RawMessage
+		err = r.t.app.C.CallMultipartFile(ctx, req.Method, vals, slack.MultipartFile{Field: f.Field, Name: f.File.Name, Type: f.File.Type, Data: f.File.Data}, &out)
+	}
+	if last == nil {
+		// nothing went out: the backoff guard answered with the failure
+		// it holds (Slack would have sent it again, and been answered the
+		// same), or Clack refused to send it
+		at, ok := slack.AttemptOf(err)
+		if !ok {
+			if err == nil {
+				err = errors.New("taut: apiCall: no request was sent")
+			}
+			return nil, err
+		}
+		last, tries = &at, 1
+	}
+	var status any = last.Status
+	switch {
+	case last.Timeout:
+		status = "TIMEOUT"
+	case last.Err != nil:
+		status = 0
+	}
+	// XHR's text decodes the answer as UTF-8, dropping a byte order mark
+	body := bytes.TrimPrefix(last.Body, []byte("\xef\xbb\xbf"))
+	return map[string]any{"attempts": tries, "status": status, "reqId": last.ReqID, "retryAfter": last.RetryAfter, "body": string(body)}, nil
 }
 
 // fetchRawChannels is fetchRawChannelsById's native: core loads each

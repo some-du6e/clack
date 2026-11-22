@@ -37,7 +37,7 @@ env:
 jobs:
   plugins:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15 # budget: 1.5 x p95 (4.3 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -58,9 +58,9 @@ jobs:
           .github/scripts/fetch_library.sh dist/library
           test -s dist/library/index.json
       - name: core and Taut experiment tests
-        run: go test -count=1 -timeout 15m -v -run 'TestForcedExperiment|TestExperimentReads|TestMpdmCustomName|TestPluginExperimentOverridesReachCore|TestWorkObjectExperiments' ./internal/core/ ./internal/taut/
+        run: go test -count=1 -timeout 10m -v -run 'TestForcedExperiment|TestExperimentReads|TestMpdmCustomName|TestPluginExperimentOverridesReachCore|TestWorkObjectExperiments' ./internal/core/ ./internal/taut/
       - name: the Experiments plugins drive Clack
         env:
           PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -count=1 -timeout 25m -v -run 'TestExperimentsPluginsDriveClack' ./internal/ui/
+        run: xvfb-run -a go test -count=1 -timeout 9m -v -run 'TestExperimentsPluginsDriveClack' ./internal/ui/

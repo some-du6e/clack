@@ -135,6 +135,11 @@ func TestActivityClicksMarkRead(t *testing.T) {
 	if !v.isUnread(it, key) {
 		t.Fatal("k-at-user starts read")
 	}
+	// the list is newest first (um/L Y): the old mention is far down, and
+	// a row takes clicks once it's laid out
+	v.scrollToKey(key)
+	e.frame()
+	e.frame()
 	v.rowFor(key).click.Click()
 	e.frame()
 	if !v.selOK || v.selKey != key {

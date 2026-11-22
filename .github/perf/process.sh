@@ -2,7 +2,8 @@
 # Runs the real clack binary of each side on Xvfb against one fakeslackd
 # (HEAD's): a cold start, then warm starts, then a long idle. Records
 # first-paint and core-ready times from the CLACK_TIMING log, and RSS / Go
-# heap after 20 s idle (and after 95 s on the last warm start).
+# heap after 20 s idle (and after 95 s on the last warm start, with the CPU
+# the process used from 20 to 95 s: idle CPU, in ms a second).
 #
 # The sides are interleaved run by run, alternating which goes first, so a
 # runner that slows down halfway hits both alike.
@@ -52,14 +53,18 @@ one() { # side run
   boot=$(sed -n '/ui: intro preview: /d; s/.*boot: ready in \([0-9.]*m\?s\) (cache \([0-9.]*[mµ]\?s\).*/\1 \2/p' "$p/$run.log" | head -1)
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$run" "${paint:-? ?}" "${ready:-?}" "${boot:-? ?}" "${rss:-0}" "${hwm:-0}" "${anon:-0}" "$heap" | tee -a "$p/process.tsv" | sed "s/^/$s\t/"
   if [ "$run" = warm3 ]; then # long idle: background sweeps (rows 30 s, images 60 s, trim) have run
+    local cpu0 cpu1 icpu
+    cpu0=$(awk '{print $14 + $15}' /proc/$apid/stat 2>/dev/null) # utime + stime, clock ticks
     sleep 75
+    cpu1=$(awk '{print $14 + $15}' /proc/$apid/stat 2>/dev/null)
+    icpu=$(awk -v a="${cpu0:-0}" -v b="${cpu1:-0}" -v hz="$(getconf CLK_TCK)" 'BEGIN { if (b > 0) printf "%.2f", (b - a) * 1000 / hz / 75 }')
     local irss ianon iheap
     irss=$(awk '/^VmRSS/{print $2}' /proc/$apid/status 2>/dev/null)
     ianon=$(awk '/^RssAnon/{print $2}' /proc/$apid/status 2>/dev/null)
     iheap=$(curl -s 127.0.0.1:6061/mem | awk '/^heap_alloc/{print $2}')
     curl -s -o "$p/idle95.heap.pprof" "127.0.0.1:6061/heap?gc=1"
     awk '/^[0-9a-f]+-[0-9a-f]+ /{n=($6==""?"[anon]":$6)} /^Rss:/{r[n]+=$2} END{for(k in r) if(r[k]>1024) print r[k], k}' /proc/$apid/smaps 2>/dev/null | sort -rn > "$p/idle95.smaps.txt"
-    printf 'idle95\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${paint:-? ?}" "${ready:-?}" "${boot:-? ?}" "${irss:-0}" "$hwm" "${ianon:-0}" "$iheap" | tee -a "$p/process.tsv" | sed "s/^/$s\t/"
+    printf 'idle95\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${paint:-? ?}" "${ready:-?}" "${boot:-? ?}" "${irss:-0}" "$hwm" "${ianon:-0}" "$iheap" "$icpu" | tee -a "$p/process.tsv" | sed "s/^/$s\t/"
   fi
   kill $apid 2>/dev/null; wait $apid 2>/dev/null
 }

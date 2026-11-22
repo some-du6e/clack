@@ -297,7 +297,32 @@ func channelReactionsLive(t *testing.T, mode string) {
 				return
 			}
 		}
-		t.Errorf("%s: the rows never drew the plugins' views", what)
+		// which row, drawing what, and what taut had for it: the pane's
+		// rows have flaked here on loaded runners (2 of 4, 4 of 6 runs)
+		var got []string
+		tv := e.threadView(ch, root)
+		for _, ts := range tss {
+			drawn := "not drawn"
+			switch {
+			case drewText(texts[ts] + reactLogged):
+				drawn = "marked"
+			case drewText(texts[ts]):
+				drawn = "unmarked"
+			}
+			pane := "no pane row"
+			if tv != nil {
+				if txt, _, ok := tv.RowText(ts); ok {
+					pane = fmt.Sprintf("pane row %q", txt)
+				}
+			}
+			view := "no taut"
+			if tt := e.a.Taut(); tt != nil {
+				m, _, ready, ok := tt.MessageViewState(ch, ts, false, 0)
+				view = fmt.Sprintf("view ok %v ready %v %q", ok, ready, m.Text)
+			}
+			got = append(got, fmt.Sprintf("%s: %s, %s, %s", ts, drawn, pane, view))
+		}
+		t.Errorf("%s: the rows never drew the plugins' views (%s)", what, strings.Join(got, "; "))
 	}
 	holds := func(ps map[pillKey]pillState, ws []pillWant) bool {
 		for _, w := range ws {

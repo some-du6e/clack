@@ -358,6 +358,12 @@ func actWorkflowBot(h Host, m core.Message) bool {
 // seen in channel ch.
 var OpenWorkflowDetails func(triggerID, ch string)
 
+// WorkflowCardMenu, set by the ui root, opens a share_shortcut card's
+// More actions menu (MoreActionsMenu, boot-shared 9mPk) from anchor (the
+// ⋮ button, window coordinates) for the card c in message ts of channel
+// ch.
+var WorkflowCardMenu func(h Host, anchor image.Rectangle, c *richtext.ShortcutCard, ch, ts string)
+
 // fetchTriggerPreview asks for a trigger's preview unless it is known
 // (getTriggerPreviews: fetchObjectWithId for the missing ones).
 func fetchTriggerPreview(h Host, id string) {
@@ -587,8 +593,14 @@ func copyMessage(gtx layout.Context, m core.Message) {
 	if t := richclip.TextyDelta(m.Doc); t != "" {
 		c.Custom = map[string]string{"slack/texty": t}
 	}
-	go func() { _ = richclip.Write(context.Background(), c) }()
+	write := writeRich
+	go func() { _ = write(context.Background(), c) }()
 }
+
+// writeRich is richclip.Write: the copy goes to the system clipboard off
+// the UI goroutine, not through Gio's clipboard, so the menu tests read
+// Copy message's copy through this (menu_keys_test.go's newMkEnv).
+var writeRich = richclip.Write
 
 func actMsgText(m core.Message) string {
 	if s := richtext.PlainText(m.Doc); strings.TrimSpace(s) != "" {

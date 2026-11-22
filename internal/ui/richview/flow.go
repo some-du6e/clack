@@ -106,6 +106,10 @@ type box struct {
 	tgTo    int16 // > target: targets target..tgTo all hover the box (a card's links)
 	part    uint8 // CSS part (css.go): its background (or color, colFill) replaces fill
 	colFill bool  // fill is the part's text color (list markers)
+	// see, seeHover: the rgba fill and hover are flattened from when
+	// they're the palette's see-through fills (Palette.raw), zero when
+	// opaque: over a View's own under (SetUnder) they composite over it
+	see, seeHover color.NRGBA
 }
 
 type imgPrim struct {
@@ -120,6 +124,48 @@ type imgPrim struct {
 	tint   color.NRGBA // an iconURL image: the icon's color
 	alpha  float32     // < 1: drawn at this opacity (a pending upload, .5)
 	play   bool        // a still the viewer played: drawn playing (animated.go)
+	// bare: nothing under it while it loads or once it failed, an image
+	// block's (AttachmentImage's c-message_attachment__image is a CSS
+	// background on a transparent box: only its 1px ring shows)
+	bare bool
+	// noUp > 0: a fit image never drawn larger than its decoded size times
+	// noUp (the scale: object-fit contain with max-width and max-height
+	// 100%, so at most its natural size in CSS px), centred in r
+	noUp float32
+	// onFail, once url failed to load, is drawn in its place (an external
+	// call face's ava_0002: Facepile's renderError)
+	onFail string
+}
+
+// failedImages is implemented by imgcache.Cache.
+type failedImages interface {
+	Failed(url string, px int) bool
+}
+
+// imgFailed reports whether url's load at px failed for good.
+func imgFailed(imgs Images, url string, px int) bool {
+	f, ok := imgs.(failedImages)
+	return ok && f.Failed(url, px)
+}
+
+// imgSource is the URL im draws: its own, or onFail once that failed.
+func imgSource(imgs Images, im *imgPrim) string {
+	if im.onFail != "" && imgFailed(imgs, im.url, im.px) {
+		return im.onFail
+	}
+	return im.url
+}
+
+// noUpRect is where an image of decoded size sz draws in box r when it
+// may not grow past sz×f: its own size, centred, when that is smaller than
+// r both ways (ok false: contained in r as usual).
+func noUpRect(r image.Rectangle, sz image.Point, f float32) (image.Rectangle, bool) {
+	w, h := int(float32(sz.X)*f+0.5), int(float32(sz.Y)*f+0.5)
+	if f <= 0 || w <= 0 || h <= 0 || w >= r.Dx() || h >= r.Dy() {
+		return r, false
+	}
+	at := r.Min.Add(image.Pt((r.Dx()-w)/2, (r.Dy()-h)/2))
+	return image.Rectangle{Min: at, Max: at.Add(image.Pt(w, h))}, true
 }
 
 // removeBtn is an unfurl's remove ("x") button (unfurl.go): drawn while
@@ -154,12 +200,15 @@ const (
 	tButton
 	tCard       // whole-card click (opens URL)
 	tExpand     // attachment "Show more" / "Show less" (id: attachment number)
-	tCollapse   // image block's hide / show toggle (img: the image)
+	tCollapse   // a hide / show toggle (img: an image block's image, else key: a call card, a container)
 	tRemove     // an unfurl's remove button (id: the attachment id)
 	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
 	tWorkObject // a work object card or one of its buttons (id: the action; workobject.go)
 	tSnippet    // a snippet's Show more / Show less (file, act; snippet.go)
+	// tWorkflowCard is a share_shortcut card's click, Start Workflow or
+	// ⋮ (id: "open", "start", "more"; key: the card; shortcut.go)
+	tWorkflowCard
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no
@@ -173,6 +222,7 @@ type target struct {
 	url  string
 	id   string
 	img  *richtext.Image
+	key  any // tCollapse: what the toggle hides when it isn't img (a call card, a container)
 	file *richtext.File
 	btn  *richtext.Button
 	// underline on hover (links)
@@ -182,6 +232,13 @@ type target struct {
 	// slug: a message_mention pill (.p-rich_text_slug), never underlined,
 	// not even by the "underline links" preference
 	slug bool
+	// msgCh, msgThread: a message_mention pill's channel_id and thread_ts
+	// (id is its message_ts): MessageMention jumps with them (p9lB)
+	msgCh, msgThread string
+	// mrkdwn: a mrkdwn or rich_text link, which Slack draws with
+	// BaseMrkdwnLink (kQRT): its click passes openThreadForRootMessage, so
+	// a link to a thread's parent opens the thread (MrkdwnLinkHandler)
+	mrkdwn bool
 	// website: a link the "underline links" preference underlines, which
 	// in Slack are only those marked data-stringify-link (links in message
 	// text, mrkdwn and rich text: boot-shared kQRT renderDefaultLink) and
@@ -249,12 +306,13 @@ type display struct {
 	// outside ::marker wider than the li's 20px margin ("10. ") overflows
 	// into the message gutter, which Slack doesn't clip.
 	overhang int
-	comps    []compBox // Slack components (see comps.go)
-	pillN    []int16   // pillRects' count of each pill's line boxes
-	slots    []slot    // interactive element runs drawn by Options.Elements
-	tips     []string  // emoji tooltips (":name:"), frag.tip-1
-	codes    []codeRun // inline code runs and code blocks (codecopy.go)
-	fileSecs []fileSec // file cards with a section button (filesection.go)
+	comps    []compBox   // Slack components (see comps.go)
+	pillN    []int16     // pillRects' count of each pill's line boxes
+	slots    []slot      // interactive element runs drawn by Options.Elements
+	media    []mediaSlot // video tiles drawn by Options.Media (media.go)
+	tips     []string    // emoji tooltips (":name:"), frag.tip-1
+	codes    []codeRun   // inline code runs and code blocks (codecopy.go)
+	fileSecs []fileSec   // file cards with a section button (filesection.go)
 	removes  []removeBtn
 	cards    []v3Card // v3 cards: context menu, hover card (unfurl_hover.go)
 	// overlayIcons paint over images (unfurl.go's video buttons)
@@ -264,6 +322,9 @@ type display struct {
 	// names are the user mentions laid out and the plugin labels they
 	// used (members.go)
 	names []nameUse
+	// slugs are the message slugs laid out and the labels they read
+	// (slugs.go)
+	slugs []slugUse
 	// pending are the ids of the canvas mentions drawn as Quip's loading
 	// skeleton (canvasMissing), in order
 	pending []string
@@ -319,6 +380,7 @@ func (d *display) reset() {
 	d.overhang = 0
 	d.comps = d.comps[:0]
 	d.slots = d.slots[:0]
+	d.media = d.media[:0]
 	d.tips = d.tips[:0]
 	d.codes = d.codes[:0]
 	d.fileSecs = d.fileSecs[:0]
@@ -327,6 +389,7 @@ func (d *display) reset() {
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
 	d.names = d.names[:0]
+	d.slugs = d.slugs[:0]
 	d.pending = d.pending[:0]
 	d.hovers = d.hovers[:0]
 	d.plays = d.plays[:0]
@@ -371,6 +434,7 @@ const (
 type deco struct {
 	kind   uint8 // 1 pill, 2 code, 3 highlight, 4 colour swatch, decoMissing, decoMissingGone, decoCanvasMissing
 	bg     color.NRGBA
+	see    color.NRGBA // bg's rgba when it's a see-through palette fill (box.see)
 	border color.NRGBA
 	padL   float32
 	padR   float32
@@ -474,8 +538,10 @@ type lay struct {
 	// expandKey, when set, is the section whose "Show more" is being laid
 	// out (its key in kitExpanded).
 	expandKey string
-	// collapsed holds the image blocks hidden with their toggle (View state).
-	collapsed map[*richtext.Image]bool
+	// collapsed holds the image blocks, call cards and containers toggled
+	// by the viewer, collapseDefs the containers' defaults (View state).
+	collapsed    map[any]bool
+	collapseDefs map[string]uint8
 	// playing holds the stills the viewer played (View state, animated.go);
 	// noAnim: Accessibility > "Allow animations" is off
 	playing map[string]bool
@@ -491,6 +557,23 @@ type lay struct {
 	ctr     partPath
 	curPart uint8
 	inBlock bool // inside a .p-rich_text_block
+	// ink, when set, is the text colour bodyStyle gives (an alert's
+	// .c-alert--boxed content-pry); linkInk, when set, is the links':
+	// that colour, always underlined (.c-alert :any-link{color:inherit;
+	// text-decoration:underline})
+	ink, linkInk color.NRGBA
+	// attDepth counts the attachments being laid out: their rich text is
+	// in the message_attachment context (AttachmentBlocks; a forwarded
+	// message's renderTruncatedAttachmentBlocks), where RichTextList
+	// draws a check list as bullets (s3Wf sS allows checkboxes only in a
+	// message, a thread or a Slackbot message)
+	attDepth int
+	// filled counts the boxes whose Block Kit blocks fill the width rather
+	// than sit in a message's flex block wrapper (an alert shrinks to its
+	// content there): a callout's or a container's children (renderBlocks
+	// draws them bare) and a shared message's text
+	// (.p-embedded_message_content's wrappers are display:block)
+	filled int
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }
@@ -724,10 +807,13 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
 				tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
 			} else {
-				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, urlCard: true})
+				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, urlCard: true, mrkdwn: true})
 			}
 			if st&richtext.Code == 0 {
 				col = p.Link
+				if l.linkInk.A != 0 {
+					col, st = l.linkInk, st|richtext.Underline
+				}
 			}
 		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
 			if sp.Pending && l.opts.Canvas {
@@ -778,15 +864,15 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			} else if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
 				tg = l.d.addTarget(target{kind: kind, id: sp.ID, self: sp.Self})
 			} // a hidden channel with a fallback name: plain text, no card (BaseMrkdwnChannel returns the span before the trigger)
-			bg, fg := p.MentionBg, p.MentionText
+			bg, fg, see := p.MentionBg, p.MentionText, p.raw.MentionBg
 			if sp.Self {
 				// c-member_slug--mention / c-mrkdwn__user_group--mention
 				// over the --link look: surf-hgl-3, the link color (content-
 				// hgl-3 in dark)
-				bg, fg = p.SelfMentionBg, p.SelfLinkText
+				bg, fg, see = p.SelfMentionBg, p.SelfLinkText, p.raw.SelfMentionBg
 			}
 			if sp.Kind == richtext.Broadcast {
-				bg, fg = p.SelfMentionBg, p.SelfMentionText
+				bg, fg, see = p.SelfMentionBg, p.SelfMentionText, p.raw.SelfMentionBg
 				k = l.faceFor(base, size, st|richtext.Bold)
 				if pt != 0 {
 					k = l.partFace(k, pt)
@@ -797,7 +883,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			if fs.pre || st&richtext.Code != 0 {
 				pad, padV = 0, 0
 			}
-			l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast, part: pt})
+			l.decos = append(l.decos, deco{kind: 1, bg: bg, see: see, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast, part: pt})
 			dc = int16(len(l.decos) - 1)
 			if l.mode&modePills != 0 && !l.inAtt && (sp.Kind == richtext.User || sp.Kind == richtext.Channel) {
 				kind := compUser
@@ -833,18 +919,18 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 		}
 		if st&richtext.Code != 0 && !fs.pre && dc < 0 {
-			l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, part: pt})
+			l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, see: p.raw.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, part: pt})
 			dc = int16(len(l.decos) - 1)
 		} else if st&richtext.FindHighlight != 0 && dc < 0 {
 			// over a keyword highlight: only the find span draws
-			bg := p.FindHighlight
+			bg, see := p.FindHighlight, p.raw.FindHighlight
 			if l.opts.FindFocused {
-				bg = p.FindFocused
+				bg, see = p.FindFocused, p.raw.FindFocused
 			}
-			l.decos = append(l.decos, deco{kind: 3, bg: bg, face: k, target: -1, part: pt})
+			l.decos = append(l.decos, deco{kind: 3, bg: bg, see: see, face: k, target: -1, part: pt})
 			dc = int16(len(l.decos) - 1)
 		} else if st&richtext.Highlight != 0 && dc < 0 {
-			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, face: k, target: -1, part: pt})
+			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, see: p.raw.Highlight, face: k, target: -1, part: pt})
 			dc = int16(len(l.decos) - 1)
 		}
 		if pill && ps.edge[0] != 0 {
@@ -1307,13 +1393,13 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			rr := image.Rect(int(r.x+0.5), int(top+0.5), int(x1+0.5), int(bot+0.5))
 			switch dc.kind {
 			case 2:
-				bx := box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1, part: dc.part, inline: true}
+				bx := box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, see: dc.see, stroke: dc.border, bw: l.dp(1), target: -1, part: dc.part, inline: true}
 				dl[r.decoI].slice(&bx, r.line, dc.radius)
 				d.boxes = append(d.boxes, bx)
 			default:
-				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: dc.target, comp: dc.comp, part: dc.part, inline: true}
+				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, see: dc.see, target: dc.target, comp: dc.comp, part: dc.part, inline: true}
 				if dc.kind == 1 && !dc.self && !l.d.cardOnly(dc.target) {
-					bx.hover, bx.hoverOver = l.st.Palette.MentionHoverBg, true
+					bx.hover, bx.seeHover, bx.hoverOver = l.st.Palette.MentionHoverBg, l.st.Palette.raw.MentionHoverBg, true
 				}
 				if dc.kind == 1 {
 					dl[r.decoI].slice(&bx, r.line, dc.radius)

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,12 +16,9 @@ func TestDeferStreamingNotification(t *testing.T) {
 	a, ca, _ := fakeApp(t, map[string]any{"mute_sounds": true})
 	rec := &recNotifier{}
 	a.notify = rec
-	msg := func(state string) *core.Message {
-		return &core.Message{TS: "1762520099.000300", User: "U0FAKEAGENT1", Name: "Agent", StreamingState: state}
+	msg := func(ts, state string) *core.Message {
+		return &core.Message{TS: ts, User: "U0FAKEAGENT1", Name: "Agent", StreamingState: state}
 	}
-	start := core.Event{Type: "message", Channel: "D0STREAM1", TS: "1762520099.000300", ConvKind: "im", Msg: msg("in_progress")}
-	settle := core.Event{Type: "update", Channel: "D0STREAM1", TS: "1762520099.000300", ConvKind: "im", Msg: msg("completed"), StreamDone: true}
-	plain := core.Event{Type: "update", Channel: "D0STREAM1", TS: "1762520099.000300", ConvKind: "im", Msg: msg("in_progress")}
 	settleWait := func(n int) {
 		t.Helper()
 		deadline := time.Now().Add(5 * time.Second)
@@ -34,10 +32,16 @@ func TestDeferStreamingNotification(t *testing.T) {
 			t.Fatalf("%d notifications, want %d", got, n)
 		}
 	}
-	for _, c := range []struct {
+	for i, c := range []struct {
 		group                   string
 		afterStart, afterSettle int
 	}{{"on", 0, 1}, {"off", 1, 1}, {"", 1, 1}} {
+		// a message of its own per group: a message shown once is never
+		// shown again (notify_dm.go's shown keys)
+		ts := fmt.Sprintf("1762520099.%06d", 300+i)
+		start := core.Event{Type: "message", Channel: "D0STREAM1", TS: ts, ConvKind: "im", Msg: msg(ts, "in_progress")}
+		settle := core.Event{Type: "update", Channel: "D0STREAM1", TS: ts, ConvKind: "im", Msg: msg(ts, "completed"), StreamDone: true}
+		plain := core.Event{Type: "update", Channel: "D0STREAM1", TS: ts, ConvKind: "im", Msg: msg(ts, "in_progress")}
 		rec.mu.Lock()
 		rec.n = 0
 		rec.mu.Unlock()

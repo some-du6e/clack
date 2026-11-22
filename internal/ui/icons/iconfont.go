@@ -59,6 +59,17 @@ func init() {
 	// IaDetailsPopoverMemberItemActionsMenu: a c-button--icon outline
 	// Button, type "vertical-ellipsis", 16px)
 	reg("vertical-ellipsis", disc(10, 3.5, 1.75), disc(10, 10, 1.75), disc(10, 16.5, 1.75))
+	// The call card's icon without an app icon (PlatformCallSubtype's
+	// renderCallIcon, boot-shared 9CtN, a y8g2 font icon): phone-flat
+	// once the call ended, call-missed and call-declined for a DM call
+	// the viewer missed or declined. Each handset is its 1.5-unit outline's
+	// centreline (the outer and inner contours averaged point by point).
+	// U+E122 icon_phone_flat
+	reg("phone-flat", s("M4.05 13.25 C5.29 13.25 6.72 13.05 7.07 12.7 C7.57 12.21 7.4 10.79 7.71 10.05 C8.17 9.85 9.09 9.75 10 9.75 C10.93 9.75 11.86 9.86 12.29 10.05 C12.59 10.75 12.43 12.21 12.92 12.7 C13.25 13.04 14.71 13.25 15.96 13.25 C16.84 13.25 17.61 13.14 17.86 12.89 C18.13 12.62 18.25 12.06 18.25 11.42 C18.25 10.34 17.91 8.92 17.41 8.38 C16.1 6.96 13.04 6.25 10 6.25 C6.94 6.25 3.91 6.95 2.6 8.36 C2.07 8.93 1.75 10.31 1.75 11.41 C1.75 12.06 1.87 12.64 2.13 12.9 C2.38 13.14 3.17 13.25 4.05 13.25 Z"))
+	// U+E168 icon_call_missed: the handset and three dots
+	reg("call-missed-font", s("M13.74 17.25 C15.11 17.25 17.25 15.35 17.25 14.4 C17.25 13.59 14.46 11.04 13.62 11.04 C12.91 11.04 12.16 12.04 11.41 12.35 C10.41 11.92 7.95 9.46 7.63 8.57 C7.92 7.88 8.95 7.08 8.95 6.38 C8.95 5.58 6.45 2.75 5.59 2.75 C4.54 2.75 2.75 4.99 2.75 6.23 C2.75 9.9 9.98 17.25 13.74 17.25 Z"), disc(12.62, 4, 0.875), disc(15.87, 4, 0.875), disc(19.12, 4, 0.875))
+	// U+E167 icon_call_declined: the handset and a cross
+	reg("call-declined-font", s("M13.74 17.25 C15.11 17.25 17.25 15.35 17.25 14.4 C17.25 13.59 14.46 11.04 13.62 11.04 C12.91 11.04 12.16 12.04 11.41 12.35 C10.41 11.92 7.95 9.46 7.63 8.57 C7.92 7.88 8.95 7.08 8.95 6.38 C8.95 5.58 6.45 2.75 5.59 2.75 C4.54 2.75 2.75 4.99 2.75 6.23 C2.75 9.9 9.98 17.25 13.74 17.25 Z"), s("M13.25 6.75 L18.75 1.25 M13.25 1.25 L18.75 6.75"))
 	// U+E706 icon_form_checkbox_dash (c-menu_item__checkbox_dash): an
 	// indeterminate menu row's mark (the Move to… menu over several
 	// conversations).

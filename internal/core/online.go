@@ -55,12 +55,28 @@ var clientOnlineProbe = probeInterfaces
 var networkFingerprint = interfaceFingerprint
 
 type onlineState struct {
-	once sync.Once
-	mu   sync.Mutex
-	on   bool
+	once   sync.Once
+	mu     sync.Mutex
+	on     bool
+	pinned bool // PinNetwork: the host's network is none of this App's business
 	// changed is the connectivity store's lastClientConnection: set at
 	// start and whenever clientOnline changes
 	changed time.Time
+}
+
+// PinNetwork takes the machine as online on one network that never
+// changes, from now on: the watcher (the poll that reconnects on a network
+// change or a wake from sleep, and flips isClientOnline) never starts, or
+// stops at its next tick. For tests over a loopback fake: the host's own
+// network (a CI runner's interfaces going away for two seconds) must
+// neither reconnect them nor mark them offline mid-measurement. Call it
+// before boot.
+func (a *App) PinNetwork() {
+	o := &a.online
+	o.once.Do(func() { o.changed = time.Now() }) // no first probe, no watcher
+	o.mu.Lock()
+	o.pinned, o.on = true, true
+	o.mu.Unlock()
 }
 
 // recentlyOnlineGrace is how long wasRecentlyOnline outlasts a lost
@@ -108,6 +124,12 @@ func (a *App) watchOnline() {
 		case <-a.bg.Done():
 			return
 		case <-t.C:
+		}
+		a.online.mu.Lock()
+		pinned := a.online.pinned
+		a.online.mu.Unlock()
+		if pinned {
+			return // PinNetwork
 		}
 		now := slack.ReadClock()
 		var why []string

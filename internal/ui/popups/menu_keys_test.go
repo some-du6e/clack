@@ -20,6 +20,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/richclip"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
@@ -33,10 +34,21 @@ type mkEnv struct {
 	now time.Time
 	// clip is the last text the menu put on the clipboard.
 	clip string
+	// rich gets Copy message's copy where the platform has a rich
+	// clipboard (macOS, Windows): richclip writes it off the UI goroutine,
+	// not through Gio's clipboard, so on those runners the router never
+	// saw it and clip stayed "" (menu-keys' macos job, red 11-14..11-20)
+	rich chan string
 }
 
 func newMkEnv(t *testing.T, m *Menu) *mkEnv {
-	e := &mkEnv{t: t, m: m, now: time.Date(2026, 11, 8, 15, 0, 0, 0, time.UTC)}
+	e := &mkEnv{t: t, m: m, now: time.Date(2026, 11, 8, 15, 0, 0, 0, time.UTC), rich: make(chan string, 8)}
+	prev := writeRich
+	writeRich = func(_ context.Context, c richclip.Copy) error {
+		e.rich <- c.Text
+		return nil
+	}
+	t.Cleanup(func() { writeRich = prev })
 	// two frames: the first one's FocusCmd holds that frame's events
 	e.frame()
 	e.frame()
@@ -52,7 +64,21 @@ func (e *mkEnv) frame() {
 	if _, b, ok := e.r.WriteClipboard(); ok {
 		e.clip = string(b)
 	}
+	select {
+	case s := <-e.rich:
+		e.clip = s
+	default:
+	}
 	e.now = e.now.Add(16 * time.Millisecond)
+}
+
+// clipWait runs frames until the clipboard has want or 5 s pass: a rich
+// copy lands from its own goroutine.
+func (e *mkEnv) clipWait(want string) string {
+	for end := time.Now().Add(5 * time.Second); e.clip != want && time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		e.frame()
+	}
+	return e.clip
 }
 
 // press sends a key press and release and runs the frames that handle it.
@@ -240,8 +266,8 @@ func TestMenuKeysMessageActions(t *testing.T) {
 		t.Errorf("read cursor %q, want %s: Mark unread didn't run", h.a.Count("C0FAKE00001").LastRead, want)
 	}
 	copied := func(t *testing.T, _ *tzHost, e *mkEnv, _ *mkHooks) {
-		if e.clip != "synthetic menu keys" {
-			t.Errorf("clipboard %q", e.clip)
+		if clip := e.clipWait("synthetic menu keys"); clip != "synthetic menu keys" {
+			t.Errorf("clipboard %q", clip)
 		}
 	}
 	cases := []struct {
@@ -496,8 +522,8 @@ func TestMenuTypeAhead(t *testing.T) {
 	}
 	e, _ = mkOpen(t, h, "context", false)
 	e.press("C", key.ModCtrl) // modified shortcuts still run
-	if e.clip != "synthetic menu keys" || !e.m.Dismissed() {
-		t.Errorf("Ctrl+C with type-ahead: clip %q", e.clip)
+	if clip := e.clipWait("synthetic menu keys"); clip != "synthetic menu keys" || !e.m.Dismissed() {
+		t.Errorf("Ctrl+C with type-ahead: clip %q", clip)
 	}
 
 	setGOOS(t, "darwin")

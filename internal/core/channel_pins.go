@@ -49,6 +49,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -159,12 +160,14 @@ func (a *App) slowConnectionCount() *atomic.Int64 {
 // socketConnected is the socket store's connected(isFast): a slow
 // connect bumps slowConnectionCount. The open Pins tabs read again (the
 // store update reruns their selectors), and so refetch when the count
-// moved.
+// moved; so do the app cards (app_card.go).
 func (a *App) socketConnected(fast bool) {
 	if fast {
 		return
 	}
 	a.slowConnectionCount().Add(1)
+	a.appCardsReconnected()
+	a.memberDNDReconnected() // dnd_members.go
 	v, ok := pinsTabs.Load(a)
 	if !ok {
 		return
@@ -251,7 +254,7 @@ func (a *App) fetchPinsTab(ch string) {
 		st.chs[ch] = c
 	}
 	if err != nil {
-		log.Printf("pins tab %s: pins.list: %v", ch, err)
+		log.Printf("pins tab %s: pins.list: %v", logtag.ID(ch), err)
 		c.state = pinsNotLoaded
 		delete(st.seen, ch) // the next read tries again
 		st.mu.Unlock()

@@ -148,6 +148,10 @@ type convo struct {
 	// channel's membership was unknown (footPending); the first frame that
 	// knows it gives the composer the focus, if it has one
 	focusKnown bool
+	// inputShown: the reply box drew last pass (Slack's thread 'input'
+	// row is mounted). The pass that first draws it again gives it a
+	// pending focusInput's focus (thread_focus_input.go).
+	inputShown bool
 }
 
 func (a *App) convoFor(ch, ts string) *convo {
@@ -190,6 +194,13 @@ func (a *App) attachComposer(c *convo) {
 	c.comp.SetOnEditLast(func() { a.editLast(c) })
 	if fl, ok := c.comp.(interface{ SetOnFocusList(func()) }); ok {
 		fl.SetOnFocusList(func() { a.focusList(c) })
+	}
+	if pk, ok := c.comp.(interface{ SetOnPageKeyEmpty(func(string)) }); ok {
+		pk.SetOnPageKeyEmpty(func(name string) {
+			if l, ok := c.list.(interface{ PageKey(string) }); ok {
+				l.PageKey(name)
+			}
+		})
 	}
 	if sn, ok := c.comp.(interface{ SetOnSend(func(string, bool)) }); ok {
 		sn.SetOnSend(func(cid string, files bool) { jumpToOwnSend(c, cid, files) })
@@ -269,6 +280,25 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		compH = d.Size.Y
 		c.compH = compH
 	}
+	// the input row mounts (InputContainer.componentDidMount with
+	// focusInputOnMount, l6n6.js:10074, KafO.js:880): a thread focusInput
+	// names takes the focus. No box this pass (loading, ThreadsError, a
+	// footer) is no row yet; an edit composer standing in leaves it alone.
+	// Under an open modal or menu the box mounts unfocused: Slack's
+	// componentDidMount focuses regardless, but a modal's focus trap takes
+	// the focus straight back, and Clack's overlays have none (as
+	// focusKnown's focus above).
+	mounted := false
+	switch {
+	case comp == nil:
+		c.inputShown = false
+	case comp == c.comp && !c.inputShown:
+		c.inputShown = true
+		if a.threadFocusWanted(c) && !a.overlayOpen() {
+			c.comp.Focus()
+			mounted = true
+		}
+	}
 	if comp != nil {
 		// Edit composers draw just the box: give them the same side and
 		// bottom margins as the normal composer (20px channel, 16px thread).
@@ -295,6 +325,9 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		d := layoutComposerIn(comp, g, pane)
 		if a.composerHeight(gtx, g, c, comp, d.Size.Y) { // no height: a new composer (composer_guard.go)
 			comp = c.comp
+			if mounted {
+				comp.Focus() // the box mounting now is the new one
+			}
 			comp.SetOrigin(origin.Add(image.Pt(mx, guess)))
 			a.composerRoadblock(c, comp)
 			d = layoutComposerIn(comp, g, pane)
@@ -392,28 +425,14 @@ func (a *App) editLast(c *convo) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		var msgs []core.Message
-		if c.ts == "" {
-			p, err := svc.History(ctx, c.ch, "")
-			if err != nil {
-				return
-			}
-			msgs = p.Messages
-		} else {
-			rs, err := svc.Replies(ctx, c.ch, c.ts)
-			if err != nil {
-				return
-			}
-			msgs = rs
+		m, found, ok := lastOwnEditable(ctx, svc, c.ch, c.ts, self) // the newest slice's (unsend.go)
+		switch {
+		case !ok:
+		case found:
+			a.Post(func() { a.startEdit(c, m) })
+		default:
+			a.Post(func() { a.Toast("You haven't sent anything here yet") })
 		}
-		for i := len(msgs) - 1; i >= 0; i-- {
-			m := msgs[i]
-			if m.User == self && !m.System && m.Subtype == "" {
-				a.Post(func() { a.startEdit(c, m) })
-				return
-			}
-		}
-		a.Post(func() { a.Toast("You haven't sent anything here yet") })
 	}()
 }
 

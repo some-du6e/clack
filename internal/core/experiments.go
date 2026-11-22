@@ -277,6 +277,9 @@ var experimentReads = map[string][]string{
 	"channel_ia_header_refinements": on,
 	// bookmark folders' add menu (views/folder_tab_more.go: THeG, sUmX)
 	"unified_file_picker": on, "surfaces_skills_unipicker": on,
+	// the inline video player: a file titled "loop" loops (videoplayer, fIJO);
+	// clips_pip: the mini player (videoplayer/pip.go, yF7D, YPBt)
+	"looping_video_option": on, "clips_pip": on,
 	// rail (rail.go)
 	"unified_global_triage": on, "activity_in_home_prototype": on, "activity_inbox": on, "activity_with_sidebar": on,
 	// the Activity badge's entry types (activity_badges.go)
@@ -288,6 +291,8 @@ var experimentReads = map[string][]string{
 	"activity_entry_layout_revisions_2": on, "activity_inbox_remove_persistent_detail_panel": on,
 	"activity_bot_item_type_reads": on, "activity_automations_only": on, "exclude_automations_filter": on,
 	"agent_status_in_activity": on, "agent_command_center": on,
+	// the thread pane's first page (thread_pages.go: requestReplies, gOq3)
+	"threads_perf_quality": on,
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on,
@@ -308,6 +313,7 @@ var experimentReads = map[string][]string{
 	"show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
 	"system_messages_redesign_m1": on, "flat_message_heading_scale": on, "portable_content_composer": {"treatment"},
 	"message_actions_truncate": on, "agent_identity_overrides": on,
+	"mentions_full_names_only_pref": on, // a message slug's DM partner, a mention's name (msg_slug.go: N1tw's k, realNamesInMentions)
 	// composer and autocomplete
 	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
@@ -349,6 +355,9 @@ var experimentReads = map[string][]string{
 	// desktop notifications (ui/notify.go, huddleui/invite.go): Slack's
 	// notification ids and groups, translated buttons, an invite's Decline
 	"desktop_notification_actions": on,
+	// a thread link to its latest reply (ui/jump.go jumpLatest, cdTA Mz):
+	// on, the thread opens at its newest reply; off, at its root
+	"thread_latest_reply_permalink": on,
 	// files
 	"file_trash_updates": on,
 	// Edit profile's photo panes (ui/popups/profile_edit.go epPhotoComp):

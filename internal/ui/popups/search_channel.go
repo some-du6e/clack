@@ -269,7 +269,7 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 	for i := range v.msgs {
 		if i < len(v.rows) && v.rows[i].Clicked(gtx) {
 			RecordRecentConversation(v.msgs[i].Channel)
-			v.h.Navigate(msgRoute(v.msgs[i]))
+			openResult(v.h, v.msgs[i])
 		}
 	}
 

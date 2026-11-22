@@ -74,6 +74,7 @@ const abDebounce = 300 * time.Millisecond
 type AppsBrowser struct {
 	base
 	h      Host
+	full   image.Rectangle // the window it covers as last drawn (Rect)
 	ch     string
 	agents bool // channel_details_agents_apps_tab
 
@@ -232,6 +233,10 @@ func openTeamPage(h Host, path string) {
 	srOpenLink(h, c.TeamURL()+strings.TrimPrefix(path, "/"))
 }
 
+// Rect is the window it covers as last drawn (window coords): the
+// browser is a page over the whole window.
+func (b *AppsBrowser) Rect() image.Rectangle { return b.full }
+
 func (b *AppsBrowser) Layout(gtx layout.Context) layout.Dimensions {
 	if b.Dismissed() {
 		return layout.Dimensions{}
@@ -239,6 +244,7 @@ func (b *AppsBrowser) Layout(gtx layout.Context) layout.Dimensions {
 	th := b.h.Theme()
 	cl := colorsOf(th)
 	full := gtx.Constraints.Max
+	b.full = image.Rectangle{Max: full}
 	b.center = image.Pt(full.X/2, full.Y/3)
 	// the window behind takes no input while the modal is up
 	func() {
@@ -411,7 +417,7 @@ func (b *AppsBrowser) filter(gtx layout.Context, th *theme.Theme, cl *Colors) la
 		g := gtx
 		g.Constraints = layout.Exact(image.Pt(w-x-dp(gtx, 10), dp(gtx, 22)))
 		if b.q.Len() == 0 {
-			para(g, th, 15, 22, theme.Regular, cl.Placeholder, nsAppsBrowser.T("Search by app name or category"), 1)
+			th.EditorPlaceholder(g, 15, cl.Placeholder, nsAppsBrowser.T("Search by app name or category")) // on the editor's centred line (Gio patch 54)
 		}
 		th.Editor(g, &b.q, unit.Sp(15), cl.Fg, cl.FocusRing)
 	}()

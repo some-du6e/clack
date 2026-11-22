@@ -133,6 +133,7 @@ func (v *View) reportPreview(c *hovercard.Controller, st *Style, h Handler) {
 	}
 	cd := &v.d.cards[i]
 	c.ReportPreview(k, v.preview(cd, st, h), cd.wrap, v.ptr)
+	c.ReportSide(k, v.side[k]) // its Popover's side
 }
 
 // pressPreview is a press on a card with a hover card: HoverCardTrigger's

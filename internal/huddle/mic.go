@@ -85,7 +85,9 @@ func (s *Session) openDevice() {
 		s.dev, s.micStatus = dev, MicOK
 		return
 	}
-	s.dev = s.openSpeakers()
+	gen := s.outReq.Add(1) // Join's: nothing else holds s yet
+	s.outGen.Store(gen)
+	s.dev = s.openSpeakers(gen)
 	s.micStatus = MicStarting
 	go s.openMic()
 }
@@ -97,11 +99,21 @@ func (s *Session) openAudio() func(func(string, ...any)) (Device, error) {
 	return openDefaultDevice // nil without cgo
 }
 
-func (s *Session) openSpeakers() Device {
+// openSpeakers opens the chosen output for open gen (outReq). It plays
+// the huddle only while outGen is gen: from the swap that installs it
+// (installSpeakers) until the next one.
+func (s *Session) openSpeakers(gen uint64) Device {
+	pull := func(out []int16) {
+		if s.outGen.Load() != gen {
+			clear(out)
+			return
+		}
+		s.play.pull(out)
+	}
 	if open := s.openAudio(); open != nil {
 		d, err := open(s.logf)
 		if err == nil {
-			if err = d.Start(nil, s.play.pull); err == nil {
+			if err = d.Start(nil, pull); err == nil {
 				return d
 			}
 			d.Close()
@@ -109,7 +121,7 @@ func (s *Session) openSpeakers() Device {
 		s.logf("huddle: speakers: %v (you won't hear the huddle)", err)
 	}
 	d := newNullDevice() // drains playback at real time
-	_ = d.Start(nil, s.play.pull)
+	_ = d.Start(nil, pull)
 	return d
 }
 

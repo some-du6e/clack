@@ -20,13 +20,25 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // icon draws a named vector icon from internal/ui/icons.
 func (b *base) icon(gtx C, name string, size unit.Dp, col color.NRGBA) D {
+	if iconDrawn != nil {
+		iconDrawn(name)
+	}
 	return icons.Get(name)(gtx, size, col)
 }
+
+// iconDrawn and emojiDrawn, when set (tests, UI goroutine), see every icon
+// b.icon draws and every emoji image b.emojiImg draws (its URL and pixel
+// size): what one row drew, not what it described.
+var (
+	iconDrawn  func(name string)
+	emojiDrawn func(url string, px int)
+)
 
 // body draws a document as plain text (for docs without a message key,
 // e.g. drafts) clipped to maxLines (0 = all). Prefer msgBody for messages.
@@ -58,10 +70,16 @@ func previewWith(m *core.Message, plain func(richtext.Doc) string) string {
 // (richview's MemberRead): "@name", nothing for a member the store can't
 // name yet (BaseMissingMember's bar adds no text; the lookup asks, and
 // "names" draws it again), never the "@U…" the doc was built with. An id
-// that isn't a member's keeps the parsed text, as MemberSlug draws it.
+// that isn't a member's keeps the parsed text, as MemberSlug draws it. A
+// message slug reads its label the same way (richview.SlugText: the
+// linked message's sender, as SimpleMessagePreview's MessageMention
+// reads it).
 func (b *base) plainText(d richtext.Doc) string { return richtext.PlainTextWith(d, b.mentionText) }
 
 func (b *base) mentionText(s richtext.Span) (string, bool) {
+	if s.Kind == richtext.MessageMention {
+		return richview.SlugText(s)
+	}
 	if s.Kind != richtext.User || !core.LooksLikeMemberID(s.ID) {
 		return "", false
 	}
@@ -379,6 +397,7 @@ func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines
 		Channel: m.Channel, TS: m.TS, Truncate: true}
 	if live {
 		o.Elements = b.liveElements(m)
+		o.Media = b.mediaFor(orig) // a lone video plays in place (media.go)
 	}
 	return b.richDoc(gtx, key, ver, m.Doc, o, maxLines)
 }
@@ -429,7 +448,33 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 // hostHandler routes richview clicks to the Host.
 type hostHandler struct{ h Host }
 
-func (hh hostHandler) OpenURL(u string) {
+func (hh hostHandler) OpenURL(u string) { hh.follow(u, false) }
+
+// OpenMrkdwnLink is a mrkdwn or rich_text link's click (richview's
+// MrkdwnLinkHandler: BaseMrkdwnLink opens a thread's parent in its
+// thread).
+func (hh hostHandler) OpenMrkdwnLink(u, _ string) { hh.follow(u, true) }
+
+// OpenMessageMention is a message_mention pill's click: MessageMention's
+// jumpToMessage with the pill's own ids.
+func (hh hostHandler) OpenMessageMention(ch, ts, thread, u string) {
+	if mj, ok := hh.h.(interface{ JumpToMessage(ch, ts, thread string) }); ok {
+		mj.JumpToMessage(ch, ts, thread)
+		return
+	}
+	hh.follow(u, false)
+}
+
+// follow is Slack's Link click for a link in a view (the ui root's
+// FollowLink: a slack: link to handleDeepLink, a permalink through
+// openPermalink), else the browser.
+func (hh hostHandler) follow(u string, openRoot bool) {
+	if lf, ok := hh.h.(interface{ FollowLink(string, bool) bool }); ok {
+		if !lf.FollowLink(u, openRoot) {
+			go func() { _ = openurl.Open(u) }()
+		}
+		return
+	}
 	if o, ok := hh.h.(interface{ OpenURL(string) }); ok {
 		o.OpenURL(u)
 		return

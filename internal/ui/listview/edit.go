@@ -273,7 +273,7 @@ func (k *ctl) layoutEditor(gtx layout.Context, d *core.ListDoc, w, h int) layout
 	at(gtx, image.Pt(pad, (h-gtx.Dp(22))/2), image.Pt(max(0, w-2*pad), gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		if e.ed.Len() == 0 {
 			ph := placeholder(e.col, e.rec == "")
-			th.Label(gtx, 15, theme.Regular, c.FgSubtle, ph)
+			th.EditorPlaceholder(gtx, 15, c.FgSubtle, ph) // on the editor's centred line (Gio patch 54)
 		}
 		return th.Editor(gtx, &e.ed, 15, c.Fg, c.Selection)
 	})

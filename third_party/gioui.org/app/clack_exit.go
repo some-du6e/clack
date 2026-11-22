@@ -2,7 +2,7 @@
 
 package app
 
-// TerminateEvent is a Clack patch (CLACK_PATCHES.md §50): the OS asked
+// TerminateEvent is a Clack patch (CLACK_PATCHES.md §58): the OS asked
 // the program to quit. macOS sends it for AppKit's terminate: (the Dock's
 // Quit, log out, restart and shut down, a quit Apple Event such as
 // osascript's): a program ranging over Events gets it while AppKit waits
@@ -13,7 +13,7 @@ type TerminateEvent struct{}
 
 func (TerminateEvent) ImplementsEvent() {}
 
-// X11ConnectionLost is a Clack patch (CLACK_PATCHES.md §51): when set,
+// X11ConnectionLost is a Clack patch (CLACK_PATCHES.md §59): when set,
 // it's called when the connection to the X server breaks (Xlib's IO
 // error handler: the X session ended, the server stopped or was killed),
 // before the process exits with status 1 as Xlib's default handler does.

@@ -26,7 +26,7 @@ func (f *fakeSlack) infoCalls() int {
 func TestRefreshedNonMemberChannelStaysAPreview(t *testing.T) {
 	a, f := previewApp(t)
 	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"C5","name":"僕のゴミ","is_channel":true,"is_member":false,"creator":"U2"}}`
-	a.handle(rtm("channel_created", map[string]any{"channel": map[string]any{"id": "C5", "name": "僕のゴミ", "creator": "U2"}}))
+	a.handleNow(t, rtm("channel_created", map[string]any{"channel": map[string]any{"id": "C5", "name": "僕のゴミ", "creator": "U2"}}))
 	if _, member := a.S.Conv("C5"); member {
 		t.Fatal("channel_created by someone else put the channel in the member set")
 	}
@@ -37,7 +37,7 @@ func TestRefreshedNonMemberChannelStaysAPreview(t *testing.T) {
 	if strings.Contains(sectionsByType(a)["channels"], "C5") {
 		t.Error("a channel the viewer isn't in got a sidebar row")
 	}
-	a.handle(rtm("channel_rename", map[string]any{"channel": map[string]any{"id": "C5", "name": "gomi"}}))
+	a.handleNow(t, rtm("channel_rename", map[string]any{"channel": map[string]any{"id": "C5", "name": "gomi"}}))
 	if _, member := a.S.Conv("C5"); member {
 		t.Fatal("channel_rename put the channel in the member set")
 	}
@@ -47,8 +47,8 @@ func TestRefreshedNonMemberChannelStaysAPreview(t *testing.T) {
 
 	// its messages (a previewed channel's) don't look it up again each
 	n := f.infoCalls()
-	a.handle(rtm("message", map[string]any{"channel": "C5", "ts": "1762516900.000100", "user": "U2", "text": "hi"}))
-	a.handle(rtm("message", map[string]any{"channel": "C5", "ts": "1762516901.000100", "user": "U2", "text": "again"}))
+	a.handleNow(t, rtm("message", map[string]any{"channel": "C5", "ts": "1762516900.000100", "user": "U2", "text": "hi"}))
+	a.handleNow(t, rtm("message", map[string]any{"channel": "C5", "ts": "1762516901.000100", "user": "U2", "text": "again"}))
 	if got := f.infoCalls(); got != n {
 		t.Errorf("messages in a known non-member channel made %d conversations.info calls", got-n)
 	}
@@ -58,7 +58,7 @@ func TestRefreshedNonMemberChannelStaysAPreview(t *testing.T) {
 
 	// joining (from any client) makes it a member's
 	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"C5","name":"gomi","is_channel":true,"is_member":true}}`
-	a.handle(rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "C5", "name": "gomi"}}))
+	a.handleNow(t, rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "C5", "name": "gomi"}}))
 	if _, member := a.S.Conv("C5"); !member {
 		t.Fatal("channel_joined didn't make the channel a member's")
 	}
@@ -73,12 +73,12 @@ func TestRefreshedNonMemberChannelStaysAPreview(t *testing.T) {
 func TestMessageInUnknownChannelUsesIsMember(t *testing.T) {
 	a, f := previewApp(t)
 	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"C6","name":"elsewhere","is_channel":true,"is_member":true}}`
-	a.handle(rtm("message", map[string]any{"channel": "C6", "ts": "1762516900.000100", "user": "U2", "text": "hi"}))
+	a.handleNow(t, rtm("message", map[string]any{"channel": "C6", "ts": "1762516900.000100", "user": "U2", "text": "hi"}))
 	if _, member := a.S.Conv("C6"); !member {
 		t.Error("is_member:true channel left out of the member set")
 	}
 	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"C4","name":"public","is_channel":true,"is_member":false}}`
-	a.handle(rtm("message", map[string]any{"channel": "C4", "ts": "1762516900.000200", "user": "U2", "text": "hi"}))
+	a.handleNow(t, rtm("message", map[string]any{"channel": "C4", "ts": "1762516900.000200", "user": "U2", "text": "hi"}))
 	if _, member := a.S.Conv("C4"); member {
 		t.Error("is_member:false channel put in the member set")
 	}
@@ -87,7 +87,7 @@ func TestMessageInUnknownChannelUsesIsMember(t *testing.T) {
 	}
 	// a member channel's own refresh (a payload without is_member) keeps it
 	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"C1","name":"general","is_channel":true}}`
-	a.handle(rtm("channel_unarchive", map[string]any{"channel": "C1"}))
+	a.handleNow(t, rtm("channel_unarchive", map[string]any{"channel": "C1"}))
 	if _, member := a.S.Conv("C1"); !member {
 		t.Error("a member channel's refresh dropped it from the member set")
 	}

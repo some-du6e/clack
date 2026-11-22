@@ -369,13 +369,13 @@ func (w *window) layoutBanner(gtx C, s *huddle.Session, r image.Rectangle) int {
 
 // huddleLoading is Slack's HuddleLoading: its spinner over "Joining
 // huddle…" while the join runs.
-func huddleLoading(gtx C, th *theme.Theme, sz image.Point) {
+func huddleLoading(gtx C, th *theme.Theme, sz image.Point, ink color.NRGBA) {
 	d := gtx.Dp(32)
 	ls := labelSize(gtx, th, 15, theme.Bold, nsHuddles.T("Joining huddle…"))
 	y := (sz.Y - d - gtx.Dp(12) - ls.Y) / 2
-	at(gtx, image.Pt((sz.X-d)/2, y), image.Pt(d, d), func(gtx C) D { spinner(gtx, d, hudWhite); return D{} })
+	at(gtx, image.Pt((sz.X-d)/2, y), image.Pt(d, d), func(gtx C) D { spinner(gtx, d, ink); return D{} })
 	at(gtx, image.Pt((sz.X-ls.X)/2, y+d+gtx.Dp(12)), ls, func(gtx C) D {
-		return th.Label(gtx, 15, theme.Bold, hudWhite, nsHuddles.T("Joining huddle…"))
+		return th.Label(gtx, 15, theme.Bold, ink, nsHuddles.T("Joining huddle…"))
 	})
 }
 

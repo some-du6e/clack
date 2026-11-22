@@ -35,6 +35,7 @@ concurrency:
 jobs:
   plugins:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (2.9 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -84,7 +85,7 @@ jobs:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
         run: |
           set -o pipefail
-          go test -count=1 -timeout 15m -v ./internal/taut/... 2>&1 | tee dist/taut-test.log
+          go test -count=1 -timeout 10m -v ./internal/taut/... 2>&1 | tee dist/taut-test.log
       - name: acceptance summary
         if: ${{ !cancelled() }}
         run: |

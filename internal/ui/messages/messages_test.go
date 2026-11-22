@@ -136,12 +136,24 @@ func TestDayLabel(t *testing.T) {
 }
 
 func TestSlackLink(t *testing.T) {
-	ch, ts, ok := slackLink("https://hackclub.slack.com/archives/C0123/p1700000000123456")
-	if !ok || ch != "C0123" || ts != "1700000000.123456" {
-		t.Errorf("got %q %q %v", ch, ts, ok)
+	ch, ts, thread, ok := slackLink("https://hackclub.slack.com/archives/C0123/p1700000000123456")
+	if !ok || ch != "C0123" || ts != "1700000000.123456" || thread != "" {
+		t.Errorf("got %q %q %q %v", ch, ts, thread, ok)
 	}
-	if _, _, ok := slackLink("https://example.com/archives/C1/p1"); ok {
+	if _, _, _, ok := slackLink("https://example.com/archives/C1/p1"); ok {
 		t.Errorf("non-slack link accepted")
+	}
+	// without openPermalink a link never makes a message's own ts a
+	// thread's root: a reply's link without thread_ts opens the
+	// conversation at it, one with thread_ts the thread
+	for _, c := range []struct{ link, want string }{
+		{"https://hackclub.slack.com/archives/C0123/p1700000000123456", "c/C0123/m/1700000000.123456"},
+		{"https://hackclub.slack.com/archives/C0123/p1700000000123456?thread_ts=1700000000.000100&cid=C0123", "c/C0123/t/1700000000.000100"},
+		{"https://hackclub.slack.com/archives/C0123", "c/C0123"},
+	} {
+		if got, ok := slackLinkRoute(c.link); !ok || got != c.want {
+			t.Errorf("slackLinkRoute(%s) = %q %v, want %q", c.link, got, ok, c.want)
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package taut
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -211,6 +212,12 @@ func (t *Taut) installHost(r *runtime) {
 		jsonArg(a, 1, &args)
 		return t.thunks.runThunk(ctx, strArg(a, 0), args)
 	})
+	sync("checksPassed", func(a []json.RawMessage) (any, error) {
+		var id int64
+		jsonArg(a, 0, &id)
+		t.thunks.checksPassed(id)
+		return nil, nil
+	})
 	sync("callNativeSync", func(a []json.RawMessage) (any, error) {
 		var id int64
 		jsonArg(a, 0, &id)
@@ -218,12 +225,18 @@ func (t *Taut) installHost(r *runtime) {
 		jsonArg(a, 1, &args)
 		return t.thunks.callNative(context.Background(), id, args)
 	})
-	async("callNative", func(ctx context.Context, a []json.RawMessage) (any, error) {
+	// a dispatch's native on a goroutine of its own, or, for DispatchSeq's,
+	// one after another in the order JS calls them
+	rt.ExposeAsyncSeq("taut_callNative", func(ctx context.Context, a []json.RawMessage) (any, error) {
 		var id int64
 		jsonArg(a, 0, &id)
 		var args []json.RawMessage
 		jsonArg(a, 1, &args)
 		return t.thunks.callNative(ctx, id, args)
+	}, func(a []json.RawMessage) bool {
+		var id int64
+		jsonArg(a, 0, &id)
+		return t.thunks.inSeq(id)
 	})
 
 	// ---- network ----
@@ -232,7 +245,9 @@ func (t *Taut) installHost(r *runtime) {
 		jsonArg(a, 1, &fields)
 		var files map[string]apiFile
 		jsonArg(a, 2, &files)
-		return t.userAPI(ctx, strArg(a, 0), fields, files)
+		var retry bool
+		jsonArg(a, 3, &retry)
+		return t.userAPI(ctx, strArg(a, 0), fields, files, retry)
 	})
 	async("messageMetadata", func(ctx context.Context, a []json.RawMessage) (any, error) {
 		return t.messageMetadata(ctx, strArg(a, 0), strArg(a, 1))
@@ -262,44 +277,56 @@ type apiFile struct {
 	Data []byte `json:"data"`
 }
 
-// userAPI calls a Slack Web API method as the signed-in user (Taut's
-// userAPI: the active team's token, the session cookie). It reports the
-// HTTP status so JS can retry 429s like Taut does.
-func (t *Taut) userAPI(ctx context.Context, method string, fields map[string]string, files map[string]apiFile) (any, error) {
-	if len(files) == 0 {
-		vals := url.Values{}
-		for k, v := range fields {
-			vals.Set(k, v)
-		}
-		raw, err := t.app.C.Raw(ctx, method, vals)
-		if err != nil {
-			var se *slack.Error
-			if errors.As(err, &se) {
-				return map[string]any{"status": 200, "json": map[string]any{"ok": false, "error": se.Code}}, nil
-			}
-			if errors.Is(err, slack.RateLimited) {
-				return map[string]any{"status": 429, "retryAfter": 2}, nil
-			}
-			return nil, err
-		}
-		return map[string]any{"status": 200, "json": json.RawMessage(raw)}, nil
-	}
-	// multipart: one file field (Slack's upload-style methods take one)
-	var name string
-	var f apiFile
-	for k, v := range files {
-		name, f = k, v
-		break
-	}
-	var out json.RawMessage
+// userAPI sends one Web API request as the signed-in user (the active
+// team's token, the session cookie) for Taut's and Slick's userAPI
+// (05_slack.js makeUserAPI), which handle the answer the way their own
+// fetch-based userAPI does (Taut app/api/userAPI.ts, Slick
+// src/app/api/userAPI.ts). So nothing here tries again: their loop retries
+// a 429 or a rate-limit code as the plugin asked. The answer comes back
+// whole, {status, retryAfter, body}, or {failed: true} when none came, as
+// fetch rejects then. retry marks one of the loop's later tries: it skips
+// the backoff guard, which would answer it with the failure the loop
+// waited out.
+func (t *Taut) userAPI(ctx context.Context, method string, fields map[string]string, files map[string]apiFile, retry bool) (any, error) {
 	vals := url.Values{}
 	for k, v := range fields {
 		vals.Set(k, v)
 	}
-	if err := t.app.C.CallMultipart(ctx, method, vals, name, f.Name, f.Data, &out); err != nil {
-		return nil, err
+	var last *slack.Attempt
+	ctx = slack.ObserveAttempts(slack.SlackRetriesUpTo(ctx, 1), func(at slack.Attempt) { last = &at })
+	if retry {
+		ctx = slack.NoBackoff(ctx)
 	}
-	return map[string]any{"status": 200, "json": out}, nil
+	var err error
+	if len(files) == 0 {
+		_, err = t.app.C.Raw(ctx, method, vals)
+	} else {
+		// one file part (Slack's upload-style methods take one)
+		var name string
+		var f apiFile
+		for k, v := range files {
+			name, f = k, v
+			break
+		}
+		var out json.RawMessage
+		err = t.app.C.CallMultipartFile(ctx, method, vals, slack.MultipartFile{Field: name, Name: f.Name, Type: f.Type, Data: f.Data}, &out)
+	}
+	if last == nil {
+		// nothing went out: the backoff guard's held failure, or a
+		// request Clack refuses to send
+		at, ok := slack.AttemptOf(err)
+		if !ok {
+			if err == nil {
+				err = errors.New("taut: userAPI: no request was sent")
+			}
+			return nil, err
+		}
+		last = &at
+	}
+	if last.Err != nil {
+		return map[string]any{"failed": true}, nil
+	}
+	return map[string]any{"status": last.Status, "retryAfter": last.RetryAfter, "body": string(bytes.TrimPrefix(last.Body, []byte("\xef\xbb\xbf")))}, nil
 }
 
 // messageMetadata is a message's app metadata (event_type + event_payload).

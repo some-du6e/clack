@@ -57,6 +57,16 @@ type desktopNote struct {
 	// Activated runs when the toast or one of its buttons is clicked (any
 	// goroutine; nil: nothing happens).
 	Activated func(toastActivation)
+	// pushChecked: the message path applied the conversation's
+	// desktop_push_enabled (notePushOn), which may turn its notifications
+	// on with the global switch off; textChecked: it wrote the body with
+	// no_text_in_notifications applied (notifyBody). notifyShow applies
+	// the global ones only to the rest.
+	pushChecked, textChecked bool
+	// soundThroughDND: a VIP sent the message and it came through Do Not
+	// Disturb (shouldOverrideDndForMessage), its sound too (canPlaySound);
+	// prioritySound: it plays priority_desktop_sound (Mvkl Tk).
+	soundThroughDND, prioritySound bool
 }
 
 // noteButton is one of actionButtons: buildNotificationActionButtons'

@@ -27,6 +27,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/chanent"
@@ -82,14 +83,22 @@ type Controller struct {
 	// notice (0: Slack's 30 s).
 	MissedAfter time.Duration
 
-	mu      sync.Mutex
-	s       *huddle.Session
-	logFP   logFP        // the event log taut last got (eventlog.go)
-	alerts  huddleAlerts // displayAlertMessage's alerts (eventlog.go)
-	joining string       // channel being joined
-	live    map[string]liveRoom
-	seeded  bool
-	gen     uint64 // bumps on every change, for cheap redraw checks
+	mu  sync.Mutex
+	wt  winTheme    // the main window's theme, for the huddle window (window_theme.go)
+	spk speakerTest // Test Speaker's icon animation (testspeaker.go)
+	// the docked bar's collapsed states (dock.go dockCollapsed): leaving is
+	// the session Leave is ending (ENDING), barJoined that it started and
+	// the window hasn't had it yet (HuddleBottomBarContent's H; cleared
+	// where the window gets the call: Start, attachWindow)
+	leaving   *huddle.Session
+	barJoined bool
+	s         *huddle.Session
+	logFP     logFP        // the event log taut last got (eventlog.go)
+	alerts    huddleAlerts // displayAlertMessage's alerts (eventlog.go)
+	joining   string       // channel being joined
+	live      map[string]liveRoom
+	seeded    bool
+	gen       uint64 // bumps on every change, for cheap redraw checks
 
 	win  *window
 	inv  *incoming      // the incoming invite (invite.go)
@@ -286,7 +295,8 @@ func (c *Controller) toastFor(text, icon string, ms int) {
 // Start starts or joins the huddle in channel (a channel or DM id). If
 // you're in another huddle you leave it first, like Slack.
 func (c *Controller) Start(channel string) {
-	c.clearInvite(channel) // the orchestrator's start: clearInviteForChannelId first
+	c.noteMainTheme(c.h.Theme()) // the window opens in your theme (window_theme.go)
+	c.clearInvite(channel)       // the orchestrator's start: clearInviteForChannelId first
 	c.mu.Lock()
 	if c.joining != "" || (c.s != nil && c.s.Channel() == channel) {
 		c.mu.Unlock()
@@ -295,6 +305,7 @@ func (c *Controller) Start(channel string) {
 	}
 	old := c.s
 	c.joining = channel
+	c.barJoined = true // from STARTING: the bar stays collapsed until the window has the call (dock.go)
 	c.mu.Unlock()
 	c.changed()
 	app := c.h.Core()
@@ -340,6 +351,9 @@ func (c *Controller) Start(channel string) {
 		c.joining = ""
 		if err == nil {
 			c.s = s
+			if c.win != nil {
+				c.barJoined = false // the window has the call (attachWindow)
+			}
 		}
 		c.mu.Unlock()
 		if err != nil {
@@ -350,7 +364,7 @@ func (c *Controller) Start(channel string) {
 			if w != nil {
 				w.close()
 			}
-			log.Printf("huddle: join %s: %v", channel, err)
+			log.Printf("huddle: join %s: %v", logtag.ID(channel), err)
 			c.showErrModal(joinErrorModal(err)) // HuddleErrorModal{isJoinError}
 			c.changed()
 			return
@@ -486,7 +500,7 @@ func (c *Controller) begin(channel, entry string) {
 				return nil, nil
 			})
 		if err != nil {
-			log.Printf("huddle: startHuddle %s: %v", channel, err)
+			log.Printf("huddle: startHuddle %s: %v", logtag.ID(channel), err)
 			c.showErrModal(joinErrorModal(err))
 		}
 	}()
@@ -637,6 +651,9 @@ func (c *Controller) peersTick(s *huddle.Session, st huddle.State) {
 // Leave leaves the huddle you're in.
 func (c *Controller) Leave() {
 	if s := c.Session(); s != nil {
+		c.mu.Lock()
+		c.leaving = s // ENDING until it's over: the docked bar collapses (dock.go)
+		c.mu.Unlock()
 		go c.leave(s)
 	}
 }
@@ -663,6 +680,7 @@ func (c *Controller) ended(err error) {
 	c.mu.Lock()
 	s := c.s
 	c.s = nil
+	c.leaving = nil
 	w := c.win
 	c.win = nil
 	c.mu.Unlock()

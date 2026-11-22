@@ -23,6 +23,10 @@ on:
       - "internal/ui/messages/row.go"
       - "internal/ui/messages/util.go"
       - "internal/ui/secondary.go"
+      - "internal/ui/thread_focus_input.go"
+      - "internal/ui/threads_audit_reply_focus_test.go"
+      - "internal/ui/popups/actions_context.go"
+      - "internal/ui/mount.go"
       - "internal/ui/notify_threads.go"
       - "internal/ui/threads_audit_test.go"
       - "internal/ui/backend.go"
@@ -57,6 +61,7 @@ concurrency:
 jobs:
   threads-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget: 1.5 x p95 (10.1 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

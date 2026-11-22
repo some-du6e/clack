@@ -32,6 +32,10 @@ import (
 type View struct {
 	doc  richtext.Doc
 	opts Options
+	// under is the opaque fill the View sits on when it isn't its
+	// palette's panel (SetUnder): the boxes' see-through fills (box.see)
+	// composite over it
+	under color.NRGBA
 
 	d       display
 	laidW   int
@@ -94,6 +98,8 @@ type View struct {
 	dark     bool            // the last layout's Palette.Dark (MemberSlug's c-member_slug--dark)
 	hovMen   mentionKey      // the @mention last reported to the hover card
 	hovOn    bool
+	probe    hovercard.Probe // keeps ptr and hover honest when the layout moves (hovercard/anchor.go)
+	side     map[any]bool    // each trigger's Popover side (hovercard Request.Opposite), while drawn
 	// the link preview whose hover trigger was last reported, and each
 	// preview's hover card content (unfurl_hover.go)
 	prevKey  previewKey
@@ -121,9 +127,17 @@ type View struct {
 
 	// expanded: attachments whose collapsed text was expanded (truncate.go)
 	expanded map[*richtext.Attachment]bool
-	// collapsed: image blocks hidden with their title-row toggle
-	collapsed map[*richtext.Image]bool
-	redraw    bool // ask for a frame after this frame's events
+	// collapsed: image blocks hidden with their title-row toggle (keys
+	// *richtext.Image), and call cards and containers toggled by the
+	// viewer, by keys that outlive a rebuilt Doc ("call:" + the call id,
+	// "container:" + Container.Key): the row's View keeps them through
+	// reactions, replies and chat.update, as Slack's component state and
+	// its redux expandables do. collapseDefs is the is_collapsible and
+	// default_collapsed each container key was last laid out with: a
+	// change resets its toggle (ContainerBlock's useEffect).
+	collapsed    map[any]bool
+	collapseDefs map[string]uint8
+	redraw       bool // ask for a frame after this frame's events
 
 	// lead: the first line's start (SetLead)
 	lead int
@@ -291,6 +305,9 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if v.namesChanged() {
 		v.dirty = true // a mention's plugin label changed (members.go)
 	}
+	if v.slugsChanged() {
+		v.dirty = true // a message slug's label reads otherwise now (slugs.go)
+	}
 	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
@@ -298,6 +315,15 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	}
 	if !v.recorded {
 		v.record(st)
+	}
+	if v.probe.Missed() {
+		// not laid out for a frame: Gio forgot the handler and the Leave
+		// it was owed (Slack's spans unmounted, and mount unhovered, with
+		// new Popovers)
+		clear(v.side)
+		if v.hovering {
+			v.left()
+		}
 	}
 	v.events(gtx, st, h)
 	v.hoverCard(st, h)
@@ -369,7 +395,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 					// Card hover: stronger border on top.
 					strokeRRect(gtx.Ops, b.r, b.radius, b.bw, b.hover)
 				default:
-					fillRadii(gtx.Ops, b.r, b.radii(), b.hover) // a wrapped pill's lines: square where it broke
+					fillRadii(gtx.Ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover)) // a wrapped pill's lines: square where it broke
 				}
 			}
 		}
@@ -384,7 +410,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
 			if b := &v.d.boxes[i]; b.hoverOver && b.hov == 0 && b.comp == 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
-				fillRadii(gtx.Ops, b.r, b.radii(), b.hover)
+				fillRadii(gtx.Ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
 	}
@@ -449,6 +475,10 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	// Input areas: the whole view takes text-selection input; clickable
 	// things show the hand cursor.
 	event.Op(gtx.Ops, v)
+	if v.hovering {
+		v.probe.Layout(gtx, v.ptr)
+	}
+	v.mounted()
 	pointer.CursorText.Add(gtx.Ops)
 	for i := range v.d.hits {
 		hr := &v.d.hits[i]
@@ -507,6 +537,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			opac.Pop()
 		}
 	}
+	v.layoutMedia(gtx) // video tiles (Options.Media), likewise over the rest
 	d := layout.Dimensions{Size: size}
 	if b := v.d.firstBaseline(); b >= 0 && b <= size.Y {
 		d.Baseline = size.Y - b
@@ -556,7 +587,8 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		v.expanded = map[*richtext.Attachment]bool{}
 	}
 	if v.collapsed == nil {
-		v.collapsed = map[*richtext.Image]bool{}
+		v.collapsed = map[any]bool{}
+		v.collapseDefs = map[string]uint8{}
 	}
 	if v.playing == nil {
 		v.playing = map[string]bool{}
@@ -565,7 +597,10 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	// messages_theme != "dense")
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
-		expanded: v.expanded, collapsed: v.collapsed, playing: v.playing, noAnim: uipref.Get().NoAnimations}
+		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations}
+	if v.opts.FillBlocks {
+		l.filled = 1 // a view's blocks (FillBlocks)
+	}
 	v.css.parts = v.css.parts[:0]
 	if v.css.scope.Active() {
 		l.css = &v.css
@@ -633,7 +668,8 @@ func (v *View) anyReady(st *Style) bool {
 	for _, p := range v.pending {
 		if p >= 0 {
 			im := &v.d.imgs[p]
-			if _, ok := st.Images.Get(im.url, im.px); ok {
+			// one whose own image failed is ready once its fallback is
+			if _, ok := st.Images.Get(imgSource(st.Images, im), im.px); ok {
 				return true
 			}
 		} else {
@@ -690,7 +726,7 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
 			if hp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
-				fillRadii(ops, b.r, b.radii(), b.hover)
+				fillRadii(ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
 	}
@@ -909,21 +945,66 @@ func (v *View) targetBounds(t int16) image.Rectangle {
 }
 
 // drawBox draws b, with its CSS part's fill when it has one.
+// SetUnder is the opaque fill the View is drawn over this frame, when it
+// isn't its palette's panel (a hovered or flashing message row; the zero
+// color: the panel). The palette's see-through fills (a mention's, code's,
+// a pre block's) composite over it, as Slack's rgba fills blend over the
+// row's own background: the jump highlight's yellow shows through them.
+func (v *View) SetUnder(c color.NRGBA) {
+	if c.A != 255 {
+		c = color.NRGBA{}
+	}
+	if c != v.under {
+		v.under = c
+		v.recorded = false // the fills are in the recording
+	}
+}
+
+// overUnder is fill over the View's under: see, the rgba a see-through
+// fill of the palette is flattened from (box.see), composited over it
+// (sRGB) instead of over the panel. An opaque fill (see zero) stays,
+// whatever its color.
+func (v *View) overUnder(fill, see color.NRGBA) color.NRGBA {
+	if v.under.A != 255 || see.A == 0 {
+		return fill
+	}
+	return Over(see, v.under)
+}
+
+// drawnFill is box b's fill as drawBox paints it (outside a hovered
+// component pill): its CSS part's background in its place (css), else its
+// own, composited over the View's under when it's see-through.
+func (v *View) drawnFill(b *box, css bool) color.NRGBA {
+	if !css || b.part == 0 {
+		return v.overUnder(b.fill, b.see)
+	}
+	if f := v.boxFill(b); f != b.fill {
+		return f // the part's own background, color or opacity, not the palette's fill
+	}
+	return v.overUnder(b.fill, b.see)
+}
+
 func (v *View) drawBox(ops *op.Ops, b *box, css bool) {
 	if b.hoverOver && b.comp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
 		// a component pill, drawn each frame: hovered, its hover fill in
 		// place of its fill
 		bb := *b
-		bb.fill = b.hover
+		bb.fill = v.overUnder(b.hover, b.seeHover)
 		drawBox(ops, &bb)
 		return
 	}
 	if !css || b.part == 0 {
+		if f := v.drawnFill(b, false); f != b.fill {
+			bb := *b
+			bb.fill = f
+			drawBox(ops, &bb)
+			return
+		}
 		drawBox(ops, b)
 		return
 	}
 	bb := *b
-	bb.fill = v.boxFill(b)
+	bb.fill = v.drawnFill(b, true)
 	if ps := v.css.get(b.part); ps != nil {
 		bb.stroke = mulAlpha(bb.stroke, ps.alpha)
 	}
@@ -1172,6 +1253,16 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}()
+	// the layout moved the view under a resting pointer (the probe's
+	// Leave, at the pointer's position then): Chromium's hover update
+	// after a layout, as a Move there would. First, before the view's own
+	// events: those are newer (a Move after the layout moved it, or the
+	// later Moves of several between frames, the probe hearing only the
+	// first), so they win. Not during a drag, whose Drag events carry the
+	// pointer.
+	if pos, ok := v.probe.Moved(gtx); ok && v.hovering && !v.dragging {
+		v.pointerAt(gtx, st, pos)
+	}
 	for {
 		ev, ok := gtx.Event(
 			pointer.Filter{Target: v, Kinds: pointer.Press | pointer.Release | pointer.Drag | pointer.Move | pointer.Enter | pointer.Leave | pointer.Cancel},
@@ -1205,31 +1296,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 		case pointer.Event:
 			switch e.Kind {
 			case pointer.Enter, pointer.Move:
-				v.hovering = true
-				v.hover = v.targetAt(e.Position)
-				v.ptr = e.Position
-				v.tipOrg.Learn(e.Position)
-				if b := v.copyButtonAt(e.Position) + 1; b != v.copyHot {
-					v.copyHot, v.copyTipAt = b, gtx.Now
-				}
-				if b := v.fileSecAt(e.Position) + 1; b != v.secHot {
-					v.secHot, v.copyTipAt = b, gtx.Now
-				}
-				if b := v.expandAt(st, e.Position) + 1; b != v.expHot {
-					v.expHot, v.copyTipAt = b, gtx.Now
-				}
-				if bar, btn, _ := v.barAt(e.Position); barKey(bar, btn) != v.barHot {
-					v.barHot, v.copyTipAt = barKey(bar, btn), gtx.Now
-				}
-				if f := v.emojiAt(e.Position); f != v.tipFrag {
-					v.tipFrag, v.tipAt = f, gtx.Now
-				}
+				v.pointerAt(gtx, st, e.Position)
 			case pointer.Leave:
-				v.hovering = false
-				v.tipFrag = -1
-				if !v.dragging {
-					v.hover = -1
-				}
+				v.left()
 			case pointer.Cancel:
 				v.dragging = false
 				v.press = -1
@@ -1368,6 +1437,84 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 	}
 }
 
+// pointerAt is the pointer over the view at p (an Enter or a Move, or
+// the layout moving the view under it): what it is on, and where.
+func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
+	v.hovering = true
+	v.hover = v.targetAt(p)
+	v.ptr = p
+	v.tipOrg.Learn(p)
+	if b := v.copyButtonAt(p) + 1; b != v.copyHot {
+		v.copyHot, v.copyTipAt = b, gtx.Now
+	}
+	if b := v.fileSecAt(p) + 1; b != v.secHot {
+		v.secHot, v.copyTipAt = b, gtx.Now
+	}
+	if b := v.expandAt(st, p) + 1; b != v.expHot {
+		v.expHot, v.copyTipAt = b, gtx.Now
+	}
+	if bar, btn, _ := v.barAt(p); barKey(bar, btn) != v.barHot {
+		v.barHot, v.copyTipAt = barKey(bar, btn), gtx.Now
+	}
+	if f := v.emojiAt(p); f != v.tipFrag {
+		v.tipFrag, v.tipAt = f, gtx.Now
+	}
+}
+
+// left is the pointer leaving the view (a Leave, or the view missing a
+// frame: Probe.Missed).
+func (v *View) left() {
+	v.hovering = false
+	v.tipFrag = -1
+	if !v.dragging {
+		v.hover = -1
+	}
+}
+
+// mounted tells the hover card controller this view is drawn, when the
+// open or pending card is one of its triggers' (Controller.Mounted).
+func (v *View) mounted() {
+	c := hovercard.Default()
+	if c == nil {
+		return
+	}
+	for _, k := range [2]any{c.OpenKey(), c.PendingKey()} {
+		switch k := k.(type) {
+		case mentionKey:
+			if k.v == v {
+				c.Mounted(k)
+				v.keepSide(c, k)
+			}
+		case previewKey:
+			if k.v == v {
+				c.Mounted(k)
+				v.keepSide(c, k)
+			}
+		}
+	}
+}
+
+// keepSide keeps the side k's open card was placed on (its Popover's
+// state, which lasts while the trigger is mounted).
+func (v *View) keepSide(c *hovercard.Controller, k any) {
+	if o, ok := c.Placed(k); ok {
+		if v.side == nil {
+			v.side = map[any]bool{}
+		}
+		v.side[k] = o
+	}
+}
+
+// WindowOrigin is the view's window origin as the pointer last showed it
+// (its tooltips' TipOrigin; tests).
+func (v *View) WindowOrigin() (image.Point, bool) {
+	b := v.tipOrg.Bounds()
+	if b.Empty() {
+		return image.Point{}, false
+	}
+	return b.Min.Mul(-1), true
+}
+
 // mentionKey identifies one @mention of a View to the hover card.
 type mentionKey struct {
 	v *View
@@ -1487,6 +1634,7 @@ func (v *View) hoverCard(st *Style, h Handler) {
 		return
 	}
 	r := v.targetBounds(t)
+	defer func() { c.ReportSide(k, v.side[k]) }() // its Popover's side
 	if urlCard {
 		c.ReportURL(k, v.d.targets[t].url, r, v.ptr) // UrlHoverCardTrigger: UrlHoverCard, position "top"
 		return
@@ -1506,7 +1654,9 @@ func (v *View) hoverCard(st *Style, h Handler) {
 	c.Report(k, v.d.targets[t].id, r, v.ptr)
 }
 
-// inSlot reports whether p is on an element run drawn by Options.Elements.
+// inSlot reports whether p is on an element run drawn by Options.Elements
+// or a video tile Options.Media draws: their widgets take their own
+// presses.
 func (v *View) inSlot(p f32.Point) bool {
 	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.slots {
@@ -1514,7 +1664,7 @@ func (v *View) inSlot(p f32.Point) bool {
 			return true
 		}
 	}
-	return false
+	return v.inMedia(pt)
 }
 
 // targetText is the text a link target draws (its frags' plain text).
@@ -1580,6 +1730,16 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 	v.activateTarget(&v.d.targets[t], v.targetText(t), anchor, h)
 }
 
+// targetRect is tg's (first) hit box, in the View's coordinates.
+func (v *View) targetRect(tg *target) (image.Rectangle, bool) {
+	for _, h := range v.d.hits {
+		if h.t >= 0 && int(h.t) < len(v.d.targets) && &v.d.targets[h.t] == tg {
+			return h.r, true
+		}
+	}
+	return image.Rectangle{}, false
+}
+
 // activateTarget is a click on tg (text: what it draws).
 func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Handler) {
 	if tg.cardOnly || tg.menuOnly {
@@ -1587,11 +1747,23 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	}
 	switch tg.kind {
 	case tLink, tCard:
+		if tg.kind == tLink && tg.slug && tg.msgCh != "" && tg.id != "" {
+			if mh, ok := h.(MessageMentionHandler); ok {
+				mh.OpenMessageMention(tg.msgCh, tg.id, tg.msgThread, tg.url)
+				break
+			}
+		}
 		if tg.url == "" {
 			break
 		}
+		// an email body's links (laid out as mrkdwn links, then marked)
+		// go through EmailIframe's onMessage, not BaseMrkdwnLink
 		if eh, ok := h.(EmailLinkHandler); ok && tg.emailLink {
 			eh.OpenEmailLink(tg.url)
+			break
+		}
+		if mh, ok := h.(MrkdwnLinkHandler); ok && tg.kind == tLink && tg.mrkdwn {
+			mh.OpenMrkdwnLink(tg.url, text)
 			break
 		}
 		if lh, ok := h.(LinkTextHandler); ok && tg.kind == tLink {
@@ -1633,13 +1805,29 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		if wh, ok := h.(WorkObjectHandler); ok && tg.att != nil {
 			wh.WorkObject(v.woEvent(tg, anchor))
 		}
+	case tWorkflowCard: // a share_shortcut card (shortcut.go)
+		if wh, ok := h.(WorkflowCardHandler); ok {
+			if c, ok := tg.key.(*richtext.ShortcutCard); ok {
+				r := image.Rectangle{Min: anchor, Max: anchor}
+				if tg.id == "more" { // the menu opens from the ⋮ button itself (uJed: LeftBottom)
+					if hr, ok := v.targetRect(tg); ok {
+						r = hr
+					}
+				}
+				wh.WorkflowCard(tg.id, c, r)
+			}
+		}
 	case tSnippet: // a snippet's Show more / Show less (snippet.go)
 		if fh, ok := h.(FileActionHandler); ok && tg.file != nil {
 			fh.FileAction(tg.act, tg.file, image.Rectangle{Min: anchor, Max: anchor})
 		}
 	case tCollapse:
-		if tg.img != nil && v.collapsed != nil {
-			v.collapsed[tg.img] = !v.collapsed[tg.img]
+		var k any = tg.img
+		if tg.key != nil {
+			k = tg.key
+		}
+		if (tg.img != nil || tg.key != nil) && v.collapsed != nil {
+			v.collapsed[k] = !v.collapsed[k]
 			v.dirty = true
 			v.redraw = true
 		}

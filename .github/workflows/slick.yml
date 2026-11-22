@@ -50,6 +50,7 @@ concurrency:
 jobs:
   plugins:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (2.8 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -106,10 +107,10 @@ jobs:
           RUN: ${{ inputs.run }}
         run: |
           set -o pipefail
-          go test -count=1 -timeout 20m -v ${RUN:+-run "$RUN"} ./internal/slick/... 2>&1 | tee dist/slick-test.log
+          go test -count=1 -timeout 10m -v ${RUN:+-run "$RUN"} ./internal/slick/... 2>&1 | tee dist/slick-test.log
       - name: acceptance summary
         if: ${{ !cancelled() }}
         run: |
           grep -E '^\s*--- (PASS|FAIL|SKIP)|^(ok|FAIL)\b|ACCEPT' dist/slick-test.log | tail -150 || true
       - name: taut tests still green (shared runtime)
-        run: go test -count=1 -timeout 15m ./internal/taut/...
+        run: go test -count=1 -timeout 9m ./internal/taut/...

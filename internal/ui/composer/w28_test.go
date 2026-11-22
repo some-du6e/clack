@@ -413,7 +413,10 @@ func TestW28OverflowRow(t *testing.T) {
 	var r input.Router
 	ops := new(op.Ops)
 	now := time.Now()
-	w := 520
+	// a 260px composer: its toolbar (114px) is narrower than its buttons
+	// in a row (137px), so Slack folds them; the mention button has moved
+	// in too (under 160)
+	w := 260
 	frame := func() {
 		ops.Reset()
 		gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Source: r.Source(), Now: now,
@@ -449,9 +452,9 @@ func TestW28OverflowRow(t *testing.T) {
 		t.Fatal("⋯ didn't open the overflow row")
 	}
 	frame()
-	sc := c.ui.rect[crShortcut]
-	if row := crMoreRowRect(gtx, more, 1); !sc.In(row) || c.ui.shown&(1<<crShortcut) == 0 {
-		t.Fatalf("Run shortcut at %v, the row %v", sc, row)
+	sc, at := c.ui.rect[crShortcut], c.ui.rect[crMention]
+	if row := crMoreRowRect(gtx, more, 2); !sc.In(row) || !at.In(row) || c.ui.shown&(1<<crShortcut) == 0 {
+		t.Fatalf("Run shortcut at %v and mention at %v, the row %v", sc, at, row)
 	}
 	click(image.Pt(5, -c.top+5)) // outside both, at the window's corner
 	if c.ui.more.open {

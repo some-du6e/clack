@@ -230,6 +230,19 @@ func (c *Custom) Set(m map[string]string) {
 	c.mu.Unlock()
 }
 
+// SetIfEmpty installs m only while the map is empty (nothing loaded yet)
+// and reports whether it did: a fuller map installed meanwhile stays.
+func (c *Custom) SetIfEmpty(m map[string]string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.m) > 0 {
+		return false
+	}
+	c.m = m
+	c.ver++
+	return true
+}
+
 func (c *Custom) clone(extra int) map[string]string {
 	n := make(map[string]string, len(c.m)+extra)
 	for k, v := range c.m {

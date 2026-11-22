@@ -20,7 +20,7 @@ const terminateWait = 15 * time.Second
 var terminateTimer *time.Timer
 
 // gio_onShouldTerminate is the app delegate's applicationShouldTerminate:
-// (Clack patch, CLACK_PATCHES.md §50), on the main thread: a program
+// (Clack patch, CLACK_PATCHES.md §58), on the main thread: a program
 // ranging over Events gets a TerminateEvent and AppKit waits for it
 // (NSTerminateLater, 1); without one, AppKit terminates now (0).
 //

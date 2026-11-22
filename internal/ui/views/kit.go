@@ -324,6 +324,14 @@ type base struct {
 	th   *theme.Theme
 	p    *pal
 	rich richCache
+	// mediaPane names the view's video players (media.go): set, its
+	// messages' lone videos play in place, as in Slack's Threads, Unreads
+	// and Later views
+	mediaPane string
+	media     map[string]*viewMedia
+	// bkView is this view's drawing of its messages' elements
+	// (blockkit.InView, elements.go)
+	bkView uint64
 	// tt is the Host's Taut plugin system (nil without plugins); tgen/tmemo
 	// cache its patched member/channel/message views for one frame.
 	tt    *taut.Taut
@@ -337,6 +345,23 @@ type base struct {
 	// revision each message's patched view was last read for (viewMsg)
 	vers map[string]verMemo
 	vsrc map[string]viewRev
+	// vneed is the EmitSeq core had emitted when viewMsg first saw a
+	// message's current revision (JS's copy counts as that revision's once
+	// the mirror handled it); vready the revision of the message's last
+	// ready read (JS answered for it: its view stands through the marks
+	// that follow, a reaction, a reply count, a sweep); vdiff whether that
+	// view draws other than core's copy (viewDraws), worked out once per
+	// conversion (vconv): a plugin that rewrites the message keeps its view
+	// while JS answers for an edit
+	vneed  map[string]uint64
+	vready map[string]viewRev
+	vconv  map[string]uint64
+	vdiff  map[string]bool
+	// vheld is when viewMsg first saw a message's current revision: a hold
+	// of the revision before's view lasts taut.EditHold from it, the frame
+	// at its end asked for once (vwake)
+	vheld map[string]time.Time
+	vwake map[string]bool
 	// rec, while a row is described (recording), notes the members it
 	// drew without a name (missing_member.go); reads (recordingReads)
 	// every member it looked up
@@ -899,6 +924,9 @@ func (b *base) emojiImg(gtx C, url string, size unit.Dp) D {
 	s := gtx.Dp(size)
 	if url != "" && b.h.Images() != nil {
 		if img, ok := b.h.Images().Get(url, s); ok {
+			if emojiDrawn != nil {
+				emojiDrawn(url, s)
+			}
 			return theme.Image(gtx, img, image.Pt(s, s), 0)
 		}
 	}
@@ -1198,6 +1226,14 @@ type async[T any] struct {
 // load starts f (cancelling any in-flight run). keep retains the previous
 // value while loading (pagination, refresh).
 func (a *async[T]) load(h Host, keep bool, f func(ctx context.Context) (T, error)) {
+	a.loadMerge(h, keep, f, nil)
+}
+
+// loadMerge is load with f's answer joined to the value held when it
+// lands (merge runs under the lock, given that value and the answer)
+// instead of replacing it: what mutate changed while f ran reaches the
+// merge. A failed f keeps load's rules.
+func (a *async[T]) loadMerge(h Host, keep bool, f func(ctx context.Context) (T, error), merge func(cur, got T) T) {
 	a.mu.Lock()
 	if a.cancel != nil {
 		a.cancel()
@@ -1218,7 +1254,9 @@ func (a *async[T]) load(h Host, keep bool, f func(ctx context.Context) (T, error
 		a.mu.Lock()
 		if gen == a.gen {
 			a.loading = false
-			if err == nil || !keep {
+			if err == nil && merge != nil {
+				a.val = merge(a.val, v)
+			} else if err == nil || !keep {
 				a.val = v
 			}
 			a.err = err

@@ -2,6 +2,7 @@ package slackc
 
 import (
 	"image"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -112,6 +113,21 @@ func (s *scope) events() {
 	}
 	moved := false
 	var last pointer.Event
+	// flushMove sends the frame's mousemove so far, coalesced to the newest
+	// position and to listening subtrees, before a discrete event: as a
+	// browser dispatches its pending coalesced moves ahead of the next
+	// mousedown or mouseup, a handler sees the pointer where it was pressed
+	// (a drag's start, a menu item's hover) before the press itself.
+	flushMove := func() {
+		if !moved {
+			return
+		}
+		moved = false
+		if t := s.hitTest(last.Position); t != nil && chainListens(t, lMove) {
+			v.dispatchPointer(s, t, "mousemove", &last, 0)
+			v.dispatchPointer(s, t, "pointermove", &last, 0)
+		}
+	}
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &s.ptag, Kinds: pointer.Move | pointer.Enter | pointer.Leave | pointer.Press | pointer.Release | pointer.Drag | pointer.Scroll | pointer.Cancel, ScrollX: sx, ScrollY: sy})
 		if !ok {
@@ -132,30 +148,29 @@ func (s *scope) events() {
 			moved = true
 			last = pe
 		case pointer.Leave:
+			flushMove()
 			if s.host == nil {
 				s.ptrIn = false
 				v.setHover(nil, s, &pe)
 			}
 		case pointer.Press:
+			flushMove()
 			s.ptr = pe.Position
 			s.press(&pe)
 		case pointer.Release:
+			flushMove()
 			s.release(&pe)
 		case pointer.Scroll:
+			flushMove()
 			s.ptr, s.ptrIn = pe.Position, true
 			s.scroll(&pe)
 		case pointer.Cancel:
+			flushMove()
 			v.pressK = 0
 			v.setActive(nil)
 		}
 	}
-	if moved {
-		// mousemove, throttled to one per frame and to listening subtrees
-		if t := s.hitTest(last.Position); t != nil && chainListens(t, lMove) {
-			v.dispatchPointer(s, t, "mousemove", &last, 0)
-			v.dispatchPointer(s, t, "pointermove", &last, 0)
-		}
-	}
+	flushMove()
 }
 
 func chainListens(t *box, bit uint32) bool {
@@ -549,6 +564,12 @@ func followLink(href string) {
 	e := env()
 	switch {
 	case strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") || strings.HasPrefix(href, "mailto:"):
+		if e.FollowLink != nil {
+			if !e.FollowLink(href) && e.OpenURL != nil {
+				e.OpenURL(href) // openPermalink's new tab: not a link Clack opens itself
+			}
+			return
+		}
 		if r := slackRoute(href); r != "" && e.Navigate != nil {
 			e.Navigate(r)
 			return
@@ -557,6 +578,9 @@ func followLink(href string) {
 			e.OpenURL(href)
 		}
 	default:
+		if e.FollowLink != nil && e.FollowLink(href) { // slack: links: handleDeepLink
+			return
+		}
 		if r := slackRoute(href); r != "" && e.Navigate != nil {
 			e.Navigate(r)
 		}
@@ -593,9 +617,13 @@ func slackRoute(href string) string {
 	if strings.HasPrefix(href, "http") && !strings.Contains(href[:i], "slack.com") {
 		return ""
 	}
-	parts := strings.Split(strings.SplitN(href[i+len("/archives/"):], "?", 2)[0], "/")
+	path, query, _ := strings.Cut(href[i+len("/archives/"):], "?")
+	parts := strings.Split(path, "/")
 	if len(parts) == 0 || parts[0] == "" {
 		return ""
+	}
+	if q, err := url.ParseQuery(query); err == nil && isMessageTS(q.Get("thread_ts")) {
+		return "c/" + parts[0] + "/t/" + q.Get("thread_ts") // a reply's link: its thread, never the reply as a root
 	}
 	if len(parts) > 1 && len(parts[1]) > 7 && parts[1][0] == 'p' {
 		ts := parts[1][1:]
@@ -605,6 +633,21 @@ func slackRoute(href string) string {
 		return "c/" + parts[0] + "/m/" + ts
 	}
 	return "c/" + parts[0]
+}
+
+// isMessageTS is a message timestamp as Slack writes one
+// ("1700000000.000100"), so a link's thread_ts can't add route segments.
+func isMessageTS(s string) bool {
+	a, b, ok := strings.Cut(s, ".")
+	if !ok || len(a) != 10 || len(b) != 6 {
+		return false
+	}
+	for _, r := range a + b {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *scope) scroll(pe *pointer.Event) {
@@ -1146,10 +1189,13 @@ func (v *View) drawTip(gtx layout.Context) {
 	}
 	p := painter{v: v, ops: gtx.Ops, clip: noClip}
 	rad := float32(gtx.Dp(6))
+	ri := image.Rect(int(x), int(y), int(x+w+0.5), int(y+h+0.5))
 	if g := th.C.TooltipGlow; g.A != 0 {
-		// the dark mode outline (theme/tooltip.go) under the box
-		ri := image.Rect(int(x), int(y), int(x+w+0.5), int(y+h+0.5))
+		// the dark mode outline (theme/tooltip.go) under the box: it tells
+		// the inspect tool too (theme.TooltipDrawn)
 		theme.TooltipShape(gtx, ri, int(rad), theme.TooltipArrow{}, th.C.Tooltip, g)
+	} else {
+		inspectTooltip(gtx, ri) // a light theme's box (fillRR): a tooltip layer of the record all the same
 	}
 	p.fillRR(rectF{x, y, x + w, y + h}, [4]float32{rad, rad, rad, rad}, th.C.Tooltip)
 	t := op.Offset(image.Pt(int(x+padX), int(y+padY))).Push(gtx.Ops)

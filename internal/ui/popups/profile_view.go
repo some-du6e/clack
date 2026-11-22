@@ -306,7 +306,9 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	}
 
 	// presence, then status (RimetoProfileBio's BioRows)
-	if !u.IsBot { // unknown presence reads as Away, like Slack
+	// unknown presence reads as Away, like Slack; RimetoProfileBio (boot-
+	// shared oGjw) has no presence row for the Slack system user (iXFk)
+	if !u.IsBot && u.ID != "USLACK" {
 		pu := u
 		if v.preview == pfPreviewExternal { // FakeExternalPreviewPresence: userType external
 			pu.External = true

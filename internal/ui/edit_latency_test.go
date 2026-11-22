@@ -54,6 +54,34 @@ class EditPassSlice extends TautPlugin {
 return EditPassSlice
 })()`
 
+// editSliceText patches the messages slice by marking each plan block's
+// title and the message's text (reactSliceText's mark, ' (logged)', as
+// Message Logger's edit marks): the uptime monitor's title lives in its
+// blocks, where patchMessageText doesn't reach, and a row takes the
+// plugins' view only once its text differs from core's (applyView), so a
+// row drawing core's copy draws the title unmarked, and the slice-text
+// mode tells the plugins' view from core's.
+const editSliceText = `(() => {
+const TautPlugin = globalThis.TautPlugin
+class EditSliceText extends TautPlugin {
+  static id = 'EditSliceText'
+  static pluginName = 'Edit slice text'
+  static description = 'Marks every plan block title, patching the messages slice'
+  static category = 'other'
+  static authors = ['test']
+  static defaultConfig = { enabled: false }
+  start() {
+    const { patchSlice, mapEntries } = this.api.redux
+    const mark = (m) => (m && Array.isArray(m.blocks) ?
+      { ...m, text: typeof m.text === 'string' ? m.text + ' (logged)' : m.text,
+        blocks: m.blocks.map((b) => (b && typeof b.title === 'string' ? { ...b, title: b.title + ' (logged)' } : b)) } : m)
+    patchSlice('messages', (ch, bucket) => (bucket && typeof bucket === 'object' ? mapEntries(bucket, (ts, m) => mark(m)) : bucket))
+  }
+  stop() {}
+}
+return EditSliceText
+})()`
+
 // editPassComponents patches what a message draws through and passes it
 // through.
 const editPassComponents = `(() => {
@@ -91,6 +119,16 @@ type latDraw struct {
 // natively, under 35 ms under a component patch).
 const latWall = 250 * time.Millisecond
 
+// sliceTextFrames and sliceTextWall bound an edit's rewritten view under a
+// plugin rewriting the message, a JS round trip after the socket (3 frames,
+// 34-36 ms in every edit measured: the known gap slice-gaps holds to
+// latWall's bound): a wider gap fails on pushes. Frames are drawn only
+// when asked, so a slower JS shows in the wall, not the frame count.
+const (
+	sliceTextFrames = 4
+	sliceTextWall   = 65 * time.Millisecond
+)
+
 // latStats logs a phase's changes and fails those drawn more than two
 // frames, or latWall, after the server sent them (the socket's and the
 // hub's goroutine hops can miss the frame in progress), or never; it
@@ -98,6 +136,13 @@ const latWall = 250 * time.Millisecond
 // announcement: core holding an event back (a lookup on the event pump)
 // is lateness too.
 func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
+	t.Helper()
+	return latStatsBound(t, mode, name, ds, 2, latWall)
+}
+
+// latStatsBound is latStats with its own bound: changes drawn more than
+// maxFrames frames or maxWall after the socket count as late.
+func latStatsBound(t *testing.T, mode, name string, ds []latDraw, maxFrames int64, maxWall time.Duration) time.Duration {
 	t.Helper()
 	var lat []time.Duration
 	late, missed := 0, 0
@@ -110,7 +155,7 @@ func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
 			all = append(all, "missed")
 		default:
 			lat = append(lat, d.drawn.Sub(d.pushed))
-			if d.frames > 2 || d.drawn.Sub(d.pushed) > latWall {
+			if d.frames > maxFrames || d.drawn.Sub(d.pushed) > maxWall {
 				late++
 			}
 			s := fmt.Sprintf("%dms/%df", d.drawn.Sub(d.pushed).Milliseconds(), d.frames)
@@ -130,7 +175,7 @@ func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
 	t.Logf("%s, %s: %d changes, drawn %d (late %d, never %d), socket to frame median %v p90 %v max %v; each: %s",
 		mode, name, len(ds), len(lat), late, missed, q(0.5).Round(time.Millisecond), q(0.9).Round(time.Millisecond), q(1).Round(time.Millisecond), strings.Join(all, " "))
 	if missed > 0 || late > 0 {
-		t.Errorf("%s, %s: %d of %d changes drawn more than two frames or %v after the socket brought them, %d never: Slack draws each in the render after it", mode, name, late, len(ds), latWall, missed)
+		t.Errorf("%s, %s: %d of %d changes drawn more than %d frames or %v after the socket brought them, %d never: Slack draws each in the render after it", mode, name, late, len(ds), maxFrames, maxWall, missed)
 	}
 	return q(0.5)
 }
@@ -143,7 +188,22 @@ func TestEditLatency(t *testing.T) {
 	// one asked for a frame (Karim's uptime bot, "like every 33 seconds");
 	// rows now draw the message as it is and a view that turns ready asks
 	// for its own frame (plugin-render-3, 9fae788f)
-	for _, mode := range []string{"native", "slice", "components"} {
+	modes := []string{"native", "slice", "components"}
+	if os.Getenv("CLACK_SLICE_GAPS") != "" || os.Getenv("CLACK_SLICE_TEXT") != "" {
+		// slice-text, a known gap run on request (flake-check
+		// only=slice-gaps): under a plugin rewriting the message (each
+		// plan title and the text marked), every edit's marked title within
+		// the same bound. A row drawing a rewritten view keeps it while JS
+		// answers for an edit, so a masking plugin never flashes what it
+		// masks (applyView), and the view of each edit draws a JS round trip
+		// after the socket: 3 frames, ~35 ms (run 44597666006), where Slack
+		// renders the patched slice in the render after the edit. Pushes
+		// run it once (CLACK_SLICE_TEXT, flake-check's edit-latency job)
+		// held to sliceTextFrames and sliceTextWall, so the gap can't grow
+		// unseen; CLACK_SLICE_GAPS holds it to the others' bound
+		modes = append(modes, "slice-text")
+	}
+	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) { editLatency(t, mode) })
 	}
 }
@@ -177,8 +237,11 @@ func editLatency(t *testing.T, mode string) {
 		e.until("Taut", 60*time.Second, func() bool { return e.a.Taut() != nil })
 		tt := e.a.Taut()
 		code, id := editPassSlice, "EditPassSlice"
-		if mode == "components" {
+		switch mode {
+		case "components":
 			code, id = editPassComponents, "EditPassComponents"
+		case "slice-text":
+			code, id = editSliceText, "EditSliceText"
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -189,7 +252,7 @@ func editLatency(t *testing.T, mode string) {
 			t.Fatal(err)
 		}
 		e.until("the plugin's patches", 30*time.Second, func() bool {
-			if mode == "slice" {
+			if mode == "slice" || mode == "slice-text" {
 				return tt.SlicePatched("messages")
 			}
 			return slackc.Patched("Blocks") && slackc.Patched("MessageWrapper")
@@ -259,6 +322,14 @@ func editLatency(t *testing.T, mode string) {
 
 	const prefix = "10router blipped · "
 	title := func(k int) string { return fmt.Sprintf(prefix+"%dm %ds", k/60, k%60) }
+	// drawn is title k as the rows draw it: marked under slice-text, where
+	// core's copy draws it unmarked
+	drawn := func(k int) string {
+		if mode == "slice-text" {
+			return title(k) + reactLogged
+		}
+		return title(k)
+	}
 	n := 0 // the edits so far
 	// newestTitle is whether a frame's labels draw edit k's title and no
 	// older one: every surface showing the message is at k
@@ -268,8 +339,8 @@ func editLatency(t *testing.T, mode string) {
 			if !strings.HasPrefix(l, prefix) {
 				continue
 			}
-			if l != title(k) {
-				return false // a surface still draws another (older) title
+			if l != drawn(k) {
+				return false // a surface still draws another (older, or unmarked) title
 			}
 			at = true
 		}
@@ -356,6 +427,10 @@ func editLatency(t *testing.T, mode string) {
 			}
 			return title(n), title(n)
 		}, func(ls, _ []string, i int) bool { return newestTitle(ls, first+i) })
+		if mode == "slice-text" && os.Getenv("CLACK_SLICE_GAPS") == "" {
+			latStatsBound(t, mode, name, ds, sliceTextFrames, sliceTextWall)
+			return
+		}
 		latStats(t, mode, name, ds)
 	}
 	// the window watched, not used: no caret blinking in a focused
@@ -368,7 +443,7 @@ func editLatency(t *testing.T, mode string) {
 
 	// the channel alone
 	e.openChannel(ch)
-	until("the channel", func(ls, _ []string) bool { return has(ls, title(0)) })
+	until("the channel", func(ls, _ []string) bool { return has(ls, drawn(0)) })
 	settleBlurred()
 	edits("channel")
 

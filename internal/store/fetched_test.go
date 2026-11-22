@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -228,5 +229,64 @@ func TestFetchedSizeAfterMutate(t *testing.T) {
 	s.mu.RUnlock()
 	if size != want {
 		t.Errorf("fetched size %d after the copy grew, want %d", size, want)
+	}
+}
+
+// The messages fetched by id are indexed by channel (fetchedBy), so
+// FetchedIn, FetchedChannels, and the plugins' injected checks (Held,
+// MessageKeys) read a channel's own and never pass over every channel's:
+// the index follows every put, every drop (a message the answer left
+// out) and every eviction past maxFetched. Held and MessageKeys count the
+// fetched copies as core's (taut's injected check: a channel's list never
+// draws one as a plugin's), and the store queues the ones it held no copy
+// of for core (TakeFetchedNew: the plugins' mirror marks them).
+func TestFetchedIndexedByChannel(t *testing.T) {
+	s := New("")
+	msg := func(ts string) slack.Message { return slack.Message{Type: "message", TS: ts, Text: "synthetic " + ts} }
+	s.PutFetched("C0AAAA0001", []slack.Message{msg("100.000001"), msg("100.000002")}, s.LiveSeq())
+	s.PutFetched("C0BBBB0001", []slack.Message{msg("200.000001")}, s.LiveSeq())
+	if got := s.FetchedChannels(); strings.Join(got, ",") != "C0AAAA0001,C0BBBB0001" {
+		t.Fatalf("FetchedChannels %v", got)
+	}
+	if got := s.FetchedIn("C0AAAA0001"); len(got) != 2 || got[0].TS != "100.000001" || got[1].TS != "100.000002" {
+		t.Fatalf("FetchedIn A: %+v", got)
+	}
+	if got := s.TakeFetchedNew(); len(got) != 3 {
+		t.Errorf("TakeFetchedNew %+v, want the three messages new to the store", got)
+	}
+	s.PutFetched("C0AAAA0001", []slack.Message{msg("100.000001")}, s.LiveSeq())
+	if got := s.TakeFetchedNew(); len(got) != 0 {
+		t.Errorf("TakeFetchedNew %+v after a message the store held again: none is new", got)
+	}
+	held := s.Held("C0AAAA0001", []MsgKey{{TS: "100.000002"}, {TS: "100.000009"}})
+	if !held[0] || held[1] {
+		t.Errorf("Held %v: a fetched copy is core's, an unknown ts isn't", held)
+	}
+	if ts, _ := s.MessageKeys("C0AAAA0001"); !ts["100.000001"] || !ts["100.000002"] || ts["200.000001"] {
+		t.Errorf("MessageKeys %v: the channel's fetched copies alone", ts)
+	}
+	// the answer leaves one out: gone, from the index too
+	s.PutFetchedAsked("C0AAAA0001", []string{"100.000001", "100.000002"}, []slack.Message{msg("100.000001")}, s.LiveSeq())
+	if got := s.FetchedIn("C0AAAA0001"); len(got) != 1 || got[0].TS != "100.000001" {
+		t.Errorf("FetchedIn A after a drop: %+v", got)
+	}
+	s.PutFetchedAsked("C0BBBB0001", []string{"200.000001"}, nil, s.LiveSeq())
+	if got := s.FetchedChannels(); strings.Join(got, ",") != "C0AAAA0001" {
+		t.Errorf("FetchedChannels %v after B's last went", got)
+	}
+	// past maxFetched the oldest go, and the index with them
+	var many []slack.Message
+	for i := 0; i < maxFetched; i++ {
+		many = append(many, msg(fmt.Sprintf("300.%06d", i+1)))
+	}
+	s.PutFetched("C0CCCC0001", many, s.LiveSeq())
+	if got := s.FetchedIn("C0AAAA0001"); len(got) != 0 {
+		t.Errorf("FetchedIn A %d after its copy was evicted", len(got))
+	}
+	if got := len(s.FetchedIn("C0CCCC0001")); got != maxFetched {
+		t.Errorf("FetchedIn C has %d, want %d", got, maxFetched)
+	}
+	if got := s.FetchedChannels(); strings.Join(got, ",") != "C0CCCC0001" {
+		t.Errorf("FetchedChannels %v after the evictions", got)
 	}
 }

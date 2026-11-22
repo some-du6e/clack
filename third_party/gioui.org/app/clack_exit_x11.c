@@ -7,7 +7,7 @@
 #include "_cgo_export.h"
 
 // gio_x11IOError is Xlib's IO error handler (Clack patch, CLACK_PATCHES.md
-// §51): the connection to the X server broke. The program records why
+// §59): the connection to the X server broke. The program records why
 // (X11ConnectionLost), then the process exits with status 1, as Xlib's
 // default handler (_XDefaultIOError) exits: an IO error handler must not
 // return.

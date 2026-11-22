@@ -284,6 +284,34 @@ func (a *App) SetPurpose(ctx context.Context, ch, purpose string) error {
 	return nil
 }
 
+// SubmitChannelPurpose is submitChannelPurpose's call (boot-shared uqxK):
+// conversations.setPurpose with name_tagging and its reason, for a
+// description already cleaned the way the Edit description dialog does
+// (composer.TextyInput.Submit).
+func (a *App) SubmitChannelPurpose(ctx context.Context, ch, purpose string) error {
+	var res convResult
+	err := a.C.Call(ctx, "conversations.setPurpose", url.Values{"channel": {ch}, "purpose": {purpose},
+		"name_tagging": {"true"}, "reason": {"submitChannelPurpose"}}, &res)
+	if err != nil {
+		return err
+	}
+	a.refreshConv(ctx, ch)
+	return nil
+}
+
+// SubmitChannelTopic is submitChannelTopic's call (boot-shared s0VR):
+// conversations.setTopic with its reason, for a topic already cleaned the
+// way the Edit topic dialog does (composer.TextyInput.Submit).
+func (a *App) SubmitChannelTopic(ctx context.Context, ch, topic string) error {
+	var res convResult
+	err := a.C.Call(ctx, "conversations.setTopic", url.Values{"channel": {ch}, "topic": {topic}, "reason": {"submitChannelTopic"}}, &res)
+	if err != nil {
+		return err
+	}
+	a.convChanged(ctx, ch, &res)
+	return nil
+}
+
 // SetTopic sets a channel topic.
 func (a *App) SetTopic(ctx context.Context, ch, topic string) error {
 	var res convResult
@@ -672,7 +700,10 @@ func (a *App) MarkAllActivityRead(ctx context.Context, view string) error {
 
 // ---- realtime: saved, activity, tabs, thread subscriptions, stars ----
 
-func (a *App) onSavedEvent(ctx context.Context, typ string, raw json.RawMessage) {
+// noteSavedEvent is a saved event's store writes (the event pump): a
+// message's, a file's or a list record's saved state and its metadata. It
+// returns the item the event names.
+func (a *App) noteSavedEvent(typ string, raw json.RawMessage) SavedItem {
 	var e struct {
 		Saved savedRaw `json:"saved"`
 	}
@@ -695,6 +726,12 @@ func (a *App) onSavedEvent(ctx context.Context, typ string, raw json.RawMessage)
 			a.markSaved(it.Channel, it.TS, false)
 		}
 	}
+	return it
+}
+
+// announceSaved is a saved event's message lookup and its "saved" event
+// (off the event pump, in order with the saved events before it).
+func (a *App) announceSaved(ctx context.Context, typ string, raw json.RawMessage, it SavedItem) {
 	if typ != "saved_deleted" && it.Channel != "" {
 		got := a.hydrate(ctx, map[string][]string{it.Channel: {it.TS}})
 		if m, ok := got[savedKey(it.Channel, it.TS)]; ok {

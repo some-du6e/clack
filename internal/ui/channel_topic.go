@@ -172,10 +172,24 @@ func (a *App) layoutTopicCard(gtx layout.Context, ch string, conv *convInfo, org
 	}
 }
 
-// cardHandler opens what the topic card's links point at.
+// cardHandler opens what the topic card's links point at: Slack's Link,
+// in the client, else the browser.
 type cardHandler struct{ a *App }
 
-func (h cardHandler) OpenURL(u string)                  { h.a.OpenURL(u) }
+func (h cardHandler) OpenURL(u string) {
+	if !h.a.FollowLink(u, false) {
+		openURL(u)
+	}
+}
+
+// OpenMrkdwnLink is a link in the topic's mrkdwn: BaseMrkdwnLink's
+// openThreadForRootMessage, so a link to a thread's parent opens its
+// thread.
+func (h cardHandler) OpenMrkdwnLink(u, _ string) {
+	if !h.a.FollowLink(u, true) {
+		openURL(u)
+	}
+}
 func (h cardHandler) OpenUser(id string, _ image.Point) { h.a.OpenProfile(h.a.PointerPos(), id) }
 func (h cardHandler) OpenChannel(id string)             { h.a.Navigate("c/" + id) }
 func (cardHandler) OpenUsergroup(string, image.Point)   {}

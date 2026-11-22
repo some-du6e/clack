@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 )
@@ -30,7 +31,9 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		a.watch(ch, "")
 	}
 	a.noteAccess(ch)
-	defer func() { log.Printf("history %s: %s (%s)", ch, time.Since(t0).Round(time.Millisecond), source) }()
+	defer func() {
+		log.Printf("history %s: %s (%s)", logtag.ID(ch), time.Since(t0).Round(time.Millisecond), source)
+	}()
 	var count, conv <-chan struct{}
 	if before == "" {
 		count, conv = a.historySide(ch)
@@ -44,6 +47,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	}
 	var msgs []slack.Message
 	var hasMore bool
+	var epoch uint64
 	if before == "" {
 		t := a.S.Timeline(ch)
 		if t == nil {
@@ -57,7 +61,14 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 			waitSide(conv)
 		}
 		if t != nil {
-			msgs, hasMore = t.Msgs, t.HasMore
+			msgs, hasMore, epoch = t.Msgs, t.HasMore, t.Epoch
+			if t.EndStale {
+				// the window from before a slow connect, at once, as
+				// Slack draws its outdated slice; read forward in the
+				// background ("history_caught_up": reached_end.go)
+				source = "cache, catching up"
+				a.startCatchUp(ch)
+			}
 		}
 	} else {
 		source = "older"
@@ -68,8 +79,11 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 		// what the socket changed, deleted or reacted while it was out
 		// stays, and a revision the store held another of reaches every
-		// copy and the views (store PrependOlderSince, read_changes.go)
-		kept := a.S.PrependOlderSince(ch, p.Messages, p.HasMore, live)
+		// copy and the views (store PrependOlderSince, read_changes.go);
+		// in front of a window read again since (one that starts after
+		// before) it would leave a hole, so it stays out of that one
+		// (store PrependOlderAt)
+		kept := a.S.PrependOlderAt(ch, before, p.Messages, p.HasMore, live)
 		a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 		a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
 		a.announceReads()                  // after the pins and subscriptions: the copies as they are now
@@ -81,7 +95,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 		msgs, hasMore = kept, p.HasMore
 	}
-	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
+	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore, Epoch: epoch}
 	if c, ok := a.Conv(ch); ok {
 		page.Conv = &c
 	}
@@ -99,63 +113,53 @@ func (a *App) Refresh(ctx context.Context, ch string) (Page, error) {
 	return a.History(ctx, ch, "")
 }
 
-// Replies returns a thread, parent first. Cached threads are live-updated
-// from realtime events; fresh forces a refetch.
+// Replies returns a thread as its pane would open on it, root first: the
+// slice at its default start (the last read of a followed thread, else
+// the root; thread_pages.go), from memory when held, else one or two
+// replies reads of 28 (requestReplies). It is one slice, never the whole
+// thread: the viewer's newest message reads the newest slice instead
+// (ThreadSliceAt with no start, as Slack's undo send and edit-last
+// selectors read dTxY tp(threadKey, null)), and a List item's comments
+// page as the thread pane's do (ui/listview item.go).
+// A reply's ts reads its parent's thread at the reply: conversations.replies
+// answers a reply's ts with its parent's thread, which repliesOne and
+// repliesAround keep under the parent's key (replyRooted), so the pane
+// opened with the reply's ts finds the reply in what it draws and hands
+// on to the parent's (ReplyAsThreadRoot), which then has the page without
+// a second read, and the reply is never watched, polled or kept as a
+// thread of its own.
 func (a *App) Replies(ctx context.Context, ch, ts string) ([]Message, error) {
-	a.watch(ch, ts)
-	a.noteAccess(ch + "/" + ts)
-	msgs, ok := a.S.Thread(ch, ts)
-	if !ok {
-		if err := a.fetchThread(ctx, ch, ts); err != nil {
-			return nil, err
-		}
-		msgs, _ = a.S.Thread(ch, ts)
+	if p, ok := a.ReplyParent(ch, ts); ok {
+		return a.repliesAt(ctx, ch, p, ts)
 	}
-	a.SubscribePresence(rowUsers(msgs))
-	return a.messages(ch, msgs), nil
+	sl, err := a.ThreadAt(ctx, ch, ts, a.threadDefaultStart(ch, ts))
+	if err != nil {
+		return nil, err
+	}
+	if p, ok := a.ReplyParent(ch, ts); ok { // the read found ts was a reply
+		return a.repliesAt(ctx, ch, p, ts)
+	}
+	return threadMsgs(sl, ts), nil
 }
 
-// RefreshReplies refetches a thread (replacing the cached copy).
+// repliesAt is Replies for thread ts of ch started at its reply start.
+func (a *App) repliesAt(ctx context.Context, ch, ts, start string) ([]Message, error) {
+	sl, err := a.ThreadAt(ctx, ch, ts, start)
+	if err != nil {
+		return nil, err
+	}
+	return threadMsgs(sl, ts), nil
+}
+
+// RefreshReplies reads the thread's default start again from the server
+// (requestReplies around it, the answers over the cached copies), then
+// returns it as Replies does.
 func (a *App) RefreshReplies(ctx context.Context, ch, ts string) ([]Message, error) {
-	if err := a.fetchThread(ctx, ch, ts); err != nil {
+	start := a.threadDefaultStart(ch, ts)
+	if err := a.RequestReplies(ctx, ch, ts, start, start); err != nil {
 		return nil, err
 	}
 	return a.Replies(ctx, ch, ts)
-}
-
-func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
-	return a.once("r:"+ch+"/"+ts, func() error {
-		pins, live, subs := a.S.PinSeq(), a.S.LiveSeq(), a.S.SubSeq()
-		var all []slack.Message
-		cursor := ""
-		for {
-			page, next, err := a.C.Replies(ctx, ch, ts, cursor)
-			if err != nil {
-				return err
-			}
-			all = append(all, page...)
-			if next == "" {
-				break
-			}
-			cursor = next
-		}
-		// the replies' people are asked for as rows draw them (lazy_users.go)
-		// the root's thread subscription, as the answer has it unless an
-		// event moved it meanwhile (store/thread_subs.go)
-		a.S.SyncSubs(ch, subs, all)
-		// a reply changed, deleted or posted while the request was out
-		// keeps the socket's copy (store/live.go)
-		a.S.SetThreadSince(ch, ts, all, live)
-		all, _ = a.S.Thread(ch, ts)
-		a.S.SyncPins(ch, pins, all)
-		a.announceReads() // a revision the store held another of, pinned as it is now (read_changes.go)
-		for i := range all {
-			if needsFileInfo(&all[i]) {
-				go a.fillFiles(ch, all[i].TS)
-			}
-		}
-		return nil
-	})
 }
 
 // hydrate fetches messages by (channel, ts): memory first, then one
@@ -443,6 +447,12 @@ func (a *App) SetPref(ctx context.Context, name string, value any) error {
 	p := a.Prefs()
 	a.emit(Event{Type: "prefs", Prefs: &p})
 	return nil
+}
+
+// MediaProgressUpdate tells Slack where the viewer is in a video (the
+// players' saveMediaProgress, gnNF and gBWG): offset_ms of duration_ms.
+func (a *App) MediaProgressUpdate(ctx context.Context, file string, offsetMS, durationMS int64) error {
+	return a.C.MediaProgressUpdate(ctx, file, offsetMS, durationMS)
 }
 
 // ---- search & directory ----
@@ -1130,21 +1140,30 @@ func (a *App) DND(ctx context.Context) (json.RawMessage, error) {
 // as its own ctx allows (onceCtx). A count that arrived or changed is
 // announced ("member_count"): the header repaints.
 func (a *App) loadMemberCount(ctx context.Context, ch string) {
-	_ = a.onceCtx(ctx, "mc:"+ch, func() error {
-		mc, err := a.MemberCounts(ctx, ch)
-		if err != nil {
-			return err
-		}
-		a.mu.Lock()
-		old, had := a.memberN[ch]
-		changed := !had || old != mc.People || a.memberA[ch] != mc.Apps
-		a.memberN[ch] = mc.People
-		a.memberG[ch] = mc.Guests
-		a.memberA[ch] = mc.Apps
-		a.mu.Unlock()
-		if changed {
-			a.memberCountChanged(ch) // history_side.go
-		}
-		return nil
-	})
+	_ = a.onceCtx(ctx, "mc:"+ch, func() error { return a.loadMemberCountNow(ctx, ch) })
+}
+
+// loadMemberCountNow reads ch's counts and caches them, without joining
+// a read already out: a stale count's refetch (membership_counts.go)
+// must not take the answer of a read that started before the join.
+func (a *App) loadMemberCountNow(ctx context.Context, ch string) error {
+	mc, err := a.MemberCounts(ctx, ch)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	old, had := a.memberN[ch]
+	changed := !had || old != mc.People || a.memberA[ch] != mc.Apps
+	a.memberN[ch] = mc.People
+	a.memberG[ch] = mc.Guests
+	a.memberA[ch] = mc.Apps
+	if a.memberMC == nil {
+		a.memberMC = map[string]MemberCounts{}
+	}
+	a.memberMC[ch] = mc
+	a.mu.Unlock()
+	if changed {
+		a.memberCountChanged(ch) // history_side.go
+	}
+	return nil
 }

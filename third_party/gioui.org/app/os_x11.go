@@ -22,7 +22,7 @@ package app
 #include <X11/Xcursor/Xcursor.h>
 #include <xkbcommon/xkbcommon-x11.h>
 
-// gio_x11SetIOErrorHandler is a Clack patch (CLACK_PATCHES.md §51,
+// gio_x11SetIOErrorHandler is a Clack patch (CLACK_PATCHES.md §59,
 // clack_exit_x11.c).
 void gio_x11SetIOErrorHandler(void);
 */
@@ -928,7 +928,7 @@ func newX11Window(gioWin *callbacks, options []Option) error {
 	if dpy == nil {
 		return errors.New("x11: cannot connect to the X server")
 	}
-	C.gio_x11SetIOErrorHandler() // Clack patch (CLACK_PATCHES.md §51)
+	C.gio_x11SetIOErrorHandler() // Clack patch (CLACK_PATCHES.md §59)
 	var major, minor C.int = C.XkbMajorVersion, C.XkbMinorVersion
 	var xkbEventBase C.int
 	if C.XkbQueryExtension(dpy, nil, &xkbEventBase, nil, &major, &minor) != C.True {
@@ -1032,6 +1032,7 @@ func newX11Window(gioWin *callbacks, options []Option) error {
 
 	// make the window visible on the screen
 	C.XMapWindow(dpy, win)
+	startupWindowShown.mark() // Clack patch (CLACK_PATCHES.md §56)
 	w.Configure(options)
 	w.ProcessEvent(X11ViewEvent{Display: unsafe.Pointer(dpy), Window: uintptr(win)})
 	return nil

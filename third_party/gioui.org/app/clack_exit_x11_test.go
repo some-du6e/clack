@@ -22,7 +22,7 @@ import (
 	"gioui.org/op/paint"
 )
 
-// Clack patch (CLACK_PATCHES.md §51) on a real X server: ci's linux-gio
+// Clack patch (CLACK_PATCHES.md §59) on a real X server: ci's linux-gio
 // job runs it with Xvfb installed (CLACK_X11_ASKED_TESTS). A Gio window
 // whose X server goes away (here the private Xvfb it's on is killed, as
 // the end of an X session or a crash of the server takes it) calls

@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -183,6 +184,7 @@ func startEnv(tb testing.TB, fs *fakeslack.Server, home string) *perfEnv {
 	e.a = New(Options{ConfigDir: home, Started: e.start, NoRealtime: true}, images) // no first-run live-updates banner shifting the layout
 	cache := filepath.Join(home, "cache")
 	svc := core.New(slack.New(fs.Creds()), store.New(cache))
+	pinNetwork(svc)
 	e.a.Attach(svc, cache)
 	// what Run does once the window exists
 	images.SetInvalidate(func() {})
@@ -203,6 +205,19 @@ func startEnv(tb testing.TB, fs *fakeslack.Server, home string) *perfEnv {
 	return e
 }
 
+// pinNetwork keeps the host's own network out of a session over a
+// loopback fakeslack (core.App.PinNetwork: no reconnect when the
+// machine's addresses change, no client_online flips). On 2026-11-21 a
+// macOS runner lost its address for two seconds in the middle of
+// TestIdleFrames' "realtime events about nothing on screen": two
+// reconnects and their catch-up loads drew 8 frames that weren't the
+// session's. The baseline tree perf runs against has no PinNetwork.
+func pinNetwork(c *core.App) {
+	if p, ok := any(c).(interface{ PinNetwork() }); ok {
+		p.PinNetwork()
+	}
+}
+
 // shutdown stops the session's background work so it can be collected.
 func (e *perfEnv) shutdown() {
 	if e.a == nil || e.a.data == nil {
@@ -218,6 +233,33 @@ func (e *perfEnv) shutdown() {
 		e.gpu.Release()
 		e.gpu = nil
 	}
+}
+
+// frameTimes records each op's wall time in a benchmark's measured loop
+// and reports their median and 95th percentile (p50-ms, p95-ms): a mean
+// hides a slow tail, and perf.yml's regression gate reads both.
+type frameTimes struct {
+	b  *testing.B
+	ds []time.Duration
+	t0 time.Time
+}
+
+func newFrameTimes(b *testing.B) *frameTimes {
+	return &frameTimes{b: b, ds: make([]time.Duration, 0, b.N)}
+}
+
+func (f *frameTimes) start() { f.t0 = time.Now() }
+func (f *frameTimes) stop()  { f.ds = append(f.ds, time.Since(f.t0)) }
+
+func (f *frameTimes) report() {
+	if len(f.ds) == 0 {
+		return
+	}
+	s := slices.Clone(f.ds)
+	slices.Sort(s)
+	at := func(q float64) float64 { return float64(s[min(len(s)-1, int(q*float64(len(s))))]) / 1e6 }
+	f.b.ReportMetric(at(0.50), "p50-ms")
+	f.b.ReportMetric(at(0.95), "p95-ms")
 }
 
 // loopProfile writes allocation profiles right before and after a
@@ -252,7 +294,9 @@ func (e *perfEnv) frame() {
 	e.now = time.Now()
 	// as App.Run: the inspect tool first, before the ops are reset (a
 	// frozen session draws the frame they hold again, inspect_wire.go)
-	if ops := a.inspectFirst(e.frameContext()); ops != nil {
+	fc := e.frameContext()
+	fc.Ops = &e.ops // a frozen frame draws into the window's ops
+	if ops := a.inspectFirst(fc); ops != nil {
 		e.frozen = ops
 		e.r.Frame(ops)
 		if e.gpu != nil {
@@ -489,16 +533,20 @@ func BenchmarkScroll500(b *testing.B) {
 	b.ReportAllocs()
 	done := loopProfile(b)
 	defer done()
+	ft := newFrameTimes(b)
 	b.ResetTimer()
 	dir := float32(240)
 	for i := 0; i < b.N; i++ {
 		if i%100 == 0 {
 			dir = -dir
 		}
+		ft.start()
 		e.scroll(p, dir)
 		e.frame()
+		ft.stop()
 	}
 	b.StopTimer()
+	ft.report()
 	b.ReportMetric(float64(e.loadedMessages(ch)), "msgs")
 	b.ReportMetric(liveHeapMB(), "heap-MB")
 }
@@ -599,8 +647,10 @@ func BenchmarkTypingFrame(b *testing.B) {
 	b.ReportAllocs()
 	done := loopProfile(b)
 	defer done()
+	ft := newFrameTimes(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		ft.start()
 		if i%200 == 199 { // keep the draft short: select all, delete
 			e.key("A", key.ModShortcut)
 			e.key(key.NameDeleteBackward, 0)
@@ -608,7 +658,10 @@ func BenchmarkTypingFrame(b *testing.B) {
 		}
 		e.typeText(string(rune('a' + i%26)))
 		e.frame()
+		ft.stop()
 	}
+	b.StopTimer()
+	ft.report()
 }
 
 // BenchmarkIdleFrame is a frame with nothing changed (a redraw the app did
@@ -625,13 +678,18 @@ func BenchmarkIdleFrame(b *testing.B) {
 	b.ReportAllocs()
 	done := loopProfile(b)
 	defer done()
+	ft := newFrameTimes(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		ft.start()
 		e.frame()
+		ft.stop()
 		if t, ok := e.r.WakeupTime(); ok && t.Sub(e.now) < time.Second {
 			wake++
 		}
 	}
+	b.StopTimer()
+	ft.report()
 	b.ReportMetric(float64(wake)/float64(b.N), "wakeups/op")
 }
 

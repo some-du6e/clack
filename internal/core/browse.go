@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -40,9 +41,17 @@ type File struct {
 	// IsImage is Slack's fileIsImage (slack.FileIsImage): image/* with
 	// thumbs, so an image Slack made no thumbs for is a plain file.
 	IsImage bool
+	// IsVideo is Slack's fileIsPlayableVideo (slack.FileIsPlayableVideo):
+	// a video/* file that won't play (an mkv with no mp4 yet) is a plain
+	// file. MP4 is its transcode, the media viewer's source with URL.
+	IsVideo bool
+	MP4     string
 	// LastRead is when the viewer last opened it (last_read: milliseconds
 	// or seconds, 0 never), for the collections' Last viewed sort.
 	LastRead int64
+	// TitleBlocks is a canvas's title_blocks: its title as rich text,
+	// emoji included (richtext.CanvasTitle).
+	TitleBlocks json.RawMessage
 }
 
 type FilePage struct {
@@ -65,6 +74,13 @@ type FilesOpts struct {
 	// last_engaged, or score with a query), "timestamp" (Last updated)
 	// or "score" (Most relevant).
 	Sort string
+	// The browser's advanced filters (useUnifiedFilesFilters'
+	// advancedFilters, which the Filters modal sets): From are people
+	// (from:<@U…>), In conversations or people (in:<#C…|name>, in:<#G…>
+	// for a group DM, in:<@U…> for a person or a DM), After and Before
+	// exclusive YYYY-MM-DD dates (after:, before:).
+	From, In      []string
+	After, Before string
 }
 
 // Huddle is an active or past huddle.
@@ -287,12 +303,18 @@ type browseFileRaw struct {
 	Thumb360H  int             `json:"thumb_360_h"`
 	ThumbPDF   string          `json:"thumb_pdf"`
 	ThumbVideo string          `json:"thumb_video"`
+	MP4        string          `json:"mp4"`
+	Subtype    string          `json:"subtype"`
+	IsExternal bool            `json:"is_external"`
+	ExtType    string          `json:"external_type"`
 	Channels   []string        `json:"channels"`
 	Groups     []string        `json:"groups"`
 	IMs        []string        `json:"ims"`
 	Mode       string          `json:"mode"`
 	IsDeleted  bool            `json:"is_deleted"`
 	FileAccess string          `json:"file_access"`
+	// a canvas's title as rich text (its :emoji: as emoji elements)
+	TitleBlocks json.RawMessage `json:"title_blocks"`
 	// fileIsImage's other thumbs and its Salesforce case (slack.FileIsImage)
 	Thumb360GIF      string `json:"thumb_360_gif"`
 	Thumb800         string `json:"thumb_800"`
@@ -319,9 +341,17 @@ func (r *browseFileRaw) file() File {
 	// channel Files tab (getMainFileAction "download", not the viewer)
 	f.IsImage = slack.FileIsImage(&slack.File{Mimetype: r.Mimetype, Filetype: r.Filetype, Thumb360: r.Thumb360,
 		Thumb360GIF: r.Thumb360GIF, Thumb800: r.Thumb800, IsSalesforceFile: r.IsSalesforceFile})
+	f.IsVideo = slack.FileIsPlayableVideo(&slack.File{Mimetype: r.Mimetype, Filetype: r.Filetype, MP4: r.MP4, Subtype: r.Subtype,
+		Mode: r.Mode, IsExternal: r.IsExternal, ExternalType: r.ExtType})
+	if f.IsVideo {
+		f.MP4 = r.MP4
+	}
 	var lr json.Number
 	if len(r.LastRead) > 0 && json.Unmarshal(r.LastRead, &lr) == nil {
 		f.LastRead, _ = lr.Int64()
+	}
+	if f.IsCanvas {
+		f.TitleBlocks = r.TitleBlocks
 	}
 	return f
 }
@@ -337,12 +367,12 @@ func (a *App) filePage(ctx context.Context, raws []browseFileRaw) []File {
 	return out
 }
 
-// filesParams builds search.modules.files params for the Files browser.
-func filesParams(o FilesOpts, self string) url.Values {
-	page := o.Page
-	if page < 1 {
-		page = 1
-	}
+// filesQuery is the browser's request query (client-boot nzlP
+// querySuggestionFromQueryAndFilter, then toString().trim()): the typed
+// query's tokens first, then the filters' tokens in Slack's order: from:,
+// in:, before:, after:, the type: tokens, creator:. in is how an in: value
+// is written (filesInValue; nil writes ids bare).
+func filesQuery(o FilesOpts, self string, in func(id string) string) string {
 	types := fileTypesAll
 	switch {
 	case o.Kind == "canvases":
@@ -358,23 +388,85 @@ func filesParams(o FilesOpts, self string) url.Values {
 	case o.Mine || o.SharedWithMe:
 		types = fileTypesOwned
 	}
-	parts := []string{types}
+	var parts []string
+	if q := strings.TrimSpace(o.Query); q != "" {
+		parts = append(parts, q)
+	}
+	for _, id := range o.From { // MemberFilterQuerySuggestionToken: from:<@U…>
+		parts = append(parts, "from:<@"+id+">")
+	}
+	for _, id := range o.In { // InQuerySuggestionToken
+		v := filesInBare(id)
+		if in != nil {
+			v = in(id)
+		}
+		parts = append(parts, "in:"+v)
+	}
+	if o.Before != "" { // DateQuerySuggestionToken: before: then after:
+		parts = append(parts, "before:"+o.Before)
+	}
+	if o.After != "" {
+		parts = append(parts, "after:"+o.After)
+	}
+	parts = append(parts, types)
+	if o.Mine {
+		parts = append(parts, "creator:<@"+self+">")
+	}
+	return strings.Join(parts, " ")
+}
+
+// filesInBare is an in: value with nothing known about id: <@U…> for a
+// person, <#…> for a conversation.
+func filesInBare(id string) string {
+	if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
+		return "<@" + id + ">"
+	}
+	return "<#" + id + ">"
+}
+
+// filesInValue is InQuerySuggestionToken's toString for id
+// (_toStringInternal): a DM is its member, <@U…> (formatMember); a group
+// DM <#G…> (formatMpim); a channel <#C…|name>, its name with any ">"
+// taken out (sanitizeChannelRefName), or <#C…> without one; a person
+// <@U…>.
+func (a *App) filesInValue(id string) string {
+	if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
+		return "<@" + id + ">"
+	}
+	r := a.ConvRef(id)
+	switch r.Kind {
+	case "im":
+		if r.User != "" {
+			return "<@" + r.User + ">"
+		}
+	case "mpim":
+		return "<#" + id + ">"
+	}
+	if name := strings.ReplaceAll(r.Name, ">", ""); name != "" {
+		return "<#" + id + "|" + name + ">"
+	}
+	return "<#" + id + ">"
+}
+
+// filesParams builds search.modules.files params for the Files browser
+// (in: as filesQuery).
+func filesParams(o FilesOpts, self string, in func(id string) string) url.Values {
+	page := o.Page
+	if page < 1 {
+		page = 1
+	}
 	sortBy := "last_engaged"
 	q := strings.TrimSpace(o.Query)
 	if q != "" || o.SharedWithMe {
 		sortBy = "score"
 	}
 	if o.Mine {
-		parts = append(parts, "creator:<@"+self+">")
 		sortBy = "timestamp"
 	}
 	if o.Sort != "" {
 		sortBy = o.Sort
 	}
-	if q != "" {
-		parts = append(parts, q)
-	}
-	p := url.Values{"module": {"files"}, "query": {strings.Join(parts, " ")}, "page": {strconv.Itoa(page)},
+	p := url.Values{"module": {"files"}, "query": {filesQuery(o, self, in)}, "page": {strconv.Itoa(page)},
 		"count": {"50"}, "sort": {sortBy}, "search_context": {"desktop_files_browser"},
 		"include_files_shares": {"1"}, "extracts": {"1"}, "highlight": {"1"}, "max_extract_len": {"200"},
 		"extra_message_data": {"1"}, "no_user_profile": {"1"}, "file_title_only": {"false"},
@@ -392,7 +484,7 @@ func filesParams(o FilesOpts, self string) url.Values {
 // unified files view calls it).
 func (a *App) Files(ctx context.Context, o FilesOpts) (FilePage, error) {
 	t0 := time.Now()
-	p := filesParams(o, a.S.SelfID())
+	p := filesParams(o, a.S.SelfID(), a.filesInValue)
 	var res struct {
 		Pagination searchPagination `json:"pagination"`
 		Items      []browseFileRaw  `json:"items"`
@@ -950,7 +1042,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			defer wg.Done()
 			bms, err := a.Bookmarks(ctx, ch)
 			if err != nil {
-				log.Printf("tabs %s: bookmarks.list: %v", ch, err)
+				log.Printf("tabs %s: bookmarks.list: %v", logtag.ID(ch), err)
 				for _, i := range folderTabs {
 					out[i].BookmarksUnknown = true
 				}
@@ -978,7 +1070,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			defer func() { <-sem }()
 			f, err := a.tabFileTitle(ctx, t.FileID)
 			if err != nil {
-				log.Printf("tabs %s: files.info %s: %v", ch, t.FileID, err)
+				log.Printf("tabs %s: files.info %s: %v", logtag.ID(ch), logtag.ID(t.FileID), err)
 				t.TitleUnknown = true
 				return
 			}
@@ -1002,7 +1094,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 		}(&out[i])
 	}
 	wg.Wait()
-	log.Printf("tabs %s: %d tabs (%d files) in %s", ch, len(out), len(fileTabs), time.Since(t0).Round(time.Millisecond))
+	log.Printf("tabs %s: %d tabs (%d files) in %s", logtag.ID(ch), len(out), len(fileTabs), time.Since(t0).Round(time.Millisecond))
 	return out, nil
 }
 
@@ -1066,13 +1158,9 @@ func (a *App) tabTitleSpans(ctx context.Context, blocks json.RawMessage, title s
 	case "", "null", "[]":
 		return nil
 	}
-	build := func() []richtext.Span {
-		d := richtext.FromMessage(a.S, &slack.Message{Text: title, Blocks: blocks})
-		if len(d.Blocks) == 0 {
-			return nil
-		}
-		return d.Blocks[0].Spans
-	}
+	// an emoji the store can't name yet stays an Emoji span (the tab bar
+	// and the canvas header resolve it when they draw)
+	build := func() []richtext.Span { return richtext.TitleBlocks(a.S, title, blocks) }
 	sp := build()
 	var users []string
 	fetched := false

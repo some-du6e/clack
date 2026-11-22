@@ -140,6 +140,19 @@ func (t *Taut) AfterMirrorEvent(f func(ev core.Event)) (restore func()) {
 	return func() { t.mirror.handled.Store(nil) }
 }
 
+// sweepEvery is how often the mirror compares what it sent JS with the
+// store (sweep): a change no event announces reaches JS within it.
+var sweepEvery atomic.Int64
+
+func init() { sweepEvery.Store(int64(750 * time.Millisecond)) }
+
+// SetSweepEvery (tests) makes the mirrors started from now sweep every d:
+// a long one leaves JS only what marks tell it.
+func SetSweepEvery(d time.Duration) (restore func()) {
+	prev := sweepEvery.Swap(int64(d))
+	return func() { sweepEvery.Store(prev) }
+}
+
 // jsTracked are the slices whose changes go to JS only for ids it holds.
 var jsTracked = map[string]bool{"members": true, "presence": true}
 
@@ -209,10 +222,17 @@ func (m *mirror) start() {
 	// (a new runtime holds nothing): handled
 	m.t.ui.views.noteSeen(m.t.app.EmitSeq())
 	raws, stopRaw := m.t.app.SubscribeRaw()
+	// a message a fetch by id brings that the store held no copy of has no
+	// change of its own to announce: marked as it lands, on the fetching
+	// goroutine before its caller draws it, as the hub marks what a
+	// window's load changed (MessagesChanged); the plugins' view of it
+	// waited for the sweep
+	unhook := m.t.app.SetFetchedHook(func(ch string, tss []string) { m.t.MessagesChanged(ch, tss) })
 	go func() {
 		defer stop()
 		defer stopRaw()
-		tick := time.NewTicker(750 * time.Millisecond)
+		defer unhook()
+		tick := time.NewTicker(time.Duration(sweepEvery.Load()))
 		defer tick.Stop()
 		for {
 			select {
@@ -453,6 +473,16 @@ func (m *mirror) postInvalidate(rt *runtime, out []change) {
 	})
 }
 
+// watching reports whether JS holds key of slice as it read it last with
+// no change told since (watch): an invalidation forgets it until JS reads
+// again, and that read takes whatever changed meanwhile.
+func (m *mirror) watching(slice, key string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.watched[slice][key]
+	return ok
+}
+
 // watch records what JS just read, so sweep can tell when it changes
 // without an event (a history page core loaded on the UI's request).
 func (m *mirror) watch(slice, key string, fp uint64) {
@@ -676,6 +706,10 @@ func (m *mirror) noteConv(ev core.Event) {
 		if ev.Channel != "" && ts != "" {
 			m.t.ui.views.bumpConv(ev.Channel, ts)
 		}
+		if ev.Type == "delete" {
+			// and the message slugs linking to it (core.RefsChanged)
+			m.t.ui.views.bumpChange(core.RefsChanged(ev))
+		}
 	}
 	// the rest name a message with nothing in it a conversion reads: a
 	// mark (each read of the open channel's newest message, then Slack's
@@ -796,7 +830,7 @@ func (m *mirror) keys(slice string) []string {
 		m.mu.Unlock()
 		return a.S.UserIDs()
 	case "messages":
-		return a.S.MessageChannels()
+		return m.messageChannels()
 	case "channelHistory":
 		var out []string
 		for _, ch := range a.S.MessageChannels() {
@@ -809,7 +843,7 @@ func (m *mirror) keys(slice string) []string {
 	case "reactions":
 		// Slack's reactions slice: _rxn_key → the message's reactions
 		var out []string
-		for _, ch := range a.S.MessageChannels() {
+		for _, ch := range m.messageChannels() {
 			for ts, msg := range m.bucket(ch) {
 				if mm, ok := msg.(map[string]any); ok && mm["reactions"] != nil {
 					out = append(out, "message-"+ts+"-"+ch)
@@ -1318,12 +1352,41 @@ func pruneEmpty(v any, zeros bool) any {
 	return v
 }
 
-// bucket is messages[ch]: the cached timeline plus open threads' replies.
+// messageChannels are messages' keys: the conversations with a timeline,
+// a jump's window or a cached thread, and those with messages fetched by
+// id.
+func (m *mirror) messageChannels() []string {
+	a := m.t.app
+	out := a.S.MessageChannels()
+	seen := make(map[string]bool, len(out))
+	for _, ch := range out {
+		seen[ch] = true
+	}
+	for _, ch := range a.S.FetchedChannels() {
+		if !seen[ch] {
+			out = append(out, ch)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// bucket is messages[ch]: the cached timeline, a jump's windows, open
+// threads' replies, and the messages fetched by id. Slack keeps one
+// messages store: every channelHistory slice's messages are in it, and a
+// message fetched by id (fetchObjectWithId: Activity's and Saved's rows,
+// the Threads view) lands in it beside them, so a plugin patching the
+// slice (Censorship, ShowRealUser) reaches all of them there; built from
+// the timeline and threads alone, a jump's window and such messages never
+// got a view (store.WindowsIn, store.FetchedIn). A message several hold
+// is the timeline's, a window's, a thread's, then the fetched copy.
 func (m *mirror) bucket(ch string) map[string]any {
 	a := m.t.app
 	tl := a.S.Timeline(ch)
+	wins := a.S.WindowsIn(ch)
 	threads := a.S.ThreadsIn(ch)
-	if tl == nil && len(threads) == 0 {
+	fetched := a.S.FetchedIn(ch)
+	if tl == nil && len(wins) == 0 && len(threads) == 0 && len(fetched) == 0 {
 		return nil
 	}
 	out := map[string]any{}
@@ -1332,11 +1395,23 @@ func (m *mirror) bucket(ch string) map[string]any {
 			out[tl.Msgs[i].TS] = messageJSON(ch, &tl.Msgs[i])
 		}
 	}
+	for _, w := range wins {
+		for i := range w.Msgs {
+			if _, ok := out[w.Msgs[i].TS]; !ok {
+				out[w.Msgs[i].TS] = messageJSON(ch, &w.Msgs[i])
+			}
+		}
+	}
 	for _, msgs := range threads {
 		for i := range msgs {
 			if _, ok := out[msgs[i].TS]; !ok {
 				out[msgs[i].TS] = messageJSON(ch, &msgs[i])
 			}
+		}
+	}
+	for i := range fetched { // a window's or a thread's copy wins
+		if _, ok := out[fetched[i].TS]; !ok {
+			out[fetched[i].TS] = messageJSON(ch, &fetched[i])
 		}
 	}
 	return out
@@ -1349,26 +1424,71 @@ func (m *mirror) history(key string) any {
 	var ts []string
 	reachedStart := false
 	if isThread {
-		msgs, ok := a.S.Thread(ch, thread)
+		// the thread's slices as its replies reads left them (store
+		// thread_slices.go: Slack's channelHistory[threadKey])
+		sls, rs, re, pre, ok := a.S.ThreadHistory(ch, thread)
 		if !ok {
 			return nil
 		}
-		for _, x := range msgs {
-			ts = append(ts, x.TS)
+		out := make([]any, 0, len(sls))
+		for _, x := range sls {
+			tss := x.TSs
+			if tss == nil {
+				tss = []string{}
+			}
+			sl := map[string]any{"timestamps": tss, "start": nil, "end": nil}
+			if x.Start != "" {
+				sl["start"] = x.Start
+			}
+			if x.End != "" {
+				sl["end"] = x.End
+			}
+			out = append(out, sl)
 		}
-		reachedStart = true
+		return map[string]any{"reachedStart": rs, "reachedEnd": re, "slices": out, "prevReachedEnd": pre}
 	} else {
 		tl := a.S.Timeline(ch)
-		if tl == nil {
+		wins := a.S.WindowsIn(ch)
+		if tl == nil && len(wins) == 0 {
 			return nil
+		}
+		// a jump's windows first, oldest first (each older than the
+		// timeline, which one joins once they meet), each a slice of its
+		// own: its range, the stretch it holds whole (createSlice's
+		// oldest and latest); the timeline's slice last
+		var slices []any
+		for _, w := range wins {
+			var wts []string
+			for i := range w.Msgs {
+				if x := &w.Msgs[i]; x.ThreadTS == "" || x.ThreadTS == x.TS || x.Subtype == "thread_broadcast" {
+					wts = append(wts, x.TS)
+				}
+			}
+			slices = append(slices, historySlice(wts, w.Start, w.End))
+		}
+		if len(wins) > 0 {
+			reachedStart = !wins[0].HasOlder
+		}
+		if tl == nil {
+			// only windows: the newest messages aren't loaded
+			return map[string]any{"reachedStart": reachedStart, "reachedEnd": false, "slices": slices, "prevReachedEnd": false}
 		}
 		for _, x := range tl.Msgs {
 			if x.ThreadTS == "" || x.ThreadTS == x.TS || x.Subtype == "thread_broadcast" {
 				ts = append(ts, x.TS)
 			}
 		}
-		reachedStart = !tl.HasMore
+		if len(wins) == 0 {
+			reachedStart = !tl.HasMore
+		}
+		slices = append(slices, historySlice(ts, "", ""))
+		return map[string]any{"reachedStart": reachedStart, "reachedEnd": true, "slices": slices, "prevReachedEnd": true}
 	}
+}
+
+// historySlice is a channelHistory slice: its timestamps, and its start
+// and end (the range given, else its first and last timestamp).
+func historySlice(ts []string, start, end string) map[string]any {
 	if ts == nil {
 		ts = []string{}
 	}
@@ -1376,7 +1496,13 @@ func (m *mirror) history(key string) any {
 	if len(ts) > 0 {
 		slice["start"], slice["end"] = ts[0], ts[len(ts)-1]
 	}
-	return map[string]any{"reachedStart": reachedStart, "reachedEnd": true, "slices": []any{slice}, "prevReachedEnd": true}
+	if start != "" {
+		slice["start"] = start
+	}
+	if end != "" {
+		slice["end"] = end
+	}
+	return slice
 }
 
 func (m *mirror) teamIDs() []string {

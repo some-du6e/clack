@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -58,6 +59,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 	body := image.Rect(0, hh+th, sz.X, sz.Y)
 	if a.chBodyW > 0 && a.chBodyW < sz.X {
 		body.Max.X = a.chBodyW
+	}
+	if dm != nil && dm.Tab() == "tasks" { // an agent's Tasks tab (agent_tasks_tab.go)
+		atExact(gtx, body.Min, body.Size(), a.agentTasksTab(ch).Layout)
+		return layout.Dimensions{Size: sz}
 	}
 	if dm != nil && dm.Tab() != "messages" {
 		atExact(gtx, body.Min, body.Size(), dm.LayoutBody)
@@ -579,7 +584,9 @@ func (a *App) openTopicDialog(ch string, conv *convInfo) {
 	if conv.Kind == "channel" || conv.Kind == "private" {
 		name = "#" + conv.Name
 	}
-	a.ShowOverlay(popups.NewTopicDialog(a, ch, conv.Kind, name, conv.Topic))
+	a.ShowOverlay(popups.NewTopicDialog(a, ch, conv.Kind, name, conv.Topic, func(text, ph string) popups.TopicInput {
+		return composer.NewTextyInput(a, text, ph, 250) // useChannelTopicInput's maxLength
+	}))
 }
 
 // inlineSpans draws rich spans on one line (topic, previews): text, links
@@ -700,9 +707,36 @@ func withListViewName(t chTab) chTab {
 // with its :emoji: resolved (tabLabelSpans).
 func tabSpans(t core.Tab, label string, emoji func(name string) (url, text string, ok bool)) []richtext.Span {
 	if len(t.TitleSpans) > 0 {
-		return tabTitleSpans(t.TitleSpans)
+		return tabTitleSpansEmoji(t.TitleSpans, emoji)
 	}
 	return tabLabelSpans(label, emoji)
+}
+
+// resolveEmoji gives the emoji in sp that have no image yet (a title
+// converted before the store could name them: richtext.TitleBlocks keeps
+// them as Emoji spans without a URL) the store's image, as Slack's Emoji
+// component reads the emoji store on every render; sp is copied only when
+// one changes.
+func resolveEmoji(sp []richtext.Span, emoji func(name string) (url, text string, ok bool)) []richtext.Span {
+	if emoji == nil {
+		return sp
+	}
+	var out []richtext.Span
+	for i, s := range sp {
+		if !s.KeptEmoji() {
+			continue
+		}
+		if u, _, ok := emoji(s.ID); ok && u != "" {
+			if out == nil {
+				out = append([]richtext.Span(nil), sp...)
+			}
+			out[i].URL = u
+		}
+	}
+	if out == nil {
+		return sp
+	}
+	return out
 }
 
 // tabTitleSpans is a canvas title's spans in the tab bar: bold, and every
@@ -711,7 +745,13 @@ func tabSpans(t core.Tab, label string, emoji func(name string) (url, text strin
 // the member slugs draw an unlinked c-member_slug, which
 // .p-quip_title__blocks_simple gives color: inherit and no background.
 // Emoji stay images; the rest stops at the first line break.
-func tabTitleSpans(in []richtext.Span) []richtext.Span {
+func tabTitleSpans(in []richtext.Span) []richtext.Span { return tabTitleSpansEmoji(in, nil) }
+
+// tabTitleSpansEmoji is tabTitleSpans with the title's emoji that had no
+// image when it was converted resolved through emoji (resolveEmoji); one
+// the store still can't name reads as its ":name:".
+func tabTitleSpansEmoji(in []richtext.Span, emoji func(name string) (url, text string, ok bool)) []richtext.Span {
+	in = resolveEmoji(in, emoji)
 	out := make([]richtext.Span, 0, len(in))
 	for _, s := range in {
 		if s.Kind == richtext.Break {

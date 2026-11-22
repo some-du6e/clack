@@ -40,6 +40,7 @@ import (
 	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -615,6 +616,12 @@ func (s *srFacetSelect) pick(i int) {
 	s.toggle(r.value, !slices.Contains(s.chosen(), r.value))
 }
 
+// Rect is the card as last laid out (window coords).
+func (s *srFacetSelect) Rect() image.Rectangle { return s.rect }
+
+// InspectRole names the overlay for the inspect tool's report.
+func (s *srFacetSelect) InspectRole() string { return "filter select" }
+
 func (s *srFacetSelect) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
 	if s.done {
@@ -728,6 +735,7 @@ func (s *srFacetSelect) Layout(gtx layout.Context) layout.Dimensions {
 	pos := slackPlace(s.anchor, image.Pt(w, h), win, "bottom-left", -dp(gtx, 10), -dp(gtx, 4), dp(gtx, 16), dp(gtx, 10), true)
 	s.rect = image.Rectangle{Min: pos, Max: pos.Add(image.Pt(w, h))}
 	card(gtx, cl, s.rect, dp(gtx, 6))
+	slackc.InspectCard(gtx, s.rect) // the inspect tool: the card is the select's box
 	s.block.Layout(gtx, s.rect)
 	cs := clipRRect(gtx, s.rect, dp(gtx, 6))
 	defer cs.Pop()

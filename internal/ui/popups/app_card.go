@@ -108,6 +108,14 @@ func (p *ProfileCard) loadApp() {
 	if card, ok := c.CachedAppCard(p.id, p.bot); ok {
 		p.app.card = &card
 	}
+	if u, ok := c.User(p.id); ok && p.app.card == nil && p.bot == "" && u.BotID == "" && u.AppID == "" {
+		// a non-human member with no bot or app (the Slack system user,
+		// USLACK): useProfileHoverApp (MB9A) finds no app and isHuman is
+		// false, so ProfileHoverCard (JM3T) renders nothing, not even
+		// AppHoverCard's loading state (AppCardOf: ErrNotAnApp)
+		p.app.failed = true
+		return
+	}
 	uid, bid := p.id, p.bot
 	type res struct {
 		card       core.AppCard
@@ -158,6 +166,7 @@ func (p *ProfileCard) layoutApp(gtx layout.Context, th *theme.Theme, cl *Colors,
 		w = mw
 	}
 	native := func(gtx layout.Context, _ slackc.Props) layout.Dimensions { return p.appContent(gtx, th, cl, w) }
+	cm := appCardClass.Inspect(0) // the inspect tool: the card holds its content (slackc EndCardAt)
 	call, d := record(loose(gtx, image.Pt(w, win.Y)), func(gtx layout.Context) layout.Dimensions {
 		return slackc.RenderLazy(gtx, "ProfileHoverCard", func() slackc.Props {
 			return slackc.Props{
@@ -177,7 +186,9 @@ func (p *ProfileCard) layoutApp(gtx layout.Context, th *theme.Theme, cl *Colors,
 	r := image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
 	rad := dp(gtx, 5)
 	st := appCardClass.Enter(gtx, 0, 0)
+	var box image.Rectangle
 	if !st.Hidden() {
+		box = r
 		lk := cardLook{fill: cl.Bg, ring: color.NRGBA{}, shadow: func(gtx layout.Context, r image.Rectangle, rad int) {
 			softShadow(gtx, r, rad, dp(gtx, 5), dp(gtx, 10), rgba(0x000000, 0.12))
 		}}
@@ -190,6 +201,7 @@ func (p *ProfileCard) layoutApp(gtx layout.Context, th *theme.Theme, cl *Colors,
 		})
 	}
 	st.Leave()
+	cm.EndCardAt(gtx, box)
 	return r
 }
 

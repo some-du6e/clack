@@ -31,6 +31,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
@@ -150,6 +151,7 @@ type ChannelDetails struct {
 	focusTopic   int
 	confirmLeave bool
 	topicEd      widget.Editor
+	texty        *composer.TextyInput // the topic or description input (startEdit)
 
 	find      *search
 	memFilter dirDropdown
@@ -165,6 +167,9 @@ type ChannelDetails struct {
 	// conversation. refreshDue defers a reload while a write is in flight.
 	evq        dirEvents
 	refreshDue bool
+
+	// bodyKind is the tab the body drew last (remountMembers).
+	bodyKind int
 
 	// presIDs are the loaded members (the watch goroutine redraws on their
 	// presence_change); presN is how many were loaded when it was built.
@@ -224,11 +229,47 @@ func (d *ChannelDetails) EditTopic() {
 	}
 }
 
-// SetEditText replaces the open edit modal's text (tests).
-func (d *ChannelDetails) SetEditText(s string) { d.topicEd.SetText(s) }
+// EditPurpose is the About tab's Description "Edit": the "Edit
+// description" modal.
+func (d *ChannelDetails) EditPurpose() {
+	if inf, ok, _ := d.info.get(); ok {
+		d.startEdit(cdEditPurpose, inf.Conv.Purpose)
+	}
+}
 
-// EditText is the open edit modal's text.
-func (d *ChannelDetails) EditText() string { return d.topicEd.Text() }
+// SetEditText replaces the open edit modal's text (tests).
+func (d *ChannelDetails) SetEditText(s string) {
+	if in := d.textyInput(); in != nil {
+		in.SetText(s)
+		return
+	}
+	d.topicEd.SetText(s)
+}
+
+// EditText is what the open edit modal's input shows.
+func (d *ChannelDetails) EditText() string {
+	if in := d.textyInput(); in != nil {
+		return in.Text()
+	}
+	return d.topicEd.Text()
+}
+
+// textyInput is the open topic or description input (nil for the
+// channel name's).
+func (d *ChannelDetails) textyInput() *composer.TextyInput {
+	if d.editKind == cdEditName {
+		return nil
+	}
+	return d.texty
+}
+
+// editTag is the edit modal's input focus tag.
+func (d *ChannelDetails) editTag() event.Tag {
+	if in := d.textyInput(); in != nil {
+		return in.Tag()
+	}
+	return &d.topicEd
+}
 
 // SaveEdit is the edit modal's Save.
 func (d *ChannelDetails) SaveEdit() {
@@ -245,6 +286,10 @@ func (d *ChannelDetails) EditError() string { return d.editErr }
 func (d *ChannelDetails) Tab() string {
 	return cdTabLabels[d.tabKinds[min(d.tab.Sel, len(d.tabKinds)-1)]]
 }
+
+// Rect is the dialog as last drawn (window coords): the inspect tool
+// boxes its overlay's layer with it.
+func (d *ChannelDetails) Rect() image.Rectangle { return d.cl.card }
 
 // Closed reports whether the dialog was dismissed (views.Closer). It also
 // drops the realtime subscription.
@@ -337,7 +382,9 @@ func (d *ChannelDetails) refreshInfo() {
 // watch subscribes to this conversation's conv / conv_removed events, and
 // to presence_change / user_change for the loaded members (their rows read
 // presence live, so an empty note just redraws); its permissions and
-// channel_email events and the team and org prefs redraw too.
+// channel_email events and the team and org prefs redraw too. Its member
+// counts going stale (someone joined or left) refetches them, and their
+// answer replaces the tab strip's count.
 func (d *ChannelDetails) watch() {
 	id := d.id
 	shown := &d.presIDs
@@ -369,11 +416,24 @@ func (d *ChannelDetails) watch() {
 			return dirMemberNote{id: id, verify: true}, true
 		case ev.Type == "conv_removed":
 			return dirMemberNote{id: id, ev: true}, true
+		case ev.Type == "member_count_stale":
+			return dirMemberNote{id: id, countStale: true}, true
+		case ev.Type == "member_count":
+			return dirMemberNote{id: id, counted: true}, true
 		}
 		return dirMemberNote{}, false
 	})
 	for _, n := range d.evq.drain() {
 		switch {
+		case n.countStale:
+			// someone joined or left: the tab strip draws the count, and
+			// its draw refetches a stale one (WDcq vC → 1Ti7 q8's
+			// maybeRefetch, core/membership_counts.go)
+			d.h.Core().RefreshMemberCount(d.id)
+		case n.counted:
+			if mc, ok := d.h.Core().MemberCountsCached(d.id); ok && d.counts.started() && !d.counts.busy() {
+				d.counts.mutate(func(v *core.MemberCounts) { *v = mc })
+			}
 		case n.verify:
 			d.refreshInfo()
 		case n.ev && cdGroup(d.kind) == "channel" && !d.writing():
@@ -395,14 +455,18 @@ func (d *ChannelDetails) watch() {
 	}
 }
 
-func (d *ChannelDetails) loadMembers(marker string) {
+func (d *ChannelDetails) loadMembers(marker string) { d.loadMembersAs(marker, true) }
+
+// loadMembersAs loads a page of members after marker; keep holds the
+// rows already loaded while it does (false: the skeleton shows).
+func (d *ChannelDetails) loadMembersAs(marker string, keep bool) {
 	var prev []core.User
 	if marker != "" {
 		cur, _, _ := d.members.get()
 		prev = append([]core.User(nil), cur.users...)
 	}
 	c, id, self := d.h.Core(), d.id, d.selfID()
-	d.members.load(d.h, true, func(ctx context.Context) (cdMembersPage, error) {
+	d.members.load(d.h, keep, func(ctx context.Context) (cdMembersPage, error) {
 		// Slack's Members tab is people only (MEMBER_LIST filter "everyone
 		// AND NOT bots AND NOT apps"); bots and apps are Agents & apps.
 		us, next, err := c.Members(ctx, id, marker, true)
@@ -456,7 +520,7 @@ func (d *ChannelDetails) Escape() bool {
 // DeprecatedBaseDialog: the header's close button, the input, Cancel,
 // Save), trapped and wrapping.
 func (d *ChannelDetails) editStops() []any {
-	return []any{&d.editClose, &d.topicEd, &d.cancelTop, &d.saveTopic}
+	return []any{&d.editClose, d.editTag(), &d.cancelTop, &d.saveTopic}
 }
 
 // editKeys runs Tab / Shift+Tab in the edit dialog.
@@ -524,55 +588,28 @@ func (d *ChannelDetails) EditFocus(gtx C) (string, bool) {
 func (d *ChannelDetails) startEdit(kind int, cur string) {
 	d.editing, d.editKind, d.confirmLeave = true, kind, false
 	d.editRing = false
-	// The topic and description inputs are Texty fields whose onEnter
-	// (onTextyEnter) returns true: Texty then inserts a newline, and the
-	// dialog's Enter→go skips contentEditable targets, so Enter never
-	// saves there. The channel name stays a one-line input.
-	d.topicEd.SingleLine = kind == cdEditName
-	d.topicEd.Submit = kind == cdEditName
-	d.topicEd.MaxLen = 250
-	if kind == cdEditName {
-		d.topicEd.MaxLen = 80
-	}
+	// The topic and description inputs are Slack's Texty inputs over the
+	// stored text (useChannelTopicInput, useChannelPurposeInput:
+	// composer.TextyInput, its mentions as pills); their onEnter
+	// (onTextyEnter) returns true, so Enter adds a line, and the dialog's
+	// Enter→go skips contentEditable targets. The channel name stays a
+	// one-line input.
 	d.editErr = ""
 	if kind != cdEditName {
-		cur = cdEditableText(cur)
+		ph := nsChannelDetails.T("Add a topic")
+		if kind == cdEditPurpose {
+			ph = nsChannelDetails.T("Add a description")
+		}
+		d.texty = composer.NewTextyInput(d.h, cur, ph, 250)
+		d.focusTopic = 3
+		return
 	}
+	d.texty = nil
+	d.topicEd.SingleLine, d.topicEd.Submit, d.topicEd.MaxLen = true, true, 80
 	d.topicEd.SetText(cur)
 	n := d.topicEd.Len()
 	d.topicEd.SetCaret(n, n)
 	d.focusTopic = 3
-}
-
-// cdEditableText is a topic or description as Slack's editor shows it:
-// links as their text (<https://x> and <https://x|https://x> become
-// https://x), the rest of the mrkdwn untouched.
-func cdEditableText(s string) string {
-	var b strings.Builder
-	for {
-		i := strings.Index(s, "<http")
-		if i < 0 {
-			b.WriteString(s)
-			return b.String()
-		}
-		j := strings.IndexByte(s[i:], '>')
-		if j < 0 {
-			b.WriteString(s)
-			return b.String()
-		}
-		inner := s[i+1 : i+j]
-		u, label, hasLabel := strings.Cut(inner, "|")
-		b.WriteString(s[:i])
-		switch {
-		case !hasLabel:
-			b.WriteString(u)
-		case label == u || "http://"+label == u || "https://"+label == u:
-			b.WriteString(label)
-		default:
-			b.WriteString(s[i : i+j+1])
-		}
-		s = s[i+j+1:]
-	}
 }
 
 // cdTopicError is Slack's getChannelTopicError for a setTopic error code.
@@ -621,11 +658,13 @@ func (d *ChannelDetails) saveTopicNow() {
 	var send func(ctx context.Context) error
 	switch kind {
 	case cdEditPurpose:
-		if t == inf.Conv.Purpose {
+		// handleSave: only a changed value() goes, as Slack cleans it
+		if d.texty == nil || !d.texty.Changed() {
 			return
 		}
+		t = d.texty.Submit()
 		d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Purpose, v.Conv.PurposeDoc = t, nil })
-		send = func(ctx context.Context) error { return c.SetPurpose(ctx, id, t) }
+		send = func(ctx context.Context) error { return c.SubmitChannelPurpose(ctx, id, t) }
 	case cdEditName:
 		t = cdChannelName(t)
 		if t == "" || t == inf.Conv.Name {
@@ -634,11 +673,12 @@ func (d *ChannelDetails) saveTopicNow() {
 		d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Name = t })
 		send = func(ctx context.Context) error { return c.Rename(ctx, id, t) }
 	default:
-		if t == inf.Conv.Topic {
+		if d.texty == nil || !d.texty.Changed() {
 			return
 		}
+		t = d.texty.Submit()
 		d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Topic, v.Conv.TopicDoc = t, nil })
-		send = func(ctx context.Context) error { return c.SetTopic(ctx, id, t) }
+		send = func(ctx context.Context) error { return c.SubmitChannelTopic(ctx, id, t) }
 	}
 	d.prevConv, d.pendKind = inf.Conv, kind
 	d.topicPending = true
@@ -767,10 +807,10 @@ func (d *ChannelDetails) update(gtx C) {
 	}
 	if d.editing && d.focusTopic > 0 {
 		// The editor appears this frame; retry focusing for a few frames.
-		if gtx.Focused(&d.topicEd) {
+		if gtx.Focused(d.editTag()) {
 			d.focusTopic = 0
 		} else {
-			gtx.Execute(key.FocusCmd{Tag: &d.topicEd})
+			gtx.Execute(key.FocusCmd{Tag: d.editTag()})
 			gtx.Execute(op.InvalidateCmd{})
 			d.focusTopic--
 		}
@@ -805,9 +845,16 @@ func (d *ChannelDetails) update(gtx C) {
 					v.Conv.Purpose, v.Conv.PurposeDoc = prev.Purpose, prev.PurposeDoc
 					v.Conv.Name = prev.Name
 				})
-				if d.pendKind == cdEditTopic && d.editing {
+				switch {
+				case d.pendKind == cdEditTopic && d.editing:
 					d.editErr = cdTopicError(err) // the modal stays open, the error under the input
-				} else {
+				case d.pendKind == cdEditPurpose && d.editing:
+					// ChannelPurposeDialog (Gro7): handleSave returns the
+					// refused submitChannelPurpose (uqxK rethrows), and the
+					// DeprecatedBaseDialog (FlDO) closes only on a resolved
+					// onGo, so the dialog stays open with the typed text and
+					// no message (useChannelPurposeInput has no error state)
+				default:
 					d.editing = false
 					d.h.Toast("Couldn’t update the " + cdEditWhat[d.pendKind] + ": " + cdErr(err))
 				}
@@ -916,6 +963,7 @@ func (d *ChannelDetails) Layout(gtx C) D {
 		return D{Size: full}
 	}
 	d.cl.dlg = image.Pt((full.X-dw)/2, (full.Y-dh)/2) // the overlay is at the window's origin
+	d.cl.card = image.Rectangle{Min: d.cl.dlg, Max: d.cl.dlg.Add(image.Pt(dw, dh))}
 	func() {
 		defer op.Offset(d.cl.dlg).Push(gtx.Ops).Pop()
 		r := image.Rect(0, 0, dw, dh)
@@ -1041,6 +1089,9 @@ func (d *ChannelDetails) editModal(gtx C, full image.Point) {
 	org := image.Pt((full.X-w)/2, (full.Y-h)/2)
 	defer op.Offset(org).Push(gtx.Ops).Pop()
 	r := image.Rect(0, 0, w, h)
+	// the inspect tool: the stacked dialog is Slack's SK modal, its card
+	// picked over the details card it sits on
+	defer popups.ModalClass.Inspect(0).EndAt(gtx, r)
 	rad := gtx.Dp(cdRadius)
 	theme.Shadow(gtx, r, rad, gtx.Dp(24), argb(0x59000000))
 	rrect(gtx, r, rad, d.p.Surface)
@@ -1069,22 +1120,31 @@ func (d *ChannelDetails) topicInput(gtx C) D {
 	td := layout.Inset{Top: 8, Bottom: 8, Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		gtx.Constraints.Min.Y = gtx.Sp(22)
+		if in := d.textyInput(); in != nil {
+			return in.Layout(gtx, d.th, d.p.Text)
+		}
 		return d.th.Editor(gtx, &d.topicEd, 15, d.p.Text, d.p.Mention)
 	})
 	call := m.Stop()
 	r := image.Rect(0, 0, w, td.Size.Y)
 	rad := gtx.Dp(8)
-	if gtx.Focused(&d.topicEd) {
+	if gtx.Focused(d.editTag()) {
 		ring := gtx.Dp(5)
 		rrect(gtx, r.Inset(-ring), rad+ring, flatten(theme.WithAlpha(d.p.Link, 0x4d), d.p.Surface))
 		one := max(1, gtx.Dp(1))
 		rrect(gtx, r.Inset(-one), rad+one, d.p.Link)
 	}
 	rrect(gtx, r, rad, d.p.Surface)
-	if !gtx.Focused(&d.topicEd) {
+	if !gtx.Focused(d.editTag()) {
 		border(gtx, r, rad, max(1, gtx.Dp(1)), d.p.Faint)
 	}
 	call.Add(gtx.Ops)
+	if in := d.textyInput(); in != nil {
+		b := max(1, gtx.Dp(1))
+		t := op.Offset(image.Pt(b, b)).Push(gtx.Ops)
+		in.LayoutWarning(gtx, d.th) // TextyLengthWarning at the input's inner top-left
+		t.Pop()
+	}
 	return D{Size: r.Size()}
 }
 
@@ -1324,6 +1384,12 @@ func cdBtn(b *base, gtx C, c *widget.Clickable, icon, label string, caret bool, 
 
 func (d *ChannelDetails) bodyArea(gtx C) D {
 	k := d.tabKinds[min(d.tab.Sel, len(d.tabKinds)-1)]
+	if k != d.bodyKind {
+		if k == cdMembers && d.members.started() {
+			d.remountMembers()
+		}
+		d.bodyKind = k
+	}
 	bg := d.p.ReadFill
 	reworked := k == cdApps && d.agentsImproved() // p-about_modal__contents--reworked-agents: base-pry
 	if k == cdMembers || reworked {
@@ -1826,6 +1892,20 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 	)
 }
 
+// remountMembers is the Members tab drawn again after another tab.
+// Slack's Tabs (client-boot tt5m) render only the selected tab's content,
+// so IaDetailsPopoverMembers mounts afresh: its search is empty, its list
+// at the top, and its people are fetched again, with the placeholders
+// until the first page answers (its member ids, eq, start empty). While
+// the tab stays open the list keeps the people it fetched: someone who
+// joins (member_joined_channel) or leaves shows up on the next mount,
+// only the tab's count follows at once (core/membership_counts.go).
+func (d *ChannelDetails) remountMembers() {
+	d.find.ed.SetText("")
+	d.list(cdMembers).Position = layout.Position{}
+	d.loadMembersAs("", false)
+}
+
 // cdSortMembers is the Members list order Slack showed for #clack
 // (2026-11-08): the viewer first, then by display name, case-insensitive
 // ("clod (you)", dodge1, karim, kyto), whatever order the edge list
@@ -1860,9 +1940,28 @@ func cdSelfFirst(us []core.User, self string) []core.User {
 // name (the real name when none is set) and " (you)" for the viewer; the
 // secondary is the real name, shown only after a display name.
 func cdMemberNames(u core.User, self string) (primary, secondary string) {
+	return cdMemberNamesPref(u, self, false)
+}
+
+// cdMemberNamesPref is cdMemberNames under the viewer's display_real_names
+// pref (client-boot rR47 EP). MediumMemberEntity's memberPrimaryName is
+// getPrefCompliantMemberName (VRXO sE): the display name, or with the pref
+// the real name; memberSecondaryName is getMemberSecondaryName (hWCs Mu):
+// with the pref the display name, else the real name when a display name
+// is set. Equal names draw twice ("clod ○ clod"), as Slack does.
+func cdMemberNamesPref(u core.User, self string, realNames bool) (primary, secondary string) {
 	primary = displayName(u)
 	if u.DisplaySet {
 		secondary = u.RealName
+	}
+	if realNames {
+		if u.RealName != "" {
+			primary = u.RealName
+		}
+		secondary = ""
+		if u.DisplaySet {
+			secondary = u.Name // the display name (Name falls back to the real name only without one)
+		}
 	}
 	if u.ID == self {
 		primary += " (you)"
@@ -1949,7 +2048,7 @@ func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 		// the profile pane
 		d.h.OpenProfile(d.press.at, u.ID)
 	}
-	full, disp := cdMemberNames(u, self)
+	full, disp := cdMemberNamesPref(u, self, d.h.Core().Prefs().DisplayRealNames)
 	// IaDetailsPopoverChannelManagerIndicatorWrapper: the managers store
 	manager := secondary && slices.Contains(d.managerIDs(), u.ID)
 	return d.hoverable(gtx, c, false, 0, func(gtx C) D {
