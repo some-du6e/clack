@@ -2,6 +2,7 @@ package clip
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -128,22 +129,11 @@ func (r *Recorder) changed() {
 
 func (r *Recorder) open(ctx context.Context) {
 	mic, st, err := huddle.OpenClipMic(ctx, huddle.ClipMicOptions{AGC: r.o.AGC, Device: r.o.Device, Logf: log.Printf}, r.capture)
-	// the encoder before the lock: NewEncoder waits for the huddle's codec
-	// goroutine (codecstack.go), which a huddle's audio keeps busy, and
-	// State, Dots and Elapsed (every frame of the popover) take r.mu
-	var enc *Encoder
-	var eerr error
-	if err == nil {
-		enc, eerr = NewEncoder(r.o.Channels, r.o.BitRate)
-	}
 	r.mu.Lock()
 	if r.state != Opening { // cancelled while the OS asked
 		r.mu.Unlock()
 		if mic != nil {
 			mic.Close()
-		}
-		if enc != nil {
-			enc.Close()
 		}
 		return
 	}
@@ -155,6 +145,7 @@ func (r *Recorder) open(ctx context.Context) {
 		r.changed()
 		return
 	}
+	enc, eerr := NewEncoder(r.o.Channels, r.o.BitRate)
 	if eerr != nil {
 		r.state, r.micSt, r.micErr = Failed, huddle.MicFailed, eerr
 		r.mu.Unlock()
@@ -285,16 +276,8 @@ func (r *Recorder) Waveform() *Waveform { return r.wave }
 
 // Stop is onAttach before the file exists: stopAudioRecording, then
 // recordingend makes the File and the state is Stopped. Before recording
-// started it does nothing (stopAudioRecording with nothing recording), and
-// so does a second Stop, or one after Cancel. It blocks until the file is
-// made; call it off the UI goroutine.
-//
-// Stopped always has a File, as Slack's recordingend always does: the
-// Blob of every chunk MediaRecorder delivered, which is empty when no
-// audio reached the encoder (a stop as recording began, a microphone that
-// delivered nothing), and the hook attaches that too (StreamManager's
-// recordingend, useAudioWaveformRecorder's V: `if (a)` holds for an empty
-// Blob). A frame libopus failed on is only lost, as in Chromium.
+// started it does nothing (stopAudioRecording with nothing recording).
+// It blocks until the file is made; call it off the UI goroutine.
 func (r *Recorder) Stop() {
 	r.mu.Lock()
 	if r.state != Recording || r.stopping {
@@ -302,10 +285,7 @@ func (r *Recorder) Stop() {
 		return
 	}
 	r.stopping = true
-	// Stop owns the microphone and the ticker now: a Cancel meanwhile, or
-	// after, finds neither to close again
 	mic, tick := r.mic, r.tick
-	r.mic, r.tick = nil, nil
 	dur := r.elapsed
 	r.mu.Unlock()
 	if tick != nil {
@@ -313,32 +293,35 @@ func (r *Recorder) Stop() {
 	}
 	if mic != nil {
 		mic.Close() // every frame captured so far reaches the encoder
-		if n := mic.Dropped(); n > 0 {
-			log.Printf("clip: the encoder fell behind the microphone: %d of its 10 ms frames lost", n)
-		}
 	}
 	r.encMu.Lock()
 	enc := r.enc
 	r.enc = nil
 	r.encMu.Unlock()
-	data := []byte{}
+	var data []byte
+	var err error
 	if enc != nil {
-		d, err := enc.Finish()
-		if err != nil {
-			log.Printf("clip: no packet encoded: %v", err)
-		}
-		if d != nil {
-			data = d
-		}
+		data, err = enc.Finish()
+	}
+	if err == nil && len(data) == 0 {
+		err = errors.New("clip: nothing recorded")
 	}
 	f := File{Name: FileName, Mime: Mime, Subtype: Subtype, Data: data, Duration: dur.Seconds(), WaveSamples: r.wave.Samples()}
 	r.mu.Lock()
 	r.stopping = false
 	if r.state == Recording {
-		r.state, r.file = Stopped, f
+		if err != nil {
+			r.state, r.micSt, r.micErr = Failed, huddle.MicFailed, err
+		} else {
+			r.state, r.file = Stopped, f
+		}
 	}
 	r.mu.Unlock()
-	log.Printf("clip: recorded %.1f s, %d bytes", f.Duration, len(f.Data))
+	if err != nil {
+		log.Printf("clip: %v", err)
+	} else {
+		log.Printf("clip: recorded %.1f s, %d bytes", f.Duration, len(f.Data))
+	}
 	r.changed()
 }
 
@@ -359,10 +342,7 @@ func (r *Recorder) File() (File, bool) {
 func (r *Recorder) Cancel() {
 	r.cancel()
 	r.mu.Lock()
-	switch r.state {
-	case Stopped, Cancelled, Failed:
-		// the recording is over: what it held is released (Stop, open's
-		// failure) or being released (an earlier Cancel)
+	if r.state == Stopped || r.state == Cancelled {
 		r.mu.Unlock()
 		return
 	}
@@ -385,9 +365,6 @@ func (r *Recorder) Cancel() {
 func (r *Recorder) release(mic *huddle.ClipMic) {
 	if mic != nil {
 		mic.Close()
-		if n := mic.Dropped(); n > 0 {
-			log.Printf("clip: the encoder fell behind the microphone: %d of its 10 ms frames lost", n)
-		}
 	}
 	r.encMu.Lock()
 	if r.enc != nil {
