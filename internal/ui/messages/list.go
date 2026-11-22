@@ -81,8 +81,9 @@ var tbIcons = [tbCount]string{"add-reaction", "comment-lines", "forward-msg", "t
 // views. It is cached across view instances (UI goroutine only), so
 // switching back to a conversation keeps its rows and scroll position.
 type listState struct {
-	hb *hub
-	m  *model // what the list shows: chm, or its window
+	irec introRec // the DM foreword's name recording (intro_rec.go)
+	hb   *hub
+	m    *model // what the list shows: chm, or its window
 	// chm is a channel list's conversation model (the newest messages,
 	// every list's); win is the window it shows instead, its own (hub.go
 	// newWindow), nil when it shows chm
@@ -1902,15 +1903,29 @@ func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.D
 	}
 	title := "#" + name
 	sub := "This is the very beginning of the #" + name + " channel."
+	partner := ""
 	if kind == "im" || kind == "mpim" {
 		title = name
 		sub = "This conversation is just between you and " + name + "."
+	}
+	if kind == "im" {
+		if app := h.Core(); app != nil {
+			if cv, ok := app.Conv(s.ch); ok {
+				partner = cv.User
+			}
+		}
 	}
 	px := dp(gtx, mt.padX)
 	y := dp(gtx, 24)
 	d := at(gtx, px, y, func(gtx layout.Context) layout.Dimensions {
 		return label(gtx, th, textStyle{size: 28, weight: theme.Black, col: c.Text, lineH: 36}, title)
 	})
+	// the partner's name recording after their name (IMForewordMemberEntity)
+	if rec, ctl := s.introRecording(h, partner); rec != nil {
+		at(gtx, px+d.Size.X+dp(gtx, 4), y+(d.Size.Y-dp(gtx, 30))/2, func(gtx layout.Context) layout.Dimensions {
+			return ctl.LayoutNameSound(gtx, &s.irec.btn, "dm-foreword", partner, rec)
+		})
+	}
 	y += d.Size.Y + dp(gtx, 8)
 	if agent != "" {
 		// a code channel: Slack's two lines instead of the channel intro and
