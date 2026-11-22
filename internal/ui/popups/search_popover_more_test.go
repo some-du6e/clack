@@ -22,22 +22,6 @@ func TestSearchPopoverShowFewerClick(t *testing.T) {
 	p := NewQuickSwitcher(e.h)
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.until(t, "the snapshot", func() bool { return p.snapOK })
-	unread := map[string]bool{}
-	for _, id := range p.unreads {
-		unread[id] = true
-	}
-	var read []string
-	for _, id := range e.fs.ChannelIDs() {
-		if !unread[id] && e.h.a.ConvRef(id).Name != "" {
-			read = append(read, id)
-		}
-	}
-	if len(read) < 3 {
-		t.Fatalf("fixture: %d read channels", len(read))
-	}
-	for _, id := range read[:3] { // Recent places below the unreads
-		RecordRecentPlace(id, "", "")
-	}
 	var ids []string
 	for id := range p.byConv {
 		ids = append(ids, id)
@@ -47,6 +31,15 @@ func TestSearchPopoverShowFewerClick(t *testing.T) {
 		t.Fatalf("fixture: %d conversations", len(ids))
 	}
 	p.unreads = ids[:13]
+	// Recent places below the unreads: pages and channels that aren't
+	// among them (an unread is listed there, not here)
+	RecordRecentPlace("view:later", "To-dos", "todos")
+	RecordRecentPlace("view:saved", "Saved", "saved")
+	for _, id := range ids[13:] {
+		if e.h.a.ConvRef(id).Name != "" {
+			RecordRecentPlace(id, "", "")
+		}
+	}
 	p.rebuild(time.Now(), true)
 	for i := 0; i < 3; i++ {
 		d.frame()
@@ -91,6 +84,17 @@ func TestSearchPopoverShowFewerClick(t *testing.T) {
 	clickRow("Show 3 more")
 	if got := srTitles(p.rows, srRMore); !slices.Equal(got, []string{"Show fewer"}) {
 		t.Fatalf("after Show 3 more: %q", got)
+	}
+	// the crash needs rows below Show fewer (Recent places): the loop
+	// went on past the shorter list's end
+	below := 0
+	for i := range p.rows {
+		if p.rows[i].kind == srRMore {
+			below = len(p.rows) - 1 - i
+		}
+	}
+	if below < 3 {
+		t.Fatalf("fixture: %d rows below Show fewer, want Recent places there (%q)", below, srTitles(p.rows, srRHeader))
 	}
 	clickRow("Show fewer")
 	if got := srTitles(p.rows, srRMore); !slices.Equal(got, []string{"Show 3 more"}) {
