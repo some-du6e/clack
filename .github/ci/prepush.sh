@@ -10,7 +10,8 @@
 # too, so a test that doesn't compile shows here. The 2026-11-21 audit
 # (93 failed agent-branch runs): it would have caught the 3 build and vet
 # failures (a method declared twice, a call short of an argument, vet's
-# unreachable code); gofmt had none.
+# unreachable code); gofmt had none. On a merge it also vets what the two
+# sides changed that meets (below).
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 base=${1:-$(git merge-base HEAD origin/ui 2>/dev/null)}
@@ -68,6 +69,55 @@ for f in "${files[@]}"; do
 	*) linux[$p]=1 ;;
 	esac
 done
+# A merge (HEAD has two parents): the packages both sides changed since
+# their merge base, and those one side changed that depend on a package
+# the other changed. Neither side's own vet sees them together, and no
+# text conflicts: train-159's merge put image-context-menu's new
+# &r.pills[k] beside lost-click-sweep's pills turned to pointers.
+if git rev-parse -q --verify HEAD^2 >/dev/null; then
+	mb=$(git merge-base HEAD^1 HEAD^2)
+	mod=$(awk '/^module /{print $2; exit}' go.mod)
+	side() { # rev -> the import paths of the Go packages it changed since mb
+		git diff --name-only --diff-filter=ACMR "$mb" "$1" | grep -E '\.go$' | grep -v '/testdata/' | while read -r f; do
+			d=$(dirname "$f")
+			[ -d "$d" ] || continue
+			p=$(modpath "$d")
+			case $p in ./*) p="$mod/${p#./}" ;; .) p=$mod ;; esac
+			echo "$p"
+		done | sort -u
+	}
+	mapfile -t sa < <(side HEAD^1)
+	mapfile -t sb < <(side HEAD^2)
+	if [ ${#sa[@]} -gt 0 ] && [ ${#sb[@]} -gt 0 ]; then
+		declare -A inA=() inB=()
+		for p in "${sa[@]}"; do inA[$p]=1; done
+		for p in "${sb[@]}"; do inB[$p]=1; done
+		merged=()
+		# each changed package and what it depends on (its tests' imports
+		# too), in one go list
+		while read -r p deps; do
+			[ -n "$p" ] || continue
+			hit=
+			if [ -n "${inA[$p]:-}" ] && [ -n "${inB[$p]:-}" ]; then
+				hit=1
+			fi
+			for d in $deps; do
+				if { [ -n "${inA[$p]:-}" ] && [ -n "${inB[$d]:-}" ]; } || { [ -n "${inB[$p]:-}" ] && [ -n "${inA[$d]:-}" ]; }; then
+					hit=1
+					break
+				fi
+			done
+			[ -n "$hit" ] && merged+=("$p")
+		done < <(go list -e -f '{{.ImportPath}} {{join .Deps " "}} {{join .TestImports " "}} {{join .XTestImports " "}}' "${sa[@]}" "${sb[@]}" 2>/dev/null | sort -u)
+		if [ ${#merged[@]} -gt 0 ]; then
+			echo "prepush: the merge's packages both sides reach (since $(git rev-parse --short "$mb")): ${merged[*]}"
+			for p in "${merged[@]}"; do
+				linux[$p]=1
+				windows[$p]=1
+			done
+		fi
+	fi
+fi
 # a package with no files for GOOS (build constraints): nothing to vet there
 hasfiles() { # GOOS pkg
 	local n
