@@ -119,7 +119,7 @@ MainCtx capabilities:
 | net.fetch | gated; same reach as a renderer's `api.fetch` |
 | net.block / net.intercept | gated; they affect only `fetch` inside the JS runtime, never Clack's Go Slack client or the image cache. The handler sees `{url, method, resourceType}` only |
 | protocol.register | gated, boot only, scheme validated, reserved list, one owner per scheme |
-| notifications.filter | gated; one chain over the `showNotification` thunk |
+| notifications.filter | gated; one chain over every toast just before it goes to the system, as Slick's `Notification.prototype.show` patch (Electron-shaped options: title, subtitle, body, silent) |
 | shell.openExternal | gated in JS, checked again in Go (schemes, injection, 3 per 10 s) |
 | dialog.openFile | gated; native picker, one at a time, returns what the user chose |
 | cookies | gated; Taut's cookie host |

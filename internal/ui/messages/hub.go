@@ -1453,9 +1453,9 @@ func (hb *hub) apply(ev core.Event) bool {
 		if m.threadTS != "" {
 			// a thread's slice lost messages wherever they were: the next
 			// draw reads the store's slice again (thread_load.go)
-			start := m.th.start
+			t := m.th
 			m.evict("")
-			m.th = threadState{start: start, root: m.th.root, gen: m.th.gen + 1}
+			m.th = threadState{start: t.start, picked: t.picked, repick: t.repick, root: t.root, gen: t.gen + 1}
 		} else {
 			m.evict(ev.TS)
 		}
