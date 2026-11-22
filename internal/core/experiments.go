@@ -305,7 +305,7 @@ var experimentReads = map[string][]string{
 	"list_channel_tab_show_view_name_fe": on, "lists_channel_tabs_default_view": on,
 	ExpChannelJoinWithAgents: on, ExpChannelHeaderWithAgents: on, ExpAgentsInChannelsImprovements: on, // the join card and header count (channel_agents.go)
 	// secondary views, messages and workflows (merged from their branches)
-	"nested_secondary_view": on, "secondary_view_default_width": on, "unread_thread_indication_in_replybar": on,
+	"nested_secondary_view": on, "secondary_view_default_width": on, "unread_thread_indication_in_replybar": on, "replybar_unread_reliability_fix": on,
 	"workflow_execution_window": on, "enable_wfb_ai_answer_step": on,
 	// drafts (backend.go: the sidebar's draft pencil)
 	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
