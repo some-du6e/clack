@@ -180,6 +180,9 @@ type EmojiPicker struct {
 	packNames []string
 	packGen   uint64
 	packIdx   *emojiIndex
+	// ctaUI is the emoji pack call to action under the search input
+	// (emoji_pack_cta.go)
+	ctaUI packCTAState
 
 	rows      []epRow
 	groupRow  [epNumGroups + 1]int32
@@ -915,7 +918,9 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 		ic.EndAt(gtx, in)
 	}
 	foot := dp(gtx, epFootH)
-	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, p.listY()), sz.X, sz.Y-foot))
+	listTop := dp(gtx, p.listY())
+	listTop += p.layoutPackCTA(gtx, th, cl, listTop, sz.X) // EmojiPackCta, between the input and the list
+	p.layoutList(gtx, th, cl, image.Rect(0, listTop, sz.X, sz.Y-foot))
 	fm := slackc.InspectAs("EmojiPickerFooter")
 	p.layoutFooter(gtx, th, cl, image.Rect(0, sz.Y-foot, sz.X, sz.Y))
 	fm.EndAt(gtx, image.Rect(0, sz.Y-foot, sz.X, sz.Y))

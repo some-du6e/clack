@@ -125,6 +125,11 @@ type packState struct {
 	inputBadge bool
 	tabBadge   bool
 	gen        uint64 // bumped by every change of list
+	// canAdd is Llxp D as the last pack read found it (permissions/info
+	// ADD_CUSTOM_EMOJI): the picker's call to action reads it
+	canAdd bool
+	// now is the clock the Halloween season reads (tests set it)
+	now func() time.Time
 }
 
 var packIndex = newPerApp() // *App → *packState
@@ -239,7 +244,11 @@ func (a *App) FetchEmojiPacks() {
 		ps.list, ps.fetched = list, true // setEmojiCollections
 		ps.gen++
 		ps.mu.Unlock()
-		a.potentialNewPack(ctx, list)
+		can := a.canAddCustomEmoji(ctx)
+		ps.mu.Lock()
+		ps.canAdd = can
+		ps.mu.Unlock()
+		a.potentialNewPack(ctx, list, can)
 		a.emit(Event{Type: "emoji_packs"})
 	}()
 }
@@ -278,7 +287,7 @@ func (a *App) fetchEmojiPacks(ctx context.Context) ([]EmojiPack, error) {
 // newer than emoji_packs_most_recent_available_time and the viewer may
 // add custom emoji, or it's installed, the four emoji pack prefs start
 // over (setMultipleUserPrefsByApi): available now, nothing clicked.
-func (a *App) potentialNewPack(ctx context.Context, list []EmojiPack) {
+func (a *App) potentialNewPack(ctx context.Context, list []EmojiPack, canAdd bool) {
 	p, ok := newestPack(list)
 	if !ok {
 		return
@@ -290,7 +299,7 @@ func (a *App) potentialNewPack(ctx context.Context, list []EmojiPack) {
 	if float64(p.DateCreate) <= since {
 		return
 	}
-	if !p.Installed && !a.canAddCustomEmoji(ctx) {
+	if !p.Installed && !canAdd {
 		return
 	}
 	_ = a.SetMultiplePrefs(ctx, map[string]any{
