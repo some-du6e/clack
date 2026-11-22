@@ -668,9 +668,10 @@ func (r *Row) drawAudio(gtx layout.Context, t *tile, s richview.MediaSlot, sz im
 	if hot && (ptr.In(z.play) || ptr.In(z.scrub) || ptr.In(z.speed) || ptr.In(z.more) || ptr.In(z.transcript)) {
 		pointer.CursorPointer.Add(gtx.Ops)
 	}
-	// the controls' tooltips
+	// the controls' tooltips: the speed control's, More's and the
+	// transcript's (AudioPlayerPlayButton is an unstyled button with no
+	// tooltip, only its aria-label "Play")
 	if c.env.Tooltip != nil {
-		c.env.Tooltip(gtx, &a.z.play, hot && ptr.In(z.play), z.play, false, 0, i18n.T("audio_player", "Play"))
 		if showSpeed {
 			c.env.Tooltip(gtx, &a.z.speed, hot && ptr.In(z.speed), z.speed, false, 0, i18n.T("stories_av", "Playback speed"))
 		}
