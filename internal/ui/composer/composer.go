@@ -769,6 +769,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		ViewContext:    c.viewContext(),
 		Count:          c.ed.Doc().Len(),
 		OverLimit:      c.overLimit(),
+		TooManyFiles:   c.tooManyFiles(),
 		Pending:        c.att.Len() > 0,
 	}
 	if isHeading(st.Block) && c.api.a != nil {
@@ -1180,7 +1181,7 @@ func (c *Composer) paragraphMenu(anchor image.Rectangle) {
 }
 
 func (c *Composer) scheduleMenu(anchor image.Rectangle) {
-	if c.overLimit() > 0 || c.ed.Empty() && c.att.Len() == 0 && c.att.gifCount() == 0 {
+	if c.overLimit() > 0 || c.tooManyFiles() || c.ed.Empty() && c.att.Len() == 0 && c.att.gifCount() == 0 {
 		return
 	}
 	// ScheduleSendMenu (schedule_menu.go): the rows for now, the Custom
@@ -1339,6 +1340,10 @@ func (c *Composer) moreThanTwo() bool {
 
 // overLimit is how far the message is past the 12,000-character limit
 // (charlimit.go), counted once per document change.
+// tooManyFiles is isComposerDraftSendable's tooManyFiles: the draft holds
+// more than 10 files (a clip attaches past the limit), and can't be sent.
+func (c *Composer) tooManyFiles() bool { return c.att.Len() > attMaxFiles }
+
 func (c *Composer) overLimit() int {
 	if v := c.ed.Version(); !c.limitOK || v != c.limitVer {
 		c.limitVer, c.limitOver, c.limitOK = v, charsOverLimit(c.ed.Doc()), true
@@ -1353,10 +1358,11 @@ func (c *Composer) submit() {
 		return
 	}
 	d := c.ed.Doc()
-	if c.overLimit() > 0 {
+	if c.overLimit() > 0 || c.tooManyFiles() {
 		// isSendingDisabled (isOverMaxLength): Enter does nothing and the
 		// send button is disabled; an edit can't be saved (cjbg maybeSave
-		// returns while textyExceedsMaxLength)
+		// returns while textyExceedsMaxLength); so with more than 10
+		// files (isComposerDraftSendable's tooManyFiles)
 		return
 	}
 	if d.Empty() && c.att.Len() == 0 && (c.edit != nil || c.att.gifCount() == 0) {

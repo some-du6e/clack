@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gioui.org/f32"
@@ -114,6 +115,44 @@ type audioPopover struct {
 	bump                time.Time // the speedbump's start
 	done                bool      // attached (or nothing left to do)
 	alerted             bool      // MicrophoneAccessErrorDialog shown
+	// core is the session the popover opened in: its clip attaches (and
+	// uploads) only while that is still the composer's
+	core *core.App
+	// unmounted: closed with its composer (another conversation, the pane
+	// or view gone, the session ended), not by the user: AudioPopover
+	// unmounts without its onClose, so the focus isn't given back
+	unmounted bool
+}
+
+// livePops are the recorder popovers open in any composer (CloseClips).
+var livePops struct {
+	sync.Mutex
+	m map[*audioPopover]struct{}
+}
+
+// CloseClips closes every open clip recorder and drops its recording, as
+// their composers go with the session (the sign-in screen, another
+// account): Slack's MessagePaneInput unmounts with the client, and
+// useAudioWaveformRecorder's unmount stops the StreamManager (w.stop())
+// with no recordingend, so nothing attaches or uploads, here or in the
+// next session.
+func CloseClips() {
+	livePops.Lock()
+	ps := make([]*audioPopover, 0, len(livePops.m))
+	for p := range livePops.m {
+		ps = append(ps, p)
+	}
+	livePops.Unlock()
+	for _, p := range ps {
+		p.unmount()
+	}
+}
+
+// unmount closes the popover as its composer goes: the recording is
+// dropped (closed's Cancel), and nothing gets the focus.
+func (p *audioPopover) unmount() {
+	p.unmounted = true
+	p.pop.Dismiss()
 }
 
 // openAudioRecorder is AudioComposerButton's click: the popover at the
@@ -130,7 +169,7 @@ func (c *Composer) openAudioRecorder(anchor image.Rectangle) {
 	if ClipDevice != nil {
 		dev = ClipDevice()
 	}
-	p := &audioPopover{c: c}
+	p := &audioPopover{c: c, core: c.h.Core()}
 	p.attachTip.Delay, p.closeTip.Delay = 300*time.Millisecond, 300*time.Millisecond
 	p.rec = vclip.Start(vclip.Options{AGC: agc, Device: dev, PlayStart: ClipStartSound, OnChange: c.h.Invalidate, TimeLimit: clipTimeLimit})
 	p.pop = popups.NewPopover(c.h, p.layout, popups.PopoverOpts{
@@ -138,6 +177,12 @@ func (c *Composer) openAudioRecorder(anchor image.Rectangle) {
 		Bare: true, OnOverlayClick: p.speedbump, OnEnter: p.stop, OnClose: p.closed,
 	})
 	c.clipPop = p
+	livePops.Lock()
+	if livePops.m == nil {
+		livePops.m = map[*audioPopover]struct{}{}
+	}
+	livePops.m[p] = struct{}{}
+	livePops.Unlock()
 	c.h.ShowOverlay(p.pop)
 }
 
@@ -176,21 +221,26 @@ func (p *audioPopover) speedbump() {
 // (the composer goes away: the hook unmounts).
 func (c *Composer) closeClip() {
 	if p := c.clipPop; p != nil {
-		p.pop.Dismiss()
+		p.unmount()
 	}
 }
 
 // closed is the popover's onClose: the recorder hook unmounts (w.stop(),
 // nothing kept unless it attached) and AudioComposerButton gives the
-// composer the focus back.
+// composer the focus back, unless the composer went with it.
 func (p *audioPopover) closed() {
+	livePops.Lock()
+	delete(livePops.m, p)
+	livePops.Unlock()
 	if !p.done {
 		p.rec.Cancel()
 	}
 	if p.c.clipPop == p {
 		p.c.clipPop = nil
 	}
-	p.c.Focus()
+	if !p.unmounted {
+		p.c.Focus()
+	}
 }
 
 // Popover geometry (dp): .p-audio_popover is 220 wide; the strip (padding
@@ -209,12 +259,24 @@ const (
 
 func (p *audioPopover) layout(gtx layout.Context) layout.Dimensions {
 	c := p.c
+	// gone with its composer, which wasn't drawn this frame (the shell lays
+	// the views out before the overlays): AudioPopover is the composer's
+	// child and unmounts with it when another conversation opens (Mod+K,
+	// Alt+arrows, the Switch to Channel menu), its pane closes or the
+	// session ends; the recording goes, and ✓ can't attach it to the
+	// conversation that was
+	if c.done || !c.drawnAt.Equal(gtx.Now) {
+		p.unmount()
+		return layout.Dimensions{}
+	}
 	th := c.h.Theme()
 	switch p.rec.State() {
 	case vclip.Stopped:
 		if !p.done {
 			p.done = true
-			if f, ok := p.rec.File(); ok {
+			// never into another session: a composer outliving its
+			// session (CloseClips missed it) drops the clip
+			if f, ok := p.rec.File(); ok && c.h.Core() == p.core {
 				c.attachClip(f)
 			}
 			p.pop.Dismiss() // onFileAttach: the popover closes
@@ -492,10 +554,14 @@ type clipMeta struct {
 }
 
 // addClip attaches a recorded clip (addAndUploadPendingFile with the
-// clip's File).
+// clip's File). Slack's eager upload adds it whatever the draft holds
+// (use_eager_upload has no count check): with 10 files already the clip
+// is the 11th, and the draft can't be sent until one goes
+// (isComposerDraftSendable's tooManyFiles, Composer.tooManyFiles), so a
+// recording is never lost to the limit.
 func (a *attachments) addClip(f vclip.File) bool {
 	a.mu.Lock()
-	err := attCheckAdd(a.pendingLocked(), a.total, int64(len(f.Data)))
+	err := attCheckAdd(0, a.total, int64(len(f.Data)))
 	upload := a.h.Core() != nil
 	var c *attChip
 	if err == nil {
