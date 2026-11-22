@@ -2,6 +2,7 @@ package chart
 
 import (
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/i18n"
@@ -41,7 +42,17 @@ func compact(v float64) string {
 		u++
 		r = round1(a / math.Pow10(3*u))
 	}
-	s := i18n.FormatNumber(numberLocale, r)
+	// compact notation groups from five integer digits (ICU's
+	// minimumGroupingDigits 2): "1000T", "25,000T"
+	s := strconv.FormatFloat(r, 'f', -1, 64)
+	ip, fp, hasFp := strings.Cut(s, ".")
+	if len(ip) >= 5 {
+		ip = groupThousands(ip)
+	}
+	s = ip
+	if hasFp {
+		s += "." + fp
+	}
 	if v < 0 && r != 0 {
 		s = "-" + s
 	}

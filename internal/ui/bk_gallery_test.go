@@ -86,7 +86,7 @@ func TestBlockKitGallery(t *testing.T) {
 		// end the frames still differ by the composer's blinking caret
 		// (round 2's duplicate end pages)
 		list := e.ownSendList(ch)
-		for page := 1; page <= 30; page++ {
+		for page := 1; page <= 90; page++ {
 			if snap("gallery-"+mode+"-"+twoDigits(page)) == nil || list.AtBottom() {
 				break
 			}
@@ -114,6 +114,16 @@ func TestBlockKitGallery(t *testing.T) {
 		})
 		e.settle(800 * time.Millisecond)
 		snap("gallery-thread-loading-" + mode)
+
+		// a bot's leaderboard thread: the chart, its reply's data_table
+		bts := fs.GalleryTS("datatable/leaderboard")
+		e.a.OpenThread(ch, bts)
+		e.until("leaderboard thread", 20*time.Second, func() bool {
+			msgs, _ := e.a.data.core.S.Thread(ch, bts)
+			return len(msgs) >= 2
+		})
+		e.settle(800 * time.Millisecond)
+		snap("gallery-thread-leaderboard-" + mode)
 		// close it: the next pass pages the channel at its full width
 		e.a.CloseSecondary()
 		e.settle(300 * time.Millisecond)

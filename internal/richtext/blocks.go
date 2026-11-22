@@ -15,11 +15,13 @@ import (
 
 // bk is a generic Block Kit block / element / rich_text node.
 type bk struct {
-	bkAgent          // plan, task_card (agent.go)
-	Type      string `json:"type"`
-	BlockID   string `json:"block_id"`
-	Elements  []bk   `json:"elements"`
-	Rows      bkRows `json:"rows"` // table
+	bkAgent                // plan, task_card (agent.go)
+	viz       *bkDataViz   // a data_visualization block's own keys (dataviz.go)
+	table     *bkDataTable // a data_table block's own keys (datatable.go)
+	Type      string       `json:"type"`
+	BlockID   string       `json:"block_id"`
+	Elements  []bk         `json:"elements"`
+	Rows      bkRows       `json:"rows"` // table
 	ColumnSet []struct {
 		Align     string `json:"align"`
 		IsWrapped bool   `json:"is_wrapped"`
@@ -427,7 +429,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", badBlock:
 		return true
 	}
 	return false
@@ -585,6 +587,10 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.shortcutBlock(b))
 	case "card":
 		return append(out, c.cardBlock(b))
+	case "data_table":
+		return append(out, c.dataTableBlock(b))
+	case "data_visualization":
+		return append(out, c.dataVizBlock(b))
 	case "markdown":
 		return append(out, markdownBlocks(c.r, b.textString())...)
 	case "mrkdwn", "plain_text":

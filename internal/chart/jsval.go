@@ -104,6 +104,13 @@ func JSNumber(f float64) string {
 	return b.String()
 }
 
+// JSString is String(v) for a JSON value.
+func JSString(v any) string { return jsString(v, true) }
+
+// ReactText is what React draws for a JSON value as a child (present
+// false: undefined); an error for an object, which React refuses.
+func ReactText(v any, present bool) (string, error) { return reactText(v, present) }
+
 // toChartNumber is mI93's z: a finite number, else null (NaN here).
 func toChartNumber(v any) float64 {
 	if f, ok := v.(float64); ok && !math.IsInf(f, 0) && !math.IsNaN(f) {

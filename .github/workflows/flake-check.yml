@@ -4920,7 +4920,7 @@ jobs:
   bk-data-viz-diag:
     if: ${{ inputs.only != '' && startsWith('bk-data-viz-diag', inputs.only) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -4929,13 +4929,32 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: chart (diagnostic)
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: data blocks (diagnostic)
         run: |
           set +e
-          go test -count=1 -v ./internal/chart > "$RUNNER_TEMP/chart.txt" 2>&1
-          echo "exit $?"
-          grep -E '^(--- FAIL|FAIL|ok|PASS)' "$RUNNER_TEMP/chart.txt" | head -60
-          grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/chart.txt" | head -120
+          for p in ./internal/ui/blockkit ./internal/ui/messages ./internal/ui/views ./internal/ui/popups ./internal/ui/richview ./internal/ui; do
+            go vet "$p" > "$RUNNER_TEMP/vet.txt" 2>&1; echo "vet $p exit $?"; head -20 "$RUNNER_TEMP/vet.txt"
+          done
+          run() {
+            name=$1; shift
+            go test -count=1 -v "$@" > "$RUNNER_TEMP/$name.txt" 2>&1
+            echo "== $name exit $?"
+            grep -E '^(--- FAIL|FAIL|ok|PASS|panic)' "$RUNNER_TEMP/$name.txt" | head -40
+            grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/$name.txt" | head -80
+            grep -E -A12 '^panic' "$RUNNER_TEMP/$name.txt" | head -40
+          }
+          run chart ./internal/chart
+          run richtext -run 'DataViz|DataTable|DataBlocks|Notification' ./internal/richtext
+          run fakeslack -run 'Gallery' ./internal/fakeslack
+          run richview -run 'DataTable|DataViz|DataBlocks' ./internal/ui/richview
+          run popups -run 'ChartMenu|CopyChartImage|DataTableMenus' ./internal/ui/popups
+          export CLACK_PIXEL_TESTS=1
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestDataBlocksChannelAndThread$' ./internal/ui > "$RUNNER_TEMP/ui.txt" 2>&1
+          echo "== ui exit $?"
+          grep -E '^(--- FAIL|FAIL|ok|PASS|panic)' "$RUNNER_TEMP/ui.txt" | head -20
+          grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/ui.txt" | head -40
           exit 0
 
   expect-fail:

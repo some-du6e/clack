@@ -132,6 +132,9 @@ type View struct {
 	// the files' FileActions (file_actions.go): the button under the
 	// press (barKey; -1 the group between its buttons) and the pointer
 	barPress, barHot int
+	// the chart under the pointer (index+1, 0 none) and what it points
+	// at there (dataviz.go)
+	vizHot, vizIdx int
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -149,7 +152,10 @@ type View struct {
 	// change resets its toggle (ContainerBlock's useEffect).
 	collapsed    map[any]bool
 	collapseDefs map[string]uint8
-	redraw       bool // ask for a frame after this frame's events
+	// tables: each data_table's page, sort and filter (datatable.go), by
+	// its block_id
+	tables map[any]*tableState
+	redraw bool // ask for a frame after this frame's events
 
 	// lead: the first line's start (SetLead)
 	lead int
@@ -329,6 +335,9 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if v.slugsChanged() {
 		v.dirty = true // a message slug's label reads otherwise now (slugs.go)
 	}
+	if v.tablesChanged() {
+		v.dirty = true // a data_table's menu sorted it (datatable.go)
+	}
 	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
@@ -422,6 +431,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.call.Add(gtx.Ops)
+	v.drawChartHover(gtx, st)
+	v.chartSemantics(gtx)
 	for _, i := range v.liveImgs { // animated GIFs: their frame now, over what's under them
 		v.drawImg(gtx.Ops, st, int(i), false)
 	}
@@ -430,7 +441,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	// over the recorded fill, under its text. Components draw their own.
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
-			if b := &v.d.boxes[i]; b.hoverOver && b.hov == 0 && b.comp == 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
+			if b := &v.d.boxes[i]; b.hoverOver && b.hov == 0 && b.comp == 0 && (b.target == v.hover || b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) && b.hover.A > 0 && v.pillHoverFill(b) {
 				fillRadii(gtx.Ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
@@ -614,11 +625,14 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if v.playing == nil {
 		v.playing = map[string]bool{}
 	}
+	if v.tables == nil {
+		v.tables = map[any]*tableState{}
+	}
 	// JUMBOMOJI is off under Compact (client-boot Y9zX: jumbomoji &&
 	// messages_theme != "dense")
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
-		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations}
+		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations, tables: v.tables}
 	if v.opts.FillBlocks {
 		l.filled = 1 // a view's blocks (FillBlocks)
 	}
@@ -750,6 +764,9 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 				fillRadii(ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
+	}
+	if static {
+		v.paintCharts(ops, st)
 	}
 	if css && hp == 0 {
 		v.partBackgrounds(func(r image.Rectangle, c color.NRGBA) { fillRadii(ops, r, [4]int{}, c) }, comp)
@@ -1553,6 +1570,9 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 	if b := v.expandAt(st, p) + 1; b != v.expHot {
 		v.expHot, v.copyTipAt = b, gtx.Now
 	}
+	if ci, h := v.chartAt(p); ci+1 != v.vizHot || h != v.vizIdx {
+		v.vizHot, v.vizIdx = ci+1, h
+	}
 	if bar, btn, _ := v.barAt(p); barKey(bar, btn) != v.barHot {
 		v.barHot, v.copyTipAt = barKey(bar, btn), gtx.Now
 	}
@@ -1566,6 +1586,7 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 func (v *View) left() {
 	v.hovering = false
 	v.tipFrag = -1
+	v.vizHot, v.vizIdx = 0, -1
 	if !v.dragging {
 		v.hover = -1
 	}
@@ -1952,6 +1973,8 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 				wh.WorkflowCard(tg.id, c, r)
 			}
 		}
+	case tDataTable: // a data_table's buttons (datatable.go)
+		v.dataTableClick(tg, h)
 	case tSnippet: // a snippet's Show more / Show less (snippet.go)
 		if fh, ok := h.(FileActionHandler); ok && tg.file != nil {
 			fh.FileAction(tg.act, tg.file, image.Rectangle{Min: anchor, Max: anchor})

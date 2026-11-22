@@ -139,6 +139,16 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(8), l.dp(8), l.dp(8)
 	case richtext.CardBlock: // .card{margin:8px 0}, kept on the first block
 		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.DataVizBlock: // .scrollContainer{margin:8px 0}; the errorFallback has none
+		if b.DataViz != nil && b.DataViz.Err {
+			return 0, 0, 0
+		}
+		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.DataTableBlock: // .dataTableBlockOuterContainer{margin:4px 0}; the errorFallback has none
+		if b.DataTable != nil && (b.DataTable.Err || b.DataTable.Full) {
+			return 0, 0, 0
+		}
+		return l.dp(4), l.dp(4), l.dp(4)
 	case richtext.ContainerBlock: // .containerBlock{margin-top:16px;margin-bottom:8px}, kept on the first block
 		return l.dp(16), l.dp(16), l.dp(8)
 	}
@@ -724,6 +734,12 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 
 	case richtext.CardBlock:
 		return l.card(b.Card, x, y, w)
+
+	case richtext.DataVizBlock:
+		return l.dataViz(b, x, y, w)
+
+	case richtext.DataTableBlock:
+		return l.dataTable(b, x, y, w)
 
 	case richtext.Table:
 		return l.table(b, x, y, w)

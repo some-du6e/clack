@@ -17,6 +17,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -154,6 +155,19 @@ func (s *surfHandler) OpenFile(f *richtext.File) {
 		openURL(f.Permalink)
 	}
 }
+
+// ChartAction is a data_visualization block's More actions: its menu.
+func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle) {
+	if mn := popups.NewChartMenu(s.h, btn, dv); mn != nil {
+		s.h.ShowOverlay(mn)
+	}
+}
+
+// DataTableAction is a data_table's header button or column header.
+func (s *surfHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
+	popups.DataTableAction(s.h, act, c, btn)
+}
+
 func (s *surfHandler) Button(b richtext.Button) {
 	if b.URL != "" {
 		openURL(b.URL)

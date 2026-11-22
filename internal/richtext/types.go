@@ -203,6 +203,12 @@ const (
 	ShortcutBlock
 	// CardBlock is a card block (card.go): Card holds its parts.
 	CardBlock
+	// DataVizBlock is a data_visualization block (dataviz.go): DataViz
+	// holds its title and chart.
+	DataVizBlock
+	// DataTableBlock is a data_table block (datatable.go): DataTable
+	// holds its caption and rows.
+	DataTableBlock
 )
 
 // Block is one vertical unit of a document.
@@ -256,6 +262,10 @@ type Block struct {
 	Shortcut *ShortcutCard
 	// Card is a CardBlock's parts (card.go).
 	Card *Card
+	// DataViz is a DataVizBlock's title and chart (dataviz.go).
+	DataViz *DataViz
+	// DataTable is a DataTableBlock's caption and rows (datatable.go).
+	DataTable *DataTable
 }
 
 // Container is a container block's header and options (Slack's
