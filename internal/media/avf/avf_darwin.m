@@ -563,15 +563,23 @@ static int mapError(NSError *e) {
 		[self seekTo:0];
 	}
 	_player.preventsDisplaySleepDuringVideoPlayback = YES;
-	[_player play];
-	NOTE(@"play (restart %d)", restart);
-	if (_rate != 1) {
-		_player.rate = (float)_rate;
-		NOTE(@"play: the rate set to %.2f", _rate);
-	}
+	[self startAtRate];
+	NOTE(@"play (restart %d) at %.2f", restart, _rate);
 	_lastTime = -1;
 	[self emit:CLACK_AV_PLAY];
 	[self check];
+}
+
+// startAtRate starts AVPlayer at the wanted rate in one step: the rate set
+// alone, which is AVPlayer's play at that rate. A play (rate 1) with the
+// rate set to 2 straight after lost the start once the item had played
+// and was seeked: AVPlayer said it played at 2, no reason to wait, while
+// the item's timebase stood at rate 0, so nothing moved (train-163 and
+// train-164; on the macOS runners 7 and 12 of 18 replays at 2x, none of
+// 60 with the rate set alone; the runner's own output device as the
+// default either way). A loop's restart keeps the rate too.
+- (void)startAtRate {
+	_player.rate = (float)_rate;
 }
 
 - (void)pause {
@@ -657,7 +665,7 @@ static int mapError(NSError *e) {
 	if (_loop) {
 		[self seekTo:0];
 		if (_wantPlay) { // not when a pause came first
-			[_player play];
+			[self startAtRate];
 		}
 		return;
 	}

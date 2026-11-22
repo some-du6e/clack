@@ -200,6 +200,54 @@ func TestAVFAudioSeekAndRate(t *testing.T) {
 	}
 }
 
+// Replaying at Slack's 2x as a user does: after the clip's end (the play
+// button's restart from 0), and after a pause and a seek back to the
+// start, each on four fresh players, every one to its end in about 1.5 s.
+// With AVPlayer's play and then its rate set to 2, about half of these
+// never moved (train-163, train-164): AVPlayer said it played at 2 while
+// the item's timebase stood at rate 0.
+func TestAVFAudioReplaysAt2x(t *testing.T) {
+	replays := []struct {
+		name string
+		to2x func(r *audioRig) // ends with the replay's Play
+	}{
+		{"after the end", func(r *audioRig) {
+			r.p.Seek(2 * time.Second)
+			r.wait(media.Seeked, 10*time.Second)
+			r.p.Play()
+			r.wait(media.Ended, 10*time.Second)
+			r.p.SetRate(2)
+			r.p.Play() // the restart: from 0
+		}},
+		{"after a pause and a seek", func(r *audioRig) {
+			r.p.Play()
+			r.wait(media.Playing, 10*time.Second)
+			time.Sleep(500 * time.Millisecond)
+			r.p.Pause()
+			r.wait(media.Pause, 10*time.Second)
+			r.p.SetRate(2)
+			r.p.Seek(0)
+			r.wait(media.Seeked, 10*time.Second)
+			r.p.Play()
+		}},
+	}
+	for _, c := range replays {
+		t.Run(c.name, func(t *testing.T) {
+			for i := 0; i < 4; i++ {
+				r := newAudioRig(t, audioFixture("aac"))
+				r.wait(media.LoadedData, 30*time.Second)
+				c.to2x(r)
+				t0 := time.Now()
+				r.wait(media.Ended, 5*time.Second)
+				if took := time.Since(t0); took > 3500*time.Millisecond {
+					t.Errorf("replay %d: 3 s at 2x played in %v, want about 1.5 s", i, took)
+				}
+				r.p.Close()
+			}
+		})
+	}
+}
+
 // A voice clip's Opus in MP4 (plain, and fragmented as Chromium's
 // MediaRecorder writes it) plays to its end through ui's chain:
 // AVFoundation, which on the runners played both itself, then Go audio,
