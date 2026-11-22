@@ -3600,6 +3600,15 @@ jobs:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_WINDOWS_TOAST_TESTS: "1"
         run: go test -count=$COUNT -v -timeout 25m -run '^(TestWindowsToastSystemDM|TestSystemDMToastLikeSlack)$' ./internal/ui
+      # notify-relatives part 4: what in Windows keeps a toast from
+      # showing, logged with the toast's tags
+      - name: "ui: Windows' reasons a toast won't show, in clack.log (COUNT runs)"
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TOAST_TESTS: "1"
+        run: go test -count=$COUNT -v -timeout 10m -run '^TestWindowsToastSaysWhyItWontShow$' ./internal/ui
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

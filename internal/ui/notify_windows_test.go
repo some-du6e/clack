@@ -9,10 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/windows/registry"
+
 	"github.com/some-du6e/clack/assets/icon"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/desktop/uiatest"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 )
@@ -295,5 +298,52 @@ func TestWindowsToastShots(t *testing.T) {
 		uiNotificationCenter(t, false)
 		_ = desktop.RemoveToasts(id, "", "")
 		time.Sleep(700 * time.Millisecond)
+	}
+}
+
+// Windows takes the toast of an app whose notifications are off in
+// Settings (Notifications\Settings\<app id>: Enabled 0) and never shows
+// it. Clack's app id is unpackaged, for which ToastNotifier.Setting fails
+// (0x80070490), so clack.log had nothing past the decision's "notify:
+// show" (Karim's toast of 2026-11-22 02:37Z). The notifier reads the
+// switch and says so with the toast's tags, and lists Clack's settings.
+func TestWindowsToastSaysWhyItWontShow(t *testing.T) {
+	if os.Getenv("CLACK_WINDOWS_TOAST_TESTS") == "" {
+		t.Skip("set CLACK_WINDOWS_TOAST_TESTS=1 to show real toasts (the windows-applog job)")
+	}
+	id := fmt.Sprintf("%s.off%d", desktop.AppUserModelID, time.Now().UnixNano()%1e9)
+	if _, err := desktop.RegisterAppUserModelID(id, "Clack", filepath.Join(t.TempDir(), "clack.png"), icon.PNG128); err != nil {
+		t.Fatal(err)
+	}
+	key := `Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\` + id
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, key, registry.SET_VALUE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = k.SetDWordValue("Enabled", 0)
+	k.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = registry.DeleteKey(registry.CURRENT_USER, key)
+		_ = desktop.RemoveToasts(id, "", "")
+		_ = desktop.UnregisterAppUserModelID(id)
+	})
+	logs := captureLog(t)
+	const ch, ts = "C0NOTEOFF01", "1762520199.000300"
+	tn := &toastNotifier{aumid: id, cache: t.TempDir()}
+	_ = tn.NotifyNote(&desktopNote{Title: "A synthetic title", Body: "a synthetic body", Channel: ch, Msg: ts})
+	lines := logs.matching("notify: ")
+	at := logtag.ID(ch) + "/" + logtag.ID(ts)
+	if want := "notify: Windows has Clack's notifications off (Settings > System > Notifications > Clack): the toast for " + at + " won't show"; !contains(lines, want) {
+		t.Errorf("no %q in clack.log: %q", want, lines)
+	}
+	settings := false
+	for _, l := range lines {
+		settings = settings || strings.HasPrefix(l, "notify: Windows' notification settings for Clack:") && strings.Contains(l, " Enabled=0")
+	}
+	if !settings {
+		t.Errorf("clack.log doesn't list Clack's notification settings with Enabled=0: %q", lines)
 	}
 }
