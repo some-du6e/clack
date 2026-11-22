@@ -31,6 +31,7 @@ import (
 
 // ToastIcon shows text in Slack's Toast with icon (popups.IconToaster).
 func (a *App) ToastIcon(text, icon string) {
+	a.toastGone() // the toast it replaces has closed
 	a.toast = toastState{text: text, icon: icon, until: time.Now().Add(6 * time.Second)}
 	a.Invalidate()
 }
@@ -72,6 +73,7 @@ func (a *App) layoutSlackToast(gtx layout.Context) {
 // (LeaveChannelsInProgressToast, NIXs) are ones; fadeDelay 5s for the
 // section toasts, Toast's default 6s for the leave's (d).
 func (a *App) ToastParts(parts []i18n.Part, icon string, iconCol color.NRGBA, d time.Duration) {
+	a.toastGone() // the toast it replaces has closed
 	a.toast = toastState{text: i18n.Plain(parts), parts: parts, icon: icon, iconCol: iconCol, rich: true, until: time.Now().Add(d)}
 	a.Invalidate()
 }

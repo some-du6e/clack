@@ -92,6 +92,9 @@ type epkPicker struct {
 	First        []string // the first pack group's emoji
 	CustomShares bool     // Custom holds one of them too
 	BeforeCustom bool     // the first pack group's heading comes right before Custom's
+	// CustomTab is the heading the Custom tab goes to ("" for none), and
+	// CustomClick the heading a click on it scrolled the list to
+	CustomTab, CustomClick string
 }
 
 // epkPickerOf opens a picker and reads it once its index and pack groups
@@ -119,6 +122,19 @@ func epkPickerOf(h Host) func() (epkPicker, bool) {
 			}
 		}
 		rows, heads, _ := epLayoutRows(nil, p.lists, false, 27, 1, 33, 10)
+		label := func(i int) string {
+			if i < 0 || i >= len(rows) || rows[i].n != 0 {
+				return ""
+			}
+			return p.groupLabel(int(rows[i].list))
+		}
+		out.CustomTab = label(int(heads[epGroupCustom]))
+		p.rowsDirty = true // clickTab works the headings out afresh
+		p.clickTab(epGroupCustom)
+		out.CustomClick = label(p.list.Position.First)
+		if p.list.Position.First == 0 && heads[epGroupCustom] != 0 {
+			out.CustomClick = "" // left at the top: the tab found no heading
+		}
 		for i, r := range rows {
 			if r.n == 0 && int(r.list) == epGroupSearch+1 {
 				// the pack group's rows run up to Custom's heading
@@ -126,7 +142,7 @@ func epkPickerOf(h Host) func() (epkPicker, bool) {
 				for next < len(rows) && rows[next].n > 0 {
 					next++
 				}
-				out.BeforeCustom = heads[epGroupCustom] == int32(next)
+				out.BeforeCustom = next < len(rows) && rows[next].n == 0 && int(rows[next].list) == epGroupCustom
 			}
 		}
 		return out, true

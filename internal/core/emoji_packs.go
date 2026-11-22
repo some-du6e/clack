@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
@@ -198,11 +199,25 @@ func (a *App) EmojiPackIsNew(id string) bool {
 	return ok && p.ID == id && a.EmojiPacksRecent() && !a.PrefBool(PrefEmojiPacksCollectionCTA, false)
 }
 
+// EmojiPackNew is the pack whose card draws the "new" pill (EmojiPackIsNew),
+// "" for none: one read of the store and the prefs for every card.
+func (a *App) EmojiPackNew() string {
+	p, ok := a.NewestEmojiPack()
+	if !ok || !a.EmojiPacksRecent() || a.PrefBool(PrefEmojiPacksCollectionCTA, false) {
+		return ""
+	}
+	return p.ID
+}
+
 // ClickedEmojiPackCTA is EmojiPackCard's handleOnClick on the new pack:
 // setUserPrefByApi emoji_packs_clicked_collection_cta true, the local
 // pref first (Slack's is optimistic), then users.prefs.set.
 func (a *App) ClickedEmojiPackCTA() {
 	a.mergePrefs(map[string]json.RawMessage{PrefEmojiPacksCollectionCTA: json.RawMessage("true")})
+	ps := a.packs()
+	ps.mu.Lock()
+	ps.gen++ // what the cards drew from (EmojiPackNew) changed
+	ps.mu.Unlock()
 	a.emit(Event{Type: "emoji_packs"})
 	go func() {
 		ctx, cancel := context.WithTimeout(a.bgCtx(), 30*time.Second)
@@ -238,9 +253,16 @@ func (a *App) FetchEmojiPacks() {
 		}
 		ps.list, ps.fetched = list, true // setEmojiCollections
 		ps.gen++
+		// the newest as stored now (a copy: emoji_collection_added
+		// writes the list under the lock)
+		newest, ok := newestPack(ps.list)
 		ps.mu.Unlock()
-		a.potentialNewPack(ctx, list)
+		// the store first: Slack dispatches setEmojiCollections without
+		// waiting for handlePotentialNewPack's reads and writes
 		a.emit(Event{Type: "emoji_packs"})
+		if ok {
+			a.potentialNewPack(ctx, newest)
+		}
 	}()
 }
 
@@ -278,11 +300,7 @@ func (a *App) fetchEmojiPacks(ctx context.Context) ([]EmojiPack, error) {
 // newer than emoji_packs_most_recent_available_time and the viewer may
 // add custom emoji, or it's installed, the four emoji pack prefs start
 // over (setMultipleUserPrefsByApi): available now, nothing clicked.
-func (a *App) potentialNewPack(ctx context.Context, list []EmojiPack) {
-	p, ok := newestPack(list)
-	if !ok {
-		return
-	}
+func (a *App) potentialNewPack(ctx context.Context, p EmojiPack) {
 	since := 0.0
 	if v, ok := a.Pref(PrefEmojiPacksAvailableTime); ok {
 		_ = json.Unmarshal(v, &since)
@@ -304,25 +322,33 @@ func (a *App) potentialNewPack(ctx context.Context, list []EmojiPack) {
 // canAddCustomEmoji is Llxp D: permissions/info grants ADD_CUSTOM_EMOJI.
 func (a *App) canAddCustomEmoji(ctx context.Context) bool {
 	body := map[string]any{"user_id": a.S.SelfID(), "permissions": []string{PermAddCustomEmoji}}
+	// a workspace permission: on Grid asked for the viewer's workspace,
+	// as the broadcast permissions' group DM case asks (broadcast.go)
+	team := a.C.Creds.Team
+	perTeam := a.C.Creds.EnterpriseID != "" && team != ""
+	if perTeam {
+		body["team_ids"] = []string{team}
+	}
 	var r struct {
-		Allowed []string `json:"allowed"`
+		Allowed        []string            `json:"allowed"`
+		AllowedPerTeam map[string][]string `json:"allowed_per_team"`
 	}
 	if a.C.Edge(ctx, "permissions/info", body, &r) != nil {
 		return false
 	}
-	for _, p := range r.Allowed {
-		if p == PermAddCustomEmoji {
-			return true
-		}
+	allowed := r.Allowed
+	if perTeam && r.AllowedPerTeam != nil {
+		allowed = append(allowed, r.AllowedPerTeam[team]...)
 	}
-	return false
+	return slices.Contains(allowed, PermAddCustomEmoji)
 }
 
 // AddEmojiPack is addEmojiCollection: emoji.addCollection {collection_id}.
 // already_installed counts as added. The store changes when the server's
 // emoji_collection_added arrives.
 func (a *App) AddEmojiPack(ctx context.Context, id string) error {
-	err := a.C.Call(ctx, "emoji.addCollection", url.Values{"collection_id": {id}}, nil)
+	// a click: a retry after a failure is deliberate (past the backoff)
+	err := a.C.Call(slack.NoBackoff(ctx), "emoji.addCollection", url.Values{"collection_id": {id}}, nil)
 	var se *slack.Error
 	if errors.As(err, &se) && se.Code == "already_installed" {
 		return nil
@@ -335,7 +361,7 @@ func (a *App) AddEmojiPack(ctx context.Context, id string) error {
 // {collection_id}.
 func (a *App) RemoveEmojiPack(ctx context.Context, id string) error {
 	a.resetEmojiPacks()
-	return a.C.Call(ctx, "emoji.removeCollection", url.Values{"collection_id": {id}}, nil)
+	return a.C.Call(slack.NoBackoff(ctx), "emoji.removeCollection", url.Values{"collection_id": {id}}, nil) // a click
 }
 
 // resetEmojiPacks is uninstallEmojiCollection: the store's initial state.

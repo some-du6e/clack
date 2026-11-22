@@ -135,9 +135,24 @@ func epLayoutRows(dst []epRow, lists epLists, search bool, hdr, gap, rowH, last 
 	} else {
 		for g := 0; g < epNumGroups; g++ {
 			if g == epGroupCustom { // the packs' groups, then Custom (NebS tZ)
+				first := int32(-1)
 				for k := epGroupSearch + 1; k < len(lists); k++ {
+					if first < 0 && len(lists[k]) > 0 {
+						first = int32(len(dst))
+					}
 					add(k)
 				}
+				add(g)
+				// Slack's Custom tab is the packs' groups and Custom
+				// (onGroupTabClick: getCustomTabGroups' omitFromTabs groups
+				// first), and Custom is there whenever a pack is
+				// (g.length > 0 || f.length > 0): the tab goes to the first
+				// pack's heading, also when every custom emoji is a pack's
+				// and Custom itself holds none
+				if first >= 0 {
+					heads[epGroupCustom] = first
+				}
+				continue
 			}
 			add(g)
 		}
@@ -384,7 +399,9 @@ func (p *EmojiPicker) refreshPacks() {
 		}
 		var ids []int32
 		for _, e := range pk.LocalEmoji {
-			if id, ok := p.idx.lookup(e.Name); ok {
+			// by name, as Slack's groups go: a name the index holds only
+			// as an alias of another emoji is that emoji's, not the pack's
+			if id, ok := p.idx.lookup(e.Name); ok && p.idx.names[id] == e.Name {
 				ids = append(ids, id)
 				if in == nil {
 					in = map[int32]bool{}
