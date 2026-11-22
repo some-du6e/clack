@@ -1493,10 +1493,20 @@ func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool,
 }
 
 // Upsert inserts or replaces a top-level message in a loaded timeline.
-func (s *Store) Upsert(ch string, m slack.Message) {
+func (s *Store) Upsert(ch string, m slack.Message) { s.upsert(ch, m, true) }
+
+// UpsertLocal is Upsert for a copy only this client has (an optimistic
+// send or its upload placeholder, a local ephemeral): its ts is the local
+// clock's, so the notifications' maxTs, which takes the server's alone,
+// doesn't take it (notifications_maxts.go).
+func (s *Store) UpsertLocal(ch string, m slack.Message) { s.upsert(ch, m, false) }
+
+func (s *Store) upsert(ch string, m slack.Message, server bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.noteAddedTSLocked(m.TS)
+	if server {
+		s.noteAddedTSLocked(m.TS)
+	}
 	t := s.timelines[ch]
 	if t == nil {
 		return
@@ -1526,6 +1536,7 @@ func (s *Store) Upsert(ch string, m slack.Message) {
 func (s *Store) UpsertInRange(ch string, m slack.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedTSLocked(m.TS)
 	t := s.timelines[ch]
 	if t == nil {
 		return
@@ -1928,6 +1939,15 @@ func (s *Store) SetThread(ch, ts string, msgs []slack.Message) {
 func (s *Store) AddReply(ch string, m slack.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedTSLocked(m.TS)
+	s.addReplyLocked(ch, m)
+}
+
+// AddReplyLocal is AddReply for a copy only this client has (UpsertLocal):
+// maxTs doesn't take its local clock's ts.
+func (s *Store) AddReplyLocal(ch string, m slack.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.addReplyLocked(ch, m)
 }
 
@@ -1937,6 +1957,7 @@ func (s *Store) AddReply(ch string, m slack.Message) {
 func (s *Store) AddReplyNoted(ch string, m slack.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedTSLocked(m.TS)
 	s.addReplyLocked(ch, m)
 	if ch != "" && m.TS != "" {
 		s.noteLiveLocked(ch, m.TS, &m)
@@ -1944,7 +1965,6 @@ func (s *Store) AddReplyNoted(ch string, m slack.Message) {
 }
 
 func (s *Store) addReplyLocked(ch string, m slack.Message) {
-	s.noteAddedTSLocked(m.TS)
 	key := ch + "/" + m.ThreadTS
 	if th, ok := s.threads[key]; ok {
 		replaced := false
