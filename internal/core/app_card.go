@@ -341,7 +341,7 @@ func (a *App) runAppCardFetch(c *appCardCache, e *appCardEntry, botID, appID, us
 	var err error
 	for try := 1; try <= appCardTries; try++ {
 		actx, cancel := context.WithTimeout(slack.NoBackoff(a.bg), appCardAttempt)
-		card, err = a.fetchAppCard(actx, botID, appID)
+		card, err = a.fetchAppCard(actx, botID, appID, a.botHomeTeam(botID, userID))
 		cancel()
 		if !appCardTimedOut(err) {
 			break
@@ -373,10 +373,13 @@ func appCardTimedOut(err error) bool {
 	return err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout())
 }
 
-func (a *App) fetchAppCard(ctx context.Context, botID, appID string) (AppCard, error) {
+func (a *App) fetchAppCard(ctx context.Context, botID, appID, home string) (AppCard, error) {
 	p := url.Values{}
 	if botID != "" {
 		p.Set("bot", botID)
+		if home != "" { // fcgE fetchProfileViaApi: bot_home_team, the homeWorkspaceId param
+			p.Set("bot_home_team", home)
+		}
 	}
 	if appID != "" {
 		p.Set("app", appID)
@@ -388,6 +391,25 @@ func (a *App) fetchAppCard(ctx context.Context, botID, appID string) (AppCard, e
 		return AppCard{}, err
 	}
 	return a.appCardOf(res.AppProfile, botID), nil
+}
+
+// botHomeTeam is the homeWorkspaceId Slack's hover card asks for the app
+// with (useProfileHoverApp → rIIG getTeamIdFromBotOrUser): the bot's
+// team_id when it is a workspace's, else the member's (getTeamIdFromBotAppUser:
+// its team_id when a workspace's), else the viewer's workspace. Without it
+// apps.profile.get answers a bot the member's profile names but bots.info
+// no longer finds (most of Hack Club's #new-bots) as the org's app, not
+// installed; with it, as the workspace's install.
+func (a *App) botHomeTeam(_, userID string) string {
+	ws := func(id string) bool { return strings.HasPrefix(id, "T") }
+	// (the store keeps no team for a bot; a message's bot_profile.team_id
+	// is the viewer's workspace for every bot seen so far)
+	if userID != "" {
+		if u, ok := a.S.User(userID); ok && ws(u.TeamID) {
+			return u.TeamID
+		}
+	}
+	return firstNonEmpty(a.C.Creds.Team, a.S.TeamID)
 }
 
 // appCardOf maps app_profile like Slack's ToML F.

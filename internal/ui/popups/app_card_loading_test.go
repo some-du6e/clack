@@ -52,7 +52,13 @@ import (
 // the fake to hook.
 func acEnv(t *testing.T, ensure ...string) (*tzHost, *fakeslack.Server) {
 	t.Helper()
-	fs, err := fakeslack.Start(fakeslack.Small)
+	return acEnvSize(t, fakeslack.Small, ensure...)
+}
+
+// acEnvSize is acEnv on a fake of size sz.
+func acEnvSize(t *testing.T, sz fakeslack.Size, ensure ...string) (*tzHost, *fakeslack.Server) {
+	t.Helper()
+	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,5 +271,71 @@ func acShot(t *testing.T, name string, img *image.RGBA, r image.Rectangle) {
 	defer f.Close()
 	if err := png.Encode(f, out); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Hack Club's #new-bots (C0BKP49D58E, Karim: "about every bot in" it),
+// read for ids and flags only: every poster and member bot there is an
+// app's bot user, in three shapes (fakeslack Size.NewBots): a member
+// whose profile.bot_id bots.info no longer finds (most of them), an app
+// whose messages carry a newer bot than its member's profile, and a live
+// bot. Each card goes from the loading card to the app once, and asks
+// for the app as Slack's does: with bot_home_team, the homeWorkspaceId
+// useProfileHoverApp works out (the member's workspace, else the
+// viewer's), so a stale bot reads as the workspace's install, not the
+// org's uninstalled app.
+func TestAppHoverCardNewBotsShapes(t *testing.T) {
+	anchor := image.Rect(300, 600, 400, 620)
+	sz := fakeslack.Small
+	sz.NewBots = true
+	for _, c := range []struct {
+		name      string
+		user, bt  string
+		wantBot   string // the bot apps.profile.get is asked for
+		active    bool   // auth or config came back: no "This app is unavailable"
+		installed bool
+	}{
+		{"stale profile bot", fakeslack.NewBotsStaleUserID, "", fakeslack.NewBotsStaleBotID, false, true},
+		{"two bots, the member", fakeslack.NewBotsTwoUserID, "", fakeslack.NewBotsTwoOldBotID, false, true},
+		{"two bots, a message's", fakeslack.NewBotsTwoUserID, fakeslack.NewBotsTwoBotID, fakeslack.NewBotsTwoBotID, true, true},
+		{"two bots, a message's with no member", "", fakeslack.NewBotsTwoBotID, fakeslack.NewBotsTwoBotID, true, true},
+		{"live bot", fakeslack.NewBotsLiveUserID, "", fakeslack.NewBotsLiveBotID, true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ensure := []string{fakeslack.AdminID}
+			if c.user != "" {
+				ensure = append(ensure, c.user)
+			}
+			h, fs := acEnvSize(t, sz, ensure...)
+			var mu sync.Mutex
+			var asked []url.Values
+			fs.SetHook(func(method string, f url.Values) (any, bool) {
+				if method == "apps.profile.get" {
+					mu.Lock()
+					asked = append(asked, f)
+					mu.Unlock()
+				}
+				return nil, false
+			})
+			p := NewHoverCard(h, anchor, c.user, c.bt)
+			rs := acFrames(t, p, 10*time.Second, func() bool { return p.app.card != nil })
+			wantSlackHeights(t, c.name, rs)
+			mu.Lock()
+			defer mu.Unlock()
+			if len(asked) == 0 {
+				t.Fatal("no apps.profile.get")
+			}
+			f := asked[0]
+			if f.Get("bot") != c.wantBot || f.Get("bot_home_team") != fakeslack.TeamID {
+				t.Errorf("apps.profile.get bot=%q bot_home_team=%q; Slack asks bot=%s bot_home_team=%s (homeWorkspaceId)", f.Get("bot"), f.Get("bot_home_team"), c.wantBot, fakeslack.TeamID)
+			}
+			card := *p.app.card
+			if card.Installed == nil || *card.Installed != c.installed || card.HomeTeamID != fakeslack.TeamID {
+				t.Errorf("the card reads the app as installed=%v on %q; Slack's answer is the workspace's install (%v on %s)", card.Installed != nil && *card.Installed, card.HomeTeamID, c.installed, fakeslack.TeamID)
+			}
+			if card.Active != c.active {
+				t.Errorf("active %v, want %v (installation.is_active: auth or config in the answer)", card.Active, c.active)
+			}
+		})
 	}
 }
