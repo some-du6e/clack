@@ -96,13 +96,17 @@ type backend struct {
 	pluginsOnce  sync.Once
 	bookmarks    map[string][]core.Bookmark
 	fetched      map[string]time.Time
-	// headerGen numbers each channel's header reads (opened): only the
-	// newest one's answer lands. Each read posts once its three calls are
-	// back, so an older one could post last: a read that started before a
-	// Hide tab, its members call slow, put the hidden tab back on the bar
-	// after the read the hide asked for (files-filters-3's push ci, run
-	// 44980164338: reads of 1 tab, then 0 and 0, and the bar kept 1).
-	headerGen map[string]int
+	// headerGen numbers each channel's header reads (opened), and
+	// headerLanded is the newest whose tab read worked and landed: an
+	// answer older than that one is dropped. Each read posts once its
+	// three calls are back, so an older one could post last: a read that
+	// started before a Hide tab, its members call slow, put the hidden tab
+	// back on the bar after the read the hide asked for (files-filters-3's
+	// push ci, run 44980164338: reads of 1 tab, then 0 and 0, and the bar
+	// kept 1). A newer read that fails lands nothing, so an older good
+	// answer still lands after it (dropping on any newer read left a cold
+	// start's bar empty when the newer one failed: no cache, no retry).
+	headerGen, headerLanded map[string]int
 	// headerStarted and headerAnswered count the header reads opened
 	// started and the answers that came back to the UI goroutine (landed
 	// or dropped): tests wait for every read out to have answered
@@ -1327,8 +1331,14 @@ func (b *backend) opened(ch string) {
 		}
 		a.Post(func() {
 			b.headerAnswered++
-			if b.headerGen[ch] != gen {
-				return // a newer read of this header is out: its answer wins
+			if gen < b.headerLanded[ch] {
+				return // a newer read of this header landed: its answer wins
+			}
+			if err == nil {
+				if b.headerLanded == nil {
+					b.headerLanded = map[string]int{}
+				}
+				b.headerLanded[ch] = gen
 			}
 			if b.tabsDone == nil {
 				b.tabsDone = map[string]bool{}

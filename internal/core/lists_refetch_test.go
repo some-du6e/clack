@@ -59,3 +59,69 @@ func TestListRefetchKeepsALaterEdit(t *testing.T) {
 		t.Errorf("after the refetch the item's status is %q, want the edit's OptBLOK0001", s)
 	}
 }
+
+// The same for a List call's own caller: a read out when the edit lands
+// gives back the cached list, the edit in it, not the read it set aside
+// (listview stores what List returns over its copy: the old cell came
+// back on screen until the refetch's reload).
+func TestListSetAsideReadReturnsTheCache(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	evs, stop := a.Subscribe()
+	defer stop()
+	a.SetRealtime(true)
+	waitEvent(t, evs, 5*time.Second, func(ev Event) bool { return ev.Type == "connection" && ev.Connected })
+	id := fakeslack.ListKitchen
+	if _, err := a.List(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.OpenList(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	defer a.CloseList(id)
+	status := func(d *ListDoc) string {
+		if d == nil {
+			return ""
+		}
+		r := d.Record("Rec0ITEM005")
+		if r == nil || r.Field("Col0STATUS1") == nil || len(r.Field("Col0STATUS1").Select) != 1 {
+			return ""
+		}
+		return r.Field("Col0STATUS1").Select[0]
+	}
+	if s := status(a.CachedList(id)); s == "" || s == "OptBLOK0001" {
+		t.Fatalf("the item's status at the start: %q", s)
+	}
+	n := fs.CallCount("lists.records.list")
+	fs.SetFault("lists.records.list", fakeslack.Fault{ReplyDelay: 1500 * time.Millisecond, Times: 1})
+	type got struct {
+		d   *ListDoc
+		err error
+	}
+	done := make(chan got, 1)
+	go func() {
+		d, err := a.List(ctx, id)
+		done <- got{d, err}
+	}()
+	for deadline := time.Now().Add(5 * time.Second); fs.CallCount("lists.records.list") == n; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the read never went out")
+		}
+	}
+	fs.EditListAsOther(id, "Rec0ITEM005", lists.Field{Key: "Col0STATUS1", ColumnID: "Col0STATUS1", Select: []string{"OptBLOK0001"}})
+	waitEvent(t, evs, 10*time.Second, func(ev Event) bool {
+		return ev.Type == "list" && ev.ID == id && ev.Name == ListChanged && status(a.CachedList(id)) == "OptBLOK0001"
+	})
+	var r got
+	select {
+	case r = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("List never returned")
+	}
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if s := status(r.d); s != "OptBLOK0001" {
+		t.Errorf("List gave back the item's status %q, want the edit's OptBLOK0001 (the cache's)", s)
+	}
+}
