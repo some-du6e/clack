@@ -4,6 +4,7 @@ import (
 	"image"
 	"strconv"
 	"strings"
+	"time"
 
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -159,6 +160,7 @@ func (b *base) addBtn(m *core.Message) *widget.Clickable {
 	k := m.Channel + "/" + m.TS
 	if b.addBtns == nil || len(b.addBtns) > 2000 {
 		b.addBtns = map[string]*widget.Clickable{}
+		b.addTips = nil
 	}
 	c := b.addBtns[k]
 	if c == nil {
@@ -166,6 +168,20 @@ func (b *base) addBtn(m *core.Message) *widget.Clickable {
 		b.addBtns[k] = c
 	}
 	return c
+}
+
+// addTip is m's add-reaction button's tooltip state.
+func (b *base) addTip(m *core.Message) *popups.TipState {
+	k := m.Channel + "/" + m.TS
+	if b.addTips == nil {
+		b.addTips = map[string]*popups.TipState{}
+	}
+	t := b.addTips[k]
+	if t == nil {
+		t = &popups.TipState{Delay: 300 * time.Millisecond}
+		b.addTips[k] = t
+	}
+	return t
 }
 
 // layoutAdd is ReactionAddButton (.c-reaction_add), as in a channel: a
@@ -210,10 +226,15 @@ func (a *actBar) layoutAdd(gtx C, _ slackc.Props) D {
 			return D{Size: size}
 		})
 	}
+	var d D
 	if st.Active() {
-		return st.Wrap(gtx, draw)
+		d = st.Wrap(gtx, draw)
+	} else {
+		d = draw(gtx)
 	}
-	return draw(gtx)
+	// ReactionAddButton's Tooltip (BaseTooltip, top, 300 ms)
+	popups.Tooltip(gtx, b.th, b.addTip(a.m), btn.Hovered(), size, popups.Above, "Add reaction…", "")
+	return d
 }
 
 // openReactionPicker opens the emoji picker for reacting to m at the

@@ -2,6 +2,7 @@ package messages
 
 import (
 	"encoding/json"
+	"gioui.org/f32"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/op/clip"
@@ -112,9 +113,19 @@ type row struct {
 	name      string
 	avatar    string
 	statusURL string
-	huddle    string // the huddle channel while the sender is in one (headphones by the name)
-	bot       bool
-	badge     string // the sender's app badge (core.SenderBadge: APP, AGENT, WORKFLOW…; "" for people)
+	// the custom status's Tooltip (BaseCustomStatus; status_tip.go): its
+	// text, expiration and the emoji's name for a status without text;
+	// the pointer over the icon (statusHov, statusPt in the icon's box,
+	// statusSize), drawn this frame (statusDrawn)
+	statusText, statusName string
+	statusExp              int64
+	statusTag              int
+	statusHov, statusDrawn bool
+	statusPt               f32.Point
+	statusSize             image.Point
+	huddle                 string // the huddle channel while the sender is in one (headphones by the name)
+	bot                    bool
+	badge                  string // the sender's app badge (core.SenderBadge: APP, AGENT, WORKFLOW…; "" for people)
 
 	needChan bool   // body mentions channels not resolved yet
 	allRich  bool   // richRaw's blocks are all rich_text (Compact: the text runs on after the sender)
@@ -137,6 +148,8 @@ type row struct {
 	reactExpand        widget.Clickable // ReactionBar's "N more" / "Show less"
 	reactExpanded      bool             // the bar's isExpanded (Slack keeps it per message)
 	expandTip          popups.TipState
+	addTip             popups.TipState // ReactionAddButton's "Add reaction…"
+	tsTip, compactTip  tsTipper        // the header's and the gutter's Timestamp tooltips (timestamp_tip.go)
 
 	// the broadcast's root preview (rootPreview), looked up once per list
 	// snapshot
@@ -149,8 +162,12 @@ type row struct {
 
 	// geometry of the last layout (row-local), for overlays
 	reactRects []image.Rectangle
-	addRect    image.Rectangle
-	height     int
+	// laidPill is the pill whose Reaction slot the last laid-out bar
+	// child drew (-1 none): a plugin's ReactionBar children map to their
+	// pills through it, for the tooltip (layoutReactionBar)
+	laidPill int
+	addRect  image.Rectangle
+	height   int
 
 	// plugin state (patched path only)
 	rc *rowCtx // this frame's inputs, for the natives
@@ -573,6 +590,7 @@ func (r *row) resolve(rc *rowCtx) {
 	// picture, badge); m.Name/m.Avatar only name user-less senders
 	// (core/sender.go).
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
+	r.statusText, r.statusName, r.statusExp = "", "", 0
 	r.huddle, r.miss = "", core.MemberKnown
 	if m.User != "" {
 		r.name, r.avatar = "", ""
@@ -605,6 +623,7 @@ func (r *row) resolve(rc *rowCtx) {
 				r.avatar = u.Avatar
 			}
 			r.statusURL = u.StatusEmojiURL
+			r.statusText, r.statusName, r.statusExp = statusTipOf(&u)
 			// qeNM: in_a_huddle with a channel and an unexpired state.
 			if u.Huddle && u.HuddleChannel != "" && u.HuddleExpires > 0 && time.Unix(u.HuddleExpires, 0).After(rc.now) {
 				r.huddle = u.HuddleChannel
@@ -1550,6 +1569,7 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	dy := strutBaseline(gtx) - (d.Size.Y - d.Baseline)
 	t := op.Offset(image.Pt(box.X-sz.X, dy)).Push(gtx.Ops)
 	call.Add(gtx.Ops)
+	r.compactTip.layout(gtx, r, d.Size)
 	t.Pop()
 	r.compactBL = dy + d.Size.Y - d.Baseline
 	return layout.Dimensions{Size: box}
@@ -2139,6 +2159,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 			}
 			rrect(gtx.Ops, image.Rect(xx, top, xx+bs, top+bs), bs/2, bg)
 		}
+		r.statusArea(gtx, image.Rect(xx, top, xx+bs, top+bs))
 		is := dp(gtx, 16)
 		at(gtx, xx+(bs-is)/2, top+(bs-is)/2, func(gtx layout.Context) layout.Dimensions {
 			return icons.Get(icons.Slack("headphones"))(gtx, unit.Dp(16), c.Text)
@@ -2147,7 +2168,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		if dense {
 			xx += dp(gtx, 3)
 		}
-	} else if r.statusURL != "" {
+	} else if r.statusURL != "" && (r.statusExp <= 0 || gtx.Now.Unix() < r.statusExp) { // useMemberCustomStatusExpired: an expired status is gone
 		s := dp(gtx, mt.statusEmoji)
 		xx += dp(gtx, 4)
 		top := baseline - s + dp(gtx, 3)
@@ -2155,6 +2176,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 			xx += statusBorder(gtx, c, image.Rect(xx, top, xx+s, top+s))
 		}
 		drawEmoji(gtx, rc.h, r.statusURL, image.Rect(xx, top, xx+s, top+s))
+		r.statusArea(gtx, image.Rect(xx, top, xx+s, top+s))
 		xx += s
 		if dense {
 			xx += dp(gtx, 3)
@@ -2236,10 +2258,14 @@ func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensi
 			gtx.Execute(op.InvalidateCmd{At: now.Add(time.Minute - age%time.Minute)})
 		}
 	}
+	var d layout.Dimensions
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, r.rc.th, st, tsS, tsText) })
+		d = st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, r.rc.th, st, tsS, tsText) })
+	} else {
+		d = label(gtx, r.rc.th, tsS, tsText)
 	}
-	return label(gtx, r.rc.th, tsS, tsText)
+	r.tsTip.layout(gtx, r, d.Size)
+	return d
 }
 
 // labelLine draws a small gray label with an icon above the name ("Pinned").
@@ -2611,10 +2637,18 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 		// Reaction and add-button slots a plugin passed on, its own
 		// buttons) are flex items, each placed like a pill
 		items := slackc.Items(e)
+		// each pill's place, for its ReactionTip as on the native path:
+		// the child a Reaction slot was drawn in (a plugin may wrap it)
+		r.reactRects = append(r.reactRects, make([]image.Rectangle, len(r.groups))...)
 		lay := func(gtx layout.Context) layout.Dimensions {
 			return r.flowPills(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
+				r.laidPill = -1
 				return slackc.LayoutElement(gtx, items[i])
-			}, nil)
+			}, func(i int, rect image.Rectangle) {
+				if k := r.laidPill; k >= 0 && k < len(r.reactRects) {
+					r.reactRects[k] = rect.Add(r.reactAt)
+				}
+			}, true)
 		}
 		if st.Active() {
 			return st.Wrap(gtx, lay)
@@ -2653,7 +2687,7 @@ func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 		case i >= shown+extra:
 			r.addRect = rect.Add(r.reactAt)
 		}
-	})
+	}, false)
 }
 
 // ReactionBar's buttons after the pills (reactionCollapse).
@@ -2770,10 +2804,10 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 }
 
 // flowPills places n items left to right in rows of pill height, wrapping
-// at the bar's width (the reaction bar's flex-wrap). placed, for the
-// native bar, gets each item's rect (kept for overlays).
-func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context, i int) layout.Dimensions, placed func(i int, rect image.Rectangle)) layout.Dimensions {
-	native := placed != nil
+// at the bar's width (the reaction bar's flex-wrap). placed gets each
+// item's rect (kept for overlays: the pills' tooltips). skipEmpty: a
+// plugin's children, where a null child takes no place.
+func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context, i int) layout.Dimensions, placed func(i int, rect image.Rectangle), skipEmpty bool) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	ph := dp(gtx, mt.reactH)
 	gap := dp(gtx, mt.reactGap)
@@ -2797,12 +2831,12 @@ func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context,
 		rec := op.Record(gtx.Ops)
 		d := item(g, i)
 		call := rec.Stop()
-		if !native && d.Size.X == 0 && d.Size.Y == 0 {
+		if skipEmpty && d.Size.X == 0 && d.Size.Y == 0 {
 			continue // a plugin's null child takes no place in the row
 		}
 		rect := place(call, d.Size)
 		bottom = rect.Max.Y
-		if native {
+		if placed != nil {
 			placed(i, rect)
 		}
 	}
@@ -2827,12 +2861,25 @@ func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensi
 		return layout.Dimensions{Size: size}
 	}
 	gtx.Constraints = layout.Exact(size)
+	var d layout.Dimensions
 	if st.Active() {
 		// .c-reaction_add is a 9999px pill: a rule's box-shadow rings it
-		return st.WrapRounded(gtx, unit.Dp(mt.reactH/2), func(gtx layout.Context) layout.Dimensions { return r.addButton(gtx, st, size) })
+		d = st.WrapRounded(gtx, unit.Dp(mt.reactH/2), func(gtx layout.Context) layout.Dimensions { return r.addButton(gtx, st, size) })
+	} else {
+		d = r.addButton(gtx, st, size)
 	}
-	return r.addButton(gtx, st, size)
+	// ReactionAddButton's Tooltip (BaseTooltip, top): "Add reaction…"
+	// after 300 ms, as the button's aria-label says
+	r.addTip.Delay = reactionAddTipDelay
+	popups.Tooltip(gtx, rc.th, &r.addTip, r.addReact.Hovered(), size, popups.Above, reactionAddTip, "")
+	return d
 }
+
+// ReactionAddButton's tip and its delay (boot-shared, CDN a09b625d90aa).
+const (
+	reactionAddTip      = "Add reaction…"
+	reactionAddTipDelay = 300 * time.Millisecond
+)
 
 func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) layout.Dimensions {
 	c := r.rc.c
@@ -2882,6 +2929,7 @@ func (pl *reactPill) reacted() bool {
 
 // layout is Reaction around the UnstyledButton pill.
 func (pl *reactPill) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	pl.r.laidPill = pl.i // the bar child this slot is drawn in is this pill's
 	if e, ok := slackc.PropChildren(p); ok {
 		return slackc.LayoutElement(gtx, e) // the button JS rendered in Reaction's tree
 	}
@@ -3647,7 +3695,15 @@ func reactionTipLine(h Host, re *core.Reaction, selfID string, cut bool) string 
 			// member users/info didn't return; never the id
 			switch u, ok := app.User(id); {
 			case ok:
+				// getPrefCompliantMemberNameById (R6Qy I): "Name
+				// hidden" for someone hidden, else the real name
+				// under display_real_names, else the display name
 				n = u.Name
+				if app.UserHidden(id) {
+					n = membersNS.T("Name hidden")
+				} else if pn, held := app.S.PrefNameHeld(id); held && strings.TrimSpace(pn) != "" {
+					n = pn
+				}
 			case app.MissingMember(id) == core.MemberNonExistent:
 				n = tipMissingGone
 			default:
