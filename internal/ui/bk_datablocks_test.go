@@ -15,6 +15,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 func (e *perfEnv) channelDataBlocks(ch string) []messages.DataBlockRect {
@@ -94,7 +95,15 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	tr := tbl.Tables[0]
+	// let the last scroll land, then read the table where it is now
+	e.settle(500 * time.Millisecond)
+	replyTS := tbl.TS
+	var tr richview.DataTableRect
+	for _, d := range e.threadDataBlocks(ch, ts) {
+		if d.TS == replyTS && len(d.Tables) == 1 {
+			tr = d.Tables[0]
+		}
+	}
 	if tr.Block == nil || tr.Block.Caption != "Full points leaderboard" || len(tr.Block.Body) != 110 || len(tr.Rows) != 5 {
 		t.Fatalf("thread table: %+v (%d rows shown)", tr.Block, len(tr.Rows))
 	}
@@ -103,14 +112,7 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 	}
 	next := tr.Buttons["next"]
 	if next.Empty() || !next.In(image.Rectangle{Max: e.size}) {
-		// bring the footer on screen
-		e.scroll(image.Pt(e.size.X-200, e.size.Y/2), 400)
-		e.settle(300 * time.Millisecond)
-		for _, d := range e.threadDataBlocks(ch, ts) {
-			if len(d.Tables) == 1 {
-				next = d.Tables[0].Buttons["next"]
-			}
-		}
+		t.Fatalf("the table's next button at %v, off the %v window", next, e.size)
 	}
 	e.click(next.Min.Add(next.Size().Div(2)))
 	e.until("the table's second page", 10*time.Second, func() bool {
