@@ -65,9 +65,16 @@ func TestNotifyFileToastReadsTheStore(t *testing.T) {
 		t.Errorf("an uploaded stub of an image the store holds whole: %q, Slack %q", got, want)
 	}
 
-	// the uploader the store doesn't hold: no name, and asked for
+	// the uploader the store doesn't hold: no name, and asked for by the
+	// toast's own read (the message's conversion asks too, for its file
+	// header's name: converted first, its asks taken)
+	const unk = "1762520000.000400"
+	um, ok := ca.HeldMessage(dm, unk)
+	if !ok {
+		t.Fatalf("%s isn't held", unk)
+	}
 	ca.S.TakeMissingUsers()
-	if got, want := body("1762520000.000400"), "shared ’s file"; got != want {
+	if got, want := b.notifyBody(core.Event{Type: "message", Channel: dm, TS: unk, Msg: &um}, conv), "shared ’s file"; got != want {
 		t.Errorf("an unknown uploader's file: %q, Slack %q", got, want)
 	}
 	if asked := ca.S.TakeMissingUsers(); !slices.Contains(asked, nobody) {
