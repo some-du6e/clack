@@ -400,12 +400,13 @@ func (e *Editor) processPointerEvent(gtx layout.Context, ev event.Event) (Editor
 		case evt.Kind == pointer.Drag && evt.Source == pointer.Mouse:
 			if e.dragging {
 				e.blinkStart = gtx.Now
-				e.text.MoveCoord(image.Point{
+				p := image.Point{
 					X: int(math.Round(float64(evt.Position.X))),
 					Y: int(math.Round(float64(evt.Position.Y))),
-				})
+				}
+				e.text.MoveCoord(p)
 				if e.clackGran != clackGranChar {
-					e.clackExtend()
+					e.clackExtend(p)
 				}
 				e.scrollCaret = true
 

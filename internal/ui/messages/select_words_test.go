@@ -20,7 +20,7 @@ func TestSelectionWordsLikeChromium(t *testing.T) {
 		sub  string
 		off  int
 		want string
-	}{{"Println", 2, "Println"}, {"fmt", 1, "fmt"}, {"fix", 1, "fix"}, {"TODO", 1, "TODO"}, {"3.14", 0, "3.14"}} {
+	}{{"Println", 2, "Println"}, {"fmt", 1, "fmt"}, {"fix", 2, "fix"} /* past the "fi" ligature, one glyph */, {"TODO", 1, "TODO"}, {"3.14", 0, "3.14"}} {
 		e.selEvents(selClicks(e.selAt(c.sub, c.off), 2, 100*time.Millisecond)...)
 		if got := e.selected(); got != c.want {
 			t.Errorf("a double click in %q selected %q, want %q", c.sub, got, c.want)

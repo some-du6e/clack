@@ -395,13 +395,18 @@ func clackGranRange(rs []rune, pos int, gran uint8) (lo, hi int) {
 	return clackWordRange(rs, pos)
 }
 
-// clackExtend is a drag after a double or triple press: the granule under
-// the pointer (the caret MoveCoord just set) and the one the press
-// selected, together, the caret at the far end from that first granule
-// (Blink's ExtendSelectionAsDirectional).
-func (e *Editor) clackExtend() {
+// clackExtend is a drag (or the release) after a double or triple press
+// at p: the granule under the pointer (the caret MoveCoord just set; a
+// word by the same side rule as the press's, clackWordPos, so a release
+// past a wrapped line's end keeps that line's last word) and the one the
+// press selected, together, the caret at the far end from that first
+// granule (Blink's ExtendSelectionAsDirectional).
+func (e *Editor) clackExtend(p image.Point) {
 	pos, _ := e.text.Selection()
 	rs := []rune(e.Text())
+	if e.clackGran == clackGranWord {
+		pos = e.clackWordPos(p, pos, rs)
+	}
 	lo, hi := clackGranRange(rs, pos, e.clackGran)
 	if lo < e.clackLo {
 		e.text.SetCaret(lo, e.clackHi)
