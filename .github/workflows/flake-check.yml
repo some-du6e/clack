@@ -5042,56 +5042,6 @@ jobs:
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
   # in its needs (.github/scripts/expect_fail_wire.py adds it).
-
-  # bk-data-viz (temporary, removed before the branch's last push): the
-  # chart package's port against ECharts while it's written; prints the
-  # failures and passes either way (a diagnostic run, not a gate)
-  bk-data-viz-diag:
-    if: ${{ inputs.only != '' && startsWith('bk-data-viz-diag', inputs.only) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: data blocks (diagnostic)
-        run: |
-          set +e
-          for p in ./internal/richtext ./internal/ui; do
-            go vet "$p" > "$RUNNER_TEMP/vet.txt" 2>&1; echo "vet $p exit $?"; head -20 "$RUNNER_TEMP/vet.txt"
-          done
-          run() {
-            name=$1; shift
-            go test -count=1 "$@" > "$RUNNER_TEMP/$name.txt" 2>&1
-            echo "== $name exit $?"
-            grep -E '^(--- FAIL|FAIL|ok|PASS|panic)' "$RUNNER_TEMP/$name.txt" | head -40
-            grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/$name.txt" | head -80
-            grep -E -A12 '^panic' "$RUNNER_TEMP/$name.txt" | head -40
-          }
-          run chart ./internal/chart
-          run richtext ./internal/richtext
-          run fakeslack ./internal/fakeslack
-          xvfb-run -a sh -c 'go test -count=1 ./internal/ui/richview > "$RUNNER_TEMP/richview.txt" 2>&1; echo "== richview exit $?"'
-          grep -E '^(--- FAIL|FAIL|ok|panic)' "$RUNNER_TEMP/richview.txt" | head -40; grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/richview.txt" | head -60
-          run blockkit ./internal/ui/blockkit
-          [ -n "$FULL" ] && xvfb-run -a sh -c 'go test -count=1 ./internal/ui/popups > "$RUNNER_TEMP/popups.txt" 2>&1; echo "== popups exit $?"'
-          grep -E '^(--- FAIL|FAIL|ok|panic)' "$RUNNER_TEMP/popups.txt" | head -40; grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/popups.txt" | head -60
-          [ -n "$FULL" ] && xvfb-run -a sh -c 'go test -count=1 ./internal/ui/views > "$RUNNER_TEMP/views.txt" 2>&1; echo "== views exit $?"'
-          grep -E '^(--- FAIL|FAIL|ok|panic)' "$RUNNER_TEMP/views.txt" | head -40; grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/views.txt" | head -60
-          [ -n "$FULL" ] && xvfb-run -a sh -c 'go test -count=1 -timeout 20m ./internal/ui/messages > "$RUNNER_TEMP/messages.txt" 2>&1; echo "== messages exit $?"'
-          grep -E '^(--- FAIL|FAIL|ok|panic)' "$RUNNER_TEMP/messages.txt" | head -40; grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/messages.txt" | head -60
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestDataBlocksChannelAndThread$' ./internal/ui > "$RUNNER_TEMP/ui.txt" 2>&1
-          echo "== ui exit $?"
-          grep -E '^(--- FAIL|FAIL|ok|PASS|panic)' "$RUNNER_TEMP/ui.txt" | head -20
-          grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/ui.txt" | head -40
-          exit 0
-
   expect-fail:
     needs:
       - go
