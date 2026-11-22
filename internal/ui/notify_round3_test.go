@@ -145,19 +145,22 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 func TestThreadsLinkLikeSlack(t *testing.T) {
 	e, fs, c, _ := followEnv(t)
 	ch := fs.ChannelIDs()[2]
+	// a row's badge draws just before its label (sidebarRowBody): the
+	// Threads link's is the "37" right before "Threads", not the rail's
 	drawn := func() (threads, huddles font.Weight, badge bool) {
 		var mu sync.Mutex
+		prev := ""
 		theme.DrawHookOpts = func(s string, o theme.LabelOpts) {
 			mu.Lock()
 			defer mu.Unlock()
 			switch s {
 			case "Threads":
 				threads = o.Font.Weight
+				badge = badge || prev == "37"
 			case "Huddles":
 				huddles = o.Font.Weight
-			case "37":
-				badge = true
 			}
+			prev = s
 		}
 		e.frame()
 		theme.DrawHookOpts = nil
