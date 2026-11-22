@@ -376,14 +376,15 @@ func TestAVFSeekAndPause(t *testing.T) {
 	r.p.Seek(1500 * time.Millisecond)
 	sk := r.wait(media.Seeked, 5*time.Second)
 	var at time.Duration
+	drawn := false // its own flag, not at == 0 (mf's TestMFSeekAndPause: a frame drawn within one clock tick)
 	for time.Since(t0) < 2*time.Second {
 		if c := r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
-			at = time.Since(t0)
+			at, drawn = time.Since(t0), true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if at == 0 || at > 500*time.Millisecond {
+	if !drawn || at > 500*time.Millisecond {
 		t.Errorf("light grey %v after Seek(1.5 s) (seeked at %v), want within 500 ms", at, sk.State.Pos)
 	}
 	t.Logf("seeked to %v; light grey drawn %v after the seek", sk.State.Pos, at)

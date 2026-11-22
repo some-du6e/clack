@@ -167,10 +167,18 @@ func (s *Server) pushReplyLive(ch, root, user, text string, activityFirst, follo
 			"key": "thread_reply-" + ch + "-" + ts, "feed_ts": ts, "is_unread": true,
 			"item": map[string]any{"type": "thread_reply", "message": map[string]any{
 				"ts": ts, "channel": ch, "thread_ts": root, "author_user_id": user, "is_broadcast": false}}}})
-		s.Push(map[string]any{"type": "activity", "subtype": "activity_updated", "entry": map[string]any{
+		bundle := map[string]any{
 			"key": "thread_v2-" + ch + "-" + root, "feed_ts": ts, "is_unread": true,
 			"item": map[string]any{"type": "thread_v2", "bundle_info": map[string]any{"payload": map[string]any{
-				"thread_entry": map[string]any{"channel_id": ch, "thread_ts": root, "latest_ts": ts, "unread_msg_count": 1}}}}}})
+				"thread_entry": map[string]any{"channel_id": ch, "thread_ts": root, "latest_ts": ts, "unread_msg_count": 1}}}}}
+		if followed {
+			// the follower's feed lists the bundle from now on, as the
+			// server's does before it pushes it (UpsertActivity):
+			// fetchActivitiesForChannel finds it
+			s.Push(s.UpsertActivity(bundle))
+		} else {
+			s.Push(map[string]any{"type": "activity", "subtype": "activity_updated", "entry": bundle})
+		}
 	}
 	if activityFirst {
 		entries()

@@ -933,6 +933,15 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_DBLCLICK_TESTS: "1"
         run: go test -count=1 -v -timeout 5m -run '^TestClackDoubleClickWindows$' gioui.org/app
+      # a test binary that printed PASS and still failed crashed as it
+      # exited (windows-shell's gioui.org/app, train-161's push ci
+      # 45018881337: no panic, no exit status): Windows Error Reporting
+      # has the faulting module and the exception code
+      - name: crashes Windows recorded (on failure)
+        if: ${{ failure() }}
+        shell: pwsh
+        run: |
+          Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001,1026; StartTime=(Get-Date).AddHours(-2)} -MaxEvents 20 -ErrorAction SilentlyContinue | Format-List TimeCreated,Id,ProviderName,Message | Out-String -Width 400
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -1367,6 +1376,15 @@ jobs:
           name: toast-shots
           path: ${{ runner.temp }}/toast-shots
           if-no-files-found: ignore
+      # a test binary that printed PASS and still failed crashed as it
+      # exited (windows-shell's gioui.org/app, train-161's push ci
+      # 45018881337: no panic, no exit status): Windows Error Reporting
+      # has the faulting module and the exception code
+      - name: crashes Windows recorded (on failure)
+        if: ${{ failure() }}
+        shell: pwsh
+        run: |
+          Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001,1026; StartTime=(Get-Date).AddHours(-2)} -MaxEvents 20 -ErrorAction SilentlyContinue | Format-List TimeCreated,Id,ProviderName,Message | Out-String -Width 400
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -1415,6 +1433,15 @@ jobs:
           go test -count=1 -v ./internal/ui/autoscroll || rc=1
           go test -count=1 -v -timeout 8m -run '^(TestAutoscrollWindow|TestAutoscrollInClack)$' ./internal/ui || rc=1
           exit $rc
+      # a test binary that printed PASS and still failed crashed as it
+      # exited (windows-shell's gioui.org/app, train-161's push ci
+      # 45018881337: no panic, no exit status): Windows Error Reporting
+      # has the faulting module and the exception code
+      - name: crashes Windows recorded (on failure)
+        if: ${{ failure() }}
+        shell: pwsh
+        run: |
+          Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001,1026; StartTime=(Get-Date).AddHours(-2)} -MaxEvents 20 -ErrorAction SilentlyContinue | Format-List TimeCreated,Id,ProviderName,Message | Out-String -Width 400
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -1531,6 +1558,15 @@ jobs:
           Add-Type -AssemblyName System.Windows.Forms
           Write-Host "the display: $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
           go test -count=1 -v -timeout 5m -run '^TestRealWindowMemory$' ./internal/ui
+      # a test binary that printed PASS and still failed crashed as it
+      # exited (windows-shell's gioui.org/app, train-161's push ci
+      # 45018881337: no panic, no exit status): Windows Error Reporting
+      # has the faulting module and the exception code
+      - name: crashes Windows recorded (on failure)
+        if: ${{ failure() }}
+        shell: pwsh
+        run: |
+          Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001,1026; StartTime=(Get-Date).AddHours(-2)} -MaxEvents 20 -ErrorAction SilentlyContinue | Format-List TimeCreated,Id,ProviderName,Message | Out-String -Width 400
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

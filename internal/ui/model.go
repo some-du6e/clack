@@ -42,7 +42,9 @@ type model struct {
 	HomeCount         int
 	ChannelHighlights int
 
-	threadsUnread bool
+	// the sidebar's Threads link (core ThreadsLink): bold, and its badge
+	threadsUnread  bool
+	threadMentions int
 }
 
 type sbSection struct {
