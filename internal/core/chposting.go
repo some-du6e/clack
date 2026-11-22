@@ -456,10 +456,15 @@ func (a *App) FeatureAccess(name string) bool {
 	if start {
 		f.loading = true
 	}
-	on := f.on[name]
+	on, known := f.on[name], f.known
 	f.mu.Unlock()
 	if start {
 		go a.loadFeatures(a.bg)
+	}
+	if !known { // the persisted featureAccess store (zxoU): last launch's answer until this one's
+		if c, ok := a.S.CachedFeatureAccess(name); ok {
+			return c
+		}
 	}
 	return on
 }
@@ -482,8 +487,13 @@ func (a *App) loadFeatures(ctx context.Context) {
 		}
 		f.on = on
 	}
+	snap := make(map[string]bool, len(f.on))
+	for k, v := range f.on {
+		snap[k] = v
+	}
 	f.mu.Unlock()
 	if err == nil {
+		a.S.SetFeatureAccess(snap)
 		a.emit(Event{Type: "features"})
 	}
 }
@@ -512,7 +522,12 @@ func (a *App) onFeatureAccessUpdated(raw json.RawMessage) {
 	for k, v := range e.Policies {
 		f.on[k] = v.Enabled
 	}
+	snap := make(map[string]bool, len(f.on))
+	for k, v := range f.on {
+		snap[k] = v
+	}
 	f.mu.Unlock()
+	a.S.SetFeatureAccess(snap)
 	a.emit(Event{Type: "features"})
 }
 

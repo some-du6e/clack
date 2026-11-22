@@ -170,11 +170,10 @@ func (s *Server) usergroupState(id string) (ugState, bool) {
 			return st, true
 		}
 	}
-	for i := 0; i < s.Size.Usergroups; i++ {
+	// a generated group's id holds its index (S0FAKE%05d): no scan, so
+	// usergroupsAll stays linear on the 2,003-group fake
+	if i, err := strconv.Atoi(strings.TrimPrefix(id, "S0FAKE")); err == nil && len(id) == len("S0FAKE00000") && strings.HasPrefix(id, "S0FAKE") && i >= 0 && i < s.Size.Usergroups {
 		g := s.generatedGroup(i)
-		if g.ID != id {
-			continue
-		}
 		var ids []string
 		for k := 1; k <= g.UserCount && k < len(s.users); k++ {
 			ids = append(ids, s.users[k].ID)
@@ -381,6 +380,12 @@ func (s *Server) handleUsergroups(method string, f url.Values, edge map[string]j
 	case "usergroups.search":
 		s.noteUsergroupForm(method, f)
 		return s.searchUsergroups(f), true
+	case "search.team":
+		if !strings.Contains(f.Get("query"), `"value":"group"`) {
+			return nil, false // people searches go on to search.go
+		}
+		s.noteUsergroupForm(method, f)
+		return s.searchTeamUsergroups(f), true
 	case "usergroups.create":
 		s.noteUsergroupForm(method, f)
 		return s.createUsergroup(f), true
@@ -521,6 +526,70 @@ func (s *Server) searchUsergroups(f url.Values) any {
 		out = append(out, s.usergroupJSON(st, false))
 	}
 	return ok("usergroups", out, "num_found", total, "next_cursor_mark", next)
+}
+
+// searchTeamUsergroups is search.team's user group search off a grid
+// (fetchPaginatedUserGroupsWithQuery): query {and: [is group, external
+// false, fuzzy_with_email per word]} (each word in the handle or name),
+// include_deleted 1 keeping deactivated groups, search_only_team, sort
+// name / date / member_count with sort_dir, count a page from
+// cursor_mark; items, num_found, next_cursor_mark. Its items carry only
+// id, name, handle, description, user_count and date_delete (no team_id,
+// auto_type, is_section or date_update), so the client's upsert has to
+// keep the stored ones.
+func (s *Server) searchTeamUsergroups(f url.Values) any {
+	var q struct {
+		Clauses []struct {
+			Type  string `json:"type"`
+			Value any    `json:"value"`
+		} `json:"clauses"`
+	}
+	_ = json.Unmarshal([]byte(f.Get("query")), &q)
+	var words []string
+	for _, c := range q.Clauses {
+		if w, ok := c.Value.(string); ok && c.Type == "fuzzy_with_email" {
+			words = append(words, strings.ToLower(w))
+		}
+	}
+	g := url.Values{"search_only_team": {f.Get("search_only_team")}, "sort_dir": {f.Get("sort_dir")}} // every match, sorted
+	if f.Get("include_deleted") != "1" {
+		g.Set("include_disabled", "false")
+	}
+	switch f.Get("sort") {
+	case "date":
+		g.Set("sort", "date_create")
+	case "member_count", "name":
+		g.Set("sort", f.Get("sort"))
+	}
+	all := s.searchUsergroups(g).(map[string]any)["usergroups"].([]map[string]any)
+	var hits []map[string]any
+	for _, m := range all {
+		hay := strings.ToLower(m["handle"].(string) + " " + m["name"].(string))
+		keep := true
+		for _, w := range words {
+			keep = keep && strings.Contains(hay, w)
+		}
+		if keep {
+			hits = append(hits, map[string]any{"id": m["id"], "name": m["name"], "handle": m["handle"], "description": m["description"],
+				"user_count": m["user_count"], "date_delete": m["date_delete"]})
+		}
+	}
+	total := len(hits)
+	from := 0
+	if c := f.Get("cursor_mark"); strings.HasPrefix(c, "ugc:") {
+		from, _ = strconv.Atoi(strings.TrimPrefix(c, "ugc:"))
+	}
+	from = min(max(from, 0), total)
+	to := total
+	if n, _ := strconv.Atoi(f.Get("count")); n > 0 {
+		to = min(from+n, total)
+	}
+	next := ""
+	if to < total {
+		next = "ugc:" + strconv.Itoa(to)
+	}
+	items := append([]map[string]any{}, hits[from:to]...)
+	return ok("items", items, "num_found", total, "next_cursor_mark", next)
 }
 
 // createUsergroup is usergroups.create: a workspace group (team_id, or
