@@ -354,8 +354,8 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 		if t.au == nil {
 			t.au = &audioState{}
 		}
-		if t.au.alt && f.AltURL != "" {
-			u = f.AltURL
+		if u = audioURL(f); t.au.alt && hasAlt(f) {
+			u = f.URL
 		}
 		src = audioSource(f, u)
 		t.au.rate = 0 // a new element: its playbackRate is set again
@@ -484,7 +484,9 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 		return
 	}
 	st := ev.State
-	repaint := t.hover || t.shown // the overlay, or the viewer's footer, shows the time
+	// the overlay, or the viewer's footer, shows the time; an audio
+	// player always does (its time and its scrubber's fill)
+	repaint := t.hover || t.shown || t.au != nil
 	switch ev.Kind {
 	case media.Play: // onPlay (tI)
 		t.playing, t.played, t.ended, repaint = true, true, false, true
@@ -511,6 +513,9 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 			return
 		}
 		t.errCode, t.loading, repaint = st.Err, false, true
+		if t.au != nil {
+			t.playing = false // an audio element's error ends its playing (no pause comes)
+		}
 	case media.LoadedMetadata, media.DurationChange, media.Seeked:
 		repaint = true
 	case media.FirstFrame: // a new player's own frame: the kept one goes

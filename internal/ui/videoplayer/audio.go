@@ -85,8 +85,20 @@ func (c *Controller) AudioAvailable() bool {
 
 // audioPlays reports whether f plays as an audio tile.
 func (c *Controller) audioPlays(f *richtext.File) bool {
-	return c.AudioAvailable() && f != nil && f.IsAudio && f.URL != "" && f.ID != "" && c.env.Manager.Takes(audioSource(f, f.URL))
+	return c.AudioAvailable() && f != nil && f.IsAudio && audioURL(f) != "" && f.ID != "" && c.env.Manager.Takes(audioSource(f, audioURL(f)))
 }
+
+// audioURL is getMediaURL: the aac rendition, else the upload.
+func audioURL(f *richtext.File) string {
+	if f.MediaURL != "" {
+		return f.MediaURL
+	}
+	return f.URL
+}
+
+// hasAlt reports whether f's player has the upload to fall back on (it
+// plays the aac rendition).
+func hasAlt(f *richtext.File) bool { return f.MediaURL != "" && f.URL != "" && f.MediaURL != f.URL }
 
 // audioSource is the player's source for f at u: the demuxer from u's
 // extension (the aac rendition is an m4a), else the filetype.
@@ -99,7 +111,7 @@ func audioSource(f *richtext.File, u string) media.Source {
 	case "m4a", "mp3", "wav", "mp4", "mov", "webm", "aac":
 	default:
 		e = strings.ToLower(f.Type)
-		if f.AltURL != "" && u != f.AltURL { // the aac rendition
+		if f.MediaURL != "" && u == f.MediaURL { // the aac rendition
 			e = "m4a"
 		}
 	}
@@ -115,7 +127,7 @@ func audioSource(f *richtext.File, u string) media.Source {
 
 // audioState is an audio tile's player UI.
 type audioState struct {
-	alt        bool // playing f.AltURL: the aac rendition didn't decode here
+	alt        bool // playing f.URL: the aac rendition didn't decode here
 	interacted bool // D: a click or a scrub (the time shows the position from then on)
 	errored    bool // Q: the element's error
 	stalled    bool // K: waiting for data while playing
@@ -291,7 +303,7 @@ func (c *Controller) audioErrorLocked(t *tile, code int) bool {
 	if t.au == nil {
 		t.au = &audioState{}
 	}
-	if !t.au.alt && t.f.AltURL != "" && t.dur == 0 && (code == media.ErrSrcNotSupported || code == media.ErrDecode) {
+	if !t.au.alt && hasAlt(t.f) && t.dur == 0 && (code == media.ErrSrcNotSupported || code == media.ErrDecode) {
 		t.au.alt = true
 		autoplay := t.loading || t.playing
 		c.closeLocked(t)

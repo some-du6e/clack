@@ -16,6 +16,7 @@ import (
 	"image"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ const (
 
 func clipFile() *richtext.File {
 	return &richtext.File{ID: "F0CLIP", Name: "audio_message.webm", Title: "Audio clip", Type: "webm", Mime: "audio/webm", Subtype: "slack_audio",
-		IsAudio: true, DurationMS: 12000, URL: clipAAC, AltURL: clipURL, Waveform: []int{4, 9, 18, 30, 44, 61, 72, 80, 66, 52, 47, 58, 70, 84, 95, 88}}
+		IsAudio: true, DurationMS: 12000, URL: clipURL, MediaURL: clipAAC, Waveform: []int{4, 9, 18, 30, 44, 61, 72, 80, 66, 52, 47, 58, 70, 84, 95, 88}}
 }
 
 func mp3File() *richtext.File {
@@ -50,10 +51,11 @@ var (
 // audioEnv is a controller on Go audio with no sound card, each URL in
 // files serving its bytes; opened lists the URLs the players read.
 type audioRig struct {
-	c      *Controller
-	p      *prefs
-	mu     sync.Mutex
-	opened []string
+	c        *Controller
+	p        *prefs
+	mu       sync.Mutex
+	opened   []string
+	repaints atomic.Int64
 }
 
 func audioEnv(t *testing.T, exp func(string) string, files map[string][]byte) *audioRig {
@@ -81,7 +83,7 @@ func audioEnv(t *testing.T, exp func(string) string, files map[string][]byte) *a
 			}
 			return o.Open(ctx, off)
 		},
-		Repaint:    func() {},
+		Repaint:    func() { r.repaints.Add(1) },
 		Pref:       r.p.get,
 		SetPref:    r.p.set,
 		Experiment: exp,
@@ -367,12 +369,68 @@ func TestAudioSource(t *testing.T) {
 	} {
 		u := tc.u
 		g := *f
-		if u == "https://files.slack.com/files-pri/T1-F0CLIP/download" {
-			g.AltURL = u
+		switch u {
+		case "https://files.slack.com/files-tmb/T1-F0CLIP-aac/download":
+			g.MediaURL = u
+		case "https://files.slack.com/files-pri/T1-F0CLIP/download":
+			g.URL = u
 		}
 		src := audioSource(&g, u)
 		if src.Ext != tc.ext || src.Mime != tc.mime || src.FileID != f.ID {
 			t.Errorf("%s: %+v, want %s %s", u, src, tc.ext, tc.mime)
 		}
 	}
+}
+
+// A playing clip repaints with every time update, the pointer elsewhere:
+// its time and its waveform's fill move on (the review of c38b91b8: they
+// froze once the pointer left, the repaint being the video overlay's,
+// which shows only while hovered).
+func TestAudioRepaintsWhilePlaying(t *testing.T) {
+	a := audioEnv(t, nil, map[string][]byte{clipAAC: mediatest.TonesAAC, clipURL: mediatest.TonesWebM})
+	c := a.c
+	r := c.Row("channel", "C1", "1.0", nil)
+	f := clipFile()
+	frame(c, [2]any{r, f})
+	audioClick(c, r, f)
+	waitFor(t, "playing", 10*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
+	if st := state(t, c, r, f); st.Hover {
+		t.Fatal("hovered: the test needs the pointer elsewhere")
+	}
+	before := a.repaints.Load()
+	time.Sleep(900 * time.Millisecond) // three of the 250 ms time updates at least
+	if n := a.repaints.Load() - before; n < 2 {
+		t.Errorf("%d repaints in 900 ms of playing, want one a time update", n)
+	}
+}
+
+// A playing clip never docks into the mini player (Slack's message
+// lists give FileAudio no onOpenMiniPlayer): scrolled under 10% it plays
+// on; its message gone, it stops.
+func TestAudioDoesNotDock(t *testing.T) {
+	a := audioEnv(t, func(string) string { return "on" }, map[string][]byte{clipAAC: mediatest.TonesAAC, clipURL: mediatest.TonesWebM})
+	c := a.c
+	if !c.PipOn() {
+		t.Fatal("clips_pip is off: the test needs it on")
+	}
+	r := c.Row("channel", "C1", "1.0", nil)
+	f := clipFile()
+	frame(c, [2]any{r, f})
+	audioClick(c, r, f)
+	waitFor(t, "playing", 10*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
+	r.MediaVisible(f, 0.05) // the observer's first report: skipped
+	r.MediaVisible(f, 0.5)
+	r.MediaVisible(f, 0.05)
+	if _, m, ok := c.Pip(); ok {
+		t.Fatalf("scrolled away while playing, the clip docked: %+v", m)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !state(t, c, r, f).Playing {
+		t.Error("scrolled away, the clip stopped (it plays on)")
+	}
+	frame(c) // another conversation
+	if _, m, ok := c.Pip(); ok {
+		t.Fatalf("its message gone while playing, the clip docked: %+v", m)
+	}
+	waitFor(t, "the clip paused with its message gone", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
 }

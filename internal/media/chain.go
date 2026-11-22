@@ -22,8 +22,11 @@ type Taker interface {
 // Order gives (nil: the order given): when a player fails before its
 // metadata because it can't play the file (MEDIA_ERR_SRC_NOT_SUPPORTED,
 // MEDIA_ERR_DECODE), the next backend gets the file and every call made
-// meanwhile, as if it had been the one from the start. Media Foundation
-// plays AAC and MP3 that Go can't, Go plays the Opus clips the OS may not.
+// meanwhile, as if it had been the one from the start (AVFoundation plays
+// AAC, Go audio the WebM and Ogg it can't read). A source only one backend
+// takes (every video: Go audio takes none) gets that backend's own
+// player, so what it is besides a Player (a FrameCopier: the idle release
+// reads its frame) and how it closes stay as they are.
 type Chain struct {
 	backends []Backend
 	order    func(src Source, bs []Backend) []Backend
@@ -74,8 +77,11 @@ func (c *Chain) candidates(src Source) []Backend {
 
 func (c *Chain) New(src Source, frameReady func()) (Player, error) {
 	bs := c.candidates(src)
-	if len(bs) == 0 {
+	switch len(bs) {
+	case 0:
 		return nil, fmt.Errorf("media: no backend plays %s (%s)", src.FileID, src.Mime)
+	case 1:
+		return bs[0].New(src, frameReady)
 	}
 	p := &chainPlayer{src: src, frameReady: frameReady, rest: bs, events: make(chan Event, 64), vol: 1, rate: 1}
 	if err := p.next(); err != nil {
@@ -273,6 +279,10 @@ func (p *chainPlayer) Backend() string {
 	return fmt.Sprintf("%T", p.cur)
 }
 
+// Close closes the current player and returns at once: the players'
+// events end in their own time (Media Foundation's after its engine's
+// shutdown), and the chain's close after them, never on the caller's
+// goroutine (the controller holds its lock there).
 func (p *chainPlayer) Close() {
 	p.mu.Lock()
 	if p.closed {
@@ -283,6 +293,8 @@ func (p *chainPlayer) Close() {
 	cur := p.cur
 	p.mu.Unlock()
 	cur.Close()
-	p.wg.Wait()
-	close(p.events)
+	go func() {
+		p.wg.Wait()
+		close(p.events)
+	}()
 }

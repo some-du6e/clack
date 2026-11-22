@@ -66,6 +66,11 @@ func (s *mfStream) thread(b []byte, mime string, opened chan<- error) {
 		opened <- fmt.Errorf("%w: Media Foundation's source reader: %#x", errUnsupported, uint32(hr))
 		return
 	}
+	if ch > maxChannels {
+		C.clack_dec_close(d)
+		opened <- fmt.Errorf("%w: %d channels", errUnsupported, int(ch))
+		return
+	}
 	s.d, s.rate, s.ch = d, int(rate), int(ch)
 	if dur > 0 {
 		s.frames = int64(dur) * int64(rate) / 10_000_000

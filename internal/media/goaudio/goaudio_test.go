@@ -98,7 +98,7 @@ func checkTones(t *testing.T, samples []float32, rate int, off time.Duration) {
 func TestDecodesTheFixtures(t *testing.T) {
 	for _, fx := range goFixtures() {
 		t.Run(fx.Name, func(t *testing.T) {
-			s, err := open(fx.Data, fx.Mime)
+			s, err := parse(fx.Data, fx.Mime)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -124,11 +124,13 @@ func TestDecodesTheFixtures(t *testing.T) {
 	}
 }
 
-// A seek lands where it says: the tone there, from the frame asked for.
+// A seek lands where it says: the tone there, from the frame asked for,
+// at the fixtures' level (silence, whose powers are all zero, would make
+// any tone "the loudest").
 func TestSeekLandsOnTheTone(t *testing.T) {
 	for _, fx := range goFixtures() {
 		t.Run(fx.Name, func(t *testing.T) {
-			s, err := open(fx.Data, fx.Mime)
+			s, err := parse(fx.Data, fx.Mime)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,6 +153,9 @@ func TestSeekLandsOnTheTone(t *testing.T) {
 				if got, ratio := mediatest.Loudest(w[n/4:], s.Rate()); got != want || ratio < 10 {
 					t.Errorf("after a seek to %v: the loudest tone is %v Hz (%.1fx), want %v Hz", at, mediatest.Tones[max(got, 0)], ratio, mediatest.Tones[want])
 				}
+				if p := mediatest.Power(w[n/4:], s.Rate(), mediatest.Tones[want]); p < 0.0025 {
+					t.Errorf("after a seek to %v: %v Hz at power %.5f, want the fixture's 0.0039 (not silence)", at, mediatest.Tones[want], p)
+				}
 			}
 		})
 	}
@@ -166,7 +171,7 @@ func TestAACIsNotSupported(t *testing.T) {
 		cases["aac"] = mediatest.TonesAAC
 	}
 	for name, b := range cases {
-		if _, err := open(b, "audio/mp4"); !errors.Is(err, errUnsupported) {
+		if _, err := parse(b, "audio/mp4"); !errors.Is(err, errUnsupported) {
 			t.Errorf("%s: %v, want errUnsupported", name, err)
 		}
 	}
@@ -488,9 +493,11 @@ func TestPlayerRateAndEarlySeek(t *testing.T) {
 	p.SetRate(2)
 	p.Seek(time.Second)
 	p.Play()
-	r.wait(t, media.Playing, 10*time.Second)
+	ev := r.wait(t, media.Playing, 10*time.Second)
 	t0 := time.Now()
-	if pos := p.State().Pos; pos < time.Second || pos > 1200*time.Millisecond {
+	// the position the playing event carried: where it started, not where
+	// it got to by the time this goroutine looked
+	if pos := ev.State.Pos; pos != time.Second {
 		t.Errorf("playing from %v, want the seek's 1 s", pos)
 	}
 	r.wait(t, media.Ended, 8*time.Second)

@@ -7,16 +7,19 @@ package avf
 // to their end on the clock, land a seek and play 2x in half the time;
 // paused, an audio-only item leaves no state watch running (the 50 ms
 // timer a video keeps until its output is made). The voice clips' Opus in
-// MP4 is logged (Go audio plays it when AVFoundation can't).
+// MP4 plays to its end through ui's chain.
 
 import (
+	"errors"
 	"fmt"
 	"image"
+	"io"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/some-du6e/clack/internal/media"
+	"github.com/some-du6e/clack/internal/media/goaudio"
 	"github.com/some-du6e/clack/internal/media/mediatest"
 )
 
@@ -184,41 +187,58 @@ func TestAVFAudioSeekAndRate(t *testing.T) {
 	}
 }
 
-// A voice clip's Opus in MP4: what AVFoundation makes of it, logged (Go
-// audio plays it where AVFoundation can't).
-func TestAVFOpusClipLogged(t *testing.T) {
+// A voice clip's Opus in MP4 (plain, and fragmented as Chromium's
+// MediaRecorder writes it) plays to its end through ui's chain:
+// AVFoundation, which on the runners played both itself, then Go audio,
+// which takes over a file AVFoundation can't read before its metadata.
+func TestAVFOpusClipPlays(t *testing.T) {
+	noCard := func(func([]int16)) (io.Closer, error) { return nil, errors.New("no sound card (the test's)") }
+	chain := media.NewChain(nil, backend{}, &goaudio.Backend{Output: noCard, Logf: t.Logf})
 	for _, name := range []string{"opus-mp4", "opus-frag"} {
-		fx := audioFixture(name)
-		id := fmt.Sprintf("FAVO%d", rigN.Add(1))
-		src, _ := mediatest.Source(id, fx.Data, false)
-		src.Mime, src.Ext = fx.Mime, fx.Ext
-		pl, err := backend{}.New(src, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var got []string
-		deadline := time.After(10 * time.Second)
-		pl.Play()
-	loop:
-		for {
-			select {
-			case ev, ok := <-pl.Events():
-				if !ok {
-					break loop
-				}
-				if ev.Kind == media.TimeUpdate {
-					continue
-				}
-				got = append(got, fmt.Sprintf("%v (pos %v, dur %v, err %d)", ev.Kind, ev.State.Pos.Round(time.Millisecond), ev.State.Duration.Round(time.Millisecond), ev.State.Err))
-				if ev.Kind == media.Ended || ev.Kind == media.Error {
-					break loop
-				}
-			case <-deadline:
-				got = append(got, "(nothing more within 10 s)")
-				break loop
+		t.Run(name, func(t *testing.T) {
+			fx := audioFixture(name)
+			id := fmt.Sprintf("FAVO%d", rigN.Add(1))
+			src, _ := mediatest.Source(id, fx.Data, false)
+			src.Mime, src.Ext = fx.Mime, fx.Ext
+			pl, err := chain.New(src, nil)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		pl.Close()
-		t.Logf("%s on AVFoundation: %v", name, got)
+			defer pl.Close()
+			pl.Play()
+			var got []media.EventKind
+			var md media.Event
+			deadline := time.After(20 * time.Second)
+			for ended := false; !ended; {
+				select {
+				case ev, ok := <-pl.Events():
+					if !ok {
+						t.Fatalf("events closed: %v", got)
+					}
+					if ev.Kind == media.TimeUpdate {
+						continue
+					}
+					got = append(got, ev.Kind)
+					switch ev.Kind {
+					case media.LoadedMetadata:
+						md = ev
+					case media.Error:
+						t.Fatalf("error %d; events %v", ev.State.Err, got)
+					case media.Ended:
+						ended = true
+					}
+				case <-deadline:
+					t.Fatalf("no end within 20 s; events %v", got)
+				}
+			}
+			if d := md.State.Duration; d < 2950*time.Millisecond || d > 3050*time.Millisecond {
+				t.Errorf("duration %v, want 3 s", d)
+			}
+			by := "AVFoundation"
+			if b, ok := pl.(interface{ Backend() string }); ok {
+				by = b.Backend()
+			}
+			t.Logf("%s played by %s: %v", name, by, got)
+		})
 	}
 }

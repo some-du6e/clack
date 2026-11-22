@@ -1,15 +1,18 @@
 // Package goaudio plays a message's audio file the way an <audio> element
 // does, decoding it in Go: WAV (PCM), MP3 (go-mp3) and Opus in Ogg, WebM
-// and MP4 (the huddle's libopus), resampled to 48 kHz stereo, at any
-// playbackRate keeping the pitch (WSOLA), out of the huddle's speakers
-// (huddle.OpenOutput). Without a sound card it keeps time on its own, so a
-// clip still plays (silently) and ends. It is the media Backend for audio
-// on Linux, which has no OS one, and the fallback for what Media
-// Foundation or AVFoundation can't decode (Opus); AAC (Slack's aac
-// renditions and most m4a uploads) is theirs.
+// and MP4 (the huddle's libopus), and on Windows what Go can't (AAC) with
+// Media Foundation's source reader; mixed to at most two channels,
+// resampled to 48 kHz stereo, at any playbackRate keeping the pitch
+// (WSOLA), out of the huddle's speakers (huddle.OpenOutput). Without a
+// sound card it keeps time on its own, so a clip still plays (silently)
+// and ends. It is the media Backend for audio on Linux and Windows, and
+// on macOS for what AVFoundation can't read (WebM, Ogg).
 //
 // The file comes through media.Source, read whole into memory (audio
-// messages are a few MB) and never written to disk.
+// messages are a few MB) and never written to disk. Its readers are total
+// (decode.go): any bytes at all open, fail with an error, or end; a
+// decoder that panics anyway (go-mp3, libopus) is the element's
+// MEDIA_ERR_DECODE (safe.go), never a crash.
 package goaudio
 
 import (
@@ -81,6 +84,7 @@ type player struct {
 	closed   bool
 	rate     float64
 	s        stream
+	mx       *mixer
 	rs       *resampler
 	ts       *stretcher
 	out      []float32 // rendered 48 kHz stereo, not played yet
@@ -95,8 +99,9 @@ type player struct {
 	opening bool
 	sinkGen uint64
 	stats   media.Stats
-	scratch []float32
-	mix     []float32
+	scratch []float32 // a Read's frames, the stream's channels
+	folded  []float32 // those mixed to at most two
+	mix     []float32 // resampled
 	stereo  []float32
 	hop     []float32
 }
@@ -114,15 +119,9 @@ func (p *player) emitLocked(k media.EventKind) {
 	}
 }
 
-func (p *player) emit(k media.EventKind) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.closed {
-		p.emitLocked(k)
-	}
-}
-
-// load reads the file, decodes its header and opens the speakers.
+// load reads the file, decodes its header, and opens the speakers if it
+// plays. Close ends it at the next look at ctx (the download's, the
+// readers').
 func (p *player) load() {
 	defer close(p.done)
 	rc, info, err := p.src.Open(p.ctx, 0)
@@ -144,8 +143,11 @@ func (p *player) load() {
 		p.fail(media.ErrNetwork, err)
 		return
 	}
-	s, err := open(b, p.src.Mime)
+	s, err := safeOpen(p.ctx, b, p.src.Mime)
 	if err != nil {
+		if p.ctx.Err() != nil {
+			return // closed while it read
+		}
 		code := media.ErrDecode
 		if errors.Is(err, errUnsupported) {
 			code = media.ErrSrcNotSupported
@@ -159,13 +161,22 @@ func (p *player) load() {
 		s.Close()
 		return
 	}
+	mask := uint32(0)
+	if m, ok := s.(masked); ok {
+		mask = m.ChannelMask()
+	}
 	p.s = s
-	p.rs = newResampler(s.Rate(), s.Channels())
+	p.mx = newMixer(s.Channels(), mask)
+	p.rs = newResampler(s.Rate(), p.mx.out)
 	p.ts = newStretcher()
 	p.st.Duration = time.Duration(s.Frames()) * time.Second / time.Duration(s.Rate())
 	p.st.Ready = media.HaveMetadata
 	if p.hasStart {
 		p.seekLocked(min(max(p.startAt, 0), p.st.Duration))
+	}
+	if p.st.Err != 0 { // the seek's decoder failed
+		p.mu.Unlock()
+		return
 	}
 	p.emitLocked(media.DurationChange)
 	p.emitLocked(media.LoadedMetadata)
@@ -185,13 +196,20 @@ func (p *player) load() {
 
 // fail is the element's error: the code, the error event.
 func (p *player) fail(code int, err error) {
-	p.logf("media: %s: Go audio: %v", p.src.FileID, err)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed {
+	p.failLocked(code, err)
+}
+
+// failLocked ends the playback with MediaError code: the error event
+// alone, as HTML's (the controller takes it as the end of playing), and
+// the speakers let go of.
+func (p *player) failLocked(code int, err error) {
+	if p.closed || p.st.Err != 0 {
 		return
 	}
-	p.st.Err, p.st.Waiting = code, false
+	p.logf("media: %s: Go audio: media_error_code %d: %v", p.src.FileID, code, err)
+	p.st.Err, p.st.Waiting, p.playWait = code, false, false
 	p.dropSinkLocked()
 	p.emitLocked(media.Error)
 }
@@ -259,6 +277,10 @@ func (p *player) pull(gen uint64, out []int16) {
 		return
 	}
 	got := p.renderLocked(frames)
+	if p.st.Err != 0 { // the decoder failed
+		clear(out)
+		return
+	}
 	vol := float32(p.st.Volume)
 	if p.st.Muted {
 		vol = 0
@@ -270,6 +292,8 @@ func (p *player) pull(gen uint64, out []int16) {
 			v = 1
 		case v < -1:
 			v = -1
+		case v != v: // NaN
+			v = 0
 		}
 		out[i] = int16(v * 32767)
 	}
@@ -286,35 +310,44 @@ func (p *player) pull(gen uint64, out []int16) {
 }
 
 // renderLocked fills p.out with at least frames frames (fewer at the
-// end): decode, resample to 48 kHz, to stereo, then the rate.
+// end): decode, mix to at most two channels, resample to 48 kHz, to
+// stereo, then the rate. A decoder that fails is the element's
+// MEDIA_ERR_DECODE.
 func (p *player) renderLocked(frames int) int {
-	ch := p.s.Channels()
+	ch, oc := p.s.Channels(), p.mx.out
 	if cap(p.scratch) < 1024*ch {
 		p.scratch = make([]float32, 1024*ch)
 	}
-	if cap(p.mix) < 2048*ch {
-		p.mix = make([]float32, 2048*ch)
+	if cap(p.folded) < 1024*oc {
+		p.folded = make([]float32, 1024*oc)
+	}
+	if cap(p.mix) < 2048*oc {
+		p.mix = make([]float32, 2048*oc)
 	}
 	if cap(p.hop) < 4*wsolaH*2 {
 		p.hop = make([]float32, 4*wsolaH*2)
 	}
 	for len(p.out)/2 < frames {
 		if !p.eof {
-			n, err := p.s.Read(p.scratch[:1024*ch])
+			n, err := safeRead(p.s, p.scratch[:1024*ch])
 			if n > 0 {
-				p.rs.push(p.scratch[:n*ch])
+				p.rs.push(p.mx.mix(p.scratch[:n*ch], n, p.folded[:1024*oc]))
 			}
 			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					p.failLocked(media.ErrDecode, err)
+					return 0
+				}
 				p.eof = true
 			}
 		}
-		got := p.rs.pull(p.mix[:2048*ch], p.eof)
+		got := p.rs.pull(p.mix[:2048*oc], p.eof)
 		p.stereo = p.stereo[:0]
 		for i := 0; i < got; i++ {
-			l := p.mix[i*ch]
+			l := p.mix[i*oc]
 			r := l
-			if ch > 1 {
-				r = p.mix[i*ch+1]
+			if oc > 1 {
+				r = p.mix[i*oc+1]
 			}
 			p.stereo = append(p.stereo, l, r)
 		}
@@ -355,8 +388,9 @@ func (p *player) endLocked() {
 // seekLocked starts the pipeline over at t.
 func (p *player) seekLocked(t time.Duration) {
 	f := int64(t.Seconds() * float64(p.s.Rate()))
-	if err := p.s.SeekFrame(f); err != nil {
-		p.logf("media: %s: seek: %v", p.src.FileID, err)
+	if err := safeSeek(p.s, f); err != nil {
+		p.failLocked(media.ErrDecode, fmt.Errorf("seek: %w", err))
+		return
 	}
 	p.rs.reset()
 	p.ts.reset()
@@ -374,6 +408,9 @@ func (p *player) Play() {
 	p.st.Paused, p.st.Ended = false, false
 	if restart && p.s != nil {
 		p.seekLocked(0)
+		if p.st.Err != 0 {
+			return
+		}
 		p.emitLocked(media.Seeking)
 		p.emitLocked(media.Seeked)
 	}
@@ -402,7 +439,7 @@ func (p *player) Pause() {
 func (p *player) Seek(t time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed {
+	if p.closed || p.st.Err != 0 {
 		return
 	}
 	if p.s == nil {
@@ -411,6 +448,9 @@ func (p *player) Seek(t time.Duration) {
 		return
 	}
 	p.seekLocked(min(max(t, 0), p.st.Duration))
+	if p.st.Err != 0 {
+		return
+	}
 	p.emitLocked(media.Seeking)
 	p.emitLocked(media.TimeUpdate)
 	p.emitLocked(media.Seeked)
@@ -439,11 +479,11 @@ func (p *player) SetRate(r float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	r = min(max(r, 0.0625), 16)
-	if r == p.rate {
+	if r == p.rate || p.closed {
 		return
 	}
 	p.rate = r
-	if p.s != nil { // what's rendered was at the old rate
+	if p.s != nil && p.st.Err == 0 { // what's rendered was at the old rate
 		p.seekLocked(p.st.Pos)
 	}
 }
@@ -466,6 +506,11 @@ func (p *player) Stats() media.Stats {
 	return p.stats
 }
 
+// Close ends the player at once: no event follows (every emit looks at
+// closed under mu), the speakers close off the caller's thread (the
+// controller calls it holding its lock, on the UI goroutine), the decoder
+// goes, and the load still reading (a download, a reader) ends at its
+// next look at ctx, closing what it made.
 func (p *player) Close() {
 	p.mu.Lock()
 	if p.closed {
@@ -473,21 +518,18 @@ func (p *player) Close() {
 		return
 	}
 	p.closed = true
-	sink := p.sink
-	p.sink = nil
+	p.sinkGen++
+	sink, s := p.sink, p.s
+	p.sink, p.s = nil, nil
+	close(p.events)
 	p.mu.Unlock()
 	p.cancel()
 	if sink != nil {
-		sink.Close()
+		go sink.Close()
 	}
-	<-p.done
-	p.mu.Lock()
-	s := p.s
-	p.mu.Unlock()
 	if s != nil {
-		s.Close() // pull touches no stream once closed
+		s.Close()
 	}
-	close(p.events)
 }
 
 // clock pulls like a sound card, at real time, into nothing: playback

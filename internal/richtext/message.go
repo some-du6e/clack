@@ -394,10 +394,7 @@ func convertFile(f *slack.File) *File {
 		// getMediaURL's aac || url_private; any other audio/* is a plain
 		// file card (an ogg upload) or a video (a webm one)
 		out.IsAudio = true
-		out.URL = SafeURL(firstNonEmpty(f.AAC, f.URLPrivate))
-		if f.AAC != "" && f.URLPrivate != "" {
-			out.AltURL = SafeURL(f.URLPrivate)
-		}
+		out.MediaURL = SafeURL(f.AAC)       // URL stays the upload's url_private
 		if p := f.MediaProgress; p != nil { // use_media_elapsed
 			out.MediaOffsetMS, out.MediaWatched = p.OffsetMS, p.MediaWatched
 		}
