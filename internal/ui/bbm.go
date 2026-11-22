@@ -22,8 +22,10 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // bbmCont is the view container the panel shows: Slack's
@@ -609,6 +611,9 @@ func (a *App) bbmCrumbs() []bbmCrumb {
 			label = "Profile"
 		case secDetails:
 			label = "Details"
+			if _, ok := a.secondary.view.(*views.ExternalOrg); ok { // ia4's view names (eU)
+				label = i18n.T("ia4", "External organization")
+			}
 		case secCode: // no breadcrumb label: getAriaLabelForViewContent (session_channel_views)
 			label = a.codeDetailsLabel()
 		case secSearch:

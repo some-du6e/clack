@@ -280,6 +280,9 @@ type Directories struct {
 	gRows    map[string]*widget.Clickable
 	more     widget.Clickable            // the user group browser's "Load More"
 	ugRights async[core.UsergroupRights] // canCreateUserGroups (0dhJ Mm)
+
+	ext *scExternal // External: the Slack Connect hub (sc_external.go)
+	inv *scInvites  // Invitations (sc_invites.go)
 }
 
 // NewDirectories builds the Directories view (People tab selected).
@@ -298,6 +301,7 @@ func NewDirectories(h Host) *Directories {
 	}
 	d.rowMenu.sel = -1
 	d.tab.Hidden = d.tabHidden
+	d.ext, d.inv = newSCExternal(d), newSCInvites(d)
 	d.chanScope.labels, d.chanScope.ns = dirScopeLabels, nsSearch
 	d.chanType.labels, d.chanType.ns = dirTypeLabels, nsSearch
 	d.acct.labels, d.acct.ns = dirAcctLabels, nsSearch
@@ -1065,9 +1069,9 @@ func (d *Directories) body(gtx C) D {
 	t := d.cur()
 	switch t {
 	case dirTabExternal:
-		return d.emptyState(gtx, "globe", "External", "Connecting with people and channels outside "+d.teamName()+" isn’t available in "+appName+" yet.", nil, "")
+		return d.ext.page(gtx)
 	case dirTabInvites:
-		return d.emptyState(gtx, "send", "Invitations", "Managing invitations isn’t available in "+appName+" yet.", nil, "")
+		return d.inv.layout(gtx)
 	}
 	return col(gtx,
 		vgap(16),
