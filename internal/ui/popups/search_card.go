@@ -66,7 +66,6 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
-	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -1021,6 +1020,18 @@ func (a *srAttCard) open(it srAttItem) {
 			link = a.m.Permalink
 		}
 		if pl, ok := core.ParsePermalink(link); ok && pl.Kind == "message" {
+			if lf, ok := h.(LinkFollower); ok {
+				// Slack's Link: openPermalink's jumpToMessage (a reply opens in
+				// its thread); one it can't place (another workspace's) opens
+				// in a new tab, and only a conversation the client opens is a
+				// recent one
+				if lf.FollowLink(link, false) {
+					RecordRecentConversation(pl.ChannelID)
+				} else {
+					openBrowser(link)
+				}
+				return
+			}
 			RecordRecentConversation(pl.ChannelID)
 			if pl.ThreadTS != "" {
 				h.Navigate("c/" + pl.ChannelID + "/t/" + pl.ThreadTS)
@@ -1031,7 +1042,10 @@ func (a *srAttCard) open(it srAttItem) {
 		}
 	}
 	if it.link != "" {
-		_ = openurl.Open(it.link)
+		if lf, ok := h.(LinkFollower); ok && lf.FollowLink(it.link, false) {
+			return
+		}
+		openBrowser(it.link)
 	}
 }
 

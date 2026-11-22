@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
 // TestNotifyTextLikeSlack: a notification's text is Slack's
-// extractTextFromMessage (Eley; richtext.NotificationText, notify_dm.go):
+// extractTextFromMessage (Eley; notifyText, notify_dm.go):
 // convertMessageToPlainText with blockSpacing single (2xQY) over the
 // blocks, else the text as written (also when the blocks give none; a
 // video block gives its title); only a message with neither reads its
@@ -88,8 +87,8 @@ func TestNotifyTextLikeSlack(t *testing.T) {
 		if err := json.Unmarshal([]byte(c.msg), &m); err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
-		cm := &core.Message{TS: "1762520000.000100", User: m.User, Subtype: m.Subtype, Text: m.Text,
-			Doc: richtext.FromMessage(noResolver{}, &m), Blocks: m.Blocks, Attachments: m.RawAttachments, BotID: m.BotID}
+		m.TS = "1762520000.000100"
+		cm := noteTestMessage(&m)
 		// a member the store doesn't hold reads as nothing (noteSpanText)
 		unknown := func(s richtext.Span) (string, bool) { return "", s.Kind == richtext.User }
 		if got := notifyText(noResolver{}, cm, unknown); got != c.want {

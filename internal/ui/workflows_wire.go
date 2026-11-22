@@ -23,6 +23,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/composer"
@@ -114,7 +115,7 @@ func (a *App) addWorkflowBookmark(ch string, t core.WorkflowTrigger, link string
 		_, err := c.AddWorkflowBookmark(ctx, ch, t, link)
 		a.Post(func() {
 			if err != nil {
-				log.Printf("workflows: add %s to %s: %v", t.ID, ch, err)
+				log.Printf("workflows: add %s to %s: %v", t.ID, logtag.ID(ch), err)
 				return
 			}
 			a.Navigate("c/" + ch)

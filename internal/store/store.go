@@ -65,7 +65,10 @@ type Store struct {
 	Usergroups  map[string]string
 	Presence    map[string]string
 	timelines   map[string]*Timeline
+	windows     map[string][]*Window       // a conversation's stretches apart from its timeline (windows.go)
+	windowHolds map[string]map[string]int  // the windows lists show, by a ts each holds (HoldWindow)
 	threads     map[string][]slack.Message // key channel/ts
+	threadHist  map[string]*threadHist     // key channel/ts: the threads' history slices (thread_slices.go)
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
@@ -1400,7 +1403,8 @@ func (s *Store) TimelineIDs() []string {
 	return ids
 }
 
-// SetLatest replaces the newest window (from a fresh history fetch).
+// SetLatest replaces the newest window (from a fresh history fetch); a
+// window it now meets joins it (windows.go).
 func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
@@ -1411,6 +1415,7 @@ func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 		t.Epoch = s.newEpochLocked()
 	}
 	s.timelines[ch] = t
+	s.absorbWindowsLocked(ch)
 	s.mu.Unlock()
 }
 
@@ -1444,6 +1449,7 @@ func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool,
 	if len(t.Msgs) > 5000 {
 		t.Msgs = t.Msgs[len(t.Msgs)-5000:]
 	}
+	s.absorbWindowsLocked(ch) // the timeline grew back to a window: they're one (Slack's slices merge as they meet)
 	return msgs
 }
 
@@ -1537,6 +1543,12 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 			}
 		}
 	}
+	if m := s.windowMsgLocked(ch, func(m *slack.Message) bool { return m.TS == ts }); m != nil {
+		f(m)
+		if !found {
+			out, found = *m, true
+		}
+	}
 	for k, th := range s.threads {
 		if !strings.HasPrefix(k, ch+"/") {
 			continue
@@ -1583,6 +1595,7 @@ func (s *Store) removeLocked(ch, ts string) {
 			}
 		}
 	}
+	s.removeWindowMsgLocked(ch, ts)
 	for k, th := range s.threads {
 		if !strings.HasPrefix(k, ch+"/") {
 			continue
@@ -1590,6 +1603,7 @@ func (s *Store) removeLocked(ch, ts string) {
 		for i := range th {
 			if th[i].TS == ts {
 				s.threads[k] = append(th[:i], th[i+1:]...)
+				s.removeTimestampLocked(k, ts) // its history's removeTimestamp (thread_slices.go)
 				break
 			}
 		}
@@ -1633,6 +1647,9 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 			}
 		}
 	}
+	if m := s.windowMsgLocked(ch, match); m != nil {
+		return m
+	}
 	pre := ch + "/"
 	for k, th := range s.threads {
 		if strings.HasPrefix(k, pre) {
@@ -1647,12 +1664,13 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 }
 
 // MessageKeys is every ts and client_msg_id among ch's cached messages
-// (timeline, threads and the messages fetched by id), in one pass: what
-// the plugins' messages slice holds of core's (taut's injected check). The
-// slice holds the fetched copies, as Slack's one messages store does, and
-// none of them is a message a plugin injected: a conversation's list draws
-// its history (Slack's channelHistory), which a message fetched by id
-// never joins.
+// (timeline, a jump's windows, threads and the messages fetched by id), in
+// one pass: what the plugins' messages slice holds of core's (taut's
+// injected check). The slice holds the windows' messages and the fetched
+// copies, as Slack's one messages store does, and none of them is a
+// message a plugin injected: a conversation's list draws its history
+// (Slack's channelHistory, the windows' slices with it), which a message
+// fetched by id never joins.
 func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1666,6 +1684,11 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	if t := s.timelines[ch]; t != nil {
 		for i := range t.Msgs {
 			add(&t.Msgs[i])
+		}
+	}
+	for _, w := range s.windows[ch] {
+		for i := range w.Msgs {
+			add(&w.Msgs[i])
 		}
 	}
 	pre := ch + "/"
@@ -1686,8 +1709,9 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 type MsgKey struct{ TS, CID string }
 
 // Held reports, for each key, whether the store caches a message of ch
-// with its ts (or client_msg_id) in the timeline, a thread or the messages
-// fetched by id (MessageKeys' set: taut's injected check): Holds for many
+// with its ts (or client_msg_id) in the timeline, a jump's window, a
+// thread or the messages fetched by id (MessageKeys' set: taut's injected
+// check): Holds for many
 // at once, one pass over the store under one read lock (Holds per message
 // scanned the timeline and every cached thread once each).
 func (s *Store) Held(ch string, keys []MsgKey) []bool {
@@ -1718,6 +1742,11 @@ func (s *Store) Held(ch string, keys []MsgKey) []bool {
 	if t := s.timelines[ch]; t != nil {
 		for i := range t.Msgs {
 			mark(&t.Msgs[i])
+		}
+	}
+	for _, w := range s.windows[ch] { // a jump's windows, which Holds reads too
+		for i := range w.Msgs {
+			mark(&w.Msgs[i])
 		}
 	}
 	pre := ch + "/"
@@ -1811,6 +1840,7 @@ func (s *Store) SetThread(ch, ts string, msgs []slack.Message) {
 	SortAsc(msgs)
 	s.mu.Lock()
 	s.threads[ch+"/"+ts] = msgs
+	s.setThreadWholeLocked(ch+"/"+ts, msgs) // the whole thread: one slice, both ends (thread_slices.go)
 	s.mu.Unlock()
 }
 
@@ -1851,6 +1881,9 @@ func (s *Store) addReplyLocked(ch string, m slack.Message) {
 			SortAsc(th)
 		}
 		s.threads[key] = th
+		if !replaced {
+			s.liveReplyLocked(key, m.TS) // its history's addTimestamps (thread_slices.go)
+		}
 	}
 }
 

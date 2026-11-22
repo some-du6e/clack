@@ -66,6 +66,13 @@ type Message struct {
 	Attachments json.RawMessage // legacy attachments / unfurls as sent
 	Metadata    json.RawMessage // app metadata {event_type, event_payload}
 	BotProfile  *BotProfile     // bot_profile of bot messages
+	// NoteFiles is what a notification's text reads of the files
+	// (richtext.NoteFilesOf: the first one's title, kind and uploader,
+	// the clips), nil with none; Upload is msg.upload (the sender
+	// uploaded the files with it), which picks the file meta line's
+	// "uploaded" over "shared".
+	NoteFiles *richtext.NoteFiles
+	Upload    bool
 	// StreamingState is an app's chat stream (chat.startStream /
 	// appendStream / stopStream): "in_progress" while open, then
 	// "completed" or "errored" (agent.go).

@@ -671,7 +671,7 @@ func TestFileLinkInSplitStaysInSplit(t *testing.T) {
 	t.Run("comment jump", func(t *testing.T) {
 		e := splitEnv(t)
 		e.a.inPane(paneSplit, func() {
-			e.a.jumpToMessage(fakeslack.FileChanLaunch, fakeslack.CommentUnread, fakeslack.CommentUnread)
+			e.a.jumpToMessage(fakeslack.FileChanLaunch, fakeslack.CommentUnread, fakeslack.CommentUnread, false)
 		})
 		e.until("the comment thread on the split view's stack", onStack(e))
 		e.frames(5)

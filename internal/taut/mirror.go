@@ -1352,8 +1352,9 @@ func pruneEmpty(v any, zeros bool) any {
 	return v
 }
 
-// messageChannels are messages' keys: the conversations with a window or
-// a cached thread, and those with messages fetched by id.
+// messageChannels are messages' keys: the conversations with a timeline,
+// a jump's window or a cached thread, and those with messages fetched by
+// id.
 func (m *mirror) messageChannels() []string {
 	a := m.t.app
 	out := a.S.MessageChannels()
@@ -1370,24 +1371,35 @@ func (m *mirror) messageChannels() []string {
 	return out
 }
 
-// bucket is messages[ch]: the cached timeline, open threads' replies, and
-// the messages fetched by id. Slack keeps one messages store, and a message
-// fetched by id (fetchObjectWithId: Activity's and Saved's rows, the
-// Threads view) lands in it beside the windows', so a plugin patching the
-// slice (Censorship, ShowRealUser) reaches it there; built from the windows
-// and threads alone, such messages never got a view (store.FetchedIn).
+// bucket is messages[ch]: the cached timeline, a jump's windows, open
+// threads' replies, and the messages fetched by id. Slack keeps one
+// messages store: every channelHistory slice's messages are in it, and a
+// message fetched by id (fetchObjectWithId: Activity's and Saved's rows,
+// the Threads view) lands in it beside them, so a plugin patching the
+// slice (Censorship, ShowRealUser) reaches all of them there; built from
+// the timeline and threads alone, a jump's window and such messages never
+// got a view (store.WindowsIn, store.FetchedIn). A message several hold
+// is the timeline's, a window's, a thread's, then the fetched copy.
 func (m *mirror) bucket(ch string) map[string]any {
 	a := m.t.app
 	tl := a.S.Timeline(ch)
+	wins := a.S.WindowsIn(ch)
 	threads := a.S.ThreadsIn(ch)
 	fetched := a.S.FetchedIn(ch)
-	if tl == nil && len(threads) == 0 && len(fetched) == 0 {
+	if tl == nil && len(wins) == 0 && len(threads) == 0 && len(fetched) == 0 {
 		return nil
 	}
 	out := map[string]any{}
 	if tl != nil {
 		for i := range tl.Msgs {
 			out[tl.Msgs[i].TS] = messageJSON(ch, &tl.Msgs[i])
+		}
+	}
+	for _, w := range wins {
+		for i := range w.Msgs {
+			if _, ok := out[w.Msgs[i].TS]; !ok {
+				out[w.Msgs[i].TS] = messageJSON(ch, &w.Msgs[i])
+			}
 		}
 	}
 	for _, msgs := range threads {
@@ -1412,26 +1424,71 @@ func (m *mirror) history(key string) any {
 	var ts []string
 	reachedStart := false
 	if isThread {
-		msgs, ok := a.S.Thread(ch, thread)
+		// the thread's slices as its replies reads left them (store
+		// thread_slices.go: Slack's channelHistory[threadKey])
+		sls, rs, re, pre, ok := a.S.ThreadHistory(ch, thread)
 		if !ok {
 			return nil
 		}
-		for _, x := range msgs {
-			ts = append(ts, x.TS)
+		out := make([]any, 0, len(sls))
+		for _, x := range sls {
+			tss := x.TSs
+			if tss == nil {
+				tss = []string{}
+			}
+			sl := map[string]any{"timestamps": tss, "start": nil, "end": nil}
+			if x.Start != "" {
+				sl["start"] = x.Start
+			}
+			if x.End != "" {
+				sl["end"] = x.End
+			}
+			out = append(out, sl)
 		}
-		reachedStart = true
+		return map[string]any{"reachedStart": rs, "reachedEnd": re, "slices": out, "prevReachedEnd": pre}
 	} else {
 		tl := a.S.Timeline(ch)
-		if tl == nil {
+		wins := a.S.WindowsIn(ch)
+		if tl == nil && len(wins) == 0 {
 			return nil
+		}
+		// a jump's windows first, oldest first (each older than the
+		// timeline, which one joins once they meet), each a slice of its
+		// own: its range, the stretch it holds whole (createSlice's
+		// oldest and latest); the timeline's slice last
+		var slices []any
+		for _, w := range wins {
+			var wts []string
+			for i := range w.Msgs {
+				if x := &w.Msgs[i]; x.ThreadTS == "" || x.ThreadTS == x.TS || x.Subtype == "thread_broadcast" {
+					wts = append(wts, x.TS)
+				}
+			}
+			slices = append(slices, historySlice(wts, w.Start, w.End))
+		}
+		if len(wins) > 0 {
+			reachedStart = !wins[0].HasOlder
+		}
+		if tl == nil {
+			// only windows: the newest messages aren't loaded
+			return map[string]any{"reachedStart": reachedStart, "reachedEnd": false, "slices": slices, "prevReachedEnd": false}
 		}
 		for _, x := range tl.Msgs {
 			if x.ThreadTS == "" || x.ThreadTS == x.TS || x.Subtype == "thread_broadcast" {
 				ts = append(ts, x.TS)
 			}
 		}
-		reachedStart = !tl.HasMore
+		if len(wins) == 0 {
+			reachedStart = !tl.HasMore
+		}
+		slices = append(slices, historySlice(ts, "", ""))
+		return map[string]any{"reachedStart": reachedStart, "reachedEnd": true, "slices": slices, "prevReachedEnd": true}
 	}
+}
+
+// historySlice is a channelHistory slice: its timestamps, and its start
+// and end (the range given, else its first and last timestamp).
+func historySlice(ts []string, start, end string) map[string]any {
 	if ts == nil {
 		ts = []string{}
 	}
@@ -1439,7 +1496,13 @@ func (m *mirror) history(key string) any {
 	if len(ts) > 0 {
 		slice["start"], slice["end"] = ts[0], ts[len(ts)-1]
 	}
-	return map[string]any{"reachedStart": reachedStart, "reachedEnd": true, "slices": []any{slice}, "prevReachedEnd": true}
+	if start != "" {
+		slice["start"] = start
+	}
+	if end != "" {
+		slice["end"] = end
+	}
+	return slice
 }
 
 func (m *mirror) teamIDs() []string {

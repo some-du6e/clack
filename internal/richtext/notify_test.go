@@ -113,11 +113,11 @@ func TestNotificationTextEmoji(t *testing.T) {
 		{"text", `{"ts":"1.0","text":"hi :smile:"}`},
 	} {
 		m := msg(t, c.msg)
-		if got := NotificationText(R, m, FromMessage(R, m), nil); got != "hi \U0001F604" {
+		if got := NotificationMessageText(R, m, nil); got != "hi \U0001F604" {
 			t.Errorf("%s: %q, want the emoji itself", c.name, got)
 		}
 		var as asTextRes
-		if got := NotificationText(as, m, FromMessage(as, m), nil); got != "hi :smile:" {
+		if got := NotificationMessageText(as, m, nil); got != "hi :smile:" {
 			t.Errorf("%s with emoji_mode as_text: %q, want \"hi :smile:\"", c.name, got)
 		}
 	}

@@ -149,7 +149,7 @@ func TestVideoVisibilityPause(t *testing.T) {
 	e := filesEnv(t, image.Pt(1440, 900), false)
 	ch := fakeslack.FilesChannelID
 	m := e.filesMsg("video")
-	e.a.jumpToMessage(ch, m.TS, "")
+	e.a.jumpToMessage(ch, m.TS, "", false)
 	e.settle(800 * time.Millisecond)
 	tile := e.videoTileInView(t, m.TS)
 	clk := time.Second
@@ -169,7 +169,7 @@ func TestVideoVisibilityPause(t *testing.T) {
 			t.Fatalf("the tile is still on screen at %v", rs[0].R)
 		}
 	}
-	e.a.jumpToMessage(ch, m.TS, "")
+	e.a.jumpToMessage(ch, m.TS, "", false)
 	e.settle(800 * time.Millisecond)
 	if st, _ := e.videoState(m.TS); st.Playing {
 		t.Error("back on screen, it played on by itself")

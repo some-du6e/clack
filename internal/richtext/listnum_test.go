@@ -57,7 +57,7 @@ func TestListHugeOffset(t *testing.T) {
 		var toast, plain string
 		bounded(t, "offset "+c.offset, 5*time.Second, func() {
 			d := FromMessage(R, m)
-			toast = NotificationText(R, m, d, nil)
+			toast = NotificationMessageText(R, m, nil)
 			plain = PlainText(d)
 		})
 		if toast != c.toast || len(toast) > 64 {
@@ -87,7 +87,7 @@ func TestListIndentOutOfRange(t *testing.T) {
 			if len(d.Blocks) > 0 {
 				indent = d.Blocks[0].Indent
 			}
-			toast = NotificationText(R, m, d, nil)
+			toast = NotificationMessageText(R, m, nil)
 			plain = PlainText(d)
 		})
 		if indent < 0 || indent > 8 {

@@ -374,7 +374,7 @@ func TestNotifyNamesTheDMPartner(t *testing.T) {
 }
 
 // A typed message mentions people as rich_text user elements, and its
-// toast's body comes from its blocks (richtext.NotificationText). A
+// toast's body comes from its blocks (richtext.NotificationMessageText). A
 // member the store didn't hold is named once the toast's wait brought
 // them, after one users/info ask. One users/info answers too late for
 // (past noteResolveWait) reads as nothing, and the body's conversion
@@ -760,7 +760,7 @@ func TestNotifyNamesNoThreadToastFromAHiddenSender(t *testing.T) {
 }
 
 // A toast's body names a mention the same whether it comes from the
-// message's blocks (richtext.NotificationText with noteNames: a rich_text
+// message's blocks (richtext.NotificationMessageText with noteNames: a rich_text
 // user element, a Block Kit section's mrkdwn) or from its text: userToText
 // (noteMentionName), the display name unless the viewer's mentions show
 // real names (the team's display_real_names_in_mentions under

@@ -182,11 +182,12 @@ func (e *perfEnv) checkToolbar(t *testing.T, what string, l rowsLister, ts, rowC
 // From Activity, a thread item opens the thread beside the inbox at the
 // reply (OpenThreadAt, activity_panel.go openSecondary); the thread
 // header's channel name opens the channel at the root (c/<id>/m/<root>,
-// the channel jumped to the message and flashing it). Hovering the root
-// and its neighbours, each toolbar is at Slack's place against its row,
-// the row at the list's top too, its card cut off by the list's top edge
-// (the jump puts the root 64dp under the list's top, BaseMessageList's
-// ANCHOR_OFFSET, and the list is scrolled that far to bring it there).
+// the channel jumped to the message and flashing it, on Slack's anchor
+// line: ANCHOR_OFFSET under the list's top). Hovering the root and its
+// neighbours, each toolbar is at Slack's place against its row; then the
+// row above the root, wheeled up to the list's top, has its card cut off
+// by the list's top edge, and so has the root once it is scrolled there,
+// the rows under it in place.
 func TestHoverToolbarJumpFromActivity(t *testing.T) {
 	e := hoverToolbarEnv(t)
 	e.jumpFromActivityToolbars(t, "jump from Activity")
@@ -260,31 +261,43 @@ func (e *perfEnv) jumpFromActivityToolbars(t *testing.T, what string) {
 		}
 		return -1
 	}
-	sc := e.scale
-	if sc == 0 {
-		sc = 1
-	}
-	anchor := int(64*sc + 0.5)
 	i := rootAt()
-	if i < 0 || rows[i].R.Min.Y-list.Min.Y != anchor {
-		t.Fatalf("%s: the jump didn't put the root %dpx under the list's top (list %v, rows %v)", what, anchor, list, rows)
+	if i < 1 || rows[i].R.Min.Y-list.Min.Y != e.anchorLine() {
+		t.Fatalf("%s: the jump didn't put the root on the anchor line, %dpx under the list's top (list %v, rows %v)", what, e.anchorLine(), list, rows)
+	}
+	// the row above the root to the list's top: a wheel takes it there
+	// exactly (a precise delta), and its card is cut off by the list's top
+	e.scroll(rowPoint(rows[i].R, list), float32(rows[i-1].R.Min.Y-list.Min.Y))
+	e.settle(300 * time.Millisecond)
+	e.pointerIn(l())
+	at := image.Rectangle{}
+	for _, r := range l().RowRects() {
+		if r.TS == rows[i-1].TS {
+			at = r.R
+		}
+	}
+	if at.Min.Y != list.Min.Y {
+		t.Fatalf("%s: wheeled to the list's top, the row above the root is at %v (list %v)", what, at, list)
 	}
 	e.inspectOn()
-	// where the jump put them: the root and the row under it (the row
-	// above is cut off past its toolbar's button)
-	for _, k := range []int{i, i + 1} {
+	for _, k := range []int{i, i - 1, i + 1} {
 		if k < len(rows) {
 			e.checkToolbar(t, what, l(), rows[k].TS, "MessageWrapper", actsTopDefault)
 		}
 	}
 	// the root's row at the list's top, its card cut off by the edge, and
 	// the rows under it
+	rows, list = l().RowRects(), l().ListRect()
+	if i = rootAt(); i < 0 {
+		t.Fatalf("%s: the root isn't drawn after the wheel (list %v, rows %v)", what, list, rows)
+	}
+	by := rows[i].R.Min.Y - list.Min.Y
 	cl, _ := e.a.convoFor(ch, "").list.(channelList)
-	cl.ScrollPx(anchor)
+	cl.ScrollPx(by)
 	e.pointerIn(l())
 	rows, list = l().RowRects(), l().ListRect()
 	if i = rootAt(); i < 0 || rows[i].R.Min.Y != list.Min.Y {
-		t.Fatalf("%s: scrolled %dpx after the jump, the root isn't at the list's top (list %v, rows %v)", what, anchor, list, rows)
+		t.Fatalf("%s: scrolled %dpx to the root, it isn't at the list's top (list %v, rows %v)", what, by, list, rows)
 	}
 	for _, k := range []int{i, i + 1, i + 2} {
 		if k < len(rows) {

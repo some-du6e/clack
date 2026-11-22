@@ -614,6 +614,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			}
 		}
 		a.S.SlurpSub(ch, &m)
+		a.forgetMsgThread(ch, m.TS) // its thread_ts as this copy has it, not as a lookup found it
 		// every stored copy takes it, a copy fetched by id included (an
 		// Activity entry's message from a conversation nobody opened:
 		// store/fetched.go), and a read out now keeps it (store/live.go),

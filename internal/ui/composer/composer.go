@@ -77,6 +77,11 @@ type Composer struct {
 	// (client-threads-view onDownArrowInEmptyInput, focusItemBelowInput);
 	// ThreadFooter's default and the channel's do nothing.
 	OnDownWhenEmpty func()
+	// OnPageKeyEmpty is MessagePane's document keydown (AEjl): with the
+	// channel's input focused and empty, PageUp, PageDown, Home and End
+	// (the key's name) go to the message list. A reply box's and the edit
+	// composer's stay theirs.
+	OnPageKeyEmpty func(name string)
 	// OnFocus runs on the UI goroutine when the box takes the keyboard
 	// focus: the thread pane's onFooterInputFocus, which lets the thread
 	// go from threadsManuallyMarkedUnread (the ui root wires it).
@@ -803,6 +808,10 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvDownEmpty:
 			if c.edit == nil && c.OnDownWhenEmpty != nil {
 				c.OnDownWhenEmpty()
+			}
+		case EvPageUpEmpty, EvPageDownEmpty, EvHomeEmpty, EvEndEmpty:
+			if c.edit == nil && c.ts == "" && c.OnPageKeyEmpty != nil {
+				c.OnPageKeyEmpty(map[EditorEventKind]string{EvPageUpEmpty: "PageUp", EvPageDownEmpty: "PageDown", EvHomeEmpty: "Home", EvEndEmpty: "End"}[ev.Kind])
 			}
 		case EvUndoEmpty:
 			if !c.tryUnsend() {
