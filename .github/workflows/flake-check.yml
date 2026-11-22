@@ -4875,6 +4875,31 @@ jobs:
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
   # in its needs (.github/scripts/expect_fail_wire.py adds it).
+
+  # bk-data-viz (temporary, removed before the branch's last push): the
+  # chart package's port against ECharts while it's written; prints the
+  # failures and passes either way (a diagnostic run, not a gate)
+  bk-data-viz-diag:
+    if: ${{ inputs.only != '' && startsWith('bk-data-viz-diag', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: chart (diagnostic)
+        run: |
+          set +e
+          go test -count=1 -v ./internal/chart > "$RUNNER_TEMP/chart.txt" 2>&1
+          echo "exit $?"
+          grep -E '^(--- FAIL|FAIL|ok|PASS)' "$RUNNER_TEMP/chart.txt" | head -60
+          grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/chart.txt" | head -120
+          exit 0
+
   expect-fail:
     needs:
       - go
