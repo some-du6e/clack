@@ -337,52 +337,106 @@ func TestEncodeSineIsOpusMP4(t *testing.T) {
 }
 
 // ffprobe and ffmpeg read the clip as an independent MP4 demuxer and Opus
-// decoder would (CLACK_FFPROBE=1: huddle.yml installs ffmpeg). The file is
-// a synthetic tone, written to the test's temp dir.
+// decoder would (CLACK_FFPROBE=1: huddle.yml installs ffmpeg), in both of
+// its shapes: a recording under the 5 s timeslice, flushed once at stop,
+// and one past it, which most clips are: live mode, the moov written at
+// the first timeslice flush (durations up to it, mvhd's 0), then a
+// fragment every 5 s and the rest at stop. Every packet the encoder made
+// is read, and ffmpeg decodes all of them without an error. The files
+// are a synthetic tone, written to the test's temp dir.
 func TestFFProbeReadsTheClip(t *testing.T) {
 	if os.Getenv("CLACK_FFPROBE") == "" {
 		t.Skip("CLACK_FFPROBE not set")
 	}
-	b, _ := encodeSine(t, 3200*time.Millisecond)
-	path := filepath.Join(t.TempDir(), FileName)
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command("ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", path).Output()
-	if err != nil {
-		t.Fatalf("ffprobe: %v", err)
-	}
-	var r struct {
-		Streams []struct {
-			CodecName  string `json:"codec_name"`
-			CodecType  string `json:"codec_type"`
-			SampleRate string `json:"sample_rate"`
-			Channels   int    `json:"channels"`
-		} `json:"streams"`
-		Format struct {
-			FormatName string `json:"format_name"`
-			Duration   string `json:"duration"`
-		} `json:"format"`
-	}
-	if err := json.Unmarshal(out, &r); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("ffprobe: %s", out)
-	if len(r.Streams) != 1 || r.Streams[0].CodecName != "opus" || r.Streams[0].CodecType != "audio" ||
-		r.Streams[0].SampleRate != "48000" || r.Streams[0].Channels != 1 {
-		t.Errorf("streams %+v", r.Streams)
-	}
-	if !strings.Contains(r.Format.FormatName, "mp4") {
-		t.Errorf("format %q", r.Format.FormatName)
-	}
-	if d, _ := strconv.ParseFloat(r.Format.Duration, 64); d < 2.9 || d > 3.3 {
-		t.Errorf("duration %q", r.Format.Duration)
-	}
-	cmd := exec.Command("ffmpeg", "-v", "error", "-i", path, "-f", "null", "-")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil || stderr.Len() > 0 {
-		t.Errorf("ffmpeg decode: %v %s", err, stderr.String())
+	for _, c := range []struct {
+		name  string
+		d     time.Duration
+		frags int
+	}{
+		{"one flush at stop", 3200 * time.Millisecond, 1},
+		{"fragments every 5 s", 12600 * time.Millisecond, 3},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			b, pcm := encodeSine(t, c.d)
+			packets := len(pcm) / FrameSamples // what's left under 60 ms isn't encoded
+			info, err := Probe(b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(info.Fragments) != c.frags {
+				t.Fatalf("%d fragments, want %d (top %v)", len(info.Fragments), c.frags, info.Top)
+			}
+			path := filepath.Join(t.TempDir(), FileName)
+			if err := os.WriteFile(path, b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command("ffprobe", "-v", "error", "-count_packets", "-show_streams", "-show_format", "-of", "json", path).Output()
+			if err != nil {
+				t.Fatalf("ffprobe: %v", err)
+			}
+			var r struct {
+				Streams []struct {
+					CodecName     string `json:"codec_name"`
+					CodecType     string `json:"codec_type"`
+					SampleRate    string `json:"sample_rate"`
+					Channels      int    `json:"channels"`
+					NbReadPackets string `json:"nb_read_packets"`
+				} `json:"streams"`
+				Format struct {
+					FormatName string `json:"format_name"`
+					Duration   string `json:"duration"`
+				} `json:"format"`
+			}
+			if err := json.Unmarshal(out, &r); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("ffprobe: %s", out)
+			if len(r.Streams) != 1 || r.Streams[0].CodecName != "opus" || r.Streams[0].CodecType != "audio" ||
+				r.Streams[0].SampleRate != "48000" || r.Streams[0].Channels != 1 {
+				t.Fatalf("streams %+v", r.Streams)
+			}
+			if got := r.Streams[0].NbReadPackets; got != strconv.Itoa(packets) {
+				t.Errorf("ffprobe read %s packets, the encoder made %d", got, packets)
+			}
+			if !strings.Contains(r.Format.FormatName, "mp4") {
+				t.Errorf("format %q", r.Format.FormatName)
+			}
+			want := float64(packets) * 0.06
+			// the last packet's end, from the fragments' timestamps (tfdt,
+			// trun): a live-mode moov's mvhd says 0, so the format's
+			// duration is FFmpeg's estimate at open, checked only for the
+			// single flush
+			pk, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "packet=pts_time,duration_time", "-of", "csv=p=0", path).Output()
+			if err != nil {
+				t.Fatalf("ffprobe packets: %v", err)
+			}
+			lines := strings.Fields(strings.TrimSpace(string(pk)))
+			if len(lines) != packets {
+				t.Errorf("%d packet entries, want %d", len(lines), packets)
+			}
+			if n := len(lines); n > 0 {
+				f := strings.Split(lines[n-1], ",")
+				pts, _ := strconv.ParseFloat(f[0], 64)
+				dur := 0.0
+				if len(f) > 1 {
+					dur, _ = strconv.ParseFloat(f[1], 64)
+				}
+				if end := pts + dur; math.Abs(end-want) > 0.3 {
+					t.Errorf("the last packet ends at %.3f s (%s), want about %.2f", end, lines[n-1], want)
+				}
+			}
+			if c.frags == 1 {
+				if d, _ := strconv.ParseFloat(r.Format.Duration, 64); math.Abs(d-want) > 0.3 {
+					t.Errorf("duration %q, want about %.2f", r.Format.Duration, want)
+				}
+			}
+			cmd := exec.Command("ffmpeg", "-v", "error", "-i", path, "-f", "null", "-")
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil || stderr.Len() > 0 {
+				t.Errorf("ffmpeg decode: %v %s", err, stderr.String())
+			}
+		})
 	}
 }
 
@@ -634,5 +688,127 @@ func TestRecorderCancelDoesNotWaitForTheMicrophone(t *testing.T) {
 			t.Fatal("the encoder was never freed")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// quietMic is a microphone that opens and never delivers a frame (one
+// whose driver hands back nothing); hold, when set, keeps its Start from
+// returning until it's closed. It counts its Closes.
+type quietMic struct {
+	hold   chan struct{}
+	closes atomic.Int32
+}
+
+func (d *quietMic) Start(func([]int16), func([]int16)) error {
+	if d.hold != nil {
+		<-d.hold
+	}
+	return nil
+}
+
+func (d *quietMic) Close() { d.closes.Add(1) }
+
+// noPanic runs f, failing the test with what panicked instead of ending
+// the test binary.
+func noPanic(t *testing.T, what string, f func()) {
+	t.Helper()
+	defer func() {
+		if p := recover(); p != nil {
+			t.Errorf("%s panicked: %v", what, p)
+		}
+	}()
+	f()
+}
+
+// A stop before any audio reached the encoder (✓, Return or Space as the
+// timer starts; a microphone that delivers nothing, even at the 5:00
+// stop) still makes the File, as Slack's recordingend does: an empty
+// audio_message.m4a with the timer's duration and the strip's samples,
+// attached like any other. The popover's close after it (×, Escape, the
+// composer going: Cancel) finds nothing left to close: it closed the
+// ticker's channel a second time and panicked.
+func TestRecorderStopBeforeAnyAudio(t *testing.T) {
+	dev := &quietMic{}
+	r := Start(Options{Device: dev})
+	waitState(t, r, Recording)
+	noPanic(t, "Stop", r.Stop)
+	if r.State() != Stopped {
+		t.Fatalf("state %s after a stop with nothing recorded, want stopped (Slack attaches the empty file)", r.State())
+	}
+	f, ok := r.File()
+	if !ok || f.Name != FileName || f.Mime != Mime || f.Subtype != Subtype || len(f.Data) != 0 || len(f.WaveSamples) != WaveDots {
+		t.Errorf("file %q %q %q, %d bytes, %d samples", f.Name, f.Mime, f.Subtype, len(f.Data), len(f.WaveSamples))
+	}
+	noPanic(t, "Cancel after a stop that recorded nothing", r.Cancel)
+	noPanic(t, "a second Cancel", r.Cancel)
+	noPanic(t, "a second Stop", r.Stop)
+	if r.State() != Stopped {
+		t.Errorf("state %s after the popover closed", r.State())
+	}
+	if n := dev.closes.Load(); n != 1 {
+		t.Errorf("the microphone closed %d times, want once", n)
+	}
+}
+
+// Stop and Cancel in every state, in either order and twice over: nothing
+// panics, the microphone closes exactly once, and the state each leaves is
+// the first one's (a Cancel during Opening or Starting cancels, a Stop
+// then does nothing; after Stopped or Failed both do nothing).
+func TestRecorderStopAndCancelInEveryState(t *testing.T) {
+	type step func(r *Recorder)
+	stop := func(r *Recorder) { r.Stop() }
+	cancel := func(r *Recorder) { r.Cancel() }
+	for _, c := range []struct {
+		name  string
+		at    State
+		steps []step
+		want  State
+	}{
+		{"opening: cancel, cancel, stop", Opening, []step{cancel, cancel, stop}, Cancelled},
+		{"starting: cancel, stop, cancel", Starting, []step{cancel, stop, cancel}, Cancelled},
+		{"recording: stop, stop, cancel", Recording, []step{stop, stop, cancel}, Stopped},
+		{"recording: cancel, stop, cancel", Recording, []step{cancel, stop, cancel}, Cancelled},
+		{"failed: cancel, stop, cancel", Failed, []step{cancel, stop, cancel}, Failed},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dev := &quietMic{}
+			var d huddle.Device = dev
+			if c.at == Opening {
+				dev.hold = make(chan struct{})
+			}
+			if c.at == Failed {
+				d = failDevice{}
+			}
+			r := Start(Options{Device: d})
+			switch c.at {
+			case Opening:
+				time.Sleep(20 * time.Millisecond) // in the device's Start
+				if r.State() != Opening {
+					t.Fatalf("state %s, want opening", r.State())
+				}
+			default:
+				waitState(t, r, c.at)
+			}
+			for i, s := range c.steps {
+				noPanic(t, "step "+strconv.Itoa(i), func() { s(r) })
+			}
+			if dev.hold != nil {
+				close(dev.hold) // the device's Start returns: open finds the recording cancelled
+			}
+			if r.State() != c.want {
+				t.Errorf("state %s, want %s", r.State(), c.want)
+			}
+			if c.at == Failed {
+				return
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for dev.closes.Load() == 0 && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			time.Sleep(50 * time.Millisecond) // a second Close would come by now
+			if n := dev.closes.Load(); n != 1 {
+				t.Errorf("the microphone closed %d times, want once", n)
+			}
+		})
 	}
 }
