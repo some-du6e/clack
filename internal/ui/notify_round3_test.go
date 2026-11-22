@@ -46,12 +46,12 @@ func TestDesktopNotificationWithoutTSLikeSlack(t *testing.T) {
 	}
 }
 
-// shouldSuppressNotificationInActiveChannel: a message of the
-// conversation open in the focused window, showing its messages, stays
-// quiet (16); one whose text holds an at-command, a thread reply the
-// conversation's view doesn't show (one mentioning the viewer), and any
-// message while the conversation shows another tab notify. Clack kept all
-// four quiet.
+// shouldSuppressNotificationInActiveChannel: a message mentioning the
+// viewer in the conversation open in the focused window, showing its
+// messages, stays quiet (16); one whose text holds an at-command, a thread
+// reply the conversation's view doesn't show (one mentioning the viewer),
+// and one while the conversation shows another tab notify. Clack kept the
+// last three quiet too.
 func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	t.Setenv("CLACK_HOME", t.TempDir())
 	sz := fakeslack.Small
@@ -106,7 +106,9 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 		e.until("its decision line", 10*time.Second, func() bool { return line(ts) != "" })
 		return ts
 	}
-	quiet := post("a synthetic plain line", nil)
+	// mentions: the conversation notifies on mentions only (1 before 16)
+	me := "<@" + fakeslack.SelfID + "> "
+	quiet := post(me+"a synthetic plain line", nil)
 	if l := line(quiet); !strings.HasPrefix(l, "notify: skip 16 ") {
 		t.Errorf("a plain message in the open conversation: %q, want skip 16", l)
 	}
@@ -127,7 +129,7 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	}
 	e.a.chTab[ch] = 1 // the Files tab, not its messages
 	e.frame()
-	other := post("a synthetic line while another tab shows", nil)
+	other := post(me+"a synthetic line while another tab shows", nil)
 	if l := line(other); !strings.HasPrefix(l, "notify: show ") {
 		t.Errorf("a message while the conversation shows its Files tab: %q, want it shown (the Messages tab isn't on screen)", l)
 	}
