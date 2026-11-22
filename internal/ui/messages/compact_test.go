@@ -20,7 +20,6 @@ package messages
 
 import (
 	"encoding/json"
-	"github.com/some-du6e/clack/internal/fakeslack"
 	"image"
 	"os"
 	"testing"
@@ -156,18 +155,6 @@ func TestIdleRowsStayPutCompact(t *testing.T) {
 func TestFlingScrollNoGapsCompact(t *testing.T) {
 	setDense(t, true)
 	TestFlingScrollNoGaps(t)
-}
-
-// The senders' names land late (users/info held): the fling still starts
-// from rows that hold still. On a loaded runner the names came between
-// two idle frames and moved the rows 22 px (files-filters-3's push ci).
-func TestFlingScrollNamesLateCompact(t *testing.T) {
-	setDense(t, true)
-	e := newFlingEnv(t, "C0FAKE00001", 1)
-	for _, m := range []string{"users.info", "edge/users/info", "users/info"} {
-		e.fs.SetFault(m, fakeslack.Fault{Delay: 400 * time.Millisecond})
-	}
-	flingThrough(t, e)
 }
 
 func TestFlingPageArrivalEveryFrameCompact(t *testing.T) {

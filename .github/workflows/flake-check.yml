@@ -4622,9 +4622,8 @@ jobs:
         uses: ./.github/actions/expect-fail-report
 
   # flakes-1122: TestLeftComposerLetsGoOfFocus (the reopened thread's reply
-  # box), TestFilesTabHideAndLinkDetails (a header read out across a Hide
-  # tab, its members call held) and TestFlingScrollNamesLateCompact (the
-  # senders' names held); the last two force their race every run.
+  # box) and TestFilesTabHideAndLinkDetails (a header read out across a
+  # Hide tab, its members call held: its race forced every run).
   # Dispatch with only=fl1122.
   fl1122-r-ui:
     if: ${{ !inputs.only || startsWith('fl1122-r-ui', inputs.only) }}
@@ -4649,7 +4648,6 @@ jobs:
           set +e
           rc=0
           go test -count=$COUNT -timeout 20m -run '^(TestLeftComposerLetsGoOfFocus|TestFilesTabHideAndLinkDetails)$' ./internal/ui || rc=1
-          go test -count=$COUNT -timeout 10m -run '^TestFlingScrollNamesLateCompact$' ./internal/ui/messages || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report

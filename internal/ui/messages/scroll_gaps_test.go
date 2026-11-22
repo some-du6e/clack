@@ -245,12 +245,12 @@ func (e *flingEnv) release() {
 
 func flingThrough(t *testing.T, e *flingEnv) {
 	until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.items) > 3 })
-	// the page's senders first: the store starts with the viewer alone, and
-	// a name that lands between two idle frames re-wraps its row (compact:
-	// the name is on the text's first line) and moves every row under it
-	// (files-filters-3's push ci 44980164338: 22 px at frame 2, with the
-	// users/info asks just answered). EnsureUsers returns once they are
-	// all in, the asks already out too.
+	// the page's senders first: the store starts with the viewer alone,
+	// and their names land while the rows are drawn. A guess at
+	// files-filters-3's push ci 44980164338 (a row moved 22 px at frame 2,
+	// the users/info asks just answered), not proven: holding the names
+	// didn't move a row (flakes-1122's red3). EnsureUsers returns once they
+	// are all in, the asks already out too.
 	var ids []string
 	for _, en := range e.v.s.snap.msgs {
 		if en.m.User != "" {
