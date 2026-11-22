@@ -102,7 +102,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$FILES_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$|TestEmailShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 13m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$|TestEmailShots$' ./internal/ui/
           # the Files browser's Filters modal (docs/FILES-AUDIT.md)
           xvfb-run -a go test -count=1 -v -run 'TestFilesViewFiltersShots$' ./internal/ui/views/
           ls -la "$FILES_SHOTS_DIR"
