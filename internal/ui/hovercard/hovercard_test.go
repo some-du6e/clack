@@ -406,3 +406,28 @@ func TestLeavingTheCardCloses(t *testing.T) {
 		t.Fatal("still open 250ms after the pointer left the card")
 	}
 }
+
+// The open card follows its trigger (review of thread-header-hover-3):
+// when the bot a sender stands for changes while its card is open (the
+// message's bot arrives from bots.info and takes over from the member's),
+// Slack's ProfileHoverTrigger renders the card again with the new
+// serviceId: the card is made again (a new generation) for the new bot.
+func TestOpenCardFollowsItsTrigger(t *testing.T) {
+	c := &Controller{}
+	now := time.Now()
+	key := new(int)
+	c.Show(Request{Key: key, UserID: "U0BOT00001", BotID: "B0MEMBER01"}, now)
+	_, gen, _ := c.Open()
+	c.ReportBot(key, "U0BOT00001", "B0MESSAGE1", image.Rect(0, 0, 80, 20), f32.Pt(10, 10))
+	c.Frame(now.Add(10*time.Millisecond), false, false)
+	r, gen2, open := c.Open()
+	if !open || r.BotID != "B0MESSAGE1" || gen2 == gen {
+		t.Errorf("open %v with bot %q (generation %d, was %d); want the card made again for B0MESSAGE1", open, r.BotID, gen2, gen)
+	}
+	// the same names again: the card stays as it is
+	c.ReportBot(key, "U0BOT00001", "B0MESSAGE1", image.Rect(0, 0, 80, 20), f32.Pt(10, 10))
+	c.Frame(now.Add(20*time.Millisecond), false, false)
+	if _, gen3, _ := c.Open(); gen3 != gen2 {
+		t.Errorf("the same report made the card again (generation %d, was %d)", gen3, gen2)
+	}
+}

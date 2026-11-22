@@ -39,11 +39,12 @@ import (
 // whole frames at most. Then it scrolls the message list (a wheel's frame
 // every 16 ms) in four turns of 1.5 s each way and reports what the
 // scroll's frames cost: whole frames in a row draw straight into the
-// window, without the frame texture's copy, and the median turn's CPU a
-// frame stays within scrollCPUMax of CLACK_FULL_FRAMES' on every OS. It reads the window's pixels back (caretReadback): on
-// X11 the caret's pixels toggle between blinks and a partial frame's window
-// is the whole frame's, bit for bit; on macOS each blink's drawable is the
-// frame texture's, bit for bit. Synthetic data only.
+// window, without the frame texture's copy, and the fastest turn's CPU a
+// frame stays within scrollCPUMax of CLACK_FULL_FRAMES' fastest turn on
+// every OS. It reads the window's pixels back (caretReadback): on X11 the
+// caret's pixels toggle between blinks and a partial frame's window is the
+// whole frame's, bit for bit; on macOS each blink's drawable is the frame
+// texture's, bit for bit. Synthetic data only.
 func TestRealWindowCaretCost(t *testing.T) {
 	if on, why := realWindowGate(); !on {
 		t.Skip(why)

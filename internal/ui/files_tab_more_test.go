@@ -123,3 +123,59 @@ func TestFilesTabHideAndLinkDetails(t *testing.T) {
 		t.Error("the pane stayed after closing")
 	}
 }
+
+// A cold start's header read (no header cache) whose answer comes back
+// after a newer read of the same header failed: the older answer is the
+// only good one, so it lands. Dropping every answer older than the newest
+// read left the bar empty here (the failed read set it to nothing, and
+// nothing retries a tab read for 2 minutes).
+func TestHeaderOlderReadLandsAfterNewerFails(t *testing.T) {
+	sz := fakeslack.Small
+	sz.Files = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	e.until("boot's header reads answered", 10*time.Second, func() bool {
+		return e.a.data.headerAnswered == e.a.data.headerStarted
+	})
+	ch := fakeslack.FilesChannelID
+	if _, ok := e.a.data.core.CachedHeader(ch); ok {
+		t.Fatal("a header cache on a fresh home")
+	}
+	// the open's read: its tabs and info answered, its members call held
+	fs.SetFault("edge/users/list", fakeslack.Fault{Delay: 3 * time.Second, Times: 1})
+	info, members := fs.CallCount("conversations.info"), fs.CallCount("edge/users/list")
+	e.openChannel(ch)
+	e.until("the open's header read out", 5*time.Second, func() bool {
+		return fs.CallCount("conversations.info") >= info+2 && fs.CallCount("edge/users/list") > members
+	})
+	if e.a.data.tabsDone[ch] {
+		t.Fatal("the open's read answered before its members call came back")
+	}
+	// a second read of the header, every conversations.info failing (a
+	// 500 is final: internal_error is tried again after a second): it
+	// answers first, with nothing
+	fs.SetFault("conversations.info", fakeslack.Fault{Status: 500})
+	started := e.a.data.headerStarted
+	delete(e.a.data.fetched, ch)
+	e.a.data.opened(ch)
+	if e.a.data.headerStarted != started+1 {
+		t.Fatal("no second header read")
+	}
+	e.until("the failed read answered", 10*time.Second, func() bool { return e.a.data.tabsDone[ch] })
+	fs.SetFault("conversations.info", fakeslack.Fault{})
+	e.until("every header read answered", 10*time.Second, func() bool {
+		return e.a.data.headerAnswered == e.a.data.headerStarted
+	})
+	e.frame()
+	for _, tb := range e.a.channelTabs(ch) {
+		if isFilesTab(tb) {
+			return
+		}
+	}
+	t.Errorf("the bar has no Files & links tab after the older good read answered: %v", e.a.channelTabs(ch))
+}
