@@ -96,6 +96,12 @@ type Editor struct {
 	scrollCaret bool
 	showCaret   bool
 
+	// Clack patch 48 (clack_words.go): a double or triple press's
+	// granule (word or paragraph) and the range it selected, which a drag
+	// then extends by that granule, keeping it
+	clackGran        uint8
+	clackLo, clackHi int
+
 	clicker gesture.Click
 
 	// history contains undo history.
@@ -353,16 +359,20 @@ func (e *Editor) processPointerEvent(gtx layout.Context, ev event.Event) (Editor
 			}
 			e.dragging = true
 
-			// Process multi-clicks.
-			switch {
-			case evt.NumClicks == 2:
-				e.text.MoveWord(-1, selectionClear)
-				e.text.MoveWord(1, selectionExtend)
-				e.dragging = false
-			case evt.NumClicks >= 3:
-				e.text.MoveLineStart(selectionClear)
-				e.text.MoveLineEnd(selectionExtend)
-				e.dragging = false
+			// Process multi-clicks: Clack patch 48 (clack_words.go), as
+			// Blink's HandleDoubleClick and HandleTripleClick select, and a
+			// drag after them extends by the word or paragraph.
+			e.clackGran = clackGranChar
+			if evt.NumClicks >= 2 {
+				pos, _ := e.text.Selection()
+				rs := []rune(e.Text())
+				gran := clackGranWord
+				if evt.NumClicks >= 3 {
+					gran = clackGranParagraph
+				}
+				lo, hi := clackGranRange(rs, pos, gran)
+				e.text.SetCaret(hi, lo)
+				e.clackGran, e.clackLo, e.clackHi = gran, lo, hi
 			}
 		}
 	case pointer.Event:
@@ -378,6 +388,9 @@ func (e *Editor) processPointerEvent(gtx layout.Context, ev event.Event) (Editor
 					X: int(math.Round(float64(evt.Position.X))),
 					Y: int(math.Round(float64(evt.Position.Y))),
 				})
+				if e.clackGran != clackGranChar {
+					e.clackExtend()
+				}
 				e.scrollCaret = true
 
 				if release {
