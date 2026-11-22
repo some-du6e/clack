@@ -106,6 +106,27 @@ func PlaySlackSound(file string) {
 	}()
 }
 
+// PlayCDNSound plays one of Slack's CDN sounds once by its file name (the
+// clip recorder's "pop_v2-86c5be3.mp3", cfKp uY), as Ofe8's play does:
+// the default output, no loop. PlayHook gets it instead when set. Any
+// goroutine; returns at once.
+func PlayCDNSound(cdn string) {
+	if h := PlayHook; h != nil {
+		h(cdn)
+		return
+	}
+	go func() {
+		pcm, err := loadSound(cdn)
+		if err != nil {
+			log.Printf("sound %s: %v", cdn, err)
+			return
+		}
+		if err := huddle.PlaySound(pcm, nil, log.Printf); err != nil {
+			log.Printf("sound %s: %v", cdn, err)
+		}
+	}()
+}
+
 type ringState struct {
 	mu   sync.Mutex
 	stop chan struct{}

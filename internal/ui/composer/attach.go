@@ -72,6 +72,7 @@ const (
 	attMaxPixels = 80 << 20
 	attChipH     = 62  // dp, chip height (and image thumbnail side)
 	attCardW     = 240 // dp, file card width
+	attClipW     = 210 // dp, a pending clip's pillow: 184 + 2×12 + 2
 	attRadius    = 12  // dp, chip corner radius
 )
 
@@ -117,6 +118,9 @@ type attChip struct {
 	kind  attKind
 	// thumbURL is Slack's thumbnail of a restored file (draft_files.go).
 	thumbURL string
+	// clip is a recorded voice clip's File fields (clips.go); nil for any
+	// other file.
+	clip *clipMeta
 
 	// pf is the eager upload as Slack's send sees it (its uploadPromise):
 	// the placeholder draws it and the share waits for it. nil for files
@@ -238,9 +242,17 @@ func (a *attachments) Files() []core.UploadFile {
 	defer a.mu.Unlock()
 	var out []core.UploadFile
 	for _, c := range a.chips {
-		out = append(out, core.UploadFile{Name: c.name, Title: c.title, Data: c.data})
+		out = append(out, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype()})
 	}
 	return out
+}
+
+// subtype is the File's subtype ("slack_audio" for a recorded clip).
+func (c *attChip) subtype() string {
+	if c.clip != nil {
+		return c.clip.subtype
+	}
+	return ""
 }
 
 // sendBatch is what one send takes from the composer.
@@ -272,7 +284,7 @@ func (a *attachments) takeForSend() (b sendBatch) {
 			c.pf.Title = c.title
 			b.pending = append(b.pending, c.pf)
 		default:
-			b.raw = append(b.raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data})
+			b.raw = append(b.raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype()})
 		}
 	}
 	a.chips, a.total = nil, 0
@@ -367,7 +379,7 @@ func (a *attachments) prepare(c *attChip) {
 	}
 	a.mu.Lock()
 	c.preparing, c.ptotal = true, int64(len(c.data))
-	name, data := c.name, c.data
+	name, data, sub := c.name, c.data, c.subtype()
 	a.mu.Unlock()
 	a.h.Invalidate()
 
@@ -401,7 +413,7 @@ func (a *attachments) prepare(c *attChip) {
 		}
 	}
 	// addAndUploadPendingFile (AnonymizeFilenames renames the file here).
-	pu, err := prepareFile(context.Background(), coreAPI{a.h.Core()}, name, data, prog)
+	pu, err := prepareFile(context.Background(), coreAPI{a.h.Core()}, core.UploadFile{Name: name, Title: name, Data: data, Subtype: sub}, prog)
 	a.mu.Lock()
 	c.preparing = false
 	var p core.PreparedUpload
@@ -1256,7 +1268,10 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 	x, y := 0, 0
 	for _, v := range views {
 		w := px
-		if !v.asImage {
+		switch {
+		case v.c.clip != nil: // the pillow around the 184px audio player
+			w = min(gtx.Dp(attClipW), avail)
+		case !v.asImage:
 			w = min(gtx.Dp(attCardW), avail)
 		}
 		if x > 0 && x+w > avail {
@@ -1317,6 +1332,8 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 			c.open.Add(gtx.Ops)
 			pointer.CursorPointer.Add(gtx.Ops)
 		}()
+	} else if c.clip != nil {
+		a.drawClipCard(gtx, th, v, r, rad) // clips.go
 	} else {
 		a.drawCard(gtx, th, v, r, rad)
 	}
@@ -1372,18 +1389,20 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 	}
 	tip := v.title
 	if onBtn {
-		tip = attRemoveTip(v.name) // RemoveFileButton's tooltip
+		tip = attRemoveTip(c.subtype()) // RemoveFileButton's tooltip
 	}
 	popups.Tooltip(gtx, th, &c.tip, hovered, sz, popups.Above, tip, "")
 }
 
-// attRemoveTip is RemoveFileButton's tooltip.
-func attRemoveTip(name string) string {
-	m := attMime(name)
-	switch {
-	case strings.HasPrefix(m, "audio/"):
+// attRemoveTip is RemoveFileButton's tooltip (boot-shared 4dwn): by the
+// File's subtype (lqEY: audio_story, slack_audio, slack_name_pronunciation;
+// 7OiV: video_story, slack_video), not its type, so an uploaded .mp3 is a
+// file.
+func attRemoveTip(subtype string) string {
+	switch subtype {
+	case "audio_story", "slack_audio", "slack_name_pronunciation":
 		return "Remove audio clip"
-	case strings.HasPrefix(m, "video/"):
+	case "video_story", "slack_video":
 		return "Remove video clip"
 	}
 	return "Remove file"

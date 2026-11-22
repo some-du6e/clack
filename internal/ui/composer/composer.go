@@ -64,6 +64,11 @@ type Composer struct {
 	// parent sets it each frame (Gio has no global transform query); menus
 	// and the emoji picker are anchored with it.
 	Origin image.Point
+	// boxSize is the composer's size in its last frame (the audio
+	// popover's overlay covers it).
+	boxSize image.Point
+	// clipPop is the open audio recorder popover (clips.go).
+	clipPop *audioPopover
 
 	// OnEditLast is called when Up is pressed in an empty composer (Slack
 	// edits your last message). The ui root wires it to the message list.
@@ -415,6 +420,7 @@ func (c *Composer) InsertEmoji(name string) {
 func (c *Composer) Close() {
 	c.saveDraft()
 	c.ac.Close()
+	c.closeClip() // a recording in progress goes with it (clips.go)
 }
 
 func (c *Composer) emojiAtom(name string) *Atom {
@@ -538,6 +544,7 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	dims := c.layoutBoundary(gtx)
 	if live {
 		c.ui.endFrame()
+		c.boxSize = dims.Size
 	}
 
 	// Autocomplete after the editor laid out, anchored at the trigger,
@@ -912,6 +919,8 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		case caMention:
 			c.mentionTrigger()
 			c.ed.Focus(gtx)
+		case caAudio:
+			c.openAudioRecorder(a.Anchor) // clips.go
 		case caShortcut:
 			// maybeTriggerSlashCommandsAutocomplete: only into an empty
 			// input without a block format (the button is disabled
