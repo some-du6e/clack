@@ -276,6 +276,26 @@ func jsJoinString(v any, present bool) string {
 	return chart.JSString(v)
 }
 
+// TextRows are the header row and the body rows as convertTableCellTo
+// PlainText reads each cell (a line break as a space).
+func (t *DataTable) TextRows() [][]string {
+	out := make([][]string, 0, len(t.Body)+1)
+	add := func(cs []DTCell) {
+		row := make([]string, len(cs))
+		for i := range cs {
+			row[i] = strings.ReplaceAll(cs[i].Plain, "\n", " ")
+		}
+		out = append(out, row)
+	}
+	if t.Header != nil {
+		add(t.Header)
+	}
+	for _, r := range t.Body {
+		add(r)
+	}
+	return out
+}
+
 // DataTableTSV is convertTableBlockToTsv over every row: the cells
 // tab-joined, the rows newline-joined, nothing quoted.
 func (t *DataTable) TSV() string {

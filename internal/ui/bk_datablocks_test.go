@@ -114,7 +114,8 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 	if next.Empty() || !next.In(image.Rectangle{Max: e.size}) {
 		t.Fatalf("the table's next button at %v, off the %v window", next, e.size)
 	}
-	e.click(next.Min.Add(next.Size().Div(2)))
+	// router coordinates, as files_click_test's tiles
+	e.clickAt(next.Min.Add(next.Max).Div(2), time.Second)
 	e.until("the table's second page", 10*time.Second, func() bool {
 		p, _ := tbl.View.DataTablePage(tr.Block)
 		return p == 1
