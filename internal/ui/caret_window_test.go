@@ -363,6 +363,9 @@ func TestRealWindowCaretCost(t *testing.T) {
 }
 
 // scrollCPUMax bounds a scroll frame's CPU with partial frames against
-// without (TestRealWindowCaretCost): what they add to whole frames, with
-// each side's fastest turn (the Mac's median turns ran 110% to 131%).
-const scrollCPUMax = 1.25
+// without (TestRealWindowCaretCost): what they add to whole frames, each
+// side's fastest turn. The measured spread on macos-latest under two CPU
+// burners (flakes-1122's fl1122-s-mac) ran 97% to 136% across six runs
+// (the median turns, before, 110% to 131% unloaded), so 150%: what partial
+// frames add (about 10%) still shows past it if it grows by half.
+const scrollCPUMax = 1.5

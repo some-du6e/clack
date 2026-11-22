@@ -4754,7 +4754,7 @@ jobs:
 
   # flakes-1122, stress on macOS: TestDisplaysMac (between two NSScreen
   # reads that agree), TestRealWindowCaretCost (each side's fastest turn;
-  # 3 runs under two CPU burners) and TestAVFPlaysFixture (the seconds
+  # 5 runs under two CPU burners) and TestAVFPlaysFixture (the seconds
   # the test drew through).
   fl1122-s-mac:
     if: ${{ !inputs.only || startsWith('fl1122-s-mac', inputs.only) }}
@@ -4784,7 +4784,12 @@ jobs:
           echo "== TestAVFPlaysFixture: $(grep -c -- '^--- FAIL: TestAVFPlaysFixture' "$RUNNER_TEMP/avf.log") of $COUNT failed"
           go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui || exit 1
           for i in 1 2; do (while :; do :; done) & done
-          (cd internal/ui && for i in 1 2 3; do "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' > "$RUNNER_TEMP/caret-$i.log" 2>&1 || rc=1; grep -E 'caret_window_test.go:[0-9]+: a scroll.s frame costs|--- (PASS|FAIL)' "$RUNNER_TEMP/caret-$i.log"; done)
+          cd internal/ui
+          for i in 1 2 3 4 5; do
+            "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' > "$RUNNER_TEMP/caret-$i.log" 2>&1 || rc=1
+            grep -E 'caret_window_test.go:[0-9]+: a scroll.s frame costs|--- (PASS|FAIL)' "$RUNNER_TEMP/caret-$i.log"
+          done
+          cd "$GITHUB_WORKSPACE"
           kill $(jobs -p) 2>/dev/null
           grep -hE -- '--- FAIL|_test.go:[0-9]+: .*want' "$RUNNER_TEMP"/*.log | head -20
           exit $rc
