@@ -119,8 +119,8 @@ func TestFilesViewListPickerTokens(t *testing.T) {
 }
 
 // A 30 KB paste into the Files search tokenizes in one pass over it (the
-// token regex at an advancing offset, the name indexes built once), well
-// inside a second; a cancelled ctx stops the request.
+// token regex at an advancing offset, the name indexes built once), inside
+// 250 ms; a cancelled ctx stops the request.
 func TestFilesViewQueryLongPaste(t *testing.T) {
 	a, f := testApp(t)
 	f.reply["search.modules.files"] = `{"ok":true,"items":[],"pagination":{"total_count":0,"page":1,"page_count":1}}`
@@ -131,12 +131,15 @@ func TestFilesViewQueryLongPaste(t *testing.T) {
 		b.WriteString(unit)
 		n++
 	}
+	// the tokenizing alone (round 2's quadratic one took 1.02 s for this
+	// on a CI runner)
 	t0 := time.Now()
+	filesQuery(t.Context(), FilesOpts{Query: b.String()}, a.S.SelfID(), newFilesLookup(a))
+	if d := time.Since(t0); d > 250*time.Millisecond {
+		t.Errorf("tokenizing a %d-byte query took %v", b.Len(), d)
+	}
 	if _, err := a.Files(t.Context(), FilesOpts{Query: b.String()}); err != nil {
 		t.Fatal(err)
-	}
-	if d := time.Since(t0); d > time.Second {
-		t.Errorf("a %d-byte query took %v", b.Len(), d)
 	}
 	q := formVal(f.last("search.modules.files"), "query")
 	if strings.Contains(q, "from:") || strings.Contains(q, "in:") || strings.Contains(q, "before:") ||
