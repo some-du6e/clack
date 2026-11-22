@@ -552,6 +552,16 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 	case onOpen:
 		c.hideAt = time.Time{}
 		c.hasPend = false
+		if has && rep.Key == c.open.Key && rep.ChannelID == "" && rep.URL == "" && rep.Preview == nil &&
+			(rep.UserID != c.open.UserID || rep.BotID != c.open.BotID) {
+			// the open card's trigger names another bot (or member) now:
+			// the message's bot bots.info just answered stands for the
+			// sender over the member's (core.App.SenderBot). Slack's
+			// ProfileHoverTrigger renders its card again with the new
+			// serviceId; the card is made again for it.
+			c.open.UserID, c.open.BotID = rep.UserID, rep.BotID
+			c.gen++
+		}
 	case has:
 		if !c.hasPend || c.pending.Key != rep.Key {
 			c.pending, c.hasPend = rep, true

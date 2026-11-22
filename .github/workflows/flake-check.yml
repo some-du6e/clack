@@ -4583,6 +4583,12 @@ jobs:
           rc=0
           xvfb-run -a go test -count="$COUNT" -timeout 20m -run '^TestJoinBanner$' ./internal/ui || rc=1
           go test -count="$COUNT" -timeout 10m -run '^TestReactionPillClickSurvivesOtherReactions$' ./internal/ui/messages || rc=1
+          # thread-header-hover-4: search results' and the search popover's buttons by result; the
+          # sender's bot asked as getBotById does, the open card following its trigger; App details for another bot
+          go test -count="$COUNT" -timeout 5m -run '^(TestSearchRowClickSurvivesResultChanges|TestSearchPopoverRowButtonsFollowRows)$' ./internal/ui/popups || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestSenderBotAsksLikeSlack$' ./internal/core || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestOpenCardFollowsItsTrigger$' ./internal/ui/hovercard || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 5m -run '^TestAppDetailsOtherBotOpensItsOwn$' ./internal/ui || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report

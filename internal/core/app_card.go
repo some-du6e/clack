@@ -430,28 +430,46 @@ func (a *App) botHomeTeam(botID, userID string) string {
 // bot_id when the store holds that bot; else the member's own bot
 // (getBotIdFromMember: an app or bot member's profile.bot_id) when it's
 // another one and the store holds it; else the message's bot_profile;
-// else whichever was tried last. An unknown bot is asked for (bots.info),
-// as getBotById does. A message posted with a bot that's gone (an app
-// reinstalled under a new bot) stands for its member's live bot; a bot
-// user posting with a newer bot than its profile names, for the newer.
-func (a *App) SenderBot(user, bot string, bp *BotProfile) string {
+// else whichever was tried last. A message posted with a bot that's gone
+// (an app reinstalled under a new bot) stands for its member's live bot;
+// a bot user posting with a newer bot than its profile names, for the
+// newer.
+//
+// ask (the sender's hover trigger or click is in use) asks bots.info for
+// the bots whose answer can change the pick, as getBotById would: the
+// message's bot while the member's stands in for it, then the member's
+// when it's unknown too, each with its app (getBotByMsg's app_id: the
+// message's bot_profile.app_id; the member's api_app_id), never Slack's
+// own bots (Emf2's d) or ids that don't look like a bot's. A row's draw
+// asks nothing (senderOf leaves a sender with a user or a bot_profile to
+// the member and the profile).
+func (a *App) SenderBot(m *Message, ask bool) string {
 	held := func(id string) bool {
 		if id == "" {
 			return false
 		}
-		if _, ok := a.S.Bot(id); ok {
-			return true
+		_, ok := a.S.Bot(id)
+		return ok
+	}
+	note := func(id, app string) {
+		if ask && id != "" && !slackInternalBots[id] && botIDRe.MatchString(id) && !a.S.BotNonexistent(id) {
+			a.S.NoteMissingBotApp(id, app)
 		}
-		if !a.S.BotNonexistent(id) {
-			a.S.NoteMissingBot(id)
-		}
-		return false
+	}
+	bot, bp := m.BotID, m.BotProfile
+	msgApp := ""
+	if bp != nil {
+		msgApp = bp.AppID
 	}
 	c, ok := bot, held(bot)
-	if !ok && user != "" {
-		if u, found := a.S.User(user); found && (u.IsBot || u.IsAppUser || u.ID == "USLACK") && !u.Deleted {
+	if !ok && m.User != "" {
+		if u, found := a.S.User(m.User); found && (u.IsBot || u.IsAppUser || u.ID == "USLACK") && !u.Deleted {
 			if mb := u.Profile.BotID; mb != "" && mb != bot {
+				note(bot, msgApp) // once it's known it's the pick
 				c, ok = mb, held(mb)
+				if !ok {
+					note(mb, u.Profile.APIAppID)
+				}
 			}
 		}
 	}

@@ -2273,12 +2273,18 @@ func (r *row) hoverUser() string {
 // human's card is the member's either way (useProfileHoverApp: no app for
 // a human).
 func (r *row) hoverBot() string {
+	return r.senderBot(r.nameHov.Hovered() || r.avatarHov.Hovered())
+}
+
+// senderBot is hoverBot; ask (the sender's trigger or click in use) lets
+// core ask bots.info for a bot the pick waits on (core.App.SenderBot).
+func (r *row) senderBot(ask bool) string {
 	if r.custom {
 		return ""
 	}
 	if r.rc != nil && r.rc.h != nil {
 		if app := r.rc.h.Core(); app != nil {
-			return app.SenderBot(r.m.User, r.m.BotID, r.m.BotProfile) // Od's bot (core app_card.go)
+			return app.SenderBot(&r.m, ask) // Od's bot (core app_card.go)
 		}
 	}
 	if r.m.BotID != "" {
@@ -2304,7 +2310,7 @@ type SenderOpener interface {
 func (r *row) openSender(rc *rowCtx) {
 	user := r.m.User // a custom response's avatar opens its member too (its bot is none: hoverBot)
 	if so, ok := rc.h.(SenderOpener); ok {
-		if bot := r.hoverBot(); user != "" || bot != "" {
+		if bot := r.senderBot(true); user != "" || bot != "" {
 			so.OpenSender(rc.origin(image.Point{}), user, bot)
 		}
 		return

@@ -100,6 +100,45 @@ func (r *srRow) selectable() bool {
 	return r.kind != srRHeader && r.kind != srRDivider && r.kind != srRNote
 }
 
+// clickKey is row i's button key: its row's key, a non-selectable row's
+// (a header, a divider, a note: never clicked) its place.
+func (p *SearchPopover) clickKey(i int) string {
+	if k := p.rows[i].key(); k != "" {
+		return k
+	}
+	return "\x00" + strconv.Itoa(i)
+}
+
+// click is row i's button, made on its first draw.
+func (p *SearchPopover) click(i int) *widget.Clickable {
+	k := p.clickKey(i)
+	b := p.clicks[k]
+	if b == nil {
+		if p.clicks == nil {
+			p.clicks = map[string]*widget.Clickable{}
+		}
+		b = new(widget.Clickable)
+		p.clicks[k] = b
+	}
+	return b
+}
+
+// pruneClicks lets the buttons of rows no longer listed go.
+func (p *SearchPopover) pruneClicks() {
+	if len(p.clicks) <= len(p.rows) {
+		return
+	}
+	keep := make(map[string]bool, len(p.rows))
+	for i := range p.rows {
+		keep[p.clickKey(i)] = true
+	}
+	for k := range p.clicks {
+		if !keep[k] {
+			delete(p.clicks, k)
+		}
+	}
+}
+
 func (r *srRow) key() string {
 	if !r.selectable() {
 		return ""
@@ -142,8 +181,11 @@ type SearchPopover struct {
 	learnMore                        widget.Clickable // "Results feel off? Learn more" (search_rows.go)
 	historyRect                      image.Rectangle
 
-	rows    []srRow
-	clicks  []widget.Clickable
+	rows []srRow
+	// clicks are the rows' buttons, kept by row (srRow.key) as Slack keys
+	// its rows: a row held while the rows change under it (a result
+	// arriving above it, a new query's rows) keeps its press and its row
+	clicks  map[string]*widget.Clickable
 	sel     int  // the row Enter opens: the picked row, else the first one
 	picked  bool // a row is selected (Slack's selectedIndex isn't null)
 	ensure  bool
@@ -480,9 +522,7 @@ func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
 	}
 	p.full = rows
 	p.rows = p.visibleRows(rows)
-	for len(p.clicks) < len(p.rows) {
-		p.clicks = append(p.clicks, widget.Clickable{})
-	}
+	p.pruneClicks()
 	// a picked row stays picked while it's still listed; otherwise the
 	// first row is the pseudo-selected one, whatever arrived above it
 	sel := -1
@@ -1555,7 +1595,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	p.qfAutoShow()
 	tbHit := p.tbClicks(gtx) // first: a toolbar button's click reaches its row too
 	for i := range p.rows {
-		if p.clicks[i].Clicked(gtx) {
+		if p.click(i).Clicked(gtx) {
 			if tbHit && p.picked && i == p.sel {
 				continue // the button took it
 			}
@@ -1586,7 +1626,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	if moved {
 		for i := range p.rows {
-			if p.rows[i].selectable() && p.clicks[i].Hovered() && !(p.picked && p.sel == i) {
+			if p.rows[i].selectable() && p.click(i).Hovered() && !(p.picked && p.sel == i) {
 				p.pick(i)
 			}
 		}
@@ -2082,8 +2122,8 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 		return layout.Dimensions{Size: sz}
 	case srRMore: // c-search_autocomplete__see_more (--selected: base-ter, underlined; :hover underlined)
 		sel := i == p.sel && p.picked
-		under := sel || p.clicks[i].Hovered()
-		return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		under := sel || p.click(i).Hovered()
+		return p.click(i).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			if sel {
 				fill(gtx, image.Rectangle{Max: sz}, cl.Selected)
 			}
@@ -2103,7 +2143,7 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 	}
 	sel := i == p.sel && p.picked
 	var state css.State
-	if sel || p.clicks[i].Hovered() {
+	if sel || p.click(i).Hovered() {
 		state = css.StateHover
 	}
 	if sel {
@@ -2132,7 +2172,7 @@ func (p *SearchPopover) suggestion(gtx layout.Context, th *theme.Theme, cl *Colo
 	r := &p.rows[i]
 	picked := i == p.sel && p.picked
 	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
-	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return p.click(i).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		switch {
 		case picked:
@@ -2324,7 +2364,7 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	sel := i == p.sel && p.picked
 	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
 	gtx.Constraints = layout.Exact(sz)
-	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return p.click(i).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		cr := image.Rect(dp(gtx, 16), dp(gtx, 6), sz.X-dp(gtx, 16), sz.Y-dp(gtx, 6))
 		rad := dp(gtx, 12)
@@ -2393,7 +2433,7 @@ func (p *SearchPopover) msgRowPlain(gtx layout.Context, th *theme.Theme, cl *Col
 	picked := i == p.sel && p.picked
 	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
 	gtx.Constraints = layout.Exact(sz)
-	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return p.click(i).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		fg, meta := cl.Fg, cl.Fg2
 		switch {
