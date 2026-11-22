@@ -367,6 +367,12 @@ jobs:
       - name: Gio hover ends on a reset Cancel (vendored gioui.org/gesture)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run '^TestClackHoverEndsOnResetCancel$' gioui.org/gesture
+      # a stroked ring's outline (MoveTo, ArcTo 2π, Close) and open arcs
+      # swept up to 2π: every loop closes and stays on the ring's band
+      # (Karim's stray line under the intro's check badge, 2026-11-22)
+      - name: Gio ring outlines close (vendored gioui.org/internal/stroke)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackRingSeam' gioui.org/internal/stroke
       # Gio patch 53: a tag's area in the window, and what of it its clip
       # areas show (the video tiles' share of their list)
       - name: Gio area bounds (vendored gioui.org/io/input)
@@ -521,6 +527,8 @@ jobs:
           xvfb-run -a go test -count=1 -run '^TestViewsPatchedReactionPillLikeNative$' ./internal/ui/views
           # the profile hover card's name / title / pronouns column against Slack's CSS (light + dark)
           xvfb-run -a go test -count=1 -v -run '^TestHoverCardPronounsLikeSlack$' ./internal/ui/popups
+          # rings drawn whole: ringAt, the intro's check badge through its pop, the spinner through its turn (no line off the ring)
+          xvfb-run -a go test -count=1 -v -run '^TestRingSeam' ./internal/ui
           # Gio patch 35 on a real GPU context: the same ops drawn twice show a live image as it is at each
           xvfb-run -a go test -count=1 -v -run '^TestLiveImageFrames$' gioui.org/gpu/headless
           # Gio patches 37-44 in pixels: the state caches change none, shared
@@ -788,6 +796,8 @@ jobs:
         run: |
           go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys|TestClackWindowOutlivesAnother)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 10m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
+          # rings drawn whole on Direct3D (Karim's Windows): ringAt, the intro's check badge, the spinner
+          go test -count=1 -v -timeout 10m -run '^TestRingSeam' ./internal/ui
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
       - name: awake clock (QueryUnbiasedInterruptTime)

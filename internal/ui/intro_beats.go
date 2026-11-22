@@ -696,14 +696,11 @@ func (in *intro) drawHackClubStage(f *introFrame, g introGeom, start time.Time, 
 	}
 }
 
-// ---- the replay's last beat: you're all set ----
-
-func (in *intro) drawFinalBeat(f *introFrame, g introGeom, start time.Time, parent fx) {
-	sz := f.sz
-	cx := float32(sz.X) / 2
-	cy := float32(sz.Y)*0.40 - f.df(20)
-	d := f.df(88)
-	c := f32.Pt(cx, cy)
+// drawDoneBadge is the last beat's badge at c (diameter d): it pops in,
+// its ring and the tint inside, the check drawing itself, then the ripple
+// it sends out.
+func drawDoneBadge(f *introFrame, c f32.Point, d float32, start time.Time, parent fx) {
+	cx, cy := c.X, c.Y
 	e := f.pop(start.Add(msec(80)), 0.6, springBouncy).mul(parent)
 	f.with("done-badge", e, c, func() {
 		ringAt(f, c, d/2, alphaMul(hexc(0x9d8cff), 0.9), f.df(2.4))
@@ -735,6 +732,17 @@ func (in *intro) drawFinalBeat(f *introFrame, g introGeom, start time.Time, pare
 			ringAt(f, c, d/2+f.df(60)*float32(q), alphaMul(hexc(0xb7a8ff), 0.45*float32(1-q)*(1-float32(q))*parent.a), f.df(2))
 		}
 	}
+}
+
+// ---- the replay's last beat: you're all set ----
+
+func (in *intro) drawFinalBeat(f *introFrame, g introGeom, start time.Time, parent fx) {
+	sz := f.sz
+	cx := float32(sz.X) / 2
+	cy := float32(sz.Y)*0.40 - f.df(20)
+	d := f.df(88)
+	c := f32.Pt(cx, cy)
+	drawDoneBadge(f, c, d, start, parent)
 	// the line and the sentence
 	ty := int(cy + d/2 + f.df(40))
 	words := splitWords(introCopy[beatFinal].title)
