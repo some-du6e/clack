@@ -60,12 +60,14 @@ func attachmentsFor(key string, h Host) *attachments {
 // tests' Apps (ci-speed-3, a heap dump's commonest root).
 func ForgetCore(c *core.App) {
 	attStore.Lock()
-	defer attStore.Unlock()
 	for k, a := range attStore.m {
 		if a.core == c {
 			delete(attStore.m, k)
 		}
 	}
+	attStore.Unlock()
+	forgetLive(c)  // its open composers (liveComposers)
+	forgetLater(c) // what it queued for the UI (restoreQ)
 }
 
 // storedFiles reports whether key's conversation has files attached

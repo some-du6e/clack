@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"image"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+	"weak"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -279,7 +281,7 @@ func New(h Host, channelID, threadTS string) *Composer {
 		c.ed.SetDoc(d)
 	}
 	c.lastVer = c.ed.Version()
-	liveComposers.Store(c.key(), c)
+	liveComposers.Store(c.key(), weak.Make(c))
 	if _, dirty := draftKeyBusy(c.key()); dirty {
 		c.syncDraftSoon() // the text an earlier composer couldn't save
 	}
@@ -287,14 +289,46 @@ func New(h Host, channelID, threadTS string) *Composer {
 }
 
 // liveComposers is the open composer of each draft key (the last one
-// opened), for a pick that finds the slot open (SelectStashedDraft).
-var liveComposers sync.Map // draftKey → *Composer
+// opened), for a pick that finds the slot open (SelectStashedDraft). It
+// holds them weakly: a composer its view dropped without Close (a session
+// ended, signed out) goes with its App (TestFinishedSessionIsCollected).
+var liveComposers sync.Map // draftKey → weak.Pointer[Composer]
 
 func liveComposer(key string) *Composer {
 	if v, ok := liveComposers.Load(key); ok {
-		return v.(*Composer)
+		if c := v.(weak.Pointer[Composer]).Value(); c != nil && !c.closed {
+			return c
+		}
 	}
 	return nil
+}
+
+// forgetLive drops a finished session's composers from liveComposers
+// (ForgetCore), so no pick finds one. Their timers are left to run out:
+// ForgetCore runs off the UI goroutine (a sign-out's), which owns them,
+// and what one queues after the session's Release is dropped (laterFor);
+// the retry's and the hint's hold their composer weakly.
+func forgetLive(a *core.App) {
+	liveComposers.Range(func(k, v any) bool {
+		if c := v.(weak.Pointer[Composer]).Value(); c == nil || c.api.a == a {
+			liveComposers.CompareAndDelete(k, v)
+		}
+		return true
+	})
+}
+
+// stopTimers stops what would wake the composer later (Close): its sync's
+// pause and retry, the hint bar's grace.
+func (c *Composer) stopTimers() {
+	if c.dsync.timer != nil {
+		c.dsync.timer.Stop()
+	}
+	if c.dsync.retry != nil {
+		c.dsync.retry.Stop()
+	}
+	if c.ui.hint.graceTimer != nil {
+		c.ui.hint.graceTimer.Stop()
+	}
 }
 
 // NewEdit returns an inline editor for m (one of the viewer's messages).
@@ -447,12 +481,10 @@ func (c *Composer) Close() {
 	if c.dsync.timer != nil && c.dsync.timer.Stop() {
 		c.syncDraftNow() // a save the pause was waiting on goes now
 	}
-	if c.dsync.retry != nil {
-		c.dsync.retry.Stop()
-	}
+	c.stopTimers()
 	c.closed = true
 	if !c.noDraft() {
-		liveComposers.CompareAndDelete(c.key(), c)
+		liveComposers.CompareAndDelete(c.key(), weak.Make(c))
 	}
 	c.saveDraft()
 	c.ac.Close()
@@ -1892,13 +1924,20 @@ func (c *Composer) restoreWith(d *Doc, also func()) {
 }
 
 // later runs f on the UI goroutine at the next composer Layout.
-func (c *Composer) later(f func()) { uiLater(c.h, f) }
+func (c *Composer) later(f func()) { laterFor(c.api.a, c.h, f) }
 
-// uiLater runs f on the UI goroutine at the next Layout of a composer or
-// a TextyInput (runRestores), waking h.
-func uiLater(h interface{ Invalidate() }, f func()) {
+// laterFor runs f on the UI goroutine at the next Layout of a composer or
+// a TextyInput (runRestores), for session a's UI (nil: whichever), waking
+// h. Once a is finished (core.App.Released) f is dropped: a draft op's
+// answer or a timer after a sign-out would wait in restoreQ for a Layout
+// that may never come (the sign-in screen has no composer), and keep the
+// session reachable until then (ForgetCore drops what it queued before).
+func laterFor(a *core.App, h interface{ Invalidate() }, f func()) {
+	if a != nil && a.Released() {
+		return
+	}
 	restoreQ.Lock()
-	restoreQ.fns = append(restoreQ.fns, f)
+	restoreQ.fns = append(restoreQ.fns, laterFn{a, f})
 	restoreQ.Unlock()
 	h.Invalidate()
 }
@@ -2051,10 +2090,21 @@ func (c *Composer) finishEdit() {
 }
 
 // restoreQ runs editor mutations from background goroutines on the UI
-// goroutine (the next Layout of any composer).
+// goroutine (the next Layout of any composer). An entry keeps what its
+// func holds, a composer and through it its session, until then: in
+// TestFinishedSessionIsCollected a heap dump found a finished session
+// held by a draft sync its composer queued after the process's last
+// composer Layout. A finished session's entries are dropped (forgetLater)
+// or never queued (laterFor).
 var restoreQ struct {
 	sync.Mutex
-	fns []func()
+	fns []laterFn
+}
+
+// laterFn is a restoreQ entry: f, for session a's UI (nil: whichever).
+type laterFn struct {
+	a *core.App
+	f func()
 }
 
 func runRestores() {
@@ -2062,9 +2112,19 @@ func runRestores() {
 	fns := restoreQ.fns
 	restoreQ.fns = nil
 	restoreQ.Unlock()
-	for _, f := range fns {
-		f()
+	for _, l := range fns {
+		if l.a == nil || !l.a.Released() { // a finished session's has nothing to update
+			l.f()
+		}
 	}
+}
+
+// forgetLater drops what a finished session queued for the UI
+// (ForgetCore).
+func forgetLater(a *core.App) {
+	restoreQ.Lock()
+	restoreQ.fns = slices.DeleteFunc(restoreQ.fns, func(l laterFn) bool { return l.a == a }) // zeroes the tail
+	restoreQ.Unlock()
 }
 
 // ---- drafts (memory only: message contents never touch disk) ----

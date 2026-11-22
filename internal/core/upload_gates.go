@@ -69,7 +69,7 @@ type listPrefsState struct {
 	slow int
 }
 
-var listPrefsStates sync.Map // *App → *listPrefsState
+var listPrefsStates = newPerApp() // *App → *listPrefsState
 
 func (a *App) listPrefs() *listPrefsState {
 	v, _ := listPrefsStates.LoadOrStore(a, &listPrefsState{prefs: map[string]map[string]json.RawMessage{},

@@ -4,6 +4,7 @@ import (
 	"image"
 	"strings"
 	"time"
+	"weak"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -69,8 +70,10 @@ type crHint struct {
 	btn     widget.Clickable
 	tip     popups.TipState
 	rect    image.Rectangle // the ButtonLink's, composer-local ("" while it takes no pointer)
-	// graceFor is the end of the grace a frame is due at (layoutFormattingTip)
-	graceFor time.Time
+	// graceFor is the end of the grace a frame is due at, graceTimer the
+	// frame's timer (layoutFormattingTip)
+	graceFor   time.Time
+	graceTimer *time.Timer
 }
 
 // hintFadeDur is .p-notification_bar__section--right's transition.
@@ -128,7 +131,17 @@ func (c *chrome) layoutFormattingTip(gtx layout.Context, th *theme.Theme, p *crP
 	// that way, gio-midframe-invalidate-loses-clicks)
 	if st.Online && !st.OnlineUntil.IsZero() && !st.OnlineUntil.Equal(c.hint.graceFor) {
 		c.hint.graceFor = st.OnlineUntil // refreshRecentlyOnline: a frame when the grace ends
-		time.AfterFunc(time.Until(st.OnlineUntil), c.f.h.Invalidate)
+		if c.hint.graceTimer != nil {
+			c.hint.graceTimer.Stop()
+		}
+		// stopped at Close; weak, so a composer dropped without one isn't
+		// kept (nor its session) until the grace ends
+		wc := weak.Make(c)
+		c.hint.graceTimer = time.AfterFunc(time.Until(st.OnlineUntil), func() {
+			if c := wc.Value(); c != nil {
+				c.f.h.Invalidate()
+			}
+		})
 	}
 	alpha, moving := c.hint.opacity(now, vis)
 	if moving {

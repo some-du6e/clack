@@ -145,12 +145,13 @@ func saveSlotThenPick(h Host, ch, ts string, d core.Draft) {
 	}
 	att := attachmentsFor(key, h)
 	args.FileIDs = att.draftFileIDs()
+	api := coreAPI{h.Core()}
 	if len(args.Blocks) == 0 && len(args.FileIDs) == 0 {
-		uiLater(h, func() { h.Toast(draftsHangTight()) }) // only files still uploading
+		laterFor(api.a, h, func() { h.Toast(draftsHangTight()) }) // only files still uploading
 		return
 	}
-	queueDraftOp(key, draftOp{api: coreAPI{h.Core()}, save: &args, done: func(err error) {
-		uiLater(h, func() {
+	queueDraftOp(key, draftOp{api: api, save: &args, done: func(err error) {
+		laterFor(api.a, h, func() {
 			if err != nil {
 				h.Toast("Couldn't save your draft: " + err.Error())
 				return

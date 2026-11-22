@@ -67,7 +67,7 @@ func (c tipCtx) layoutGroupTip(gtx layout.Context) {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				_, _, _ = app.UsergroupUsers(ctx, grp, "") // a failure stays silent (catch {})
-				uiLater(c.h, func() { delete(g.busy, id) })
+				laterFor(app, c.h, func() { delete(g.busy, id) })
 			}()
 		}
 	}

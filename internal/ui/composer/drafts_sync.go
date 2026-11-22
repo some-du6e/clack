@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"time"
+	"weak"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/taut"
@@ -310,7 +311,19 @@ func (c *Composer) retrySync() {
 	if c.dsync.retry != nil {
 		c.dsync.retry.Stop()
 	}
-	c.dsync.retry = time.AfterFunc(c.dsync.retryIn, func() { c.later(c.syncDraftNow) })
+	// the timer holds the composer weakly: one its view dropped goes with
+	// its App, and the text it held syncs from the next composer of its
+	// key (New, a dirty key). closed is the UI goroutine's: read there.
+	wc := weak.Make(c)
+	c.dsync.retry = time.AfterFunc(c.dsync.retryIn, func() {
+		if c := wc.Value(); c != nil {
+			c.later(func() {
+				if !c.closed {
+					c.syncDraftNow()
+				}
+			})
+		}
+	})
 }
 
 // draftArgs is the server draft for what the composer holds now.

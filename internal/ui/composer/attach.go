@@ -509,13 +509,9 @@ func attCleanName(name string) string {
 // toast shows s from any goroutine (via the composer's UI queue).
 func (a *attachments) toast(s string) { a.later(func() { a.h.Toast(s) }) }
 
-// later runs f on the UI goroutine at the next composer Layout.
-func (a *attachments) later(f func()) {
-	restoreQ.Lock()
-	restoreQ.fns = append(restoreQ.fns, f)
-	restoreQ.Unlock()
-	a.h.Invalidate()
-}
+// later runs f on the UI goroutine at the next composer Layout, while the
+// files' session lasts (laterFor).
+func (a *attachments) later(f func()) { laterFor(a.core, a.h, f) }
 
 // ---- file types ----
 
