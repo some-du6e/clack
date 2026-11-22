@@ -155,8 +155,8 @@ func newRig(t *testing.T, data []byte, whole bool, size image.Point, setup ...fu
 			// reads, the player's (HTML) events, its state and its counters
 			// (TestMFSeekAndPause failed 1 run in 25 with only its FAIL line
 			// kept, flakes-1122)
-			t.Logf("%s: the engine's events %s; the demuxer's reads %v; the player's events %v; state %+v; stats %+v",
-				id, traceOf(id), readsOf(id), r.kinds(), r.p.State(), r.p.Stats())
+			t.Logf("%s: the engine's events %s; the demuxer's reads %v; the player's events %v; state %+v; stats %+v; the last frames' pts %v, %v",
+				id, traceOf(id), readsOf(id), r.kinds(), r.p.State(), r.p.Stats(), time.Duration(r.p.prevPts.Load()), time.Duration(r.p.framePts.Load()))
 		}
 		r.p.Close()
 		select {
@@ -541,14 +541,17 @@ func TestMFSeekAndPause(t *testing.T) {
 		t.Errorf("seeked %v after Seek(1.5 s), want within 2 s", d)
 	}
 	var at time.Duration
+	var c color.RGBA
 	for time.Since(seeked) < 2*time.Second {
-		if c := r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
+		if c = r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
 			at = time.Since(seeked)
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if at == 0 || at > 250*time.Millisecond {
+	if at == 0 {
+		t.Errorf("no light grey within 2 s of seeked (Seek(1.5 s) %v before; seeked at %v): %v drawn", seeked.Sub(t0), sk.State.Pos, c)
+	} else if at > 250*time.Millisecond {
 		t.Errorf("light grey %v after seeked (Seek(1.5 s) %v before; seeked at %v), want within 250 ms", at, seeked.Sub(t0), sk.State.Pos)
 	}
 	t.Logf("seeked to %v; light grey drawn %v after seeked, %v after Seek (the engine's seek %v)", sk.State.Pos, at, seeked.Sub(t0)+at, seeked.Sub(t0))
@@ -564,6 +567,36 @@ func TestMFSeekAndPause(t *testing.T) {
 	if st1.Asks <= st0.Asks {
 		t.Error("the window's frames didn't ask")
 	}
+}
+
+// A paused seek whose frame is the player's first transfer, made while
+// the seek is out (the hook holds every transfer until the clock is 1.4 s
+// in: the pause comes at 0, the seek takes it to 1.5 s): the frame at
+// 1.5 s, light grey, is drawn after seeked. TestMFSeekAndPause's 1 in 10
+// (fl1122-s-win 45031306261): play, pause and seek within 1 ms, the one
+// transfer at seeked, then no poll, and light grey never came.
+func TestMFPausedSeekIsTheFirstTransfer(t *testing.T) {
+	delayFirstTransfer.Store(int64(1400 * time.Millisecond))
+	defer delayFirstTransfer.Store(0)
+	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
+	r.draw()
+	r.p.Play()
+	r.wait(media.Playing, 10*time.Second)
+	r.p.Pause()
+	r.wait(media.Pause, 5*time.Second)
+	if n := r.p.Stats().Transfers; n != 0 {
+		t.Fatalf("%d transfers before the seek: the hook didn't hold them", n)
+	}
+	r.p.Seek(1500 * time.Millisecond)
+	r.wait(media.Seeked, 5*time.Second)
+	var c color.RGBA
+	for t0 := time.Now(); time.Since(t0) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
+		if c = r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
+			t.Logf("light grey %v after seeked; stats %+v", time.Since(t0), r.p.Stats())
+			return
+		}
+	}
+	t.Errorf("%v drawn 2 s after seeked, want the frame at 1.5 s (%s); stats %+v", c, mediatest.Want(1500*time.Millisecond), r.p.Stats())
 }
 
 // Paused, a change of the drawn size (a zoom, another monitor's scale, a

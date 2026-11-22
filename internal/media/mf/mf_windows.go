@@ -244,34 +244,41 @@ type player struct {
 	done  chan struct{}
 
 	// the media thread's
-	info           media.Info
-	infoErr        error
-	infoOK         bool
-	bound          bool
-	opened         bool
-	failed         bool
-	format         uint32
-	engineGen      uint32 // the engine's, as its events carry it
-	fellBack       bool   // made again for the other format (once)
-	okTransfers    int    // the frames this engine transferred
-	reopening      bool
-	forceFrame     bool // a new ring: the frame presented goes into it (clack_me_tick's force)
-	reopens        int
-	ringW, ringH   uint32
-	native, draw   image.Point
-	ringOK         bool
-	fps            float64
-	wantPlay       bool
-	seekTo         float64 // a seek before the engine was there, -1 none
-	volume, rate   float64
-	muted, loop    bool
-	wantFrame      bool          // tick until the frame at the position is drawn
-	wantUntil      time.Time     // or until then
-	wantFrom       int64         // NTransfers when it was asked for
-	emptyTicks     int           // polls in a row with no new frame
-	lastPts        time.Duration // the newest frame transferred's, -1 none
-	seeking        bool          // a seek sent, no seeked yet: poll on
-	seekUntil      time.Time     // (at most until then)
+	info         media.Info
+	infoErr      error
+	infoOK       bool
+	bound        bool
+	opened       bool
+	failed       bool
+	format       uint32
+	engineGen    uint32 // the engine's, as its events carry it
+	fellBack     bool   // made again for the other format (once)
+	okTransfers  int    // the frames this engine transferred
+	reopening    bool
+	forceFrame   bool // a new ring: the frame presented goes into it (clack_me_tick's force)
+	reopens      int
+	ringW, ringH uint32
+	native, draw image.Point
+	ringOK       bool
+	fps          float64
+	wantPlay     bool
+	seekTo       float64 // a seek before the engine was there, -1 none
+	volume, rate float64
+	muted, loop  bool
+	wantFrame    bool          // tick until the frame at the position is drawn
+	wantUntil    time.Time     // or until then
+	wantFrom     int64         // NTransfers when it was asked for
+	emptyTicks   int           // polls in a row with no new frame
+	lastPts      time.Duration // the newest frame transferred's, -1 none
+	seeking      bool          // a seek sent, no seeked yet: poll on
+	// seekTransfer: a frame was transferred while the seek was out. Its
+	// pts can be the seek's while its pixels are the frame before: a
+	// paused seek right after the first frame (flakes-1122b's fl1122-s-win
+	// 45031306261, 1 of 10: play, pause and seek in 1 ms, the player's one
+	// transfer at seeked, then no poll, and the first frame stayed drawn).
+	// At seeked such a frame isn't the one there: one more is transferred.
+	seekTransfer   bool
+	seekUntil      time.Time // (at most until then)
 	lastRefresh    time.Time
 	restoreSeek    bool
 	transferErrs   int
@@ -430,7 +437,7 @@ func (p *player) control(op int, v float64) {
 	}
 	hr := C.clack_me_control(p.c, C.int(op), C.double(v))
 	if op == opSeek && hr == 0 {
-		p.seeking, p.seekUntil = true, time.Now().Add(10*time.Second)
+		p.seeking, p.seekUntil, p.seekTransfer = true, time.Now().Add(10*time.Second), false
 	}
 	if hr == 0 || op == opPlay || op == opPause || p.noAudio && (op == opVolume || op == opMuted) {
 		return
@@ -823,6 +830,9 @@ func (p *player) tick() {
 		}
 	case 1:
 		p.forceFrame = false
+		if p.seeking {
+			p.seekTransfer = true
+		}
 		p.transferErrs = 0
 		p.okTransfers++
 		p.emptyTicks = 0
@@ -961,11 +971,17 @@ func (p *player) onEvent(ev mfEvent) {
 	switch ev.code {
 	case evSeeking:
 		if !p.seeking {
-			p.seeking, p.seekUntil = true, time.Now().Add(10*time.Second) // the engine's own (a loop)
+			p.seeking, p.seekUntil, p.seekTransfer = true, time.Now().Add(10*time.Second), false // the engine's own (a loop)
 		}
 	case evSeeked:
 		p.seeking = false
 		p.wantFrameHere() // until the frame there is drawn (it may be already)
+		if p.seekTransfer {
+			// a frame transferred during the seek: not proof the one there
+			// is drawn; the presented one goes in again, and the polls go
+			// on until it's there (a pts there, or 8 polls with nothing new)
+			p.seekTransfer, p.lastPts, p.forceFrame = false, -1, true
+		}
 	case evLoadedMetadata:
 		if p.reopening {
 			p.makeRing() // the same video: the polls a paused seek needs
