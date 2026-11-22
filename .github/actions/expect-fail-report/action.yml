@@ -1,0 +1,17 @@
+name: expect_fail report
+description: >-
+  The job's end under expect_fail (docs/CI-SPEED.md, "Proof runs"): its
+  summary lists each listed test it ran with the first lines of its
+  failure, and its records go up for the run's expect-fail job. Run it last,
+  with if: always() && env.XF_ID.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: '"$XF_BIN" -report'
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ env.XF_ID }}
+        path: ${{ env.XF_DIR }}/results
+        if-no-files-found: ignore
+        retention-days: 7

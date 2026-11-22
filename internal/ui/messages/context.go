@@ -27,8 +27,14 @@ import (
 //     when the link holds an emoji or image);
 //   - a user mention: the member menu; a channel link: the channel menu;
 //     a user group: the link menu for its admin/user_groups link;
-//   - an image: Copy Image / Copy Image URL; an emoji: the same for its
-//     image;
+//   - an image block's or an attachment's image (AttachmentImage, the CSS
+//     background of an <a href>): the link menu for that href (Copy Link,
+//     Open Link); with animations off, an animated one is an <img> under
+//     its play button: Copy Image / Copy Image URL;
+//   - an emoji (in the text or a reaction pill): Copy Image / Copy Image
+//     URL for its image; a reaction's count: no menu (reaction_menu.go);
+//   - a section's accessory image or a context block's image (Block
+//     Kit's image element, a background div): the message actions menu;
 //   - a file (card, gallery image, video): the file menu;
 //   - a v3 link preview (row, social, video, music, image cards): the
 //     attachment's menu (Remove preview for the sender, Copy link);
@@ -54,7 +60,11 @@ type ctxPress struct {
 func (s *listState) contextMenu(h Host, origin image.Point) {
 	p := s.ctx
 	s.ctx = ctxPress{}
-	if !p.ok || p.taken {
+	if !p.ok {
+		return
+	}
+	defer s.clearPillParts() // a press's parts are its own (reaction_menu.go)
+	if p.taken {
 		return
 	}
 	i := s.itemAt(p.pos)
@@ -66,7 +76,9 @@ func (s *listState) contextMenu(h Host, origin image.Point) {
 		return // the inline editor has its own (Cut/Copy/Paste) menu
 	}
 	at := s.anchor(h, origin, image.Point{})
-	h.ShowOverlay(s.contextMenuFor(h, r, i, p.pos, at))
+	if o := s.contextMenuFor(h, r, i, p.pos, at); o != nil {
+		h.ShowOverlay(o)
+	}
 }
 
 // itemAt is the visible message item at p (exactly; dividers and gaps
@@ -86,13 +98,17 @@ func (s *listState) itemAt(p f32.Point) int {
 }
 
 // contextMenuFor picks the menu for a press at p (list coordinates) on
-// row r (item i); at is the pointer in window coordinates.
+// row r (item i); at is the pointer in window coordinates. nil: Slack
+// opens no menu there.
 func (s *listState) contextMenuFor(h Host, r *row, i int, p f32.Point, at image.Point) popups.Overlay {
 	m := r.src
 	if s.sel.active {
 		if t := s.selectedText(h); t != "" {
 			return popups.NewTextSelectionMenu(h, at, t)
 		}
+	}
+	if o, ok := s.reactionMenu(h, r, i, p, at); ok { // reaction_menu.go
+		return o
 	}
 	local := p.Sub(f32.Pt(float32(r.bodyRect.Min.X), float32(s.pos[i]+r.bodyRect.Min.Y)))
 	if local.X >= 0 && local.Y >= 0 && int(local.X) < r.bodyRect.Dx() && int(local.Y) < r.bodyRect.Dy() {
@@ -124,6 +140,12 @@ func (s *listState) contextMenuFor(h Host, r *row, i int, p f32.Point, at image.
 		case richview.HitUsergroup:
 			return popups.NewLinkMenu(h, at, popups.LinkMenu{URL: popups.UsergroupLink(h)})
 		case richview.HitImage:
+			if hit.Link != "" {
+				// AttachmentImage: the image is its <a href>'s CSS
+				// background, so the shell's link menu, no image items
+				link := hit.Link
+				return popups.NewLinkMenu(h, at, popups.LinkMenu{URL: link, Open: func() { r.handler.OpenURL(link) }})
+			}
 			if hit.Image != nil && hit.Image.URL != "" {
 				return popups.NewImageMenu(h, at, hit.Image.URL, hit.Image.Proxy)
 			}

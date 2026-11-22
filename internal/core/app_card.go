@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -341,7 +342,7 @@ func (a *App) runAppCardFetch(c *appCardCache, e *appCardEntry, botID, appID, us
 	var err error
 	for try := 1; try <= appCardTries; try++ {
 		actx, cancel := context.WithTimeout(slack.NoBackoff(a.bg), appCardAttempt)
-		card, err = a.fetchAppCard(actx, botID, appID)
+		card, err = a.fetchAppCard(actx, botID, appID, a.botHomeTeam(botID, userID))
 		cancel()
 		if !appCardTimedOut(err) {
 			break
@@ -373,10 +374,13 @@ func appCardTimedOut(err error) bool {
 	return err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout())
 }
 
-func (a *App) fetchAppCard(ctx context.Context, botID, appID string) (AppCard, error) {
+func (a *App) fetchAppCard(ctx context.Context, botID, appID, home string) (AppCard, error) {
 	p := url.Values{}
 	if botID != "" {
 		p.Set("bot", botID)
+		if home != "" { // fcgE fetchProfileViaApi: bot_home_team, the homeWorkspaceId param
+			p.Set("bot_home_team", home)
+		}
 	}
 	if appID != "" {
 		p.Set("app", appID)
@@ -388,6 +392,120 @@ func (a *App) fetchAppCard(ctx context.Context, botID, appID string) (AppCard, e
 		return AppCard{}, err
 	}
 	return a.appCardOf(res.AppProfile, botID), nil
+}
+
+// botHomeTeam is the homeWorkspaceId Slack's hover card asks for the app
+// with: useProfileHoverApp's rIIG getTeamIdFromBotOrUser, sent as
+// bot_home_team (fcgE fetchProfileViaApi). In its order: the bot's
+// team_id when it is a workspace's (bots.info), else the message's
+// bot_profile.team_id when it is (botProfileTeam), else
+// getTeamIdFromBotAppUser over the member. Without it apps.profile.get
+// answers a bot the member's profile names but bots.info no longer finds
+// (most of Hack Club's #new-bots) as the org's app, not installed; with it
+// as the workspace's install, and an external Slack Connect bot as its
+// own team's.
+func (a *App) botHomeTeam(botID, userID string) string {
+	cur := firstNonEmpty(a.C.Creds.Team, a.S.TeamID)
+	if botID != "" {
+		if b, ok := a.S.Bot(botID); ok && looksLikeTeamID(b.TeamID) {
+			return b.TeamID
+		}
+		if t, ok := a.botProfileTeams.Load(botID); ok && looksLikeTeamID(t.(string)) {
+			return t.(string)
+		}
+	}
+	var u *slack.User
+	if userID != "" {
+		if m, ok := a.S.User(userID); ok {
+			u = m
+		}
+	}
+	return teamIDFromBotAppUser(u, cur)
+}
+
+// SenderBot is the bot a message's sender stands for, beside its member:
+// Emf2 maybeGetBotAndMemberByIds' bot, which MessageSender hands
+// BaseMessageSender as botId and both its hover card (ProfileHoverTrigger
+// serviceId) and its click (openProfile serviceId) ask for. The message's
+// bot_id when the store holds that bot; else the member's own bot
+// (getBotIdFromMember: an app or bot member's profile.bot_id) when it's
+// another one and the store holds it; else the message's bot_profile;
+// else whichever was tried last. An unknown bot is asked for (bots.info),
+// as getBotById does. A message posted with a bot that's gone (an app
+// reinstalled under a new bot) stands for its member's live bot; a bot
+// user posting with a newer bot than its profile names, for the newer.
+func (a *App) SenderBot(user, bot string, bp *BotProfile) string {
+	held := func(id string) bool {
+		if id == "" {
+			return false
+		}
+		if _, ok := a.S.Bot(id); ok {
+			return true
+		}
+		if !a.S.BotNonexistent(id) {
+			a.S.NoteMissingBot(id)
+		}
+		return false
+	}
+	c, ok := bot, held(bot)
+	if !ok && user != "" {
+		if u, found := a.S.User(user); found && (u.IsBot || u.IsAppUser || u.ID == "USLACK") && !u.Deleted {
+			if mb := u.Profile.BotID; mb != "" && mb != bot {
+				c, ok = mb, held(mb)
+			}
+		}
+	}
+	if !ok && bp != nil && bp.ID != "" {
+		c = bp.ID
+	}
+	return c
+}
+
+// teamIDFromBotAppUser is rIIG getTeamIdFromBotAppUser: the member's
+// workspace when its team_id is one; the viewer's for no member, one with
+// neither a team_id nor enterprise_user, Slackbot, the system user, or a
+// deactivated member of an org; else the member's Grid workspaces' (the
+// viewer's when it is among them, else the first), else the viewer's.
+func teamIDFromBotAppUser(u *slack.User, cur string) string {
+	if u == nil || u.TeamID == "" && u.EnterpriseUser == nil || u.IsSlackbot || u.ID == "USLACKBOT" || u.ID == "USLACK" {
+		return cur
+	}
+	if looksLikeTeamID(u.TeamID) {
+		return u.TeamID
+	}
+	if looksLikeEnterpriseID(u.TeamID) && u.Deleted {
+		return cur
+	}
+	if eu := u.EnterpriseUser; eu != nil && len(eu.Teams) > 0 {
+		for _, t := range eu.Teams {
+			if t == cur {
+				return cur
+			}
+		}
+		return eu.Teams[0]
+	}
+	return cur
+}
+
+// looksLikeTeamID and looksLikeEnterpriseID are uVRc's: T or E then 8 or
+// more of A-Z0-9.
+var (
+	teamIDRe       = regexp.MustCompile(`^T[A-Z0-9]{8,}$`)
+	enterpriseIDRe = regexp.MustCompile(`^E[A-Z0-9]{8,}$`)
+)
+
+func looksLikeTeamID(id string) bool       { return id != "" && teamIDRe.MatchString(id) }
+func looksLikeEnterpriseID(id string) bool { return id != "" && enterpriseIDRe.MatchString(id) }
+
+// noteBotProfileTeam remembers a message's bot_profile.team_id for its
+// bot (botHomeTeam's second source, the trigger's botProfile).
+func (a *App) noteBotProfileTeam(bot, team string) {
+	if bot == "" || team == "" {
+		return
+	}
+	if t, ok := a.botProfileTeams.Load(bot); !ok || t.(string) != team {
+		a.botProfileTeams.Store(bot, team)
+	}
 }
 
 // appCardOf maps app_profile like Slack's ToML F.

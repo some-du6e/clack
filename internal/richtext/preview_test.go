@@ -84,3 +84,34 @@ func TestPreviewFromMessage(t *testing.T) {
 		})
 	}
 }
+
+// A message without blocks but with attachments (a bot's unfurl or
+// legacy attachment): SimpleMessagePreview draws getMessageRootText as
+// mrkdwn, never the attachment card (cjey's last return; the 2026-11-22
+// relatives of the search card's flattened unfurl).
+func TestPreviewNoBlocksAttachmentText(t *testing.T) {
+	x := slack.Attachment{ID: 1, FromURL: "https://x.com/pontusab/status/1", ServiceName: "X (formerly Twitter)",
+		AuthorName: "Pontus Abrahamsson (@pontusab) on X", Text: "Updated: prompt", Fallback: "X (formerly Twitter): Pontus"}
+	for _, tc := range []struct {
+		name, text, subtype, want string
+	}{
+		{"a bot's attachment only: its fallback", "", "bot_message", "X (formerly Twitter): Pontus"},
+		{"text and an unfurl: the text", "look at <https://x.com/pontusab/status/1>", "", "look at https://x.com/pontusab/status/1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &slack.Message{Type: "message", TS: "1.000100", User: "U1", Text: tc.text, Subtype: tc.subtype, Attachments: []slack.Attachment{x}}
+			d, ok := PreviewFromMessage(R, m)
+			if !ok {
+				t.Fatal("no preview: the caller would draw the attachment card")
+			}
+			if got := PlainText(d); got != tc.want {
+				t.Errorf("preview %q, want %q", got, tc.want)
+			}
+			for _, b := range d.Blocks {
+				if b.Kind == AttachmentBlock {
+					t.Error("an attachment in the preview")
+				}
+			}
+		})
+	}
+}

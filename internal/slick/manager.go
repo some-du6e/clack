@@ -143,6 +143,7 @@ func (s *Slick) loadInstalled() {
 			p.hash = "" // describe on first use
 		}
 		s.plugins[id] = p
+		s.pluginsGen.Add(1)
 	}
 }
 
@@ -906,6 +907,7 @@ func (s *Slick) install(ctx context.Context, code, source, expectedID string) (s
 		s.plugins[id] = p
 	}
 	p.meta, p.hash = *meta, h
+	s.pluginsGen.Add(1) // a new plugin or a replaced one
 	p.inJS, p.mainInJS, p.startError = false, false, ""
 	if !isMain {
 		if source != "" {
@@ -950,6 +952,10 @@ func (s *Slick) Remove(ctx context.Context, id string) error {
 	for _, f := range []string{id + ".js", id + ".main.js", id + ".meta.json"} {
 		_ = os.Remove(s.path("plugins", f))
 	}
+	// after its files are gone: a library read between the two would keep
+	// the removed plugin's hashes under the new count (InstalledSHA256
+	// reads the files), as Taut's Remove orders it
+	s.pluginsGen.Add(1)
 	s.dropSwitches(id)
 	s.clearData(id, true)
 	s.mu.Lock()

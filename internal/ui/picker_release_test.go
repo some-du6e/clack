@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 	"weak"
 
@@ -54,6 +55,55 @@ func TestClosedEmojiPickerReleased(t *testing.T) {
 			if strings.Contains(g, "popups.") || strings.Contains(g, "EmojiPicker") {
 				t.Logf("goroutine in popups:\n%s", g)
 			}
+		}
+	}
+}
+
+// The same for a picker opened from a message's hover toolbar (Add
+// reaction…), whose list then isn't laid out again: a notification click
+// takes the window to another channel while the picker is up, and the
+// picker closes there. The toolbar's popover hold (messages
+// toolbar_hold.go) kept the picker until that list laid out again.
+func TestClosedEmojiPickerReleasedFromToolbar(t *testing.T) {
+	x := newTCEnv(t, "native")
+	p := x.hoverBar(func() toolbarLister { return x.cv() }, x.root, barReact)
+	x.handClick(p)
+	x.until("the emoji picker", 8*time.Second, func() bool {
+		return x.openOverlay(func(o Overlay) bool { _, ok := o.(*popups.EmojiPicker); return ok })
+	})
+	var w weak.Pointer[popups.EmojiPicker]
+	var lo, hi uintptr
+	for _, o := range x.a.overlays {
+		if pk, ok := o.(*popups.EmojiPicker); ok {
+			w = weak.Make(pk)
+			lo = uintptr(unsafe.Pointer(pk))
+			hi = lo + unsafe.Sizeof(*pk)
+		}
+	}
+	if w.Value() == nil {
+		t.Fatal("the emoji picker didn't open")
+	}
+	// another channel: the first one's list isn't laid out again
+	other := ""
+	for _, id := range x.fs.ChannelIDs() {
+		if id != x.ch {
+			other = id
+			break
+		}
+	}
+	x.a.Navigate("c/" + other)
+	x.settle(200 * time.Millisecond)
+	if !x.a.dismissTop() {
+		t.Fatal("dismissTop closed nothing")
+	}
+	for i := 0; i < 3; i++ {
+		x.frame()
+	}
+	runtime.GC()
+	if w.Value() != nil {
+		t.Error("a closed emoji picker opened from the hover toolbar is still reachable three frames after it closed, its channel's list no longer laid out")
+		if path := reachPath(x.a, lo, hi, "EmojiPicker"); path != "" {
+			t.Errorf("held by App%s", path)
 		}
 	}
 }

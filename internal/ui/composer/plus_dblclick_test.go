@@ -522,6 +522,39 @@ func TestPlusDoubleClickAt300ms(t *testing.T) {
 	}
 }
 
+// The + pressed (its menu opens), the menu's scrim pressed on the same
+// spot once it's up (the menu closes), then the + again inside the
+// double-click time of the first press: Chromium counts a window's clicks
+// whatever element each lands on (Blink takes the platform event's
+// click_count and resets it for no element), so that's a triple click.
+// The + only opens its menu again; no file chooser (Gio patch 48, the
+// router's window count).
+func TestPlusAfterScrimClickIsNoDoubleClick(t *testing.T) {
+	e := newPlusEnv(t)
+	e.open(tChGen, "")
+	p := e.plus()
+	t0 := e.ptr
+	e.click(p)
+	if !e.menuOpen() {
+		t.Fatalf("the first click opened no menu: %s", e.diag())
+	}
+	for e.ptr < t0+330*time.Millisecond { // past plusScrimDelay: the scrim is up
+		e.frame()
+	}
+	e.click(p)
+	if e.menuOpen() {
+		t.Fatalf("a click on the scrim left the menu open: %s", e.diag())
+	}
+	e.frame()
+	third := e.ptr - t0
+	e.click(p)
+	e.frame()
+	if e.picks != 0 || !e.menuOpen() || e.h.menus != 2 {
+		t.Fatalf("+, scrim, + (the third press %v after the first, double-click time %v): %d choosers, menu %v, %d menus; want no chooser and the menu open again (a triple click); %s",
+			third, gesture.DoubleClickTime(), e.picks, e.menuOpen(), e.h.menus, e.diag())
+	}
+}
+
 // A double click 400 ms apart selects the word in the composer's editor
 // (Gio patch 48), where gesture.Click's old 200 ms made it two clicks.
 func TestEditorDoubleClickAt400ms(t *testing.T) {

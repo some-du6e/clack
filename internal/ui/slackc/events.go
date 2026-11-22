@@ -425,7 +425,7 @@ func (s *scope) release(pe *pointer.Event) {
 		return
 	}
 	if btn == 0 {
-		v.click(s, target, pe)
+		v.click(s, target, pe, false)
 	} else if btn == 1 {
 		v.dispatchPointer(s, target, "auxclick", pe, btn)
 	}
@@ -446,19 +446,33 @@ func commonAncestor(a, b *box) *box {
 }
 
 // click dispatches click (and dblclick) and runs the default actions:
-// links, labels, checkboxes, selects and form submission.
-func (v *View) click(s *scope, t *box, pe *pointer.Event) {
+// links, labels, checkboxes, selects and form submission. kbd is a
+// keyboard's click (Enter or Space on a button, a link, a checkbox):
+// Blink's activation behaviour dispatches a simulated click, detail 0,
+// never a dblclick, and it doesn't count in the mouse's run.
+func (v *View) click(s *scope, t *box, pe *pointer.Event, kbd bool) {
 	if t.disabled() {
 		return
 	}
-	now := int64(pe.Time / time.Millisecond)
-	k := t.k()
-	if v.lastClk.k == k && time.Duration(now-v.lastClk.t)*time.Millisecond <= doubleClickTime() { // the platform's (gio_patch48.go)
-		v.lastClk.n++
-	} else {
-		v.lastClk.n = 1
+	// the click's detail: the window's count of the press (Gio patch 48,
+	// gio_patch48.go), as Blink's is the platform event's click_count
+	// whatever element it lands on; on stock Gio this element's within the
+	// double-click time
+	v.clickDetail = 0
+	if !kbd {
+		now := int64(pe.Time / time.Millisecond)
+		k := t.k()
+		if v.lastClk.k == k && time.Duration(now-v.lastClk.t)*time.Millisecond <= doubleClickTime() {
+			v.lastClk.n++
+		} else {
+			v.lastClk.n = 1
+		}
+		v.lastClk.k, v.lastClk.t = k, now
+		if n := clicksOf(*pe); n > 0 {
+			v.lastClk.n = n
+		}
+		v.clickDetail = v.lastClk.n
 	}
-	v.lastClk.k, v.lastClk.t = k, now
 	// checkbox/radio state flips before click handlers see it
 	ctrl := t
 	if t.repl != rCheck && t.repl != rRadio {
@@ -471,7 +485,7 @@ func (v *View) click(s *scope, t *box, pe *pointer.Event) {
 		}
 	}
 	v.dispatchPointer(s, t, "click", pe, 0)
-	if v.lastClk.n == 2 {
+	if !kbd && v.lastClk.n == 2 {
 		v.dispatchPointer(s, t, "dblclick", pe, 0)
 	}
 	if ctrl != nil && ctrl != t && !ctrl.disabled() {
@@ -801,10 +815,10 @@ func (v *View) keyEvents(s *scope, b *box) {
 		if ke.State == key.Press && (ke.Name == key.NameReturn || ke.Name == key.NameEnter || ke.Name == key.NameSpace) && b.n != nil {
 			switch b.n.T {
 			case "button", "a", "summary":
-				v.click(s, b, &pointer.Event{})
+				v.click(s, b, &pointer.Event{}, true)
 			}
 			if b.repl == rCheck || b.repl == rRadio {
-				v.click(s, b, &pointer.Event{})
+				v.click(s, b, &pointer.Event{}, true)
 			}
 		}
 	}
@@ -947,7 +961,7 @@ func (v *View) dispatchPointer(s *scope, t *box, typ string, pe *pointer.Event, 
 	}
 	if typ == "click" || typ == "dblclick" {
 		b = append(b, `,"detail":`...)
-		b = strconv.AppendInt(b, int64(max(v.lastClk.n, 1)), 10)
+		b = strconv.AppendInt(b, int64(v.clickDetail), 10)
 	}
 	v.endEvent(t, b)
 }

@@ -189,8 +189,11 @@ func (c *Client) Post(ctx context.Context, o PostOpts) (*Message, error) {
 	return &r.Message, err
 }
 
+// Update is chat.update for an edit. Slack's commitMessageEdit (boot-shared
+// 4Tc8) sends {channel, ts, skip_dlp_user_warning: false, blocks}; Clack
+// also sends the text and link_names.
 func (c *Client) Update(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
-	p := url.Values{"channel": {ch}, "ts": {ts}, "text": {text}, "link_names": {"true"}}
+	p := url.Values{"channel": {ch}, "ts": {ts}, "text": {text}, "link_names": {"true"}, "skip_dlp_user_warning": {"false"}}
 	if len(blocks) > 0 {
 		p.Set("blocks", string(blocks))
 	}

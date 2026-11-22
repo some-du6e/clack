@@ -160,6 +160,18 @@ func TestFilesChannel(t *testing.T) {
 			t.Errorf("%s: box %v (image %v), want a file card", name, fr.R, fr.File.IsImage)
 		}
 	}
+	// a .txt Slack typed binary and one it typed text (Karim's
+	// information.txt, 2026-11-18): hosted files, so file cards (getFileType:
+	// only mode "snippet" is a snippet), typed by their pretty_type
+	for name, kind := range map[string]string{fakeslack.FilesBinaryText: "Binary", fakeslack.FilesPlainText: "Plain Text"} {
+		f := docFiles(e.filesMsg(name))[0]
+		if f.IsSnippet || f.IsImage || f.PrettyType != kind {
+			t.Errorf("%s: %+v, want a %s file card", name, f, kind)
+		}
+		if fr := e.fileInView(t, name); fr.File.IsImage || fr.R.Dy() >= 100 || fr.R.Dy() < 40 {
+			t.Errorf("%s: box %v, want a file card", name, fr.R)
+		}
+	}
 	at := image.Pt(700, 400)
 	own := e.filesMsg("own image")
 	if got := fileMenuLabels(popups.NewFileMenu(e.a, at, own, docFiles(own)[0])); !strings.HasSuffix(got, "|-|Delete file") || !strings.Contains(got, "Save for later") {
@@ -203,6 +215,9 @@ func TestFilesShots(t *testing.T) {
 			e.a.ShowOverlay(popups.NewLightbox(e.a, *docFiles(six)[1].Thumb, six))
 			e.filesShot("files-viewer-" + mode)
 			e.a.dismissTop()
+			// the binary .txt and the text one
+			e.fileInView(t, fakeslack.FilesBinaryText)
+			e.filesShot("files-txt-" + mode)
 		})
 	}
 }

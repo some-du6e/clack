@@ -1468,7 +1468,11 @@ func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 	rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), bg)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(s, s))
-	layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, icon, 20, fg) })
+	gs := unit.Dp(20)
+	if strings.HasPrefix(icon, "file-") { // a svgicon's glyph is drawn on the whole tile
+		gs = size
+	}
+	layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, icon, gs, fg) })
 	return D{Size: image.Pt(s, s)}
 }
 
@@ -1484,6 +1488,13 @@ func fileTileStyle(it *fileItem, dark bool) (bg, fg color.NRGBA, icon string) {
 		return rgb(0xe19b06), rgb(0xfcf2d9), "list-view"
 	case it.isCanvas():
 		return rgb(0x1d9bd1), white, "canvas"
+	case it.Filetype == "email" || it.Mode == "email":
+		// c-icon--file-email-svgicon: email-5606c9a.svg's tile and envelope
+		return rgb(0x1d9bd1), white, "file-email"
+	case it.Filetype == "binary": // c-icon--file-binary-svgicon
+		return rgb(0x616061), white, "file-binary"
+	case it.Filetype == "text": // c-icon--file-text-svgicon (file-snippet-0a4c72a.svg)
+		return rgb(0x1d9bd1), white, "file-text"
 	case it.Filetype == "pdf":
 		return rgb(0xe01e5a), white, "files"
 	case isSheet(it):

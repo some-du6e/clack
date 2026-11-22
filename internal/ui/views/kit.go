@@ -27,6 +27,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -339,6 +340,10 @@ type base struct {
 	tmemo map[string]*memoEntry
 	// addBtns are the messages' add-reaction buttons (reactions_slack.go)
 	addBtns map[string]*widget.Clickable
+	// addTips are their "Add reaction…" tooltips (ReactionAddButton's)
+	addTips map[string]*popups.TipState
+	// pillTips are the reaction pills' ReactionTips (reactions_slack.go)
+	pillTips map[string]*pillTip
 	// pv caches Activity's preview documents (activity_rows.go)
 	pv map[string]pvEntry
 	// vers caches msgVer per message copy (msgVerOf); vsrc is the

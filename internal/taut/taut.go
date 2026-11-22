@@ -198,6 +198,8 @@ type Taut struct {
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
+	// pluginsGen counts changes to the installed plugins (PluginsGen)
+	pluginsGen atomic.Uint64
 
 	running   atomic.Int32 // plugins with a live instance
 	crashes   []time.Time  // recent runtime crashes (restartAfterCrash; under mu)
@@ -535,6 +537,12 @@ func (t *Taut) Subscribe() (<-chan struct{}, func()) {
 		t.changeMu.Unlock()
 	}
 }
+
+// PluginsGen counts the changes to the installed plugins' files: one
+// read from disk, installed, replaced or removed (not one started,
+// stopped or set up). A reader that keeps what it read of them (the
+// plugin library's install states) reads again when it moves.
+func (t *Taut) PluginsGen() uint64 { return t.pluginsGen.Load() }
 
 // closeSubscribers closes every Subscribe channel (their range loops
 // end) and keeps no more: Close's, the Taut is done. Their goroutines kept

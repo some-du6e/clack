@@ -72,46 +72,61 @@ func (b *backend) desktopNotification(a *App, ev core.Event) {
 }
 
 // desktopNotificationAfter is desktopNotification; resolved: the
-// conversation was looked up already.
+// conversation was looked up already. Each decision writes its line
+// (notify_decisions.go), the one that waits for the lookup once it ran.
 func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool) {
 	var e struct {
 		Channel         string `json:"channel"`
 		TS              string `json:"ts"`
 		Msg             string `json:"msg"`
 		ThreadTS        string `json:"thread_ts"`
-		Content         string `json:"content"`
 		IsChannelInvite bool   `json:"is_channel_invite"`
 		User            string `json:"user"`
 	}
 	if json.Unmarshal(ev.Raw, &e) != nil || e.Channel == "" {
+		noteDecided(ev.Channel, "", noteSkipNoModel) // no channel (3)
 		return
 	}
 	ts := e.TS
 	if ts == "" {
 		ts = e.Msg
 	}
+	skip := func(why noteSkip) { noteDecided(e.Channel, ts, why) }
 	key := noteShownKey(e.Channel, e.Msg) // a desktop_notification's msg (notify_dm.go)
 	if b.noteWasShown(key) {
-		return // shown already: the reply's own message event came first (it may have while a lookup ran)
+		skip(noteSkipShown) // shown already: the reply's own message event came first (it may have while a lookup ran)
+		return
 	}
 	if !b.notePushOn(e.Channel) {
-		return // maybeShowNotification's "Skip pref-disabled push notification" (notify_dm.go)
+		skip(noteSkipPushOff) // maybeShowNotification's "Skip pref-disabled push notification" (notify_dm.go)
+		return
 	}
 	// shouldShowNotificationForDesktopNotification's order: an invite
-	// shows (0) before any check of the reply's own (7, 16, 29, 20)
+	// shows (0) before any check of the reply's own (7, 16, 29, 19, 20)
 	if !e.IsChannelInvite {
 		if e.ThreadTS == "" || e.ThreadTS == ts {
-			return // not a reply (7)
+			skip(noteSkipNotReply) // not a reply (7)
+			return
 		}
 		if a.focused && a.secondary.kind == secThread && a.secondary.open() &&
 			a.secondary.channel == e.Channel && a.secondary.ts == e.ThreadTS {
-			return // the thread is on screen (16)
+			skip(noteSkipOnScreen) // the thread is on screen (16)
+			return
 		}
 		if b.core.UserHidden(e.User) {
-			return // from a member the viewer hid ("user" in it: isUserHidden, 29)
+			skip(noteSkipHidden) // from a member the viewer hid ("user" in it: isUserHidden, 29)
+			return
+		}
+		// notifications.maxTs: a reply newer than every message the store
+		// took is one the client never had (store/notifications_maxts.go;
+		// "!r || a > r", the max starting at "0")
+		if tsBefore(b.core.S.NotificationsMaxTS(), ts) {
+			skip(noteSkipTooNew) // 19
+			return
 		}
 		if root, ok := b.core.S.Find(e.Channel, e.ThreadTS); ok && root.LastRead != "" && !tsBefore(root.LastRead, ts) {
-			return // read already (20)
+			skip(noteSkipRead) // read already (20)
+			return
 		}
 	}
 	c, named := b.noteConv(e.Channel)
@@ -125,27 +140,59 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 		return
 	}
 	if c == nil {
-		return // an unknown conversation (3)
+		skip(noteSkipNoModel) // an unknown conversation (3)
+		return
 	}
 	if c.Preview {
-		return // a channel the viewer isn't in (isMemberOfChannel: 2)
+		skip(noteSkipNotMember) // a channel the viewer isn't in (isMemberOfChannel: 2)
+		return
 	}
 	title := nsGrowl.T("New message in {channel}", "channel", notifyChannelName(c))
 	if c.Kind == "im" || c.Kind == "app" { // isIm (an app's DM too)
 		title = nsGrowl.T("New message from {name}", "name", c.Name)
 	}
-	body := e.Content
 	note := a.messageNote(e.Channel, ts, e.ThreadTS) // the toast's payload (notify.go): its click opens the thread at ts
 	note.pushChecked = true                          // notePushOn above
 	b.noteMarkShown(key)
-	// in order with the other notifications (backend.go showNotification)
-	a.showNotification(map[string]any{"title": title, "message": body, "body": body, "channelId": e.Channel, "ts": e.TS},
-		func(ctx context.Context, args map[string]any) (any, error) {
-			if t, bd, ok := notificationText(args, nil, body); ok {
-				a.notifyMessage(t, bd, note)
-			}
+	skip(noteShow)
+	// showNotification gets what maybeShowNotification hands it for a
+	// desktop_notification: {message: the event, modelObject: its
+	// conversation, options: {skip_formatting, launch_uri, image_uri,
+	// avatar_image}}. Plugins read the event (BetterBlock hides a blocked
+	// sender's by its user), and what they pass on is shown: the body is
+	// the message's content as the server wrote it (getServerFormattedContent),
+	// none when a plugin took the message away (StreamerMode); in order
+	// with the other notifications (backend.go showNotification)
+	a.showNotification(b.desktopNotificationArgs(ev.Raw, e.Channel), func(ctx context.Context, args map[string]any) (any, error) {
+		m, _ := args["message"].(map[string]any)
+		if m == nil {
 			return nil, nil
-		})
+		}
+		body, _ := m["content"].(string)
+		a.notifyMessage(title, body, note)
+		return nil, nil
+	})
+}
+
+// desktopNotificationArgs is maybeShowNotification's showNotification
+// arguments for a desktop_notification (boot-render /+fI): the event
+// itself as message, the conversation the store holds as modelObject (an
+// unknown one has none), and the options it sets: skip_formatting, and
+// the event's launchUri, imageUri and avatarImage where it has them.
+func (b *backend) desktopNotificationArgs(raw json.RawMessage, ch string) map[string]any {
+	msg := map[string]any{}
+	_ = json.Unmarshal(raw, &msg)
+	opts := map[string]any{"skip_formatting": true}
+	for from, to := range map[string]string{"launchUri": "launch_uri", "imageUri": "image_uri", "avatarImage": "avatar_image"} {
+		if v, ok := msg[from]; ok {
+			opts[to] = v
+		}
+	}
+	args := map[string]any{"message": msg, "options": opts}
+	if conv, ok := b.core.S.ConvJSON(ch); ok {
+		args["modelObject"] = conv
+	}
+	return args
 }
 
 // tsBefore reports a < b for Slack timestamps ("1700000000.000100").

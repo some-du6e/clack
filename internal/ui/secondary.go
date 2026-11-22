@@ -22,6 +22,7 @@ const (
 	secCode       // a code channel's details pane (codechannel_pane.go)
 	secWorkflow   // the workflow details view (workflow_details.go)
 	secWorkObject // a work object's flexpane (workobject_pane.go)
+	secEmail      // an email file's FileDetails (email_pane.go)
 )
 
 // secondaryState is the resizable right-hand pane (thread, channel details,

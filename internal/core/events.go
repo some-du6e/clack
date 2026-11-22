@@ -350,6 +350,9 @@ func (a *App) handle(ev slack.Event) {
 		if ev.Type == "thread_marked" {
 			a.onThreadMarked(ev.Raw) // the root's last_read, before the UI hears of it
 		}
+		if ev.Type == "update_thread_state" && a.onUpdateThreadState(ev.Raw) {
+			a.emit(Event{Type: "threads_state"}) // the threads' unread state moved: at once (thread_unreads.go)
+		}
 		if ev.Type == "badge_counts_updated" {
 			// handleBadgeCountsUpdatedRTMEvent's activity_v2, in order with
 			// the activity entries before it (activity_later.go): its zero
@@ -487,17 +490,40 @@ func (a *App) handle(ev slack.Event) {
 	case "desktop_notification":
 		// the server's notification for a followed thread's reply (the
 		// client's message path skips replies that don't mention the
-		// viewer): the UI decides and shows it (ui/notify_threads.go)
-		a.emit(Event{Type: ev.Type, Channel: ch, Raw: ev.Raw})
+		// viewer): the UI decides and shows it (ui/notify_threads.go).
+		// Behind the events of its conversation still held for its
+		// lookup, as Slack's routeMessages dispatches the socket's events
+		// in order once the message before it has its channel: let
+		// through, a held group DM's first message toasted after its
+		// thread's reply that came later, and the UI looked the
+		// conversation up a second time (pump_later.go)
+		raw := ev.Raw
+		if a.holdBehindConv(ch) {
+			a.convLater(ch, func(context.Context) {
+				defer a.releaseConv(ch)
+				a.emit(Event{Type: "desktop_notification", Channel: ch, Raw: raw})
+			})
+			return
+		}
+		a.emit(Event{Type: ev.Type, Channel: ch, Raw: raw})
 	case "dnd_override":
 		// a sender's "notify anyway" for a message Do Not Disturb held
 		// back (boot-render handleDndOverride): the UI shows the stored
-		// message's notification with DND ignored (ui/notify_dm.go)
+		// message's notification with DND ignored (ui/notify_dm.go),
+		// after the message itself when that waits for its conversation
 		var e struct {
 			Timestamp string `json:"timestamp"`
 		}
 		if json.Unmarshal(ev.Raw, &e) == nil && ch != "" && e.Timestamp != "" {
-			a.emit(Event{Type: ev.Type, Channel: ch, TS: e.Timestamp})
+			over := Event{Type: ev.Type, Channel: ch, TS: e.Timestamp}
+			if a.holdBehindConv(ch) {
+				a.convLater(ch, func(context.Context) {
+					defer a.releaseConv(ch)
+					a.emit(over)
+				})
+				return
+			}
+			a.emit(over)
 		}
 	case "star_added", "star_removed":
 		a.onStarEvent(ev.Raw, ev.Type == "star_added")
@@ -728,6 +754,11 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	if json.Unmarshal(ev.Raw, &m) != nil || m.TS == "" {
 		return
 	}
+	// the notifications' maxTs takes every message the socket brings, as
+	// Slack's store adds them all (store/notifications_maxts.go): the
+	// desktop_notification for it that comes next isn't one for a
+	// message the client never took (19)
+	a.S.NoteAdded(m.TS)
 	// appendMessages merges a socket message into the stored one: a pin
 	// that came first stays (store/pins.go), and a thread's subscription
 	// changes only with a "subscribed" of the copy's own (thread_subs.go)

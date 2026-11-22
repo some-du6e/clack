@@ -1565,8 +1565,8 @@ func TestPlainTextSelection(t *testing.T) {
 	if v.SelectedText() != "second line" {
 		t.Errorf("selectLine(14) = %q", v.SelectedText())
 	}
-	v.selectLine(3)
-	if v.SelectedText() != "hello world" {
+	v.selectLine(3) // the paragraph and its break, as Blink's triple click (kParagraph)
+	if v.SelectedText() != "hello world\n" {
 		t.Errorf("selectLine(3) = %q", v.SelectedText())
 	}
 

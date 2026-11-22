@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/internal/clickrule"
 	f32internal "gioui.org/internal/f32"
 	"gioui.org/internal/ops"
 	"gioui.org/io/clipboard"
@@ -58,6 +59,8 @@ type Router struct {
 	transfers []io.ReadCloser
 	// Clack patch 15: per-window values for gestures (Source.Value).
 	values map[any]any
+	// Clack patch 48: the window's run of clicks (clack_clicks.go)
+	clicks clickrule.Run
 	// Clack patch 35: the frame in progress is the last one's ops again
 	// (Source.Replay): Frame keeps the handlers' filters
 	replay bool
@@ -453,6 +456,9 @@ func (q *Router) Queue(events ...event.Event) {
 		se, system := e.(SystemEvent)
 		if system {
 			e = se.Event
+		}
+		if pe, ok := e.(pointer.Event); ok && !q.keyLog.replay {
+			e = q.countClick(pe) // Clack patch 48: the window's click count
 		}
 		q.noteKey(e) // Clack patch 28
 		noteInput(e) // Clack patch 33
