@@ -21,15 +21,20 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
 // clipHost is slickHost keeping the overlays the composer shows, so a
 // test lays them out each frame as the ui root does.
 type clipHost struct {
 	slickHost
-	mu  sync.Mutex
-	ovs []popups.Overlay
+	mu   sync.Mutex
+	ovs  []popups.Overlay
+	vids *videoplayer.Controller // the window's players (Videos), nil: none
 }
+
+// Videos is the ui root's: the window's players.
+func (h *clipHost) Videos() *videoplayer.Controller { return h.vids }
 
 func (h *clipHost) ShowOverlay(o popups.Overlay) {
 	h.mu.Lock()

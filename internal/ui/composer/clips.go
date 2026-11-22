@@ -25,11 +25,15 @@ import (
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/huddle/avperm"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
 // Audio clips: the composer's microphone button records a voice clip the
@@ -590,14 +594,27 @@ func pendingClip(f vclip.File) *core.PendingFile {
 	return pf
 }
 
-// drawClipCard is a pending clip's tile, PendingAudioMessageUpload: a
-// pillow (1px border, radius 12, 12 in) holding the 184px flat audio
-// message player in its mini style with the clip's waveform and duration.
-// The play button is disabled while the clip is pending (isPending).
+// drawClipCard is a pending clip's tile: a pillow (1px border, radius 12,
+// 12 in) holding the 184px flat audio message player in its mini style
+// with the clip's waveform and duration. While the clip is still the
+// recording's bytes it's PendingAudioMessageUpload, whose play button is
+// disabled (isPending); once uploaded, PendingFile's renderContent draws
+// FileAudio for the file (fileIsPlayableAudio), which plays: the window's
+// player (videoplayer, the mini style: the play button, the scrubber and
+// the time, at the natural rate).
 func (a *attachments) drawClipCard(gtx layout.Context, th *theme.Theme, v attView, r image.Rectangle, rad int) {
 	pal := clipPalette(th)
 	fillRRect(gtx, r, rad, th.C.Bg)
 	strokeRRect(gtx, r, rad, max(1, gtx.Dp(1)), th.C.Border)
+	if f := a.uploadedClip(v.c); f != nil {
+		if row := a.clipRow(); row != nil && row.MediaTile(f, 1, false) {
+			defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+			g := gtx
+			g.Constraints = layout.Exact(r.Size())
+			row.LayoutMedia(g, richview.MediaSlot{File: f, Mini: true})
+			return
+		}
+	}
 	dp := func(f float32) int { return gtx.Dp(unit.Dp(f)) }
 	bs := dp(34)
 	x0 := r.Min.X + dp(12)
@@ -635,3 +652,51 @@ func (a *attachments) drawClipCard(gtx layout.Context, th *theme.Theme, v attVie
 		return label(gtx, th.Shaper, ts, dur)
 	})
 }
+
+// uploadedClip is c's file as Slack processed the upload (files.info's
+// object), nil until then. Its waveform is the server's, else the
+// recording's (the samples the clip went up with).
+func (a *attachments) uploadedClip(c *attChip) *richtext.File {
+	a.mu.Lock()
+	var sf *slack.File
+	if c.prepared != nil {
+		sf = c.prepared.File
+	}
+	a.mu.Unlock()
+	f := richtext.FileOf(sf)
+	if f == nil {
+		return nil
+	}
+	if len(f.Waveform) == 0 && c.clip != nil {
+		for _, s := range c.clip.samples {
+			f.Waveform = append(f.Waveform, int(math.Round(s)))
+		}
+	}
+	return f
+}
+
+// clipRow is the window's player row for the composer's uploaded clips
+// (the ui root's Videos), nil where there is none.
+func (a *attachments) clipRow() *videoplayer.Row {
+	v, ok := a.h.(interface {
+		Videos() *videoplayer.Controller
+	})
+	if !ok {
+		return nil
+	}
+	ctl := v.Videos()
+	if ctl == nil {
+		return nil
+	}
+	if a.clipPlayer == nil || a.clipCtl != ctl {
+		a.clipCtl, a.clipPlayer = ctl, ctl.Row("composer", "", "", clipRowHost{})
+	}
+	return a.clipPlayer
+}
+
+// clipRowHost is the uploaded clip's RowHost: the mini player has no menu
+// and opens nothing.
+type clipRowHost struct{}
+
+func (clipRowHost) OpenFile(*richtext.File)                                         {}
+func (clipRowHost) FileAction(richview.FileAction, *richtext.File, image.Rectangle) {}

@@ -1,8 +1,14 @@
 package composer
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"image"
+	"io"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,8 +21,12 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/media"
+	"github.com/some-du6e/clack/internal/media/goaudio"
+	"github.com/some-du6e/clack/internal/media/mediatest"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
 // The recorder's life with its composer and session: a stop before any
@@ -273,5 +283,82 @@ func TestAudioClipPastTenFiles(t *testing.T) {
 	e.frame()
 	if e.c.tooManyFiles() || e.c.ui.cur.sendOff() {
 		t.Errorf("10 files again: tooManyFiles %v, send off %v", e.c.tooManyFiles(), e.c.ui.cur.sendOff())
+	}
+}
+
+// Once uploaded the pending clip plays, as Slack's PendingFile draws
+// FileAudio for the processed file (fileIsPlayableAudio) where
+// PendingAudioMessageUpload drew the recording's bytes with its play
+// button disabled: the window's player in its mini style, with no speed
+// control or More actions, at the natural rate whatever
+// media_playback_speed says (ignoresPlaybackSpeedPref), reading the
+// uploaded file.
+func TestAudioClipPendingCardPlays(t *testing.T) {
+	e := newClipEnv(t, func() huddle.Device { return huddle.NewToneDevice(440) })
+	var mu sync.Mutex
+	var clip []byte
+	var opened []string
+	noCard := func(func([]int16)) (io.Closer, error) { return nil, errors.New("no sound card (the test's)") }
+	ctl := videoplayer.New(videoplayer.Env{
+		Manager: media.NewManager(media.NewChain(nil, &goaudio.Backend{Output: noCard, Logf: t.Logf})),
+		Open: func(ctx context.Context, u string, off int64) (io.ReadCloser, media.Info, error) {
+			mu.Lock()
+			opened = append(opened, u)
+			b := clip
+			mu.Unlock()
+			_, o := mediatest.Source("FCLIP", b, false)
+			return o.Open(ctx, off)
+		},
+		Pref: func(k string) (json.RawMessage, bool) {
+			if k == "media_playback_speed" {
+				return json.RawMessage("2"), true
+			}
+			return nil, false
+		},
+		Repaint: func() {},
+		Theme:   func() *theme.Theme { return e.h.th },
+	})
+	t.Cleanup(ctl.CloseAll)
+	e.h.vids = ctl
+
+	e.record()
+	time.Sleep(1200 * time.Millisecond)
+	e.c.StopClip()
+	var fid string
+	e.until("the clip uploaded and processed", func() bool {
+		e.c.att.mu.Lock()
+		defer e.c.att.mu.Unlock()
+		if len(e.c.att.chips) != 1 || e.c.att.chips[0].prepared == nil || e.c.att.chips[0].prepared.File == nil {
+			return false
+		}
+		fid = e.c.att.chips[0].prepared.ID
+		mu.Lock()
+		clip = e.c.att.chips[0].data
+		mu.Unlock()
+		return true
+	})
+	e.frame()
+	st, ok := ctl.TileState("composer", "", "", fid)
+	if !ok || st.AudioPlay.Empty() || st.AudioScrub.Empty() {
+		t.Fatalf("the uploaded clip's card draws no player: %v %+v", ok, st)
+	}
+	if !st.AudioSpeed.Empty() || !st.AudioMore.Empty() {
+		t.Errorf("the mini player drew the speed control %v or More %v", st.AudioSpeed, st.AudioMore)
+	}
+	if !ctl.Click("composer", "", "", fid) {
+		t.Fatal("no tile to click")
+	}
+	e.until("the clip playing", func() bool {
+		st, _ := ctl.TileState("composer", "", "", fid)
+		return st.Playing && st.Elapsed > 300*time.Millisecond
+	})
+	st, _ = ctl.TileState("composer", "", "", fid)
+	if st.Rate != 1 {
+		t.Errorf("rate %v with media_playback_speed 2, want 1 (ignoresPlaybackSpeedPref)", st.Rate)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(opened) == 0 || !strings.Contains(opened[0], fid) && !strings.Contains(opened[0], "audio_message") {
+		t.Errorf("the player read %v, not the uploaded file", opened)
 	}
 }

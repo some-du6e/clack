@@ -48,6 +48,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
+	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
 // Attachments: the + menu, file pickers, clipboard images and the chip row
@@ -208,8 +209,12 @@ func (a *attachments) dropPreviews(chips ...*attChip) {
 // call from any goroutine except Layout, Menu and the picker modal, which
 // run on the UI goroutine.
 type attachments struct {
-	h    Host
-	core *core.App // the session the files were uploaded to
+	h Host
+	// the uploaded clips' player row (clips.go clipRow) and the window's
+	// players it's of; the UI goroutine's
+	clipPlayer *videoplayer.Row
+	clipCtl    *videoplayer.Controller
+	core       *core.App // the session the files were uploaded to
 
 	onChange func() // guarded by mu: the owning composer's attChanged (draft_files.go)
 
