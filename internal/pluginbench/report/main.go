@@ -27,6 +27,7 @@ func main() {
 	dataPath := flag.String("data", "internal/pluginbench/bench.json", "bench.json to write")
 	docPath := flag.String("doc", "docs/PLUGIN-BENCH.md", "markdown table to write")
 	check := flag.Bool("check", false, "compare with the committed data; exit 1 on a regression")
+	keep := flag.Bool("keep", false, "keep the committed data's plugins this run didn't measure (a run limited with PLUGIN_BENCH_ONLY)")
 	run := flag.String("run", "", "URL of the run (recorded in the data)")
 	flag.Parse()
 	if *in == "" {
@@ -47,6 +48,9 @@ func main() {
 	var old pluginbench.Data
 	if b, err := os.ReadFile(*dataPath); err == nil {
 		_ = json.Unmarshal(b, &old)
+	}
+	if *keep {
+		cur.Keep(&old)
 	}
 	out, doc := *dataPath, *docPath
 	if *check {
@@ -254,6 +258,15 @@ The screenshots are in the run's ` + "`plugin-bench-shots`" + ` artifact.
 	if d.Run != "" {
 		fmt.Fprintf(&b, " by [this run](%s)", d.Run)
 	}
+	kept := 0
+	for _, p := range d.Plugins {
+		if p.Run != "" {
+			kept++
+		}
+	}
+	if kept > 0 { // -keep: a run limited to some plugins
+		fmt.Fprintf(&b, "; the %d plugins it didn't measure keep an earlier run's results, each naming its run", kept)
+	}
 	b.WriteString(".\n\n## Host fixes and gaps the bench found\n\n" + hostNotes + "\n## Results\n\n")
 	b.WriteString(summaryTable(d))
 	b.WriteString("\n## Per plugin\n")
@@ -262,6 +275,9 @@ The screenshots are in the run's ` + "`plugin-bench-shots`" + ` artifact.
 		fmt.Fprintf(&b, "\n### %s\n\n**%s**: %s.", p.Name, sys(p.Winner), p.Reason)
 		if p.Notes != "" {
 			b.WriteString(" " + p.Notes)
+		}
+		if p.Run != "" {
+			fmt.Fprintf(&b, " Measured by [an earlier run](%s).", p.Run)
 		}
 		b.WriteString("\n\n| | Taut | Slick |\n|---|---|---|\n")
 		t, s := p.Variant("taut"), p.Variant("slick")

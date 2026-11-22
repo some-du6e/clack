@@ -670,12 +670,16 @@ func rankGroups(groups []libGroup, words []string, skip func(libGroup) bool) []l
 
 // suggestionRow is a library plugin in Taut's row: the name and its
 // description (in line with the installed rows' names, past the checkbox
-// column), and the library's own action for it (Install, or Install… when
-// both systems have it) at the right, with how it went under the name.
+// column), the other version's name where it has its own, and the
+// library's own action for it (Install, or Install… when both systems
+// have it and the bench hasn't picked) at the right, with how it went
+// under the name. Its name and description are the library row's face's.
 func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layout.Dimensions {
 	v, tp := pp.lib, pp.taut
 	cl := tp.colors()
-	e := g.first()
+	e := g.first() // the row's widgets, whichever version it shows
+	face, pick := v.face(g)
+	_, alias := v.versions(g, face, pick)
 	x := gtx.Dp(4+theme.NativeCheckSize+8) + gtx.Dp(4) // .taut-settings__row-spacer, then row-main's padding
 	act := v.action(g)
 	kind := act.kind
@@ -696,9 +700,9 @@ func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layo
 	}
 	y := gtx.Dp(6)
 	y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-		return tp.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 20, Weight: theme.Bold, Color: cl.fg, MaxLines: 1}, e.Name)
+		return tp.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 20, Weight: theme.Bold, Color: cl.fg, MaxLines: 1}, face.Name)
 	}).Size.Y
-	if c := groupCompat(g); c.Line != "" { // how it works in Clack, before Install
+	if c := rowCompat(g, face, pick); c.Line != "" { // how it works in Clack, before Install
 		col := cl.fg2
 		if c.Status == pluginlib.CompatBroken {
 			col = cl.err
@@ -707,9 +711,14 @@ func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layo
 			return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: col, MaxLines: 1}, c.Line)
 		}).Size.Y
 	}
-	if d := plainMrkdwn(e.Description); d != "" {
+	if d := plainMrkdwn(rowDescription(g, face)); d != "" {
 		y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
 			return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.fg2, MaxLines: 1}, d)
+		}).Size.Y
+	}
+	if alias != "" { // a search by the other version's name found this
+		y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+			return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.fg3, MaxLines: 1}, alias)
 		}).Size.Y
 	}
 	if c := groupCredit(tp.a.credits(), g); c != "" { // the library row's "By …", as mentions

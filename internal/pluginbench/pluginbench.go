@@ -104,6 +104,10 @@ type Plugin struct {
 	Winner   string    `json:"winner"`   // taut | slick
 	Reason   string    `json:"reason"`
 	Notes    string    `json:"notes,omitempty"` // what the scenario couldn't exercise
+	// Run is the run that measured it, when that isn't the data's own: a
+	// run limited to some plugins keeps the rest from the data before it
+	// (Keep)
+	Run string `json:"run,omitempty"`
 }
 
 // Variant returns the plugin's variant of a system.
@@ -363,6 +367,44 @@ func fmtUnit(v float64, unit string) string {
 }
 
 func kb(n int64) string { return fmt.Sprintf("%.1f KB", float64(n)/1024) }
+
+// Keep adds old's plugins that d didn't measure (a run limited to some
+// plugins: PLUGIN_BENCH_ONLY), each with the run that measured it, and
+// old's bundle sources to d's when it keeps any, then sorts d.
+func (d *Data) Keep(old *Data) {
+	if old != nil {
+		have := map[string]bool{}
+		for _, p := range d.Plugins {
+			have[p.Name] = true
+		}
+		kept := false
+		for _, p := range old.Plugins {
+			if have[p.Name] {
+				continue
+			}
+			if p.Run == "" {
+				p.Run = old.Run
+			}
+			if p.Run == d.Run {
+				p.Run = ""
+			}
+			d.Plugins = append(d.Plugins, p)
+			kept = true
+		}
+		if kept {
+			srcs := map[string]bool{}
+			for _, s := range append(append([]string(nil), d.Sources...), old.Sources...) {
+				srcs[s] = true
+			}
+			d.Sources = d.Sources[:0]
+			for s := range srcs {
+				d.Sources = append(d.Sources, s)
+			}
+			sort.Strings(d.Sources)
+		}
+	}
+	d.Sort()
+}
 
 // Sort orders plugins by name.
 func (d *Data) Sort() {
