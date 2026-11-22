@@ -53,8 +53,9 @@ func TestDesktopNotificationWithoutTSLikeSlack(t *testing.T) {
 // hands maybeShowNotification the socket's own message, which carries no
 // _hidden_reply (only the store's copies do). With the reply's thread open
 // in the side pane its desktop_notification is on screen too (16). One
-// whose text holds an at-command, and one while the conversation shows
-// another tab, notify.
+// whose text holds an at-command, a streamed reply as its stream settles
+// (the store's copy), and one while the conversation shows another tab,
+// notify.
 func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	t.Setenv("CLACK_HOME", t.TempDir())
 	sz := fakeslack.Small
@@ -159,6 +160,24 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	}
 	if n := noteWith(e, rec, "can you check", 300*time.Millisecond); n != nil {
 		t.Error("the reply in the thread open in the side pane notified")
+	}
+	// a streamed thread reply mentioning the viewer: held while it streams
+	// (33), it notifies as its stream settles, its conversation on screen
+	// or not, since Slack's messageChanged hands maybeShowNotification the
+	// store's copy (getMessage), whose _hidden_reply keeps a reply the
+	// conversation's view doesn't show off the screen
+	c.SetExperimentGroup("defer_notification_3p_streaming", "on")
+	streamTS := fmt.Sprintf("%d.000700", rootSec+2)
+	streamed := func(state, text string) map[string]any {
+		return map[string]any{"type": "message", "channel": ch, "user": sender, "ts": streamTS, "thread_ts": root, "text": text, "streaming_state": state}
+	}
+	fs.Push(streamed("in_progress", me+"a synthetic answer, streaming"))
+	e.until("the streamed reply's decision line", 10*time.Second, func() bool { return line(streamTS) != "" })
+	fs.Push(map[string]any{"type": "message", "subtype": "message_changed", "channel": ch, "hidden": true, "ts": streamTS,
+		"message": streamed("completed", me+"a synthetic answer, settled")})
+	e.until("the settled reply's decision line", 10*time.Second, func() bool { return len(lines(streamTS)) >= 2 })
+	if ls := lines(streamTS); !strings.HasPrefix(ls[0], "notify: skip 33 ") || !strings.HasPrefix(ls[1], "notify: show ") {
+		t.Errorf("a streamed thread reply mentioning the viewer, its conversation open: %q, want skip 33 while it streams and shown as it settles (the store's copy has _hidden_reply)", ls)
 	}
 	if e.a.chTab == nil {
 		e.a.chTab = map[string]int{}
