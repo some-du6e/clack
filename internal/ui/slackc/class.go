@@ -16,16 +16,25 @@ import (
 // and the user CSS box (key "user").
 var Styles = css.NewEngine()
 
-// SetStyle installs or replaces the sheet under key (any goroutine).
+// SetStyle installs or replaces the sheet under key (any goroutine). The
+// same sheet again changes nothing: no restyle, no frame.
 func SetStyle(key, src string) {
+	v := Styles.Version()
 	Styles.Set(key, src)
+	if Styles.Version() == v {
+		return
+	}
 	resetNativeStyles()
 	invalidate()
 }
 
-// RemoveStyle drops the sheet under key.
+// RemoveStyle drops the sheet under key (nothing when there is none).
 func RemoveStyle(key string) {
+	v := Styles.Version()
 	Styles.Remove(key)
+	if Styles.Version() == v {
+		return
+	}
 	resetNativeStyles()
 	invalidate()
 }

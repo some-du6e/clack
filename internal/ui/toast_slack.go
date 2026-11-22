@@ -204,8 +204,8 @@ func (a *App) toastLink(gtx layout.Context, r image.Rectangle, href string) {
 		if !ok {
 			break
 		}
-		if ev.Kind == gesture.KindClick {
-			a.OpenURL(href)
+		if ev.Kind == gesture.KindClick && !a.FollowLink(href, false) {
+			openURL(href) // Slack's Link: a Slack link in the client, the rest in the browser
 		}
 	}
 	defer clip.Rect(r).Push(gtx.Ops).Pop()

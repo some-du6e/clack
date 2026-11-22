@@ -164,11 +164,17 @@ type Options struct {
 	LifecycleTimeout time.Duration
 	// NoAutoStart keeps New from starting enabled plugins (tests).
 	NoAutoStart bool
+	// DeferStart: New does everything but start the enabled plugins (and
+	// so the JS engine): Start does, later. The user CSS is installed by
+	// New either way (the UI's launch shows it from its first frame and
+	// starts the plugins after it, internal/ui/backend.go).
+	DeferStart bool
 }
 
 // Taut is the plugin system. All methods are safe for concurrent use.
 type Taut struct {
 	startDone chan struct{} // closed when the start-up StartEnabled returned (StartDone)
+	startOnce sync.Once     // Start's (and Close's, for a Taut never started)
 	opts      Options
 	app       *core.App
 	dir       string
@@ -258,20 +264,38 @@ func New(o Options) (*Taut, error) {
 		o.UI.SetStyle("user", t.userCSS)
 	}
 	t.stopWatch = make(chan struct{})
-	if !o.NoAutoStart {
+	switch {
+	case o.NoAutoStart:
+		t.startOnce.Do(func() { close(t.startDone) })
+	case o.DeferStart: // Start, later
+	default:
+		t.Start()
+	}
+	return t, nil
+}
+
+// Start starts the plugins enabled at start in the background and
+// watches the plugin folder (once). New calls it unless
+// Options.NoAutoStart or DeferStart; StartDone closes when they started.
+func (t *Taut) Start() {
+	t.startOnce.Do(func() {
+		if t.closed.Load() {
+			close(t.startDone)
+			return
+		}
 		go func() {
 			t0 := time.Now()
 			t.StartEnabled(context.Background())
 			applog.Mark("taut-started", fmt.Sprintf("%d running, in %s", t.running.Load(), time.Since(t0).Round(time.Millisecond)))
 			close(t.startDone)
 		}()
-		if len(t.plugins) > 0 {
+		t.mu.Lock()
+		has := len(t.plugins) > 0
+		t.mu.Unlock()
+		if has {
 			t.startWatch()
 		}
-	} else {
-		close(t.startDone)
-	}
-	return t, nil
+	})
 }
 
 // StartDone is closed once the plugins enabled at start have started (or
@@ -284,6 +308,7 @@ func (t *Taut) Close() error {
 	if !t.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	t.startOnce.Do(func() { close(t.startDone) }) // never started (DeferStart): nothing waits for it
 	ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 	defer cancel()
 	t.mu.Lock()

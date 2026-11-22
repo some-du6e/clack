@@ -142,18 +142,33 @@ func (a *App) OpenThreadAt(ch, thread, ts string) {
 //     conversation in the primary for it to move; jumpToMessage (jump.go),
 //     which puts the thread's conversation there, moves it itself.
 func (a *App) openThreadAt(ch, thread, ts string, prev Route) {
+	a.openThreadAtIn(ch, thread, ts, prev, false)
+}
+
+// openThreadAtIn is openThreadAt; resolved: thread is known to be a root
+// (OpenThread's guard found ts's thread), so it isn't looked up again.
+func (a *App) openThreadAtIn(ch, thread, ts string, prev Route, resolved bool) {
 	if ch == "" || thread == "" {
 		return
 	}
 	split := a.pane == paneSplit || a.splitClick() // OpenThread puts it in the split view
-	a.OpenThread(ch, thread)
+	if !split {
+		a.threadStartAt(ch, thread, ts) // jumpToThreadReply, before the pane mounts (thread_close.go)
+	}
+	a.openThread(ch, thread, ts, resolved)
+	p := prev.Page()
+	flash := !a.nestedSecondary() || p != "threads" && p != "unreads" && prev.Channel() != ch
+	if split {
+		if ts != "" { // the split view's thread at the reply too
+			a.splitAtReply(ch, thread, ts, flash)
+		}
+		return
+	}
 	s := &a.secondary
-	if split || ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {
+	if ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {
 		return
 	}
 	s.at = ts
-	p := prev.Page()
-	flash := !a.nestedSecondary() || p != "threads" && p != "unreads" && prev.Channel() != ch
 	if j, ok := a.convoFor(ch, thread).list.(interface{ JumpTo(ts string, flash bool) }); ok {
 		j.JumpTo(ts, flash)
 	}
@@ -185,7 +200,10 @@ func (a *App) OpenThreadReply(ch, thread, ts string) {
 		return
 	}
 	split := a.pane == paneSplit || a.splitClick()
-	a.OpenThread(ch, thread)
+	if !split {
+		a.threadStartAt(ch, thread, ts) // the pane starts at replyTs (thread_close.go)
+	}
+	a.openThread(ch, thread, ts, false)
 	s := &a.secondary
 	if split || ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {
 		return

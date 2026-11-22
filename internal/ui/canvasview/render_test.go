@@ -192,10 +192,19 @@ func TestRenderKitchenSink(t *testing.T) {
 			if canvasOpened != "F0CANVAS002" {
 				t.Errorf("canvas link opened %q", canvasOpened)
 			}
+			// (a host without openPermalink: the conversation at the
+			// message, a reply's link its thread, never the linked message
+			// as a thread's root)
 			v.handler.OpenURL("https://fake.slack.com/archives/C0FAKE00003/p1762500000000100")
 			h.mu.Lock()
-			if len(h.routes) == 0 || h.routes[len(h.routes)-1] != "c/C0FAKE00003/t/1762500000.000100" {
+			if len(h.routes) == 0 || h.routes[len(h.routes)-1] != "c/C0FAKE00003/m/1762500000.000100" {
 				t.Errorf("routes %v", h.routes)
+			}
+			h.mu.Unlock()
+			v.handler.OpenURL("https://fake.slack.com/archives/C0FAKE00003/p1762500060000200?thread_ts=1762500000.000100&cid=C0FAKE00003")
+			h.mu.Lock()
+			if len(h.routes) == 0 || h.routes[len(h.routes)-1] != "c/C0FAKE00003/t/1762500000.000100" {
+				t.Errorf("a reply's link: routes %v", h.routes)
 			}
 			h.mu.Unlock()
 		}

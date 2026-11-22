@@ -70,12 +70,17 @@ type AttentionHost interface {
 	UserAttention() bool
 }
 
-// threadRoot is the loaded root message.
+// threadRoot is the root message (rootMsg): the slice's first when the
+// slice starts with it, else the store's copy the model keeps
+// (thread_load.go), wherever the slice is.
 func (s *listState) threadRoot() (*core.Message, bool) {
-	if len(s.snap.msgs) == 0 || s.snap.msgs[0].m.TS != s.ts {
-		return nil, false
+	if len(s.snap.msgs) > 0 && s.snap.msgs[0].m.TS == s.ts {
+		return &s.snap.msgs[0].m, true
 	}
-	return &s.snap.msgs[0].m, true
+	if r := s.snap.th.root; r != nil && r.TS == s.ts && (s.snap.loaded || len(s.snap.msgs) > 0) {
+		return r, true
+	}
+	return nil, false
 }
 
 // threadSub is use_thread_subscription: followed, and its lastRead.
@@ -285,8 +290,20 @@ func (s *listState) threadStart(jump string) (key string, offset bool) {
 
 // threadStartPosition is threadStart as a list position: the item at y
 // 100 (or 0), clamped by the list at either end like Slack's
-// AnchorLayout brackets scrollTop.
+// AnchorLayout brackets scrollTop. With no jump, the scrollmark the pane
+// saved as it last unmounted comes first, where the slice drawn holds its
+// message (getThreadStartPosition: scrollmark.mark unless highlighting);
+// it serves one mount.
 func (s *listState) threadStartPosition(gtx layout.Context, jump string) layout.Position {
+	mark := s.thrMark
+	s.thrMark = threadMark{}
+	if mark.key != "" && jump == "" {
+		for i, it := range s.items {
+			if it.kind == itMsg && it.key == mark.key {
+				return layout.Position{BeforeEnd: true, First: i, Offset: mark.off}
+			}
+		}
+	}
 	key, off := s.threadStart(jump)
 	for i, it := range s.items {
 		if it.kind == itMsg && it.key == key {

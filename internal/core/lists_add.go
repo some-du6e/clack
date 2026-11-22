@@ -188,7 +188,7 @@ type ListResult struct {
 // search.modules.files with type:lists, most recently viewed first, or
 // by relevance for a query.
 func (a *App) SearchLists(ctx context.Context, query string, page int) ([]ListResult, int, error) {
-	p := filesParams(FilesOpts{Kind: "lists", Query: query, Page: page}, a.S.SelfID())
+	p := filesParams(FilesOpts{Kind: "lists", Query: query, Page: page}, a.S.SelfID(), nil)
 	var res struct {
 		Pagination searchPagination `json:"pagination"`
 		Items      []browseFileRaw  `json:"items"`

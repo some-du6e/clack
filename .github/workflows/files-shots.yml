@@ -40,6 +40,8 @@ on:
       - "internal/ui/drop_overlay.go"
       - "internal/ui/drop_overlay_test.go"
       - "internal/ui/composer/taut.go"
+      - "internal/ui/popups/files_filters.go"
+      - "internal/ui/views/files_filters_test.go"
       - ".github/workflows/files-shots.yml"
   workflow_dispatch:
 
@@ -90,6 +92,8 @@ jobs:
         run: |
           mkdir -p "$FILES_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -timeout 13m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$' ./internal/ui/
+          # the Files browser's Filters modal (docs/FILES-AUDIT.md)
+          xvfb-run -a go test -count=1 -v -run 'TestFilesViewFiltersShots$' ./internal/ui/views/
           ls -la "$FILES_SHOTS_DIR"
       - name: the media viewer plays videos, and the same checks on ui (before-ui)
         if: ${{ !cancelled() }}

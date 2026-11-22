@@ -55,9 +55,9 @@ func Themed(th *theme.Theme) (p Palette, ok bool) {
 		return Palette{}, false
 	}
 	if th.Dark {
-		p = DarkPalette()
+		p = darkPalette()
 	} else {
-		p = LightPalette()
+		p = lightPalette()
 	}
 	for _, f := range paletteTokens {
 		theme.SetTok(th.Tokens, f.f(&p), f.tok, th.Dark)

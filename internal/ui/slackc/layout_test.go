@@ -520,8 +520,11 @@ func TestSlackRoute(t *testing.T) {
 	cases := map[string]string{
 		"https://hackclub.slack.com/archives/C0B4DEFKFCJ":                   "c/C0B4DEFKFCJ",
 		"https://hackclub.slack.com/archives/C0B4DEFKFCJ/p1730000000123456": "c/C0B4DEFKFCJ/m/1730000000.123456",
-		"slack://channel?team=T1&id=C9":                                     "c/C9",
-		"https://example.com/archives/C1":                                   "",
+		// a reply's link: its thread, never the reply as a thread's root
+		"https://hackclub.slack.com/archives/C0B4DEFKFCJ/p1730000000123456?thread_ts=1730000000.000100&cid=C0B4DEFKFCJ": "c/C0B4DEFKFCJ/t/1730000000.000100",
+		"https://hackclub.slack.com/archives/C0B4DEFKFCJ/p1730000000123456?thread_ts=1/x":                               "c/C0B4DEFKFCJ/m/1730000000.123456",
+		"slack://channel?team=T1&id=C9":   "c/C9",
+		"https://example.com/archives/C1": "",
 	}
 	for in, want := range cases {
 		if got := slackRoute(in); got != want {

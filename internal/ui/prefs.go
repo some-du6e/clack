@@ -121,6 +121,16 @@ type prefs struct {
 	// insets by component, slackc/reserve.go): the next start keeps that
 	// space free until the plugin renders, so its first tree moves nothing.
 	PluginSlots map[string]slackc.Insets `json:"plugin_slots,omitempty"`
+	// PluginPatched and PluginStyled are what the plugins enabled last
+	// session showed once they ran: the components they patched
+	// (slackc.PatchedNames) and whether they added CSS of their own
+	// (api.setStyle, a page's style tags). A warm start waits for the
+	// plugins (up to the reveal's cap) when its first frame draws one of
+	// those components outside a reserved slot, or when they styled the
+	// page, and starts them after its first real frame when they showed
+	// nothing (reveal.go, backend.go).
+	PluginPatched []string `json:"plugin_patched,omitempty"`
+	PluginStyled  bool     `json:"plugin_styled,omitempty"`
 	// SpellLanguages are Language & region's spellcheck languages on
 	// Windows and Linux (the desktop app keeps them in Electron's session,
 	// per device): nil is the OS locale's language.

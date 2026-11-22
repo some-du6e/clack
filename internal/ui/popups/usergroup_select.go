@@ -51,6 +51,13 @@ type ugSelect struct {
 	// canPick, when set, is asked before a pick (shouldOptionBeSelected):
 	// false refuses it.
 	canPick func() bool
+	// rank, when set, is the Searcher's local tier, run on the UI
+	// goroutine for each filter (search is then unused); fetch, when set,
+	// asks the server for a filter once (the remote tier) and returns what
+	// to apply on the UI goroutine before rank runs again.
+	rank  func(q string) []ugOption
+	fetch func(ctx context.Context, q string) (apply func(), err error)
+	asked map[string]bool
 
 	ed       widget.Editor
 	picked   []ugOption
@@ -76,7 +83,13 @@ type ugOption struct {
 	Avatar         string
 	Conv           core.Conv // channels: the icon
 	Deleted        bool
+	// User marks a member option in a select of both kinds (the advanced
+	// search modal's In: channels and people).
+	User bool
 }
+
+// isMember reports whether o draws as a member (avatar) or a channel.
+func (s *ugSelect) isMember(o ugOption) bool { return s.member || o.User }
 
 func newUGSelect(h Host, large bool, placeholder string) *ugSelect {
 	s := &ugSelect{h: h, large: large, placeholder: placeholder, sel: -1}
@@ -154,6 +167,28 @@ func (s *ugSelect) Options() []ugOption {
 }
 
 func (s *ugSelect) query(q string) {
+	if s.rank != nil {
+		s.results, s.loaded, s.active = s.rank(q), q, 0
+		if s.fetch == nil || s.asked[q] {
+			return
+		}
+		if s.asked == nil {
+			s.asked = map[string]bool{}
+		}
+		s.asked[q] = true
+		fetch := s.fetch
+		run(s.h, func(ctx context.Context) (func(), error) { return fetch(ctx, q) }, func(apply func(), err error) {
+			if err != nil || apply == nil {
+				return
+			}
+			apply()
+			if s.q == q {
+				s.results, s.loaded = s.rank(q), q
+				s.h.Invalidate()
+			}
+		})
+		return
+	}
 	if s.search == nil || (strings.TrimSpace(q) == "" && !s.allowEmpty) {
 		s.results, s.loaded = nil, q
 		return
@@ -316,7 +351,7 @@ func (s *ugSelect) tokenGeom(gtx layout.Context) (h int, fs float32, ic int, mem
 func (s *ugSelect) tokenW(gtx layout.Context, th *theme.Theme, o ugOption) int {
 	h, fs, ic, mp := s.tokenGeom(gtx)
 	lw := textW(gtx, th, fs, theme.Bold, o.Label)
-	if s.member {
+	if s.isMember(o) {
 		return h + mp + lw + dp(gtx, 4) + ic + dp(gtx, 4)
 	}
 	return dp(gtx, 4) + dp(gtx, 16) + dp(gtx, 2) + lw + dp(gtx, 4) + ic
@@ -443,7 +478,7 @@ func (s *ugSelect) token(gtx layout.Context, th *theme.Theme, cl *Colors, o ugOp
 	rrect(gtx, image.Rect(0, 0, w, h), dp(gtx, 4), bg)
 	_, fs, ic, mp := s.tokenGeom(gtx)
 	x := 0
-	if s.member {
+	if s.isMember(o) {
 		func() { // c-token__avatar: the left corners round, the right square
 			defer clipRRect(gtx, image.Rect(0, 0, h+dp(gtx, 4), h), dp(gtx, 4)).Pop()
 			defer clipRRect(gtx, image.Rect(0, 0, h, h), 0).Pop()
@@ -452,7 +487,7 @@ func (s *ugSelect) token(gtx layout.Context, th *theme.Theme, cl *Colors, o ugOp
 		x = h + mp
 	} else {
 		icn := "hash"
-		if o.Conv.Kind == "private" {
+		if o.Conv.Kind == "private" || o.Conv.Kind == "mpim" { // a group DM is private (is_private)
 			icn = "lock"
 		}
 		at(gtx, image.Pt(dp(gtx, 4), (h-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
@@ -537,14 +572,14 @@ func (s *ugSelect) drawOptions(gtx layout.Context, th *theme.Theme, cl *Colors, 
 						fg, fg2 = cl.HighText, cl.HighText
 					}
 					x := dp(gtx, 24)
-					if s.member {
+					if s.isMember(o) {
 						at(gtx, image.Pt(x, (rowH-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
 							return avatar(gtx, s.h, o.Avatar, 20)
 						})
 						x += dp(gtx, 20) + dp(gtx, 8)
 					} else {
 						ic := "hash"
-						if o.Conv.Kind == "private" {
+						if o.Conv.Kind == "private" || o.Conv.Kind == "mpim" { // a group DM is private (is_private)
 							ic = "lock"
 						}
 						at(gtx, image.Pt(x, (rowH-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
@@ -589,7 +624,7 @@ func ugMemberOption(u core.User) ugOption {
 	if u.DisplaySet {
 		sub = u.RealName
 	}
-	return ugOption{ID: u.ID, Label: userName(u), Sub: sub, Avatar: u.Avatar, Deleted: u.Deleted}
+	return ugOption{ID: u.ID, Label: userName(u), Sub: sub, Avatar: u.Avatar, Deleted: u.Deleted, User: true}
 }
 
 // ugChannelOption is channel id as an option.
