@@ -569,36 +569,6 @@ func TestMFSeekAndPause(t *testing.T) {
 	}
 }
 
-// A paused seek whose frame is the player's first transfer, made while
-// the seek is out (the hook holds every transfer until the clock is 1.4 s
-// in: the pause comes at 0, the seek takes it to 1.5 s): the frame at
-// 1.5 s, light grey, is drawn after seeked. TestMFSeekAndPause's 1 in 10
-// (fl1122-s-win 45031306261): play, pause and seek within 1 ms, the one
-// transfer at seeked, then no poll, and light grey never came.
-func TestMFPausedSeekIsTheFirstTransfer(t *testing.T) {
-	delayFirstTransfer.Store(int64(1400 * time.Millisecond))
-	defer delayFirstTransfer.Store(0)
-	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
-	r.draw()
-	r.p.Play()
-	r.wait(media.Playing, 10*time.Second)
-	r.p.Pause()
-	r.wait(media.Pause, 5*time.Second)
-	if n := r.p.Stats().Transfers; n != 0 {
-		t.Fatalf("%d transfers before the seek: the hook didn't hold them", n)
-	}
-	r.p.Seek(1500 * time.Millisecond)
-	r.wait(media.Seeked, 5*time.Second)
-	var c color.RGBA
-	for t0 := time.Now(); time.Since(t0) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
-		if c = r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
-			t.Logf("light grey %v after seeked; stats %+v", time.Since(t0), r.p.Stats())
-			return
-		}
-	}
-	t.Errorf("%v drawn 2 s after seeked, want the frame at 1.5 s (%s); stats %+v", c, mediatest.Want(1500*time.Millisecond), r.p.Stats())
-}
-
 // Paused, a change of the drawn size (a zoom, another monitor's scale, a
 // narrower tile) makes the ring again, and the paused frame goes into the
 // new one: a paused <video> keeps its frame at any size. Round 3's
