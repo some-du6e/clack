@@ -266,18 +266,22 @@ func TestFilesViewBulkManage(t *testing.T) {
 	}
 }
 
-// The create menus and the gear: "+" without file sections has Canvas
-// and List; "New" follows the section; no gear without file sections.
+// The create menus and the gear: "+" has Canvas, List and Sidebar
+// section; "New" follows the section; the gear has Bulk manage files (not
+// on a free plan). File sections are everyone's since Slack dropped
+// custom_file_sections (the 2026-11-21 drift).
 func TestFilesViewCreateMenus(t *testing.T) {
-	v, _, _, _ := filesView(t)
-	if got := menuLabels(v.plusMenuItems()); got != "Canvas|List" {
+	v, h, _, _ := filesView(t)
+	h.Core().SetExperimentGroup("custom_file_sections", "off") // the dropped gate: no change
+	if got := menuLabels(v.plusMenuItems()); got != "Canvas|List|Sidebar section" {
 		t.Errorf("+ menu %q", got)
 	}
-	if got := v.plusMenuItems()[0].Subtitle + " / " + v.plusMenuItems()[1].Subtitle; got != "Create and share content / Track and manage projects" {
+	items := v.plusMenuItems()
+	if got := items[0].Subtitle + " / " + items[1].Subtitle + " / " + items[2].Subtitle; got != "Create and share content / Track and manage projects / Group and organize your files" {
 		t.Errorf("subtitles %q", got)
 	}
-	if n := len(v.gearMenuItems()); n != 0 {
-		t.Errorf("gear items without file sections: %d", n)
+	if got := menuLabels(v.gearMenuItems()); got != "Bulk manage files" {
+		t.Errorf("gear %q", got)
 	}
 	for nav, want := range map[int]string{0: "New canvas|New list", 1: "New canvas", 2: "New list"} {
 		v.nav = nav

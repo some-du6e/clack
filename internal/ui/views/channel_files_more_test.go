@@ -162,9 +162,16 @@ func TestChannelFilesHoverActions(t *testing.T) {
 	if !cfShareShown(pdf) || cfShareShown(canvas) || cfShareShown(list) {
 		t.Error("Share is for files only")
 	}
+	// files get it too under unified_files_3p_primary_custom_sections
+	h.Core().SetExperimentGroup("unified_files_3p_primary_custom_sections", "off")
 	if v.starShown(pdf) || !v.starShown(canvas) || !v.starShown(list) {
-		t.Error("the star is for canvases and lists")
+		t.Error("the section button is for canvases and lists")
 	}
+	h.Core().SetExperimentGroup("unified_files_3p_primary_custom_sections", "on")
+	if !v.starShown(pdf) {
+		t.Error("unified_files_3p_primary_custom_sections on: no section button on a file")
+	}
+	h.Core().SetExperimentGroup("unified_files_3p_primary_custom_sections", "off")
 	v.openShare(*pdf)
 	e.frame()
 	var kinds []string
@@ -185,8 +192,9 @@ func TestChannelFilesHoverActions(t *testing.T) {
 		}
 	}
 	if v.fv.sectionButtonShown(pdf) {
-		t.Error("a file draws the section button")
+		t.Error("a file draws the section button without unified_files_3p_primary_custom_sections")
 	}
+	h.Core().ClearExperimentGroup("unified_files_3p_primary_custom_sections")
 }
 
 // View link details goes to the host with the link and LinkEntity's
