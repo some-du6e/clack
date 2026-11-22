@@ -44,7 +44,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"gioui.org/font"
 	"gioui.org/gesture"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
@@ -522,6 +521,29 @@ func (v *Activity) smallButton(gtx C, c *widget.Clickable, kind btnKind, icon, l
 
 // ---- Slack Connect invitations: Ignore, Accept ----
 
+// The invite actions live in sc_invite_actions.go (shared with
+// Directories › Invitations); Activity is their host.
+func (v *Activity) inviterName(it core.ActivityItem) string            { return scInviterName(&v.base, it) }
+func (v *Activity) ignoreForked(ph popups.Host, it core.ActivityItem)  { scIgnoreForked(v, ph, it) }
+func (v *Activity) ignoreThis(ph popups.Host, it core.ActivityItem)    { scIgnoreThis(v, ph, it) }
+func (v *Activity) ignoreAll(ph popups.Host, it core.ActivityItem)     { scIgnoreAll(v, ph, it) }
+func (v *Activity) acceptDM(ph popups.Host, it core.ActivityItem)      { scAcceptDM(v, ph, it) }
+func (v *Activity) acceptChannel(ph popups.Host, it core.ActivityItem) { scAcceptChannel(v, ph, it) }
+
+func (v *Activity) scBase() *base { return &v.base }
+func (v *Activity) scPost(f func()) {
+	v.notes.mu.Lock()
+	v.notes.fns = append(v.notes.fns, f)
+	v.notes.mu.Unlock()
+	v.h.Invalidate()
+}
+func (v *Activity) scReload()             { v.load(actRefresh) }
+func (v *Activity) scForked() *[2]func()  { return &v.forked }
+func (v *Activity) scFlights() *scFlights { return &v.flights }
+func (v *Activity) scWrite(fail string, f func(context.Context, *core.App) error, r func()) {
+	v.write(fail, f, r)
+}
+
 // inviteActions is FI's text actions for the row's invite, as the row
 // shows them (Accept for a channel invite opens Slack's multi-step accept
 // modal, which Clack doesn't have: left out).
@@ -546,6 +568,9 @@ func (v *Activity) inviteButtons(gtx C, r *actRow, acts []string) D {
 			if a == core.InviteActIgnore {
 				return v.smallButton(gtx, &r.invC[i], btnOutline, "", nsSlackConnect.T("Ignore"))
 			}
+			if r.it.Invite != nil && v.flights.busy(r.it.Invite.ID) { // loading while its flow runs (c-button--small: 56px)
+				return popups.LoadingButtonWake(gtx, v.th, &r.invC[i], popups.BtnSmall, 56, tipWake(v.h, &v.flightWake))
+			}
 			return v.smallButton(gtx, &r.invC[i], btnPrimary, "", nsSlackConnect.T("Accept"))
 		}))
 	}
@@ -568,313 +593,11 @@ func (v *Activity) inviteClicked(it *core.ActivityItem, act string) {
 	}
 }
 
-// inviterName is the Ignore modals' {imMember} (forceRealName).
-func (v *Activity) inviterName(it core.ActivityItem) string {
-	if u, ok := v.user(it.Actor); ok && u.RealName != "" {
-		return u.RealName
-	}
-	return firstNonEmpty(it.Invite.InviterName, it.ActorName, v.userName(it.Actor))
-}
-
-// ignoreForked is IgnoreForkedModal ("What would you like to do?"): two
-// IgnoreForkedModalButton rows, Ignore this invitation (times-circle) and
-// Block invitations from this person (disable), each opening its modal.
-func (v *Activity) ignoreForked(ph popups.Host, it core.ActivityItem) {
-	name := v.inviterName(it)
-	var m *popups.Modal
-	var rows [2]widget.Clickable
-	choices := []struct {
-		icon, text, sub string
-		next            func()
-	}{
-		{"times-circle-medium", nsIntro.T("Ignore this invitation"),
-			nsIntro.T("This invite simply disappears, as if nothing ever happened. But {imMember} can reach out again.", "imMember", name),
-			func() { v.ignoreThis(ph, it) }},
-		{"disable-font", nsIntro.T("Block invitations from this person"),
-			nsIntro.T("You’ll no longer receive Slack Connect invitations sent from {imMember}.", "imMember", name),
-			func() { v.ignoreAll(ph, it) }},
-	}
-	for i := range choices {
-		next := choices[i].next
-		v.forked[i] = func() {
-			if m != nil {
-				m.Dismiss()
-			}
-			next()
-		}
-	}
-	m = popups.NewModal(ph, popups.ModalOpts{
-		Title: nsIntro.T("What would you like to do?"),
-		Body: func(gtx C) D {
-			for i := range rows {
-				if rows[i].Clicked(gtx) {
-					v.forked[i]()
-				}
-			}
-			// p-ignore_forked_modal__content: padding 0 14px 24px, the
-			// rows' 4px padding-top
-			return layout.Inset{Top: 4, Bottom: 24}.Layout(gtx, func(gtx C) D {
-				return col(gtx,
-					layout.Rigid(func(gtx C) D { return v.forkedRow(gtx, &rows[0], choices[0].icon, choices[0].text, choices[0].sub) }),
-					layout.Rigid(func(gtx C) D { return v.forkedRow(gtx, &rows[1], choices[1].icon, choices[1].text, choices[1].sub) }),
-				)
-			})
-		},
-	})
-	ph.ShowOverlay(m)
-}
-
-// forkedRow is IgnoreForkedModalButton: padding 12px 14px, radius 4px, a
-// 36px round icon well (foreground-min .04), the bold text over its
-// subtext (padding 0 16px), a chevron at the end.
-func (v *Activity) forkedRow(gtx C, c *widget.Clickable, icon, text, sub string) D {
-	return c.Layout(gtx, func(gtx C) D {
-		pointerCursor(gtx)
-		m := op.Record(gtx.Ops)
-		d := layout.Inset{Top: 12, Bottom: 12, Left: 14, Right: 14}.Layout(gtx, func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return row(gtx, layout.Middle,
-				layout.Rigid(func(gtx C) D {
-					s := gtx.Dp(36)
-					theme.Circle(gtx, image.Pt(s/2, s/2), s, theme4(v, 0x0a))
-					g := gtx
-					g.Constraints = layout.Exact(image.Pt(s, s))
-					return layout.Center.Layout(g, func(gtx C) D { return v.icon(gtx, icon, 20, v.p.Sec) })
-				}),
-				layout.Flexed(1, func(gtx C) D {
-					return layout.Inset{Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
-						return col(gtx,
-							layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, wBold, v.p.Text, 0, text) }),
-							layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, wReg, v.p.Sec, 0, sub) }),
-						)
-					})
-				}),
-				layout.Rigid(func(gtx C) D { return v.icon(gtx, "chevron-medium-right", 20, v.p.Sec) }),
-			)
-		})
-		call := m.Stop()
-		if c.Hovered() {
-			rrect(gtx, image.Rectangle{Max: d.Size}, gtx.Dp(4), theme4(v, 0x0a))
-		}
-		call.Add(gtx.Ops)
-		return d
-	})
-}
-
 // theme4 is foreground-min at alpha a over the page (rgba(29,28,29,a)).
 func theme4(v *Activity, a uint8) color.NRGBA {
 	c := v.p.Text
 	c.A = a
 	return c
-}
-
-// ignoreThis is IgnoreThisModal: "Ignore this invitation from {name}?",
-// "{name} ({email}) won’t be notified you’ve done this." (plus the search
-// hint for a DM introduction or channel invite), Cancel / Ignore Invitation
-// (danger) → conversations.ignoreInvite or sharedInvites.ignoreInvite.
-func (v *Activity) ignoreThis(ph popups.Host, it core.ActivityItem) {
-	name := v.inviterName(it)
-	email := ""
-	if it.Invite.InviterEmail != "" {
-		email = " (" + it.Invite.InviterEmail + ")"
-	}
-	channel := it.Invite.Kind == "channel"
-	body := nsIntro.T("{imMember}{maybeImMemberEmail} won’t be notified you’ve done this.", "imMember", name, "maybeImMemberEmail", email)
-	if channel {
-		body = nsIntro.T("{imMember}{maybeImMemberEmail} won’t be notified you’ve done this. If you change your mind, you can search for their name to start the conversation.", "imMember", name, "maybeImMemberEmail", email)
-	}
-	id, key := it.Invite.ID, actKey(&it)
-	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title: nsIntro.T("Ignore this invitation from {imMember}?", "imMember", name),
-		Body:  func(gtx C) D { return v.para(gtx, 15, 22, wReg, v.p.Text, 0, body) },
-		Buttons: []*popups.ModalButton{
-			{Label: nsIntro.T("Cancel"), Kind: popups.BtnOutline},
-			{Label: nsIntro.T("Ignore Invitation"), Kind: popups.BtnDanger, Do: func() bool {
-				v.write("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
-					if err := c.IgnoreConnectInvite(ctx, id, channel); err != nil {
-						return err
-					}
-					// the reload, on the UI goroutine (load reads the view's state)
-					v.notes.mu.Lock()
-					v.notes.fns = append(v.notes.fns, func() { v.load(actRefresh) })
-					v.notes.mu.Unlock()
-					v.h.Invalidate()
-					return nil
-				}, func() {})
-				_ = key
-				return true
-			}},
-		},
-	}))
-}
-
-// ignoreAll is IgnoreAllModal: "Block invitations from {name}?", Cancel /
-// Block Invitations (danger) → conversations.ignoreUser or
-// sharedInvites.ignoreUser, then IgnoreAllSuccessModal ("You won’t hear
-// from {name} again", Got It).
-func (v *Activity) ignoreAll(ph popups.Host, it core.ActivityItem) {
-	name := v.inviterName(it)
-	email := ""
-	if it.Invite.InviterEmail != "" {
-		email = " (" + it.Invite.InviterEmail + ")"
-	}
-	channel := it.Invite.Kind == "channel"
-	id := it.Invite.ID
-	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title: nsIntro.T("Block invitations from {imMember}?", "imMember", name),
-		Body: func(gtx C) D {
-			return col(gtx,
-				layout.Rigid(func(gtx C) D {
-					return v.para(gtx, 15, 22, wReg, v.p.Text, 0, nsIntro.T("You’ll no longer receive Slack Connect invitations from {imMember}{maybeImMemberEmail}.", "imMember", name, "maybeImMemberEmail", email))
-				}),
-				layout.Rigid(func(gtx C) D {
-					return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
-						return v.para(gtx, 15, 22, wReg, v.p.Text, 0, nsIntro.T("They won’t be notified you’ve done this."))
-					})
-				}),
-				layout.Rigid(func(gtx C) D {
-					return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
-						return v.para(gtx, 15, 22, wReg, v.p.Text, 0, i18n.StripTags(nsIntro.T("To undo this, you can adjust the setting under <strong>privacy & visibility</strong> in your preferences.")))
-					})
-				}),
-			)
-		},
-		Buttons: []*popups.ModalButton{
-			{Label: nsIntro.T("Cancel"), Kind: popups.BtnOutline},
-			{Label: nsIntro.T("Block Invitations"), Kind: popups.BtnDanger, Do: func() bool {
-				v.write("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
-					if err := c.BlockConnectInvites(ctx, id, channel); err != nil {
-						return err
-					}
-					v.notes.mu.Lock()
-					v.notes.fns = append(v.notes.fns, func() {
-						ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-							Title: nsIntro.T("You won\u2019t hear from {imMember} again", "imMember", name),
-							Body: func(gtx C) D {
-								return v.para(gtx, 15, 22, wReg, v.p.Text, 0, i18n.StripTags(nsIntro.T("If you change your mind, you can adjust the setting under <strong>privacy & visibility</strong> in your preferences.")))
-							},
-							Buttons: []*popups.ModalButton{{Label: nsIntro.T("Got It"), Kind: popups.BtnOutline}},
-						}))
-						v.load(actRefresh) // on the UI goroutine, as the modal
-					})
-					v.notes.mu.Unlock()
-					v.h.Invalidate()
-					return nil
-				}, func() {})
-				return true
-			}},
-		},
-	}))
-}
-
-// acceptDM is SlackConnectAcceptDmInviteAction: sharedInvites.canAccept
-// {sig}; eligible and from a verified organisation, sharedInvites.accept
-// and the DM with the inviter opens; eligible otherwise, the trust modal;
-// not eligible, "Hmm, something went wrong" (hasConnectInviteAcceptanceFailed).
-func (v *Activity) acceptDM(ph popups.Host, it core.ActivityItem) {
-	inv := *it.Invite
-	inviter := it.Actor
-	v.write("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
-		ok, err := c.ConnectDMInviteEligible(ctx, inv.Sig)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errors.New("this invitation can’t be accepted")
-		}
-		if !inv.TeamVerified {
-			v.notes.mu.Lock()
-			v.notes.fns = append(v.notes.fns, func() { v.trustModal(ph, it) })
-			v.notes.mu.Unlock()
-			v.h.Invalidate()
-			return nil
-		}
-		if err := c.AcceptConnectDMInvite(ctx, inv.Sig, inv.ID); err != nil {
-			return err
-		}
-		v.openDMWith(inviter)
-		return nil
-	}, func() {})
-}
-
-// openDMWith opens your DM with user (Y1Qm openDmWithMember,
-// shouldNavigateToChannel: conversations.open). Called off the UI
-// goroutine.
-func (v *Activity) openDMWith(user string) {
-	c := v.h.Core()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	conv, err := c.OpenDM(ctx, user)
-	v.notes.mu.Lock()
-	v.notes.fns = append(v.notes.fns, func() {
-		if err == nil && conv.ID != "" {
-			v.h.Navigate("c/" + conv.ID)
-		}
-		v.load(actRefresh)
-	})
-	v.notes.mu.Unlock()
-	v.h.Invalidate()
-}
-
-// trustModal is SlackConnectConfirmTrustModal: "Before you accept this
-// invitation…" ("This invitation is from a new account" for a suspicious
-// one isn't in the feed's invite), "Make sure you recognize the sender’s
-// email address and other info.", the inviter's photo, "{name} from
-// {team}.", the email, "This organization has used Slack since {MMM
-// YYYY}", Ignore (the forked modal) / Accept Invitation.
-func (v *Activity) trustModal(ph popups.Host, it core.ActivityItem) {
-	inv := *it.Invite
-	name := v.inviterName(it)
-	av := ""
-	if u, ok := v.user(it.Actor); ok {
-		av = u.Avatar
-	}
-	inviter := it.Actor
-	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title: nsSharedInvites.T("Before you accept this invitation…"), // SlackConnectConfirmTrustModal
-		Body: func(gtx C) D {
-			ln := func(s string, size, lh unit.Sp, w font.Weight, top unit.Dp) layout.FlexChild {
-				return layout.Rigid(func(gtx C) D {
-					return layout.Inset{Top: top}.Layout(gtx, func(gtx C) D {
-						return layout.Center.Layout(gtx, func(gtx C) D { return v.para(gtx, size, lh, w, v.p.Text, 0, s) })
-					})
-				})
-			}
-			ch := []layout.FlexChild{
-				ln(nsSharedInvites.T("Make sure you recognize the sender’s email address and other info."), 15, 22, wReg, 0),
-				layout.Rigid(func(gtx C) D {
-					return layout.Inset{Top: 24}.Layout(gtx, func(gtx C) D {
-						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						return layout.Center.Layout(gtx, func(gtx C) D { return v.avatar(gtx, av, 50) })
-					})
-				}),
-				ln(i18n.StripTags(nsSharedInvites.T("<strong>{invitingUserName}</strong> from {invitingTeamName}.", "invitingUserName", name, "invitingTeamName", it.Team)), 15, 22, wReg, 8),
-			}
-			if inv.InviterEmail != "" {
-				ch = append(ch, ln(inv.InviterEmail, 13, 18, wReg, 0))
-			}
-			if inv.TeamCreated > 0 {
-				ch = append(ch, ln(nsSharedInvites.T("This organization has used Slack since {teamDuration}", "teamDuration", monthYear(time.Unix(inv.TeamCreated, 0))), 15, 22, wReg, 4))
-			}
-			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return col(gtx, ch...) })
-		},
-		Buttons: []*popups.ModalButton{
-			{Label: nsSharedInvites.T("Ignore"), Kind: popups.BtnOutline, Do: func() bool {
-				v.ignoreForked(ph, it)
-				return true
-			}},
-			{Label: nsSharedInvites.T("Accept Invitation"), Kind: popups.BtnPrimary, Do: func() bool {
-				v.write("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
-					if err := c.AcceptConnectDMInvite(ctx, inv.Sig, inv.ID); err != nil {
-						return err
-					}
-					v.openDMWith(inviter)
-					return nil
-				}, func() {})
-				return true
-			}},
-		},
-	}))
 }
 
 // ---- "Notifications cleared." ----
@@ -1583,76 +1306,6 @@ func (v *Activity) underSticky(gtx C, i int) bool {
 }
 
 // ---- accepting a Slack Connect channel invite ----
-
-// acceptChannel is SlackConnectAcceptChannelInviteAction's click (dcZX):
-// the eligibility check (core ChannelInviteEligible), then the upgrade
-// modal, the accept modal (popups/sc_accept.go; a trial adds its note
-// and "Accept and Start Trial"), or the join_channel alternative's
-// conversations.joinConnectedShared; anything else is
-// hasConnectInviteAcceptanceFailed. Grid's "accept on another
-// workspace" (SlackConnectConfirmWorkspaceModal), the start-trial modal
-// before the accept modal and the join-when-connected and join-workspace
-// alternatives aren't in Clack: Clack signs in to one workspace.
-func (v *Activity) acceptChannel(ph popups.Host, it core.ActivityItem) {
-	inv := *it.Invite
-	team, name := it.Team, strings.TrimPrefix(it.Title, "#")
-	inviter := v.inviterName(it)
-	v.write("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
-		el, err := c.ChannelInviteEligible(ctx, inv.Sig)
-		if err != nil {
-			return err
-		}
-		show := func(f func()) {
-			v.notes.mu.Lock()
-			v.notes.fns = append(v.notes.fns, f)
-			v.notes.mu.Unlock()
-			v.h.Invalidate()
-		}
-		switch {
-		case el.IsEligible && el.Requirements.Upgrade || el.Reason == core.SCReasonUpgradeButCannot:
-			show(func() { ph.ShowOverlay(popups.NewSCUpgradeModal(ph, inv.ID)) })
-		case el.IsEligible:
-			show(func() {
-				ph.ShowOverlay(popups.NewSCAcceptModal(ph, popups.SCAcceptOpts{Invite: inv, ChannelName: name, InvitingTeam: team,
-					RequiredAccess: el.RequiredPrivacy(), FreeTrial: el.Requirements.Trial,
-					OnAccepted: func(string, bool) { v.afterChannelAccept(ph, inv, inviter, team) }}))
-			})
-		case el.CanJoinChannel():
-			if err := c.JoinConnectedChannel(ctx, inv.Sig, inv.ID); err != nil {
-				return err
-			}
-			show(func() { v.afterChannelAccept(ph, inv, inviter, team) })
-		default:
-			return errors.New("this invitation can’t be accepted")
-		}
-		return nil
-	}, func() {})
-}
-
-// afterChannelAccept is g7VB acceptSharedInviteAndMaybeOpenWelcomeModal:
-// connectInvites.list for the invite; an approved acceptance opens the
-// channel; then SharedInviteCreatorWelcomeModal; the feed reloads (the
-// invite's row leaves it).
-func (v *Activity) afterChannelAccept(ph popups.Host, inv core.ActivityInvite, inviter, team string) {
-	v.write("", func(ctx context.Context, c *core.App) error {
-		st, err := c.ConnectChannelInvite(ctx, inv.ID)
-		v.notes.mu.Lock()
-		v.notes.fns = append(v.notes.fns, func() {
-			if err == nil && st.Found {
-				if st.Approved && st.ChannelID != "" {
-					v.h.Navigate("c/" + st.ChannelID)
-				}
-				ph.ShowOverlay(popups.NewSCWelcomeModal(ph, popups.SCWelcome{Connected: st.Approved, ChannelName: st.ChannelName,
-					InvitingTeam: firstNonEmpty(st.InvitingTeam, team), InvitingTeamID: st.InvitingTeamID, InvitingName: inviter,
-					PendingTeams: st.PendingTeams}))
-			}
-			v.load(actRefresh)
-		})
-		v.notes.mu.Unlock()
-		v.h.Invalidate()
-		return err
-	}, func() {})
-}
 
 // actMrkdwnPlain is a message's mrkdwn as the badges' tooltips
 // show it (their Mrkdwn): mentions and channel links as @name and #name,

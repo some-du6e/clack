@@ -7,6 +7,7 @@ package icons
 var slackRef = map[string]string{
 	// a rich_text check list's checkboxes (checklist.go)
 	"checkbox-filled": "checkbox-filled",
+	"verified-filled": "verified-filled",
 	"square":          "square",
 	// the search switcher's toolbar (search.go)
 	"quick-switch":        "quick-switch",

@@ -1234,14 +1234,18 @@ func (v *Unreads) message(gtx C, r unrRow) D {
 		v.msgs[key] = s
 	}
 	hovered := s.hv.Update(gtx.Source)
+	menu := false // opened once the body laid out: it may be the body's (content_menu.go)
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &s.ctx, Kinds: pointer.Press})
 		if !ok {
 			break
 		}
 		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
-			v.messageMenu(*m)
+			menu = true
 		}
+	}
+	if menu {
+		defer v.messageMenu(gtx, *m)
 	}
 	w := gtx.Constraints.Max.X
 	name, av := v.authorOf(m)
@@ -1302,24 +1306,30 @@ func (v *Unreads) message(gtx C, r unrRow) D {
 		}
 		fill(gtx, rr, bg)
 	}
-	call.Add(gtx.Ops)
+	// the row's hover and right-click target are the content's parent
+	// (threads.go msg: a sibling on top took the pointer from the body)
 	st := clip.Rect(rr).Push(gtx.Ops)
 	s.hv.Add(gtx.Ops)
-	pass := pointer.PassOp{}.Push(gtx.Ops)
 	event.Op(gtx.Ops, &s.ctx)
-	pass.Pop()
+	call.Add(gtx.Ops)
 	st.Pop()
 	return D{Size: rr.Size()}
 }
 
 // messageMenu opens the message's context menu at the pointer.
-func (v *Unreads) messageMenu(m core.Message) {
+func (v *Unreads) messageMenu(gtx C, m core.Message) {
 	ph, ok := v.h.(popups.Host)
 	if !ok {
 		v.h.OpenMessageMenu(image.Point{}, m)
 		return
 	}
 	at := v.menuAt().Min
+	// what the press was on in the body (an image, a link, a mention, a
+	// file: popups.ContentMenu), as the channel's list opens it
+	if o, ok := v.contentMenu(gtx, ph, at, m); ok {
+		ph.ShowOverlay(o)
+		return
+	}
 	ph.ShowOverlay(popups.NewMessageContextMenu(ph, at, m, popups.InChannel, popups.MessageMenuOpts{}))
 }
 
