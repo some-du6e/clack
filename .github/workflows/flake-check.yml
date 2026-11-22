@@ -4382,6 +4382,24 @@ jobs:
           TEST: TestReplyUnreadMarkInTheReplysFrame
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: a channel's reply bar list goes with its count, and keeps a mark from before it (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestThreadActivityClearedWithItsCount|TestThreadActivityKeepsAMarkFromBeforeItsList)
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the reply bar's marks after a slow reconnect (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestReplyBarRefetchesAfterASlowReconnect
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the reply bar's marks after a failed fetch (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestReplyBarRetriesAFailedFetch
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

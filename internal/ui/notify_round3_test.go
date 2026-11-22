@@ -48,10 +48,13 @@ func TestDesktopNotificationWithoutTSLikeSlack(t *testing.T) {
 
 // shouldSuppressNotificationInActiveChannel: a message mentioning the
 // viewer in the conversation open in the focused window, showing its
-// messages, stays quiet (16); one whose text holds an at-command, a thread
-// reply the conversation's view doesn't show (one mentioning the viewer),
-// and one while the conversation shows another tab notify. Clack kept the
-// last three quiet too.
+// messages, stays quiet (16), and so do the conversation's thread replies
+// that notify the viewer (a mention, an @here): Slack's messageReceived
+// hands maybeShowNotification the socket's own message, which carries no
+// _hidden_reply (only the store's copies do). With the reply's thread open
+// in the side pane its desktop_notification is on screen too (16). One
+// whose text holds an at-command, and one while the conversation shows
+// another tab, notify.
 func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	t.Setenv("CLACK_HOME", t.TempDir())
 	sz := fakeslack.Small
@@ -89,11 +92,18 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	}
 	e.a.focused = true
 	sender := fs.UserIDs()[3]
-	line := func(ts string) string {
+	lines := func(ts string) []string {
+		var out []string
 		for _, l := range logs.matching("notify: ") {
 			if strings.HasSuffix(l, " "+logtag.ID(ch)+"/"+logtag.ID(ts)) {
-				return l
+				out = append(out, l)
 			}
+		}
+		return out
+	}
+	line := func(ts string) string {
+		if ls := lines(ts); len(ls) > 0 {
+			return ls[0]
 		}
 		return ""
 	}
@@ -121,8 +131,34 @@ func TestOnScreenNotificationsLikeSlack(t *testing.T) {
 	fs.Push(map[string]any{"type": "message", "channel": ch, "user": sender, "ts": reply, "event_ts": reply, "thread_ts": root,
 		"text": "<@" + fakeslack.SelfID + "> a synthetic question for you in the thread"})
 	e.until("the reply's decision line", 10*time.Second, func() bool { return line(reply) != "" })
-	if l := line(reply); !strings.HasPrefix(l, "notify: show ") {
-		t.Errorf("a thread reply mentioning the viewer, its conversation open: %q, want it shown (_hidden_reply)", l)
+	if l := line(reply); !strings.HasPrefix(l, "notify: skip 16 ") {
+		t.Errorf("a thread reply mentioning the viewer, its conversation open: %q, want skip 16 (the socket's message has no _hidden_reply)", l)
+	}
+	here := fmt.Sprintf("%d.000800", rootSec+2) // a thread the viewer doesn't follow: no desktop_notification comes
+	fs.Push(map[string]any{"type": "message", "channel": ch, "user": sender, "ts": here, "event_ts": here, "thread_ts": root,
+		"text": "<!here> a synthetic heads-up in the thread"})
+	e.until("the @here reply's decision line", 10*time.Second, func() bool { return line(here) != "" })
+	if l := line(here); !strings.HasPrefix(l, "notify: skip 16 ") {
+		t.Errorf("an @here reply in a thread the viewer doesn't follow, its conversation open: %q, want skip 16", l)
+	}
+	// the viewer's own thread open in the side pane, the conversation on
+	// its Messages tab: the reply's message and its desktop_notification
+	// are both on screen
+	mine, _ := fs.PostQuiet(ch, fakeslack.SelfID, "a synthetic question the viewer asked")
+	e.a.OpenThread(ch, mine)
+	e.until("the thread's pane", 15*time.Second, func() bool {
+		return e.a.secondary.kind == secThread && e.a.secondary.open() && e.threadView(ch, mine) != nil
+	})
+	e.a.focused = true
+	paneTS := fs.PushFollowedReplyLive(ch, mine, sender, me+"can you check", false)
+	e.until("the side pane reply's two decision lines", 10*time.Second, func() bool { return len(lines(paneTS)) >= 2 })
+	for _, l := range lines(paneTS) {
+		if !strings.HasPrefix(l, "notify: skip 16 ") {
+			t.Errorf("a reply mentioning the viewer in the thread open in the side pane: %q, want skip 16 for its message and its desktop_notification", l)
+		}
+	}
+	if n := noteWith(e, rec, "can you check", 300*time.Millisecond); n != nil {
+		t.Error("the reply in the thread open in the side pane notified")
 	}
 	if e.a.chTab == nil {
 		e.a.chTab = map[string]int{}
