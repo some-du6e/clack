@@ -51,6 +51,12 @@ const (
 	// ends with space.150 (24px) above the composer, space.100 (16px)
 	// while the channel's context bar shows (getBottomSpacerHeight).
 	itBottom
+	// itInput is the thread list's "input" row (getThreadRowsAndKeys,
+	// boot-shared eTbq): its last row once the slice reaches the thread's
+	// end, the reply box. It is as tall as the box the host lays out
+	// (SetInputHeight), which the host draws where the row is (InputRow),
+	// so the box scrolls with the replies as Slack's does.
+	itInput
 )
 
 type item struct {
@@ -109,9 +115,14 @@ type listState struct {
 
 	list     layout.List
 	contentH int // total item height when all items fit (see layoutList)
-	heights  []int
-	pos      []int // y of visible items (valid where heights > 0 this frame)
-	visible  [2]int
+	// inputH is the thread's reply box height the host gives its "input"
+	// row this frame (ThreadView.SetInputHeight); inputY is where the last
+	// layout put the row, under the list's top (size.Y when the row was
+	// below the list)
+	inputH, inputY int
+	heights        []int
+	pos            []int // y of visible items (valid where heights > 0 this frame)
+	visible        [2]int
 
 	openLastRead string // the "New" line position, fixed while open
 	opened       bool
@@ -1052,10 +1063,14 @@ func (s *listState) build(h Host, now time.Time) {
 		// pane that was at the end when a slow connect made it stale keeps
 		// the reply box (endGap) until its read past the old end lands,
 		// even once a reply the socket brought makes the store's slice for
-		// it no longer the last (prevReachedEnd false): Slack's input is
-		// one of the list's rows, scrolled away with it, but Clack's box
-		// is drawn under the list and may hold what's being typed
+		// it no longer the last (prevReachedEnd false): it may hold what's
+		// being typed
 		s.items = append(s.items, item{kind: itLoading, key: "loading-end"})
+	} else if s.thread && len(msgs) > 0 {
+		// getThreadRowsAndKeys' "input" row in its place: the reply box,
+		// one of the list's rows, scrolled with it (none drawn when the
+		// host draws no box: its height is then 0)
+		s.items = append(s.items, item{kind: itInput, key: "input"})
 	}
 	if cap(s.heights) < len(s.items) {
 		s.heights = make([]int, len(s.items), len(s.items)+64)
@@ -1209,6 +1224,12 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 			// getThreadStartPosition: the first unread reply, the reply
 			// last read to, or the root (thread_unread.go)
 			s.list.Position = s.threadStartPosition(gtx, "")
+			if s.highlight != "" && s.hlRestart && !s.hlSeen {
+				// a jump's highlight no row drew before its last list
+				// went (a thread switch, CloseThread): the row flashes
+				// from the start as this list places it
+				s.highlightAt = now
+			}
 		} else {
 			s.toEnd()
 		}
@@ -1392,11 +1413,22 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 			s.highlight, s.hlSeen = "", false
 		}
 	}
-	// contentH is the total item height when every item was laid out (the
-	// ui root puts a short thread's reply box under it), else 0.
+	// where the thread's "input" row is: the host draws the reply box
+	// there, below the list (clipped away) when the row is out of view
+	s.inputY = size.Y
+	in := len(s.items) - 1
+	hasInput := in >= 0 && s.items[in].kind == itInput
+	if hasInput && in >= s.visible[0] && in < s.visible[1] {
+		s.inputY = s.pos[in]
+	}
+	// contentH is the total item height when every item was laid out, the
+	// reply box's row aside (a short thread ends there), else 0.
 	s.contentH = 0
 	if p.First == 0 && s.visible[1] == len(s.items) {
 		s.contentH = y + p.Offset
+		if hasInput {
+			s.contentH -= s.heights[in]
+		}
 	}
 	if !s.unreadSeen && s.opened {
 		ui := s.unreadIndex()
@@ -1701,6 +1733,9 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		return s.threadSeparator(gtx, h, c, it, w, rc.now)
 	case itBottom:
 		return layout.Dimensions{Size: image.Pt(w, dp(gtx, s.bottomSpacerH(h)))}
+	case itInput:
+		// the reply box's room: the host draws the box there (InputRow)
+		return layout.Dimensions{Size: image.Pt(w, max(s.inputH, 0))}
 	}
 	e := &s.snap.msgs[it.idx]
 	if len(it.group) > 0 {

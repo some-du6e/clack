@@ -128,6 +128,7 @@ type Composer struct {
 	lastTyping time.Time
 	typingOn   bool // typing reported since the composer was last empty
 	lastVer    uint64
+	userEdits  uint64 // the text changes the user made (Edits)
 	emojiVer   uint64 // custom emoji set version the doc was last scanned at
 	// charsOverLimit at limitVer (overLimit: counted once per change)
 	limitVer  uint64
@@ -948,6 +949,7 @@ func (c *Composer) changed() {
 		return
 	}
 	c.lastVer = v
+	c.userEdits++
 	if c.field != nil {
 		if c.field.OnChange != nil {
 			c.field.OnChange()
@@ -2257,6 +2259,13 @@ func (c *Composer) TypingLine() string { return c.ui.cur.Typing }
 
 // DocText is the composer's text as plain characters (tests).
 func (c *Composer) DocText() string { return c.ed.Doc().Text() }
+
+// Edits counts the changes the user made to the text: typing, a paste, a
+// picker's insert, an undo (the editor's EvChange), not a draft put in
+// or the box emptied after a send. The ui root reveals a thread's reply
+// box scrolled out of view when it moves, as Chromium scrolls a focused
+// editor's caret into view after an edit.
+func (c *Composer) Edits() uint64 { return c.userEdits }
 
 // SendRect and ScheduleRect are the send split button's two halves in
 // window coordinates as of the last frame, empty when not drawn (tests

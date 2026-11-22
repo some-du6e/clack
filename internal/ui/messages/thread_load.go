@@ -522,6 +522,18 @@ func CloseThread(app *core.App, ch, thread string, unmount bool) {
 			s.place = jumpPlace{}
 			s.snap.rev = 0
 			s.tl = threadList{}
+			// a jump's flash (the thread metadata's highlightTs): the
+			// pane's unmount clears it with the startTs (clearStartTs), and
+			// a row that drew it ends it as the list lets the row go
+			// (MessageBackground.componentWillUnmount: clearHighlight); one
+			// no row drew yet stays, and flashes from the start as the next
+			// list places its row (componentDidMount: startHighlightTimer)
+			switch {
+			case unmount || s.hlSeen:
+				s.highlight, s.hlSeen, s.hlRestart = "", false, false
+			case s.highlight != "":
+				s.hlRestart = true
+			}
 		}
 	}
 }

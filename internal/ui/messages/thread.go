@@ -71,16 +71,38 @@ type ThreadView struct {
 }
 
 // ContentHeight is the height the pane needs to show the whole thread (header,
-// parent, divider and replies) as of its last layout, or 0 when the thread
-// is taller than the pane. Slack top-aligns a short thread with its reply
-// composer right under the last reply: the list draws a short thread from
-// its top (Gio patch 45), and the ui root reads this right after laying it
-// out to put the composer under it in the same frame.
+// parent, divider and replies) as of its last layout, its reply box's row
+// aside, or 0 when the thread and its box are taller than the pane. Slack
+// top-aligns a short thread with its reply box right under the last reply:
+// the list draws a short thread from its top (Gio patch 45).
 func (v *ThreadView) ContentHeight() int {
 	if v.s.contentH <= 0 || len(v.s.items) == 0 {
 		return 0
 	}
 	return v.top + v.s.contentH
+}
+
+// SetInputHeight gives the thread's "input" row the reply box's height
+// for the next Layout: Slack's reply box is the thread list's last row
+// (getThreadRowsAndKeys' "input", boot-shared eTbq), so it scrolls with
+// the replies, sits right under the last one at the thread's end, and
+// takes room nothing else does. 0 when the host draws no box there.
+func (v *ThreadView) SetInputHeight(h int) { v.s.inputH = max(h, 0) }
+
+// InputRow is where the last Layout put the "input" row, for the host to
+// draw the reply box there: its top in the view's coordinates (the list's
+// bottom when the row was below the list's view, the box then drawn
+// clipped away: Slack keeps the row mounted, getPersistentKeys), whether
+// the list ends with the row (not while a slice short of the thread's end
+// shows its "loading" row instead), and the list's box in the view, which
+// the reply box is clipped to.
+func (v *ThreadView) InputRow() (y int, ok bool, list image.Rectangle) {
+	s := v.s
+	n := len(s.items) - 1
+	if n < 0 || s.items[n].kind != itInput {
+		return 0, false, image.Rectangle{}
+	}
+	return v.top + s.inputY, true, image.Rect(0, v.top, s.size.X, v.top+s.size.Y)
 }
 
 // NewestRowBottom is the window y of the newest reply's (or, with none,
