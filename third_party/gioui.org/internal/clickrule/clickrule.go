@@ -3,7 +3,8 @@
 // Package clickrule is the platform's rule for runs of quick clicks
 // (double and triple clicks), the way Chromium counts them on each
 // platform. Clack patch 48 (CLACK_PATCHES.md §48): package app sets Base
-// and Read for its backend, gesture.Click counts every press by Current.
+// and Read for its backend, gesture.Click counts a mouse's presses by
+// Current and a touch's by Tap.
 package clickrule
 
 import (
@@ -64,3 +65,38 @@ func (r Rule) Within(ref, p f32.Point) bool {
 	dx, dy := p.X-ref.X, p.Y-ref.Y
 	return dx <= float32(r.Slop.X) && -dx <= float32(r.Slop.X) && dy <= float32(r.Slop.Y) && -dy <= float32(r.Slop.Y)
 }
+
+// TapRule says when a tap (a touch's, or a pen's: Gio reports a pen as a
+// touch) continues a run of taps. Distances are dp.
+type TapRule struct {
+	// Interval is the longest time from the last tap's release to the
+	// next press.
+	Interval time.Duration
+	// Slop is how near, dp, the next press must land to the last tap's
+	// press (less than, as the crow flies).
+	Slop float32
+	// Move is how far, dp, a tap may move while down for the next press
+	// to repeat it.
+	Move float32
+	// Cycle, when not 0, starts a new run after that many taps.
+	Cycle int
+}
+
+// Tap is Chromium's rule for taps on its desktop platforms, Windows and
+// Linux, which the mouse's settings don't touch: its gesture detector's
+// (ui/events/gesture_detection gesture_detector.cc, IsRepeatedTap and the
+// single tap repeat count) with GestureConfigurationAura's values
+// (gesture_configuration.h). A press no later than double_tap_timeout_in_ms
+// (400 ms) after the last tap's release, and nearer than
+// max_distance_between_taps_for_double_tap (20 DIPs, plus the detector's
+// .05 slop epsilon) to that tap's press, counts on, if that tap stayed
+// within max_touch_move_in_pixels_for_click (15 DIPs, +.05) of where it went
+// down (always_in_bigger_tap_region_). The count goes 1, 2, 3 and round
+// again (max_tap_count 3, single_tap_repeat_interval); modifiers don't
+// count.
+var Tap = TapRule{Interval: 400 * time.Millisecond, Slop: 20.05, Move: 15.05, Cycle: 3}
+
+// PxPerDp is the key under which package app keeps a window's pixels per
+// dp (a float32) in its router's values (input.Source.Value, Clack patch
+// 15), for Tap's distances. A router without one (a test's) is 1.
+type PxPerDp struct{}

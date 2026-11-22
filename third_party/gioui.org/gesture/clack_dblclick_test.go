@@ -28,20 +28,50 @@ type clickAt struct {
 	moves []f32.Point
 	// os is the platform's own count (pointer.Event.Clicks)
 	os int
+	// touch makes it a tap (pointer.Touch): down for hold (30 ms if 0)
+	// and up at up (p if nil)
+	touch bool
+	hold  time.Duration
+	up    *f32.Point
 }
 
 // clickCounts runs presses through a router into one Click and returns
 // each press's NumClicks.
 func clickCounts(t *testing.T, presses ...clickAt) []int {
 	t.Helper()
+	return clickCountsOn(t, nil, presses...)
+}
+
+// clickCountsOn is clickCounts with setup run on the router's Source
+// first (a window's values).
+func clickCountsOn(t *testing.T, setup func(input.Source), presses ...clickAt) []int {
+	t.Helper()
 	var c Click
 	var ops op.Ops
 	c.Add(&ops)
 	var r input.Router
+	if setup != nil {
+		setup(r.Source())
+	}
 	c.Update(r.Source())
 	r.Frame(&ops)
 	var evs []event.Event
 	for _, pr := range presses {
+		if pr.touch {
+			// a finger (or a pen: Gio reports both as touches); the router
+			// adds its Leave after the release
+			hold, up := pr.hold, pr.p
+			if hold == 0 {
+				hold = 30 * time.Millisecond
+			}
+			if pr.up != nil {
+				up = *pr.up
+			}
+			evs = append(evs,
+				pointer.Event{Kind: pointer.Press, Source: pointer.Touch, PointerID: 2, Position: pr.p, Time: pr.t, Modifiers: pr.mods},
+				pointer.Event{Kind: pointer.Release, Source: pointer.Touch, PointerID: 2, Position: up, Time: pr.t + hold, Modifiers: pr.mods})
+			continue
+		}
 		for _, m := range pr.moves {
 			evs = append(evs, pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: m, Time: pr.t - time.Millisecond})
 		}
@@ -188,5 +218,62 @@ func TestClackClickOSCount(t *testing.T) {
 	}
 	if got := clickCounts(t, clickAt{t: sec, p: at}, clickAt{t: sec + 400*time.Millisecond, p: at}); !sameInts(got, []int{1, 2}) {
 		t.Errorf("without AppKit's count, 400 ms apart: %v, want [1 2]", got)
+	}
+}
+
+// Taps (a touch's, or a pen's: Gio reports both as touches) count by
+// Chromium's gesture detector on Windows and Linux (clickrule.Tap), not by
+// the mouse's double-click box: within 400 ms of the last tap's release,
+// under 20 dp from its press (the router's scale; 1 here), the last tap
+// still within 15 dp of where it went down; 1, 2, 3 and round again. A
+// finger drifting a few px as it lifts doesn't end the run, as the
+// router's Leave after every touch release did through the mouse rule's
+// move check on Windows. The editor's double-tap word select reads it.
+func TestClackClickTaps(t *testing.T) {
+	at := f32.Pt(50, 50)
+	pt := func(dx, dy float32) *f32.Point { p := at.Add(f32.Pt(dx, dy)); return &p }
+	ms := time.Millisecond
+	windows := clickrule.Rule{FromFirst: true, MoveResets: true}
+	winRead := func() (time.Duration, image.Point) { return 500 * ms, image.Pt(2, 2) } // SM_CXDOUBLECLK 4
+	for _, tc := range []struct {
+		name    string
+		rule    clickrule.Rule
+		read    func() (time.Duration, image.Point)
+		presses []clickAt
+		want    []int
+	}{
+		{"Windows: two taps 6 px apart", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true}, {t: sec + 150*ms, p: at.Add(f32.Pt(6, 0)), touch: true}}, []int{1, 2}},
+		{"Windows: a tap lifting 6 px from where it went down, then one there", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true, up: pt(6, 0)}, {t: sec + 150*ms, p: at, touch: true}}, []int{1, 2}},
+		{"Windows: taps 19 px apart", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true}, {t: sec + 150*ms, p: at.Add(f32.Pt(19, 0)), touch: true}}, []int{1, 2}},
+		{"Windows: taps 21 px apart", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true}, {t: sec + 150*ms, p: at.Add(f32.Pt(21, 0)), touch: true}}, []int{1, 1}},
+		{"Windows: 400 ms after the last tap's release", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true, hold: 50 * ms}, {t: sec + 450*ms, p: at, touch: true}}, []int{1, 2}},
+		{"Windows: 410 ms after the last tap's release", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true, hold: 50 * ms}, {t: sec + 460*ms, p: at, touch: true}}, []int{1, 1}},
+		{"Windows: the fourth tap is a single", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true}, {t: sec + 100*ms, p: at, touch: true}, {t: sec + 200*ms, p: at, touch: true},
+				{t: sec + 300*ms, p: at, touch: true}, {t: sec + 400*ms, p: at, touch: true}}, []int{1, 2, 3, 1, 2}},
+		{"Windows: a tap that moved 16 px while down isn't repeated", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true, up: pt(16, 0)}, {t: sec + 150*ms, p: at, touch: true}}, []int{1, 1}},
+		{"Windows: modifiers don't matter", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true}, {t: sec + 150*ms, p: at, touch: true, mods: key.ModShift}}, []int{1, 2}},
+		{"Windows: a click after a tap starts over", windows, winRead,
+			[]clickAt{{t: sec, p: at, touch: true}, {t: sec + 150*ms, p: at}}, []int{1, 1}},
+		{"Linux: two taps 6 px apart", clickrule.Default, nil,
+			[]clickAt{{t: sec, p: at, touch: true}, {t: sec + 150*ms, p: at.Add(f32.Pt(6, 0)), touch: true}}, []int{1, 2}},
+		{"Linux: three taps, each 10 px on", clickrule.Default, nil,
+			[]clickAt{{t: sec, p: at, touch: true}, {t: sec + 150*ms, p: at.Add(f32.Pt(10, 0)), touch: true},
+				{t: sec + 300*ms, p: at.Add(f32.Pt(20, 0)), touch: true}}, []int{1, 2, 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withRule(t, tc.rule, tc.read)
+			if got := clickCounts(t, tc.presses...); !sameInts(got, tc.want) {
+				t.Errorf("taps %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

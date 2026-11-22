@@ -69,19 +69,9 @@ func (h *Hover) Update(q input.Source) bool {
 // Click detects click gestures in the form
 // of ClickEvents.
 type Click struct {
-	// clickedAt is the timestamp at which
-	// the last click occurred.
-	clickedAt time.Duration
-	// clicks is incremented if successive clicks
-	// follow the platform's rule (clack_dblclick.go).
-	clicks int
-	// Clack patch 48: the run's last and first presses, the last one's
-	// modifiers, the rule it was counted by, and whether a move ended the
-	// run since (clickrule.Rule.MoveResets).
-	clickedPos, runPos f32.Point
-	clickedMods        key.Modifiers
-	rule               clickrule.Rule
-	runBroken          bool
+	// run counts successive clicks by the platform's rule (Clack patch
+	// 48, clack_dblclick.go): NumClicks.
+	run ClickRun
 	// pressed tracks whether the pointer is pressed.
 	pressed bool
 	// hovered tracks whether the pointer is inside the gesture.
@@ -210,13 +200,14 @@ func (c *Click) Update(q input.Source) (ClickEvent, bool) {
 				break
 			}
 			c.pressed = false
+			c.run.Released(e)
 			if !c.entered || c.hovered {
 				return ClickEvent{
 					Kind:      KindClick,
 					Position:  e.Position.Round(),
 					Source:    e.Source,
 					Modifiers: e.Modifiers,
-					NumClicks: c.clicks,
+					NumClicks: c.run.clicks,
 				}, true
 			} else {
 				return ClickEvent{Kind: KindCancel}, true
@@ -227,6 +218,7 @@ func (c *Click) Update(q input.Source) (ClickEvent, bool) {
 			c.hovered = false
 			c.entered = false
 			if wasPressed {
+				c.run.Cancelled()
 				return ClickEvent{Kind: KindCancel}, true
 			}
 		case pointer.Press:
@@ -238,12 +230,12 @@ func (c *Click) Update(q input.Source) (ClickEvent, bool) {
 			}
 			c.pid = e.PointerID
 			c.pressed = true
-			c.count(e)
-			return ClickEvent{Kind: KindPress, Position: e.Position.Round(), Source: e.Source, Modifiers: e.Modifiers, NumClicks: c.clicks}, true
+			c.run.Press(q, e)
+			return ClickEvent{Kind: KindPress, Position: e.Position.Round(), Source: e.Source, Modifiers: e.Modifiers, NumClicks: c.run.clicks}, true
 		case pointer.Move, pointer.Drag:
-			c.moved(e)
+			c.run.Moved(e)
 		case pointer.Leave:
-			c.moved(e)
+			c.run.Moved(e)
 			if !c.pressed {
 				c.pid = e.PointerID
 			}
