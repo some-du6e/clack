@@ -516,9 +516,10 @@ func TestMFPlaysFixture(t *testing.T) {
 	}
 }
 
-// A seek while paused fires seeking and seeked and shows the frame there,
-// light grey, within 500 ms; paused, 2 s of the window drawing cost no
-// transfer and no repaint.
+// A seek while paused fires seeking and seeked, the engine's seek within
+// 2 s of Seek, and shows the frame there, light grey, within 250 ms of
+// seeked; paused, 2 s of the window drawing cost no transfer and no
+// repaint.
 func TestMFSeekAndPause(t *testing.T) {
 	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
 	r.draw()
@@ -534,6 +535,11 @@ func TestMFSeekAndPause(t *testing.T) {
 	// keyframe) is the runner's, 513 ms of a 514 ms seek on a slow one
 	// (patched-tooltips' push ci 44997553108: seeking@2191 ms, seeked@2704)
 	seeked := time.Now()
+	// the engine's part gets a loose bound of its own: a seek that hangs
+	// is a bug however slow the runner (513 ms on the slowest seen)
+	if d := seeked.Sub(t0); d > 2*time.Second {
+		t.Errorf("seeked %v after Seek(1.5 s), want within 2 s", d)
+	}
 	var at time.Duration
 	for time.Since(seeked) < 2*time.Second {
 		if c := r.draw(); mediatest.Matches(1500*time.Millisecond, c) {

@@ -574,7 +574,7 @@ jobs:
           rc=0
           start=$(date +%s)
           CLACK_TEST_HEAP_REPORT="$RUNNER_TEMP/heap-report.txt" CLACK_TEST_HEAP_PROFILE="$RUNNER_TEMP/heap.pprof" CLACK_RETAIN_DUMP=1 \
-            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=1 -test.timeout 35m > "$RUNNER_TEMP/ui.log" 2>&1 || rc=$?
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=1 -test.timeout 35m > "$RUNNER_TEMP/ui.log" 2>&1 || rc=$?
           echo "internal/ui: exit $rc after $(( $(date +%s) - start )) s"
           grep -E -- '^(--- FAIL|FAIL|ok|PASS)' "$RUNNER_TEMP/ui.log" | head -20 || true
           grep -A 40 -- '--- FAIL: TestFinishedSessionIsCollected' "$RUNNER_TEMP/ui.log" | head -60 || true
@@ -621,7 +621,7 @@ jobs:
           cd internal/ui
           pids=""
           for i in 1 2 3 4; do
-            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=$COUNT -test.timeout 30m -test.run '^TestRailPeekDMsRowMenu$' > "$RUNNER_TEMP/peek-$i.log" 2>&1 &
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=$COUNT -test.timeout 30m -test.run '^TestRailPeekDMsRowMenu$' > "$RUNNER_TEMP/peek-$i.log" 2>&1 &
             pids="$pids $!"
           done
           rc=0
@@ -4645,7 +4645,7 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
-      - name: ui, then messages' late names (COUNT each)
+      - name: ui, the reply box and the hidden tab's header read (COUNT each)
         run: |
           set +e
           rc=0
@@ -4786,7 +4786,7 @@ jobs:
           for i in 1 2; do (while :; do :; done) & done
           cd internal/ui
           for i in 1 2 3 4 5; do
-            "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' > "$RUNNER_TEMP/caret-$i.log" 2>&1 || rc=1
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' > "$RUNNER_TEMP/caret-$i.log" 2>&1 || rc=1
             grep -E 'caret_window_test.go:[0-9]+: a scroll.s frame costs|--- (PASS|FAIL)' "$RUNNER_TEMP/caret-$i.log"
           done
           cd "$GITHUB_WORKSPACE"

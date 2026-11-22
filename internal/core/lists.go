@@ -280,10 +280,12 @@ func (a *App) List(ctx context.Context, id string) (*ListDoc, error) {
 	if old := st.docs[id]; old != nil && st.applied[id] != seen {
 		// events changed the cached list while this read was out: it may
 		// predate them, so it doesn't replace it, and a read after them
-		// does
+		// does. The caller gets the cached list too (listview stores what
+		// List returns: the read would undo the edit there)
+		c := old.Clone()
 		st.mu.Unlock()
 		a.listRefetch(id)
-		return d.Clone(), nil
+		return c, nil
 	}
 	if old := st.docs[id]; old != nil {
 		d.PinnedViews = old.PinnedViews
