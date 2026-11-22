@@ -280,6 +280,30 @@ func (s *Server) handleSlackConnectHub(method string, f url.Values, edge map[str
 			}
 		}
 		return ok("results", out), true
+	case "sharedInvites.canAccept", "sharedInvites.accept", "sharedInvites.ignoreInvite", "conversations.ignoreInvite",
+		"sharedInvites.ignoreUser", "conversations.ignoreUser":
+		// a received hub invite's Accept and Ignore (by sig for canAccept,
+		// else by invite id); Activity's own invites stay activity.go's
+		x.mu.Lock()
+		defer x.mu.Unlock()
+		for i := range x.h.Invites {
+			inv := &x.h.Invites[i]
+			if inv.Direction != "incoming" || method == "sharedInvites.canAccept" && inv.Sig != f.Get("sig") ||
+				method != "sharedInvites.canAccept" && inv.ID != f.Get("invite") {
+				continue
+			}
+			x.note(method, f)
+			switch method {
+			case "sharedInvites.canAccept":
+				return ok("is_eligible", true), true
+			case "sharedInvites.accept":
+				inv.Status = "accepted"
+				return ok("channel", "D0PARTNER1"), true
+			}
+			inv.Status = "ignored"
+			return ok(), true
+		}
+		return nil, false
 	case "sharedInvites.canGetLink":
 		x.mu.Lock()
 		defer x.mu.Unlock()

@@ -104,12 +104,13 @@ func TestSlackConnectForkedIgnoreActsOnItsInvite(t *testing.T) {
 		t.Fatal("no Ignore Invitation")
 	}
 	e.until("the ignore", 10*time.Second, func() bool {
-		return slices.ContainsFunc(fs.ActivityWrites(), func(w fakeslack.ActivityWrite) bool { return strings.HasSuffix(w.Method, "ignoreInvite") })
+		return len(fs.SlackConnectForms("conversations.ignoreInvite"))+len(fs.SlackConnectForms("sharedInvites.ignoreInvite")) > 0
 	})
-	for _, w := range fs.ActivityWrites() {
-		if strings.HasSuffix(w.Method, "ignoreInvite") && (w.Method != "conversations.ignoreInvite" || w.Form.Get("invite") != "I0RECVA001") {
-			t.Errorf("ignored %s %s, want conversations.ignoreInvite I0RECVA001", w.Method, w.Form.Get("invite"))
-		}
+	if fms := fs.SlackConnectForms("sharedInvites.ignoreInvite"); len(fms) > 0 {
+		t.Errorf("ignored the newer invite: sharedInvites.ignoreInvite %v", fms)
+	}
+	if fms := fs.SlackConnectForms("conversations.ignoreInvite"); len(fms) != 1 || fms[0].Get("invite") != "I0RECVA001" {
+		t.Errorf("conversations.ignoreInvite %v, want I0RECVA001 once", fms)
 	}
 }
 
@@ -142,15 +143,7 @@ func TestSlackConnectAcceptInFlight(t *testing.T) {
 	v.SCInviteAct(inv.ID, core.InviteActAcceptDM) // the second click
 	e.frame()
 	once.Do(func() { close(release) })
-	count := func(m string) int {
-		n := 0
-		for _, w := range fs.ActivityWrites() {
-			if w.Method == m {
-				n++
-			}
-		}
-		return n
-	}
+	count := func(m string) int { return len(fs.SlackConnectForms(m)) }
 	e.until("the accept", 10*time.Second, func() bool { return count("sharedInvites.accept") > 0 && !v.SCInviteBusy(inv.ID) })
 	e.settle(500 * time.Millisecond)
 	if a, b := count("sharedInvites.canAccept"), count("sharedInvites.accept"); a != 1 || b != 1 {
