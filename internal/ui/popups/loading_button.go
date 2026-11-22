@@ -42,9 +42,21 @@ func LoadingButton(gtx layout.Context, th *theme.Theme, c *widget.Clickable, siz
 	return loadingButtonGrp(gtx, th, c, size, minW, grpNone)
 }
 
+// LoadingButtonWake is LoadingButton with the spinner's next frame asked
+// through wake (at on the frame's clock) instead of an op.InvalidateCmd
+// executed mid-layout, which replays later handlers' unread input in
+// Gio's router.
+func LoadingButtonWake(gtx layout.Context, th *theme.Theme, c *widget.Clickable, size BtnSize, minW float32, wake func(now, at time.Time)) layout.Dimensions {
+	return loadingButtonWake(gtx, th, c, size, minW, grpNone, wake)
+}
+
 // loadingButtonGrp draws a c-button of size as LoadingButton draws it
 // loading, at least minW dp wide; grp as buttonGrp's.
 func loadingButtonGrp(gtx layout.Context, th *theme.Theme, c *widget.Clickable, size BtnSize, minW float32, grp grpSide) layout.Dimensions {
+	return loadingButtonWake(gtx, th, c, size, minW, grp, nil)
+}
+
+func loadingButtonWake(gtx layout.Context, th *theme.Theme, c *widget.Clickable, size BtnSize, minW float32, grp grpSide, wake func(now, at time.Time)) layout.Dimensions {
 	var mods uint64 = 1 << BtnDisabled
 	h, rad, pad, spin := float32(28), float32(4), float32(12), float32(12)
 	if size == BtnMedium {
@@ -67,7 +79,7 @@ func loadingButtonGrp(gtx layout.Context, th *theme.Theme, c *widget.Clickable, 
 		// centred in the content box: the 1px bottom padding lifts it half
 		// a pixel
 		at(gtx, image.Pt((sz.X-s)/2, (sz.Y-dp(gtx, 1)-s)/2), func(gtx layout.Context) layout.Dimensions {
-			kitSpinner(gtx, s, 78, codeTok(th, "content-ter"), codeTok(th, "content-hgl-1"))
+			kitSpinnerWake(gtx, s, 78, codeTok(th, "content-ter"), codeTok(th, "content-hgl-1"), wake)
 			return layout.Dimensions{Size: image.Pt(s, s)}
 		})
 		return layout.Dimensions{Size: sz}
@@ -94,6 +106,12 @@ func InfiniteSpinner(gtx layout.Context, d int, noMargin bool, track, arc color.
 // (cubic-bezier(.25,.29,.54,.86) and (.41,.24,.64,.69)). It keeps frames
 // coming while it shows.
 func kitSpinner(gtx layout.Context, d int, box float32, track, arc color.NRGBA) {
+	kitSpinnerWake(gtx, d, box, track, arc, nil)
+}
+
+// kitSpinnerWake is kitSpinner with its next frame asked through wake
+// when set.
+func kitSpinnerWake(gtx layout.Context, d int, box float32, track, arc color.NRGBA, wake func(now, at time.Time)) {
 	sw := float32(d) * 8 / box
 	rr := float32(d) * 35 / box
 	ctr := f32.Pt(float32(d)/2, float32(d)/2)
@@ -112,5 +130,9 @@ func kitSpinner(gtx layout.Context, d int, box float32, track, arc color.NRGBA) 
 	q := 1.5 * math.Pi
 	ring(q+2*math.Pi*cubicBezierY(.25, .29, .54, .86, t), arc, math.Pi/2)
 	ring(q+2*math.Pi*cubicBezierY(.41, .24, .64, .69, t), arc, math.Pi/2)
+	if wake != nil {
+		wake(gtx.Now, gtx.Now.Add(16*time.Millisecond))
+		return
+	}
 	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
 }
