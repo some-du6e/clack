@@ -297,18 +297,11 @@ func TestActivityReactionPills(t *testing.T) {
 	rx := &rxFake{}
 	fs.SetHook(rx.hook(nil))
 	const key, ts = "fa-reaction", "1762700500.000100"
+	e.size.Y = 2400 // the reaction row is below a 1400px window
+	e.frame()
 	r := v.rowFor(key)
 	c := &rxCase{t: t, e: e, b: &v.base, x: rx, toasts: h.toasts, ch: fakeslack.ViewsChannel, ts: ts, drawn: r.msg}
 	e.until(t, "the row's pill", func() bool { _, ok := c.pill("tada"); return ok })
-	if p, ok := c.pill("tada"); ok {
-		row, _, _ := e.r.AreaBounds(&r.click)
-		bar, _, barOK := e.r.AreaBounds(&r.bar)
-		t.Logf("pill at %v, row %v, bar %v (%v)", p, row, bar, barOK)
-		c.e.r.Queue(asEvents([]pointer.Event{{Kind: pointer.Move, Source: pointer.Mouse, Position: p}})...)
-		e.frame()
-		e.frame()
-		t.Logf("pointer on the pill: row hovered %v, pill hovered %v", r.click.Hovered(), rxPillBtn(c.b, c.key()+":tada").Hovered())
-	}
 	c.check("tada")
 	if v.selOK && v.selKey == key {
 		t.Error("a click on the row's reaction opened the row")
