@@ -434,7 +434,12 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		cl := clip.Rect{Max: image.Pt(sz.X, availH)}.Push(gtx.Ops)
 		lcall.Add(gtx.Ops)
 		cl.Pop()
-		a.placeInputRow(gtx, c, ir, comp, call, guess, mx, compH, origin, sz, hc)
+		if a.placeInputRow(gtx, c, ir, comp, call, guess, mx, compH, origin, sz, hc) {
+			// it laid out where it wasn't (the thread loaded, scrolled,
+			// grew or shrank, the box's height changed), or it shows now:
+			// again, so what it anchors in window coordinates is where it is
+			a.Invalidate()
+		}
 		a.dropZone(c, image.Rectangle{Min: origin, Max: origin.Add(sz)}, foot)
 		a.layoutDropOverlay(gtx, c, sz)
 		return layout.Dimensions{Size: sz}
@@ -495,17 +500,15 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 // view (clipped away, still laid out, so its focus and draft stay: Slack
 // keeps the row mounted) when the reader scrolled up. What the box
 // anchors in window coordinates (its popups, its rects) laid out at guess:
-// when the row is elsewhere it lays out there next pass.
+// it reports whether the box needs the next pass, laid out where the row
+// is (or the box shows now, its list changed under the decision).
 func (a *App) placeInputRow(gtx layout.Context, c *convo, ir threadInputRow, comp composerView, call op.CallOp, guess, mx, compH int,
-	origin, sz image.Point, hc interface{ HidesComposer() bool }) {
+	origin, sz image.Point, hc interface{ HidesComposer() bool }) bool {
 	c.fitH = 0
 	if comp == nil {
 		c.compRect = image.Rectangle{}
 		c.inputYOK, c.inputVis = false, false
-		if c.comp != nil && hc != nil && !hc.HidesComposer() {
-			a.Invalidate() // the thread's box shows now (its list changed under the decision)
-		}
-		return
+		return c.comp != nil && hc != nil && !hc.HidesComposer()
 	}
 	y, ok, lr := ir.InputRow()
 	view := image.Rect(0, 0, sz.X, sz.Y)
@@ -527,9 +530,7 @@ func (a *App) placeInputRow(gtx layout.Context, c *convo, ir threadInputRow, com
 	cl.Pop()
 	c.inputY, c.inputYOK = y, true
 	c.inputVis = y >= view.Min.Y && y+compH <= view.Max.Y
-	if y != guess {
-		a.Invalidate()
-	}
+	return y != guess
 }
 
 // editLast opens the edit composer on the viewer's newest message (Up in
