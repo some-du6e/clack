@@ -213,18 +213,16 @@ func (c *Composer) draftsMenuItems() []popups.MenuItem {
 			Do:    func() { c.h.Navigate("drafts") }})
 	}
 	return append(items, popups.MenuItem{Key: "texty_draft_management_save_as_draft", Label: draftsNS.T("Save as draft"),
-		Disabled: c.ed.Empty() && c.att.Len() == 0, Do: c.saveAsDraft})
+		Disabled: c.ed.Empty() && c.att.Len() == 0 || c.dsync.stashing, Do: c.saveAsDraft})
 }
 
 // pickDraft is the menu's onSelectDraft: d takes the composer's slot
-// (selectStashedDraft), focused with the caret at its end.
+// (selectStashedDraft), focused with the caret at its end: at once, or
+// once Slack has what the slot held (stash_draft.go).
 func (c *Composer) pickDraft(d core.Draft) {
-	if !SelectStashedDraft(c.h, c, c.ch, c.ts, d) {
-		return
+	if SelectStashedDraft(c.h, c, c.ch, c.ts, d) {
+		c.Focus()
 	}
-	n := c.ed.Doc().Len()
-	c.ed.SetSelection(n, n)
-	c.Focus()
 }
 
 // saveAsDraft is "Save as draft": stashDraft, then the composer empties.
@@ -234,8 +232,13 @@ func (c *Composer) pickDraft(d core.Draft) {
 // thread's saves a new one and empties, which deletes the one it held, as
 // emptying it does. Nothing happens while a file uploads (a toast says to
 // wait) or when the composer holds nothing.
+//
+// The composer empties only once Slack has the draft (stashed): Slack's
+// drafts store keeps the draft locally and syncs it later, so nothing
+// typed is ever dropped. Refused (Slack unreachable), everything stays
+// where it was and a toast says the draft couldn't be saved.
 func (c *Composer) saveAsDraft() {
-	if c.noDraft() {
+	if c.noDraft() || c.dsync.stashing {
 		return
 	}
 	if c.att.uploading() {
@@ -248,25 +251,38 @@ func (c *Composer) saveAsDraft() {
 	if c.dsync.timer != nil {
 		c.dsync.timer.Stop()
 	}
-	d := c.ed.Doc()
-	args := draftSyncArgs{
-		DraftID:     c.draftID(),
-		ChannelID:   c.ch,
-		ThreadTs:    c.ts,
-		Broadcast:   c.broadcast && c.ts != "",
-		Blocks:      d.RichTextBlocks(),
-		Text:        d.Mrkdwn(),
-		FileIDs:     c.att.draftFileIDs(),
-		Attachments: c.att.draftGifAttachments(gifPickerOn(c.api.a)),
-		DateStashed: time.Now().UnixMilli(),
-	}
-	if ops, ok := d.Delta()["ops"].([]any); ok {
-		args.Ops = ops
-	}
-	h := c.h
-	queueDraftOp(c.key(), draftOp{api: c.api, stash: &args, keep: c.ts == "", onErr: func(err error) {
-		c.later(func() { h.Toast("Couldn't save your draft: " + err.Error()) })
+	args := c.draftArgs()
+	args.DateStashed = time.Now().UnixMilli()
+	v, av, gen := c.ed.Version(), c.attVer, c.attachGen
+	c.dsync.stashing = true
+	queueDraftOp(c.key(), draftOp{api: c.api, stash: &args, keep: c.ts == "", done: func(err error) {
+		c.later(func() { c.stashed(v, av, gen, err) })
 	}})
+	c.h.Invalidate()
+}
+
+// stashed is "Save as draft"'s answer (UI goroutine), for what the
+// composer held at version v, files av, slot generation gen.
+func (c *Composer) stashed(v, av, gen uint64, err error) {
+	c.dsync.stashing = false
+	if err != nil {
+		c.h.Toast("Couldn't save your draft: " + err.Error())
+		c.dsync.synced = unsyncedVer // the stash was its save: sync it again
+		c.retrySync()
+		return
+	}
+	key := c.key()
+	if c.closed || c.attachGen != gen || c.ed.Version() != v || c.attVer != av {
+		// changed since (or closed): what the slot holds now stays, saved
+		// as a draft of its own (a conversation's slot let its draft go
+		// with the stash)
+		if c.closed && liveComposer(key) == nil && c.ed.Version() == v {
+			clearDraft(c.ch, c.ts)
+		}
+		c.dsync.synced = unsyncedVer
+		c.syncDraftSoon()
+		return
+	}
 	c.ed.SetDoc(NewDoc())
 	c.lastVer = c.ed.Version()
 	c.att.Clear() // the files went with the draft
@@ -275,7 +291,7 @@ func (c *Composer) saveAsDraft() {
 	c.broadcast = false
 	c.typingStopped()
 	if c.ts != "" {
-		c.deleteServerDraft("composer_cleared") // after the stash, in the queue
+		c.deleteServerDraft("composer_cleared") // the thread draft it held: the stash made its own
 	} else {
 		c.dsync.synced = c.ed.Version()
 	}

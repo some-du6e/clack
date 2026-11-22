@@ -755,6 +755,13 @@ func groupCredit(cr creditResolver, g libGroup) string {
 func (pp *pluginsPage) libraryList(gtx layout.Context) layout.Dimensions {
 	p := pp.s
 	sz := gtx.Constraints.Max
+	// the search's typing first (its editor lays out later, in the head):
+	// the cards follow the text this frame draws in the box
+	for {
+		if _, ok := p.query.Update(gtx); !ok {
+			break
+		}
+	}
 	words := strings.Fields(strings.ToLower(p.query.Text()))
 	cards, empty := pp.lib.cards(words)
 	type el func(gtx layout.Context, w int) layout.Dimensions

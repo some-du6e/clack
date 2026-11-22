@@ -3519,3 +3519,32 @@ jobs:
         with:
           name: composer-drafts-shots
           path: ${{ runner.temp }}/composer-shots
+
+  # karim-1118's review (2026-11-22): "Save as draft" and picking a draft
+  # with Slack unreachable keep the composer's text, a thread draft brings
+  # its own broadcast, EmailBlocks' work is linear and capped (breaks and
+  # list items too), HTML's implied end tags and a cap that still hides a
+  # style sheet, links in any case and an unclosed <head>, and an email's
+  # links open no URL card. COUNT runs. Dispatch with only=karim-1118.
+  karim-1118-r4-review:
+    if: ${{ !inputs.only || startsWith('karim-1118-r4-review', inputs.only) }}
+    name: "karim-1118 the review's fixes (drafts offline, email bounds)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the drafts offline, the email converter's bounds, the email links
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 15m -run '^(TestSaveAsDraftKeepsTextWhenTheSaveFails|TestPickDraftSavesTheTextFirst|TestPickThreadDraftTakesItsBroadcast|TestDraftManagementButton)$' ./internal/ui/composer || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestEmailBlocks|TestEmailFields)' ./internal/richtext || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestEmailBodyLinksOpenNoURLCard|TestEmailFile|TestEmailLegacy|TestEmailRecipients)' ./internal/ui/richview || rc=1
+          exit $rc

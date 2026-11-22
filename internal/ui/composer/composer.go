@@ -144,6 +144,7 @@ type Composer struct {
 	attVer  uint64
 	touched bool
 	srvGen  uint64
+	closed  bool // Close ran
 	// the drafts button's count (draftsCount, draft_button.go) and what
 	// it was counted for
 	dmN   int
@@ -278,7 +279,22 @@ func New(h Host, channelID, threadTS string) *Composer {
 		c.ed.SetDoc(d)
 	}
 	c.lastVer = c.ed.Version()
+	liveComposers.Store(c.key(), c)
+	if _, dirty := draftKeyBusy(c.key()); dirty {
+		c.syncDraftSoon() // the text an earlier composer couldn't save
+	}
 	return c
+}
+
+// liveComposers is the open composer of each draft key (the last one
+// opened), for a pick that finds the slot open (SelectStashedDraft).
+var liveComposers sync.Map // draftKey → *Composer
+
+func liveComposer(key string) *Composer {
+	if v, ok := liveComposers.Load(key); ok {
+		return v.(*Composer)
+	}
+	return nil
 }
 
 // NewEdit returns an inline editor for m (one of the viewer's messages).
@@ -428,6 +444,16 @@ func (c *Composer) InsertEmoji(name string) {
 
 // Close stores the draft and releases background work.
 func (c *Composer) Close() {
+	if c.dsync.timer != nil && c.dsync.timer.Stop() {
+		c.syncDraftNow() // a save the pause was waiting on goes now
+	}
+	if c.dsync.retry != nil {
+		c.dsync.retry.Stop()
+	}
+	c.closed = true
+	if !c.noDraft() {
+		liveComposers.CompareAndDelete(c.key(), c)
+	}
 	c.saveDraft()
 	c.ac.Close()
 }

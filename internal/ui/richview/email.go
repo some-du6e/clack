@@ -205,7 +205,7 @@ func (l *lay) emailUnfurl(f *richtext.File, x, y, w int) int {
 	bx := x + l.dp(12)
 	limit := y + bh
 	by := y + l.dp(8)
-	for _, b := range richtext.EmailBlocks(e.HTML) {
+	for _, b := range richtext.EmailBlocksOf(e.HTML) {
 		if by >= limit {
 			break
 		}
@@ -315,7 +315,7 @@ func (l *lay) emailDetails(f *richtext.File, x, y, w int) int {
 	label(i18n.T("email-file-details", "Body"))
 	t0 := len(l.d.targets)
 	bx := cx
-	for i, b := range richtext.EmailBlocks(e.HTML) {
+	for i, b := range richtext.EmailBlocksOf(e.HTML) {
 		if i > 0 {
 			y += l.dp(8)
 		}

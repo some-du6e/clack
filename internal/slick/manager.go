@@ -940,7 +940,6 @@ func (s *Slick) Remove(ctx context.Context, id string) error {
 	s.mu.Lock()
 	rt := s.rt
 	delete(s.plugins, id)
-	s.pluginsGen.Add(1)
 	delete(s.sources, id)
 	delete(s.cfg.Plugins, id)
 	delete(s.cfg.PluginWorkspaces, id)
@@ -953,6 +952,10 @@ func (s *Slick) Remove(ctx context.Context, id string) error {
 	for _, f := range []string{id + ".js", id + ".main.js", id + ".meta.json"} {
 		_ = os.Remove(s.path("plugins", f))
 	}
+	// after its files are gone: a library read between the two would keep
+	// the removed plugin's hashes under the new count (InstalledSHA256
+	// reads the files), as Taut's Remove orders it
+	s.pluginsGen.Add(1)
 	s.dropSwitches(id)
 	s.clearData(id, true)
 	s.mu.Lock()

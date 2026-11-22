@@ -148,7 +148,7 @@ func (l *lay) emailLegacy(f *richtext.File, x, y, w int) int {
 		m := l.mark()
 		t0 := len(l.d.targets)
 		by := cy + l.dp(8)
-		for _, b := range richtext.EmailBlocks(e.HTML) {
+		for _, b := range richtext.EmailBlocksOf(e.HTML) {
 			if by >= limit {
 				break
 			}

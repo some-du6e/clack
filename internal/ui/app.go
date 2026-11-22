@@ -606,16 +606,19 @@ func (a *App) Run() error {
 			if a.hud != nil {
 				a.hud.Close() // leave the huddle cleanly (Chime LEAVE)
 			}
+			if a.winSaveDue { // a move or resize savePrefsSoon hasn't written yet
+				a.savePrefs()
+			}
+			// ui.json before the stop's wait: Windows ending the session
+			// gives the quit 3 s (cmd/clack's OnSessionEnd)
+			a.flushPrefs()
 			if a.data != nil {
 				select { // plugins' stop hooks, the metadata cache
 				case <-a.data.stop():
 				case <-time.After(5 * time.Second):
 				}
 			}
-			if a.winSaveDue { // a move or resize savePrefsSoon hasn't written yet
-				a.savePrefs()
-			}
-			a.flushPrefs() // the window is gone: nothing waits on this
+			a.flushPrefs() // what the stop changed; the window is gone: nothing waits on this
 			return e.Err
 		case *app.ClosingEvent:
 			// the close button, Alt+F4: Slack's MAIN_WINDOW_CLOSE keeps the

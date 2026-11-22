@@ -116,9 +116,18 @@ func previousRun(path string) string {
 // window's close). A later call waits (at most d) for the first to finish,
 // then flushes again, so the exit that follows it loses nothing. Any
 // goroutine.
-func (l *Logger) Exit(reason string, d time.Duration) {
+func (l *Logger) Exit(reason string, d time.Duration) { l.exitLine(reason, d, true) }
+
+// ExitQuiet is Exit with the exit line in the log file only, not on
+// stderr: for the CLI's own ends (-version, clack login, a launch handed
+// to the running Clack), whose terminal shows the command's output.
+func (l *Logger) ExitQuiet(reason string, d time.Duration) { l.exitLine(reason, d, false) }
+
+func (l *Logger) exitLine(reason string, d time.Duration, stderr bool) {
 	if l == nil {
-		log.Printf("exit: %s", reason)
+		if stderr {
+			log.Printf("exit: %s", reason)
+		}
 		return
 	}
 	l.exit.mu.Lock()
@@ -139,7 +148,11 @@ func (l *Logger) Exit(reason string, d time.Duration) {
 	run, header := l.exit.run, l.exit.header
 	l.exit.mu.Unlock()
 	defer close(done)
-	log.Printf("exit: %s", reason)
+	if stderr || l.w == nil {
+		log.Printf("exit: %s", reason)
+	} else {
+		log.New(l.w, log.Prefix(), log.Flags()).Printf("exit: %s", reason) // the file alone, as the standard logger formats it
+	}
 	if run != "" && recordIs(run, header) {
 		if f, err := os.OpenFile(run, os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 			_, _ = fmt.Fprintf(f, "%s%s: %s\n", runEndedPrefix, time.Now().Format(time.RFC3339), Redact(reason))

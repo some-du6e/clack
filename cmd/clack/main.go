@@ -250,7 +250,7 @@ func main() {
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("clack", version)
-		logs.Exit("printed the version (-version)", time.Second)
+		logs.ExitQuiet("printed the version (-version)", time.Second)
 		return
 	}
 
@@ -272,7 +272,7 @@ func main() {
 			exitWith(logs, 1, fmt.Sprintf("%s failed: %v", what, err))
 		}
 		fmt.Println(urlHandlerMessage(*unregURL, r))
-		logs.Exit(what+" done", time.Second)
+		logs.ExitQuiet(what+" done", time.Second)
 		return
 	}
 
@@ -280,7 +280,7 @@ func main() {
 		if err := loginCLI(*credsPath, flag.Arg(1)); err != nil {
 			exitWith(logs, 1, fmt.Sprintf("clack login failed: %v", err))
 		}
-		logs.Exit("clack login done", time.Second)
+		logs.ExitQuiet("clack login done", time.Second)
 		return
 	}
 
@@ -316,7 +316,7 @@ func main() {
 			case <-time.After(3 * time.Second):
 			}
 		}
-		logs.Exit("handed this launch to the Clack already running", time.Second)
+		logs.ExitQuiet("handed this launch to the Clack already running", time.Second)
 		return
 	}
 	applog.Mark("single-instance", "")

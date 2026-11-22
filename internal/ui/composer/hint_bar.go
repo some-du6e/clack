@@ -69,6 +69,8 @@ type crHint struct {
 	btn     widget.Clickable
 	tip     popups.TipState
 	rect    image.Rectangle // the ButtonLink's, composer-local ("" while it takes no pointer)
+	// graceFor is the end of the grace a frame is due at (layoutFormattingTip)
+	graceFor time.Time
 }
 
 // hintFadeDur is .p-notification_bar__section--right's transition.
@@ -121,12 +123,16 @@ func (c *chrome) layoutFormattingTip(gtx layout.Context, th *theme.Theme, p *crP
 		now = time.Now()
 	}
 	vis := st.Online && st.MoreThanTwo
-	if st.Online && !st.OnlineUntil.IsZero() {
-		gtx.Execute(op.InvalidateCmd{At: st.OnlineUntil}) // refreshRecentlyOnline
+	// Frames come from the host, never an InvalidateCmd mid-layout (it
+	// requeues the frame's unread events: a press after a click got lost
+	// that way, gio-midframe-invalidate-loses-clicks)
+	if st.Online && !st.OnlineUntil.IsZero() && !st.OnlineUntil.Equal(c.hint.graceFor) {
+		c.hint.graceFor = st.OnlineUntil // refreshRecentlyOnline: a frame when the grace ends
+		time.AfterFunc(time.Until(st.OnlineUntil), c.f.h.Invalidate)
 	}
 	alpha, moving := c.hint.opacity(now, vis)
 	if moving {
-		gtx.Execute(op.InvalidateCmd{})
+		c.f.h.Invalidate() // the fade's next frame
 	}
 	if vis && c.hint.btn.Clicked(gtx) && popups.OpenPreferencesSection != nil {
 		popups.OpenPreferencesSection("advanced")

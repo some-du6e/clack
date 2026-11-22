@@ -185,9 +185,9 @@ func TestDraftManagementButton(t *testing.T) {
 	own := c.serverDraftID()
 	save.Do()
 	g.settle()
-	if txt := c.ed.Doc().Text(); txt != "" {
-		t.Errorf("after Save as draft the composer holds %q, want it empty", txt)
-	}
+	// it empties once Slack has the draft (nothing typed is dropped if
+	// Slack doesn't answer: TestSaveAsDraftKeepsTextWhenTheSaveFails)
+	until("the composer empty after Save as draft", func() bool { return c.ed.Doc().Text() == "" })
 	stashed := func() (fakeslack.Draft, bool) {
 		for _, d := range fs.LiveDrafts() {
 			if strings.Contains(string(d.Blocks), `"hey"`) {
