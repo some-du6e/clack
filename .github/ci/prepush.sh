@@ -45,6 +45,7 @@ fi
 # are modules of their own, but the main module's replace is what builds
 # them: vetting one alone took its own go.mod's other typesetting)
 declare -A linux=() windows=() darwin=()
+mod=$(awk '/^module /{print $2; exit}' go.mod)
 modpath() { # dir -> import path, through the module the dir is in
 	local d=$1 m
 	for m in third_party/gioui.org third_party/typesetting third_party/rnnoise-go; do
@@ -79,7 +80,6 @@ done
 # one side (then it's here) or didn't (then its API is the same).
 if git rev-parse -q --verify HEAD^2 >/dev/null; then
 	mb=$(git merge-base HEAD^1 HEAD^2)
-	mod=$(awk '/^module /{print $2; exit}' go.mod)
 	side() { # rev -> the import paths of the Go packages it changed since mb
 		git diff --name-only --diff-filter=ACMR "$mb" "$1" | grep -E '\.go$' | grep -v '/testdata/' | while read -r f; do
 			d=$(dirname "$f")
@@ -150,7 +150,7 @@ vet() { # vet GOOS warn ENV... -- pkgs...
 	# unkeyed key.Range, os_windows.go's unsafe.Pointer)
 	local own=() third=()
 	for p in "${pkgs[@]}"; do
-		case $p in ./*) own+=("$p") ;; *) third+=("$p") ;; esac
+		case $p in ./* | "$mod" | "$mod"/*) own+=("$p") ;; *) third+=("$p") ;; esac
 	done
 	local args
 	for args in own third; do
