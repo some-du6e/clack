@@ -44,8 +44,9 @@ func (a *App) videos() *videoplayer.Controller {
 		Open: func(ctx context.Context, rawURL string, off int64) (io.ReadCloser, media.Info, error) {
 			return openVideo(ctx, c, rawURL, off)
 		},
-		FrameReady: a.videoFrameReady, // a new video frame: a quiet frame of this window (quiet.go)
-		Repaint:    a.videoRepaint,
+		FrameReady:  a.videoFrameReady, // a new video frame: a quiet frame of this window (quiet.go)
+		FrameOrigin: a.FrameOrigin,
+		Repaint:     a.videoRepaint,
 		Pref: func(name string) (json.RawMessage, bool) {
 			if c != nil {
 				return c.Pref(name)

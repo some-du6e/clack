@@ -1616,7 +1616,7 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	}
 	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
 	v.ReplyUserIcons = m.ReplyUserIcons
-	v.NoteFiles, v.Upload = richtext.NoteFilesOf(m.Files), m.Upload
+	v.NoteFiles, v.Upload = a.noteFiles(m, false), m.Upload // note_files.go
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState
