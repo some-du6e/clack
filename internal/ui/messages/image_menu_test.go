@@ -45,21 +45,26 @@ const (
 	imgEmojiLink = "https://emoji.slack-edge.com/T0266FRGM/party/0a1b2c3d4e5f6a7b.png"
 )
 
-func imgMenuEnv(t *testing.T) *ctxEnv {
+// imgMenuMsgs are the messages, one per test: the harness is 700px
+// tall, and the list keeps to its newest message.
+var imgMenuMsgs = map[string]slack.Message{
+	tsImgBlock: {Type: "message", TS: tsImgBlock, User: "UALICE", Text: "chart",
+		Blocks: json.RawMessage(`[{"type":"image","block_id":"i1","image_url":"` + imgURL + `","alt_text":"chart"}]`)},
+	tsImgAtt: {Type: "message", TS: tsImgAtt, BotID: "B0EMOJI", Username: "emojibot", Text: "<" + imgEmojiLink + ">", Attachments: []slack.Attachment{{
+		ID: 1, Fallback: "128x128px image", Title: "party.png", FromURL: imgEmojiLink, ImageURL: imgEmojiLink, ImageWidth: 128, ImageHeight: 128}}},
+	tsImgAcc: {Type: "message", TS: tsImgAcc, User: "UALICE", Text: "build passed",
+		Blocks: json.RawMessage(`[{"type":"section","block_id":"s1","text":{"type":"mrkdwn","text":"build passed"},` +
+			`"accessory":{"type":"image","image_url":"` + imgURL + `","alt_text":"badge"}}]`)},
+	tsImgReact: {Type: "message", TS: tsImgReact, User: "UBOB", Text: "new emoji",
+		Reactions: []slack.Reaction{{Name: "party", Count: 2, Users: []string{"UALICE", "UBOB"}}}},
+	tsImgCard: {Type: "message", TS: tsImgCard, BotID: "B0EMOJI", Username: "emojibot", Text: "<" + imgEmojiLink + ">", Attachments: []slack.Attachment{{
+		ID: 1, Fallback: "128x128px image", FromURL: imgEmojiLink, OriginalURL: imgEmojiLink, ImageURL: imgEmojiLink, ImageWidth: 128, ImageHeight: 128}}},
+}
+
+// imgMenuEnv shows message ts alone, with :party: a custom emoji.
+func imgMenuEnv(t *testing.T, ts string) *ctxEnv {
 	t.Helper()
-	return newCtxEnvSetup(t, tGen, []slack.Message{
-		{Type: "message", TS: tsImgBlock, User: "UALICE", Text: "chart",
-			Blocks: json.RawMessage(`[{"type":"image","block_id":"i1","image_url":"` + imgURL + `","alt_text":"chart"}]`)},
-		{Type: "message", TS: tsImgAtt, BotID: "B0EMOJI", Username: "emojibot", Text: "<" + imgEmojiLink + ">", Attachments: []slack.Attachment{{
-			ID: 1, Fallback: "128x128px image", Title: "party.png", FromURL: imgEmojiLink, ImageURL: imgEmojiLink, ImageWidth: 128, ImageHeight: 128}}},
-		{Type: "message", TS: tsImgAcc, User: "UALICE", Text: "build passed",
-			Blocks: json.RawMessage(`[{"type":"section","block_id":"s1","text":{"type":"mrkdwn","text":"build passed"},` +
-				`"accessory":{"type":"image","image_url":"` + imgURL + `","alt_text":"badge"}}]`)},
-		{Type: "message", TS: tsImgReact, User: "UBOB", Text: "new emoji",
-			Reactions: []slack.Reaction{{Name: "party", Count: 2, Users: []string{"UALICE", "UBOB"}}}},
-		{Type: "message", TS: tsImgCard, BotID: "B0EMOJI", Username: "emojibot", Text: "<" + imgEmojiLink + ">", Attachments: []slack.Attachment{{
-			ID: 1, Fallback: "128x128px image", FromURL: imgEmojiLink, OriginalURL: imgEmojiLink, ImageURL: imgEmojiLink, ImageWidth: 128, ImageHeight: 128}}},
-	}, func(app *core.App) {
+	return newCtxEnvSetup(t, tGen, []slack.Message{imgMenuMsgs[ts]}, func(app *core.App) {
 		app.S.SetEmojiList(map[string]string{"party": imgEmojiLink})
 	})
 }
@@ -116,7 +121,7 @@ func linkMenuDoes(t *testing.T, m *popups.Menu, link, what string, opened *[]str
 // An image block's image is its link's background: the link menu for
 // image_url.
 func TestContextMenuOnImageBlock(t *testing.T) {
-	e := imgMenuEnv(t)
+	e := imgMenuEnv(t, tsImgBlock)
 	var opened []string
 	openURL = func(u string) { opened = append(opened, u) }
 	e.rightClick(e.imageAt(tsImgBlock))
@@ -127,7 +132,7 @@ func TestContextMenuOnImageBlock(t *testing.T) {
 // preview titled): the link menu for getExternalSourceUrl, here the
 // from_url off Slack's hosts.
 func TestContextMenuOnAttachmentImage(t *testing.T) {
-	e := imgMenuEnv(t)
+	e := imgMenuEnv(t, tsImgAtt)
 	var opened []string
 	openURL = func(u string) { opened = append(opened, u) }
 	e.rightClick(e.imageAt(tsImgAtt))
@@ -137,7 +142,7 @@ func TestContextMenuOnAttachmentImage(t *testing.T) {
 // A section's accessory image is BaseImageElement's background div: the
 // message list opens the message's own menu.
 func TestContextMenuOnAccessoryImage(t *testing.T) {
-	e := imgMenuEnv(t)
+	e := imgMenuEnv(t, tsImgAcc)
 	e.rightClick(e.imageAt(tsImgAcc))
 	m := e.menu(0, "right-click on an accessory image")
 	if !hasLabel(m, "Add reaction…") || !hasLabel(m, "Copy link") || hasLabel(m, "Copy Image") {
@@ -162,7 +167,7 @@ func (e *ctxEnv) reactionPoint(ts string, dx int) f32.Point {
 // the emoji's image), its count text has no menu, its padding is the
 // message's.
 func TestContextMenuOnReaction(t *testing.T) {
-	e := imgMenuEnv(t)
+	e := imgMenuEnv(t, tsImgReact)
 	es := int(mt.reactEmoji) // PxPerDp 1
 	e.rightClick(e.reactionPoint(tsImgReact, 8+es/2))
 	m := e.menu(0, "right-click on a reaction's emoji")
@@ -186,7 +191,7 @@ func TestContextMenuOnReaction(t *testing.T) {
 // takes the whole card, image included (Copy link; Remove preview only
 // for the sender), as in Slack.
 func TestContextMenuOnImageCard(t *testing.T) {
-	e := imgMenuEnv(t)
+	e := imgMenuEnv(t, tsImgCard)
 	e.rightClick(e.imageAt(tsImgCard))
 	m := e.menu(0, "right-click on an image card")
 	if got := strings.Join(labels(m), "|"); got != "Copy link" {

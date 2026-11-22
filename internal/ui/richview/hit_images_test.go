@@ -77,20 +77,20 @@ func TestHitAtSlackImageTargets(t *testing.T) {
 		t.Errorf("accessory image: kind %d emoji %q link %q, want nothing (the message's menu)", h.Kind, h.EmojiURL, hitLink(h))
 	}
 
-	// a context block's image: the same element, inline
+	// a context block's image: the same element, inline (drawn with no
+	// target of its own)
 	ctx := blocksDoc(`[{"type":"context","block_id":"c1","elements":[{"type":"image","image_url":"` + img + `","alt_text":"logo"},` +
 		`{"type":"mrkdwn","text":"from CI"}]}]`)
 	hs, _ = clickHarness(ctx)
 	found := false
-	for i := range hs.v.d.frags {
-		f := &hs.v.d.frags[i]
-		if f.kind != fImage || f.alt || f.url == "" || strings.HasPrefix(f.url, iconURL) { // not an emoji or an icon
+	for i := range hs.v.d.imgs {
+		im := &hs.v.d.imgs[i]
+		if im.url == "" || strings.HasPrefix(im.url, iconURL) {
 			continue
 		}
 		found = true
-		p := f32.Pt(f.x+float32(f.size)/2, float32(f.y+f.size/2))
-		if h := hs.v.HitAt(p); h.EmojiURL != "" || h.Kind != HitNone {
-			t.Errorf("context image: kind %d emoji %q, want nothing (the message's menu)", h.Kind, h.EmojiURL)
+		if h := hitMid(hs.v, im.r); h.EmojiURL != "" || h.Kind != HitNone || hitLink(h) != "" {
+			t.Errorf("context image: kind %d emoji %q link %q, want nothing (the message's menu)", h.Kind, h.EmojiURL, hitLink(h))
 		}
 	}
 	if !found {
