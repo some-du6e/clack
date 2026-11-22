@@ -9,8 +9,10 @@ package core
 //
 //   - the store is unifiedFilesBrowser's (client-boot mSgJ, wbGe):
 //     setCollections sorts by position, highest first, and keeps the
-//     collapsed state the client already had (custom_file_sections_
-//     collapsed_persist is off, so collapsing never leaves the client);
+//     collapsed state the client already had. Collapsing never leaves the
+//     client: Clack doesn't read custom_file_sections_collapsed_persist,
+//     under which Slack saves it (boot-render GsF9 tN; on for the test
+//     account on 2026-11-21, not ported);
 //   - maybeFetchCollections (boot-shared GIC/): files.collections.list
 //     at boot, again after a day, with the names
 //     unescaped (jHyp processCollections, lodash unescape). The store

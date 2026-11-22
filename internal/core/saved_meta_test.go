@@ -181,3 +181,21 @@ func TestSavedMetaFollowsWrites(t *testing.T) {
 		t.Error("Unsave kept the metadata")
 	}
 }
+
+// ClearSaved is clearSavedItemImmediately's saved.delete: saved_not_found
+// (cleared elsewhere already) counts as cleared; other errors stay errors.
+func TestClearSavedNotFoundIsCleared(t *testing.T) {
+	a, f := testApp(t)
+	a.markSaved("C1", "1.000001", true)
+	f.reply["saved.delete"] = `{"ok":false,"error":"saved_not_found"}`
+	if err := a.ClearSaved(context.Background(), "C1", "1.000001"); err != nil {
+		t.Fatalf("saved_not_found: %v", err)
+	}
+	if _, saved := a.SavedMeta("C1", "1.000001"); saved {
+		t.Error("saved_not_found left the item saved")
+	}
+	f.reply["saved.delete"] = `{"ok":false,"error":"internal_error"}`
+	if err := a.ClearSaved(context.Background(), "C1", "1.000002"); err == nil {
+		t.Error("internal_error counted as cleared")
+	}
+}

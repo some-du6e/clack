@@ -593,8 +593,7 @@ func (v *SearchView) fileTypeItems() []MenuItem {
 // moreMenu is MoreFiltersDropdown (the e8 template): the rows for the
 // filters the row doesn't show as pills (srMoreAllowed). Saved
 // preferences (the search_exclude_bots / search_only_my_channels prefs),
-// Results (Exact matches only; Exclude archived only with
-// search_explore_freshness_signals on), then From, In, With people,
+// Results (Exact matches only), then From, In, With people,
 // Message has (File, Link, Action), Message is (A direct message, In a
 // thread, Saved, To-dos with later_todos, Pinned, In Activity), Date, File
 // type, Reactions and Creator, each only when allowed. Every row maps to

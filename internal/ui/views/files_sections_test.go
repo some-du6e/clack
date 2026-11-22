@@ -457,3 +457,57 @@ func TestFilesViewNestedClicks(t *testing.T) {
 		t.Errorf("× click: opened %v, recents %v", h.opened[before:], h.Core().RecentlyViewedFileIDs())
 	}
 }
+
+// The rail's Files peek rows carry FileSectionDropdownButton for every
+// account (boot-render's peek rows: FileActions renderFavoriteButton, the
+// section button), and its click opens FileSectionMoveToMenu. With file
+// sections everyone's since the 2026-11-21 drift, the old star never draws.
+func TestFilesPeekSectionButton(t *testing.T) {
+	v, h, e, _, _ := sectionsView(t)
+	v.PeekOpened(func() {})
+	e.draw = func(gtx layout.Context) {
+		v.LayoutPeek(gtx)
+		for _, o := range h.open() {
+			o.Layout(gtx)
+		}
+	}
+	var it fileItem
+	e.until(t, "a canvas or list in the peek", func() bool {
+		items, ok := v.peekKeys()
+		for _, x := range items {
+			if x.isCanvas() || x.isList() {
+				it = x
+				return ok
+			}
+		}
+		return false
+	})
+	c := v.clicksOf(it.ID)
+	c.starSize = image.Point{} // the Files tab drew this file's button too
+	e.frame()
+	if c.starSize == (image.Point{}) {
+		t.Fatalf("the peek's %s row has no section button", it.ID)
+	}
+	n := len(h.open())
+	c.star.Click()
+	e.frame()
+	if len(h.open()) != n+1 {
+		t.Fatalf("the section button's click opened %d overlays, want FileSectionMoveToMenu", len(h.open())-n)
+	}
+	if _, ok := h.open()[len(h.open())-1].(*popups.Menu); !ok {
+		t.Errorf("the click opened %T, want the move menu", h.open()[len(h.open())-1])
+	}
+	dismissAll(h)
+	// Starred lists every collection's files (u1Hg gU): the shared canvas
+	// sits in Launch, not in the old files.favorites set
+	v.pk.starred.Value = true
+	e.until(t, "Starred lists the collections' files", func() bool {
+		items, ok := v.peekKeys()
+		for _, x := range items {
+			if x.ID == fakeslack.CanvasShared {
+				return ok
+			}
+		}
+		return false
+	})
+}

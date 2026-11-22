@@ -174,9 +174,11 @@ func (a *App) refreshTeamIcon(ctx context.Context) {
 func (a *App) fetchTeam(ctx context.Context, team string) bool {
 	var r struct {
 		Team struct {
-			ID   string          `json:"id"`
-			Name string          `json:"name"`
-			Icon json.RawMessage `json:"icon"`
+			ID           string          `json:"id"`
+			Name         string          `json:"name"`
+			Icon         json.RawMessage `json:"icon"`
+			Plan         string          `json:"plan"`
+			EnterpriseID string          `json:"enterprise_id"`
 		} `json:"team"`
 	}
 	var p url.Values
@@ -185,6 +187,11 @@ func (a *App) fetchTeam(ctx context.Context, team string) bool {
 	}
 	if err := a.C.Call(ctx, "team.info", p, &r); err != nil {
 		return false
+	}
+	// the session's own team: its plan too (QuickMessageResultsOn,
+	// OnFreePlan), so a failed boot team.info doesn't leave it unknown
+	if team == "" || team == a.C.Creds.Team {
+		a.setTeamPlan(r.Team.Plan, r.Team.EnterpriseID)
 	}
 	a.setTeamName(firstNonEmpty(r.Team.ID, team), r.Team.Name)
 	changed := a.setTeamIcon(firstNonEmpty(r.Team.ID, team), r.Team.Icon)

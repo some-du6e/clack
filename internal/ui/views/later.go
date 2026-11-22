@@ -1993,7 +1993,7 @@ func (l *Later) clearTodo(it core.SavedItem) {
 	ch, ts := it.Channel, it.TS
 	l.remove(k)
 	if c := l.h.Core(); c != nil && c.Experiment(core.ExpLaterTodosImmediateClear) == "on" {
-		l.write(k, l.immediateClearToast(time.Now()), true, func(ctx context.Context, c *core.App) error { return c.Unsave(ctx, ch, ts) })
+		l.write(k, l.immediateClearToast(time.Now()), true, func(ctx context.Context, c *core.App) error { return c.ClearSaved(ctx, ch, ts) })
 		return
 	}
 	send := func() {

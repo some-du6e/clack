@@ -2355,8 +2355,8 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	})
 }
 
-// msgRowPlain is SuggestionQuickMessage with omni_quick_message_results
-// off: a --multiline suggestion item (padding 4px 16px, the 36px avatar
+// msgRowPlain is SuggestionQuickMessage with the quick message results
+// off (a free team, core.QuickMessageResultsOn): a --multiline suggestion item (padding 4px 16px, the 36px avatar
 // 12px before the text) with the extract on top (15px, one line, …
 // where Slack cut it) and the metadata under it (13px at 70%: the
 // sender, "• " or "⟳ Reply in a thread • ", the date). The picked row is

@@ -321,8 +321,9 @@ type SearchView struct {
 	err     string
 	sess    core.SearchSession // one per query: every module call shares it
 	exact   bool               // More > Exact matches only (search_exact_matches_only)
-	// exclArch is channel_type exclude_archived: a saved tab's filter (More
-	// no longer offers Exclude archived, search_view_filters.go)
+	// exclArch is channel_type exclude_archived. Nothing sets it since
+	// More lost Exclude archived (search_view_filters.go); kept for the
+	// saved filters' plumbing
 	exclArch bool
 	visible  []string // the filters the row shows as pills (srFSources first), last frame
 	// tabSort is the Files, Canvases, Channels and People tabs' Sort
