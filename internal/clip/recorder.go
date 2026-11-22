@@ -154,11 +154,13 @@ func (r *Recorder) open(ctx context.Context) {
 		r.changed()
 		return
 	}
-	r.mic, r.state = mic, Starting // microphonestart
-	r.mu.Unlock()
+	// the encoder is the recorder's before the state says so: a Cancel that
+	// sees Starting has an encoder to free
 	r.encMu.Lock()
 	r.enc = enc
 	r.encMu.Unlock()
+	r.mic, r.state = mic, Starting // microphonestart
+	r.mu.Unlock()
 	r.changed()
 	if r.o.PlayStart != nil {
 		r.o.PlayStart()
@@ -331,8 +333,12 @@ func (r *Recorder) File() (File, bool) {
 }
 
 // Cancel is onCancel (and the popover's unmount, w.stop()): the recording
-// and the microphone stop and nothing is kept. Safe to call more than
-// once, on any goroutine.
+// and the microphone stop and nothing is kept. It returns at once, since
+// the popover's onClose calls it on the UI goroutine: the state is
+// Cancelled when it returns, and the microphone and the encoder close on
+// a goroutine of their own (a sound card's Close can take a while, and
+// the microphone's Close waits for its queued frames). Safe to call more
+// than once, on any goroutine.
 func (r *Recorder) Cancel() {
 	r.cancel()
 	r.mu.Lock()
@@ -345,13 +351,18 @@ func (r *Recorder) Cancel() {
 	mic, tick := r.mic, r.tick
 	r.mic, r.tick = nil, nil
 	r.mu.Unlock()
-	if stopping { // Stop owns the microphone and the encoder now
-		r.changed()
-		return
+	if !stopping { // else Stop owns the microphone and the encoder now
+		if tick != nil {
+			close(tick)
+		}
+		go r.release(mic)
 	}
-	if tick != nil {
-		close(tick)
-	}
+	r.changed()
+}
+
+// release closes a cancelled recording's microphone, then its encoder:
+// capture can be in the encoder until the microphone has closed.
+func (r *Recorder) release(mic *huddle.ClipMic) {
 	if mic != nil {
 		mic.Close()
 	}
@@ -361,5 +372,4 @@ func (r *Recorder) Cancel() {
 		r.enc = nil
 	}
 	r.encMu.Unlock()
-	r.changed()
 }

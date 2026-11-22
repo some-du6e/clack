@@ -584,3 +584,55 @@ func TestRecorderCancelFailAndLimit(t *testing.T) {
 		t.Errorf("limit stop: %.2f s, %d bytes", f.Duration, len(f.Data))
 	}
 }
+
+// slowCloseDevice is a tone microphone whose Close takes a while, as a
+// sound card's can.
+type slowCloseDevice struct {
+	huddle.Device
+	delay  time.Duration
+	once   atomic.Bool
+	closed chan struct{}
+}
+
+func (d *slowCloseDevice) Close() {
+	time.Sleep(d.delay)
+	d.Device.Close()
+	if d.once.CompareAndSwap(false, true) {
+		close(d.closed)
+	}
+}
+
+// Cancel returns at once even when the microphone is slow to close (the
+// popover's onClose calls it on the UI goroutine), and the microphone and
+// the encoder still close after it.
+func TestRecorderCancelDoesNotWaitForTheMicrophone(t *testing.T) {
+	dev := &slowCloseDevice{Device: huddle.NewToneDevice(440), delay: 2 * time.Second, closed: make(chan struct{})}
+	r := Start(Options{Device: dev})
+	waitState(t, r, Recording)
+	t0 := time.Now()
+	r.Cancel()
+	if d := time.Since(t0); d > 500*time.Millisecond {
+		t.Errorf("Cancel took %v; the microphone's Close takes %v", d.Round(time.Millisecond), dev.delay)
+	}
+	if r.State() != Cancelled {
+		t.Fatalf("state %s after Cancel", r.State())
+	}
+	select {
+	case <-dev.closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the microphone never closed")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.encMu.Lock()
+		enc := r.enc
+		r.encMu.Unlock()
+		if enc == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the encoder was never freed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
