@@ -743,6 +743,15 @@ func (t *Trigger) Layout(gtx layout.Context, userID string, size image.Point) {
 // LayoutBot is Layout for a sender that may be a bot without a user
 // (botID: the message's bot_id). Both "" disables it.
 func (t *Trigger) LayoutBot(gtx layout.Context, userID, botID string, size image.Point) {
+	t.LayoutBotFn(gtx, userID, func() string { return botID }, size)
+}
+
+// LayoutBotFn is LayoutBot with the bot worked out when the trigger
+// reports, after this frame's pointer events: a sender's bot that asks
+// bots.info while its trigger is in use (core.App.SenderBot) asks in the
+// frame the pointer comes onto it, and a trigger the pointer isn't on
+// works out nothing.
+func (t *Trigger) LayoutBotFn(gtx layout.Context, userID string, bot func() string, size image.Point) {
 	c := current
 	if t.probe.Missed() {
 		// not laid out for a frame: Gio forgot the handler, and the Leave
@@ -791,9 +800,11 @@ func (t *Trigger) LayoutBot(gtx layout.Context, userID, botID string, size image
 			t.opp = o
 		}
 	}
-	if t.in && c != nil && (userID != "" || botID != "") {
-		c.ReportBot(t, userID, botID, image.Rectangle{Max: size}, t.pos)
-		c.ReportSide(t, t.opp)
+	if t.in && c != nil {
+		if botID := bot(); userID != "" || botID != "" {
+			c.ReportBot(t, userID, botID, image.Rectangle{Max: size}, t.pos)
+			c.ReportSide(t, t.opp)
+		}
 	}
 	func() {
 		defer pointer.PassOp{}.Push(gtx.Ops).Pop()

@@ -911,28 +911,43 @@ func clipRRectCorners(gtx layout.Context, r image.Rectangle, nw, ne, se, sw int)
 // open the channel, Join / Leave change the membership, the caret opens
 // "Join…".
 func (v *SearchView) handleChannels(gtx layout.Context) {
-	for i := range v.chans {
+	// bounded by the live results, one row's action a frame
+	for i := 0; i < len(v.chans); i++ {
 		ch := v.chans[i]
 		ui := v.chanUIOf(ch.ID)
 		if v.row(ch.ID).Clicked(gtx) || ui.open.Clicked(gtx) {
 			// ChannelListItem's navigate; openChannelResultInHome
 			RecordRecentConversation(ch.ID)
 			v.h.Navigate("c/" + ch.ID)
+			return
 		}
 		_ = ui.inact.Clicked(gtx) // onInteractionButtonClick: nothing
 		if v.btn(ch.ID).Clicked(gtx) && !ui.busy {
 			s := v.chanState(ch)
 			switch {
 			case ch.IsMember && s.canLeave:
-				v.leaveChannel(i)
+				v.leaveChannel(ch.ID)
 			case !ch.IsMember:
-				v.joinChannel(i, "")
+				v.joinChannel(ch.ID, "")
 			}
+			return
 		}
 		if ui.caret.Clicked(gtx) && !ui.busy {
 			v.joinMenu(gtx, i)
+			return
 		}
 	}
+}
+
+// chanIndex is channel id's place in the results, -1 when it isn't
+// listed (a page or a new search landed).
+func (v *SearchView) chanIndex(id string) int {
+	for i := range v.chans {
+		if v.chans[i].ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 // joinMenu is renderJoinMenu at the caret (position BottomRight).
@@ -947,7 +962,10 @@ func (v *SearchView) joinMenu(gtx layout.Context, i int) {
 	}
 	px := v.padX(gtx, gtx.Constraints.Max.X)
 	anchor := v.win(gtx, ui.caretR.Add(image.Pt(px, y)))
-	join := func(d core.TempJoin) func() { return func() { v.joinChannel(i, d) } }
+	// the menu's rows join the channel the caret was on, by its id: a page
+	// landing while the menu is open moves another channel to i
+	id := v.chans[i].ID
+	join := func(d core.TempJoin) func() { return func() { v.joinChannel(id, d) } }
 	items := []MenuItem{
 		MenuItem{Header: "Join…"}.In(nsSearch),
 		MenuItem{Label: "Just for today", Do: join(core.TempToday)}.In(nsSearch),
@@ -960,13 +978,14 @@ func (v *SearchView) joinMenu(gtx layout.Context, i int) {
 // joinChannel is onClickJoin (joinChannelWithRetryToast, reason
 // search_channel_view; d "" for a lasting join): on failure the
 // "Couldn’t join {channelName}." toast.
-func (v *SearchView) joinChannel(i int, d core.TempJoin) {
+func (v *SearchView) joinChannel(id string, d core.TempJoin) {
 	c := v.h.Core()
-	if c == nil || i >= len(v.chans) {
+	i := v.chanIndex(id)
+	if c == nil || i < 0 {
 		return
 	}
 	ch := v.chans[i]
-	id, seq := ch.ID, v.seq
+	seq := v.seq
 	v.chanUIOf(id).busy = true
 	run(v.h, func(ctx context.Context) (core.Conv, error) {
 		if d != "" {
@@ -974,7 +993,8 @@ func (v *SearchView) joinChannel(i int, d core.TempJoin) {
 		}
 		return c.Join(ctx, id)
 	}, func(_ core.Conv, err error) {
-		if seq != v.seq || i >= len(v.chans) || v.chans[i].ID != id {
+		i := v.chanIndex(id)
+		if seq != v.seq || i < 0 {
 			return
 		}
 		v.chanUIOf(id).busy = false
@@ -990,17 +1010,19 @@ func (v *SearchView) joinChannel(i int, d core.TempJoin) {
 
 // leaveChannel is onClickLeave: conversations.leave, and on failure the
 // "Couldn’t leave {channelName}." toast.
-func (v *SearchView) leaveChannel(i int) {
+func (v *SearchView) leaveChannel(id string) {
 	c := v.h.Core()
-	if c == nil || i >= len(v.chans) {
+	i := v.chanIndex(id)
+	if c == nil || i < 0 {
 		return
 	}
 	ch := v.chans[i]
-	id, seq := ch.ID, v.seq
+	seq := v.seq
 	v.chanUIOf(id).busy = true
 	run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.Leave(ctx, id) },
 		func(_ struct{}, err error) {
-			if seq != v.seq || i >= len(v.chans) || v.chans[i].ID != id {
+			i := v.chanIndex(id)
+			if seq != v.seq || i < 0 {
 				return
 			}
 			v.chanUIOf(id).busy = false
@@ -1198,9 +1220,10 @@ func srBanner(gtx layout.Context, th *theme.Theme, label string, deact bool, w i
 // handlePeople opens a clicked card's member profile (onCellClick:
 // navigate to the profile).
 func (v *SearchView) handlePeople(gtx layout.Context) {
-	for i := range v.people {
+	for i := 0; i < len(v.people); i++ {
 		if v.row(v.people[i].ID).Clicked(gtx) {
 			pfOpenFull(v.h, v.people[i].ID)
+			return
 		}
 	}
 }

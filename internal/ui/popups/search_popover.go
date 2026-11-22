@@ -67,6 +67,7 @@ const (
 
 // srRow is one row of the popover list.
 type srRow struct {
+	ck       string // its button's key, made at rebuild (keyRows)
 	kind     srRowKind
 	id       string // conv / user / channel id, route, or query
 	conv     string // srRUser: DM id when one exists
@@ -103,10 +104,30 @@ func (r *srRow) selectable() bool {
 // clickKey is row i's button key: its row's key, a non-selectable row's
 // (a header, a divider, a note: never clicked) its place.
 func (p *SearchPopover) clickKey(i int) string {
+	if k := p.rows[i].ck; k != "" {
+		return k // made at rebuild (keyRows)
+	}
 	if k := p.rows[i].key(); k != "" {
 		return k
 	}
 	return "\x00" + strconv.Itoa(i)
+}
+
+// keyRows gives each row its button key once a rebuild (clickKey's, not
+// per frame), a second row for the same entity (a channel in Unreads and
+// in Recent) its own: two rows never share a button, nor hover together.
+func (p *SearchPopover) keyRows() {
+	seen := make(map[string]int, len(p.rows))
+	for i := range p.rows {
+		r := &p.rows[i]
+		r.ck = ""
+		k := p.clickKey(i)
+		if n := seen[k]; n > 0 {
+			k += "\x01" + strconv.Itoa(n)
+		}
+		seen[p.clickKey(i)]++
+		r.ck = k
+	}
 }
 
 // click is row i's button, made on its first draw.
@@ -522,6 +543,7 @@ func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
 	}
 	p.full = rows
 	p.rows = p.visibleRows(rows)
+	p.keyRows()
 	p.pruneClicks()
 	// a picked row stays picked while it's still listed; otherwise the
 	// first row is the pseudo-selected one, whatever arrived above it
@@ -1594,7 +1616,10 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	p.qfAutoShow()
 	tbHit := p.tbClicks(gtx) // first: a toolbar button's click reaches its row too
-	for i := range p.rows {
+	// one row's click a frame, bounded by the live rows: activate can
+	// rebuild them (a "Show N more" / "Show fewer" row), and the rows after
+	// it are then others, or fewer
+	for i := 0; i < len(p.rows); i++ {
 		if p.click(i).Clicked(gtx) {
 			if tbHit && p.picked && i == p.sel {
 				continue // the button took it
@@ -1603,6 +1628,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 			if p.done {
 				return layout.Dimensions{}
 			}
+			break
 		}
 	}
 	// A row's onMouseMove picks it (SuggestionItem, client-boot-shared
@@ -1625,7 +1651,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 	if moved {
-		for i := range p.rows {
+		for i := 0; i < len(p.rows); i++ {
 			if p.rows[i].selectable() && p.click(i).Hovered() && !(p.picked && p.sel == i) {
 				p.pick(i)
 			}
