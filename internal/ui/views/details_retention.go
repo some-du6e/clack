@@ -39,6 +39,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"math"
 	"strconv"
 	"strings"
 
@@ -82,6 +83,12 @@ type cdRetention struct {
 // retentionInf is inf with the conversation as the rules read it.
 func (d *ChannelDetails) retentionInf(inf core.ChannelDetails) core.ChannelDetails {
 	inf.Conv = d.conv(inf, true)
+	if inf.Conv.Kind == "" {
+		// a DM opened before the store or conversations.info has it: the
+		// dialog's kind (a D id is a DM), not a zero conversation that
+		// skips the org's rule for DMs
+		inf.Conv.Kind = d.kind
+	}
 	return inf
 }
 
@@ -161,23 +168,42 @@ func (d *ChannelDetails) openRetention(inf core.ChannelDetails) {
 	d.x.dlg.rt = rt
 }
 
-// durValue is the input's number; ok false for an empty or unparsable
-// field (Slack's NaN).
-func (rt *cdRetention) durValue() (int, bool) {
-	n, err := strconv.Atoi(strings.TrimSpace(rt.dur.Text()))
+// durValue is the input's number as parseInt reads it (a sign and
+// digits, any length: a JS number, so a long one is a big float rather
+// than an overflow); ok false for an empty or unparsable field (NaN).
+func (rt *cdRetention) durValue() (float64, bool) {
+	return cdParseInt(rt.dur.Text())
+}
+
+func cdParseInt(t string) (float64, bool) {
+	t = strings.TrimSpace(t)
+	end := 0
+	if end < len(t) && (t[0] == '-' || t[0] == '+') {
+		end++
+	}
+	digits := end
+	for end < len(t) && t[end] >= '0' && t[end] <= '9' {
+		end++
+	}
+	if end == digits {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(t[:end], 64)
 	return n, err == nil
 }
 
-// cdRetentionDays is convertRetentionDurationToDays.
-func cdRetentionDays(n, unit int) int {
+// cdRetentionDays is convertRetentionDurationToDays, in float math as in
+// Slack (365 * n never wraps).
+func cdRetentionDays(n float64, unit int) float64 {
 	if unit == 1 {
 		return 365 * n
 	}
 	return n
 }
 
-// cdRetentionValid is isRetentionValid (no redaction buffer).
-func cdRetentionValid(typ, n int, ok bool, unit int) bool {
+// cdRetentionValid is isRetentionValid (no redaction buffer): an
+// integer number of days in (0, 36500).
+func cdRetentionValid(typ int, n float64, ok bool, unit int) bool {
 	if typ == 0 {
 		return true
 	}
@@ -185,11 +211,11 @@ func cdRetentionValid(typ, n int, ok bool, unit int) bool {
 		return false
 	}
 	s := cdRetentionDays(n, unit)
-	return s > 0 && s < 36500
+	return s == math.Trunc(s) && s > 0 && s < 36500
 }
 
 // cdRetentionDurationError is getCustomRetentionDurationError.
-func cdRetentionDurationError(n, unit int) string {
+func cdRetentionDurationError(n float64, unit int) string {
 	ns := nsChanOptions
 	if cdRetentionDays(n, unit) <= 0 {
 		return ns.T("Messages must be kept for at least 1 day.")
@@ -219,7 +245,7 @@ func cdTeamRetentionDescription(dur, typ int) string {
 }
 
 // cdRetentionWarning is getRetentionDurationWarning ("" for none).
-func cdRetentionWarning(typ, n int, ok bool, unit int, team core.Retention, admin bool) string {
+func cdRetentionWarning(typ int, n float64, ok bool, unit int, team core.Retention, admin bool) string {
 	if typ == 0 || !cdRetentionValid(typ, n, ok, unit) {
 		return ""
 	}
@@ -227,8 +253,8 @@ func cdRetentionWarning(typ, n int, ok bool, unit int, team core.Retention, admi
 	l := cdRetentionDays(n, unit)
 	switch {
 	case l < 30:
-		return ns.T("Historical messages help people find the information they need to get work done. Please check with your team before choosing to delete messages in this channel after {retentionDuration, plural, =1 {# day} other {# days}}.", "retentionDuration", n)
-	case team.Type == 2 && l > team.Duration:
+		return ns.T("Historical messages help people find the information they need to get work done. Please check with your team before choosing to delete messages in this channel after {retentionDuration, plural, =1 {# day} other {# days}}.", "retentionDuration", int(n)) // valid: |n| < 36500
+	case team.Type == 2 && l > float64(team.Duration):
 		if admin {
 			return ns.T("Heads up, It looks like you’re choosing to keep messages in this channel longer than the rest of this workspace.")
 		}
@@ -248,13 +274,14 @@ func (d *ChannelDetails) updateRetention(gtx C) {
 	}
 	c, id := d.h.Core(), d.id
 	if !rt.loaded {
-		if r, done, err := rt.load.get(); done && !rt.load.busy() {
-			if err == nil {
-				rt.typ, rt.initTyp, rt.initDur = r.Type, r.Type, r.Duration
-			}
+		// BaseMessageRetention shows the form only in getDataRetention's
+		// .then (prefsLoaded); with no catch, a failed read keeps the
+		// jumbo spinner until the modal closes
+		if r, done, err := rt.load.get(); done && !rt.load.busy() && err == nil {
+			rt.typ, rt.initTyp, rt.initDur = r.Type, r.Type, r.Duration
 			rt.dur.SetText(strconv.Itoa(rt.initDur))
 			rt.durText = rt.dur.Text()
-			rt.loaded = true // BaseMessageRetention shows the form once the fetch settles
+			rt.loaded = true
 		}
 		return
 	}
@@ -271,11 +298,11 @@ func (d *ChannelDetails) updateRetention(gtx C) {
 	if t := rt.dur.Text(); t != rt.durText {
 		rt.durText = t
 		n, ok := rt.durValue()
-		rt.changed = !ok || n != rt.initDur // parseInt: NaN differs from anything
+		rt.changed = !ok || n != float64(rt.initDur) // parseInt: NaN differs from anything
 	}
 	n, ok := rt.durValue()
 	if dl.ok.Clicked(gtx) && !rt.saving && rt.changed && cdRetentionValid(rt.typ, n, ok, rt.unit) {
-		typ, days := rt.typ, cdRetentionDays(n, rt.unit)
+		typ, days := rt.typ, int(cdRetentionDays(n, rt.unit)) // valid: an integer under 36500
 		rt.saving = true
 		rt.op.load(d.h, false, func(ctx context.Context) (bool, error) { return true, c.SetChannelRetention(ctx, id, typ, days) })
 	}
@@ -291,6 +318,13 @@ func (d *ChannelDetails) updateRetention(gtx C) {
 	}
 }
 
+// cdRetentionTitle is MessageRetentionModal's title. An empty
+// ChannelName (a DM or group DM) leaves "Edit  message history", which
+// HTML draws with one space.
+func cdRetentionTitle(name string) string {
+	return strings.Join(strings.Fields(nsChannelDetails.T("Edit {channelName} message history", "channelName", name)), " ")
+}
+
 // retentionDialog draws MessageRetentionModal.
 func (d *ChannelDetails) retentionDialog(gtx C, full image.Point, name string, cancel W) {
 	dl := &d.x.dlg
@@ -298,7 +332,7 @@ func (d *ChannelDetails) retentionDialog(gtx C, full image.Point, name string, c
 	if rt == nil {
 		return
 	}
-	title := nsChannelDetails.T("Edit {channelName} message history", "channelName", name)
+	title := cdRetentionTitle(name)
 	var body []W
 	if rt.err != "" {
 		body = append(body, d.cdLegacyAlert("error", rt.err), cdSpace(16))
@@ -320,7 +354,7 @@ func (d *ChannelDetails) retentionDialog(gtx C, full image.Point, name string, c
 }
 
 // retentionForm is DataRetention.
-func (d *ChannelDetails) retentionForm(rt *cdRetention, n int, ok, valid bool) []W {
+func (d *ChannelDetails) retentionForm(rt *cdRetention, n float64, ok, valid bool) []W {
 	ns := nsChanOptions
 	team := d.teamName()
 	out := []W{
@@ -379,7 +413,7 @@ func (d *ChannelDetails) retentionForm(rt *cdRetention, n int, ok, valid bool) [
 // retentionInput is CustomRetentionDurationInput: the number field (a
 // c-input_text: 36 tall, radius 8, 1px border, 4px 12px padding, 15px,
 // 20px under it) and the Days / Years select, then the error line.
-func (d *ChannelDetails) retentionInput(gtx C, rt *cdRetention, n int, ok, valid bool) D {
+func (d *ChannelDetails) retentionInput(gtx C, rt *cdRetention, n float64, ok, valid bool) D {
 	invalid := ok && !valid // the field is red unless it's empty (NaN)
 	return col(gtx,
 		layout.Rigid(func(gtx C) D {

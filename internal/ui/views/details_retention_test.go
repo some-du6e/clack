@@ -277,3 +277,136 @@ func TestRetentionTextsLikeSlack(t *testing.T) {
 		t.Errorf("100 years: %q", got)
 	}
 }
+
+// isRetentionValid in Slack's float math: Years × 365 never wraps, so the
+// values a 64-bit int would wrap into range (365 × 5508753709683126373 ≡ 1,
+// 365 × -758085372892173354 ≡ 30) stay invalid, and parseInt reads
+// numbers past 2^63 instead of failing.
+func TestRetentionDurationBoundsLikeSlack(t *testing.T) {
+	const tooLong = "Slack can only keep messages for up to 99 years, but thanks for your vote of confidence."
+	const tooShort = "Messages must be kept for at least 1 day."
+	for _, c := range []struct {
+		text  string
+		unit  int // 0 days, 1 years
+		valid bool
+		err   string
+	}{
+		{"5508753709683126373", 1, false, tooLong},
+		{"-758085372892173354", 1, false, tooShort},
+		{"99999999999999999999", 0, false, tooLong},
+		{"99999999999999999999", 1, false, tooLong},
+		{"99", 1, true, ""},
+		{"100", 1, false, tooLong},
+		{"36499", 0, true, ""},
+		{"36500", 0, false, tooLong},
+		{"0", 1, false, tooShort},
+	} {
+		if got := retValidText(1, c.text, c.unit); got != c.valid {
+			t.Errorf("%s (unit %d) valid = %v, want %v", c.text, c.unit, got, c.valid)
+		}
+		if !c.valid {
+			if got := retDurErrText(c.text, c.unit); got != c.err {
+				t.Errorf("%s (unit %d) error %q, want %q", c.text, c.unit, got, c.err)
+			}
+		}
+	}
+	if got := retTitle(""); got != "Edit message history" {
+		t.Errorf("a DM's title %q: an empty ChannelName leaves one space in HTML", got)
+	}
+	if got := retTitle("#plans"); got != "Edit #plans message history" {
+		t.Errorf("a channel's title %q", got)
+	}
+}
+
+func TestDetailsRetentionModalEdges(t *testing.T) {
+	owner := func(e *cdTestEnv) { retPaid(e); retViewerAs(e, true, false) }
+	edit := func(t *testing.T, srv *cdTestServer) *cdTestEnv {
+		e := retOpen(t, srv, "C1", owner)
+		e.scrollTo(cdSecPermissions)
+		e.d.Press("message-history")
+		e.until("getDataRetention", func() bool { return retLoadSettled(e) })
+		e.frame()
+		return e
+	}
+	custom := `{"ok":true,"retention":{"retention_type":1,"retention_duration":30}}`
+	t.Run("a wrapping Years value isn't saved", func(t *testing.T) {
+		srv := &cdTestServer{people: 3, self: `"is_owner":true`, replies: map[string]string{"conversations.getRetention": custom}}
+		e := edit(t, srv)
+		retPickUnit(e, 1)
+		for _, v := range []string{"5508753709683126373", "-758085372892173354"} {
+			retSetDuration(e, v)
+			e.frame()
+			e.d.Press("save")
+			for range 3 {
+				e.frame()
+			}
+		}
+		if n := len(srv.seen("conversations.setRetention")); n != 0 {
+			t.Errorf("Save Changes sent %d setRetention calls for a wrapped duration: %v", n, srv.seen("conversations.setRetention")[0].form)
+		}
+	})
+	t.Run("a failed getRetention keeps the spinner", func(t *testing.T) {
+		srv := &cdTestServer{people: 3, self: `"is_owner":true`, replies: map[string]string{
+			"conversations.getRetention": `{"ok":false,"error":"ratelimited"}`}}
+		e := edit(t, srv)
+		for range 3 {
+			e.frame()
+		}
+		if retLoaded(e) || retType(e) != 0 {
+			t.Errorf("after a failed getRetention the form shows (type %d); Slack's BaseMessageRetention keeps the spinner", retType(e))
+		}
+	})
+	t.Run("Escape closes the open Days / Years menu first", func(t *testing.T) {
+		srv := &cdTestServer{people: 3, self: `"is_owner":true`, replies: map[string]string{"conversations.getRetention": custom}}
+		e := edit(t, srv)
+		retSetDuration(e, "45")
+		e.frame()
+		retOpenUnitMenu(e)
+		e.frame()
+		if !e.d.Escape() {
+			t.Fatal("Escape closed the details")
+		}
+		e.frame()
+		if e.d.Dialog() != "retention" || retUnitMenuOpen(e) {
+			t.Errorf("after Escape: dialog %q, menu open %v; want the modal with the menu closed", e.d.Dialog(), retUnitMenuOpen(e))
+		}
+		if retDuration(e) != "45" {
+			t.Errorf("the typed duration became %q", retDuration(e))
+		}
+	})
+}
+
+// A DM's Settings tab shows only when settingsSections has a section, so
+// it never opens blank or appears and then goes away.
+func TestDetailsRetentionDMTabStable(t *testing.T) {
+	t.Run("archived group DM with exports on", func(t *testing.T) {
+		e := newCDTestEnv(t, &cdTestServer{people: 3}, "G8")
+		retPaid(e)
+		e.h.app.SetExperimentGroup("channel_exports", "on")
+		e.until("info", e.loaded)
+		for range 5 {
+			e.frame()
+		}
+		inf, _, _ := e.d.info.get()
+		if retSettingsTab(e) && len(e.d.settingsSections(inf)) == 0 {
+			t.Errorf("an archived group DM shows a Settings tab with no sections")
+		}
+	})
+	t.Run("Grid org that turns overrides off, a DM the store doesn't hold", func(t *testing.T) {
+		srv := &cdTestServer{people: 2, replies: map[string]string{
+			"enterprise.prefs.get": `{"ok":true,"org_prefs":{},"locked_prefs":{},"unlocked_prefs":{"allow_retention_override":false}}`}}
+		e := newCDTestEnv(t, srv, "D2")
+		retPaid(e)
+		if err := e.h.app.LoadEnterprisePrefs(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		seen := false
+		for i := 0; i < 40 && !(e.loaded() && i > 10); i++ {
+			e.frame()
+			seen = seen || retSettingsTab(e)
+		}
+		if seen {
+			t.Error("the DM showed a Settings tab its org's unlocked allow_retention_override hides")
+		}
+	})
+}
