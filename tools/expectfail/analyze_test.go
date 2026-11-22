@@ -67,6 +67,8 @@ func TestVerdict(t *testing.T) {
 			[]string{"run TestA", "run TestA/sub", "fail TestA/sub", "run TestA/ok", "pass TestA/ok", "fail TestA"}, true, true, ""},
 		{"an unlisted sibling fails as well", "TestA/sub", 1,
 			[]string{"run TestA", "run TestA/sub", "fail TestA/sub", "run TestA/other", "fail TestA/other", "fail TestA"}, false, false, "TestA/other failed"},
+		{"a parent with a failure of its own beside a listed subtest", "TestA/sub", 1,
+			[]string{"run TestA", "run TestA/sub", "fail TestA/sub", "out TestA a_test.go:30: the parent's own check", "fail TestA"}, false, false, "TestA failed with output of its own"},
 		{"a listed parent covers its subtests", "TestA", 1,
 			[]string{"run TestA", "run TestA/x", "fail TestA/x", "fail TestA"}, true, true, ""},
 		{"a panic in the listed test", "TestA", 2,
@@ -168,6 +170,18 @@ func TestCheck(t *testing.T) {
 			}
 		})
 	}
+	// a rerun of the failed jobs: the leg's attempt 1 records (an extra
+	// failure) give way to its attempt 2's; another leg's attempt 1 stays
+	t.Run("a rerun's attempt replaces the leg's", func(t *testing.T) {
+		dir := t.TempDir()
+		writeRec(t, filepath.Join(dir, "a1"), Record{Job: "j1", Leg: "j1-0", Attempt: 1, Package: "p", Exit: 1, Unexpected: []string{"TestZ failed"}})
+		writeRec(t, filepath.Join(dir, "a2"), Record{Job: "j1", Leg: "j1-0", Attempt: 2, Package: "p", Exit: 1, Masked: true, Listed: []TestResult{{Name: "TestA", Fails: 1}}})
+		writeRec(t, filepath.Join(dir, "b1"), Record{Job: "j1", Leg: "j1-1", Attempt: 1, Package: "q", Exit: 1, Masked: true, Listed: []TestResult{{Name: "TestB", Fails: 1}}})
+		var out bytes.Buffer
+		if code := check(dir, "TestA,TestB", `{"j1":{"result":"success"}}`, "", &out); code != 0 {
+			t.Errorf("exit %d: %s", code, out.String())
+		}
+	})
 	// the summary shows the failure's first lines
 	dir := t.TempDir()
 	writeRec(t, filepath.Join(dir, "a"), failA)

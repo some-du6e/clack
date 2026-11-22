@@ -14,6 +14,9 @@ import (
 var proofWorkflows = []string{"flake-check", "ci", "threads-audit", "files-view", "hover-card", "bk-gallery-shots",
 	"ui-taut", "ch-details-shots", "ui-slick", "composer-taut", "bk-agent-shots"}
 
+// wireHint is what each wiring failure says to do.
+const wireHint = "python3 -I .github/scripts/expect_fail_wire.py .github/workflows/<file>.yml adds what's missing"
+
 type wfJob struct {
 	id    string
 	lines []string
@@ -110,13 +113,17 @@ func TestWorkflowsWireExpectFail(t *testing.T) {
 			if sg < 0 {
 				continue
 			}
+			setup := ""
+			if sg+1 < len(j.steps) {
+				setup = strings.Join(j.steps[sg+1], "\n")
+			}
 			if sg+1 >= len(j.steps) || !uses(j.steps[sg+1], "./.github/actions/expect-fail") ||
-				!strings.Contains(strings.Join(j.steps[sg+1], "\n"), "tests: ${{ inputs.expect_fail }}") {
-				t.Errorf("%s: job %s: the step after setup-go isn't ./.github/actions/expect-fail with tests: ${{ inputs.expect_fail }}", name, j.id)
+				!strings.Contains(setup, "tests: ${{ inputs.expect_fail }}") || !strings.Contains(setup, "leg: ${{ github.job }}-${{ strategy.job-index }}") {
+				t.Errorf("%s: job %s: the step after setup-go isn't ./.github/actions/expect-fail with its tests and leg: %s", name, j.id, wireHint)
 			}
 			last := j.steps[len(j.steps)-1]
 			if !uses(last, "./.github/actions/expect-fail-report") || !strings.Contains(strings.Join(last, "\n"), "if: ${{ always() && env.XF_ID }}") {
-				t.Errorf("%s: job %s: its last step isn't ./.github/actions/expect-fail-report with if: ${{ always() && env.XF_ID }}", name, j.id)
+				t.Errorf("%s: job %s: its last step isn't ./.github/actions/expect-fail-report with if: ${{ always() && env.XF_ID }}: %s", name, j.id, wireHint)
 			}
 		}
 		if check == nil {
@@ -126,7 +133,7 @@ func TestWorkflowsWireExpectFail(t *testing.T) {
 		body := strings.Join(check.lines, "\n")
 		for _, id := range ids {
 			if !regexp.MustCompile(`(?m)^      - ` + regexp.QuoteMeta(id) + `\s*$`).MatchString(body) {
-				t.Errorf("%s: the expect-fail job's needs lacks %s", name, id)
+				t.Errorf("%s: the expect-fail job's needs lacks %s: %s", name, id, wireHint)
 			}
 		}
 		if !strings.Contains(body, "if: ${{ always() && inputs.expect_fail != '' }}") {
@@ -147,9 +154,23 @@ func TestEvidenceBranchesSkipPushRuns(t *testing.T) {
 		text := readWorkflow(t, name)
 		on := text[strings.Index(text, "\non:\n"):]
 		on = on[:strings.Index(on, "\n  pull_request:")]
-		for _, want := range []string{`branches-ignore: ["**-red", "**-red[0-9]*", "**-mut", "**-mut[0-9]*", "**-r[0-9]*red", "**-r[0-9]*red[0-9]*", "**-r[0-9]*mut", "**-r[0-9]*mut[0-9]*"]`, `tags: ["**"]`} {
-			if !strings.Contains(on, want) {
-				t.Errorf("%s: push lacks %s", name, want)
+		if !strings.Contains(on, `tags: ["**"]`) {
+			t.Errorf("%s: push lacks tags: [\"**\"]", name)
+		}
+		m := regexp.MustCompile(`branches-ignore: \[([^\]\n]*(?:\][^\]\n]*)*)\]\n`).FindStringSubmatch(on)
+		if m == nil {
+			t.Errorf("%s: push has no branches-ignore", name)
+			continue
+		}
+		var globs []string
+		for _, g := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(m[1], -1) {
+			globs = append(globs, g[1])
+		}
+		// the globs skip exactly the branches setup.sh calls evidence
+		for _, b := range evidenceSamples {
+			skip := slices.ContainsFunc(globs, func(g string) bool { return globMatch(g, b) })
+			if ev := evidenceRule.MatchString(b); skip != ev {
+				t.Errorf("%s: branch %s: push skipped %v, evidence %v", name, b, skip, ev)
 			}
 		}
 	}
@@ -158,17 +179,53 @@ func TestEvidenceBranchesSkipPushRuns(t *testing.T) {
 	}
 }
 
+const evidenceRegex = `-(r[0-9]+)?(red|mut)([0-9]+[a-z]?)?$`
+
+var (
+	evidenceRule    = regexp.MustCompile(evidenceRegex)
+	evidenceSamples = []string{"thread-load-speed-red4", "caret-align-mut1", "ci-speed-3-red", "ci-speed-3-red13c", "ci-speed-2-red9b",
+		"blockkit-coverage-r3red5", "blockkit-coverage-r3mut1", "x-r12red", "x-r3mut", "x-mut", "x-red1b", "x-red12cd", "x-red1-b",
+		"msg-latency-3-red-minors", "red-badge", "quiet-ci", "ci-speed-2-grn8", "redraw-fix", "red-team", "x-redx", "x-r-red1", "x-rxred1",
+		"feature/x-red2", "x-mut4z", "x-mutt", "ui", "main"}
+)
+
+// globMatch is GitHub's branch filter glob, as far as the push filters
+// use it: ** any run, * any run without /, [..] a class, + one or more of
+// what came before.
+func globMatch(glob, s string) bool {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(glob); i++ {
+		switch c := glob[i]; {
+		case strings.HasPrefix(glob[i:], "**"):
+			b.WriteString(".*")
+			i++
+		case c == '*':
+			b.WriteString("[^/]*")
+		case c == '[':
+			j := strings.IndexByte(glob[i:], ']')
+			b.WriteString(glob[i : i+j+1])
+			i += j
+		case c == '+':
+			b.WriteString("+")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	b.WriteString("$")
+	return regexp.MustCompile(b.String()).MatchString(s)
+}
+
 // The setup's evidence-branch rule matches the push filter's branches.
 func TestEvidenceBranchPattern(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "actions", "expect-fail", "setup.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	const rule = `-(r[0-9]+)?(red|mut)([0-9]+[a-z]?)?$`
-	if !strings.Contains(string(b), `=~ `+rule+` ]]`) {
-		t.Fatal("setup.sh's evidence-branch rule changed: keep it and the push filters alike")
+	if !strings.Contains(string(b), `=~ `+evidenceRegex+` ]]`) {
+		t.Fatal("setup.sh's evidence-branch rule changed: keep it, evidenceRegex and the push filters alike")
 	}
-	re := regexp.MustCompile(rule)
+	re := evidenceRule
 	for _, c := range []struct {
 		ref string
 		ev  bool

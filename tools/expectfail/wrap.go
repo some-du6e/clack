@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,9 +25,11 @@ import (
 func wrap(bin string, args []string) int {
 	listed, err := parseListed(os.Getenv("EXPECT_FAIL"))
 	base := strings.TrimSuffix(filepath.Base(bin), ".exe")
-	if err != nil || !strings.HasSuffix(base, ".test") || hasArg(args, "-test.list") {
+	if err != nil || !strings.HasSuffix(base, ".test") || hasArg(args, "-test.list") || os.Getenv("XF_OFF") != "" {
 		// go run's binaries (GOFLAGS -exec reaches them too), test
-		// listings, or no list: as if it weren't here
+		// listings, no list, or a step that needs a binary's real status
+		// (XF_OFF=1: gio-layer-fix.sh's tests that must panic on stock
+		// Gio): as if it weren't here
 		return passthrough(bin, args)
 	}
 	jsonMode := false
@@ -117,7 +120,8 @@ func wrap(bin string, args []string) int {
 		}
 	}
 	rec := verdict(r, exit, listed)
-	rec.Job, rec.Package = jobName(), pkg
+	rec.Job, rec.Package, rec.Leg = jobName(), pkg, os.Getenv("XF_LEG")
+	rec.Attempt, _ = strconv.Atoi(os.Getenv("GITHUB_RUN_ATTEMPT"))
 	save(rec)
 	say(os.Stdout, rec)
 	switch {

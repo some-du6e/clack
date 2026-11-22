@@ -156,6 +156,11 @@ func TestWrapUnderGoTest(t *testing.T) {
 			t.Fatalf("exit %d:\n%s", r.code, r.out)
 		}
 	})
+	t.Run("XF_OFF=1: the binary's own status (a step that needs a real failure)", func(t *testing.T) {
+		if r := gotest("TestFail", []string{"XF_OFF=1"}, "-run", "^TestFail$", "."); r.code == 0 || len(r.recs) != 0 {
+			t.Fatalf("exit %d, %d records:\n%s", r.code, len(r.recs), r.out)
+		}
+	})
 	t.Run("go test -list goes through untouched", func(t *testing.T) {
 		if r := gotest("TestFail", nil, "-list", ".", "."); r.code != 0 || !strings.Contains(r.out, "TestHang") {
 			t.Fatalf("exit %d:\n%s", r.code, r.out)

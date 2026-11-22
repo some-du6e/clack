@@ -11,10 +11,15 @@ inputs:
     description: the tests that must fail, comma-separated (TestA,TestB/sub)
     required: false
     default: ""
+  leg:
+    description: the job's leg, its id and strategy.job-index (a rerun's records replace that leg's)
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
     - shell: bash
       env:
         XF_TESTS: ${{ inputs.tests }}
+        XF_LEG_IN: ${{ inputs.leg }}
       run: bash "$GITHUB_ACTION_PATH/setup.sh"

@@ -9,10 +9,11 @@ name: supply-chain
 # (internal/jsrt/jsrt.wasm's reproducibility is checked by jsrt.yml's wasm job.)
 on:
   push:
-    # evidence branches (-redN, -mutN) prove a failure: their runs are
+    # evidence branches (-redN, -mutN, ... as expect-fail's setup.sh matches
+    # them: tools/expectfail's TestEvidenceBranchesSkipPushRuns) prove a failure: their runs are
     # dispatched with expect_fail, and a push run would only end red
     # (docs/CI-SPEED.md, "Proof runs")
-    branches-ignore: ["**-red", "**-red[0-9]*", "**-mut", "**-mut[0-9]*", "**-r[0-9]*red", "**-r[0-9]*red[0-9]*", "**-r[0-9]*mut", "**-r[0-9]*mut[0-9]*"]
+    branches-ignore: ["**-red", "**-red[0-9]+", "**-red[0-9]+[a-z]", "**-mut", "**-mut[0-9]+", "**-mut[0-9]+[a-z]", "**-r[0-9]+red", "**-r[0-9]+red[0-9]+", "**-r[0-9]+red[0-9]+[a-z]", "**-r[0-9]+mut", "**-r[0-9]+mut[0-9]+", "**-r[0-9]+mut[0-9]+[a-z]"]
     tags: ["**"]
   pull_request:
   workflow_dispatch:

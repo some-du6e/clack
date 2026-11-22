@@ -35,6 +35,7 @@ func readRecords(dir string) ([]Record, error) {
 		recs = append(recs, r)
 		return nil
 	})
+	recs = latestAttempts(recs)
 	sort.SliceStable(recs, func(i, j int) bool {
 		if recs[i].Job != recs[j].Job {
 			return recs[i].Job < recs[j].Job
@@ -42,6 +43,25 @@ func readRecords(dir string) ([]Record, error) {
 		return recs[i].Package < recs[j].Package
 	})
 	return recs, err
+}
+
+// latestAttempts keeps each leg's records of its latest attempt: a rerun
+// of a proof run's failed jobs reruns those legs only, and the failed
+// attempt's artifacts stay in the run beside the new ones.
+func latestAttempts(recs []Record) []Record {
+	latest := map[string]int{}
+	for _, r := range recs {
+		if r.Leg != "" && r.Attempt > latest[r.Leg] {
+			latest[r.Leg] = r.Attempt
+		}
+	}
+	out := recs[:0]
+	for _, r := range recs {
+		if r.Leg == "" || r.Attempt == latest[r.Leg] {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // seen is one listed test across records.

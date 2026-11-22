@@ -31,7 +31,10 @@ type testState struct {
 	// Head is the first lines of the test's first failure (its own
 	// output, without the === and --- framing lines).
 	Head []string
-	buf  []string
+	// OwnOut: a failed run printed lines of its own (not its subtests'):
+	// a parent that failed by itself, not only through a subtest
+	OwnOut bool
+	buf    []string
 }
 
 // binRun collects one test binary's events.
@@ -94,6 +97,9 @@ func (r *binRun) add(e event) {
 			st.Skips++
 		case "fail":
 			st.Fails++
+			if len(st.buf) > 0 {
+				st.OwnOut = true
+			}
 			if st.Head == nil {
 				st.Head = append([]string{}, st.buf...)
 			}
@@ -154,7 +160,12 @@ func (t TestResult) failed() bool { return t.Fails > 0 || t.Open > 0 }
 // Record is one test binary's run under expect_fail, written to
 // $XF_DIR/results for the job's report and the run's check.
 type Record struct {
-	Job     string `json:"job"`
+	Job string `json:"job"`
+	// Leg is the job's matrix leg (job id and strategy.job-index) and
+	// Attempt the run's attempt: a rerun of failed jobs leaves the failed
+	// attempt's records in the run, and the check keeps each leg's latest
+	Leg     string `json:"leg,omitempty"`
+	Attempt int    `json:"attempt,omitempty"`
 	Package string `json:"package"`
 	Exit    int    `json:"exit"`
 	// Masked: the binary failed, every failure was a listed test's, and
@@ -196,13 +207,21 @@ func verdict(r *binRun, exit int, l Listed) Record {
 			explained[f] = true
 		}
 	}
+	// a parent fails when a subtest does: a listed subtest's explains it,
+	// unless the parent printed lines of its own (its own t.Error, or a
+	// t.Log, which test2json can't tell apart): then list the parent
+	ownOut := map[string]bool{}
 	for _, f := range failed {
 		if explained[f] {
 			continue
 		}
 		for g := range explained {
 			if strings.HasPrefix(g, f+"/") {
-				explained[f] = true
+				if r.tests[f].OwnOut {
+					ownOut[f] = true
+				} else {
+					explained[f] = true
+				}
 				break
 			}
 		}
@@ -211,7 +230,10 @@ func verdict(r *binRun, exit int, l Listed) Record {
 		if !explained[f] {
 			st := r.tests[f]
 			why := "failed"
-			if st.Fails == 0 {
+			switch {
+			case ownOut[f]:
+				why = "failed with output of its own, besides its listed subtests' (list " + f + " to cover it)"
+			case st.Fails == 0:
 				why = "was still running when the binary exited " + fmt.Sprint(exit)
 			}
 			rec.Unexpected = append(rec.Unexpected, f+" "+why)

@@ -1,12 +1,14 @@
 name: ci
-# a dispatch with `only` says so in the run list ("ci only=full-test")
-run-name: ${{ inputs.only && format('ci only={0}', inputs.only) || '' }}
+# a dispatch with `only` says so in the run list ("ci only=full-test"), a
+# proof run (expect_fail) as one
+run-name: ${{ inputs.expect_fail && format('ci proof expect_fail={0}{1}', inputs.expect_fail, inputs.only && format(' only={0}', inputs.only) || '') || inputs.only && format('ci only={0}', inputs.only) || '' }}
 on:
   push:
-    # evidence branches (-redN, -mutN) prove a failure: their runs are
+    # evidence branches (-redN, -mutN, ... as expect-fail's setup.sh matches
+    # them: tools/expectfail's TestEvidenceBranchesSkipPushRuns) prove a failure: their runs are
     # dispatched with expect_fail, and a push run would only end red and
     # ping Karim's phone (docs/CI-SPEED.md, "Proof runs")
-    branches-ignore: ["**-red", "**-red[0-9]*", "**-mut", "**-mut[0-9]*", "**-r[0-9]*red", "**-r[0-9]*red[0-9]*", "**-r[0-9]*mut", "**-r[0-9]*mut[0-9]*"]
+    branches-ignore: ["**-red", "**-red[0-9]+", "**-red[0-9]+[a-z]", "**-mut", "**-mut[0-9]+", "**-mut[0-9]+[a-z]", "**-r[0-9]+red", "**-r[0-9]+red[0-9]+", "**-r[0-9]+red[0-9]+[a-z]", "**-r[0-9]+mut", "**-r[0-9]+mut[0-9]+", "**-r[0-9]+mut[0-9]+[a-z]"]
     tags: ["**"]
   pull_request:
   workflow_dispatch:
