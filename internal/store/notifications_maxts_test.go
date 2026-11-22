@@ -59,16 +59,20 @@ func TestNotificationsMaxTSLikeSlack(t *testing.T) {
 	}
 }
 
-// An update_thread_state takes the threads' state at once, and a
-// client.counts answer requested before it doesn't put back the older
-// state it carries; one requested after it does. An event with no state
-// changes nothing.
+// An update_thread_state takes the threads' state at once, and neither
+// the boot data read from disk after it nor a client.counts answer
+// requested before it puts back the older state they carry; an answer
+// requested after it does. An event with no state changes nothing.
 func TestThreadStateNewerThanCountsAnswer(t *testing.T) {
 	s := New("")
 	yes, none := true, 0
 	since := s.Seq() // a client.counts request goes out
 	if !s.SetThreadState(&yes, &none, map[string]int{"C1": 1}) {
 		t.Fatal("SetThreadState reported no change for new state")
+	}
+	s.InstallBootData(&BootData{}) // last session's: no unread threads
+	if !s.ThreadsUnread || s.ThreadsUnreadByChannel["C1"] != 1 {
+		t.Errorf("boot data installed after the event put back its state: unread %v, by channel %v", s.ThreadsUnread, s.ThreadsUnreadByChannel)
 	}
 	if s.SetThreadState(&yes, &none, map[string]int{"C1": 1}) {
 		t.Error("SetThreadState reported a change for the same state")
