@@ -161,6 +161,18 @@ func caretReadback(t *testing.T, a *App, frames <-chan caretGPUFrame, blink time
 		}
 		return img
 	}
+	// Partial frames came back on just now, after the whole-frames turns,
+	// and the window takes a few frames to draw partial again: a fresh
+	// frame texture fills, the sticky atlas's first repack makes the next
+	// frame's damage too big (whole, straight into the window), and two
+	// more fill the texture again (gpu.FrameStats.Whole says which). At
+	// 1440x900 that was four blinks, all of the 2.4 s the first wait gave
+	// (3 of 50 runs: 44960352218, 44963639630). So the window settles
+	// first.
+	drain()
+	if _, ok := next("partial frame since partial frames came back on", 10*blink, func(f caretGPUFrame) bool { return f.partial }); !ok {
+		return
+	}
 	for try := 0; try < 4; try++ {
 		drain()
 		if _, ok := next("blink's partial frame", 4*blink, isBlink); !ok {
