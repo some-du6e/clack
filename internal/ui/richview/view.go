@@ -100,6 +100,7 @@ type View struct {
 	hovOn    bool
 	probe    hovercard.Probe // keeps ptr and hover honest when the layout moves (hovercard/anchor.go)
 	side     map[any]bool    // each trigger's Popover side (hovercard Request.Opposite), while drawn
+	origin   int             // a tag: the view's area, for its window origin as the layout put it (follow)
 	// the link preview whose hover trigger was last reported, and each
 	// preview's hover card content (unfurl_hover.go)
 	prevKey  previewKey
@@ -478,7 +479,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.hovering {
 		v.probe.Layout(gtx, v.ptr)
 	}
-	v.mounted()
+	v.mounted(gtx, size)
 	pointer.CursorText.Add(gtx.Ops)
 	for i := range v.d.hits {
 		hr := &v.d.hits[i]
@@ -1472,8 +1473,9 @@ func (v *View) left() {
 }
 
 // mounted tells the hover card controller this view is drawn, when the
-// open or pending card is one of its triggers' (Controller.Mounted).
-func (v *View) mounted() {
+// open or pending card is one of its triggers' (Controller.Mounted). size
+// is the view's laid-out size.
+func (v *View) mounted(gtx layout.Context, size image.Point) {
 	c := hovercard.Default()
 	if c == nil {
 		return
@@ -1484,6 +1486,7 @@ func (v *View) mounted() {
 			if k.v == v {
 				c.Mounted(k)
 				v.keepSide(c, k)
+				v.follow(gtx, c, k, size)
 			}
 		case previewKey:
 			if k.v == v {
@@ -1491,6 +1494,32 @@ func (v *View) mounted() {
 				v.keepSide(c, k)
 			}
 		}
+	}
+}
+
+// follow tells an open canvas card where its mention is this frame
+// (Controller.Follow): Quip's positioners place the bubble again after
+// any change to the document, so it goes with its mention while the
+// pointer rests on it. The mention's window bounds come from the layout,
+// not the pointer: the view's area as the last frame put it (Gio patch
+// 53), whose frame asks for the next one when it moved the view (patch
+// 57: a block inserted above it, the canvas scrolling, the pane
+// resizing). The origin learned from pointer events is stale exactly
+// then: a collaborator's edit moves the mention under a pointer resting
+// on the card, and no pointer event reaches the view.
+func (v *View) follow(gtx layout.Context, c *hovercard.Controller, k mentionKey, size image.Point) {
+	if !c.Follows(k) || k.t < 0 || int(k.t) >= len(v.d.targets) {
+		return
+	}
+	func() {
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, &v.origin)
+	}()
+	if org, ok := areaOrigin(gtx, &v.origin); ok {
+		// the router's coordinates include Gio's own title bar; the
+		// card's are the frame's
+		c.Follow(k, v.targetBounds(k.t).Add(org.Sub(c.FrameOrigin())))
 	}
 }
 

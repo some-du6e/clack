@@ -15,9 +15,10 @@ import (
 // the boot API lands.
 
 type enterprisePrefs struct {
-	mu     sync.Mutex
-	org    map[string]json.RawMessage
-	locked map[string]json.RawMessage
+	mu       sync.Mutex
+	org      map[string]json.RawMessage
+	locked   map[string]json.RawMessage
+	unlocked map[string]json.RawMessage
 }
 
 var entPrefsIndex sync.Map // *App → *enterprisePrefs
@@ -47,12 +48,13 @@ func (a *App) setEnterprisePrefs(raw map[string]json.RawMessage) {
 			raw = inner
 		}
 	}
-	var org, locked map[string]json.RawMessage
+	var org, locked, unlocked map[string]json.RawMessage
 	_ = json.Unmarshal(raw["org_prefs"], &org)
 	_ = json.Unmarshal(raw["locked_prefs"], &locked)
+	_ = json.Unmarshal(raw["unlocked_prefs"], &unlocked)
 	ep := a.entPrefs()
 	ep.mu.Lock()
-	ep.org, ep.locked = org, locked
+	ep.org, ep.locked, ep.unlocked = org, locked, unlocked
 	ep.mu.Unlock()
 }
 
@@ -71,6 +73,15 @@ func (a *App) EnterpriseLockedPref(name string) json.RawMessage {
 	ep.mu.Lock()
 	defer ep.mu.Unlock()
 	return ep.locked[name]
+}
+
+// EnterpriseUnlockedPref is getUnlockedOrgPref (client-boot TI4y D1):
+// enterprisePrefs.unlocked_prefs[name], nil when unset.
+func (a *App) EnterpriseUnlockedPref(name string) json.RawMessage {
+	ep := a.entPrefs()
+	ep.mu.Lock()
+	defer ep.mu.Unlock()
+	return ep.unlocked[name]
 }
 
 // EnterpriseOrgPrefTrue is `!0 === getOrgPref(state, name)`.

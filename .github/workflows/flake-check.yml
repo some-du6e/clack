@@ -3024,6 +3024,10 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 30m -run "$UI_TESTS" ./internal/ui || rc=1
           # notify-file-meta (2026-11-21): the toast text's file and clip lines
           go test -count=$COUNT -timeout 10m -run '^(TestFileTypeLikeSlack|TestNoteFilesOf|TestNoteFileTitle|TestNotificationText)' ./internal/richtext || rc=1
+          # notify-file-meta-2: the file store's copy, Slack's own initial_comment
+          go test -count=$COUNT -timeout 10m -run '^TestNoteFilesNow' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestTruthy|TestFileInitialCommentKept)$' ./internal/slack || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestMirrorFileInitialComment$' ./internal/taut || rc=1
           exit $rc
   system-dm-toast-windows:
     if: ${{ inputs.only != '' && startsWith('system-dm-toast-windows', inputs.only) }}

@@ -52,8 +52,23 @@ const (
 // (9ldh convertChannelToPrivateApi, 6ndL conversationsConvertToPrivate):
 // conversations.convertToPrivate {channel} (no name or user_ids from
 // this modal).
+//
+// Done, Slack's convertChannelToPrivateApi (boot-shared 6Swf) dispatches
+// xulU convertToPrivate: the stored channel becomes is_private, so the
+// sidebar row and the header take the lock before any event arrives.
 func (a *App) ConvertToPrivate(ctx context.Context, ch string) error {
-	return a.C.Call(ctx, "conversations.convertToPrivate", url.Values{"channel": {ch}}, nil)
+	if err := a.C.Call(ctx, "conversations.convertToPrivate", url.Values{"channel": {ch}}, nil); err != nil {
+		return err
+	}
+	if old, ok := a.S.Conv(ch); ok && old != nil {
+		c := *old
+		c.IsPrivate = true
+		a.S.PutConvLocal(c)
+		if v, ok := a.Conv(ch); ok {
+			a.emit(Event{Type: "conv", Channel: ch, Conv: &v})
+		}
+	}
+	return nil
 }
 
 // DeleteChannel is DeleteChannelModal's Delete Channel (ew/6, 6ndL

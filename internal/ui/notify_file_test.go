@@ -9,16 +9,19 @@ import (
 )
 
 // heldNames is a resolver whose store holds these members' names
-// (MemberNameHeld, getPrefCompliantMemberName).
+// (MemberName, getPrefCompliantMemberName of getMemberById).
 type heldNames struct {
 	noResolver
 	names map[string]string
 }
 
-func (h heldNames) MemberNameHeld(id string) (string, bool) {
+func (h heldNames) MemberName(id string) (string, bool) {
 	n, ok := h.names[id]
 	return n, ok
 }
+
+// MemberNameHeld is the read before notify-file-meta-2 (red branches).
+func (h heldNames) MemberNameHeld(id string) (string, bool) { return h.MemberName(id) }
 
 // TestNotifyFileTextLikeSlack: a notification's text for a message with
 // files is extractTextFromMessage's (boot-shared Eley, notify_file.go): a
@@ -32,7 +35,12 @@ func (h heldNames) MemberNameHeld(id string) (string, bool) {
 // Expected values are Slack's own: Eley's extractTextFromMessage with
 // MXE2, 2grX, vITP, Jg0n, Qre6, R3SR, ajnp and lodash running in node over
 // these messages (CDN build 35b42de8b870; only the store, i18n's t, the
-// text converter and the sender read are stand-ins). Synthetic messages.
+// text converter and Slackbot AI's entitlement, on, are stand-ins; the
+// sender is hVKV's getMsgSenderEntity: a legacy file_comment's
+// comment.user, a canvas comment's editor, a list edit's author, none
+// for a huddle, a canvas update, a Slackbot response or Slackbot's own
+// file, the file's uploader for Slackbot's email forward). Synthetic
+// messages.
 func TestNotifyFileTextLikeSlack(t *testing.T) {
 	unknown := func(s richtext.Span) (string, bool) { return "", s.Kind == richtext.User }
 	for _, c := range []struct {
@@ -175,6 +183,53 @@ func TestNotifyFileTextLikeSlack(t *testing.T) {
 		{"a clip with text that converts to nothing",
 			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"<@U0NOBODY01>","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0001","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted","subtype":"slack_video"}]}`,
 			map[string]string{}, "sent a video clip and a message, \"\""},
+		// the sender the uploader is compared with is getMsgSenderEntity's
+		// userId (hVKV running in node too: notify-file-meta-2)
+		{"a legacy file_comment's sender is comment.user",
+			`{"type":"message","ts":"1762520000.000100","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0001","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"subtype":"file_comment","comment":{"user":"U0SYNTH0001","comment":"c"}}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared this file"},
+		{"Slackbot forwarding an email: the file's uploader is the sender",
+			`{"type":"message","ts":"1762520000.000100","user":"USLACKBOT","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0002","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"email","pretty_type":"Email","mode":"email","bot_id":"B0SYNTH0001"}]}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared this email"},
+		{"Slackbot posting its own bot file: no member sender",
+			`{"type":"message","ts":"1762520000.000100","user":"USLACKBOT","text":"","files":[{"id":"F0SYNTH0001","user":"USLACKBOT","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted","bot_id":"B0SYNTH0001"}]}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared Slackbot’s file"},
+		{"Slackbot's own file under Slackbot AI: no member sender",
+			`{"type":"message","ts":"1762520000.000100","user":"USLACKBOT","text":"","files":[{"id":"F0SYNTH0001","user":"USLACKBOT","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}]}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared Slackbot’s file"},
+		{"Slackbot AI's message: Slackbot is the sender",
+			`{"type":"message","ts":"1762520000.000100","user":"USLACKBOT","text":"","files":[{"id":"F0SYNTH0001","user":"USLACKBOT","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"ai_context":{"type":"slackbot_ai"}}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared this file"},
+		{"a Slackbot response: no member sender",
+			`{"type":"message","ts":"1762520000.000100","user":"USLACKBOT","text":"","files":[{"id":"F0SYNTH0001","user":"USLACKBOT","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"subtype":"slackbot_response"}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared Slackbot’s file"},
+		{"a huddle message: no member sender",
+			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0001","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"room":{"id":"R0SYNTH0001"},"room_id":"R0SYNTH0001"}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared Ada’s file"},
+		{"a canvas comment root: its most recent editor",
+			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0002","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"subtype":"document_comment_root","document_comment":{"thread_id":"temp:C:x","most_recent_editor":"U0SYNTH0002","authors":["U0SYNTH0001"]}}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared this file"},
+		{"a canvas comment root without an editor: its first author",
+			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0002","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"subtype":"document_comment_root","document_comment":{"thread_id":"temp:C:x","authors":["U0SYNTH0002","U0SYNTH0001"]}}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared this file"},
+		{"a list edit: who made it",
+			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0002","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"subtype":"list_edit","list_edit":{"created_by":"U0SYNTH0002"}}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared this file"},
+		{"a tab added: who added it",
+			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0002","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"subtype":"channel_tab_added","tab_added_user_id":"U0SYNTH0002"}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared this file"},
+		{"a folder item added: who added it",
+			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0002","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"subtype":"folder_item_added_unread_ignore","item_added_user_id":"U0SYNTH0002"}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared this file"},
+		{"a channel canvas update: no member sender",
+			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0001","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"subtype":"channel_canvas_updated"}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared Ada’s file"},
+		{"an AI huddle summary: msg.user",
+			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0001","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"ai_context":{"summary":{"type":"huddle"}}}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared this file"},
+		{"a welcome party: no member sender",
+			`{"type":"message","ts":"1762520000.000100","user":"U0SYNTH0001","text":"","files":[{"id":"F0SYNTH0001","user":"U0SYNTH0001","name":"x.bin","title":"","mimetype":"application/octet-stream","filetype":"binary","pretty_type":"Binary","mode":"hosted"}],"subtype":"welcome_party"}`,
+			map[string]string{"U0SYNTH0001": "Ada", "U0SYNTH0002": "Robin", "USLACKBOT": "Slackbot"}, "shared Ada’s file"},
 	} {
 		var m slack.Message
 		if err := json.Unmarshal([]byte(c.msg), &m); err != nil {
