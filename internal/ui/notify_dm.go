@@ -119,7 +119,7 @@ func (b *backend) noteDMReason(a *App, ev core.Event, c *convInfo, ignoreDND boo
 		return noteSkipNoDisplay
 	case ev.Reply:
 		return noteSkipReply
-	case b.noteOnScreen(a, ev.Channel):
+	case b.noteOnScreen(a, ev, ignoreDND || ev.StreamDone): // a dnd_override's re-check and a settled stream read the store's copy
 		return noteSkipOnScreen
 	case m.User != "" && m.User == b.selfID:
 		return noteSkipOwn
@@ -161,7 +161,7 @@ func (b *backend) noteChannelReason(a *App, ev core.Event, c *convInfo, ignoreDN
 	switch {
 	case !wants:
 		return noteSkipNoMention
-	case b.noteOnScreen(a, ev.Channel):
+	case b.noteOnScreen(a, ev, ignoreDND || ev.StreamDone): // a dnd_override's re-check and a settled stream read the store's copy
 		return noteSkipOnScreen
 	case m.User != "" && m.User == b.selfID:
 		return noteSkipOwn
@@ -197,10 +197,38 @@ func (b *backend) noteGroupDMLevel(ch string) string {
 	return level
 }
 
-// noteOnScreen is shouldSuppressNotificationInActiveChannel: the
-// conversation is the one open, in the focused window.
-func (b *backend) noteOnScreen(a *App, ch string) bool {
-	return a.router.Current().Channel() == ch && a.focused
+// noteOnScreen is shouldSuppressNotificationInActiveChannel (client-boot
+// Fpyc, build 548618a2169f2a90): the message's conversation is the main
+// view of the focused window (ey.pA, the Primary container) showing its
+// messages (WatJ: no tab past Messages selected), unless its text holds an
+// at-command (containsAtCommand: @channel, @everyone, …; not @here).
+// Slack's last check, a thread reply the conversation's view doesn't show
+// (_hidden_reply), reads a field only the store's copies carry (D8Sp
+// makeMsgObject): messageReceived hands maybeShowNotification the
+// socket's own message, so a thread reply of the conversation on screen
+// is on screen like any other (16). Only handleDndOverride's re-check and
+// messageChanged's settled stream (defer_notification_3p_streaming) hand
+// it the store's copy (getMessage), so storeCopy (noteDNDOverride's
+// re-check, a StreamDone update) lets such a reply through.
+func (b *backend) noteOnScreen(a *App, ev core.Event, storeCopy bool) bool {
+	m := ev.Msg
+	if m != nil && containsAtCommand(m.Text) {
+		return false
+	}
+	if !a.focused || a.router.Current().Channel() != ev.Channel {
+		return false
+	}
+	if _, other := a.selectedTab(ev.Channel); other {
+		return false // its canvas, files or another tab, not its messages
+	}
+	return !(storeCopy && m != nil && noteHiddenReply(m))
+}
+
+// noteHiddenReply is the message formatter's _hidden_reply (client-boot,
+// "!!thread_ts && thread_ts !== ts && subtype !== thread_broadcast"): a
+// thread reply that isn't also sent to the conversation.
+func noteHiddenReply(m *core.Message) bool {
+	return m.ThreadTS != "" && m.ThreadTS != m.TS && m.Subtype != "thread_broadcast"
 }
 
 // noteDNDHolds is Do Not Disturb (13): paused notifications

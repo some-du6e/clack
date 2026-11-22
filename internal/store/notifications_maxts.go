@@ -37,7 +37,9 @@ func (s *Store) noteAddedLocked(msgs []slack.Message) {
 
 // NoteAdded takes message ts into maxTs: a socket message the store may
 // keep nowhere (a reply in a thread no cache holds), which Slack's store
-// keeps all the same.
+// keeps all the same. Only a server's ts: a copy only this client has (an
+// optimistic send, a local ephemeral) carries the local clock's, which
+// may run ahead of the server's (UpsertLocal, AddReplyLocal).
 func (s *Store) NoteAdded(ts string) {
 	s.mu.Lock()
 	s.noteAddedTSLocked(ts)
@@ -53,4 +55,17 @@ func (s *Store) NotificationsMaxTS() string {
 		return notificationsMaxTSZero
 	}
 	return s.notesMaxTS
+}
+
+// NotificationAhead is shouldShowNotificationForDesktopNotification's 19
+// test, "!r || a > r": ts is newer than maxTs, compared as maxTs is
+// raised (TSLess), so the check and the raise can't disagree.
+func (s *Store) NotificationAhead(ts string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cur := s.notesMaxTS
+	if cur == "" {
+		cur = notificationsMaxTSZero
+	}
+	return TSLess(cur, ts)
 }

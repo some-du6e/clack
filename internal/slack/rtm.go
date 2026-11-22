@@ -48,6 +48,9 @@ type RTM struct {
 
 	// OnHello runs after every (re)connect, e.g. to resend subscriptions.
 	OnHello func()
+	// OnDrop sees an event Events had no room for, on the reader
+	// goroutine, before it's gone (core notes a dropped message's ts).
+	OnDrop func(Event)
 }
 
 // LastConnectFast reports whether the current (or last) connection was a
@@ -433,6 +436,9 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		case r.Events <- ev:
 		default:
 			log.Printf("rtm: event buffer full, dropping %s", ev.Type)
+			if r.OnDrop != nil {
+				r.OnDrop(ev)
+			}
 		}
 	}
 }

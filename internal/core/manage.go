@@ -829,6 +829,9 @@ func (a *App) onThreadMarked(raw json.RawMessage) {
 	}
 	_ = json.Unmarshal(raw, &e)
 	a.setThreadLastRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead)
+	// threadMarked's updateActivitiesUnreadState: the reply bars' items of
+	// the thread up to its new last read go (channel_thread_activity.go)
+	a.threadActivityRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead)
 }
 
 // setThreadLastRead records a thread's last read reply (Slack's

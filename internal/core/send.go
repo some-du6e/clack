@@ -84,11 +84,18 @@ func isTopLevel(m *slack.Message) bool {
 // putLocal inserts or replaces a message in the cached timeline / thread.
 func (a *App) putLocal(ch string, m slack.Message) {
 	if isTopLevel(&m) {
-		a.S.Upsert(ch, m)
+		a.S.UpsertLocal(ch, m) // the local clock's ts: the notifications' maxTs takes the server's alone
 	}
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
-		a.S.AddReply(ch, m)
+		a.S.AddReplyLocal(ch, m)
 	}
+}
+
+// putSent is putLocal for the server's copy of a send (the API's answer,
+// or its echo once confirmed): its ts is the server's.
+func (a *App) putSent(ch string, m slack.Message) {
+	a.S.NoteAdded(m.TS)
+	a.putLocal(ch, m)
 }
 
 // putChanged is putLocal for the socket's message_changed of a message no
@@ -212,7 +219,7 @@ func (a *App) confirmPending(ch string, m *slack.Message) bool {
 		a.mu.Unlock()
 	})
 	a.S.Remove(ch, p.ts)
-	a.putLocal(ch, *m)
+	a.putSent(ch, *m)
 	v := a.message(ch, m)
 	a.emit(Event{Type: "sent", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, ReplacesTS: p.ts, ClientMsgID: cid,
 		UserID: m.User, Msg: &v, Reply: !isTopLevel(m), ConvKind: a.kindOf(ch)})

@@ -590,6 +590,16 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			weight = theme.Black
 			col = c.SidebarTextUnread
 		}
+		// AllThreadsRowElement: hasUnreads (the threads' unread state)
+		// bolds it, but under focus mode, and channel_badges'
+		// thread_mentions is its badge (core ThreadsLink)
+		if r.key == "threads" {
+			if a.model().threadsUnread && !a.focusQuiet() {
+				weight = theme.Black
+				col = c.SidebarTextUnread
+			}
+			mentions = a.model().threadMentions
+		}
 	case sbHeading:
 		clickPrefix = "sbh."
 		if a.sbCollapsed(r) {
