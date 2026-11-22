@@ -242,7 +242,7 @@ func TestAppHoverCardLoadingSpinner(t *testing.T) {
 	acShot(t, "app-card-loaded", pixeltest.Render(t, 1000, 800, ops), r)
 }
 
-// acShot saves the card's part of img under CLACK_SHOTS.
+// acShot saves the card's part of img under CLACK_SHOTS, over white.
 func acShot(t *testing.T, name string, img *image.RGBA, r image.Rectangle) {
 	t.Helper()
 	dir := os.Getenv("CLACK_SHOTS")
@@ -253,11 +253,9 @@ func acShot(t *testing.T, name string, img *image.RGBA, r image.Rectangle) {
 	out := image.NewRGBA(image.Rectangle{Max: r.Size()})
 	for y := 0; y < r.Dy(); y++ {
 		for x := 0; x < r.Dx(); x++ {
-			c := img.RGBAAt(r.Min.X+x, r.Min.Y+y)
-			if c.A == 0 {
-				c = color.RGBA{0xff, 0xff, 0xff, 0xff}
-			}
-			out.SetRGBA(x, y, c)
+			c := img.RGBAAt(r.Min.X+x, r.Min.Y+y) // premultiplied: over white
+			w := 0xff - c.A
+			out.SetRGBA(x, y, color.RGBA{c.R + w, c.G + w, c.B + w, 0xff})
 		}
 	}
 	f, err := os.Create(filepath.Join(dir, name+".png"))
