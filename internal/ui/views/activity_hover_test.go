@@ -28,6 +28,10 @@ func TestActivityHoverBarLikeSlack(t *testing.T) {
 	old := theme.WindowPointer
 	theme.WindowPointer = func() (image.Point, bool) { return last, true }
 	t.Cleanup(func() { theme.WindowPointer = old })
+	// room under every row for the 300px menu (keepInBounds would move it)
+	e.size.Y = 2400
+	e.frame()
+	e.frame()
 	for _, c := range []struct {
 		key  string
 		want []actBtn

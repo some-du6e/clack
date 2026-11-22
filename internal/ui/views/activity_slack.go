@@ -819,7 +819,12 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		if m.ThreadTS != "" && m.ThreadTS != ts {
 			thread = m.ThreadTS
 		}
+		// activity_copy_link: copyLinkToFile for a message that is one
+		// file, else copyLink; the clipboard only, no toast
 		link := popups.MessageLink(ph, ch, ts, thread, m.Permalink)
+		if fl := popups.SingleFileLink(m); fl != "" {
+			link = fl
+		}
 		g2 = append(g2, popups.MenuItem{Key: "copy_link", Label: nsActivity.T("Copy link"), DoCtx: func(gtx C) { popups.CopyText(gtx, link) }})
 	}
 	groups = append(groups, g2)
