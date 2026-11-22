@@ -195,6 +195,13 @@ func (a *App) attachComposer(c *convo) {
 	if fl, ok := c.comp.(interface{ SetOnFocusList(func()) }); ok {
 		fl.SetOnFocusList(func() { a.focusList(c) })
 	}
+	if pk, ok := c.comp.(interface{ SetOnPageKeyEmpty(func(string)) }); ok {
+		pk.SetOnPageKeyEmpty(func(name string) {
+			if l, ok := c.list.(interface{ PageKey(string) }); ok {
+				l.PageKey(name)
+			}
+		})
+	}
 	if sn, ok := c.comp.(interface{ SetOnSend(func(string, bool)) }); ok {
 		sn.SetOnSend(func(cid string, files bool) { jumpToOwnSend(c, cid, files) })
 	}
@@ -418,28 +425,14 @@ func (a *App) editLast(c *convo) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		var msgs []core.Message
-		if c.ts == "" {
-			p, err := svc.History(ctx, c.ch, "")
-			if err != nil {
-				return
-			}
-			msgs = p.Messages
-		} else {
-			rs, err := svc.Replies(ctx, c.ch, c.ts)
-			if err != nil {
-				return
-			}
-			msgs = rs
+		m, found, ok := lastOwnEditable(ctx, svc, c.ch, c.ts, self) // the newest slice's (unsend.go)
+		switch {
+		case !ok:
+		case found:
+			a.Post(func() { a.startEdit(c, m) })
+		default:
+			a.Post(func() { a.Toast("You haven't sent anything here yet") })
 		}
-		for i := len(msgs) - 1; i >= 0; i-- {
-			m := msgs[i]
-			if m.User == self && !m.System && m.Subtype == "" {
-				a.Post(func() { a.startEdit(c, m) })
-				return
-			}
-		}
-		a.Post(func() { a.Toast("You haven't sent anything here yet") })
 	}()
 }
 

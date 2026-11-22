@@ -220,4 +220,5 @@ func (s *Store) SetThreadSince(ch, ts string, msgs []slack.Message, since uint64
 	s.replayAllReactsLocked(ch, out, since) // the socket's reactions meanwhile (reacts.go)
 	s.readThreadLocked(ch, ts, out)         // a new revision reaches every copy, and core (read_revisions.go)
 	s.threads[ch+"/"+ts] = out
+	s.setThreadWholeLocked(ch+"/"+ts, out) // the whole thread: one slice, both ends (thread_slices.go)
 }

@@ -120,9 +120,11 @@ func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
 // (componentDidUpdate) call removeThreadFromManuallyMarkedUnreadArray:
 // showing it is reading it.
 func (v *ThreadView) Reopen() {
-	v.closeFind(false) // ThreadSearchBar unmounts with the pane
+	v.s.thrOpening = true // a new pane: a jump starts it at getThreadStartPosition's message
+	v.closeFind(false)    // ThreadSearchBar unmounts with the pane
 	v.s.thr = threadRead{}
-	v.s.snap.rev = 0 // rebuild the rows with the new marker
+	v.s.rootHandedOn = false // opened with a reply's ts again: hand on again (ReplyRootRedirector)
+	v.s.snap.rev = 0         // rebuild the rows with the new marker
 	if app := v.h.Core(); app != nil {
 		app.ForgetThreadMarkedUnread(v.ch, v.ts)
 		if cv, ok := app.Conv(v.ch); ok && cv.Kind == "channel" && cv.Preview {
@@ -167,8 +169,10 @@ func (v *ThreadView) EditComposer() *composer.Composer { return v.s.editComposer
 // Typing returns the "X is typing" text for this thread.
 func (v *ThreadView) Typing() string { return typingText(v.s.snap.typing) }
 
-// ScrollToBottom jumps to the newest reply.
-func (v *ThreadView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
+// ScrollToBottom jumps to the newest reply drawn: the list's end (toEnd:
+// Position{} is the top of a slice short of the thread's end, which
+// doesn't keep to its end).
+func (v *ThreadView) ScrollToBottom() { v.s.toEnd() }
 
 // JumpToOwnSend is the pane's reply box sending the viewer's reply, with
 // or without files (composer.OnSend): the list goes to its end, and its
@@ -186,9 +190,10 @@ func (v *ThreadView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
 // list is, so the send puts the list where Slack's is when you send.
 func (v *ThreadView) JumpToOwnSend(cid string, files bool) {
 	s := v.s
-	s.list.Position = layout.Position{}
+	s.toEnd() // the list's end, kept to or not (a slice short of the thread's end)
 	s.positioned = true
 	s.pendingJump = "" // a JumpTo still waiting for its reply
+	s.place = jumpPlace{}
 	v.h.Invalidate()
 }
 
@@ -196,30 +201,53 @@ func (v *ThreadView) JumpToOwnSend(cid string, files bool) {
 // pane opens at a message (client-boot 6IaZ over CSo3 GC, from toThread's
 // replyTs and uiState.highlightTs): the list starts at ts (startTs) and,
 // with flash, ts is highlighted (highlightTs) the way a permalink's
-// message is (ChannelView.Highlight). The thread loads whole
-// (conversations.replies, every page), so a ts it doesn't hold is
-// dropped once it's in, and the pane keeps its own start position.
+// message is (ChannelView.Highlight). The pane draws the slice ts falls
+// in (thread_load.go): one that doesn't hold it gives way to the store's
+// slice at ts, read around ts (two pages of 28) when the store has none,
+// and a ts the thread doesn't have is dropped once that is in. Where the
+// list starts is the thread list's (ThreadsFlexpane, boot-shared 4M8N;
+// its BaseMessageList Twp/), once that slice is in (placeThreadJump waits
+// for it):
+//   - a pane that just opened starts at getThreadStartPosition's message,
+//     100px under the top or at the top (placeThreadJump, threadStart),
+//     and with no highlight its saved place wins (the scrollmark);
+//   - a pane already showing the thread scrolls the reply's top to the
+//     list's top unless that's on screen already (a new highlightKey:
+//     scrollToKey(startTs, {lazy: true}), the anchor line at the top).
+//
+// Nothing holds the reply there after (the anchor drops at the scroll's
+// echo).
 func (v *ThreadView) JumpTo(ts string, flash bool) {
 	s := v.s
-	s.highlight = ""
-	if flash {
-		s.highlight, s.highlightAt = ts, time.Now()
+	opening := s.thrOpening || !s.positioned
+	s.thrOpening = false
+	if !flash && opening && (s.positioned && s.laidOut || s.thrMark.key != "") {
+		s.highlight = ""
+		return // no highlight: the reopened pane's own place (getThreadStartPosition's scrollmark)
 	}
-	s.pendingJump = ts
-	for i, it := range s.items {
-		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == ts {
-			// there now; the next sync places it again after any rebuild
-			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
-			s.positioned = true
-			break
-		}
+	// the slice ts falls in first: placeThreadJump places and flashes the
+	// reply once it is loaded
+	if s.hb.jumpThread(s.m, ts) {
+		s.snap.rev = 0 // the slice at ts: rebuild from it
 	}
+	flashing := flash && s.highlight == ts && time.Since(s.highlightAt) < highlightFor && s.mounted()
+	switch {
+	case flashing: // a repeat jump: the running flash goes on (rFp4)
+	case flash:
+		s.highlight, s.highlightAt, s.hlSeen = ts, time.Now(), false
+	default:
+		s.highlight = ""
+	}
+	s.hlRestart = !flashing
+	s.pendingJump, s.jumpLazy = ts, !opening
+	s.place = jumpPlace{}
+	s.positioned = true // the jump places the list, not the thread's start position
 }
 
 // Highlighted is the message the pane highlights now (JumpTo's flash),
 // "" for none.
 func (v *ThreadView) Highlighted() string {
-	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < 4*time.Second {
+	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < highlightFor {
 		return s.highlight
 	}
 	return ""
@@ -499,6 +527,36 @@ func mpimMembers(app *core.App, cv core.Conv) (int, string) {
 	}
 	sort.Slice(names, func(i, j int) bool { return strings.ToLower(names[i]) < strings.ToLower(names[j]) })
 	return n, strings.Join(names, ", ")
+}
+
+// replyRoot is the thread a thread list's root is a reply in, once its
+// messages loaded: its ts was a reply's (Slack's isReply, a thread_ts
+// that isn't its own ts). "" for a real root, or before the load.
+func (s *listState) replyRoot() string {
+	if !s.thread {
+		return ""
+	}
+	for i := range s.snap.msgs {
+		if m := &s.snap.msgs[i].m; m.TS == s.ts {
+			if m.ThreadTS != "" && m.ThreadTS != m.TS {
+				return m.ThreadTS
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// RootLoaded reports whether the pane's root message has loaded, and
+// whether it turned out to be a reply (the pane was opened with a reply's
+// ts and hands on to its thread): the ui root records the thread's visit
+// only for a root.
+func (v *ThreadView) RootLoaded() (isReply, loaded bool) {
+	m, ok := v.root()
+	if !ok {
+		return false, false
+	}
+	return m.ThreadTS != "" && m.ThreadTS != m.TS, true
 }
 
 // root is the thread's parent message, once loaded.
@@ -925,13 +983,21 @@ func (s *listState) threadLoading() bool {
 //     initializing = isEmpty(timestamps) and fetchReplies clears it, so a
 //     loading thread has no reply box;
 //   - with timestamps, until reachedEnd or prevReachedEnd: the
-//     "loading-end" row takes its place. Clack fetches every page at once,
-//     and a model stays loaded once it was (both ends reached);
+//     "loading-end" row takes its place (a slice short of the thread's
+//     end: thread_load.go); a pane that was at the end when a slow
+//     connect made it stale keeps the box until its read past the old end
+//     lands (endGap: list.go build);
 //   - ThreadsError or LargeOfflineIndicator replaces the whole pane.
 //
 // Signed out, the list's sign-in prompt keeps the old composer.
 func (v *ThreadView) HidesComposer() bool {
 	s := v.s
+	if s.replyRoot() != "" {
+		return true // a reply as the root: loading until the Host moves on (layoutList)
+	}
+	if s.thread && s.snap.loaded && len(s.snap.msgs) > 0 && !s.snap.th.reachedEnd && !s.snap.th.prevReachedEnd && !s.snap.th.endGap {
+		return true // the "loading-end" row in its place
+	}
 	if !s.thread || s.snap.loaded {
 		return false
 	}

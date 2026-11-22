@@ -822,8 +822,15 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 			// open_in_home ends with maybeClosePeek: from the rail's peek
 			// the card closes too
 			closePeek := v.peekCloser()
+			ch, ts := it.Channel, it.TS
 			g = append(g, popups.MenuItem{Key: "open_in_home", Label: nsActivity.T("Open in home"), Icon: "home", Do: func() {
 				closePeek()
+				// WabB: toThread({threadTs, replyTs: ts, highlightRoot}), else
+				// toMessage(ch, ts, ts)
+				if o, ok := v.h.(popups.MessageOpener); ok {
+					o.OpenAtMessage(ch, ts, thread, true)
+					return
+				}
 				v.h.Navigate(route)
 			}})
 		}

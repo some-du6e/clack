@@ -38,5 +38,5 @@ func (a *App) OpenAppDMMessages(ch, ts string) {
 	if dm := a.appDM(ch); dm != nil {
 		dm.SetTab("messages")
 	}
-	a.jumpToMessage(ch, ts, "")
+	a.jumpToMessage(ch, ts, "", false)
 }

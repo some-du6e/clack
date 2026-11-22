@@ -553,7 +553,7 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 			fs.col = p.Text2
 		}
 		bi := len(l.d.boxes)
-		l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.PreBg, stroke: p.PreBorder, bw: l.dp(1), radius: l.dp(4), target: -1, part: l.curPart})
+		l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.PreBg, see: p.raw.PreBg, stroke: p.PreBorder, bw: l.dp(1), radius: l.dp(4), target: -1, part: l.curPart})
 		c0 := int32(len(l.d.plain))
 		l.addSpans(b.Spans, &fs)
 		c1 := int32(len(l.d.plain))

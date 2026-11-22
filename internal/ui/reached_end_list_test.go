@@ -91,9 +91,18 @@ func socketGapList(t *testing.T, mode gapMode) {
 	}
 	var target string
 	if jump {
+		// read back to an old message: the wheel pages the conversation
+		// back, so the list is one stretch from it to the newest (a jump
+		// to a message that far back draws a window of its own instead,
+		// Slack's slice around it, which never takes the newest messages)
 		target = fs.HistoryTS(ch)[2]
-		v.Highlight(target)
-		e.until("the list paged back to the message jumped to", 30*time.Second, func() bool { return holds(target) && v.JumpPending() == "" })
+		e.until("the list paged back to the old message", 30*time.Second, func() bool {
+			if holds(target) {
+				return true
+			}
+			e.scroll(e.listPoint(), -20000)
+			return false
+		})
 	}
 	before := post(ch, "before the gap")
 	e.until("the message before the gap", 10*time.Second, func() bool { return holds(before) })

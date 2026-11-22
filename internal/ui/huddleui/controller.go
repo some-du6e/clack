@@ -27,6 +27,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/chanent"
@@ -363,7 +364,7 @@ func (c *Controller) Start(channel string) {
 			if w != nil {
 				w.close()
 			}
-			log.Printf("huddle: join %s: %v", channel, err)
+			log.Printf("huddle: join %s: %v", logtag.ID(channel), err)
 			c.showErrModal(joinErrorModal(err)) // HuddleErrorModal{isJoinError}
 			c.changed()
 			return
@@ -499,7 +500,7 @@ func (c *Controller) begin(channel, entry string) {
 				return nil, nil
 			})
 		if err != nil {
-			log.Printf("huddle: startHuddle %s: %v", channel, err)
+			log.Printf("huddle: startHuddle %s: %v", logtag.ID(channel), err)
 			c.showErrModal(joinErrorModal(err))
 		}
 	}()

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -148,6 +149,10 @@ type App struct {
 	pollSeen  map[string]string  // conversation -> counts latest|updated at the last poll
 	watchCh   string             // conversation last opened (History), refreshed every poll
 	watchTh   []watchedThread    // threads last opened (Replies), newest first
+	// msgThread is the thread_ts of messages looked up by ts ("ch/ts" to
+	// the message's thread_ts, "" for none): jumpToMessage's lookups and a
+	// reply's ts a thread was fetched with (reply_thread.go)
+	msgThread map[string]string
 	// accessed: when each conversation ("ch/thread_ts" for a thread) was
 	// last read, and loaded when its newest page was last fetched, for
 	// Slack's message cache budget (evict.go)
@@ -167,6 +172,9 @@ type App struct {
 type watchedThread struct {
 	ch, ts string
 	at     time.Time
+	// first and last: the replies its pane has on screen (NoteThreadView),
+	// what a poll reads again
+	first, last string
 }
 
 type call struct {
@@ -381,12 +389,12 @@ func (a *App) pollOnce(ctx context.Context) {
 	}
 	for _, ch := range fetch {
 		if err := a.loadLatest(ctx, ch); err != nil {
-			log.Printf("poll: history %s: %v", ch, err)
+			log.Printf("poll: history %s: %v", logtag.ID(ch), err)
 		}
 	}
 	for _, t := range threads {
-		if err := a.fetchThread(ctx, t.ch, t.ts); err != nil {
-			log.Printf("poll: thread %s: %v", t.ch, err)
+		if err := a.pollThread(ctx, t.ch, t.ts, t.first, t.last); err != nil { // its pane's rows, the page past its end (thread_pages.go)
+			log.Printf("poll: thread %s %s: %v", logtag.ID(t.ch), logtag.ID(t.ts), err)
 		}
 	}
 	a.emit(Event{Type: "poll"})
@@ -418,7 +426,24 @@ func (a *App) watch(ch, threadTS string) {
 	}
 	th := []watchedThread{{ch: ch, ts: threadTS, at: time.Now()}}
 	for _, t := range a.watchTh {
-		if (t.ch != ch || t.ts != threadTS) && len(th) < 2 {
+		switch {
+		case t.ch == ch && t.ts == threadTS:
+			th[0].first, th[0].last = t.first, t.last // its pane's rows, as noted
+		case len(th) < 2:
+			th = append(th, t)
+		}
+	}
+	a.watchTh = th
+}
+
+// unwatch stops watching thread ch/threadTS: a reply's ts, whose
+// parent's thread is the one opened (reply_thread.go).
+func (a *App) unwatch(ch, threadTS string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	th := a.watchTh[:0]
+	for _, t := range a.watchTh {
+		if t.ch != ch || t.ts != threadTS {
 			th = append(th, t)
 		}
 	}

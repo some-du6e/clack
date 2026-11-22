@@ -537,10 +537,22 @@ func (s *listState) injVisible(m *core.Message) bool {
 }
 
 // mergeInjected inserts the injected messages into s.snap.msgs in ts order,
-// skipping any the snapshot already has (same ts or client_msg_id).
+// skipping any the snapshot already has (same ts or client_msg_id). A
+// jump's window takes only the ones its slice covers, as injectMessages'
+// withTimestamps adds an injected ts to a channelHistory slice (05_slack.js):
+// from its first message on (anywhere before once it has no older
+// messages) up to its last (anywhere after once it met the newest). A
+// deletion Message Logger kept today came under a window from months ago.
 func (s *listState) mergeInjected() {
 	if len(s.inj.msgs) == 0 {
 		return
+	}
+	first, last, ok := s.ends()
+	covers := func(ts string) bool {
+		if s.win == nil || s.m != s.win {
+			return true
+		}
+		return ok && (!s.snap.hasMore || !tsLess(ts, first)) && (!s.snap.newestMissing || !tsLess(last, ts))
 	}
 	have := make(map[string]bool, len(s.snap.msgs))
 	for i := range s.snap.msgs {
@@ -552,7 +564,7 @@ func (s *listState) mergeInjected() {
 	}
 	inj := make([]core.Message, 0, len(s.inj.msgs))
 	for _, m := range s.inj.msgs {
-		if have[m.TS] || m.ClientMsgID != "" && have["c:"+m.ClientMsgID] {
+		if have[m.TS] || m.ClientMsgID != "" && have["c:"+m.ClientMsgID] || !covers(m.TS) {
 			continue
 		}
 		inj = append(inj, m)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
@@ -1181,7 +1182,7 @@ func (b *backend) opened(ch string) {
 		}
 		wg.Wait()
 		if err != nil {
-			log.Printf("ui: tabs %s: %v", ch, err)
+			log.Printf("ui: tabs %s: %v", logtag.ID(ch), err)
 		}
 		// Slack's tab bar (core.Tabs: canvases, lists, bookmarks, files…).
 		// A tab whose file or bookmarks read failed keeps what the last
@@ -1194,7 +1195,7 @@ func (b *backend) opened(ch string) {
 		tabs, bms := b.tabsOf(ts, notMember)
 		var members []string
 		if tried {
-			log.Printf("ui: members %s: %d err=%v", ch, len(us), merr)
+			log.Printf("ui: members %s: %d err=%v", logtag.ID(ch), len(us), merr)
 			if merr == nil {
 				for _, u := range us {
 					if len(members) == 3 {
@@ -1817,8 +1818,8 @@ func (b *backend) signOut() {
 }
 
 // openURL opens a link in the system browser (http, https and mailto only;
-// see openurl.Check).
-func openURL(u string) { _ = openurl.Open(u) }
+// see openurl.Check). A var: tests catch what reaches the browser.
+var openURL = func(u string) { _ = openurl.Open(u) }
 
 // notificationMessage is showNotification's `message`: the message as
 // Slack's store keeps it, which plugins drop (ShutUpSlackbot, StreamerMode

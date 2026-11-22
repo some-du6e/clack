@@ -1032,7 +1032,7 @@ func (v *SearchView) handle(gtx layout.Context) {
 				// onReactionsPillClick: the message, scrolled to its
 				// reactions
 				RecordRecentConversation(v.msgs[i].Channel)
-				v.h.Navigate(msgRoute(v.msgs[i]))
+				openResult(v.h, v.msgs[i])
 			}
 			if c.atts.Clicked(gtx) {
 				v.srOpenAttachments(gtx, i)
@@ -1050,7 +1050,7 @@ func (v *SearchView) handle(gtx layout.Context) {
 			body, jump := c.click.Clicked(gtx), c.jump.Clicked(gtx)
 			if body || jump {
 				RecordRecentConversation(v.msgs[i].Channel)
-				v.h.Navigate(msgRoute(v.msgs[i]))
+				openResult(v.h, v.msgs[i])
 			}
 			if c.fwd.Clicked(gtx) {
 				v.h.ShowOverlay(NewForwardModal(v.h, v.msgs[i]))

@@ -125,6 +125,11 @@ type Size struct {
 	// ThreadsAudit adds #th-audit: one thread per way the thread pane
 	// marks unread replies, opens and counts (threads_audit.go).
 	ThreadsAudit bool
+	// TombstoneThread adds an archived public channel the viewer is in,
+	// its history several pages long both ways around a thread whose root
+	// was deleted: a tombstone with TombstoneReplies replies
+	// (tombstone.go).
+	TombstoneThread bool
 	// PluginBench adds the plugin bench's channels (plugin_bench.go):
 	// #plugin-bench (500 messages), #admins-only and a Slackbot DM; the
 	// viewer becomes a workspace admin.
@@ -388,6 +393,12 @@ type Server struct {
 	// find_in_thread pages below the count asked for, so a test can
 	// page through a short thread.
 	FindInThreadPage int
+
+	// PagedReplies makes conversations.replies of a thread the test
+	// posted (PostReplyQuiet) answer a page at a time as live Slack does
+	// (replies_paging.go) instead of the whole thread at once. Set it
+	// before the client reads.
+	PagedReplies bool
 
 	srv   *http.Server
 	ln    net.Listener
@@ -765,6 +776,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.ThreadsAudit {
 		s.addThreadsAudit() // threads_audit.go
 	}
+	if sz.TombstoneThread {
+		s.addTombstoneThread() // tombstone.go
+	}
 	if sz.PluginBench {
 		s.addPluginBench() // plugin_bench.go
 	}
@@ -820,6 +834,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 func (s *Server) Close() error {
 	searchLogs.Delete(s)
 	pageLogs.Delete(s)
+	hugeStates.Delete(s) // huge_thread.go
 	viewsStates.Delete(s)
 	threadsAuditStates.Delete(s)
 	agentDMStates.Delete(s)
@@ -1478,6 +1493,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleHugeThread(method, f); handled { // huge_thread.go
+		return out
+	}
 	if out, handled := s.handleSystemDM(method, f); handled { // system_dm.go
 		return out
 	}
@@ -1855,7 +1873,16 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		if msgs, found := s.quietThread(f.Get("channel"), f.Get("ts")); found {
+			if s.PagedReplies {
+				page, more, next := pageReplies(msgs, f)
+				return ok("messages", page, "has_more", more, "response_metadata", map[string]any{"next_cursor": next})
+			}
 			return ok("messages", msgs, "has_more", false)
+		}
+		if root := s.quietRootOf(f.Get("channel"), f.Get("ts")); root != "" { // a reply's ts: its thread (messages_list.go)
+			if msgs, found := s.quietThread(f.Get("channel"), root); found {
+				return ok("messages", msgs, "has_more", false)
+			}
 		}
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
@@ -2043,6 +2070,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleChannels(method, f); handled {
 		return out
 	}
+	if method == "messages.list" { // what no fixture answered: any message the fake holds (messages_list.go)
+		return s.messagesList(f)
+	}
 	return unanswered{} // answers.go
 }
 
@@ -2125,9 +2155,12 @@ func (s *Server) historyPage(f url.Values) any {
 		limit = 50
 	}
 	latest := f.Get("latest")
+	// inclusive keeps the messages at latest and oldest themselves (Slack
+	// sends inclusive: true on every call: fetchHistory, client-boot rGEL)
+	incl := f.Get("inclusive") == "true" || f.Get("inclusive") == "1"
 	start := 0
 	if latest != "" {
-		for start < len(msgs) && !slackTSLess(msgs[start].TS, latest) {
+		for start < len(msgs) && (slackTSLess(latest, msgs[start].TS) || !incl && msgs[start].TS == latest) {
 			start++
 		}
 	}
@@ -2135,7 +2168,6 @@ func (s *Server) historyPage(f url.Values) any {
 	if oldest := f.Get("oldest"); oldest != "" {
 		// Slack answers oldest (without latest) with the messages just
 		// after it, newest first; has_more when newer ones remain.
-		incl := f.Get("inclusive") == "true"
 		stop := start
 		for stop < len(msgs) && (slackTSLess(oldest, msgs[stop].TS) || incl && msgs[stop].TS == oldest) {
 			stop++

@@ -242,5 +242,7 @@ type threadPane struct {
 
 func (p *threadPane) Layout(gtx layout.Context) layout.Dimensions {
 	c := p.a.convoFor(p.ch, p.ts)
-	return p.a.layoutConvo(gtx, c, p.a.secondaryOrigin)
+	d := p.a.layoutConvo(gtx, c, p.a.secondaryOrigin)
+	p.a.recordThreadVisit(p.ch, p.ts, c)
+	return d
 }

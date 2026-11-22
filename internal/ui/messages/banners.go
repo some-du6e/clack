@@ -204,6 +204,7 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 			}()
 		} else if ui := s.unreadIndex(); ui >= 0 { // jumpToUnread
 			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, ui-1)}
+			s.stopScroll()
 		}
 		h.Invalidate()
 	}
@@ -342,8 +343,12 @@ func (s *listState) archivesBanner(gtx layout.Context, h Host, size image.Point)
 	bw := dp(gtx, 8) + gs + dp(gtx, 4) + sz.X + dp(gtx, 16)
 	r := image.Rect((size.X-bw)/2, size.Y-bh-dp(gtx, 16), (size.X-bw)/2+bw, size.Y-dp(gtx, 16))
 	s.latestR = r
-	if s.jump.Clicked(gtx) { // jumpToMostRecent
-		s.list.Position = layout.Position{}
+	if s.jump.Clicked(gtx) { // jumpToMostRecent: the newest page in the window's place
+		if s.win != nil {
+			s.jumpToLatest()
+		} else {
+			s.toEnd()
+		}
 		h.Invalidate()
 	}
 	at(gtx, r.Min.X, r.Min.Y, func(gtx layout.Context) layout.Dimensions {
@@ -479,14 +484,22 @@ func (s *listState) openDayMenu(h Host, req dayMenuReq, now time.Time, gtx layou
 	h.ShowOverlay(popups.NewMenuOpts(h, items, popups.MenuOpts{Anchor: anchor, Side: popups.Below}))
 }
 
-// jumpToTime is jumpToTimestamp: the zero time is the most recent
+// jumpToTime is MessageList.jumpToDate: the zero time is the most recent
 // messages, else the first message at or after t, paging back until it
-// is loaded (layoutList's pendingDate).
+// is loaded (layoutList's pendingDate). In a window short of the newest
+// messages, the zero time is jumpToTimestamp({ts: ""}) (jumpToDate(null)
+// takes the last timestamp only with reachedEnd, AEjl): the newest
+// messages, where the window's end was its top (Position{}).
 func (s *listState) jumpToTime(h Host, t time.Time) {
-	if t.IsZero() {
-		s.list.Position = layout.Position{}
+	s.dateFor = ""
+	switch {
+	case t.IsZero() && s.win != nil && s.snap.newestMissing:
+		s.jumpToLatest()
 		s.pendingDate = time.Time{}
-	} else {
+	case t.IsZero():
+		s.toEnd()
+		s.pendingDate = time.Time{}
+	default:
 		s.pendingDate, s.jumpPages = t, 0
 	}
 	h.Invalidate()
@@ -494,12 +507,29 @@ func (s *listState) jumpToTime(h Host, t time.Time) {
 
 // pendingDateJump pages back until a message at or before pendingDate is
 // loaded (or history ends), then shows the first message at or after it.
+// A window takes a date it doesn't reach the way jumpToDate's
+// jumpToTimestamp at the date does (AEjl): the conversation's newest
+// messages when they hold it, else the window around it.
 func (s *listState) pendingDateJump(now time.Time) {
 	if s.pendingDate.IsZero() || s.thread || !s.snap.loaded || s.snap.older {
 		return
 	}
 	msgs := s.snap.msgs
-	if len(msgs) > 0 && s.snap.hasMore && tsTime(msgs[0].m.TS).After(s.pendingDate) && s.jumpPages < 20 {
+	if first, last, ok := s.ends(); s.win != nil && ok && s.snap.around == "" && !s.snap.newer {
+		ts := strconv.FormatInt(s.pendingDate.Unix(), 10) + ".000000"
+		before := s.snap.hasMore && tsLess(ts, first)
+		after := s.snap.newestMissing && tsLess(last, ts)
+		switch {
+		case after && s.newestHold(ts):
+			s.leaveWindow() // the next frame finds it in the newest messages
+			return
+		case (before || after) && s.dateFor != ts:
+			s.dateFor = ts
+			s.openWindow(ts)
+			return
+		}
+	}
+	if first, _, ok := s.ends(); ok && s.snap.hasMore && tsTime(first).After(s.pendingDate) && s.jumpPages < 20 {
 		if now.Sub(s.lastOlder) > 300*time.Millisecond && s.hb.loadOlder(s.m) {
 			s.jumpPages++
 			s.lastOlder = now

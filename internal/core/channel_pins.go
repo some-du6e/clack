@@ -49,6 +49,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -253,7 +254,7 @@ func (a *App) fetchPinsTab(ch string) {
 		st.chs[ch] = c
 	}
 	if err != nil {
-		log.Printf("pins tab %s: pins.list: %v", ch, err)
+		log.Printf("pins tab %s: pins.list: %v", logtag.ID(ch), err)
 		c.state = pinsNotLoaded
 		delete(st.seen, ch) // the next read tries again
 		st.mu.Unlock()

@@ -3042,3 +3042,161 @@ jobs:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_WINDOWS_TOAST_TESTS: "1"
         run: go test -count=$COUNT -v -timeout 25m -run '^(TestWindowsToastSystemDM|TestSystemDMToastLikeSlack)$' ./internal/ui
+
+
+  # thread-load: a thread of 1,078,423 synthetic replies (Karim, 2026-11-20:
+  # "make this thread load really fucking fast") opens and pages the way
+  # Slack's thread pane does: the store's slices against Slack's own
+  # reducer (TestThreadHistoryLikeSlack), core's requests (one page of 28
+  # from the root, two around a reply, loadPre and loadPost), and the pane
+  # opened through the permalink, from the channel and from Activity, then
+  # scrolled through older pages (time to the first replies, requests,
+  # heap, frames), and after a slow connect a thread at its end goes stale
+  # with the channels and its read past the old end joins what the socket
+  # brought. Dispatch with only=thread-load.
+  thread-load:
+    if: ${{ !inputs.only || startsWith('thread-load', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "store, core and ui: the huge thread's pages, COUNT runs (one verbose)"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadHistoryLikeSlack|TestThreadPageKeepsRootOutOfSlice|TestResetReachedEndCoversThreads)$' ./internal/store || rc=1
+          go test -count=$COUNT -v -timeout 15m -run '^(TestThreadOpensLikeSlack|TestThreadNewestPageLikeSlack|TestSocketGapThreadAtItsEnd)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadPaneAfterSlowConnect|TestThreadLoadingRepliesRow)$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
+          exit $rc
+
+  # threads-ship (2026-11-21): the review of thread-load-speed's blockers
+  # (wf_15e6e96d-4f5): a List item's comments page like the thread pane,
+  # a poll with the socket away refreshes the pane's rows, a pane closed
+  # or hidden while it pages starts over as a pane mounted afresh (its
+  # scrollmark by message), a followed thread opens at its last read with
+  # no window holding its root, Mod+Z and Up read the newest slice, the
+  # reply box stays through a slow connect, and find in thread lands a
+  # result outside the slice. Dispatch with only=thread-load (or
+  # only=thread-load-ship for these alone).
+  thread-load-ship:
+    if: ${{ !inputs.only || startsWith('thread-load-ship', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "core, messages, listview and ui: the threads-ship blockers, COUNT runs"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadStartTsFollowedWithoutRoot|TestThreadPollRefreshesPaneRows)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadReplyBoxStaysAfterSlowConnect|TestFindInThreadNewerResultLands|TestFindInThreadClosedStopsReading)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^TestItemCommentsPageLikeSlack$' ./internal/ui/listview || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 25m -run '^(TestThreadPaneClosedWhilePageLoads|TestThreadPaneHiddenAndShownKeepsPaging|TestThreadReopenAfterJumpStartsAtItsStart|TestThreadPaneRefreshesAtPoll|TestUndoAndEditLastReadTheNewestSlice)$' ./internal/ui || rc=1
+          exit $rc
+
+  # thread-open-root (2026-11-17, round 2 2026-11-18): a thread pane never
+  # shows a reply as its root (Karim, α.105: a link to a reply in a bot's
+  # digest of active threads opened the reply alone, as the root), and the
+  # rest of Slack's jumpToMessage: a reply's permalink with and without
+  # thread_ts, a thread parent's link (openThreadForRootMessage; not in a
+  # bot's DM), message_mention pills, the window around an old message
+  # (two conversations.history calls), the split view's back stack and
+  # reply, the reply route's history entry, one replies fetch per
+  # hand-over, thread-only and latest-reply links, slack:// links in
+  # messages, foreign workspaces, deep links, OpenThread, the pane's
+  # hand-over, a followed thread's toast, the log's tags; the pane's
+  # hand-over on each open and the highlight's keyframes (messages), row
+  # and surface links, search results and Activity's Open in home, the
+  # lookups (core). Round 3 adds the jump's anchor line (Karim, α.108:
+  # links highlighted a message without scrolling to it; Gio patch 50) and
+  # an archived channel's tombstone thread paging up (Karim: "i cant scroll
+  # up from this thread"). Round 4: Slack's general anchoring, thread pane
+  # starts, jumps to a ts no row holds, windows kept while shown. One
+  # verbose run, then COUNT. Dispatch:
+  # only=thread-open-root.
+  thread-open-root:
+    if: ${{ !inputs.only || startsWith('thread-open-root', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      TESTS: '^(TestReplyPermalinkOpensParentThread|TestReplyPermalinkWithoutThreadOpensParentThread|TestThreadPaneNeverShowsReplyAsRoot|TestDeepLinkToReplyOpensParentThread|TestFollowedThreadToastOpensParentThread|TestReplyPermalinkSplitClickOpensInSplit|TestParentLinkOpensItsThread|TestMessageMentionPillOpensThread|TestPermalinkLoadsAroundOldMessage|TestSplitViewLinkKeepsBackStack|TestReplyRouteLeavesNoHistory|TestReplyRootedPaneFetchesThreadOnce|TestThreadOnlyLinksOpenTheThread|TestForeignWorkspaceLinkOpensBrowser|TestNavigationLogsTagIDs|TestJumpWindowIsTheListsOwn|TestJumpWindowPagesWithinItself|TestJumpWindowTakesLiveChanges|TestEnteringConversationAfterJump|TestColdJumpLoadsOnlyTheWindow|TestColdJumpRefreshedBeforeFirstFrame|TestHandOverHighlightsRootAfterWindow|TestFollowLinkOpensSlackLinksInClient|TestTopicCardLinksFollowSlackLinks|TestJumpToLoadedMessageOnAnchorLine|TestJumpToLateMessageOnAnchorLine|TestJumpHoldsThroughRowsGrowingAbove|TestJumpToReplyOnAnchorLine|TestArchivedTombstoneWindowPagesOlder|TestArchivedTombstoneThreadScrollsUp|TestJumpWindowKeepsReactionsAfterOtherJumps|TestWindowNewerFailureDoesNotBlockOlder|TestJumpWindowEndStaysPut|TestAnchorLineKeepsRowAfterScroll|TestNewMessageNearEndSticks|TestJumpToMissingMessageLandsOnNext|TestJumpToMissingInWindowDoesNotClimb|TestThreadReHighlightScrollsLazilyToTop|TestHighlightRootFromElsewhereAnchors|TestEnteringWithUnreadsShowsNewest|TestHighlightRootRouteKeepsWindow|TestPageKeysScrollTheList|TestArchivedTombstoneJumpScrollsBothWays|TestHoverToolbarJumpFromActivity|TestFlashEndsWhenRowLeaves|TestJumpWindowLastPageStaysPut|TestUnreadConversationOpensAtNewest|TestOwnSendJumpsToNewest|TestNewMessageNearEndSticksDarkClean|TestEmptyComposerPageKeys|TestSharedMessageOpensItsReply)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: ui (links, deep links, panes and toasts open a message's thread as Slack's jumpToMessage does)
+        run: |
+          go test -count=1 -v -timeout 45m -run "$TESTS" ./internal/ui
+          go test -count=$COUNT -timeout 120m -run "$TESTS" ./internal/ui
+      - name: messages, views, popups, blockkit (the pane's hand-over, the highlight, row and surface links, search, Activity)
+        if: ${{ !cancelled() }}
+        run: |
+          go test -count=1 -v -run '^(TestReplyRootedPaneHandsOnEachOpen|TestJumpHighlightKeyframes|TestHandOverWaitsForReadAfterJoin|TestChannelNameArrivesBetweenFrames|TestEveryRowFlashes|TestRepeatJumpKeepsFlash|TestFlashTintsSeeThroughFills|TestWindowSwitchCountsFromItsModel|TestWindowLoadTakesUpdateWhileOut|TestWindowMostRecentLeavesWindow|TestWindowDownArrowOntoLastMessage|TestWindowFocusNewestLeavesWindow|TestWindowDateJumpPastItsEnd|TestListCacheKeepsShownWindow|TestDrawnWindowTakenBack|TestInjectedMessagesStayInTheirSlice|TestWindowPageKeepsLiveChanges|TestRenameDuringWindowPage|TestLiveReadsWindow|TestWindowEndKeyLeavesWindow|TestPageUpMovesAPageLess21|TestPageKeyTakesTheDOMNames|TestNewMessageAfterPageUpKeepsPlace|TestShrinkingNearEndKeepsToIt|TestDeletedLineRowKeepsNextInPlace|TestEndStopsTheWheelCurve|TestPluginJumpStartsAFlash|TestTombstoneSquareLikeSlack|TestWindowRowsDrawPluginViews)$' ./internal/ui/messages
+          go test -count=$COUNT -run '^(TestReplyRootedPaneHandsOnEachOpen|TestJumpHighlightKeyframes|TestHandOverWaitsForReadAfterJoin|TestChannelNameArrivesBetweenFrames|TestEveryRowFlashes|TestRepeatJumpKeepsFlash|TestFlashTintsSeeThroughFills|TestWindowSwitchCountsFromItsModel|TestWindowLoadTakesUpdateWhileOut|TestWindowMostRecentLeavesWindow|TestWindowDownArrowOntoLastMessage|TestWindowFocusNewestLeavesWindow|TestWindowDateJumpPastItsEnd|TestListCacheKeepsShownWindow|TestDrawnWindowTakenBack|TestInjectedMessagesStayInTheirSlice|TestWindowPageKeepsLiveChanges|TestRenameDuringWindowPage|TestLiveReadsWindow|TestWindowEndKeyLeavesWindow|TestPageUpMovesAPageLess21|TestPageKeyTakesTheDOMNames|TestNewMessageAfterPageUpKeepsPlace|TestShrinkingNearEndKeepsToIt|TestDeletedLineRowKeepsNextInPlace|TestEndStopsTheWheelCurve|TestPluginJumpStartsAFlash|TestTombstoneSquareLikeSlack|TestWindowRowsDrawPluginViews)$' ./internal/ui/messages
+          go test -count=$COUNT -v -run '^(TestRowLinksFollowSlackLinks|TestActivityOpenInHomeOpensAtReply)$' ./internal/ui/views
+          go test -count=$COUNT -v -run '^TestSearchResultOpensReplyAtReply$' ./internal/ui/popups
+          go test -count=$COUNT -v -run '^TestSurfaceLinksFollowSlackLinks$' ./internal/ui/blockkit
+          go test -count=$COUNT -v -run '^(TestTopicLinksFollowSlackLinks|TestSearchCardForeignPermalinkOpensBrowser)$' ./internal/ui/popups
+          go test -count=$COUNT -v -run '^TestCanvasLinksFollowSlackLinks$' ./internal/ui/canvasview
+          go test -count=$COUNT -v -run '^(TestSeeThroughFillsOverUnder|TestOpaqueFillsStayOverUnder)$' ./internal/ui/richview
+          go test -count=$COUNT -v -run '^(TestMirrorHoldsJumpWindows|TestFetchedMessageMarkedOnce)$' ./internal/taut
+          go test -count=$COUNT -v -run '^TestEmptyInputHandsPageKeysToList$' ./internal/ui/composer
+          go test -count=$COUNT -v -run '^TestPluginLinksFollowSlackLinks$' ./internal/ui/slackc
+      - name: the lookups and the log's tags (core, logtag, ui)
+        if: ${{ !cancelled() }}
+        run: |
+          go test -count=$COUNT -v -run '^(TestReplyThread|TestCachedSlugKeepsParentThread|TestReplyThreadOpenRoot|TestReplyThreadSingleFlight|TestHistoryAround|TestRepliesForReplyKeyedByParent|TestLatestReply|TestReplyThreadForgetsChangedMessages)$' ./internal/core
+          go test -count=$COUNT -v -run '^(TestWindowsAreSlices|TestWindowReadsMergeLive|TestHeldWindowsStay|TestWindowReachingNewestIsAnEpoch)$' ./internal/store
+          go test -count=$COUNT -v -run '^TestID$' ./internal/logtag
+          go test -count=$COUNT -run '^(TestDeepLinkMessage|TestNavLogTags)$' ./internal/ui
+      - name: gio (patch 50, List.ScrollDelta)
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestListScrollDelta|TestListStopScroll)$' gioui.org/layout
+
+  # jump-reactions: reactions on a jump window's messages draw after the
+  # list left the conversation for old messages elsewhere and came back to
+  # the window it kept (edit-latency's reactions round, thread-open-root's
+  # review: core dropped the shown window past 8, and reactions found no
+  # message). Dispatch with only=jump-reactions.
+  jump-reactions:
+    if: ${{ !inputs.only || startsWith('jump-reactions', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: reactions on a jump window after leaving it (one verbose run, then COUNT)"
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 15m -run '^TestJumpWindowReactionsAfterLeaving$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run '^TestJumpWindowReactionsAfterLeaving$' ./internal/ui || rc=1
+          exit $rc
