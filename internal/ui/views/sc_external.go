@@ -105,12 +105,14 @@ type scExternal struct {
 	slideFrom int
 	slideAt   time.Time
 	shownAt   time.Time // the carousel's 7 s timer
+	qwk, twk  wake      // the next quote's frame, the tooltips' (never a mid-layout InvalidateCmd)
 	mu        sync.Mutex
 }
 
 func newSCExternal(d *Directories) *scExternal {
 	e := &scExternal{d: d, rows: map[string]*widget.Clickable{}}
 	e.list.Axis = layout.Vertical
+	e.tipCh.Wake, e.tipDM.Wake = tipWake(d.h, &e.twk), tipWake(d.h, &e.twk)
 	e.in = newSearchIn(nsSC, "Search for people by their name, company, or email address")
 	return e
 }
@@ -149,7 +151,17 @@ func scLoadTeams(ctx context.Context, c *core.App, filter string, count int, mar
 			out.counts[k] = v
 		}
 	}
-	out.teams = append(out.teams, ts...)
+	// a team a page repeats is listed once (the teams store upserts by id)
+	seen := make(map[string]bool, len(out.teams)+len(ts))
+	for _, t := range out.teams {
+		seen[t.ID] = true
+	}
+	for _, t := range ts {
+		if !seen[t.ID] {
+			seen[t.ID] = true
+			out.teams = append(out.teams, t)
+		}
+	}
 	var need []string
 	for _, t := range ts {
 		if _, ok := out.counts[t.ID]; !ok {
@@ -254,6 +266,23 @@ func (d *Directories) SCCTA() (channel, channelOff, dmOff bool, contact string) 
 	h, _, _ := d.ext.hub.get()
 	return h.CreateChannel, !h.Invite.OK, !h.DMEligible, d.ext.contactText(h)
 }
+
+// SCScrollToEnd scrolls the tab's list to its last rows (the tutorial and
+// the social proof).
+func (d *Directories) SCScrollToEnd() { d.ext.list.Position = layout.Position{First: 1 << 20} }
+
+// SCQuoteDue is when the carousel moves on (the shown quote's 7 s), and
+// the frame the tab asked the host for, with its timer still out.
+func (d *Directories) SCQuoteDue() (next, asked time.Time, pending bool) {
+	asked, pending = d.ext.qwk.due()
+	return d.ext.shownAt.Add(7 * time.Second), asked, pending
+}
+
+// SCNextQuote is the carousel's › (now on the frame's clock).
+func (d *Directories) SCNextQuote(now time.Time) { d.ext.goQuote(d.ext.quote+1, now) }
+
+// SCInviteFilterOpen opens Invitations' Filter by menu.
+func (d *Directories) SCInviteFilterOpen() { d.inv.filter.open = true }
 
 // SCDismissBanner is the banner's close button.
 func (d *Directories) SCDismissBanner() { d.ext.dismissBanner() }
@@ -380,7 +409,7 @@ func (e *scExternal) rowList() []scRow {
 			return layout.Inset{Top: 4, Bottom: 8}.Layout(gtx, func(gtx C) D {
 				return layout.Center.Layout(gtx, func(gtx C) D {
 					if e.avail.busy() {
-						return popups.LoadingButton(gtx, d.th, &e.more, popups.BtnMedium, 80)
+						return popups.LoadingButtonWake(gtx, d.th, &e.more, popups.BtnMedium, 80, tipWake(d.h, &e.twk))
 					}
 					return d.button(gtx, &e.more, btnOutline, false, nsBrowsers.T("Load More"))
 				})
@@ -438,7 +467,7 @@ func (e *scExternal) page(gtx C) D {
 		e.deb.set(q, gtx.Now)
 		e.deb.sent = q
 		e.setQuery(q)
-	} else if dq, ok := e.deb.due(gtx, dirDebounce); ok {
+	} else if dq, ok := e.deb.dueVia(e.d.h, gtx, dirDebounce); ok {
 		e.setQuery(dq)
 	}
 	hub, _, _ := e.hub.get()
@@ -985,7 +1014,7 @@ func (e *scExternal) carousel(gtx C) D {
 		if !now.Before(next) {
 			e.goQuote(e.quote+1, now)
 		} else {
-			gtx.Execute(op.InvalidateCmd{At: next})
+			e.qwk.schedule(d.h, now, next)
 		}
 	}
 	if e.prevQ.Clicked(gtx) && e.quote > 0 {
@@ -1084,7 +1113,7 @@ func (e *scExternal) quotes(gtx C) D {
 		t := float32(gtx.Now.Sub(e.slideAt)) / float32(time.Second)
 		if t < 1 {
 			pos = float32(e.slideFrom) + (float32(e.quote)-float32(e.slideFrom))*easeInOut(t)
-			gtx.Execute(op.InvalidateCmd{})
+			d.h.Invalidate() // the slide's next frame, asked of the host
 		}
 	}
 	one := func(gtx C, q scQuote) D {

@@ -77,16 +77,22 @@ func (a *App) SearchExternalOrg(ctx context.Context, teamID, query string, limit
 	grid := a.C.Creds.EnterpriseID != ""
 	convs := a.localOrgConvs(teamID, query)
 	hs, cerr := a.C.SearchChannelsWith(ctx, query, slack.ChannelSearchOpts{Count: limit, Filter: "xws AND shared", ExternalTeam: teamID})
-	var ids []string
+	// the hits the store doesn't hold are fetched (fetchChannelsById);
+	// the ones it holds keep what it has (a leave since stays left)
+	var hits, need []string
 	for _, h := range hs {
-		if !slices.ContainsFunc(convs, func(c Conv) bool { return c.ID == h.ID }) {
-			ids = append(ids, h.ID)
+		if slices.ContainsFunc(convs, func(c Conv) bool { return c.ID == h.ID }) {
+			continue
+		}
+		hits = append(hits, h.ID)
+		if c, ok := a.Conv(h.ID); !ok || !named(c) {
+			need = append(need, h.ID)
 		}
 	}
-	if len(ids) > 0 {
-		a.fetchChannelsByID(ctx, ids)
+	if len(need) > 0 {
+		a.fetchChannelsByID(ctx, need)
 	}
-	for _, id := range ids {
+	for _, id := range hits {
 		if c, ok := a.Conv(id); ok && named(c) && !c.IsArchived {
 			convs = append(convs, c)
 		}
@@ -244,10 +250,9 @@ func (a *App) fetchChannelsByID(ctx context.Context, ids []string) {
 			if c.ID == "" {
 				continue
 			}
-			a.S.PutName(c.ID, c.Name)
-			if _, ok := a.S.Conv(c.ID); !ok {
-				a.S.PutExtConv(c)
-			}
+			// stored only when nothing holds it by now (checked under the
+			// store's lock: a membership change while this read was out wins)
+			a.S.AddExtConv(c)
 		}
 	}
 }

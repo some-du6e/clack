@@ -13,6 +13,7 @@ import (
 	"errors"
 	"image"
 	"strings"
+	"sync"
 	"time"
 
 	"gioui.org/font"
@@ -34,6 +35,51 @@ type scActHost interface {
 	scPost(f func()) // on the UI goroutine, next frame
 	scReload()       // read the invites again (on the UI goroutine)
 	scForked() *[2]func()
+	scFlights() *scFlights
+}
+
+// scFlights are the invites whose Accept flow is running: Slack's accept
+// actions (SlackConnectAcceptDmInviteAction, …ChannelInviteAction) hold
+// their button loading from the click until the flow settles (the
+// eligibility read and the accept, or the modal it opens), so a second
+// click sends nothing.
+type scFlights struct {
+	mu sync.Mutex
+	m  map[string]bool
+}
+
+// start claims invite id; false when its flow is already running.
+func (f *scFlights) start(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.m[id] {
+		return false
+	}
+	if f.m == nil {
+		f.m = map[string]bool{}
+	}
+	f.m[id] = true
+	return true
+}
+
+func (f *scFlights) done(id string) {
+	f.mu.Lock()
+	delete(f.m, id)
+	f.mu.Unlock()
+}
+
+// busy reports invite id's flow running (the Accept button loading).
+func (f *scFlights) busy(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.m[id]
+}
+
+// scSettle ends invite id's flow (the finally's setIsLoading(false)) and
+// asks for the frame that draws Accept again.
+func scSettle(x scActHost, id string) {
+	x.scFlights().done(id)
+	x.scBase().h.Invalidate()
 }
 
 // inviterName is the Ignore modals' {imMember} (forceRealName).
@@ -64,21 +110,25 @@ func scIgnoreForked(x scActHost, ph popups.Host, it core.ActivityItem) {
 			nsIntro.T("You’ll no longer receive Slack Connect invitations sent from {imMember}.", "imMember", name),
 			func() { scIgnoreAll(x, ph, it) }},
 	}
+	// this modal's own row actions: a row runs its closure, never the
+	// host's latest (an older modal under a newer one acts on its invite)
+	var acts [2]func()
 	for i := range choices {
 		next := choices[i].next
-		x.scForked()[i] = func() {
+		acts[i] = func() {
 			if m != nil {
 				m.Dismiss()
 			}
 			next()
 		}
 	}
+	*x.scForked() = acts // the newest modal's, for the hosts' tests
 	m = popups.NewModal(ph, popups.ModalOpts{
 		Title: nsIntro.T("What would you like to do?"),
 		Body: func(gtx C) D {
 			for i := range rows {
 				if rows[i].Clicked(gtx) {
-					x.scForked()[i]()
+					acts[i]()
 				}
 			}
 			// p-ignore_forked_modal__content: padding 0 14px 24px, the
@@ -90,8 +140,45 @@ func scIgnoreForked(x scActHost, ph popups.Host, it core.ActivityItem) {
 				)
 			})
 		},
+		OnClose: func() { scForkedOpen.drop(m) },
 	})
+	scForkedOpen.put(m, acts)
 	ph.ShowOverlay(m)
+}
+
+// scForkedOpen are the open forked modals' row actions, by modal (tests
+// press a given modal's row; ForkedRowPress).
+var scForkedOpen = forkedModals{m: map[*popups.Modal][2]func(){}}
+
+type forkedModals struct {
+	mu sync.Mutex
+	m  map[*popups.Modal][2]func()
+}
+
+func (f *forkedModals) put(m *popups.Modal, acts [2]func()) {
+	f.mu.Lock()
+	f.m[m] = acts
+	f.mu.Unlock()
+}
+
+func (f *forkedModals) drop(m *popups.Modal) {
+	f.mu.Lock()
+	delete(f.m, m)
+	f.mu.Unlock()
+}
+
+// ForkedRowPress presses row i (0 Ignore this invitation, 1 Block
+// invitations) of the open forked Ignore modal m, as a click on it does
+// (tests); false when m isn't one.
+func ForkedRowPress(m *popups.Modal, i int) bool {
+	scForkedOpen.mu.Lock()
+	acts, ok := scForkedOpen.m[m]
+	scForkedOpen.mu.Unlock()
+	if !ok || i < 0 || i > 1 {
+		return false
+	}
+	acts[i]()
+	return true
 }
 
 // forkedRow is IgnoreForkedModalButton: padding 12px 14px, radius 4px, a
@@ -233,7 +320,11 @@ func scIgnoreAll(x scActHost, ph popups.Host, it core.ActivityItem) {
 func scAcceptDM(x scActHost, ph popups.Host, it core.ActivityItem) {
 	inv := *it.Invite
 	inviter := it.Actor
+	if !x.scFlights().start(inv.ID) {
+		return
+	}
 	x.scWrite("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
+		defer scSettle(x, inv.ID)
 		ok, err := c.ConnectDMInviteEligible(ctx, inv.Sig)
 		if err != nil {
 			return err
@@ -346,7 +437,11 @@ func scAcceptChannel(x scActHost, ph popups.Host, it core.ActivityItem) {
 	inv := *it.Invite
 	team, name := it.Team, strings.TrimPrefix(it.Title, "#")
 	inviter := scInviterName(v, it)
+	if !x.scFlights().start(inv.ID) {
+		return
+	}
 	x.scWrite("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
+		defer scSettle(x, inv.ID)
 		el, err := c.ChannelInviteEligible(ctx, inv.Sig)
 		if err != nil {
 			return err

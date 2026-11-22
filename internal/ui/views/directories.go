@@ -2422,7 +2422,17 @@ func (dd *dirDropdown) update(gtx C) bool {
 // 1px #5e5d60@.45, 13px bold, a caret 4px after the label. The menu opens
 // right-aligned under it.
 func (dd *dirDropdown) layoutSort(b *base, gtx C, label string) D {
-	dims := dd.btn.Layout(gtx, func(gtx C) D {
+	dims := dd.layoutSortButton(b, gtx, label)
+	if dd.open {
+		dd.menu(b, gtx, dims.Size, true)
+	}
+	return dims
+}
+
+// layoutSortButton is layoutSort's button alone (the caller places the
+// menu).
+func (dd *dirDropdown) layoutSortButton(b *base, gtx C, label string) D {
+	return dd.btn.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		tw := b.th.Measure(gtx, 13, wBold, label)
 		h, pad, chev := gtx.Dp(28), gtx.Dp(12), gtx.Dp(16)
@@ -2447,10 +2457,6 @@ func (dd *dirDropdown) layoutSort(b *base, gtx C, label string) D {
 		dirAt(gtx, image.Pt(pad+tw+gtx.Dp(4), (h-chev)/2), func(gtx C) D { return b.icon(gtx, ic, 16, b.p.Sec) })
 		return D{Size: sz}
 	})
-	if dd.open {
-		dd.menu(b, gtx, dims.Size, true)
-	}
-	return dims
 }
 
 // layoutSelect is a form select: w x 36, radius 8, 1px #7c7a7f, padding

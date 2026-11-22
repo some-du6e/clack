@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -62,7 +63,7 @@ func TestNoNotYetAvailable(t *testing.T) {
 			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue
 			}
-			if strings.Contains(line, `available in "+appName+" yet`) || strings.Contains(line, "available in Clack yet") {
+			if notYetAvailable(line) {
 				t.Errorf("%s:%d: a not-yet-available page: %s", p, i+1, strings.TrimSpace(line))
 			}
 		}
@@ -70,5 +71,28 @@ func TestNoNotYetAvailable(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// notYetRe is a "… available in <the app> yet" page however the app's
+// name goes in: views' and popups' appName, package ui's AppName (or
+// ui.AppName), an {appName} placeholder, or "Clack" itself.
+var notYetRe = regexp.MustCompile(`available in (Clack|"\s*\+\s*(\w+\.)?[Aa]pp[Nn]ame\s*\+\s*"|\{[Aa]pp[Nn]ame\}) yet`)
+
+func notYetAvailable(line string) bool { return notYetRe.MatchString(line) }
+
+func TestNotYetAvailableMatcher(t *testing.T) {
+	for line, want := range map[string]bool{
+		`"Managing invitations isn’t available in "+appName+" yet."`: true,
+		`"Huddles aren’t available in " + AppName + " yet"`:          true,
+		`"x isn’t available in "+ui.AppName+" yet"`:                  true,
+		`T("Polls aren’t available in {appName} yet")`:               true,
+		`"Recording clips isn't available in Clack yet"`:             true,
+		`"This field can't be edited in Clack yet"`:                  false,
+		`"Available in Clack"`:                                       false,
+	} {
+		if got := notYetAvailable(line); got != want {
+			t.Errorf("%s: %v, want %v", line, got, want)
+		}
 	}
 }

@@ -82,6 +82,7 @@ type ExternalOrg struct {
 	closeTip popups.TipState
 	verified widget.Clickable
 	verTip   popups.TipState
+	twk      wake // the tooltips' hover-delay frame
 
 	mu     sync.Mutex
 	counts map[string]scOrgCount
@@ -93,6 +94,7 @@ func NewExternalOrg(h Host, teamID string) *ExternalOrg {
 	o := &ExternalOrg{base: newBase(h), d: NewDirectories(h), team: teamID, rows: map[string]*widget.Clickable{},
 		counts: map[string]scOrgCount{}, asked: map[string]bool{}}
 	o.list.Axis = layout.Vertical
+	o.closeTip.Wake, o.verTip.Wake = tipWake(h, &o.twk), tipWake(h, &o.twk)
 	o.in = newSearchIn(nsSCNext, "Search for a channel or person")
 	return o
 }
@@ -313,7 +315,7 @@ func (o *ExternalOrg) Layout(gtx C) D {
 		o.deb.set(q, gtx.Now)
 		o.deb.sent = q
 		o.setQuery(q)
-	} else if dq, ok := o.deb.due(gtx, dirDebounce); ok {
+	} else if dq, ok := o.deb.dueVia(o.h, gtx, dirDebounce); ok {
 		o.setQuery(dq)
 	}
 	size := gtx.Constraints.Max

@@ -51,20 +51,23 @@ type scInvActs struct {
 	copy, revoke, ignore, accept widget.Clickable
 	tipCopy, tipRevoke           popups.TipState
 	copiedAt                     time.Time
+	wk                           wake // Link copied's end, the tooltips' delay
 }
 
 type scInvites struct {
-	d *Directories
+	d  *Directories
+	wk wake // the spinner's frames
 
-	hub    async[core.SCHub]
-	data   async[scInvData]
-	filter dirDropdown
-	list   widget.List
-	retry  widget.Clickable
-	learn  widget.Clickable
-	admin  widget.Clickable
-	acts   map[string]*scInvActs
-	forked [2]func()
+	hub     async[core.SCHub]
+	data    async[scInvData]
+	filter  dirDropdown
+	list    widget.List
+	retry   widget.Clickable
+	learn   widget.Clickable
+	admin   widget.Clickable
+	acts    map[string]*scInvActs
+	forked  [2]func()
+	flights scFlights // the invites whose Accept flow runs
 
 	notesMu sync.Mutex
 	notes   []func()
@@ -116,8 +119,9 @@ func (v *scInvites) scPost(f func()) {
 	v.notesMu.Unlock()
 	v.d.h.Invalidate()
 }
-func (v *scInvites) scReload()            { v.fetch() }
-func (v *scInvites) scForked() *[2]func() { return &v.forked }
+func (v *scInvites) scReload()             { v.fetch() }
+func (v *scInvites) scForked() *[2]func()  { return &v.forked }
+func (v *scInvites) scFlights() *scFlights { return &v.flights }
 func (v *scInvites) scWrite(fail string, f func(context.Context, *core.App) error, revert func()) {
 	c := v.d.h.Core()
 	go func() {
@@ -183,6 +187,14 @@ func (d *Directories) SCInviteAct(id, act string) {
 	d.inv.act(ci, act)
 }
 
+// SCForkedRowPress presses row i of Invitations' open forked Ignore
+// modal m (ForkedRowPress).
+func (d *Directories) SCForkedRowPress(m *popups.Modal, i int) bool { return ForkedRowPress(m, i) }
+
+// SCInviteBusy reports invite id's Accept flow running (its button
+// loading).
+func (d *Directories) SCInviteBusy(id string) bool { return d.inv.flights.busy(id) }
+
 // SCInvitesRetry is the error state's Try again.
 func (d *Directories) SCInvitesRetry() { d.inv.fetchWith(true) }
 
@@ -213,6 +225,7 @@ func (v *scInvites) actsOf(id string) *scInvActs {
 	a, ok := v.acts[id]
 	if !ok {
 		a = &scInvActs{}
+		a.tipCopy.Wake, a.tipRevoke.Wake = tipWake(v.d.h, &a.wk), tipWake(v.d.h, &a.wk)
 		v.acts[id] = a
 	}
 	return a
@@ -293,6 +306,16 @@ func (v *scInvites) revokeModal(ph popups.Host, ci core.ConnectInvite) {
 					}
 					out, err := c.ConnectInvitesOutgoing(ctx) // fetchAndResetOutboundConnectInvites (McFF)
 					if err != nil {
+						// the revoke went through: the card shows it revoked
+						// (no Revoke or Copy link) though the re-read failed
+						v.data.mutate(func(d *scInvData) {
+							for i := range d.out {
+								if d.out[i].ID == ci.ID {
+									d.out[i].Status = "revoked"
+								}
+							}
+						})
+						v.d.h.Invalidate()
 						return nil
 					}
 					v.data.mutate(func(d *scInvData) { d.out = out })
@@ -316,7 +339,7 @@ func (v *scInvites) layout(gtx C) D {
 	case "loading":
 		return layout.Inset{Top: 40}.Layout(gtx, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return layout.N.Layout(gtx, func(gtx C) D { return actSpinner(gtx, gtx.Dp(32), d.p.Faint) }) // xRE+ Spinner large, margin_top_250
+			return layout.N.Layout(gtx, func(gtx C) D { return actSpinnerVia(gtx, gtx.Dp(32), d.p.Faint, tipWake(d.h, &v.wk)) }) // xRE+ Spinner large, margin_top_250
 		})
 	case "error":
 		if v.retry.Clicked(gtx) {
@@ -361,7 +384,7 @@ func (v *scInvites) rows() []scRow {
 			v.list.Position = layout.Position{}
 		}
 		return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D {
-			dims := v.filter.layoutSort(&d.base, gtx, v.filter.text(v.filter.sel))
+			dims := v.filter.layoutSortButton(&d.base, gtx, v.filter.text(v.filter.sel)) // the menu once, left-aligned
 			if v.filter.open {
 				v.filter.menu(&d.base, gtx, dims.Size, false)
 			}
@@ -556,7 +579,14 @@ func (v *scInvites) card(gtx C, ci core.ConnectInvite) D {
 		default:
 			c = &a.accept
 		}
+		if (x == core.InviteActAcceptDM || x == core.InviteActAcceptChannel) && v.flights.busy(ci.ID) {
+			for c.Clicked(gtx) { // loading: not pressable (clicks while it runs send nothing later)
+			}
+			continue
+		}
 		if c.Clicked(gtx) {
+			for c.Clicked(gtx) { // one flow per frame: a double click's second lands on the modal it opened
+			}
 			if x == core.InviteActCopyLink {
 				cdCopy(gtx, ci.Link)
 				a.copiedAt = gtx.Now
@@ -806,14 +836,19 @@ func (v *scInvites) cardActions(gtx C, ci core.ConnectInvite, acts []string, a *
 			}))
 		case core.InviteActAcceptDM, core.InviteActAcceptChannel:
 			ch = append(ch, layout.Rigid(func(gtx C) D {
-				return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return d.button(gtx, &a.accept, btnPrimary, true, nsSC.T("Accept")) })
+				return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D {
+					if v.flights.busy(ci.ID) { // loading while its flow runs (c-button--small: min-width 56px)
+						return popups.LoadingButtonWake(gtx, d.th, &a.accept, popups.BtnSmall, 56, tipWake(d.h, &a.wk))
+					}
+					return d.button(gtx, &a.accept, btnPrimary, true, nsSC.T("Accept"))
+				})
 			}))
 		case core.InviteActCopyLink:
 			ch = append(ch, layout.Rigid(func(gtx C) D {
 				tip := nsSC.T("Copy link")
 				if !a.copiedAt.IsZero() && gtx.Now.Sub(a.copiedAt) < 2*time.Second {
 					tip = nsSC.T("Link copied")
-					gtx.Execute(op.InvalidateCmd{At: a.copiedAt.Add(2 * time.Second)})
+					a.wk.schedule(d.h, gtx.Now, a.copiedAt.Add(2*time.Second))
 				}
 				bd := layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return d.iconButton(gtx, &a.copy, "link", 28, 16, d.p.Sec) })
 				popups.Tooltip(gtx, d.th, &a.tipCopy, a.copy.Hovered(), bd.Size, popups.Above, tip, "")

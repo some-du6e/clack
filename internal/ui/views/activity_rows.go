@@ -535,8 +535,9 @@ func (v *Activity) scPost(f func()) {
 	v.notes.mu.Unlock()
 	v.h.Invalidate()
 }
-func (v *Activity) scReload()            { v.load(actRefresh) }
-func (v *Activity) scForked() *[2]func() { return &v.forked }
+func (v *Activity) scReload()             { v.load(actRefresh) }
+func (v *Activity) scForked() *[2]func()  { return &v.forked }
+func (v *Activity) scFlights() *scFlights { return &v.flights }
 func (v *Activity) scWrite(fail string, f func(context.Context, *core.App) error, r func()) {
 	v.write(fail, f, r)
 }
@@ -564,6 +565,9 @@ func (v *Activity) inviteButtons(gtx C, r *actRow, acts []string) D {
 		ch = append(ch, layout.Rigid(func(gtx C) D {
 			if a == core.InviteActIgnore {
 				return v.smallButton(gtx, &r.invC[i], btnOutline, "", nsSlackConnect.T("Ignore"))
+			}
+			if r.it.Invite != nil && v.flights.busy(r.it.Invite.ID) { // loading while its flow runs (c-button--small: 56px)
+				return popups.LoadingButtonWake(gtx, v.th, &r.invC[i], popups.BtnSmall, 56, tipWake(v.h, &v.flightWake))
 			}
 			return v.smallButton(gtx, &r.invC[i], btnPrimary, "", nsSlackConnect.T("Accept"))
 		}))
