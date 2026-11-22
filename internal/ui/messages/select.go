@@ -4,9 +4,9 @@ import (
 	"html"
 	"image"
 	"strings"
-	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -30,8 +30,14 @@ type selection struct {
 	active   bool // a != b somewhere
 	dragging bool
 	focused  bool
-	lastTap  time.Duration
+	// click counts the presses (the window's count, Gio patch 48), taps
+	// is the last press's, gran what it selected by (a double click's
+	// word, a triple's paragraph) and ga, gb that first granule, which a
+	// drag extends by gran (Blink's ExtendSelectionAsDirectional)
+	click    gesture.ClickRun
 	taps     int
+	gran     uint8
+	ga, gb   selPoint
 	pressPos f32.Point
 	keyIdx   map[string]int // item key -> index, rebuilt with items
 }
@@ -114,28 +120,35 @@ func (s *listState) selPointer(gtx layout.Context, h Host, e pointer.Event, size
 			// preventDefaults)
 			return
 		}
-		if e.Time-s.sel.lastTap < 400*time.Millisecond {
-			s.sel.taps++
-		} else {
+		// the press's count, the window's (Gio patch 48), as Blink's
+		// SelectionController takes it: 2 the word (HandleDoubleClick), 3
+		// and more the paragraph with its break (HandleTripleClick); taps
+		// take no multi-click selection in text that isn't editable
+		// (mouse_down_allows_multi_click_)
+		s.sel.taps = s.sel.click.Press(gtx.Source, e)
+		if e.Source != pointer.Mouse {
 			s.sel.taps = 1
 		}
-		s.sel.lastTap = e.Time
 		k := s.items[i].key
 		off := r.rv.OffsetAt(local)
+		s.sel.gran = selGranChar
 		switch {
 		case s.sel.taps == 2:
-			a, b := r.rv.WordAt(off)
+			a, b := r.rv.WordAtPoint(local) // an emoji whole; a wrapped line's last word past its end
 			s.sel.a, s.sel.b = selPoint{k, a}, selPoint{k, b}
+			s.sel.gran = selGranWord
 		case s.sel.taps >= 3:
 			a, b := r.rv.LineAt(off)
 			s.sel.a, s.sel.b = selPoint{k, a}, selPoint{k, b}
+			s.sel.gran = selGranParagraph
 		case e.Modifiers.Contain(key.ModShift) && s.sel.active:
 			s.sel.b = selPoint{k, off}
 		default:
 			s.sel.a, s.sel.b = selPoint{k, off}, selPoint{k, off}
 		}
+		s.sel.ga, s.sel.gb = s.sel.a, s.sel.b
 		s.sel.pressPos = e.Position
-		s.sel.dragging = s.sel.taps == 1
+		s.sel.dragging = true
 		s.sel.active = s.sel.a != s.sel.b
 		gtx.Execute(key.FocusCmd{Tag: s})
 	case pointer.Drag:
@@ -146,7 +159,12 @@ func (s *listState) selPointer(gtx layout.Context, h Host, e pointer.Event, size
 			return
 		}
 		if i, r, local := s.rowAt(e.Position); r != nil {
-			s.sel.b = selPoint{s.items[i].key, offsetIn(r, local)}
+			p := selPoint{s.items[i].key, offsetIn(r, local)}
+			if s.sel.gran == selGranChar {
+				s.sel.b = p
+			} else {
+				s.extendBy(r, p)
+			}
 			s.sel.active = s.sel.a != s.sel.b
 		}
 		// auto-scroll at the edges
@@ -318,4 +336,37 @@ func (s *listState) selKeys(gtx layout.Context, h Host) {
 			}
 		}
 	}
+}
+
+// A selection's granule: what a press selected by and a drag after it
+// extends by.
+const (
+	selGranChar uint8 = iota
+	selGranWord
+	selGranParagraph
+)
+
+// extendBy is a drag after a double or triple press reaching p in row r:
+// the granule there and the one the press selected (ga, gb), together,
+// the drag's end at the far side (Blink's ExtendSelectionAsDirectional).
+func (s *listState) extendBy(r *row, p selPoint) {
+	a, b := r.rv.WordAt(p.off)
+	if s.sel.gran == selGranParagraph {
+		a, b = r.rv.LineAt(p.off)
+	}
+	lo, hi := selPoint{p.key, a}, selPoint{p.key, b}
+	if s.before(lo, s.sel.ga) {
+		s.sel.a, s.sel.b = s.sel.gb, lo
+		return
+	}
+	s.sel.a, s.sel.b = s.sel.ga, hi
+	if s.before(hi, s.sel.gb) {
+		s.sel.b = s.sel.gb
+	}
+}
+
+// before reports whether p comes before q in the list.
+func (s *listState) before(p, q selPoint) bool {
+	ip, iq := s.sel.keyIdx[p.key], s.sel.keyIdx[q.key]
+	return ip < iq || ip == iq && p.off < q.off
 }

@@ -256,6 +256,9 @@ func DecodeConfig(data []byte) (image.Config, string, error) { return decodeConf
 // first. A WebP decodes its picture's chunks alone (decodeWebP), within its
 // picture's budget too.
 func decodeImage(data []byte, maxPixels, maxSide int, b *Budget) (image.Image, error) {
+	if isAnimWebP(data) {
+		return firstWebPFrame(data, maxPixels, maxSide, b)
+	}
 	cfg, format, err := decodeConfig(data)
 	if err != nil {
 		return nil, err

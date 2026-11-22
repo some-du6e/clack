@@ -695,7 +695,7 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 			th, _ := l.plainFlow(b.Image.Title, x, y, w, &fs, -1)
 			h += th + l.dp(4)
 		}
-		tg := l.d.addTarget(target{kind: tImage, img: b.Image})
+		tg := l.d.addTarget(target{kind: tImage, img: b.Image, href: b.Image.URL}) // Image (8plt): AttachmentImage with no externalSourceUrl
 		return h + l.image(b.Image, x, y+h, min(w, l.dp(360)), l.dp(360), l.dp(4), tg)
 
 	case richtext.Actions:
@@ -1013,7 +1013,7 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 		}
 	}
 	if b.Image != nil {
-		tg := l.d.addTarget(target{kind: tImage, img: b.Image})
+		tg := l.d.addTarget(target{kind: tImage, img: b.Image, elem: true}) // BaseImageElement
 		l.image(b.Image, x+w-accW, y, accW, accW, l.dp(8), tg)
 		h = max(h, accW+accBottom)
 	} else if len(b.Buttons) > 0 && l.opts.Elements != nil {
@@ -1301,7 +1301,7 @@ func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
 	iw, ih := l.kitImageSize(img, w)
 	r := image.Rect(x, iy, x+iw, iy+ih)
 	rad := l.dp(8)
-	itg := l.d.addTarget(target{kind: tImage, img: img})
+	itg := l.d.addTarget(target{kind: tImage, img: img, href: img.URL}) // Image (8plt): no externalSourceUrl
 	// AttachmentImage (UvHM): its source is the URL through Slack's image
 	// proxy (imgcache.PublicFetch), drawn as the box's CSS background, so
 	// the box is empty while it loads and if it fails (bare)

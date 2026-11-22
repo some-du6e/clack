@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"gioui.org/f32"
-	"gioui.org/internal/clickrule"
 	"gioui.org/internal/fling"
 	"gioui.org/io/event"
 	"gioui.org/io/input"
@@ -54,10 +53,17 @@ func (h *Hover) Update(q input.Source) bool {
 			continue
 		}
 		switch e.Kind {
-		case pointer.Leave, pointer.Cancel:
+		case pointer.Leave:
 			if h.entered && h.pid == e.PointerID {
 				h.entered = false
 			}
+		case pointer.Cancel:
+			// Clack patch 60: a Cancel ends the hover whatever pointer
+			// it names, as it ends a Click's. The router's first event
+			// to a handler made again (pointerHandler.ResetEvent: a tag
+			// that missed a frame, its unread Leave dropped) is a
+			// Cancel of pointer 0, and on Windows the mouse is pointer 1.
+			h.entered = false
 		case pointer.Enter:
 			h.pid = e.PointerID
 			h.entered = true
@@ -178,14 +184,10 @@ func (c *Click) Pressed() bool {
 
 // Update state and return the next click events, if any.
 func (c *Click) Update(q input.Source) (ClickEvent, bool) {
-	kinds := pointer.Press | pointer.Release | pointer.Enter | pointer.Leave | pointer.Cancel
-	if clickrule.Base.MoveResets {
-		kinds |= pointer.Move | pointer.Drag // Clack patch 48: a move can end a run of clicks
-	}
 	for {
 		evt, ok := q.Event(pointer.Filter{
 			Target: c,
-			Kinds:  kinds,
+			Kinds:  pointer.Press | pointer.Release | pointer.Enter | pointer.Leave | pointer.Cancel,
 		})
 		if !ok {
 			break
@@ -232,8 +234,6 @@ func (c *Click) Update(q input.Source) (ClickEvent, bool) {
 			c.pressed = true
 			c.run.Press(q, e)
 			return ClickEvent{Kind: KindPress, Position: e.Position.Round(), Source: e.Source, Modifiers: e.Modifiers, NumClicks: c.run.clicks}, true
-		case pointer.Move, pointer.Drag:
-			c.run.Moved(e)
 		case pointer.Leave:
 			c.run.Moved(e)
 			if !c.pressed {

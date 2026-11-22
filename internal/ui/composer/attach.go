@@ -1604,7 +1604,8 @@ type attBrowser struct {
 	clicks  []widget.Clickable
 	list    layout.List
 	focused bool
-	reveal  bool // scroll the cursor into view
+	reveal  bool   // scroll the cursor into view
+	lastHit string // the entry the last click hit (doubleClicked)
 }
 
 func (a *attachments) openBrowser() {
@@ -1664,6 +1665,19 @@ func (b *attBrowser) confirm() {
 	if len(paths) > 0 {
 		go b.a.addPaths(paths)
 	}
+}
+
+// doubleClicked reports whether a click on entry i, the window's click n
+// of its run (Gio patch 48), double-clicks the entry: the run's last click
+// hit it too. A folder opens on its first click, so a double click's
+// second click lands on whatever entry the folder's listing puts under
+// the pointer, and a list that scrolled between the clicks moves another
+// entry there: such a click is a single one, not an attach.
+func (b *attBrowser) doubleClicked(i, n int) bool {
+	p := b.entries[i].path
+	dbl := n >= 2 && b.lastHit == p
+	b.lastHit = p
+	return dbl
 }
 
 // activate opens a folder or acts on a file; it reports whether the entry
@@ -1779,7 +1793,7 @@ clicks:
 				break
 			}
 			b.cursor = i
-			if b.activate(i, cl.NumClicks >= 2) {
+			if b.activate(i, b.doubleClicked(i, cl.NumClicks)) {
 				break clicks
 			}
 		}

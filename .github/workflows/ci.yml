@@ -362,6 +362,11 @@ jobs:
       - name: Gio pointer state reset (vendored gioui.org/io/input, gesture)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run '^(TestResetPointers|TestHoverResetPointers)$' gioui.org/io/input gioui.org/gesture
+      # Gio patch 60: a Hover ends on a Cancel of any pointer (a handler the
+      # router made again, Windows' mouse is pointer 1)
+      - name: Gio hover ends on a reset Cancel (vendored gioui.org/gesture)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackHoverEndsOnResetCancel$' gioui.org/gesture
       # Gio patch 53: a tag's area in the window, and what of it its clip
       # areas show (the video tiles' share of their list)
       - name: Gio area bounds (vendored gioui.org/io/input)
@@ -416,10 +421,12 @@ jobs:
         run: go test -count=1 -v -run 'TestCaptionHit|TestHiddenTitleBarOption|TestTitlebarDoubleClickAction' gioui.org/app
       # Gio patch 48: a run of clicks counts by the platform's rule, as
       # Chromium's does (500 ms and 2 px here; the Windows and macOS rules
-      # with their settings stood in), not a fixed 200 ms
+      # with their settings stood in), not a fixed 200 ms, for the window
+      # whatever widget a press lands on; an Editor's double and triple
+      # clicks select as Blink's do
       - name: Gio click counts (vendored gioui.org/gesture)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestMouseClicks|TestClackClick' gioui.org/gesture
+        run: go test -count=1 -v -run 'TestMouseClicks|TestClackClick|TestClackEditor' gioui.org/gesture gioui.org/widget
       # the X11 path on a real X server: python-xlib plays a file manager's
       # XDND source against a Gio window (enter, positions, drop, leave).
       # Gio patch 35: on the X11 window, a frame only Window.Invalidate
@@ -804,6 +811,14 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
         run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy' ./internal/ui/composer
+      # The image menu's Copy Image (Slack's webContents.copyImageAt) on a
+      # fakeslack image: CF_DIB and "PNG" read back as its pixels.
+      - name: copy image (CF_DIB, "PNG")
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -run '^TestWinCopyImageRoundTrip$' ./internal/ui/popups
       # A copy as Slack's desktop app makes it: text, "HTML Format" and the
       # custom types (slack/html, slack/texty) in Chromium's web custom data.
       - name: rich copy (CF_UNICODETEXT, HTML Format, Chromium Web Custom MIME Data Format)

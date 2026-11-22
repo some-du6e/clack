@@ -104,14 +104,14 @@ jobs:
         run: |
           mkdir -p "$HOVER_SHOTS_DIR"
           go test -count=1 -v ./internal/ui/hovercard
-          go test -count=1 -v -run 'TestLocality|TestAppCardAndExternal|TestBotHomeTeamLikeSlack|TestChannelCard|TestChannelTabSlugPeek' ./internal/core
+          go test -count=1 -v -run 'TestLocality|TestAppCardAndExternal|TestBotHomeTeamLikeSlack|TestSenderBotLikeSlack|TestChannelCard|TestChannelTabSlugPeek' ./internal/core
           go test -count=1 -v -run 'TestHoverCard|TestHoverTrigger|TestLocalTimeLabel' ./internal/ui/popups
           # a bot's and an app's card from its first frame to the loaded one, Slack's loading card (app-card-loading.png, app-card-loaded.png)
           CLACK_PIXEL_TESTS=1 CLACK_SHOTS="$HOVER_SHOTS_DIR" xvfb-run -a go test -count=1 -v -run '^TestAppHoverCard' ./internal/ui/popups
           xvfb-run -a go test -count=1 -v -run 'TestChannelHoverCard|TestComposerMemberTip' ./internal/ui/popups
           xvfb-run -a go test -count=1 -v -run 'TestSlugChannelCardAndAppTipLikeSlack|TestSlugProfileCardLikeSlack' ./internal/ui/composer
           go test -count=1 -v -run 'TestHoverTrigger' ./internal/ui/views
-          go test -count=1 -v -run 'TestRowHoverTarget' ./internal/ui/messages
+          go test -count=1 -v -run 'TestRowHoverTarget|TestSenderHoverAndClickAgree' ./internal/ui/messages
           go test -count=1 -v -run 'TestMentionHoverCard|TestCanvasChannelAndTabSlugCards|TestBody' ./internal/ui/richview
           xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardAnchor|TestHoverCardOverDialog|TestPersonClickOpensProfilePane|TestMentionHoverAndClick|TestChannelHoverCardInChannel|TestChannelHoverCardCodeHuddleTabs|TestTabSlugPeeks|TestCanvasChannelCard|TestPinsFolderSlugPeeks|TestURLHoverCard' ./internal/ui/
           # the shared huddle badge (the sidebar suffix and the channel card's): card-badge-*.png
