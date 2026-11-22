@@ -224,7 +224,7 @@ func Check(cfg Config) (Report, error) {
 		}
 	}
 	released := map[string]bool{}
-	names := func(body *ast.BlockStmt) {
+	refers := func(body *ast.BlockStmt) {
 		ast.Inspect(body, func(n ast.Node) bool {
 			if id, ok := n.(*ast.Ident); ok {
 				released[id.Name] = true
@@ -233,7 +233,7 @@ func Check(cfg Config) (Report, error) {
 		})
 	}
 	for _, fn := range releases {
-		names(fn.Body)
+		refers(fn.Body)
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -248,7 +248,7 @@ func Check(cfg Config) (Report, error) {
 			}
 			for _, h := range funcs[name] {
 				if h != fn {
-					names(h.Body)
+					refers(h.Body)
 				}
 			}
 			return true
