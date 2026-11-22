@@ -22,6 +22,7 @@ type engineImpl struct {
 
 type keyedSheet struct {
 	key string
+	src string // what was parsed: Set with the same text changes nothing
 	sh  *sheet
 }
 
@@ -70,20 +71,28 @@ func NewEngine() *Engine {
 // Set installs or replaces the sheet under key. A replaced sheet keeps
 // its original position in the cascade order.
 func (e *Engine) Set(key, src string) {
-	sh := parseSheet(src)
 	im := &e.impl
+	im.mu.Lock()
+	for i := range im.sheets {
+		if im.sheets[i].key == key && im.sheets[i].src == src {
+			im.mu.Unlock()
+			return // the same sheet again: no rebuild, no new version
+		}
+	}
+	im.mu.Unlock()
+	sh := parseSheet(src)
 	im.mu.Lock()
 	defer im.mu.Unlock()
 	found := false
 	for i := range im.sheets {
 		if im.sheets[i].key == key {
-			im.sheets[i].sh = sh
+			im.sheets[i].sh, im.sheets[i].src = sh, src
 			found = true
 			break
 		}
 	}
 	if !found {
-		im.sheets = append(im.sheets, keyedSheet{key: key, sh: sh})
+		im.sheets = append(im.sheets, keyedSheet{key: key, src: src, sh: sh})
 	}
 	e.rebuild()
 }
@@ -204,10 +213,11 @@ func (e *Engine) Remove(key string) {
 	for i := range im.sheets {
 		if im.sheets[i].key == key {
 			im.sheets = append(im.sheets[:i:i], im.sheets[i+1:]...)
-			break
+			e.rebuild()
+			return
 		}
 	}
-	e.rebuild()
+	// no such sheet: nothing changes (no rebuild, no new version)
 }
 
 // rebuild compiles the snapshot from all sheets (mu held).

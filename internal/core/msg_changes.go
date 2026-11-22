@@ -76,9 +76,6 @@ type msgChanges struct {
 	recent [maxRecentChanges]MsgKey // the latest changes' messages, by seq
 	copies [maxChangeCopies]changeCopy
 	nc     uint64 // copies kept so far
-	// removing is the message whose next update removes the Activity
-	// entries about it (removesNext)
-	removing MsgKey
 	// refetching are the messages RefetchMessages asked Slack for
 	// (read_changes.go)
 	refetching map[MsgKey]refetch
@@ -109,9 +106,6 @@ func (a *App) noteMsgChange(ev *Event) {
 	n := l.n.Load() + 1
 	ev.Seq = n
 	k := MsgKey{ev.Channel, ev.TS}
-	if ev.Type == "update" && ev.Name != UpdateReactions && l.removing == k {
-		ev.Removes, l.removing = true, MsgKey{} // message_changed's, not a reaction's in between
-	}
 	if l.recs == nil {
 		l.recs = map[MsgKey]*MsgChange{}
 	}
@@ -166,16 +160,6 @@ func (a *App) noteMsgChange(ev *Event) {
 // "update" or "delete", or "gone" (RefetchMessages).
 func msgChangeEvent(ev *Event) bool {
 	return (ev.Type == "update" || ev.Type == "delete" || ev.Type == "gone") && ev.Channel != "" && ev.TS != ""
-}
-
-// removesNext marks the next update of ch/ts as one that removes the
-// Activity entries about it (Event.Removes): the update message_changed
-// sends right after (emitUpdate, emitStreamDone).
-func (a *App) removesNext(ch, ts string) {
-	l := &a.msgLog
-	l.mu.Lock()
-	l.removing = MsgKey{ch, ts}
-	l.mu.Unlock()
 }
 
 // keepCopyLocked notes that k's change seq keeps its message, and lets go

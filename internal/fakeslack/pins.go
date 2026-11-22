@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -158,6 +159,32 @@ func (s *Server) PostQuiet(ch, user, text string) (ts string, ev map[string]any)
 		"client_msg_id": m.ClientMsgID}
 }
 
+// PostReplyAttachmentsQuiet is PostReplyQuiet for a reply carrying
+// attachments (a link's unfurl: a shared message's is_msg_unfurl card).
+func (s *Server) PostReplyAttachmentsQuiet(ch, root, user, text string, atts []slack.Attachment) string {
+	ts := s.PostReplyQuiet(ch, root, user, text)
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	rs := s.quietReplies[ch+"/"+root]
+	for i := range rs {
+		if rs[i].TS == ts {
+			rs[i].Attachments = atts
+		}
+	}
+	return ts
+}
+
+// PostQuietAt is PostQuiet at ts, where the history puts it (newest
+// first): a history whose messages are minutes apart, for date jumps.
+func (s *Server) PostQuietAt(ch, user, text, ts string) {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	h := s.histLocked(ch)
+	i := sort.Search(len(h), func(i int) bool { return !slackTSLess(ts, h[i].TS) })
+	m := slack.Message{Type: "message", TS: ts, User: user, Text: text, ClientMsgID: "quiet-" + ts}
+	s.hist[ch] = append(h[:i:i], append([]slack.Message{m}, h[i:]...)...)
+}
+
 // PostFilesQuiet is PostQuiet for a message sharing files (complete file
 // objects, as a processed upload's message carries them).
 func (s *Server) PostFilesQuiet(ch, user, text string, files []slack.File) string {
@@ -179,6 +206,18 @@ func (s *Server) PostBotQuiet(ch, botID, username, text string) string {
 	defer s.histMu.Unlock()
 	if h := s.hist[ch]; len(h) > 0 && h[0].TS == ts {
 		h[0].Subtype, h[0].BotID, h[0].Username = "bot_message", botID, username
+	}
+	return ts
+}
+
+// PostBotBlocksQuiet is PostBotQuiet for a bot message with Block Kit
+// blocks (a bot's rich_text digest).
+func (s *Server) PostBotBlocksQuiet(ch, botID, username, text string, blocks json.RawMessage) string {
+	ts := s.PostBotQuiet(ch, botID, username, text)
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	if h := s.hist[ch]; len(h) > 0 && h[0].TS == ts {
+		h[0].Blocks = blocks
 	}
 	return ts
 }

@@ -1159,6 +1159,7 @@ func (w *window) Configure(options []Option) {
 		showMode = windows.SW_SHOWNOACTIVATE // Clack patch (CLACK_PATCHES.md §8)
 	}
 	windows.ShowWindow(w.hwnd, showMode)
+	startupWindowShown.mark() // Clack patch (CLACK_PATCHES.md §56)
 }
 
 func (w *window) WriteClipboard(mime string, s []byte) {

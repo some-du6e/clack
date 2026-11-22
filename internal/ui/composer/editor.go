@@ -114,6 +114,12 @@ const (
 	// (onCmdKWhenSelected): the composer shows the coachmark and opens
 	// the jumper
 	EvCmdKSelected
+	// PageUp, PageDown, Home and End in an empty editor (MessagePane's
+	// document keydown hands them to the message list)
+	EvPageUpEmpty
+	EvPageDownEmpty
+	EvHomeEmpty
+	EvEndEmpty
 )
 
 // EditorEvent is reported by Editor.Update.

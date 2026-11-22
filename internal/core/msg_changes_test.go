@@ -405,16 +405,27 @@ func TestOlderRepliesStored(t *testing.T) {
 	}
 }
 
-// The update after removesNext is the one message_changed sends: a
-// reactions update emitted in between (the viewer's own reaction, from
-// another goroutine) doesn't take its removal.
+// The update that removes the Activity entries about its message
+// carries that itself (Event.Removes, message_changed's): a reactions
+// update emitted before it (the viewer's own reaction, from another
+// goroutine) takes none of it, and one after it doesn't undo it.
 func TestRemovesNotTakenByReactions(t *testing.T) {
 	a := New(slack.New(slack.Creds{Token: "xoxc-test"}), store.New(""))
 	const ch, ts = "C1", "1762790900.000100"
-	a.removesNext(ch, ts)
-	a.emit(Event{Type: "update", Name: UpdateReactions, Channel: ch, TS: ts, Msg: &Message{TS: ts, Reactions: []Reaction{{Name: "tada", Count: 1}}}})
-	a.emit(Event{Type: "update", Channel: ch, TS: ts, Msg: &Message{TS: ts, Text: "the mention edited out"}})
-	if c, _ := a.MessageChange(ch, ts); c.RemoveSeq == 0 || c.RemoveSeq != c.Seq {
+	react := func() {
+		a.emit(Event{Type: "update", Name: UpdateReactions, Channel: ch, TS: ts, Msg: &Message{TS: ts, Reactions: []Reaction{{Name: "tada", Count: 1}}}})
+	}
+	react()
+	if c, _ := a.MessageChange(ch, ts); c.RemoveSeq != 0 {
+		t.Fatalf("a reactions update removed the entries: %+v", c)
+	}
+	a.emit(Event{Type: "update", Channel: ch, TS: ts, Msg: &Message{TS: ts, Text: "the mention edited out"}, Removes: true})
+	c, _ := a.MessageChange(ch, ts)
+	if c.RemoveSeq == 0 || c.RemoveSeq != c.Seq {
 		t.Fatalf("after the edit: %+v; its update removes the entries", c)
+	}
+	react()
+	if d, _ := a.MessageChange(ch, ts); d.RemoveSeq != c.RemoveSeq {
+		t.Fatalf("a reactions update after the edit moved its removal: %+v, was %+v", d, c)
 	}
 }

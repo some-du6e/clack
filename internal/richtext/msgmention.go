@@ -166,7 +166,9 @@ func mpimNames(n string) string {
 // again as it draws (Slack's MessageMention reads it on every render),
 // and the URL even when the slug is disabled, which a notification
 // writes in its place (messageMentionToText's convertUnknownSlugToUrl);
-// a disabled slug isn't a link (richview).
+// a disabled slug isn't a link (richview). Its thread_ts (ThreadTS) goes
+// with the channel and the ts: MessageMention's click is jumpToMessage
+// with the element's own ids (p9lB).
 func messageMentionSpan(r Resolver, e *bk) Span {
 	var label string
 	var lock, off bool
@@ -176,7 +178,7 @@ func messageMentionSpan(r Resolver, e *bk) Span {
 	} else {
 		label, lock, pre, off = MessageMentionLabel(r, e.ChannelID, e.AuthorID)
 	}
-	return Span{Kind: MessageMention, Text: label, ID: e.MessageTS, Chan: e.ChannelID, URL: SafeURL(e.URL),
+	return Span{Kind: MessageMention, Text: label, ID: e.MessageTS, Chan: e.ChannelID, ThreadTS: e.ThreadTS, URL: SafeURL(e.URL),
 		Lock: lock, Pre: pre, Off: off}
 }
 

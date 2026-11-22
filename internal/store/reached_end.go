@@ -48,7 +48,9 @@ const maxAhead = 100
 // ones): a send goes in past the window whatever the socket missed (the
 // Web API works while the socket is dead), so it says nothing about what
 // came before it, and a window read forward from it would skip the gap.
-// It reports how many windows it reset.
+// Every thread history's end goes stale in the same reset, as Slack's
+// resetReachedEnd({}) covers every key (thread_slices.go). It reports how
+// many windows and thread histories it reset.
 func (s *Store) ResetReachedEnd(mine map[string]bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,7 +70,7 @@ func (s *Store) ResetReachedEnd(mine map[string]bool) int {
 		}
 		n++
 	}
-	return n
+	return n + s.resetThreadEndsLocked("") // and every thread's (thread_slices.go)
 }
 
 // EndOf reports whether ch's window has a stale end and, if so, the

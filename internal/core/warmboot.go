@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -58,6 +59,13 @@ type warmState struct {
 	// dataReady closes once the sidebar's data is in: the boot data
 	// installed (a warm start) or Boot finished (a cold one).
 	dataReady chan struct{}
+	// deferRest: meta.json's custom emoji and user groups load after the
+	// window's first real frame (DeferCacheRest), restReady closes for it
+	// (FirstFrameDone, or a cold start, which has no warm frame to keep
+	// clear); restOnce closes it
+	deferRest atomic.Bool
+	restReady chan struct{}
+	restOnce  sync.Once
 	readyOnce sync.Once
 	// done closes once the warm load resolved, with or without boot data.
 	done chan struct{}
@@ -118,10 +126,41 @@ func (a *App) bootAccount() (team, user string) {
 	return firstNonEmpty(a.C.Creds.Team, a.C.Creds.EnterpriseID), a.C.Creds.UserID
 }
 
+// cacheRestMax is how long meta.json's custom emoji and user groups wait
+// at most for the window's first real frame (one started hidden draws
+// none).
+const cacheRestMax = 1500 * time.Millisecond
+
+// DeferCacheRest makes Boot load meta.json's custom emoji and user groups
+// (6.6 MB and 0.4 MB on Hack Club) after the window's first real frame
+// (FirstFrameDone), not alongside the first part, which the warm
+// snapshot reads: the first frame doesn't draw them, and decoding them
+// took the CPU it needs. Call it before Boot (the UI's real window).
+func (a *App) DeferCacheRest() { a.warm.deferRest.Store(true) }
+
+// FirstFrameDone tells core the window's first real frame is up: what
+// DeferCacheRest held back loads now. Any goroutine, any number of times.
+func (a *App) FirstFrameDone() { a.warm.restOnce.Do(func() { close(a.warm.restReady) }) }
+
+// waitCacheRest waits, when the UI deferred it, for the first real frame
+// (FirstFrameDone), at most cacheRestMax.
+func (a *App) waitCacheRest(ctx context.Context) {
+	if !a.warm.deferRest.Load() {
+		return
+	}
+	t := time.NewTimer(cacheRestMax)
+	defer t.Stop()
+	select {
+	case <-a.warm.restReady:
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
 // loadWarm is Boot's warm load: boot_data.json and headers.json are read
-// alongside meta.json (cacheDone), then the boot data is installed and
-// its snapshot built. It closes a.warm.done.
-func (a *App) loadWarm(cacheDone <-chan struct{}) {
+// alongside meta.json's first part (cacheBase), then the boot data is
+// installed and its snapshot built. It closes a.warm.done.
+func (a *App) loadWarm(cacheBase <-chan struct{}) {
 	defer close(a.warm.done)
 	t0 := time.Now()
 	team, user := a.bootAccount()
@@ -132,18 +171,24 @@ func (a *App) loadWarm(cacheDone <-chan struct{}) {
 	} else {
 		a.loadHeaders("", "") // none: headers come from their reads, as before the warm boot
 	}
-	<-cacheDone // the users, emoji, prefs and experiments the snapshot reads
+	<-cacheBase // the users, prefs and experiments the snapshot reads
 	switch {
 	case noWarmBoot:
+		a.FirstFrameDone() // a cold start: nothing to hold meta.json's rest for
 		applog.Mark("cache-read", "cold: CLACK_NO_WARM_BOOT")
 		return
 	case d == nil:
+		a.FirstFrameDone()
 		applog.Mark("cache-read", "cold: no boot data")
 		return
 	case !a.S.HasCachedPrefs(): // meta.json didn't load: the rows' names and rules would differ
+		a.FirstFrameDone()
 		applog.Mark("cache-read", "cold: no metadata cache")
 		return
 	}
+	// the custom emoji the first frame draws (the sections' icons, status
+	// emoji, tab bars' bookmarks): meta.json's full map comes after it
+	a.S.InstallBootEmoji(d.Emoji)
 	added := a.S.InstallBootData(d)
 	a.installWarmCore(d)
 	a.InvalidateSnapshot()
@@ -268,6 +313,7 @@ func (a *App) saveBootData() {
 	team, user := a.bootAccount()
 	d := &store.BootData{Team: team, User: user}
 	a.S.BootSidebar(d)
+	d.Emoji = a.bootEmoji(d)
 	sort.Slice(d.Convs, func(i, j int) bool { return d.Convs[i].ID < d.Convs[j].ID })
 	sort.Slice(d.Counts, func(i, j int) bool { return d.Counts[i].ID < d.Counts[j].ID })
 	a.mu.Lock()
@@ -316,6 +362,46 @@ func (a *App) saveBootData() {
 	a.warm.mu.Unlock()
 	applog.Debugf("cache: boot data saved (%d convs, %d sections, %d counts) in %s", len(d.Convs), len(d.Sections), len(d.Counts),
 		time.Since(t0).Round(time.Millisecond))
+}
+
+// bootEmoji is the custom emoji a launch's first frame draws
+// (BootData.Emoji): the sections' icons, the sidebar DMs' people's and the
+// viewer's status emoji, and the cached tab bars' bookmark icons and the
+// emoji in their titles, as the full map has them (aliases with their
+// targets).
+func (a *App) bootEmoji(d *store.BootData) map[string]string {
+	var names []string
+	for _, s := range d.Sections {
+		if s.Emoji != "" {
+			names = append(names, s.Emoji)
+		}
+	}
+	a.S.RLock()
+	for _, c := range d.Convs {
+		if u := a.S.Users[c.User]; c.IsIM && u != nil && u.Profile.StatusEmoji != "" {
+			names = append(names, u.Profile.StatusEmoji)
+		}
+	}
+	if e := a.S.Self.Profile.StatusEmoji; e != "" {
+		names = append(names, e)
+	}
+	a.S.RUnlock()
+	h := &a.warm.headers
+	h.mu.Lock()
+	for _, e := range h.m {
+		for _, t := range e.Tabs {
+			for _, b := range t.Bookmarks {
+				if b.Emoji != "" {
+					names = append(names, b.Emoji)
+				}
+			}
+			for _, code := range statusEmojiCodeRE.FindAllString(t.Label+" "+t.Title, -1) {
+				names = append(names, strings.SplitN(strings.Trim(code, ":"), "::", 2)[0])
+			}
+		}
+	}
+	h.mu.Unlock()
+	return a.S.BootEmoji(names)
 }
 
 // setBootOK records that Boot answered with the conversation list.

@@ -316,9 +316,11 @@ jobs:
           go test -count=1 -v -run 'TestQueryVertAttribBinding' gioui.org/gpu/internal/opengl
       # Gio patch 45: a StartAligned ScrollToEnd list lays out short content
       # from its start and still keeps to its end (the thread pane)
-      - name: Gio start-aligned lists (vendored gioui.org/layout)
+      # Gio patch 50: what the list's own scrolling moved it (ScrollDelta)
+      # and ending a running wheel curve or fling at a jump (StopScroll)
+      - name: Gio lists (patches 45, 50; vendored gioui.org/layout)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestListStartAligned' gioui.org/layout
+        run: go test -count=1 -v -run '^(TestListStartAligned|TestListScrollDelta|TestListStopScroll)$' gioui.org/layout
       # Gio patch 26: an Invalidate made while the client handles a wake-up
       # gets a wake-up of its own (hidden and minimized windows draw no
       # frame to cover it); the real windows are windows-shell's
@@ -1606,6 +1608,26 @@ jobs:
             "$RUNNER_TEMP/ui-bounds.test" -test.v -test.count=1 -test.timeout 9m -test.run "^$t\$" || rc=1
           done
           exit $rc
+      # launch-speed (Karim, 2026-11-21: "Make launching the app take less
+      # than a Mac app bounce"): Clack.app launched through LaunchServices
+      # against fakeslackd, with a Slick theme and user CSS, cold once and
+      # seven times warm. Every launch's first real frame is in the theme,
+      # and a warm launch's first frame is the client from the cache, not
+      # the boot placeholder; the fastest warm launch showing the client
+      # within one Dock bounce (700 ms on the runner: flake-check's
+      # launch-speed-mac films one) only warns here, as the runners' speed
+      # varies about 2x (flake-check's launch-budget job fails on it)
+      # (.github/perf/launch-budget.sh, launch.py; docs/STARTUP.md).
+      - name: launch budget (Clack.app through LaunchServices, in its theme, within one Dock bounce)
+        if: ${{ !cancelled() }}
+        env:
+          LAUNCH_SOFT_BOUNCE: "1"
+        run: .github/perf/launch-budget.sh "$RUNNER_TEMP/launch"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: launch-budget-macos
+          path: ${{ runner.temp }}/launch/out
       - name: build
         if: ${{ !cancelled() }}
         run: |

@@ -1322,7 +1322,7 @@ func (p *SearchPopover) activate(i int) {
 	case srRMsg:
 		RecordRecentConversation(r.msg.Channel)
 		p.Dismiss()
-		p.h.Navigate(msgRoute(*r.msg))
+		openResult(p.h, *r.msg)
 	case srRFile:
 		f := p.fileByID[r.id]
 		p.Dismiss()

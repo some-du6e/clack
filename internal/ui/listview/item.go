@@ -44,11 +44,28 @@ type Item struct {
 	cload    bool
 	channel  string
 	thread   string
-	queue    []func()
+	// the comments are the item's thread a slice at a time, as the List
+	// record thread view's Comments tab draws it (ThreadsFlexpane:
+	// client-list-record-thread f2Yt hands the record's thread to
+	// boot-shared l6n6): cend is the slice's end, what its next page reads
+	// from (loadPost); creached and cprev whether it reaches the thread's
+	// end (or had, before a disconnect: prevReachedEnd), and croot the
+	// root, whose reply_count is the button's count
+	cend            string
+	creached, cprev bool
+	croot           *core.Message
+	cpage           bool      // the page after the slice is out
+	csettle         time.Time // finishLoading's 250ms after a page settled, before the next
+	queue           []func()
 
 	// UI goroutine only
 	wheel     wheelScroll
 	maxScroll int // last frame's
+	// cBottom is where the comments end in the content, last frame (the
+	// next page loads as it nears the pane's bottom); focusWant: the
+	// comment button asked for the composer while it wasn't drawn
+	cBottom   int
+	focusWant bool
 	btns      map[string]*widget.Clickable
 	styles    styles
 	rvs       map[string]*richview.View
@@ -131,6 +148,12 @@ func (it *Item) load() {
 	}()
 }
 
+// loadComments reads the item's comments: its thread from the root, as
+// they read under its fields (getThreadStartTs with startAtTop), the
+// slice the store holds there, else its first page (core.ThreadAt:
+// requestReplies, 28 a page). Later pages come as the pane scrolls to
+// their end (loadNewer); a live comment joins a slice that reached the
+// thread's end.
 func (it *Item) loadComments() {
 	a := it.h.Core()
 	if a == nil {
@@ -139,19 +162,81 @@ func (it *Item) loadComments() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ch, ts, err := a.ListRecordThread(ctx, it.id, it.rec)
-	var msgs []core.Message
+	var sl core.ThreadSlice
 	if err == nil {
-		msgs, err = a.Replies(ctx, ch, ts)
+		sl, err = a.ThreadAt(ctx, ch, ts, a.ThreadStartTs(ch, ts, "", "", true))
 	}
 	it.mu.Lock()
 	it.channel, it.thread, it.cload = ch, ts, true
 	if err == nil {
-		it.comments, it.cerr = msgs, nil
+		it.setComments(sl, ts)
 	} else {
 		it.cerr = err
 	}
 	it.mu.Unlock()
 	it.h.Invalidate()
+}
+
+// setComments makes sl, the slice of thread ts from its root, the
+// comments: the root first (the slice's, or the store's copy), then the
+// slice's replies. Callers hold it.mu.
+func (it *Item) setComments(sl core.ThreadSlice, ts string) {
+	msgs := make([]core.Message, 0, len(sl.Msgs)+1)
+	if (len(sl.Msgs) == 0 || sl.Msgs[0].TS != ts) && sl.Root != nil {
+		msgs = append(msgs, *sl.Root)
+	}
+	it.comments, it.cerr = append(msgs, sl.Msgs...), nil
+	it.cend, it.creached, it.cprev, it.croot = sl.End, sl.ReachedEnd, sl.PrevReachedEnd, sl.Root
+}
+
+// commentsShort reports a slice of comments loaded that stops short of
+// the thread's end: getThreadRowsAndKeys' "loading-end" row where the
+// input goes, until the page after it reaches the end. Callers hold
+// it.mu.
+func (it *Item) commentsShort() bool {
+	return it.cload && it.cerr == nil && !it.creached && !it.cprev
+}
+
+// loadNewer is loadPost for the comments (BaseMessageList, once akeQ's
+// loadMore finds their end within 400px of the pane's bottom): the page
+// after the slice's end, {oldest: its end}, one at a time and 250ms
+// after the last settled (finishLoading), none past the thread's end. It
+// reports the time a page held back by that wait may go, zero when none
+// waits.
+func (it *Item) loadNewer() time.Time {
+	a := it.h.Core()
+	it.mu.Lock()
+	if a == nil || !it.commentsShort() || it.cpage || it.cend == "" {
+		it.mu.Unlock()
+		return time.Time{}
+	}
+	if at := it.csettle; time.Now().Before(at) {
+		it.mu.Unlock()
+		return at
+	}
+	it.cpage = true
+	ch, ts, end := it.channel, it.thread, it.cend
+	it.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := a.ThreadNewer(ctx, ch, ts, end)
+		var sl core.ThreadSlice
+		if err == nil {
+			sl = a.ThreadSliceAt(ch, ts, ts)
+		}
+		it.mu.Lock()
+		it.cpage = false
+		it.csettle = time.Now().Add(250 * time.Millisecond)
+		if err != nil {
+			it.csettle = time.Now().Add(3 * time.Second) // retried, later
+		} else if it.thread == ts {
+			it.setComments(sl, ts)
+		}
+		it.mu.Unlock()
+		it.h.Invalidate()
+	}()
+	return time.Time{}
 }
 
 // goLive follows list and thread events while the pane is drawn.
@@ -211,6 +296,7 @@ func (it *Item) Layout(gtx layout.Context) layout.Dimensions {
 	it.queue = nil
 	d, loaded, err := it.doc, it.loaded, it.err
 	comments, cload := it.comments, it.cload
+	short := it.commentsShort()
 	it.mu.Unlock()
 	for _, f := range q {
 		f()
@@ -259,7 +345,7 @@ func (it *Item) Layout(gtx layout.Context) layout.Dimensions {
 	// content, scrolled
 	m := op.Record(gtx.Ops)
 	it.tipHit = false
-	h := it.layoutContent(gtx, d, rec, comments, cload, body.X)
+	h := it.layoutContent(gtx, d, rec, comments, cload, short, body.X)
 	if !it.tipHit {
 		popups.Tooltip(gtx, th, &it.tip, false, image.Point{}, popups.Above, "", "")
 	}
@@ -272,8 +358,20 @@ func (it *Item) Layout(gtx layout.Context) layout.Dimensions {
 		defer op.Offset(image.Pt(0, -it.scroll)).Push(gtx.Ops).Pop()
 		call.Add(gtx.Ops)
 	}()
-	// the composer pinned at the bottom
-	it.layoutComposer(gtx, d, body)
+	// loadMore: the comments' next page once their end is within 400px of
+	// the pane's bottom (akeQ's threshold)
+	if short && it.cBottom-(it.scroll+body.Y) < gtx.Dp(400) {
+		if at := it.loadNewer(); !at.IsZero() {
+			gtx.Execute(op.InvalidateCmd{At: at})
+		}
+	}
+	// the composer pinned at the bottom: Slack's input row, which a slice
+	// short of the thread's end doesn't have (getThreadRowsAndKeys: only
+	// with reachedEnd or prevReachedEnd), so a comment never goes where
+	// the comments drawn don't reach
+	if !short {
+		it.layoutComposer(gtx, d, body)
+	}
 	func() {
 		defer clip.Rect{Max: image.Pt(body.X, body.Y-gtx.Dp(72))}.Push(gtx.Ops).Pop()
 		event.Op(gtx.Ops, &it.tag)
@@ -339,7 +437,7 @@ func itemColumns(d *core.ListDoc) []*lists.Column {
 	return out
 }
 
-func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Record, comments []core.Message, cload bool, w int) int {
+func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Record, comments []core.Message, cload, short bool, w int) int {
 	th := it.h.Theme()
 	c := &th.C
 	it.hits = it.hits[:0]
@@ -495,6 +593,13 @@ func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 			y += gtx.Dp(22) + max(dims.Size.Y, gtx.Dp(22)) + gtx.Dp(12)
 		}
 	}
+	it.cBottom = y
+	if short {
+		// the "loading-end" row in the input's place: more comments come
+		// as the pane nears it (loadNewer)
+		theme.RRect(gtx, image.Rect(pad, y, pad+gtx.Dp(200), y+gtx.Dp(16)), gtx.Dp(4), c.Skeleton)
+		y += gtx.Dp(32)
+	}
 	return y
 }
 
@@ -539,6 +644,10 @@ func (it *Item) layoutComposer(gtx layout.Context, d *core.ListDoc, body image.P
 	}
 	theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
 	theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), border)
+	if it.focusWant {
+		it.focusWant = false
+		gtx.Execute(key.FocusCmd{Tag: &it.composer})
+	}
 	for {
 		ev, ok := it.composer.Update(gtx)
 		if !ok {
@@ -636,7 +745,17 @@ func (it *Item) events(gtx layout.Context, d *core.ListDoc) {
 					switch {
 					case rec == nil:
 					case h.act == "comment": // BaseListRecordDetailAddCommentButton: the thread's composer
-						gtx.Execute(key.FocusCmd{Tag: &it.composer})
+						it.mu.Lock()
+						short := it.commentsShort()
+						it.mu.Unlock()
+						if short {
+							// not drawn until the comments reach the thread's
+							// end: to their end (the next pages load there),
+							// and the composer focused once it shows
+							it.scroll, it.focusWant = it.maxScroll, true
+						} else {
+							gtx.Execute(key.FocusCmd{Tag: &it.composer})
+						}
 					case h.act == "more":
 						it.openPaneMenu(d, rec, image.Point{}, false)
 					case h.act == "subtask-row":
@@ -690,19 +809,10 @@ func (it *Item) layoutActions(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 	moreW := gtx.Dp(34)
 	cr := image.Rect(pad, y, w-pad-moreW-gtx.Dp(8), y+h)
 	mr := image.Rect(w-pad-moreW, y, w-pad, y+h)
-	n := 0
-	for _, m := range comments {
-		if m.Subtype != "list_record_comment" && !(m.TS == m.ThreadTS && strings.TrimSpace(m.Text) == "") {
-			n++
-		}
-	}
-	label, icon := nsLists.T("Add Comment"), "add-comment"
-	switch {
-	case n >= 999:
-		label, icon = nsLists.T("{replyCount}+ Comments", "replyCount", 999), ""
-	case n > 0:
-		label, icon = nsLists.T("{replyCount, plural, =1 {# Comment} other {# Comments}}", "replyCount", n), ""
-	}
+	it.mu.Lock()
+	root := it.croot
+	it.mu.Unlock()
+	label, icon := commentsLabel(root, comments)
 	_ = cload
 	outline := func(r image.Rectangle) {
 		theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
@@ -733,4 +843,30 @@ func (it *Item) layoutActions(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 	it.hits = append(it.hits, itemHit{r: cr, act: "comment"}, itemHit{r: mr, act: "more"})
 	it.moreAt = mr
 	return y + h + gtx.Dp(24)
+}
+
+// commentsLabel is the comment button's text and icon: "Add Comment"
+// with the add-comment icon, else "{n} Comments" (999 and over: "999+
+// Comments"). n is the thread root's reply_count, whatever slice of the
+// comments is loaded (BaseListRecordDetailAddCommentButton reads the
+// root message, d?.reply_count: client-list-record-details); the comments
+// loaded count only while the root isn't known.
+func commentsLabel(root *core.Message, comments []core.Message) (label, icon string) {
+	n := 0
+	if root != nil {
+		n = root.ReplyCount
+	} else {
+		for _, m := range comments {
+			if m.Subtype != "list_record_comment" && !(m.TS == m.ThreadTS && strings.TrimSpace(m.Text) == "") {
+				n++
+			}
+		}
+	}
+	switch {
+	case n >= 999:
+		return nsLists.T("{replyCount}+ Comments", "replyCount", 999), ""
+	case n > 0:
+		return nsLists.T("{replyCount, plural, =1 {# Comment} other {# Comments}}", "replyCount", n), ""
+	}
+	return nsLists.T("Add Comment"), "add-comment"
 }

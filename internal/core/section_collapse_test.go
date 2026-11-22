@@ -31,7 +31,7 @@ func TestSectionCollapsedSyncsWithAccount(t *testing.T) {
 	})
 	collapsed := func(id string) bool { return a.sectionCollapsed(slack.Section{ID: id}) }
 	prefChange := func() {
-		a.handle(slack.Event{Type: "pref_change", Raw: json.RawMessage(`{"type":"pref_change","name":"channel_sections"}`)})
+		a.handleNow(t, slack.Event{Type: "pref_change", Raw: json.RawMessage(`{"type":"pref_change","name":"channel_sections"}`)})
 	}
 
 	// read: another client collapsed L0FAKE01 (its Filter value kept)

@@ -505,3 +505,49 @@ func TestW10NativeSpellMenu(t *testing.T) {
 		nativeOnRelease = prev
 	}
 }
+
+// TestEmptyInputHandsPageKeysToList: MessagePane's document keydown
+// hands PageUp, PageDown, Home and End to the message list while the
+// channel's input is focused and empty (AEjl): the editor reports them
+// when empty only, and the channel's composer gives them to the view;
+// a reply box keeps its own (ThreadFooter's onPageUp).
+func TestEmptyInputHandsPageKeysToList(t *testing.T) {
+	for _, k := range []struct {
+		name key.Name
+		ev   EditorEventKind
+	}{{key.NamePageUp, EvPageUpEmpty}, {key.NamePageDown, EvPageDownEmpty}, {key.NameHome, EvHomeEmpty}, {key.NameEnd, EvEndEmpty}} {
+		e := NewEditor()
+		edPress(e, k.name, 0)
+		if !edHas(e, k.ev) {
+			t.Errorf("%s in an empty box: no event for the list", k.name)
+		}
+		e = NewEditor()
+		edType(e, "x")
+		e.events = nil
+		edPress(e, k.name, 0)
+		if edHas(e, k.ev) {
+			t.Errorf("%s with text: handed to the list", k.name)
+		}
+	}
+	app, _ := fakeslackApp(t)
+	h := &slickHost{app: app, th: theme.New(false)}
+	channel := New(h, "C0W10PGKEY", "")
+	t.Cleanup(channel.Close)
+	var got []string
+	channel.OnPageKeyEmpty = func(name string) { got = append(got, name) }
+	channel.ed.emit(EvPageUpEmpty)
+	channel.ed.emit(EvEndEmpty)
+	channel.handleEditor(layout.Context{Ops: new(op.Ops)})
+	if strings.Join(got, ",") != "PageUp,End" {
+		t.Errorf("the channel's composer handed %q to the list, want PageUp,End", got)
+	}
+	reply := New(h, "C0W10PGKEY", "1700000000.000300")
+	t.Cleanup(reply.Close)
+	n := 0
+	reply.OnPageKeyEmpty = func(string) { n++ }
+	reply.ed.emit(EvPageUpEmpty)
+	reply.handleEditor(layout.Context{Ops: new(op.Ops)})
+	if n != 0 {
+		t.Errorf("a reply box handed its PageUp to the list")
+	}
+}

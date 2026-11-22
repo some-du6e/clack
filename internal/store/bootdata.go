@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -69,6 +70,13 @@ type BootData struct {
 	StarsKnown     bool            `json:"stars_known,omitempty"`
 	Starred        []string        `json:"starred,omitempty"`
 	ActivityBadges map[string]int  `json:"activity_badges,omitempty"`
+
+	// Emoji are the custom emoji a launch's first frame draws (the
+	// sections' icons, the sidebar's DM people's and the viewer's status
+	// emoji, the cached tab bars' bookmark icons), name to value as in
+	// the full map, aliases with their targets: meta.json's 65k come after
+	// the first frame (LoadCacheBase), these before it (InstallBootEmoji).
+	Emoji map[string]string `json:"emoji,omitempty"`
 }
 
 var errDropped = errors.New("store: the disk cache was dropped (signed out)")
@@ -153,6 +161,57 @@ func (s *Store) BootSidebar(d *BootData) {
 			d.ThreadsByChan[k] = v
 		}
 	}
+}
+
+// InstallBootEmoji installs the boot data's few custom emoji while the
+// emoji map is still empty (meta.json's comes after the first frame and
+// replaces them; a map from emoji.list is newer and stays).
+func (s *Store) InstallBootEmoji(m map[string]string) {
+	if len(m) == 0 || s.CustomEmoji.Len() > 0 {
+		return
+	}
+	cp := make(map[string]string, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	// partial before the map: a full map installed in between clears it
+	// again (installCacheRest, SetEmojiPacked)
+	s.emojiPartial.Store(true)
+	if !s.CustomEmoji.SetIfEmpty(cp) {
+		s.emojiPartial.Store(false)
+	}
+}
+
+// EmojiPartial reports whether the emoji map is only the boot data's few
+// (InstallBootEmoji): meta.json had none, so emoji.list is due.
+func (s *Store) EmojiPartial() bool { return s.emojiPartial.Load() }
+
+// BootEmoji is the custom emoji map's entries for names (":" trimmed),
+// with each alias's targets: the boot data's few (BootData.Emoji).
+func (s *Store) BootEmoji(names []string) map[string]string {
+	m := s.CustomEmoji.Snapshot()
+	if len(m) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for _, n := range names {
+		n = strings.Trim(n, ":")
+		for i := 0; n != "" && i < 6; i++ {
+			v, ok := m[n]
+			if !ok {
+				break
+			}
+			out[n] = v
+			if !strings.HasPrefix(v, "alias:") {
+				break
+			}
+			n = strings.TrimPrefix(v, "alias:")
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // InstallBootData fills the store from boot data (a warm boot), keeping

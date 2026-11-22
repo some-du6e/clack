@@ -29,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/some-du6e/clack/internal/logtag"
 )
 
 // ChannelFilesSort is the tab's sort select (ogf8 QX): Newest
@@ -221,7 +223,7 @@ func (a *App) ChannelLinks(ctx context.Context, ch, query string, s ChannelFiles
 		l.Timestamp = looseFloat(it.Timestamp)
 		out.Links = append(out.Links, l)
 	}
-	log.Printf("channel links %s: %d, page %d/%d", ch, len(out.Links), out.Page, out.Pages)
+	log.Printf("channel links %s: %d, page %d/%d", logtag.ID(ch), len(out.Links), out.Page, out.Pages)
 	return out, nil
 }
 
