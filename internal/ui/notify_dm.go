@@ -119,7 +119,7 @@ func (b *backend) noteDMReason(a *App, ev core.Event, c *convInfo, ignoreDND boo
 		return noteSkipNoDisplay
 	case ev.Reply:
 		return noteSkipReply
-	case b.noteOnScreen(a, ev, ignoreDND): // a dnd_override's re-check reads the store's copy
+	case b.noteOnScreen(a, ev, ignoreDND || ev.StreamDone): // a dnd_override's re-check and a settled stream read the store's copy
 		return noteSkipOnScreen
 	case m.User != "" && m.User == b.selfID:
 		return noteSkipOwn
@@ -161,7 +161,7 @@ func (b *backend) noteChannelReason(a *App, ev core.Event, c *convInfo, ignoreDN
 	switch {
 	case !wants:
 		return noteSkipNoMention
-	case b.noteOnScreen(a, ev, ignoreDND): // a dnd_override's re-check reads the store's copy
+	case b.noteOnScreen(a, ev, ignoreDND || ev.StreamDone): // a dnd_override's re-check and a settled stream read the store's copy
 		return noteSkipOnScreen
 	case m.User != "" && m.User == b.selfID:
 		return noteSkipOwn
@@ -206,9 +206,10 @@ func (b *backend) noteGroupDMLevel(ch string) string {
 // (_hidden_reply), reads a field only the store's copies carry (D8Sp
 // makeMsgObject): messageReceived hands maybeShowNotification the
 // socket's own message, so a thread reply of the conversation on screen
-// is on screen like any other (16). Only handleDndOverride re-checks the
-// store's copy (getMessage), so storeCopy (noteDNDOverride's re-check)
-// lets such a reply through.
+// is on screen like any other (16). Only handleDndOverride's re-check and
+// messageChanged's settled stream (defer_notification_3p_streaming) hand
+// it the store's copy (getMessage), so storeCopy (noteDNDOverride's
+// re-check, a StreamDone update) lets such a reply through.
 func (b *backend) noteOnScreen(a *App, ev core.Event, storeCopy bool) bool {
 	m := ev.Msg
 	if m != nil && containsAtCommand(m.Text) {
