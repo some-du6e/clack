@@ -451,14 +451,21 @@ func (v *View) click(s *scope, t *box, pe *pointer.Event) {
 	if t.disabled() {
 		return
 	}
+	// the click's detail: the window's count of the press (Gio patch 48,
+	// gio_patch48.go), as Blink's is the platform event's click_count
+	// whatever element it lands on; on stock Gio this element's within the
+	// double-click time
 	now := int64(pe.Time / time.Millisecond)
 	k := t.k()
-	if v.lastClk.k == k && time.Duration(now-v.lastClk.t)*time.Millisecond <= doubleClickTime() { // the platform's (gio_patch48.go)
+	if v.lastClk.k == k && time.Duration(now-v.lastClk.t)*time.Millisecond <= doubleClickTime() {
 		v.lastClk.n++
 	} else {
 		v.lastClk.n = 1
 	}
 	v.lastClk.k, v.lastClk.t = k, now
+	if n := clicksOf(*pe); n > 0 {
+		v.lastClk.n = n
+	}
 	// checkbox/radio state flips before click handlers see it
 	ctrl := t
 	if t.repl != rCheck && t.repl != rRadio {
