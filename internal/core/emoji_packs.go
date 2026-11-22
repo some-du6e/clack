@@ -224,7 +224,10 @@ func (a *App) FetchEmojiPacks() {
 	ps.fetched = true
 	ps.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(a.bgCtx(), 30*time.Second)
+		// a mount the viewer opened (the dialog's tab, the picker) asks
+		// again after a failure, as Slack's does: past the client's
+		// identical-failure backoff
+		ctx, cancel := context.WithTimeout(slack.NoBackoff(a.bgCtx()), 30*time.Second)
 		defer cancel()
 		list, err := a.fetchEmojiPacks(ctx)
 		ps.mu.Lock()

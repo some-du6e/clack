@@ -249,6 +249,9 @@ func TestEmojiPacksTabLikeSlack(t *testing.T) {
 // Custom tab with the pack as its own group, Custom without its emoji.
 func TestEmojiPackAddLikeSlack(t *testing.T) {
 	e := newEPK(t, nil)
+	// one custom emoji of the workspace's own, so Custom has a heading
+	b, _ := json.Marshal(map[string]any{"type": "emoji_changed", "subtype": "add", "name": "own-parrot", "value": e.fs.URL + "img/64x64/" + fakeslack.TeamID + "/own-parrot/00000000000000ab.png"})
+	e.h.a.Inject(slack.Event{Type: "emoji_changed", Raw: b})
 	e.open(1)
 	e.until("the cards", func() bool { return e.d.cards() == 5 })
 	e.clickCard(fakeslack.PackGratitudeID)
