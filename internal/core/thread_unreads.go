@@ -53,7 +53,11 @@ func (a *App) onUpdateThreadState(raw json.RawMessage) bool {
 	if e.ChannelBadges != nil && a.mergeChannelBadges(e.ChannelBadges) {
 		a.emit(Event{Type: "activity_badges"}) // the app badge reads them (classic_badges.go)
 	}
-	return a.S.SetThreadState(e.HasUnreads, e.MentionCount, e.UnreadCountByChannel)
+	changed := a.S.SetThreadState(e.HasUnreads, e.MentionCount, e.UnreadCountByChannel)
+	if e.UnreadCountByChannel != nil {
+		a.pruneThreadActivity(a.chActMark()) // a channel left with none has no reply bar marks (channel_thread_activity.go)
+	}
+	return changed
 }
 
 // ThreadsUnreadIn is client.counts' threads.unread_count_by_channel[ch]:
@@ -69,7 +73,7 @@ func (a *App) ThreadsUnreadIn(ch string) int {
 // (channel_thread_activity.go), as unread items per thread ts. The
 // socket's changes after the request went out stay over the answer.
 func (a *App) ChannelUnreadThreads(ctx context.Context, ch string) (map[string]int, error) {
-	since := a.chActNow()
+	since := a.chActBegin(ch)
 	p, err := a.Activity(ctx, ActivityOpts{Types: "thread_v2", Unread: true, Mode: "chrono_unreads", Limit: 10, ChannelIDs: []string{ch}})
 	if err != nil {
 		return nil, err
