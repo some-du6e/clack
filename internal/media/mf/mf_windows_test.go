@@ -287,6 +287,11 @@ func checkColors(t *testing.T, samples []sample) {
 	if len(samples) == 0 {
 		t.Fatal("no frame drawn")
 	}
+	defer func() {
+		if t.Failed() {
+			trace(t, samples)
+		}
+	}()
 	from := samples[0].at // where the clock was when the first frame was drawn
 	for i, w := range colorWindows {
 		n, bad := 0, 0
@@ -313,6 +318,20 @@ func checkColors(t *testing.T, samples []sample) {
 		}
 		t.Logf("second %d: %d frames drawn, %d off", i+1, n, bad)
 	}
+}
+
+// trace logs the samples (every nth, the last 8 whole) for a failed check:
+// the clock's position, the frame's time and the one before, the colour.
+func trace(t *testing.T, samples []sample) {
+	t.Helper()
+	var b strings.Builder
+	n := max(len(samples)/40, 1)
+	for i, s := range samples {
+		if i%n == 0 || i >= len(samples)-8 {
+			fmt.Fprintf(&b, " %d:%v/%v/%v=%d", i, s.at.Round(time.Millisecond), s.pts.Round(time.Millisecond), s.prev.Round(time.Millisecond), s.c.R)
+		}
+	}
+	t.Logf("%d samples (i:clock/pts/prev=red):%s", len(samples), b.String())
 }
 
 // partWindow is the least of a colour's window, after the first frame
@@ -663,6 +682,11 @@ func checkRGBA(t *testing.T, samples []sample) {
 	if len(samples) == 0 {
 		t.Fatal("no frame drawn")
 	}
+	defer func() {
+		if t.Failed() {
+			trace(t, samples)
+		}
+	}()
 	from := samples[0].at // where the clock was when the first frame was drawn
 	var by [3][]sample
 	for _, s := range samples {
