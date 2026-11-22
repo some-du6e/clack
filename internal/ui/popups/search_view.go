@@ -398,14 +398,16 @@ type SearchView struct {
 	chans  []core.ChannelHit
 	people []core.User
 	files  []core.File
-	rows   []*widget.Clickable // a result's body (file, channel, person)
-	btns   []*widget.Clickable // a channel's Join / Joined / Leave
-	chanUI []*srChanUI         // a channel's other controls (search_rows.go)
-	// rowUI keeps each result's controls by the result (its file, channel
-	// or member id), as Slack keys its list items: a press on a row stays
-	// that result's while the list changes under it (keyRows)
-	rowUI map[string]*srRowUI
-	listY int
+	// a result's controls, kept by the result (its file, channel or
+	// member id) as Slack keys its result rows: a row or button held
+	// while more results load or a new search lands keeps its press and
+	// its result. By index, growth moved every Clickable (Gio routes a
+	// press by its handler's address) and a new search put another result
+	// under a held one.
+	rows   map[string]*widget.Clickable // a result's body (file, channel, person)
+	btns   map[string]*widget.Clickable // a channel's Join / Joined / Leave
+	chanUI map[string]*srChanUI         // a channel's other controls, by channel (search_rows.go)
+	listY  int
 
 	// numbered pagination (Slack's c-pagination)
 	prevBtn, nextBtn widget.Clickable
@@ -631,11 +633,7 @@ func (v *SearchView) search(page int) {
 					return
 				}
 				v.files, v.total, v.page, v.pages = fp.Files, fp.Total, max(fp.Page, 1), fp.Pages
-				keys := make([]string, len(fp.Files))
-				for i := range fp.Files {
-					keys[i] = fp.Files[i].ID
-				}
-				v.keyRows("files", keys)
+				v.growRows(len(fp.Files))
 				done(fp.Total)
 			})
 	case srTabChannels:
@@ -655,11 +653,7 @@ func (v *SearchView) search(page int) {
 					return
 				}
 				v.chans, v.total, v.page, v.pages = cp.Channels, cp.Total, max(cp.Page, 1), cp.Pages
-				keys := make([]string, len(cp.Channels))
-				for i := range cp.Channels {
-					keys[i] = cp.Channels[i].ID
-				}
-				v.keyRows("channels", keys)
+				v.growRows(len(cp.Channels))
 				done(cp.Total)
 			})
 	case srTabPeople:
@@ -682,38 +676,73 @@ func (v *SearchView) search(page int) {
 				v.people, v.total, v.page, v.pages = pp.Users, pp.Total, max(pp.Page, 1), pp.Pages
 				// hydrateFacetSuggestions: the pills' suggestions merge in
 				v.facetTitles, v.facetLocs = srMergeFacets(v.facetTitles, pp.Titles), srMergeFacets(v.facetLocs, pp.Locations)
-				keys := make([]string, len(pp.Users))
-				for i := range pp.Users {
-					keys[i] = pp.Users[i].ID
-				}
-				v.keyRows("people", keys)
+				v.growRows(len(pp.Users))
 				done(pp.Total)
 			})
 	}
 }
 
-// srRowUI is one file, channel or person result's controls.
-type srRowUI struct {
-	row, btn widget.Clickable
-	ch       srChanUI
+// growRows is a new page of results: the controls of results no longer
+// listed go, and no join or leave is in flight.
+func (v *SearchView) growRows(int) {
+	keep := make(map[string]bool, len(v.files)+len(v.chans)+len(v.people))
+	for _, f := range v.files {
+		keep[f.ID] = true
+	}
+	for _, c := range v.chans {
+		keep[c.ID] = true
+	}
+	for _, u := range v.people {
+		keep[u.ID] = true
+	}
+	for k := range v.rows {
+		if !keep[k] {
+			delete(v.rows, k)
+		}
+	}
+	for k := range v.btns {
+		if !keep[k] {
+			delete(v.btns, k)
+		}
+	}
+	for k, ui := range v.chanUI {
+		if !keep[k] {
+			delete(v.chanUI, k)
+		} else {
+			ui.busy = false
+		}
+	}
 }
 
-// keyRows gives the results with these keys (a module's ids, in order)
-// their controls: each result keeps its own, whatever its index.
-func (v *SearchView) keyRows(module string, keys []string) {
-	if v.rowUI == nil || len(v.rowUI) > 2000 {
-		v.rowUI = map[string]*srRowUI{}
-	}
-	v.rows, v.btns, v.chanUI = v.rows[:0], v.btns[:0], v.chanUI[:0]
-	for _, k := range keys {
-		u := v.rowUI[module+"/"+k]
-		if u == nil {
-			u = new(srRowUI)
-			v.rowUI[module+"/"+k] = u
+// row is result id's body button, made on its first draw.
+func (v *SearchView) row(id string) *widget.Clickable { return srClick(&v.rows, id) }
+
+// btn is channel id's Join / Joined / Leave button.
+func (v *SearchView) btn(id string) *widget.Clickable { return srClick(&v.btns, id) }
+
+// chanUIOf is channel id's other controls.
+func (v *SearchView) chanUIOf(id string) *srChanUI {
+	ui := v.chanUI[id]
+	if ui == nil {
+		if v.chanUI == nil {
+			v.chanUI = map[string]*srChanUI{}
 		}
-		u.ch.busy = false // a new page: no join or leave in flight
-		v.rows, v.btns, v.chanUI = append(v.rows, &u.row), append(v.btns, &u.btn), append(v.chanUI, &u.ch)
+		ui = &srChanUI{}
+		v.chanUI[id] = ui
 	}
+	return ui
+}
+
+func srClick(m *map[string]*widget.Clickable, id string) *widget.Clickable {
+	b := (*m)[id]
+	if b == nil {
+		if *m == nil {
+			*m = map[string]*widget.Clickable{}
+		}
+		b = new(widget.Clickable)
+		(*m)[id] = b
+	}
+	return b
 }
 
 func (v *SearchView) addMessages(res core.SearchResult, page int) {
@@ -1099,9 +1128,10 @@ func (v *SearchView) handle(gtx layout.Context) {
 	}
 	switch v.tab {
 	case srTabFiles, srTabCanvases:
-		for i := range v.files {
-			if v.rows[i].Clicked(gtx) {
+		for i := 0; i < len(v.files); i++ {
+			if v.row(v.files[i].ID).Clicked(gtx) {
 				v.openFile(v.files[i])
+				break
 			}
 		}
 	case srTabMessages, srTabDMs:
@@ -1889,7 +1919,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 	}
 	at(gtx, image.Pt(padL, padT+dp(gtx, 2)), func(gtx layout.Context) layout.Dimensions {
 		d := srAvatar(gtx, v.h, m, avURL, 36, rp)
-		c.avHov.LayoutBot(gtx, m.User, srHoverBot(v.h, m), d.Size)
+		c.avHov.LayoutBotFn(gtx, m.User, func() string { return srHoverBot(v.h, m, true) }, d.Size)
 		return d
 	})
 	right := w - padR
@@ -1925,7 +1955,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		d := vcenter(gtx, nameH, func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 15, theme.Black, cl.Fg, name)
 		})
-		c.nameHov.LayoutBot(gtx, m.User, srHoverBot(v.h, m), d.Size)
+		c.nameHov.LayoutBotFn(gtx, m.User, func() string { return srHoverBot(v.h, m, true) }, d.Size)
 		return d
 	})
 	srDrawWhere(gtx, v.h, c.where, tx+d.Size.X+dp(gtx, 4), padT, right, nameH, bg)
@@ -2362,9 +2392,9 @@ func (v *SearchView) replyChip(gtx layout.Context, th *theme.Theme, cl *Colors, 
 // srHoverBot is the bot a result's sender opens AppHoverCard for with its
 // member: the message row's (core.App.SenderBot, Emf2's bot), with or
 // without a user.
-func srHoverBot(h Host, m *core.Message) string {
+func srHoverBot(h Host, m *core.Message, ask bool) string {
 	if app := h.Core(); app != nil {
-		return app.SenderBot(m.User, m.BotID, m.BotProfile)
+		return app.SenderBot(m, ask)
 	}
 	if m.BotID != "" {
 		return m.BotID
