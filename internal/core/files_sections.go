@@ -1,16 +1,24 @@
 package core
 
-// The Files sidebar's file collections (custom_file_sections) and its
-// Recently viewed list, ported from Slack's web client (CDN build
-// 4d0c78085232, fetched without a cookie):
+// The Files sidebar's file collections and its Recently viewed list,
+// ported from Slack's web client (CDN build 4d0c78085232, fetched without a
+// cookie). They were custom_file_sections' until Slack dropped the
+// experiment and kept its on path for everyone (build 8f19be21ed7e:
+// maybeFetchStarredUnifiedFiles is a no-op, "starred files are loaded with
+// file collections"; the 2026-11-21 drift):
 //
 //   - the store is unifiedFilesBrowser's (client-boot mSgJ, wbGe):
 //     setCollections sorts by position, highest first, and keeps the
-//     collapsed state the client already had (custom_file_sections_
-//     collapsed_persist is off, so collapsing never leaves the client);
+//     collapsed state the client already had. Collapsing never leaves the
+//     client: Clack doesn't read custom_file_sections_collapsed_persist,
+//     under which Slack saves it (boot-render GsF9 tN; on for the test
+//     account on 2026-11-21, not ported);
 //   - maybeFetchCollections (boot-shared GIC/): files.collections.list
-//     once custom_file_sections is on, again after a day, with the names
-//     unescaped (jHyp processCollections, lodash unescape);
+//     at boot, again after a day, with the names
+//     unescaped (jHyp processCollections, lodash unescape). The store
+//     leaves out a "recently_viewed" collection (u1Hg s6, build
+//     8f19be21ed7e) unless recently_viewed_file_collection is on, which
+//     Clack doesn't read: Recently viewed is the client's own list;
 //   - createFileCollection / renameFileCollection (vBP0):
 //     files.collections.create {name, emoji} and files.collections.update
 //     {collection, name, emoji}; changeCollectionSort (boot-render Q1Ql):
@@ -36,6 +44,7 @@ import (
 	"errors"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -159,22 +168,26 @@ func sortCollections(cs []FileCollection) {
 	sort.SliceStable(cs, func(i, j int) bool { return cs[i].Position > cs[j].Position })
 }
 
-// FileSectionsOn reports custom_file_sections (the sidebar's collections
-// instead of the Starred sub-header).
-func (a *App) FileSectionsOn() bool { return a.Experiment("custom_file_sections") == "on" }
+// FileSectionsOn reports the sidebar's collections instead of the Starred
+// sub-header: what custom_file_sections on gave. Slack shows them to
+// everyone now (the 2026-11-21 drift); the views still ask, so their old
+// off branches are dead.
+func (a *App) FileSectionsOn() bool { return true }
 
-// FileCollections returns the collections (getFileCollections: none
-// without custom_file_sections) and whether files.collections.list has
-// answered.
+// FileCollections returns the collections (u1Hg s6: the stored ones but a
+// "recently_viewed" one) and whether files.collections.list has answered.
 func (a *App) FileCollections() ([]FileCollection, bool) {
-	if !a.FileSectionsOn() {
-		return nil, false
-	}
 	s := a.fileCollections()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return copyCollections(s.list), s.status == "loaded"
+	out := copyCollections(s.list)
+	out = slices.DeleteFunc(out, func(c FileCollection) bool { return c.Type == CollectionTypeRecentlyViewed })
+	return out, s.status == "loaded"
 }
+
+// CollectionTypeRecentlyViewed is a server-side Recently viewed collection
+// (u1Hg bL isRecentlyViewedCollection), kept out of the store's readers.
+const CollectionTypeRecentlyViewed = "recently_viewed"
 
 // FileCollectionsLoading reports a first files.collections.list in flight
 // (getCollectionsFetchStatus "loading": the sidebar's shimmer rows).
@@ -211,12 +224,9 @@ func (a *App) FileCollectionOf(fileID string) (FileCollection, bool) {
 }
 
 // FetchFileCollections is maybeFetchCollections: files.collections.list
-// when custom_file_sections is on and the last answer is missing or more
-// than a day old. Only the first load shows as loading.
+// when the last answer is missing or more than a day old. Only the first
+// load shows as loading.
 func (a *App) FetchFileCollections(ctx context.Context) error {
-	if !a.FileSectionsOn() {
-		return nil
-	}
 	s := a.fileCollections()
 	s.mu.Lock()
 	if s.status == "loading" || !s.fetched.IsZero() && time.Since(s.fetched) <= 24*time.Hour {
@@ -243,6 +253,28 @@ func (a *App) FetchFileCollections(ctx context.Context) error {
 	a.setCollectionsLocked(s, r.Collections)
 	s.fetched, s.status = time.Now(), "loaded"
 	return nil
+}
+
+// ForceFetchFileCollections waits out a files.collections.list in flight
+// (boot's maybeFetchCollections) and asks again whatever the day's cache
+// holds: tests that change the fake's collections after boot.
+func (a *App) ForceFetchFileCollections(ctx context.Context) error {
+	s := a.fileCollections()
+	for {
+		s.mu.Lock()
+		if s.status != "loading" {
+			s.fetched = time.Time{}
+			s.mu.Unlock()
+			break
+		}
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	return a.FetchFileCollections(ctx)
 }
 
 // setCollectionsLocked is setCollections: the new list, each known
@@ -797,14 +829,10 @@ func (a *App) RecentlyViewedFileIDs() []string {
 
 // FileOpened is FileOpenSubscriber's maybeAddToRecentIfNotStarred for a
 // canvas or list a view opened (not in a channel tab: getCurrentChannelTab
-// keeps those out): the file joins Recently viewed unless it is starred,
-// or with custom_file_sections in any collection.
+// keeps those out): the file joins Recently viewed unless it is in a
+// collection.
 func (a *App) FileOpened(id string) {
-	if a.FileSectionsOn() {
-		if _, in := a.FileCollectionOf(id); in {
-			return
-		}
-	} else if a.FileStarred(id) {
+	if _, in := a.FileCollectionOf(id); in {
 		return
 	}
 	a.AddOpenFile(id)

@@ -526,8 +526,9 @@ type SearchOpts struct {
 	Module      string // "messages" (default) | "dms"
 	Context     string // search_context ("" = the module's results tab)
 	ExactOnly   bool   // More > Exact matches only
-	// ExcludeArchived is More > Exclude archived (channel_type
-	// exclude_archived; search_explore_freshness_signals)
+	// ExcludeArchived is channel_type exclude_archived (More > Exclude
+	// archived until Slack dropped it with search_explore_freshness_signals:
+	// the 2026-11-21 drift)
 	ExcludeArchived bool
 	Session         SearchSession
 	// InChannel is search in channel (⌘F): the query runs as

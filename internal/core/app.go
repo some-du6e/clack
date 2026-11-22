@@ -923,7 +923,7 @@ func (a *App) Boot(ctx context.Context) error {
 	// recent searches and places (maybeLoadRecentsPrefs, search_recents.go)
 	go a.MaybeLoadRecents(a.bg)
 	// fetchedDeferredMessagingClientData's maybeFetchCollections (boot-
-	// render): the file collections, under custom_file_sections, so the
+	// render): the file collections, so the
 	// canvas and list headers' section buttons know them
 	go func() { _ = a.FetchFileCollections(a.bg) }()
 	// The warm boot's files from this session's fresh state, once

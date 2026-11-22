@@ -38,6 +38,9 @@ import (
 
 // Size sets how big the workspace is.
 type Size struct {
+	// FreeTeam makes the workspace a free one outside any enterprise:
+	// team.info has no plan or enterprise_id, and Creds no EnterpriseID.
+	FreeTeam bool
 	// NoFixtureDocs leaves out the fake's own canvases and lists (Launch
 	// plan, Launch tracker, Team to-dos…): a workspace built on the fake
 	// (internal/demo) brings its own with AddCanvas and AddList.
@@ -467,7 +470,10 @@ type Server struct {
 
 	// Permissions are permissions/info's answers by channel_id ("" for a
 	// request without one). nil: every broadcast permission is allowed,
-	// MANAGE_CHANNEL_TABS for a channel, and without a channel Edit
+	// MANAGE_CHANNEL_TABS, SET_CHANNEL_TOPIC and SET_CHANNEL_PURPOSE for a
+	// channel (a workspace whose members edit topics and descriptions:
+	// Slack's client asks for the grants alone since the 2026-11-21
+	// drift, core/chperms.go), and without a channel Edit
 	// profile's UPDATE_NAME,
 	// UPDATE_DISPLAY_NAME and EDIT_PROFILE_PHOTO too.
 	// Set it before the calls.
@@ -849,8 +855,12 @@ const (
 // Creds returns credentials pointing every host (team, enterprise, edge) at
 // the fake.
 func (s *Server) Creds() slack.Creds {
-	return slack.Creds{Token: TeamToken, Cookie: "xoxd-fake", Team: TeamID, EnterpriseToken: OrgToken,
+	c := slack.Creds{Token: TeamToken, Cookie: "xoxd-fake", Team: TeamID, EnterpriseToken: OrgToken,
 		EnterpriseID: EnterpriseID, UserID: SelfID, TeamURL: s.URL, EnterpriseURL: s.URL}
+	if s.Size.FreeTeam {
+		c.EnterpriseID = ""
+	}
+	return c
 }
 
 // ChannelIDs returns the member channel ids in sidebar order.
@@ -1834,6 +1844,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				"icon": map[string]any{"image_34": s.URL + "img/34x34/partner.png", "image_44": s.URL + "img/44x44/partner.png",
 					"image_88": s.URL + "img/88x88/partner.png"}})
 		}
+		if s.Size.FreeTeam {
+			return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",
+				"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"}, "plan": ""})
+		}
 		return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",
 			"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"},
 			"plan": "enterprise", "enterprise_id": "E0FAKE00001"}) // the test account's team is an enterprise grid's
@@ -1996,8 +2010,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		var ch string
 		_ = json.Unmarshal(edge["channel_id"], &ch)
 		allowed := []string{"CAN_AT_CHANNEL", "CAN_AT_EVERYONE"}
-		if ch != "" { // a Grid member manages a channel's tabs (useCanEditTabs' MANAGE_CHANNEL_TABS)
-			allowed = append(allowed, "MANAGE_CHANNEL_TABS")
+		if ch != "" { // a Grid member manages a channel's tabs (useCanEditTabs' MANAGE_CHANNEL_TABS) and sets its topic and description
+			allowed = append(allowed, "MANAGE_CHANNEL_TABS", "SET_CHANNEL_TOPIC", "SET_CHANNEL_PURPOSE")
 		}
 		if ch == "" { // the team's: Edit profile's grants (core/profile_grants.go)
 			allowed = append(allowed, "UPDATE_NAME", "UPDATE_DISPLAY_NAME", "EDIT_PROFILE_PHOTO")

@@ -135,13 +135,14 @@ func TestChannelFilesSuggestions(t *testing.T) {
 	}
 }
 
-// The hover group: Share on files (not canvases or lists), the star on
-// canvases and lists; Share opens the file share dialog, the star stars
-// with addCanvasToFavorites' toast (without custom_file_sections), or
-// opens the section menu (with it).
+// The hover group: Share on files (not canvases or lists), the section
+// button (FileSectionDropdownButton) where the star was, on canvases and
+// lists; Share opens the file share dialog. Slack dropped
+// custom_file_sections and kept its on path (the 2026-11-21 drift), so
+// the old gate forced off still draws the section button.
 func TestChannelFilesHoverActions(t *testing.T) {
-	v, h, e, fs := cfView(t, false)
-	h.Core().SetExperimentGroup("custom_file_sections", "")
+	v, h, e, _ := cfView(t, false)
+	h.Core().SetExperimentGroup("custom_file_sections", "off")
 	e.frame()
 	var pdf, canvas, list *fileItem
 	for i := range v.files.items {
@@ -161,9 +162,16 @@ func TestChannelFilesHoverActions(t *testing.T) {
 	if !cfShareShown(pdf) || cfShareShown(canvas) || cfShareShown(list) {
 		t.Error("Share is for files only")
 	}
+	// files get it too under unified_files_3p_primary_custom_sections
+	h.Core().SetExperimentGroup("unified_files_3p_primary_custom_sections", "off")
 	if v.starShown(pdf) || !v.starShown(canvas) || !v.starShown(list) {
-		t.Error("the star is for canvases and lists")
+		t.Error("the section button is for canvases and lists")
 	}
+	h.Core().SetExperimentGroup("unified_files_3p_primary_custom_sections", "on")
+	if !v.starShown(pdf) {
+		t.Error("unified_files_3p_primary_custom_sections on: no section button on a file")
+	}
+	h.Core().SetExperimentGroup("unified_files_3p_primary_custom_sections", "off")
 	v.openShare(*pdf)
 	e.frame()
 	var kinds []string
@@ -178,27 +186,15 @@ func TestChannelFilesHoverActions(t *testing.T) {
 		t.Fatalf("no share dialog: overlays %v", kinds)
 	}
 	dismissAll(h.filesHost)
-	v.star(*canvas, image.Rect(900, 300, 932, 332))
-	e.until(t, "the star", func() bool { return len(fs.StarredFiles()) == 1 })
-	ts := h.toasts()
-	if len(ts) == 0 || ts[len(ts)-1] != "Added "+canvas.title()+" to Starred. [View]" {
-		t.Errorf("toasts %q", ts)
+	for _, it := range []*fileItem{canvas, list} {
+		if !v.fv.sectionButtonShown(it) || v.starTip(it) != "" {
+			t.Errorf("%s: the section button doesn't take the star's place", it.ID)
+		}
 	}
-	h.action()
-	if h.last() != "canvas:"+canvas.ID {
-		t.Errorf("View opened %q", h.last())
+	if v.fv.sectionButtonShown(pdf) {
+		t.Error("a file draws the section button without unified_files_3p_primary_custom_sections")
 	}
-	n := len(h.toasts())
-	v.star(*list, image.Rect(900, 300, 932, 332))
-	e.until(t, "the list star", func() bool { return len(fs.StarredFiles()) == 2 })
-	if len(h.toasts()) != n {
-		t.Errorf("a list toasted %q (only a child window does)", h.toasts()[n:])
-	}
-	// custom_file_sections: FileSectionDropdownButton instead of the star
-	h.Core().SetExperimentGroup("custom_file_sections", "on")
-	if !v.fv.sectionButtonShown(canvas) || !v.starShown(canvas) || v.starTip(canvas) != "" {
-		t.Error("the section button doesn't replace the star")
-	}
+	h.Core().ClearExperimentGroup("unified_files_3p_primary_custom_sections")
 }
 
 // View link details goes to the host with the link and LinkEntity's
@@ -336,7 +332,6 @@ func TestChannelFilesMoreShots(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		v, h, e, _ := cfView(t, dark)
 		h.showGallery = true
-		h.Core().SetExperimentGroup("custom_file_sections", "")
 		settle := func() {
 			for range 25 {
 				e.frame()
@@ -349,7 +344,7 @@ func TestChannelFilesMoreShots(t *testing.T) {
 		settle()
 		vaShot(t, e, "chfiles-suggest", dark)
 		cfType(e, v, "")
-		// a canvas row's hover: the star (and the PDF's Share)
+		// a canvas row's hover: the section button (and the PDF's Share)
 		v.setType(cfFiles)
 		settle()
 		hover := func(pred func(r cfRow) bool) {

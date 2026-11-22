@@ -270,8 +270,8 @@ var experimentReads = map[string][]string{
 	// sidebar (sidebar_rules.go, section menus, prefs)
 	"filter_dormant_channels": on, "improve_mute_pref": on, "dm_recency_sort_rollout": {"without_edu", "with_edu"},
 	"programmable_sidebar_dm_history": on, "vip_section_pref": on, "agents_in_dm_sidebar": on, "agents_in_dm_sidebar_pref": on,
-	"sidebar_section_search": on, "add_channels_channel_sections_slackathon": on, "mute_channel_edu": on,
-	"sidebar_text_filter": on, "sidebar_text_filter_m2": on, "sidebar_text_filter_m3": on, "temp_mute": on, "manage_conversations_strings": on,
+	"sidebar_section_search": on, "mute_channel_edu": on,
+	"sidebar_text_filter": on, "sidebar_text_filter_m2": on, "sidebar_text_filter_m3": on, "temp_mute": on,
 	"thread_root_selected_state": on, "suggested_sections_auto_sort_v2": on, "suggested_sections_auto_sort_killswitch": on, "meeting_assistant": on,
 	"mpdm_naming": on, "sc_mpdm_naming": on, "mpdm_notifications_advanced_option": on, "silent_sidebar": on,
 	"channel_ia_header_refinements": on,
@@ -299,9 +299,9 @@ var experimentReads = map[string][]string{
 	"availability_prefs_section": on, "status_improvements": on, "activity_bulk_unread_tool": on,
 	"lists_grid_todos": on,
 	// channel header, tabs and details (channel.go, views/details*.go)
-	"ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on, "enable_new_channel_settings": on,
+	"ai_channel_exclusions": on, "enable_new_channel_settings": on,
 	"move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
-	"channel_topic_purpose_setting_restrict_to_channel_managers": on, "channel_details_agents_apps_tab": on,
+	"channel_details_agents_apps_tab":    on,
 	"list_channel_tab_show_view_name_fe": on, "lists_channel_tabs_default_view": on,
 	ExpChannelJoinWithAgents: on, ExpChannelHeaderWithAgents: on, ExpAgentsInChannelsImprovements: on, // the join card and header count (channel_agents.go)
 	// secondary views, messages and workflows (merged from their branches)
@@ -315,7 +315,7 @@ var experimentReads = map[string][]string{
 	"message_actions_truncate": on, "agent_identity_overrides": on,
 	"mentions_full_names_only_pref": on, // a message slug's DM partner, a mention's name (msg_slug.go: N1tw's k, realNamesInMentions)
 	// composer and autocomplete
-	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
+	"slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},
@@ -341,9 +341,8 @@ var experimentReads = map[string][]string{
 	"huddles_new_grids":    on,
 	"huddles_status_ultra": on, // the rail's status emoji drops the huddle's headphones (dnd.go SelfStatusEmoji)
 	// search and the switcher (search*.go, popups/search_*)
-	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
+	"desktop_search_recents_read": on, "desktop_search_recents_write": on,
 	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},
-	"search_explore_freshness_signals":               on,
 	// the search box's completers (popups/search_filter_*): the date
 	// modifiers go to the date picker; type: lists Surfaces
 	"omni_date_quick_filters": on, "surfaces_synth_view": on,
@@ -368,7 +367,6 @@ var experimentReads = map[string][]string{
 	"slack_kit_v2_button":                        on,
 	"a11y_no_auto_highlight_search_multi_select": {"on", "treatment"},
 	"basic_select_placeholder_option":            {"on", "treatment"},
-	"custom_file_sections":                       on, // the Files sidebar's starred file collection (views/files.go)
 	// message actions (ui/popups actions_forward.go, actions_flag.go): the
 	// share dialog's schedule caret and Save Draft; the flag row's custom
 	// group DM names and its cross-org rules

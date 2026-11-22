@@ -61,7 +61,7 @@ var defaultExperimentGroups = map[string]string{
 	// search and the switcher, as experiments.getByUser had them on
 	// 2026-11-10 (docs/EXPERIMENTS.md); the recents experiments only
 	// matter once Slack's own answer is in
-	"omni_quick_message_results": "on", "search_autocomplete_promote_exact_name_matches": "treatment_5",
+	"search_autocomplete_promote_exact_name_matches": "treatment_5",
 	"activity_inbox": "on", "agent_tasks": "on", "agents_landing_page": "on", "later_todos": "on",
 	// the Activity page's layout toggle sits in its header (5Ns/ XW; the
 	// live audit, docs/VIEWS-AUDIT.md): its density is the global pref
@@ -77,7 +77,7 @@ var defaultExperimentGroups = map[string]string{
 	"activity_bot_item_type_reads": "on", "activity_automations_only": "on", "exclude_automations_filter": "on",
 	"agent_status_in_activity": "on",
 	// the section menus (ui/section_menu.go)
-	"sidebar_section_search": "on", "add_channels_channel_sections_slackathon": "on", "mute_channel_edu": "on",
+	"sidebar_section_search": "on", "mute_channel_edu": "on",
 	// code channels (codechannel.go), as experiments.getByUser had them on 2026-11-08
 	"session_channels": "on", "session_channel_views": "on", "code_channels_naming": "on",
 	// agents and code channels (exp-agents-code, the account on 2026-11-10): the
@@ -85,9 +85,6 @@ var defaultExperimentGroups = map[string]string{
 	"agent_member_channel_count": "on", "plan_block_coding_enhancements": "on", "code_channels_auto_close": "on",
 	"session_channels_slug_peek":         "on", // 2026-11-13: a channel-tab slug with a peek opens no channel card
 	"agent_streaming_slimmer_task_cards": "on", "app_thread_nugget_fe": "on", "app_nugget_refinement": "on",
-	// Advanced > "Enable smart quotes and symbols" shows in the live dialog
-	// (iZ.w gates it), so composer_smart_symbols is on
-	"composer_smart_symbols": "on",
 	// Navigation > "Show Agents in direct messages" shows in the live
 	// dialog (TabRail: Mq && n7)
 	"agents_in_dm_sidebar": "on", "agents_in_dm_sidebar_pref": "on",
@@ -117,7 +114,6 @@ var defaultExperimentGroups = map[string]string{
 	// (experiments.getByUser on 2026-11-10: sidebar_filter.go, temp_mute.go);
 	// the input is there from the first frame
 	"sidebar_text_filter": "on", "sidebar_text_filter_m2": "on", "sidebar_text_filter_m3": "on", "temp_mute": "on",
-	"manage_conversations_strings": "on", // the section move toast's wording (ui/section_menu.go)
 	// the sidebar's organize mode bar gets Leave (ui/sidebar_organize.go)
 	"bulk_leave_channels_from_sidebar": "on",
 	"thread_root_selected_state":       "on", // the selected thread root (ui/messages/active_thread.go)
@@ -140,9 +136,8 @@ var defaultExperimentGroups = map[string]string{
 	"agents_in_channels_improvements": "on", "ai_channel_exclusions": "on",
 	"autocomplete_affinity_ml_model": "on", "autocomplete_demote_flannel_passthrough_rltv_exact_match": "on",
 	"autocomplete_frequently_used_emojis_frecency": "on", "basic_select_placeholder_option": "on",
-	"canvas_blockquote_layout": "on", "canvas_comment_only_mode": "on", "canvas_table_of_contents": "on",
+	"canvas_comment_only_mode": "on", "canvas_table_of_contents": "on",
 	"channel_header_with_agents": "on", "channel_join_experience_with_agents": "on",
-	"channel_topic_purpose_setting_restrict_to_channel_managers": "on", "custom_file_sections": "on",
 	"defer_notification_3p_streaming": "on", "desktop_search_recents_read": "on",
 	"desktop_search_recents_write": "on", "draft_management_in_composer": "treatment",
 	"emoji_exact_match_boost": "on", "emoji_skin_tone_picker_improvement": "on",
@@ -152,7 +147,7 @@ var defaultExperimentGroups = map[string]string{
 	"focus_mode_custom_duration": "treatment", "force_native_notifications": "off", "frontline_users": "on",
 	"ia4_slash_command_fe": "on", "invite_slash_command_in_threads": "on", "list_channel_tab_show_view_name_fe": "on",
 	"lists_channel_tabs_default_view": "on", "lists_export_enrichment": "on",
-	"lists_file_backed_templates": "on", "lists_grid_todos": "on", "mcp_ai_channel_exclusions": "on",
+	"lists_file_backed_templates": "on", "lists_grid_todos": "on",
 	"miles_davis_themes": "on", "mpdm_default_exclude_history_clients_webapp": "on", "mpdm_naming": "on",
 	"mpdm_notifications_advanced_option": "on", "omni_date_quick_filters": "on", "profile_photo_comp": "on",
 	"schedule_send_forwards": "on", "sc_mpdm_naming": "on", "semantic_emoji_matching": "on",

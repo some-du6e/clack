@@ -53,7 +53,8 @@ type srWO struct {
 	list              layout.List
 }
 
-// woOn is work_objects_message_search_xp_v2 (PEUt YR).
+// woOn is work objects in search: work_objects_message_search_xp_v2 (PEUt
+// YR) until Slack dropped it and kept its on path (the 2026-11-21 drift).
 func (v *SearchView) woOn() bool {
 	c := v.h.Core()
 	return c != nil && c.WorkObjectFlags().Search

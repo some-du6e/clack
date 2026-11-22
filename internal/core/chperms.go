@@ -16,26 +16,25 @@ import (
 //
 // On them sit the topic and description checks:
 //
-//   - canUserSetTopicForChannelWithReasonById (boot-shared xjwB): no for an
-//     unknown conversation, a Slack Connect DM or group DM, an archived
-//     one; yes with SET_CHANNEL_TOPIC; otherwise no when
-//     channel_topic_purpose_setting_restrict_to_channel_managers is on and
-//     this isn't a 1:1 DM, or the viewer isn't a member, can't post, or is
-//     a guest (restricted or ultra restricted); else yes.
-//   - canUserSetPurpose (boot-shared uJL7 s): public and private channels
-//     only, not archived; yes with SET_CHANNEL_PURPOSE; otherwise no when
-//     the experiment is on (for every channel), or for a non-member, a
-//     viewer who can't post, or a guest; else yes.
+//   - canUserSetTopicForChannelWithReasonById (boot-shared iJOl, was
+//     xjwB): no for an unknown conversation, a Slack Connect DM or group
+//     DM, an archived one; yes with SET_CHANNEL_TOPIC; otherwise no unless
+//     this is a 1:1 DM the viewer is in, can post to, and isn't a guest
+//     (restricted or ultra restricted) in.
+//   - canUserSetPurpose (boot-shared GvU9 s, was uJL7): public and private
+//     channels only, not archived; yes with SET_CHANNEL_PURPOSE, else no.
+//
+// Both used to apply the second rule only under
+// channel_topic_purpose_setting_restrict_to_channel_managers (falling back
+// to membership, posting and guest checks without it). Slack dropped the
+// experiment and kept its on path for everyone (build 8f19be21ed7e, the
+// 2026-11-21 drift).
 
 // The grants (QxkB's permission enum keys).
 const (
 	PermSetChannelTopic   = "SET_CHANNEL_TOPIC"
 	PermSetChannelPurpose = "SET_CHANNEL_PURPOSE"
 )
-
-// ExpRestrictTopicPurpose limits topic and description edits to people
-// with the grants (channel managers, admins).
-const ExpRestrictTopicPurpose = "channel_topic_purpose_setting_restrict_to_channel_managers"
 
 // chPermSet is what one permissions/info call asks for: both grants, the
 // way the header's topic and the details' Topic and Description read them
@@ -158,13 +157,12 @@ func (a *App) CanSetTopic(ch string) bool {
 		return false
 	case a.ChannelGrant(ch, PermSetChannelTopic):
 		return true
-	case a.experiment(ExpRestrictTopicPurpose) == "on" && !c.IsIM:
+	case !c.IsIM:
 		return false
 	}
-	// a DM is always the viewer's (JUrK bl reads is_member, which Slack's
+	// a DM is always the viewer's (crlq bl reads is_member, which Slack's
 	// DM objects carry)
-	member := c.IsMember || c.IsIM || c.IsMPIM
-	return member && a.PostingFor(c).CanPost() && !a.viewerRestricted()
+	return a.PostingFor(c).CanPost() && !a.viewerRestricted()
 }
 
 // CanSetPurpose is canUserSetPurpose(ch).ok (uJL7 s).
@@ -176,10 +174,6 @@ func (a *App) CanSetPurpose(ch string) bool {
 	switch {
 	case c.IsArchived:
 		return false
-	case a.ChannelGrant(ch, PermSetChannelPurpose):
-		return true
-	case a.experiment(ExpRestrictTopicPurpose) == "on":
-		return false
 	}
-	return c.IsMember && a.PostingFor(c).CanPost() && !a.viewerRestricted()
+	return a.ChannelGrant(ch, PermSetChannelPurpose)
 }
