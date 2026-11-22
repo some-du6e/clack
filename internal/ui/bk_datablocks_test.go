@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
+	"gioui.org/io/pointer"
+
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/richview"
@@ -95,13 +98,24 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// let the last scroll land, then read the table where it is now
-	e.settle(500 * time.Millisecond)
+	// let the last scroll land and the rows stay put, then read the table
+	// where it is now
 	replyTS := tbl.TS
 	var tr richview.DataTableRect
-	for _, d := range e.threadDataBlocks(ch, ts) {
-		if d.TS == replyTS && len(d.Tables) == 1 {
-			tr = d.Tables[0]
+	read := func() richview.DataTableRect {
+		for _, d := range e.threadDataBlocks(ch, ts) {
+			if d.TS == replyTS && len(d.Tables) == 1 {
+				return d.Tables[0]
+			}
+		}
+		return richview.DataTableRect{}
+	}
+	for dl := time.Now().Add(10 * time.Second); time.Now().Before(dl); {
+		e.settle(300 * time.Millisecond)
+		if r := read(); r.Buttons["next"] == tr.Buttons["next"] && !r.Buttons["next"].Empty() {
+			break
+		} else {
+			tr = r
 		}
 	}
 	if tr.Block == nil || tr.Block.Caption != "Full points leaderboard" || len(tr.Block.Body) != 110 || len(tr.Rows) != 5 {
@@ -114,8 +128,16 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 	if next.Empty() || !next.In(image.Rectangle{Max: e.size}) {
 		t.Fatalf("the table's next button at %v, off the %v window", next, e.size)
 	}
-	// router coordinates, as files_click_test's tiles
-	e.clickAt(next.Min.Add(next.Max).Div(2), time.Second)
+	// router coordinates, as files_click_test's tiles; the pointer over it
+	// first: it hovers the button
+	at := next.Min.Add(next.Max).Div(2)
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(at.X), float32(at.Y)), Time: 900 * time.Millisecond})
+	e.frame()
+	e.frame()
+	if h := tbl.View.HoveredTableTarget(); h != "next" {
+		t.Errorf("the pointer at %v (next %v) hovers %q, want the next button", at, next, h)
+	}
+	e.clickAt(at, time.Second)
 	e.until("the table's second page", 10*time.Second, func() bool {
 		p, _ := tbl.View.DataTablePage(tr.Block)
 		return p == 1

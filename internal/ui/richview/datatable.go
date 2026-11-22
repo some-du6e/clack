@@ -940,3 +940,15 @@ func (v *View) DataTableRows(t *richtext.DataTable) []string {
 	}
 	return out
 }
+
+// HoveredTableTarget is the data_table target under the pointer ("next",
+// "sort", "row"; "" none), for tests.
+func (v *View) HoveredTableTarget() string {
+	if !v.hovering || v.hover < 0 || int(v.hover) >= len(v.d.targets) {
+		return ""
+	}
+	if tg := &v.d.targets[v.hover]; tg.kind == tDataTable {
+		return tg.id
+	}
+	return ""
+}
