@@ -68,7 +68,17 @@ type UploadedFile struct {
 	Shared          bool // files.share shared it
 	Deleted         bool // a drafts.delete without skip_file_deletion removed it
 	W, H            int  // an uploaded image's size (its bytes decode)
-	data            []byte
+	// What the upload sent, which decides how this server files it
+	// (types): files.getUploadURL's args (filename, length, snippet_type,
+	// subtype, alt_txt), the upload POST's Content-Type, its file part's
+	// filename and Content-Type (as sent: "" when the part had none), and
+	// files.completeUpload's args.
+	UploadArgs   url.Values
+	PostType     string
+	PartName     string
+	PartType     string
+	CompleteArgs url.Values
+	data         []byte
 }
 
 // SharedFiles is one files.share call.
@@ -90,12 +100,12 @@ func (s *Server) newID(prefix string) string {
 // thumb_360 this server draws (never a real files.slack.com URL). An
 // uploaded image that decoded is served as its own bytes, at its size.
 func (f *UploadedFile) object(base string) map[string]any {
+	mt, ft, pt := f.types()
 	o := map[string]any{"id": f.ID, "name": f.Name, "title": f.Title, "size": f.Size, "mode": "hosted",
-		"mimetype": mimeOf(f.Name), "filetype": strings.TrimPrefix(strings.ToLower(extOf(f.Name)), "."),
-		"pretty_type": strings.ToUpper(strings.TrimPrefix(extOf(f.Name), ".")), "user": SelfID,
+		"mimetype": mt, "filetype": ft, "pretty_type": pt, "user": SelfID,
 		"is_external": false, "is_public": false, "file_access": "visible",
 		"url_private": base + "files-pri/" + f.ID + "/" + f.Name, "permalink": base + "files/" + SelfID + "/" + f.ID + "/" + f.Name}
-	if strings.HasPrefix(mimeOf(f.Name), "image/") {
+	if mt == "image/png" || mt == "image/jpeg" || mt == "image/gif" { // the thumbs this server draws
 		o["thumb_360"] = base + "img/360x360/" + f.ID + ".png"
 		if f.W > 0 && f.H > 0 {
 			o["original_w"], o["original_h"] = f.W, f.H
@@ -142,6 +152,11 @@ func (f *UploadedFile) stub(base string) map[string]any {
 // memory only) so the file object can carry the image's size and the
 // server can serve it.
 func (s *Server) keepUploadBytes(id, ctype string, body []byte) {
+	s.draftMu.Lock()
+	if up := s.files[id]; up != nil {
+		up.PostType = ctype
+	}
+	s.draftMu.Unlock()
 	_, params, err := mime.ParseMediaType(ctype)
 	if err != nil || params["boundary"] == "" {
 		return
@@ -156,9 +171,11 @@ func (s *Server) keepUploadBytes(id, ctype string, body []byte) {
 			continue
 		}
 		data, _ := io.ReadAll(io.LimitReader(p, 64<<20))
+		_, disp, _ := mime.ParseMediaType(p.Header.Get("Content-Disposition"))
 		s.draftMu.Lock()
 		up := s.files[id]
 		if up != nil {
+			up.PartName, up.PartType = disp["filename"], p.Header.Get("Content-Type")
 			up.data = data
 			if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
 				up.W, up.H = cfg.Width, cfg.Height
@@ -240,6 +257,18 @@ func (s *Server) draftJSON(d *Draft) map[string]any {
 // HTTP handler into handleDrafts for upload POSTs.
 const uploadCookieKey = "\x00cookie"
 
+// callArgs is a call's args as the client sent them (this server's own
+// keys left out).
+func callArgs(f url.Values) url.Values {
+	out := url.Values{}
+	for k, v := range f {
+		if k != uploadCookieKey {
+			out[k] = append([]string(nil), v...)
+		}
+	}
+	return out
+}
+
 func fail(code string) map[string]any { return map[string]any{"ok": false, "error": code} }
 
 // handleDrafts answers the draft and upload methods (handled=false for
@@ -255,7 +284,7 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 			return fail("invalid_arguments"), true
 		}
 		id := s.newID("F")
-		s.files[id] = &UploadedFile{ID: id, Name: f.Get("filename"), Title: f.Get("filename"), Size: n}
+		s.files[id] = &UploadedFile{ID: id, Name: f.Get("filename"), Title: f.Get("filename"), Size: n, UploadArgs: callArgs(f)}
 		return ok("file", id, "upload_url", s.URL+"api/upload/"+id), true
 	case strings.HasPrefix(method, "upload/"):
 		if up := s.files[strings.TrimPrefix(method, "upload/")]; up != nil {
@@ -276,7 +305,7 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 			if up == nil || up.Deleted || up.Bytes == 0 {
 				return fail("file_not_found"), true
 			}
-			up.Completed = true
+			up.Completed, up.CompleteArgs = true, callArgs(f)
 			if r.Title != "" {
 				up.Title = r.Title
 			}

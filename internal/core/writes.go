@@ -366,7 +366,7 @@ func (a *App) PrepareUpload(ctx context.Context, f UploadFile, progress func(sen
 // uploadOnce is one eager upload attempt: files.getUploadURL {filename,
 // length, snippet_type, alt_txt} (Slack's getUploadURL fetcher sends the
 // last two for snippets and for images with alt text), the multipart POST
-// to upload_url, files.completeUpload.
+// to upload_url (uploadPart), files.completeUpload.
 func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, total int64)) (string, error) {
 	t0 := time.Now()
 	var r struct {
@@ -390,7 +390,7 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 		return "", errors.New("core: files.getUploadURL returned no upload slot")
 	}
 	log.Printf("upload: %s slot for %d bytes", id, n)
-	if err := a.C.UploadBytes(ctx, r.UploadURL, f.Name, f.Data, progress); err != nil {
+	if err := a.C.UploadPart(ctx, r.UploadURL, uploadPart(f), progress); err != nil {
 		log.Printf("upload: %s POST failed after %s (%s)", id, time.Since(t0).Round(time.Millisecond), uploadErrClass(err))
 		return "", err
 	}
@@ -401,6 +401,17 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 	}
 	log.Printf("upload: %s complete; processing", id)
 	return id, nil
+}
+
+// uploadPart is the FormData entry Slack's UploadQueue posts for f: the
+// File, named f.Name and typed as Chromium types it (slack.FileType), or a
+// snippet's Blob, which FormData names "blob", of the snippet's type
+// (text/plain when f has none).
+func uploadPart(f UploadFile) slack.MultipartFile {
+	if f.SnippetType != "" {
+		return slack.MultipartFile{Field: "file", Name: "blob", Type: firstNonEmpty(f.Type, "text/plain"), Data: f.Data}
+	}
+	return slack.MultipartFile{Field: "file", Name: f.Name, Type: firstNonEmpty(f.Type, slack.FileType(f.Name)), Data: f.Data}
 }
 
 // retryableUpload: anything but a Slack API error, a sign-out or the

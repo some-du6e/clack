@@ -517,6 +517,10 @@ type UploadFile struct {
 	// AltText is an image's alt text (the Edit file dialog),
 	// files.getUploadURL's alt_txt.
 	AltText string
+	// Type is the upload part's Content-Type: the Blob's type for a
+	// snippet (uploadSnippet), else "" for slack.FileType(Name), the type
+	// Chromium gives a File of that name. Slack files the upload by it.
+	Type string
 }
 
 type UploadedFile struct {
