@@ -285,17 +285,12 @@ func colorReport(samples []sample) (errs, logs []string) {
 		slices.Sort(sorted)
 		usual = sorted[len(sorted)/2]
 	}
+	_ = usual
 	stepped := func(w [2]time.Duration) (time.Duration, bool) {
 		for i := 1; i < len(samples); i++ {
 			a, b := samples[i-1], samples[i]
 			gap := gaps[i-1]
-			if a.at >= w[1] || b.at <= w[0] || gap < 300*time.Millisecond || gap < 8*usual {
-				continue
-			}
-			// what of the window the stall leaves: fewer draws than 3
-			// usual gaps would fit
-			left := (w[1] - w[0]) - (min(b.at, w[1]) - max(a.at, w[0]))
-			if usual > 0 && left < 3*usual {
+			if a.at < w[1] && b.at > w[0] && gap >= 300*time.Millisecond {
 				return gap, true
 			}
 		}
