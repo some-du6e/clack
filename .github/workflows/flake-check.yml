@@ -4840,14 +4840,14 @@ jobs:
       - karim-1118-r4-review
       - lost-click
       - mf-late
-      - row-hit
-      - rx-bar
       - fl1122-r-ui
       - fl1122-r-guard
       - fl1122-r-pixel
       - fl1122-s-views
       - fl1122-s-mac
       - fl1122-s-win
+      - row-hit
+      - rx-bar
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
@@ -4869,8 +4869,6 @@ jobs:
           EXPECT_FAIL: ${{ inputs.expect_fail }}
           NEEDS: ${{ toJSON(needs) }}
         run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"
-
-
   # flakes-1122: TestLeftComposerLetsGoOfFocus (the reopened thread's reply
   # box) and TestFilesTabHideAndLinkDetails (a header read out across a
   # Hide tab, its members call held: its race forced every run).
