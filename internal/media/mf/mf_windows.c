@@ -815,12 +815,9 @@ void clack_me_bind_set(clackMF *m, uintptr_t devp) {
 
 // clack_me_open makes the engine, reading the file through a byte stream
 // of total bytes (seekable: the server answers ranges), and gives it its
-// source. url is only the demuxer's hint (clack-media://<id>.<ext>). An
-// audio file's engine (CLACK_MF_AUDIOONLY) has no device and no frames:
-// no DXGI manager, no output format.
+// source. url is only the demuxer's hint (clack-media://<id>.<ext>).
 int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *url, uint32_t format, uint32_t flags, uint32_t gen, clackMFInfo *info) {
-	int audioOnly = (flags & CLACK_MF_AUDIOONLY) != 0;
-	if (m->mgr == NULL && !audioOnly) {
+	if (m->mgr == NULL) {
 		fail(info, "no device", E_UNEXPECTED);
 		return E_UNEXPECTED;
 	}
@@ -852,16 +849,14 @@ int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *u
 		goto out;
 	}
 	IMFAttributes_SetUnknown(a, &clackMF_MEDIA_ENGINE_CALLBACK, (IUnknown *)n);
-	if (!audioOnly) {
-		IMFAttributes_SetUnknown(a, &clackMF_MEDIA_ENGINE_DXGI_MANAGER, (IUnknown *)m->mgr);
-		IMFAttributes_SetUINT32(a, &clackMF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, format);
-	}
+	IMFAttributes_SetUnknown(a, &clackMF_MEDIA_ENGINE_DXGI_MANAGER, (IUnknown *)m->mgr);
+	IMFAttributes_SetUINT32(a, &clackMF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, format);
 	hr = CoCreateInstance(&clackCLSID_MFMediaEngineClassFactory, NULL, CLSCTX_INPROC_SERVER, &clackIID_IMFMediaEngineClassFactory, (void **)&f);
 	if (FAILED(hr)) {
 		fail(info, "CoCreateInstance(MFMediaEngineClassFactory)", hr);
 		goto out;
 	}
-	hr = f->lpVtbl->CreateInstance(f, flags & (CLACK_MF_FORCEMUTE | CLACK_MF_AUDIOONLY), a, &base);
+	hr = f->lpVtbl->CreateInstance(f, flags & CLACK_MF_FORCEMUTE, a, &base);
 	if (FAILED(hr)) {
 		fail(info, "IMFMediaEngineClassFactory::CreateInstance", hr);
 		goto out;

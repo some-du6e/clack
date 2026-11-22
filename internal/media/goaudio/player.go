@@ -144,7 +144,7 @@ func (p *player) load() {
 		p.fail(media.ErrNetwork, err)
 		return
 	}
-	s, err := open(b)
+	s, err := open(b, p.src.Mime)
 	if err != nil {
 		code := media.ErrDecode
 		if errors.Is(err, errUnsupported) {
@@ -156,6 +156,7 @@ func (p *player) load() {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
+		s.Close()
 		return
 	}
 	p.s = s
@@ -480,6 +481,12 @@ func (p *player) Close() {
 		sink.Close()
 	}
 	<-p.done
+	p.mu.Lock()
+	s := p.s
+	p.mu.Unlock()
+	if s != nil {
+		s.Close() // pull touches no stream once closed
+	}
 	close(p.events)
 }
 

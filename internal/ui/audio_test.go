@@ -107,8 +107,8 @@ func TestAudioInlinePlay(t *testing.T) {
 		clk += 500 * time.Millisecond
 		e.until(tc.name+" playing", 15*time.Second, func() bool { st, _ := e.audioState(m.TS, tc.id); return st.Playing && !st.Loading })
 		st, _ = e.audioState(m.TS, tc.id)
-		if !st.Alt {
-			t.Errorf("%s: playing, but not url_private (Go audio has no AAC for the aac rendition)", tc.name)
+		if st.Alt == goaudio.DecodesAAC() {
+			t.Errorf("%s: playing url_private %v; Go audio decodes AAC: %v (the aac rendition first, url_private where it can't)", tc.name, st.Alt, goaudio.DecodesAAC())
 		}
 		if st.Duration < 2950*time.Millisecond || st.Duration > 3100*time.Millisecond {
 			t.Errorf("%s: duration %v, want the file's 3 s once its metadata came", tc.name, st.Duration)

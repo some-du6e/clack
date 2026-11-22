@@ -43,10 +43,9 @@ enum {
 	CLACK_MF_LIVE_N
 };
 
-// clack_me_open's flags (MF_MEDIA_ENGINE_CREATEFLAGS): FORCEMUTE, an
-// engine with no audio renderer (no audio output to render to);
-// AUDIOONLY, an audio file's engine, with no device and no frames.
-enum { CLACK_MF_AUDIOONLY = 0x1, CLACK_MF_FORCEMUTE = 0x4 };
+// clack_me_open's flags: MF_MEDIA_ENGINE_FORCEMUTE, an engine with no
+// audio renderer (no audio output to render to).
+enum { CLACK_MF_FORCEMUTE = 0x4 };
 
 // The controls (clack_me_control).
 enum { CLACK_MF_PLAY = 1, CLACK_MF_PAUSE, CLACK_MF_SEEK, CLACK_MF_VOLUME, CLACK_MF_MUTED, CLACK_MF_LOOP, CLACK_MF_RATE };

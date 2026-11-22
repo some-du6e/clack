@@ -104,6 +104,12 @@ func (s *opusStream) Rate() int     { return 48000 }
 func (s *opusStream) Channels() int { return s.ch }
 func (s *opusStream) Frames() int64 { return s.total }
 func (s *opusStream) Codec() string { return s.codec }
+func (s *opusStream) Close() {
+	if s.dec != nil {
+		s.dec.Close()
+		s.dec = nil
+	}
+}
 
 func (s *opusStream) SeekFrame(f int64) error {
 	f = max(0, min(f, s.total))

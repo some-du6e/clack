@@ -22,11 +22,12 @@ import (
 	"github.com/some-du6e/clack/internal/media/mediatest"
 )
 
-// goFixtures are the fixtures Go audio decodes: all but the AAC one.
+// goFixtures are the fixtures Go audio decodes: all but the AAC one,
+// unless the OS decodes it (Media Foundation's, on Windows).
 func goFixtures() []mediatest.AudioFixture {
 	var out []mediatest.AudioFixture
 	for _, fx := range mediatest.AudioFixtures() {
-		if fx.Name != "aac" {
+		if fx.Name != "aac" || DecodesAAC() {
 			out = append(out, fx)
 		}
 	}
@@ -97,20 +98,24 @@ func checkTones(t *testing.T, samples []float32, rate int, off time.Duration) {
 func TestDecodesTheFixtures(t *testing.T) {
 	for _, fx := range goFixtures() {
 		t.Run(fx.Name, func(t *testing.T) {
-			s, err := open(fx.Data)
+			s, err := open(fx.Data, fx.Mime)
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer s.Close()
 			d := time.Duration(s.Frames()) * time.Second / time.Duration(s.Rate())
-			tol := 10 * time.Millisecond
-			if fx.Name == "mp3" { // LAME's delay and padding, and its Xing frame
+			tol, slack := 10*time.Millisecond, s.Rate()/100
+			switch fx.Name {
+			case "mp3": // LAME's delay and padding, and its Xing frame
 				tol = 80 * time.Millisecond
+			case "aac": // the OS's decoder may keep AAC's 1024 priming frames
+				tol, slack = 40*time.Millisecond, s.Rate()/20
 			}
 			if d < mediatest.AudioDuration-tol || d > mediatest.AudioDuration+tol {
 				t.Errorf("duration %v (%d frames at %d Hz), want 3 s", d, s.Frames(), s.Rate())
 			}
 			samples := mono(t, s)
-			if diff := len(samples) - int(s.Frames()); diff < -s.Rate()/100 || diff > s.Rate()/100 {
+			if diff := len(samples) - int(s.Frames()); diff < -slack || diff > slack {
 				t.Errorf("decoded %d frames, Frames says %d", len(samples), s.Frames())
 			}
 			t.Logf("%s: %s, %d Hz × %d, %v, %d frames decoded", fx.Name, s.Codec(), s.Rate(), s.Channels(), d, len(samples))
@@ -123,10 +128,11 @@ func TestDecodesTheFixtures(t *testing.T) {
 func TestSeekLandsOnTheTone(t *testing.T) {
 	for _, fx := range goFixtures() {
 		t.Run(fx.Name, func(t *testing.T) {
-			s, err := open(fx.Data)
+			s, err := open(fx.Data, fx.Mime)
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer s.Close()
 			for _, at := range []time.Duration{1400 * time.Millisecond, 2500 * time.Millisecond, 200 * time.Millisecond} {
 				if err := s.SeekFrame(int64(at.Seconds() * float64(s.Rate()))); err != nil {
 					t.Fatal(err)
@@ -150,11 +156,17 @@ func TestSeekLandsOnTheTone(t *testing.T) {
 	}
 }
 
-// AAC is the OS's: Go audio says it doesn't support it (the element's
-// MEDIA_ERR_SRC_NOT_SUPPORTED, so the next backend or url_private plays).
+// Without the OS's decoder AAC is the OS backend's: Go audio says it
+// doesn't support it (the element's MEDIA_ERR_SRC_NOT_SUPPORTED, so the
+// next backend or url_private plays). A page that isn't audio is never
+// supported.
 func TestAACIsNotSupported(t *testing.T) {
-	for name, b := range map[string][]byte{"aac": mediatest.TonesAAC, "not audio": []byte("<html>signed out</html>")} {
-		if _, err := open(b); !errors.Is(err, errUnsupported) {
+	cases := map[string][]byte{"not audio": []byte("<html>signed out</html>")}
+	if !DecodesAAC() {
+		cases["aac"] = mediatest.TonesAAC
+	}
+	for name, b := range cases {
+		if _, err := open(b, "audio/mp4"); !errors.Is(err, errUnsupported) {
 			t.Errorf("%s: %v, want errUnsupported", name, err)
 		}
 	}
@@ -487,8 +499,12 @@ func TestPlayerRateAndEarlySeek(t *testing.T) {
 	}
 }
 
-// AAC fails as MEDIA_ERR_SRC_NOT_SUPPORTED before any metadata.
+// Without the OS's decoder AAC fails as MEDIA_ERR_SRC_NOT_SUPPORTED
+// before any metadata.
 func TestPlayerAACFails(t *testing.T) {
+	if DecodesAAC() {
+		t.Skip("this build decodes AAC (Media Foundation's source reader): TestPlayerRendersTheFile/aac plays it")
+	}
 	p, r := newPlayer(t, &Backend{Output: noDevice}, source("FGAE", fixture("aac")))
 	p.Play()
 	ev := r.wait(t, media.Error, 10*time.Second)
@@ -544,6 +560,9 @@ func TestChainFallsBackToGoAudio(t *testing.T) {
 		t.Errorf("played by %v", p)
 	}
 
+	if DecodesAAC() {
+		return // Go audio plays the AAC one too (Media Foundation's decoder)
+	}
 	q, err := ch.New(source("FGAD", fixture("aac")), nil)
 	if err != nil {
 		t.Fatal(err)

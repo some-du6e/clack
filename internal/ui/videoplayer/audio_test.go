@@ -147,10 +147,14 @@ func TestAudioClipPlaysAndFallsBack(t *testing.T) {
 	audioClick(c, r, f)
 	waitFor(t, "playing", 10*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
 	st := state(t, c, r, f)
-	if !st.Alt {
+	switch got := a.urls(); {
+	case goaudio.DecodesAAC(): // Media Foundation's decoder: the aac rendition plays
+		if st.Alt || len(got) != 1 || got[0] != clipAAC {
+			t.Errorf("read %v (url_private: %v), want the aac rendition alone", got, st.Alt)
+		}
+	case !st.Alt:
 		t.Error("playing without having fallen back to url_private")
-	}
-	if got := a.urls(); len(got) < 2 || got[0] != clipAAC || got[len(got)-1] != clipURL {
+	case len(got) < 2 || got[0] != clipAAC || got[len(got)-1] != clipURL:
 		t.Errorf("read %v, want the aac rendition, then url_private", got)
 	}
 	if st.Duration < 2950*time.Millisecond || st.Duration > 3050*time.Millisecond {

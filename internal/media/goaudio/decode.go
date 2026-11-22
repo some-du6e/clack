@@ -24,14 +24,37 @@ type stream interface {
 	SeekFrame(f int64) error
 	// Codec names what it decodes (logs, tests).
 	Codec() string
+	// Close lets go of its decoder.
+	Close()
 }
+
+// osOpen, where the OS has a decoder for what Go can't decode (Media
+// Foundation's source reader on Windows: AAC), opens b with it; nil
+// elsewhere. mime is the file's type, a hint.
+var osOpen func(b []byte, mime string) (stream, error)
+
+// DecodesAAC reports whether this build decodes AAC (Media Foundation's,
+// on Windows with cgo): elsewhere an aac rendition is for the OS backend
+// or url_private.
+func DecodesAAC() bool { return osOpen != nil }
 
 // errUnsupported is a file this package can't decode: the element's
 // MEDIA_ERR_SRC_NOT_SUPPORTED.
 var errUnsupported = errors.New("goaudio: unsupported audio")
 
-// open sniffs the file and returns its stream.
-func open(b []byte) (stream, error) {
+// open sniffs the file and returns its stream: Go's decoders, then the
+// OS's for what they don't support.
+func open(b []byte, mime string) (stream, error) {
+	s, err := openGo(b)
+	if err != nil && errors.Is(err, errUnsupported) && osOpen != nil {
+		if ds, oerr := osOpen(b, mime); oerr == nil {
+			return ds, nil
+		}
+	}
+	return s, err
+}
+
+func openGo(b []byte) (stream, error) {
 	switch {
 	case len(b) >= 12 && string(b[:4]) == "RIFF" && string(b[8:12]) == "WAVE":
 		return openWAV(b)
@@ -118,6 +141,7 @@ func (w *wavStream) Rate() int     { return w.rate }
 func (w *wavStream) Channels() int { return w.ch }
 func (w *wavStream) Frames() int64 { return int64(len(w.data) / w.frame) }
 func (w *wavStream) Codec() string { return "pcm" }
+func (w *wavStream) Close()        {}
 func (w *wavStream) SeekFrame(f int64) error {
 	w.pos = max(0, min(f, w.Frames()))
 	return nil
@@ -173,6 +197,7 @@ func (m *mp3Stream) Rate() int     { return m.d.SampleRate() }
 func (m *mp3Stream) Channels() int { return 2 } // go-mp3 always decodes to stereo
 func (m *mp3Stream) Frames() int64 { return m.frames }
 func (m *mp3Stream) Codec() string { return "mp3" }
+func (m *mp3Stream) Close()        {}
 func (m *mp3Stream) SeekFrame(f int64) error {
 	_, err := m.d.Seek(max(0, min(f, m.frames))*4, io.SeekStart)
 	return err
