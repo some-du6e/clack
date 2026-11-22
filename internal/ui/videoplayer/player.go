@@ -47,6 +47,11 @@ type Env struct {
 	FrameReady func()
 	// Repaint asks for a layout (the App's Invalidate).
 	Repaint func()
+	// FrameOrigin is the frame's origin in the router's coordinates (the
+	// App's FrameOrigin): AreaBounds rectangles include Gio's own title
+	// bar's offset, the menu anchors this package hands out don't. nil:
+	// none.
+	FrameOrigin func() image.Point
 	// Pref is an account pref as Slack sent it; SetPref writes one
 	// (users.prefs.set, Slack's setPref).
 	Pref    func(name string) (json.RawMessage, bool)
@@ -152,6 +157,14 @@ type Controller struct {
 }
 
 // New is a window's players.
+// frameOrigin is Env.FrameOrigin's answer (zero without one).
+func (c *Controller) frameOrigin() image.Point {
+	if c.env.FrameOrigin == nil {
+		return image.Point{}
+	}
+	return c.env.FrameOrigin()
+}
+
 func New(env Env) *Controller {
 	return &Controller{env: env, tiles: map[key]*tile{}, progress: map[string]time.Duration{}, vol: 1, prefVol: 1}
 }

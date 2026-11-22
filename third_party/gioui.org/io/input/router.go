@@ -49,6 +49,9 @@ type Router struct {
 	// InvalidateCmd summary.
 	wakeup     bool
 	wakeupTime time.Time
+	// Clack patch 57: the areas the frame being laid out read through
+	// FollowArea, and where they were (clack_follow.go)
+	follow map[event.Tag]followedArea
 	// Changes queued for next call to Frame.
 	commands []Command
 	// transfers is the pending transfer.DataEvent.Open functions.
@@ -431,6 +434,7 @@ func (q *Router) Frame(frame *op.Ops) {
 			h.active = false
 		}
 	}
+	q.followFrame() // Clack patch 57
 	q.executeCommands()
 	q.requeue(remaining...) // Clack patch 28: Queue, not logged again
 	st := q.lastState()
