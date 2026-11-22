@@ -396,12 +396,16 @@ func (f *Files) update(gtx C) {
 		}
 	}
 	if q, ok := f.deb.due(gtx, 300*time.Millisecond); ok && q != f.query {
-		// a search sorts by relevance (the browser's d1 RELEVANT); with
-		// the query gone the default sort comes back
+		// a search sorts by relevance (the browser's d1 RELEVANT). With the
+		// query gone (onResetSearch, t8, without hasBrowseFilesSorts:
+		// `eL !== RELEVANT || et || setSort(LAST_ENGAGED)`) Most relevant
+		// goes back to Recently viewed unless advanced filters are set;
+		// any other sort stays
 		f.query, f.reload = q, true
-		if strings.TrimSpace(q) != "" {
+		switch {
+		case strings.TrimSpace(q) != "":
 			f.sortBy = "score"
-		} else {
+		case f.sortBy == "score" && !f.adv.Set():
 			f.sortBy = ""
 		}
 	}

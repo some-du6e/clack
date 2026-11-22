@@ -503,6 +503,8 @@ func (d *ChannelDetails) Escape() bool {
 		if d.agents != nil {
 			d.agents.filt.open = false
 		}
+	case d.x.dlg.rt != nil && d.x.dlg.rt.unitDD.open: // the retention modal's Days / Years menu
+		d.x.dlg.rt.unitDD.open = false
 	case d.escapeDialog():
 	case d.editing:
 		d.editing, d.editErr = false, ""

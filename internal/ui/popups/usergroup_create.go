@@ -132,7 +132,8 @@ func OpenUserGroupCreate(h Host) *UserGroupEditModal {
 			e.bump = true
 			return false
 		},
-		Over: e.over,
+		OnEscape: ugEscape(e.chans, e.members), // MultiSelectInput onEscape: the open list first (Channels, then the members)
+		Over:     e.over,
 	}).OldDialog()
 	e.sync()
 	h.ShowOverlay(e)

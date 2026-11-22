@@ -118,6 +118,10 @@ func (s *cdTestServer) handler(w http.ResponseWriter, r *http.Request) {
 			write(`{"ok":true,"channel":{"id":"C7","name":"partners","is_channel":true,"is_member":true,"is_ext_shared":true,"num_members":2}}`)
 		case "D1":
 			write(`{"ok":true,"channel":{"id":"D1","is_im":true,"user":"U1"}}`)
+		case "D2": // a DM the store doesn't hold (details_retention_test.go)
+			write(`{"ok":true,"channel":{"id":"D2","is_im":true,"user":"U2"}}`)
+		case "G8": // an archived group DM (details_retention_test.go)
+			write(`{"ok":true,"channel":{"id":"G8","name":"mpdm-self--alice--bob-2","is_mpim":true,"is_member":true,"is_archived":true,"members":["USELF","U1","U2"]}}`)
 		case "G9":
 			write(`{"ok":true,"channel":{"id":"G9","name":"mpdm-self--alice--bob-1","is_mpim":true,"is_member":true,"members":["USELF","U1","U2"]}}`)
 		default:

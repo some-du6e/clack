@@ -2278,9 +2278,9 @@ func (d *ChannelDetails) addPeopleResults(gtx C) {
 }
 
 // settingsVisible is isSettingsVisible for the tab strip: channels always
-// have the permissions section, group DMs Copy members (on a paid team),
-// 1:1 DMs only Message history or Export (details_retention.go); guests
-// never see the tab.
+// have the permissions section; a DM or group DM shows it when
+// settingsSections has any (Copy members on a paid team, Message history,
+// Export: details_retention.go); guests never see the tab.
 func (d *ChannelDetails) settingsVisible() bool {
 	c := d.h.Core()
 	if c == nil {
@@ -2289,13 +2289,11 @@ func (d *ChannelDetails) settingsVisible() bool {
 	if u, ok := c.User(d.selfID()); ok && u.Guest {
 		return false
 	}
-	switch cdGroup(d.kind) {
-	case "im":
+	if cdGroup(d.kind) != "channel" {
+		// isSettingsVisible: the sections aren't empty, so the tab never
+		// opens on a blank body
 		inf, _, _ := d.info.get()
-		return d.historyShown(inf) || d.exportShown(inf)
-	case "mpim":
-		inf, _, _ := d.info.get()
-		return c.C != nil && c.C.Creds.EnterpriseID != "" || d.historyShown(inf) || d.exportShown(inf)
+		return len(d.settingsSections(inf)) > 0
 	}
 	return true
 }

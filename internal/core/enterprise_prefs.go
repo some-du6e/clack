@@ -19,6 +19,7 @@ type enterprisePrefs struct {
 	org      map[string]json.RawMessage
 	locked   map[string]json.RawMessage
 	unlocked map[string]json.RawMessage
+	live     bool // enterprise.prefs.get answered this session
 }
 
 var entPrefsIndex = newPerApp() // *App → *enterprisePrefs
@@ -35,8 +36,40 @@ func (a *App) LoadEnterprisePrefs(ctx context.Context) error {
 		return err
 	}
 	a.setEnterprisePrefs(raw)
+	ep := a.entPrefs()
+	ep.mu.Lock()
+	ep.live = true
+	ep.mu.Unlock()
+	if b, err := json.Marshal(raw); err == nil {
+		a.S.SetEnterprisePrefs(b) // the disk cache (installCachedEnterprisePrefs)
+	}
 	a.emit(Event{Type: "enterprise_prefs"})
 	return nil
+}
+
+// installCachedEnterprisePrefs reads the answer the last session's
+// enterprise.prefs.get left in the disk cache, unless this session's has
+// answered: Slack's enterprisePrefs store is persisted (TI4y,
+// persistenceEnabled), so a Grid org's prefs (Message history's unlocked
+// allow_retention_override, channel_retention.go) hold from the first
+// frame. A first start reads them unset until the call answers, as
+// Slack's does.
+func (a *App) installCachedEnterprisePrefs() {
+	b := a.S.CachedEnterprisePrefs()
+	if len(b) == 0 {
+		return
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(b, &raw) != nil {
+		return
+	}
+	ep := a.entPrefs()
+	ep.mu.Lock()
+	live := ep.live
+	ep.mu.Unlock()
+	if !live {
+		a.setEnterprisePrefs(raw)
+	}
 }
 
 // setEnterprisePrefs is updateEnterprisePrefs over the call's answer: the

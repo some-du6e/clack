@@ -150,6 +150,8 @@ func (m *metaDecoder) value(key string) error {
 		err = dec.Decode(&d.Experiments)
 	case "features":
 		err = dec.Decode(&d.Features)
+	case "enterprise_prefs":
+		err = dec.Decode(&d.EnterprisePrefs)
 	default:
 		var skip json.RawMessage
 		err = dec.Decode(&skip)
@@ -222,6 +224,10 @@ func writeDiskCache(w io.Writer, d *diskCache, users []*slack.User) error {
 	if d.Features != nil {
 		put(`,"features":`)
 		val(d.Features)
+	}
+	if len(d.EnterprisePrefs) > 0 { // before the first frame, as Slack's persisted store
+		put(`,"enterprise_prefs":`)
+		val(d.EnterprisePrefs)
 	}
 	put(`,"users":[`)
 	for i, u := range users {
