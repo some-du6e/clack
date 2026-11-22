@@ -38,3 +38,15 @@ func (v *ThreadView) ListRect() image.Rectangle { return v.s.listRect() }
 func (s *listState) listRect() image.Rectangle {
 	return image.Rectangle{Min: s.origin, Max: s.origin.Add(s.size)}
 }
+
+// ReplyBarState is the reply bar of root ts as the last frame drew it: the
+// repliers' avatars it showed and whether it drew the "Unread" mark
+// (renderUnreadThreadsIndicator). ok is false while no row of ts is laid
+// out.
+func (v *ChannelView) ReplyBarState(ts string) (avatars int, unread, ok bool) {
+	r := v.s.rows[ts]
+	if r == nil {
+		return 0, false, false
+	}
+	return r.replyN, r.unreadMark, true
+}

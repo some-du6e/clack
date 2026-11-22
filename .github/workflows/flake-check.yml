@@ -3921,3 +3921,111 @@ jobs:
           go test -count=$COUNT -v -timeout 10m -run '^(TestEmailBlocks|TestEmailFields)' ./internal/richtext || rc=1
           go test -count=$COUNT -v -timeout 10m -run '^(TestEmailBodyLinksOpenNoURLCard|TestEmailFile|TestEmailLegacy|TestEmailRecipients)' ./internal/ui/richview || rc=1
           exit $rc
+
+  # thread-reply-toast round 3, evidence (2026-11-22): this branch is the
+  # code before round 3 (thread-reply-toast-2, 72999b14) with round 3's
+  # tests and their read-only hooks (fakeslack lists a followed reply's
+  # bundle, ChannelView.ReplyBarState, theme.DrawHookOpts). The job passes
+  # only when each round 3 test fails for the reason its check names, and
+  # round 1's test, the control, passes. Dispatch with
+  # only=thread-reply-toast-3-red.
+  thread-reply-toast-3-red:
+    if: ${{ !inputs.only || startsWith('thread-reply-toast-3-red', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "store and core: round 3's tests on the code before round 3 (report only)"
+        run: |
+          set +e
+          go test -v -count=1 -timeout 10m -run '^TestNotificationsMaxTSEveryAddPath$' ./internal/store > "$RUNNER_TEMP/store.log" 2>&1
+          echo "store exit $?"
+          go test -v -count=1 -timeout 10m -run '^(TestMaxTSFromAMessageTheDecodeRefuses|TestOptimisticSendKeepsMaxTS|TestThreadsViewKeepsNewerThreadState)$' ./internal/core > "$RUNNER_TEMP/core.log" 2>&1
+          echo "core exit $?"
+          grep -hE '^(=== RUN|--- (FAIL|PASS)|ok |FAIL|    +[a-z_0-9]+_test\.go:[0-9]+:)' "$RUNNER_TEMP/store.log" "$RUNNER_TEMP/core.log" | cut -c1-400 | head -120
+          exit 0
+      - name: "ui: round 3's tests and round 1's control on the code before round 3 (report only)"
+        run: |
+          set +e
+          xvfb-run -a go test -v -count=1 -timeout 40m -run '^(TestDesktopNotificationWithoutTSLikeSlack|TestOnScreenNotificationsLikeSlack|TestThreadsLinkLikeSlack|TestSlickFiltersSeeTheToast|TestReplyUnreadMarkInTheReplysFrame|TestReplyInOwnThreadToastsAndShowsInActivity)$' ./internal/ui > "$RUNNER_TEMP/ui.log" 2>&1
+          echo "go test exit $?"
+          grep -E '^(=== RUN|--- (FAIL|PASS)|ok |FAIL|    +[a-z_0-9]+_test\.go:[0-9]+:)' "$RUNNER_TEMP/ui.log" | cut -c1-400 | head -200
+          exit 0
+      - name: "evidence: passes only when each round 3 test fails for its named reason and the control passes"
+        run: |
+          python3 -I - "$RUNNER_TEMP/store.log" "$RUNNER_TEMP/core.log" "$RUNNER_TEMP/ui.log" <<'EOF'
+          import os, re, sys
+          want = {
+              "TestNotificationsMaxTSEveryAddPath": [
+                  r"^after (the newest page's read|a catch-up from a stale end|a message_changed copy in the window's range|a thread's replies read) maxTs is"],
+              "TestMaxTSFromAMessageTheDecodeRefuses": [
+                  r"^after a message the typed decode refused maxTs is"],
+              "TestOptimisticSendKeepsMaxTS": [
+                  r"^with the send's local copy in, maxTs is",
+                  r"^once the send was confirmed maxTs is"],
+              "TestThreadsViewKeepsNewerThreadState": [
+                  r"^the Threads view's answer, requested before the update_thread_state, put its older state back"],
+              "TestDesktopNotificationWithoutTSLikeSlack": [
+                  r"^a desktop_notification without its own ts didn't notify"],
+              "TestOnScreenNotificationsLikeSlack": [
+                  r"^a message with an at-command in the open conversation: .*, want it shown",
+                  r"^a thread reply mentioning the viewer, its conversation open: .*, want it shown",
+                  r"^a message while the conversation shows its Files tab: .*, want it shown"],
+              "TestThreadsLinkLikeSlack": [
+                  r"^with unread threads the Threads link draws at",
+                  r"^with 37 thread mentions the Threads link has no badge"],
+              "TestSlickFiltersSeeTheToast": [
+                  r"^the reply the filter doesn't permit showed",
+                  r"^the filter never saw the reply's toast",
+                  r"^the filter saw .*, want the toast's",
+                  r'^no "notify: a Slick filter kept'],
+              "TestReplyUnreadMarkInTheReplysFrame": [
+                  r"^the second reply drew \(frame \d+ after its events\) without its Unread mark"],
+          }
+          control = "TestReplyInOwnThreadToastsAndShowsInActivity"
+          res, errs, cur = {}, {}, None
+          for path in sys.argv[1:]:
+              for line in open(path, encoding="utf-8", errors="replace"):
+                  line = line.rstrip("\n")
+                  m = re.match(r"^=== RUN   (Test[A-Za-z0-9_]+)(/.*)?$", line)
+                  if m:
+                      cur = m.group(1)
+                      errs.setdefault(cur, [])
+                      continue
+                  m = re.match(r"^--- (FAIL|PASS): (Test[A-Za-z0-9_]+) \(", line)
+                  if m:
+                      res[m.group(2)] = m.group(1).lower()
+                      continue
+                  m = re.match(r"^ +[a-z_0-9]+_test\.go:[0-9]+: (.*)$", line)
+                  if m and cur:
+                      errs[cur].append(m.group(1))
+          ok, report = True, []
+          for t, pats in want.items():
+              named = [e for e in errs.get(t, []) if any(re.search(p, e) for p in pats)]
+              other = [e for e in errs.get(t, []) if e not in named]
+              good = res.get(t) == "fail" and len(named) > 0
+              ok = ok and good
+              report.append(f"{t}: {res.get(t, 'not run')}, {len(named)} check(s) failed as named, {len(other)} other")
+              for e in named[:4]:
+                  print(f"{t} (named): {e[:300]}")
+              for e in other[:5]:
+                  print(f"::warning title={t}::also: {e[:300]}")
+          cgood = res.get(control) == "pass"
+          ok = ok and cgood
+          report.append(f"{control} (control): {res.get(control, 'not run')}")
+          for r in report:
+              print("::notice title=evidence::" + r)
+          if os.environ.get("GITHUB_STEP_SUMMARY"):
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                  f.write("\n".join(report) + "\n")
+          print("evidence: every round 3 test fails for its named reason before round 3, and the control passes" if ok else "evidence: a round 3 test didn't fail as named, or the control failed")
+          sys.exit(0 if ok else 1)
+          EOF
