@@ -1543,12 +1543,12 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           CLACK_MEDIA_TESTS: "1"
-        run: go test -count="$COUNT" -v -timeout 20m -run '^TestAVFAudioReplaysAt2x$' ./internal/media/avf
+        run: go test -count="$COUNT" -v -timeout 12m -run '^TestAVFAudioReplaysAt2x$' ./internal/media/avf
       - name: the other audio tests
         if: ${{ !cancelled() && inputs.expect_fail == '' }}
         env:
           CLACK_MEDIA_TESTS: "1"
-        run: go test -count="$COUNT" -v -timeout 20m -run '^(TestAVFPlaysAudio|TestAVFAudioSeekAndRate|TestAVFOpusClipPlays)$' ./internal/media/avf
+        run: go test -count="$COUNT" -v -timeout 12m -run '^(TestAVFPlaysAudio|TestAVFAudioSeekAndRate|TestAVFOpusClipPlays)$' ./internal/media/avf
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
