@@ -103,24 +103,25 @@ func TestHitAtSlackImageTargets(t *testing.T) {
 // query that only escapes its ampersands unescaped (lodash unescape).
 func TestExternalSourceURL(t *testing.T) {
 	for _, c := range []struct {
-		a    rt.Attachment
-		want string
+		title, orig, app, from string
+		want                   string
 	}{
-		{rt.Attachment{TitleLink: "https://t.example/", OriginalURL: "https://o.example/", FromURL: "https://f.example/"}, "https://t.example/"},
-		{rt.Attachment{OriginalURL: "https://o.example/", AppUnfurlURL: "https://a.example/", FromURL: "https://f.example/"}, "https://o.example/"},
-		{rt.Attachment{AppUnfurlURL: "https://a.example/", FromURL: "https://f.example/"}, "https://a.example/"},
-		{rt.Attachment{FromURL: "https://emoji.slack-edge.com/T0/x/1.png"}, "https://emoji.slack-edge.com/T0/x/1.png"},
-		{rt.Attachment{FromURL: "https://hackclub.slack.com/archives/C1/p1700000000000100"}, ""},
-		{rt.Attachment{FromURL: "https://hackclub.enterprise.slack.com/archives/C1"}, ""},
-		{rt.Attachment{FromURL: "https://app.slack.com/client/T0/C1"}, ""},
-		{rt.Attachment{FromURL: "https://files.slack.com/files-pri/T0-F1/a.png"}, ""},
-		{rt.Attachment{FromURL: "https://a.b.example.slack.com/x"}, "https://a.b.example.slack.com/x"},
-		{rt.Attachment{TitleLink: "https://e.example/p?a=1&amp;b=2"}, "https://e.example/p?a=1&b=2"},
-		{rt.Attachment{TitleLink: "https://e.example/p?a=1&amp;b=2&c=3"}, "https://e.example/p?a=1&amp;b=2&c=3"},
-		{rt.Attachment{}, ""},
+		{"https://t.example/", "https://o.example/", "", "https://f.example/", "https://t.example/"},
+		{"", "https://o.example/", "https://a.example/", "https://f.example/", "https://o.example/"},
+		{"", "", "https://a.example/", "https://f.example/", "https://a.example/"},
+		{"", "", "", "https://emoji.slack-edge.com/T0/x/1.png", "https://emoji.slack-edge.com/T0/x/1.png"},
+		{"", "", "", "https://hackclub.slack.com/archives/C1/p1700000000000100", ""},
+		{"", "", "", "https://hackclub.enterprise.slack.com/archives/C1", ""},
+		{"", "", "", "https://app.slack.com/client/T0/C1", ""},
+		{"", "", "", "https://files.slack.com/files-pri/T0-F1/a.png", ""},
+		{"", "", "", "https://a.b.example.slack.com/x", "https://a.b.example.slack.com/x"},
+		{"https://e.example/p?a=1&amp;b=2", "", "", "", "https://e.example/p?a=1&b=2"},
+		{"https://e.example/p?a=1&amp;b=2&c=3", "", "", "", "https://e.example/p?a=1&amp;b=2&c=3"},
+		{"", "", "", "", ""},
 	} {
-		if got := extSourceURL(&c.a); got != c.want {
-			t.Errorf("%+v: %q, want %q", c.a, got, c.want)
+		a := extAtt(c.title, c.orig, c.app, c.from)
+		if got := extSourceURL(&a); got != c.want {
+			t.Errorf("title_link %q original_url %q app_unfurl_url %q from_url %q: %q, want %q", c.title, c.orig, c.app, c.from, got, c.want)
 		}
 	}
 }

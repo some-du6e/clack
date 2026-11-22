@@ -9,3 +9,8 @@ func hitLink(h Hit) string { return h.Link }
 
 // extSourceURL is AttachmentMedia's externalSourceUrl.
 func extSourceURL(a *rt.Attachment) string { return externalSourceURL(a) }
+
+// extAtt is an attachment with these links.
+func extAtt(title, orig, app, from string) rt.Attachment {
+	return rt.Attachment{TitleLink: title, OriginalURL: orig, AppUnfurlURL: app, FromURL: from}
+}
