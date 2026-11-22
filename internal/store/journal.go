@@ -1,6 +1,7 @@
 package store
 
 import (
+	"maps"
 	"math"
 	"sync/atomic"
 
@@ -27,6 +28,7 @@ type journal struct {
 	msgs     map[string]uint64 // conversation -> its last new message (s.mu)
 	convs    map[string]uint64 // conversation -> its last local membership change or edit (s.mu)
 	sections uint64            // the last change to the section list (s.mu)
+	threads  uint64            // the last update_thread_state the threads' state took (s.mu)
 }
 
 // Seq is the journal's position now: a fetch notes it as it goes out.
@@ -134,11 +136,39 @@ func (s *Store) SetCountsSince(c *slack.Counts, since uint64) int {
 			merged++
 		}
 	}
-	s.ThreadsUnread = c.Threads.HasUnreads
-	s.ThreadMentions = c.Threads.MentionCount
-	s.ThreadsUnreadByChannel = c.Threads.UnreadCountByChannel
+	if s.jr.threads <= since { // an update_thread_state after the request went out is newer
+		s.ThreadsUnread = c.Threads.HasUnreads
+		s.ThreadMentions = c.Threads.MentionCount
+		s.ThreadsUnreadByChannel = c.Threads.UnreadCountByChannel
+	}
 	s.countsLive = true
 	return merged
+}
+
+// SetThreadState is update_thread_state's state, taken at once as Slack's
+// updateThreadState takes it: whether any followed thread has unread
+// replies, their mention count, and how many threads of each conversation
+// have unread replies (the reply bar's Unread mark). nil leaves a field as
+// it was; an event with none changes nothing. Journaled: a client.counts
+// answer requested before it keeps the event's (SetCountsSince), even when
+// the event changed no value. It reports whether a value changed.
+func (s *Store) SetThreadState(hasUnreads *bool, mentions *int, byChannel map[string]int) (changed bool) {
+	if hasUnreads == nil && mentions == nil && byChannel == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if hasUnreads != nil && s.ThreadsUnread != *hasUnreads {
+		s.ThreadsUnread, changed = *hasUnreads, true
+	}
+	if mentions != nil && s.ThreadMentions != *mentions {
+		s.ThreadMentions, changed = *mentions, true
+	}
+	if byChannel != nil && !maps.Equal(s.ThreadsUnreadByChannel, byChannel) {
+		s.ThreadsUnreadByChannel, changed = byChannel, true
+	}
+	s.jr.threads = s.jr.seq.Add(1)
+	return changed
 }
 
 // dmUnreadCount is client-boot mtwS applyCountsToChannels' rule for an IM

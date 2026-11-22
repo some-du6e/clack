@@ -18,6 +18,9 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -445,7 +448,15 @@ func (b *backend) stop() <-chan struct{} {
 		// (flushPendingChannelSectionCollapsedSync on teardown)
 		b.core.FlushSectionCollapsed()
 		closeTaut(s, t)
-		_ = b.core.Close()
+		_ = b.core.Close() // and its Release: core's maps keyed by the App
+		// what the UI's packages keep of the session beside it: its
+		// message hub, its app DMs, its plugin credit names (each kept the
+		// session in memory for good after a sign-out or a switch;
+		// ci-speed-3)
+		messages.ForgetCore(b.core)
+		blockkit.ForgetCore(b.core)
+		composer.ForgetCore(b.core)
+		forgetCreditNames(b.core.S)
 	}()
 	return done
 }
@@ -797,6 +808,9 @@ func (b *backend) handle(a *App, ev core.Event) {
 		changed = changed || b.activityBadgeMoved()
 	case "activity_badges": // badge_counts_updated or a mark read (core activity_badges.go)
 		changed = b.activityBadgeMoved()
+	case "threads_state": // update_thread_state taken at once: the reply bars' Unread mark (core thread_unreads.go)
+		m.threadsUnread = b.core.ThreadsState().Unread
+		changed = true
 	case "presence":
 		for _, c := range m.Convs {
 			if c.Kind == "im" && (c.User == ev.UserID || contains(ev.Users, c.User)) {
@@ -893,6 +907,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		a.Invalidate()
 	case "pins_tab", "bookmarks": // the Pins tab's rows, the folders' bookmarks (core/channel_pins.go, bookmark_folders.go)
 		a.Invalidate()
+	case "list_prefs": // a conversation's list prefs: the composer's + reads can_upload_files (core/upload_gates.go)
+		a.Invalidate()
 	}
 	if changed {
 		b.recount()
@@ -981,35 +997,51 @@ func (b *backend) maybeNotify(a *App, ev core.Event) { b.maybeNotifyAfter(a, ev,
 // maybeNotifyAfter is maybeNotify; resolved: the lookups it needed ran
 // (noteResolve), so it shows what it has.
 func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
-	if ev.Msg == nil || ev.Msg.System || b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
+	if ev.Msg == nil || ev.Msg.System {
+		return // no message of Slack's to decide on
+	}
+	// every decision below writes its line (notify_decisions.go); a
+	// notification that waits for lookups writes it once they answer
+	skip := func(why noteSkip) { noteDecided(ev.Channel, ev.TS, why) }
+	if b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
+		skip(noteSkipEphemeral)
 		return
 	}
 	key := noteShownKey(ev.Channel, ev.TS)
 	if !resolved && b.noteWasShown(key) {
-		return // shown already (notify_dm.go)
+		skip(noteSkipShown) // shown already (notify_dm.go)
+		return
 	}
 	if !b.notePushOn(ev.Channel) {
-		return // "Skip pref-disabled push notification"
+		skip(noteSkipPushOff) // "Skip pref-disabled push notification"
+		return
 	}
 	if ev.Msg.Streaming() && b.core.Experiment("defer_notification_3p_streaming") == "on" {
+		skip(noteSkipStreaming)
 		return
 	}
 	if b.core.UserHidden(ev.Msg.User) {
-		return // a member the viewer hid (isUserHidden): no notification, no lookups for one
+		skip(noteSkipHidden) // a member the viewer hid (isUserHidden): no notification, no lookups for one
+		return
 	}
 	if c, ok := b.core.MessageChange(ev.Channel, ev.TS); ok && c.Deleted {
-		return // deleted while the lookups it waited for ran: nothing to show, or open
+		skip(noteSkipDeleted) // deleted while the lookups it waited for ran: nothing to show, or open
+		return
 	}
 	c, named := b.noteConv(ev.Channel)
 	if c != nil && c.Preview {
-		return // a channel the viewer isn't in (isMemberOfChannel: reason 2)
+		skip(noteSkipNotMember) // a channel the viewer isn't in (isMemberOfChannel: reason 2)
+		return
 	}
 	ignoreDND := b.noteDNDIgnored(ev.Channel, ev.TS)
+	var why noteSkip
 	if noteIsDM(ev, c) {
-		if b.noteDMHolds(a, ev, c, ignoreDND) {
-			return
-		}
-	} else if b.noteChannelHolds(a, ev, c, ignoreDND) {
+		why = b.noteDMReason(a, ev, c, ignoreDND)
+	} else {
+		why = b.noteChannelReason(a, ev, c, ignoreDND)
+	}
+	if why != noteShow {
+		skip(why)
 		return
 	}
 	// Slack records it as the showNotification thunk goes out, before the
@@ -1060,6 +1092,7 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	// plugin's rewrite of the text never shows either
 	hidden := b.notifyHiddenBody(ev, c)
 	// in order with the other notifications (showNotification: taut.DispatchSeq)
+	noteDecided(ev.Channel, ev.TS, noteShow)
 	a.showNotification(map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 		func(ctx context.Context, args map[string]any) (any, error) {
 			if t, text, ok := notificationText(args, msg, body); ok {

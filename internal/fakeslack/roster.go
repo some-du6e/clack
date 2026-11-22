@@ -28,7 +28,7 @@ type rosterState struct {
 	counts map[string]int
 }
 
-var rosterStates sync.Map // *Server -> *rosterState
+var rosterStates = newPerServer() // *Server -> *rosterState
 
 func (s *Server) roster() *rosterState {
 	v, _ := rosterStates.LoadOrStore(s, &rosterState{ids: map[string][]string{}, counts: map[string]int{}})

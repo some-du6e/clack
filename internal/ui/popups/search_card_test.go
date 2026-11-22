@@ -1,10 +1,11 @@
 package popups
 
-// The density card (search_card.go): srp_card_explore on, the account's
-// group, against srp_card_explore control and unassigned, over fakeslack
-// with a hooked search.modules.messages answer.
+// The density card (search_card.go): for everyone, against a dogfood
+// user's "original" density, over fakeslack with a hooked
+// search.modules.messages answer.
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"net/url"
@@ -87,7 +88,7 @@ func TestSearchDensityCard(t *testing.T) {
 	e := srNewEnv(t, false)
 	scHook(e)
 	if !e.h.a.SearchCardExplore() {
-		t.Fatal("the account's srp_card_explore group doesn't give the density card")
+		t.Fatal("no density card")
 	}
 	v, d := srView(t, e, fakeslack.SearchWord, false)
 	if len(v.cards) != 5 {
@@ -197,16 +198,25 @@ func TestSearchDensityCard(t *testing.T) {
 	}
 }
 
-// srp_card_explore control or unassigned: Slack's earlier card, Clack's
-// one-line body and reply chip, no pills and no reply fetch.
+// A dogfood user who picked the "original" density (FvhF Ui; Slack dropped
+// srp_card_explore, the 2026-11-21 drift, and its groups no longer turn
+// the card off): Slack's earlier card, Clack's one-line body and reply
+// chip, no pills and no reply fetch.
 func TestSearchDensityCardOff(t *testing.T) {
 	for _, g := range []string{"control", ""} {
-		t.Run(fmt.Sprintf("group %q", g), func(t *testing.T) {
+		t.Run(fmt.Sprintf("srp_card_explore %q", g), func(t *testing.T) {
 			e := srNewEnv(t, false)
 			replies := scHook(e)
-			e.h.a.SetExperimentGroup(core.ExpSrpCardExplore, g)
+			e.h.a.SetExperimentGroup("srp_card_explore", g)
+			if !e.h.a.SearchCardExplore() {
+				t.Fatal("the dropped srp_card_explore still turns the density card off")
+			}
+			e.h.a.SetExperimentGroup(core.ExpPersistentTSDogfood, "on")
+			if err := e.h.a.SetPref(context.Background(), "search_results_card_density", "original"); err != nil {
+				t.Fatal(err)
+			}
 			if e.h.a.SearchCardExplore() {
-				t.Fatal("the density card in this group")
+				t.Fatal("the density card for a dogfood user who picked original")
 			}
 			v, d := srView(t, e, fakeslack.SearchWord, false)
 			for range 5 {

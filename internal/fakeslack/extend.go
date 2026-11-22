@@ -20,7 +20,7 @@ type extState struct {
 	images func(path string) ([]byte, string, bool)
 }
 
-var extStates sync.Map // *Server -> *extState
+var extStates = newPerServer() // *Server -> *extState
 
 func (s *Server) ext() *extState {
 	v, _ := extStates.LoadOrStore(s, &extState{})

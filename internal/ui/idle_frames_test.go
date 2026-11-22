@@ -467,6 +467,29 @@ func (e *perfEnv) idle(t *testing.T, p *idleprobe.Probe, name string, caret bool
 }
 
 // firstCauses lists the first n distinct non-caret causes.
+// frameTimeline is each of r's frames, at most n: when in the idle period
+// it came and what asked for it (each cause once), for a failure to say
+// which frames were too many.
+func frameTimeline(r idleprobe.Result, n int) []string {
+	var out []string
+	for i, f := range r.Frames {
+		if i == n {
+			out = append(out, fmt.Sprintf("\t... and %d more", len(r.Frames)-n))
+			break
+		}
+		seen := map[string]bool{}
+		var cs []string
+		for _, c := range f.Causes {
+			if !seen[c] {
+				seen[c] = true
+				cs = append(cs, c)
+			}
+		}
+		out = append(out, fmt.Sprintf("\t%v: %s", f.At.Round(time.Millisecond), strings.Join(cs, " | ")))
+	}
+	return out
+}
+
 func firstCauses(r idleprobe.Result, n int) []string {
 	seen := map[string]bool{}
 	var out []string

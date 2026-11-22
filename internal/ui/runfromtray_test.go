@@ -272,3 +272,50 @@ func TestDrainIdleRunsPosted(t *testing.T) {
 		t.Error("drainIdle didn't run posted work once the shaper was ready (no frame had taken it)")
 	}
 }
+
+// Every close that isn't runFromTray's hide says why Run is ending
+// (ExitReason, cmd/clack's "exit: …" line), and the first reason stays:
+// a Quit's reason over the close it causes.
+func TestExitReason(t *testing.T) {
+	defer func(v bool) { closeHidesWithoutTray = v }(closeHidesWithoutTray)
+	closeHidesWithoutTray = false
+	fresh := func() *App {
+		a, _, _ := fakePrefsApp(t)
+		a.hideHook = func() bool { return true }
+		return a
+	}
+	for _, c := range []struct {
+		name string
+		set  func(a *App)
+		want string
+	}{
+		{"no tray icon", func(a *App) {}, "the window closed (no notification-area icon to keep running in)"},
+		{"runFromTray off", func(a *App) { a.SetTray(&fakeTray{}); a.prefs.NoRunFromTray = true }, "the window closed (Leave app running in notification area is off)"},
+		{"signed out", func(a *App) { a.SetTray(&fakeTray{}); a.login = &loginScreen{} }, "the window closed while signed out"},
+		{"the hide failed", func(a *App) { a.SetTray(&fakeTray{}); a.hideHook = func() bool { return false } }, "the window closed (it couldn't be hidden)"},
+		{"the tray's Quit", func(a *App) { a.SetTray(&fakeTray{}); a.noteExit("Quit in the tray menu"); a.quitting.Store(true) }, "Quit in the tray menu"},
+	} {
+		a := fresh()
+		c.set(a)
+		if a.closeToTray() {
+			t.Errorf("%s: the close hid the window", c.name)
+		}
+		if got := a.ExitReason(); got != c.want {
+			t.Errorf("%s: ExitReason %q, want %q", c.name, got, c.want)
+		}
+	}
+	// a hide isn't an exit; the first reason given stays
+	a := fresh()
+	a.SetTray(&fakeTray{})
+	if !a.closeToTray() {
+		t.Fatal("runFromTray on: no hide")
+	}
+	if got := a.ExitReason(); got != "the window closed" {
+		t.Errorf("after a hide: ExitReason %q, want the default", got)
+	}
+	a.noteExit("restarting to install v0.1.0-alpha.110")
+	a.noteExit("the window closed (it couldn't be hidden)")
+	if got := a.ExitReason(); got != "restarting to install v0.1.0-alpha.110" {
+		t.Errorf("ExitReason %q, want the first reason", got)
+	}
+}

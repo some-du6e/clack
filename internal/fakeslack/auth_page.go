@@ -26,7 +26,7 @@ const (
 )
 
 // pageLogs is each server's page loads (outside /api/), "path?query".
-var pageLogs sync.Map // *Server → *pageLog
+var pageLogs = newPerServer() // *Server → *pageLog
 
 type pageLog struct {
 	mu    sync.Mutex

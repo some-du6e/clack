@@ -9,6 +9,12 @@ name: supply-chain
 # (internal/jsrt/jsrt.wasm's reproducibility is checked by jsrt.yml's wasm job.)
 on:
   push:
+    # evidence branches (-redN, -mutN, ... as expect-fail's setup.sh matches
+    # them: tools/expectfail's TestEvidenceBranchesSkipPushRuns) prove a failure: their runs are
+    # dispatched with expect_fail, and a push run would only end red
+    # (docs/CI-SPEED.md, "Proof runs")
+    branches-ignore: ["**-red", "**-red[0-9]+", "**-red[0-9]+[a-z]", "**-mut", "**-mut[0-9]+", "**-mut[0-9]+[a-z]", "**-r[0-9]+red", "**-r[0-9]+red[0-9]+", "**-r[0-9]+red[0-9]+[a-z]", "**-r[0-9]+mut", "**-r[0-9]+mut[0-9]+", "**-r[0-9]+mut[0-9]+[a-z]"]
+    tags: ["**"]
   pull_request:
   workflow_dispatch:
 
@@ -150,12 +156,17 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      # the repo's own actions (a .github/actions directory, by its path)
+      # come with the commit; what they use is pinned like the workflows'
       - name: every action pinned to a commit SHA
         run: |
           set -euo pipefail
-          if grep -nE '^\s*-?\s*uses:' .github/workflows/*.yml | grep -vE 'uses: *[^@ ]+@[0-9a-f]{40}( |$)'; then
+          if grep -nE '^\s*-?\s*uses:' .github/workflows/*.yml .github/actions/*/action.yml | grep -vE 'uses: *([^@ ]+@[0-9a-f]{40}|\./\.github/actions/[A-Za-z0-9_-]+)( |$)'; then
             echo "::error::unpinned actions above"; exit 1
           fi
+          for u in $(grep -hoE 'uses: *\./\.github/actions/[A-Za-z0-9_-]+' .github/workflows/*.yml | sed 's/.*\.\/\.github/.github/' | sort -u); do
+            [ -f "$u/action.yml" ] || { echo "::error::$u/action.yml: no such action"; exit 1; }
+          done
       # every workflow that builds against Taut or Slick by its pin (reads
       # the variable) defines that pin itself, as a full commit SHA, and
       # every definition names the same commit: a workflow reading a pin it

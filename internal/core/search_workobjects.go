@@ -8,7 +8,8 @@ import (
 	"github.com/some-du6e/clack/internal/workobject"
 )
 
-// Work objects in search (work_objects_message_search_xp_v2; client-boot
+// Work objects in search (for everyone since Slack dropped
+// work_objects_message_search_xp_v2, the 2026-11-21 drift; client-boot
 // rZ6M searchWorkObjects, build 4d0c78085232): a message search also
 // asks search.modules.workObjects (Is0w AV: query, reason
 // "search-work-objects", client_req_id, highlight, the messages tab's

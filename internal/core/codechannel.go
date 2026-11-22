@@ -553,6 +553,8 @@ func (a *App) onChannelUpdated(raw json.RawMessage) []string {
 			ids = []string{id}
 		}
 	}
+	_, unlinked := e.Updates["unlinked"]
+	_, connected := e.Updates["connected_team_ids"]
 	var changed []string
 	for _, id := range ids {
 		cur, ok := a.S.Conv(id)
@@ -562,6 +564,9 @@ func (a *App) onChannelUpdated(raw json.RawMessage) []string {
 				continue // "Received channel_updated on missing channel"
 			}
 			ext = true
+		}
+		if unlinked || connected { // channelUpdated: the list prefs are stale (upload_gates.go)
+			a.listPrefsStale(id)
 		}
 		b, err := json.Marshal(cur)
 		if err != nil {

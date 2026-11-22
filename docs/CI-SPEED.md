@@ -443,3 +443,278 @@ only and is early, its numbers are stable on its own bare-metal runners
 reports on pull requests, where Clack works on branches and dispatches.
 perf.yml already has what a gate needs: both sides on one runner,
 interleaved, each built from its own tree.
+
+## Round 3
+
+Branch `ci-speed-3` (2026-11-21), from ui at 821a5101 (α.133) and merged
+with ui since. As in round 2, each red and green run is on an evidence
+branch `ci-speed-3-*` whose head commit carries `[skip ci]`, so pushing it
+starts nothing; the branches are deleted afterwards and the runs stay.
+From the EGL item on, a proof is one run that passes only when the fix
+passes and its mutant fails as named (taut-flush-proof), so a red proof no
+longer shows up as a failed run.
+
+### The ui tests let each finished App go
+
+internal/ui's tests make over 500 Apps in one process, 509 from startEnv
+alone, and before this round none was ever collected. By the end ui.test
+held 9.1 GB live and the runner reached 15.6 of its 16 GB. Reading the code
+found the first roots. A tool found the rest. `internal/ui/retain_test.go`
+writes a heap dump with `runtime/debug.WriteHeapDump`, reads it back in the
+same process and prints every root that reaches a given object, with the
+shortest path. A root is a global, a goroutine's frame or a timer. It names each object
+on the path by the symbols its words hold: a closure's function, an itab
+like `go:itab.*ui.App,ui/messages.Host`. `go test` links its temporary
+binary with `-s -w`, so globals print as bare addresses there; build with
+`go test -c` to get their names.
+
+What held the Apps, in the order the dumps found it:
+
+1. Package maps keyed by the session: core's 33 maps keyed by `*App`
+   (now `newPerApp`, which `Release` empties), fakeslack's 27 keyed by
+   `*Server`, store's three keyed by `*Store`, the shaper caches in theme,
+   messages, blockkit and slackc/kit, messages' hubs, blockkit's app DMs
+   and message hosts, popups', views' and composer's registries, and
+   fourteen sync.Maps and four maps keyed by `*App` in internal/ui
+   (`release`; `TestReleaseCoversAppMaps` reads the package for any it
+   misses).
+2. Goroutines ranging over channels nobody closed: per App an invalidator,
+   an image cache sweep, core's pump, the Interactive's raw feed, messages'
+   hub, composer's typing, blockkit's views, the backend's Taut and Slick
+   watchers. Core's `Release` and Taut's and Slick's `Close` now close
+   every channel they handed out. A subscription's stop used to delete its
+   channel without closing it, so a consumer stopped before `Release`
+   (blockkit's, from `backend.stop`) waited forever. Now whoever takes a
+   channel out of the set closes it, under the lock its sends hold.
+3. Listener lists nothing removed from: `i18n.OnChange` and `onOSScheme`
+   kept every App's callback. Both return a stop now, and `release` runs
+   the App's.
+4. Caches keyed by conversation that kept the last session's entries:
+   composer's `attStore` and messages' `listCache` (with `lastChannel`,
+   `lastThread`, `paneLast`, `lastHost`). These held more Apps than any
+   other root in the first leak run. `composer.ForgetCore` and
+   `messages.ForgetCore` now drop them, from `backend.stop` too, so a
+   sign-out or an account switch lets the old session go in the real app
+   as well.
+5. Lookups after `Release` that put the App back. Something still ran
+   `LoadOrStore` for an App or a store after its `Release` (a goroutine
+   finishing late, or a stale list drawn). A released App's or store's
+   entries are no longer kept, and a late subscriber gets a closed
+   channel.
+6. Timers: core's temporary-mute expiry, and the image cache's animation
+   sweep, which re-arms itself while a kept player plays and nothing
+   draws. `Release` and `Cache.Close` stop them.
+
+`TestFinishedSessionIsCollected` guards all of it: two sessions in a row,
+and the first one's App, core App, fake server and shaper must be
+collected within 10 s. It checks the first of two because `ui.New` points
+process-wide hooks at the newest App (one App per process). On a failure it
+prints the goroutines the sessions left and the heap dump's roots. Red:
+44958300566 (blockkit's goroutine and `blockkit.notDM`), 44959106725
+(`blockkit.notDM`). Green: 44959763759.
+
+To see what holds the Apps across the whole package, flake-check's
+release-leaks job runs internal/ui in four parts by test name. Each part
+traces the first live App of every test that leaves one, and the end-of-run
+report (`CLACK_TEST_HEAP_REPORT`, `CLACK_RETAIN_DUMP=n`) groups the live
+Apps by test. Its first run (44962912991) found 265 of 509 Apps live and
+the roots in items 4 to 6. The second (44964925469) found 28.
+
+internal/ui alone, without GOMEMLIMIT (flake-check ui-heap):
+
+| run | what changed | live heap at the end | Apps live | ui.test peak | runner peak | time |
+|---|---|---|---|---|---|---|
+| 44950485950 | none, the measurement only | 9,106 MiB | all | 14,871 MiB | 15,628 MiB | 1,236 s |
+| 44950488360 | item 1, core and fakeslack | 8,577 MiB | | | 15,201 MiB | 1,227 s |
+| 44959766093 | items 1 to 3 | 4,846 MiB | 248 of 509 | 9,501 MiB | 10,315 MiB | 1,236 s |
+| 44964928177 | items 1 to 5, part of 6 | 1,846 MiB | 15 of 509 | 4,078 MiB | 4,946 MiB | 1,218 s |
+| 44966386962 | all six | 1,798 MiB | 13 of 509 | 4,206 MiB | 5,024 MiB | 1,231 s |
+
+full-test (`go test ./...`, one job), without GOMEMLIMIT:
+
+| run | what changed | runner peak | ui.test peak | job | internal/ui |
+|---|---|---|---|---|---|
+| 44925236847 (round 2, no limit) | none | 15,686 MiB | 13.9 GB | | |
+| 44960051436 | items 1 to 3 | 10,468 MiB | 9,575 MiB | 24.7 min | 1,239 s |
+| 44966389317 | all six | 8,124 MiB | 4,220 MiB | 23.9 min | 1,212 s |
+
+So the GOMEMLIMIT=11GiB stopgap from round 2 is gone from full-test and
+release's test job. Round 2's full-test with the limit peaked at 11,612 MiB
+in 23.0 min (44942313462). Without it, the peak minute is now other
+packages beside ui.test: messages.test at 3,400 MiB and views.test at
+2,575 MiB in 44966389317. Their own tests keep sessions the same way, and
+the same tools will find what holds them.
+
+The second leak run shows what's left. A few single slots hold the newest
+App that used them (`canvasview.copyText`, `slackc.stack`,
+`popups.epCoreApp`, `popups.stackCur`). wazero's compile cache is
+process-wide on purpose. A few tests end with an upload in flight or a
+Slick goroutine still running. That's a handful of Apps, not the package.
+
+### Flakes (round 3)
+
+| test | cause | fix | red | green |
+|---|---|---|---|---|
+| TestCornerDockButton (videoplayer), α.133's release test job (44948141967) | Not GC pressure. The sampler had the runner at 2.8 to 3.9 GB, ui.test at 0.5 to 1.3 GB and the load at 4.7 to 5.6 on 4 vCPUs while videoplayer ran: CPU. The test gave the mini player 5 s of wall time to play | the waits read the tile's own state: while it loads they wait (a minute for a hang), and one that neither loads nor plays for 5 s fails | 44953782259: a fake player whose second play takes 6 s, 3 of 3 fail | 44953787134: the same player, 3 of 3 pass |
+| TestOnePlaysAtATime (videoplayer), train-143's linux-test rest shard (44970400272), "no the second playing within 5s" | A tile is Playing from its play event, which the fake sends at once, before its data. The test clicked the second video on the first's play event, and when the first's data came its start paused the second, as Slack's coordinator does (an autoplay's start pauses the others). The second, paused while it waited, never played. A loaded runner made the first's metadata that late. Plain CPU load didn't (44973568440: 0 of 18 with the old waits under twice the CPUs busy) | the test waits for the first to play, its spinner gone. A subtest with the first's data late gives the order every time. Every tile wait in the package is now `waitForTile`: its limit counts only while the video neither loads nor is what the test waits for, and a failure prints the tile's and the player's state | 44974193400: the mutant, "no the second playing": the second paused, all its data in (ready 4), no event dropped | 44974193400: 10 times under -race, the package 3 times under load |
+| TestRealWindowCaretCost at 1440x900, "no blink's partial frame in 2.4s" | The readback started right after partial frames came back on. The window takes a few frames to settle: a fresh frame texture fills, the sticky atlas's first repack makes the next frame's damage too big (straight into the window), and two more fill the texture again. At 1440x900 that took four blinks, the whole wait. `gpu.FrameStats.Whole` (new) says why each frame was whole | the readback waits for the first partial frame first | 44960352218: 2 of 25; 44963639630: 1 of 25, with the four reasons. The earlier 0 of 35 (44950757123, 44952864910) ran the 800x600 mode | 44965770262: 0 of 25 |
+| TestPatchedReactionPillLikeNative/dark/cls (train-138, 44960329088) | Not EGL. linux-test has no display, so every pixel subtest gets `eglInitialize` 0x3001 and skips (all eight did). This one failed because its TempDir cleanup raced Taut's debounced data flush, "directory not empty". The timer's flush took the dirty data under the lock and wrote it after, so Close's last flush found nothing and returned while storage/ was still being written | Taut's flushes run one at a time, writes included, so Close returns with its data on disk. It also stops an older flush's rename from landing over a newer one's | 44963637245, the mutant: "a flush returned while another was still writing" | 44963637245: 20 times under -race |
+| TestMacIdleCPU | not reproduced | the count failures print the pass's frame timeline: each frame, when it came, what asked for it, and the caret's blink interval | | |
+
+## Round 3 (quiet-ci): red only when something is wrong
+
+Every run here starts from Karim's account, so every failed run is a push
+notification on their phone: 194 in the 24 h to 2026-11-21 23:40Z. Most were
+red by design (proofs) or not about the change (flakes, a base that was red).
+
+### Proof runs (expect_fail)
+
+A proof (a red or mutant branch, the tests on the old code) names the tests
+it proves fail, and the run passes only if each of them fails and nothing
+else does:
+
+```sh
+# flake-check, one job: the usual proof
+gh workflow run flake-check.yml --repo some-du6e/clack --ref <branch>-red1 -f only=<job> -f count=1 -f expect_fail=TestA,TestB/sub
+# an area workflow that takes it (threads-audit, files-view, hover-card, bk-gallery-shots,
+# ui-taut, ch-details-shots, ui-slick, composer-taut, bk-agent-shots)
+gh workflow run threads-audit.yml --repo some-du6e/clack --ref <branch>-red1 -f expect_fail=TestA
+# ci: any of its only= jobs (linux-test runs the whole suite in its five shards)
+gh workflow run ci.yml --repo some-du6e/clack --ref <branch>-red1 -f only=linux-test -f expect_fail=TestA
+```
+
+- The names are as `go test -json` reports them: `TestA`, a subtest
+  `TestA/sub` (spaces become `_`), comma-separated. A listed test covers its
+  subtests; a listed subtest's failure also fails its parents, which is fine
+  unless a parent printed lines of its own (its own `t.Error`, or a `t.Log`:
+  test2json can't tell them apart): then list the parent too.
+- Each job that sets up Go runs `.github/actions/expect-fail` right after
+  setup-go: it builds `tools/expectfail` and sets `GOFLAGS=-exec=<it>`, so
+  every `go test` in the job (text or `-json`, `xvfb-run`, test-shard.py)
+  runs its binary through it. It judges each binary: listed failures exit 0;
+  a listed test that passes or is skipped (in any of its `-count` runs), any
+  other failed test, a crash or timeout outside a listed test, or a binary
+  that fails with no failed test (TestMain) keeps it red. Build and vet
+  errors stop `go test` before the binary, so they stay red too: a proof
+  that doesn't compile proves nothing.
+- Each job ends with `.github/actions/expect-fail-report` (its summary lists
+  each listed test it ran with the first lines of its failure, and uploads
+  its records), and an `expect-fail` job, needing every job, checks across
+  them: every listed test failed somewhere and passed nowhere, every job
+  that ran succeeded. Its summary is the proof, readable without the log.
+  A step without `-v` shows an expected failure only there: to `go test`
+  the package passed, so it prints nothing of it.
+- Not judged: binaries a job builds with `go test -c` and runs itself
+  (flake-check's Windows fanouts, some stress jobs), and a step that sets
+  `XF_OFF=1` because it needs a binary's real status (gio-layer-fix.sh's
+  tests that must panic on stock Gio, in linux-gio and macos-idle). A
+  listed failure there stays red, never a false pass.
+- Rerunning a proof run's failed jobs: each record carries its leg (job and
+  matrix index) and the run's attempt, and the check keeps each leg's
+  latest, so the failed attempt's records don't count.
+- A new job in one of these workflows needs the two steps and an entry in
+  `expect-fail`'s needs; `tools/expectfail`'s TestWorkflowsWireExpectFail
+  fails ci until it has them. After a merge (a train taking a branch made
+  before quiet-ci), wire them with the script, which needs only Python:
+
+  ```sh
+  python3 -I .github/scripts/expect_fail_wire.py --check .github/workflows/flake-check.yml  # what's missing, exit 1
+  python3 -I .github/scripts/expect_fail_wire.py .github/workflows/flake-check.yml          # add it, in place
+  ```
+
+  It adds the input, the setup step after setup-go, the report step last
+  and the check job's needs, exactly as the guard wants them, and leaves a
+  wired file byte for byte as it was. It refuses (exit 2) a file not laid
+  out like the repo's (jobs at 2 spaces, steps at 6).
+
+Proven on quiet-ci (throwaway branches, deleted): the listed test failing
+alone was green (flake-check 44974452814; ci only=linux-test over the whole
+suite 44976014400); a listed test that passed was red (44974455267,
+"TestXFProofPasses passed (1 of 1 runs)"); an unlisted failure was red
+(44974458023, "TestXFProofExtra failed, and expect_fail doesn't list it").
+
+### The evidence-branch rule
+
+A branch named like a proof, ending `-red`, `-redN`, `-redNx`, `-mutN`,
+`-rNredN` or `-rNmutN` (`thread-load-speed-red4`, `ci-speed-3-red13c`,
+`blockkit-coverage-r3red5`):
+
+- starts no ci or supply-chain run on push (`branches-ignore`): its push run
+  would only be red;
+- fails at once, in the expect-fail setup step, when dispatched without
+  `expect_fail`, with a message saying to pass it (44974460708). So every
+  proof names what it expects to fail.
+
+`expect_fail` on ui, main or a tag fails the same way: those pass only when
+nothing fails. Diagnostic branches (`-probeN`, `-dbgN`) aren't covered: a
+probe that is meant to fail is a proof, so name it `-redN` and list its
+tests.
+
+### Before a push (prepush.sh)
+
+```sh
+.github/ci/prepush.sh            # changed since the merge base with origin/ui
+.github/ci/prepush.sh <base>     # or since <base>
+```
+
+It runs `gofmt -l` on the Go files changed since the base (and the working
+tree's), then `go vet` on their packages, with the GOOS their `_windows` and
+`_darwin` files need (Windows with cgo where mingw is installed). On swiss
+vet goes through the go gate, so a package like internal/ui takes minutes.
+Of the 24 h's agent-branch failures it would have caught 3, all of them
+compile or vet errors (`method Modal.Rect already declared`, `not enough
+arguments in call to a.jumpToMessage` in a test, vet's `unreachable code`);
+gofmt had none.
+
+### The release's test job
+
+release.yml's test job is ci's full-test step for step (the same
+`go test ./...` on the same runner image, a clean cache). On a tree that
+already passed it, it adds no coverage, only another roll of the flakes:
+alpha.135's tree had passed full-test on its squash source (409e358f, run
+44955419010), and the release lost two attempts to flakes. It now looks for
+a successful ci full-test on a commit with the tag's tree (prior-full-test.sh,
+ci's runs of the last 3 days) and, finding one, skips the suite with a
+summary linking that run; otherwise it runs as before. The tree, not the
+sha: ui squashes a branch whose pre-merge full-test ran on the branch's
+commit, and ui's own full-test is often cancelled. A proof run's green
+full-test doesn't count (its expect-fail job ran: the listed failures exit
+0, and a listed test that panics ends its package early), and any API
+error runs the suite. It asks the server for ci's green dispatches and
+ui and main pushes of the 3 days (a branch's push run skips full-test).
+Not covered: nothing keeps ci's full-test and this job step for step
+alike; a change to one should go to both.
+
+### The 24 h of failures, classified
+
+194 failed runs to 2026-11-21 23:40Z. Of the 104 not on an evidence branch
+by the old naming: 4 on ui and main (menu-keys' macOS clipboard reads,
+fixed on ui at a913a1fe; code-channels' TestTautZeroCost, fixed at
+821a5101; the runs after both were cancelled), 5 on trains, 27 on proof or
+diagnostic branches the old naming missed (`-red13c`, `-r3red5`, `-probe2`,
+`-dbg1`, `-slow3`, `-nolimit`), and 68 on agent branches:
+
+| class | runs | what |
+|---|---|---|
+| real, fixed later | 38 | the branch's own tests or jobs, passing on a later push |
+| real | 8 | the branch's own tests, not passing again inside the window (quote-paste-crash's TestWinQuotePaste ×5, ci-speed-3's heap test, acrows-race, threads-ship) |
+| flake | 19 | below |
+| broken push | 3 | build or vet errors: prepush.sh |
+
+The flakes, by test:
+
+| test | runs | state |
+|---|---|---|
+| TestMenuKeysMessageActions, TestMenuTypeAhead (menu-keys, macOS) | 6 | red on every branch until ui a913a1fe |
+| thread-open-root's own tests, the same sha green later | 4 | |
+| TestThreadsRefreshGapLikeSlack | 2 | open: the next to fix (it also failed alpha.114's release) |
+| TestPreviewFooterMembershipUnknownAtOpen, TestPreviewFooterUnderComposerPlugin | 2 | a real race, fixed: preview-footer-race (ResolveConv's joiners) |
+| launch-budget (launch-speed), the same sha green later | 2 | |
+| TestJoinBanner | 1 | GOMEMLIMIT=7GiB's GC (ci-speed-2 kept 11 GiB) |
+| TestSnapshotsWhileBusy (jsrt) | 1 | |
+| TestInspectPicksToast (windows-applog) | 1 | |
+
+Fixed alongside, from the releases: TestMessageMenuOldMenuRows
+(menu-click-rerender: slackc dropped a press's scope on a re-render) and
+Media Foundation's first-frame timing in TestMFRGBA, TestMFPlaysFixture and
+TestMFColdStart (mf-first-frame).

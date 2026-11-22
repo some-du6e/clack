@@ -632,6 +632,7 @@ func (s *Store) ThreadSliceMsgs(ch, ts string, t ThreadSlice) []slack.Message {
 func (s *Store) AddThreadPageSince(ch, ts string, msgs []slack.Message, tss []string, b ThreadPageBounds, since uint64) []slack.Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs)
 	k := ch + "/" + ts
 	newer := func(t string) (liveRec, bool) {
 		r, ok := s.live[ch+"/"+t]

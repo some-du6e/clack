@@ -49,5 +49,8 @@ func (t *Tray) Balloon(title, content string) error {
 	return errors.New("desktop: no tray on this platform")
 }
 
+// OnSessionEnd is Windows-only (WM_ENDSESSION).
+func (t *Tray) OnSessionEnd(f func(why string)) {}
+
 // Close is a no-op.
 func (t *Tray) Close() {}

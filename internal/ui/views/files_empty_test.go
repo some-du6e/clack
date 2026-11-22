@@ -49,23 +49,19 @@ func TestFilesEmptyCopy(t *testing.T) {
 	}
 }
 
-// The sidebar's Starred part follows custom_file_sections (the account's
-// team has it on): the starred file collection's header row, which a click
-// collapses (the client store's toggleCollectionCollapse), or the plain
-// "Starred" sub-header with no collapse.
+// The sidebar's Starred part is the starred file collection's header row,
+// which a click collapses (the client store's toggleCollectionCollapse),
+// never the old plain "Starred" sub-header: Slack dropped
+// custom_file_sections and kept its on path (the 2026-11-21 drift), so the
+// old gate forced off changes nothing.
 func TestFilesSidebarStarred(t *testing.T) {
 	v, h, e, _ := filesView(t)
 	app := h.Core()
 	app.SetExperimentGroup("custom_file_sections", "off")
-	e.frame()
-	if v.fileCollections() || !hasRow(v, "starred-canvas-header") {
-		t.Fatalf("custom_file_sections off: rows %s", rowKeys(v))
-	}
-	app.SetExperimentGroup("custom_file_sections", "on")
 	e.until(t, "files.collections.list", func() bool { _, ok := app.FileCollections(); return ok })
 	e.frame()
 	if !v.fileCollections() || hasRow(v, "starred-canvas-header") {
-		t.Fatalf("custom_file_sections on: rows %s", rowKeys(v))
+		t.Fatalf("custom_file_sections forced off: rows %s", rowKeys(v))
 	}
 	key := "coll:" + fakeslack.StarredCollectionID
 	if !hasRow(v, key) {
@@ -95,11 +91,9 @@ func TestFilesEmptyShots(t *testing.T) {
 		h.th = theme.New(dark)
 		app := h.Core()
 		app.SetExperimentGroup("unified_files_3p_primary_custom_sections", "on")
-		app.SetExperimentGroup("custom_file_sections", "on")
 		e.until(t, "files.collections.list", func() bool { _, ok := app.FileCollections(); return ok })
 		e.frame()
 		vaShot(t, e, "files-sidebar-collections", dark)
-		app.SetExperimentGroup("custom_file_sections", "off")
 		app.SetExperimentGroup("unified_files_3p_primary_custom_sections", "off")
 		e.frame()
 		vaShot(t, e, "files-sidebar-starred", dark)

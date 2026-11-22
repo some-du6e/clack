@@ -133,7 +133,7 @@ func (s *Server) SetSearchHistory(terms ...string) {
 	}
 }
 
-var searchLogs sync.Map // *Server -> *searchLog
+var searchLogs = newPerServer() // *Server -> *searchLog
 
 func (s *Server) slog() *searchLog {
 	v, _ := searchLogs.LoadOrStore(s, &searchLog{forms: map[string][]url.Values{}})

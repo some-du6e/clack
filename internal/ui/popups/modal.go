@@ -144,7 +144,11 @@ type ModalOpts struct {
 	// OnCmdEnter runs on ⌘Enter (Block Kit modals bind command+enter to
 	// submit).
 	OnCmdEnter func()
-	OnClose    func()
+	// OnEscape, when set, is asked first on Escape: true means the body
+	// took it (an open select list closed: MultiSelectInput's onEscape
+	// stops the event), and the modal stays.
+	OnEscape func() bool
+	OnClose  func()
 	// CloseGuard, when set, is asked before the user closes the modal
 	// (the close button, Escape, a click outside): false keeps it open,
 	// and the owner shows its speed bump (Slack's getShouldShowSpeedBump).

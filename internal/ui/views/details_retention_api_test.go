@@ -69,7 +69,39 @@ func retText(r retR) string { return cdRetentionText(core.Retention(r)) }
 func retTeamDesc(dur, typ int) string { return cdTeamRetentionDescription(dur, typ) }
 
 func retWarning(typ, n int, unit int, team retR, admin bool) string {
-	return cdRetentionWarning(typ, n, true, unit, core.Retention(team), admin)
+	return cdRetentionWarning(typ, float64(n), true, unit, core.Retention(team), admin)
 }
 
-func retDurErr(n, unit int) string { return cdRetentionDurationError(n, unit) }
+func retDurErr(n, unit int) string { return cdRetentionDurationError(float64(n), unit) }
+
+// retValidText is isRetentionValid over the box's text as parseInt reads it.
+func retValidText(typ int, text string, unit int) bool {
+	n, ok := cdParseInt(text)
+	return cdRetentionValid(typ, n, ok, unit)
+}
+
+// retDurErrText is the error line for the box's text.
+func retDurErrText(text string, unit int) string {
+	n, _ := cdParseInt(text)
+	return cdRetentionDurationError(n, unit)
+}
+
+// retLoadSettled: getDataRetention answered (or failed).
+func retLoadSettled(e *cdTestEnv) bool {
+	rt := e.d.x.dlg.rt
+	if rt == nil {
+		return false
+	}
+	_, done, _ := rt.load.get()
+	return done && !rt.load.busy()
+}
+
+func retOpenUnitMenu(e *cdTestEnv) {
+	if rt := e.d.x.dlg.rt; rt != nil {
+		rt.unitDD.open = true
+	}
+}
+
+func retUnitMenuOpen(e *cdTestEnv) bool { rt := e.d.x.dlg.rt; return rt != nil && rt.unitDD.open }
+
+func retTitle(name string) string { return cdRetentionTitle(name) }

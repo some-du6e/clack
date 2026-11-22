@@ -284,6 +284,14 @@ var (
 	rvStyles = map[*text.Shaper]*rvStyleEntry{}
 )
 
+func init() { // a finished App's shapers leave the cache (theme.ForgetShaper)
+	theme.OnForgetShaper(func(sh *text.Shaper) {
+		rvMu.Lock()
+		delete(rvStyles, sh)
+		rvMu.Unlock()
+	})
+}
+
 // richStyle is the richview.Style for th's shaper, like
 // messages.styleFor: Lato, theme emoji, palette and embolden per mode.
 func richStyle(th *theme.Theme) *richview.Style {

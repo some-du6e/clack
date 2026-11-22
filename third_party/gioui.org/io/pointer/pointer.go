@@ -46,6 +46,12 @@ type Event struct {
 	// Modifiers is the set of active modifiers when
 	// the mouse button was pressed.
 	Modifiers key.Modifiers
+	// Clicks is the platform's own count of a Press (and its Release) in
+	// a run of quick clicks, where the platform keeps one: AppKit's
+	// NSEvent clickCount on macOS, Chromium's click count there. 0
+	// otherwise; gesture.Click then counts by the platform's rule. Clack
+	// patch 48 (CLACK_PATCHES.md).
+	Clicks int
 }
 
 // PassOp sets the pass-through mode. InputOps added while the pass-through
