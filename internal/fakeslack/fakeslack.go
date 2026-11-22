@@ -765,7 +765,8 @@ func Serve(ln net.Listener, sz Size) *Server {
 		s.addIdentity()
 	}
 	if sz.Gallery {
-		s.addGalleryConvs() // gallery.go
+		s.addGalleryConvs()  // gallery.go
+		s.addStretchyEmoji() // bkgallery_stretchy.go
 	}
 	if sz.ChannelLinks {
 		s.addChannelLinks() // channel_links.go
@@ -2251,6 +2252,11 @@ func (s *Server) img(w http.ResponseWriter, r *http.Request) {
 			w.Write(b)
 			return
 		}
+	}
+	if b, ct, ok := stretchImage(strings.TrimPrefix(r.URL.Path, "/img/")); ok { // stretchy emoji tiles (bkgallery_stretchy.go)
+		w.Header().Set("Content-Type", ct)
+		w.Write(b)
+		return
 	}
 	if b, ct, ok := gifImage(strings.TrimPrefix(r.URL.Path, "/img/")); ok { // animated GIFs and their stills (gifs.go)
 		w.Header().Set("Content-Type", ct)
