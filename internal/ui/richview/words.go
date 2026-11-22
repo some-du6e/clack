@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"runtime"
 	"unicode/utf8"
-
-	"gioui.org/widget"
 )
 
 // What a double or triple click selects, as Blink's SelectionController
@@ -20,10 +18,11 @@ var SelectTrailingSpace = runtime.GOOS == "windows"
 // wordRange is what a double click at byte offset off of pl selects: the
 // word there, a run of spaces, or another character with its marks, as
 // Blink's word granularity takes them from ICU's word breaks with
-// Chromium's rules (Gio's widget.ClackWordRange, patch 48: a period joins
-// only digits, a colon nothing), over the paragraph off is in. A press on
-// a line's break takes the line's last word; on Windows a word takes the
-// whitespace after it (SelectTrailingSpace).
+// Chromium's rules (Gio's widget.ClackWordRange, patch 48, through
+// gio_patch48.go: a period joins only digits, a colon nothing), over the
+// paragraph off is in. A press on a line's break takes the line's last
+// word; on Windows a word takes the whitespace after it
+// (SelectTrailingSpace).
 func wordRange(pl []byte, off int) (int, int) {
 	n := len(pl)
 	if n == 0 {
@@ -52,7 +51,7 @@ func wordRange(pl []byte, off int) (int, int) {
 		i += sz
 	}
 	at = append(at, b)
-	lo, hi := widget.ClackWordRange(rs, pos, SelectTrailingSpace)
+	lo, hi := chromiumWordRange(rs, pos, SelectTrailingSpace) // gio_patch48.go
 	return at[lo], at[hi]
 }
 

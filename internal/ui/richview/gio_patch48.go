@@ -8,6 +8,7 @@ import (
 	"gioui.org/gesture"
 	"gioui.org/io/input"
 	"gioui.org/io/pointer"
+	"gioui.org/widget"
 )
 
 // Gio patch 48 (third_party/gioui.org/CLACK_PATCHES.md): the platform's
@@ -27,3 +28,9 @@ func (c *clickCounter) press(q input.Source, e pointer.Event) int { return c.run
 // clicksOf is the window's count of the click that press or release e
 // is part of (0 without one).
 func clicksOf(e pointer.Event) int { return e.Clicks }
+
+// chromiumWordRange is Gio's ClackWordRange: what a double click at pos of
+// rs selects, the segment of ICU's word rules with Chromium's.
+func chromiumWordRange(rs []rune, pos int, trailingSpace bool) (int, int) {
+	return widget.ClackWordRange(rs, pos, trailingSpace)
+}
