@@ -4277,7 +4277,13 @@ jobs:
   # conversation's held messages (core and ui), each decision logs Slack's
   # reason, a desktop_notification ahead of its message is dropped (19),
   # plugins' showNotification gets Slack's arguments, and update_thread_state
-  # moves the Unread mark at once. Dispatch with only=thread-reply-toast.
+  # moves the Unread mark at once. Round 3: the checks read the event's own
+  # ts (a desktop_notification without one isn't 19), every add path and no
+  # local copy raises maxTs, the Threads view keeps a newer thread state,
+  # on-screen messages notify as Slack's do (an at-command, a hidden reply,
+  # another tab), the Threads link bolds and badges, Slick's filters see the
+  # toast, and the reply bar's mark is there in the frame its reply draws.
+  # Dispatch with only=thread-reply-toast.
   thread-reply-toast:
     if: ${{ !inputs.only || startsWith('thread-reply-toast', inputs.only) }}
     runs-on: ubuntu-latest
@@ -4334,6 +4340,78 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           TEST: TestFollowedReplyNotificationArgsLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "store: every add path raises maxTs, local copies don't (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestNotificationsMaxTSEveryAddPath|TestLocalCopiesKeepMaxTS|TestThreadsViewStateSince)
+          PKG: ./internal/store
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: maxTs from a refused or dropped message, an optimistic send, the Threads view's state (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestMaxTSFromAMessageTheDecodeRefuses|TestOptimisticSendKeepsMaxTS|TestThreadsViewKeepsNewerThreadState|TestDroppedMessageRaisesMaxTS)
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: the reply bar's channel lists as Slack keeps them (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestChannelThreadActivityLikeSlack
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "slick: notification filters run over the toast about to show (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestAllowNotificationRunsTheFilters
+          PKG: ./internal/slick
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: a desktop_notification without its own ts notifies (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestDesktopNotificationWithoutTSLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: on-screen messages notify as Slack's do (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestOnScreenNotificationsLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the Threads link bolds and badges (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestThreadsLinkLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: Slick's filters see the toast (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestSlickFiltersSeeTheToast
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the reply bar's Unread mark is there in the reply's first frame (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestReplyUnreadMarkInTheReplysFrame
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: a channel's reply bar list goes with its count, and keeps a mark from before it (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestThreadActivityClearedWithItsCount|TestThreadActivityKeepsAMarkFromBeforeItsList)
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the reply bar's marks after a slow reconnect (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestReplyBarRefetchesAfterASlowReconnect
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the reply bar's marks after a failed fetch (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestReplyBarRetriesAFailedFetch
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}

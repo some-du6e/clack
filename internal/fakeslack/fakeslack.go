@@ -373,6 +373,9 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 
 // Server is a running fake.
 type Server struct {
+	// client.counts' threads.unread_count_by_channel (threads_by_channel.go)
+	threadsByChan map[string]int
+
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
@@ -1670,7 +1673,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				chans = append(chans, e)
 			}
 		}
-		out := ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
+		threads := map[string]any{"has_unreads": true, "mention_count": 2}
+		if by := s.threadsByChannel(); by != nil {
+			threads["unread_count_by_channel"] = by // SetThreadsByChannel
+		}
+		out := ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", threads)
 		if av := s.activityV2(); av != nil { // activity_badges.go
 			out["activity_v2"] = av
 		}
