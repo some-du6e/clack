@@ -97,7 +97,9 @@ func TestWrapUnderGoTest(t *testing.T) {
 		return result{code, b.String(), recs}
 	}
 	t.Run("the listed test fails, nothing else: green", func(t *testing.T) {
-		r := gotest("TestFail", nil, "-run", "^(TestPass|TestFail)$", ".")
+		// -v: go test shows a package's output only when it fails or with
+		// -v, and to go test it passed (the job's summary has the failure)
+		r := gotest("TestFail", nil, "-v", "-run", "^(TestPass|TestFail)$", ".")
 		if r.code != 0 || !strings.Contains(r.out, "--- FAIL: TestFail") || !strings.Contains(r.out, "TestFail failed as expected") {
 			t.Fatalf("exit %d:\n%s", r.code, r.out)
 		}
