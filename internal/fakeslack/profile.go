@@ -94,10 +94,12 @@ func (s *Server) profileSections(f url.Values) any {
 		hdr = append(hdr,
 			fsElement(id, "PsHEADER", "PeRECORD", "ProfileFileElement", "FILE", "Name Recording", "Name Recording", true, map[string]any{"fileId": nil}),
 			fsElement(id, "PsHEADER", "PePRONOUNCE", "ProfileTextElement", "TEXT", "Name Pronunciation", "Name Pronunciation", true, text("")))
-	case id == ProfileID: // Robin has recorded their name (NameRecordingID)
+	case id == ProfileID:
+		// Robin has recorded their name (NameRecordingID); someone else's
+		// profile carries only the elements that are set, so not their
+		// empty Name Pronunciation
 		hdr = append(hdr,
-			fsElement(id, "PsHEADER", "PeRECORD", "ProfileFileElement", "FILE", "Name Recording", "Name Recording", false, map[string]any{"fileId": NameRecordingID}),
-			fsElement(id, "PsHEADER", "PePRONOUNCE", "ProfileTextElement", "TEXT", "Name Pronunciation", "Name Pronunciation", true, text("")))
+			fsElement(id, "PsHEADER", "PeRECORD", "ProfileFileElement", "FILE", "Name Recording", "Name Recording", false, map[string]any{"fileId": NameRecordingID}))
 	}
 	sections = append(sections, fsSection(id, "PsHEADER", "HEADER", "Header", false, hdr...))
 	// Contact information: Slack only returns the email to the person
