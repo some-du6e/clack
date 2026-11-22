@@ -125,7 +125,9 @@ type Message struct {
 	// NoDisplay and NoNotifications are the server's no_display and
 	// no_notifications: no desktop notification for the message
 	// (client-boot Fpyc's reasons 4 and 5; ui/notify_dm.go).
-	NoDisplay, NoNotifications bool
+	// DNDSuppressed is dnd_suppressed: a mention held for Do Not Disturb
+	// (canCountAsUnreadForCurrentUser; core NotifyMention's callers).
+	NoDisplay, NoNotifications, DNDSuppressed bool
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
@@ -153,6 +155,7 @@ type BotProfile struct {
 	Icon                            string      // best icon URL
 	Icons                           SenderIcons // bot_profile.icons as sent
 	Deleted                         bool
+	Workflow                        bool // is_workflow_bot: a workflow's keyword counts (shouldIgnoreHighlightWords)
 }
 
 type Reaction struct {

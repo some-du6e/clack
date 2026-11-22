@@ -1677,11 +1677,11 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	if bp := m.BotProfile; bp != nil {
 		a.noteBotProfileTeam(bp.ID, bp.TeamID)
 		v.BotProfile = &BotProfile{ID: bp.ID, Name: bp.Name, AppID: bp.AppID, UserID: bp.UserID, TeamID: bp.TeamID,
-			Icon: firstNonEmpty(bp.Icons.Image72, bp.Icons.Image48, bp.Icons.Image36), Deleted: bp.Deleted}
+			Icon: firstNonEmpty(bp.Icons.Image72, bp.Icons.Image48, bp.Icons.Image36), Deleted: bp.Deleted, Workflow: bp.IsWorkflowBot}
 	}
 	v.Pending, v.Failed = a.pendingState(m)
 	v.Ephemeral = m.IsEphemeral
-	v.NoDisplay, v.NoNotifications = m.NoDisplay, m.NoNotifications
+	v.NoDisplay, v.NoNotifications, v.DNDSuppressed = m.NoDisplay, m.NoNotifications, m.DNDSuppressed
 	if m.PinnedInfo != nil {
 		// getMessagePinnedInfo (client-boot): the label's pinnedBy is pinned_info.pinned_by
 		v.PinnedBy = m.PinnedInfo.PinnedBy

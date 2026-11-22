@@ -108,6 +108,9 @@ type Message struct {
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
 	UploadStatus string `json:"-"`
+	// DNDSuppressed is dnd_suppressed: held for Do Not Disturb, so a
+	// mention in it notifies no one (canCountAsUnreadForCurrentUser).
+	DNDSuppressed bool `json:"dnd_suppressed,omitempty"`
 }
 
 // MessageDocumentComment is a canvas comment root's document_comment.

@@ -993,13 +993,17 @@ func (b *backend) notePeople() {
 }
 
 // maybeNotify is maybeShowNotification for a message (or a settled
-// stream's update): ephemerals (Slackbot's "you can't @channel here")
-// never notify, and under defer_notification_3p_streaming neither does a
-// message still streaming ("Skip notification for in-progress streaming
-// message"). A conversation whose desktop push is off never does, a DM's
-// message follows shouldShowNotificationForDirectMessage and any other's
-// shouldShowNotificationForChannelMessage (notify_dm.go). The
-// conversation comes from core, not the sidebar's rows, and what the
+// stream's update): a notice this client made ("Only visible to you",
+// core LocalEphemeral: Slack's addEphemeralMessage) never notifies, and
+// under defer_notification_3p_streaming neither does a message still
+// streaming ("Skip notification for in-progress streaming message"). A
+// conversation whose desktop push is off never does, nor one the viewer
+// isn't in (2) unless the message mentions them in a canvas (a
+// document_mention in its file channel), nor an ephemeral in a file
+// channel (28). A DM's message follows
+// shouldShowNotificationForDirectMessage and any other's, a join, a topic
+// or a pin too, shouldShowNotificationForChannelMessage (notify_dm.go).
+// The conversation comes from core, not the sidebar's rows, and what the
 // notification names is looked up first when the store can't name it
 // yet (notify_conv.go).
 func (b *backend) maybeNotify(a *App, ev core.Event) { b.maybeNotifyAfter(a, ev, false) }
@@ -1007,14 +1011,14 @@ func (b *backend) maybeNotify(a *App, ev core.Event) { b.maybeNotifyAfter(a, ev,
 // maybeNotifyAfter is maybeNotify; resolved: the lookups it needed ran
 // (noteResolve), so it shows what it has.
 func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
-	if ev.Msg == nil || ev.Msg.System {
+	if ev.Msg == nil {
 		return // no message of Slack's to decide on
 	}
 	// every decision below writes its line (notify_decisions.go); a
 	// notification that waits for lookups writes it once they answer
 	skip := func(why noteSkip) { noteDecided(ev.Channel, ev.TS, why) }
-	if b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
-		skip(noteSkipEphemeral)
+	if b.core.Interactive().LocalNotice(ev.Channel, ev.TS) {
+		skip(noteSkipEphemeral) // Slack's local ephemerals never reach maybeShowNotification
 		return
 	}
 	key := noteShownKey(ev.Channel, ev.TS)
@@ -1039,8 +1043,12 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		return
 	}
 	c, named := b.noteConv(ev.Channel)
-	if c != nil && c.Preview {
-		skip(noteSkipNotMember) // a channel the viewer isn't in (isMemberOfChannel: reason 2)
+	if c != nil && c.Preview && !(c.File && ev.Msg.Subtype == "document_mention") {
+		skip(noteSkipNotMember) // a channel the viewer isn't in (isMemberOfChannel: reason 2), but a canvas's mention of them
+		return
+	}
+	if c != nil && c.File && (ev.Msg.Ephemeral || b.core.Interactive().Ephemeral(ev.Channel, ev.TS)) {
+		skip(noteSkipFileEph) // an ephemeral in a file channel (28)
 		return
 	}
 	ignoreDND := b.noteDNDIgnored(ev.Channel, ev.TS)
