@@ -35,6 +35,7 @@ func TestThreadsBodyContentMenu(t *testing.T) {
 	var got []popups.Overlay
 	e := &vaEnv{size: image.Pt(900, 700)}
 	e.draw = func(gtx layout.Context) {
+		v.frame() // the view's theme, palette and plugins, as its Layout sets them first
 		v.msgBody(gtx, &m, false, 0)
 		if o, ok := bodyMenu(&v.base, gtx, h, image.Pt(10, 10), m); ok {
 			got = append(got, o)
