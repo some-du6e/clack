@@ -442,7 +442,9 @@ func TestEmojiPacksSoonAndFailedRead(t *testing.T) {
 	e.m.Close()
 	e.open(1)
 	e.until("the one pack", func() bool { return e.d.cards() == 1 })
-	e.until("Stay tuned", func() bool { return e.drew("Stay tuned") && e.drew("More") })
+	e.until("Stay tuned", func() bool {
+		return e.drew("Stay tuned") && slices.ContainsFunc(e.texts, func(s string) bool { return strings.Contains(s, "More emoji packs") })
+	})
 	if r := e.d.soon(); r.Min != image.Pt(240, 0) || r.Dx() != 224 || r.Dy() != 200 {
 		t.Errorf("Stay tuned at %v, want the first row's second 224 × 200 card", r)
 	}
