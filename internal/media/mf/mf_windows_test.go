@@ -37,10 +37,20 @@ func need(t *testing.T, err error) {
 	t.Skip(err)
 }
 
-// read is one of the demuxer's reads: where, and the bytes it got.
+// read is one of the demuxer's reads: where, the bytes it got, and when
+// the engine asked for it and had it (ms after the player was made). The
+// times say where a slow load went: TestMFColdStart's 12.9 s on
+// windows-idle (train-161's push ci 45018881337) was between the engine's
+// loadstart and its durationchange, three reads, and nothing then told
+// whether they or the engine's own start were slow.
 type read struct {
-	off int64
-	n   int
+	off         int64
+	n           int
+	asked, done int64
+}
+
+func (r read) String() string {
+	return fmt.Sprintf("{%d+%d asked@%d done@%d}", r.off, r.n, r.asked, r.done)
 }
 
 // The demuxer's reads and the engine's events by file, from the hooks
@@ -54,10 +64,11 @@ var (
 
 func init() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	testRead = func(id string, off int64, n int) {
+	testRead = func(id string, off int64, n int, asked time.Time) {
 		hookMu.Lock()
 		defer hookMu.Unlock()
-		reads[id] = append(reads[id], read{off, n})
+		b := born[id]
+		reads[id] = append(reads[id], read{off, n, asked.Sub(b).Milliseconds(), time.Since(b).Milliseconds()})
 	}
 	testEvent = func(id string, code uint32) {
 		hookMu.Lock()
@@ -140,7 +151,12 @@ func newRig(t *testing.T, data []byte, whole bool, size image.Point, setup ...fu
 	}()
 	t.Cleanup(func() {
 		if t.Failed() {
-			t.Logf("%s: the engine's events %s; the demuxer's reads %v", id, traceOf(id), readsOf(id))
+			// enough to say why without the run: the engine's events and
+			// reads, the player's (HTML) events, its state and its counters
+			// (TestMFSeekAndPause failed 1 run in 25 with only its FAIL line
+			// kept, flakes-1122)
+			t.Logf("%s: the engine's events %s; the demuxer's reads %v; the player's events %v; state %+v; stats %+v",
+				id, traceOf(id), readsOf(id), r.kinds(), r.p.State(), r.p.Stats())
 		}
 		r.p.Close()
 		select {
@@ -386,8 +402,8 @@ func TestMFColdStart(t *testing.T) {
 		t.Fatalf("loadedmetadata with no engine made; the engine's events %s", traceOf(r.id))
 	}
 	took := at.Sub(opened)
-	t.Logf("loadedmetadata %v after the engine was made; the platform's start (window, device, MFStartup, the audio check) %v before it (audio: %s); the engine's events %s",
-		took, opened.Sub(t0), audio, traceOf(r.id))
+	t.Logf("loadedmetadata %v after the engine was made; the platform's start (window, device, MFStartup, the audio check) %v before it (audio: %s); the engine's events %s; the demuxer's reads %v",
+		took, opened.Sub(t0), audio, traceOf(r.id), readsOf(r.id))
 	if took > 10*time.Second {
 		t.Errorf("loadedmetadata %v after the engine was made, want under 10 s", took)
 	}
