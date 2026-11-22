@@ -488,6 +488,19 @@ func (c *Cache) Close() {
 		if c.done != nil {
 			close(c.done)
 		}
+		// and the players: animSweep re-arms itself while any plays, and a
+		// kept one nothing draws any more plays for good, its timer (a
+		// runtime root) holding the cache and the window it repaints
+		// (ci-speed-3: a heap dump's commonest root once the rest went)
+		c.mu.Lock()
+		if c.animT != nil {
+			c.animT.Stop()
+			c.animT = nil
+		}
+		for e := range c.playing {
+			c.releaseLocked(e)
+		}
+		c.mu.Unlock()
 	})
 }
 
