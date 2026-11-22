@@ -4400,6 +4400,20 @@ jobs:
           TEST: TestReplyBarRetriesAFailedFetch
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives (docs/NOTIFY-RULES.md): the message rules' cells
+      # where Clack decided otherwise than Slack's client
+      - name: "ui: what mentions the viewer in a channel's message, as Slack's rules read it (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestChannelNotifyMentionsLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: broadcasts, joins, topics, canvas mentions, ephemerals and the Slackbot DM's emails (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestNotifyRulesLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
