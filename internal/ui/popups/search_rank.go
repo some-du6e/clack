@@ -588,6 +588,9 @@ func srDateLabel(after, before, on string, now time.Time) string {
 type srSeg struct {
 	Text string
 	Hit  bool
+	// Mention is a mention slug (srMentionOther / srMentionSelf), drawn
+	// in Slack's mention colours and never split (search_popover.go)
+	Mention uint8
 }
 
 func srWordRune(r rune) bool {
@@ -892,4 +895,172 @@ func srApplyExactNameRules(cands []srCand, group string, facts func(srCand) srEx
 func srRetainExactNames(kept, pool []srCand, group string, limit int, facts func(srCand) srExactFacts) []srCand {
 	return acrank.RetainExactNames(kept, pool, group, limit, func(c srCand) acrank.ExactFacts { return facts(c).acrank() },
 		func(a, b srCand) bool { return a.ID == b.ID || (a.Conv != "" && a.Conv == b.Conv) })
+}
+
+// ---- the results page's title ----
+
+// srTitleQuery is the title's query: Slack's SearchQuery (client-boot
+// pYM5, CDN build a09b625d90aa) fromString(query).toDisplayString(),
+// every token's display joined by spaces:
+//
+//   - a member (<@U…>) is MemberQuerySuggestionToken's "@" and the
+//     mention name (getMentionPrefCompliantMemberNameById: the display
+//     name, or the real name under the mention pref; the id while the
+//     member is unknown), a user group (<!subteam^S…|@handle>) "@handle";
+//   - a channel (<#C…|name>) is ChannelQuerySuggestionToken's channel
+//     name with its "#" (getChannelName, privateChannelUseHashSign), a
+//     DM's "@" and the partner's name;
+//   - from:, to:, with:, creator: (MemberFilterQuerySuggestionToken) and
+//     in: (InQuerySuggestionToken) show "modifier:" and their member's or
+//     channel's display; the other modifiers (has:, is:, before:, …) and
+//     words as typed;
+//   - a "phrase" keeps its quotes, its <@U…> and <#C…> resolved
+//     (_resolveDisplayPhrase).
+//
+// The search box shows a query through toTextyOps instead
+// (srDisplayQuery: "in:general", no hash).
+func srTitleQuery(h Host, q string) string {
+	toks := srTokens(q)
+	out := make([]string, 0, len(toks))
+	for _, t := range toks {
+		out = append(out, srDisplayToken(h, t))
+	}
+	return strings.Join(out, " ")
+}
+
+func srDisplayToken(h Host, t string) string {
+	if strings.HasPrefix(t, `"`) || strings.HasPrefix(t, `-"`) {
+		return srDisplayPhrase(h, t)
+	}
+	if d, ok := srDisplayRef(h, t); ok {
+		return d
+	}
+	neg := len(t) > 1 && t[0] == '-'
+	body := t
+	if neg {
+		body = t[1:]
+	}
+	k, val, ok := strings.Cut(body, ":")
+	if !ok || val == "" || !srModKeys[strings.ToLower(k)] {
+		return t
+	}
+	switch strings.ToLower(k) {
+	case "in", "from", "to", "with", "creator":
+		if d, ok := srDisplayRef(h, val); ok {
+			return t[:len(t)-len(val)] + d
+		}
+	}
+	return t
+}
+
+// srDisplayRef is a member, user group or channel token's display, ok
+// false for anything else.
+func srDisplayRef(h Host, v string) (string, bool) {
+	if len(v) < 4 || v[0] != '<' || v[len(v)-1] != '>' {
+		return "", false
+	}
+	in := v[1 : len(v)-1]
+	label := ""
+	if i := strings.IndexByte(in, '|'); i >= 0 {
+		in, label = in[:i], in[i+1:]
+	}
+	switch {
+	case strings.HasPrefix(in, "!subteam^"):
+		if label != "" {
+			return "@" + strings.TrimPrefix(label, "@"), true
+		}
+		return "@" + strings.TrimPrefix(in, "!subteam^"), true
+	case strings.HasPrefix(in, "@"):
+		return "@" + srMemberDisplay(h, in[1:]), true
+	case strings.HasPrefix(in, "#"):
+		return srChannelDisplay(h, in[1:], label), true
+	}
+	return "", false
+}
+
+// srMemberDisplay is getMentionPrefCompliantMemberNameById for id: the id
+// itself while the member is unknown.
+func srMemberDisplay(h Host, id string) string {
+	u, ok := lookupUser(h, id)
+	if !ok {
+		return id
+	}
+	real := false
+	if c := h.Core(); c != nil {
+		real = c.RealNamesInMentions()
+	}
+	// getPrefCompliantMemberNamePure: the real name under the pref, else
+	// the display name, else the real name
+	if !real && u.DisplayName != "" {
+		return u.DisplayName
+	}
+	if u.RealName != "" {
+		return u.RealName
+	}
+	return userName(u)
+}
+
+// srChannelDisplay is ChannelQuerySuggestionToken's toDisplayString for
+// channel id (label: the token's own name): getChannelName with the hash
+// for public and private channels, a DM's partner, else "#" and the
+// label.
+func srChannelDisplay(h Host, id, label string) string {
+	if c := h.Core(); c != nil {
+		ref := c.ConvRef(id)
+		switch {
+		case ref.Kind == "im" && ref.User != "":
+			return "@" + srMemberDisplay(h, ref.User)
+		case ref.Name != "":
+			return "#" + ref.Name
+		}
+	}
+	return "#" + label
+}
+
+// srDisplayPhrase is PhraseQuerySuggestionToken's display: the phrase in
+// its quotes, its member and channel references resolved (an unknown
+// member stays as typed).
+func srDisplayPhrase(h Host, t string) string {
+	var b strings.Builder
+	for len(t) > 0 {
+		i := strings.IndexByte(t, '<')
+		if i < 0 {
+			b.WriteString(t)
+			break
+		}
+		b.WriteString(t[:i])
+		j := strings.IndexByte(t[i:], '>')
+		if j < 0 {
+			b.WriteString(t[i:])
+			break
+		}
+		ref := t[i : i+j+1]
+		inner := ref[1 : len(ref)-1]
+		switch {
+		case strings.HasPrefix(inner, "@U") || strings.HasPrefix(inner, "@W"):
+			id := strings.SplitN(inner[1:], "|", 2)[0]
+			if _, ok := lookupUser(h, id); ok {
+				b.WriteString("@" + srMemberDisplay(h, id))
+			} else {
+				b.WriteString(ref)
+			}
+		case strings.HasPrefix(inner, "#"):
+			id, label, _ := strings.Cut(inner[1:], "|")
+			name := label
+			if c := h.Core(); c != nil {
+				if n := c.ConvRef(id).Name; n != "" {
+					name = n
+				}
+			}
+			if name != "" {
+				b.WriteString("#" + name)
+			} else {
+				b.WriteString(ref)
+			}
+		default:
+			b.WriteString(ref)
+		}
+		t = t[i+j+1:]
+	}
+	return b.String()
 }
