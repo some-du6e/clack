@@ -3693,3 +3693,46 @@ jobs:
           TEST: TestReplyInOwnThreadToastsAndShowsInActivity
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
+
+  # tb-click (thread-header-hover, 2026-11-22; Karim α.136: "i click and
+  # it disappears as if you are not hovering it", and Reply in thread
+  # lost under their plugins): the message actions bar clicked as a hand
+  # does (the press and the release ~100 ms apart, in frames of their
+  # own), with no plugin, a plugin wrapping MessageActions and
+  # MessageActionButtonReaction, one re-rendering them on every mousedown
+  # and mouseup, and Taut's OwlMode itself: each action runs, the row stays
+  # hovered with its bar, the emoji picker and the More actions menu hold
+  # it (Slack's setPopoverHold); and the thread header's channel name links
+  # with the pane's slice away from the root. Dispatch with only=tb-click.
+  tb-click:
+    if: ${{ !inputs.only || startsWith('tb-click', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: build Taut's OwlMode (the reviewed TAUT_PIN; GPLv3, never committed)
+        env:
+          TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37
+        run: |
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "$TAUT_PIN"
+          cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
+          npm run -s build:user-plugin -- plugins/OwlMode.tsx "$GITHUB_WORKSPACE/dist/taut-plugins/OwlMode.js"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code; never share its Go cache
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the bar's clicks and the header's link, COUNT runs
+        env:
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+        run: |
+          xvfb-run -a go test -count="$COUNT" -v -timeout 30m -run '^(TestToolbarClicksKeepHover|TestThreadHeaderLinkAwayFromRoot)$' ./internal/ui

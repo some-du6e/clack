@@ -14,6 +14,7 @@ on:
     paths:
       - "internal/ui/messages/thread*.go"
       - "internal/ui/thread_header_test.go"
+      - "internal/ui/thread_header_link_test.go"
       - "internal/ui/exp_wave4_test.go"
       - "internal/core/exp_wave4.go"
       - "internal/ui/route*.go"
@@ -66,7 +67,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$THREAD_HEADER_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestThreadHeaderFromActivity|TestThreadHeaderJumpsToRoot' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestThreadHeaderFromActivity|TestThreadHeaderJumpsToRoot|TestThreadHeaderLinkAwayFromRoot' ./internal/ui/
           # agent threads' titles (exp-wave-4: thread-agent-title-*.png, thread-agent-dm-title-*.png)
           xvfb-run -a go test -count=1 -v -run 'TestThreadAgentTitle' ./internal/ui/
           # Slack Connect in the sidebar on the same fixture (slack-connect-sidebar-*.png)
