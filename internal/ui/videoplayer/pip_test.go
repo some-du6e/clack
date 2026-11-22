@@ -131,7 +131,7 @@ func TestPipDocksOnScroll(t *testing.T) {
 	if tr := c.PipTrigger(); tr != "scroll" {
 		t.Errorf("trigger %q, want scroll", tr)
 	}
-	waitFor(t, "the inline player paused", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "the inline player paused", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
 	if st := state(t, c, r, f); !st.InPip {
 		t.Errorf("the inline tile while docked: %+v, want it showing it's in the mini player", st)
 	}
@@ -159,7 +159,7 @@ func TestPipObserverPerMount(t *testing.T) {
 	frame(c)               // another conversation: docks
 	waitPipPlaying(t, c)
 	c.ClosePip(true) // Jump to message: the conversation opens again
-	waitFor(t, "the inline player playing on", 5*time.Second, func() bool { frame(c, [2]any{r, f}); return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "the inline player playing on", 5*time.Second, func() bool { frame(c, [2]any{r, f}); return state(t, c, r, f).Playing })
 	r.MediaVisible(f, 0.05) // the list not at the message yet
 	if _, _, ok := c.Pip(); ok {
 		t.Fatalf("docked (%q) on the first report after it was laid out again", c.PipTrigger())
@@ -237,12 +237,12 @@ func TestPipCloseResumes(t *testing.T) {
 	// again, then Jump to message: it plays on inline from there
 	r.MediaVisible(f, 0.5)
 	click(c, r, f)
-	waitFor(t, "playing again", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "playing again", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
 	r.MediaVisible(f, 0.05)
 	waitPipPlaying(t, c, [2]any{r, f})
 	at, _, _ = c.PipPlayback()
 	c.ClosePip(true)
-	waitFor(t, "the inline player playing on", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "the inline player playing on", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
 	if pos := state(t, c, r, f).Player.State().Pos; pos < at-100*time.Millisecond {
 		t.Errorf("Jump to message: the inline player at %v, the mini player was at %v", pos, at)
 	}
@@ -286,7 +286,7 @@ func TestPipPendingResume(t *testing.T) {
 	at, _, _ := c.PipPlayback()
 	c.ClosePip(true) // Jump to message: the conversation opens again
 	frame(c, [2]any{r, f})
-	waitFor(t, "the inline player playing from there", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "the inline player playing from there", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
 	if pos := state(t, c, r, f).Player.State().Pos; pos < at-100*time.Millisecond {
 		t.Errorf("laid out again: the inline player at %v, the mini player was at %v", pos, at)
 	}
