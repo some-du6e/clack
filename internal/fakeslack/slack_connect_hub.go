@@ -262,7 +262,7 @@ func (s *Server) handleSlackConnectHub(method string, f url.Values, edge map[str
 		x.mu.Unlock()
 		out := []map[string]any{}
 		if method == "edge/users/search" {
-			for _, u := range s.users {
+			for _, u := range append(slices.Clone(s.users), s.variants()...) { // the fixed people (Partner Co's) are variants
 				if u.TeamID == team && !u.Deleted && strings.Contains(strings.ToLower(u.Name+" "+u.RealName), q) {
 					out = append(out, map[string]any{"id": u.ID, "team_id": u.TeamID, "name": u.Name, "real_name": u.RealName,
 						"is_bot": u.IsBot, "profile": map[string]any{"real_name": u.RealName, "display_name": u.Profile.DisplayName}})
