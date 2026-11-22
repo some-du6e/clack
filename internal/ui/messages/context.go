@@ -110,6 +110,11 @@ func (s *listState) contextMenuFor(h Host, r *row, i int, p f32.Point, at image.
 	if o, ok := s.reactionMenu(h, r, i, p, at); ok { // reaction_menu.go
 		return o
 	}
+	if r.tsTip.hovered() || r.compactTip.hovered() {
+		// the time is an <a> to the message's permalink (Timestamp's
+		// link): the shell's link menu
+		return popups.TimeLinkMenu(h, at, m.Channel, m.TS, m.ThreadTS)
+	}
 	local := p.Sub(f32.Pt(float32(r.bodyRect.Min.X), float32(s.pos[i]+r.bodyRect.Min.Y)))
 	if local.X >= 0 && local.Y >= 0 && int(local.X) < r.bodyRect.Dx() && int(local.Y) < r.bodyRect.Dy() {
 		if ah, ok := r.rv.AttachmentAt(local); ok && ah.Att != nil {

@@ -46,6 +46,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -193,6 +194,8 @@ type thrMsg struct {
 	top         unit.Dp
 	name, stamp string
 	missTip     missTip // the sender's BaseMissingMember tooltip
+	// time is MessageTimestamp's link to the message (popups.TimeLink)
+	time popups.TimeLink
 }
 
 // Threads is the Threads view.
@@ -1628,6 +1631,16 @@ func (v *Threads) msg(gtx C, s *thrMsg, m *core.Message, top unit.Dp) D {
 			break
 		}
 		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+			if ph, ok := v.h.(popups.Host); ok && s.time.Hovered() {
+				// the time is an <a> to the message's permalink: the
+				// shell's link menu
+				var at image.Point
+				if pp, ok := v.h.(interface{ PointerPos() image.Point }); ok {
+					at = pp.PointerPos()
+				}
+				ph.ShowOverlay(popups.TimeLinkMenu(ph, at, m.Channel, m.TS, m.ThreadTS))
+				continue
+			}
 			v.messageMenu(*m)
 		}
 	}
@@ -1939,11 +1952,33 @@ func (s *thrMsg) line(gtx C, st slackc.Styled, name, stamp string) D {
 		hgap(7),
 		layout.Rigid(func(gtx C) D {
 			if stamp == "" {
+				s.time.Skip()
 				return D{}
 			}
-			return v.para(gtx, 12, 17.6, wReg, v.meta(), 1, stamp)
+			d := v.para(gtx, 12, 17.6, wReg, v.meta(), 1, stamp)
+			s.timeLink(gtx, d)
+			return d
 		}),
 	)
+}
+
+// timeLink makes the time laid out at the current offset (d) the link
+// to s's message: the hand cursor, the underline, the full date's
+// tooltip, handleTimestampClick on a click (popups.TimeLink).
+func (s *thrMsg) timeLink(gtx C, d D) {
+	v, m := s.v, s.m
+	if m == nil {
+		return
+	}
+	tip := ""
+	if s.time.Hovered() {
+		tip = richview.FullTimestampSeconds(m.TS, gtx.Now)
+	}
+	if c := s.time.Layout(gtx, v.th, d.Size, d.Size.Y-d.Baseline, v.meta(), tip); c.Clicked {
+		if ph, ok := v.h.(popups.Host); ok {
+			popups.OpenMessageTime(ph, m.Channel, m.TS, m.ThreadTS, c.Cmd)
+		}
+	}
 }
 
 // ---- keyboard (ThreadsView over the virtual list) ----
