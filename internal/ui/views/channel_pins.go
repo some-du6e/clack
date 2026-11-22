@@ -98,6 +98,9 @@ type cpRow struct {
 	tb      [cpTbCount]widget.Clickable
 	tbTip   [cpTbCount]popups.TipState
 	tbRects [cpTbCount]image.Rectangle
+	// time is the pinned message's MessageTimestamp (clickable, full):
+	// its permalink's link (popups.TimeLink)
+	time popups.TimeLink
 }
 
 // The pinned message's MessageActions buttons (no quick reactions).
@@ -291,6 +294,13 @@ func (v *ChannelPins) update(gtx C) {
 				break
 			}
 			if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) && !v.preview {
+				if ph, ok := v.h.(popups.Host); ok && r.time.Hovered() && it.Msg != nil {
+					// the time is an <a> to the message's permalink: the
+					// shell's link menu
+					m := it.Msg
+					ph.ShowOverlay(popups.TimeLinkMenu(ph, v.pointer(), m.Channel, m.TS, m.ThreadTS))
+					continue
+				}
 				v.openMenu(it, v.pointer())
 			}
 		}
@@ -583,7 +593,19 @@ func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 						return row(gtx, layout.Baseline,
 							layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, wBlack, v.p.Text, 1, name) }),
 							hgap(8), // "\xa0\xa0"
-							layout.Rigid(func(gtx C) D { return v.para(gtx, 12, 17.6, wReg, v.p.Meta, 1, stamp) }),
+							layout.Rigid(func(gtx C) D {
+								// BasePinnedMessage's MessageTimestamp (msg,
+								// clickable, full: the full date, no
+								// tooltip): the permalink's link,
+								// handleTimestampClick on a click
+								d := v.para(gtx, 12, 17.6, wReg, v.p.Meta, 1, stamp)
+								if c := r.time.Layout(gtx, v.th, d.Size, d.Size.Y-d.Baseline, v.p.Meta, ""); c.Clicked && !v.preview {
+									if ph, ok := v.h.(popups.Host); ok {
+										popups.OpenMessageTime(ph, m.Channel, m.TS, m.ThreadTS, c.Cmd)
+									}
+								}
+								return d
+							}),
 						)
 					}),
 					layout.Rigid(func(gtx C) D { return v.actPaneBody(gtx, m) }),
