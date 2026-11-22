@@ -3498,4 +3498,4 @@ jobs:
         env:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
         run: |
-          xvfb-run -a go test -count="$COUNT" -v -timeout 35m -run '^(TestToolbarClicksKeepHover|TestThreadHeaderLinkAwayFromRoot)$' ./internal/ui
+          xvfb-run -a go test -count="$COUNT" -v -timeout 30m -run '^(TestToolbarClicksKeepHover|TestThreadHeaderLinkAwayFromRoot)$' ./internal/ui
