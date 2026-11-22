@@ -13,6 +13,10 @@ func rowStatusURL(r *row) string { return r.statusURL }
 func rowStatusHov(r *row) bool   { return r.statusHov }
 func rowStatusDrawn(r *row) bool { return r.statusDrawn }
 func rowTimeHov(r *row) bool     { return r.tsTip.hov }
+func rowCompactHov(r *row) bool  { return r.compactTip.hov }
+
+// rowCompactTipShowing reports whether the gutter time's tooltip is up.
+func rowCompactTipShowing(r *row, now time.Time) bool { return r.compactTip.tip.Showing(now) }
 
 // statusTipState is the status tooltip the list holds.
 func statusTipState(s *listState) (on bool, text, sub string, rect image.Rectangle) {

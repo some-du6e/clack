@@ -166,8 +166,10 @@ type row struct {
 	// child drew (-1 none): a plugin's ReactionBar children map to their
 	// pills through it, for the tooltip (layoutReactionBar)
 	laidPill int
-	addRect  image.Rectangle
-	height   int
+	// laidPills counts the pills the bar child drew
+	laidPills int
+	addRect   image.Rectangle
+	height    int
 
 	// plugin state (patched path only)
 	rc *rowCtx // this frame's inputs, for the natives
@@ -295,6 +297,12 @@ type reactPill struct {
 	r   *row
 	i   int // the group, r.groups[i]
 	btn widget.Clickable
+	// where the pointer is on the pill, and the pill's size, for its
+	// ReactionTip when a plugin's bar child holds several pills and its
+	// box is no one pill's (pillPointer)
+	ptTag  int
+	pt     f32.Point
+	ptSize image.Point
 }
 
 // rowCtx carries per-frame inputs to a row layout.
@@ -1535,6 +1543,7 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 		visible = p.Bool("visible")
 	}
 	if !visible {
+		r.compactTip.skip()
 		return layout.Dimensions{Size: box}
 	}
 	def := compactTSClass
@@ -1544,6 +1553,7 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	st := def.Enter(gtx, hoverState(rc.hovered), 0)
 	defer st.Leave()
 	if st.Hidden() {
+		r.compactTip.skip()
 		return layout.Dimensions{Size: box}
 	}
 	// getCompactGutter: renderTimestamp({meridiem: !(adjacent && light)}):
@@ -2177,6 +2187,10 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		}
 		drawEmoji(gtx, rc.h, r.statusURL, image.Rect(xx, top, xx+s, top+s))
 		r.statusArea(gtx, image.Rect(xx, top, xx+s, top+s))
+		if r.statusExp > 0 {
+			// a frame when it expires, which takes it away
+			gtx.Execute(op.InvalidateCmd{At: time.Unix(r.statusExp, 0)})
+		}
 		xx += s
 		if dense {
 			xx += dp(gtx, 3)
@@ -2239,11 +2253,13 @@ func (r *row) hoverBot() string {
 // layoutTimestamp is the header's Timestamp ("3:04 PM").
 func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if p.Has("visible") && !p.Bool("visible") {
+		r.tsTip.skip()
 		return layout.Dimensions{}
 	}
 	st := tsClass.Enter(gtx, 0, 0)
 	defer st.Leave()
 	if st.Hidden() {
+		r.tsTip.skip()
 		return layout.Dimensions{}
 	}
 	tsS := textStyle{size: float32(st.FontSize(12)), col: st.Color(r.rc.c.Text2)}
@@ -2642,10 +2658,12 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 		r.reactRects = append(r.reactRects, make([]image.Rectangle, len(r.groups))...)
 		lay := func(gtx layout.Context) layout.Dimensions {
 			return r.flowPills(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
-				r.laidPill = -1
+				r.laidPill, r.laidPills = -1, 0
 				return slackc.LayoutElement(gtx, items[i])
 			}, func(i int, rect image.Rectangle) {
-				if k := r.laidPill; k >= 0 && k < len(r.reactRects) {
+				// a child holding one pill is its box; several, and
+				// their tips go by the pointer (pillPointer)
+				if k := r.laidPill; k >= 0 && k < len(r.reactRects) && r.laidPills == 1 {
 					r.reactRects[k] = rect.Add(r.reactAt)
 				}
 			}, true)
@@ -2930,12 +2948,39 @@ func (pl *reactPill) reacted() bool {
 // layout is Reaction around the UnstyledButton pill.
 func (pl *reactPill) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	pl.r.laidPill = pl.i // the bar child this slot is drawn in is this pill's
+	pl.r.laidPills++
+	var d layout.Dimensions
 	if e, ok := slackc.PropChildren(p); ok {
-		return slackc.LayoutElement(gtx, e) // the button JS rendered in Reaction's tree
+		d = slackc.LayoutElement(gtx, e) // the button JS rendered in Reaction's tree
+	} else {
+		// the pill draws its box itself: under an UnstyledButton patch a
+		// rule its className brings is painted once, round
+		// (slackc.ComponentBox)
+		d = slackc.ComponentBox(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
 	}
-	// the pill draws its box itself: under an UnstyledButton patch a rule
-	// its className brings is painted once, round (slackc.ComponentBox)
-	return slackc.ComponentBox(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
+	pl.pillPointer(gtx, d.Size)
+	return d
+}
+
+// pillPointer follows the pointer over the pill (size, at the current
+// offset), letting it through: where it is on the pill places the
+// pill's ReactionTip when the bar child it was drawn in held others too.
+func (pl *reactPill) pillPointer(gtx layout.Context, size image.Point) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &pl.ptTag, Kinds: pointer.Enter | pointer.Move})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			pl.pt = e.Position
+		}
+	}
+	pl.ptSize = size
+	a := clip.Rect{Max: size}.Push(gtx.Ops)
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &pl.ptTag)
+	pass.Pop()
+	a.Pop()
 }
 
 // layoutButton is the pill: UnstyledButton data-qa="reactji", .c-reaction
@@ -3696,13 +3741,16 @@ func reactionTipLine(h Host, re *core.Reaction, selfID string, cut bool) string 
 			switch u, ok := app.User(id); {
 			case ok:
 				// getPrefCompliantMemberNameById (R6Qy I): "Name
-				// hidden" for someone hidden, else the real name
-				// under display_real_names, else the display name
+				// hidden" for someone hidden, else under
+				// display_real_names getMemberRealName (hWCs wg:
+				// profile.real_name || real_name, which keeps a lone
+				// U+200B as Slack prints it), else the display name;
+				// the sender line's rule (core.User.RealName)
 				n = u.Name
 				if app.UserHidden(id) {
 					n = membersNS.T("Name hidden")
-				} else if pn, held := app.S.PrefNameHeld(id); held && strings.TrimSpace(pn) != "" {
-					n = pn
+				} else if uipref.Get().DisplayRealNames && u.RealName != "" {
+					n = u.RealName
 				}
 			case app.MissingMember(id) == core.MemberNonExistent:
 				n = tipMissingGone

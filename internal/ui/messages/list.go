@@ -1728,6 +1728,13 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		for k := range r.pills {
 			if k < len(r.reactRects) && k < len(r.groups) && r.pills[k].btn.Hovered() {
 				s.tipRect = r.reactRects[k] // row-local; positioned in overlays
+				if s.tipRect.Empty() {
+					// a plugin's bar child holding several pills: the
+					// pill is where the pointer is, back by its place on it
+					pl := &r.pills[k]
+					p := image.Pt(int(s.pointer.X-pl.pt.X), int(s.pointer.Y-pl.pt.Y)-s.pos[i])
+					s.tipRect = image.Rectangle{Min: p, Max: p.Add(pl.ptSize)}
+				}
 				s.tipItem = i
 				if key := s.items[i].key + "\x00" + r.groups[k].name; key != s.tipKey {
 					s.tipKey, s.tipAt = key, rc.now

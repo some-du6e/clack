@@ -19,6 +19,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // tipEnv is a channel view over a router, with the pointer moved through
@@ -35,9 +36,16 @@ type tipEnv struct {
 	ts    time.Duration
 	mu    sync.Mutex
 	drawn []string
+	pid   pointer.ID // the mouse's pointer id (Windows': 1)
 }
 
 func newTipEnv(t *testing.T, setup func(app *core.App)) *tipEnv {
+	t.Helper()
+	return newTipEnvRows(t, setup, 3)
+}
+
+// newTipEnvRows is newTipEnv waiting for rows rows.
+func newTipEnvRows(t *testing.T, setup func(app *core.App), rows int) *tipEnv {
 	t.Helper()
 	app, _, tt, u, h := pluginEnv(t)
 	if setup != nil {
@@ -52,7 +60,7 @@ func newTipEnv(t *testing.T, setup func(app *core.App)) *tipEnv {
 		e.mu.Unlock()
 	}
 	t.Cleanup(func() { theme.DrawHook = nil })
-	until(t, 5*time.Second, "rows", e.frame, func() bool { return len(e.v.s.rows) >= 3 })
+	until(t, 5*time.Second, "rows", e.frame, func() bool { return len(e.v.s.rows) >= rows })
 	return e
 }
 
@@ -69,7 +77,7 @@ func (e *tipEnv) frame() {
 // move puts the pointer at p and runs a frame.
 func (e *tipEnv) move(p image.Point) {
 	e.ts += 30 * time.Millisecond
-	e.r.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(float32(p.X), float32(p.Y)), Source: pointer.Mouse, Time: e.ts})
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(float32(p.X), float32(p.Y)), Source: pointer.Mouse, PointerID: e.pid, Time: e.ts})
 	e.frame()
 }
 
@@ -182,11 +190,31 @@ func TestReactionTipNamesFollowPrefs(t *testing.T) {
 	if got := tipPlain(reactionTip(h, &re, tSelf)); got != "alice and you reacted with :tada:" {
 		t.Errorf("display names: %q", got)
 	}
+	// display_real_names, as the sender line reads it (uipref)
+	t.Cleanup(uipref.Reset)
 	app.S.Lock()
 	app.S.Prefs.DisplayRealNames = true
+	prefs := app.S.Prefs
 	app.S.Unlock()
+	uipref.Set(prefs)
 	if got := tipPlain(reactionTip(h, &re, tSelf)); got != "Alice Example and you reacted with :tada:" {
 		t.Errorf("display_real_names: %q, want the real name", got)
+	}
+	// a real name of ordinary spaces around it reads trimmed; a lone
+	// U+200B (Karim's) is getMemberRealName's truthy string, which Slack
+	// prints, as the sender line does
+	zwsp := string(rune(0x200b))
+	app.S.PutUsers([]slack.User{
+		{ID: "UPAD", Name: "pad", Profile: slack.Profile{DisplayName: "pad", RealName: "  Pad Example "}},
+		{ID: "UZW", Name: "zw", Profile: slack.Profile{DisplayName: "karim", RealName: zwsp}},
+	})
+	pad := core.Reaction{Name: "tada", Count: 1, Users: []string{"UPAD"}}
+	if got := tipPlain(reactionTip(h, &pad, tSelf)); got != "Pad Example reacted with :tada:" {
+		t.Errorf("a real name with spaces around it: %q", got)
+	}
+	zw := core.Reaction{Name: "tada", Count: 2, Users: []string{"UZW", tSelf}}
+	if got := tipPlain(reactionTip(h, &zw, tSelf)); got != zwsp+" and you reacted with :tada:" {
+		t.Errorf("a U+200B real name: %q, want Slack's %q", got, zwsp+" and you reacted with :tada:")
 	}
 	app.S.Lock()
 	if app.S.RawPrefs == nil {
@@ -332,4 +360,141 @@ return PassBar
 	patched(t, "ReactionBar")
 	until(t, 8*time.Second, "the patched bar's tree", e.frame, func() bool { return e.u.anyTree("x-passbar") })
 	check("ReactionBar patched")
+}
+
+// Grouped messages: alice's two (the second a grouped row, its time in
+// the gutter while it's hovered) and bob's.
+const (
+	tsG1 = "1700000501.000100"
+	tsG2 = "1700000561.000100"
+	tsG3 = "1700000621.000100"
+)
+
+func groupedMessages(app *core.App) {
+	app.S.SetLatest(tGen, []slack.Message{
+		{Type: "message", TS: tsG1, User: "UALICE", Text: "first of a group"},
+		{Type: "message", TS: tsG2, User: "UALICE", Text: "grouped follow-up"},
+		{Type: "message", TS: tsG3, User: "UBOB", Text: "the next message"},
+	}, false)
+}
+
+// item is the list item of the message at ts.
+func (e *tipEnv) item(ts string) (r *row, top, height int, header bool) {
+	for i := e.v.s.visible[0]; i < e.v.s.visible[1] && i < len(e.v.s.items); i++ {
+		if it := e.v.s.items[i]; it.kind == itMsg {
+			if r := e.v.s.rows[it.key]; r != nil && r.m.TS == ts {
+				return r, e.v.s.pos[i], e.v.s.heights[i], it.header
+			}
+		}
+	}
+	return nil, 0, 0, false
+}
+
+// The gutter time's tooltip ends when the pointer leaves the time
+// straight into the next row, in a frame that doesn't draw the time (its
+// row isn't hovered then). The Leave is never read, so the trigger hears
+// only its handler's reset Cancel, of pointer 0, when the row is hovered
+// again; with Windows' mouse (pointer 1) the tip came up at once over the
+// message and stayed (the patched-tooltips review).
+func TestGutterTimeTipEndsOnWindowsMouse(t *testing.T) {
+	e := newTipEnv(t, groupedMessages)
+	e.pid = 1
+	var r2 *row
+	var top2, h2, top3, h3 int
+	until(t, 5*time.Second, "the grouped rows", e.frame, func() bool {
+		var hd2 bool
+		r2, top2, h2, hd2 = e.item(tsG2)
+		r3, t3, hh3, _ := e.item(tsG3)
+		top3, h3 = t3, hh3
+		return r2 != nil && r3 != nil && !hd2 && h2 > 0 && h3 > 0
+	})
+	onRow2 := image.Pt(300, top2+h2/2)
+	e.rest(onRow2, 50*time.Millisecond)
+	var at image.Point
+	found := false
+	for y := top2 + 2; y < top2+h2 && !found; y += 3 {
+		for x := 2; x < 80 && !found; x += 3 {
+			e.move(image.Pt(x, y))
+			if rowCompactHov(r2) {
+				at, found = image.Pt(x, y), true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("control: no point in the grouped row's gutter hovers its time")
+	}
+	e.rest(at, timestampTipDelayT+100*time.Millisecond)
+	if !rowCompactTipShowing(r2, e.now) {
+		t.Fatal("control: resting on the gutter time doesn't show its tooltip")
+	}
+	// one frame: off the time into the next row
+	e.move(image.Pt(300, top3+h3/2))
+	if r, _, _, _ := e.item(tsG2); r != r2 {
+		t.Fatal("the grouped row was made again; the test needs the same row")
+	}
+	// back on the grouped row, away from its time
+	e.rest(onRow2, 100*time.Millisecond)
+	if rowCompactHov(r2) || rowCompactTipShowing(r2, e.now) {
+		t.Errorf("the pointer on the row's text (%v), away from its gutter time: the time is still hovered (%v) and its tooltip up (%v)",
+			onRow2, rowCompactHov(r2), rowCompactTipShowing(r2, e.now))
+	}
+}
+
+const tsMulti = "1700000701.000100"
+
+func twoReactions(app *core.App) {
+	app.S.SetLatest(tGen, []slack.Message{
+		{Type: "message", TS: tsMulti, User: "UALICE", Text: "two reactions", Reactions: []slack.Reaction{
+			{Name: "tada", Count: 2, Users: []string{"UALICE", tSelf}},
+			{Name: "eyes", Count: 1, Users: []string{"UBOB"}},
+		}},
+	}, false)
+}
+
+// A plugin's ReactionBar that wraps every slot in one element: each
+// pill's ReactionTip sits on that pill, not at the row's corner (one box
+// for several pills names none of them).
+func TestPluginWrappedPillsTipOnTheirPill(t *testing.T) {
+	e := newTipEnvRows(t, twoReactions, 1)
+	install(t, e.tt, []byte(`(() => {
+const TautPlugin = globalThis.TautPlugin, opt = globalThis.TautOpt;
+class WrapPills extends TautPlugin {
+  static id = 'WrapPills'
+  static pluginName = 'Wrap Pills'
+  static description = 'wraps the bar children in one span'
+  static authors = ['clack']
+  static defaultConfig = { enabled: true }
+  start() {
+    this.api.patchComponent('ReactionBar', (O) => (p) => React.createElement(O, { ...p, children: React.createElement('span', { className: 'x-wrapped-pills' }, p.children) }))
+  }
+}
+return WrapPills
+})()`))
+	patched(t, "ReactionBar")
+	until(t, 8*time.Second, "the wrapped pills", e.frame, func() bool { return e.u.anyTree("x-wrapped-pills") })
+	var r *row
+	var top, height int
+	until(t, 5*time.Second, "the row", e.frame, func() bool {
+		r, top, height, _ = e.item(tsMulti)
+		return r != nil && len(r.groups) == 2
+	})
+	hit := map[string]bool{}
+	for y := top + 2; y < top+height; y += 3 {
+		for x := 40; x < 400; x += 3 {
+			p := image.Pt(x, y)
+			e.move(p)
+			if e.v.s.tip == "" {
+				continue
+			}
+			name := e.v.s.tipKey[strings.IndexByte(e.v.s.tipKey, 0)+1:]
+			box := e.v.s.tipRect.Add(image.Pt(0, top))
+			if !p.In(box.Inset(-1)) {
+				t.Fatalf("the pointer at %v on the %s pill: its tip anchored at %v", p, name, box)
+			}
+			hit[name] = true
+		}
+	}
+	if !hit["tada"] || !hit["eyes"] {
+		t.Errorf("hovered pills %v; want both tada and eyes", hit)
+	}
 }
