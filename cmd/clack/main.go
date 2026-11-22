@@ -400,8 +400,9 @@ func main() {
 	a := ui.New(opts, images)
 	applog.Mark("ui-new", "")
 	// macOS: Cmd+Q in the stub menu (before Clack's menu bar installs,
-	// after the first frame) quits as Clack's own Quit does
-	app.SetQuitHandler(a.Quit)
+	// after the first frame) quits as Clack's own Quit does, with the
+	// menu's reason for the exit line
+	app.SetQuitHandler(func() { a.QuitBecause("Quit in the menu") })
 	// A slack:// link is a navigation, except a magic-login link, which
 	// is Slack's browser handing "the Slack app" a sign-in: that signs in
 	// (on the sign-in screen only; see ui.App.SignInWithLink).
