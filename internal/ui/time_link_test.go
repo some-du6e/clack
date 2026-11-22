@@ -57,7 +57,7 @@ func (e *perfEnv) timeClick(p image.Point, mods key.Modifiers, at time.Duration)
 // the message's permalink.
 func TestMessageTimeIsAPermalink(t *testing.T) {
 	e := threadHeaderEnv(t, false)
-	pub, root, reply := fakeslack.ThreadPublicID, fakeslack.ThreadRootTS, fakeslack.ThreadReplyTS(1)
+	pub, root := fakeslack.ThreadPublicID, fakeslack.ThreadRootTS
 	e.openChannel(pub)
 	e.settle(800 * time.Millisecond)
 
@@ -92,9 +92,37 @@ func TestMessageTimeIsAPermalink(t *testing.T) {
 	m.Dismiss()
 	e.frame()
 
-	// a reply's time inside its thread: the reply highlighted there
+	// a reply's time inside its thread: the reply highlighted there (a
+	// reply that starts a group: its time is the header's, drawn at rest;
+	// a grouped one's gutter time shows only under the pointer)
 	e.a.OpenThread(pub, root)
 	e.settle(800 * time.Millisecond)
+	reply := ""
+	tries := 0
+	e.until("a reply's time", 10*time.Second, func() bool {
+		e.frame()
+		rows := e.paneRows("", pub, root)
+		var rootRow *messages.SenderView
+		for i := range rows {
+			if rows[i].TS == root {
+				rootRow = &rows[i]
+			}
+			if rows[i].TS != root && rows[i].TimeTag != nil {
+				reply = rows[i].TS
+				return true
+			}
+		}
+		// every reply grouped: the pointer on the last one shows its
+		// gutter time (placed from the root's time and the rows' tops)
+		if tries++; tries > 20 && rootRow != nil && rootRow.TimeTag != nil && len(rows) > 1 {
+			if full, _, ok := e.r.AreaBounds(rootRow.TimeTag); ok {
+				last := rows[len(rows)-1]
+				y := full.Min.Y + (last.Top - rootRow.Top) + 10
+				e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(full.Min.X+40), float32(y)), Time: 4 * time.Second})
+			}
+		}
+		return false
+	})
 	p = e.timePoint(t, "", pub, root, reply)
 	e.timeClick(p, 0, 5*time.Second)
 	e.waitParentThread(t, "a click on the reply's time", pub, root, reply)

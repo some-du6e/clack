@@ -1688,8 +1688,10 @@ func (v *Threads) msg(gtx C, s *thrMsg, m *core.Message, top unit.Dp) D {
 	}
 	call.Add(gtx.Ops)
 	st := clip.Rect(r).Push(gtx.Ops)
-	hv.Add(gtx.Ops)
+	// the message's hover (:hover) and its right-click let the pointer
+	// through to what the message holds (its time's link, its pills)
 	pass := pointer.PassOp{}.Push(gtx.Ops)
+	hv.Add(gtx.Ops)
 	event.Op(gtx.Ops, &s.ctx)
 	pass.Pop()
 	st.Pop()
