@@ -4625,8 +4625,9 @@ jobs:
 
   # flakes-1122: TestLeftComposerLetsGoOfFocus (the reopened thread's reply
   # box) and TestFilesTabHideAndLinkDetails (a header read out across a
-  # Hide tab, its members call held: its race forced every run).
-  # Dispatch with only=fl1122.
+  # Hide tab, its members call held: its race forced every run);
+  # flakes-1122b: TestHeaderOlderReadLandsAfterNewerFails (the older read
+  # lands after a newer one failed). Dispatch with only=fl1122.
   fl1122-r-ui:
     if: ${{ !inputs.only || startsWith('fl1122-r-ui', inputs.only) }}
     runs-on: ubuntu-latest
@@ -4649,14 +4650,16 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -timeout 20m -run '^(TestLeftComposerLetsGoOfFocus|TestFilesTabHideAndLinkDetails)$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 20m -run '^(TestLeftComposerLetsGoOfFocus|TestFilesTabHideAndLinkDetails|TestHeaderOlderReadLandsAfterNewerFails)$' ./internal/ui || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
   # flakes-1122: the per-App and per-Server map guards (permapguard), and
   # core's list refetch across an applied event (TestListRefetchKeepsALaterEdit
-  # holds the read; TestListEditRoundTrip, the flake it found), COUNT each.
+  # holds the read; TestListEditRoundTrip, the flake it found;
+  # TestListSetAsideReadReturnsTheCache, List's own caller), and jsrt's
+  # moves across a handle release (flakes-1122b), COUNT each.
   fl1122-r-guard:
     if: ${{ !inputs.only || startsWith('fl1122-r-guard', inputs.only) }}
     runs-on: ubuntu-latest
@@ -4680,7 +4683,8 @@ jobs:
           go test -count=1 ./internal/permapguard || rc=1
           go test -count=1 -run '^TestReleaseCoversAppMaps$' ./internal/core || rc=1
           go test -count=1 -run '^TestForgetCoversServerMaps$' ./internal/fakeslack || rc=1
-          go test -count=$COUNT -timeout 10m -run '^(TestListRefetchKeepsALaterEdit|TestListEditRoundTrip)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestListRefetchKeepsALaterEdit|TestListEditRoundTrip|TestListSetAsideReadReturnsTheCache)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestMovesCoalesceAcrossAHandleRelease|TestQueuedRectsAndMovesCoalesce)$' ./internal/jsrt || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
