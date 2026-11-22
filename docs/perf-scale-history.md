@@ -635,3 +635,5 @@ One row per platform per run of perf.yml's scale jobs (fakeslackd -scale: 65,846
 | 2026-11-21 | `e0cab40` | main | windows | 263 MB | 286 MB | 753 MB | 713 MB | 724 MB | 402 MB | 2 MB |
 | 2026-11-21 | `085f054` | main | linux | 240 MB | 583 MB | 952 MB | 962 MB | 741 MB | 408 MB | 2 MB |
 | 2026-11-21 | `085f054` | main | windows | 221 MB | 233 MB | 763 MB | 699 MB | 667 MB | 430 MB | 2 MB |
+| 2026-11-22 | `ae5c376` | menu-click-rerender | linux | 236 MB | 382 MB | 924 MB | 888 MB | 687 MB | 411 MB | 2 MB |
+| 2026-11-22 | `ae5c376` | menu-click-rerender | windows | 255 MB | 259 MB | 782 MB | 717 MB | 705 MB | 460 MB | 1 MB |
