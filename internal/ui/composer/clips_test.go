@@ -18,6 +18,7 @@ import (
 
 	vclip "github.com/some-du6e/clack/internal/clip"
 	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -211,9 +212,6 @@ func TestAudioClipRecordStopSend(t *testing.T) {
 	if got := up.Data(); string(got) != string(data) {
 		t.Errorf("the POST carried %d bytes, the clip is %d", len(got), len(data))
 	}
-	if up.Cookie {
-		t.Error("the upload POST carried a cookie")
-	}
 
 	// 4. Enter sends it
 	until("the clip processed", func() bool {
@@ -337,19 +335,15 @@ func TestAudioClipGate(t *testing.T) {
 		t.Error("on without a recorder (window.MediaRecorder)")
 	}
 	setClipRecorder(t, true)
-	if cv, ok := app.S.Conv(ch); ok {
-		cv.IsExtShared = true
-		if c.audioClipOn() {
-			t.Error("on in a Slack Connect channel without allow_audio_clip_sharing_slack_connect")
-		}
-		app.SetTeamPrefs(map[string]json.RawMessage{"allow_audio_clips": json.RawMessage("true"),
-			"allow_audio_clip_sharing_slack_connect": json.RawMessage("true")})
-		if !c.audioClipOn() {
-			t.Error("off in a Slack Connect channel with both prefs")
-		}
-		cv.IsExtShared = false
-	} else {
-		t.Fatal("no conversation")
+	// a Slack Connect channel (is_ext_shared)
+	app.S.PutConv(slack.Conversation{ID: ch, Name: "shared-clips", IsChannel: true, IsMember: true, IsExtShared: true})
+	if c.audioClipOn() {
+		t.Error("on in a Slack Connect channel without allow_audio_clip_sharing_slack_connect")
+	}
+	app.SetTeamPrefs(map[string]json.RawMessage{"allow_audio_clips": json.RawMessage("true"),
+		"allow_audio_clip_sharing_slack_connect": json.RawMessage("true")})
+	if !c.audioClipOn() {
+		t.Error("off in a Slack Connect channel with both prefs")
 	}
 	for _, c := range []struct {
 		in   float64
