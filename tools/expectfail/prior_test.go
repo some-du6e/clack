@@ -101,9 +101,13 @@ func TestPriorFullTest(t *testing.T) {
 				}
 			}
 			write(bin, "gh", fakeGH)
-			write(fix, "runs-dispatch.json", map[string]any{"workflow_runs": c.dispatch})
+			// the API's lists are arrays, never null (a nil slice's JSON)
+			list := func(rs []priorRun) map[string]any {
+				return map[string]any{"workflow_runs": append([]priorRun{}, rs...)}
+			}
+			write(fix, "runs-dispatch.json", list(c.dispatch))
 			if !c.noUI {
-				write(fix, "runs-ui.json", map[string]any{"workflow_runs": c.ui})
+				write(fix, "runs-ui.json", list(c.ui))
 			}
 			write(fix, "runs-main.json", map[string]any{"workflow_runs": []priorRun{}})
 			for _, r := range append(append([]priorRun{}, c.dispatch...), c.ui...) {
