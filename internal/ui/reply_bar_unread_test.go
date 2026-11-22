@@ -116,10 +116,13 @@ func TestReplyBarRetriesAFailedFetch(t *testing.T) {
 	fs.SetThreadsByChannel(map[string]int{ch: 1})
 	replier := fs.UserIDs()[3]
 	root, _ := fs.PostQuiet(ch, fakeslack.SelfID, "a synthetic question the viewer asked")
-	e.openChannel(ch)
-	cv := replyBarRows(e, ch, root)
+	// failing from before the pane opens: the counts read at the socket's
+	// first connect may answer after SetThreadsByChannel (the pane fetches
+	// as it opens) or before it (at the reply's thread state)
 	before := fs.CallCount("activity.feed")
 	fs.SetFault("activity.feed", fakeslack.Fault{Error: "ratelimited"})
+	e.openChannel(ch)
+	cv := replyBarRows(e, ch, root)
 	fs.PushFollowedReplyLive(ch, root, replier, "a synthetic answer", false)
 	e.until("the failed fetch", 15*time.Second, func() bool { return fs.CallCount("activity.feed") > before })
 	e.settle(300 * time.Millisecond)
