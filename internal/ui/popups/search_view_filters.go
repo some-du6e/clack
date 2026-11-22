@@ -663,17 +663,13 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 	if saved {
 		items = append(items, Sep())
 	}
-	exclArch := shown(srFExclArch) && c != nil && c.Experiment("search_explore_freshness_signals") == "on"
-	if shown(srFExact) || exclArch {
-		items = append(items, MenuItem{Header: "Results"}.In(nsSearch))
-	}
+	// Results: Exact matches only. +0La MoreFiltersDropdown dropped the
+	// Exclude archived item it showed under search_explore_freshness_signals
+	// (and the experiment with it: build 8f19be21ed7e, the 2026-11-21
+	// drift), so Clack has none either.
 	if shown(srFExact) {
+		items = append(items, MenuItem{Header: "Results"}.In(nsSearch))
 		items = append(items, checkT("Exact matches only", func() bool { return v.exact }, func() { v.exact = !v.exact; v.search(1) }))
-	}
-	if exclArch {
-		items = append(items, checkT("Exclude archived", func() bool { return v.exclArch }, func() { v.exclArch = !v.exclArch; v.search(1) }))
-	}
-	if shown(srFExact) || exclArch {
 		items = append(items, Sep())
 	}
 	if shown(srFFrom) {

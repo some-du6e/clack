@@ -1165,6 +1165,14 @@ func (d *ChannelDetails) cdDlgButton(c *widget.Clickable, kind btnKind, label st
 }
 
 // layoutDialog draws the open stacked dialog, if any.
+// cdAIUsers are AiExclusionsModal's "used by" bullets. The Slack MCP
+// Server is there for everyone since Slack dropped mcp_ai_channel_exclusions
+// (build 8f19be21ed7e, the 2026-11-21 drift); Today and AI steps in
+// Workflow Builder need features Clack doesn't have.
+func cdAIUsers() []string {
+	return []string{"Slackbot", "Search AI answers", "Canvas AI", "Slack MCP Server"}
+}
+
 func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelDetails) {
 	dl := &d.x.dlg
 	name, _ := d.title(d.conv(inf, true))
@@ -1204,10 +1212,7 @@ func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelD
 		if dl.err != "" {
 			body = append(body, d.cdAlert(dl.err, false), cdSpace(12))
 		}
-		users := []string{"Slackbot", "Search AI answers", "Canvas AI"}
-		if d.h.Core().Experiment("mcp_ai_channel_exclusions") == "on" {
-			users = append(users, "Slack MCP Server")
-		}
+		users := cdAIUsers()
 		body = append(body,
 			func(gtx C) D {
 				return row(gtx, layout.Baseline,
