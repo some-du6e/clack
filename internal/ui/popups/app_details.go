@@ -89,6 +89,9 @@ func NewAppDetailsView(h Host, userID, botID string) *AppDetailsView {
 // UserID is the app's bot user the view was opened for.
 func (v *AppDetailsView) UserID() string { return v.uid }
 
+// Bot is the bot the view was opened for ("": the member's own).
+func (v *AppDetailsView) Bot() string { return v.bot }
+
 // Card is the app's profile once loaded.
 func (v *AppDetailsView) Card() (core.AppCard, bool) {
 	if v.card == nil {

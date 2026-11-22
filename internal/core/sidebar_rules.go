@@ -58,6 +58,9 @@ var defaultExperimentGroups = map[string]string{
 	"unified_file_picker":  "on", // the folders' add menu (views/folder_tab_more.go), the account's group of 2026-11-13
 	"looping_video_option": "on", // the inline video player's loop (videoplayer), as the account has it
 	"clips_pip":            "on", // the mini player (videoplayer/pip.go), as the account has it
+	// the audio player's card gets the speed and transcript controls
+	// (videoplayer/audio.go), as the account has it
+	"transcribe_opt_in_ui_v2": "on",
 	// search and the switcher, as experiments.getByUser had them on
 	// 2026-11-10 (docs/EXPERIMENTS.md); the recents experiments only
 	// matter once Slack's own answer is in

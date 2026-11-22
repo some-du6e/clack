@@ -253,12 +253,19 @@ func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensi
 	if DrawHook != nil {
 		DrawHook(txt)
 	}
+	if DrawHookOpts != nil {
+		DrawHookOpts(txt, o)
+	}
 	return t.text(gtx, o, txt, true)
 }
 
 // DrawHook, when set (tests: the "no English left" checks), sees every
 // string Text draws.
 var DrawHook func(txt string)
+
+// DrawHookOpts, when set (tests), sees every string Text draws with its
+// options: a label's weight (a sidebar row drawn bold) or color.
+var DrawHookOpts func(txt string, o LabelOpts)
 
 // text is Text; scan says whether a tofu scan records txt as drawn
 // (Measure's layouts aren't).

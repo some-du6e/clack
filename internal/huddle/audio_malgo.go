@@ -100,7 +100,9 @@ func (d *malgoDevice) Start(capture func([]int16), playback func([]int16)) error
 			C.free(cfg.Capture.DeviceID)
 		}
 		if err == nil {
-			err = dev.Start()
+			if err = dev.Start(); err != nil {
+				dev.Uninit() // made but not started: out of malgo's callback map too
+			}
 		}
 		if err != nil {
 			errs = append(errs, err)
@@ -123,7 +125,9 @@ func (d *malgoDevice) Start(capture func([]int16), playback func([]int16)) error
 			C.free(cfg.Playback.DeviceID)
 		}
 		if err == nil {
-			err = dev.Start()
+			if err = dev.Start(); err != nil {
+				dev.Uninit() // made but not started: out of malgo's callback map too
+			}
 		}
 		if err != nil {
 			errs = append(errs, err)

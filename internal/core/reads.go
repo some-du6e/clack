@@ -870,6 +870,7 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 	}
 	subs := a.S.SubSeq() // a subscription event while it is out is newer (SyncSubs)
 	seq, since := a.MessageChangeSeq(), a.S.LiveSeq()
+	threadsSince := a.S.Seq() // an update_thread_state while it is out is newer (SetThreadsStateSince)
 	if err := a.C.Call(ctx, "subscriptions.thread.getView", p, &res); err != nil {
 		return ThreadsPage{}, err
 	}
@@ -917,9 +918,7 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 		}
 		out.Threads = append(out.Threads, Thread{Channel: ch, Root: a.message(ch, &root), Replies: a.messages(ch, kept), UnreadCount: unread})
 	}
-	a.S.Lock()
-	a.S.ThreadsUnread, a.S.ThreadMentions = res.State.HasUnreads, res.State.MentionCount
-	a.S.Unlock()
+	a.S.SetThreadsStateSince(res.State.HasUnreads, res.State.MentionCount, threadsSince)
 	out.State = a.ThreadsState()
 	out.Convs = a.convRefs(chans)
 	return out, nil

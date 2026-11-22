@@ -31,6 +31,9 @@ var (
 	plain      = map[*App]int{}     // missed
 	dropped    = map[*App]bool{}    // released below
 	nested     = map[string][]key{} // missed
+	viaHelper  sync.Map             // a helper's key parameter: missed
+	helped     = map[*App]int{}     // the release's helper drops it
+	deep       = map[*App]int{}     // two calls down: missed
 	// permapguard: emptied when each request ends
 	exempt sync.Map
 )
@@ -43,11 +46,19 @@ func (a *App) use(ch string) {
 	strings.Store(ch, ch)
 	exempt.Store(a, 1)
 	registered.Store(a, 1)
+	put(key{a, ch})
 }
+
+func put(k key) { viaHelper.Store(k, 1) }
+
+func (a *App) drop() { delete(helped, a); a.dropDeeper() }
+
+func (a *App) dropDeeper() { delete(deep, a) }
 
 func (a *App) Release() {
 	values.Delete(a)
 	delete(dropped, a)
+	a.drop()
 }
 `
 
@@ -69,11 +80,11 @@ func TestCheck(t *testing.T) {
 		missing = append(missing, m.Var)
 	}
 	slices.Sort(missing)
-	if want := []string{"bare", "byKey", "nested", "plain"}; !slices.Equal(missing, want) {
+	if want := []string{"bare", "byKey", "deep", "nested", "plain", "viaHelper"}; !slices.Equal(missing, want) {
 		t.Errorf("missing %v, want %v (%v)", missing, want, rep.Missing)
 	}
 	slices.Sort(rep.Checked)
-	if want := []string{"bare", "byKey", "dropped", "exempt", "nested", "plain", "values"}; !slices.Equal(rep.Checked, want) {
+	if want := []string{"bare", "byKey", "deep", "dropped", "exempt", "helped", "nested", "plain", "values", "viaHelper"}; !slices.Equal(rep.Checked, want) {
 		t.Errorf("checked %v, want %v", rep.Checked, want)
 	}
 	if rep.Registered != 1 {

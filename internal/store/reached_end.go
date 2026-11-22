@@ -171,6 +171,7 @@ func (s *Store) CatchUp(ch, from string, gen uint64, msgs []slack.Message, hasMo
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs) // the page is the server's, whatever the window does with it
 	t := s.timelines[ch]
 	if t == nil || !t.EndStale || t.End != from {
 		return false, false
@@ -317,6 +318,7 @@ func (s *Store) SetLatestReadAt(ch string, msgs []slack.Message, hasMore bool, s
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs) // the page's own, not the local sends it carries over
 	out := s.liveKeepLocked(ch, msgs, since)
 	s.readWindowLocked(ch, out, since)
 	old := s.timelines[ch]

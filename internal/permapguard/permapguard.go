@@ -12,14 +12,27 @@
 //   - a package-level map whose key or value type holds the object (a
 //     *App, or a struct or slice of the package's that holds one);
 //   - a package-level sync.Map that a function of the package calls with
-//     such a key or value: a parameter or receiver of the object's type,
-//     a composite literal of a type that holds one (catchUpKey{a, ch}), or
-//     a local assigned one of those;
+//     such a key or value: a parameter or receiver of a type that holds
+//     the object (*App, catchUpKey, []catchUpKey), a composite literal of
+//     one (catchUpKey{a, ch}), or a local assigned one of those;
 //
-// and each must be referred to in the release function's body, or carry a
-// "permapguard:" comment saying why its entries go anyway (deleted when a
-// request ends). Maps made by the package's registering constructor
-// (newPerApp) are released by construction.
+// and each must be referred to in the release function's body, or in the
+// body of a function or method of the package it calls (one level), or
+// carry a "permapguard:" comment saying why its entries go anyway
+// (deleted when a request ends). Maps made by the package's registering
+// constructor (newPerApp) are released by construction.
+//
+// It matches names, not objects (no type check), so it misses:
+//
+//   - a sync.Map reached other than by its own name (m := &bare; m.Store,
+//     a field, a function's result), and a value it can't see holds the
+//     object: one passed as any, an interface, a field read (s.app), or a
+//     call's result;
+//   - a release that only names the map (a read counts as a release, a
+//     local of the same name too), or drops it two calls down.
+//
+// A miss of the first kind passes; of the second, it fails loudly (add a
+// "permapguard:" comment, or name the map in the release).
 package permapguard
 
 import (
@@ -145,7 +158,7 @@ func Check(cfg Config) (Report, error) {
 			if !ok {
 				return true
 			}
-			owned := ownerParams(fn, cfg.Owner)
+			owned := ownerParams(fn, holds)
 			// locals that hold the owner: k := catchUpKey{a, ch}, x := a
 			ast.Inspect(fn, func(n ast.Node) bool {
 				switch st := n.(type) {
@@ -193,25 +206,55 @@ func Check(cfg Config) (Report, error) {
 			return false
 		})
 	}
-	// what the release refers to
-	released := map[string]bool{}
-	foundRelease := false
+	// what the release refers to, and the functions and methods of the
+	// package it calls (one level: a release that hands the maps to a
+	// helper, a.dropLists())
+	funcs := map[string][]*ast.FuncDecl{}
+	var releases []*ast.FuncDecl
 	for _, f := range files {
 		for _, d := range f.Decls {
 			fn, ok := d.(*ast.FuncDecl)
-			if !ok || fn.Name.Name != cfg.Release || fn.Recv == nil || fn.Body == nil {
+			if !ok || fn.Body == nil {
 				continue
 			}
-			foundRelease = true
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok {
-					released[id.Name] = true
-				}
-				return true
-			})
+			funcs[fn.Name.Name] = append(funcs[fn.Name.Name], fn)
+			if fn.Name.Name == cfg.Release && fn.Recv != nil {
+				releases = append(releases, fn)
+			}
 		}
 	}
-	if !foundRelease {
+	released := map[string]bool{}
+	refers := func(body *ast.BlockStmt) {
+		ast.Inspect(body, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok {
+				released[id.Name] = true
+			}
+			return true
+		})
+	}
+	for _, fn := range releases {
+		refers(fn.Body)
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			var name string
+			switch f := call.Fun.(type) {
+			case *ast.Ident:
+				name = f.Name
+			case *ast.SelectorExpr:
+				name = f.Sel.Name
+			}
+			for _, h := range funcs[name] {
+				if h != fn {
+					refers(h.Body)
+				}
+			}
+			return true
+		})
+	}
+	if len(releases) == 0 {
 		return rep, fmt.Errorf("no method %s in %s", cfg.Release, cfg.Dir)
 	}
 	keys := make([]string, 0, len(vars))
@@ -324,22 +367,20 @@ func holdsOwner(e ast.Expr, owner string, types map[string]ast.Expr, seen map[st
 	return false
 }
 
-// ownerParams are fn's receiver and parameters of the owner's pointer type.
-func ownerParams(fn *ast.FuncDecl, owner string) map[string]bool {
+// ownerParams are fn's receiver and parameters of a type that holds the
+// owner (*App, catchUpKey{a *App; ...}, []catchUpKey).
+func ownerParams(fn *ast.FuncDecl, holds func(ast.Expr) bool) map[string]bool {
 	m := map[string]bool{}
 	add := func(fl *ast.FieldList) {
 		if fl == nil {
 			return
 		}
 		for _, f := range fl.List {
-			s, ok := f.Type.(*ast.StarExpr)
-			if !ok {
+			if !holds(f.Type) {
 				continue
 			}
-			if id, ok := s.X.(*ast.Ident); ok && id.Name == owner {
-				for _, n := range f.Names {
-					m[n.Name] = true
-				}
+			for _, n := range f.Names {
+				m[n.Name] = true
 			}
 		}
 	}

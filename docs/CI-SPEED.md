@@ -604,8 +604,12 @@ gh workflow run ci.yml --repo some-du6e/clack --ref <branch>-red1 -f only=linux-
   that ran succeeded. Its summary is the proof, readable without the log.
   A step without `-v` shows an expected failure only there: to `go test`
   the package passed, so it prints nothing of it.
-- Not judged: binaries a job builds with `go test -c` and runs itself
-  (flake-check's Windows fanouts, some stress jobs), and a step that sets
+- Binaries a job builds with `go test -c` and runs itself are judged only
+  when the step runs them through the wrapper, from the package's
+  directory: `${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.run ...`
+  (empty outside a proof run; flake-check's ui-heap, flakes-1121's four
+  processes and fl1122-s-mac do). Not judged: the rest of them
+  (flake-check's Windows fanouts, ci's prebuilt steps), and a step that sets
   `XF_OFF=1` because it needs a binary's real status (gio-layer-fix.sh's
   tests that must panic on stock Gio, in linux-gio and macos-idle). A
   listed failure there stays red, never a false pass.

@@ -37,10 +37,20 @@ func need(t *testing.T, err error) {
 	t.Skip(err)
 }
 
-// read is one of the demuxer's reads: where, and the bytes it got.
+// read is one of the demuxer's reads: where, the bytes it got, and when
+// the engine asked for it and had it (ms after the player was made). The
+// times say where a slow load went: TestMFColdStart's 12.9 s on
+// windows-idle (train-161's push ci 45018881337) was between the engine's
+// loadstart and its durationchange, three reads, and nothing then told
+// whether they or the engine's own start were slow.
 type read struct {
-	off int64
-	n   int
+	off         int64
+	n           int
+	asked, done int64
+}
+
+func (r read) String() string {
+	return fmt.Sprintf("{%d+%d asked@%d done@%d}", r.off, r.n, r.asked, r.done)
 }
 
 // The demuxer's reads and the engine's events by file, from the hooks
@@ -54,10 +64,11 @@ var (
 
 func init() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	testRead = func(id string, off int64, n int) {
+	testRead = func(id string, off int64, n int, asked time.Time) {
 		hookMu.Lock()
 		defer hookMu.Unlock()
-		reads[id] = append(reads[id], read{off, n})
+		b := born[id]
+		reads[id] = append(reads[id], read{off, n, asked.Sub(b).Milliseconds(), time.Since(b).Milliseconds()})
 	}
 	testEvent = func(id string, code uint32) {
 		hookMu.Lock()
@@ -140,7 +151,12 @@ func newRig(t *testing.T, data []byte, whole bool, size image.Point, setup ...fu
 	}()
 	t.Cleanup(func() {
 		if t.Failed() {
-			t.Logf("%s: the engine's events %s; the demuxer's reads %v", id, traceOf(id), readsOf(id))
+			// enough to say why without the run: the engine's events and
+			// reads, the player's (HTML) events, its state and its counters
+			// (TestMFSeekAndPause failed 1 run in 25 with only its FAIL line
+			// kept, flakes-1122)
+			t.Logf("%s: the engine's events %s; the demuxer's reads %v; the player's events %v; state %+v; stats %+v; the last frames' pts %v, %v",
+				id, traceOf(id), readsOf(id), r.kinds(), r.p.State(), r.p.Stats(), time.Duration(r.p.prevPts.Load()), time.Duration(r.p.framePts.Load()))
 		}
 		r.p.Close()
 		select {
@@ -386,8 +402,8 @@ func TestMFColdStart(t *testing.T) {
 		t.Fatalf("loadedmetadata with no engine made; the engine's events %s", traceOf(r.id))
 	}
 	took := at.Sub(opened)
-	t.Logf("loadedmetadata %v after the engine was made; the platform's start (window, device, MFStartup, the audio check) %v before it (audio: %s); the engine's events %s",
-		took, opened.Sub(t0), audio, traceOf(r.id))
+	t.Logf("loadedmetadata %v after the engine was made; the platform's start (window, device, MFStartup, the audio check) %v before it (audio: %s); the engine's events %s; the demuxer's reads %v",
+		took, opened.Sub(t0), audio, traceOf(r.id), readsOf(r.id))
 	if took > 10*time.Second {
 		t.Errorf("loadedmetadata %v after the engine was made, want under 10 s", took)
 	}
@@ -500,9 +516,10 @@ func TestMFPlaysFixture(t *testing.T) {
 	}
 }
 
-// A seek while paused fires seeking and seeked and shows the frame there,
-// light grey, within 500 ms; paused, 2 s of the window drawing cost no
-// transfer and no repaint.
+// A seek while paused fires seeking and seeked, the engine's seek within
+// 2 s of Seek, and shows the frame there, light grey, within 250 ms of
+// seeked; paused, 2 s of the window drawing cost no transfer and no
+// repaint.
 func TestMFSeekAndPause(t *testing.T) {
 	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
 	r.draw()
@@ -518,15 +535,29 @@ func TestMFSeekAndPause(t *testing.T) {
 	// keyframe) is the runner's, 513 ms of a 514 ms seek on a slow one
 	// (patched-tooltips' push ci 44997553108: seeking@2191 ms, seeked@2704)
 	seeked := time.Now()
+	// the engine's part gets a loose bound of its own: a seek that hangs
+	// is a bug however slow the runner (513 ms on the slowest seen)
+	if d := seeked.Sub(t0); d > 2*time.Second {
+		t.Errorf("seeked %v after Seek(1.5 s), want within 2 s", d)
+	}
+	// drawn is its own flag: at is 0 when the frame is there at the first
+	// draw, within one tick of Windows' monotonic clock (0.5-15.6 ms):
+	// "light grey 0s after seeked" with {192 192 192} drawn failed as never
+	// drawn (fl1122-s-win 45031306261, flakes-1122b's push ci 45034453742;
+	// TestMFSeekAndPause's 1 in 25, flakes-1122)
 	var at time.Duration
+	var c color.RGBA
+	drawn := false
 	for time.Since(seeked) < 2*time.Second {
-		if c := r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
-			at = time.Since(seeked)
+		if c = r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
+			at, drawn = time.Since(seeked), true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if at == 0 || at > 250*time.Millisecond {
+	if !drawn {
+		t.Errorf("no light grey within 2 s of seeked (Seek(1.5 s) %v before; seeked at %v): %v drawn", seeked.Sub(t0), sk.State.Pos, c)
+	} else if at > 250*time.Millisecond {
 		t.Errorf("light grey %v after seeked (Seek(1.5 s) %v before; seeked at %v), want within 250 ms", at, seeked.Sub(t0), sk.State.Pos)
 	}
 	t.Logf("seeked to %v; light grey drawn %v after seeked, %v after Seek (the engine's seek %v)", sk.State.Pos, at, seeked.Sub(t0)+at, seeked.Sub(t0))
