@@ -4660,7 +4660,7 @@ jobs:
   fl1122-r-guard:
     if: ${{ !inputs.only || startsWith('fl1122-r-guard', inputs.only) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # budget, min (new job: no p95 yet)
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
