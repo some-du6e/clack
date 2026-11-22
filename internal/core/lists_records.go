@@ -270,7 +270,7 @@ type savedRecordState struct {
 	busy map[string]bool
 }
 
-var savedRecordStates sync.Map // *App -> *savedRecordState
+var savedRecordStates = newPerApp() // *App -> *savedRecordState
 
 func (a *App) savedRecords() *savedRecordState {
 	if v, ok := savedRecordStates.Load(a); ok {

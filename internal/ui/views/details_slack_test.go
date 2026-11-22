@@ -309,6 +309,9 @@ func TestDetailsSettingsSections(t *testing.T) {
 	if e.d.x.dlg.kind != cdDlgAIUse {
 		t.Fatalf("AI use opened dialog %d", e.d.x.dlg.kind)
 	}
+	if got := strings.Join(cdAIUsers(), ", "); got != "Slackbot, Search AI answers, Canvas AI, Slack MCP Server" {
+		t.Errorf("AI use bullets %q (the MCP server is everyone's since mcp_ai_channel_exclusions went)", got)
+	}
 	e.d.x.dlg.ok.Click()
 	e.until("conversations.setProperties", func() bool { return len(srv.seen("conversations.setProperties")) > 0 })
 	f := srv.seen("conversations.setProperties")[0].form

@@ -29,7 +29,7 @@ type fileStars struct {
 	loaded bool
 }
 
-var fileStarStores sync.Map // *App -> *fileStars
+var fileStarStores = newPerApp() // *App -> *fileStars
 
 func (a *App) fileStars() *fileStars {
 	if v, ok := fileStarStores.Load(a); ok {

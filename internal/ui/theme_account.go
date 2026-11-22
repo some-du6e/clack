@@ -255,5 +255,5 @@ func (a *App) followOSTheme() {
 // watcher runs off the UI goroutine); followOSTheme applies it if sync is
 // on.
 func (a *App) watchOSTheme() {
-	onOSScheme(func() { a.Post(a.followOSTheme) })
+	a.unhookAtRelease(onOSScheme(func() { a.Post(a.followOSTheme) }))
 }

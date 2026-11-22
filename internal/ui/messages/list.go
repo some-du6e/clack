@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
@@ -356,6 +357,53 @@ func (s *listState) onScreen() bool {
 	return false
 }
 
+// forgottenCores counts ForgetCore's calls; the next list drawn lets go
+// of the forgotten sessions' lists (dropForgottenLists).
+var forgottenCores atomic.Uint64
+
+// droppedAt is forgottenCores when the lists were last swept (UI goroutine).
+var droppedAt uint64
+
+// dropForgottenLists lets go of the lists, and the last-drawn slots, whose
+// hub is no longer its core's: a session ForgetCore let go of. The lists
+// are the UI goroutine's and ForgetCore runs on a session's stop, so the
+// next list drawn does it. Each kept its hub, and through it the session
+// and its App, reachable until another list took its key (ci-speed-3:
+// listCache held more finished tests' Apps than any root but one).
+func dropForgottenLists() {
+	n := forgottenCores.Load()
+	if n == droppedAt {
+		return
+	}
+	droppedAt = n
+	var hostCore *core.App
+	if lastHost != nil {
+		hostCore = lastHost.Core()
+	}
+	hubsMu.Lock()
+	defer hubsMu.Unlock()
+	stale := func(s *listState) bool { return s != nil && s.hb != nil && hubs[s.hb.app] != s.hb }
+	for k, s := range listCache {
+		if stale(s) {
+			delete(listCache, k)
+		}
+	}
+	if stale(lastChannel) {
+		lastChannel = nil
+	}
+	if stale(lastThread) {
+		lastThread = nil
+	}
+	for k, p := range paneLast {
+		if p != nil && stale(*p) {
+			delete(paneLast, k)
+		}
+	}
+	if _, ok := hubs[hostCore]; lastHost != nil && !ok {
+		lastHost = nil
+	}
+}
+
 // lastHost is the Host of the last message list drawn. Host components
 // (drawn inside plugin trees, possibly outside any list) reach core and
 // the popups through it; nil until a list has been drawn.
@@ -368,6 +416,7 @@ func stateFor(h Host, ch, ts string) *listState { return stateIn(h, ch, ts, "") 
 // rows, scroll position and inline editors over the shared conversation
 // model, so the same conversation can be open in both.
 func stateIn(h Host, ch, ts, pane string) *listState {
+	dropForgottenLists()
 	key := ch
 	if ts != "" {
 		key = ch + "/" + ts

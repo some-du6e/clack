@@ -63,6 +63,19 @@ func (fv *filesViewStore) addCollectionLocked(name, emoji string, fileIDs ...str
 	return c.ID
 }
 
+// SetFileCollectionType gives collection id another type (tests: a
+// server-side "recently_viewed" collection).
+func (s *Server) SetFileCollectionType(id, typ string) {
+	fv := s.filesView()
+	fv.mu.Lock()
+	defer fv.mu.Unlock()
+	for _, c := range fv.colls {
+		if c.ID == id {
+			c.Type = typ
+		}
+	}
+}
+
 // FileCollections returns the custom collections' names and their files
 // (tests), in the store's order.
 func (s *Server) FileCollections() map[string][]string {

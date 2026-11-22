@@ -106,7 +106,7 @@ type FilesViewCall struct {
 	Args   url.Values
 }
 
-var filesViewStores sync.Map // *Server -> *filesViewStore
+var filesViewStores = newPerServer() // *Server -> *filesViewStore
 
 func (s *Server) filesView() *filesViewStore {
 	if v, ok := filesViewStores.Load(s); ok {

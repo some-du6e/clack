@@ -18,7 +18,6 @@ func filesViewFake(t *testing.T) (*App, *fakeslack.Server) {
 	}
 	t.Cleanup(func() { _ = fs.Close() })
 	a := New(slack.New(fs.Creds()), store.New(""))
-	a.SetExperimentGroup("custom_file_sections", "") // unassigned, as fakeslack has it (core's defaults hold the account's group); tests turn it on
 	return a, fs
 }
 

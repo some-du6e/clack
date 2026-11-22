@@ -177,7 +177,7 @@ type appAboutStore struct {
 	m  map[string]*appAboutEntry
 }
 
-var appAboutIndex sync.Map // *App → *appAboutStore
+var appAboutIndex = newPerApp() // *App → *appAboutStore
 
 func (a *App) appAbout() *appAboutStore {
 	v, _ := appAboutIndex.LoadOrStore(a, &appAboutStore{m: map[string]*appAboutEntry{}})

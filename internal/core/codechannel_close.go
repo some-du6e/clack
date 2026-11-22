@@ -113,7 +113,7 @@ type codeOpenState struct {
 	conn         chan bool        // connection changes for the closer (true: connected)
 }
 
-var codeOpenStates sync.Map // *App → *codeOpenState
+var codeOpenStates = newPerApp() // *App → *codeOpenState
 
 func (a *App) codeOpen() *codeOpenState {
 	if v, ok := codeOpenStates.Load(a); ok {

@@ -67,7 +67,7 @@ func ptBetween(src, a, b string) (between, after string) {
 var soundsNS = i18n.NS("sounds")
 
 func (a *App) startLocale() {
-	i18n.OnChange(a.Invalidate)
+	a.unhookAtRelease(i18n.OnChange(a.Invalidate))
 	if l := a.prefs.Locale; l != "" && l != i18n.EnUS {
 		i18n.SetLocale(l, nil) // from the cache: no frame waits for it
 	}

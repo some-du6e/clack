@@ -42,13 +42,14 @@ func forgetGrants(a *App) {
 	pc.mu.Unlock()
 }
 
-// canUserSetTopicForChannelWithReasonById / canUserSetPurpose: without
-// the experiment a member who can post edits topic and description;
-// under channel_topic_purpose_setting_restrict_to_channel_managers only
-// the SET_CHANNEL_TOPIC / SET_CHANNEL_PURPOSE grants do, 1:1 DMs aside.
+// canUserSetTopicForChannelWithReasonById / canUserSetPurpose: only the
+// SET_CHANNEL_TOPIC / SET_CHANNEL_PURPOSE grants edit topic and
+// description, 1:1 DMs' topics aside, in every group. Slack dropped
+// channel_topic_purpose_setting_restrict_to_channel_managers and kept its
+// on path (boot-shared iJOl, GvU9; build 8f19be21ed7e, the 2026-11-21
+// drift), so the old gate forced to any group changes nothing.
 func TestTopicPurposeRestrictedToGrants(t *testing.T) {
 	a, f := testApp(t)
-	a.SetExperimentGroup("channel_topic_purpose_setting_restrict_to_channel_managers", "") // unassigned first (core's defaults hold the account's on)
 	a.S.PutConv(slack.Conversation{ID: "C2", Name: "random", IsChannel: true, IsMember: true})
 	a.S.PutConv(slack.Conversation{ID: "C3", Name: "elsewhere", IsChannel: true})
 	a.S.PutConv(slack.Conversation{ID: "C4", Name: "old", IsChannel: true, IsMember: true, IsArchived: true})
@@ -62,52 +63,46 @@ func TestTopicPurposeRestrictedToGrants(t *testing.T) {
 	}
 	next(t, evs, "permissions")
 
-	// unassigned (Slack's null): the member rule
-	if !a.CanSetTopic("C2") || !a.CanSetPurpose("C2") || !a.CanSetTopic("G1") || !a.CanSetTopic("D1") {
-		t.Error("a member can't set topic or description without the experiment")
-	}
-	if a.CanSetTopic("C3") || a.CanSetPurpose("C3") {
-		t.Error("a non-member can set the topic")
-	}
-	if a.CanSetTopic("C4") || a.CanSetPurpose("C4") || a.CanSetTopic("G2") || a.CanSetPurpose("G1") {
-		t.Error("archived channel, Slack Connect group DM or a group DM's purpose is editable")
-	}
-	for _, group := range []string{"off", "control"} {
-		a.SetExperimentGroup(ExpRestrictTopicPurpose, group)
-		if !a.CanSetTopic("C2") {
-			t.Errorf("%s: the member rule should hold", group)
+	const old = "channel_topic_purpose_setting_restrict_to_channel_managers"
+	for _, group := range []string{"", "off", "control", "on"} {
+		a.SetExperimentGroup(old, group)
+		if a.CanSetTopic("C2") || a.CanSetPurpose("C2") || a.CanSetTopic("G1") {
+			t.Errorf("%q: a member edits topic or description without the grants", group)
+		}
+		if !a.CanSetTopic("D1") {
+			t.Errorf("%q: a 1:1 DM's topic needs no grant", group)
+		}
+		if a.CanSetTopic("C3") || a.CanSetPurpose("C3") {
+			t.Errorf("%q: a non-member edits without the grants", group)
+		}
+		if a.CanSetTopic("C4") || a.CanSetPurpose("C4") || a.CanSetTopic("G2") || a.CanSetPurpose("G1") {
+			t.Errorf("%q: archived channel, Slack Connect group DM or a group DM's purpose is editable", group)
 		}
 	}
-
-	a.SetExperimentGroup(ExpRestrictTopicPurpose, "on")
-	if a.CanSetTopic("C2") || a.CanSetPurpose("C2") || a.CanSetTopic("G1") {
-		t.Error("on: editable without the grants")
-	}
-	if !a.CanSetTopic("D1") {
-		t.Error("on: a 1:1 DM's topic needs no grant")
-	}
+	a.ClearExperimentGroup(old)
 
 	forgetGrants(a)
 	f.reply["info"] = `{"ok":true,"allowed":["SET_CHANNEL_TOPIC","SET_CHANNEL_PURPOSE"]}`
 	waitGrants(t, a, "C2")
 	waitGrants(t, a, "C3")
-	if !a.CanSetTopic("C2") || !a.CanSetPurpose("C2") || !a.CanSetTopic("C3") {
-		t.Error("on: the grants don't allow it")
+	if !a.CanSetTopic("C2") || !a.CanSetPurpose("C2") || !a.CanSetTopic("C3") || !a.CanSetPurpose("C3") {
+		t.Error("the grants don't allow it")
 	}
-	if a.CanSetTopic("C4") {
-		t.Error("an archived channel's topic is editable with the grant")
+	if a.CanSetTopic("C4") || a.CanSetPurpose("C4") {
+		t.Error("an archived channel's topic or description is editable with the grants")
 	}
 
-	// a guest gets only what the grants give
-	a.ClearExperimentGroup(ExpRestrictTopicPurpose)
+	// a guest gets only what the grants give, and a 1:1 DM's topic isn't
+	// a guest's to set
 	forgetGrants(a)
 	f.reply["info"] = `{"ok":true,"allowed":[]}`
 	waitGrants(t, a, "C2")
+	waitGrants(t, a, "D1")
 	a.S.Self.IsRestricted = true
 	if u, ok := a.S.User("USELF"); ok {
 		u.IsRestricted = true
 	}
-	if a.CanSetTopic("C2") || a.CanSetPurpose("C2") {
+	if a.CanSetTopic("C2") || a.CanSetPurpose("C2") || a.CanSetTopic("D1") {
 		t.Error("a guest edits the topic without a grant")
 	}
 }

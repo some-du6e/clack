@@ -88,7 +88,7 @@ type ugRightsCache struct {
 	known   bool
 }
 
-var ugRightsIndex sync.Map // *App → *ugRightsCache
+var ugRightsIndex = newPerApp() // *App → *ugRightsCache
 
 func (a *App) ugRights() *ugRightsCache {
 	v, _ := ugRightsIndex.LoadOrStore(a, &ugRightsCache{})

@@ -438,7 +438,7 @@ type featureCache struct {
 	on      map[string]bool
 }
 
-var featureIndex sync.Map // *App → *featureCache
+var featureIndex = newPerApp() // *App → *featureCache
 
 func (a *App) features() *featureCache {
 	v, _ := featureIndex.LoadOrStore(a, &featureCache{on: map[string]bool{}})

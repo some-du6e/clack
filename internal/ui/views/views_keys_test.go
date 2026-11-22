@@ -1242,6 +1242,29 @@ func TestTodosKeysAndRealtimeLikeSlack(t *testing.T) {
 	}
 	e.until(t, "saved.delete once the toast is gone", func() bool { return log.count("saved.delete", nil) == 1 })
 
+	// later_todos_immediate_clear (new in build 8f19be21ed7e, on for the
+	// test account on 2026-11-21): Delete sends saved.delete at once and
+	// toasts "To-do cleared" with no Undo; a second clear while that toast
+	// shows counts onto it
+	app.SetExperimentGroup(core.ExpLaterTodosImmediateClear, "on")
+	e.until(t, "settled before the immediate clears", func() bool { return laterSettled(l) })
+	plain := len(h.toasts())
+	kbPress(e, key.NameHome, 0)
+	kbPress(e, key.NameDeleteForward, 0)
+	e.until(t, "saved.delete at once", func() bool { return log.count("saved.delete", nil) == 2 })
+	e.until(t, "the plain toast", func() bool { ts := h.toasts(); return len(ts) > plain && ts[len(ts)-1] == "To-do cleared" })
+	kbPress(e, key.NameHome, 0)
+	kbPress(e, key.NameDeleteForward, 0)
+	e.until(t, "the second saved.delete", func() bool { return log.count("saved.delete", nil) == 3 })
+	e.until(t, "the counted toast", func() bool { ts := h.toasts(); return ts[len(ts)-1] == "2 to-dos cleared" })
+	h.mu.Lock()
+	undos = append([]string(nil), h.undos...)
+	h.mu.Unlock()
+	if len(undos) != 1 {
+		t.Errorf("an immediate clear offered Undo: %q", undos)
+	}
+	app.ClearExperimentGroup(core.ExpLaterTodosImmediateClear)
+
 	lists := log.count("saved.list", nil)
 	mu.Lock()
 	items = append(items, map[string]any{"item_id": fakeslack.ViewsChannel, "item_type": "message", "ts": "1762700000.000100", "todo_state": "to_do", "date_created": 1762700000})
