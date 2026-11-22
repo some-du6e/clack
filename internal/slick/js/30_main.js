@@ -400,19 +400,40 @@ function syncFetchHook() {
 // body, silent: Electron's NotificationConstructorOptions, after Slack's
 // renderer made them), and one that doesn't permit it keeps it from
 // showing; the sound and the dock bounce Slack's renderer starts stay.
-// Clack asks at the same point, before its toast goes to the system
-// (S.allowNotification from slick.AllowNotification, ui notify.go), and
-// tells Go how many filters there are, so no toast waits on JS while
-// none is. Filtering showNotification's arguments, a followed thread's
-// reply (Slack's {message: the event, modelObject, options}) had no title
-// or body for them.
+// Clack asks at the same point for its own toasts, before one goes to the
+// system with the title and body it shows (S.allowNotification from
+// slick.AllowNotification, ui notify.go): their showNotification
+// arguments carry _clackToast, so the thunk's patch lets them by. Anything
+// else showNotification is dispatched with (a plugin's, a test's) is
+// asked over its arguments as it comes, as Slick's patch sees every
+// notification Slack shows: round 3 asked only at the finished toast, and
+// such a toast skipped the filters (Streamer Mode, Shut Up Slackbot).
+// Filtering only the arguments, a followed thread's reply (Slack's
+// {message: the event, modelObject, options}) had no title or body for
+// them. Go knows how many filters there are, and with none there's no
+// patch: no toast and no dispatch asks JS.
 
 const notificationFilters = new Set()
+let unpatchNotifications
 function syncNotificationPatch() {
   try {
     go('notificationFilters', notificationFilters.size)
   } catch (err) {
     console.error('[slick] notification filters:', err)
+  }
+  if (notificationFilters.size && !unpatchNotifications) {
+    unpatchNotifications = TA.redux.patchThunk('showNotification', (original) => (...args) => {
+      const opts = args[0] || {}
+      if (opts._clackToast) return original(...args) // asked at the finished toast
+      const message = opts.message
+      const body = typeof message === 'string' ? message : (message?.text ?? opts.body ?? '')
+      // Electron's NotificationConstructorOptions, from the arguments
+      if (!S.allowNotification({ ...opts, title: opts.title ?? '', subtitle: opts.subtitle, body, silent: opts.silent })) return () => undefined
+      return original(...args)
+    })
+  } else if (!notificationFilters.size && unpatchNotifications) {
+    unpatchNotifications()
+    unpatchNotifications = undefined
   }
 }
 S.allowNotification = (options) => {
