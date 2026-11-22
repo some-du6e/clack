@@ -143,7 +143,8 @@ type SearchPopover struct {
 	historyRect                      image.Rectangle
 
 	rows    []srRow
-	clicks  []widget.Clickable
+	clicks  []*widget.Clickable // rows[i]'s, kept by the row (keyClicks)
+	clickBy map[string]*widget.Clickable
 	sel     int  // the row Enter opens: the picked row, else the first one
 	picked  bool // a row is selected (Slack's selectedIndex isn't null)
 	ensure  bool
@@ -480,9 +481,7 @@ func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
 	}
 	p.full = rows
 	p.rows = p.visibleRows(rows)
-	for len(p.clicks) < len(p.rows) {
-		p.clicks = append(p.clicks, widget.Clickable{})
-	}
+	p.keyClicks()
 	// a picked row stays picked while it's still listed; otherwise the
 	// first row is the pseudo-selected one, whatever arrived above it
 	sel := -1
@@ -3135,4 +3134,30 @@ func srSegsText(segs []srSeg) string {
 		b.WriteString(s.Text)
 	}
 	return b.String()
+}
+
+// keyClicks gives each listed row its own Clickable, kept by the row (its
+// kind and id), as Slack keys the autocomplete's items: a press on a row
+// stays that row's when results arrive and the list changes under it.
+func (p *SearchPopover) keyClicks() {
+	if p.clickBy == nil || len(p.clickBy) > 1000 {
+		p.clickBy = map[string]*widget.Clickable{}
+	}
+	p.clicks = p.clicks[:0]
+	seen := map[string]int{}
+	for i := range p.rows {
+		k := strconv.Itoa(int(p.rows[i].kind)) + "\x00" + p.rows[i].id
+		if n := seen[k]; n > 0 { // the same row twice: each its own
+			seen[k]++
+			k += "\x00" + strconv.Itoa(n)
+		} else {
+			seen[k] = 1
+		}
+		c := p.clickBy[k]
+		if c == nil {
+			c = new(widget.Clickable)
+			p.clickBy[k] = c
+		}
+		p.clicks = append(p.clicks, c)
+	}
 }

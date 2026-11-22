@@ -40,7 +40,7 @@ func srResultRow(m slackc.Props) slackc.Props {
 // mirror hands the current page's message results to plugins.
 func (v *SearchView) mirror() {
 	t := tautRT.Load()
-	if t == nil || !t.Started() || v.tab != srTabMessages && v.tab != srTabDMs {
+	if v.noStore || t == nil || !t.Started() || v.tab != srTabMessages && v.tab != srTabDMs {
 		return
 	}
 	rows := make([]any, len(v.msgs))
@@ -63,7 +63,7 @@ func (v *SearchView) mirror() {
 // unpatched, or until the patched copy of this page has been computed).
 func (v *SearchView) storeResult(i int) slackc.Props {
 	t := tautRT.Load()
-	if t == nil || !t.SlicePatched("searchResults") || i >= len(v.msgs) {
+	if v.noStore || t == nil || !t.SlicePatched("searchResults") || i >= len(v.msgs) {
 		return nil
 	}
 	raw, ok := t.View("searchResults", srStoreWindow)

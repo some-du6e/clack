@@ -651,7 +651,7 @@ func (v *SearchView) chanButtons(gtx layout.Context, th *theme.Theme, i, right i
 func (v *SearchView) chanRow(gtx layout.Context, th *theme.Theme, cl *Colors, i, px, cw int) layout.Dimensions {
 	gtx.Constraints.Min = image.Point{}
 	ch := v.chans[i]
-	ui := &v.chanUI[i]
+	ui := v.chanUI[i]
 	n := len(v.chans)
 	bw := border1(gtx)
 	h := srChanRowH(gtx, i, n)
@@ -708,7 +708,7 @@ func (v *SearchView) chanRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 			}
 			at(gtx, b.join.Min, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Exact(b.join.Size())
-				return buttonGrp(gtx, th, &v.btns[i], BtnOutline, BtnMedium, label, "", 0, false, grp)
+				return buttonGrp(gtx, th, v.btns[i], BtnOutline, BtnMedium, label, "", 0, false, grp)
 			})
 			if s.temp {
 				at(gtx, b.caret.Min, func(gtx layout.Context) layout.Dimensions {
@@ -916,7 +916,7 @@ func (v *SearchView) handleChannels(gtx layout.Context) {
 			break
 		}
 		ch := v.chans[i]
-		ui := &v.chanUI[i]
+		ui := v.chanUI[i]
 		if v.rows[i].Clicked(gtx) || ui.open.Clicked(gtx) {
 			// ChannelListItem's navigate; openChannelResultInHome
 			RecordRecentConversation(ch.ID)
@@ -941,7 +941,7 @@ func (v *SearchView) handleChannels(gtx layout.Context) {
 // joinMenu is renderJoinMenu at the caret (position BottomRight).
 func (v *SearchView) joinMenu(gtx layout.Context, i int) {
 	y, ok := v.srChanRowY(gtx, i)
-	ui := &v.chanUI[i]
+	ui := v.chanUI[i]
 	if !ok || ui.caretR.Empty() {
 		return
 	}
