@@ -2182,6 +2182,21 @@ func (s *Store) CachedFeatureAccess(name string) (on, ok bool) {
 	return s.features[name], true
 }
 
+// CachedFeatures is the whole persisted feature answer (a copy; nil when
+// there is none).
+func (s *Store) CachedFeatures() map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.features == nil {
+		return nil
+	}
+	out := make(map[string]bool, len(s.features))
+	for k, v := range s.features {
+		out[k] = v
+	}
+	return out
+}
+
 // HasCachedPrefs reports whether prefs came from the disk cache.
 func (s *Store) HasCachedPrefs() bool {
 	s.mu.RLock()

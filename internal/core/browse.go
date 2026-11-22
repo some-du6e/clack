@@ -1030,7 +1030,6 @@ func (r usergroupRaw) over(g *slack.Usergroup) {
 		"handle":      func() { g.Handle = r.Handle },
 		"name":        func() { g.Name = r.Name },
 		"description": func() { g.Description = r.Description },
-		"user_count":  func() { g.UserCount = int(looseInt(r.UserCount)) },
 		"date_delete": func() { g.DateDelete = r.DateDelete },
 		"date_update": func() { g.DateUpdate = r.DateUpdate },
 		"team_id":     func() { g.TeamID = r.TeamID },
@@ -1041,6 +1040,9 @@ func (r usergroupRaw) over(g *slack.Usergroup) {
 			set()
 		}
 	}
+	// upsertEntity's user_count is parseInt(user_count) || 0 whether or not
+	// the answer has the key
+	g.UserCount = int(looseInt(r.UserCount))
 }
 
 // ---- channel tab bar ----

@@ -194,3 +194,62 @@ func TestUserGroupBrowserNoGroupsLikeSlack(t *testing.T) {
 		t.Errorf("no groups: %q", got)
 	}
 }
+
+// A cold boot with no persisted feature answer: the User Groups tab is in
+// the strip from the first frame and stays (Slack reads the features before
+// it draws the strip); a guest never has it.
+func TestUserGroupTabColdBootLikeSlack(t *testing.T) {
+	// the features answer is held until the strip has drawn (a slow
+	// network): the strip must not wait for it, nor change when it comes
+	hold := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
+	e, fs := previewEnvWith(t, func(fs *fakeslack.Server) {
+		fs.SetHook(func(method string, f url.Values) (any, bool) {
+			if method == "features.access.policies.list" {
+				<-hold
+			}
+			return nil, false
+		})
+	})
+	t.Cleanup(func() { release(); fs.SetHook(nil) })
+	e.a.Navigate("directories")
+	v, ok := e.a.views[Route("directories")].(*views.Directories)
+	if !ok { // mounted by the first frame
+		e.frame()
+		v, ok = e.a.views[Route("directories")].(*views.Directories)
+	}
+	if !ok {
+		t.Fatalf("no Directories: %T", e.a.views[Route("directories")])
+	}
+	if !v.TabShown(2) {
+		t.Fatal("User Groups isn't in the strip's first frame for a member")
+	}
+	for i := 0; i < 20; i++ { // the answer still out
+		e.frame()
+		if !v.TabShown(2) {
+			t.Fatal("User Groups left the strip while the features answer was out")
+		}
+	}
+	release()
+	for dl := time.Now().Add(3 * time.Second); time.Now().Before(dl); {
+		e.frame()
+		if !v.TabShown(2) {
+			t.Fatal("User Groups left the strip when the answer came (it allows the tab)")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.until("the features answer", 10*time.Second, func() bool {
+		on, known := e.a.data.core.FeatureState("user_groups__manage")
+		return on && known
+	})
+	c := e.a.data.core
+	u, _ := c.S.User(c.S.SelfID())
+	g := *u
+	g.IsRestricted = true
+	c.S.PutUsers([]slack.User{g})
+	e.frame()
+	if v.TabShown(2) {
+		t.Error("a guest has User Groups")
+	}
+}

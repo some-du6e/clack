@@ -220,7 +220,7 @@ func (a *App) featuresNow(ctx context.Context) {
 		if known {
 			return
 		}
-		if !loading {
+		if !loading { // one read, then go on with what the store holds
 			a.loadFeatures(ctx)
 			return
 		}

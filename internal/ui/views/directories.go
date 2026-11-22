@@ -340,7 +340,15 @@ func (d *Directories) tabHidden(i int) bool {
 	}
 	switch i {
 	case dirTabGroups:
-		return c.ViewerRestricted() || !c.FeatureAccess(core.FeatureUserGroupsManage)
+		if c.ViewerRestricted() {
+			return true
+		}
+		// with neither this launch's answer nor a persisted one the tab is
+		// drawn, and a later answer takes it away only for a viewer it
+		// doesn't apply to (Slack's blocking boot read never draws the
+		// strip without one)
+		on, known := c.FeatureState(core.FeatureUserGroupsManage)
+		return known && !on
 	case dirTabExternal, dirTabInvites:
 		return c.ViewerRestricted()
 	}

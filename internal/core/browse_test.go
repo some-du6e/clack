@@ -457,6 +457,7 @@ func TestFeatureAccessFromCache(t *testing.T) {
 	f.hooks["features.access.policies.list"] = func(url.Values) { <-hold }
 	f.reply["features.access.policies.list"] = `{"ok":true,"feature_policies":{"user_groups__manage":{"is_enabled":false}}}`
 	a.S.SetFeatureAccess(map[string]bool{FeatureUserGroupsManage: true})
+	a.installCachedFeatures() // Boot's, once meta.json's first part is in
 	if !a.FeatureAccess(FeatureUserGroupsManage) {
 		t.Error("the cached answer isn't read before the call answers")
 	}
