@@ -603,19 +603,20 @@ func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 	return r.row.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		v.box(gtx, sz, gtx.Dp(8), last)
+		// the row's hover and right-click target are the content's parent
+		// (threads.go msg): the body's links, mentions and images and the
+		// hover actions are hit first, and the row stays hovered over them
+		st := clip.Rect{Max: sz}.Push(gtx.Ops)
+		r.hv.Add(gtx.Ops)
+		event.Op(gtx.Ops, &r.ctx)
 		call.Add(gtx.Ops)
 		if (hovered || r.row.Hovered()) && !v.preview {
 			v.actions(gtx, r, it, sz)
 		}
+		st.Pop()
 		if ring {
 			v.vkRing(gtx, image.Rectangle{Max: sz}, gtx.Dp(8))
 		}
-		st := clip.Rect{Max: sz}.Push(gtx.Ops)
-		r.hv.Add(gtx.Ops)
-		pass := pointer.PassOp{}.Push(gtx.Ops)
-		event.Op(gtx.Ops, &r.ctx)
-		pass.Pop()
-		st.Pop()
 		return D{Size: sz}
 	})
 }

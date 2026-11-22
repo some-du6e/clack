@@ -15,6 +15,13 @@ on:
       - "internal/ui/people_invite_test.go"
       - "internal/ui/usergroup_browser_test.go"
       - "internal/ui/views/stub_guard_test.go"
+      - "internal/ui/views/sc_*.go"
+      - "internal/ui/slack_connect_hub_test.go"
+      - "internal/ui/external_org.go"
+      - "internal/ui/slack_connect_hub_fixes_test.go"
+      - "internal/ui/popups/loading_button.go"
+      - "internal/fakeslack/slack_connect_hub.go"
+      - "internal/core/slack_connect_*.go"
       - "internal/ui/views/kit.go"
       - "internal/ui/popups/usergroup_*.go"
       - "internal/ui/popups/profile_usergroup.go"
@@ -63,12 +70,12 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          go test -count=1 -v -run 'TestBrowseFilterParams|TestConnectedOrgsAndEnterpriseTeams|TestSearchUsergroups|TestCreateUsergroup|TestFeatureAccessFromCache' ./internal/core
+          go test -count=1 -v -run 'TestBrowseFilterParams|TestConnectedOrgsAndEnterpriseTeams|TestSearchUsergroups|TestCreateUsergroup|TestFeatureAccessFromCache|TestOrgSearchKeepsALeave' ./internal/core
           go test -count=1 -v -run 'TestMergeUsergroup|TestFeatureAccessRoundTrip' ./internal/store
-          go test -count=1 -v -run 'TestDir|TestNoUnsupportedToast' ./internal/ui/views
+          go test -count=1 -v -run 'TestDir|TestNoUnsupportedToast|TestNoNotYetAvailable|TestNotYetAvailableMatcher' ./internal/ui/views
           go test -count=1 -v -run 'TestCleanTextKeepsHangulFillers' ./internal/ui/theme
           xvfb-run -a go test -count=1 -v -run 'TestMaybeLeaveChannel' ./internal/ui/popups
-          xvfb-run -a go test -count=1 -v -run 'TestChannelBrowserFilters$|TestPeopleBrowserFacetFilters$|TestSidebarDraftPencil$|TestChannelBrowserShot$|TestPeopleBrowserInvite$|TestPeopleBrowserLowResultsBanner$|TestUserGroupBrowser' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelBrowserFilters$|TestPeopleBrowserFacetFilters$|TestSidebarDraftPencil$|TestChannelBrowserShot$|TestPeopleBrowserInvite$|TestPeopleBrowserLowResultsBanner$|TestUserGroupBrowser|TestSlackConnect' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

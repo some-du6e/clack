@@ -1231,6 +1231,26 @@ func (s *Store) putExtConvLocked(c slack.Conversation) {
 	}
 }
 
+// AddExtConv remembers c as PutExtConv does unless the store already
+// holds it (in the sidebar, or outside it with a name): a copy fetched
+// earlier never replaces what a later change stored (a leave's
+// is_member false). It reports whether it stored c.
+func (s *Store) AddExtConv(c slack.Conversation) bool {
+	if c.ID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.Convs[c.ID]; ok {
+		return false
+	}
+	if x, ok := s.ext[c.ID]; ok && x.Name != "" {
+		return false
+	}
+	s.putExtConvLocked(c)
+	return true
+}
+
 // ExtConv returns a non-sidebar conversation.
 func (s *Store) ExtConv(id string) (*slack.Conversation, bool) {
 	s.mu.RLock()
