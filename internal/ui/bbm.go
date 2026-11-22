@@ -621,6 +621,8 @@ func (a *App) bbmCrumbs() []bbmCrumb {
 			if p, ok := a.secondary.view.(*woPane); ok {
 				label = p.title(p.entity())
 			}
+		case secEmail: // FileDetails' titleContent
+			label = emailPaneTitle()
 		}
 		cs = append(cs, bbmCrumb{key: "secondary", label: label, last: true})
 	}

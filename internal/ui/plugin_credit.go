@@ -283,6 +283,13 @@ var creditNames struct {
 	by map[*store.Store]map[string]creditNameHit
 }
 
+// forgetCreditNames drops s's names: a stopped session's store.
+func forgetCreditNames(s *store.Store) {
+	creditNames.mu.Lock()
+	delete(creditNames.by, s)
+	creditNames.mu.Unlock()
+}
+
 // byName is the one member here called name, or "".
 func (r creditResolver) byName(name string) string {
 	f := store.FoldName(name)

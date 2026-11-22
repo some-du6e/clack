@@ -593,8 +593,7 @@ func (v *SearchView) fileTypeItems() []MenuItem {
 // moreMenu is MoreFiltersDropdown (the e8 template): the rows for the
 // filters the row doesn't show as pills (srMoreAllowed). Saved
 // preferences (the search_exclude_bots / search_only_my_channels prefs),
-// Results (Exact matches only; Exclude archived only with
-// search_explore_freshness_signals on), then From, In, With people,
+// Results (Exact matches only), then From, In, With people,
 // Message has (File, Link, Action), Message is (A direct message, In a
 // thread, Saved, To-dos with later_todos, Pinned, In Activity), Date, File
 // type, Reactions and Creator, each only when allowed. Every row maps to
@@ -663,17 +662,13 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 	if saved {
 		items = append(items, Sep())
 	}
-	exclArch := shown(srFExclArch) && c != nil && c.Experiment("search_explore_freshness_signals") == "on"
-	if shown(srFExact) || exclArch {
-		items = append(items, MenuItem{Header: "Results"}.In(nsSearch))
-	}
+	// Results: Exact matches only. +0La MoreFiltersDropdown dropped the
+	// Exclude archived item it showed under search_explore_freshness_signals
+	// (and the experiment with it: build 8f19be21ed7e, the 2026-11-21
+	// drift), so Clack has none either.
 	if shown(srFExact) {
+		items = append(items, MenuItem{Header: "Results"}.In(nsSearch))
 		items = append(items, checkT("Exact matches only", func() bool { return v.exact }, func() { v.exact = !v.exact; v.search(1) }))
-	}
-	if exclArch {
-		items = append(items, checkT("Exclude archived", func() bool { return v.exclArch }, func() { v.exclArch = !v.exclArch; v.search(1) }))
-	}
-	if shown(srFExact) || exclArch {
 		items = append(items, Sep())
 	}
 	if shown(srFFrom) {

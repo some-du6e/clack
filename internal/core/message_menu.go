@@ -192,7 +192,7 @@ type extrasState struct {
 	reporting bool
 }
 
-var extrasIndex sync.Map // *App → *extrasState
+var extrasIndex = newPerApp() // *App → *extrasState
 
 func (a *App) extras() *extrasState {
 	if v, ok := extrasIndex.Load(a); ok {

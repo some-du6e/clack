@@ -1,10 +1,12 @@
 package views
 
-// The Files sidebar's sections (custom_file_sections), Recently viewed,
+// The Files sidebar's sections (everyone's since Slack dropped
+// custom_file_sections: the 2026-11-21 drift), Recently viewed,
 // Bulk manage, the create menus and paging, against internal/fakeslack
 // (synthetic files only; nothing talks to Slack).
 
 import (
+	"context"
 	"image"
 	"os"
 	"strconv"
@@ -32,13 +34,16 @@ func (h *filesHost) ToastUndo(text string, undo func()) {
 	h.action = undo
 }
 
-// sectionsView is filesView with custom_file_sections on, a custom section
-// holding the shared canvas, and files.collections.list answered.
+// sectionsView is filesView with a custom section holding the shared
+// canvas, and files.collections.list answered again after the view's
+// mount asked.
 func sectionsView(t *testing.T) (*Files, *filesHost, *vaEnv, *fakeslack.Server, string) {
 	t.Helper()
 	v, h, e, fs := filesView(t)
 	id := fs.AddFileCollection("Launch", "", fakeslack.CanvasShared)
-	h.Core().SetExperimentGroup("custom_file_sections", "on")
+	if err := h.Core().ForceFetchFileCollections(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	e.until(t, "files.collections.list", func() bool { _, ok := h.Core().FileCollections(); return ok })
 	e.until(t, "the section's canvas", func() bool { return hasRow(v, fakeslack.CanvasShared+"-"+id) })
 	return v, h, e, fs, id
@@ -177,25 +182,22 @@ func TestFilesViewSectionsMove(t *testing.T) {
 	}
 }
 
-// Recently viewed: a canvas FileOpened joins it (not a starred one, or
-// with file sections one in a section); the × and the context menu's
-// "Remove from recently viewed" take it out.
+// Recently viewed: a canvas FileOpened joins it (not one in a section);
+// the × and the context menu's "Remove from recently viewed" take it out;
+// the collections' header and divider under it.
 func TestFilesViewRecentlyViewed(t *testing.T) {
 	v, h, e, _ := filesView(t)
 	a := h.Core()
+	e.until(t, "files.collections.list", func() bool { _, ok := a.FileCollections(); return ok })
 	a.FileOpened(fakeslack.CanvasShared)
 	e.until(t, "the recent row", func() bool { return hasRow(v, fakeslack.CanvasShared) })
-	keys := rowKeys(v)
-	if !strings.Contains(keys, "spacer-1 "+core.RecentlyViewedCollection+" "+fakeslack.CanvasShared+" spacer-2 starred-canvas-header") {
-		t.Errorf("rows %q", keys)
-	}
 	var row sbRow
 	for _, r := range v.sidebarRows() {
 		if r.key == fakeslack.CanvasShared {
 			row = r
 		}
 	}
-	if got := menuLabels(v.fileRowMenu(row)); got != "Copy link to canvas|-|Open in split view|-|Remove from recently viewed" {
+	if got := menuLabels(v.fileRowMenu(row)); got != "Move to section|-|Copy link to canvas|-|Open in split view|-|Remove from recently viewed" {
 		t.Errorf("recent canvas menu %q", got)
 	}
 	v.dismissRow(row)
@@ -203,19 +205,18 @@ func TestFilesViewRecentlyViewed(t *testing.T) {
 	if hasRow(v, fakeslack.CanvasShared) || len(a.RecentlyViewedFileIDs()) != 0 {
 		t.Errorf("× kept it: %s", rowKeys(v))
 	}
-	// starred files stay out (no file sections)
-	it := *v.item(fakeslack.CanvasDM)
-	v.toggleStar(it.File)
+	// a starred canvas (in the starred collection) stays out
+	if _, err := a.MoveFileToCollection(context.Background(), fakeslack.CanvasDM, fakeslack.StarredCollectionID); err != nil {
+		t.Fatal(err)
+	}
 	a.FileOpened(fakeslack.CanvasDM)
 	if ids := a.RecentlyViewedFileIDs(); len(ids) != 0 {
 		t.Errorf("a starred canvas joined Recently viewed: %v", ids)
 	}
-	// with file sections: the collection header and its divider
+	// the collection header and its divider
 	a.FileOpened(fakeslack.CanvasShared)
-	a.SetExperimentGroup("custom_file_sections", "on")
-	e.until(t, "files.collections.list", func() bool { _, ok := a.FileCollections(); return ok })
 	e.frame()
-	keys = rowKeys(v)
+	keys := rowKeys(v)
 	if !strings.Contains(keys, "file-collections-divider "+core.RecentlyViewedCollection+" "+fakeslack.CanvasShared+" recently-viewed-collections-divider coll:") {
 		t.Errorf("sections rows %q", keys)
 	}
@@ -265,18 +266,22 @@ func TestFilesViewBulkManage(t *testing.T) {
 	}
 }
 
-// The create menus and the gear: "+" without file sections has Canvas
-// and List; "New" follows the section; no gear without file sections.
+// The create menus and the gear: "+" has Canvas, List and Sidebar
+// section; "New" follows the section; the gear has Bulk manage files (not
+// on a free plan). File sections are everyone's since Slack dropped
+// custom_file_sections (the 2026-11-21 drift).
 func TestFilesViewCreateMenus(t *testing.T) {
-	v, _, _, _ := filesView(t)
-	if got := menuLabels(v.plusMenuItems()); got != "Canvas|List" {
+	v, h, _, _ := filesView(t)
+	h.Core().SetExperimentGroup("custom_file_sections", "off") // the dropped gate: no change
+	if got := menuLabels(v.plusMenuItems()); got != "Canvas|List|Sidebar section" {
 		t.Errorf("+ menu %q", got)
 	}
-	if got := v.plusMenuItems()[0].Subtitle + " / " + v.plusMenuItems()[1].Subtitle; got != "Create and share content / Track and manage projects" {
+	items := v.plusMenuItems()
+	if got := items[0].Subtitle + " / " + items[1].Subtitle + " / " + items[2].Subtitle; got != "Create and share content / Track and manage projects / Group and organize your files" {
 		t.Errorf("subtitles %q", got)
 	}
-	if n := len(v.gearMenuItems()); n != 0 {
-		t.Errorf("gear items without file sections: %d", n)
+	if got := menuLabels(v.gearMenuItems()); got != "Bulk manage files" {
+		t.Errorf("gear %q", got)
 	}
 	for nav, want := range map[int]string{0: "New canvas|New list", 1: "New canvas", 2: "New list"} {
 		v.nav = nav
@@ -451,4 +456,58 @@ func TestFilesViewNestedClicks(t *testing.T) {
 	if len(h.opened) != before || len(h.Core().RecentlyViewedFileIDs()) != 0 {
 		t.Errorf("× click: opened %v, recents %v", h.opened[before:], h.Core().RecentlyViewedFileIDs())
 	}
+}
+
+// The rail's Files peek rows carry FileSectionDropdownButton for every
+// account (boot-render's peek rows: FileActions renderFavoriteButton, the
+// section button), and its click opens FileSectionMoveToMenu. With file
+// sections everyone's since the 2026-11-21 drift, the old star never draws.
+func TestFilesPeekSectionButton(t *testing.T) {
+	v, h, e, _, _ := sectionsView(t)
+	v.PeekOpened(func() {})
+	e.draw = func(gtx layout.Context) {
+		v.LayoutPeek(gtx)
+		for _, o := range h.open() {
+			o.Layout(gtx)
+		}
+	}
+	var it fileItem
+	e.until(t, "a canvas or list in the peek", func() bool {
+		items, ok := v.peekKeys()
+		for _, x := range items {
+			if x.isCanvas() || x.isList() {
+				it = x
+				return ok
+			}
+		}
+		return false
+	})
+	c := v.clicksOf(it.ID)
+	c.starSize = image.Point{} // the Files tab drew this file's button too
+	e.frame()
+	if c.starSize == (image.Point{}) {
+		t.Fatalf("the peek's %s row has no section button", it.ID)
+	}
+	n := len(h.open())
+	c.star.Click()
+	e.frame()
+	if len(h.open()) != n+1 {
+		t.Fatalf("the section button's click opened %d overlays, want FileSectionMoveToMenu", len(h.open())-n)
+	}
+	if _, ok := h.open()[len(h.open())-1].(*popups.Menu); !ok {
+		t.Errorf("the click opened %T, want the move menu", h.open()[len(h.open())-1])
+	}
+	dismissAll(h)
+	// Starred lists every collection's files (u1Hg gU): the shared canvas
+	// sits in Launch, not in the old files.favorites set
+	v.pk.starred.Value = true
+	e.until(t, "Starred lists the collections' files", func() bool {
+		items, ok := v.peekKeys()
+		for _, x := range items {
+			if x.ID == fakeslack.CanvasShared {
+				return ok
+			}
+		}
+		return false
+	})
 }

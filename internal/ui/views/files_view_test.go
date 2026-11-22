@@ -1,10 +1,11 @@
 package views
 
 // The Files view's file actions against internal/fakeslack (synthetic
-// files only): starring, the ⋯ menu, Delete, Edit file details, list
+// files only): the ⋯ menu, Delete, Edit file details, list
 // templates and the file opener.
 
 import (
+	"context"
 	"image"
 	"os"
 	"strings"
@@ -46,10 +47,8 @@ func (h *filesHost) last() string {
 func filesView(t *testing.T) (*Files, *filesHost, *vaEnv, *fakeslack.Server) {
 	t.Helper()
 	app, fs := vaFake(t)
-	// without file sections, as fakeslack's experiments.getByUser has it
-	// (the account and core's defaults have custom_file_sections on); the
-	// sections tests turn it on (sectionsView)
-	app.SetExperimentGroup("custom_file_sections", "")
+	// file sections are everyone's: Slack dropped custom_file_sections and
+	// kept its on path (the 2026-11-21 drift)
 	h := &filesHost{vaHost: &vaHost{slickHost: &slickHost{app: app, th: theme.New(false)}}}
 	v := NewFiles(h)
 	e := &vaEnv{size: image.Pt(1200, 900)}
@@ -84,29 +83,20 @@ func menuLabels(items []popups.MenuItem) string {
 	return strings.Join(out, "|")
 }
 
-// The ⋯ menu on your own canvas, and the star: files.favorites.add, the
-// canvas under Starred, "Unstar canvas", then files.favorites.remove.
+// The ⋯ menu on your own canvas: no star row, since a canvas or list
+// goes to Starred through its section button (FileSectionDropdownButton)
+// now that file sections are everyone's (Slack dropped
+// custom_file_sections: the 2026-11-21 drift), even with the old gate
+// forced off.
 func TestFilesViewStarAndMenu(t *testing.T) {
-	v, _, e, fs := filesView(t)
+	v, h, _, _ := filesView(t)
+	h.Core().SetExperimentGroup("custom_file_sections", "off")
 	it := *v.item(fakeslack.CanvasDM)
-	want := "Add to saved|Add to starred|Copy link to canvas|-|Open in split view|-|Delete canvas"
+	want := "Add to saved|Copy link to canvas|-|Open in split view|-|Delete canvas"
 	if got := menuLabels(v.fileMenuItems(it)); got != want {
 		t.Errorf("canvas menu = %s\nwant %s", got, want)
 	}
-	v.toggleStar(it.File)
-	e.until(t, "the star", func() bool { s := fs.StarredFiles(); return len(s) == 1 && s[0] == fakeslack.CanvasDM })
-	if st, _, _ := v.starred.get(); len(st) != 1 || st[0].ID != fakeslack.CanvasDM {
-		t.Errorf("Starred rows = %+v", st)
-	}
-	if got := menuLabels(v.fileMenuItems(it)); !strings.Contains(got, "Unstar canvas") {
-		t.Errorf("starred canvas menu = %s", got)
-	}
-	v.toggleStar(it.File)
-	e.until(t, "the unstar", func() bool { return len(fs.StarredFiles()) == 0 })
-	if st, _, _ := v.starred.get(); len(st) != 0 {
-		t.Errorf("Starred rows after unstar = %+v", st)
-	}
-	// someone else's list: no Delete, Unstar list once starred
+	// someone else's list: no Delete
 	for _, x := range v.items {
 		if x.isList() && x.User != fakeslack.SelfID {
 			got := menuLabels(v.fileMenuItems(x))
@@ -212,7 +202,9 @@ func TestFilesViewShots(t *testing.T) {
 		h.th = theme.New(dark)
 		e.until(t, "the templates", func() bool { return len(v.templateItems()) == 3 })
 		it := *v.item(fakeslack.CanvasDM)
-		v.toggleStar(it.File)
+		if _, err := h.Core().MoveFileToCollection(context.Background(), it.ID, fakeslack.StarredCollectionID); err != nil {
+			t.Fatal(err)
+		}
 		e.until(t, "the star", func() bool { return len(fs.StarredFiles()) == 1 })
 		e.frame()
 		vaShot(t, e, "files-starred", dark)

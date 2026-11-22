@@ -81,7 +81,7 @@ func TestLoadingPauseAsksNoFrames(t *testing.T) {
 		t.Fatalf("after the click: %+v, want a player loading", st)
 	}
 	st.Player.Pause()
-	waitFor(t, "paused", 5*time.Second, func() bool { return !state(t, c, r, f).Playing && state(t, c, r, f).Player.State().Paused })
+	waitForTile(t, c, r, f, "paused", 5*time.Second, func() bool { return !state(t, c, r, f).Playing && state(t, c, r, f).Player.State().Paused })
 	time.Sleep(50 * time.Millisecond)
 	if st := state(t, c, r, f); st.Loading {
 		t.Error("paused before it played, it still loads: the spinner goes on")
@@ -116,7 +116,7 @@ func TestSecondClickWhileLoadingPlays(t *testing.T) {
 	if st.Loading {
 		t.Error("still loading after the second click: the spinner should end")
 	}
-	waitFor(t, "playing", 10*time.Second, func() bool {
+	waitForTile(t, c, r, f, "playing", 10*time.Second, func() bool {
 		st := state(t, c, r, f)
 		return st.Playing && st.Player != nil && !st.Player.State().Paused
 	})
@@ -149,7 +149,7 @@ func TestSpinnerQuietFrames(t *testing.T) {
 	if d := d(); d < 10 {
 		t.Errorf("%d quiet frames in 300 ms of loading, want the spinner's (about 18)", d)
 	}
-	waitFor(t, "playing", 15*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
+	waitForTile(t, c, r, f, "playing", 15*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
 	time.Sleep(100 * time.Millisecond)
 	d = spun()
 	time.Sleep(300 * time.Millisecond)
@@ -165,7 +165,7 @@ func TestLoadErrorStopsSpinner(t *testing.T) {
 	f := videoFile("F1")
 	layoutWakes(c, r, f)
 	click(c, r, f)
-	waitFor(t, "the error", 10*time.Second, func() bool { return state(t, c, r, f).Err != 0 })
+	waitForTile(t, c, r, f, "the error", 10*time.Second, func() bool { return state(t, c, r, f).Err != 0 })
 	time.Sleep(50 * time.Millisecond)
 	if st := state(t, c, r, f); st.Loading {
 		t.Error("the load failed and the tile still loads: the spinner goes on")
@@ -192,7 +192,7 @@ func TestLoadingPillShowsDuration(t *testing.T) {
 	f := videoFile("F1")
 	layoutWakes(c, r, f)
 	click(c, r, f)
-	waitFor(t, "the play event", 5*time.Second, func() bool { st := state(t, c, r, f); return st.Playing || !st.Loading })
+	waitForTile(t, c, r, f, "the play event", 5*time.Second, func() bool { st := state(t, c, r, f); return st.Playing || !st.Loading })
 	st := state(t, c, r, f)
 	if !st.Loading {
 		t.Skip("the fixture loaded before the play event was seen")

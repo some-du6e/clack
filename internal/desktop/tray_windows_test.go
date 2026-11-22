@@ -5,6 +5,7 @@ package desktop
 import (
 	"os"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -81,5 +82,63 @@ func TestPutUTF16(t *testing.T) {
 	putUTF16(b[:], "abcdef")
 	if got := windows.UTF16ToString(b[:]); got != "abc" || b[3] != 0 {
 		t.Errorf("got %q %v", got, b)
+	}
+}
+
+// Windows ending the session sends every top-level window
+// WM_QUERYENDSESSION, then WM_ENDSESSION, and ends the process once those
+// return: the tray's hidden window answers yes and hands OnSessionEnd the
+// reason, which Clack logs as its exit line before it goes. A cancelled
+// end (WM_ENDSESSION with FALSE) says nothing.
+func TestTraySessionEnd(t *testing.T) {
+	if os.Getenv("CLACK_WINDOWS_TRAY_TESTS") == "" {
+		t.Skip("CLACK_WINDOWS_TRAY_TESTS not set")
+	}
+	// an earlier test's Close posts WM_CLOSE: its tray thread lets go a
+	// moment later
+	var tr *Tray
+	var err error
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		if tr, err = StartTray("Clack test", nil, nil); err != errTrayAlreadyRunning || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("StartTray: %v", err)
+	}
+	defer tr.Close()
+	got := make(chan string, 4)
+	tr.OnSessionEnd(func(why string) { got <- why })
+	tr.mu.Lock()
+	hwnd := uintptr(tr.hwnd)
+	tr.mu.Unlock()
+	const closeApp, logoff = 0x1, 0x80000000
+	if r, _, _ := procSendMessageW.Call(hwnd, wmQueryEndSess, 0, logoff); r != 1 {
+		t.Errorf("WM_QUERYENDSESSION answered %d, want TRUE", r)
+	}
+	procSendMessageW.Call(hwnd, wmEndSession, 0, logoff) // cancelled
+	for _, c := range []struct {
+		lp   uintptr
+		want string
+	}{
+		{logoff, "Windows is signing the user out (WM_ENDSESSION)"},
+		{0, "Windows is shutting down or restarting (WM_ENDSESSION)"},
+		{closeApp, "an installer or update is replacing Clack's files (Windows Restart Manager closed it) (WM_ENDSESSION)"},
+	} {
+		procSendMessageW.Call(hwnd, wmEndSession, 1, c.lp)
+		select {
+		case why := <-got:
+			if why != c.want {
+				t.Errorf("lParam %#x: %q, want %q", c.lp, why, c.want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("lParam %#x: OnSessionEnd wasn't called", c.lp)
+		}
+	}
+	select {
+	case why := <-got:
+		t.Errorf("an extra call: %q (the cancelled end?)", why)
+	default:
 	}
 }

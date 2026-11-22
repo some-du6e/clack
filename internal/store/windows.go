@@ -65,6 +65,7 @@ func (s *Store) AddWindow(ch string, msgs []slack.Message, start, end string, ha
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs)
 	msgs = s.liveKeepLocked(ch, msgs, since)
 	s.readWindowLocked(ch, msgs, since)
 	if len(msgs) == 0 && hasNewer {

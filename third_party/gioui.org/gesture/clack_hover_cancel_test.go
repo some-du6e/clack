@@ -15,7 +15,7 @@ import (
 	"gioui.org/op/clip"
 )
 
-// Clack patch 58: a Hover the pointer leaves in a frame that doesn't lay
+// Clack patch 60: a Hover the pointer leaves in a frame that doesn't lay
 // it out (a message's gutter time, drawn only while its row is hovered)
 // never reads the Leave: the router drops it with the handler. When the
 // Hover is laid out again its first event is the new handler's Cancel,

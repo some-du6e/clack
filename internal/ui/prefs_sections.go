@@ -255,18 +255,30 @@ func panelPad(gtx layout.Context) image.Point { return image.Pt(gtx.Dp(28), gtx.
 // box, w drawing at the content box as before (gtx's max size; w's own
 // height is what scrolls).
 func panelList(gtx layout.Context, l *layout.List, w layout.Widget) layout.Dimensions {
+	return panelListN(gtx, l, 1, func(gtx layout.Context, _ int) layout.Dimensions { return w(gtx) })
+}
+
+// panelListN is panelList with n elements, one under the other, the first
+// below the panel's top padding: the list lays out only the elements in
+// view, so a long page in many elements scrolls without laying out the
+// rest (the plugin library's rows).
+func panelListN(gtx layout.Context, l *layout.List, n int, el func(gtx layout.Context, i int) layout.Dimensions) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	pad := panelPad(gtx)
 	t := op.Offset(image.Pt(-pad.X, -pad.Y)).Push(gtx.Ops)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(sz.X+2*pad.X, sz.Y+pad.Y))
-	l.Layout(g, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+	l.Layout(g, n, func(gtx layout.Context, i int) layout.Dimensions {
 		c := gtx
 		c.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X, 1<<24)}
-		ct := op.Offset(pad).Push(gtx.Ops)
-		d := w(c)
+		top := 0
+		if i == 0 {
+			top = pad.Y
+		}
+		ct := op.Offset(image.Pt(pad.X, top)).Push(gtx.Ops)
+		d := el(c, i)
 		ct.Pop()
-		return layout.Dimensions{Size: image.Pt(sz.X+2*pad.X, d.Size.Y+pad.Y)}
+		return layout.Dimensions{Size: image.Pt(sz.X+2*pad.X, d.Size.Y+top)}
 	})
 	t.Pop()
 	return layout.Dimensions{Size: sz}

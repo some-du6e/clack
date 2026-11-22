@@ -320,18 +320,66 @@ func TestBrowsePeople(t *testing.T) {
 	}
 }
 
+// Off a grid the user group directory is fetchPaginatedUserGroupsWithQuery's
+// search.team (D8Wa TC): groups and not external ones, a fuzzy_with_email
+// clause per word, 50 a page, getSortParams' sorts ("date" for the
+// directory's date sorts), include_deleted unless deactivated groups are
+// left out, org_wide_aware.
 func TestSearchUsergroups(t *testing.T) {
 	a, f := testApp(t)
-	f.reply["usergroups.search"] = `{"ok":true,"usergroups":[
+	f.reply["search.team"] = `{"ok":true,"items":[
 		{"id":"S1","handle":"eng","name":"Engineering","description":"builders","user_count":"5"},
-		{"id":"S2","handle":"ops","name":"Ops","user_count":7}],"num_found":2}`
+		{"id":"S2","handle":"ops","name":"Ops","user_count":7,"date_delete":1700000000}],"num_found":12,"next_cursor_mark":"c2"}`
 	ctx := context.Background()
-	gs, err := a.SearchUsergroups(ctx, UsergroupOpts{Query: "@en"})
-	if err != nil || len(gs) != 2 {
-		t.Fatalf("groups: %+v %v", gs, err)
+	pg, err := a.SearchUsergroups(ctx, UsergroupOpts{Query: "en gin"})
+	if err != nil || len(pg.Groups) != 2 || pg.Total != 12 || pg.Next != "c2" {
+		t.Fatalf("page: %+v %v", pg, err)
 	}
-	if g := gs[0]; g.ID != "S1" || g.Handle != "eng" || g.Name != "Engineering" || g.Description != "builders" || g.UserCount != 5 || gs[1].UserCount != 7 {
+	gs := pg.Groups
+	if g := gs[0]; g.ID != "S1" || g.Handle != "eng" || g.Name != "Engineering" || g.Description != "builders" || g.UserCount != 5 || gs[1].UserCount != 7 || gs[1].DateDelete == 0 {
 		t.Errorf("groups: %+v", gs)
+	}
+	p := f.last("search.team")
+	for k, want := range map[string]string{"sort": "name", "sort_dir": "asc", "include_users": "false", "include_deleted": "1",
+		"count": "50", "org_wide_aware": "true",
+		"query": `{"clauses":[{"type":"is","value":"group"},{"type":"external","value":false},{"type":"fuzzy_with_email","value":"en"},{"type":"fuzzy_with_email","value":"gin"}],"type":"and"}`} {
+		if formVal(p, k) != want {
+			t.Errorf("%s = %q, want %q", k, formVal(p, k), want)
+		}
+	}
+	if p.Has("cursor_mark") || p.Has("keyword") {
+		t.Errorf("first page sent %v", p)
+	}
+	if a.StoredUsergroup("S2").DateDelete == 0 {
+		t.Error("the deactivated group isn't in the store (bulkAddGroups)")
+	}
+	if us, _ := a.Usergroups(ctx, "ops", 0); len(us) != 0 {
+		t.Errorf("a deactivated group is offered to mention: %+v", us)
+	}
+	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{Sort: "date_create", Desc: true, ExcludeDisabled: true, Cursor: "c2"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.last("search.team"); formVal(p, "sort") != "date" || formVal(p, "sort_dir") != "desc" || p.Has("include_deleted") || formVal(p, "cursor_mark") != "c2" {
+		t.Errorf("date sort, next page: %v", p)
+	}
+}
+
+// On a grid it is userGroupsForSearcher's usergroups.search (wBUp _): the
+// keyword, sort, include_hidden false, include_disabled, 50 a page from
+// cursor_mark; num_found and next_cursor_mark page it.
+func TestSearchUsergroupsGrid(t *testing.T) {
+	a, f := testApp(t)
+	a.C.Creds.EnterpriseID = "E1"
+	f.reply["usergroups.search"] = `{"ok":true,"usergroups":[
+		{"id":"S1","handle":"eng","name":"Engineering","description":"builders","user_count":"5","team_id":"T1"},
+		{"id":"S2","handle":"ops","name":"Ops","user_count":7}],"num_found":2181,"next_cursor_mark":"AoIu"}`
+	ctx := context.Background()
+	pg, err := a.SearchUsergroups(ctx, UsergroupOpts{Query: "@en"})
+	if err != nil || len(pg.Groups) != 2 || pg.Total != 2181 || pg.Next != "AoIu" {
+		t.Fatalf("page: %+v %v", pg, err)
+	}
+	if g := pg.Groups[0]; g.ID != "S1" || g.UserCount != 5 || g.TeamID != "T1" || pg.Groups[1].UserCount != 7 {
+		t.Errorf("groups: %+v", pg.Groups)
 	}
 	p := f.last("usergroups.search")
 	for k, want := range map[string]string{"keyword": "en", "sort": "name", "sort_dir": "asc", "include_hidden": "false",
@@ -340,14 +388,69 @@ func TestSearchUsergroups(t *testing.T) {
 			t.Errorf("%s = %q, want %q", k, formVal(p, k), want)
 		}
 	}
-	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{Sort: "member_count", Desc: true, Count: 10}); err != nil {
-		t.Fatal(err)
+	if p.Has("cursor_mark") {
+		t.Errorf("the first page sent cursor_mark %q", formVal(p, "cursor_mark"))
 	}
-	if p := f.last("usergroups.search"); formVal(p, "sort") != "member_count" || formVal(p, "sort_dir") != "desc" || formVal(p, "count") != "10" {
+	f.reply["usergroups.search"] = `{"ok":true,"usergroups":[],"num_found":2181,"next_cursor_mark":"AoIu"}`
+	pg, err = a.SearchUsergroups(ctx, UsergroupOpts{Sort: "member_count", Desc: true, Count: 10, Cursor: "AoIu", ExcludeDisabled: true})
+	if err != nil || pg.Next != "" {
+		t.Fatalf("a cursor answered with itself is the end: %+v %v", pg, err)
+	}
+	if p := f.last("usergroups.search"); formVal(p, "sort") != "member_count" || formVal(p, "sort_dir") != "desc" || formVal(p, "count") != "10" ||
+		formVal(p, "cursor_mark") != "AoIu" || formVal(p, "include_disabled") != "false" {
 		t.Errorf("member sort: %v", p)
 	}
 	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{Sort: "bogus"}); err != nil || formVal(f.last("usergroups.search"), "sort") != "name" {
 		t.Errorf("bogus sort not normalized: %v", err)
+	}
+}
+
+// createUserGroup: usergroups.create with the form's fields, then
+// usergroups.users.update with the members step's picks (no team_id).
+func TestCreateUsergroup(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["usergroups.create"] = `{"ok":true,"usergroup":{"id":"S9","handle":"design","name":"Design","team_id":"T1","user_count":0}}`
+	f.reply["usergroups.users.update"] = `{"ok":true,"usergroup":{"id":"S9","users":["U1","U2"]}}`
+	ctx := context.Background()
+	g, err := a.CreateUsergroup(ctx, UsergroupCreate{TeamID: "T1", Name: "  Design ", Handle: "design", Channels: []string{"C1", "G2"},
+		EnableSection: true, Users: []string{"U1", "U2"}})
+	if err != nil || g.ID != "S9" || g.Handle != "design" {
+		t.Fatalf("created %+v %v", g, err)
+	}
+	p := f.last("usergroups.create")
+	for k, want := range map[string]string{"name": "Design", "handle": "design", "team_id": "T1", "channels": "C1,G2", "enable_section": "true"} {
+		if formVal(p, k) != want {
+			t.Errorf("create %s = %q, want %q", k, formVal(p, k), want)
+		}
+	}
+	if p.Has("description") || p.Has("additional_channels") {
+		t.Errorf("create sent empty fields: %v", p)
+	}
+	u := f.last("usergroups.users.update")
+	if formVal(u, "usergroup") != "S9" || formVal(u, "users") != "U1,U2" || u.Has("team_id") {
+		t.Errorf("users.update %v", u)
+	}
+	if a.StoredUsergroup("S9").Handle != "design" {
+		t.Error("the new group isn't stored for its pane")
+	}
+	if ids, _ := a.S.GroupUsers("S9"); len(ids) != 2 {
+		t.Errorf("members %v", ids)
+	}
+	// no members: no users.update; an error is the create's
+	f.reply["usergroups.create"] = `{"ok":false,"error":"name_already_exists"}`
+	f.mu.Lock()
+	n := len(f.calls)
+	f.mu.Unlock()
+	if _, err := a.CreateUsergroup(ctx, UsergroupCreate{Name: "Design", Handle: "design2"}); err == nil {
+		t.Error("name_already_exists didn't fail the create")
+	}
+	f.mu.Lock()
+	later := append([]string(nil), f.calls[n:]...)
+	f.mu.Unlock()
+	for _, m := range later {
+		if m == "usergroups.users.update" {
+			t.Error("a failed create still updated members")
+		}
 	}
 }
 

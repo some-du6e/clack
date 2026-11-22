@@ -37,8 +37,27 @@ func attMime(name string) string { return mime.TypeByExtension(filepath.Ext(name
 // file is Slack's file object for the pending upload.
 func (it attItem) file() slackc.Props {
 	v := it.v
+	// a draft's file the store doesn't have yet is Slack's unknown object,
+	// one that never came its non-existent one (draft_meta.go): a plugin's
+	// MessagePane gets no name made of the id
+	switch {
+	case v.loading:
+		return slackc.Props{"id": it.fileID(), "isUnknown": true}
+	case v.gone:
+		return slackc.Props{"id": it.fileID(), "isNonExistent": true}
+	}
 	m := attMime(v.name)
 	return slackc.Props{"name": v.name, "title": v.title, "size": v.size, "mimetype": m, "type": m}
+}
+
+// fileID is the chip's Slack file id ("" before its upload gave it one).
+func (it attItem) fileID() string {
+	it.a.mu.Lock()
+	defer it.a.mu.Unlock()
+	if p := it.v.c.prepared; p != nil {
+		return p.ID
+	}
+	return ""
 }
 
 func (it attItem) pendingID() string { return attPendingID(it.v.c.id) }
@@ -53,7 +72,7 @@ func (it attItem) props() slackc.Props {
 		"$key": it.pendingID(),
 		"pendingFile": slackc.Props{
 			"pendingFileId": it.pendingID(),
-			"title":         it.v.title,
+			"title":         it.shownTitle(),
 			"file":          it.file(),
 		},
 		"isUploading": it.v.preparing,
@@ -83,7 +102,15 @@ func (it attItem) layoutFieldset(gtx layout.Context, p slackc.Props) layout.Dime
 }
 
 func (it attItem) titleProps() slackc.Props {
-	return slackc.Props{"$key": it.pendingID() + "/title", "file": it.file(), "title": it.v.title}
+	return slackc.Props{"$key": it.pendingID() + "/title", "file": it.file(), "title": it.shownTitle()}
+}
+
+// shownTitle is the chip's title, none while its file is unknown.
+func (it attItem) shownTitle() string {
+	if it.v.loading || it.v.gone {
+		return ""
+	}
+	return it.v.title
 }
 
 // layoutTitle: Clack has no rename dialog, so the title draws nothing.

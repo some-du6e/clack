@@ -369,6 +369,32 @@ type File struct {
 	Deanimate    string `json:"deanimate,omitempty"`
 	DeanimateGIF string `json:"deanimate_gif,omitempty"`
 
+	// An email file (mode "email": an email Slack's email app or a
+	// forwarding address brought in; filetype "email", text/html). Read
+	// from Hack Club's (2026-11-18): from, to and cc as {address, name,
+	// original, slack_user_id when a member sent it}, the subject, the
+	// body as plain text (plain_text) and its first 500 characters
+	// (preview_plain_text), Preview its HTML, the attachments the email
+	// carried as Slack files (slack_file_id), the header date, and the
+	// sender's DMARC check. SimplifiedHTML is files.info's.
+	From                    EmailAddresses   `json:"from,omitempty"`
+	To                      EmailAddresses   `json:"to,omitempty"`
+	Cc                      EmailAddresses   `json:"cc,omitempty"`
+	Subject                 string           `json:"subject,omitempty"`
+	PlainText               string           `json:"plain_text,omitempty"`
+	PreviewPlainText        string           `json:"preview_plain_text,omitempty"`
+	SimplifiedHTML          string           `json:"simplified_html,omitempty"`
+	EmailAttachments        EmailAttachments `json:"attachments,omitempty"`
+	OriginalAttachmentCount int              `json:"original_attachment_count,omitempty"`
+	InlineAttachmentCount   int              `json:"inline_attachment_count,omitempty"`
+	HasMore                 bool             `json:"has_more,omitempty"`
+	SentToSelf              bool             `json:"sent_to_self,omitempty"`
+	EmailHeaders            *EmailHeaders    `json:"headers,omitempty"`
+	EmailSecurity           *EmailSecurity   `json:"email_security,omitempty"`
+	Timestamp               int64            `json:"timestamp,omitempty"`
+	AppID                   string           `json:"app_id,omitempty"`
+	AppName                 string           `json:"app_name,omitempty"`
+
 	// Clack only, never on the wire. Pending marks a file of the viewer's
 	// optimistic send whose upload hasn't finished (Slack's pendingUpload
 	// in a placeholder's pendingFiles); its thumbs are localimg URLs.
@@ -376,6 +402,80 @@ type File struct {
 	// sent, processing).
 	Pending       bool `json:"-"`
 	UploadPercent int  `json:"-"`
+}
+
+// EmailAddress is one of an email file's from, to or cc: the address,
+// the display name, the header as written (original), and the member who
+// sent it (slack_user_id).
+type EmailAddress struct {
+	Address     string `json:"address"`
+	Name        string `json:"name"`
+	Original    string `json:"original,omitempty"`
+	SlackUserID string `json:"slack_user_id,omitempty"`
+}
+
+// EmailAttachment is a file an email carried: Slack keeps each as a file
+// of its own (slack_file_id).
+type EmailAttachment struct {
+	Filename    string          `json:"filename"`
+	Size        int64           `json:"size"`
+	Mimetype    string          `json:"mimetype"`
+	URL         string          `json:"url"`
+	SlackFileID string          `json:"slack_file_id,omitempty"`
+	Metadata    json.RawMessage `json:"metadata,omitempty"`
+}
+
+// EmailHeaders are an email file's headers.
+type EmailHeaders struct {
+	Date      string `json:"date,omitempty"`
+	MessageID string `json:"message_id,omitempty"`
+}
+
+// EmailSecurity is an email file's sender checks.
+type EmailSecurity struct {
+	HasValidDMARC *bool `json:"has_valid_dmarc,omitempty"`
+}
+
+// The email fields decode leniently: another kind of file may carry a
+// field of the same name in another shape, and a message must never fail
+// to decode over one.
+type (
+	EmailAddresses   []EmailAddress
+	EmailAttachments []EmailAttachment
+)
+
+func (a *EmailAddresses) UnmarshalJSON(b []byte) error {
+	var v []EmailAddress
+	if json.Unmarshal(b, &v) == nil {
+		*a = v
+	}
+	return nil
+}
+
+func (a *EmailAttachments) UnmarshalJSON(b []byte) error {
+	var v []EmailAttachment
+	if json.Unmarshal(b, &v) == nil {
+		*a = v
+	}
+	return nil
+}
+
+func (h *EmailHeaders) UnmarshalJSON(b []byte) error {
+	type plain EmailHeaders
+	var v plain
+	if json.Unmarshal(b, &v) == nil {
+		*h = EmailHeaders(v)
+	}
+	return nil
+}
+
+func (e *EmailSecurity) UnmarshalJSON(b []byte) error {
+	type plain EmailSecurity
+	var v plain
+	if json.Unmarshal(b, &v) == nil {
+		*e = EmailSecurity(v)
+	}
+	return nil
 }
 
 type AttachmentField struct {

@@ -10,8 +10,10 @@ import (
 )
 
 // performBulkChannelMove's toast: Manage conversations' save says
-// "Updated conversations in <section>." under manage_conversations_strings
-// and "Moved N conversations to <section>." without it; one channel moved
+// "Updated conversations in <section>." in every group (Slack dropped
+// manage_conversations_strings and kept that wording: qQEZ, build
+// 8f19be21ed7e, the 2026-11-21 drift), so forcing the old gate off
+// changes nothing; one channel moved
 // by the header's Move to… is "Moved #x to <section>."; Undo sends the
 // reverse move.
 func TestSectionMoveToast(t *testing.T) {
@@ -53,7 +55,7 @@ func TestSectionMoveToast(t *testing.T) {
 	e.until("moved", 10*time.Second, func() bool { return in(to, moved[0]) && in(to, moved[1]) })
 	e.until("toast", 5*time.Second, func() bool { return a.toast.text != "" })
 	if got, want := a.toast.text, "Updated conversations in Projects."; got != want {
-		t.Errorf("manage_conversations_strings on: %q, want %q", got, want)
+		t.Errorf("Manage conversations: %q, want %q", got, want)
 	}
 	if a.toast.undo == nil {
 		t.Fatal("no Undo")
@@ -67,9 +69,11 @@ func TestSectionMoveToast(t *testing.T) {
 	manage()
 	e.until("moved again", 10*time.Second, func() bool { return in(to, moved[0]) && in(to, moved[1]) })
 	e.until("toast", 5*time.Second, func() bool { return a.toast.text != "" })
-	if got, want := a.toast.text, "Moved 2 conversations to Projects."; got != want {
-		t.Errorf("manage_conversations_strings off: %q, want %q", got, want)
+	if got, want := a.toast.text, "Updated conversations in Projects."; got != want {
+		t.Errorf("manage_conversations_strings forced off: %q, want %q (the gate is gone)", got, want)
 	}
+	a.undoToast()
+	e.until("undone again", 10*time.Second, func() bool { return !in(to, moved[0]) && in(from, moved[0]) && in(from, moved[1]) })
 	c.ClearExperimentGroup("manage_conversations_strings")
 
 	// one channel through the header's Move to…: its own strings

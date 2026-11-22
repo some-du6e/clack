@@ -751,6 +751,7 @@ func TestNotifyNamesNoThreadToastFromAHiddenSender(t *testing.T) {
 					"content": "Robin Example invited you", "title": "th-secret-plans"}
 			}
 			raw, _ := json.Marshal(ev)
+			ca.S.NoteAdded("1762521700.000100") // the reply's own message came first (the notifications' maxTs, reason 19)
 			a.data.handle(a, core.Event{Type: "desktop_notification", Channel: priv, Raw: raw})
 			if n := quiet(a, rec); (n > 0) != c.toasts {
 				t.Errorf("%d toasts, want %v", n, c.toasts)

@@ -29,7 +29,7 @@ type teamPrefStore struct {
 	loaded bool
 }
 
-var teamPrefIndex sync.Map // *App → *teamPrefStore
+var teamPrefIndex = newPerApp() // *App → *teamPrefStore
 
 func (a *App) teamPrefStore() *teamPrefStore {
 	if v, ok := teamPrefIndex.Load(a); ok {

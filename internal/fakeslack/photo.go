@@ -119,7 +119,7 @@ type photoStore struct {
 	base   string // SetPhotoBase's
 }
 
-var photoStores sync.Map // *Server -> *photoStore
+var photoStores = newPerServer() // *Server -> *photoStore
 
 func (s *Server) photos() *photoStore {
 	v, _ := photoStores.LoadOrStore(s, &photoStore{byID: map[string]*preparedPhoto{}, byName: map[string]*preparedPhoto{}})

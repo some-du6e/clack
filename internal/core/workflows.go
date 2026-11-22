@@ -407,7 +407,7 @@ type wfState struct {
 	previews map[string]WorkflowTrigger
 }
 
-var wfStates sync.Map // *App -> *wfState
+var wfStates = newPerApp() // *App -> *wfState
 
 func (ix *Interactive) wf() *wfState {
 	v, _ := wfStates.LoadOrStore(ix.a, &wfState{triggers: map[string]WorkflowTrigger{}, previews: map[string]WorkflowTrigger{}})

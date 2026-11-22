@@ -18,7 +18,7 @@ func TestAutoplayPausesTheOtherOnceItPlays(t *testing.T) {
 	b, fb := c.Row("channel", "C1", "2.0", nil), videoFile("FB")
 	frame(c, [2]any{a, fa}, [2]any{b, fb})
 	click(c, a, fa)
-	waitFor(t, "A playing", 15*time.Second, func() bool { st := state(t, c, a, fa); return st.Playing && !st.Loading })
+	waitForTile(t, c, a, fa, "A playing", 15*time.Second, func() bool { st := state(t, c, a, fa); return st.Playing && !st.Loading })
 	click(c, b, fb)
 	time.Sleep(150 * time.Millisecond)
 	if !state(t, c, b, fb).Loading {
@@ -27,11 +27,11 @@ func TestAutoplayPausesTheOtherOnceItPlays(t *testing.T) {
 	if !state(t, c, a, fa).Playing {
 		t.Error("A paused at B's click, B still loading: it plays on until B plays")
 	}
-	waitFor(t, "B playing", 15*time.Second, func() bool { st := state(t, c, b, fb); return st.Playing && !st.Loading })
-	waitFor(t, "A paused once B plays", 5*time.Second, func() bool { return !state(t, c, a, fa).Playing })
+	waitForTile(t, c, b, fb, "B playing", 15*time.Second, func() bool { st := state(t, c, b, fb); return st.Playing && !st.Loading })
+	waitForTile(t, c, a, fa, "A paused once B plays", 5*time.Second, func() bool { return !state(t, c, a, fa).Playing })
 	// a click on a loaded, paused video pauses the other at once (play()
 	// on a video with its data fires play then)
 	click(c, a, fa)
-	waitFor(t, "A playing again", 5*time.Second, func() bool { return state(t, c, a, fa).Playing })
-	waitFor(t, "B paused at once", 2*time.Second, func() bool { return !state(t, c, b, fb).Playing })
+	waitForTile(t, c, a, fa, "A playing again", 5*time.Second, func() bool { return state(t, c, a, fa).Playing })
+	waitForTile(t, c, b, fb, "B paused at once", 2*time.Second, func() bool { return !state(t, c, b, fb).Playing })
 }

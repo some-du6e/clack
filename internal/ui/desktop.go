@@ -130,9 +130,31 @@ func (a *App) Raise() {
 // Quit closes the window; Run then returns. Safe from any goroutine. It
 // is Slack's QUIT_APP: app.isQuitting is set first, so the close isn't
 // runFromTray's hide (runfromtray.go).
-func (a *App) Quit() {
+func (a *App) Quit() { a.QuitBecause("Quit") }
+
+// QuitBecause is Quit, with why for the exit line (ExitReason): the tray
+// menu's Quit, the update's restart, Windows ending the session. The
+// first reason given stays. Safe from any goroutine.
+func (a *App) QuitBecause(why string) {
+	a.noteExit(why)
 	a.quitting.Store(true)
 	a.perform(system.ActionClose)
+}
+
+// noteExit records why Run is about to end, unless a reason is already
+// recorded.
+func (a *App) noteExit(why string) {
+	a.exitWhy.CompareAndSwap(nil, &why)
+}
+
+// ExitReason is why Run ended (cmd/clack's exit line): the reason Quit was
+// given, why a close wasn't runFromTray's hide, or the window's end.
+// Call it after Run returns.
+func (a *App) ExitReason() string {
+	if p := a.exitWhy.Load(); p != nil {
+		return *p
+	}
+	return "the window closed"
 }
 
 func (a *App) perform(act system.Action) {
@@ -308,7 +330,7 @@ func (a *App) installUpdate() {
 				if u.quit != nil {
 					u.quit()
 				} else {
-					a.Quit() // the helper starts the new version once Clack exits
+					a.QuitBecause("restarting to install " + info.Tag) // the helper starts the new version once Clack exits
 				}
 			case errors.Is(err, ErrUpdateManual):
 				u.phase = updManual

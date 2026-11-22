@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
@@ -247,6 +248,7 @@ type listState struct {
 	tbSize  image.Point
 	tbAt    int             // tbRow's MessageActions position (actionsAt)
 	tbHov   int             // hovered toolbar button, -1 none
+	tbHold  toolbarHold     // the popover a toolbar button opened, holding its row's hover
 	tbBtns  []int           // the buttons tbRow's toolbar has, in order (actions_rules.go)
 	tbLabel [tbCount]string // their labels (aria-label and tooltip) for tbRow
 	tbQAs   [tbCount]string // … and data-qa
@@ -365,6 +367,53 @@ func (s *listState) onScreen() bool {
 	return false
 }
 
+// forgottenCores counts ForgetCore's calls; the next list drawn lets go
+// of the forgotten sessions' lists (dropForgottenLists).
+var forgottenCores atomic.Uint64
+
+// droppedAt is forgottenCores when the lists were last swept (UI goroutine).
+var droppedAt uint64
+
+// dropForgottenLists lets go of the lists, and the last-drawn slots, whose
+// hub is no longer its core's: a session ForgetCore let go of. The lists
+// are the UI goroutine's and ForgetCore runs on a session's stop, so the
+// next list drawn does it. Each kept its hub, and through it the session
+// and its App, reachable until another list took its key (ci-speed-3:
+// listCache held more finished tests' Apps than any root but one).
+func dropForgottenLists() {
+	n := forgottenCores.Load()
+	if n == droppedAt {
+		return
+	}
+	droppedAt = n
+	var hostCore *core.App
+	if lastHost != nil {
+		hostCore = lastHost.Core()
+	}
+	hubsMu.Lock()
+	defer hubsMu.Unlock()
+	stale := func(s *listState) bool { return s != nil && s.hb != nil && hubs[s.hb.app] != s.hb }
+	for k, s := range listCache {
+		if stale(s) {
+			delete(listCache, k)
+		}
+	}
+	if stale(lastChannel) {
+		lastChannel = nil
+	}
+	if stale(lastThread) {
+		lastThread = nil
+	}
+	for k, p := range paneLast {
+		if p != nil && stale(*p) {
+			delete(paneLast, k)
+		}
+	}
+	if _, ok := hubs[hostCore]; lastHost != nil && !ok {
+		lastHost = nil
+	}
+}
+
 // lastHost is the Host of the last message list drawn. Host components
 // (drawn inside plugin trees, possibly outside any list) reach core and
 // the popups through it; nil until a list has been drawn.
@@ -377,6 +426,7 @@ func stateFor(h Host, ch, ts string) *listState { return stateIn(h, ch, ts, "") 
 // rows, scroll position and inline editors over the shared conversation
 // model, so the same conversation can be open in both.
 func stateIn(h Host, ch, ts, pane string) *listState {
+	dropForgottenLists()
 	key := ch
 	if ts != "" {
 		key = ch + "/" + ts
@@ -1184,6 +1234,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		if i, ok := s.sel.keyIdx[key]; ok && key != "" {
 			s.hoverIdx = i
 		}
+	}
+	if i, ok := s.tbHold.row(s); ok {
+		s.hoverIdx = i // a popover the row's toolbar opened holds its hover
 	}
 	if k := s.kbIndex(); k >= 0 {
 		s.hoverIdx = k // the keyboard-selected message draws as hovered
@@ -2237,7 +2290,9 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		switch i {
 		case tbAddReact:
 			_ = rc
-			h.ShowOverlay(popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil))
+			o := popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil)
+			s.holdHover(o)
+			h.ShowOverlay(o)
 		case tbReply:
 			// RwAt.onComment: the comment thunk with threadTs =
 			// msg.thread_ts, so the key is the thread's even for a
@@ -2268,13 +2323,15 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			if s.thread {
 				where = popups.InThread
 			}
-			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
+			o := popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
 				Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
 				OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
 				Where:   where,
 				Trigger: trigger,
-			}))
+			})
+			s.holdHover(o) // onMoreActionsMenuOpen: onPopoverOpen
+			h.ShowOverlay(o)
 		}
 	}
 	hov := btn.Hovered()

@@ -13,7 +13,9 @@ import (
 
 // rawTaps fans the realtime gateway's raw events out to SubscribeRaw
 // subscribers. nil until the first subscriber, so without plugins the cost
-// is one atomic load per event.
+// is one atomic load per event. A channel leaves subs only under mu, which
+// every tap holds, and whoever takes it out closes it: its stop, or
+// Release, which takes the whole set (subs nil).
 type rawTaps struct {
 	mu   sync.Mutex
 	subs map[chan slack.Event]struct{}
@@ -21,7 +23,7 @@ type rawTaps struct {
 
 type rawTapPtr = atomic.Pointer[rawTaps]
 
-var rawTapIndex sync.Map // *App → *rawTapPtr
+var rawTapIndex = newPerApp() // *App → *rawTapPtr
 
 func (a *App) rawTapPtr() *rawTapPtr {
 	if p, ok := rawTapIndex.Load(a); ok {
@@ -58,40 +60,34 @@ func (a *App) tapRaw(ev slack.Event) {
 func (a *App) SubscribeRaw() (<-chan slack.Event, func()) {
 	ptr := a.rawTapPtr()
 	c := make(chan slack.Event, 1024)
-	for {
-		cur := ptr.Load()
-		next := &rawTaps{subs: map[chan slack.Event]struct{}{c: {}}}
-		if cur != nil {
-			cur.mu.Lock()
-			for k := range cur.subs {
-				next.subs[k] = struct{}{}
-			}
-			cur.mu.Unlock()
-		}
-		if ptr.CompareAndSwap(cur, next) {
-			break
-		}
+	t := ptr.Load()
+	if t == nil {
+		ptr.CompareAndSwap(nil, &rawTaps{subs: map[chan slack.Event]struct{}{}})
+		t = ptr.Load()
 	}
+	if t == nil { // Release took the set meanwhile: the App is done
+		close(c)
+		return c, func() {}
+	}
+	t.mu.Lock()
+	if t.subs == nil || a.released.Load() { // likewise, or Release is under way
+		close(c)
+	} else {
+		t.subs[c] = struct{}{}
+	}
+	t.mu.Unlock()
 	var once sync.Once
 	return c, func() {
 		once.Do(func() {
-			for {
-				cur := ptr.Load()
-				next := &rawTaps{subs: map[chan slack.Event]struct{}{}}
-				cur.mu.Lock()
-				for k := range cur.subs {
-					if k != c {
-						next.subs[k] = struct{}{}
-					}
-				}
-				cur.mu.Unlock()
-				if len(next.subs) == 0 {
-					next = nil
-				}
-				if ptr.CompareAndSwap(cur, next) {
-					return
-				}
+			// whoever takes c out closes it, under the lock every tap
+			// holds: a stop before Release used to leave its consumer's
+			// range loop, and what it kept, waiting for good
+			t.mu.Lock()
+			if _, live := t.subs[c]; live {
+				delete(t.subs, c)
+				close(c)
 			}
+			t.mu.Unlock()
 		})
 	}
 }

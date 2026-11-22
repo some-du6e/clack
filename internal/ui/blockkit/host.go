@@ -259,6 +259,17 @@ var (
 	styles   = map[*text.Shaper]*styleEntry{}
 )
 
+func init() { // a finished App's shapers leave both caches (theme.ForgetShaper)
+	theme.OnForgetShaper(func(sh *text.Shaper) {
+		stylesMu.Lock()
+		delete(styles, sh)
+		stylesMu.Unlock()
+		agentStyleMu.Lock()
+		delete(agentStyles, sh)
+		agentStyleMu.Unlock()
+	})
+}
+
 // styleFor is a richview.Style like the message list's, for text inside
 // modals and App Home.
 func styleFor(th *theme.Theme, images *imgcache.Cache) *richview.Style {

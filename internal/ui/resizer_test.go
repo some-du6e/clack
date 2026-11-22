@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -79,7 +80,7 @@ func TestResizersHoldThePointer(t *testing.T) {
 		e.movePtr(image.Pt(rail+250, y)) // no button: nothing follows
 		drawn(sbWidthMax, "a move after the release")
 		s.intent, s.mode = 0, "auto"
-		s.rz.lastPress = time.Time{}
+		s.rz.click = gesture.ClickRun{}
 		e.frame()
 	})
 

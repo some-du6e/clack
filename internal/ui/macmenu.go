@@ -78,7 +78,7 @@ func (a *App) macMenus() []menubar.Menu {
 			{ID: menuSignOutTeam, Title: "Sign Out", Do: on(a.signOut)}, // titled with the workspace (menuState)
 		}},
 		sep,
-		menubar.Item{ID: "menuitem-quit", Title: "Quit " + AppName, Key: "q", Mods: C, Do: a.Quit},
+		menubar.Item{ID: "menuitem-quit", Title: "Quit " + AppName, Key: "q", Mods: C, Do: func() { a.QuitBecause("Quit in the menu") }},
 	)
 	return []menubar.Menu{
 		{Title: AppName, Kind: "app", Items: app},

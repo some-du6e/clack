@@ -234,3 +234,37 @@ func TestConvertToPrivateMarksStoredChannel(t *testing.T) {
 		t.Errorf("after convertToPrivate the channel is %+v, want private", c)
 	}
 }
+
+// Slack's enterprisePrefs store is persisted (TI4y persistenceEnabled):
+// the last enterprise.prefs.get answer goes to the disk cache and holds
+// on the next start before the call answers, so a Grid org whose unlocked
+// allow_retention_override is false hides a DM's Message history from the
+// first frame. A live answer isn't overwritten by the cached one.
+func TestEnterprisePrefsPersistLikeSlack(t *testing.T) {
+	a, f := retApp(t, retViewer{})
+	f.reply["enterprise.prefs.get"] = `{"ok":true,"org_prefs":{},"locked_prefs":{},"unlocked_prefs":{"allow_retention_override":false}}`
+	if err := a.LoadEnterprisePrefs(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	saved := retEntCached(a)
+	if len(saved) == 0 {
+		t.Fatal("enterprise.prefs.get's answer isn't kept for the disk cache")
+	}
+	dm := retInf("im", false, false)
+	b, fb := retApp(t, retViewer{})
+	if !retHistoryShown(b, dm) {
+		t.Fatal("a first start with no cache: the unlocked pref is unset, so Message history shows (as in Slack)")
+	}
+	retEntRestore(t, b, saved) // through meta.json, then boot's install
+	if retHistoryShown(b, dm) {
+		t.Error("the next start shows a DM's Message history before enterprise.prefs.get answers; the cached org pref hides it")
+	}
+	fb.reply["enterprise.prefs.get"] = `{"ok":true,"unlocked_prefs":{"allow_retention_override":true}}`
+	if err := b.LoadEnterprisePrefs(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	retEntRestore(t, b, saved)
+	if !retHistoryShown(b, dm) {
+		t.Error("a late cache install replaced this session's live answer")
+	}
+}

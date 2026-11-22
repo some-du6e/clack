@@ -293,6 +293,11 @@ func (v *ChannelView) ToolbarRect() (ts string, r image.Rectangle, ok bool) {
 	return v.s.toolbarRect()
 }
 
+// ToolbarRect is ChannelView.ToolbarRect for the thread.
+func (v *ThreadView) ToolbarRect() (ts string, r image.Rectangle, ok bool) {
+	return v.s.toolbarRect()
+}
+
 func (s *listState) toolbarRect() (string, image.Rectangle, bool) {
 	if s.tbFor < 0 || s.tbFor >= len(s.items) {
 		return "", image.Rectangle{}, false

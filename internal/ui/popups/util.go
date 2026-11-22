@@ -313,6 +313,15 @@ func permalink(h Host, ch, ts, threadTS string) string {
 
 var domains sync.Map // Host -> team domain
 
+// ForgetHost drops h's entries in the package's maps keyed by Host: for a
+// host that's done (internal/ui's tests, at a session's end).
+func ForgetHost(h Host) {
+	domains.Delete(h)
+	asyncMu.Lock()
+	delete(pumpLive, h) // work still in flight finds its pump gone: a no-op
+	asyncMu.Unlock()
+}
+
 // teamDomain is the workspace's Slack subdomain (cached; Snapshot copies).
 func teamDomain(h Host) string {
 	if v, ok := domains.Load(h); ok {
