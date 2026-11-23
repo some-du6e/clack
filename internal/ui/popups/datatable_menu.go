@@ -252,10 +252,11 @@ func (f *dtFull) filterField(gtx layout.Context) layout.Dimensions {
 			td := vcenter(gtx, fh, func(gtx layout.Context) layout.Dimensions {
 				return text(gtx, th, 13, theme.Regular, cl.Fg2, label)
 			})
-			if f.clear.Hovered() || gtx.Focused(&f.clear) {
+			if f.clear.Hovered() || gtx.Focused(&f.clear) { // a text underline, not a border
+				col := cl.Fg2
 				lh := dp(gtx, 18) // 13px at 1.38463
 				y := (fh-lh)/2 + lh - dp(gtx, 2)
-				fill(gtx, image.Rect(0, y, td.Size.X, y+max(1, dp(gtx, 1))), cl.Fg2)
+				fill(gtx, image.Rect(0, y, td.Size.X, y+max(1, dp(gtx, 1))), col)
 			}
 			return layout.Dimensions{Size: image.Pt(td.Size.X, fh)}
 		})
