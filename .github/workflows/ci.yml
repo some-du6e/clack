@@ -367,6 +367,13 @@ jobs:
       - name: Gio hover ends on a reset Cancel (vendored gioui.org/gesture)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run '^TestClackHoverEndsOnResetCancel$' gioui.org/gesture
+      # Gio patch 61: an InvalidateCmd asks for its frame and replays
+      # nothing; FocusCmd and the other stateful commands keep the
+      # immediate path. The whole package, so the router's own command and
+      # focus tests show nothing else moved
+      - name: Gio InvalidateCmd replays nothing (vendored gioui.org/io/input, the whole package)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v gioui.org/io/input
       # Gio patch 53: a tag's area in the window, and what of it its clip
       # areas show (the video tiles' share of their list)
       - name: Gio area bounds (vendored gioui.org/io/input)
