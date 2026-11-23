@@ -177,23 +177,34 @@ func resourceSection(va uint32, icon []byte) []byte {
 		return out
 	}
 	const sub = 0x80000000
-	// layout: root, the two type dirs, the two name dirs (to languages),
-	// the two data entries, then the data
-	root := dir([2]uint32{rtIcon, sub | 40}, [2]uint32{rtGroupIcon, sub | 64})
-	iconType := dir([2]uint32{1, sub | 88})
-	groupType := dir([2]uint32{1, sub | 112})
-	iconLang := dir([2]uint32{0x409, 136})
-	groupLang := dir([2]uint32{0x409, 152})
-	data := 168
+	// the layout: the root, the two type dirs, the two name dirs (each to
+	// its language), the two data entries, then the data, each part's
+	// offset the sum of the lengths before it
+	dirLen := func(n int) uint32 { return uint32(16 + 8*n) }
+	offIconType := dirLen(2)
+	offGroupType := offIconType + dirLen(1)
+	offIconLang := offGroupType + dirLen(1)
+	offGroupLang := offIconLang + dirLen(1)
+	offIconEntry := offGroupLang + dirLen(1)
+	offGroupEntry := offIconEntry + 16
+	offData := offGroupEntry + 16
+	root := dir([2]uint32{rtIcon, sub | offIconType}, [2]uint32{rtGroupIcon, sub | offGroupType})
+	iconType := dir([2]uint32{1, sub | offIconLang})
+	groupType := dir([2]uint32{1, sub | offGroupLang})
+	iconLang := dir([2]uint32{0x409, offIconEntry})
+	groupLang := dir([2]uint32{0x409, offGroupEntry})
 	iconEntry := make([]byte, 16)
-	binary.LittleEndian.PutUint32(iconEntry, va+uint32(data))
+	binary.LittleEndian.PutUint32(iconEntry, va+offData)
 	binary.LittleEndian.PutUint32(iconEntry[4:], uint32(len(icon)))
 	groupEntry := make([]byte, 16)
-	binary.LittleEndian.PutUint32(groupEntry, va+uint32(data+len(icon)))
+	binary.LittleEndian.PutUint32(groupEntry, va+offData+uint32(len(icon)))
 	binary.LittleEndian.PutUint32(groupEntry[4:], uint32(len(group)))
 	var out []byte
 	for _, part := range [][]byte{root, iconType, groupType, iconLang, groupLang, iconEntry, groupEntry, icon, group} {
 		out = append(out, part...)
+	}
+	if uint32(len(out)) != offData+uint32(len(icon)+len(group)) {
+		panic("the resource section's parts aren't where their offsets say")
 	}
 	return out
 }
