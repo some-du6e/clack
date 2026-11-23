@@ -204,7 +204,7 @@ func (s *canvasSaver) hasErrorLocked(now time.Time) bool {
 }
 
 func (s *canvasSaver) stateLocked(now time.Time) CanvasSaveState {
-	st := CanvasSaveState{Pending: len(s.pending) > 0, Saving: s.inFlight}
+	st := CanvasSaveState{Pending: len(s.pending) > 0 || len(s.waiting) > 0, Saving: s.inFlight} // waiting: edits made before the model loaded
 	switch {
 	case s.hasErrorLocked(now):
 		st.Reason, st.ReadOnly = s.reason, true
@@ -590,7 +590,7 @@ func (s *canvasSaver) armPollLocked(a *App, id string) {
 	s.poll = time.AfterFunc(unsavedPoll, func() {
 		s.mu.Lock()
 		s.poll = nil
-		pending := len(s.pending) > 0 && a.bg.Err() == nil // nothing after the app shut down
+		pending := (len(s.pending) > 0 || len(s.waiting) > 0) && a.bg.Err() == nil // nothing after the app shut down
 		if pending {
 			s.armPollLocked(a, id)
 		}
