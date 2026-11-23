@@ -225,6 +225,9 @@ func (v *View) goLive() {
 					v.h.Invalidate()
 				}
 				if ev.Type == "canvas_save" && ev.ID == v.id { // the save banner and lock (banner.go)
+					if ns := a.TakeCanvasSaveNotices(v.id); len(ns) > 0 {
+						v.post(func() { v.showSaveNotices(ns) })
+					}
 					v.h.Invalidate()
 				}
 			case <-tick.C:

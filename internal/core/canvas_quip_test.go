@@ -151,3 +151,31 @@ func TestCanvasModelReadsDuringCalls(t *testing.T) {
 		t.Errorf("the fetch: %v", err)
 	}
 }
+
+// rawTapCount is how many raw-event subscribers the App has.
+func rawTapCount(a *App) int {
+	t := a.rawTapPtr().Load()
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.subs)
+}
+
+// The canvas watch is subscribed when ensureCanvasWatch returns, so the
+// document_update a canvas call brings isn't missed: subscribing was the
+// watch goroutine's first step, and a push that came before it was lost
+// (TestCanvasModelFollowsEdits flaked so, full-test 45242101565).
+func TestCanvasModelWatchSubscribedAtOnce(t *testing.T) {
+	a, _ := canvasApp(t)
+	n0 := rawTapCount(a)
+	a.ensureCanvasWatch()
+	if n := rawTapCount(a); n != n0+1 {
+		t.Errorf("%d raw subscribers once ensureCanvasWatch returned, want %d", n, n0+1)
+	}
+	a.ensureCanvasWatch()
+	if n := rawTapCount(a); n != n0+1 {
+		t.Errorf("%d raw subscribers after a second ensureCanvasWatch, want %d", n, n0+1)
+	}
+}
