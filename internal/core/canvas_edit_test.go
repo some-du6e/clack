@@ -755,6 +755,9 @@ func TestCanvasSaveListDeletes(t *testing.T) {
 	if len(rs) != 1 || len(rs[0].Save.Sections) != 1 || quip.FieldsString(&rs[0].Save.Sections[0]) != "1,2,3,9,13,19,20,33" {
 		t.Errorf("an item of two: %+v", rs)
 	}
+	if err := a.SaveCanvas(ctx, id, quip.Edit{Kind: quip.EditDelete, SectionID: "temp:C:LDL00003"}); !errors.Is(err, quip.ErrRefused) {
+		t.Errorf("the validator took the last item deleted without its list: %v", err)
+	}
 	if err := a.SaveCanvasDelete(ctx, id, "temp:C:LDL00003", txt("two")); err != nil {
 		t.Fatalf("the last item: %v", err)
 	}
