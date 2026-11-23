@@ -1682,22 +1682,31 @@ func (v *viewCache) entryStateNeed(slice, key, sub string, need uint64) (*viewEn
 // posted to it (d -1).
 func (v *viewCache) msgPending(ch, ts string, d int) {
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	k := msgKey{ch, ts}
+	ready := false
 	if v.pendMsg[k] += d; v.pendMsg[k] <= 0 {
 		delete(v.pendMsg, k)
+		// the last change posted: a view of it work installed while it was
+		// queued, with its marks behind it, was held back (work announces
+		// no pending message); it's ready now, and the row waiting on it
+		// reads it again when the epoch moves
+		if g := v.groups[viewSK{"messages", ch}]; d < 0 && g != nil && v.visibleLocked(g) {
+			if e := g.subs[ts]; e != nil && v.msgMarksReadyLocked(viewKey{"messages", ch, ts}, e.ver) {
+				ready = true
+				v.epoch.Add(1)
+			}
+		}
+	}
+	v.mu.Unlock()
+	if f := v.t.opts.UI.Invalidate; ready && f != nil {
+		f()
 	}
 }
 
 // msgStale marks message ch/ts's view stale: its bucket's fetch (the
 // group, as stale does) and its own readiness. Reports whether the bucket
 // is on screen (stale's).
-func (v *viewCache) msgStale(ch, ts string) (onScreen bool) { return v.msgStaleAt(ch, ts, 0) }
-
-// msgStaleAt is msgStale at version at (postMark's), 0 for a new one: a
-// mark at a change's post stales the reads that went to JS before it,
-// not the ones after, which hold the change.
-func (v *viewCache) msgStaleAt(ch, ts string, at uint64) (onScreen bool) {
+func (v *viewCache) msgStale(ch, ts string) (onScreen bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	defer func() {
@@ -1705,34 +1714,18 @@ func (v *viewCache) msgStaleAt(ch, ts string, at uint64) (onScreen bool) {
 			v.epoch.Add(1)
 		}
 	}()
-	if at == 0 {
-		v.seq++
-		at = v.seq
-	}
+	v.seq++
 	if len(v.msgVer) >= maxMsgMarks {
 		clear(v.msgVer)
 		v.sliceVer["messages"] = v.seq // every message stale once: as safe as the marks let go
 	}
-	k := msgKey{ch, ts}
-	v.msgVer[k] = max(v.msgVer[k], at)
+	v.msgVer[msgKey{ch, ts}] = v.seq
 	g := v.groups[viewSK{"messages", ch}]
 	if g == nil {
 		return false
 	}
-	g.ver = max(g.ver, at)
+	g.ver = v.seq
 	return len(g.subs) > 0 && v.visibleLocked(g)
-}
-
-// postMark is the version of a change the mirror just posted to JS. A
-// read (work's pass) that starts after it goes to JS behind the change
-// (the reads and the invalidates share the in-order lane) and holds it;
-// one that started before may hold JS's state from before it, which
-// send's marks at this version stale.
-func (v *viewCache) postMark() uint64 {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.seq++
-	return v.seq
 }
 
 // noteSeen records that the mirror handled core's event seq (its marks
@@ -1842,11 +1835,7 @@ func (v *viewCache) staleAll() {
 // stale marks the cached views of slice (key "" = all) stale, reporting
 // whether one of them is on screen (visibleLocked): those the UI reads
 // again soon; the rest are fetched again when next read.
-func (v *viewCache) stale(slice, key string) (onScreen bool) { return v.staleAt(slice, key, 0) }
-
-// staleAt is stale at version at (postMark's), 0 for a new one, as
-// msgStaleAt.
-func (v *viewCache) staleAt(slice, key string, at uint64) (onScreen bool) {
+func (v *viewCache) stale(slice, key string) (onScreen bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// what's on screen reads again at once (ViewEpoch); the rest when
@@ -1856,12 +1845,9 @@ func (v *viewCache) staleAt(slice, key string, at uint64) (onScreen bool) {
 			v.epoch.Add(1)
 		}
 	}()
-	if at == 0 {
-		v.seq++
-		at = v.seq
-	}
+	v.seq++
 	if key == "" {
-		v.sliceVer[slice] = max(v.sliceVer[slice], at)
+		v.sliceVer[slice] = v.seq
 		return v.sliceN[slice] > 0 && v.sliceRead[slice] >= v.lastRead-v.onScreen
 	}
 	if slice == "messages" {
@@ -1871,13 +1857,13 @@ func (v *viewCache) staleAt(slice, key string, at uint64) (onScreen bool) {
 			clear(v.chanVer)
 			v.sliceVer[slice] = v.seq
 		}
-		v.chanVer[key] = max(v.chanVer[key], at)
+		v.chanVer[key] = v.seq
 	}
 	g := v.groups[viewSK{slice, key}]
 	if g == nil {
 		return false
 	}
-	g.ver = max(g.ver, at)
+	g.ver = v.seq
 	return len(g.subs) > 0 && v.visibleLocked(g)
 }
 
@@ -1996,7 +1982,7 @@ func (v *viewCache) work() {
 				// a frame comes 250 ms on, which an idle window never lays
 				// out: the masked word stayed in clear until a mouse move
 				if k.slice == "messages" && k.key != "" && k.sub != "" && (dropped || v.visibleLocked(g)) &&
-					!v.msgMarksReadyLocked(k, was) && v.msgMarksReadyLocked(k, ver) {
+					!v.msgMarksReadyLocked(k, was) && v.msgMarksReadyLocked(k, ver) && v.pendMsg[msgKey{k.key, k.sub}] == 0 {
 					changed = true
 					v.epoch.Add(1)
 					if viewTrace.Load() != nil {
@@ -2019,7 +2005,19 @@ func (v *viewCache) work() {
 				// its injected list, which may have come back as it was
 				// (the same messages, kept decoded and converted)
 				bucket := k.slice == "messages" && k.key != "" && k.sub == ""
-				if (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
+				// a message with a change still queued for JS (pendMsg)
+				// isn't ready, whatever its marks: this answer is from
+				// before the change, and no row draws it. The message's
+				// read once the change is posted announces it (send's
+				// marks stale this one), or msgPending does when its
+				// count goes to 0 with this one ready. Announced here, an
+				// idle runtime's at-once answer on the in-order lane, 8 ms
+				// before the post, asked for a frame that drew nothing new
+				// on every edit under a plugin patching the messages slice
+				// (flake-check's activity-edits: 80 frames for 20 edits,
+				// 61 before e0cab406c)
+				held := k.slice == "messages" && k.key != "" && k.sub != "" && v.pendMsg[msgKey{k.key, k.sub}] > 0
+				if !held && (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
 					changed = true
 					v.epoch.Add(1)
 					if viewTrace.Load() != nil {
