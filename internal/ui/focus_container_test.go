@@ -86,6 +86,13 @@ func TestThreadsAuditFindInTheActivityPanesThread(t *testing.T) {
 	e := newActShell(t)
 	crPersistent(e)
 	e.ca.SetExperimentGroup("find_in_thread", "on")
+	// the fixture's thread item (fa-thread) is this thread: its messages
+	// where conversations.replies serves them (the views fixture answers
+	// them only to the Threads view's getView)
+	ch, ts := fakeslack.ViewsChannel, fakeslack.ViewsThreadUnread
+	e.fs.PostAtQuiet(ch, ts, "U0FAKE00001", "a synthetic question for the team")
+	e.fs.ReplyAtQuiet(ch, ts, "1762600100.000100", fakeslack.SelfID, "a synthetic answer")
+	e.fs.ReplyAtQuiet(ch, ts, "1762600200.000100", "U0FAKE00002", "a synthetic follow-up")
 	cmOpenActivity(e)
 	for i := 0; i < 40 && e.activity().OpenedItem() != "fa-thread"; i++ {
 		e.activity().StepItem(1, false)
@@ -94,7 +101,6 @@ func TestThreadsAuditFindInTheActivityPanesThread(t *testing.T) {
 	if k := e.activity().OpenedItem(); k != "fa-thread" {
 		t.Fatalf("stepping through the inbox never opened the thread item (at %q)", k)
 	}
-	ch, ts := fakeslack.ViewsChannel, fakeslack.ViewsThreadUnread
 	var tl threadList
 	e.until("the pane's thread drawn with its reply box", func() bool {
 		c := e.a.convos[ch+"/"+ts]
