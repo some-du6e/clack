@@ -236,6 +236,10 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.mu.Lock()
 		a.connected = up
 		a.mu.Unlock()
+		// countsNotYetApplied: the connect's client.counts is still to come
+		// (refreshCountsAfterGap), and until it is in the socket's changes
+		// don't advance the mutation timestamps (history_changed.go)
+		a.countsNotYetApplied()
 		// Merging msg-latency: its OnState block (socketConnected(fast)
 		// and firstUp before the emit, socketDown on a drop) replaces this
 		// emit; keep its block and give its emit Fast: up &&

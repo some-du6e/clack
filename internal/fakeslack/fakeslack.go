@@ -1656,7 +1656,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("channels", cs, "response_metadata", map[string]string{"next_cursor": ""})
 	case "client.counts":
-		var chans, ims []slack.CountEntry
+		// slack.CountEntry, with history_invalid when set (history_rewrite.go)
+		var chans, ims []any
 		s.convMu.Lock() // a leave or a join rewrites the list meanwhile
 		convs := append([]slack.Conversation(nil), s.convs...)
 		s.convMu.Unlock()
@@ -1694,9 +1695,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			e = s.postedCount(c.ID, e) // count_posts.go: CountsFollowPosts
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
-				ims = append(ims, e)
+				ims = append(ims, s.countWithMutations(e))
 			} else {
-				chans = append(chans, e)
+				chans = append(chans, s.countWithMutations(e))
 			}
 		}
 		threads := map[string]any{"has_unreads": true, "mention_count": 2}
