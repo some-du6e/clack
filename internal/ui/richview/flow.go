@@ -213,6 +213,9 @@ const (
 	// "sort" with col, "prev", "next", "page:N") or row ("row", hover
 	// only; table: its state; datatable.go)
 	tDataTable
+	// tTimeline is a timeline section's "(Sources)" (timeline: the
+	// section; timeline.go)
+	tTimeline
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no
@@ -299,6 +302,8 @@ type target struct {
 	// table and col: a tDataTable's table state and column (datatable.go)
 	table *TableControl
 	col   int
+	// timeline is a tTimeline's section (timeline.go)
+	timeline *richtext.TimelineSection
 }
 
 type hit struct {

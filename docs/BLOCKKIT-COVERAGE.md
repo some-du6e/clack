@@ -62,7 +62,7 @@ After a bundle update: `python3 -B -I tools/bkregistry.py BUILD boot-shared.js b
 
 | part | types |
 |---|---|
-| 2a (in progress) | contact_card, event, share_prompt, timeline |
+| 2a (in progress) | contact_card, event, share_prompt |
 | 2b (sideways scrolling) | carousel (Slack's LSo8 scroller with its arrows: the account has no a11y_carousel) |
 | 2d (inline rich text) | _canvas_mention, _theme_install_button, attachment_mention, canvas_message_unfurl, canvas_user_mention, citation, folder_mention, salesforce_data_field, skill, tag, unknown, variable, work_object_mention, workflowtoken |
 | 2e (elements) | feedback_buttons, file_input, password, split_button |
@@ -125,7 +125,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | share_shortcut (slack.ts) | `KrN7` ShareShortcut → WorkflowEntity on `VLgN`/`aJif` | absent (drew nothing) | **partial** | Forward workflow (Slack's share dialog for a workflow: the hover bar's button and More actions' item, `Tw8O`), More actions' Feature workflow and Add workflow to channel aren't in Clack, so none is drawn; the other-org badge (`ISuZ`, hermes_next); the VIP badge after the title (`LA2n`, for a bot that is one of your VIPs); ShortcutIcon's app and workflow icon fallbacks (`mp5R`: the app for `app_id`, the workflow's `icons.image_96`); the hover shadow; the Slackbot-message attachment variant (`7lAH`) |
 | table | `POW9` Table | partial: a `raw_number` cell's numeric `value` failed the whole block ("This content could not be displayed."), `cell_text` cells drew empty | **full** | |
 | task_card | `1+vf` TaskCard | full | full | (agent.go) |
-| timeline (slack.ts) | `9B8s` Timeline | absent | absent | |
+| timeline (slack.ts) | boot-shared `9B8s` Timeline → TimelineCondensed (helpers `rSPu`, `IiSM`; sources modal `+sSl`; build 9f450b8ad3db) | absent | **partial**: the header (the only point's title; else the summary, "Using N tools" while a point runs and "Used N tools" after, a closed running timeline its last point's title), the last three distinct point icons before it, the caret that opens it; open, each point (with more than one) and its steps' sections down a 16px step column (the point's icon, a dot on its first and last section, the 1px line), "(Sources)" opening the section's sources (Messages, Files, Web, Memories); a finished stream stops its in-progress points; a task_attribution_ block draws nothing; notifications get each point's title with In progress: / Error: (`richtext/timeline_test.go`, `richview/timeline_test.go`) | the running header's shimmer (drawn still); Slack's ai-sparkle, agentforce-filled, ai-file-summary, search-files and ai-workflow glyphs (Clack has none: the quiet dot); the sources modal's rows are links (Slack's avatars, thumbnails, favicons and timestamps, and its fetch of the messages the client doesn't hold) |
 | video | `u8h8` VideoBlock | partial (drawn as an unfurl card) | same | not re-audited |
 | share_skill, share_workflow, salesforce_record_card, search_top_results, mcp_app, page, layout, prototype, related_automation_decorator, attachment_reference, canvas_mermaid, message (client only) | `1Ine`, `ZiEp`, `bgQL`, `jBv3`, `bwbq`, `eMXm`, `+42+`, `b3P2`, `9H1Y`, `jBv3`, `iToP`, `jBv3` | absent (layout: the per-block error line, its object `rows` failed the decode) | absent | |
 | expandable, group, error (client enum) | no renderable | drew nothing | **fallback** (the card) | |

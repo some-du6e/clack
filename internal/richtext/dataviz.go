@@ -65,6 +65,15 @@ func (b *bk) UnmarshalJSON(data []byte) error {
 		}
 		typ, _ = t.Type.(string)
 	}
+	if typ == "timeline" {
+		var t bkTimeline
+		if json.Unmarshal(data, &t) != nil {
+			return err
+		}
+		*b = bk{Type: typ, timeline: &t}
+		b.BlockID = rawString(t.BlockID)
+		return nil
+	}
 	if typ == "data_table" {
 		var t bkDataTable
 		if json.Unmarshal(data, &t) != nil {

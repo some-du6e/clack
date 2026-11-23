@@ -69,7 +69,7 @@ var pendingParts = map[string][]string{
 	"part 2f (the remaining blocks)": {"attachment_reference", "auth_provider", "canvas_mermaid", "canvas_table", "channel_section",
 		"channel_set", "layout", "mcp_app", "message", "page", "prototype", "related_automation_decorator", "salesforce_record_card",
 		"search_top_results", "share_skill", "share_workflow"},
-	"part 2a (Karim's named blocks, in progress)": {"contact_card", "event", "share_prompt", "timeline"},
+	"part 2a (Karim's named blocks, in progress)": {"contact_card", "event", "share_prompt"},
 }
 
 func init() {

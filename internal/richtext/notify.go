@@ -125,6 +125,24 @@ func notifyBlock(b *Block, st SpanText) string {
 		if b.DataViz != nil {
 			return b.DataViz.PlainTitle
 		}
+	case TimelineBlock: // convertTimelineBlocksToPlainText: each point's status and title
+		if t := b.Timeline; t != nil {
+			var parts []string
+			for i := range t.Points {
+				p := &t.Points[i]
+				prefix := ""
+				switch p.Status {
+				case "in_progress":
+					prefix = "In progress: "
+				case "error":
+					prefix = "Error: "
+				}
+				if s := strings.TrimSpace(prefix + spansText(p.Title, st)); s != "" {
+					parts = append(parts, s)
+				}
+			}
+			return strings.Join(parts, " ")
+		}
 	case DataTableBlock: // convertTableBlockToPlainText: every row
 		if t := b.DataTable; t != nil && !t.Err {
 			rows := make([]string, 0, len(t.Body)+1)

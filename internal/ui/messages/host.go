@@ -621,6 +621,14 @@ func (r *richHandler) DataTableAction(act string, c *richview.TableControl, btn 
 	}
 }
 
+// TimelineSources is a timeline section's "(Sources)"
+// (richview.TimelineHandler): its sources modal.
+func (r *richHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
+	if ph, ok := r.h.(popups.Host); ok {
+		popups.OpenTimelineSources(ph, sec)
+	}
+}
+
 func (r *richHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle) {
 	if r.anchor != nil {
 		min := r.anchor(btn.Min)

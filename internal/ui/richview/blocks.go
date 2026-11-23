@@ -144,6 +144,11 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 			return 0, 0, 0
 		}
 		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.TimelineBlock: // .container{margin:12px 0}; .firstBlock: none above
+		if b.Timeline == nil || b.Timeline.Hidden || len(b.Timeline.Points) == 0 {
+			return 0, 0, 0
+		}
+		return l.dp(12), 0, l.dp(12)
 	case richtext.AttachmentBlock: // a message_embed's card: .container__Ij6XE{margin:12px 0}
 		if b.Att != nil && b.Att.Embed {
 			return l.dp(12), l.dp(12), l.dp(12)
@@ -744,6 +749,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 
 	case richtext.DataTableBlock:
 		return l.dataTable(b, x, y, w)
+
+	case richtext.TimelineBlock:
+		return l.timeline(b, x, y, w)
 
 	case richtext.Table:
 		return l.table(b, x, y, w)
