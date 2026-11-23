@@ -105,6 +105,17 @@ func (b *backend) startTautAsync(a *App) {
 			}
 			a.startupMark("plugins", detail)
 			if a.data != b || b.taut != nil || b.cancel == nil || b.ctx.Err() != nil {
+				if t != nil {
+					// its Attached post, if one comes after this, binds
+					// nothing; one that came first (posted while it was
+					// built) is undone
+					t.Detach()
+					if tautOwner.Load().Of(t) {
+						tautOwner.Store(nil)
+						slackc.SetBridge(nil)
+						slackc.Reset()
+					}
+				}
 				go closeTaut(s, t) // stopped (sign-out, quit) meanwhile
 				return
 			}
@@ -156,6 +167,9 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string, deferJS boo
 				patchedNow = nil // a fresh runtime starts unpatched
 				patchMu.Unlock()
 				a.Post(func() {
+					if br.Detached() {
+						return // signed out or switched meanwhile (detachTaut): bind nothing of the dying Taut
+					}
 					slackc.Reset()
 					slackc.SetBridge(br)
 					bound.Store(br)
@@ -297,6 +311,7 @@ func (b *backend) stopTaut() {
 func (b *backend) detachTaut() {
 	b.slick = nil
 	if b.taut != nil {
+		b.taut.Detach() // an Attached post after this binds nothing (its Close comes later)
 		popups.SetTaut(nil)
 		messages.SetTaut(nil)
 		composer.SetTaut(nil)

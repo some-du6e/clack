@@ -1933,6 +1933,9 @@ jobs:
           set +e
           rc=0
           go test -count=1 -v -timeout 8m -run '^(TestDisplaysMac|TestBoundsMac)$' gioui.org/app || rc=1
+          # a process of its own: it catches a kept launch snapshot only as
+          # its process's first Displays call (CLACK_PATCHES.md §56)
+          go test -count=1 -v -timeout 3m -run '^TestDisplaysMacAfterLaunchReadsLive$' gioui.org/app || rc=1
           go test -c -o "$RUNNER_TEMP/ui-bounds.test" ./internal/ui || exit 1
           cd internal/ui
           for t in TestMacWindowBounds TestMacWindowBoundsOffScreen TestMacWindowBoundsFullScreen; do

@@ -32,6 +32,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -414,14 +415,14 @@ func TestWindowNewerFailureDoesNotBlockOlder(t *testing.T) {
 	ch := longRead
 	target := plainAt(t, e.fs, ch, 2500)
 	e.openAtOld(t, ch, target)
-	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+	var failed atomic.Int32 // the newer pages failed (recordCalls replaced the hook once: none)
+	calls := e.recordCallsThen(func(method string, f url.Values) (any, bool) {
 		if method == "conversations.history" && f.Get("channel") == ch && f.Get("oldest") != "" && f.Get("latest") == "" {
+			failed.Add(1)
 			return map[string]any{"ok": false, "error": "synthetic_failure"}, true // every newer page fails
 		}
 		return nil, false
-	})
-	t.Cleanup(func() { e.fs.SetHook(nil) })
-	calls := e.recordCalls("conversations.history")
+	}, "conversations.history")
 	newer := func() int { // newer pages asked so far
 		k := 0
 		for _, c := range calls.of("conversations.history", ch, "oldest", "latest") {
@@ -450,6 +451,9 @@ func TestWindowNewerFailureDoesNotBlockOlder(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	e.settle(6 * time.Second) // the window's end in view all along
+	if failed.Load() == 0 {
+		t.Fatal("no newer page failed: the hook didn't run")
+	}
 	if n := newer(); n > 4 {
 		t.Errorf("%d newer pages asked in about 6 s with each one failing; want the retries to back off", n)
 	}
