@@ -356,6 +356,7 @@ type Activity struct {
 	kbFocused, kbMode bool
 	focusKey          string
 	lastUndo          *actUndo
+	focusList         bool // the list takes the focus at its next draw (FocusList, openStep)
 
 	// Live updates (activity_live.go): the newest unread entry the
 	// "New activity" banner announces.

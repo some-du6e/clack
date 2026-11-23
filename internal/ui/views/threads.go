@@ -2149,6 +2149,13 @@ func (v *Threads) typeInto(gtx C, active, text string) {
 	gtx.Execute(op.InvalidateCmd{})
 }
 
+// FocusList gives the threads list the key focus at its next draw
+// (onViewClosed: a thread opened from it, with →, closed again).
+func (v *Threads) FocusList() {
+	v.kb.focusIt = true
+	v.h.Invalidate()
+}
+
 // thrPrintable is isPrintableKeyEvent (client-boot 3NzO: e.key is one
 // character, no ⌘ or Ctrl) for the keys Gio names. The character itself
 // comes after, as the key.EditEvent the OS sends (kbText).

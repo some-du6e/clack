@@ -220,6 +220,7 @@ type listState struct {
 	findFlash         string
 	findFlashAt       time.Time
 	sel               selection
+	editFromInput     string // the message Up in the conversation's empty input edits (editLast), until its editor opens
 	sb                scrollbar
 	// sbCall is the scrollbar the last layout recorded for the host to
 	// draw after its reply box (sbDeferred until it does), in the frame at
@@ -1479,6 +1480,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		y += s.heights[i]
 		s.visible[1] = i + 1
 	}
+	s.kbWheelBlur(gtx, size) // after the positions: the selected row's (kbnav.go)
 	// MessageBackground's componentWillUnmount: the highlighted row leaving
 	// the drawn rows (scrolled out of the virtual list) ends its flash
 	if s.highlight != "" {
@@ -2724,9 +2726,12 @@ func (s *listState) openEdit(h Host, m core.Message) {
 		t.SetEditing("main", m.Channel, m.TS, true) // patchMessageText leaves it alone
 	}
 	r.editFrames = 0
+	fromInput := s.editFromInput == m.TS
+	s.editFromInput = ""
 	var ed *composer.Composer
 	ed = composer.NewEdit(h, m, func() {
 		s.endEdit(ed)
+		s.editStopped(h, m, fromInput) // stopEditingMessage's focus
 		h.Invalidate()
 	})
 	ed.EditInThread = s.thread // IHC0's inThread: this list's view context
@@ -2742,6 +2747,45 @@ func (s *listState) openEdit(h Host, m core.Message) {
 	h.Invalidate()
 }
 
+// InputFocuser is a Host that can give a conversation's input the focus:
+// channel's (thread "") or its thread's reply box.
+type InputFocuser interface {
+	FocusInput(channel, thread string)
+}
+
+// KeyboardModer is a Host that knows whether the viewer is moving around
+// with the keyboard (Slack's FocusEventManager.hasKeyboardFocus: Tab, F6
+// or an arrow pressed since the last click).
+type KeyboardModer interface {
+	KeyboardMode() bool
+}
+
+func keyboardMode(h Host) bool {
+	k, ok := h.(KeyboardModer)
+	return ok && k.KeyboardMode()
+}
+
+// editStopped is MessageEditInput's stopEditingMessage, an edit saved or
+// cancelled: one started from the conversation's input (Up in it,
+// editStartedFromComposer) gives the input the focus back; in keyboard
+// mode the list takes it at the message (transitionFocusTo the message
+// list with its ts); otherwise the focus stays where it went (the
+// transition to the input isn't forced, and a mouse user's is dropped).
+func (s *listState) editStopped(h Host, m core.Message, fromInput bool) {
+	switch {
+	case fromInput:
+		if f, ok := h.(InputFocuser); ok {
+			thread := ""
+			if s.thread {
+				thread = s.ts
+			}
+			f.FocusInput(m.Channel, thread)
+		}
+	case keyboardMode(h):
+		s.kb.ts, s.kb.focusReq = m.TS, true
+	}
+}
+
 // editLast edits the viewer's most recent message in this list.
 func (s *listState) editLast(h Host) bool {
 	app := h.Core()
@@ -2755,6 +2799,7 @@ func (s *listState) editLast(h Host) bool {
 			if s.thread && m.TS == s.ts && len(s.snap.msgs) > 1 {
 				continue // in a thread, Up edits your last reply first
 			}
+			s.editFromInput = m.TS // stopEditingMessage: the focus goes back to the input
 			s.startEdit(h, m.TS)
 			return true
 		}
