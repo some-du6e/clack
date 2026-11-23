@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/stackdump"
 	"github.com/some-du6e/clack/internal/store"
 )
 
@@ -103,6 +104,10 @@ type App struct {
 	actLaterMu sync.Mutex
 	actLaterQ  []func(context.Context)
 	actLaterOn bool
+	// what the pump and the Activity queue are on, and the stall dumps'
+	// limit (pump_watch.go)
+	pumpOn, actOn atomic.Pointer[pumpTask]
+	pumpDumps     stackdump.Limiter
 	// the other socket events' lookups, off the event pump (pump_later.go)
 	pumpQ laterQueue
 	// convQs order the events held for their conversation's lookup, one
@@ -213,6 +218,7 @@ func New(c *slack.Client, s *store.Store) *App {
 	}
 	a.warm.dataReady, a.warm.done = make(chan struct{}), make(chan struct{})
 	a.warm.restReady = make(chan struct{})
+	a.pumpDumps.Every = 10 * time.Minute // a stall's goroutine dump (pump_watch.go)
 	a.bg, a.stopBG = context.WithCancel(context.Background())
 	c.OnAuthFailed(a.onAuthFailed)
 	a.RTM = c.NewRTM()

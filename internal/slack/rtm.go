@@ -9,12 +9,15 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/some-du6e/clack/internal/stackdump"
 )
 
 // Event is one realtime event; Raw holds the full payload.
@@ -51,6 +54,9 @@ type RTM struct {
 	// OnDrop sees an event Events had no room for, on the reader
 	// goroutine, before it's gone (core notes a dropped message's ts).
 	OnDrop func(Event)
+
+	// dumps keeps the watchdog's goroutine dumps to one per 10 minutes
+	dumps stackdump.Limiter
 }
 
 // LastConnectFast reports whether the current (or last) connection was a
@@ -60,7 +66,7 @@ type RTM struct {
 func (r *RTM) LastConnectFast() bool { return r.fast.Load() }
 
 func (c *Client) NewRTM() *RTM {
-	return &RTM{c: c, Events: make(chan Event, 1024), kick: make(chan struct{}, 1)}
+	return &RTM{c: c, Events: make(chan Event, 1024), kick: make(chan struct{}, 1), dumps: stackdump.Limiter{Every: 10 * time.Minute}}
 }
 
 // MaxRTMFails is how many failed connects in a row (none reached hello)
@@ -104,9 +110,41 @@ var errStaleURL = errors.New("rtm: reconnect_url refused")
 // tests.
 var rtmPingEvery, rtmPongTimeout atomic.Int64 // nanoseconds
 
+// The socket's watchdog, beside the liveness check: a socket whose pongs
+// come can still be dead to Slack's events (Karim's α.136 on 2026-11-22:
+// nothing at all from 01:57Z to 02:42Z, the pongs answered and no line
+// logged, a reply's toast lost). A healthy gateway sends something of its
+// own accord well within ReconnectURLMaxAge (a reconnect_url at the
+// least), so with no such frame for rtmFrameTimeout, twice that, while
+// the pongs come, or with the pong check not run for rtmTickTimeout or
+// three of its intervals (a ping stuck in its write, so the check that
+// would close the socket never comes), the watchdog logs it with every
+// goroutine's stack and closes the socket with 4998, and Run connects
+// again as after the liveness check (the reconnect_url is stale by then:
+// a slow connect, as Slack's socket manager makes it). It looks every
+// rtmWatchEvery; a look that comes long after the last (the machine
+// slept) leaves the socket to the pong check. Vars for tests.
+var rtmFrameTimeout, rtmTickTimeout, rtmWatchEvery atomic.Int64 // nanoseconds
+
+// rtmPingHook, for tests, runs at each tick of the pong check, before it
+// looks (one that blocks stalls the check).
+var rtmPingHook atomic.Pointer[func(ctx context.Context)]
+
 func init() {
 	rtmPingEvery.Store(int64(10 * time.Second))
 	rtmPongTimeout.Store(int64(90 * time.Second))
+	rtmFrameTimeout.Store(int64(2 * ReconnectURLMaxAge))
+	rtmTickTimeout.Store(int64(30 * time.Second)) // three of the pong check's 10 s
+	rtmWatchEvery.Store(int64(10 * time.Second))
+}
+
+// SetStallTimers sets the watchdog's timeouts, for a socket with no frame
+// of Slack's own (2 × ReconnectURLMaxAge) and for a pong check that
+// hasn't run (30 s), and how often it looks (10 s), and returns the
+// undo: for tests.
+func SetStallTimers(frames, ticks, every time.Duration) (restore func()) {
+	f, k, e := rtmFrameTimeout.Swap(int64(frames)), rtmTickTimeout.Swap(int64(ticks)), rtmWatchEvery.Swap(int64(every))
+	return func() { rtmFrameTimeout.Store(f); rtmTickTimeout.Store(k); rtmWatchEvery.Store(e) }
 }
 
 // SetPingTimers sets the liveness check's ping interval and pong timeout
@@ -122,6 +160,17 @@ const pongTimeout = "Too long since we received a pong"
 
 // errPongTimeout: the socket was closed by the liveness check.
 var errPongTimeout = errors.New("rtm: " + pongTimeout)
+
+// The watchdog's close reasons (status 4998 too) and errors.
+const (
+	noFrames  = "Too long since we received an event"
+	pingStall = "Too long since the pong check ran"
+)
+
+var (
+	errNoFrames  = errors.New("rtm: " + noFrames)
+	errPingStall = errors.New("rtm: " + pingStall)
+)
 
 // session is how one connect went.
 type session struct {
@@ -177,7 +226,7 @@ func (r *RTM) Run(ctx context.Context) {
 			log.Printf("rtm: gateway refused the reconnect_url, connecting with a fresh URL")
 		case s.hello:
 			log.Printf("rtm: disconnected (%v) after %s (fast=%v), retrying in %s", s.err, s.up.Round(time.Second), r.fast.Load(), wait)
-			if connReset(s.err) || errors.Is(s.err, errPongTimeout) {
+			if connReset(s.err) || errors.Is(s.err, errPongTimeout) || errors.Is(s.err, errPingStall) {
 				// the path that reset the socket, or went quiet under it,
 				// took the pooled API connections with it too
 				r.c.ResetConns()
@@ -312,6 +361,62 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 	lastPong := upAt
 	pings := map[int64]bool{}
 	var noPong atomic.Bool
+	// the watchdog's clocks: the last frame Slack sent of its own accord
+	// (an event, a reconnect_url, hello: not a pong or another answer to
+	// one of Clack's frames) and the pong check's last tick; stalled is
+	// why it closed the socket
+	var watchMu sync.Mutex
+	lastFrame, lastTick := upAt, upAt
+	var stalled atomic.Pointer[error]
+	go func() {
+		every := time.Duration(rtmWatchEvery.Load())
+		t := time.NewTicker(every)
+		defer t.Stop()
+		looked := upAt
+		for {
+			select {
+			case <-cctx.Done():
+				return
+			case <-t.C:
+			}
+			now := ReadClock()
+			gap := now.WallSince(looked)
+			looked = now
+			if gap > 3*every {
+				continue // the machine slept, or the process was held: the pong check sees to the socket
+			}
+			watchMu.Lock()
+			frames, ticks := now.WallSince(lastFrame), now.WallSince(lastTick)
+			watchMu.Unlock()
+			pongMu.Lock()
+			pongs := now.WallSince(lastPong)
+			pongMu.Unlock()
+			tickMax := time.Duration(rtmTickTimeout.Load())
+			if p := 3 * time.Duration(rtmPingEvery.Load()); p > tickMax {
+				tickMax = p
+			}
+			var why error
+			reason := noFrames
+			switch {
+			case frames > time.Duration(rtmFrameTimeout.Load()) && pongs <= time.Duration(rtmPongTimeout.Load()):
+				why = errNoFrames
+				log.Printf("rtm: nothing from Slack for %s but answers to its pings: closing the socket to connect again (4998 %s); the goroutines follow", frames.Round(time.Second), noFrames)
+			case ticks > tickMax:
+				why, reason = errPingStall, pingStall
+				log.Printf("rtm: the pong check hasn't run for %s: closing the socket to connect again (4998 %s); the goroutines follow", ticks.Round(time.Second), pingStall)
+			default:
+				continue
+			}
+			if !r.dumps.Log("rtm: the goroutines", "slack.(*RTM).connect") {
+				log.Printf("rtm: (the goroutines were dumped less than %s ago)", r.dumps.Every)
+			}
+			stalled.Store(&why)
+			// as the liveness check closes it: the handshake waits 5 s at
+			// most, then the connection drops and Read ends
+			_ = conn.Close(websocket.StatusCode(4998), reason)
+			return
+		}
+	}()
 	// Slack's timer starts over when a ping's promise resolves: any reply
 	// whose reply_to is the ping's id and whose ok isn't false, whatever
 	// its type (SlackSocket _onSocketMessage → handleReply)
@@ -343,6 +448,13 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 				return
 			case <-t.C:
 			}
+			at := ReadClock()
+			watchMu.Lock()
+			lastTick = at
+			watchMu.Unlock()
+			if h := rtmPingHook.Load(); h != nil {
+				(*h)(cctx)
+			}
 			pongMu.Lock()
 			quiet := ReadClock().WallSince(lastPong)
 			pongMu.Unlock()
@@ -368,12 +480,22 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		}
 	}()
 
+	// the events the buffer had no room for, this connection: dropped in
+	// all, dropWindow and dropTypes since dropAt (the last line about it)
+	var dropped, dropWindow int
+	var dropAt ClockReading
+	dropTypes := map[string]int{}
 	for {
 		_, data, err := conn.Read(cctx)
 		if err != nil {
 			s.err = err
 			if noPong.Load() {
 				s.err = fmt.Errorf("%w (%w)", errPongTimeout, err)
+			} else if why := stalled.Load(); why != nil {
+				s.err = fmt.Errorf("%w (%w)", *why, err)
+			}
+			if dropped > 0 {
+				log.Printf("rtm: the socket closed with %d events dropped since the event buffer filled", dropped)
 			}
 			return s
 		}
@@ -383,6 +505,12 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 			continue
 		}
 		ev.Raw = data
+		if ev.Type != "pong" && ev.Type != "" { // a frame of Slack's own (the watchdog)
+			at := ReadClock()
+			watchMu.Lock()
+			lastFrame = at
+			watchMu.Unlock()
+		}
 		switch ev.Type {
 		case "hello":
 			s.hello = true
@@ -434,8 +562,28 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		}
 		select {
 		case r.Events <- ev:
+			if dropped > 0 {
+				log.Printf("rtm: the event buffer has room again, after %d events dropped", dropped)
+				dropped, dropWindow = 0, 0
+			}
 		default:
-			log.Printf("rtm: event buffer full, dropping %s", ev.Type)
+			// the frames still come, so this is the handler falling
+			// behind, not the socket going quiet: one line as it fills,
+			// then a count every dropLogEvery, so a flood can't push the
+			// watchdog's lines out of the log's queue
+			dropped++
+			dropWindow++
+			dropTypes[ev.Type]++
+			switch now := ReadClock(); {
+			case dropped == 1:
+				log.Printf("rtm: event buffer full (%d events wait for the handler): dropping %s and what follows until it has room; the socket still brings them", len(r.Events), ev.Type)
+				dropAt, dropWindow = now, 0
+				clear(dropTypes)
+			case now.WallSince(dropAt) >= dropLogEvery:
+				log.Printf("rtm: event buffer still full: dropped %d more in %s (%s), %d in all", dropWindow, now.WallSince(dropAt).Round(time.Second), dropSummary(dropTypes), dropped)
+				dropAt, dropWindow = now, 0
+				clear(dropTypes)
+			}
 			if r.OnDrop != nil {
 				r.OnDrop(ev)
 			}
@@ -547,4 +695,30 @@ func (r *RTM) Connected() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.conn != nil
+}
+
+// dropLogEvery is how often a full event buffer says how many it dropped.
+const dropLogEvery = 10 * time.Second
+
+// dropSummary is the dropped events' types with their counts, the most
+// first, five at most.
+func dropSummary(types map[string]int) string {
+	names := make([]string, 0, len(types))
+	for t := range types {
+		names = append(names, t)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if types[names[i]] != types[names[j]] {
+			return types[names[i]] > types[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	if len(names) > 5 {
+		names = names[:5]
+	}
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = fmt.Sprintf("%s %d", n, types[n])
+	}
+	return strings.Join(parts, ", ")
 }

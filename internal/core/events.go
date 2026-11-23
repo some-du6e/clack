@@ -24,13 +24,14 @@ var mentionRe = regexp.MustCompile(`<@([UW][A-Z0-9]+)`)
 // App that never connected (no realtime) kept it, and itself, for good.
 func (a *App) pump() {
 	done := a.bg.Done()
+	go a.pumpWatch(done) // pump_watch.go
 	for {
 		select {
 		case ev, ok := <-a.RTM.Events:
 			if !ok {
 				return
 			}
-			a.handle(ev)
+			tracked(&a.pumpOn, "the event pump", &pumpTask{ev: ev, at: slack.ReadClock()}, func() { a.handle(ev) })
 		case <-done:
 			return
 		}

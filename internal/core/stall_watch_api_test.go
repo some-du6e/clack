@@ -3,11 +3,18 @@ package core
 import (
 	"testing"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
-// The red commit's stubs for the watchdogs' test seams: the code before
-// them has none, so the tests run on its behaviour.
+// The watchdogs' test seams (slack rtm.go, pump_watch.go). The red commit
+// replaces this file with stubs: the tests then run on the code before
+// them.
 
-func stallTimers(t *testing.T, frames, ticks, every time.Duration) {}
+func stallTimers(t *testing.T, frames, ticks, every time.Duration) {
+	t.Cleanup(slack.SetStallTimers(frames, ticks, every))
+}
 
-func pumpTimers(t *testing.T, after, every time.Duration) {}
+func pumpTimers(t *testing.T, after, every time.Duration) {
+	t.Cleanup(setPumpTimers(after, every))
+}
