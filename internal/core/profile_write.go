@@ -382,11 +382,6 @@ func (s ProfileFormSave) Dirty() bool {
 type ProfileFormResult struct {
 	Closed      bool
 	FieldErrors map[string]ProfileFieldError
-	// HeaderWritten: the header section took the form's pronunciation,
-	// title and recording, the form open or not (a field error from
-	// users.profile.set keeps it open): the profile's recording is the
-	// form's from then on.
-	HeaderWritten bool
 }
 
 // SaveProfileForm runs EditProfileFormPane's handleSubmit (see the top of
@@ -395,7 +390,17 @@ func (a *App) SaveProfileForm(ctx context.Context, s ProfileFormSave) (ProfileFo
 	if !s.Dirty() {
 		return ProfileFormResult{Closed: true}, nil
 	}
-	headerWritten := false
+	if s.RecordingWas != "" && s.Recording != s.RecordingWas {
+		// handleSubmit's e5(ea): the recording it replaces goes, not awaited
+		was := s.RecordingWas
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+			defer cancel()
+			if err := a.DeleteFile(ctx, was); err != nil {
+				log.Printf("profile: deleting the replaced name recording: %v", err)
+			}
+		}()
+	}
 	if s.Header.Found && (s.Pronunciation != s.PronunciationWas || s.Title != s.TitleWas || s.Recording != s.RecordingWas) {
 		var rec *string
 		if s.Header.Record != nil && s.Recording != s.RecordingWas {
@@ -404,21 +409,6 @@ func (a *App) SaveProfileForm(ctx context.Context, s ProfileFormSave) (ProfileFo
 		}
 		if err := a.SetProfileHeaderFields(ctx, s.UserID, s.Header, s.Pronunciation, s.Title, rec); err != nil {
 			return ProfileFormResult{}, err
-		}
-		headerWritten = true
-		if rec != nil && s.RecordingWas != "" {
-			// handleSubmit's e5(ea): the recording it replaced goes, not
-			// awaited. Slack starts that delete before setProfileHeaderFields;
-			// here it waits for the header to stop naming the file, so a
-			// failed write never leaves the profile on a deleted recording.
-			was := s.RecordingWas
-			go func() {
-				ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-				defer cancel()
-				if err := a.DeleteFile(ctx, was); err != nil {
-					log.Printf("profile: deleting the replaced name recording: %v", err)
-				}
-			}()
 		}
 	}
 	type res struct{ err error }
@@ -460,10 +450,10 @@ func (a *App) SaveProfileForm(ctx context.Context, s ProfileFormSave) (ProfileFo
 		}
 		_ = json.Unmarshal(se.Body, &b)
 		if b.Field != "" {
-			return ProfileFormResult{FieldErrors: map[string]ProfileFieldError{b.Field: {Type: "error_no_special_chars"}}, HeaderWritten: headerWritten}, nil
+			return ProfileFormResult{FieldErrors: map[string]ProfileFieldError{b.Field: {Type: "error_no_special_chars"}}}, nil
 		}
 	}
-	return ProfileFormResult{Closed: true, HeaderWritten: headerWritten}, nil
+	return ProfileFormResult{Closed: true}, nil
 }
 
 // SetOwnProfile is updateCurrentMemberProfile: users.profile.set with

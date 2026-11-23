@@ -61,14 +61,6 @@ func (c *Controller) ToggleNameSound(pane, user string, f *richtext.File) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	t := c.nameTileLocked(pane, user, f)
-	if t.errCode != 0 && t.h != nil {
-		// the last load failed: the click loads it again, as play() on the
-		// Audio element does, instead of seeking a player that has nothing
-		c.closeLocked(t)
-		t.au.errored = false
-		c.mountLocked(t, true) // a new player from 0, its error cleared
-		return
-	}
 	if t.playing || t.loading {
 		if t.h != nil {
 			t.h.Pause()
