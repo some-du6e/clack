@@ -24,13 +24,14 @@ var mentionRe = regexp.MustCompile(`<@([UW][A-Z0-9]+)`)
 // App that never connected (no realtime) kept it, and itself, for good.
 func (a *App) pump() {
 	done := a.bg.Done()
+	go a.pumpWatch(done) // pump_watch.go
 	for {
 		select {
 		case ev, ok := <-a.RTM.Events:
 			if !ok {
 				return
 			}
-			a.handle(ev)
+			tracked(&a.pumpOn, "the event pump", &pumpTask{ev: ev, at: slack.ReadClock()}, func() { a.handle(ev) })
 		case <-done:
 			return
 		}
@@ -153,35 +154,16 @@ func (a *App) handle(ev slack.Event) {
 		a.S.Unlock()
 		a.presenceArrived()
 		a.emit(Event{Type: "presence", Users: us, Presence: e.Presence})
+	case "manual_presence_change":
+		a.onManualPresence(ev.Raw) // tickle.go
 	case "user_change", "user_profile_changed":
 		var e struct {
 			User slack.User `json:"user"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		if e.User.ID != "" {
-			// Seen: when a view last read the member (store.MemberAccessed:
-			// a row its sender, a mention its member, as they draw), so the
-			// views know whether one draws them now. One the store didn't
-			// hold, or no view read, draws nowhere (a row that wants it
-			// draws the unknown stub, and its fetch's "names" follows), as
-			// most of a large workspace's profile changes are. The event is
-			// read without a lookup, which would count as a view's.
-			seen := a.S.MemberAccessed(e.User.ID)
-			// what message Docs read of the member, against both the last
-			// event's and the stored copy's (a status or huddle change
-			// converts no message again; a name stored anew since without
-			// an event, an older answer stored after it included, does)
-			before, had := a.S.RawUser(e.User.ID)
-			var beforeFP uint64
-			if had && before != nil {
-				beforeFP = userDocFP(before)
-			}
-			a.S.PutUsers([]slack.User{e.User})
-			if su, ok := a.S.RawUser(e.User.ID); ok {
-				u := a.userOf(su)
-				same := a.noteUserDoc(su) && had && beforeFP == userDocFP(su)
-				a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: same})
-			}
+			a.putUserLive(e.User)
+			a.membersFetched([]string{e.User.ID}) // the member as it is now (member_fresh.go)
 		}
 	case "team_icon_change":
 		a.onTeamIconChange(ev.Raw)
@@ -207,6 +189,10 @@ func (a *App) handle(ev slack.Event) {
 		a.S.Unlock()
 		a.setTeamName(firstNonEmpty(e.TeamID, cur), e.Name)
 		a.emit(Event{Type: "team"})
+	case "emoji_collection_added": // emoji_packs.go
+		a.onEmojiCollectionAdded(ev.Raw)
+	case "emoji_collection_removed":
+		a.onEmojiCollectionRemoved(ev.Raw)
 	case "emoji_changed":
 		var e struct {
 			Subtype string   `json:"subtype"`
@@ -431,7 +417,7 @@ func (a *App) handle(ev slack.Event) {
 			// changes the group.
 			a.noteUsergroupEvent(ev.Raw, ev.Type == "subteam_created")
 		}
-	case "saved_added", "saved_updated", "saved_deleted":
+	case "saved_added", "saved_updated", "saved_deleted", "saved_due":
 		// the store's saved state now, on the pump; its message's lookup
 		// and the event after it, in order with the saved events before
 		// (pump_later.go)
@@ -827,9 +813,15 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		}
 	}
 	self := a.S.SelfID()
-	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))
+	rm := ruleMessage(&m)
+	mention := a.messageBadges(ch, rm) // shouldMessageBadgeChannel (badge_rules.go)
+	counted := false
 	if !isReply || m.Subtype == "thread_broadcast" {
-		a.S.NoteMessage(ch, &m, mention)
+		if counted = m.User == self && self != "" || a.countsInSidebar(rm); counted {
+			a.S.NoteMessage(ch, &m, mention) // the viewer's own reads the conversation
+		} else {
+			a.S.NoteHeard(ch, &m) // not unread (a join, a huddle's post, a topic: badge_rules.go)
+		}
 		a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
 	} else if m.User != self {
 		a.refreshCountsSoon() // thread unread state lives server-side
@@ -842,7 +834,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	// store holds the message already (above): only its announcement waits
 	if a.holdForConv(ch) {
 		mm, since := m, a.S.Seq()
-		countedDM := mention || a.S.CountsAsDM(ch) // as NoteMessage counted it, above
+		countedDM := !counted || mention || a.S.CountsAsDM(ch) // as NoteMessage counted it (or NoteHeard didn't), above
 		a.convLater(ch, func(ctx context.Context) {
 			defer a.releaseConv(ch)
 			if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
@@ -1207,4 +1199,31 @@ func keepFiles(m, old *slack.Message) {
 		}
 	}
 	m.Files = fs
+}
+
+// putUserLive stores a member's new copy (user_change, a refetch that
+// found it changed) and tells the views: a "user" event. Seen is when a
+// view last read the member (store.MemberAccessed: a row its sender, a
+// mention its member, as they draw), so the views know whether one draws
+// them now; one the store didn't hold, or no view read, draws nowhere (a
+// row that wants it draws the unknown stub, and its fetch's "names"
+// follows), as most of a large workspace's profile changes are. The
+// member is read without a lookup, which would count as a view's.
+func (a *App) putUserLive(nu slack.User) {
+	seen := a.S.MemberAccessed(nu.ID)
+	// what message Docs read of the member, against both the last
+	// event's and the stored copy's (a status or huddle change converts
+	// no message again; a name stored anew since without an event, an
+	// older answer stored after it included, does)
+	before, had := a.S.RawUser(nu.ID)
+	var beforeFP uint64
+	if had && before != nil {
+		beforeFP = userDocFP(before)
+	}
+	a.S.PutUsers([]slack.User{nu})
+	if su, ok := a.S.RawUser(nu.ID); ok {
+		u := a.userOf(su)
+		same := a.noteUserDoc(su) && had && beforeFP == userDocFP(su)
+		a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: same})
+	}
 }

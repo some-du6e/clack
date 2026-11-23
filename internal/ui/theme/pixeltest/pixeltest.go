@@ -89,6 +89,31 @@ func Render(t testing.TB, w, h int, ops *op.Ops) *image.RGBA {
 	return img
 }
 
+// Need skips the test now when the process has no headless GPU (Render
+// would skip it later), deciding it with a small window if no Render has
+// yet. A test calls it before it starts what it renders: skipped later,
+// the app it started is still busy, writing into its t.TempDir (a Taut
+// runtime mid-boot: "TempDir RemoveAll cleanup: directory not empty",
+// TestPatchedReactionPillLikeNative in invalidate-relatives' full-test
+// 45057092647). With CLACK_PIXEL_TESTS set it never skips: Render fails.
+func Need(t testing.TB) {
+	t.Helper()
+	if os.Getenv("CLACK_PIXEL_TESTS") != "" {
+		return
+	}
+	if gpu.Load() == 0 {
+		if win, err := NewWindow(1, 1); err == nil {
+			win.Release()
+			gpu.CompareAndSwap(0, 1)
+		} else {
+			gpu.CompareAndSwap(0, 2)
+		}
+	}
+	if gpu.Load() == 2 {
+		t.Skip("no headless GPU in this process; CI runs this with CLACK_PIXEL_TESTS=1")
+	}
+}
+
 // Ink counts the pixels in r that are at least half fg over bg (and near
 // the fg-bg line, so other colours don't count).
 func Ink(img *image.RGBA, r image.Rectangle, fg, bg color.NRGBA) int {

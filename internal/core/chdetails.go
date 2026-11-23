@@ -370,8 +370,10 @@ func (a *App) MentionsViewer(m *Message) bool {
 
 // mentionOpts are the checkForMentionInMessage options the callers tell
 // apart: here counts @here; broadcast @channel, @everyone and @group
-// (never in a reply); keywords the viewer's highlight words.
-type mentionOpts struct{ here, broadcast, keywords bool }
+// (never in a reply); keywords the viewer's highlight words; noUsergroups
+// is ignoreUserGroupMentions (the notification rules' check without
+// at-channel mentions: NotifyMention).
+type mentionOpts struct{ here, broadcast, keywords, noUsergroups bool }
 
 // hereMentionRe is @here in mrkdwn (client-boot p6HR $2), and
 // broadcastMentionRe @everyone, @channel and @group (K0, Oh, y7).
@@ -404,7 +406,7 @@ func (a *App) mentionsViewer(m *Message, o mentionOpts) bool {
 			return true
 		}
 		for _, g := range usergroupMentionRe.FindAllStringSubmatch(t, -1) {
-			if a.S.InUsergroup(g[1]) {
+			if !o.noUsergroups && a.S.InUsergroup(g[1]) {
 				return true
 			}
 		}
@@ -551,7 +553,7 @@ func (a *App) richMention(els []json.RawMessage, self string, o mentionOpts) boo
 				return true
 			}
 		case "usergroup":
-			if a.S.InUsergroup(e.UsergroupID) {
+			if !o.noUsergroups && a.S.InUsergroup(e.UsergroupID) {
 				return true
 			}
 		case "broadcast":

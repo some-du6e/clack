@@ -161,7 +161,7 @@ func (v *SearchView) srCompactBody(m *core.Message) []richtext.Block {
 // srRichOf is card i's views, built again when its message, the plugin
 // text, the query or its expanded state changes.
 func (v *SearchView) srRichOf(i int) *srCardRich {
-	c := &v.cards[i]
+	c := v.cards[i]
 	m := &v.msgs[i]
 	terms := v.q.Highlights()
 	key := m.Channel + "/" + m.TS + "\x00" + m.EditedTS + "\x00" + c.ovText + "\x00" + strings.Join(terms, "\x01") +
@@ -248,7 +248,7 @@ func (v *SearchView) srRichStyle(th *theme.Theme) *richview.Style {
 // srRichMeasure lays out card i's body and extras bw wide (recorded, not
 // yet drawn) and works out the clamps.
 func (v *SearchView) srRichMeasure(gtx layout.Context, th *theme.Theme, i, bw, lh int) srRichParts {
-	c := &v.cards[i]
+	c := v.cards[i]
 	r := v.srRichOf(i)
 	st := v.srRichStyle(th)
 	hd := srCardHandler{srWOHandler{v}, i}

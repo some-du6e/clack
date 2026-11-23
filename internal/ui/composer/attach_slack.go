@@ -2,12 +2,11 @@ package composer
 
 import (
 	"image"
-	"mime"
-	"path/filepath"
 	"strconv"
 
 	"gioui.org/layout"
 
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -31,8 +30,17 @@ type attItem struct {
 	sz image.Point
 }
 
-// attMime is a file's type from its extension ("" when unknown).
-func attMime(name string) string { return mime.TypeByExtension(filepath.Ext(name)) }
+// attFileType is a chip's File type as Slack's client holds it, which its
+// pending file's mimetype is: a clip's own (the recorder's audio/mp4), else
+// the type Chromium gives a file of that name (slack.FileType: its lists
+// and this machine's OS). Go's mime.TypeByExtension isn't it: it gave a .js
+// "text/javascript; charset=utf-8".
+func attFileType(name, clipMime string) string {
+	if clipMime != "" {
+		return clipMime
+	}
+	return slack.FileType(name)
+}
 
 // file is Slack's file object for the pending upload.
 func (it attItem) file() slackc.Props {
@@ -46,8 +54,7 @@ func (it attItem) file() slackc.Props {
 	case v.gone:
 		return slackc.Props{"id": it.fileID(), "isNonExistent": true}
 	}
-	m := attMime(v.name)
-	return slackc.Props{"name": v.name, "title": v.title, "size": v.size, "mimetype": m, "type": m}
+	return slackc.Props{"name": v.name, "title": v.title, "size": v.size, "mimetype": v.typ, "type": v.typ}
 }
 
 // fileID is the chip's Slack file id ("" before its upload gave it one).

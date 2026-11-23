@@ -32,6 +32,9 @@ const (
 	noteSkipNoNotify  noteSkip = "5"  // no_notifications
 	noteSkipReply     noteSkip = "6"  // a reply that doesn't mention the viewer (any reply in a DM)
 	noteSkipNotReply  noteSkip = "7"  // a desktop_notification that isn't a thread's reply
+	noteSkipJoinLeave noteSkip = "8"  // a join or a leave
+	noteSkipBot       noteSkip = "9"  // a bot's message without a mention, the level at Mentions
+	noteSkipApp       noteSkip = "10" // an app's message without a mention, the level at Mentions
 	noteSkipOwn       noteSkip = "11" // the viewer's own
 	noteSkipMuted     noteSkip = "12"
 	noteSkipDND       noteSkip = "13"
@@ -39,6 +42,10 @@ const (
 	noteSkipTooNew    noteSkip = "19" // newer than the newest message the store took (notifications.maxTs)
 	noteSkipRead      noteSkip = "20" // its thread read to it already
 	noteSkipShown     noteSkip = "21" // shown already
+	noteSkipEmail     noteSkip = "22" // an email forwarded to Slackbot, in the Slackbot DM
+	noteSkipFileCmt   noteSkip = "25" // a canvas's or list's comment in its file channel
+	noteSkipCanvasStb noteSkip = "26" // a canvas section's stub in its file channel
+	noteSkipFileEph   noteSkip = "28" // an ephemeral message in a file channel
 	noteSkipHidden    noteSkip = "29" // from a member the viewer hid
 	noteSkipCanvasUpd noteSkip = "30" // a channel canvas's update
 	noteSkipTabCanvas noteSkip = "31" // a tab canvas's update
@@ -48,7 +55,7 @@ const (
 	noteSkipFolder    noteSkip = "35" // a folder's item added
 
 	noteSkipPushOff   noteSkip = "pref-disabled" // the conversation's desktop push is off
-	noteSkipEphemeral noteSkip = "ephemeral"     // an ephemeral message (Clack's rule)
+	noteSkipEphemeral noteSkip = "ephemeral"     // a notice this client made (core LocalEphemeral: Slack's addEphemeralMessage, which never notifies)
 	noteSkipDeleted   noteSkip = "deleted"       // deleted while the lookups it waited for ran (Clack's)
 )
 

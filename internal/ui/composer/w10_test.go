@@ -408,7 +408,7 @@ func TestW10LinkDialogRichText(t *testing.T) {
 		t.Fatalf("doc %q: the emoji should stay", got.Text())
 	}
 	for i := 0; i < got.Len(); i++ {
-		want := "https://example.com/docs"
+		want := "http://example.com/docs" // normalizeLinkUrl
 		if got.Attrs[i].Atom != nil {
 			want = ""
 		}
