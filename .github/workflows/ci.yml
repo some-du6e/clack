@@ -785,6 +785,24 @@ jobs:
         with:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
+      # TestCrashRecordForRealEvent needs Windows to log a crash (Application
+      # Error, event 1000): 45196009117 logged none, for its fail-fast or
+      # crash_native's access violation. What the image set, then reporting on
+      - name: Windows Error Reporting on (applog's crash record)
+        shell: pwsh
+        run: |
+          $k = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+          $p = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting'
+          $ae = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug'
+          foreach ($x in @($k, $p, $ae)) { "--- $x"; Get-ItemProperty $x -ErrorAction SilentlyContinue | Select-Object * -ExcludeProperty PS* | Format-List | Out-String -Width 300 }
+          Get-Service WerSvc | Format-List Name,Status,StartType | Out-String
+          New-Item -Path $k -Force | Out-Null
+          Set-ItemProperty -Path $k -Name Disabled -Value 0 -Type DWord
+          Set-ItemProperty -Path $k -Name DontShowUI -Value 1 -Type DWord
+          if (Test-Path $p) { Remove-ItemProperty -Path $p -Name Disabled -ErrorAction SilentlyContinue }
+          Set-Service WerSvc -StartupType Manual
+          Start-Service WerSvc -ErrorAction Continue
+          Get-Service WerSvc | Format-List Name,Status,StartType | Out-String
       - name: applog tests
         env:
           CLACK_WINDOWS_WER_TESTS: "1" # TestCrashRecordForRealEvent: a child's fail-fast, read back through wevtutil

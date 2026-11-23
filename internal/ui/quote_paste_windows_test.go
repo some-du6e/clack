@@ -487,10 +487,11 @@ func TestWinQuotePaste(t *testing.T) {
 		}, []qpLine{
 			{quote, "quoted in clack"},
 			{composer.Line{Kind: composer.Bullet, Quoted: true}, "an item"},
+			// its delta ends {"insert": "after it", bold} then a bare "\n"
+			// (TextyDelta merges a newline only into an op without
+			// attributes): prepareDeltaForPaste adds no closing quote line
+			// (TestPasteTextyIntoQuoteTail has the delta that gets one)
 			{quote, "after it"},
-			// its delta's last op is "after it\n", not a bare "\n":
-			// prepareDeltaForPaste's closing quote line
-			{quote, ""},
 		}, 0},
 		{"Clack's composer copy (Ctrl+C)", copyOwn, func() {}, []qpLine{
 			{composer.Line{Kind: composer.Bullet, Quoted: true}, "item one"},

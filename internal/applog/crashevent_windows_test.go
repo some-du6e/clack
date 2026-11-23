@@ -67,6 +67,9 @@ func TestCrashRecordForRealEvent(t *testing.T) {
 	}
 	t.Logf("CrashRecordFor: %s", line)
 	if line == "" {
+		// what the log has: the newest events, any source
+		raw, err := exec.Command("wevtutil", "qe", "Application", "/f:text", "/rd:true", "/c:6").CombinedOutput()
+		t.Logf("the Application log's newest events (%v):\n%s", err, raw)
 		t.Fatalf("no Application Error event for pid %d in 90 s", pid)
 	}
 	for _, want := range []string{fmt.Sprintf("pid %d,", pid), "exception 0x", "Application Error, event 1000"} {
