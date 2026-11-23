@@ -97,6 +97,7 @@ func (q *Router) frameKeyLog() {
 // requeue queues events the router was already given (a state replay):
 // KeyPresses has them already.
 func (q *Router) requeue(events ...event.Event) {
+	q.replayed += len(events) // Clack patch 61 (tests)
 	q.keyLog.replay = true
 	defer func() { q.keyLog.replay = false }()
 	q.Queue(events...)
