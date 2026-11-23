@@ -297,6 +297,72 @@ func (v *View) Hovered() bool { return v.hover >= 0 }
 // Pointer reports whether the pointer is inside the view.
 func (v *View) Pointer() bool { return v.hovering }
 
+// HandCursors adds the hand over v's links, mentions, cards and buttons
+// once more, in areas that pass every event on: for an input area laid
+// out over the view after its Layout, at the same origin (a canvas
+// editor's press area, which takes the text cursor for presses on plain
+// text), whose cursor would otherwise win over the view's own. dates
+// gives a canvas's dates the hand too: an editor's (Quip's
+// control.c68 .slack-date-contents:not(.read-only)).
+func (v *View) HandCursors(gtx layout.Context, dates bool) {
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	v.handAreas(gtx, dates)
+}
+
+// handAreas sets the hand over everything a click acts on (Layout's own
+// cursors, after its text cursor for the whole view).
+func (v *View) handAreas(gtx layout.Context, dates bool) {
+	for i := range v.d.hits {
+		hr := &v.d.hits[i]
+		if hr.r.Empty() {
+			continue
+		}
+		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly {
+			continue // no click: the text cursor stays
+		}
+		s := clip.Rect(hr.r).Push(gtx.Ops)
+		pointer.CursorPointer.Add(gtx.Ops)
+		s.Pop()
+	}
+	v.barCursors(gtx, false) // the shown FileActions' buttons
+	for i := range v.d.codes {
+		if c := &v.d.codes[i]; c.block {
+			s := clip.Rect(v.copyButton(c)).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
+	}
+	for i := range v.d.frags {
+		f := &v.d.frags[i]
+		if v.handFrag(f, dates) {
+			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
+	}
+}
+
+// handFrag reports whether frag f takes the hand: a link, a mention or a
+// card does; a chip that isn't a link (a channel the viewer can't see)
+// only in a canvas, where Quip draws it as an <a> all the same
+// (ChannelMentionView; .document a:not(.c-link):hover{cursor:pointer});
+// a canvas's date only for an editor (dates).
+func (v *View) handFrag(f *frag, dates bool) bool {
+	if f.target < 0 {
+		return false
+	}
+	if int(f.target) >= len(v.d.targets) {
+		return true
+	}
+	switch tg := &v.d.targets[f.target]; {
+	case tg.kind == tDate:
+		return dates
+	case tg.cardOnly:
+		return v.opts.Canvas
+	}
+	return true
+}
+
 func (v *View) selRange() (int32, int32) {
 	if v.selA <= v.selB {
 		return v.selA, v.selB
@@ -506,34 +572,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	}
 	v.mounted(gtx, size)
 	pointer.CursorText.Add(gtx.Ops)
-	for i := range v.d.hits {
-		hr := &v.d.hits[i]
-		if hr.r.Empty() {
-			continue
-		}
-		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly {
-			continue // no click: the text cursor stays
-		}
-		s := clip.Rect(hr.r).Push(gtx.Ops)
-		pointer.CursorPointer.Add(gtx.Ops)
-		s.Pop()
-	}
-	v.barCursors(gtx, false) // the shown FileActions' buttons
-	for i := range v.d.codes {
-		if c := &v.d.codes[i]; c.block {
-			s := clip.Rect(v.copyButton(c)).Push(gtx.Ops)
-			pointer.CursorPointer.Add(gtx.Ops)
-			s.Pop()
-		}
-	}
-	for i := range v.d.frags {
-		f := &v.d.frags[i]
-		if f.target >= 0 && (int(f.target) >= len(v.d.targets) || !v.d.targets[f.target].cardOnly) {
-			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
-			pointer.CursorPointer.Add(gtx.Ops)
-			s.Pop()
-		}
-	}
+	v.handAreas(gtx, false)
 	// Element runs (Options.Elements) go last: their input areas must be
 	// above the cursor/hit areas of cards and links registered above.
 	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {

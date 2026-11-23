@@ -23,6 +23,9 @@ const (
 	HitButton                   // a Block Kit or attachment button
 	HitCard                     // a whole-card link (URL)
 	HitOther                    // another clickable (Show more)
+	// HitDate is a canvas's date control. Only LinkRects reports it: to
+	// HitAt (context menus) a date is plain text.
+	HitDate
 )
 
 // Hit describes the point HitAt was asked about.
@@ -71,8 +74,8 @@ func (v *View) HitAt(p f32.Point) Hit {
 		return h
 	}
 	tg := &v.d.targets[t]
-	if tg.cardOnly {
-		return h // a chip, not a link
+	if tg.cardOnly || tg.kind == tDate {
+		return h // a chip, not a link; a canvas date is text to a menu
 	}
 	switch tg.kind {
 	case tLink:
@@ -153,7 +156,7 @@ func (v *View) ImageRects() []ImageRect {
 // LinkRect is a link's box: a URL, an @mention, a channel or a user
 // group mention.
 type LinkRect struct {
-	Kind HitKind // HitLink, HitUser, HitChannel or HitUsergroup
+	Kind HitKind // HitLink, HitUser, HitChannel, HitUsergroup or a canvas's HitDate
 	ID   string  // the member, channel or user group
 	URL  string  // a link's URL
 	R    image.Rectangle
@@ -169,7 +172,7 @@ func (v *View) LinkRects() []LinkRect {
 			continue
 		}
 		tg := &v.d.targets[f.target]
-		if tg.cardOnly {
+		if tg.cardOnly && !v.opts.Canvas { // a canvas's chip is Quip's <a>: listed
 			continue
 		}
 		var k HitKind
@@ -182,6 +185,8 @@ func (v *View) LinkRects() []LinkRect {
 			k = HitChannel
 		case tUsergroup:
 			k = HitUsergroup
+		case tDate:
+			k = HitDate
 		default:
 			continue
 		}

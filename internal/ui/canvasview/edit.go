@@ -162,12 +162,23 @@ func (e *editState) textArea(gtx layout.Context, v *View, b *blk, r image.Rectan
 			e.refuse(v, b)
 		}
 	}
-	defer clip.Rect(r).Push(gtx.Ops).Pop()
-	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-	if b.edOK {
-		pointer.CursorText.Add(gtx.Ops)
+	func() {
+		defer clip.Rect(r).Push(gtx.Ops).Pop()
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		if b.edOK {
+			pointer.CursorText.Add(gtx.Ops)
+		}
+		event.Op(gtx.Ops, b)
+	}()
+	// Quip's cursors over the text: the hand on a link, a mention, a
+	// file or canvas link and an editor's date (canvas-controller CSS:
+	// .document a:not(.c-link):hover and control.c68
+	// .slack-date-contents:not(.read-only) take cursor:pointer), the
+	// text cursor only on plain text. The press area above is on top of
+	// the block's read view, so its text cursor would win everywhere.
+	if b.rv != nil && !hidden(b) {
+		b.rv.HandCursors(gtx, true)
 	}
-	event.Op(gtx.Ops, b)
 }
 
 // primary: a left-button mouse press, or a touch.
@@ -268,10 +279,15 @@ func (e *editState) titleArea(gtx layout.Context, v *View, r image.Rectangle) {
 			v.startRename()
 		}
 	}
-	defer clip.Rect(r).Push(gtx.Ops).Pop()
-	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-	pointer.CursorText.Add(gtx.Ops)
-	event.Op(gtx.Ops, tag)
+	func() {
+		defer clip.Rect(r).Push(gtx.Ops).Pop()
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		pointer.CursorText.Add(gtx.Ops)
+		event.Op(gtx.Ops, tag)
+	}()
+	if v.title != nil {
+		v.title.HandCursors(gtx, true) // as textArea: a link in the title keeps the hand
+	}
 }
 
 // startRename turns the title into an editor (More actions > Rename).

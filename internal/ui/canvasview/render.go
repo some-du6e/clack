@@ -9,6 +9,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -426,20 +427,17 @@ func (v *View) spans(sp []richtext.Span) []richtext.Span {
 	}
 	out := make([]richtext.Span, len(sp))
 	copy(out, sp)
+	// a richtext.Date stays one: the export has its formatted text only
+	// (no timestamp), which richview draws as text, but in a canvas it is
+	// Quip's date control, with its own cursor (richview's tDate)
 	for i := range out {
-		s := &out[i]
-		switch s.Kind {
-		case richtext.Emoji:
-			if s.URL == "" {
-				if u, t, ok := a.Emoji(s.ID); ok {
-					s.URL = u
-					if s.Text == "" {
-						s.Text = t
-					}
+		if s := &out[i]; s.Kind == richtext.Emoji && s.URL == "" {
+			if u, t, ok := a.Emoji(s.ID); ok {
+				s.URL = u
+				if s.Text == "" {
+					s.Text = t
 				}
 			}
-		case richtext.Date:
-			s.Kind = richtext.Text // the export has the formatted date only
 		}
 	}
 	return out
@@ -724,10 +722,19 @@ func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) int {
 					checkMark(gtx, c.BorderStrong)
 				}
 			}
-			if !editable {
-				return layout.Dimensions{Size: s}
+			d := layout.Dimensions{Size: s}
+			if editable {
+				d = b.check.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
 			}
-			return b.check.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
+			// li.slackified-checkbox .checkbox{cursor:pointer}, an editor's
+			// or not (Quip's browser checkbox above keeps the arrow:
+			// .checkbox-container .checkbox{cursor:default})
+			pass := pointer.PassOp{}.Push(gtx.Ops)
+			area := clip.Rect{Max: s}.Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			area.Pop()
+			pass.Pop()
+			return d
 		})
 		if toggled {
 			v.edit.toggleCheck(v, b)
