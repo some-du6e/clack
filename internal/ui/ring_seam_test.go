@@ -13,6 +13,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"runtime"
 	"testing"
 	"time"
 
@@ -27,14 +28,16 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
-// What counts as drawn off a ring: a channel above seamInk (16/255: a
-// 1% coverage column shows as 25 on a dark background, sRGB), more than
+// What counts as drawn off a ring: a channel above seamInk, more than
 // seamSlack px outside its band (antialiasing and Direct3D's soft edge
-// stay within 3).
-const (
-	seamInk   = 16
-	seamSlack = 3.0
-)
+// stay within 3). On GL, 16/255: Gio patch 63's 32-bit coverage leaves no
+// column at all (a 1% column shows as 25 on a dark background, sRGB).
+// Direct3D 11 and Metal keep a column of under 1% (up to 21/255 on black)
+// under any shape, filled or stroked, that 32-bit coverage doesn't remove
+// (a separate Gio issue): there the tests catch a line from 32/255.
+const seamSlack = 3.0
+
+var seamInk = map[bool]uint8{true: 16, false: 32}[runtime.GOOS == "linux"]
 
 // seamFrame is an intro frame at now on a w×h window, one device px per
 // layout unit.

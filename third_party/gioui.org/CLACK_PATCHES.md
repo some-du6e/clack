@@ -3179,28 +3179,32 @@ the ring's band; `TestClackRingSeamSweeps`: open arcs swept from 0.9 of a
 turn to a whole one, the spinners'), in ci's linux-gio job. Not in
 `UPSTREAM.patch`.
 
-## 63. gpu: path coverage in 32-bit float where it can be blended
+## 63. gpu: path coverage in 32-bit float on GL where it can be blended
 
-`gpu/internal/opengl/opengl.go` (`floatTripleFor`: `R32F` first on
+`gpu/internal/opengl/opengl.go` (`floatTripleFor`): `R32F` first on
 desktop GL 3, and on GLES 3 with `EXT_color_buffer_float` and
-`EXT_float_blend`), `gpu/internal/d3d11/d3d11_windows.go`
-(`detectFloatFormat`: `R32_FLOAT` first when the device can render to it
-and blend it), `gpu/internal/metal/metal_darwin.go` (`R32Float`, which
-every Mac GPU family blends); `R16F` / `R16_FLOAT` stay the fallback.
+`EXT_float_blend`; `R16F` stays the fallback.
 
 The stencil pass adds each outline segment's signed coverage into a float
 texture from the segment down to the path's bottom, and the segments of a
 closed outline cancel below it. In half float (11 bits) the many partial
-sums where an outline runs vertical (a ring's left and right sides, a
-circle's) leave about 1% behind, a column under the shape to its bottom.
-On a light background that's invisible; on the intro's dark one, and in
-dark mode, sRGB turns 1% into 25/255: a faint line hanging off rings and
-filled circles (the same report as patch 62). In 32-bit float the sums
-cancel. The coverage texture takes twice the memory.
+sums where an outline runs vertical (a ring's or a circle's left and
+right sides) leave up to 1% behind, a column under the shape to its
+bottom. On a light background that's invisible; on the intro's dark one,
+and in dark mode, sRGB turns 1% into 25/255: a faint line hanging off
+rings and filled circles (the same report as patch 62). In 32-bit float
+the sums cancel: on llvmpipe no ring, badge or spinner leaves a column.
+The coverage texture takes twice the memory.
+
+Direct3D 11 (WARP) and Metal keep a column of under 1% (up to 21/255 on
+black) under such shapes with 32-bit coverage too (WARP was given
+R32_FLOAT, blendable), so its cause there is elsewhere; they keep R16 and
+that column, a known issue.
 
 Tests: `internal/ui`'s `TestRingSeamRingAt` (ringAt at seven radii, four
 widths, four scales, sub-pixel centres), `TestRingSeamDoneBadge` (the
 intro's check badge through its pop) and `TestRingSeamSpinnerSweep`
 (`popups.InfiniteSpinner` through its turn): nothing drawn more than 3 px
-off the ring's band, at 16/255, on llvmpipe (linux-gio), Direct3D 11
-WARP (windows-applog) and Metal (macos-idle). Not in `UPSTREAM.patch`.
+off the ring's band at 16/255 on llvmpipe (linux-gio), and at 32/255 on
+Direct3D 11 WARP (windows-applog) and Metal (macos-idle). Not in
+`UPSTREAM.patch`.

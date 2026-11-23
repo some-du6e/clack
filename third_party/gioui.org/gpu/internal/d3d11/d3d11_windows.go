@@ -153,14 +153,6 @@ func init() {
 }
 
 func detectFloatFormat(dev *d3d11.Device) (uint32, bool) {
-	// Clack patch 62: path coverage in 32-bit float when the device
-	// blends into it (the stencil pass sums each segment's coverage down to
-	// the path's bottom; half float's sums leave a faint column under a
-	// ring, Karim's stray line on Windows, 2026-11-22)
-	const r32 = d3d11.FORMAT_SUPPORT_TEXTURE2D | d3d11.FORMAT_SUPPORT_RENDER_TARGET | d3d11.FORMAT_SUPPORT_BLENDABLE
-	if support, _ := dev.CheckFormatSupport(d3d11.DXGI_FORMAT_R32_FLOAT); support&r32 == r32 {
-		return d3d11.DXGI_FORMAT_R32_FLOAT, true
-	}
 	formats := []uint32{
 		d3d11.DXGI_FORMAT_R16_FLOAT,
 		d3d11.DXGI_FORMAT_R32_FLOAT,
