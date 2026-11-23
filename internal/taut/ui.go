@@ -1396,12 +1396,20 @@ type viewEntry struct {
 	bsum  uint64
 	blen  int
 	bkeys []store.MsgKey
+	// vals: a long bucket read in chunks keeps its entries, not raw (the
+	// same entries again, in one value: a channel of 908,000-character
+	// messages held 137 MB twice); get writes raw again from them
+	vals map[string]json.RawMessage
 
 	// same: the fetch found the value the installed entry it was handed
 	// holds, and decoded nothing (work keeps that entry, taking bsum and
 	// blen)
 	same bool
 }
+
+// viewLongBucket: a chunked bucket longer than this keeps its entries and
+// not its bytes whole (viewEntry.vals).
+const viewLongBucket = 4 << 20
 
 // viewInj is a message of a bucket that core didn't have; sum and rawLen
 // tell its bytes, so a refetch keeps it (decoded and converted) when
@@ -1772,6 +1780,9 @@ func (v *viewCache) get(slice, key, sub string) (json.RawMessage, bool) {
 	e := v.entry(slice, key, sub)
 	if e == nil {
 		return nil, false
+	}
+	if e.raw == nil && e.vals != nil {
+		return wholeJSON(e.vals), true // the bytes it was installed from
 	}
 	return e.raw, true
 }
@@ -2353,6 +2364,9 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 					e.bkeys = append(e.bkeys, store.MsgKey{TS: ts, CID: clientMsgID(raw)})
 				}
 				e.size += 3*1024*len(e.inj) + 48*len(e.bkeys)
+				if chunked[sk] && len(raw) > viewLongBucket {
+					e.raw, e.sum, e.vals = nil, e.bsum, b // sameValue: sum and length
+				}
 			}
 		case "members":
 			if cur != nil && cur.mem != nil && bytes.Equal(cur.raw, raw) {
