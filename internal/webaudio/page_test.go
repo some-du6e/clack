@@ -212,13 +212,14 @@ globalThis.convert = async (u8) => {
 	if err != nil {
 		t.Fatalf("the converted file (%d bytes) isn't Opus in MP4: %v", len(b), err)
 	}
-	// what the recorder recorded by the context's clock, from start() to
-	// the stop() that ended's handler made (the 3 s, the lead-in and how
-	// late the timers came, which a busy runner stretches), less the last
-	// part of a 60 ms packet (Chromium's encoder drops it) and the Opus
-	// pre-skip
-	if ch != 2 || cv.Recorded < 3 || dur < cv.Recorded-0.07 || dur > cv.Recorded+0.01 {
-		t.Errorf("the converted file: %d channels, %.3f s; want stereo, the %.3f s the recorder recorded (at least the 3 s)", ch, dur, cv.Recorded)
+	// the file is the recorder's whole 60 ms packets (Chromium's encoder
+	// drops the last part of one), its last packet counted 21 ms (Mp4Muxer's
+	// last sample: 1024 frames at 48 kHz): 39 to 99 ms under what the
+	// recorder recorded by the context's clock, from start() to the stop()
+	// ended's handler made (the 3 s, the lead-in, and how late the timers
+	// came, which a busy runner stretches)
+	if ch != 2 || cv.Recorded < 3 || dur < cv.Recorded-0.1-0.003 || dur > cv.Recorded-0.039+0.003 {
+		t.Errorf("the converted file: %d channels, %.3f s; want stereo, 39 to 99 ms under the %.3f s the recorder recorded (at least the 3 s)", ch, dur, cv.Recorded)
 	}
 	for s, want := range mediatest.Tones {
 		from := int((float64(s) + 0.05 + 0.2) * 48000)
