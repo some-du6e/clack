@@ -51,11 +51,15 @@ type Edit struct {
 	Kind      EditKind
 	SectionID string
 	RTML      string // EditText: the section's whole new RTML
-	Checked   bool   // EditCheck
+	Checked   bool   // EditCheck; EditText with Recheck
 	// Base is the section's sequence the edit was made against. A save
 	// goes only while the section is still there: one that moved since
 	// (someone else's save) isn't overwritten, as Clack can't merge.
 	Base int64
+	// Recheck, with EditText: the section's box set to Checked as well (a
+	// tick and typing in the same item before a save; Slack's dirty
+	// fields hold both, setSectionAttribute marking STATUS and ATTRIBUTES)
+	Recheck bool
 }
 
 // Counters are a client session's save counters, as 7yDq keeps them for
@@ -153,6 +157,13 @@ func UpdateSection(server *Section, e Edit, parentStyle *int32, trace string, lo
 		u.Deleted = Ptr(true)
 	default:
 		return nil, unsupported("edit kind %v", e.Kind)
+	}
+	if e.Recheck {
+		if e.Kind != EditText {
+			return nil, unsupported("a box set with a %v edit", e.Kind)
+		}
+		u.Attributes = bundleAttributes(server.Attributes)
+		u.Attributes.Checked = Ptr(e.Checked)
 	}
 	if a, ok := activityRow(u, server); ok {
 		u.ActivityStackUpdate = Ptr(a)

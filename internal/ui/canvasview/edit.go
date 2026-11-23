@@ -129,7 +129,9 @@ func quipOn(v *View) bool {
 // saveQuip runs a save through edit-document off the UI goroutine. A save
 // Clack can't make the way Slack's client would (nothing was sent) gets
 // the can't-edit toast and the canvas reloads; a failed one stays pending
-// in core and is retried, and the banner says so when Slack's would.
+// in core and is retried (core.ErrCanvasSavePending), and the banner says
+// so when Slack's would; any other failure says so too. What a later
+// attempt drops comes as core's notices (showSaveNotices).
 func (e *editState) saveQuip(v *View, f func(ctx context.Context, a *core.App) error) {
 	a := v.h.Core()
 	if a == nil {
@@ -143,16 +145,46 @@ func (e *editState) saveQuip(v *View, f func(ctx context.Context, a *core.App) e
 		v.post(func() {
 			e.saving--
 			switch {
+			case err == nil, errors.Is(err, core.ErrCanvasSavePending):
+				// saved, or pending in core: retried, the banner once it's
+				// Slack's error state
 			case errors.Is(err, core.ErrCanvasConflict):
 				v.h.Toast(changedMeanwhile)
 				v.load(true)
 			case errors.Is(err, quip.ErrUnsupported) || errors.Is(err, quip.ErrRefused) || errors.Is(err, core.ErrCanvasReadOnly):
 				v.h.Toast(cantEdit + " (" + friendly(err) + ")")
 				v.load(true)
+			default:
+				v.h.Toast("Couldn't save your change to the canvas: " + friendly(err))
+				v.load(true)
 			}
 			v.h.Invalidate()
 		})
 	}()
+}
+
+// showSaveNotices tells what core's later attempts dropped (a conflict
+// found on a retry, an edit refused after waiting behind another save) as
+// a direct save's result is told, and reloads the canvas.
+func (v *View) showSaveNotices(ns []core.CanvasSaveNotice) {
+	if len(ns) == 0 {
+		return
+	}
+	conflict, reason := false, ""
+	for _, n := range ns {
+		if n.Conflict {
+			conflict = true
+		} else if reason == "" {
+			reason = n.Reason
+		}
+	}
+	if conflict {
+		v.h.Toast(changedMeanwhile)
+	}
+	if reason != "" {
+		v.h.Toast(cantEdit + " (" + strings.ReplaceAll(reason, "_", " ") + ")")
+	}
+	v.load(true)
 }
 
 // quipRefuses reports whether a finished session with markdown md changes
@@ -340,6 +372,10 @@ func (e *editState) pressEvents(gtx layout.Context, s *session, b *blk, size ima
 // edit: a toast, and nothing is sent.
 const cantEdit = "This part can't be edited in Clack yet"
 
+// lockedText is Clack's feedback for a block finished while the canvas's
+// saves are locked (the banner's error state): it stays open with its text.
+const lockedText = "Clack can't save to this canvas right now. Your text stays here until it can"
+
 // changedMeanwhile is Clack's feedback for an edit through edit-document of
 // a section someone else saved first (core.ErrCanvasConflict): Slack's
 // editor would merge the two; Clack doesn't send it.
@@ -454,13 +490,7 @@ func (e *editState) commitRename(v *View) {
 	v.shown = &d
 	if quipOn(v) { // the title section's text
 		from := e.renameFrom
-		e.saveQuip(v, func(ctx context.Context, a *core.App) error {
-			tid, err := a.CanvasTitleSection(ctx, v.id)
-			if err != nil {
-				return err
-			}
-			return a.SaveCanvasText(ctx, v.id, tid, from, title)
-		})
+		e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasTitle(ctx, v.id, from, title) })
 		return
 	}
 	e.save(v, func(ctx context.Context, a *core.App) error { return a.RenameCanvas(ctx, v.id, title) })
@@ -587,15 +617,16 @@ func (e *editState) finish(v *View) bool {
 		switch {
 		case v.h.Core().CanvasSaveState(v.id).ReadOnly:
 			// the error state's lock (cant_sync): nothing saves until a
-			// save succeeds; the text stays here (the banner says why)
-			s.refused = true
+			// save succeeds; the text stays here, open, and Escape saves it
+			// once the lock lifts (Slack keeps text typed before the lock
+			// and saves it then; it has no way to throw it away)
+			v.h.Toast(lockedText)
 			s.focus = true
 			return false
 		case quipRefuses(s, md, quipPlain):
 			// edit-document saves typed plain text in a block, or a block
-			// emptied, for now: nothing else is sent
+			// emptied, for now: nothing else is sent, and the text stays
 			v.h.Toast(cantEdit)
-			s.refused = true
 			s.focus = true
 			return false
 		}
@@ -650,6 +681,22 @@ func (e *editState) finish(v *View) bool {
 	}
 	e.save(v, func(ctx context.Context, a *core.App) error { return a.EditCanvas(ctx, v.id, ch) })
 	return true
+}
+
+// escape is Escape in the open block: it closes the picker; after a
+// refusal whose toast says Escape again discards (Editable's), it
+// discards the edit; else it saves the block. It reports whether the
+// session ended.
+func (e *editState) escape(v *View) bool {
+	if e.pick.active() {
+		e.pick = picker{}
+		return false
+	}
+	if s := e.cur; s != nil && s.refused { // discard: the block shows what is saved
+		e.discard(v)
+		return true
+	}
+	return e.finish(v)
 }
 
 // discard ends the session without saving.
@@ -877,15 +924,7 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 		}
 		switch ev.Kind {
 		case composer.EvCancel:
-			if e.pick.active() {
-				e.pick = picker{}
-				continue
-			}
-			if s.refused { // discard: the block shows what is saved
-				e.discard(v)
-				return gtx.Dp(bodyLine)
-			}
-			if e.finish(v) {
+			if e.escape(v) {
 				return gtx.Dp(bodyLine)
 			}
 		case composer.EvSubmit: // Ctrl/Cmd+Enter saves
@@ -893,6 +932,7 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 				return gtx.Dp(bodyLine)
 			}
 		case composer.EvChange:
+			s.refused = false // changed since the refusal: Escape saves again, never discards it
 			shortcuts(s)
 			v.cover.typed()
 		}

@@ -120,11 +120,20 @@ func saveBackoff(n int) time.Duration {
 
 // canvasSaver is one canvas's saving.
 type canvasSaver struct {
-	mu        sync.Mutex
-	pending   []quip.Edit // by section, the latest edit each
-	since     time.Time   // when the oldest pending edit came
-	errors    []saveError // the failures in a row (errorState_.errors_)
-	idDiff    int         // saves attempted since the last success
+	mu      sync.Mutex
+	pending []quip.Edit // by section, one edit each (Slack's dirty sections: mergeEdit)
+	// waiting are edits made while the canvas's model couldn't be loaded:
+	// each is built against the model once a load succeeds, in order
+	waiting []saveBuild
+	// flight is the attempt in flight's edits; after, by section, what was
+	// edited of one of them meanwhile (the fields dirty since), which is
+	// what's left of it once that save succeeds
+	flight    []quip.Edit
+	after     map[string]quip.Edit
+	notices   []CanvasSaveNotice // for the view: edits no caller heard were dropped
+	since     time.Time          // when the oldest pending edit came
+	errors    []saveError        // the failures in a row (errorState_.errors_)
+	idDiff    int                // saves attempted since the last success
 	inFlight  bool
 	again     bool
 	started   time.Time // the attempt in flight's start
@@ -222,6 +231,61 @@ var ErrCanvasReadOnly = errors.New("core: the canvas can't take edits until a sa
 // two the way Slack's editor does (mergeRtml), and it leaves the queue.
 var ErrCanvasConflict = errors.New("core: someone else changed that part of the canvas since it was edited")
 
+// ErrCanvasSavePending wraps an attempt's failure (the save, or the
+// model's load before it) while its edits stay pending: they go again
+// after Slack's backoff, and the banner shows Slack's error state once it
+// comes.
+var ErrCanvasSavePending = errors.New("core: the change waits to be saved")
+
+// A CanvasSaveNotice is an edit a save dropped where no caller heard of it
+// (an attempt after a failure, one that waited behind another save, an
+// edit that waited for the model): someone else saved its section
+// meanwhile (Conflict), or Clack can't save it the way Slack's client
+// would (Reason).
+type CanvasSaveNotice struct {
+	Conflict bool
+	Reason   string
+}
+
+// maxSaveNotices bounds the notices a canvas keeps for a view to take.
+const maxSaveNotices = 16
+
+// TakeCanvasSaveNotices hands over the canvas's notices, each once (the
+// view says so and reloads).
+func (a *App) TakeCanvasSaveNotices(id string) []CanvasSaveNotice {
+	st := a.savers()
+	st.mu.Lock()
+	s := st.byID[id]
+	st.mu.Unlock()
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.notices
+	s.notices = nil
+	return out
+}
+
+func (s *canvasSaver) noteLocked(n CanvasSaveNotice) {
+	if len(s.notices) == maxSaveNotices {
+		s.notices = s.notices[1:]
+	}
+	s.notices = append(s.notices, n)
+}
+
+// noticeOf is the notice for an edit err kept from being saved.
+func noticeOf(err error) CanvasSaveNotice {
+	if errors.Is(err, ErrCanvasConflict) {
+		return CanvasSaveNotice{Conflict: true}
+	}
+	r := err.Error()
+	if i := strings.LastIndex(r, ": "); i >= 0 {
+		r = r[i+2:]
+	}
+	return CanvasSaveNotice{Reason: r}
+}
+
 // SaveCanvas saves edits to the canvas through edit-document, as Slack's
 // editor saves its dirty sections: they wait as pending until a save of
 // them succeeds (a later edit of the same section replaces an earlier
@@ -260,20 +324,63 @@ type sectionBase struct {
 	sty  int32
 }
 
-// queueSave loads the canvas's model, has build make the edits against
-// each section's base (under the saver's lock, so a save finishing
-// meanwhile can't move it), queues them and runs a save.
-func (a *App) queueSave(ctx context.Context, id string, build func(base func(string) (sectionBase, bool)) ([]quip.Edit, error)) error {
-	if err := a.LoadCanvasModel(ctx, id); err != nil {
-		return err
-	}
+// saveBuild makes a save's edits against each section's base.
+type saveBuild func(base func(string) (sectionBase, bool)) ([]quip.Edit, error)
+
+// queueSave has build make the edits against each section's base (under
+// the saver's lock, so a save finishing meanwhile can't move it), queues
+// them and runs a save. The canvas's model is loaded first; an edit made
+// while it can't be (offline, a failed answer) waits for it as Slack's
+// waits for a save: the load is part of the attempt, counted and retried
+// like a failed save, and the error is ErrCanvasSavePending.
+func (a *App) queueSave(ctx context.Context, id string, build saveBuild) error {
 	s := a.saver(id)
-	s.mu.Lock() // the saver, then the model (never the other way)
+	s.mu.Lock()
 	if s.hasErrorLocked(time.Now()) {
 		s.mu.Unlock()
 		return ErrCanvasReadOnly
 	}
-	base := func(sectionID string) (sectionBase, bool) {
+	s.mu.Unlock()
+	lerr := a.LoadCanvasModel(slack.NoBackoff(ctx), id)
+	s.mu.Lock() // the saver, then the model (never the other way)
+	if lerr != nil || len(s.waiting) > 0 {
+		// the edit waits behind the model (or behind edits that already
+		// do, so the order holds)
+		if len(s.pending) == 0 && len(s.waiting) == 0 {
+			s.since = time.Now()
+		}
+		s.waiting = append(s.waiting, build)
+		s.armPollLocked(a, id)
+		if lerr != nil {
+			s.failLocked(a, id, lerr)
+			s.mu.Unlock()
+			a.emit(Event{Type: "canvas_save", ID: id})
+			return fmt.Errorf("%w: %w", ErrCanvasSavePending, lerr)
+		}
+		s.mu.Unlock()
+		a.emit(Event{Type: "canvas_save", ID: id})
+		return a.saveAttempt(ctx, id, s, true)
+	}
+	edits, err := build(a.saveBase(id, s))
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if len(s.pending) == 0 {
+		s.since = time.Now()
+	}
+	s.queueLocked(edits)
+	s.armPollLocked(a, id)
+	s.mu.Unlock()
+	a.emit(Event{Type: "canvas_save", ID: id})
+	return a.saveAttempt(ctx, id, s, true)
+}
+
+// saveBase is the base edits of the canvas are made against, with the
+// saver's lock held: each section as the model holds it, or as a pending
+// edit of it leaves it.
+func (a *App) saveBase(id string, s *canvasSaver) func(string) (sectionBase, bool) {
+	return func(sectionID string) (sectionBase, bool) {
 		var b sectionBase
 		found := false
 		a.CanvasModel(id, func(d *quip.Doc) {
@@ -306,29 +413,69 @@ func (a *App) queueSave(ctx context.Context, id string, build func(base func(str
 		}
 		return b, found
 	}
-	edits, err := build(base)
-	if err != nil {
-		s.mu.Unlock()
-		return err
+}
+
+// buildWaitingLocked builds the edits that waited for the model, in the
+// order they were made, as queueSave would have; one that can't be made
+// any more (its section changed or went meanwhile) is a notice, as its
+// caller was told it waits.
+func (a *App) buildWaitingLocked(id string, s *canvasSaver) {
+	ws := s.waiting
+	s.waiting = nil
+	base := a.saveBase(id, s)
+	for _, b := range ws {
+		edits, err := b(base)
+		if err != nil {
+			s.noteLocked(noticeOf(err))
+			continue
+		}
+		s.queueLocked(edits)
 	}
-	if len(s.pending) == 0 {
-		s.since = time.Now()
-	}
+}
+
+// queueLocked queues edits as Slack's dirty fields hold them: an edit of a
+// section already pending joins that edit (mergeEdit), so one bundle
+// section carries both; one of a section whose save is out joins it too,
+// and is kept apart as what's dirty since (after), which is all that's
+// left of the section once that save succeeds.
+func (s *canvasSaver) queueLocked(edits []quip.Edit) {
 	for _, e := range edits {
-		replaced := false
-		for i := range s.pending {
-			if s.pending[i].SectionID == e.SectionID {
-				s.pending[i], replaced = e, true
+		i := slices.IndexFunc(s.pending, func(p quip.Edit) bool { return p.SectionID == e.SectionID })
+		if i < 0 {
+			s.pending = append(s.pending, e)
+			continue
+		}
+		if s.inFlight && slices.ContainsFunc(s.flight, func(f quip.Edit) bool { return f.SectionID == e.SectionID }) {
+			if s.after == nil {
+				s.after = map[string]quip.Edit{}
+			}
+			if a, ok := s.after[e.SectionID]; ok {
+				s.after[e.SectionID] = mergeEdit(a, e)
+			} else {
+				s.after[e.SectionID] = e
 			}
 		}
-		if !replaced {
-			s.pending = append(s.pending, e)
-		}
+		s.pending[i] = mergeEdit(s.pending[i], e)
 	}
-	s.armPollLocked(a, id)
-	s.mu.Unlock()
-	a.emit(Event{Type: "canvas_save", ID: id})
-	return a.saveAttempt(ctx, id, s)
+}
+
+// mergeEdit is edit e of a section made while p of it is pending, as
+// Slack's dirty fields hold the two: a tick and typing are one edit with
+// the text and the box (toUpdateBundle sends content and attributes in
+// one section); a later box or text replaces the earlier one, keeping the
+// other; a delete is the latest edit.
+func mergeEdit(p, e quip.Edit) quip.Edit {
+	switch {
+	case e.Kind == quip.EditDelete || p.Kind == quip.EditDelete:
+		return e
+	case e.Kind == quip.EditCheck && p.Kind == quip.EditText:
+		p.Recheck, p.Checked = true, e.Checked
+		return p
+	case e.Kind == quip.EditText && !e.Recheck && (p.Kind == quip.EditCheck || p.Recheck):
+		e.Recheck, e.Checked = true, p.Checked
+		return e
+	}
+	return e
 }
 
 // armPollLocked starts the dirty warning's poll while edits are pending.
@@ -350,8 +497,12 @@ func (s *canvasSaver) armPollLocked(a *App, id string) {
 	})
 }
 
-// saveAttempt is i40t.save for the canvas's pending edits.
-func (a *App) saveAttempt(ctx context.Context, id string, s *canvasSaver) error {
+// saveAttempt is i40t.save for the canvas's pending edits (after building
+// those that waited for the model, which it loads first). direct is an
+// attempt its caller hears of: its result is the caller's to show;
+// another's edits it drops or refuses are notices (TakeCanvasSaveNotices),
+// told with its canvas_save event.
+func (a *App) saveAttempt(ctx context.Context, id string, s *canvasSaver, direct bool) error {
 	s.mu.Lock()
 	if s.inFlight {
 		// shouldDeferSave_: one save at a time, the next one 200 ms later
@@ -359,11 +510,33 @@ func (a *App) saveAttempt(ctx context.Context, id string, s *canvasSaver) error 
 		s.mu.Unlock()
 		return nil
 	}
-	if len(s.pending) == 0 {
+	if len(s.waiting) > 0 {
 		s.mu.Unlock()
+		err := a.LoadCanvasModel(slack.NoBackoff(ctx), id)
+		s.mu.Lock()
+		if s.inFlight { // another attempt began meanwhile: it builds them
+			s.again = true
+			s.mu.Unlock()
+			return nil
+		}
+		if err != nil {
+			s.failLocked(a, id, err)
+			s.mu.Unlock()
+			a.emit(Event{Type: "canvas_save", ID: id})
+			return fmt.Errorf("%w: %w", ErrCanvasSavePending, err)
+		}
+		a.buildWaitingLocked(id, s)
+	}
+	if len(s.pending) == 0 {
+		if len(s.waiting) == 0 {
+			s.settleLocked()
+		}
+		s.mu.Unlock()
+		a.emit(Event{Type: "canvas_save", ID: id})
 		return nil
 	}
 	edits := append([]quip.Edit(nil), s.pending...)
+	s.flight = edits
 	s.inFlight, s.started = true, time.Now()
 	s.idDiff++
 	retries := len(s.errors)
@@ -377,67 +550,66 @@ func (a *App) saveAttempt(ctx context.Context, id string, s *canvasSaver) error 
 	again := s.again
 	s.again = false
 	refused := errors.Is(err, quip.ErrUnsupported) || errors.Is(err, quip.ErrRefused) || errors.Is(err, ErrCanvasConflict)
-	leave := func(gone []quip.Edit) { // these edits leave the queue (a later edit of the same section made meanwhile stays)
-		left := s.pending[:0]
-		for _, p := range s.pending {
-			if !slices.Contains(gone, p) {
-				left = append(left, p)
-			}
+	after := s.after
+	s.flight, s.after = nil, nil
+	// done takes a section's edit out of the queue: what was edited of it
+	// while the save was out stays when keep, on base (the saved sequence)
+	done := func(id string, keep bool, base int64) {
+		i := slices.IndexFunc(s.pending, func(p quip.Edit) bool { return p.SectionID == id })
+		if i < 0 {
+			return
 		}
-		s.pending = left
+		if e, ok := after[id]; ok && keep {
+			if base != 0 {
+				e.Base = base
+			}
+			s.pending[i] = e
+			return
+		}
+		s.pending = slices.Delete(s.pending, i, i+1)
 	}
-	leave(dropped) // edits of sections someone else saved: never sent
+	// someone else saved these sections: never sent, nor what was edited
+	// of them since (made on the same base)
+	for _, e := range dropped {
+		done(e.SectionID, false, 0)
+	}
 	switch {
-	case err == nil || refused:
-		// saved, or never sendable
-		leave(edits)
-		if err == nil {
-			s.errors, s.idDiff, s.reason, s.forbidden = nil, 0, "", time.Time{}
-			// an edit made meanwhile of a section just saved builds on
-			// this save: its base is the saved sequence
-			for i := range s.pending {
-				if q, ok := saved[s.pending[i].SectionID]; ok {
-					s.pending[i].Base = q
-				}
-			}
+	case err == nil:
+		for _, e := range edits { // saved: what was edited of it since builds on the saved sequence
+			done(e.SectionID, true, saved[e.SectionID])
 		}
-		if len(s.pending) > 0 {
-			again = true
+		s.errors, s.idDiff, s.reason, s.forbidden = nil, 0, "", time.Time{}
+	case refused:
+		// never sendable: out of the queue, but not what was edited since
+		for _, e := range edits {
+			done(e.SectionID, true, 0)
 		}
 	default:
-		info := saveErrorInfo(err)
-		if info.typ == saveErrForbidden {
-			// setError(1, 7, 15000) at once, not counted
-			s.forbidden = time.Now()
-		} else {
-			s.errors = append(s.errors, info)
-			switch {
-			case info.typ == saveErrTooLarge:
-				s.reason = "Document too large"
-			case !a.ClientOnline(): // navigator.onLine, in Slack
-				s.reason = "Connection offline"
-			default:
-				s.reason = "Server not reachable"
-			}
-			delay := saveBackoff(len(s.errors))
-			if s.retry != nil {
-				s.retry.Stop()
-			}
-			s.retry = time.AfterFunc(delay, func() {
-				if a.bg.Err() != nil {
-					return
-				}
-				rctx, cancel := context.WithTimeout(a.bg, 60*time.Second)
-				defer cancel()
-				_ = a.saveAttempt(rctx, id, s)
-			})
-		}
+		// failed: all of it stays pending, what was in flight with what
+		// was edited since (merged into it), for the retry
+		s.failLocked(a, id, err)
 		again = false
-		log.Printf("core: canvas %s: save failed (%d in a row): %s", id, len(s.errors), slack.FailureDetail(err))
+	}
+	if !direct {
+		if len(dropped) > 0 || errors.Is(err, ErrCanvasConflict) {
+			s.noteLocked(CanvasSaveNotice{Conflict: true})
+		}
+		if refused && !errors.Is(err, ErrCanvasConflict) {
+			s.noteLocked(noticeOf(err))
+		}
+	}
+	switch {
+	case len(s.pending) == 0 && len(s.waiting) == 0:
+		s.settleLocked() // nothing left: the failure run is over
+	case err == nil || refused:
+		again = true
 	}
 	s.mu.Unlock()
-	if err == nil && len(dropped) > 0 {
+	switch {
+	case err == nil && len(dropped) > 0:
 		err = fmt.Errorf("%w: %d edits", ErrCanvasConflict, len(dropped))
+	case err != nil && !refused:
+		err = fmt.Errorf("%w: %w", ErrCanvasSavePending, err)
 	}
 	a.emit(Event{Type: "canvas_save", ID: id})
 	if again {
@@ -447,10 +619,51 @@ func (a *App) saveAttempt(ctx context.Context, id string, s *canvasSaver) error 
 			}
 			rctx, cancel := context.WithTimeout(a.bg, 60*time.Second)
 			defer cancel()
-			_ = a.saveAttempt(rctx, id, s)
+			a.saveAttempt(rctx, id, s, false)
 		})
 	}
 	return err
+}
+
+// failLocked counts a failed attempt (the save, or the model's load before
+// it) as getSaveErrorInfo_ sorts it, and arms the retry after Slack's
+// backoff.
+func (s *canvasSaver) failLocked(a *App, id string, err error) {
+	info := saveErrorInfo(err)
+	log.Printf("core: canvas %s: save failed (%d in a row before it): %s", id, len(s.errors), slack.FailureDetail(err))
+	if info.typ == saveErrForbidden {
+		// setError(1, 7, 15000) at once, not counted, no retry
+		s.forbidden = time.Now()
+		return
+	}
+	s.errors = append(s.errors, info)
+	switch {
+	case info.typ == saveErrTooLarge:
+		s.reason = "Document too large"
+	case !a.ClientOnline(): // navigator.onLine, in Slack
+		s.reason = "Connection offline"
+	default:
+		s.reason = "Server not reachable"
+	}
+	delay := saveBackoff(len(s.errors))
+	if s.retry != nil {
+		s.retry.Stop()
+	}
+	s.retry = time.AfterFunc(delay, func() {
+		if a.bg.Err() != nil {
+			return
+		}
+		rctx, cancel := context.WithTimeout(a.bg, 60*time.Second)
+		defer cancel()
+		a.saveAttempt(rctx, id, s, false)
+	})
+}
+
+// settleLocked ends the failure run once nothing is left to save (the
+// queue emptied, whatever the last attempt's result): the error state, and
+// its lock, lift.
+func (s *canvasSaver) settleLocked() {
+	s.errors, s.idDiff, s.reason = nil, 0, ""
 }
 
 // postSave builds, checks and posts one save of edits: the model caught up
@@ -465,10 +678,10 @@ func (a *App) postSave(ctx context.Context, id string, edits []quip.Edit, retrie
 	if err := a.loadModelLocked(ctx, id, q); err != nil {
 		return nil, nil, err
 	}
-	if err := a.fetchModelLocked(ctx, id, q); err != nil && ctx.Err() == nil {
-		// Slack saves without asking first; a failed catch-up only means
-		// the model is as it was
-		log.Printf("core: canvas %s: fetch-latest before a save: %s", id, slack.FailureDetail(err))
+	if err := a.fetchModelLocked(slack.NoBackoff(ctx), id, q); err != nil {
+		// never on stale state: how the server takes a stale section
+		// sequence isn't known, so the attempt fails and goes again
+		return nil, nil, fmt.Errorf("core: catching the canvas up before a save: %w", err)
 	}
 	q.mu.Lock()
 	d, thread := q.doc, q.thread
@@ -559,14 +772,14 @@ func (a *App) flushCanvasSaves(ctx context.Context, id string) {
 		return
 	}
 	s.mu.Lock()
-	pending := len(s.pending) > 0 && !s.inFlight
+	pending := (len(s.pending) > 0 || len(s.waiting) > 0) && !s.inFlight
 	if s.retry != nil {
 		s.retry.Stop()
 		s.retry = nil
 	}
 	s.mu.Unlock()
 	if pending {
-		_ = a.saveAttempt(ctx, id, s)
+		a.saveAttempt(ctx, id, s, false)
 	}
 }
 
@@ -656,16 +869,47 @@ func (a *App) CanvasTitleSection(ctx context.Context, id string) (string, error)
 	if err := a.LoadCanvasModel(ctx, id); err != nil {
 		return "", err
 	}
+	if t := a.canvasTitleID(id); t != "" {
+		return t, nil
+	}
+	return "", fmt.Errorf("%w: the canvas's model went, or has no title section", quip.ErrUnsupported)
+}
+
+// canvasTitleID is the model's title section ("" when core holds no model,
+// or it has none).
+func (a *App) canvasTitleID(id string) string {
 	out := ""
 	a.CanvasModel(id, func(d *quip.Doc) {
+		if d == nil { // the state went with the canvas's last view
+			return
+		}
 		for _, s := range d.Sections() {
 			if s.Type != nil && *s.Type == quip.TypeTitle {
 				out = *s.ID
 			}
 		}
 	})
-	if out == "" {
-		return "", fmt.Errorf("%w: the canvas has no title section", quip.ErrUnsupported)
+	return out
+}
+
+// SaveCanvasTitle renames the canvas through its title section's text, as
+// SaveCanvasText saves a block's (orig is the title the rename began
+// from). The title section is the model's when the edit is built, so a
+// rename made before the model loads waits for it as any edit does.
+func (a *App) SaveCanvasTitle(ctx context.Context, id, orig, title string) error {
+	rtml, err := quip.TextRTML(title)
+	if err != nil {
+		return err
 	}
-	return out, nil
+	return a.queueSave(ctx, id, func(base func(string) (sectionBase, bool)) ([]quip.Edit, error) {
+		tid := a.canvasTitleID(id)
+		if tid == "" {
+			return nil, fmt.Errorf("%w: the canvas has no title section", quip.ErrUnsupported)
+		}
+		b, err := plainBase(base, tid, orig)
+		if err != nil {
+			return nil, err
+		}
+		return []quip.Edit{{Kind: quip.EditText, SectionID: tid, RTML: rtml, Base: b.seq}}, nil
+	})
 }

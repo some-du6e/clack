@@ -165,8 +165,11 @@ func TestCanvasQuipSaves(t *testing.T) {
 	ed.SetSelection(0, 0)
 	ed.InsertText("Please ")
 	frame()
-	if v.edit.finish(v) || v.edit.cur == nil || !v.edit.cur.refused || cantEdits(h) != 1 {
+	if v.edit.finish(v) || v.edit.cur == nil || cantEdits(h) != 1 {
 		t.Errorf("text with a mention: finished, editor %v, toasts %d", v.edit.cur != nil, cantEdits(h))
+	}
+	if v.edit.escape(v) || v.edit.cur == nil || cantEdits(h) != 2 { // Escape again keeps the text, and says so again
+		t.Errorf("Escape after the refusal: closed %v, toasts %d", v.edit.cur == nil, cantEdits(h))
 	}
 	v.edit.discard(v)
 
@@ -234,7 +237,7 @@ func TestCanvasQuipSaveBanner(t *testing.T) {
 	ed.SetSelection(ed.Doc().Len(), ed.Doc().Len())
 	ed.InsertText(" again")
 	frame()
-	if v.edit.finish(v) || v.edit.cur == nil || !v.edit.cur.refused {
+	if v.edit.finish(v) || v.edit.cur == nil {
 		t.Errorf("finishing in the error state: closed %v", v.edit.cur == nil)
 	}
 	if n := len(quipSaves(fs)); n != 2 {
@@ -249,4 +252,85 @@ func TestCanvasQuipSaveBanner(t *testing.T) {
 	if es := fs.CanvasEdits(); len(es) != 0 {
 		t.Errorf("%d canvases.edit calls, want none", len(es))
 	}
+}
+
+// toasts counts the toasts that start with prefix.
+func toasts(h *testHost, prefix string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, m := range h.toasts {
+		if strings.HasPrefix(m, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// Under the save error state's lock, Escape keeps an open block's text,
+// and Escape again too: Slack keeps text typed before cant_sync and saves
+// it once a save succeeds, and has no way to throw it away.
+func TestCanvasQuipLockKeepsText(t *testing.T) {
+	h, fs, v, s, frame := quipEnv(t)
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 2})
+	box := func() *blk { return findBlk(v, func(b *canvas.Block) bool { return b.ID == quipCheckID }) }
+	v.edit.toggleCheck(v, box())
+	settle(t, s, v, "the first failure", func() bool { return len(quipSaves(fs)) == 1 && h.a.CanvasSaveState(quipCanvasID).Pending })
+	v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == quipFirstID }))
+	frame()
+	if v.edit.cur == nil {
+		t.Fatal("the paragraph didn't open")
+	}
+	ed := v.edit.cur.ed
+	ed.SetSelection(ed.Doc().Len(), ed.Doc().Len())
+	ed.InsertText(", kept")
+	frame()
+	v.edit.toggleCheck(v, box())
+	settle(t, s, v, "the error state", func() bool { return h.a.CanvasSaveState(quipCanvasID).ReadOnly })
+	for i := 1; i <= 2; i++ {
+		if v.edit.escape(v) || v.edit.cur == nil {
+			t.Fatalf("Escape %d under the lock closed the block", i)
+		}
+	}
+	if got := v.edit.cur.ed.Doc().Text(); got != "First paragraph, kept" {
+		t.Errorf("the block holds %q", got)
+	}
+	if n := toasts(h, lockedText); n != 2 {
+		t.Errorf("%d lock toasts, want one each Escape", n)
+	}
+}
+
+// A conflict found on an attempt that waited behind another save (finish
+// heard nothing of it) is told as a direct one is: the toast, and the
+// canvas reloads.
+func TestCanvasQuipDeferredConflictToast(t *testing.T) {
+	h, fs, v, s, frame := quipEnv(t)
+	typed := func(id, add string) {
+		t.Helper()
+		v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == id }))
+		frame()
+		if v.edit.cur == nil {
+			t.Fatalf("block %s didn't open", id)
+		}
+		ed := v.edit.cur.ed
+		ed.SetSelection(ed.Doc().Len(), ed.Doc().Len())
+		ed.InsertText(add)
+		frame()
+		if !v.edit.finish(v) {
+			t.Fatalf("block %s's edit was refused", id)
+		}
+	}
+	before := fs.CallCount("canvas/edit-document")
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{ReplyDelay: 700 * time.Millisecond, Times: 1})
+	typed(quipFirstID, ", one")
+	settle(t, s, v, "the first save going out", func() bool { return fs.CallCount("canvas/edit-document") > before })
+	typed(quipSecondID, ", A")
+	if !fs.ReplaceCanvasBlockAsOther(quipCanvasID, quipSecondID, "Second paragraph, B") {
+		t.Fatal("no second paragraph to replace")
+	}
+	settle(t, s, v, "the conflict's toast", func() bool { return toasts(h, changedMeanwhile) == 1 })
+	settle(t, s, v, "the canvas reloaded with B's paragraph", func() bool {
+		b := findBlk(v, func(b *canvas.Block) bool { return b.ID == quipSecondID })
+		return b != nil && b.b.Text() == "Second paragraph, B"
+	})
 }

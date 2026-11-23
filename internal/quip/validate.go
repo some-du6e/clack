@@ -72,6 +72,9 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 			last = p
 		}
 		want := bundleFields[e.Kind]
+		if e.Kind == EditText && e.Recheck { // the text and the box: content and attributes
+			want = "1,2,9,12,13,16,19,20,33"
+		}
 		got := FieldsString(u)
 		if u.ActivityStackUpdate != nil {
 			got = strings.Replace(got, ",39", "", 1)
@@ -100,12 +103,7 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 		if a, ok := activityRow(u, server); ok != (u.ActivityStackUpdate != nil) || ok && a != *u.ActivityStackUpdate {
 			return refuse("section %s: activity row %v, Slack's would be %v (%v)", id, u.ActivityStackUpdate, a, ok)
 		}
-		switch e.Kind {
-		case EditText:
-			if err := d.checkContent(u, server, e); err != nil {
-				return err
-			}
-		case EditCheck:
+		if e.Kind == EditCheck || e.Kind == EditText && e.Recheck {
 			if u.Attributes == nil || u.Attributes.Checked == nil || *u.Attributes.Checked != e.Checked {
 				return refuse("section %s: the box isn't set as edited", id)
 			}
@@ -117,6 +115,13 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 			if server.Parents == nil || len(server.Parents.IDs) == 0 {
 				return refuse("section %s: a box outside a list", id)
 			}
+		}
+		switch e.Kind {
+		case EditText:
+			if err := d.checkContent(u, server, e); err != nil {
+				return err
+			}
+		case EditCheck: // the box, checked above
 		case EditDelete:
 			if server.Parents != nil && len(server.Parents.IDs) > 0 {
 				return refuse("section %s: deleting a list item (its list's end isn't saved yet)", id)
