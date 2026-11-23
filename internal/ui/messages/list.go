@@ -173,8 +173,15 @@ type listState struct {
 
 	lastTyping time.Time
 
+	// the open inline editor (one per list, as Slack's messageEditWindow
+	// holds one per window) and its message: its row draws it, and a row
+	// made again for the message (a jump's window and back, a rebuild)
+	// takes it back, with what was typed (keepEdit)
+	edit           *composer.Composer
+	editCh, editTS string
+
 	noMark      bool
-	unreadSeen  bool         // the "New" line (or no line at all) has been on screen
+	unreadSeen  bool         // the "New" line has been visible (unreadLineVisible)
 	pane        slackc.Props // $pane for components in a thread pane
 	inj         injState     // plugin-injected messages
 	pend        pendingEdit  // an edit waiting for taut's actionable message
@@ -901,6 +908,7 @@ func (s *listState) sync(h Host, now time.Time) {
 			delete(s.rows, ts)
 		}
 	}
+	s.dropDeletedEdit(live)
 }
 
 // anchorItem is the item now showing the message keyed key, -1 if none.
@@ -1107,6 +1115,50 @@ func (s *listState) newestItem() int {
 		}
 	}
 	return -1
+}
+
+// unreadLineVisible is MessagePane.isUnreadLineVisible (client-boot-shared):
+// !isLoading && (!isGhostLastRead && getUnreadLinePlacement() === 2 ||
+// !unreadCount && reachedEnd && isAtBottom). MessageList's placement is 2
+// for its divider in view, and only a slice that holds the divider has one
+// (getListProps' unreadIndex: canShowUnreadDivider, the slice's first
+// message at or before the last read or its start reached, and the first
+// unread in the slice); without it the placement is 1 or 3. So a jump's
+// window that ends before the last read, or starts after it, never shows
+// the line, and the newest messages it goes back to aren't marked read
+// for it. Where the slice holds the first unread but the list draws no
+// line (only the viewer's own sends after it, nothing read above), the
+// first unread's row stands for it. A thread's list keeps its markers'
+// rule (thread_unread.go), and a conversation without a read cursor its
+// own: no line to wait for. The ghost last read (the line kept after a
+// mark) needs no case: its conversation is read.
+func (s *listState) unreadLineVisible(h Host, atBottom bool) bool {
+	ui := s.unreadIndex()
+	inView := func(i int) bool { return i >= s.visible[0] && i < s.visible[1] }
+	lr := s.openLastRead
+	if s.thread || lr == "" {
+		return ui < 0 || inView(ui)
+	}
+	if s.snap.loading {
+		return false
+	}
+	first, last, ok := s.ends()
+	if ok && tsLess(lr, last) && (!s.snap.hasMore || !tsLess(lr, first)) {
+		if ui < 0 {
+			for i, it := range s.items {
+				if it.kind == itMsg && it.idx < len(s.snap.msgs) && tsLess(lr, s.snap.msgs[it.idx].m.TS) {
+					ui = i
+					break
+				}
+			}
+		}
+		return ui >= 0 && inView(ui)
+	}
+	unread := false
+	if app := h.Core(); app != nil {
+		unread = app.Count(s.ch).Unread
+	}
+	return !unread && !s.snap.newestMissing && atBottom
 }
 
 // unreadIndex returns the item index of the "New" line, or -1.
@@ -1405,8 +1457,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.contentH = y + p.Offset
 	}
 	if !s.unreadSeen && s.opened {
-		ui := s.unreadIndex()
-		s.unreadSeen = ui < 0 || (ui >= s.visible[0] && ui < s.visible[1])
+		s.unreadSeen = s.unreadLineVisible(h, !p.BeforeEnd)
 	}
 
 	s.updateUnreadThreads(h)
@@ -1717,6 +1768,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	if !ok {
 		r = newListRow(e, s.thread)
 		s.rows[it.key] = r
+		s.keepEdit(it.key, r)
 	} else if len(it.group) > 0 && r.rev != e.rev {
 		r.set(e)
 	}
@@ -2450,6 +2502,7 @@ func (s *listState) startEdit(h Host, ts string) {
 		}
 		r = newListRow(&s.snap.msgs[i], s.thread)
 		s.rows[ts] = r
+		s.keepEdit(ts, r)
 	}
 	if r.edit != nil {
 		r.edit.Focus()
@@ -2483,24 +2536,17 @@ func (s *listState) openEdit(h Host, m core.Message) {
 	if !ok {
 		return
 	}
-	for _, o := range s.rows {
-		if o.edit != nil {
-			o.edit = nil // one inline editor at a time, like Slack
-		}
-	}
-	t := tautOf()
-	if t != nil {
+	s.closeEdits() // one inline editor at a time, like Slack
+	if t := tautOf(); t != nil {
 		t.SetEditing("main", m.Channel, m.TS, true) // patchMessageText leaves it alone
 	}
-	rr := r
 	r.editFrames = 0
-	r.edit = composer.NewEdit(h, m, func() {
-		rr.edit = nil
-		if t != nil {
-			t.SetEditing("main", m.Channel, m.TS, false)
-		}
+	var ed *composer.Composer
+	ed = composer.NewEdit(h, m, func() {
+		s.endEdit(ed)
 		h.Invalidate()
 	})
+	r.edit, s.edit, s.editCh, s.editTS = ed, ed, m.Channel, m.TS
 	app := h.Core()
 	r.edit.SaveEditThen = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {
 		commitEditThen(ctx, app, ch, ts, text, blocks, fileIDs, done)
@@ -3058,12 +3104,54 @@ func (s *listState) placeSendJump(gtx layout.Context, now time.Time) {
 }
 
 func (s *listState) closeEdits() {
-	t := tautOf()
+	if s.edit != nil {
+		s.endEdit(s.edit)
+	}
 	for _, r := range s.rows {
-		if r.edit != nil && t != nil {
-			t.SetEditing("main", r.src.Channel, r.src.TS, false)
-		}
 		r.edit = nil
+	}
+}
+
+// endEdit is the end of inline editor ed (saved, cancelled, dropped): its
+// row draws the message again and, if it's the list's open one, Taut
+// hears the edit closed.
+func (s *listState) endEdit(ed *composer.Composer) {
+	for _, r := range s.rows {
+		if r.edit == ed {
+			r.edit = nil
+		}
+	}
+	if s.edit != ed {
+		return
+	}
+	if t := tautOf(); t != nil {
+		t.SetEditing("main", s.editCh, s.editTS, false)
+	}
+	s.edit, s.editCh, s.editTS = nil, "", ""
+}
+
+// keepEdit gives row r, made for the message keyed key, the list's open
+// inline editor if it's that message's: the row the sync dropped while the
+// list showed a jump's window (or rebuilt) had it. Slack's edit is the
+// window's messageEditWindow entry and a draft, not the row's: back at the
+// message the editor shows again, with what was typed. It takes the
+// keyboard when asked (Edit again, a click), not by itself.
+func (s *listState) keepEdit(key string, r *row) {
+	if s.edit == nil || key != s.editTS || r.edit != nil || s.edit.Done() {
+		return
+	}
+	r.edit, r.editFrames = s.edit, editFocusFrames
+}
+
+// dropDeletedEdit ends the open inline editor whose message the
+// conversation's own messages no longer hold although they span it: the
+// message was deleted. A jump's window not holding it isn't that.
+func (s *listState) dropDeletedEdit(live map[string]bool) {
+	if s.edit == nil || s.win != nil || live[s.editTS] {
+		return
+	}
+	if first, last, ok := s.ends(); ok && !tsLess(s.editTS, first) && !tsLess(last, s.editTS) {
+		s.endEdit(s.edit)
 	}
 }
 

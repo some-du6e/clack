@@ -408,6 +408,10 @@ func (rc *rowCtx) noAvatar() bool { return rc.dense }
 
 func newRow(e *entry) *row { return newListRow(e, false) }
 
+// editFocusFrames is how many frames a new inline editor asks for the
+// keyboard (its first Focus can land before its editor registered).
+const editFocusFrames = 3
+
 // newListRow is a row of a list; thread rows truncate long Block Kit
 // sections behind "Show more" like Slack's thread pane (a channel never
 // does).
@@ -1753,7 +1757,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 		ed := r.edit
 		// The composer's first Focus can land before its editor registered
 		// for input; ask again on the next frames so Escape/typing work.
-		if r.editFrames < 3 {
+		if r.editFrames < editFocusFrames {
 			r.editFrames++
 			ed.Focus()
 		}
