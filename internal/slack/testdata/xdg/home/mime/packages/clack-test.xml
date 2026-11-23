@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- internal/slack's XDG_DATA_HOME fixture: update-mime-database . (in mime/) writes mime.cache -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-clack-go"><glob pattern="*.go"/></mime-type>
+  <mime-type type="text/x-clack-python"><glob pattern="*.py"/></mime-type>
+  <mime-type type="text/x-clack-python3"><glob pattern="*.py" weight="60"/></mime-type>
+  <mime-type type="video/x-clack-mp2t"><glob pattern="*.ts"/></mime-type>
+  <mime-type type="text/x-clack-linguist"><glob pattern="*.ts"/></mime-type>
+  <mime-type type="image/x-ico"><glob pattern="*.ico"/></mime-type>
+  <mime-type type="application/octet-stream"><glob pattern="*.bin"/></mime-type>
+  <mime-type type="text/x-clack-cpp"><glob pattern="*.C" case-sensitive="true"/></mime-type>
+  <mime-type type="text/x-clack-c"><glob pattern="*.c"/></mime-type>
+  <mime-type type="image/x-clack-heic"><glob pattern="*.HEIC"/></mime-type>
+  <mime-type type="application/x-clack-backup"><glob pattern="*~"/></mime-type>
+  <mime-type type="application/x-clack-zst"><glob pattern="*.tar.zst"/></mime-type>
+  <mime-type type="text/x-clack-readme"><glob pattern="README*"/></mime-type>
+  <mime-type type="text/x-clack-md"><glob pattern="*.md" weight="40"/></mime-type>
+  <mime-type type="text/x-clack-e-acute"><glob pattern="*.é"/></mime-type>
+  <mime-type type="text/x-clack-nihon"><glob pattern="*.日本"/></mime-type>
+  <mime-type type="text/x-clack-crab"><glob pattern="*.🦀"/></mime-type>
+  <mime-type type="text/x-clack-svg"><glob pattern="*.svg"/></mime-type>
+  <mime-type type="text/x-clack-mov"><glob pattern="*.mov"/></mime-type>
+</mime-info>

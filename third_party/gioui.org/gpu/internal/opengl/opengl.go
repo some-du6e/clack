@@ -780,6 +780,11 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 	switch format {
 	case driver.TextureFormatFloat:
 		tex.triple = b.floatTriple
+		bits := int32(16) // for Clack patch 62's ring tests: half float, or a 32-bit fallback triple
+		if b.floatTriple.typ == gl.FLOAT {
+			bits = 32
+		}
+		driver.ClackCoverageBits.Store(bits)
 	case driver.TextureFormatSRGBA, driver.TextureFormatOutput:
 		// Output: the window's own format, sRGB (Clack patch 46's frame
 		// texture)

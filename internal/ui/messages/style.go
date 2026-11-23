@@ -382,7 +382,25 @@ func at(gtx layout.Context, x, y int, w layout.Widget) layout.Dimensions {
 
 // drawAvatar paints an avatar (or a placeholder while it loads).
 func drawAvatar(gtx layout.Context, h Host, url string, r image.Rectangle, c *colors) {
-	paintAvatar(gtx, h.Images(), url, r, c)
+	paintAvatar(gtx, h.Images(), avatarFor(h, url, r.Dx()), r, c)
+}
+
+// avatarFor is the picture to paint for a member's avatar url in a box px
+// device pixels across (core.AvatarAt: a larger image past 72px, not the
+// 72px one scaled up), the one asked for drawn while the larger one loads.
+func avatarFor(h Host, url string, px int) string {
+	a := h.Core()
+	if a == nil {
+		return url
+	}
+	big := a.AvatarAt(url, px)
+	if big == url || h.Images() == nil {
+		return url
+	}
+	if _, ok := h.Images().Get(big, px); ok || !h.Images().Loaded(url) {
+		return big
+	}
+	return url
 }
 
 // paintAvatar is BaseAvatar (client-boot xc3R) in r: the picture, or
@@ -394,7 +412,12 @@ func drawAvatar(gtx layout.Context, h Host, url string, r image.Rectangle, c *co
 // .c-avatar--no_image, rgba(var(--sk_foreground_low_solid)) in the
 // avatar's rounded square, until "names" resolves the row again.
 func paintAvatar(gtx layout.Context, imgs *imgcache.Cache, url string, r image.Rectangle, c *colors) {
-	radius := avatarRadius(r.Dx())
+	paintAvatarRadius(gtx, imgs, url, r, c, avatarRadius(r.Dx()))
+}
+
+// paintAvatarRadius is paintAvatar with the corners a class gives the
+// avatar (the DM foreword's .p-new_im_foreword-entity__avatar: 9px).
+func paintAvatarRadius(gtx layout.Context, imgs *imgcache.Cache, url string, r image.Rectangle, c *colors, radius int) {
 	if isDefaultBotAvatar(url) {
 		if img, ok := defaultBotAvatarImage(); ok {
 			richview.DrawImage(gtx.Ops, img, r, radius, true)

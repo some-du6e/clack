@@ -61,7 +61,7 @@ func TestBlockFallbacks(t *testing.T) {
 		// fail the decode into the per-block error line
 		{"known blocks Clack can't draw keep that rule whatever their fields' shapes",
 			`[{"type":"auth_provider","name":{"type":"plain_text","text":"Google"}},{"type":"canvas_table","rows":[{"cells":[]}]},` +
-				`{"type":"layout","rows":[{"items":[]}]},{"type":"data_visualization","title":"Q3","chart":{"type":"pie"}},` +
+				`{"type":"layout","rows":[{"items":[]}]},` +
 				`{"type":"share_prompt","label":"Share"}]`,
 			[]Block{para(tx("fallback text"))}},
 	}

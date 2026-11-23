@@ -50,6 +50,13 @@ func init() {
 	}
 }
 
+// Renderable reports whether Slack's client has a renderable for block
+// type t. Modals and App Home look types up in the same list
+// (ViewBlocks' and AppHomeBlocks' SUIProvider, boot-shared WSwB, 0IXH).
+// A block of any other type draws its fallback, or else the
+// UnsupportedBlockFallback card.
+func Renderable(t string) bool { return messageRenderables[t] }
+
 // maxFallbackDepth bounds a chain of fallbacks inside fallbacks (Slack's
 // recursion has none; a hostile payload shouldn't take the stack).
 const maxFallbackDepth = 8
@@ -154,7 +161,14 @@ func (c *builder) children(bs []bk, callout bool) []Block {
 // (the per-block "This content could not be displayed.").
 func decodeBlock(raw json.RawMessage) bk {
 	var b bk
-	if json.Unmarshal(raw, &b) != nil {
+	err := json.Unmarshal(raw, &b)
+	if err == nil && !isDataType(b.Type) {
+		return b
+	}
+	if d, ok := dataBlock(raw); ok {
+		return d
+	}
+	if err != nil {
 		return bk{Type: badBlock}
 	}
 	return b

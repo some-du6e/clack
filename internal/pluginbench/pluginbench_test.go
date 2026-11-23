@@ -1,6 +1,7 @@
 package pluginbench
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -71,6 +72,38 @@ func TestDecideWithoutChecks(t *testing.T) {
 		if pk, _ := d.For([]Entry{{System: "taut", ID: c.t.ID}, {System: "slick", ID: c.s.ID}}); !pickChecked(pk) {
 			t.Errorf("%s: a check on one variant, and the pick isn't Checked", c.name)
 		}
+	}
+}
+
+// A committed pick from costs alone (no behaviour check on either side,
+// which the Library doesn't recommend) losing to a version that passes a
+// check added since isn't a regression: the bench learned what the plugin
+// does (plugin-bench 45061897607 went red on exactly that, Bring Back
+// Slackbot's Taut version). A behaviour-checked pick losing on correctness
+// still is one.
+func TestRegressionsCostOnlyPick(t *testing.T) {
+	v := func(sys string, checks ...bool) Variant {
+		x := Variant{System: sys, ID: "P", Loaded: true, IdleSeconds: 3}
+		for i, pass := range checks {
+			x.Checks = append(x.Checks, Check{Name: fmt.Sprint("check ", i), Pass: pass})
+		}
+		return x
+	}
+	old := &Data{Plugins: []Plugin{{Name: "Bring Back Slackbot", Winner: "taut", Variants: []Variant{v("taut"), v("slick")}}}}
+	cur := &Data{Plugins: []Plugin{{Name: "Bring Back Slackbot", Variants: []Variant{v("taut", false), v("slick", true)}}}}
+	Decide(&cur.Plugins[0])
+	if cur.Plugins[0].Winner != "slick" {
+		t.Fatalf("the new run picked %s (%s), want slick on the check", cur.Plugins[0].Winner, cur.Plugins[0].Reason)
+	}
+	if regs := Regressions(old, cur); len(regs) != 0 {
+		t.Errorf("a pick from costs alone, corrected by a new check: %v, want no regression", regs)
+	}
+	// checked: Taut's won 1/1 against 0/1, and loses on correctness now
+	old.Plugins[0].Variants = []Variant{v("taut", true), v("slick", false)}
+	cur.Plugins[0].Variants = []Variant{v("taut", true, false), v("slick", true, true)}
+	Decide(&cur.Plugins[0])
+	if regs := Regressions(old, cur); len(regs) != 1 || !strings.Contains(regs[0], "beats the Taut winner on correctness") {
+		t.Errorf("a behaviour-checked pick losing on correctness: %v, want that regression", regs)
 	}
 }
 

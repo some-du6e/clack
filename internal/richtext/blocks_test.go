@@ -166,7 +166,7 @@ func TestBlockKit(t *testing.T) {
 }
 
 func (b Block) kindName() string {
-	return [...]string{"Paragraph", "Preformatted", "Quote", "List", "Header", "Divider", "Context", "Section", "ImageBlock", "Actions", "AttachmentBlock", "FileBlock", "Tombstone", "Table", "Agent", "Unsupported", "UnknownBlock", "FileStatus", "CallBlock", "AlertBlock", "CalloutBlock", "LoadingBlock", "RichHeader", "RichDivider", "ContainerBlock", "ShortcutBlock", "CardBlock"}[b.Kind]
+	return [...]string{"Paragraph", "Preformatted", "Quote", "List", "Header", "Divider", "Context", "Section", "ImageBlock", "Actions", "AttachmentBlock", "FileBlock", "Tombstone", "Table", "Agent", "Unsupported", "UnknownBlock", "FileStatus", "CallBlock", "AlertBlock", "CalloutBlock", "LoadingBlock", "RichHeader", "RichDivider", "ContainerBlock", "ShortcutBlock", "CardBlock", "DataVizBlock", "DataTableBlock"}[b.Kind]
 }
 
 func TestBlocksFallBackToText(t *testing.T) {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -184,13 +185,13 @@ func TestHoverCardInChannel(t *testing.T) {
 		// rest on the card near its bottom, which stays 12px above the
 		// trigger while an app card's loading state gives way to its data
 		e.move(f32.Pt(float32(r.Min.X+20), float32(r.Max.Y-20)))
-		e.settle(500 * time.Millisecond) // apps.profile.get, team.info, avatars
+		trace := hcSettle(e, 500*time.Millisecond) // apps.profile.get, team.info, avatars
 		if e.a.hover.card == nil {
-			t.Fatalf("%s: the card closed while resting on it (%v)", id, r)
+			t.Fatalf("%s: the card closed while resting on it (%v); the controller while resting: %s", id, r, trace)
 		}
 		r = e.a.hover.card.Rect()
 		if got, _, open := ctl.Open(); !open || got.UserID != id {
-			t.Fatalf("%s: card not open (%+v)", id, got)
+			t.Fatalf("%s: card not open (%+v); the controller while resting on %v: %s", id, got, r, trace)
 		}
 		if r.Max.Y != anchor.Min.Y-hovercard.OffsetY {
 			t.Errorf("%s: card %v not 12px above %v", id, r, anchor)
@@ -200,6 +201,35 @@ func TestHoverCardInChannel(t *testing.T) {
 		time.Sleep(hovercard.HideDelay + 50*time.Millisecond)
 		e.frame()
 	}
+}
+
+// hcSettle is e.settle(d) noting each change of the hover controller's
+// state, frame by frame (on the pointer, the open card, the pending one,
+// the drawn card, blocked): TestHoverCardInChannel's Slack Connect card
+// once closed under the resting pointer and the sender name under it
+// opened (flakes-1122c's push ci 45058646083), which 18 runs with held
+// reads didn't repeat (flakes-1122d's fdiag-hover 45068546335).
+func hcSettle(e *perfEnv, d time.Duration) string {
+	ctl := &e.a.hover.ctl
+	var log []string
+	last := ""
+	t0 := time.Now()
+	for dl := t0.Add(d); time.Now().Before(dl); {
+		e.frame()
+		o, _, open := ctl.Open()
+		p, pend := ctl.Pending()
+		cr := image.Rectangle{}
+		if e.a.hover.card != nil {
+			cr = e.a.hover.card.Rect()
+		}
+		st := fmt.Sprintf("over=%v open=%v:%s pend=%v:%s card=%v blocked=%v", ctl.OverCard(), open, o.UserID, pend, p.UserID, cr, e.a.hoverBlocked())
+		if st != last {
+			log = append(log, fmt.Sprintf("+%dms %s", time.Since(t0).Milliseconds(), st))
+			last = st
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return strings.Join(log, " | ")
 }
 
 // hostOverlay is a full-window dialog whose own content has a trigger

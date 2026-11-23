@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // An activity entry's lookups (its messages: messages.list, its people:
@@ -74,7 +76,7 @@ func (a *App) activityWorker() {
 			continue // the session ended: drop what is left
 		}
 		ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
-		f(ctx)
+		tracked(&a.actOn, "the Activity events' queue", &pumpTask{at: slack.ReadClock()}, func() { f(ctx) })
 		cancel()
 	}
 }
