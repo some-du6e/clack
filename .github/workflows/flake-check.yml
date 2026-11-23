@@ -2925,11 +2925,15 @@ jobs:
               xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 $v -test.timeout 20m -test.run '^TestGiantMessagesBounded$' 2>&1 | tail -n 200) || rc=1
             kill $fp 2>/dev/null; wait $fp 2>/dev/null
           done
-          # under a plugin that patches the messages slice (the fake in the
-          # test's process: the plugin bench's env needs it)
+          # under a plugin that patches the messages slice, against a fresh
+          # fakeslackd of its own
+          "$RUNNER_TEMP/fakeslackd" -small -giant 100 -addr 127.0.0.1:8934 > "$RUNNER_TEMP/fakeslackd-plugins.log" 2>&1 &
+          fp=$!
+          for _ in $(seq 1 200); do curl -s -o /dev/null http://127.0.0.1:8934/img/1x1/x.png && break; sleep 0.1; done
           mkdir -p "$RUNNER_TEMP/giant/plugins"
-          (cd internal/ui && CLACK_GIANT_PLUGINS=1 CLACK_GIANT_OUT="$RUNNER_TEMP/giant/plugins" \
+          (cd internal/ui && CLACK_GIANT_PLUGINS=1 CLACK_FAKESLACK_URL=http://127.0.0.1:8934/ CLACK_GIANT_OUT="$RUNNER_TEMP/giant/plugins" \
             xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 -test.v -test.timeout 20m -test.run '^TestGiantMessagesPlugins$' 2>&1 | tail -n 200) || rc=1
+          kill $fp 2>/dev/null; wait $fp 2>/dev/null
           exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

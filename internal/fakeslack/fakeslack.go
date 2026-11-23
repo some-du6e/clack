@@ -382,6 +382,7 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 
 // Server is a running fake.
 type Server struct {
+	remote bool // Remote: a fakeslackd in another process
 	// client.counts' threads.unread_count_by_channel (threads_by_channel.go)
 	threadsByChan map[string]int
 
@@ -912,8 +913,12 @@ func Remote(url string, sz Size) *Server {
 	if !strings.HasSuffix(url, "/") {
 		url += "/"
 	}
-	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}, prefs: DefaultPrefs()}
+	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}, prefs: DefaultPrefs(), remote: true}
 }
+
+// IsRemote reports a Server Remote describes: its fixture's data (users,
+// messages) is in the other process, not here.
+func (s *Server) IsRemote() bool { return s.remote }
 
 // CallCount returns how often method was called.
 func (s *Server) CallCount(method string) int64 {

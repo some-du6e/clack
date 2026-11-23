@@ -11,7 +11,9 @@ package ui
 //   - the live Go heap (after a collection) grows past giantHeapMB over
 //     what it was before the channel opened, or the process's peak RSS
 //     (VmHWM) past giantRSSMB over its RSS then;
-//   - any frame from the open on takes longer than giantFrameMax;
+//   - any frame from the open on takes longer than giantFrameMax, or 1.5
+//     times the longest frame of an ordinary channel's open on this
+//     runner if that's more;
 //   - a giant message doesn't draw what Slack draws. Slack's message pane
 //     cuts nothing: Message (boot-shared b5pm) renders Blocks (lby4)
 //     without truncateLimits, so MessageBlocks (u33y) and the rich text
@@ -51,7 +53,8 @@ const (
 	// giantRSSMB bounds the peak RSS's growth over the RSS before the
 	// channel opened (+825 MB, the fake in its own process)
 	giantRSSMB = 1500
-	// giantFrameMax bounds every frame from the open on.
+	// giantFrameMax bounds every frame from the open on, unless a screen
+	// of ordinary text costs more on this runner (giantSession's reference).
 	giantFrameMax = 300 * time.Millisecond
 	// giantAbortMB: past this RSS growth the test stops driving frames
 	// (the bound is long gone; the runner keeps its memory).
@@ -113,13 +116,17 @@ func TestGiantMessagesBounded(t *testing.T) {
 // patches the messages slice (passing it through, as Slick's and Taut's
 // message plugins patch it): every row then draws the plugins' view of
 // its message, and the mirror hands JS the open channel's messages.
-// CLACK_GIANT_PLUGINS=1 too (the fake in this process: the bench needs it).
+// CLACK_GIANT_PLUGINS=1 too. The fake is fakeslackd in its own process
+// when CLACK_FAKESLACK_URL names one, as for TestGiantMessagesBounded: its
+// own copy of the messages and the responses it encodes aren't the
+// client's memory (in this process they were 300 MB live and a gigabyte
+// of garbage the session).
 func TestGiantMessagesPlugins(t *testing.T) {
 	n, out := giantSetup(t)
 	if os.Getenv("CLACK_GIANT_PLUGINS") == "" {
 		t.Skip("CLACK_GIANT_PLUGINS not set (flake-check's giant-messages job runs this)")
 	}
-	fs := giantServer(t, n, false)
+	fs := giantServer(t, n, true)
 	be := benchStart(t, fs)
 	e := be.perfEnv
 	e.waitReady()
@@ -189,8 +196,23 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 		defer f.Close()
 		_ = pprof.Lookup("heap").WriteTo(f, 0)
 	}
-	e.openChannel(fs.ChannelIDs()[1])
-	e.settle(time.Second)
+	// the reference: a channel of ordinary messages opened the same way,
+	// each frame timed. A frame that draws a new screen of text costs the
+	// renderer (llvmpipe on the runners: mostly its path stenciling) about
+	// as much whatever the messages' size, and runners differ by half again
+	// in it; the giant channel's frames are held to what a screen of
+	// ordinary text costs here, or giantFrameMax if that's more.
+	ref := fs.ChannelIDs()[1]
+	e.a.Navigate("c/" + ref)
+	var refMax time.Duration
+	for dl := time.Now().Add(3 * time.Second); time.Now().Before(dl); {
+		t0 := time.Now()
+		e.frame()
+		refMax = max(refMax, time.Since(t0))
+		time.Sleep(2 * time.Millisecond)
+	}
+	frameMax := max(giantFrameMax, refMax*3/2)
+	t.Logf("reference: #%s's open, the longest frame %v; the giant channel's frame bound %v", ref, refMax.Round(time.Millisecond), frameMax.Round(time.Millisecond))
 	baseHeap := liveHeapMB()
 	_ = os.WriteFile("/proc/self/clear_refs", []byte("5"), 0) // VmHWM from here (Linux)
 	baseRSS := giantProcStatus("VmRSS")["VmRSS"]
@@ -227,7 +249,7 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 					if s := frameOf.Load(); s != nil {
 						stage = *s
 					}
-					t.Errorf("a %s frame has run for %v and counting (bound %v)", stage, time.Since(time.Unix(0, at)).Round(time.Millisecond), giantFrameMax)
+					t.Errorf("a %s frame has run for %v and counting (bound %v)", stage, time.Since(time.Unix(0, at)).Round(time.Millisecond), frameMax)
 				}
 				profile("watchdog")
 				panic(fmt.Sprintf("giant messages: RSS %.0f MB passed %d MB in one frame (before the channel: %.0f MB)", rss, giantPanicMB, baseRSS))
@@ -475,14 +497,14 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 	}
 	slow := 0
 	for _, f := range frames {
-		if f.d > giantFrameMax {
+		if f.d > frameMax {
 			if slow < 5 {
-				t.Errorf("a %s frame took %v (bound %v)", f.stage, f.d.Round(time.Millisecond), giantFrameMax)
+				t.Errorf("a %s frame took %v (bound %v: %v, or 1.5 times the reference's %v)", f.stage, f.d.Round(time.Millisecond), frameMax.Round(time.Millisecond), giantFrameMax, refMax.Round(time.Millisecond))
 			}
 			slow++
 		}
 	}
 	if slow > 5 {
-		t.Errorf("… %d frames in all over %v", slow, giantFrameMax)
+		t.Errorf("… %d frames in all over %v", slow, frameMax.Round(time.Millisecond))
 	}
 }
