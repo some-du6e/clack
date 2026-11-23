@@ -274,8 +274,9 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 	case "V":
 		// Shift: paste and match style (plain text), like Slack.
 		e.plainPaste = shift
-		e.startPaste(gtx, shift)
-		e.emit(EvPasted) // the composer sets filesRead
+		if e.startPaste(gtx, shift) {
+			e.emit(EvPasted) // the composer sets filesRead
+		}
 	case "Z":
 		switch {
 		case shift:
@@ -321,6 +322,7 @@ func (e *Editor) copySel(gtx layout.Context) bool {
 	sl := e.doc.Slice(lo, hi)
 	txt := sl.copyText()
 	e.clipText, e.clipDoc = txt, sl
+	e.clipWrote, e.clipWroteNow = true, gtx.Now
 	gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(txt))})
 	return true
 }

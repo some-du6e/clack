@@ -124,20 +124,34 @@ type pendingPaste struct {
 // pasteSnap) the text, the rich text and the composer's file probe all
 // come from that one read; elsewhere Gio delivers the text
 // (clipboard.ReadCmd) and the HTML is read beside it (startClipHTML).
-func (e *Editor) startPaste(gtx layout.Context, plain bool) {
+// It reports whether it started a read (the composer's file probe goes
+// with it: EvPasted).
+//
+// A paste in the frame this editor copied or cut in pastes that copy: Gio
+// writes the clipboard only after the frame, so a read started now would
+// take what the clipboard held before (a cut then a paste sent at once:
+// SendInput, AutoHotkey's Send ^x^v, remote control). Gio's own
+// ReadCmd ran after the write, so before the one-session read this held
+// by itself.
+func (e *Editor) startPaste(gtx layout.Context, plain bool) bool {
 	e.richRead, e.filesRead, e.clipSnap, e.clipSnapText = nil, nil, nil, false
+	if e.clipWrote && e.clipDoc != nil && gtx.Now.Equal(e.clipWroteNow) {
+		e.receivePaste(gtx, e.clipText)
+		return false
+	}
 	if s := startPasteSnap(plain); s != nil {
 		e.clipSnap, e.clipSnapText = s, true
 		if s.rich != nil {
 			e.richRead = s.rich
 		}
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(8 * time.Millisecond)})
-		return
+		return true
 	}
 	if !plain {
 		e.richRead = startClipHTML()
 	}
 	gtx.Execute(clipboard.ReadCmd{Tag: e})
+	return true
 }
 
 // flushSnap hands the snapshot's text to the paste once it was read (as

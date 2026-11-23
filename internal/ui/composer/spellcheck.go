@@ -738,8 +738,9 @@ func (e *Editor) contextItems(w *spellMenuWait, sugg []string) []popups.MenuItem
 		popups.MenuItem{Label: "Copy", Key: "copy", Hint: shortcut.Format("Mod+C"), Disabled: !has, DoCtx: func(gtx layout.Context) { e.copySel(gtx) }},
 		popups.MenuItem{Label: "Paste", Key: "paste", Hint: shortcut.Format("Mod+V"), DoCtx: func(gtx layout.Context) {
 			e.plainPaste = false
-			e.startPaste(gtx, false)
-			e.emit(EvPasted)
+			if e.startPaste(gtx, false) {
+				e.emit(EvPasted)
+			}
 		}},
 	)
 	return items

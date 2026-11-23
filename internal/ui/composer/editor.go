@@ -181,13 +181,19 @@ type Editor struct {
 	lastVer    uint64
 	lastSpace  bool
 
-	clipText   string
-	clipDoc    *Doc
-	slugs      edSlugs // pasted Slack links being resolved (slugs.go)
-	plainPaste bool
-	richRead   *clipRead     // HTML read started by Ctrl/Cmd+V
-	pendPaste  *pendingPaste // plain text waiting for richRead and filesRead
-	filesRead  *filePaste    // the composer's file probe for that paste
+	clipText string
+	clipDoc  *Doc
+	// clipWrote: copySel wrote the clipboard in the frame of clipWroteNow
+	// (its gtx.Now). Gio carries the write out only after the frame, so a
+	// paste in that same frame pastes clipDoc, not what the clipboard
+	// still holds (startPaste)
+	clipWrote    bool
+	clipWroteNow time.Time
+	slugs        edSlugs // pasted Slack links being resolved (slugs.go)
+	plainPaste   bool
+	richRead     *clipRead     // HTML read started by Ctrl/Cmd+V
+	pendPaste    *pendingPaste // plain text waiting for richRead and filesRead
+	filesRead    *filePaste    // the composer's file probe for that paste
 	// clipSnap is the paste's one read of the clipboard where the
 	// platform reads it at once (Windows: pasteSnap); clipSnapText, its
 	// text still to come (it stands for Gio's clipboard.ReadCmd there)
