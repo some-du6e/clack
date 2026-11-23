@@ -564,6 +564,7 @@ func (v *ChannelPins) box(gtx C, sz image.Point, radius int, last bool) {
 // message is BasePinnedMessage in its row.
 func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 	r := v.rowOf(it.Key())
+	r.time.Begin() // a time this frame doesn't draw holds no hover
 	m := v.viewMsg(it.Msg)
 	hovered := r.hv.Update(gtx.Source)
 	ring := v.kb.ringOn(it.Key())
@@ -599,7 +600,7 @@ func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 								// tooltip): the permalink's link,
 								// handleTimestampClick on a click
 								d := v.para(gtx, 12, 17.6, wReg, v.p.Meta, 1, stamp)
-								if c := r.time.Layout(gtx, v.th, d.Size, d.Size.Y-d.Baseline, v.p.Meta, ""); c.Clicked && !v.preview {
+								if c := r.time.Layout(gtx, v.th, d.Size, d.Size.Y-d.Baseline, v.p.Meta, nil); c.Clicked && !v.preview {
 									if ph, ok := v.h.(popups.Host); ok {
 										popups.OpenMessageTime(ph, m.Channel, m.TS, m.ThreadTS, c.Cmd)
 									}
