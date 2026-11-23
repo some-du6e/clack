@@ -477,6 +477,7 @@ func TestViewsPatchedReactionPillLikeNative(t *testing.T) {
 }
 
 func vpCompare(t *testing.T, dark bool, plug string, vw vpView) {
+	pixeltest.Need(t) // before the app and its Taut start (a skip later left them writing into the TempDir)
 	tt, u, h := vpEnv(t, dark)
 	name := strings.ReplaceAll(t.Name()[strings.Index(t.Name(), "/")+1:], "/", "-")
 	b := vw.base(h)

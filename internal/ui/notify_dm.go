@@ -117,7 +117,7 @@ func (b *backend) noteDMReason(a *App, ev core.Event, c *convInfo, ignoreDND boo
 	switch {
 	case m.NoDisplay:
 		return noteSkipNoDisplay
-	case ev.Reply:
+	case noteIsReply(ev): // a broadcast too
 		return noteSkipReply
 	case b.noteOnScreen(a, ev, ignoreDND || ev.StreamDone): // a dnd_override's re-check and a settled stream read the store's copy
 		return noteSkipOnScreen
@@ -129,6 +129,8 @@ func (b *backend) noteDMReason(a *App, ev core.Event, c *convInfo, ignoreDND boo
 		return noteSkipNoNotify
 	case b.noteDNDHolds(ev, c, ignoreDND):
 		return noteSkipDND
+	case noteSlackbotIM(c) && m.Upload && m.NoteFiles != nil && m.NoteFiles.Email:
+		return noteSkipEmail // shouldSuppressEmailShared: an email forwarded to Slackbot
 	}
 	if why, ok := noteQuietSubtypes[m.Subtype]; ok {
 		return why
@@ -140,26 +142,59 @@ func (b *backend) noteDMReason(a *App, ev core.Event, c *convInfo, ignoreDND boo
 	return noteShow
 }
 
-// noteChannelReason is rr for any other conversation's message: its level
-// (a channel's wantsNotify, a group DM's noteGroupDMLevel), a reply only
-// when it mentions the viewer (notify_threads.go), and the holds RM shares
-// with it, in rr's order.
+// noteChannelReason is rr for any other conversation's message, in rr's
+// order (client-boot Fpyc shouldShowNotificationForChannelMessage, build
+// a09b625d90aa; docs/NOTIFY-RULES.md):
+//
+//   - a canvas's or list's comment and a canvas section's stub in its
+//     file channel (25, 26), a reply only when it mentions the viewer
+//     (6: their mention, a user group of theirs, @here; notify_threads.go),
+//     and never a join or leave (8);
+//   - at a level of Everything every other message passes; at Mentions a
+//     bot's message (9) and an app's (10) need a mention, and any message
+//     needs one that counts as unread for the viewer (1: no huddle's post,
+//     none of their own). What mentions them is
+//     checkMessageAndUpdateMentions (core NotifyMention): @channel,
+//     @everyone, @here and their user groups only where the channel takes
+//     at-channel mentions (noteAtChannel), @here never while they're away,
+//     and no keyword in a bot's or an app's message;
+//   - then on screen (16), their own (11), no_notifications (5), a muted
+//     channel unless the viewer or one of their keywords is mentioned (12),
+//     Do Not Disturb (13) and the quiet subtypes.
+//
+// Clack read any <!here>, <!channel> or <!everyone> in the text as a
+// mention, no user group's and none in an attachment, a keyword in any
+// bot's message, held every muted channel's message and never decided on
+// a join, a topic or a pin.
 func (b *backend) noteChannelReason(a *App, ev core.Event, c *convInfo, ignoreDND bool) noteSkip {
 	m := ev.Msg
 	if m.NoDisplay {
 		return noteSkipNoDisplay
 	}
+	if c != nil && c.File {
+		switch m.Subtype {
+		case "document_comment_root", "list_record_comment", "surface_card_comment":
+			return noteSkipFileCmt
+		case "canvas_section_stub":
+			return noteSkipCanvasStb
+		}
+	}
 	if !replyNotifies(b.core, ev) {
 		return noteSkipReply
 	}
-	wants := ev.Mention
-	if ev.ConvKind == "mpim" || c != nil && c.Kind == "mpim" {
-		wants = wants || b.noteGroupDMLevel(ev.Channel) == "everything"
-	} else {
-		wants = b.wantsNotify(ev.Channel, ev.Mention)
+	if noteJoinLeave[m.Subtype] {
+		return noteSkipJoinLeave
 	}
+	everything := b.noteDesktopLevel(ev, c) == "everything"
+	mention := b.core.NotifyMention(m, b.noteAtChannel(ev, c, everything))
 	switch {
-	case !wants:
+	case m.Subtype == "bot_message" && !everything && !mention:
+		return noteSkipBot
+	case b.core.IsAppMessage(m) && !everything && !mention:
+		return noteSkipApp
+	case (m.Subtype == "document_mention" || m.Subtype == "list_mention") && !mention:
+		return noteSkipNoMention
+	case !(mention && b.core.CountsAsUnreadForViewer(m) || everything):
 		return noteSkipNoMention
 	case b.noteOnScreen(a, ev, ignoreDND || ev.StreamDone): // a dnd_override's re-check and a settled stream read the store's copy
 		return noteSkipOnScreen
@@ -167,7 +202,7 @@ func (b *backend) noteChannelReason(a *App, ev core.Event, c *convInfo, ignoreDN
 		return noteSkipOwn
 	case m.NoNotifications:
 		return noteSkipNoNotify
-	case c != nil && c.Muted:
+	case c != nil && c.Muted && !b.core.NotifyMention(m, false):
 		return noteSkipMuted
 	case b.noteDNDHolds(ev, c, ignoreDND):
 		return noteSkipDND
@@ -176,6 +211,48 @@ func (b *backend) noteChannelReason(a *App, ev core.Event, c *convInfo, ignoreDN
 		return why
 	}
 	return noteShow
+}
+
+// noteJoinLeave are the subtypes rr never notifies for (8).
+var noteJoinLeave = map[string]bool{"channel_join": true, "channel_leave": true, "group_join": true, "group_leave": true}
+
+// noteDesktopLevel is getCalculatedDesktopNotifySetting for the message's
+// conversation: a group DM's noteGroupDMLevel, else the channel's desktop
+// override, else global_desktop. "nothing" reads as mentions_dms (no level
+// is ever nothing: the push switch, notePushOn, is the off switch).
+func (b *backend) noteDesktopLevel(ev core.Event, c *convInfo) string {
+	if ev.ConvKind == "mpim" || c != nil && c.Kind == "mpim" {
+		return b.noteGroupDMLevel(ev.Channel)
+	}
+	p := b.core.Prefs()
+	level := p.GlobalDesktop
+	if o := p.ChannelNotify[ev.Channel].Desktop; o != "" && o != "default" {
+		level = o
+	}
+	if level == "nothing" {
+		level = "mentions_dms"
+	}
+	return level
+}
+
+// noteAtChannel is can_channel_have_at_channel_mentions (client-boot
+// QWNA): @channel, @everyone, @here and user groups count in a channel at
+// Everything that isn't muted, or in one that doesn't suppress_at_channel
+// ("Ignore @channel, @everyone and @here"). Slack's other branch (a
+// #general the viewer can't post in takes them anyway) reads a posting
+// permission Clack doesn't keep.
+func (b *backend) noteAtChannel(ev core.Event, c *convInfo, everything bool) bool {
+	if noteIsDM(ev, c) {
+		return false
+	}
+	muted := c != nil && c.Muted
+	return everything && !muted || !b.core.NotifyPrefs(ev.Channel).SuppressAtChannel
+}
+
+// noteSlackbotIM is isChannelSlackbotIm (oSFb): the viewer's DM with
+// Slackbot.
+func noteSlackbotIM(c *convInfo) bool {
+	return c != nil && (c.Kind == "im" || c.Kind == "app") && c.User == "USLACKBOT"
 }
 
 // noteGroupDMLevel is getCalculatedDesktopNotifySetting for group DM ch,

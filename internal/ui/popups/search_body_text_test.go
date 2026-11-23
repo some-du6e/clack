@@ -179,15 +179,15 @@ func TestSearchCardHighlightsPrefixes(t *testing.T) {
 	v, d := srView(t, e, word+" ann deplo*", false)
 	d.until(t, "the card", func() bool { return len(v.cards) == 1 })
 	scBuild(v, 0)
-	doc := scBodyDoc(&v.cards[0])
+	doc := scBodyDoc(v.cards[0])
 	for _, w := range []string{word, "announcement", "deployment"} {
 		if !scHasStyle(doc, w, richtext.Highlight) {
-			t.Errorf("%q isn't highlighted in %q", w, scText(&v.cards[0]))
+			t.Errorf("%q isn't highlighted in %q", w, scText(v.cards[0]))
 		}
 	}
 	for _, w := range []string{"about", "day"} {
 		if scHasStyle(doc, w, richtext.Highlight) {
-			t.Errorf("%q is highlighted in %q", w, scText(&v.cards[0]))
+			t.Errorf("%q is highlighted in %q", w, scText(v.cards[0]))
 		}
 	}
 }

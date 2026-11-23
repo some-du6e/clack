@@ -42,7 +42,6 @@ type SearchInChannel struct {
 	ch       string
 	ed       widget.Editor
 	focused  bool
-	list     layout.List
 	closeBtn widget.Clickable
 	fullBtn  widget.Clickable // "Go to full search" / "View full search"
 	allBtn   widget.Clickable // "View all N results"
@@ -53,6 +52,7 @@ type SearchInChannel struct {
 	sortBy   string      // score | timestamp | oldest
 	sortSt   srSortState // sort_forced_to_recent / disable_sort_override (search_view.go)
 	origin   image.Point
+	originOK bool // SetOrigin gave it; else the host's SecondaryOrigin, each frame
 	searched bool // a search ran (Slack's eu: the no-results state replaces "Nothing to show yet.")
 	// skelStart is when the loading skeleton's shimmer began
 	// (search_channel_states.go)
@@ -65,8 +65,11 @@ type SearchInChannel struct {
 	err     string
 	msgs    []core.Message
 	total   int
-	rows    []widget.Clickable
 	convs   map[string]core.ConvRef
+	// res draws the results: the results page's cards (SearchView's card,
+	// search_view.go), as Slack's list renders a "message-result" item
+	// (variant card) in both, each card's controls its result's
+	res *SearchView
 }
 
 // NewSearchInChannel opens search in channel ch.
@@ -74,7 +77,6 @@ func NewSearchInChannel(h Host, ch string) *SearchInChannel {
 	v := &SearchInChannel{h: h, ch: ch, sortBy: DefaultSearchSort(h.Core())}
 	v.ed.SingleLine = true
 	v.ed.Submit = true
-	v.list.Axis = layout.Vertical
 	return v
 }
 
@@ -87,8 +89,7 @@ func (v *SearchInChannel) Search(q string) {
 	v.query = q
 	v.seq++
 	seq := v.seq
-	v.msgs, v.total, v.err = nil, 0, ""
-	v.list.Position = layout.Position{}
+	v.msgs, v.total, v.err, v.res = nil, 0, "", nil
 	c := v.h.Core()
 	if q == "" || c == nil {
 		v.loading, v.searched = false, false
@@ -114,10 +115,17 @@ func (v *SearchInChannel) Search(q string) {
 		}
 		v.msgs, v.total, v.convs = res.Messages, res.Total, res.Convs
 		v.sortSt.answered(res)
-		for len(v.rows) < len(v.msgs) {
-			v.rows = append(v.rows, widget.Clickable{})
-		}
+		v.res = v.newResults(res)
 	})
+}
+
+// newResults is the cards for answer res: a results-only SearchView with
+// the keywords' highlights, not mirrored into the search store.
+func (v *SearchInChannel) newResults(res core.SearchResult) *SearchView {
+	r := &SearchView{h: v.h, q: srParse(v.query), tab: srTabMessages, sortBy: v.sortBy, menuCard: -1, sess: v.sess(), noStore: true}
+	r.list.Axis = layout.Vertical
+	r.addMessages(res, 1)
+	return r
 }
 
 func (v *SearchInChannel) fullSearch() {
@@ -135,7 +143,11 @@ func (v *SearchInChannel) fullQuery() string {
 
 // SetOrigin tells the pane where its top-left corner is in window
 // coordinates (the sort menu opens under its select).
-func (v *SearchInChannel) SetOrigin(p image.Point) { v.origin = p }
+func (v *SearchInChannel) SetOrigin(p image.Point) { v.origin, v.originOK = p, true }
+
+// secondaryOrigin is the ui root's: where the secondary column (the ⌘F
+// pane's) is in the window.
+type secondaryOrigin interface{ SecondaryOrigin() image.Point }
 
 // sess is the pane's search session (one per pane).
 func (v *SearchInChannel) sess() core.SearchSession {
@@ -266,11 +278,15 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 	if v.sortBtn.Clicked(gtx) {
 		v.sortMenu()
 	}
-	for i := range v.msgs {
-		if i < len(v.rows) && v.rows[i].Clicked(gtx) {
-			RecordRecentConversation(v.msgs[i].Channel)
-			openResult(v.h, v.msgs[i])
-		}
+	if so, ok := v.h.(secondaryOrigin); ok && !v.originOK {
+		// the pane's place in the window: the cards' More actions and
+		// attachments open there (SearchView.win)
+		v.origin = so.SecondaryOrigin()
+	}
+	if v.res != nil {
+		// the cards' clicks, each its own result's (SearchView.cardEvents)
+		v.res.SetOrigin(v.origin)
+		v.res.cardEvents(gtx)
 	}
 
 	pad := dp(gtx, 16)
@@ -395,12 +411,23 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	if v.total > 10 {
 		n++
 	}
+	res := v.res
+	if res == nil || len(res.cards) != len(v.msgs) {
+		return layout.Dimensions{Size: gtx.Constraints.Max}
+	}
+	// where the cards are, for their menus (SearchView.cardY): the pane's
+	// coordinates
+	res.listY, res.cardX = top+headH, pad
 	at(gtx, image.Pt(0, headH), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(w, maxInt(0, fy-headH)))
 		defer clipRRect(gtx, image.Rectangle{Max: gtx.Constraints.Max}, 0).Pop()
-		return v.list.Layout(gtx, n, func(gtx layout.Context, i int) layout.Dimensions {
+		return res.list.Layout(gtx, n, func(gtx layout.Context, i int) layout.Dimensions {
 			if i < len(v.msgs) {
-				return v.row(gtx, th, cl, i, w)
+				return at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
+					d := res.card(gtx, th, cl, i, inner)
+					res.cards[i].h = d.Size.Y + dp(gtx, 8)
+					return layout.Dimensions{Size: image.Pt(pad+inner, res.cards[i].h)}
+				})
 			}
 			// "View all N results" (search-escape-hatch), centred
 			label := nsSearch.T("View all {totalCountStr} results", "totalCountStr", srCountGrouped(v.total))
@@ -509,83 +536,4 @@ func (v *SearchInChannel) footer(gtx layout.Context, th *theme.Theme, cl *Colors
 func srCountGrouped(n int) string {
 	s := srResultsLabel(n)
 	return s[:strings.IndexByte(s, ' ')]
-}
-
-// row is one result: avatar, sender, time, two lines of text.
-func (v *SearchInChannel) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int) layout.Dimensions {
-	m := &v.msgs[i]
-	pad := dp(gtx, 16)
-	name, av := srAuthor(v.h, m)
-	terms := srParse(v.query).Highlights()
-	segs := srRunSegs(srBodyRuns(v.h, m), terms, true)
-	cw := w - 2*pad
-	tx := dp(gtx, 12) + dp(gtx, 36) + dp(gtx, 8)
-	// a hidden sender's card (SearchResult's isMsgFromHiddenSender,
-	// search_view.go cardHidden): no header, HiddenMessageBody
-	hidden := srHiddenSender(v.h, m)
-	var htoks []srRichTok
-	toks, lines, over := srWrapFit(gtx, th, segs, maxInt(1, cw-tx-dp(gtx, 12)), 2, textW(gtx, th, 15, theme.Regular, "…"))
-	if hidden {
-		htoks, lines = srRichLayout(gtx, th, 15, srHiddenContents(v.h, m), maxInt(1, cw-tx-dp(gtx, 12)))
-		toks, over = nil, false
-	}
-	lh := dp(gtx, 22)
-	h := dp(gtx, 12) + lh + lines*lh + dp(gtx, 12)
-	h = maxInt(h, dp(gtx, 64))
-	if hidden {
-		return at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
-			return clickBox(gtx, &v.rows[i], nil, func(gtx layout.Context) layout.Dimensions {
-				r := image.Rect(0, 0, cw, h)
-				bg := cl.Bg
-				if v.rows[i].Hovered() {
-					bg = cl.BgHover
-				}
-				rrect(gtx, r, dp(gtx, 12), bg)
-				stroke(gtx, r, dp(gtx, 12), border1(gtx), cl.Divider)
-				srDrawHiddenAvatar(gtx, th, image.Pt(dp(gtx, 12), dp(gtx, 12)), 36, bg)
-				srDrawHiddenHead(gtx, th, cl, m, tx, dp(gtx, 10), cw-dp(gtx, 12), lh)
-				srDrawRich(gtx, th, cl, htoks, tx, dp(gtx, 10)+lh, lh)
-				return layout.Dimensions{Size: image.Pt(cw, h+dp(gtx, 8))}
-			})
-		})
-	}
-	return at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
-		return clickBox(gtx, &v.rows[i], nil, func(gtx layout.Context) layout.Dimensions {
-			r := image.Rect(0, 0, cw, h)
-			bg := cl.Bg
-			if v.rows[i].Hovered() {
-				bg = cl.BgHover
-			}
-			rrect(gtx, r, dp(gtx, 12), bg)
-			stroke(gtx, r, dp(gtx, 12), border1(gtx), cl.Divider)
-			at(gtx, image.Pt(dp(gtx, 12), dp(gtx, 12)), func(gtx layout.Context) layout.Dimensions {
-				return avatar(gtx, v.h, av, 36)
-			})
-			nd := at(gtx, image.Pt(tx, dp(gtx, 10)), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, cw-tx-dp(gtx, 120)), lh)}
-				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 15, theme.Black, cl.Fg, name)
-				})
-			})
-			when := dayTime(tsTime(m.TS), time.Now())
-			at(gtx, image.Pt(tx+nd.Size.X+dp(gtx, 8), dp(gtx, 10)), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Fg2, when)
-				})
-			})
-			at(gtx, image.Pt(tx, dp(gtx, 10)+lh), func(gtx layout.Context) layout.Dimensions {
-				srDrawToks(gtx, th, cl, toks, lh, cl.Fg)
-				if over {
-					x := srEndX(toks, lines-1)
-					at(gtx, image.Pt(x, (lines-1)*lh), func(gtx layout.Context) layout.Dimensions {
-						return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-							return text(gtx, th, 15, theme.Regular, cl.Fg, "…")
-						})
-					})
-				}
-				return layout.Dimensions{}
-			})
-			return layout.Dimensions{Size: image.Pt(cw, h+dp(gtx, 8))}
-		})
-	})
 }

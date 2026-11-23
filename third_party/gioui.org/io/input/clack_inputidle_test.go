@@ -32,3 +32,31 @@ func TestSinceInput(t *testing.T) {
 		}
 	}
 }
+
+// Clack patch 33's press hook sees each pointer press and key press a
+// router is queued, and nothing else: a move, a release, a scroll, a
+// key's release, an edit, a cancel.
+func TestPressHook(t *testing.T) {
+	var got []bool
+	SetPressHook(func(mouse bool) { got = append(got, mouse) })
+	defer SetPressHook(nil)
+	var r Router
+	r.Queue(
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse},
+		pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse},
+		pointer.Event{Kind: pointer.Cancel},
+		key.Event{Name: key.NameDownArrow, State: key.Press},
+		key.Event{Name: key.NameDownArrow, State: key.Release},
+		key.EditEvent{Text: "a"},
+	)
+	if len(got) != 2 || !got[0] || got[1] {
+		t.Errorf("the press hook saw %v, want [true false] (the mouse press, the key press)", got)
+	}
+	SetPressHook(nil)
+	r.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse})
+	if len(got) != 2 {
+		t.Errorf("a nil hook still saw a press: %v", got)
+	}
+}
