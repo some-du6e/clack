@@ -50,12 +50,21 @@ func (x *rfEnv) listFocused(c *convo, tv *messages.ThreadView) {
 	x.settle(200 * time.Millisecond)
 }
 
-// focusWithin runs frames until the open thread's reply box has the key
-// focus, at most d, and says whether it got it.
-func (x *rfEnv) focusWithin(d time.Duration) bool {
+// boxFocused is whether c's reply box has the key focus.
+func (x *rfEnv) boxFocused(c *convo) bool {
+	if c == nil || c.comp == nil {
+		return false
+	}
+	cb, ok := c.comp.(composerBox)
+	return ok && x.r.Source().Focused(cb.FocusTag())
+}
+
+// focusWithin runs frames until c's reply box has the key focus, at most
+// d, and says whether it got it.
+func (x *rfEnv) focusWithin(c *convo, d time.Duration) bool {
 	for dl := time.Now().Add(d); ; {
 		x.frame()
-		if x.threadFocused() {
+		if x.boxFocused(c) {
 			return true
 		}
 		if time.Now().After(dl) {
@@ -76,7 +85,8 @@ func (x *rfEnv) focusWithin(d time.Duration) bool {
 func (x *rfEnv) scrollAway(c *convo, tv *messages.ThreadView, wheel bool) {
 	x.t.Helper()
 	paneBottom := c.compRect.Max.Y // at the thread's end the box ends at the pane's bottom
-	at := x.paneWheelPoint()
+	r := tv.ListRect()
+	at := image.Pt((r.Min.X+r.Max.X)/2, (r.Min.Y+r.Max.Y)/2)
 	x.until("the box scrolled away with the replies", 20*time.Second, func() bool {
 		if c.compRect.Min.Y >= paneBottom {
 			return true
@@ -90,8 +100,8 @@ func (x *rfEnv) scrollAway(c *convo, tv *messages.ThreadView, wheel bool) {
 		return false
 	})
 	x.settle(500 * time.Millisecond)
-	if tv.KeyboardSelected() == "" || x.threadFocused() {
-		x.t.Fatalf("scrolled away, the list has the keyboard focus %v and the box %v", tv.KeyboardSelected() != "", x.threadFocused())
+	if tv.KeyboardSelected() == "" || x.boxFocused(c) {
+		x.t.Fatalf("scrolled away, the list has the keyboard focus %v and the box %v", tv.KeyboardSelected() != "", x.boxFocused(c))
 	}
 }
 
@@ -120,9 +130,9 @@ func TestThreadsAuditReplyBoxKeysBringItBack(t *testing.T) {
 		wheel bool // the newest reply stays selected (↓ goes past it)
 	}{{"End", key.NameEnd, false}, {"↓ past the last reply", key.NameDownArrow, true}, {"Tab", key.NameTab, false}} {
 		t.Run(k.what, func(t *testing.T) {
-			x, _, tv := boxAway(t, k.wheel)
+			x, c, tv := boxAway(t, k.wheel)
 			x.key(k.key, 0)
-			if !x.focusWithin(time.Second) {
+			if !x.focusWithin(c, time.Second) {
 				t.Fatalf("%s from the thread list left the reply box unfocused (the list's keyboard focus: %v)", k.what, tv.KeyboardSelected() != "")
 			}
 			x.holdBox(t, k.what+" into the box out of view", 500*time.Millisecond)
@@ -166,7 +176,7 @@ func TestThreadsAuditReplyBoxEndKeepsItsTop(t *testing.T) {
 	r := cut("End")
 	before := x.paneTops()
 	x.key(key.NameEnd, 0)
-	if !x.focusWithin(time.Second) {
+	if !x.focusWithin(c, time.Second) {
 		t.Fatal("End left the reply box unfocused")
 	}
 	x.settle(300 * time.Millisecond)
@@ -183,7 +193,7 @@ func TestThreadsAuditReplyBoxEndKeepsItsTop(t *testing.T) {
 
 	cut("Tab")
 	x.key(key.NameTab, 0)
-	if !x.focusWithin(time.Second) {
+	if !x.focusWithin(c, time.Second) {
 		t.Fatal("Tab left the reply box unfocused")
 	}
 	x.holdBox(t, "Tab into the box cut at the pane's bottom", 500*time.Millisecond)
@@ -311,29 +321,48 @@ func TestThreadsAuditReplyBoxScrollbar(t *testing.T) {
 	x.holdBox(t, fmt.Sprintf("the bar dragged back past the bottom (y %d)", list.Max.Y), 500*time.Millisecond)
 }
 
-// TestThreadsAuditReplyBoxInSplitView: a thread in the split view is Slack's same
-// ThreadsFlexpane (client-thread-view renders it in the split container),
-// so its reply box is its list's last row there too: right under the last
-// reply at the thread's end, scrolled away with the replies, and back
-// with End from its list.
+// splitThread is the split view's conversation for the thread and its
+// list, nil until the split view has drawn it: the split view keeps
+// conversations of its own (inPane), so the main window's lookups
+// (threadView, a.convos) don't see it.
+func (x *rfEnv) splitThread() (*convo, *messages.ThreadView) {
+	var c *convo
+	x.a.inPane(paneSplit, func() { c = x.a.convos[x.ch+"/"+x.root] })
+	if c == nil {
+		return nil, nil
+	}
+	if l, ok := c.list.(threadList); ok {
+		return c, l.ThreadView
+	}
+	return c, nil
+}
+
+// TestThreadsAuditReplyBoxInSplitView: a thread in the split view is Slack's
+// same ThreadsFlexpane (client-thread-view renders it in the split
+// container), so its reply box is its list's last row there too: right
+// under the last reply at the thread's end, scrolled away with the
+// replies, and back with End from its list.
 func TestThreadsAuditReplyBoxInSplitView(t *testing.T) {
 	x := openTopEnv(t)
 	x.root = fakeslack.ThreadOpenRead
 	x.a.OpenSplit("c/" + x.ch + "/t/" + x.root)
+	var c *convo
+	var tv *messages.ThreadView
 	x.until("the split view's thread drawn", 20*time.Second, func() bool {
-		return x.a.splitOpen() && len(x.paneTops()) > 0
+		c, tv = x.splitThread()
+		return x.a.splitOpen() && tv != nil && len(rowTops(tv.RowRects(), tv.ListRect())) > 0
 	})
-	x.holdBox(t, "the split view's thread at its end", 500*time.Millisecond)
-	c := x.a.convos[x.ch+"/"+x.root]
-	tv := x.threadView(x.ch, x.root)
+	miss := func() string { return x.boxUnderNewestIn(tv, c) }
+	tops := func() map[string]int { return rowTops(tv.RowRects(), tv.ListRect()) }
+	x.holdBoxBy(t, "the split view's thread at its end", 500*time.Millisecond, miss, tops)
 	if l := tv.ListRect(); !l.In(x.a.split.card) {
 		t.Fatalf("the thread's list (%v) isn't in the split view's card (%v)", l, x.a.split.card)
 	}
 	x.listFocused(c, tv)
 	x.scrollAway(c, tv, false) // the box scrolls with the replies
 	x.key(key.NameEnd, 0)
-	if !x.focusWithin(time.Second) {
+	if !x.focusWithin(c, time.Second) {
 		t.Fatal("End from the split view's thread list left its reply box unfocused")
 	}
-	x.holdBox(t, "End in the split view's thread", 500*time.Millisecond)
+	x.holdBoxBy(t, "End in the split view's thread", 500*time.Millisecond, miss, tops)
 }
