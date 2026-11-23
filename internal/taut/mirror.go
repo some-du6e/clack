@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
 
@@ -915,7 +916,7 @@ func (m *mirror) get(slice, key string) any {
 		m.watch("members", key, m.memberFP(key))
 		return m.member(u)
 	case "messages":
-		b := m.bucket(key)
+		b := m.bucketJSON(key)
 		m.watch("messages", key, m.messagesFP(key))
 		if b == nil {
 			return nil
@@ -1447,6 +1448,137 @@ func (m *mirror) bucket(ch string) map[string]any {
 		}
 	}
 	return out
+}
+
+// bucketJSON is bucket as the JSON the host hands JS: the same messages
+// in the same order of precedence, each one's text and blocks written
+// into the output as they are rather than through encoding/json, which
+// copies a map's strings through its reflection and re-validates every
+// RawMessage (a 908,000-character message's text and blocks are 1.9 MB:
+// a channel of them made gigabytes of garbage a read). nil when the
+// channel holds no messages.
+func (m *mirror) bucketJSON(ch string) json.RawMessage {
+	a := m.t.app
+	tl := a.S.Timeline(ch)
+	wins := a.S.WindowsIn(ch)
+	threads := a.S.ThreadsIn(ch)
+	fetched := a.S.FetchedIn(ch)
+	if tl == nil && len(wins) == 0 && len(threads) == 0 && len(fetched) == 0 {
+		return nil
+	}
+	var all []*slack.Message
+	seen := map[string]bool{}
+	add := func(sm *slack.Message) {
+		if !seen[sm.TS] {
+			seen[sm.TS] = true
+			all = append(all, sm)
+		}
+	}
+	if tl != nil {
+		for i := range tl.Msgs {
+			add(&tl.Msgs[i])
+		}
+	}
+	for _, w := range wins {
+		for i := range w.Msgs {
+			add(&w.Msgs[i])
+		}
+	}
+	for _, msgs := range threads {
+		for i := range msgs {
+			add(&msgs[i])
+		}
+	}
+	for i := range fetched { // a window's or a thread's copy wins
+		add(&fetched[i])
+	}
+	type part struct {
+		ts     string
+		small  []byte // the message without its text and blocks
+		text   string
+		blocks json.RawMessage
+	}
+	parts := make([]part, 0, len(all))
+	n := 2
+	for _, sm := range all {
+		e := messageJSON(ch, sm)
+		text, _ := e["text"].(string)
+		blocks, _ := e["blocks"].(json.RawMessage)
+		delete(e, "text")
+		delete(e, "blocks")
+		small, err := json.Marshal(e)
+		if err != nil || len(small) < 2 {
+			continue
+		}
+		parts = append(parts, part{ts: sm.TS, small: small, text: text, blocks: blocks})
+		n += len(sm.TS) + len(small) + len(text) + len(text)/8 + len(blocks) + 32
+	}
+	out := make([]byte, 0, n)
+	out = append(out, '{')
+	for i, p := range parts {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = appendJSONString(out, p.ts)
+		out = append(out, ':')
+		out = append(out, p.small[:len(p.small)-1]...) // its closing brace after text and blocks
+		if len(p.small) > 2 {
+			out = append(out, ',')
+		}
+		out = append(out, `"text":`...)
+		out = appendJSONString(out, p.text)
+		if len(p.blocks) > 0 { // the store's blocks: Slack's JSON, decoded once already
+			out = append(out, `,"blocks":`...)
+			out = append(out, p.blocks...)
+		}
+		out = append(out, '}')
+	}
+	out = append(out, '}')
+	return out
+}
+
+// appendJSONString appends s as a JSON string: quote, backslash and
+// control characters escaped, invalid UTF-8 as U+FFFD (encoding/json's
+// rules, without its HTML escapes, which JSON.parse doesn't need).
+func appendJSONString(b []byte, s string) []byte {
+	const hex = "0123456789abcdef"
+	b = append(b, '"')
+	start := 0
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c < utf8.RuneSelf {
+			if c >= 0x20 && c != '"' && c != '\\' {
+				i++
+				continue
+			}
+			b = append(b, s[start:i]...)
+			switch c {
+			case '"', '\\':
+				b = append(b, '\\', c)
+			case '\n':
+				b = append(b, '\\', 'n')
+			case '\r':
+				b = append(b, '\\', 'r')
+			case '\t':
+				b = append(b, '\\', 't')
+			default:
+				b = append(b, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xf])
+			}
+			i++
+			start = i
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			b = append(b, s[start:i]...)
+			b = append(b, `\ufffd`...)
+			i += size
+			start = i
+			continue
+		}
+		i += size
+	}
+	return append(append(b, s[start:]...), '"')
 }
 
 // history is channelHistory[ch] or channelHistory[ch-threadTs].
