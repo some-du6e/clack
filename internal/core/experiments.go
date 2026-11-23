@@ -353,7 +353,7 @@ var experimentReads = map[string][]string{
 	"omni_date_quick_filters": on, "surfaces_synth_view": on,
 	// prefs, status, focus, notifications, emoji picker
 	"emoji_skin_tone_picker_improvement": on, "focus_mode_custom_duration": {"treatment"},
-	"defer_notification_3p_streaming": on,
+	"defer_notification_3p_streaming": on, "message_sound_debounce": on,
 	// the standard emoji set everything reads (emoji_set.go)
 	ExpEmojiV17: on,
 	// desktop notifications (ui/notify.go, huddleui/invite.go): Slack's

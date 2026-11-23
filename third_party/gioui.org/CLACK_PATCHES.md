@@ -1661,6 +1661,15 @@ linux-gio job, `internal/ui` `TestInputIdleSeesFocusedWidgetKeys`,
 `TestInputIdleSeesScroll` and `TestInputIdleSeesGrabbedDrag`, and
 `cmd/clack` `TestWaitQuietOnInput`. Not in `UPSTREAM.patch`.
 
+`SetPressHook` (2026-11-23, notify-relatives): the same spot tells a hook
+of each pointer press and key press (not a move, a release, a scroll, an
+edit or a cancel), on the queuing goroutine, before routing. Clack tickles
+the realtime socket with it, as Slack's client does on every mousedown and
+keydown in its windows (client-boot `handleWindowMouseDownEvent`,
+`handleWindowKeyDownEvent`), and a focused widget's keys and a grabbed
+drag never reach a handler at the root. Test: `TestPressHook`; `internal/ui`
+`TestPresenceActivityLikeSlack`.
+
 ## 34. io/input: where the key focus is
 
 `io/input/clack_focus.go` (new: `Source.FocusTag`, `Source.CanFocus`,

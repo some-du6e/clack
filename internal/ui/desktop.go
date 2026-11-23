@@ -104,6 +104,10 @@ func (a *App) openDeepLink(uri string) bool {
 		})
 		return true
 	}
+	if key, ok := savedForLaterLink(uri); ok { // slack://saved-for-later?item_id=… (notify_saved.go)
+		a.Post(func() { a.withVia("a deep link", func() { a.openSavedKey(key) }) })
+		return true
+	}
 	route, user, ok := deepLinkRoute(uri)
 	if ok {
 		a.Post(func() {

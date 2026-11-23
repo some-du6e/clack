@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/logtag"
@@ -71,13 +72,78 @@ func (a *App) notifyMessage(title, body string, n *desktopNote) {
 		}
 	}
 	file := messageSound(c.GlobalNotifyString(pref))
+	ch, thread := "", ""
+	if n != nil {
+		ch, thread = n.Channel, n.ThreadTS
+	}
+	debounce := c.Experiment("message_sound_debounce") == "on"
 	go func() { // dnd.info the first time: off the UI goroutine
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if (throughDND || !c.DNDActive(ctx)) && soundPlayback() {
+		// canPlaySound's order: the system, Do Not Disturb, then the
+		// debounce (shouldSuppressConsecutiveMessageSound); then
+		// maybePlayNewMsgSound plays nothing while a huddle is on
+		// (getActiveHuddleCallId, isLiveVoiceCallRunning)
+		if (throughDND || !c.DNDActive(ctx)) && soundPlayback() && !(debounce && a.soundDebounced(ch, thread)) && !inHuddle(a) {
 			huddleui.PlaySlackSound(file)
 		}
 	}()
+}
+
+// inHuddle reports whether the viewer is in a huddle, when Slack's
+// maybePlayNewMsgSound plays no message sound (tests swap it).
+var inHuddle = func(a *App) bool {
+	h := a.hudLive.Load()
+	return h != nil && h.Session() != nil
+}
+
+// soundDebounce is message_sound_debounce's quiet stretch (Slack's 5 s
+// debounce; tests shorten it).
+var soundDebounce = 5 * time.Second
+
+// soundDebounced is shouldSuppressConsecutiveMessageSound (client-boot
+// Fpyc): under message_sound_debounce one message sound per thread, or
+// conversation, until soundDebounce passes without another; each one in
+// between starts the stretch again (lodash debounce) and plays nothing.
+func (a *App) soundDebounced(ch, thread string) bool {
+	k := ch
+	if thread != "" {
+		k = ch + "/" + thread
+	}
+	a.soundMu.Lock()
+	defer a.soundMu.Unlock()
+	if t, ok := a.soundQuiet[k]; ok {
+		t.Reset(soundDebounce)
+		return true
+	}
+	if a.soundQuiet == nil {
+		a.soundQuiet = map[string]*time.Timer{}
+	}
+	var t *time.Timer
+	t = time.AfterFunc(soundDebounce, func() {
+		a.soundMu.Lock() // soundDebounced holds it until t is set
+		defer a.soundMu.Unlock()
+		a.soundQuietOverLocked(k, t)
+	})
+	a.soundQuiet[k] = t
+	return false
+}
+
+// soundQuietOver ends the quiet stretch timer t started for k, unless a
+// newer stretch holds k now: a Reset that comes as t fires runs t's func
+// again once more, and that run found the newer stretch's entry and
+// deleted it, so the next message in that stretch played a sound.
+func (a *App) soundQuietOver(k string, t *time.Timer) {
+	a.soundMu.Lock()
+	defer a.soundMu.Unlock()
+	a.soundQuietOverLocked(k, t)
+}
+
+// soundQuietOverLocked is soundQuietOver with soundMu held.
+func (a *App) soundQuietOverLocked(k string, t *time.Timer) {
+	if a.soundQuiet[k] == t {
+		delete(a.soundQuiet, k)
+	}
 }
 
 // soundPlayback is the shell's answer to SHOULD_PLAY_SOUND, which the web
@@ -159,6 +225,9 @@ func (a *App) notifyActions(n huddleui.Notification) {
 		a.notify = newNotifier()
 	}
 	sl := a.Slick()
+	if n.Sound != "" { // a suggestion's desktop_sound, which the macOS app plays with it
+		go huddleui.PlaySlackSound(n.Sound)
+	}
 	if nn, ok := a.notify.(noteNotifier); ok && n.Channel != "" {
 		dn := a.huddleNote(n)
 		dn.Body = body
@@ -256,8 +325,10 @@ func (a *App) messageNote(ch, ts, thread string) *desktopNote {
 func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
 	team, ws := a.noteTeam()
 	now := time.Now()
-	// no reply box; silent: both come from an invite (notifIsFromInvite),
-	// which rings in its own window
+	// no reply box; silent: an invite's and a missed one's come from an
+	// invite (notifIsFromInvite), which rings in its own window; a
+	// suggestion's sound, when the macOS app has one, Clack plays
+	// (notifyActions)
 	n := &desktopNote{Team: team, Workspace: ws, Channel: h.Channel, Subtitle: h.Subtitle, Msg: huddleNotificationTag(h.Channel, now), Silent: true}
 	typ := noteTypeHuddle
 	if h.Missed {
@@ -265,13 +336,20 @@ func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
 		// (sharedHuddleNotificationOptions; notifyBrowser passes title "")
 		typ, n.Title = noteTypeHuddleMissed, h.Title
 	}
-	if a.noteActionsOn() {
+	switch {
+	case h.Recommend && a.noteActionsOn():
+		// desktopHuddleRecommendNotificationOptions: the conversation and
+		// the minute
+		n.ID = buildNotificationID(team, noteTypeHuddleRecommend, h.Channel, notificationMinuteBucket(now))
+	case h.Recommend:
+		n.ID = shellNoteID(team, n.Msg)
+	case a.noteActionsOn():
 		call := h.Call
 		if call == "" {
 			call = "t" + strconv.FormatInt(now.UnixMilli(), 10) // notificationDedupKey
 		}
 		n.ID = buildNotificationID(team, typ, h.Channel, call)
-	} else {
+	default:
 		n.ID = shellNoteID(team, n.Msg)
 	}
 	for _, b := range h.Buttons {
@@ -368,6 +446,11 @@ func (a *App) notificationClicked(ch, msg, thread, id string) {
 	}
 	if strings.HasPrefix(msg, "huddle") {
 		a.Navigate("c/" + ch)
+		return
+	}
+	if sch, sts, ok := core.ParseSavedItemID(msg); ok {
+		// a Later reminder's (looksLikeSavedItemId: openSavedForLaterView)
+		a.openSavedForLater(sch, sts, thread)
 		return
 	}
 	ts := ""

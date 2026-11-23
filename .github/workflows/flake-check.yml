@@ -3649,6 +3649,15 @@ jobs:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_WINDOWS_TOAST_TESTS: "1"
         run: go test -count=$COUNT -v -timeout 25m -run '^(TestWindowsToastSystemDM|TestSystemDMToastLikeSlack)$' ./internal/ui
+      # notify-relatives part 4: what in Windows keeps a toast from
+      # showing, logged with the toast's tags
+      - name: "ui: Windows' reasons a toast won't show, in clack.log (COUNT runs)"
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TOAST_TESTS: "1"
+        run: go test -count=$COUNT -v -timeout 10m -run '^TestWindowsToastSaysWhyItWontShow$' ./internal/ui
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -4447,6 +4456,97 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           TEST: TestReplyBarRetriesAFailedFetch
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives (docs/NOTIFY-RULES.md): the message rules' cells
+      # where Clack decided otherwise than Slack's client
+      - name: "ui: what mentions the viewer in a channel's message, as Slack's rules read it (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestChannelNotifyMentionsLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: broadcasts, joins, topics, canvas mentions, ephemerals and the Slackbot DM's emails (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestNotifyRulesLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives part 5: the stall watchdogs (Karim's α.136, 45
+      # minutes without a line while the socket answered its pings)
+      - name: "slack: the socket's watchdog: a stalled pong check, an idle socket, a full buffer (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestRTMReconnectsWhenThePongCheckStalls|TestRTMKeepsAnIdleSocket|TestRTMBufferFullIsNotSilence)
+          PKG: ./internal/slack
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: a socket that sends nothing, a handler that blocks, an idle session (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestSocketThatSendsNothingConnectsAgain|TestStalledHandlerIsNamed|TestIdleSessionLogsNoStall)
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives part 2: the message sound (Slack's debounce, none
+      # in a huddle) and a huddle invite where the level is Nothing
+      - name: "ui: one message sound per thread or conversation in 5 s, none in a huddle (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestMessageSoundDebounceLikeSlack|TestNoMessageSoundInAHuddle)
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "huddleui: a huddle invite notifies in a conversation set to Nothing (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestIncomingInviteNotifiesAtNothing
+          PKG: ./internal/ui/huddleui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives part 3: a message's sidebar bold and mention badge
+      - name: "core: the sidebar's bold and mention badge for a message, as Slack counts them (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestSidebarMarksLikeSlack
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives part 6: a Later reminder coming due (saved_due) and
+      # a "join the huddle" suggestion (huddle_recommend)
+      - name: "ui: a Later reminder coming due notifies, and its click opens Later (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestLaterReminderLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "huddleui: a huddle suggestion notifies as Slack's does (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestHuddleRecommendLikeSlack
+          PKG: ./internal/ui/huddleui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives review fixes: the viewer's activity told to the
+      # socket (Slack's tickle), Later reminders of reminders and of
+      # conversations never looked up, the debounce's late timer, the
+      # watchdogs' sleep and full-buffer logging, the dump's cap
+      - name: "core: the tickle as Slack's maybeTickleMS sends it, and the pump's sleep isn't a stall (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestTickleLikeSlack|TestPumpSleepIsNotAStall)
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "slack: a slowly drained event buffer logs once (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestRTMBufferSlowDrainLogsOnce|TestRTMBufferFullIsNotSilence)
+          PKG: ./internal/slack
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "stackdump: one dump record stays under its cap (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestLogCapsTheDump
+          PKG: ./internal/stackdump
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the viewer's activity keeps them active, Later reminders open Later, the debounce's late timer (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestPresenceActivityLikeSlack|TestLaterReminderOfAReminderLikeSlack|TestLaterReminderInAChannelNeverLookedUp|TestSoundDebounceLateTimerKeepsNewerStretch)
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}

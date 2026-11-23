@@ -31,7 +31,13 @@ import (
 // the next snapshot.
 func privNoteApp(t *testing.T) (*App, *core.App, *noteRec) {
 	t.Helper()
-	a, ca, _, rec := privNoteAppFS(t)
+	a, ca, fs, rec := privNoteAppFS(t)
+	// every conversation at Everything: the title and body tests' messages
+	// (notifyIn) notify whatever their text, as rr's level has it
+	fs.SetPrefs(map[string]any{"all_notifications_prefs": `{"channels":{},"global":{"global_desktop":"everything","global_mpdm_desktop":"everything"}}`})
+	if _, err := ca.RefreshPrefs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	// noteMsg's sender, held as a toast's sender is once it waited for
 	// them (noteMembers): "{sender}: " is the member's name
 	// (getPrefCompliantMemberNameById), never the message's own name
@@ -85,8 +91,9 @@ func fixtureConv(t *testing.T, ca *core.App, id string) slack.Conversation {
 	return *c
 }
 
-// notifyIn delivers Ada's message mentioning the viewer in ch (the
-// default "mentions" level notifies for it).
+// notifyIn delivers Ada's message in ch, which privNoteApp's level of
+// Everything notifies for (the rules read the text, not the event's
+// Mention, which stays for the event's shape).
 func notifyIn(a *App, ch, kind, ts, text string) {
 	a.data.handle(a, core.Event{Type: "message", Channel: ch, TS: ts, ConvKind: kind, Msg: noteMsg(ts, "", text), Mention: true})
 }

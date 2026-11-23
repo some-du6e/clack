@@ -866,6 +866,8 @@ func Serve(ln net.Listener, sz Size) *Server {
 
 // Close stops the server.
 func (s *Server) Close() error {
+	s.SendReconnectURLs(0)
+	s.AutoAway(0)
 	s.forget() // its state beside it, in every perServer map (perserver.go)
 	if s.srv == nil {
 		return nil
@@ -2350,10 +2352,14 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var f struct {
-			Type string `json:"type"`
-			ID   int64  `json:"id"`
+			Type   string `json:"type"`
+			ID     int64  `json:"id"`
+			Reason string `json:"reason"`
 		}
-		if json.Unmarshal(data, &f) == nil && f.Type == "ping" && s.liveSocket(c) {
+		if json.Unmarshal(data, &f) == nil && f.Type == "tickle" {
+			s.noteTickle(f.Reason) // AutoAway (presence.go)
+		}
+		if f.Type == "ping" && s.liveSocket(c) {
 			b, _ := json.Marshal(map[string]any{"type": "pong", "reply_to": f.ID})
 			wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			_ = c.Write(wctx, websocket.MessageText, b)

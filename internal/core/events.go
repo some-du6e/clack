@@ -24,13 +24,14 @@ var mentionRe = regexp.MustCompile(`<@([UW][A-Z0-9]+)`)
 // App that never connected (no realtime) kept it, and itself, for good.
 func (a *App) pump() {
 	done := a.bg.Done()
+	go a.pumpWatch(done) // pump_watch.go
 	for {
 		select {
 		case ev, ok := <-a.RTM.Events:
 			if !ok {
 				return
 			}
-			a.handle(ev)
+			tracked(&a.pumpOn, "the event pump", &pumpTask{ev: ev, at: slack.ReadClock()}, func() { a.handle(ev) })
 		case <-done:
 			return
 		}
@@ -153,6 +154,8 @@ func (a *App) handle(ev slack.Event) {
 		a.S.Unlock()
 		a.presenceArrived()
 		a.emit(Event{Type: "presence", Users: us, Presence: e.Presence})
+	case "manual_presence_change":
+		a.onManualPresence(ev.Raw) // tickle.go
 	case "user_change", "user_profile_changed":
 		var e struct {
 			User slack.User `json:"user"`
@@ -414,7 +417,7 @@ func (a *App) handle(ev slack.Event) {
 			// changes the group.
 			a.noteUsergroupEvent(ev.Raw, ev.Type == "subteam_created")
 		}
-	case "saved_added", "saved_updated", "saved_deleted":
+	case "saved_added", "saved_updated", "saved_deleted", "saved_due":
 		// the store's saved state now, on the pump; its message's lookup
 		// and the event after it, in order with the saved events before
 		// (pump_later.go)
@@ -810,9 +813,15 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		}
 	}
 	self := a.S.SelfID()
-	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))
+	rm := ruleMessage(&m)
+	mention := a.messageBadges(ch, rm) // shouldMessageBadgeChannel (badge_rules.go)
+	counted := false
 	if !isReply || m.Subtype == "thread_broadcast" {
-		a.S.NoteMessage(ch, &m, mention)
+		if counted = m.User == self && self != "" || a.countsInSidebar(rm); counted {
+			a.S.NoteMessage(ch, &m, mention) // the viewer's own reads the conversation
+		} else {
+			a.S.NoteHeard(ch, &m) // not unread (a join, a huddle's post, a topic: badge_rules.go)
+		}
 		a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
 	} else if m.User != self {
 		a.refreshCountsSoon() // thread unread state lives server-side
@@ -825,7 +834,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	// store holds the message already (above): only its announcement waits
 	if a.holdForConv(ch) {
 		mm, since := m, a.S.Seq()
-		countedDM := mention || a.S.CountsAsDM(ch) // as NoteMessage counted it, above
+		countedDM := !counted || mention || a.S.CountsAsDM(ch) // as NoteMessage counted it (or NoteHeard didn't), above
 		a.convLater(ch, func(ctx context.Context) {
 			defer a.releaseConv(ch)
 			if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
