@@ -1661,6 +1661,15 @@ linux-gio job, `internal/ui` `TestInputIdleSeesFocusedWidgetKeys`,
 `TestInputIdleSeesScroll` and `TestInputIdleSeesGrabbedDrag`, and
 `cmd/clack` `TestWaitQuietOnInput`. Not in `UPSTREAM.patch`.
 
+`SetPressHook` (2026-11-23, notify-relatives): the same spot tells a hook
+of each pointer press and key press (not a move, a release, a scroll, an
+edit or a cancel), on the queuing goroutine, before routing. Clack tickles
+the realtime socket with it, as Slack's client does on every mousedown and
+keydown in its windows (client-boot `handleWindowMouseDownEvent`,
+`handleWindowKeyDownEvent`), and a focused widget's keys and a grabbed
+drag never reach a handler at the root. Test: `TestPressHook`; `internal/ui`
+`TestPresenceActivityLikeSlack`.
+
 ## 34. io/input: where the key focus is
 
 `io/input/clack_focus.go` (new: `Source.FocusTag`, `Source.CanFocus`,
@@ -3195,3 +3204,58 @@ linux-gio job. In Clack: `internal/ui/popups`' `TestTickersKeepLaterPresses`
 (a press on a button laid out after a tooltip in its delay, a loading
 spinner, a peek card animating in and a focused editor: one click each,
 and each ticker's wakeup on its cadence). Not in `UPSTREAM.patch`.
+
+## 62. internal/stroke: a near-zero segment strokes without NaN
+
+`internal/stroke/stroke.go`: `strokePathNorm` takes a segment's normal
+from the whole segment (`p2 - p0`) when the derivative at the end it's
+asked for is zero, and `ArcTransform` returns the identity for a circle
+of radius 0 instead of scaling by `1/0`.
+
+A ring drawn as `MoveTo`, `ArcTo(c, c, 2π)` and `Close` doesn't land
+exactly: `ArcTo` steps its rotation matrix 34 times in float32, the pen
+ends a float's error from the start, and `Close` adds a segment of about
+1e-5 px. Its midpoint control point rounds onto one of its ends, so the
+normal there was zero; the round join after it then started its arc on
+the pivot itself, a circle of radius 0, and every point of the stroke's
+outline after it was NaN (Karim's stray line under the intro's check
+badge, Windows α.146, 2026-11-22: a thin line in the ring's colour down
+from its 3 o'clock point). llvmpipe drops a NaN quad; other GPUs don't
+have to.
+
+Tests: `internal/stroke/clack_ring_seam_test.go`
+(`TestClackRingSeamClosedRing`: rings of 2 to 250 px, 1 to 7 px wide, on
+sub-pixel centres, their outline's loops each close, no NaN, nothing off
+the ring's band; `TestClackRingSeamSweeps`: open arcs swept from 0.9 of a
+turn to a whole one, the spinners'), in ci's linux-gio job. Not in
+`UPSTREAM.patch`.
+
+## 63. gpu: path coverage in 32-bit float on GL where it can be blended
+
+`gpu/internal/opengl/opengl.go` (`floatTripleFor`): `R32F` first on
+desktop GL 3, and on GLES 3 with `EXT_color_buffer_float` and
+`EXT_float_blend`; `R16F` stays the fallback.
+
+The stencil pass adds each outline segment's signed coverage into a float
+texture from the segment down to the path's bottom, and the segments of a
+closed outline cancel below it. In half float (11 bits) the many partial
+sums where an outline runs vertical (a ring's or a circle's left and
+right sides) leave up to 1% behind, a column under the shape to its
+bottom. On a light background that's invisible; on the intro's dark one,
+and in dark mode, sRGB turns 1% into 25/255: a faint line hanging off
+rings and filled circles (the same report as patch 62). In 32-bit float
+the sums cancel: on llvmpipe no ring, badge or spinner leaves a column.
+The coverage texture takes twice the memory.
+
+Direct3D 11 (WARP) and Metal keep a column of under 1% (up to 21/255 on
+black) under such shapes with 32-bit coverage too (WARP was given
+R32_FLOAT, blendable), so its cause there is elsewhere; they keep R16 and
+that column, a known issue.
+
+Tests: `internal/ui`'s `TestRingSeamRingAt` (ringAt at seven radii, four
+widths, four scales, sub-pixel centres), `TestRingSeamDoneBadge` (the
+intro's check badge through its pop) and `TestRingSeamSpinnerSweep`
+(`popups.InfiniteSpinner` through its turn): nothing drawn more than 3 px
+off the ring's band at 16/255 on llvmpipe (linux-gio), and at 32/255 on
+Direct3D 11 WARP (windows-applog) and Metal (macos-idle). Not in
+`UPSTREAM.patch`.

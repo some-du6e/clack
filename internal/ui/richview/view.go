@@ -613,6 +613,27 @@ func fragRect(f *frag) image.Rectangle {
 	return image.Rect(int(f.x), f.top, int(f.x+f.w+0.999), f.bot)
 }
 
+// fragSpan is frag f's extent across as hit tests take it, half-open like
+// Chromium's hit test rects ([left, right)). Where two frags touch
+// (consecutive emoji), the edge and the pixel column it falls in belong to
+// one frag only, the one that starts there. An image's box is where it is
+// painted (whole pixels, as Layout draws it). fragRect's floor and ceiling
+// gave a shared column to both, and the earlier one took it.
+func fragSpan(f *frag) (x0, x1 float32) {
+	if f.kind == fImage {
+		x := float32(int(f.x + 0.5))
+		return x, x + float32(f.size)
+	}
+	return f.x, f.x + f.w
+}
+
+// fragHas reports whether p is on frag f: fragSpan across, its line box
+// down.
+func fragHas(f *frag, p f32.Point) bool {
+	x0, x1 := fragSpan(f)
+	return p.X >= x0 && p.X < x1 && p.Y >= float32(f.top) && p.Y < float32(f.bot)
+}
+
 func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	mode := compMode()
 	if el := v.opts.Elements; el != nil {
@@ -1261,7 +1282,7 @@ func (v *View) targetAt(p f32.Point) int16 {
 	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if f.target >= 0 && pt.In(fragRect(f)) {
+		if f.target >= 0 && fragHas(f, p) {
 			return f.target
 		}
 	}
@@ -1295,9 +1316,8 @@ func (v *View) selectWord(off int32) {
 // else the word around p's offset (selectWord), the line's last word when
 // p is after the last word of a line that wraps (lineEndWord).
 func (v *View) wordAtPoint(p f32.Point) (int32, int32) {
-	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.frags {
-		if f := &v.d.frags[i]; f.kind != fText && f.p0 >= 0 && f.p1 > f.p0 && pt.In(fragRect(f)) {
+		if f := &v.d.frags[i]; f.kind != fText && f.p0 >= 0 && f.p1 > f.p0 && fragHas(f, p) {
 			return f.p0, f.p1
 		}
 	}
@@ -2063,6 +2083,18 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 // as a browser aligns inline content (firstBaseline); -1 before layout or
 // when the first line holds nothing.
 func (v *View) FirstBaseline() int { return v.d.firstBaseline() }
+
+// FirstTextTop is the top of the first text the view laid out, in its
+// own coordinates (-1 for none): where its first line that says
+// something starts.
+func (v *View) FirstTextTop() int {
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.kind == fText {
+			return f.top
+		}
+	}
+	return -1
+}
 
 // ElementSlots are the boxes Options.Elements drew its element runs in
 // (actions blocks, accessories), view-local, as of the last layout.

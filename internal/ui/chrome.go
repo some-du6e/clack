@@ -741,6 +741,15 @@ func (a *App) teamIcon(gtx layout.Context, s int) layout.Dimensions {
 // avatar draws a user image (or a colored initial tile while loading).
 func (a *App) avatar(gtx layout.Context, url, name string, s, radius int) layout.Dimensions {
 	if url != "" {
+		// a member's larger picture past 72 device pixels (core.AvatarAt),
+		// the one asked for while it loads
+		if c := a.Core(); c != nil {
+			if big := c.AvatarAt(url, s); big != url {
+				if img, ok := a.images.Get(big, s*2); ok {
+					return theme.Image(gtx, img, image.Pt(s, s), radius)
+				}
+			}
+		}
 		if img, ok := a.images.Get(url, s*2); ok {
 			return theme.Image(gtx, img, image.Pt(s, s), radius)
 		}

@@ -43,9 +43,9 @@ func TestSurfaceCollapseSurvivesUpdate(t *testing.T) {
 		}
 		open := frame()
 		frame()
-		// the header: the first block, 4px down, under the container's
-		// 16px top margin; its whole row toggles
-		pt := f32.Pt(40, float32(4+16+12))
+		// the header: the first block, under the container's 16px top
+		// margin (inside the surface); its whole row toggles
+		pt := f32.Pt(40, float32(16+12))
 		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt},
 			pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt},
 			pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt})

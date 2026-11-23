@@ -41,6 +41,8 @@ var readOnlyExact = map[string]bool{
 	"conversations.history": true, "conversations.replies": true,
 	"users.conversations": true, "users.getPresence": true, "users.counts": true,
 	"users.profile.getSections": true, "client.counts": true, "client.getWebSocketURL": true,
+	// Quip's canvas reads (CanvasCall); edit-document writes
+	"canvas/load-data": true, "canvas/fetch-latest": true,
 }
 
 // notReadOnly match the suffix rule but may do something on Slack's side

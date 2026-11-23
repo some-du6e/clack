@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -261,23 +262,43 @@ func checkColors(t *testing.T, samples []sample) {
 // colorReport is checkColors' verdict: each second's window (the 400 ms
 // well inside it, by the position each draw read) wants several draws,
 // each of the second's colour. A second the test's own draws stepped
-// over doesn't count: a gap of 300 ms or more between two draws where the
-// window lies (on a loaded runner one draw took longer than the second's
-// 400 ms window: directories-usergroups-2's push ci 44999661783, 129
-// draws and second 2 none; the gap can begin or end inside the window
-// too, TestAVFSilent's 2 draws in second 1, slack-connect-hub's push ci
-// 45034919995). Draws that go on while the position doesn't move through
-// the window (it stood, then jumped) still fail, and so does a video that
-// stops: the draws go on, showing the wrong colour. A short second logs
-// the draws around it, the position each read and when.
+// over doesn't count: one stall, a gap between two draws of 300 ms or
+// more and 8 times the run's usual gap (its median), where the window
+// lies, that leaves less of the window than 3 usual gaps or 100 ms (on a loaded
+// runner one draw took longer than the second's 400 ms window:
+// directories-usergroups-2's push ci 44999661783, 129 draws and second 2
+// none; the gap can begin or end inside the window too, TestAVFSilent's 2
+// draws in second 1, slack-connect-hub's push ci 45034919995). Draws that
+// come slowly all along still fail (a steady 350 ms between them: no gap
+// stands out), so do draws that go on while the position doesn't move
+// through the window (it stood, then jumped), and a video that stops (the
+// draws go on, showing the wrong colour). A short second logs the draws
+// around it, the position each read and when.
 func colorReport(samples []sample) (errs, logs []string) {
+	var gaps []time.Duration
+	for i := 1; i < len(samples); i++ {
+		gaps = append(gaps, samples[i].wall.Sub(samples[i-1].wall))
+	}
+	usual := time.Duration(0)
+	if len(gaps) > 0 {
+		sorted := slices.Clone(gaps)
+		slices.Sort(sorted)
+		usual = sorted[len(sorted)/2]
+	}
 	stepped := func(w [2]time.Duration) (time.Duration, bool) {
 		for i := 1; i < len(samples); i++ {
 			a, b := samples[i-1], samples[i]
-			if a.at < w[1] && b.at > w[0] {
-				if gap := b.wall.Sub(a.wall); gap >= 300*time.Millisecond {
-					return gap, true
-				}
+			gap := gaps[i-1]
+			if a.at >= w[1] || b.at <= w[0] || gap < 300*time.Millisecond || gap < 8*usual {
+				continue
+			}
+			// what of the window the stall leaves: fewer draws than 3
+			// usual gaps would fit, or under 100 ms (a runner still slow
+			// for a few draws after its stall: 2 draws 60 ms apart, the
+			// flakes-1122d review)
+			left := (w[1] - w[0]) - (min(b.at, w[1]) - max(a.at, w[0]))
+			if usual > 0 && left < max(3*usual, 100*time.Millisecond) {
+				return gap, true
 			}
 		}
 		return 0, false
@@ -356,6 +377,14 @@ func TestColorReportStalls(t *testing.T) {
 		}
 		return out
 	}
+	// cadence draws every d of wall time, the position following it
+	cadence := func(d time.Duration) []sample {
+		var out []sample
+		for w := time.Duration(0); w <= 3*time.Second; w += d {
+			out = append(out, sample{at: w, wall: t0.Add(w), c: colorAt(w)})
+		}
+		return out
+	}
 	between := func(a, b time.Duration) func(time.Duration) bool {
 		return func(w time.Duration) bool { return w > a && w < b }
 	}
@@ -376,6 +405,19 @@ func TestColorReportStalls(t *testing.T) {
 		}), false},
 		{"draws 210 ms apart in it (no gap of 300 ms)", play(func(w time.Duration) bool {
 			return w >= 290*time.Millisecond && w <= 700*time.Millisecond && w != 495*time.Millisecond
+		}, nil), false},
+		{"two draws, then a stall to past the window (TestAVFSilent's)", play(between(320*time.Millisecond, 720*time.Millisecond), nil), true},
+		{"a stall, then draws still slow for a while (60 ms apart)", play(func(w time.Duration) bool {
+			// every 15 ms to 285, a stall to 615, then 675 and 735: the
+			// window holds 615 and 675, and the stall leaves it 85 ms
+			return w > 285*time.Millisecond && w < 615*time.Millisecond ||
+				w > 615*time.Millisecond && w < 735*time.Millisecond && w != 675*time.Millisecond
+		}, nil), true},
+		{"a steady 350 ms between draws, all along", cadence(350 * time.Millisecond), false},
+		{"a steady 300 ms between draws, all along", cadence(300 * time.Millisecond), false},
+		{"a stall that leaves most of the window undrawn", play(func(w time.Duration) bool {
+			// a stall from 120 to 420 ms, then draws every 150 ms only
+			return w > 120*time.Millisecond && w < 420*time.Millisecond || w >= 420*time.Millisecond && w < 1000*time.Millisecond && (w-420*time.Millisecond)%(150*time.Millisecond) != 0
 		}, nil), false},
 	} {
 		errs, logs := colorReport(c.samples)

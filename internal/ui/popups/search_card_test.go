@@ -112,10 +112,10 @@ func TestSearchDensityCard(t *testing.T) {
 
 	// the long body: the rich text clamped to 132px (six 22px lines),
 	// faded, "... Show more" under it
-	if c := &v.cards[0]; !c.dense.on || c.dense.heur || !scClipped(c) || scBodyH(c) > 6*22*2 {
+	if c := v.cards[0]; !c.dense.on || c.dense.heur || !scClipped(c) || scBodyH(c) > 6*22*2 {
 		t.Errorf("long body: on %v heur %v clipped %v height %d", c.dense.on, c.dense.heur, scClipped(c), scBodyH(c))
 	}
-	if p := scText(&v.cards[0]); !strings.Contains(p, "row01") {
+	if p := scText(v.cards[0]); !strings.Contains(p, "row01") {
 		t.Errorf("long body text %q", p)
 	}
 	if !srHas(x, "... Show more") || srHas(x, "Show less") || srHasPrefix(x, "… Show more") {
@@ -123,33 +123,33 @@ func TestSearchDensityCard(t *testing.T) {
 	}
 	// compactCardBlocks: the three blocks from the match, clipped by the
 	// heuristic
-	if c := &v.cards[1]; !c.dense.heur || !scClipped(c) {
+	if c := v.cards[1]; !c.dense.heur || !scClipped(c) {
 		t.Error("five blocks: not clipped")
 	}
-	if p := scText(&v.cards[1]); strings.Contains(p, "blockA") || strings.Contains(p, "blockC") || !strings.Contains(p, "blockD") || !strings.Contains(p, "blockE") {
+	if p := scText(v.cards[1]); strings.Contains(p, "blockA") || strings.Contains(p, "blockC") || !strings.Contains(p, "blockD") || !strings.Contains(p, "blockE") {
 		t.Errorf("compacted body %q", p)
 	}
 	// the match is highlighted as a keyword (c-mrkdwn__highlight)
-	if !scHasStyle(scBodyDoc(&v.cards[1]), fakeslack.SearchWord, richtext.Highlight) {
-		t.Errorf("%q isn't highlighted in %q", fakeslack.SearchWord, scText(&v.cards[1]))
+	if !scHasStyle(scBodyDoc(v.cards[1]), fakeslack.SearchWord, richtext.Highlight) {
+		t.Errorf("%q isn't highlighted in %q", fakeslack.SearchWord, scText(v.cards[1]))
 	}
 	for i := 4; i < len(v.cards); i++ { // below the fold: never laid out
 		scBuild(v, i)
 	}
 	// attachments and files without a match stay out (the pill counts them)
-	if c := &v.cards[4]; scHasExtra(c) || strings.Contains(scText(c), "Design doc") || strings.Contains(scText(c), "notes.txt") {
+	if c := v.cards[4]; scHasExtra(c) || strings.Contains(scText(c), "Design doc") || strings.Contains(scText(c), "notes.txt") {
 		t.Errorf("unmatched attachments drawn: %q", scText(c))
 	}
 	// the mention is a mention (drawn as in the channel, not "@name"
 	// text), and the X unfurl without a match isn't flattened under it
-	if c := &v.cards[5]; scHasExtra(c) || strings.Contains(scText(c), "Pontus") || strings.Contains(scText(c), "Updated:") {
+	if c := v.cards[5]; scHasExtra(c) || strings.Contains(scText(c), "Pontus") || strings.Contains(scText(c), "Updated:") {
 		t.Errorf("the unfurl was drawn: %q", scText(c))
 	}
-	if !scHasUser(scBodyDoc(&v.cards[5]), "U0000000002") {
-		t.Errorf("no user mention in %q", scText(&v.cards[5]))
+	if !scHasUser(scBodyDoc(v.cards[5]), "U0000000002") {
+		t.Errorf("no user mention in %q", scText(v.cards[5]))
 	}
 	// an attachment holding the match draws as an attachment
-	if c := &v.cards[6]; !scHasExtra(c) || !strings.Contains(scText(c), "Brief") {
+	if c := v.cards[6]; !scHasExtra(c) || !strings.Contains(scText(c), "Brief") {
 		t.Errorf("the matched attachment isn't drawn: %q", scText(c))
 	}
 	if !scAttMatched(&v.msgs[6], "1") {
@@ -159,7 +159,7 @@ func TestSearchDensityCard(t *testing.T) {
 	// the pills
 	kinds := func(i int) []int {
 		var out []int
-		for _, p := range srPills(&v.cards[i], &v.msgs[i]) {
+		for _, p := range srPills(v.cards[i], &v.msgs[i]) {
 			out = append(out, p.kind)
 		}
 		return out
@@ -168,10 +168,10 @@ func TestSearchDensityCard(t *testing.T) {
 		!slices.Equal(kinds(4), []int{srPillAttachments}) || len(kinds(0)) != 0 {
 		t.Errorf("pills: %v %v %v %v", kinds(0), kinds(2), kinds(3), kinds(4))
 	}
-	if p := srPills(&v.cards[2], &v.msgs[2]); p[0].count != 6 || p[0].icon != "reaction" {
+	if p := srPills(v.cards[2], &v.msgs[2]); p[0].count != 6 || p[0].icon != "reaction" {
 		t.Errorf("reactions pill %+v, want 6 and reaction", p[0])
 	}
-	if p := srPills(&v.cards[3], &v.msgs[3]); p[0].count != 2 || p[0].icon != "comment" {
+	if p := srPills(v.cards[3], &v.msgs[3]); p[0].count != 2 || p[0].icon != "comment" {
 		t.Errorf("replies pill %+v, want 2 and comment", p[0])
 	}
 	if v.cards[4].attN != 2 {
@@ -221,15 +221,15 @@ func TestSearchDensityCard(t *testing.T) {
 	v.cards[1].more.Click()
 	d.frame()
 	x = d.scan()
-	if p := scText(&v.cards[1]); !strings.Contains(p, "blockA") || scClipped(&v.cards[1]) || srHas(x, "Show less") {
-		t.Errorf("five blocks expanded: %q clipped %v Show less %v", p, scClipped(&v.cards[1]), srHas(x, "Show less"))
+	if p := scText(v.cards[1]); !strings.Contains(p, "blockA") || scClipped(v.cards[1]) || srHas(x, "Show less") {
+		t.Errorf("five blocks expanded: %q clipped %v Show less %v", p, scClipped(v.cards[1]), srHas(x, "Show less"))
 	}
 	h0 := v.cards[0].h
 	v.cards[0].more.Click()
 	d.frame()
 	x = d.scan()
-	if scClipped(&v.cards[0]) || srHas(x, "Show less") {
-		t.Errorf("long body expanded: clipped %v Show less %v", scClipped(&v.cards[0]), srHas(x, "Show less"))
+	if scClipped(v.cards[0]) || srHas(x, "Show less") {
+		t.Errorf("long body expanded: clipped %v Show less %v", scClipped(v.cards[0]), srHas(x, "Show less"))
 	}
 	if v.cards[0].h <= h0 {
 		t.Errorf("expanded card %d px, collapsed %d", v.cards[0].h, h0)
@@ -263,7 +263,7 @@ func TestSearchDensityCardOff(t *testing.T) {
 			}
 			x := d.scan()
 			// the old body: one line of the rows joined by " … ", cut
-			if c := &v.cards[0]; c.lines != 1 || !c.over || scHasRich(c) {
+			if c := v.cards[0]; c.lines != 1 || !c.over || scHasRich(c) {
 				t.Errorf("off: %d lines, over %v, rich body %v", c.lines, c.over, scHasRich(c))
 			}
 			if srHas(x, "... Show more") || !srHasPrefix(x, "… Show more") || srHas(x, "row40") {

@@ -977,6 +977,14 @@ func pfPresenceNative(gtx layout.Context, th *theme.Theme, u core.User, dot floa
 	})
 }
 
+// MemberPresence draws u's presence glyph, about dot dp, as Slack's
+// ConnectedPresence draws it through Presence and BasePresence (both
+// patchable), with no text: the DM foreword's member entity
+// (messages/foreword.go) puts it after the member's name.
+func MemberPresence(gtx layout.Context, h Host, u core.User, dot float32) layout.Dimensions {
+	return pfPresence(gtx, h, h.Theme(), u, dot, false, 0)
+}
+
 // pfShowsPresence is MemberProfileBaseEntity's presence rule: everyone
 // but a deactivated member. Clack's member card also reaches bots (the
 // click card); they have none, but Slackbot does: core marks it a bot,

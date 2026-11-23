@@ -3,6 +3,7 @@ package popups
 import (
 	"image"
 	"image/color"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -95,15 +96,16 @@ type epCell struct{ row, col int }
 
 var epNoCell = epCell{-1, -1}
 
-// epLists holds the id slices rows point into: groups 0..9, then search.
-type epLists = [epNumGroups + 1][]int32
+// epLists holds the id slices rows point into: groups 0..9, then search,
+// then the installed emoji packs' groups (EmojiPicker.refreshPacks).
+type epLists = [][]int32
 
 // epLayoutRows flattens lists into heading + emoji rows (search: only the
 // search list). A heading row is gap + hdr tall (Slack's 1px
 // empty-header-row and its 27px group row), emoji rows rowH, the last one
 // rowH + last. It returns the rows, each group's heading row (-1 when
 // absent) and the total height. Heights are px.
-func epLayoutRows(dst []epRow, lists *epLists, search bool, hdr, gap, rowH, last int) ([]epRow, [epNumGroups + 1]int32, int) {
+func epLayoutRows(dst []epRow, lists epLists, search bool, hdr, gap, rowH, last int) ([]epRow, [epNumGroups + 1]int32, int) {
 	dst = dst[:0]
 	var heads [epNumGroups + 1]int32
 	for i := range heads {
@@ -115,7 +117,9 @@ func epLayoutRows(dst []epRow, lists *epLists, search bool, hdr, gap, rowH, last
 		if len(ids) == 0 {
 			return
 		}
-		heads[g] = int32(len(dst))
+		if g < len(heads) { // a pack's group has no tab to scroll to it
+			heads[g] = int32(len(dst))
+		}
 		dst = append(dst, epRow{y: int32(y), si: si + 1, list: uint8(g)})
 		y += gap + hdr
 		si += 2 // empty-header-row, group
@@ -130,6 +134,26 @@ func epLayoutRows(dst []epRow, lists *epLists, search bool, hdr, gap, rowH, last
 		add(epGroupSearch)
 	} else {
 		for g := 0; g < epNumGroups; g++ {
+			if g == epGroupCustom { // the packs' groups, then Custom (NebS tZ)
+				first := int32(-1)
+				for k := epGroupSearch + 1; k < len(lists); k++ {
+					if first < 0 && len(lists[k]) > 0 {
+						first = int32(len(dst))
+					}
+					add(k)
+				}
+				add(g)
+				// Slack's Custom tab is the packs' groups and Custom
+				// (onGroupTabClick: getCustomTabGroups' omitFromTabs groups
+				// first), and Custom is there whenever a pack is
+				// (g.length > 0 || f.length > 0): the tab goes to the first
+				// pack's heading, also when every custom emoji is a pack's
+				// and Custom itself holds none
+				if first >= 0 {
+					heads[epGroupCustom] = first
+				}
+				continue
+			}
 			add(g)
 		}
 	}
@@ -165,6 +189,15 @@ type EmojiPicker struct {
 	freq   []int32
 	lists  epLists
 	search epSearcher
+
+	// the installed packs' groups (refreshPacks): their names, and the
+	// pack store generation and index they were built from
+	packNames []string
+	packGen   uint64
+	packIdx   *emojiIndex
+	// ctaUI is the emoji pack call to action under the search input
+	// (emoji_pack_cta.go)
+	ctaUI packCTAState
 
 	rows      []epRow
 	groupRow  [epNumGroups + 1]int32
@@ -226,6 +259,10 @@ func NewEmojiPicker(h Host, onPick func(name string)) *EmojiPicker {
 	p.tabLock, p.drawnTab, p.prevID = -1, -1, -1
 	p.tone = epTone(h)
 	p.rowFn = p.layoutRow
+	p.lists = make(epLists, epNumGroups+1)
+	if a := h.Core(); a != nil {
+		a.FetchEmojiPacks() // componentDidMount's fetchAllEmojiCollections
+	}
 	p.refreshIndex()
 	return p
 }
@@ -313,6 +350,7 @@ func (p *EmojiPicker) SetAnchorRect(r image.Rectangle) {
 // refreshIndex picks up a newer (custom-inclusive) index when it lands.
 func (p *EmojiPicker) refreshIndex() {
 	if p.idx != nil && p.full && p.idx.current() {
+		p.refreshPacks()
 		return
 	}
 	x, full := epIndexFor(p.h)
@@ -336,6 +374,73 @@ func (p *EmojiPicker) refreshIndex() {
 	}
 	p.prevID = -1
 	p.rowsDirty = true
+	p.refreshPacks()
+}
+
+// refreshPacks puts the installed emoji packs in the list as Slack's
+// picker groups them (NebS tZ): each installed pack with local emoji,
+// newest first (sortBy -date_create), is a group under its name with no
+// tab of its own (omitFromTabs), right before Custom, which leaves their
+// emoji out. Rebuilt when the pack store or the index changes.
+func (p *EmojiPicker) refreshPacks() {
+	a := p.h.Core()
+	if a == nil || p.idx == nil {
+		return
+	}
+	gen := a.EmojiPacksGen()
+	if gen == p.packGen && p.packIdx == p.idx {
+		return
+	}
+	p.packGen, p.packIdx = gen, p.idx
+	packs, _ := a.EmojiPacks()
+	sort.SliceStable(packs, func(i, j int) bool { return packs[i].DateCreate > packs[j].DateCreate })
+	p.lists, p.packNames = p.lists[:epGroupSearch+1], p.packNames[:0]
+	var in map[int32]bool
+	for _, pk := range packs {
+		if !pk.Installed || len(pk.LocalEmoji) == 0 || len(p.lists) >= 255 {
+			continue
+		}
+		var ids []int32
+		for _, e := range pk.LocalEmoji {
+			// by name, as Slack's groups go: a name the index holds only
+			// as an alias of another emoji is that emoji's, not the pack's
+			if id, ok := p.idx.lookup(e.Name); ok && p.idx.names[id] == e.Name {
+				ids = append(ids, id)
+				if in == nil {
+					in = map[int32]bool{}
+				}
+				in[id] = true
+			}
+		}
+		if len(ids) > 0 { // names the index doesn't hold yet come with its rebuild
+			p.lists = append(p.lists, ids)
+			p.packNames = append(p.packNames, pk.Name)
+		}
+	}
+	custom := p.idx.group[epGroupCustom]
+	if len(in) > 0 {
+		kept := make([]int32, 0, len(custom))
+		for _, id := range custom {
+			if !in[id] {
+				kept = append(kept, id)
+			}
+		}
+		custom = kept
+	}
+	p.lists[epGroupCustom] = custom
+	p.rowsDirty = true
+}
+
+// groupLabel is list's heading: a group's name in the locale, or a
+// pack's own name (nameLocalized is the pack's name).
+func (p *EmojiPicker) groupLabel(list int) string {
+	if k := list - epGroupSearch - 1; k >= 0 {
+		if k < len(p.packNames) {
+			return p.packNames[k]
+		}
+		return ""
+	}
+	return epGroupLabel(epGroupNames[list])
 }
 
 // loadFrequent fills Frequently Used from getFrequentlyUsedEmoji's names
@@ -358,7 +463,7 @@ func (p *EmojiPicker) ensureRows(gtx layout.Context) {
 	}
 	p.rowsDirty = false
 	p.rowsScale = gtx.Metric.PxPerDp
-	p.rows, p.groupRow, p.totalH = epLayoutRows(p.rows, &p.lists, p.searching,
+	p.rows, p.groupRow, p.totalH = epLayoutRows(p.rows, p.lists, p.searching,
 		dp(gtx, epHdrH), dp(gtx, epHdrGap), dp(gtx, epRowH), dp(gtx, epLastExtra))
 }
 
@@ -434,7 +539,10 @@ func (p *EmojiPicker) activeTab() int {
 		return p.tabLock
 	}
 	g := int(p.rows[p.rowAt(p.scrollTop()+1)].list)
-	if g >= epNumGroups {
+	switch {
+	case g > epGroupSearch: // a pack's group: one of the Custom tab's (getCustomTabGroups)
+		return epGroupCustom
+	case g >= epNumGroups:
 		return 0
 	}
 	return g
@@ -456,7 +564,7 @@ func (p *EmojiPicker) clickTab(i int) {
 	if p.rowsDirty {
 		// rows are rebuilt with px metrics in Layout; the heading index
 		// doesn't depend on them.
-		_, heads, _ := epLayoutRows(nil, &p.lists, false, 1, 0, 1, 0)
+		_, heads, _ := epLayoutRows(nil, p.lists, false, 1, 0, 1, 0)
 		p.groupRow = heads
 	}
 	if r := p.groupRow[i]; r >= 0 {
@@ -827,7 +935,9 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 		ic.EndAt(gtx, in)
 	}
 	foot := dp(gtx, epFootH)
-	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, p.listY()), sz.X, sz.Y-foot))
+	listTop := dp(gtx, p.listY())
+	listTop += p.layoutPackCTA(gtx, th, cl, listTop, sz.X) // EmojiPackCta, between the input and the list
+	p.layoutList(gtx, th, cl, image.Rect(0, listTop, sz.X, sz.Y-foot))
 	fm := slackc.InspectAs("EmojiPickerFooter")
 	p.layoutFooter(gtx, th, cl, image.Rect(0, sz.Y-foot, sz.X, sz.Y))
 	fm.EndAt(gtx, image.Rect(0, sz.Y-foot, sz.X, sz.Y))
@@ -1086,7 +1196,7 @@ func (p *EmojiPicker) layoutList(gtx layout.Context, th *theme.Theme, cl *Colors
 func (p *EmojiPicker) headingText(gtx layout.Context, th *theme.Theme, cl *Colors, list, x, y, hb, w int) {
 	at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(loose(gtx, image.Pt(w-dp(gtx, 40), hb)), hb, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Bold, cl.Fg, epGroupLabel(epGroupNames[list]))
+			return text(gtx, th, 13, theme.Bold, cl.Fg, p.groupLabel(list))
 		})
 	})
 }

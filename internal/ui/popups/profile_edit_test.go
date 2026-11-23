@@ -78,7 +78,7 @@ func epPNG(t *testing.T, w, h int) []byte {
 }
 
 // The form pane: BEl1's fields in order (Pronouns with display_pronouns,
-// Name pronunciation from the header section, no Name recording), the
+// Name recording and Name pronunciation from the header section), the
 // title unlocked once the header says so, validation on typing with
 // Slack's messages, Save disabled on an error, then users.profile.set and
 // the cache updated; Cancel closes without the speed bump, Escape with
@@ -88,7 +88,7 @@ func TestEditProfileFormLikeSlack(t *testing.T) {
 	m := NewEditProfileModal(h, EditProfileOpts{Focus: "pronouns"})
 	f := m.Form()
 	epUntil(t, m, "the header section", func() bool { return !f.secsLoading })
-	if got, want := f.Fields(), []string{"real_name", "display_name", "title", "pronouns", "name_pronunciation", "tz"}; !slices.Equal(got, want) {
+	if got, want := f.Fields(), []string{"real_name", "display_name", "title", "pronouns", "name_recording", "name_pronunciation", "tz"}; !slices.Equal(got, want) {
 		t.Fatalf("fields %v, want %v", got, want)
 	}
 	if f.byName["title"].disabled || f.byName["title"].ed.Text() != fakeslack.SelfTitle {

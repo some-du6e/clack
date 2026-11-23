@@ -68,11 +68,20 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 	var tbl *messages.DataBlockRect
 	var seen string
 	dl := time.Now().Add(30 * time.Second)
-	scrolled := time.Now()
+	// the thread opens at getThreadStartPosition (the root, then its tall
+	// chart), which its first layout sets over an earlier scroll, so the
+	// reply's table starts under the fold: the pane to its end from the
+	// first frame and every 300ms after, until the table's footer is in
+	// the list (laid out isn't enough: the row lays out half in view)
+	var scrolled time.Time
+	inList := func(d *messages.DataBlockRect) bool {
+		tv := e.threadView(ch, ts)
+		next := d.Tables[0].Buttons["next"]
+		return tv != nil && !next.Empty() && next.In(tv.ListRect())
+	}
 	for {
 		e.frame()
 		if time.Since(scrolled) > 300*time.Millisecond {
-			// the reply is under the root's tall chart: the pane to its end
 			if tv := e.threadView(ch, ts); tv != nil {
 				tv.ScrollToBottom()
 			}
@@ -90,12 +99,12 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 			}
 		}
 		seen = sb.String()
-		if charts <= 1 && tbl != nil && len(tbl.Tables[0].Rows) == 5 {
+		if charts <= 1 && tbl != nil && len(tbl.Tables[0].Rows) == 5 && inList(tbl) {
 			break
 		}
 		if time.Now().After(dl) {
 			tv := e.threadView(ch, ts)
-			t.Fatalf("the thread pane (view %v) shows %q, want the root's chart and the reply's table", tv != nil, seen)
+			t.Fatalf("the thread pane (view %v) shows %q, want the root's chart and the reply's table with its footer in the list (table laid out: %v)", tv != nil, seen, tbl != nil)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

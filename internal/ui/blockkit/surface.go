@@ -196,6 +196,10 @@ type Surface struct {
 	prevTexts map[string]*richview.View
 	hand      surfHandler
 	isHome    bool
+	// asMessage: the view's blocks draw as a message's do
+	// (InteractiveBlocks with getMessageOverrides, boot-shared VoyB,
+	// nllw), a code channel view's
+	asMessage bool
 	busy      map[string]bool
 	gen       uint32
 	blkErr    map[string]string // block_id → action error under actions blocks
@@ -242,6 +246,7 @@ func (s *Surface) set(v *core.View, keep bool) {
 	old := s.vals
 	s.view = v
 	s.isHome = v != nil && v.Type == "home"
+	s.asMessage = v != nil && v.Type == "code_channel_view"
 	s.blocks = ParseBlocks(expandConditions(s.h, v.Blocks))
 	s.vals = Values{}
 	if keep && old != nil {
@@ -356,7 +361,7 @@ func (s *Surface) channel() string {
 	}
 	return ""
 }
-func (s *Surface) modal() bool { return !s.isHome }
+func (s *Surface) modal() bool { return !s.isHome && !s.asMessage }
 func (s *Surface) changed() {
 	s.gen++
 	if s.h != nil {
@@ -496,9 +501,13 @@ func (s *Surface) docOf(b *Block) richtext.Doc {
 }
 
 func (s *Surface) textOf(key string, doc func() richtext.Doc) *richview.View {
+	return s.textWith(key, richview.Options{FillBlocks: true}, doc) // a view's blocks: no flex wrappers
+}
+
+// textWith is textOf with o, the options the view is made with.
+func (s *Surface) textWith(key string, o richview.Options, doc func() richtext.Doc) *richview.View {
 	v := s.texts[key]
 	if v == nil {
-		o := richview.Options{FillBlocks: true}  // a view's blocks: no flex wrappers
 		if old := s.prevTexts[key]; old != nil { // a views.update: the block's view, its toggles kept
 			delete(s.prevTexts, key)
 			v = old
@@ -522,18 +531,35 @@ func surfaceKey(b *Block, i int) string {
 }
 
 // Layout draws the surface at the constraint width; returns its height.
+//
+// Slack puts each top-level block in a wrapper div of its own (ViewBlocks'
+// wrapViewBlock and AppHomeBlocks' wrapAppHomeBlock, boot-shared WSwB),
+// none of them flex boxes but App Home's actions wrapper, so a block's
+// margins collapse with its wrapper's and its neighbours' (blockMargins,
+// wrapperTop). The first block's top margin and the last one's bottom
+// stay inside: the modal's dialog body has padding, App Home's
+// .p-app_home__blockkit is flow-root. Blocks drawn as a message's
+// (asMessage) are in flex wrappers, where margins add up.
 func (s *Surface) Layout(gtx C) D {
 	drain()
 	w := gtx.Constraints.Max.X
 	y := 0
 	st := styleFor(s.h.Theme(), s.h.Images())
+	prevBottom, afterContext := 0, false // the last block's outer bottom margin, a context drawn
 	for i := range s.blocks {
 		b := &s.blocks[i]
-		gap := dp(gtx, 8)
-		if i == 0 {
-			gap = dp(gtx, 4)
+		top, bottom, inner, innerBottom := s.blockMargins(b, i == 0)
+		gap := top
+		switch {
+		case i == 0:
+		case s.asMessage:
+			gap = prevBottom + top // flex wrappers: nothing collapses
+		default:
+			gap = max(prevBottom, s.wrapperTop(b, afterContext), top)
 		}
-		y += gap
+		y += dp(gtx, float32(gap+inner))
+		prevBottom = bottom
+		afterContext = afterContext || b.Type == "context"
 		var bh int
 		s.curY = y
 		at(gtx, image.Pt(0, y), func(gtx C) D {
@@ -546,12 +572,183 @@ func (s *Surface) Layout(gtx C) D {
 			bm.End(gtx, image.Pt(w, bh))
 			return D{}
 		})
-		y += bh
+		y += bh + dp(gtx, float32(innerBottom))
 	}
-	if len(s.blocks) > 0 {
-		y += dp(gtx, 4)
-	}
+	y += dp(gtx, float32(prevBottom)) // the last block's margin, inside the body's padding
 	return D{Size: image.Pt(w, y)}
+}
+
+// blockMargins are block b's margins on the surface, in dp, as Slack's CSS
+// gives them. top and bottom are its outer margins, which collapse with
+// its wrapper's (wrapperTop) and its neighbours'. inner and innerBottom
+// are the space inside its wrapper above and below what Clack draws, which
+// doesn't collapse: a block's padding, App Home's flex actions wrapper.
+// home is App Home, where each block keeps its own CSS margins; else a
+// modal, whose *_block_wrapper--modal_view rules take a section's, a
+// divider's, an image's and a context's away (margin 0).
+func (s *Surface) blockMargins(b *Block, first bool) (top, bottom, inner, innerBottom int) {
+	if s.asMessage {
+		return s.messageMargins(b, first)
+	}
+	home := s.isHome
+	switch b.Type {
+	case "actions":
+		if home {
+			// .p-actions_block_wrapper--app_home_view{display:flex}: the
+			// block's margin-bottom and its actions' 8px tops stay inside
+			return 0, 0, 8, 8
+		}
+		// .p-actions_block{margin-bottom:8px}, and every action 8px down
+		// inside the flex row (.p-actions_block_wrapper--modal_view
+		// .p-actions_block__action{margin:8px 0 0})
+		return 0, 8, 8, 0
+	case "header":
+		// .p-header_block{margin:1em 0 4px} at 15px; the first block's 4px
+		// is a message's (.p-block_kit_renderer>:first-child .p-header_block),
+		// and a view's blocks have no p-block_kit_renderer
+		return 15, 4, 0, 0
+	case "rich_text":
+		// .p-rich_text_block has none of its own here (.c-message's 8px 0
+		// -4px is a message's): its first and last elements' collapse
+		// through it
+		return richEdgeMargin(b.richFirst, true), richEdgeMargin(b.richLast, false), 0, 0
+	case "section":
+		if home {
+			return 8, 4, 0, 0 // .p-section_block{margin:8px 0 4px}
+		}
+	case "divider", "image":
+		if home {
+			return 8, 8, 0, 0 // .p-divider_block, .p-image_block{margin:8px 0}
+		}
+	case "context":
+		if home {
+			return 4, 4, 0, 0 // .p-context_block{margin:4px 0}
+		}
+	case "input":
+		if home {
+			return 12, 12, 0, 0 // .p-input_block_wrapper--app_home_view{margin:12px 0}
+		}
+	case "plan", "task_card":
+		return 8, 8, 0, 0 // PlanBlock's and TaskCard's .block{margin:8px 0}
+	}
+	return kitMargins(b)
+}
+
+// kitMargins are the margins of block b's own CSS where no surface
+// overrides them, in dp (as blockMargins): the newer blocks' and
+// UnsupportedBlockFallback's.
+func kitMargins(b *Block) (top, bottom, inner, innerBottom int) {
+	switch b.Type {
+	case "alert", "card", "carousel":
+		return 8, 8, 0, 0 // .alertBlock, .card, .carousel: margin 8px 0
+	case "container":
+		return 16, 8, 0, 0 // .containerBlock{margin-top:16px;margin-bottom:8px}
+	case "data_table":
+		return 4, 4, 0, 0 // .dataTableBlockOuterContainer{margin-top:4px;margin-bottom:4px}
+	case "video":
+		return 0, 0, 8, 8 // VideoBlock's root, .p-video_block__body{padding:8px 0}
+	}
+	if !richtext.Renderable(b.Type) && len(b.Nested) == 0 {
+		// UnsupportedBlockFallback: .fallback{margin:8px 0}; a fallback
+		// payload draws its own blocks (resolveFallback), their margins
+		// inside richview's view
+		return 8, 8, 0, 0
+	}
+	return 0, 0, 0, 0
+}
+
+// messageMargins are block b's margins where the blocks draw as a
+// message's (asMessage), in dp (as blockMargins). Each block sits in a
+// .p-block_kit_renderer__block_wrapper flex box, so they add up. The
+// first block loses a section's, an image's and a slim plan's top margin
+// (p-block_kit_renderer__block_wrapper--first) and a header keeps 4px of
+// its (.p-block_kit_renderer>:first-child .p-header_block). A rich_text
+// is a flex item there: its elements' margins stay inside it.
+func (s *Surface) messageMargins(b *Block, first bool) (top, bottom, inner, innerBottom int) {
+	switch b.Type {
+	case "section":
+		if first {
+			return 0, 4, 0, 0
+		}
+		return 8, 4, 0, 0 // .p-section_block{margin:8px 0 4px}
+	case "header":
+		if first {
+			return 4, 4, 0, 0
+		}
+		return 15, 4, 0, 0
+	case "image":
+		if first {
+			return 0, 8, 0, 0
+		}
+		return 8, 8, 0, 0
+	case "divider":
+		return 8, 8, 0, 0
+	case "context":
+		return 4, 4, 0, 0
+	case "actions":
+		return 0, 8, 8, 0
+	case "rich_text":
+		return 0, 0, richEdgeMargin(b.richFirst, true), richEdgeMargin(b.richLast, false)
+	case "plan", "task_card":
+		if first && s.slimTaskCards() {
+			return 0, 8, 0, 0 // .p-block_kit_renderer__block_wrapper--first .blockSlim
+		}
+		return 8, 8, 0, 0
+	}
+	return kitMargins(b)
+}
+
+// slimTaskCards is agent_streaming_slimmer_task_cards, as Message reads
+// it (agent_card.go).
+func (s *Surface) slimTaskCards() bool {
+	c := s.h.Core()
+	return c == nil || c.Experiment("agent_streaming_slimmer_task_cards") == "on"
+}
+
+// ownsMargins: Layout draws the outer margins of a block of type t
+// (blockMargins) and its richview doesn't (NoOuterMargins), so they
+// collapse as Slack's do. The others' richview margins are space inside
+// them (a table's .tableMargin padding, a call card's) or none.
+func ownsMargins(t string) bool {
+	switch t {
+	case "rich_text", "divider", "image", "context", "header", "alert", "card", "container":
+		return true
+	}
+	return false
+}
+
+// wrapperTop is the top margin, in dp, of block b's wrapper in a modal or
+// App Home when a block comes before it. A modal's are 12px apart
+// (.p-block_kit_modal .p-block_wrapper--modal_view:not(:first-of-type)),
+// 4px for a context's and for a divider's after a context. App Home's
+// have none (an input wrapper's 12px is in blockMargins).
+func (s *Surface) wrapperTop(b *Block, afterContext bool) int {
+	if s.isHome {
+		return 0
+	}
+	if b.Type == "context" || b.Type == "divider" && afterContext {
+		return 4
+	}
+	return 12
+}
+
+// richEdgeMargin is the margin a rich_text block's first (or last)
+// element of type t gives the block's top (bottom): a code block's or a
+// quote's 4px (.c-mrkdwn__pre, __quote), a divider's 8px
+// (.p-rich_text_divider), a header's 4px under it (none above the
+// block's first, as richview draws it).
+func richEdgeMargin(t string, first bool) int {
+	switch t {
+	case "rich_text_preformatted", "rich_text_quote":
+		return 4
+	case "rich_text_divider":
+		return 8
+	case "rich_text_header":
+		if !first {
+			return 4
+		}
+	}
+	return 0
 }
 
 func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
@@ -571,12 +768,16 @@ func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
 	case "section":
 		return s.section(gtx, b, key, w, st)
 	}
-	v := s.textOf(key, func() richtext.Doc { return s.docOf(b) })
+	// the block's outer margins are Layout's (blockMargins), to collapse
+	// with its wrapper's as Slack's do
+	o := richview.Options{FillBlocks: true, NoOuterMargins: ownsMargins(b.Type)}
+	v := s.textWith(key, o, func() richtext.Doc { return s.docOf(b) })
 	if len(b.Nested) > 0 || len(b.Elements) > 0 { // child blocks, a fallback's payload, a card's actions: live elements
 		if s.nested == nil {
 			s.nested = &nestedElements{s: s}
 		}
-		v.SetOptions(richview.Options{Elements: s.nested, FillBlocks: true})
+		o.Elements = s.nested
+		v.SetOptions(o)
 	}
 	d := v.Layout(gtx, st, &s.hand)
 	return d.Size.Y
@@ -591,68 +792,76 @@ func errorLine(gtx C, th *theme.Theme, cl colors, w int, msg string) D {
 	return D{Size: image.Pt(w, dp(gtx, 20))}
 }
 
-// flow lays out an actions block's elements, wrapping, 8px apart. In
-// modals Slack makes it a grid: two equal columns, every element (28px
-// tall) filling its column, rows 8px apart.
+// flow lays out an actions block's elements in Slack's wrapping rows
+// (flowRun).
 func (s *Surface) flow(gtx C, b *Block, w int) int { return s.flowRun(gtx, b, w, true) }
 
 // flowRun is flow; without draw it only measures (nestedElements).
+//
+// .p-actions_block_elements is a wrapping flex row (align-items: end) of
+// actions with an 8px top and right margin (margin 8px 8px 0 0), the top
+// one the gap between rows (Layout gives the first row its own). In a
+// modal each action is calc(50% - 8px) wide, two to a row, its element
+// filling it (.p-actions_block_wrapper--modal_view); in App Home it is
+// its element's width. Checkboxes and radio buttons take the whole row
+// (p-actions_block__action--full_width: width 100%) on both.
 func (s *Surface) flowRun(gtx C, b *Block, w int, draw bool) int {
 	x, y, rowH := 0, 0, 0
 	gap := dp(gtx, 8)
 	self := s.selfID()
-	if s.modal() {
-		colW := (w - gap) / 2
-		n := 0
-		for i := range b.Elements {
-			e := &b.Elements[i]
-			if hiddenFrom(e, self) {
-				continue
-			}
-			ew := s.widget(b, e)
-			sz := ew.size(gtx, colW, false)
-			if sz.X == 0 {
-				continue
-			}
-			if !stacks(e) && !isTextInput(e.Type) && e.Type != "datetimepicker" {
-				sz.X = colW
-			} else {
-				sz.X = min(sz.X, colW)
-			}
-			cx := (n % 2) * (colW + gap)
-			if n%2 == 0 && n > 0 {
-				y += rowH + gap
-				rowH = 0
-			}
-			if draw {
-				at(gtx, image.Pt(cx, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
-			}
-			rowH = max(rowH, sz.Y)
-			n++
+	modal := s.modal()
+	colW := max(w/2-gap, 0)
+	type cell struct {
+		ew *ew
+		x  int
+		sz image.Point
+	}
+	var row []cell
+	place := func() {
+		if !draw {
+			return
 		}
-		return y + rowH
+		for _, c := range row {
+			at(gtx, image.Pt(c.x, y+rowH-c.sz.Y), func(gtx C) D { return c.ew.layout(fixed(gtx, c.sz), c.sz) })
+		}
 	}
 	for i := range b.Elements {
 		e := &b.Elements[i]
 		if hiddenFrom(e, self) {
 			continue
 		}
+		full := e.Type == "checkboxes" || e.Type == "radio_buttons"
+		cw := w
+		if modal && !full {
+			cw = colW
+		}
 		ew := s.widget(b, e)
-		sz := ew.size(gtx, w, false)
+		sz := ew.size(gtx, cw, false)
 		if sz.X == 0 {
 			continue
 		}
-		if x > 0 && x+sz.X > w {
-			x = 0
+		if modal && !stacks(e) && !isTextInput(e.Type) && e.Type != "datetimepicker" {
+			sz.X = cw // .p-actions_block__action>button{width:100%}
+		} else {
+			sz.X = min(sz.X, cw)
+		}
+		adv := sz.X + gap // the action's margin box
+		switch {
+		case full:
+			adv = w
+		case modal:
+			adv = colW + gap
+		}
+		if len(row) > 0 && x+adv > w {
+			place()
 			y += rowH + gap
-			rowH = 0
+			x, rowH, row = 0, 0, row[:0]
 		}
-		if draw {
-			at(gtx, image.Pt(x, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
-		}
-		x += sz.X + gap
+		row = append(row, cell{ew: ew, x: x, sz: sz})
+		x += adv
 		rowH = max(rowH, sz.Y)
 	}
+	place()
 	return y + rowH
 }
 

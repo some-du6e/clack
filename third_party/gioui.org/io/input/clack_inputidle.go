@@ -23,20 +23,49 @@ import (
 var (
 	inputEpoch = time.Now()
 	inputAt    atomic.Int64 // monotonic ns since inputEpoch, +1; 0 = none yet
+	pressHook  atomic.Pointer[func(mouse bool)]
 )
 
-// noteInput records e when it's the person's input (Queue).
+// noteInput records e when it's the person's input (Queue), and tells
+// the press hook of a pointer press and a key press.
 func noteInput(e event.Event) {
 	switch e := e.(type) {
 	case pointer.Event:
 		if e.Kind == pointer.Cancel {
 			return // the router's or the window's own, not input
 		}
-	case key.Event, key.EditEvent:
+		if e.Kind == pointer.Press {
+			pressed(true)
+		}
+	case key.Event:
+		if e.State == key.Press {
+			pressed(false)
+		}
+	case key.EditEvent:
 	default:
 		return
 	}
 	inputAt.Store(int64(time.Since(inputEpoch)) + 1)
+}
+
+func pressed(mouse bool) {
+	if f := pressHook.Load(); f != nil {
+		(*f)(mouse)
+	}
+}
+
+// SetPressHook makes f see every pointer press (mouse true) and key press
+// (mouse false) any router in the process is queued, wherever it goes, on
+// the goroutine that queues it (a window's event loop), before it's
+// routed. nil stops it. f must not block: it holds the window's events.
+// Clack tells the realtime socket of the person's activity with it, as
+// Slack's client does on mousedown and keydown.
+func SetPressHook(f func(mouse bool)) {
+	if f == nil {
+		pressHook.Store(nil)
+		return
+	}
+	pressHook.Store(&f)
 }
 
 // SinceInput is how long ago any router in the process was queued a

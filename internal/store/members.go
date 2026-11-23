@@ -438,5 +438,9 @@ func (s *Store) TouchMember(id string) {
 	now := time.Now().UnixMilli()
 	s.mu.RLock()
 	s.touchLocked(id, now)
+	_, held := s.Users[id]
 	s.mu.RUnlock()
+	if held {
+		s.noteMemberHit(id) // getMemberById's maybeRefetch
+	}
 }
