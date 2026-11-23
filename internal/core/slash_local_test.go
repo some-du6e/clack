@@ -74,6 +74,7 @@ func slashLocalApp(t *testing.T) (*App, *fakeSlack) {
 	for _, c := range []slack.Conversation{
 		{ID: "C0GENERAL1", Name: "general", IsChannel: true, IsMember: true},
 		{ID: "C0RANDOM01", Name: "random", IsChannel: true},
+		{ID: "C0RANDOM02", Name: "random-two", IsChannel: true}, // a join that fails (C0RANDOM01 gets joined)
 		{ID: "C0OLDNEWS1", Name: "old-news", IsChannel: true, IsMember: true, IsArchived: true},
 		{ID: "G0OLDSECR1", Name: "old-secrets", IsChannel: true, IsPrivate: true, IsMember: true, IsArchived: true},
 		{ID: "C0OTHERWS1", Name: "elsewhere", IsChannel: true, ContextTeamID: "T0OTHERWS1"},
@@ -123,11 +124,11 @@ func TestOpenCommand(t *testing.T) {
 		t.Errorf("another workspace: %v", err)
 	}
 	f.reply["conversations.join"] = `{"ok":false,"error":"is_archived"}`
-	if tg, err := a.OpenCommand(ctx, "/open", mention("C0RANDOM01"), "random"); err != nil || tg.Conv != "C0RANDOM01" {
+	if tg, err := a.OpenCommand(ctx, "/open", mention("C0RANDOM02"), "random-two"); err != nil || tg.Conv != "C0RANDOM02" {
 		t.Errorf("archived: %+v %v, want it shown", tg, err)
 	}
 	f.reply["conversations.join"] = `{"ok":false,"error":"method_not_supported_for_channel_type"}`
-	if _, err := a.OpenCommand(ctx, "/open", mention("C0RANDOM01"), "random"); feedbackOf(err) != "There was a problem joining “random”, sorry!" {
+	if _, err := a.OpenCommand(ctx, "/open", mention("C0RANDOM02"), "random-two"); feedbackOf(err) != "There was a problem joining “random-two”, sorry!" {
 		t.Errorf("join refused: %v", err)
 	}
 	f.reply["conversations.open"] = `{"ok":false,"error":"user_disabled"}`
@@ -186,15 +187,19 @@ func TestMsgCommand(t *testing.T) {
 			t.Errorf("%s %v: %v, want %q", tc.cmd, tc.params, err, tc.want)
 		}
 	}
-	for code, want := range map[string]string{"user_not_found": "A valid member name is required.",
-		"channel_not_found": "A valid channel name is required.", "access_denied": "Hmm, something went wrong. Try again?"} {
-		f.reply["conversations.open"] = `{"ok":false,"error":"` + code + `"}`
-		if _, err := a.MsgCommand(ctx, "/msg", mention("U0BOBBY0001"), true); feedbackOf(err) != want {
-			t.Errorf("conversations.open %s: %v, want %q", code, err, want)
+	// user_not_found last: the store then forgets the member
+	for _, c := range []struct{ code, want string }{
+		{"channel_not_found", "A valid channel name is required."},
+		{"access_denied", "Hmm, something went wrong. Try again?"},
+		{"user_not_found", "A valid member name is required."},
+	} {
+		f.reply["conversations.open"] = `{"ok":false,"error":"` + c.code + `"}`
+		if _, err := a.MsgCommand(ctx, "/msg", mention("U0BOBBY0001"), true); feedbackOf(err) != c.want {
+			t.Errorf("conversations.open %s: %v, want %q", c.code, err, c.want)
 		}
 	}
 	f.reply["conversations.join"] = `{"ok":false,"error":"channel_not_found"}`
-	if _, err := a.MsgCommand(ctx, "/msg", mention("C0RANDOM01"), true); feedbackOf(err) != "A valid channel name is required." {
+	if _, err := a.MsgCommand(ctx, "/msg", mention("C0RANDOM02"), true); feedbackOf(err) != "A valid channel name is required." {
 		t.Errorf("join channel_not_found: %v", err)
 	}
 }

@@ -35,6 +35,10 @@ func localSeed(s *store.Store) {
 	s.PutConv(slack.Conversation{ID: tChOldPriv, Name: "old-secrets", IsChannel: true, IsPrivate: true, IsMember: true, IsArchived: true})
 	s.PutConv(slack.Conversation{ID: tChOther, Name: "elsewhere", IsChannel: true, ContextTeamID: "T0OTHERWS1"})
 	s.PutUsers([]slack.User{{ID: tGone, Name: "gone", Deleted: true, Profile: slack.Profile{DisplayName: "gone"}}})
+	// loaded timelines: where Slackbot's feedback lands (slackbotSaid)
+	for _, ch := range []string{tChGen, tBobbyDM} {
+		s.PrependOlder(ch, []slack.Message{{Type: "message", TS: "1700000000.000100", User: "UALICE", Text: "synthetic"}}, false)
+	}
 }
 
 // localComposer is cmdComposer with localSeed (and seed), conversations.open

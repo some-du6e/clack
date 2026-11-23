@@ -121,10 +121,13 @@ func TestUserFeedbackModalFailures(t *testing.T) {
 	d := &srDrv{size: image.Pt(1280, 800), w: m}
 	m.Pick(0)
 	m.Fill("canvas", "Tables should paste.", true)
-	for _, tc := range []struct{ fault, want string }{
+	for i, tc := range []struct{ fault, want string }{
 		{"ratelimited", ufLimited},
 		{"invalid_arguments", ufFailed},
 	} {
+		// a new request each time: the client answers an identical retry
+		// of a failed call with that failure (its backoff)
+		m.Fill("canvas", "Tables should paste. "+strings.Repeat("Again. ", i), true)
 		e.fs.SetFault("feedback.submitUserFeedback", fakeslack.Fault{Error: tc.fault})
 		m.Submit()
 		slUntil(t, 20*time.Second, tc.fault, d.frame, func() bool { return !m.busy && m.Err() == tc.want })
