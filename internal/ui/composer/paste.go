@@ -331,6 +331,14 @@ func (d *Doc) pasteQuoted(lo int, src *Doc, lineHasText bool) int {
 			src.Lines[i] = Line{Kind: Quote}
 		}
 	}
+	if src.quoteTail {
+		// Slack's copy whose last op wasn't a bare "\n": prepareDeltaForPaste
+		// pushes {insert: "\n", blockquote: true}, a quote line after it
+		src.Runes = append(src.Runes, '\n')
+		src.Attrs = append(src.Attrs, Attr{})
+		src.Lines = append(src.Lines, Line{Kind: Quote})
+		last++
+	}
 	keep := rtIsList(src.Lines[last].Kind) || src.Lines[last].Kind == CodeBlock
 	line := d.LineOf(d.clamp(lo))
 	quote := d.Lines[line]

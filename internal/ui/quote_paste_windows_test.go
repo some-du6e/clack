@@ -509,6 +509,9 @@ func TestWinQuotePaste(t *testing.T) {
 			{quote, "quoted in clack"},
 			{composer.Line{Kind: composer.Bullet, Quoted: true}, "an item"},
 			{quote, "after it"},
+			// its delta's last op is "after it\n", not a bare "\n":
+			// prepareDeltaForPaste's closing quote line
+			{quote, ""},
 		}, 0},
 		{"Clack's composer copy (Ctrl+C)", copyOwn, func() {}, []qpLine{
 			{composer.Line{Kind: composer.Bullet, Quoted: true}, "item one"},

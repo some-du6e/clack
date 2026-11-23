@@ -37,6 +37,7 @@ func textyDoc(s string) *Doc {
 	}
 	doc := &Doc{}
 	endsLine := false // the last rune is a line's closing "\n"
+	bare := false     // the last op inserted was a bare "\n"
 	endLine := func(at qAttrs) {
 		doc.Lines = append(doc.Lines, qLine(at))
 		doc.Runes = append(doc.Runes, '\n')
@@ -78,7 +79,12 @@ func textyDoc(s string) *Doc {
 				continue
 			}
 		}
+		bare = text == "\n"
 		a := qAttr(at)
+		if a.Link != "" {
+			// as the HTML path's links: javascript:, file: and the like go
+			a.Link = phSafeURL(a.Link)
+		}
 		for _, r := range text {
 			switch r {
 			case '\n':
@@ -98,6 +104,9 @@ func textyDoc(s string) *Doc {
 	if endsLine {
 		// the delta's last "\n" closes the last line: no line after it
 		doc.Runes, doc.Attrs = doc.Runes[:len(doc.Runes)-1], doc.Attrs[:len(doc.Attrs)-1]
+		// prepareDeltaForPaste into a quote: a last op that isn't a bare
+		// "\n" gets another, a quote line of its own
+		doc.quoteTail = !bare
 	} else {
 		doc.Lines = append(doc.Lines, Line{}) // no closing "\n": a paragraph
 	}

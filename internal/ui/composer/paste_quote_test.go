@@ -221,3 +221,52 @@ func TestTextyDocLines(t *testing.T) {
 		}
 	}
 }
+
+// Slack's copy (slack/texty) into an empty quote line: a delta whose last
+// op isn't a bare "\n" ("hello\n" in one op) gets the closing quote line
+// prepareDeltaForPaste (+hBz) pushes, {insert: "\n", blockquote: true};
+// one ending in a bare "\n" op gets none. And its links go through
+// phSafeURL as the HTML path's do: a javascript: link pastes as text.
+func TestPasteTextyIntoQuoteTail(t *testing.T) {
+	lines := func(e *Editor) []string {
+		var out []string
+		for i, l := range e.doc.Lines {
+			k := "p"
+			if l.Kind == Quote {
+				k = "q"
+			}
+			out = append(out, k+" "+string(e.doc.Runes[e.doc.LineStart(i):e.doc.LineEnd(i)]))
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name, delta string
+		want        []string
+	}{
+		{"one op ending in a newline", `{"ops":[{"insert":"hello\n"}]}`, []string{"q hello", "q "}},
+		{"a bare newline op last", `{"ops":[{"insert":"hello"},{"insert":"\n"}]}`, []string{"q hello"}},
+	} {
+		e := quoted(t, "button", "")
+		td := textyDoc(c.delta)
+		if td == nil {
+			t.Fatalf("%s: textyDoc took nothing", c.name)
+		}
+		e.pasteClip("hello\n", "", td)
+		if got := lines(e); strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	td := textyDoc(`{"ops":[{"insert":"click","attributes":{"link":"javascript:alert(1)"}},{"insert":" and "},{"insert":"here","attributes":{"link":"https://example.com/"}},{"insert":"\n"}]}`)
+	if td == nil {
+		t.Fatal("textyDoc took nothing")
+	}
+	var links []string
+	for _, a := range td.Attrs {
+		if a.Link != "" && (len(links) == 0 || links[len(links)-1] != a.Link) {
+			links = append(links, a.Link)
+		}
+	}
+	if strings.Join(links, " ") != "https://example.com/" {
+		t.Errorf("the texty paste's links: %q, want only https://example.com/", links)
+	}
+}
