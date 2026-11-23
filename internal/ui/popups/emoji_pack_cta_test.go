@@ -9,6 +9,7 @@ package popups
 // 2026-11-20, so the fake's packs carry a recent date_create. Synthetic.
 
 import (
+	"encoding/json"
 	"image"
 	"image/color"
 	"os"
@@ -17,6 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
+	"gioui.org/io/input"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -69,9 +73,43 @@ func ctaEnvFS(t *testing.T, packs []fakeslack.EmojiPack, installed []string, can
 			t.Fatal("the pack read never landed")
 		}
 	}
-	time.Sleep(200 * time.Millisecond) // potentialNewPack's prefs write, after the read
+	// potentialNewPack's prefs write after the read, when it makes one (the
+	// newest pack newer than the last available time, and the viewer may
+	// add it or has it): waited for in the local prefs, which merge its
+	// answer
+	since := float64(ctaFakeAvailableTime)
+	if v, ok := prefs[core.PrefEmojiPacksAvailableTime].(float64); ok {
+		since = v
+	}
+	var newest fakeslack.EmojiPack
+	for _, pk := range packs {
+		if pk.DateCreate > newest.DateCreate {
+			newest = pk
+		}
+	}
+	if float64(newest.DateCreate) > since && (canAdd || slices.Contains(installed, newest.ID)) {
+		for dl := time.Now().Add(15 * time.Second); ctaAvailableTime(h) < float64(newest.DateCreate); time.Sleep(20 * time.Millisecond) {
+			Pump()
+			if time.Now().After(dl) {
+				t.Fatalf("potentialNewPack's write never landed (available time %v, the pack %d)", ctaAvailableTime(h), newest.DateCreate)
+			}
+		}
+	}
 	Pump()
 	return h, fake
+}
+
+// ctaFakeAvailableTime is the fake's emoji_packs_most_recent_available_time
+// (fakeslack.go's prefs, Hack Club's on 2026-11-22).
+const ctaFakeAvailableTime = 1793987493
+
+// ctaAvailableTime is the local emoji_packs_most_recent_available_time.
+func ctaAvailableTime(h *tzHost) float64 {
+	var v float64
+	if raw, ok := h.a.Pref(core.PrefEmojiPacksAvailableTime); ok {
+		_ = json.Unmarshal(raw, &v)
+	}
+	return v
 }
 
 // ctaFrame lays the picker out once at scale and returns the strings it
@@ -337,5 +375,132 @@ func TestEmojiPackCTAPixels(t *testing.T) {
 	dismiss := image.Rect(r.Max.X-30*scale, r.Min.Y+12*scale, r.Max.X-8*scale, r.Max.Y-12*scale)
 	if n := ink(dismiss); n < 10 {
 		t.Errorf("%d dark pixels where the dismiss button is (%v)", n, dismiss)
+	}
+}
+
+// The first picker of a session while the pack read is still out: the
+// call to action is there from its first frame, because boot learned
+// ADD_CUSTOM_EMOJI (AcSl maybeFetchClientPermissions; Slack's eyHx sets
+// hasFetched before the read), its pack's name filling in when the read
+// lands, and the box (with the list under it) doesn't move. Learned only
+// after the read, the list jumped 67dp under a pointer about to click.
+func TestEmojiPackCTAFirstFrame(t *testing.T) {
+	h := epShotEnvWith(t, false, func(fs *fakeslack.Server) {
+		fs.SetEmojiPacks([]fakeslack.EmojiPack{ctaPack("Ec0CTA00001", "Fall Foliage", time.Now().Add(-24*time.Hour))})
+		fs.Permissions = map[string][]string{"": {core.PermAddCustomEmoji}}
+		// the window open since yesterday (an earlier session's read
+		// reset it)
+		fs.SetPrefs(map[string]any{core.PrefEmojiPacksAvailableTime: float64(time.Now().Add(-23 * time.Hour).Unix())})
+		fs.SetFault("emoji.collections.list", fakeslack.Fault{Delay: 1500 * time.Millisecond, Times: 1})
+	})
+	for dl := time.Now().Add(10 * time.Second); !h.a.EmojiPackCanAdd(); time.Sleep(20 * time.Millisecond) {
+		Pump()
+		if time.Now().After(dl) {
+			t.Fatal("boot never learned ADD_CUSTOM_EMOJI: the first picker would draw without the call to action")
+		}
+	}
+	if _, fetched := h.a.EmojiPacks(); fetched {
+		t.Fatal("the packs were read before the picker opened")
+	}
+	p := ctaPicker(h, 1) // its mount starts the pack read, held
+	var ops op.Ops
+	ctaFrame(p, h, &ops, 1)
+	_, kind, first := p.PackCTA()
+	if kind != core.PackCTAInstall {
+		t.Fatalf("the first frame: call to action %v, want the install's box", kind)
+	}
+	if ps, _ := h.a.EmojiPacks(); len(ps) != 0 {
+		t.Fatal("the pack read landed before the first frame: nothing tested")
+	}
+	for dl := time.Now().Add(15 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		Pump()
+		if ps, _ := h.a.EmojiPacks(); len(ps) == 1 {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatal("the pack read never landed")
+		}
+	}
+	drawn := ctaFrame(p, h, &ops, 1)
+	name, kind, after := p.PackCTA()
+	if kind != core.PackCTAInstall || name != "Fall Foliage" || !slices.Contains(drawn, "Fall Foliage emoji for your team") {
+		t.Errorf("after the read: %q %v, drawn %q", name, kind, drawn)
+	}
+	if after != first {
+		t.Errorf("the box moved when the read landed: %v → %v", first, after)
+	}
+}
+
+// ctaRT lays the picker out through a router, for real clicks.
+type ctaRT struct {
+	t   *testing.T
+	p   *EmojiPicker
+	h   *tzHost
+	r   input.Router
+	ops op.Ops
+	at  time.Duration
+}
+
+func (e *ctaRT) frame() {
+	win := image.Pt(420, 560)
+	e.ops.Reset()
+	gtx := layout.Context{Ops: &e.ops, Now: time.Now(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(win), Source: e.r.Source()}
+	paint.FillShape(&e.ops, colorsOf(e.h.th).EmojiFoot, clip.Rect{Max: win}.Op())
+	e.p.Layout(gtx)
+	e.r.Frame(&e.ops)
+	Pump()
+}
+
+func (e *ctaRT) click(pt image.Point) {
+	p := f32.Pt(float32(pt.X)+.5, float32(pt.Y)+.5)
+	e.at += time.Second
+	e.r.Queue(
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p, Time: e.at},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: p, Time: e.at + time.Millisecond},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: p, Time: e.at + 2*time.Millisecond},
+	)
+	e.frame()
+	e.frame()
+}
+
+// The call to action's click target is Slack's content-sized unstyled
+// button: the 22px label line from the inner box's 12px padding to the
+// arrow's end (and its art). A click in the box's padding above it, or in
+// the box right of it, does nothing; on the label it opens the Add emoji
+// dialog.
+func TestEmojiPackCTAClickArea(t *testing.T) {
+	h := ctaEnv(t, []fakeslack.EmojiPack{ctaPack("Ec0CTA00001", "Fall Foliage", time.Now().Add(-24*time.Hour))}, nil, true, nil)
+	e := &ctaRT{t: t, h: h, p: ctaPicker(h, 1)}
+	h.ShowOverlay(e.p)
+	e.frame()
+	e.frame()
+	_, kind, box := e.p.PackCTA()
+	btn := e.p.PackCTAButton()
+	if kind != core.PackCTAInstall || btn.Empty() {
+		t.Fatalf("call to action %v, button %v", kind, btn)
+	}
+	// the label's line: 12 in, 12 down, 22 tall
+	if btn.Min.X-box.Min.X != 12 || btn.Min.Y-box.Min.Y != 12 || btn.Dy() != 22 {
+		t.Errorf("button %v in the box %v, want 12px in and down, 22 tall", btn.Sub(box.Min), box.Size())
+	}
+	dismissX := box.Max.X - 8 - 22
+	if btn.Max.X+8 >= dismissX {
+		t.Fatalf("button %v runs into the dismiss button at x %d: no space right of it to click", btn, dismissX)
+	}
+	misses := map[string]image.Point{
+		"the box's top padding":    image.Pt((btn.Min.X+btn.Max.X)/2, box.Min.Y+4),
+		"the box's bottom padding": image.Pt((btn.Min.X+btn.Max.X)/2, box.Max.Y-4),
+		"right of the button":      image.Pt((btn.Max.X+dismissX)/2, (btn.Min.Y+btn.Max.Y)/2),
+		"the box's left padding":   image.Pt(box.Min.X+5, (btn.Min.Y+btn.Max.Y)/2),
+	}
+	for what, pt := range misses {
+		e.click(pt)
+		if e.p.Dismissed() || h.a.PrefBool(core.PrefEmojiPacksPickerCTA, false) {
+			t.Fatalf("a click on %s (%v) took the call to action", what, pt)
+		}
+	}
+	e.click(image.Pt((btn.Min.X+btn.Max.X)/2, (btn.Min.Y+btn.Max.Y)/2))
+	if !e.p.Dismissed() || !h.a.PrefBool(core.PrefEmojiPacksPickerCTA, false) {
+		t.Errorf("a click on the label: picker dismissed %v, pref %v", e.p.Dismissed(), h.a.PrefBool(core.PrefEmojiPacksPickerCTA, false))
 	}
 }

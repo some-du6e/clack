@@ -60,7 +60,11 @@ const (
 // packCTAState is the picker's call to action.
 type packCTAState struct {
 	cta, dismiss widget.Clickable
-	textHover    gesture.Hover
+	// art: the pack's emoji (or the Halloween banner's two), drawn inside
+	// the button, so a click on one is the button's
+	art       [3]widget.Clickable
+	btn       image.Rectangle // the button's box, inner box coordinates (tests)
+	textHover gesture.Hover
 	// the arrow's transition: hovered now, the value it started from and
 	// when
 	hovered bool
@@ -90,6 +94,16 @@ func (p *EmojiPicker) packCTA() (core.EmojiPack, core.PackCTA) {
 func (p *EmojiPicker) PackCTA() (name string, kind core.PackCTA, r image.Rectangle) {
 	c := &p.ctaUI
 	return c.drawn.Name, c.drawnKind, c.rect.Add(p.rect.Min)
+}
+
+// PackCTAButton is the call to action's button in window coordinates: its
+// content box, the label's line (tests).
+func (p *EmojiPicker) PackCTAButton() image.Rectangle {
+	c := &p.ctaUI
+	if c.rect.Empty() {
+		return image.Rectangle{}
+	}
+	return c.btn.Add(c.rect.Min).Add(p.rect.Min)
 }
 
 // ClickPackCTA and DismissPackCTA are the call to action's click and its
@@ -147,6 +161,12 @@ func (p *EmojiPicker) layoutPackCTA(gtx layout.Context, th *theme.Theme, cl *Col
 		p.ctaClicked(pk, kind)
 		return 0
 	}
+	for i := range c.art {
+		if c.art[i].Clicked(gtx) {
+			p.ctaClicked(pk, kind)
+			return 0
+		}
+	}
 	if c.dismiss.Clicked(gtx) {
 		if a := p.h.Core(); a != nil {
 			a.ClickedEmojiPickerCTA(kind == core.PackCTAPostInstall)
@@ -180,11 +200,14 @@ func (p *EmojiPicker) layoutPackCTA(gtx layout.Context, th *theme.Theme, cl *Col
 	func() {
 		cs := clipRRect(gtx, image.Rectangle{Max: isz}, rad) // overflow: hidden
 		defer cs.Pop()
-		// the call to action: its clickable box spans the graphic and text
+		// the call to action: an unstyled button (no padding) sized to its
+		// content in the flex row: the 22px label line, from the inner
+		// box's 12px padding to the arrow's end; the art, absolute inside
+		// it, takes its clicks too. The box's padding around it and the
+		// space right of it take none.
 		gg := gtx
 		gg.Constraints = layout.Exact(image.Pt(ctaW, isz.Y))
-		c.cta.Layout(gg, func(gtx layout.Context) layout.Dimensions {
-			pointerCursor(gtx, gtx.Constraints.Min)
+		func(gtx layout.Context) {
 			if halloween {
 				p.ctaHalloweenArt(gtx)
 			} else {
@@ -224,8 +247,22 @@ func (p *EmojiPicker) layoutPackCTA(gtx layout.Context, th *theme.Theme, cl *Col
 					})
 				}
 			}
-			return layout.Dimensions{Size: gtx.Constraints.Min}
-		})
+			// the button's box: the arrow keeps its room while hidden
+			// (opacity 0; its margin-left -3px only while it fades)
+			end := tx + td.Size.X + dp(gtx, 2) + dp(gtx, 20)
+			if !halloween {
+				end = tx + td.Size.X + th.Measure(gtx, 15, theme.Bold, " ") + dp(gtx, 15)
+			}
+			c.btn = image.Rect(dp(gtx, 12), lineY, min(end, gtx.Constraints.Max.X), lineY+dp(gtx, 22))
+			at(gtx, c.btn.Min, func(gtx layout.Context) layout.Dimensions {
+				g := gtx
+				g.Constraints = layout.Exact(c.btn.Size())
+				return c.cta.Layout(g, func(gtx layout.Context) layout.Dimensions {
+					pointerCursor(gtx, gtx.Constraints.Min)
+					return layout.Dimensions{Size: gtx.Constraints.Min}
+				})
+			})
+		}(gg)
 	}()
 	// .p-emoji_picker__pack_cta_dismiss_btn: the smedium icon button
 	// (its 16px glyph) at 22x22; the Halloween one at .5 until hovered
@@ -304,6 +341,7 @@ func (p *EmojiPicker) ctaArt(gtx layout.Context, pk core.EmojiPack) {
 			Rotate(ctr, float32(float64(s.deg)*math.Pi/180))
 		st := op.Affine(tr).Push(gtx.Ops)
 		containImage(gtx, img, sz)
+		p.ctaArtArea(gtx, i, sz)
 		st.Pop()
 	}
 }
@@ -316,7 +354,7 @@ func (p *EmojiPicker) ctaHalloweenArt(gtx layout.Context) {
 	}
 	isz := gtx.Constraints.Min
 	s := dp(gtx, 25)
-	for _, e := range []struct {
+	for i, e := range []struct {
 		name string
 		at   image.Point
 	}{{"spider_web", image.Pt(dp(gtx, 8), dp(gtx, -4))}, {"candle", image.Pt(dp(gtx, 8), isz.Y+dp(gtx, 8)-s)}} {
@@ -324,8 +362,23 @@ func (p *EmojiPicker) ctaHalloweenArt(gtx layout.Context) {
 		if !ok {
 			continue
 		}
-		at(gtx, e.at, func(gtx layout.Context) layout.Dimensions { return p.drawEmoji(gtx, id, 0, 25) })
+		at(gtx, e.at, func(gtx layout.Context) layout.Dimensions {
+			d := p.drawEmoji(gtx, id, 0, 25)
+			p.ctaArtArea(gtx, i, image.Pt(s, s))
+			return d
+		})
 	}
+}
+
+// ctaArtArea is art image i's share of the button: its box (sz, turned
+// with it) takes the button's clicks and its cursor.
+func (p *EmojiPicker) ctaArtArea(gtx layout.Context, i int, sz image.Point) {
+	g := gtx
+	g.Constraints = layout.Exact(sz)
+	p.ctaUI.art[i].Layout(g, func(gtx layout.Context) layout.Dimensions {
+		pointerCursor(gtx, gtx.Constraints.Min)
+		return layout.Dimensions{Size: gtx.Constraints.Min}
+	})
 }
 
 // halloweenArrow is HalloweenBannerArrow: "M8 10h6.5L11.5 6.75M14.5 10

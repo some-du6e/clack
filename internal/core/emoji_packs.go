@@ -126,9 +126,12 @@ type packState struct {
 	inputBadge bool
 	tabBadge   bool
 	gen        uint64 // bumped by every change of list
-	// canAdd is Llxp D as the last pack read found it (permissions/info
-	// ADD_CUSTOM_EMOJI): the picker's call to action reads it
-	canAdd bool
+	// canAdd is Llxp D as the permission store holds it (permissions/info
+	// ADD_CUSTOM_EMOJI, asked at boot: LoadEmojiPermissions), answered at
+	// canAddAt (zero: never); permWait is closed when the call out answers
+	canAdd   bool
+	canAddAt time.Time
+	permWait chan struct{}
 	// now is the clock the Halloween season reads (tests set it)
 	now func() time.Time
 }
@@ -265,13 +268,10 @@ func (a *App) FetchEmojiPacks() {
 		// the store first: Slack dispatches setEmojiCollections without
 		// waiting for handlePotentialNewPack's reads and writes
 		a.emit(Event{Type: "emoji_packs"})
-		// Llxp D, kept for the picker's call to action
-		// (EmojiPickerPackCTA), which reads it as Slack's selector does
-		can := a.canAddCustomEmoji(ctx)
-		ps.mu.Lock()
-		ps.canAdd = can
-		ps.mu.Unlock()
-		a.emit(Event{Type: "emoji_packs"})
+		// Llxp D from the permission store, which boot filled
+		// (LoadEmojiPermissions): the picker's call to action
+		// (EmojiPickerPackCTA) read it from its first frame
+		can := a.emojiCanAdd(ctx)
 		if ok {
 			a.potentialNewPack(ctx, newest, can)
 		}
@@ -331,9 +331,65 @@ func (a *App) potentialNewPack(ctx context.Context, p EmojiPack, canAdd bool) {
 	})
 }
 
-// canAddCustomEmoji is Llxp D: permissions/info grants ADD_CUSTOM_EMOJI.
-func (a *App) canAddCustomEmoji(ctx context.Context) bool {
-	body := map[string]any{"user_id": a.S.SelfID(), "permissions": []string{PermAddCustomEmoji}}
+// emojiClientPermissions is Slack's client permission set's custom emoji
+// group (client-boot's getPermissionSet({context: "client"}), its w:
+// ADD_CUSTOM_EMOJI, DELETE_CUSTOM_EMOJI, EDIT_SLACKBOT_RESPONSES), which
+// maybeFetchClientPermissions asks for at boot.
+var emojiClientPermissions = []string{PermAddCustomEmoji, "DELETE_CUSTOM_EMOJI", "EDIT_SLACKBOT_RESPONSES"}
+
+// LoadEmojiPermissions is maybeFetchClientPermissions for the custom emoji
+// group: permissions/info, its ADD_CUSTOM_EMOJI kept (Llxp D) for the
+// picker's call to action and the pack read. Boot asks, so the first
+// picker of a session draws the call to action from its first frame, as
+// Slack's does; a caller while a call is out waits for its answer. A
+// failed call allows nothing and keeps nothing (the next read asks).
+func (a *App) LoadEmojiPermissions(ctx context.Context) bool {
+	ps := a.packs()
+	ps.mu.Lock()
+	if w := ps.permWait; w != nil {
+		ps.mu.Unlock()
+		select {
+		case <-w:
+		case <-ctx.Done():
+		}
+		ps.mu.Lock()
+		defer ps.mu.Unlock()
+		return ps.canAdd
+	}
+	w := make(chan struct{})
+	ps.permWait = w
+	ps.mu.Unlock()
+	can, err := a.askEmojiPermissions(ctx)
+	ps.mu.Lock()
+	ps.permWait = nil
+	if err == nil {
+		ps.canAdd, ps.canAddAt = can, time.Now()
+	}
+	ps.mu.Unlock()
+	close(w)
+	if err == nil {
+		a.emit(Event{Type: "emoji_packs"})
+	}
+	return can
+}
+
+// emojiCanAdd is Llxp D from the permission store: the last answer while
+// under an hour old (Slack's permissions are kept an hour), else asked.
+func (a *App) emojiCanAdd(ctx context.Context) bool {
+	ps := a.packs()
+	ps.mu.Lock()
+	if !ps.canAddAt.IsZero() && time.Since(ps.canAddAt) <= chPermMaxAge {
+		defer ps.mu.Unlock()
+		return ps.canAdd
+	}
+	ps.mu.Unlock()
+	return a.LoadEmojiPermissions(ctx)
+}
+
+// askEmojiPermissions is the permissions/info call: whether it grants
+// ADD_CUSTOM_EMOJI.
+func (a *App) askEmojiPermissions(ctx context.Context) (bool, error) {
+	body := map[string]any{"user_id": a.S.SelfID(), "permissions": emojiClientPermissions}
 	// a workspace permission: on Grid asked for the viewer's workspace,
 	// as the broadcast permissions' group DM case asks (broadcast.go)
 	team := a.C.Creds.Team
@@ -345,14 +401,14 @@ func (a *App) canAddCustomEmoji(ctx context.Context) bool {
 		Allowed        []string            `json:"allowed"`
 		AllowedPerTeam map[string][]string `json:"allowed_per_team"`
 	}
-	if a.C.Edge(ctx, "permissions/info", body, &r) != nil {
-		return false
+	if err := a.C.Edge(ctx, "permissions/info", body, &r); err != nil {
+		return false, err
 	}
 	allowed := r.Allowed
 	if perTeam && r.AllowedPerTeam != nil {
 		allowed = append(allowed, r.AllowedPerTeam[team]...)
 	}
-	return slices.Contains(allowed, PermAddCustomEmoji)
+	return slices.Contains(allowed, PermAddCustomEmoji), nil
 }
 
 // AddEmojiPack is addEmojiCollection: emoji.addCollection {collection_id}.
