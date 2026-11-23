@@ -541,6 +541,8 @@ func (m *mirror) sweep() {
 			fp = m.memberFP(it.key)
 		case "channels":
 			fp = m.channelFP(it.key)
+		case "channelHistory":
+			fp = m.historyFP(it.key)
 		default:
 			continue
 		}
@@ -1049,6 +1051,11 @@ func (m *mirror) get(slice, key string) any {
 		}
 		return nil
 	case "channelHistory":
+		// watched like messages: a history core loads with no event (a
+		// channel's first load, a page) changes what JS read, and Slack's
+		// reducer makes the slice the load's. A copy read before the load
+		// listed nothing, so HideResolved, filtering it, hid nothing
+		m.watch("channelHistory", key, m.historyFP(key))
 		return m.history(key)
 	case "teams":
 		return m.team(key)
@@ -1545,6 +1552,51 @@ func (m *mirror) history(key string) any {
 		slices = append(slices, historySlice(ts, "", ""))
 		return map[string]any{"reachedStart": reachedStart, "reachedEnd": true, "slices": slices, "prevReachedEnd": true}
 	}
+}
+
+// historyFP fingerprints channelHistory[key] as history lists it: its
+// slices' ranges and their messages' timestamps, the ones history lists
+// (a load, a page, a window or a new message changes it, an edit or a
+// reaction doesn't). A channel's in place (VisitHistory); a thread's from
+// its slices.
+func (m *mirror) historyFP(key string) uint64 {
+	a := m.t.app
+	h := fnv64a(fnvOffset64)
+	flag := func(b bool) {
+		if b {
+			h.str("+")
+		} else {
+			h.str("-")
+		}
+	}
+	ch, thread, isThread := strings.Cut(key, "-")
+	if isThread {
+		sls, rs, re, pre, ok := a.S.ThreadHistory(ch, thread)
+		if !ok {
+			return 0
+		}
+		flag(rs)
+		flag(re)
+		flag(pre)
+		for _, x := range sls {
+			h.str("|" + x.Start + ":" + x.End + "|")
+			for _, ts := range x.TSs {
+				h.str(ts)
+				h.str(",")
+			}
+		}
+		return uint64(h)
+	}
+	a.S.VisitHistory(ch, func(start, end string, older bool) {
+		h.str("|" + start + ":" + end + "|")
+		flag(older)
+	}, func(x *slack.Message) {
+		if x.ThreadTS == "" || x.ThreadTS == x.TS || x.Subtype == "thread_broadcast" {
+			h.str(x.TS)
+			h.str(",")
+		}
+	})
+	return uint64(h)
 }
 
 // historySlice is a channelHistory slice: its timestamps, and its start
