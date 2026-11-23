@@ -1133,6 +1133,7 @@ func vertFormatFor(f shader.InputLocation) C.MTLVertexFormat {
 func pixelFormatFor(f driver.TextureFormat) C.MTLPixelFormat {
 	switch f {
 	case driver.TextureFormatFloat:
+		driver.ClackCoverageBits.Store(16) // for Clack patch 62's ring tests
 		return C.MTLPixelFormatR16Float
 	case driver.TextureFormatRGBA8:
 		return C.MTLPixelFormatRGBA8Unorm
