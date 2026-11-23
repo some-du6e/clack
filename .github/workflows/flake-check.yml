@@ -5304,6 +5304,7 @@ jobs:
       - fl1122c-s-avf
       - fl1122c-r-views
       - fl1122c-s-displays
+      - composer-link-edit
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
