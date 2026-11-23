@@ -317,10 +317,11 @@ var crEnableFlags = [...]struct {
 
 // crNoRecorder is the clip buttons Slack leaves out of a client that
 // can't record: MessagePaneInput's isStoriesButtonEnabled and
-// isAudioButtonEnabled (boot-shared Jg9Y yD / hP) need window.MediaRecorder,
-// and Clack has no clip recorder, so enableStoryButton and
-// enableAudioButton are false and TextyButtons drops the clips group and
-// its divider.
+// isAudioButtonEnabled (boot-shared Qre6 yD / hP) need window.MediaRecorder,
+// so enableStoryButton and enableAudioButton are false and TextyButtons
+// drops the clips group and its divider. Clack records audio clips where
+// it can open a microphone (clipHide, clips.go); the video button always
+// stays out.
 const crNoRecorder = 1<<crVideo | 1<<crAudio
 
 // hideBits returns the buttons a plugin turned off (enable…: false).
@@ -632,7 +633,7 @@ func (c *Composer) drawRoadblock(gtx layout.Context, p slackc.Props) layout.Dime
 // composer.addButton infra's broadcast context).
 func (c *Composer) inputProps() slackc.Props {
 	p := c.convProps()
-	putEnableFlags(p, crNoRecorder)
+	putEnableFlags(p, c.clipHide())
 	p["enableGifPicker"] = true
 	if c.edit != nil {
 		p["enableScheduleSendButton"] = false
@@ -688,7 +689,7 @@ func (c *Composer) onBroadcastChange(e slackc.Props) {
 }
 
 func (c *Composer) layoutInput(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	c.cs.Hide = crNoRecorder
+	c.cs.Hide = c.clipHide()
 	if p != nil {
 		c.cs.Hide |= hideBits(p)
 	}
