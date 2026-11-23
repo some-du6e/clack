@@ -181,7 +181,7 @@ func (f *UploadedFile) types() (mimetype, filetype, pretty string) {
 	if err != nil {
 		mt = ""
 	}
-	if st := f.UploadArgs.Get("snippet_type"); st != "" {
+	if st := f.URLArgs.Get("snippet_type"); st != "" {
 		if st == "auto" {
 			st = "text"
 		}

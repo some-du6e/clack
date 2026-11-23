@@ -231,6 +231,7 @@ func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) 
 	raws := make([]*PendingFile, len(o.Files))
 	for i, f := range o.Files {
 		raws[i] = NewPendingFile(f.Name, firstNonEmpty(f.Title, f.Name), f.Data)
+		raws[i].Subtype = f.Subtype
 	}
 	var ph *filePlaceholder
 	if o.Channel != "" {
@@ -364,9 +365,11 @@ func (a *App) PrepareUpload(ctx context.Context, f UploadFile, progress func(sen
 }
 
 // uploadOnce is one eager upload attempt: files.getUploadURL {filename,
-// length, snippet_type, alt_txt} (Slack's getUploadURL fetcher sends the
-// last two for snippets and for images with alt text), the multipart POST
-// to upload_url (uploadPart), files.completeUpload.
+// length, snippet_type, subtype, alt_txt} (Slack's getUploadURL fetcher
+// sends snippet_type for snippets, subtype for clips and alt_txt for
+// images with alt text), the multipart POST to upload_url (uploadPart),
+// files.completeUpload {files: [{id, title, subtype}]} (UploadQueue's
+// _getMultiFileUploadDataForApi adds subtype when the File has one).
 func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, total int64)) (string, error) {
 	t0 := time.Now()
 	var r struct {
@@ -378,6 +381,9 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 	args := url.Values{"filename": {f.Name}, "length": {strconv.Itoa(n)}}
 	if f.SnippetType != "" {
 		args.Set("snippet_type", f.SnippetType)
+	}
+	if f.Subtype != "" {
+		args.Set("subtype", f.Subtype)
 	}
 	if f.AltText != "" {
 		args.Set("alt_txt", f.AltText)
@@ -395,7 +401,7 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 		return "", err
 	}
 	log.Printf("upload: %s POST %d bytes in %s", id, n, time.Since(t0).Round(time.Millisecond))
-	if err := a.C.CompleteUpload(ctx, []slack.UploadedRef{{ID: id, Title: firstNonEmpty(f.Title, f.Name)}}); err != nil {
+	if err := a.C.CompleteUpload(ctx, []slack.UploadedRef{{ID: id, Title: firstNonEmpty(f.Title, f.Name), Subtype: f.Subtype}}); err != nil {
 		log.Printf("upload: %s completeUpload failed (%s)", id, uploadErrClass(err))
 		return "", err
 	}
@@ -404,14 +410,28 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 }
 
 // uploadPart is the FormData entry Slack's UploadQueue posts for f: the
-// File, named f.Name and typed as Chromium types it (slack.FileType), or a
-// snippet's Blob, which FormData names "blob", of the snippet's type
-// (text/plain when f has none).
+// File, named f.Name, or a snippet's Blob, which FormData names "blob";
+// typed f.FileType() (UploadPart sends "" as application/octet-stream).
 func uploadPart(f UploadFile) slack.MultipartFile {
+	name := f.Name
 	if f.SnippetType != "" {
-		return slack.MultipartFile{Field: "file", Name: "blob", Type: firstNonEmpty(f.Type, "text/plain"), Data: f.Data}
+		name = "blob"
 	}
-	return slack.MultipartFile{Field: "file", Name: f.Name, Type: firstNonEmpty(f.Type, slack.FileType(f.Name)), Data: f.Data}
+	return slack.MultipartFile{Field: "file", Name: name, Type: f.FileType(), Data: f.Data}
+}
+
+// FileType is f's type as Slack's client holds its File (or a snippet's
+// Blob): f.Type; else a snippet's text/plain; else the type Chromium gives
+// a File of f's name (slack.FileType, "" where its lists have none). The
+// upload's part goes up with it, and plugins see it as the File's type.
+func (f UploadFile) FileType() string {
+	switch {
+	case f.Type != "":
+		return f.Type
+	case f.SnippetType != "":
+		return "text/plain"
+	}
+	return slack.FileType(f.Name)
 }
 
 // retryableUpload: anything but a Slack API error, a sign-out or the

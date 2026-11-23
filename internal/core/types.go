@@ -518,9 +518,14 @@ type UploadFile struct {
 	// files.getUploadURL's alt_txt.
 	AltText string
 	// Type is the upload part's Content-Type: the Blob's type for a
-	// snippet (uploadSnippet), else "" for slack.FileType(Name), the type
+	// snippet (uploadSnippet), the recorder's for a clip (audio/mp4), a
+	// plugin File's own; else "" for slack.FileType(Name), the type
 	// Chromium gives a File of that name. Slack files the upload by it.
 	Type string
+	// Subtype is the File's subtype ("slack_audio" for a voice clip,
+	// internal/clip): UploadQueue sends it as files.getUploadURL's subtype
+	// and in completeUpload's files entry. "" for an ordinary file.
+	Subtype string
 }
 
 type UploadedFile struct {

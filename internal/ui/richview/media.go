@@ -49,6 +49,12 @@ type MediaSlot struct {
 	Radius  int
 	Border  color.NRGBA
 	BorderW int
+	// Mini is an audio file's player in its mini style (audioPlayerStyle
+	// {style: "default", mini: true}, a pending file's in the composer:
+	// PendingFile's FileAudio): the play button, the scrubber and the time,
+	// with no speed control, transcript button or More actions, at the
+	// natural rate (ignoresPlaybackSpeedPref).
+	Mini bool
 }
 
 // mediaSlot is a tile Options.Media draws: r in the View's coordinates.
