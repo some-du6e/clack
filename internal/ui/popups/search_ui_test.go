@@ -84,6 +84,7 @@ type srDrv struct {
 		Layout(gtx layout.Context) layout.Dimensions
 	}
 	over  func(gtx layout.Context) // drawn after w (menus)
+	now   time.Time                // the frames' clock when set, else the wall clock
 	texts []string                 // the last scanned frame's text
 	dark  bool
 }
@@ -92,6 +93,9 @@ func (d *srDrv) frame() {
 	d.ops.Reset()
 	gtx := layout.Context{Ops: &d.ops, Source: d.r.Source(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 		Constraints: layout.Exact(d.size), Now: time.Now()}
+	if !d.now.IsZero() {
+		gtx.Now = d.now
+	}
 	slackc.Frame(gtx)
 	bg := rgb(0xffffff)
 	if d.dark {

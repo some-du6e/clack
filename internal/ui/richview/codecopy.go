@@ -208,6 +208,10 @@ func (v *View) drawCopyButtons(gtx layout.Context, st *Style) {
 		name, tip := "copy", "Copy"
 		if v.copiedNow(i, gtx.Now) {
 			name, tip = "check", "Copied!"
+			// the revert's frame, asked again every frame it shows: a
+			// frame in between that asks for an earlier wakeup of its own
+			// (the tooltip's delay) replaces the window's timer
+			gtx.Execute(op.InvalidateCmd{At: v.copiedAt.Add(copiedFor)})
 		}
 		ip := v.px(copyIconPx)
 		o := br.Min.Add(image.Pt((br.Dx()-ip)/2, (br.Dy()-ip)/2))

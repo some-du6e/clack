@@ -77,6 +77,53 @@ func SoundLabel(v string) string {
 	return ""
 }
 
+// SoundURL is the CDN URL of one of Slack's sounds by its pref value
+// ("knock_brush.mp3" → .../knock_brush-ac2b6e8.mp3), the url Slack's sound
+// playback (Ofe8 play) is handed; "" for "none" and names Slack doesn't
+// ship.
+func SoundURL(file string) string {
+	if cdn, ok := slackSounds[file]; ok {
+		return slackSoundCDN + cdn
+	}
+	return ""
+}
+
+// SoundBytes is the file behind one of Slack's CDN sound URLs (what
+// SoundURL makes, or another sound of the build's by its hashed name), from
+// Clack's cache or the CDN without a cookie; ok is false for any other URL.
+func SoundBytes(url string) ([]byte, bool) {
+	file, ok := strings.CutPrefix(url, slackSoundCDN)
+	if !ok || strings.ContainsAny(file, "?#") {
+		return nil, false
+	}
+	b, err := soundBytes(file)
+	return b, err == nil
+}
+
+// Hooked is the pref value ("knock_brush.mp3") of the Slack sound behind
+// one of Slack's CDN sound URLs when PlayHook (tests) is set: a page
+// element playing it (Slack's sound playback on the plugins' page) hands
+// the hook each sound it plays, as Clack's own path does. ok is false
+// without the hook or for any other URL.
+func Hooked(url string) (pref string, ok bool) {
+	if PlayHook == nil {
+		return "", false
+	}
+	return SoundPref(url)
+}
+
+// SoundPref is the pref value ("knock_brush.mp3") of the Slack sound
+// behind one of Slack's CDN sound URLs (SoundURL's); ok is false for any
+// other URL.
+func SoundPref(url string) (pref string, ok bool) {
+	for pref, cdn := range slackSounds {
+		if url == slackSoundCDN+cdn {
+			return pref, true
+		}
+	}
+	return "", false
+}
+
 // PlayHook, when set (tests), gets every sound PlaySlackSound would play
 // instead of the speakers.
 var PlayHook func(file string)

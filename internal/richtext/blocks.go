@@ -16,11 +16,13 @@ import (
 
 // bk is a generic Block Kit block / element / rich_text node.
 type bk struct {
-	bkAgent          // plan, task_card (agent.go)
-	Type      string `json:"type"`
-	BlockID   string `json:"block_id"`
-	Elements  []bk   `json:"elements"`
-	Rows      bkRows `json:"rows"` // table
+	bkAgent                // plan, task_card (agent.go)
+	viz       *bkDataViz   // a data_visualization block's own keys (dataviz.go)
+	table     *bkDataTable // a data_table block's own keys (datatable.go)
+	Type      string       `json:"type"`
+	BlockID   string       `json:"block_id"`
+	Elements  []bk         `json:"elements"`
+	Rows      bkRows       `json:"rows"` // table
 	ColumnSet []struct {
 		Align     string `json:"align"`
 		IsWrapped bool   `json:"is_wrapped"`
@@ -98,7 +100,7 @@ type bk struct {
 	CallID     string   `json:"call_id"`
 	Call       *bkCall  `json:"call"` // call.go
 	// callout, container (kitcards.go)
-	ChildBlocks      []bk            `json:"child_blocks"`
+	ChildBlocks      bkChildren      `json:"child_blocks"`
 	BackgroundColor  string          `json:"background_color"`
 	RichTextTitle    *bk             `json:"rich_text_title"`
 	Subtitle         *textObj        `json:"subtitle"`
@@ -314,23 +316,11 @@ func parseBlocks(raw json.RawMessage) []bk {
 	if len(raw) <= 2 || string(raw) == "null" {
 		return nil
 	}
-	var bs []bk
-	if json.Unmarshal(raw, &bs) == nil {
-		return bs
-	}
-	// One malformed block shouldn't drop the rest: decode them one by one;
-	// the bad ones become Slack's "This content could not be displayed."
-	var parts []json.RawMessage
-	if json.Unmarshal(raw, &parts) != nil {
+	// One malformed block shouldn't drop the rest: the bad ones become
+	// Slack's "This content could not be displayed."
+	bs, err := decodeBlocks(raw)
+	if err != nil {
 		return nil
-	}
-	bs = bs[:0]
-	for _, p := range parts {
-		var b bk
-		if json.Unmarshal(p, &b) != nil {
-			b = bk{Type: badBlock}
-		}
-		bs = append(bs, b)
 	}
 	return bs
 }
@@ -528,7 +518,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", badBlock:
 		return true
 	}
 	return false
@@ -686,6 +676,10 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.shortcutBlock(b))
 	case "card":
 		return append(out, c.cardBlock(b))
+	case "data_table":
+		return append(out, c.dataTableBlock(b))
+	case "data_visualization":
+		return append(out, c.dataVizBlock(b))
 	case "markdown":
 		return append(out, markdownBlocks(c.r, b.textString())...)
 	case "mrkdwn", "plain_text":
