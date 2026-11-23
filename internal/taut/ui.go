@@ -1950,21 +1950,9 @@ func (v *viewCache) work() {
 				e.ver = ver
 				// what the UI sees changed; a channel's bucket shows only
 				// its injected list, which may have come back as it was
-				// (the same messages, kept decoded and converted). A
-				// message's value from a call that ran before the change's
-				// last mark (the mirror marked it again while JS answered)
-				// isn't ready: a row waiting on it draws what it drew until
-				// the refetch below, whose answer announces it (the same
-				// bytes with their marks behind them, or newer ones).
-				// Announcing it here as well asked for a frame that drew
-				// nothing new, one an edit under a plugin patching the
-				// messages slice since the reads and the invalidates share
-				// the in-order lane (TestActivityEditLatency/slice: 80
-				// frames for 20 edits, 61 before)
+				// (the same messages, kept decoded and converted)
 				bucket := k.slice == "messages" && k.key != "" && k.sub == ""
-				early := k.slice == "messages" && k.key != "" && k.sub != "" &&
-					!v.msgMarksReadyLocked(k, ver) && v.staleLocked(e, g, k.slice)
-				if !early && (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
+				if (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
 					changed = true
 					v.epoch.Add(1)
 				}
