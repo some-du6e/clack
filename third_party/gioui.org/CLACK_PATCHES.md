@@ -3256,7 +3256,19 @@ bottom. On a light background that's invisible; on the intro's dark one,
 and in dark mode, sRGB turns 1% into 25/255: a faint line hanging off
 rings and filled circles (the same report as patch 62). In 32-bit float
 the sums cancel: on llvmpipe no ring, badge or spinner leaves a column.
-The coverage texture takes twice the memory.
+
+What it costs (perf.yml's gated job, llvmpipe, 2026-11-23): the coverage
+and intersection atlases take 4 bytes a texel instead of 2 (about 36 MB
+instead of 18 for a 4K window), and the stencil pass's clear and One/One
+blend move twice the bytes. ui → ring-seam-2 (run 45125099421, which
+also carries RingPath): idle frame median 48.4 → 57.5 ms (+18.6%), scroll
+frame median 52.0 → 56.1 ms (+7.8%), idle RSS 313 → 333 MB; the gate
+fails on all three. ring-seam-2 → the same tree with R16F (45132400754,
+R32F alone): idle frame median 68.8 → 61.9 ms (-10.0%), scroll 69.1 →
+66.6 ms (-3.7%), idle RSS 321 → 311 MB. Every frame time and allocation
+count else is within noise. llvmpipe rasterizes on the CPU, so bandwidth
+is its worst case; a real GPU pays less. Direct3D 11, Metal and Vulkan
+don't change.
 
 `gpu.ClackCoverageBits` (each backend's `NewTexture` for
 `TextureFormatFloat`, through `driver.ClackCoverageBits`) says which
