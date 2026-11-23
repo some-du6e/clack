@@ -1,6 +1,6 @@
 # Slack's experiments in Clack
 
-<!-- Generated from the experiments inventory (branch experiments, 2026-11-10); the method below. Refreshed by hand on 2026-11-11 (branch exp-wave-2): see "2026-11-11 refresh"; drift against the account on 2026-11-13 (branch exp-drift): see "2026-11-13 drift"; wave 3 (branch exp-wave-3): see "2026-11-13 wave 3"; wave 4 (branch exp-wave-4): see "2026-11-13 wave 4"; lists-records: see "2026-11-13 lists-records"; wave 5 (branch exp-wave-5): see "2026-11-13 wave 5"; wave 6 (branch exp-wave-6): see "2026-11-13 wave 6"; two stale gates (branch experiment-gate-drift): see "2026-11-15 gate drift"; wave 7 (branch exp-wave-7): see "2026-11-15 wave 7"; wave 8 (branch exp-wave-8): see "2026-11-15 wave 8"; wave 9 (branch exp-wave-9): see "2026-11-15 wave 9"; wave 10 (branch exp-wave-10): see "2026-11-15 wave 10"; drift against build 8f19be21ed7e (branch experiments-drift): see "2026-11-21 drift"; drift against build a63c14cf59d2 (branch experiments-drift-2): see "2026-11-22 drift". -->
+<!-- Generated from the experiments inventory (branch experiments, 2026-11-10); the method below. Refreshed by hand on 2026-11-11 (branch exp-wave-2): see "2026-11-11 refresh"; drift against the account on 2026-11-13 (branch exp-drift): see "2026-11-13 drift"; wave 3 (branch exp-wave-3): see "2026-11-13 wave 3"; wave 4 (branch exp-wave-4): see "2026-11-13 wave 4"; lists-records: see "2026-11-13 lists-records"; wave 5 (branch exp-wave-5): see "2026-11-13 wave 5"; wave 6 (branch exp-wave-6): see "2026-11-13 wave 6"; two stale gates (branch experiment-gate-drift): see "2026-11-15 gate drift"; wave 7 (branch exp-wave-7): see "2026-11-15 wave 7"; wave 8 (branch exp-wave-8): see "2026-11-15 wave 8"; wave 9 (branch exp-wave-9): see "2026-11-15 wave 9"; wave 10 (branch exp-wave-10): see "2026-11-15 wave 10"; drift against build 8f19be21ed7e (branch experiments-drift): see "2026-11-21 drift"; drift against build a63c14cf59d2 (branch experiments-drift-2): see "2026-11-22 drift"; drift against build 66e72b57ade1 (branch experiments-drift-3): see "2026-11-23 drift". -->
 
 Slack turns features on per account with experiments. Clack should behave the way
 Slack's desktop client does in whatever group the account is in. This is the inventory
@@ -856,3 +856,42 @@ None of these is assigned to the test account, so Slack draws none of them there
 | `wfb_tasks_run_now_invokes_task` | `on` | client-boot `YwqI` gS | Workflow Builder tasks' Run now invokes the task | no Workflow Builder |
 
 The other 315 experiments the account has on that Clack doesn't read are already named in this file (the inventory's classes and the earlier waves and drifts).
+
+## 2026-11-23 drift (branch experiments-drift-3, build 66e72b57ade1)
+
+**Method.** The newest public CDN build, `66e72b57ade1` (slack-datamine-plus `build/meta.json`, captured 2026-11-23; `5718bdb1b28b` came between), against `a63c14cf59d2`, the build the 2026-11-22 drift matched. Both builds were fetched whole from `a.slack-edge.com/bv1-13-br/` without cookies (3,068 and 3,070 chunks; 2,979 are byte for byte the same) and scanned whole by the same scanner, so the comparison doesn't lean on an earlier scan. The 2026-11-22 drift kept the earlier scan's reads for the chunks whose names hadn't changed; for a check, `8f19be21ed7e` (its chunk list from datamine-plus's history) was fetched and scanned whole too: against `a63c14cf59d2` it reads the same 1,450 names, each by the same reader, in the same chunk and against the same groups, as that drift found. The chunks were deleted afterwards.
+
+**What changed in Slack's reads.** Nothing Clack reads:
+
+| Experiment | `a63c14cf59d2` | `66e72b57ade1` | Clack |
+|---|---|---|---|
+| `ai_sampling_channel_unreads_summary_contextual_nudge` | boot-shared and its megaphone chunk, `=== treatment` | gone | not read (Slack AI's channel summary nudge) |
+| `internal_ai_sampling_channel_unreads_summary_contextual_nudge` | the tabbed channels' `use-tab-view`, `=== on` | gone | not read |
+| `slackbot_ai_paywall_redesign` | a literal in `use-tab-view` | a constant of boot `OZvG`, read by the new `shouldShowSlackbotAiNoAccessPaywallRedesign` in the Slackbot AI upgrade paywall | not read (no Slackbot AI) |
+| `slackbot_free_teams_segmented_offer` | the upgrade paywall's module chunk | the paywall's own chunk and the megaphone `slackbot-ai-dm-upgrade-banner` | not read |
+
+datamine-plus's `experiments.txt` lists `slackbot_ai_free_pro_paywall_translations` and `slackbot_free_teams_segmented_offer` as new; both were read in `a63c14cf59d2` already (its lists lag the code, as noted on 2026-11-22). The session-toggle table in client-boot is unchanged. Nothing to port or retire.
+
+**Assignments.** One read-only `experiments.getByUser` through the probe (clod's session, not Karim's), names and groups only: 1,664 assignments (1,643 on 2026-11-22); 27 changed. Three are experiments Clack reads, and Clack has both branches of each already, so it follows the new groups as Slack does:
+
+| Experiment | 2026-11-22 | 2026-11-23 | Clack |
+|---|---|---|---|
+| `emoji_v17` | not assigned | `on` | the 17.0 standard set (core `emoji_set.go`, emoji `set.go`): the Unicode 17 emoji in the picker, the ":" list and messages |
+| `replybar_unread_reliability_fix` | not assigned | `on` | a thread read elsewhere leaves the reply bar's list (core `channel_thread_activity.go`) |
+| `wfb_3p_agent_tasks_tab` | not assigned | `off` | read (core `agent_tasks.go`); off is what not assigned reads as |
+
+The others change nothing Clack draws:
+
+| Experiment | 2026-11-22 | 2026-11-23 | Read by Slack's web client |
+|---|---|---|---|
+| `calendar2webapp_agenda`, `calendar2webapp_create_event`, `calendar2webapp_exploration` | not assigned | `on` | client-boot and boot-shared: Slack's calendar (the agenda, Create event's guest list, the exploration) |
+| `calendar2webapp_launch`, `calendar2webapp_mobile`, `calapp_rewrite_connect`, `gcal_shared_dwa`, `ocal_shared_dwa` | not assigned or `off` | `on` | the calendar's launch and connect flows; `gcal_shared_dwa` picks the unified Google Calendar app rows |
+| `calendar_jit_background_notifications`, `calendar_jit_delay_dismiss` | not assigned | `on` | boot-render, client-boot: just-in-time meeting notifications |
+| `video_effects_longpipe` | not assigned | `on` | client-boot: picks Slack's video effects engine ("longpipe" over "mediapipe"), internal to its huddle pipeline |
+| `huddles_camera_native_aspect_capture` | not assigned | `off` | client-boot; off is the default |
+| `apps_connection_status_unfinished_connect_translations` | not assigned | `on` | the `auth_provider` block's connection status strings; Clack draws that block as its fallback text |
+| `onboard_joiners_with_slackbot` | not assigned | `control` | client-boot; control is the default |
+| `admin_home_productivity_suite_banner`, `app_activity_log_export`, `dbsc_enforcement_by_session_start`, `desktop_windows_com_activation`, `enterprise_productivity_admin_feedback`, `session_channels_pr_tab_subtabs` | not assigned or `off` | `on` | not in the web client (admin pages, the desktop app's main process, the server) |
+| `integrations_cta_v2_q3fy27`, `marketplace_aa_v2_q2fy27`, `marketplace_filter_q3fy27`, `newxp_14783_recaptcha_riskanalysis_score` | `treatment_a`, `control`, `control`, `control` | `treatment_b`, `treatment`, `treatment_a`, `treatment` | not in the web client (marketing, the marketplace, sign-up) |
+
+**Backlog.** Slack's calendar (the `calendar2webapp_*`, `calendar_jit_*` and `*cal_shared_dwa` gates above) is on for this account now: a feature Clack doesn't have, queued with it. The 2026-11-22 drift's 14 gates are unchanged.
