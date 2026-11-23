@@ -113,3 +113,20 @@ func TestCrashFileHeldByTheRunningClack(t *testing.T) {
 		t.Errorf("crash.log after the second capture: %q", b)
 	}
 }
+
+// With no stderr on Windows, crash.log is fd 2 for the whole run, so a
+// DLL's own stderr lines land there too: without a runtime or native
+// crash report in it, the next start says so instead of calling it a
+// crash.
+func TestPreviousCrashNeedsACrashReport(t *testing.T) {
+	p := filepath.Join(t.TempDir(), CrashFileName)
+	os.WriteFile(p, []byte(crashHeaderPrefix+" old\nlibpng warning: iCCP: known incorrect sRGB profile\n"), 0o600)
+	rec := previousCrash(p)
+	if strings.Contains(rec, "crashed") || !strings.Contains(rec, "holds no crash") || !strings.Contains(rec, "libpng warning") {
+		t.Errorf("a DLL's stderr line read as %q", rec)
+	}
+	os.WriteFile(p, []byte(crashHeaderPrefix+" old\n2026/11/21 17:39:59.123 native exception 0xc0000374 (STATUS_HEAP_CORRUPTION) in ntdll.dll\n"), 0o600)
+	if rec := previousCrash(p); !strings.Contains(rec, "the previous run crashed (old)") {
+		t.Errorf("the native capture's record read as %q", rec)
+	}
+}

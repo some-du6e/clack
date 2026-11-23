@@ -19,11 +19,13 @@ func openCrashFile(path string) (*os.File, error) {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
+			f.Close()
 			return nil, errCrashFileHeld
 		}
-		return nil, err
+		// a file system without locks (some network homes): the capture
+		// runs unlocked rather than not at all
+		return f, nil
 	}
 	return f, nil
 }

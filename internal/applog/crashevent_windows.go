@@ -4,7 +4,9 @@ package applog
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -29,5 +31,9 @@ func CrashRecordFor(prev string) string {
 	if err != nil {
 		return ""
 	}
-	return crashRecordIn(out, pid, started)
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return crashRecordIn(out, filepath.Base(exe), pid, started)
 }

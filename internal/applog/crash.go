@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -43,7 +44,8 @@ func (l *Logger) CaptureCrashes(header string) {
 	}
 	go func() {
 		if err := l.captureCrashes(header); err != nil {
-			fmt.Fprintf(os.Stderr, "clack: no crash log: %v\n", err)
+			// in clack.log too: a start with no capture says why
+			log.Printf("applog: no crash capture this run: %v", err)
 		}
 	}()
 }
@@ -56,7 +58,13 @@ func (l *Logger) captureCrashes(header string) error {
 	// this run's alone while it runs (another Clack's launch that hands its
 	// link over and exits mustn't start the file afresh under the running
 	// one's crash output)
+	// held for a moment by another Clack's launch handing its link over
+	// (it opens and exits): try again for up to 2 s
 	f, err := openCrashFile(path)
+	for i := 0; errors.Is(err, errCrashFileHeld) && i < 20; i++ {
+		time.Sleep(100 * time.Millisecond)
+		f, err = openCrashFile(path)
+	}
 	if err != nil {
 		return err
 	}
@@ -108,6 +116,35 @@ func previousCrash(path string) string {
 
 // previousCrashFrom is previousCrash for the open file f (read from its
 // current offset, the start).
+// crashMarks are what a crash's report holds: the runtime's (a panic, a
+// fatal error, a signal, a Windows exception Go caught, its goroutine
+// dump) or the native capture's (crash_windows.go writeNative).
+var crashMarks = [][]byte{
+	[]byte("panic: "), []byte("fatal error: "), []byte("runtime: "), []byte("goroutine "),
+	[]byte("[signal "), []byte("Exception 0x"), []byte("native exception 0x"),
+}
+
+// crashMarked reports whether b holds a crash's report.
+func crashMarked(b []byte) bool {
+	for _, m := range crashMarks {
+		if bytes.Contains(b, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// firstLine is b's first line, at most 120 bytes of it.
+func firstLine(b []byte) string {
+	if i := bytes.IndexByte(b, '\n'); i >= 0 {
+		b = b[:i]
+	}
+	if len(b) > 120 {
+		b = b[:120]
+	}
+	return string(bytes.TrimSpace(b))
+}
+
 func previousCrashFrom(f *os.File) string {
 	b, err := io.ReadAll(io.LimitReader(f, maxCrashImport+1))
 	if err != nil {
@@ -125,6 +162,13 @@ func previousCrashFrom(f *os.File) string {
 	b = bytes.TrimRight(b, "\n")
 	if len(bytes.TrimSpace(b)) == 0 {
 		return ""
+	}
+	if !crashMarked(b) {
+		// Windows with no stderr: crash.log is fd 2 for the whole run, so
+		// what a DLL writes to stderr lands here too; only the runtime's
+		// own report, or the native capture's, is a crash
+		return fmt.Sprintf("%s applog: the previous run's crash.log holds no crash, only other output (%d bytes, its first line %q)\n",
+			time.Now().Format("2006/01/02 15:04:05"), len(b), firstLine(b))
 	}
 	cut := ""
 	if len(b) > maxCrashImport {
