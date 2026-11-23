@@ -122,11 +122,12 @@ type attChip struct {
 	// clip is a recorded voice clip's File fields (clips.go); nil for any
 	// other file.
 	clip *clipMeta
-	// ftype is its File's type (attFileType), worked out once from the
-	// name the File was made with: Chromium fixes File.type then, and a
-	// plugin renaming the file leaves it (fileTypeLocked).
-	ftype    string
-	ftypeSet bool
+	// ftype is its File's type, fixed when the chip is made (attFileType,
+	// out of attachments.mu: the OS lookup can read the registry, UTType or
+	// the XDG database), as Chromium fixes File.type when it makes the File
+	// and a plugin renaming the file leaves it; a file a draft named by id
+	// alone gets the server's mimetype when files.info answers (metaDone)
+	ftype string
 	// loading: a restored file the draft named by id alone, whose
 	// files.info is out (Slack's unknown file: MissingText bars over an
 	// exception tile); gone: it never came (a non-existent file: "This
@@ -288,16 +289,10 @@ func (c *attChip) mime() string {
 	return ""
 }
 
-// fileTypeLocked is c's File type (ftype), looked up the first time it's
-// asked for: prepare asks before a plugin renames the file, Layout and
-// pendingLocked every frame, which mustn't ask the OS each time (the
-// registry, UTType). Call with attachments.mu held.
-func (c *attChip) fileTypeLocked() string {
-	if !c.ftypeSet {
-		c.ftype, c.ftypeSet = attFileType(c.name, c.mime()), true
-	}
-	return c.ftype
-}
+// fileTypeLocked is c's File type (ftype). Layout and pendingLocked read
+// it every frame and never ask the OS: it was looked up once, before the
+// chip was made. Call with attachments.mu held.
+func (c *attChip) fileTypeLocked() string { return c.ftype }
 
 // sendBatch is what one send takes from the composer.
 type sendBatch struct {
@@ -381,6 +376,7 @@ func (a *attachments) Add(name string, data []byte) { a.add(name, data) }
 func (a *attachments) add(name string, data []byte) bool {
 	name = attCleanName(name)
 	upload := a.h.Core() != nil // prepare uploads only with a core
+	ft := attFileType(name, "") // the OS lookup, before the lock
 	a.mu.Lock()
 	err := attCheckAdd(a.pendingLocked(), a.total, int64(len(data)))
 	var c *attChip
@@ -389,7 +385,7 @@ func (a *attachments) add(name string, data []byte) bool {
 		// corner spinner, isUploading): prepare runs on its own goroutine,
 		// which may start a frame or more later.
 		c = &attChip{id: int(attNextID.Add(1)), name: name, title: name, data: data, kind: attKindOf(name, data),
-			pf: core.NewPendingFile(name, name, data), preparing: upload, ptotal: int64(len(data))}
+			pf: core.NewPendingFile(name, name, data), preparing: upload, ptotal: int64(len(data)), ftype: ft}
 		a.chips = append(a.chips, c)
 		a.total += int64(len(data))
 	}
