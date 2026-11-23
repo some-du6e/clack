@@ -5233,6 +5233,38 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # plugins-work-0 (2026-11-23, library-dupes' follow-up): the bench's
+  # regression gate doesn't count a committed pick from costs alone (no
+  # behaviour check) as able to regress on correctness when a new check
+  # decides the pair (plugin-bench 45061897607); docs/PLUGIN-COMPAT.md
+  # (getclack.club/compat) stays in step with compat.go and the Library's
+  # index. COUNT runs each. Dispatch with only=plugins-work-0.
+  plugins-work-0:
+    if: ${{ !inputs.only || startsWith('plugins-work-0', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the bench's decisions and its regression gate, the compat page, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestRegressionsCostOnlyPick|TestDecide|TestDecideWithoutChecks|TestKeep|TestEmbedded)$' ./internal/pluginbench || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs|TestPairsMatchDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -5353,6 +5385,7 @@ jobs:
       - fl1122c-s-displays
       - library-dupes
       - rx-bar
+      - plugins-work-0
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
