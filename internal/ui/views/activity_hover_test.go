@@ -241,8 +241,9 @@ func TestActivityEveryRowHasTheHand(t *testing.T) {
 }
 
 // A row click whose press and release came in one frame is decided in the
-// next (clickLater); one whose next frame never comes in time (the view
-// not drawn, the row not laid out) is dropped, not opened later.
+// next (clickLater), however often that frame lays the row out; one whose
+// next frame never comes in time (the view not drawn, the row not laid
+// out) is dropped, not opened later.
 func TestActivityLateClickExpires(t *testing.T) {
 	v, _, e, _ := vaFakeActivity(t, false)
 	e.size.Y = 2400
@@ -263,8 +264,8 @@ func TestActivityLateClickExpires(t *testing.T) {
 	draw := e.draw
 	click()
 	e.frame()
-	if !r.clickLater {
-		t.Fatal("a press and release in one frame weren't deferred: the test checks nothing")
+	if v.selOK && v.selKey == rowKey {
+		t.Error("a press and release in one frame opened the row in that frame: what took the press isn't known yet")
 	}
 	e.draw = func(gtx layout.Context) {}
 	e.frame()

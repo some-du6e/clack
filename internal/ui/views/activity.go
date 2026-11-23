@@ -2310,11 +2310,14 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	onActions := v.agentActionsClicked(gtx, r)
 	// a deferred click is the next frame's to decide, and only its: a row
 	// not laid out then (scrolled off, the page changed) drops it
-	late, split := r.clickLater && v.tgen == r.clickGen+1 && gtx.Now.Sub(r.clickAt) < actClickLaterMax, v.splitClick()
-	if late {
-		split = r.clickSplit // the click's own frame's
+	// (a row laid out again in its click's frame leaves it be)
+	late, split := false, v.splitClick()
+	if r.clickLater && v.tgen != r.clickGen {
+		late, r.clickLater = v.tgen == r.clickGen+1 && gtx.Now.Sub(r.clickAt) < actClickLaterMax, false
+		if late {
+			split = r.clickSplit // the click's own frame's
+		}
 	}
-	r.clickLater = false
 	clicked := r.click.Clicked(gtx) && !onActions
 	if h := r.click.History(); clicked && len(h) > 0 && h[len(h)-1].Start.Equal(gtx.Now) {
 		// pressed and released in this frame: what took the press (a
