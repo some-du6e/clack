@@ -920,14 +920,30 @@ func TestThreadsMountLoadLikeSlack(t *testing.T) {
 	}
 }
 
-// thrAnimating runs a frame and reports whether it asked for another
-// within an animation's time (InfiniteSpinner asks 16 ms on), not the
-// minutes a timestamp's next text is away.
+// thrAnimating runs frames and reports whether they keep asking for the
+// next one within an animation's time (InfiniteSpinner asks 16 ms on,
+// every frame), not the minutes a timestamp's next text is away, nor a
+// timer's one frame: 5 frames 50 ms apart, 4 of them asking within 40 ms.
+// A frame asked for once lands in one of them at most: markVisible's
+// check 350 ms after a load that sorts the list (visibleDue) came within
+// the 250 ms the single frame this was allowed once a slow runner took
+// 100 ms from that load to the frame (TestThreadsSettleBeforeNextLoad,
+// thread-header-hover-4's full-test 45033113108: mounting false, "the
+// floating loader still drawn").
 func thrAnimating(e *vaEnv) bool {
-	e.r.WakeupTime() // the frames before
-	e.frame()
-	at, ok := e.r.WakeupTime()
-	return ok && !at.IsZero() && time.Until(at) < 250*time.Millisecond
+	n := 0
+	for i := 0; i < 5; i++ {
+		if i > 0 {
+			time.Sleep(50 * time.Millisecond)
+		}
+		e.r.WakeupTime() // the frames before
+		f := time.Now()
+		e.frame()
+		if at, ok := e.r.WakeupTime(); ok && !at.IsZero() && at.Sub(f) < 40*time.Millisecond {
+			n++
+		}
+	}
+	return n >= 4
 }
 
 // A reload that fails, on a revisit or the sidebar row clicked again,

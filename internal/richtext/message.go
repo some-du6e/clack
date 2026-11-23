@@ -343,6 +343,17 @@ func (c *builder) fileBlock(f *slack.File) Block {
 	return Block{Kind: FileBlock, File: out}
 }
 
+// transcriptStatus is file.transcription.status.
+func transcriptStatus(raw json.RawMessage) string {
+	var t struct {
+		Status string `json:"status"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &t) != nil {
+		return ""
+	}
+	return t.Status
+}
+
 func convertFile(f *slack.File) *File {
 	out := &File{
 		ID: f.ID, Name: f.Name, Title: f.Title, Mime: f.Mimetype, Type: f.Filetype, PrettyType: f.PrettyType,
@@ -379,6 +390,16 @@ func convertFile(f *slack.File) *File {
 			out.Still = st
 		}
 		out.Deanimate = f.Deanimate != ""
+	case slack.FileIsPlayableAudio(f):
+		// fileIsPlayableAudio: FileAudio's AudioPlayer, playing
+		// getMediaURL's aac || url_private; any other audio/* is a plain
+		// file card (an ogg upload) or a video (a webm one)
+		out.IsAudio = true
+		out.MediaURL = SafeURL(f.AAC)       // URL stays the upload's url_private
+		if p := f.MediaProgress; p != nil { // use_media_elapsed
+			out.MediaOffsetMS, out.MediaWatched = p.OffsetMS, p.MediaWatched
+		}
+		out.Transcript, out.TranscriptRegion, out.VTT = transcriptStatus(f.Transcription), f.IsTranscriptionRegionSupported, SafeURL(f.VTT)
 	case slack.FileIsPlayableVideo(f):
 		// fileIsPlayableVideo; any other video/* is a plain file card
 		out.IsVideo = true
@@ -393,11 +414,6 @@ func convertFile(f *slack.File) *File {
 		}
 		if f.IsSalesforceFile {
 			out.Salesforce = true
-		}
-	case strings.HasPrefix(mime, "audio/") || f.Subtype == "slack_audio":
-		out.IsAudio = true
-		if f.MP4 != "" {
-			out.URL = SafeURL(f.MP4)
 		}
 	default:
 		out.Thumb = largestThumb(f)

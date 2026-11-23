@@ -407,7 +407,7 @@ func (ph *filePlaceholder) refresh() {
 		return
 	}
 	if ph.threadTS != "" {
-		a.S.AddReply(ph.ch, upd)
+		a.S.AddReplyLocal(ph.ch, upd) // the placeholder's local ts
 	}
 	v := a.message(ph.ch, &upd)
 	a.emit(Event{Type: "update", Channel: ph.ch, TS: ph.ts, ThreadTS: ph.threadTS, Msg: &v, ClientMsgID: ph.cid})

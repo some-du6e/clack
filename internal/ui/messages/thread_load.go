@@ -44,6 +44,13 @@ type threadState struct {
 	// for an open with none: the slice drawn is the one it falls in. ""
 	// until the first load picks it (or after the pane closed: clearStartTs)
 	start string
+	// picked: start is that pick, which Slack's thread metadata never
+	// holds (ThreadsFlexpane works getThreadStartTs out on every render),
+	// where a jump's startTs stays until the pane unmounts
+	picked bool
+	// repick: a thread switch left the thread (CloseThread), so the next
+	// list to mount over the model picks its start again (repickThread)
+	repick bool
 	// gen counts moves of start: a load out for an older start lands
 	// nowhere
 	gen uint64
@@ -184,10 +191,10 @@ func (m *model) applyThreadMsg(msg core.Message, seq uint64, isNew bool) bool {
 // start meanwhile leaves this answer out: the next load reads its slice.
 func (hb *hub) loadThreadSlice(ctx context.Context, m *model) {
 	m.mu.Lock()
-	gen, start := m.th.gen, m.th.start
+	gen, start, picked := m.th.gen, m.th.start, m.th.picked
 	m.mu.Unlock()
 	if start == "" {
-		start = hb.app.ThreadStartTs(m.ch, m.threadTS, "", "", false)
+		start, picked = hb.app.ThreadStartTs(m.ch, m.threadTS, "", "", false), true
 	}
 	sl, err := hb.app.ThreadAt(ctx, m.ch, m.threadTS, start)
 	own := hb.app.TrackedSends(m.ch)
@@ -207,7 +214,7 @@ func (hb *hub) loadThreadSlice(ctx context.Context, m *model) {
 	m.err = err
 	live := m.takeLive()
 	if err == nil {
-		m.th.start = start
+		m.th.start, m.th.picked = start, picked
 		m.setThreadSlice(sl, own)
 		m.dropped = false // the store's slice, whole
 		m.keepLive(live)
@@ -351,18 +358,49 @@ func (hb *hub) threadPage(m *model, older, newer bool) bool {
 // that holds ts stays (the list scrolls to it); else the model draws the
 // store's slice at ts, empty (FlexpaneLoading) until its around read
 // lands. It reports whether the model's messages changed.
-func (hb *hub) jumpThread(m *model, ts string) bool {
+func (hb *hub) jumpThread(m *model, ts string) bool { return hb.moveThreadStart(m, ts, false) }
+
+// repickThread is a new list mounting over a thread model a switch left
+// (CloseThread's repick): when the model's start was its first load's own
+// pick, the start is picked again from the last read as it is now (Slack
+// works getThreadStartTs out on every render) and the model moves to the
+// slice it falls in, as a jump does: from memory when the store holds it,
+// else read around it. A jump's startTs stays. UI goroutine.
+func (hb *hub) repickThread(m *model) {
+	m.mu.Lock()
+	due := m.th.repick && m.th.picked
+	m.th.repick = false
+	if due && !m.loaded {
+		// nothing held (an eviction started the model over): its next load
+		// picks the start again, and one out for the old pick lands nowhere
+		m.th.start, m.th.picked = "", false
+		m.th.gen++
+		due = false
+	}
+	m.mu.Unlock()
+	if !due || hb.app == nil {
+		return
+	}
+	if hb.moveThreadStart(m, hb.app.ThreadStartTs(m.ch, m.threadTS, "", "", false), true) {
+		hb.invalidate()
+	}
+}
+
+// moveThreadStart is jumpThread with picked: whether ts is
+// getThreadStartTs' pick rather than the thread metadata's startTs.
+func (hb *hub) moveThreadStart(m *model, ts string, picked bool) bool {
 	if ts == "" {
 		return false
 	}
 	m.mu.Lock()
 	t := &m.th
 	if t.start == ts {
+		t.picked = picked
 		m.mu.Unlock()
 		return false
 	}
 	held := m.loaded && (m.find(ts) >= 0 || m.threadCovers(ts))
-	t.start = ts
+	t.start, t.picked = ts, picked
 	if held {
 		m.mu.Unlock()
 		return false
@@ -419,13 +457,21 @@ func SetThreadStart(app *core.App, ch, thread, ts string) {
 // CloseThread is a thread pane leaving ch/thread: truncateThreadHistory
 // (core.CloseThread), and with unmount (the pane unmounted, not switched
 // to another thread) clearStartTs too (a later open starts at
-// getThreadStartTs again). When the pane unmounted, or the store let any
-// of the thread go, the model and the panes' lists start over, as a pane
-// mounted afresh does: Slack's next ThreadsFlexpane is a new component,
-// which draws the store's slice at getThreadStartTs (empty: loadAround)
-// from getThreadStartPosition. A page or a load out meanwhile lands
-// nowhere (the model's gen moves), so it can't make the model's
-// messages a slice at no start, or a cut history's. UI goroutine.
+// getThreadStartTs again). The panes' lists of the thread start over
+// either way, as a list mounted afresh does: Slack's thread list
+// (BaseMessageList, Twp/) is keyed by its thread
+// (ThreadsFlexpane.renderMessageList, boot-shared 4M8N), so a thread
+// switch, which keeps the ThreadsFlexpane, still unmounts the list of the
+// thread left, and the next list to show it is new: it draws the store's
+// slice at getThreadStartTs, with the last read as it is then, from
+// getThreadStartPosition. Only the pane's unmount saves a scrollmark
+// (maybeSaveThreadScrollmarks). When the pane unmounted, or the store let
+// any of the thread go, the model starts over too (the next load reads the
+// store's slice, empty: loadAround); after a switch it keeps its slice and
+// the next list picks its start again (repickThread), a jump's startTs
+// staying, as it does after a cut. A page or a load out meanwhile lands
+// nowhere (the model's gen moves), so it can't make the model's messages a
+// slice at no start, or a cut history's. UI goroutine.
 func CloseThread(app *core.App, ch, thread string, unmount bool) {
 	if app == nil || ch == "" || thread == "" {
 		return
@@ -438,16 +484,24 @@ func CloseThread(app *core.App, ch, thread string, unmount bool) {
 	hb.mu.Lock()
 	m := hb.thread[ch+"/"+thread]
 	hb.mu.Unlock()
-	if m == nil || !cut && !unmount {
+	if m == nil {
 		return
 	}
 	m.mu.Lock()
-	m.msgs = nil
-	m.loaded, m.hasMore = false, false
-	m.fetched = time.Time{}
-	m.live, m.livePlace, m.liveReact = nil, nil, nil
-	m.th = threadState{root: m.th.root, gen: m.th.gen + 1}
-	m.rev++
+	if cut || unmount {
+		start := ""
+		if !unmount && !m.th.picked {
+			start = m.th.start // the thread metadata's startTs: clearStartTs is the unmount's
+		}
+		m.msgs = nil
+		m.loaded, m.hasMore = false, false
+		m.fetched = time.Time{}
+		m.live, m.livePlace, m.liveReact = nil, nil, nil
+		m.th = threadState{start: start, root: m.th.root, gen: m.th.gen + 1}
+		m.rev++
+	} else {
+		m.th.repick = true
+	}
 	m.mu.Unlock()
 	// maybeSaveThreadScrollmarks (componentWillUnmount): where the reader
 	// was, by message, for the next mount, except in a public channel the

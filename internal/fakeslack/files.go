@@ -3,9 +3,12 @@ package fakeslack
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
+	"github.com/some-du6e/clack/internal/media/mediatest"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -65,6 +68,32 @@ const (
 // serve mediatest's fixture (3 s, 320×180) with ranges, as
 // files.slack.com does.
 const FilesVideoID = "F0FILESVID01"
+
+// FilesAudioID and FilesClipID are #files-gallery's audio file (an mp3,
+// the "audio" case) and voice clip (a webm slack_audio, "voice clip"):
+// each url_private serves mediatest's audio fixture in its format (3 s of
+// tones) and each aac the AAC rendition, with ranges.
+const (
+	FilesAudioID = "F0FILESAUD01"
+	FilesClipID  = "F0FILESAUD02"
+)
+
+// serveAudio serves the audio files' bytes: the aac renditions (an m4a
+// name), else url_private's format. false: id isn't one of them.
+func serveAudio(w http.ResponseWriter, r *http.Request, id, tail string) bool {
+	if id != FilesAudioID && id != FilesClipID {
+		return false
+	}
+	switch {
+	case strings.HasSuffix(tail, ".m4a"):
+		mediatest.AudioHandler(mediatest.TonesAAC, "audio/mp4").ServeHTTP(w, r)
+	case id == FilesAudioID:
+		mediatest.AudioHandler(mediatest.TonesMP3, "audio/mpeg").ServeHTTP(w, r)
+	default:
+		mediatest.AudioHandler(mediatest.TonesWebM, "audio/webm").ServeHTTP(w, r)
+	}
+	return true
+}
 
 // FilesVideo is the video file the "video" case shares.
 func (s *Server) FilesVideo() slack.File {
@@ -146,13 +175,15 @@ func (s *Server) filesFixtures() []filesFixture {
 		MP4:        s.URL + "files-pri/" + TeamID + "-F0FILESVID01/demo-walkthrough.mp4",
 		ThumbVideo: s.URL + "img/1280x720/F0FILESVID01.png", ThumbVideoW: 1280, ThumbVideoH: 720,
 		OriginalW: 1280, OriginalH: 720, DurationMS: 83000, Permalink: s.URL + "files/F0FILESVID01/demo-walkthrough.mp4"}
-	audio := slack.File{ID: "F0FILESAUD01", Name: "standup-notes.mp3", Title: "standup-notes.mp3", Mimetype: "audio/mpeg",
+	audio := slack.File{ID: FilesAudioID, Name: "standup-notes.mp3", Title: "standup-notes.mp3", Mimetype: "audio/mpeg",
 		Filetype: "mp3", PrettyType: "MP3", Size: 900 << 10, Mode: "hosted", DurationMS: 154000,
-		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESAUD01/standup-notes.mp3", Permalink: s.URL + "files/F0FILESAUD01/standup-notes.mp3"}
-	clip := slack.File{ID: "F0FILESAUD02", Name: "audio_message.webm", Title: "Audio clip", Mimetype: "audio/webm",
+		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESAUD01/standup-notes.mp3", Permalink: s.URL + "files/F0FILESAUD01/standup-notes.mp3",
+		AAC: s.URL + "files-pri/" + TeamID + "-F0FILESAUD01/aac/standup-notes.m4a"}
+	clip := slack.File{ID: FilesClipID, Name: "audio_message.webm", Title: "Audio clip", Mimetype: "audio/webm",
 		Filetype: "webm", PrettyType: "WebM", Subtype: "slack_audio", Size: 60 << 10, Mode: "hosted", DurationMS: 12000,
 		AudioWaveSamples: []int{4, 9, 18, 30, 44, 61, 72, 80, 66, 52, 47, 58, 70, 84, 95, 88, 71, 55, 40, 33, 41, 57, 69, 62, 48, 35, 22, 14, 9, 5},
-		URLPrivate:       s.URL + "files-pri/" + TeamID + "-F0FILESAUD02/audio_message.webm", Permalink: s.URL + "files/F0FILESAUD02/audio_message.webm"}
+		URLPrivate:       s.URL + "files-pri/" + TeamID + "-F0FILESAUD02/audio_message.webm", Permalink: s.URL + "files/F0FILESAUD02/audio_message.webm",
+		AAC: s.URL + "files-pri/" + TeamID + "-F0FILESAUD02/aac/audio_message.m4a"}
 	pdf := slack.File{ID: "F0FILESPDF01", Name: "q3-report.pdf", Title: "Q3 report", Mimetype: "application/pdf", Filetype: "pdf",
 		PrettyType: "PDF", Size: 312 << 10, Mode: "hosted", ThumbPDF: s.URL + "img/612x792/F0FILESPDF01.png", ThumbPDFW: 612, ThumbPDFH: 792,
 		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESPDF01/q3-report.pdf", Permalink: s.URL + "files/F0FILESPDF01/q3-report.pdf"}

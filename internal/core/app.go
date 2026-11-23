@@ -58,6 +58,12 @@ type App struct {
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
 
 	thrUnread threadsMarkedUnread // ThreadsMarkedUnread (message_menu.go)
+	// the reply bars' unread thread activity per channel
+	// (channel_thread_activity.go), under chActMu
+	chActMu  sync.Mutex
+	chActs   map[string]*chActList
+	chActSeq uint64
+	chActGen uint64 // slow reconnects (threadActivityStale)
 
 	msgLog msgChanges // each message's latest change, for the views that keep copies of them (msg_changes.go)
 	// refetchQ is RefetchMessages' rounds (read_changes.go)
@@ -225,6 +231,7 @@ func New(c *slack.Client, s *store.Store) *App {
 			// end goes stale before the lists hear of the connection, and
 			// the open one is read forward from it (reached_end.go)
 			a.resetReachedEnd()
+			a.threadActivityStale() // the reply bars' lists are fetched again (channel_thread_activity.go)
 		}
 		a.emit(Event{Type: "connection", Connected: up, Fast: up && a.RTM.LastConnectFast()})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
@@ -234,6 +241,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		}
 	}
 	a.RTM.OnHello = a.onHello
+	a.RTM.OnDrop = a.onDroppedEvent // a dropped message's ts still goes into maxTs (maxts_heard.go)
 	s.SetMembersOnline(a.membersOnline)
 	appsByStore.Store(s, a)
 	store.ExperimentGroup = experimentForStore
@@ -1194,12 +1202,16 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 
 func (a *App) refreshCounts(ctx context.Context) {
 	since := a.S.Seq()
+	chSince := a.chActMark()
 	if c, err := a.C.Counts(ctx); err == nil {
 		// a mark or message while it was out stays (store/journal.go); an
 		// answer merged with one is partly older than Slack is now, so the
 		// counts are read once more (not again after that read: a busy
 		// channel doesn't keep it asking)
 		merged := a.installCounts(c, since)
+		if c.Threads.UnreadCountByChannel != nil {
+			a.pruneThreadActivity(chSince) // a channel with no unread threads has no reply bar marks (channel_thread_activity.go)
+		}
 		a.readBadgePeople() // an IM the answer made unread: its member (members.go)
 		a.mu.Lock()
 		reread := merged && !a.countsReread

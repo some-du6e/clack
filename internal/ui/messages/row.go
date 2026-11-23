@@ -3836,7 +3836,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 				if hov && latest != "" {
 					desc = lastReply(tsTime(latest), rc.now, count)
 				} else if !hov && rc.list != nil && !rc.thread {
-					unread = rc.list.unreadThreadsFor(m.TS)
+					unread = app.UnreadThreadsFor(rc.list.ch, m.TS) // getUnreadThreadsCountForMessage (unread_threads.go)
 				}
 			case hov:
 				desc = threadsNS.T("View thread") // the threads I18n
