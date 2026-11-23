@@ -1111,6 +1111,7 @@ type CanvasBlockEdit struct {
 	OrigKind    canvas.Kind
 	OrigLevel   int
 	OrigChecked bool
+	OrigSeq     int64 // red-evidence stub: nothing reads it
 	Spans       []richtext.Span
 	Kind        canvas.Kind
 	Level       int
@@ -1558,4 +1559,11 @@ func (a *App) SaveCanvasTitle(ctx context.Context, id, orig, title string) error
 		}
 		return []quip.Edit{{Kind: quip.EditText, SectionID: tid, RTML: rtml, Base: b.seq}}, nil
 	})
+}
+
+// red-evidence stubs: the names the fixed tests use, doing nothing
+func (a *App) CanvasSectionSeq(id, sectionID string) int64 { return 0 }
+
+func (a *App) CanvasBlockEditable(id, sectionID string, spans []richtext.Span) (bool, string) {
+	return true, ""
 }

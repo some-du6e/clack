@@ -602,3 +602,60 @@ func TestCanvasQuipDeferredConflictToast(t *testing.T) {
 		return b != nil && b.b.Text() == "Second paragraph, B"
 	})
 }
+
+// An underline-only change, or a link made with the Link button over its
+// own address, saves: canvas markdown can't tell either from the text as
+// it was (no underline; a link that is its URL is bare text), so the
+// session had closed without a save.
+func TestCanvasQuipFormatOnlySaves(t *testing.T) {
+	const linkID = "temp:C:QSV00007"
+	bs := append(quipBlocks(), canvas.Block{ID: linkID, Kind: canvas.Paragraph, Spans: txt("See https://example.com/docs")})
+	_, fs, v, s, frame := quipEnvBlocks(t, bs)
+	v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == quipFirstID }))
+	frame()
+	ed := v.edit.cur.ed
+	ed.SetSelection(len("First "), len("First paragraph"))
+	ed.ToggleStyle(composer.Underline)
+	frame()
+	if !v.edit.finish(v) {
+		t.Fatal("an underlined word was refused")
+	}
+	settle(t, s, v, "the underline's save", func() bool { return len(quipSaves(fs)) == 1 })
+	if r := quipSaves(fs)[0]; !strings.Contains(quip.SectionRTML(&r.Save.Sections[0]), "<u>paragraph</u>") {
+		t.Errorf("the save's section %q", quip.SectionRTML(&r.Save.Sections[0]))
+	}
+	v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == linkID }))
+	frame()
+	ed = v.edit.cur.ed
+	ed.SetSelection(len("See "), ed.Doc().Len())
+	v.edit.apply(v, "link", image.Point{})
+	frame()
+	if !v.edit.finish(v) {
+		t.Fatal("a link made with the Link button was refused")
+	}
+	settle(t, s, v, "the link's save", func() bool { return len(quipSaves(fs)) == 2 })
+	if r := quipSaves(fs)[1]; !strings.Contains(quip.SectionRTML(&r.Save.Sections[0]), `<a href="https://example.com/docs">https://example.com/docs</a>`) {
+		t.Errorf("the save's section %q", quip.SectionRTML(&r.Save.Sections[0]))
+	}
+}
+
+// A block holding a line break isn't opened with the switch on: the
+// editor makes each line a block of its own, so the block would come back
+// split and save as two sections, even left as it was.
+func TestCanvasQuipLineBreakNotEditable(t *testing.T) {
+	const brID = "temp:C:QSV00008"
+	bs := append(quipBlocks(), canvas.Block{ID: brID, Kind: canvas.Paragraph, Spans: []richtext.Span{
+		{Kind: richtext.Text, Text: "two"}, {Kind: richtext.Break}, {Kind: richtext.Text, Text: "lines"}}})
+	_, fs, v, _, _ := quipEnvBlocks(t, bs)
+	b := findBlk(v, func(b *canvas.Block) bool { return b.ID == brID })
+	if b == nil || b.edOK || b.edWhy != "a line break" {
+		t.Errorf("a block with a line break: %+v", b)
+	}
+	v.edit.start(v, b)
+	if v.edit.cur != nil {
+		t.Error("the block opened")
+	}
+	if n := len(quipSaves(fs)); n != 0 {
+		t.Errorf("%d edit-document calls", n)
+	}
+}

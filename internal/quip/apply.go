@@ -337,3 +337,6 @@ func matchUnits(bu, nu []unit) []int {
 	}
 	return match
 }
+
+// SameRTML is a red-evidence stub: byte equality
+func SameRTML(a, b string) bool { return a == b }
