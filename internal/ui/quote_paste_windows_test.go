@@ -16,12 +16,10 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
-	"unsafe"
 
 	"gioui.org/app"
 	"gioui.org/app/winclip"
 	"gioui.org/io/event"
-	"golang.org/x/sys/windows"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -162,37 +160,18 @@ const qpBitmap = "$b = New-Object System.Drawing.Bitmap 3, 2, ([System.Drawing.I
 // read in a session like every reader in the process.
 func qpClipText(t *testing.T) string {
 	t.Helper()
-	gcd := asTestUser32.NewProc("GetClipboardData")
-	k32 := windows.NewLazySystemDLL("kernel32.dll")
-	lock, unlock, size := k32.NewProc("GlobalLock"), k32.NewProc("GlobalUnlock"), k32.NewProc("GlobalSize")
-	move := k32.NewProc("RtlMoveMemory")
-	var out string
-	err := winclip.Session(context.Background(), 0, func() error {
-		h, _, _ := gcd.Call(13) // CF_UNICODETEXT
-		if h == 0 {
-			return nil
+	const cfUnicodeText = 13
+	snap, err := winclip.Read(context.Background(), func(f winclip.Format) int64 {
+		if f.ID == cfUnicodeText {
+			return 1 << 20
 		}
-		n, _, _ := size.Call(h)
-		p, _, _ := lock.Call(h)
-		if p == 0 || n < 2 {
-			return nil
-		}
-		defer unlock.Call(h)
-		u := make([]uint16, n/2)
-		move.Call(uintptr(unsafe.Pointer(&u[0])), p, uintptr(2*len(u)))
-		for i, c := range u {
-			if c == 0 {
-				u = u[:i]
-				break
-			}
-		}
-		out = string(utf16.Decode(u))
-		return nil
+		return 0
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return out
+	b, _ := snap.Bytes(cfUnicodeText)
+	return winclip.UTF16Text(b)
 }
 
 // qpWin is App.Run's window on the desktop, signed in to fakeslack.
