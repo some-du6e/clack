@@ -152,9 +152,14 @@ type listState struct {
 	tip     string
 	tipRect image.Rectangle
 	tipItem int
-	tipG    groupTip  // the hovered pill's ReactionTip (reaction_tip.go)
-	tipKey  string    // which pill (item key + name), to time the delay
-	tipAt   time.Time // when the pointer reached it
+	tipG    groupTip // the hovered pill's ReactionTip (reaction_tip.go)
+	tipKey  string   // which pill (item key + name), to time the delay
+	tipGen  uint64   // the TooltipManager generation its hover began in (theme.HideTooltips)
+	// the hover bar's button under the pointer and the TooltipManager
+	// generation it came in (theme.HideTooltips)
+	tbTipKey string
+	tbTipGen uint64
+	tipAt    time.Time // when the pointer reached it
 
 	// the hovered sender status's tooltip (status_tip.go): its content,
 	// the icon's box in list coordinates, the row (item) and since when
@@ -163,6 +168,7 @@ type listState struct {
 	stRect image.Rectangle
 	stItem int
 	stKey  string
+	stGen  uint64
 	stAt   time.Time
 
 	lastTyping time.Time
@@ -1765,6 +1771,8 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	}
 	gtx.Constraints.Min.X = w
 	r.statusDrawn = false
+	r.tsTip.begin() // a time this frame doesn't draw holds no hover (popups.TimeLink.Begin)
+	r.compactTip.begin()
 	d := r.layout(gtx, rc)
 	// the sender status's tooltip: the icon's box is where the pointer
 	// is, back by its place in the icon
@@ -1772,7 +1780,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		p := image.Pt(int(s.pointer.X-r.statusPt.X), int(s.pointer.Y-r.statusPt.Y))
 		s.stOn, s.stItem, s.stRect = true, i, image.Rectangle{Min: p, Max: p.Add(r.statusSize)}
 		if s.items[i].key != s.stKey {
-			s.stKey, s.stAt = s.items[i].key, rc.now
+			s.stKey, s.stAt, s.stGen = s.items[i].key, rc.now, theme.TipGen()
 		}
 		s.stTip = r.statusTipFor(rc.now)
 	}
@@ -1790,7 +1798,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 				}
 				s.tipItem = i
 				if key := s.items[i].key + "\x00" + r.groups[k].name; key != s.tipKey {
-					s.tipKey, s.tipAt = key, rc.now
+					s.tipKey, s.tipAt, s.tipGen = key, rc.now, theme.TipGen()
 				}
 				// ReactionTip mounts once the tooltip shows, and its
 				// TooltipMemberName reads the reactors (getMemberById,
@@ -1991,6 +1999,9 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// reaction tooltip
 	if s.tip == "" {
 		s.tipKey = ""
+	} else if s.tipGen != theme.TipGen() {
+		// HideTooltips (Escape, a menu or modal opening): hidden until the
+		// pointer leaves the pill
 	} else if s.tipItem >= s.visible[0] && s.tipItem < s.visible[1] {
 		if wait := s.tipAt.Add(reactionTipDelay); rc.now.Before(wait) {
 			gtx.Execute(op.InvalidateCmd{At: wait})
@@ -2006,6 +2017,8 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// the sender status's tooltip (BaseTooltip's 150 ms)
 	if !s.stOn {
 		s.stKey = ""
+	} else if s.stGen != theme.TipGen() {
+		// hidden (HideTooltips) until the pointer leaves the icon
 	} else if s.stItem >= s.visible[0] && s.stItem < s.visible[1] {
 		if wait := s.stAt.Add(statusTipDelay); rc.now.Before(wait) {
 			gtx.Execute(op.InvalidateCmd{At: wait})
@@ -2139,7 +2152,10 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		key, tip, cx = "b"+strconv.Itoa(i), s.tbLabel[i], x+pad+(len(s.quick.names)+slot)*bs+bs/2
 		s.tip = ""
 	}
-	if a := s.tilt.tipAlpha(gtx, key); a > 0 {
+	if key != s.tbTipKey {
+		s.tbTipKey, s.tbTipGen = key, theme.TipGen()
+	}
+	if a := s.tilt.tipAlpha(gtx, key); a > 0 && s.tbTipGen == theme.TipGen() { // hidden (HideTooltips) until the pointer leaves the button
 		btn := image.Rect(cx-bs/2, y+pad, cx-bs/2+bs, y+pad+bs)
 		tooltip(gtx, th, c, tip, btn, theme.WindowBounds(s.origin), a)
 	}

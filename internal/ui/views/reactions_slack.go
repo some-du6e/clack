@@ -371,6 +371,7 @@ type pillTip struct {
 	tag   int
 	hov   bool
 	since time.Time
+	gen   uint64 // the TooltipManager generation the hover began in
 	org   theme.TipOrigin
 }
 
@@ -396,7 +397,7 @@ func (b *base) reactTip(gtx C, key string, m *core.Message, g messages.ReactionG
 		}
 		if e, ok := ev.(pointer.Event); ok {
 			if e.Kind == pointer.Enter && !t.hov {
-				t.since = gtx.Now
+				t.since, t.gen = gtx.Now, theme.TipGen()
 			}
 			t.hov = e.Kind == pointer.Enter
 		}
@@ -408,7 +409,7 @@ func (b *base) reactTip(gtx C, key string, m *core.Message, g messages.ReactionG
 	event.Op(gtx.Ops, &t.tag)
 	pass.Pop()
 	ar.Pop()
-	if !t.hov || size.X <= 0 {
+	if !t.hov || size.X <= 0 || t.gen != theme.TipGen() { // hidden (theme.HideTooltips) until the pointer leaves
 		return
 	}
 	if wait := t.since.Add(messages.ReactionTipDelay); gtx.Now.Before(wait) {
