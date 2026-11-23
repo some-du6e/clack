@@ -159,13 +159,14 @@ func slicesEqual(a, b []actBtn) bool {
 // icon), in the dense and the detailed layout.
 func TestActivityPreviewLinksArePlain(t *testing.T) {
 	for _, dense := range []bool{false, true} {
-		const ts = "1762700100.000100"
+		const ts = "1762700500.000100" // fa-reaction's (vaFakeActivity's store holds the mentions' already)
 		ch := fakeslack.ViewsChannel
 		blocks := json.RawMessage(`[{"type":"rich_text","block_id":"b1","elements":[{"type":"rich_text_section","elements":[` +
 			`{"type":"link","url":"` + rhLink + `","text":"example.com/doc","truncated":true},{"type":"text","text":" is the plan"}]}]}]`)
 		v, _, e, _ := vaFakeActivityWith(t, false, func(fs *fakeslack.Server) {
-			fs.SetActivityMessage(slack.Message{Type: "message", Channel: ch, TS: ts, User: "U0FAKE00001",
-				Text: "<" + rhLink + "|example.com/doc> is the plan", Blocks: blocks})
+			fs.SetActivityMessage(slack.Message{Type: "message", Channel: ch, TS: ts, User: fakeslack.SelfID,
+				Text: "<" + rhLink + "|example.com/doc> is the plan", Blocks: blocks,
+				Reactions: []slack.Reaction{{Name: "tada", Count: 2, Users: []string{"U0FAKE00001", "U0FAKE00002"}}}})
 		})
 		v.dense, v.rows, v.dirty = dense, map[string]*actRow{}, true
 		e.frame()
