@@ -65,12 +65,17 @@ func addElement(el slackc.HostElement, names ...string) {
 	elements = append(elements, elementEntry{el: el, names: names})
 }
 
+// noElement are the kit components that render no DOM element of their
+// own in Slack (slackc.RegisterHostNoElement): Tooltip clones its child.
+var noElement []string
+
 // Register registers every kit component with slackc under the names the
 // JS side uses (Slack's component names plus the api.elements aliases),
 // with the element each one is in Slack's DOM where CSS needs it.
 // Safe to call more than once.
 func Register() {
 	regOnce.Do(func() {
+		slackc.RegisterHostNoElement(noElement...)
 		for _, e := range elements {
 			slackc.RegisterHostElement(e.el, e.names...)
 		}

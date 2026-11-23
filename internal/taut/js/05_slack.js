@@ -2184,7 +2184,9 @@ const query = named('query', (teamId, request) => {
   if (method && flannelMethods.has(method)) return flannelCall(teamId, request)
   error(Error(`Unsupported flannel method: ${method}`))
   const { args } = request
-  if (args && (Object.hasOwn(args, 'type') || Object.hasOwn(args, 'subtype'))) throw Error('Arguments must not include `type` or `subtype` fields')
+  // lodash has (iPXF jz): an own property
+  const own = (k) => Object.prototype.hasOwnProperty.call(args, k)
+  if (args && (own('type') || own('subtype'))) throw Error('Arguments must not include `type` or `subtype` fields')
   return Promise.reject(Error(`[Taut] Clack sends no flannel socket message (${method})`))
 })
 defineModule('flannel', { J8: FLANNEL_METHODS, P: query })

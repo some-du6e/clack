@@ -124,6 +124,8 @@ the dummy request doesn't answer identical calls for its retry window
 | userAPI fails as Taut's and Slick's own do: the answer's JSON whole in "failed:", `[slick]` for Slick, no Clack-side 429 retries, `HTTP <status>:`, `res.json()`'s SyntaxError, fetch's `Failed to fetch`, the abort | internal/taut/js/05_slack.js:514-563, internal/taut/host.go:278, internal/slick/js/20_api.js:528 | TestUserAPIErrorsLikeTaut, TestSlickAPICallErrorsLikeSlack |
 | Slick's `redux.thunkNames` | internal/taut/js/03_redux.js:646, internal/slick/js/20_api.js:484 | TestSlickReduxThunkNames |
 | `addMemberToPresenceSubscription` / `removeMemberFromPresenceSubscription` (LastSeen, OnlineCount): Slack's presence manager (client-boot 4hlf): a count per member; its first subscriber and its last leaving each send `presence_sub`, 100 ms debounced, with every counted member in Clack's own set | internal/core/presence_subs.go, internal/core/app.go presenceIDs, internal/taut/thunks.go | TestPresenceSubscriptionLikeSlack (over the booted socket), TestSlickPresenceThunks |
+| The flannel client's `query` export (OnlineCount): Slack's edge cache client (client-boot EVxR, build a09b625d90aa), found by name and by its source ("Unsupported flannel method"); a method of Slack's table goes to the team's edge cache with Clack's token and settles as FlannelRequest (Ln2M) over BaseRequest (Umoo) settles: the answer with flannelUrl, args, method and clientRequestId, a not-ok answer as a FlannelRequestError (final, internal_error included), permission_denied with status PERMISSION_DENIED, HTTP failures as BaseRequest's; any other method is logged as Slack logs it and rejected (Slack sends it as a gateway socket message, which Clack doesn't) | internal/taut/js/05_slack.js (flannel), internal/taut/flannel.go, internal/slack/apiq.go NoAnswerRetries | TestFlannelQueryLikeSlack, TestOnlineCountLikeSlack |
+| The presence manager's `getPresenceSubscriptionByTeamId` export (OnlineCount's 950-member cap): every member `presence_sub` carries with its count of subscribers, Clack's own set one each; undefined for a team the client isn't signed in to | internal/taut/js/05_slack.js, internal/core/presence_subs.go PresenceSubscriptionOf | TestPresenceSubscriptionGetterLikeSlack, TestOnlineCountLikeSlack |
 
 All of them run over internal/fakeslack, which can now answer a hook with any
 status, headers and body (`fakeslack.Reply`, internal/fakeslack/fakeslack.go:1398),
@@ -436,10 +438,7 @@ Unused by the 59 plugins (29 members), all present unless marked: `Store#.subscr
    `getLink`, `notifyMember`, `showThread` (BetterHuddles),
    `openInSplitView`, `closeFlexpane` (ChatTabs) and `joinCodeChannel`
    (QuickJoin). Also `autocompleteMembers`, which a plugin can dispatch
-   (BetterHuddles) but which has no native, and the presence manager's
-   `getPresenceSubscriptionByTeamId` export, which OnlineCount looks up for
-   its 950-member cap (without it the cap counts nothing already
-   subscribed).
+   (BetterHuddles) but which has no native.
 2. **patchComponent / elements for Slick**: 110 uses in 41 Slick plugins
    name 72 components. They need the catalogue PLUGINS-components.md keeps
    for Taut's 52.

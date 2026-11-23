@@ -37,6 +37,13 @@ var (
 	clsMessagePane = slackc.Class("p-message_pane p-message_pane--classic-nav")
 	clsAvatarStack = slackc.Class("c-button-unstyled p-avatar_stack--details", "data-qa", "avatar_stack").Tag("button")
 	clsAvatarCount = slackc.Class("p-avatar_stack--details__count").Tag("span")
+	// the header's avatar stack sits in an AutoClog impression hook (the
+	// header's "avatar_stack" item: AutoClog clogImpression, eventId
+	// 300167, round the connected BaseAvatarStack), display:contents in
+	// Slack's sheet: a BaseAvatarStack patch's tree is its children, which
+	// OnlineCount's .p-autoclog__hook:has(> .slick-online-count) makes a
+	// flex row of the stack and its count
+	clsAutoclogHook = slackc.Class("p-autoclog__hook").FlexItems()
 
 	clsSidebar = slackc.Class("p-channel_sidebar p-channel_sidebar--classic-nav").Mods(invertedScope)
 	clsSbList  = slackc.Class("p-channel_sidebar__list p-channel_sidebar__static_list", "role", "tree")
@@ -274,7 +281,7 @@ func (h hdrStack) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if len(faces) > 0 {
 		pw += gtx.Dp(4)
 	}
-	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+	d := st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("hdr.members"), func(gtx layout.Context, s image.Point, hov bool) {
 			// Slack 2026 (--polish): no outline, only the hover fill.
 			if hov {
@@ -302,7 +309,19 @@ func (h hdrStack) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 			return layout.Dimensions{Size: image.Pt(pw, btn)}
 		})
 	})
+	if hdrStackTap != nil {
+		hdrStackDrawn = d.Size
+	}
+	return d
 }
+
+// hdrStackTap, when set (tests), sees where the channel header placed its
+// avatar stack's component (a patch's tree and all: OnlineCount's count)
+// for ch, and the size the stack itself drew (hdrStackDrawn).
+var (
+	hdrStackTap   func(ch string, placed image.Rectangle, stack image.Point)
+	hdrStackDrawn image.Point
+)
 
 // ---- HelpButton (#48, StreamerMode, whatsNew) ----
 

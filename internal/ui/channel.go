@@ -304,10 +304,16 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	if conv != nil && conv.Kind != "im" && !appDM && conv.NumMembers > 0 {
 		call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(max(right-x, 0), btn)}
+			hook := clsAutoclogHook.Enter(gtx, 0, 0) // AutoClog's div.p-autoclog__hook
+			defer hook.Leave()
 			return slackc.Component(gtx, "BaseAvatarStack", hdrStack{a: a, ch: ch, conv: conv, btn: btn}, hdrStack.props, hdrStack.layout)
 		})
 		right -= d.Size.X
 		place(gtx, call, image.Pt(right, y+(btn-d.Size.Y)/2))
+		if hdrStackTap != nil {
+			o := image.Pt(right, y+(btn-d.Size.Y)/2)
+			hdrStackTap(ch, image.Rectangle{Min: o, Max: o.Add(d.Size)}, hdrStackDrawn)
+		}
 		if clicked(a.clicks.get("hdr.members")) {
 			a.OpenDetails(ch)
 		}

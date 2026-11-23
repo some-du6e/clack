@@ -66,7 +66,7 @@ Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌
 | NoUpsell | ✅ | live | Clack draws no upsells. |
 | OfficeHours | — | CI (acceptance check) | Not run live (it changes your presence). |
 | oneko | ⚠️ | CI (acceptance check) | The cat element and its mousemove listener work; the cat isn't drawn (its sprite is a `data:` URL moved with pixel `background-position`). |
-| OnlineCount | ❌ | — | Needs Slack's flannel `query` export and presence subscriptions for up to 950 users. |
+| OnlineCount | ✅ | CI (`TestOnlineCountLikeSlack`, `TestPluginGapOnlineCount`) | The online count beside the channel header's avatar stack, as in Slack: Slack's flannel `query` export lists the channel's people (edge users/list), their presence is subscribed (presence_sub, the 950 cap from `getPresenceSubscriptionByTeamId`) and the count follows presence_change; AutoClog's `div.p-autoclog__hook` holds the stack and the count, which the plugin's rule lays out as a flex row (Tooltip adds no element, as Slack's clones its child). |
 | PrivateChannelMapper | ⚠️ | — | Autocomplete rows keep their `.promise` tier (`d69711c`); the missing-channel pill never triggers. |
 | QuickJoin | ✅ | CI (`TestSlickViewQuickJoin`) | A Join button under a channel you can join. |
 | QuietSpotify | ❌ | — | No Spotify embeds or frames in Clack. |
@@ -165,4 +165,4 @@ Related theme fixes: importing selects the theme (`fcc7ac9`); pausing Slick keep
 | ui, slackc | Plugin elements in the top nav and sidebar resolve Slack's inverted theme scope (`sk-client-theme--light-inverted-sidebar`); a `FlexItems` native's patch lays out as its parent row's items (StreamerMode's toggle beside the help button); a native that draws nothing (Slack's null) is no flex item |
 | slackc/kit | `SvgIcon` resolves Slack's names through the icon set's own table (`eye-open`, StreamerMode's toggle, had drawn the fallback dot) |
 
-Still open: SlimMessageBox's `@container` cases; ClearURLs' paste-time cleaning (Quill's Clipboard); CustomFonts, CustomSounds, oneko's sprite, OnlineCount, PrivateChannelMapper's pill, ShowRealUser's forwarded copies; BetterHuddles' own call client; and every *CI*-only row's live re-check.
+Still open: SlimMessageBox's `@container` cases; ClearURLs' paste-time cleaning (Quill's Clipboard); CustomFonts, CustomSounds, oneko's sprite, PrivateChannelMapper's pill, ShowRealUser's forwarded copies; BetterHuddles' own call client; and every *CI*-only row's live re-check.

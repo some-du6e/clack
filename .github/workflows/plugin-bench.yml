@@ -107,7 +107,9 @@ jobs:
 
   # The host gaps the bench found (internal/ui/plugin_gaps_test.go), each
   # with the Library's published bundle in the whole client: Streamer
-  # Mode's rows, pronouns in the thread pane, Quick Join's double click.
+  # Mode's rows, pronouns in the thread pane, Quick Join's double click,
+  # Online Count's count beside the header's avatar stack
+  # (plugin_gap_onlinecount_test.go).
   gaps:
     runs-on: ubuntu-latest
     timeout-minutes: 30

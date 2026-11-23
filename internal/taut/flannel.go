@@ -26,7 +26,9 @@ var flannelMethods = map[string]bool{
 // as its FlannelRequest goes (client-boot Ln2M): the method's path on the
 // edge cache, args as the JSON body with Clack's token (core's edge
 // client: what Clack's own member lists send), tried as BaseRequest tries
-// it (slack.SlackRetriesUpTo, BaseRequest's 3 attempts). The answer is
+// it (slack.SlackRetriesUpTo, BaseRequest's 3 attempts; a not-ok answer
+// is final, slack.NoAnswerRetries, as FlannelRequest's _onNotOk rejects
+// an internal_error at once). The answer is
 // the last try whole (lastTry) and flannelUrl, where it went, for
 // flannelSettle to settle the query from as FlannelRequest does. team is
 // the query's teamId: the signed-in team or its enterprise, as Slack
@@ -47,7 +49,7 @@ func (t *Taut) flannel(ctx context.Context, team, method string, args json.RawMe
 	}
 	var last *slack.Attempt
 	tries := 0
-	ctx = slack.ObserveAttempts(slack.SlackRetriesUpTo(ctx, slack.SlackMaxAttempts), func(at slack.Attempt) {
+	ctx = slack.ObserveAttempts(slack.NoAnswerRetries(slack.SlackRetriesUpTo(ctx, slack.SlackMaxAttempts)), func(at slack.Attempt) {
 		tries++
 		last = &at
 	})
