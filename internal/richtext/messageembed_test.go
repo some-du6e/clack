@@ -1,8 +1,11 @@
 package richtext
 
 import (
+	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -80,5 +83,56 @@ func TestMessageEmbed(t *testing.T) {
 	d = embedDoc(t, R, `[{"type":"message_embed","channel":"C1","ts":"1.0"}]`)
 	if len(d.Blocks) != 0 {
 		t.Errorf("no finder: %s", dump(d.Blocks))
+	}
+}
+
+// embedCards counts the message_embed cards in bs, nested ones too.
+func embedCards(bs []Block) int {
+	n := 0
+	for i := range bs {
+		b := &bs[i]
+		if b.Kind == AttachmentBlock && b.Att != nil {
+			if b.Att.Embed {
+				n++
+			}
+			n += embedCards(b.Att.Text)
+		}
+		n += embedCards(b.Children)
+	}
+	return n
+}
+
+// Embeds inside embeds are bounded: a chain of messages each embedding
+// the one before three times draws at most maxEmbedCards cards, and a
+// message embedding its own ts draws its card once, without itself in
+// it; both convert in bounded time.
+func TestMessageEmbedBounded(t *testing.T) {
+	embed := func(ts string) string { return `{"type":"message_embed","channel":"C1","ts":"` + ts + `"}` }
+	r := embedRes{msgs: map[string]slack.Message{}}
+	r.msgs["C1/1.0"] = slack.Message{TS: "1.0", Channel: "C1", User: "U1", Text: "the first"}
+	for i := 2; i <= 12; i++ {
+		prev := strconv.Itoa(i-1) + ".0"
+		ts := strconv.Itoa(i) + ".0"
+		r.msgs["C1/"+ts] = slack.Message{TS: ts, Channel: "C1", User: "U1", Text: "message " + ts,
+			Blocks: json.RawMessage(`[` + embed(prev) + `,` + embed(prev) + `,` + embed(prev) + `]`)}
+	}
+	r.msgs["C1/5.5"] = slack.Message{TS: "5.5", Channel: "C1", User: "U1", Text: "self", Blocks: json.RawMessage(`[` + embed("5.5") + `]`)}
+	conv := func(blocks string) Doc {
+		t.Helper()
+		var d Doc
+		done := make(chan struct{})
+		go func() { d = embedDoc(t, r, blocks); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: no conversion after 10s", blocks)
+		}
+		return d
+	}
+	if n := embedCards(conv(`[` + embed("12.0") + `]`).Blocks); n == 0 || n > maxEmbedCards {
+		t.Errorf("a chain embedding three times a level: %d cards, want 1 to %d", n, maxEmbedCards)
+	}
+	if n := embedCards(conv(`[` + embed("5.5") + `]`).Blocks); n != 1 {
+		t.Errorf("a message embedding itself: %d cards, want its own once", n)
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/chart"
@@ -362,5 +363,42 @@ func TestDataTableFullscreenFilter(t *testing.T) {
 	e.settle()
 	if f.ed.Text() != "" || !focused(&f.ed) {
 		t.Errorf("Clear filter: field %q, focused %v; want it empty and focused", f.ed.Text(), focused(&f.ed))
+	}
+}
+
+// firingElements is stubElements whose message has sent n actions.
+type firingElements struct {
+	stubElements
+	n *uint64
+}
+
+func (f firingElements) ActionsFired() uint64 { return *f.n }
+
+// The fullscreen view closes once its element host sends an action (a
+// row's action cell: DataTableFullscreenModal's onAction runs it and
+// closes the modal), so a view of rows the message no longer has can't
+// send a second one.
+func TestDataTableFullscreenClosesAfterAction(t *testing.T) {
+	h := chartHost(t, true)
+	d := richtext.FromMessage(h.a.S, &slack.Message{TS: "1.0", Text: "t", Blocks: []byte(`[{"type":"data_table","block_id":"dtact","rows":[[{"type":"raw_text","text":"Task"},{"type":"raw_text","text":"Action"}],[{"type":"raw_text","text":"a"},{"type":"action_cell","element":{"type":"button","action_id":"done","text":{"type":"plain_text","text":"Done"},"value":"a"}}]]}]`)})
+	var drawn int
+	var sent uint64 = 3 // actions before the view opened
+	c := richview.NewTableControl(d.Blocks[0].DataTable, nil)
+	c.Elements = firingElements{stubElements{&drawn}, &sent}
+	f := newDTFull(h, c, false)
+	if !f.m.o.FillBody {
+		t.Errorf("the fullscreen view measures its rows (no FillBody)")
+	}
+	var ops op.Ops
+	gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(960, 600))}
+	f.layout(gtx)
+	if f.m.Dismissed() {
+		t.Fatal("closed before any action")
+	}
+	sent++
+	ops.Reset()
+	f.layout(gtx)
+	if !f.m.Dismissed() {
+		t.Error("an action from its rows left the view open")
 	}
 }

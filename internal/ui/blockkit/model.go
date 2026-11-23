@@ -437,6 +437,29 @@ func elementsOf(b *Block) []*Element {
 
 // find returns the element with blockID/actionID (actionID may be empty
 // when the app didn't set one: then the first of its type at index n).
+// findValue is find preferring the element whose value is value (a
+// data_table's action cells sharing an action_id).
+func findValue(bs []Block, blockID, actionID, value string) (ref, bool) {
+	first, found := ref{}, false
+	for _, b := range allBlocks(bs) {
+		if blockID != "" && b.BlockID != blockID {
+			continue
+		}
+		for _, e := range elementsOf(b) {
+			if e.ActionID != actionID {
+				continue
+			}
+			if e.Value == value {
+				return ref{b, e}, true
+			}
+			if !found {
+				first, found = ref{b, e}, true
+			}
+		}
+	}
+	return first, found
+}
+
 func find(bs []Block, blockID, actionID string) (ref, bool) {
 	for _, b := range allBlocks(bs) {
 		if blockID != "" && b.BlockID != blockID {

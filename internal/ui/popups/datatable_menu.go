@@ -128,6 +128,9 @@ type dtFull struct {
 	ed    widget.Editor
 	clear widget.Clickable // the field's Clear, while it has text
 	focus bool             // the field takes the focus next frame
+	// fired reads the element host's sent actions, fired0 its count at open
+	fired  func() uint64
+	fired0 uint64
 }
 
 // dtFullHandler is the fullscreen view's richview handler: its column
@@ -185,7 +188,12 @@ func newDTFull(h Host, c *richview.TableControl, focus bool) *dtFull {
 	f.v.SetTableControl(&t, f.full)
 	f.ed.SingleLine = true
 	f.ed.SetText(f.full.FilterText())
-	f.m = NewModal(h, ModalOpts{Title: t.Caption, Width: 960, Body: f.layout,
+	// DataTableFullscreenModal's onAction runs the row's action and closes
+	// the modal: the view closes once the message's elements send one
+	if fc, ok := c.Elements.(interface{ ActionsFired() uint64 }); ok {
+		f.fired, f.fired0 = fc.ActionsFired, fc.ActionsFired()
+	}
+	f.m = NewModal(h, ModalOpts{Title: t.Caption, Width: 960, Body: f.layout, FillBody: true,
 		// the field, then its Clear while it shows
 		FocusStops: func() []event.Tag {
 			if f.ed.Len() > 0 {
@@ -197,6 +205,10 @@ func newDTFull(h Host, c *richview.TableControl, focus bool) *dtFull {
 }
 
 func (f *dtFull) layout(gtx layout.Context) layout.Dimensions {
+	if f.fired != nil && f.fired() != f.fired0 {
+		f.m.Dismiss()
+		return layout.Dimensions{}
+	}
 	if RichStyle == nil {
 		return layout.Dimensions{}
 	}
