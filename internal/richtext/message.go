@@ -354,6 +354,15 @@ func transcriptStatus(raw json.RawMessage) string {
 	return t.Status
 }
 
+// FileOf is a Slack file object as a message draws it (the composer's
+// uploaded clip, which its pending file plays as FileAudio).
+func FileOf(f *slack.File) *File {
+	if f == nil {
+		return nil
+	}
+	return convertFile(f)
+}
+
 func convertFile(f *slack.File) *File {
 	out := &File{
 		ID: f.ID, Name: f.Name, Title: f.Title, Mime: f.Mimetype, Type: f.Filetype, PrettyType: f.PrettyType,

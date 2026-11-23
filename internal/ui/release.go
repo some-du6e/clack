@@ -36,8 +36,9 @@ func (a *App) release() {
 	popups.ForgetHost(a)
 	views.ForgetHost(a)
 	blockkit.ForgetHost(a)
-	a.closeVideos()      // its players and their goroutines (video.go)
-	clear(lastClickMods) // keyed by its widgets (widgets.go; one App at a time here)
+	a.closeVideos()       // its players and their goroutines (video.go)
+	composer.CloseClips() // and a clip recording's microphone
+	clear(lastClickMods)  // keyed by its widgets (widgets.go; one App at a time here)
 	if a.data != nil && a.data.core != nil {
 		messages.ForgetCore(a.data.core)
 		blockkit.ForgetCore(a.data.core)

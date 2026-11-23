@@ -517,6 +517,10 @@ type UploadFile struct {
 	// AltText is an image's alt text (the Edit file dialog),
 	// files.getUploadURL's alt_txt.
 	AltText string
+	// Subtype is the File's subtype ("slack_audio" for a voice clip,
+	// internal/clip): UploadQueue sends it as files.getUploadURL's subtype
+	// and in completeUpload's files entry. "" for an ordinary file.
+	Subtype string
 }
 
 type UploadedFile struct {
