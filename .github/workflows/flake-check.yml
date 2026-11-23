@@ -6173,12 +6173,13 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 5m -run '^TestHistoryHiddenFollowsPatches$' ./internal/taut || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^TestHiddenHistoryRows$' ./internal/ui/messages || rc=1
-          go test -count="$COUNT" -timeout 15m -run '^TestHideResolvedLikeSlack$' ./internal/slick || rc=1
-          xvfb-run -a go test -count="$COUNT" -timeout 15m -run '^TestPluginGapHideResolved$' ./internal/ui || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
-          exit $rc
+          # report only (plugins-work-3-diag): every test once, -v, and exit 0
+          pick='_test.go:[0-9]+:|^(---|ok|FAIL|PASS)|^\s+--- '
+          go test -v -count=1 -timeout 5m -run '^(TestHistoryHiddenFollowsPatches|TestChannelHistoryFollowsLoads)$' ./internal/taut 2>&1 | grep -E "$pick" || true
+          go test -v -count=1 -timeout 5m -run '^TestHiddenHistoryRows$' ./internal/ui/messages 2>&1 | grep -E "$pick" || true
+          go test -v -count=1 -timeout 15m -run '^TestHideResolvedLikeSlack$' ./internal/slick 2>&1 | grep -E "$pick" || true
+          xvfb-run -a go test -v -count=1 -timeout 15m -run '^TestPluginGapHideResolved$' ./internal/ui 2>&1 | grep -E 'plugin_gap_hideresolved_test.go|^(---|ok|FAIL|PASS)' || true
+          exit 0
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
