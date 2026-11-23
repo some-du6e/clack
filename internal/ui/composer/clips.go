@@ -564,13 +564,14 @@ type clipMeta struct {
 // (isComposerDraftSendable's tooManyFiles, Composer.tooManyFiles), so a
 // recording is never lost to the limit.
 func (a *attachments) addClip(f vclip.File) bool {
+	ft := attFileType(f.Name, f.Mime) // the recorder's type (no OS lookup unless it has none), before the lock
 	a.mu.Lock()
 	err := attCheckAdd(0, a.total, int64(len(f.Data)))
 	upload := a.h.Core() != nil
 	var c *attChip
 	if err == nil {
 		c = &attChip{id: int(attNextID.Add(1)), name: f.Name, title: f.Name, data: f.Data, kind: attKindOf(f.Name, f.Data),
-			pf: pendingClip(f), preparing: upload, ptotal: int64(len(f.Data)),
+			pf: pendingClip(f), preparing: upload, ptotal: int64(len(f.Data)), ftype: ft,
 			clip: &clipMeta{subtype: f.Subtype, mime: f.Mime, samples: f.WaveSamples, duration: f.Duration}}
 		a.chips = append(a.chips, c)
 		a.total += int64(len(f.Data))

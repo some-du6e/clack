@@ -5263,9 +5263,9 @@ jobs:
       - name: "core: the upload part's type, the profile photo's"
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestUploadTypesLikeSlack|TestUploadFileType|TestCheckPhoto)$' ./internal/core
-      - name: "composer: a pending file's type"
+      - name: "composer: a pending file's type, looked up once out of attachments.mu"
         if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -v -run '^TestAttachmentFileTypes$' ./internal/ui/composer
+        run: go test -count=$COUNT -v -run '^(TestAttachmentFileTypes|TestAttachmentTypeLookedUpOnce|TestRestoredDraftFileTypes)$' ./internal/ui/composer
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
