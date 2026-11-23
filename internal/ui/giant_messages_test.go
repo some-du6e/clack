@@ -161,6 +161,40 @@ func TestGiantMessagesBounded(t *testing.T) {
 	giantSession(t, e, fs, n, out, nil)
 }
 
+// TestGiantMessagesKeywords is the same session with Channel keywords
+// set (global_keywords: three of the newest message's own words), which
+// every conversion of every message marks (richtext.HighlightDoc): a
+// match cuts a raw span in parts that stay raw, so the giant rows keep
+// their lazy layout.
+func TestGiantMessagesKeywords(t *testing.T) {
+	n, out := giantSetup(t)
+	fs := giantServer(t, n, true)
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	lines := strings.Split(fakeslack.GiantText(0), "\n")
+	if len(lines) < 100 {
+		t.Fatalf("the newest giant message has %d lines", len(lines))
+	}
+	var kws []string
+	for _, i := range []int{10, len(lines) / 2, len(lines) - 3} {
+		if w := strings.Trim(lines[i], "',.!-"); len(w) >= 4 && !strings.ContainsAny(w, "',.!-") {
+			kws = append(kws, w)
+		}
+	}
+	if len(kws) == 0 {
+		t.Fatal("no keyword among the newest message's words")
+	}
+	c := e.a.data.core
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := c.SetGlobalNotifyPref(ctx, "global_keywords", strings.Join(kws, ",")); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the keywords", 30*time.Second, func() bool { return len(c.Prefs().Keywords) == len(kws) })
+	t.Logf("keywords %q", kws)
+	giantSession(t, e, fs, n, out, nil)
+}
+
 // TestGiantMessagesPlugins is the same session under a Taut plugin that
 // patches the messages slice (passing it through, as Slick's and Taut's
 // message plugins patch it): every row then draws the plugins' view of

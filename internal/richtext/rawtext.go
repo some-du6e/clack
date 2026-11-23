@@ -232,8 +232,8 @@ func eachRichText(s string, lead, first bool, text func(string) bool, brk func(B
 // newlines of a paragraph run would end the run early, and the leading
 // whitespace of a first element is trimmed only at the element's start.
 func rawCutSafe(s string, i int, br BrKind) bool {
-	if i <= 0 || i >= len(s) {
-		return true
+	if i <= 0 || i >= len(s) || br == BrRawPre {
+		return true // a preformatted element is cut at each newline and nothing else (Pieces)
 	}
 	isWS := func(r rune) bool { return r == '\n' || r == ' ' || r == '\t' || r == 0xa0 }
 	a, b := i, i
@@ -251,7 +251,9 @@ func rawCutSafe(s string, i int, br BrKind) bool {
 		}
 		b += n
 	}
-	if strings.Contains(s[a:b], "\n") {
+	// a run (two newlines or more, white space between) crossing the cut
+	// would end early; a lone newline is a break either side of it
+	if strings.Count(s[a:b], "\n") > 1 {
 		return false
 	}
 	if br == BrRawFirst && strings.TrimLeftFunc(s[:i], unicode.IsSpace) == "" {

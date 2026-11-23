@@ -343,8 +343,12 @@ func sweepRows(now time.Time) {
 		if s.releaseEvicted() {
 			continue
 		}
+		// a big row of a list on screen goes in releaseBigRows, after its
+		// layout (a list drawn no frame for a second still shows it: the
+		// sweep runs before layout, and released it to lay it out again)
+		away := !s.onScreen()
 		for _, r := range s.rows {
-			if r.rv != nil && r.edit == nil && (now.Sub(r.drawn) > rowIdle || now.Sub(r.drawn) > bigRowIdle && r.rv.PlainLen() >= bigRowText) {
+			if r.rv != nil && r.edit == nil && (now.Sub(r.drawn) > rowIdle || away && now.Sub(r.drawn) > bigRowIdle && r.rv.PlainLen() >= bigRowText) {
 				// the trees' msgs it remembered and laid over its message
 				// (slackc's sweep has let their roots go, and a remount
 				// hands the natives none until JS draws them again): not

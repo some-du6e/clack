@@ -54,9 +54,61 @@ func TestBucketJSONSameAsBucket(t *testing.T) {
 			t.Errorf("message %s:\n bucket     %.400s\n bucketJSON %.400s", ts, xj, yj)
 		}
 	}
+	// the order JS sees: the messages by ts, each message's keys sorted,
+	// text and blocks among them, as encoding/json writes a map
+	if g, w := jsonKeyOrder(t, got), jsonKeyOrder(t, want); !reflect.DeepEqual(g, w) {
+		t.Errorf("bucketJSON's keys come in another order than encoding/json's:\n got  %.300v\n want %.300v", g, w)
+	}
 	if m.bucketJSON("C0NOSUCHCHAN") != nil {
 		t.Error("a channel with no messages has a bucket")
 	}
+}
+
+// jsonKeyOrder lists an object of objects' keys in the order the JSON
+// writes them: each top-level key, then its object's keys.
+func jsonKeyOrder(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var top []string
+	var byKey map[string]json.RawMessage
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	if _, err := dec.Token(); err != nil { // {
+		t.Fatal(err)
+	}
+	for dec.More() {
+		k, err := dec.Token()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			t.Fatal(err)
+		}
+		top = append(top, k.(string))
+		if byKey == nil {
+			byKey = map[string]json.RawMessage{}
+		}
+		byKey[k.(string)] = v
+	}
+	var out []string
+	for _, k := range top {
+		out = append(out, "@"+k)
+		d := json.NewDecoder(strings.NewReader(string(byKey[k])))
+		if tok, err := d.Token(); err != nil || tok != json.Delim('{') {
+			continue
+		}
+		for d.More() {
+			mk, err := d.Token()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var skip json.RawMessage
+			if err := d.Decode(&skip); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, mk.(string))
+		}
+	}
+	return out
 }
 
 func mustJSON(s string) string {

@@ -1,6 +1,7 @@
 package taut
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"hash/fnv"
@@ -1492,9 +1493,12 @@ func (m *mirror) bucketJSON(ch string) json.RawMessage {
 	for i := range fetched { // a window's or a thread's copy wins
 		add(&fetched[i])
 	}
+	// each message's JSON is encoding/json's of its map, keys sorted,
+	// with its text and blocks written in their places: marshalled with a
+	// sentinel for each, then the sentinel's bytes swapped for them
 	type part struct {
 		ts     string
-		small  []byte // the message without its text and blocks
+		small  []byte // the message, sentinels for its text and blocks
 		text   string
 		blocks json.RawMessage
 	}
@@ -1504,8 +1508,12 @@ func (m *mirror) bucketJSON(ch string) json.RawMessage {
 		e := messageJSON(ch, sm)
 		text, _ := e["text"].(string)
 		blocks, _ := e["blocks"].(json.RawMessage)
-		delete(e, "text")
-		delete(e, "blocks")
+		e["text"] = bucketTextMark
+		if len(blocks) > 0 {
+			e["blocks"] = bucketBlocksMark
+		} else {
+			delete(e, "blocks")
+		}
 		small, err := json.Marshal(e)
 		if err != nil || len(small) < 2 {
 			continue
@@ -1513,6 +1521,9 @@ func (m *mirror) bucketJSON(ch string) json.RawMessage {
 		parts = append(parts, part{ts: sm.TS, small: small, text: text, blocks: blocks})
 		n += len(sm.TS) + len(small) + len(text) + len(text)/8 + len(blocks) + 32
 	}
+	// the messages in ts order, as encoding/json writes a map's keys (the
+	// order JS's Object.keys sees them)
+	sort.Slice(parts, func(i, j int) bool { return parts[i].ts < parts[j].ts })
 	out := make([]byte, 0, n)
 	out = append(out, '{')
 	for i, p := range parts {
@@ -1521,21 +1532,35 @@ func (m *mirror) bucketJSON(ch string) json.RawMessage {
 		}
 		out = appendJSONString(out, p.ts)
 		out = append(out, ':')
-		out = append(out, p.small[:len(p.small)-1]...) // its closing brace after text and blocks
-		if len(p.small) > 2 {
-			out = append(out, ',')
+		rest := p.small
+		for len(rest) > 0 {
+			ti, bi := bytes.Index(rest, bucketTextMark), bytes.Index(rest, bucketBlocksMark)
+			switch {
+			case ti >= 0 && (bi < 0 || ti < bi):
+				out = append(out, rest[:ti]...)
+				out = appendJSONString(out, p.text)
+				rest = rest[ti+len(bucketTextMark):]
+			case bi >= 0:
+				out = append(out, rest[:bi]...)
+				out = append(out, p.blocks...) // the store's blocks: Slack's JSON, decoded once already
+				rest = rest[bi+len(bucketBlocksMark):]
+			default:
+				out = append(out, rest...)
+				rest = nil
+			}
 		}
-		out = append(out, `"text":`...)
-		out = appendJSONString(out, p.text)
-		if len(p.blocks) > 0 { // the store's blocks: Slack's JSON, decoded once already
-			out = append(out, `,"blocks":`...)
-			out = append(out, p.blocks...)
-		}
-		out = append(out, '}')
 	}
 	out = append(out, '}')
 	return out
 }
+
+// bucketTextMark and bucketBlocksMark stand for a message's text and
+// blocks while bucketJSON marshals the rest of it (strings no message
+// holds: a NUL each side).
+var (
+	bucketTextMark   = json.RawMessage(`"\u0000clack-bucket-text\u0000"`)
+	bucketBlocksMark = json.RawMessage(`"\u0000clack-bucket-blocks\u0000"`)
+)
 
 // appendJSONString appends s as a JSON string: quote, backslash and
 // control characters escaped, invalid UTF-8 as U+FFFD (encoding/json's

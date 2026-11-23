@@ -46,21 +46,55 @@ func giantDocs(text string) (raw, expanded rt.Doc) {
 func TestGiantViewLaysOutAsExpanded(t *testing.T) {
 	st := newTestStyle()
 	rawDoc, expDoc := giantDocs(giantLines(3000))
+	giantViewAsExpanded(t, st, "paragraph", rawDoc, expDoc, true)
+	// a quote's and a code block's, a bold one's: 256 lines and more as
+	// one raw span each (Slack's rich_text_quote, rich_text_preformatted),
+	// the code block's with indented and blank lines and lines of spaces
+	var code strings.Builder
+	for i := 0; i < 1200; i++ {
+		switch i % 7 {
+		case 3:
+			code.WriteString("    \n")
+		case 5:
+			code.WriteString("\n")
+		default:
+			fmt.Fprintf(&code, "%sline%d(x, y)\n", strings.Repeat("  ", i%4), i)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		kind rt.BlockKind
+		sp   rt.Span
+	}{
+		{"quote", rt.Quote, rt.Span{Kind: rt.Text, Text: giantLines(1200), Br: rt.BrRawLead}},
+		{"bold", rt.Paragraph, rt.Span{Kind: rt.Text, Text: giantLines(1200), Br: rt.BrRawFirst, Style: rt.Bold}},
+		{"code block", rt.Preformatted, rt.Span{Kind: rt.Text, Text: code.String(), Br: rt.BrRawPre}},
+	} {
+		raw := doc(rt.Block{Kind: c.kind, Spans: []rt.Span{c.sp}})
+		exp := doc(rt.Block{Kind: c.kind, Spans: rt.Expand([]rt.Span{c.sp})})
+		giantViewAsExpanded(t, st, c.name, raw, exp, false)
+	}
+}
+
+// giantViewAsExpanded checks that rawDoc lays out as expDoc, the spans
+// its raw spans stand for (lazy: it must have lazy words).
+func giantViewAsExpanded(t *testing.T, st *Style, name string, rawDoc, expDoc rt.Doc, lazy bool) {
+	t.Helper()
 	for _, w := range []int{400, 900} {
 		a := layoutAt(st, rawDoc, Options{}, w)
 		b := layoutAt(st, expDoc, Options{}, w)
-		if a.d.lazyN == 0 {
-			t.Fatalf("%dpx: no lazy words", w)
+		if lazy && a.d.lazyN == 0 {
+			t.Fatalf("%s %dpx: no lazy words", name, w)
 		}
 		if b.d.lazyN != 0 {
-			t.Fatalf("%dpx: lazy words without a raw span", w)
+			t.Fatalf("%s %dpx: lazy words without a raw span", name, w)
 		}
 		if a.d.size.Y != b.d.size.Y || len(a.d.lines) != len(b.d.lines) || string(a.d.plain) != string(b.d.plain) || len(a.d.frags) != len(b.d.frags) {
-			t.Fatalf("%dpx: %d px, %d lines, %d frags; expanded %d px, %d lines, %d frags", w, a.d.size.Y, len(a.d.lines), len(a.d.frags), b.d.size.Y, len(b.d.lines), len(b.d.frags))
+			t.Fatalf("%s %dpx: %d px, %d lines, %d frags; expanded %d px, %d lines, %d frags", name, w, a.d.size.Y, len(a.d.lines), len(a.d.frags), b.d.size.Y, len(b.d.lines), len(b.d.frags))
 		}
 		for i := range a.d.lines {
 			if la, lb := a.d.lines[i], b.d.lines[i]; la != lb {
-				t.Fatalf("%dpx: line %d %+v, expanded %+v", w, i, la, lb)
+				t.Fatalf("%s %dpx: line %d %+v, expanded %+v", name, w, i, la, lb)
 			}
 		}
 		a.setClip()
@@ -69,7 +103,7 @@ func TestGiantViewLaysOutAsExpanded(t *testing.T) {
 			fa, fb := &a.d.frags[i], &b.d.frags[i]
 			if fa.sh == nil || fa.sh.str != fb.sh.str || fa.p0 != fb.p0 || fa.p1 != fb.p1 || fa.y != fb.y || fa.top != fb.top || fa.bot != fb.bot ||
 				math.Abs(float64(fa.x-fb.x)) > 0.05 || math.Abs(float64(fa.w-fb.w)) > 0.001 {
-				t.Fatalf("%dpx: frag %d (%q) at %.3f w %.3f y %d, expanded (%q) at %.3f w %.3f y %d", w, i, string(a.d.plain[fa.p0:fa.p1]), fa.x, fa.w, fa.y, fb.sh.str, fb.x, fb.w, fb.y)
+				t.Fatalf("%s %dpx: frag %d (%q) at %.3f w %.3f y %d, expanded (%q) at %.3f w %.3f y %d", name, w, i, string(a.d.plain[fa.p0:fa.p1]), fa.x, fa.w, fa.y, fb.sh.str, fb.x, fb.w, fb.y)
 			}
 		}
 	}

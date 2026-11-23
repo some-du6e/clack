@@ -231,6 +231,15 @@ func (v *View) materialize(st *Style) {
 	if d.lazyN == 0 {
 		return
 	}
+	shaped := false
+	defer func() {
+		if shaped {
+			// the words shaped are narrower than their bounds: the View
+			// is as wide as what's laid out now (a selection doesn't
+			// start past the text)
+			d.size.X = d.contentWidth(v.laidW)
+		}
+	}()
 	for li := range d.lines {
 		ln := &d.lines[li]
 		if ln.f1 <= ln.f0 || d.frags[ln.f0].lazy == 0 {
@@ -249,6 +258,7 @@ func (v *View) materialize(st *Style) {
 				sh := st.word(d.faces[f.lazy-1], string(d.plain[f.p0:f.p1]))
 				shift += sh.adv - f.w
 				f.sh, f.w = sh, sh.adv
+				shaped = true
 			case !in && f.sh != nil:
 				f.sh = nil // its width stays the exact one
 			}

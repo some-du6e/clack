@@ -717,37 +717,17 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		h = l.blocks(v.doc.Blocks, 0, 0, w, true)
 	}
 	v.d.pillRects()
-	maxX := 0
-	for i := range v.d.frags {
-		if x := int(v.d.frags[i].x + v.d.frags[i].w + 0.999); x > maxX {
-			maxX = x
-		}
-	}
 	for i := range v.d.boxes {
-		if x := v.d.boxes[i].r.Max.X; x > maxX {
-			maxX = x
-		}
 		if y := v.d.boxes[i].r.Max.Y; y > h {
 			h = y
 		}
 	}
 	for i := range v.d.imgs {
-		if x := v.d.imgs[i].r.Max.X; x > maxX {
-			maxX = x
-		}
 		if y := v.d.imgs[i].r.Max.Y; y > h {
 			h = y
 		}
 	}
-	for i := range v.d.removes { // a remove button sits 9px past its card
-		if x := v.d.removes[i].r.Max.X; x > maxX {
-			maxX = x
-		}
-	}
-	if maxX > w {
-		maxX = w
-	}
-	v.d.size = image.Pt(maxX, h)
+	v.d.size = image.Pt(v.d.contentWidth(w), h)
 	v.laidW, v.laidPx, v.laidSp, v.laidGen, v.laidMode = w, pxdp, pxsp, st.gen, mode
 	v.dirty = false
 	v.recorded = false
@@ -757,6 +737,27 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if int(v.hover) >= len(v.d.targets) {
 		v.hover = -1
 	}
+}
+
+// contentWidth is how wide what's laid out reaches, at most w: its words,
+// boxes, images and remove buttons (one sits 9px past its card).
+func (d *display) contentWidth(w int) int {
+	maxX := 0
+	for i := range d.frags {
+		if x := int(d.frags[i].x + d.frags[i].w + 0.999); x > maxX {
+			maxX = x
+		}
+	}
+	for i := range d.boxes {
+		maxX = max(maxX, d.boxes[i].r.Max.X)
+	}
+	for i := range d.imgs {
+		maxX = max(maxX, d.imgs[i].r.Max.X)
+	}
+	for i := range d.removes {
+		maxX = max(maxX, d.removes[i].r.Max.X)
+	}
+	return min(maxX, w)
 }
 
 func (v *View) anyReady(st *Style) bool {

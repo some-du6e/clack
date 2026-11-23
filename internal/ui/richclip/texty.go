@@ -17,8 +17,9 @@ import (
 // code blocks are the newline's line format. "" for an empty doc.
 func TextyDelta(d richtext.Doc) string {
 	type op struct {
-		Insert     string         `json:"insert"`
-		Attributes map[string]any `json:"attributes,omitempty"`
+		Insert     string           `json:"insert"`
+		Attributes map[string]any   `json:"attributes,omitempty"`
+		more       *strings.Builder // plain text run on (Insert is its start): one copy, not one a line
 	}
 	var ops []op
 	add := func(s string, a map[string]any) {
@@ -26,7 +27,15 @@ func TextyDelta(d richtext.Doc) string {
 			return
 		}
 		if len(a) == 0 && len(ops) > 0 && len(ops[len(ops)-1].Attributes) == 0 {
-			ops[len(ops)-1].Insert += s
+			// a 92,000-line message's text appended a line at a time to
+			// one string copied it all each time (about 80 GB copied
+			// for #giant-wall)
+			last := &ops[len(ops)-1]
+			if last.more == nil {
+				last.more = &strings.Builder{}
+				last.more.WriteString(last.Insert)
+			}
+			last.more.WriteString(s)
 			return
 		}
 		ops = append(ops, op{Insert: s, Attributes: a})
@@ -115,6 +124,11 @@ func TextyDelta(d richtext.Doc) string {
 	}
 	if len(ops) == 0 {
 		return ""
+	}
+	for i := range ops {
+		if ops[i].more != nil {
+			ops[i].Insert = ops[i].more.String()
+		}
 	}
 	out, err := json.Marshal(struct {
 		Ops []op `json:"ops"`
