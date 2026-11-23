@@ -388,7 +388,9 @@ type display struct {
 	charts []chartPrim
 	// carousels are the carousels' scrollers (carousel.go)
 	carousels []carouselSlot
-	pills     []snipPill
+	// promptBtns are the share_prompts' Send to buttons (shareprompt.go)
+	promptBtns []promptBtn
+	pills      []snipPill
 	// ells counts the frags that are a clamp's "…" (frag.ell)
 	ells int
 }
@@ -446,6 +448,7 @@ func (d *display) reset() {
 	d.bars = d.bars[:0]
 	d.charts = d.charts[:0]
 	d.carousels = d.carousels[:0]
+	d.promptBtns = d.promptBtns[:0]
 	d.pills = d.pills[:0]
 	d.ells = 0
 }

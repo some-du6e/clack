@@ -597,6 +597,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	pointer.CursorText.Add(gtx.Ops)
 	v.handAreas(gtx, false)
 	v.drawCarousels(gtx, st, v.layH) // the carousels' cards and arrows (carousel.go)
+	v.drawPromptLoading(gtx, st)     // the share_prompts' sends in flight (shareprompt.go)
 	// Element runs (Options.Elements) go last: their input areas must be
 	// above the cursor/hit areas of cards and links registered above.
 	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {

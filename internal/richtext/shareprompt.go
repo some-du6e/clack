@@ -19,9 +19,9 @@ type SharePrompt struct {
 	// itself, which Send posts.
 	Rich    []Block
 	RichRaw json.RawMessage
-	// PromptID, AppID, BotUserID and IsSlackbot are the block's.
-	PromptID, AppID, BotUserID string
-	IsSlackbot                 bool
+	// BlockID, PromptID, AppID, BotUserID and IsSlackbot are the block's.
+	BlockID, PromptID, AppID, BotUserID string
+	IsSlackbot                          bool
 	// AgentName is the agent's real name (getMemberRealName: "Send to
 	// {agentName}"), AgentAvatar its picture; Shown is whether the card
 	// draws.
@@ -60,7 +60,7 @@ func (c *builder) sharePromptBlock(b *bk) Block {
 	if v == nil {
 		v = &bkSharePrompt{}
 	}
-	sp := &SharePrompt{Label: rawString(v.Label), Prompt: rawString(v.Prompt), PromptID: rawString(firstRaw(v.PromptID, v.PromptCaml)),
+	sp := &SharePrompt{BlockID: b.BlockID, Label: rawString(v.Label), Prompt: rawString(v.Prompt), PromptID: rawString(firstRaw(v.PromptID, v.PromptCaml)),
 		AppID: rawString(firstRaw(v.AppID, v.AppCamel)), BotUserID: rawString(firstRaw(v.BotUser, v.BotCamel))}
 	if s, ok := rawValue(firstRaw(v.Slackbot, v.SlackCamel)); ok {
 		sp.IsSlackbot = jsTruthy(s)
