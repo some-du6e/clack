@@ -5686,6 +5686,9 @@ jobs:
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
           GOTRACEBACK: all
         run: |
+          # a paste in the frame of a cut pastes the cut (the composer's model)
+          go test -count=1 -v -run '^TestPasteInTheFrameOfACut$' ./internal/ui/composer
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           # the paste's clipboard readers four at a time, in a child process
           go test -count=1 -v -timeout 10m -run '^TestWinClipboardReadersOneAtATime$' ./internal/ui/composer *> "$env:RUNNER_TEMP\readers.log"
           $readers = $LASTEXITCODE
