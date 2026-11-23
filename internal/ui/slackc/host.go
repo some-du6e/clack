@@ -92,6 +92,32 @@ func RegisterHost(fn HostComponent, names ...string) {
 	}
 }
 
+var noElement sync.Map // host name → true (RegisterHostNoElement)
+
+// RegisterHostNoElement declares host components that render no DOM
+// element of their own in Slack. Slack's Tooltip (BaseTooltip, client-boot
+// F2XN, build a09b625d90aa) clones its child, adding its handlers and
+// data-sk="tooltip_parent", and puts only a hidden span beside it, so the
+// child is the Tooltip's parent's child in the DOM. Selectors see it
+// there: ".hook > .count" and ".hook:has(> .count)" match a .count a
+// Tooltip holds right under .hook (OnlineCount's), and no rule matches
+// the component itself. Its box stays, for the host to track the pointer
+// and draw its tip, and is as big as what it holds: an inline-flex box,
+// which lays a child out at its own size with no line box around it, so
+// it sits where the child would. nth-child positions count it once,
+// where its child sits; the hidden span after the child isn't there.
+func RegisterHostNoElement(names ...string) {
+	for _, n := range names {
+		noElement.Store(n, true)
+	}
+}
+
+// hostWithoutElement reports a component declared RegisterHostNoElement.
+func hostWithoutElement(name string) bool {
+	_, ok := noElement.Load(name)
+	return ok
+}
+
 // LookupHost returns the registered host component for name.
 func LookupHost(name string) (HostComponent, bool) {
 	hosts.RLock()

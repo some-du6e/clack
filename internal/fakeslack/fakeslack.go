@@ -2306,6 +2306,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	// registered before hello: once the client is connected, Push reaches it
 	s.addSocket(c) // Push (canvas.go)
 	defer s.dropSocket(c)
+	defer s.dropPresenceSub(c)
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
 		_, data, err := c.Read(ctx)
@@ -2314,14 +2315,21 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		}
 		s.noteFrame(data)
 		var f struct {
-			Type string `json:"type"`
-			ID   int64  `json:"id"`
+			Type string   `json:"type"`
+			ID   int64    `json:"id"`
+			IDs  []string `json:"ids"`
 		}
-		if json.Unmarshal(data, &f) == nil && f.Type == "ping" && s.liveSocket(c) {
+		if json.Unmarshal(data, &f) != nil {
+			continue
+		}
+		switch {
+		case f.Type == "ping" && s.liveSocket(c):
 			b, _ := json.Marshal(map[string]any{"type": "pong", "reply_to": f.ID})
 			wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			_ = c.Write(wctx, websocket.MessageText, b)
 			cancel()
+		case f.Type == "presence_sub":
+			s.presenceSub(c, f.IDs) // presence.go
 		}
 	}
 }

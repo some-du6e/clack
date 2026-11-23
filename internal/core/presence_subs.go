@@ -81,6 +81,29 @@ func (a *App) PresenceSubscriptions() map[string]int {
 	return out
 }
 
+// PresenceSubscriptionOf is the presence manager's map for team
+// (getPresenceSubscriptionByTeamId, which OnlineCount sizes its own
+// subscriptions by, as Slack's server ignores a presence subscription of
+// about a thousand people): every member presence_sub carries, with its
+// count of subscribers. Clack's own set (the viewer, DM partners and the
+// people its views showed lately) counts one each, the members a plugin
+// subscribed what they were counted. nil for a team other than the
+// signed-in one or its enterprise. Like the next presence_sub, it lets
+// recently shown people past the set's bound go.
+func (a *App) PresenceSubscriptionOf(team string) map[string]int {
+	if team == "" || team != a.C.Creds.Team && team != a.C.Creds.EnterpriseID {
+		return nil
+	}
+	ids := a.presenceIDs(nil)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make(map[string]int, len(ids))
+	for _, id := range ids {
+		out[id] = max(a.presSubs[id], 1)
+	}
+	return out
+}
+
 // sendPresenceSubSoon is sendPresenceSubEvent: while the socket is up,
 // presence_sub with every member, once the changes have paused 100 ms.
 func (a *App) sendPresenceSubSoon() {

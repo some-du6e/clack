@@ -2084,6 +2084,122 @@ defineModule('slack-exports', {
 defineModule('pending-files', { updatePendingFile })
 defineModule('view-contexts', viewContexts)
 
+// ---- flannel: Slack's edge cache client (client-boot EVxR, build a09b625d90aa) ----
+// query(teamId, {method, args, signal}) sends a method of Slack's table (x
+// there) as a FlannelRequest (Ln2M): Go posts it to the team's edge cache
+// with Clack's token, as core's own member lists go, and tries it as
+// BaseRequest (Umoo) tries it, then hands back its last try, which
+// flannelSettle settles as FlannelRequest's resolve and _onNotOk do.
+// Slack sends any other method to the gateway as a {type: "flannel"}
+// socket message (iPXF jz) after logging it; Clack logs it the same way
+// and rejects, as it sends no socket message a plugin built.
+
+/** the methods query sends over HTTP (EVxR x) */
+const FLANNEL_METHODS = {
+  MEMBER_INFO: 'users/info', MEMBER_SEARCH: 'users/search', MEMBER_LIST: 'users/list', MEMBER_COUNTS: 'users/counts',
+  CHANNEL_INFO: 'channels/info', CHANNEL_SEARCH: 'channels/search', MPIMS_SEARCH: 'mpims/search', CHANNEL_MEMBERSHIP: 'channels/membership',
+  USERGROUP_INFO: 'usergroups/info', USERGROUP_SEARCH: 'usergroups/search', EMOJI_INFO: 'emojis/info', EMOJI_SEARCH: 'emojis/search',
+  EMOJI_LIST: 'emojis/list', HUDDLES_INFO: 'huddles/info', HUDDLES_LIST: 'huddles/list', OBJECT_SEARCH: 'objects/search',
+  PERMISSIONS_INFO: 'permissions/info', BULK_USER_SEARCH: 'users/searchBulk', BULK_USERGROUP_SEARCH: 'usergroups/searchBulk',
+  EXTERNAL_TEAMS_SEARCH: 'externalTeams/search', EXTERNAL_TEAMS_LIST: 'externalTeams/list', EXTERNAL_TEAMS_COUNTS: 'externalTeams/counts',
+  APP_INFO: 'apps/info',
+}
+const flannelMethods = new Set(Object.values(FLANNEL_METHODS))
+
+/** Ln2M's: its name stays Error's, as Slack's class sets none */
+class FlannelRequestError extends Error {
+  data
+  method
+  args
+  id
+  attempts
+}
+
+/**
+ * settles a query from its last try o ({attempts, status, reqId,
+ * retryAfter, body, flannelUrl}) as Slack's request settles:
+ * BaseRequest's _onLoad, _onTimeout, _onError and throwError (Umoo), which
+ * FlannelRequest keeps, then FlannelRequest's resolve and _onNotOk
+ */
+function flannelSettle(o, { id, method, args }) {
+  const status = o.status
+  const response = typeof o.body === 'string' ? o.body : ''
+  const attempts = o.attempts || 1
+  // BaseRequest.throwError: without a source error the rejection carries
+  // the answer as its data
+  const thrown = ({ message, status: code, sourceError } = {}) => {
+    const r = message || sourceError?.message || 'Request did not complete.'
+    const s = code ?? 0
+    let data
+    try {
+      data = JSON.parse(response ?? 'null')
+    } catch {
+      data = { ok: false, error: r }
+    }
+    const tail = { status: s, response, retryAfter: apiRetryAfterMs(o, s, attempts), attempts }
+    return sourceError ? Object.assign(Error(r), sourceError, tail) : Object.assign(Error(r), { data, ...tail })
+  }
+  if (status === 'TIMEOUT') throw thrown({ message: 'Request timed out after 60 seconds.', status: 'TIMEOUT' })
+  if (status === 0) throw thrown() // XHR's error event: no answer
+  if (status !== 200) throw thrown({ message: 'Request completed but is not OK', status })
+  let t
+  try {
+    t = JSON.parse(response)
+  } catch {
+    t = { ok: false, error: '_parse_error' }
+  }
+  t = { flannelUrl: o.flannelUrl, args, method, clientRequestId: id, ...t }
+  if (t.ok) return t
+  const r = new FlannelRequestError(`Flannel ${method} not ok: ${t.error}`)
+  r.data = t
+  r.method = method
+  r.args = args
+  r.id = id
+  r.attempts = attempts
+  if (API_RATE_LIMITED.includes(t.error)) throw thrown({ sourceError: r, status: 'RATELIMITED' })
+  if (t.error === 'permission_denied') throw thrown({ sourceError: r, status: 'PERMISSION_DENIED' })
+  throw r
+}
+
+/** EVxR's flannel call for a method in the table: its request, queued expedited, tried, settled */
+function flannelCall(teamId, { method, args, signal } = {}) {
+  if (!method) throw Error('Must include a method')
+  if (signal?.aborted) return Promise.reject(new AbortError())
+  const id = apiRequestId(getRawState()?.bootData?.version_uid)
+  // computeToken (kMPT) puts the team's token before the caller's args;
+  // Clack sends its own, which the args show as "[redacted]"
+  const shown = { token: '[redacted]', ...args }
+  const sent = Promise.resolve(go('flannel', String(teamId ?? ''), method, encode(args ?? {}))).then((o) => flannelSettle(o, { id, method, args: shown }))
+  if (!signal?.addEventListener) return sent
+  return new Promise((resolve, reject) => {
+    // aborted on its way: the queue rejects at once, the answer is dropped
+    const onAbort = () => reject(new AbortError())
+    signal.addEventListener('abort', onAbort, { once: true })
+    sent.then(resolve, reject).finally(() => signal.removeEventListener?.('abort', onAbort))
+  })
+}
+
+const query = named('query', (teamId, request) => {
+  const { method } = request
+  if (method && flannelMethods.has(method)) return flannelCall(teamId, request)
+  error(Error(`Unsupported flannel method: ${method}`))
+  const { args } = request
+  if (args && (Object.hasOwn(args, 'type') || Object.hasOwn(args, 'subtype'))) throw Error('Arguments must not include `type` or `subtype` fields')
+  return Promise.reject(Error(`[Taut] Clack sends no flannel socket message (${method})`))
+})
+defineModule('flannel', { J8: FLANNEL_METHODS, P: query })
+
+// ---- Slack's presence manager (client-boot 4hlf) ----
+// getPresenceSubscriptionByTeamId(teamId) is the manager's count of
+// subscribers for each member whose presence the team's socket
+// subscribes to (presence_sub carries every key): Clack's own set (the
+// viewer, DM partners and the people its views showed lately, one each)
+// with the members plugins subscribed (addMemberToPresenceSubscription)
+// counted, a fresh copy; undefined for a team the client isn't signed in
+// to, as Slack's has none.
+const getPresenceSubscriptionByTeamId = named('getPresenceSubscriptionByTeamId', (teamId) => goOr(null, 'presenceSubscription', String(teamId ?? '')) ?? undefined)
+defineModule('presence-manager', { Wb: getPresenceSubscriptionByTeamId })
+
 Object.assign(T, {
   members,
   channels,

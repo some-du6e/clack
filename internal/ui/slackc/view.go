@@ -55,6 +55,9 @@ type View struct {
 	topKey    uint64
 	hasTop    bool
 	topFlex   bool // the parent native's flex items (ClassDef.FlexItems)
+	topEls    []css.Element
+	topElsOK  bool
+	topKids   topKidsStyle // a FlexItems parent's style as :has() on it sees the tree
 	rootStyle css.Style
 	rootsGen  uint64 // nativeRootsGen the styles were computed with
 	topStyle  *css.Style
@@ -265,6 +268,73 @@ func (v *View) setMetrics(gtx layout.Context) {
 }
 
 // Layout lays out nodes; "@" nodes named name call native.
+// treeKidsEl is a FlexItems native as its own selectors see it under a
+// patched tree: in Slack's DOM the tree's top elements are its children
+// (OnlineCount's count beside the avatar stack in .p-autoclog__hook).
+type treeKidsEl struct {
+	css.Element // the native (*nativeEl, or *kidsEl with declared kids)
+	v           *View
+}
+
+func (e *treeKidsEl) Kids() []css.Element {
+	top := e.v.topElements()
+	k, ok := e.Element.(css.KidsElement)
+	if !ok || len(k.Kids()) == 0 {
+		return top
+	}
+	return append(append([]css.Element(nil), k.Kids()...), top...)
+}
+
+// topKidsStyle is View.withTopKids' cache.
+type topKidsStyle struct {
+	gen            uint64 // bumped by setTree
+	ok             bool
+	forGen, forKey uint64 // what it was computed for: the tree, the native's stack key,
+	forVer         uint64 // the style sheets
+	forDark        bool
+	el             *treeKidsEl
+	st             css.Style
+	key            uint64
+	seq            uint64
+}
+
+// withTopKids is a FlexItems native's element, style and stack key as a
+// :has() rule on it sees this tree's top elements as its children:
+// .p-autoclog__hook:has(> .slick-online-count) makes the hook a flex row
+// once OnlineCount's count is in the tree. It is cascaded again when the
+// tree, the native or the sheets change; the key changes with it.
+func (v *View) withTopKids(el css.Element, key uint64) (css.Element, *css.Style, uint64) {
+	tk := &v.topKids
+	ver := Styles.Version()
+	dark := env().Theme != nil && env().Theme.Dark
+	if tk.ok && tk.forGen == tk.gen && tk.forKey == key && tk.forVer == ver && tk.forDark == dark {
+		v.topEl = tk.el
+		return tk.el, &tk.st, tk.key
+	}
+	kel := &treeKidsEl{Element: el, v: v}
+	v.topEl = kel // the top elements' parent while the cascade matches them
+	var ps *css.Style
+	if n := len(stack); n >= 2 {
+		ps = stack[n-2].style
+	}
+	e := cssEnv()
+	c := Styles.Cascade(kel, css.PseudoNone, nil, e)
+	tk.st = css.Compute(&c, ps, e)
+	ne, _ := el.(*nativeEl)
+	if k, ok := el.(*kidsEl); ok {
+		ne = k.nativeEl
+	}
+	if ne != nil {
+		if vs := scopeVarsOf(ne, tk.st.Vars); vs != nil {
+			tk.st.Vars = vs // a theme scope's tokens (scopevars.go), as lookupNative gives them
+		}
+	}
+	tk.seq++
+	tk.ok, tk.forGen, tk.forKey, tk.forVer, tk.forDark = true, tk.gen, key, ver, dark
+	tk.el, tk.key = kel, mix(key^tk.seq*0x9e3779b97f4a7c15)
+	return kel, &tk.st, tk.key
+}
+
 func (v *View) Layout(gtx layout.Context, nodes []*Node, name string, orig Props, native Native) layout.Dimensions {
 	v.fr = frame{name: name, orig: orig, native: native}
 	v.frameNo++
@@ -280,6 +350,9 @@ func (v *View) Layout(gtx layout.Context, nodes []*Node, name string, orig Props
 	if f := flexParent(el); f != v.topFlex {
 		v.topFlex = f
 		v.needStyle = true
+	}
+	if v.topFlex && st != nil {
+		el, st, key = v.withTopKids(el, key)
 	}
 	if key != v.topKey || (st != nil) != v.hasTop {
 		v.topKey, v.hasTop = key, st != nil
@@ -350,6 +423,8 @@ func (v *View) setTree(nodes []*Node) {
 	v.syncSheet(nodes)
 	clear(v.byK)
 	v.top = v.buildBoxes(nodes, nil)
+	v.topElsOK = false
+	v.topKids.gen++
 	v.main.boxes = v.top
 	v.main.root.lk = v.top
 	v.main.ok = false
