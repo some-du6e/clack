@@ -68,6 +68,11 @@ type model struct {
 	// messages"); merged: it met the newest messages and the list goes
 	// back to the conversation's model
 	win, newestMissing, merged bool
+	// cut, cutSet: a history change came while a load was out
+	// (historyChanged): what is before cut ("": everything) goes again
+	// when the load lands, its answer being maybe from before the change
+	cut    string
+	cutSet bool
 	// around: the message a window's load is out for; newer: loading the
 	// page after its end (loadNewer)
 	around string
@@ -508,6 +513,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			} else {
 				m.failed(hb, err, false, time.Now())
 			}
+			m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
 			m.markLoadChanged()
 			m.rev++
 			m.mu.Unlock()
@@ -628,6 +634,7 @@ func (hb *hub) loadOlder(m *model) bool {
 			m.err = err
 			m.failed(hb, err, true, time.Now())
 		}
+		m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
@@ -781,6 +788,7 @@ func (hb *hub) loadWindow(m *model, ts string) {
 			m.failed(hb, err, false, time.Now())
 			m.loaded, m.merged, m.newestMissing = true, true, false
 		}
+		m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
@@ -864,6 +872,7 @@ func (hb *hub) loadWindowPage(m *model, older bool) bool {
 				hb.authFailed.Store(true)
 			}
 		}
+		m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
@@ -1037,6 +1046,15 @@ func (m *model) evict(oldest string) {
 	}
 	m.evictGen++
 	m.rev++
+}
+
+// evictThread is a thread model whose slice lost messages wherever they
+// were: the next draw reads the store's slice again (thread_load.go).
+// m.mu is held.
+func (m *model) evictThread() {
+	t := m.th
+	m.evict("")
+	m.th = threadState{start: t.start, picked: t.picked, repick: t.repick, root: t.root, gen: t.gen + 1}
 }
 
 func (m *model) prepend(page []core.Message, hasMore bool) {
@@ -1480,16 +1498,14 @@ func (hb *hub) apply(ev core.Event) bool {
 		}
 		m.mu.Lock()
 		if m.threadTS != "" {
-			// a thread's slice lost messages wherever they were: the next
-			// draw reads the store's slice again (thread_load.go)
-			t := m.th
-			m.evict("")
-			m.th = threadState{start: t.start, picked: t.picked, repick: t.repick, root: t.root, gen: t.gen + 1}
+			m.evictThread()
 		} else {
 			m.evict(ev.TS)
 		}
 		m.mu.Unlock()
 		return true
+	case "history_changed":
+		return hb.historyChanged(ev.Channel, ev.TS)
 	case "typing":
 		chm, thm := hb.models(ev.Channel, ev.ThreadTS)
 		m := chm

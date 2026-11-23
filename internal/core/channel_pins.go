@@ -424,6 +424,7 @@ func (a *App) UnpinFromTab(ctx context.Context, it PinsTabItem) error {
 	}
 	err := a.C.Call(ctx, "pins.remove", url.Values{"channel": {ch}, "timestamp": {it.TS}, "reason": {"unpin-message"}}, nil)
 	if err == nil || isCode(err, "no_pin") {
+		a.ownMutation(ch, false) // history_changed.go
 		return nil
 	}
 	st.mu.Lock()

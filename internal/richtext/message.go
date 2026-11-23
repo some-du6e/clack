@@ -1,6 +1,7 @@
 package richtext
 
 import (
+	"bytes"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 // newBuilder is a builder for message m shown in channel ch: its sender,
 // its canvas unfurls' hints and its files.
 func newBuilder(r Resolver, m *slack.Message, ch string) *builder {
-	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS, streamDone: streamDone(m)}
+	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS, streamDone: streamDone(m), msgText: m.Text}
 	c.hintsFrom(m)
 	if len(m.Files) > 0 {
 		c.files = make(map[string]*slack.File, len(m.Files))
@@ -124,7 +125,7 @@ func metaEventType(raw json.RawMessage) string {
 // hasCalendarEvent is isCalendarEventMessage: an attachment with a
 // calendar_event.
 func hasCalendarEvent(raw json.RawMessage) bool {
-	if !strings.Contains(string(raw), `"calendar_event"`) {
+	if !bytes.Contains(raw, []byte(`"calendar_event"`)) {
 		return false
 	}
 	var as []struct {
@@ -146,7 +147,7 @@ func hasCalendarEvent(raw json.RawMessage) bool {
 // meetingReminder is isMeetingReminderMsg (kbmb): a block whose
 // accessory's action_id starts with "meeting_join_".
 func meetingReminder(raw json.RawMessage) bool {
-	if !strings.Contains(string(raw), "meeting_join_") {
+	if !bytes.Contains(raw, []byte("meeting_join_")) {
 		return false
 	}
 	var parts []json.RawMessage
