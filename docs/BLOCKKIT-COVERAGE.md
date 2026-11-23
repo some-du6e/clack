@@ -62,7 +62,7 @@ After a bundle update: `python3 -B -I tools/bkregistry.py BUILD boot-shared.js b
 
 | part | types |
 |---|---|
-| 2a (in progress) | contact_card, event, share_prompt |
+| 2a (in progress) | event |
 | 2b (sideways scrolling) | carousel (Slack's LSo8 scroller with its arrows: the account has no a11y_carousel) |
 | 2d (inline rich text) | _canvas_mention, _theme_install_button, attachment_mention, canvas_message_unfurl, canvas_user_mention, citation, folder_mention, salesforce_data_field, skill, tag, unknown, variable, work_object_mention, workflowtoken |
 | 2e (elements) | feedback_buttons, file_input, password, split_button |
@@ -121,7 +121,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | plan | `5mjF` PlanBlock | full | full | (agent.go) |
 | rich_text | `N5ZY` · `EAqS` → `qaNC` RichTextRenderer | full | full | see rich_text below |
 | section | `bzDH` | full | full | |
-| share_prompt (slack.ts) | `JcWK` | absent | absent | |
+| share_prompt (slack.ts) | boot-shared `JcWK` SharePrompt → `CvC8` SharePromptButton (header `9eVz`; Send: `G2io` startAgentOrAssistantThread, failing to `aWKL` DeadEndLinkDialog; build 9f450b8ad3db) | absent | **partial**: the card when the client knows the agent with a picture and it's an Agentforce agent (426px at most outside canvases, 8px around it): the #83388a tile, the label over "Prompt", the prompt when it isn't empty (plain text three lines with Show more, expanded with Less; prompt_rich_text cut at 150 characters or 3 line breaks with Show more and Show less), and Send to {agentName}, which posts the prompt to the agent's DM (a verbatim mrkdwn section, or the rich text block; agent_message_source_type shared_prompt_link) and opens its thread, or on a failed send "We’re unable to open this link" | Slackbot AI's prompts (`6HeA`) and AI apps' (Clack knows neither), an agent found by app_id alone, Forward prompt (PromptShareDialog), attached skills, the button's loading state, the card's shadow, and the ai-thread-summary and send-filled glyphs (Clack's sparkles and send) |
 | share_shortcut (slack.ts) | `KrN7` ShareShortcut → WorkflowEntity on `VLgN`/`aJif` | absent (drew nothing) | **partial** | Forward workflow (Slack's share dialog for a workflow: the hover bar's button and More actions' item, `Tw8O`), More actions' Feature workflow and Add workflow to channel aren't in Clack, so none is drawn; the other-org badge (`ISuZ`, hermes_next); the VIP badge after the title (`LA2n`, for a bot that is one of your VIPs); ShortcutIcon's app and workflow icon fallbacks (`mp5R`: the app for `app_id`, the workflow's `icons.image_96`); the hover shadow; the Slackbot-message attachment variant (`7lAH`) |
 | table | `POW9` Table | partial: a `raw_number` cell's numeric `value` failed the whole block ("This content could not be displayed."), `cell_text` cells drew empty | **full** | |
 | task_card | `1+vf` TaskCard | full | full | (agent.go) |
@@ -261,10 +261,10 @@ Round 2 built `share_shortcut`, the inline file slug, `card` and check lists. Wh
 
 1. `carousel` (`ZDqH`): LSo8's horizontal scroller of 340px cards 16px apart, with arrows and shadows inside and paging by whole cards. Richview has no horizontal scrolling or clipping yet, and the partly shown card needs both.
 2. `data_table`: done (partial; see the table above).
-3. `contact_card` (`zb3H`): Slack Connect's introductions card. Its Save contact info and Start DM actions call the API and open their own modals, and fakeslack needs both endpoints first.
+3. `contact_card`: done (partial; see the table above).
 4. `timeline` (`9B8s`) and `event` (`0lYF`, a calendar event card).
 5. `message_embed` (`ACXQ`): the referenced message drawn as a message unfurl. richtext needs a resolver for a stored message by channel and ts.
-6. `share_prompt` (`JcWK`): the prompt card, CvC8, or 6HeA for Slackbot's.
+6. `share_prompt`: done (partial; see the table above).
 7. The call card's open items:
    - the ended card's grayscale icon and faces (richview has no image filter);
    - the faces' name tooltips;

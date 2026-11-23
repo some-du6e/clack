@@ -2171,6 +2171,9 @@ func (s *Server) userByIDRaw(id string) (slack.User, bool) {
 			return u, true
 		}
 	}
+	if id == PromptAgentID { // prompt_agent.go
+		return s.promptAgentUser(), true
+	}
 	if s.Size.Identity {
 		for _, u := range s.identityUsers() {
 			if u.ID == id {

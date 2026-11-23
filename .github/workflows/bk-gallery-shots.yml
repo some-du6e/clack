@@ -18,6 +18,7 @@ on:
       - "internal/ui/popups/timeline_sources*"
       - "internal/ui/popups/contact_card*"
       - "internal/ui/popups/share_contact*"
+      - "internal/ui/popups/shareprompt*"
       - "internal/store/contact*"
       - "internal/fakeslack/gallery*"
       - "internal/ui/bk_gallery_test.go"
@@ -63,7 +64,7 @@ jobs:
       - name: block kit unit tests
         run: |
           go test -count=1 ./internal/richtext ./internal/fakeslack ./internal/ui/richview ./internal/ui/blockkit ./internal/chart
-          go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources|TestContactCard|TestShareContact' ./internal/ui/popups
+          go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources|TestContactCard|TestShareContact|TestSharePrompt' ./internal/ui/popups
           go test -count=1 -run 'TestContactMember' ./internal/store
           go test -count=1 -run 'TestCodeSummaryTimeline' ./internal/core
           go test -count=1 -run 'TestBroadcastPreambleTimelineRoot' ./internal/ui/messages

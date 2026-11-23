@@ -393,6 +393,9 @@ func (h srCardHandler) ContactCardAction(act string, c *richtext.ContactCard, _ 
 	ContactCardAction(h.v.h, act, c)
 }
 
+// SharePromptSend is a share_prompt's Send to {agentName} on the card.
+func (h srCardHandler) SharePromptSend(p *richtext.SharePrompt) { SharePromptSend(h.v.h, p) }
+
 // TimelineSources is a timeline section's "(Sources)" on the card: its
 // sources modal.
 func (h srCardHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {

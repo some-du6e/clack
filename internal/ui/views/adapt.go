@@ -508,7 +508,6 @@ func (hh hostHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, win
 	}
 }
 
-// TimelineSources is a timeline section's "(Sources)": its sources modal.
 // ContactCardAction is a contact card's action.
 func (hh hostHandler) ContactCardAction(act string, c *richtext.ContactCard, _ image.Rectangle, _ bool) {
 	if ph, ok := hh.h.(popups.Host); ok {
@@ -516,6 +515,14 @@ func (hh hostHandler) ContactCardAction(act string, c *richtext.ContactCard, _ i
 	}
 }
 
+// SharePromptSend is a share_prompt's Send to {agentName}.
+func (hh hostHandler) SharePromptSend(p *richtext.SharePrompt) {
+	if ph, ok := hh.h.(popups.Host); ok {
+		popups.SharePromptSend(ph, p)
+	}
+}
+
+// TimelineSources is a timeline section's "(Sources)": its sources modal.
 func (hh hostHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
 	if ph, ok := hh.h.(popups.Host); ok {
 		popups.OpenTimelineSources(ph, sec)

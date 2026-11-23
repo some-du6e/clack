@@ -14,9 +14,10 @@ import "encoding/json"
 // SharePrompt is a share_prompt block.
 type SharePrompt struct {
 	Label, Prompt string
-	// Rich is prompt_rich_text's text (the preview draws it over Prompt);
-	// RichRaw the block itself, which Send posts.
-	Rich    []Span
+	// Rich is prompt_rich_text's blocks (the preview draws them instead
+	// of Prompt, cut as TruncatedBlocks cuts them); RichRaw the block
+	// itself, which Send posts.
+	Rich    []Block
 	RichRaw json.RawMessage
 	// PromptID, AppID, BotUserID and IsSlackbot are the block's.
 	PromptID, AppID, BotUserID string
@@ -67,7 +68,7 @@ func (c *builder) sharePromptBlock(b *bk) Block {
 	if raw := firstRaw(v.Rich, v.RichCamel); len(raw) > 0 && raw[0] == '{' {
 		var rb bk
 		if json.Unmarshal(raw, &rb) == nil && rb.Type == "rich_text" {
-			sp.Rich, sp.RichRaw = flattenSpans(c.richText(rb.Elements)), raw
+			sp.Rich, sp.RichRaw = c.richText(rb.Elements), raw
 		}
 	}
 	if ar, ok := c.r.(AgentResolver); ok && sp.BotUserID != "" {

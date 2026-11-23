@@ -220,6 +220,9 @@ const (
 	// tContact is a contact card (id: its member): a click opens their
 	// profile, with no hover card (contact.go)
 	tContact
+	// tSharePrompt is a share_prompt's Send to {agentName} (prompt: the
+	// block's; shareprompt.go)
+	tSharePrompt
 	// tDate is a canvas's date control (Quip's CONTROL_SLACK_DATE_TYPE,
 	// span.slack-date-contents.mention): no link and no click here, but an
 	// editor's pointer is the hand over it (canvas-controller CSS:
@@ -314,6 +317,8 @@ type target struct {
 	col   int
 	// timeline is a tTimeline's section (timeline.go)
 	timeline *richtext.TimelineSection
+	// prompt is a tSharePrompt's block (shareprompt.go)
+	prompt *richtext.SharePrompt
 }
 
 type hit struct {
@@ -580,6 +585,12 @@ type lay struct {
 	// expandKey, when set, is the section whose "Show more" is being laid
 	// out (its key in kitExpanded).
 	expandKey string
+	// expandColl, when set, is the View-local toggle (collapsed) of the
+	// "Show more" being laid out: a share_prompt's (shareprompt.go).
+	expandColl any
+	// lastTruncated reports whether the last flow stopped at maxLines
+	// with items left over (a share_prompt's "Show more" shows only then).
+	lastTruncated bool
 	// collapsed holds the image blocks, call cards and containers toggled
 	// by the viewer, collapseDefs the containers' defaults (View state).
 	collapsed    map[any]bool
@@ -860,7 +871,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.truncatedLink(sp, fs, k, pt) // msgcard.go
 				continue
 			}
-			if sp.URL == expandURL && l.expandKey != "" { // section Show more / Show less (truncate.go)
+			if sp.URL == expandURL && l.expandColl != nil { // a share_prompt's Show more / Show less (shareprompt.go)
+				tg = l.d.addTarget(target{kind: tCollapse, key: l.expandColl, underline: true})
+			} else if sp.URL == expandURL && l.expandKey != "" { // section Show more / Show less (truncate.go)
 				tg = l.d.addTarget(target{kind: tExpand, id: l.expandKey, underline: true})
 			} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
 				tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
@@ -1079,6 +1092,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		items = items[:n-1]
 	}
 	if len(items) == 0 {
+		l.lastTruncated = false
 		return 0, 0
 	}
 	base := l.faceFor(fs.face, fs.size, 0)
@@ -1548,6 +1562,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	}
 	l.items = l.items[:0]
 	l.decos = l.decos[:0]
+	l.lastTruncated = truncated
 	return y - y0, wmax
 }
 

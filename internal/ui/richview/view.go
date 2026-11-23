@@ -2093,6 +2093,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		v.dataTableClick(tg, h)
 	case tContact: // a contact card: its member's profile (contact.go)
 		h.OpenUser(tg.id, anchor)
+	case tSharePrompt: // a share_prompt's Send to {agentName} (shareprompt.go)
+		if sh, ok := h.(SharePromptHandler); ok && tg.prompt != nil {
+			sh.SharePromptSend(tg.prompt)
+		}
 	case tTimeline: // a timeline section's (Sources) (timeline.go)
 		if th, ok := h.(TimelineHandler); ok && tg.timeline != nil {
 			r, _ := v.targetRect(tg)
