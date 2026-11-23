@@ -1900,10 +1900,11 @@ func (s *listState) dayDivider(gtx layout.Context, h Host, c *colors, i int, day
 	// the pill is drawn by overlays, over the rows (its z-index 2 against
 	// .c-message__actions' 1), unless it's the one stuck to the list's top
 	m := op.Record(gtx.Ops)
-	if pr, clicked := s.dayPill(gtx, h, c, btn, dayLabel(day, now), w/2, (hh-dp(gtx, mt.dayPillH))/2); clicked {
+	pr, clicked := s.dayPill(gtx, h, c, btn, dayLabel(day, now), w/2, (hh-dp(gtx, mt.dayPillH))/2)
+	if clicked {
 		s.dayReq = &dayMenuReq{day: day, item: i, r: pr}
 	}
-	s.dayCalls = append(s.dayCalls, dayCall{item: i, call: m.Stop()})
+	s.dayCalls = append(s.dayCalls, dayCall{item: i, call: m.Stop(), r: pr})
 	return layout.Dimensions{Size: image.Pt(w, hh)}
 }
 
@@ -1911,6 +1912,15 @@ func (s *listState) dayDivider(gtx layout.Context, h Host, c *colors, i int, day
 type dayCall struct {
 	item int
 	call op.CallOp
+	r    image.Rectangle // the pill
+}
+
+// dayPillScroll is the list's wheel under a day pill drawn over it
+// (toolbar_scroll.go's actScroll): Slack's pill is inside the scroller,
+// so a wheel over it scrolls the pane. r is the pill in list coordinates;
+// the area reaches past its ring and shadow, which draw inside it.
+func (s *listState) dayPillScroll(gtx layout.Context, r image.Rectangle) clip.Stack {
+	return s.actionsScrollArea(gtx, r.Inset(-dp(gtx, 8)))
 }
 
 func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.Dimensions {
@@ -2067,14 +2077,23 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		if dc.item == stuck || dc.item < s.visible[0] || dc.item >= s.visible[1] || dc.item >= len(s.pos) {
 			continue // the stuck one is drawn at the top below; one off screen isn't drawn
 		}
+		a := s.dayPillScroll(gtx, dc.r.Add(image.Pt(0, s.pos[dc.item])))
 		t := op.Offset(image.Pt(0, s.pos[dc.item])).Push(gtx.Ops)
 		dc.call.Add(gtx.Ops)
 		t.Pop()
+		a.Pop()
 	}
 	if stuck >= 0 {
-		if pr, clicked := s.dayPill(gtx, h, c, &s.stickyDay, dayLabel(stickyDay, rc.now), size.X/2, stickyAt); clicked {
+		// the stuck pill's place, before it's drawn: its rect at stickyAt
+		m := op.Record(gtx.Ops)
+		pr, clicked := s.dayPill(gtx, h, c, &s.stickyDay, dayLabel(stickyDay, rc.now), size.X/2, stickyAt)
+		call := m.Stop()
+		if clicked {
 			s.dayReq = &dayMenuReq{day: stickyDay, item: -1, r: pr}
 		}
+		a := s.dayPillScroll(gtx, pr)
+		call.Add(gtx.Ops)
+		a.Pop()
 	}
 
 	// reaction tooltip
