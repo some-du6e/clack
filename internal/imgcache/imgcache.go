@@ -40,6 +40,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -95,10 +96,14 @@ type Cache struct {
 	written   int64 // bytes saved since the last trim (under mu)
 	trimming  bool
 
-	mu       sync.Mutex
-	entries  map[key]*list.Element
-	byURL    map[string]map[int]*list.Element // entries per URL, by size (derive)
-	lru      *list.List                       // front = most recent
+	mu      sync.Mutex
+	entries map[key]*list.Element
+	byURL   map[string]map[int]*list.Element // entries per URL, by size (derive)
+	// byFamily is the URLs byURL holds by picture: a member's or an
+	// app's image_24 … image_512 are one picture at other sizes
+	// (familyKey; deriveFamilyLocked)
+	byFamily map[string]map[string]bool
+	lru      *list.List // front = most recent
 	bytes    int
 	maxBytes int
 	inflight map[key]bool
@@ -615,6 +620,9 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 	} else {
 		e := c.deriveLocked(k)
 		if e == nil {
+			e = c.deriveFamilyLocked(k)
+		}
+		if e == nil {
 			c.startLocked(k, true)
 			if w, ok := c.waiting[k]; ok && w.gen != c.gen { // this frame's (FrameRedrawn)
 				w.gen = c.gen
@@ -1120,6 +1128,17 @@ func (c *Cache) putLocked(e *entry) {
 	if m == nil {
 		m = map[int]*list.Element{}
 		c.byURL[e.k.url] = m
+		if fk := familyKey(e.k.url); fk != "" {
+			if c.byFamily == nil {
+				c.byFamily = map[string]map[string]bool{}
+			}
+			f := c.byFamily[fk]
+			if f == nil {
+				f = map[string]bool{}
+				c.byFamily[fk] = f
+			}
+			f[e.k.url] = true
+		}
 	}
 	m[e.k.size] = el
 	c.bytes += e.n
@@ -1174,6 +1193,14 @@ func (c *Cache) dropLocked(el *list.Element) {
 		delete(m, e.k.size)
 		if len(m) == 0 {
 			delete(c.byURL, e.k.url)
+			if fk := familyKey(e.k.url); fk != "" {
+				if f := c.byFamily[fk]; f != nil {
+					delete(f, e.k.url)
+					if len(f) == 0 {
+						delete(c.byFamily, fk)
+					}
+				}
+			}
 		}
 	}
 	c.bytes -= e.n
@@ -1214,6 +1241,69 @@ func (c *Cache) deriveLocked(k key) *entry {
 	e.op = paint.NewImageOp(e.px[0])
 	return e
 }
+
+// deriveFamilyLocked makes k, for now, from the same picture at another
+// size the cache holds (another image_N of a member's or an app's: the
+// row's 72px avatar when the profile, the App pane or a hover card asks
+// for its 192px or 512px one), scaled at once; the exact image loads and
+// replaces it. Slack's avatars keep showing the picture they had while a
+// larger src loads (Karim, α.146: the App pane's icon "takes a bit to
+// load. should no loading bc it alr there from the message"). The largest
+// held size is the source.
+func (c *Cache) deriveFamilyLocked(k key) *entry {
+	if k.size <= 0 {
+		return nil
+	}
+	fk := familyKey(k.url)
+	if fk == "" {
+		return nil
+	}
+	var src *entry
+	for u := range c.byFamily[fk] {
+		if u == k.url {
+			continue
+		}
+		for _, el := range c.byURL[u] {
+			e := el.Value.(*entry)
+			if e.interim || len(e.px) == 0 || e.frames > 1 {
+				continue
+			}
+			if src == nil || e.size.X*e.size.Y > src.size.X*src.size.Y {
+				src = e
+			}
+		}
+	}
+	if src == nil || src.size.X*src.size.Y > deriveMaxPx {
+		return nil
+	}
+	e := &entry{k: k, used: time.Now().UnixMilli(), interim: true}
+	e.px = []*image.RGBA{Scale(src.px[0], k.size)}
+	e.size = e.px[0].Bounds().Size()
+	e.n = len(e.px[0].Pix)
+	e.op = paint.NewImageOp(e.px[0])
+	return e
+}
+
+// familyKey is the picture a sized avatar or icon URL is one size of
+// ("": not one): Slack's avatars.slack-edge.com images end in _<px> before
+// the extension (…_72.jpg, …_512.png), its ca.slack-edge.com ones in
+// -<px>, its default avatars in -<px>.png, and the in-repo fake's in
+// img/<px>x<px>/; image_original (_original, the full-size viewer's) is
+// the same picture too.
+func familyKey(u string) string {
+	if m := familySlackRe.FindStringSubmatch(u); m != nil {
+		return m[1] + "\x00" + m[2]
+	}
+	if m := familyFakeRe.FindStringSubmatch(u); m != nil {
+		return m[1] + "\x00" + m[2]
+	}
+	return ""
+}
+
+var (
+	familySlackRe = regexp.MustCompile(`^(https://(?:avatars|ca|a)\.slack-edge\.com/.+?)[_-](?:24|32|36|48|64|72|96|128|192|512|1024|original)(\.(?:png|jpe?g|gif|webp))?$`)
+	familyFakeRe  = regexp.MustCompile(`^(https?://(?:127\.0\.0\.1|localhost)(?::\d+)?/img/)\d+x\d+(/.+)$`)
+)
 
 // deriveMaxPx bounds the source pixels derive scales on the UI goroutine:
 // emoji and avatars, not photos.

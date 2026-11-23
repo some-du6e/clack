@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The socket events' network lookups run off the event pump, in the
@@ -27,6 +30,14 @@ type laterQueue struct {
 	mu      sync.Mutex
 	tasks   []func(ctx context.Context)
 	running bool
+	on      atomic.Pointer[pumpTask] // the task it runs (pump_watch.go)
+}
+
+// waiting is how many tasks wait behind the one running.
+func (q *laterQueue) waiting() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.tasks)
 }
 
 // runLater runs f after every task queued on q before it, off the
@@ -60,7 +71,7 @@ func (a *App) laterWork(q *laterQueue) {
 			continue // the session ended: nothing to announce
 		}
 		ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
-		f(ctx)
+		tracked(&q.on, "a queue", &pumpTask{at: slack.ReadClock()}, func() { f(ctx) })
 		cancel()
 	}
 }

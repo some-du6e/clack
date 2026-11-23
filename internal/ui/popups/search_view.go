@@ -383,12 +383,15 @@ type SearchView struct {
 	countQ  string
 
 	msgs  []core.Message
-	cards []srCard
-	convs map[string]core.ConvRef
-	total int
-	page  int
-	pages int
-	store srStoreRows // the page's rows as plugins present the store (search_store.go)
+	cards []*srCard // one per result of the page (search in channel shares them, search_channel.go)
+	// noStore: these results aren't the search store's (search in
+	// channel's own cards: Slack keeps them in searchInChannel's slice)
+	noStore bool
+	convs   map[string]core.ConvRef
+	total   int
+	page    int
+	pages   int
+	store   srStoreRows // the page's rows as plugins present the store (search_store.go)
 
 	fromSugg []core.FilterSuggestion // filter_suggestions.from (With people)
 
@@ -761,7 +764,7 @@ func (v *SearchView) addMessages(res core.SearchResult, page int) {
 		name, av := srAuthor(v.h, m)
 		runs := srBodyRuns(v.h, m)
 		dense := srDenseOf(m)
-		v.cards = append(v.cards, srCard{
+		v.cards = append(v.cards, &srCard{
 			name: name, avatar: av, when: dayTime(tsTime(m.TS), now),
 			where: srWhereOf(v.h, v.convs, m),
 			flat:  srRunSegs(runs, terms, true),
@@ -1132,49 +1135,55 @@ func (v *SearchView) handle(gtx layout.Context) {
 			}
 		}
 	case srTabMessages, srTabDMs:
-		for i := range v.cards {
-			c := &v.cards[i]
-			if c.rich.moreAtt.Clicked(gtx) { // the attachments' Show more expands the card too
-				c.expanded = true
-			}
-			if c.more.Clicked(gtx) {
-				c.expanded = !c.expanded
-			}
-			if c.reacts.Clicked(gtx) {
-				// onReactionsPillClick: the message, scrolled to its
-				// reactions
-				RecordRecentConversation(v.msgs[i].Channel)
-				openResult(v.h, v.msgs[i])
-			}
-			if c.atts.Clicked(gtx) {
-				v.srOpenAttachments(gtx, i)
-			}
-			if c.chip.Clicked(gtx) {
-				m := v.msgs[i]
-				ts := m.ThreadTS
-				if ts == "" {
-					ts = m.TS
-				}
-				RecordRecentConversation(m.Channel)
-				v.h.Navigate("c/" + m.Channel + "/t/" + ts)
-			}
-			// card body and "Open in home" both jump to the message
-			body, jump := c.click.Clicked(gtx), c.jump.Clicked(gtx)
-			if body || jump {
-				RecordRecentConversation(v.msgs[i].Channel)
-				openResult(v.h, v.msgs[i])
-			}
-			if c.fwd.Clicked(gtx) {
-				v.h.ShowOverlay(NewForwardModal(v.h, v.msgs[i]))
-			}
-			if c.kebab.Clicked(gtx) {
-				v.resultMenu(gtx, i)
-			}
-		}
+		v.cardEvents(gtx)
 	case srTabChannels:
 		v.handleChannels(gtx)
 	case srTabPeople:
 		v.handlePeople(gtx)
+	}
+}
+
+// cardEvents handles the message result cards' clicks (the results
+// page's, search in channel's).
+func (v *SearchView) cardEvents(gtx layout.Context) {
+	for i := range v.cards {
+		c := v.cards[i]
+		if c.rich.moreAtt.Clicked(gtx) { // the attachments' Show more expands the card too
+			c.expanded = true
+		}
+		if c.more.Clicked(gtx) {
+			c.expanded = !c.expanded
+		}
+		if c.reacts.Clicked(gtx) {
+			// onReactionsPillClick: the message, scrolled to its
+			// reactions
+			RecordRecentConversation(v.msgs[i].Channel)
+			openResult(v.h, v.msgs[i])
+		}
+		if c.atts.Clicked(gtx) {
+			v.srOpenAttachments(gtx, i)
+		}
+		if c.chip.Clicked(gtx) {
+			m := v.msgs[i]
+			ts := m.ThreadTS
+			if ts == "" {
+				ts = m.TS
+			}
+			RecordRecentConversation(m.Channel)
+			v.h.Navigate("c/" + m.Channel + "/t/" + ts)
+		}
+		// card body and "Open in home" both jump to the message
+		body, jump := c.click.Clicked(gtx), c.jump.Clicked(gtx)
+		if body || jump {
+			RecordRecentConversation(v.msgs[i].Channel)
+			openResult(v.h, v.msgs[i])
+		}
+		if c.fwd.Clicked(gtx) {
+			v.h.ShowOverlay(NewForwardModal(v.h, v.msgs[i]))
+		}
+		if c.kebab.Clicked(gtx) {
+			v.resultMenu(gtx, i)
+		}
 	}
 }
 
@@ -1771,7 +1780,7 @@ func (a srCardArgs) layoutListItem(gtx layout.Context, p slackc.Props) layout.Di
 // Slack renders the card from it; the card's own text again when it's
 // gone. Parsed once per change.
 func (v *SearchView) overText(i int, over slackc.Props) {
-	c := &v.cards[i]
+	c := v.cards[i]
 	m := &v.msgs[i]
 	t, _ := over.Str("text")
 	if t == m.Text {
@@ -1815,7 +1824,7 @@ func (a srCardArgs) resultProps() slackc.Props {
 func (a srCardArgs) layoutResult(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	v := a.v
 	m := &v.msgs[a.i]
-	c := &v.cards[a.i]
+	c := v.cards[a.i]
 	name, av := c.name, c.avatar
 	src := p
 	if src == nil {
@@ -1832,7 +1841,7 @@ func (a srCardArgs) layoutResult(gtx layout.Context, p slackc.Props) layout.Dime
 // unpatched), whose avatar slot it lays out.
 func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int, name, avURL string, rp slackc.Props) layout.Dimensions {
 	gtx.Constraints.Min = image.Point{}
-	c := &v.cards[i]
+	c := v.cards[i]
 	m := &v.msgs[i]
 	if srHiddenSender(v.h, m) {
 		return v.cardHidden(gtx, th, cl, i, w)
@@ -2144,7 +2153,7 @@ func srDrawRich(gtx layout.Context, th *theme.Theme, cl *Colors, toks []srRichTo
 
 // cardHidden is card i for a hidden sender's message (see above).
 func (v *SearchView) cardHidden(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int) layout.Dimensions {
-	c := &v.cards[i]
+	c := v.cards[i]
 	m := &v.msgs[i]
 	padL, padR, padT, padB := dp(gtx, 16), dp(gtx, 32), dp(gtx, 15), dp(gtx, 12)
 	av := dp(gtx, 36)

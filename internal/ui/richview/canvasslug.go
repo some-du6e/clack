@@ -46,7 +46,7 @@ func (l *lay) canvasSlug(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) 
 		s := &parts[i]
 		if s.Kind == richtext.Emoji && s.URL != "" {
 			p0, p1 := l.plainAdd(":" + s.ID + ":")
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: s.URL, size: ep,
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep), url: s.URL, size: ep,
 				deco: dc, target: tg, p0: p0, p1: p1, brk: true, alt: true, part: pt})
 			continue
 		}
@@ -140,7 +140,7 @@ func (l *lay) quipAnchor(b *richtext.Block, x, y, w int) int {
 		s := &an.FooterTitle[i]
 		if s.Kind == richtext.Emoji && s.URL != "" {
 			p0, p1 := l.plainAdd(":" + s.ID + ":")
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: s.URL, size: ep,
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep), url: s.URL, size: ep,
 				deco: -1, target: tg, p0: p0, p1: p1, brk: true, alt: true})
 			continue
 		}

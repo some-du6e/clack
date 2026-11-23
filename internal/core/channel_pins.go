@@ -165,6 +165,7 @@ func (a *App) slowConnectionCount() *atomic.Int64 {
 // store update reruns their selectors), and so refetch when the count
 // moved; so do the app cards (app_card.go).
 func (a *App) socketConnected(fast bool) {
+	a.memberFreshConnected(fast) // the members' subscriptions start over (member_fresh.go)
 	if fast {
 		return
 	}

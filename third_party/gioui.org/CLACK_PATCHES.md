@@ -72,7 +72,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_clicks.go`, `io/input/pointer_test.go`,
 `widget/clack_words.go`, `widget/clack_editor_clicks*_test.go`,
 `app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
-`app/clack_titlebar_darwin_test.go` and
+`app/clack_titlebar_darwin_test.go`,
+`io/input/clack_unfocused.go`, `io/input/clack_unfocused_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -1661,6 +1662,15 @@ linux-gio job, `internal/ui` `TestInputIdleSeesFocusedWidgetKeys`,
 `TestInputIdleSeesScroll` and `TestInputIdleSeesGrabbedDrag`, and
 `cmd/clack` `TestWaitQuietOnInput`. Not in `UPSTREAM.patch`.
 
+`SetPressHook` (2026-11-23, notify-relatives): the same spot tells a hook
+of each pointer press and key press (not a move, a release, a scroll, an
+edit or a cancel), on the queuing goroutine, before routing. Clack tickles
+the realtime socket with it, as Slack's client does on every mousedown and
+keydown in its windows (client-boot `handleWindowMouseDownEvent`,
+`handleWindowKeyDownEvent`), and a focused widget's keys and a grabbed
+drag never reach a handler at the root. Test: `TestPressHook`; `internal/ui`
+`TestPresenceActivityLikeSlack`.
+
 ## 34. io/input: where the key focus is
 
 `io/input/clack_focus.go` (new: `Source.FocusTag`, `Source.CanFocus`,
@@ -3195,3 +3205,124 @@ linux-gio job. In Clack: `internal/ui/popups`' `TestTickersKeepLaterPresses`
 (a press on a button laid out after a tooltip in its delay, a loading
 spinner, a peek card animating in and a focused editor: one click each,
 and each ticker's wakeup on its cadence). Not in `UPSTREAM.patch`.
+
+## 62. internal/stroke: a near-zero segment strokes without NaN
+
+`internal/stroke/stroke.go`: `strokePathNorm` takes a segment's normal
+from the whole segment (`p2 - p0`) when the derivative at the end it's
+asked for is zero, and `ArcTransform` returns the identity for a circle
+of radius 0 instead of scaling by `1/0`. `StrokeQuads.addLine` asks for
+the t = 1 normal with the segment's own start, not the offset start it
+has already moved p0 to (that fallback reads p0; a non-degenerate t = 1
+normal never does): from the offset start, a near-zero closing line's
+"whole segment" points about a half-width across the stroke, and both
+sides ended a half-width along the tangent, a 2·hw jump that left
+sub-pixel holes (ring-seam-2, from ring-seam's review).
+
+A ring drawn as `MoveTo`, `ArcTo(c, c, 2π)` and `Close` doesn't land
+exactly: `ArcTo` cuts a whole turn into 16 segments and steps its
+rotation matrix 32 times in float32 (twice a segment), the pen
+ends a float's error from the start, and `Close` adds a segment of about
+1e-5 px. Its midpoint control point rounds onto one of its ends, so the
+normal there was zero; the round join after it then started its arc on
+the pivot itself, a circle of radius 0, and every point of the stroke's
+outline after it was NaN (Karim's stray line under the intro's check
+badge, Windows α.146, 2026-11-22: a thin line in the ring's colour down
+from its 3 o'clock point). llvmpipe drops a NaN quad; other GPUs don't
+have to.
+
+Tests: `internal/stroke/clack_ring_seam_test.go`
+(`TestClackRingSeamClosedRing`: rings of 2 to 250 px, 1 to 7 px wide, on
+sub-pixel centres, closed as ArcTo leaves them and one float step short
+on the side whose closing midpoint rounds onto the start, the same on
+every architecture; their outline's loops each close, no NaN, nothing off
+the ring's band; `TestClackRingSeamSweeps`: open arcs swept from 0.9 of a
+turn to a whole one, the spinners'; `TestClackRingSeamTinyFirstSegment`:
+polylines whose first segment is one float step, no NaN and no hole by
+their start, which addLine's t = 1 normal left), in ci's linux-gio job and
+on arm64 in macos-idle (its compiler fuses multiply-adds).
+
+`gpu/clack_ring.go`, for tests on every backend: `ClackStrokeNaNs` counts
+the stroked paths the renderers built whose outline has a NaN point
+(`buildVerts`). What a GPU does with NaN differs (llvmpipe drew the
+column, WARP and Metal a faint mark or nothing), so Clack's ring tests
+(`internal/ui/ring_seam_test.go`) fail on the count, not on pixels alone:
+`TestRingSeamCloseByFloatError` strokes a ring closed one float step
+short through the real renderer, on linux-gio, windows-applog (Direct3D
+11) and macos-idle (Metal). Not in `UPSTREAM.patch`.
+
+## 63. dropped: path coverage in 32-bit float on GL
+
+Dropped 2026-11-23 (ring-seam-2), before any release shipped it. It put
+`R32F` first in `gpu/internal/opengl/opengl.go`'s `floatTripleFor`
+(desktop GL 3, GLES 3 with `EXT_color_buffer_float` and
+`EXT_float_blend`), with a `gl.R32F` constant; both are gone, and GL is
+back on Gio's `R16F`.
+
+What it fixed: the stencil pass adds each outline segment's signed
+coverage into a float texture from the segment down to the path's
+bottom, and a closed outline's segments cancel below it. In half float
+(11 bits) the many partial sums where an outline runs vertical (a ring's
+or a circle's left and right sides) leave up to 1% behind, a column under
+the shape to its bottom: invisible on a light background, up to 23/255
+on black (sRGB). In 32-bit float the sums cancel on llvmpipe.
+
+Why it went: speed. The coverage and intersection atlases take 4 bytes a
+texel instead of 2 (about 36 MB instead of 18 for a 4K window), and the
+stencil pass's clear and One/One blend move twice the bytes. perf.yml's
+gated job on llvmpipe, 2026-11-23:
+
+- ui → ring-seam-2 with it (run 45125099421, which also carries
+  RingPath): idle frame median 48.4 → 57.5 ms (+18.6%), scroll frame
+  median 52.0 → 56.1 ms (+7.8%), idle RSS 313 → 333 MB. The gate failed
+  on all three.
+- ring-seam-2 → the same tree without it (45132400754, R32F alone): idle
+  frame median 68.8 → 61.9 ms (-10.0%), scroll 69.1 → 66.6 ms (-3.7%),
+  idle RSS 321 → 311 MB.
+
+llvmpipe rasterizes on the CPU, its worst case, but a 10-19% idle frame
+for a sub-1% column isn't worth it. Direct3D 11 (WARP) and Metal keep a
+column like it even with 32-bit coverage (WARP was given blendable
+R32_FLOAT), so its cause there is elsewhere.
+
+Known issue, every backend: a column of under 1% (up to 23/255 on black)
+under rings and filled circles, from half-float coverage. Karim's line
+(patch 62) was a different, full-strength fault, and is fixed.
+
+What stays (patch 62's tests): `gpu.ClackCoverageBits` (each backend's
+`NewTexture` for `TextureFormatFloat`, through `driver.ClackCoverageBits`)
+says which coverage the last renderer made, 16 or 32 (GL's RGBA float
+fallback). The ring tests set their off-band bar from it: 32/255 on half
+float, 16/255 on 32-bit. `internal/ui`'s `TestRingSeamRingAt` (ringAt at
+seven radii, four widths, four scales, sub-pixel centres),
+`TestRingSeamDoneBadge` (the intro's check badge through its pop),
+`TestRingSeamSpinnerSweep` (`popups.InfiniteSpinner` through its turn)
+and `TestRingSeamCloseByFloatError`: nothing drawn more than 3 px off the
+ring's band, the ring drawn at its seam and across from it, and no NaN in
+a stroke outline, on llvmpipe (linux-gio), Direct3D 11 WARP
+(windows-applog) and Metal (macos-idle). Not in `UPSTREAM.patch`.
+
+## 64. io/input: typed text with nothing focused goes to a handler the window names
+
+`io/input/router.go` (`Router.processEvent`: a `key.EditEvent` with no
+focused handler goes to `Router.unfocusedText`) and
+`io/input/clack_unfocused.go` (`Source.SetUnfocusedText`). The focus
+itself stays empty: `Focused(nil)` still holds, so what reads it (the
+views' global scroll keys, a modal giving the focus back) sees nothing
+new.
+
+A browser types a key's character into whatever has the focus once the
+keydown is through. Slack's message input listens for keydown on the
+document and, for a printable key whose target is no input (its
+`shouldInputStealKeyEvent`), focuses itself during the keydown, so the
+character lands in it. Gio routes an `EditEvent` to the focused handler
+as it queues it and drops it with none; a `FocusCmd` executed from the
+key's handler doesn't bring it back, as the immediate path's replay
+queues again only events that had a receiver. Clack's App names a tag of
+its own and hands what it reads to the channel's composer.
+
+Tests: `io/input/clack_unfocused_test.go` (`TestClackUnfocusedText`:
+dropped with no handler named, read by the named one with the focus
+still empty, a focused editor's as before, dropped again after `nil`),
+in ci's linux-gio job. In Clack: `internal/ui`'s typing redirect tests.
+Not in `UPSTREAM.patch`.

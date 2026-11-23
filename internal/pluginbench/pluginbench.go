@@ -469,7 +469,11 @@ func (d *Data) Sort() {
 
 // Regressions compares a new run with the committed data: a committed
 // winner that no longer loads, now keeps re-rendering, passes fewer checks
-// than it did, or lost to the other variant on correctness.
+// than it did, or lost to the other variant on correctness. A committed
+// pick that checked nothing either version does was costs alone, which the
+// Library doesn't recommend (Pick.Checked): the other version passing a
+// check added since is the bench learning what the plugin does, not a
+// regression (plugin-bench 45061897607 went red on Bring Back Slackbot's).
 func Regressions(old, cur *Data) []string {
 	var out []string
 	for i := range old.Plugins {
@@ -501,7 +505,7 @@ func Regressions(old, cur *Data) []string {
 			}
 			out = append(out, fmt.Sprintf("%s: the %s winner passes %d checks, was %d (failing: %s)", op.Name, name(op.Winner), nw.Passed(), ow.Passed(), strings.Join(failed, ", ")))
 		case np.Winner != op.Winner:
-			if o := np.Variant(np.Winner); o != nil && (o.Passed() > nw.Passed() || nw.Rerenders() || !nw.Loaded) {
+			if o := np.Variant(np.Winner); o != nil && (op.Checked() && o.Passed() > nw.Passed() || nw.Rerenders() || !nw.Loaded) {
 				out = append(out, fmt.Sprintf("%s: %s now beats the %s winner on correctness: %s", op.Name, name(np.Winner), name(op.Winner), np.Reason))
 			}
 		}
