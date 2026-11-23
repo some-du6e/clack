@@ -65,7 +65,7 @@ func TestBlockFallbacks(t *testing.T) {
 		{"known blocks Clack can't draw keep that rule whatever their fields' shapes",
 			`[{"type":"auth_provider","name":{"type":"plain_text","text":"Google"}},{"type":"canvas_table","rows":[{"cells":[]}]},` +
 				`{"type":"layout","rows":[{"items":[]}]},` +
-				`{"type":"share_prompt","label":"Share"}]`,
+				`{"type":"share_workflow","label":"Share"}]`,
 			[]Block{para(tx("fallback text"))}},
 	}
 	for _, c := range cases {

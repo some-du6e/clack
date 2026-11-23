@@ -266,6 +266,15 @@ func (r *refNames) ContactMember(id string) (richtext.ContactMember, bool) {
 	return m, ok
 }
 
+// PromptAgent is richtext.AgentResolver: the store's.
+func (r *refNames) PromptAgent(id string) (name, avatar string, agentforce, ok bool) {
+	r.member(id)
+	if r.peek {
+		return store.Peek{Store: r.Store}.PromptAgent(id)
+	}
+	return r.msgNames.PromptAgent(id)
+}
+
 func (r *refNames) MemberAvatar(id string) string {
 	r.member(id)
 	if r.peek {

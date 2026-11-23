@@ -108,3 +108,32 @@ func activeMember(u *slack.User) bool {
 	return !(u.IsBot || slackbot || u.ID == "USLACK") && !(u.IsSlackSecurityBot || u.ID == "USLACKSECURITY") &&
 		!u.IsRestricted && !u.IsUltraRestricted && !u.Deleted && !u.IsInvitedUser && !u.IsForgotten
 }
+
+// PromptAgent is richtext.AgentResolver: a share_prompt's agent if the
+// store holds it (a miss is asked for).
+func (s *Store) PromptAgent(id string) (name, avatar string, agentforce, ok bool) {
+	return s.promptAgent(s.User, id)
+}
+
+// PromptAgent is richtext.AgentResolver without counting a hit.
+func (p Peek) PromptAgent(id string) (name, avatar string, agentforce, ok bool) {
+	return p.promptAgent(p.peekUser, id)
+}
+
+var (
+	_ richtext.AgentResolver = (*Store)(nil)
+	_ richtext.AgentResolver = Peek{}
+)
+
+func (s *Store) promptAgent(look userLookup, id string) (name, avatar string, agentforce, ok bool) {
+	u, known := look(id)
+	if !known || u == nil {
+		return "", "", false, false
+	}
+	// getMemberRealName: real_name, else the profile's
+	name = u.RealName
+	if name == "" {
+		name = u.Profile.RealName
+	}
+	return name, s.memberAvatar(look, id), u.IsAgentforceBot, true
+}

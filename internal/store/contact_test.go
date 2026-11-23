@@ -31,10 +31,10 @@ func TestContactMember(t *testing.T) {
 	})
 	s.PutNonexistent([]string{"U0NOSUCH"})
 	for _, c := range []struct {
-		id                          string
-		team                        string
+		id                           string
+		team                         string
 		teamUnknown, interact, share bool
-		profileOnly, deleted        bool
+		profileOnly, deleted         bool
 	}{
 		{"U0SELF", "Fake Club", false, true, false, false, false},
 		{"U0MEMBER", "Fake Club", false, true, true, false, false},
