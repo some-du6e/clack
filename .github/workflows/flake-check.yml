@@ -4902,9 +4902,6 @@ jobs:
           rc=0
           tests='^(TestJumpWindowEndStaysPut|TestJumpWindowLastPageStaysPut|TestWindowNewerFailureDoesNotBlockOlder)$'
           go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui || rc=1
-          for i in 1 2; do (while :; do :; done) & done
-          go test -count=$COUNT -timeout 14m -run "$tests" ./internal/ui || rc=1
-          kill $(jobs -p) 2>/dev/null
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report

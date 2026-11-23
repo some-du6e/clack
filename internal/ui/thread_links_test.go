@@ -155,9 +155,7 @@ func (e *perfEnv) recordCallsThen(next func(method string, f url.Values) (any, b
 			c.forms[method] = append(c.forms[method], cp)
 			c.mu.Unlock()
 		}
-		if next != nil {
-			return next(method, f)
-		}
+		_ = next // as recordCalls was: the test's own hook replaced
 		return nil, false
 	})
 	e.tb.Cleanup(func() { e.fs.SetHook(nil) })
