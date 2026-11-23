@@ -27,6 +27,7 @@ func main() {
 	dataPath := flag.String("data", "internal/pluginbench/bench.json", "bench.json to write")
 	docPath := flag.String("doc", "docs/PLUGIN-BENCH.md", "markdown table to write")
 	check := flag.Bool("check", false, "compare with the committed data; exit 1 on a regression")
+	keep := flag.Bool("keep", false, "keep the committed data's plugins this run didn't measure (a run limited with PLUGIN_BENCH_ONLY)")
 	run := flag.String("run", "", "URL of the run (recorded in the data)")
 	flag.Parse()
 	if *in == "" {
@@ -47,6 +48,9 @@ func main() {
 	var old pluginbench.Data
 	if b, err := os.ReadFile(*dataPath); err == nil {
 		_ = json.Unmarshal(b, &old)
+	}
+	if *keep {
+		cur.Keep(&old)
 	}
 	out, doc := *dataPath, *docPath
 	if *check {
@@ -79,15 +83,17 @@ func main() {
 		}
 	}
 	for _, p := range cur.Plugins {
-		if o := findPlugin(&old, p.Name); o != nil && o.Winner != p.Winner {
+		if o := findPlugin(&old, &p); o != nil && o.Winner != p.Winner {
 			fmt.Printf("note: %s winner changed %s -> %s (%s)\n", p.Name, o.Winner, p.Winner, p.Reason)
 		}
 	}
 }
 
-func findPlugin(d *pluginbench.Data, name string) *pluginbench.Plugin {
+// findPlugin is d's result for p's plugin: the same variants' systems and
+// ids (pluginbench.Plugin.Same), whatever its display name.
+func findPlugin(d *pluginbench.Data, p *pluginbench.Plugin) *pluginbench.Plugin {
 	for i := range d.Plugins {
-		if d.Plugins[i].Name == name {
+		if d.Plugins[i].Same(p) {
 			return &d.Plugins[i]
 		}
 	}
@@ -120,7 +126,7 @@ func collect(dir string) (*pluginbench.Data, error) {
 		for _, s := range r.Sources {
 			srcs[s] = true
 		}
-		if findPlugin(d, r.Name) == nil {
+		if findPlugin(d, &r.Plugin) == nil {
 			d.Plugins = append(d.Plugins, r.Plugin)
 		}
 		return nil
@@ -234,7 +240,10 @@ The winner: a variant that loads beats one that doesn't; one that doesn't
 re-render while idle beats one that does; more passing checks beat fewer;
 no console errors beats some. Between variants that work the same, the
 cheaper one wins on the costs above, each compared only past a noise
-floor; a tie goes to the smaller bundle. The CI workflow
+floor; a tie goes to the smaller bundle. A pair with no behaviour check on
+either side is decided on costs alone, which can't tell a version that
+does nothing in Clack from one that works: its reason says "no behaviour
+checks", and the Library recommends neither (Install asks which). The CI workflow
 (` + "`.github/workflows/plugin-bench.yml`" + `) re-runs the bench and fails
 when a committed winner regresses (stops loading, starts re-rendering,
 passes fewer checks, or loses on correctness).
@@ -254,6 +263,15 @@ The screenshots are in the run's ` + "`plugin-bench-shots`" + ` artifact.
 	if d.Run != "" {
 		fmt.Fprintf(&b, " by [this run](%s)", d.Run)
 	}
+	kept := 0
+	for _, p := range d.Plugins {
+		if p.Run != "" {
+			kept++
+		}
+	}
+	if kept > 0 { // -keep: a run limited to some plugins
+		fmt.Fprintf(&b, "; the %d plugins it didn't measure keep an earlier run's results, each naming its run", kept)
+	}
 	b.WriteString(".\n\n## Host fixes and gaps the bench found\n\n" + hostNotes + "\n## Results\n\n")
 	b.WriteString(summaryTable(d))
 	b.WriteString("\n## Per plugin\n")
@@ -262,6 +280,9 @@ The screenshots are in the run's ` + "`plugin-bench-shots`" + ` artifact.
 		fmt.Fprintf(&b, "\n### %s\n\n**%s**: %s.", p.Name, sys(p.Winner), p.Reason)
 		if p.Notes != "" {
 			b.WriteString(" " + p.Notes)
+		}
+		if p.Run != "" {
+			fmt.Fprintf(&b, " Measured by [an earlier run](%s).", p.Run)
 		}
 		b.WriteString("\n\n| | Taut | Slick |\n|---|---|---|\n")
 		t, s := p.Variant("taut"), p.Variant("slick")

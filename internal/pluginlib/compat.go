@@ -49,6 +49,7 @@ var compat = map[string]Compat{
 	Slick + "/ShowRealUser":         partial("forwarded copies aren't matched"),
 	Slick + "/SlickMCP":             broken("its MCP server needs Node's http module"),
 	// docs/PLUGINS-live-taut.md
+	Taut + "/BringBackSlackbot":   broken("Slack no longer reads the experiment it sets"),
 	Taut + "/BrowserPopouts":      broken("needs pop-out windows"),
 	Taut + "/ClickToLoad":         partial("Load shows Clack's media box, not a player"),
 	Taut + "/CustomNameRecording": broken("can't decode audio"),
