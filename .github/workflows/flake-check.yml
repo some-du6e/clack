@@ -5781,6 +5781,75 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # plugins-work-2 (2026-11-23, sounds): the page's <audio> elements play
+  # on Clack's media players (jsrt TestMediaElementPlays); Clack's
+  # notification sound goes through Slack's sound playback on the page, so
+  # Slick's CustomSounds, from Slick's build at the slick workflow's pin with
+  # its main half, swaps it for the user's file through its protocol
+  # (slick); Notifications' sounds still play (ui). Its review's fixes: a
+  # second play() during a load doesn't silence the element (jsrt); the
+  # page branch of a notification's sound, every hooked sound reaching
+  # PlayHook (ui). COUNT runs each. Dispatch with only=plugins-work-2.
+  plugins-work-2:
+    if: ${{ !inputs.only || startsWith('plugins-work-2', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    env:
+      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        continue-on-error: true # GitHub release downloads sometimes 504 three times running
+        with:
+          bun-version: 1.4.4
+      - name: bun from npm (setup-bun's download failed)
+        if: steps.setup-bun.outcome == 'failure'
+        run: |
+          for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
+          bun --version
+      - name: clone slick at the slick workflow's pin
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (Slick); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: page media, CustomSounds, Notifications' sounds, COUNT runs each
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestMediaElementPlays|TestMediaElementSecondPlayDuringLoad|TestFileInputPicker)$' ./internal/jsrt || rc=1
+          go test -count="$COUNT" -timeout 8m -run '^(TestCustomSoundsLikeSlack|TestSlickPresenceThunks)$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 8m -run '^(TestPrefsAuditAppliedRoundTripSounds|TestNotifySoundOnThePage)$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -5913,6 +5982,7 @@ jobs:
       - fl1122d-r-taut
       - canvas-quip
       - plugins-work-1
+      - plugins-work-2
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
