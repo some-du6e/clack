@@ -111,6 +111,8 @@ type Message struct {
 	// resetKey generation).
 	gen uint32
 	ver atomic.Uint32
+	// fired counts the actions its elements sent (ActionsFired)
+	fired atomic.Uint64
 	// acu is the agent_channel_unfurl props by channel (agentChannel)
 	acu map[string]popups.EntityProps
 	gtx layout.Context
@@ -448,7 +450,13 @@ func (me *Message) attOf(bid string) *attachment {
 	return nil
 }
 
+// ActionsFired counts the actions the message's elements have sent: the
+// fullscreen data_table view closes after one of its rows' (its onAction
+// closes the modal).
+func (me *Message) ActionsFired() uint64 { return me.fired.Load() }
+
 func (me *Message) fire(w *ew, action json.RawMessage, done func(error)) {
+	me.fired.Add(1)
 	log.Printf("blockkit: %s action in %s/%s block=%s legacy=%v", w.e.Type, me.m.Channel, me.m.TS, w.bid, me.legacy[w] != nil)
 	ix := me.h.Core().Interactive()
 	key := w.bid
@@ -528,17 +536,20 @@ func (me *Message) widgetFor(bt *richtext.Button) *ew {
 	if bt.BlockID == "" {
 		return me.legacyWidget(bt)
 	}
-	k := bt.BlockID + "\x00" + bt.ActionID
+	// a data_table's rows may share one action_id, each cell's button its
+	// own value (DataTableBlockRow renders each cell's element): the value
+	// tells them apart
+	k := bt.BlockID + "\x00" + bt.ActionID + "\x00" + bt.Value
 	if w := me.ws[k]; w != nil {
 		return w
 	}
-	if r, ok := find(me.blocks, bt.BlockID, bt.ActionID); ok {
+	if r, ok := findValue(me.blocks, bt.BlockID, bt.ActionID, bt.Value); ok {
 		w := newEW(me, r.block, r.el, r.block.Type == "input")
 		me.ws[k] = w
 		return w
 	}
 	for i := range me.atts {
-		if r, ok := find(me.atts[i].Blocks, bt.BlockID, bt.ActionID); ok {
+		if r, ok := findValue(me.atts[i].Blocks, bt.BlockID, bt.ActionID, bt.Value); ok {
 			w := newEW(me, r.block, r.el, r.block.Type == "input")
 			me.ws[k] = w
 			return w

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/some-du6e/clack/internal/chart"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The coverage guard: every type Slack's current web client can render in
@@ -121,7 +122,20 @@ var guardSamples = map[string]string{
 	"data_table":         `{"type":"data_table","rows":[[{"type":"raw_text","text":"a"}],[{"type":"raw_text","text":"b"}]]}`,
 	"data_visualization": `{"type":"data_visualization","title":"t","chart":{"type":"pie","segments":[{"label":"a","value":1}]}}`,
 	"table":              `{"type":"table","rows":[[{"type":"raw_text","text":"a"}]]}`,
+	"message_embed":      `{"type":"message_embed","channel":"C1","ts":"1.0"}`,
 }
+
+// mustDraw are the block types whose builder may return nothing for a
+// sample it can't use: drawn holds them to a block of their kind.
+var mustDraw = map[string]BlockKind{
+	"data_table":         DataTableBlock,
+	"data_visualization": DataVizBlock,
+	"message_embed":      AttachmentBlock,
+}
+
+// guardRes is the guard's resolver: the test resolver, holding the
+// message message_embed's sample embeds.
+var guardRes = embedRes{msgs: map[string]slack.Message{"C1/1.0": {TS: "1.0", Channel: "C1", User: "U1", Text: "embedded"}}}
 
 func guardSample(typ string) string {
 	if s, ok := guardSamples[typ]; ok {
@@ -136,7 +150,7 @@ func guardSample(typ string) string {
 // element inside a rich_text.
 func drawn(t *testing.T, typ string) bool {
 	t.Helper()
-	c := &builder{r: R}
+	c := &builder{r: guardRes}
 	switch {
 	case elementTypes[typ]:
 		var e bk
@@ -158,14 +172,19 @@ func drawn(t *testing.T, typ string) bool {
 		}
 		c.block(nil, &b)
 	default:
-		var b bk
-		if err := json.Unmarshal([]byte(guardSample(typ)), &b); err != nil {
-			t.Fatalf("%s: %v", typ, err)
+		// as a message's blocks decode (a data block by its own keys)
+		b := decodeBlock(json.RawMessage(guardSample(typ)))
+		if b.Type == badBlock {
+			t.Fatalf("%s: its sample doesn't decode", typ)
 		}
-		for _, o := range c.block(nil, &b) {
+		out := c.block(nil, &b)
+		for _, o := range out {
 			if o.Kind == UnknownBlock || o.Kind == Unsupported {
 				return false
 			}
+		}
+		if k, ok := mustDraw[typ]; ok && !slices.ContainsFunc(out, func(o Block) bool { return o.Kind == k && !drawsError(&o) }) {
+			return false
 		}
 	}
 	return !slices.Contains(c.undrawn, typ)
@@ -266,4 +285,9 @@ func dtCellSample(typ string) string {
 		return `{"type":"action_cell","element":{"type":"button","action_id":"a","text":{"type":"plain_text","text":"Go"}}}`
 	}
 	return `{"type":"` + typ + `"}`
+}
+
+// drawsError reports a data block that draws its error state.
+func drawsError(b *Block) bool {
+	return b.DataViz != nil && b.DataViz.Err || b.DataTable != nil && b.DataTable.Err
 }

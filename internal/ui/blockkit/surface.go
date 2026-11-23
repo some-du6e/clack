@@ -267,7 +267,7 @@ func (s *Surface) set(v *core.View, keep bool) {
 	if keep {
 		for _, b := range allBlocks(s.blocks) {
 			for _, e := range elementsOf(b) {
-				k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
+				k := surfKey(b, e)
 				if w := oldWS[k]; w != nil && s.vals.get(b.BlockID, e.ActionID) == old.get(b.BlockID, e.ActionID) {
 					w.rebind(b, e)
 					s.ws[k] = w
@@ -416,8 +416,15 @@ func (s *Surface) fire(w *ew, action json.RawMessage, done func(error)) {
 // loading reports an action of block bid in flight.
 func (s *Surface) loading(bid string) bool { return s.flying[bid] > 0 }
 
+// surfKey is an element's widget key: its block, action_id and type, and
+// its value (a data_table's rows may share one action_id, each cell's
+// button its own value).
+func surfKey(b *Block, e *Element) string {
+	return b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type + "\x00" + e.Value
+}
+
 func (s *Surface) widget(b *Block, e *Element) *ew {
-	k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
+	k := surfKey(b, e)
 	w := s.ws[k]
 	if w == nil {
 		w = newEW(s, b, e, b.Type == "input")

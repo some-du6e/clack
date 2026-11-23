@@ -89,6 +89,12 @@ def main():
     cell_types = sorted(set(re.findall(r'case"([a-z_]+)"', cells.group(0)))) if cells else []
     charts = re.search(r'function isCartesianChart\(e\)\{return(.*?)\}function isSupportedChart\(e\)\{return(.*?)\}', src)
     chart_types = sorted(set(re.findall(r'"([a-z_]+)"===e\.type', charts.group(1) + charts.group(2)))) if charts else []
+    # a bundle the patterns no longer match fails here, not with an empty
+    # list the guard would then hold Clack to
+    for what, got in (("renderables", renderables), ("renderCellContent's cell types", cell_types),
+                      ("isSupportedChart's chart types", chart_types)):
+        if not got:
+            sys.exit("bkregistry: found no " + what + " in " + chunk + ": the bundle changed shape; update the patterns")
     out = {
         "build": build,
         "chunk": os.path.basename(chunk),

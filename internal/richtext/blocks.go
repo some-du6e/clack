@@ -208,6 +208,11 @@ type builder struct {
 	// undrawn are the types Slack has a renderable for that reached no
 	// renderer of Clack's (the coverage guard reads it)
 	undrawn []string
+	// embedding are the messages (channel/ts) whose message_embed is being
+	// drawn on the way here, embedCards the embeds drawn so far
+	// (messageembed.go)
+	embedding  map[string]bool
+	embedCards int
 	// notify converts for a notification's text (NotificationMessageText): a
 	// type with no renderable adds nothing, with no fallback chain
 	notify bool
