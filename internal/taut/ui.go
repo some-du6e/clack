@@ -1170,7 +1170,7 @@ func (t *Taut) MessagesChanged(ch string, tss []string) {
 // and the mark that takes them to JS takes ch off the sweep's watch, so
 // nothing else would tell JS the history changed.
 func (t *Taut) WindowLoaded(ch string) {
-	if t == nil || ch == "" || !t.SlicePatched("messages") {
+	if t == nil || ch == "" || !t.SlicePatched("messages") && !t.SlicePatched("channelHistory") {
 		return
 	}
 	t.mirror.invalidate("channelHistory", ch)
@@ -1190,7 +1190,17 @@ func (t *Taut) WindowLoaded(ch string) {
 // again (a jump's window around the message its thread lookup fetched)
 // doesn't mark it twice.
 func (t *Taut) MessagesAdded(ch string, tss []string) {
-	if t == nil || ch == "" || len(tss) == 0 || !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
+	if t == nil || ch == "" || len(tss) == 0 {
+		return
+	}
+	// channelHistory[ch] lists them now (mirror.history): a copy JS read
+	// before the load lacks them. It goes at once rather than at the
+	// sweep's next look (historyFP): a help channel's first load left its
+	// resolved tickets drawn under HideResolved until then
+	if t.SlicePatched("channelHistory") && t.mirror.watching("channelHistory", ch) {
+		t.mirror.invalidate("channelHistory", ch)
+	}
+	if !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
 		return
 	}
 	if held := t.app.S.FetchedHas(ch, tss); slices.Contains(held, true) {
