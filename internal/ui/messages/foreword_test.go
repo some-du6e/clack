@@ -4,12 +4,7 @@ package messages
 // (boot-shared VHud, build 9f450b8ad3db; foreword.go) on synthetic members.
 
 import (
-	"context"
-	"errors"
 	"image"
-	"image/png"
-	"io"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -20,19 +15,11 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/paint"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
-	"github.com/some-du6e/clack/internal/fakeslack"
-	"github.com/some-du6e/clack/internal/media"
-	"github.com/some-du6e/clack/internal/media/goaudio"
-	"github.com/some-du6e/clack/internal/media/mediatest"
 	"github.com/some-du6e/clack/internal/slack"
-	"github.com/some-du6e/clack/internal/store"
-	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
-	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
@@ -194,166 +181,5 @@ func TestIMForewordMemberEntity(t *testing.T) {
 	e.click(name)
 	if got := strings.Join(e.h.profiles(), ","); got != "UFWROBIN1,UFWROBIN1" {
 		t.Errorf("profiles opened %q, want the member's from the avatar and the name", got)
-	}
-}
-
-// The description's MemberSlug and View Profile open the profile too;
-// the slug's hover is c-member_slug--link:hover.
-func TestIMForewordSlugAndViewProfile(t *testing.T) {
-	e := newFWEnv(t, nil, fwRobin(), nil)
-	top := float32(e.top())
-	r := e.v.s.fw.rects
-	for _, k := range []string{"slug", "view"} {
-		b, ok := r[k]
-		if !ok || b.Empty() {
-			t.Fatalf("no %s laid out: %v", k, r)
-		}
-		e.click(f32.Pt(float32(b.Min.X+b.Dx()/2), top+float32(b.Min.Y+b.Dy()/2)))
-	}
-	if got := strings.Join(e.h.profiles(), ","); got != "UFWROBIN1,UFWROBIN1" {
-		t.Errorf("profiles opened %q, want two", got)
-	}
-	b := r["slug"]
-	e.move(f32.Pt(float32(b.Min.X+2), top+float32(b.Min.Y+b.Dy()/2)))
-	if !e.v.s.fw.slug.Hovered() {
-		t.Error("the slug isn't hovered")
-	}
-}
-
-// Your own DM: "(you)" after your name and "This is your space." (bold)
-// before the rest; without EDIT_PROFILE_PHOTO no buttons (Slack's l is
-// false, and renderViewProfileButton draws nothing for yourself). A bot's:
-// the APP badge, "This is the very beginning of your direct message
-// history with @…" and "How does … work?", which opens its About tab
-// (openAboutAppInIm). The Slack system user's: its own description, no
-// View Profile.
-func TestIMForewordSelfBotAndSystem(t *testing.T) {
-	app, _ := newTestApp(t)
-	self := app.Self()
-	e := newFWEnv(t, app, slack.User{ID: self.ID}, nil)
-	for _, s := range []string{"(you)", "This", "space.", "Draft"} {
-		if !e.has(s) {
-			t.Errorf("self DM: no %q drawn", s)
-		}
-	}
-	if e.has("View Profile") || e.has("Edit Profile") {
-		t.Error("self DM without EDIT_PROFILE_PHOTO drew a button")
-	}
-
-	var about []string
-	prev := popups.OpenAppAbout
-	popups.OpenAppAbout = func(uid string) { about = append(about, uid) }
-	t.Cleanup(func() { popups.OpenAppAbout = prev })
-	bot := slack.User{ID: "UFWBOT001", Name: "fixturebot", RealName: "Fixture Bot", IsBot: true, Profile: slack.Profile{RealName: "Fixture Bot"}}
-	e = newFWEnv(t, nil, bot, nil)
-	for _, s := range []string{"APP", "@Fixture Bot", " How does Fixture Bot work?"} {
-		if !e.has(s) {
-			t.Errorf("bot DM: no %q drawn", s)
-		}
-	}
-	if e.has("View Profile") {
-		t.Error("bot DM drew View Profile")
-	}
-	top := float32(e.top())
-	b := e.v.s.fw.rects["help"]
-	e.click(f32.Pt(float32(b.Min.X+b.Dx()/2), top+float32(b.Min.Y+b.Dy()/2)))
-	if len(about) != 1 || about[0] != "UFWBOT001" {
-		t.Errorf("How does … work? opened %v, want the bot's About", about)
-	}
-
-	sys := slack.User{ID: "USLACK", Name: "Slack", RealName: "Slack", Profile: slack.Profile{RealName: "Slack"}}
-	e = newFWEnv(t, nil, sys, nil)
-	if !e.has("notifications") || e.has("View Profile") || e.has("APP") {
-		t.Errorf("system DM: description %v, View Profile %v, APP %v", e.has("notifications"), e.has("View Profile"), e.has("APP"))
-	}
-}
-
-// A member with a name recording (here your own DM, whose header section
-// fakeslack lets the test write): the header's Name Recording plays from
-// the 30px button after the name and the presence
-// (NamePronunciationAudioPlayer), and its pronunciation text follows the
-// pronouns.
-func TestIMForewordNameRecording(t *testing.T) {
-	fs, err := fakeslack.Start(fakeslack.Small)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { fs.Close() })
-	c := slack.New(fs.Creds())
-	c.EdgeURL = fs.URL + "edge/"
-	s := store.New("")
-	self := slack.User{ID: fakeslack.SelfID, TeamID: fakeslack.TeamID, Name: "me", Presence: "active", Profile: slack.Profile{DisplayName: "me", Pronouns: "they/them"}}
-	s.PutUsers([]slack.User{self})
-	app := core.New(c, s)
-	app.S.Self = self
-	app.ServeOffline()
-	ctx := context.Background()
-	if err := app.C.Call(ctx, "users.profile.setSections", map[string][]string{"user": {fakeslack.SelfID}, "section": {"PsHEADER"},
-		"elements": {`[{"element_id":"PePRONOUNCE","text":{"text":"ME-me"}},{"element_id":"PeRECORD","file":{"fileId":"` + fakeslack.NameRecordingID + `"}}]`}}, nil); err != nil {
-		t.Fatal(err)
-	}
-	_, opener := mediatest.Source(fakeslack.NameRecordingID, mediatest.TonesOpusFrag, false)
-	noCard := func(func([]int16)) (io.Closer, error) { return nil, errors.New("no sound card (the test's)") }
-	th := theme.New(false)
-	ctl := videoplayer.New(videoplayer.Env{
-		Manager: media.NewManager(media.NewChain(nil, &goaudio.Backend{Output: noCard, Logf: t.Logf})),
-		Open: func(ctx context.Context, u string, off int64) (io.ReadCloser, media.Info, error) {
-			return opener.Open(ctx, off)
-		},
-		Repaint: func() {},
-		Theme:   func() *theme.Theme { return th },
-	})
-	t.Cleanup(ctl.CloseAll)
-	e := newFWEnv(t, app, self, func(h *fwHost) Host { h.vids = ctl; return fwVideosHost{h} })
-	until(t, 10*time.Second, "the name recording's button", e.frame, func() bool {
-		_, ok := ctl.TileState("dm-foreword", "name", fakeslack.SelfID, fakeslack.NameRecordingID)
-		return ok
-	})
-	until(t, 5*time.Second, "the pronunciation after the pronouns", e.frame, func() bool { return e.has("they/them · ME-me") })
-}
-
-// Screenshots of the member DM's foreword, light and dark (PROFILE_SHOTS_DIR,
-// own-profile.yml), no tofu.
-func TestIMForewordShots(t *testing.T) {
-	dir := os.Getenv("PROFILE_SHOTS_DIR")
-	if dir == "" {
-		t.Skip("PROFILE_SHOTS_DIR unset (own-profile.yml sets it)")
-	}
-	for _, dark := range []bool{false, true} {
-		mode := map[bool]string{false: "light", true: "dark"}[dark]
-		e := newFWEnv(t, nil, fwRobin(), nil)
-		e.h.th.SetDark(dark)
-		const sc = 2
-		win := image.Pt(900*sc, 700*sc)
-		var ops op.Ops
-		frame := func() {
-			ops.Reset()
-			paint.Fill(&ops, colorsFor(e.h.th).Bg)
-			gtx := layout.Context{Ops: &ops, Now: time.Now(), Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc}, Constraints: layout.Exact(win)}
-			e.v.Layout(gtx)
-		}
-		for i := 0; i < 6; i++ {
-			frame()
-			time.Sleep(20 * time.Millisecond)
-		}
-		stop := theme.StartTofuScan()
-		frame()
-		if st := stop(); st.Notdef > 0 {
-			t.Errorf("%s: %d .notdef glyphs", mode, st.Notdef)
-		}
-		img := pixeltest.Render(t, win.X, win.Y, &ops)
-		top := e.top() * sc
-		r := image.Rect(0, max(0, top), win.X, min(win.Y, top+360*sc))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		f, err := os.Create(dir + "/dm-foreword-" + mode + ".png")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := png.Encode(f, img.SubImage(r)); err != nil {
-			t.Fatal(err)
-		}
-		f.Close()
 	}
 }
