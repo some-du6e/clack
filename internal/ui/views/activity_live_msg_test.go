@@ -1333,7 +1333,8 @@ func TestActivityLiveDelete(t *testing.T) {
 }
 
 // An entry whose message messages.list doesn't have (Slack's isNonExistent
-// stub, after its UFM fetch) draws no body and no loading shimmer.
+// stub, after its UFM fetch) draws no body and no loading shimmer: the
+// mention's row renders null (ActivityAtMention: !a || W), nothing drawn.
 func TestActivityLiveMissingMessage(t *testing.T) {
 	e := newLmEnv(t, lmOpts{setup: func(e *lmEnv) { e.f.gone[lmMention], e.f.listGone = true, true }})
 	e.untilVote(1)
@@ -1348,6 +1349,9 @@ func TestActivityLiveMissingMessage(t *testing.T) {
 	}
 	if n := e.v.shimmers - shimmers; n != 0 {
 		t.Fatalf("%d loading shimmers in 5 frames for a message there is none of; Slack draws no body", n)
+	}
+	if h := e.rowH(lmMentionKey); h != 0 {
+		t.Errorf("the mention whose message there is none of is a %dpx row; Slack renders it null", h)
 	}
 }
 

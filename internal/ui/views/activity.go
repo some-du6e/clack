@@ -2287,6 +2287,9 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// newest copy Activity has (activity_msgs.go)
 	v.pollLists(it)
 	it = v.rowItem(r, it)
+	if actRowGone(it, r.msgGone) {
+		return D{} // the item renders null (actRowGone)
+	}
 	if r.built && r.dSrc != r.liSrc {
 		// a newer copy than the row was described from: its text and
 		// marks follow in this frame
@@ -3903,6 +3906,24 @@ func (v *Activity) btnRect(gtx C, c *widget.Clickable) image.Rectangle {
 // actClickLaterMax is how long a deferred row click (clickLater) waits
 // for its next frame: a view not drawn meanwhile drops it.
 const actClickLaterMax = 500 * time.Millisecond
+
+// actRowGone is Slack's item components returning null for a message
+// that is no more: a mention's (ActivityAtMention and its kin: !a || W)
+// and a reaction's (ActivityReaction: !v || N) when the message is
+// isNonExistent (messages.list had none, or a fetch gave up online:
+// gone), a tombstone, or moderated or thread_hidden (r34X V). A thread's
+// row stays for its latest reply (it draws no body then); its own
+// message, the first unread reply, takes the entry out when deleted.
+func actRowGone(it *core.ActivityItem, gone bool) bool {
+	if it.Type != "message_reaction" && !actMentionType(it.Type) {
+		return false
+	}
+	if gone {
+		return true
+	}
+	m := it.Msg
+	return m != nil && (m.Tombstone || m.Subtype == "tombstone" || m.Subtype == "moderated" || m.Subtype == "thread_hidden")
+}
 
 // pointerAt is where the pointer is, for menus opened from a press.
 func (v *Activity) pointerAt() image.Point {

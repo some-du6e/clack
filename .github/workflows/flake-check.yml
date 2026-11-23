@@ -4797,6 +4797,17 @@ jobs:
           - { test: TestActivityHoverBarLikeSlack, pkg: ./internal/ui/views }
           - { test: TestActivityPreviewLinksArePlain, pkg: ./internal/ui/views }
           - { test: TestPreviewLinksPlain, pkg: ./internal/richtext }
+          - { test: TestCanvasCommentsReactionPillOpensNoThread, pkg: ./internal/ui/views }
+          - { test: TestLocalReactionsEndWhenTheStoreHoldsIt, pkg: ./internal/ui/views }
+          - { test: TestSubmitOutsideUndoesOnlyItsOwn, pkg: ./internal/ui/messages }
+          - { test: TestReactionTipLeavesADisabledPill, pkg: ./internal/ui/messages }
+          - { test: TestActivityEveryRowHasTheHand, pkg: ./internal/ui/views }
+          - { test: TestActivityLateClickExpires, pkg: ./internal/ui/views }
+          - { test: TestActivityRefusedFetchLeavesNoSkeleton, pkg: ./internal/ui/views }
+          - { test: TestActivityLiveDeletedReactionAndTombstone, pkg: ./internal/ui/views }
+          - { test: TestActivityLiveMissingMessage, pkg: ./internal/ui/views }
+          - { test: TestRefetchGivesUpOnline, pkg: ./internal/core }
+          - { test: TestMessagesListSplitsARefusedGroup, pkg: ./internal/core }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

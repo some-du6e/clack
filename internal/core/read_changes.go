@@ -136,8 +136,8 @@ const (
 
 // refetchBackoff is the wait after the n-th failed fetch of a message: 2 s
 // (past the client's own refusal of an identical failed request,
-// slack/guard.go), doubling to a minute.
-func refetchBackoff(n int) time.Duration {
+// slack/guard.go), doubling to a minute (tests replace it).
+var refetchBackoff = func(n int) time.Duration {
 	d := 2 * time.Second
 	for i := 1; i < n && d < time.Minute; i++ {
 		d *= 2
@@ -279,6 +279,8 @@ func (a *App) refetchRound() {
 		}
 	}
 	wait := refetchWaitAfter(err)
+	online := err == nil || a.ClientOnline()
+	var given []MsgKey // asked for the last time, online: non-existent
 	l := &a.msgLog
 	at := time.Now()
 	var again []MsgKey
@@ -299,6 +301,13 @@ func (a *App) refetchRound() {
 		r.fails++
 		r.retry = at.Add(max(refetchBackoff(r.fails), wait))
 		r.out = r.fails < refetchTries // still waiting for core's own next try
+		if !r.out && online {
+			// Slack's UnknownFetchManager marks what its fetch didn't
+			// bring non-existent unless the client is offline: a message
+			// asked for its last time without an answer is gone, and its
+			// row is no loading skeleton for ever
+			given = append(given, k)
+		}
 		if !r.out {
 			closeAll(r.waiters) // core asks no more: a view's next call does
 			r.waiters = nil
@@ -318,6 +327,9 @@ func (a *App) refetchRound() {
 		}
 	}
 	l.mu.Unlock()
+	for _, k := range given {
+		a.emit(Event{Type: "gone", Channel: k.Channel, TS: k.TS})
+	}
 	if len(slugs) > 0 {
 		// the slugs linking to them draw again (and their conversions
 		// are made again: MsgRefs.Messages), as Slack's MessageMention

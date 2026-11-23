@@ -233,7 +233,11 @@ const (
 //
 // Slack's pMap stops starting groups after the first failure and
 // rejects the whole fetch; here every group is asked, so one failed
-// group costs only its own channels.
+// group costs only its own channels. A group Slack refuses (an API
+// error, not a rate limit) is asked again channel by channel, and a
+// channel refused on its own is answered: its messages are non-existent,
+// as Slack's UnknownFetchManager marks every id a failed fetch didn't
+// bring (unless offline). Network and HTTP failures answer nothing.
 func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (msgs map[string][]Message, answered map[string]bool, err error) {
 	type q struct {
 		Channel    string   `json:"channel"`
@@ -262,7 +266,8 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 		next int
 		wg   sync.WaitGroup
 	)
-	ask := func(g []q) {
+	var ask func(g []q)
+	ask = func(g []q) {
 		b, _ := json.Marshal(g)
 		var r struct {
 			Messages map[string][]Message `json:"messages"`
@@ -272,8 +277,28 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 		for i := range g {
 			chans[i] = g[i].Channel
 		}
+		var se *Error
+		refused := errors.As(err, &se) && se.Code != "ratelimited"
+		if refused && len(g) > 1 {
+			// Slack refused the group (one channel the viewer can't read,
+			// a message id it won't take): each channel on its own, so
+			// the others' messages come
+			log.Printf("messages.list: %d channels: %v (%s); one by one", len(g), err, logtag.IDs(chans))
+			for i := range g {
+				ask(g[i : i+1 : i+1])
+			}
+			return
+		}
 		mu.Lock()
 		defer mu.Unlock()
+		if refused {
+			// the channel answered, with none of the messages: they are
+			// non-existent (Slack's UnknownFetchManager marks every id a
+			// fetch didn't bring so, unless it's offline)
+			log.Printf("messages.list: %s: %v: none of its %d messages", logtag.IDs(chans), err, len(g[0].Timestamps))
+			answered[chans[0]] = true
+			return
+		}
 		if err != nil {
 			log.Printf("messages.list: %d channels: %v (%s)", len(g), err, logtag.IDs(chans))
 			errs = append(errs, err)
