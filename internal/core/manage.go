@@ -744,6 +744,13 @@ func (a *App) noteSavedEvent(typ string, raw json.RawMessage) SavedItem {
 // its "saved" event (Name "due") is the one the UI notifies from
 // (shouldShowNotificationForSavedItem, ui/notify_saved.go).
 func (a *App) announceSaved(ctx context.Context, typ string, raw json.RawMessage, it SavedItem) {
+	if typ == "saved_due" && it.Channel != "" {
+		// handleSavedDue looks the conversation up before the message and
+		// before shouldShowNotificationForSavedItem asks for it (channelIds:
+		// [itemId], reason "handleSavedDue"): one nothing looked up this
+		// session (a channel the viewer isn't in) was skipped (3)
+		a.ResolveConv(ctx, it.Channel)
+	}
 	if typ != "saved_deleted" && it.Channel != "" {
 		got := a.hydrate(ctx, map[string][]string{it.Channel: {it.TS}})
 		if m, ok := got[savedKey(it.Channel, it.TS)]; ok {

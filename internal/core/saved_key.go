@@ -28,20 +28,59 @@ func SavedItemID(it *SavedItem) string {
 	return it.ItemID
 }
 
-// savedMessageKeyRE is looksLikeSavedItemId's message form: a
-// conversation's id and a message's ts.
-var savedMessageKeyRE = regexp.MustCompile(`^([CDG][A-Z0-9]{2,})-([0-9]{1,12}\.[0-9]{1,8})$`)
+// The id shapes looksLikeSavedItemId and looksLikeSalesforceTaskTodoId
+// (client-boot 3h/T) read: a reminder's (QXHQ looksLikeReminderId), a
+// file's or a list's (oRye looksLikeFileId), a conversation's (nQiy
+// looksLikeChannelId), a message's ts (e5ct looksLikeMessageTimestamp)
+// and a list record's (iLfW looksLikeRecordId).
+var (
+	savedReminderRE = regexp.MustCompile(`^@?Sa[A-Z0-9]{8,}$`)
+	savedFileRE     = regexp.MustCompile(`^F[A-Z0-9]{8,14}$`)
+	savedChannelRE  = regexp.MustCompile(`^(C|G|D|Z)[A-Z0-9]{8,}$`)
+	savedTSRE       = regexp.MustCompile(`^[0-9]{10}\.[0-9]{6}$`)
+	savedRecordRE   = regexp.MustCompile(`^Rec[A-Z0-9]{8,}$`)
+)
 
-// savedOtherKeyRE is looksLikeSavedItemId's other forms: a file's or a
-// list's id, alone or with a record, a section or a draft record after it.
-var savedOtherKeyRE = regexp.MustCompile(`^F[A-Z0-9]{2,}(-[A-Za-z0-9:_.-]+)?$`)
-
-// ParseSavedItemID is looksLikeSavedItemId over a notification's msg: ok for
-// a saved item's key, with the conversation and the message for a
-// message's.
-func ParseSavedItemID(key string) (ch, ts string, ok bool) {
-	if m := savedMessageKeyRE.FindStringSubmatch(key); m != nil {
-		return m[1], m[2], true
+// looksLikeSavedItemID is looksLikeSavedItemId: a reminder's or a file's
+// id, or a conversation and a message's ts, a list and a record, or a list
+// and a draft record ("temp:C:…"), joined by "-".
+func looksLikeSavedItemID(key string) bool {
+	if savedReminderRE.MatchString(key) || savedFileRE.MatchString(key) {
+		return true
 	}
-	return "", "", savedOtherKeyRE.MatchString(key) && !strings.HasPrefix(key, "F-")
+	first, rest, _ := strings.Cut(key, "-")
+	second, _, _ := strings.Cut(rest, "-")
+	return savedChannelRE.MatchString(first) && savedTSRE.MatchString(second) ||
+		savedFileRE.MatchString(first) && (savedRecordRE.MatchString(second) || strings.HasPrefix(second, "temp:C:"))
+}
+
+// looksLikeSalesforceTaskTodoID is looksLikeSalesforceTaskTodoId: a
+// Salesforce record's composite id ("S:org:record", FNHU) whose record is
+// a task (key prefix 00T, 8gF2).
+func looksLikeSalesforceTaskTodoID(key string) bool {
+	parts := strings.Split(key, ":")
+	part := func(i int) string {
+		if i < len(parts) {
+			return parts[i]
+		}
+		return ""
+	}
+	return part(0) == "S" && part(1) != "" && part(2) != "" && strings.HasPrefix(part(2), "00T")
+}
+
+// ParseSavedItemID is notificationClicked's test of a notification's msg
+// (looksLikeSavedItemId or looksLikeSalesforceTaskTodoId: the toast opens
+// Later, openSavedForLaterView), with the conversation and the message
+// when the key is a message's (the one openSavedForLaterView opens beside
+// the list: looksLikeChannelId and looksLikeMessageTimestamp).
+func ParseSavedItemID(key string) (ch, ts string, ok bool) {
+	if !looksLikeSavedItemID(key) && !looksLikeSalesforceTaskTodoID(key) {
+		return "", "", false
+	}
+	first, rest, _ := strings.Cut(key, "-")
+	second, _, _ := strings.Cut(rest, "-")
+	if savedChannelRE.MatchString(first) && savedTSRE.MatchString(second) {
+		return first, second, true
+	}
+	return "", "", true
 }
