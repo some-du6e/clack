@@ -15,7 +15,8 @@ them; `Eley` (boot-shared) shows the notification.
 
 Status marks: **✓** Clack does what Slack does. **fixed (n)** it didn't until
 notify-relatives part n (1: the rules, 2: sounds and huddles, 3: the
-sidebar's marks, 4: Windows, 5: the stall watchdogs). **gap (n)** it still
+sidebar's marks, 4: Windows, 5: the stall watchdogs, 6: Later reminders and
+huddle suggestions). **gap (n)** it still
 differs; part n of notify-relatives takes it. **n/a** a feature Clack
 doesn't have (named).
 
@@ -31,11 +32,11 @@ doesn't have (named).
 | Bot's, app's, Workflow Builder's post | `message` (`bot_message`, `bot_id`) | → rr: 9, 10 | fixed (1) |
 | Slackbot | `message` in the Slackbot DM | → RM: 22 for a forwarded email | fixed (1) |
 | Reminder (/remind) | Slackbot DM `message` ("Reminder: …"); `reminder_fired` only updates the list | → RM | ✓ |
-| Later reminder | `saved_due` | `handleSavedDue` (boot-render) loads the item → x6 `shouldShowNotificationForSavedItem` → `showSavedItemNotification`: "Reminder due" with the item's content (a message, a list record, a canvas section, a reminder, a file), a click opens it in Later | gap (6): not handled. A path of its own (the socket event, x6, the content per item type, the click into Later, fakeslack's `saved_due`), left for part 6 |
+| Later reminder | `saved_due` | `handleSavedDue` (boot-render) loads the item → x6 `shouldShowNotificationForSavedItem` → `showSavedItemNotification`: "Reminder due" with the item's content (a message, a list record, a canvas section, a reminder, a file), a click opens it in Later | fixed (6): core takes `saved_due` with the other saved events (the item held, its message looked up), ui/notify_saved.go asks x6 and shows "Reminder due" with the message as a message's notification writes it, the item's key (`getIdForSavedItem`) as msg, silent; a reminder's or a section's description, a file's title (files.info first, as handleSavedDue fetches it); a list record's name and a Salesforce task's subject Clack doesn't hold (""). Its click, and `slack://saved-for-later?item_id=`, open Later with the message beside the list (TestLaterReminderLikeSlack) |
 | Calendar reminder | `calendar_reminder` | `showJustInTimeCalendarNotification` (silent) | n/a: Clack has no calendar integration |
 | Huddle invite | `huddle_invite` | HW `shouldShowNotificationForHuddle` → `showHuddleNotification`, plus the ring | fixed (2): see §6 |
 | Huddle started in a channel | `message` subtype `huddle_thread` | → rr: never as a mention (canCountAsUnreadForCurrentUser), passes at Everything | fixed (1) |
-| "Join the huddle" suggestion | `huddle_recommend` | HW → `showHuddleRecommendationNotification` | gap (6): not handled. Clack draws no huddle suggestion at all, so the toast comes with that feature |
+| "Join the huddle" suggestion | `huddle_recommend` | huddleRecommendRtmHandler (not for the viewer's own huddle) → HW → `showHuddleRecommendNotification`: no title, the conversation as subtitle, "{A and B} are talking in {conversation}.", id type hudrec, `desktop_sound` from the macOS app only | fixed (6): huddleui/recommend.go (TestHuddleRecommendLikeSlack); the topic form reads a huddle topic Clack doesn't keep |
 | Slack Connect or channel invite | `desktop_notification` with `is_channel_invite` | gA: shown (0) before any reply check | ✓ |
 | Canvas mention | `message` subtype `document_mention` in the canvas's file channel | maybeShowNotification lets it past the member check; → rr: 1 without the viewer's mention | fixed (1) |
 | List assignment | Activity item `list_record_assigned` | none: Activity only. A `list_mention` message → rr (1 without a mention) | ✓ |
@@ -152,11 +153,13 @@ whom it sends one to. Clack ✓ (thread-reply-toast rounds 1–3).
   the huddle the viewer is in. Clack (huddleui `mayNotifyHuddle`): DND,
   mute and the known channel ✓; fixed (2): it held an invite in a
   conversation, or a workspace, set to Nothing
-  (TestIncomingInviteNotifiesAtNothing). `huddle_recommend`: gap (6), §1.
+  (TestIncomingInviteNotifiesAtNothing). `huddle_recommend` the same,
+  each suppressed one logged with its reason: fixed (6), §1.
 - **x6 (Later reminders)**: permission 15, `global_desktop` stored as
   `nothing` 14 (areGlobalDesktopNotificationsDisabled reads the stored
-  value), a message's channel must be known (3), 24, 17. No DND check.
-  gap (6), §1.
+  value), a message's channel must be known (3), 24, 17. No DND, mute,
+  level or push check. Clack fixed (6), §1: `notify: show|skip <reason>
+  saved_due <type> <tags>` in clack.log.
 - **pK (approvals)**, activities summary, onboarding, seasonal, welcome
   party: permission 15, `global_desktop` `nothing` 14. n/a.
 
