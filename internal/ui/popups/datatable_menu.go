@@ -12,7 +12,9 @@ package popups
 //     and Clear Sort (danger);
 //   - View {caption}: DataTableFullscreenModal, the caption as its title,
 //     the filter, then every row (DataTableFullscreenVirtualized) with the
-//     inline table's sort and filter to start from.
+//     inline table's sort and filter to start from; its action cells'
+//     buttons are the message's live elements (the inline table's element
+//     host), so they send block_actions.
 //
 // Copy table puts convertTableBlockToTsv's text on the clipboard (Slack
 // adds a slack/block-kit flavor, the block for pasting into its composer,
@@ -120,11 +122,15 @@ func DownloadDataTable(h Host, t *richtext.DataTable) {
 // field over the table.
 type dtFull struct {
 	h     Host
+	m     *Modal
 	full  *richview.TableControl
 	v     *richview.View
 	ed    widget.Editor
 	clear widget.Clickable // the field's Clear, while it has text
 	focus bool             // the field takes the focus next frame
+	// fired reads the element host's sent actions, fired0 its count at open
+	fired  func() uint64
+	fired0 uint64
 }
 
 // dtFullHandler is the fullscreen view's richview handler: its column
@@ -160,14 +166,34 @@ func OpenDataTableFull(h Host, c *richview.TableControl, focus bool) {
 }
 
 func openDataTableFull(h Host, c *richview.TableControl, focus bool) *dtFull {
+	f := newDTFull(h, c, focus)
+	h.ShowOverlay(f.m)
+	return f
+}
+
+// newDataTableFull is OpenDataTableFull's modal and its table's richview,
+// which draws the action cells' buttons through the inline table's
+// element host (they send block_actions, as DataTableFullscreenModal's
+// rows pass the table's onAction).
+func newDataTableFull(h Host, c *richview.TableControl, focus bool) (*Modal, *richview.View) {
+	f := newDTFull(h, c, focus)
+	return f.m, f.v
+}
+
+func newDTFull(h Host, c *richview.TableControl, focus bool) *dtFull {
 	t := *c.Table
 	t.Full = true
 	f := &dtFull{h: h, full: richview.NewTableControl(&t, c), focus: focus}
-	f.v = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.DataTableBlock, BlockID: t.BlockID, DataTable: &t}}}, richview.Options{NoHoverCards: true})
+	f.v = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.DataTableBlock, BlockID: t.BlockID, DataTable: &t}}}, richview.Options{NoHoverCards: true, Elements: c.Elements})
 	f.v.SetTableControl(&t, f.full)
 	f.ed.SingleLine = true
 	f.ed.SetText(f.full.FilterText())
-	m := NewModal(h, ModalOpts{Title: t.Caption, Width: 960, Body: f.layout,
+	// DataTableFullscreenModal's onAction runs the row's action and closes
+	// the modal: the view closes once the message's elements send one
+	if fc, ok := c.Elements.(interface{ ActionsFired() uint64 }); ok {
+		f.fired, f.fired0 = fc.ActionsFired, fc.ActionsFired()
+	}
+	f.m = NewModal(h, ModalOpts{Title: t.Caption, Width: 960, Body: f.layout, FillBody: true,
 		// the field, then its Clear while it shows
 		FocusStops: func() []event.Tag {
 			if f.ed.Len() > 0 {
@@ -175,11 +201,14 @@ func openDataTableFull(h Host, c *richview.TableControl, focus bool) *dtFull {
 			}
 			return []event.Tag{&f.ed}
 		}})
-	h.ShowOverlay(m)
 	return f
 }
 
 func (f *dtFull) layout(gtx layout.Context) layout.Dimensions {
+	if f.fired != nil && f.fired() != f.fired0 {
+		f.m.Dismiss()
+		return layout.Dimensions{}
+	}
 	if RichStyle == nil {
 		return layout.Dimensions{}
 	}

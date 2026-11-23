@@ -44,6 +44,19 @@ on:
 # settings.panel, onMessageSendBlocks, main.call and main.on,
 # redux.getStore). SlickMCP's main half still needs node:http and fails.
 # Acceptance passed 58/58 at it (slick run 45097512723).
+# 05fa29d (2026-11-23, Slick v161 and v162, slick-v162) reviewed from
+# f6be3bd: one dependency bump (amazon-chime-sdk-js 3.33.0, BetterHuddles'
+# bundle; installed with --ignore-scripts); scripts/build/app.ts's
+# pageBuildOptions takes an optional themes map and __SLICK_THEMES__ is now
+# a JSON string (only Slick's own app reads it), while pageBuildOptions({})
+# and pagePlugins, which build.mjs uses, are as they were; loader v3, the
+# Check for updates button and the media keys change Slick's desktop and
+# extension loaders, which Clack doesn't run. Plugin changes: the new
+# CustomAppIcon, whose main half uses electron's nativeImage, nativeTheme,
+# systemPreferences, app.dock and BrowserWindow.setIcon (Clack's shims
+# since slick-v162), a `hidden` setting, ChatTabs' header-tab views
+# (Slack's view state and navigate), and Snappy's extension opt-in (not
+# Clack's loader).
 env:
   SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979
 

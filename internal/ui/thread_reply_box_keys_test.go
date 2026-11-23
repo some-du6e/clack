@@ -77,12 +77,12 @@ func (x *rfEnv) focusWithin(c *convo, d time.Duration) bool {
 // scrollAway takes the reply box out of view with the thread list keeping
 // the keyboard focus: PageUp a page at a time (onKeyDownPageUp: the
 // selection goes to the first message in view), or, keeping the newest
-// reply selected, the wheel. Slack's list keeps its focus through a
-// scrollbar drag (onDragStart's preventDefault) but blurs an active row
-// the wheel takes out of view (onScroll after onWheel,
-// shouldBlurItemScrolledOutOfView); Clack's keeps it through both, so the
-// wheel stands in for the drag here.
-func (x *rfEnv) scrollAway(c *convo, tv *messages.ThreadView, wheel bool) {
+// reply selected, drags of the scrollbar's thumb. Slack's list keeps its
+// focus through a scrollbar drag (onDragStart's preventDefault) but blurs
+// an active row the wheel takes out of view (onScroll after onWheel,
+// shouldBlurItemScrolledOutOfView), and so does Clack's (kbWheelBlur): the
+// wheel here would leave nothing focused.
+func (x *rfEnv) scrollAway(c *convo, tv *messages.ThreadView, drag bool) {
 	x.t.Helper()
 	paneBottom := c.compRect.Max.Y // at the thread's end the box ends at the pane's bottom
 	r := tv.ListRect()
@@ -91,10 +91,18 @@ func (x *rfEnv) scrollAway(c *convo, tv *messages.ThreadView, wheel bool) {
 		if c.compRect.Min.Y >= paneBottom {
 			return true
 		}
-		if wheel {
-			x.scroll(at, -400)
-		} else {
+		switch th := tv.ScrollThumb(); {
+		case !drag:
 			x.key(key.NamePageUp, 0)
+		case th.Empty():
+			x.movePtr(at) // the bar shows with the pointer over the pane
+		default:
+			// the thumb up a little: the replies down, the box out below
+			g := image.Pt((th.Min.X+th.Max.X)/2, (th.Min.Y+th.Max.Y)/2)
+			to := g.Sub(image.Pt(0, x.px(40)))
+			x.rzPress(g)
+			x.rzMove(to)
+			x.rzRelease(to)
 		}
 		x.settle(300 * time.Millisecond)
 		return false
@@ -107,7 +115,7 @@ func (x *rfEnv) scrollAway(c *convo, tv *messages.ThreadView, wheel bool) {
 
 // boxAway opens the read thread at its end, gives its list the keyboard
 // focus, and takes the reply box out of view (scrollAway).
-func boxAway(t *testing.T, wheel bool) (*rfEnv, *convo, *messages.ThreadView) {
+func boxAway(t *testing.T, drag bool) (*rfEnv, *convo, *messages.ThreadView) {
 	t.Helper()
 	x := openTopEnv(t)
 	x.openAt(fakeslack.ThreadOpenRead)
@@ -115,7 +123,7 @@ func boxAway(t *testing.T, wheel bool) (*rfEnv, *convo, *messages.ThreadView) {
 	c := x.a.convos[x.ch+"/"+x.root]
 	tv := x.threadView(x.ch, x.root)
 	x.listFocused(c, tv)
-	x.scrollAway(c, tv, wheel)
+	x.scrollAway(c, tv, drag)
 	return x, c, tv
 }
 
@@ -125,12 +133,12 @@ func boxAway(t *testing.T, wheel bool) (*rfEnv, *convo, *messages.ThreadView) {
 // box right under the last reply.
 func TestThreadsAuditReplyBoxKeysBringItBack(t *testing.T) {
 	for _, k := range []struct {
-		what  string
-		key   key.Name
-		wheel bool // the newest reply stays selected (↓ goes past it)
+		what string
+		key  key.Name
+		drag bool // the newest reply stays selected (↓ goes past it)
 	}{{"End", key.NameEnd, false}, {"↓ past the last reply", key.NameDownArrow, true}, {"Tab", key.NameTab, false}} {
 		t.Run(k.what, func(t *testing.T) {
-			x, c, tv := boxAway(t, k.wheel)
+			x, c, tv := boxAway(t, k.drag)
 			x.key(k.key, 0)
 			if !x.focusWithin(c, time.Second) {
 				t.Fatalf("%s from the thread list left the reply box unfocused (the list's keyboard focus: %v)", k.what, tv.KeyboardSelected() != "")
@@ -155,8 +163,9 @@ func TestThreadsAuditReplyBoxEndKeepsItsTop(t *testing.T) {
 	cut := func(what string) image.Rectangle {
 		x.t.Helper()
 		x.listFocused(c, tv) // at the thread's end again
-		// a notch of the wheel at a time, standing in for a short drag of
-		// the scrollbar (scrollAway)
+		// a notch of the wheel at a time: the newest reply, selected above
+		// the box, stays in view, so the list keeps its focus (a wheel
+		// drops it only with the selected row out of view: scrollAway)
 		x.until(what+": the box cut at the pane's bottom", 20*time.Second, func() bool {
 			if c.compRect.Max.Y > paneBottom+x.px(8) {
 				return true

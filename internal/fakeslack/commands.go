@@ -83,10 +83,14 @@ func commandAPI(s *Server, method string, f url.Values) (any, bool) {
 	app.mu.Lock()
 	app.Calls = append(app.Calls, f)
 	app.mu.Unlock()
+	text, err := commandText(f)
+	if err != nil {
+		// not what Slack's executeCommand sends (commandText)
+		return map[string]any{"ok": false, "error": "invalid_blocks", "detail": err.Error()}, true
+	}
 	if f.Get("command") != TicketCommand {
 		return map[string]any{"ok": false, "error": "unknown_command"}, true
 	}
-	text := strings.TrimSpace(commandText(f))
 	switch text {
 	case "timeout":
 		return map[string]any{"ok": false, "error": "dispatch_failed"}, true
@@ -142,46 +146,159 @@ func (s *Server) cmdEphemeral(ch, thread, text string) map[string]any {
 
 // commandText is the text the server hands the app: the text param, or,
 // when the client sent the arguments as blocks (Slack's executeCommand
-// does), their rich text with mentions as Slack's escapes.
-func commandText(f url.Values) string {
-	if t := f.Get("text"); t != "" || f.Get("blocks") == "" {
-		return t
+// does), their rich text with mentions as Slack's escapes. It is strict
+// about what convertDeltaToBlocks (with executeCommand's options) makes,
+// so a client that differs fails: never text and blocks together, one
+// rich_text block without a block_id, known element types only, and the
+// whitespace Slack trims (none leading the first section, none trailing
+// the last one's unformatted text, no spaces before a line break outside
+// code: /(^|\S)( +)(\n)/gm).
+func commandText(f url.Values) (string, error) {
+	t, raw := f.Get("text"), f.Get("blocks")
+	switch {
+	case f.Has("text") && f.Has("blocks"):
+		return "", fmt.Errorf("text and blocks together")
+	case raw == "":
+		return t, nil
 	}
-	var blocks []struct {
-		Elements []struct {
-			Elements []map[string]any `json:"elements"`
-		} `json:"elements"`
+	var blocks []map[string]any
+	if json.Unmarshal([]byte(raw), &blocks) != nil {
+		return "", fmt.Errorf("blocks aren't a JSON array")
 	}
-	if json.Unmarshal([]byte(f.Get("blocks")), &blocks) != nil {
-		return ""
+	if len(blocks) != 1 || blocks[0]["type"] != "rich_text" {
+		return "", fmt.Errorf("%d blocks, want one rich_text", len(blocks))
+	}
+	if _, ok := blocks[0]["block_id"]; ok {
+		return "", fmt.Errorf("a block_id (convertDeltaToBlocks sets none)")
 	}
 	var b strings.Builder
-	for _, bl := range blocks {
-		for _, sec := range bl.Elements {
-			for _, el := range sec.Elements {
-				str := func(k string) string { v, _ := el[k].(string); return v }
-				switch str("type") {
-				case "text":
-					b.WriteString(str("text"))
-				case "user":
-					b.WriteString("<@" + str("user_id") + ">")
-				case "channel":
-					b.WriteString("<#" + str("channel_id") + ">")
-				case "usergroup":
-					b.WriteString("<!subteam^" + str("usergroup_id") + ">")
-				case "broadcast":
-					b.WriteString("<!" + str("range") + ">")
-				case "link":
-					if t := str("text"); t != "" {
-						b.WriteString("<" + str("url") + "|" + t + ">")
-					} else {
-						b.WriteString("<" + str("url") + ">")
-					}
-				case "emoji":
-					b.WriteString(":" + str("name") + ":")
+	inline := func(els []any, pre bool) error {
+		for _, e := range els {
+			el, _ := e.(map[string]any)
+			str := func(k string) string { v, _ := el[k].(string); return v }
+			switch str("type") {
+			case "text":
+				if !pre && cmdSpacesBeforeBreak(str("text")) {
+					return fmt.Errorf("spaces before a line break in %q", str("text"))
 				}
+				b.WriteString(str("text"))
+			case "user":
+				b.WriteString("<@" + str("user_id") + ">")
+			case "channel":
+				b.WriteString("<#" + str("channel_id") + ">")
+			case "usergroup":
+				b.WriteString("<!subteam^" + str("usergroup_id") + ">")
+			case "broadcast":
+				b.WriteString("<!" + str("range") + ">")
+			case "link":
+				if t := str("text"); t != "" {
+					b.WriteString("<" + str("url") + "|" + t + ">")
+				} else {
+					b.WriteString("<" + str("url") + ">")
+				}
+			case "emoji":
+				b.WriteString(":" + str("name") + ":")
+			case "color":
+				b.WriteString(str("value"))
+			case "message_mention":
+				b.WriteString("<" + str("url") + ">")
+			default:
+				return fmt.Errorf("element type %q", str("type"))
 			}
 		}
+		return nil
 	}
-	return b.String()
+	secs, _ := blocks[0]["elements"].([]any)
+	plainText := func(sec any, at func([]any) any) string {
+		m, _ := sec.(map[string]any)
+		if m["type"] != "rich_text_section" {
+			return ""
+		}
+		els, _ := m["elements"].([]any)
+		if len(els) == 0 {
+			return ""
+		}
+		el, _ := at(els).(map[string]any)
+		if _, styled := el["style"]; styled || el["type"] != "text" {
+			return ""
+		}
+		v, _ := el["text"].(string)
+		return v
+	}
+	if len(secs) > 0 {
+		if first := plainText(secs[0], func(e []any) any { return e[0] }); first != strings.TrimLeft(first, " \t\n") {
+			return "", fmt.Errorf("leading whitespace %q (trimStart)", first)
+		}
+		if last := plainText(secs[len(secs)-1], func(e []any) any { return e[len(e)-1] }); last != strings.TrimRight(last, " \t\n") {
+			return "", fmt.Errorf("trailing whitespace %q (the last text is trimmed)", last)
+		}
+	}
+	for i, sec := range secs {
+		m, _ := sec.(map[string]any)
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		typ, _ := m["type"].(string)
+		els, _ := m["elements"].([]any)
+		var err error
+		switch typ {
+		case "rich_text_section", "rich_text_quote", "rich_text_header":
+			err = inline(els, false)
+		case "rich_text_preformatted":
+			err = inline(els, true)
+		case "rich_text_list":
+			for j, it := range els {
+				item, _ := it.(map[string]any)
+				if j > 0 {
+					b.WriteString("\n")
+				}
+				sub, _ := item["elements"].([]any)
+				if err = inline(sub, false); err != nil {
+					break
+				}
+			}
+		case "rich_text_divider":
+		default:
+			err = fmt.Errorf("element type %q", typ)
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return b.String(), nil
 }
+
+// cmdSpacesBeforeBreak reports a match of convertDeltaToBlocks' K,
+// /(^|\S)( +)(\n)/gm, with JavaScript's classes: spaces right before a
+// "\n" that follow a line's start (after \n, \r, U+2028 or U+2029) or a
+// character that isn't JavaScript white space. Go's \S is ASCII only (it
+// matches U+00A0), and its (?m)^ follows \n alone.
+func cmdSpacesBeforeBreak(s string) bool {
+	rs := []rune(s)
+	for i := 0; i < len(rs); i++ {
+		if rs[i] != ' ' {
+			continue
+		}
+		j := i
+		for j < len(rs) && rs[j] == ' ' {
+			j++
+		}
+		if j < len(rs) && rs[j] == '\n' && (i == 0 || jsLineTerminator(rs[i-1]) || !jsWhiteSpace(rs[i-1])) {
+			return true
+		}
+		i = j
+	}
+	return false
+}
+
+// jsWhiteSpace is JavaScript's \s.
+func jsWhiteSpace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ', 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff:
+		return true
+	}
+	return r >= 0x2000 && r <= 0x200a
+}
+
+// jsLineTerminator is what JavaScript's multiline ^ follows.
+func jsLineTerminator(r rune) bool { return r == '\n' || r == '\r' || r == 0x2028 || r == 0x2029 }

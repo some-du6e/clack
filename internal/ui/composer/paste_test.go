@@ -385,16 +385,15 @@ func TestPasteKeepsMentions(t *testing.T) {
 	}
 	texty := `{"ops":[{"insert":"cc "},{"insert":"@karim","attributes":{"slackmention":{"id":"U0FAKE00001","label":"@karim","mention":false,"unverified":false}}},` +
 		`{"insert":" now","attributes":{"bold":true}},{"insert":"\n"}]}`
-	h := textyHTML(texty)
-	if h == "" {
-		t.Fatal("slack/texty made no html")
+	d = textyDoc(texty)
+	if d == nil {
+		t.Fatal("slack/texty made no doc")
 	}
-	d = docFromHTML(h)
 	if got := pasteAtoms(d); len(got) != 1 || got[0] != fmt.Sprintf("%d:U0FAKE00001:@karim", AtomUser) {
-		t.Errorf("slack/texty atoms %q (html %q)", got, h)
+		t.Errorf("slack/texty atoms %q", got)
 	}
 	phCheck(t, "slack/texty text", d, "p cc "+string(ObjRune)+"* now*")
-	if textyHTML(`not json`) != "" || textyHTML(`{"ops":[]}`) != "" {
-		t.Error("textyHTML took junk")
+	if textyDoc(`not json`) != nil || textyDoc(`{"ops":[]}`) != nil {
+		t.Error("textyDoc took junk")
 	}
 }

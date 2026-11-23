@@ -388,6 +388,12 @@ func (h srCardHandler) DataTableAction(act string, c *richview.TableControl, btn
 	DataTableAction(h.v.h, act, c, ActionAnchor(btn, c.Window))
 }
 
+// TimelineSources is a timeline section's "(Sources)" on the card: its
+// sources modal.
+func (h srCardHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
+	OpenTimelineSources(h.v.h, sec)
+}
+
 func (h srCardHandler) OpenFile(f *richtext.File) {
 	if f == nil {
 		return

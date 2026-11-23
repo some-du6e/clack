@@ -54,8 +54,13 @@ func (e *Encoder) Write(pcm []int16) error {
 	}
 	e.fifo = append(e.fifo, pcm...)
 	n := FrameSamples * e.channels
-	for len(e.fifo) >= n {
-		pkt, err := e.enc.Encode(e.fifo[:n], FrameSamples, e.pkt)
+	// packet by packet from the front, and what's left (under a packet)
+	// moved down once: moved after every packet, a whole recording
+	// written at once (a page's MediaRecorder at stop) cost its length
+	// squared
+	off := 0
+	for len(e.fifo)-off >= n {
+		pkt, err := e.enc.Encode(e.fifo[off:off+n], FrameSamples, e.pkt)
 		if err != nil {
 			// Chromium's Opus encoder keeps running after a failed frame
 			// (NotifyError); the frame is lost
@@ -64,7 +69,10 @@ func (e *Encoder) Write(pcm []int16) error {
 			e.mux.Add(pkt, time.Duration(e.packets)*FrameSamples*time.Second/Rate)
 		}
 		e.packets++ // the next packet's capture time moves on either way
-		e.fifo = append(e.fifo[:0], e.fifo[n:]...)
+		off += n
+	}
+	if off > 0 {
+		e.fifo = append(e.fifo[:0], e.fifo[off:]...)
 	}
 	return nil
 }

@@ -162,10 +162,10 @@ func (c *builder) children(bs []bk, callout bool) []Block {
 func decodeBlock(raw json.RawMessage) bk {
 	var b bk
 	err := json.Unmarshal(raw, &b)
-	if err == nil && !isDataType(b.Type) {
+	if err == nil && !ownKeysType(b.Type) {
 		return b
 	}
-	if d, ok := dataBlock(raw); ok {
+	if d, ok := ownKeysBlock(raw); ok {
 		return d
 	}
 	if err != nil {

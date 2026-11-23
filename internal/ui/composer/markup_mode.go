@@ -9,7 +9,9 @@ import "github.com/some-du6e/clack/internal/richtext"
 // draft. The round trip goes through mrkdwn, so pills and emoji come back
 // as the same mention and emoji elements. An empty parse keeps d.
 func parseMarkup(d *Doc, r richtext.Resolver) *Doc {
-	blocks := richtext.FromMrkdwn(r, d.Mrkdwn())
+	// untrimmed: TSF trims what it renders, not what is sent (a first
+	// line's indent stays)
+	blocks := richtext.FromMrkdwnUntrimmed(r, d.Mrkdwn())
 	out := DocFromRichtext(blocks)
 	if out == nil || out.Empty() && !d.Empty() {
 		return d

@@ -26,3 +26,29 @@ func TestDataTableActionCells(t *testing.T) {
 		t.Errorf("the first action cell isn't an element")
 	}
 }
+
+// Rows sharing one action_id are told apart by their buttons' values: a
+// click on row 2 finds row 2's element (its value goes out), and each
+// row gets its own widget key.
+func TestDataTableSharedActionID(t *testing.T) {
+	bs := ParseBlocks(json.RawMessage(`[{"type":"data_table","block_id":"dt1","rows":[
+		[{"type":"raw_text","text":"Task"},{"type":"raw_text","text":"Action"}],
+		[{"type":"raw_text","text":"a"},{"type":"action_cell","element":{"type":"button","action_id":"done","text":{"type":"plain_text","text":"Done"},"value":"row_1"}}],
+		[{"type":"raw_text","text":"b"},{"type":"action_cell","element":{"type":"button","action_id":"done","text":{"type":"plain_text","text":"Done"},"value":"row_2"}}]]}]`))
+	r, ok := findValue(bs, "dt1", "done", "row_2")
+	if !ok || r.el.Value != "row_2" {
+		t.Fatalf("row 2: %+v %v", r.el, ok)
+	}
+	if r, ok := findValue(bs, "dt1", "done", "row_1"); !ok || r.el.Value != "row_1" {
+		t.Errorf("row 1: %+v %v", r.el, ok)
+	}
+	b := bs[0]
+	if k1, k2 := surfKey(&b, &b.Elements[0]), surfKey(&b, &b.Elements[1]); k1 == k2 {
+		t.Errorf("the rows share the widget key %q", k1)
+	}
+	// any other block keeps its key without the value
+	sec := Block{Type: "actions", BlockID: "a1"}
+	if k := surfKey(&sec, &Element{Type: "button", ActionID: "go", Value: "v"}); k != "a1\x00go\x00button" {
+		t.Errorf("an actions block's button key %q", k)
+	}
+}

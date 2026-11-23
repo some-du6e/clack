@@ -783,6 +783,9 @@ func (v *View) anyReady(st *Style) bool {
 			if _, ok := st.Images.Get(f.url, f.size); ok {
 				return true
 			}
+			if f.alt && !f.broken && imgFailed(st.Images, f.url, f.size) {
+				return true // it failed since: its broken icon
+			}
 		}
 	}
 	return false
@@ -900,7 +903,14 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			}
 			if !ok {
 				if static {
-					v.pending = append(v.pending, ^int32(i))
+					v.pending = append(v.pending, ^int32(i)) // drawn once it loads (a retry)
+				}
+				// a message emoji that failed: Chromium's broken <img>
+				// (brokenimage.go)
+				// once shown it stays until the image loads (a retry that's
+				// busy decoding isn't Failed, and drew a blank gap)
+				if f.broken = f.alt && (f.broken || imgFailed(st.Images, f.url, f.size)); f.broken {
+					paintBrokenEmoji(ops, int(f.x+0.5), f.y, f.size, v.laidPx)
 				}
 				continue
 			}
@@ -2091,6 +2101,11 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		}
 	case tDataTable: // a data_table's buttons (datatable.go)
 		v.dataTableClick(tg, h)
+	case tTimeline: // a timeline section's (Sources) (timeline.go)
+		if th, ok := h.(TimelineHandler); ok && tg.timeline != nil {
+			r, _ := v.targetRect(tg)
+			th.TimelineSources(tg.timeline, r.Add(v.Origin))
+		}
 	case tSnippet: // a snippet's Show more / Show less (snippet.go)
 		if fh, ok := h.(FileActionHandler); ok && tg.file != nil {
 			fh.FileAction(tg.act, tg.file, image.Rectangle{Min: anchor, Max: anchor})

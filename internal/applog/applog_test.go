@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -347,6 +348,38 @@ func TestStartWritesFileAndTail(t *testing.T) {
 	}
 	if st, _ := os.Stat(filepath.Join(dir, FileName)); st != nil && st.Mode().Perm()&0o077 != 0 && os.PathSeparator == '/' {
 		t.Errorf("log file mode %v, want owner-only", st.Mode().Perm())
+	}
+}
+
+// Karim's clack.log of 2026-11-20 had no times from its second run on:
+// Gio's app package clears the standard logger's date and time flags in its
+// init on Windows when the process has no stderr (log_windows.go), as a
+// windowsgui Clack started from the Start menu has. Start puts them back,
+// so every line in the file starts with its date and time.
+func TestStartStampsEveryLine(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLACK_LOG_DIR", dir)
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	defer func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) }()
+	log.SetFlags(log.Flags() &^ log.LstdFlags) // Gio's init with no stderr
+	l := Start(io.Discard)
+	closeForCleanup(t, l)
+	log.Printf("the first line")
+	log.Printf("the second line")
+	l.Close(30 * time.Second)
+	b, err := os.ReadFile(filepath.Join(dir, FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamped := regexp.MustCompile(`^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d the (first|second) line$`)
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("the file has %d lines, want 2:\n%s", len(lines), b)
+	}
+	for _, line := range lines {
+		if !stamped.MatchString(line) {
+			t.Errorf("line %q has no date and time", line)
+		}
 	}
 }
 
