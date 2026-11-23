@@ -758,6 +758,8 @@ func (c *Client) PrepareUpload(ctx context.Context, f UploadFile, progress func(
 type UploadedRef struct {
 	ID    string `json:"id"`
 	Title string `json:"title,omitempty"`
+	// Subtype is the File's ("slack_audio" for a voice clip).
+	Subtype string `json:"subtype,omitempty"`
 }
 
 // CompleteUpload is files.completeUpload with Slack's eager-upload args
