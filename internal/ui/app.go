@@ -383,6 +383,11 @@ type App struct {
 	// the frame's layout
 	inspReset   bool
 	inspPresses []key.Event
+
+	// secFocused: the side pane is the focused view container;
+	// actPaneFocus: the thread the Activity tab's own pane draws is
+	// (focus_container.go)
+	secFocused, actPaneFocus bool
 }
 
 // New creates the app. Call Run on the UI goroutine (main).

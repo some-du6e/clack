@@ -203,6 +203,7 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 	globalKeys := slackc.WantsGlobal("keydown") || slackc.WantsGlobal("keyup")
 	a.secondary.keyFocus = a.threadPaneFocused(gtx) || a.secChannelFocused(gtx) // for the pane's Escape
 	a.secondary.findFocus = a.threadFindFocused(gtx)
+	a.noteFocusedContainer(gtx) // focus_container.go
 	for {
 		e, ok := gtx.Event(filters...)
 		if !ok {

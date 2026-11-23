@@ -34,9 +34,16 @@ import (
 //     renderUnreadThreadsIndicator ("Unread" after an 8px
 //     icon-placeholder-filled, gap 4, --dt_color-content-imp) while it's
 //     above 0, in the span hover hides (c-message__reply_bar_last_reply).
-//     Slack passes 0 for the thread open in a focused secondary view;
-//     Clack doesn't track that focus, so the mark stays until the thread
-//     is read.
+//     It is 0 for the thread open in a focused secondary view (MessageWrapper:
+//     activeThreadKeyFromSecondaryView with isSecondaryViewFocused, the
+//     pane's focusedContainer), the Host saying which (SecondaryThreadFocuser).
+
+// SecondaryThreadFocuser is a Host that knows the thread its secondary
+// view shows while that view is the focused container: its reply bar
+// counts no "Unread".
+type SecondaryThreadFocuser interface {
+	SecondaryThreadFocused(channel, ts string) bool
+}
 
 // unreadThreadsRetry is a failed fetch's wait before it's tried again
 // with nothing moving; each failure in a row doubles it, up to 32 times.
