@@ -71,13 +71,59 @@ func (a *App) notifyMessage(title, body string, n *desktopNote) {
 		}
 	}
 	file := messageSound(c.GlobalNotifyString(pref))
+	ch, thread := "", ""
+	if n != nil {
+		ch, thread = n.Channel, n.ThreadTS
+	}
+	debounce := c.Experiment("message_sound_debounce") == "on"
 	go func() { // dnd.info the first time: off the UI goroutine
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if (throughDND || !c.DNDActive(ctx)) && soundPlayback() {
+		// canPlaySound's order: the system, Do Not Disturb, then the
+		// debounce (shouldSuppressConsecutiveMessageSound); then
+		// maybePlayNewMsgSound plays nothing while a huddle is on
+		// (getActiveHuddleCallId, isLiveVoiceCallRunning)
+		if (throughDND || !c.DNDActive(ctx)) && soundPlayback() && !(debounce && a.soundDebounced(ch, thread)) && !inHuddle(a) {
 			huddleui.PlaySlackSound(file)
 		}
 	}()
+}
+
+// inHuddle reports whether the viewer is in a huddle, when Slack's
+// maybePlayNewMsgSound plays no message sound (tests swap it).
+var inHuddle = func(a *App) bool {
+	h := a.hudLive.Load()
+	return h != nil && h.Session() != nil
+}
+
+// soundDebounce is message_sound_debounce's quiet stretch (Slack's 5 s
+// debounce; tests shorten it).
+var soundDebounce = 5 * time.Second
+
+// soundDebounced is shouldSuppressConsecutiveMessageSound (client-boot
+// Fpyc): under message_sound_debounce one message sound per thread, or
+// conversation, until soundDebounce passes without another; each one in
+// between starts the stretch again (lodash debounce) and plays nothing.
+func (a *App) soundDebounced(ch, thread string) bool {
+	k := ch
+	if thread != "" {
+		k = ch + "/" + thread
+	}
+	a.soundMu.Lock()
+	defer a.soundMu.Unlock()
+	if t, ok := a.soundQuiet[k]; ok {
+		t.Reset(soundDebounce)
+		return true
+	}
+	if a.soundQuiet == nil {
+		a.soundQuiet = map[string]*time.Timer{}
+	}
+	a.soundQuiet[k] = time.AfterFunc(soundDebounce, func() {
+		a.soundMu.Lock()
+		delete(a.soundQuiet, k)
+		a.soundMu.Unlock()
+	})
+	return false
 }
 
 // soundPlayback is the shell's answer to SHOULD_PLAY_SOUND, which the web

@@ -289,15 +289,10 @@ func (c *Controller) mayNotifyHuddle(ch string, dnd bool) bool {
 		return false
 	}
 	conv, ok := app.Conv(ch)
-	if !ok || conv.Muted {
-		return false
-	}
-	p := app.Prefs()
-	level := p.GlobalDesktop
-	if o := p.ChannelNotify[ch].Desktop; o != "" && o != "default" {
-		level = o
-	}
-	return level != "nothing"
+	// HW's level check (14) never holds one: getCalculatedDesktopNotifySetting
+	// reads "nothing" as mentions_dms. Clack held an invite in a
+	// conversation set to Nothing.
+	return ok && !conv.Muted
 }
 
 // inviteNotification is sharedHuddleNotificationOptions +

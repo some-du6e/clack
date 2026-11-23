@@ -232,6 +232,10 @@ type App struct {
 
 	// hud, for the image cache's goroutines (imagesReady, huddle_wire.go)
 	hudLive atomic.Pointer[huddleui.Controller]
+	// soundQuiet is message_sound_debounce's timers, by thread or
+	// conversation (notify.go soundDebounced)
+	soundMu    sync.Mutex
+	soundQuiet map[string]*time.Timer
 	// hudPings are animReady's calls into the huddle windows (tests: a
 	// video's frames never make them draw, videoFrameReady)
 	hudPings atomic.Int64
