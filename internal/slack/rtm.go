@@ -181,6 +181,12 @@ type session struct {
 	hello bool          // the gateway said hello: the connect worked
 	up    time.Duration // wall-clock time from the dial to the drop (0 if the dial failed)
 	err   error
+	// quiet is the longest the socket went without a frame of Slack's own
+	// (an event, a reconnect_url: not a pong), awake time, the drop's
+	// stretch included: how often the gateway speaks unasked, which the
+	// no-frames watchdog's 2x285 s bound assumes it does (dogfood logs
+	// settle it)
+	quiet time.Duration
 }
 
 // Run blocks until ctx is done or the session ended, reconnecting with
@@ -229,7 +235,7 @@ func (r *RTM) Run(ctx context.Context) {
 		case stale:
 			log.Printf("rtm: gateway refused the reconnect_url, connecting with a fresh URL")
 		case s.hello:
-			log.Printf("rtm: disconnected (%v) after %s (fast=%v), retrying in %s", s.err, s.up.Round(time.Second), r.fast.Load(), wait)
+			log.Printf("rtm: disconnected (%v) after %s (fast=%v; Slack's own frames at most %s apart), retrying in %s", s.err, s.up.Round(time.Second), r.fast.Load(), s.quiet.Round(time.Second), wait)
 			if connReset(s.err) || errors.Is(s.err, errPongTimeout) || errors.Is(s.err, errPingStall) {
 				// the path that reset the socket, or went quiet under it,
 				// took the pooled API connections with it too
@@ -371,6 +377,15 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 	// why it closed the socket
 	var watchMu sync.Mutex
 	lastFrame, lastTick := upAt, upAt
+	var quiet time.Duration // the longest stretch between frames of Slack's own (session.quiet)
+	defer func() {
+		watchMu.Lock()
+		if g := ReadClock().Mono - lastFrame.Mono; g > quiet {
+			quiet = g
+		}
+		s.quiet = quiet
+		watchMu.Unlock()
+	}()
 	var stalled atomic.Pointer[error]
 	go func() {
 		every := time.Duration(rtmWatchEvery.Load())
@@ -512,6 +527,9 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		if ev.Type != "pong" && ev.Type != "" { // a frame of Slack's own (the watchdog)
 			at := ReadClock()
 			watchMu.Lock()
+			if g := at.Mono - lastFrame.Mono; g > quiet {
+				quiet = g
+			}
 			lastFrame = at
 			watchMu.Unlock()
 		}
@@ -566,8 +584,11 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		}
 		select {
 		case r.Events <- ev:
-			if dropped > 0 {
-				log.Printf("rtm: the event buffer has room again, after %d events dropped", dropped)
+			// room again only once the handler has drained half the buffer:
+			// one that takes events slower than they come gets one line as
+			// it fills and the counts, not two lines per event it takes
+			if dropped > 0 && len(r.Events) <= cap(r.Events)/2 {
+				log.Printf("rtm: the event buffer has room again (%d wait), after %d events dropped", len(r.Events), dropped)
 				dropped, dropWindow = 0, 0
 			}
 		default:

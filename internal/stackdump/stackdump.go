@@ -7,6 +7,7 @@ package stackdump
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"runtime"
 	"sync"
@@ -36,6 +37,12 @@ func Of(all []byte, fn string) []string {
 	}
 	return out
 }
+
+// MaxDump is the most one record writes: the stalled goroutines come
+// first, so the cap leaves out only the others. A whole dump (up to
+// 16 MiB) rotated the 5 MiB clack.log on its own, and filled applog's
+// Tail (its last 1 MiB) so the line that said why fell out of a log grab.
+const MaxDump = 512 << 10
 
 // Limiter lets a dump through at most once per Every, so a stall that
 // comes back, or two at once, doesn't fill the log with copies.
@@ -69,6 +76,11 @@ func (l *Limiter) Log(what string, first ...string) bool {
 	}
 	b.WriteString("all goroutines:\n")
 	b.Write(all)
+	if b.Len() > MaxDump {
+		more := b.Len() - MaxDump
+		b.Truncate(MaxDump)
+		fmt.Fprintf(&b, "\n… %d bytes more of goroutines left out (stackdump.MaxDump)", more)
+	}
 	log.Print(b.String())
 	return true
 }

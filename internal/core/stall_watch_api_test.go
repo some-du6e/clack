@@ -19,5 +19,5 @@ func pumpTimers(t *testing.T, after, every time.Duration) {
 	t.Cleanup(setPumpTimers(after, every))
 }
 
-// forgetWake: the code before it keeps no wake.
-func forgetWake(t *testing.T) {}
+// forgetWake drops the pump watchdog's last wake when the test ends.
+func forgetWake(t *testing.T) { t.Cleanup(func() { pumpWoke.Store(nil) }) }

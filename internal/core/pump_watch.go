@@ -63,17 +63,33 @@ func tracked(on *atomic.Pointer[pumpTask], where string, t *pumpTask, f func()) 
 	on.Store(t)
 	f()
 	on.Store(nil)
-	if took := slack.ReadClock().WallSince(t.at); took >= time.Duration(pumpStallAfter.Load()) {
+	// awake time, from the last wake when one came while it ran (pumpWoke):
+	// a task a sleep came into the middle of took no longer
+	from := t.at
+	if w := pumpWoke.Load(); w != nil && w.Mono > from.Mono {
+		from = *w
+	}
+	if took := slack.ReadClock().Mono - from.Mono; took >= time.Duration(pumpStallAfter.Load()) {
 		log.Printf("core: %s took %s on %s", where, took.Round(100*time.Millisecond), t.what())
 	}
 }
 
+// pumpWoke is pumpWatch's last wake, for tracked's "took".
+var pumpWoke atomic.Pointer[slack.ClockReading]
+
 // pumpWatch looks at the pump and its queues every pumpWatchEvery until
 // done, and logs each task stalled past pumpStallAfter once.
 func (a *App) pumpWatch(done <-chan struct{}) {
-	t := time.NewTicker(time.Duration(pumpWatchEvery.Load()))
+	every := time.Duration(pumpWatchEvery.Load())
+	t := time.NewTicker(every)
 	defer t.Stop()
 	told := map[*pumpTask]bool{}
+	// woke is a look that came long after the one before (the machine
+	// slept, the process was held): a task in flight then ages from it,
+	// as the socket's watchdog skips such a look, so the time asleep
+	// isn't a stall. Ages are awake time besides (Mono, which leaves a
+	// sleep out on macOS and Linux; Windows counts it, hence woke).
+	looked, woke := slack.ReadClock(), slack.ClockReading{}
 	for {
 		select {
 		case <-done:
@@ -82,12 +98,22 @@ func (a *App) pumpWatch(done <-chan struct{}) {
 		}
 		after := time.Duration(pumpStallAfter.Load())
 		now := slack.ReadClock()
+		if now.WallSince(looked) > 3*every {
+			woke = now
+			w := now // a copy: tracked reads it on the pump's goroutine
+			pumpWoke.Store(&w)
+		}
+		looked = now
 		look := func(where string, on *atomic.Pointer[pumpTask], waiting int, stack string) {
 			w := on.Load()
 			if w == nil || told[w] {
 				return
 			}
-			age := now.WallSince(w.at)
+			from := w.at
+			if woke.Mono > from.Mono {
+				from = woke
+			}
+			age := now.Mono - from.Mono
 			if age < after {
 				return
 			}
