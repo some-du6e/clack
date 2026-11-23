@@ -519,6 +519,7 @@ func CloseThread(app *core.App, ch, thread string, unmount bool) {
 			s.positioned = false
 			s.thr = threadRead{}
 			s.pendingJump = ""
+			s.kb.inputWant = false // End's jumpToReplyCallback goes with the list
 			s.place = jumpPlace{}
 			s.snap.rev = 0
 			s.tl = threadList{}

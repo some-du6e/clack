@@ -28,6 +28,7 @@ import (
 	"gioui.org/io/key"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
@@ -36,13 +37,17 @@ import (
 // under it (.p-threads_footer__input_container's margin-top), the box
 // inside the window.
 func (x *rfEnv) boxUnderNewest() string {
-	tv := x.threadView(x.ch, x.root)
-	c := x.a.convos[x.ch+"/"+x.root]
+	return x.boxUnderNewestIn(x.threadView(x.ch, x.root), x.a.convos[x.ch+"/"+x.root])
+}
+
+// boxUnderNewestIn is boxUnderNewest for thread list tv and its
+// conversation c (the split view's, which keeps conversations of its own).
+func (x *rfEnv) boxUnderNewestIn(tv *messages.ThreadView, c *convo) string {
 	if tv == nil || c == nil {
 		return "no thread pane"
 	}
 	last := fakeslack.ThreadOpenReply(x.root, fakeslack.ThreadOpenReplies-1)
-	if _, ok := x.paneTops()[last]; !ok {
+	if _, ok := rowTops(tv.RowRects(), tv.ListRect())[last]; !ok {
 		return "the thread's last reply isn't drawn"
 	}
 	bottom, ok := tv.NewestRowBottom()
@@ -66,11 +71,18 @@ func (x *rfEnv) boxUnderNewest() string {
 // (boxUnderNewest), then fails unless every frame for d does.
 func (x *rfEnv) holdBox(t *testing.T, what string, d time.Duration) {
 	t.Helper()
-	x.until(what+": the last reply and the box under it", 20*time.Second, func() bool { return x.boxUnderNewest() == "" })
+	x.holdBoxBy(t, what, d, x.boxUnderNewest, x.paneTops)
+}
+
+// holdBoxBy is holdBox with the check (miss: boxUnderNewest's) and the
+// tops a failure lists for a pane of the caller's.
+func (x *rfEnv) holdBoxBy(t *testing.T, what string, d time.Duration, miss func() string, tops func() map[string]int) {
+	t.Helper()
+	x.until(what+": the last reply and the box under it", 20*time.Second, func() bool { return miss() == "" })
 	for dl := time.Now().Add(d); time.Now().Before(dl); {
 		x.frame()
-		if miss := x.boxUnderNewest(); miss != "" {
-			t.Fatalf("%s: %s (%s)", what, miss, x.drawnTops(x.paneTops()))
+		if m := miss(); m != "" {
+			t.Fatalf("%s: %s (%s)", what, m, x.drawnTops(tops()))
 		}
 		time.Sleep(2 * time.Millisecond)
 	}

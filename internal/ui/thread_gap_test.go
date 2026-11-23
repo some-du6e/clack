@@ -94,7 +94,9 @@ func TestThreadsAuditReplyGap(t *testing.T) {
 					t.Fatal(err)
 				}
 				f.Close()
-				threadGapPixels(t, tc.name+" "+mode, img, pane, box, bottom)
+				// short of the list's scrollbar: Slack's track is 8px wide and
+				// 4px in from the list's right (it shows a moment after a scroll)
+				threadGapPixels(t, tc.name+" "+mode, img, pane, box, bottom, tv.ListRect().Max.X-e.px(12))
 			}
 		})
 	}
@@ -114,13 +116,13 @@ func replyBoxRect(c *convo) image.Rectangle {
 // threadGapPixels: between the last reply's bottom edge and the box only
 // pane background, except the focused box's shadow (crShadow: a few px
 // around it); the box's top border is ink.
-func threadGapPixels(t *testing.T, name string, img *image.RGBA, pane, box image.Rectangle, bottom int) {
+func threadGapPixels(t *testing.T, name string, img *image.RGBA, pane, box image.Rectangle, bottom, track int) {
 	t.Helper()
 	at := func(x, y int) color.NRGBA {
 		c := img.RGBAAt(x, y)
 		return color.NRGBA{c.R, c.G, c.B, c.A}
 	}
-	x0, x1 := pane.Min.X+2, pane.Max.X-14 // clear of the pane's edge and the scrollbar
+	x0, x1 := pane.Min.X+2, min(pane.Max.X-14, track) // clear of the pane's edge and the scrollbar's track
 	bg := at(x0, bottom)
 	const shadow = 4
 	for y := bottom; y < box.Min.Y-shadow; y++ {
