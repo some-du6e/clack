@@ -34,6 +34,12 @@ type pluginCheck func(t *testing.T, h *harness)
 
 // before runs before the plugin is imported (seed storage, fetches).
 var before = map[string]func(h *harness){
+	// the header's count is users/counts' (Slack's membershipCounts holds
+	// only its answer, nothing before it)
+	"HumanCount": func(h *harness) {
+		h.app.C.EdgeURL = h.api.srv.URL + "/api/edge/"
+		h.api.set("edge/"+entID+"/users/counts", map[string]any{"ok": true, "counts": map[string]any{"people": 1234, "guests": 0}})
+	},
 	"Nicknames": func(h *harness) {
 		h.tt.data.write("plugin:Nicknames:storage", "nicknames", `{"UALICE":"Ally Nick"}`)
 	},
@@ -93,16 +99,31 @@ const (
 )
 
 var checks = map[string]pluginCheck{
+	// HumanCount reads membershipCounts with useReduxState: before
+	// users/counts answers, the stack keeps Slack's own count; once it
+	// answers (the header's draw loads it: History here) the store changes
+	// and the plugin's render follows on its own, as Slack's store-driven
+	// render does, the stack drawn with the 1234 people.
 	"HumanCount": func(t *testing.T, h *harness) {
+		count := func(nodes []any) any {
+			n := findNative(nodes, "BaseAvatarStack")
+			if n == nil {
+				return nil
+			}
+			p, _ := n["p"].(map[string]any)
+			return p["memberCount"]
+		}
+		if _, ok := h.app.MemberCountCached(chGen); ok {
+			t.Fatal("users/counts answered before the stack rendered: nothing to see it follow")
+		}
 		nodes := h.render(1, "BaseAvatarStack", map[string]any{"channelId": chGen, "memberCount": 5})
-		n := findNative(nodes, "BaseAvatarStack")
-		if n == nil {
-			t.Fatalf("no native BaseAvatarStack in %v", nodes)
+		if got := count(nodes); got != float64(5) {
+			t.Errorf("memberCount before users/counts answered = %v, want Slack's own 5", got)
 		}
-		p, _ := n["p"].(map[string]any)
-		if p["memberCount"] != float64(1234) {
-			t.Errorf("memberCount = %v, want the people count 1234", p["memberCount"])
+		if _, err := h.app.History(h.ctx(), chGen, ""); err != nil {
+			t.Fatal(err)
 		}
+		eventually(t, 5*time.Second, "the stack re-rendered with the people count", func() bool { return count(h.tree(1)) == float64(1234) })
 	},
 	"Censorship": func(t *testing.T, h *harness) {
 		var text string

@@ -85,6 +85,9 @@ type msgChanges struct {
 	// (its finally marks what a failed fetch didn't return), not asked
 	// for again
 	slugAsked, slugGone map[MsgKey]bool
+	// gaveUp are the messages RefetchMessages stopped asking for after
+	// their fetches failed (MessageGaveUp)
+	gaveUp map[MsgKey]bool
 }
 
 // changeCopy is the change whose message a slot of msgChanges.copies keeps.

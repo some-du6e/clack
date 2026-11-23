@@ -342,6 +342,9 @@ func confirmationModal(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 
 func init() {
 	add(tooltip, "Tooltip")
+	// Slack's BaseTooltip clones its child (data-sk="tooltip_parent") and
+	// adds a hidden span beside it: no element of its own
+	noElement = append(noElement, "Tooltip")
 	add(popover, "Popover")
 	add(confirmationModal, "ConfirmationModal")
 }

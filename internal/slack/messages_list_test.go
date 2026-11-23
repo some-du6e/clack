@@ -129,11 +129,13 @@ func TestMessagesListGroupsOfTen(t *testing.T) {
 	}
 }
 
-// A group that fails (too_many_channels) costs only its own channels:
-// they're unanswered with no messages, the error says so, and the other
-// groups' channels are answered with their messages.
+// A group that fails (too_many_channels, for one channel in it) is asked
+// again channel by channel: only the failing channel is unanswered with
+// no messages, the error says so, and every other channel is answered
+// with its messages; the one-channel calls share Slack's 2 slots with
+// the groups' (never more calls in flight).
 func TestMessagesListFailedGroupOnlyItsChannels(t *testing.T) {
-	c, _ := startMLFake(t, map[string]bool{mlChannel(14): true})
+	c, f := startMLFake(t, map[string]bool{mlChannel(14): true})
 	want := map[string][]string{}
 	for i := range 23 {
 		want[mlChannel(i)] = []string{"1762800100.000100"}
@@ -146,9 +148,17 @@ func TestMessagesListFailedGroupOnlyItsChannels(t *testing.T) {
 	}
 	for i := range 23 {
 		ch := mlChannel(i)
-		failed := i >= 10 && i < 20
+		failed := i == 14 // its group is asked again channel by channel
 		if answered[ch] == failed || (len(got[ch]) == 0) != failed {
-			t.Errorf("%s (failed group %v): answered %v, %d messages", ch, failed, answered[ch], len(got[ch]))
+			t.Errorf("%s (failing %v): answered %v, %d messages", ch, failed, answered[ch], len(got[ch]))
 		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.maxIn > slack.MessagesListConcurrency {
+		t.Errorf("%d calls in flight at most, want %d", f.maxIn, slack.MessagesListConcurrency)
+	}
+	if n := len(f.calls); n != 3+10 {
+		t.Errorf("%d calls, want the 3 groups' and the failed group's 10 channels': %v", n, f.calls)
 	}
 }

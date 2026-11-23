@@ -879,14 +879,23 @@ func (r *appRef) apiCall(ctx context.Context, a []json.RawMessage) (any, error) 
 		var out json.RawMessage
 		err = r.t.app.C.CallMultipartFile(ctx, req.Method, vals, slack.MultipartFile{Field: f.Field, Name: f.File.Name, Type: f.File.Type, Data: f.File.Data}, &out)
 	}
+	return lastTry("apiCall", last, tries, err)
+}
+
+// lastTry is a call's last request, whole, for JS to settle the call from
+// as Slack's request settles (apiCallSettle, flannelSettle): {attempts,
+// status, reqId, retryAfter, body}, status being the HTTP status,
+// "TIMEOUT" (no answer within RequestTimeout) or 0 (no answer). last is
+// nil when nothing went out: the backoff guard answered with the failure
+// it holds (Slack would have sent it again, and been answered the same),
+// whose try it is then, or Clack refused to send it, which rejects with
+// err.
+func lastTry(what string, last *slack.Attempt, tries int, err error) (map[string]any, error) {
 	if last == nil {
-		// nothing went out: the backoff guard answered with the failure
-		// it holds (Slack would have sent it again, and been answered the
-		// same), or Clack refused to send it
 		at, ok := slack.AttemptOf(err)
 		if !ok {
 			if err == nil {
-				err = errors.New("taut: apiCall: no request was sent")
+				err = errors.New("taut: " + what + ": no request was sent")
 			}
 			return nil, err
 		}

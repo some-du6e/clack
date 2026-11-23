@@ -2084,6 +2084,196 @@ defineModule('slack-exports', {
 defineModule('pending-files', { updatePendingFile })
 defineModule('view-contexts', viewContexts)
 
+// ---- flannel: Slack's edge cache client (client-boot EVxR, build a09b625d90aa) ----
+// query(teamId, {method, args, signal}) sends a method of Slack's table (x
+// there) as a FlannelRequest (Ln2M): Go posts it to the team's edge cache
+// with Clack's token, as core's own member lists go, and tries it as
+// BaseRequest (Umoo) tries it, then hands back its last try, which
+// flannelSettle settles as FlannelRequest's resolve and _onNotOk do.
+// Slack sends any other method to the gateway as a {type: "flannel"}
+// socket message (iPXF jz) after logging it; Clack logs it the same way
+// and rejects, as it sends no socket message a plugin built.
+
+/** the methods query sends over HTTP (EVxR x) */
+const FLANNEL_METHODS = {
+  MEMBER_INFO: 'users/info', MEMBER_SEARCH: 'users/search', MEMBER_LIST: 'users/list', MEMBER_COUNTS: 'users/counts',
+  CHANNEL_INFO: 'channels/info', CHANNEL_SEARCH: 'channels/search', MPIMS_SEARCH: 'mpims/search', CHANNEL_MEMBERSHIP: 'channels/membership',
+  USERGROUP_INFO: 'usergroups/info', USERGROUP_SEARCH: 'usergroups/search', EMOJI_INFO: 'emojis/info', EMOJI_SEARCH: 'emojis/search',
+  EMOJI_LIST: 'emojis/list', HUDDLES_INFO: 'huddles/info', HUDDLES_LIST: 'huddles/list', OBJECT_SEARCH: 'objects/search',
+  PERMISSIONS_INFO: 'permissions/info', BULK_USER_SEARCH: 'users/searchBulk', BULK_USERGROUP_SEARCH: 'usergroups/searchBulk',
+  EXTERNAL_TEAMS_SEARCH: 'externalTeams/search', EXTERNAL_TEAMS_LIST: 'externalTeams/list', EXTERNAL_TEAMS_COUNTS: 'externalTeams/counts',
+  APP_INFO: 'apps/info',
+}
+const flannelMethods = new Set(Object.values(FLANNEL_METHODS))
+
+/** Ln2M's: its name stays Error's, as Slack's class sets none */
+class FlannelRequestError extends Error {
+  data
+  method
+  args
+  id
+  attempts
+}
+
+/**
+ * settles a query from its last try o ({attempts, status, reqId,
+ * retryAfter, body, flannelUrl}) as Slack's request settles:
+ * BaseRequest's _onLoad, _onTimeout, _onError and throwError (Umoo), which
+ * FlannelRequest keeps, then FlannelRequest's resolve and _onNotOk
+ */
+function flannelSettle(o, { id, method, args }) {
+  const status = o.status
+  const response = typeof o.body === 'string' ? o.body : ''
+  const attempts = o.attempts || 1
+  // BaseRequest.throwError: without a source error the rejection carries
+  // the answer as its data
+  const thrown = ({ message, status: code, sourceError } = {}) => {
+    const r = message || sourceError?.message || 'Request did not complete.'
+    const s = code ?? 0
+    let data
+    try {
+      data = JSON.parse(response ?? 'null')
+    } catch {
+      data = { ok: false, error: r }
+    }
+    const tail = { status: s, response, retryAfter: apiRetryAfterMs(o, s, attempts), attempts }
+    return sourceError ? Object.assign(Error(r), sourceError, tail) : Object.assign(Error(r), { data, ...tail })
+  }
+  if (status === 'TIMEOUT') throw thrown({ message: 'Request timed out after 60 seconds.', status: 'TIMEOUT' })
+  if (status === 0) throw thrown() // XHR's error event: no answer
+  if (status !== 200) throw thrown({ message: 'Request completed but is not OK', status })
+  let t
+  try {
+    t = JSON.parse(response)
+  } catch {
+    t = { ok: false, error: '_parse_error' }
+  }
+  t = { flannelUrl: o.flannelUrl, args, method, clientRequestId: id, ...t }
+  if (t.ok) return t
+  const r = new FlannelRequestError(`Flannel ${method} not ok: ${t.error}`)
+  r.data = t
+  r.method = method
+  r.args = args
+  r.id = id
+  r.attempts = attempts
+  if (API_RATE_LIMITED.includes(t.error)) throw thrown({ sourceError: r, status: 'RATELIMITED' })
+  if (t.error === 'permission_denied') throw thrown({ sourceError: r, status: 'PERMISSION_DENIED' })
+  throw r
+}
+
+// ---- Slack's API queue for flannel calls (client-boot 7quX, ApiQ.q) ----
+// One queue per team. An identical request already queued or running (the
+// same method, deep-equal args, the same signal) is answered by that one's
+// promise ("Deduped request for method"); at most 10 run at once, at most 5
+// of one method (a method at 5 waits, others pass it); flannel's are
+// expedited, so they go to the front; an abort takes the request out,
+// cancels it (Go stops it and its retries) and rejects with AbortError.
+const API_Q_MAX_ACTIVE = 10
+const API_Q_MAX_ACTIVE_PER_METHOD = 5
+const apiQueues = new Map() // team → {active: [], enqueued: []}
+function apiQueue(team) {
+  let q = apiQueues.get(team)
+  if (!q) apiQueues.set(team, (q = { active: [], enqueued: [] }))
+  return q
+}
+function apiQDequeue(q, rec) {
+  for (const list of [q.active, q.enqueued]) {
+    const i = list.indexOf(rec)
+    if (i >= 0) list.splice(i, 1)
+  }
+}
+function apiQTick(q) {
+  while (q.active.length < API_Q_MAX_ACTIVE) {
+    const counts = {}
+    for (const r of q.active) counts[r.method] = (counts[r.method] ?? 0) + 1
+    const i = q.enqueued.findIndex((r) => (counts[r.method] ?? 0) < API_Q_MAX_ACTIVE_PER_METHOD)
+    if (i < 0) return
+    const rec = q.enqueued.splice(i, 1)[0]
+    q.active.push(rec)
+    rec.sent = true
+    let sent
+    try {
+      sent = Promise.resolve(rec.send())
+    } catch (err) {
+      sent = Promise.reject(err)
+    }
+    sent.then(rec.resolve, rec.reject).finally(() => {
+      apiQDequeue(q, rec)
+      apiQTick(q)
+    })
+  }
+}
+/** ApiQ.q: rec is {team, method, args, signal, expedited, send(), cancel()} */
+function apiQEnqueue(rec) {
+  if (rec.signal?.aborted) return Promise.reject(new AbortError())
+  const q = apiQueue(rec.team)
+  const same = (r) => r.signal === rec.signal && r.method === rec.method && deepEqual(r.args, rec.args)
+  const match = q.active.find(same) ?? q.enqueued.find(same)
+  if (match) return match.promise // Deduped request for method
+  rec.promise = new Promise((resolve, reject) => {
+    rec.resolve = resolve
+    rec.reject = reject
+  })
+  if (rec.signal?.addEventListener) {
+    const onAbort = () => {
+      apiQDequeue(q, rec)
+      if (rec.sent) rec.cancel?.() // what never went out has nothing to stop
+      rec.reject(new AbortError())
+      apiQTick(q)
+    }
+    rec.signal.addEventListener('abort', onAbort, { once: true })
+    const detach = () => rec.signal.removeEventListener?.('abort', onAbort)
+    rec.promise.then(detach, detach)
+  }
+  if (rec.expedited) q.enqueued.unshift(rec)
+  else q.enqueued.push(rec)
+  apiQTick(q)
+  return rec.promise
+}
+
+let flannelSeq = 0
+/** EVxR's flannel call for a method in the table: its request, queued expedited (ApiQ), tried, settled */
+function flannelCall(teamId, { method, args, signal } = {}) {
+  if (!method) throw Error('Must include a method')
+  const id = apiRequestId(getRawState()?.bootData?.version_uid)
+  // computeToken (kMPT) puts the team's token before the caller's args;
+  // Clack sends its own, which the args show as "[redacted]"
+  const shown = { token: '[redacted]', ...args }
+  const key = ++flannelSeq
+  return apiQEnqueue({
+    team: String(teamId ?? ''),
+    method,
+    args: args ?? {},
+    signal,
+    expedited: true,
+    send: () => Promise.resolve(go('flannel', key, String(teamId ?? ''), method, encode(args ?? {}))).then((o) => flannelSettle(o, { id, method, args: shown })),
+    cancel: () => goOr(null, 'flannelCancel', key),
+  })
+}
+
+const query = named('query', (teamId, request) => {
+  const { method } = request
+  if (method && flannelMethods.has(method)) return flannelCall(teamId, request)
+  error(Error(`Unsupported flannel method: ${method}`))
+  const { args } = request
+  // lodash has (iPXF jz): an own property
+  const own = (k) => Object.prototype.hasOwnProperty.call(args, k)
+  if (args && (own('type') || own('subtype'))) throw Error('Arguments must not include `type` or `subtype` fields')
+  return Promise.reject(Error(`[Taut] Clack sends no flannel socket message (${method})`))
+})
+defineModule('flannel', { J8: FLANNEL_METHODS, P: query })
+
+// ---- Slack's presence manager (client-boot 4hlf) ----
+// getPresenceSubscriptionByTeamId(teamId) is the manager's count of
+// subscribers for each member whose presence the team's socket
+// subscribes to (presence_sub carries every key): Clack's own set (the
+// viewer, DM partners and the people its views showed lately, one each)
+// with the members plugins subscribed (addMemberToPresenceSubscription)
+// counted, a fresh copy; undefined for a team the client isn't signed in
+// to, as Slack's has none.
+const getPresenceSubscriptionByTeamId = named('getPresenceSubscriptionByTeamId', (teamId) => goOr(null, 'presenceSubscription', String(teamId ?? '')) ?? undefined)
+defineModule('presence-manager', { Wb: getPresenceSubscriptionByTeamId })
+
 Object.assign(T, {
   members,
   channels,

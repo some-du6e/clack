@@ -25,8 +25,9 @@ import (
 //
 // The rules with values are Slack's own (client-boot-styles, 2026-11:
 // cf726c4f2eaecc74) for elements natives draw and lay plugin content out
-// in: the top nav's right container and the thread header's row (a
-// patched component's tree under them, ClassDef.FlexItems), and the
+// in: the top nav's right container, the thread header's row and the
+// channel header's AutoClog hook round the avatar stack (a patched
+// component's tree under them, ClassDef.FlexItems), and the
 // reaction pill's button (.c-reaction: the children a patched
 // ReactionBar hands back, ClassDef.LayoutChildren), reduced there to what
 // lays its children out and the text they inherit (its box, its 8px
@@ -62,6 +63,7 @@ const nativeCSS = `
 .c-message_kit__labels__text { color: N }
 .c-tooltip__tip { color: N; background-color: N }
 .p-ia4_client .p-ia4_top_nav__right_container{flex:1 0 auto;justify-content:flex-end;align-items:center;margin-right:4px;display:flex}
+.p-autoclog__hook{display:contents}
 .p-flexpane_header__primary{font-size:18px;line-height:1.33334;font-weight:var(--custom-font-weight-black,900);letter-spacing:var(--custom-font-tracking-subtitle,inherit);align-items:center;gap:8px;display:flex}
 .p-flexpane--ia_details_popover .p-flexpane_header.p-flexpane_header--smaller .p-flexpane_header__primary{gap:4px}
 .c-reaction{justify-content:center;align-items:center;gap:4px;font-size:12px;line-height:1;display:inline-flex}

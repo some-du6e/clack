@@ -134,9 +134,72 @@ const (
 	refetchRateWait = time.Minute
 )
 
+// MessageGaveUp reports whether core stopped asking for ch/ts after its
+// fetches failed (RefetchMessages): its row draws no loading skeleton,
+// and no body, until an answer comes. Not a deletion: the message is
+// asked for again.
+func (a *App) MessageGaveUp(ch, ts string) bool {
+	l := &a.msgLog
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.gaveUp[MsgKey{ch, ts}]
+}
+
+// SetRefetchBackoff replaces this App's wait after a message's n-th
+// failed fetch (refetchBackoff), before its first RefetchMessages (tests).
+func (a *App) SetRefetchBackoff(f func(n int) time.Duration) {
+	q := &a.refetchQ
+	q.mu.Lock()
+	q.backoff = f
+	q.mu.Unlock()
+}
+
+// refetchOnline is the client coming back online: every message whose
+// fetches failed starts its tries over (what failed while offline says
+// nothing), what waits for core's next try goes in the next round, and
+// the ones core gave up on are asked for now (a slug's too: its stub
+// goes once the answer comes).
+func (a *App) refetchOnline() {
+	l := &a.msgLog
+	l.mu.Lock()
+	for k, r := range l.refetching {
+		r.fails = 0
+		if !r.out {
+			r.retry = time.Time{}
+		}
+		l.refetching[k] = r
+	}
+	byCh := map[string][]string{}
+	for k := range l.gaveUp {
+		byCh[k.Channel] = append(byCh[k.Channel], k.TS)
+		if l.slugGone[k] {
+			delete(l.slugGone, k)
+			if l.slugAsked == nil {
+				l.slugAsked = map[MsgKey]bool{}
+			}
+			l.slugAsked[k] = true
+		}
+	}
+	l.mu.Unlock()
+	q := &a.refetchQ
+	q.mu.Lock()
+	for k := range q.pending {
+		q.pending[k] = time.Time{}
+	}
+	if q.timer != nil && q.timer.Stop() {
+		q.timer = nil
+	}
+	a.scheduleRefetchLocked(time.Now())
+	q.mu.Unlock()
+	for ch, tss := range byCh {
+		a.RefetchMessages(ch, tss)
+	}
+}
+
 // refetchBackoff is the wait after the n-th failed fetch of a message: 2 s
 // (past the client's own refusal of an identical failed request,
-// slack/guard.go), doubling to a minute.
+// slack/guard.go), doubling to a minute (a test sets its App's own:
+// refetchQueue.backoff).
 func refetchBackoff(n int) time.Duration {
 	d := 2 * time.Second
 	for i := 1; i < n && d < time.Minute; i++ {
@@ -155,6 +218,9 @@ type refetchQueue struct {
 	busy    bool                 // a round is out
 	timer   *time.Timer          // the next round
 	last    time.Time            // when the last round ended
+	// backoff replaces refetchBackoff for this App (tests; set before
+	// the first RefetchMessages)
+	backoff func(n int) time.Duration
 }
 
 // RefetchMessages asks Slack again for the messages tss of ch by id (as
@@ -266,6 +332,10 @@ func (a *App) refetchRound() {
 		return
 	}
 	q.busy = true
+	backoff := refetchBackoff
+	if q.backoff != nil {
+		backoff = q.backoff
+	}
 	q.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(a.bg, 30*time.Second)
@@ -274,11 +344,14 @@ func (a *App) refetchRound() {
 	for _, k := range keys {
 		if _, ok := got[k.Channel+"/"+k.TS]; ok {
 			a.announceHeld(k.Channel, k.TS)
-		} else if answered[k.Channel] {
+		} else if _, held := a.HeldMessage(k.Channel, k.TS); answered[k.Channel] && !held {
+			// its channel answered without it, and nothing brought it
+			// meanwhile (a live message, another fetch)
 			a.emit(Event{Type: "gone", Channel: k.Channel, TS: k.TS})
 		}
 	}
 	wait := refetchWaitAfter(err)
+	var given []string // gave up on this round: their rows stop loading (MessageGaveUp)
 	l := &a.msgLog
 	at := time.Now()
 	var again []MsgKey
@@ -289,6 +362,8 @@ func (a *App) refetchRound() {
 		if _, ok := got[k.Channel+"/"+k.TS]; ok || answered[k.Channel] {
 			closeAll(l.refetching[k].waiters)
 			delete(l.refetching, k)
+			delete(l.gaveUp, k)
+			delete(l.slugGone, k)
 			if l.slugAsked[k] {
 				delete(l.slugAsked, k)
 				slugs = append(slugs, k.String())
@@ -297,11 +372,26 @@ func (a *App) refetchRound() {
 		}
 		r := l.refetching[k]
 		r.fails++
-		r.retry = at.Add(max(refetchBackoff(r.fails), wait))
+		r.retry = at.Add(max(backoff(r.fails), wait))
 		r.out = r.fails < refetchTries // still waiting for core's own next try
 		if !r.out {
-			closeAll(r.waiters) // core asks no more: a view's next call does
-			r.waiters = nil
+			// core stops asking by itself, locally: a failed fetch says
+			// nothing about the message (a 5xx, a timeout, a channel
+			// that fails its group), so no "gone" goes out, which would
+			// hide its Activity row, mark a saved item deleted and drop
+			// a thread's reply everywhere; only an answer for its
+			// channel without it is (above). The row stops loading
+			// (MessageGaveUp) and the message is asked for again when a
+			// view next asks (after the backoff, with every try again:
+			// the count starts over) or the client comes back online
+			// (refetchOnline)
+			closeAll(r.waiters)
+			r.waiters, r.fails = nil, 0
+			if l.gaveUp == nil || len(l.gaveUp) >= maxRefetchKeys {
+				l.gaveUp = map[MsgKey]bool{}
+			}
+			l.gaveUp[k] = true
+			given = append(given, k.String())
 			if l.slugAsked[k] {
 				// a slug asks on every frame: it keeps the non-existent
 				// stub instead (msg_slug.go)
@@ -318,6 +408,10 @@ func (a *App) refetchRound() {
 		}
 	}
 	l.mu.Unlock()
+	if len(given) > 0 {
+		// the rows that drew a loading skeleton for them draw again
+		a.emit(Event{Type: "names", Users: given})
+	}
 	if len(slugs) > 0 {
 		// the slugs linking to them draw again (and their conversions
 		// are made again: MsgRefs.Messages), as Slack's MessageMention
@@ -365,11 +459,14 @@ func closeAll(chs []chan struct{}) {
 }
 
 // refetchWaitAfter is the least wait err asks for: a rate limit's
-// Retry-After (a minute when it names none), else nothing beyond the
-// backoff.
+// Retry-After (a minute when it names none; an ok:false "ratelimited"
+// answer too), else nothing beyond the backoff.
 func refetchWaitAfter(err error) time.Duration {
 	var he *slack.HTTPError
+	var se *slack.Error
 	switch {
+	case errors.As(err, &se) && se.Code == "ratelimited":
+		return refetchRateWait
 	case errors.As(err, &he) && he.Status == 429:
 		if he.RetryAfter > 0 {
 			return time.Duration(he.RetryAfter) * time.Second

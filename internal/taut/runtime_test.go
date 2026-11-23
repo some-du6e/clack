@@ -288,7 +288,7 @@ func TestMirrorShapes(t *testing.T) {
 			msgs: Object.keys(s.messages['`+chGen+`']).length,
 			msgChannel: s.messages['`+chGen+`']['1700000001.000100'].channel,
 			rxn: s.messages['`+chGen+`']['1700000002.000200']._rxn_key,
-			count: s.membershipCounts['`+chGen+`'].counts.member_count,
+			count: s.membershipCounts['`+chGen+`']?.counts.member_count ?? null, // none until users/counts answers
 			threadOnly: s.threadOnlyChannels['`+chAnn+`']?.isThreadOnly ?? false,
 			readOnly: !!s.readOnlyChannels['`+chAnn+`'],
 			self: s.bootData.user_id, team: s.selfTeamIds.enterpriseId,
@@ -301,7 +301,7 @@ func TestMirrorShapes(t *testing.T) {
 			sameIdentity: s.channels === T.redux.getRawState().channels,
 		}`, &got)
 	want := map[string]any{"general": "general", "lc": "general", "member": true, "alice": "alice", "aliceLc": "alice", "unknown": true,
-		"msgs": float64(3), "msgChannel": chGen, "rxn": "message-1700000001.000100-" + chGen, "count": float64(1234),
+		"msgs": float64(3), "msgChannel": chGen, "rxn": "message-1700000001.000100-" + chGen, "count": nil,
 		"threadOnly": true, "readOnly": false, "self": selfID, "team": entID, "hc": true, "bot": "Helper Bot", "inKeys": true,
 		"hist": float64(3), "cached": "Bob Example", "current": selfID, "sameIdentity": true}
 	want["rxn"] = "message-1700000002.000200-" + chGen
