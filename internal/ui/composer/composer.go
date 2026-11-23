@@ -490,13 +490,21 @@ func (c *Composer) TypeText(s string) {
 	c.Focus()
 }
 
-// StealKey is TypeText for a shortcut the window redirected here (Mod+B,
-// Mod+I, Mod+V: enableShortcuts): the key goes to the editor once it has
-// the focus, a paste reading the clipboard then.
-func (c *Composer) StealKey(k key.Event) {
-	c.ed.stolen = append(c.ed.stolen, k)
+// StealKeys is TypeText for shortcuts the window redirected here in the
+// frame at (Mod+B, Mod+I, Mod+V: enableShortcuts): they go to the editor
+// once it has the focus, a paste reading the clipboard then. An editor
+// that doesn't get the focus at its next draw, or within a second, drops
+// them: a Mod+V parked in an undrawn input pasted whatever the clipboard
+// held when the input next had the focus.
+func (c *Composer) StealKeys(at time.Time, ks []key.Event) {
+	c.ed.stolen = stolenKeys{keys: append(c.ed.stolen.keys, ks...), at: at}
 	c.Focus()
 }
+
+// DrawnAt reports whether the composer's editor was last drawn (a live
+// draw, not a measure pass) in the frame of time at: the window steals
+// keys only into an input on screen (ui type_steal.go).
+func (c *Composer) DrawnAt(at time.Time) bool { return DrawnAt(c.ed, at) }
 
 // InsertEmoji inserts an emoji atom at the caret.
 func (c *Composer) InsertEmoji(name string) {

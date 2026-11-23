@@ -72,7 +72,7 @@ func (a *App) readRootPointer(gtx layout.Context) {
 			composer.NotePointer(a.ptrWin) // the editors' context menus open here
 			if pe.Kind == pointer.Press {
 				composer.NotePress() // a click may move the focus (editor_focus.go)
-				a.kbMode = false     // a click ends keyboard mode (keyboard_mode.go)
+				a.notePress()        // a click ends keyboard mode (keyboard_mode.go)
 			}
 			a.navButtons(pe)
 			a.railPeekPointer(pe)  // the More peek's safe area (rail_peek.go)

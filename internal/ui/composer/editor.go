@@ -159,7 +159,7 @@ const (
 // value also works).
 type Editor struct {
 	missed []event.Event // key events KeepFocus read while it wasn't drawn (editor_focus.go)
-	stolen []key.Event   // shortcuts the window redirected here, run once focused (Composer.StealKey)
+	stolen stolenKeys    // shortcuts the window redirected here, run once focused (Composer.StealKeys)
 	// Intercept, if set, is offered Enter, Tab, Up, Down, Escape (with
 	// modifiers) before the editor handles them; returning true consumes
 	// the key (used by the autocomplete popup).
@@ -1213,14 +1213,24 @@ func (e *Editor) onDrag(gtx layout.Context, ev pointer.Event) {
 	}
 }
 
+// stolenKeys are shortcuts the window redirected to the editor (Mod+B,
+// Mod+I, Mod+V) in the frame at, for its next draw with the focus.
+type stolenKeys struct {
+	keys []key.Event
+	at   time.Time
+}
+
 func (e *Editor) processKeys(gtx layout.Context) {
-	if len(e.stolen) > 0 && gtx.Focused(e) {
+	if len(e.stolen.keys) > 0 {
 		// keys the window redirected here before the focus came
-		// (Composer.StealKey)
-		ks := e.stolen
-		e.stolen = nil
-		for _, k := range ks {
-			e.command(gtx, k)
+		// (Composer.StealKeys): run with the focus there by now, else
+		// dropped
+		st := e.stolen
+		e.stolen = stolenKeys{}
+		if gtx.Focused(e) && gtx.Now.Sub(st.at) < time.Second {
+			for _, k := range st.keys {
+				e.command(gtx, k)
+			}
 		}
 	}
 	for {

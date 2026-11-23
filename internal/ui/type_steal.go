@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -33,45 +34,47 @@ import (
 // onKeyDown). Keys in the sidebar and Activity's list stay theirs.
 
 // stealShortcuts are the shortcuts shouldInputStealKeyEvent passes with
-// enableShortcuts (zQkO), Mod held.
+// enableShortcuts (zQkO: isCmdKey with e.key b, i or v), Mod held and
+// Shift allowed. Not Alt: Windows sends AltGr as Ctrl+Alt, and AltGr+V
+// types "@" on Czech, Hungarian and Croatian layouts (Slack's e.key is
+// "@" then, not "v"), as Option changes a Mac's key.
 var stealShortcuts = []key.Name{"B", "I", "V"}
 
 // typeSteal reads the typed text and shortcuts no widget has the focus
 // for (App.frame, after the shortcuts) and hands them to the primary
-// view's channel input.
+// view's channel input, the frame's together (messages.StealText).
 func (a *App) typeSteal(gtx layout.Context) {
 	gtx.Source.SetUnfocusedText(&a.stealTag)
 	fs := []event.Filter{key.FocusFilter{Target: &a.stealTag}}
 	if gtx.Focused(nil) {
 		for _, n := range stealShortcuts {
-			fs = append(fs, key.Filter{Name: n, Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt})
+			fs = append(fs, key.Filter{Name: n, Required: key.ModShortcut, Optional: key.ModShift})
 		}
 	}
+	st := &a.stealText
 	for {
 		ev, ok := gtx.Event(fs...)
 		if !ok {
-			return
+			break
 		}
-		var text string
-		var k key.Event
 		switch e := ev.(type) {
 		case key.EditEvent:
-			if !stealsText(e.Text) {
-				continue
-			}
-			text = e.Text
+			st.Edit(e, stealsText)
+		case key.CompositionEvent:
+			st.Composition(e)
 		case key.Event:
-			if e.State != key.Press {
-				continue
+			if e.State == key.Press {
+				st.Key(e)
 			}
-			k = e
-		default:
-			continue
 		}
-		if c := a.stealTarget(); c != nil {
-			if t := a.stealInto(c, text, k); t != nil {
-				gtx.Execute(key.FocusCmd{Tag: t})
-			}
+	}
+	text, keys := st.Take()
+	if text == "" && len(keys) == 0 {
+		return
+	}
+	if c := a.stealTarget(); c != nil {
+		if t := a.stealInto(gtx, c, text, keys); t != nil {
+			gtx.Execute(key.FocusCmd{Tag: t})
 		}
 	}
 }
@@ -84,39 +87,51 @@ func stealsText(s string) bool {
 }
 
 // stealTarget is the conversation whose input takes a key nothing else
-// has: the primary view's channel while its message input is mounted
-// (not a preview's or archived channel's footer, nor an edit composer in
-// its place) and no overlay or menu is up (MessagePaneInput stops
-// listening while an overlay is open; isMenuVisible).
+// has: the primary view's channel, while its message input can (canSteal).
 func (a *App) stealTarget() *convo {
-	if a.login != nil || a.intro != nil || a.overlayOpen() || slackc.ModalOpen() {
-		return nil
-	}
 	ch := a.router.Current().Channel()
 	if ch == "" {
 		return nil
 	}
-	c := a.convos[ch+"/"]
-	if c == nil || c.comp == nil || c.edit != nil || a.footerFor(c) != footNone {
-		return nil
+	if c := a.convos[ch+"/"]; a.canSteal(c) {
+		return c
 	}
-	if hc, ok := c.list.(interface{ HidesComposer() bool }); ok && hc.HidesComposer() {
-		return nil
-	}
-	return c
+	return nil
 }
 
-// stealInto hands a key typeSteal or a message list took to c's input:
-// text is typed at its caret, a shortcut (k) does what it does there. It
-// returns the input's focus tag for the caller to focus at once, so the
-// keys after it go there too (nil: c has no input to take it).
-func (a *App) stealInto(c *convo, text string, k key.Event) event.Tag {
-	if c == nil || c.comp == nil || (c.edit != nil && !c.edit.Done()) {
+// canSteal reports whether c's input can take a key: MessagePaneInput
+// listens only while it is mounted and no overlay is open (and
+// isMenuVisible), ThreadsFlexpane's onKeyDown not while an overlay is
+// open. Mounted is drawn in the last frame (or this one, for a list
+// laid out after it): not behind another of the channel's tabs (Canvas,
+// List, Files, Pins, Workflows, a folder; a DM's), whose views Slack
+// draws without the input, nor a preview's or archived channel's footer
+// in its place, an edit composer, or a thread slice short of its end.
+func (a *App) canSteal(c *convo) bool {
+	if a.login != nil || a.intro != nil || a.overlayOpen() || slackc.ModalOpen() {
+		return false
+	}
+	if c == nil || c.comp == nil || (c.edit != nil && !c.edit.Done()) || a.footerFor(c) != footNone {
+		return false
+	}
+	if hc, ok := c.list.(interface{ HidesComposer() bool }); ok && hc.HidesComposer() {
+		return false
+	}
+	d, ok := c.comp.(interface{ DrawnAt(time.Time) bool })
+	return ok && (d.DrawnAt(a.prevNow) || d.DrawnAt(a.frameNow))
+}
+
+// stealInto hands keys typeSteal or a message list took to c's input
+// (canSteal's): text is typed at its caret, the shortcuts do what they do
+// there once it has the focus. It returns the input's focus tag for the
+// caller to focus at once (nil: c's input can't take them).
+func (a *App) stealInto(gtx layout.Context, c *convo, text string, keys []key.Event) event.Tag {
+	if !a.canSteal(c) {
 		return nil
 	}
 	t, ok := c.comp.(interface {
 		TypeText(string)
-		StealKey(key.Event)
+		StealKeys(time.Time, []key.Event)
 		FocusTag() any
 	})
 	if !ok {
@@ -124,8 +139,9 @@ func (a *App) stealInto(c *convo, text string, k key.Event) event.Tag {
 	}
 	if text != "" {
 		t.TypeText(text)
-	} else {
-		t.StealKey(k)
+	}
+	if len(keys) > 0 {
+		t.StealKeys(gtx.Now, keys)
 	}
 	a.Invalidate()
 	return t.FocusTag()
@@ -135,8 +151,10 @@ func (a *App) stealInto(c *convo, text string, k key.Event) event.Tag {
 // SetSteal).
 func (a *App) wireSteal(c *convo) {
 	if l, ok := c.list.(interface {
-		SetSteal(func(string, key.Event) event.Tag)
+		SetSteal(func(layout.Context, string, []key.Event) event.Tag)
 	}); ok {
-		l.SetSteal(func(text string, k key.Event) event.Tag { return a.stealInto(c, text, k) })
+		l.SetSteal(func(gtx layout.Context, text string, keys []key.Event) event.Tag {
+			return a.stealInto(gtx, c, text, keys)
+		})
 	}
 }

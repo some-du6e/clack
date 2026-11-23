@@ -3304,12 +3304,12 @@ a stroke outline, on llvmpipe (linux-gio), Direct3D 11 WARP
 
 ## 64. io/input: typed text with nothing focused goes to a handler the window names
 
-`io/input/router.go` (`Router.processEvent`: a `key.EditEvent` with no
-focused handler goes to `Router.unfocusedText`) and
-`io/input/clack_unfocused.go` (`Source.SetUnfocusedText`). The focus
-itself stays empty: `Focused(nil)` still holds, so what reads it (the
-views' global scroll keys, a modal giving the focus back) sees nothing
-new.
+`io/input/router.go` (`Router.processEvent`: a `key.EditEvent` or a
+`key.CompositionEvent` with no focused handler goes to
+`Router.unfocusedText`) and `io/input/clack_unfocused.go`
+(`Source.SetUnfocusedText`, `Router.unfocusedTextFor`). The focus itself
+stays empty: `Focused(nil)` still holds, so what reads it (the views'
+global scroll keys, a modal giving the focus back) sees nothing new.
 
 A browser types a key's character into whatever has the focus once the
 keydown is through. Slack's message input listens for keydown on the
@@ -3319,10 +3319,21 @@ character lands in it. Gio routes an `EditEvent` to the focused handler
 as it queues it and drops it with none; a `FocusCmd` executed from the
 key's handler doesn't bring it back, as the immediate path's replay
 queues again only events that had a receiver. Clack's App names a tag of
-its own and hands what it reads to the channel's composer.
+its own and hands what it reads to the channel's composer. An IME's or a
+dead key's marked text comes with its `CompositionEvent`, so the handler
+can leave it be and take the committed text.
+
+Only text queued with nothing focused goes there, not text a command's
+replay (`requeue`) finds unfocused: a handler that took a key and then
+dropped the focus before reading the key's text has had it (a message
+list's E opening an inline edit, which typed a stray "e" into it on
+Windows and X11, where the key comes before its text). Gio drops that
+text, as it did before the patch; Slack's handler prevents the key's
+default, so its character lands nowhere.
 
 Tests: `io/input/clack_unfocused_test.go` (`TestClackUnfocusedText`:
 dropped with no handler named, read by the named one with the focus
-still empty, a focused editor's as before, dropped again after `nil`),
-in ci's linux-gio job. In Clack: `internal/ui`'s typing redirect tests.
-Not in `UPSTREAM.patch`.
+still empty, a focused editor's as before, dropped again after `nil`;
+`TestClackUnfocusedTextNotOnReplay`: a key's text after its handler drops
+the focus; `TestClackUnfocusedComposition`), in ci's linux-gio job. In
+Clack: `internal/ui`'s typing redirect tests. Not in `UPSTREAM.patch`.

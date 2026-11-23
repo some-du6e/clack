@@ -31,10 +31,11 @@ type kbNav struct {
 	// firstInView: the next layout selects the first message in view
 	// (FocusFirstInView)
 	firstInView bool
-	// steal is the host's way to the conversation's input for a key the
-	// list doesn't take (SetSteal): it types the key there and returns the
-	// input's focus tag
-	steal func(text string, k key.Event) event.Tag
+	// steal is the host's way to the conversation's input for keys the
+	// list doesn't take (SetSteal): it types them there and returns the
+	// input's focus tag; typed gathers a frame's (StealText)
+	steal func(gtx layout.Context, text string, keys []key.Event) event.Tag
+	typed StealText
 	// inputWant: End's jump to the thread's latest reply is out (a slice
 	// short of the end has no "input" row); its row then takes the focus
 	// (focusInput's jumpToReplyCallback). jumpTo is the pane's JumpTo.
@@ -86,17 +87,17 @@ func (s *listState) kbWheelBlur(gtx layout.Context, size image.Point) {
 	gtx.Execute(key.FocusCmd{Tag: nil})
 }
 
-// kbSteal hands a key the list has the focus for to the conversation's
-// input, which takes the focus at once (so the keys after it go there
-// too): for a channel's list MessagePaneInput's handleKeyDown, which
-// steals a list item's key as any other outside the thread pane; for a
-// thread's ThreadsFlexpane onKeyDown, whose focusOnKey("input") moves the
-// focus to the reply box with the key.
-func (s *listState) kbSteal(gtx layout.Context, text string, k key.Event) {
+// kbSteal hands the frame's keys the list has the focus for to the
+// conversation's input, which takes the focus at once (so the keys after
+// them go there too): for a channel's list MessagePaneInput's
+// handleKeyDown, which steals a list item's key as any other outside the
+// thread pane; for a thread's ThreadsFlexpane onKeyDown, whose
+// focusOnKey("input") moves the focus to the reply box with the key.
+func (s *listState) kbSteal(gtx layout.Context, text string, keys []key.Event) {
 	if s.kb.steal == nil {
 		return
 	}
-	t := s.kb.steal(text, k)
+	t := s.kb.steal(gtx, text, keys)
 	if t == nil {
 		return
 	}
@@ -237,10 +238,11 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		key.Filter{Focus: &s.kb, Name: key.NameReturn},
 		key.Filter{Focus: &s.kb, Name: "E"},
 		key.Filter{Focus: &s.kb, Name: "V"},
-		// enableShortcuts: Mod+B, Mod+I and Mod+V go to the input
-		key.Filter{Focus: &s.kb, Name: "B", Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt},
-		key.Filter{Focus: &s.kb, Name: "I", Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt},
-		key.Filter{Focus: &s.kb, Name: "V", Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt}}
+		// enableShortcuts: Mod+B, Mod+I and Mod+V go to the input (not
+		// with Alt: AltGr, ui type_steal.go)
+		key.Filter{Focus: &s.kb, Name: "B", Required: key.ModShortcut, Optional: key.ModShift},
+		key.Filter{Focus: &s.kb, Name: "I", Required: key.ModShortcut, Optional: key.ModShift},
+		key.Filter{Focus: &s.kb, Name: "V", Required: key.ModShortcut, Optional: key.ModShift}}
 	if i, _, _ := s.inputRow(); i >= 0 {
 		// Tab to the thread's reply box (tabToInput); Shift+Tab and a
 		// list with no box row keep Gio's own focus order
@@ -255,17 +257,21 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		case key.FocusEvent:
 			s.kb.on = e.Focus
 		case key.EditEvent:
-			// a character typed with a message selected: the input's
-			if s.kb.on && stealsKey(e.Text) {
-				s.kbSteal(gtx, e.Text, key.Event{})
-			}
+			// a character typed with a message selected: the input's,
+			// with the frame's others (StealText)
+			s.kb.typed.Edit(e, func(t string) bool { return s.kb.on && stealsKey(t) })
+		case key.CompositionEvent:
+			s.kb.typed.Composition(e) // an IME's marked text stays out
 		case key.Event:
 			if e.State != key.Press {
 				continue
 			}
 			if e.Modifiers.Contain(key.ModShortcut) {
-				s.kbSteal(gtx, "", e) // Mod+B, Mod+I, Mod+V
+				s.kb.typed.Key(e) // Mod+B, Mod+I, Mod+V
 				continue
+			}
+			if s.kb.typed.Started() {
+				continue // the input's from the frame's first stolen key on
 			}
 			i := s.kbIndex()
 			switch e.Name {
@@ -315,6 +321,9 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 			}
 			h.Invalidate()
 		}
+	}
+	if text, keys := s.kb.typed.Take(); text != "" || len(keys) > 0 {
+		s.kbSteal(gtx, text, keys)
 	}
 	event.Op(gtx.Ops, &s.kb)
 }
@@ -458,10 +467,12 @@ func (v *ChannelView) FocusNewest(leave func()) bool {
 	return v.s.focusNewest()
 }
 
-// SetSteal gives the list its way to the conversation's input for a key
-// it has the focus for and doesn't take (kbSteal): f types the key there
-// and returns the input's focus tag (nil: no input to take it).
-func (v *ChannelView) SetSteal(f func(text string, k key.Event) event.Tag) { v.s.kb.steal = f }
+// SetSteal gives the list its way to the conversation's input for keys
+// it has the focus for and doesn't take (kbSteal): f types them there and
+// returns the input's focus tag (nil: no input to take them).
+func (v *ChannelView) SetSteal(f func(gtx layout.Context, text string, keys []key.Event) event.Tag) {
+	v.s.kb.steal = f
+}
 
 // ListKeyFocus reports whether the thread's message list has the key
 // focus (a reply selected): the shell's Escape is then the pane's, as
@@ -493,7 +504,9 @@ func (v *ThreadView) FocusFirstInView(leave func()) bool {
 }
 
 // SetSteal is ChannelView.SetSteal for a thread's replies: the reply box.
-func (v *ThreadView) SetSteal(f func(text string, k key.Event) event.Tag) { v.s.kb.steal = f }
+func (v *ThreadView) SetSteal(f func(gtx layout.Context, text string, keys []key.Event) event.Tag) {
+	v.s.kb.steal = f
+}
 
 // FocusNewest is ChannelView.FocusNewest for a thread's replies.
 func (v *ThreadView) FocusNewest(leave func()) bool {

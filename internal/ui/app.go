@@ -398,10 +398,19 @@ type App struct {
 	inspPresses []key.Event
 
 	// typeSteal's handler for typed text nothing has the focus for
-	// (type_steal.go; Gio patch 64)
-	stealTag int
-	// kbMode: the viewer moves around with the keyboard (keyboard_mode.go)
-	kbMode bool
+	// (type_steal.go; Gio patch 64), and the frame's text for it
+	stealTag  int
+	stealText messages.StealText
+	// this frame's time and the last one's (canSteal: an input drawn)
+	frameNow, prevNow time.Time
+	// kbMode: the viewer moves around with the keyboard; kbRelated the
+	// last key or press, kbFocus the focus it saw last (keyboard_mode.go)
+	kbMode    bool
+	kbRelated kbRelated
+	kbFocus   event.Tag
+	// noMoveFocus: an open that keeps the focus where it is
+	// (PreventMoveFocus: Activity's option+up/down)
+	noMoveFocus bool
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -906,6 +915,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.winSize = sz
 	windowActive.Store(a.focused) // the indicators turn only in an active window (indicatorFrame)
 	a.frameSeq.Add(1)
+	a.prevNow, a.frameNow = a.frameNow, gtx.Now
 	a.syncWheelAnimation()
 	a.syncThemeTokens()
 	a.focusFadeFrame(gtx) // focus mode's view transition (focus_fade.go)
@@ -926,6 +936,7 @@ func (a *App) frame(gtx layout.Context) {
 	// the inspect tool, before anything reads input: while a session runs
 	// the window lays out hover-only and the tool reads the clicks and
 	// keys (inspect_wire.go)
+	a.keyboardModeFrame(gtx) // where the last frame left the focus, before this frame's keys (keyboard_mode.go)
 	winGtx := gtx
 	gtx = a.inspectBegin(gtx)
 
