@@ -1,10 +1,12 @@
 package composer
 
 import (
+	"image"
 	"net/url"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"gioui.org/io/key"
 )
@@ -33,14 +35,27 @@ func (e *lkEnv) typeOver(s string) {
 	e.frame()
 }
 
+// freshClick clicks p a second past the last click, so no double-click
+// window (Clack's 500 ms) joins them.
+func (e *lkEnv) freshClick(p image.Point) {
+	e.ptr += time.Second
+	e.click(p)
+}
+
+// popover is the last popover, or the test's end.
+func (e *lkEnv) popover(what string) *linkPopover {
+	e.t.Helper()
+	if e.pop == nil {
+		e.t.Fatalf("%s opened no popover", what)
+	}
+	return e.pop
+}
+
 func TestLinkPopoverHoldsTheKeys(t *testing.T) {
 	e := newLinkEnv(t)
 	e.setDoc(lkDoc())
-	e.click(e.runeAt(7))
-	p := e.pop
-	if p == nil {
-		t.Fatal("the click opened no popover")
-	}
+	e.freshClick(e.runeAt(7))
+	p := e.popover("a click in the link")
 	caret := p.initHi
 	e.typeOver("s")
 	e.key(key.NameDeleteBackward, 0)
@@ -62,7 +77,7 @@ func TestLinkPopoverHoldsTheKeys(t *testing.T) {
 	// Ctrl+Shift+U with the caret in a link: the popover, whose Shift+Tab
 	// from Remove is Edit, and Enter there opens the dialog
 	e.setDoc(lkDoc())
-	e.click(e.runeAt(1))
+	e.freshClick(e.runeAt(1))
 	e.c.ed.SetSelection(7, 7)
 	e.pop, e.dlg = nil, nil
 	e.key("U", key.ModShortcut|key.ModShift)
@@ -79,8 +94,9 @@ func TestLinkPopoverHoldsTheKeys(t *testing.T) {
 
 	// Escape closes it and puts the click's caret back
 	e.setDoc(lkDoc())
-	e.click(e.runeAt(7))
-	p = e.pop
+	e.pop = nil
+	e.freshClick(e.runeAt(7))
+	p = e.popover("a click in the link")
 	at := p.initHi
 	e.key(key.NameEscape, 0)
 	if !p.Dismissed() {
@@ -94,11 +110,8 @@ func TestLinkPopoverHoldsTheKeys(t *testing.T) {
 func TestLinkPopoverClosesWithItsText(t *testing.T) {
 	e := newLinkEnv(t)
 	e.setDoc(lkDoc())
-	e.click(e.runeAt(7))
-	p := e.pop
-	if p == nil {
-		t.Fatal("no popover")
-	}
+	e.freshClick(e.runeAt(7))
+	p := e.popover("a click in the link")
 	e.c.submit() // the draft goes, the link with it
 	e.frame()
 	e.frame()
@@ -107,8 +120,9 @@ func TestLinkPopoverClosesWithItsText(t *testing.T) {
 	}
 
 	e.setDoc(lkDoc())
-	e.click(e.runeAt(7))
-	p = e.pop
+	e.pop = nil
+	e.freshClick(e.runeAt(7))
+	p = e.popover("a click in the link")
 	d := e.c.ed.Doc()
 	e.c.ed.SetSelection(d.Len(), d.Len())
 	e.c.ed.InsertText("!") // the text changed under it
@@ -135,7 +149,7 @@ func TestLinkDialogFollowsSlugAnswer(t *testing.T) {
 	d := NewDoc()
 	d.Insert(0, " docs here", Attr{})
 	e.setDoc(d)
-	e.click(e.runeAt(8)) // the editor focused
+	e.freshClick(e.runeAt(8)) // the editor focused
 	e.c.ed.SetSelection(0, 0)
 	e.c.PasteText(lsURL)
 	e.frame()
