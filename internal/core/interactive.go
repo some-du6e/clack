@@ -238,6 +238,7 @@ type Interactive struct {
 	subs    map[chan ViewEvent]struct{}
 	tokens  map[string]time.Time // client_tokens this client issued
 	ephem   map[string]string    // "channel/ts" → thread_ts of ephemeral messages
+	local   map[string]bool      // "channel/ts" of the ephemerals this client made (LocalEphemeral)
 	homes   map[string]*View     // channel → home view
 	views   map[string]*View     // view id → latest copy (modals)
 	actions []AppShortcut
@@ -259,7 +260,7 @@ func (a *App) Interactive() *Interactive {
 		return v.(*Interactive)
 	}
 	v, _ := interactiveIndex.LoadOrStore(a, &Interactive{a: a, subs: map[chan ViewEvent]struct{}{},
-		tokens: map[string]time.Time{}, ephem: map[string]string{}, homes: map[string]*View{}, views: map[string]*View{}})
+		tokens: map[string]time.Time{}, ephem: map[string]string{}, local: map[string]bool{}, homes: map[string]*View{}, views: map[string]*View{}})
 	ix := v.(*Interactive)
 	ix.start()
 	return ix
@@ -593,6 +594,15 @@ func (ix *Interactive) Ephemeral(ch, ts string) bool {
 	_, ok := ix.ephem[ch+"/"+ts]
 	ix.mu.Unlock()
 	return ok
+}
+
+// LocalNotice reports whether the message is an ephemeral this client
+// made itself (LocalEphemeral: Slack's addEphemeralMessage, which never
+// goes through maybeShowNotification), not one the socket brought.
+func (ix *Interactive) LocalNotice(ch, ts string) bool {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	return ix.local[ch+"/"+ts]
 }
 
 // DismissEphemeral removes an ephemeral message locally, as Slack's

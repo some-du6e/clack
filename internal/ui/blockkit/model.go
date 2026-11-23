@@ -260,6 +260,10 @@ type Block struct {
 	// kids are Nested's blocks as UnmarshalJSON found them, until
 	// parseBlocks decodes them at their depth (nest).
 	kids []json.RawMessage
+	// richFirst and richLast are a rich_text block's first and last
+	// elements' types, whose margins collapse through it (the Surface's
+	// blockMargins), read once here rather than from Raw every frame.
+	richFirst, richLast string
 }
 
 // maxNesting is how deep blocks inside blocks are followed (containers'
@@ -287,6 +291,13 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 		_ = json.Unmarshal(p.Elements, &b.Elements)
 	case b.Type == "card" && len(p.Actions) > 0: // Card's actions (7Xkb), its block id theirs
 		_ = json.Unmarshal(p.Actions, &b.Elements)
+	case b.Type == "rich_text" && len(p.Elements) > 0:
+		var els []struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(p.Elements, &els) == nil && len(els) > 0 {
+			b.richFirst, b.richLast = els[0].Type, els[len(els)-1].Type
+		}
 	}
 	// the nested blocks wait for parseBlocks, which knows their depth
 	switch {

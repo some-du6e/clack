@@ -289,6 +289,20 @@ type Bridge struct{ t *Taut }
 // Bridge returns the slackc bridge.
 func (t *Taut) Bridge() *Bridge { return &Bridge{t: t} }
 
+// Detach says the UI let go of t (a sign-out, an account switch): its
+// Close comes later, on another goroutine, and a runtime that starts
+// meanwhile still calls Attached; the UI's post of it binds nothing once
+// Detached (the flakes-1122d review: a start that beat Close bound the
+// dying Taut's bridge after the detach).
+func (t *Taut) Detach() { t.detached.Store(true) }
+
+// Detached reports that the bridge's Taut was detached or closed: the UI
+// binds it no more.
+func (b *Bridge) Detached() bool { return b.t.detached.Load() || b.t.closed.Load() }
+
+// Of reports whether b is t's bridge.
+func (b *Bridge) Of(t *Taut) bool { return b != nil && t != nil && b.t == t }
+
 // with runs f with the runtime. slackc calls the Bridge from the UI
 // goroutine, which must never wait for a runtime to start (hundreds of ms
 // cold, up to the init timeout) or to restart after a crash: without a
@@ -2800,6 +2814,16 @@ type File struct {
 	Name string
 	Type string
 	Data []byte
+}
+
+// UploadType is the type f's upload goes up with: Slack's FormData sends
+// a File's type, application/octet-stream when it has none (a plugin's new
+// File([..], name) without one), never a type guessed from its name.
+func (f File) UploadType() string {
+	if f.Type == "" {
+		return "application/octet-stream"
+	}
+	return f.Type
 }
 
 func (f File) MarshalJSON() ([]byte, error) {

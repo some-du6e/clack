@@ -11,3 +11,6 @@ import "time"
 var start = time.Now()
 
 func routerSince() time.Duration { return time.Since(start) }
+
+// routerOnPress: stock Gio tells of no presses.
+func routerOnPress(func(mouse bool)) {}

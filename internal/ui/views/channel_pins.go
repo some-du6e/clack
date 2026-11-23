@@ -98,6 +98,9 @@ type cpRow struct {
 	tb      [cpTbCount]widget.Clickable
 	tbTip   [cpTbCount]popups.TipState
 	tbRects [cpTbCount]image.Rectangle
+	// time is the pinned message's MessageTimestamp (clickable, full):
+	// its permalink's link (popups.TimeLink)
+	time popups.TimeLink
 }
 
 // The pinned message's MessageActions buttons (no quick reactions).
@@ -138,6 +141,17 @@ func NewChannelPins(h Host, ch string) *ChannelPins {
 	v := &ChannelPins{base: newBase(h), fv: NewFiles(h), cf: NewChannelFiles(h, ch), ch: ch, rows: map[string]*cpRow{}}
 	v.list.Axis = layout.Vertical
 	v.kb = newVKList(&v.list)
+	// a pin draws pins.list's copy unless a timeline holds the message
+	// (core.PinsTab swaps in only those): a copy another view fetched by
+	// id doesn't end the tab's own reaction changes
+	v.ownCopy = func(ch, ts string) bool {
+		c := h.Core()
+		if c == nil {
+			return false
+		}
+		_, ok := c.S.Find(ch, ts)
+		return !ok
+	}
 	return v
 }
 
@@ -310,6 +324,8 @@ func (v *ChannelPins) update(gtx C) {
 				break
 			}
 			if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) && !v.preview {
+				// the pin's own menu, on its time too (BasePinnedMessage's
+				// row takes the right-click before the <a>)
 				v.openMenu(it, v.pointer())
 			}
 		}
@@ -574,6 +590,7 @@ func (v *ChannelPins) box(gtx C, sz image.Point, radius int, last bool) {
 // message is BasePinnedMessage in its row.
 func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 	r := v.rowOf(it.Key())
+	r.time.Begin() // a time this frame doesn't draw holds no hover
 	m := v.viewMsg(it.Msg)
 	hovered := r.hv.Update(gtx.Source)
 	ring := v.kb.ringOn(it.Key())
@@ -603,7 +620,19 @@ func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 						return row(gtx, layout.Baseline,
 							layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, wBlack, v.p.Text, 1, name) }),
 							hgap(8), // "\xa0\xa0"
-							layout.Rigid(func(gtx C) D { return v.para(gtx, 12, 17.6, wReg, v.p.Meta, 1, stamp) }),
+							layout.Rigid(func(gtx C) D {
+								// BasePinnedMessage's MessageTimestamp (msg,
+								// clickable, full: the full date, no
+								// tooltip): the permalink's link,
+								// handleTimestampClick on a click
+								d := v.para(gtx, 12, 17.6, wReg, v.p.Meta, 1, stamp)
+								if c := r.time.Layout(gtx, v.th, d.Size, d.Size.Y-d.Baseline, v.p.Meta, nil); c.Clicked && !v.preview {
+									if ph, ok := v.h.(popups.Host); ok {
+										popups.OpenMessageTime(ph, m.Channel, m.TS, m.ThreadTS, c.Cmd)
+									}
+								}
+								return d
+							}),
 						)
 					}),
 					// the pin's unfurl is cursor: pointer (handBody)

@@ -295,9 +295,10 @@ func (l *lay) spanPart(sp *richtext.Span) uint8 {
 		}
 		p = p.with(linkClass)
 	case richtext.Date:
-		if sp.URL != "" {
+		switch {
+		case sp.URL != "":
 			p = p.with(dateLinkClass)
-		} else {
+		case !l.opts.Canvas: // a canvas's date is Quip's span.slack-date-contents, not a message's
 			p = p.with(dateClass)
 		}
 	case richtext.User:

@@ -336,6 +336,10 @@ func (t *Taut) registerLocked(ctx context.Context, id string) error {
 	return nil
 }
 
+// loadedHook, when set, runs between a plugin's load in JS and the write
+// of its metadata (tests: a register held while Close comes).
+var loadedHook func(t *Taut, id string)
+
 // loadInJS evaluates the plugin's code and refreshes its metadata.
 func (t *Taut) loadInJS(ctx context.Context, p *plugin) error {
 	rt, err := t.ensureRuntime()
@@ -350,9 +354,14 @@ func (t *Taut) loadInJS(ctx context.Context, p *plugin) error {
 		return fmt.Errorf("stored as %q but declares the id %q", p.id, m.ID)
 	}
 	t.with(func() { p.meta, p.inJS = &m, true })
-	if err := writeMeta(t.dir, p.id, p.hash, &m); err != nil {
-		t.logf("taut: %s: caching its metadata: %v", p.id, err)
+	if loadedHook != nil {
+		loadedHook(t, p.id)
 	}
+	t.whileOpen(func() {
+		if err := writeMeta(t.dir, p.id, p.hash, &m); err != nil {
+			t.logf("taut: %s: caching its metadata: %v", p.id, err)
+		}
+	})
 	return nil
 }
 
@@ -374,16 +383,18 @@ func (t *Taut) migrate(ctx context.Context, p *plugin) {
 	if migrated == nil {
 		return
 	}
-	if err := t.cfg.edit(p.id, func(b map[string]json.RawMessage) {
-		for k := range b {
-			delete(b, k)
+	t.whileOpen(func() {
+		if err := t.cfg.edit(p.id, func(b map[string]json.RawMessage) {
+			for k := range b {
+				delete(b, k)
+			}
+			for k, v := range migrated {
+				b[k] = v
+			}
+		}); err != nil {
+			t.logf("taut: couldn't save %s's migrated config: %v", p.id, err)
 		}
-		for k, v := range migrated {
-			b[k] = v
-		}
-	}); err != nil {
-		t.logf("taut: couldn't save %s's migrated config: %v", p.id, err)
-	}
+	})
 }
 
 func secretName(id, key string) string { return "plugin:" + id + ":" + key }

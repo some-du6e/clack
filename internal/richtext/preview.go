@@ -207,3 +207,71 @@ func simpleMessageUnfurl(m *slack.Message, raws []json.RawMessage) bool {
 	}
 	return m.Text == "" || m.Text == "<"+from+">"
 }
+
+// PreviewLinks is d as Slack's SimpleRichTextPreview draws its links: a
+// rich_text link element is a plain hyperlink, its text or else its URL
+// (Link), whatever its truncated flag; the RichTextSlug chip with the
+// "link" icon (Truncated) is the message's own renderer's. d is not
+// changed: what holds a truncated link is copied.
+func PreviewLinks(d Doc) Doc {
+	if bs, ok := previewLinkBlocks(d.Blocks); ok {
+		d.Blocks = bs
+	}
+	return d
+}
+
+func previewLinkBlocks(bs []Block) ([]Block, bool) {
+	var out []Block
+	for i := range bs {
+		b, changed := bs[i], false
+		if s, ok := previewLinkSpans(b.Spans); ok {
+			b.Spans, changed = s, true
+		}
+		copied := false
+		for j := range b.Items {
+			if s, ok := previewLinkSpans(b.Items[j]); ok {
+				if !copied {
+					b.Items, copied = append([][]Span(nil), b.Items...), true
+				}
+				b.Items[j], changed = s, true
+			}
+		}
+		copied = false
+		for j := range b.Fields {
+			if s, ok := previewLinkSpans(b.Fields[j]); ok {
+				if !copied {
+					b.Fields, copied = append([][]Span(nil), b.Fields...), true
+				}
+				b.Fields[j], changed = s, true
+			}
+		}
+		if c, ok := previewLinkBlocks(b.Children); ok {
+			b.Children, changed = c, true
+		}
+		if !changed {
+			continue
+		}
+		if out == nil {
+			out = append([]Block(nil), bs...)
+		}
+		out[i] = b
+	}
+	return out, out != nil
+}
+
+func previewLinkSpans(ss []Span) ([]Span, bool) {
+	var out []Span
+	for i := range ss {
+		if ss[i].Kind != Link || !ss[i].Truncated {
+			continue
+		}
+		if out == nil {
+			out = append([]Span(nil), ss...)
+		}
+		out[i].Truncated = false
+		if out[i].Text == "" {
+			out[i].Text = out[i].URL
+		}
+	}
+	return out, out != nil
+}

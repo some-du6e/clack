@@ -345,7 +345,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	}
 	editedDone := false
 	var gal []*richtext.File
-	if top && len(bs) > 0 && (bs[0].Kit || richMargined(bs[0].Kind)) {
+	if top && !l.opts.NoOuterMargins && len(bs) > 0 && (bs[0].Kit || richMargined(bs[0].Kind)) {
 		_, first, _ := l.margins(&bs[0])
 		y += first
 	}
@@ -486,7 +486,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		h, _ := l.flow(x, y, w, &fs)
 		y += h
 	}
-	if top && len(bs) > 0 && (bs[len(bs)-1].Kit || richMargined(bs[len(bs)-1].Kind)) && !(editedDone && editedAfter == len(bs)-1) {
+	if top && !l.opts.NoOuterMargins && len(bs) > 0 && (bs[len(bs)-1].Kit || richMargined(bs[len(bs)-1].Kind)) && !(editedDone && editedAfter == len(bs)-1) {
 		_, _, bottom := l.margins(&bs[len(bs)-1])
 		y += bottom
 	}

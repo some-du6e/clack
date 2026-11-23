@@ -614,6 +614,23 @@ func (e *lmEnv) rowH(key string) int {
 	return -1
 }
 
+// rowDrawnH is rowH less the list's lead-in above item 0 (a row that
+// renders null is 0 high; the lead-in is the list's, not the row's).
+func (e *lmEnv) rowDrawnH(key string) int {
+	p := actPage(e.v)
+	for li, i := range e.v.vis {
+		if i >= 0 && i < len(p.Items) && actKey(&p.Items[i]) == key {
+			if h, ok := e.v.stk.h[li]; ok {
+				if li == 0 {
+					h -= e.v.stk.lead
+				}
+				return h
+			}
+		}
+	}
+	return -1
+}
+
 // untilVote waits for the page (and the pane, when open) to draw the vote
 // at revision n.
 func (e *lmEnv) untilVote(n int) {
@@ -1333,7 +1350,8 @@ func TestActivityLiveDelete(t *testing.T) {
 }
 
 // An entry whose message messages.list doesn't have (Slack's isNonExistent
-// stub, after its UFM fetch) draws no body and no loading shimmer.
+// stub, after its UFM fetch) draws no body and no loading shimmer: the
+// mention's row renders null (ActivityAtMention: !a || W), nothing drawn.
 func TestActivityLiveMissingMessage(t *testing.T) {
 	e := newLmEnv(t, lmOpts{setup: func(e *lmEnv) { e.f.gone[lmMention], e.f.listGone = true, true }})
 	e.untilVote(1)
@@ -1348,6 +1366,9 @@ func TestActivityLiveMissingMessage(t *testing.T) {
 	}
 	if n := e.v.shimmers - shimmers; n != 0 {
 		t.Fatalf("%d loading shimmers in 5 frames for a message there is none of; Slack draws no body", n)
+	}
+	if h := e.rowDrawnH(lmMentionKey); h != 0 {
+		t.Errorf("the mention whose message there is none of is a %dpx row; Slack renders it null", h)
 	}
 }
 
