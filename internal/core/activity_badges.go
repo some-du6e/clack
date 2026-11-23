@@ -123,6 +123,11 @@ func (a *App) onActivityBadges(raw json.RawMessage) {
 // markItemsReadAcrossLists: each unread item marked read takes one off
 // its type's count (never below 0), before the server's
 // badge_counts_updated confirms it.
+// DecActivityBadges is decrementBadgeCounts for items marked read here
+// alone, with no write (the Activity view's thread and channel reads:
+// getOptimisticUpdates): each unread item takes one off its type's count.
+func (a *App) DecActivityBadges(items []ActivityItem) { a.decActivityBadges(items) }
+
 func (a *App) decActivityBadges(items []ActivityItem) {
 	a.mu.Lock()
 	changed := false
@@ -180,8 +185,20 @@ func (a *App) activityBadgeTypes() map[string]bool {
 	for _, k := range []string{"thread_v2", "channel", "internal_channel_invite", "list_record_edited", "bot_dm_bundle",
 		"at_user", "at_user_group", "at_channel", "at_everyone", "keyword", "list_record_assigned", "list_user_mentioned",
 		"external_channel_invite", "external_dm_invite", "shared_workspace_invite", "unjoined_channel_mention",
-		"quietly_added_to_channel", "prejoin_dm_welcome_party_alert", "list_todo_notification"} {
+		"quietly_added_to_channel", "prejoin_dm_welcome_party_alert"} {
 		t[k] = true
+	}
+	// 9OWn j (build 66e72b57ade1): the to-dos' and the approvals' behind
+	// their lists experiments (c4db Dq, ci), system alerts behind
+	// generic_system_user_alert (YwqI j0)
+	if a.experiment("lists_monster_step") == "on" {
+		t["list_todo_notification"] = true
+	}
+	if a.experiment("approvals_in_todos") == "on" {
+		t["list_approval_request"], t["list_approval_reviewed"] = true, true
+	}
+	if a.experiment("generic_system_user_alert") == "on" {
+		t["generic_system_alert"] = true
 	}
 	if a.ActivityInbox() && a.GlobalNotifyBool("global_reminders_in_activity", true) {
 		t["saved_reminder"] = true // 5Ns/ ah
@@ -193,6 +210,15 @@ func (a *App) activityBadgeTypes() map[string]bool {
 		t["code_review_requested"] = true // ysZt f
 	}
 	return t
+}
+
+// The experiments the All badge's kinds read (TestExperimentReadsListed);
+// lists_monster_step and approvals_in_todos are classic_badges.go's.
+func init() {
+	experimentReads["generic_system_user_alert"] = on
+	// the account's group (account_experiments.json) before
+	// experiments.getByUser answers (TestDefaultExperimentsMatchAccount)
+	defaultExperimentGroups["generic_system_user_alert"] = "on"
 }
 
 // activityMentionTypes is 3x6A V: the Mentions tab's sum.

@@ -778,7 +778,23 @@ var activityLiveTypes = []string{"thread_v2", "at_user", "at_user_group", "at_ch
 	"list_approval_reviewed", "bot_dm_bundle", "saved_reminder", "dm", "channel", "mpdm", "generic_system_alert",
 	"prejoin_dm_welcome_party_alert"}
 
-func activityLiveType(t string) bool { return slices.Contains(activityLiveTypes, t) }
+// activityLiveTypesV1 is activityUpdatedV1's allow-list (boot-shared Gfjq
+// `et`, build 66e72b57ade1): V2's without dm, channel and mpdm, the
+// conversations' own entries, which only the inbox shows.
+var activityLiveTypesV1 = slices.DeleteFunc(slices.Clone(activityLiveTypes), func(t string) bool {
+	return t == "dm" || t == "channel" || t == "mpdm"
+})
+
+// activityLiveType reports whether a realtime activity_updated of entry
+// type t reaches the stores: handleActivityRTMEvent runs activityUpdatedV2
+// with the activity inbox and activityUpdatedV1 without it, each with its
+// own list.
+func (a *App) activityLiveType(t string) bool {
+	if a.ActivityInbox() {
+		return slices.Contains(activityLiveTypes, t)
+	}
+	return slices.Contains(activityLiveTypesV1, t)
+}
 
 // onActivityEvent is an activity event's work, on the activity queue
 // (activity_later.go); seq is MessageChangeSeq when the socket brought it
@@ -791,10 +807,13 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage, seq uint
 	}
 	_ = json.Unmarshal(raw, &e)
 	ev := Event{Type: "activity", Name: e.Subtype, ID: firstNonEmpty(e.Key, e.Entry.Key), Raw: raw}
-	if e.Subtype == "activity_updated" && !activityLiveType(e.Entry.Item.Type) {
-		// activityUpdatedV2: "received invalid activity_updated event with
-		// entryType …", dropped before any store sees it
+	if e.Subtype == "activity_updated" && !a.activityLiveType(e.Entry.Item.Type) {
+		// activityUpdatedV2 (V1): "received invalid activity_updated event
+		// with entryType …", dropped before any store sees it; its
+		// breakthrough still counts, as handleActivityRTMEvent's check
+		// follows the update whatever it did
 		log.Printf("activity: dropped an activity_updated %q entry", e.Entry.Item.Type)
+		a.activityBreakthrough(ctx, e.Entry, "")
 		return
 	}
 	if e.Entry.Key != "" || e.Entry.Item.Type != "" {
@@ -806,6 +825,29 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage, seq uint
 		}
 	}
 	a.emit(ev)
+	if e.Subtype == "activity_updated" {
+		a.activityBreakthrough(ctx, e.Entry, ev.Channel)
+	}
+}
+
+// activityBreakthrough is handleActivityRTMEvent's is_breakthrough: an
+// entry that breaks through focus mode adds its conversation to the
+// silent sidebar's DND overrides (addDndOverrideChannel, while
+// isSilentSidebarActive: the UI checks that, ui/focus_mode.go), so its
+// row is bold and badged again.
+// ch is the entry's conversation when it was formatted already.
+func (a *App) activityBreakthrough(ctx context.Context, e activityRaw, ch string) {
+	if !e.IsBreakthrough {
+		return
+	}
+	if ch == "" {
+		if items := a.activityItems(ctx, []activityRaw{e}); len(items) == 1 {
+			ch = items[0].Channel
+		}
+	}
+	if ch != "" {
+		a.emit(Event{Type: "activity_breakthrough", Channel: ch})
+	}
 }
 
 func (a *App) onThreadSubscription(raw json.RawMessage, on bool) {
@@ -851,6 +893,16 @@ func (a *App) onThreadMarked(raw json.RawMessage) {
 	// threadMarked's updateActivitiesUnreadState: the reply bars' items of
 	// the thread up to its new last read go (channel_thread_activity.go)
 	a.threadActivityRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead)
+	a.emitThreadRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead)
+}
+
+// emitThreadRead tells the Activity view that thread ch/threadTS is read up
+// to lastRead: updateUnreadActivityItemByThreadKey (client-boot tsND), which
+// marks the thread's unread items read at once, before any activity_updated.
+func (a *App) emitThreadRead(ch, threadTS, lastRead string) {
+	if ch != "" && threadTS != "" && lastRead != "" {
+		a.emit(Event{Type: "thread_read", Channel: ch, ThreadTS: threadTS, TS: lastRead})
+	}
 }
 
 // setThreadLastRead records a thread's last read reply (Slack's

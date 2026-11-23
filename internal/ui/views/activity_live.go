@@ -27,6 +27,7 @@ import (
 	"image"
 	"slices"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -88,6 +89,11 @@ func (v *Activity) liveAccepts(it *core.ActivityItem) bool {
 // slice: a load in flight may still read the old one).
 func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 	key := actKey(&in)
+	// applyPendingMarkToActivityUpdate: a mark whose write is out wins over
+	// the server's state from before it (activity_marks.go)
+	if unread, ok := v.pending.reconcile(key, in.Unread, in.FeedTS, time.Now()); ok {
+		in.Unread = unread
+	}
 	at := -1
 	for i := range p.Items {
 		if actKey(&p.Items[i]) == key {
