@@ -281,10 +281,11 @@ func TestThreadsAuditReplyBoxScrollbar(t *testing.T) {
 	grab := image.Pt((th.Min.X+th.Max.X)/2, (max(th.Min.Y, box.Min.Y)+min(th.Max.Y, box.Max.Y))/2)
 	before := x.paneTops()
 	x.rzPress(grab)
-	dy := x.px(20)
+	dy := x.px(100) // long enough that a px of rounding is a small part of it
 	x.rzMove(grab.Sub(image.Pt(0, dy)))
 	x.frame()
 	after := x.paneTops()
+	x.rzRelease(grab.Sub(image.Pt(0, dy)))
 	shift, moved := 0, ""
 	for ts, y := range before {
 		if ay, ok := after[ts]; ok {
@@ -293,31 +294,47 @@ func TestThreadsAuditReplyBoxScrollbar(t *testing.T) {
 		}
 	}
 	if shift <= 0 {
-		x.rzRelease(grab)
 		t.Fatalf("a %d px drag up from the bar beside the box moved the replies %d px (%s); it scrolls the list in Slack's (one scroll container)", dy, shift, x.otLabel(moved))
 	}
 	track := list.Dy() - 2*inset
-	content := shift * track / dy
-	want := max(x.px(50), list.Dy()*list.Dy()/content)
-	if d := th.Dy() - want; d < -2 || d > 2 {
-		t.Errorf("the bar is %d px tall; Slack's view²/content (at least 50 px) is %d for the %d px of content a drag moves (%d px for %d)", th.Dy(), want, content, shift, dy)
+	content := float64(shift) * float64(track) / float64(dy)
+	want := max(float64(x.px(50)), float64(list.Dy()*list.Dy())/content)
+	if d := float64(th.Dy()) - want; d < -2 || d > 2 {
+		t.Errorf("the bar is %d px tall; Slack's view²/content (at least 50 px) is %.1f for the %.0f px of content a drag moves (%d px for %d)", th.Dy(), want, content, shift, dy)
 	}
 
-	// on past the track's top: the thread's top
-	x.rzMove(image.Pt(grab.X, list.Min.Y-x.px(400)))
-	x.frame()
-	x.settle(300 * time.Millisecond)
-	if _, ok := x.paneTops()[x.root]; !ok {
-		t.Errorf("the bar dragged past the track's top, the root isn't drawn (%s)", x.drawnTops(x.paneTops()))
+	// up past the track's top, again as the page above each slice's top
+	// loads (the list holds a slice of the thread), until the root shows
+	// at the top: the bar then starts 4px under the pane's top
+	dragTo := func(y int) {
+		th := tv.ScrollThumb()
+		if th.Empty() {
+			x.movePtr(x.paneWheelPoint())
+			return
+		}
+		g := image.Pt((th.Min.X+th.Max.X)/2, (th.Min.Y+th.Max.Y)/2)
+		x.rzPress(g)
+		x.rzMove(image.Pt(g.X, y))
+		x.frame()
+		x.rzRelease(image.Pt(g.X, y))
+		x.settle(500 * time.Millisecond)
 	}
-	if th := tv.ScrollThumb(); th.Min.Y != list.Min.Y+inset {
-		t.Errorf("at the thread's top the bar starts at y %d; Slack's track starts %d px under the pane's top (y %d)", th.Min.Y, inset, list.Min.Y+inset)
-	}
-	// and back past the bottom: the end, the box under the last reply
-	x.rzMove(image.Pt(grab.X, list.Max.Y+x.px(400)))
-	x.frame()
-	x.rzRelease(image.Pt(grab.X, list.Max.Y+x.px(400)))
-	x.settle(300 * time.Millisecond)
+	x.until("the bar dragged up to the thread's root", 60*time.Second, func() bool {
+		if _, ok := x.paneTops()[x.root]; ok && tv.ScrollThumb().Min.Y == list.Min.Y+inset {
+			return true
+		}
+		dragTo(list.Min.Y - x.px(400))
+		return false
+	})
+	// and down past the bottom, again as pages load, to the thread's end,
+	// the box under the last reply
+	x.until("the bar dragged down to the thread's end", 60*time.Second, func() bool {
+		if x.boxUnderNewest() == "" {
+			return true
+		}
+		dragTo(list.Max.Y + x.px(400))
+		return false
+	})
 	x.holdBox(t, fmt.Sprintf("the bar dragged back past the bottom (y %d)", list.Max.Y), 500*time.Millisecond)
 }
 
@@ -345,6 +362,7 @@ func (x *rfEnv) splitThread() (*convo, *messages.ThreadView) {
 func TestThreadsAuditReplyBoxInSplitView(t *testing.T) {
 	x := openTopEnv(t)
 	x.root = fakeslack.ThreadOpenRead
+	x.wheelTo(x.root) // the root in the channel's history, its last read known, as a reply bar's open has it
 	x.a.OpenSplit("c/" + x.ch + "/t/" + x.root)
 	var c *convo
 	var tv *messages.ThreadView
