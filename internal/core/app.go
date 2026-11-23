@@ -970,6 +970,11 @@ func (a *App) Boot(ctx context.Context) error {
 	// render): the file collections, so the
 	// canvas and list headers' section buttons know them
 	go func() { _ = a.FetchFileCollections(a.bg) }()
+	// maybeFetchClientPermissions (AcSl, at boot): the custom emoji group,
+	// so the first emoji picker draws the pack call to action from its
+	// first frame instead of moving its list down under the pointer when
+	// the pack read learns it (emoji_packs.go)
+	go a.LoadEmojiPermissions(a.bg)
 	// The warm boot's files from this session's fresh state, once
 	// startup's work is done, then with the metadata cache every 5
 	// minutes, and at Close.

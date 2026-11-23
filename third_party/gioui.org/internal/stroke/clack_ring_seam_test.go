@@ -78,7 +78,27 @@ var (
 	clackWidths  = []float32{1, 1.6, 2, 2.4, 3, 7}
 )
 
-// A closed ring (MoveTo, ArcTo 2π, Close): its outline's two loops close.
+// clackShortArc is clackArc closed, its arc ending one float step past
+// its start in y, on the side whose closing midpoint rounds onto the start
+// (the closing line's end): what ArcTo's rounding did to 73 of 1248 rings,
+// made the same on every architecture (arm64's fused multiply-adds round
+// ArcTo differently).
+func clackShortArc(c f32.Point, r float32) StrokeQuads {
+	qs := clackArc(c, r, 2*math.Pi, false)
+	start := qs[0].Quad.From
+	for _, dir := range []float64{1, -1} {
+		pen := f32.Pt(start.X, math.Nextafter32(start.Y, float32(math.Inf(int(dir)))))
+		if mid := pen.Add(start).Mul(.5); mid == start {
+			last := &qs[len(qs)-1].Quad
+			last.To = pen
+			return append(qs, StrokeQuad{Contour: 1, Quad: QuadSegment{From: pen, Ctrl: mid, To: start}})
+		}
+	}
+	return nil // start.Y odd: both midpoints round onto the pen
+}
+
+// A closed ring (MoveTo, ArcTo 2π, Close), and one whose arc ends a float
+// step short: its outline's two loops close.
 func TestClackRingSeamClosedRing(t *testing.T) {
 	n := 0
 	for _, c := range clackCentres {
@@ -87,12 +107,20 @@ func TestClackRingSeamClosedRing(t *testing.T) {
 				if w >= r {
 					continue
 				}
-				out := clackArc(c, r, 2*math.Pi, true).stroke(StrokeStyle{Width: w})
 				hw := float64(w) / 2
-				if f := clackOutlineFaults(out, c, float64(r)-hw, float64(r)+hw, 0.05); len(f) > 0 {
-					n++
-					if n <= 12 {
-						t.Errorf("ring c %v r %g w %g: %d faults, first %q", c, r, w, len(f), f[0])
+				for _, short := range []bool{false, true} {
+					in := clackArc(c, r, 2*math.Pi, true)
+					if short {
+						if in = clackShortArc(c, r); in == nil {
+							continue
+						}
+					}
+					out := in.stroke(StrokeStyle{Width: w})
+					if f := clackOutlineFaults(out, c, float64(r)-hw, float64(r)+hw, 0.05); len(f) > 0 {
+						n++
+						if n <= 12 {
+							t.Errorf("ring c %v r %g w %g (a float step short: %v): %d faults, first %q", c, r, w, short, len(f), f[0])
+						}
 					}
 				}
 			}
@@ -126,5 +154,95 @@ func TestClackRingSeamSweeps(t *testing.T) {
 	}
 	if n > 12 {
 		t.Errorf("…and %d more sweeps", n-12)
+	}
+}
+
+// clackNaN is the first outline segment with a NaN point, or -1.
+func clackNaN(out StrokeQuads) int {
+	for i, q := range out {
+		if q.Quad.From != q.Quad.From || q.Quad.Ctrl != q.Quad.Ctrl || q.Quad.To != q.Quad.To {
+			return i
+		}
+	}
+	return -1
+}
+
+// clackWinding is the outline's nonzero winding number at p, each quad
+// cut into 16 lines.
+func clackWinding(out StrokeQuads, p f32.Point) int {
+	w := 0
+	cross := func(a, b f32.Point) {
+		if (a.Y <= p.Y) == (b.Y <= p.Y) {
+			return
+		}
+		x := a.X + (p.Y-a.Y)/(b.Y-a.Y)*(b.X-a.X)
+		if x > p.X {
+			if b.Y > a.Y {
+				w++
+			} else {
+				w--
+			}
+		}
+	}
+	for _, q := range out {
+		prev := q.Quad.From
+		for i := 1; i <= 16; i++ {
+			t := float32(i) / 16
+			u := 1 - t
+			pt := q.Quad.From.Mul(u * u).Add(q.Quad.Ctrl.Mul(2 * u * t)).Add(q.Quad.To.Mul(t * t))
+			cross(prev, pt)
+			prev = pt
+		}
+	}
+	return w
+}
+
+// A polyline whose first segment is one float step long (its midpoint
+// rounds onto its end, so its control point is its end): the stroke covers
+// everything within a half width of the line, no hole by its start.
+// addLine took the t = 1 normal from the start it had already offset, so
+// that segment's sides ended a half width along the line instead of
+// across it (Gio patch 62, ring-seam's review).
+func TestClackRingSeamTinyFirstSegment(t *testing.T) {
+	const w, hw = 2, 1
+	for _, b := range []f32.Point{{X: 100, Y: 50}, {X: 333.3, Y: 384.5}, {X: 40.25, Y: 12.5}} {
+		for _, d := range []f32.Point{{X: 1, Y: 0}, {X: 0, Y: 1}, {X: 1, Y: 1}, {X: -1, Y: 0}} {
+			step := func(v, dir float32) float32 {
+				switch {
+				case dir > 0:
+					return math.Nextafter32(v, float32(math.Inf(1)))
+				case dir < 0:
+					return math.Nextafter32(v, float32(math.Inf(-1)))
+				}
+				return v
+			}
+			e := f32.Pt(step(b.X, d.X), step(b.Y, d.Y))
+			a := f32.Pt(b.X-10, b.Y)
+			in := StrokeQuads{
+				{Contour: 1, Quad: QuadSegment{From: e, Ctrl: e.Add(b).Mul(.5), To: b}},
+				{Contour: 1, Quad: QuadSegment{From: b, Ctrl: b.Add(a).Mul(.5), To: a}},
+			}
+			out := in.stroke(StrokeStyle{Width: w})
+			if i := clackNaN(out); i >= 0 {
+				t.Errorf("start %v → %v → %v: segment %d of the outline is NaN", e, b, a, i)
+				continue
+			}
+			holes := 0
+			for y := float64(b.Y) - hw; y <= float64(b.Y)+hw; y += 0.05 {
+				for x := float64(b.X) - 3; x <= float64(b.X)+hw; x += 0.05 {
+					// the distance to the segment b–a (a lies 10 to the left)
+					dx := math.Max(x-float64(b.X), 0)
+					if math.Hypot(dx, y-float64(b.Y)) >= hw-0.06 {
+						continue
+					}
+					if clackWinding(out, f32.Pt(float32(x), float32(y))) == 0 {
+						holes++
+					}
+				}
+			}
+			if holes > 0 {
+				t.Errorf("start %v → %v → %v: %.3f px² of the stroke uncovered by its start", e, b, a, float64(holes)*0.05*0.05)
+			}
+		}
 	}
 }
