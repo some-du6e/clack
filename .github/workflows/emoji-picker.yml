@@ -37,6 +37,8 @@ on:
       - "internal/ui/popups/style.go"
       - "internal/ui/messages/quickreact*"
       - "internal/fakeslack/fakeslack.go"
+      - "internal/core/emoji_pack*.go" # the picker's pack call to action (TestEmojiPackCTAPixels)
+      - "internal/fakeslack/emoji_packs.go"
       - ".github/workflows/emoji-picker.yml"
   workflow_dispatch:
     inputs:
