@@ -160,6 +160,11 @@ type View struct {
 	// tables: each data_table's page, sort and filter (datatable.go), by
 	// its block_id
 	tables map[any]*tableState
+	// carousels: each carousel's scroller (carousel.go), by block_id
+	carousels map[string]*carouselState
+	// layH is the handler of the Layout under way (its carousels' cards
+	// lay out with it)
+	layH   Handler
 	redraw bool // ask for a frame after this frame's events
 
 	// lead: the first line's start (SetLead)
@@ -384,6 +389,7 @@ func (v *View) selRange() (int32, int32) {
 
 // Layout draws the doc at the constraints' max width and returns its size.
 func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimensions {
+	v.layH = h
 	v.dark = st != nil && st.Palette.Dark
 	if st != nil {
 		v.hitImgs = st.Images
@@ -590,6 +596,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.mounted(gtx, size)
 	pointer.CursorText.Add(gtx.Ops)
 	v.handAreas(gtx, false)
+	v.drawCarousels(gtx, st, v.layH) // the carousels' cards and arrows (carousel.go)
 	// Element runs (Options.Elements) go last: their input areas must be
 	// above the cursor/hit areas of cards and links registered above.
 	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {
@@ -696,6 +703,9 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if v.playing == nil {
 		v.playing = map[string]bool{}
 	}
+	if v.carousels == nil {
+		v.carousels = map[string]*carouselState{}
+	}
 	if v.tables == nil {
 		v.tables = map[any]*tableState{}
 	}
@@ -703,7 +713,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	// messages_theme != "dense")
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
-		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations, tables: v.tables}
+		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations, tables: v.tables, carousels: v.carousels}
 	if v.opts.FillBlocks {
 		l.filled = 1 // a view's blocks (FillBlocks)
 	}

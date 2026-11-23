@@ -127,6 +127,7 @@ func (l *lay) card(cd *richtext.Card, x, y, w int) int {
 		yy += l.cardActions(cd, ix, yy, iw)
 	}
 	h := yy + pad + bw - y
+	h = max(h, l.opts.CardHeight) // a carousel's card: as tall as the tallest
 	frame := box{kind: bBorder, r: image.Rect(x, y, x+cw, y+h), radius: l.dp(12), fill: p.Panel, stroke: l.tok("otl-ter"), bw: bw, target: -1}
 	l.d.boxes = append(l.d.boxes, box{})
 	copy(l.d.boxes[box0+1:], l.d.boxes[box0:])

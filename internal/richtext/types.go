@@ -221,6 +221,9 @@ const (
 	// EventBlock is an event block (event.go): Event holds the calendar
 	// event as the card reads it.
 	EventBlock
+	// CarouselBlock is a carousel block (carousel.go): Children are its
+	// cards, Carousel its label.
+	CarouselBlock
 )
 
 // Block is one vertical unit of a document.
@@ -289,6 +292,8 @@ type Block struct {
 	Prompt *SharePrompt
 	// Event is an EventBlock's calendar event (event.go).
 	Event *Event
+	// Carousel is a CarouselBlock's label (carousel.go).
+	Carousel *Carousel
 }
 
 // Container is a container block's header and options (Slack's
