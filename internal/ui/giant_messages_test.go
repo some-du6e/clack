@@ -54,8 +54,11 @@ const (
 	// channel opened (+825 MB, the fake in its own process)
 	giantRSSMB = 1500
 	// giantFrameMax bounds the app's part of every frame from the open on
-	// (a frame less its GPU raster: perfEnv.raster).
-	giantFrameMax = 300 * time.Millisecond
+	// (a frame less its GPU raster: perfEnv.raster). The longest is a
+	// giant row laid out again once back on screen (its layout released
+	// while away: messages' releaseBigRows), 92,000 lines in 112-299 ms
+	// on CI's runners, the same work; before the fixes, 13.4 s.
+	giantFrameMax = 500 * time.Millisecond
 	// giantWholeMax bounds every whole frame, raster and all. llvmpipe's
 	// path stenciling costs about the same for any new screen of text,
 	// whatever the messages' size (an ordinary channel's open: up to
