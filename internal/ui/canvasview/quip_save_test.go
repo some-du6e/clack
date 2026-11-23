@@ -24,6 +24,7 @@ const (
 	quipSecondID = "temp:C:QSV00002"
 	quipCheckID  = "temp:C:QSV00003"
 	quipMentID   = "temp:C:QSV00004"
+	quipQuoteID  = "temp:C:QSV00005"
 )
 
 func quipBlocks() []canvas.Block {
@@ -41,9 +42,16 @@ func quipBlocks() []canvas.Block {
 // quipEnv opens the Quip canvas with saves through edit-document on.
 func quipEnv(t *testing.T) (*testHost, *fakeslack.Server, *View, *shooter, func()) {
 	t.Helper()
+	return quipEnvBlocks(t, quipBlocks())
+}
+
+// quipEnvBlocks opens a Quip canvas of blocks bs (the first quipFirstID)
+// with saves through edit-document on.
+func quipEnvBlocks(t *testing.T, bs []canvas.Block) (*testHost, *fakeslack.Server, *View, *shooter, func()) {
+	t.Helper()
 	h, fs := newEnv(t, false)
 	h.a.SetQuipEdit(true)
-	fs.AddCanvas(fakeslack.FakeCanvas{ID: quipCanvasID, Title: "Quip saves", Doc: canvas.Doc{Blocks: quipBlocks()}})
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: quipCanvasID, Title: "Quip saves", Doc: canvas.Doc{Blocks: bs}})
 	v := New(h, quipCanvasID, Full, Actions{})
 	s := newShooter(t, image.Pt(1100, 900))
 	frame := func() { s.frame(func(gtx layout.Context) { v.Layout(gtx) }) }
@@ -439,5 +447,68 @@ func TestCanvasQuipRestyle(t *testing.T) {
 	}
 	if got := quip.FieldsString(&rs[0].Save.Sections[0]); got != "1,2,9,10,13,19,20,33" {
 		t.Errorf("a restyle's fields %s, want the style alone", got)
+	}
+}
+
+// A quote's paragraph (a section of style 16) saves its text through
+// edit-document as a text edit of its section, which stays in the quote;
+// Enter in it (a second quote paragraph) waits for the rest of B3.
+func TestCanvasQuipQuoteParagraph(t *testing.T) {
+	quote := canvas.Block{Kind: canvas.Quote, Children: []canvas.Block{{ID: quipQuoteID, Kind: canvas.Paragraph, Spans: txt("Keep it short.")}}}
+	h, fs, v, s, frame := quipEnvBlocks(t, append(quipBlocks(), quote))
+	open := func() {
+		t.Helper()
+		q := findBlk(v, func(b *canvas.Block) bool { return b.Kind == canvas.Quote })
+		if q == nil || len(q.kids) != 1 {
+			t.Fatal("no quote with one paragraph")
+		}
+		v.edit.start(v, q.kids[0])
+		frame()
+		if v.edit.cur == nil || !v.edit.cur.quoted {
+			t.Fatal("the quote's paragraph didn't open as one")
+		}
+	}
+	open()
+	ed := v.edit.cur.ed
+	ed.SetSelection(0, ed.Doc().Len())
+	ed.InsertText("Keep it short, please.")
+	frame()
+	if !v.edit.finish(v) {
+		t.Fatal("the quote's paragraph was refused")
+	}
+	settle(t, s, v, "the quote's new text", func() bool {
+		fc, _ := fs.Canvas(quipCanvasID)
+		for _, b := range fc.Doc.Blocks {
+			if b.Kind == canvas.Quote && len(b.Children) == 1 && b.Children[0].Text() == "Keep it short, please." {
+				return true
+			}
+		}
+		return false
+	})
+	rs := quipSaves(fs)
+	if len(rs) != 1 || len(rs[0].Save.Sections) != 1 {
+		t.Fatalf("%d saves", len(rs))
+	}
+	sec := &rs[0].Save.Sections[0]
+	if got := quip.FieldsString(sec); got != "1,2,9,12,13,19,20,33" || sec.ID == nil || *sec.ID != quipQuoteID {
+		t.Errorf("the save's section %s, fields %s: want the quote's text alone", quip.SectionRTML(sec), got)
+	}
+
+	// Enter: a new quote paragraph isn't saved yet
+	open()
+	ed = v.edit.cur.ed
+	ed.SetSelection(ed.Doc().Len(), ed.Doc().Len())
+	ed.InsertText("\nAnd clear.")
+	frame()
+	if v.edit.finish(v) || v.edit.cur == nil || cantEdits(h) != 1 {
+		t.Errorf("a second quote paragraph: editor %v, toasts %d", v.edit.cur != nil, cantEdits(h))
+	}
+	v.edit.discard(v)
+	time.Sleep(200 * time.Millisecond)
+	if n := len(quipSaves(fs)); n != 1 {
+		t.Errorf("%d edit-document calls, want the first one", n)
+	}
+	if es := fs.CanvasEdits(); len(es) != 0 {
+		t.Errorf("%d canvases.edit calls, want none", len(es))
 	}
 }

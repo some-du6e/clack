@@ -872,14 +872,14 @@ func blockEdit(base func(string) (sectionBase, bool), be CanvasBlockEdit) (quip.
 		return e, err
 	}
 	b, _ := base(be.SectionID)
-	if want, ok := textStyle(be.OrigKind); ok && len(b.parents) == 0 && b.sty != want {
-		return quip.Edit{}, fmt.Errorf("%w: section %s isn't a %v any more", ErrCanvasConflict, be.SectionID, be.OrigKind)
-	}
 	if be.Kind != be.OrigKind {
 		ns, okNew := textStyle(be.Kind)
-		_, okOld := textStyle(be.OrigKind)
-		if !okNew || !okOld || len(b.parents) > 0 {
+		os, okOld := textStyle(be.OrigKind)
+		switch {
+		case !okNew || !okOld || len(b.parents) > 0 || b.sty == quip.StyleBlockquote:
 			return quip.Edit{}, fmt.Errorf("%w: a block made a %v from a %v", quip.ErrUnsupported, be.Kind, be.OrigKind)
+		case b.sty != os: // restyled meanwhile
+			return quip.Edit{}, fmt.Errorf("%w: section %s isn't a %v any more", ErrCanvasConflict, be.SectionID, be.OrigKind)
 		}
 		e.Restyle, e.Style = true, ns
 	}

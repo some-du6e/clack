@@ -163,8 +163,9 @@ func (e *editState) saveQuip(v *View, f func(ctx context.Context, a *core.App) e
 
 // quipRefuses reports whether a finished session with markdown md (blocks
 // bs) changes something edit-document can't save yet: Quip's default
-// content typed over, a quote's paragraph, a block's own style, level or
-// box changed, a code block, new blocks that start or leave a list (each
+// content typed over, a quote's paragraph made more than its own text, a
+// block's style changed into or out of a list, a code block made more
+// than its code, new blocks that start or leave a list (each
 // new block has to keep the list, and the level, of the block it follows),
 // or a mention, emoji or date in a new block (a control section of its
 // own). A session that changed nothing, or a new block left empty, saves
@@ -173,12 +174,15 @@ func quipRefuses(v *View, s *session, md string, bs []canvas.Block) bool {
 	switch {
 	case !quipChanged(s, md):
 		return false
-	case s.def || s.quoted:
+	case s.def:
 		return true
 	case s.target != nil && md == "":
 		return false
 	case len(bs) == 0:
 		return true
+	case s.quoted: // a quote's paragraph (a section of style 16): its own text, for now
+		q := unquote(bs)
+		return len(q) != 1 || q[0].Kind != canvas.Paragraph || q[0].Level != 0
 	}
 	if s.target != nil && s.kind0 == canvas.Code { // a code block's text, nothing more
 		return len(bs) != 1 || bs[0].Kind != canvas.Code
@@ -793,6 +797,9 @@ func (e *editState) finish(v *View) bool {
 			})
 		default: // the block's text, and its style, level or box when they changed
 			b := bs[0]
+			if s.quoted { // the quote's paragraph itself
+				b = unquote(bs)[0]
+			}
 			be := core.CanvasBlockEdit{SectionID: id, Orig: from, OrigKind: s.kind0, OrigLevel: s.level0, OrigChecked: s.checked0,
 				Spans: b.Spans, Kind: b.Kind, Level: b.Level, Checked: b.Checked}
 			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasBlock(ctx, v.id, be) })

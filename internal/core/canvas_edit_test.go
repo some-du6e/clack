@@ -799,3 +799,31 @@ func TestCanvasSaveCode(t *testing.T) {
 		t.Errorf("a code edit from old text: %v", err)
 	}
 }
+
+// A quote's paragraph (a section of style 16) saves its own text like any
+// paragraph, and stays in the quote.
+func TestCanvasSaveQuoteParagraph(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	txt := func(s string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: s}} }
+	q := modelSection(t, a, fakeslack.CanvasShared, "Keep it short.")
+	if q.Style == nil || *q.Style != quip.StyleBlockquote {
+		t.Fatalf("the quote's paragraph has style %v", q.Style)
+	}
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *q.ID, Orig: txt("Keep it short."), OrigKind: canvas.Paragraph,
+		Spans: txt("Keep it short, please."), Kind: canvas.Paragraph}); err != nil {
+		t.Fatalf("a quote's paragraph: %v", err)
+	}
+	after := modelSection(t, a, fakeslack.CanvasShared, "Keep it short, please.")
+	if after.Style == nil || *after.Style != quip.StyleBlockquote {
+		t.Errorf("the paragraph left the quote: style %v", after.Style)
+	}
+	if rs := saves(fs); len(rs) != 1 || quip.FieldsString(&rs[0].Save.Sections[0]) != "1,2,9,12,13,19,20,33" {
+		t.Errorf("the save %+v", rs)
+	}
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *q.ID, Orig: txt("Keep it short, please."), OrigKind: canvas.Paragraph,
+		Spans: txt("Keep it short, please."), Kind: canvas.Heading1}); !errors.Is(err, quip.ErrUnsupported) {
+		t.Errorf("a quote's paragraph made a heading: %v", err)
+	}
+}
