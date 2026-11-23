@@ -56,7 +56,7 @@ func TestModalTitleWraps(t *testing.T) {
 	if want := 40 + 30*len(lines); head != want {
 		t.Errorf("%d lines %q in a %dpx header, want %dpx (padding 20px 28px, 30px lines)", len(lines), lines, head, want)
 	}
-	if got := strings.Join(lines, " "); got != mtLong {
+	if got := mtJoin(lines); got != mtLong {
 		t.Errorf("the lines read %q, want the whole title %q (no ellipsis)", got, mtLong)
 	}
 	// each line fits beside the close button: padding-right 76px
@@ -108,8 +108,7 @@ func TestModalTitleWrapsChannelEntity(t *testing.T) {
 	if icons != 1 {
 		t.Errorf("lines %q draw the lock %d times, want once, beside the name", lines, icons)
 	}
-	got := strings.ReplaceAll(strings.Join(lines, " "), "[lock]", "")
-	if strings.ReplaceAll(got, "- ", "-") != pre+after {
+	if got := strings.ReplaceAll(mtJoin(lines), "[lock]", ""); got != pre+after {
 		t.Errorf("the lines read %q, want %q", got, pre+after)
 	}
 	if cr := mtClose(m); cr.Min.Y != 20 {
@@ -133,4 +132,18 @@ func TestModalTitleTruncates(t *testing.T) {
 	if head := mtFrame(t, o); head != 70 {
 		t.Errorf("an OldDialog's header is %dpx, want 70px (one line, cut)", head)
 	}
+}
+
+// mtJoin puts a wrapped title's lines back together: a line broken at a
+// space lost that space (TitleLines trims it), one broken after a hyphen
+// (UAX #14: "release-|coordination") lost nothing.
+func mtJoin(lines []string) string {
+	var b strings.Builder
+	for i, ln := range lines {
+		if i > 0 && !strings.HasSuffix(lines[i-1], "-") {
+			b.WriteByte(' ')
+		}
+		b.WriteString(ln)
+	}
+	return b.String()
 }
