@@ -15,6 +15,8 @@ on:
       - "internal/ui/popups/actions_*.go"
       - "internal/ui/popups/section_modals.go"
       - "internal/ui/popups/create_channel.go"
+      - "internal/ui/popups/channel_managers.go"
+      - "internal/ui/popups/remove_member.go"
       - "internal/ui/refocus/**"
       - "internal/ui/blockkit/modal*.go"
       - "internal/ui/blockkit/menus.go"
@@ -61,7 +63,7 @@ jobs:
       - name: popups dialogs through the router
         run: go test -count=1 -v -timeout 10m -run "$POPUP_TESTS" ./internal/ui/popups
       - name: Block Kit confirm and modal
-        run: go test -count=1 -v -timeout 10m -run 'TestConfirmObjectKeys|TestBlockKitModalKeys' ./internal/ui/blockkit
+        run: go test -count=1 -v -timeout 10m -run 'TestConfirmObjectKeys|TestBlockKitModalKeys|TestConfirmObjectTitle$' ./internal/ui/blockkit
       - name: Notify N people over a real composer editor
         run: go test -count=1 -v -timeout 10m -run 'TestBroadcastWarningKeys|TestBroadcastConfirm' ./internal/ui/composer
       - name: Edit topic over channel details
@@ -74,6 +76,9 @@ jobs:
         run: |
           mkdir -p "$DIALOG_KEYS_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -timeout 10m -run 'TestDialogKeysShots$' ./internal/ui/
+          # long titles: wrapped (c-sk-modal) and cut (DeprecatedDialog)
+          CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -timeout 10m -run 'TestModalTitleShots$' ./internal/ui/popups/
+          CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -timeout 10m -run 'TestConfirmObjectTitleShots$' ./internal/ui/blockkit/
           ls -l "$DIALOG_KEYS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

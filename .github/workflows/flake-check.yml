@@ -3396,6 +3396,39 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # 2026-11-23 (Karim, alpha.157: "fucked text"): modal titles wrap as
+  # Slack's .c-sk-modal_title_bar__text does, by whole 30px lines, a
+  # channel entity with its icon; DeprecatedDialog titles stay cut
+  # (truncateTitle), Block Kit confirms included.
+  modal-title-wrap:
+    if: ${{ !inputs.only || startsWith('modal-title-wrap', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the title wrap, COUNT runs"
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 20m -run '^(TestModalTitleWraps|TestModalTitleWrapsChannelEntity|TestModalTitleTruncates)$' ./internal/ui/popups || rc=1
+          if [ -f internal/ui/blockkit/confirm_title_test.go ]; then go test -count=$COUNT -v -timeout 20m -run '^TestConfirmObjectTitle$' ./internal/ui/blockkit || rc=1; fi
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # 2026-11-20 (Karim, α.113): "i swear i just saw the [/] icon flicker
   # like crazy" in a thread composer under OwlMode's patches. The footer's
   # layout across a sweep of widths, frame after frame, with and without
@@ -5857,6 +5890,7 @@ jobs:
   expect-fail:
     needs:
       - go
+      - modal-title-wrap
       - avf-audio
       - race-video
       - members
