@@ -39,7 +39,10 @@ The winner: a variant that loads beats one that doesn't; one that doesn't
 re-render while idle beats one that does; more passing checks beat fewer;
 no console errors beats some. Between variants that work the same, the
 cheaper one wins on the costs above, each compared only past a noise
-floor; a tie goes to the smaller bundle. The CI workflow
+floor; a tie goes to the smaller bundle. A pair with no behaviour check on
+either side is decided on costs alone, which can't tell a version that
+does nothing in Clack from one that works: its reason says "no behaviour
+checks", and the Library recommends neither (Install asks which). The CI workflow
 (`.github/workflows/plugin-bench.yml`) re-runs the bench and fails
 when a committed winner regresses (stops loading, starts re-rendering,
 passes fewer checks, or loses on correctness).
@@ -50,7 +53,7 @@ fidelity compares the two variants' screenshots of the same scene with
 each other: **Pixel diff** is the share of the window that differs.
 The screenshots are in the run's `plugin-bench-shots` artifact.
 
-Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this run](https://github.com/some-du6e/clack/actions/runs/42697545499).
+Bundles: slick 34f2c25, slick b582605, slick f6be3bd, taut 6fe5123, taut efe682d. Generated 2026-11-22T19:43:42Z by [this run](https://github.com/some-du6e/clack/actions/runs/45061897607); the 25 plugins it didn't measure keep an earlier run's results, each naming its run.
 
 ## Host fixes and gaps the bench found
 
@@ -105,7 +108,9 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 |---|---|---|---|---|---|---|---|---|
 | Account Switcher | **Taut** | works fully, 4.6x faster to load, 3.5x less JS memory | 1/1 / 1/1 | 3.6 / 16.4 | 67.0 / 94.0 | 0.0 / 30.0 | 130 / 457 | 0 / 0 |
 | Admin Backend | **Slick** | works fully in both; costs within noise, smaller bundle (7.1 KB vs 9.1 KB) | 1/1 / 1/1 | 4.7 / 9.0 | 70.0 / 58.0 | 4.1 / 0.0 | 165 / 181 | 0 / 0 |
+| Anonymize Filenames | **Taut** | no behaviour checks, both load, 8.5x less JS memory | 0/0 / 0/0 | 2.2 / 5.6 | 29.0 / 47.0 | 11.9 / 29.8 | 12.7 / 107 | 0 / 0 |
 | Better Typing Indicator | **Taut** | works fully in both; costs within noise, smaller bundle (5.4 KB vs 12.4 KB) | 1/1 / 1/1 | 8.5 / 10.0 | 364 / 274 | 105 / 77.2 | 407 / 521 | 0 / 0 |
+| Bring Back Slackbot | **Slick** | works fully (Taut passes 0/1 checks) | 0/1 / 1/1 | 6.7 / 5.0 | 24.0 / 146 | 0.0 / 174 | 55.9 / 277 | 0 / 0 |
 | Censorship | **Taut** | works fully, 2.0x faster to load, 2.6x less frame overhead | 1/1 / 1/1 | 5.7 / 11.6 | 213 / 554 | 1632 / 1742 | 11896 / 3663 | 0 / 0 |
 | Clear URLs | **Taut** | works fully, 3.5x faster to load, 1.5x less JS memory | 1/1 / 1/1 | 4.0 / 13.7 | 68.0 / 27.0 | 0.0 / 0.0 | 340 / 520 | 0 / 0 |
 | Click to Load | **Taut** | works fully, 4.2x faster to load, 5.4x less JS memory | 1/1 / 1/1 | 3.8 / 15.8 | 266 / 0.0 | 54.9 / 0.0 | 19.8 / 107 | 0 / 0 |
@@ -114,11 +119,15 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 | Experiments | **Slick** | works fully, 3.6x less frame overhead | 1/1 / 1/1 | 6.3 / 9.3 | 189 / 52.0 | 45.0 / 8.0 | 80.5 / 120 | 0 / 0 |
 | Haiku Warning | **Slick** | works fully (Taut passes 1/2 checks), frame overhead 0.0 µs vs 313 µs, scroll CPU 0.0 ms vs 933 ms | 1/2 / 2/2 | 7.6 / 68.0 | 313 / 0.0 | 933 / 0.0 | 307 / 491 | 0 / 0 |
 | Human Count | **Taut** | works fully in both; costs within noise, smaller bundle (0.9 KB vs 3.1 KB) | 1/1 / 1/1 | 2.1 / 3.2 | 103 / 101 | 11.4 / 13.8 | 48.1 / 60.1 | 0 / 0 |
+| IDV Status | **Taut** | no behaviour checks, both load; costs within noise, smaller bundle (2.4 KB vs 6.2 KB) | 0/0 / 0/0 | 2.4 / 5.6 | 134 / 103 | 236 / 212 | 1104 / 1129 | 0 / 0 |
 | Last Seen | **Slick** | works fully, 3.3x faster to load, 2.5x less JS memory | 1/1 / 1/1 | 22.9 / 6.9 | 180 / 152 | 26.8 / 40.4 | 711 / 286 | 0 / 0 |
 | Nicknames | **Taut** | works fully in both; costs within noise, smaller bundle (5.8 KB vs 10.0 KB) | 2/2 / 2/2 | 7.1 / 9.1 | 146 / 107 | 12.7 / 0.0 | 211 / 269 | 0 / 0 |
+| No Tracking | **Taut** | no behaviour checks, both load, 3.0x faster to load, 3.4x less JS memory | 0/0 / 0/0 | 4.5 / 13.5 | 50.0 / 36.0 | 12.3 / 2.9 | 33.7 / 113 | 0 / 0 |
 | Office Hours | **Taut** | works fully, 6.7x less frame overhead, scroll CPU 0.0 ms vs 77 ms | 1/1 / 1/1 | 6.9 / 7.9 | 48.0 / 320 | 0.0 / 77.0 | 183 / 203 | 0 / 0 |
 | Oneko | **Taut** | works fully, 5.1x less idle CPU | 2/2 / 2/2 | 2.7 / 5.2 | 93.0 / 129 | 35.0 / 65.1 | 96.9 / 152 | 0 / 0 |
+| Private Channel | **Taut** | no behaviour checks, both load, 1.4x faster to load, 1.5x less frame overhead | 0/0 / 0/0 | 13.6 / 18.7 | 99.0 / 149 | 33.8 / 66.9 | 309 / 474 | 0 / 0 |
 | Quick Join | **Taut** | works fully, 6.5x less frame overhead, 6.9x less JS memory | 1/1 / 1/1 | 2.2 / 6.4 | 29.0 / 189 | 0.0 / 17.5 | 15.0 / 104 | 0 / 0 |
+| Real Markdown | **Taut** | no behaviour checks, both load; costs within noise, smaller bundle (2.6 KB vs 7.6 KB) | 0/0 / 0/0 | 2.7 / 4.9 | 34.0 / 11.0 | 14.5 / 0.0 | 22.5 / 48.1 | 0 / 0 |
 | Restricted Channel Warning | **Taut** | works fully, scroll CPU 70 ms vs 1828 ms, 2.9x less JS memory | 1/1 / 1/1 | 3.5 / 4.0 | 278 / 408 | 70.0 / 1828 | 292 / 835 | 0 / 0 |
 | Show Real User | **Taut** | works fully in both; costs within noise, smaller bundle (3.7 KB vs 8.3 KB) | 1/1 / 1/1 | 12.6 / 8.9 | 717 / 604 | 1645 / 1670 | 7392 / 8577 | 0 / 0 |
 | Show Sending Bot | **Slick** | works fully, 2.6x faster to load | 1/1 / 1/1 | 66.1 / 25.9 | 815 / 882 | 1500 / 1502 | 23850 / 21247 | 0 / 0 |
@@ -133,7 +142,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Account Switcher
 
-**Taut**: works fully, 4.6x faster to load, 3.5x less JS memory.
+**Taut**: works fully, 4.6x faster to load, 3.5x less JS memory. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -153,7 +162,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Admin Backend
 
-**Slick**: works fully in both; costs within noise, smaller bundle (7.1 KB vs 9.1 KB).
+**Slick**: works fully in both; costs within noise, smaller bundle (7.1 KB vs 9.1 KB). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -171,9 +180,28 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 | Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-adminbackend-taut.png`) | 0.0% (`bench-adminbackend-slick.png`) |
 
+### Anonymize Filenames
+
+**Taut**: no behaviour checks, both load, 8.5x less JS memory. No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+
+| | Taut | Slick |
+|---|---|---|
+| Bundle | `AnonymizeFilenames` 1.1 KB, sha256 `2f533b7fef68` | `AnonymiseFileNames` 10.9 KB, sha256 `34982cff4df6` |
+| Loads | yes | yes |
+| Console errors | none | none |
+| Patches | — | EditFileDialogTitle, FileFieldset, MultiFileUploadItem |
+| Host trees delivered | 0 | 0 |
+| Load | 2.2 ms | 5.6 ms |
+| Frame (median / p95) | 733 / 1320 µs (no plugin: 704) | 784 / 1485 µs (no plugin: 737) |
+| Scroll pass CPU | 381 ms (no plugin: 369) | 404 ms (no plugin: 374) |
+| Allocations / frame | 934 (no plugin: 916) | 1062 (no plugin: 912) |
+| JS heap / Go heap | +12.7 KB / +4880 KB | +107 KB / +12019 KB |
+| Idle | 0 trees in 3 s, 176 wakeups (no plugin: 118), CPU 0.5 ms/s (no plugin: 0.5) | 0 trees in 3 s, 176 wakeups (no plugin: 118), CPU 0.5 ms/s (no plugin: 0.5) |
+| Pixel diff | 0.0% (`bench-anonymizefilenames-taut.png`) | 0.0% (`bench-anonymisefilenames-slick.png`) |
+
 ### Better Typing Indicator
 
-**Taut**: works fully in both; costs within noise, smaller bundle (5.4 KB vs 12.4 KB).
+**Taut**: works fully in both; costs within noise, smaller bundle (5.4 KB vs 12.4 KB). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -191,9 +219,29 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 | Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-bettertypingindicator-taut.png`) | 0.0% (`bench-bettertypingindicator-slick.png`) |
 
+### Bring Back Slackbot
+
+**Slick**: works fully (Taut passes 0/1 checks).
+
+| | Taut | Slick |
+|---|---|---|
+| Bundle | `BringBackSlackbot` 0.4 KB, sha256 `df6c2038345e` | `CustomSlackbot` 4.7 KB, sha256 `cf21b48ff67c` |
+| Loads | yes | yes |
+| a Slackbot custom response drawn with the plugin's avatar, not the team's icon | fail: drawn as the team: its icon "http://127.0.0.1:39533/img/88x88/team.png", named "Fake Club" | pass: avatar https://ca.slack-edge.com/E09V59WQY1E-USLACKBOT-sv41d8cd98f0-192, named "Fake Club" |
+| Console errors | none | none |
+| Patches | — | ReplyBarAvatar |
+| Host trees delivered | 0 | 34 |
+| Load | 6.7 ms | 5.0 ms |
+| Frame (median / p95) | 1197 / 2085 µs (no plugin: 1173) | 1331 / 2772 µs (no plugin: 1185) |
+| Scroll pass CPU | 567 ms (no plugin: 585) | 744 ms (no plugin: 571) |
+| Allocations / frame | 897 (no plugin: 879) | 1076 (no plugin: 877) |
+| JS heap / Go heap | +55.9 KB / +5047 KB | +277 KB / +12371 KB |
+| Idle | 0 trees in 3 s, 170 wakeups (no plugin: 114), CPU 0.6 ms/s (no plugin: 0.7) | 0 trees in 3 s, 169 wakeups (no plugin: 114), CPU 0.7 ms/s (no plugin: 0.7) |
+| Pixel diff | 0.0% (`bench-bringbackslackbot-taut.png`) | 0.0% (`bench-customslackbot-slick.png`) |
+
 ### Censorship
 
-**Taut**: works fully, 2.0x faster to load, 2.6x less frame overhead.
+**Taut**: works fully, 2.0x faster to load, 2.6x less frame overhead. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -213,7 +261,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Clear URLs
 
-**Taut**: works fully, 3.5x faster to load, 1.5x less JS memory. The rules come from ClearURLs/Rules on GitHub at start, so this check needs the network.
+**Taut**: works fully, 3.5x faster to load, 1.5x less JS memory. The rules come from ClearURLs/Rules on GitHub at start, so this check needs the network. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -233,7 +281,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Click to Load
 
-**Taut**: works fully, 4.2x faster to load, 5.4x less JS memory. Clack draws link unfurls natively and never loads third-party frames, so there is no embed for either variant to hold; the check only sees that the hook is in place.
+**Taut**: works fully, 4.2x faster to load, 5.4x less JS memory. Clack draws link unfurls natively and never loads third-party frames, so there is no embed for either variant to hold; the check only sees that the hook is in place. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -253,7 +301,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Copy Reacted
 
-**Taut**: works fully in both; costs within noise, smaller bundle (3.8 KB vs 5.7 KB).
+**Taut**: works fully in both; costs within noise, smaller bundle (3.8 KB vs 5.7 KB). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -273,7 +321,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Custom Name Recording
 
-**Taut**: works fully in both; costs within noise, smaller bundle (3.4 KB vs 5.4 KB). Its button lives in Edit profile, behind a file picker; the bench checks the patch only.
+**Taut**: works fully in both; costs within noise, smaller bundle (3.4 KB vs 5.4 KB). Its button lives in Edit profile, behind a file picker; the bench checks the patch only. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -293,7 +341,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Experiments
 
-**Slick**: works fully, 3.6x less frame overhead.
+**Slick**: works fully, 3.6x less frame overhead. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -313,7 +361,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Haiku Warning
 
-**Slick**: works fully (Taut passes 1/2 checks), frame overhead 0.0 µs vs 313 µs, scroll CPU 0.0 ms vs 933 ms. Taut's warns only in channels Orpheus is in unless "Warn even if Orpheus doesn't respond" is on; the bench turns that on, as Orpheus isn't in the fake workspace.
+**Slick**: works fully (Taut passes 1/2 checks), frame overhead 0.0 µs vs 313 µs, scroll CPU 0.0 ms vs 933 ms. Taut's warns only in channels Orpheus is in unless "Warn even if Orpheus doesn't respond" is on; the bench turns that on, as Orpheus isn't in the fake workspace. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -334,7 +382,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Human Count
 
-**Taut**: works fully in both; costs within noise, smaller bundle (0.9 KB vs 3.1 KB).
+**Taut**: works fully in both; costs within noise, smaller bundle (0.9 KB vs 3.1 KB). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -352,9 +400,28 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 | Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-humancount-taut.png`) | 0.0% (`bench-humancount-slick.png`) |
 
+### IDV Status
+
+**Taut**: no behaviour checks, both load; costs within noise, smaller bundle (2.4 KB vs 6.2 KB). No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+
+| | Taut | Slick |
+|---|---|---|
+| Bundle | `IdvStatus` 2.4 KB, sha256 `65b02b15a467` | `HcaStatus` 6.2 KB, sha256 `343c65a5a44c` |
+| Loads | yes | yes |
+| Console errors | none | none |
+| Patches | BaseMessageSender | BaseMessageSender |
+| Host trees delivered | 145 | 145 |
+| Load | 2.4 ms | 5.6 ms |
+| Frame (median / p95) | 876 / 1968 µs (no plugin: 742) | 864 / 1977 µs (no plugin: 761) |
+| Scroll pass CPU | 629 ms (no plugin: 393) | 596 ms (no plugin: 384) |
+| Allocations / frame | 1443 (no plugin: 908) | 1443 (no plugin: 910) |
+| JS heap / Go heap | +1104 KB / +15322 KB | +1129 KB / +12306 KB |
+| Idle | 0 trees in 3 s, 173 wakeups (no plugin: 116), CPU 0.6 ms/s (no plugin: 0.5) | 0 trees in 3 s, 171 wakeups (no plugin: 117), CPU 0.5 ms/s (no plugin: 0.6) |
+| Pixel diff | 0.0% (`bench-idvstatus-taut.png`) | 0.0% (`bench-hcastatus-slick.png`) |
+
 ### Last Seen
 
-**Slick**: works fully, 3.3x faster to load, 2.5x less JS memory.
+**Slick**: works fully, 3.3x faster to load, 2.5x less JS memory. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -374,7 +441,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Nicknames
 
-**Taut**: works fully in both; costs within noise, smaller bundle (5.8 KB vs 10.0 KB).
+**Taut**: works fully in both; costs within noise, smaller bundle (5.8 KB vs 10.0 KB). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -393,9 +460,28 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 | Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.3 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-nicknames-taut.png`) | 0.0% (`bench-nicknames-slick.png`) |
 
+### No Tracking
+
+**Taut**: no behaviour checks, both load, 3.0x faster to load, 3.4x less JS memory. No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+
+| | Taut | Slick |
+|---|---|---|
+| Bundle | `NoTrack` 3.2 KB, sha256 `126c768a8036` | `NoTrack` 9.5 KB, sha256 `5c53f406db24` |
+| Loads | yes | yes |
+| Console errors | none | none |
+| Patches | — | — |
+| Host trees delivered | 0 | 0 |
+| Load | 4.5 ms | 13.5 ms |
+| Frame (median / p95) | 1233 / 2261 µs (no plugin: 1183) | 1232 / 2192 µs (no plugin: 1196) |
+| Scroll pass CPU | 599 ms (no plugin: 586) | 580 ms (no plugin: 577) |
+| Allocations / frame | 898 (no plugin: 877) | 897 (no plugin: 877) |
+| JS heap / Go heap | +33.7 KB / +4868 KB | +113 KB / +4289 KB |
+| Idle | 0 trees in 3 s, 170 wakeups (no plugin: 113), CPU 0.7 ms/s (no plugin: 0.7) | 0 trees in 3 s, 169 wakeups (no plugin: 113), CPU 0.8 ms/s (no plugin: 0.7) |
+| Pixel diff | 0.0% (`bench-notracking-taut.png`) | 0.0% (`bench-notrack-slick.png`) |
+
 ### Office Hours
 
-**Taut**: works fully, 6.7x less frame overhead, scroll CPU 0.0 ms vs 77 ms.
+**Taut**: works fully, 6.7x less frame overhead, scroll CPU 0.0 ms vs 77 ms. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -415,7 +501,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Oneko
 
-**Taut**: works fully, 5.1x less idle CPU.
+**Taut**: works fully, 5.1x less idle CPU. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -434,9 +520,28 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 | Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 3.0 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 13.8 ms/s (no plugin: 0.6) |
 | Pixel diff | 0.1% (`bench-oneko-taut.png`) | 0.1% (`bench-oneko-slick.png`) |
 
+### Private Channel
+
+**Taut**: no behaviour checks, both load, 1.4x faster to load, 1.5x less frame overhead. No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+
+| | Taut | Slick |
+|---|---|---|
+| Bundle | `PrivateChannel` 10.2 KB, sha256 `6aa9901dcd4b` | `PrivateChannelMapper` 22.5 KB, sha256 `cc8315acef5f` |
+| Loads | yes | yes |
+| Console errors | none | none |
+| Patches | BaseMessageAttachmentSlackMessage, BaseMrkdwnChannel, HuddleLinkJoinGate, ListChannelEntity, MessageAttachmentHuddleLink | BaseMrkdwnChannel, ListChannelEntity |
+| Host trees delivered | 13 | 13 |
+| Load | 13.6 ms | 18.7 ms |
+| Frame (median / p95) | 1302 / 2238 µs (no plugin: 1203) | 1322 / 2348 µs (no plugin: 1173) |
+| Scroll pass CPU | 614 ms (no plugin: 580) | 629 ms (no plugin: 563) |
+| Allocations / frame | 1112 (no plugin: 876) | 1112 (no plugin: 876) |
+| JS heap / Go heap | +309 KB / +4578 KB | +474 KB / +4569 KB |
+| Idle | 0 trees in 3 s, 170 wakeups (no plugin: 113), CPU 0.7 ms/s (no plugin: 0.6) | 0 trees in 3 s, 170 wakeups (no plugin: 114), CPU 0.7 ms/s (no plugin: 0.7) |
+| Pixel diff | 0.0% (`bench-privatechannel-taut.png`) | 0.0% (`bench-privatechannelmapper-slick.png`) |
+
 ### Quick Join
 
-**Taut**: works fully, 6.5x less frame overhead, 6.9x less JS memory. Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in a message (Clack draws the link natively and sends the click to the document's listeners at the link's element).
+**Taut**: works fully, 6.5x less frame overhead, 6.9x less JS memory. Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in a message (Clack draws the link natively and sends the click to the document's listeners at the link's element). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -454,9 +559,28 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 | Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 3.1 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-quickjoin-taut.png`) | 0.0% (`bench-quickjoin-slick.png`) |
 
+### Real Markdown
+
+**Taut**: no behaviour checks, both load; costs within noise, smaller bundle (2.6 KB vs 7.6 KB). No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+
+| | Taut | Slick |
+|---|---|---|
+| Bundle | `RealMarkdown` 2.6 KB, sha256 `743b42426857` | `NotShitMarkdown` 7.6 KB, sha256 `fbb13d0dfa20` |
+| Loads | yes | yes |
+| Console errors | none | none |
+| Patches | — | — |
+| Host trees delivered | 0 | 0 |
+| Load | 2.7 ms | 4.9 ms |
+| Frame (median / p95) | 1020 / 1754 µs (no plugin: 986) | 1004 / 1699 µs (no plugin: 993) |
+| Scroll pass CPU | 504 ms (no plugin: 489) | 484 ms (no plugin: 491) |
+| Allocations / frame | 909 (no plugin: 895) | 911 (no plugin: 892) |
+| JS heap / Go heap | +22.5 KB / +4889 KB | +48.1 KB / +4289 KB |
+| Idle | 0 trees in 3 s, 171 wakeups (no plugin: 114), CPU 0.6 ms/s (no plugin: 0.6) | 0 trees in 3 s, 173 wakeups (no plugin: 115), CPU 0.6 ms/s (no plugin: 0.7) |
+| Pixel diff | 0.0% (`bench-realmarkdown-taut.png`) | 0.0% (`bench-notshitmarkdown-slick.png`) |
+
 ### Restricted Channel Warning
 
-**Taut**: works fully, scroll CPU 70 ms vs 1828 ms, 2.9x less JS memory.
+**Taut**: works fully, scroll CPU 70 ms vs 1828 ms, 2.9x less JS memory. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -476,7 +600,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Show Real User
 
-**Taut**: works fully in both; costs within noise, smaller bundle (3.7 KB vs 8.3 KB).
+**Taut**: works fully in both; costs within noise, smaller bundle (3.7 KB vs 8.3 KB). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -496,7 +620,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Show Sending Bot
 
-**Slick**: works fully, 2.6x faster to load.
+**Slick**: works fully, 2.6x faster to load. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -516,7 +640,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Shut Up Slackbot
 
-**Slick**: works fully, 2.4x less frame overhead.
+**Slick**: works fully, 2.4x less frame overhead. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -537,7 +661,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Silent Typing
 
-**Taut**: works fully, 5.2x less frame overhead, 3.1x less JS memory.
+**Taut**: works fully, 5.2x less frame overhead, 3.1x less JS memory. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -558,7 +682,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Slim Message Box
 
-**Taut**: works fully in both; costs within noise, smaller bundle (7.3 KB vs 10.8 KB).
+**Taut**: works fully in both; costs within noise, smaller bundle (7.3 KB vs 10.8 KB). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -578,7 +702,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Streamer Mode
 
-**Slick**: works fully, 9.8x faster to load.
+**Slick**: works fully, 9.8x faster to load. Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -599,7 +723,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### User Pronouns
 
-**Taut**: works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.8 KB).
+**Taut**: works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.8 KB). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|
@@ -620,7 +744,7 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this ru
 
 ### Who Reacted
 
-**Taut**: works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.4 KB).
+**Taut**: works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.4 KB). Measured by [an earlier run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 | | Taut | Slick |
 |---|---|---|

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -104,6 +105,51 @@ type Plugin struct {
 	Winner   string    `json:"winner"`   // taut | slick
 	Reason   string    `json:"reason"`
 	Notes    string    `json:"notes,omitempty"` // what the scenario couldn't exercise
+	// Run is the run that measured it, when that isn't the data's own: a
+	// run limited to some plugins keeps the rest from the data before it
+	// (Keep)
+	Run string `json:"run,omitempty"`
+}
+
+// Checked reports a behaviour check on either variant: what the plugin
+// does was looked at, not just what it costs.
+func (p *Plugin) Checked() bool {
+	for _, v := range p.Variants {
+		if len(v.Checks) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// Same reports whether p and o are one plugin's results: the same system
+// and id for each variant (a plugin's display name can change, its ids
+// pair it), or the same name for results without ids.
+func (p *Plugin) Same(o *Plugin) bool {
+	ids := func(q *Plugin) (map[string]string, bool) {
+		m := map[string]string{}
+		for _, v := range q.Variants {
+			if v.ID == "" {
+				return nil, false
+			}
+			m[v.System] = v.ID
+		}
+		return m, len(m) > 0
+	}
+	a, okA := ids(p)
+	b, okB := ids(o)
+	if !okA || !okB {
+		return p.Name == o.Name
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	for sys, id := range a {
+		if b[sys] != id {
+			return false
+		}
+	}
+	return true
 }
 
 // Variant returns the plugin's variant of a system.
@@ -150,6 +196,11 @@ type Pick struct {
 	Winner string // system
 	Reason string
 	Exact  bool // every offered bundle is the version the bench measured
+	// Checked: the bench checked what the plugin does (a check on either
+	// variant). Without one the pick is costs only, which can't tell a
+	// version that does nothing from one that works: the Library doesn't
+	// recommend it (Install asks which)
+	Checked bool
 }
 
 // Entry is an offered bundle: its system, id and sha256.
@@ -173,7 +224,7 @@ func (d *Data) For(entries []Entry) (Pick, bool) {
 			exact = exact && strings.EqualFold(v.SHA256, e.SHA256)
 		}
 		if match && p.Winner != "" {
-			return Pick{Winner: p.Winner, Reason: p.Reason, Exact: exact}, true
+			return Pick{Winner: p.Winner, Reason: p.Reason, Exact: exact, Checked: p.Checked()}, true
 		}
 	}
 	return Pick{}, false
@@ -274,6 +325,14 @@ func decide(a, b *Variant) (w, l *Variant, why string) {
 	if pa < len(a.Checks) {
 		full = fmt.Sprintf("same results (%d/%d checks each)", pa, len(a.Checks))
 	}
+	inBoth := full + " in both"
+	if len(a.Checks) == 0 && len(b.Checks) == 0 {
+		// nothing looked at what either does: a version that does nothing
+		// can't be told from one that works, and the cheaper wins (the
+		// Library doesn't recommend it: Pick.Checked)
+		full = "no behaviour checks, both load"
+		inBoth = full
+	}
 	var x *Variant
 	switch {
 	case score > 0:
@@ -289,7 +348,7 @@ func decide(a, b *Variant) (w, l *Variant, why string) {
 		if c := costLine(x, o); c != "" {
 			return pick(x, full+", "+c)
 		}
-		return pick(x, fmt.Sprintf("%s in both; costs within noise, smaller bundle (%s vs %s)", full, kb(x.Size), kb(o.Size)))
+		return pick(x, fmt.Sprintf("%s; costs within noise, smaller bundle (%s vs %s)", inBoth, kb(x.Size), kb(o.Size)))
 	}
 	if c := costLine(x, other(x)); c != "" {
 		return pick(x, full+", "+c)
@@ -364,6 +423,42 @@ func fmtUnit(v float64, unit string) string {
 
 func kb(n int64) string { return fmt.Sprintf("%.1f KB", float64(n)/1024) }
 
+// Keep adds old's plugins that d didn't measure (a run limited to some
+// plugins: PLUGIN_BENCH_ONLY), each with the run that measured it, and
+// old's bundle sources to d's when it keeps any, then sorts d. A plugin
+// is the same one by its variants' systems and ids (Same), whatever its
+// display name.
+func (d *Data) Keep(old *Data) {
+	if old != nil {
+		kept := false
+		for _, p := range old.Plugins {
+			if slices.ContainsFunc(d.Plugins, func(n Plugin) bool { return n.Same(&p) }) {
+				continue
+			}
+			if p.Run == "" {
+				p.Run = old.Run
+			}
+			if p.Run == d.Run {
+				p.Run = ""
+			}
+			d.Plugins = append(d.Plugins, p)
+			kept = true
+		}
+		if kept {
+			srcs := map[string]bool{}
+			for _, s := range append(append([]string(nil), d.Sources...), old.Sources...) {
+				srcs[s] = true
+			}
+			d.Sources = d.Sources[:0]
+			for s := range srcs {
+				d.Sources = append(d.Sources, s)
+			}
+			sort.Strings(d.Sources)
+		}
+	}
+	d.Sort()
+}
+
 // Sort orders plugins by name.
 func (d *Data) Sort() {
 	sort.Slice(d.Plugins, func(i, j int) bool { return strings.ToLower(d.Plugins[i].Name) < strings.ToLower(d.Plugins[j].Name) })
@@ -381,7 +476,7 @@ func Regressions(old, cur *Data) []string {
 		op := &old.Plugins[i]
 		var np *Plugin
 		for j := range cur.Plugins {
-			if cur.Plugins[j].Name == op.Name {
+			if cur.Plugins[j].Same(op) {
 				np = &cur.Plugins[j]
 			}
 		}
