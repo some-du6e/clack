@@ -3197,7 +3197,7 @@ linux-gio job. In Clack: `internal/ui/popups`' `TestTickersKeepLaterPresses`
 spinner, a peek card animating in and a focused editor: one click each,
 and each ticker's wakeup on its cadence). Not in `UPSTREAM.patch`.
 
-## 62. io/input: typed text with nothing focused goes to a handler the window names
+## 64. io/input: typed text with nothing focused goes to a handler the window names
 
 `io/input/router.go` (`Router.processEvent`: a `key.EditEvent` with no
 focused handler goes to `Router.unfocusedText`) and

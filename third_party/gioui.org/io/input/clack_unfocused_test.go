@@ -1,6 +1,6 @@
 package input
 
-// Clack patch 62: typed text with no handler focused goes to the handler
+// Clack patch 64: typed text with no handler focused goes to the handler
 // SetUnfocusedText named; the focus stays empty.
 
 import (

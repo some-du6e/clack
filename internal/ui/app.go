@@ -385,7 +385,7 @@ type App struct {
 	inspPresses []key.Event
 
 	// typeSteal's handler for typed text nothing has the focus for
-	// (type_steal.go; Gio patch 62)
+	// (type_steal.go; Gio patch 64)
 	stealTag int
 	// kbMode: the viewer moves around with the keyboard (keyboard_mode.go)
 	kbMode bool

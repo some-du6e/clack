@@ -25,7 +25,7 @@ import (
 // Mod+V (enableShortcuts: zQkO's isCmdKey with b, i or v).
 //
 // Gio routes typed text to the focused handler only, so the App names a
-// handler for the text nothing has the focus for (Gio patch 62) and hands
+// handler for the text nothing has the focus for (Gio patch 64) and hands
 // it to the channel's composer; Mod+B, Mod+I and Mod+V come as keys. A
 // message list with the keyboard focus hands its keys on itself
 // (messages kbnav.go: the channel's to its input, as handleKeyDown does

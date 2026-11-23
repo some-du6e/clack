@@ -4,7 +4,7 @@ package input
 
 import "gioui.org/io/event"
 
-// Clack patch 62 (CLACK_PATCHES.md): typed text that no handler has the
+// Clack patch 64 (CLACK_PATCHES.md): typed text that no handler has the
 // focus for goes to the handler the window named for it.
 //
 // A browser types a key's character into whatever has the focus once

@@ -59,7 +59,7 @@ type Router struct {
 	transfers []io.ReadCloser
 	// Clack patch 15: per-window values for gestures (Source.Value).
 	values map[any]any
-	// Clack patch 62: the handler typed text goes to while no handler has
+	// Clack patch 64: the handler typed text goes to while no handler has
 	// the focus (Source.SetUnfocusedText, clack_unfocused.go)
 	unfocusedText event.Tag
 	// Clack patch 48: the window's run of clicks (clack_clicks.go)
@@ -547,7 +547,7 @@ func (q *Router) processEvent(e event.Event, system bool) {
 		if f := state.focus; f != nil {
 			evts = append(evts, taggedEvent{tag: f, event: e})
 		} else if t := q.unfocusedText; t != nil {
-			evts = append(evts, taggedEvent{tag: t, event: e}) // Clack patch 62
+			evts = append(evts, taggedEvent{tag: t, event: e}) // Clack patch 64
 		}
 		q.changeState(e, state, evts)
 	case key.FocusEvent, key.SelectionEvent:
