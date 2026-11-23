@@ -120,6 +120,10 @@ type prepareSendArgs struct {
 	// dialog first (MessagePaneInput passes it; InputContainer, the
 	// thread composer, doesn't).
 	IncludeBroadcastKeywordWarning bool `json:"includeBroadcastKeywordWarning,omitempty"`
+	// EnableSlashCommands is what /msg passes (false); this build's
+	// prepareAndSendMessage reads no such option (handleSlashCommand runs
+	// unless the send is scheduled), so it changes nothing here either.
+	EnableSlashCommands *bool `json:"enableSlashCommands,omitempty"`
 }
 
 // sendMessageArgs is the chat.postMessage-shaped sendMessage thunk.

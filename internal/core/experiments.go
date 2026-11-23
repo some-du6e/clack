@@ -320,6 +320,8 @@ var experimentReads = map[string][]string{
 	// composer and autocomplete
 	"slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
+	// /feedback's dialog and its note (composer/slash_local.go, popups/user_feedback.go: tCkD, VhHZ)
+	"slash_feedback_in_modal": on, "slash_feedback_modal_warning": on,
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},
 	"emoji_exact_match_boost":                                  on,

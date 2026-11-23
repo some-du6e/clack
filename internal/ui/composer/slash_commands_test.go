@@ -30,6 +30,27 @@ type cmdHost struct {
 	mu       sync.Mutex
 	overlays []popups.Overlay
 	invites  []string
+	navs     []string
+	toggles  int // ToggleKeyboardShortcuts
+	searches int // OpenSearchFromCommand
+}
+
+func (h *cmdHost) Navigate(r string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.navs = append(h.navs, r)
+}
+
+func (h *cmdHost) ToggleKeyboardShortcuts() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.toggles++
+}
+
+func (h *cmdHost) OpenSearchFromCommand() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.searches++
 }
 
 func (h *cmdHost) ShowOverlay(o popups.Overlay) {
@@ -50,12 +71,12 @@ const (
 )
 
 // cmdComposer is a composer in #general (a thread's when ts is set) over
-// the fake API.
-func cmdComposer(t *testing.T, ts string) (*Composer, *cmdHost, *fakeSlack) {
+// the fake API, the store seeded with Bobby and seed.
+func cmdComposer(t *testing.T, ts string, seed ...func(s *store.Store)) (*Composer, *cmdHost, *fakeSlack) {
 	t.Helper()
-	app, fs := syntheticApp(t, func(s *store.Store) {
+	app, fs := syntheticApp(t, append([]func(*store.Store){func(s *store.Store) {
 		s.PutUsers([]slack.User{{ID: tBobby, Name: "bobby", RealName: "Bobby Tables", Profile: slack.Profile{DisplayName: "bobby", RealName: "Bobby Tables"}}})
-	})
+	}}, seed...)...)
 	stubTyping(t)
 	withTaut(t, nil)
 	h := &cmdHost{slickHost: slickHost{app: app, th: theme.New(false)}}

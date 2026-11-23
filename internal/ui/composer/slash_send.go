@@ -30,6 +30,20 @@ type commandUI struct {
 	keep func(d *Doc)
 	// invite is the local /invite's invite modal for a channel
 	invite func(ch string, users []string)
+	// shortcuts is /shortcuts: the Keyboard Shortcuts pane toggled (false:
+	// no host for it)
+	shortcuts func() bool
+	// search is /search: with commit the search for q runs, else the
+	// search popover opens (false: no host for it)
+	search func(q string, commit bool) bool
+	// show takes the viewer where /open or /msg says: browse (the route)
+	// with no arguments, the create-channel modal, the conversation
+	show func(browse string, t core.LocalTarget)
+	// feedback is /feedback's dialog
+	feedback func()
+	// contents puts d in ch's composer (addEphemeralFeedback's
+	// inputDelta), when it is open
+	contents func(ch string, d *Doc)
 }
 
 // commandUI is the composer's.
@@ -48,6 +62,44 @@ func (c *Composer) commandUI() *commandUI {
 			if o, ok := c.h.(inviteOpener); ok {
 				o.OpenInviteToChannel(ch, users)
 			}
+		},
+		shortcuts: func() bool {
+			t, ok := c.h.(shortcutsToggler)
+			if ok {
+				c.later(t.ToggleKeyboardShortcuts)
+			}
+			return ok
+		},
+		search: func(q string, commit bool) bool {
+			if commit {
+				c.later(func() { popups.SubmitSearch(c.h, q) })
+				return true
+			}
+			o, ok := c.h.(searchOpener)
+			if ok {
+				c.later(o.OpenSearchFromCommand)
+			}
+			return ok
+		},
+		show: func(browse string, t core.LocalTarget) {
+			c.later(func() {
+				switch {
+				case t.Browse:
+					c.h.Navigate(browse)
+				case t.Create:
+					c.h.ShowOverlay(popups.NewCreateChannelModal(c.h, popups.CreateChannelOpts{Name: t.Name}))
+				case t.Conv != "":
+					c.h.Navigate("c/" + t.Conv)
+				}
+			})
+		},
+		feedback: func() { c.later(func() { popups.NewUserFeedbackModal(c.h) }) },
+		contents: func(ch string, d *Doc) {
+			c.later(func() {
+				if t := liveComposer(draftKey(ch, "")); t != nil && t.edit == nil {
+					t.setContents(d)
+				}
+			})
 		},
 	}
 }
@@ -85,6 +137,9 @@ func (j *sendJob) slashCommand(ctx context.Context, a prepareSendArgs, q qDelta)
 		j.api.clearCommandFeedback(ts != "")
 		j.ui.remind(ch, ts)
 		return nil
+	}
+	if ok, err := j.localCommand(ctx, a, q, args); ok { // slash_local.go
+		return err
 	}
 	o := core.CommandOpts{Channel: ch, ThreadTS: ts, Command: args.Cmd, Disp: args.Disp, Params: args.Params,
 		Blocks: commandBlocks(args.Rest), AppID: a.SlashCommandAppID}
