@@ -386,7 +386,9 @@ type display struct {
 	bars []fileBar
 	// charts are the data_visualization blocks' charts (dataviz.go)
 	charts []chartPrim
-	pills  []snipPill
+	// promptBtns are the share_prompts' Send to buttons (shareprompt.go)
+	promptBtns []promptBtn
+	pills      []snipPill
 	// ells counts the frags that are a clamp's "…" (frag.ell)
 	ells int
 }
@@ -443,6 +445,7 @@ func (d *display) reset() {
 	d.expands = d.expands[:0]
 	d.bars = d.bars[:0]
 	d.charts = d.charts[:0]
+	d.promptBtns = d.promptBtns[:0]
 	d.pills = d.pills[:0]
 	d.ells = 0
 }

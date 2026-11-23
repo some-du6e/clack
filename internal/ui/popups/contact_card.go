@@ -74,12 +74,12 @@ func ContactCardAction(h Host, act string, c *richtext.ContactCard) {
 			if err := a.AddContact(ctx, c.CardID, "contact_card_save_info"); err != nil {
 				return false, err
 			}
-			// the modal only when its dismissal isn't recorded (and the
-			// interactions loaded: a failed read shows nothing, as Slack's
-			// loading flag stays up)
+			// the modal unless its dismissal is on record: a failed read
+			// shows it too (zb3H clears its loading flag in finally, with
+			// no dismissal loaded)
 			ints, err := a.UserInteractions(ctx, [2]string{core.SaveContactModalComp, core.InteractionDismiss})
 			if err != nil {
-				return false, nil
+				return true, nil
 			}
 			_, dismissed := ints[core.InteractionKey(core.SaveContactModalComp, core.InteractionDismiss, "")]
 			return !dismissed, nil

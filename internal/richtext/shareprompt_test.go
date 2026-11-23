@@ -87,3 +87,22 @@ func TestSharePromptNotifyText(t *testing.T) {
 		t.Errorf("notification text %q, want the label", got)
 	}
 }
+
+// Mistyped fields don't fail the block: a field of another type reads as
+// absent (an object label, a number prompt or agent, a string
+// prompt_rich_text), and with no agent to look up the card draws nothing,
+// as SharePromptButton returns null before it reads the label.
+func TestSharePromptMistypedFields(t *testing.T) {
+	r := agentRes{agents: map[string]agentFx{"UAF": {name: "Pipeline Agent", avatar: "https://img.test/a.png", agentforce: true}}}
+	d := FromMessage(r, msg(t, `{"ts":"1.0","text":"fallback text","blocks":[{"type":"share_prompt","label":{"x":1},"prompt":7,"prompt_id":["p"],"bot_user_id":5,"is_slackbot":"yes","prompt_rich_text":"x"}]}`))
+	if len(d.Blocks) != 1 || d.Blocks[0].Kind != SharePromptBlock || d.Blocks[0].Prompt == nil {
+		t.Fatalf("blocks %s, want the share_prompt", dump(d.Blocks))
+	}
+	p := d.Blocks[0].Prompt
+	if p.Label != "" || p.Prompt != "" || p.PromptID != "" || p.BotUserID != "" || len(p.Rich) != 0 || len(p.RichRaw) != 0 {
+		t.Errorf("prompt %+v: want each mistyped field absent", p)
+	}
+	if !p.IsSlackbot || p.Shown {
+		t.Errorf("is_slackbot %v shown %v: want a truthy string read as true, and nothing drawn", p.IsSlackbot, p.Shown)
+	}
+}

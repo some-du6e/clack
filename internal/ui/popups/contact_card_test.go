@@ -119,11 +119,38 @@ func TestContactCardSave(t *testing.T) {
 	fs.SetInteraction(core.SaveContactModalComp, core.InteractionDismiss, 1)
 	ContactCardAction(h, "save_info", ccCard(false, "CC0FAKEPROF"))
 	maUntil(t, "the second contacts.add", func() bool { return len(fs.ContactAdds()) == 2 })
-	time.Sleep(200 * time.Millisecond)
-	drain()
-	if h.shownCount() != shown {
-		t.Errorf("Saved contact again after its dismissal")
+	// the decision follows the second interactions read: wait for it, then
+	// give its answer a moment to come back
+	maUntil(t, "the second users.interactions.list", func() bool {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return len(rec.calls["users.interactions.list"]) == 2
+	})
+	for range 10 {
+		time.Sleep(50 * time.Millisecond)
+		drain()
+		if h.shownCount() != shown {
+			t.Fatalf("Saved contact again after its dismissal")
+		}
 	}
+}
+
+// A users.interactions.list that fails still shows "Saved contact": no
+// dismissal is on record (zb3H clears its loading flag in finally).
+func TestContactCardSaveInteractionsFail(t *testing.T) {
+	h, fs, rec := ccBooted(t)
+	fs.SetHook(func(method string, form url.Values) (any, bool) {
+		rec.mu.Lock()
+		rec.calls[method] = append(rec.calls[method], form)
+		rec.mu.Unlock()
+		if method == "users.interactions.list" {
+			return map[string]any{"ok": false, "error": "fatal_error"}, true
+		}
+		return nil, false
+	})
+	ContactCardAction(h, "save_info", ccCard(false, "CC0FAKEPROF"))
+	rec.wait(t, "users.interactions.list", nil, 10*time.Second)
+	maUntil(t, "Saved contact", func() bool { m := h.topModal(); return m != nil && m.o.Title == "Saved contact" })
 }
 
 // Share contact: "Share contact" with one destination; Share posts the
