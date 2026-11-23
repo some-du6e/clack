@@ -5381,6 +5381,24 @@ jobs:
           - { test: TestRowLinkClicksAndCursorLikeSlack, pkg: ./internal/ui/views }
           - { test: TestViewsReactionBarGroupsLikeSlack, pkg: ./internal/ui/views }
           - { test: TestActivityHoverBarLikeSlack, pkg: ./internal/ui/views }
+          - { test: TestActivityPreviewLinksArePlain, pkg: ./internal/ui/views }
+          - { test: TestPreviewLinksPlain, pkg: ./internal/richtext }
+          - { test: TestCanvasCommentsReactionPillOpensNoThread, pkg: ./internal/ui/views }
+          - { test: TestLocalReactionsEndWhenTheStoreHoldsIt, pkg: ./internal/ui/views }
+          - { test: TestSubmitOutsideUndoesOnlyItsOwn, pkg: ./internal/ui/messages }
+          - { test: TestReactionTipLeavesADisabledPill, pkg: ./internal/ui/messages }
+          - { test: TestActivityEveryRowHasTheHand, pkg: ./internal/ui/views }
+          - { test: TestActivityLateClickExpires, pkg: ./internal/ui/views }
+          - { test: TestActivityFailedFetchKeepsTheRows, pkg: ./internal/ui/views }
+          - { test: TestActivityLiveDeletedReactionAndTombstone, pkg: ./internal/ui/views }
+          - { test: TestActivityLiveMissingMessage, pkg: ./internal/ui/views }
+          - { test: TestRefetchGivesUpLocally, pkg: ./internal/core }
+          - { test: TestRefetchGoneOnlyFromAnAnswer, pkg: ./internal/core }
+          - { test: TestMessagesListSplitsAFailedGroup, pkg: ./internal/core }
+          - { test: TestMessagesListFailedGroupOnlyItsChannels, pkg: ./internal/slack }
+          - { test: TestSavedGoneOnlyWhereItsGroupAnswered, pkg: ./internal/core }
+          - { test: TestLaterCleanUpFailedGroupOnlyRemovesTombstones, pkg: ./internal/ui/views }
+          - { test: TestPinsLocalReactionOutlivesAFetchedCopy, pkg: ./internal/ui/views }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

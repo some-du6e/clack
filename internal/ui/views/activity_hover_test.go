@@ -1,13 +1,22 @@
 package views
 
 import (
+	"encoding/json"
 	"image"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
 
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -146,3 +155,180 @@ func slicesEqual(a, b []actBtn) bool {
 	}
 	return true
 }
+
+// Activity's rows preview a message as Slack's SimpleRichTextPreview
+// does: a rich_text link is a plain hyperlink, a truncated one (a pasted
+// link's slug) too, never the message's RichTextSlug chip with its link
+// icon (Karim's 2026-11-22 "fix": a dense row's link chip after its type
+// icon), in the dense and the detailed layout.
+func TestActivityPreviewLinksArePlain(t *testing.T) {
+	for _, dense := range []bool{false, true} {
+		const ts = "1762700500.000100" // fa-reaction's (vaFakeActivity's store holds the mentions' already)
+		ch := fakeslack.ViewsChannel
+		blocks := json.RawMessage(`[{"type":"rich_text","block_id":"b1","elements":[{"type":"rich_text_section","elements":[` +
+			`{"type":"link","url":"` + rhLink + `","text":"example.com/doc","truncated":true},{"type":"text","text":" is the plan"}]}]}]`)
+		v, _, e, _ := vaFakeActivityWith(t, false, func(fs *fakeslack.Server) {
+			fs.SetActivityMessage(slack.Message{Type: "message", Channel: ch, TS: ts, User: fakeslack.SelfID,
+				Text: "<" + rhLink + "|example.com/doc> is the plan", Blocks: blocks,
+				Reactions: []slack.Reaction{{Name: "tada", Count: 2, Users: []string{"U0FAKE00001", "U0FAKE00002"}}}})
+		})
+		v.dense, v.rows, v.dirty = dense, map[string]*actRow{}, true
+		e.frame()
+		e.frame()
+		var ent *richEntry
+		e.until(t, "the row's preview", func() bool {
+			for k, x := range v.rich {
+				if strings.HasSuffix(k, ch+"/"+ts) && len(x.v.LinkRects()) > 0 {
+					ent = x
+					return true
+				}
+			}
+			return false
+		})
+		doc := ent.v.Doc()
+		links := 0
+		for _, b := range doc.Blocks {
+			for _, sp := range b.Spans {
+				if sp.Kind == richtext.Link {
+					links++
+					if sp.Truncated {
+						t.Errorf("dense %v: the preview draws the link as its slug chip (truncated)", dense)
+					}
+					if sp.Text != "example.com/doc" || sp.URL != rhLink {
+						t.Errorf("dense %v: the link reads %q -> %q", dense, sp.Text, sp.URL)
+					}
+				}
+			}
+		}
+		if links != 1 {
+			t.Errorf("dense %v: %d links in the preview, want 1", dense, links)
+		}
+		if lr := ent.v.LinkRects(); lr[0].URL != rhLink {
+			t.Errorf("dense %v: the drawn link goes to %q", dense, lr[0].URL)
+		}
+	}
+}
+
+// Every Activity row is cursor: pointer, so a mention row's text (no
+// subtext before it) shows the hand as a reply's does, in the dense and
+// the detailed layout.
+func TestActivityEveryRowHasTheHand(t *testing.T) {
+	for _, dense := range []bool{false, true} {
+		v, _, e, _ := vaFakeActivity(t, false)
+		e.size.Y = 2400
+		v.dense, v.rows, v.dirty = dense, map[string]*actRow{}, true
+		e.frame()
+		e.frame()
+		ch, ts := fakeslack.ViewsChannel, "1762700100.000100" // fa-at-user's
+		var ent *richEntry
+		e.until(t, "the mention's preview", func() bool {
+			for k, x := range v.rich {
+				if strings.HasSuffix(k, ch+"/"+ts) {
+					ent = x
+					return true
+				}
+			}
+			return false
+		})
+		e.frame()
+		full, _, ok := e.r.AreaBounds(ent.v)
+		if !ok {
+			t.Fatalf("dense %v: the mention's preview has no area", dense)
+		}
+		q := full.Min.Add(textPoint(t, ent.v))
+		if cur := pointerAt(e, f32.Pt(float32(q.X)+.5, float32(q.Y)+.5)); cur != pointer.CursorPointer {
+			t.Errorf("dense %v: the cursor over a mention row's text is %v, want the row's hand", dense, cur)
+		}
+	}
+}
+
+// A row click whose press and release came in one frame is decided in the
+// next window frame (clickLater), however long that frame takes to come
+// and however often a frame lays the row out (the peek measures it, then
+// draws it); one whose next frame doesn't lay the row out (the view not
+// drawn) is dropped, not opened later.
+func TestActivityLateClickExpires(t *testing.T) {
+	v, h, e, _ := vaFakeActivity(t, false)
+	fh := &actFrameHost{vaHost: h}
+	v.h = fh
+	e.size.Y = 2400
+	twice := func(gtx layout.Context) {
+		m := op.Record(gtx.Ops) // the peek's measure: laid out, not drawn
+		v.Layout(gtx)
+		m.Stop()
+		v.Layout(gtx)
+	}
+	e.draw = twice
+	frame := func() { fh.seq.Add(1); e.frame() }
+	frame()
+	const rowKey = "fa-dm-reacted"
+	r := v.rowFor(rowKey)
+	row, _, ok := e.r.AreaBounds(&r.click)
+	if !ok {
+		t.Fatal("the row isn't drawn")
+	}
+	p := f32.Pt(float32(row.Min.X+row.Dx()/2), float32(row.Min.Y+row.Dy()/2)) // the row's middle: no avatar or link
+	click := func() {
+		e.r.Queue(asEvents([]pointer.Event{{Kind: pointer.Move, Source: pointer.Mouse, Position: p},
+			{Kind: pointer.Press, Source: pointer.Mouse, Position: p, Buttons: pointer.ButtonPrimary},
+			{Kind: pointer.Release, Source: pointer.Mouse, Position: p}})...)
+	}
+	// the view isn't drawn in the click's next frame: its click goes
+	click()
+	frame()
+	if v.selOK && v.selKey == rowKey {
+		t.Error("a press and release in one frame opened the row in that frame: what took the press isn't known yet")
+	}
+	e.draw = func(gtx layout.Context) {}
+	frame()
+	e.draw = twice
+	frame()
+	frame()
+	if v.selOK && v.selKey == rowKey {
+		t.Error("a deferred click opened the row frames after its next one")
+	}
+	if v.rowFor(rowKey).clickLater {
+		t.Error("the dropped click is still waiting")
+	}
+	// its next frame comes late (a slow frame): it decides it, and opens
+	// the row
+	if v.selOK {
+		t.Fatalf("the row %q is open before the click: the test checks nothing", v.selKey)
+	}
+	click()
+	frame()
+	time.Sleep(600 * time.Millisecond)
+	frame()
+	if !v.selOK || v.selKey != rowKey {
+		t.Errorf("a click decided in its next frame, 600ms later, didn't open the row (open %v %q)", v.selOK, v.selKey)
+	}
+	// the rule itself, on a click deferred in the last frame (clickLater
+	// as the click's frame leaves it): the next frame decides it however
+	// late it comes, once (the second layout of that frame would close
+	// the row again); a frame that doesn't lay the row out drops it
+	rr := v.rowFor(rowKey)
+	v.selOK = false
+	rr.clickLater, rr.clickSplit, rr.clickFrame = true, false, fh.seq.Load()
+	time.Sleep(600 * time.Millisecond)
+	frame()
+	if !v.selOK || v.selKey != rowKey || rr.clickLater {
+		t.Errorf("a deferred click's next frame, 600ms late: open %v %q, still waiting %v; want it opened", v.selOK, v.selKey, rr.clickLater)
+	}
+	v.selOK = false
+	rr.clickLater, rr.clickFrame = true, fh.seq.Load()
+	e.draw = func(gtx layout.Context) {}
+	frame()
+	e.draw = twice
+	frame()
+	if v.selOK || v.rowFor(rowKey).clickLater {
+		t.Errorf("a deferred click whose next frame didn't lay the row out: open %v, still waiting %v; want it dropped", v.selOK, v.rowFor(rowKey).clickLater)
+	}
+}
+
+// actFrameHost is vaHost with the window's frame count (frameNo).
+type actFrameHost struct {
+	*vaHost
+	seq atomic.Uint64
+}
+
+func (h *actFrameHost) FrameSeq() uint64 { return h.seq.Load() }
