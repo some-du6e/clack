@@ -1,6 +1,7 @@
 package popups
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"strings"
@@ -10,8 +11,11 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
 // Measured from app.slack.com (2026-11, full profile in the secondary
@@ -48,6 +52,13 @@ type ProfileView struct {
 	hudBox  image.Rectangle // Huddle button rect in pane coords (last frame)
 
 	secs pfSecState // users.profile.getSections (profile_sections.go)
+
+	// the name recording (Name's NamePronunciationAudioPlayer): its file
+	// once files.info answered, and the button
+	recID    string
+	recFile  *slack.File
+	recAsked bool
+	recBtn   videoplayer.NameSoundButton
 
 	// "View as" (profile_preview.go)
 	preview             int           // pfPreviewNone | Internal | External
@@ -232,6 +243,11 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 		return layout.Dimensions{Size: image.Pt(w, y)}
 	}
 
+	// the header section: the name recording's button after the name, the
+	// pronunciation and the add links below
+	hd, hdOK := v.secs.header()
+	hdata := pfHeaderDataOf(hd)
+
 	// name (real_name) and Edit for yourself
 	editW := 0
 	if edit { // Name's Edit link: !preview && isSelf
@@ -245,10 +261,24 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 		})
 		editW += dp(gtx, 12)
 	}
+	// Name: the name, then (margin_left_25) the name recording's
+	// NamePronunciationAudioPlayer, then Edit
+	rec, ctl := v.recording(hdata.recordingFile)
+	btnW := 0
+	if rec != nil {
+		btnW = dp(gtx, 4) + dp(gtx, 30)
+	}
+	nameMax := maxInt(1, inner-editW-btnW)
 	at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, inner-editW), dp(gtx, 30))}
+		gtx.Constraints = layout.Constraints{Max: image.Pt(nameMax, dp(gtx, 30))}
 		return para(gtx, th, 22, 30, theme.Black, cl.Fg, u.RealName, 1)
 	})
+	if rec != nil {
+		nx := pad + minInt(textW(gtx, th, 22, theme.Black, u.RealName), nameMax) + dp(gtx, 4)
+		at(gtx, image.Pt(nx, y), func(gtx layout.Context) layout.Dimensions {
+			return ctl.LayoutNameSound(gtx, &v.recBtn, "profile", v.id, rec)
+		})
+	}
 	y += dp(gtx, 30)
 
 	// title (.p-r_member_profile__subtitle: 18px, line-height 1.5)
@@ -264,8 +294,6 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	// pronouns · name pronunciation, then the add links (yourself). The
 	// pronunciation link needs the workspace's Name Pronunciation (or
 	// Name Recording) field, from the header section.
-	hd, hdOK := v.secs.header()
-	hdata := pfHeaderDataOf(hd)
 	var pron []string
 	if !pfBlank(u.Pronouns) {
 		pron = append(pron, u.Pronouns)
@@ -516,4 +544,44 @@ func (p *pfPaneMenu) Dismiss() {
 	if p.menu != nil {
 		p.menu.closeAll()
 	}
+}
+
+// recording is the member's name recording as NamePronunciationAudioPlayer
+// plays it (files.info's url_private, asked once per pane) and the
+// window's players, nil until both are there.
+func (v *ProfileView) recording(id string) (*richtext.File, *videoplayer.Controller) {
+	if id == "" {
+		return nil, nil
+	}
+	vh, ok := v.h.(interface {
+		Videos() *videoplayer.Controller
+	})
+	if !ok {
+		return nil, nil
+	}
+	ctl := vh.Videos()
+	if ctl == nil || !ctl.AudioAvailable() {
+		return nil, nil
+	}
+	if id != v.recID {
+		v.recID, v.recFile, v.recAsked = id, nil, false
+	}
+	if !v.recAsked {
+		v.recAsked = true
+		if a := v.h.Core(); a != nil {
+			run(v.h, func(ctx context.Context) (*slack.File, error) {
+				return a.ProfileRecordingFile(ctx, id)
+			}, func(f *slack.File, err error) {
+				if err == nil && v.recID == id {
+					v.recFile = f
+					v.h.Invalidate()
+				}
+			})
+		}
+	}
+	f := richtext.FileOf(v.recFile)
+	if f == nil || f.URL == "" {
+		return nil, nil
+	}
+	return f, ctl
 }
