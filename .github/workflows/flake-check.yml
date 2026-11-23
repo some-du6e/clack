@@ -5233,6 +5233,42 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # canvas-edit round 2, B1 (internal/quip): Quip's codec against Slack's
+  # own modules (the parity snapshots), the fake's canvas calls, the
+  # transport and core's model of a canvas.
+  canvas-quip:
+    if: ${{ !inputs.only || startsWith('canvas-quip', inputs.only) }}
+    name: "canvas-quip ${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: quip, test: "TestQuip.*", pkg: ./internal/quip }
+          - { name: fakeslack, test: "TestQuip.*", pkg: ./internal/fakeslack }
+          - { name: slack, test: "(TestCanvasCall.*|TestEncodeURIComponent)", pkg: ./internal/slack }
+          - { name: core, test: "TestCanvasModel.*", pkg: ./internal/core }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "${{ matrix.name }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -5353,6 +5389,7 @@ jobs:
       - fl1122c-s-displays
       - library-dupes
       - rx-bar
+      - canvas-quip
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

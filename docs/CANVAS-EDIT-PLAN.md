@@ -43,23 +43,24 @@ Remote branch `canvases-2026-11-07` (4e510d1a, `internal/core/canvas_quip.go`) s
 
 | where | what |
 |---|---|
-| `internal/quip/wire.go` | protobuf wire reader and writer: varints, fixed32/64, length-delimited; packed and unpacked repeated scalars on read, packed on write; size and depth caps |
-| `internal/quip/schema.go` | the messages below, each with `Marshal` and `Unmarshal` |
+| `internal/quip/wire.go` | protobuf wire reader and writer over the messages' `pb:"N"` tags (reflection): varints, fixed32/64, length-delimited; packed and unpacked repeated scalars on read, packed on write; size and depth caps; Slack's decoder's ways (a message seen twice is replaced, a number with wire type 2 is read packed, field 0 is skipped) |
+| `internal/quip/messages.go`, `enums.go` | the messages below and their enums; a `pb:"extra"` field keeps the records of fields Slack's schema has and Clack doesn't name (its `slack:"…"` tag lists them), dropping the rest as Slack's decoder does, and writes them back in field order |
 | `internal/quip/rtml.go` | RTML parse (`W77Y.parse`'s grammar) into text and marks (`fce5.getTextAndMarks`), the writer (`getCompactRtml`), `escapeText`, `isSafeUri`, and conversion to and from `richtext.Span`s |
 | `internal/quip/position.go` | `0fa5`'s `generate`, `increment`, `decrement`, `position_path`, control paths |
 | `internal/quip/ids.go` | new section ids, `su:`/`sc:`/`se:` syncer ids, the 12-hex session id |
 | `internal/quip/merge.go` | applying an edit to RTML and the three-way merge (Slack's `withRtml` and `mergeRtml` semantics without Automerge) |
-| `internal/quip/doc.go` | the document model: sections by id, display order, lists and controls; applies load-data answers, fetch-latest changes and save answers with Slack's sequence rules |
+| `internal/quip/doc.go` | the document model: sections by id, display order, lists and controls; applies load-data answers and fetch-latest changes with Slack's sequence rules (save answers: B2) |
 | `internal/quip/bundle.go` | builds one save's `DocumentData` by `ZRIn.toUpdateBundle`'s rules, and `Validate` |
-| `internal/slack/canvas.go` | `(*Client).CanvasCall(ctx, path, form)`: the transport |
-| `internal/core/canvas_edit.go` | per-canvas edit state: model, follow, save queue, retries, error state, rebase |
+| `internal/slack/canvas.go` | `(*Client).CanvasCall(ctx, path, []CanvasField)`: the transport; the form keeps its order and is written as Slack's encodeBody writes it (`encodeURIComponent`, the token last) |
+| `internal/core/canvas_quip.go` | the read model: `LoadCanvasModel`, the follow on `document_update` and files.open, `CanvasModel` |
+| `internal/core/canvas_edit.go` | per-canvas edit state: save queue, retries, error state, rebase (B2) |
 | `internal/ui/canvasview/edit.go`, `banner.go` | the save path on sections, Slack's banners, the editing lock |
-| `internal/fakeslack/quip.go`, `quip_doc.go` | the fake's Quip model and the three endpoints |
-| `tools/quip/` | node scripts over Slack's CDN chunks: `schema.cjs`, `vectors.cjs`, the runtime (copies of /root/clack-ops/scratch/canvas-edit/tools) |
+| `internal/fakeslack/quip.go`, `quip_endpoints.go` | the fake's Quip model (made from the canvas's blocks, written back into them after a save) and the three endpoints |
+| `tools/oracles/quip.cjs` | Slack's Quip modules in node (jsdom for the RTML parser) over `internal/quip/testdata/parity/*.json`: `python3 -I tools/parity.py --refresh quip-codec` reruns it (the `quip-codec` parity dimension) |
 
 ## Go types
 
-Field numbers and types are from CANVASES.md; the full dump of build 9685e6ce144b is /root/clack-ops/scratch/canvas-edit/meta/schema.txt and schema-section.txt (regenerate with `tools/quip/schema.cjs`). Presence is explicit, as in Slack's encoder: a field is written when it was set, even to its zero value, so `type: TEXT_TYPE` (0) and an empty `parents` are on the wire. A small generic keeps that honest:
+Field numbers and types are from CANVASES.md; the full dump of build 9685e6ce144b is /root/clack-ops/scratch/canvas-edit/meta/schema.txt and schema-section.txt (regenerate with /root/clack-ops/scratch/canvas-edit/tools/schema.cjs; build 5718bdb1b28b's dump, 2026-11-23, is the same). Presence is explicit, as in Slack's encoder: a field is written when it was set, even to its zero value, so `type: TEXT_TYPE` (0) and an empty `parents` are on the wire. As built (B1), a field is a pointer, nil when unset (`quip.Ptr(int32(0))` sets a zero); the sketch below used a generic:
 
 ```go
 // Opt is a proto2 optional field: set or not, whatever the value.

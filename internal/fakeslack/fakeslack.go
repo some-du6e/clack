@@ -845,6 +845,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 	mux.HandleFunc("/img/", s.img)
 	mux.HandleFunc("/ws", s.ws)
 	mux.HandleFunc("/files-pri/", s.filesPri) // canvas exports (canvas.go)
+	mux.HandleFunc("/canvas/-/", s.quipCall)  // Quip's canvas calls (quip_endpoints.go)
 	mux.HandleFunc("/auth", s.authPage)       // the token page (auth_page.go)
 	mux.HandleFunc("/photos/", s.photosPage)  // users.preparePhoto's images (photo.go)
 	mux.HandleFunc("/", s.otherPage)          // any other page: logged, not found

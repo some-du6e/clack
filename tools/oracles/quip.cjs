@@ -1,0 +1,223 @@
+// quip.cjs: Slack's own Quip modules (web client build 5718bdb1b28b,
+// 2026-11-23) on internal/quip's parity snapshots: the protobuf encoder and
+// decoder (p8gD.toBinary / fromBinary over QkBk's syncer.* and o3+F's
+// proto.section.* classes), order keys (0fa5.generate), RTML text
+// (W77Y.escapeText, isSafeUri), RTML parsing (fce5.getTextAndMarks) and
+// writing (the editor's getCompactRtml).
+//
+//   QUIP_CHUNKS=<webapp chunk>,<editor chunk> JSDOM=<dir with node_modules/jsdom> \
+//     node tools/oracles/quip.cjs KIND CASES.json > SLACK.json
+//
+// KIND is a snapshot's slack.refresh (quip-wire-encode, quip-wire-decode,
+// quip-order, quip-rtml-text, quip-rtml-parse, quip-rtml-write). CASES.json
+// is the snapshot's cases; the output maps each case name to Slack's
+// value. tools/parity.py --refresh runs it.
+//
+// The chunks are gantry-v2-async-quip-collab-webapp.b0a4464d07be5505.min.js
+// and gantry-v2-async-quip-collab-editor.2b9ea24acdaf8782.min.js from the
+// public CDN (https://a.slack-edge.com/bv1-13-br/), fetched without a
+// cookie; this repo doesn't redistribute them. jsdom 24.1.3 gives the RTML
+// parser its DOM (W77Y walks a real document, as in the browser).
+'use strict';
+const fs = require('fs');
+const path = require('path');
+
+const SCRATCH = '/root/clack-ops/scratch/canvas-edit';
+const CHUNKS = (process.env.QUIP_CHUNKS || [
+  SCRATCH + '/b2/gantry-v2-async-quip-collab-webapp.b0a4464d07be5505.min.js',
+  SCRATCH + '/b2/gantry-v2-async-quip-collab-editor.2b9ea24acdaf8782.min.js',
+].join(',')).split(',');
+const JSDOM_DIR = process.env.JSDOM || SCRATCH + '/npm';
+
+// --- a browser for the modules: jsdom's window as the global scope
+const { JSDOM } = require(path.join(JSDOM_DIR, 'node_modules', 'jsdom'));
+const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', { url: 'https://app.slack.com/client/T0/C0' });
+const win = dom.window;
+for (const k of Object.getOwnPropertyNames(win)) {
+  if (k in globalThis) continue;
+  try { Object.defineProperty(globalThis, k, { value: win[k], configurable: true, writable: true }); } catch (e) { /* not copyable */ }
+}
+for (const k of ['window', 'self', 'document', 'navigator', 'location', 'localStorage', 'sessionStorage']) {
+  try { Object.defineProperty(globalThis, k, { value: k === 'window' || k === 'self' ? globalThis : win[k], configurable: true, writable: true }); } catch (e) { /* keep node's */ }
+}
+for (const k of ['addEventListener', 'removeEventListener', 'dispatchEvent', 'getComputedStyle', 'getSelection']) {
+  if (typeof win[k] === 'function') globalThis[k] = win[k].bind(win);
+}
+globalThis.requestAnimationFrame = f => setTimeout(f, 0);
+globalThis.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
+const quiet = console.warn;
+console.warn = () => {}; // Quip's logger warns on bad input (order.generate_), as in the browser
+console.log = console.info = console.debug = () => {}; // and its diagnostics log at load; results go to stdout below
+
+// --- an rspack runtime over the chunks: a module runs its own factory
+const START = /[{,](?:"([^"]{1,12})"|([A-Za-z0-9_$]{1,12})):\(function\(/g;
+const texts = CHUNKS.map(f => fs.readFileSync(f, 'utf8'));
+const where = new Map();
+const starts = texts.map((t, fi) => {
+  const st = [];
+  START.lastIndex = 0;
+  let m;
+  while ((m = START.exec(t))) st.push([m.index, m[1] || m[2]]);
+  st.forEach(([, id], si) => { if (!where.has(id)) where.set(id, [fi, si]); });
+  return st;
+});
+function factoryOf(id) {
+  const w = where.get(id);
+  if (!w) return null;
+  const [fi, si] = w;
+  const t = texts[fi], st = starts[fi];
+  const begin = st[si][0] + 1;
+  // the module ends where a later module starts; a match inside the module
+  // doesn't parse, so try the following starts in turn
+  for (let j = si + 1; j < st.length && j < si + 400; j++) {
+    try {
+      const o = (0, eval)('({' + t.slice(begin, st[j][0]) + '})');
+      const ks = Object.keys(o);
+      if (ks.length === 1) return o[ks[0]];
+    } catch (e) { /* not the end yet */ }
+  }
+  throw new Error('cannot cut module ' + id);
+}
+const cache = new Map();
+function stub(id) {
+  const fn = function () { return undefined; };
+  return new Proxy({}, { get: (_, k) => (k === '__esModule' ? true : typeof k === 'symbol' || k === 'then' ? undefined : fn) });
+}
+function req(id) {
+  if (cache.has(id)) return cache.get(id).exports;
+  if (!where.has(id)) {
+    const m = { exports: stub(id) };
+    cache.set(id, m);
+    return m.exports;
+  }
+  const m = { id, exports: {}, loaded: false };
+  cache.set(id, m);
+  factoryOf(id).call(m.exports, m, m.exports, req);
+  m.loaded = true;
+  return m.exports;
+}
+req.d = (ex, getters, values) => {
+  for (const k in getters || {}) if (!Object.prototype.hasOwnProperty.call(ex, k)) Object.defineProperty(ex, k, { enumerable: true, get: getters[k] });
+  for (const k in values || {}) if (!Object.prototype.hasOwnProperty.call(ex, k)) Object.defineProperty(ex, k, { enumerable: true, value: values[k], writable: true });
+};
+req.r = ex => { Object.defineProperty(ex, '__esModule', { value: true }); };
+req.n = m => { const g = m && m.__esModule ? () => m.default : () => m; req.d(g, { a: g }); return g; };
+req.o = (o, p) => Object.prototype.hasOwnProperty.call(o, p);
+req.g = globalThis;
+req.p = '';
+req.u = id => id + '.js';
+req.nmd = m => m;
+req.hmd = m => m;
+
+// --- message classes by full name, from QkBk and o3+F and every type
+// their fields reach
+const classes = new Map();
+function addClass(c) {
+  let d;
+  try { d = c.getDescriptor(); } catch (e) { return; }
+  const name = d.getFullName();
+  if (classes.has(name)) return;
+  classes.set(name, c);
+  for (const f of d.getFields()) {
+    if (f.isCompositeType()) {
+      const nt = f.getNativeType();
+      if (nt && typeof nt.getDescriptor === 'function') addClass(nt);
+    }
+  }
+}
+function walk(o, seen) {
+  if (!o || (typeof o !== 'object' && typeof o !== 'function') || seen.has(o)) return;
+  seen.add(o);
+  if (typeof o === 'function' && typeof o.getDescriptor === 'function') addClass(o);
+  for (const k of Object.getOwnPropertyNames(o)) {
+    if (['prototype', 'caller', 'arguments', 'descriptor_'].includes(k)) continue;
+    let v;
+    try { v = o[k]; } catch (e) { continue; }
+    if (v && (typeof v === 'object' || typeof v === 'function') && !Array.isArray(v)) walk(v, seen);
+  }
+}
+const seen = new Set();
+for (const id of ['QkBk', 'o3+F', '5SNU']) walk(req(id), seen);
+const pbu = req('p8gD');
+
+const INT64 = new Set([3, 4, 6, 16, 18]);
+const BYTES = 12;
+function hexOf(b) { return Buffer.from(b).toString('hex'); }
+function classOf(type) {
+  const c = classes.get(type);
+  if (!c) throw new Error('no message ' + type);
+  return c;
+}
+
+// build makes a message from a tree keyed by field number: a message is
+// an object, a repeated field an array, bytes a hex string.
+function build(cls, tree) {
+  const msg = new cls();
+  const d = cls.getDescriptor();
+  for (const [k, v] of Object.entries(tree)) {
+    const f = d.findFieldByTag(Number(k));
+    if (!f) throw new Error(d.getFullName() + ' has no field ' + k);
+    const one = x => {
+      if (f.isCompositeType()) return build(f.getNativeType(), x);
+      if (f.getFieldType() === BYTES) return new Uint8Array(Buffer.from(x, 'hex'));
+      if (INT64.has(f.getFieldType()) && f.getNativeType() === String) return String(x);
+      return x;
+    };
+    if (f.isRepeated()) {
+      if (!Array.isArray(v)) throw new Error(d.getFullName() + '.' + k + ' is repeated');
+      for (const x of v) msg.add$Value(Number(k), one(x));
+    } else msg.set$Value(Number(k), one(v));
+  }
+  return msg;
+}
+
+const order = req('0fa5');
+const W77Y = req('W77Y');
+const fce5 = req('fce5');
+
+// getCompactRtml lives inside the editor's 1 MB module; it is cut out as
+// written and run with the two names it reads (dHCX for sortBy, a logger).
+function compactRtml() {
+  const t = texts.find(x => x.includes('function getCompactRtml('));
+  const i = t.indexOf('function getCompactRtml(');
+  const j = t.indexOf('function getMarkOrNull(', i);
+  const src = t.slice(i, j);
+  const names = [...new Set([...src.matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]{0,3})\.(sortBy)\b/g)].map(m => m[1]))];
+  const logs = [...new Set([...src.matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]{0,3})\.S\.error\b/g)].map(m => m[1]))];
+  if (names.length !== 1 || logs.length !== 1) throw new Error('getCompactRtml reads ' + names + ' ' + logs);
+  return new Function(names[0], logs[0], src + '\nreturn getCompactRtml;')(req('dHCX'), { S: { error() {} } });
+}
+
+const KINDS = {
+  'quip-wire-encode': c => hexOf(pbu.Rm(build(classOf(c.in.type), c.in.fields))),
+  'quip-wire-decode': c => {
+    let msg;
+    try {
+      msg = pbu.Er(new Uint8Array(Buffer.from(c.in.hex, 'hex')), classOf(c.in.type));
+    } catch (e) {
+      return { error: String(e.message || e) };
+    }
+    return { hex: hexOf(pbu.Rm(msg)) };
+  },
+  'quip-order': c => order.cM(c.in.prev, c.in.next),
+  'quip-rtml-text': c => (c.in.fn === 'escapeText' ? W77Y.X1(c.in.s, c.in.flag) : c.in.fn === 'isSafeUri' ? W77Y.MG(c.in.s, c.in.flag) : (() => { throw new Error('fn ' + c.in.fn); })()),
+  'quip-rtml-parse': c => fce5.N(c.in.rtml),
+  'quip-rtml-write': (() => {
+    let f;
+    return c => {
+      f = f || compactRtml();
+      // a round trip case is Slack's own parse, then its writer
+      const tm = c.in.rtml !== undefined ? fce5.N(c.in.rtml) : { text: c.in.text, marks: c.in.marks.map(m => ({ ...m })) };
+      return f(tm);
+    };
+  })(),
+};
+
+const [kind, file] = process.argv.slice(2);
+if (!KINDS[kind] || !file) {
+  quiet('usage: quip.cjs KIND CASES.json, KIND one of ' + Object.keys(KINDS).join(' '));
+  process.exit(2);
+}
+const out = {};
+for (const c of JSON.parse(fs.readFileSync(file, 'utf8'))) out[c.name] = KINDS[kind](c);
+process.stdout.write(JSON.stringify(out) + '\n');

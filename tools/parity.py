@@ -819,7 +819,29 @@ def refresh_emoji_rank(cases, tmp):
     return out
 
 
-REFRESHERS = {'emoji-rank': refresh_emoji_rank}
+QUIP_ORACLE = os.path.join(ROOT, 'tools', 'oracles', 'quip.cjs')
+QUIP_SNAPSHOTS = ('quip-wire-encode', 'quip-wire-decode', 'quip-order', 'quip-rtml-text', 'quip-rtml-parse', 'quip-rtml-write')
+
+
+def quip_refresher(kind):
+    """Slack's values for one of internal/quip's snapshots: tools/oracles/quip.cjs runs Slack's Quip modules in
+    node (QUIP_CHUNKS names the two CDN chunks, JSDOM the directory holding jsdom; see the script's header)."""
+    def refresh(cases, tmp):
+        node = shutil.which('node')
+        if not node:
+            raise Unavailable('no node on PATH')
+        f = os.path.join(tmp, 'cases.json')
+        with open(f, 'w', encoding='utf-8') as fh:
+            json.dump(cases, fh, ensure_ascii=False)
+        p = subprocess.run([node, QUIP_ORACLE, kind, f], capture_output=True, text=True, timeout=600)
+        if p.returncode:
+            raise Unavailable(f'the harness failed ({p.returncode}): {p.stderr.strip()[-500:]}')
+        # one JSON line; its strings can hold U+2028, so split on newlines only
+        return json.loads(p.stdout.rstrip('\n').split('\n')[-1])
+    return refresh
+
+
+REFRESHERS = {'emoji-rank': refresh_emoji_rank, **{k: quip_refresher(k) for k in QUIP_SNAPSHOTS}}
 
 
 def dump_snapshot(s):
