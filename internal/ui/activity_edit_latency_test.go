@@ -167,6 +167,8 @@ func activityEditLatency(t *testing.T, mode string) {
 	wakeFrames := 0
 	// and which plugin views the view cache's worker asked frames for
 	views := map[string]int{}
+	var timeline []string // the first edits' marks and reads, in order
+	t0 := time.Now()
 	taut.TraceViews(func(slice, key, sub, why string) {
 		if !recording.Load() {
 			return
@@ -175,8 +177,15 @@ func activityEditLatency(t *testing.T, mode string) {
 		if sub != "" {
 			what = "a message"
 		}
+		reason := why
+		if i := strings.Index(reason, " ("); i >= 0 {
+			reason = reason[:i]
+		}
 		amu.Lock()
-		views[fmt.Sprintf("%s %s, %s: %s", slice, key, what, why)]++
+		views[fmt.Sprintf("%s %s, %s: %s", slice, key, what, reason)]++
+		if len(timeline) < 60 {
+			timeline = append(timeline, fmt.Sprintf("%8.1f ms  %s, %s: %s", float64(time.Since(t0).Microseconds())/1000, slice, what, why))
+		}
 		amu.Unlock()
 	})
 	t.Cleanup(func() { taut.TraceViews(nil) })
@@ -279,6 +288,9 @@ func activityEditLatency(t *testing.T, mode string) {
 	t.Logf("%s: the views the worker announced:", mode)
 	for k, n := range views {
 		t.Logf("%s: %4d  %s", mode, n, k)
+	}
+	for _, l := range timeline {
+		t.Logf("%s: %s", mode, l)
 	}
 	amu.Unlock()
 	// and with frames drawn only when asked, the first one after an edit is

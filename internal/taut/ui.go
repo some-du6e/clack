@@ -1904,6 +1904,19 @@ func traceView(k viewKey, why string) {
 	}
 }
 
+// traceMsg traces message ch/ts's marks: the version, its own mark and
+// the pending count now.
+func (v *viewCache) traceMsg(ch, ts, what string) {
+	if viewTrace.Load() == nil {
+		return
+	}
+	v.mu.Lock()
+	mk := msgKey{ch, ts}
+	why := fmt.Sprintf("%s (seq %d, its mark %d, pending %d)", what, v.seq, v.msgVer[mk], v.pendMsg[mk])
+	v.mu.Unlock()
+	traceView(viewKey{"messages", ch, ts}, why)
+}
+
 func (v *viewCache) work() {
 	for {
 		v.mu.Lock()
@@ -1986,7 +1999,10 @@ func (v *viewCache) work() {
 					!v.msgMarksReadyLocked(k, was) && v.msgMarksReadyLocked(k, ver) {
 					changed = true
 					v.epoch.Add(1)
-					traceView(k, "ready: the same bytes, its marks behind them now")
+					if viewTrace.Load() != nil {
+						traceView(k, fmt.Sprintf("ready: the same bytes, its marks behind them now (was %d, ver %d, its mark %d, pending %d)",
+							was, ver, v.msgVer[msgKey{k.key, k.sub}], v.pendMsg[msgKey{k.key, k.sub}]))
+					}
 				}
 				if e.blen > 0 {
 					cur.bsum, cur.blen = e.bsum, e.blen
@@ -2007,8 +2023,9 @@ func (v *viewCache) work() {
 					changed = true
 					v.epoch.Add(1)
 					if viewTrace.Load() != nil {
-						traceView(k, fmt.Sprintf("a new value (first %v, marks ready %v, stale %v)", cur == nil,
-							k.slice != "messages" || k.sub == "" || v.msgMarksReadyLocked(k, ver), v.staleLocked(e, g, k.slice)))
+						traceView(k, fmt.Sprintf("a new value (first %v, marks ready %v, stale %v, ver %d, its mark %d, pending %d)", cur == nil,
+							k.slice != "messages" || k.sub == "" || v.msgMarksReadyLocked(k, ver), v.staleLocked(e, g, k.slice),
+							ver, v.msgVer[msgKey{k.key, k.sub}], v.pendMsg[msgKey{k.key, k.sub}]))
 					}
 				}
 				g.subs[k.sub] = e
