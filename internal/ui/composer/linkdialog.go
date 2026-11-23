@@ -24,19 +24,63 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// Slack's "Add link" dialog (Ctrl+Shift+U or the link button): a 520 modal
-// with labelled "Text" and "Link" inputs (15/700 labels, 36px inputs with
-// radius 8, #7c7a7f border, blue 1px + 4px focus ring) and Cancel / Save.
-// Save is disabled while the link is empty; Enter in a field saves.
+// Slack's "Add link" dialog, ComposerLinkModal (boot-shared jRNC, build
+// 83aff18a1847): a 520 modal with labelled "Text" and "Link" inputs
+// (15/700 labels, 36px inputs with radius 8, #7c7a7f border, blue 1px +
+// 4px focus ring) and Cancel / Save. Its _FormDialog (qph5) disables Save
+// until a field changed (goButtonIsDisabled: !inputIsDirty) and while the
+// link is javascript: or about: (isLinkUrlValid); Enter in a field
+// submits the form whenever the link is valid, changed or not. onSubmit:
+//
+//   - an empty Link (normalizeLinkUrl) with a new text makes the range that
+//     text, plain (insertPlainText); otherwise it takes the link off
+//     (removeLink), a slug being edited back to its label;
+//   - else the text (the URL when it's blank) is linked to the normalized
+//     URL (saveLink): in place when the text didn't change, as new text
+//     when it did.
+//
+// The Text field starts empty for a link whose text is its URL (an
+// autolink, a slug being edited), and the focus goes to Link when the
+// link has text, to Text when it has none.
+
+// linkForm is what openTextyLinkFormModal hands ComposerLinkModal.
+type linkForm struct {
+	lo, hi      int    // range
+	text, url   string // initialText, initialUrl
+	editable    bool   // textIsEditable
+	editingSlug bool   // isEditingSlug
+	preview     *richview.View
+}
+
+// linkResult is how the dialog ended: what onSubmit did.
+type linkResult struct {
+	kind          linkResultKind
+	text, url     string
+	didTextChange bool
+}
+
+type linkResultKind uint8
+
+const (
+	linkSaved   linkResultKind = iota // saveLink
+	linkPlain                         // insertPlainText
+	linkRemoved                       // removeLink
+)
 
 type crLinkDlg struct {
-	h              Host
-	text, link     widget.Editor
-	modal          *popups.Modal
-	focused, saved bool
-	onSave         func(text, url string)
-	text0, url0    string        // the prefill (didTextChange, props)
-	saveJS         slackc.JSFunc // a plugin's saveLink override
+	h          Host
+	text, link widget.Editor
+	modal      *popups.Modal
+	focused    bool
+	saved      bool
+	form       linkForm
+	onDone     func(linkResult)
+	text0      string // initialText
+	url0       string // initialUrl
+	dirty      bool   // inputIsDirty
+	lastText   string // the fields as onChange last saw them
+	lastURL    string
+	saveJS     slackc.JSFunc // a plugin's saveLink override
 	// preview is ComposerLinkModal's textIsEditable false: the selection
 	// holds an emoji or a mention (an embed, "\uE000" in its text), or a
 	// line break when making a new link, so the Text field is the
@@ -46,34 +90,28 @@ type crLinkDlg struct {
 	preview *richview.View
 }
 
-// openLinkDialog shows the dialog. text and url prefill the fields (url
-// when editing an existing link); onSave gets the text and the normalized
-// URL, onCancel runs when the dialog closes without saving.
-func openLinkDialog(h Host, text, url string, onSave func(text, url string), onCancel func()) {
-	openLinkDialogRich(h, text, url, nil, onSave, onCancel)
-}
-
-// openLinkDialogRich is openLinkDialog with textIsEditable false when
-// preview is set: preview is the selection's rich text, drawn in place of
-// the Text field.
-func openLinkDialogRich(h Host, text, url string, preview *richview.View, onSave func(text, url string), onCancel func()) {
-	d := &crLinkDlg{h: h, onSave: onSave, text0: text, url0: url, preview: preview}
+// openLinkDialog shows the dialog for f; done gets how it was submitted,
+// onCancel runs when it closes without being.
+func openLinkDialog(h Host, f linkForm, done func(linkResult), onCancel func()) {
+	d := &crLinkDlg{h: h, form: f, onDone: done, text0: f.text, url0: f.url, preview: f.preview}
 	d.text = widget.Editor{SingleLine: true, Submit: true}
 	d.link = widget.Editor{SingleLine: true, Submit: true}
-	if text != "" {
-		d.text.SetText(text)
+	// state.text: the initial text unless it's the URL of an editable link
+	if t := f.text; t != "" && (!f.editable || f.text != f.url) {
+		d.text.SetText(t)
 		n := d.text.Len()
 		d.text.SetCaret(n, n)
 	}
-	if url != "" {
-		d.link.SetText(url)
+	if f.url != "" {
+		d.link.SetText(f.url)
 		n := d.link.Len()
 		d.link.SetCaret(n, n)
 	}
+	d.lastText, d.lastURL = d.text.Text(), d.link.Text()
 	// ComposerLinkModal (+Hdp, the message-input I18n): initialUrl ? "Edit
 	// link" : "Add link"
 	title := messageInputNS.T("Add link")
-	if url != "" {
+	if f.url != "" {
 		title = messageInputNS.T("Edit link")
 	}
 	d.modal = popups.NewModal(h, popups.ModalOpts{
@@ -107,34 +145,84 @@ func openLinkDialogRich(h Host, text, url string, preview *richview.View, onSave
 // linkDialogTap sees each dialog as it opens (tests).
 var linkDialogTap func(*crLinkDlg)
 
-func (d *crLinkDlg) canSave() bool { return strings.TrimSpace(d.link.Text()) != "" }
+// valid is isValid: no javascript: or about: link.
+func (d *crLinkDlg) valid() bool { return isLinkURLValid(d.link.Text()) }
 
-// save goes through saveLink({didTextChange, text, url}), Slack's
-// ComposerLinkModal method: a plugin's override when one came back in
-// the props, else the composer's own, which runs LinkTransforms.
+// canSave is the Save button: valid, and a field changed.
+func (d *crLinkDlg) canSave() bool { return d.valid() && d.dirty }
+
+// noteEdits is onChange: when a field changed, inputIsDirty is whether
+// either now differs from the initial text and URL (hasUnsavedEdits).
+func (d *crLinkDlg) noteEdits() {
+	if t, u := d.text.Text(), d.link.Text(); t != d.lastText || u != d.lastURL {
+		d.lastText, d.lastURL = t, u
+		d.dirty = t != d.text0 || u != d.url0
+	}
+}
+
+// linkTextBlank is /^\s+$/.
+func linkTextBlank(s string) bool {
+	return s != "" && !strings.ContainsFunc(s, func(r rune) bool { return !jsSpace(r) })
+}
+
+// save is _FormDialog.save, onGo: onSubmit when the link is valid.
 func (d *crLinkDlg) save() {
-	if d.saved || !d.canSave() {
+	if d.saved || !d.valid() {
 		return
 	}
 	d.saved = true
-	text, url := d.text.Text(), crNormalizeURL(d.link.Text())
+	d.submit(d.text.Text(), d.link.Text())
+}
+
+// submit is ComposerLinkModal.onSubmit over the fields' text and url.
+func (d *crLinkDlg) submit(text, rawURL string) {
+	f := d.form
+	l := normalizeLinkURL(rawURL)
 	if d.preview != nil {
 		text = d.text0 // the text can't change: c === e, didTextChange false
 	}
+	if l == "" {
+		was := d.text0
+		if f.editable && d.text0 == d.url0 {
+			was = ""
+		}
+		if text != "" && !linkTextBlank(text) && text != was {
+			d.done(linkResult{kind: linkPlain, text: text})
+		} else {
+			d.done(linkResult{kind: linkRemoved})
+		}
+		return
+	}
+	o := text
+	if text == "" || linkTextBlank(text) {
+		o = rawURL
+	}
+	t := o
+	if f.editingSlug && o == rawURL {
+		t = l
+	}
+	d.saveLink(t, l)
+}
+
+// saveLink goes through saveLink({didTextChange, text, url}), Slack's
+// ComposerLinkModal method: a plugin's override when one came back in
+// the props, else the composer's own, which runs LinkTransforms.
+func (d *crLinkDlg) saveLink(text, url string) {
+	d.saved = true
 	if d.saveJS.ID != 0 {
 		d.saveJS.Call(slackc.Props{"didTextChange": text != d.text0, "text": text, "url": url})
 		return
 	}
-	d.saveLink(text, url)
+	linkSource = "link-dialog" // addLinkTransform's ctx.source
+	u := transformLink(url)
+	linkSource = "paste"
+	d.done(linkResult{kind: linkSaved, text: text, url: u, didTextChange: text != d.text0})
 }
 
-func (d *crLinkDlg) saveLink(text, url string) {
+func (d *crLinkDlg) done(r linkResult) {
 	d.saved = true
-	if d.onSave != nil {
-		linkSource = "link-dialog" // addLinkTransform's ctx.source
-		u := transformLink(url)
-		linkSource = "paste"
-		d.onSave(text, u)
+	if d.onDone != nil {
+		d.onDone(r)
 	}
 }
 
@@ -152,7 +240,7 @@ func (d *crLinkDlg) props() slackc.Props {
 		// textIsEditable (ComposerLinkModal's prop)
 		"textIsEditable": d.preview == nil,
 		"saveLink": func(a slackc.Props) {
-			d.saveLink(a.StrOr("text", d.text.Text()), crNormalizeURL(a.StrOr("url", d.link.Text())))
+			d.saveLink(a.StrOr("text", d.text.Text()), normalizeLinkURL(a.StrOr("url", d.link.Text())))
 		},
 		"onSave":  func() { d.save(); d.modal.Dismiss() },
 		"onClose": func() { d.modal.Dismiss() },
@@ -177,9 +265,9 @@ func (d *crLinkDlg) layoutBody(gtx layout.Context, p slackc.Props) layout.Dimens
 func (d *crLinkDlg) body(gtx layout.Context) layout.Dimensions {
 	if !d.focused && gtx.Source.Enabled() {
 		d.focused = true
-		tag := &d.text
-		if d.text.Len() > 0 {
-			tag = &d.link
+		tag := &d.text // focusTextOnMount: no initial text
+		if d.text0 != "" {
+			tag = &d.link // focusUrlOnMount
 		}
 		gtx.Execute(key.FocusCmd{Tag: tag})
 	}
@@ -192,15 +280,15 @@ func (d *crLinkDlg) body(gtx layout.Context) layout.Dimensions {
 			if _, ok := ev.(widget.SubmitEvent); !ok {
 				continue
 			}
-			switch {
-			case d.canSave():
+			// the form's submit (Enter in either field): _FormDialog.save,
+			// which asks isValid only
+			if d.valid() {
 				d.save()
 				d.modal.Dismiss()
-			case ed == &d.text:
-				gtx.Execute(key.FocusCmd{Tag: &d.link})
 			}
 		}
 	}
+	d.noteEdits()
 	th := d.h.Theme()
 	w := gtx.Constraints.Max.X
 	y := 0
@@ -305,23 +393,4 @@ func crLinkField(gtx layout.Context, th *theme.Theme, ed *widget.Editor, w int) 
 	// focuses the editor too (it sits under the editor's own area).
 	defer clip.Rect(r).Push(gtx.Ops).Pop()
 	pointer.CursorText.Add(gtx.Ops)
-}
-
-// crNormalizeURL trims s and adds https:// when it has no scheme
-// ("example.com", "localhost:8080/x"); mailto: and tel: are kept.
-func crNormalizeURL(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	if strings.Contains(s, "://") {
-		return s
-	}
-	l := strings.ToLower(s)
-	for _, p := range [...]string{"mailto:", "tel:", "sms:"} {
-		if strings.HasPrefix(l, p) {
-			return s
-		}
-	}
-	return "https://" + strings.TrimLeft(s, "/")
 }

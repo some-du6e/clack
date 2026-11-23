@@ -194,6 +194,19 @@ type Editor struct {
 	// composer's).
 	CmdKCoachmark bool
 
+	// OnElementContext, set by the composer, is TextyInput.onContextMenu
+	// for a right-click whose target is a link or a slug (link_target.go):
+	// it opens Texty's own menu (LinkContextMenu, SlugContextMenu) at
+	// at (window px) and reports true, and the desktop menu doesn't open
+	// (Texty calls preventDefault).
+	OnElementContext func(el edElem, at image.Point) bool
+	// OnLinkClick, set by the composer, is TextyInput.onLinkClick: a click
+	// in a link (maybeHandleLinkClick) with the link's range selected.
+	OnLinkClick func(gtx layout.Context, c linkClick)
+	linkPress   edElem      // what the last primary press targeted
+	linkPressOK bool        // linkPress is set
+	linkPressAt image.Point // where it was (editor-local px)
+
 	// Input state.
 	clicker    gesture.Click
 	hover      edHover // the pointer over it (editor_hover.go)
@@ -1100,6 +1113,15 @@ func (e *Editor) hitPos(pt image.Point) int {
 }
 
 func (e *Editor) onClick(gtx layout.Context, ev gesture.ClickEvent) {
+	switch {
+	case ev.Kind == gesture.KindPress && ev.Source == pointer.Mouse:
+		defer e.noteLinkPress(ev) // after the press placed the caret
+	case ev.Kind == gesture.KindClick && ev.Source == pointer.Mouse:
+		e.onLinkRelease(gtx, ev) // the click event: Texty's onInputClick
+		return
+	case ev.Kind == gesture.KindCancel:
+		e.linkPressOK = false
+	}
 	if !((ev.Kind == gesture.KindPress && ev.Source == pointer.Mouse) ||
 		(ev.Kind == gesture.KindClick && ev.Source != pointer.Mouse)) {
 		return

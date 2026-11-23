@@ -47,20 +47,26 @@ func TestChromeActionsDrain(t *testing.T) {
 	}
 }
 
+// The link dialog's Link field as Slack's normalizeLinkUrl (MqLx) keeps
+// it: http://, not https://, in front of a bare host; anything with a
+// scheme as it is, "localhost:8080" included; a lone email a mailto: link.
+// (Slack's own answers; TestLinkURLSlackOracle has the rest.)
 func TestNormalizeURL(t *testing.T) {
 	for in, want := range map[string]string{
 		"":                        "",
-		"  example.com ":          "https://example.com",
+		"  example.com ":          "http://example.com",
 		"https://example.com":     "https://example.com",
 		"http://x.y/z":            "http://x.y/z",
-		"localhost:8080/a":        "https://localhost:8080/a",
-		"//cdn.example.com":       "https://cdn.example.com",
+		"localhost:8080/a":        "localhost:8080/a",
+		"//cdn.example.com":       "http://cdn.example.com",
 		"mailto:a@b.c":            "mailto:a@b.c",
 		"MAILTO:a@b.c":            "MAILTO:a@b.c",
 		"ftp://files.example.com": "ftp://files.example.com",
+		"karim@example.com":       "mailto:karim@example.com",
+		"example.com/a b":         "http://example.com/a%20b",
 	} {
-		if got := crNormalizeURL(in); got != want {
-			t.Errorf("crNormalizeURL(%q) = %q, want %q", in, got, want)
+		if got := normalizeLinkURL(in); got != want {
+			t.Errorf("normalizeLinkURL(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
