@@ -119,20 +119,29 @@ func ClickReactionGroup(h ReactHost, ch, ts, base string, local ReactionLocal) {
 					if !ok {
 						return nil, fmt.Errorf("messages: bad reaction key %q", a.ReactionKey)
 					}
-					ev, call := app.ReactBegin(c, t, a.Name, a.Add)
-					held := ev != nil
-					if held {
-						ApplyEvent(app, *ev) // a channel list showing it too, this frame
-					} else if _, ok := app.HeldMessage(c, t); !ok {
-						local.Change(a.Name, a.Add, false)
-					}
-					h.Invalidate()
-					err := call(ctx)
-					if err != nil && !held {
-						local.Change(a.Name, a.Add, true)
-					}
-					h.Invalidate()
-					return nil, err
+					return nil, submitOutside(ctx, h, app, local, c, t, a.Name, a.Add)
 				})
 		})
+}
+
+// submitOutside is submitAddOrRemoveReaction's native for a bar outside
+// the list: core's optimistic change (ReactBegin) when the store holds
+// the message, else local's, then reactions.add/remove; a failure takes
+// back only a change local made (core rolls its own back).
+func submitOutside(ctx context.Context, h ReactHost, app *core.App, local ReactionLocal, ch, ts, name string, add bool) error {
+	ev, call := app.ReactBegin(ch, ts, name, add)
+	changed := false // a change of local's
+	if ev != nil {
+		ApplyEvent(app, *ev) // a channel list showing it too, this frame
+	} else if _, ok := app.HeldMessage(ch, ts); !ok {
+		local.Change(name, add, false)
+		changed = true
+	}
+	h.Invalidate()
+	err := call(ctx)
+	if err != nil && changed {
+		local.Change(name, add, true)
+	}
+	h.Invalidate()
+	return err
 }

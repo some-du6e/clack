@@ -134,6 +134,9 @@ type View struct {
 	// the files' FileActions (file_actions.go): the button under the
 	// press (barKey; -1 the group between its buttons) and the pointer
 	barPress, barHot int
+	// the chart under the pointer (index+1, 0 none) and what it points
+	// at there (dataviz.go)
+	vizHot, vizIdx int
 	// remHot is the attachment remove button under the pointer (its
 	// index in removes, +1), for its "Remove preview" tooltip
 	remHot int
@@ -154,7 +157,10 @@ type View struct {
 	// change resets its toggle (ContainerBlock's useEffect).
 	collapsed    map[any]bool
 	collapseDefs map[string]uint8
-	redraw       bool // ask for a frame after this frame's events
+	// tables: each data_table's page, sort and filter (datatable.go), by
+	// its block_id
+	tables map[any]*tableState
+	redraw bool // ask for a frame after this frame's events
 
 	// lead: the first line's start (SetLead)
 	lead int
@@ -228,6 +234,7 @@ func (v *View) Set(doc richtext.Doc, o Options) {
 	v.selA, v.selB = 0, 0
 	v.hover, v.press = -1, -1
 	v.tipFrag = -1
+	v.vizHot, v.vizIdx = 0, -1 // a chart's hover from the doc before
 }
 
 // SetOptions changes only the options (e.g. edited flag, pending state).
@@ -291,11 +298,82 @@ func (v *View) SelectedText() string {
 	return string(v.d.plain[a:b])
 }
 
-// Hovered reports whether the pointer is over a clickable item.
-func (v *View) Hovered() bool { return v.hover >= 0 }
+// Hovered reports whether the pointer is over a clickable item. A canvas's
+// date isn't one: an editor's pointer is the hand over it (HandCursors),
+// but it has no click here, so a press on it is the text's (canvasview's
+// press area: the editor, or its can't-edit feedback).
+func (v *View) Hovered() bool {
+	return v.hover >= 0 && (int(v.hover) >= len(v.d.targets) || v.d.targets[v.hover].kind != tDate)
+}
 
 // Pointer reports whether the pointer is inside the view.
 func (v *View) Pointer() bool { return v.hovering }
+
+// HandCursors adds the hand over v's links, mentions, cards and buttons
+// once more, in areas that pass every event on: for an input area laid
+// out over the view after its Layout, at the same origin (a canvas
+// editor's press area, which takes the text cursor for presses on plain
+// text), whose cursor would otherwise win over the view's own. dates
+// gives a canvas's dates the hand too: an editor's (Quip's
+// control.c68 .slack-date-contents:not(.read-only)).
+func (v *View) HandCursors(gtx layout.Context, dates bool) {
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	v.handAreas(gtx, dates)
+}
+
+// handAreas sets the hand over everything a click acts on (Layout's own
+// cursors, after its text cursor for the whole view).
+func (v *View) handAreas(gtx layout.Context, dates bool) {
+	for i := range v.d.hits {
+		hr := &v.d.hits[i]
+		if hr.r.Empty() {
+			continue
+		}
+		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly {
+			continue // no click: the text cursor stays
+		}
+		s := clip.Rect(hr.r).Push(gtx.Ops)
+		pointer.CursorPointer.Add(gtx.Ops)
+		s.Pop()
+	}
+	v.barCursors(gtx, false) // the shown FileActions' buttons
+	for i := range v.d.codes {
+		if c := &v.d.codes[i]; c.block {
+			s := clip.Rect(v.copyButton(c)).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
+	}
+	for i := range v.d.frags {
+		f := &v.d.frags[i]
+		if v.handFrag(f, dates) {
+			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
+	}
+}
+
+// handFrag reports whether frag f takes the hand: a link, a mention or a
+// card does; a chip that isn't a link (a channel the viewer can't see)
+// only in a canvas, where Quip draws it as an <a> all the same
+// (ChannelMentionView; .document a:not(.c-link):hover{cursor:pointer});
+// a canvas's date only for an editor (dates).
+func (v *View) handFrag(f *frag, dates bool) bool {
+	if f.target < 0 {
+		return false
+	}
+	if int(f.target) >= len(v.d.targets) {
+		return true
+	}
+	switch tg := &v.d.targets[f.target]; {
+	case tg.kind == tDate:
+		return dates
+	case tg.cardOnly:
+		return v.opts.Canvas
+	}
+	return true
+}
 
 func (v *View) selRange() (int32, int32) {
 	if v.selA <= v.selB {
@@ -333,6 +411,9 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	}
 	if v.slugsChanged() {
 		v.dirty = true // a message slug's label reads otherwise now (slugs.go)
+	}
+	if v.tablesChanged() {
+		v.dirty = true // a data_table's menu sorted it (datatable.go)
 	}
 	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
@@ -427,6 +508,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.call.Add(gtx.Ops)
+	v.drawChartHover(gtx, st)
+	v.chartSemantics(gtx)
 	for _, i := range v.liveImgs { // animated GIFs: their frame now, over what's under them
 		v.drawImg(gtx.Ops, st, int(i), false)
 	}
@@ -435,7 +518,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	// over the recorded fill, under its text. Components draw their own.
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
-			if b := &v.d.boxes[i]; b.hoverOver && b.hov == 0 && b.comp == 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
+			if b := &v.d.boxes[i]; v.hoverOverShown(b) {
 				fillRadii(gtx.Ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
@@ -506,34 +589,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	}
 	v.mounted(gtx, size)
 	pointer.CursorText.Add(gtx.Ops)
-	for i := range v.d.hits {
-		hr := &v.d.hits[i]
-		if hr.r.Empty() {
-			continue
-		}
-		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly {
-			continue // no click: the text cursor stays
-		}
-		s := clip.Rect(hr.r).Push(gtx.Ops)
-		pointer.CursorPointer.Add(gtx.Ops)
-		s.Pop()
-	}
-	v.barCursors(gtx, false) // the shown FileActions' buttons
-	for i := range v.d.codes {
-		if c := &v.d.codes[i]; c.block {
-			s := clip.Rect(v.copyButton(c)).Push(gtx.Ops)
-			pointer.CursorPointer.Add(gtx.Ops)
-			s.Pop()
-		}
-	}
-	for i := range v.d.frags {
-		f := &v.d.frags[i]
-		if f.target >= 0 && (int(f.target) >= len(v.d.targets) || !v.d.targets[f.target].cardOnly) {
-			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
-			pointer.CursorPointer.Add(gtx.Ops)
-			s.Pop()
-		}
-	}
+	v.handAreas(gtx, false)
 	// Element runs (Options.Elements) go last: their input areas must be
 	// above the cursor/hit areas of cards and links registered above.
 	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {
@@ -640,11 +696,14 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if v.playing == nil {
 		v.playing = map[string]bool{}
 	}
+	if v.tables == nil {
+		v.tables = map[any]*tableState{}
+	}
 	// JUMBOMOJI is off under Compact (client-boot Y9zX: jumbomoji &&
 	// messages_theme != "dense")
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
-		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations}
+		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations, tables: v.tables}
 	if v.opts.FillBlocks {
 		l.filled = 1 // a view's blocks (FillBlocks)
 	}
@@ -724,6 +783,9 @@ func (v *View) anyReady(st *Style) bool {
 			if _, ok := st.Images.Get(f.url, f.size); ok {
 				return true
 			}
+			if f.alt && !f.broken && imgFailed(st.Images, f.url, f.size) {
+				return true // it failed since: its broken icon
+			}
 		}
 	}
 	return false
@@ -776,6 +838,9 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 				fillRadii(ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
+	}
+	if static {
+		v.paintCharts(ops, st)
 	}
 	if css && hp == 0 {
 		v.partBackgrounds(func(r image.Rectangle, c color.NRGBA) { fillRadii(ops, r, [4]int{}, c) }, comp)
@@ -838,7 +903,14 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			}
 			if !ok {
 				if static {
-					v.pending = append(v.pending, ^int32(i))
+					v.pending = append(v.pending, ^int32(i)) // drawn once it loads (a retry)
+				}
+				// a message emoji that failed: Chromium's broken <img>
+				// (brokenimage.go)
+				// once shown it stays until the image loads (a retry that's
+				// busy decoding isn't Failed, and drew a blank gap)
+				if f.broken = f.alt && (f.broken || imgFailed(st.Images, f.url, f.size)); f.broken {
+					paintBrokenEmoji(ops, int(f.x+0.5), f.y, f.size, v.laidPx)
 				}
 				continue
 			}
@@ -940,6 +1012,21 @@ func (v *View) staticText(t int16) bool {
 		}
 	}
 	return false
+}
+
+// hoverOverShown reports whether b's hover fill takes its fill's place
+// now: a pill's whose target is hovered, or a data_table row's when its
+// target or one inside it (target..tgTo) is. A box without a target (a
+// hidden channel's chip, a URL-less message or canvas slug) never shows
+// it.
+func (v *View) hoverOverShown(b *box) bool {
+	if !b.hoverOver || b.hov != 0 || b.comp != 0 || b.hover.A == 0 || b.target < 0 || v.hover < 0 {
+		return false
+	}
+	if b.target != v.hover && !(b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) {
+		return false
+	}
+	return v.pillHoverFill(b)
 }
 
 // pillHoverFill reports that b's own hover fill shows: no rule gives the
@@ -1552,7 +1639,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 						}
 					}
 				}
-				if pc, ok := h.(PlainClicker); ok && v.press < 0 && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) {
+				if pc, ok := h.(PlainClicker); ok && (v.press < 0 || v.menuOnlyAt(v.press)) && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) {
 					if d := e.Position.Sub(v.pressPos); d.X*d.X+d.Y*d.Y <= 16 {
 						pc.PlainClick()
 					}
@@ -1582,6 +1669,9 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 		v.expHot, v.copyTipAt = b, gtx.Now
 		v.copyGen = theme.TipGen()
 	}
+	if ci, h := v.chartAt(p); ci+1 != v.vizHot || h != v.vizIdx {
+		v.vizHot, v.vizIdx = ci+1, h
+	}
 	if bar, btn, _ := v.barAt(p); barKey(bar, btn) != v.barHot {
 		v.barHot, v.copyTipAt = barKey(bar, btn), gtx.Now
 		v.copyGen = theme.TipGen()
@@ -1601,6 +1691,7 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 func (v *View) left() {
 	v.hovering = false
 	v.tipFrag = -1
+	v.vizHot, v.vizIdx = 0, -1
 	// the buttons under it are left too: a return waits their tooltip's
 	// delay again (mouseleave)
 	v.copyHot, v.secHot, v.expHot, v.barHot, v.remHot = 0, 0, 0, 0, 0
@@ -1903,6 +1994,24 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 	v.activateTarget(&v.d.targets[t], v.targetText(t), anchor, h)
 }
 
+// menuOnlyAt reports whether target t takes no click (a data_table row, a
+// snippet's or an email card's menu-only area): a click there is the
+// view's plain click (a search card opens its result).
+func (v *View) menuOnlyAt(t int16) bool {
+	return t >= 0 && int(t) < len(v.d.targets) && v.d.targets[t].menuOnly
+}
+
+// actionRect is r (view coordinates) for a handler: in window coordinates
+// (true) when the view knows its window origin, which the pointer's last
+// move over it taught it, else plus Origin (false: the owner maps it, as
+// messages' rows do with their origin).
+func (v *View) actionRect(r image.Rectangle) (image.Rectangle, bool) {
+	if org, ok := v.WindowOrigin(); ok {
+		return r.Add(org), true
+	}
+	return r.Add(v.Origin), false
+}
+
 // targetRect is tg's (first) hit box, in the View's coordinates.
 func (v *View) targetRect(tg *target) (image.Rectangle, bool) {
 	for _, h := range v.d.hits {
@@ -1989,6 +2098,13 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 				}
 				wh.WorkflowCard(tg.id, c, r)
 			}
+		}
+	case tDataTable: // a data_table's buttons (datatable.go)
+		v.dataTableClick(tg, h)
+	case tTimeline: // a timeline section's (Sources) (timeline.go)
+		if th, ok := h.(TimelineHandler); ok && tg.timeline != nil {
+			r, _ := v.targetRect(tg)
+			th.TimelineSources(tg.timeline, r.Add(v.Origin))
 		}
 	case tSnippet: // a snippet's Show more / Show less (snippet.go)
 		if fh, ok := h.(FileActionHandler); ok && tg.file != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strconv"
@@ -1683,10 +1684,24 @@ func (v *viewCache) entryStateNeed(slice, key, sub string, need uint64) (*viewEn
 // posted to it (d -1).
 func (v *viewCache) msgPending(ch, ts string, d int) {
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	k := msgKey{ch, ts}
+	ready := false
 	if v.pendMsg[k] += d; v.pendMsg[k] <= 0 {
 		delete(v.pendMsg, k)
+		// the last change posted: a view of it work installed while it was
+		// queued, with its marks behind it, was held back (work announces
+		// no pending message); it's ready now, and the row waiting on it
+		// reads it again when the epoch moves
+		if g := v.groups[viewSK{"messages", ch}]; d < 0 && g != nil && v.visibleLocked(g) {
+			if e := g.subs[ts]; e != nil && v.msgMarksReadyLocked(viewKey{"messages", ch, ts}, e.ver) {
+				ready = true
+				v.epoch.Add(1)
+			}
+		}
+	}
+	v.mu.Unlock()
+	if f := v.t.opts.UI.Invalidate; ready && f != nil {
+		f()
 	}
 }
 
@@ -1856,6 +1871,40 @@ func (v *viewCache) stale(slice, key string) (onScreen bool) {
 
 // work is the fetch worker: one batch at a time until nothing is wanted,
 // so a busy runtime gets each key asked once, not once per frame.
+// viewTrace, when set (TraceViews), hears each view the worker announces
+// to the UI and why.
+var viewTrace atomic.Pointer[func(slice, key, sub, why string)]
+
+// TraceViews sets (nil clears) a hook that hears each view the view
+// cache's worker announces to the UI (it asks for a frame for it) and why:
+// for tests, which reads ask for the frames.
+func TraceViews(f func(slice, key, sub, why string)) {
+	if f == nil {
+		viewTrace.Store(nil)
+		return
+	}
+	viewTrace.Store(&f)
+}
+
+func traceView(k viewKey, why string) {
+	if f := viewTrace.Load(); f != nil {
+		(*f)(k.slice, k.key, k.sub, why)
+	}
+}
+
+// traceMsg traces message ch/ts's marks: the version, its own mark and
+// the pending count now.
+func (v *viewCache) traceMsg(ch, ts, what string) {
+	if viewTrace.Load() == nil {
+		return
+	}
+	v.mu.Lock()
+	mk := msgKey{ch, ts}
+	why := fmt.Sprintf("%s (seq %d, its mark %d, pending %d)", what, v.seq, v.msgVer[mk], v.pendMsg[mk])
+	v.mu.Unlock()
+	traceView(viewKey{"messages", ch, ts}, why)
+}
+
 func (v *viewCache) work() {
 	for {
 		v.mu.Lock()
@@ -1935,9 +1984,13 @@ func (v *viewCache) work() {
 				// a frame comes 250 ms on, which an idle window never lays
 				// out: the masked word stayed in clear until a mouse move
 				if k.slice == "messages" && k.key != "" && k.sub != "" && (dropped || v.visibleLocked(g)) &&
-					!v.msgMarksReadyLocked(k, was) && v.msgMarksReadyLocked(k, ver) {
+					!v.msgMarksReadyLocked(k, was) && v.msgMarksReadyLocked(k, ver) && v.pendMsg[msgKey{k.key, k.sub}] == 0 {
 					changed = true
 					v.epoch.Add(1)
+					if viewTrace.Load() != nil {
+						traceView(k, fmt.Sprintf("ready: the same bytes, its marks behind them now (was %d, ver %d, its mark %d, pending %d)",
+							was, ver, v.msgVer[msgKey{k.key, k.sub}], v.pendMsg[msgKey{k.key, k.sub}]))
+					}
 				}
 				if e.blen > 0 {
 					cur.bsum, cur.blen = e.bsum, e.blen
@@ -1954,9 +2007,26 @@ func (v *viewCache) work() {
 				// its injected list, which may have come back as it was
 				// (the same messages, kept decoded and converted)
 				bucket := k.slice == "messages" && k.key != "" && k.sub == ""
-				if (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
+				// a message with a change still queued for JS (pendMsg)
+				// isn't ready, whatever its marks: this answer is from
+				// before the change, and no row draws it. The message's
+				// read once the change is posted announces it (send's
+				// marks stale this one), or msgPending does when its
+				// count goes to 0 with this one ready. Announced here, an
+				// idle runtime's at-once answer on the in-order lane, 8 ms
+				// before the post, asked for a frame that drew nothing new
+				// on every edit under a plugin patching the messages slice
+				// (flake-check's activity-edits: 80 frames for 20 edits,
+				// 61 before e0cab406c)
+				held := k.slice == "messages" && k.key != "" && k.sub != "" && v.pendMsg[msgKey{k.key, k.sub}] > 0
+				if !held && (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
 					changed = true
 					v.epoch.Add(1)
+					if viewTrace.Load() != nil {
+						traceView(k, fmt.Sprintf("a new value (first %v, marks ready %v, stale %v, ver %d, its mark %d, pending %d)", cur == nil,
+							k.slice != "messages" || k.sub == "" || v.msgMarksReadyLocked(k, ver), v.staleLocked(e, g, k.slice),
+							ver, v.msgVer[msgKey{k.key, k.sub}], v.pendMsg[msgKey{k.key, k.sub}]))
+					}
 				}
 				g.subs[k.sub] = e
 				cur = e

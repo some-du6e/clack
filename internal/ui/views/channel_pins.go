@@ -141,6 +141,17 @@ func NewChannelPins(h Host, ch string) *ChannelPins {
 	v := &ChannelPins{base: newBase(h), fv: NewFiles(h), cf: NewChannelFiles(h, ch), ch: ch, rows: map[string]*cpRow{}}
 	v.list.Axis = layout.Vertical
 	v.kb = newVKList(&v.list)
+	// a pin draws pins.list's copy unless a timeline holds the message
+	// (core.PinsTab swaps in only those): a copy another view fetched by
+	// id doesn't end the tab's own reaction changes
+	v.ownCopy = func(ch, ts string) bool {
+		c := h.Core()
+		if c == nil {
+			return false
+		}
+		_, ok := c.S.Find(ch, ts)
+		return !ok
+	}
 	return v
 }
 

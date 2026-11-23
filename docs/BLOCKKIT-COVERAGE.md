@@ -48,6 +48,26 @@ Clack before: only types missing from the enum fell back. Known types it couldn'
 
 The elements inside child blocks and fallback payloads are live, as in Slack, where the surface's `onAction` reaches them (Container `yWQF` provides the blockKit context, and Callout's `a+Oj` inherits it). Blockkit keeps the tree richtext draws (`Block.Nested`: a container's or a callout's `child_blocks`, and `richtext.FallbackItems`). Its lookups and the view state walk that tree, so a nested button sends `block_actions` with its own block's id. In modals and App Home, the Surface is the Elements host of the richview that draws those blocks. One gap remains there: an input block nested in a container draws as a section with its element (no hint, no error line), and the submit's checks skip it.
 
+## The coverage guard
+
+`TestSlackBlockTypesHaveRenderers` (`internal/richtext/coverage_guard_test.go`) holds Clack to Slack's current list. Its data, `internal/richtext/testdata/slack_block_types.json`, is `tools/bkregistry.py`'s output for one client build (9f450b8ad3db, boot-shared `6f5a26389f15555d`): every type the bundle registers a SUI renderable for (109: blocks, elements, the rich_text pieces and their inline elements share one map; `rich_text_file` is registered through a variable), the cell types DataTableBlock's renderCellContent draws, the chart types isSupportedChart takes, and slack.ts's block and element types. The test fails when:
+
+- fallback.go's `messageRenderables` differs from the bundle's list (a new type would take the fallback chain though Slack draws it);
+- a type has no Clack renderer: a block or text object reaches the builder's "Slack draws it, Clack doesn't" path or the fallback card, an element doesn't become a Button, an inline element in a rich_text section reaches the unknown path, a data_table cell isn't drawn, a chart type isn't supported; unless `notDrawn` names it with a reason;
+- `notDrawn` names a type Clack draws now, or one Slack no longer names.
+
+After a bundle update: `python3 -B -I tools/bkregistry.py BUILD boot-shared.js blocks.ts elements.ts > internal/richtext/testdata/slack_block_types.json`, and the test names each new type.
+
+`notDrawn` (2026-11-23): `condition` and `fallback_canary`, which Slack has no renderable for (expanded first; always the fallback), and the types later parts will draw:
+
+| part | types |
+|---|---|
+| 2a (in progress) | contact_card, event, share_prompt |
+| 2b (sideways scrolling) | carousel (Slack's LSo8 scroller with its arrows: the account has no a11y_carousel) |
+| 2d (inline rich text) | _canvas_mention, _theme_install_button, attachment_mention, canvas_message_unfurl, canvas_user_mention, citation, folder_mention, salesforce_data_field, skill, tag, unknown, variable, work_object_mention, workflowtoken |
+| 2e (elements) | feedback_buttons, file_input, password, split_button |
+| 2f (blocks) | attachment_reference, auth_provider, canvas_mermaid, canvas_table, channel_section, channel_set, layout, mcp_app, message, page, prototype, related_automation_decorator, salesforce_record_card, search_top_results, share_skill, share_workflow |
+
 ## Use in the probe account's conversations
 
 Top-level blocks; "in attachments" counts attachment `blocks`:
@@ -86,8 +106,8 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | container | `yWQF` ContainerBlock | absent | **full** | the collapse's 0.16s height animation |
 | context | `0v+p` | full | full | |
 | context_actions | `fYf1` | full | full | (agent.go) |
-| data_table | `6dWo` DataTableBlock | absent | absent | pagination, sorting, raw/rich cells |
-| data_visualization (slack.ts) | `vxqh` (lazy chunk) | absent | absent | pie/bar/line/area charts |
+| data_table | boot-shared `Phw4` DataTableBlock (rows `cNHK`, header row `x+0S`, state `A1Xw`, sort and filter `UCSE`, TSV `/R+4`, Pagination `4YPB`; build 9f450b8ad3db) | absent | **partial**: the caption, Search table, View {caption} and More actions in the header, the 36px header row whose cells open Sort (Ascending, Descending, Clear Sort: sortRows, numeric for raw_number columns, else upper-cased text with empty cells last), 48px rows paged by page_size (5) with Slack's pagination and the spacer that keeps every page as tall, raw_text, cell_text, raw_number, rich_text and action_cell cells clamped to one line, the is_salesforce label, Copy table and Download table (TSV, `<caption slug>.tsv`), and the fullscreen view with the filter (Slack's FuzzyMatcher, fuzzyLimit 3) and every row; a render that throws draws the errorFallback; in messages, threads, Activity and search previews, modals and App Home (`richview/datablocks_test.go`, `richtext/datablocks_test.go`, `ui/bk_datablocks_test.go`) | the header's own filter field (Search table opens the fullscreen view's), the sideways scroll (a table wider than columns × 120px draws narrower columns), the expand-cell popover, the caption's and header cells' truncation tooltips, the slack/block-kit clipboard flavor, Slack Kit's fullscreen modal (a 960px modal here), Share table (share_and_copy_blocks is off) |
+| data_visualization (slack.ts) | boot-shared `vxqh` DataVisualizationBlockLazy → canvas-data-visualization-block `v4Jz` DataVisualizationBlock, `mhRP` (ECharts 6.1.0 options; build 9f450b8ad3db) | absent | **partial**: the legacy layout (bk_refresh_data_visualization_size_variants is off): bar, line, area and pie charts laid out as ECharts lays out Slack's options (internal/chart; the split lines, axes, labels, bars, symbols, sectors, areas and lines are checked against ECharts itself in `chart/oracle_test.go`), the title, axes, their labels, ticks and split lines, the series colours and the legend, the axis pointer and the tooltip (ported from ECharts' code and checked by `TestHoverAndTooltip`, not against ECharts), More actions (View as table, Download chart data, Copy as image under data_visualization_copy_image, off without a preview image), the aria-label (buildChartDescription), the errorFallback where the render throws, the title in notifications (`richview/datablocks_test.go`, `popups/datablocks_test.go`, `chart/*_test.go`) | ECharts' animations, the sideways scroll under 400px, the actions group staying shown while its menu is open, View as table in Clack's modal (not Slack Kit's fullscreen one), Open in new window and Copy chart / Share chart (their experiments are off). preview_images aren't drawn: Slack's message client never draws them (its Suspense fallback is null in the legacy layout); they're Copy as image's picture |
 | divider | `Iu9o` | full | full | |
 | event (slack.ts) | `0lYF` | absent | absent | calendar event card |
 | fallback_canary (slack.ts) | none: always its fallback | absent (drew nothing) | **full** | |
@@ -97,7 +117,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | input | `h/Gw` InputBlock | full in modals and App Home; partial in messages (label + placeholder) | same | |
 | loading (slack.ts) | `KSQB` | absent | **full** | |
 | markdown | none in messages (server-translated) | Clack converts it itself | same | Slack's client would show the fallback card if one arrived untranslated. Kept, because the agent-thread fixture (Karim's report, 2026-11-12) stores one |
-| message_embed (slack.ts) | `ACXQ` MessageEmbed | absent | absent | |
+| message_embed (slack.ts) | boot-shared `ACXQ` MessageEmbed (props: `j3iH` getMessageAttachmentProps; build 9f450b8ad3db) | absent | **partial**: the message the client holds at channel/ts as a message unfurl card (its blocks without related_automation_decorator, an mcp_app as "This content is only available in the original conversation.", else its first attachment's blocks; its author, channel, thread context and files), margin 12px 0; nothing for a message the client doesn't hold (`richtext/messageembed_test.go`) | the card's link to the message (fromUrl needs the team's domain), the message's other attachments, a Slack Connect source team; an embed made before its message loaded (or since changed) stays as it was until its own message redraws |
 | plan | `5mjF` PlanBlock | full | full | (agent.go) |
 | rich_text | `N5ZY` · `EAqS` → `qaNC` RichTextRenderer | full | full | see rich_text below |
 | section | `bzDH` | full | full | |
@@ -105,7 +125,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | share_shortcut (slack.ts) | `KrN7` ShareShortcut → WorkflowEntity on `VLgN`/`aJif` | absent (drew nothing) | **partial** | Forward workflow (Slack's share dialog for a workflow: the hover bar's button and More actions' item, `Tw8O`), More actions' Feature workflow and Add workflow to channel aren't in Clack, so none is drawn; the other-org badge (`ISuZ`, hermes_next); the VIP badge after the title (`LA2n`, for a bot that is one of your VIPs); ShortcutIcon's app and workflow icon fallbacks (`mp5R`: the app for `app_id`, the workflow's `icons.image_96`); the hover shadow; the Slackbot-message attachment variant (`7lAH`) |
 | table | `POW9` Table | partial: a `raw_number` cell's numeric `value` failed the whole block ("This content could not be displayed."), `cell_text` cells drew empty | **full** | |
 | task_card | `1+vf` TaskCard | full | full | (agent.go) |
-| timeline (slack.ts) | `9B8s` Timeline | absent | absent | |
+| timeline (slack.ts) | boot-shared `9B8s` Timeline → TimelineCondensed (helpers `rSPu`, `IiSM`; sources modal `+sSl`; build 9f450b8ad3db) | absent | **partial**: the header (the only point's title; else the summary, "Using N tools" while a point runs and "Used N tools" after, a closed running timeline its last point's title), the last three distinct point icons before it, the caret that opens it; open, each point (with more than one) and its steps' sections down a 16px step column (the point's icon, a dot on its first and last section, the 1px line), "(Sources)" opening the section's sources (Messages, Files, Web, Memories); a finished stream stops its in-progress points; a task_attribution_ block draws nothing; notifications get each point's title with In progress: / Error: (`richtext/timeline_test.go`, `richview/timeline_test.go`) | the running header's shimmer (drawn still); Slack's ai-sparkle, agentforce-filled, ai-file-summary, search-files and ai-workflow glyphs (Clack has none: the quiet dot); the sources modal's rows are links (Slack's avatars, thumbnails, favicons and timestamps, and its fetch of the messages the client doesn't hold) |
 | video | `u8h8` VideoBlock | partial (drawn as an unfurl card) | same | not re-audited |
 | share_skill, share_workflow, salesforce_record_card, search_top_results, mcp_app, page, layout, prototype, related_automation_decorator, attachment_reference, canvas_mermaid, message (client only) | `1Ine`, `ZiEp`, `bgQL`, `jBv3`, `bwbq`, `eMXm`, `+42+`, `b3P2`, `9H1Y`, `jBv3`, `iToP`, `jBv3` | absent (layout: the per-block error line, its object `rows` failed the decode) | absent | |
 | expandable, group, error (client enum) | no renderable | drew nothing | **fallback** (the card) | |
@@ -240,7 +260,7 @@ Round 3's other fixes (the review's MINORs and NITs), with tests that fail on `7
 Round 2 built `share_shortcut`, the inline file slug, `card` and check lists. What's left, in order, with what each needs:
 
 1. `carousel` (`ZDqH`): LSo8's horizontal scroller of 340px cards 16px apart, with arrows and shadows inside and paging by whole cards. Richview has no horizontal scrolling or clipping yet, and the partly shown card needs both.
-2. `data_table` (`6dWo`): pagination, sorting, raw and rich cells.
+2. `data_table`: done (partial; see the table above).
 3. `contact_card` (`zb3H`): Slack Connect's introductions card. Its Save contact info and Start DM actions call the API and open their own modals, and fakeslack needs both endpoints first.
 4. `timeline` (`9B8s`) and `event` (`0lYF`, a calendar event card).
 5. `message_embed` (`ACXQ`): the referenced message drawn as a message unfurl. richtext needs a resolver for a stored message by channel and ts.

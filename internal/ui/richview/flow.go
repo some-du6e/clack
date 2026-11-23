@@ -42,6 +42,7 @@ type frag struct {
 	url    string // image
 	p0, p1 int32  // plain text byte range
 	alt    bool   // image frag has text fallback in plain (":name:")
+	broken bool   // an alt frag recorded with the broken image icon (its load failed)
 	comp   int16  // component tag (index+1 into display.comps), 0 = static
 	hov    int16  // hover layer (index+1 into display.hovers), 0 = none
 	part   uint8  // CSS part (css.go), 0 = none
@@ -210,6 +211,19 @@ const (
 	// tWorkflowCard is a share_shortcut card's click, Start Workflow or
 	// ⋮ (id: "open", "start", "more"; key: the card; shortcut.go)
 	tWorkflowCard
+	// tDataTable is a data_table's button (id: "search", "view", "more",
+	// "sort" with col, "prev", "next", "page:N") or row ("row", hover
+	// only; table: its state; datatable.go)
+	tDataTable
+	// tTimeline is a timeline section's "(Sources)" (timeline: the
+	// section; timeline.go)
+	tTimeline
+	// tDate is a canvas's date control (Quip's CONTROL_SLACK_DATE_TYPE,
+	// span.slack-date-contents.mention): no link and no click here, but an
+	// editor's pointer is the hand over it (canvas-controller CSS:
+	// control.c68 .slack-date-contents:not(.read-only){cursor:pointer}),
+	// which View.HandCursors gives it; a viewer's stays the text cursor.
+	tDate
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no
@@ -293,6 +307,11 @@ type target struct {
 	menuOnly bool
 	// act is a tSnippet's action: FileShowMore or FileShowLess.
 	act FileAction
+	// table and col: a tDataTable's table state and column (datatable.go)
+	table *TableControl
+	col   int
+	// timeline is a tTimeline's section (timeline.go)
+	timeline *richtext.TimelineSection
 }
 
 type hit struct {
@@ -351,8 +370,10 @@ type display struct {
 	expands []expandBtn
 	// bars are the files' FileActions (file_actions.go), pills the
 	// snippets' Show more / Show less (snippet.go)
-	bars  []fileBar
-	pills []snipPill
+	bars []fileBar
+	// charts are the data_visualization blocks' charts (dataviz.go)
+	charts []chartPrim
+	pills  []snipPill
 	// ells counts the frags that are a clamp's "…" (frag.ell)
 	ells int
 }
@@ -408,6 +429,7 @@ func (d *display) reset() {
 	d.plays = d.plays[:0]
 	d.expands = d.expands[:0]
 	d.bars = d.bars[:0]
+	d.charts = d.charts[:0]
 	d.pills = d.pills[:0]
 	d.ells = 0
 }
@@ -564,6 +586,9 @@ type lay struct {
 	// noAnim: Accessibility > "Allow animations" is off
 	playing map[string]bool
 	noAnim  bool
+	// tables holds the data_tables' page, sort and filter (View state,
+	// datatable.go)
+	tables map[any]*tableState
 	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
 	titleFrags [2]int
 	// media is the card's AttachmentMedia part (fixedMedia), for
@@ -947,6 +972,8 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			if sp.URL != "" {
 				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
 				col = p.Link
+			} else if l.opts.Canvas {
+				tg = l.d.addTarget(target{kind: tDate}) // Quip's date control (tDate)
 			}
 		}
 		if st&richtext.Code != 0 && !fs.pre && dc < 0 {

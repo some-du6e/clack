@@ -1,6 +1,7 @@
 package views
 
 import (
+	"context"
 	"image"
 	"net/url"
 	"slices"
@@ -457,5 +458,100 @@ func TestViewsReactionBarGroupsLikeSlack(t *testing.T) {
 		if reacted(1) {
 			t.Error("the tada pill is the viewer's")
 		}
+	}
+}
+
+// The canvas comment stream: a pill's click toggles the reaction and
+// doesn't open the comment's thread (Reaction stops its click there);
+// a click on the comment elsewhere opens it.
+func TestCanvasCommentsReactionPillOpensNoThread(t *testing.T) {
+	app, fs := vaFake(t)
+	ch := core.CanvasFileChannel(fakeslack.CanvasChannel)
+	const reply = "1762500100.000200" // CommentReacted's latest reply, the one the stream draws
+	// the reply has the viewer's eyes (the stream draws a thread's latest
+	// reply and its reactions)
+	if err := app.C.React(context.Background(), ch, reply, "eyes", true); err != nil {
+		t.Fatal(err)
+	}
+	rx := &rxFake{}
+	fs.SetHook(rx.hook(nil))
+	h := newKBHost(app, false)
+	v := NewCanvasComments(h, fakeslack.CanvasChannel, "")
+	e := &vaEnv{size: image.Pt(600, 1400)}
+	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
+	c := &rxCase{t: t, e: e, b: &v.base, x: rx, ch: ch, ts: reply}
+	e.until(t, "the reply's pill", func() bool { _, ok := c.pill("eyes"); return ok })
+	p, _ := c.pill("eyes")
+	c.click(p)
+	e.until(t, "the pill's reaction call", func() bool { return rx.n() > 0 })
+	e.frame()
+	if _, th := h.last(); th != "" {
+		t.Errorf("a click on the reply's reaction opened the thread %s", th)
+	}
+	// the reply itself opens it
+	rr := v.RowRect(reply)
+	if rr.Empty() {
+		t.Fatal("the reply has no row")
+	}
+	c.click(f32.Pt(float32(rr.Min.X+rr.Dx()/2), float32(rr.Min.Y+14)))
+	e.until(t, "the comment's thread", func() bool { _, th := h.last(); return th == ch+"/"+fakeslack.CommentReacted })
+}
+
+// A view's own change to a message the store doesn't hold lasts until the
+// store holds the message: then the store's copy says what the viewer's
+// reactions are, and the change is dropped.
+func TestLocalReactionsEndWhenTheStoreHoldsIt(t *testing.T) {
+	app, _ := vaFake(t)
+	v := NewThreads(newKBHost(app, false))
+	ch, ts := fakeslack.ViewsChannel, "1762799999.000100"
+	m := core.Message{Channel: ch, TS: ts, User: "U0FAKE00001", Text: "a synthetic message"}
+	l := &rxnLocalCopy{b: &v.base, m: m}
+	l.Change("tada", true, false)
+	if !reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Fatal("the local change doesn't show")
+	}
+	app.S.PutFetched(ch, []slack.Message{{Type: "message", TS: ts, User: "U0FAKE00001", Text: "a synthetic message"}}, app.S.LiveSeq())
+	if _, ok := app.HeldMessage(ch, ts); !ok {
+		t.Fatal("the store doesn't hold the message: the test checks nothing")
+	}
+	if reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Error("the store holds the message, and the local change still shows over its copy")
+	}
+	if len(v.rxnLocal) != 0 {
+		t.Errorf("the local changes outlived the store taking the message: %v", v.rxnLocal)
+	}
+}
+
+// The Pins tab draws pins.list's copy of a pin, and core swaps in only a
+// timeline's (core.PinsTab): a copy another view fetched by id doesn't
+// end the tab's own reaction change, which would flip the pill back (and
+// a second click then read "reacted" and take the reaction off); a
+// timeline holding the message, the copy the tab draws then, does.
+func TestPinsLocalReactionOutlivesAFetchedCopy(t *testing.T) {
+	app, fs := pfCore(t)
+	h := pfHostFor(t, app, fs, false)
+	v := NewChannelPins(h, fakeslack.PinsChannelID)
+	ch, ts := fakeslack.PinsChannelID, "1762799999.000100"
+	m := core.Message{Channel: ch, TS: ts, User: "U0FAKE00001", Text: "a synthetic pinned message"}
+	l := &rxnLocalCopy{b: &v.base, m: m}
+	l.Change("tada", true, false)
+	if !reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Fatal("the local change doesn't show")
+	}
+	// another view fetches it by id: the store holds a copy the tab doesn't draw
+	app.S.PutFetched(ch, []slack.Message{{Type: "message", TS: ts, User: "U0FAKE00001", Text: "a synthetic pinned message"}}, app.S.LiveSeq())
+	if _, ok := app.HeldMessage(ch, ts); !ok {
+		t.Fatal("the store doesn't hold the fetched copy: the test checks nothing")
+	}
+	if !reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Error("a copy another view fetched ended the Pins tab's reaction change: its pill flips back")
+	}
+	// the channel's history holds it: the tab draws the store's copy now
+	app.S.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "U0FAKE00001", Text: "a synthetic pinned message"}}, false)
+	if reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Error("a timeline holds the message, and the tab's local change still shows over its copy")
+	}
+	if len(v.rxnLocal) != 0 {
+		t.Errorf("the local changes outlived the timeline taking the message: %v", v.rxnLocal)
 	}
 }

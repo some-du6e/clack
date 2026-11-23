@@ -51,9 +51,15 @@ func TestBlockFallbacks(t *testing.T) {
 		{"blocks that are all null or empty rich_text draw an empty body, not the text",
 			`[null,{"type":"rich_text","elements":[]}]`,
 			nil},
-		{"a block Clack can't draw yet lets the text stand in",
-			`[{"type":"timeline","block_id":"t1"}]`,
+		{"a block Clack can't draw yet lets the text stand in", // (attachment_reference: pending, part 2f)
+			`[{"type":"attachment_reference","block_id":"t1"}]`,
 			[]Block{para(tx("fallback text"))}},
+		{"a timeline without points throws in TimelineCondensed: the per-block error line",
+			`[{"type":"timeline","block_id":"t1"}]`,
+			[]Block{{Kind: Unsupported, Kit: true, Spans: []Span{tx("This content could not be displayed.")}}}},
+		{"a timeline with no points draws nothing, and the text doesn't stand in",
+			`[{"type":"timeline","block_id":"t1","points":[]}]`,
+			nil},
 		{"a rich_text piece or an inline element at the top level draws as inside a rich_text",
 			`[{"type":"rich_text_section","elements":[{"type":"text","text":"hi"}]},{"type":"text","text":"there"}]`,
 			[]Block{para(tx("hi")), para(tx("there"))}},
@@ -61,7 +67,7 @@ func TestBlockFallbacks(t *testing.T) {
 		// fail the decode into the per-block error line
 		{"known blocks Clack can't draw keep that rule whatever their fields' shapes",
 			`[{"type":"auth_provider","name":{"type":"plain_text","text":"Google"}},{"type":"canvas_table","rows":[{"cells":[]}]},` +
-				`{"type":"layout","rows":[{"items":[]}]},{"type":"data_visualization","title":"Q3","chart":{"type":"pie"}},` +
+				`{"type":"layout","rows":[{"items":[]}]},` +
 				`{"type":"share_prompt","label":"Share"}]`,
 			[]Block{para(tx("fallback text"))}},
 	}

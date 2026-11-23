@@ -676,6 +676,7 @@ func TestSearchToolbar(t *testing.T) {
 		t.Fatalf("history actions %q", got)
 	}
 	p.tb.run = 1
+	d.now = time.Now() // the test's clock from the copy on
 	d.frame()
 	if _, data, ok := d.r.WriteClipboard(); !ok || string(data) != "alpha launch" {
 		t.Errorf("copied %q %v", data, ok)
@@ -683,6 +684,13 @@ func TestSearchToolbar(t *testing.T) {
 	if p.tb.active != 1 {
 		t.Error("Copy search query didn't show Query copied!")
 	}
+	// a frame 100 ms on, before its 3 s are up (the pointer moved), asks
+	// for the label's end again (clack_reverts_test.go)
+	d.now = d.now.Add(100 * time.Millisecond)
+	if at := wakesDuring(d.frame); !asked(at, p.tb.until) {
+		t.Errorf("a frame while Query copied! shows asked for %v, not its end at %v", at, p.tb.until)
+	}
+	d.now = time.Time{}
 	p.tb.run = 2
 	d.frame()
 	d.until(t, "search.delete", func() bool { return len(e.fs.SearchForms("search.delete")) == 1 })

@@ -103,6 +103,14 @@ type Logger struct {
 func Start(stderr io.Writer) *Logger {
 	dir, err := Dir()
 	l := start(dir, err, stderr)
+	// Every line carries its date and time, whatever an init did to the
+	// flags: Gio's app package clears them on Windows when the process has
+	// no stderr (third_party/gioui.org/app/log_windows.go, for DebugView,
+	// which stamps lines itself), as a windowsgui Clack started from the
+	// Start menu or the taskbar has, so those runs logged no time at all
+	// (only a start with a stderr, like the update helper's relaunch, kept
+	// them).
+	log.SetFlags(log.LstdFlags)
 	log.SetOutput(l.Output(stderr))
 	return l
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -154,6 +155,24 @@ func (s *surfHandler) OpenFile(f *richtext.File) {
 		openURL(f.Permalink)
 	}
 }
+
+// ChartAction is a data_visualization block's More actions: its menu.
+func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
+	if mn := popups.NewChartMenu(s.h, popups.ActionAnchor(btn, window), dv); mn != nil {
+		s.h.ShowOverlay(mn)
+	}
+}
+
+// TimelineSources is a timeline section's "(Sources)": its sources modal.
+func (s *surfHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
+	popups.OpenTimelineSources(s.h, sec)
+}
+
+// DataTableAction is a data_table's header button or column header.
+func (s *surfHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
+	popups.DataTableAction(s.h, act, c, popups.ActionAnchor(btn, c.Window))
+}
+
 func (s *surfHandler) Button(b richtext.Button) {
 	if b.URL != "" {
 		openURL(b.URL)
@@ -253,7 +272,7 @@ func (s *Surface) set(v *core.View, keep bool) {
 	if keep {
 		for _, b := range allBlocks(s.blocks) {
 			for _, e := range elementsOf(b) {
-				k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
+				k := surfKey(b, e)
 				if w := oldWS[k]; w != nil && s.vals.get(b.BlockID, e.ActionID) == old.get(b.BlockID, e.ActionID) {
 					w.rebind(b, e)
 					s.ws[k] = w
@@ -402,8 +421,19 @@ func (s *Surface) fire(w *ew, action json.RawMessage, done func(error)) {
 // loading reports an action of block bid in flight.
 func (s *Surface) loading(bid string) bool { return s.flying[bid] > 0 }
 
-func (s *Surface) widget(b *Block, e *Element) *ew {
+// surfKey is an element's widget key: its block, action_id and type, and
+// in a data_table its value (the rows may share one action_id, each
+// cell's button its own value).
+func surfKey(b *Block, e *Element) string {
 	k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
+	if b.Type == "data_table" {
+		k += "\x00" + e.Value
+	}
+	return k
+}
+
+func (s *Surface) widget(b *Block, e *Element) *ew {
+	k := surfKey(b, e)
 	w := s.ws[k]
 	if w == nil {
 		w = newEW(s, b, e, b.Type == "input")

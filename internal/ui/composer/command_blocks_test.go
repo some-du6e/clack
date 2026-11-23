@@ -6,12 +6,13 @@ import (
 )
 
 // A slash command's arguments go out as executeCommand's blocks
-// (boot-render 5dbN: convertDeltaToBlocks of deltaWithoutCmd with
+// (boot-render pymN: convertDeltaToBlocks of deltaWithoutCmd with
 // expandTruncatedLinks): one rich_text block with no block_id, mentions as
 // their member, channel, group or range, a link slug as a bare link, and no
 // blocks for blank arguments. Karim's /remind with his own @karim chip went
 // out as the plain text "@karim", and Slack's /remind matched that to a
-// different member.
+// different member. This is the composer's document as Quill holds it
+// (qFromDoc); slash_oracle_test.go has Slack's own output for its deltas.
 func TestCommandBlocksLikeSlack(t *testing.T) {
 	type piece struct {
 		text string
@@ -57,14 +58,18 @@ func TestCommandBlocksLikeSlack(t *testing.T) {
 			atom(&Atom{Kind: AtomLink, ID: "https://example.com/docs/a/guide", URL: "https://example.com/docs/a/guide", Text: "example.com/docs/…/guide"})),
 			`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[` +
 				`{"type":"link","url":"https://example.com/docs/a/guide"}]}]}]`},
-		{"leading space", doc(txt("  /ticket   anchor")),
+		{"spaces after the command", doc(txt("/ticket   anchor")),
 			`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"anchor"}]}]}]`},
 		{"no arguments", doc(txt("/giphy")), ""},
 		{"blank arguments", doc(txt("/giphy   ")), ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := commandArgs(c.d).CommandBlocks()
+			q, _ := qFromDoc(c.d)
+			if !looksLikeSlashCommand(q) {
+				t.Fatalf("%q isn't a command", c.d.Text())
+			}
+			got := commandBlocks(parseSlashArgs(q).Rest)
 			if c.want == "" {
 				if got != nil {
 					t.Fatalf("blank arguments sent blocks %s; Slack sends none", got)
@@ -86,11 +91,18 @@ func TestCommandBlocksLikeSlack(t *testing.T) {
 
 	// the link slug's atom is shared with the composer: expanding it for
 	// the command must not touch the document
-	d := doc(txt("/ticket "), atom(&Atom{Kind: AtomLink, ID: "https://example.com/x", URL: "https://example.com/x", Text: "example.com/x…"}))
-	_ = commandArgs(d).CommandBlocks()
+	label := "example.com/x" + string(rune(0x2026))
+	d := doc(txt("/ticket "), atom(&Atom{Kind: AtomLink, ID: "https://example.com/x", URL: "https://example.com/x", Text: label}))
+	q, _ := qFromDoc(d)
+	_ = commandBlocks(parseSlashArgs(q).Rest)
 	for _, a := range d.Attrs {
-		if a.Atom != nil && a.Atom.Text != "example.com/x…" {
-			t.Errorf("CommandBlocks rewrote the composer's link slug to %q", a.Atom.Text)
+		if a.Atom != nil && a.Atom.Text != label {
+			t.Errorf("the command's blocks rewrote the composer's link slug to %q", a.Atom.Text)
 		}
+	}
+
+	// a leading space is Slack's escape: a message, not a command
+	if q, _ := qFromDoc(doc(txt("  /ticket   anchor"))); looksLikeSlashCommand(q) {
+		t.Error("a leading space ran as a command")
 	}
 }

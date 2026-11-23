@@ -88,7 +88,7 @@ func (a *attachments) loadMeta(c *attChip) {
 		f, err := a.core.FileInfo(ctx, id)
 		cancel()
 		if err == nil && (f.Name != "" || f.Title != "") {
-			a.metaDone(c, &attMeta{name: f.Name, title: f.Title, pretty: f.PrettyType, thumb: f.Thumb, image: f.IsImage, size: f.Size}, true)
+			a.metaDone(c, &attMeta{name: f.Name, title: f.Title, pretty: f.PrettyType, thumb: f.Thumb, mime: f.Mime, image: f.IsImage, size: f.Size}, true)
 			return
 		}
 		if err == nil {
@@ -107,20 +107,27 @@ func (a *attachments) loadMeta(c *attChip) {
 
 type attMeta struct {
 	name, title, pretty, thumb string
+	mime                       string // files.info's mimetype
 	image                      bool
 	size                       int64
 }
 
-// metaDone ends c's fetch: m is the file (ok), else c is gone.
+// metaDone ends c's fetch: m is the file (ok), else c is gone. The file's
+// type is the server's mimetype, else the type Chromium gives its name,
+// worked out before the lock (attFileType can ask the OS).
 func (a *attachments) metaDone(c *attChip, m *attMeta, ok bool) {
+	var name, ft string
+	if ok && m != nil {
+		name = attCleanName(firstNonEmpty(m.name, m.title))
+		ft = firstNonEmpty(m.mime, attFileType(name, ""))
+	}
 	a.mu.Lock()
 	c.loading = false
 	if !ok || m == nil {
 		c.gone = true
 	} else {
-		name := attCleanName(firstNonEmpty(m.name, m.title))
 		title := firstNonEmpty(m.title, name)
-		c.name, c.title = name, title
+		c.name, c.title, c.ftype = name, title, ft
 		c.kind = attKindOf(name, nil)
 		if m.pretty != "" {
 			c.kind.Label = m.pretty

@@ -606,6 +606,41 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 	}
 }
 
+// ChartAction is a data_visualization block's More actions
+// (richview.ChartActionHandler): its menu (popups.NewChartMenu) at the
+// button.
+// DataTableAction is a data_table's header button or column header
+// (richview.DataTableHandler): its menus and the fullscreen view.
+func (r *richHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
+	if r.anchor != nil && !c.Window {
+		min := r.anchor(btn.Min)
+		btn = image.Rectangle{Min: min, Max: min.Add(btn.Size())}
+	}
+	if ph, ok := r.h.(popups.Host); ok {
+		popups.DataTableAction(ph, act, c, btn)
+	}
+}
+
+// TimelineSources is a timeline section's "(Sources)"
+// (richview.TimelineHandler): its sources modal.
+func (r *richHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
+	if ph, ok := r.h.(popups.Host); ok {
+		popups.OpenTimelineSources(ph, sec)
+	}
+}
+
+func (r *richHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
+	if r.anchor != nil && !window {
+		min := r.anchor(btn.Min)
+		btn = image.Rectangle{Min: min, Max: min.Add(btn.Size())}
+	}
+	if ph, ok := r.h.(popups.Host); ok {
+		if mn := popups.NewChartMenu(ph, btn, dv); mn != nil {
+			ph.ShowOverlay(mn)
+		}
+	}
+}
+
 // WorkflowCard is a share_shortcut card (richview.WorkflowCardHandler):
 // the card opens the workflow details view (WorkflowEntity's onClick),
 // Start Workflow trips the link trigger from the message

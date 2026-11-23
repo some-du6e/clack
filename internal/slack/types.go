@@ -583,30 +583,37 @@ type DocumentSection struct {
 
 // User is a (subset of a) Slack user object.
 type User struct {
-	ID                string  `json:"id"`
-	TeamID            string  `json:"team_id,omitempty"`
-	Name              string  `json:"name"`
-	Deleted           bool    `json:"deleted,omitempty"`
-	Color             string  `json:"color,omitempty"`
-	RealName          string  `json:"real_name,omitempty"`
-	TZ                string  `json:"tz,omitempty"`
-	TZLabel           string  `json:"tz_label,omitempty"`
-	TZOffset          int     `json:"tz_offset,omitempty"`
-	IsAdmin           bool    `json:"is_admin,omitempty"`
-	IsOwner           bool    `json:"is_owner,omitempty"`
-	IsPrimaryOwner    bool    `json:"is_primary_owner,omitempty"`
-	IsBot             bool    `json:"is_bot,omitempty"`
-	IsAppUser         bool    `json:"is_app_user,omitempty"`
-	IsSlackbot        bool    `json:"is_slackbot,omitempty"` // gmjA: Slackbot (with id USLACKBOT)
-	IsRestricted      bool    `json:"is_restricted,omitempty"`
-	IsUltraRestricted bool    `json:"is_ultra_restricted,omitempty"`
-	AgentStatus       string  `json:"agent_status,omitempty"`      // not_an_agent | consistently_an_agent | check_required (bot users)
-	IsWorkflowBot     bool    `json:"is_workflow_bot,omitempty"`   // Workflow Builder's bot user: badged WORKFLOW
-	IsAgentforceBot   bool    `json:"is_agentforce_bot,omitempty"` // a Salesforce Agentforce agent: badged AGENTFORCE
-	IsSidekickBot     bool    `json:"is_sidekick_bot,omitempty"`   // 7jev isSidekickMember (bD9l keeps it out of Slack Connect channels)
-	Updated           int64   `json:"updated,omitempty"`
-	Profile           Profile `json:"profile"`
-	Presence          string  `json:"presence,omitempty"`
+	ID                string `json:"id"`
+	TeamID            string `json:"team_id,omitempty"`
+	Name              string `json:"name"`
+	Deleted           bool   `json:"deleted,omitempty"`
+	Color             string `json:"color,omitempty"`
+	RealName          string `json:"real_name,omitempty"`
+	TZ                string `json:"tz,omitempty"`
+	TZLabel           string `json:"tz_label,omitempty"`
+	TZOffset          int    `json:"tz_offset,omitempty"`
+	IsAdmin           bool   `json:"is_admin,omitempty"`
+	IsOwner           bool   `json:"is_owner,omitempty"`
+	IsPrimaryOwner    bool   `json:"is_primary_owner,omitempty"`
+	IsBot             bool   `json:"is_bot,omitempty"`
+	IsAppUser         bool   `json:"is_app_user,omitempty"`
+	IsSlackbot        bool   `json:"is_slackbot,omitempty"` // gmjA: Slackbot (with id USLACKBOT)
+	IsRestricted      bool   `json:"is_restricted,omitempty"`
+	IsUltraRestricted bool   `json:"is_ultra_restricted,omitempty"`
+	AgentStatus       string `json:"agent_status,omitempty"`      // not_an_agent | consistently_an_agent | check_required (bot users)
+	IsWorkflowBot     bool   `json:"is_workflow_bot,omitempty"`   // Workflow Builder's bot user: badged WORKFLOW
+	IsAgentforceBot   bool   `json:"is_agentforce_bot,omitempty"` // a Salesforce Agentforce agent: badged AGENTFORCE
+	IsSidekickBot     bool   `json:"is_sidekick_bot,omitempty"`   // 7jev isSidekickMember (bD9l keeps it out of Slack Connect channels)
+	// IsProfileOnlyUser is is_profile_only_user (DIay isProfileOnlyUser):
+	// the member searches leave such a member out unless asked
+	// (includeProfileOnlyUsers).
+	IsProfileOnlyUser bool `json:"is_profile_only_user,omitempty"`
+	// Interact is interact: false for a member information barriers keep
+	// from the viewer (th9D zP), whom the local member search drops.
+	Interact *bool   `json:"interact,omitempty"`
+	Updated  int64   `json:"updated,omitempty"`
+	Profile  Profile `json:"profile"`
+	Presence string  `json:"presence,omitempty"`
 	// ManualPresence is the viewer's own manual_presence ("away" when they
 	// set themselves away, "active"; computeManualPresence keeps it on the
 	// viewer's member only): maybeTickleMS sends no tickle while it's away.

@@ -233,7 +233,12 @@ const (
 //
 // Slack's pMap stops starting groups after the first failure and
 // rejects the whole fetch; here every group is asked, so one failed
-// group costs only its own channels.
+// group costs only its own channels. A failed group of several channels
+// (any failure but a rate limit: splitGroup) is asked again channel by
+// channel, so one channel that fails can't take the others down. Only a
+// call that succeeded answers its channels: a failure, an API refusal
+// too, says nothing about the messages (Clack never reads one as a
+// deletion).
 func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (msgs map[string][]Message, answered map[string]bool, err error) {
 	type q struct {
 		Channel    string   `json:"channel"`
@@ -261,16 +266,39 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 		errs []error
 		next int
 		wg   sync.WaitGroup
+		// every call, a split group's too, takes one of Slack's
+		// MessagesListConcurrency slots
+		slots = make(chan struct{}, MessagesListConcurrency)
 	)
-	ask := func(g []q) {
+	var ask func(g []q)
+	ask = func(g []q) {
 		b, _ := json.Marshal(g)
 		var r struct {
 			Messages map[string][]Message `json:"messages"`
 		}
+		slots <- struct{}{}
 		err := c.Call(ctx, "messages.list", url.Values{"message_ids": {string(b)}, "org_wide_aware": {"true"}}, &r)
+		<-slots
 		chans := make([]string, len(g))
 		for i := range g {
 			chans[i] = g[i].Channel
+		}
+		if err != nil && len(g) > 1 && splitGroup(ctx, err) {
+			// one channel can fail its group every time (one the viewer
+			// can't read, a huge one that times out, too_many_channels):
+			// each channel on its own, all at once in the calls' slots,
+			// so the others' messages come
+			log.Printf("messages.list: %d channels: %v (%s); one by one", len(g), err, logtag.IDs(chans))
+			var sw sync.WaitGroup
+			for i := range g {
+				sw.Add(1)
+				go func(one []q) {
+					defer sw.Done()
+					ask(one)
+				}(g[i : i+1 : i+1])
+			}
+			sw.Wait()
+			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
@@ -304,6 +332,22 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 	}
 	wg.Wait()
 	return msgs, answered, errors.Join(errs...)
+}
+
+// splitGroup reports whether a failed messages.list group is asked again
+// channel by channel: any failure (a request timing out too, its caller's
+// ctx still live) but a rate limit (more calls would only be refused too)
+// and the caller giving up.
+func splitGroup(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, RateLimited) {
+		return false
+	}
+	var he *HTTPError
+	if errors.As(err, &he) && he.Status == 429 {
+		return false
+	}
+	var se *Error
+	return !errors.As(err, &se) || se.Code != "ratelimited"
 }
 
 // SearchMessages runs search.messages.
@@ -677,13 +721,17 @@ func (c *Client) MediaProgressUpdate(ctx context.Context, file string, offsetMS,
 
 // Command is a slash command from commands.list.
 type Command struct {
-	Name    string         `json:"name"`
-	Desc    string         `json:"desc"`
-	Usage   string         `json:"usage"`
-	Type    string         `json:"type"`
-	AppID   string         `json:"app,omitempty"`
-	AppName string         `json:"app_name,omitempty"`
-	Icons   map[string]any `json:"icons,omitempty"` // image_32 … image_512 (+ non-string flags)
+	Name string `json:"name"`
+	// CanonicalName and Aliases are what else the command answers to
+	// (is_match_for_command: canonical_name ?? name, aliases).
+	CanonicalName string         `json:"canonical_name,omitempty"`
+	Aliases       []string       `json:"aliases,omitempty"`
+	Desc          string         `json:"desc"`
+	Usage         string         `json:"usage"`
+	Type          string         `json:"type"`
+	AppID         string         `json:"app,omitempty"`
+	AppName       string         `json:"app_name,omitempty"`
+	Icons         map[string]any `json:"icons,omitempty"` // image_32 … image_512 (+ non-string flags)
 	// RunnableFromThread is is_runnable_from_thread: the command may run
 	// in a thread (isSlashCommandEnabled's Lf).
 	RunnableFromThread bool `json:"is_runnable_from_thread,omitempty"`

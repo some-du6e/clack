@@ -374,6 +374,26 @@ func (h srCardHandler) PlainClick() {
 	openResult(h.v.h, m)
 }
 
+// ChartAction is a data_visualization block's More actions on the card:
+// its menu.
+func (h srCardHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
+	if mn := NewChartMenu(h.v.h, ActionAnchor(btn, window), dv); mn != nil {
+		h.v.h.ShowOverlay(mn)
+	}
+}
+
+// DataTableAction is a data_table's header button or column header on the
+// card.
+func (h srCardHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
+	DataTableAction(h.v.h, act, c, ActionAnchor(btn, c.Window))
+}
+
+// TimelineSources is a timeline section's "(Sources)" on the card: its
+// sources modal.
+func (h srCardHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
+	OpenTimelineSources(h.v.h, sec)
+}
+
 func (h srCardHandler) OpenFile(f *richtext.File) {
 	if f == nil {
 		return

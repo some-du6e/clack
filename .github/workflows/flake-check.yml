@@ -1752,7 +1752,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: go test ./...
-        run: go test -timeout 30m ./...
+        run: python3 .github/scripts/test-shard.py full --heavy github.com/some-du6e/clack/internal/ui --split 2 --times .github/test-times.json --timeout 30m --out "$RUNNER_TEMP/full"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -2903,6 +2903,39 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # composer-link-edit (2026-11-22): the composer's link editing, Slack's
+  # (LinkContextMenu, SlugContextMenu, ComposerEditLinkPopover,
+  # ComposerLinkModal), through the real composer over fakeslack, and the
+  # URL helpers against Slack's own answers. Dispatch with
+  # only=composer-link-edit -f count=3.
+  composer-link-edit:
+    if: ${{ !inputs.only || startsWith('composer-link-edit', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "link editing, COUNT runs"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkShortcutOnSelection|TestLinkPasteOverSelection|TestLinkSlugRenameSends|TestLinkRenameDraftRoundTrip|TestLinkRenameInMessageEdit|TestLinkURLSlackOracle|TestLinkDialog\w*|TestLinkRemoveStaysUnlinked|TestNormalizeURL|TestW10LinkDialogRichText|TestLinkDialogFocusAfterMeasurePass|TestSetLink|TestEditComposerLinkSlug|TestLinkSlugPasteSendsTruncatedLink)$' ./internal/ui/composer || rc=1
+          go test -race -count=1 -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkSlugRenameSends|TestLinkDialogFollowsSlugAnswer)$' ./internal/ui/composer || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # theme-contrast round 4: the fade's continuity, the cascade per variable,
   # the DMs rows drawn (activity_inbox on and off, the peek card's scope),
   # the control strip's held press. Dispatch with only=theme-contrast-4
@@ -3227,6 +3260,43 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 20m -run "$UI_TESTS" ./internal/ui 2>&1 | grep -E '^(=== RUN|--- (PASS|FAIL)|FAIL|ok)|_test\.go:[0-9]+:' || true
           xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 20m -run "$VIEWS_TESTS" ./internal/ui/views || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # canvas-cursor (2026-11-23): Quip's cursors over a canvas
+  # (canvas-controller CSS): the hand on a link, a person or channel
+  # mention, a file or canvas link, an editor's date and the checklist
+  # box, the text cursor on plain text and the title, a viewer's date
+  # still text, a table cell's date as the text's (canvasview
+  # cursor_test.go); a click on an editor's date in a block Clack can't
+  # edit yet gives the can't-edit toast, as the block's text does
+  # (TestCanvasDateClickRefuses); a control that holds a link parses as
+  # that link, not a date (canvas control_link_test.go).
+  # Dispatch with only=canvas-cursor.
+  canvas-cursor:
+    # dispatch only: its tests' files aren't in the push paths
+    if: ${{ inputs.only != '' && startsWith('canvas-cursor', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: canvas, canvasview (COUNT runs each)
+        run: |
+          rc=0
+          go test -count=$COUNT -v -timeout 10m -run '^TestControlLinkIsLink$' ./internal/canvas/ || rc=1
+          go test -count=$COUNT -v -timeout 20m -run '^(TestCanvasCursors|TestCanvasCursorsReadOnly|TestCanvasDateClickRefuses)$' ./internal/ui/canvasview/ || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -5290,6 +5360,67 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # the views' reaction pills as a channel's (Slack's ReactionBar: a
+  # click toggles, canAddReaction disables, one pill per skin-tone group),
+  # Activity's ControlledClick and the rows' cursor (views-reactions)
+  rx-bar:
+    if: ${{ !inputs.only || startsWith('rx-bar', inputs.only) }}
+    name: "rx-bar ${{ matrix.test }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { test: TestCanAddReactionLikeSlack, pkg: ./internal/core }
+          - { test: TestReactionBarDisabledLikeSlack, pkg: ./internal/ui/messages }
+          - { test: TestThreadsReactionPills, pkg: ./internal/ui/views }
+          - { test: TestUnreadsReactionPills, pkg: ./internal/ui/views }
+          - { test: TestPinsReactionPills, pkg: ./internal/ui/views }
+          - { test: TestActivityReactionPills, pkg: ./internal/ui/views }
+          - { test: TestRowLinkClicksAndCursorLikeSlack, pkg: ./internal/ui/views }
+          - { test: TestViewsReactionBarGroupsLikeSlack, pkg: ./internal/ui/views }
+          - { test: TestActivityHoverBarLikeSlack, pkg: ./internal/ui/views }
+          - { test: TestActivityPreviewLinksArePlain, pkg: ./internal/ui/views }
+          - { test: TestPreviewLinksPlain, pkg: ./internal/richtext }
+          - { test: TestCanvasCommentsReactionPillOpensNoThread, pkg: ./internal/ui/views }
+          - { test: TestLocalReactionsEndWhenTheStoreHoldsIt, pkg: ./internal/ui/views }
+          - { test: TestSubmitOutsideUndoesOnlyItsOwn, pkg: ./internal/ui/messages }
+          - { test: TestReactionTipLeavesADisabledPill, pkg: ./internal/ui/messages }
+          - { test: TestActivityEveryRowHasTheHand, pkg: ./internal/ui/views }
+          - { test: TestActivityLateClickExpires, pkg: ./internal/ui/views }
+          - { test: TestActivityFailedFetchKeepsTheRows, pkg: ./internal/ui/views }
+          - { test: TestActivityLiveDeletedReactionAndTombstone, pkg: ./internal/ui/views }
+          - { test: TestActivityLiveMissingMessage, pkg: ./internal/ui/views }
+          - { test: TestRefetchGivesUpLocally, pkg: ./internal/core }
+          - { test: TestRefetchGoneOnlyFromAnAnswer, pkg: ./internal/core }
+          - { test: TestMessagesListSplitsAFailedGroup, pkg: ./internal/core }
+          - { test: TestMessagesListFailedGroupOnlyItsChannels, pkg: ./internal/slack }
+          - { test: TestSavedGoneOnlyWhereItsGroupAnswered, pkg: ./internal/core }
+          - { test: TestLaterCleanUpFailedGroupOnlyRemovesTombstones, pkg: ./internal/ui/views }
+          - { test: TestPinsLocalReactionOutlivesAFetchedCopy, pkg: ./internal/ui/views }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.test }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # plugins-work-0 (2026-11-23, library-dupes' follow-up): the bench's
   # regression gate doesn't count a committed pick from costs alone (no
   # behaviour check) as able to regress on correctness when a new check
@@ -5319,6 +5450,259 @@ jobs:
           go test -count="$COUNT" -timeout 5m -run '^(TestRegressionsCostOnlyPick|TestDecide|TestDecideWithoutChecks|TestKeep|TestEmbedded)$' ./internal/pluginbench || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs|TestPairsMatchDocs)$' ./internal/pluginlib || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # emoji-packs: the Add emoji dialog's Emoji packs tab (popups), Slack's
+  # 8DMj and its store, through the dialog's Layout against the fake:
+  # the list, a pack's details, adding and removing a pack, the picker's
+  # pack group, Stay tuned and a failed read.
+  emoji-packs:
+    if: ${{ !inputs.only || startsWith('emoji-packs', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the emoji pack tests (COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 20m -run '^(TestEmojiPacksTabLikeSlack|TestEmojiPackAddLikeSlack|TestEmojiPackOnlyCustomTabLikeSlack|TestEmojiPackRemoveLikeSlack|TestEmojiPacksSoonAndFailedRead)$' ./internal/ui/popups || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # Chromium's OS lookup between its two mime lists (slack.FileType): the
+  # XDG shared-mime-info database on Linux, the registry on Windows, UTType
+  # on macOS; the upload, photo and composer types built on it
+  # (upload-filetype-2). -f only=platform-mime runs all three.
+  platform-mime-linux:
+    if: ${{ !inputs.only || startsWith('platform-mime-linux', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (the composer's test binary links internal/huddle's X11 capture)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "slack: FileType, the mime.cache reader, this runner's shared-mime-info"
+        run: go test -count=$COUNT -v -run '^(TestFileType.*|TestXDG.*|TestMimeCache.*|TestSystemXDGMimeTypes|TestUploadPartLikeFormData)$' ./internal/slack
+      - name: "core: the upload part's type, the profile photo's"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestUploadTypesLikeSlack|TestUploadFileType|TestCheckPhoto)$' ./internal/core
+      - name: "composer: a pending file's type, looked up once out of attachments.mu"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestAttachmentFileTypes|TestAttachmentTypeLookedUpOnce|TestRestoredDraftFileTypes)$' ./internal/ui/composer
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  platform-mime-windows:
+    if: ${{ !inputs.only || startsWith('platform-mime-windows', inputs.only) }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "slack: FileType over the registry's Content Type (test extensions under HKCU\\Software\\Classes)"
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_ASSOC_TESTS: "1"
+        run: go test -count=$COUNT -v -run '^(TestRegistryMimeTypes|TestFileType.*|TestXDG.*|TestMimeCache.*|TestUploadPartLikeFormData)$' ./internal/slack
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  platform-mime-macos:
+    if: ${{ !inputs.only || startsWith('platform-mime-macos', inputs.only) }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "slack: FileType over UTType"
+        run: go test -count=$COUNT -v -run '^(TestUTTypeMimeTypes|TestFileType.*|TestXDG.*|TestMimeCache.*|TestUploadPartLikeFormData)$' ./internal/slack
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122d: the jump window tests whose held (or failed) newer pages
+  # recordCalls once replaced (the page came back at once), COUNT each,
+  # then COUNT under two CPU burners.
+  fl1122d-r-jump:
+    if: ${{ !inputs.only || startsWith('fl1122d-r-jump', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: ui (COUNT, then COUNT under load)
+        run: |
+          set +e
+          rc=0
+          tests='^(TestJumpWindowEndStaysPut|TestJumpWindowLastPageStaysPut|TestWindowNewerFailureDoesNotBlockOlder)$'
+          go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui || rc=1
+          for i in 1 2; do (while :; do :; done) & done
+          go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui || rc=1
+          kill $(jobs -p) 2>/dev/null
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122d: Taut's Close waits for a runtime starting
+  # (TestCloseWaitsForAStartingRuntime holds the start), then the two
+  # reaction pill tests with no GPU, as full-test runs them (they skip;
+  # skipped mid-start, their TempDir's cleanup found the boot's file),
+  # COUNT each.
+  fl1122d-r-taut:
+    if: ${{ !inputs.only || startsWith('fl1122d-r-taut', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: taut, then the pill tests without a GPU (COUNT each)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 10m -run '^(TestCloseWaitsForAStartingRuntime|TestCloseDropsARegistersLateWrite|TestBridgeDetached)$' ./internal/taut || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestViewsPatchedReactionPillLikeNative$' ./internal/ui/views || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # avatar-refresh: a member's new picture, name and status in every row
+  # (Karim, α.143 "two different pfps?"): the rows' redraw when the change
+  # comes while no list draws the member (messages), Slack's member
+  # freshness and user_change subscriptions (core), and a restart's stale
+  # offline copy fetched again (ui). avatar-refresh-2: the review's MINORs
+  # (an older refetch answer, the hello gate, avatarAlts pruned, off-Grid
+  # fast reconnects, a failed larger picture, the interim's retry, TSF's
+  # trim).
+  avatar-refresh:
+    if: ${{ !inputs.only || startsWith('avatar-refresh', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the avatar refresh tests (COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 10m -run '^(TestSenderFollowsMemberLikeSlack|TestBotThreadRowLikeSlack|TestAvatarPictureForScaleLikeSlack|TestAvatarLargerPictureFailsLikeSlack)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestMemberSubscribedFollowsUserChange|TestMemberRefetchedPastMaxAgeLikeSlack|TestMemberSubscriptionsAfterReconnect|TestMemberSubscribeWaitsForHello|TestMemberRefetchKeepsNewerCopy|TestMemberFreshnessKeptOnFastReconnectOffGrid)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 15m -run '^TestAvatarAfterRestartLikeSlack$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestFamilySizeDrawsAtOnce|TestFamilyInterimRetriesSharpLoad)$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestAvatarAltsFollowTheStore|TestPutUserNotOlder)$' ./internal/store || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestMrkdwnTrimLikeTSF|TestNewlineOnlyBlocksKeptLikeSlack|TestBlankAttachmentTextLikeSlack|TestEmptyContextElementKeepsItsBoxLikeSlack)$' ./internal/richtext || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestMarkupModeSend$' ./internal/ui/composer || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestAppPaneIconFromTheMessageLikeSlack$' ./internal/ui/popups || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # canvas-edit round 2, B1 (internal/quip): Quip's codec against Slack's
+  # own modules (the parity snapshots), the fake's canvas calls, the
+  # transport and core's model of a canvas.
+  canvas-quip:
+    if: ${{ !inputs.only || startsWith('canvas-quip', inputs.only) }}
+    name: "canvas-quip ${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: quip, test: "TestQuip.*", pkg: ./internal/quip }
+          - { name: fakeslack, test: "TestQuip.*", pkg: ./internal/fakeslack }
+          - { name: slack, test: "(TestCanvasCall.*|TestEncodeURIComponent)", pkg: ./internal/slack }
+          - { name: core, test: "TestCanvasModel.*", pkg: ./internal/core }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "${{ matrix.name }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -5472,6 +5856,164 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # Karim's 2026-11-21 crash (Windows, α.113): a quote started in the
+  # composer (">" typed, or the Blockquote button), then Ctrl+V with each
+  # kind of copy on the real clipboard; App.Run's own window, SendInput,
+  # PowerShell's WinForms clipboard. GOTRACEBACK=all: a native fault on a
+  # Go thread prints every goroutine (runtime winthrow).
+  quote-paste-win:
+    if: ${{ !inputs.only || startsWith('quote-paste-win', inputs.only) }}
+    name: "quote-paste TestWinQuotePaste (windows-applog)"
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      # WER keeps a minidump of a test binary that dies outside Go's sight
+      # (a fault on a thread Go doesn't own, a fail-fast, a blown stack)
+      - name: Windows keeps a crashed test binary's dump (WER LocalDumps)
+        shell: pwsh
+        run: |
+          $dumps = Join-Path $env:RUNNER_TEMP dumps
+          New-Item -ItemType Directory -Force $dumps | Out-Null
+          $k = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\ui.test.exe'
+          New-Item -Path $k -Force | Out-Null
+          Set-ItemProperty -Path $k -Name DumpFolder -Value $dumps -Type ExpandString
+          Set-ItemProperty -Path $k -Name DumpType -Value 2 -Type DWord # full: goroutine stacks live in Go's heap
+          Set-ItemProperty -Path $k -Name DumpCount -Value 4 -Type DWord
+      - name: "TestWinQuotePaste, COUNT runs (5 at most)"
+        shell: pwsh
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-applog
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+          GOTRACEBACK: all
+        run: |
+          # a paste in the frame of a cut pastes the cut (the composer's model)
+          go test -count=1 -v -run '^TestPasteInTheFrameOfACut$' ./internal/ui/composer
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # the paste's clipboard readers four at a time, in a child process
+          go test -count=1 -v -timeout 10m -run '^TestWinClipboardReadersOneAtATime$' ./internal/ui/composer *> "$env:RUNNER_TEMP\readers.log"
+          $readers = $LASTEXITCODE
+          Get-Content "$env:RUNNER_TEMP\readers.log" | Select-String -Pattern '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)|_test\.go:\d+:|reads \(busy\)|Windows, two threads' | ForEach-Object { $_.Line }
+          "TestWinClipboardReadersOneAtATime: exit code $readers"
+          go test -c -o "$env:RUNNER_TEMP\ui.test.exe" ./internal/ui
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Push-Location internal/ui
+          # each flag quoted: PowerShell splits a bare -test.v at the dot
+          # one process per run, so a run that crashes the process (a native
+          # fault, a heap corruption: 0xC0000374) can't hide the runs after
+          # it, and each exit code is its own; each run through expect_fail's
+          # wrapper in a proof run (XF_BIN: empty otherwise). 5 runs at most
+          # (like emoji-anim's): a run is ~96 s, so COUNT's 20 took ~35 of the
+          # job's 40 minutes
+          $n = [Math]::Min([int]$env:COUNT, 5)
+          $rc = 0
+          for ($i = 1; $i -le $n; $i++) {
+            $log = "$env:RUNNER_TEMP\test-$i.log"
+            if ($env:XF_BIN) {
+              & $env:XF_BIN "$env:RUNNER_TEMP\ui.test.exe" '-test.v' '-test.count=1' '-test.timeout=15m' '-test.run=^TestWinQuotePaste$' *> $log
+            } else {
+              & "$env:RUNNER_TEMP\ui.test.exe" '-test.v' '-test.count=1' '-test.timeout=15m' '-test.run=^TestWinQuotePaste$' *> $log
+            }
+            $r = $LASTEXITCODE
+            "run ${i}: the test binary's exit code: {0} (0x{1:X8})" -f $r, $r
+            if ($r -ne 0) { $rc = $r }
+            Get-Content $log | Add-Content "$env:RUNNER_TEMP\test.log"
+          }
+          Pop-Location
+          Get-Content "$env:RUNNER_TEMP\test.log" | Select-String -Pattern '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok|panic|fatal error|Exception)|_test\.go:\d+:' | Select-Object -Last 120 | ForEach-Object { $_.Line }
+          Get-Content "$env:RUNNER_TEMP\test.log" -TotalCount 3
+          Get-Content "$env:RUNNER_TEMP\test.log" -Tail 60
+          "the test binary's exit code: {0} (0x{1:X8})" -f $rc, $rc
+          if ($rc -ne 0 -or $readers -ne 0) { exit 1 }
+      - name: Windows' record of a crash (event log, dump, stacks)
+        if: always()
+        shell: pwsh
+        run: |
+          Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddHours(-2)} -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -in @('Application Error', 'Windows Error Reporting') } |
+            Select-Object -First 6 | ForEach-Object { "--- $($_.TimeCreated) $($_.ProviderName) $($_.Id)"; $_.Message }
+          $dumps = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP dumps) -Filter *.dmp -ErrorAction SilentlyContinue)
+          $dumps | ForEach-Object { "dump: $($_.Name) $($_.Length) bytes" }
+          if ($dumps.Count -eq 0) { exit 0 }
+          $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+          if (-not (Test-Path $cdb)) { "no cdb at $cdb"; exit 0 }
+          $out = Join-Path $env:RUNNER_TEMP dumps\cdb.txt
+          & $cdb -z $dumps[0].FullName -c '.symfix; .reload; .lastevent; .ecxr; r; kn 80; lm; ~*kn 40; q' *> $out
+          $t = Get-Content $out
+          $i = ($t | Select-String -Pattern '^Last event:' | Select-Object -First 1).LineNumber
+          if (-not $i) { $t | Select-Object -Last 150; exit 0 }
+          $t[($i - 1)..([Math]::Min($i + 110, $t.Count - 1))]
+          # Go frames: ui_test+offset, as file:line from the binary's own tables
+          $exe = "$env:RUNNER_TEMP\ui.test.exe"
+          $fs = [System.IO.File]::OpenRead($exe); $hdr = New-Object byte[] 4096; [void]$fs.Read($hdr, 0, 4096); $fs.Close()
+          $pe = [BitConverter]::ToInt32($hdr, 0x3c)
+          $base = [BitConverter]::ToUInt64($hdr, $pe + 24 + 24)
+          $offs = $t[($i - 1)..([Math]::Min($i + 110, $t.Count - 1))] | Select-String -Pattern 'ui_test\+0x([0-9a-f]+)' -AllMatches | ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value }
+          if ($offs) { $offs | ForEach-Object { '0x{0:x}' -f ($base + [Convert]::ToUInt64($_, 16)) } | go tool addr2line $exe }
+      # the binary (67 MB) only where there is something to read it against:
+      # a failed run, or a proof run's expected failure
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ failure() || env.XF_ID }}
+        with:
+          name: quote-paste-win-crash
+          path: |
+            ${{ runner.temp }}/dumps
+            ${{ runner.temp }}/test.log
+            ${{ runner.temp }}/ui.test.exe
+          if-no-files-found: ignore
+          retention-days: 3
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # message-polish: the message pane's P1 batch: the older page asked for
+  # ahead of the scroll (BaseDynamicList's loadMore), a failed emoji's
+  # broken image icon, one day pill at the top and over the toolbar, the
+  # toolbar's tips past the list's clip, the toolbar following its
+  # message, the reactions bar opening on your own hidden reaction, and
+  # mention pills' real names.
+  message-polish:
+    if: ${{ !inputs.only || startsWith('message-polish', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps, Xvfb and Mesa
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the message pane polish tests (COUNT; the pixel ones on Mesa llvmpipe)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=$COUNT -timeout 15m -run '^(TestOlderPageAheadOfScrollLikeSlack|TestDayPillStraddlingTheTopLikeSlack|TestToolbarTipOverTheListTopLikeSlack|TestToolbarFollowsItsMessageLikeSlack|TestOwnHiddenReactionOpensTheBarLikeSlack|TestDayPillInputIsItsOwnBoxLikeSlack)$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 5m -run '^TestFailedEmojiDrawsBrokenImageLikeSlack$' ./internal/ui/richview || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestMentionPillRealNamesLikeSlack$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # plugins-work-2b (2026-11-23, name recordings): Web Audio's
   # decodeAudioData and MediaRecorder on the plugins' page (webaudio, jsrt),
   # a File's own upload fields across the bridge (taut), Slick's
@@ -5562,6 +6104,80 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # channel-files-race: TestChannelFilesRadiosAndPaging read the last
+  # links form after Oldest before the links read had gone out (its own
+  # goroutine): "links sort_dir \"desc\"" in train-207's full-test
+  # 45177193228. COUNT runs, then COUNT under 2 busy loops.
+  channel-files-race:
+    if: ${{ !inputs.only || startsWith('channel-files-race', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: views TestChannelFilesRadiosAndPaging (COUNT, then COUNT under load)
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=$COUNT -timeout 10m -run '^TestChannelFilesRadiosAndPaging$' ./internal/ui/views || rc=1
+          for i in 1 2; do (while :; do :; done) & done
+          xvfb-run -a go test -count=$COUNT -timeout 12m -run '^TestChannelFilesRadiosAndPaging$' ./internal/ui/views || rc=1
+          kill $(jobs -p) 2>/dev/null
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # fling-22px: TestFlingScrollNoGapsCompact/history failed 3 times the same
+  # way (an idle frame moved the first row on screen 22 px, one Compact
+  # line: files-filters-3 44980164338, bk-modal-spacing 45090826439,
+  # upload-filetype-2 45103177353), reruns green. A channel's name, looked
+  # up as its mention first drew, landed in the row on the anchor line
+  # between two frames (diagnosed in 45172860772); the fling now starts
+  # with every name in the store (knowNames). COUNT runs each on an idle
+  # runner, under 4 busy loops and under -race; a failed run prints every
+  # visible row before and after the frame (scroll_gaps_test.go logMove;
+  # REPRO=1 keeps a reproduced move green while diagnosing).
+  fling-22px:
+    if: ${{ !inputs.only || startsWith('fling-22px', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the Compact fling's history case, an idle runner
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" idle
+      - name: the same under 4 busy loops
+        if: ${{ !cancelled() }}
+        env:
+          BURN: "4"
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" burn
+      - name: the same under -race
+        if: ${{ !cancelled() }}
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" race -race
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -5639,6 +6255,7 @@ jobs:
       - profile-role-band
       - inspect-blur-fast
       - canvas-jumps
+      - canvas-cursor
       - system-dm-avatar
       - caret-align
       - composer-toolbar
@@ -5694,7 +6311,11 @@ jobs:
       - canvas-quip
       - plugins-work-1
       - plugins-work-2
+      - quote-paste-win
+      - message-polish
       - plugins-work-2b
+      - channel-files-race
+      - fling-22px
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
@@ -5716,327 +6337,3 @@ jobs:
           EXPECT_FAIL: ${{ inputs.expect_fail }}
           NEEDS: ${{ toJSON(needs) }}
         run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"
-
-
-  # the views' reaction pills as a channel's (Slack's ReactionBar: a
-  # click toggles, canAddReaction disables, one pill per skin-tone group),
-  # Activity's ControlledClick and the rows' cursor (views-reactions)
-  rx-bar:
-    if: ${{ !inputs.only || startsWith('rx-bar', inputs.only) }}
-    name: "rx-bar ${{ matrix.test }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 20 # budget, min (new job: no p95 yet)
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { test: TestCanAddReactionLikeSlack, pkg: ./internal/core }
-          - { test: TestReactionBarDisabledLikeSlack, pkg: ./internal/ui/messages }
-          - { test: TestThreadsReactionPills, pkg: ./internal/ui/views }
-          - { test: TestUnreadsReactionPills, pkg: ./internal/ui/views }
-          - { test: TestPinsReactionPills, pkg: ./internal/ui/views }
-          - { test: TestActivityReactionPills, pkg: ./internal/ui/views }
-          - { test: TestRowLinkClicksAndCursorLikeSlack, pkg: ./internal/ui/views }
-          - { test: TestViewsReactionBarGroupsLikeSlack, pkg: ./internal/ui/views }
-          - { test: TestActivityHoverBarLikeSlack, pkg: ./internal/ui/views }
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "${{ matrix.test }}, every run counted"
-        env:
-          TEST: ${{ matrix.test }}
-          PKG: ${{ matrix.pkg }}
-        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  # composer-link-edit (2026-11-22): the composer's link editing, Slack's
-  # (LinkContextMenu, SlugContextMenu, ComposerEditLinkPopover,
-  # ComposerLinkModal), through the real composer over fakeslack, and the
-  # URL helpers against Slack's own answers. Dispatch with
-  # only=composer-link-edit -f count=3.
-  composer-link-edit:
-    if: ${{ !inputs.only || startsWith('composer-link-edit', inputs.only) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "link editing, COUNT runs"
-        run: |
-          set +e
-          rc=0
-          go test -count=$COUNT -v -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkShortcutOnSelection|TestLinkPasteOverSelection|TestLinkSlugRenameSends|TestLinkRenameDraftRoundTrip|TestLinkRenameInMessageEdit|TestLinkURLSlackOracle|TestLinkDialog\w*|TestLinkRemoveStaysUnlinked|TestNormalizeURL|TestW10LinkDialogRichText|TestLinkDialogFocusAfterMeasurePass|TestSetLink|TestEditComposerLinkSlug|TestLinkSlugPasteSendsTruncatedLink)$' ./internal/ui/composer || rc=1
-          go test -race -count=1 -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkSlugRenameSends|TestLinkDialogFollowsSlugAnswer)$' ./internal/ui/composer || rc=1
-          exit $rc
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  # emoji-packs: the Add emoji dialog's Emoji packs tab (popups), Slack's
-  # 8DMj and its store, through the dialog's Layout against the fake:
-  # the list, a pack's details, adding and removing a pack, the picker's
-  # pack group, Stay tuned and a failed read.
-  emoji-packs:
-    if: ${{ !inputs.only || startsWith('emoji-packs', inputs.only) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30 # budget, min (new job: no p95 yet)
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: the emoji pack tests (COUNT)
-        run: |
-          set +e
-          rc=0
-          go test -count=$COUNT -timeout 20m -run '^(TestEmojiPacksTabLikeSlack|TestEmojiPackAddLikeSlack|TestEmojiPackOnlyCustomTabLikeSlack|TestEmojiPackRemoveLikeSlack|TestEmojiPacksSoonAndFailedRead)$' ./internal/ui/popups || rc=1
-          exit $rc
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  # Chromium's OS lookup between its two mime lists (slack.FileType): the
-  # XDG shared-mime-info database on Linux, the registry on Windows, UTType
-  # on macOS; the upload, photo and composer types built on it
-  # (upload-filetype-2). -f only=platform-mime runs all three.
-  platform-mime-linux:
-    if: ${{ !inputs.only || startsWith('platform-mime-linux', inputs.only) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps (the composer's test binary links internal/huddle's X11 capture)
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "slack: FileType, the mime.cache reader, this runner's shared-mime-info"
-        run: go test -count=$COUNT -v -run '^(TestFileType.*|TestXDG.*|TestMimeCache.*|TestSystemXDGMimeTypes|TestUploadPartLikeFormData)$' ./internal/slack
-      - name: "core: the upload part's type, the profile photo's"
-        if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -v -run '^(TestUploadTypesLikeSlack|TestUploadFileType|TestCheckPhoto)$' ./internal/core
-      - name: "composer: a pending file's type"
-        if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -v -run '^TestAttachmentFileTypes$' ./internal/ui/composer
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  platform-mime-windows:
-    if: ${{ !inputs.only || startsWith('platform-mime-windows', inputs.only) }}
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: "slack: FileType over the registry's Content Type (test extensions under HKCU\\Software\\Classes)"
-        shell: bash
-        env:
-          CGO_ENABLED: "0"
-          CLACK_WINDOWS_ASSOC_TESTS: "1"
-        run: go test -count=$COUNT -v -run '^(TestRegistryMimeTypes|TestFileType.*|TestXDG.*|TestMimeCache.*|TestUploadPartLikeFormData)$' ./internal/slack
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  platform-mime-macos:
-    if: ${{ !inputs.only || startsWith('platform-mime-macos', inputs.only) }}
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: "slack: FileType over UTType"
-        run: go test -count=$COUNT -v -run '^(TestUTTypeMimeTypes|TestFileType.*|TestXDG.*|TestMimeCache.*|TestUploadPartLikeFormData)$' ./internal/slack
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  # flakes-1122d: the jump window tests whose held (or failed) newer pages
-  # recordCalls once replaced (the page came back at once), COUNT each,
-  # then COUNT under two CPU burners.
-  fl1122d-r-jump:
-    if: ${{ !inputs.only || startsWith('fl1122d-r-jump', inputs.only) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30 # budget, min (new job: no p95 yet)
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: ui (COUNT, then COUNT under load)
-        run: |
-          set +e
-          rc=0
-          tests='^(TestJumpWindowEndStaysPut|TestJumpWindowLastPageStaysPut|TestWindowNewerFailureDoesNotBlockOlder)$'
-          go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui || rc=1
-          for i in 1 2; do (while :; do :; done) & done
-          go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui || rc=1
-          kill $(jobs -p) 2>/dev/null
-          exit $rc
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  # flakes-1122d: Taut's Close waits for a runtime starting
-  # (TestCloseWaitsForAStartingRuntime holds the start), then the two
-  # reaction pill tests with no GPU, as full-test runs them (they skip;
-  # skipped mid-start, their TempDir's cleanup found the boot's file),
-  # COUNT each.
-  fl1122d-r-taut:
-    if: ${{ !inputs.only || startsWith('fl1122d-r-taut', inputs.only) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 25 # budget, min (new job: no p95 yet)
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: taut, then the pill tests without a GPU (COUNT each)
-        run: |
-          set +e
-          rc=0
-          go test -count=$COUNT -timeout 10m -run '^(TestCloseWaitsForAStartingRuntime|TestCloseDropsARegistersLateWrite|TestBridgeDetached)$' ./internal/taut || rc=1
-          go test -count=$COUNT -timeout 10m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages || rc=1
-          go test -count=$COUNT -timeout 10m -run '^TestViewsPatchedReactionPillLikeNative$' ./internal/ui/views || rc=1
-          exit $rc
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  # avatar-refresh: a member's new picture, name and status in every row
-  # (Karim, α.143 "two different pfps?"): the rows' redraw when the change
-  # comes while no list draws the member (messages), Slack's member
-  # freshness and user_change subscriptions (core), and a restart's stale
-  # offline copy fetched again (ui).
-  avatar-refresh:
-    if: ${{ !inputs.only || startsWith('avatar-refresh', inputs.only) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 40 # budget, min (new job: no p95 yet)
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: the avatar refresh tests (COUNT)
-        run: |
-          set +e
-          rc=0
-          go test -count=$COUNT -timeout 10m -run '^(TestSenderFollowsMemberLikeSlack|TestBotThreadRowLikeSlack|TestAvatarPictureForScaleLikeSlack)$' ./internal/ui/messages || rc=1
-          go test -count=$COUNT -timeout 10m -run '^(TestMemberSubscribedFollowsUserChange|TestMemberRefetchedPastMaxAgeLikeSlack|TestMemberSubscriptionsAfterReconnect)$' ./internal/core || rc=1
-          go test -count=$COUNT -timeout 15m -run '^TestAvatarAfterRestartLikeSlack$' ./internal/ui || rc=1
-          go test -count=$COUNT -timeout 5m -run '^TestFamilySizeDrawsAtOnce$' ./internal/imgcache || rc=1
-          go test -count=$COUNT -timeout 10m -run '^TestAppPaneIconFromTheMessageLikeSlack$' ./internal/ui/popups || rc=1
-          exit $rc
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  # canvas-edit round 2, B1 (internal/quip): Quip's codec against Slack's
-  # own modules (the parity snapshots), the fake's canvas calls, the
-  # transport and core's model of a canvas.
-  canvas-quip:
-    if: ${{ !inputs.only || startsWith('canvas-quip', inputs.only) }}
-    name: "canvas-quip ${{ matrix.name }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 20 # budget, min (new job: no p95 yet)
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: quip, test: "TestQuip.*", pkg: ./internal/quip }
-          - { name: fakeslack, test: "TestQuip.*", pkg: ./internal/fakeslack }
-          - { name: slack, test: "(TestCanvasCall.*|TestEncodeURIComponent)", pkg: ./internal/slack }
-          - { name: core, test: "TestCanvasModel.*", pkg: ./internal/core }
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: "${{ matrix.name }}, every run counted"
-        env:
-          TEST: ${{ matrix.test }}
-          PKG: ${{ matrix.pkg }}
-        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report

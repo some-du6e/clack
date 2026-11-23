@@ -117,6 +117,7 @@ func (a *App) openThread(channel, ts, at string, resolved bool) {
 		a.OpenSplit("c/" + channel + "/t/" + ts)
 		if a.splitTop() != before {
 			a.logThreadOpen(channel, ts, at, "in the split view")
+			a.threadListFocus(channel, ts) // keyboard mode's list focus (keyboard_mode.go)
 		}
 		return
 	}
@@ -127,6 +128,7 @@ func (a *App) openThread(channel, ts, at string, resolved bool) {
 	a.logThreadOpen(channel, ts, at, "")
 	a.secondary = secondaryState{kind: secThread, channel: channel, ts: ts, width: a.secondary.width}
 	a.secondary.view = a.mountThread(channel, ts)
+	a.threadListFocus(channel, ts) // keyboard mode: the navigation's focus goes to the list (keyboard_mode.go)
 	if a.data != nil && a.data.core != nil {
 		// a thread visit (desktop_search_recents_write) for a root: now
 		// when core knows it is one, else once the pane shows its root
@@ -329,10 +331,26 @@ func (a *App) CloseSecondary() {
 	}
 	w := a.secondary.width
 	a.secondary = secondaryState{width: w}
-	if ch := a.router.Current().Channel(); ch != "" && was != secNone {
-		a.focusChannelComposer(ch)
-	}
+	a.focusAfterClose(was)
 	a.Invalidate()
+}
+
+// focusAfterClose is onViewClosed (client-boot 1zp8): a closed secondary
+// view hands the focus to the Primary view, a channel's message input or
+// a list view's list (Activity's inbox, the Threads view), so the keys
+// after a pane opened from there and closed again work there, not
+// nowhere.
+func (a *App) focusAfterClose(was secKind) {
+	if was == secNone {
+		return
+	}
+	if ch := a.router.Current().Channel(); ch != "" {
+		a.focusChannelComposer(ch)
+		return
+	}
+	if v, ok := a.views[a.router.Current()].(interface{ FocusList() }); ok {
+		v.FocusList()
+	}
 }
 
 // threadEsc is Escape in the thread pane: Slack's secondary view is a
@@ -354,11 +372,28 @@ func (a *App) threadEsc() bool {
 	return true
 }
 
+// threadListFocused reports whether the thread pane's message list has
+// the key focus (a reply selected). Slack's list has no Escape of its
+// own: the key goes on to the view, whose handler marks the thread read
+// or closes the pane, as from the reply box (threadEsc).
+func (a *App) threadListFocused(gtx layout.Context) bool {
+	s := &a.secondary
+	if s.kind != secThread || !s.open() {
+		return false
+	}
+	c := a.convos[s.channel+"/"+s.ts]
+	if c == nil {
+		return false
+	}
+	l, ok := c.list.(interface{ ListKeyFocus(layout.Context) bool })
+	return ok && l.ListKeyFocus(gtx)
+}
+
 // threadPaneFocused reports whether the key focus is in the thread pane's
-// reply composer with no popup of its own up. An edit composer, the
-// message list's keyboard focus and the composer's autocomplete keep
-// their own Escape (cancel the edit, back to the composer, close the
-// popup), as Slack's input handles them before the view's keydown.
+// reply composer with no popup of its own up. An edit composer and the
+// composer's autocomplete keep their own Escape (cancel the edit, close
+// the popup: the editor claims it, shortcut.OwnEscape), as Slack's input
+// handles them before the view's keydown.
 func (a *App) threadPaneFocused(gtx layout.Context) bool {
 	s := &a.secondary
 	if s.kind != secThread || !s.open() {
@@ -390,9 +425,7 @@ func (a *App) toggleSecondary() {
 	}
 	a.secondary.hidden = !a.secondary.hidden
 	if a.secondary.hidden {
-		if ch := a.router.Current().Channel(); ch != "" {
-			a.focusChannelComposer(ch)
-		}
+		a.focusAfterClose(a.secondary.kind)
 	}
 }
 

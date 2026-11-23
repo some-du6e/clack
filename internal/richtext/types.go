@@ -203,6 +203,15 @@ const (
 	ShortcutBlock
 	// CardBlock is a card block (card.go): Card holds its parts.
 	CardBlock
+	// DataVizBlock is a data_visualization block (dataviz.go): DataViz
+	// holds its title and chart.
+	DataVizBlock
+	// DataTableBlock is a data_table block (datatable.go): DataTable
+	// holds its caption and rows.
+	DataTableBlock
+	// TimelineBlock is a timeline block (timeline.go): Timeline holds its
+	// points.
+	TimelineBlock
 )
 
 // Block is one vertical unit of a document.
@@ -230,6 +239,9 @@ type Block struct {
 	Rows       [][][]Span // Table: rows → cells → inline spans (multi-paragraph cells joined by Break)
 	ColAlign   []string   // Table: per-column "left" | "center" | "right" ("" = left)
 	ColWrap    []bool     // Table: per-column is_wrapped
+	// Whole: a Table drawn whole, as a modal's (TableFullscreenModal: a
+	// chart's View as table), not TablePreview's first 10 rows
+	Whole bool
 	// Kit marks a block made from a Block Kit layout block (section,
 	// context, header, divider, image, actions, table): it gets Slack's
 	// p-*_block margins and chrome. Canvases and attachments reuse the
@@ -256,6 +268,12 @@ type Block struct {
 	Shortcut *ShortcutCard
 	// Card is a CardBlock's parts (card.go).
 	Card *Card
+	// DataViz is a DataVizBlock's title and chart (dataviz.go).
+	DataViz *DataViz
+	// DataTable is a DataTableBlock's caption and rows (datatable.go).
+	DataTable *DataTable
+	// Timeline is a TimelineBlock's points (timeline.go).
+	Timeline *Timeline
 }
 
 // Container is a container block's header and options (Slack's
@@ -343,6 +361,9 @@ type Attachment struct {
 	// author, MsgTS its ts.
 	MsgCard  bool
 	AuthorID string
+	// Embed: a message_embed block's card (messageembed.go: MessageEmbed's
+	// .container, margin 12px 0)
+	Embed bool
 
 	// Unfurl fields Slack's MessageAttachment reads (gantry-v2 shared boot
 	// async, 2026-11): ID is the attachment's id (chat.deleteAttachment's

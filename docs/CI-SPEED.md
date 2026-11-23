@@ -722,3 +722,69 @@ Fixed alongside, from the releases: TestMessageMenuOldMenuRows
 (menu-click-rerender: slackc dropped a press's scope on a re-render) and
 Media Foundation's first-frame timing in TestMFRGBA, TestMFPlaysFixture and
 TestMFColdStart (mf-first-frame).
+
+## Round 4: internal/ui's test binaries under their timeouts
+
+Go's `-timeout` counts from each test binary's start, so a package's tests
+share one budget however many jobs the suite is split across.
+internal/ui's had nearly run out of it:
+
+- **full-test** (`go test -timeout 30m ./...`, one job): internal/ui's
+  binary took 1,476-1,713 s over the 40 full-tests of 2026-11-23 04:47 to
+  10:12Z, the trains rising from ~1,500 s (train-183) to 1,628-1,661 s
+  (train-198 to 200) in 4.5 h; reply-box-2's 45128655580 was 87 s short of
+  the timeout. release.yml's test job and flake-check's release-suite run
+  the same command.
+- **linux-test**: test-shard.py's go test runs pass no `-timeout`, so each
+  binary has Go's 10 min default. internal/ui's quarter ran 339-417 s
+  (quote-paste-3's push run 45143535474) and came to 433 s at the
+  refreshed times below.
+
+The runner wasn't the limit. In full-test the other packages are done
+about 13 min in, and internal/ui's binary ran its last ~15 min alone at a
+load of 0.5-1.3 on 4 vCPUs, the runner's memory at 2.2-4.9 GB
+(runner-load, 45102052586). The tests wait on frames and timers, not
+CPU.
+
+So internal/ui now runs as more than one binary, in the same job:
+
+- `test-shard.py full --split 2` (full-test, release's test job,
+  release-suite): every package at once in the one job, internal/ui as
+  two `go test` processes of half its tests each (packed by recorded
+  time, as linux-test's shards are), each with `-timeout 30m`, then
+  `check` over the shares. The suite's whole load stays in one job,
+  which is what full-test is for (the α.82 and α.83 races), and
+  prior-full-test.sh still finds one full-test job.
+- `test-shard.py run --shard K/4 --split 2` (linux-test): each shard runs
+  as two shares of its own, 8 in all, two binaries per heavy package a
+  job. linux-coverage's check reads the share subdirectories, so it still
+  fails unless every test ran exactly once.
+
+Both first compile the heavy packages' test binaries once (`go test
+-exec=true -run '^$'`): concurrent go commands each compile what they
+need, the same packages included. `.github/test-times.json` was stale: it
+had 639 of internal/ui's 929 tests (976 s of 1,731 s), and the 290 new
+ones packed at the median, which is why the quarters ran 339 to 417 s. It
+is refreshed from train-202's and quote-paste-3's shards.
+
+| | before | after |
+|---|---|---|
+| full-test: internal/ui | one binary, 1,476-1,713 s (40 runs) | two: 750.5 and 752.8 s (45161490349), 763.4 and 764.0 s (45166937416) |
+| full-test: the job | 27.6-33.1 min, median 29.3, p95 32.0 (budget 40) | 14.5 min, 15.0 min |
+| full-test: the runner's peak | 8,597 MiB (45102052586) | 8,648 MiB, 9,907 MiB |
+| linux-test: internal/ui a binary | 339-417 s, one a job (45143535474) | 188-197 s, two a job (45162123928) |
+| linux-test: a shard's job | 7.4-8.7 min | 4.4-4.6 min |
+
+Each run's check found every one of its 5,011 top-level tests (104
+packages) run exactly once. linux-test's 4 shard jobs together take about
+14 runner-min less a push.
+
+Not done: speeding up the slowest tests. TestDemoSurfaces alone is 134 s
+(8% of internal/ui), then TestImageSendShots 60 s,
+TestThreadsAuditOpenLikeSlack 43 s and TestStartupStatesNeverBlock 33 s.
+The split makes them fit; it doesn't make them cheaper. Each binary now
+sits well under its timeout (full-test's at 764 of 1,800 s, linux-test's
+at 197 of 600 s), but internal/ui's tests grew ~140 s in the 4.5 h of
+trains that day: when a binary passes 20 min in full-test or 7 in
+linux-test, raise `--split`, which costs no job, and refresh the times
+(`test-shard.py times`, from a run's test-shard-* or full-test artifacts).

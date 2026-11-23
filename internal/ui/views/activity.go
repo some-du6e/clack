@@ -184,6 +184,7 @@ type actRow struct {
 	// clickLater is a click whose press came in the same frame, decided
 	// in the next (ControlledClick's marks are this frame's layout's)
 	clickLater, clickSplit bool
+	clickFrame             uint64   // the frame it came in (frameNo)
 	ctx                    struct{} // the row's context-menu press target
 	d                      actDesc
 	built                  bool
@@ -299,6 +300,10 @@ type Activity struct {
 	plusX int
 	seg   [2]widget.Clickable
 	dense bool
+	// frameAt and frameN count the frames the view laid out, for a host
+	// without a frame count (frameNo)
+	frameAt time.Time
+	frameN  uint64
 	// superNarrow is ActivityList's isSuperNarrowDense this frame (eH: the
 	// list's width under 625px; never in the peek, which has no column
 	// width): the list's --super_narrow_dense, the Dense row on two lines.
@@ -351,6 +356,7 @@ type Activity struct {
 	kbFocused, kbMode bool
 	focusKey          string
 	lastUndo          *actUndo
+	focusList         bool // the list takes the focus at its next draw (FocusList, openStep)
 
 	// Live updates (activity_live.go): the newest unread entry the
 	// "New activity" banner announces.
@@ -1624,6 +1630,21 @@ func (v *Activity) OpenedItem() string {
 	return ""
 }
 
+// PaneThread is the thread the view's own pane draws beside the inbox
+// (pane: the persistent detail panel, Slack's Primary view on the
+// Activity tab), "" ts while it draws none: no item, a channel's, a
+// file's (paneFileOf), or an item opened as a secondary view
+// (openSecondary under activity_inbox_remove_persistent_detail_panel).
+func (v *Activity) PaneThread() (channel, ts string) {
+	if !v.paneInView() || v.sel.Channel == "" || v.selDesc.thread == "" {
+		return "", ""
+	}
+	if fid, wait := v.paneFileOf(); fid != "" || wait {
+		return "", ""
+	}
+	return v.sel.Channel, v.selDesc.thread
+}
+
 // unreadsSel is the opened row's key while Unreads is on ("" otherwise),
 // the one read row its list keeps.
 func (v *Activity) unreadsSel() string {
@@ -2285,6 +2306,9 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// newest copy Activity has (activity_msgs.go)
 	v.pollLists(it)
 	it = v.rowItem(r, it)
+	if actRowGone(it, r.msgGone) {
+		return D{} // the item renders null (actRowGone)
+	}
 	if r.built && r.dSrc != r.liSrc {
 		// a newer copy than the row was described from: its text and
 		// marks follow in this frame
@@ -2303,17 +2327,22 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// marks the row read and doesn't open it (ControlledClick skips a
 	// BUTTON target)
 	onActions := v.agentActionsClicked(gtx, r)
-	late, split := r.clickLater, v.splitClick()
-	if late {
-		split = r.clickSplit // the click's own frame's
+	// a deferred click is the next frame's to decide, and only its: a row
+	// not laid out then (scrolled off, the page changed) drops it
+	// (a row laid out again in its click's frame leaves it be)
+	late, split := false, v.splitClick()
+	if fn := v.frameNo(gtx); r.clickLater && fn != r.clickFrame { // a later frame (the view may lay out twice a frame: the peek)
+		late, r.clickLater = fn == r.clickFrame+1, false
+		if late {
+			split = r.clickSplit // the click's own frame's
+		}
 	}
-	r.clickLater = false
 	clicked := r.click.Clicked(gtx) && !onActions
 	if h := r.click.History(); clicked && len(h) > 0 && h[len(h)-1].Start.Equal(gtx.Now) {
 		// pressed and released in this frame: what took the press (a
 		// pill, a link) marks it as this frame lays the row out, so the
 		// click is decided in the next, with this frame's modifiers
-		r.clickLater, r.clickSplit, clicked = true, split, false
+		r.clickLater, r.clickSplit, r.clickFrame, clicked = true, split, v.frameNo(gtx), false
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	clicked = clicked || late
@@ -2591,7 +2620,10 @@ func (r *actRow) itemBody(gtx C, st slackc.Styled, sel bool) D {
 		pointerCursor(gtx)
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		m := op.Record(gtx.Ops)
-		dims := v.rowContent(gtx, r)
+		// the item is cursor: pointer (.p-activity_ia4_page__item:hover,
+		// .activity_row_content_container), every kind's body under the
+		// hand (handBody)
+		dims := v.handBody(gtx, func(gtx C) D { return v.rowContent(gtx, r) })
 		call := m.Stop()
 		rect := image.Rectangle{Max: dims.Size}
 		bg := v.p.ReadFill
@@ -3655,11 +3687,14 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		return v.para(gtx, 15, 22, wReg, col, lines, d.body)
 	}
 	if r.msg() == nil {
-		if r.it.Channel == "" || r.msgGone {
+		if r.it.Channel == "" || r.msgGone || v.gaveUp(r.it) {
 			// ActivityRowContentDetails draws no body for a message the
 			// store doesn't have (deleted since: activity_msgs.go; or none
 			// at all: isNonExistent, MsgGone), the shimmer only for one
-			// it's still fetching (isUnknown)
+			// it's still fetching (isUnknown). One whose fetches failed
+			// until core gave up (MessageGaveUp) isn't deleted: its row
+			// stays, with no body and no skeleton for ever, until an
+			// answer brings the message
 			return D{}
 		}
 		return v.shimmerLine(gtx, 240)
@@ -3891,6 +3926,48 @@ func (v *Activity) btnRect(gtx C, c *widget.Clickable) image.Rectangle {
 	}
 	s := gtx.Dp(32)
 	return image.Rectangle{Min: at, Max: at.Add(image.Pt(s, s))}
+}
+
+// frameNo is the window's frame being laid out (the host's FrameSeq),
+// for a deferred row click (clickLater): its next frame decides it,
+// however long that frame took to come, and a frame that doesn't lay the
+// row out drops it. A host without a frame count: the frames this view
+// laid out (by gtx.Now; the peek's second layout of a frame is the same
+// frame).
+func (v *Activity) frameNo(gtx C) uint64 {
+	if fc, ok := v.h.(frameCounter); ok {
+		return fc.FrameSeq()
+	}
+	if !gtx.Now.Equal(v.frameAt) {
+		v.frameAt, v.frameN = gtx.Now, v.frameN+1
+	}
+	return v.frameN
+}
+
+// gaveUp reports whether core stopped fetching the row's message after
+// its fetches failed (core.MessageGaveUp).
+func (v *Activity) gaveUp(it *core.ActivityItem) bool {
+	k, _, ok := actMsgRef(it)
+	c := v.h.Core()
+	return ok && c != nil && c.MessageGaveUp(k.ch, k.ts)
+}
+
+// actRowGone is Slack's item components returning null for a message
+// that is no more: a mention's (ActivityAtMention and its kin: !a || W)
+// and a reaction's (ActivityReaction: !v || N) when the message is
+// isNonExistent (messages.list had none, or a fetch gave up online:
+// gone), a tombstone, or moderated or thread_hidden (r34X V). A thread's
+// row stays for its latest reply (it draws no body then); its own
+// message, the first unread reply, takes the entry out when deleted.
+func actRowGone(it *core.ActivityItem, gone bool) bool {
+	if it.Type != "message_reaction" && !actMentionType(it.Type) {
+		return false
+	}
+	if gone {
+		return true
+	}
+	m := it.Msg
+	return m != nil && (m.Tombstone || m.Subtype == "tombstone" || m.Subtype == "moderated" || m.Subtype == "thread_hidden")
 }
 
 // pointerAt is where the pointer is, for menus opened from a press.

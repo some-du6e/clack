@@ -131,8 +131,9 @@ type barBtn struct {
 type fileBar struct {
 	card  image.Rectangle // the card: the group shows while it's hovered
 	f     *richtext.File
-	inset int  // Dp from the card's top and right
-	group bool // a c-message_actions__group (pillows); else gallery_v3's bare group
+	viz   *richtext.DataViz // a data_visualization block's More actions (dataviz.go)
+	inset int               // Dp from the card's top and right
+	group bool              // a c-message_actions__group (pillows); else gallery_v3's bare group
 	btns  []barBtn
 }
 
@@ -404,6 +405,13 @@ func (v *View) barAction(bar, btn int, h Handler) {
 	b := &v.d.bars[bar]
 	_, rs := v.barRects(bar)
 	r := rs[btn].Add(v.Origin)
+	if b.viz != nil {
+		if ch, ok := h.(ChartActionHandler); ok {
+			wr, win := v.actionRect(rs[btn])
+			ch.ChartAction(b.viz, wr, win)
+		}
+		return
+	}
 	switch act := b.btns[btn].act; act {
 	case FileExpand:
 		h.OpenFile(b.f) // FileActions' onExpand: openViewer

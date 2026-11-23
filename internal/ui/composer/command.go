@@ -11,13 +11,21 @@ import (
 // earlier command feedback goes away, the command runs (chat.command
 // with a client_token, so the modal an app opens with the trigger shows
 // here), and its response, or Slack's text for why it failed ("*/se*
-// failed with the error …"), shows as Slackbot's temporary ephemeral in
-// the conversation (core/command.go). The composer isn't restored on a
-// failure; keep_input asks for the text back.
+// failed with the error …", the lowercased command named), shows as
+// Slackbot's temporary ephemeral in the conversation (core/command.go).
+// The failure goes back to prepareAndSendMessage's caller, which puts the
+// text back (InputContainer's catch); keep_input asks for it back on
+// success. A failure with silence_error resolves: nothing at all.
 func runCommand(ctx context.Context, api coreAPI, o core.CommandOpts) (core.CommandResult, error) {
 	api.clearCommandFeedback(o.ThreadTS != "")
 	res, err := api.command(ctx, o)
 	if err != nil {
+		var ce *core.CommandError
+		if errors.As(err, &ce) && ce.Silent {
+			// executeCommand's catch: `if (n.silence_error) return;` the
+			// command resolves, nothing shows and the input stays cleared
+			return res, nil
+		}
 		if txt := core.CommandFailureText(err, o.Command); txt != "" {
 			api.commandFeedback(o.Channel, o.ThreadTS, txt)
 		}
