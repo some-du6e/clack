@@ -16,6 +16,16 @@ import (
 // CopyText puts s on the clipboard.
 func CopyText(gtx layout.Context, s string) { copyText(gtx, s) }
 
+// SingleFileLink is the file's link for a message that is one file and
+// nothing else (isSingleFileMessageAction), which Copy link copies in
+// place of the message's (copyLinkToFile); "" for any other message.
+func SingleFileLink(m *core.Message) string {
+	if f := singleFile(m, false); f != nil {
+		return f.Permalink
+	}
+	return ""
+}
+
 // ChannelLink is a conversation's link, as the channel menu's Copy link
 // builds it.
 func ChannelLink(h Host, ch string) string {
