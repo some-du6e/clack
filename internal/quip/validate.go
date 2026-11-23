@@ -96,6 +96,12 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 	}
 	last := -1
 	made := map[string]*Section{} // the new sections checked so far
+	deleted := map[string]bool{}  // the sections this save deletes
+	for _, e := range edits {
+		if e.Kind == EditDelete {
+			deleted[e.SectionID] = true
+		}
+	}
 	for i := range data.Sections {
 		u := &data.Sections[i]
 		id := str(u.ID)
@@ -199,13 +205,30 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 				return refuse("section %s: a block edit that changes nothing", id)
 			}
 		case EditDelete:
-			if server.Parents != nil && len(server.Parents.IDs) > 0 {
-				return refuse("section %s: deleting a list item (its list's end isn't saved yet)", id)
-			}
-			if server.Type == nil || *server.Type != TypeText {
+			switch {
+			case inList:
+				// a list item: its list keeps an item, or goes with the
+				// last one (notifyDescendantDeleted_ deletes it)
+				list, left := server.Parents.IDs[0], false
+				for _, c := range d.ListChildren(server.Parents.IDs[0]) {
+					left = left || c != id && !deleted[c]
+				}
+				if !left && !deleted[list] {
+					return refuse("section %s: the last item of list %s deleted without the list", id, list)
+				}
+				if server.Type == nil || *server.Type != TypeText {
+					return refuse("section %s: deleting a list item of type %v", id, server.Type)
+				}
+			case server.Type != nil && *server.Type == TypeList:
+				// a list goes only with all its items
+				for _, c := range d.ListChildren(id) {
+					if !deleted[c] {
+						return refuse("section %s: deleting a list with item %s left", id, c)
+					}
+				}
+			case server.Type == nil || *server.Type != TypeText:
 				return refuse("section %s: deleting a section of type %v", id, server.Type)
-			}
-			if d.DeleteMerges(id) {
+			case d.DeleteMerges(id):
 				return refuse("section %s: deleting it leaves two sections Slack's editor would merge", id)
 			}
 		}

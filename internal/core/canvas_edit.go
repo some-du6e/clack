@@ -703,9 +703,11 @@ func (a *App) SaveCanvasText(ctx context.Context, id, sectionID, orig, text stri
 
 // SaveCanvasDelete deletes a block's section (the block emptied). orig is
 // the block's spans when the edit began, which the section has to hold
-// still (else ErrCanvasConflict). A section holding mentions, emoji or
-// dates isn't deleted yet (quip.ErrUnsupported): what Slack's editor does
-// with their control sections then isn't ported.
+// still (else ErrCanvasConflict). A list's last item takes the list with
+// it, as Slack's notifyDescendantDeleted_ does. Not deleted yet
+// (quip.ErrUnsupported): a section holding mentions, emoji or dates (what
+// Slack's editor does with their control sections then isn't ported), a
+// block whose neighbours Slack would merge, the canvas's last block.
 func (a *App) SaveCanvasDelete(ctx context.Context, id, sectionID string, orig []richtext.Span) error {
 	return a.queueSave(ctx, id, func(c *saveCtx) ([]quip.Edit, error) {
 		base := c.base
@@ -735,7 +737,41 @@ func (a *App) SaveCanvasDelete(ctx context.Context, id, sectionID string, orig [
 		if merges { // deleteSection would merge the two lists (or code blocks) around it
 			return nil, fmt.Errorf("%w: deleting a block between two lists or code blocks Slack's editor would merge", quip.ErrUnsupported)
 		}
-		return []quip.Edit{{Kind: quip.EditDelete, SectionID: sectionID, Base: b.seq}}, nil
+		edits := []quip.Edit{{Kind: quip.EditDelete, SectionID: sectionID, Base: b.seq}}
+		if len(b.parents) > 0 { // a list item: the last one takes its list with it (notifyDescendantDeleted_)
+			list := b.parents[0]
+			last, alone, listSeq := false, false, int64(0)
+			a.CanvasModel(id, func(d *quip.Doc) {
+				if d == nil {
+					return
+				}
+				left := 0
+				for _, c := range d.ListChildren(list) {
+					if c != d.RealID(sectionID) {
+						left++
+					}
+				}
+				last = left == 0
+				if sec := d.Section(list); sec != nil && sec.Sequence != nil {
+					listSeq = *sec.Sequence
+				}
+				top := 0
+				for _, sec := range d.Sections() {
+					if (sec.Parents == nil || len(sec.Parents.IDs) == 0) && (sec.SectionClass == nil || *sec.SectionClass != quip.ClassControl) &&
+						(sec.Type == nil || *sec.Type != quip.TypeTitle) {
+						top++
+					}
+				}
+				alone = top <= 1
+			})
+			if last && alone { // Slack's deleteEntity would make a new section to take its place
+				return nil, fmt.Errorf("%w: deleting the canvas's last block", quip.ErrUnsupported)
+			}
+			if last {
+				edits = append(edits, quip.Edit{Kind: quip.EditDelete, SectionID: list, Base: listSeq})
+			}
+		}
+		return edits, nil
 	})
 }
 

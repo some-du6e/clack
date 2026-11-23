@@ -226,7 +226,8 @@ func TestCanvasSaveTooLargeAndForbidden(t *testing.T) {
 
 // A save that Slack's client wouldn't make is refused before anything goes
 // out: an empty annotation (getCompactRtml would lose the text after it),
-// a list item's delete, a raw tab, a control the section doesn't hold.
+// a list deleted with its items left, a raw tab, a control the section
+// doesn't hold.
 func TestCanvasSaveRefusals(t *testing.T) {
 	a, fs := canvasApp(t)
 	ctx := context.Background()
@@ -237,8 +238,8 @@ func TestCanvasSaveRefusals(t *testing.T) {
 		t.Errorf("an empty annotation: %v", err)
 	}
 	item := modelSection(t, a, fakeslack.CanvasShared, "Write the changelog")
-	if err := a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditDelete, SectionID: *item.ID}); !errors.Is(err, quip.ErrRefused) {
-		t.Errorf("a list item's delete: %v", err)
+	if err := a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditDelete, SectionID: item.Parents.IDs[0]}); !errors.Is(err, quip.ErrRefused) {
+		t.Errorf("a list deleted with its items left: %v", err)
 	}
 	if err := a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditText, SectionID: *p.ID, RTML: "a\tb"}); !errors.Is(err, quip.ErrRefused) {
 		t.Errorf("a raw tab: %v", err)
@@ -720,5 +721,52 @@ func TestCanvasSaveDeleteMerges(t *testing.T) {
 	fc, _ := fs.Canvas(id)
 	if fc.Doc.Find("temp:C:MRG00004") != nil || fc.Doc.Find("temp:C:MRG00002") == nil {
 		t.Errorf("the export after the deletes: %+v", fc.Doc.Blocks)
+	}
+}
+
+// A list item is deleted alone while its list keeps items; the last one
+// takes its list with it in the same save (notifyDescendantDeleted_).
+func TestCanvasSaveListDeletes(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	const id = "F0LISTDEL01"
+	txt := func(s string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: s}} }
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: id, Title: "List deletes", Doc: canvas.Doc{Blocks: []canvas.Block{
+		{ID: "temp:C:LDL00001", Kind: canvas.Paragraph, Spans: txt("before")},
+		{ID: "temp:C:LDL00002", Kind: canvas.Bullet, Spans: txt("one")},
+		{ID: "temp:C:LDL00003", Kind: canvas.Bullet, Spans: txt("two")},
+		{ID: "temp:C:LDL00004", Kind: canvas.Paragraph, Spans: txt("after")},
+	}}})
+	loadModel(t, a, id)
+	if err := a.SaveCanvasDelete(ctx, id, "temp:C:LDL00002", txt("one")); err != nil {
+		t.Fatalf("an item of two: %v", err)
+	}
+	rs := saves(fs)
+	if len(rs) != 1 || len(rs[0].Save.Sections) != 1 || quip.FieldsString(&rs[0].Save.Sections[0]) != "1,2,3,9,13,19,20,33" {
+		t.Errorf("an item of two: %+v", rs)
+	}
+	if err := a.SaveCanvasDelete(ctx, id, "temp:C:LDL00003", txt("two")); err != nil {
+		t.Fatalf("the last item: %v", err)
+	}
+	rs = saves(fs)
+	r := rs[len(rs)-1]
+	if len(r.Save.Sections) != 2 {
+		t.Fatalf("the last item's save: %d sections, want the item and its list", len(r.Save.Sections))
+	}
+	var types []int32
+	for _, sec := range r.Save.Sections {
+		types = append(types, *sec.Type)
+		if sec.Deleted == nil || !*sec.Deleted {
+			t.Errorf("section %s isn't deleted", *sec.ID)
+		}
+	}
+	if !slices.Contains(types, quip.TypeList) || !slices.Contains(types, quip.TypeText) {
+		t.Errorf("the last item's save holds types %v", types)
+	}
+	fc, _ := fs.Canvas(id)
+	for _, b := range fc.Doc.Blocks {
+		if b.Kind.IsList() {
+			t.Errorf("a list is left: %+v", fc.Doc.Blocks)
+		}
 	}
 }

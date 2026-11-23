@@ -151,3 +151,16 @@ func (d *Doc) DeleteMerges(id string) bool {
 	}
 	return false
 }
+
+// ListChildren are the live sections whose first parent is id (a list's
+// items), in no particular order.
+func (d *Doc) ListChildren(id string) []string {
+	var out []string
+	for sid, s := range d.sections {
+		if s.Deleted != nil && *s.Deleted || s.Parents == nil || len(s.Parents.IDs) == 0 || s.Parents.IDs[0] != id {
+			continue
+		}
+		out = append(out, sid)
+	}
+	return out
+}
