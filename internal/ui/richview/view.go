@@ -291,8 +291,13 @@ func (v *View) SelectedText() string {
 	return string(v.d.plain[a:b])
 }
 
-// Hovered reports whether the pointer is over a clickable item.
-func (v *View) Hovered() bool { return v.hover >= 0 }
+// Hovered reports whether the pointer is over a clickable item. A canvas's
+// date isn't one: an editor's pointer is the hand over it (HandCursors),
+// but it has no click here, so a press on it is the text's (canvasview's
+// press area: the editor, or its can't-edit feedback).
+func (v *View) Hovered() bool {
+	return v.hover >= 0 && (int(v.hover) >= len(v.d.targets) || v.d.targets[v.hover].kind != tDate)
+}
 
 // Pointer reports whether the pointer is inside the view.
 func (v *View) Pointer() bool { return v.hovering }

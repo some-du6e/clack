@@ -2,9 +2,11 @@ package canvasview
 
 import (
 	"image"
+	"strings"
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/canvas"
@@ -23,6 +25,8 @@ const (
 	cursorFilesID  = "temp:C:CUR00003" // a file link and a canvas link
 	cursorDateID   = "temp:C:CUR00004" // a date first, then text
 	cursorCheckID  = "temp:C:CUR00005"
+	cursorTableID  = "temp:C:CUR00006"
+	cursorCellID   = "temp:C:CUR00007" // a table cell's date
 )
 
 func cursorBlocks() []canvas.Block {
@@ -47,6 +51,10 @@ func cursorBlocks() []canvas.Block {
 			{Kind: richtext.Text, Text: " is launch day"},
 		}},
 		{ID: cursorCheckID, Kind: canvas.Check, Spans: txt("Order stickers")},
+		{ID: cursorTableID, Kind: canvas.Table, Rows: [][]canvas.Cell{{
+			{Blocks: []canvas.Block{{ID: cursorCellID, Kind: canvas.Paragraph, Spans: []richtext.Span{{Kind: richtext.Date, Text: "August 12th"}}}}},
+			{Blocks: []canvas.Block{{ID: "temp:C:CUR00008", Kind: canvas.Paragraph, Spans: txt("Stickers")}}},
+		}}},
 	}
 }
 
@@ -54,6 +62,13 @@ func cursorBlocks() []canvas.Block {
 // waits for its mentions to have names (a mention is Quip's loading
 // skeleton, no link, until then).
 func cursorRig(t *testing.T, id, access string) *pointerRig {
+	t.Helper()
+	r, _, _ := cursorEnv(t, id, access)
+	return r
+}
+
+// cursorEnv is cursorRig with its host and fake.
+func cursorEnv(t *testing.T, id, access string) (*pointerRig, *testHost, *fakeslack.Server) {
 	t.Helper()
 	h, fs := newEnv(t, false)
 	fs.AddCanvas(fakeslack.FakeCanvas{ID: id, Title: "Cursors", ViewerAccess: access, Doc: canvas.Doc{Blocks: cursorBlocks()}})
@@ -71,7 +86,7 @@ func cursorRig(t *testing.T, id, access string) *pointerRig {
 		time.Sleep(10 * time.Millisecond)
 	}
 	r.frame()
-	return r
+	return r, h, fs
 }
 
 func (r *pointerRig) block(id string) *blk {
@@ -83,6 +98,11 @@ func (r *pointerRig) block(id string) *blk {
 				found = b
 			}
 			walk(b.kids)
+			for _, row := range b.cells {
+				for _, c := range row {
+					walk(c.kids)
+				}
+			}
 		}
 	}
 	walk(r.v.blocks)
@@ -188,6 +208,9 @@ func TestCanvasCursors(t *testing.T) {
 		hand("a file or canvas link", p)
 	}
 	hand("a date", r.origin(cursorDateID).Add(image.Pt(6, line/2)))
+	for _, p := range r.linkPoints(cursorCellID, richview.HitDate) {
+		hand("a date in a table cell", p) // cells have no press area: richview's own pass gave the text cursor
+	}
 
 	// the checklist box, in the gutter left of the item's text
 	ck := r.block(cursorCheckID)
@@ -213,6 +236,11 @@ func TestCanvasCursorsReadOnly(t *testing.T) {
 	if c := r.cursorAt(r.origin(cursorDateID).Add(image.Pt(6, line/2))); c != pointer.CursorText {
 		t.Errorf("a viewer's date: cursor %v, want the text cursor", c)
 	}
+	for _, p := range r.linkPoints(cursorCellID, richview.HitDate) {
+		if c := r.cursorAt(p); c != pointer.CursorText {
+			t.Errorf("a viewer's date in a table cell: cursor %v, want the text cursor", c)
+		}
+	}
 	for _, p := range r.linkPoints(cursorLinksID, richview.HitChannel) {
 		if c := r.cursorAt(p); c != pointer.CursorPointer {
 			t.Errorf("a viewer's channel at %v: cursor %v, want the hand", p, c)
@@ -225,3 +253,71 @@ func TestCanvasCursorsReadOnly(t *testing.T) {
 
 // gtxLine is the body's line height in the rig's pixels.
 func gtxLine(r *pointerRig) int { return gtxFor(nil, r.sz).Dp(bodyLine) }
+
+// A click on an editor's date, in a block Clack's editor can't open yet,
+// gives the can't-edit toast as a click on the block's other text does,
+// opens nothing and sends nothing. Before, the date's hand target made the
+// block's press area take it for a link or mention, and the click did
+// nothing at all under the hand (the canvas review of A, 11-23).
+func TestCanvasDateClickRefuses(t *testing.T) {
+	r, h, fs := cursorEnv(t, cursorCanvas, "")
+	b := r.block(cursorDateID)
+	if b.edOK {
+		t.Fatal("the date's block opens in the editor: the test is about one that can't")
+	}
+	refusals := func() int {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		n := 0
+		for _, m := range h.toasts {
+			if strings.HasPrefix(m, cantEdit) {
+				n++
+			}
+		}
+		return n
+	}
+	// clicks a second apart, past Gio's double-click window (a second
+	// click within it would select a word, and a selection takes no toast)
+	at := 10 * time.Second
+	click := func(p image.Point) {
+		t.Helper()
+		pt := f32.Pt(float32(p.X), float32(p.Y))
+		at += time.Second
+		r.router.Queue(
+			pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt, Time: at},
+			pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt, Time: at},
+			pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt, Time: at + 50*time.Millisecond},
+		)
+		r.frame()
+		r.frame()
+	}
+	date := r.linkPoints(cursorDateID, richview.HitDate)[0]
+	if c := r.cursorAt(date); c != pointer.CursorPointer {
+		t.Fatalf("the date at %v: cursor %v, want the hand", date, c)
+	}
+	click(date)
+	if n := refusals(); n != 1 {
+		h.mu.Lock()
+		t.Errorf("a click on the date: %d can't-edit toasts, want 1 (%q)", n, h.toasts)
+		h.mu.Unlock()
+	}
+	var dr image.Rectangle
+	for _, lr := range b.rv.LinkRects() {
+		if lr.Kind == richview.HitDate {
+			dr = lr.R
+		}
+	}
+	click(r.origin(cursorDateID).Add(image.Pt(dr.Max.X+24, (dr.Min.Y+dr.Max.Y)/2))) // " is launch day"
+	if n := refusals(); n != 2 {
+		t.Errorf("a click on the text after the date: %d can't-edit toasts in all, want 2", n)
+	}
+	if r.v.edit.cur != nil {
+		t.Error("the date's block opened in the editor")
+	}
+	if b.rv.HasSelection() {
+		t.Error("the clicks left a selection")
+	}
+	if es := fs.CanvasEdits(); len(es) != 0 {
+		t.Errorf("%d canvases.edit calls, want 0: %v", len(es), es)
+	}
+}

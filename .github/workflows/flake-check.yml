@@ -3235,8 +3235,11 @@ jobs:
   # (canvas-controller CSS): the hand on a link, a person or channel
   # mention, a file or canvas link, an editor's date and the checklist
   # box, the text cursor on plain text and the title, a viewer's date
-  # still text (canvasview cursor_test.go); a control that holds a link
-  # parses as that link, not a date (canvas control_link_test.go).
+  # still text, a table cell's date as the text's (canvasview
+  # cursor_test.go); a click on an editor's date in a block Clack can't
+  # edit yet gives the can't-edit toast, as the block's text does
+  # (TestCanvasDateClickRefuses); a control that holds a link parses as
+  # that link, not a date (canvas control_link_test.go).
   # Dispatch with only=canvas-cursor.
   canvas-cursor:
     # dispatch only: its tests' files aren't in the push paths
@@ -3260,7 +3263,7 @@ jobs:
         run: |
           rc=0
           go test -count=$COUNT -v -timeout 10m -run '^TestControlLinkIsLink$' ./internal/canvas/ || rc=1
-          go test -count=$COUNT -v -timeout 20m -run '^(TestCanvasCursors|TestCanvasCursorsReadOnly)$' ./internal/ui/canvasview/ || rc=1
+          go test -count=$COUNT -v -timeout 20m -run '^(TestCanvasCursors|TestCanvasCursorsReadOnly|TestCanvasDateClickRefuses)$' ./internal/ui/canvasview/ || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report

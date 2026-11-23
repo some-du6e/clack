@@ -573,8 +573,12 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, top int) layout.Dimension
 		} else {
 			h = b.rv.Layout(g, st, v.handler).Size.Y
 		}
-		if v.edit.canEdit(v) && !b.inCell { // other kinds: a click explains they can't be edited yet
+		switch {
+		case !v.edit.canEdit(v):
+		case !b.inCell: // other kinds: a click explains they can't be edited yet
 			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
+		case !hidden(b): // a cell has no press area; its dates take an editor's hand all the same (textArea's cursor pass)
+			b.rv.HandCursors(gtx, true)
 		}
 	}
 	return layout.Dimensions{Size: image.Pt(w, top+h)}
