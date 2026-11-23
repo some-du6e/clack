@@ -6,8 +6,10 @@ package core
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -151,5 +153,44 @@ func TestCanvasSaveSpansTrailingBreak(t *testing.T) {
 	}
 	if got := quip.SectionRTML(&rs[0].Save.Sections[0]); got != "Notes:<br>" {
 		t.Errorf("saved %q, want the line break kept", got)
+	}
+}
+
+// A new block whose save the server took, its answer lost, is there under
+// its temp id once the canvas catches up: the retry doesn't make it again,
+// and it isn't someone else's.
+func TestCanvasSaveLostAnswerNewBlock(t *testing.T) {
+	fastSaves(t)
+	saveBackoffBase = time.Hour // the retry goes when the test runs it (retryNow)
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	nid := a.NewCanvasSectionID(fakeslack.CanvasShared)
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, AfterHandle: true, Times: 1})
+	if err := a.SaveCanvasNewBlocks(ctx, fakeslack.CanvasShared, *head.ID, []CanvasNewBlock{
+		{ID: nid, Kind: canvas.Paragraph, Spans: []richtext.Span{{Kind: richtext.Text, Text: "A paragraph saved once"}}},
+	}); err == nil {
+		t.Fatal("the lost answer came")
+	}
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending {
+		t.Errorf("still pending after the retry: %+v", st)
+	}
+	if ns := a.TakeCanvasSaveNotices(fakeslack.CanvasShared); len(ns) != 0 {
+		t.Errorf("notices %+v for this client's own save", ns)
+	}
+	if n := len(saves(fs)); n != 1 {
+		t.Errorf("%d edit-document calls, want the one the server took", n)
+	}
+	fc, _ := fs.Canvas(fakeslack.CanvasShared)
+	n := 0
+	for _, b := range fc.Doc.Blocks {
+		if b.Text() == "A paragraph saved once" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d blocks with the new paragraph's text, want 1", n)
 	}
 }
