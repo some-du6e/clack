@@ -2900,7 +2900,7 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps (Xvfb, Mesa llvmpipe)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
-      - name: TestGiantMessagesBounded (COUNT runs, each against a fresh fakeslackd, the first verbose), then TestGiantMessagesPlugins
+      - name: TestGiantMessagesBounded (COUNT runs, each against a fresh fakeslackd, the first verbose), then TestGiantMessagesPlugins (COUNT runs, verbose)
         env:
           CLACK_GIANT_MESSAGES: "100"
           CLACK_BENCH_GPU: "1"
@@ -2925,15 +2925,18 @@ jobs:
               xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 $v -test.timeout 20m -test.run '^TestGiantMessagesBounded$' 2>&1 | tail -n 200) || rc=1
             kill $fp 2>/dev/null; wait $fp 2>/dev/null
           done
-          # under a plugin that patches the messages slice, against a fresh
-          # fakeslackd of its own
-          "$RUNNER_TEMP/fakeslackd" -small -giant 100 -addr 127.0.0.1:8934 > "$RUNNER_TEMP/fakeslackd-plugins.log" 2>&1 &
-          fp=$!
-          for _ in $(seq 1 200); do curl -s -o /dev/null http://127.0.0.1:8934/img/1x1/x.png && break; sleep 0.1; done
-          mkdir -p "$RUNNER_TEMP/giant/plugins"
-          (cd internal/ui && CLACK_GIANT_PLUGINS=1 CLACK_FAKESLACK_URL=http://127.0.0.1:8934/ CLACK_GIANT_OUT="$RUNNER_TEMP/giant/plugins" \
-            xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 -test.v -test.timeout 20m -test.run '^TestGiantMessagesPlugins$' 2>&1 | tail -n 200) || rc=1
-          kill $fp 2>/dev/null; wait $fp 2>/dev/null
+          # under a plugin that patches the messages slice, each against a
+          # fresh fakeslackd of its own (its peak RSS varies most: every run
+          # verbose)
+          for i in $(seq 1 "$COUNT"); do
+            "$RUNNER_TEMP/fakeslackd" -small -giant 100 -addr 127.0.0.1:8934 > "$RUNNER_TEMP/fakeslackd-plugins-$i.log" 2>&1 &
+            fp=$!
+            for _ in $(seq 1 200); do curl -s -o /dev/null http://127.0.0.1:8934/img/1x1/x.png && break; sleep 0.1; done
+            mkdir -p "$RUNNER_TEMP/giant/plugins-$i"
+            (cd internal/ui && CLACK_GIANT_PLUGINS=1 CLACK_FAKESLACK_URL=http://127.0.0.1:8934/ CLACK_GIANT_OUT="$RUNNER_TEMP/giant/plugins-$i" \
+              xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 -test.v -test.timeout 20m -test.run '^TestGiantMessagesPlugins$' 2>&1 | tail -n 200) || rc=1
+            kill $fp 2>/dev/null; wait $fp 2>/dev/null
+          done
           exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

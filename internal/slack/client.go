@@ -767,7 +767,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			}
 			continue
 		}
-		data, err := io.ReadAll(resp.Body)
+		data, err := readBody(resp.Body, resp.ContentLength)
 		resp.Body.Close()
 		if err != nil {
 			unanswered(ctx, u, err) // cut off before the whole answer came
@@ -1380,4 +1380,44 @@ func (p *progressReader) Read(b []byte) (int, error) {
 		p.f(p.sent, p.total)
 	}
 	return n, err
+}
+
+// readBody reads r to its end as io.ReadAll does, in chunks that double
+// to 4 MB and then one copy of the whole: io.ReadAll grows one slice by a
+// quarter at a time once it's large, allocating about five times a long
+// answer (a page of 908,000-character messages, 120 MB: 600 MB of
+// garbage), where this allocates twice it. hint is the answer's
+// Content-Length when known (-1 otherwise: a gzipped answer the
+// transport decompresses), and the first chunk is that long.
+func readBody(r io.Reader, hint int64) ([]byte, error) {
+	size := 8 << 10
+	if hint > 0 && hint < 1<<30 {
+		size = int(hint) + 1 // the byte more sees the end without a second chunk
+	}
+	var chunks [][]byte
+	total := 0
+	for {
+		c := make([]byte, size)
+		n, err := io.ReadFull(r, c)
+		c = c[:n]
+		total += n
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			if len(chunks) == 0 {
+				if n >= size/2 {
+					return c, nil
+				}
+				return bytes.Clone(c), nil // not a mostly empty chunk kept
+			}
+			chunks = append(chunks, c)
+			break
+		}
+		chunks = append(chunks, c)
+		if err != nil {
+			return bytes.Join(chunks, nil), err
+		}
+		if size < 4<<20 {
+			size = min(size*2, 4<<20)
+		}
+	}
+	return bytes.Join(chunks, nil), nil
 }
