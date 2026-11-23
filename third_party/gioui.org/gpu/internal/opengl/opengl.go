@@ -1445,9 +1445,7 @@ func floatTripleFor(f *gl.Functions, ver [2]int, gles bool, exts []string) (text
 	// to the path's bottom, and in half float the sums of a ring's many
 	// segments don't cancel, leaving a faint column under it (Karim's
 	// stray line, 2026-11-22)
-	if ver[0] >= 3 && (!gles || hasExtension(exts, "GL_EXT_color_buffer_float") && hasExtension(exts, "GL_EXT_float_blend")) {
-		triples = append(triples, textureTriple{gl.R32F, gl.Enum(gl.RED), gl.Enum(gl.FLOAT)})
-	}
+	// red: no R32F (as before Clack patch 63)
 	if ver[0] >= 3 {
 		triples = append(triples, textureTriple{gl.R16F, gl.Enum(gl.RED), gl.Enum(gl.HALF_FLOAT)})
 	}
