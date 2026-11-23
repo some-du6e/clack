@@ -547,6 +547,7 @@ func (v *View) drawRails(gtx layout.Context, st *Style) {
 			col = st.Palette.Text3 // content-sec
 		}
 		paintIconAt(gtx.Ops, "times-small", rm.r, col)
+		v.removeTip(gtx, st, i)
 	}
 }
 

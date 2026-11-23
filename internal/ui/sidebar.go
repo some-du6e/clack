@@ -80,6 +80,7 @@ type sidebarState struct {
 	outboxTip   popups.TipState
 	codeTips    map[string]*codeRowTip // code channel rows' name tooltips (codechannel.go)
 	sharedTips  map[string]*codeRowTip // shared channel rows' name tooltips (sidebar_connect.go)
+	nameTips    map[string]*codeRowTip // other rows' truncated-name tooltips (sidebar_connect.go)
 	teamAsked   map[string]bool        // external teams asked for (sidebar_connect.go)
 
 	// ChannelSidebar (slick_shell.go)
