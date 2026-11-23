@@ -58,13 +58,20 @@ func TestEventRSVP(t *testing.T) {
 // connect modal, a plain ok nothing.
 func TestEventCopy(t *testing.T) {
 	h, _, rec := emBooted(t)
-	shown := h.shownCount()
 	EventAction(h, "copy", &richtext.Event{ID: "E1", AppType: "gcal"}, "C0EV", "1.0", image.Rectangle{})
 	rec.wait(t, "calendar.event.copy", map[string]string{"event_id": "E1", "message_ts": "1.0", "channel": "C0EV"}, 10*time.Second)
 	EventAction(h, "copy", &richtext.Event{ID: fakeslack.EventNeedsAuth, AppType: "gcal"}, "C0EV", "2.0", image.Rectangle{})
 	maUntil(t, "Connect calendar", func() bool { m := h.topModal(); return m != nil && m.o.Title == "Connect calendar" })
-	if n := h.shownCount(); n != shown+1 {
-		t.Errorf("%d overlays shown, want one (the modal)", n-shown)
+	h.mu.Lock()
+	n := 0
+	for _, o := range h.shown {
+		if m, ok := o.(*Modal); ok && m.o.Title == "Connect calendar" {
+			n++
+		}
+	}
+	h.mu.Unlock()
+	if n != 1 {
+		t.Errorf("%d Connect calendar modals, want 1 (E1's plain ok opens none)", n)
 	}
 }
 
