@@ -61,6 +61,8 @@ jobs:
         run: |
           go test -count=1 ./internal/richtext ./internal/fakeslack ./internal/ui/richview ./internal/ui/blockkit ./internal/chart
           go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources' ./internal/ui/popups
+          go test -count=1 -run 'TestCodeSummaryTimeline' ./internal/core
+          go test -count=1 -run 'TestBroadcastPreambleTimelineRoot' ./internal/ui/messages
       - name: gallery screenshots
         env:
           BK_SHOTS_DIR: ${{ github.workspace }}/dist/shots

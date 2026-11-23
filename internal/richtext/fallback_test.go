@@ -54,8 +54,11 @@ func TestBlockFallbacks(t *testing.T) {
 		{"a block Clack can't draw yet lets the text stand in", // (attachment_reference: pending, part 2f)
 			`[{"type":"attachment_reference","block_id":"t1"}]`,
 			[]Block{para(tx("fallback text"))}},
-		{"a timeline with no points draws nothing, and the text doesn't stand in",
+		{"a timeline without points throws in TimelineCondensed: the per-block error line",
 			`[{"type":"timeline","block_id":"t1"}]`,
+			[]Block{unsupported()}},
+		{"a timeline with no points draws nothing, and the text doesn't stand in",
+			`[{"type":"timeline","block_id":"t1","points":[]}]`,
 			nil},
 		{"a rich_text piece or an inline element at the top level draws as inside a rich_text",
 			`[{"type":"rich_text_section","elements":[{"type":"text","text":"hi"}]},{"type":"text","text":"there"}]`,

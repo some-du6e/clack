@@ -283,3 +283,18 @@ func TestSenderRenameWhileDrawing(t *testing.T) {
 		t.Errorf("the row, drawn frame after frame, still draws %q after Cara's rename to kit.l", name())
 	}
 }
+
+// A broadcast's preamble previews a timeline-only root by its points'
+// titles (convertMessageToPlainText), not a bare "replied to a thread".
+func TestBroadcastPreambleTimelineRoot(t *testing.T) {
+	root := core.Message{TS: "1700000001.000100", ThreadTS: "1700000001.000100", Doc: richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.TimelineBlock,
+		Timeline: &richtext.Timeline{Points: []richtext.TimelinePoint{
+			{Status: "complete", Title: []richtext.Span{{Kind: richtext.Text, Text: "Searched"}}},
+			{Status: "error", Title: []richtext.Span{{Kind: richtext.Text, Text: "Booked"}}}}}}}}}
+	s := &listState{}
+	s.snap.msgs = []entry{{m: root, rev: 1}}
+	r := &row{m: core.Message{TS: "1700000002.000200", ThreadTS: root.TS, Broadcast: true}}
+	if got := r.rootPreview(&rowCtx{list: s, usersRev: 1}); got != "Searched Error: Booked" {
+		t.Errorf("the preamble's preview: %q", got)
+	}
+}

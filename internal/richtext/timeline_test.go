@@ -57,12 +57,37 @@ func TestTimelineDecode(t *testing.T) {
 	if d := FromMessage(R, m); d.Blocks[0].Timeline == nil || !d.Blocks[0].Timeline.Running {
 		t.Errorf("ai_context streaming: not running")
 	}
-	// no points, or points not an array: nothing; the other blocks draw
-	for _, b := range []string{`{"type":"timeline","points":[]}`, `{"type":"timeline","points":{"a":1}}`, `{"type":"timeline"}`} {
-		d := blocksMsg(t, `[`+b+`,{"type":"section","text":{"type":"mrkdwn","text":"after"}}]`)
-		if len(d.Blocks) != 1 || PlainText(*d) != "after" {
-			t.Errorf("%s: %s", b, dump(d.Blocks))
+	// no points: nothing; points that aren't an array, or a null point:
+	// TimelineCondensed throws (e.length, e.some), the per-block error
+	// line; the other blocks draw
+	for _, c := range []struct {
+		block   string
+		errLine bool
+	}{
+		{`{"type":"timeline","points":[]}`, false},
+		{`{"type":"timeline","points":""}`, false},
+		{`{"type":"timeline","points":{"a":1}}`, true},
+		{`{"type":"timeline"}`, true},
+		{`{"type":"timeline","points":[{"id":"a","text":"x"},null]}`, true},
+	} {
+		d := blocksMsg(t, `[`+c.block+`,{"type":"section","text":{"type":"mrkdwn","text":"after"}}]`)
+		want := 1
+		if c.errLine {
+			want = 2
 		}
+		if len(d.Blocks) != want || c.errLine && d.Blocks[0].Kind != Unsupported || PlainText(Doc{Blocks: d.Blocks[want-1:]}) != "after" {
+			t.Errorf("%s: %s", c.block, dump(d.Blocks))
+		}
+	}
+	// a point that isn't an object counts, with nothing in it; a section
+	// titled with a string keeps it (i.richTextTitle &&); steps with no
+	// titled section still expand the header
+	tl = timelineOf(t, blocksMsg(t, `[{"type":"timeline","points":[7,
+		{"id":"b","status":"complete","text":"y","steps":[{"id":"s","sections":[{"rich_text_title":"plain title"},{"sources":[]}]}]},
+		{"id":"c","text":"z","steps":[{"id":"t","sections":[]}]}]}]`), 0)
+	if len(tl.Points) != 3 || len(tl.Points[0].Title) != 0 || len(tl.Points[1].Sections) != 1 ||
+		title(tl.Points[1].Sections[0].Title) != "plain title" || !tl.Points[2].HasSteps || len(tl.Points[2].Sections) != 0 {
+		t.Errorf("points %+v", tl.Points)
 	}
 	// task_attribution_: hidden (Slack's task attribution feature is off)
 	if tl := timelineOf(t, blocksMsg(t, `[{"type":"timeline","block_id":"task_attribution_9","points":[{"id":"a","status":"complete","text":"x"}]}]`), 0); !tl.Hidden {
@@ -80,5 +105,15 @@ func TestTimelineNotificationText(t *testing.T) {
 	}
 	if got := notificationTextOf(t, `{"ts":"1.0","text":"fallback","blocks":[{"type":"timeline","points":[]}]}`); !strings.Contains(got, "fallback") {
 		t.Errorf("no points: %q", got)
+	}
+}
+
+// convertMessageToPlainText gives a timeline its points' titles, as the
+// notification does: a timeline-only message's plain text (a code
+// channel's summary, a broadcast's root preview) isn't empty.
+func TestTimelinePlainText(t *testing.T) {
+	d := blocksMsg(t, `[{"type":"timeline","points":[{"id":"a","status":"complete","text":"Searched"},{"id":"b","status":"error","text":"Booked"}]}]`)
+	if got := PlainText(*d); got != "Searched Error: Booked" {
+		t.Errorf("plain text %q", got)
 	}
 }
