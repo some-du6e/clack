@@ -2069,6 +2069,7 @@ func (d *drawOps) buildVerts(pathData []byte, tr f32.Affine2D, outline bool, str
 			Width: strWidth,
 		}
 		quads := stroke.StrokePathCommands(ss, pathData)
+		noteStrokeNaN(quads) // Clack patch 62
 		for _, quad := range quads {
 			d.qs.contour = quad.Contour
 			quad.Quad = quad.Quad.Transform(tr)

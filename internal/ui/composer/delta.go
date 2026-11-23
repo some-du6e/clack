@@ -128,6 +128,9 @@ func deltaAttrs(a Attr) map[string]any {
 	if a.Style&Code != 0 {
 		at["code"] = true
 	}
+	if a.Style&Unlink != 0 {
+		at["unlink"] = true
+	}
 	if a.Link != "" {
 		at["link"] = a.Link
 	}

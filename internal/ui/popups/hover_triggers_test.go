@@ -68,7 +68,7 @@ func TestHoverTriggerSearchResult(t *testing.T) {
 		{Channel: "C0FAKE00001", TS: "1700000001.000100", User: fakeslack.ProfileID, Text: "a synthetic result"},
 		{Channel: "C0FAKE00001", TS: "1700000002.000100", BotID: fakeslack.AppBotID, Text: "a synthetic bot result"},
 	}
-	v.cards = make([]srCard, len(v.msgs))
+	v.cards = []*srCard{{}, {}}
 	th := h.Theme()
 	cl := colorsOf(th)
 	size := image.Pt(700, 90)

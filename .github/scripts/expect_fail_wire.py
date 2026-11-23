@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""expect_fail_wire.py [--check] WORKFLOW.yml...
+"""expect_fail_wire.py [--check | --ci] WORKFLOW.yml...
 
 Wires expect_fail into workflows (docs/CI-SPEED.md, "Proof runs"), as
 tools/expectfail's TestWorkflowsWireExpectFail wants it:
@@ -12,12 +12,18 @@ tools/expectfail's TestWorkflowsWireExpectFail wants it:
 Idempotent: a wired file comes out unchanged, so run it on a merged file
 (a train merging branches made before quiet-ci, whose new jobs lack the
 steps) and commit what it changes. --check changes nothing and exits 1 if
-a file needs wiring, naming what. Needs only Python 3 (no Go, no checkout
+a file needs wiring, naming what. --ci checks a file as ci does
+(tools/expectfail's TestWorkflowsWireExpectFail): one that takes
+expect_fail must be wired as --check has it; one that doesn't is fine
+unless it uses the expect-fail actions or is one of the test's
+proofWorkflows (read from the test, not copied). prepush.sh runs it on the
+workflows a branch changed. Needs only Python 3 (no Go, no checkout
 beyond the files).
 
 The repo's workflows are laid out alike (jobs at 2 spaces, steps at 6);
 a file that isn't fails with a message rather than being guessed at.
 """
+import os
 import re
 import sys
 
@@ -224,14 +230,47 @@ def wire(text):
     return '\n'.join(out) + '\n', notes
 
 
+TAKES = re.compile(r'(?m)^      expect_fail:\s*$')
+
+
+def proof_workflows():
+    """TestWorkflowsWireExpectFail's proofWorkflows, read from the test."""
+    test = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'tools', 'expectfail', 'workflows_test.go')
+    m = re.search(r'var proofWorkflows = \[\]string\{([^}]*)\}', open(test).read())
+    if not m:
+        raise Bad(f'{test}: no proofWorkflows list')
+    return re.findall(r'"([^"]+)"', m.group(1))
+
+
 def main(argv):
-    check = '--check' in argv
-    files = [a for a in argv if a != '--check']
+    ci = '--ci' in argv
+    check = '--check' in argv or ci
+    files = [a for a in argv if a not in ('--check', '--ci')]
     if not files:
         print(__doc__.strip(), file=sys.stderr)
         return 2
     rc = 0
+    proofs = []
+    if ci:
+        try:
+            proofs = proof_workflows()
+        except (Bad, OSError) as e:
+            print(f'expect_fail_wire: {e}', file=sys.stderr)
+            return 2
     for f in files:
+        if ci:
+            text = open(f).read()
+            name = os.path.basename(f)[:-len('.yml')] if f.endswith('.yml') else os.path.basename(f)
+            if not TAKES.search(text):
+                if './.github/actions/expect-fail' in text:
+                    print(f'{f}: uses the expect-fail actions without the expect_fail input')
+                    rc = max(rc, 1)
+                elif name in proofs:
+                    print(f'{f}: no expect_fail input (a proof workflow: agents dispatch it for proofs)')
+                    rc = max(rc, 1)
+                else:
+                    print(f'{f}: takes no expect_fail (ci checks no wiring)')
+                continue
         try:
             text = open(f).read()
             new, notes = wire(text)

@@ -502,7 +502,7 @@ func (d *Doc) rtInline(start, end int) []any {
 		at := d.Attrs[i]
 		au := auto[i-start]
 		j := i + 1
-		for j < end && d.Attrs[j].Atom == nil && d.Attrs[j].Style == at.Style &&
+		for j < end && d.Attrs[j].Atom == nil && d.Attrs[j].Style&^Unlink == at.Style&^Unlink &&
 			d.Attrs[j].Link == at.Link && auto[j-start] == au {
 			j++
 		}
@@ -623,7 +623,7 @@ func (d *Doc) rtAutoLinks(start, end int) []string {
 	rs := make([]rune, end-start)
 	for i := range rs {
 		a := d.Attrs[start+i]
-		if a.Atom != nil || a.Link != "" || a.Style&Code != 0 {
+		if a.Atom != nil || a.Link != "" || a.Style&(Code|Unlink) != 0 {
 			rs[i] = 0
 		} else {
 			rs[i] = d.Runes[start+i]
@@ -850,7 +850,7 @@ func (d *Doc) rtMrkdwnLine(start, end int) string {
 		}
 		at := d.Attrs[i]
 		j := i + 1
-		for j < end && d.Attrs[j].Atom == nil && d.Attrs[j].Style == at.Style && d.Attrs[j].Link == at.Link {
+		for j < end && d.Attrs[j].Atom == nil && d.Attrs[j].Style&^Unlink == at.Style&^Unlink && d.Attrs[j].Link == at.Link {
 			j++
 		}
 		raw := string(d.Runes[i:j])

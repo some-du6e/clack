@@ -415,6 +415,7 @@ func TestPatchedReactionPillLikeNative(t *testing.T) {
 }
 
 func rpCompare(t *testing.T, dark bool, mode, plug string) {
+	pixeltest.Need(t) // before the app and its Taut start (a skip later left them writing into the TempDir)
 	tt, u, h := rpEnv(t, dark)
 	th := h.th
 	v := NewChannelView(h, rpChan)

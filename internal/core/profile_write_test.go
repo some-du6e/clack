@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
@@ -124,12 +125,13 @@ func pwPNG(t *testing.T, w, h int) []byte {
 // processUpload's checks: the File's type by its extension, as Chromium
 // types a picked file (and as FormData sends it), must be GIF, PNG or JPEG;
 // then the size it loads at, at least 36 and at most 4000 px a side, the
-// minimum first.
+// minimum first. Here the OS types .heic (as a Mac does) and nothing else.
 func TestCheckPhoto(t *testing.T) {
+	defer slack.SetPlatformMimeTypes(func(ext string) (string, bool) { return "image/heic", ext == "heic" })()
 	for name, want := range map[string]string{
 		"me.png": "image/png", "ME.PNG": "image/png", "a.gif": "image/gif", "a.jpg": "image/jpeg",
-		"a.JPEG": "image/jpeg", "a.jfif": "image/jpeg", "a.pjpeg": "image/jpeg", "a.pjp": "image/jpeg",
-		"a.webp": "", "a.heic": "", "a.bmp": "", "noext": "", "a.png.txt": "", "dir.png/x": "",
+		"a.JPEG": "image/jpeg", "a.jpe": "image/jpeg", "a.jfif": "image/jpeg", "a.pjpeg": "image/jpeg", "a.pjp": "image/jpeg",
+		"a.webp": "image/webp", "a.heic": "image/heic", "a.bmp": "image/bmp", "noext": "", "a.png.txt": "text/plain", "dir.png/x": "",
 	} {
 		if got := PhotoFileType(name); got != want {
 			t.Errorf("PhotoFileType(%q) = %q, want %q", name, got, want)
@@ -378,5 +380,132 @@ func TestProfilePhotoLikeSlack(t *testing.T) {
 	}
 	if a.HasCustomPhoto(fakeslack.SelfID) {
 		t.Error("custom photo after deletePhoto")
+	}
+}
+
+// The name recording in handleSubmit: a new recording's id goes into the
+// HEADER section's Name Recording element (setProfileHeaderFields: file
+// {fileId}); one that replaces the profile's first deletes the old file
+// (e5(ea), not awaited); a removed one is null. The recording unchanged,
+// a pronunciation edit leaves the element as the section has it.
+func TestSaveProfileFormNameRecording(t *testing.T) {
+	a, _, calls := pwEnv(t)
+	ctx := context.Background()
+	ps, err := a.ProfileSections(ctx, fakeslack.SelfID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := HeaderOf(ps)
+	if h.Record == nil || h.Record.ElementID != "PeRECORD" {
+		t.Fatalf("no Name Recording element: %+v", h)
+	}
+	def := a.ProfileFormDefaults(fakeslack.SelfID)
+	base := ProfileFormSave{UserID: fakeslack.SelfID, Defaults: def, Changes: map[string]string{}, Header: h,
+		Title: def["title"], TitleWas: def["title"]}
+	record := func(t *testing.T, n int) string {
+		t.Helper()
+		ss := calls.get("users.profile.setSections")
+		if len(ss) != n {
+			t.Fatalf("%d setSections, want %d", len(ss), n)
+		}
+		var els []map[string]any
+		if err := json.Unmarshal([]byte(ss[n-1].Get("elements")), &els); err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range els {
+			if e["element_id"] == "PeRECORD" {
+				b, _ := json.Marshal(e)
+				return string(b)
+			}
+		}
+		return ""
+	}
+	deleted := func(t *testing.T, id string) {
+		t.Helper()
+		for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(10 * time.Millisecond) {
+			for _, d := range calls.get("files.delete") {
+				if d.Get("file") == id {
+					return
+				}
+			}
+		}
+		t.Errorf("no files.delete of %s: %v", id, calls.get("files.delete"))
+	}
+
+	s := base
+	s.Recording = "F0NEWREC0001"
+	if !s.Dirty() {
+		t.Fatal("a new recording isn't a change")
+	}
+	if r, err := a.SaveProfileForm(ctx, s); err != nil || !r.Closed {
+		t.Fatalf("save: %+v %v", r, err)
+	}
+	if got := record(t, 1); got != `{"element_id":"PeRECORD","file":{"fileId":"F0NEWREC0001"}}` {
+		t.Errorf("new recording: %s", got)
+	}
+	if d := calls.get("files.delete"); len(d) != 0 {
+		t.Errorf("deleted %v with nothing replaced", d)
+	}
+
+	s = base
+	s.Recording, s.RecordingWas = "F0NEWREC0002", "F0NEWREC0001"
+	if _, err := a.SaveProfileForm(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if got := record(t, 2); got != `{"element_id":"PeRECORD","file":{"fileId":"F0NEWREC0002"}}` {
+		t.Errorf("replacing recording: %s", got)
+	}
+	deleted(t, "F0NEWREC0001")
+
+	s = base
+	s.Recording, s.RecordingWas = "", "F0NEWREC0002"
+	if _, err := a.SaveProfileForm(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if got := record(t, 3); got != `{"element_id":"PeRECORD","file":null}` {
+		t.Errorf("removed recording: %s", got)
+	}
+	deleted(t, "F0NEWREC0002")
+
+	// the recording unchanged: a pronunciation edit leaves it be
+	s = base
+	s.Recording, s.RecordingWas = "F0SAMEREC001", "F0SAMEREC001"
+	s.Pronunciation = "AY-duh"
+	if _, err := a.SaveProfileForm(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if got := record(t, 4); got != `{"element_id":"PeRECORD","file":null}` { // the section's own (fakeslack serves fileId null)
+		t.Errorf("unchanged recording rewritten: %s", got)
+	}
+	for _, d := range calls.get("files.delete") {
+		if d.Get("file") == "F0SAMEREC001" {
+			t.Error("an unchanged recording was deleted")
+		}
+	}
+}
+
+// A header write that fails deletes nothing: the profile still names the
+// recording the form would have replaced. The delete waits for the header
+// (Slack's handleSubmit starts it first, and a failed setSections left the
+// profile on a deleted file).
+func TestSaveProfileFormKeepsRecordingWhenHeaderFails(t *testing.T) {
+	a, fs, calls := pwEnv(t)
+	ctx := context.Background()
+	ps, err := a.ProfileSections(ctx, fakeslack.SelfID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := a.ProfileFormDefaults(fakeslack.SelfID)
+	s := ProfileFormSave{UserID: fakeslack.SelfID, Defaults: def, Changes: map[string]string{}, Header: HeaderOf(ps),
+		Title: def["title"], TitleWas: def["title"], Recording: "F0NEWREC0009", RecordingWas: "F0OLDREC0009"}
+	fs.SetFault("users.profile.setSections", fakeslack.Fault{Error: "fatal_error"})
+	if _, err := a.SaveProfileForm(ctx, s); err == nil {
+		t.Fatal("the save went through a failed header write")
+	}
+	time.Sleep(300 * time.Millisecond)
+	for _, d := range calls.get("files.delete") {
+		if d.Get("file") == "F0OLDREC0009" {
+			t.Error("deleted the recording the profile still names")
+		}
 	}
 }

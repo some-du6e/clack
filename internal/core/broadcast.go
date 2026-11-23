@@ -616,6 +616,10 @@ func (a *App) LocalEphemeral(ch, threadTS, text string) string {
 	ix := a.Interactive()
 	ix.mu.Lock()
 	ix.ephem[ch+"/"+ts] = threadTS
+	if len(ix.local) > 2000 {
+		clear(ix.local)
+	}
+	ix.local[ch+"/"+ts] = true
 	ix.mu.Unlock()
 	a.putLocal(ch, m)
 	v := a.message(ch, &m)
