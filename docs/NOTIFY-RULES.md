@@ -13,9 +13,11 @@ Module ids are that build's. `Fpyc` holds the rules (rr, RM, gA, HW, x6, pK,
 the on-screen checks, the sounds); `maybeShowNotification` (boot-render) runs
 them; `Eley` (boot-shared) shows the notification.
 
-Status marks: **✓** Clack does what Slack does. **fixed (1)** it didn't until
-notify-relatives part 1. **gap (n)** it still differs; part n of
-notify-relatives takes it. **n/a** a feature Clack doesn't have (named).
+Status marks: **✓** Clack does what Slack does. **fixed (n)** it didn't until
+notify-relatives part n (1: the rules, 2: sounds and huddles, 3: the
+sidebar's marks, 4: Windows, 5: the stall watchdogs). **gap (n)** it still
+differs; part n of notify-relatives takes it. **n/a** a feature Clack
+doesn't have (named).
 
 ## 1. The paths
 
@@ -29,11 +31,11 @@ notify-relatives takes it. **n/a** a feature Clack doesn't have (named).
 | Bot's, app's, Workflow Builder's post | `message` (`bot_message`, `bot_id`) | → rr: 9, 10 | fixed (1) |
 | Slackbot | `message` in the Slackbot DM | → RM: 22 for a forwarded email | fixed (1) |
 | Reminder (/remind) | Slackbot DM `message` ("Reminder: …"); `reminder_fired` only updates the list | → RM | ✓ |
-| Later reminder | `saved_due` | x6 `shouldShowNotificationForSavedItem` → `showSavedItemNotification` | gap (2): not handled |
-| Calendar reminder | `calendar_reminder` | `showJustInTimeCalendarNotification` (silent) | gap (2): not handled |
-| Huddle invite | `huddle_invite` | HW `shouldShowNotificationForHuddle` → `showHuddleNotification`, plus the ring | gap (2): see §6 |
+| Later reminder | `saved_due` | `handleSavedDue` (boot-render) loads the item → x6 `shouldShowNotificationForSavedItem` → `showSavedItemNotification`: "Reminder due" with the item's content (a message, a list record, a canvas section, a reminder, a file), a click opens it in Later | gap (6): not handled. A path of its own (the socket event, x6, the content per item type, the click into Later, fakeslack's `saved_due`), left for part 6 |
+| Calendar reminder | `calendar_reminder` | `showJustInTimeCalendarNotification` (silent) | n/a: Clack has no calendar integration |
+| Huddle invite | `huddle_invite` | HW `shouldShowNotificationForHuddle` → `showHuddleNotification`, plus the ring | fixed (2): see §6 |
 | Huddle started in a channel | `message` subtype `huddle_thread` | → rr: never as a mention (canCountAsUnreadForCurrentUser), passes at Everything | fixed (1) |
-| "Join the huddle" suggestion | `huddle_recommend` | HW → `showHuddleRecommendationNotification` | gap (2): not handled |
+| "Join the huddle" suggestion | `huddle_recommend` | HW → `showHuddleRecommendationNotification` | gap (6): not handled. Clack draws no huddle suggestion at all, so the toast comes with that feature |
 | Slack Connect or channel invite | `desktop_notification` with `is_channel_invite` | gA: shown (0) before any reply check | ✓ |
 | Canvas mention | `message` subtype `document_mention` in the canvas's file channel | maybeShowNotification lets it past the member check; → rr: 1 without the viewer's mention | fixed (1) |
 | List assignment | Activity item `list_record_assigned` | none: Activity only. A `list_mention` message → rr (1 without a mention) | ✓ |
@@ -68,7 +70,9 @@ In order:
 6. **Agent turns** (`agent_turn_notifications`): 36. n/a: no AI agents' turns.
 7. **Not shown**: if the message is in the focused window's active view,
    `maybePlayMessageSentOrArrivedNoise` plays the arrival sound (or the sent
-   sound for the viewer's own). gap (2).
+   sound for the viewer's own). n/a: both sounds are Accessibility settings
+   (`conversationIncomingMessageSound`, `conversationSentMessageSound`, F25J),
+   kept per device in local storage, which Clack's preferences don't have.
 8. **Shown**: showNotification (Eley): permission (15), not from a secondary
    window, `ensureModelsArePresent` (5 s), the dock bounce
    (`mac_ssb_bounce`), `maybePlayNewMsgSound`, then the OS notification.
@@ -142,13 +146,17 @@ whom it sends one to. Clack ✓ (thread-reply-toast rounds 1–3).
 ## 6. The other gates
 
 - **HW (huddles)**: permission 15, DND 13 (no VIP override), the channel
-  muted 12, no channel 3, 24, 17. `huddle_invite` also ignores an invite to
-  the huddle the viewer is in. gap (2): Clack's ring (huddleui) applies no
-  DND or mute rule and shows no OS notification; `huddle_recommend` isn't
-  handled.
+  muted 12, the level 14, no channel 3, 24, 17. The level never holds one:
+  getCalculatedNotifySetting reads a stored `nothing` (the conversation's or
+  the global) as `mentions_dms`. `huddle_invite` also ignores an invite to
+  the huddle the viewer is in. Clack (huddleui `mayNotifyHuddle`): DND,
+  mute and the known channel ✓; fixed (2): it held an invite in a
+  conversation, or a workspace, set to Nothing
+  (TestIncomingInviteNotifiesAtNothing). `huddle_recommend`: gap (6), §1.
 - **x6 (Later reminders)**: permission 15, `global_desktop` stored as
-  `nothing` 14, a message's channel must be known (3), 24, 17. No DND
-  check. gap (2).
+  `nothing` 14 (areGlobalDesktopNotificationsDisabled reads the stored
+  value), a message's channel must be known (3), 24, 17. No DND check.
+  gap (6), §1.
 - **pK (approvals)**, activities summary, onboarding, seasonal, welcome
   party: permission 15, `global_desktop` `nothing` 14. n/a.
 
@@ -161,13 +169,48 @@ whom it sends one to. Clack ✓ (thread-reply-toast rounds 1–3).
   for the same thread or channel within 5 s; nor while a call window or a
   huddle is active (getWindowForActiveCallAcrossAllTeams,
   getActiveHuddleCallId). The sound is
-  `desktop_sound`, or `priority_desktop_sound` for a VIP. gap (2): audit.
-- **Sound without one**: the arrival sound (above, §2.7). gap (2).
+  `desktop_sound`, or `priority_desktop_sound` for a VIP. Clack
+  (ui/notify.go `notifyMessage`): the OS setting (SHOULD_PLAY_SOUND), DND
+  with the VIP exception and the sound names ✓; fixed (2): the debounce
+  (`soundDebounced`, TestMessageSoundDebounceLikeSlack) and no sound in a
+  huddle (TestNoMessageSoundInAHuddle). Clack has no call windows apart
+  from huddles.
+- **Sound without one**: the arrival sound (§2.7). n/a.
 - **Dock**: macOS bounces the icon on a shown notification per
-  `mac_ssb_bounce` (short, long, off). Clack: ui/dock.go (audit in 2).
-- **Badge, sidebar bold and mention badge, the Threads link, Activity's
-  unread**: notify-relatives part 3 (same frame as the message, cleared
-  when read anywhere).
+  `mac_ssb_bounce` (short, long, off). Clack ✓ (ui/dock.go `bounceDock`:
+  maybeBounceDockIcon, and the shell's Do Not Disturb check before
+  dock.bounce).
+- **Dock and taskbar badge**: getDesktopUnreads / getAppBadgeCount over the
+  sidebar's counts. Clack ✓: the count moves with the message event that
+  makes a row unread, in the same `handle`.
+- **Threads link**: bold while the threads have unread replies, the badge
+  `channel_badges.thread_mentions`. Clack ✓ (thread-reply-toast round 3).
+- **Activity's unread**: the server's `activity_updated` items. Clack ✓.
+- **Sidebar bold and mention badge** for a message the socket brings
+  (countUnreadMessages, EJMC; core/badge_rules.go): bold when
+  canCountAsUnreadForCurrentUser (qxvW) says so, with
+  `system_messages_redesign_m1`'s system messages: not a join or leave, a
+  huddle's post, a topic, purpose or canvas update, a conversion, a
+  retention notice, an AI app's thread root; the viewer's own join counts
+  when someone added them, and a workflow's post as them; a broadcast
+  counts until its thread is read past it (B95B). The mention badge when
+  shouldMessageBadgeChannel (eqVu) says so: every message where the
+  conversation badges all unreads; in a DM, or a conversation that takes
+  at-channel mentions (QWNA) and isn't muted with muted items hidden
+  (`improve_mute_pref`), the viewer's mention, a user group of theirs,
+  @channel, @everyone and @group (not in a reply) and @here (not while
+  they're away, nor from before the session's start: `start_ms`; the build
+  never sets `_presence_last_changed`); elsewhere the viewer's mention and
+  their user groups. Their keywords count except in a bot's or an app's
+  message. Fixed (3): Clack bolded the row for every message, counted
+  @here, @channel and @everyone anywhere and while away, never a user
+  group's or a mention in an attachment, and a keyword in any bot's
+  message, and read the viewer's join as their own message
+  (TestSidebarMarksLikeSlack). Cleared when read anywhere: the server's
+  `channel_marked` ✓. Not ported: a file comment of the viewer's and their
+  `mpdm_move` (Clack decodes neither; file comments are gone since 2018),
+  and the streamed messages of an agent's session channel behind
+  `session_channels_streaming_unread` (off in Clack's experiments).
 
 ## 8. Windows: why a toast Clack sent doesn't show
 
@@ -195,3 +238,35 @@ Windows toast notifications being disabled or FocusAssist being active").
 Clack's own notification settings, as Windows keeps them, are listed
 whenever they change: `notify: Windows' notification settings for Clack:
 Enabled=1 ShowInActionCenter=1 …`.
+
+## 9. When nothing comes: the stall watchdogs (part 5)
+
+Karim's α.136 wrote nothing to clack.log from 01:57Z to 02:42Z on
+2026-11-22 while its socket answered pings, and a reply's toast never
+came. Slack's socket manager keeps a socket only while it hears from it:
+a `reconnect_url` comes every 285 s at most, and a missing pong closes it
+after 90 s (memory: slack-socket-manager-rules). Clack's watchdogs
+(internal/slack/rtm.go, internal/core/pump_watch.go):
+
+- **A socket that only answers pings**: no frame of Slack's own (an event, a
+  `reconnect_url`) for twice 285 s while the pongs come. clack.log says
+  `rtm: nothing from Slack for … but answers to its pings: closing the
+  socket to connect again (4998 …)`, then every goroutine's stack, and the
+  socket closes with 4998 to connect again, as a slow connect.
+- **A pong check that stops running** (a ping stuck in its write): `rtm:
+  the pong check hasn't run for …`, the stacks, and the same reconnect.
+  A look long after the last one (the machine slept) leaves the socket to
+  the pong check.
+- **A handler that blocks**: the event pump, or a queue behind it (the
+  lookups', the Activity events', a held conversation's), on one task for
+  30 s: `core: <the queue> has been on <a TYPE/subtype event of ch:TAG>
+  for …, N waiting behind it`, the stalled goroutine's stack and every
+  other's, and `core: … took …` once it's done.
+- **A full event buffer** is not silence: `rtm: event buffer full (N events
+  wait for the handler): dropping … and what follows until it has room;
+  the socket still brings them`, a count every 10 s, and `rtm: the event
+  buffer has room again, after N events dropped`.
+
+Dumps come at most every 10 minutes. A healthy idle socket, which hears
+a `reconnect_url` now and then, logs none of it (TestRTMKeepsAnIdleSocket,
+TestIdleSessionLogsNoStall).
