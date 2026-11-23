@@ -56,7 +56,7 @@ func TestBlockFallbacks(t *testing.T) {
 			[]Block{para(tx("fallback text"))}},
 		{"a timeline without points throws in TimelineCondensed: the per-block error line",
 			`[{"type":"timeline","block_id":"t1"}]`,
-			[]Block{unsupported()}},
+			[]Block{{Kind: Unsupported, Kit: true, Spans: []Span{tx("This content could not be displayed.")}}}},
 		{"a timeline with no points draws nothing, and the text doesn't stand in",
 			`[{"type":"timeline","block_id":"t1","points":[]}]`,
 			nil},
