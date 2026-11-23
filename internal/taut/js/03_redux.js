@@ -700,18 +700,24 @@ function notePrimaryThread(nav) {
   const id = nav?.params?.threadId
   primaryThread = nav?.viewType === 'Thread' && nav?.options?.forceRenderInPrimary && typeof id === 'string' ? { id, shown: false } : null
 }
-/** Go → JS (Slick's setRoute): the conversation and thread the window shows */
-T.setView = (channel, thread) => {
+/**
+ * Go → JS (Slick's setRoute): the conversation and thread the window
+ * shows, and tab, the conversation's header tab when the window shows one
+ * (Slack's view for it: a Canvas or List view inChannelTab, a Channel view
+ * toChannelTab, its params naming the channel as parentTab)
+ */
+T.setView = (channel, thread, tab) => {
   const id = channel && thread ? `${channel}-${thread}` : ''
   if (primaryThread) {
     if (primaryThread.id === id) primaryThread.shown = true
     else if (primaryThread.shown) primaryThread = null // moved on from it
   }
+  const inTab = channel && tab && typeof tab === 'object' && tab.params?.parentTab === channel ? tab : null
   const primary =
     primaryThread?.shown && primaryThread.id === id
       ? { id: 'thread', viewType: 'Thread', params: { threadId: id } }
       : channel
-        ? { id: channel, viewType: 'Channel' }
+        ? (inTab ?? { id: channel, viewType: 'Channel' })
         : undefined
   setLocalSlice('window', { main: { activeTab: 'home' } })
   setLocalSlice('view', primary ? { 'v2::main::home::primary': primary } : {})

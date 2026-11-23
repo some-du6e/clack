@@ -112,6 +112,13 @@ type Options struct {
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
+	// SetAppIcon is Clack's Dock or window icon from now on: png, a PNG,
+	// nil for Clack's own (cmd/clack: desktop.SetAppIcon). Slick's main
+	// halves set it (CustomAppIcon). nil: nothing changes it.
+	SetAppIcon func(png []byte)
+	// UserDefault reads the user's macOS defaults for Slick's main halves
+	// (systemPreferences.getUserDefault; cmd/clack: desktop.UserDefault).
+	UserDefault func(key, typ string) any
 	// shaperHold (tests): the startup shaper reaches the UI goroutine only
 	// once it's closed, so the fonts load late.
 	shaperHold <-chan struct{}
@@ -411,6 +418,12 @@ type App struct {
 	// noMoveFocus: an open that keeps the focus where it is
 	// (PreventMoveFocus: Activity's option+up/down)
 	noMoveFocus bool
+
+	// chTabPicked: a tab of the channel was picked (its tab bar, a tab
+	// link), so Slack's view for it is the tab's, Messages' too
+	// (slackTabView); tabViewKey is the view last told to Slick
+	chTabPicked map[string]bool
+	tabViewKey  string
 }
 
 // New creates the app. Call Run on the UI goroutine (main).

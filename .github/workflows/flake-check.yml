@@ -5723,7 +5723,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -5801,7 +5801,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -6032,7 +6032,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
       TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37 # Taut (MIT, third-party), same pin as ui-taut.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

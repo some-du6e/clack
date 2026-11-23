@@ -18,6 +18,7 @@ static void clack_set_net_wm_icon(void *dpy, unsigned long win, unsigned long *d
 import "C"
 
 import (
+	"image"
 	"sync"
 	"unsafe"
 
@@ -26,9 +27,11 @@ import (
 )
 
 var x11Icon struct {
-	once sync.Once
-	data []C.ulong
-	win  uintptr
+	mu       sync.Mutex
+	defaults []C.ulong // Clack's icons, packed once
+	custom   []C.ulong // SetAppIcon's, nil for Clack's own
+	dpy      unsafe.Pointer
+	win      uintptr // the main window (0 once it's going)
 }
 
 // SetWindowIcon gives the window its icon where the platform takes one
@@ -38,23 +41,68 @@ var x11Icon struct {
 // resource #1. Pass every window event; pngs are icon sizes (32–256 px).
 func SetWindowIcon(ev event.Event, pngs ...[]byte) {
 	e, ok := ev.(app.X11ViewEvent)
-	if !ok || !e.Valid() || e.Window == x11Icon.win {
+	if !ok {
 		return
 	}
-	x11Icon.once.Do(func() {
-		for _, v := range netWMIcon(decodeIcons(pngs)) {
-			x11Icon.data = append(x11Icon.data, C.ulong(v)) // format 32 = C long per item
+	x11Icon.mu.Lock()
+	defer x11Icon.mu.Unlock()
+	if !e.Valid() {
+		// the window is about to go (Gio's shutdown): SetAppIcon leaves it
+		// alone, as a property on a destroyed window is Xlib's BadWindow
+		x11Icon.dpy, x11Icon.win = nil, 0
+		return
+	}
+	if e.Window == x11Icon.win {
+		return
+	}
+	if x11Icon.defaults == nil {
+		x11Icon.defaults = packIcons(decodeIcons(pngs))
+	}
+	x11Icon.dpy, x11Icon.win = e.Display, e.Window
+	applyX11IconLocked()
+}
+
+// SetAppIcon is the window's icon from now on (CustomAppIcon: Slick's
+// window setIcon on Linux): png, a PNG, or Clack's own (defaults, the
+// icon sizes SetWindowIcon is given) for nil. On Wayland, where the
+// compositor takes the app's icon from its .desktop file, it changes
+// nothing, as Electron's setIcon doesn't there.
+func SetAppIcon(png []byte, defaults ...[]byte) {
+	x11Icon.mu.Lock()
+	defer x11Icon.mu.Unlock()
+	if x11Icon.defaults == nil && len(defaults) > 0 {
+		x11Icon.defaults = packIcons(decodeIcons(defaults))
+	}
+	x11Icon.custom = nil
+	if png != nil {
+		if icons := decodeIcons([][]byte{png}); len(icons) > 0 {
+			x11Icon.custom = packIcons(icons)
 		}
-	})
-	if len(x11Icon.data) == 0 {
+	}
+	applyX11IconLocked()
+}
+
+func packIcons(icons []*image.NRGBA) []C.ulong {
+	var out []C.ulong
+	for _, v := range netWMIcon(icons) {
+		out = append(out, C.ulong(v)) // format 32 = C long per item
+	}
+	return out
+}
+
+func applyX11IconLocked() {
+	data := x11Icon.custom
+	if data == nil {
+		data = x11Icon.defaults
+	}
+	if x11Icon.win == 0 || len(data) == 0 {
 		return
 	}
-	x11Icon.win = e.Window
 	// Gio calls XInitThreads, so Xlib may be used from this goroutine. The
 	// buffer is copied into a C array: XChangeProperty keeps no pointer.
-	n := len(x11Icon.data)
+	n := len(data)
 	buf := (*C.ulong)(C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof(C.ulong(0)))))
 	defer C.free(unsafe.Pointer(buf))
-	copy(unsafe.Slice(buf, n), x11Icon.data)
-	C.clack_set_net_wm_icon(e.Display, C.ulong(e.Window), buf, C.int(n))
+	copy(unsafe.Slice(buf, n), data)
+	C.clack_set_net_wm_icon(x11Icon.dpy, C.ulong(x11Icon.win), buf, C.int(n))
 }
