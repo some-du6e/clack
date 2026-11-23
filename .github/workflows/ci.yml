@@ -158,9 +158,11 @@ jobs:
 
   # `go test ./...`, split: internal/ui's and internal/ui/messages' top-level
   # tests packed into 4 shards by their recorded times (test-shard.py,
-  # .github/test-times.json: about 4 min of each package's tests per shard;
-  # hashed by name they ran 2.4 to 6.8 min), every other package in the
-  # rest shard. linux-coverage checks the shards ran every test once.
+  # .github/test-times.json: about 4 min of each package's tests per shard
+  # when packing began, 7.2 min of internal/ui's and 1.5 of messages' at
+  # the 2026-11-23 refresh; hashed by name they ran 2.4 to 6.8 min), every
+  # other package in the rest shard. linux-coverage checks the shards ran
+  # every test once.
   linux-test:
     if: ${{ !inputs.only || startsWith('linux-test', inputs.only) }}
     runs-on: ubuntu-latest
@@ -219,14 +221,18 @@ jobs:
       - name: every test ran in some shard
         run: python3 .github/scripts/test-shard.py check "$RUNNER_TEMP"/shards/test-shard-*
 
-  # release.yml's test job, step for step: every package in one
-  # `go test` on a clean cache. The shards above split internal/ui
+  # release.yml's test job, step for step: every package at once in one
+  # job on a clean cache. The shards above split internal/ui
   # across jobs, so none of them carries the whole suite's load, and
   # timing races that only show under it (TestInspectKonami in α.82,
   # TestFilesViewSectionsSidebar in α.83) passed ci and failed the
   # tagged release. This fails the ui/main push instead. ui and main
   # only (~18 min), or any branch by hand (gh workflow run ci.yml --ref
   # <branch>); a newer push to the same ref cancels the older run.
+  # internal/ui runs as two test binaries of half its tests each, beside
+  # the other packages (test-shard.py full): Go's 30 min -timeout counts
+  # per binary, and the one ui.test reached 1,713 s (docs/CI-SPEED.md,
+  # "internal/ui's two binaries").
   full-test:
     if: ${{ (github.ref == 'refs/heads/ui' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && (!inputs.only || startsWith('full-test', inputs.only)) }}
     runs-on: ubuntu-latest
@@ -265,7 +271,13 @@ jobs:
           .github/scripts/dump-before-budget.sh 35 & wd=$!
           .github/scripts/runner-load.sh 60 & rl=$!
           trap 'kill $wd $rl 2>/dev/null' EXIT
-          go test -timeout 30m ./...
+          python3 .github/scripts/test-shard.py full --heavy github.com/some-du6e/clack/internal/ui --split 2 --times .github/test-times.json --timeout 30m --out "$RUNNER_TEMP/full"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: full-test
+          path: ${{ runner.temp }}/full
+          retention-days: 7
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
