@@ -778,6 +778,13 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: kept(ctx, data),
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
+		if bin, ok := out.(*canvasAnswer); ok { // a canvas call: binary protobuf (CanvasCall)
+			if err := canvasJSONError(method, resp, data); err != nil {
+				return err
+			}
+			bin.b = data
+			return nil
+		}
 		// {"ok":true…: no need to parse the whole body (7 MB for
 		// emoji.list) just to read "ok"; the decode below validates it
 		if !okFast(data) {

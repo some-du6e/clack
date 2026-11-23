@@ -70,6 +70,11 @@ type canvasStore struct {
 	sockets map[*websocket.Conn]bool
 	muted   map[*websocket.Conn]bool // MuteSockets: pongs only
 	shared  bool                     // the shared canvas's message is in the history
+	// Quip's side (quip.go): each canvas's document, the canvas calls
+	// taken, load-data's preserialized form
+	quips            map[string]*quipModel
+	quipLog          []QuipRequest
+	quipPreserialize bool
 }
 
 var canvasStores = newPerServer() // *Server -> *canvasStore
@@ -368,7 +373,7 @@ func (s *Server) canvasFile(c *FakeCanvas) map[string]any {
 		"url_private_download": s.URL + "files-pri/" + TeamID + "-" + c.ID + "/download/canvas",
 		"permalink":            s.permalinkHost() + "/docs/" + TeamID + "/" + c.ID,
 		"is_public":            true, "comments_count": 0, "show_badge": false, "size": len(c.Title),
-		"title_blocks": []any{}, "quip_thread_id": "FAKE" + c.ID[len(c.ID)-4:],
+		"title_blocks": []any{}, "quip_thread_id": quipThreadID(c),
 		"channels": []string{}, "groups": []string{}, "ims": []string{}}
 	if c.ViewerAccess != "" {
 		f["access"] = c.ViewerAccess
