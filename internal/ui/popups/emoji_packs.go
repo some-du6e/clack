@@ -121,6 +121,38 @@ type packsState struct {
 	// mounted: the list is showing (AddEmojiPackDialogContent mounted),
 	// since when its mount effect has asked for the packs
 	mounted bool
+	// view is what the list draws, read from the store once per
+	// EmojiPacksGen (packsView)
+	view packsView
+}
+
+// packsView is the store as the list draws it: the packs newest first,
+// how many are installed, the pack the "new" pill is on.
+type packsView struct {
+	gen       uint64
+	ok        bool
+	packs     []core.EmojiPack
+	installed int
+	newID     string
+}
+
+// packsView reads the store again when it changed (the layout runs twice a
+// frame, and its cards would each read the prefs).
+func (s *emojiAddModal) packsView(a *core.App) packsView {
+	gen := a.EmojiPacksGen()
+	if s.packs.view.ok && s.packs.view.gen == gen {
+		return s.packs.view
+	}
+	packs, _ := a.EmojiPacks()
+	sort.SliceStable(packs, func(i, j int) bool { return packs[i].DateCreate > packs[j].DateCreate })
+	v := packsView{gen: gen, ok: true, packs: packs, newID: a.EmojiPackNew()}
+	for _, p := range packs {
+		if p.Installed {
+			v.installed++
+		}
+	}
+	s.packs.view = v
+	return v
 }
 
 func (s *emojiAddModal) initPacks() {
@@ -349,18 +381,12 @@ func (s *emojiAddModal) packsLayout(gtx layout.Context, th *theme.Theme, cl *Col
 	if a == nil {
 		return layout.Dimensions{Size: image.Pt(w, 0)}
 	}
-	packs, _ := a.EmojiPacks()
+	vw := s.packsView(a)
+	packs, installed := vw.packs, vw.installed
 	s.packs.soonR = image.Rectangle{}
 	if len(packs) == 0 {
 		return layout.Dimensions{Size: image.Pt(w, 0)} // isEmpty(collections): null
 	}
-	installed := 0
-	for _, p := range packs {
-		if p.Installed {
-			installed++
-		}
-	}
-	sort.SliceStable(packs, func(i, j int) bool { return packs[i].DateCreate > packs[j].DateCreate })
 	items := make([]packItem, 0, len(packs)+2)
 	for i := range packs {
 		items = append(items, packItem{pack: &packs[i]})
@@ -519,8 +545,7 @@ func (s *emojiAddModal) packCard(gtx layout.Context, th *theme.Theme, cl *Colors
 	if p.Emoji == nil {
 		return // no emoji field: the card renders nothing
 	}
-	a := s.h.Core()
-	isNew := a != nil && a.EmojiPackIsNew(p.ID)
+	isNew := p.ID != "" && p.ID == s.packs.view.newID
 	rad := dp(gtx, 8)
 	if c.click.Hovered() {
 		softShadow(gtx, r, rad, dp(gtx, 1), dp(gtx, 3), rgba(0x000000, .08))

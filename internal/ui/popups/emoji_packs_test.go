@@ -362,6 +362,44 @@ func TestEmojiPackAddLikeSlack(t *testing.T) {
 	e.until("Added", func() bool { return e.drew("Added") && e.drew("1") })
 }
 
+// The same add with no custom emoji of the workspace's own: every custom
+// emoji is the pack's, Custom holds none, and the Custom tab still goes
+// to the pack's group (Slack's Custom tab is the packs' groups and Custom,
+// and Custom stays whenever a pack does). Review of 013bdc44: the tab sat
+// at Frequently Used and the Tab key skipped Custom.
+func TestEmojiPackOnlyCustomTabLikeSlack(t *testing.T) {
+	e := newEPK(t, nil)
+	if n := len(e.h.a.CustomEmoji()); n != 0 {
+		t.Fatalf("the workspace has %d custom emoji of its own: the case tests nothing", n)
+	}
+	e.open(1)
+	e.until("the cards", func() bool { return e.d.cards() == 5 })
+	e.clickCard(fakeslack.PackGratitudeID)
+	e.until("the details", func() bool { _, _, ok := e.d.detail(); return ok && e.drew("Add Pack") })
+	e.click(e.d.addRect())
+	e.until("the dialog to close", func() bool { return e.m.Dismissed() })
+	read := epkPickerOf(e.h)
+	var pk epkPicker
+	for dl := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		var ok bool
+		if pk, ok = read(); ok {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatal("the picker has no pack group")
+		}
+	}
+	if !slices.Equal(pk.Groups, []string{"Gratitude"}) {
+		t.Fatalf("the pack groups are %q, want Gratitude's", pk.Groups)
+	}
+	if pk.CustomTab != "Gratitude" {
+		t.Errorf("the Custom tab goes to %q; with every custom emoji a pack's, Slack's Custom tab shows the pack's group", pk.CustomTab)
+	}
+	if pk.CustomClick != "Gratitude" {
+		t.Errorf("a click on the Custom tab scrolled to %q, want the pack's group", pk.CustomClick)
+	}
+}
+
 // An installed pack's details for a workspace admin: the local emoji as
 // copy buttons with the tip, Remove Pack, which empties the store first
 // and closes with the removed toast; the next open reads the packs again.
