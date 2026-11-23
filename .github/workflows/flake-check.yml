@@ -5038,6 +5038,121 @@ jobs:
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
+  # flakes-1122c, macOS: Displays after the launch reads NSScreen afresh
+  # (TestDisplaysMacAfterLaunchReadsLive), and TestDisplaysMac as the
+  # process's first call, each in COUNT processes of its own (the launch's
+  # screens went to a process's first call, however late).
+  fl1122c-s-displays:
+    if: ${{ !inputs.only || startsWith('fl1122c-s-displays', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: Displays (COUNT processes each)
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          for t in TestDisplaysMacAfterLaunchReadsLive TestDisplaysMac; do
+            n=0
+            for i in $(seq 1 $COUNT); do
+              go test -count=1 -v -timeout 3m -run "^$t\$" gioui.org/app > "$RUNNER_TEMP/d.log" 2>&1 || { rc=1; n=$((n + 1)); grep -E -- '_test.go:[0-9]+: |--- FAIL' "$RUNNER_TEMP/d.log" | head -6; }
+            done
+            echo "== $t: $n of $COUNT processes failed"
+          done
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122c: the threads view's tests that ask thrAnimating (a
+  # spinner's frames, not a timer's one: TestThreadsSettleBeforeNextLoad's
+  # 150 ms-late check forces markVisible's timer into the old 250 ms),
+  # COUNT each, then COUNT again under two CPU burners.
+  fl1122c-r-views:
+    if: ${{ !inputs.only || startsWith('fl1122c-r-views', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: views (COUNT, then COUNT under load)
+        run: |
+          set +e
+          rc=0
+          tests='^(TestThreadsSettleBeforeNextLoad|TestThreadsMountLoadLikeSlack|TestThreadsGhostLineDrawnLikeSlack)$'
+          xvfb-run -a go test -count=$COUNT -timeout 10m -run "$tests" ./internal/ui/views || rc=1
+          for i in 1 2; do (while :; do :; done) & done
+          xvfb-run -a go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui/views || rc=1
+          kill $(jobs -p) 2>/dev/null
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122c, stress on macOS: colorReport's rule on made-up draws
+  # (TestColorReportStalls), then TestAVFSilent and TestAVFPlaysFixture
+  # COUNT each under two CPU burners (a short second logs its draws: a
+  # stall of the test's, or a position that stood and jumped).
+  fl1122c-s-avf:
+    if: ${{ !inputs.only || startsWith('fl1122c-s-avf', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: AVFoundation (1, then COUNT each under load)
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -run '^TestColorReportStalls$' ./internal/media/avf || rc=1
+          for i in 1 2; do (while :; do :; done) & done
+          go test -count=$COUNT -v -timeout 20m -run '^(TestAVFSilent|TestAVFPlaysFixture)$' ./internal/media/avf > "$RUNNER_TEMP/avf.log" 2>&1 || rc=1
+          kill $(jobs -p) 2>/dev/null
+          for t in TestAVFSilent TestAVFPlaysFixture; do
+            echo "== $t: $(grep -c -- "^--- FAIL: $t " "$RUNNER_TEMP/avf.log") of $COUNT failed"
+          done
+          grep -E -- 'second [0-9]: .*(didn.t draw through|want several|position@wall)|--- FAIL' "$RUNNER_TEMP/avf.log" | head -40
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: fl1122c-avf-logs
+          path: ${{ runner.temp }}/avf.log
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -5153,6 +5268,9 @@ jobs:
       - fl1122-s-mac
       - fl1122-s-win
       - row-hit
+      - fl1122c-s-avf
+      - fl1122c-r-views
+      - fl1122c-s-displays
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
