@@ -1752,7 +1752,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: go test ./...
-        run: go test -timeout 30m ./...
+        run: python3 .github/scripts/test-shard.py full --heavy github.com/some-du6e/clack/internal/ui --split 2 --times .github/test-times.json --timeout 30m --out "$RUNNER_TEMP/full"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
