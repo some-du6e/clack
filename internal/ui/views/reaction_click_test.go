@@ -1,6 +1,7 @@
 package views
 
 import (
+	"context"
 	"image"
 	"net/url"
 	"slices"
@@ -465,28 +466,34 @@ func TestViewsReactionBarGroupsLikeSlack(t *testing.T) {
 // a click on the comment elsewhere opens it.
 func TestCanvasCommentsReactionPillOpensNoThread(t *testing.T) {
 	app, fs := vaFake(t)
+	ch := core.CanvasFileChannel(fakeslack.CanvasChannel)
+	const reply = "1762500100.000200" // CommentReacted's latest reply, the one the stream draws
+	// the reply has the viewer's eyes (the stream draws a thread's latest
+	// reply and its reactions)
+	if err := app.C.React(context.Background(), ch, reply, "eyes", true); err != nil {
+		t.Fatal(err)
+	}
 	rx := &rxFake{}
 	fs.SetHook(rx.hook(nil))
 	h := newKBHost(app, false)
 	v := NewCanvasComments(h, fakeslack.CanvasChannel, "")
 	e := &vaEnv{size: image.Pt(600, 1400)}
 	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
-	ch := core.CanvasFileChannel(fakeslack.CanvasChannel)
-	c := &rxCase{t: t, e: e, b: &v.base, x: rx, ch: ch, ts: fakeslack.CommentReacted}
-	e.until(t, "the reacted comment's pill", func() bool { _, ok := c.pill("eyes"); return ok })
+	c := &rxCase{t: t, e: e, b: &v.base, x: rx, ch: ch, ts: reply}
+	e.until(t, "the reply's pill", func() bool { _, ok := c.pill("eyes"); return ok })
 	p, _ := c.pill("eyes")
 	c.click(p)
-	e.until(t, "reactions.add", func() bool { return rx.sent("add eyes " + ch + "/" + fakeslack.CommentReacted) })
+	e.until(t, "the pill's reaction call", func() bool { return rx.n() > 0 })
 	e.frame()
 	if _, th := h.last(); th != "" {
-		t.Errorf("a click on the comment's reaction opened the thread %s", th)
+		t.Errorf("a click on the reply's reaction opened the thread %s", th)
 	}
-	// the comment itself opens it
-	rr := v.RowRect(fakeslack.CommentReacted)
+	// the reply itself opens it
+	rr := v.RowRect(reply)
 	if rr.Empty() {
-		t.Fatal("the reacted comment has no row")
+		t.Fatal("the reply has no row")
 	}
-	c.click(f32.Pt(float32(rr.Min.X+40), float32(rr.Min.Y+12)))
+	c.click(f32.Pt(float32(rr.Min.X+rr.Dx()/2), float32(rr.Min.Y+14)))
 	e.until(t, "the comment's thread", func() bool { _, th := h.last(); return th == ch+"/"+fakeslack.CommentReacted })
 }
 

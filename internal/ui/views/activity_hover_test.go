@@ -253,7 +253,7 @@ func TestActivityLateClickExpires(t *testing.T) {
 	if !ok {
 		t.Fatal("the row isn't drawn")
 	}
-	p := f32.Pt(float32(row.Min.X+60), float32(row.Min.Y+row.Dy()/2))
+	p := f32.Pt(float32(row.Min.X+row.Dx()/2), float32(row.Min.Y+row.Dy()/2)) // the row's middle: no avatar or link
 	click := func() {
 		e.r.Queue(asEvents([]pointer.Event{{Kind: pointer.Move, Source: pointer.Mouse, Position: p},
 			{Kind: pointer.Press, Source: pointer.Mouse, Position: p, Buttons: pointer.ButtonPrimary},
