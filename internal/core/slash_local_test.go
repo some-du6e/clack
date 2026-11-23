@@ -70,11 +70,15 @@ func TestSubmitUserFeedback(t *testing.T) {
 func slashLocalApp(t *testing.T) (*App, *fakeSlack) {
 	t.Helper()
 	a, f := testApp(t)
-	a.S.PutUsers([]slack.User{{ID: "U0BOBBY0001", Name: "bobby"}, {ID: "U0GONE00001", Name: "gone", Deleted: true}})
+	a.S.PutUsers([]slack.User{{ID: "U0BOBBY0001", Name: "bobby"}, {ID: "U0GONE00001", Name: "gone", Deleted: true},
+		// one per API error case: the client answers an identical retry of
+		// a failed call with that failure (slack-client backoff)
+		{ID: "U0CODE00001", Name: "code1"}, {ID: "U0CODE00002", Name: "code2"}, {ID: "U0CODE00003", Name: "code3"}})
 	for _, c := range []slack.Conversation{
 		{ID: "C0GENERAL1", Name: "general", IsChannel: true, IsMember: true},
 		{ID: "C0RANDOM01", Name: "random", IsChannel: true},
-		{ID: "C0RANDOM02", Name: "random-two", IsChannel: true}, // a join that fails (C0RANDOM01 gets joined)
+		{ID: "C0RANDOM02", Name: "random-two", IsChannel: true},   // joins that fail (C0RANDOM01 gets joined), one
+		{ID: "C0RANDOM03", Name: "random-three", IsChannel: true}, // request each: a failed call's retry gets its failure
 		{ID: "C0OLDNEWS1", Name: "old-news", IsChannel: true, IsMember: true, IsArchived: true},
 		{ID: "G0OLDSECR1", Name: "old-secrets", IsChannel: true, IsPrivate: true, IsMember: true, IsArchived: true},
 		{ID: "C0OTHERWS1", Name: "elsewhere", IsChannel: true, ContextTeamID: "T0OTHERWS1"},
@@ -128,7 +132,7 @@ func TestOpenCommand(t *testing.T) {
 		t.Errorf("archived: %+v %v, want it shown", tg, err)
 	}
 	f.reply["conversations.join"] = `{"ok":false,"error":"method_not_supported_for_channel_type"}`
-	if _, err := a.OpenCommand(ctx, "/open", mention("C0RANDOM02"), "random-two"); feedbackOf(err) != "There was a problem joining “random-two”, sorry!" {
+	if _, err := a.OpenCommand(ctx, "/open", mention("C0RANDOM03"), "random-three"); feedbackOf(err) != "There was a problem joining “random-three”, sorry!" {
 		t.Errorf("join refused: %v", err)
 	}
 	f.reply["conversations.open"] = `{"ok":false,"error":"user_disabled"}`
@@ -187,14 +191,15 @@ func TestMsgCommand(t *testing.T) {
 			t.Errorf("%s %v: %v, want %q", tc.cmd, tc.params, err, tc.want)
 		}
 	}
-	// user_not_found last: the store then forgets the member
-	for _, c := range []struct{ code, want string }{
-		{"channel_not_found", "A valid channel name is required."},
-		{"access_denied", "Hmm, something went wrong. Try again?"},
-		{"user_not_found", "A valid member name is required."},
+	// a member each (an identical retry of a failed call gets that
+	// failure), user_not_found last: the store then forgets its member
+	for _, c := range []struct{ code, user, want string }{
+		{"channel_not_found", "U0CODE00001", "A valid channel name is required."},
+		{"access_denied", "U0CODE00002", "Hmm, something went wrong. Try again?"},
+		{"user_not_found", "U0CODE00003", "A valid member name is required."},
 	} {
 		f.reply["conversations.open"] = `{"ok":false,"error":"` + c.code + `"}`
-		if _, err := a.MsgCommand(ctx, "/msg", mention("U0BOBBY0001"), true); feedbackOf(err) != c.want {
+		if _, err := a.MsgCommand(ctx, "/msg", mention(c.user), true); feedbackOf(err) != c.want {
 			t.Errorf("conversations.open %s: %v, want %q", c.code, err, c.want)
 		}
 	}
