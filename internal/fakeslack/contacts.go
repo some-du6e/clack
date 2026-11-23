@@ -17,7 +17,7 @@ type contactState struct {
 	adds []url.Values
 }
 
-var contactStates sync.Map // *Server -> *contactState
+var contactStates = newPerServer() // *Server -> *contactState
 
 func (s *Server) contacts() *contactState {
 	v, _ := contactStates.LoadOrStore(s, &contactState{})

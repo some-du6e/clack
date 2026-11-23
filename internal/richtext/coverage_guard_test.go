@@ -125,6 +125,7 @@ var guardSamples = map[string]string{
 	"message_embed":      `{"type":"message_embed","channel":"C1","ts":"1.0"}`,
 	"timeline":           `{"type":"timeline","points":[{"id":"a","status":"complete","text":"x"}]}`,
 	"share_prompt":       `{"type":"share_prompt","prompt":"x","bot_user_id":"UAF"}`,
+	"contact_card":       `{"type":"contact_card","contact_user_id":"U1","contact_card_id":"CC1"}`,
 }
 
 // mustDraw are the block types whose builder may return nothing for a
@@ -135,10 +136,12 @@ var mustDraw = map[string]BlockKind{
 	"message_embed":      AttachmentBlock,
 	"timeline":           TimelineBlock,
 	"share_prompt":       SharePromptBlock,
+	"contact_card":       ContactCardBlock,
 }
 
 // guardRes is the guard's resolver: the test resolver, holding the
-// message message_embed's sample embeds and share_prompt's agent.
+// message message_embed's sample embeds, share_prompt's agent and
+// contact_card's member.
 var guardRes = guardResolver{embedRes{msgs: map[string]slack.Message{"C1/1.0": {TS: "1.0", Channel: "C1", User: "U1", Text: "embedded"}}}}
 
 type guardResolver struct{ embedRes }
@@ -149,6 +152,14 @@ func (guardResolver) PromptAgent(id string) (name, avatar string, agentforce, ok
 		return "Pipeline Agent", "https://img.test/a.png", true, true
 	}
 	return "", "", false, false
+}
+
+// ContactMember knows contact_card's sample member.
+func (guardResolver) ContactMember(id string) (ContactMember, bool) {
+	if id == "U1" {
+		return ContactMember{Name: "Robin", Team: "Fake Club", CanInteract: true}, true
+	}
+	return ContactMember{}, false
 }
 
 func guardSample(typ string) string {
