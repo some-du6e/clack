@@ -2796,6 +2796,17 @@ type File struct {
 	Name string
 	Type string
 	Data []byte
+	// Subtype, Duration (seconds) and AudioWaveSamples are the File's own
+	// upload fields, as Slack's recorder (useAudioWaveformRecorder) sets
+	// them on the File and CustomNameRecording does from decodeAudioData.
+	// Slack's UploadQueue (boot-shared HnCu) sends the subtype with the
+	// upload (files.getUploadURL and files.completeUpload); duration and
+	// audio_wave_samples stay on the pending File for the tiles that draw
+	// it while it uploads, and the server's file record has its own once
+	// it is processed.
+	Subtype          string
+	Duration         float64
+	AudioWaveSamples []float64
 }
 
 // UploadType is the type f's upload goes up with: Slack's FormData sends
@@ -2809,21 +2820,35 @@ func (f File) UploadType() string {
 }
 
 func (f File) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{"$file": map[string]any{"name": f.Name, "type": f.Type, "size": len(f.Data), "data": f.Data}})
+	o := map[string]any{"name": f.Name, "type": f.Type, "size": len(f.Data), "data": f.Data}
+	if f.Subtype != "" {
+		o["subtype"] = f.Subtype
+	}
+	if f.Duration > 0 {
+		o["duration"] = f.Duration
+	}
+	if f.AudioWaveSamples != nil {
+		o["audio_wave_samples"] = f.AudioWaveSamples
+	}
+	return json.Marshal(map[string]any{"$file": o})
 }
 
 func (f *File) UnmarshalJSON(b []byte) error {
 	var v struct {
 		F *struct {
-			Name string `json:"name"`
-			Type string `json:"type"`
-			Data []byte `json:"data"`
+			Name             string    `json:"name"`
+			Type             string    `json:"type"`
+			Data             []byte    `json:"data"`
+			Subtype          string    `json:"subtype"`
+			Duration         float64   `json:"duration"`
+			AudioWaveSamples []float64 `json:"audio_wave_samples"`
 		} `json:"$file"`
 	}
 	if err := json.Unmarshal(b, &v); err != nil || v.F == nil {
 		return nil
 	}
 	f.Name, f.Type, f.Data = v.F.Name, v.F.Type, v.F.Data
+	f.Subtype, f.Duration, f.AudioWaveSamples = v.F.Subtype, v.F.Duration, v.F.AudioWaveSamples
 	return nil
 }
 

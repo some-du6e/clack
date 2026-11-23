@@ -5472,6 +5472,96 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # plugins-work-2b (2026-11-23, name recordings): Web Audio's
+  # decodeAudioData and MediaRecorder on the plugins' page (webaudio, jsrt),
+  # a File's own upload fields across the bridge (taut), Slick's
+  # CustomNameRecording from Slick's build at the slick workflow's pin
+  # (slick) and Taut's from Taut's at ui-taut's pin, converting a WAV and
+  # uploading it from Edit profile in the whole client (ui); the compat
+  # page. Its review's fixes: Decode runs the decoders behind the decode
+  # boundary and holds to its cap, FuzzMP3's seeds through it (goaudio);
+  # the audio host's calls reject when the host panics, keep to Web
+  # Audio's bounds, and recordings go to the host as they record, up to
+  # their cap, with a far-off clock timer armed once (jsrt); the encoder
+  # (clip); Edit profile taking the uploaded recording (ui). COUNT runs
+  # each. Dispatch with only=plugins-work-2b.
+  plugins-work-2b:
+    if: ${{ !inputs.only || startsWith('plugins-work-2b', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    env:
+      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37 # Taut (MIT, third-party), same pin as ui-taut.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: clone taut at ui-taut's pin and build CustomNameRecording
+        run: |
+          set -o pipefail
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "$TAUT_PIN"
+          git -C /tmp/taut log --oneline -1
+          (cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund)
+          mkdir -p dist/taut-plugins
+          (cd /tmp/taut && npm run -s build:user-plugin -- plugins/CustomNameRecording.tsx "$GITHUB_WORKSPACE/dist/taut-plugins/CustomNameRecording.js")
+          test -s dist/taut-plugins/CustomNameRecording.js
+      - id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        continue-on-error: true # GitHub release downloads sometimes 504 three times running
+        with:
+          bun-version: 1.4.4
+      - name: bun from npm (setup-bun's download failed)
+        if: steps.setup-bun.outcome == 'failure'
+        run: |
+          for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
+          bun --version
+      - name: clone slick at the slick workflow's pin
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (Slick, Taut); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: decodeAudioData and MediaRecorder, the decode boundary and the caps, the upload's fields, CustomNameRecording in the harness and in the client, COUNT runs each
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestDecodeSurvivesADecoderPanic|TestDecodeStopsAtItsCap|FuzzMP3)$' ./internal/media/goaudio || rc=1
+          go test -count="$COUNT" -timeout 5m ./internal/clip || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestDecodeLikeChromium|TestEncodeOpusInMP4|TestWebAudioLikeChromium)$' ./internal/webaudio || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestMediaElementPlays|TestFileInputPicker|TestAudioHostPanicsReject|TestAudioHostClampsRateAndChannels|TestMediaRecorderStreamsToTheHost|TestMediaRecorderStopsAtTheCap|TestAudioClockTimerFarOff)$' ./internal/jsrt || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestUploadFileFieldsLikeSlack$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 8m -run '^TestCustomNameRecordingLikeSlack$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 10m -run '^TestTautCustomNameRecording' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -5604,6 +5694,7 @@ jobs:
       - canvas-quip
       - plugins-work-1
       - plugins-work-2
+      - plugins-work-2b
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

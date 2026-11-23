@@ -4,9 +4,9 @@ Clack runs Taut's and Slick's plugins natively, from the published plugin Librar
 
 | | Plugins |
 |---|---:|
-| ✅ Works fully | 72 |
-| ⚠️ Partly works | 18 |
-| ❌ Doesn't work yet | 8 |
+| ✅ Works fully | 74 |
+| ⚠️ Partly works | 17 |
+| ❌ Doesn't work yet | 7 |
 
 A plugin both systems ship (under the same name or not) is one row in Preferences › Plugins › Browse; here each version has its own line.
 Compatibility follows the newest Clack release. Each row comes from `internal/pluginlib/compat.go`, which `TestCompatMatchesDocs` keeps in step with the per-system pages, [PLUGINS-live-taut.md](PLUGINS-live-taut.md) and [PLUGINS-live-slick.md](PLUGINS-live-slick.md). `go test ./internal/pluginlib -run TestCompatDocInStep -update` writes this page from it and the Library's index (`tools/compatdoc/index.json`), and the test fails while the page is out of step.
@@ -20,7 +20,6 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Browser Pop-outs | Taut | Enables Slack's pop-out windows in the browser | needs pop-out windows |
 | Click to Load | Slick | Replaces third-party media embeds with privacy-preserving click-to-load placeholders | Clack shows no iframes for it to hold back |
 | Custom Fonts | Slick | Use any installed system font or upload your own font file. | Clack can't load web fonts |
-| Custom Name Recording | Taut | Uploads an audio file as your name recording, instead of recording one | can't decode audio |
 | Quiet Spotify | Slick | Customize the volume of Spotify embeds so they are not stupidly loud | Clack has no Spotify players to quiet |
 | Slick MCP | Slick | Connect local AI agents to Slack with search, messaging, and desktop controls. | its MCP server needs Node's http module |
 
@@ -34,7 +33,6 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Chat Tabs | Slick | Browser-like tabs for the real power users of Slack. Open channels, DMs, and threads in new tabs to keep organized. | thread tabs open beside their channel |
 | Clear URLs | Slick | Automatically removes tracking elements from URLs you send | cleans links when you send, not when you paste |
 | Click to Load | Taut | Holds Spotify, SoundCloud and other music embeds until you click to load them | Load shows Clack's media box, not a player |
-| Custom Name Recording | Slick | Upload custom audio as your Slack name recording | can't decode audio, so nothing uploads |
 | Custom Sounds | Slick | Override Slack notification sounds with your own audio file. | Ogg Vorbis, FLAC or Linux AAC files play Slack's own sound |
 | Hide Resolved Tickets | Slick | Hide resolved questions in help channels so only the open ones are left | its header toggle isn't drawn; what it hides is unchecked |
 | Installed Apps | Slick | Show apps people authorized, who authorized an app, and its channel memberships. | the app marketplace page asks you to sign in |
@@ -68,6 +66,8 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Clear URLs | Taut | Strips tracking parameters from links you paste into messages (rules from <https://github.com/ClearURLs/Rules\|ClearURLs>) |
 | Copy Reacted | Slick | Copy the list of people who reacted to a message |
 | Copy Reacted | Taut | Copies the list of people who reacted to a message |
+| Custom Name Recording | Slick | Upload custom audio as your Slack name recording |
+| Custom Name Recording | Taut | Uploads an audio file as your name recording, instead of recording one |
 | Custom Slackbot | Slick | Customize the name and avatar used for workspace custom responses |
 | DeArrow | Slick | Replace clickbait YouTube titles and thumbnails with crowdsourced ones. Sends the IDs of YouTube videos you see to DeArrow (sponsor.ajay.app). |
 | Experiments | Slick | Enable Access to Experiments & other dev-only features in Slack! |

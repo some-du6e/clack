@@ -318,7 +318,19 @@ function encode(v, seen = new Set()) {
   }
 }
 
-/** encode, with Blobs and Files read into {$file: {name, type, data}} (base64), for natives that need the bytes */
+/**
+ * a File's own upload fields, as Slack's recorder (useAudioWaveformRecorder) and CustomNameRecording set them on
+ * the File: subtype (UploadQueue sends it), duration and audio_wave_samples (its pending tiles draw them)
+ */
+function fileFields(f) {
+  const o = {}
+  if (typeof f.subtype === 'string' && f.subtype) o.subtype = f.subtype
+  if (typeof f.duration === 'number' && Number.isFinite(f.duration)) o.duration = f.duration
+  if (Array.isArray(f.audio_wave_samples)) o.audio_wave_samples = f.audio_wave_samples.map(Number).filter(Number.isFinite)
+  return o
+}
+
+/** encode, with Blobs and Files read into {$file: {name, type, data, …its upload fields}} (base64), for natives that need the bytes */
 async function encodeAsync(v) {
   const files = []
   const walk = (x, seen = new Set()) => {
@@ -334,7 +346,7 @@ async function encodeAsync(v) {
     const bytes = new Uint8Array(await f.arrayBuffer())
     let bin = ''
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-    read.set(f, { $file: { name: f.name ?? 'blob', type: f.type || 'application/octet-stream', size: bytes.length, data: btoa(bin) } })
+    read.set(f, { $file: { name: f.name ?? 'blob', type: f.type || 'application/octet-stream', size: bytes.length, data: btoa(bin), ...fileFields(f) } })
   }
   const swap = (x, seen = new Set()) => {
     if (!x || typeof x !== 'object') return x
@@ -362,7 +374,7 @@ function decode(v) {
     const bin = atob(f.data || '')
     const bytes = new Uint8Array(bin.length)
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-    return new File([bytes], f.name || 'file', { type: f.type || '' })
+    return Object.assign(new File([bytes], f.name || 'file', { type: f.type || '' }), fileFields(f))
   }
   // a native sub-part Go passes as a child or prop: a patchable Slack component carrying its slot id
   if (v.$slot !== undefined && typeof v.n === 'string') return G.React.createElement(slackComponent(v.n), { ...decode(v.p || {}), $slot: v.$slot, key: v.k ?? v.$slot })
