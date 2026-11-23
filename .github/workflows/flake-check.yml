@@ -5153,10 +5153,6 @@ jobs:
           retention-days: 7
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
-  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
-  # every listed test failed in some job and passed in none, nothing else
-  # failed, every job that ran succeeded. Proof runs only. A new job goes
-  # in its needs (.github/scripts/expect_fail_wire.py adds it).
   # library-dupes (2026-11-22, Karim's report: No Track and No Tracking
   # were two Library rows): a plugin both systems ship is one row under
   # either version's name (docs/PLUGINS.md's pair table), over the
@@ -5226,6 +5222,10 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (.github/scripts/expect_fail_wire.py adds it).
   expect-fail:
     needs:
       - go
