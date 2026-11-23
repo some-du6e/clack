@@ -65,6 +65,12 @@ const (
 	// giantAbortMB: past this RSS growth the test stops driving frames
 	// (the bound is long gone; the runner keeps its memory).
 	giantAbortMB = 6000
+	// giantAppMemoryLimit is cmd/clack's soft memory limit (trim.go's
+	// memoryLimit, set unless GOMEMLIMIT is): the session runs as the app
+	// does, the collector running sooner as the heap nears it, not at
+	// twice what's live (the plugin session's peak, without it, 1.5-1.7 GB
+	// over its start)
+	giantAppMemoryLimit = 768 << 20
 	// giantPanicMB: past this RSS the watchdog writes a heap profile and
 	// panics, should a single frame run away.
 	giantPanicMB = 11000
@@ -235,6 +241,10 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 		}
 		defer f.Close()
 		_ = pprof.Lookup("heap").WriteTo(f, 0)
+	}
+	if os.Getenv("GOMEMLIMIT") == "" {
+		old := debug.SetMemoryLimit(giantAppMemoryLimit)
+		defer debug.SetMemoryLimit(old)
 	}
 	// the reference, for the report: a channel of ordinary messages opened
 	// the same way, each frame timed. A frame that draws a new screen of

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/slack"
@@ -130,6 +132,77 @@ func (b *bk) textString() string {
 	var t textObj
 	_ = json.Unmarshal(b.Text, &t)
 	return t.Text
+}
+
+// textIs reports whether the element's text, as textString decodes it,
+// is s: compared in the JSON, nothing decoded (a long message's text
+// element is its text field, 908,000 characters decoded on every
+// conversion of the message). A surrogate escape or a byte that isn't
+// UTF-8, which decoding would change, says no: textString decides.
+func (b *bk) textIs(s string) bool {
+	t := b.Text
+	if len(t) < 2 || t[0] != '"' || t[len(t)-1] != '"' {
+		return false
+	}
+	t = t[1 : len(t)-1]
+	j := 0
+	for i := 0; i < len(t); {
+		c := t[i]
+		switch {
+		case c == '\\':
+			if i+1 >= len(t) {
+				return false
+			}
+			var r rune
+			n := 2
+			switch t[i+1] {
+			case '"', '\\', '/':
+				r = rune(t[i+1])
+			case 'b':
+				r = '\b'
+			case 'f':
+				r = '\f'
+			case 'n':
+				r = '\n'
+			case 'r':
+				r = '\r'
+			case 't':
+				r = '\t'
+			case 'u':
+				if i+6 > len(t) {
+					return false
+				}
+				v, err := strconv.ParseUint(string(t[i+2:i+6]), 16, 32)
+				if err != nil || utf16.IsSurrogate(rune(v)) {
+					return false
+				}
+				r, n = rune(v), 6
+			default:
+				return false
+			}
+			var enc [utf8.UTFMax]byte
+			k := utf8.EncodeRune(enc[:], r)
+			if j+k > len(s) || s[j:j+k] != string(enc[:k]) {
+				return false
+			}
+			i, j = i+n, j+k
+		case c < utf8.RuneSelf:
+			if j >= len(s) || s[j] != c {
+				return false
+			}
+			i, j = i+1, j+1
+		default:
+			r, k := utf8.DecodeRune(t[i:])
+			if r == utf8.RuneError && k == 1 {
+				return false
+			}
+			if j+k > len(s) || s[j:j+k] != string(t[i:i+k]) {
+				return false
+			}
+			i, j = i+k, j+k
+		}
+	}
+	return j == len(s)
 }
 
 // textBlank reports whether the element's text is only white space
@@ -932,8 +1005,10 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 		n := len(out)
 		switch e.Type {
 		case "text":
-			t := e.textString()
-			if len(t) == len(c.msgText) && t == c.msgText {
+			var t string
+			if len(c.msgText) >= 64<<10 && e.textIs(c.msgText) {
+				t = c.msgText // read in place: not decoded again each conversion
+			} else if t = e.textString(); len(t) == len(c.msgText) && t == c.msgText {
 				t = c.msgText // the message's text field: one copy of the text, not two
 			}
 			if pre {
