@@ -290,12 +290,12 @@ func TestThreadsAuditReplyBoxScrollbar(t *testing.T) {
 	x.holdBox(t, fmt.Sprintf("the bar dragged back past the bottom (y %d)", list.Max.Y), 500*time.Millisecond)
 }
 
-// TestSplitViewThreadReplyBox: a thread in the split view is Slack's same
+// TestThreadsAuditReplyBoxInSplitView: a thread in the split view is Slack's same
 // ThreadsFlexpane (client-thread-view renders it in the split container),
 // so its reply box is its list's last row there too: right under the last
 // reply at the thread's end, scrolled away with the replies, and back
 // with End from its list.
-func TestSplitViewThreadReplyBox(t *testing.T) {
+func TestThreadsAuditReplyBoxInSplitView(t *testing.T) {
 	x := openTopEnv(t)
 	x.root = fakeslack.ThreadOpenRead
 	x.a.OpenSplit("c/" + x.ch + "/t/" + x.root)
