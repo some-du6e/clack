@@ -55,7 +55,12 @@ const (
 // reach it) under the hover toolbar's group.
 func NewMessageContextMenu(h Host, at image.Point, m core.Message, where MessageContext, o MessageMenuOpts) *Menu {
 	o.Where = where
-	items := append(ctxHoverItems(h, at, m, where, o), Sep())
+	// the first group, then the menu (an ephemeral message has no first
+	// group: no separator above the menu)
+	items := ctxHoverItems(h, at, m, where, o)
+	if len(items) > 0 {
+		items = append(items, Sep())
+	}
 	items = append(items, actMessageItems(h, m, o)...)
 	a := pointRect(at)
 	p := actMenuProps(m, a)
@@ -93,21 +98,18 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	ch, ts := m.Channel, m.TS
 	// canAddReaction (vtEK): a canvas comment follows the canvas's access;
 	// a comment thread's root takes none in its thread (ThreadRootCanvas)
-	react := !m.System && (h.Core() == nil || h.Core().CanAddReaction(&m)) && !(where == InThread && m.IsCommentRoot())
+	// (isActionable: never an ephemeral, temporary or tombstoned message)
+	app := h.Core()
+	react := !m.System && (app == nil && actionable(nil, &m) || app != nil && app.CanAddReaction(&m)) && !(where == InThread && m.IsCommentRoot())
 	if react {
 		items = append(items, MenuItem{Action: "add_reaction", Label: "Add reaction…", Icon: "add-reaction", Hint: nsMessage.T("R"), Keys: KeyReact, Do: func() {
 			h.ShowOverlay(NewReactionPicker(h, at, ch, ts, m.ThreadTS, nil))
 		}}.In(nsMessage))
 	}
-	if where != InThread {
-		isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
-		label := "Reply in thread"
-		switch {
-		case where == InThreadsView:
-			label = "View thread"
-		case m.ReplyCount > 0 || isReply:
-			label = "Reply to thread"
-		}
+	// the thread action (LKNk, actions_rules.go): none in the thread pane
+	// or where canStartOrOpenThread is false (an ephemeral message without
+	// replies)
+	if label, ok := ThreadAction(h.Core(), &m, where); ok {
 		items = append(items, MenuItem{Action: "comment", Label: label, Icon: "threads", Hint: nsMessage.T("T"), Keys: KeyComment, Do: func() {
 			// the comment thunk (0yz+, default branch): setFocusInput for
 			// channel-(threadTs || ts), then the thread opens. The
@@ -144,6 +146,9 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	// to-do, else "Add to-do", one action id for both (boot-shared:
 	// `{id: addToLaterTodos, name: S ? "Complete to-do" : "Add to-do"}`;
 	// clear_later_todo is Slack's separate, danger "Clear to-do")
+	if !TodoShown(h.Core(), &m) { // on3u: none on an ephemeral or automated message
+		return items
+	}
 	ta := TodoActionFor(h.Core(), &m)
 	todo := MenuItem{Action: "add_to_later_todos", Label: ta.Label, Icon: ta.MenuIcon, Hint: nsSaved.T("A"), Keys: KeyLaterTodos}.In(nsSaved)
 	todo.Do = func() {
