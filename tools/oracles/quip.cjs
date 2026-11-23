@@ -245,7 +245,8 @@ const KINDS = {
 // Which fields an edit dirties is Slack's setters' (EKJU): typing
 // setDirty([CONTENT, STATUS]) (the input path), a checkbox
 // setSectionAttribute -> [STATUS] then [ATTRIBUTES], deleteSection [STATUS]
-// with deleteEntity [DELETED].
+// with deleteEntity [DELETED]. A case with several (typing and a tick,
+// say) names its dirty fields.
 const DIRTY = { text: [12, 15], check: [15, 16], delete: [3, 15] };
 function saveRuntime() {
   if (saveRuntime.r) return saveRuntime.r;
@@ -264,7 +265,7 @@ function sectionEntity(rt, c) {
   const e = Object.create(rt.Sec.prototype);
   const stub = deepStub('section');
   Object.assign(e, {
-    id_: pb.getId(), isBeingDeleted_: false, isReadOnly_: pb.getReadOnlyOrDefault(), dirtyFields: new Set(DIRTY[c.in.edit.kind]),
+    id_: pb.getId(), isBeingDeleted_: false, isReadOnly_: pb.getReadOnlyOrDefault(), dirtyFields: new Set(c.in.edit.dirty || DIRTY[c.in.edit.kind]),
     pendingFields: new Set(), sequence_: Number(pb.getSequenceOrDefault()), localSequence_: c.in.localSeq, transientSequence_: 0,
     isProgrammaticUpdate_: false, isDeleted_: pb.getDeletedOrDefault() || c.in.edit.kind === 'delete', dirtyState_: 2,
     document: stub, contentOrigin_: pb.getContentOriginOrDefault(), knownFields: rt.nTyX.Ps.concat(rt.nTyX.fP || [], rt.nTyX.mV || []),
@@ -274,12 +275,12 @@ function sectionEntity(rt, c) {
   });
   // update() loads attributes with Slack's own conversion
   e.attributes_ = rt.Sec.prototype.convertAttributesPbToMap.call(e, pb.getAttributesOrDefault());
-  if (c.in.edit.kind === 'check') e.attributes_.set('checked', c.in.edit.checked);
+  if (c.in.edit.kind === 'check' || 'checked' in c.in.edit) e.attributes_.set('checked', c.in.edit.checked);
   for (const id of pb.getParentsOrDefault().idsArray()) {
     e.parents_.push({ id: () => id, sectionStyle: () => c.in.parentStyle });
   }
   let content = pb.getContent();
-  if (c.in.edit.kind === 'text') {
+  if (c.in.edit.kind === 'text' || c.in.edit.rtml !== undefined) {
     // the content toPb makes: the title's (createPbFn of the RTML, then
     // the cover when there is one), a text section's (its RTML, and the
     // code language the content holds)
@@ -299,6 +300,9 @@ function sectionEntity(rt, c) {
   e.toContentPb = () => content;
   e.type = () => pb.getTypeOrDefault(); // the section content's type (its class, made from the server's type)
   e.positionPath = () => pb.getPositionPathOrDefault();
+  // plain content, as Clack saves: no CRDT copy (otherwise toPb's deleted
+  // comes from crdt.currentSaveDeleted, which the stubs would make up)
+  e.isCrdtEnabled = () => false;
   e.checkDirtyFieldInvariants = () => {}; // metrics only
   e.validateFsck_ = () => {};
   e.validateCrdt_ = () => {};

@@ -56,6 +56,8 @@ type Edit struct {
 	// goes only while the section is still there: one that moved since
 	// (someone else's save) isn't overwritten, as Clack can't merge.
 	Base int64
+	// red-evidence stub: the field the fixed tests set; nothing reads it
+	Recheck bool
 }
 
 // Counters are a client session's save counters, as 7yDq keeps them for

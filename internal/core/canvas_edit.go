@@ -222,6 +222,16 @@ var ErrCanvasReadOnly = errors.New("core: the canvas can't take edits until a sa
 // two the way Slack's editor does (mergeRtml), and it leaves the queue.
 var ErrCanvasConflict = errors.New("core: someone else changed that part of the canvas since it was edited")
 
+// red-evidence stubs: the names the fixed tests use, doing nothing
+var ErrCanvasSavePending = errors.New("core: the change waits to be saved")
+
+type CanvasSaveNotice struct {
+	Conflict bool
+	Reason   string
+}
+
+func (a *App) TakeCanvasSaveNotices(id string) []CanvasSaveNotice { return nil }
+
 // SaveCanvas saves edits to the canvas through edit-document, as Slack's
 // editor saves its dirty sections: they wait as pending until a save of
 // them succeeds (a later edit of the same section replaces an earlier

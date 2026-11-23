@@ -15,7 +15,8 @@ type saveSectionIn struct {
 	Edit   struct {
 		Kind    string `json:"kind"`
 		RTML    string `json:"rtml"`
-		Checked bool   `json:"checked"`
+		Checked *bool  `json:"checked"` // with "text": the box set too
+		Dirty   []int  `json:"dirty"`   // the dirty fields, when not the kind's own
 	} `json:"edit"`
 	LocalSeq    int64  `json:"localSeq"`
 	Session     string `json:"session"`
@@ -37,10 +38,11 @@ func TestQuipSaveSectionLikeSlack(t *testing.T) {
 	s.Run(t, paritytest.Check[saveSectionIn, saveSectionOut]{Clack: func(t *testing.T, c saveSectionIn) saveSectionOut {
 		var server Section
 		build(t, reflect.ValueOf(&server).Elem(), c.Server)
-		e := Edit{SectionID: *server.ID, RTML: c.Edit.RTML, Checked: c.Edit.Checked}
+		e := Edit{SectionID: *server.ID, RTML: c.Edit.RTML, Checked: c.Edit.Checked != nil && *c.Edit.Checked}
 		switch c.Edit.Kind {
 		case "text":
 			e.Kind = EditText
+			e.Recheck = c.Edit.Checked != nil
 		case "check":
 			e.Kind = EditCheck
 		case "delete":

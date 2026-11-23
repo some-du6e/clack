@@ -652,6 +652,23 @@ func (e *editState) finish(v *View) bool {
 	return true
 }
 
+// escape is the EvCancel handling above, as a method (red evidence: the
+// same code).
+func (e *editState) escape(v *View) bool {
+	if e.pick.active() {
+		e.pick = picker{}
+		return false
+	}
+	if s := e.cur; s != nil && s.refused { // discard: the block shows what is saved
+		e.discard(v)
+		return true
+	}
+	return e.finish(v)
+}
+
+// red-evidence stub: the lock toast's name in the fixed tests
+const lockedText = "Clack can't save to this canvas right now. Your text stays here until it can"
+
 // discard ends the session without saving.
 func (e *editState) discard(v *View) {
 	if s := e.cur; s != nil && s.place != nil {
@@ -877,15 +894,7 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 		}
 		switch ev.Kind {
 		case composer.EvCancel:
-			if e.pick.active() {
-				e.pick = picker{}
-				continue
-			}
-			if s.refused { // discard: the block shows what is saved
-				e.discard(v)
-				return gtx.Dp(bodyLine)
-			}
-			if e.finish(v) {
+			if e.escape(v) {
 				return gtx.Dp(bodyLine)
 			}
 		case composer.EvSubmit: // Ctrl/Cmd+Enter saves
