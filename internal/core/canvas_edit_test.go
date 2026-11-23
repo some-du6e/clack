@@ -442,7 +442,9 @@ func TestCanvasSaveTypingDuringSave(t *testing.T) {
 	loadModel(t, a, fakeslack.CanvasShared)
 	p := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
 	before := fs.CallCount("canvas/edit-document")
-	fs.SetFault("canvas/edit-document", fakeslack.Fault{ReplyDelay: 700 * time.Millisecond, Times: 1})
+	// the first answer is held long enough for the second edit to come
+	// while it's out
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{ReplyDelay: 2 * time.Second, Times: 1})
 	first := make(chan error, 1)
 	go func() {
 		first <- a.SaveCanvasText(ctx, fakeslack.CanvasShared, *p.ID, "Weekly sync", "Weekly sync, one")

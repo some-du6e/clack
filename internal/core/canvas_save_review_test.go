@@ -295,3 +295,24 @@ func TestCanvasSaveFlushOnQuit(t *testing.T) {
 		t.Errorf("a released App's saver keeps timers: retry %v, poll %v", s.retry != nil, s.poll != nil)
 	}
 }
+
+// Renaming an untitled canvas: files.info calls it "Untitled" (or by its
+// first words), which its empty title section doesn't hold, so the rename
+// goes from whatever name it began with. Once named, a rename from a name
+// the canvas no longer has is a conflict again.
+func TestCanvasSaveRenameUntitled(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	const id = "F0QUIPUNT01"
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: id, Doc: canvas.Doc{Blocks: []canvas.Block{{ID: "temp:C:UNT00001", Kind: canvas.Paragraph}}}})
+	loadModel(t, a, id)
+	if err := a.SaveCanvasTitle(ctx, id, "Untitled", "Launch plan"); err != nil {
+		t.Fatalf("renaming an untitled canvas: %v", err)
+	}
+	if fc, _ := fs.Canvas(id); fc.Title != "Launch plan" {
+		t.Errorf("the canvas's title %q", fc.Title)
+	}
+	if err := a.SaveCanvasTitle(ctx, id, "Untitled", "Launch plan, again"); !errors.Is(err, ErrCanvasConflict) {
+		t.Errorf("a rename from a name the canvas no longer has: %v", err)
+	}
+}
