@@ -2988,8 +2988,11 @@ The launch's first `displays()` (macOS) no longer waits for the main
 thread's queue, which AppKit serves only once NSApplication finished
 launching: `applicationWillFinishLaunching:` reads the screens
 (`snapshotLaunchScreens`, on the main thread, once) and `displays()`
-takes them when they come before its own main-thread read does (once;
-later calls read afresh). Clack reads the displays for the main window's
+takes them when they come before its own main-thread read does (once,
+and only during the launch: `applicationDidFinishLaunching:` drops them
+after the windows asked for in it opened, `retireLaunchScreens`; kept
+until a first call, they were that call's screens however late it came,
+a runner's Dock before it settled in TestDisplaysMac). Clack reads the displays for the main window's
 place (winbounds.go), so the window is created the moment the launch
 finishes instead of one main-queue round trip later (15-70 ms on CI).
 

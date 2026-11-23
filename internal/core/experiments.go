@@ -328,7 +328,7 @@ var experimentReads = map[string][]string{
 	"invite_slash_command_in_threads":                          on,
 	"ia4_slash_command_fe":                                     on,
 	"unarchive_channel_banner_polish":                          on,
-	ExpExternalHuddles:                                         on, // the + button's and menu's upload gates (upload_gates.go)
+	ExpExternalHuddles:                                         on, // the + button's and menu's upload gates (upload_gates.go), and the audio clip button (clips.go)
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on,
 	"session_channels_inline_diff": on, "code_channels_naming": on, "session_channel_views": on,

@@ -334,6 +334,7 @@ func (a *App) switchAccount(c slack.Creds) {
 	}
 	a.closeInspectSession() // its records are the account's views
 	a.closeVideos()         // and its videos (video.go)
+	composer.CloseClips()   // a recording in progress goes, never into the next account
 	if a.data != nil {
 		_ = a.data.stop()
 		a.data = nil
@@ -374,6 +375,7 @@ func (a *App) SignedOut() bool {
 func (a *App) showLogin() {
 	a.closeInspectSession() // inspect_wire.go
 	a.closeVideos()         // nothing plays on behind the sign-in screen (video.go)
+	composer.CloseClips()   // nor records: a clip recording goes, never into the next session
 	if a.data != nil {
 		_ = a.data.stop()
 		a.data = nil

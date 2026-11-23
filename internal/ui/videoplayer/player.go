@@ -866,6 +866,9 @@ type State struct {
 	AudioPlay, AudioScrub image.Rectangle
 	Rate                  float64
 	Alt                   bool
+	// AudioSpeed and AudioMore are its speed control and More actions
+	// (empty where the style draws none: the mini player)
+	AudioSpeed, AudioMore image.Rectangle
 }
 
 // Click is the tile's click (fIJO's tE), as a press and release on it
@@ -904,6 +907,7 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 	}
 	if a := t.au; a != nil {
 		st.AudioPlay, st.AudioScrub, st.Rate, st.Alt = a.z.play, a.z.scrub, a.rate, a.alt
+		st.AudioSpeed, st.AudioMore = a.z.speed, a.z.more
 	}
 	return st, true
 }

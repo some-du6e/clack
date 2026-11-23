@@ -293,7 +293,9 @@ func (s *listState) threadStart(jump string) (key string, offset bool) {
 // AnchorLayout brackets scrollTop. With no jump, the scrollmark the pane
 // saved as it last unmounted comes first, where the slice drawn holds its
 // message (getThreadStartPosition: scrollmark.mark unless highlighting);
-// it serves one mount.
+// it serves one mount. Then the start is getThreadStartTs': the jump, else
+// the thread metadata's startTs (a jump's the model kept across a thread
+// switch, CloseThread), else the last read.
 func (s *listState) threadStartPosition(gtx layout.Context, jump string) layout.Position {
 	mark := s.thrMark
 	s.thrMark = threadMark{}
@@ -303,6 +305,9 @@ func (s *listState) threadStartPosition(gtx layout.Context, jump string) layout.
 				return layout.Position{BeforeEnd: true, First: i, Offset: mark.off}
 			}
 		}
+	}
+	if jump == "" && !s.snap.th.picked {
+		jump = s.snap.th.start
 	}
 	key, off := s.threadStart(jump)
 	for i, it := range s.items {
