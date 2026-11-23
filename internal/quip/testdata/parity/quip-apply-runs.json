@@ -29,6 +29,11 @@
     {"name": "an entity no-break space written raw", "in": {"base": "a&nbsp;b", "runs": [{"text": "a b!"}], "rtml": "a b!"}, "slack": "a b!"},
     {"name": "a quote entity written as its character", "in": {"base": "say &quot;hi&quot;", "runs": [{"text": "say \"hi\" now"}], "rtml": "say \"hi\" now"}, "slack": "say \"hi\" now"},
     {"name": "a zero-width space dropped", "in": {"base": "a​b", "runs": [{"text": "a​bc"}], "rtml": "abc"}, "slack": "abc"},
-    {"name": "leading spaces typed", "in": {"base": "x", "runs": [{"text": "  x"}], "rtml": "  x"}, "slack": "  x"}
+    {"name": "leading spaces typed", "in": {"base": "x", "runs": [{"text": "  x"}], "rtml": "  x"}, "slack": "  x"},
+    {"name": "typing inside a link keeps its nolink and file id", "in": {"base": "see <a href=\"https://example.com/f\" data-nolink=\"true\" data-slack-file-id=\"F123\">the file</a> now", "runs": [{"text": "see "}, {"text": "the big file", "href": "https://example.com/f"}, {"text": " now"}], "rtml": "see <a href=\"https://example.com/f\" data-nolink=\"true\" data-slack-file-id=\"F123\">the big file</a> now"}, "slack": "see <a href=\"https://example.com/f\" data-nolink=\"true\" data-slack-file-id=\"F123\">the big file</a> now"},
+    {"name": "a link over text that was none takes no nolink", "in": {"base": "see <a href=\"https://example.com/f\" data-nolink=\"true\">the file</a> now", "runs": [{"text": "see "}, {"text": "the file now", "href": "https://example.com/f"}], "rtml": "see <a href=\"https://example.com/f\">the file now</a>"}, "slack": "see <a href=\"https://example.com/f\">the file now</a>"},
+    {"name": "a kept control inside bold, typed beside", "in": {"base": "<b>Owner: <control id=\"temp:C:X1\"></control></b>", "runs": [{"text": "Owners: ", "bold": true}, {"control": "temp:C:X1"}], "rtml": "<b>Owners: <control id=\"temp:C:X1\"></control></b>"}, "slack": "<b>Owners: <control id=\"temp:C:X1\"></control></b>"},
+    {"name": "a kept control inside italic, typed before", "in": {"base": "<i>ask <control id=\"temp:C:X1\"></control> today</i>", "runs": [{"text": "please ask ", "italic": true}, {"control": "temp:C:X1"}, {"text": " today", "italic": true}], "rtml": "<i>please ask <control id=\"temp:C:X1\"></control> today</i>"}, "slack": "<i>please ask <control id=\"temp:C:X1\"></control> today</i>"},
+    {"name": "an empty comment anchor in the section", "in": {"base": "ab<annotation id=\"z\"></annotation>cd", "runs": [{"text": "abXcd"}], "rtml": "(refused)"}, "slack": "(refused)"}
   ]
 }

@@ -659,3 +659,108 @@ func TestCanvasQuipLineBreakNotEditable(t *testing.T) {
 		t.Errorf("%d edit-document calls", n)
 	}
 }
+
+// On edit-document's path the editor keeps what a block holds as it is: a
+// heading's bold and a trailing no-break space aren't saved away, by a
+// block left as it was (nothing is sent) or by text typed in it; an empty
+// block left empty isn't deleted.
+func TestCanvasQuipKeepsWhatItHolds(t *testing.T) {
+	const head, nbsp, empty = "temp:C:QSV00011", "temp:C:QSV00012", "temp:C:QSV00013"
+	_, fs, v, s, frame := quipEnvBlocks(t, []canvas.Block{
+		{ID: quipFirstID, Kind: canvas.Paragraph, Spans: txt("First paragraph")},
+		{ID: head, Kind: canvas.Heading2, Spans: []richtext.Span{{Kind: richtext.Text, Text: "Q3 "}, {Kind: richtext.Text, Text: "goals", Style: richtext.Bold}}},
+		{ID: nbsp, Kind: canvas.Paragraph, Spans: txt("hello\u00a0")},
+		{ID: empty, Kind: canvas.Paragraph},
+		{ID: quipSecondID, Kind: canvas.Paragraph, Spans: txt("Last paragraph")},
+	})
+	open := func(id string) *composer.Editor {
+		t.Helper()
+		b := findBlk(v, func(b *canvas.Block) bool { return b.ID == id })
+		if b == nil {
+			t.Fatalf("no block %s", id)
+		}
+		v.edit.start(v, b)
+		frame()
+		if v.edit.cur == nil {
+			t.Fatalf("block %s didn't open", id)
+		}
+		return v.edit.cur.ed
+	}
+	for _, id := range []string{head, nbsp, empty} {
+		open(id)
+		if !v.edit.finish(v) {
+			t.Fatalf("block %s, left as it was, was refused", id)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := len(quipSaves(fs)); n != 0 {
+		t.Errorf("%d edit-document calls for blocks left as they were", n)
+	}
+	if quipBlock(fs, empty) == nil {
+		t.Error("the empty paragraph, left empty, was deleted")
+	}
+
+	ed := open(head)
+	ed.SetSelection(0, 0)
+	ed.InsertText("Our ")
+	frame()
+	if !v.edit.finish(v) {
+		t.Fatal("text typed in the heading was refused")
+	}
+	settle(t, s, v, "the heading", func() bool { b := quipBlock(fs, head); return b != nil && strings.HasPrefix(b.Text(), "Our ") })
+	rs := quipSaves(fs)
+	if len(rs) != 1 || len(rs[0].Save.Sections) != 1 || !strings.Contains(quip.SectionRTML(&rs[0].Save.Sections[0]), "<b>goals</b>") {
+		t.Errorf("the heading's save took its bold away: %+v", rs)
+	}
+
+	ed = open(nbsp)
+	ed.SetSelection(0, 0)
+	ed.InsertText("Well, ")
+	frame()
+	if !v.edit.finish(v) {
+		t.Fatal("text typed before a no-break space was refused")
+	}
+	settle(t, s, v, "the paragraph", func() bool { b := quipBlock(fs, nbsp); return b != nil && strings.HasPrefix(b.Text(), "Well, ") })
+	rs = quipSaves(fs)
+	if r := quip.SectionRTML(&rs[len(rs)-1].Save.Sections[0]); !strings.HasSuffix(r, "&nbsp;") && !strings.HasSuffix(r, "\u00a0") {
+		t.Errorf("the paragraph's no-break space went: %q", r)
+	}
+}
+
+// A new mention in a block is refused while its text is still in the
+// editor (core doesn't save one yet): the editor stays open with it, and
+// Escape again discards the change; nothing is sent.
+func TestCanvasQuipNewMentionKeepsText(t *testing.T) {
+	h, fs, v, _, frame := quipEnv(t)
+	v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == quipFirstID }))
+	frame()
+	if v.edit.cur == nil {
+		t.Fatal("the paragraph didn't open")
+	}
+	ed := v.edit.cur.ed
+	n := ed.Doc().Len()
+	ed.SetSelection(n, n)
+	ed.InsertText(" for ")
+	m := ed.Doc().Len()
+	ed.InsertAtom(m, m, &composer.Atom{Kind: composer.AtomUser, ID: "U0FAKE00001", Text: "@Fake"})
+	frame()
+	if v.edit.finish(v) || v.edit.cur == nil {
+		t.Fatal("a new mention closed the editor")
+	}
+	h.mu.Lock()
+	last := ""
+	if len(h.toasts) > 0 {
+		last = h.toasts[len(h.toasts)-1]
+	}
+	h.mu.Unlock()
+	if !strings.HasPrefix(last, "Clack can't save a new mention or emoji") {
+		t.Errorf("the toast %q", last)
+	}
+	if !v.edit.escape(v) || v.edit.cur != nil {
+		t.Error("Escape after the refusal didn't discard the change")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := len(quipSaves(fs)); n != 0 {
+		t.Errorf("%d edit-document calls for a refused mention", n)
+	}
+}

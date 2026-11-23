@@ -1064,6 +1064,13 @@ func (a *App) SaveCanvasDelete(ctx context.Context, id, sectionID string, orig [
 		switch {
 		case !ok:
 			return nil, fmt.Errorf("%w: section %s isn't in the canvas", ErrCanvasConflict, sectionID)
+		case b.typ == quip.TypeTitle:
+			// the title emptied: its section stays, with no text (Slack
+			// shows its placeholder, and calls the canvas "Untitled")
+			if _, err := plainBase(base, sectionID, spansPlain(orig)); err != nil {
+				return nil, err
+			}
+			return []quip.Edit{{Kind: quip.EditText, SectionID: sectionID, RTML: "", Base: b.seq}}, nil
 		case b.typ != quip.TypeText:
 			return nil, fmt.Errorf("%w: a section of type %d", quip.ErrUnsupported, b.typ)
 		}
@@ -1252,11 +1259,34 @@ func (a *App) CanvasSectionSeq(id, sectionID string) int64 {
 	return n
 }
 
+// CanvasTitleSaveable reports whether the canvas's title is one a save can
+// send the metadata of (quip.TitleMetadata, which every save sends), and
+// why not: while it isn't, no edit of the canvas saves. It's true when core
+// holds no model of the canvas yet.
+func (a *App) CanvasTitleSaveable(id string) (bool, string) {
+	ok, why := true, ""
+	a.CanvasModel(id, func(d *quip.Doc) {
+		if d == nil {
+			return
+		}
+		for _, t := range d.Sections() {
+			if t.Type != nil && *t.Type == quip.TypeTitle {
+				if _, err := quip.TitleMetadata(quip.SectionRTML(t)); err != nil {
+					ok, why = false, "the canvas's title has an emoji, a mention, a link or a line break, which Clack can't save yet"
+				}
+				return
+			}
+		}
+	})
+	return ok, why
+}
+
 // CanvasBlockEditable reports whether a block shown as spans can be edited
 // through edit-document without losing what its section holds that the
-// block doesn't show (faithfulBlock), and why not. It's true when core
-// holds no model of the canvas yet, or the block's text is another's than
-// the section's (the export is late: the save checks again).
+// block doesn't show (faithfulBlock), and why not; the title's own block
+// only while it's plain text (titleBlockEdit). It's true when core holds no
+// model of the canvas yet, or the block's text is another's than the
+// section's (the export is late: the save checks again).
 func (a *App) CanvasBlockEditable(id, sectionID string, spans []richtext.Span) (bool, string) {
 	ok, why := true, ""
 	a.CanvasModel(id, func(d *quip.Doc) {
@@ -1264,6 +1294,12 @@ func (a *App) CanvasBlockEditable(id, sectionID string, spans []richtext.Span) (
 			return
 		}
 		sec := d.Section(d.RealID(sectionID))
+		if sec != nil && sec.Type != nil && *sec.Type == quip.TypeTitle {
+			if t, marks, pok := quip.ParseRTML(quip.SectionRTML(sec)); !pok || len(marks) > 0 || strings.Contains(t, "<control") || strings.Contains(t, "<br>") {
+				ok, why = false, "formatting, a link, a mention or a line break in the title"
+			}
+			return
+		}
 		if sec == nil || sec.Type == nil || *sec.Type != quip.TypeText {
 			return
 		}
@@ -1312,6 +1348,9 @@ func (a *App) SaveCanvasBlock(ctx context.Context, id string, be CanvasBlockEdit
 
 // blockEdit is SaveCanvasBlock's edit (Kind 0: nothing changed).
 func blockEdit(base func(string) (sectionBase, bool), be CanvasBlockEdit) (quip.Edit, error) {
+	if b, ok := base(be.SectionID); ok && b.typ == quip.TypeTitle {
+		return titleBlockEdit(base, be)
+	}
 	e, err := spansEdit(base, be.SectionID, be.Orig, be.Spans, be.OrigSeq)
 	if err != nil {
 		return e, err
@@ -1355,6 +1394,40 @@ func blockEdit(base func(string) (sectionBase, bool), be CanvasBlockEdit) (quip.
 		}
 	}
 	return e, nil
+}
+
+// titleBlockEdit is an edit of the canvas's title where it's drawn (the
+// document's opening heading, which is its title section): its text, as a
+// rename saves it (SaveCanvasTitle). Formatting, a link, a mention or a
+// line break in the title isn't saved yet (TitleMetadata holds the plain
+// title only), nor the title made another kind of block.
+func titleBlockEdit(base func(string) (sectionBase, bool), be CanvasBlockEdit) (quip.Edit, error) {
+	if be.Kind != be.OrigKind || be.Level != be.OrigLevel || be.Checked != be.OrigChecked {
+		return quip.Edit{}, fmt.Errorf("%w: the title made another kind of block", quip.ErrUnsupported)
+	}
+	var text strings.Builder
+	for _, sp := range be.Spans {
+		if sp.Kind != richtext.Text || sp.Style != 0 {
+			return quip.Edit{}, fmt.Errorf("%w: formatting, a link, a mention or a line break in the title", quip.ErrUnsupported)
+		}
+		text.WriteString(sp.Text)
+	}
+	orig := spansPlain(be.Orig)
+	b, err := plainBase(base, be.SectionID, orig)
+	if err != nil {
+		if errors.Is(err, ErrCanvasConflict) || be.OrigSeq == 0 || b.seq == be.OrigSeq {
+			return quip.Edit{}, err
+		}
+		return quip.Edit{}, fmt.Errorf("%w: section %s", ErrCanvasConflict, be.SectionID) // changed since the block opened
+	}
+	if text.String() == orig {
+		return quip.Edit{}, nil
+	}
+	rtml, err := quip.TextRTML(text.String())
+	if err != nil {
+		return quip.Edit{}, err
+	}
+	return quip.Edit{Kind: quip.EditText, SectionID: be.SectionID, RTML: rtml, Base: b.seq}, nil
 }
 
 // textStyle is a top-level text block's section style (a paragraph or a

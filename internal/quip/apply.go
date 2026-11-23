@@ -181,14 +181,24 @@ const maxDiff = 4_000_000
 // doesn't hold of the base keeps covering the characters it covered, as
 // Slack's withRtml moves marks with their characters: comment anchors
 // (annotation), and a link's nolink and slackFileId when the run keeps its
-// href over the same text. A mark whose characters are all gone goes away,
-// so no mark is ever empty (getCompactRtml would lose the text after it).
+// href over its characters, with text typed in it or not. A mark whose
+// characters are all gone goes away, so no mark is ever empty
+// (getCompactRtml would lose the text after it).
 // It refuses a run naming a control the base doesn't have, or one used
 // twice.
 func ApplyRuns(base string, runs []Run) (string, error) {
 	bt, bm, ok := ParseRTML(base)
 	if !ok {
 		return "", unsupported("RTML Slack can't parse")
+	}
+	for _, m := range bm {
+		if m.Start == m.End {
+			// an empty mark (a comment anchor with no text): the editor's
+			// getCompactRtml would lose the text after it, which Slack's
+			// own save would send; the edit is refused rather than drop it
+			// or send it
+			return "", unsupported("an empty <%s> in the section (getCompactRtml would lose the text after it)", m.Name)
+		}
 	}
 	bu := units(bt)
 	have := map[string]bool{}
@@ -268,8 +278,9 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 	text := b.String()
 
 	var marks []Mark
-	// a control the edit kept keeps the formatting around it in the base:
-	// an editor holds a mention or emoji as an atom it doesn't format
+	// a control the edit kept keeps the formatting around it in the base
+	// (an editor holds a mention or emoji as an atom it doesn't format),
+	// with what its run adds
 	keptCtl := map[int]int{} // new unit -> its base unit
 	for bi, ni := range match {
 		if ni >= 0 && nu[ni].ctl != "" {
@@ -287,8 +298,8 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 	// formatting: a mark over each stretch of units whose runs share it
 	style := func(name string, flag func(Run) bool) {
 		on := func(i int) bool {
-			if bi, ok := keptCtl[i]; ok {
-				return baseHas(name, bi)
+			if bi, ok := keptCtl[i]; ok && baseHas(name, bi) {
+				return true
 			}
 			return flag(runs[from[i]])
 		}
@@ -313,12 +324,20 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 	style("del", func(r Run) bool { return r.Strike })
 	style("code", func(r Run) bool { return r.Code })
 	// links: one mark per stretch with the same href; the base link's
-	// value when the stretch is all characters it covered
+	// value (nolink, a file id) when every character the stretch kept was
+	// under it, whatever was typed among them: typing inside a link
+	// extends it, as the editor's DOM extends the <a> typed in
+	inv := make([]int, len(nu)) // new unit -> its base unit, -1 when typed
+	for k := range inv {
+		inv[k] = -1
+	}
+	for bi, ni := range match {
+		if ni >= 0 {
+			inv[ni] = bi
+		}
+	}
 	baseLink := func(i int) (Mark, bool) { // the base link over new unit i's base character
-		for bi, ni := range match {
-			if ni != i {
-				continue
-			}
+		if bi := inv[i]; bi >= 0 {
 			for _, m := range bm {
 				if m.Name == "a" && m.Start <= bu[bi].start && bu[bi].end <= m.End {
 					return m, true
@@ -338,16 +357,23 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 			j++
 		}
 		val := linkValue(h, false, "")
-		if m, ok := baseLink(i); ok {
-			if l, ok := parseLinkValue(m.Value); ok && l.href == h {
-				same := true
-				for k := i; k < j && same; k++ {
-					m2, ok := baseLink(k)
-					same = ok && m2 == m
-				}
-				if same {
-					val = m.Value
-				}
+		var link Mark
+		kept, same := false, true
+		for k := i; k < j && same; k++ {
+			if inv[k] < 0 {
+				continue // typed inside the stretch
+			}
+			m, ok := baseLink(k)
+			switch {
+			case !ok || kept && m != link: // text that was no link, or another one
+				same = false
+			default:
+				link, kept = m, true
+			}
+		}
+		if kept && same {
+			if l, ok := parseLinkValue(link.Value); ok && l.href == h {
+				val = link.Value
 			}
 		}
 		if !IsSafeURI(h, false) {

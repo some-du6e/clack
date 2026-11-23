@@ -44,3 +44,18 @@ func TestQuipSameRTML(t *testing.T) {
 		}
 	}
 }
+
+// Typing inside a link keeps the link's own values (its nolink, its file
+// id), as the editor's DOM extends the <a> typed in; text that was no link,
+// made one with the same href, doesn't take them.
+func TestQuipApplyRunsTypedInLink(t *testing.T) {
+	base := `see <a href="https://example.com/f" data-nolink="true" data-slack-file-id="F123">the file</a> now`
+	out, err := ApplyRuns(base, []Run{{Text: "see "}, {Text: "the big file", Href: "https://example.com/f"}, {Text: " now"}})
+	if want := `see <a href="https://example.com/f" data-nolink="true" data-slack-file-id="F123">the big file</a> now`; err != nil || out != want {
+		t.Errorf("typing inside a link: %q, %v; want %q", out, err, want)
+	}
+	out, err = ApplyRuns(base, []Run{{Text: "see "}, {Text: "the file now", Href: "https://example.com/f"}})
+	if want := `see <a href="https://example.com/f">the file now</a>`; err != nil || out != want {
+		t.Errorf("a link over text that was no link: %q, %v; want %q", out, err, want)
+	}
+}

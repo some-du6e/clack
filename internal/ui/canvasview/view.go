@@ -37,6 +37,11 @@ type View struct {
 
 	sectionTip popups.TipState // the header's section button (section_button.go)
 
+	// titleWhy is why no edit of the canvas saves through edit-document
+	// ("": none): its title is one every save's metadata can't carry
+	// (core.CanvasTitleSaveable), checked once per pass over the blocks
+	titleWhy string
+
 	mu      sync.Mutex
 	doc     *core.CanvasDoc
 	err     error
@@ -223,6 +228,9 @@ func (v *View) goLive() {
 				}
 				if ev.Type == "canvas_viewers" && ev.ID == v.id {
 					v.h.Invalidate()
+				}
+				if ev.Type == "canvas_model" && ev.ID == v.id { // what opens is checked against the model (blockEditable)
+					v.post(v.recheckEditable)
 				}
 				if ev.Type == "canvas_save" && ev.ID == v.id { // the save banner and lock (banner.go)
 					if ns := a.TakeCanvasSaveNotices(v.id); len(ns) > 0 {

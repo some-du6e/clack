@@ -171,8 +171,41 @@ func (v *View) rebuild(d *core.CanvasDoc) {
 	}
 	v.shown = d
 	v.nameMentions(d)
+	v.checkTitle()
 	v.blocks = v.makeBlocks(d, d.Doc.Blocks, old)
 	v.edit.docChanged(v)
+}
+
+// checkTitle notes whether the canvas's title lets edits save
+// (core.CanvasTitleSaveable), for this pass's blockEditable.
+func (v *View) checkTitle() {
+	v.titleWhy = ""
+	if a := v.h.Core(); a != nil && quipOn(v) {
+		if ok, why := a.CanvasTitleSaveable(v.id); !ok {
+			v.titleWhy = why
+		}
+	}
+}
+
+// recheckEditable checks again which blocks open in the editor once core
+// has the canvas's model, or it changed: blockEditable checks a block
+// against its section, and the title every save sends.
+func (v *View) recheckEditable() {
+	v.checkTitle()
+	var walk func(bs []*blk)
+	walk = func(bs []*blk) {
+		for _, b := range bs {
+			if b.b != nil && !b.inCell {
+				b.edOK, b.edWhy = v.blockEditable(*b.b)
+			}
+			walk(b.kids)
+			for _, c := range b.cols {
+				walk(c)
+			}
+		}
+	}
+	walk(v.blocks)
+	v.h.Invalidate()
 }
 
 // nameMentions names the document's user, channel and group mentions from

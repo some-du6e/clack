@@ -79,7 +79,11 @@ type session struct {
 	ver      uint64
 	refused  bool // the last save was refused: Escape now discards
 	quoted   bool // a paragraph of a quote: each line saves as a "> " section
-	press    *pressAt
+	// quip: it saves through edit-document (quipOn when it began), which
+	// keeps what the editor holds as it is: a heading's bold, trailing
+	// spaces (canvas markdown drops both)
+	quip  bool
+	press *pressAt
 	// def: the block is Quip's unedited default content (Block.Default).
 	// Focusing it empties it (Section.hideDefaultContent, HIDE_ON_FOCUS):
 	// the editor opens empty with the caret at 0. Typing makes it an
@@ -261,6 +265,37 @@ func quipRefuses(v *View, s *session, md string, bs []canvas.Block) bool {
 	return false
 }
 
+// newControl reports whether a session's block holds a mention or emoji
+// the block didn't when it began: core's spanRuns matches each to one of
+// its section's controls, and refuses one it can't.
+func newControl(s *session, bs []canvas.Block) bool {
+	if s.quoted {
+		bs = unquote(bs)
+	}
+	if len(bs) == 0 {
+		return false
+	}
+	used := make([]bool, len(s.spans))
+	for _, sp := range bs[0].Spans {
+		switch sp.Kind {
+		case richtext.User, richtext.Channel, richtext.Emoji:
+		default:
+			continue
+		}
+		found := false
+		for k, o := range s.spans {
+			if !used[k] && o.Kind == sp.Kind && o.ID == sp.ID && (o.ID != "" || o.Text == sp.Text) {
+				used[k], found = true, true
+				break
+			}
+		}
+		if !found {
+			return true
+		}
+	}
+	return false
+}
+
 // newBlocks are blocks bs as new sections with ids.
 func newBlocks(bs []canvas.Block, ids []string) []core.CanvasNewBlock {
 	out := make([]core.CanvasNewBlock, 0, len(bs))
@@ -294,6 +329,9 @@ func findBlockByID(bs []*blk, id string) *canvas.Block {
 // blocks aren't the section any more.
 func (v *View) blockEditable(b canvas.Block) (bool, string) {
 	ok, why := v.editable(b)
+	if ok && quipOn(v) && v.titleWhy != "" { // no edit of the canvas saves (checkTitle)
+		return false, v.titleWhy
+	}
 	if !ok || !quipOn(v) || b.ID == "" || b.Kind == canvas.Code {
 		return ok, why
 	}
@@ -371,6 +409,9 @@ func quipChanged(s *session, md string, bs []canvas.Block) bool {
 func quipSame(s *session, bs []canvas.Block) bool {
 	if s.quoted {
 		bs = unquote(bs)
+	}
+	if len(bs) == 0 { // the editor holds nothing: the same when the block held nothing either
+		return blankSpans(s.spans) && strings.TrimSpace(s.code0) == ""
 	}
 	if len(bs) != 1 {
 		return false
@@ -579,7 +620,10 @@ const changedMeanwhile = "Someone else changed this part of the canvas while you
 
 func (e *editState) refuse(v *View, b *blk) {
 	msg := cantEdit
-	if b.edWhy != "" {
+	switch {
+	case strings.HasPrefix(b.edWhy, "the canvas"):
+		msg += " (" + b.edWhy + ")"
+	case b.edWhy != "":
 		msg += " (it has " + b.edWhy + ")"
 	}
 	v.h.Toast(msg)
@@ -767,7 +811,7 @@ func (e *editState) start(v *View, b *blk) {
 	}
 	s := &session{target: b, id: b.b.ID, kind: b.b.Kind, level: b.b.Level, checked: b.b.Checked, orig: canvas.Markdown(*b.b),
 		spans: append([]richtext.Span(nil), b.b.Spans...), kind0: b.b.Kind, level0: b.b.Level, checked0: b.b.Checked, code0: b.b.Code,
-		ed: newEditor(), focus: true}
+		ed: newEditor(), focus: true, quip: quipOn(v)}
 	if a := v.h.Core(); a != nil && quipOn(v) && b.b.ID != "" {
 		s.seq0 = a.CanvasSectionSeq(v.id, b.b.ID)
 	}
@@ -821,6 +865,14 @@ func (e *editState) finish(v *View) bool {
 			// once the lock lifts (Slack keeps text typed before the lock
 			// and saves it then; it has no way to throw it away)
 			v.h.Toast(lockedText)
+			s.focus = true
+			return false
+		case s.target != nil && newControl(s, bs):
+			// a mention or emoji the block didn't hold is a control
+			// section of its own, which core doesn't save yet
+			// (spanRuns): said while the text is still here
+			v.h.Toast("Clack can't save a new mention or emoji to a canvas yet. Remove it, or press Escape again to discard your changes")
+			s.refused = true
 			s.focus = true
 			return false
 		case quipRefuses(v, s, md, bs):
@@ -975,7 +1027,7 @@ func (v *View) StartNewBlock() {
 	place := &blk{b: &canvas.Block{Kind: canvas.Paragraph}}
 	v.blocks = append(v.blocks, place)
 	v.list.ScrollTo(len(v.blocks)) // the header row comes first: this is the new block's row
-	s := &session{afterID: after, place: place, kind: canvas.Paragraph, ed: newEditor(), focus: true}
+	s := &session{afterID: after, place: place, kind: canvas.Paragraph, ed: newEditor(), focus: true, quip: quipOn(v)}
 	s.ed.SetDoc(composer.NewDoc())
 	e.cur = s
 	v.h.Invalidate()
@@ -1414,7 +1466,7 @@ func fromDoc(d *composer.Doc, s *session) []canvas.Block {
 	var out []canvas.Block
 	for i := range d.Lines {
 		lo, hi := d.LineStart(i), d.LineEnd(i)
-		sp := lineSpans(d, lo, hi)
+		sp := lineSpans(d, lo, hi, !s.quip)
 		ln := d.Lines[i]
 		var b canvas.Block
 		switch ln.Kind {
@@ -1433,7 +1485,7 @@ func fromDoc(d *composer.Doc, s *session) []canvas.Block {
 			b = canvas.Block{Kind: canvas.Quote, Children: []canvas.Block{{Kind: canvas.Paragraph, Spans: sp}}}
 		case composer.Header1, composer.Header2, composer.Header3:
 			b = canvas.Block{Kind: map[composer.BlockKind]canvas.Kind{composer.Header1: canvas.Heading1,
-				composer.Header2: canvas.Heading2, composer.Header3: canvas.Heading3}[ln.Kind], Spans: unbold(sp)}
+				composer.Header2: canvas.Heading2, composer.Header3: canvas.Heading3}[ln.Kind], Spans: sp}
 		case composer.Bullet:
 			k := canvas.Bullet
 			if s.kind == canvas.Check {
@@ -1452,8 +1504,8 @@ func fromDoc(d *composer.Doc, s *session) []canvas.Block {
 				b = canvas.Block{Kind: canvas.Paragraph, Spans: sp}
 			}
 		}
-		if b.Kind == canvas.Heading1 || b.Kind == canvas.Heading2 || b.Kind == canvas.Heading3 {
-			b.Spans = unbold(b.Spans)
+		if !s.quip && (b.Kind == canvas.Heading1 || b.Kind == canvas.Heading2 || b.Kind == canvas.Heading3) {
+			b.Spans = unbold(b.Spans) // canvas markdown's heading is bold already
 		}
 		out = append(out, b)
 	}
@@ -1526,8 +1578,10 @@ func unbold(sp []richtext.Span) []richtext.Span {
 	return out
 }
 
-// lineSpans converts runes [lo, hi) to spans.
-func lineSpans(d *composer.Doc, lo, hi int) []richtext.Span {
+// lineSpans converts runes [lo, hi) to spans; trim drops trailing spaces
+// (canvas markdown's save: edit-document keeps them, as Slack's pre-wrap
+// editor does, the space after a picked mention too).
+func lineSpans(d *composer.Doc, lo, hi int, trim bool) []richtext.Span {
 	var out []richtext.Span
 	var cur richtext.Span
 	flush := func() {
@@ -1568,7 +1622,7 @@ func lineSpans(d *composer.Doc, lo, hi int) []richtext.Span {
 	}
 	flush()
 	// trailing spaces (the one after an inserted pill) aren't saved
-	for len(out) > 0 {
+	for trim && len(out) > 0 {
 		l := &out[len(out)-1]
 		if l.Kind != richtext.Text && l.Kind != richtext.Link {
 			break
