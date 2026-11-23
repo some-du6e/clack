@@ -787,7 +787,12 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       # TestCrashRecordForRealEvent needs Windows to log a crash (Application
       # Error, event 1000): 45196009117 logged none, for its fail-fast or
-      # crash_native's access violation. What the image set, then reporting on
+      # crash_native's access violation, and 45202224745 none with WerSvc
+      # running. The image sets AeDebug's Debugger to "-" (no JIT debugger):
+      # with a debugger set, a crash goes to it instead of Windows Error
+      # Reporting, and "-" starts nothing, so the process ends unrecorded.
+      # Without it, as on a user's PC, WER records the crash. What the image
+      # set, then reporting on
       - name: Windows Error Reporting on (applog's crash record)
         shell: pwsh
         run: |
@@ -800,6 +805,10 @@ jobs:
           Set-ItemProperty -Path $k -Name Disabled -Value 0 -Type DWord
           Set-ItemProperty -Path $k -Name DontShowUI -Value 1 -Type DWord
           if (Test-Path $p) { Remove-ItemProperty -Path $p -Name Disabled -ErrorAction SilentlyContinue }
+          foreach ($x in @($ae, 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug')) {
+            Remove-ItemProperty -Path $x -Name Debugger -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $x -Name Auto -ErrorAction SilentlyContinue
+          }
           Set-Service WerSvc -StartupType Manual
           Start-Service WerSvc -ErrorAction Continue
           Get-Service WerSvc | Format-List Name,Status,StartType | Out-String
