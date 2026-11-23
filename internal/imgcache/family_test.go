@@ -10,6 +10,7 @@ package imgcache
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -92,5 +93,57 @@ func TestFamilySizeDrawsAtOnce(t *testing.T) {
 	}
 	if k := familyKey("https://ca.slack-edge.com/T0SYNTH01-U0SYNTH01-0123abcd-72"); k == "" || k != familyKey("https://ca.slack-edge.com/T0SYNTH01-U0SYNTH01-0123abcd-512") {
 		t.Errorf("ca.slack-edge.com's sizes aren't one picture: %q", k)
+	}
+}
+
+// The sharp size's load fails (a network error): the scaled copy keeps
+// drawing, and the exact image is asked for again once its retry is due,
+// as for any failed load. Clack kept the scaled copy for good.
+func TestFamilyInterimRetriesSharpLoad(t *testing.T) {
+	const (
+		small = "https://avatars.slack-edge.com/2026-11-22/2345678_abcdef0123_72.png"
+		big   = "https://avatars.slack-edge.com/2026-11-22/2345678_abcdef0123_192.png"
+	)
+	var mu sync.Mutex
+	asked := map[string]int{}
+	fetch := func(ctx context.Context, u string) ([]byte, error) {
+		mu.Lock()
+		asked[u]++
+		n := asked[u]
+		mu.Unlock()
+		if u == big && n == 1 {
+			return nil, errors.New("synthetic: connection reset")
+		}
+		if u == big {
+			return familyPNG(192), nil
+		}
+		return familyPNG(72), nil
+	}
+	c := New(fetch, "", nil)
+	for dl := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if _, ok := c.Get(small, 72); ok {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatal("the 72px image never loaded")
+		}
+	}
+	if _, ok := c.Get(big, 144); !ok {
+		t.Fatal("the 192px size draws nothing while the 72px one is held: the case tests nothing")
+	}
+	// the surface draws it every frame: its retry is due after RetryMin
+	for dl := time.Now().Add(RetryMin + 5*time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, ok := c.Get(big, 144); !ok {
+			t.Fatal("the scaled copy stopped drawing after the sharp load failed")
+		}
+		mu.Lock()
+		n := asked[big]
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatalf("the sharp size was asked for %d times in %v after it failed: the scaled copy stays for good", n, RetryMin+5*time.Second)
+		}
 	}
 }

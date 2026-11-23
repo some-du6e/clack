@@ -449,10 +449,16 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.richText(b.Elements)...)
 	case "section":
 		blk := Block{Kind: Section, BlockID: b.BlockID, Expand: b.Expand}
-		tb := c.textBlocks(b.textObj())
-		if len(tb) == 1 && tb[0].Kind == Paragraph {
+		to := b.textObj()
+		tb := c.textBlocks(to)
+		switch {
+		case len(tb) == 1 && tb[0].Kind == Paragraph:
 			blk.Spans = tb[0].Spans
-		} else {
+		case len(tb) == 0 && to != nil && to.Text != "":
+			// text that formats to nothing ("\n", TSF's trim): Slack's
+			// section keeps its box, an empty text in it
+			blk.Spans = []Span{}
+		default:
 			blk.Children = tb
 		}
 		for i := range b.Fields {
@@ -482,6 +488,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		// image or text its own box): Children keeps them apart, Spans
 		// has them joined for plain-text consumers.
 		blk := Block{Kind: Context}
+		kept := false // a text element that formats to nothing: its box stays
 		for i := range b.Elements {
 			e := &b.Elements[i]
 			var ss []Span
@@ -498,6 +505,12 @@ func (c *builder) block(out []Block, b *bk) []Block {
 				ss = c.textSpans(t)
 				if len(ss) > 0 {
 					blk.Children = append(blk.Children, Block{Kind: Paragraph, Spans: ss})
+				} else if t.Text != "" {
+					// Context renders a p-context_block_element for every
+					// element, its 16px spacing after it: an element whose
+					// text formats to nothing keeps its (empty) box
+					blk.Children = append(blk.Children, Block{Kind: Paragraph, Spans: []Span{}})
+					kept = true
 				}
 			}
 			if len(ss) == 0 {
@@ -509,7 +522,10 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			blk.Spans = append(blk.Spans, ss...)
 		}
 		if len(blk.Spans) == 0 {
-			return out
+			if !kept {
+				return out
+			}
+			blk.Spans = []Span{}
 		}
 		return append(out, blk)
 	case "header":

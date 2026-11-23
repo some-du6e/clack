@@ -127,6 +127,13 @@ func TestSenderFollowsMemberLikeSlack(t *testing.T) {
 				}
 			}
 			aliceChanges(t, h)
+			if !offScreen {
+				// a message in this conversation after the change, drawn:
+				// the hub (core's events in order, off this goroutine) has
+				// taken the change by the time it shows
+				injectEvent(h.app, avCh, "message", "", map[string]any{"user": "UBOB", "ts": avMarker, "text": "after the change"})
+				until(t, 5*time.Second, "the marker in the list", f, func() bool { return v.s.rows[avMarker] != nil })
+			}
 			if offScreen {
 				// a message in the other conversation after the change,
 				// and only that list drawn until it shows: the hub (which

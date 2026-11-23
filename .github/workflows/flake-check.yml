@@ -5632,7 +5632,10 @@ jobs:
   # (Karim, α.143 "two different pfps?"): the rows' redraw when the change
   # comes while no list draws the member (messages), Slack's member
   # freshness and user_change subscriptions (core), and a restart's stale
-  # offline copy fetched again (ui).
+  # offline copy fetched again (ui). avatar-refresh-2: the review's MINORs
+  # (an older refetch answer, the hello gate, avatarAlts pruned, off-Grid
+  # fast reconnects, a failed larger picture, the interim's retry, TSF's
+  # trim).
   avatar-refresh:
     if: ${{ !inputs.only || startsWith('avatar-refresh', inputs.only) }}
     runs-on: ubuntu-latest
@@ -5655,10 +5658,13 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -timeout 10m -run '^(TestSenderFollowsMemberLikeSlack|TestBotThreadRowLikeSlack|TestAvatarPictureForScaleLikeSlack)$' ./internal/ui/messages || rc=1
-          go test -count=$COUNT -timeout 10m -run '^(TestMemberSubscribedFollowsUserChange|TestMemberRefetchedPastMaxAgeLikeSlack|TestMemberSubscriptionsAfterReconnect)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestSenderFollowsMemberLikeSlack|TestBotThreadRowLikeSlack|TestAvatarPictureForScaleLikeSlack|TestAvatarLargerPictureFailsLikeSlack)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestMemberSubscribedFollowsUserChange|TestMemberRefetchedPastMaxAgeLikeSlack|TestMemberSubscriptionsAfterReconnect|TestMemberSubscribeWaitsForHello|TestMemberRefetchKeepsNewerCopy|TestMemberFreshnessKeptOnFastReconnectOffGrid)$' ./internal/core || rc=1
           go test -count=$COUNT -timeout 15m -run '^TestAvatarAfterRestartLikeSlack$' ./internal/ui || rc=1
-          go test -count=$COUNT -timeout 5m -run '^TestFamilySizeDrawsAtOnce$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestFamilySizeDrawsAtOnce|TestFamilyInterimRetriesSharpLoad)$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestAvatarAltsFollowTheStore|TestPutUserNotOlder)$' ./internal/store || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestMrkdwnTrimLikeTSF|TestNewlineOnlyBlocksKeptLikeSlack|TestBlankAttachmentTextLikeSlack|TestEmptyContextElementKeepsItsBoxLikeSlack)$' ./internal/richtext || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestMarkupModeSend$' ./internal/ui/composer || rc=1
           go test -count=$COUNT -timeout 10m -run '^TestAppPaneIconFromTheMessageLikeSlack$' ./internal/ui/popups || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}

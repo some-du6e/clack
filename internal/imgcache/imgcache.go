@@ -646,6 +646,11 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 	}
 	e := el.Value.(*entry)
 	e.used = now.UnixMilli()
+	if e.interim && !c.inflight[k] {
+		// a scaled copy whose exact load isn't out (it failed): asked for
+		// again once its retry is due (startLocked keeps a failure's wait)
+		c.startLocked(k, true)
+	}
 	if e.gen != c.gen { // this frame's (FrameRedrawn)
 		e.gen = c.gen
 		c.genEls = append(c.genEls, el)
