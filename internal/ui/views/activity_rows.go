@@ -1014,7 +1014,7 @@ func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub 
 func (b *base) actPreviewDoc(m *core.Message) richtext.Doc {
 	c := b.h.Core()
 	if c == nil || len(m.Blocks) == 0 && len(m.Attachments) <= 2 { // no blocks: the attachments' text, not the cards (PreviewDoc)
-		return m.Doc
+		return richtext.PreviewLinks(m.Doc)
 	}
 	ver := b.msgVerOf(m)
 	k := m.Channel + "/" + m.TS
@@ -1025,6 +1025,10 @@ func (b *base) actPreviewDoc(m *core.Message) richtext.Doc {
 	if !ok {
 		doc = m.Doc
 	}
+	// SimpleRichTextPreview draws a link as a plain hyperlink, a truncated
+	// one too: no RichTextSlug chip (Karim's 2026-11-22 "fix": the link
+	// icon on its tinted chip at the start of a thread row)
+	doc = richtext.PreviewLinks(doc)
 	if b.pv == nil || len(b.pv) > 2000 {
 		b.pv = map[string]pvEntry{}
 	}

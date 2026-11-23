@@ -4795,6 +4795,8 @@ jobs:
           - { test: TestRowLinkClicksAndCursorLikeSlack, pkg: ./internal/ui/views }
           - { test: TestViewsReactionBarGroupsLikeSlack, pkg: ./internal/ui/views }
           - { test: TestActivityHoverBarLikeSlack, pkg: ./internal/ui/views }
+          - { test: TestActivityPreviewLinksArePlain, pkg: ./internal/ui/views }
+          - { test: TestPreviewLinksPlain, pkg: ./internal/richtext }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

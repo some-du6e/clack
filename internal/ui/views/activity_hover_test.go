@@ -1,13 +1,18 @@
 package views
 
 import (
+	"encoding/json"
 	"image"
+	"strings"
 	"testing"
 
 	"gioui.org/f32"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -145,4 +150,56 @@ func slicesEqual(a, b []actBtn) bool {
 		}
 	}
 	return true
+}
+
+// Activity's rows preview a message as Slack's SimpleRichTextPreview
+// does: a rich_text link is a plain hyperlink, a truncated one (a pasted
+// link's slug) too, never the message's RichTextSlug chip with its link
+// icon (Karim's 2026-11-22 "fix": a dense row's link chip after its type
+// icon), in the dense and the detailed layout.
+func TestActivityPreviewLinksArePlain(t *testing.T) {
+	for _, dense := range []bool{false, true} {
+		const ts = "1762700100.000100"
+		ch := fakeslack.ViewsChannel
+		blocks := json.RawMessage(`[{"type":"rich_text","block_id":"b1","elements":[{"type":"rich_text_section","elements":[` +
+			`{"type":"link","url":"` + rhLink + `","text":"example.com/doc","truncated":true},{"type":"text","text":" is the plan"}]}]}]`)
+		v, _, e, _ := vaFakeActivityWith(t, false, func(fs *fakeslack.Server) {
+			fs.SetActivityMessage(slack.Message{Type: "message", Channel: ch, TS: ts, User: "U0FAKE00001",
+				Text: "<" + rhLink + "|example.com/doc> is the plan", Blocks: blocks})
+		})
+		v.dense, v.rows, v.dirty = dense, map[string]*actRow{}, true
+		e.frame()
+		e.frame()
+		var ent *richEntry
+		e.until(t, "the row's preview", func() bool {
+			for k, x := range v.rich {
+				if strings.HasSuffix(k, ch+"/"+ts) && len(x.v.LinkRects()) > 0 {
+					ent = x
+					return true
+				}
+			}
+			return false
+		})
+		doc := ent.v.Doc()
+		links := 0
+		for _, b := range doc.Blocks {
+			for _, sp := range b.Spans {
+				if sp.Kind == richtext.Link {
+					links++
+					if sp.Truncated {
+						t.Errorf("dense %v: the preview draws the link as its slug chip (truncated)", dense)
+					}
+					if sp.Text != "example.com/doc" || sp.URL != rhLink {
+						t.Errorf("dense %v: the link reads %q -> %q", dense, sp.Text, sp.URL)
+					}
+				}
+			}
+		}
+		if links != 1 {
+			t.Errorf("dense %v: %d links in the preview, want 1", dense, links)
+		}
+		if lr := ent.v.LinkRects(); lr[0].URL != rhLink {
+			t.Errorf("dense %v: the drawn link goes to %q", dense, lr[0].URL)
+		}
+	}
 }
