@@ -14,12 +14,14 @@ import (
 
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/media"
+	"github.com/some-du6e/clack/internal/media/goaudio"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 )
 
 // pageMedia is the plugin runtime's media host (taut.Options.Media): the
 // page's <audio> elements play on the players Clack's own media play on
-// (playersBackend: Go audio, the OS's media stack), as sound only (a page
+// (pageSoundsBackend: Go audio first, out of the picked speakers, then the
+// OS's media stack), as sound only (a page
 // element is drawn nowhere). Slack's sound playback is one (Taut.PlaySound:
 // Clack's notification sounds), and whatever a plugin plays. Slack's sounds
 // come from Clack's copies of its CDN files (huddleui.SoundBytes); any other
@@ -33,7 +35,7 @@ type pageMedia struct{}
 const pageMediaMax = 32 << 20
 
 var (
-	pageMediaBackend = sync.OnceValue(playersBackend)
+	pageMediaBackend = sync.OnceValue(pageSoundsBackend)
 	// pageMediaHook, when set (tests), opens a page element's source
 	// instead of the players.
 	pageMediaHook func(src string, data []byte) (jsrt.MediaPlayer, error)
@@ -43,8 +45,8 @@ func (pageMedia) Open(src string, data []byte) (jsrt.MediaPlayer, error) {
 	if h := pageMediaHook; h != nil {
 		return h(src, data)
 	}
-	if data == nil && huddleui.Hooked(src) { // tests: PlayHook sees Slack's sounds, as on Clack's own path
-		return newHookedPlayer(), nil
+	if pref, ok := huddleui.Hooked(src); ok && data == nil { // tests: PlayHook sees each of Slack's sounds, as on Clack's own path
+		return newHookedPlayer(pref), nil
 	}
 	if data == nil {
 		b, ok := huddleui.SoundBytes(src)
@@ -72,6 +74,29 @@ func (pageMedia) Open(src string, data []byte) (jsrt.MediaPlayer, error) {
 		return nil, err
 	}
 	return &pagePlayer{p: p}, nil
+}
+
+// pageSoundsBackend is the players' chain with Go audio first for every
+// page sound: it plays out of the speakers picked in Audio & video
+// (huddle.OpenOutput), as Clack's own sounds do (huddle.PlaySound), where
+// the OS's player (AVPlayer) would play to the system's default; the OS's
+// player still takes a file Go audio can't decode (AAC on macOS).
+func pageSoundsBackend() media.Backend {
+	osb, _ := media.Default() // nil on Linux
+	return media.NewChain(func(src media.Source, bs []media.Backend) []media.Backend {
+		out := make([]media.Backend, 0, len(bs))
+		for _, b := range bs {
+			if _, ok := b.(*goaudio.Backend); ok {
+				out = append(out, b)
+			}
+		}
+		for _, b := range bs {
+			if _, ok := b.(*goaudio.Backend); !ok {
+				out = append(out, b)
+			}
+		}
+		return out
+	}, osb, &goaudio.Backend{})
 }
 
 // pageMediaExt is what a page source is: its bytes' signature, else its
@@ -121,25 +146,42 @@ func (pp *pagePlayer) Next() (jsrt.MediaEvent, bool) {
 	return jsrt.MediaEvent{}, false
 }
 
-// hookedPlayer is a sound huddleui.PlayHook took (tests): it plays at
-// once and ends, silent.
+// hookedPlayer is a page sound huddleui.PlayHook takes (tests): each Play
+// hands the hook its pref value, as each of Clack's own sounds does, and
+// plays at once and ends, silent. Its events queue without bound, so a
+// burst of plays on the JS thread never waits for the element to read
+// them.
 type hookedPlayer struct {
+	pref   string
 	mu     sync.Mutex
-	ch     chan jsrt.MediaEvent
+	evs    []jsrt.MediaEvent
+	kick   chan struct{}
 	closed bool
 }
 
-func newHookedPlayer() *hookedPlayer { return &hookedPlayer{ch: make(chan jsrt.MediaEvent, 8)} }
+func newHookedPlayer(pref string) *hookedPlayer {
+	return &hookedPlayer{pref: pref, kick: make(chan struct{}, 1)}
+}
 
 func (p *hookedPlayer) Play() {
+	if h := huddleui.PlayHook; h != nil {
+		h(p.pref)
+	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed {
+		p.mu.Unlock()
 		return
 	}
-	p.ch <- jsrt.MediaEvent{Type: "playing", Ready: 4}
-	for _, ty := range []string{"pause", "ended"} {
-		p.ch <- jsrt.MediaEvent{Type: ty, Paused: true, Ended: true, Ready: 4}
+	p.evs = append(p.evs, jsrt.MediaEvent{Type: "playing", Ready: 4},
+		jsrt.MediaEvent{Type: "pause", Paused: true, Ended: true, Ready: 4},
+		jsrt.MediaEvent{Type: "ended", Paused: true, Ended: true, Ready: 4})
+	p.mu.Unlock()
+	p.wake()
+}
+func (p *hookedPlayer) wake() {
+	select {
+	case p.kick <- struct{}{}:
+	default:
 	}
 }
 func (p *hookedPlayer) Pause()               {}
@@ -148,14 +190,25 @@ func (p *hookedPlayer) SetVolume(v float64)  {}
 func (p *hookedPlayer) SetMuted(m bool)      {}
 func (p *hookedPlayer) SetLoop(l bool)       {}
 func (p *hookedPlayer) Next() (jsrt.MediaEvent, bool) {
-	ev, ok := <-p.ch
-	return ev, ok
+	for {
+		p.mu.Lock()
+		if len(p.evs) > 0 {
+			ev := p.evs[0]
+			p.evs = p.evs[1:]
+			p.mu.Unlock()
+			return ev, true
+		}
+		if p.closed {
+			p.mu.Unlock()
+			return jsrt.MediaEvent{}, false
+		}
+		p.mu.Unlock()
+		<-p.kick
+	}
 }
 func (p *hookedPlayer) Close() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.closed {
-		p.closed = true
-		close(p.ch)
-	}
+	p.closed = true
+	p.mu.Unlock()
+	p.wake()
 }

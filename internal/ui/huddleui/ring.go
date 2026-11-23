@@ -100,22 +100,28 @@ func SoundBytes(url string) ([]byte, bool) {
 	return b, err == nil
 }
 
-// Hooked hands PlayHook (tests) the sound behind one of Slack's CDN sound
-// URLs, by its pref value ("knock_brush.mp3"), when the hook is set and url
-// is one: the sound a page element would play (Slack's sound playback on
-// the plugins' page). False otherwise.
-func Hooked(url string) bool {
-	h := PlayHook
-	if h == nil {
-		return false
+// Hooked is the pref value ("knock_brush.mp3") of the Slack sound behind
+// one of Slack's CDN sound URLs when PlayHook (tests) is set: a page
+// element playing it (Slack's sound playback on the plugins' page) hands
+// the hook each sound it plays, as Clack's own path does. ok is false
+// without the hook or for any other URL.
+func Hooked(url string) (pref string, ok bool) {
+	if PlayHook == nil {
+		return "", false
 	}
+	return SoundPref(url)
+}
+
+// SoundPref is the pref value ("knock_brush.mp3") of the Slack sound
+// behind one of Slack's CDN sound URLs (SoundURL's); ok is false for any
+// other URL.
+func SoundPref(url string) (pref string, ok bool) {
 	for pref, cdn := range slackSounds {
 		if url == slackSoundCDN+cdn {
-			h(pref)
-			return true
+			return pref, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // PlayHook, when set (tests), gets every sound PlaySlackSound would play

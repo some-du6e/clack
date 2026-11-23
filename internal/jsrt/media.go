@@ -47,20 +47,23 @@ type MediaEvent struct {
 	Err           int // MediaError code, 0 for none
 }
 
-// mediaPlayers are the players the page's elements opened, by element id.
+// mediaPlayers are the players the page's loads opened, each by its own
+// handle: an element's load holds the player it opened, so a load the
+// element left behind (a newer src, a newer load) closes its own player
+// and never the one that took its place.
 type mediaPlayers struct {
-	mu sync.Mutex
-	m  map[int]MediaPlayer
+	mu  sync.Mutex
+	m   map[int]MediaPlayer
+	seq int
 }
 
-func (p *mediaPlayers) put(id int, pl MediaPlayer) {
+// add keeps pl under a new handle.
+func (p *mediaPlayers) add(pl MediaPlayer) int {
 	p.mu.Lock()
-	old := p.m[id]
-	p.m[id] = pl
-	p.mu.Unlock()
-	if old != nil && old != pl {
-		old.Close()
-	}
+	defer p.mu.Unlock()
+	p.seq++
+	p.m[p.seq] = pl
+	return p.seq
 }
 
 func (p *mediaPlayers) get(id int) MediaPlayer {
@@ -109,12 +112,14 @@ func (r *Runtime) installMedia(def func(name string, fn HostFunc)) {
 		}
 		return Value{}
 	}
-	// mediaOpen(id, src, data?): a player for the element's source, paused;
-	// rejects with NotSupportedError when the source can't be played
+	// mediaOpen(src, data?): a player for an element's source, paused, as
+	// the handle the element's controls and events name it by (mediaCtl,
+	// mediaNext); rejects with NotSupportedError when the source can't be
+	// played
 	def("mediaOpen", func(js *Ctx, _ Value, a []Value) (any, error) {
-		id, src := arg(a, 0).Int(), arg(a, 1).String()
+		src := arg(a, 0).String()
 		var data []byte
-		if d := arg(a, 2); d.IsObject() {
+		if d := arg(a, 1); d.IsObject() {
 			data = d.Bytes()
 		}
 		p, resolve, reject := js.NewPromise()
@@ -124,12 +129,18 @@ func (r *Runtime) installMedia(def func(name string, fn HostFunc)) {
 				reject(&JSError{Name: "NotSupportedError", Message: "Failed to load because no supported source was found."})
 				return
 			}
-			players.put(id, pl)
-			resolve(true)
+			select {
+			case <-r.done: // the runtime closed while it opened
+				pl.Close()
+				return
+			default:
+			}
+			resolve(players.add(pl))
 		}()
 		return p, nil
 	})
-	// mediaCtl(id, op, value): play, pause, seek (s), volume, muted, loop, close
+	// mediaCtl(handle, op, value): play, pause, seek (s), volume, muted,
+	// loop, close (the handle's player only)
 	def("mediaCtl", func(js *Ctx, _ Value, a []Value) (any, error) {
 		id, op := arg(a, 0).Int(), arg(a, 1).String()
 		if op == "close" {
@@ -159,7 +170,7 @@ func (r *Runtime) installMedia(def func(name string, fn HostFunc)) {
 		}
 		return nil, nil
 	})
-	// mediaNext(id): the player's next event, null once it is closed
+	// mediaNext(handle): the player's next event, null once it is closed
 	def("mediaNext", func(js *Ctx, _ Value, a []Value) (any, error) {
 		pl := players.get(arg(a, 0).Int())
 		p, resolve, _ := js.NewPromise()

@@ -16,6 +16,9 @@ type fakeMedia struct {
 	mu      sync.Mutex
 	opened  []fakeOpen
 	players []*fakePlayer
+	// gate, when set, holds each Open until the test closes the channel
+	// it sends there
+	gate chan chan struct{}
 }
 
 type fakeOpen struct {
@@ -24,6 +27,11 @@ type fakeOpen struct {
 }
 
 func (h *fakeMedia) Open(src string, data []byte) (MediaPlayer, error) {
+	if h.gate != nil {
+		release := make(chan struct{})
+		h.gate <- release
+		<-release
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.opened = append(h.opened, fakeOpen{src, append([]byte(nil), data...)})

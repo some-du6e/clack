@@ -263,6 +263,13 @@ func (t *Taut) installHost(r *runtime) {
 		}
 		return t.flannel(ctx, key, strArg(a, 1), strArg(a, 2), args)
 	})
+	// Slack's sound playback couldn't play a sound PlaySound asked for
+	sync("soundFailed", func(a []json.RawMessage) (any, error) {
+		if f := t.opts.SoundFailed; f != nil {
+			go f(strArg(a, 0))
+		}
+		return nil, nil
+	})
 	sync("flannelCancel", func(a []json.RawMessage) (any, error) {
 		var key int64
 		jsonArg(a, 0, &key)

@@ -21,6 +21,7 @@ import (
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
@@ -159,6 +160,13 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string, deferJS boo
 		ClipboardRead:  func() (string, error) { return "", errors.New("clipboard reads aren't supported") },
 		PickFiles:      a.pickFiles,
 		Media:          pageMedia{}, // page_media.go: Slack's sound playback, and plugins'
+		// a notification sound the page couldn't play (CustomSounds with a
+		// file Go audio and the OS can't decode): Slack's own, natively
+		SoundFailed: func(url string) {
+			if pref, ok := huddleui.SoundPref(url); ok {
+				huddleui.PlaySlackSound(pref)
+			}
+		},
 		UI: taut.UIHooks{
 			// Called for the first runtime and again for a fresh one after
 			// a crash: drop every mounted root (their JS instances are

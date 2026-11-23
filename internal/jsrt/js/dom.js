@@ -734,17 +734,17 @@
     canPlayType() { return ''; }
     get paused() { return this._paused !== false; }
     get currentTime() { return this._media ? this._media.pos : 0; }
-    set currentTime(v) { const m = mediaOf(this); m.pos = +v || 0; m.ended = false; if (m.open) H.mediaCtl(m.id, 'seek', m.pos); }
+    set currentTime(v) { const m = mediaOf(this); m.pos = +v || 0; m.ended = false; if (m.open) H.mediaCtl(m.h, 'seek', m.pos); }
     get duration() { return this._media ? this._media.duration : NaN; }
     get volume() { return this._vol ?? 1; }
     set volume(v) {
       v = +v;
       if (!(v >= 0 && v <= 1)) throw new DOMException(`Failed to set the 'volume' property on 'HTMLMediaElement': The volume provided (${v}) is outside the range [0, 1].`, 'IndexSizeError');
       this._vol = v;
-      if (this._media?.open) H.mediaCtl(this._media.id, 'volume', v);
+      if (this._media?.open) H.mediaCtl(this._media.h, 'volume', v);
     }
     get muted() { return !!this._muted; }
-    set muted(v) { this._muted = !!v; if (this._media?.open) H.mediaCtl(this._media.id, 'muted', this._muted); }
+    set muted(v) { this._muted = !!v; if (this._media?.open) H.mediaCtl(this._media.h, 'muted', this._muted); }
     get ended() { return this._media ? this._media.ended : false; }
     get readyState() { return this._media ? this._media.ready : 0; }
     get error() { return this._media?.error ?? null; }
@@ -806,7 +806,8 @@
   // AbortError when pause() or a new load came first. play and pause are the
   // element's own events; the others are the player's (mediaPump).
   let mediaSeq = 0;
-  const mediaOf = (el) => el._media || (el._media = { id: ++mediaSeq, gen: 0, src: '', open: false, pos: 0, duration: NaN, ready: 0, ended: false, owesPause: false, error: null, pending: [] });
+  // h is the open player's handle (H.mediaOpen's), loading the src a load is under way for
+  const mediaOf = (el) => el._media || (el._media = { id: ++mediaSeq, gen: 0, src: '', open: false, h: 0, loading: null, pos: 0, duration: NaN, ready: 0, ended: false, owesPause: false, error: null, pending: [] });
   const fireMedia = (el, type) => setTimeout(() => el.dispatchEvent(new G.Event(type)), 0);
   const settlePlay = (m) => { const p = m.pending; m.pending = []; for (const w of p) w.resolve(); };
   const rejectPlay = (m, err) => { const p = m.pending; m.pending = []; for (const w of p) w.reject(err); };
@@ -816,11 +817,14 @@
     const src = el.src;
     if (!src) return Promise.reject(new DOMException('The element has no supported sources.', 'NotSupportedError'));
     const p = new Promise((resolve, reject) => m.pending.push({ resolve, reject }));
-    if (m.ended && !el.loop) { m.ended = false; m.pos = 0; if (m.open) H.mediaCtl(m.id, 'seek', 0); }
+    if (m.ended && !el.loop) { m.ended = false; m.pos = 0; if (m.open) H.mediaCtl(m.h, 'seek', 0); }
     if (m.owesPause) { m.owesPause = false; fireMedia(el, 'pause'); } // the end's, before this play
     if (el._paused !== false) { el._paused = false; fireMedia(el, 'play'); }
+    // a load already under way for src plays it once it's open, this play()
+    // settling with the first's (Chromium doesn't fetch the resource again)
+    if (m.loading === src) return p;
     if (!m.open || m.src !== src) mediaLoad(el, m, src);
-    else { H.mediaCtl(m.id, 'play'); if (m.ready >= 3) settlePlay(m); }
+    else { H.mediaCtl(m.h, 'play'); if (m.ready >= 3) settlePlay(m); }
     return p;
   };
   const mediaPause = (el) => {
@@ -831,14 +835,14 @@
       fireMedia(el, 'pause');
       if (m) rejectPlay(m, new DOMException('The play() request was interrupted by a call to pause().', 'AbortError'));
     }
-    if (m?.open) H.mediaCtl(m.id, 'pause');
+    if (m?.open) H.mediaCtl(m.h, 'pause');
   };
   const mediaReset = (el) => {
     const m = el._media;
     if (!m) return;
     m.gen++;
-    if (m.open) H.mediaCtl(m.id, 'close');
-    Object.assign(m, { src: '', open: false, pos: 0, duration: NaN, ready: 0, ended: false, owesPause: false, error: null });
+    if (m.open) H.mediaCtl(m.h, 'close');
+    Object.assign(m, { src: '', open: false, h: 0, loading: null, pos: 0, duration: NaN, ready: 0, ended: false, owesPause: false, error: null });
     if (el._paused === false) {
       el._paused = true;
       rejectPlay(m, new DOMException('The play() request was interrupted by a new load request.', 'AbortError'));
@@ -846,8 +850,9 @@
   };
   const mediaLoad = async (el, m, src) => {
     const gen = ++m.gen;
-    if (m.open) H.mediaCtl(m.id, 'close');
-    Object.assign(m, { src, open: false, ready: 0, duration: NaN, error: null });
+    if (m.open) H.mediaCtl(m.h, 'close');
+    Object.assign(m, { src, open: false, h: 0, loading: src, ready: 0, duration: NaN, error: null });
+    let h = 0;
     try {
       let data = null;
       const scheme = src.slice(0, Math.max(0, src.indexOf(':'))).toLowerCase();
@@ -857,26 +862,27 @@
         data = new Uint8Array(await res.arrayBuffer());
       }
       if (gen !== m.gen) return;
-      await H.mediaOpen(m.id, src, data);
+      h = await H.mediaOpen(src, data);
     } catch {
       if (gen !== m.gen) return;
+      m.loading = null;
       m.error = { code: 4, message: 'MEDIA_ELEMENT_ERROR: Format error', MEDIA_ERR_SRC_NOT_SUPPORTED: 4 };
       fireMedia(el, 'error');
       rejectPlay(m, new DOMException('Failed to load because no supported source was found.', 'NotSupportedError'));
       return;
     }
-    if (gen !== m.gen) { H.mediaCtl(m.id, 'close'); return; }
-    m.open = true;
-    H.mediaCtl(m.id, 'volume', el.volume);
-    H.mediaCtl(m.id, 'muted', el.muted);
-    H.mediaCtl(m.id, 'loop', !!el.loop);
-    if (m.pos > 0) H.mediaCtl(m.id, 'seek', m.pos);
-    if (el._paused === false) H.mediaCtl(m.id, 'play');
-    mediaPump(el, m, gen);
+    if (gen !== m.gen) { H.mediaCtl(h, 'close'); return; } // left behind: its own player only
+    Object.assign(m, { open: true, h, loading: null });
+    H.mediaCtl(h, 'volume', el.volume);
+    H.mediaCtl(h, 'muted', el.muted);
+    H.mediaCtl(h, 'loop', !!el.loop);
+    if (m.pos > 0) H.mediaCtl(h, 'seek', m.pos);
+    if (el._paused === false) H.mediaCtl(h, 'play');
+    mediaPump(el, m, gen, h);
   };
-  const mediaPump = async (el, m, gen) => {
+  const mediaPump = async (el, m, gen, h) => {
     for (;;) {
-      const ev = await H.mediaNext(m.id);
+      const ev = await H.mediaNext(h);
       if (!ev || gen !== m.gen) return;
       m.pos = ev.pos;
       if (ev.duration === ev.duration) m.duration = ev.duration;

@@ -162,6 +162,10 @@ type Options struct {
 	// Options.Media): Slack's sound playback (PlaySound) and whatever a
 	// plugin plays. nil: play() rejects, and PlaySound reports false.
 	Media jsrt.MediaHost
+	// SoundFailed is called (on its own goroutine) with a sound PlaySound
+	// asked for that the page's sound playback couldn't play (a plugin
+	// swapped in a file Clack can't decode): the caller plays it itself.
+	SoundFailed func(url string)
 	// TaskTimeout bounds one JS task (jsrt's Options.Timeout).
 	TaskTimeout time.Duration
 	// LifecycleTimeout is the start/stop limit (Taut: 5 s).

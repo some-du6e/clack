@@ -2319,7 +2319,9 @@ const stopSound = named('stop', (url, { logFailure = true } = {}) => {
   }
 })
 defineModule('sound-playback', { Dd: getAudioElement, TQ: createAudioElement, ZH: playSound, ds: stopSound })
-T.playSound = (url) => void playSound(url)
+// a sound the page couldn't play (a plugin swapped in a file Clack can't
+// decode): Clack plays the sound it asked for itself (Options.SoundFailed)
+T.playSound = (url) => void playSound(url, { onError: () => goOr(null, 'soundFailed', url) })
 
 Object.assign(T, {
   members,

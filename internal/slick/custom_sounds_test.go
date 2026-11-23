@@ -2,7 +2,6 @@ package slick
 
 import (
 	"bytes"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,9 +63,10 @@ func TestCustomSoundsLikeSlack(t *testing.T) {
 
 	playSound(h, slackSound)
 	got := opened("the user's sound", 2, func(o mediaOpened) bool { return o.src != slackSound })
-	want := "slick-custom-sounds://current/sound.mp3?p=" + url.QueryEscape(sound)
-	if got.src != strings.ReplaceAll(want, "+", "%20") && got.src != want {
-		t.Errorf("the element opened %q, want %q", got.src, want)
+	// its own protocol (how it spells the rest is the plugin's), and the
+	// bytes it serves are the chosen file's
+	if !strings.HasPrefix(got.src, "slick-custom-sounds:") {
+		t.Errorf("the element opened %q, want the plugin's slick-custom-sounds: URL", got.src)
 	}
 	if !bytes.Equal(got.data, body) {
 		t.Errorf("the element opened %d bytes, want the chosen file's %d (fetched through the plugin's protocol handler)", len(got.data), len(body))

@@ -4,8 +4,8 @@ Clack runs Taut's and Slick's plugins natively, from the published plugin Librar
 
 | | Plugins |
 |---|---:|
-| ✅ Works fully | 73 |
-| ⚠️ Partly works | 17 |
+| ✅ Works fully | 72 |
+| ⚠️ Partly works | 18 |
 | ❌ Doesn't work yet | 8 |
 
 A plugin both systems ship (under the same name or not) is one row in Preferences › Plugins › Browse; here each version has its own line.
@@ -35,6 +35,7 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Clear URLs | Slick | Automatically removes tracking elements from URLs you send | cleans links when you send, not when you paste |
 | Click to Load | Taut | Holds Spotify, SoundCloud and other music embeds until you click to load them | Load shows Clack's media box, not a player |
 | Custom Name Recording | Slick | Upload custom audio as your Slack name recording | can't decode audio, so nothing uploads |
+| Custom Sounds | Slick | Override Slack notification sounds with your own audio file. | Ogg Vorbis, FLAC or Linux AAC files play Slack's own sound |
 | Hide Resolved Tickets | Slick | Hide resolved questions in help channels so only the open ones are left | its header toggle isn't drawn; what it hides is unchecked |
 | Installed Apps | Slick | Show apps people authorized, who authorized an app, and its channel memberships. | the app marketplace page asks you to sign in |
 | Let Me See | Slick | Adds a Hide drawings button to the floating huddle bar shown during a screenshare | Hide drawings does nothing |
@@ -68,7 +69,6 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Copy Reacted | Slick | Copy the list of people who reacted to a message |
 | Copy Reacted | Taut | Copies the list of people who reacted to a message |
 | Custom Slackbot | Slick | Customize the name and avatar used for workspace custom responses |
-| Custom Sounds | Slick | Override Slack notification sounds with your own audio file. |
 | DeArrow | Slick | Replace clickbait YouTube titles and thumbnails with crowdsourced ones. Sends the IDs of YouTube videos you see to DeArrow (sponsor.ajay.app). |
 | Experiments | Slick | Enable Access to Experiments & other dev-only features in Slack! |
 | Experiments | Taut | Adds a tab for trying Slack's unreleased features |

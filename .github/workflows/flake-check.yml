@@ -5408,8 +5408,10 @@ jobs:
   # notification sound goes through Slack's sound playback on the page, so
   # Slick's CustomSounds, from Slick's build at the slick workflow's pin with
   # its main half, swaps it for the user's file through its protocol
-  # (slick); Notifications' sounds still play (ui). COUNT runs each.
-  # Dispatch with only=plugins-work-2.
+  # (slick); Notifications' sounds still play (ui). Its review's fixes: a
+  # second play() during a load doesn't silence the element (jsrt); the
+  # page branch of a notification's sound, every hooked sound reaching
+  # PlayHook (ui). COUNT runs each. Dispatch with only=plugins-work-2.
   plugins-work-2:
     if: ${{ !inputs.only || startsWith('plugins-work-2', inputs.only) }}
     runs-on: ubuntu-latest
@@ -5463,9 +5465,9 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 5m -run '^(TestMediaElementPlays|TestFileInputPicker)$' ./internal/jsrt || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestMediaElementPlays|TestMediaElementSecondPlayDuringLoad|TestFileInputPicker)$' ./internal/jsrt || rc=1
           go test -count="$COUNT" -timeout 8m -run '^(TestCustomSoundsLikeSlack|TestSlickPresenceThunks)$' ./internal/slick || rc=1
-          xvfb-run -a go test -count="$COUNT" -timeout 8m -run '^TestPrefsAuditAppliedRoundTripSounds$' ./internal/ui || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 8m -run '^(TestPrefsAuditAppliedRoundTripSounds|TestNotifySoundOnThePage)$' ./internal/ui || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
