@@ -588,7 +588,7 @@ func (a *App) StoredUsergroups() []Usergroup {
 		if g.DateDelete != 0 {
 			continue
 		}
-		out = append(out, Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: g.UserCount})
+		out = append(out, Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: g.UserCount, TeamID: g.TeamID})
 	}
 	return out
 }

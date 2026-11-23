@@ -50,17 +50,23 @@ const (
 )
 
 // cmdComposer is a composer in #general (a thread's when ts is set) over
-// the fake API.
-func cmdComposer(t *testing.T, ts string) (*Composer, *cmdHost, *fakeSlack) {
+// the fake API, the store seeded with Bobby and seed. Drafts are
+// process-global: the box's is cleared before, and after Close saves
+// whatever a failed command put back.
+func cmdComposer(t *testing.T, ts string, seed ...func(s *store.Store)) (*Composer, *cmdHost, *fakeSlack) {
 	t.Helper()
-	app, fs := syntheticApp(t, func(s *store.Store) {
+	app, fs := syntheticApp(t, append([]func(*store.Store){func(s *store.Store) {
 		s.PutUsers([]slack.User{{ID: tBobby, Name: "bobby", RealName: "Bobby Tables", Profile: slack.Profile{DisplayName: "bobby", RealName: "Bobby Tables"}}})
-	})
+	}}, seed...)...)
 	stubTyping(t)
 	withTaut(t, nil)
+	clearDraft(tChGen, ts)
 	h := &cmdHost{slickHost: slickHost{app: app, th: theme.New(false)}}
 	c := New(h, tChGen, ts)
-	t.Cleanup(c.Close)
+	t.Cleanup(func() {
+		c.Close()
+		clearDraft(tChGen, ts)
+	})
 	return c, h, fs
 }
 
@@ -224,10 +230,9 @@ func TestSlashRemindAloneOpensModal(t *testing.T) {
 	h.mu.Lock()
 	m, ok := h.overlays[0].(*popups.Modal)
 	h.mu.Unlock()
-	if !ok {
+	if !ok || m.Title() != "Reminder" {
 		t.Fatalf("overlay %T, want the Reminder modal", h.overlays[0])
 	}
-	_ = m
 	if k := len(fs.called("chat.command")); k != 0 {
 		t.Errorf("%d chat.command calls for /remind alone", k)
 	}
@@ -260,6 +265,7 @@ func TestSlashFailurePutsTextBack(t *testing.T) {
 	if got != "/nope hi" {
 		t.Fatalf("composer %q after the failure, want the command back", got)
 	}
+	c.ed.SetDoc(NewDoc()) // nothing left for Close to save as the box's draft
 }
 
 // TestSlashBroadcastWarningFirst: a command with a keyword goes through

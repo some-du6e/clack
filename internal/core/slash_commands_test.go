@@ -75,8 +75,17 @@ func TestTopicCommandLocal(t *testing.T) {
 	if err := run("<@U1|@alice> owns the release"); err != nil {
 		t.Fatal(err)
 	}
-	if p := f.last("conversations.setTopic"); p.Get("topic") != "<@U1|@alice> owns the release" || p.Get("channel") != "C1" {
+	if p := f.last("conversations.setTopic"); p.Get("topic") != "<@U1|@alice> owns the release" || p.Get("channel") != "C1" ||
+		p.Get("reason") != "submitChannelTopic" {
 		t.Errorf("setTopic %v", p)
+	}
+	// the composer's Submit (submitChannelTopic's cleaning) is the topic
+	// that goes out; the limit reads the value
+	if _, err := a.Command(ctx, topicOpts("C1", "<@U1|@alice> & co", "<@U1> &amp; co")); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.last("conversations.setTopic"); p.Get("topic") != "<@U1> &amp; co" {
+		t.Errorf("cleaned topic %q", p.Get("topic"))
 	}
 	if countCalls(f, "chat.command") != 0 {
 		t.Error("/topic went to chat.command")

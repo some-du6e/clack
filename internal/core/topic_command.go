@@ -16,8 +16,10 @@ import (
 // composer hands it over as Text, mentions as <@U…|label>). An empty one
 // does nothing; one longer than 250 characters (80 in a group DM under
 // mpdm_naming; channelTopicExceedsLimit) fails with the too-long text;
-// else conversations.setTopic, its failure in getChannelTopicError's
-// words. Both failures are CUSTOM_ERROR: Slackbot shows the text as is.
+// else submitChannelTopic (s0VR) sends it cleaned (Submit, as the Edit
+// topic dialog does: <@U…> for a mention, & < > escaped, phone numbers
+// linked), its failure in getChannelTopicError's words. Both failures are
+// CUSTOM_ERROR: Slackbot shows the text as is.
 func (a *App) topicCommand(ctx context.Context, o CommandOpts, cmd string) (CommandResult, error) {
 	if o.ThreadTS != "" && !a.threadCommandOK(o.Channel, cmd, slack.Command{}) {
 		return CommandResult{}, &CommandError{Command: cmd, Kind: CmdUnsupportedInThread}
@@ -33,7 +35,11 @@ func (a *App) topicCommand(ctx context.Context, o CommandOpts, cmd string) (Comm
 	if jsLen(topic) > max {
 		return CommandResult{}, customErr(cmd, channelTopicError("too_long"))
 	}
-	if err := a.SetTopic(ctx, o.Channel, topic); err != nil {
+	// submitChannelTopic: the value cleaned (o.Submit), with its reason
+	if o.Submit != "" {
+		topic = o.Submit
+	}
+	if err := a.SubmitChannelTopic(ctx, o.Channel, topic); err != nil {
 		code := ""
 		var se *slack.Error
 		if errors.As(err, &se) {

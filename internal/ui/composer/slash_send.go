@@ -1,14 +1,18 @@
 package composer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // A command goes through prepareAndSendMessage like any message (the
@@ -54,11 +58,23 @@ func (c *Composer) commandUI() *commandUI {
 
 // processed is prepareAndSendMessage's processedDelta for the thunk's
 // delta: the message processor (the smart-symbol pass and the mention
-// auto-slugging, slash_mentions.go) and linkify.
+// auto-slugging, slash_mentions.go) and linkify. The composer's own
+// delta comes processed already (submit's prepareMessage): run once, as
+// rNCs is, a second auto-slugging pass would resolve names the first left
+// as text (a name now starting its own op after a resolved one). A delta
+// a plugin changed or relayed is processed here.
 func (j *sendJob) processed(a prepareSendArgs) qDelta {
 	q := qFromSlackDelta(a.Delta)
-	q, _ = processQ(q, j.store)
+	if j.handed == nil || !sameDelta(a.Delta, j.handed) {
+		q, _ = processQ(q, j.store)
+	}
 	return linkifyQ(q)
+}
+
+// sameDelta reports whether delta encodes to handed.
+func sameDelta(delta map[string]any, handed []byte) bool {
+	b, err := json.Marshal(delta)
+	return err == nil && bytes.Equal(b, handed)
 }
 
 // errMissingCommand is chatCommandApi's "Missing required params".
@@ -92,6 +108,9 @@ func (j *sendJob) slashCommand(ctx context.Context, a prepareSendArgs, q qDelta)
 	// of deltaWithoutCmd); chat.command never carries it (Params is set)
 	rest, _ := qToDoc(qNormalize(args.Rest))
 	o.Text = TextyValue(rest)
+	// and /topic's topic as submitChannelTopic sends it (TextyInput.Submit)
+	p := uipref.Get()
+	o.Submit = LinkifyPhoneNumbers(CleanMessageText(o.Text, p.ConvertEmoticons && !p.EmojiAsText))
 	res, err := runCommand(ctx, j.api, o)
 	if err == nil && res.KeepInput && j.ui != nil && j.ui.keep != nil {
 		d, _ := qToDoc(qNormalize(q)) // executeCommand: setContents(the command's delta)
@@ -170,8 +189,16 @@ func qFromSlackDelta(delta map[string]any) qDelta {
 				if name == "" {
 					continue
 				}
-				q.push(qOp{k: qEmb, emb: &qEmbed{atom: &Atom{Kind: AtomEmoji, ID: name, Text: ":" + name + ":",
-					Uni: field("slackemoji", "unicode")}}, attrs: at})
+				uni := field("slackemoji", "unicode")
+				if uni == "" {
+					// createEmojiChunkFromOp: a standard emoji (in the emoji
+					// data, isStandardEmojiFromParsedEmoji) is its unicode, its
+					// skin tone's; a custom one keeps none
+					if _, text, ok := emoji.Standard(name); ok {
+						uni = text
+					}
+				}
+				q.push(qOp{k: qEmb, emb: &qEmbed{atom: &Atom{Kind: AtomEmoji, ID: name, Text: ":" + name + ":", Uni: uni}}, attrs: at})
 			case truthy(e["divider"]) || truthy(e["slackhorizontalrule"]):
 				q.push(qOp{k: qEmb, emb: &qEmbed{hr: true}, attrs: at})
 			}
@@ -285,6 +312,12 @@ var savedNS = i18n.NS("saved_for_later")
 // of the input's contents with the defaults (no processing, links as
 // typed).
 func (c *Composer) openReminderModal(ch, ts string) {
+	m, _ := c.reminderModal(ch, ts)
+	c.h.ShowOverlay(m)
+}
+
+// reminderModal is openReminderModal's dialog and its Description input.
+func (c *Composer) reminderModal(ch, ts string) (*popups.Modal, *TextyInput) {
 	_, _ = ch, ts // the modal names no conversation without a message
 	in := NewTextyInput(c.h, "", savedNS.T("Remind me to\u2026"), 0)
 	api := c.api
@@ -297,5 +330,5 @@ func (c *Composer) openReminderModal(ch, ts string) {
 			}
 		}()
 	})
-	c.h.ShowOverlay(m)
+	return m, in
 }

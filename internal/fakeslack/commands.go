@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -179,7 +178,7 @@ func commandText(f url.Values) (string, error) {
 			str := func(k string) string { v, _ := el[k].(string); return v }
 			switch str("type") {
 			case "text":
-				if !pre && cmdSpacesBeforeBreak.ReplaceAllString(str("text"), "$1$3") != str("text") {
+				if !pre && cmdSpacesBeforeBreak(str("text")) {
 					return fmt.Errorf("spaces before a line break in %q", str("text"))
 				}
 				b.WriteString(str("text"))
@@ -269,5 +268,37 @@ func commandText(f url.Values) (string, error) {
 	return b.String(), nil
 }
 
-// cmdSpacesBeforeBreak is convertDeltaToBlocks' K.
-var cmdSpacesBeforeBreak = regexp.MustCompile(`(?m)(^|\S)( +)(\n)`)
+// cmdSpacesBeforeBreak reports a match of convertDeltaToBlocks' K,
+// /(^|\S)( +)(\n)/gm, with JavaScript's classes: spaces right before a
+// "\n" that follow a line's start (after \n, \r, U+2028 or U+2029) or a
+// character that isn't JavaScript white space. Go's \S is ASCII only (it
+// matches U+00A0), and its (?m)^ follows \n alone.
+func cmdSpacesBeforeBreak(s string) bool {
+	rs := []rune(s)
+	for i := 0; i < len(rs); i++ {
+		if rs[i] != ' ' {
+			continue
+		}
+		j := i
+		for j < len(rs) && rs[j] == ' ' {
+			j++
+		}
+		if j < len(rs) && rs[j] == '\n' && (i == 0 || jsLineTerminator(rs[i-1]) || !jsWhiteSpace(rs[i-1])) {
+			return true
+		}
+		i = j
+	}
+	return false
+}
+
+// jsWhiteSpace is JavaScript's \s.
+func jsWhiteSpace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ', 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff:
+		return true
+	}
+	return r >= 0x2000 && r <= 0x200a
+}
+
+// jsLineTerminator is what JavaScript's multiline ^ follows.
+func jsLineTerminator(r rune) bool { return r == '\n' || r == '\r' || r == 0x2028 || r == 0x2029 }

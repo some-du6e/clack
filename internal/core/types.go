@@ -204,6 +204,9 @@ type User struct {
 	HuddleExpires                 int64
 	Agent                         bool // agent_status consistently_an_agent (read for the badge only under support_lots_of_agents; sender.go)
 	Workflow, Agentforce, AppUser bool // is_workflow_bot, is_agentforce_bot, is_app_user (the sender badge; sender.go)
+	// ProfileOnly is is_profile_only_user, NoInteract interact false (an
+	// information barrier): the member searches leave both out.
+	ProfileOnly, NoInteract bool
 
 	// TeamID is the member's team as Slack's computeLocality reads it
 	// (the org on Enterprise Grid for org members, else team_id).
@@ -943,6 +946,11 @@ type CommandOpts struct {
 	AppID string
 	// TeamID is slashCommandApplicableTeamId (chat.command team_id).
 	TeamID string
+	// Submit is Text as submitChannelTopic sends it (s0VR:
+	// linkifyPhoneNumbers(clean_message_text_with_state(value)), the
+	// composer's TextyInput.Submit rule): the local /topic's topic ("":
+	// Text as it is).
+	Submit string
 }
 
 // CommandParam is one of a command's parsed arguments

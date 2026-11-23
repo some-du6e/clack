@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"weak"
 
@@ -103,6 +104,11 @@ type Composer struct {
 	// (messages.ChannelView.JumpToOwnSend, ThreadView.JumpToOwnSend).
 	OnSend func(cid string, files bool)
 
+	// EditInThread marks an edit composer opened in a thread pane or the
+	// Threads view, set by whoever opens it: saveMessageEdit (IHC0) runs
+	// the processor with inThread from the view context, so such an edit
+	// resolves no broadcast keywords and one in the channel does.
+	EditInThread bool
 	// InThreadsView marks the Threads view's inline reply composer:
 	// .p-threads_view .p-threads_footer__input_container has margin 0 20px,
 	// so none of the flexpane's 12px over the box.
@@ -1359,6 +1365,9 @@ func (c *Composer) schedule(t time.Time) {
 	if c.edit != nil || c.ed.Empty() || !t.After(time.Now()) {
 		return // the menu's times are ahead; the dialog only takes 5 min to 120 days out
 	}
+	// a refused or failed schedule puts back what was typed (orig), as a
+	// send's restore does, not the processed document's chips
+	orig := c.ed.Doc().Clone()
 	doc := c.prepareMessage(c.ed.Doc()) // prepareAndSendMessage with dateScheduled: the processor too
 	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
 	api, ch, ts := c.api, c.ch, c.ts
@@ -1374,12 +1383,12 @@ func (c *Composer) schedule(t time.Time) {
 			j := &sendJob{api: api, ch: ch, ts: ts, confirm: c.confirmBroadcast}
 			enabled := api.broadcastEnabled(ctx, ch)
 			if !j.confirmed(ctx, broadcastAsk{Channel: ch, Used: used, Scheduled: true}, enabled) {
-				c.restore(doc)
+				c.restore(orig)
 				return
 			}
 			if msg, no := j.prohibited(ctx, ch, ts, used, enabled); no {
 				api.localEphemeral(ch, ts, msg)
-				c.restore(doc)
+				c.restore(orig)
 				return
 			}
 		}
@@ -1389,7 +1398,7 @@ func (c *Composer) schedule(t time.Time) {
 			// scheduleSendMessage's failure: a local ephemeral
 			// (scheduleSendError); the message stays a draft
 			api.localEphemeral(ch, ts, scheduleFailedText)
-			c.restore(doc)
+			c.restore(orig)
 		}
 		// success says nothing: Slack's context bar shows the schedule
 	}()
@@ -1502,7 +1511,7 @@ func (c *Composer) submit() {
 		c.saveEditWithFiles(c.prepareMessage(d))
 		return
 	}
-	doc := c.prepareMessage(d)
+	doc, store := c.prepareMessageStore(d)
 	text := doc.Mrkdwn()
 	blocks := doc.RichTextBlocks()
 	api, ts := c.api, c.ts
@@ -1553,7 +1562,7 @@ func (c *Composer) submit() {
 		return
 	}
 
-	o := &outgoing{doc: doc, orig: d.Clone(), text: text, blocks: blocks, broadcast: c.broadcast && ts != ""}
+	o := &outgoing{doc: doc, orig: d.Clone(), text: text, blocks: blocks, broadcast: c.broadcast && ts != "", store: &store, processed: true}
 	if c.att.Len() == 0 {
 		// A slash command (the slash test on the processed delta, s4/N)
 		// goes through prepareAndSendMessage like a message: the broadcast
@@ -1604,6 +1613,12 @@ func (c *Composer) submit() {
 // outgoing is a message on its way out of the composer.
 type outgoing struct {
 	doc *Doc
+	// store is what the processor read for doc (prepareMessageStore): the
+	// job's searches reuse it (nil: the job takes the composer's).
+	// processed: doc is the processor's output already, so the job doesn't
+	// run it a second time over the same delta (Slack's rNCs runs once)
+	store     *slugStore
+	processed bool
 	// orig is the composer's document as it was (InputContainer's
 	// contents): what a failed send puts back (nil: doc)
 	orig *Doc
@@ -1667,7 +1682,12 @@ func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 	hasFiles := !batch.empty()
 	job = &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
 		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast,
-		store: c.slugStore(), ui: c.commandUI()}
+		ui: c.commandUI()}
+	if o.store != nil {
+		job.store = *o.store
+	} else {
+		job.store = c.slugStore()
+	}
 	job.sent = func(cid string, files bool) {
 		c.later(func() {
 			if c.OnSend != nil {
@@ -1694,8 +1714,15 @@ func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 			c.restoreSend(o)
 			return
 		}
+		// Mod+Z's unsend window opens for a message the job posted
+		// (prepareAndSendMessage's updateMessageEligibleForUnsending, past
+		// handleSlashCommand): a command, the reminder modal or a huddle
+		// returns nil without posting, and Mod+Z then undoes as before
+		posted := job.posted.Load()
 		c.later(func() {
-			c.unsendBy = time.Now().Add(unsendWindow)
+			if posted {
+				c.unsendBy = time.Now().Add(unsendWindow)
+			}
 			c.att.dropPreviews(batch.chips...) // sent: no viewer shows them any more
 		})
 	}
@@ -1803,6 +1830,12 @@ type sendJob struct {
 	// needs from the composer (nil: nothing)
 	store slugStore
 	ui    *commandUI
+	// posted is set once deliver's post or files share went through: what
+	// arms the unsend window (a command never gets there)
+	posted atomic.Bool
+	// handed is the processed delta args handed out, as JSON: the one the
+	// processor already ran over (processed)
+	handed []byte
 }
 
 func (j *sendJob) run(ctx context.Context) error {
@@ -1834,6 +1867,9 @@ func (j *sendJob) args() prepareSendArgs {
 	delta := j.o.delta
 	if delta == nil {
 		delta = j.o.doc.Delta()
+		if j.o.processed {
+			j.handed, _ = json.Marshal(delta)
+		}
 	}
 	return prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
 		ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view,
@@ -1868,9 +1904,13 @@ func (j *sendJob) deliver(ctx context.Context, ch, ts, text string, blocks json.
 			// (no jumpToTimestamp there), then the uploads and files.share
 			j.sent("", true)
 		}
-		return sendFiles(ctx, j.api, ch, ts, comment, blocks, broadcast, j.prepared, j.pending, j.raw)
+		err := sendFiles(ctx, j.api, ch, ts, comment, blocks, broadcast, j.prepared, j.pending, j.raw)
+		j.posted.Store(err == nil)
+		return err
 	}
-	return postMessage(ctx, j.api, ch, ts, text, blocks, broadcast, j.sent, j.o.attachments)
+	err := postMessage(ctx, j.api, ch, ts, text, blocks, broadcast, j.sent, j.o.attachments)
+	j.posted.Store(err == nil)
+	return err
 }
 
 // checkThenSend runs the SendChecks hook (composer.addSendCheck) and

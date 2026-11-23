@@ -1432,6 +1432,7 @@ func (a *App) userOf(u *slack.User) User {
 		HuddleChannel: u.Profile.HuddleChannel, HuddleExpires: u.Profile.HuddleExpires,
 		Stranger: u.IsStranger, BotID: u.Profile.BotID, AppID: u.Profile.APIAppID,
 		Workflow: u.IsWorkflowBot, Agentforce: u.IsAgentforceBot, AppUser: u.IsAppUser,
+		ProfileOnly: u.IsProfileOnlyUser, NoInteract: u.Interact != nil && !*u.Interact,
 		DisplayName: strings.TrimSpace(u.Profile.DisplayName), FirstName: u.Profile.FirstName, LastName: u.Profile.LastName,
 	}
 	if eu := u.EnterpriseUser; eu != nil {
