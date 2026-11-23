@@ -3231,6 +3231,43 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # canvas-cursor (2026-11-23): Quip's cursors over a canvas
+  # (canvas-controller CSS): the hand on a link, a person or channel
+  # mention, a file or canvas link, an editor's date and the checklist
+  # box, the text cursor on plain text and the title, a viewer's date
+  # still text, a table cell's date as the text's (canvasview
+  # cursor_test.go); a click on an editor's date in a block Clack can't
+  # edit yet gives the can't-edit toast, as the block's text does
+  # (TestCanvasDateClickRefuses); a control that holds a link parses as
+  # that link, not a date (canvas control_link_test.go).
+  # Dispatch with only=canvas-cursor.
+  canvas-cursor:
+    # dispatch only: its tests' files aren't in the push paths
+    if: ${{ inputs.only != '' && startsWith('canvas-cursor', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: canvas, canvasview (COUNT runs each)
+        run: |
+          rc=0
+          go test -count=$COUNT -v -timeout 10m -run '^TestControlLinkIsLink$' ./internal/canvas/ || rc=1
+          go test -count=$COUNT -v -timeout 20m -run '^(TestCanvasCursors|TestCanvasCursorsReadOnly|TestCanvasDateClickRefuses)$' ./internal/ui/canvasview/ || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # system-dm-avatar (2026-11-21): the Slack system user (USLACK) drawn as
   # Slack's bundled logo (getMemberProfileImage 6Knt: n8qp) everywhere:
   # imgcache rasterizes that one shipped SVG and no other; the store's
@@ -5353,6 +5390,7 @@ jobs:
       - profile-role-band
       - inspect-blur-fast
       - canvas-jumps
+      - canvas-cursor
       - system-dm-avatar
       - caret-align
       - composer-toolbar
