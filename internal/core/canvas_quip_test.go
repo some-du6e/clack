@@ -115,3 +115,39 @@ func TestCanvasModelLoadFailure(t *testing.T) {
 		t.Errorf("a file that isn't a canvas: %v", err)
 	}
 }
+
+// The model is held only to read or change it, never across a call: a
+// reader doesn't wait on a fetch-latest in flight (the review of B1: the
+// lock was held across load-data and fetch-latest, so CanvasModel, called
+// from the frame, would have waited out the network).
+func TestCanvasModelReadsDuringCalls(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	if err := a.LoadCanvasModel(ctx, fakeslack.CanvasShared); err != nil {
+		t.Fatal(err)
+	}
+	q := a.quipCanvas(fakeslack.CanvasShared)
+	if q == nil {
+		t.Fatal("no model state after a load")
+	}
+	before := fs.CallCount("canvas/fetch-latest")
+	fs.SetFault("canvas/fetch-latest", fakeslack.Fault{Delay: 2 * time.Second, Times: 1})
+	done := make(chan error, 1)
+	go func() { done <- a.fetchCanvasModel(ctx, fakeslack.CanvasShared, q) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for fs.CallCount("canvas/fetch-latest") == before {
+		if time.Now().After(deadline) {
+			t.Fatal("fetch-latest never went out")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	start := time.Now()
+	read := false
+	a.CanvasModel(fakeslack.CanvasShared, func(d *quip.Doc) { read = d != nil })
+	if waited := time.Since(start); !read || waited > 500*time.Millisecond {
+		t.Errorf("CanvasModel during a fetch: read a model %v, after %v", read, waited)
+	}
+	if err := <-done; err != nil {
+		t.Errorf("the fetch: %v", err)
+	}
+}

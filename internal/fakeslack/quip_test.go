@@ -263,9 +263,32 @@ func TestQuipFetchFollowsOtherEdits(t *testing.T) {
 	}
 }
 
-// save posts edit-document as Slack's client does.
+// save posts edit-document as Slack's client does. title "auto" sends the
+// title metadata of d's title section (as every save of a canvas does),
+// "" no title at all, anything else that title with the right rich text.
 func save(t *testing.T, c *slack.Client, d *quip.Doc, seq int, title string, data *quip.DocumentData) (*quip.EditAnswer, error) {
 	t.Helper()
+	rtml := ""
+	for _, sec := range d.Sections() {
+		if sec.Type != nil && *sec.Type == quip.TypeTitle {
+			rtml = quip.SectionRTML(sec)
+		}
+	}
+	for _, sec := range data.Sections {
+		if sec.Content != nil && sec.Content.Title != nil {
+			rtml = quip.SectionRTML(&sec)
+		}
+	}
+	meta, err := quip.TitleMetadata(rtml)
+	if err != nil {
+		t.Fatalf("the title's metadata: %v", err)
+	}
+	if data.TitleRichText == nil {
+		data.TitleRichText = meta.RichText
+	}
+	if title == "auto" {
+		title = meta.Title
+	}
 	form := []slack.CanvasField{{Name: "thread", Value: *d.Thread.ID}, {Name: "document", Value: *d.Document.ID}, {Name: "retry_count", Value: "0"},
 		{Name: "session", Value: "0123456789ab"}, {Name: "sequence", Value: strconv.Itoa(seq)}, {Name: "data_binary", Value: quip.MarshalBase64(data)}}
 	if title != "" {
@@ -288,7 +311,7 @@ func TestQuipSaveShowsInTheExport(t *testing.T) {
 	p := findText(t, d, "Agenda")
 	edit := quip.Section{ID: p.ID, Sequence: p.Sequence, Content: &quip.Content{Text: &quip.ContentText{Text: quip.Ptr("Agenda <i>changed</i> &amp; kept")}},
 		Modified: quip.Ptr(true), LocalSequence: quip.Ptr(int64(1)), TraceID: quip.Ptr("0123456789ab-0")}
-	a, err := save(t, c, d, 1, "Weekly sync notes", &quip.DocumentData{Sections: []quip.Section{edit}})
+	a, err := save(t, c, d, 1, "auto", &quip.DocumentData{Sections: []quip.Section{edit}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +356,7 @@ func TestQuipSaveShowsInTheExport(t *testing.T) {
 	para := quip.Section{ID: quip.Ptr(np), Sequence: quip.Ptr(int64(0)), Type: quip.Ptr(quip.TypeText), Style: quip.Ptr(quip.StylePlain),
 		SectionClass: quip.Ptr(quip.ClassSection), Position: quip.Ptr(paraPos),
 		Content: &quip.Content{Text: &quip.ContentText{Text: quip.Ptr(`Ping <control id="` + ctl + `"></control>`)}}, Parents: &quip.Parents{}}
-	if _, err := save(t, c, d2, 2, "Weekly sync notes", &quip.DocumentData{Sections: []quip.Section{ctrl, para}}); err != nil {
+	if _, err := save(t, c, d2, 2, "auto", &quip.DocumentData{Sections: []quip.Section{ctrl, para}}); err != nil {
 		t.Fatal(err)
 	}
 	fc, _ = s.Canvas(CanvasShared)
@@ -361,19 +384,20 @@ func TestQuipSaveRefusals(t *testing.T) {
 		seq   int
 		code  int
 	}{
-		{"stale sequence", quip.Section{ID: p.ID, Sequence: quip.Ptr(*p.Sequence - 1), Content: text("x")}, "T", 1, 409},
-		{"sequence ahead", quip.Section{ID: p.ID, Sequence: quip.Ptr(*p.Sequence + 1), Content: text("x")}, "T", 2, 400},
-		{"no sequence", quip.Section{ID: p.ID, Content: text("x")}, "T", 3, 400},
-		{"unknown id", quip.Section{ID: quip.Ptr("temp:C:XYZ0123"), Sequence: quip.Ptr(int64(0)), Content: text("x")}, "T", 4, 400},
-		{"new id, sequence", quip.Section{ID: quip.Ptr(newID), Sequence: quip.Ptr(int64(5)), Position: quip.Ptr("zz:temp"), Content: text("x")}, "T", 5, 400},
-		{"new id, no temp position", quip.Section{ID: quip.Ptr(newID), Sequence: quip.Ptr(int64(0)), Position: quip.Ptr("zz"), Content: text("x")}, "T", 6, 400},
-		{"thread id", quip.Section{ID: p.ID, Sequence: p.Sequence, ThreadID: d.Thread.ID, Content: text("x")}, "T", 7, 400},
-		{"merged state", quip.Section{ID: p.ID, Sequence: p.Sequence, MergedState: quip.Ptr(quip.MergedFromLocal)}, "T", 8, 400},
-		{"type and style", quip.Section{ID: p.ID, Sequence: p.Sequence, Type: quip.Ptr(quip.TypeList), Style: quip.Ptr(quip.StyleH1)}, "T", 9, 400},
-		{"missing control", quip.Section{ID: p.ID, Sequence: p.Sequence, Content: text(`<control id="temp:C:FAKnone"></control>`)}, "T", 10, 400},
-		{"RTML Slack gives up on", quip.Section{ID: p.ID, Sequence: p.Sequence, Content: text("<b>a<b>b</b></b>")}, "T", 11, 400},
-		{"invalid UTF-8", quip.Section{ID: p.ID, Sequence: p.Sequence, Content: text("a\xffb")}, "T", 12, 400},
+		{"stale sequence", quip.Section{ID: p.ID, Sequence: quip.Ptr(*p.Sequence - 1), Content: text("x")}, "auto", 1, 409},
+		{"sequence ahead", quip.Section{ID: p.ID, Sequence: quip.Ptr(*p.Sequence + 1), Content: text("x")}, "auto", 2, 400},
+		{"no sequence", quip.Section{ID: p.ID, Content: text("x")}, "auto", 3, 400},
+		{"unknown id", quip.Section{ID: quip.Ptr("temp:C:XYZ0123"), Sequence: quip.Ptr(int64(0)), Content: text("x")}, "auto", 4, 400},
+		{"new id, sequence", quip.Section{ID: quip.Ptr(newID), Sequence: quip.Ptr(int64(5)), Position: quip.Ptr("zz:temp"), Content: text("x")}, "auto", 5, 400},
+		{"new id, no temp position", quip.Section{ID: quip.Ptr(newID), Sequence: quip.Ptr(int64(0)), Position: quip.Ptr("zz"), Content: text("x")}, "auto", 6, 400},
+		{"thread id", quip.Section{ID: p.ID, Sequence: p.Sequence, ThreadID: d.Thread.ID, Content: text("x")}, "auto", 7, 400},
+		{"merged state", quip.Section{ID: p.ID, Sequence: p.Sequence, MergedState: quip.Ptr(quip.MergedFromLocal)}, "auto", 8, 400},
+		{"type and style", quip.Section{ID: p.ID, Sequence: p.Sequence, Type: quip.Ptr(quip.TypeList), Style: quip.Ptr(quip.StyleH1)}, "auto", 9, 400},
+		{"missing control", quip.Section{ID: p.ID, Sequence: p.Sequence, Content: text(`<control id="temp:C:FAKnone"></control>`)}, "auto", 10, 400},
+		{"RTML Slack gives up on", quip.Section{ID: p.ID, Sequence: p.Sequence, Content: text("<b>a<b>b</b></b>")}, "auto", 11, 400},
+		{"invalid UTF-8", quip.Section{ID: p.ID, Sequence: p.Sequence, Content: text("a\xffb")}, "auto", 12, 400},
 		{"no title", quip.Section{ID: p.ID, Sequence: p.Sequence, Content: text("x")}, "", 13, 400},
+		{"a title the title section doesn't give", quip.Section{ID: p.ID, Sequence: p.Sequence, Content: text("x")}, "Another title", 14, 400},
 	} {
 		t.Run(k.name, func(t *testing.T) {
 			_, err := save(t, c, d, k.seq, k.title, &quip.DocumentData{Sections: []quip.Section{k.sec}})
@@ -385,7 +409,7 @@ func TestQuipSaveRefusals(t *testing.T) {
 	}
 	// the session's sequence has to go up
 	ok := quip.Section{ID: p.ID, Sequence: p.Sequence, Content: text("fine")}
-	if _, err := save(t, c, d, 50, "T", &quip.DocumentData{Sections: []quip.Section{ok}}); err != nil {
+	if _, err := save(t, c, d, 50, "auto", &quip.DocumentData{Sections: []quip.Section{ok}}); err != nil {
 		t.Fatalf("a good save: %v", err)
 	}
 	after, _ := json.Marshal(s.QuipSections(CanvasShared))
@@ -393,7 +417,7 @@ func TestQuipSaveRefusals(t *testing.T) {
 		t.Error("the good save changed nothing")
 	}
 	var he *slack.HTTPError
-	if _, err := save(t, c, d, 50, "T", &quip.DocumentData{Sections: []quip.Section{ok}}); !errors.As(err, &he) || he.Status != 409 {
+	if _, err := save(t, c, d, 50, "auto", &quip.DocumentData{Sections: []quip.Section{ok}}); !errors.As(err, &he) || he.Status != 409 {
 		t.Errorf("the same session sequence again: %v", err)
 	}
 	// a canvas the viewer can only read
@@ -401,7 +425,7 @@ func TestQuipSaveRefusals(t *testing.T) {
 	cs.mu.Lock()
 	cs.byID[CanvasShared].ViewerAccess = "read"
 	cs.mu.Unlock()
-	if _, err := save(t, c, d, 60, "T", &quip.DocumentData{Sections: []quip.Section{ok}}); !errors.As(err, &he) || he.Status != 403 {
+	if _, err := save(t, c, d, 60, "auto", &quip.DocumentData{Sections: []quip.Section{ok}}); !errors.As(err, &he) || he.Status != 403 {
 		t.Errorf("a read-only canvas: %v", err)
 	}
 }

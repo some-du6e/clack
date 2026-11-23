@@ -767,7 +767,11 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			}
 			continue
 		}
-		data, err := io.ReadAll(resp.Body)
+		var rd io.Reader = resp.Body
+		if _, ok := out.(*canvasAnswer); ok {
+			rd = io.LimitReader(resp.Body, MaxCanvasAnswer+1) // past quip's cap nothing would read it
+		}
+		data, err := io.ReadAll(rd)
 		resp.Body.Close()
 		if err != nil {
 			unanswered(ctx, u, err) // cut off before the whole answer came
@@ -779,6 +783,9 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		if bin, ok := out.(*canvasAnswer); ok { // a canvas call: binary protobuf (CanvasCall)
+			if len(data) > MaxCanvasAnswer {
+				return fmt.Errorf("slack %s: an answer over %d bytes", method, MaxCanvasAnswer)
+			}
 			if err := canvasJSONError(method, resp, data); err != nil {
 				return err
 			}

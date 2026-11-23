@@ -555,6 +555,7 @@ func (a *App) CloseCanvas(ctx context.Context, id string) error {
 	if !last {
 		return nil
 	}
+	a.flushCanvasSaves(ctx, id) // Slack saves once more on unload (canvas_edit.go)
 	a.dropCanvasModel(id)
 	return a.C.Call(ctx, "files.close", url.Values{"file_id": {id}}, nil)
 }

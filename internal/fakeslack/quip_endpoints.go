@@ -94,17 +94,23 @@ func (s *Server) quipCall(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(s.Latency)
 	}
 	fault, faulted := s.takeFault(method)
-	if faulted {
-		if fault.Delay > 0 {
-			time.Sleep(fault.Delay)
-		}
-		if !fault.AfterHandle && s.applyFault(w, fault) {
-			return
-		}
+	if faulted && fault.Delay > 0 {
+		time.Sleep(fault.Delay)
 	}
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 4*quip.MaxMessage))
 	req := QuipRequest{Path: path}
-	status, answer, jsonErr := s.quipAnswer(r, path, string(body), &req)
+	if faulted && !fault.AfterHandle && (fault.HangUp || fault.Status != 0 || fault.Error != "") {
+		// the call is read and logged, never applied
+		s.quipAnswer(r, path, string(body), &req, false)
+		req.Status, req.Why = fault.Status, "a fault"
+		cs := s.canvasStore()
+		cs.mu.Lock()
+		cs.quipLog = append(cs.quipLog, req)
+		cs.mu.Unlock()
+		s.applyFault(w, fault)
+		return
+	}
+	status, answer, jsonErr := s.quipAnswer(r, path, string(body), &req, true)
 	cs := s.canvasStore()
 	cs.mu.Lock()
 	cs.quipLog = append(cs.quipLog, req)
@@ -141,7 +147,7 @@ var sessionRE = regexp.MustCompile(`^[0-9a-f]{12}$`)
 
 // quipAnswer checks a call and answers it: the status, the answer's
 // bytes, or the JSON error Slack's API layer would give instead.
-func (s *Server) quipAnswer(r *http.Request, path, body string, req *QuipRequest) (status int, answer []byte, jsonErr string) {
+func (s *Server) quipAnswer(r *http.Request, path, body string, req *QuipRequest, apply bool) (status int, answer []byte, jsonErr string) {
 	bad := func(code int, why string, args ...any) (int, []byte, string) {
 		req.Status, req.Why = code, fmt.Sprintf(why, args...)
 		return code, nil, ""
@@ -225,6 +231,9 @@ func (s *Server) quipAnswer(r *http.Request, path, body string, req *QuipRequest
 	// so no unknown field, no field out of order, every number packed
 	if again := quip.Marshal(msg); string(again) != string(raw) {
 		return bad(http.StatusBadRequest, "%s isn't as Slack's encoder writes it (unknown fields, order or packing)", field)
+	}
+	if !apply {
+		return http.StatusOK, nil, ""
 	}
 	cs := s.canvasStore()
 	cs.mu.Lock()
@@ -471,6 +480,27 @@ func (cs *canvasStore) quipSave(s *Server, req *QuipRequest) (int, []byte, strin
 		}
 		if !quip.ValidUTF8(sec) {
 			return bad(http.StatusBadRequest, "section %s: invalid UTF-8", id)
+		}
+	}
+	// the title metadata every save sends: the title section's, after
+	// this save (Slack's extractTitleMetadata, quip.TitleMetadata)
+	titleRTML := ""
+	for _, sec := range m.secs {
+		if sec.Type != nil && *sec.Type == quip.TypeTitle && (sec.Deleted == nil || !*sec.Deleted) {
+			titleRTML = quip.SectionRTML(sec)
+			if b := inBundle[*sec.ID]; b != nil && b.Content != nil && b.Content.Title != nil {
+				titleRTML = quip.SectionRTML(b)
+			}
+		}
+	}
+	if want, err := quip.TitleMetadata(titleRTML); err == nil {
+		switch {
+		case f.Get("title") != want.Title:
+			return bad(http.StatusBadRequest, "title %q, the title section gives %q", f.Get("title"), want.Title)
+		case string(quip.Marshal(d.TitleRichText)) != string(quip.Marshal(want.RichText)):
+			return bad(http.StatusBadRequest, "title_rich_text_api isn't the title section's")
+		case len(d.TitleSlackEmojiInfo) != 0:
+			return bad(http.StatusBadRequest, "title emoji info for a title without emoji")
 		}
 	}
 	// apply: each set field replaces the stored one; a new sequence each

@@ -20,6 +20,9 @@ type Doc struct {
 	// order is the Section/<document id> index: section id -> sort value
 	// (the position_path).
 	order map[string]string
+	// added is the ids in the order they came into the model, the order
+	// of Slack's entitiesById_ map, which a save's bundle follows.
+	added []string
 }
 
 // ErrNotFound is load-data's answer without a response, which Slack's
@@ -151,8 +154,37 @@ func (d *Doc) put(s *Section) bool {
 		return false
 	}
 	c := *s
+	if _, known := d.sections[id]; !known {
+		d.added = append(d.added, id)
+	}
 	d.sections[id] = &c
 	return true
+}
+
+// inOrder is every section id as it came into the model.
+func (d *Doc) inOrder() []string { return d.added }
+
+// ApplySaved takes edit-document's answer: the stored versions of the
+// saved sections replace the model's (they are newer), as Slack applies a
+// save answer (document.update with the POST response). changed false is
+// a save that changed nothing.
+func (d *Doc) ApplySaved(a *EditAnswer) []string {
+	if a == nil || a.FinalData == nil {
+		return nil
+	}
+	var out []string
+	for i := range a.FinalData.Sections {
+		s := &a.FinalData.Sections[i]
+		if d.put(s) {
+			out = append(out, str(s.ID))
+		}
+		if s.PositionPath != nil && (s.Deleted == nil || !*s.Deleted) {
+			d.order[str(s.ID)] = *s.PositionPath
+		} else if s.Deleted != nil && *s.Deleted {
+			delete(d.order, str(s.ID))
+		}
+	}
+	return out
 }
 
 func seq(p *int64) int64 {
@@ -241,7 +273,18 @@ func (d *Doc) rename(temp, real string) {
 		c.ID = Ptr(real)
 		delete(d.sections, temp)
 		if old := d.sections[real]; old == nil || seq(old.Sequence) <= seq(c.Sequence) {
+			if old == nil {
+				// Slack's entityIdDidChange deletes the old key and sets the
+				// new one: the entity moves to the end of the map
+				d.added = append(d.added, real)
+			}
 			d.sections[real] = &c
+		}
+		for i, x := range d.added {
+			if x == temp {
+				d.added = append(d.added[:i], d.added[i+1:]...)
+				break
+			}
 		}
 	}
 	if v, ok := d.order[temp]; ok {

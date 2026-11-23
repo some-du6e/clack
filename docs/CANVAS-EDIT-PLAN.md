@@ -283,6 +283,14 @@ All run in GitHub Actions; locally only gofmt and `go vet` on one package.
 
 **Schema drift.** `.github/workflows/quip-schema-drift.yml` (workflow_dispatch and weekly): it fetches the current quip-collab chunks named by datamine's chunks.txt, dumps the schema with `tools/quip/schema.cjs`, and fails when a field Clack writes changed number, type or label. A failure means Slack shipped a new schema: refresh the golden values before trusting saves.
 
+## Status
+
+- **A** (canvas-cursor): Quip's cursors over a canvas. Done.
+- **B1** (canvas-quip-codec): the codec, the read model, the strict fake. Done.
+- **B2** (canvas-quip-save): saves through edit-document behind the switch (off), Slack's retries, backoff, banners and lock, the validator. Done; what it doesn't save yet is listed in CANVASES.md, "Saves through edit-document".
+- **B3**: every part Slack's editor edits, through edit-document; the refusal list and the can't-edit toast go.
+- **B4**: the other canvas writes through Slack's client paths; canvases.edit and friends gone, kept out by a source scan.
+
 ## Order of work
 
 1. `internal/quip` codec, positions, ids, RTML, merge, with golden tests.
