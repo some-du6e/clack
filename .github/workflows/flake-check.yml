@@ -4472,6 +4472,20 @@ jobs:
           TEST: TestSidebarMarksLikeSlack
           PKG: ./internal/core
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives part 6: a Later reminder coming due (saved_due) and
+      # a "join the huddle" suggestion (huddle_recommend)
+      - name: "ui: a Later reminder coming due notifies, and its click opens Later (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestLaterReminderLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "huddleui: a huddle suggestion notifies as Slack's does (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestHuddleRecommendLikeSlack
+          PKG: ./internal/ui/huddleui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
