@@ -41,8 +41,8 @@ func TestTimelineHeader(t *testing.T) {
 	st := newTestStyle()
 	for _, c := range []struct {
 		name, blocks, text string
-		icons             int
-		caret             bool
+		icons              int
+		caret              bool
 	}{
 		{"used", usedTools, "Used 3 tools", 2, true},
 		{"one point", `[{"type":"timeline","points":[{"id":"a","status":"complete","text":"Looked it up","icon":"clock"}]}]`, "Looked it up", 1, false},
