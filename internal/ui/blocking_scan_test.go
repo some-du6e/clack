@@ -21,6 +21,7 @@ import (
 // each because its exec calls only run off the UI goroutine.
 var execAllowed = map[string]string{
 	"openurl/openurl.go":       "Open starts the browser on its own goroutine",
+	"openurl/path.go":          "OpenPath and Reveal call uiguard.OffUI: popups runs them on goroutines",
 	"composer/attach.go":       "attRun/attHave run on the picker and clipboard-image goroutines",
 	"composer/attach_linux.go": "attNativePick runs on Pick's goroutine",
 	"popups/emoji_add.go":      "the chooser lookup and dialog run in background goroutines",

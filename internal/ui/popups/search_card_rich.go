@@ -394,16 +394,11 @@ func (h srCardHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Re
 	OpenTimelineSources(h.v.h, sec)
 }
 
+// OpenFile is handleFileContainerClick (OpenFileCard): a hosted .exe or
+// zip downloads in the app; only a remote or external file's own link
+// and a PDF's page open the browser.
 func (h srCardHandler) OpenFile(f *richtext.File) {
-	if f == nil {
-		return
-	}
-	switch {
-	case f.Permalink != "":
-		lbOpen(h.v.h, f.Permalink)
-	case f.URL != "":
-		lbOpen(h.v.h, f.URL)
-	}
+	OpenFileCard(h.v.h, f, func(u string) { lbOpen(h.v.h, u) })
 }
 
 // richPlain is the card's drawn text (tests): the body's and extras'

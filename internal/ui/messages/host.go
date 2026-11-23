@@ -439,11 +439,24 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 			return
 		}
 	}
-	if f.Permalink != "" {
-		openURL(f.Permalink)
-	} else if f.URL != "" {
-		openURL(f.URL)
+	openFileAction(r.h, f)
+}
+
+// openFileAction is handleFileContainerClick's rest for a click the
+// viewers above didn't take (popups.OpenFileCard): an .exe, a zip or a
+// document downloads in the app; only a remote or external file's own
+// link, and a PDF (openFileInNewWindow's fallback: Clack has no PDF
+// viewer), open the browser. A playable audio file has no click
+// (MessageFile gives fileIsPlayableAudio none).
+func openFileAction(h Host, f *richtext.File) {
+	if f.IsAudio || f.IsImage || f.IsVideo {
+		return // the viewers' (or the player's) own
 	}
+	popups.OpenFileCardWith(f, openURL, func(f *richtext.File) {
+		if ph, ok := h.(popups.Host); ok {
+			downloadFile(ph, f)
+		}
+	})
 }
 
 // OpenAudioClipMenu is the audio player's More actions

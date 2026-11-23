@@ -22,6 +22,7 @@ import (
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -930,10 +931,15 @@ func (r *handler) OpenImage(img richtext.Image) {
 	r.v.h.OpenLightbox(img, core.Message{})
 }
 
+// OpenFile is handleFileContainerClick (popups.OpenFileCard): a hosted
+// .exe or zip downloads in the app, never in the browser.
 func (r *handler) OpenFile(f *richtext.File) {
-	if f.Permalink != "" {
-		r.OpenURL(f.Permalink)
-	}
+	ph, _ := r.v.h.(popups.Host)
+	popups.OpenFileCardWith(f, r.OpenURL, func(f *richtext.File) {
+		if ph != nil {
+			popups.DownloadFile(ph, f)
+		}
+	})
 }
 
 func (r *handler) Button(b richtext.Button) {

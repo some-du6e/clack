@@ -30,6 +30,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -75,6 +76,9 @@ type Env struct {
 	Toast func(text string)
 	// OpenURL opens a link in the browser.
 	OpenURL func(url string)
+	// DownloadFile downloads a Slack file in the app (popups.DownloadFile:
+	// the download toast), as a file card's click does.
+	DownloadFile func(f *richtext.File)
 	// Navigate follows a Clack route ("c/<id>", …) for Slack-internal links.
 	Navigate func(route string)
 	// FollowLink is Slack's Link click for a plugin-drawn href: a slack:

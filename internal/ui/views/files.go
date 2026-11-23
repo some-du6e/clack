@@ -2117,23 +2117,26 @@ func openFile(h Host, it fileItem) {
 		h.OpenLightbox(richtext.Image{URL: it.URL, Alt: it.title(), W: it.ThumbW, H: it.ThumbH, Title: it.title(), Proxy: true}, core.Message{})
 		return
 	}
-	u := it.Permalink
-	if u == "" {
-		u = it.URL
-	}
-	if u == "" {
-		return
-	}
-	// the file's page: in the browser (Clack has no viewer for it), or a
-	// link the client opens itself (hostHandler's follow), never the
-	// deep-link handler, which opens only slack: links
-	hostHandler{h}.follow(u, false)
+	// handleFileContainerClick's rest (popups.OpenFileCard): an .exe, a
+	// zip or a document downloads in the app; a remote or external file's
+	// own link and a PDF's page (openFileInNewWindow) go through
+	// hostHandler's follow (a link the client opens itself, else the
+	// browser), never the deep-link handler, which opens only slack: links
+	rf := cfRich(&it)
+	rf.Mode = it.Mode
+	follow := func(u string) { hostHandler{h}.follow(u, false) }
+	ph, _ := h.(popups.Host)
+	popups.OpenFileCardWith(rf, follow, func(f *richtext.File) {
+		if ph != nil {
+			popups.DownloadFile(ph, f)
+		}
+	})
 }
 
 // fileFromRich is a message attachment as a Files item, for openFile.
 func fileFromRich(f *richtext.File) fileItem {
 	it := fileItem{core.File{ID: f.ID, Name: f.Name, Title: f.Title, Filetype: f.Type, PrettyType: f.PrettyType,
-		Mime: f.Mime, User: f.User, URL: f.URL, Permalink: f.Permalink, Size: f.Size, Created: f.Created,
+		Mime: f.Mime, User: f.User, URL: f.URL, Permalink: f.Permalink, Size: f.Size, Created: f.Created, Mode: f.Mode,
 		IsCanvas: core.IsCanvasFile(f.Type, "", f.PrettyType), IsList: core.IsListFile(f.Type, "", f.PrettyType), IsImage: f.IsImage}}
 	if f.Thumb != nil {
 		it.ThumbW, it.ThumbH = f.Thumb.W, f.Thumb.H

@@ -21,6 +21,7 @@ import (
 	"github.com/some-du6e/clack/internal/lists"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -84,10 +85,17 @@ func (r *handler) OpenChannel(id string) {
 }
 func (r *handler) OpenUsergroup(id string, anchor image.Point) {}
 func (r *handler) OpenImage(img richtext.Image)                {}
+
+// OpenFile is handleFileContainerClick for a file in a cell
+// (popups.OpenFileCard): an .exe or a zip downloads in the app, never in
+// the browser.
 func (r *handler) OpenFile(f *richtext.File) {
-	if f.Permalink != "" {
-		r.OpenURL(f.Permalink)
-	}
+	ph, _ := r.h.(popups.Host)
+	popups.OpenFileCardWith(f, r.OpenURL, func(f *richtext.File) {
+		if ph != nil {
+			popups.DownloadFile(ph, f)
+		}
+	})
 }
 func (r *handler) Button(b richtext.Button) {
 	if b.URL != "" {

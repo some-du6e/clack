@@ -338,18 +338,16 @@ func (richHandler) OpenUser(id string, anchor image.Point) {
 func (richHandler) OpenChannel(id string)                       { navigate("c/" + id) }
 func (richHandler) OpenUsergroup(id string, anchor image.Point) {}
 func (richHandler) OpenImage(img richtext.Image)                { openURL(img.URL) }
+
+// OpenFile is handleFileContainerClick (popups.OpenFileCardWith): a file
+// Slack downloads goes to the shell's download (Env.DownloadFile), never
+// the browser.
 func (richHandler) OpenFile(f *richtext.File) {
-	if f == nil {
-		return
-	}
-	switch {
-	case f.Permalink != "":
-		openURL(f.Permalink)
-	case f.URL != "":
-		openURL(f.URL)
-	default:
-		openURL(f.Download)
-	}
+	popups.OpenFileCardWith(f, openURL, func(f *richtext.File) {
+		if d := envOf().DownloadFile; d != nil {
+			d(f)
+		}
+	})
 }
 func (richHandler) Button(b richtext.Button) {}
 

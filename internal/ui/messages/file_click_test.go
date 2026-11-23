@@ -26,10 +26,14 @@ import (
 // Clicks on the files of fakeslack's #files-gallery (synthetic files)
 // through Gio's router, in a channel and a thread, with and without
 // plugins patching the rows: every gallery tile opens the image viewer on
-// its own file (the "+ N" tile on the file under it), a video and the
-// file cards (audio, PDF, snippet, zip, documents) open the file, and a
-// right click on a tile opens the file menu. A snippet's pillow has no
-// click (a collapsed one's click expands it).
+// its own file (the "+ N" tile on the file under it), a video opens the
+// media viewer, and a right click on a tile opens the file menu. The file
+// cards do what Slack's handleFileContainerClick does (getMainFileAction):
+// a hosted zip, document, text or binary file downloads in the app
+// (Karim's .exe opened Chrome, 2026-11-23), a PDF takes
+// openFileInNewWindow's permalink (Clack has no PDF viewer), a playable
+// audio file and a snippet's pillow have no click (a collapsed snippet's
+// click expands it). No Slack-hosted file opens in the browser otherwise.
 
 type fileClickHost struct {
 	coreHost
@@ -90,7 +94,7 @@ type clickView interface {
 
 // fileClicks draws v over a router and clicks every file of msgs,
 // checking what opened.
-func fileClicks(t *testing.T, label string, h *fileClickHost, v clickView, size image.Point, msgs []slack.Message, opened *[]string) {
+func fileClicks(t *testing.T, label string, h *fileClickHost, v clickView, size image.Point, msgs []slack.Message, opened, downloaded *[]string) {
 	t.Helper()
 	var r input.Router
 	ops := new(op.Ops)
@@ -157,7 +161,7 @@ func fileClicks(t *testing.T, label string, h *fileClickHost, v clickView, size 
 			}
 			p := fr.R.Min.Add(fr.R.Max).Div(2)
 			nv, _ := h.counts()
-			nu := len(*opened)
+			nu, nd := len(*opened), len(*downloaded)
 			click(p, pointer.ButtonPrimary)
 			gotV, _ := h.counts()
 			// fileIsImage: an image Slack made no thumb_360 for (a very
@@ -179,6 +183,22 @@ func fileClicks(t *testing.T, label string, h *fileClickHost, v clickView, size 
 				if gotV != nv || len(*opened) != nu {
 					t.Errorf("%s: clicking the snippet %s opened %v (viewer %v)", name, want.ID, (*opened)[nu:], gotV != nv)
 				}
+			case strings.HasPrefix(want.Mimetype, "video/"):
+				// "view": the media viewer (this host has none), never the
+				// browser or a download
+				if len(*opened) != nu || len(*downloaded) != nd {
+					t.Errorf("%s: clicking the video %s opened %v (downloads %v)", name, want.ID, (*opened)[nu:], (*downloaded)[nd:])
+				}
+			case strings.HasPrefix(want.Mimetype, "audio/"):
+				// fileIsPlayableAudio: MessageFile gives its pillow no click
+				if gotV != nv || len(*opened) != nu || len(*downloaded) != nd {
+					t.Errorf("%s: clicking the audio file %s opened %v (viewer %v, downloads %v)", name, want.ID, (*opened)[nu:], gotV != nv, (*downloaded)[nd:])
+				}
+			case want.Filetype == "pdf":
+				// "view" (FSFV's PDF), which Clack lacks: openFileInNewWindow
+				if len(*opened) != nu+1 || (*opened)[len(*opened)-1] != want.Permalink || len(*downloaded) != nd {
+					t.Errorf("%s: clicking the PDF %s opened %v (downloads %v), want its permalink", name, want.ID, (*opened)[nu:], (*downloaded)[nd:])
+				}
 			default:
 				if strings.HasPrefix(want.Mimetype, "image/") && (fr.File.IsImage || fr.R.Dy() >= 100) {
 					t.Errorf("%s: unthumbed image %s is %v (image %v), want a file card", name, want.ID, fr.R, fr.File.IsImage)
@@ -186,8 +206,12 @@ func fileClicks(t *testing.T, label string, h *fileClickHost, v clickView, size 
 				if gotV != nv {
 					t.Errorf("%s: %s (%s) opened the image viewer", name, want.ID, want.Mimetype)
 				}
-				if len(*opened) != nu+1 || (*opened)[len(*opened)-1] != want.Permalink {
-					t.Errorf("%s: clicking %s (%s) at %v opened %v, want %s", name, want.ID, want.Mimetype, p, (*opened)[nu:], want.Permalink)
+				// getFileOpenMode "download": downloadFileAndClog, in the app
+				if len(*opened) != nu {
+					t.Errorf("%s: clicking %s (%s) at %v opened %v in the browser, want it downloaded in the app", name, want.ID, want.Mimetype, p, (*opened)[nu:])
+				}
+				if len(*downloaded) != nd+1 || (*downloaded)[len(*downloaded)-1] != want.ID {
+					t.Errorf("%s: clicking %s (%s) at %v downloaded %v, want %s", name, want.ID, want.Mimetype, p, (*downloaded)[nd:], want.ID)
 				}
 			}
 		}
@@ -220,6 +244,15 @@ func menuHas(m *popups.Menu, label string) bool {
 	return false
 }
 
+// recordDownloads catches the in-app downloads (downloadFile) by file id.
+func recordDownloads(t *testing.T) *[]string {
+	var got []string
+	prev := downloadFile
+	downloadFile = func(_ popups.Host, f *richtext.File) { got = append(got, f.ID) }
+	t.Cleanup(func() { downloadFile = prev })
+	return &got
+}
+
 func recordOpenURL(t *testing.T) *[]string {
 	var got []string
 	prev := openURL
@@ -231,17 +264,18 @@ func recordOpenURL(t *testing.T) *[]string {
 // fileClickViews clicks through #files-gallery and its thread in h.
 func fileClickViews(t *testing.T, fs *fakeslack.Server, h *fileClickHost) {
 	opened := recordOpenURL(t)
+	downloaded := recordDownloads(t)
 	ch := fakeslack.FilesChannelID
 	cv := NewChannelView(h, ch)
 	cv.Preview = true
 	hist := fs.FilesHistory()
-	fileClicks(t, "channel", h, cv, image.Pt(1600, 9000), hist, opened)
+	fileClicks(t, "channel", h, cv, image.Pt(1600, 9000), hist, opened, downloaded)
 	for _, m := range hist {
 		if m.ReplyCount == 0 {
 			continue
 		}
 		tv := NewThreadView(h, ch, m.TS)
-		fileClicks(t, "thread", h, tv, image.Pt(480, 4000), fs.FilesReplies(m.TS)[1:], opened)
+		fileClicks(t, "thread", h, tv, image.Pt(480, 4000), fs.FilesReplies(m.TS)[1:], opened, downloaded)
 	}
 }
 

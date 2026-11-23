@@ -306,6 +306,7 @@ type App struct {
 	font             fontState             // Appearance > Font (prefs_font.go)
 	explorer         *explorer.Explorer    // native file chooser (set in onWindow)
 	dl               downloadPrefs         // Download location, for the savers' goroutines (downloads.go)
+	dlToast          downloadToastState    // the download toast (downloads.go)
 	tautGen          int                   // bumps when a (new) plugin runtime attaches
 	tautTabs         []taut.PreferencesTab // plugins' Preferences tabs
 	switchAt         time.Time             // navigation time, for the channel-switch latency log
@@ -988,7 +989,8 @@ func (a *App) frame(gtx layout.Context) {
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.layoutWorkflowRunToast(gtx)
-	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
+	a.layoutDownloadToast(gtx) // Slack's download toast (downloads.go)
+	a.layoutIntroOverlay(gtx)  // Replay introduction, over everything
 	// middle-click autoscroll's window-wide area: over everything but the
 	// tracker
 	a.autoscroll.End(gtx.Ops, gtx.Source, sz)

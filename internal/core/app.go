@@ -1022,6 +1022,11 @@ func (a *App) Boot(ctx context.Context) error {
 // save still writing).
 func (a *App) Close() error {
 	a.side.wait() // History's side reads (StopTraffic, before it, cancelled them)
+	if v, ok := downloadStates.Load(a); ok {
+		// cancelInProgressDownloadsEpic: quitting cancels what's still
+		// downloading, and its partial files go
+		v.(*Downloads).CancelAll()
+	}
 	a.saves.Wait()
 	a.checkpointClosedCodeChannels() // the closed code channels' watermarks (codechannel_close.go)
 	a.SaveWarm()

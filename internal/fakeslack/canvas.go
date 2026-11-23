@@ -856,6 +856,9 @@ func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.serveBigFile(w, r, id) { // generated big files (bigfile.go)
+		return
+	}
 	if id == FilesVideoID { // the gallery's video: mediatest's fixture, with ranges (http.ServeContent)
 		mediatest.Handler(mediatest.GreyGreyRed, false).ServeHTTP(w, r)
 		return

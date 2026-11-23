@@ -8,7 +8,9 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/kit"
 )
@@ -48,6 +50,7 @@ func (a *App) slackcFrame(gtx layout.Context) {
 			},
 			Toast:           a.Toast,
 			OpenURL:         openURL,
+			DownloadFile:    func(f *richtext.File) { popups.DownloadFile(a, f) },
 			Navigate:        a.Navigate,
 			FollowLink:      func(href string) bool { return a.FollowLink(href, false) },
 			Core:            c,
