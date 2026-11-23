@@ -9,6 +9,7 @@ package popups
 
 import (
 	"context"
+	"sync"
 
 	"gioui.org/layout"
 
@@ -19,14 +20,39 @@ import (
 
 var nsDeadEnd = i18n.NS("private_message_forwarding")
 
+// promptSends are the sends in flight, by promptKey: SharePromptButton's
+// loading state, while which its LoadingButton (q8Sb, disableWhenLoading)
+// takes no click (BaseButton U4rH: aria-disabled swaps onClick for
+// preventDefault).
+var promptSends sync.Map
+
+// promptKey is a prompt's send: its block, prompt and agent.
+func promptKey(p *richtext.SharePrompt) string {
+	return p.BlockID + "\x00" + p.PromptID + "\x00" + p.BotUserID
+}
+
+func init() {
+	richview.PromptSending = func(p *richtext.SharePrompt) bool {
+		_, ok := promptSends.Load(promptKey(p))
+		return ok
+	}
+}
+
 // SharePromptSend posts p's prompt to its agent's DM (core's
-// SendSharedPrompt) and opens the thread of the message it sent.
+// SendSharedPrompt) and opens the thread of the message it sent; a click
+// while that send runs does nothing. A Slackbot prompt needs Slackbot AI
+// (startAgentOrAssistantThread returns at once without it), which Clack
+// doesn't have: nothing.
 func SharePromptSend(h Host, p *richtext.SharePrompt) {
-	if p == nil || p.BotUserID == "" {
+	if p == nil || p.BotUserID == "" || p.IsSlackbot {
 		return
 	}
 	a := h.Core()
 	if a == nil {
+		return
+	}
+	key := promptKey(p)
+	if _, busy := promptSends.LoadOrStore(key, true); busy {
 		return
 	}
 	type sent struct{ ch, ts string }
@@ -34,6 +60,7 @@ func SharePromptSend(h Host, p *richtext.SharePrompt) {
 		ch, ts, err := a.SendSharedPrompt(ctx, p.BotUserID, p.Prompt, p.RichRaw)
 		return sent{ch, ts}, err
 	}, func(s sent, err error) {
+		promptSends.Delete(key) // finally: J(!1)
 		if err != nil || s.ch == "" || s.ts == "" {
 			h.ShowOverlay(NewDeadEndLinkDialog(h, "shared_prompt"))
 			return
