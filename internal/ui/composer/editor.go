@@ -51,6 +51,10 @@ type EditorStyle struct {
 	PlaceholderText                                      string
 	MaxHeight                                            unit.Dp
 	EmojiSize                                            unit.Dp
+	// NativeEmojiGap is the space after a standard emoji, at 1x only (0:
+	// none): a canvas's native glyph span's margin-right on a 1x Mac, as
+	// richview.Style's NativeEmojiGap.
+	NativeEmojiGap unit.Dp
 	// Embolden strokes text glyphs this many pixels wider (0 = off), to
 	// match richview's text where the editor replaces it (canvas blocks).
 	Embolden float32

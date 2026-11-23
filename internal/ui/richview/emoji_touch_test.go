@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -131,5 +132,52 @@ func TestStretchyEmojiNoSeam(t *testing.T) {
 	}
 	if len(seams) > 0 {
 		t.Errorf("the tiles' bar breaks at x %v on row %d (want one bar from x %d to %d)", seams, y, pad+first.Min.X, pad+last.Max.X)
+	}
+}
+
+// TestTouchingEmojiHitEdge: where two emoji touch, the pixel column they
+// share is one emoji's in every hit test, the one drawn there: a double
+// click on it (wordAtPoint) takes that emoji whole, and HitAt names it.
+// Chromium hit-tests half-open boxes, so a shared edge belongs to the box
+// that starts there. fragRect's whole-pixel floor and ceiling held the
+// column in both frags, and a double click took the emoji before it
+// (review of bk-modal-spacing, 2026-11-22). Synthetic images.
+func TestTouchingEmojiHitEdge(t *testing.T) {
+	st := newTestStyle()
+	em := func(n string) rt.Span { return rt.Span{Kind: rt.Emoji, ID: n, URL: "https://emoji.test/" + n + ".png"} }
+	const scale = 1.25
+	// the run has to start at a fractional x below .5: then the column the
+	// next emoji is drawn from is the one both whole-pixel rects held
+	var v *View
+	var fs []*frag
+	for _, lead := range []string{"a", "ab", "abc", "i", "il", "w", "wa", "x", "xy", "m", "mn", "ok", "Hi", "go", "it"} {
+		v = New(doc(para(txt(lead), em("a"), em("b"), em("c"), em("d"))), Options{})
+		v.relayout(st, 600, scale, scale)
+		if fs = emojiFrags(v); len(fs) != 4 {
+			t.Fatalf("%q: %d emoji frags, want 4", lead, len(fs))
+		}
+		if fr := fs[0].x - float32(int(fs[0].x)); fr > 0.05 && fr < 0.45 {
+			break
+		}
+		fs = nil
+	}
+	if fs == nil {
+		t.Fatal("no lead text put the emoji run at x + .05 to x + .45, where the shared column can be told apart")
+	}
+	for k := 0; k+1 < len(fs); k++ {
+		c := drawnRect(fs[k+1]).Min.X // emoji k+1 is drawn from here
+		y := float32(fs[k].y + fs[k].size/2)
+		for _, pr := range []struct {
+			x    float32
+			want *frag
+		}{{float32(c) + 0.5, fs[k+1]}, {float32(c) - 0.5, fs[k]}} {
+			p := f32.Pt(pr.x, y)
+			if a, b := v.wordAtPoint(p); a != pr.want.p0 || b != pr.want.p1 {
+				t.Errorf("a double click at x %.1f (emoji %d drawn from x %d) selects %d-%d, want the emoji drawn there, %d-%d", pr.x, k+1, c, a, b, pr.want.p0, pr.want.p1)
+			}
+			if h := v.HitAt(p); h.EmojiURL != pr.want.url {
+				t.Errorf("HitAt x %.1f (emoji %d drawn from x %d): %q, want %q, the emoji drawn there", pr.x, k+1, c, h.EmojiURL, pr.want.url)
+			}
+		}
 	}
 }

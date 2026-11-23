@@ -592,8 +592,7 @@ func (s *Surface) blockMargins(b *Block, first bool) (top, bottom, inner, innerB
 		// .p-rich_text_block has none of its own here (.c-message's 8px 0
 		// -4px is a message's): its first and last elements' collapse
 		// through it
-		f, l := richEdgeTypes(b.Raw)
-		return richEdgeMargin(f, true), richEdgeMargin(l, false), 0, 0
+		return richEdgeMargin(b.richFirst, true), richEdgeMargin(b.richLast, false), 0, 0
 	case "section":
 		if home {
 			return 8, 4, 0, 0 // .p-section_block{margin:8px 0 4px}
@@ -670,8 +669,7 @@ func (s *Surface) messageMargins(b *Block, first bool) (top, bottom, inner, inne
 	case "actions":
 		return 0, 8, 8, 0
 	case "rich_text":
-		f, l := richEdgeTypes(b.Raw)
-		return 0, 0, richEdgeMargin(f, true), richEdgeMargin(l, false)
+		return 0, 0, richEdgeMargin(b.richFirst, true), richEdgeMargin(b.richLast, false)
 	case "plan", "task_card":
 		if first && s.slimTaskCards() {
 			return 0, 8, 0, 0 // .p-block_kit_renderer__block_wrapper--first .blockSlim
@@ -713,19 +711,6 @@ func (s *Surface) wrapperTop(b *Block, afterContext bool) int {
 		return 4
 	}
 	return 12
-}
-
-// richEdgeTypes are a rich_text block's first and last elements' types.
-func richEdgeTypes(raw json.RawMessage) (first, last string) {
-	var rt struct {
-		Elements []struct {
-			Type string `json:"type"`
-		} `json:"elements"`
-	}
-	if json.Unmarshal(raw, &rt) != nil || len(rt.Elements) == 0 {
-		return "", ""
-	}
-	return rt.Elements[0].Type, rt.Elements[len(rt.Elements)-1].Type
 }
 
 // richEdgeMargin is the margin a rich_text block's first (or last)

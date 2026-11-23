@@ -297,6 +297,14 @@ type Style struct {
 	// section's line height: control.c54 img is
 	// var(--section-content-line-height) square at vertical-align top.
 	EmojiSize float32
+	// NativeEmojiGap is the space after a standard emoji, in Dp, drawn only
+	// at 1x (0: none). A canvas draws a standard emoji as its native glyph
+	// in a span (Quip's EmojiImpl without a customEmojiUrl), and on a 1x
+	// Mac in Chrome that span has a 4px margin-right ([@media
+	// (resolution<=1x)] body.mac.chrome span.emoji.emoji-in-canvas). A
+	// custom emoji's <img> has none, nor has the span elsewhere or at 2x
+	// (Quip's webkit body class isn't Chromium's).
+	NativeEmojiGap float32
 	// EmojiURL maps a standard emoji image stem to its URL (the theme's
 	// emoji style); nil uses Slack's apple set.
 	EmojiURL func(stem string) string
