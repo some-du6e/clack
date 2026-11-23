@@ -786,6 +786,8 @@ jobs:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: applog tests
+        env:
+          CLACK_WINDOWS_WER_TESTS: "1" # TestCrashRecordForRealEvent: a child's fail-fast, read back through wevtutil
         run: go test -count=1 -v ./internal/applog
       # Gio patches 37-44 on Direct3D 11 (WARP): the state caches change no
       # pixel, the window's drawing held to the old way (theme's
@@ -991,6 +993,15 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
         run: go test -count=1 -v -timeout 5m -run '^TestWinQuotePaste$' ./internal/ui
+      # Gio's own copy and paste (Gio patch 65: winclip sessions off the
+      # window thread, the paste back by _WM_CLACK_PASTE, a busy one
+      # reported), in a window of its own
+      - name: Gio's copy and paste (the real clipboard)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -timeout 3m -run '^TestWinGioClipboard$' gioui.org/app
       # a test binary that printed PASS and still failed crashed as it
       # exited (windows-shell's gioui.org/app, train-161's push ci
       # 45018881337: no panic, no exit status): Windows Error Reporting
