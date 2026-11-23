@@ -65,6 +65,7 @@ func TestHistoryHiddenFollowsPatches(t *testing.T) {
 	// a navigation with no message to start at drops the highlight
 	h.tt.SetViewHighlight(chGen, "")
 	hidden("the message hidden again after a plain navigation", gone)
+	ui = nil // Unmarshal into a map keeps the keys the new JSON hasn't
 	h.jsInto(`return T.redux.getRawState().viewUiState?.['`+chGen+`'] ?? null`, &ui)
 	if hl, _ := ui[chGen].(map[string]any); hl == nil || hl["highlightTs"] != nil || ui["ts"] != nil {
 		t.Errorf("viewUiState[%s] after the plain navigation = %v, want {%s: {}}", chGen, ui, chGen)

@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"image"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -54,10 +55,47 @@ func TestPluginGapHideResolved(t *testing.T) {
 		return out
 	}
 	e.toBottom()
-	e.until("the open ticket and the plain message drawn, the resolved one not", 20*time.Second, func() bool {
+	ticketRows := func() bool {
 		r := rows()
 		return r[open] && r[plain] && !r[done]
-	})
+	}
+	for deadline := time.Now().Add(20 * time.Second); !ticketRows(); {
+		if time.Now().After(deadline) {
+			// what the list drew, what Taut was told, and what JS sees
+			ch := fakeslack.BenchChannelID
+			var drawn []string
+			for k := range rows() {
+				drawn = append(drawn, k)
+			}
+			slices.Sort(drawn)
+			hid, ok := e.tt.HistoryHidden(ch)
+			for _, p := range e.a.Slick().Settings().Plugins {
+				if p.ID == e.entry.ID {
+					t.Logf("%s: enabled %v, active %v, running %v, start error %q", p.ID, p.Enabled, p.Active, p.Running, p.StartError)
+				}
+			}
+			t.Logf("rows drawn %v; open %s, done %s, plain %s", drawn, open, done, plain)
+			t.Logf("Taut.HistoryHidden(%s): %d hidden, done %v, ok %v; channelHistory patched %v", ch, hid.Len(), hid.Has(done), ok, e.tt.SlicePatched("channelHistory"))
+			t.Logf("JS: %s", e.js(`(() => {
+  const ch = '`+ch+`', done = '`+done+`';
+  const raw = __taut.getRawState(), st = __taut.getState();
+  const ts = (h) => (h && Array.isArray(h.slices) ? h.slices.flatMap((s) => (s && s.timestamps) || []) : null);
+  const m = raw.messages && raw.messages[ch] && raw.messages[ch][done];
+  const key = (m && m._rxn_key) || ('message-' + done + '-' + ch);
+  return JSON.stringify({
+    name: raw.channels && raw.channels[ch] && raw.channels[ch].name,
+    raw: (ts(raw.channelHistory && raw.channelHistory[ch]) || []).slice(-5),
+    view: (ts(st.channelHistory && st.channelHistory[ch]) || []).slice(-5),
+    same: (raw.channelHistory && raw.channelHistory[ch]) === (st.channelHistory && st.channelHistory[ch]),
+    doneMsg: !!m, msgs: raw.messages && raw.messages[ch] ? Object.keys(raw.messages[ch]).length : -1,
+    rxnKey: key, rxns: raw.reactions ? raw.reactions[key] : 'no slice', vui: raw.viewUiState,
+  });
+})()`))
+			t.Fatal("timed out after 20s waiting for the open ticket and the plain message drawn, the resolved one not")
+		}
+		e.frame()
+		time.Sleep(time.Millisecond)
+	}
 	toggle := func() (k int64, tip string) {
 		tree := e.treeWith("slick-hide-resolved")
 		if tree == "" {

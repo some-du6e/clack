@@ -92,8 +92,10 @@ func TestHideResolvedLikeSlack(t *testing.T) {
 		}
 	}
 	tg := hideToggleOf(h.waitTree(t, 1, `the toggle saying "Show 3 resolved" before the search button`, shows("Show 3 resolved", "3", false)))
-	if tg.pressed != true || tg.label != "Show 3 resolved" {
-		t.Errorf("the toggle: aria-pressed %v, aria-label %q; want true and its tip", tg.pressed, tg.label)
+	// aria-pressed={!revealed}: the attribute React writes for a boolean
+	// aria-*, its string
+	if tg.pressed != "true" || tg.label != "Show 3 resolved" {
+		t.Errorf("the toggle: aria-pressed %#v, aria-label %q; want \"true\" and its tip", tg.pressed, tg.label)
 	}
 	click := func(tg hideToggle) {
 		t.Helper()
