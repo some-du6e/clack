@@ -5291,7 +5291,7 @@ jobs:
           go test -count="$COUNT" -timeout 10m -run '^(TestFlannelQueryLikeSlack|TestPresenceSubscriptionGetterLikeSlack|TestPresenceSubscriptionLikeSlack|TestAPICallNotOkLikeSlack)$' ./internal/taut || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestFlexItemsHasSeesTree|TestNativeKidsHas)$' ./internal/ui/slackc || rc=1
           go test -count="$COUNT" -timeout 15m -run '^TestOnlineCountLikeSlack$' ./internal/slick || rc=1
-          xvfb-run -a go test -count="$COUNT" -timeout 25m -run '^TestPluginGapOnlineCount$' ./internal/ui || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 15m -run '^TestPluginGapOnlineCount$' ./internal/ui || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
