@@ -161,8 +161,11 @@ jobs:
   # .github/test-times.json: about 4 min of each package's tests per shard
   # when packing began, 7.2 min of internal/ui's and 1.5 of messages' at
   # the 2026-11-23 refresh; hashed by name they ran 2.4 to 6.8 min), every
-  # other package in the rest shard. linux-coverage checks the shards ran
-  # every test once.
+  # other package in the rest shard. Each shard runs as two shares of its
+  # own (--split 2: 8 shares, two test binaries per heavy package a job,
+  # at once), so each binary has half the time under Go's 10 min default
+  # -timeout, which internal/ui's quarter neared at 433 s. linux-coverage
+  # checks the shares ran every test once.
   linux-test:
     if: ${{ !inputs.only || startsWith('linux-test', inputs.only) }}
     runs-on: ubuntu-latest
@@ -191,7 +194,7 @@ jobs:
           SHARD: ${{ matrix.shard }}
           HEAVY: github.com/some-du6e/clack/internal/ui,github.com/some-du6e/clack/internal/ui/messages
         run: |
-          if [ "$SHARD" = rest ]; then set -- --rest; else set -- --shard "$SHARD" --times .github/test-times.json; fi
+          if [ "$SHARD" = rest ]; then set -- --rest; else set -- --shard "$SHARD" --split 2 --times .github/test-times.json; fi
           python3 .github/scripts/test-shard.py run --heavy "$HEAVY" "$@" --out "$RUNNER_TEMP/shard"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

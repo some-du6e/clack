@@ -2,7 +2,7 @@
 """ci.yml's `go test ./...`, split over parallel jobs, and the check that
 the split dropped nothing.
 
-  test-shard.py run  --heavy PKG,PKG --shard K/N [--times FILE] --out DIR
+  test-shard.py run  --heavy PKG,PKG --shard K/N [--split M] [--times FILE] --out DIR
   test-shard.py run  --heavy PKG,PKG --rest      --out DIR
   test-shard.py full --heavy PKG,PKG --split N [--times FILE] [--timeout D] --out DIR
   test-shard.py check [--baseline FILE.jsonl] DIR...
@@ -20,6 +20,12 @@ from the same test lists and file. --rest runs every other package of
 the heavy packages' test lists, this shard's share) and DIR/*.jsonl
 (`go test -json`). `times` reads shard DIRs (test-shard-* artifacts) and
 prints their tests' times, averaged over the DIRs that ran each.
+
+With --split M a shard runs as M shares of its own, shards (K-1)M+1..KM
+of NM, each its own go test per heavy package, all at once, in DIR/1..NM
+(check and times take a DIR of such subdirectories in place of a shard's):
+a test binary gets Go's 10 min default -timeout, which internal/ui's
+quarter of the suite neared (433 s at 2026-11-23's times).
 
 full is `go test ./...` in one job, every package at once, with each
 heavy package run as N go test processes of its shards' tests instead of
@@ -234,10 +240,40 @@ def run(args):
         meta, jobs = plan(pkgs, heavy, {}, None, 'rest', [])
     else:
         pkgs, heavy, lists, times = setup(args)
+        m = args.split or 1
+        if m > 1:
+            k, n = (int(x) for x in args.shard.split('/'))
+            if not 1 <= k <= n or m < 1:
+                raise SystemExit(f'bad --shard {args.shard} --split {m}')
+            shares = []
+            for j in range((k - 1) * m + 1, k * m + 1):
+                meta, jobs = plan(pkgs, heavy, lists, times, f'{j}/{n * m}', [])
+                d = os.path.join(args.out, str(j))
+                write_meta(d, meta)
+                shares.append((d, f'{j}/{n * m} ', jobs))
+            rc = prebuild(heavy)
+            if rc:
+                return rc
+            running = [(d, label, start(d, jobs)) for d, label, jobs in shares]
+            for d, label, procs in running:
+                rc = finish(procs, label) or rc
+            return rc
         meta, jobs = plan(pkgs, heavy, lists, times, args.shard, [])
     write_meta(args.out, meta)
     # all at once, as `go test ./...` runs packages in parallel
     return finish(start(args.out, jobs))
+
+
+def prebuild(heavy):
+    """compiles the heavy packages' test binaries once and runs none of
+    them (true stands in for each binary, overriding GOFLAGS' expect-fail
+    -exec): concurrent go commands would each compile the same packages"""
+    pre = subprocess.run(['go', 'test', '-count=1', '-exec=true', '-run', '^$', *heavy],
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if pre.returncode:
+        sys.stdout.write(pre.stdout)
+        print(f'::error::building {", ".join(heavy)} failed ({pre.returncode})')
+    return pre.returncode
 
 
 def full(args):
@@ -257,16 +293,10 @@ def full(args):
     d = os.path.join(args.out, 'rest')
     write_meta(d, meta)
     shares.append((d, '', jobs))
-    # the heavy test binaries' packages compiled once, run nowhere (true
-    # stands in for each binary; it overrides GOFLAGS' expect-fail -exec)
-    pre = subprocess.run(['go', 'test', '-count=1', '-exec=true', '-run', '^$', *heavy],
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    if pre.returncode:
-        sys.stdout.write(pre.stdout)
-        print(f'::error::building {", ".join(heavy)} failed ({pre.returncode})')
-        return pre.returncode
+    rc = prebuild(heavy)
+    if rc:
+        return rc
     running = [(d, label, start(d, jobs)) for d, label, jobs in shares]
-    rc = 0
     for d, label, procs in running:
         rc = finish(procs, label) or rc
     print('::group::every test ran in one of the shares (test-shard.py check)')
@@ -317,10 +347,26 @@ def ran(paths):
     return tests, done
 
 
+def share_dirs(dirs):
+    """each DIR with a shard.json, or the subdirectories of one without
+    (a --split shard's shares)"""
+    out = []
+    for d in dirs:
+        if os.path.exists(os.path.join(d, 'shard.json')):
+            out.append(d)
+            continue
+        subs = sorted((os.path.join(d, x) for x in os.listdir(d) if os.path.exists(os.path.join(d, x, 'shard.json'))),
+                      key=lambda x: (len(x), x))
+        if not subs:
+            raise SystemExit(f'{d}: no shard.json in it or its subdirectories')
+        out.extend(subs)
+    return out
+
+
 def check(args):
     errs = []
     shards = []
-    for d in args.dirs:
+    for d in share_dirs(args.dirs):
         with open(os.path.join(d, 'shard.json')) as f:
             meta = json.load(f)
         paths = [os.path.join(d, x) for x in sorted(os.listdir(d)) if x.endswith('.jsonl')]
@@ -394,7 +440,7 @@ def times(args):
     """every top-level test's elapsed seconds, averaged over the DIRs"""
     heavy = [p for p in (args.heavy or '').split(',') if p]
     got = {}
-    for d in args.dirs:
+    for d in share_dirs(args.dirs):
         paths = [os.path.join(d, x) for x in sorted(os.listdir(d)) if x.endswith('.jsonl')]
         for path in paths:
             for e in events(path):
@@ -416,6 +462,7 @@ def main():
     g = r.add_mutually_exclusive_group(required=True)
     g.add_argument('--shard')
     g.add_argument('--rest', action='store_true')
+    r.add_argument('--split', type=int, help='run the shard as M shares of its own (shards (K-1)M+1..KM of NM)')
     r.add_argument('--times')
     r.add_argument('--out', required=True)
     fu = sub.add_parser('full')
