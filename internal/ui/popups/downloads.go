@@ -314,7 +314,7 @@ func (t *DownloadToast) Layout(gtx layout.Context, h Host) layout.Dimensions {
 		shadowY, blur = dp(gtx, 18), dp(gtx, 48)
 	}
 	theme.Shadow(gtx, box.Add(image.Pt(0, shadowY)), dp(gtx, 8), blur, theme.WithAlpha(cl.PanelShadow, 0x14))
-	theme.RRect(gtx, box.Inset(-maxInt(1, dp(gtx, 1))), dp(gtx, 8)+1, theme.WithAlpha(cl.Fg, 0x21))
+	theme.RRect(gtx, box.Inset(-border1(gtx)), dp(gtx, 8)+1, theme.WithAlpha(cl.Fg, 0x21))
 	theme.RRect(gtx, box, dp(gtx, 8), cl.Tooltip)
 	// the toast takes the pointer: nothing under it is hit
 	area := clip.Rect(box).Push(gtx.Ops)
@@ -827,7 +827,7 @@ func (dm *downloadsModal) over(gtx layout.Context) {
 		return d
 	})
 	lx := x + s + dp(gtx, 12)
-	fill(gtx, image.Rect(lx, y+(s-dp(gtx, 25))/2, lx+maxInt(1, dp(gtx, 1)), y+(s-dp(gtx, 25))/2+dp(gtx, 25)), cl.Divider)
+	fill(gtx, image.Rect(lx, y+(s-dp(gtx, 25))/2, lx+border1(gtx), y+(s-dp(gtx, 25))/2+dp(gtx, 25)), cl.Divider)
 }
 
 // body is p-downloads_modal__content: 424px tall (shorter to fit a short
