@@ -176,6 +176,7 @@ func (a *App) fetchUnknownMembers(ctx context.Context, ids []string) {
 				r = slack.MembersResult{Failed: ask, Err: fctx.Err()}
 			}
 			a.S.PutAbsentUsers(r.Users)         // upsertKnown
+			a.membersFetched(userIDs(r.Users))  // fresh (member_fresh.go)
 			a.S.PutNonexistent(r.Missing)       // upsertNonExistent
 			a.S.ForgetMissing('u', r.Failed...) // asked again at the next lookup
 			users, missing, failed = len(r.Users), len(r.Missing), len(r.Failed)
@@ -252,6 +253,7 @@ func (a *App) EvictMembers() []string {
 	keep := slices.Concat(a.sidebarPeopleNow(), a.badgePeopleNow())
 	a.touchSidebarMembers(keep)
 	ids := a.S.RunMembersPass(t0, keep...)
+	a.membersStale(ids) // their subscriptions go in the next cycle (member_fresh.go)
 	if len(ids) > 0 || before+gone >= 700 {
 		after, gone2 := a.S.MembersStats()
 		log.Printf("core: members cache: %d members and %d not found; %d went, %d and %d left (%s)",

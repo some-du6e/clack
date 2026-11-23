@@ -1,6 +1,6 @@
 package input
 
-// Clack patch 64: a command that takes the immediate path (or defers to
+// Clack patch 66: a command that takes the immediate path (or defers to
 // the next frame) replays everything still queued: the events no handler
 // asked for too, and the window's focus moves, not only the events that
 // made a handler's events. A press stored for a handler that asks only for

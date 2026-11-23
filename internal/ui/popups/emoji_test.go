@@ -219,10 +219,10 @@ func TestEmojiSearchFrecencyBoost(t *testing.T) {
 // group row, 33px emoji rows, the last one 43 (getRowHeight); si is the
 // screen row index the cells' data-color-index derives from.
 func TestEmojiLayoutRows(t *testing.T) {
-	var lists epLists
+	lists := make(epLists, epNumGroups+1)
 	lists[epGroupFrequent] = []int32{1, 2, 3}
 	lists[epGroupSmileys] = []int32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	rows, at, total := epLayoutRows(nil, &lists, false, 27, 1, 33, 10)
+	rows, at, total := epLayoutRows(nil, lists, false, 27, 1, 33, 10)
 	type r struct {
 		y, start, si int32
 		list, n      uint8
@@ -246,7 +246,7 @@ func TestEmojiLayoutRows(t *testing.T) {
 		t.Error("data-color-index")
 	}
 	lists[epGroupSearch] = make([]int32, 20)
-	rows, at, total = epLayoutRows(rows, &lists, true, 27, 1, 33, 10)
+	rows, at, total = epLayoutRows(rows, lists, true, 27, 1, 33, 10)
 	if len(rows) != 4 || rows[3].n != 2 || at[epGroupSearch] != 0 || at[epGroupFrequent] != -1 || total != 28+3*33+10 {
 		t.Errorf("search rows = %+v total %d", rows, total)
 	}
@@ -305,9 +305,9 @@ func TestEmojiBigIndex(t *testing.T) {
 	if len(blob) < 3 || x.names[blob[0]] != "blob_parrot21" || x.names[blob[1]] != "blob_blob11" {
 		t.Errorf("boosted first = %v", epNames(x, blob[:minInt(3, len(blob))]))
 	}
-	var lists epLists
+	lists := make(epLists, epNumGroups+1)
 	lists[epGroupCustom] = x.group[epGroupCustom]
-	rows, _, _ := epLayoutRows(nil, &lists, false, 27, 1, 33, 10)
+	rows, _, _ := epLayoutRows(nil, lists, false, 27, 1, 33, 10)
 	if want := 1 + (len(x.group[epGroupCustom])+8)/9; len(rows) != want {
 		t.Errorf("rows = %d, want %d", len(rows), want)
 	}

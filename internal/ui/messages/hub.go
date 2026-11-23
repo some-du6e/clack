@@ -193,6 +193,8 @@ type hub struct {
 	wins   map[*model]bool   // the lists' window models (newWindow)
 	nextID uint32            // the last model's id (guarded by mu)
 	userRv uint64            // bumps on profile, name, pref and members-cache events
+	// senders are the members rows resolved as their senders (readMember)
+	senders map[string]bool
 	// authFailed stops every load after core's auth_failed (or an auth
 	// error) until the connection comes back or the user hits Retry.
 	authFailed atomic.Bool
@@ -307,6 +309,33 @@ func (hb *hub) drawsMember(ev core.Event) bool {
 	}
 	hb.mu.Unlock()
 	return frame.IsZero() || seen.UnixMilli() >= frame.UnixMilli()
+}
+
+// readMember reports whether a row resolved ev's member as its sender
+// (noteSender): it holds what it resolved (the name, the picture, the
+// status) until usersRev moves. A member only a mention or a preview
+// names isn't one: those convert again (reconvert).
+func (hb *hub) readMember(ev core.Event) bool {
+	id := ev.UserID
+	if id == "" && ev.User != nil {
+		id = ev.User.ID
+	}
+	if id == "" {
+		return false
+	}
+	hb.mu.Lock()
+	defer hb.mu.Unlock()
+	return hb.senders[id]
+}
+
+// noteSender records that a row resolved member id as its sender.
+func (hb *hub) noteSender(id string) {
+	hb.mu.Lock()
+	if hb.senders == nil {
+		hb.senders = map[string]bool{}
+	}
+	hb.senders[id] = true
+	hb.mu.Unlock()
 }
 
 // redraws reports whether ev's change to the models shows: a
@@ -1506,6 +1535,18 @@ func (hb *hub) apply(ev core.Event) bool {
 		// senders, so drawsMember never saw them read
 		re := hb.reconvert(ev)
 		if ev.Type == "user" && !hb.drawsMember(ev) {
+			// not on screen now: nothing to draw, but a row that drew the
+			// member before (one scrolled away, a list left open in
+			// another conversation) resolved it then and keeps what it
+			// resolved until usersRev moves, so it must move for any
+			// member a row has read (Karim, α.143: a thread broadcast kept
+			// a sender's old picture beside a newer message with the new
+			// one). The rows read it again when they next draw.
+			if hb.readMember(ev) {
+				hb.mu.Lock()
+				hb.userRv++
+				hb.mu.Unlock()
+			}
 			return re
 		}
 		hb.mu.Lock()

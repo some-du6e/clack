@@ -3,7 +3,7 @@ package popups
 // A press-only scrim (a backdrop that takes the press dismissing it; its
 // release goes to no handler) with something laid out before it that
 // executes a command in the middle of layout: a focused editor whose text
-// changed (SelectionCmd, SnippetCmd: Gio patch 64) or a ticker
+// changed (SelectionCmd, SnippetCmd: Gio patch 66) or a ticker
 // (op.InvalidateCmd: patch 61, the 11-17 lost click). The router replayed
 // the queued press without the release, the pointer stayed down on the
 // gone scrim, and the next press, on the button under where it was, went

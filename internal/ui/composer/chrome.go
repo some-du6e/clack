@@ -113,6 +113,11 @@ type chromeState struct {
 	// PlusOpen is the + button's open state (ShortcutsMenuTriggerButton's
 	// S, attachments.plusOpen): p-shortcuts_menu_trigger_button--composer_ia-open
 	PlusOpen bool
+	// EmojiBadge is EmojiToolbarButton's c-wysiwyg_container__button--
+	// with_badge: the channel's input (MessagePaneInput's
+	// enableEmojiButtonBadge) after an emoji pack was added
+	// (core.EmojiPackInputBadge)
+	EmojiBadge bool
 	// Invalid is WysiwygContainer's isInvalid (a Block Kit field with an
 	// error): c-basic_container--invalid
 	Invalid bool
@@ -301,6 +306,7 @@ type crPal struct {
 	send, sendHover, sendText, sendDiv     color.NRGBA
 	sendDisIcon, sendDisDiv                color.NRGBA
 	yellow, emojiInk                       color.NRGBA
+	badgeRing                              color.NRGBA // the emoji button badge's 2px ring
 	check, checkHover, checkMark           color.NRGBA
 	checkBorder, checkBorderHover, checkBg color.NRGBA
 	shadow                                 [3]color.NRGBA // the shadow rect, 1 and 2px out (crShadow)
@@ -356,6 +362,12 @@ func crMakePal(th *theme.Theme) crPal {
 	p.sendDisIcon = crFade(ink, p.bg, .3)
 	p.sendDisDiv = crFade(p.footHover, p.bg, .3)
 	p.yellow = rgb(0xecb22e) // --dt_color-brand-core-slack-yellow
+	// .c-wysiwyg_container__button--with_badge:before's border:
+	// sk_primary_background, in a dark container --dt_color-otl-ter
+	p.badgeRing = c.Bg
+	if th.Dark {
+		p.badgeRing = theme.Over(theme.WithAlpha(rgb(0x797c81), 0x4d), c.Bg) // --dt_color-otl-ter, dark
+	}
 	// the hovered emoji button's icon: the button's hover colour
 	// (content-pry) in light, .sk-client-theme--dark …--emoji:hover
 	// {color: var(--dt_color-constants-black)} in dark
@@ -1331,6 +1343,15 @@ func (c *chrome) footButton(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 		t.Pop()
 	} else {
 		c.icon(gtx, st, id, r, ic)
+	}
+	if id == crEmoji && st.EmojiBadge {
+		// --with_badge:before: a 10px disc of --dt_color-base-inv-imp in a
+		// 2px ring of sk_primary_background (dark: otl-ter), its box at
+		// top 2px, right 2px of the button
+		d := gtx.Dp(10) + 2*gtx.Dp(2)
+		b := image.Rect(r.Max.X-gtx.Dp(2)-d, r.Min.Y+gtx.Dp(2), r.Max.X-gtx.Dp(2), r.Min.Y+gtx.Dp(2)+d)
+		fillRRect(gtx, b, d/2, p.badgeRing)
+		fillRRect(gtx, b.Inset(gtx.Dp(2)), d/2-gtx.Dp(2), rgb(0xe01e5a))
 	}
 	c.hit(gtx, id, r, !dis)
 	c.tooltip(gtx, th, st, id, r)

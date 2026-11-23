@@ -72,7 +72,7 @@ type Router struct {
 	// command (Clack patches 61 and 64, tests).
 	replayed, deferredReplayed int
 	// processingSystem is set while processEvent handles a SystemEvent:
-	// its replay queues it as one again (Clack patch 64)
+	// its replay queues it as one again (Clack patch 66)
 	processingSystem bool
 	// scratchFilters is for garbage-free construction of ephemeral filters.
 	scratchFilters []taggedFilter
@@ -178,7 +178,7 @@ type stateChange struct {
 	event  event.Event
 	state  inputState
 	events []taggedEvent
-	// replay is what made the change (Clack patch 64): its trigger, then
+	// replay is what made the change (Clack patch 66): its trigger, then
 	// every event merged into it that no handler asked for (a release of
 	// a press-only handler's press, a move) and the window's focus calls,
 	// in order. A command's replay redoes all of it; the triggers alone
@@ -187,7 +187,7 @@ type stateChange struct {
 }
 
 // replayItem is an event to queue again or a window call to make again
-// (Clack patch 64).
+// (Clack patch 66).
 type replayItem struct {
 	event event.Event
 	redo  func()
@@ -408,7 +408,7 @@ func (q *Router) Frame(frame *op.Ops) {
 	if n := len(q.changes); n > 0 {
 		if q.deferring {
 			// Collect events for replay: every one, and the window's
-			// calls, not only the triggers (Clack patch 64).
+			// calls, not only the triggers (Clack patch 66).
 			for _, ch := range q.changes[1:] {
 				remaining = append(remaining, ch.replay...)
 			}
@@ -523,7 +523,7 @@ func (f *filter) Reset() {
 }
 
 func (q *Router) processEvent(e event.Event, system bool) {
-	q.processingSystem = system // Clack patch 64
+	q.processingSystem = system // Clack patch 66
 	defer func() { q.processingSystem = false }()
 	state := q.lastState()
 	switch e := e.(type) {
@@ -581,10 +581,10 @@ func (q *Router) execute(c Command) {
 	// replays every event still queued (a widget ticking in the middle of
 	// layout replayed the input of everything laid out after it). A
 	// clipboard.WriteCmd likewise only hands the window its content
-	// (patch 64). The commands that change the input state (FocusCmd,
+	// (patch 66). The commands that change the input state (FocusCmd,
 	// SelectionCmd, SnippetCmd, SoftKeyboardCmd, pointer.GrabCmd,
 	// clipboard.ReadCmd, transfer.OfferCmd, ResetPointers) keep the
-	// immediate path, whose replay (patch 64) redoes everything queued.
+	// immediate path, whose replay (patch 66) redoes everything queued.
 	switch c.(type) {
 	case op.InvalidateCmd, clipboard.WriteCmd:
 		q.executeCommand(c)
@@ -602,7 +602,7 @@ func (q *Router) execute(c Command) {
 		immediate = immediate || immediateCmd(c) // Clack patch 49: ResetPointers
 		if immediate {
 			// Hold on to the remaining events for state replay: all of
-			// them, and the window's calls (Clack patch 64). The first
+			// them, and the window's calls (Clack patch 66). The first
 			// change is the state delivered so far, which the command
 			// changed; what came after it is redone on top.
 			var items []replayItem
@@ -706,7 +706,7 @@ func (q *Router) changeState(e event.Event, state inputState, evts []taggedEvent
 		prev := &q.changes[len(q.changes)-1]
 		prev.state = state
 		prev.events = append(prev.events, evts...)
-		// Clack patch 64: an event merged into a change that is still
+		// Clack patch 66: an event merged into a change that is still
 		// queued is redone with it (the first change's state is already
 		// delivered, and never replayed)
 		if e != nil && len(q.changes) > 1 {
@@ -717,7 +717,7 @@ func (q *Router) changeState(e event.Event, state inputState, evts []taggedEvent
 
 // replayItemFor is e to queue again: a SystemEvent again when it came as
 // one, so a replay doesn't hand a key reserved for focus moves to a
-// catch-all filter (Clack patch 64).
+// catch-all filter (Clack patch 66).
 func (q *Router) replayItemFor(e event.Event) replayItem {
 	if q.processingSystem {
 		return replayItem{event: SystemEvent{Event: e}}
@@ -727,7 +727,7 @@ func (q *Router) replayItemFor(e event.Event) replayItem {
 
 // noteRedo records a window call that changed the queued state without
 // an event of its own (MoveFocus, ScrollFocus, ClickFocus) for a replay to
-// make again (Clack patch 64).
+// make again (Clack patch 66).
 func (q *Router) noteRedo(f func()) {
 	if n := len(q.changes); n > 1 {
 		q.changes[n-1].replay = append(q.changes[n-1].replay, replayItem{redo: f})
@@ -735,7 +735,7 @@ func (q *Router) noteRedo(f func()) {
 }
 
 // replayItems queues the events again and makes the calls again, in
-// order (Clack patch 64); deferred is Frame's replay of a deferred
+// order (Clack patch 66); deferred is Frame's replay of a deferred
 // command's frame.
 func (q *Router) replayItems(items []replayItem, deferred bool) {
 	for _, it := range items {
@@ -771,7 +771,7 @@ func (q *Router) MoveFocus(dir key.FocusDirection) {
 	kstate, evts := q.key.queue.MoveFocus(q.handlers, state.keyState, dir)
 	state.keyState = kstate
 	q.changeState(nil, state, evts)
-	q.noteRedo(func() { q.MoveFocus(dir) }) // Clack patch 64
+	q.noteRedo(func() { q.MoveFocus(dir) }) // Clack patch 66
 }
 
 // RevealFocus scrolls the current focus (if any) into viewport
@@ -817,7 +817,7 @@ func (q *Router) ScrollFocus(dist image.Point) {
 		Source: pointer.Touch,
 		Scroll: f32internal.FPt(dist),
 	}))
-	q.noteRedo(func() { q.ScrollFocus(dist) }) // Clack patch 64
+	q.noteRedo(func() { q.ScrollFocus(dist) }) // Clack patch 66
 }
 
 func maxPoint(p1, p2 image.Point) image.Point {
@@ -864,7 +864,7 @@ func (q *Router) ClickFocus() {
 	q.changeState(nil, state, q.pointer.queue.Deliver(q.handlers, area, e))
 	e.Kind = pointer.Release
 	q.changeState(nil, state, q.pointer.queue.Deliver(q.handlers, area, e))
-	q.noteRedo(q.ClickFocus) // Clack patch 64
+	q.noteRedo(q.ClickFocus) // Clack patch 66
 }
 
 // TextInputState returns the input state from the most recent

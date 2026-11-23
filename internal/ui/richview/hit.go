@@ -58,7 +58,8 @@ func (v *View) HitAt(p f32.Point) Hit {
 		case fImage:
 			// an emoji's <img> (alt: its :name: text); a context block's
 			// image is BaseImageElement's background div, no image
-			if h.EmojiURL == "" && f.alt && f.url != "" && !strings.HasPrefix(f.url, iconURL) && p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
+			x0, x1 := fragSpan(f) // the column two touching emoji share is one's
+			if h.EmojiURL == "" && f.alt && f.url != "" && !strings.HasPrefix(f.url, iconURL) && p.X >= x0 && p.X < x1 && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
 				h.EmojiURL = f.url
 				if f.tip > 0 && int(f.tip) <= len(v.d.tips) {
 					h.Emoji = v.d.tips[f.tip-1]
