@@ -3201,10 +3201,17 @@ and each ticker's wakeup on its cadence). Not in `UPSTREAM.patch`.
 `internal/stroke/stroke.go`: `strokePathNorm` takes a segment's normal
 from the whole segment (`p2 - p0`) when the derivative at the end it's
 asked for is zero, and `ArcTransform` returns the identity for a circle
-of radius 0 instead of scaling by `1/0`.
+of radius 0 instead of scaling by `1/0`. `StrokeQuads.addLine` asks for
+the t = 1 normal with the segment's own start, not the offset start it
+has already moved p0 to (that fallback reads p0; a non-degenerate t = 1
+normal never does): from the offset start, a near-zero closing line's
+"whole segment" points about a half-width across the stroke, and both
+sides ended a half-width along the tangent, a 2·hw jump that left
+sub-pixel holes (ring-seam-2, from ring-seam's review).
 
 A ring drawn as `MoveTo`, `ArcTo(c, c, 2π)` and `Close` doesn't land
-exactly: `ArcTo` steps its rotation matrix 34 times in float32, the pen
+exactly: `ArcTo` cuts a whole turn into 16 segments and steps its
+rotation matrix 32 times in float32 (twice a segment), the pen
 ends a float's error from the start, and `Close` adds a segment of about
 1e-5 px. Its midpoint control point rounds onto one of its ends, so the
 normal there was zero; the round join after it then started its arc on

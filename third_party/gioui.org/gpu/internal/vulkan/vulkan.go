@@ -1144,6 +1144,7 @@ func formatFor(format driver.TextureFormat) vk.Format {
 	case driver.TextureFormatSRGBA:
 		return vk.FORMAT_R8G8B8A8_SRGB
 	case driver.TextureFormatFloat:
+		driver.ClackCoverageBits.Store(16) // Clack patch 63, for tests
 		return vk.FORMAT_R16_SFLOAT
 	default:
 		panic("unsupported texture format")

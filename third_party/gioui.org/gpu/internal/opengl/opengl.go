@@ -780,6 +780,11 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 	switch format {
 	case driver.TextureFormatFloat:
 		tex.triple = b.floatTriple
+		bits := int32(16) // Clack patch 63, for tests
+		if b.floatTriple.typ == gl.FLOAT {
+			bits = 32
+		}
+		driver.ClackCoverageBits.Store(bits)
 	case driver.TextureFormatSRGBA, driver.TextureFormatOutput:
 		// Output: the window's own format, sRGB (Clack patch 46's frame
 		// texture)
@@ -1434,7 +1439,7 @@ func (t *timer) Duration() (time.Duration, bool) {
 // floatTripleFor determines the best texture triple for floating point FBOs.
 func floatTripleFor(f *gl.Functions, ver [2]int, gles bool, exts []string) (textureTriple, error) {
 	var triples []textureTriple
-	// Clack patch 62: path coverage in 32-bit float where it can be
+	// Clack patch 63: path coverage in 32-bit float where it can be
 	// blended into (desktop GL 3; GLES 3 with EXT_color_buffer_float and
 	// EXT_float_blend): a stencil pass sums each segment's coverage down
 	// to the path's bottom, and in half float the sums of a ring's many
