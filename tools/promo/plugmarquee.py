@@ -21,12 +21,25 @@ seed = opt('--seed', 4, int)
 rng = random.Random(seed)
 BG = (0x5a, 0x3f, 0xd6)
 STYLE = {'taut': ((255, 255, 255), (0x4a, 0x2f, 0xc9)),
-         'slick': ((0xff, 0xb5, 0x47), (0x2a, 0x17, 0x00))}
+         'slick': ((0xff, 0xb5, 0x47), (0x2a, 0x17, 0x00)),
+         'both': ((0xe4, 0xdc, 0xff), (0x3a, 0x22, 0xa8))}
 LATO = '/usr/share/fonts/truetype/lato/Lato-Bold.ttf'
 SS = 3
 
 plugins = json.load(open(idx))['plugins']
-items = [(p['system'], p['name']) for p in plugins]
+# one pill per Library row: a plugin both systems ship (the same name, or one of the six
+# renamed pairs in docs/PLUGINS.md) is one lavender pill under Taut's name
+RENAMED = {('slick', 'No Track'): 'No Tracking', ('slick', 'Anonymise File Names'): 'Anonymize Filenames',
+           ('slick', 'Private Channel Mapper'): 'Private Channel', ('slick', 'Not Shit Markdown'): 'Real Markdown',
+           ('slick', 'HCA Status'): 'IDV Status', ('slick', 'Custom Slackbot'): 'Bring Back Slackbot'}
+rowsys = {}
+for p in plugins:
+    key = RENAMED.get((p['system'], p['name']), p['name']).lower()
+    if key in rowsys and rowsys[key][0] != p['system']:
+        rowsys[key] = ('both', rowsys[key][1] if rowsys[key][0] == 'taut' else p['name'] if p['system'] == 'taut' else rowsys[key][1])
+    elif key not in rowsys:
+        rowsys[key] = (p['system'], RENAMED.get((p['system'], p['name']), p['name']) if p['system'] == 'slick' and (p['system'], p['name']) in RENAMED else p['name'])
+items = [(sysname, name) for sysname, name in rowsys.values()]
 rng.shuffle(items)
 
 MARGIN_Y, GAP_X = 8, 10
@@ -60,9 +73,13 @@ for r in range(ROWS):
 
 # whole-pixel scrolling: every row moves STEP px a frame and is padded (its gaps widened) to
 # exactly STEP * n px, so a loop is one copy and no frame blends sub-pixel positions
-n = int(round(T * FPS))
 natural = max(sum(sprites[i].size[0] + GAP_X for i in rows[r]) for r in range(ROWS))
-STEP = max(1, int(math.ceil(natural / n)))
+STEP = opt('--step', 0, int)
+if STEP > 0:
+    n = int(math.ceil(natural / STEP))
+else:
+    n = int(round(T * FPS))
+    STEP = max(1, int(math.ceil(natural / n)))
 PERIOD = STEP * n
 strips = []
 for r in range(ROWS):
