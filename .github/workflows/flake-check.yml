@@ -2875,7 +2875,9 @@ jobs:
   # the raw spans' and the answer reads' unit tests: a preformatted raw
   # span highlighted mid-line stays preformatted (richtext), and an answer
   # cut off mid-body is an error, as io.ReadAll's is (slack: Content-Length,
-  # chunked, gzip). only=giant-messages runs it with giant-messages;
+  # chunked, gzip); a message held only as fetched by id has its
+  # reactions in the plugins' reactions slice (taut: keys and get agree).
+  # only=giant-messages runs it with giant-messages;
   # only=giant-messages-fixes alone.
   giant-messages-fixes:
     if: ${{ !inputs.only || startsWith('giant-messages-fixes', inputs.only) }}
@@ -2893,12 +2895,15 @@ jobs:
         with:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: richtext raw spans, slack answer reads (every package, then the verdict)
+      - name: gio deps (taut's test binary links them)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: richtext raw spans, slack answer reads, taut reactions (every package, then the verdict)
         run: |
           set +e
           rc=0
           go test -count=$COUNT -timeout 8m -run '^(TestRawPreHighlightMidLine|TestRawSpanMessage|TestRichTextPieces|TestTextIsAsDecoded|TestRichJumbo)$' ./internal/richtext || rc=1
           go test -count=$COUNT -timeout 8m -run '^(TestReadBodyCutOff|TestReadBodyAsReadAll|TestAdaptiveRouting)$' ./internal/slack || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^(TestReactionsOfFetchedMessages|TestBucketJSONSameAsBucket)$' ./internal/taut || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
