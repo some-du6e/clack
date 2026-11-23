@@ -367,6 +367,11 @@ type App struct {
 	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
 	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
 
+	// secFocused: the side pane is the focused view container;
+	// actPaneFocus: the thread the Activity tab's own pane draws is
+	// (focus_container.go)
+	secFocused, actPaneFocus bool
+
 	insp    *inspect.Tool // the inspect tool, nil unless gated on (inspect_wire.go)
 	inspKey key.Filter    // its shortcut
 	konami  konami        // the code that turns it on and off
@@ -383,11 +388,6 @@ type App struct {
 	// the frame's layout
 	inspReset   bool
 	inspPresses []key.Event
-
-	// secFocused: the side pane is the focused view container;
-	// actPaneFocus: the thread the Activity tab's own pane draws is
-	// (focus_container.go)
-	secFocused, actPaneFocus bool
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
