@@ -67,6 +67,9 @@ type Router struct {
 	// deferring is set if command execution and event delivery is deferred
 	// to the next frame.
 	deferring bool
+	// replayed counts the events a command's immediate execution queued
+	// again (Clack patch 61's tests).
+	replayed int
 	// scratchFilters is for garbage-free construction of ephemeral filters.
 	scratchFilters []taggedFilter
 	// Clack patch 28: the key presses for Source.KeyPresses.
@@ -552,6 +555,15 @@ func (q *Router) processEvent(e event.Event, system bool) {
 }
 
 func (q *Router) execute(c Command) {
+	// Clack patch 61: an InvalidateCmd changes no input state and sends no
+	// events; it only asks for a frame. It records its wakeup at once,
+	// deferring or not, and never takes the immediate path below, which
+	// replays every event still queued (a widget ticking in the middle of
+	// layout replayed the input of everything laid out after it).
+	if inv, ok := c.(op.InvalidateCmd); ok {
+		q.executeCommand(inv)
+		return
+	}
 	// The command can be executed immediately if event delivery is not frozen, and
 	// no event receiver has completed their event handling.
 	if !q.deferring {

@@ -49,6 +49,18 @@ type PopoverOpts struct {
 	// cubic-bezier(.33,1,.68,1)). NoMotion is prefers-reduced-motion
 	// (animation: none).
 	AnimateIn, NoMotion bool
+	// Bare draws the content as it is, without the card's background,
+	// border and shadow: Slack's .c-popover__content has none, the
+	// content brings its own (AudioPopover's strip).
+	Bare bool
+	// OnOverlayClick, when set, runs on a click outside the content
+	// instead of closing the popover (Slack's shouldCloseOnOverlayClick:
+	// false; AudioPopover flashes its speedbump).
+	OnOverlayClick func()
+	// OnEnter runs on Return or Space while the popover has the keyboard
+	// focus: the content's autoFocus button (AudioPopover's Stop
+	// recording).
+	OnEnter func()
 }
 
 // Popover is a card with arbitrary content anchored to a rectangle; it
@@ -99,12 +111,27 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 		p.Dismiss()
 		return layout.Dimensions{}
 	}
+	if p.o.OnEnter != nil && isTop(p) {
+		for {
+			e, ok := gtx.Event(key.Filter{Focus: p, Name: key.NameReturn}, key.Filter{Focus: p, Name: key.NameEnter},
+				key.Filter{Focus: p, Name: key.NameSpace})
+			if !ok {
+				break
+			}
+			if ke, ok := e.(key.Event); ok && ke.State == key.Press {
+				p.o.OnEnter()
+			}
+		}
+	}
 	if p.o.Modal {
 		fill(gtx, image.Rectangle{Max: win}, cl.Backdrop)
 	}
 	if !p.o.Peek && p.scrim.Layout(gtx) {
-		p.Dismiss()
-		return layout.Dimensions{}
+		if p.o.OnOverlayClick == nil {
+			p.Dismiss()
+			return layout.Dimensions{}
+		}
+		p.o.OnOverlayClick()
 	}
 	m := dp(gtx, 8)
 	maxW := win.X - 2*m
@@ -168,7 +195,13 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 	keyTarget(gtx, p, p.rect)
 	st := popoverClass.Enter(gtx, 0, 0)
 	var box image.Rectangle
-	if !st.Hidden() {
+	if !st.Hidden() && p.o.Bare {
+		t := op.Offset(pos).Push(gtx.Ops)
+		p.block.Layout(gtx, image.Rectangle{Max: d.Size})
+		call.Add(gtx.Ops)
+		t.Pop()
+		box = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
+	} else if !st.Hidden() {
 		styledCard(gtx, st, cl, pos, d.Size, dp(gtx, rad), false, func(gtx layout.Context) {
 			local := image.Rectangle{Max: d.Size}
 			p.block.Layout(gtx, local)

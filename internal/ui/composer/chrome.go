@@ -155,6 +155,9 @@ type chromeState struct {
 	// OverLimit is how many characters the message is past the 12,000
 	// limit (TextyLengthWarning's numCharsOverLimit; charlimit.go).
 	OverLimit int
+	// TooManyFiles: more than 10 files attached (isComposerDraftSendable's
+	// tooManyFiles), so the send is off.
+	TooManyFiles bool
 	// Drafts is the drafts button's count (DraftManagementButton,
 	// draft_button.go; 0: no button). DraftsBusy: a file still uploads
 	// (the button is aria-disabled).
@@ -178,7 +181,7 @@ type chromeState struct {
 
 // sendOff is isSendingDisabledForTextState: nothing to send, or the
 // message is over the 12,000-character limit (isOverMaxLength).
-func (st *chromeState) sendOff() bool { return !st.CanSend || st.OverLimit > 0 }
+func (st *chromeState) sendOff() bool { return !st.CanSend || st.OverLimit > 0 || st.TooManyFiles }
 
 // crBtn names every clickable in the chrome.
 type crBtn uint8

@@ -132,6 +132,7 @@ type audioState struct {
 	errored    bool // Q: the element's error
 	stalled    bool // K: waiting for data while playing
 	rate       float64
+	mini       bool // the slot's Mini: no speed, transcript or More, the natural rate
 	z          audioZones
 	press      audioZone
 	scrub      bool
@@ -249,7 +250,11 @@ func (c *Controller) applyAudioLocked(t *tile) {
 		t.h.SetMuted(false)
 		t.applied = true
 	}
-	if r := c.speedLocked(t.f); r != t.au.rate {
+	r := c.speedLocked(t.f)
+	if t.au.mini { // ignoresPlaybackSpeedPref
+		r = 1
+	}
+	if r != t.au.rate {
 		t.h.SetRate(r)
 		t.au.rate = r
 	}
@@ -332,6 +337,7 @@ func (r *Row) layoutAudio(gtx layout.Context, s richview.MediaSlot) layout.Dimen
 	if t.au == nil {
 		t.au = &audioState{}
 	}
+	t.au.mini = s.Mini
 	t.laid = c.frame
 	if t.unmount != nil {
 		t.unmount.Stop()
@@ -560,8 +566,8 @@ func (r *Row) drawAudio(gtx layout.Context, t *tile, s richview.MediaSlot, sz im
 	hot := t.hover
 	ptr := image.Pt(int(t.ptr.X), int(t.ptr.Y))
 	speed := c.prefSpeedLocked()
-	flat := AudioFlat(s.File)
-	showSpeed, showTr := c.showSpeed(s.File), c.showTranscript(s.File)
+	flat, mini := AudioFlat(s.File), s.Mini
+	showSpeed, showTr := c.showSpeed(s.File) && !mini, c.showTranscript(s.File) && !mini
 	errored, stalled := a.errored, a.stalled
 	c.mu.Unlock()
 	var z audioZones
@@ -574,8 +580,10 @@ func (r *Row) drawAudio(gtx layout.Context, t *tile, s richview.MediaSlot, sz im
 		cy := in.Min.Y + (in.Dy()-bs)/2
 		z.play = image.Rect(in.Min.X, cy, in.Min.X+bs, cy+bs)
 		right := in.Max.X
-		z.more = image.Rect(right-dp(32), in.Min.Y+(in.Dy()-dp(32))/2, right, in.Min.Y+(in.Dy()+dp(32))/2)
-		right = z.more.Min.X
+		if !mini { // AudioClipOverflowMenu: !mini && showActions
+			z.more = image.Rect(right-dp(32), in.Min.Y+(in.Dy()-dp(32))/2, right, in.Min.Y+(in.Dy()+dp(32))/2)
+			right = z.more.Min.X
+		}
 		if showSpeed { // .p-media_controls__control: margin 0 8px
 			_, tsz := r.text(gtx, speedLabel(speed), 13, true, pal.max70)
 			w := tsz.X + dp(16) + dp(2)
@@ -615,7 +623,9 @@ func (r *Row) drawAudio(gtx layout.Context, t *tile, s richview.MediaSlot, sz im
 		if showSpeed {
 			r.speedButton(gtx, z.speed, speed, hot && ptr.In(z.speed), pal)
 		}
-		r.iconButton(gtx, z.more, "ellipsis-vertical-filled", hot && ptr.In(z.more), pal)
+		if !mini {
+			r.iconButton(gtx, z.more, "ellipsis-vertical-filled", hot && ptr.In(z.more), pal)
+		}
 	} else {
 		bs := dp(36)
 		z.play = image.Rect(in.Min.X, in.Min.Y, in.Min.X+bs, in.Min.Y+bs)
@@ -687,7 +697,7 @@ func (r *Row) drawAudio(gtx layout.Context, t *tile, s richview.MediaSlot, sz im
 		if showSpeed {
 			c.env.Tooltip(gtx, &a.z.speed, hot && ptr.In(z.speed), z.speed, false, 0, i18n.T("stories_av", "Playback speed"))
 		}
-		if flat {
+		if flat && !mini {
 			c.env.Tooltip(gtx, &a.z.more, hot && ptr.In(z.more), z.more, false, 0, i18n.T("file", "More actions"))
 		}
 		if showTr {

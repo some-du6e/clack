@@ -3153,3 +3153,45 @@ Tests: `gesture/clack_hover_cancel_test.go`
 doesn't lay the Hover out, for mouse ids 0 and 1), in ci's linux-gio
 job. In Clack: `internal/ui/messages`' `TestGutterTimeTipEndsOnWindowsMouse`
 (the gutter time's own trigger). Not in `UPSTREAM.patch`.
+
+## 61. io/input: an InvalidateCmd asks for its frame and replays nothing
+
+`io/input/router.go` (`Router.execute`): an `op.InvalidateCmd` records its
+wakeup (`executeCommand`: the earliest asked for) and returns, deferring
+or not. It no longer takes the immediate path, which keeps the first
+state change, truncates the rest and queues their events again
+(`requeue`, patch 28) to replay them from the new state.
+
+An `InvalidateCmd` changes no input state and sends no events, so the
+replay redid every queued event's hit testing, enter/leave and delivery
+for nothing, each time a widget asked for a frame in the middle of
+layout. That is most of them: tooltips in their hover delay, spinners,
+the peek card's animate-in, carousels, debounces, a focused editor's
+caret (`widget.Editor`, every frame while focused), Gio's own
+`material` loader and button ink. Each stateful router patch had to
+learn to tell a replay from new input (28's key log, 48's click count,
+33's last-input time still counts a replay as input). The composer's
+lost click of 2026-11-17 came through this path (a + turn ticking while
+a scrim's click was still queued); the hub review of 2026-11-22 found
+its carousel doing the same.
+
+Commands that change the input state (`key.FocusCmd`, `SelectionCmd`,
+`SoftKeyboardCmd`, `SnippetCmd`, `pointer.GrabCmd`, `clipboard.ReadCmd`,
+patch 49's reset) keep the immediate path and its replay: the queued
+events must be delivered from the state they make. `clipboard.WriteCmd`
+changes none either and still replays; it runs only on a copy.
+
+`Router.replayed` counts the events an immediate execution queued again,
+for the tests.
+
+Tests: `io/input/clack_invalidate_test.go`
+(`TestClackInvalidateReplaysNothing`: a handler laid out first ticks while
+a later one's press and release are queued; nothing is replayed, the
+later handler reads both once, the wakeup is the earliest asked for;
+`TestClackInvalidateWhileDeferring`: recorded at once while a focus
+change waits for the next frame; `TestClackFocusCmdStillImmediate`: the
+focus change still replays the queue and is read in its frame), in ci's
+linux-gio job. In Clack: `internal/ui/popups`' `TestTickersKeepLaterPresses`
+(a press on a button laid out after a tooltip in its delay, a loading
+spinner, a peek card animating in and a focused editor: one click each,
+and each ticker's wakeup on its cadence). Not in `UPSTREAM.patch`.

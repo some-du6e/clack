@@ -231,6 +231,7 @@ func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) 
 	raws := make([]*PendingFile, len(o.Files))
 	for i, f := range o.Files {
 		raws[i] = NewPendingFile(f.Name, firstNonEmpty(f.Title, f.Name), f.Data)
+		raws[i].Subtype = f.Subtype
 	}
 	var ph *filePlaceholder
 	if o.Channel != "" {
@@ -364,9 +365,11 @@ func (a *App) PrepareUpload(ctx context.Context, f UploadFile, progress func(sen
 }
 
 // uploadOnce is one eager upload attempt: files.getUploadURL {filename,
-// length, snippet_type, alt_txt} (Slack's getUploadURL fetcher sends the
-// last two for snippets and for images with alt text), the multipart POST
-// to upload_url, files.completeUpload.
+// length, snippet_type, subtype, alt_txt} (Slack's getUploadURL fetcher
+// sends snippet_type for snippets, subtype for clips and alt_txt for
+// images with alt text), the multipart POST to upload_url,
+// files.completeUpload {files: [{id, title, subtype}]} (UploadQueue's
+// _getMultiFileUploadDataForApi adds subtype when the File has one).
 func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, total int64)) (string, error) {
 	t0 := time.Now()
 	var r struct {
@@ -378,6 +381,9 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 	args := url.Values{"filename": {f.Name}, "length": {strconv.Itoa(n)}}
 	if f.SnippetType != "" {
 		args.Set("snippet_type", f.SnippetType)
+	}
+	if f.Subtype != "" {
+		args.Set("subtype", f.Subtype)
 	}
 	if f.AltText != "" {
 		args.Set("alt_txt", f.AltText)
@@ -395,7 +401,7 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 		return "", err
 	}
 	log.Printf("upload: %s POST %d bytes in %s", id, n, time.Since(t0).Round(time.Millisecond))
-	if err := a.C.CompleteUpload(ctx, []slack.UploadedRef{{ID: id, Title: firstNonEmpty(f.Title, f.Name)}}); err != nil {
+	if err := a.C.CompleteUpload(ctx, []slack.UploadedRef{{ID: id, Title: firstNonEmpty(f.Title, f.Name), Subtype: f.Subtype}}); err != nil {
 		log.Printf("upload: %s completeUpload failed (%s)", id, uploadErrClass(err))
 		return "", err
 	}

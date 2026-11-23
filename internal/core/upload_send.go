@@ -67,6 +67,9 @@ var ErrProcessingTimeout = errors.New("core: polling for processing timed out")
 type PendingFile struct {
 	Name, Title string
 	Data        []byte // in memory only
+	// Subtype is the File's subtype ("slack_audio" for a voice clip): the
+	// placeholder draws it as one.
+	Subtype string
 
 	mu       sync.Mutex
 	sent     int64
@@ -304,10 +307,10 @@ type phSlot struct {
 var pendingSeq atomic.Int64
 
 // localFile is the placeholder's object for a file still uploading.
-func localFile(self, name, title string, data []byte) (slack.File, string) {
+func localFile(self, name, title, subtype string, data []byte) (slack.File, string) {
 	ext := strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
 	f := slack.File{ID: "pending:" + strconv.FormatInt(pendingSeq.Add(1), 10), Name: name, Title: firstNonEmpty(title, name),
-		Mimetype: mimeByExt(ext), Filetype: ext, Size: int64(len(data)), Mode: "hosted", User: self, Pending: true}
+		Mimetype: mimeByExt(ext), Filetype: ext, Size: int64(len(data)), Mode: "hosted", User: self, Pending: true, Subtype: subtype}
 	var preview string
 	if strings.HasPrefix(f.Mimetype, "image/") && len(data) > 0 {
 		if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil && cfg.Width > 0 && cfg.Height > 0 {
@@ -334,6 +337,8 @@ func mimeByExt(ext string) string {
 		return "image/heic"
 	case "mp4":
 		return "video/mp4"
+	case "m4a":
+		return "audio/mp4"
 	case "mov":
 		return "video/quicktime"
 	case "pdf":
@@ -474,7 +479,7 @@ func (a *App) startPlaceholder(ctx context.Context, o UploadOpts, raws []*Pendin
 			ph.resolveNow(ph.slots[len(ph.slots)-1], res)
 			return
 		}
-		f, preview := localFile(self, pf.Name, pf.Title, pf.Data)
+		f, preview := localFile(self, pf.Name, pf.Title, pf.Subtype, pf.Data)
 		f.UploadPercent = pf.percent()
 		ph.slots = append(ph.slots, &phSlot{file: f, pf: pf, preview: preview})
 		ph.started = true
