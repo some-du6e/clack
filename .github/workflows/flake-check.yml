@@ -5544,8 +5544,8 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 5m -run '^(TestDecodeLikeChromium|TestEncodeOpusInMP4)$' ./internal/webaudio || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^(TestWebAudioLikeChromium|TestMediaElementPlays|TestFileInputPicker)$' ./internal/jsrt || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestDecodeLikeChromium|TestEncodeOpusInMP4|TestWebAudioLikeChromium)$' ./internal/webaudio || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestMediaElementPlays|TestFileInputPicker)$' ./internal/jsrt || rc=1
           go test -count="$COUNT" -timeout 5m -run '^TestUploadFileFieldsLikeSlack$' ./internal/taut || rc=1
           go test -count="$COUNT" -timeout 8m -run '^TestCustomNameRecordingLikeSlack$' ./internal/slick || rc=1
           xvfb-run -a go test -count="$COUNT" -timeout 10m -run '^TestTautCustomNameRecording' ./internal/ui || rc=1

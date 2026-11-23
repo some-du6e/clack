@@ -1,4 +1,4 @@
-package jsrt
+package webaudio
 
 import (
 	"context"
@@ -8,11 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/clip"
+	"github.com/some-du6e/clack/internal/jsrt"
+	"github.com/some-du6e/clack/internal/media/goaudio"
 	"github.com/some-du6e/clack/internal/media/mediatest"
 )
 
-// TestWebAudioLikeChromium: Web Audio's decodeAudioData and MediaRecorder,
-// as Chromium has them, over the client's audio host.
+// TestWebAudioLikeChromium: Web Audio's decodeAudioData and MediaRecorder
+// on the plugins' page (jsrt's dom.js), as Chromium has them, over this
+// host. (Here, not in jsrt's tests: this host's decoders and encoder bring
+// cgo that jsrt's own workflows don't build.)
 //
 //   - decodeAudioData decodes the whole file into an AudioBuffer at the
 //     context's rate (48 kHz by default, or the rate the context was made
@@ -32,7 +37,11 @@ import (
 //     file plus the lead-in, with its tones where they were; it took as
 //     long as the audio plays, as a real-time recorder does.
 func TestWebAudioLikeChromium(t *testing.T) {
-	r := newTest(t, withAudio)
+	r, err := jsrt.New(jsrt.Options{Audio: Host{}, Log: func(level, msg string) { t.Logf("js %s: %s", level, msg) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(r.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	call := func(fn string, v any, args ...any) {
@@ -45,7 +54,8 @@ func TestWebAudioLikeChromium(t *testing.T) {
 			t.Fatalf("%s: %s: %v", fn, got, err)
 		}
 	}
-	evalString(t, r, `
+	if err := r.Do(func(js *jsrt.Ctx) error {
+		_, err := js.Eval("test.js", `
 const ab = (u8) => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 globalThis.decode = async (u8, rate) => {
   const ctx = rate ? new AudioContext({ sampleRate: rate }) : new AudioContext();
@@ -121,6 +131,10 @@ globalThis.convert = async (u8) => {
   return { type: e, blobType: blob.type, mime, events, wall: (performance.now() - t0) / 1000, rate: l.sampleRate, b64: btoa(bin) };
 };
 0`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	type decoded struct {
 		State, Error, Message    string
@@ -212,4 +226,18 @@ globalThis.convert = async (u8) => {
 			t.Errorf("the converted file is %d frames: no second %d", len(first), s)
 		}
 	}
+}
+
+// recordingOf is a MediaRecorder file as Go reads it: Opus in MP4's
+// length, and its first channel decoded at 48 kHz with the channel count.
+func recordingOf(b []byte) (dur float64, first []float32, channels int, err error) {
+	info, err := clip.Probe(b)
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	p, err := goaudio.Decode(context.Background(), b, "audio/mp4", 48000)
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	return info.Duration().Seconds(), p.Channels[0], len(p.Channels), nil
 }
