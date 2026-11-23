@@ -102,10 +102,8 @@ func openStub(t *testing.T, method string, i int) handOff {
 	var h handOff
 	t0 := time.Now()
 	switch method {
-	case "shell":
-		if err := shellOpen(u); err != nil {
-			t.Fatalf("ShellExecuteEx: %v", err)
-		}
+	case "launch": // Open's hand-off (ShellExecuteEx, rundll32 only if that fails)
+		launch(u)
 		h.ret = time.Since(t0)
 	case "rundll32":
 		cmd := command(u)
@@ -140,25 +138,26 @@ func median(ds []time.Duration) time.Duration {
 	return s[len(s)/2]
 }
 
-// shellBudget is the hand-off's budget, from the call to the handler's
-// process (ShellExecuteEx's median).
-const shellBudget = 400 * time.Millisecond
+// handOffBudget is Open's hand-off budget, from the call to the handler's
+// process being created (the median of 7). windows-latest measured
+// ShellExecuteEx at 5.6ms and rundll32 at 58.6ms (cold: 35ms and 110ms).
+const handOffBudget = 30 * time.Millisecond
 
 func TestOpenHandOffLatency(t *testing.T) {
 	registerStub(t)
 	// one of each first: the shell's and the DLLs' caches are cold
-	for _, m := range []string{"shell", "rundll32"} {
+	for _, m := range []string{"launch", "rundll32"} {
 		h := openStub(t, m, 0)
 		t.Logf("%s, cold: returned %v, rundll32 exited %v, handler created %v", m, h.ret, h.exit, h.handler)
 	}
 	got := map[string][]handOff{}
 	for i := 1; i <= 7; i++ {
-		for _, m := range []string{"shell", "rundll32"} {
+		for _, m := range []string{"launch", "rundll32"} {
 			got[m] = append(got[m], openStub(t, m, i))
 		}
 	}
 	med := map[string]handOff{}
-	for _, m := range []string{"shell", "rundll32"} {
+	for _, m := range []string{"launch", "rundll32"} {
 		var ret, exit, handler []time.Duration
 		for _, h := range got[m] {
 			ret, exit, handler = append(ret, h.ret), append(exit, h.exit), append(handler, h.handler)
@@ -167,10 +166,7 @@ func TestOpenHandOffLatency(t *testing.T) {
 		t.Logf("%s, median of %d: call returned %v, rundll32 exited %v, handler process created %v (all: %v)",
 			m, len(handler), med[m].ret, med[m].exit, med[m].handler, handler)
 	}
-	if h := med["shell"].handler; h > shellBudget {
-		t.Errorf("ShellExecuteEx handed the URL over in %v (median), over the %v budget", h, shellBudget)
-	}
-	if med["shell"].handler > med["rundll32"].handler {
-		t.Logf("note: rundll32 handed over faster here (%v vs %v)", med["rundll32"].handler, med["shell"].handler)
+	if h := med["launch"].handler; h > handOffBudget {
+		t.Errorf("Open's hand-off took %v (median) to the handler's process, over the %v budget", h, handOffBudget)
 	}
 }

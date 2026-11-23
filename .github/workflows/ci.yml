@@ -1043,14 +1043,6 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
         run: go test -count=1 -v -timeout 3m -run '^TestWinGioClipboard$' gioui.org/app
-      - name: a clicked link's hand-off (the message click, then ShellExecuteEx vs rundll32 to a clackstub:// handler under HKCU)
-        if: ${{ !cancelled() }}
-        shell: bash # every go test counts (pwsh steps fail only on the last command)
-        run: |
-          rc=0
-          go test -count=1 -v -timeout 5m -run '^(TestOpenHandOffLatency|TestEscapeExternalHandlerValue|TestCheck)$' ./internal/ui/openurl || rc=1
-          go test -count=1 -v -timeout 5m -run '^TestLinkClickHandsOffAtOnce$' ./internal/ui/messages || rc=1
-          exit $rc
       # a test binary that printed PASS and still failed crashed as it
       # exited (windows-shell's gioui.org/app, train-161's push ci
       # 45018881337: no panic, no exit status): Windows Error Reporting
@@ -1499,6 +1491,14 @@ jobs:
           name: toast-shots
           path: ${{ runner.temp }}/toast-shots
           if-no-files-found: ignore
+      - name: a clicked link's hand-off (the message click, then ShellExecuteEx vs rundll32 to a clackstub:// handler under HKCU)
+        if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
+        run: |
+          rc=0
+          go test -count=1 -v -timeout 5m -run '^(TestOpenHandOffLatency|TestEscapeExternalHandlerValue|TestCheck)$' ./internal/ui/openurl || rc=1
+          go test -count=1 -v -timeout 5m -run '^TestLinkClickHandsOffAtOnce$' ./internal/ui/messages || rc=1
+          exit $rc
       # a test binary that printed PASS and still failed crashed as it
       # exited (windows-shell's gioui.org/app, train-161's push ci
       # 45018881337: no panic, no exit status): Windows Error Reporting
