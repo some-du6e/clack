@@ -252,6 +252,31 @@ func (t *Taut) installHost(r *runtime) {
 	async("messageMetadata", func(ctx context.Context, a []json.RawMessage) (any, error) {
 		return t.messageMetadata(ctx, strArg(a, 0), strArg(a, 1))
 	})
+	// Slack's flannel query (05_slack.js query): its key in the queue,
+	// teamId, method, args; flannelCancel stops one the queue aborted
+	async("flannel", func(ctx context.Context, a []json.RawMessage) (any, error) {
+		var key int64
+		jsonArg(a, 0, &key)
+		var args json.RawMessage
+		if len(a) > 3 {
+			args = a[3]
+		}
+		return t.flannel(ctx, key, strArg(a, 1), strArg(a, 2), args)
+	})
+	sync("flannelCancel", func(a []json.RawMessage) (any, error) {
+		var key int64
+		jsonArg(a, 0, &key)
+		t.cancelFlannel(key)
+		return nil, nil
+	})
+	// the presence manager's getPresenceSubscriptionByTeamId: Clack's
+	// presence set with its counts, null for another team
+	sync("presenceSubscription", func(a []json.RawMessage) (any, error) {
+		if m := t.app.PresenceSubscriptionOf(strArg(a, 0)); m != nil {
+			return m, nil
+		}
+		return nil, nil
+	})
 
 	// ---- time ----
 	sync("scheduleEnd", func(a []json.RawMessage) (any, error) {

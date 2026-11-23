@@ -34,8 +34,18 @@ on:
 # MainCtx, which has no node:http, child_process or fs writes: SlickMCP's
 # local HTTP server can't start there (its main half fails, and says so),
 # and SelfCare's badge and audio muting are accepted and change nothing.
+# f6be3bd (2026-11-23, plugins-work-1), the commit the published Library is
+# built from, reviewed from b6392ab: the build Clack runs
+# (scripts/build/plugin.ts, scripts/build/app.ts) is unchanged; dev deps
+# only (electron 45.3.2, oxfmt, oxlint; installed with --ignore-scripts);
+# release scripts and settings credits Clack doesn't run; plugin changes
+# (BetterBlock, BetterMessageMenu, MessageLogger, SlickMCP's tool controls,
+# the new NeutralPronouns) use only APIs the bridge has (isActive,
+# settings.panel, onMessageSendBlocks, main.call and main.on,
+# redux.getStore). SlickMCP's main half still needs node:http and fails.
+# Acceptance passed 58/58 at it (slick run 45097512723).
 env:
-  SLICK_PIN: b6392ababb7ad5206ed0f9e44feebfe729d0aa8e
+  SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131
 
 permissions:
   contents: read

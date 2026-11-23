@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -246,6 +247,37 @@ func newHarnessOn(t *testing.T, api *fakeAPI, c *slack.Client) *harness {
 		app.S.Self = *u
 	}
 	app.ServeOffline()
+	return newHarnessApp(t, api, app)
+}
+
+// newBootedHarness is the harness over fakeslack's own workspace, booted
+// as Clack boots, with the realtime socket up: presence_sub goes out and
+// the gateway's answers (presence_change) come in.
+func newBootedHarness(t *testing.T, fs *fakeslack.Server) *harness {
+	t.Helper()
+	app := core.New(slack.New(fs.Creds()), store.New(t.TempDir()))
+	t.Cleanup(app.Shutdown)
+	evs, stop := app.Subscribe()
+	if err := app.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	app.SetRealtime(true)
+	deadline := time.After(15 * time.Second)
+	for connected := false; !connected; {
+		select {
+		case ev := <-evs:
+			connected = ev.Type == "connection" && ev.Connected
+		case <-deadline:
+			t.Fatal("timed out waiting for the realtime socket")
+		}
+	}
+	stop()
+	return newHarnessApp(t, newFakeAPI(t), app)
+}
+
+// newHarnessApp is the harness's Taut, Slick and UI over app.
+func newHarnessApp(t *testing.T, api *fakeAPI, app *core.App) *harness {
+	t.Helper()
 	h := &harness{t: t, app: app, api: api, dir: t.TempDir(), fetches: map[string]string{},
 		ui: &testUI{trees: map[uint64][]byte{}, styles: map[string]string{}}}
 	tt, err := taut.New(taut.Options{
