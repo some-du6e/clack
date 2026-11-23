@@ -53,6 +53,7 @@ type tooltipState struct {
 	org   origin
 	since time.Time
 	on    bool
+	gen   uint64 // the TooltipManager generation the hover began in (theme.HideTooltips)
 }
 
 // tooltip: tip (string or element), position (top default; Slack's
@@ -96,7 +97,10 @@ func (st *tooltipState) show(gtx layout.Context, h *slackc.Host, sz image.Point,
 	}
 	if !st.on {
 		st.on = true
-		st.since = gtx.Now
+		st.since, st.gen = gtx.Now, theme.TipGen()
+	}
+	if st.gen != theme.TipGen() { // hidden (Escape, a menu or modal) until the pointer leaves
+		return
 	}
 	if wait := st.since.Add(opt.delay); gtx.Now.Before(wait) {
 		gtx.Execute(op.InvalidateCmd{At: wait})

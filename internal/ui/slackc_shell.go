@@ -504,6 +504,8 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		a.codeRowTooltip(gtx, conv, label, image.Rect(tx, 0, tx+nw, rowH), trunc)
 	} else if conv.Shared { // SharedChannelTooltipContent (sidebar_connect.go)
 		a.sharedRowTooltip(gtx, conv, label, image.Rect(tx, 0, tx+nw, rowH), trunc)
+	} else { // BaseChannelName's tooltip over a truncated name
+		a.nameRowTooltip(gtx, conv.ID, label, image.Rect(tx, 0, tx+nw, rowH), trunc)
 	}
 	if (kind == "im" || kind == "app") && conv.PeerTeam != "" && !trunc && !ns.Hidden() {
 		// an external DM partner's org (sidebar_connect.go), on the name's

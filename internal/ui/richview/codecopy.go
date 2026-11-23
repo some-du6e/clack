@@ -177,6 +177,7 @@ func (v *View) copyBlock(gtx layout.Context, i int) {
 	gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(t))})
 	v.copied, v.copiedAt = i+1, gtx.Now
 	v.copyTipAt = gtx.Now // Slack's announcer and the tooltip switch at once
+	v.copyGen = theme.TipGen()
 	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(copiedFor)})
 }
 
@@ -235,7 +236,7 @@ const msgActionTipDelay = 60 * time.Millisecond
 // top-right (BaseTooltip's position: the arrow arrowOffset from the box's
 // right).
 func (v *View) btnTip(gtx layout.Context, st *Style, br image.Rectangle, tip string, right bool, delay time.Duration) {
-	if tip == "" {
+	if tip == "" || v.copyGen != theme.TipGen() { // hidden (theme.HideTooltips) until the pointer leaves
 		return
 	}
 	if wait := v.copyTipAt.Add(delay); !gtx.Now.IsZero() && gtx.Now.Before(wait) {

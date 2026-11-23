@@ -174,7 +174,19 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			if k == "bell" {
 				name = a.headerBellIcon(ch, conv)
 			}
-			return iconButton(gtx, a.clicks.get("hdr."+k), name, 28, 20, c.FgMuted, c.BgHover, 8)
+			d := iconButton(gtx, a.clicks.get("hdr."+k), name, 28, 20, c.FgMuted, c.BgHover, 8)
+			if k == "bell" {
+				// NotificationsButton's Tooltip, below the button
+				dm := conv != nil && (conv.Kind == "im" || conv.Kind == "app")
+				muted := conv != nil && conv.Muted
+				hov := a.clicks.get("hdr.bell").Hovered()
+				var lines []popups.TipLine
+				if hov {
+					lines = popups.NotifyButtonTip(a, ch, dm, muted)
+				}
+				popups.TooltipLines(gtx, a.th, &a.hdrX().bellTip, hov, d.Size, popups.Below, lines)
+			}
+			return d
 		})
 		right -= gtx.Dp(6)
 	}

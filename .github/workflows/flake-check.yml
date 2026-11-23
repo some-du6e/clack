@@ -5417,6 +5417,7 @@ jobs:
       - library-dupes
       - plugins-work-0
       - plugins-work-1
+      - rx-bar
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
@@ -5438,3 +5439,47 @@ jobs:
           EXPECT_FAIL: ${{ inputs.expect_fail }}
           NEEDS: ${{ toJSON(needs) }}
         run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"
+
+
+  # the views' reaction pills as a channel's (Slack's ReactionBar: a
+  # click toggles, canAddReaction disables, one pill per skin-tone group),
+  # Activity's ControlledClick and the rows' cursor (views-reactions)
+  rx-bar:
+    if: ${{ !inputs.only || startsWith('rx-bar', inputs.only) }}
+    name: "rx-bar ${{ matrix.test }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { test: TestCanAddReactionLikeSlack, pkg: ./internal/core }
+          - { test: TestReactionBarDisabledLikeSlack, pkg: ./internal/ui/messages }
+          - { test: TestThreadsReactionPills, pkg: ./internal/ui/views }
+          - { test: TestUnreadsReactionPills, pkg: ./internal/ui/views }
+          - { test: TestPinsReactionPills, pkg: ./internal/ui/views }
+          - { test: TestActivityReactionPills, pkg: ./internal/ui/views }
+          - { test: TestRowLinkClicksAndCursorLikeSlack, pkg: ./internal/ui/views }
+          - { test: TestViewsReactionBarGroupsLikeSlack, pkg: ./internal/ui/views }
+          - { test: TestActivityHoverBarLikeSlack, pkg: ./internal/ui/views }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.test }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
