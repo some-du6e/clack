@@ -83,6 +83,16 @@ func EncodeCustom(m map[string]string) []byte {
 // maxCustom caps what DecodeCustom reads (clipboard data is untrusted).
 const maxCustom = 8 << 20
 
+// Windows' registered clipboard formats for HTML and web custom data,
+// Chromium's names (clipboard_format_type_win.cc).
+const (
+	HTMLFormat   = "HTML Format"
+	CustomFormat = "Chromium Web Custom MIME Data Format"
+)
+
+// MaxCustom is maxCustom: a snapshot's limit for the custom data.
+const MaxCustom = maxCustom
+
 // DecodeCustom is ReadCustomDataIntoMap.
 func DecodeCustom(b []byte) (map[string]string, error) {
 	if len(b) < 8 || len(b) > maxCustom {

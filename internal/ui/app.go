@@ -551,6 +551,7 @@ func (a *App) Run() error {
 	a.wcoEnable()            // Windows: the top nav draws the caption buttons
 	a.macNav = macTitlebarOn // macOS: the top nav is the drag area under the traffic lights
 	a.winLive.Store(a.win)
+	a.watchClipBusy() // Windows: a copy or paste another app's hold of the clipboard stopped (clipbusy.go)
 	if startMacWindow != nil {
 		startMacWindow(a) // macOS: the Dock icon and the app's activation show a hidden window (window_darwin.go)
 	}

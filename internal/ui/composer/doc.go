@@ -113,6 +113,10 @@ type Doc struct {
 	Runes []rune
 	Attrs []Attr
 	Lines []Line
+	// quoteTail: a pasted delta whose last op wasn't a bare "\n" (Slack's
+	// copy, textyDoc); pasted into a quote it gets the closing quote line
+	// Slack's prepareDeltaForPaste (+hBz) adds (pasteQuoted)
+	quoteTail bool
 }
 
 // NewDoc returns an empty document with one paragraph line.
@@ -134,9 +138,10 @@ func (d *Doc) Empty() bool {
 // Clone deep-copies the document (atoms are immutable and shared).
 func (d *Doc) Clone() *Doc {
 	return &Doc{
-		Runes: append([]rune(nil), d.Runes...),
-		Attrs: append([]Attr(nil), d.Attrs...),
-		Lines: append([]Line(nil), d.Lines...),
+		Runes:     append([]rune(nil), d.Runes...),
+		Attrs:     append([]Attr(nil), d.Attrs...),
+		Lines:     append([]Line(nil), d.Lines...),
+		quoteTail: d.quoteTail,
 	}
 }
 

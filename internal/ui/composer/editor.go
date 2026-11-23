@@ -181,13 +181,24 @@ type Editor struct {
 	lastVer    uint64
 	lastSpace  bool
 
-	clipText   string
-	clipDoc    *Doc
-	slugs      edSlugs // pasted Slack links being resolved (slugs.go)
-	plainPaste bool
-	richRead   *clipRead     // HTML read started by Ctrl/Cmd+V
-	pendPaste  *pendingPaste // plain text waiting for richRead and filesRead
-	filesRead  *filePaste    // the composer's file probe for that paste
+	clipText string
+	clipDoc  *Doc
+	// clipWrote: copySel wrote the clipboard in the frame of clipWroteNow
+	// (its gtx.Now). Gio carries the write out only after the frame, so a
+	// paste in that same frame pastes clipDoc, not what the clipboard
+	// still holds (startPaste)
+	clipWrote    bool
+	clipWroteNow time.Time
+	slugs        edSlugs // pasted Slack links being resolved (slugs.go)
+	plainPaste   bool
+	richRead     *clipRead     // HTML read started by Ctrl/Cmd+V
+	pendPaste    *pendingPaste // plain text waiting for richRead and filesRead
+	filesRead    *filePaste    // the composer's file probe for that paste
+	// clipSnap is the paste's one read of the clipboard where the
+	// platform reads it at once (Windows: pasteSnap); clipSnapText, its
+	// text still to come (it stands for Gio's clipboard.ReadCmd there)
+	clipSnap     *pasteSnap
+	clipSnapText bool
 
 	events  []EditorEvent
 	filters []event.Filter
@@ -962,7 +973,11 @@ func (e *Editor) paste(s string) { e.pasteHTML(s, "") }
 // HTML's formatting, a list if the text looks like one, else plain text.
 // Code blocks and inline code take plain text, as does Shift (paste and
 // match style).
-func (e *Editor) pasteHTML(s, html string) {
+func (e *Editor) pasteHTML(s, html string) { e.pasteClip(s, html, nil) }
+
+// pasteClip is pasteHTML with what the clipboard's rich read found:
+// Slack's own copy (slack/texty, as textyDoc reads it) before the HTML.
+func (e *Editor) pasteClip(s, html string, texty *Doc) {
 	e.init()
 	// Under "Format messages with markup" the composer shows no
 	// formatting, so pastes go in as text like typing does.
@@ -996,6 +1011,9 @@ func (e *Editor) pasteHTML(s, html string) {
 	}
 	e.begin(edOther, false)
 	a := e.typingAttr(lo, hi)
+	// Texty's getLineAtCursor, read before the selection goes: whether the
+	// caret's line has anything on it (pasteQuoted)
+	lineHasText := d.LineEnd(d.LineOf(lo)) > d.LineStart(d.LineOf(lo))
 	d.Delete(lo, hi)
 	var end int
 	line := d.LineOf(lo)
@@ -1005,7 +1023,10 @@ func (e *Editor) pasteHTML(s, html string) {
 	own := (!plain || e.textOnly) && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n")
 	var rich *Doc
 	if !plain && !own && a.Style&Code == 0 && d.Lines[line].Kind != CodeBlock {
-		if html != "" {
+		switch {
+		case texty != nil:
+			rich = texty
+		case html != "":
 			rich = docFromHTML(html)
 		}
 		if rich == nil {
@@ -1015,10 +1036,14 @@ func (e *Editor) pasteHTML(s, html string) {
 	switch {
 	case own && e.textOnly:
 		end = d.InsertDoc(lo, textOnlyDoc(e.clipDoc))
+	case own && d.Lines[line].Kind == Quote:
+		// the composer's own copy is slack/texty in Slack: into a quote
+		// the same way as any other
+		end = d.pasteQuoted(lo, e.clipDoc.Clone(), lineHasText)
 	case own:
 		end = d.InsertDoc(lo, e.clipDoc)
 	case rich != nil:
-		end = e.pasteRich(lo, rich)
+		end = e.pasteRich(lo, rich, lineHasText)
 		if LinkTransforms != nil {
 			end = transformPastedLinks(d, lo, end)
 		}
@@ -1075,6 +1100,7 @@ func (e *Editor) Update(gtx layout.Context) (EditorEvent, bool) {
 	if ev, ok := e.pop(); ok {
 		return ev, true
 	}
+	e.flushSnap(gtx)
 	e.flushPaste(gtx)
 	e.processPointer(gtx)
 	if len(e.events) == 0 {

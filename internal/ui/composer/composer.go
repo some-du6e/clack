@@ -921,7 +921,11 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvPasted:
 			if c.field == nil { // Texty there has no onFilesSelected
 				// a paste whose files attach inserts no text (filePaste)
-				c.ed.filesRead = c.att.PasteClipboardImage()
+				if s := c.ed.clipSnap; s != nil {
+					c.ed.filesRead = c.att.pasteFromSnap(s) // the paste's one read (Windows)
+				} else {
+					c.ed.filesRead = c.att.PasteClipboardImage()
+				}
 			}
 		case EvPasteLimit:
 			c.pasteLimitDialog(c.ed.RefusedPaste())
@@ -2412,6 +2416,11 @@ func (c *Composer) Edits() uint64 { return c.userEdits }
 // click them like a user).
 func (c *Composer) SendRect() image.Rectangle     { return c.winRect(crSend) }
 func (c *Composer) ScheduleRect() image.Rectangle { return c.winRect(crSchedule) }
+
+// QuoteRect is the formatting bar's Blockquote button in window
+// coordinates as of the last frame, empty when not drawn (folded into the
+// bar's ⋯, or the bar hidden); tests click it like a user.
+func (c *Composer) QuoteRect() image.Rectangle { return c.winRect(crQuote) }
 
 // BoxRect is the input box (its border included) in window coordinates
 // as of the last frame, empty before it was drawn (tests measure the space

@@ -1122,6 +1122,10 @@ var (
 	errAttNoClipImage = errors.New("There's no image on the clipboard")
 	errAttClipTools   = errors.New("Pasting images needs xclip (X11) or wl-clipboard (Wayland)")
 	errAttClipNone    = errors.New("Pasting images isn't supported on this system yet")
+	// errAttClipBusy: another app kept the clipboard open (Windows:
+	// winclip.ErrBusy), or the main thread was too busy to read the
+	// pasteboard (macOS)
+	errAttClipBusy = errors.New("The clipboard is busy. Try pasting again.")
 )
 
 // PasteClipboardImage probes the system clipboard for an image (async) and
@@ -1161,6 +1165,43 @@ func (a *attachments) pasteImage(explicit bool) *filePaste {
 			case errors.Is(err, errAttTooBig):
 				a.toast(attRejectText(attPastedName(mime), err))
 			case explicit:
+				a.toast(err.Error())
+			}
+			return
+		}
+		a.add(attPastedName(mime), data)
+	}()
+	return fp
+}
+
+// pasteFromSnap is pasteImage for a paste whose clipboard was read in one
+// snapshot (pasteSnap): the same answer, from the snapshot's files and
+// picture.
+func (a *attachments) pasteFromSnap(s *pasteSnap) *filePaste {
+	if !a.pasting.CompareAndSwap(false, true) {
+		return nil
+	}
+	fp := newFilePaste()
+	go func() {
+		defer a.pasting.Store(false)
+		defer fp.decide(false)
+		<-s.done
+		if len(s.files) > 0 {
+			fp.decide(true)
+			a.addPaths(s.files)
+			return
+		}
+		data, mime, err := s.img, s.imgMime, s.imgErr
+		if err == nil && !strings.HasPrefix(http.DetectContentType(data), "image/") {
+			err = errAttNoClipImage
+		}
+		fp.decide(err == nil || errors.Is(err, errAttTooBig))
+		if err != nil {
+			switch {
+			case errors.Is(err, errAttTooBig):
+				a.toast(attRejectText(attPastedName(mime), err))
+			case errors.Is(err, errAttClipBusy):
+				// the paste read nothing: another app kept the clipboard open
 				a.toast(err.Error())
 			}
 			return

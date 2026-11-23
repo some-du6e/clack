@@ -72,7 +72,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_clicks.go`, `io/input/pointer_test.go`,
 `widget/clack_words.go`, `widget/clack_editor_clicks*_test.go`,
 `app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
-`app/clack_titlebar_darwin_test.go` and
+`app/clack_titlebar_darwin_test.go`,
+`app/winclip/` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -1429,6 +1430,7 @@ or straight to the view). Tests: `app/clack_keys_darwin_test.go`
 once each; the log says which came through `doCommandBySelector:`, run
 43663715941 the list above) and `internal/ui` `TestMacInspectKeys`. Not
 in `UPSTREAM.patch`.
+
 ## 30. app: no frame for a display link tick after the animation stopped (macOS)
 
 `app/os_macos.go` (`newOSWindow`'s display link callback). A fix.
@@ -3300,6 +3302,77 @@ and `TestRingSeamCloseByFloatError`: nothing drawn more than 3 px off the
 ring's band, the ring drawn at its seam and across from it, and no NaN in
 a stroke outline, on llvmpipe (linux-gio), Direct3D 11 WARP
 (windows-applog) and Metal (macos-idle). Not in `UPSTREAM.patch`.
+
+## 65. app/winclip: one clipboard session at a time (Windows)
+
+`app/winclip/winclip.go`, `app/winclip/winclip_windows.go` (new),
+`app/os_windows.go` (`readClipboard`, `writeClipboard`, `clipWait`,
+`clipMaxText`, `clipWork`, `_WM_CLACK_PASTE`, `pastes`).
+
+Karim, 2026-11-21 (Windows, alpha.113): a quote started in the composer,
+then Ctrl+V, and Clack was gone, twice, with nothing in clack.log or
+crash.log. CI's windows-applog runner reproduced it (TestWinQuotePaste),
+and Windows' dump of the test binary showed why: `KERNELBASE!GlobalSize`
+called from Clack's `richclip.readCustom` on the handle `GetClipboardData`
+had just returned, and the heap ending the process
+(`ntdll!RtlReportFatalFailure`, STATUS_HEAP_CORRUPTION 0xc0000374, a
+fail-fast no exception handler sees, Go's included). A paste reads the
+clipboard on two goroutines at once (the rich text, and the files and
+picture), and each opened it with no window. Windows lets a second
+thread open the clipboard that way while another holds it open, and the
+handle `GetClipboardData` gives is the reader's own copy, owned by the
+clipboard and good only while it is open: one reader's `CloseClipboard`
+freed the copy the other was reading.
+
+- `winclip.Session(ctx, owner, f)` is the process's one way to open the
+  clipboard: a one-slot semaphore (taken before the open, given back
+  after the close), a locked OS thread, `OpenClipboard(owner)` tried
+  every 5 ms for up to 80 ms while another app holds it (Chromium's
+  `ScopedClipboard::Acquire`: 5 tries with a `Sleep(5)` between, each
+  lasting a timer tick, about 60-80 ms in all; `ErrBusy` after that or
+  when ctx ends), `f`, `CloseClipboard`. `f` copies out what it reads.
+- A format's data is read only by `winclip.CopyData(id, limit)`, in a
+  session: no data (`ErrNoData`) for a null handle, an empty block or one
+  that won't lock; `ErrNotMemory` for a format whose handle isn't global
+  memory (`CF_BITMAP`, `CF_PALETTE`, the metafiles, owner-drawn ones:
+  `GlobalSize` and `GlobalLock` are wrong on them); `ErrTooBig` past the
+  caller's limit; else the block's `GlobalSize` bytes, copied while it is
+  locked (`RtlMoveMemory`, no uintptr turned into a Go pointer) and never
+  past it. `winclip.Read(ctx, want)` is one session's snapshot: the
+  formats in the order the owner put them (at most 512, with their names
+  for registered ones) and a copy of each `want` gives a limit, parsed by
+  the caller after the close. `winclip.ReadPlan(ctx, plan)` decides the
+  limits from the whole format list, so a paste skips an office app's
+  rendered picture, and a DIB when there is a PNG, before copying any. Clack's composer reads a whole paste in one
+  `Read` (its text, rich text, files and picture: one copy's, however the
+  clipboard changes meanwhile). `winclip.UTF16Text` decodes
+  `CF_UNICODETEXT` as Chromium's `ReadText` does: `GlobalSize / 2` code
+  units up to the first NUL, an odd last byte dropped.
+  Clack's readers and writers (`internal/ui/richclip`,
+  `internal/ui/composer`'s HTML read and file probe, `internal/ui/clipimg`)
+  all go through it, and richclip's `TestClipboardOpensAreSessions` fails
+  on a Go file that opens the clipboard any other way.
+- A window's own text paste and copy are sessions too, owned by its HWND,
+  and run off the window thread: `clipWork`, one goroutine taking them in
+  the order they were asked for, so a copy then a paste in one frame
+  pastes the copy. The window thread never waits for a session: a thread
+  holding one may be sending this window a message (an `EmptyClipboard`
+  sends `WM_DESTROYCLIPBOARD` to the owner Gio's copy made), which the
+  window thread takes only back in its message loop. A session waits up
+  to `clipWait` (2 s). The paste's text is `CopyData` (at most
+  `clipMaxText`, 256 MB) and `UTF16Text`; it goes on the window's
+  `pastes` and a posted `_WM_CLACK_PASTE` (`WM_USER+0x61`) delivers its
+  `DataEvent` on the window thread (a window gone since drops it). A copy
+  or paste whose session couldn't start is reported: `winclip.OnBusy(write)`,
+  on its own goroutine, where Clack shows a toast (`internal/ui`'s
+  `watchClipBusy`) instead of dropping it without a word.
+
+Composer's `TestWinClipboardReadersOneAtATime` (four readers at once for
+4 s on the real clipboard, in a child process) and ui's
+`TestWinQuotePaste` (App.Run's window, SendInput) run on windows-applog
+and in flake-check's `quote-paste-win` job; `app`'s `TestWinGioClipboard`
+(a window's copy and paste in one frame, a paste behind a held session,
+a busy one reported) on windows-applog. Not in `UPSTREAM.patch`.
 
 ## 66. io/input: a command's replay redoes everything queued
 
