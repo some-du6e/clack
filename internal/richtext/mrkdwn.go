@@ -17,14 +17,16 @@ import (
 // resolved :emoji: are atomic and never formatted inside, except that a
 // link's label is itself mrkdwn.
 //
-// Newlines that open the text draw nothing: Slack's mrkdwn renderer
-// (BaseMrkdwn over TSF) starts with the first line that says something.
-// Hack Club's help bots open their section text with "\n" (Heidi the
-// Helper, read 2026-11-23), and Slack draws the text right under the
-// sender's line, where Clack drew an 8px empty line first (Karim, α.146:
-// "theres a gap there on help bots").
+// The text is trimmed first, as Slack's mrkdwn renderer (BaseMrkdwn over
+// TSF) does: `var Z=r.trim(H);if(0==Z.length)return""`, both ends, of
+// TSF's isSpace (char codes 9 to 13 and 32; not U+00A0). Hack Club's help
+// bots open their section text with "\n" (Heidi the Helper, read
+// 2026-11-23), and Slack draws the text right under the sender's line,
+// where Clack drew an 8px empty line first (Karim, α.146: "theres a gap
+// there on help bots"). Text that trims to nothing renders nothing: the
+// block holding it (a section, a context element) stays, empty.
 func FromMrkdwn(r Resolver, text string) []Block {
-	text = strings.TrimLeft(text, "\n")
+	text = TrimTSF(text)
 	if text == "" {
 		return nil
 	}
@@ -739,4 +741,11 @@ func onlyEmoji(r Resolver, text string) bool {
 		return false
 	}
 	return n > 0 && n <= 23
+}
+
+// TrimTSF is TSF's trim: both ends of the characters its isSpace counts,
+// char codes 9 to 13 (tab, newline, vertical tab, form feed, return) and
+// 32.
+func TrimTSF(s string) string {
+	return strings.TrimFunc(s, func(r rune) bool { return r > 8 && r < 14 || r == 32 })
 }

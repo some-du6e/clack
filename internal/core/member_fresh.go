@@ -219,6 +219,20 @@ func (a *App) membersStale(ids []string) {
 // subscribed are refetched (and subscribed) at once.
 func (a *App) memberFreshConnected(fast bool) {
 	m := &a.mfresh
+	if !a.memberGrid() {
+		// ConditionalFetchManager (off Grid): the TTLs go only when the
+		// freshness epoch moves (the slow connection count: a fast
+		// reconnect keeps them); nothing is subscribed
+		if fast {
+			return
+		}
+		m.mu.Lock()
+		m.init()
+		m.conn++
+		m.ttl = map[string]time.Time{}
+		m.mu.Unlock()
+		return
+	}
 	m.mu.Lock()
 	m.init()
 	var again []string
@@ -541,6 +555,11 @@ func (a *App) refetchMembers(ctx context.Context, ids []string) {
 	}
 	changed := 0
 	for _, nu := range r.Users {
+		// a copy newer than the answer landed meanwhile (user_change while
+		// the request was out): the answer is the older one
+		if old, ok := a.S.RawUser(nu.ID); ok && old != nil && old.Updated > nu.Updated {
+			continue
+		}
 		if old, ok := a.S.RawUser(nu.ID); ok && old != nil && sameMember(old, &nu) {
 			continue // what the store holds already
 		}

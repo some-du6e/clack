@@ -326,7 +326,7 @@ func (s *Server) variants() []slack.User {
 	x.Team = ExternalTeamID
 	xap := prof("", "Partner Bot", "", "xapp")
 	xap.Team, xap.BotID, xap.APIAppID = ExternalTeamID, ExternalAppBotID, ExternalAppAppID
-	return append([]slack.User{
+	return stampUpdated(append([]slack.User{
 		{ID: ProfileID, TeamID: TeamID, Name: "robin", RealName: "Robin Example", TZ: "Europe/Berlin", TZLabel: "Central European Time", TZOffset: 3600, Profile: p, Presence: "active"},
 		{ID: AdminID, TeamID: TeamID, Name: "avery.admin", RealName: "Avery Admin", IsAdmin: true, TZ: "America/Los_Angeles", TZOffset: -28800, Profile: a},
 		{ID: DeactivatedID, TeamID: TeamID, Name: "gone.user", RealName: "Gone User", Deleted: true, TZ: "America/New_York", TZOffset: -18000, Profile: g},
@@ -335,7 +335,18 @@ func (s *Server) variants() []slack.User {
 		{ID: AppUserID, TeamID: TeamID, Name: "deploybot", RealName: "Deploy Bot", IsBot: true, Profile: ap, Presence: "active"},
 		{ID: ExternalID, TeamID: ExternalTeamID, Name: "sam.partner", RealName: "Sam Partner", TZ: "Asia/Tokyo", TZOffset: 32400, Profile: x, Presence: "active"},
 		{ID: ExternalAppUserID, TeamID: ExternalTeamID, Name: "partnerbot", RealName: "Partner Bot", IsBot: true, Profile: xap},
-	}, append(s.roleUsers(prof), s.newBotsUsers(prof)...)...) // roles.go, new_bots.go
+	}, append(s.roleUsers(prof), s.newBotsUsers(prof)...)...)) // roles.go, new_bots.go
+}
+
+// stampUpdated gives every member without one the updated stamp Slack's
+// members always carry (users.list, the boot's, users.info alike).
+func stampUpdated(us []slack.User) []slack.User {
+	for i := range us {
+		if us[i].Updated == 0 {
+			us[i].Updated = FakeUpdated
+		}
+	}
+	return us
 }
 
 // appProfile is apps.profile.get's app_profile for the fixed apps (the
@@ -981,7 +992,7 @@ func (s *Server) generate() {
 			}
 			return s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/u" + strconv.Itoa(i) + ".png"
 		}
-		u := slack.User{ID: id, TeamID: TeamID, Name: handle, RealName: first + " " + last, TZ: "America/New_York",
+		u := slack.User{ID: id, TeamID: TeamID, Name: handle, RealName: first + " " + last, TZ: "America/New_York", Updated: FakeUpdated,
 			TZLabel: "Eastern Standard Time", TZOffset: -18000, Color: fmt.Sprintf("%06x", r.Intn(1<<24)),
 			Profile: slack.Profile{RealName: first + " " + last, DisplayName: handle, FirstName: first, LastName: last,
 				Title: title(word(2) + " " + word(3)), AvatarHash: hash,
@@ -2339,13 +2350,35 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	s.addSocket(c) // Push (canvas.go)
 	defer s.dropSocket(c)
 	s.newGatewayConnection() // member_changes.go: no user_change subscriptions yet
-	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
+	said := make(chan struct{})
+	hello := func() {
+		_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
+		close(said)
+	}
+	if hold := s.helloHold(); hold != nil { // HoldHello (member_changes.go)
+		go func() {
+			select {
+			case <-hold:
+				hello()
+			case <-ctx.Done():
+			}
+		}()
+	} else {
+		hello()
+	}
 	for {
 		_, data, err := c.Read(ctx)
 		if err != nil {
 			return
 		}
 		s.noteFrame(data)
+		select {
+		case <-said:
+		default:
+			if s.earlyFrame(data) { // before hello: not taken
+				continue
+			}
+		}
 		if rep := s.subscriptionReply(data); rep != nil { // member_changes.go
 			wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			_ = c.Write(wctx, websocket.MessageText, rep)

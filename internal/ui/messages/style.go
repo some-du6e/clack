@@ -393,10 +393,15 @@ func avatarFor(h Host, url string, px int) string {
 	if big == url || h.Images() == nil {
 		return url
 	}
-	if _, ok := h.Images().Get(big, px); ok || !h.Images().Loaded(url) {
+	if _, ok := h.Images().Get(big, px); ok {
 		return big
 	}
-	return url
+	// the larger one isn't there: the one asked for while it loads, and
+	// for good if it failed (never an empty box where a picture loads)
+	if h.Images().Failed(big, px) || h.Images().Loaded(url) {
+		return url
+	}
+	return big
 }
 
 // paintAvatar is BaseAvatar (client-boot xc3R) in r: the picture, or

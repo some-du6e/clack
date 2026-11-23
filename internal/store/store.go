@@ -189,6 +189,8 @@ type Store struct {
 	// 512px ones (AvatarAt)
 	avatarMu   sync.RWMutex
 	avatarAlts map[string][2]string
+	avatarKey  map[string]string // member id → their 72px picture (avatarAlts' key)
+	avatarRefs map[string]int    // members per key (Slack's default avatars are shared)
 	missMu     sync.Mutex
 	missSeen   map[string]bool
 	missing    []string // "c"+id | "b"+id
@@ -759,11 +761,47 @@ func (s *Store) noteAvatars(team string, us []slack.User) {
 
 func (s *Store) noteAvatarLocked(team string, u *slack.User) {
 	k := AvatarURL(u, 72, team)
+	if s.avatarKey == nil {
+		s.avatarKey = map[string]string{}
+	}
+	if s.avatarRefs == nil {
+		s.avatarRefs = map[string]int{}
+	}
+	a := [2]string{AvatarURL(u, 192, team), AvatarURL(u, 512, team)}
+	if old, ok := s.avatarKey[u.ID]; ok {
+		if old == k {
+			s.avatarAlts[k] = a // the same picture (its larger sizes as now)
+			return
+		}
+		s.unrefAvatarLocked(u.ID, old) // their previous picture
+	}
 	if k == "" {
 		return
 	}
-	if a := [2]string{AvatarURL(u, 192, team), AvatarURL(u, 512, team)}; a[0] != k || a[1] != k {
+	if a[0] != k || a[1] != k {
 		s.avatarAlts[k] = a
+		s.avatarKey[u.ID] = k
+		s.avatarRefs[k]++
+	}
+}
+
+func (s *Store) unrefAvatarLocked(id, k string) {
+	delete(s.avatarKey, id)
+	if s.avatarRefs[k]--; s.avatarRefs[k] <= 0 {
+		delete(s.avatarRefs, k)
+		delete(s.avatarAlts, k)
+	}
+}
+
+// forgetAvatars drops members' pictures from avatarAlts (the members
+// pass let them go): it holds only stored members'.
+func (s *Store) forgetAvatars(ids []string) {
+	s.avatarMu.Lock()
+	defer s.avatarMu.Unlock()
+	for _, id := range ids {
+		if k, ok := s.avatarKey[id]; ok {
+			s.unrefAvatarLocked(id, k)
+		}
 	}
 }
 

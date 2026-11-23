@@ -343,6 +343,7 @@ func (s *Store) EvictMembersKeeping(keep []string) []string {
 		s.members.nonexistent = resized(s.members.nonexistent)
 	}
 	s.mu.Unlock()
+	s.forgetAvatars(out) // their pictures' sizes (AvatarAt)
 	s.ForgetMissing('u', out...)
 	if cut > len(cs)-cut {
 		s.missMu.Lock()

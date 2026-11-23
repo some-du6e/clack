@@ -56,6 +56,11 @@ type RTM struct {
 	// waiters are the frames Request sent on the current connection,
 	// by id, waiting for the gateway's reply (r.mu)
 	waiters map[int64]chan json.RawMessage
+	// helloCh closes when the current connection says hello (helloOK) or
+	// ends without one; Request waits for it, as Slack's sendMessage waits
+	// for the socket to be connected (r.mu)
+	helloCh chan struct{}
+	helloOK bool
 
 	// OnHello runs after every (re)connect, e.g. to resend subscriptions.
 	OnHello func()
@@ -357,10 +362,15 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 	conn.SetReadLimit(64 << 20)
 	r.mu.Lock()
 	r.conn = conn
+	r.helloCh, r.helloOK = make(chan struct{}), false
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
 		r.conn = nil
+		if r.helloCh != nil && !r.helloOK {
+			close(r.helloCh) // no hello: what waits for one gives up
+		}
+		r.helloCh, r.helloOK = nil, false
 		for id, ch := range r.waiters { // the connection went: no reply comes
 			close(ch)
 			delete(r.waiters, id)
@@ -547,6 +557,12 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		switch ev.Type {
 		case "hello":
 			s.hello = true
+			r.mu.Lock()
+			if r.helloCh != nil && !r.helloOK {
+				r.helloOK = true
+				close(r.helloCh)
+			}
+			r.mu.Unlock()
 			log.Printf("rtm: connected in %s", time.Since(t0).Round(time.Millisecond))
 			if r.OnState != nil {
 				r.OnState(true)
@@ -724,13 +740,25 @@ var ErrNoReply = errors.New("rtm: the connection closed before the reply")
 // ok false, ErrNoReply when the connection went first, ctx's error when
 // it ends first.
 func (r *RTM) Request(ctx context.Context, v map[string]any) error {
+	// connected first: a frame before the gateway's hello isn't taken
+	r.mu.Lock()
+	conn, hello := r.conn, r.helloCh
+	r.mu.Unlock()
+	if conn == nil || hello == nil {
+		return websocket.CloseError{Code: websocket.StatusGoingAway}
+	}
+	select {
+	case <-hello:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	id := r.next.Add(1)
 	v["id"] = id
 	ch := make(chan json.RawMessage, 1)
 	r.mu.Lock()
-	if r.conn == nil {
+	if r.conn != conn || !r.helloOK {
 		r.mu.Unlock()
-		return websocket.CloseError{Code: websocket.StatusGoingAway}
+		return ErrNoReply // that connection went before its hello
 	}
 	if r.waiters == nil {
 		r.waiters = map[int64]chan json.RawMessage{}
