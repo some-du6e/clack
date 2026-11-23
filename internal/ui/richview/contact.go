@@ -56,6 +56,9 @@ func (l *lay) contactCard(b *richtext.Block, x, y, w int) int {
 		tg = l.d.addTarget(target{kind: tContact, id: cc.UserID})
 	}
 	l.cardFrame(x, y, cw, h, tg)
+	if tg < 0 { // .p-contact_card__container{cursor:pointer}, a click or not
+		l.d.handRects = append(l.d.handRects, image.Rect(x, y, x+cw, y+h))
+	}
 	ar := image.Rect(x+pad, y+pad, x+pad+ic, y+pad+ic)
 	rad := l.dp(8)
 	if cc.Member.Avatar != "" {

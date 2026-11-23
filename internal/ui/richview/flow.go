@@ -386,9 +386,12 @@ type display struct {
 	bars []fileBar
 	// charts are the data_visualization blocks' charts (dataviz.go)
 	charts []chartPrim
-	// promptBtns are the share_prompts' Send to buttons (shareprompt.go)
-	promptBtns []promptBtn
-	pills      []snipPill
+	// busyBtns are the buttons that write to Slack (writes.go)
+	busyBtns []busyBtn
+	// cursorRegions are the card blocks' boxes (the default arrow outside
+	// their text), handRects pointer boxes without a click (cursors.go)
+	cursorRegions, handRects []image.Rectangle
+	pills                    []snipPill
 	// ells counts the frags that are a clamp's "…" (frag.ell)
 	ells int
 }
@@ -445,7 +448,9 @@ func (d *display) reset() {
 	d.expands = d.expands[:0]
 	d.bars = d.bars[:0]
 	d.charts = d.charts[:0]
-	d.promptBtns = d.promptBtns[:0]
+	d.busyBtns = d.busyBtns[:0]
+	d.cursorRegions = d.cursorRegions[:0]
+	d.handRects = d.handRects[:0]
 	d.pills = d.pills[:0]
 	d.ells = 0
 }

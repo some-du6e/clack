@@ -22,6 +22,10 @@ on:
       - "internal/ui/popups/event*"
       - "internal/core/calendar.go"
       - "internal/slackasset/**"
+      - "internal/fakeslack/calendar_events.go"
+      - "internal/ui/popups/writes.go"
+      - "internal/ui/popups/menu.go"
+      - "internal/ui/popups/menu_cursor_test.go"
       - "internal/store/contact*"
       - "internal/fakeslack/gallery*"
       - "internal/ui/bk_gallery_test.go"
@@ -67,7 +71,7 @@ jobs:
       - name: block kit unit tests
         run: |
           go test -count=1 ./internal/richtext ./internal/fakeslack ./internal/ui/richview ./internal/ui/blockkit ./internal/chart
-          go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources|TestContactCard|TestShareContact|TestSharePrompt|TestEventRSVP|TestEventCopy|TestEventMenu' ./internal/ui/popups
+          go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources|TestContactCard|TestShareContact|TestSharePrompt|TestEventRSVP|TestEventCopy|TestEventMenu|TestMenuCursors' ./internal/ui/popups
           go test -count=1 -run 'TestContactMember' ./internal/store
           go test -count=1 -run 'TestCodeSummaryTimeline' ./internal/core
           go test -count=1 -run 'TestBroadcastPreambleTimelineRoot' ./internal/ui/messages

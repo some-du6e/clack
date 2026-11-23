@@ -387,6 +387,14 @@ func (c *chartPrim) path(ops *op.Ops, cmds []chart.Cmd, fill bool) clip.PathSpec
 // normalized to positive size, its top corners radius 4 (shrunk to fit,
 // as zrender does when the rect is smaller than its radii).
 func (c *chartPrim) bar(ops *op.Ops, b chart.BarItem, col color.NRGBA) {
+	if ps, ok := c.barPath(ops, b); ok {
+		paint.FillShape(ops, col, clip.Outline{Path: ps}.Op())
+	}
+}
+
+// barPath is bar b's shape (its top corners rounded 4px, zrender's
+// borderRadius [4, 4, 0, 0]); false for an empty bar.
+func (c *chartPrim) barPath(ops *op.Ops, b chart.BarItem) (clip.PathSpec, bool) {
 	x, y, w, h := b.X, b.Y, b.W, b.H
 	if w < 0 {
 		x, w = x+w, -w
@@ -395,7 +403,7 @@ func (c *chartPrim) bar(ops *op.Ops, b chart.BarItem, col color.NRGBA) {
 		y, h = y+h, -h
 	}
 	if w <= 0 || h <= 0 {
-		return
+		return clip.PathSpec{}, false
 	}
 	r1, r2 := 4.0, 4.0 // tl, tr; br, bl 0
 	if r1+r2 > w {
@@ -418,7 +426,7 @@ func (c *chartPrim) bar(ops *op.Ops, b chart.BarItem, col color.NRGBA) {
 		arcTo(&p, c, x+r1, y+r1, r1, math.Pi, 3*math.Pi/2)
 	}
 	p.Close()
-	paint.FillShape(ops, col, clip.Outline{Path: p.End()}.Op())
+	return p.End(), true
 }
 
 // arcTo adds the circle arc about (cx, cy) radius r from angle a0 to a1
@@ -461,25 +469,28 @@ func (c *chartPrim) sector(ops *op.Ops, s chart.SectorItem, grow float64, fill c
 		return
 	}
 	r := s.R + grow
-	build := func() clip.PathSpec {
-		var p clip.Path
-		p.Begin(ops)
-		full := s.End-s.Start >= 2*math.Pi-1e-9
-		if full {
-			p.MoveTo(c.at(s.CX+r*math.Cos(s.Start), s.CY+r*math.Sin(s.Start)))
-			arcTo(&p, c, s.CX, s.CY, r, s.Start, s.Start+2*math.Pi)
-		} else {
-			p.MoveTo(c.at(s.CX+r*math.Cos(s.Start), s.CY+r*math.Sin(s.Start)))
-			arcTo(&p, c, s.CX, s.CY, r, s.Start, s.End)
-			p.LineTo(c.at(s.CX, s.CY))
-		}
-		p.Close()
-		return p.End()
-	}
+	build := func() clip.PathSpec { return c.sectorPath(ops, s, r) }
 	paint.FillShape(ops, fill, clip.Outline{Path: build()}.Op())
 	if s.StrokeW > 0 {
 		paint.FillShape(ops, c.pal.Border, clip.Stroke{Path: build(), Width: float32(s.StrokeW) * c.scale}.Op())
 	}
+}
+
+// sectorPath is segment s's wedge at radius r (the whole circle for a
+// segment that is all of it).
+func (c *chartPrim) sectorPath(ops *op.Ops, s chart.SectorItem, r float64) clip.PathSpec {
+	var p clip.Path
+	p.Begin(ops)
+	if s.End-s.Start >= 2*math.Pi-1e-9 {
+		p.MoveTo(c.at(s.CX+r*math.Cos(s.Start), s.CY+r*math.Sin(s.Start)))
+		arcTo(&p, c, s.CX, s.CY, r, s.Start, s.Start+2*math.Pi)
+	} else {
+		p.MoveTo(c.at(s.CX+r*math.Cos(s.Start), s.CY+r*math.Sin(s.Start)))
+		arcTo(&p, c, s.CX, s.CY, r, s.Start, s.End)
+		p.LineTo(c.at(s.CX, s.CY))
+	}
+	p.Close()
+	return p.End()
 }
 
 // chartLabel draws an axis label: 13px Lato in the axis tick colour, its
