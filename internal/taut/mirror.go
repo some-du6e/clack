@@ -576,8 +576,10 @@ func (m *mirror) onEvent(ev core.Event) {
 		if ev.Type == "message" && ev.Msg != nil && ev.Msg.User != "" {
 			m.stopTyping(ev.Channel, ev.Msg.ThreadTS, ev.Msg.User)
 		}
-	case "evicted":
-		// core trimmed the conversation to Slack's message cache budget
+	case "evicted", "history_changed":
+		// history_changed: Slack rewrote the conversation's history
+		// (core/history_changed.go), and core let go of what it cached
+		// before the change; evicted: core trimmed the conversation to Slack's message cache budget
 		// (core/evict.go): the JS side drops what it cached of it, as
 		// Slack's store drops the evicted messages, and so do the UI's
 		// patched views of them (the pass never trims what's on screen)
