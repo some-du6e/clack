@@ -342,7 +342,7 @@ func TestIMForewordShots(t *testing.T) {
 			t.Errorf("%s: %d .notdef glyphs", mode, st.Notdef)
 		}
 		img := pixeltest.Render(t, win.X, win.Y, &ops)
-		top := e.top() * sc
+		top := e.top() // the 2x frames' pixels already
 		r := image.Rect(0, max(0, top), win.X, min(win.Y, top+360*sc))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
