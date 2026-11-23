@@ -5213,6 +5213,8 @@ jobs:
         with:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (the composer's test binary links internal/huddle's X11 capture)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "slack: FileType, the mime.cache reader, this runner's shared-mime-info"
         run: go test -count=$COUNT -v -run '^(TestFileType.*|TestXDG.*|TestMimeCache.*|TestSystemXDGMimeTypes|TestUploadPartLikeFormData)$' ./internal/slack
       - name: "core: the upload part's type, the profile photo's"
