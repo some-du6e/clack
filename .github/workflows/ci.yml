@@ -367,6 +367,13 @@ jobs:
       - name: Gio hover ends on a reset Cancel (vendored gioui.org/gesture)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run '^TestClackHoverEndsOnResetCancel$' gioui.org/gesture
+      # Gio patch 61: an InvalidateCmd asks for its frame and replays
+      # nothing; FocusCmd and the other stateful commands keep the
+      # immediate path. The whole package, so the router's own command and
+      # focus tests show nothing else moved
+      - name: Gio InvalidateCmd replays nothing (vendored gioui.org/io/input, the whole package)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v gioui.org/io/input
       # a stroked ring's outline (MoveTo, ArcTo 2π, Close) and open arcs
       # swept up to 2π: every loop closes and stays on the ring's band
       # (Karim's stray line under the intro's check badge, 2026-11-22)
