@@ -346,6 +346,19 @@ type base struct {
 	addTips map[string]*popups.TipState
 	// pillTips are the reaction pills' ReactionTips (reactions_slack.go)
 	pillTips map[string]*pillTip
+	// pillBtns are the reaction pills' buttons (handleReactionClick), by
+	// the bar's key and the group's name
+	pillBtns map[string]*widget.Clickable
+	// ctlPress and pillPress mark the frame of the last primary press on
+	// a body's link, mention, button or image, and on a reaction pill
+	// (content_menu.go pressedOn)
+	ctlPress, pillPress time.Time
+	// hand > 0 while a row draws bodies under its hand (handBody)
+	hand int
+	// rxnLocal are the viewer's reaction changes to messages the store
+	// doesn't hold, by ch/ts (reactions_local.go)
+	rxnMu    sync.Mutex
+	rxnLocal map[string][]rxnOp
 	// pv caches Activity's preview documents (activity_rows.go)
 	pv map[string]pvEntry
 	// vers caches msgVer per message copy (msgVerOf); vsrc is the
