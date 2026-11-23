@@ -16,6 +16,7 @@ package richtext
 // displayed.").
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 )
@@ -272,7 +273,7 @@ func expandCondition(raw json.RawMessage, team, enterprise string) (blocks []jso
 // case (or its default, or nothing), the rest stay. raw comes back as it
 // was when it has no condition block.
 func ExpandConditions(raw json.RawMessage, team, enterprise string) json.RawMessage {
-	if len(raw) == 0 || !strings.Contains(string(raw), `"condition"`) {
+	if len(raw) == 0 || !bytes.Contains(raw, []byte(`"condition"`)) {
 		return raw
 	}
 	var parts []json.RawMessage
@@ -311,7 +312,7 @@ func (c *builder) teamIDs() (team, enterprise string) {
 // condition blocks expanded, as InteractiveBlocks and ReadonlyBlocks do
 // before drawing. Fallback payloads skip that step, like resolveFallback.
 func (c *builder) expanded(raw json.RawMessage) json.RawMessage {
-	if !strings.Contains(string(raw), `"condition"`) {
+	if !bytes.Contains(raw, []byte(`"condition"`)) {
 		return raw
 	}
 	team, ent := c.teamIDs()
