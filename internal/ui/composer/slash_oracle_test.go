@@ -3,8 +3,6 @@ package composer
 import (
 	"encoding/json"
 	"testing"
-
-	"github.com/some-du6e/clack/internal/core"
 )
 
 // TestSlashCommandsLikeSlack runs Slack's slash-command path on Slack's
@@ -91,23 +89,23 @@ func oracleHits(t *testing.T, raw string) map[string][]slugHit {
 // TestAutoSlugLikeSlack: the typed-name mentions Slack's
 // replacePotentialMentionsSynchronously makes over the same search
 // results: unique names, spelled-out names, user groups, keywords,
-// channels (archived ones last), and the text left alone (code, links,
-// a chip already there, no match).
+// channels (another workspace's last), and the text left alone (code,
+// links, a chip already there, no match).
 func TestAutoSlugLikeSlack(t *testing.T) {
 	for _, c := range mentionOracleCases {
 		t.Run(c.name, func(t *testing.T) {
 			hits := oracleHits(t, c.members)
 			var chans []struct {
-				ID       string `json:"id"`
-				Name     string `json:"name"`
-				Archived bool   `json:"is_archived"`
+				ID        string `json:"id"`
+				Name      string `json:"name"`
+				OtherTeam bool   `json:"fromAnotherTeam"`
 			}
 			if err := json.Unmarshal([]byte(c.channels), &chans); err != nil {
 				t.Fatal(err)
 			}
 			st := slugStore{find: func(q string) []slugHit { return hits[q] }}
 			for _, ch := range chans {
-				st.channels = append(st.channels, core.Conv{ID: ch.ID, Name: ch.Name, Kind: "channel", IsArchived: ch.Archived})
+				st.channels = append(st.channels, slugChannel{id: ch.ID, name: ch.Name, otherTeam: ch.OtherTeam})
 			}
 			out, _ := autoSlug(qFromSlackDelta(oracleDelta(t, c.ops)), st)
 			var got []map[string]any

@@ -23,7 +23,7 @@ import (
 //     up to a space, "'s", "…" or punctuation; trailing punctuation off
 //     the label.
 //   - searchFunc (rNCs): a #word is the public channels named exactly so
-//     (the first one not archived wins, 1GCd); an @word is the broadcast
+//     (the first one not of another workspace wins, 1GCd); an @word is the broadcast
 //     keyword of that name the viewer may use here (none in a thread),
 //     else the store's members (self included, not Slackbot) and user
 //     groups the autocomplete's search finds, 25 at most.
@@ -49,8 +49,8 @@ import (
 type slugStore struct {
 	users    []core.User
 	groups   []core.Usergroup
-	channels []core.Conv // public channels
-	keywords []string    // the broadcast keywords the viewer may use here (none in a thread)
+	channels []slugChannel // public channels
+	keywords []string      // the broadcast keywords the viewer may use here (none in a thread)
 	selfID   string
 	rk       rankCtx
 	frec     *frecency.Cache
@@ -60,6 +60,14 @@ type slugStore struct {
 	smart bool
 	// find, when set, answers the member search instead (tests)
 	find func(q string) []slugHit
+}
+
+// slugChannel is a channel the # search finds: fromAnotherTeam is a
+// channel of another workspace of the org (pS2E isFromAnotherTeam; the
+// composer's channels are the viewer's team's).
+type slugChannel struct {
+	id, name  string
+	otherTeam bool
 }
 
 // slugStore snapshots the store for the composer's conversation.
@@ -97,7 +105,7 @@ func (c *Composer) slugStore() slugStore {
 	st.groups = a.StoredUsergroups()
 	for _, cv := range s.Convs {
 		if cv.Kind == "channel" && !cv.File {
-			st.channels = append(st.channels, cv)
+			st.channels = append(st.channels, slugChannel{id: cv.ID, name: cv.Name})
 		}
 	}
 	if c.ts == "" && haveConv && a.BroadcastEnabledCached(c.ch) {
@@ -510,29 +518,30 @@ func (st slugStore) search(q string) []slugHit {
 }
 
 // channelMention is createPotentialMentionChannelObject over the public
-// channels named exactly so: the first one not archived, else the first.
+// channels named exactly so: the first one not of another workspace, else
+// the first.
 func (st slugStore) channelMention(pm potentialMention) (slugMention, bool) {
-	var first, open *core.Conv
+	var first, same *slugChannel
 	for i := range st.channels {
 		c := &st.channels[i]
-		if c.Name != pm.bare {
+		if c.name != pm.bare {
 			continue
 		}
 		if first == nil {
 			first = c
 		}
-		if open == nil && !c.IsArchived {
-			open = c
+		if same == nil && !c.otherTeam {
+			same = c
 		}
 	}
-	u := open
+	u := same
 	if u == nil {
 		u = first
 	}
 	if u == nil {
 		return slugMention{}, false
 	}
-	return slugMention{atom: &Atom{Kind: AtomChannel, ID: u.ID, Text: "#" + u.Name}, index: pm.index, length: pm.matchLength}, true
+	return slugMention{atom: &Atom{Kind: AtomChannel, ID: u.id, Text: "#" + u.name}, index: pm.index, length: pm.matchLength}, true
 }
 
 // autoSlug is replacePotentialMentionsSynchronously: q with every

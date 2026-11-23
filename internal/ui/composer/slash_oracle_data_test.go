@@ -153,7 +153,7 @@ var mentionOracleCases = []mentionOracleCase{
 		members: `{"here":[{"id":"BKhere","name":"here","is_broadcast_keyword":true}]}`, channels: `[]`,
 		want: `[{"insert":"see "},{"insert":"@here","id":"BKhere"},{"insert":".\n"}]`},
 	{name: "channel", ops: `[{"insert":"/x #general and #nope, #general_ ok\n"}]`,
-		members: `{}`, channels: `[{"id":"C0GENERAL","name":"general"},{"id":"C0OLDGEN01","name":"general","is_archived":true}]`,
+		members: `{}`, channels: `[{"id":"C0OTHER0001","name":"general","fromAnotherTeam":true},{"id":"C0GENERAL","name":"general"}]`,
 		want: `[{"insert":"/x "},{"insert":"#general","id":"C0GENERAL"},{"insert":" and #nope, "},{"insert":"#general","id":"C0GENERAL"},{"insert":" ok\n"}]`},
 	{name: "nobody", ops: `[{"insert":"hi @nobody\n"}]`,
 		members: `{}`, channels: `[]`,
