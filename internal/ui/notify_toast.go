@@ -326,9 +326,11 @@ func parseToastActivation(args string) (toastActivation, bool) {
 // target in it (parseNotificationId); otherwise the shell names it
 // "team_msg".
 const (
-	noteTypeMessage      = "msg"
-	noteTypeHuddle       = "huddle"
-	noteTypeHuddleMissed = "hudmiss"
+	noteTypeMessage         = "msg"
+	noteTypeHuddle          = "huddle"
+	noteTypeHuddleMissed    = "hudmiss"
+	noteTypeHuddleRecommend = "hudrec"
+	noteTypeSaved           = "saved"
 )
 
 // shortDigest is HAag's FNV-1a 32 over UTF-16 units, in base 36.

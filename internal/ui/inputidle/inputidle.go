@@ -16,3 +16,8 @@ import "time"
 // Since is how long ago the last input was (how long the process has run,
 // when there was none), on the monotonic clock. Any goroutine.
 func Since() time.Duration { return routerSince() }
+
+// OnPress makes f see each mouse press (mouse true) and key press (false)
+// in any of the process's windows, wherever it goes (Gio patch 33's press
+// hook), on that window's event goroutine; nil stops it. f must not block.
+func OnPress(f func(mouse bool)) { routerOnPress(f) }

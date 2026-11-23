@@ -285,7 +285,16 @@ func (s *listState) threadStart(jump string) (key string, offset bool) {
 		}
 		return k, true
 	}
-	return start, start != root && tsLess(s.thr.initial, start)
+	// startOffset 100 for a start past the pane's initialLastRead, else
+	// past pendingBoundaryLastRead (deriveThreadOpenBoundary's
+	// boundaryLastRead: the subscription's lastRead as it is now, with no
+	// open boundary recorded), only when that is a ts: a followed thread
+	// read past a jump's reply starts at the reply, at the top
+	u := s.thr.initial
+	if u == "" {
+		_, u = s.threadSub()
+	}
+	return start, start != root && u != "" && tsLess(u, start)
 }
 
 // threadStartPosition is threadStart as a list position: the item at y

@@ -5,9 +5,7 @@ import (
 	"image/color"
 	"math"
 	"os"
-	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,12 +21,10 @@ import (
 	vclip "github.com/some-du6e/clack/internal/clip"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/huddle"
-	"github.com/some-du6e/clack/internal/huddle/avperm"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/icons"
-	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
@@ -150,6 +146,7 @@ func CloseClips() {
 	for _, p := range ps {
 		p.unmount()
 	}
+	popups.CloseNameRecorders() // and the profile's name recorder (popups)
 }
 
 // unmount closes the popover as its composer goes: the recording is
@@ -466,71 +463,9 @@ func clipPalette(th *theme.Theme) clipColors {
 	return p
 }
 
-// micAccessError is MicrophoneAccessErrorDialog (boot-shared AJKj): the
-// desktop app's "Check your system preferences" (macOS) or "system
-// settings", linked to the OS's microphone privacy page where there is
-// one (ktNw mt), and a Close button.
-func (c *Composer) micAccessError() {
-	src := "Check your <a>system settings</a> to make sure Slack has permission to access your microphone, and try again."
-	if runtime.GOOS == "darwin" {
-		src = "Check your <a>system preferences</a> to make sure Slack has permission to access your microphone, and try again."
-	}
-	parts := nsStoriesAV.RT(src)
-	for i := range parts {
-		parts[i].Text = strings.ReplaceAll(parts[i].Text, "Slack", AppName)
-	}
-	link := avperm.SettingsURL(avperm.Mic)
-	if runtime.GOOS == "linux" {
-		link = "" // ktNw: no page off macOS and Windows
-	}
-	var lc widget.Clickable
-	closeBtn := &popups.ModalButton{Label: nsStoriesAV.T("Close"), Kind: popups.BtnOutline}
-	m := popups.NewModal(c.h, popups.ModalOpts{
-		Title:     nsStoriesAV.T("Can’t access microphone"),
-		TitleWrap: true,
-		Buttons:   []*popups.ModalButton{closeBtn},
-		AutoFocus: closeBtn,
-		Body: func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min = image.Point{}
-			th := c.h.Theme()
-			if lc.Clicked(gtx) && link != "" {
-				_ = openurl.OpenSettings(link)
-			}
-			st := textStyle{Size: 15, LineHeight: 22, Color: th.C.Fg}
-			var spans []richSpan
-			linkAt := -1
-			for _, pt := range parts {
-				s := st
-				if pt.Tag == "a" && link != "" {
-					s.Color = th.C.Link
-					linkAt = len(spans)
-				}
-				spans = append(spans, richSpan{text: pt.Text, st: s})
-			}
-			d := richLabel(gtx, th.Shaper, spans)
-			if linkAt >= 0 {
-				// the link's box, when it fits on the first line (it does
-				// at the dialog's width in every bundled locale's text)
-				pre := 0
-				for _, sp := range spans[:linkAt] {
-					pre += clipMeasure(gtx, th, sp.st, sp.text)
-				}
-				lw := clipMeasure(gtx, th, spans[linkAt].st, spans[linkAt].text)
-				if pre+lw <= gtx.Constraints.Max.X {
-					offset(gtx, pre, 0, func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints = layout.Exact(image.Pt(lw, gtx.Sp(22)))
-						return lc.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							pointer.CursorPointer.Add(gtx.Ops)
-							return layout.Dimensions{Size: gtx.Constraints.Min}
-						})
-					})
-				}
-			}
-			return d
-		},
-	})
-	c.h.ShowOverlay(m)
-}
+// micAccessError is MicrophoneAccessErrorDialog (boot-shared AJKj), the
+// dialog the profile's name recorder opens too (popups).
+func (c *Composer) micAccessError() { popups.ShowMicrophoneAccessError(c.h) }
 
 // clipMeasure is s's width set in st on one line.
 func clipMeasure(gtx layout.Context, th *theme.Theme, st textStyle, s string) int {

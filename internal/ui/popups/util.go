@@ -29,6 +29,15 @@ func avatar(gtx layout.Context, h Host, url string, size float32) layout.Dimensi
 	sz := image.Pt(px, px)
 	rad := avatarRadius(gtx, size)
 	if url != "" {
+		if a := h.Core(); a != nil {
+			// a member's larger picture past 72 device pixels (core.AvatarAt),
+			// their 72px one while it loads
+			if big := a.AvatarAt(url, px); big != url {
+				if img, ok := h.Images().Get(big, px); ok {
+					return theme.Image(gtx, img, sz, rad)
+				}
+			}
+		}
 		if img, ok := h.Images().Get(url, px); ok {
 			return theme.Image(gtx, img, sz, rad)
 		}

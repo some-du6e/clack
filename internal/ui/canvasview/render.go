@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"net/url"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"gioui.org/f32"
@@ -61,6 +62,20 @@ func placeholderText(dark bool) color.NRGBA {
 	return color.NRGBA{R: 0x77, G: 0x75, B: 0x7a, A: 0xff}
 }
 
+// nativeEmojiGap is the space after a canvas's standard emoji, in Dp (at
+// 1x only, richview.Style's NativeEmojiGap). Quip draws a standard emoji
+// as its native glyph in span.emoji.emoji-in-canvas, whose margin-right
+// is 4px in Chrome on a Mac at 1x ([@media (resolution<=1x)]
+// body.mac.chrome, canvas-controller CSS); Windows, Linux and a 2x Mac
+// have none (Quip's webkit and gecko body classes aren't Chromium's). A
+// custom emoji is an <img> (control.c54 img) with no margin anywhere.
+func nativeEmojiGap() float32 {
+	if runtime.GOOS == "darwin" {
+		return 4
+	}
+	return 0
+}
+
 // styleSet is one richview.Style per text size, per window shaper.
 type styleSet struct {
 	shaper                      *text.Shaper
@@ -87,6 +102,7 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 		st.EmojiURL = th.EmojiURL
 		st.TextSize, st.LineHeight = size, line
 		st.EmojiSize = line // control.c54 img: the section's line height, vertical-align top
+		st.NativeEmojiGap = nativeEmojiGap()
 		st.PreLine = codeLine
 		if heading {
 			st.BoldWeight = font.Black

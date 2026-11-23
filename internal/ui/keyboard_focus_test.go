@@ -220,7 +220,7 @@ func TestThreadsAuditEscapeInThePane(t *testing.T) {
 	if n, m := len(e.fs.ThreadsAuditMarks()), e.fs.CallCount("conversations.mark"); n != marks || m != channelMarks {
 		t.Errorf("Escape in the inline edit marked %d threads and %d channels read", n-marks, m-channelMarks)
 	}
-	e.until("the list focused at the edited reply (keyboard mode)", 3*time.Second, func() bool { return tv.SelectedReply() == mine && e.kfListFocused(tv) })
+	e.until("the list focused at the edited reply (keyboard mode)", 3*time.Second, func() bool { return tv.KeyboardSelected() == mine && e.kfListFocused(tv) })
 }
 
 // TestThreadsAuditWheelDropsTheListFocus: the wheel scrolling the
@@ -282,7 +282,7 @@ func TestThreadsAuditKeyboardModeOpensToTheList(t *testing.T) {
 	if !x.kfListFocused(tv) || x.threadFocused() {
 		t.Fatalf("opened in keyboard mode, the thread's list has the focus %v and its reply box %v; Slack's navigation focuses the list (THREAD_MESSAGE_LIST)", x.kfListFocused(tv), x.threadFocused())
 	}
-	if tv.SelectedReply() == "" {
+	if tv.KeyboardSelected() == "" {
 		t.Error("the thread's list has the focus with no message selected")
 	}
 }

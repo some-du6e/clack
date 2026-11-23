@@ -133,6 +133,7 @@ type audioState struct {
 	stalled    bool // K: waiting for data while playing
 	rate       float64
 	mini       bool // the slot's Mini: no speed, transcript or More, the natural rate
+	name       bool // NameSound's element: from the start, no progress kept or sent
 	z          audioZones
 	press      audioZone
 	scrub      bool

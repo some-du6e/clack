@@ -35,6 +35,11 @@ type kbNav struct {
 	// list doesn't take (SetSteal): it types the key there and returns the
 	// input's focus tag
 	steal func(text string, k key.Event) event.Tag
+	// inputWant: End's jump to the thread's latest reply is out (a slice
+	// short of the end has no "input" row); its row then takes the focus
+	// (focusInput's jumpToReplyCallback). jumpTo is the pane's JumpTo.
+	inputWant bool
+	jumpTo    func(ts string, flash bool)
 }
 
 // msgActionKeys are a selected message's own keys (EtVr P2's single
@@ -99,6 +104,75 @@ func (s *listState) kbSteal(gtx layout.Context, text string, k key.Event) {
 	gtx.Execute(key.FocusCmd{Tag: t})
 }
 
+// inputRow is the thread list's "input" row: its item index, and whether
+// its top is in the list's view (BaseList isItemInView: the top between
+// the view's top and bottom, the row cut or not) and the whole row is.
+// -1 with no row (a host that draws no box in the list, a footer in its
+// place, or a slice short of the thread's end, its "loading" row).
+func (s *listState) inputRow() (i int, topIn, whole bool) {
+	i = len(s.items) - 1
+	if !s.thread || !s.inputOn || i < 0 || s.items[i].kind != itInput {
+		return -1, false, false
+	}
+	if i < s.visible[0] || i >= s.visible[1] || i >= len(s.pos) {
+		return i, false, false // not laid out: below the view
+	}
+	y := s.pos[i]
+	return i, y >= 0 && y <= s.size.Y, y >= 0 && y+s.inputH <= s.size.Y
+}
+
+// focusInput is ThreadsFlexpane's focusInput (boot-shared 4M8N) from the
+// list's keys: End (its onKeyDownEnd, the keyboard list's onEnd, which
+// then does nothing else) and ↓ past the last reply (the next active item
+// is the "input" row, whose focus is onItemFocusEnter's focusInput). With
+// the row in the list, focusInputIfAvailable's focusOnKey("input") makes
+// it the active item and scrolls to it unless its top is in the view
+// (isItemInView || scrollToKey: the row's offset, clamped to the list's
+// end), and the reply box takes the focus; texty's focus doesn't scroll
+// (preventScroll), so a box whose top shows stays where it is. A slice
+// short of the thread's end has no row: the pane jumps to the root's
+// latest reply (jumpToReply, highlighted as its default is) and gives the
+// box the focus once the row is in (jumpToReplyCallback, onJumpToReply).
+// false: neither (no row and no latest reply, or no box to focus).
+func (s *listState) focusInput(gtx layout.Context) bool {
+	if !s.thread || !s.inputOn || s.kb.leave == nil {
+		return false
+	}
+	if i, topIn, _ := s.inputRow(); i >= 0 {
+		if !topIn {
+			s.toEnd()
+		}
+		s.kbLeave(gtx)
+		return true
+	}
+	r, ok := s.threadRoot()
+	if !ok || r.LatestReply == "" || s.kb.jumpTo == nil {
+		return false
+	}
+	s.kb.jumpTo(r.LatestReply, true)
+	s.kb.inputWant = true
+	return true
+}
+
+// tabToInput is Tab from the thread list: the browser moves the focus to
+// the next tabbable element, the reply box's editor in the "input" row
+// (the other rows are out of the roving tab order), and Chromium scrolls
+// what it focuses into view (Element::focus without preventScroll:
+// CenterIfNeeded, the closest edge for a box partly in view). The box is
+// the list's last row, so either way a box not wholly in view brings the
+// list to its end. false: no row (Gio's own Tab order then).
+func (s *listState) tabToInput(gtx layout.Context) bool {
+	i, _, whole := s.inputRow()
+	if i < 0 || s.kb.leave == nil {
+		return false
+	}
+	if !whole {
+		s.toEnd()
+	}
+	s.kbLeave(gtx)
+	return true
+}
+
 // focusNewest selects the newest message and takes keyboard focus. A
 // window short of the newest messages goes to them first, as Slack's
 // scrollToMostRecentMessage(true) does (jumpToTimestamp({ts: ""}) with
@@ -136,27 +210,44 @@ func (s *listState) kbIndex() int {
 // kbKeys handles the list's focus and keys (layoutList, each frame).
 func (s *listState) kbKeys(gtx layout.Context, h Host) {
 	s.kbWant()
+	if s.kb.inputWant && s.pendingJump == "" && s.snap.loaded && s.built == s.snap.rev {
+		// End's jump to the latest reply is done: the box takes the focus
+		// (onJumpToReply's focusInputIfAvailable), its row in the list now
+		s.kb.inputWant = false
+		if i, topIn, _ := s.inputRow(); i >= 0 && s.kb.leave != nil {
+			if !topIn {
+				s.toEnd()
+			}
+			s.kbLeave(gtx)
+		}
+	}
 	if s.kb.focusReq && gtx.Source.Enabled() {
 		s.kb.focusReq = false
 		s.kb.on = true
 		gtx.Execute(key.FocusCmd{Tag: &s.kb})
 	}
+	filters := []event.Filter{key.FocusFilter{Target: &s.kb},
+		key.Filter{Focus: &s.kb, Name: key.NameUpArrow},
+		key.Filter{Focus: &s.kb, Name: key.NameDownArrow},
+		key.Filter{Focus: &s.kb, Name: key.NamePageUp},
+		key.Filter{Focus: &s.kb, Name: key.NamePageDown},
+		key.Filter{Focus: &s.kb, Name: key.NameHome},
+		key.Filter{Focus: &s.kb, Name: key.NameEnd},
+		key.Filter{Focus: &s.kb, Name: key.NameEscape},
+		key.Filter{Focus: &s.kb, Name: key.NameReturn},
+		key.Filter{Focus: &s.kb, Name: "E"},
+		key.Filter{Focus: &s.kb, Name: "V"},
+		// enableShortcuts: Mod+B, Mod+I and Mod+V go to the input
+		key.Filter{Focus: &s.kb, Name: "B", Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt},
+		key.Filter{Focus: &s.kb, Name: "I", Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt},
+		key.Filter{Focus: &s.kb, Name: "V", Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt}}
+	if i, _, _ := s.inputRow(); i >= 0 {
+		// Tab to the thread's reply box (tabToInput); Shift+Tab and a
+		// list with no box row keep Gio's own focus order
+		filters = append(filters, key.Filter{Focus: &s.kb, Name: key.NameTab})
+	}
 	for {
-		ev, ok := gtx.Event(key.FocusFilter{Target: &s.kb},
-			key.Filter{Focus: &s.kb, Name: key.NameUpArrow},
-			key.Filter{Focus: &s.kb, Name: key.NameDownArrow},
-			key.Filter{Focus: &s.kb, Name: key.NamePageUp},
-			key.Filter{Focus: &s.kb, Name: key.NamePageDown},
-			key.Filter{Focus: &s.kb, Name: key.NameHome},
-			key.Filter{Focus: &s.kb, Name: key.NameEnd},
-			key.Filter{Focus: &s.kb, Name: key.NameEscape},
-			key.Filter{Focus: &s.kb, Name: key.NameReturn},
-			key.Filter{Focus: &s.kb, Name: "E"},
-			key.Filter{Focus: &s.kb, Name: "V"},
-			// enableShortcuts: Mod+B, Mod+I and Mod+V go to the input
-			key.Filter{Focus: &s.kb, Name: "B", Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt},
-			key.Filter{Focus: &s.kb, Name: "I", Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt},
-			key.Filter{Focus: &s.kb, Name: "V", Required: key.ModShortcut, Optional: key.ModShift | key.ModAlt})
+		ev, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}
@@ -191,10 +282,23 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 				case j >= 0 && j < len(s.items):
 					s.kb.ts = s.items[j].key
 					s.scrollTo(s.kb.ts)
+				case d > 0 && s.thread && s.inputOn:
+					// a thread's next item past its last reply is the
+					// "input" row (isFocusableItem), none while the slice
+					// stops short of the end (its "loading" row isn't one)
+					if i, _, _ := s.inputRow(); i >= 0 {
+						s.focusInput(gtx)
+					}
 				case d > 0:
 					s.kbLeave(gtx)
 				}
-			case key.NamePageUp, key.NamePageDown, key.NameHome, key.NameEnd:
+			case key.NameEnd:
+				if !s.focusInput(gtx) {
+					s.pageKey(e.Name)
+				}
+			case key.NameTab:
+				s.tabToInput(gtx)
+			case key.NamePageUp, key.NamePageDown, key.NameHome:
 				s.pageKey(e.Name)
 			case key.NameEscape:
 				s.kbLeave(gtx)
@@ -364,9 +468,8 @@ func (v *ChannelView) SetSteal(f func(text string, k key.Event) event.Tag) { v.s
 // from its reply box.
 func (v *ThreadView) ListKeyFocus(gtx layout.Context) bool { return gtx.Focused(&v.s.kb) }
 
-// SelectedReply is the message the thread list's keyboard focus selects
-// ("" while the list doesn't have it; tests).
-func (v *ThreadView) SelectedReply() string {
+// KeyboardSelected is ChannelView.KeyboardSelected for a thread's replies.
+func (v *ThreadView) KeyboardSelected() string {
 	if !v.s.kb.on {
 		return ""
 	}

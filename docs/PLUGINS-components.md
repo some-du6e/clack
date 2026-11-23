@@ -80,7 +80,7 @@ Clack's `slackc.Render(gtx, name, props, native)` has to reproduce these rules e
 | 57 | BasePresence | patch | LastSeen | popups/util.go:`presenceDot`; sidebar.go:`(*App).presenceDot`; views/kit.go:`avatarPresence` | pop/shell/views | private copies |
 | 58 | LocalTime | patch | LastSeen | popups/profile_card.go:`pfLocalTimeLabel` via `pfIconLine` | pop | drawn |
 | 59 | RimetoMemberProfileOverflowMenu | patch | AdminBackend, Nicknames | popups/profile_card.go:`pfMoreItems` (+ profile_view.go `pfPaneMenu`) | pop | drawn |
-| 60 | EditAudioButton | patch | CustomNameRecording | missing (profile_view.go only has an "Add name pronunciation" link row) | pop | **missing** |
+| 60 | EditAudioButton | patch | CustomNameRecording | popups/profile_name_rec.go:`(*epNameRec).layout` (Edit profile's Name recording control) | pop | drawn |
 | 61 | CaptionsSubmenu | patch | HuddleActivity | missing (huddleui's ⋯ menu Show captions › rows are native menu items) | huddleui | **missing** |
 | 62 | CaptionsItemsMenu | patch | HuddleActivity | missing | huddleui | **missing** |
 | 63 | HuddleMetaEvent | patch | HuddleActivity | huddleui/captions_panel.go:`logRow` → `metaEvent` | huddleui | drawn |
@@ -405,7 +405,7 @@ Taut's own infra patches these at module load, so its patches sit innermost (app
 
 #### EditAudioButton
 - **CustomNameRecording** P/CustomNameRecording.tsx:25-33. Reads `onChangeFile(fileId|null), onFileUploadStart(), onFileUploadEnd()`. Renders `<>{Original}<UploadButton/></>`: a `Button(outline, medium, className taut-name-recording__upload)` with `SvgIcon file-upload 18` + `span.margin_left_25`, plus an `InlineAlert` on error. It uploads through `files.upload` (thunk `addAndUploadPendingFile`) with `subtype: 'slack_name_pronunciation'`.
-- **Clack**: **missing**. The edit-profile name-recording control would sit near popups/profile_view.go's "Add name pronunciation" row, **pop**.
+- **Clack**: popups/profile_name_rec.go `(*epNameRec).layout`, **pop**. Edit profile's Name recording field renders `EditAudioButton{onChangeFile, initialFileId, onFileUploadStart, onFileUploadEnd}` as Slack's BaseEditProfileField does (rguE): `<Original>` is the field's own control (Record Audio Clip, the recorder, the tile). `onChangeFile(id)` makes the file the form's recording (EditProfileFormPane's te) and shows it on the tile, `null` deletes a recording made in the form, and the upload props hold Save. The profile pane's NamePronunciationAddLink has no EditAudioButton in Slack, and none in Clack.
 
 ### 1.9 Huddles (HuddleActivity only)
 
