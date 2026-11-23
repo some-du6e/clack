@@ -51,8 +51,9 @@ func (a *App) countsInSidebar(m *Message) bool {
 }
 
 // messageBadges is shouldMessageBadgeChannel (eqVu) for message m of ch: a
-// conversation set to badge every new message (badge_all_unreads) badges
-// on any. A DM, and any other conversation that takes at-channel mentions
+// conversation set to badge every new message (badge_all_unreads) that
+// isn't muted badges on any (getShouldBadgeAllUnreadsForChannelId, EmXR:
+// `n && !isMuted`; a muted one goes on to the rules below). A DM, and any other conversation that takes at-channel mentions
 // (can_channel_have_at_channel_mentions) unless it's muted with muted
 // items hidden (improve_mute_pref), badges on the viewer's mention, a user
 // group of theirs, @channel, @everyone and @group (not in a reply) and
@@ -63,8 +64,7 @@ func (a *App) countsInSidebar(m *Message) bool {
 // The loud-mentions limit (canMsgMentionChannelIfMention) reads a feature
 // Clack doesn't have.
 func (a *App) messageBadges(ch string, m *Message) bool {
-	n := a.NotifyPrefs(ch)
-	if n.BadgeAllUnreads {
+	if a.NotifyPrefs(ch).BadgeAllUnreads && !a.S.IsMuted(ch) {
 		return true
 	}
 	c, ok := a.S.Conv(ch)
