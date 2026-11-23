@@ -19,6 +19,28 @@ if [ -z "$base" ]; then
 	echo "prepush: no base (pass one, or fetch origin/ui)" >&2
 	exit 2
 fi
+# workflows: ci's linux-build checks every workflow's Go timeouts against
+# its job's budget (budget-check.py) and its expect_fail wiring (the
+# expectfail tests); both are quick, so they run here first (flakes-1122d
+# pushed fl1122d-r-jump with a 14 min timeout its budget couldn't hold)
+wfrc=0
+mapfile -t wfs < <({
+	git diff --name-only --diff-filter=ACMR "$base" HEAD
+	git diff --name-only --diff-filter=ACMR HEAD
+} | grep -E '^\.github/workflows/.*\.yml$' | sort -u)
+if [ ${#wfs[@]} -gt 0 ]; then
+	python3 -I .github/scripts/budget-check.py .github/workflows/*.yml >/dev/null 2>&1 || {
+		python3 -I .github/scripts/budget-check.py .github/workflows/*.yml 2>&1 | grep -v '^budget-check:' | sed 's/^/prepush: /'
+		wfrc=1
+	}
+	for w in "${wfs[@]}"; do
+		[ -f "$w" ] || continue
+		python3 -I .github/scripts/expect_fail_wire.py --check "$w" >/dev/null 2>&1 || {
+			python3 -I .github/scripts/expect_fail_wire.py --check "$w" 2>&1 | sed 's/^/prepush: /'
+			wfrc=1
+		}
+	done
+fi
 mapfile -t files < <({
 	git diff --name-only --diff-filter=ACMR "$base" HEAD
 	git diff --name-only --diff-filter=ACMR HEAD
@@ -26,9 +48,9 @@ mapfile -t files < <({
 } | grep -E '\.go$' | grep -v '/testdata/' | sort -u)
 if [ ${#files[@]} -eq 0 ] && ! git rev-parse -q --verify HEAD^2 >/dev/null; then
 	echo "prepush: no Go files changed since $(git rev-parse --short "$base")"
-	exit 0
+	exit $wfrc
 fi
-rc=0
+rc=$wfrc
 present=()
 for f in "${files[@]}"; do
 	[ -f "$f" ] && present+=("$f")
