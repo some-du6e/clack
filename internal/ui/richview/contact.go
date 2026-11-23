@@ -92,7 +92,7 @@ func (l *lay) contactCard(b *richtext.Block, x, y, w int) int {
 			case "share_contact":
 				bt.icon, bt.tip = "share-message", nsAttachmentMedia.T("Share contact…")
 			case "save_info":
-				bt.icon, bt.tip = "user-directory-add", nsAttachmentMedia.T("Save contact")
+				bt.icon, bt.tip = "user-add", nsAttachmentMedia.T("Save contact") // Slack's user-directory-add
 			}
 			btns = append(btns, bt)
 		}
