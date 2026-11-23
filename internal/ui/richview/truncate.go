@@ -3,6 +3,7 @@ package richview
 import (
 	"sync"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/richtext"
 )
 
@@ -127,12 +128,22 @@ func withExpander(bs []richtext.Block, more bool) []richtext.Block {
 // maxCharacters 300, maxNewlines 5) where Options.Truncate is set: the
 // section's text and each of its fields on their own, all expanded
 // together. Slack keeps the state in its expandables store under
-// "blockText" + message ts + block_id for the session; kitExpanded is
-// that store.
+// getExpandableKey("blockText", ts, {blockId}) (expander.go): expanded
+// once, a section stays expanded in every view, across restarts.
+//
+// kitExpanded is the open state of the parts Slack keeps in the
+// component (a work object meta line's, an email's recipient rows): for
+// the session, by Clack's own keys.
 var (
 	kitExpMu    sync.Mutex
 	kitExpanded = map[string]bool{}
 )
+
+// xpOn is !!getObjectById(key): the key stored as expanded.
+func xpOn(key string) bool {
+	on, ok := xp().Expanded(key)
+	return ok && on
+}
 
 func kitIsExpanded(key string) bool {
 	kitExpMu.Lock()
@@ -150,17 +161,14 @@ func setKitExpanded(key string, on bool) {
 	}
 }
 
-// kitTruncKey is the expandables key of section b in this layout ("" =
-// the section doesn't truncate here).
+// kitTruncKey is the expandables key of section b in this layout:
+// getExpandableKey("blockText", the message's ts, {blockId}) ("" = the
+// section doesn't truncate here).
 func (l *lay) kitTruncKey(b *richtext.Block) string {
 	if !l.opts.Truncate || !b.Kit || b.Expand || l.inAtt {
 		return ""
 	}
-	id := b.BlockID
-	if id == "" {
-		id = "\x00" // Slack falls back to the block index; one per message is enough here
-	}
-	return "blockText/" + l.opts.Channel + "/" + l.opts.TS + "/" + id
+	return expandable.Key(expandable.BlockText, l.opts.TS, expandable.Opts{BlockID: b.BlockID})
 }
 
 // kitTruncate is section text (or one field) as Slack shows it: cut with
@@ -170,7 +178,7 @@ func kitTruncate(bs []richtext.Block, key string) []richtext.Block {
 	if !cut {
 		return bs
 	}
-	if kitIsExpanded(key) {
+	if xpOn(key) {
 		return withExpander(append([]richtext.Block(nil), bs...), false)
 	}
 	return withExpander(short, true)

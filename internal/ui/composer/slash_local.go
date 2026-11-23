@@ -36,6 +36,12 @@ import (
 //     Slackbot says "Hmm, something went wrong. Try again?" there and the
 //     command lands in that conversation's composer (addEphemeralFeedback's
 //     inputDelta).
+//   - /collapse, /expand: collapseCommand, expandCommand (229d, s/xk;
+//     core.App.ExpandCommand): every preview of every message held for
+//     the conversation (in a thread, the thread's) collapsed or expanded
+//     in this composer's view (the expandables store), and outside a
+//     thread Slackbot's "I’ve collapsed all files in this channel for
+//     you." (or expanded), which stays.
 //   - /feedback: feedbackCommand (tCkD) under slash_feedback_in_modal:
 //     UserFeedbackModal (popups/user_feedback.go). With the experiment off
 //     Slack opens its Help pane's feedback form, which Clack doesn't have:
@@ -106,6 +112,10 @@ func (j *sendJob) localCommand(ctx context.Context, a prepareSendArgs, q qDelta,
 		if t.Conv != "" && len(msg.ops) > 0 {
 			j.msgSend(ctx, t.Conv, msg, q)
 		}
+		return true, nil
+	case "/collapse", "/expand":
+		j.api.clearCommandFeedback(ts != "")
+		j.api.a.ExpandCommand(ch, ts, j.ui.viewContext, j.api.a.LocalCommand(args.Cmd) == "/expand")
 		return true, nil
 	case "/feedback":
 		if j.ui.feedback == nil || j.api.a.Experiment(popups.ExpSlashFeedbackInModal) != "on" {

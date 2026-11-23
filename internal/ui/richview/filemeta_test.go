@@ -4,6 +4,7 @@ import (
 	"image"
 	"testing"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	rt "github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -41,8 +42,8 @@ func TestFileMetaLine(t *testing.T) {
 		t.Fatalf("caret %+v", carets)
 	}
 	tg := v.targetAt(rectCenter(carets[0].r))
-	if tg < 0 || v.d.targets[tg].kind != tExpand {
-		t.Fatalf("the caret isn't a toggle (target %d)", tg)
+	if tg < 0 || v.d.targets[tg].kind != tExpandable || v.d.targets[tg].id != fileKeyFor(o, "F1") || v.d.targets[tg].on {
+		t.Fatalf("the caret isn't the files' collapse (target %d: %+v)", tg, v.d.targets[max(tg, 0)])
 	}
 	// collapse: only the line is left, caret-right-filled
 	v.activate(tg, image.Point{}, nil)
@@ -50,11 +51,17 @@ func TestFileMetaLine(t *testing.T) {
 	if len(v.d.imgs) != 0 || len(boxesOf(&v.d, bCaretRight)) != 1 {
 		t.Errorf("collapsed: %d images, right carets %d", len(v.d.imgs), len(boxesOf(&v.d, bCaretRight)))
 	}
-	// the same message elsewhere in the session stays collapsed
+	// the same message in a new View stays collapsed (the expandables
+	// store), in another view context it doesn't
 	if w := layoutAt(st, doc(text, fileBlock(img())), o, 600); len(w.d.imgs) != 0 {
-		t.Error("the collapsed state didn't stick for the session")
+		t.Error("the collapsed state didn't stick")
 	}
-	setKitExpanded(fileKeyFor(o, "F1"), false)
+	o2 := o
+	o2.ViewContext = "Thread"
+	if w := layoutAt(st, doc(text, fileBlock(img())), o2, 600); len(w.d.imgs) != 1 {
+		t.Error("the thread's copy collapsed too")
+	}
+	forgetExpandable(fileKeyFor(o, "F1"))
 
 	// image only: the line comes first
 	v = layoutAt(st, doc(fileBlock(img())), Options{Channel: "C1", TS: "2.0"}, 600)
@@ -92,4 +99,15 @@ func TestFileMetaLine(t *testing.T) {
 	}
 }
 
-func fileKeyFor(o Options, ids string) string { return "files/" + o.Channel + "/" + o.TS + "/" + ids }
+// fileKeyFor is the files' expandable in o's view: getExpandableKey("files", ts, {fileIds, viewContext}).
+func fileKeyFor(o Options, ids ...string) string {
+	return expandable.Key(expandable.Files, o.TS, expandable.Opts{FileIDs: ids, ViewContext: o.ViewContext})
+}
+
+// forgetExpandable drops key from the package's own store (no state).
+func forgetExpandable(key string) {
+	localExpander.mu.Lock()
+	delete(localExpander.m, key)
+	localExpander.mu.Unlock()
+	localExpander.gen.Add(1)
+}

@@ -331,7 +331,11 @@ type base struct {
 	// messages' lone videos play in place, as in Slack's Threads, Unreads
 	// and Later views
 	mediaPane string
-	media     map[string]*viewMedia
+	// viewCtx is the view context Slack's list passes its messages
+	// (expandable.ViewThreads, …): their collapsible previews' keys end
+	// with it ("" where Clack hasn't matched the view's)
+	viewCtx string
+	media   map[string]*viewMedia
 	// bkView is this view's drawing of its messages' elements
 	// (blockkit.InView, elements.go)
 	bkView uint64

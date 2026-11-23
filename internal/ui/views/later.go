@@ -41,6 +41,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -193,8 +194,10 @@ type savedBase struct {
 }
 
 func newSavedBase(h Host) savedBase {
+	b := newBase(h)
+	b.viewCtx = expandable.ViewSavedForLater // its previews' expandables (expander.go)
 	return savedBase{
-		base:  newBase(h),
+		base:  b,
 		convs: map[string]core.ConvRef{},
 		rows:  map[string]*laterRow{},
 		gone:  map[string]time.Time{},

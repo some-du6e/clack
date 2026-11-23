@@ -146,6 +146,7 @@ type App struct {
 	exp        *sidebarExp          // experiments the sidebar rules read (nil: defaults)
 	expGroups  map[string]string    // the groups every check reads (experiments.go)
 	icon       teamIconState        // the rail's workspace icon (team_icon.go)
+	expd       expandablesState     // Slack's expandables store: previews collapsed or expanded (expandables.go)
 	rxn        reactState           // the viewer's reactions in flight (reactions.go)
 	frec       frecencyState        // the frecency pref's save throttle and Frequently Used cache (frecency.go)
 	rec        recentsState         // recent searches and places: the recents pref, visits (search_recents.go)

@@ -24,6 +24,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -198,6 +199,9 @@ func (b *backend) start(a *App) {
 		go presencePoll(b.ctx, b.core)
 	}
 	installMemberRead(b.core) // mentions ask for their members as they draw (lazy_users.go)
+	// every message view reads and writes the account's expandables
+	// (Slack's expandables store: collapsed previews, core expandables.go)
+	richview.SetExpander(b.core)
 	// the sidebar rules keep a closed DM with a huddle on: they read the
 	// huddle UI's rooms (huddle_wire.go sbHuddleSync rebuilds on a change)
 	b.core.SetHuddleChannels(a.huddles().HuddleChannels)
@@ -779,6 +783,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 	m := &b.m
 	changed := false
 	switch ev.Type {
+	case "expandables": // a preview collapsed or expanded (a caret, /collapse, /expand): the views lay out again (their gen check)
 	case "experiments": // a group changed (experiments.getByUser, a plugin's override): the sidebar rules and names read them
 		b.resnapshot(a)
 		b.loadDrafts(a) // which drafts a row counts follows the draft experiments

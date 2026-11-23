@@ -48,6 +48,7 @@ type View struct {
 	laidGen uint32
 	laidEl  uint32 // Options.Elements version the layout was made with
 	laidPf  uint32 // uipref.Gen the layout was made with (jumbomoji, swatches, link underlines, inline media)
+	laidXp  uint64 // the expandables' generation it was made with (expander.go: collapsed previews)
 	dirty   bool
 
 	ops      op.Ops
@@ -415,7 +416,7 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if v.tablesChanged() {
 		v.dirty = true // a data_table's menu sorted it (datatable.go)
 	}
-	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
+	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf || expGen() != v.laidXp {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
 		v.recorded = false
@@ -685,6 +686,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	}
 	v.d.reset()
 	v.laidPf = uipref.Gen()
+	v.laidXp = expGen()
 	v.tipFrag = -1
 	if v.expanded == nil {
 		v.expanded = map[*richtext.Attachment]bool{}
@@ -1598,7 +1600,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if b := v.expPress; b != 0 {
 					v.expPress = 0
 					if v.expandAt(st, e.Position)+1 == b {
-						v.expand(b-1, h)
+						v.expand(st, b-1, h)
 					}
 					continue
 				}
@@ -2120,6 +2122,12 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 			v.dirty = true
 			v.redraw = true
 		}
+	case tExpandable: // a key of the expandables store (expander.go)
+		xp().SetExpanded(tg.id, tg.on)
+		v.dirty = true
+		v.redraw = true
+	case tAllowPreviews: // the sender joins allowed_unfurl_senders (expander.go)
+		xp().AllowPreviewsFrom(tg.id)
 	case tExpand:
 		if tg.id != "" {
 			setKitExpanded(tg.id, !kitIsExpanded(tg.id))

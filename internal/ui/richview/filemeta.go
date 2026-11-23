@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/font"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -30,35 +31,56 @@ import (
 //	several files: "N files"
 //
 // The button toggles the files' expandable (getExpandableKey("files",
-// ts, {fileIds, viewContext}): kept for the session); collapsed, only the
-// line is left. With no state yet, files are expanded unless one is an
-// image and expand_internal_inline_imgs is off (FilesMetaTextWrapper's
-// isExpanded).
+// ts, {fileIds, viewContext}) in the expandables store, expander.go):
+// collapsed, only the line is left. With no state yet, files are
+// expanded unless the sender is an unverified outsider in a DM
+// (collapseFromUnverifiedUser) or one is an image and
+// expand_internal_inline_imgs is off (FilesMetaTextWrapper's
+// isExpanded); toggleExpanded sets the opposite of what shows.
 
 // fileMetaLineH is the meta line's height (dp).
 const fileMetaLineH = 22
 
-// filesKey is the files' expandables key in this layout.
+// filesKey is the files' expandables key: getExpandableKey("files", ts,
+// {fileIds, viewContext}), the message's ts and the view's context.
 func (l *lay) filesKey(files []*richtext.File) string {
 	ids := make([]string, len(files))
 	for i, f := range files {
 		ids[i] = f.ID
 	}
-	return "files/" + l.opts.Channel + "/" + l.opts.TS + "/" + strings.Join(ids, "_")
+	return expandable.Key(expandable.Files, l.opts.TS, expandable.Opts{FileIDs: ids, ViewContext: l.opts.ViewContext})
 }
 
-// filesExpanded is isExpanded: the default flipped by the toggle.
+// filesExpanded is FilesMetaTextWrapper's isExpanded: the key's state,
+// else collapsed for an unverified outsider's files in a DM or when one
+// is an image and expand_internal_inline_imgs is off.
 func (l *lay) filesExpanded(files []*richtext.File) bool {
-	def := true
+	if on, ok := xp().Expanded(l.filesKey(files)); ok {
+		return on
+	}
+	if l.filesFromUnverified() {
+		return false
+	}
 	for _, f := range files {
 		if f.IsImage && uipref.Get().NoInternalImgs {
-			def = false
+			return false
 		}
 	}
-	if kitIsExpanded(l.filesKey(files)) { // toggled this session
-		return !def
+	return true
+}
+
+// filesFromUnverified is FilesMetaTextWrapper's collapseFromUnverifiedUser.
+func (l *lay) filesFromUnverified() bool {
+	return l.opts.Sender != "" && xp().CollapseFromUnverifiedUser(l.opts.Sender, l.opts.Channel)
+}
+
+// filesDisclosure is shouldShowUnverifiedDisclosure: collapsed by the
+// unverified rule, with no state of the viewer's.
+func (l *lay) filesDisclosure(files []*richtext.File) bool {
+	if _, ok := xp().Expanded(l.filesKey(files)); ok {
+		return false
 	}
-	return def
+	return l.filesFromUnverified()
 }
 
 // fileMetaText is renderMetaText for the files.
@@ -149,8 +171,9 @@ func (l *lay) fileMetaWith(files []*richtext.File, wos, x, y, w int) (int, bool)
 		}
 	}
 	l.plainAdd("\n")
-	// the button: an 8x7 caret 11.5px after the text, on the x-height
-	tg := l.d.addTarget(target{kind: tExpand, id: l.filesKey(files)})
+	// the button: an 8x7 caret 11.5px after the text, on the x-height;
+	// toggleExpanded sets the opposite of what shows
+	tg := l.d.addTarget(target{kind: tExpandable, id: l.filesKey(files), on: !expanded})
 	cx := endX + l.dp(11.5) + l.dp(4)
 	cy := y + lineH/2 + l.dp(1)
 	kind, cr := bCaret, image.Rect(cx-l.dp(4), cy-l.dp(3), cx+l.dp(4), cy+l.dp(4))

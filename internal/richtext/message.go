@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -266,6 +267,9 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 					at.ID = strconv.Itoa(a.ID)
 				}
 				at.Index = i
+				// the media's expandable (getExpandableKey("attachment"):
+				// the view's context ends it, richview appends it)
+				at.MediaKey = expandable.AttachmentKey(a, m.TS, "")
 				at.BotID = firstNonEmpty(a.BotID, m.BotID)
 				at.BotName = botName(r, m, at.BotID)
 				at.LinkedInText = a.FromURL != "" && linksURL(m, a.FromURL)

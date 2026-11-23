@@ -15,6 +15,8 @@ import (
 //	  meta.json       the user directory, custom emoji, usergroups, prefs (SaveCache)
 //	  boot_data.json  the sidebar a warm boot renders first (bootdata.go)
 //	  headers.json    recently opened channels' tab bars and facepiles (bootdata.go)
+//	  expandables.json  which previews were collapsed or expanded, by Slack's
+//	                  expandable keys (core expandables.go)
 //	  img/            avatars and emoji (imgcache)
 //
 // Every file is 0600 and every directory 0700; nothing in it is message

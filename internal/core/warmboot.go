@@ -164,6 +164,7 @@ func (a *App) loadWarm(cacheBase <-chan struct{}) {
 	defer close(a.warm.done)
 	t0 := time.Now()
 	team, user := a.bootAccount()
+	a.loadExpandables(team, user) // not a warm boot file: the account's state (expandables.go)
 	var d *store.BootData
 	if !noWarmBoot {
 		d = a.S.ReadBootData(team, user)

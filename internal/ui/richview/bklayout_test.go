@@ -353,7 +353,7 @@ func TestKitSectionShowMore(t *testing.T) {
 	}
 	var tg int16 = -1
 	for i, x := range v.d.targets {
-		if x.kind == tExpand && x.id != "" {
+		if x.kind == tExpandable {
 			tg = int16(i)
 		}
 	}
@@ -362,11 +362,11 @@ func TestKitSectionShowMore(t *testing.T) {
 	}
 	h0 := v.d.size.Y
 	key := v.d.targets[tg].id
-	if key != "blockText/C1/9.0/long" {
-		t.Errorf("expand key %q", key)
+	if key != "block_text_9.0_long" || !v.d.targets[tg].on { // getExpandableKey("blockText", ts, {blockId})
+		t.Errorf("expand key %q, on %v", key, v.d.targets[tg].on)
 	}
 	v.activate(tg, image.Point{}, nil)
-	t.Cleanup(func() { setKitExpanded(key, false) })
+	t.Cleanup(func() { forgetExpandable(key) })
 	// a new View (the row re-created) keeps the expansion
 	v = layoutAt(st, d, o, 600)
 	plain = string(v.d.plain)

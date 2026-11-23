@@ -10,6 +10,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -48,6 +49,9 @@ type commandUI struct {
 	// contents puts d in ch's composer (addEphemeralFeedback's
 	// inputDelta), when it is open
 	contents func(ch string, d *Doc)
+	// viewContext is the composer's view as prepareAndSendMessage gets
+	// it (executeCommand passes it on: /collapse and /expand's keys)
+	viewContext string
 }
 
 // commandUI is the composer's.
@@ -105,7 +109,20 @@ func (c *Composer) commandUI() *commandUI {
 				}
 			})
 		},
+		viewContext: c.viewContext(),
 	}
+}
+
+// viewContext is the composer's view context (Zhyr Y): the channel's
+// message pane, a thread pane, the Threads view's reply box.
+func (c *Composer) viewContext() string {
+	switch {
+	case c.InThreadsView:
+		return expandable.ViewThreads
+	case c.ts != "":
+		return expandable.ViewThread
+	}
+	return expandable.ViewChannel
 }
 
 // processed is prepareAndSendMessage's processedDelta for the thunk's
