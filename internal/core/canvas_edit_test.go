@@ -912,12 +912,19 @@ func TestCanvasSaveListItemReplaced(t *testing.T) {
 		{ID: "temp:C:RPL00002", Kind: canvas.Bullet, Spans: txt("one")},
 	}}})
 	loadModel(t, a, id)
-	// never the list deleted in a save that adds an item to it
-	x := modelSection(t, a, id, "one")
+	// never the list deleted in a save that adds an item to it (a canvas
+	// of its own, so the rest holds whatever this one does)
+	const other = "F0QUIPLAST4"
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: other, Title: "Deleted list", Doc: canvas.Doc{Blocks: []canvas.Block{
+		{ID: "temp:C:RPL00003", Kind: canvas.Paragraph, Spans: txt("before")},
+		{ID: "temp:C:RPL00004", Kind: canvas.Bullet, Spans: txt("one")},
+	}}})
+	loadModel(t, a, other)
+	x := modelSection(t, a, other, "one")
 	var pos string
-	a.CanvasModel(id, func(d *quip.Doc) { pos = d.PositionAfter(*x.Position, nil) })
-	err := a.SaveCanvas(ctx, id, quip.Edit{Kind: quip.EditDelete, SectionID: *x.ID}, quip.Edit{Kind: quip.EditDelete, SectionID: x.Parents.IDs[0]},
-		quip.Edit{Kind: quip.EditNew, SectionID: a.NewCanvasSectionID(id), After: *x.ID, Style: quip.StylePlain, Position: pos, RTML: "two"})
+	a.CanvasModel(other, func(d *quip.Doc) { pos = d.PositionAfter(*x.Position, nil) })
+	err := a.SaveCanvas(ctx, other, quip.Edit{Kind: quip.EditDelete, SectionID: *x.ID}, quip.Edit{Kind: quip.EditDelete, SectionID: x.Parents.IDs[0]},
+		quip.Edit{Kind: quip.EditNew, SectionID: a.NewCanvasSectionID(other), After: *x.ID, Style: quip.StylePlain, Position: pos, RTML: "two"})
 	if !errors.Is(err, quip.ErrRefused) || !strings.Contains(err.Error(), "adds an item") {
 		t.Errorf("a list deleted in the save that adds an item to it: %v", err)
 	}

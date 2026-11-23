@@ -171,7 +171,11 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 	match := matchUnits(bu, nu) // base unit -> new unit, -1 when gone
 	for bi, ni := range match {
 		if ni >= 0 {
-			nu[ni].s = diForm(bu[bi]) // as Slack's save writer writes the character the DOM holds
+			// the base's form: ParseRTML writes text as escapeText of the
+			// DOM's characters, as Slack's save writer (CITi's DI) does, so
+			// an entity the RTML spelled otherwise (&nbsp;, &quot;) is
+			// written as DI writes it
+			nu[ni].s = bu[bi].s
 		}
 	}
 	// the new text, and where each unit sits in it (DI's text() drops
@@ -283,19 +287,6 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 		return "", unsupported("marks getCompactRtml can't write")
 	}
 	return out, nil
-}
-
-// diForm is a kept unit as Slack's save writer (CITi's DI) writes the
-// character the editor's DOM holds for it: a control and a line break as
-// they are, a character through escapeText (&, < and > as entities, a
-// no-break space as itself, any other entity as its character). Canvases
-// are pre-wrap (the canvas editor's improvedWordWrapping), so the browser
-// keeps typed spaces as they are and DI writes them so.
-func diForm(u unit) string {
-	if u.br || u.ctl != "" {
-		return u.s
-	}
-	return EscapeText(html.UnescapeString(u.s), false)
 }
 
 // matchUnits pairs base units with the new units that are the same
