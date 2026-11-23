@@ -960,10 +960,7 @@ func (r *actRow) previewSub(gtx C, lines int, sub string) D {
 	if st.Hidden() {
 		return D{}
 	}
-	// the item is cursor: pointer, its body under the hand (handBody)
-	draw := func(gtx C) D {
-		return r.v.handBody(gtx, func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, sub) })
-	}
+	draw := func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, sub) } // under the row's hand (itemBody)
 	if !st.Active() {
 		return draw(gtx)
 	}

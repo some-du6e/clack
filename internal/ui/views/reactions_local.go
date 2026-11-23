@@ -20,6 +20,7 @@ import (
 type rxnOp struct {
 	name string
 	add  bool
+	seq  uint64 // MessageChangeSeq when it was made
 }
 
 // withLocalReactions is m with the view's local reaction changes laid
@@ -28,6 +29,12 @@ func (b *base) withLocalReactions(m *core.Message) *core.Message {
 	k := m.Channel + "/" + m.TS
 	b.rxnMu.Lock()
 	ops := b.rxnLocal[k]
+	if len(ops) > 0 && b.storeTookBack(m, ops) {
+		// the store holds the message now, or core changed it since: its
+		// copy, not these, says what the viewer's reactions are
+		delete(b.rxnLocal, k)
+		ops = nil
+	}
 	if len(ops) > 0 {
 		// an op the copy shows already is done
 		keep := ops[:0]
@@ -50,6 +57,27 @@ func (b *base) withLocalReactions(m *core.Message) *core.Message {
 	c := *m
 	c.Reactions = b.applyRxnOps(m.Reactions, ops)
 	return &c
+}
+
+// storeTookBack reports whether core has the message ops change: the
+// store holds it (HeldMessage), or a change core made to it is newer
+// than the ops (MessageChange). Call with rxnMu held.
+func (b *base) storeTookBack(m *core.Message, ops []rxnOp) bool {
+	c := b.h.Core()
+	if c == nil {
+		return false
+	}
+	if _, ok := c.HeldMessage(m.Channel, m.TS); ok {
+		return true
+	}
+	if ch, ok := c.MessageChange(m.Channel, m.TS); ok {
+		for _, op := range ops {
+			if ch.Seq > op.seq {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // reactedIn reports whether the viewer's reaction name is among rs.
@@ -119,11 +147,15 @@ func (l *rxnLocalCopy) Change(name string, add, undo bool) {
 	if l.b.rxnLocal == nil {
 		l.b.rxnLocal = map[string][]rxnOp{}
 	}
+	var seq uint64
+	if c := l.b.h.Core(); c != nil {
+		seq = c.MessageChangeSeq()
+	}
 	ops := l.b.rxnLocal[k]
 	if i := slices.IndexFunc(ops, func(o rxnOp) bool { return o.name == name }); i >= 0 {
-		ops[i].add = add
+		ops[i].add, ops[i].seq = add, seq
 	} else {
-		ops = append(ops, rxnOp{name, add})
+		ops = append(ops, rxnOp{name, add, seq})
 	}
 	l.b.rxnLocal[k] = ops
 	l.b.rxnMu.Unlock()

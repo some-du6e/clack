@@ -184,7 +184,9 @@ type actRow struct {
 	// clickLater is a click whose press came in the same frame, decided
 	// in the next (ControlledClick's marks are this frame's layout's)
 	clickLater, clickSplit bool
-	ctx                    struct{} // the row's context-menu press target
+	clickGen               uint32    // the frame it came in (base.tgen)
+	clickAt                time.Time // and when
+	ctx                    struct{}  // the row's context-menu press target
 	d                      actDesc
 	built                  bool
 	gen                    uint64 // i18n.Gen d was described in
@@ -2303,7 +2305,9 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// marks the row read and doesn't open it (ControlledClick skips a
 	// BUTTON target)
 	onActions := v.agentActionsClicked(gtx, r)
-	late, split := r.clickLater, v.splitClick()
+	// a deferred click is the next frame's to decide, and only its: a row
+	// not laid out then (scrolled off, the page changed) drops it
+	late, split := r.clickLater && v.tgen == r.clickGen+1 && gtx.Now.Sub(r.clickAt) < actClickLaterMax, v.splitClick()
 	if late {
 		split = r.clickSplit // the click's own frame's
 	}
@@ -2313,7 +2317,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		// pressed and released in this frame: what took the press (a
 		// pill, a link) marks it as this frame lays the row out, so the
 		// click is decided in the next, with this frame's modifiers
-		r.clickLater, r.clickSplit, clicked = true, split, false
+		r.clickLater, r.clickSplit, r.clickGen, r.clickAt, clicked = true, split, v.tgen, gtx.Now, false
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	clicked = clicked || late
@@ -2591,7 +2595,10 @@ func (r *actRow) itemBody(gtx C, st slackc.Styled, sel bool) D {
 		pointerCursor(gtx)
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		m := op.Record(gtx.Ops)
-		dims := v.rowContent(gtx, r)
+		// the item is cursor: pointer (.p-activity_ia4_page__item:hover,
+		// .activity_row_content_container), every kind's body under the
+		// hand (handBody)
+		dims := v.handBody(gtx, func(gtx C) D { return v.rowContent(gtx, r) })
 		call := m.Stop()
 		rect := image.Rectangle{Max: dims.Size}
 		bg := v.p.ReadFill
@@ -3892,6 +3899,10 @@ func (v *Activity) btnRect(gtx C, c *widget.Clickable) image.Rectangle {
 	s := gtx.Dp(32)
 	return image.Rectangle{Min: at, Max: at.Add(image.Pt(s, s))}
 }
+
+// actClickLaterMax is how long a deferred row click (clickLater) waits
+// for its next frame: a view not drawn meanwhile drops it.
+const actClickLaterMax = 500 * time.Millisecond
 
 // pointerAt is where the pointer is, for menus opened from a press.
 func (v *Activity) pointerAt() image.Point {

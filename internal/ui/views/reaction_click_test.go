@@ -459,3 +459,58 @@ func TestViewsReactionBarGroupsLikeSlack(t *testing.T) {
 		}
 	}
 }
+
+// The canvas comment stream: a pill's click toggles the reaction and
+// doesn't open the comment's thread (Reaction stops its click there);
+// a click on the comment elsewhere opens it.
+func TestCanvasCommentsReactionPillOpensNoThread(t *testing.T) {
+	app, fs := vaFake(t)
+	rx := &rxFake{}
+	fs.SetHook(rx.hook(nil))
+	h := newKBHost(app, false)
+	v := NewCanvasComments(h, fakeslack.CanvasChannel, "")
+	e := &vaEnv{size: image.Pt(600, 1400)}
+	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
+	ch := core.CanvasFileChannel(fakeslack.CanvasChannel)
+	c := &rxCase{t: t, e: e, b: &v.base, x: rx, ch: ch, ts: fakeslack.CommentReacted}
+	e.until(t, "the reacted comment's pill", func() bool { _, ok := c.pill("eyes"); return ok })
+	p, _ := c.pill("eyes")
+	c.click(p)
+	e.until(t, "reactions.add", func() bool { return rx.sent("add eyes " + ch + "/" + fakeslack.CommentReacted) })
+	e.frame()
+	if _, th := h.last(); th != "" {
+		t.Errorf("a click on the comment's reaction opened the thread %s", th)
+	}
+	// the comment itself opens it
+	rr := v.RowRect(fakeslack.CommentReacted)
+	if rr.Empty() {
+		t.Fatal("the reacted comment has no row")
+	}
+	c.click(f32.Pt(float32(rr.Min.X+40), float32(rr.Min.Y+12)))
+	e.until(t, "the comment's thread", func() bool { _, th := h.last(); return th == ch+"/"+fakeslack.CommentReacted })
+}
+
+// A view's own change to a message the store doesn't hold lasts until the
+// store holds the message: then the store's copy says what the viewer's
+// reactions are, and the change is dropped.
+func TestLocalReactionsEndWhenTheStoreHoldsIt(t *testing.T) {
+	app, _ := vaFake(t)
+	v := NewThreads(newKBHost(app, false))
+	ch, ts := fakeslack.ViewsChannel, "1762799999.000100"
+	m := core.Message{Channel: ch, TS: ts, User: "U0FAKE00001", Text: "a synthetic message"}
+	l := &rxnLocalCopy{b: &v.base, m: m}
+	l.Change("tada", true, false)
+	if !reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Fatal("the local change doesn't show")
+	}
+	app.S.PutFetched(ch, []slack.Message{{Type: "message", TS: ts, User: "U0FAKE00001", Text: "a synthetic message"}}, app.S.LiveSeq())
+	if _, ok := app.HeldMessage(ch, ts); !ok {
+		t.Fatal("the store doesn't hold the message: the test checks nothing")
+	}
+	if reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Error("the store holds the message, and the local change still shows over its copy")
+	}
+	if len(v.rxnLocal) != 0 {
+		t.Errorf("the local changes outlived the store taking the message: %v", v.rxnLocal)
+	}
+}

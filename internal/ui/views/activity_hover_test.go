@@ -5,10 +5,12 @@ import (
 	"image"
 	"strings"
 	"testing"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
+	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -202,5 +204,82 @@ func TestActivityPreviewLinksArePlain(t *testing.T) {
 		if lr := ent.v.LinkRects(); lr[0].URL != rhLink {
 			t.Errorf("dense %v: the drawn link goes to %q", dense, lr[0].URL)
 		}
+	}
+}
+
+// Every Activity row is cursor: pointer, so a mention row's text (no
+// subtext before it) shows the hand as a reply's does, in the dense and
+// the detailed layout.
+func TestActivityEveryRowHasTheHand(t *testing.T) {
+	for _, dense := range []bool{false, true} {
+		v, _, e, _ := vaFakeActivity(t, false)
+		e.size.Y = 2400
+		v.dense, v.rows, v.dirty = dense, map[string]*actRow{}, true
+		e.frame()
+		e.frame()
+		ch, ts := fakeslack.ViewsChannel, "1762700100.000100" // fa-at-user's
+		var ent *richEntry
+		e.until(t, "the mention's preview", func() bool {
+			for k, x := range v.rich {
+				if strings.HasSuffix(k, ch+"/"+ts) {
+					ent = x
+					return true
+				}
+			}
+			return false
+		})
+		e.frame()
+		full, _, ok := e.r.AreaBounds(ent.v)
+		if !ok {
+			t.Fatalf("dense %v: the mention's preview has no area", dense)
+		}
+		q := full.Min.Add(textPoint(t, ent.v))
+		if cur := pointerAt(e, f32.Pt(float32(q.X)+.5, float32(q.Y)+.5)); cur != pointer.CursorPointer {
+			t.Errorf("dense %v: the cursor over a mention row's text is %v, want the row's hand", dense, cur)
+		}
+	}
+}
+
+// A row click whose press and release came in one frame is decided in the
+// next (clickLater); one whose next frame never comes in time (the view
+// not drawn, the row not laid out) is dropped, not opened later.
+func TestActivityLateClickExpires(t *testing.T) {
+	v, _, e, _ := vaFakeActivity(t, false)
+	e.size.Y = 2400
+	e.frame()
+	const rowKey = "fa-dm-reacted"
+	r := v.rowFor(rowKey)
+	row, _, ok := e.r.AreaBounds(&r.click)
+	if !ok {
+		t.Fatal("the row isn't drawn")
+	}
+	p := f32.Pt(float32(row.Min.X+60), float32(row.Min.Y+row.Dy()/2))
+	click := func() {
+		e.r.Queue(asEvents([]pointer.Event{{Kind: pointer.Move, Source: pointer.Mouse, Position: p},
+			{Kind: pointer.Press, Source: pointer.Mouse, Position: p, Buttons: pointer.ButtonPrimary},
+			{Kind: pointer.Release, Source: pointer.Mouse, Position: p}})...)
+	}
+	// the view isn't drawn after the click's frame: its click goes
+	draw := e.draw
+	click()
+	e.frame()
+	if !r.clickLater {
+		t.Fatal("a press and release in one frame weren't deferred: the test checks nothing")
+	}
+	e.draw = func(gtx layout.Context) {}
+	e.frame()
+	time.Sleep(actClickLaterMax + 100*time.Millisecond)
+	e.draw = draw
+	e.frame()
+	e.frame()
+	if v.selOK && v.selKey == rowKey {
+		t.Error("a deferred click opened the row long after it came")
+	}
+	// decided in the next frame, it opens the row
+	click()
+	e.frame()
+	e.frame()
+	if !v.selOK || v.selKey != rowKey {
+		t.Errorf("a click decided in its next frame didn't open the row (open %v %q)", v.selOK, v.selKey)
 	}
 }
