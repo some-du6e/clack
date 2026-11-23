@@ -236,6 +236,10 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.mu.Lock()
 		a.connected = up
 		a.mu.Unlock()
+		// countsNotYetApplied: the connect's client.counts is still to come
+		// (refreshCountsAfterGap), and until it is in the socket's changes
+		// don't advance the mutation timestamps (history_changed.go)
+		a.countsNotYetApplied()
 		// Merging msg-latency: its OnState block (socketConnected(fast)
 		// and firstUp before the emit, socketDown on a drop) replaces this
 		// emit; keep its block and give its emit Fast: up &&
@@ -252,9 +256,17 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.emit(Event{Type: "connection", Connected: up, Fast: up && a.RTM.LastConnectFast()})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
-			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
-			go a.refreshCountsAfterGap(a.bg)           // what the socket missed (codechannel_close.go)
-			a.retryTickle()                            // a tickle that failed with the socket down (tickle.go)
+			fast := a.RTM.LastConnectFast()
+			a.socketConnected(fast) // the refetchers' slow reconnects (channel_pins.go)
+			if fast {
+				// fetchAndApplyReconnectCounts: a fast reconnect fetches no
+				// counts (the socket replays what it missed), and they count
+				// as applied (history_changed.go)
+				a.countsApplied()
+			} else {
+				go a.refreshCountsAfterGap(a.bg) // what the socket missed (codechannel_close.go)
+			}
+			a.retryTickle() // a tickle that failed with the socket down (tickle.go)
 		}
 	}
 	a.RTM.OnHello = a.onHello
@@ -1208,10 +1220,12 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// only an hour after it was last used (evict.go)
 	a.noteLoaded(ch)
 	pins, subs, live, gen := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq(), a.S.EndGen()
+	stale := a.staleMark()
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {
 		return err
 	}
+	defer a.readFresh(ch, stale) // a stale mark from before the read is answered (history_changed.go)
 	// its people are asked for as rows draw them (lazy_users.go); the
 	// reactions the socket brought while the request was out stay, and a
 	// revision the store held another of reaches every copy and the views

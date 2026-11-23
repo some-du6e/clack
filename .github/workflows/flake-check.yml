@@ -380,6 +380,36 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # History rewritten on Slack's side (history-changed): the lists and
+  # core drop what was cached before a channel_history_changed, also with
+  # a load out across it (a race the first full-test met). Dispatch with
+  # only=history-changed.
+  history-changed:
+    if: ${{ !inputs.only || startsWith('history-changed', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: core
+        run: go test -count=$COUNT -run 'TestHistoryChanged|TestCountsHistoryInvalidPurgesHistory$|TestCountsUpdatedRereadsHistory$|TestSocketHistoryChangeAdvancesHistoryInvalid$' ./internal/core
+      - name: ui (the lists)
+        run: go test -count=$COUNT -timeout 40m -run 'TestHistoryChangedLists$' ./internal/ui
+      - name: slow runner (one CPU)
+        run: go test -cpu 1 -count=5 -timeout 30m -run 'TestHistoryChangedLists$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # The video players' concurrency under the race detector (round 3's
   # review: Handle.loop's onEvent taking the controller's lock across the
   # UI goroutine, handle goroutines and time.AfterFunc unmounts, the
@@ -5983,6 +6013,7 @@ jobs:
       - canvas-quip
       - plugins-work-1
       - plugins-work-2
+      - history-changed
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

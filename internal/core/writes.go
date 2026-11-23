@@ -61,6 +61,9 @@ func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMess
 		}
 	}
 	err := a.C.Update(ctx, ch, ts, text, blocks)
+	if err == nil {
+		a.ownMutation(ch, false) // history_changed.go
+	}
 	if err != nil && had {
 		if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) {
 			x.Text, x.Blocks, x.Edited, x.Files = prev.Text, prev.Blocks, prev.Edited, prev.Files
@@ -93,11 +96,21 @@ func (a *App) EndStale(ch string) bool {
 // saveMessageEditWithFiles): chat.update with file_ids, the files the
 // message keeps after the edit followed by those added while editing.
 func (a *App) EditWithFiles(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
-	return a.C.UpdateWithFiles(ctx, ch, ts, text, blocks, fileIDs)
+	err := a.C.UpdateWithFiles(ctx, ch, ts, text, blocks, fileIDs)
+	if err == nil {
+		a.ownMutation(ch, false) // history_changed.go
+	}
+	return err
 }
 
 // Delete deletes a message.
-func (a *App) Delete(ctx context.Context, ch, ts string) error { return a.C.Delete(ctx, ch, ts) }
+func (a *App) Delete(ctx context.Context, ch, ts string) error {
+	err := a.C.Delete(ctx, ch, ts)
+	if err == nil {
+		a.ownMutation(ch, true) // history_changed.go
+	}
+	return err
+}
 
 // DeleteAttachment removes a link preview from a message, as Slack's
 // removeAttachmentsIncludingChildren: the attachment (and the others
@@ -482,6 +495,7 @@ func (a *App) Pin(ctx context.Context, ch, ts string) error {
 	a.pinsTabPrepend(ch, it)
 	err := a.C.Call(ctx, "pins.add", url.Values{"channel": {ch}, "timestamp": {ts}, "reason": {"pin-message"}}, nil)
 	if err == nil || isCode(err, "already_pinned") {
+		a.ownMutation(ch, false) // history_changed.go
 		return nil
 	}
 	a.pinsTabRemove(ch, it)

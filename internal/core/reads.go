@@ -62,6 +62,13 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 		if t != nil {
 			msgs, hasMore, epoch = t.Msgs, t.HasMore, t.Epoch
+			if a.historyStale(ch) {
+				// client.counts' updated is newer than the one applied: the
+				// cached page at once, the newest read again in the
+				// background (history_changed.go)
+				source = "cache, stale"
+				a.startStaleRead(ch)
+			}
 			if t.EndStale {
 				// the window from before a slow connect, at once, as
 				// Slack draws its outdated slice; read forward in the

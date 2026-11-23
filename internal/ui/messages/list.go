@@ -187,6 +187,10 @@ type listState struct {
 
 	lastTyping time.Time
 
+	// mountLoaded: the pane loaded its thread since it was shown
+	// (ThreadsFlexpane's initializing cleared: HidesComposer)
+	mountLoaded bool
+
 	// the open inline editor (one per list, as Slack's messageEditWindow
 	// holds one per window) and its message: its row draws it, and a row
 	// made again for the message (a jump's window and back, a rebuild)
@@ -771,6 +775,9 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.snap.rev = 0
 	}
 	changed := s.m.snapshot(&s.snap)
+	if s.snap.loaded {
+		s.mountLoaded = true
+	}
 	handed := false
 	if s.win != nil && s.m == s.win && s.snap.merged && s.handOver() {
 		changed, handed = s.m.snapshot(&s.snap), true
