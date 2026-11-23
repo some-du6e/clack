@@ -5283,13 +5283,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Push-Location internal/ui
           # each flag quoted: PowerShell splits a bare -test.v at the dot
-          # through expect_fail's wrapper in a proof run (XF_BIN: empty otherwise)
-          if ($env:XF_BIN) {
-            & $env:XF_BIN "$env:RUNNER_TEMP\ui.test.exe" '-test.v' "-test.count=$env:COUNT" '-test.timeout=15m' '-test.run=^TestWinQuotePaste$' *> "$env:RUNNER_TEMP\test.log"
-          } else {
-            & "$env:RUNNER_TEMP\ui.test.exe" '-test.v' "-test.count=$env:COUNT" '-test.timeout=15m' '-test.run=^TestWinQuotePaste$' *> "$env:RUNNER_TEMP\test.log"
+          # COUNT processes, one run each: the test's App.Run window ends its
+          # process when it closes (exit code 0), so -test.count past 1 ran
+          # once; each run through expect_fail's wrapper in a proof run
+          # (XF_BIN: empty otherwise)
+          $rc = 0
+          for ($i = 1; $i -le [int]$env:COUNT; $i++) {
+            $log = "$env:RUNNER_TEMP\test-$i.log"
+            if ($env:XF_BIN) {
+              & $env:XF_BIN "$env:RUNNER_TEMP\ui.test.exe" '-test.v' '-test.count=1' '-test.timeout=15m' '-test.run=^TestWinQuotePaste$' *> $log
+            } else {
+              & "$env:RUNNER_TEMP\ui.test.exe" '-test.v' '-test.count=1' '-test.timeout=15m' '-test.run=^TestWinQuotePaste$' *> $log
+            }
+            $r = $LASTEXITCODE
+            "run ${i}: the test binary's exit code: {0} (0x{1:X8})" -f $r, $r
+            if ($r -ne 0) { $rc = $r }
+            Get-Content $log | Add-Content "$env:RUNNER_TEMP\test.log"
           }
-          $rc = $LASTEXITCODE
           Pop-Location
           Get-Content "$env:RUNNER_TEMP\test.log" | Select-String -Pattern '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok|panic|fatal error|Exception)|_test\.go:\d+:' | Select-Object -Last 120 | ForEach-Object { $_.Line }
           Get-Content "$env:RUNNER_TEMP\test.log" -TotalCount 3
