@@ -1,6 +1,10 @@
 package slack
 
-import "strings"
+import (
+	"runtime"
+	"strings"
+	"unicode/utf16"
+)
 
 // FileType is the type Chromium gives a file the user picks, drops or
 // pastes (File.type), from its name. Slack's client posts an upload to
@@ -10,33 +14,66 @@ import "strings"
 // it: an octet-stream part becomes a Binary file whatever its name (Karim's
 // .js, 2026-11-22, filetype binary).
 //
-// The lists are Chromium 156's (Electron 45.3.2, Slack desktop 4.53.292),
-// net/base/mime_util.cc kPrimaryMappings then kSecondaryMappings, the first
-// entry in order that has the extension, which is the text after the name's
-// last "." (blink's GetContentTypeFromFileName) compared ignoring ASCII
-// case. Chromium asks the OS between the two lists (the Windows registry,
-// the XDG database, macOS's UTIs), which differs from machine to machine;
-// Clack keeps to the lists, so an extension neither has (.go, .py, .ts) is
-// "".
+// It's Chromium 156's GetMimeTypeFromExtension (Electron 45.3.2, Slack
+// desktop 4.53.292) for the text after the name's last "." (blink's
+// GetContentTypeFromFileName, the lookup a user's File gets): net/base/
+// mime_util.cc's kPrimaryMappings, then what this machine's OS gives the
+// extension (platformMimeType: the Windows registry, macOS's UTType, the
+// XDG shared-mime-info database), then kSecondaryMappings. The lists match
+// ignoring ASCII case, the first entry in order that has the extension
+// winning; the OS's answer differs from machine to machine as it does for
+// Slack desktop on that machine (.py, which neither list has, is
+// text/x-python-script on a Mac and "" where the OS knows no type).
 func FileType(name string) string {
 	i := strings.LastIndexByte(name, '.')
 	if i < 0 {
 		return ""
 	}
-	ext := name[i+1:]
-	if ext == "" || strings.IndexByte(ext, 0) >= 0 {
+	return mimeTypeFromExtension(name[i+1:])
+}
+
+// mimeTypeFromExtension is mime_util.cc's GetMimeTypeFromExtensionHelper
+// with include_platform_types: nothing for an extension of more than 65536
+// path units (UTF-16 on Windows, bytes elsewhere) or with a NUL in it, else
+// the primary list's type, the OS's, the secondary list's, or "".
+func mimeTypeFromExtension(ext string) string {
+	if extPathUnits(ext) > 65536 || strings.IndexByte(ext, 0) >= 0 {
 		return ""
 	}
-	for _, list := range [...][]mimeInfo{chromiumPrimaryMappings, chromiumSecondaryMappings} {
-		for _, m := range list {
-			for _, e := range strings.Split(m.exts, ",") {
-				if equalFoldASCII(e, ext) {
-					return m.mime
-				}
+	if m := findMimeType(chromiumPrimaryMappings, ext); m != "" {
+		return m
+	}
+	if m, ok := platformMimeType(ext); ok {
+		return m
+	}
+	return findMimeType(chromiumSecondaryMappings, ext)
+}
+
+// findMimeType is mime_util.cc's FindMimeType: the first entry in list
+// order with ext among its extensions, ignoring ASCII case.
+func findMimeType(list []mimeInfo, ext string) string {
+	for _, m := range list {
+		for _, e := range strings.Split(m.exts, ",") {
+			if equalFoldASCII(e, ext) {
+				return m.mime
 			}
 		}
 	}
 	return ""
+}
+
+// extPathUnits is ext's length as base::FilePath::StringType counts it:
+// UTF-16 units on Windows (each byte of invalid UTF-8 one U+FFFD), bytes
+// elsewhere.
+func extPathUnits(ext string) int {
+	if runtime.GOOS != "windows" {
+		return len(ext)
+	}
+	n := 0
+	for _, r := range ext {
+		n += utf16.RuneLen(r)
+	}
+	return n
 }
 
 // equalFoldASCII is base::EqualsCaseInsensitiveASCII: only A-Z fold

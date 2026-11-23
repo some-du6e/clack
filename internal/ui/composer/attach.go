@@ -122,6 +122,11 @@ type attChip struct {
 	// clip is a recorded voice clip's File fields (clips.go); nil for any
 	// other file.
 	clip *clipMeta
+	// ftype is its File's type (attFileType), worked out once from the
+	// name the File was made with: Chromium fixes File.type then, and a
+	// plugin renaming the file leaves it (fileTypeLocked).
+	ftype    string
+	ftypeSet bool
 	// loading: a restored file the draft named by id alone, whose
 	// files.info is out (Slack's unknown file: MissingText bars over an
 	// exception tile); gone: it never came (a non-existent file: "This
@@ -283,6 +288,17 @@ func (c *attChip) mime() string {
 	return ""
 }
 
+// fileTypeLocked is c's File type (ftype), looked up the first time it's
+// asked for: prepare asks before a plugin renames the file, Layout and
+// pendingLocked every frame, which mustn't ask the OS each time (the
+// registry, UTType). Call with attachments.mu held.
+func (c *attChip) fileTypeLocked() string {
+	if !c.ftypeSet {
+		c.ftype, c.ftypeSet = attFileType(c.name, c.mime()), true
+	}
+	return c.ftype
+}
+
 // sendBatch is what one send takes from the composer.
 type sendBatch struct {
 	chips    []*attChip
@@ -407,13 +423,13 @@ func (a *attachments) prepare(c *attChip) {
 	}
 	a.mu.Lock()
 	c.preparing, c.ptotal = true, int64(len(c.data))
-	name, data, sub, typ := c.name, c.data, c.subtype(), c.mime()
+	name, data, sub, typ, ft := c.name, c.data, c.subtype(), c.mime(), c.fileTypeLocked()
 	a.mu.Unlock()
 	a.h.Invalidate()
 
 	// The name the file goes out under: Slack's upload reads File.name,
 	// which plugins may redefine (AnonymiseFileNames).
-	if n := uploadName(name, attMime(name)); n != name {
+	if n := uploadName(name, ft); n != name {
 		a.mu.Lock()
 		if c.title == c.name { // not renamed meanwhile
 			c.title = n
@@ -1296,6 +1312,7 @@ type attView struct {
 	c         *attChip
 	name      string // the file name it uploads under
 	title     string // the name the chip shows
+	typ       string // its File's type (attFileType)
 	thumb     paint.ImageOp
 	thumbPx   int
 	preparing bool
@@ -1324,7 +1341,7 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 			c.thumbBusy = true
 			go a.makeThumb(c, px)
 		}
-		views[i] = attView{c: c, name: c.name, title: c.title, thumb: c.thumb, thumbPx: c.thumbPx,
+		views[i] = attView{c: c, name: c.name, title: c.title, typ: c.fileTypeLocked(), thumb: c.thumb, thumbPx: c.thumbPx,
 			preparing: c.preparing, failed: c.prepErr != nil && c.prepared == nil,
 			asImage: c.kind.Image && !c.thumbBad && !c.loading && !c.gone, size: c.size(),
 			loading: c.loading, gone: c.gone}

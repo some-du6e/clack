@@ -1015,6 +1015,11 @@ jobs:
         env:
           CLACK_WINDOWS_ASSOC_TESTS: "1" # TestURLHandlerShell changes the runner user's slack:// association
         run: go test -count=1 -v -run 'TestURLHandler|TestHandlerCommands|TestForwardOnWindows|TestURLLaunchArgs' ./internal/desktop
+      - name: file types (the registry's Content Type between Chromium's lists; test extensions under HKCU\Software\Classes)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_WINDOWS_ASSOC_TESTS: "1" # TestRegistryMimeTypes registers .clacktest<pid>… extensions and removes them
+        run: go test -count=1 -v -run 'TestRegistryMimeTypes|TestFileType|TestXDG|TestMimeCache|TestUploadPartLikeFormData' ./internal/slack
       # The real exe: it registers itself at start (reg query), Windows
       # routes `start slack://…` to it (nothing else on the runner has
       # slack://), and the running Clack takes the link from the launch
@@ -1646,6 +1651,8 @@ jobs:
           # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
           go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
           go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
+          # file types: UTType between Chromium's lists (slack.FileType)
+          go test -count=1 -v -run 'TestUTTypeMimeTypes|TestFileType|TestXDG|TestMimeCache|TestUploadPartLikeFormData' ./internal/slack
       # Gio patch 49: the inspect freeze's end catches every widget up with
       # the mouse (macOS leaves its id 0), and the tool's freeze of a
       # message body's and a sidebar heading's hovers

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"log"
-	"mime"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -424,7 +423,9 @@ func (a *App) pickFiles(accept string, multiple bool) ([]jsrt.PickedFile, error)
 		if err != nil {
 			continue
 		}
-		out = append(out, jsrt.PickedFile{Name: name, Type: mime.TypeByExtension(filepath.Ext(name)), Data: data, LastModified: mod})
+		// the File's type as Chromium gives a picked file (its lists and this
+		// machine's OS), not Go's mime table ("text/javascript; charset=utf-8")
+		out = append(out, jsrt.PickedFile{Name: name, Type: slack.FileType(name), Data: data, LastModified: mod})
 	}
 	return out, nil
 }

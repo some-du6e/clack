@@ -5265,10 +5265,6 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
-  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
-  # every listed test failed in some job and passed in none, nothing else
-  # failed, every job that ran succeeded. Proof runs only. A new job goes
-  # in its needs (.github/scripts/expect_fail_wire.py adds it).
   # emoji-packs: the Add emoji dialog's Emoji packs tab (popups), Slack's
   # 8DMj and its store, through the dialog's Layout against the fake:
   # the list, a pack's details, adding and removing a pack, the picker's
@@ -5300,6 +5296,86 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # Chromium's OS lookup between its two mime lists (slack.FileType): the
+  # XDG shared-mime-info database on Linux, the registry on Windows, UTType
+  # on macOS; the upload, photo and composer types built on it
+  # (upload-filetype-2). -f only=platform-mime runs all three.
+  platform-mime-linux:
+    if: ${{ !inputs.only || startsWith('platform-mime-linux', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (the composer's test binary links internal/huddle's X11 capture)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "slack: FileType, the mime.cache reader, this runner's shared-mime-info"
+        run: go test -count=$COUNT -v -run '^(TestFileType.*|TestXDG.*|TestMimeCache.*|TestSystemXDGMimeTypes|TestUploadPartLikeFormData)$' ./internal/slack
+      - name: "core: the upload part's type, the profile photo's"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestUploadTypesLikeSlack|TestUploadFileType|TestCheckPhoto)$' ./internal/core
+      - name: "composer: a pending file's type"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^TestAttachmentFileTypes$' ./internal/ui/composer
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  platform-mime-windows:
+    if: ${{ !inputs.only || startsWith('platform-mime-windows', inputs.only) }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "slack: FileType over the registry's Content Type (test extensions under HKCU\\Software\\Classes)"
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_ASSOC_TESTS: "1"
+        run: go test -count=$COUNT -v -run '^(TestRegistryMimeTypes|TestFileType.*|TestXDG.*|TestMimeCache.*|TestUploadPartLikeFormData)$' ./internal/slack
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  platform-mime-macos:
+    if: ${{ !inputs.only || startsWith('platform-mime-macos', inputs.only) }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "slack: FileType over UTType"
+        run: go test -count=$COUNT -v -run '^(TestUTTypeMimeTypes|TestFileType.*|TestXDG.*|TestMimeCache.*|TestUploadPartLikeFormData)$' ./internal/slack
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (.github/scripts/expect_fail_wire.py adds it).
   expect-fail:
     needs:
       - go
@@ -5418,6 +5494,9 @@ jobs:
       - library-dupes
       - rx-bar
       - plugins-work-0
+      - platform-mime-linux
+      - platform-mime-windows
+      - platform-mime-macos
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
