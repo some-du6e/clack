@@ -437,23 +437,7 @@ type SCHub struct {
 // sharedInvites.canGetLink.
 func (a *App) LoadSlackConnectHub(ctx context.Context) SCHub {
 	h := SCHub{AdminContent: a.SlackConnectAdminContent(), Paid: a.SlackConnectPaidPlan(), TeamName: a.SlackConnectTeamName()}
-	body := map[string]any{"user_id": a.S.SelfID(), "permissions": []string{"CREATE_PUBLIC_CHANNEL", "CREATE_PRIVATE_CHANNEL"}}
-	if a.C.Creds.EnterpriseID != "" {
-		body["team_ids"] = a.selfWorkspaceIDs()
-	} else {
-		body["as_admin"] = true
-	}
-	var r struct {
-		Allowed        []string            `json:"allowed"`
-		AllowedPerTeam map[string][]string `json:"allowed_per_team"`
-	}
-	if err := a.C.Edge(ctx, "permissions/info", body, &r); err == nil {
-		has := len(r.Allowed) > 0
-		for _, ps := range r.AllowedPerTeam {
-			has = has || len(ps) > 0
-		}
-		h.CreateChannel = has && !a.viewerRestricted()
-	}
+	h.CreateChannel = a.CanCreateChannels(ctx) // slash_local.go
 	h.Invite = a.slackConnectInviteRights(h.CreateChannel)
 	h.DMEligible = a.SlackConnectDMEligible(ctx)
 	return h
