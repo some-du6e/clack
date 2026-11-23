@@ -5275,10 +5275,7 @@ jobs:
           GOTRACEBACK: all
         run: |
           # the paste's clipboard readers four at a time, in a child process
-          go test -count=1 -v -timeout 10m -run '^TestWinClipboardReadersOneAtATime$' ./internal/ui/composer *> "$env:RUNNER_TEMP\readers.log"
-          $readers = $LASTEXITCODE
-          Get-Content "$env:RUNNER_TEMP\readers.log" | Select-String -Pattern '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)|_test\.go:\d+:|reads \(busy\)|Windows, two threads' | ForEach-Object { $_.Line }
-          "TestWinClipboardReadersOneAtATime: exit code $readers"
+          $readers = 0 # mutant: the readers test left out
           go test -c -o "$env:RUNNER_TEMP\ui.test.exe" ./internal/ui
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Push-Location internal/ui

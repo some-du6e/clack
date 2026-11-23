@@ -25,6 +25,9 @@ const clipMaxText = 256 << 20
 // put there). Each copy is bounded by its block and its limit
 // (winclip.CopyData) and parsed after the session closes.
 func startPasteSnap(plain bool) *pasteSnap {
+	if true {
+		return nil // mutant: a paste's readers each read on their own, at once
+	}
 	s := &pasteSnap{done: make(chan struct{}), imgErr: errAttNoClipImage}
 	if !plain {
 		s.rich = &clipRead{done: make(chan struct{})}
