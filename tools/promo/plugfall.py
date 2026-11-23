@@ -18,7 +18,7 @@ plugins = json.load(open(idx))['plugins']
 names = [(p['system'], p['name']) for p in plugins]
 rng.shuffle(names)
 
-FPS = 15
+FPS = 30
 SCALE = min(W, H) / 720.0                 # pill size follows the short side
 FONT = ImageFont.truetype('/usr/share/fonts/truetype/lato/Lato-Bold.ttf', max(11, int(17 * SCALE)))
 PAD_X, PILL_H = int(14 * SCALE), int(34 * SCALE)
