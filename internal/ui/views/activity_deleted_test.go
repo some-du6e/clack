@@ -3,6 +3,7 @@ package views
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
@@ -10,38 +11,51 @@ import (
 
 // Activity's rows for messages that are no more, as Slack's item
 // components draw them: a mention's or a reaction's row renders null once
-// its message is non-existent (messages.list had none, or refused the
-// fetch: UnknownFetchManager's isNonExistent), deleted (message_deleted:
+// its message is non-existent (messages.list answered without it:
+// UnknownFetchManager's isNonExistent), deleted (message_deleted:
 // "Remove activity item") or a tombstone (message_changed); a thread's
 // row whose latest reply is gone stays with no body. No row is a
 // loading skeleton for ever.
 
-// A fetch Slack refuses (an API error for the channel) leaves no row on
-// its loading bar: the mention renders null, the thread whose latest
-// reply it couldn't bring draws no body; no shimmer frame after frame.
-func TestActivityRefusedFetchLeavesNoSkeleton(t *testing.T) {
-	e := newLmEnv(t, lmOpts{latest: true, setup: func(e *lmEnv) {
-		e.fs.SetFault("messages.list", fakeslack.Fault{Error: "channel_not_found"})
-	}})
-	e.e.until(t, "the rows", func() bool { return e.shown(lmMentionKey) && e.shown(lmThreadKey) && !e.v.data.busy() })
-	for i := 0; i < 5; i++ {
-		e.frame()
-	}
-	shimmers := e.v.shimmers
-	for i := 0; i < 10; i++ {
-		e.frame()
-	}
-	if n := e.v.shimmers - shimmers; n != 0 {
-		t.Errorf("%d loading shimmers in 10 frames after Slack refused the fetch: a row loads for ever", n)
-	}
-	if h := e.rowDrawnH(lmMentionKey); h != 0 {
-		t.Errorf("the mention whose fetch Slack refused is a %dpx row; Slack renders it null", h)
-	}
-	if h := e.rowH(lmThreadKey); h <= 0 {
-		t.Errorf("the thread's row is %dpx; it stays with no body", h)
-	}
-	if got := e.drawn(lmLatest); got != "" {
-		t.Errorf("the thread's row drew %q for a reply there is none of", got)
+// Fetches that fail (an API error for the channel, a 5xx), every one of
+// core's tries, delete nothing: the mention's and the thread's rows stay,
+// with no body and no shimmer frame after frame (core gave up:
+// MessageGaveUp), and no change says the messages are gone, so Saved and
+// Threads keep them too.
+func TestActivityFailedFetchKeepsTheRows(t *testing.T) {
+	for _, f := range []fakeslack.Fault{{Error: "channel_not_found"}, {Status: 500}} {
+		e := newLmEnv(t, lmOpts{latest: true, setup: func(e *lmEnv) {
+			e.app.SetRefetchBackoff(func(int) time.Duration { return 5 * time.Millisecond })
+			e.fs.SetFault("messages.list", f)
+		}})
+		e.e.until(t, "the rows", func() bool { return e.shown(lmMentionKey) && e.shown(lmThreadKey) && !e.v.data.busy() })
+		e.e.until(t, "core giving up", func() bool {
+			return e.app.MessageGaveUp(lmChan, lmMention) && e.app.MessageGaveUp(lmChan, lmLatest)
+		})
+		for i := 0; i < 5; i++ {
+			e.frame()
+		}
+		shimmers := e.v.shimmers
+		for i := 0; i < 10; i++ {
+			e.frame()
+		}
+		if n := e.v.shimmers - shimmers; n != 0 {
+			t.Errorf("%+v: %d loading shimmers in 10 frames after core gave up: a row loads for ever", f, n)
+		}
+		if h := e.rowDrawnH(lmMentionKey); h <= 0 {
+			t.Errorf("%+v: the mention whose fetches failed is a %dpx row: a failure hid it", f, h)
+		}
+		if h := e.rowH(lmThreadKey); h <= 0 {
+			t.Errorf("%+v: the thread's row is %dpx; it stays with no body", f, h)
+		}
+		if got := e.drawn(lmLatest); got != "" {
+			t.Errorf("%+v: the thread's row drew %q for a reply it couldn't fetch", f, got)
+		}
+		for _, ts := range []string{lmMention, lmLatest} {
+			if c, ok := e.app.MessageChange(lmChan, ts); ok && c.Deleted {
+				t.Errorf("%+v: %s, whose fetches failed, is gone", f, ts)
+			}
+		}
 	}
 }
 

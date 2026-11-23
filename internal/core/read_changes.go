@@ -392,3 +392,17 @@ func refetchWaitAfter(err error) time.Duration {
 	}
 	return 0
 }
+
+// Red stubs: the fix's API on the pre-fix code, without its behaviour.
+
+// MessageGaveUp: core asks no more by itself (its last try failed).
+func (a *App) MessageGaveUp(ch, ts string) bool {
+	l := &a.msgLog
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	r, ok := l.refetching[MsgKey{ch, ts}]
+	return ok && !r.out && r.fails >= refetchTries
+}
+
+// SetRefetchBackoff sets the package's backoff.
+func (a *App) SetRefetchBackoff(f func(n int) time.Duration) { refetchBackoff = f }
