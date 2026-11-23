@@ -41,6 +41,7 @@ type frag struct {
 	url    string // image
 	p0, p1 int32  // plain text byte range
 	alt    bool   // image frag has text fallback in plain (":name:")
+	broken bool   // an alt frag recorded with the broken image icon (its load failed)
 	comp   int16  // component tag (index+1 into display.comps), 0 = static
 	hov    int16  // hover layer (index+1 into display.hovers), 0 = none
 	part   uint8  // CSS part (css.go), 0 = none

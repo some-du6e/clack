@@ -9,6 +9,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // Message slugs (a message_mention: a pasted message link, the "message"
@@ -294,6 +295,26 @@ func slugMentionName(u *slack.User, real bool) string {
 		return u.Profile.DisplayName
 	}
 	return realName
+}
+
+// MentionRealNames is shouldDisplayRealNamesInMentions (realNamesInMentions):
+// rich text's UserElement passes it to MemberSlug as forceRealNames, and
+// a mention then reads the member's real name (hWCs wg), else
+// getMemberMentionName.
+func (a *App) MentionRealNames() bool { return a.realNamesInMentions() }
+
+// MentionName is MemberSlug's name for member u: wg (their real name)
+// under forceRealNames, else getMemberMentionName (store.DisplayName).
+func MentionName(u *slack.User, real bool) string {
+	if real && u != nil {
+		if n := strings.TrimSpace(u.Profile.RealName); n != "" {
+			return n
+		}
+		if n := strings.TrimSpace(u.RealName); n != "" {
+			return n
+		}
+	}
+	return store.DisplayName(u)
 }
 
 // realNamesInMentions is shouldDisplayRealNamesInMentions (client-boot
