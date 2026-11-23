@@ -65,9 +65,39 @@ func (x *rfEnv) focusWithin(d time.Duration) bool {
 	}
 }
 
+// scrollAway takes the reply box out of view with the thread list keeping
+// the keyboard focus: PageUp a page at a time (onKeyDownPageUp: the
+// selection goes to the first message in view), or, keeping the newest
+// reply selected, the wheel. Slack's list keeps its focus through a
+// scrollbar drag (onDragStart's preventDefault) but blurs an active row
+// the wheel takes out of view (onScroll after onWheel,
+// shouldBlurItemScrolledOutOfView); Clack's keeps it through both, so the
+// wheel stands in for the drag here.
+func (x *rfEnv) scrollAway(c *convo, tv *messages.ThreadView, wheel bool) {
+	x.t.Helper()
+	paneBottom := c.compRect.Max.Y // at the thread's end the box ends at the pane's bottom
+	at := x.paneWheelPoint()
+	x.until("the box scrolled away with the replies", 20*time.Second, func() bool {
+		if c.compRect.Min.Y >= paneBottom {
+			return true
+		}
+		if wheel {
+			x.scroll(at, -400)
+		} else {
+			x.key(key.NamePageUp, 0)
+		}
+		x.settle(300 * time.Millisecond)
+		return false
+	})
+	x.settle(500 * time.Millisecond)
+	if tv.KeyboardSelected() == "" || x.threadFocused() {
+		x.t.Fatalf("scrolled away, the list has the keyboard focus %v and the box %v", tv.KeyboardSelected() != "", x.threadFocused())
+	}
+}
+
 // boxAway opens the read thread at its end, gives its list the keyboard
-// focus, and wheels the list up until the reply box is out of view.
-func boxAway(t *testing.T) (*rfEnv, *convo, *messages.ThreadView) {
+// focus, and takes the reply box out of view (scrollAway).
+func boxAway(t *testing.T, wheel bool) (*rfEnv, *convo, *messages.ThreadView) {
 	t.Helper()
 	x := openTopEnv(t)
 	x.openAt(fakeslack.ThreadOpenRead)
@@ -75,20 +105,7 @@ func boxAway(t *testing.T) (*rfEnv, *convo, *messages.ThreadView) {
 	c := x.a.convos[x.ch+"/"+x.root]
 	tv := x.threadView(x.ch, x.root)
 	x.listFocused(c, tv)
-	paneBottom := c.compRect.Max.Y // at the thread's end the box ends at the pane's bottom
-	at := x.paneWheelPoint()
-	x.until("the box scrolled away with the replies", 20*time.Second, func() bool {
-		if c.compRect.Min.Y >= paneBottom {
-			return true
-		}
-		x.scroll(at, -400)
-		x.settle(300 * time.Millisecond)
-		return false
-	})
-	x.settle(500 * time.Millisecond)
-	if tv.KeyboardSelected() == "" || x.threadFocused() {
-		t.Fatalf("scrolled away, the list has the keyboard focus %v and the box %v", tv.KeyboardSelected() != "", x.threadFocused())
-	}
+	x.scrollAway(c, tv, wheel)
 	return x, c, tv
 }
 
@@ -98,11 +115,12 @@ func boxAway(t *testing.T) (*rfEnv, *convo, *messages.ThreadView) {
 // box right under the last reply.
 func TestThreadsAuditReplyBoxKeysBringItBack(t *testing.T) {
 	for _, k := range []struct {
-		what string
-		key  key.Name
-	}{{"End", key.NameEnd}, {"↓ past the last reply", key.NameDownArrow}, {"Tab", key.NameTab}} {
+		what  string
+		key   key.Name
+		wheel bool // the newest reply stays selected (↓ goes past it)
+	}{{"End", key.NameEnd, false}, {"↓ past the last reply", key.NameDownArrow, true}, {"Tab", key.NameTab, false}} {
 		t.Run(k.what, func(t *testing.T) {
-			x, _, tv := boxAway(t)
+			x, _, tv := boxAway(t, k.wheel)
 			x.key(k.key, 0)
 			if !x.focusWithin(time.Second) {
 				t.Fatalf("%s from the thread list left the reply box unfocused (the list's keyboard focus: %v)", k.what, tv.KeyboardSelected() != "")
@@ -127,6 +145,8 @@ func TestThreadsAuditReplyBoxEndKeepsItsTop(t *testing.T) {
 	cut := func(what string) image.Rectangle {
 		x.t.Helper()
 		x.listFocused(c, tv) // at the thread's end again
+		// a notch of the wheel at a time, standing in for a short drag of
+		// the scrollbar (scrollAway)
 		x.until(what+": the box cut at the pane's bottom", 20*time.Second, func() bool {
 			if c.compRect.Max.Y > paneBottom+x.px(8) {
 				return true
@@ -309,17 +329,7 @@ func TestThreadsAuditReplyBoxInSplitView(t *testing.T) {
 		t.Fatalf("the thread's list (%v) isn't in the split view's card (%v)", l, x.a.split.card)
 	}
 	x.listFocused(c, tv)
-	paneBottom := c.compRect.Max.Y
-	at := x.paneWheelPoint()
-	x.until("the box scrolled away with the replies", 20*time.Second, func() bool {
-		if c.compRect.Min.Y >= paneBottom {
-			return true
-		}
-		x.scroll(at, -400)
-		x.settle(300 * time.Millisecond)
-		return false
-	})
-	x.settle(500 * time.Millisecond)
+	x.scrollAway(c, tv, false) // the box scrolls with the replies
 	x.key(key.NameEnd, 0)
 	if !x.focusWithin(time.Second) {
 		t.Fatal("End from the split view's thread list left its reply box unfocused")
