@@ -222,7 +222,7 @@ func parseBlocks(raw json.RawMessage) []bk {
 	}
 	// One malformed block shouldn't drop the rest: the bad ones become
 	// Slack's "This content could not be displayed."
-	bs, err := decodeBlocks(raw, false)
+	bs, err := decodeBlocks(raw)
 	if err != nil {
 		return nil
 	}

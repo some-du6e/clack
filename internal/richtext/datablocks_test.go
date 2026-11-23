@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Synthetic fixtures only: Slack's own examples (its Block Kit reference
@@ -266,4 +267,61 @@ func TestDataBlocksDecodeEntryPoints(t *testing.T) {
 			t.Errorf("%s: children %s", c.name, dump(ch))
 		}
 	}
+}
+
+// A container nested deep over a leaf whose field is typed unlike bk's
+// decodes each block list a bounded number of times: the decodes grow
+// with the depth, by at most two a level (the message's list decodes its
+// blocks again one by one once its pass fails), where a list that decoded
+// a failing child again doubled them at every level. The chain is the
+// per-block error line; one ending in a mistyped chart keeps the chart.
+func TestBlockDecodeLinear(t *testing.T) {
+	nest := func(depth int, leaf string) string {
+		s := leaf
+		for i := 0; i < depth; i++ {
+			s = `{"type":"container","child_blocks":[` + s + `]}`
+		}
+		return `[` + s + `]`
+	}
+	bad := `{"type":"context","elements":"x"}`
+	decode := func(depth int, leaf string) ([]bk, int64) {
+		t.Helper()
+		listDecodes.Store(0)
+		var bs []bk
+		done := make(chan struct{})
+		go func() { bs = parseBlocks(json.RawMessage(nest(depth, leaf))); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("depth %d: no decode after 10s", depth)
+		}
+		return bs, listDecodes.Load()
+	}
+	_, c8 := decode(8, bad)
+	_, c16 := decode(16, bad)
+	if c16-c8 > 2*8+2 {
+		t.Fatalf("list decodes: %d at depth 8, %d at depth 16: more than two a level", c8, c16)
+	}
+	bs, c24 := decode(24, bad)
+	if c24 > 2*24+3 {
+		t.Errorf("depth 24: %d list decodes, want at most %d", c24, 2*24+3)
+	}
+	if len(bs) != 1 || bs[0].Type != badBlock {
+		t.Errorf("depth 24: %d blocks, first %q; want the error line", len(bs), firstType(bs))
+	}
+	bs, _ = decode(24, `{"type":"data_visualization","title":7,"chart":{"type":"pie","segments":[{"label":"a","value":1}]}}`)
+	inner := bs
+	for len(inner) == 1 && inner[0].Type == "container" {
+		inner = inner[0].ChildBlocks
+	}
+	if len(inner) != 1 || inner[0].Type != "data_visualization" || inner[0].viz == nil {
+		t.Errorf("a mistyped chart under 24 containers: %q", firstType(inner))
+	}
+}
+
+func firstType(bs []bk) string {
+	if len(bs) == 0 {
+		return ""
+	}
+	return bs[0].Type
 }
