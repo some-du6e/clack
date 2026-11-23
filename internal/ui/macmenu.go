@@ -370,7 +370,7 @@ func (a *App) findInThread() bool {
 	if s := &a.secondary; s.kind == secThread && s.open() && (s.keyFocus || s.findFocus) {
 		return openFindIn(a.convos[s.channel+"/"+s.ts])
 	}
-	if a.splitOpen() && a.split.focus {
+	if a.splitFocus { // the key focus in the split view's thread (focus_container.go), not the last press's side
 		if r := a.splitTop(); r.Thread() != "" {
 			found := false
 			a.inPane(paneSplit, func() { found = openFindIn(a.convos[r.Channel()+"/"+r.Thread()]) })
@@ -379,7 +379,7 @@ func (a *App) findInThread() bool {
 			}
 		}
 	}
-	if a.actPaneFocus && a.activityTab() {
+	if a.actPaneFocus {
 		if v, ok := a.views[Route("activity")].(*views.Activity); ok {
 			if ch, ts := v.PaneThread(); ts != "" {
 				return openFindIn(a.convos[ch+"/"+ts])

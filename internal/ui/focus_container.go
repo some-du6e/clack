@@ -16,27 +16,53 @@ import (
 // isSecondaryViewFocused), and Mod+F finds in the thread of the focused
 // container (findInThread).
 
-// noteFocusedContainer follows the focus into and out of the side pane
-// and the thread the Activity tab's own pane draws (keys.process, once
-// keyFocus and findFocus are this frame's): in one, its view is the
-// focused container; anywhere else, it isn't; with nothing focused it
-// stays what it was.
+// noteFocusedContainer follows the focus into and out of the side pane,
+// the split view's thread and the thread the Activity tab's own pane
+// draws (keys.process, once keyFocus and findFocus are this frame's): the
+// one the key focus is in is the focused container. With the focus
+// nowhere, or the window inactive, none is: Slack's ViewContainer onBlur
+// sets the focused container to null when the focus leaves for nothing
+// (relatedTarget null), a window losing its focus too.
 func (a *App) noteFocusedContainer(gtx layout.Context) {
-	in := a.secondaryHasFocus(gtx)
-	switch {
-	case in && !a.secFocused:
-		a.secFocused = true
+	if in := a.focused && a.secondaryHasFocus(gtx); in != a.secFocused {
+		a.secFocused = in
 		a.Invalidate() // the reply bars count again
-	case !in && a.secFocused && (!gtx.Focused(nil) || !a.secondary.open()):
-		a.secFocused = false // the focus elsewhere, or the view gone
-		a.Invalidate()
 	}
-	// the Activity tab's Primary view, for Mod+F (findInThread)
-	if a.activityPaneThreadFocused(gtx) {
-		a.actPaneFocus = true
-	} else if !gtx.Focused(nil) || !a.activityTab() {
-		a.actPaneFocus = false
+	// for Mod+F (findInThread: a key, so the window has the focus): the
+	// split view's thread, the Activity tab's Primary view
+	a.splitFocus = a.splitThreadFocused(gtx)
+	a.actPaneFocus = a.activityPaneThreadFocused(gtx)
+}
+
+// splitThreadFocused reports whether the key focus is in the split
+// view's thread: its reply box, an edit composer in its place, its list,
+// its find bar (getFocusedContainer() === Split showing a thread).
+func (a *App) splitThreadFocused(gtx layout.Context) bool {
+	r := a.splitTop()
+	if !a.splitOpen() || r.Thread() == "" {
+		return false
 	}
+	in := false
+	a.inPane(paneSplit, func() {
+		c := a.convos[r.Channel()+"/"+r.Thread()]
+		if c == nil {
+			return
+		}
+		for _, cv := range []composerView{c.comp, c.edit} {
+			if ft, ok := cv.(interface{ FocusTag() any }); ok && gtx.Focused(ft.FocusTag()) {
+				in = true
+			}
+		}
+		if tl, ok := c.list.(threadList); ok && (tl.FindFocused(gtx) || tl.ListKeyFocus(gtx)) {
+			in = true
+		}
+		if ec, ok := c.list.(interface{ EditComposer() *composer.Composer }); ok {
+			if e := ec.EditComposer(); e != nil && gtx.Focused(e.FocusTag()) {
+				in = true
+			}
+		}
+	})
+	return in
 }
 
 // secondaryHasFocus reports whether the key focus is anywhere in the open

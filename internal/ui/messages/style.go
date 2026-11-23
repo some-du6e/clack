@@ -196,6 +196,11 @@ func flatten(c colors) colors {
 		&c.FindBorder} {
 		*p = richview.Over(*p, bg)
 	}
+	// the scrollbar's bar stays see-through (over rows, images, the
+	// hover), its alpha such that over the pane it lands where Slack's
+	// sRGB blend does
+	c.ScrollThumb = theme.LinearAlpha(c.ScrollThumb, bg)
+	c.ScrollThumbHover = theme.LinearAlpha(c.ScrollThumbHover, bg)
 	return c
 }
 

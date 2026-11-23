@@ -376,9 +376,9 @@ type App struct {
 	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
 
 	// secFocused: the side pane is the focused view container;
-	// actPaneFocus: the thread the Activity tab's own pane draws is
-	// (focus_container.go)
-	secFocused, actPaneFocus bool
+	// splitFocus, actPaneFocus: the split view's thread is, the thread the
+	// Activity tab's own pane draws is (focus_container.go)
+	secFocused, splitFocus, actPaneFocus bool
 
 	insp    *inspect.Tool // the inspect tool, nil unless gated on (inspect_wire.go)
 	inspKey key.Filter    // its shortcut
