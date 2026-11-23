@@ -103,9 +103,8 @@ func cantEdits(h *testHost) int {
 
 // With the switch on, each edit Clack can make the way Slack's client does
 // is one edit-document the fake takes (typed text, a ticked box, a rename,
-// a paragraph emptied, text typed around a mention, which stays), and none
-// goes through canvases.edit. What it can't make yet (a new block) says so
-// and sends nothing.
+// a paragraph emptied, text typed around a mention, which stays, a new
+// block under the last one), and none goes through canvases.edit.
 func TestCanvasQuipSaves(t *testing.T) {
 	h, fs, v, s, frame := quipEnv(t)
 	ok := func(what string, n int) {
@@ -180,16 +179,25 @@ func TestCanvasQuipSaves(t *testing.T) {
 		t.Errorf("the mention after the save: %+v", b.Spans)
 	}
 
-	// a new block
+	// a new block under the last one: a new section after it
 	v.StartNewBlock()
 	frame()
-	if v.edit.cur != nil || cantEdits(h) != 1 {
-		t.Errorf("a new block: editor %v, toasts %d", v.edit.cur != nil, cantEdits(h))
+	if v.edit.cur == nil {
+		t.Fatal("no new block under the last one")
 	}
-	time.Sleep(200 * time.Millisecond)
+	v.edit.cur.ed.InsertText("A new paragraph")
 	frame()
-	if n := len(quipSaves(fs)); n != 5 {
-		t.Errorf("%d edit-document calls after the refusal, want 5", n)
+	if !v.edit.finish(v) {
+		t.Fatal("a new paragraph was refused")
+	}
+	settle(t, s, v, "the new paragraph", func() bool {
+		fc, _ := fs.Canvas(quipCanvasID)
+		n := len(fc.Doc.Blocks)
+		return n > 0 && fc.Doc.Blocks[n-1].Text() == "A new paragraph"
+	})
+	ok("a new block", 6)
+	if n := cantEdits(h); n != 0 {
+		t.Errorf("%d can't-edit toasts", n)
 	}
 	if es := fs.CanvasEdits(); len(es) != 0 {
 		t.Errorf("%d canvases.edit calls, want none: %v", len(es), es)
@@ -338,5 +346,98 @@ func TestCanvasQuipControlLinkNotEditable(t *testing.T) {
 	b := findBlk(v, func(b *canvas.Block) bool { return b.ID == "temp:C:QSV00009" })
 	if b.edOK || b.edWhy != "a canvas, file or message mention" {
 		t.Errorf("a paragraph with a canvas mention: editable %v (%q)", b.edOK, b.edWhy)
+	}
+}
+
+// Enter in a block saves the new block after it, in one save with the
+// block's own text: at the end of a paragraph (the paragraph as it was, a
+// new one after it), in a checklist item (a new item in its list). A new
+// block that starts a list after a paragraph can't be saved yet: the
+// editor says so and stays open.
+func TestCanvasQuipNewBlocks(t *testing.T) {
+	h, fs, v, s, frame := quipEnv(t)
+	settle(t, s, v, "the canvas's model", func() bool { return h.a.NewCanvasSectionID(quipCanvasID) != "" })
+	blocks := func() []canvas.Block { fc, _ := fs.Canvas(quipCanvasID); return fc.Doc.Blocks }
+	after := func(id string) *canvas.Block {
+		bs := blocks()
+		for i := range bs {
+			if bs[i].ID == id && i+1 < len(bs) {
+				return &bs[i+1]
+			}
+		}
+		return nil
+	}
+	enter := func(id, typed string) bool {
+		t.Helper()
+		v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == id }))
+		frame()
+		if v.edit.cur == nil {
+			t.Fatalf("block %s didn't open", id)
+		}
+		ed := v.edit.cur.ed
+		ed.SetSelection(ed.Doc().Len(), ed.Doc().Len())
+		ed.InsertText(typed)
+		for i := 0; i < 3; i++ {
+			frame()
+		}
+		return v.edit.finish(v)
+	}
+	if !enter(quipSecondID, "\nTyped after Enter") {
+		t.Fatal("Enter at the end of a paragraph was refused")
+	}
+	settle(t, s, v, "the paragraph after Enter", func() bool { b := after(quipSecondID); return b != nil && b.Text() == "Typed after Enter" })
+	if r := quipSaves(fs); len(r) != 1 || len(r[0].Save.Sections) != 2 {
+		t.Errorf("Enter: %d saves, want 1 with the paragraph and the new one", len(r))
+	}
+	if !enter(quipCheckID, "\nAnother item") {
+		t.Fatal("Enter in a checklist item was refused")
+	}
+	settle(t, s, v, "the new checklist item", func() bool {
+		b := after(quipCheckID)
+		return b != nil && b.Kind == canvas.Check && b.Text() == "Another item" && !b.Checked
+	})
+	n := len(quipSaves(fs))
+	v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == quipFirstID }))
+	frame()
+	ed := v.edit.cur.ed
+	ed.SetSelection(ed.Doc().Len(), ed.Doc().Len())
+	ed.InsertText("\na list")
+	ed.ToggleBlock(composer.Bullet) // the new line made a bullet
+	frame()
+	if v.edit.finish(v) || v.edit.cur == nil || cantEdits(h) != 1 {
+		t.Errorf("a new list after a paragraph: editor %v, toasts %d", v.edit.cur != nil, cantEdits(h))
+	}
+	v.edit.discard(v)
+	time.Sleep(200 * time.Millisecond)
+	if got := len(quipSaves(fs)); got != n {
+		t.Errorf("%d edit-document calls for a refused new list", got-n)
+	}
+	if es := fs.CanvasEdits(); len(es) != 0 {
+		t.Errorf("%d canvases.edit calls, want none", len(es))
+	}
+}
+
+// A format chosen in the editor saves as Slack's setSectionStyle: the first
+// paragraph made a heading 2 from the toolbar (no text typed) is one save
+// with its style alone, and the fake's block is a heading.
+func TestCanvasQuipRestyle(t *testing.T) {
+	_, fs, v, s, frame := quipEnv(t)
+	v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == quipFirstID }))
+	frame()
+	if v.edit.cur == nil {
+		t.Fatal("the paragraph didn't open")
+	}
+	v.edit.apply(v, "h2", image.Point{})
+	frame()
+	if !v.edit.finish(v) {
+		t.Fatal("a heading 2 was refused")
+	}
+	settle(t, s, v, "the heading", func() bool { b := quipBlock(fs, quipFirstID); return b != nil && b.Kind == canvas.Heading2 })
+	rs := quipSaves(fs)
+	if len(rs) != 1 || len(rs[0].Save.Sections) != 1 {
+		t.Fatalf("%d saves", len(rs))
+	}
+	if got := quip.FieldsString(&rs[0].Save.Sections[0]); got != "1,2,9,10,13,19,20,33" {
+		t.Errorf("a restyle's fields %s, want the style alone", got)
 	}
 }

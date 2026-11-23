@@ -524,3 +524,170 @@ func TestCanvasSaveSpans(t *testing.T) {
 		t.Errorf("the heading after a stale edit: %q", quip.SectionRTML(&after))
 	}
 }
+
+// New blocks save as the new sections Slack's editor makes: typed under a
+// heading (two in one save, the second after the first), Enter in the
+// middle of the heading (its own text cut, a paragraph after it), a new
+// checklist item in the list it follows; each one Slack's new-section
+// bundle, in the fake's export where it was typed, and a later edit of a
+// new block reaches its section. What a new section can't be yet is
+// refused before anything goes out: a paragraph after a list item (the
+// list's end), a mention in a new block.
+func TestCanvasSaveNewBlocks(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	txt := func(s string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: s}} }
+	id := func() string {
+		t.Helper()
+		n := a.NewCanvasSectionID(fakeslack.CanvasShared)
+		if n == "" {
+			t.Fatal("no new section id with the model loaded")
+		}
+		return n
+	}
+	blocks := func() []canvas.Block { fc, _ := fs.Canvas(fakeslack.CanvasShared); return fc.Doc.Blocks }
+	at := func(sectionID string) int {
+		for i, b := range blocks() {
+			if b.ID == sectionID {
+				return i
+			}
+		}
+		return -1
+	}
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	p1, h2 := id(), id()
+	if p1 == h2 {
+		t.Fatal("two new section ids are the same")
+	}
+	if err := a.SaveCanvasNewBlocks(ctx, fakeslack.CanvasShared, *head.ID, []CanvasNewBlock{
+		{ID: p1, Kind: canvas.Paragraph, Spans: txt("First new paragraph")},
+		{ID: h2, Kind: canvas.Heading2, Spans: txt("A new heading")},
+	}); err != nil {
+		t.Fatalf("two new blocks: %v", err)
+	}
+	rs := saves(fs)
+	r := rs[len(rs)-1]
+	if len(r.Save.Sections) != 2 || *r.Save.Sections[0].ID != p1 || *r.Save.Sections[1].ID != h2 {
+		t.Fatalf("the save's sections %+v", r.Save.Sections)
+	}
+	for _, sec := range r.Save.Sections {
+		if got := quip.FieldsString(&sec); got != "1,2,3,8,9,10,11,12,13,16,19,20,21,33,35,39" {
+			t.Errorf("new section %s: fields %s", *sec.ID, got)
+		}
+	}
+	if i := at(*head.ID); i < 0 || at(p1) != i+1 || at(h2) != i+2 || blocks()[i+2].Kind != canvas.Heading2 {
+		t.Errorf("the export after two new blocks: %+v", blocks())
+	}
+	// the new paragraph typed into again
+	if err := a.SaveCanvasSpans(ctx, fakeslack.CanvasShared, p1, txt("First new paragraph"), txt("First new paragraph, again")); err != nil {
+		t.Errorf("an edit of a new block: %v", err)
+	}
+	if i := at(p1); i < 0 || blocks()[i].Text() != "First new paragraph, again" {
+		t.Errorf("the new paragraph after an edit: %+v", blocks())
+	}
+	// Enter in the middle of the heading
+	tail := id()
+	if err := a.SaveCanvasSplit(ctx, fakeslack.CanvasShared, *head.ID, txt("Weekly sync"), txt("Weekly"),
+		[]CanvasNewBlock{{ID: tail, Kind: canvas.Paragraph, Spans: txt("sync")}}); err != nil {
+		t.Fatalf("a split: %v", err)
+	}
+	if i := at(*head.ID); i < 0 || blocks()[i].Text() != "Weekly" || at(tail) != i+1 || blocks()[i+1].Text() != "sync" {
+		t.Errorf("the export after a split: %+v", blocks())
+	}
+	// a new checklist item after "Write the changelog", in its list
+	item := modelSection(t, a, fakeslack.CanvasShared, "Write the changelog")
+	notes := id()
+	if err := a.SaveCanvasNewBlocks(ctx, fakeslack.CanvasShared, *item.ID, []CanvasNewBlock{{ID: notes, Kind: canvas.Check, Spans: txt("Write the release notes")}}); err != nil {
+		t.Fatalf("a new checklist item: %v", err)
+	}
+	if i := at(*item.ID); i < 0 || at(notes) != i+1 || blocks()[i+1].Kind != canvas.Check || blocks()[i+1].Checked {
+		t.Errorf("the export after a new checklist item: %+v", blocks())
+	}
+	n := len(saves(fs))
+	if err := a.SaveCanvasNewBlocks(ctx, fakeslack.CanvasShared, *item.ID, []CanvasNewBlock{{ID: id(), Kind: canvas.Paragraph, Spans: txt("x")}}); !errors.Is(err, quip.ErrUnsupported) {
+		t.Errorf("a paragraph after a list item: %v", err)
+	}
+	if err := a.SaveCanvasNewBlocks(ctx, fakeslack.CanvasShared, *head.ID, []CanvasNewBlock{{ID: id(), Kind: canvas.Paragraph,
+		Spans: []richtext.Span{{Kind: richtext.Text, Text: "cc "}, {Kind: richtext.User, ID: "U0FAKE00001"}}}}); !errors.Is(err, quip.ErrUnsupported) {
+		t.Errorf("a mention in a new block: %v", err)
+	}
+	if got := len(saves(fs)); got != n {
+		t.Errorf("%d edit-document calls for refused new blocks", got-n)
+	}
+}
+
+// A block's style, level and box save as Slack's setters mark them: the
+// heading made a heading 2 (setSectionStyle: STYLE alone, no content),
+// then a paragraph with new text (STYLE and CONTENT), a nested checklist
+// item outdented (setSectionAttribute: its attributes at the new level),
+// an item ticked with its text unchanged (a check edit). A block moved
+// into a list, or a list made another kind, isn't saved yet.
+func TestCanvasSaveRestyle(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	txt := func(s string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: s}} }
+	block := func(id string) *canvas.Block { fc, _ := fs.Canvas(fakeslack.CanvasShared); return fc.Doc.Find(id) }
+	last := func() *quip.Section { rs := saves(fs); return &rs[len(rs)-1].Save.Sections[0] }
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *head.ID, Orig: txt("Weekly sync"), OrigKind: canvas.Heading1,
+		Spans: txt("Weekly sync"), Kind: canvas.Heading2}); err != nil {
+		t.Fatalf("H1 to H2: %v", err)
+	}
+	if got := quip.FieldsString(last()); got != "1,2,9,10,13,19,20,33" || *last().Style != quip.StyleH2 {
+		t.Errorf("H1 to H2: fields %s", got)
+	}
+	if b := block(*head.ID); b == nil || b.Kind != canvas.Heading2 || b.Text() != "Weekly sync" {
+		t.Errorf("the export after H1 to H2: %+v", b)
+	}
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *head.ID, Orig: txt("Weekly sync"), OrigKind: canvas.Heading2,
+		Spans: txt("Weekly sync, now a paragraph"), Kind: canvas.Paragraph}); err != nil {
+		t.Fatalf("H2 to a paragraph with new text: %v", err)
+	}
+	if got := quip.FieldsString(last()); got != "1,2,9,10,12,13,19,20,33" {
+		t.Errorf("H2 to a paragraph with new text: fields %s", got)
+	}
+	if b := block(*head.ID); b == nil || b.Kind != canvas.Paragraph || b.Text() != "Weekly sync, now a paragraph" {
+		t.Errorf("the export after a restyle with text: %+v", b)
+	}
+	shots := modelSection(t, a, fakeslack.CanvasShared, "Screenshots")
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *shots.ID, Orig: txt("Screenshots"), OrigKind: canvas.Check, OrigLevel: 1,
+		Spans: txt("Screenshots"), Kind: canvas.Check, Level: 0}); err != nil {
+		t.Fatalf("an item outdented: %v", err)
+	}
+	if got := quip.FieldsString(last()); got != "1,2,9,13,16,19,20,33" || *last().Attributes.Indentation != 0 {
+		t.Errorf("an item outdented: fields %s", got)
+	}
+	if b := block(*shots.ID); b == nil || b.Level != 0 {
+		t.Errorf("the export after an outdent: %+v", b)
+	}
+	item := modelSection(t, a, fakeslack.CanvasShared, "Write the changelog")
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *item.ID, Orig: txt("Write the changelog"), OrigKind: canvas.Check,
+		Spans: txt("Write the changelog"), Kind: canvas.Check, Checked: true}); err != nil {
+		t.Fatalf("an item ticked: %v", err)
+	}
+	if got := quip.FieldsString(last()); !strings.HasPrefix(got, "1,2,9,13,16,19,20,33") {
+		t.Errorf("an item ticked: fields %s", got)
+	}
+	if b := block(*item.ID); b == nil || !b.Checked {
+		t.Errorf("the export after a tick: %+v", b)
+	}
+	n := len(saves(fs))
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *head.ID, Orig: txt("Weekly sync, now a paragraph"), OrigKind: canvas.Paragraph,
+		Spans: txt("Weekly sync, now a paragraph"), Kind: canvas.Bullet}); !errors.Is(err, quip.ErrUnsupported) {
+		t.Errorf("a paragraph made a bullet: %v", err)
+	}
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *item.ID, Orig: txt("Write the changelog"), OrigKind: canvas.Check, OrigChecked: true,
+		Spans: txt("Write the changelog"), Kind: canvas.Numbered}); !errors.Is(err, quip.ErrUnsupported) {
+		t.Errorf("a checklist item made a numbered one: %v", err)
+	}
+	// nothing changed: nothing sent
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *item.ID, Orig: txt("Write the changelog"), OrigKind: canvas.Check, OrigChecked: true,
+		Spans: txt("Write the changelog"), Kind: canvas.Check, Checked: true}); err != nil {
+		t.Errorf("an edit that changes nothing: %v", err)
+	}
+	if got := len(saves(fs)); got != n {
+		t.Errorf("%d edit-document calls for refused or empty edits", got-n)
+	}
+}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -25,6 +27,45 @@ var bundleFields = map[EditKind]string{
 	EditCheck:  "1,2,9,13,16,19,20,33",
 	EditDelete: "1,2,3,9,13,19,20,33",
 }
+
+// fieldsFor is bundleFields for e with its restyle (style, 10) and its
+// level or box (attributes, 16): "" for a kind that has none.
+func fieldsFor(e Edit) string {
+	base, ok := bundleFields[e.Kind]
+	if e.Kind == EditBlock {
+		base, ok = "1,2,9,13,19,20,33", true
+	}
+	if !ok {
+		return ""
+	}
+	set := map[int]bool{}
+	for _, f := range strings.Split(base, ",") {
+		n, _ := strconv.Atoi(f)
+		set[n] = true
+	}
+	if e.Restyle {
+		set[10] = true
+	}
+	if e.Reindent || e.Recheck {
+		set[16] = true
+	}
+	var out []int
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Ints(out)
+	var b strings.Builder
+	for i, n := range out {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(n))
+	}
+	return b.String()
+}
+
+// maxIndent is the deepest list level a save sets.
+const maxIndent = 8
 
 // savedTags are the tags Slack's save writer (CITi's DI) writes in a
 // canvas: sub, sup and f are the canvas's disallowedFormattingTags.
@@ -54,6 +95,7 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 		pos[id] = i
 	}
 	last := -1
+	made := map[string]*Section{} // the new sections checked so far
 	for i := range data.Sections {
 		u := &data.Sections[i]
 		id := str(u.ID)
@@ -62,6 +104,16 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 			return refuse("section %s has no edit", id)
 		}
 		delete(byID, id)
+		if e.Kind == EditNew {
+			if err := d.checkNew(u, e, s, made); err != nil {
+				return err
+			}
+			made[id] = u
+			continue
+		}
+		if len(made) > 0 {
+			return refuse("section %s after a new section (entitiesById_: new ones come last)", id)
+		}
 		server := d.Section(id)
 		if server == nil || server.Deleted != nil && *server.Deleted {
 			return refuse("section %s isn't live in the model", id)
@@ -71,7 +123,7 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 		} else {
 			last = p
 		}
-		want := bundleFields[e.Kind]
+		want := fieldsFor(e)
 		got := FieldsString(u)
 		if u.ActivityStackUpdate != nil {
 			got = strings.Replace(got, ",39", "", 1)
@@ -100,6 +152,39 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 		if a, ok := activityRow(u, server); ok != (u.ActivityStackUpdate != nil) || ok && a != *u.ActivityStackUpdate {
 			return refuse("section %s: activity row %v, Slack's would be %v (%v)", id, u.ActivityStackUpdate, a, ok)
 		}
+		inList := server.Parents != nil && len(server.Parents.IDs) > 0
+		if e.Kind == EditCheck || e.Recheck || e.Reindent {
+			// the server's attributes as update() loads them, with the box
+			// or the level the edit set (setSectionAttribute)
+			want := bundleAttributes(server.Attributes)
+			if e.Kind == EditCheck || e.Recheck {
+				want.Checked = Ptr(e.Checked)
+			}
+			if e.Reindent {
+				want.Indentation = Ptr(e.Indent)
+			}
+			if u.Attributes == nil || string(Marshal(want)) != string(Marshal(u.Attributes)) {
+				return refuse("section %s: attributes other than the box or level edited", id)
+			}
+			if !inList {
+				return refuse("section %s: a box or level outside a list", id)
+			}
+		}
+		if e.Reindent && (e.Indent < 0 || e.Indent > maxIndent) {
+			return refuse("section %s: list level %d", id, e.Indent)
+		}
+		if e.Restyle {
+			// between a paragraph and the headings of a top-level text
+			// section: the content's type stays (setSectionStyle marks
+			// STYLE alone)
+			old := int32(0)
+			if server.Style != nil {
+				old = *server.Style
+			}
+			if u.Style == nil || *u.Style != e.Style || inList || !isTextStyle(e.Style) || !isTextStyle(old) || e.Style == old {
+				return refuse("section %s: style %d to %d", id, old, e.Style)
+			}
+		}
 		switch e.Kind {
 		case EditText:
 			if err := d.checkContent(u, server, e); err != nil {
@@ -109,13 +194,9 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 			if u.Attributes == nil || u.Attributes.Checked == nil || *u.Attributes.Checked != e.Checked {
 				return refuse("section %s: the box isn't set as edited", id)
 			}
-			want := bundleAttributes(server.Attributes)
-			want.Checked = Ptr(e.Checked)
-			if string(Marshal(want)) != string(Marshal(u.Attributes)) {
-				return refuse("section %s: attributes other than checked changed", id)
-			}
-			if server.Parents == nil || len(server.Parents.IDs) == 0 {
-				return refuse("section %s: a box outside a list", id)
+		case EditBlock:
+			if !e.Restyle && !e.Reindent && !e.Recheck {
+				return refuse("section %s: a block edit that changes nothing", id)
 			}
 		case EditDelete:
 			if server.Parents != nil && len(server.Parents.IDs) > 0 {
@@ -146,6 +227,117 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 		return refuse("the save doesn't write back to the same bytes")
 	}
 	return d.checkTitle(data, edits, meta)
+}
+
+// newFields are a new section's bundle fields (the activity row, 39, when
+// it has text): Slack's own entity's, quip-save-new-section.
+const newFields = "1,2,3,8,9,10,11,12,13,16,19,20,21,33,35"
+
+// checkNew holds a new section to what Slack's editor saves for one it
+// just made after e.After (K2FO.createNewSectionAtPosition, initSibling).
+func (d *Doc) checkNew(u *Section, e Edit, s *Save, made map[string]*Section) error {
+	id := str(u.ID)
+	if !IsNewSectionID(id, ShardChars(&d.Document)) {
+		return refuse("new section %s: not a new section id for the document's shard", id)
+	}
+	if d.Section(id) != nil {
+		return refuse("new section %s is in the model already", id)
+	}
+	got := FieldsString(u)
+	if u.ActivityStackUpdate != nil {
+		got = strings.Replace(got, ",39", "", 1)
+	}
+	if got != newFields {
+		return refuse("new section %s: fields %s, a new section carries %s", id, FieldsString(u), newFields)
+	}
+	after := made[e.After]
+	if after == nil {
+		if a := d.Section(e.After); a != nil && (a.Deleted == nil || !*a.Deleted) {
+			after = a
+		}
+	}
+	if after == nil {
+		return refuse("new section %s: after %s, which isn't in the model or this save", id, e.After)
+	}
+	var parent *Section
+	if after.Parents != nil && len(after.Parents.IDs) > 0 {
+		parent = d.Section(after.Parents.IDs[0])
+	}
+	switch {
+	case seq(u.Sequence) != 0 || *u.Deleted || *u.ReadOnly || *u.SectionClass != ClassSection || !*u.Modified:
+		return refuse("new section %s: sequence, deleted, read_only, class or modified isn't a new section's", id)
+	case str(u.TraceID) != s.Trace:
+		return refuse("new section %s: trace %q, the save's is %q", id, str(u.TraceID), s.Trace)
+	case *u.LocalSequence < 1 || *u.LocalSequence != s.local[id]:
+		return refuse("new section %s: local sequence %d", id, *u.LocalSequence)
+	case *u.Type != TypeText:
+		return refuse("new section %s: type %d", id, *u.Type)
+	case parent != nil && *u.Style != StylePlain, parent == nil && !isTextStyle(*u.Style):
+		return refuse("new section %s: style %d after a section with parents %v", id, *u.Style, parent != nil)
+	}
+	// its position: a :temp key right after the one it follows, before
+	// any other entity
+	p, ap := str(u.Position), str(after.Position)
+	if !IsTemp(p) || p != e.Position || !(p > ap) {
+		return refuse("new section %s: position %q after %q", id, p, ap)
+	}
+	for _, x := range d.sections {
+		if x.Position != nil && (x.Deleted == nil || !*x.Deleted) && *x.Position > ap && *x.Position < p {
+			return refuse("new section %s: position %q isn't next to %q (%s sits between)", id, p, ap, str(x.ID))
+		}
+	}
+	wantPath := p
+	if parent != nil && parent.Position != nil {
+		wantPath = *parent.Position + "-" + p
+	}
+	if str(u.PositionPath) != wantPath {
+		return refuse("new section %s: position path %q, want %q", id, str(u.PositionPath), wantPath)
+	}
+	// initSibling's parents, and the attributes it and
+	// createNewSectionAtPosition set
+	var wantIDs []string
+	if after.Parents != nil {
+		wantIDs = after.Parents.IDs
+	}
+	if !slices.Equal(u.Parents.IDs, wantIDs) || u.Parents.ContainerID != nil {
+		return refuse("new section %s: parents %v, the section before has %v", id, u.Parents.IDs, wantIDs)
+	}
+	if parent != nil && parent.Style != nil {
+		if u.Parents.ContainerStyle == nil || *u.Parents.ContainerStyle != *parent.Style {
+			return refuse("new section %s: container style", id)
+		}
+	} else if u.Parents.ContainerStyle != nil {
+		return refuse("new section %s: a container style without a parent the model has", id)
+	}
+	want := &Attributes{VerticalMargin: Ptr(false)} // no text alignment: the canvas editor suppresses it
+	if a := after.Attributes; a != nil {
+		want.Indentation, want.ParagraphIndentation = a.Indentation, a.ParagraphIndentation
+	}
+	if e.Checked {
+		want.Checked = Ptr(true)
+	}
+	if string(Marshal(want)) != string(Marshal(u.Attributes)) {
+		return refuse("new section %s: attributes other than a new section's", id)
+	}
+	// typed text's content, nothing else
+	c := u.Content
+	if c == nil || FieldsString(c) != "1" || c.Text == nil || FieldsString(c.Text) != "1" {
+		return refuse("new section %s: content other than text", id)
+	}
+	rtml := str(c.Text.Text)
+	if rtml != e.RTML {
+		return refuse("new section %s: not the edited RTML", id)
+	}
+	if err := d.checkRTML(id, rtml); err != nil {
+		return err
+	}
+	if len(ControlIDs(rtml)) > 0 || len(AnnotationIDs(rtml)) > 0 {
+		return refuse("new section %s: a mention, emoji, date or comment anchor in a new section", id)
+	}
+	if a, ok := activityRow(u, nil); ok != (u.ActivityStackUpdate != nil) || ok && a != *u.ActivityStackUpdate {
+		return refuse("new section %s: activity row", id)
+	}
+	return nil
 }
 
 func (d *Doc) checkParents(u, server *Section) error {

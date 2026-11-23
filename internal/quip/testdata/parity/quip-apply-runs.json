@@ -23,6 +23,8 @@
     {"name": "bold over a control", "in": {"base": "hi <control id=\"temp:C:X1\"></control>", "runs": [{"text": "hi "}, {"control": "temp:C:X1", "bold": true}], "rtml": "hi <b><control id=\"temp:C:X1\"></control></b>"}, "slack": "hi <b><control id=\"temp:C:X1\"></control></b>"},
     {"name": "bold and italic overlapping", "in": {"base": "abcdef", "runs": [{"text": "ab", "bold": true}, {"text": "cd", "bold": true, "italic": true}, {"text": "ef", "italic": true}], "rtml": "<b>ab<i>cd</i></b><i>ef</i>"}, "slack": "<b>ab<i>cd</i></b><i>ef</i>"},
     {"name": "underline, strike, code", "in": {"base": "one two three", "runs": [{"text": "one", "underline": true}, {"text": " "}, {"text": "two", "strike": true}, {"text": " "}, {"text": "three", "code": true}], "rtml": "<u>one</u> <del>two</del> <code>three</code>"}, "slack": "<u>one</u> <del>two</del> <code>three</code>"},
-    {"name": "formatting taken off", "in": {"base": "<b>bold</b> text", "runs": [{"text": "bold text"}], "rtml": "bold text"}, "slack": "bold text"}
+    {"name": "formatting taken off", "in": {"base": "<b>bold</b> text", "runs": [{"text": "bold text"}], "rtml": "bold text"}, "slack": "bold text"},
+    {"name": "a space Enter left at the end", "in": {"base": "First paragraph", "runs": [{"text": "First "}], "rtml": "(refused)"}, "slack": "(refused)"},
+    {"name": "Enter at the end", "in": {"base": "First paragraph", "runs": [{"text": "First paragraph"}], "rtml": "First paragraph"}, "slack": "First paragraph"}
   ]
 }

@@ -246,7 +246,11 @@ const KINDS = {
 // setDirty([CONTENT, STATUS]) (the input path), a checkbox
 // setSectionAttribute -> [STATUS] then [ATTRIBUTES], deleteSection [STATUS]
 // with deleteEntity [DELETED].
-const DIRTY = { text: [12, 15], check: [15, 16], delete: [3, 15] };
+// A restyle is setSectionStyle: [STYLE] (TYPE only when the content's
+// type changes, never between text styles); a list level is
+// setSectionAttribute("indentation"): [STATUS], then [ATTRIBUTES]. A case
+// with several (typing and a restyle, say) names its dirty fields.
+const DIRTY = { text: [12, 15], check: [15, 16], delete: [3, 15], block: [] };
 function saveRuntime() {
   if (saveRuntime.r) return saveRuntime.r;
   const EKJU = req('EKJU'), nTyX = req('nTyX'), u = req('7yDq'), WJQ2 = req('WJQ2');
@@ -264,22 +268,23 @@ function sectionEntity(rt, c) {
   const e = Object.create(rt.Sec.prototype);
   const stub = deepStub('section');
   Object.assign(e, {
-    id_: pb.getId(), isBeingDeleted_: false, isReadOnly_: pb.getReadOnlyOrDefault(), dirtyFields: new Set(DIRTY[c.in.edit.kind]),
+    id_: pb.getId(), isBeingDeleted_: false, isReadOnly_: pb.getReadOnlyOrDefault(), dirtyFields: new Set(c.in.edit.dirty || DIRTY[c.in.edit.kind]),
     pendingFields: new Set(), sequence_: Number(pb.getSequenceOrDefault()), localSequence_: c.in.localSeq, transientSequence_: 0,
     isProgrammaticUpdate_: false, isDeleted_: pb.getDeletedOrDefault() || c.in.edit.kind === 'delete', dirtyState_: 2,
     document: stub, contentOrigin_: pb.getContentOriginOrDefault(), knownFields: rt.nTyX.Ps.concat(rt.nTyX.fP || [], rt.nTyX.mV || []),
-    position_: pb.getPositionOrDefault(), sectionStyle_: pb.getStyleOrDefault(), parents_: [], missingParentIds_: [],
+    position_: pb.getPositionOrDefault(), sectionStyle_: c.in.edit.style ?? pb.getStyleOrDefault(), parents_: [], missingParentIds_: [],
     hasLayoutParent_: pb.hasHasLayoutParent() ? pb.getHasLayoutParent() : undefined, savedDefaultContent_: null,
     persistOnNextChange_: false, layoutParent_: null, sectionContent_: stub,
   });
   // update() loads attributes with Slack's own conversion
   e.attributes_ = rt.Sec.prototype.convertAttributesPbToMap.call(e, pb.getAttributesOrDefault());
-  if (c.in.edit.kind === 'check') e.attributes_.set('checked', c.in.edit.checked);
+  if (c.in.edit.kind === 'check' || 'checked' in c.in.edit) e.attributes_.set('checked', c.in.edit.checked);
+  if ('indent' in c.in.edit) e.attributes_.set('indentation', c.in.edit.indent);
   for (const id of pb.getParentsOrDefault().idsArray()) {
     e.parents_.push({ id: () => id, sectionStyle: () => c.in.parentStyle });
   }
   let content = pb.getContent();
-  if (c.in.edit.kind === 'text') {
+  if (c.in.edit.kind === 'text' || c.in.edit.rtml !== undefined) {
     // the content toPb makes: the title's (createPbFn of the RTML, then
     // the cover when there is one), a text section's (its RTML, and the
     // code language the content holds)
@@ -299,6 +304,9 @@ function sectionEntity(rt, c) {
   e.toContentPb = () => content;
   e.type = () => pb.getTypeOrDefault(); // the section content's type (its class, made from the server's type)
   e.positionPath = () => pb.getPositionPathOrDefault();
+  // plain content, as Clack saves: no CRDT copy (otherwise toPb's deleted
+  // comes from crdt.currentSaveDeleted, which the stubs would make up)
+  e.isCrdtEnabled = () => false;
   e.checkDirtyFieldInvariants = () => {}; // metrics only
   e.validateFsck_ = () => {};
   e.validateCrdt_ = () => {};
@@ -315,6 +323,82 @@ KINDS['quip-save-section'] = c => {
   try {
     const a = rt.J.shouldAddToActivityStack(b, c.in.team);
     if (a !== null) b.setActivityStackUpdate(a);
+  } finally {
+    rt.J.get = get;
+  }
+  return { hex: hexOf(pbu.Rm(b)), localSeq: e.localSequence_ };
+};
+// A new section, as Slack's editor makes one after another section
+// (K2FO.createNewSection): a fresh entity (sequence 0, the constructor's
+// content origin, USER_EDIT), every field dirty (setDirty(nTyX.mA)),
+// vertical_margin false through EKJU's own setSectionAttribute, then
+// K2FO.moveSiblingTo's initSibling from the section it follows (its
+// parents, indentation, paragraph indentation; text alignment under the
+// canvas editor's suppressTextAlignment, on by default: !autoTextAlignment).
+// The editor hands toPb the new section's content; a ticked checklist item
+// gets its box through setSectionAttribute too. Then toUpdateBundle, and
+// the activity row against no server copy.
+KINDS['quip-save-new-section'] = c => {
+  const rt = saveRuntime();
+  setSaveCounter(rt.u, c.in.session, c.in.saveSeq);
+  const K2FO = req('K2FO');
+  const S = classOf('syncer.Section');
+  const origin = classOf('proto.section.Section').ContentOrigin.USER_EDIT;
+  const after = build(S, c.in.after);
+  const doc = new Proxy(deepStub('document'), {
+    get: (t, k) => k === 'editorConfig' ? () => ({ suppressTextAlignment: true }) : t[k],
+  });
+  const parentStub = id => ({ id: () => id, sectionStyle: () => c.in.parentStyle, position: () => c.in.parentPosition, parents_: [],
+    sectionContent: () => ({ allowsNewChild: () => true }) });
+  // the section it follows: its attributes as update() loads them
+  const a = Object.create(rt.Sec.prototype);
+  Object.assign(a, { id_: after.getId(), document: doc, parents_: after.getParentsOrDefault().idsArray().map(parentStub),
+    layoutParent_: null, position_: after.getPositionOrDefault() });
+  a.attributes_ = rt.Sec.prototype.convertAttributesPbToMap.call(a, after.getAttributesOrDefault());
+  a.parents = () => a.parents_;
+  a.layoutParent = () => null;
+  // the new one
+  const e = Object.create(rt.Sec.prototype);
+  const stub = deepStub('section');
+  Object.assign(e, {
+    id_: c.in.id, isBeingDeleted_: false, isReadOnly_: false, dirtyFields: new Set(rt.nTyX.mA),
+    pendingFields: new Set(), sequence_: 0, localSequence_: 0, transientSequence_: 0,
+    isProgrammaticUpdate_: false, isDeleted_: false, dirtyState_: 2,
+    document: doc, contentOrigin_: origin, knownFields: rt.nTyX.Ps.concat(rt.nTyX.fP || [], rt.nTyX.mV || []),
+    position_: '', sectionStyle_: c.in.style, parents_: [], missingParentIds_: [],
+    hasLayoutParent_: undefined, savedDefaultContent_: null,
+    persistOnNextChange_: false, layoutParent_: null, sectionContent_: stub,
+  });
+  e.attributes_ = new Map();
+  e.fireAttributeChangeListeners_ = () => {};
+  e.setDirty = f => f.forEach(x => e.dirtyFields.add(x));
+  e.setPosition = p => { e.position_ = p; };
+  e.setParents = ps => { e.parents_ = ps.slice(); };
+  e.layoutParent = () => null;
+  e.sectionStyle = () => c.in.style;
+  e.setSectionAttribute('vertical_margin', false); // createNewSectionAtPosition, no id given
+  K2FO.j8(a, e, c.in.position); // moveSiblingTo: setPosition, initSibling
+  if (c.in.checked) e.setSectionAttribute('checked', true);
+  const Content = classOf('proto.section.Section.Content');
+  const content = new Content().setText(new (classOf('proto.section.Section.ContentText'))().setText(c.in.rtml));
+  e.toContentPb = () => content;
+  e.type = () => classOf('proto.section.Section').Type.TEXT_TYPE;
+  e.positionPath = () => (c.in.parentPosition ? c.in.parentPosition + '-' : '') + e.position_;
+  // EKJU: null !== sectionContent().overrideThreadId(), which a text
+  // section's content never has (only a copied live app's)
+  e.shouldSaveCopyThreadData = () => false;
+  // plain content, as Clack saves: no CRDT copy (otherwise toPb's deleted
+  // comes from crdt.currentSaveDeleted, which the stubs would make up)
+  e.isCrdtEnabled = () => false;
+  e.checkDirtyFieldInvariants = () => {};
+  e.validateFsck_ = () => {};
+  e.validateCrdt_ = () => {};
+  const b = e.toUpdateBundle();
+  const get = rt.J.get;
+  rt.J.get = () => null; // no server copy: a new section
+  try {
+    const r = rt.J.shouldAddToActivityStack(b, c.in.team);
+    if (r !== null) b.setActivityStackUpdate(r);
   } finally {
     rt.J.get = get;
   }

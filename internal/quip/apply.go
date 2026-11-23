@@ -168,15 +168,18 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 			}
 		}
 	}
-	match := matchUnits(bu, nu) // base unit -> new unit, -1 when gone
-	kept := make([]bool, len(nu))
+	match := matchUnits(bu, nu)   // base unit -> new unit, -1 when gone
+	from0 := make([]int, len(nu)) // new unit -> base unit, -1 when new
+	for i := range from0 {
+		from0[i] = -1
+	}
 	for bi, ni := range match {
 		if ni >= 0 {
-			kept[ni] = true
+			from0[ni] = bi
 			nu[ni].s = bu[bi].s // the base's own form: its entities, its no-break spaces
 		}
 	}
-	if err := checkSpaces(nu, kept); err != nil {
+	if err := checkSpaces(nu, from0, len(bu)); err != nil {
 		return "", err
 	}
 	// the new text, and where each unit sits in it
@@ -282,13 +285,15 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 	return out, nil
 }
 
-// checkSpaces refuses spaces typed where the browser would hold them as
+// checkSpaces refuses spaces where the browser would hold them as
 // no-break spaces: a space run of two or more, or one at the text's start,
-// its end or a line break, that the edit made or typed next to. A single
-// typed space between two other characters is a plain space, as Chromium's
-// whitespace rebalancing leaves it; runs the edit didn't touch keep the
-// base's forms.
-func checkSpaces(nu []unit, kept []bool) error {
+// its end or a line break, that the edit made, typed next to or moved
+// (Enter after a space leaves it at a block's end). A single space the
+// edit touched between two other characters is a plain space, as
+// Chromium's whitespace rebalancing leaves it; runs the edit didn't touch
+// keep the base's forms. from is each new unit's base unit (-1: new), nb
+// the base's length.
+func checkSpaces(nu []unit, from []int, nb int) error {
 	space := func(i int) bool { return i >= 0 && i < len(nu) && nu[i].key() == " " }
 	for i := 0; i < len(nu); {
 		if !space(i) {
@@ -299,9 +304,17 @@ func checkSpaces(nu []unit, kept []bool) error {
 		for space(j) {
 			j++
 		}
-		touched := i > 0 && !kept[i-1] || j < len(nu) && !kept[j]
+		// untouched: the same base units, in a row, with the same
+		// neighbours (or the same end of the text)
+		touched := false
 		for k := i; k < j && !touched; k++ {
-			touched = !kept[k]
+			touched = from[k] < 0 || k > i && from[k] != from[k-1]+1
+		}
+		if !touched {
+			first, last := from[i], from[j-1]
+			left := i == 0 && first == 0 || i > 0 && from[i-1] >= 0 && from[i-1] == first-1
+			right := j == len(nu) && last == nb-1 || j < len(nu) && from[j] >= 0 && from[j] == last+1
+			touched = !left || !right
 		}
 		edge := i == 0 || j == len(nu) || nu[i-1].br || nu[j].br
 		if touched && (j-i > 1 || edge) {

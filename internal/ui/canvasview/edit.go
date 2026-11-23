@@ -67,12 +67,17 @@ type session struct {
 	checked bool
 	orig    string          // the markdown it started from
 	spans   []richtext.Span // and its spans: the save checks the section still holds them
-	ed      *composer.Editor
-	focus   bool
-	ver     uint64
-	refused bool // the last save was refused: Escape now discards
-	quoted  bool // a paragraph of a quote: each line saves as a "> " section
-	press   *pressAt
+	// and the kind, level and box it began with (the toolbar's formats
+	// change kind, level and checked as the session goes)
+	kind0    canvas.Kind
+	level0   int
+	checked0 bool
+	ed       *composer.Editor
+	focus    bool
+	ver      uint64
+	refused  bool // the last save was refused: Escape now discards
+	quoted   bool // a paragraph of a quote: each line saves as a "> " section
+	press    *pressAt
 	// def: the block is Quip's unedited default content (Block.Default).
 	// Focusing it empties it (Section.hideDefaultContent, HIDE_ON_FOCUS):
 	// the editor opens empty with the caret at 0. Typing makes it an
@@ -156,24 +161,89 @@ func (e *editState) saveQuip(v *View, f func(ctx context.Context, a *core.App) e
 }
 
 // quipRefuses reports whether a finished session with markdown md (blocks
-// bs) changes something edit-document can't save yet: a new block or one
-// split in two, Quip's default content typed over, a quote's paragraph, a
-// style, level or box change, a code block. A session that changed
-// nothing, or a new block left empty, saves nothing and closes; a block
-// emptied is deleted.
-func quipRefuses(s *session, md string, bs []canvas.Block) bool {
+// bs) changes something edit-document can't save yet: Quip's default
+// content typed over, a quote's paragraph, a block's own style, level or
+// box changed, a code block, new blocks that start or leave a list (each
+// new block has to keep the list, and the level, of the block it follows),
+// or a mention, emoji or date in a new block (a control section of its
+// own). A session that changed nothing, or a new block left empty, saves
+// nothing and closes; a block emptied is deleted.
+func quipRefuses(v *View, s *session, md string, bs []canvas.Block) bool {
 	switch {
 	case !quipChanged(s, md):
 		return false
-	case s.target == nil || s.def || s.quoted:
+	case s.def || s.quoted:
 		return true
-	case md == "":
+	case s.target != nil && md == "":
 		return false
-	case len(bs) != 1:
+	case len(bs) == 0:
 		return true
 	}
-	b := bs[0]
-	return b.Kind != s.kind || b.Level != s.level || b.Checked != s.checked || !quipTextKind(b.Kind)
+	news := bs
+	var kind canvas.Kind
+	var level int
+	if s.target != nil {
+		b := bs[0]
+		same := b.Kind == s.kind0 && b.Level == s.level0 && b.Checked == s.checked0
+		switch {
+		case !quipTextKind(b.Kind):
+			return true
+		case len(bs) > 1 && !same: // a split keeps the block as it was
+			return true
+		case b.Kind != s.kind0 && (b.Kind.IsList() || s.kind0.IsList()): // into or out of a list, or another list's kind
+			return true
+		case b.Level != s.level0 && !b.Kind.IsList(), b.Checked != s.checked0 && b.Kind != canvas.Check:
+			return true
+		}
+		news, kind, level = bs[1:], s.kind0, s.level0
+	} else {
+		after := findBlockByID(v.blocks, s.afterID)
+		if after == nil {
+			return true
+		}
+		kind, level = after.Kind, after.Level
+	}
+	if !quipTextKind(kind) {
+		return true
+	}
+	for _, b := range news {
+		if !quipTextKind(b.Kind) || kind.IsList() != b.Kind.IsList() || b.Kind.IsList() && (b.Kind != kind || b.Level != level) ||
+			!b.Kind.IsList() && b.Level != 0 || b.Checked && b.Kind != canvas.Check {
+			return true
+		}
+		for _, sp := range b.Spans {
+			if sp.Kind != richtext.Text && sp.Kind != richtext.Link && sp.Kind != richtext.Break {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// newBlocks are blocks bs as new sections with ids.
+func newBlocks(bs []canvas.Block, ids []string) []core.CanvasNewBlock {
+	out := make([]core.CanvasNewBlock, 0, len(bs))
+	for i, b := range bs {
+		id := ""
+		if i < len(ids) {
+			id = ids[i]
+		}
+		out = append(out, core.CanvasNewBlock{ID: id, Kind: b.Kind, Level: b.Level, Checked: b.Checked, Spans: b.Spans})
+	}
+	return out
+}
+
+// findBlockByID is the block of the view with section id (nil: none).
+func findBlockByID(bs []*blk, id string) *canvas.Block {
+	for _, b := range bs {
+		if b.b != nil && id != "" && b.b.ID == id {
+			return b.b
+		}
+		if x := findBlockByID(b.kids, id); x != nil {
+			return x
+		}
+	}
+	return nil
 }
 
 // quipTextKind: a block that is one text section in Quip (a paragraph, a
@@ -573,7 +643,8 @@ func (e *editState) start(v *View, b *blk) {
 		return
 	}
 	s := &session{target: b, id: b.b.ID, kind: b.b.Kind, level: b.b.Level, checked: b.b.Checked, orig: canvas.Markdown(*b.b),
-		spans: append([]richtext.Span(nil), b.b.Spans...), ed: composer.NewEditor(), focus: true}
+		spans: append([]richtext.Span(nil), b.b.Spans...), kind0: b.b.Kind, level0: b.b.Level, checked0: b.b.Checked,
+		ed: composer.NewEditor(), focus: true}
 	if b.parent != nil && b.parent.b.Kind == canvas.Quote && b.b.Kind == canvas.Paragraph {
 		// a quote's paragraph is a Quip section of its own (style 16):
 		// it saves as "> …" so it stays in the quote
@@ -615,6 +686,7 @@ func (e *editState) finish(v *View) bool {
 			return false
 		}
 	}
+	var quipNew []string // new blocks' section ids (edit-document)
 	if md := blocksMarkdown(bs); quipOn(v) && quipChanged(s, md) {
 		switch {
 		case v.h.Core().CanvasSaveState(v.id).ReadOnly:
@@ -623,14 +695,30 @@ func (e *editState) finish(v *View) bool {
 			s.refused = true
 			s.focus = true
 			return false
-		case quipRefuses(s, md, bs):
+		case quipRefuses(v, s, md, bs):
 			// edit-document saves a block's own text (formatting, links,
-			// line breaks, its mentions and emoji), or the block emptied,
-			// for now: a new block, a style or level change isn't sent
+			// line breaks, its mentions and emoji), the block emptied, and
+			// new blocks that keep the list they follow, for now
 			v.h.Toast(cantEdit)
 			s.refused = true
 			s.focus = true
 			return false
+		}
+		if md != "" && (s.target == nil || len(bs) > 1) { // each new block's section id, so later edits reach it
+			n := len(bs)
+			if s.target != nil {
+				n--
+			}
+			for i := 0; i < n; i++ {
+				nid := v.h.Core().NewCanvasSectionID(v.id)
+				if nid == "" { // core doesn't hold the canvas's model yet
+					v.h.Toast(cantEdit + " (the canvas is still loading)")
+					s.refused = true
+					s.focus = true
+					return false
+				}
+				quipNew = append(quipNew, nid)
+			}
 		}
 	}
 	e.cur = nil
@@ -660,6 +748,9 @@ func (e *editState) finish(v *View) bool {
 		if len(local) > 0 {
 			local[0].ID = s.id
 		}
+		for i := 1; i < len(local) && i-1 < len(quipNew); i++ {
+			local[i].ID = quipNew[i-1]
+		}
 		e.replaceLocal(v, s.target, local)
 	default: // a new block
 		e.dropPlace(v, s)
@@ -670,6 +761,9 @@ func (e *editState) finish(v *View) bool {
 		if s.afterID == "" {
 			ch.Operation = "insert_at_end"
 		}
+		for i := 0; i < len(local) && i < len(quipNew); i++ {
+			local[i].ID = quipNew[i]
+		}
 		e.insertLocal(v, s.afterID, local)
 	}
 	if quipOn(v) { // against what the session began from (session.spans)
@@ -678,8 +772,21 @@ func (e *editState) finish(v *View) bool {
 			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasDelete(ctx, v.id, id, from) })
 			return true
 		}
-		spans := bs[0].Spans
-		e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasSpans(ctx, v.id, id, from, spans) })
+		switch {
+		case s.target == nil: // new blocks after the one the session followed
+			after, blocks := s.afterID, newBlocks(bs, quipNew)
+			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasNewBlocks(ctx, v.id, after, blocks) })
+		case len(bs) > 1: // Enter: the block's own text and new blocks after it
+			first, rest := bs[0].Spans, newBlocks(bs[1:], quipNew)
+			e.saveQuip(v, func(ctx context.Context, a *core.App) error {
+				return a.SaveCanvasSplit(ctx, v.id, id, from, first, rest)
+			})
+		default: // the block's text, and its style, level or box when they changed
+			b := bs[0]
+			be := core.CanvasBlockEdit{SectionID: id, Orig: from, OrigKind: s.kind0, OrigLevel: s.level0, OrigChecked: s.checked0,
+				Spans: b.Spans, Kind: b.Kind, Level: b.Level, Checked: b.Checked}
+			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasBlock(ctx, v.id, be) })
+		}
 		return true
 	}
 	e.save(v, func(ctx context.Context, a *core.App) error { return a.EditCanvas(ctx, v.id, ch) })
@@ -703,15 +810,17 @@ func (v *View) StartNewBlock() {
 	if e == nil || !e.canEdit(v) || !e.finish(v) {
 		return
 	}
-	if quipOn(v) { // a new section through edit-document comes in B3
-		v.h.Toast(cantEdit)
-		return
-	}
 	after := ""
 	for i := len(v.blocks) - 1; i >= 0; i-- {
 		if v.blocks[i].b.ID != "" {
 			after = v.blocks[i].b.ID
 			break
+		}
+	}
+	if quipOn(v) { // a new section through edit-document follows a text block, for now
+		if ab := findBlockByID(v.blocks, after); ab == nil || !quipTextKind(ab.Kind) || ab.Kind.IsList() {
+			v.h.Toast(cantEdit)
+			return
 		}
 	}
 	place := &blk{b: &canvas.Block{Kind: canvas.Paragraph}}
@@ -828,6 +937,12 @@ func (e *editState) docChanged(v *View) {
 		}
 	}
 	walk(v.blocks)
+	if found == nil && quipOn(v) { // a new block's section, under the real id the server gave it
+		if real := v.h.Core().CanvasSectionID(v.id, s.id); real != s.id {
+			s.id = real
+			walk(v.blocks)
+		}
+	}
 	if found == nil {
 		e.cur = nil // someone deleted it
 		v.h.Toast("The block you were editing was deleted")

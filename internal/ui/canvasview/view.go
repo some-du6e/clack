@@ -165,6 +165,15 @@ func (v *View) load(keep bool) {
 			ids := []string{d.Info.Creator}
 			ids = append(ids, d.Info.Editors...)
 			a.EnsureUsers(ctx, ids)
+			if a.QuipEditOn() && d.Info.Editable && v.mode != Peek { // edits are made against Quip's model
+				go func() {
+					mctx, mcancel := context.WithTimeout(context.Background(), 60*time.Second)
+					defer mcancel()
+					if err := a.LoadCanvasModel(mctx, v.id); err != nil {
+						log.Printf("canvasview: canvas %s: the model didn't load: %v", v.id, err)
+					}
+				}()
+			}
 		}
 		v.mu.Lock()
 		if gen == v.gen {
