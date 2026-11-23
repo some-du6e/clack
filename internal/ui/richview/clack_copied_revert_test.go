@@ -1,9 +1,12 @@
+//go:build !stockgio
+
 package richview
 
 // The code block's copy button shows "Copied!" for copiedFor, and every
 // frame while it does asks for the frame that reverts it: asked only in
 // the click's frame, a frame in between (the tooltip's delay, the pointer
 // moving) dropped it and the check stayed until something else drew.
+// Not built for the stock Gio check (input.ExecuteHook is Clack patch 10).
 
 import (
 	"image"
