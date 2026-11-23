@@ -1419,36 +1419,39 @@ func (p *progressReader) Read(b []byte) (int, error) {
 // answer (a page of 908,000-character messages, 120 MB: 600 MB of
 // garbage), where this allocates twice it. hint is the answer's
 // Content-Length when known (-1 otherwise: a gzipped answer the
-// transport decompresses), and the first chunk is that long.
+// transport decompresses), and the first chunk is that long. Like
+// io.ReadAll it reads with plain Reads: io.EOF ends the answer, any other
+// error (io.ErrUnexpectedEOF from a connection cut mid-answer, a body
+// shorter than its Content-Length, a gzip stream cut short) comes back
+// with what came before it.
 func readBody(r io.Reader, hint int64) ([]byte, error) {
 	size := 8 << 10
 	if hint > 0 && hint < 1<<30 {
 		size = int(hint) + 1 // the byte more sees the end without a second chunk
 	}
 	var chunks [][]byte
-	total := 0
+	c := make([]byte, 0, size)
 	for {
-		c := make([]byte, size)
-		n, err := io.ReadFull(r, c)
-		c = c[:n]
-		total += n
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			if len(chunks) == 0 {
-				if n >= size/2 {
-					return c, nil
-				}
-				return bytes.Clone(c), nil // not a mostly empty chunk kept
-			}
-			chunks = append(chunks, c)
-			break
-		}
-		chunks = append(chunks, c)
+		n, err := r.Read(c[len(c):cap(c)])
+		c = c[:len(c)+n]
 		if err != nil {
-			return bytes.Join(chunks, nil), err
+			if err == io.EOF {
+				err = nil
+			}
+			if len(chunks) == 0 {
+				if len(c) >= cap(c)/2 {
+					return c, err
+				}
+				return bytes.Clone(c), err // not a mostly empty chunk kept
+			}
+			return bytes.Join(append(chunks, c), nil), err
 		}
-		if size < 4<<20 {
-			size = min(size*2, 4<<20)
+		if len(c) == cap(c) {
+			chunks = append(chunks, c)
+			if size < 4<<20 {
+				size = min(size*2, 4<<20)
+			}
+			c = make([]byte, 0, size)
 		}
 	}
-	return bytes.Join(chunks, nil), nil
 }

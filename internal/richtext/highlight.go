@@ -453,8 +453,12 @@ func markRaw(out []Span, sp Span, on []bool, st Style) []Span {
 		}
 		part := sp
 		part.Text = sp.Text[b0:b1]
-		if i > 0 {
-			part.Br = BrRaw // only the element's start is first in its section
+		if i > 0 && sp.Br != BrRawPre {
+			// only the element's start is first in its section; a
+			// preformatted element's parts stay preformatted (a line a
+			// piece: as rich text a newline, a line of spaces and a
+			// newline are one paragraph run)
+			part.Br = BrRaw
 		}
 		if on[r0] {
 			part.Style |= st
