@@ -18,6 +18,7 @@ import (
 	"gioui.org/unit"
 
 	vclip "github.com/some-du6e/clack/internal/clip"
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/media"
@@ -443,5 +444,122 @@ func TestProfileNameRecordingButton(t *testing.T) {
 	}
 	if f, _ := self.recording(""); f != nil || self.recFile != nil {
 		t.Error("a button on a profile without a recording")
+	}
+}
+
+// A failed upload (files.getUploadURL refused once): the tile keeps the
+// recording with RemoveFileButton's warning-filled icon, and Save waits,
+// as EditAudioButton ends onFileUploadStart's loading only on the
+// upload's file or a remove. Slack's button has no retry: removing the
+// recording brings Record Audio Clip back and frees Save, and recording
+// again uploads it and Save writes it.
+func TestEditProfileNameRecordingUploadFails(t *testing.T) {
+	h, fs := epEnv(t, false)
+	calls := recordCalls(fs)
+	useNameMic(t, func() huddle.Device { return huddle.NewToneDevice(440) })
+	fs.SetFault("files.getUploadURL", fakeslack.Fault{Error: "fatal_error", Times: 1})
+	m := NewEditProfileModal(h, EditProfileOpts{})
+	f := m.Form()
+	epUntil(t, m, "the header section", func() bool { return !f.secsLoading })
+	recordName(t, m)
+	time.Sleep(600 * time.Millisecond)
+	f.StopName()
+	epUntil(t, m, "the upload's failure", func() bool { _, _, up, failed := f.Recording(); return failed && !up })
+	if f.nr.mode != nrFile || f.nr.status() != nrStatusWarning {
+		t.Errorf("after the failure: mode %d, status %d; want the tile with the warning", f.nr.mode, f.nr.status())
+	}
+	if f.canSave() || !f.saveBtn.Loading() {
+		t.Errorf("Save after the failure: can save %v, loading %v; want it waiting", f.canSave(), f.saveBtn.Loading())
+	}
+	f.Save()
+	epFrame(m)
+	if m.Dismissed() || len(calls.get("users.profile.setSections")) != 0 {
+		t.Fatal("Save went through while the recording's upload had failed")
+	}
+	f.RemoveName()
+	if id, _, _, failed := f.Recording(); id != "" || failed || f.nr.mode != nrButton || !f.canSave() || f.saveBtn.Loading() {
+		t.Fatalf("after the remove: %q failed %v mode %d, can save %v", id, failed, f.nr.mode, f.canSave())
+	}
+	if d := calls.get("files.delete"); len(d) != 0 {
+		t.Errorf("removing a recording that never uploaded deleted %v", d)
+	}
+	recordName(t, m)
+	time.Sleep(900 * time.Millisecond) // another length: not the refused request again
+	f.StopName()
+	epUntil(t, m, "the second upload", func() bool { id, _, up, _ := f.Recording(); return id != "" && !up })
+	id, _, _, failed := f.Recording()
+	if failed || f.nr.status() == nrStatusWarning || !f.canSave() {
+		t.Fatalf("the second upload: failed %v, status %d, can save %v", failed, f.nr.status(), f.canSave())
+	}
+	f.Save()
+	epUntil(t, m, "the save", m.Dismissed)
+	if got, want := headerElements(t, calls.get("users.profile.setSections"))["PeRECORD"], `{"element_id":"PeRECORD","file":{"fileId":"`+id+`"}}`; got != want {
+		t.Errorf("Name Recording written %s, want %s", got, want)
+	}
+}
+
+// EditAudioButton is a plugin boundary with Slack's props, as
+// BaseEditProfileField renders it (rguE; EditProfileFormPane's
+// getAudioFileProps): a plugin's upload (CustomNameRecording's Upload
+// audio) calls onFileUploadStart, onChangeFile with its file's id and
+// onFileUploadEnd. Save waits meanwhile; the file shows on the tile (the
+// control's initialFile); initialFileId follows the form's recording; and
+// Save writes it. onChangeFile(null) deletes a recording made in the form.
+// After a file was removed from the control, a plugin's file stays off the
+// tile (useFileUploading's removed flag), and the form still saves it.
+func TestEditProfileNameRecordingPluginProps(t *testing.T) {
+	h, fs := epEnv(t, false)
+	calls := recordCalls(fs)
+	m := NewEditProfileModal(h, EditProfileOpts{})
+	f := m.Form()
+	epUntil(t, m, "the header section", func() bool { return !f.secsLoading })
+	if p := f.nr.audioProps(); p.Has("initialFileId") {
+		t.Errorf("initialFileId %v before any recording", p["initialFileId"])
+	}
+	upload := func(name string, n int) string {
+		t.Helper()
+		pu, err := h.a.PrepareUpload(context.Background(), core.UploadFile{Name: name, Title: name, Data: mediatest.TonesOpusFrag[:n], Subtype: NameRecSubtype}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pu.ID
+	}
+	p := f.nr.audioProps()
+	p["onFileUploadStart"].(func())()
+	if f.canSave() || !f.saveBtn.Loading() {
+		t.Errorf("onFileUploadStart: can save %v, loading %v", f.canSave(), f.saveBtn.Loading())
+	}
+	first := upload("audio_name_pronunciation.m4a", 4096)
+	p["onChangeFile"].(func(any))(first)
+	p["onFileUploadEnd"].(func())()
+	epUntil(t, m, "the plugin's file on the tile", func() bool { return f.nr.mode == nrFile && f.nr.file != nil && f.nr.file.ID == first })
+	if got := f.nr.audioProps().StrOr("initialFileId", ""); got != first || !f.canSave() || !f.dirty() {
+		t.Errorf("after the plugin's upload: initialFileId %q, can save %v, dirty %v", got, f.canSave(), f.dirty())
+	}
+	f.nr.audioProps()["onChangeFile"].(func(any))(nil)
+	waitDeleted(t, calls, first)
+	if id, _, _, _ := f.Recording(); id != "" || f.nr.mode != nrButton {
+		t.Errorf("after onChangeFile(null): %q, mode %d", id, f.nr.mode)
+	}
+
+	// the control's own remove, then a plugin's file: saved, not shown
+	second := upload("audio_name_pronunciation.m4a", 5000)
+	f.nr.audioProps()["onChangeFile"].(func(any))(second)
+	epUntil(t, m, "the second file on the tile", func() bool { return f.nr.mode == nrFile && f.nr.file != nil && f.nr.file.ID == second })
+	f.RemoveName()
+	waitDeleted(t, calls, second)
+	third := upload("audio_name_pronunciation.m4a", 6000)
+	f.nr.audioProps()["onChangeFile"].(func(any))(third)
+	for i := 0; i < 20; i++ {
+		epFrame(m)
+		time.Sleep(10 * time.Millisecond)
+	}
+	if f.nr.mode != nrButton {
+		t.Errorf("after a remove the plugin's file showed (mode %d): useFileUploading keeps initialFile null", f.nr.mode)
+	}
+	f.Save()
+	epUntil(t, m, "the save", m.Dismissed)
+	if got, want := headerElements(t, calls.get("users.profile.setSections"))["PeRECORD"], `{"element_id":"PeRECORD","file":{"fileId":"`+third+`"}}`; got != want {
+		t.Errorf("Name Recording written %s, want %s", got, want)
 	}
 }
