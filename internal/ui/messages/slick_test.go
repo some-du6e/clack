@@ -345,11 +345,12 @@ func TestSlickViewBetterBlock(t *testing.T) {
 		}
 		return alice
 	})
-	// the thread pane: Carol's reply collapses, Alice's stay
+	// the thread pane: Carol's reply leaves it (the patch takes it out of
+	// the thread's channelHistory too, ch-threadTs), Alice's stay
 	tv := NewThreadView(e.h, ch, tsRoot)
 	ft := frameFn(tv)
-	e.waitFor(t, "Carol's reply collapsed in the thread", ft, func() bool {
-		return itemHeight(tv.s, tsReplyCarol) == 0 && itemHeight(tv.s, tsReplyAlice) > 0 && itemHeight(tv.s, tsRoot) > 0
+	e.waitFor(t, "Carol's reply out of the thread", ft, func() bool {
+		return itemHeight(tv.s, tsReplyCarol) < 0 && itemHeight(tv.s, tsReplyAlice) > 0 && itemHeight(tv.s, tsRoot) > 0
 	})
 }
 
