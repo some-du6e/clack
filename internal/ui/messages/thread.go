@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -116,6 +117,43 @@ func (v *ThreadView) InputRow() (y int, ok bool, list image.Rectangle) {
 	return v.top + s.inputY, true, image.Rect(0, v.top, s.size.X, v.top+s.size.Y)
 }
 
+// DrawScrollbar draws the thread list's scrollbar over what the host drew
+// on the list since Layout (the reply box in the "input" row): Slack's
+// thread pane is one scroll container with the input inside it, so the
+// scrollbar's track spans the box's row too, the thumb is over the box,
+// to be seen and dragged there, and the pointer over the box shows it
+// (.c-scrollbar:hover). Each Layout draws it once.
+func (v *ThreadView) DrawScrollbar(gtx layout.Context) {
+	s := v.s
+	if !s.sbDeferred {
+		return
+	}
+	s.sbDeferred = false
+	if !gtx.Now.Equal(s.sbAt) {
+		return // recorded in another frame: its ops are gone
+	}
+	t := op.Offset(image.Pt(0, v.top)).Push(gtx.Ops)
+	s.sbCall.Add(gtx.Ops)
+	// the pointer anywhere over the list's box, the reply box drawn on it
+	// and the bar included: on top, pass-through, so the box, the rows
+	// and the bar get it as before
+	area := clip.Rect(image.Rectangle{Max: s.size}).Push(gtx.Ops)
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &s.sb.over)
+	pass.Pop()
+	area.Pop()
+	t.Pop()
+}
+
+// ScrollThumb is the list's scrollbar thumb in window coordinates as the
+// last frame drew it, empty while it was hidden (tests).
+func (v *ThreadView) ScrollThumb() image.Rectangle {
+	if r := v.s.sb.thumb; !r.Empty() {
+		return r.Add(v.s.origin)
+	}
+	return image.Rectangle{}
+}
+
 // NewestRowBottom is the window y of the newest reply's (or, with none,
 // the root's) bottom edge as of the last frame, false when it wasn't on
 // screen.
@@ -137,6 +175,7 @@ func NewThreadView(h Host, ch, ts string) *ThreadView { return NewThreadViewIn(h
 // Slack's split view), with a list state of its own (stateIn).
 func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
 	v := &ThreadView{h: h, ch: ch, ts: ts, s: stateIn(h, ch, ts, pane)}
+	v.s.kb.jumpTo = v.JumpTo // End's jumpToReply (kbnav.go focusInput)
 	v.s.closeEdits()
 	v.Reopen()
 	v.s.hb.ensureLoaded(v.s.m)

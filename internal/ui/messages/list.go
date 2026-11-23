@@ -206,7 +206,13 @@ type listState struct {
 	findFlashAt       time.Time
 	sel               selection
 	sb                scrollbar
-	pendingJump       string
+	// sbCall is the scrollbar the last layout drew for the host to draw
+	// over its reply box (sbDeferred until it does), in the frame at sbAt
+	// (a call is only good in the frame that recorded it)
+	sbCall      op.CallOp
+	sbDeferred  bool
+	sbAt        time.Time
+	pendingJump string
 	// jumpLazy: the pending jump is highlightRoot's (highlightLazy) or a
 	// re-highlight in an open thread pane: a message whose top is already
 	// on screen isn't scrolled to
@@ -1136,6 +1142,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	st := styleFor(h)
 	now := time.Now()
 	lastHost = h
+	// the scrollbar call DrawScrollbar draws is this layout's only (an
+	// early return records none)
+	s.sbDeferred = false
 	if gtx.Now.IsZero() || !gtx.Now.Equal(s.preparedAt) { // else prepare did, this frame
 		s.endUnmountedFlash()
 		s.adopt(gtx.Now)
@@ -1439,7 +1448,17 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.updateUnreadThreads(h)
 	s.contextMenu(h, origin)
 	s.overlays(gtx, h, rc, size)
-	s.layoutScrollbar(gtx, c, size, now)
+	if s.thread && s.inputOn {
+		// the host draws the reply box over the list's "input" row, and
+		// the scrollbar goes over it (ThreadView.DrawScrollbar): Slack's
+		// thread pane is one scroll container, its scrollbar over every
+		// row, the input's too
+		m := op.Record(gtx.Ops)
+		s.layoutScrollbar(gtx, c, size, now)
+		s.sbCall, s.sbDeferred, s.sbAt = m.Stop(), true, gtx.Now
+	} else {
+		s.layoutScrollbar(gtx, c, size, now)
+	}
 	area.Pop()
 	s.reportMedia() // the video tiles' share on screen (file_rects.go)
 

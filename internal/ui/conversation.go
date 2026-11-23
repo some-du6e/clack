@@ -446,6 +446,13 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			// again, so what it anchors in window coordinates is where it is
 			a.Invalidate()
 		}
+		// the list's scrollbar over the box: the thread pane is one
+		// scroll container with the box inside it
+		if sb, ok := c.list.(interface{ DrawScrollbar(layout.Context) }); ok {
+			cl := clip.Rect{Max: image.Pt(sz.X, availH)}.Push(gtx.Ops)
+			sb.DrawScrollbar(gtx)
+			cl.Pop()
+		}
 		a.dropZone(c, image.Rectangle{Min: origin, Max: origin.Add(sz)}, foot)
 		a.layoutDropOverlay(gtx, c, sz)
 		return layout.Dimensions{Size: sz}
