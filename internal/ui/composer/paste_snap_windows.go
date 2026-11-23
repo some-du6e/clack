@@ -5,6 +5,7 @@ package composer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"time"
 
 	"gioui.org/app/winclip"
@@ -37,24 +38,21 @@ func startPasteSnap(plain bool) *pasteSnap {
 		uiguard.OffUI("a clipboard session")
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		dib := false
-		snap, err := winclip.Read(ctx, func(f winclip.Format) int64 {
-			switch {
-			case f.ID == attCFUnicodeText:
-				return clipMaxText
-			case f.ID == attCFHDROP:
-				return 1 << 24
-			case f.Name == "PNG":
-				return attMaxFileSize
-			case (f.ID == attCFDIB || f.ID == attCFDIBV5) && !dib:
-				dib = true // the one its owner placed; the other is Windows' conversion
-				return attMaxFileSize
-			case !plain && f.Name == richclip.CustomFormat:
-				return richclip.MaxCustom
-			case !plain && f.Name == richclip.HTMLFormat:
-				return phMaxHTML + 4096
+		snap, err := winclip.ReadPlan(ctx, func(fs []winclip.Format) map[uint32]int64 {
+			m := imagePlan(fs, false)
+			for _, f := range fs {
+				switch {
+				case f.ID == attCFUnicodeText:
+					m[f.ID] = clipMaxText
+				case f.ID == attCFHDROP:
+					m[f.ID] = 1 << 24
+				case !plain && f.Name == richclip.CustomFormat:
+					m[f.ID] = richclip.MaxCustom
+				case !plain && f.Name == richclip.HTMLFormat:
+					m[f.ID] = phMaxHTML + 4096
+				}
 			}
-			return 0
+			return m
 		})
 		if err != nil {
 			s.imgErr = errAttClipBusy
@@ -71,6 +69,10 @@ func startPasteSnap(plain bool) *pasteSnap {
 		}
 		if len(s.files) == 0 {
 			s.img, s.imgMime, s.imgErr = snapImage(snap, false)
+			if s.imgErr == errSnapNeedDIB {
+				// the "PNG" wasn't one: the DIB, as base fell back to it
+				s.img, s.imgMime, s.imgErr = attClipboardDIB(ctx)
+			}
 		}
 	}()
 	return s
@@ -96,6 +98,42 @@ func snapRich(snap *winclip.Snapshot) (string, *Doc) {
 	}
 	return "", nil
 }
+
+// imagePlan is the picture formats a read copies: none for an office
+// app's copy (rich text and a rendered picture of it) unless explicit, as
+// base decided from the format list before reading any picture; the
+// "PNG" alone when there is one (it keeps transparency); else the DIB its
+// owner placed (the other one is Windows' conversion).
+func imagePlan(fs []winclip.Format, explicit bool) map[uint32]int64 {
+	m := map[uint32]int64{}
+	var names []string
+	var png, dib uint32
+	for _, f := range fs {
+		if f.Name != "" {
+			names = append(names, f.Name)
+		}
+		switch {
+		case f.Name == "PNG" && png == 0:
+			png = f.ID
+		case (f.ID == attCFDIB || f.ID == attCFDIBV5) && dib == 0:
+			dib = f.ID
+		}
+	}
+	if !explicit && attRichCopy(names) {
+		return m
+	}
+	switch {
+	case png != 0:
+		m[png] = attMaxFileSize
+	case dib != 0:
+		m[dib] = attMaxFileSize
+	}
+	return m
+}
+
+// errSnapNeedDIB: the snapshot's "PNG" wasn't a PNG; the DIB is read on
+// its own (attClipboardDIB).
+var errSnapNeedDIB = errors.New("the clipboard's PNG isn't one")
 
 // snapImage is the clipboard's picture as a PNG: unless explicit none for
 // an office app's copy (rich text and a rendered picture of it), the
@@ -124,6 +162,9 @@ func snapImage(snap *winclip.Snapshot, explicit bool) ([]byte, string, error) {
 		}
 		if b, ok := snap.Bytes(png); ok && bytes.HasPrefix(b, []byte("\x89PNG\r\n\x1a\n")) {
 			return b, "image/png", nil
+		}
+		if dib != 0 {
+			return nil, "", errSnapNeedDIB
 		}
 	}
 	if dib == 0 {

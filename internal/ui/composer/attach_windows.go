@@ -21,9 +21,6 @@ import (
 // are the reads on their own. The pickers are the Gio explorer's native
 // dialog or the in-app modal.
 
-// errAttClipBusy: another app kept the clipboard open (winclip.ErrBusy).
-var errAttClipBusy = errors.New("The clipboard is busy. Try pasting again.")
-
 // Standard clipboard formats (winuser.h).
 const (
 	attCFDIB   = 8
@@ -41,6 +38,17 @@ func attNativePick(context.Context) ([]string, bool, error) { return nil, false,
 func attRead(ctx context.Context, want func(winclip.Format) int64) (*winclip.Snapshot, error) {
 	uiguard.OffUI("a clipboard session")
 	snap, err := winclip.Read(ctx, want)
+	if errors.Is(err, winclip.ErrBusy) {
+		return nil, errAttClipBusy
+	}
+	return snap, err
+}
+
+// attReadPlan is winclip.ReadPlan off the UI goroutine, the busy error a
+// toast's.
+func attReadPlan(ctx context.Context, plan func([]winclip.Format) map[uint32]int64) (*winclip.Snapshot, error) {
+	uiguard.OffUI("a clipboard session")
+	snap, err := winclip.ReadPlan(ctx, plan)
 	if errors.Is(err, winclip.ErrBusy) {
 		return nil, errAttClipBusy
 	}
@@ -67,15 +75,27 @@ func attClipboardFiles(ctx context.Context) ([]string, error) {
 
 // attClipboardImage reads the clipboard's image as a PNG. Unless explicit,
 // an office app's copy (rich text plus a rendered picture of it) isn't an
-// image, as on Linux and macOS.
+// image, as on Linux and macOS; that's decided from the format list
+// before any picture is read (imagePlan).
 func attClipboardImage(ctx context.Context, explicit bool) ([]byte, string, error) {
+	snap, err := attReadPlan(ctx, func(fs []winclip.Format) map[uint32]int64 { return imagePlan(fs, explicit) })
+	if err != nil {
+		return nil, "", err
+	}
+	data, mime, err := snapImage(snap, explicit)
+	if err == errSnapNeedDIB {
+		return attClipboardDIB(ctx)
+	}
+	return data, mime, err
+}
+
+// attClipboardDIB reads the DIB its owner placed, as a PNG (a clipboard
+// whose "PNG" wasn't one).
+func attClipboardDIB(ctx context.Context) ([]byte, string, error) {
 	dib := false
 	snap, err := attRead(ctx, func(f winclip.Format) int64 {
-		switch {
-		case f.Name == "PNG":
-			return attMaxFileSize
-		case (f.ID == attCFDIB || f.ID == attCFDIBV5) && !dib:
-			dib = true // the one its owner placed; the other is Windows' conversion
+		if (f.ID == attCFDIB || f.ID == attCFDIBV5) && !dib {
+			dib = true
 			return attMaxFileSize
 		}
 		return 0
@@ -83,5 +103,25 @@ func attClipboardImage(ctx context.Context, explicit bool) ([]byte, string, erro
 	if err != nil {
 		return nil, "", err
 	}
-	return snapImage(snap, explicit)
+	for _, f := range snap.Formats {
+		if f.ID != attCFDIB && f.ID != attCFDIBV5 {
+			continue
+		}
+		if snap.TooBig[f.ID] {
+			return nil, "", errAttTooBig
+		}
+		b, ok := snap.Bytes(f.ID)
+		if !ok {
+			break
+		}
+		p, err := attDIBToPNG(b)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(p) > attMaxFileSize {
+			return nil, "", errAttTooBig
+		}
+		return p, "image/png", nil
+	}
+	return nil, "", errAttNoClipImage
 }

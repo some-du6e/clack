@@ -1122,6 +1122,10 @@ var (
 	errAttNoClipImage = errors.New("There's no image on the clipboard")
 	errAttClipTools   = errors.New("Pasting images needs xclip (X11) or wl-clipboard (Wayland)")
 	errAttClipNone    = errors.New("Pasting images isn't supported on this system yet")
+	// errAttClipBusy: another app kept the clipboard open (Windows:
+	// winclip.ErrBusy), or the main thread was too busy to read the
+	// pasteboard (macOS)
+	errAttClipBusy = errors.New("The clipboard is busy. Try pasting again.")
 )
 
 // PasteClipboardImage probes the system clipboard for an image (async) and
@@ -1193,8 +1197,12 @@ func (a *attachments) pasteFromSnap(s *pasteSnap) *filePaste {
 		}
 		fp.decide(err == nil || errors.Is(err, errAttTooBig))
 		if err != nil {
-			if errors.Is(err, errAttTooBig) {
+			switch {
+			case errors.Is(err, errAttTooBig):
 				a.toast(attRejectText(attPastedName(mime), err))
+			case errors.Is(err, errAttClipBusy):
+				// the paste read nothing: another app kept the clipboard open
+				a.toast(err.Error())
 			}
 			return
 		}

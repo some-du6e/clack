@@ -36,14 +36,16 @@ var ErrBusy = errors.New("the clipboard is busy")
 // sem is the process's one session.
 var sem = make(chan struct{}, 1)
 
-// openTries and openPause are Chromium's ScopedClipboard::Acquire: another
-// app may hold the clipboard for a moment (a clipboard manager reading a
-// new copy), so the open is tried 5 times, 5 ms apart, and then the
-// session fails (ErrBusy). The wait for this process's own sessions comes
-// before and isn't counted.
+// openBudget and openPause: another app may hold the clipboard for a
+// moment (a clipboard manager reading a new copy), so the open is tried
+// every 5 ms for up to 80 ms, then the session fails (ErrBusy).
+// Chromium's ScopedClipboard::Acquire tries 5 times with Sleep(5) between,
+// and each Sleep lasts a timer tick (15.6 ms by default): about 60-80 ms
+// in all. The wait for this process's own sessions comes before and isn't
+// counted.
 const (
-	openTries = 5
-	openPause = 5 * time.Millisecond
+	openBudget = 80 * time.Millisecond
+	openPause  = 5 * time.Millisecond
 )
 
 // Session runs f with the clipboard open, after every other session of
@@ -62,11 +64,11 @@ func Session(ctx context.Context, owner uintptr, f func() error) error {
 	defer func() { <-sem }()
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	for i := 0; ; i++ {
+	for start := time.Now(); ; {
 		if r, _, _ := openClipboard.Call(owner); r != 0 {
 			break
 		}
-		if i == openTries-1 || ctx.Err() != nil {
+		if time.Since(start) >= openBudget || ctx.Err() != nil {
 			return ErrBusy
 		}
 		time.Sleep(openPause)
@@ -80,11 +82,28 @@ func Session(ctx context.Context, owner uintptr, f func() error) error {
 // it). A format past its limit is in TooBig, unread. The copies are made
 // before the session closes; parse them after.
 func Read(ctx context.Context, want func(Format) int64) (*Snapshot, error) {
+	return ReadPlan(ctx, func(fs []Format) map[uint32]int64 {
+		m := map[uint32]int64{}
+		for _, f := range fs {
+			if limit := want(f); limit > 0 {
+				m[f.ID] = limit
+			}
+		}
+		return m
+	})
+}
+
+// ReadPlan is Read with the limits decided from the whole format list:
+// plan gets the clipboard's formats and returns each one's limit (a
+// format it leaves out isn't read). A paste skips an office app's
+// rendered picture that way, before copying any of it.
+func ReadPlan(ctx context.Context, plan func([]Format) map[uint32]int64) (*Snapshot, error) {
 	s := &Snapshot{Data: map[uint32][]byte{}, TooBig: map[uint32]bool{}}
 	err := Session(ctx, 0, func() error {
 		s.Formats = formats()
+		limits := plan(s.Formats)
 		for _, f := range s.Formats {
-			limit := want(f)
+			limit := limits[f.ID]
 			if limit <= 0 {
 				continue
 			}
