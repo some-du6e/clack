@@ -196,3 +196,53 @@ func TestPresenceSubscriptionGetterLikeSlack(t *testing.T) {
 		t.Errorf("another team's map %v, want undefined", m)
 	}
 }
+
+// TestFlannelQueueLikeSlack: flannel queries go through Slack's API queue
+// (client-boot 7quX, ApiQ.q): an identical query already running is
+// answered by that one (one request, the same answer); at most 5 of one
+// method run at once (7 users/list: 5 go out, 2 wait); and an abort
+// rejects with AbortError and stops the request, its retries included (a
+// 503 is tried 3 times otherwise).
+func TestFlannelQueueLikeSlack(t *testing.T) {
+	e := newAPICallEnv(t, 5*time.Second)
+	const ch = fakeslack.ViewsChannel
+	e.fs.SetRoster(ch, fakeslack.SynthMemberID(92101))
+	calls := func() int64 { return e.fs.CallCount("edge/users/list") }
+	const q = `const query = T.getExport((x) => typeof x === 'function' && x.name === 'query' && Function.prototype.toString.call(x).includes('Unsupported flannel method'))
+		const team = T.getRawState().selfTeamIds.teamId
+		const list = (marker, signal) => query(team, { method: 'users/list', args: { channels: ['` + ch + `'], count: 100, marker }, signal })
+		`
+	var ok bool
+
+	n := calls()
+	var same bool
+	e.jsInto(q+`const [a, b] = await Promise.all([list('dup'), list('dup')]); return a === b`, &same)
+	if !same || calls()-n != 1 {
+		t.Errorf("two identical queries: the same answer %v, %d requests; want one request answering both", same, calls()-n)
+	}
+
+	e.fs.SetFault("edge/users/list", fakeslack.Fault{Delay: 800 * time.Millisecond})
+	n = calls()
+	e.jsInto(q+`globalThis.many = Promise.all([1, 2, 3, 4, 5, 6, 7].map((i) => list('m' + i))); return true`, &ok)
+	time.Sleep(300 * time.Millisecond)
+	if got := calls() - n; got != 5 {
+		t.Errorf("%d users/list running at once, want 5 (ApiQ's per-method limit)", got)
+	}
+	e.jsInto(`await many; return true`, &ok)
+	if got := calls() - n; got != 7 {
+		t.Errorf("%d users/list in all, want the 7", got)
+	}
+	e.fs.SetFault("edge/users/list", fakeslack.Fault{})
+
+	e.fs.SetFault("edge/users/list", fakeslack.Fault{Status: 503, Times: 3})
+	defer e.fs.SetFault("edge/users/list", fakeslack.Fault{})
+	n = calls()
+	e.jsInto(q+`globalThis.ac = new AbortController(); globalThis.aborted = list('abort', ac.signal).then(() => 'resolved', (err) => err.name); return true`, &ok)
+	eventually(t, 5*time.Second, "the first try", func() bool { return calls()-n >= 1 })
+	var name string
+	e.jsInto(`ac.abort(); return await aborted`, &name)
+	time.Sleep(3 * time.Second) // past the retry's wait (60 s in Slack's units, 0.6-2.4 s here)
+	if name != "AbortError" || calls()-n != 1 {
+		t.Errorf("an aborted query: %q after %d requests, want AbortError and no retry", name, calls()-n)
+	}
+}

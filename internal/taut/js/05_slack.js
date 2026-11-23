@@ -2161,21 +2161,93 @@ function flannelSettle(o, { id, method, args }) {
   throw r
 }
 
-/** EVxR's flannel call for a method in the table: its request, queued expedited, tried, settled */
+// ---- Slack's API queue for flannel calls (client-boot 7quX, ApiQ.q) ----
+// One queue per team. An identical request already queued or running (the
+// same method, deep-equal args, the same signal) is answered by that one's
+// promise ("Deduped request for method"); at most 10 run at once, at most 5
+// of one method (a method at 5 waits, others pass it); flannel's are
+// expedited, so they go to the front; an abort takes the request out,
+// cancels it (Go stops it and its retries) and rejects with AbortError.
+const API_Q_MAX_ACTIVE = 10
+const API_Q_MAX_ACTIVE_PER_METHOD = 5
+const apiQueues = new Map() // team → {active: [], enqueued: []}
+function apiQueue(team) {
+  let q = apiQueues.get(team)
+  if (!q) apiQueues.set(team, (q = { active: [], enqueued: [] }))
+  return q
+}
+function apiQDequeue(q, rec) {
+  for (const list of [q.active, q.enqueued]) {
+    const i = list.indexOf(rec)
+    if (i >= 0) list.splice(i, 1)
+  }
+}
+function apiQTick(q) {
+  while (q.active.length < API_Q_MAX_ACTIVE) {
+    const counts = {}
+    for (const r of q.active) counts[r.method] = (counts[r.method] ?? 0) + 1
+    const i = q.enqueued.findIndex((r) => (counts[r.method] ?? 0) < API_Q_MAX_ACTIVE_PER_METHOD)
+    if (i < 0) return
+    const rec = q.enqueued.splice(i, 1)[0]
+    q.active.push(rec)
+    rec.sent = true
+    let sent
+    try {
+      sent = Promise.resolve(rec.send())
+    } catch (err) {
+      sent = Promise.reject(err)
+    }
+    sent.then(rec.resolve, rec.reject).finally(() => {
+      apiQDequeue(q, rec)
+      apiQTick(q)
+    })
+  }
+}
+/** ApiQ.q: rec is {team, method, args, signal, expedited, send(), cancel()} */
+function apiQEnqueue(rec) {
+  if (rec.signal?.aborted) return Promise.reject(new AbortError())
+  const q = apiQueue(rec.team)
+  const same = (r) => r.signal === rec.signal && r.method === rec.method && deepEqual(r.args, rec.args)
+  const match = q.active.find(same) ?? q.enqueued.find(same)
+  if (match) return match.promise // Deduped request for method
+  rec.promise = new Promise((resolve, reject) => {
+    rec.resolve = resolve
+    rec.reject = reject
+  })
+  if (rec.signal?.addEventListener) {
+    const onAbort = () => {
+      apiQDequeue(q, rec)
+      if (rec.sent) rec.cancel?.() // what never went out has nothing to stop
+      rec.reject(new AbortError())
+      apiQTick(q)
+    }
+    rec.signal.addEventListener('abort', onAbort, { once: true })
+    const detach = () => rec.signal.removeEventListener?.('abort', onAbort)
+    rec.promise.then(detach, detach)
+  }
+  if (rec.expedited) q.enqueued.unshift(rec)
+  else q.enqueued.push(rec)
+  apiQTick(q)
+  return rec.promise
+}
+
+let flannelSeq = 0
+/** EVxR's flannel call for a method in the table: its request, queued expedited (ApiQ), tried, settled */
 function flannelCall(teamId, { method, args, signal } = {}) {
   if (!method) throw Error('Must include a method')
-  if (signal?.aborted) return Promise.reject(new AbortError())
   const id = apiRequestId(getRawState()?.bootData?.version_uid)
   // computeToken (kMPT) puts the team's token before the caller's args;
   // Clack sends its own, which the args show as "[redacted]"
   const shown = { token: '[redacted]', ...args }
-  const sent = Promise.resolve(go('flannel', String(teamId ?? ''), method, encode(args ?? {}))).then((o) => flannelSettle(o, { id, method, args: shown }))
-  if (!signal?.addEventListener) return sent
-  return new Promise((resolve, reject) => {
-    // aborted on its way: the queue rejects at once, the answer is dropped
-    const onAbort = () => reject(new AbortError())
-    signal.addEventListener('abort', onAbort, { once: true })
-    sent.then(resolve, reject).finally(() => signal.removeEventListener?.('abort', onAbort))
+  const key = ++flannelSeq
+  return apiQEnqueue({
+    team: String(teamId ?? ''),
+    method,
+    args: args ?? {},
+    signal,
+    expedited: true,
+    send: () => Promise.resolve(go('flannel', key, String(teamId ?? ''), method, encode(args ?? {}))).then((o) => flannelSettle(o, { id, method, args: shown })),
+    cancel: () => goOr(null, 'flannelCancel', key),
   })
 }
 

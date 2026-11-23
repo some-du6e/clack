@@ -35,7 +35,17 @@ func init() {
 			t.Fatal("no stylesheet")
 		}
 	}
+	// the header's count is users/counts' (Slack's membershipCounts holds
+	// nothing until it answers)
+	before["HumanCount"] = func(h *harness) {
+		h.app.C.EdgeURL = h.api.srv.URL + "/api/edge/"
+		h.api.set("edge/"+entID+"/users/counts", map[string]any{"ok": true, "counts": map[string]any{"people": 1300, "guests": 0}})
+	}
 	checks["HumanCount"] = func(t *testing.T, h *harness) {
+		if _, err := h.app.History(h.ctx(), chGen, ""); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, 5*time.Second, "#general's users/counts", func() bool { _, ok := h.app.MemberCountCached(chGen); return ok })
 		n := findNative(h.render(1, "BaseAvatarStack", map[string]any{"channelId": chGen, "memberCount": 5}), "BaseAvatarStack")
 		if n == nil {
 			t.Fatal("no native BaseAvatarStack")

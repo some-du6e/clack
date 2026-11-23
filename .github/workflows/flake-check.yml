@@ -5229,11 +5229,17 @@ jobs:
   # of its own (slackc); OnlineCount from Slick's build at the slick
   # workflow's pin over a booted fakeslack (slick) and from the published
   # Library in the whole client (ui: plugin-bench's gaps job runs it too).
+  # Its review's fixes: plugins' subscriptions sit beside Clack's own
+  # presence set (core), queries go through Slack's ApiQ and
+  # membershipCounts waits for users/counts (taut), a Tooltip's child sits
+  # where Slack's DOM has it, before BaseTooltip's hidden span (slackc).
   # COUNT runs each. Dispatch with only=plugins-work-1.
   plugins-work-1:
     if: ${{ !inputs.only || startsWith('plugins-work-1', inputs.only) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    env:
+      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -5254,7 +5260,7 @@ jobs:
       - name: clone slick at the slick workflow's pin
         run: |
           git clone -q https://github.com/3kh0/slick /tmp/slick
-          git -C /tmp/slick checkout -q f6be3bde30f080a6ca4e33327ae99816d08bb131
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
           git -C /tmp/slick log --oneline -1
       - name: "install slick deps (no scripts)"
         working-directory: /tmp/slick
@@ -5280,7 +5286,7 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
-      - name: the flannel query, the presence getter, the hook's :has(), OnlineCount in the harness and in the client, COUNT runs each
+      - name: the flannel query and its queue, the presence getter and set, the hook's :has(), Tooltip's DOM, OnlineCount in the harness and in the client, COUNT runs each
         env:
           SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
           PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
@@ -5288,8 +5294,9 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 10m -run '^(TestFlannelQueryLikeSlack|TestPresenceSubscriptionGetterLikeSlack|TestPresenceSubscriptionLikeSlack|TestAPICallNotOkLikeSlack)$' ./internal/taut || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^(TestFlexItemsHasSeesTree|TestNativeKidsHas)$' ./internal/ui/slackc || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestPluginSubscriptionsKeepClacksOwnPresence$' ./internal/core || rc=1
+          go test -count="$COUNT" -timeout 10m -run '^(TestFlannelQueryLikeSlack|TestFlannelQueueLikeSlack|TestPresenceSubscriptionGetterLikeSlack|TestPresenceSubscriptionLikeSlack|TestAPICallNotOkLikeSlack|TestMirrorShapes)$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestFlexItemsHasSeesTree|TestTooltipChildAsSlacksDOM|TestNativeKidsHas)$' ./internal/ui/slackc || rc=1
           go test -count="$COUNT" -timeout 15m -run '^TestOnlineCountLikeSlack$' ./internal/slick || rc=1
           xvfb-run -a go test -count="$COUNT" -timeout 15m -run '^TestPluginGapOnlineCount$' ./internal/ui || rc=1
           exit $rc

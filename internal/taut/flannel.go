@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -33,7 +34,17 @@ var flannelMethods = map[string]bool{
 // flannelSettle to settle the query from as FlannelRequest does. team is
 // the query's teamId: the signed-in team or its enterprise, as Slack
 // finds no flannel URL for a team it isn't signed in to.
-func (t *Taut) flannel(ctx context.Context, team, method string, args json.RawMessage) (any, error) {
+func (t *Taut) flannel(ctx context.Context, key int64, team, method string, args json.RawMessage) (any, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	k := flannelKey{t, key}
+	if v, loaded := flannelCancels.LoadOrStore(k, cancel); loaded {
+		flannelCancels.Delete(k)
+		if _, early := v.(flannelCanceled); early {
+			return nil, context.Canceled // aborted before it started
+		}
+	}
+	defer flannelCancels.Delete(k)
 	if !flannelMethods[method] {
 		return nil, fmt.Errorf("taut: flannel: %q isn't one of Slack's flannel methods", method)
 	}
@@ -61,4 +72,30 @@ func (t *Taut) flannel(ctx context.Context, team, method string, args json.RawMe
 	}
 	o["flannelUrl"] = c.EdgeBase()
 	return o, nil
+}
+
+// flannelKey is a query's request, by its runtime's Taut and its key in
+// the page's queue (05_slack.js apiQEnqueue).
+type flannelKey struct {
+	t   *Taut
+	key int64
+}
+
+// flannelCancels are the running queries' cancels: the queue aborting one
+// (its signal) stops the request and its retries, as ApiQ cancels its
+// request.
+var flannelCancels sync.Map // flannelKey → context.CancelFunc
+
+// flannelCanceled marks a query aborted before its request started (the
+// queue sent it, the abort came first): it starts and stops at once.
+type flannelCanceled struct{}
+
+// cancelFlannel stops the query key: the queue only cancels what it sent,
+// so a key not running yet is about to, and the mark stops it.
+func (t *Taut) cancelFlannel(key int64) {
+	if v, loaded := flannelCancels.LoadOrStore(flannelKey{t, key}, flannelCanceled{}); loaded {
+		if c, ok := v.(context.CancelFunc); ok {
+			c()
+		}
+	}
 }

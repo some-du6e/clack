@@ -104,8 +104,11 @@ var noElement sync.Map // host name → true (RegisterHostNoElement)
 // the component itself. Its box stays, for the host to track the pointer
 // and draw its tip, and is as big as what it holds: an inline-flex box,
 // which lays a child out at its own size with no line box around it, so
-// it sits where the child would. nth-child positions count it once,
-// where its child sits; the hidden span after the child isn't there.
+// it sits where the child would. The child carries the clone's
+// data-sk="tooltip_parent", and the hidden span[data-sk=tooltip] after it
+// is one of the parent's children to selectors as well (it draws
+// nothing): the child isn't :last-child, nth-child counts the span, and
+// "+" from the child reaches the span, not what follows the Tooltip.
 func RegisterHostNoElement(names ...string) {
 	for _, n := range names {
 		noElement.Store(n, true)

@@ -2184,8 +2184,14 @@ func (a *App) onHello() {
 	}
 }
 
-// presenceIDs merges add into the subscribed set (self + DM partners +
-// recently shown users, newest first, capped) and returns the full set.
+// presenceIDs merges add into the subscribed set and returns the full set:
+// Clack's own (the viewer, DM partners and the users its views showed
+// lately, newest first), capped at maxSubs, and on top of it the members
+// plugins subscribed to (presence_subs.go), which the cap leaves alone.
+// Slack's presence manager (4hlf) keeps a plugin's members beside its own,
+// and a plugin sizes its subscriptions by getPresenceSubscriptionByTeamId,
+// which counts Clack's set (OnlineCount keeps the whole within 950), so a
+// plugin's batch never pushes out the people Clack's views show.
 func (a *App) presenceIDs(add []string) []string {
 	base := map[string]bool{a.C.Creds.UserID: true}
 	a.S.RLock()
@@ -2197,9 +2203,6 @@ func (a *App) presenceIDs(add []string) []string {
 	a.S.RUnlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for id := range a.presSubs { // members someone subscribed to (presence_subs.go)
-		base[id] = true
-	}
 	now := time.Now()
 	for _, id := range add {
 		if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
@@ -2229,8 +2232,16 @@ func (a *App) presenceIDs(add []string) []string {
 			continue
 		}
 		out = append(out, r.id)
+		base[r.id] = true
 	}
-	return out
+	subs := make([]string, 0, len(a.presSubs))
+	for id := range a.presSubs { // members plugins subscribed to, beside Clack's own
+		if !base[id] {
+			subs = append(subs, id)
+		}
+	}
+	sort.Strings(subs)
+	return append(out, subs...)
 }
 
 // SubscribePresence adds users the UI is showing to the realtime presence

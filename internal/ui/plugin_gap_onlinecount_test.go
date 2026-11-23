@@ -68,7 +68,13 @@ func TestPluginGapOnlineCount(t *testing.T) {
 	e.until("the count of the 4 online in the header", 15*time.Second, func() bool {
 		return e.treeWith("slick-online-count", `"tip":"4 online, 2 away"`) != "" && placed.Dx() > stack.X
 	})
-	e.settle(300 * time.Millisecond)
+	// the count drawn, nothing keeps asking: settling, and the live
+	// update below, send no more edge users/list (one listing of the six)
+	lists := e.fs.CallCount("edge/users/list")
+	e.settle(800 * time.Millisecond)
+	if n := e.fs.CallCount("edge/users/list"); n != lists {
+		t.Errorf("%d more edge users/list while the count stood", n-lists)
+	}
 	t.Logf("the stack alone %v; with the count %v (the stack %v of it)", alone, placed, stack)
 	// the count right of the stack: the 6px gap, its 8px dot, the dot's
 	// 5px gap and its 4px right padding at least
@@ -87,4 +93,7 @@ func TestPluginGapOnlineCount(t *testing.T) {
 	e.until("the count after a presence_change", 15*time.Second, func() bool {
 		return e.treeWith("slick-online-count", `"tip":"5 online, 1 away"`) != ""
 	})
+	if n := e.fs.CallCount("edge/users/list"); n != lists {
+		t.Errorf("a presence_change made %d more edge users/list", n-lists)
+	}
 }

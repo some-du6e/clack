@@ -1,6 +1,7 @@
 package pluginlib
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -50,6 +51,8 @@ func TestCompatDocInStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// a Windows checkout may have made the file's line ends CRLF
+	got = bytes.ReplaceAll(got, []byte("\r\n"), []byte("\n"))
 	if string(got) != want {
 		t.Errorf("docs/PLUGIN-COMPAT.md is out of step with compat.go and the Library's index:\n%s\n"+
 			"regenerate it: go test ./internal/pluginlib -run TestCompatDocInStep -update (or, from the repository root, python3 tools/compatdoc/compatdoc.py)",

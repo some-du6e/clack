@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"gioui.org/layout"
+
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // OnlineCount's count beside the channel header's avatar stack. In Slack's
@@ -20,7 +22,11 @@ import (
 // as big as the span and no rule reaches it (a className on Slack's
 // Tooltip styles its tip, not its trigger), and a child combinator from
 // the hook reaches the span. Without the count the hook stays
-// display:contents: the stack lays out alone, as before.
+// display:contents: the stack lays out alone, as before. The stack's own
+// rules see the hook with the tree too (:has() from the native's
+// cascade), a hover on the count reaches the hook's :has() (and a hover
+// its rules don't see keeps its style and key), and a tree of text alone
+// leaves the hook not :empty, as its text would in Slack's DOM.
 func TestFlexItemsHasSeesTree(t *testing.T) {
 	defer func() { stack = stack[:0] }()
 	windowSize = image.Pt(1000, 800)
@@ -31,17 +37,33 @@ func TestFlexItemsHasSeesTree(t *testing.T) {
       .slick-online-count { display: inline-flex; align-items: center; gap: 5px; padding-right: 4px; font-size: 13px; font-weight: 700; white-space: nowrap; }
       .slick-online-count::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: rgb(10, 200, 10); }
       .p-autoclog__hook > .slick-online-count { color: rgb(1, 2, 3); }
-      .test-tip-class { padding: 20px; }`)
+      .test-tip-class { padding: 20px; }
+      .p-autoclog__hook:has(> .slick-online-count) .test-stack-inner { --hook-has-count: y; }
+      .p-autoclog__hook:has(> .slick-online-count:hover) { --count-hovered: y; }
+      .p-autoclog__hook:empty { --hook-empty: y; }`)
 	defer RemoveStyle("test:online-count")
 	hook := Class("p-autoclog__hook").FlexItems()
-	stackNative := func(gtx layout.Context, p Props) layout.Dimensions { return layout.Dimensions{Size: image.Pt(60, 28)} }
-	lay := func(tree string) (*View, layout.Dimensions) {
-		t.Helper()
+	inner := Class("test-stack-inner")
+	var innerVar string // the stack's own element's --hook-has-count
+	stackNative := func(gtx layout.Context, p Props) layout.Dimensions {
+		s := inner.Enter(gtx, 0, 0)
+		defer s.Leave()
+		innerVar = ""
+		if st := s.Style(); st != nil {
+			innerVar = st.Vars["--hook-has-count"]
+		}
+		return layout.Dimensions{Size: image.Pt(60, 28)}
+	}
+	layNodes := func(v *View, nodes []*Node) layout.Dimensions {
 		g := testGtx(400, 28)
 		h := hook.Enter(g, 0, 0)
 		defer h.Leave()
+		return v.Layout(g, nodes, "Stack", nil, stackNative)
+	}
+	lay := func(tree string) (*View, layout.Dimensions) {
+		t.Helper()
 		v := NewView(9001)
-		return v, v.Layout(g, mustTree(t, tree), "Stack", nil, stackNative)
+		return v, layNodes(v, mustTree(t, tree))
 	}
 
 	v, d := lay(`[{"t":"@","n":"Stack","k":1},` +
@@ -77,6 +99,26 @@ func TestFlexItemsHasSeesTree(t *testing.T) {
 	if want := 60 + 6 + int(tip.w+0.999); d.Size.X < want-1 || d.Size.X > want+1 {
 		t.Errorf("the row is %dpx wide, want the stack, the gap and the count (%d)", d.Size.X, want)
 	}
+	if innerVar != "y" {
+		t.Error(".p-autoclog__hook:has(> .slick-online-count) .test-stack-inner didn't reach the stack's own element")
+	}
+
+	// hovering the stack: nothing the hook's rules see; hovering the count:
+	// its :has(> .slick-online-count:hover)
+	key := v.topKey
+	if v.topStyle.Vars["--count-hovered"] != "" {
+		t.Error("the hook matched the count's :hover before a hover")
+	}
+	v.setState(stackBox, css.StateHover, true)
+	layNodes(v, v.nodes)
+	if v.topKey != key || v.topStyle.Vars["--count-hovered"] != "" {
+		t.Errorf("hovering the stack: the hook's key moved %v, --count-hovered %q; want neither", v.topKey != key, v.topStyle.Vars["--count-hovered"])
+	}
+	v.setState(count, css.StateHover, true)
+	layNodes(v, v.nodes)
+	if v.topStyle.Vars["--count-hovered"] != "y" {
+		t.Error("hovering the count: the hook's :has(> .slick-online-count:hover) didn't follow")
+	}
 
 	// no count: the hook is display:contents and the stack lays out alone
 	v2, d2 := lay(`[{"t":"@","n":"Stack","k":1}]`)
@@ -85,5 +127,14 @@ func TestFlexItemsHasSeesTree(t *testing.T) {
 	}
 	if d2.Size.X != 60 || d2.Size.Y != 28 {
 		t.Errorf("the stack alone lays out %v, want 60x28", d2.Size)
+	}
+	if innerVar != "" {
+		t.Error("the stack without the count matched .p-autoclog__hook:has(> .slick-online-count): another tree's hook")
+	}
+
+	// text alone in the hook: not :empty
+	v3, _ := lay(`[{"t":"#","v":"3 online"}]`)
+	if v3.topStyle == nil || v3.topStyle.Vars["--hook-empty"] != "" {
+		t.Errorf("the hook holding text matched :empty (%v)", v3.topStyle)
 	}
 }

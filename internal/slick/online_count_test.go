@@ -35,12 +35,12 @@ func TestOnlineCountLikeSlack(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = fs.Close() })
 	const ch = fakeslack.ViewsChannel
-	var people []string
+	var members []string
 	for i := 1; i <= 6; i++ {
-		people = append(people, fakeslack.SynthMemberID(91000+i))
+		members = append(members, fakeslack.SynthMemberID(91000+i))
 	}
-	fs.SetRoster(ch, people...)
-	for i, id := range people {
+	fs.SetRoster(ch, members...)
+	for i, id := range members {
 		p := "active"
 		if i >= 4 {
 			p = "away"
@@ -52,8 +52,8 @@ func TestOnlineCountLikeSlack(t *testing.T) {
 	if _, err := h.app.ChannelInfo(h.ctx(), ch); err != nil {
 		t.Fatal(err)
 	}
-	if n, ok := h.app.MemberCountCached(ch); !ok || n != len(people) {
-		t.Fatalf("%s's member count: %d (%v), want %d", ch, n, ok, len(people))
+	if n, ok := h.app.MemberCountCached(ch); !ok || n != len(members) {
+		t.Fatalf("%s's member count: %d (%v), want %d", ch, n, ok, len(members))
 	}
 	h.importFile(filepath.Join(dir, "OnlineCount.js"))
 	if err := h.s.SetEnabled(h.ctx(), "OnlineCount", true); err != nil {
@@ -62,7 +62,7 @@ func TestOnlineCountLikeSlack(t *testing.T) {
 	if info := h.plugin("OnlineCount"); !info.Running || info.StartError != "" {
 		t.Fatalf("OnlineCount didn't start: %+v", info)
 	}
-	h.render(1, "BaseAvatarStack", map[string]any{"channelId": ch, "memberCount": len(people)})
+	h.render(1, "BaseAvatarStack", map[string]any{"channelId": ch, "memberCount": len(members)})
 	shows := func(want string) func([]any) bool {
 		return func(nodes []any) bool { text, _ := onlineCountOf(nodes); return text == want }
 	}
@@ -71,13 +71,41 @@ func TestOnlineCountLikeSlack(t *testing.T) {
 		t.Errorf("its tip %q, want %q", tip, "4 online, 2 away")
 	}
 
-	// users/list asked for the channel's people the way the plugin does
-	if fs.UserListFilters() == nil || !slices.Contains(fs.UserListFilters(), "everyone AND NOT bots AND NOT apps") {
-		t.Errorf("no edge users/list for the channel's people: filters %q", fs.UserListFilters())
+	// users/list asked for the channel's people the way the plugin does,
+	// once (six people: one page), and nothing keeps asking: a second
+	// with the count drawn adds no users/list and no presence_sub
+	people := func() int {
+		n := 0
+		for _, f := range fs.UserListFilters() {
+			if f == "everyone AND NOT bots AND NOT apps" {
+				n++
+			}
+		}
+		return n
+	}
+	subs := func() int {
+		n := 0
+		for _, f := range fs.SocketFrames() {
+			if strings.Contains(f, `"presence_sub"`) {
+				n++
+			}
+		}
+		return n
+	}
+	if n := people(); n != 1 {
+		t.Errorf("%d edge users/list for the channel's people, want 1", n)
+	}
+	lists, frames := fs.CallCount("edge/users/list"), subs()
+	time.Sleep(time.Second)
+	if n := fs.CallCount("edge/users/list"); n != lists {
+		t.Errorf("%d more edge users/list in a second with the count drawn", n-lists)
+	}
+	if n := subs(); n != frames {
+		t.Errorf("%d more presence_sub in a second with the count drawn", n-frames)
 	}
 	// presence_sub carries every one of the channel's people
 	sub := lastPresenceSub(fs)
-	for _, id := range people {
+	for _, id := range members {
 		if !slices.Contains(sub, id) {
 			t.Errorf("presence_sub doesn't carry %s: %v", id, sub)
 		}
@@ -86,7 +114,7 @@ func TestOnlineCountLikeSlack(t *testing.T) {
 	var counted map[string]int
 	h.jsInto(`const g = T.getExport((e) => typeof e === 'function' && e.name === 'getPresenceSubscriptionByTeamId')
 		return g(T.getRawState().selfTeamIds.teamId) ?? null`, &counted)
-	for _, id := range append([]string{fakeslack.SelfID}, people...) {
+	for _, id := range append([]string{fakeslack.SelfID}, members...) {
 		if counted[id] < 1 {
 			t.Errorf("getPresenceSubscriptionByTeamId has no count for %s: %v", id, counted)
 		}
@@ -98,10 +126,13 @@ func TestOnlineCountLikeSlack(t *testing.T) {
 	}
 
 	// one of the away people comes online: the count follows
-	fs.SetPresence(people[4], "active")
+	fs.SetPresence(members[4], "active")
 	_, tip = onlineCountOf(h.waitTree(t, 1, "the count after a presence_change", shows("5")))
 	if tip != "5 online, 1 away" {
 		t.Errorf("its tip after the change %q, want %q", tip, "5 online, 1 away")
+	}
+	if n := fs.CallCount("edge/users/list"); n != lists {
+		t.Errorf("a presence_change made %d more edge users/list", n-lists)
 	}
 
 	// stopped, it lets their presence go
@@ -110,7 +141,7 @@ func TestOnlineCountLikeSlack(t *testing.T) {
 	}
 	eventually(t, 5*time.Second, "presence_sub without the channel's people", func() bool {
 		s := lastPresenceSub(fs)
-		return s != nil && !slices.ContainsFunc(people, func(id string) bool { return slices.Contains(s, id) })
+		return s != nil && !slices.ContainsFunc(members, func(id string) bool { return slices.Contains(s, id) })
 	})
 }
 
