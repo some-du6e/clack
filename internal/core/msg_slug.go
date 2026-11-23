@@ -9,6 +9,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // Message slugs (a message_mention: a pasted message link, the "message"
@@ -294,6 +295,20 @@ func slugMentionName(u *slack.User, real bool) string {
 		return u.Profile.DisplayName
 	}
 	return realName
+}
+
+// MentionName is MemberSlug's name for member u: wg (their real name)
+// under forceRealNames (RealNamesInMentions), else getMemberMentionName
+// (store.DisplayName). A real name Clack counts as none (memberRealName:
+// a lone U+200B, only spaces) names the member as getMemberMentionName
+// does, never a blank-looking "@".
+func MentionName(u *slack.User, real bool) string {
+	if real {
+		if n := memberRealName(u); n != "" {
+			return n
+		}
+	}
+	return store.DisplayName(u)
 }
 
 // realNamesInMentions is shouldDisplayRealNamesInMentions (client-boot

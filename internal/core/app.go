@@ -1421,7 +1421,7 @@ func avatarURL(u *slack.User, size int, viewerTeam string) string {
 func (a *App) userOf(u *slack.User) User {
 	viewer := firstNonEmpty(a.C.Creds.Team, a.S.TeamID)
 	v := User{
-		ID: u.ID, Name: store.DisplayName(u), RealName: strings.TrimSpace(firstNonEmpty(u.Profile.RealName, u.RealName)), Handle: u.Name,
+		ID: u.ID, Name: store.DisplayName(u), RealName: memberRealName(u), Handle: u.Name,
 		DisplaySet: strings.TrimSpace(u.Profile.DisplayName) != "",
 		Avatar:     avatarURL(u, 72, viewer), Avatar192: avatarURL(u, 192, viewer), Avatar512: avatarURL(u, 512, viewer),
 		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, Email: u.Profile.Email, StatusText: u.Profile.StatusText,
@@ -1439,9 +1439,6 @@ func (a *App) userOf(u *slack.User) User {
 		v.EnterpriseID, v.Teams, v.EnterpriseAdmin = eu.EnterpriseID, eu.Teams, eu.IsAdmin
 	}
 	v.TeamID, v.External = a.locality(u)
-	if v.RealName == "​" {
-		v.RealName = ""
-	}
 	// the status emoji through its status_emoji_display_info entry (by
 	// emoji_name, not the list's first: status_emoji.go)
 	v.StatusEmojiInfo = parseStatusEmojiInfo(u.Profile.StatusEmojiDisplay)
@@ -2381,4 +2378,19 @@ func chanID(raw json.RawMessage) string {
 	}
 	_ = json.Unmarshal(raw, &c)
 	return c.ID
+}
+
+// memberRealName is the member's real name as Clack names people: the
+// profile's, else the member's, trimmed, and none for a lone U+200B (Hack
+// Club profiles that set their real name to a zero-width space to leave
+// it blank, Karim's among them).
+func memberRealName(u *slack.User) string {
+	if u == nil {
+		return ""
+	}
+	n := strings.TrimSpace(firstNonEmpty(u.Profile.RealName, u.RealName))
+	if n == "\u200b" {
+		return ""
+	}
+	return n
 }

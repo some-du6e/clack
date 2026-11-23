@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/some-du6e/clack/internal/core"
-	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
@@ -35,7 +34,9 @@ func installMemberRead(c *core.App) {
 		u, ok := c.S.User(id) // getMemberById: a miss is asked for, a hit is an access
 		switch {
 		case ok:
-			return store.DisplayName(u), richview.MemberLoaded // richtext's userSpan reads the same name
+			// MemberSlug's name: the real name under forceRealNames
+			// (shouldDisplayRealNamesInMentions), else getMemberMentionName
+			return core.MentionName(u, c.RealNamesInMentions()), richview.MemberLoaded
 		case !core.LooksLikeMemberID(id):
 			// getMemberById makes any other id a non-existent member at
 			// once, which MemberSlug draws as "@id": the parsed text
@@ -52,7 +53,7 @@ func installMemberRead(c *core.App) {
 		u, ok := c.S.RawUser(id) // getRawMemberById: no access, nothing asked for
 		switch {
 		case ok && u != nil:
-			return store.DisplayName(u), richview.MemberLoaded
+			return core.MentionName(u, c.RealNamesInMentions()), richview.MemberLoaded
 		case !core.LooksLikeMemberID(id):
 			return "", richview.MemberLoaded
 		case c.MissingMember(id) == core.MemberNonExistent:

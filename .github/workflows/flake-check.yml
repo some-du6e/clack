@@ -5975,6 +5975,45 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # message-polish: the message pane's P1 batch: the older page asked for
+  # ahead of the scroll (BaseDynamicList's loadMore), a failed emoji's
+  # broken image icon, one day pill at the top and over the toolbar, the
+  # toolbar's tips past the list's clip, the toolbar following its
+  # message, the reactions bar opening on your own hidden reaction, and
+  # mention pills' real names.
+  message-polish:
+    if: ${{ !inputs.only || startsWith('message-polish', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps, Xvfb and Mesa
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the message pane polish tests (COUNT; the pixel ones on Mesa llvmpipe)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=$COUNT -timeout 15m -run '^(TestOlderPageAheadOfScrollLikeSlack|TestDayPillStraddlingTheTopLikeSlack|TestToolbarTipOverTheListTopLikeSlack|TestToolbarFollowsItsMessageLikeSlack|TestOwnHiddenReactionOpensTheBarLikeSlack|TestDayPillInputIsItsOwnBoxLikeSlack)$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 5m -run '^TestFailedEmojiDrawsBrokenImageLikeSlack$' ./internal/ui/richview || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestMentionPillRealNamesLikeSlack$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -6109,6 +6148,7 @@ jobs:
       - plugins-work-1
       - plugins-work-2
       - quote-paste-win
+      - message-polish
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

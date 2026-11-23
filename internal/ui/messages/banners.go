@@ -517,7 +517,9 @@ func (s *listState) jumpToTime(h Host, t time.Time) {
 // that can't open a window (no conversation model) pages back until the
 // date is loaded or history ends.
 func (s *listState) pendingDateJump(now time.Time) {
-	if s.pendingDate.IsZero() || s.thread || !s.snap.loaded || s.snap.older {
+	// an older page out doesn't hold it: a window it opens turns the page
+	// away, and paging back below waits while one is out (loadOlder)
+	if s.pendingDate.IsZero() || s.thread || !s.snap.loaded {
 		return
 	}
 	msgs := s.snap.msgs

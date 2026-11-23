@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -352,12 +353,20 @@ func TestPrependKeepsJoinSummaryInPlace(t *testing.T) {
 		}
 		all = append(all, m)
 	}
+	// the older page is held until the summary is at the top: Slack's
+	// list asks for it as soon as fewer than half a pane and 400px of rows
+	// are over the viewport (olderAhead), at the channel's open here
+	release := make(chan struct{})
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(free)
 	hook := func(method string, f url.Values) (any, bool) {
 		if method != "conversations.history" || f.Get("channel") != ch {
 			return nil, false
 		}
 		end := len(all)
 		if l := f.Get("latest"); l != "" {
+			<-release
 			for end > 0 && all[end-1]["ts"].(string) >= l {
 				end--
 			}
@@ -390,6 +399,7 @@ func TestPrependKeepsJoinSummaryInPlace(t *testing.T) {
 		t.Fatalf("first row %s, want the join summary %s", k0, key)
 	}
 	s.lastOlder = time.Time{}
+	free()
 	until(t, 10*time.Second, "the older page", e.frame, func() bool { return len(s.snap.msgs) >= 40 })
 	e.frame()
 	j := -1
