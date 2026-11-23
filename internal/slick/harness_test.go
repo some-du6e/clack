@@ -198,13 +198,14 @@ func (u *testUI) style(substr string) string {
 }
 
 type harness struct {
-	t   *testing.T
-	tt  *taut.Taut
-	s   *Slick
-	app *core.App
-	api *fakeAPI
-	ui  *testUI
-	dir string
+	media *harnessMedia // what the page's <audio> elements open (media_api_test.go)
+	t     *testing.T
+	tt    *taut.Taut
+	s     *Slick
+	app   *core.App
+	api   *fakeAPI
+	ui    *testUI
+	dir   string
 
 	fetchMu sync.Mutex
 	fetches map[string]string // URL prefix → JSON body
@@ -279,8 +280,8 @@ func newBootedHarness(t *testing.T, fs *fakeslack.Server) *harness {
 func newHarnessApp(t *testing.T, api *fakeAPI, app *core.App) *harness {
 	t.Helper()
 	h := &harness{t: t, app: app, api: api, dir: t.TempDir(), fetches: map[string]string{},
-		ui: &testUI{trees: map[uint64][]byte{}, styles: map[string]string{}}}
-	tt, err := taut.New(taut.Options{
+		ui: &testUI{trees: map[uint64][]byte{}, styles: map[string]string{}}, media: &harnessMedia{}}
+	opts := taut.Options{
 		App: app, Dir: filepath.Join(h.dir, "taut"), CredsPath: filepath.Join(h.dir, "creds.json"), UI: h.ui.hooks(), NoAutoStart: true,
 		CacheDir: filepath.Join(os.TempDir(), "clack-slick-test-cache"), Fetch: h.fetch,
 		Log: func(level, msg string) {
@@ -288,7 +289,9 @@ func newHarnessApp(t *testing.T, api *fakeAPI, app *core.App) *harness {
 				t.Logf("js %s: %s", level, msg)
 			}
 		},
-	})
+	}
+	withPageMedia(&opts, h.media) // media_api_test.go
+	tt, err := taut.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}

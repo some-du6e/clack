@@ -63,6 +63,10 @@ type Options struct {
 	// the input's accept attribute). Return nil files (and nil error) when
 	// the user cancels. Called on its own goroutine. nil = inputs do nothing.
 	PickFiles func(accept string, multiple bool) ([]PickedFile, error)
+	// Media plays the <audio> and <video> elements' sources (media.go).
+	// nil = play() rejects with NotSupportedError, as a browser without a
+	// media pipeline does.
+	Media MediaHost
 	// Language is navigator.language (default "en-US"); Platform is
 	// navigator.platform (default from GOOS: "MacIntel", "Win32", "Linux x86_64").
 	Language, Platform string
