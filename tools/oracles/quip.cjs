@@ -340,6 +340,14 @@ KINDS['quip-save-title'] = c => {
   if (!text) return { title: 'Untitled', richText: hexOf(pbu.Rm(R.Uw('Untitled'))) };
   return { title: text.substring(0, 255), richText: hexOf(pbu.Rm(R.oc([section], () => null, opts))) };
 };
+// Slack's save writer over a section's RTML: CITi.F0 (renderToString,
+// the DI handler over W77Y's parse of the DOM the RTML builds). A case
+// holds when the RTML Clack wrote comes back unchanged: Slack's editor,
+// loading it and saving it as it is, would send those bytes.
+KINDS['quip-apply-runs'] = c => {
+  if (c.in.rtml === '(refused)') return '(refused)';
+  return req('CITi').F0(c.in.rtml, null, {});
+};
 module.exports = { req, classes, classOf, build, hexOf, pbu, KINDS };
 if (require.main === module) {
   const [kind, file] = process.argv.slice(2);

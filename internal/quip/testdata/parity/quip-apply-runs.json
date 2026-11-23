@@ -1,0 +1,28 @@
+{
+  "dimension": "quip-apply-runs",
+  "slack": {"kind": "slack-js", "build": "web client 5718bdb1b28b", "captured": "2026-11-23", "source": "CITi.F0 (renderToString: the save writer DI over the RTML's DOM)", "refresh": "quip-apply-runs", "notes": "Each case's rtml is what Clack's ApplyRuns writes for the base and the editor's runs; Slack's value is its save writer's RTML for the DOM that RTML builds, so a case holds when Slack's editor, loading Clack's RTML and saving it unchanged, sends the same bytes. (refused) cases are edits Clack refuses."},
+  "cases": [
+    {"name": "plain", "in": {"base": "Hello world", "runs": [{"text": "Hello there"}], "rtml": "Hello there"}, "slack": "Hello there"},
+    {"name": "bold added", "in": {"base": "Hello world", "runs": [{"text": "Hello "}, {"text": "world", "bold": true}], "rtml": "Hello <b>world</b>"}, "slack": "Hello <b>world</b>"},
+    {"name": "typing inside bold", "in": {"base": "Hello <b>world</b>", "runs": [{"text": "Hello "}, {"text": "big world", "bold": true}], "rtml": "Hello <b>big world</b>"}, "slack": "Hello <b>big world</b>"},
+    {"name": "entities", "in": {"base": "a &amp; b", "runs": [{"text": "a & b & c"}], "rtml": "a &amp; b &amp; c"}, "slack": "a &amp; b &amp; c"},
+    {"name": "control kept in place", "in": {"base": "Ask <control id=\"temp:C:X1\"></control> today", "runs": [{"text": "Please ask "}, {"control": "temp:C:X1"}, {"text": " today"}], "rtml": "Please ask <control id=\"temp:C:X1\"></control> today"}, "slack": "Please ask <control id=\"temp:C:X1\"></control> today"},
+    {"name": "control taken out", "in": {"base": "Ask <control id=\"temp:C:X1\"></control> today", "runs": [{"text": "Ask today"}], "rtml": "Ask today"}, "slack": "Ask today"},
+    {"name": "control moved", "in": {"base": "<control id=\"temp:C:X1\"></control> said hi", "runs": [{"text": "Hi, said "}, {"control": "temp:C:X1"}], "rtml": "Hi, said <control id=\"temp:C:X1\"></control>"}, "slack": "Hi, said <control id=\"temp:C:X1\"></control>"},
+    {"name": "link added", "in": {"base": "see the docs", "runs": [{"text": "see "}, {"text": "the docs", "href": "https://example.com/docs"}], "rtml": "see <a href=\"https://example.com/docs\">the docs</a>"}, "slack": "see <a href=\"https://example.com/docs\">the docs</a>"},
+    {"name": "link keeps its file id", "in": {"base": "see <a href=\"https://example.com/f\" data-slack-file-id=\"F123\">file</a>", "runs": [{"text": "see "}, {"text": "file", "href": "https://example.com/f"}], "rtml": "see <a href=\"https://example.com/f\" data-slack-file-id=\"F123\">file</a>"}, "slack": "see <a href=\"https://example.com/f\" data-slack-file-id=\"F123\">file</a>"},
+    {"name": "link retargeted", "in": {"base": "see <a href=\"https://example.com/f\" data-slack-file-id=\"F123\">file</a>", "runs": [{"text": "see "}, {"text": "file", "href": "https://example.com/g"}], "rtml": "see <a href=\"https://example.com/g\">file</a>"}, "slack": "see <a href=\"https://example.com/g\">file</a>"},
+    {"name": "comment anchor carried", "in": {"base": "a <annotation id=\"c1\">commented</annotation> b", "runs": [{"text": "a very commented b"}], "rtml": "a very <annotation id=\"c1\">commented</annotation> b"}, "slack": "a very <annotation id=\"c1\">commented</annotation> b"},
+    {"name": "typing inside a comment anchor", "in": {"base": "<annotation id=\"c1\">good text</annotation>", "runs": [{"text": "good new text"}], "rtml": "<annotation id=\"c1\">good new text</annotation>"}, "slack": "<annotation id=\"c1\">good new text</annotation>"},
+    {"name": "comment anchor's text deleted", "in": {"base": "x <annotation id=\"c1\">gone</annotation> y", "runs": [{"text": "x y"}], "rtml": "x y"}, "slack": "x y"},
+    {"name": "typed double space", "in": {"base": "a b", "runs": [{"text": "a  b"}], "rtml": "(refused)"}, "slack": "(refused)"},
+    {"name": "typed trailing space", "in": {"base": "a", "runs": [{"text": "a "}], "rtml": "(refused)"}, "slack": "(refused)"},
+    {"name": "no-break space kept", "in": {"base": "a  b", "runs": [{"text": "a  b c"}], "rtml": "a  b c"}, "slack": "a  b c"},
+    {"name": "a control the section lacks", "in": {"base": "x", "runs": [{"text": "x "}, {"control": "temp:C:NOPE"}], "rtml": "(refused)"}, "slack": "(refused)"},
+    {"name": "line break", "in": {"base": "line one", "runs": [{"text": "line one"}, {"break": true}, {"text": "line two"}], "rtml": "line one<br>line two"}, "slack": "line one<br>line two"},
+    {"name": "bold over a control", "in": {"base": "hi <control id=\"temp:C:X1\"></control>", "runs": [{"text": "hi "}, {"control": "temp:C:X1", "bold": true}], "rtml": "hi <b><control id=\"temp:C:X1\"></control></b>"}, "slack": "hi <b><control id=\"temp:C:X1\"></control></b>"},
+    {"name": "bold and italic overlapping", "in": {"base": "abcdef", "runs": [{"text": "ab", "bold": true}, {"text": "cd", "bold": true, "italic": true}, {"text": "ef", "italic": true}], "rtml": "<b>ab<i>cd</i></b><i>ef</i>"}, "slack": "<b>ab<i>cd</i></b><i>ef</i>"},
+    {"name": "underline, strike, code", "in": {"base": "one two three", "runs": [{"text": "one", "underline": true}, {"text": " "}, {"text": "two", "strike": true}, {"text": " "}, {"text": "three", "code": true}], "rtml": "<u>one</u> <del>two</del> <code>three</code>"}, "slack": "<u>one</u> <del>two</del> <code>three</code>"},
+    {"name": "formatting taken off", "in": {"base": "<b>bold</b> text", "runs": [{"text": "bold text"}], "rtml": "bold text"}, "slack": "bold text"}
+  ]
+}

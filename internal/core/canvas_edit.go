@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/quip"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -611,16 +612,185 @@ func (a *App) SaveCanvasText(ctx context.Context, id, sectionID, orig, text stri
 	})
 }
 
-// SaveCanvasDelete deletes a block's section (the block emptied), checked
-// against orig as SaveCanvasText checks it.
-func (a *App) SaveCanvasDelete(ctx context.Context, id, sectionID, orig string) error {
+// SaveCanvasDelete deletes a block's section (the block emptied). orig is
+// the block's spans when the edit began, which the section has to hold
+// still (else ErrCanvasConflict). A section holding mentions, emoji or
+// dates isn't deleted yet (quip.ErrUnsupported): what Slack's editor does
+// with their control sections then isn't ported.
+func (a *App) SaveCanvasDelete(ctx context.Context, id, sectionID string, orig []richtext.Span) error {
 	return a.queueSave(ctx, id, func(base func(string) (sectionBase, bool)) ([]quip.Edit, error) {
-		b, err := plainBase(base, sectionID, orig)
-		if err != nil {
-			return nil, err
+		b, ok := base(sectionID)
+		switch {
+		case !ok:
+			return nil, fmt.Errorf("%w: section %s isn't in the canvas", ErrCanvasConflict, sectionID)
+		case b.typ != quip.TypeText:
+			return nil, fmt.Errorf("%w: a section of type %d", quip.ErrUnsupported, b.typ)
+		}
+		plain, ok := quip.RTMLPlain(b.rtml)
+		if !ok {
+			return nil, fmt.Errorf("%w: RTML Slack can't parse", quip.ErrUnsupported)
+		}
+		if plainCompare(plain) != plainCompare(spansPlain(orig)) {
+			return nil, fmt.Errorf("%w: section %s", ErrCanvasConflict, sectionID)
+		}
+		if strings.ContainsRune(plain, quip.ControlMark) {
+			return nil, fmt.Errorf("%w: deleting a block with mentions, emoji or dates", quip.ErrUnsupported)
 		}
 		return []quip.Edit{{Kind: quip.EditDelete, SectionID: sectionID, Base: b.seq}}, nil
 	})
+}
+
+// SaveCanvasSpans saves a text block's new content as the editor holds
+// it (canvas spans: text with its formatting and links, line breaks, and
+// the block's mentions and emoji), written onto the section's RTML
+// (quip.ApplyRuns): each control stays where the span standing for it is,
+// and comment anchors move with their characters. orig is the block's
+// spans when the edit began, which the section has to hold still (else
+// ErrCanvasConflict). It refuses (quip.ErrUnsupported) what Slack's editor
+// would write and Clack can't yet: a new mention or emoji (a control
+// section of its own), a date, an @-mention of a group, a canvas, file or
+// message mention, highlighted text, a code block.
+func (a *App) SaveCanvasSpans(ctx context.Context, id, sectionID string, orig, spans []richtext.Span) error {
+	return a.queueSave(ctx, id, func(base func(string) (sectionBase, bool)) ([]quip.Edit, error) {
+		b, ok := base(sectionID)
+		switch {
+		case !ok:
+			return nil, fmt.Errorf("%w: section %s isn't in the canvas", ErrCanvasConflict, sectionID)
+		case b.typ != quip.TypeText:
+			return nil, fmt.Errorf("%w: a section of type %d", quip.ErrUnsupported, b.typ)
+		case b.sty == quip.StyleCode:
+			return nil, fmt.Errorf("%w: a code block", quip.ErrUnsupported)
+		}
+		plain, ok := quip.RTMLPlain(b.rtml)
+		if !ok {
+			return nil, fmt.Errorf("%w: RTML Slack can't parse", quip.ErrUnsupported)
+		}
+		if plainCompare(plain) != plainCompare(spansPlain(orig)) {
+			return nil, fmt.Errorf("%w: section %s", ErrCanvasConflict, sectionID)
+		}
+		for _, s := range orig {
+			switch {
+			case !controlSpan(s), s.Kind == richtext.User && s.ID != "", s.Kind == richtext.Channel && s.ID != "", s.Kind == richtext.Emoji:
+			default:
+				// the editor holds a person, a channel and an emoji as
+				// they are; anything else it would turn into text or a link
+				return nil, fmt.Errorf("%w: a date, @-mention of a group or canvas, file or message mention", quip.ErrUnsupported)
+			}
+		}
+		ctls, _ := quip.RTMLControls(b.rtml)
+		runs, err := spanRuns(orig, spans, ctls)
+		if err != nil {
+			return nil, err
+		}
+		rtml, err := quip.ApplyRuns(b.rtml, runs)
+		if err != nil {
+			return nil, err
+		}
+		return []quip.Edit{{Kind: quip.EditText, SectionID: sectionID, RTML: rtml, Base: b.seq}}, nil
+	})
+}
+
+// controlSpan reports whether a canvas span is one of Quip's controls.
+func controlSpan(s richtext.Span) bool {
+	switch s.Kind {
+	case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast, richtext.Emoji, richtext.Date:
+		return true
+	case richtext.Link:
+		return s.Control
+	}
+	return false
+}
+
+// spansPlain is spans as quip.RTMLPlain writes a section: a control as
+// quip.ControlMark, a line break as "\n".
+func spansPlain(spans []richtext.Span) string {
+	var b strings.Builder
+	for _, s := range spans {
+		switch {
+		case controlSpan(s):
+			b.WriteRune(quip.ControlMark)
+		case s.Kind == richtext.Break:
+			b.WriteByte('\n')
+		default:
+			b.WriteString(s.Text)
+		}
+	}
+	return b.String()
+}
+
+// spanRuns turns an editor's spans into ApplyRuns' runs: a control span
+// is the section's control it stood for when the edit began (orig's
+// controls are ctls, in order), matched in order by what it shows, then
+// anywhere (a cut and paste).
+func spanRuns(orig, spans []richtext.Span, ctls []string) ([]quip.Run, error) {
+	type ctl struct {
+		s  richtext.Span
+		id string
+	}
+	var have []ctl
+	for _, s := range orig {
+		if controlSpan(s) {
+			if len(have) >= len(ctls) {
+				return nil, fmt.Errorf("%w: the block shows more controls than the section holds", ErrCanvasConflict)
+			}
+			have = append(have, ctl{s, ctls[len(have)]})
+		}
+	}
+	if len(have) != len(ctls) {
+		return nil, fmt.Errorf("%w: the block shows fewer controls than the section holds", ErrCanvasConflict)
+	}
+	used := make([]bool, len(have))
+	next := 0
+	var runs []quip.Run
+	for _, s := range spans {
+		switch {
+		case controlSpan(s):
+			found := -1
+			for k := next; k < len(have) && found < 0; k++ {
+				if !used[k] && sameControl(have[k].s, s) {
+					found = k
+				}
+			}
+			for k := 0; k < len(have) && found < 0; k++ {
+				if !used[k] && sameControl(have[k].s, s) {
+					found = k
+				}
+			}
+			if found < 0 {
+				return nil, fmt.Errorf("%w: a new mention, emoji or date", quip.ErrUnsupported)
+			}
+			used[found], next = true, found+1
+			runs = append(runs, quip.Run{Control: have[found].id})
+		case s.Kind == richtext.Break:
+			runs = append(runs, quip.Run{Break: true})
+		case s.Kind == richtext.Text || s.Kind == richtext.Link:
+			if s.Style&richtext.Highlight != 0 {
+				return nil, fmt.Errorf("%w: highlighted text", quip.ErrUnsupported)
+			}
+			r := quip.Run{Text: s.Text, Bold: s.Style&richtext.Bold != 0, Italic: s.Style&richtext.Italic != 0,
+				Underline: s.Style&richtext.Underline != 0, Strike: s.Style&richtext.Strike != 0, Code: s.Style&richtext.Code != 0}
+			if s.Kind == richtext.Link {
+				r.Href = s.URL
+			}
+			runs = append(runs, r)
+		default:
+			return nil, fmt.Errorf("%w: an inline object of kind %d", quip.ErrUnsupported, s.Kind)
+		}
+	}
+	return runs, nil
+}
+
+// sameControl reports whether two spans show the same control (an
+// editor's copy of a mention is a new span, equal in what it shows).
+func sameControl(a, b richtext.Span) bool {
+	if a.Kind != b.Kind {
+		return false
+	}
+	switch a.Kind {
+	case richtext.User, richtext.Channel, richtext.Emoji:
+		return a.ID == b.ID && (a.ID != "" || a.Text == b.Text)
+	}
+	return false
 }
 
 // plainBase is the base of a plain-text edit of sectionID begun from orig.

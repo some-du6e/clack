@@ -280,12 +280,12 @@ func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*
 		key := b.ID + "\x00" + string(rune('A'+b.Kind)) + "\x00" + canvas.Markdown(*b) + fileKey(d, b) + mentionKey(b)
 		if o, ok := old[key]; ok && len(b.Children) == 0 && len(b.Columns) == 0 && b.Kind != canvas.Table {
 			o.b = b
-			o.edOK, o.edWhy = canvas.Editable(*b)
+			o.edOK, o.edWhy = v.editable(*b)
 			out = append(out, o)
 			continue
 		}
 		x := &blk{b: b, key: key}
-		x.edOK, x.edWhy = canvas.Editable(*b)
+		x.edOK, x.edWhy = v.editable(*b)
 		switch b.Kind {
 		case canvas.Table:
 			x.cells = v.tableCells(d, b)

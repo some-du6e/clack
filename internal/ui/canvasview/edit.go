@@ -65,8 +65,8 @@ type session struct {
 	kind    canvas.Kind
 	level   int
 	checked bool
-	orig    string // the markdown it started from
-	text    string // and its plain text: the save checks the section still holds it
+	orig    string          // the markdown it started from
+	spans   []richtext.Span // and its spans: the save checks the section still holds them
 	ed      *composer.Editor
 	focus   bool
 	ver     uint64
@@ -155,44 +155,77 @@ func (e *editState) saveQuip(v *View, f func(ctx context.Context, a *core.App) e
 	}()
 }
 
-// quipRefuses reports whether a finished session with markdown md changes
-// something edit-document can't save yet: a new block, Quip's default
-// content typed over, text with formatting, links, mentions, emoji or
-// line breaks, a style, level or box change. A session that changed
-// nothing, or a new block left empty, saves nothing and closes.
-func quipRefuses(s *session, md string, plain bool) bool {
+// quipRefuses reports whether a finished session with markdown md (blocks
+// bs) changes something edit-document can't save yet: a new block or one
+// split in two, Quip's default content typed over, a quote's paragraph, a
+// style, level or box change, a code block. A session that changed
+// nothing, or a new block left empty, saves nothing and closes; a block
+// emptied is deleted.
+func quipRefuses(s *session, md string, bs []canvas.Block) bool {
 	switch {
 	case !quipChanged(s, md):
 		return false
 	case s.target == nil || s.def || s.quoted:
 		return true
+	case md == "":
+		return false
+	case len(bs) != 1:
+		return true
 	}
-	return md != "" && !plain
+	b := bs[0]
+	return b.Kind != s.kind || b.Level != s.level || b.Checked != s.checked || !quipTextKind(b.Kind)
+}
+
+// quipTextKind: a block that is one text section in Quip (a paragraph, a
+// heading, a list item).
+func quipTextKind(k canvas.Kind) bool {
+	switch k {
+	case canvas.Paragraph, canvas.Heading1, canvas.Heading2, canvas.Heading3, canvas.Bullet, canvas.Numbered, canvas.Check:
+		return true
+	}
+	return false
+}
+
+// editable is whether block b opens in the editor and saves, and else
+// what is in the way: through edit-document (the switch on) whatever its
+// section's text holds that the editor keeps as it is; else what canvas
+// markdown carries (canvas.Editable).
+func (v *View) editable(b canvas.Block) (bool, string) {
+	if !quipOn(v) {
+		return canvas.Editable(b)
+	}
+	if !quipTextKind(b.Kind) {
+		return false, "this kind of block"
+	}
+	for _, s := range b.Spans {
+		switch s.Kind {
+		case richtext.Text, richtext.Break, richtext.Emoji:
+		case richtext.Link:
+			if s.Control {
+				return false, "a canvas, file or message mention"
+			}
+		case richtext.User, richtext.Channel:
+			if s.ID == "" {
+				return false, "a mention Clack can't match to a person or channel"
+			}
+		case richtext.Date:
+			return false, "a date"
+		case richtext.Broadcast:
+			return false, "an @" + s.ID + " mention"
+		default:
+			return false, "an inline object"
+		}
+		if s.Style&richtext.Highlight != 0 {
+			return false, "highlighted text"
+		}
+	}
+	return true, ""
 }
 
 // quipChanged reports whether finishing a session with markdown md saves
 // anything (finish's cases that return without a save don't).
 func quipChanged(s *session, md string) bool {
 	return !(s.def && md == "") && !(s.target != nil && md == s.orig && !s.def) && !(s.target == nil && md == "")
-}
-
-// plainEdit is a finished session's text when edit-document can save it
-// now: one block of the same kind, level and box, all plain text.
-func plainEdit(s *session, bs []canvas.Block) (string, bool) {
-	if len(bs) != 1 || bs[0].Kind != s.kind || bs[0].Level != s.level || bs[0].Checked != s.checked {
-		return "", false
-	}
-	switch bs[0].Kind { // a code block's text isn't in its spans, and its RTML isn't typed text's
-	case canvas.Paragraph, canvas.Heading1, canvas.Heading2, canvas.Heading3, canvas.Bullet, canvas.Numbered, canvas.Check:
-	default:
-		return "", false
-	}
-	for _, sp := range bs[0].Spans {
-		if sp.Kind != richtext.Text || sp.Style != 0 {
-			return "", false
-		}
-	}
-	return canvas.SpansText(bs[0].Spans), true
 }
 
 func (e *editState) editing(b *blk) bool {
@@ -540,7 +573,7 @@ func (e *editState) start(v *View, b *blk) {
 		return
 	}
 	s := &session{target: b, id: b.b.ID, kind: b.b.Kind, level: b.b.Level, checked: b.b.Checked, orig: canvas.Markdown(*b.b),
-		text: b.b.Text(), ed: composer.NewEditor(), focus: true}
+		spans: append([]richtext.Span(nil), b.b.Spans...), ed: composer.NewEditor(), focus: true}
 	if b.parent != nil && b.parent.b.Kind == canvas.Quote && b.b.Kind == canvas.Paragraph {
 		// a quote's paragraph is a Quip section of its own (style 16):
 		// it saves as "> …" so it stays in the quote
@@ -572,7 +605,7 @@ func (e *editState) finish(v *View) bool {
 	// "> ", saves the same way as a quote's own paragraph)
 	check := unquote(bs)
 	for _, b := range check {
-		if ok, why := canvas.Editable(b); !ok {
+		if ok, why := v.editable(b); !ok {
 			if why == "" {
 				why = "this"
 			}
@@ -582,7 +615,6 @@ func (e *editState) finish(v *View) bool {
 			return false
 		}
 	}
-	quipText, quipPlain := plainEdit(s, bs)
 	if md := blocksMarkdown(bs); quipOn(v) && quipChanged(s, md) {
 		switch {
 		case v.h.Core().CanvasSaveState(v.id).ReadOnly:
@@ -591,9 +623,10 @@ func (e *editState) finish(v *View) bool {
 			s.refused = true
 			s.focus = true
 			return false
-		case quipRefuses(s, md, quipPlain):
-			// edit-document saves typed plain text in a block, or a block
-			// emptied, for now: nothing else is sent
+		case quipRefuses(s, md, bs):
+			// edit-document saves a block's own text (formatting, links,
+			// line breaks, its mentions and emoji), or the block emptied,
+			// for now: a new block, a style or level change isn't sent
 			v.h.Toast(cantEdit)
 			s.refused = true
 			s.focus = true
@@ -639,13 +672,14 @@ func (e *editState) finish(v *View) bool {
 		}
 		e.insertLocal(v, s.afterID, local)
 	}
-	if quipOn(v) { // against the text the session began from (session.text)
-		id, from := s.id, s.text
+	if quipOn(v) { // against what the session began from (session.spans)
+		id, from := s.id, s.spans
 		if ch.Operation == "delete" {
 			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasDelete(ctx, v.id, id, from) })
 			return true
 		}
-		e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasText(ctx, v.id, id, from, quipText) })
+		spans := bs[0].Spans
+		e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasSpans(ctx, v.id, id, from, spans) })
 		return true
 	}
 	e.save(v, func(ctx context.Context, a *core.App) error { return a.EditCanvas(ctx, v.id, ch) })

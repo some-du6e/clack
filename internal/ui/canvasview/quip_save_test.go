@@ -11,7 +11,9 @@ import (
 
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/quip"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/composer"
 )
 
 // The Quip canvas: plain blocks edit-document can save now, and one with a
@@ -101,8 +103,9 @@ func cantEdits(h *testHost) int {
 
 // With the switch on, each edit Clack can make the way Slack's client does
 // is one edit-document the fake takes (typed text, a ticked box, a rename,
-// a paragraph emptied), and none goes through canvases.edit. What it can't
-// make yet (text with a mention, a new block) says so and sends nothing.
+// a paragraph emptied, text typed around a mention, which stays), and none
+// goes through canvases.edit. What it can't make yet (a new block) says so
+// and sends nothing.
 func TestCanvasQuipSaves(t *testing.T) {
 	h, fs, v, s, frame := quipEnv(t)
 	ok := func(what string, n int) {
@@ -155,7 +158,7 @@ func TestCanvasQuipSaves(t *testing.T) {
 		t.Errorf("%d can't-edit toasts for saves Clack makes", n)
 	}
 
-	// text with a mention: refused in the editor, which stays open
+	// text typed before a mention: the mention stays, the same control
 	v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == quipMentID }))
 	frame()
 	if v.edit.cur == nil {
@@ -165,21 +168,28 @@ func TestCanvasQuipSaves(t *testing.T) {
 	ed.SetSelection(0, 0)
 	ed.InsertText("Please ")
 	frame()
-	if v.edit.finish(v) || v.edit.cur == nil || !v.edit.cur.refused || cantEdits(h) != 1 {
-		t.Errorf("text with a mention: finished, editor %v, toasts %d", v.edit.cur != nil, cantEdits(h))
+	if !v.edit.finish(v) {
+		t.Fatal("text typed before a mention was refused")
 	}
-	v.edit.discard(v)
+	settle(t, s, v, "the paragraph with its mention", func() bool {
+		b := quipBlock(fs, quipMentID)
+		return b != nil && strings.HasPrefix(b.Text(), "Please Ask ")
+	})
+	ok("text around a mention", 5)
+	if b := quipBlock(fs, quipMentID); len(b.Spans) == 0 || b.Spans[len(b.Spans)-1].Kind != richtext.User || b.Spans[len(b.Spans)-1].ID != "U0FAKE00001" {
+		t.Errorf("the mention after the save: %+v", b.Spans)
+	}
 
 	// a new block
 	v.StartNewBlock()
 	frame()
-	if v.edit.cur != nil || cantEdits(h) != 2 {
+	if v.edit.cur != nil || cantEdits(h) != 1 {
 		t.Errorf("a new block: editor %v, toasts %d", v.edit.cur != nil, cantEdits(h))
 	}
 	time.Sleep(200 * time.Millisecond)
 	frame()
-	if n := len(quipSaves(fs)); n != 4 {
-		t.Errorf("%d edit-document calls after the refusals, want 4", n)
+	if n := len(quipSaves(fs)); n != 5 {
+		t.Errorf("%d edit-document calls after the refusal, want 5", n)
 	}
 	if es := fs.CanvasEdits(); len(es) != 0 {
 		t.Errorf("%d canvases.edit calls, want none: %v", len(es), es)
@@ -248,5 +258,85 @@ func TestCanvasQuipSaveBanner(t *testing.T) {
 	}
 	if es := fs.CanvasEdits(); len(es) != 0 {
 		t.Errorf("%d canvases.edit calls, want none", len(es))
+	}
+}
+
+// Formatting typed in the editor saves through edit-document: bold
+// toggled on a word of a plain paragraph, then the word typed over in
+// italics, each one edit-document; the fake's block shows the styles.
+func TestCanvasQuipRichSaves(t *testing.T) {
+	_, fs, v, s, frame := quipEnv(t)
+	v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == quipFirstID }))
+	frame()
+	ed := v.edit.cur.ed
+	ed.SetSelection(len("First "), len("First paragraph"))
+	ed.ToggleStyle(composer.Bold)
+	frame()
+	if !v.edit.finish(v) {
+		t.Fatal("a bold word was refused")
+	}
+	styled := func(word string, st richtext.Style) func() bool {
+		return func() bool {
+			b := quipBlock(fs, quipFirstID)
+			if b == nil {
+				return false
+			}
+			for _, sp := range b.Spans {
+				if sp.Text == word && sp.Style&st != 0 {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	settle(t, s, v, "the bold word", styled("paragraph", richtext.Bold))
+	if n := len(quipSaves(fs)); n != 1 {
+		t.Errorf("%d edit-document calls, want 1", n)
+	}
+	r := quipSaves(fs)[0]
+	if len(r.Save.Sections) != 1 || !strings.Contains(quip.SectionRTML(&r.Save.Sections[0]), "<b>paragraph</b>") {
+		t.Errorf("the save's section %+v", r.Save.Sections)
+	}
+
+	// an italic word typed at the end
+	v.edit.start(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == quipFirstID }))
+	frame()
+	ed = v.edit.cur.ed
+	ed.SetSelection(ed.Doc().Len(), ed.Doc().Len())
+	ed.InsertText(" ")
+	ed.ToggleStyle(composer.Italic)
+	ed.InsertText("again")
+	frame()
+	if !v.edit.finish(v) {
+		t.Fatal("an italic word was refused")
+	}
+	settle(t, s, v, "the italic word", styled("again", richtext.Italic))
+	if es := fs.CanvasEdits(); len(es) != 0 {
+		t.Errorf("%d canvases.edit calls, want none", len(es))
+	}
+}
+
+// A canvas, file or message mention (Quip's control around a link) keeps
+// its block out of the editor with the switch on too: the editor would
+// hold it as a plain link, and a save would turn the mention into one.
+func TestCanvasQuipControlLinkNotEditable(t *testing.T) {
+	h, fs := newEnv(t, false)
+	h.a.SetQuipEdit(true)
+	src := `<div class="quip-canvas-content">` +
+		`<p id="temp:C:QSV00009" class="line">See <control id="temp:C:CTLc0001">` +
+		`<a href="https://fake.slack.com/docs/T0FAKE0001/F0CANVAS002">Weekly sync notes</a></control></p></div>`
+	d, err := canvas.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: "F0QUIPSAVE02", Title: "Mentions", HTML: src, Doc: d})
+	v := New(h, "F0QUIPSAVE02", Full, Actions{})
+	s := newShooter(t, image.Pt(1100, 900))
+	settle(t, s, v, "the canvas", func() bool {
+		return findBlk(v, func(b *canvas.Block) bool { return b.ID == "temp:C:QSV00009" }) != nil
+	})
+	b := findBlk(v, func(b *canvas.Block) bool { return b.ID == "temp:C:QSV00009" })
+	if b.edOK || b.edWhy != "a canvas, file or message mention" {
+		t.Errorf("a paragraph with a canvas mention: editable %v (%q)", b.edOK, b.edWhy)
 	}
 }

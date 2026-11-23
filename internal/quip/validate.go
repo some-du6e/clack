@@ -215,14 +215,26 @@ func (d *Doc) checkContent(u, server *Section, e Edit) error {
 	if err := d.checkRTML(id, rtml); err != nil {
 		return err
 	}
-	// the section's mentions, emoji, dates and comment anchors stay as
-	// they are: taking one out (Slack's editor changes only the text,
-	// eju0.remove) comes with editing them
+	// an edit may take the section's mentions, emoji, dates and comment
+	// anchors out (Slack's editor changes only the text, eju0.remove) or
+	// move them, but adds none: a new one is a control section of its own
 	old := SectionRTML(server)
-	if !slices.Equal(ControlIDs(rtml), ControlIDs(old)) || !slices.Equal(AnnotationIDs(rtml), AnnotationIDs(old)) {
-		return refuse("section %s: the edit takes out, adds or moves a mention, emoji, date or comment anchor", id)
+	if !subsetOnce(ControlIDs(rtml), ControlIDs(old)) || !subsetOnce(AnnotationIDs(rtml), AnnotationIDs(old)) {
+		return refuse("section %s: the edit adds a mention, emoji, date or comment anchor, or names one twice", id)
 	}
 	return nil
+}
+
+// subsetOnce reports whether every id of got is one of have's, none twice.
+func subsetOnce(got, have []string) bool {
+	seen := map[string]bool{}
+	for _, id := range got {
+		if seen[id] || !slices.Contains(have, id) {
+			return false
+		}
+		seen[id] = true
+	}
+	return true
 }
 
 // checkRTML holds a section's RTML to what Slack's save writer writes.

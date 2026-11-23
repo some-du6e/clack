@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/quip"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -223,8 +226,7 @@ func TestCanvasSaveTooLargeAndForbidden(t *testing.T) {
 
 // A save that Slack's client wouldn't make is refused before anything goes
 // out: an empty annotation (getCompactRtml would lose the text after it),
-// a list item's delete, a raw tab, a mention or emoji taken out of the text
-// with its control section left.
+// a list item's delete, a raw tab, a control the section doesn't hold.
 func TestCanvasSaveRefusals(t *testing.T) {
 	a, fs := canvasApp(t)
 	ctx := context.Background()
@@ -241,15 +243,17 @@ func TestCanvasSaveRefusals(t *testing.T) {
 	if err := a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditText, SectionID: *p.ID, RTML: "a\tb"}); !errors.Is(err, quip.ErrRefused) {
 		t.Errorf("a raw tab: %v", err)
 	}
-	// "Agenda for this week, with :tada: and bold text": saved as plain
-	// text, the emoji would be taken out, which no save makes yet
+	// the Agenda paragraph's emoji (":tada:") named in the heading: a
+	// control the heading doesn't hold, so a new mention, which needs a
+	// control section of its own
 	agenda := modelSection(t, a, fakeslack.CanvasShared, "Agenda")
-	if len(quip.ControlIDs(quip.SectionRTML(&agenda))) == 0 {
+	ctls := quip.ControlIDs(quip.SectionRTML(&agenda))
+	if len(ctls) == 0 {
 		t.Fatalf("the Agenda paragraph has no control: %q", quip.SectionRTML(&agenda))
 	}
-	err = a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditText, SectionID: *agenda.ID, RTML: "Agenda for this week"})
-	if !errors.Is(err, quip.ErrRefused) || !strings.Contains(err.Error(), "takes out") {
-		t.Errorf("a save without the paragraph's emoji: %v", err)
+	err = a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditText, SectionID: *p.ID, RTML: `Weekly <control id="` + ctls[0] + `"></control>`})
+	if !errors.Is(err, quip.ErrRefused) || !strings.Contains(err.Error(), "adds a mention") {
+		t.Errorf("another section's emoji in the heading: %v", err)
 	}
 	if n := len(saves(fs)); n != 0 {
 		t.Errorf("%d refused saves went out", n)
@@ -359,7 +363,7 @@ func TestCanvasSaveConflict(t *testing.T) {
 	if b := fc.Doc.Find(*p.ID); b == nil || b.Text() != "Weekly sync, theirs" {
 		t.Errorf("their heading after the refused edit: %+v", b)
 	}
-	if err := a.SaveCanvasDelete(ctx, fakeslack.CanvasShared, *p.ID, "Weekly sync, mine again"); !errors.Is(err, ErrCanvasConflict) {
+	if err := a.SaveCanvasDelete(ctx, fakeslack.CanvasShared, *p.ID, []richtext.Span{{Kind: richtext.Text, Text: "Weekly sync, mine again"}}); !errors.Is(err, ErrCanvasConflict) {
 		t.Errorf("a delete from stale text: %v", err)
 	}
 	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending {
@@ -432,5 +436,91 @@ func TestCanvasSaveTypingDuringSave(t *testing.T) {
 	}
 	if n := len(saves(fs)); n != 2 {
 		t.Errorf("%d edit-document calls, want 2", n)
+	}
+}
+
+// A block's new content as the editor holds it goes onto its section's
+// RTML: the Agenda paragraph ("Agenda for this week, with :tada: and bold
+// text.") keeps its emoji where the editor has it and takes new
+// formatting; a new mention isn't saved yet; an emoji taken out leaves
+// the text (its control section stays, as Slack's editor leaves it); an
+// edit begun from other text is a conflict.
+func TestCanvasSaveSpans(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	agenda := modelSection(t, a, fakeslack.CanvasShared, "Agenda")
+	block := func() *canvas.Block {
+		t.Helper()
+		fc, _ := fs.Canvas(fakeslack.CanvasShared)
+		b := fc.Doc.Find(*agenda.ID)
+		if b == nil {
+			t.Fatal("no Agenda block")
+		}
+		return b
+	}
+	orig := append([]richtext.Span(nil), block().Spans...)
+	var emoji richtext.Span
+	for _, s := range orig {
+		if s.Kind == richtext.Emoji {
+			emoji = s
+		}
+	}
+	if emoji.ID == "" {
+		t.Fatalf("the Agenda paragraph has no emoji: %+v", orig)
+	}
+	styled := []richtext.Span{
+		{Kind: richtext.Text, Text: "Agenda for "},
+		{Kind: richtext.Text, Text: "this week", Style: richtext.Italic},
+		{Kind: richtext.Text, Text: ", with "},
+		emoji,
+		{Kind: richtext.Text, Text: " and "},
+		{Kind: richtext.Text, Text: "bold", Style: richtext.Bold},
+		{Kind: richtext.Text, Text: " text."},
+	}
+	if err := a.SaveCanvasSpans(ctx, fakeslack.CanvasShared, *agenda.ID, orig, styled); err != nil {
+		t.Fatalf("italics added: %v", err)
+	}
+	after := modelSection(t, a, fakeslack.CanvasShared, "Agenda")
+	if got := quip.SectionRTML(&after); !strings.Contains(got, "<i>this week</i>") || !strings.Contains(got, "<b>bold</b>") ||
+		len(quip.ControlIDs(got)) != 1 || quip.ControlIDs(got)[0] != quip.ControlIDs(quip.SectionRTML(&agenda))[0] {
+		t.Errorf("the saved RTML %q", got)
+	}
+	var kinds []richtext.SpanKind
+	for _, s := range block().Spans {
+		kinds = append(kinds, s.Kind)
+	}
+	if !slices.Contains(kinds, richtext.Emoji) {
+		t.Errorf("the export lost the emoji: %+v", block().Spans)
+	}
+	// a new mention: its control section isn't made yet
+	withUser := append(append([]richtext.Span(nil), styled...), richtext.Span{Kind: richtext.Text, Text: " cc "}, richtext.Span{Kind: richtext.User, ID: "U0FAKE00001"})
+	if err := a.SaveCanvasSpans(ctx, fakeslack.CanvasShared, *agenda.ID, styled, withUser); !errors.Is(err, quip.ErrUnsupported) {
+		t.Errorf("a new mention: %v", err)
+	}
+	// the emoji taken out
+	bare := []richtext.Span{{Kind: richtext.Text, Text: "Agenda for "}, {Kind: richtext.Text, Text: "this week", Style: richtext.Italic},
+		{Kind: richtext.Text, Text: ", with "}, {Kind: richtext.Text, Text: "bold", Style: richtext.Bold}, {Kind: richtext.Text, Text: " text."}}
+	if err := a.SaveCanvasSpans(ctx, fakeslack.CanvasShared, *agenda.ID, styled, bare); err != nil {
+		t.Fatalf("the emoji taken out: %v", err)
+	}
+	bareSec := modelSection(t, a, fakeslack.CanvasShared, "Agenda")
+	if got := quip.SectionRTML(&bareSec); len(quip.ControlIDs(got)) != 0 {
+		t.Errorf("the emoji is still in %q", got)
+	}
+	// begun from text the section no longer holds
+	if err := a.SaveCanvasSpans(ctx, fakeslack.CanvasShared, *agenda.ID, styled, bare); !errors.Is(err, ErrCanvasConflict) {
+		t.Errorf("an edit from stale spans: %v", err)
+	}
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	txt := func(s string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: s}} }
+	if err := a.SaveCanvasSpans(ctx, fakeslack.CanvasShared, *head.ID, txt("Weekly sync"), txt("Weekly sync, A")); err != nil {
+		t.Fatalf("the heading: %v", err)
+	}
+	if err := a.SaveCanvasSpans(ctx, fakeslack.CanvasShared, *head.ID, txt("Weekly sync"), txt("B")); !errors.Is(err, ErrCanvasConflict) {
+		t.Errorf("the heading from its old text: %v", err)
+	}
+	if after := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync"); quip.SectionRTML(&after) != "Weekly sync, A" {
+		t.Errorf("the heading after a stale edit: %q", quip.SectionRTML(&after))
 	}
 }
