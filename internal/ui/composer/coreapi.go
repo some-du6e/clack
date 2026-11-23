@@ -142,6 +142,11 @@ func (c coreAPI) searchChannels(ctx context.Context, q string) ([]core.ChannelHi
 	return c.a.AutocompleteChannels(ctx, q)
 }
 
+// addReminder files a reminder of its own (saved.add item_type reminder).
+func (c coreAPI) addReminder(ctx context.Context, description json.RawMessage, dueAt int64) error {
+	return c.a.AddReminder(ctx, description, dueAt)
+}
+
 // recordFrecency is recordFrecencyEvent (the shared "frecency" pref).
 func (c coreAPI) recordFrecency(id, text string) { c.a.RecordFrecency(id, text) }
 

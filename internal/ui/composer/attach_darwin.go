@@ -65,9 +65,6 @@ func attMacPasteErr(err error) error {
 	return errAttNoClipImage
 }
 
-// errAttClipBusy: the main thread was too busy to read the pasteboard.
-var errAttClipBusy = errors.New("The clipboard is busy. Try pasting again.")
-
 func attMacHasType(types []string, want string) bool {
 	for _, t := range types {
 		if t == want {

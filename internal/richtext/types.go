@@ -209,6 +209,9 @@ const (
 	// DataTableBlock is a data_table block (datatable.go): DataTable
 	// holds its caption and rows.
 	DataTableBlock
+	// TimelineBlock is a timeline block (timeline.go): Timeline holds its
+	// points.
+	TimelineBlock
 )
 
 // Block is one vertical unit of a document.
@@ -269,6 +272,8 @@ type Block struct {
 	DataViz *DataViz
 	// DataTable is a DataTableBlock's caption and rows (datatable.go).
 	DataTable *DataTable
+	// Timeline is a TimelineBlock's points (timeline.go).
+	Timeline *Timeline
 }
 
 // Container is a container block's header and options (Slack's
@@ -356,6 +361,9 @@ type Attachment struct {
 	// author, MsgTS its ts.
 	MsgCard  bool
 	AuthorID string
+	// Embed: a message_embed block's card (messageembed.go: MessageEmbed's
+	// .container, margin 12px 0)
+	Embed bool
 
 	// Unfurl fields Slack's MessageAttachment reads (gantry-v2 shared boot
 	// async, 2026-11): ID is the attachment's id (chat.deleteAttachment's

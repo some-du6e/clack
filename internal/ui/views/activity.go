@@ -356,6 +356,7 @@ type Activity struct {
 	kbFocused, kbMode bool
 	focusKey          string
 	lastUndo          *actUndo
+	focusList         bool // the list takes the focus at its next draw (FocusList, openStep)
 
 	// Live updates (activity_live.go): the newest unread entry the
 	// "New activity" banner announces.
@@ -1627,6 +1628,21 @@ func (v *Activity) OpenedItem() string {
 		return v.selKey
 	}
 	return ""
+}
+
+// PaneThread is the thread the view's own pane draws beside the inbox
+// (pane: the persistent detail panel, Slack's Primary view on the
+// Activity tab), "" ts while it draws none: no item, a channel's, a
+// file's (paneFileOf), or an item opened as a secondary view
+// (openSecondary under activity_inbox_remove_persistent_detail_panel).
+func (v *Activity) PaneThread() (channel, ts string) {
+	if !v.paneInView() || v.sel.Channel == "" || v.selDesc.thread == "" {
+		return "", ""
+	}
+	if fid, wait := v.paneFileOf(); fid != "" || wait {
+		return "", ""
+	}
+	return v.sel.Channel, v.selDesc.thread
 }
 
 // unreadsSel is the opened row's key while Unreads is on ("" otherwise),

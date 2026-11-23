@@ -252,22 +252,28 @@ func TestBroadcastDeltaShape(t *testing.T) {
 	if got := deltaKeywords(back); !slices.Equal(got, []string{"channel"}) {
 		t.Errorf("keywords %v", got)
 	}
-	if _, _, ok := deltaCommand(back); ok {
+	if looksLikeSlashCommand(linkifyQ(qFromSlackDelta(back))) {
 		t.Error("a message read as a command")
 	}
 
-	// NativeAtChannel's relay: "/channel " + the message
+	// NativeAtChannel's relay: "/channel " + the message; the keyword is
+	// a broadcast element of the command's blocks
 	ops := append([]any{map[string]any{"insert": "/channel "}}, back["ops"].([]any)...)
-	cmd, text, ok := deltaCommand(map[string]any{"ops": ops})
-	if !ok || cmd != "/channel" || text != "ping <!channel> please" {
-		t.Errorf("command %q %q %v", cmd, text, ok)
+	q := linkifyQ(qFromSlackDelta(map[string]any{"ops": ops}))
+	a := parseSlashArgs(q)
+	wantBlocks := `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"ping "},{"type":"broadcast","range":"channel"},{"type":"text","text":" please"}]}]}]`
+	if !looksLikeSlashCommand(q) || a.Cmd != "/channel" || string(commandBlocks(a.Rest)) != wantBlocks {
+		t.Errorf("command %q blocks %s", a.Cmd, commandBlocks(a.Rest))
 	}
-	// bChannel's: one text op; a full-width slash counts too
-	cmd, text, ok = deltaCommand(map[string]any{"ops": []any{map[string]any{"insert": "／bchannel tok123\n"}}})
-	if !ok || cmd != "/bchannel" || text != "tok123" {
-		t.Errorf("bchannel command %q %q %v", cmd, text, ok)
+	// bChannel's: one text op; a full-width slash counts too, and stays in
+	// the command word (executeCommand's lookup reads it as "/")
+	fw := string(rune(0xff0f)) + "bchannel"
+	q = linkifyQ(qFromSlackDelta(map[string]any{"ops": []any{map[string]any{"insert": fw + " tok123\n"}}}))
+	if a := parseSlashArgs(q); !looksLikeSlashCommand(q) || a.Cmd != fw || a.Disp != fw ||
+		string(commandBlocks(a.Rest)) != `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"tok123"}]}]}]` {
+		t.Errorf("bchannel command %q %s", a.Cmd, commandBlocks(a.Rest))
 	}
-	if _, _, ok := deltaCommand(map[string]any{"ops": []any{map[string]any{"insert": "// not a command\n"}}}); ok {
+	if looksLikeSlashCommand(linkifyQ(qFromSlackDelta(map[string]any{"ops": []any{map[string]any{"insert": "// not a command\n"}}}))) {
 		t.Error("// read as a command")
 	}
 }
@@ -284,8 +290,11 @@ func TestBroadcastRelayedCommandSkipsCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// handleSlashCommand on the processed delta: blocks, no text, the app
 	cmds := fs.called("chat.command")
-	if len(cmds) != 1 || cmds[0].Get("command") != "/channel" || cmds[0].Get("text") != "ping <!channel> please" || cmds[0].Get("channel") != tChOpen {
+	want := `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"ping "},{"type":"broadcast","range":"channel"},{"type":"text","text":" please"}]}]}]`
+	if len(cmds) != 1 || cmds[0].Get("command") != "/channel" || cmds[0].Has("text") || cmds[0].Get("blocks") != want ||
+		cmds[0].Get("channel") != tChOpen || cmds[0].Get("app_id") != "A08FPGU02A2" {
 		t.Fatalf("chat.command %v", cmds)
 	}
 	if len(fs.called("chat.postMessage")) != 0 {

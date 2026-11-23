@@ -1752,7 +1752,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: go test ./...
-        run: go test -timeout 30m ./...
+        run: python3 .github/scripts/test-shard.py full --heavy github.com/some-du6e/clack/internal/ui --split 2 --times .github/test-times.json --timeout 30m --out "$RUNNER_TEMP/full"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -5543,9 +5543,9 @@ jobs:
       - name: "core: the upload part's type, the profile photo's"
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestUploadTypesLikeSlack|TestUploadFileType|TestCheckPhoto)$' ./internal/core
-      - name: "composer: a pending file's type"
+      - name: "composer: a pending file's type, looked up once out of attachments.mu"
         if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -v -run '^TestAttachmentFileTypes$' ./internal/ui/composer
+        run: go test -count=$COUNT -v -run '^(TestAttachmentFileTypes|TestAttachmentTypeLookedUpOnce|TestRestoredDraftFileTypes)$' ./internal/ui/composer
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -5665,7 +5665,10 @@ jobs:
   # (Karim, α.143 "two different pfps?"): the rows' redraw when the change
   # comes while no list draws the member (messages), Slack's member
   # freshness and user_change subscriptions (core), and a restart's stale
-  # offline copy fetched again (ui).
+  # offline copy fetched again (ui). avatar-refresh-2: the review's MINORs
+  # (an older refetch answer, the hello gate, avatarAlts pruned, off-Grid
+  # fast reconnects, a failed larger picture, the interim's retry, TSF's
+  # trim).
   avatar-refresh:
     if: ${{ !inputs.only || startsWith('avatar-refresh', inputs.only) }}
     runs-on: ubuntu-latest
@@ -5688,10 +5691,13 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -timeout 10m -run '^(TestSenderFollowsMemberLikeSlack|TestBotThreadRowLikeSlack|TestAvatarPictureForScaleLikeSlack)$' ./internal/ui/messages || rc=1
-          go test -count=$COUNT -timeout 10m -run '^(TestMemberSubscribedFollowsUserChange|TestMemberRefetchedPastMaxAgeLikeSlack|TestMemberSubscriptionsAfterReconnect)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestSenderFollowsMemberLikeSlack|TestBotThreadRowLikeSlack|TestAvatarPictureForScaleLikeSlack|TestAvatarLargerPictureFailsLikeSlack)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestMemberSubscribedFollowsUserChange|TestMemberRefetchedPastMaxAgeLikeSlack|TestMemberSubscriptionsAfterReconnect|TestMemberSubscribeWaitsForHello|TestMemberRefetchKeepsNewerCopy|TestMemberFreshnessKeptOnFastReconnectOffGrid)$' ./internal/core || rc=1
           go test -count=$COUNT -timeout 15m -run '^TestAvatarAfterRestartLikeSlack$' ./internal/ui || rc=1
-          go test -count=$COUNT -timeout 5m -run '^TestFamilySizeDrawsAtOnce$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestFamilySizeDrawsAtOnce|TestFamilyInterimRetriesSharpLoad)$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestAvatarAltsFollowTheStore|TestPutUserNotOlder)$' ./internal/store || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestMrkdwnTrimLikeTSF|TestNewlineOnlyBlocksKeptLikeSlack|TestBlankAttachmentTextLikeSlack|TestEmptyContextElementKeepsItsBoxLikeSlack)$' ./internal/richtext || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestMarkupModeSend$' ./internal/ui/composer || rc=1
           go test -count=$COUNT -timeout 10m -run '^TestAppPaneIconFromTheMessageLikeSlack$' ./internal/ui/popups || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
@@ -5883,6 +5889,328 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # Karim's 2026-11-21 crash (Windows, α.113): a quote started in the
+  # composer (">" typed, or the Blockquote button), then Ctrl+V with each
+  # kind of copy on the real clipboard; App.Run's own window, SendInput,
+  # PowerShell's WinForms clipboard. GOTRACEBACK=all: a native fault on a
+  # Go thread prints every goroutine (runtime winthrow).
+  quote-paste-win:
+    if: ${{ !inputs.only || startsWith('quote-paste-win', inputs.only) }}
+    name: "quote-paste TestWinQuotePaste (windows-applog)"
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      # WER keeps a minidump of a test binary that dies outside Go's sight
+      # (a fault on a thread Go doesn't own, a fail-fast, a blown stack)
+      - name: Windows keeps a crashed test binary's dump (WER LocalDumps)
+        shell: pwsh
+        run: |
+          $dumps = Join-Path $env:RUNNER_TEMP dumps
+          New-Item -ItemType Directory -Force $dumps | Out-Null
+          $k = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\ui.test.exe'
+          New-Item -Path $k -Force | Out-Null
+          Set-ItemProperty -Path $k -Name DumpFolder -Value $dumps -Type ExpandString
+          Set-ItemProperty -Path $k -Name DumpType -Value 2 -Type DWord # full: goroutine stacks live in Go's heap
+          Set-ItemProperty -Path $k -Name DumpCount -Value 4 -Type DWord
+      - name: "TestWinQuotePaste, COUNT runs (5 at most)"
+        shell: pwsh
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-applog
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+          GOTRACEBACK: all
+        run: |
+          # a paste in the frame of a cut pastes the cut (the composer's model)
+          go test -count=1 -v -run '^TestPasteInTheFrameOfACut$' ./internal/ui/composer
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # the paste's clipboard readers four at a time, in a child process
+          go test -count=1 -v -timeout 10m -run '^TestWinClipboardReadersOneAtATime$' ./internal/ui/composer *> "$env:RUNNER_TEMP\readers.log"
+          $readers = $LASTEXITCODE
+          Get-Content "$env:RUNNER_TEMP\readers.log" | Select-String -Pattern '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)|_test\.go:\d+:|reads \(busy\)|Windows, two threads' | ForEach-Object { $_.Line }
+          "TestWinClipboardReadersOneAtATime: exit code $readers"
+          go test -c -o "$env:RUNNER_TEMP\ui.test.exe" ./internal/ui
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Push-Location internal/ui
+          # each flag quoted: PowerShell splits a bare -test.v at the dot
+          # one process per run, so a run that crashes the process (a native
+          # fault, a heap corruption: 0xC0000374) can't hide the runs after
+          # it, and each exit code is its own; each run through expect_fail's
+          # wrapper in a proof run (XF_BIN: empty otherwise). 5 runs at most
+          # (like emoji-anim's): a run is ~96 s, so COUNT's 20 took ~35 of the
+          # job's 40 minutes
+          $n = [Math]::Min([int]$env:COUNT, 5)
+          $rc = 0
+          for ($i = 1; $i -le $n; $i++) {
+            $log = "$env:RUNNER_TEMP\test-$i.log"
+            if ($env:XF_BIN) {
+              & $env:XF_BIN "$env:RUNNER_TEMP\ui.test.exe" '-test.v' '-test.count=1' '-test.timeout=15m' '-test.run=^TestWinQuotePaste$' *> $log
+            } else {
+              & "$env:RUNNER_TEMP\ui.test.exe" '-test.v' '-test.count=1' '-test.timeout=15m' '-test.run=^TestWinQuotePaste$' *> $log
+            }
+            $r = $LASTEXITCODE
+            "run ${i}: the test binary's exit code: {0} (0x{1:X8})" -f $r, $r
+            if ($r -ne 0) { $rc = $r }
+            Get-Content $log | Add-Content "$env:RUNNER_TEMP\test.log"
+          }
+          Pop-Location
+          Get-Content "$env:RUNNER_TEMP\test.log" | Select-String -Pattern '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok|panic|fatal error|Exception)|_test\.go:\d+:' | Select-Object -Last 120 | ForEach-Object { $_.Line }
+          Get-Content "$env:RUNNER_TEMP\test.log" -TotalCount 3
+          Get-Content "$env:RUNNER_TEMP\test.log" -Tail 60
+          "the test binary's exit code: {0} (0x{1:X8})" -f $rc, $rc
+          if ($rc -ne 0 -or $readers -ne 0) { exit 1 }
+      - name: Windows' record of a crash (event log, dump, stacks)
+        if: always()
+        shell: pwsh
+        run: |
+          Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddHours(-2)} -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -in @('Application Error', 'Windows Error Reporting') } |
+            Select-Object -First 6 | ForEach-Object { "--- $($_.TimeCreated) $($_.ProviderName) $($_.Id)"; $_.Message }
+          $dumps = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP dumps) -Filter *.dmp -ErrorAction SilentlyContinue)
+          $dumps | ForEach-Object { "dump: $($_.Name) $($_.Length) bytes" }
+          if ($dumps.Count -eq 0) { exit 0 }
+          $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+          if (-not (Test-Path $cdb)) { "no cdb at $cdb"; exit 0 }
+          $out = Join-Path $env:RUNNER_TEMP dumps\cdb.txt
+          & $cdb -z $dumps[0].FullName -c '.symfix; .reload; .lastevent; .ecxr; r; kn 80; lm; ~*kn 40; q' *> $out
+          $t = Get-Content $out
+          $i = ($t | Select-String -Pattern '^Last event:' | Select-Object -First 1).LineNumber
+          if (-not $i) { $t | Select-Object -Last 150; exit 0 }
+          $t[($i - 1)..([Math]::Min($i + 110, $t.Count - 1))]
+          # Go frames: ui_test+offset, as file:line from the binary's own tables
+          $exe = "$env:RUNNER_TEMP\ui.test.exe"
+          $fs = [System.IO.File]::OpenRead($exe); $hdr = New-Object byte[] 4096; [void]$fs.Read($hdr, 0, 4096); $fs.Close()
+          $pe = [BitConverter]::ToInt32($hdr, 0x3c)
+          $base = [BitConverter]::ToUInt64($hdr, $pe + 24 + 24)
+          $offs = $t[($i - 1)..([Math]::Min($i + 110, $t.Count - 1))] | Select-String -Pattern 'ui_test\+0x([0-9a-f]+)' -AllMatches | ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value }
+          if ($offs) { $offs | ForEach-Object { '0x{0:x}' -f ($base + [Convert]::ToUInt64($_, 16)) } | go tool addr2line $exe }
+      # the binary (67 MB) only where there is something to read it against:
+      # a failed run, or a proof run's expected failure
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ failure() || env.XF_ID }}
+        with:
+          name: quote-paste-win-crash
+          path: |
+            ${{ runner.temp }}/dumps
+            ${{ runner.temp }}/test.log
+            ${{ runner.temp }}/ui.test.exe
+          if-no-files-found: ignore
+          retention-days: 3
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # message-polish: the message pane's P1 batch: the older page asked for
+  # ahead of the scroll (BaseDynamicList's loadMore), a failed emoji's
+  # broken image icon, one day pill at the top and over the toolbar, the
+  # toolbar's tips past the list's clip, the toolbar following its
+  # message, the reactions bar opening on your own hidden reaction, and
+  # mention pills' real names.
+  message-polish:
+    if: ${{ !inputs.only || startsWith('message-polish', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps, Xvfb and Mesa
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the message pane polish tests (COUNT; the pixel ones on Mesa llvmpipe)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=$COUNT -timeout 15m -run '^(TestOlderPageAheadOfScrollLikeSlack|TestDayPillStraddlingTheTopLikeSlack|TestToolbarTipOverTheListTopLikeSlack|TestToolbarFollowsItsMessageLikeSlack|TestOwnHiddenReactionOpensTheBarLikeSlack|TestDayPillInputIsItsOwnBoxLikeSlack)$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 5m -run '^TestFailedEmojiDrawsBrokenImageLikeSlack$' ./internal/ui/richview || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestMentionPillRealNamesLikeSlack$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # plugins-work-2b (2026-11-23, name recordings): Web Audio's
+  # decodeAudioData and MediaRecorder on the plugins' page (webaudio, jsrt),
+  # a File's own upload fields across the bridge (taut), Slick's
+  # CustomNameRecording from Slick's build at the slick workflow's pin
+  # (slick) and Taut's from Taut's at ui-taut's pin, converting a WAV and
+  # uploading it from Edit profile in the whole client (ui); the compat
+  # page. Its review's fixes: Decode runs the decoders behind the decode
+  # boundary and holds to its cap, FuzzMP3's seeds through it (goaudio);
+  # the audio host's calls reject when the host panics, keep to Web
+  # Audio's bounds, and recordings go to the host as they record, up to
+  # their cap, with a far-off clock timer armed once (jsrt); the encoder
+  # (clip); Edit profile taking the uploaded recording (ui). COUNT runs
+  # each. Dispatch with only=plugins-work-2b.
+  plugins-work-2b:
+    if: ${{ !inputs.only || startsWith('plugins-work-2b', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    env:
+      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37 # Taut (MIT, third-party), same pin as ui-taut.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: clone taut at ui-taut's pin and build CustomNameRecording
+        run: |
+          set -o pipefail
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "$TAUT_PIN"
+          git -C /tmp/taut log --oneline -1
+          (cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund)
+          mkdir -p dist/taut-plugins
+          (cd /tmp/taut && npm run -s build:user-plugin -- plugins/CustomNameRecording.tsx "$GITHUB_WORKSPACE/dist/taut-plugins/CustomNameRecording.js")
+          test -s dist/taut-plugins/CustomNameRecording.js
+      - id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        continue-on-error: true # GitHub release downloads sometimes 504 three times running
+        with:
+          bun-version: 1.4.4
+      - name: bun from npm (setup-bun's download failed)
+        if: steps.setup-bun.outcome == 'failure'
+        run: |
+          for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
+          bun --version
+      - name: clone slick at the slick workflow's pin
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (Slick, Taut); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: decodeAudioData and MediaRecorder, the decode boundary and the caps, the upload's fields, CustomNameRecording in the harness and in the client, COUNT runs each
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestDecodeSurvivesADecoderPanic|TestDecodeStopsAtItsCap|FuzzMP3)$' ./internal/media/goaudio || rc=1
+          go test -count="$COUNT" -timeout 5m ./internal/clip || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestDecodeLikeChromium|TestEncodeOpusInMP4|TestWebAudioLikeChromium)$' ./internal/webaudio || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestMediaElementPlays|TestFileInputPicker|TestAudioHostPanicsReject|TestAudioHostClampsRateAndChannels|TestMediaRecorderStreamsToTheHost|TestMediaRecorderStopsAtTheCap|TestAudioClockTimerFarOff)$' ./internal/jsrt || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestUploadFileFieldsLikeSlack$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 8m -run '^TestCustomNameRecordingLikeSlack$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 10m -run '^TestTautCustomNameRecording' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # channel-files-race: TestChannelFilesRadiosAndPaging read the last
+  # links form after Oldest before the links read had gone out (its own
+  # goroutine): "links sort_dir \"desc\"" in train-207's full-test
+  # 45177193228. COUNT runs, then COUNT under 2 busy loops.
+  channel-files-race:
+    if: ${{ !inputs.only || startsWith('channel-files-race', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: views TestChannelFilesRadiosAndPaging (COUNT, then COUNT under load)
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=$COUNT -timeout 10m -run '^TestChannelFilesRadiosAndPaging$' ./internal/ui/views || rc=1
+          for i in 1 2; do (while :; do :; done) & done
+          xvfb-run -a go test -count=$COUNT -timeout 12m -run '^TestChannelFilesRadiosAndPaging$' ./internal/ui/views || rc=1
+          kill $(jobs -p) 2>/dev/null
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # fling-22px: TestFlingScrollNoGapsCompact/history failed 3 times the same
+  # way (an idle frame moved the first row on screen 22 px, one Compact
+  # line: files-filters-3 44980164338, bk-modal-spacing 45090826439,
+  # upload-filetype-2 45103177353), reruns green. A channel's name, looked
+  # up as its mention first drew, landed in the row on the anchor line
+  # between two frames (diagnosed in 45172860772); the fling now starts
+  # with every name in the store (knowNames). COUNT runs each on an idle
+  # runner, under 4 busy loops and under -race; a failed run prints every
+  # visible row before and after the frame (scroll_gaps_test.go logMove;
+  # REPRO=1 keeps a reproduced move green while diagnosing).
+  fling-22px:
+    if: ${{ !inputs.only || startsWith('fling-22px', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the Compact fling's history case, an idle runner
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" idle
+      - name: the same under 4 busy loops
+        if: ${{ !cancelled() }}
+        env:
+          BURN: "4"
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" burn
+      - name: the same under -race
+        if: ${{ !cancelled() }}
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" race -race
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -6017,6 +6345,11 @@ jobs:
       - canvas-quip
       - plugins-work-1
       - plugins-work-2
+      - quote-paste-win
+      - message-polish
+      - plugins-work-2b
+      - channel-files-race
+      - fling-22px
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

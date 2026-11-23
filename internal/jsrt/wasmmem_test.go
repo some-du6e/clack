@@ -88,7 +88,11 @@ func TestWasmMemoryGrowsInPlace(t *testing.T) {
 	res := growJS(t, false, bufs)
 	t.Logf("wasmmem: reserved address space: %v", res)
 	t.Logf("wasmmem: snapshot: %s", res.snap)
-	if res.memAfter < res.memBefore+bufs*(4<<20) {
+	// about that much: the first buffers fill what the boot left free in
+	// the JS heap (more as the page's own scripts grow: 1.5 MiB once dom.js
+	// had Web Audio), so the growth may fall short by that, never by more
+	// than a fresh runtime's heap holds
+	if res.memAfter < res.memBefore+bufs*(4<<20)-16<<20 {
 		t.Fatalf("the wasm memory grew %d → %d bytes for %d MiB of ArrayBuffers", res.memBefore, res.memAfter, bufs*4)
 	}
 	if heapMemoryWanted() {

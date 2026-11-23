@@ -218,6 +218,11 @@ type ModalOpts struct {
 	// Height fixes the card's height in dp (within the window); the body
 	// takes what the header and footer leave, scrolling past it.
 	Height float32
+	// FillBody: the body takes the card's whole height (the window's,
+	// within Height or MaxHeight), laid out once a frame in the modal's
+	// scroller, with no measuring pass (DataTableFullscreenModal, a
+	// fullscreen modal, whose rows draw their action buttons)
+	FillBody bool
 	// MaxHeight caps the card's height in dp (.p-add_emoji_dialog's
 	// max-height: 700px); the body scrolls past it.
 	MaxHeight float32
@@ -503,7 +508,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	// measure the body
 	var bodyH int
-	if m.o.Body != nil {
+	if m.o.Body != nil && !m.o.FillBody {
 		_, d := record(loose(gtx, image.Pt(bodyW, 1<<20)), m.o.Body)
 		bodyH = d.Size.Y
 	}
@@ -524,7 +529,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 			maxBody = max(c, dp(gtx, 60))
 		}
 	}
-	scroll := bodyH > maxBody
+	scroll := bodyH > maxBody || m.o.FillBody && m.o.Body != nil
 	if scroll || m.o.Height > 0 {
 		bodyH = maxBody
 	}

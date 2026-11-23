@@ -562,7 +562,7 @@ func (c *Composer) editLast(cmd editLastCmd, doc *Doc) {
 			return // nothing matched: resolved, nothing else
 		}
 		pd := make(chan *Doc, 1)
-		c.later(func() { pd <- c.prepareSend(nd) }) // saveMessageEdit's processDelta
+		c.later(func() { pd <- c.prepareMessage(nd) }) // saveMessageEdit's processDelta (rNCs)
 		var prepared *Doc
 		select {
 		case prepared = <-pd:

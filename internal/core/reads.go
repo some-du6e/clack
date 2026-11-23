@@ -578,6 +578,21 @@ func (a *App) BrowseChannels(ctx context.Context, query string, page int, sort s
 	return ChannelPage{Channels: a.channelHits(hs), Total: total, Pages: pages, Page: page}, nil
 }
 
+// StoredUsergroups is the store's user groups (not deactivated), without
+// loading them: what the send's mention search sees.
+func (a *App) StoredUsergroups() []Usergroup {
+	a.S.RLock()
+	defer a.S.RUnlock()
+	out := make([]Usergroup, 0, len(a.S.Groups))
+	for _, g := range a.S.Groups {
+		if g.DateDelete != 0 {
+			continue
+		}
+		out = append(out, Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: g.UserCount, TeamID: g.TeamID})
+	}
+	return out
+}
+
 // Usergroups lists usergroups matching query (prefix matches first).
 func (a *App) Usergroups(ctx context.Context, query string, limit int) ([]Usergroup, error) {
 	a.S.RLock()

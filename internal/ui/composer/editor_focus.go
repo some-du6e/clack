@@ -82,6 +82,18 @@ func DrawnLive(gtx layout.Context, ed *Editor) bool {
 	return ok && at.Equal(gtx.Now)
 }
 
+// DrawnAt reports whether ed's last live draw was in the frame of time at
+// (DrawnLive for a frame before this one).
+func DrawnAt(ed *Editor, at time.Time) bool {
+	if at.IsZero() {
+		return false
+	}
+	kept.Lock()
+	defer kept.Unlock()
+	t, ok := kept.at[ed]
+	return ok && t.Equal(at)
+}
+
 // noteLive records a draw that delivers input (not a measure pass).
 func (e *Editor) noteLive(gtx layout.Context) {
 	if !gtx.Source.Enabled() {

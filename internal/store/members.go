@@ -342,6 +342,9 @@ func (s *Store) EvictMembersKeeping(keep []string) []string {
 		s.members.access = resized(s.members.access)
 		s.members.nonexistent = resized(s.members.nonexistent)
 	}
+	// their pictures' sizes (AvatarAt), under s.mu: a member stored again
+	// right after the pass keeps its own (nothing takes avatarMu, then s.mu)
+	s.forgetAvatars(out)
 	s.mu.Unlock()
 	s.ForgetMissing('u', out...)
 	if cut > len(cs)-cut {

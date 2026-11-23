@@ -8,8 +8,8 @@ package goaudio
 // TestReadersAreTotal's cases are what the review found by hand. The
 // readers are called as they are, so a panic is theirs; go-mp3's decoder,
 // another's code, runs behind the decode boundary (safe.go) as in the
-// player, and FuzzMP3 calls this package's frame index and tag skip
-// directly.
+// player and in Decode (decodeAudioData's), which FuzzMP3 runs too, and
+// FuzzMP3 calls this package's frame index and tag skip directly.
 
 import (
 	"bytes"
@@ -121,7 +121,7 @@ func FuzzWAV(f *testing.F) {
 }
 
 func FuzzMP3(f *testing.F) {
-	addSeeds(f, mediatest.TonesMP3)
+	addSeeds(f, mediatest.TonesMP3, mpeg2MixedBlocks(2))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		defer stuck(b, 10*time.Second)()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -145,6 +145,10 @@ func FuzzMP3(f *testing.F) {
 		if len(frames) > 0 && (rate < 8000 || rate > 48000) {
 			t.Fatalf("rate %d", rate)
 		}
+		// decodeAudioData's whole-file decode (Decode), behind the same
+		// boundary: a file or its error, at the file's rate and converted
+		decodeOK(t, ctx, b, 0)
+		decodeOK(t, ctx, b, 48000)
 		// go-mp3's decoding, behind the boundary as in the player
 		s, err := safeOpen(ctx, b, "audio/mpeg")
 		if err != nil {
@@ -152,4 +156,28 @@ func FuzzMP3(f *testing.F) {
 		}
 		fuzzStream(t, s, true)
 	})
+}
+
+// decodeOK decodes b as decodeAudioData does: an error, or channels within
+// bounds, each as long as the others and the whole within the cap.
+func decodeOK(t *testing.T, ctx context.Context, b []byte, rate int) {
+	p, err := Decode(ctx, b, "audio/mpeg", rate)
+	if err != nil {
+		return
+	}
+	if c := len(p.Channels); c < 1 || c > maxChannels {
+		t.Fatalf("Decode at %d Hz: %d channels", rate, c)
+	}
+	if rate > 0 && p.Rate != rate || p.Rate <= 0 {
+		t.Fatalf("Decode at %d Hz: rate %d", rate, p.Rate)
+	}
+	n := p.Frames()
+	for c, x := range p.Channels {
+		if len(x) != n {
+			t.Fatalf("Decode at %d Hz: channel %d has %d frames, channel 0 %d", rate, c, len(x), n)
+		}
+	}
+	if int64(n)*int64(len(p.Channels)) > decodeCap() {
+		t.Fatalf("Decode at %d Hz: %d frames of %d channels, past the cap", rate, n, len(p.Channels))
+	}
 }

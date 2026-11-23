@@ -178,7 +178,7 @@ func (s *Server) agentTasksUser() slack.User {
 
 // addAgentTasks adds Atlas's bot user and the viewer's DM with it.
 func (s *Server) addAgentTasks() {
-	s.users = append(s.users, s.agentTasksUser())
+	s.users = append(s.users, stampUpdated([]slack.User{s.agentTasksUser()})...)
 	s.convs = append(s.convs, slack.Conversation{ID: AgentTasksDMID, IsIM: true, User: AgentTasksUserID, IsOpen: true,
 		Created: 1762500000, Priority: 0.8})
 	s.hist[AgentTasksDMID] = []slack.Message{{Type: "message", TS: "1763400000.000100", User: AgentTasksUserID, BotID: AgentTasksBotID,

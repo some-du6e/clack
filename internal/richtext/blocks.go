@@ -18,6 +18,7 @@ type bk struct {
 	bkAgent                // plan, task_card (agent.go)
 	viz       *bkDataViz   // a data_visualization block's own keys (dataviz.go)
 	table     *bkDataTable // a data_table block's own keys (datatable.go)
+	timeline  *bkTimeline  // a timeline block's own keys (timeline.go)
 	Type      string       `json:"type"`
 	BlockID   string       `json:"block_id"`
 	Elements  []bk         `json:"elements"`
@@ -43,7 +44,9 @@ type bk struct {
 	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	TeamID      string          `json:"team_id"`
-	Name        bkStr           `json:"name"` // emoji; auth_provider's is a text object
+	Channel     bkStr           `json:"channel"` // message_embed (messageembed.go)
+	TS          bkStr           `json:"ts"`      // message_embed
+	Name        bkStr           `json:"name"`    // emoji; auth_provider's is a text object
 	Unicode     string          `json:"unicode"`
 	SkinTone    int             `json:"skin_tone"`
 	Range       string          `json:"range"`
@@ -203,6 +206,18 @@ type builder struct {
 	// missing: a block Slack draws but Clack can't yet drew nothing (the
 	// message text then stands in, FromMessageIn)
 	missing bool
+	// undrawn are the types Slack has a renderable for that reached no
+	// renderer of Clack's (the coverage guard reads it)
+	undrawn []string
+	// streamDone: the message's stream has finished (IiSM u: its
+	// ai_context.result_status, else its streaming_state), so a timeline's
+	// in-progress points no longer run
+	streamDone bool
+	// embedding are the messages (channel/ts) whose message_embed is being
+	// drawn on the way here, embedCards the embeds drawn so far
+	// (messageembed.go)
+	embedding  map[string]bool
+	embedCards int
 	// notify converts for a notification's text (NotificationMessageText): a
 	// type with no renderable adds nothing, with no fallback chain
 	notify bool
@@ -417,7 +432,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", badBlock:
 		return true
 	}
 	return false
@@ -434,10 +449,16 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.richText(b.Elements)...)
 	case "section":
 		blk := Block{Kind: Section, BlockID: b.BlockID, Expand: b.Expand}
-		tb := c.textBlocks(b.textObj())
-		if len(tb) == 1 && tb[0].Kind == Paragraph {
+		to := b.textObj()
+		tb := c.textBlocks(to)
+		switch {
+		case len(tb) == 1 && tb[0].Kind == Paragraph:
 			blk.Spans = tb[0].Spans
-		} else {
+		case len(tb) == 0 && to != nil && to.Text != "":
+			// text that formats to nothing ("\n", TSF's trim): Slack's
+			// section keeps its box, an empty text in it
+			blk.Spans = []Span{}
+		default:
 			blk.Children = tb
 		}
 		for i := range b.Fields {
@@ -467,6 +488,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		// image or text its own box): Children keeps them apart, Spans
 		// has them joined for plain-text consumers.
 		blk := Block{Kind: Context}
+		kept := false // a text element that formats to nothing: its box stays
 		for i := range b.Elements {
 			e := &b.Elements[i]
 			var ss []Span
@@ -483,6 +505,12 @@ func (c *builder) block(out []Block, b *bk) []Block {
 				ss = c.textSpans(t)
 				if len(ss) > 0 {
 					blk.Children = append(blk.Children, Block{Kind: Paragraph, Spans: ss})
+				} else if t.Text != "" {
+					// Context renders a p-context_block_element for every
+					// element, its 16px spacing after it: an element whose
+					// text formats to nothing keeps its (empty) box
+					blk.Children = append(blk.Children, Block{Kind: Paragraph, Spans: []Span{}})
+					kept = true
 				}
 			}
 			if len(ss) == 0 {
@@ -494,7 +522,10 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			blk.Spans = append(blk.Spans, ss...)
 		}
 		if len(blk.Spans) == 0 {
-			return out
+			if !kept {
+				return out
+			}
+			blk.Spans = []Span{}
 		}
 		return append(out, blk)
 	case "header":
@@ -577,6 +608,10 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.cardBlock(b))
 	case "data_table":
 		return append(out, c.dataTableBlock(b))
+	case "message_embed":
+		return c.messageEmbed(out, b)
+	case "timeline":
+		return c.timelineBlock(out, b)
 	case "data_visualization":
 		return append(out, c.dataVizBlock(b))
 	case "markdown":
@@ -617,6 +652,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 	}
 	// a type Slack draws that Clack doesn't yet: its text object, if any
 	// (docs/BLOCKKIT-COVERAGE.md)
+	c.undrawn = append(c.undrawn, b.Type)
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)
 	}
@@ -1024,6 +1060,7 @@ func init() {
 // else the text, else nothing.
 func (c *builder) unknownInline(e *bk, m brMode) []Span {
 	if messageRenderables[e.Type] {
+		c.undrawn = append(c.undrawn, e.Type)
 		if e.Type != "citation" || e.Details != nil && (len(e.Details.CitationType) > 0 || len(e.Details.CitationTypeCamel) > 0) {
 			return unknownElement(e.textString(), e.URL)
 		}

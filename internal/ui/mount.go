@@ -31,7 +31,8 @@ var (
 	// header, no footer, a full-width body that draws its own columns.
 	mkPrefsModal func(a *App, title string, body layout.Widget, done func()) Overlay
 	// mkEditComposer opens an edit composer for one of the viewer's messages.
-	mkEditComposer func(a *App, m core.Message, onDone func()) composerView
+	// inThread: it opens in a thread (the processor's inThread).
+	mkEditComposer func(a *App, m core.Message, inThread bool, onDone func()) composerView
 )
 
 func (a *App) mountChannel(ch string) View {

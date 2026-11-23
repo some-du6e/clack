@@ -375,6 +375,11 @@ type App struct {
 	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
 	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
 
+	// secFocused: the side pane is the focused view container;
+	// splitFocus, actPaneFocus: the split view's thread is, the thread the
+	// Activity tab's own pane draws is (focus_container.go)
+	secFocused, splitFocus, actPaneFocus bool
+
 	insp    *inspect.Tool // the inspect tool, nil unless gated on (inspect_wire.go)
 	inspKey key.Filter    // its shortcut
 	konami  konami        // the code that turns it on and off
@@ -391,6 +396,21 @@ type App struct {
 	// the frame's layout
 	inspReset   bool
 	inspPresses []key.Event
+
+	// typeSteal's handler for typed text nothing has the focus for
+	// (type_steal.go; Gio patch 64), and the frame's text for it
+	stealTag  int
+	stealText messages.StealText
+	// this frame's time and the last one's (canSteal: an input drawn)
+	frameNow, prevNow time.Time
+	// kbMode: the viewer moves around with the keyboard; kbRelated the
+	// last key or press, kbFocus the focus it saw last (keyboard_mode.go)
+	kbMode    bool
+	kbRelated kbRelated
+	kbFocus   event.Tag
+	// noMoveFocus: an open that keeps the focus where it is
+	// (PreventMoveFocus: Activity's option+up/down)
+	noMoveFocus bool
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -551,6 +571,7 @@ func (a *App) Run() error {
 	a.wcoEnable()            // Windows: the top nav draws the caption buttons
 	a.macNav = macTitlebarOn // macOS: the top nav is the drag area under the traffic lights
 	a.winLive.Store(a.win)
+	a.watchClipBusy() // Windows: a copy or paste another app's hold of the clipboard stopped (clipbusy.go)
 	if startMacWindow != nil {
 		startMacWindow(a) // macOS: the Dock icon and the app's activation show a hidden window (window_darwin.go)
 	}
@@ -895,6 +916,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.winSize = sz
 	windowActive.Store(a.focused) // the indicators turn only in an active window (indicatorFrame)
 	a.frameSeq.Add(1)
+	a.prevNow, a.frameNow = a.frameNow, gtx.Now
 	a.syncWheelAnimation()
 	a.syncThemeTokens()
 	a.focusFadeFrame(gtx) // focus mode's view transition (focus_fade.go)
@@ -915,6 +937,7 @@ func (a *App) frame(gtx layout.Context) {
 	// the inspect tool, before anything reads input: while a session runs
 	// the window lays out hover-only and the tool reads the clicks and
 	// keys (inspect_wire.go)
+	a.keyboardModeFrame(gtx) // where the last frame left the focus, before this frame's keys (keyboard_mode.go)
 	winGtx := gtx
 	gtx = a.inspectBegin(gtx)
 
@@ -927,6 +950,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.hoverBegin(gtx) // before any widget reads keys (Escape)
 	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
+	a.typeSteal(gtx) // after the shortcuts: a key they take is no typing
 	a.updateTitle()
 
 	// Slack's ancestor chain for plugin CSS (.p-client_container > .p-ia…);
