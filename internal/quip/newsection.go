@@ -128,13 +128,7 @@ func isTextStyle(style int32) bool {
 // blocks, two quote paragraphs or two quote layouts, all top-level. Such
 // a delete isn't Slack's alone, so it isn't saved until the merge is.
 func (d *Doc) DeleteMerges(id string) bool {
-	var top []*Section
-	for _, s := range d.Sections() {
-		if s.Parents != nil && len(s.Parents.IDs) > 0 || s.SectionClass != nil && *s.SectionClass == ClassControl {
-			continue
-		}
-		top = append(top, s)
-	}
+	top := d.TopLevel()
 	for i, s := range top {
 		if str(s.ID) != id || i == 0 || i == len(top)-1 {
 			continue
@@ -150,6 +144,42 @@ func (d *Doc) DeleteMerges(id string) bool {
 		return a.Type != nil && b.Type != nil && *a.Type == TypeLayoutBlockquote && *b.Type == TypeLayoutBlockquote
 	}
 	return false
+}
+
+// TopLevel are the live sections Slack's editor takes for a top-level
+// section's siblings, in document order (EKJU's navigator: getSibling_
+// over the reachable sections in display order skips descendants and
+// sections in a layout): no parents, not in a layout, not a control, not
+// the title, which a canvas hides (mode "canvas" sets
+// skipUntitledOnNewDoc, so omitBuiltInHeadingOrTitleSection, and
+// isHiddenTitle makes the title unreachable).
+func (d *Doc) TopLevel() []*Section {
+	var top []*Section
+	for _, s := range d.Sections() {
+		switch {
+		case s.Parents != nil && len(s.Parents.IDs) > 0,
+			s.HasLayoutParent != nil && *s.HasLayoutParent,
+			s.SectionClass != nil && *s.SectionClass == ClassControl,
+			s.Type != nil && *s.Type == TypeTitle:
+			continue
+		}
+		top = append(top, s)
+	}
+	return top
+}
+
+// LeavesNoBlock reports whether deleting the sections gone leaves the
+// canvas with no top-level section: then Slack's deleteEntity makes a new
+// section in place of the last (a section with no sibling before or after
+// it, or the top ancestor of one), which a save of the deletes alone
+// doesn't hold.
+func (d *Doc) LeavesNoBlock(gone func(id string) bool) bool {
+	for _, s := range d.TopLevel() {
+		if !gone(str(s.ID)) {
+			return false
+		}
+	}
+	return true
 }
 
 // ListChildren are the live sections whose first parent is id (a list's

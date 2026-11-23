@@ -827,3 +827,105 @@ func TestCanvasSaveQuoteParagraph(t *testing.T) {
 		t.Errorf("a quote's paragraph made a heading: %v", err)
 	}
 }
+
+// The canvas's last block isn't deleted: Slack's deleteEntity would make
+// a new section in its place (a canvas hides its title, so the title is
+// no sibling). Emptied, it stays, its text deleted, as Slack's editor
+// leaves a section whose text goes: a paragraph, or the last item of the
+// only list. The validator refuses its delete on its own; with a new
+// block after it, the paragraph goes.
+func TestCanvasSaveLastBlock(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	txt := func(s string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: s}} }
+	const id, list = "F0QUIPLAST1", "F0QUIPLAST2"
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: id, Title: "Last block", Doc: canvas.Doc{Blocks: []canvas.Block{
+		{ID: "temp:C:LST00001", Kind: canvas.Paragraph, Spans: txt("only")},
+	}}})
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: list, Title: "Last list", Doc: canvas.Doc{Blocks: []canvas.Block{
+		{ID: "temp:C:LST00002", Kind: canvas.Bullet, Spans: txt("one")},
+	}}})
+	loadModel(t, a, id)
+	loadModel(t, a, list)
+	if err := a.SaveCanvas(ctx, id, quip.Edit{Kind: quip.EditDelete, SectionID: "temp:C:LST00001"}); !errors.Is(err, quip.ErrRefused) {
+		t.Errorf("the validator took the last block's delete: %v", err)
+	}
+	if n := len(saves(fs)); n != 0 {
+		t.Errorf("%d edit-document calls for a refused delete", n)
+	}
+	emptied := func(canvasID, sectionID, was string, kind canvas.Kind) { // its text alone, with the activity row for text taken out
+		t.Helper()
+		if err := a.SaveCanvasDelete(ctx, canvasID, sectionID, txt(was)); err != nil {
+			t.Fatalf("%s emptied: %v", was, err)
+		}
+		rs := saves(fs)
+		r := rs[len(rs)-1]
+		if len(r.Save.Sections) != 1 || quip.FieldsString(&r.Save.Sections[0]) != "1,2,9,12,13,19,20,33,39" || quip.SectionRTML(&r.Save.Sections[0]) != "" {
+			t.Errorf("%s emptied: %+v", was, r.Save.Sections)
+		}
+		fc, _ := fs.Canvas(canvasID)
+		if len(fc.Doc.Blocks) != 1 || fc.Doc.Blocks[0].Kind != kind || fc.Doc.Blocks[0].Text() != "" || fc.Doc.Blocks[0].ID != sectionID {
+			t.Errorf("%s emptied: the export %+v", was, fc.Doc.Blocks)
+		}
+	}
+	emptied(id, "temp:C:LST00001", "only", canvas.Paragraph)
+	emptied(list, "temp:C:LST00002", "one", canvas.Bullet)
+	nid := a.NewCanvasSectionID(id)
+	if err := a.SaveCanvasNewBlocks(ctx, id, "temp:C:LST00001", []CanvasNewBlock{{ID: nid, Kind: canvas.Paragraph, Spans: txt("next")}}); err != nil {
+		t.Fatalf("a new block: %v", err)
+	}
+	if err := a.SaveCanvasDelete(ctx, id, "temp:C:LST00001", nil); err != nil {
+		t.Errorf("a paragraph with a block after it: %v", err)
+	}
+	fc, _ := fs.Canvas(id)
+	if len(fc.Doc.Blocks) != 1 || fc.Doc.Blocks[0].Text() != "next" {
+		t.Errorf("the export after the delete: %+v", fc.Doc.Blocks)
+	}
+}
+
+// A list's last item emptied while a new item after it waits to be saved
+// (another save is out): the list stays, as the new item keeps it, and the
+// delete goes with the new item in one save the validator takes.
+func TestCanvasSaveListItemReplaced(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	txt := func(s string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: s}} }
+	const id = "F0QUIPLAST3"
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: id, Title: "Replaced item", Doc: canvas.Doc{Blocks: []canvas.Block{
+		{ID: "temp:C:RPL00001", Kind: canvas.Paragraph, Spans: txt("before")},
+		{ID: "temp:C:RPL00002", Kind: canvas.Bullet, Spans: txt("one")},
+	}}})
+	loadModel(t, a, id)
+	before := fs.CallCount("canvas/edit-document")
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{ReplyDelay: 700 * time.Millisecond, Times: 1})
+	first := make(chan error, 1)
+	go func() {
+		first <- a.SaveCanvasSpans(ctx, id, "temp:C:RPL00001", txt("before"), txt("before, typed"))
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for fs.CallCount("canvas/edit-document") == before {
+		if time.Now().After(deadline) {
+			t.Fatal("the first save never went out")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	nid := a.NewCanvasSectionID(id)
+	if err := a.SaveCanvasNewBlocks(ctx, id, "temp:C:RPL00002", []CanvasNewBlock{{ID: nid, Kind: canvas.Bullet, Spans: txt("two")}}); err != nil {
+		t.Fatalf("a new item while a save is out: %v", err)
+	}
+	if err := a.SaveCanvasDelete(ctx, id, "temp:C:RPL00002", txt("one")); err != nil {
+		t.Fatalf("the old item emptied: %v", err)
+	}
+	if err := <-first; err != nil {
+		t.Fatalf("the first save: %v", err)
+	}
+	waitSaveState(t, a, id, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending && !s.Saving })
+	rs := saves(fs)
+	if len(rs) != 2 || len(rs[1].Save.Sections) != 2 || rs[1].Status != http.StatusOK {
+		t.Fatalf("%d saves, want the paragraph's, then the delete with the new item: %+v", len(rs), rs)
+	}
+	fc, _ := fs.Canvas(id)
+	if len(fc.Doc.Blocks) != 2 || fc.Doc.Blocks[1].Kind != canvas.Bullet || fc.Doc.Blocks[1].Text() != "two" {
+		t.Errorf("the export: %+v", fc.Doc.Blocks)
+	}
+}

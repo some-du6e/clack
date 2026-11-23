@@ -103,6 +103,13 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 			deleted[e.SectionID] = true
 		}
 	}
+	newIn := map[string]bool{} // the lists this save adds an item to (checkNew holds each to its parents)
+	for i := range data.Sections {
+		u := &data.Sections[i]
+		if e, ok := byID[str(u.ID)]; ok && e.Kind == EditNew && u.Parents != nil && len(u.Parents.IDs) > 0 {
+			newIn[u.Parents.IDs[0]] = true
+		}
+	}
 	for i := range data.Sections {
 		u := &data.Sections[i]
 		id := str(u.ID)
@@ -207,11 +214,15 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 			}
 		case EditDelete:
 			switch {
+			case server.HasLayoutParent != nil && *server.HasLayoutParent:
+				// the layout's onChildRemoved changes it too
+				return refuse("section %s: deleting a section in a layout", id)
 			case inList:
 				// a list item: its list keeps an item, or goes with the
 				// last one (notifyDescendantDeleted_ deletes it)
-				list, left := server.Parents.IDs[0], false
-				for _, c := range d.ListChildren(server.Parents.IDs[0]) {
+				list := server.Parents.IDs[0]
+				left := newIn[list]
+				for _, c := range d.ListChildren(list) {
 					left = left || c != id && !deleted[c]
 				}
 				if !left && !deleted[list] {
@@ -236,6 +247,15 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 	}
 	if len(byID) > 0 {
 		return refuse("%d edits have no section", len(byID))
+	}
+	if len(deleted) > 0 { // never the last block: deleteEntity would make a new one in its place
+		left := false
+		for _, u := range made {
+			left = left || u.Parents == nil || len(u.Parents.IDs) == 0
+		}
+		if !left && d.LeavesNoBlock(func(id string) bool { return deleted[id] }) {
+			return refuse("the save deletes the canvas's last block (Slack's editor would make a new section in its place)")
+		}
 	}
 	if !ValidUTF8(data) {
 		return refuse("invalid UTF-8")
