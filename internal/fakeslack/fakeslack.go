@@ -227,6 +227,11 @@ type Size struct {
 	// GIFs adds #gif-wall (GIFWallID) with this many messages, each a
 	// large animated GIF (gifs.go): the GIF memory test's channel.
 	GIFs int
+	// Giant adds #giant-wall (GiantWallID): of its latest Giant messages
+	// every twelfth is short and the rest are each about 908,000
+	// characters in about 92,000 lines (giant.go), then 60 older short
+	// ones: the giant message memory test's channel.
+	Giant int
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -836,6 +841,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.GIFs > 0 {
 		s.addGIFWall() // gifs.go
+	}
+	if sz.Giant > 0 {
+		s.addGiantWall() // giant.go
 	}
 	if sz.AppPlans {
 		s.addAppPlans() // agents.go

@@ -2871,6 +2871,75 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # giant-messages (2026-11-20, restarted 2026-11-23): messages the shape
+  # of the channel Heliodex reported (opening it took Clack to 13 GB):
+  # #giant-wall (fakeslack Size.Giant, synthetic text), 92 of its latest
+  # 100 messages each about 908,000 characters in about 92,000 lines.
+  # TestGiantMessagesBounded opens it, scrolls, pages back to the 100th
+  # newest and jumps around, under the GPU renderer (llvmpipe), and fails
+  # past its live heap, peak RSS and frame time bounds or when a giant
+  # message doesn't draw what Slack draws; TestGiantMessagesPlugins is
+  # the same session under a plugin patching the messages slice. Heap
+  # profiles and reports are the giant-messages artifact. Dispatch with
+  # only=giant-messages (-f count=3 for a flake check).
+  giant-messages:
+    if: ${{ !inputs.only || startsWith('giant-messages', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (Xvfb, Mesa llvmpipe)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: TestGiantMessagesBounded (COUNT runs, each against a fresh fakeslackd, the first verbose), then TestGiantMessagesPlugins
+        env:
+          CLACK_GIANT_MESSAGES: "100"
+          CLACK_BENCH_GPU: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          set -o pipefail
+          go build -o "$RUNNER_TEMP/fakeslackd" ./internal/fakeslack/fakeslackd || exit 1
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui || exit 1
+          rc=0
+          for i in $(seq 1 "$COUNT"); do
+            # the fake in its own process: the RSS is the client's alone
+            "$RUNNER_TEMP/fakeslackd" -small -giant 100 -addr 127.0.0.1:8933 > "$RUNNER_TEMP/fakeslackd-$i.log" 2>&1 &
+            fp=$!
+            for _ in $(seq 1 200); do curl -s -o /dev/null http://127.0.0.1:8933/img/1x1/x.png && break; sleep 0.1; done
+            mkdir -p "$RUNNER_TEMP/giant/$i"
+            v=""
+            [ "$i" = 1 ] && v="-test.v"
+            # through expect_fail's wrapper when a proof run names it
+            (cd internal/ui && CLACK_FAKESLACK_URL=http://127.0.0.1:8933/ CLACK_GIANT_OUT="$RUNNER_TEMP/giant/$i" \
+              xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 $v -test.timeout 20m -test.run '^TestGiantMessagesBounded$' 2>&1 | tail -n 200) || rc=1
+            kill $fp 2>/dev/null; wait $fp 2>/dev/null
+          done
+          # under a plugin that patches the messages slice (the fake in the
+          # test's process: the plugin bench's env needs it)
+          mkdir -p "$RUNNER_TEMP/giant/plugins"
+          (cd internal/ui && CLACK_GIANT_PLUGINS=1 CLACK_GIANT_OUT="$RUNNER_TEMP/giant/plugins" \
+            xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 -test.v -test.timeout 20m -test.run '^TestGiantMessagesPlugins$' 2>&1 | tail -n 200) || rc=1
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: giant-messages
+          path: ${{ runner.temp }}/giant
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # inspect-draw (2026-11-21): the inspect review's pen (draw.go): lines
   # burned into the copy where and as wide as they were drawn at 1x and
   # 2x, undo, Esc back to blurring with the app's input intact after, and
@@ -5353,6 +5422,7 @@ jobs:
       - fl1122c-s-displays
       - library-dupes
       - rx-bar
+      - giant-messages
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
