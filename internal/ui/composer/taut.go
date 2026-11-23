@@ -357,10 +357,15 @@ func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks 
 // prepareFile uploads one attached file's bytes (addAndUploadPendingFile;
 // AnonymizeFilenames renames it). It returns the prepared upload to share
 // on send. Call off the UI goroutine.
-func prepareFile(ctx context.Context, api coreAPI, name string, data []byte, progress func(sent, total int64)) (core.PreparedUpload, error) {
+func prepareFile(ctx context.Context, api coreAPI, f core.UploadFile, progress func(sent, total int64)) (core.PreparedUpload, error) {
+	name, data := f.Name, f.Data
 	if t := currentTaut(); t.ThunkPatched(thPendingFile) {
 		var up core.PreparedUpload
-		r, err := taut.Dispatch(ctx, t, thPendingFile, pendingFileArgs{File: taut.File{Name: name, Data: data}},
+		ft := ""
+		if f.Subtype != "" {
+			ft = "audio/mp4" // a clip's File type (the blob's)
+		}
+		r, err := taut.Dispatch(ctx, t, thPendingFile, pendingFileArgs{File: taut.File{Name: name, Type: ft, Data: data}},
 			func(ctx context.Context, a pendingFileArgs) (pendingFileResult, error) {
 				n := a.File.Name
 				if n == "" {
@@ -370,7 +375,7 @@ func prepareFile(ctx context.Context, api coreAPI, name string, data []byte, pro
 				if len(d) == 0 {
 					d = data
 				}
-				p, err := api.prepareUpload(ctx, core.UploadFile{Name: n, Title: n, Data: d}, progress)
+				p, err := api.prepareUpload(ctx, core.UploadFile{Name: n, Title: n, Data: d, Subtype: f.Subtype}, progress)
 				if err != nil {
 					return pendingFileResult{}, err
 				}
@@ -386,7 +391,7 @@ func prepareFile(ctx context.Context, api coreAPI, name string, data []byte, pro
 		}
 		return up, nil
 	}
-	return api.prepareUpload(ctx, core.UploadFile{Name: name, Title: name, Data: data}, progress)
+	return api.prepareUpload(ctx, core.UploadFile{Name: name, Title: name, Data: data, Subtype: f.Subtype}, progress)
 }
 
 // ---- hooks (composer.addSendCheck / addLinkTransform / patchInlineMarkup) ----

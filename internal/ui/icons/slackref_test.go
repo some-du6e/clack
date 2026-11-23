@@ -354,6 +354,7 @@ var fontRef = map[string]rune{
 	"bullet-list":           0xE157,
 	"plus-small":            0xE281,
 	"times-small":           0xE294,
+	"check-large-bold":      0xE319,
 	"times-circle-medium":   0xE229,
 	"disable-font":          0xE149,
 	"chevron-medium-down":   0xE256,
