@@ -32,7 +32,7 @@ doesn't have (named).
 | Bot's, app's, Workflow Builder's post | `message` (`bot_message`, `bot_id`) | → rr: 9, 10 | fixed (1) |
 | Slackbot | `message` in the Slackbot DM | → RM: 22 for a forwarded email | fixed (1) |
 | Reminder (/remind) | Slackbot DM `message` ("Reminder: …"); `reminder_fired` only updates the list | → RM | ✓ |
-| Later reminder | `saved_due` | `handleSavedDue` (boot-render) loads the item → x6 `shouldShowNotificationForSavedItem` → `showSavedItemNotification`: "Reminder due" with the item's content (a message, a list record, a canvas section, a reminder, a file), a click opens it in Later | fixed (6): core takes `saved_due` with the other saved events (the item held, its message looked up), ui/notify_saved.go asks x6 and shows "Reminder due" with the message as a message's notification writes it, the item's key (`getIdForSavedItem`) as msg, silent; a reminder's or a section's description, a file's title (files.info first, as handleSavedDue fetches it); a list record's name and a Salesforce task's subject Clack doesn't hold (""). Its click, and `slack://saved-for-later?item_id=`, open Later with the message beside the list (TestLaterReminderLikeSlack) |
+| Later reminder | `saved_due` | `handleSavedDue` (boot-render) loads the item → x6 `shouldShowNotificationForSavedItem` → `showSavedItemNotification`: "Reminder due" with the item's content (a message, a list record, a canvas section, a reminder, a file), a click opens it in Later | fixed (6): core takes `saved_due` with the other saved events (the item held, its message looked up), ui/notify_saved.go asks x6 and shows "Reminder due" with the message as a message's notification writes it, the item's key (`getIdForSavedItem`) as msg, silent; a reminder's or a section's description, a file's title (files.info first, as handleSavedDue fetches it); a list record's name and a Salesforce task's subject Clack doesn't hold (""). Its click, and `slack://saved-for-later?item_id=`, open Later with the message beside the list (TestLaterReminderLikeSlack); any other key Slack's `looksLikeSavedItemId` or `looksLikeSalesforceTaskTodoId` takes (a reminder's `Sa…`, a file's, a list record's, a Salesforce task's) opens Later alone (TestLaterReminderOfAReminderLikeSlack); a message's conversation nothing looked up is looked up first, as handleSavedDue does (TestLaterReminderInAChannelNeverLookedUp) |
 | Calendar reminder | `calendar_reminder` | `showJustInTimeCalendarNotification` (silent) | n/a: Clack has no calendar integration |
 | Huddle invite | `huddle_invite` | HW `shouldShowNotificationForHuddle` → `showHuddleNotification`, plus the ring | fixed (2): see §6 |
 | Huddle started in a channel | `message` subtype `huddle_thread` | → rr: never as a mention (canCountAsUnreadForCurrentUser), passes at Everything | fixed (1) |
@@ -198,7 +198,9 @@ whom it sends one to. Clack ✓ (thread-reply-toast rounds 1–3).
   when someone added them, and a workflow's post as them; a broadcast
   counts until its thread is read past it (B95B). The mention badge when
   shouldMessageBadgeChannel (eqVu) says so: every message where the
-  conversation badges all unreads; in a DM, or a conversation that takes
+  conversation badges all unreads and isn't muted
+  (getShouldBadgeAllUnreadsForChannelId is `n && !isMuted`; a muted one
+  goes on to the rest); in a DM, or a conversation that takes
   at-channel mentions (QWNA) and isn't muted with muted items hidden
   (`improve_mute_pref`), the viewer's mention, a user group of theirs,
   @channel, @everyone and @group (not in a reply) and @here (not while
@@ -246,15 +248,23 @@ Enabled=1 ShowInActionCenter=1 …`.
 
 Karim's α.136 wrote nothing to clack.log from 01:57Z to 02:42Z on
 2026-11-22 while its socket answered pings, and a reply's toast never
-came. Slack's socket manager keeps a socket only while it hears from it:
-a `reconnect_url` comes every 285 s at most, and a missing pong closes it
-after 90 s (memory: slack-socket-manager-rules). Clack's watchdogs
-(internal/slack/rtm.go, internal/core/pump_watch.go):
+came. Slack's socket manager closes a socket after 90 s without a pong,
+and keeps the gateway's last `reconnect_url` for a fast reconnect only
+while it's under 285 s old (getFastReconnectUrl; memory:
+slack-socket-manager-rules). How often the gateway sends one unasked is
+not in Slack's code and nobody has measured it: Karim's dogfood logs show
+fast reconnects after 8 h connections (so one under 285 s old was there),
+and a 2017 RTM write-up saw one every 30 s on an idle bot. Clack's
+no-frames bound of twice 285 s rests on that; every disconnect line now
+says the longest the connection went without a frame of Slack's own
+(`rtm: disconnected (…) after … (fast=…; Slack's own frames at most … apart)`),
+so the next logs settle it. Clack's watchdogs (internal/slack/rtm.go,
+internal/core/pump_watch.go):
 
 - **A socket that only answers pings**: no frame of Slack's own (an event, a
   `reconnect_url`) for twice 285 s while the pongs come. clack.log says
   `rtm: nothing from Slack for … but answers to its pings: closing the
-  socket to connect again (4998 …)`, then every goroutine's stack, and the
+  socket to connect again (4998 …)`, then the goroutines' stacks, and the
   socket closes with 4998 to connect again, as a slow connect.
 - **A pong check that stops running** (a ping stuck in its write): `rtm:
   the pong check hasn't run for …`, the stacks, and the same reconnect.
@@ -262,14 +272,62 @@ after 90 s (memory: slack-socket-manager-rules). Clack's watchdogs
   the pong check.
 - **A handler that blocks**: the event pump, or a queue behind it (the
   lookups', the Activity events', a held conversation's), on one task for
-  30 s: `core: <the queue> has been on <a TYPE/subtype event of ch:TAG>
-  for …, N waiting behind it`, the stalled goroutine's stack and every
-  other's, and `core: … took …` once it's done.
+  30 s of awake time: `core: <the queue> has been on <a TYPE/subtype event
+  of ch:TAG> for …, N waiting behind it`, the stalled goroutine's stack and
+  the others', and `core: … took …` once it's done. A look long after the
+  last one (a sleep, a hold) is a wake: a task in flight ages from it, so
+  the time asleep isn't a stall, on Windows too, where Go's monotonic
+  clock counts a sleep (TestPumpSleepIsNotAStall).
 - **A full event buffer** is not silence: `rtm: event buffer full (N events
   wait for the handler): dropping … and what follows until it has room;
   the socket still brings them`, a count every 10 s, and `rtm: the event
-  buffer has room again, after N events dropped`.
+  buffer has room again (N wait), after N events dropped` once the handler
+  has drained half of it: one that drains slower than the events come gets
+  the counts, not two lines per event it takes
+  (TestRTMBufferSlowDrainLogsOnce).
 
-Dumps come at most every 10 minutes. A healthy idle socket, which hears
-a `reconnect_url` now and then, logs none of it (TestRTMKeepsAnIdleSocket,
-TestIdleSessionLogsNoStall).
+Dumps come at most every 10 minutes, the stalled goroutines first, cut at
+512 KiB (stackdump.MaxDump, TestLogCapsTheDump): a whole dump of up to
+16 MiB rotated the 5 MiB clack.log on its own and filled a log grab's last
+1 MiB, the line that said why outside it. A healthy idle socket, which
+hears a `reconnect_url` now and then, logs none of it
+(TestRTMKeepsAnIdleSocket, TestIdleSessionLogsNoStall).
+
+## 10. The viewer's presence: tickling the socket
+
+The rules above count @here only while the viewer isn't away
+(NotifyMention; the sidebar's badge, §7), and the viewer's presence is the
+server's: its auto-away marks them away when no client has shown activity
+for a while. Slack's client and desktop app show it (client-boot
+`maybeTickleMS`, "Ping the message server if necessary"; desktop
+4.53.276's `systemIdleStatusEpic` and `tickleMessageServerEpic`; build
+5718bdb1b28b), and Clack now does the same (internal/core/tickle.go,
+internal/ui/presence_activity.go):
+
+- **The tickle**: `{type: "tickle", reason}` over the socket, when it's
+  connected, the viewer isn't manually away (`manual_presence`, kept from
+  `manual_presence_change`), and nothing that counts as activity went out
+  for 19 s: a tickle, a typing indicator or a user_typing
+  (`lastSocketActivity`, which the socket manager's send moves for those).
+  One whose send fails with the socket closed goes once more when it's
+  back.
+- **Its reasons**: the window gaining the focus (`focus`), a press of the
+  mouse (`mousedown`) or of a key (`keydown`) anywhere in Clack's windows
+  (Gio patch 33's press hook), and the desktop app's poll (`polling`): at
+  once and every 10 s, while the system had input in the last 20 s
+  (`getSystemIdleTime() <= 20`: GetLastInputInfo on Windows,
+  CGEventSourceSecondsSinceLastEventType on macOS) and the screen isn't
+  locked (WTSQuerySessionInformation's session flags,
+  CGSSessionScreenIsLocked). On Linux Clack reads no system idle time
+  (Electron reads X11's screensaver): the poll counts Clack's own windows'
+  input there.
+- **set_active**: Slack's modern `apiCall` adds `set_active=true` only for
+  a caller that asks (`SET_ACTIVE`: none in this build) or passes its own
+  (admin `search.team`, `enterprise.teams.directory`,
+  `enterprise.users.profile.set`, the admin terms of service), and the
+  legacy `interop.api` bridge that sets it by default has no caller. None
+  of them is a call Clack makes, so Clack sends none.
+- **Before**: Clack sent no tickle. After the server's auto-away, `<!here>`
+  in a channel at Mentions no longer toasted or badged for a viewer reading
+  in Clack, and others saw them away (TestPresenceActivityLikeSlack,
+  TestTickleLikeSlack).
