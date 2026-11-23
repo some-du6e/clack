@@ -764,6 +764,9 @@ func (c *Controller) Handle(ev core.Event) {
 	case "huddle_invite":
 		c.onInvite(ev.Raw)
 		return
+	case "huddle_recommend": // huddleRecommendRtmHandler (recommend.go)
+		c.onRecommend(ev.Raw)
+		return
 	case "huddle_invite_cancel": // huddleInviteCancelRtmHandler
 		var e struct {
 			Channel string `json:"channel_id"`

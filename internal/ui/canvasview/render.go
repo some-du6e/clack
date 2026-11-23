@@ -5,10 +5,12 @@ import (
 	"image/color"
 	"net/url"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -61,6 +63,20 @@ func placeholderText(dark bool) color.NRGBA {
 	return color.NRGBA{R: 0x77, G: 0x75, B: 0x7a, A: 0xff}
 }
 
+// nativeEmojiGap is the space after a canvas's standard emoji, in Dp (at
+// 1x only, richview.Style's NativeEmojiGap). Quip draws a standard emoji
+// as its native glyph in span.emoji.emoji-in-canvas, whose margin-right
+// is 4px in Chrome on a Mac at 1x ([@media (resolution<=1x)]
+// body.mac.chrome, canvas-controller CSS); Windows, Linux and a 2x Mac
+// have none (Quip's webkit and gecko body classes aren't Chromium's). A
+// custom emoji is an <img> (control.c54 img) with no margin anywhere.
+func nativeEmojiGap() float32 {
+	if runtime.GOOS == "darwin" {
+		return 4
+	}
+	return 0
+}
+
 // styleSet is one richview.Style per text size, per window shaper.
 type styleSet struct {
 	shaper                      *text.Shaper
@@ -87,6 +103,7 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 		st.EmojiURL = th.EmojiURL
 		st.TextSize, st.LineHeight = size, line
 		st.EmojiSize = line // control.c54 img: the section's line height, vertical-align top
+		st.NativeEmojiGap = nativeEmojiGap()
 		st.PreLine = codeLine
 		if heading {
 			st.BoldWeight = font.Black
@@ -426,20 +443,17 @@ func (v *View) spans(sp []richtext.Span) []richtext.Span {
 	}
 	out := make([]richtext.Span, len(sp))
 	copy(out, sp)
+	// a richtext.Date stays one: the export has its formatted text only
+	// (no timestamp), which richview draws as text, but in a canvas it is
+	// Quip's date control, with its own cursor (richview's tDate)
 	for i := range out {
-		s := &out[i]
-		switch s.Kind {
-		case richtext.Emoji:
-			if s.URL == "" {
-				if u, t, ok := a.Emoji(s.ID); ok {
-					s.URL = u
-					if s.Text == "" {
-						s.Text = t
-					}
+		if s := &out[i]; s.Kind == richtext.Emoji && s.URL == "" {
+			if u, t, ok := a.Emoji(s.ID); ok {
+				s.URL = u
+				if s.Text == "" {
+					s.Text = t
 				}
 			}
-		case richtext.Date:
-			s.Kind = richtext.Text // the export has the formatted date only
 		}
 	}
 	return out
@@ -575,8 +589,12 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, top int) layout.Dimension
 		} else {
 			h = b.rv.Layout(g, st, v.handler).Size.Y
 		}
-		if v.edit.canEdit(v) && !b.inCell { // other kinds: a click explains they can't be edited yet
+		switch {
+		case !v.edit.canEdit(v):
+		case !b.inCell: // other kinds: a click explains they can't be edited yet
 			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
+		case !hidden(b): // a cell has no press area; its dates take an editor's hand all the same (textArea's cursor pass)
+			b.rv.HandCursors(gtx, true)
 		}
 	}
 	return layout.Dimensions{Size: image.Pt(w, top+h)}
@@ -724,10 +742,19 @@ func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) int {
 					checkMark(gtx, c.BorderStrong)
 				}
 			}
-			if !editable {
-				return layout.Dimensions{Size: s}
+			d := layout.Dimensions{Size: s}
+			if editable {
+				d = b.check.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
 			}
-			return b.check.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
+			// li.slackified-checkbox .checkbox{cursor:pointer}, an editor's
+			// or not (Quip's browser checkbox above keeps the arrow:
+			// .checkbox-container .checkbox{cursor:default})
+			pass := pointer.PassOp{}.Push(gtx.Ops)
+			area := clip.Rect{Max: s}.Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			area.Pop()
+			pass.Pop()
+			return d
 		})
 		if toggled {
 			v.edit.toggleCheck(v, b)

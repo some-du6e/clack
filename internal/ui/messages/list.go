@@ -51,6 +51,12 @@ const (
 	// ends with space.150 (24px) above the composer, space.100 (16px)
 	// while the channel's context bar shows (getBottomSpacerHeight).
 	itBottom
+	// itInput is the thread list's "input" row (getThreadRowsAndKeys,
+	// boot-shared eTbq): its last row once the slice reaches the thread's
+	// end, the reply box. It is as tall as the box the host lays out
+	// (SetInputHeight), which the host draws where the row is (InputRow),
+	// so the box scrolls with the replies as Slack's does.
+	itInput
 )
 
 type item struct {
@@ -81,8 +87,10 @@ var tbIcons = [tbCount]string{"add-reaction", "comment-lines", "forward-msg", "t
 // views. It is cached across view instances (UI goroutine only), so
 // switching back to a conversation keeps its rows and scroll position.
 type listState struct {
-	hb *hub
-	m  *model // what the list shows: chm, or its window
+	irec introRec   // the DM foreword's header data (intro_rec.go)
+	fw   imForeword // the DM foreword's widgets (foreword.go)
+	hb   *hub
+	m    *model // what the list shows: chm, or its window
 	// chm is a channel list's conversation model (the newest messages,
 	// every list's); win is the window it shows instead, its own (hub.go
 	// newWindow), nil when it shows chm
@@ -109,9 +117,15 @@ type listState struct {
 
 	list     layout.List
 	contentH int // total item height when all items fit (see layoutList)
-	heights  []int
-	pos      []int // y of visible items (valid where heights > 0 this frame)
-	visible  [2]int
+	// inputOn: the host draws the thread's reply box in its "input" row
+	// (ThreadView.SetInputRow), inputH the box's height this frame
+	// (SetInputHeight); inputY is where the last layout put the row, under
+	// the list's top (size.Y when the row was below the list)
+	inputOn        bool
+	inputH, inputY int
+	heights        []int
+	pos            []int // y of visible items (valid where heights > 0 this frame)
+	visible        [2]int
 
 	openLastRead string // the "New" line position, fixed while open
 	opened       bool
@@ -173,8 +187,15 @@ type listState struct {
 
 	lastTyping time.Time
 
+	// the open inline editor (one per list, as Slack's messageEditWindow
+	// holds one per window) and its message: its row draws it, and a row
+	// made again for the message (a jump's window and back, a rebuild)
+	// takes it back, with what was typed (keepEdit)
+	edit           *composer.Composer
+	editCh, editTS string
+
 	noMark      bool
-	unreadSeen  bool         // the "New" line (or no line at all) has been on screen
+	unreadSeen  bool         // the "New" line has been visible (unreadLineVisible)
 	pane        slackc.Props // $pane for components in a thread pane
 	inj         injState     // plugin-injected messages
 	pend        pendingEdit  // an edit waiting for taut's actionable message
@@ -200,7 +221,13 @@ type listState struct {
 	findFlashAt       time.Time
 	sel               selection
 	sb                scrollbar
-	pendingJump       string
+	// sbCall is the scrollbar the last layout recorded for the host to
+	// draw after its reply box (sbDeferred until it does), in the frame at
+	// sbAt (a call is only good in the frame that recorded it)
+	sbCall      op.CallOp
+	sbDeferred  bool
+	sbAt        time.Time
+	pendingJump string
 	// jumpLazy: the pending jump is highlightRoot's (highlightLazy) or a
 	// re-highlight in an open thread pane: a message whose top is already
 	// on screen isn't scrolled to
@@ -903,6 +930,7 @@ func (s *listState) sync(h Host, now time.Time) {
 			delete(s.rows, ts)
 		}
 	}
+	s.dropDeletedEdit(live)
 }
 
 // anchorItem is the item now showing the message keyed key, -1 if none.
@@ -1060,10 +1088,14 @@ func (s *listState) build(h Host, now time.Time) {
 		// pane that was at the end when a slow connect made it stale keeps
 		// the reply box (endGap) until its read past the old end lands,
 		// even once a reply the socket brought makes the store's slice for
-		// it no longer the last (prevReachedEnd false): Slack's input is
-		// one of the list's rows, scrolled away with it, but Clack's box
-		// is drawn under the list and may hold what's being typed
+		// it no longer the last (prevReachedEnd false): it may hold what's
+		// being typed
 		s.items = append(s.items, item{kind: itLoading, key: "loading-end"})
+	} else if s.thread && len(msgs) > 0 && s.inputOn {
+		// getThreadRowsAndKeys' "input" row in its place: the reply box,
+		// one of the list's rows, scrolled with it (a host that draws the
+		// box elsewhere, or a footer instead, has none)
+		s.items = append(s.items, item{kind: itInput, key: "input"})
 	}
 	if cap(s.heights) < len(s.items) {
 		s.heights = make([]int, len(s.items), len(s.items)+64)
@@ -1111,6 +1143,50 @@ func (s *listState) newestItem() int {
 	return -1
 }
 
+// unreadLineVisible is MessagePane.isUnreadLineVisible (client-boot-shared):
+// !isLoading && (!isGhostLastRead && getUnreadLinePlacement() === 2 ||
+// !unreadCount && reachedEnd && isAtBottom). MessageList's placement is 2
+// for its divider in view, and only a slice that holds the divider has one
+// (getListProps' unreadIndex: canShowUnreadDivider, the slice's first
+// message at or before the last read or its start reached, and the first
+// unread in the slice); without it the placement is 1 or 3. So a jump's
+// window that ends before the last read, or starts after it, never shows
+// the line, and the newest messages it goes back to aren't marked read
+// for it. Where the slice holds the first unread but the list draws no
+// line (only the viewer's own sends after it, nothing read above), the
+// first unread's row stands for it. A thread's list keeps its markers'
+// rule (thread_unread.go), and a conversation without a read cursor its
+// own: no line to wait for. The ghost last read (the line kept after a
+// mark) needs no case: its conversation is read.
+func (s *listState) unreadLineVisible(h Host, atBottom bool) bool {
+	ui := s.unreadIndex()
+	inView := func(i int) bool { return i >= s.visible[0] && i < s.visible[1] }
+	lr := s.openLastRead
+	if s.thread || lr == "" {
+		return ui < 0 || inView(ui)
+	}
+	if s.snap.loading {
+		return false
+	}
+	first, last, ok := s.ends()
+	if ok && tsLess(lr, last) && (!s.snap.hasMore || !tsLess(lr, first)) {
+		if ui < 0 {
+			for i, it := range s.items {
+				if it.kind == itMsg && it.idx < len(s.snap.msgs) && tsLess(lr, s.snap.msgs[it.idx].m.TS) {
+					ui = i
+					break
+				}
+			}
+		}
+		return ui >= 0 && inView(ui)
+	}
+	unread := false
+	if app := h.Core(); app != nil {
+		unread = app.Count(s.ch).Unread
+	}
+	return !unread && !s.snap.newestMissing && atBottom
+}
+
 // unreadIndex returns the item index of the "New" line, or -1.
 func (s *listState) unreadIndex() int {
 	for i, it := range s.items {
@@ -1128,6 +1204,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	st := styleFor(h)
 	now := time.Now()
 	lastHost = h
+	// the scrollbar call DrawScrollbar draws is this layout's only (an
+	// early return records none)
+	s.sbDeferred = false
 	if gtx.Now.IsZero() || !gtx.Now.Equal(s.preparedAt) { // else prepare did, this frame
 		s.endUnmountedFlash()
 		s.adopt(gtx.Now)
@@ -1217,6 +1296,12 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 			// getThreadStartPosition: the first unread reply, the reply
 			// last read to, or the root (thread_unread.go)
 			s.list.Position = s.threadStartPosition(gtx, "")
+			if s.highlight != "" && s.hlRestart && !s.hlSeen {
+				// a jump's highlight no row drew before its last list
+				// went (a thread switch, CloseThread): the row flashes
+				// from the start as this list places it
+				s.highlightAt = now
+			}
 		} else {
 			s.toEnd()
 		}
@@ -1411,21 +1496,41 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 			s.highlight, s.hlSeen = "", false
 		}
 	}
-	// contentH is the total item height when every item was laid out (the
-	// ui root puts a short thread's reply box under it), else 0.
+	// where the thread's "input" row is: the host draws the reply box
+	// there, below the list (clipped away) when the row is out of view
+	s.inputY = size.Y
+	in := len(s.items) - 1
+	hasInput := in >= 0 && s.items[in].kind == itInput
+	if hasInput && in >= s.visible[0] && in < s.visible[1] {
+		s.inputY = s.pos[in]
+	}
+	// contentH is the total item height when every item was laid out, the
+	// reply box's row aside (a short thread ends there), else 0.
 	s.contentH = 0
 	if p.First == 0 && s.visible[1] == len(s.items) {
 		s.contentH = y + p.Offset
+		if hasInput {
+			s.contentH -= s.heights[in]
+		}
 	}
 	if !s.unreadSeen && s.opened {
-		ui := s.unreadIndex()
-		s.unreadSeen = ui < 0 || (ui >= s.visible[0] && ui < s.visible[1])
+		s.unreadSeen = s.unreadLineVisible(h, !p.BeforeEnd)
 	}
 
 	s.updateUnreadThreads(h)
 	s.contextMenu(h, origin)
 	s.overlays(gtx, h, rc, size)
-	s.layoutScrollbar(gtx, c, size, now)
+	if s.thread && s.inputOn {
+		// the host draws the reply box in the list's "input" row, and the
+		// scrollbar goes after it (ThreadView.DrawScrollbar): Slack's
+		// thread pane is one scroll container, its scrollbar above every
+		// row, the input's too
+		m := op.Record(gtx.Ops)
+		s.layoutScrollbar(gtx, c, size, now)
+		s.sbCall, s.sbDeferred, s.sbAt = m.Stop(), true, gtx.Now
+	} else {
+		s.layoutScrollbar(gtx, c, size, now)
+	}
 	area.Pop()
 	s.reportMedia() // the video tiles' share on screen (file_rects.go)
 
@@ -1720,6 +1825,9 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		return s.threadSeparator(gtx, h, c, it, w, rc.now)
 	case itBottom:
 		return layout.Dimensions{Size: image.Pt(w, dp(gtx, s.bottomSpacerH(h)))}
+	case itInput:
+		// the reply box's room: the host draws the box there (InputRow)
+		return layout.Dimensions{Size: image.Pt(w, max(s.inputH, 0))}
 	}
 	e := &s.snap.msgs[it.idx]
 	if len(it.group) > 0 {
@@ -1730,6 +1838,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	if !ok {
 		r = newListRow(e, s.thread)
 		s.rows[it.key] = r
+		s.keepEdit(it.key, r)
 	} else if len(it.group) > 0 && r.rev != e.rev {
 		r.set(e)
 	}
@@ -1943,6 +2052,17 @@ func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.D
 	}
 	title := "#" + name
 	sub := "This is the very beginning of the #" + name + " channel."
+	if kind == "im" {
+		// BaseImForeword (foreword.go), but for Slackbot's DM and a member
+		// the store doesn't hold yet
+		if app := h.Core(); app != nil {
+			if cv, ok := app.Conv(s.ch); ok {
+				if d, ok := s.imForewordLayout(gtx, h, c, w, cv); ok {
+					return d
+				}
+			}
+		}
+	}
 	if kind == "im" || kind == "mpim" {
 		title = name
 		sub = "This conversation is just between you and " + name + "."
@@ -2554,6 +2674,7 @@ func (s *listState) startEdit(h Host, ts string) {
 		}
 		r = newListRow(&s.snap.msgs[i], s.thread)
 		s.rows[ts] = r
+		s.keepEdit(ts, r)
 	}
 	if r.edit != nil {
 		r.edit.Focus()
@@ -2587,24 +2708,17 @@ func (s *listState) openEdit(h Host, m core.Message) {
 	if !ok {
 		return
 	}
-	for _, o := range s.rows {
-		if o.edit != nil {
-			o.edit = nil // one inline editor at a time, like Slack
-		}
-	}
-	t := tautOf()
-	if t != nil {
+	s.closeEdits() // one inline editor at a time, like Slack
+	if t := tautOf(); t != nil {
 		t.SetEditing("main", m.Channel, m.TS, true) // patchMessageText leaves it alone
 	}
-	rr := r
 	r.editFrames = 0
-	r.edit = composer.NewEdit(h, m, func() {
-		rr.edit = nil
-		if t != nil {
-			t.SetEditing("main", m.Channel, m.TS, false)
-		}
+	var ed *composer.Composer
+	ed = composer.NewEdit(h, m, func() {
+		s.endEdit(ed)
 		h.Invalidate()
 	})
+	r.edit, s.edit, s.editCh, s.editTS = ed, ed, m.Channel, m.TS
 	app := h.Core()
 	r.edit.SaveEditThen = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {
 		commitEditThen(ctx, app, ch, ts, text, blocks, fileIDs, done)
@@ -3162,12 +3276,54 @@ func (s *listState) placeSendJump(gtx layout.Context, now time.Time) {
 }
 
 func (s *listState) closeEdits() {
-	t := tautOf()
+	if s.edit != nil {
+		s.endEdit(s.edit)
+	}
 	for _, r := range s.rows {
-		if r.edit != nil && t != nil {
-			t.SetEditing("main", r.src.Channel, r.src.TS, false)
-		}
 		r.edit = nil
+	}
+}
+
+// endEdit is the end of inline editor ed (saved, cancelled, dropped): its
+// row draws the message again and, if it's the list's open one, Taut
+// hears the edit closed.
+func (s *listState) endEdit(ed *composer.Composer) {
+	for _, r := range s.rows {
+		if r.edit == ed {
+			r.edit = nil
+		}
+	}
+	if s.edit != ed {
+		return
+	}
+	if t := tautOf(); t != nil {
+		t.SetEditing("main", s.editCh, s.editTS, false)
+	}
+	s.edit, s.editCh, s.editTS = nil, "", ""
+}
+
+// keepEdit gives row r, made for the message keyed key, the list's open
+// inline editor if it's that message's: the row the sync dropped while the
+// list showed a jump's window (or rebuilt) had it. Slack's edit is the
+// window's messageEditWindow entry and a draft, not the row's: back at the
+// message the editor shows again, with what was typed. It takes the
+// keyboard when asked (Edit again, a click), not by itself.
+func (s *listState) keepEdit(key string, r *row) {
+	if s.edit == nil || key != s.editTS || r.edit != nil || s.edit.Done() {
+		return
+	}
+	r.edit, r.editFrames = s.edit, editFocusFrames
+}
+
+// dropDeletedEdit ends the open inline editor whose message the
+// conversation's own messages no longer hold although they span it: the
+// message was deleted. A jump's window not holding it isn't that.
+func (s *listState) dropDeletedEdit(live map[string]bool) {
+	if s.edit == nil || s.win != nil || live[s.editTS] {
+		return
+	}
+	if first, last, ok := s.ends(); ok && !tsLess(s.editTS, first) && !tsLess(last, s.editTS) {
+		s.endEdit(s.edit)
 	}
 }
 

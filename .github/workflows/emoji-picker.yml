@@ -37,6 +37,8 @@ on:
       - "internal/ui/popups/style.go"
       - "internal/ui/messages/quickreact*"
       - "internal/fakeslack/fakeslack.go"
+      - "internal/core/emoji_pack*.go" # the picker's pack call to action (TestEmojiPackCTAPixels)
+      - "internal/fakeslack/emoji_packs.go"
       - ".github/workflows/emoji-picker.yml"
   workflow_dispatch:
     inputs:
@@ -91,7 +93,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$EMOJI_SHOTS_DIR"
-          xvfb-run -a go test -p 1 -count=1 -v -run 'TestEmojiPickerShots|TestEmojiTabRow' ./internal/ui/popups 2>&1 | tee dist/emoji-picker-shots.log
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestEmojiPickerShots|TestEmojiTabRow|TestEmojiPackCTAPixels' ./internal/ui/popups 2>&1 | tee dist/emoji-picker-shots.log
           ls -la "$EMOJI_SHOTS_DIR"
       # Slack's light picker: its markup rebuilt from the web client's
       # source with Slack's own CSS (popups/testdata/slack-picker), drawn
