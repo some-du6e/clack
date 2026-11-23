@@ -198,8 +198,10 @@ type hdrSearch struct {
 	btn  int // px
 }
 
-// props: ViewHeaderSearch's ({channel, canOpenFindInChannelPopover}), the
-// channel as Slack's channels store has it.
+// props: ViewHeaderSearch's, {channel} as Slack's live fibers carry it
+// (docs/PLUGINS-props-live.md), the channel as Slack's channels store has
+// it. canOpenFindInChannelPopover, the Find in channel popover's flag, is
+// unset there, as in Clack, which has no such popover.
 func (h hdrSearch) props() slackc.Props {
 	kind, name := "", ""
 	if h.conv != nil {
@@ -213,7 +215,6 @@ func (h hdrSearch) props() slackc.Props {
 			"is_private": kind == "private" || kind == "im" || kind == "mpim",
 			"is_im":      kind == "im", "is_mpim": kind == "mpim",
 		},
-		"canOpenFindInChannelPopover": true,
 	}
 }
 

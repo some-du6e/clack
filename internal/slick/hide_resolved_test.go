@@ -83,7 +83,7 @@ func TestHideResolvedLikeSlack(t *testing.T) {
 	hidden("nothing hidden in #general", chGen)
 
 	// the header's search button, and the toggle the plugin puts before it
-	help := map[string]any{"channel": map[string]any{"id": chHelp, "name": "ysws-help", "is_channel": true}, "canOpenFindInChannelPopover": true}
+	help := map[string]any{"channel": map[string]any{"id": chHelp, "name": "ysws-help", "is_channel": true}}
 	h.render(1, "ViewHeaderSearch", help)
 	shows := func(tip, count string, revealed bool) func([]any) bool {
 		return func(nodes []any) bool {
@@ -124,7 +124,7 @@ func TestHideResolvedLikeSlack(t *testing.T) {
 	hidden("hidden again after a plain navigation", chHelp, tDone, tPlain, tDone2, tCast)
 
 	// #general's header has no toggle
-	h.render(2, "ViewHeaderSearch", map[string]any{"channel": map[string]any{"id": chGen, "name": "general", "is_channel": true}, "canOpenFindInChannelPopover": true})
+	h.render(2, "ViewHeaderSearch", map[string]any{"channel": map[string]any{"id": chGen, "name": "general", "is_channel": true}})
 	time.Sleep(200 * time.Millisecond) // what the store's changes would re-render
 	gen := h.waitTree(t, 2, "#general's header", func([]any) bool { return true })
 	if g := hideToggleOf(gen); g.btn != nil || !g.searchAfter() {
