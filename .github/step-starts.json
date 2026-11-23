@@ -96,36 +96,44 @@
   },
   "windows-applog": {
    "Gio frame cost on Direct3D 11 (WARP)": [
-    1.0,
-    5.7
+    1.2,
+    6.8
    ],
    "OS file drops (IDropTarget across processes, WM_DROPFILES)": [
-    6.5,
-    6.6
+    7.8,
+    7.9
+   ],
+   "double clicks by GetDoubleClickTime (SendInput)": [
+    10.8,
+    10.8
+   ],
+   "paste into a quote (App.Run's window, the real clipboard)": [
+    10.8,
+    12.5
    ],
    "the inspect freeze's pointer reset (Gio patch 49, fakeslack)": [
-    6.6,
-    7.4
+    7.9,
+    8.6
    ],
    "the inspect tool's pick to review, and the picker in popups (WARP, fakeslack)": [
-    7.4,
-    8.2
+    8.6,
+    9.8
    ],
    "the title bar (HiddenTitleBar, Clack's caption buttons over the top nav)": [
-    8.4,
-    8.7
+    10.1,
+    10.4
    ],
    "the window's place (Bounds and Displays, Slack's mainWindowSettings)": [
-    8.8,
-    9.0
+    10.5,
+    10.8
    ],
    "thread reply box gap (layout, fakeslack)": [
-    8.2,
-    8.4
+    9.8,
+    10.1
    ],
    "typed text on a focused list (SendInput, WM_KEYDOWN then WM_CHAR)": [
-    6.6,
-    6.6
+    7.9,
+    7.9
    ]
   },
   "windows-idle": {

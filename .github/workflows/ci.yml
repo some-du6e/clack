@@ -772,7 +772,7 @@ jobs:
   windows-applog:
     if: ${{ !inputs.only || startsWith('windows-applog', inputs.only) }}
     runs-on: windows-latest
-    timeout-minutes: 20 # budget, min (p95 10.5): docs/CI-SPEED.md
+    timeout-minutes: 23 # budget, min (p95 13, with the quote paste): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -979,6 +979,18 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_DBLCLICK_TESTS: "1"
         run: go test -count=1 -v -timeout 5m -run '^TestClackDoubleClickWindows$' gioui.org/app
+      # Karim's 2026-11-21 crash (α.113): a quote started in the composer
+      # (">" typed, or the Blockquote button), then Ctrl+V with each kind of
+      # copy on the real clipboard, in App.Run's own window (SendInput,
+      # PowerShell's WinForms clipboard): the window lives, and each paste
+      # lands as Slack's composer lands it (Gio patch 65: one clipboard
+      # session at a time in the process).
+      - name: paste into a quote (App.Run's window, the real clipboard)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -timeout 5m -run '^TestWinQuotePaste$' ./internal/ui
       # a test binary that printed PASS and still failed crashed as it
       # exited (windows-shell's gioui.org/app, train-161's push ci
       # 45018881337: no panic, no exit status): Windows Error Reporting
@@ -988,18 +1000,6 @@ jobs:
         shell: pwsh
         run: |
           Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001,1026; StartTime=(Get-Date).AddHours(-2)} -MaxEvents 20 -ErrorAction SilentlyContinue | Format-List TimeCreated,Id,ProviderName,Message | Out-String -Width 400
-      # Karim's 2026-11-21 crash (α.113): a quote started in the composer
-      # (">" typed, or the Blockquote button), then Ctrl+V with each kind of
-      # copy on the real clipboard, in App.Run's own window (SendInput,
-      # PowerShell's WinForms clipboard): the window lives, and each paste
-      # lands as Slack's composer lands it (Gio patch 65: one clipboard
-      # session at a time in the process). Last: it has no timing record yet.
-      - name: paste into a quote (App.Run's window, the real clipboard)
-        if: ${{ !cancelled() }}
-        env:
-          CGO_ENABLED: "0"
-          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
-        run: go test -count=1 -v -timeout 5m -run '^TestWinQuotePaste$' ./internal/ui
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
