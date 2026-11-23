@@ -5,12 +5,14 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -904,6 +906,34 @@ func (l *lay) v2Card(b *richtext.Block, x, y, w int) int {
 	return total
 }
 
+// removeAt is the remove button the hover target is (its index in
+// removes), or -1.
+func (v *View) removeAt() int {
+	if !v.hovering || v.hover < 0 {
+		return -1
+	}
+	for i := range v.d.removes {
+		if v.d.removes[i].del == v.hover {
+			return i
+		}
+	}
+	return -1
+}
+
+// removeTip is AttachmentDeleteButton's Tooltip (boot-shared, CDN build
+// 36d315d11944: position top, BaseTooltip's delay) over remove button i
+// while the pointer is on it: "Remove preview" (its aria-label; "Remove
+// contact info" for a contact_card, which Clack doesn't draw).
+func (v *View) removeTip(gtx layout.Context, st *Style, i int) {
+	if v.remHot != i+1 {
+		return
+	}
+	v.btnTip(gtx, st, v.d.removes[i].r, i18n.T("inline_attachments", "Remove preview"), false, removeTipDelay)
+}
+
+// removeTipDelay is BaseTooltip's default delay.
+const removeTipDelay = 150 * time.Millisecond
+
 // drawRemoves paints the remove buttons of hovered cards.
 func (v *View) drawRemoves(gtx layout.Context, st *Style) {
 	if !v.hovering || v.hover < 0 {
@@ -922,6 +952,7 @@ func (v *View) drawRemoves(gtx layout.Context, st *Style) {
 		s := rm.r.Dx() * 12 / 20
 		c := rm.r.Min.Add(rm.r.Max).Div(2)
 		paintIconAt(gtx.Ops, "close-circle-filled", image.Rect(c.X-s/2, c.Y-s/2, c.X-s/2+s, c.Y-s/2+s), p.TooltipText)
+		v.removeTip(gtx, st, i)
 	}
 }
 

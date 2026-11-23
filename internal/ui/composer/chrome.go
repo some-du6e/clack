@@ -1078,10 +1078,17 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 	if label == "" {
 		return
 	}
+	// ComposerButton (aiGo: the formatting, insertion and footer buttons,
+	// FileMenuButton's attach and EmojiToolbarButton too): delay 500
+	c.tip[id].Delay = composerTipDelay
 	t := op.Offset(r.Min).Push(gtx.Ops)
 	popups.Tooltip(gtx, th, &c.tip[id], hov, r.Size(), popups.Above, label, keys)
 	t.Pop()
 }
+
+// composerTipDelay is ComposerButton's Tooltip delay (CDN build
+// 36d315d11944); SendButton's and the drafts button's keep BaseTooltip's.
+const composerTipDelay = 500 * time.Millisecond
 
 // icon draws button id's glyph centred in r.
 func (c *chrome) icon(gtx layout.Context, st *chromeState, id crBtn, r image.Rectangle, col color.NRGBA) {

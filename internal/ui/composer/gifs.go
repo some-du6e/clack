@@ -355,9 +355,9 @@ func (a *attachments) layoutGif(gtx layout.Context, th *theme.Theme, g *draftGif
 		})
 	}
 	area.Pop()
-	if onBtn {
-		popups.Tooltip(gtx, th, &g.tip, true, image.Pt(px, px), popups.Above, i18n.T("live_unfurling", "Remove GIF"), "")
-	}
+	// called every frame the chip draws: a tooltip told false starts over
+	// (popups.HideTooltips holds one hidden until then)
+	popups.Tooltip(gtx, th, &g.tip, onBtn, image.Pt(px, px), popups.Above, i18n.T("live_unfurling", "Remove GIF"), "")
 }
 
 // pickGif is the composer's onGifSelected: the GIF joins the draft and

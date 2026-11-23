@@ -220,6 +220,10 @@ type SenderView struct {
 	// Avatar is the picture the row drew (its URL; "" for a row without
 	// one), Badge the app badge after the name ("" for none).
 	Avatar, Badge string
+	// TimeTag is the pointer tag of the message's time link (the
+	// header's, else the gutter's; nil when neither was drawn), whose
+	// area the router knows (AreaBounds)
+	TimeTag event.Tag
 }
 
 // Senders lists the senders of the visible messages as of the last frame.
@@ -252,6 +256,11 @@ func (s *listState) senders() []SenderView {
 		}
 		sv.Body = r.bodyRect
 		sv.Avatar, sv.Badge = r.avDrawn, r.badge
+		if r.tsTip.link.Hovered() || r.tsTip.link.Shown() {
+			sv.TimeTag = r.tsTip.link.Tag()
+		} else if r.compactTip.link.Shown() {
+			sv.TimeTag = r.compactTip.link.Tag()
+		}
 		out = append(out, sv)
 	}
 	return out
