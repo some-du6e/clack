@@ -471,6 +471,11 @@ type item struct {
 	target int16
 	url    string
 	size   int
+	// edge is where an image sits in its item: an icon's or an inline
+	// image's 1px sides. An emoji has none (Slack's .c-emoji is its size,
+	// with no margin): consecutive emoji touch, so tiles drawn to join up
+	// (stretchy custom emoji) do.
+	edge   float32
 	p0, p1 int32
 	brk    bool // break opportunity after this item (CJK, images)
 	// open marks a pad that opens an element (a pill's start padding): it
@@ -638,7 +643,7 @@ func (l *lay) addText(s string, fs *flowStyle, k faceKey, col color.NRGBA, st ri
 		}
 		p0, p1 := l.plainAdd(sg.text)
 		ep := fs.emoji
-		l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: l.st.emojiURL(sg.stem), size: ep,
+		l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep), url: l.st.emojiURL(sg.stem), size: ep,
 			deco: dc, target: tg, p0: p0, p1: p1, brk: true, alt: true, part: l.curPart})
 	}
 }
@@ -795,7 +800,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.d.tips = append(l.d.tips, ":"+sp.ID+":")
 				tip = int16(len(l.d.tips))
 			}
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip, part: pt})
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip, part: pt})
 			continue
 		case richtext.InlineImage:
 			if sp.URL == "" {
@@ -803,7 +808,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 			p0, p1 := l.plainAdd(sp.Text)
 			ip := max(fs.emoji, l.dp(16))
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ip + 2*l.dp(1)), url: sp.URL, size: ip, deco: -1, target: -1, p0: p0, p1: p1, brk: true, part: pt})
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ip + 2*l.dp(1)), edge: l.dpf(1), url: sp.URL, size: ip, deco: -1, target: -1, p0: p0, p1: p1, brk: true, part: pt})
 			continue
 		case richtext.ColorSwatch:
 			if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 && !uipref.Get().HideHexSwatch {
@@ -1156,7 +1161,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		trail = -1
 		last = len(d.frags)
 		if it.kind == itImage {
-			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip, part: it.part, col: it.col})
+			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + it.edge, w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip, part: it.part, col: it.col})
 		} else if it.kind == itWord {
 			d.frags = append(d.frags, frag{kind: fText, x: float32(x0) + x, w: w, size: int(it.face.size >> 6), sh: sh, col: it.col, style: it.style, target: it.target, p0: p0, p1: p1, comp: it.comp,
 				part: it.part, boxed: it.deco >= 0, weight: it.face.f.Weight, tip: it.tip})
@@ -1741,7 +1746,7 @@ func (l *lay) measure(s string, k faceKey) float32 {
 		var w float32
 		for _, sg := range segs {
 			if sg.stem != "" {
-				w += float32(k.size>>6)*1.2 + 2*l.dpf(1) // emoji ≈ 1.2em, like the flows
+				w += float32(k.size>>6) * 1.2 // emoji ≈ 1.2em, edge to edge like the flows
 			} else {
 				w += l.measure(sg.text, k)
 			}

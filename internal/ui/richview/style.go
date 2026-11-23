@@ -419,6 +419,10 @@ type Options struct {
 	// wrappers aren't flex (WSwB wrapViewBlock, wrapAppHomeBlock): an
 	// alert fills the width, as it does in a callout or a container
 	FillBlocks bool
+	// NoOuterMargins: the host draws the doc's outer margins, the first
+	// block's top and the last's bottom (a modal's block, whose margins
+	// collapse with Slack's block wrappers: blockkit's Surface)
+	NoOuterMargins bool
 	// CheckLists: rich_text check lists draw their checkboxes, as the
 	// rich_text renderable allows in a message or a thread (allowCheckList:
 	// s3Wf sS's blocks container contexts); elsewhere they're bullet lists

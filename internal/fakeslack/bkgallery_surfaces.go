@@ -400,6 +400,8 @@ func surfAPI(s *Server, method string, f url.Values) (any, bool) {
 			s.emit(map[string]any{"type": "view_updated", "view_id": SurfInputsView, "app_id": AppAppID, "view": v})
 		case "SURFA6":
 			s.openSurfView(f.Get("client_token"), SurfInspect())
+		case "SURFA7":
+			s.openSurfView(f.Get("client_token"), SurfStretchy())
 		default:
 			s.openSurfView(f.Get("client_token"), surfTicket())
 		}
