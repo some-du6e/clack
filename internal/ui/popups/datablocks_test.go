@@ -22,9 +22,12 @@ import (
 func chartHost(t *testing.T, copyImage bool) *tzHost {
 	t.Helper()
 	a := core.New(slack.New(slack.Creds{}), store.New(""))
+	// on by default (the account's group, defaultExperimentGroups)
+	group := "off"
 	if copyImage {
-		a.SetExperimentGroup("data_visualization_copy_image", "on")
+		group = "on"
 	}
+	a.SetExperimentGroup("data_visualization_copy_image", group)
 	th := theme.New(false)
 	sh := theme.NewShaper()
 	th.SetShapers(sh, sh)
