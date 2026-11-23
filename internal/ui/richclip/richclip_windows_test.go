@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf16"
-	"unsafe"
 
 	"gioui.org/app/winclip"
 )
@@ -19,18 +18,7 @@ func readFormat(t *testing.T, f uintptr) []byte {
 	t.Helper()
 	var b []byte
 	err := winclip.Session(context.Background(), 0, func() error {
-		h, _, _ := rcGetClipboardData.Call(f)
-		if h == 0 {
-			return nil
-		}
-		n, _, _ := rcGlobalSize.Call(h)
-		p, _, _ := rcGlobalLock.Call(h)
-		if p == 0 || n == 0 {
-			return nil
-		}
-		defer rcGlobalUnlock.Call(h)
-		b = make([]byte, n)
-		rcRtlMoveMemory.Call(uintptr(unsafe.Pointer(&b[0])), p, n)
+		b, _ = winclip.CopyData(uint32(f), 1<<30) // nil when absent
 		return nil
 	})
 	if err != nil {

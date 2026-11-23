@@ -184,11 +184,11 @@ type Editor struct {
 	richRead   *clipRead     // HTML read started by Ctrl/Cmd+V
 	pendPaste  *pendingPaste // plain text waiting for richRead and filesRead
 	filesRead  *filePaste    // the composer's file probe for that paste
-	// snap is the paste's one read of the clipboard where the platform
-	// reads it at once (Windows: pasteSnap); snapText, its text still to
-	// come (it stands for Gio's clipboard.ReadCmd there)
-	snap     *pasteSnap
-	snapText bool
+	// clipSnap is the paste's one read of the clipboard where the
+	// platform reads it at once (Windows: pasteSnap); clipSnapText, its
+	// text still to come (it stands for Gio's clipboard.ReadCmd there)
+	clipSnap     *pasteSnap
+	clipSnapText bool
 
 	events  []EditorEvent
 	filters []event.Filter

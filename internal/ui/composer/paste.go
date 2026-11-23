@@ -125,9 +125,9 @@ type pendingPaste struct {
 // come from that one read; elsewhere Gio delivers the text
 // (clipboard.ReadCmd) and the HTML is read beside it (startClipHTML).
 func (e *Editor) startPaste(gtx layout.Context, plain bool) {
-	e.richRead, e.filesRead, e.snap, e.snapText = nil, nil, nil, false
+	e.richRead, e.filesRead, e.clipSnap, e.clipSnapText = nil, nil, nil, false
 	if s := startPasteSnap(plain); s != nil {
-		e.snap, e.snapText = s, true
+		e.clipSnap, e.clipSnapText = s, true
 		if s.rich != nil {
 			e.richRead = s.rich
 		}
@@ -143,15 +143,15 @@ func (e *Editor) startPaste(gtx layout.Context, plain bool) {
 // flushSnap hands the snapshot's text to the paste once it was read (as
 // Gio's DataEvent would), and otherwise asks for another frame.
 func (e *Editor) flushSnap(gtx layout.Context) {
-	s := e.snap
-	if s == nil || !e.snapText {
+	s := e.clipSnap
+	if s == nil || !e.clipSnapText {
 		return
 	}
 	if !s.ready() {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(8 * time.Millisecond)})
 		return
 	}
-	e.snapText = false
+	e.clipSnapText = false
 	e.scrollCaret = true
 	e.scroller.Stop()
 	e.receivePaste(gtx, s.text)

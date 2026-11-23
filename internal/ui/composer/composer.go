@@ -914,7 +914,7 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvPasted:
 			if c.field == nil { // Texty there has no onFilesSelected
 				// a paste whose files attach inserts no text (filePaste)
-				if s := c.ed.snap; s != nil {
+				if s := c.ed.clipSnap; s != nil {
 					c.ed.filesRead = c.att.pasteFromSnap(s) // the paste's one read (Windows)
 				} else {
 					c.ed.filesRead = c.att.PasteClipboardImage()
