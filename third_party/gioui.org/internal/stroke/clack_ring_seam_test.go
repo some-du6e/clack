@@ -17,7 +17,7 @@ import (
 )
 
 // clackArc is MoveTo(c+(r,0)), ArcTo(c, c, sweep) and, closed, Close, as
-// op/clip's Path records them (contour 0).
+// op/clip's Path records them (its first contour is 1: split opens a group on each new one).
 func clackArc(c f32.Point, r, sweep float32, closed bool) StrokeQuads {
 	start := f32.Pt(c.X+r, c.Y)
 	pen := start
@@ -28,11 +28,11 @@ func clackArc(c f32.Point, r, sweep float32, closed bool) StrokeQuads {
 		p1 := m.Transform(p0)
 		p2 := m.Transform(p1)
 		ctl := p1.Mul(2).Sub(p0.Add(p2).Mul(.5))
-		qs = append(qs, StrokeQuad{Quad: QuadSegment{From: p0, Ctrl: ctl, To: p2}})
+		qs = append(qs, StrokeQuad{Contour: 1, Quad: QuadSegment{From: p0, Ctrl: ctl, To: p2}})
 		pen = p2
 	}
 	if closed && pen != start {
-		qs = append(qs, StrokeQuad{Quad: QuadSegment{From: pen, Ctrl: pen.Add(start).Mul(.5), To: start}})
+		qs = append(qs, StrokeQuad{Contour: 1, Quad: QuadSegment{From: pen, Ctrl: pen.Add(start).Mul(.5), To: start}})
 	}
 	return qs
 }

@@ -3150,3 +3150,54 @@ Tests: `gesture/clack_hover_cancel_test.go`
 doesn't lay the Hover out, for mouse ids 0 and 1), in ci's linux-gio
 job. In Clack: `internal/ui/messages`' `TestGutterTimeTipEndsOnWindowsMouse`
 (the gutter time's own trigger). Not in `UPSTREAM.patch`.
+
+## 62. internal/stroke: a near-zero segment strokes without NaN
+
+`internal/stroke/stroke.go`: `strokePathNorm` takes a segment's normal
+from the whole segment (`p2 - p0`) when the derivative at the end it's
+asked for is zero, and `ArcTransform` returns the identity for a circle
+of radius 0 instead of scaling by `1/0`.
+
+A ring drawn as `MoveTo`, `ArcTo(c, c, 2π)` and `Close` doesn't land
+exactly: `ArcTo` steps its rotation matrix 34 times in float32, the pen
+ends a float's error from the start, and `Close` adds a segment of about
+1e-5 px. Its midpoint control point rounds onto one of its ends, so the
+normal there was zero; the round join after it then started its arc on
+the pivot itself, a circle of radius 0, and every point of the stroke's
+outline after it was NaN (Karim's stray line under the intro's check
+badge, Windows α.146, 2026-11-22: a thin line in the ring's colour down
+from its 3 o'clock point). llvmpipe drops a NaN quad; other GPUs don't
+have to.
+
+Tests: `internal/stroke/clack_ring_seam_test.go`
+(`TestClackRingSeamClosedRing`: rings of 2 to 250 px, 1 to 7 px wide, on
+sub-pixel centres, their outline's loops each close, no NaN, nothing off
+the ring's band; `TestClackRingSeamSweeps`: open arcs swept from 0.9 of a
+turn to a whole one, the spinners'), in ci's linux-gio job. Not in
+`UPSTREAM.patch`.
+
+## 63. gpu: path coverage in 32-bit float where it can be blended
+
+`gpu/internal/opengl/opengl.go` (`floatTripleFor`: `R32F` first on
+desktop GL 3, and on GLES 3 with `EXT_color_buffer_float` and
+`EXT_float_blend`), `gpu/internal/d3d11/d3d11_windows.go`
+(`detectFloatFormat`: `R32_FLOAT` first when the device can render to it
+and blend it), `gpu/internal/metal/metal_darwin.go` (`R32Float`, which
+every Mac GPU family blends); `R16F` / `R16_FLOAT` stay the fallback.
+
+The stencil pass adds each outline segment's signed coverage into a float
+texture from the segment down to the path's bottom, and the segments of a
+closed outline cancel below it. In half float (11 bits) the many partial
+sums where an outline runs vertical (a ring's left and right sides, a
+circle's) leave about 1% behind, a column under the shape to its bottom.
+On a light background that's invisible; on the intro's dark one, and in
+dark mode, sRGB turns 1% into 25/255: a faint line hanging off rings and
+filled circles (the same report as patch 62). In 32-bit float the sums
+cancel. The coverage texture takes twice the memory.
+
+Tests: `internal/ui`'s `TestRingSeamRingAt` (ringAt at seven radii, four
+widths, four scales, sub-pixel centres), `TestRingSeamDoneBadge` (the
+intro's check badge through its pop) and `TestRingSeamSpinnerSweep`
+(`popups.InfiniteSpinner` through its turn): nothing drawn more than 3 px
+off the ring's band, at 16/255, on llvmpipe (linux-gio), Direct3D 11
+WARP (windows-applog) and Metal (macos-idle). Not in `UPSTREAM.patch`.

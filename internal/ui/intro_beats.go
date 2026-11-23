@@ -334,14 +334,11 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 	}
 }
 
-// ringAt strokes a circle (centre c, radius r).
+// ringAt strokes a circle (centre c, radius r): theme.RingPath, which
+// closes exactly (ArcTo 2π + Close left a near-zero closing segment, the
+// stray line under the check badge).
 func ringAt(f *introFrame, c f32.Point, r float32, col color.NRGBA, w float32) {
-	var p clip.Path
-	p.Begin(f.gtx.Ops)
-	p.MoveTo(f32.Pt(c.X+r, c.Y))
-	p.ArcTo(c, c, 2*math.Pi)
-	p.Close()
-	paint.FillShape(f.gtx.Ops, col, clip.Stroke{Path: p.End(), Width: w}.Op())
+	paint.FillShape(f.gtx.Ops, col, clip.Stroke{Path: theme.RingPath(f.gtx.Ops, c, r), Width: w}.Op())
 }
 
 // drawPointer is a mouse pointer with its tip at p, h tall.

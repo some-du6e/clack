@@ -309,12 +309,22 @@ func strokePathNorm(p0, p1, p2 f32.Point, t, d float32) f32.Point {
 	case 0:
 		n := p1.Sub(p0)
 		if n.X == 0 && n.Y == 0 {
+			// Clack patch 62: a segment whose control point is its start
+			// (a near-zero line's midpoint rounds onto an end) takes its
+			// normal from the whole segment; a zero normal here made the
+			// next round join start its arc on the pivot (radius 0: NaN)
+			n = p2.Sub(p0)
+		}
+		if n.X == 0 && n.Y == 0 {
 			return f32.Point{}
 		}
 		n = rot90CW(n)
 		return normPt(n, d)
 	case 1:
 		n := p2.Sub(p1)
+		if n.X == 0 && n.Y == 0 {
+			n = p2.Sub(p0) // Clack patch 62, as at t = 0
+		}
 		if n.X == 0 && n.Y == 0 {
 			return f32.Point{}
 		}
@@ -561,6 +571,12 @@ func ArcTransform(p, f1, f2 f32.Point, angle float32) (transform f32.Affine2D, s
 		// degenerate case of a circle.
 		rx = dist(f1, p)
 		ry = rx
+		if rx == 0 {
+			// Clack patch 62: a circle of radius 0 (a round join whose pen
+			// is its pivot) sweeps nothing; its 1/rx scale made every point
+			// NaN
+			return f32.AffineId(), segments
+		}
 	} else {
 		// semi-major axis: 2a = |PF1| + |PF2|
 		a := 0.5 * (dist(f1, p) + dist(f2, p))

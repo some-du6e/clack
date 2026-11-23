@@ -1133,7 +1133,10 @@ func vertFormatFor(f shader.InputLocation) C.MTLVertexFormat {
 func pixelFormatFor(f driver.TextureFormat) C.MTLPixelFormat {
 	switch f {
 	case driver.TextureFormatFloat:
-		return C.MTLPixelFormatR16Float
+		// Clack patch 62: path coverage in 32-bit float (every Mac GPU
+		// family blends R32Float): half float's sums leave a faint column
+		// under a stroked ring
+		return C.MTLPixelFormatR32Float
 	case driver.TextureFormatRGBA8:
 		return C.MTLPixelFormatRGBA8Unorm
 	case driver.TextureFormatSRGBA:

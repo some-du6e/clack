@@ -27,6 +27,15 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
+// What counts as drawn off a ring: a channel above seamInk (16/255: a
+// 1% coverage column shows as 25 on a dark background, sRGB), more than
+// seamSlack px outside its band (antialiasing and Direct3D's soft edge
+// stay within 3).
+const (
+	seamInk   = 16
+	seamSlack = 3.0
+)
+
 // seamFrame is an intro frame at now on a w×h window, one device px per
 // layout unit.
 func seamFrame(ops *op.Ops, w, h int, now time.Time) *introFrame {
@@ -80,7 +89,7 @@ func TestRingSeamRingAt(t *testing.T) {
 					img := pixeltest.Render(t, w, h, &ops)
 					hw := float64(sw*s) / 2
 					R := float64(r * s)
-					reportOff(t, fmt.Sprintf("ringAt r %g w %g scale %g c %v", r, sw, s, c), offBand(img, c, R-hw, R+hw, 1.5, 24))
+					reportOff(t, fmt.Sprintf("ringAt r %g w %g scale %g c %v", r, sw, s, c), offBand(img, c, R-hw, R+hw, seamSlack, seamInk))
 				}
 			}
 		}
@@ -103,7 +112,7 @@ func TestRingSeamDoneBadge(t *testing.T) {
 		drawDoneBadge(f, c, d, start, fx{a: 1, s: 1})
 		img := pixeltest.Render(t, w, h, &ops)
 		outer := float64(d/2+1.2) * float64(e.s)
-		reportOff(t, fmt.Sprintf("badge at %dms (scale %.3f)", ms, e.s), offBand(img, c, 0, outer, 1.5, 60))
+		reportOff(t, fmt.Sprintf("badge at %dms (scale %.3f)", ms, e.s), offBand(img, c, 0, outer, seamSlack, seamInk))
 	}
 }
 
@@ -131,7 +140,7 @@ func TestRingSeamSpinnerSweep(t *testing.T) {
 			}
 			rr, hw := float64(d)*35/box, float64(d)*8/box/2
 			c := f32.Pt(float32(o.X)+d/2, float32(o.Y)+d/2)
-			reportOff(t, fmt.Sprintf("spinner at %dms (noMargin %v)", k*10, noMargin), offBand(img, c, rr-hw, rr+hw, 1.5, 24))
+			reportOff(t, fmt.Sprintf("spinner at %dms (noMargin %v)", k*10, noMargin), offBand(img, c, rr-hw, rr+hw, seamSlack, seamInk))
 		}
 	}
 }
