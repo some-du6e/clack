@@ -108,6 +108,9 @@ type App struct {
 	// limit (pump_watch.go)
 	pumpOn, actOn atomic.Pointer[pumpTask]
 	pumpDumps     stackdump.Limiter
+	// startedAt is when the session began (Slack's start_ms): an @here
+	// from before it doesn't badge (badge_rules.go)
+	startedAt time.Time
 	// the other socket events' lookups, off the event pump (pump_later.go)
 	pumpQ laterQueue
 	// convQs order the events held for their conversation's lookup, one
@@ -219,6 +222,7 @@ func New(c *slack.Client, s *store.Store) *App {
 	a.warm.dataReady, a.warm.done = make(chan struct{}), make(chan struct{})
 	a.warm.restReady = make(chan struct{})
 	a.pumpDumps.Every = 10 * time.Minute // a stall's goroutine dump (pump_watch.go)
+	a.startedAt = time.Now()
 	a.bg, a.stopBG = context.WithCancel(context.Background())
 	c.OnAuthFailed(a.onAuthFailed)
 	a.RTM = c.NewRTM()

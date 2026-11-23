@@ -828,9 +828,15 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		}
 	}
 	self := a.S.SelfID()
-	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))
+	rm := ruleMessage(&m)
+	mention := a.messageBadges(ch, rm) // shouldMessageBadgeChannel (badge_rules.go)
+	counted := false
 	if !isReply || m.Subtype == "thread_broadcast" {
-		a.S.NoteMessage(ch, &m, mention)
+		if counted = m.User == self && self != "" || a.countsInSidebar(rm); counted {
+			a.S.NoteMessage(ch, &m, mention) // the viewer's own reads the conversation
+		} else {
+			a.S.NoteHeard(ch, &m) // not unread (a join, a huddle's post, a topic: badge_rules.go)
+		}
 		a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
 	} else if m.User != self {
 		a.refreshCountsSoon() // thread unread state lives server-side
@@ -843,7 +849,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	// store holds the message already (above): only its announcement waits
 	if a.holdForConv(ch) {
 		mm, since := m, a.S.Seq()
-		countedDM := mention || a.S.CountsAsDM(ch) // as NoteMessage counted it, above
+		countedDM := !counted || mention || a.S.CountsAsDM(ch) // as NoteMessage counted it (or NoteHeard didn't), above
 		a.convLater(ch, func(ctx context.Context) {
 			defer a.releaseConv(ch)
 			if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {

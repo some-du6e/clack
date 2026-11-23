@@ -2063,8 +2063,11 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 		e.Latest = m.TS
 	}
 	self := s.Self.ID
-	if m.User == self && self != "" {
-		// Our own message (from any client) reads the conversation.
+	invited := (m.Subtype == "channel_join" || m.Subtype == "group_join") && m.Inviter != ""
+	if m.User == self && self != "" && m.WorkflowID == "" && !invited {
+		// Our own message (from any client) reads the conversation; a
+		// workflow's post as us doesn't, nor our join when someone added
+		// us (canCountAsUnreadForCurrentUser's isInviteForCurrentUser).
 		e.LastRead, e.HasUnreads, e.MentionCount = m.TS, false, 0
 		return *e
 	}
@@ -2076,6 +2079,31 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 		e.MentionCount++
 	}
 	return *e
+}
+
+// NoteHeard is NoteMessage for a message that doesn't count as unread for
+// the viewer (core's canCountAsUnreadForCurrentUser: a join, a huddle's
+// post): the conversation's latest and the journal move, its unread state
+// doesn't.
+func (s *Store) NoteHeard(ch string, m *slack.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.Counts[ch]
+	if !ok {
+		e = &slack.CountEntry{ID: ch}
+		s.Counts[ch] = e
+	}
+	s.noteMessageLocked(ch)
+	if e.Latest == "" || TSLess(e.Latest, m.TS) {
+		e.Latest = m.TS
+	}
+}
+
+// IsMuted reports whether conversation ch is muted.
+func (s *Store) IsMuted(ch string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Muted[ch]
 }
 
 // countsAsDMLocked reports whether NoteMessage counts every message from

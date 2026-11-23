@@ -1,5 +1,11 @@
 package core
 
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+)
+
 // What the desktop notification rules read of a message (client-boot
 // Fpyc shouldShowNotificationForChannelMessage and its helpers, Slack's
 // client build a09b625d90aa; the table in docs/NOTIFY-RULES.md).
@@ -67,14 +73,36 @@ var countsAsUnreadIgnored = map[string]bool{
 	"channel_tab_added_unread_ignore": true, "folder_item_added_unread_ignore": true,
 }
 
+// countsAsUnreadM1Ignored are isM1SidebarIgnoredMessage's types (qxvW
+// s): system messages that leave a conversation's row as it was under
+// system_messages_redesign_m1, which countUnreadMessages passes and rr
+// doesn't.
+var countsAsUnreadM1Ignored = map[string]bool{
+	"channel_join_request": true, "channel_topic": true, "group_topic": true, "channel_purpose": true,
+	"group_purpose": true, "channel_unarchive": true, "group_unarchive": true, "channel_posting_permissions": true,
+	"automatic_ai_huddle_notes_enabled": true, "automatic_ai_huddle_notes_disabled": true,
+	"channel_canvas_updated": true, "tabbed_canvas_updated": true, "folder_item_added": true, "retention": true,
+	"channel_convert_to_private": true, "channel_convert_shared": true, "channel_convert_to_linked_private": true,
+	"channel_convert_to_linked_private_read": true, "channel_convert_to_linked_private_edit": true,
+	"channel_convert_to_linked_private_transfer": true,
+}
+
 // CountsAsUnreadForViewer is canCountAsUnreadForCurrentUser (qxvW Ay) as
 // rr asks it of a mention: a message that isn't hidden (no_display; a
 // socket message is never a hidden stub or a hidden reply) and that
 // invites the viewer (a join with an inviter, isInviteForCurrentUser), or
 // isn't the viewer's own (a workflow's post as them is), isn't one of
 // the ignored types (a huddle's post, a join) and wasn't held for Do Not
-// Disturb (dnd_suppressed).
-func (a *App) CountsAsUnreadForViewer(m *Message) bool {
+// Disturb (dnd_suppressed). (A file comment of the viewer's and their
+// mpdm_move don't count either: Clack decodes neither, and Slack sends
+// no file comments since 2018.)
+func (a *App) CountsAsUnreadForViewer(m *Message) bool { return a.countsAsUnread(m, false) }
+
+// countsAsUnread is canCountAsUnreadForCurrentUser with
+// systemMessagesRedesignM1Enabled as m1: the system messages of
+// countsAsUnreadM1Ignored and a data retention notice
+// (metadata.event_type slack_system.data_retention.*) don't count.
+func (a *App) countsAsUnread(m *Message, m1 bool) bool {
 	if m == nil || m.NoDisplay {
 		return false
 	}
@@ -85,5 +113,20 @@ func (a *App) CountsAsUnreadForViewer(m *Message) bool {
 	if m.User == self && m.WorkflowID == "" || countsAsUnreadIgnored[m.Subtype] {
 		return false
 	}
+	if m1 && (countsAsUnreadM1Ignored[m.Subtype] || retentionNotice(m.Metadata)) {
+		return false
+	}
 	return !m.DNDSuppressed
+}
+
+// retentionNotice reports whether a message's metadata is a data
+// retention notice's (isM1SidebarIgnoredMessage's event_type test).
+func retentionNotice(raw json.RawMessage) bool {
+	if len(raw) == 0 || !bytes.Contains(raw, []byte("slack_system.data_retention.")) {
+		return false
+	}
+	var md struct {
+		EventType string `json:"event_type"`
+	}
+	return json.Unmarshal(raw, &md) == nil && strings.HasPrefix(md.EventType, "slack_system.data_retention.")
 }
