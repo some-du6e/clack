@@ -21,6 +21,9 @@ import (
 // are the reads on their own. The pickers are the Gio explorer's native
 // dialog or the in-app modal.
 
+// errAttClipBusy: another app kept the clipboard open (winclip.ErrBusy).
+var errAttClipBusy = errors.New("The clipboard is busy. Try pasting again.")
+
 // Standard clipboard formats (winuser.h).
 const (
 	attCFDIB   = 8

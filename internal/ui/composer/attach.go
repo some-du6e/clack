@@ -1095,7 +1095,6 @@ var (
 	errAttNoClipImage = errors.New("There's no image on the clipboard")
 	errAttClipTools   = errors.New("Pasting images needs xclip (X11) or wl-clipboard (Wayland)")
 	errAttClipNone    = errors.New("Pasting images isn't supported on this system yet")
-	errAttClipBusy    = errors.New("The clipboard is busy. Try pasting again.")
 )
 
 // PasteClipboardImage probes the system clipboard for an image (async) and
