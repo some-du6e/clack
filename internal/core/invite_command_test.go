@@ -25,10 +25,22 @@ func inviteCmdApp(t *testing.T) (*App, *fakeSlack) {
 	f.reply["chat.command"] = `{"ok":true}`
 	f.reply["conversations.invite"] = `{"ok":true}`
 	f.reply["permissions.info"] = `{"ok":true,"allowed":["INVITE_TO_CHANNEL","INVITE_EXTERNAL_TO_CHANNEL"]}`
+	// member-shaped ids: the parsed args' mentions are classified as Slack
+	// does (kflk looksLikeMemberId, emAa looksLikeUserGroupId)
+	a.S.PutUsers([]slack.User{
+		{ID: invAlice, Name: "alice", Profile: slack.Profile{DisplayName: "Alice"}},
+		{ID: invBob, Name: "bob", Profile: slack.Profile{RealName: "Bob B"}},
+	})
 	a.S.TeamName = "Hack Club"
 	a.SetExperimentGroup("invite_slash_command_in_threads", "on")
 	return a, f
 }
+
+const (
+	invAlice = "U0ALICE0001"
+	invBob   = "U0BOB000002"
+	invGroup = "S0ENG000001"
+)
 
 func countCalls(f *fakeSlack, method string) (n int) {
 	f.mu.Lock()
@@ -56,32 +68,32 @@ func TestInviteCommandLocal(t *testing.T) {
 	}
 	t.Run("one person", func(t *testing.T) {
 		a, f := inviteCmdApp(t)
-		if _, err := run(a, "C2", "<@U1>"); err != nil {
+		if _, err := run(a, "C2", "<@"+invAlice+">"); err != nil {
 			t.Fatal(err)
 		}
 		if countCalls(f, "chat.command") != 0 {
 			t.Error("the local /invite sent chat.command")
 		}
-		if p := f.last("conversations.invite"); p.Get("channel") != "C2" || p.Get("users") != "U1" {
+		if p := f.last("conversations.invite"); p.Get("channel") != "C2" || p.Get("users") != invAlice {
 			t.Errorf("conversations.invite %v", p)
 		}
 	})
 	t.Run("a user group", func(t *testing.T) {
 		a, f := inviteCmdApp(t)
-		if _, err := run(a, "C2", "<!subteam^S1|@eng>"); err != nil {
+		if _, err := run(a, "C2", "<!subteam^"+invGroup+"|@eng>"); err != nil {
 			t.Fatal(err)
 		}
-		if p := f.last("conversations.invite"); p.Get("subteams") != "S1" || p.Has("users") {
+		if p := f.last("conversations.invite"); p.Get("subteams") != invGroup || p.Has("users") {
 			t.Errorf("conversations.invite %v", p)
 		}
 	})
 	t.Run("multi off: the first only", func(t *testing.T) {
 		a, f := inviteCmdApp(t)
 		a.SetExperimentGroup("invite_slash_command_multi", "off")
-		if _, err := run(a, "C2", "<@U1> <@U2>"); err != nil {
+		if _, err := run(a, "C2", "<@"+invAlice+"> <@"+invBob+">"); err != nil {
 			t.Fatal(err)
 		}
-		if n := countCalls(f, "conversations.invite"); n != 1 || f.last("conversations.invite").Get("users") != "U1" {
+		if n := countCalls(f, "conversations.invite"); n != 1 || f.last("conversations.invite").Get("users") != invAlice {
 			t.Errorf("%d invites, last %v", n, f.last("conversations.invite"))
 		}
 	})
@@ -89,7 +101,7 @@ func TestInviteCommandLocal(t *testing.T) {
 		a, f := inviteCmdApp(t)
 		a.SetExperimentGroup("invite_slash_command_multi", "on")
 		f.reply["conversations.invite"] = `{"ok":false,"error":"already_in_channel"}`
-		_, err := run(a, "C2", "<@U1> <@U2>")
+		_, err := run(a, "C2", "<@"+invAlice+"> <@"+invBob+">")
 		if n := countCalls(f, "conversations.invite"); n != 2 {
 			t.Errorf("%d invites, want 2", n)
 		}
@@ -103,11 +115,11 @@ func TestInviteCommandLocal(t *testing.T) {
 	})
 	t.Run("a private channel opens the invite modal", func(t *testing.T) {
 		a, f := inviteCmdApp(t)
-		res, err := run(a, "G3", "<@U1>")
+		res, err := run(a, "G3", "<@"+invAlice+">")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Invite == nil || res.Invite.AddPeople != "G3" || len(res.Invite.AddUsers) != 1 || res.Invite.AddUsers[0] != "U1" {
+		if res.Invite == nil || res.Invite.AddPeople != "G3" || len(res.Invite.AddUsers) != 1 || res.Invite.AddUsers[0] != invAlice {
 			t.Errorf("result %+v", res.Invite)
 		}
 		if countCalls(f, "conversations.invite") != 0 {
@@ -117,14 +129,14 @@ func TestInviteCommandLocal(t *testing.T) {
 	t.Run("private without permission", func(t *testing.T) {
 		a, f := inviteCmdApp(t)
 		f.reply["permissions.info"] = `{"ok":true,"allowed":[]}`
-		_, err := run(a, "G3", "<@U1>")
+		_, err := run(a, "G3", "<@"+invAlice+">")
 		if got := feedbackOf(err); got != "You don’t have permission to invite people to this channel." {
 			t.Errorf("feedback %q (%v)", got, err)
 		}
 	})
 	t.Run("not a member", func(t *testing.T) {
 		a, _ := inviteCmdApp(t)
-		_, err := run(a, "C1", "<@U1>")
+		_, err := run(a, "C1", "<@"+invAlice+">")
 		if got := feedbackOf(err); got != "You don’t have permission to invite people from *Hack Club* to this channel." {
 			t.Errorf("feedback %q (%v)", got, err)
 		}
@@ -150,7 +162,7 @@ func TestInviteCommandLocal(t *testing.T) {
 	})
 	t.Run("a DM keeps chat.command", func(t *testing.T) {
 		a, f := inviteCmdApp(t)
-		if _, err := run(a, "D1", "<@U2>"); err != nil {
+		if _, err := run(a, "D1", "<@"+invBob+">"); err != nil {
 			t.Fatal(err)
 		}
 		if countCalls(f, "chat.command") != 1 {
@@ -160,7 +172,7 @@ func TestInviteCommandLocal(t *testing.T) {
 	t.Run("off: one person at a time", func(t *testing.T) {
 		a, _ := inviteCmdApp(t)
 		a.SetExperimentGroup("invite_slash_command_in_threads", "off")
-		_, err := run(a, "C2", "<@U1> <@U2>")
+		_, err := run(a, "C2", "<@"+invAlice+"> <@"+invBob+">")
 		if got := feedbackOf(err); got != "*/invite* can only invite one user. Try the invite shortcut to add multiple users!" {
 			t.Errorf("feedback %q", got)
 		}
