@@ -321,6 +321,9 @@ func (l *Layout) xCoord(g Rect, i int) float64 {
 
 func (l *Layout) yCoord(g Rect, v float64) float64 {
 	e := l.ys.ext
+	if e[1] == e[0] { // scaleMapper's normalize: 0.5 for a zero span
+		return g.Y + g.H/2
+	}
 	return g.Y + g.H - (v-e[0])/(e[1]-e[0])*g.H
 }
 

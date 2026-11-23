@@ -154,7 +154,14 @@ func (c *builder) children(bs []bk, callout bool) []Block {
 // (the per-block "This content could not be displayed.").
 func decodeBlock(raw json.RawMessage) bk {
 	var b bk
-	if json.Unmarshal(raw, &b) != nil {
+	err := json.Unmarshal(raw, &b)
+	if err == nil && !ownKeysType(b.Type) {
+		return b
+	}
+	if d, ok := ownKeysBlock(raw); ok {
+		return d
+	}
+	if err != nil {
 		return bk{Type: badBlock}
 	}
 	return b

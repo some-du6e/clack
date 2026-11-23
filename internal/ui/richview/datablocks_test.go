@@ -38,15 +38,17 @@ type dtHandler struct {
 	ctls   []*TableControl
 	btns   []image.Rectangle
 	charts []*rt.DataViz
+	wins   []bool // ChartAction's window flags
 }
 
 func (h *dtHandler) DataTableAction(act string, c *TableControl, btn image.Rectangle) {
 	h.acts, h.ctls, h.btns = append(h.acts, act), append(h.ctls, c), append(h.btns, btn)
 }
 
-func (h *dtHandler) ChartAction(v *rt.DataViz, btn image.Rectangle) {
+func (h *dtHandler) ChartAction(v *rt.DataViz, btn image.Rectangle, window bool) {
 	h.charts = append(h.charts, v)
 	h.btns = append(h.btns, btn)
+	h.wins = append(h.wins, window)
 }
 
 func dtCenter(r image.Rectangle) f32.Point {

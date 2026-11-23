@@ -55,9 +55,10 @@ import (
 var nsBlockKit = i18n.NS("block_kit")
 
 // ChartActionHandler is optional on a Handler: a data_visualization
-// block's More actions button was clicked (btn in window coordinates).
+// block's More actions button was clicked: btn in window coordinates when
+// window is true, else in the view's plus Origin (the owner maps it).
 type ChartActionHandler interface {
-	ChartAction(v *richtext.DataViz, btn image.Rectangle)
+	ChartAction(v *richtext.DataViz, btn image.Rectangle, window bool)
 }
 
 // chartPrim is a block's chart: its layout (chart px, CSS px) drawn in r.
@@ -207,8 +208,13 @@ func (l *lay) topLevelError(x, y, w int) int {
 // centredFlow lays s out across w from x, each line centred
 // (text-align: center), and returns its height.
 func (l *lay) centredFlow(s string, x, y, w int, fs *flowStyle) int {
+	return l.centredFlowTarget(s, x, y, w, fs, -1)
+}
+
+// centredFlowTarget is centredFlow with its words on target tg.
+func (l *lay) centredFlowTarget(s string, x, y, w int, fs *flowStyle, tg int16) int {
 	f0, n0 := len(l.d.frags), len(l.d.lines)
-	h, _ := l.plainFlow(s, x, y, w, fs, -1)
+	h, _ := l.plainFlow(s, x, y, w, fs, tg)
 	for li := n0; li < len(l.d.lines); li++ {
 		ln := &l.d.lines[li]
 		a, b := max(ln.f0, f0), min(ln.f1, len(l.d.frags))

@@ -407,7 +407,8 @@ func (v *View) barAction(bar, btn int, h Handler) {
 	r := rs[btn].Add(v.Origin)
 	if b.viz != nil {
 		if ch, ok := h.(ChartActionHandler); ok {
-			ch.ChartAction(b.viz, r)
+			wr, win := v.actionRect(rs[btn])
+			ch.ChartAction(b.viz, wr, win)
 		}
 		return
 	}

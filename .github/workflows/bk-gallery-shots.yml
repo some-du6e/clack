@@ -11,6 +11,10 @@ on:
       - "internal/richtext/**"
       - "internal/ui/richview/**"
       - "internal/ui/blockkit/**"
+      - "internal/chart/**"
+      - "internal/ui/popups/chart_menu.go"
+      - "internal/ui/popups/datatable_menu.go"
+      - "internal/ui/popups/datablocks_test.go"
       - "internal/fakeslack/gallery*"
       - "internal/ui/bk_gallery_test.go"
       - "internal/ui/messages/row.go"
@@ -53,7 +57,9 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: block kit unit tests
-        run: go test -count=1 ./internal/richtext ./internal/fakeslack ./internal/ui/richview ./internal/ui/blockkit
+        run: |
+          go test -count=1 ./internal/richtext ./internal/fakeslack ./internal/ui/richview ./internal/ui/blockkit ./internal/chart
+          go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock' ./internal/ui/popups
       - name: gallery screenshots
         env:
           BK_SHOTS_DIR: ${{ github.workspace }}/dist/shots

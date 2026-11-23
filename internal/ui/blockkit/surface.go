@@ -157,8 +157,8 @@ func (s *surfHandler) OpenFile(f *richtext.File) {
 }
 
 // ChartAction is a data_visualization block's More actions: its menu.
-func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle) {
-	if mn := popups.NewChartMenu(s.h, btn, dv); mn != nil {
+func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
+	if mn := popups.NewChartMenu(s.h, popups.ActionAnchor(btn, window), dv); mn != nil {
 		s.h.ShowOverlay(mn)
 	}
 }
@@ -170,7 +170,7 @@ func (s *surfHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rec
 
 // DataTableAction is a data_table's header button or column header.
 func (s *surfHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
-	popups.DataTableAction(s.h, act, c, btn)
+	popups.DataTableAction(s.h, act, c, popups.ActionAnchor(btn, c.Window))
 }
 
 func (s *surfHandler) Button(b richtext.Button) {

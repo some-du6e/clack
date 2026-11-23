@@ -234,6 +234,7 @@ func (v *View) Set(doc richtext.Doc, o Options) {
 	v.selA, v.selB = 0, 0
 	v.hover, v.press = -1, -1
 	v.tipFrag = -1
+	v.vizHot, v.vizIdx = 0, -1 // a chart's hover from the doc before
 }
 
 // SetOptions changes only the options (e.g. edited flag, pending state).
@@ -446,7 +447,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	// over the recorded fill, under its text. Components draw their own.
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
-			if b := &v.d.boxes[i]; b.hoverOver && b.hov == 0 && b.comp == 0 && (b.target == v.hover || b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) && b.hover.A > 0 && v.pillHoverFill(b) {
+			if b := &v.d.boxes[i]; v.hoverOverShown(b) {
 				fillRadii(gtx.Ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
@@ -936,6 +937,21 @@ func (v *View) staticText(t int16) bool {
 		}
 	}
 	return false
+}
+
+// hoverOverShown reports whether b's hover fill takes its fill's place
+// now: a pill's whose target is hovered, or a data_table row's when its
+// target or one inside it (target..tgTo) is. A box without a target (a
+// hidden channel's chip, a URL-less message or canvas slug) never shows
+// it.
+func (v *View) hoverOverShown(b *box) bool {
+	if !b.hoverOver || b.hov != 0 || b.comp != 0 || b.hover.A == 0 || b.target < 0 || v.hover < 0 {
+		return false
+	}
+	if b.target != v.hover && !(b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) {
+		return false
+	}
+	return v.pillHoverFill(b)
 }
 
 // pillHoverFill reports that b's own hover fill shows: no rule gives the
@@ -1549,7 +1565,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 						}
 					}
 				}
-				if pc, ok := h.(PlainClicker); ok && v.press < 0 && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) {
+				if pc, ok := h.(PlainClicker); ok && (v.press < 0 || v.menuOnlyAt(v.press)) && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) {
 					if d := e.Position.Sub(v.pressPos); d.X*d.X+d.Y*d.Y <= 16 {
 						pc.PlainClick()
 					}
@@ -1902,6 +1918,24 @@ func (v *View) clickLink(gtx layout.Context, t int16, anchor image.Point, e poin
 
 func (v *View) activate(t int16, anchor image.Point, h Handler) {
 	v.activateTarget(&v.d.targets[t], v.targetText(t), anchor, h)
+}
+
+// menuOnlyAt reports whether target t takes no click (a data_table row, a
+// snippet's or an email card's menu-only area): a click there is the
+// view's plain click (a search card opens its result).
+func (v *View) menuOnlyAt(t int16) bool {
+	return t >= 0 && int(t) < len(v.d.targets) && v.d.targets[t].menuOnly
+}
+
+// actionRect is r (view coordinates) for a handler: in window coordinates
+// (true) when the view knows its window origin, which the pointer's last
+// move over it taught it, else plus Origin (false: the owner maps it, as
+// messages' rows do with their origin).
+func (v *View) actionRect(r image.Rectangle) (image.Rectangle, bool) {
+	if org, ok := v.WindowOrigin(); ok {
+		return r.Add(org), true
+	}
+	return r.Add(v.Origin), false
 }
 
 // targetRect is tg's (first) hit box, in the View's coordinates.

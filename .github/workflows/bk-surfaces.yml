@@ -12,6 +12,7 @@ on:
       - "internal/ui/blockkit/**"
       - "internal/ui/richview/**"
       - "internal/richtext/**"
+      - "internal/chart/**"
       - "internal/ui/composer/**"
       - "internal/core/interactive*.go"
       - "internal/core/slugs.go"

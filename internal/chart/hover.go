@@ -50,14 +50,15 @@ func (l *Layout) sectorAt(x, y float64, hovered int) int {
 		if dx*dx+dy*dy > r*r {
 			continue
 		}
-		a := math.Atan2(dy, dx)
-		for a < s.Start {
+		if math.IsNaN(s.Start) || math.IsInf(s.Start, 0) || math.IsNaN(s.End) {
+			continue // a sector of sums past float64's range: no angle to test
+		}
+		// the angle from Start, in [0, 2π)
+		a := math.Mod(math.Atan2(dy, dx)-s.Start, 2*math.Pi)
+		if a < 0 {
 			a += 2 * math.Pi
 		}
-		for a >= s.Start+2*math.Pi {
-			a -= 2 * math.Pi
-		}
-		if a < s.End {
+		if a < s.End-s.Start {
 			return s.Index
 		}
 	}
