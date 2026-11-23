@@ -287,14 +287,41 @@ func TestActivityLateClickExpires(t *testing.T) {
 	if v.selOK && v.selKey == rowKey {
 		t.Error("a deferred click opened the row frames after its next one")
 	}
+	if v.rowFor(rowKey).clickLater {
+		t.Error("the dropped click is still waiting")
+	}
 	// its next frame comes late (a slow frame): it decides it, and opens
 	// the row
+	if v.selOK {
+		t.Fatalf("the row %q is open before the click: the test checks nothing", v.selKey)
+	}
 	click()
 	frame()
 	time.Sleep(600 * time.Millisecond)
 	frame()
 	if !v.selOK || v.selKey != rowKey {
 		t.Errorf("a click decided in its next frame, 600ms later, didn't open the row (open %v %q)", v.selOK, v.selKey)
+	}
+	// the rule itself, on a click deferred in the last frame (clickLater
+	// as the click's frame leaves it): the next frame decides it however
+	// late it comes, once (the second layout of that frame would close
+	// the row again); a frame that doesn't lay the row out drops it
+	rr := v.rowFor(rowKey)
+	v.selOK = false
+	rr.clickLater, rr.clickSplit, rr.clickFrame = true, false, fh.seq.Load()
+	time.Sleep(600 * time.Millisecond)
+	frame()
+	if !v.selOK || v.selKey != rowKey || rr.clickLater {
+		t.Errorf("a deferred click's next frame, 600ms late: open %v %q, still waiting %v; want it opened", v.selOK, v.selKey, rr.clickLater)
+	}
+	v.selOK = false
+	rr.clickLater, rr.clickFrame = true, fh.seq.Load()
+	e.draw = func(gtx layout.Context) {}
+	frame()
+	e.draw = twice
+	frame()
+	if v.selOK || v.rowFor(rowKey).clickLater {
+		t.Errorf("a deferred click whose next frame didn't lay the row out: open %v, still waiting %v; want it dropped", v.selOK, v.rowFor(rowKey).clickLater)
 	}
 }
 
