@@ -687,6 +687,34 @@ func (s *Store) PutUsers(us []slack.User) {
 	}
 }
 
+// PutUserNotOlder is PutUsers for one member, unless the copy the store
+// holds has a later updated stamp (a user_change that landed while an
+// older answer was out): decided under the store's lock, so nothing
+// stored in between is overwritten. It reports whether u was stored.
+func (s *Store) PutUserNotOlder(u slack.User) bool {
+	now := time.Now().Unix()
+	s.mu.Lock()
+	old, had := s.Users[u.ID]
+	if had && old != nil && old.Updated > u.Updated {
+		s.mu.Unlock()
+		return false
+	}
+	if s.userSeen == nil {
+		s.userSeen = map[string]int64{}
+	}
+	if had && old != nil && old.Presence != "" {
+		u.Presence = old.Presence
+	}
+	s.Users[u.ID] = &u
+	s.userSeen[u.ID] = now
+	s.storedLocked(u.ID)
+	team := s.TeamID
+	s.mu.Unlock()
+	s.noteAvatars(team, []slack.User{u})
+	s.gen.Add(1)
+	return true
+}
+
 // putUserPtrs is PutUsers for users the store may keep as they are (the
 // metadata cache's, decoded one by one: no second copy), fetched at the
 // times seen says.

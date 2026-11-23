@@ -501,6 +501,10 @@ func (c *builder) block(out []Block, b *bk) []Block {
 				if len(ss) > 0 {
 					blk.Children = append(blk.Children, Block{Kind: Paragraph, Spans: ss})
 				} else if t.Text != "" {
+					// Context renders a p-context_block_element for every
+					// element, its 16px spacing after it: an element whose
+					// text formats to nothing keeps its (empty) box
+					blk.Children = append(blk.Children, Block{Kind: Paragraph, Spans: []Span{}})
 					kept = true
 				}
 			}

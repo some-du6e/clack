@@ -1001,8 +1001,11 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 	}
 	if len(b.Fields) > 0 {
 		if b.Kit {
-			if h > 0 {
-				h += l.dp(12) // .p-section_block__fields:not(:first-child)
+			// .p-section_block__fields:not(:first-child): after the
+			// p-section_block__text div, there for any text object, even
+			// one TSF formats to nothing (Spans kept, empty)
+			if h > 0 || b.Spans != nil || len(b.Children) > 0 {
+				h += l.dp(12)
 			}
 			h += l.kitFields(b.Fields, x, y+h, tw, key)
 		} else {

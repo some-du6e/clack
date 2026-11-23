@@ -557,16 +557,18 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		switch ev.Type {
 		case "hello":
 			s.hello = true
+			log.Printf("rtm: connected in %s", time.Since(t0).Round(time.Millisecond))
+			if r.OnState != nil {
+				r.OnState(true)
+			}
+			// after OnState: what waited for hello wakes with the new
+			// connection's state in place (core's member epoch moved)
 			r.mu.Lock()
 			if r.helloCh != nil && !r.helloOK {
 				r.helloOK = true
 				close(r.helloCh)
 			}
 			r.mu.Unlock()
-			log.Printf("rtm: connected in %s", time.Since(t0).Round(time.Millisecond))
-			if r.OnState != nil {
-				r.OnState(true)
-			}
 			if r.OnHello != nil {
 				go r.OnHello()
 			}
@@ -734,6 +736,11 @@ func (e *GatewayError) Error() string { return fmt.Sprintf("rtm: refused (%d): %
 // ErrNoReply is a Request whose connection went before its reply came.
 var ErrNoReply = errors.New("rtm: the connection closed before the reply")
 
+// ErrHelloWaited is a Request made before its connection said hello: it
+// waited for the hello and sent nothing (the state it was made for is the
+// last connection's; ask again).
+var ErrHelloWaited = errors.New("rtm: the request waited for the connection's hello and wasn't sent")
+
 // Request sends a frame and waits for the gateway's reply to it (Slack's
 // sendMessage for socket requests, which resolves on the frame whose
 // reply_to is its id): nil when it's ok, a *GatewayError when it says
@@ -749,8 +756,16 @@ func (r *RTM) Request(ctx context.Context, v map[string]any) error {
 	}
 	select {
 	case <-hello:
-	case <-ctx.Done():
-		return ctx.Err()
+	default:
+		// not connected yet: the request was made for the state before
+		// this connection, which OnState(true) has started over by the
+		// time hello closes; the caller asks again on the new one
+		select {
+		case <-hello:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return ErrHelloWaited
 	}
 	id := r.next.Add(1)
 	v["id"] = id

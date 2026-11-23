@@ -74,6 +74,23 @@ func (s *Server) EditMember(id string, edit func(u *slack.User)) (slack.User, bo
 	return u, true
 }
 
+// touchUpdated stamps u updated now, later than any stamp before (the
+// viewer's own profile and photo writes: a conditional users/info then
+// answers the member as changed, as Slack's does).
+func (s *Server) touchUpdated(u *slack.User) {
+	mc := s.memberChanges()
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	now := time.Now().Unix()
+	if now <= mc.clock {
+		now = mc.clock + 1
+	}
+	if now <= u.Updated {
+		now = u.Updated + 1
+	}
+	mc.clock, u.Updated = now, now
+}
+
 // editedUser is id's edited copy, if EditMember changed it.
 func (s *Server) editedUser(id string) (slack.User, bool) {
 	v, ok := memberChangeStores.Load(s)

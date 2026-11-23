@@ -177,7 +177,9 @@ func TestMemberSubscribeWaitsForHello(t *testing.T) {
 	t.Cleanup(release)
 	ws := fs.CallCount("ws")
 	a.RTM.Reconnect("test")
-	waitFor(t, "the new connection open, its hello held", 15*time.Second, func() bool { return fs.CallCount("ws") > ws })
+	// the fake counts the dial at its handler's entry: the client's side
+	// (its conn, its hello gate) is set once it's connected
+	waitFor(t, "the new connection open, its hello held", 15*time.Second, func() bool { return fs.CallCount("ws") > ws && a.RTM.Connected() })
 	id := unheldMember(t, a, fs)
 	a.User(id) // a row draws them: fetched, then a subscription asked for
 	waitFor(t, "the member fetched", 10*time.Second, func() bool { _, held := a.S.RawUser(id); return held })
@@ -189,6 +191,18 @@ func TestMemberSubscribeWaitsForHello(t *testing.T) {
 	waitFor(t, "the member subscribed once the connection said hello", 15*time.Second, func() bool { return fs.UserSubscribed(id) })
 	if n := fs.EarlyFrames(); n != 0 {
 		t.Errorf("%d subscription requests went out before the connection's hello", n)
+	}
+	// the request that waited sent nothing (ErrHelloWaited): the member
+	// is asked for once, on the connection now up
+	time.Sleep(2500 * time.Millisecond) // a cycle more, were it to ask again
+	asks := 0
+	for _, f := range fs.UserSubscriptions() {
+		if ids, ok := strings.CutPrefix(f, "subscribe:"); ok && slices.Contains(strings.Split(ids, ","), id) {
+			asks++
+		}
+	}
+	if asks != 1 {
+		t.Errorf("the member was asked for in %d subscribe requests, want one", asks)
 	}
 }
 

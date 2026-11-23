@@ -204,6 +204,7 @@ func (s *Server) handleProfileWrites(method string, f url.Values) (any, bool) {
 		if v, ok := p["real_name"].(string); ok {
 			u.RealName = v
 		}
+		s.touchUpdated(u)
 		prof := u.Profile
 		ps.mu.Unlock()
 		return ok("profile", prof), true
@@ -255,6 +256,7 @@ func (s *Server) setSelfPhoto(on bool) {
 	} else {
 		p.AvatarHash, p.ImageOriginal = "default00001", ""
 	}
+	s.touchUpdated(&s.users[0])
 }
 
 // sectionOverride applies a setSections element to a getSections one.

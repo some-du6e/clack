@@ -26,7 +26,14 @@ import (
 // there on help bots"). Text that trims to nothing renders nothing: the
 // block holding it (a section, a context element) stays, empty.
 func FromMrkdwn(r Resolver, text string) []Block {
-	text = TrimTSF(text)
+	return FromMrkdwnUntrimmed(r, TrimTSF(text))
+}
+
+// FromMrkdwnUntrimmed is FromMrkdwn without TSF's render-side trim, for
+// parsing what is sent (the composer's "Format messages with markup":
+// what the viewer typed, its first line's indent included, goes out as
+// it is).
+func FromMrkdwnUntrimmed(r Resolver, text string) []Block {
 	if text == "" {
 		return nil
 	}

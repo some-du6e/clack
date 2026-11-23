@@ -785,9 +785,15 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		att.Footer = flatten(FromMrkdwn(c.r, a.Footer))
 		att.FooterIcon = SafeImage(a.FooterIcon)
 		blk.Buttons = legacyActions(a.Actions)
+		// MessageAttachmentGeneric renders only what Dv89's ov finds
+		// (hasAuthor, hasTitle, hasText, hasFields, hasFooter, hasMedia,
+		// hasActions); hasFooter is footer, footer_icon, a ts, or an app
+		// unfurl's bot. Its fallback div shows only when no other prop is
+		// set: text made of spaces (TSF trims it to nothing) rules it out.
+		footer := a.Footer != "" || a.FooterIcon != "" || att.TS != 0 || att.IsAppUnfurl && a.BotID != ""
 		if att.Title == nil && att.Text == nil && att.Pretext == nil && blk.Fields == nil && att.Image == nil &&
-			att.Thumb == nil && att.AuthorName == "" && att.ServiceName == "" && blk.Buttons == nil && len(a.Files) == 0 {
-			if a.Fallback == "" {
+			att.Thumb == nil && att.AuthorName == "" && att.ServiceName == "" && blk.Buttons == nil && len(a.Files) == 0 && !footer {
+			if a.Fallback == "" || a.Text != "" {
 				return Block{}, false
 			}
 			att.Text = FromMrkdwn(c.r, a.Fallback)

@@ -339,7 +339,10 @@ func (s *Server) variants() []slack.User {
 }
 
 // stampUpdated gives every member without one the updated stamp Slack's
-// members always carry (users.list, the boot's, users.info alike).
+// members always carry: variants(), the generated members and the app
+// bots here; members built inline elsewhere get it when users.info
+// answers them (userByID). The viewer's profile and photo writes move it
+// (touchUpdated).
 func stampUpdated(us []slack.User) []slack.User {
 	for i := range us {
 		if us[i].Updated == 0 {
@@ -2352,8 +2355,10 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	s.newGatewayConnection() // member_changes.go: no user_change subscriptions yet
 	said := make(chan struct{})
 	hello := func() {
-		_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
+		// said first: a frame the client sends once it has hello is read
+		// after it, never counted as early
 		close(said)
+		_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	}
 	if hold := s.helloHold(); hold != nil { // HoldHello (member_changes.go)
 		go func() {

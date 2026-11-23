@@ -439,6 +439,14 @@ func (a *App) fetchMemberBatch(ctx context.Context, ids []string, conn uint64) {
 	if m.conn != conn {
 		return
 	}
+	if errors.Is(subErr, slack.ErrHelloWaited) {
+		// nothing was sent: the batch goes again, on the connection now up
+		for _, id := range ids {
+			m.pending[id] = true
+		}
+		m.signal()
+		return
+	}
 	var ge *slack.GatewayError
 	if errors.As(subErr, &ge) && ge.Code == gatewayIDCap {
 		m.full = true
@@ -477,6 +485,9 @@ func (a *App) unsubscribeMembers(ctx context.Context, ids []string, conn uint64)
 	if errors.As(err, &ge) && ge.Code == gatewayRateLimit {
 		return false
 	}
+	if errors.Is(err, slack.ErrHelloWaited) {
+		return true // nothing sent: still held, unsubscribed by the next cycle
+	}
 	for _, id := range ids {
 		delete(m.held, id)
 	}
@@ -501,7 +512,7 @@ func (a *App) subscribeRequest(ctx context.Context, conn uint64, send func(conte
 	err := try()
 	var ge *slack.GatewayError
 	if !errors.As(err, &ge) || ge.Code != gatewayRateLimit {
-		if err != nil {
+		if err != nil && !errors.Is(err, slack.ErrHelloWaited) {
 			log.Printf("members: subscription request: %v", err)
 		}
 		return err
@@ -563,8 +574,9 @@ func (a *App) refetchMembers(ctx context.Context, ids []string) {
 		if old, ok := a.S.RawUser(nu.ID); ok && old != nil && sameMember(old, &nu) {
 			continue // what the store holds already
 		}
-		a.putUserLive(nu)
-		changed++
+		if a.putUserLiveNotOlder(nu) { // the check again, under the store's lock
+			changed++
+		}
 	}
 	if changed > 0 {
 		log.Printf("members: refetched %d: %d changed", len(stamps), changed)
