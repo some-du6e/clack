@@ -147,7 +147,6 @@ type convo struct {
 	edit     composerView // Up-to-edit / "Edit message" composer, replaces comp
 	org      originTracker
 	compH    int
-	fitH     int             // a thread that fits the pane with its box: the box's top under it (0: it doesn't)
 	compRect image.Rectangle // window coords (emoji picker anchor)
 	jp       *joinPane       // the join pane / archived bar in place of the composer (joinpane.go)
 	banner   *joinBanner     // the channel join banner over the composer (joinbanner.go)
@@ -166,15 +165,46 @@ type convo struct {
 	// row is mounted). The pass that first draws it again gives it a
 	// pending focusInput's focus (thread_focus_input.go).
 	inputShown bool
-	// a thread's reply box is its list's last row (threadInputRow):
-	// inputY is where the last pass drew the box (the row's top, the
-	// pane's bottom with the row out of view), inputYOK that it did, and
-	// inputVis that the box was wholly in the list's view; edits is the
-	// user's edits to editsOf, the composer drawn there, as last seen
+	// place is where each layout of the convo in the last frame put its
+	// box, by the order of the frame's layouts (placeAt, placeN): a convo
+	// two containers draw in one frame (the side pane and Activity's
+	// persistent detail panel showing the same thread, ThreadPane) guesses
+	// each layout's place from that layout's last, where one place shared
+	// had each see the other's and ask for another frame, every frame
+	place   [2]boxPlace
+	placeAt time.Time
+	placeN  int
+	// edits is the user's edits to editsOf, the composer drawn here, as
+	// last seen
+	editsOf composerView
+	edits   uint64
+}
+
+// boxPlace is where one layout of a convo drew its composer or footer.
+// A thread's reply box is its list's last row (threadInputRow): inputY
+// is where the box went (the row's top, the pane's bottom with the row
+// out of view), inputYOK that it did, and inputVis that the box was
+// wholly in the list's view. fitH is a thread that fits the pane with its
+// box or footer: the box's top under it (0: it doesn't).
+type boxPlace struct {
 	inputY             int
 	inputYOK, inputVis bool
-	editsOf            composerView
-	edits              uint64
+	fitH               int
+}
+
+// fitHeight is the last layout's fitH (tests).
+func (c *convo) fitHeight() int { return c.place[c.placeN].fitH }
+
+// boxPlaceFor is this layout's boxPlace: the frame's first layout of c
+// gets the first, a second one in the same frame the next.
+func (c *convo) boxPlaceFor(now time.Time) *boxPlace {
+	switch {
+	case now.IsZero() || !now.Equal(c.placeAt):
+		c.placeAt, c.placeN = now, 0
+	case c.placeN < len(c.place)-1:
+		c.placeN++
+	}
+	return &c.place[c.placeN]
 }
 
 // threadInputRow is a thread list whose last row is the reply box
@@ -259,6 +289,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	sz := gtx.Constraints.Max
 	origin := c.org.get(fallback)
 	c.org.track(gtx, a)
+	pl := c.boxPlaceFor(gtx.Now) // this layout's place: its last frame's guess
 
 	// a thread's reply box is its list's last row unless a footer stands
 	// in its place: the list hears which before it builds its rows
@@ -293,8 +324,11 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	// popups, rects): where the last frame put it; the list says where it
 	// goes in this frame
 	guess := sz.Y - c.compH
-	if c.inputYOK {
-		guess = c.inputY // a thread's reply box: where its row was
+	switch {
+	case pl.inputYOK:
+		guess = pl.inputY // a thread's reply box: where its row was
+	case pl.fitH > 0:
+		guess = pl.fitH // a thread that fits over its footer (or box): right under it
 	}
 	compH, mx, bannerH := 0, 0, 0
 	var call op.CallOp
@@ -419,7 +453,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		// focuses with preventScroll)
 		if ed, ok := comp.(interface{ Edits() uint64 }); ok {
 			n := ed.Edits()
-			if c.editsOf == comp && n != c.edits && !c.inputVis {
+			if c.editsOf == comp && n != c.edits && !pl.inputVis {
 				ir.ScrollToBottom()
 			}
 			c.editsOf, c.edits = comp, n
@@ -440,7 +474,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		cl := clip.Rect{Max: image.Pt(sz.X, availH)}.Push(gtx.Ops)
 		lcall.Add(gtx.Ops)
 		cl.Pop()
-		if a.placeInputRow(gtx, c, ir, comp, call, guess, mx, compH, origin, sz, hc) {
+		if a.placeInputRow(gtx, c, pl, ir, comp, call, guess, mx, compH, origin, sz, hc) {
 			// it laid out where it wasn't (the thread loaded, scrolled,
 			// grew or shrank, the box's height changed), or it shows now:
 			// again, so what it anchors in window coordinates is where it is
@@ -450,7 +484,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		a.layoutDropOverlay(gtx, c, sz)
 		return layout.Dimensions{Size: sz}
 	}
-	c.inputYOK, c.inputVis = false, false
+	pl.inputYOK, pl.inputVis = false, false
 	// a thread that fits over its box ends where the list drew its last
 	// reply in this frame (messages.ThreadView.ContentHeight): the list is
 	// clipped there and the box goes under it
@@ -460,7 +494,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			fit = h
 		}
 	}
-	c.fitH = fit
+	pl.fitH = fit
 	listH := availH
 	if fit > 0 {
 		listH = fit
@@ -508,12 +542,12 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 // anchors in window coordinates (its popups, its rects) laid out at guess:
 // it reports whether the box needs the next pass, laid out where the row
 // is (or the box shows now, its list changed under the decision).
-func (a *App) placeInputRow(gtx layout.Context, c *convo, ir threadInputRow, comp composerView, call op.CallOp, guess, mx, compH int,
+func (a *App) placeInputRow(gtx layout.Context, c *convo, pl *boxPlace, ir threadInputRow, comp composerView, call op.CallOp, guess, mx, compH int,
 	origin, sz image.Point, hc interface{ HidesComposer() bool }) bool {
-	c.fitH = 0
+	pl.fitH = 0
 	if comp == nil {
 		c.compRect = image.Rectangle{}
-		c.inputYOK, c.inputVis = false, false
+		pl.inputYOK, pl.inputVis = false, false
 		return c.comp != nil && hc != nil && !hc.HidesComposer()
 	}
 	y, ok, lr := ir.InputRow()
@@ -524,7 +558,7 @@ func (a *App) placeInputRow(gtx layout.Context, c *convo, ir threadInputRow, com
 		y = sz.Y - compH // no row this pass (the list changed under the decision): the pane's bottom
 	}
 	if ch, ok := c.list.(interface{ ContentHeight() int }); ok && ch.ContentHeight() > 0 {
-		c.fitH = y // the thread and its box fit the pane: the box right under the thread
+		pl.fitH = y // the thread and its box fit the pane: the box right under the thread
 	}
 	comp.SetOrigin(origin.Add(image.Pt(mx, y))) // BoxRect, popups
 	top := origin.Add(image.Pt(0, y))
@@ -534,8 +568,17 @@ func (a *App) placeInputRow(gtx layout.Context, c *convo, ir threadInputRow, com
 	call.Add(gtx.Ops)
 	t.Pop()
 	cl.Pop()
-	c.inputY, c.inputYOK = y, true
-	c.inputVis = y >= view.Min.Y && y+compH <= view.Max.Y
+	pl.inputY, pl.inputYOK = y, true
+	pl.inputVis = y >= view.Min.Y && y+compH <= view.Max.Y
+	if !pl.inputVis {
+		// the autocomplete open over a box the list's view no longer
+		// shows whole closes, as Escape does (until its token changes):
+		// its list is drawn deferred, unclipped, and would float over the
+		// replies; typing brings the box back and opens it again
+		if p, ok := comp.(interface{ DismissPopup() }); ok {
+			p.DismissPopup()
+		}
+	}
 	return y != guess
 }
 

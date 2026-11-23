@@ -301,7 +301,9 @@ func (c *Composer) bindSlugs() {
 						atoms[u] = at
 					}
 				}
+				pre := c.ed.Version()
 				c.ed.applySlugs(atoms, urls)
+				c.ownCommit(pre) // chat.slugifyUrl's answer, not the user's edit
 				c.h.Invalidate()
 			})
 		}()
