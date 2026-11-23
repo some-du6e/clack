@@ -1673,6 +1673,12 @@ func plainBase(base func(string) (sectionBase, bool), sectionID, orig string) (s
 	return b, nil
 }
 
+// untitled reports whether a title section's RTML holds no title.
+func untitled(rtml string) bool {
+	t, marks, ok := quip.ParseRTML(rtml)
+	return ok && len(marks) == 0 && plainCompare(html.UnescapeString(t)) == ""
+}
+
 // plainCompare is text as two copies of a section are compared: a
 // no-break space as a space (the export and RTML may write either), the
 // ends trimmed.
@@ -1721,6 +1727,13 @@ func (a *App) SaveCanvasTitle(ctx context.Context, id, orig, title string) error
 		tid := a.canvasTitleID(id)
 		if tid == "" {
 			return nil, fmt.Errorf("%w: the canvas has no title section", quip.ErrUnsupported)
+		}
+		if b, ok := c.base(tid); ok && b.typ == quip.TypeTitle && untitled(b.rtml) {
+			// files.info calls an untitled canvas "Untitled", or by its
+			// first words, which its empty title section doesn't hold: a
+			// rename goes from whatever name it began with, as Slack's
+			// renameTitle sets the title without looking at the old one
+			return []quip.Edit{{Kind: quip.EditText, SectionID: tid, RTML: rtml, Base: b.seq}}, nil
 		}
 		b, err := plainBase(c.base, tid, orig)
 		if err != nil {
