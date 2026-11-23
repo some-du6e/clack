@@ -3223,10 +3223,23 @@ have to.
 
 Tests: `internal/stroke/clack_ring_seam_test.go`
 (`TestClackRingSeamClosedRing`: rings of 2 to 250 px, 1 to 7 px wide, on
-sub-pixel centres, their outline's loops each close, no NaN, nothing off
+sub-pixel centres, closed as ArcTo leaves them and one float step short
+on the side whose closing midpoint rounds onto the start, the same on
+every architecture; their outline's loops each close, no NaN, nothing off
 the ring's band; `TestClackRingSeamSweeps`: open arcs swept from 0.9 of a
-turn to a whole one, the spinners'), in ci's linux-gio job. Not in
-`UPSTREAM.patch`.
+turn to a whole one, the spinners'; `TestClackRingSeamTinyFirstSegment`:
+polylines whose first segment is one float step, no NaN and no hole by
+their start, which addLine's t = 1 normal left), in ci's linux-gio job and
+on arm64 in macos-idle (its compiler fuses multiply-adds).
+
+`gpu/clack_ring.go`, for tests on every backend: `ClackStrokeNaNs` counts
+the stroked paths the renderers built whose outline has a NaN point
+(`buildVerts`). What a GPU does with NaN differs (llvmpipe drew the
+column, WARP and Metal a faint mark or nothing), so Clack's ring tests
+(`internal/ui/ring_seam_test.go`) fail on the count, not on pixels alone:
+`TestRingSeamCloseByFloatError` strokes a ring closed one float step
+short through the real renderer, on linux-gio, windows-applog (Direct3D
+11) and macos-idle (Metal). Not in `UPSTREAM.patch`.
 
 ## 63. gpu: path coverage in 32-bit float on GL where it can be blended
 
@@ -3244,6 +3257,14 @@ and in dark mode, sRGB turns 1% into 25/255: a faint line hanging off
 rings and filled circles (the same report as patch 62). In 32-bit float
 the sums cancel: on llvmpipe no ring, badge or spinner leaves a column.
 The coverage texture takes twice the memory.
+
+`gpu.ClackCoverageBits` (each backend's `NewTexture` for
+`TextureFormatFloat`, through `driver.ClackCoverageBits`) says which
+coverage the last renderer made, 32 or 16: the ring tests set their
+off-band bar from it (16/255 with 32-bit coverage, 32/255 with half
+float), and `TestRingSeamCoverageBits` holds CI's llvmpipe to 32. Direct3D
+11, Metal and Vulkan stay on half float, and the column of under 1% under
+rings and filled circles stays there (up to 23/255 on black).
 
 Direct3D 11 (WARP) and Metal keep a column of under 1% (up to 21/255 on
 black) under such shapes with 32-bit coverage too (WARP was given

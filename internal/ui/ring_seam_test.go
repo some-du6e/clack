@@ -240,3 +240,67 @@ func TestRingSeamSpinnerSweep(t *testing.T) {
 		}
 	}
 }
+
+// floatShortRing is theme.RingPath's circle with its last arc ending one
+// float step from its start in y, on the side whose closing midpoint
+// rounds onto the start, and closed: Close adds a line one step long whose
+// control point is its end. That's Karim's seam, what MoveTo + ArcTo(2π) +
+// Close drew for some centres and radii (ArcTo's pen missing its start),
+// built here the same on every architecture; ok is false where c.Y's
+// float is odd (both midpoints round onto the pen).
+func floatShortRing(ops *op.Ops, c f32.Point, r float32) (spec clip.PathSpec, ok bool) {
+	const q = 0.5522847498307936
+	k := r * q
+	start := f32.Pt(c.X+r, c.Y)
+	var pen f32.Point
+	for _, dir := range []int{1, -1} {
+		p := f32.Pt(start.X, math.Nextafter32(start.Y, float32(math.Inf(dir))))
+		if p.Add(start).Mul(.5) == start {
+			pen, ok = p, true
+			break
+		}
+	}
+	if !ok {
+		return clip.PathSpec{}, false
+	}
+	var p clip.Path
+	p.Begin(ops)
+	p.MoveTo(start)
+	p.CubeTo(f32.Pt(c.X+r, c.Y+k), f32.Pt(c.X+k, c.Y+r), f32.Pt(c.X, c.Y+r))
+	p.CubeTo(f32.Pt(c.X-k, c.Y+r), f32.Pt(c.X-r, c.Y+k), f32.Pt(c.X-r, c.Y))
+	p.CubeTo(f32.Pt(c.X-r, c.Y-k), f32.Pt(c.X-k, c.Y-r), f32.Pt(c.X, c.Y-r))
+	p.CubeTo(f32.Pt(c.X+k, c.Y-r), f32.Pt(c.X+r, c.Y-k), pen)
+	p.Close()
+	return p.End(), true
+}
+
+// A ring whose path closes by a float step (Gio patch 62, on whatever GPU
+// runs it): no NaN in its outline, nothing off its band, drawn at its seam.
+// The intro's rings no longer close this way (theme.RingPath), but any
+// path built from rounded arcs can.
+func TestRingSeamCloseByFloatError(t *testing.T) {
+	const w, h = 320, 320
+	n := 0
+	for _, c := range []f32.Point{{X: 160, Y: 160}, {X: 159.5, Y: 160.5}, {X: 160.37, Y: 159.71}, {X: 100.25, Y: 120}} {
+		for _, r := range []float32{6, 12, 44, 88} {
+			for _, sw := range []float32{1.6, 2.4, 3} {
+				var ops op.Ops
+				f := seamFrame(&ops, w, h, time.Unix(1_800_000_000, 0))
+				spec, ok := floatShortRing(&ops, c, r)
+				if !ok {
+					continue
+				}
+				n++
+				paint.FillShape(f.gtx.Ops, color.NRGBA{R: 0xff, A: 0xff}, clip.Stroke{Path: spec, Width: sw}.Op())
+				what := fmt.Sprintf("float-short ring r %g w %g c %v", r, sw, c)
+				img := renderRing(t, what, w, h, &ops)
+				hw := float64(sw) / 2
+				reportOff(t, what, offBand(img, c, float64(r)-hw, float64(r)+hw, seamSlack, seamInk(t)))
+				reportDrawn(t, what, img, c, float64(r), hw, 1)
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no centre whose float is even: nothing tested")
+	}
+}
