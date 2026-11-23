@@ -153,9 +153,14 @@ jobs:
           pattern: plugin-bench-results-*
           path: dist/results
       - name: report (fails when a committed winner regressed)
+        env:
+          ONLY: ${{ inputs.only }}
         run: |
           set -o pipefail
-          go run ./internal/pluginbench/report -in dist/results -check \
+          # a run limited to some plugins keeps the committed data's others
+          set --
+          if [ -n "$ONLY" ]; then set -- -keep; fi
+          go run ./internal/pluginbench/report -in dist/results -check "$@" \
             -run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
       - name: generated data
         if: ${{ !cancelled() }}

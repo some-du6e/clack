@@ -1,0 +1,2288 @@
+{
+ "schema": 1,
+ "generated": "2026-11-16T16:01:43.373Z",
+ "sources": {
+  "taut": {
+   "name": "Taut",
+   "repo": "https://github.com/jeremy46231/taut",
+   "commit": "6fe5123e3b4cffaa16c6dda71291ad5d82cdad37",
+   "license": "GPL-3.0",
+   "licenseFile": "taut-LICENSE",
+   "build": "npm run build:user-plugin"
+  },
+  "slick": {
+   "name": "Slick",
+   "repo": "https://github.com/3kh0/slick",
+   "commit": "b5826053d27b43cb8097382f7648f034335f1119",
+   "license": "GPL-3.0",
+   "licenseFile": "slick-LICENSE",
+   "build": "internal/slick/build/build.mjs (Slick build:plugin / page build)"
+  }
+ },
+ "plugins": [
+  {
+   "system": "taut",
+   "id": "AccountSwitcher",
+   "name": "Account Switcher",
+   "description": "Switches between saved accounts from the profile menu",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/AccountSwitcher.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-AccountSwitcher.js",
+   "sha256": "53aef6b542de2d7e0359d386ae1e0de017f8500309efdf04f272b50c551ec544",
+   "size": 4612
+  },
+  {
+   "system": "taut",
+   "id": "AdminBackend",
+   "name": "Admin Backend",
+   "description": "Adds buttons to open a member in Hack Club tools",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": true,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/AdminBackend.tsx",
+   "contributors": [
+    "Jeremy Woolley",
+    "Leo"
+   ],
+   "file": "taut-AdminBackend.js",
+   "sha256": "658c30a1d1564790978a900038413ba494214bc752410b70d4941af75042c44d",
+   "size": 9320
+  },
+  {
+   "system": "taut",
+   "id": "AnonymizeFilenames",
+   "name": "Anonymize Filenames",
+   "description": "Randomizes file names before uploading to prevent metadata leakage",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/AnonymizeFilenames.ts",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-AnonymizeFilenames.js",
+   "sha256": "2f533b7fef6817a6683955b45838536054c1ed1aafbb289beceac39e9dc0c308",
+   "size": 1177
+  },
+  {
+   "system": "taut",
+   "id": "BetterTypingIndicator",
+   "name": "Better Typing Indicator",
+   "description": "Shows as many typing people as possible and lets you view their profiles",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/BetterTypingIndicator.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-BetterTypingIndicator.js",
+   "sha256": "15d01169f553382a88e33b8e53a8d76ac7a57c49f06bcb4e45c717836f27e96c",
+   "size": 5533
+  },
+  {
+   "system": "taut",
+   "id": "BringBackSlackbot",
+   "name": "Bring Back Slackbot",
+   "description": "Shows Slackbot's custom responses as sent by Slackbot again",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/BringBackSlackbot.ts",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-BringBackSlackbot.js",
+   "sha256": "df6c2038345e32a4e5312b942fd95c5ffa8ebe9d23cbee90c1f9b4416738f0fb",
+   "size": 421
+  },
+  {
+   "system": "taut",
+   "id": "BrowserPopouts",
+   "name": "Browser Pop-outs",
+   "description": "Enables Slack's pop-out windows in the browser",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/BrowserPopouts.ts",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-BrowserPopouts.js",
+   "sha256": "7d730cc1a0066a0a3159a0a99ef3f3684a8749a82a1c9156eab4a25323068065",
+   "size": 590
+  },
+  {
+   "system": "taut",
+   "id": "Censorship",
+   "name": "Censorship",
+   "description": "Masks words you choose in messages, only on your screen",
+   "category": "fun",
+   "categoryLabel": "Fun",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/Censorship.ts",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-Censorship.js",
+   "sha256": "edc6acf45852160a778a94217553ace5d8f502f3b45c6cde1b3f695f111bf096",
+   "size": 1813
+  },
+  {
+   "system": "taut",
+   "id": "ClearURLs",
+   "name": "Clear URLs",
+   "description": "Strips tracking parameters from links you paste into messages (rules from <https://github.com/ClearURLs/Rules|ClearURLs>)",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/ClearURLs.ts",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-ClearURLs.js",
+   "sha256": "c8766572eb857d1ec89afa13631944cbd796d593e601c11d1caf5ff730442d42",
+   "size": 2523
+  },
+  {
+   "system": "taut",
+   "id": "ClickToLoad",
+   "name": "Click to Load",
+   "description": "Holds Spotify, SoundCloud and other music embeds until you click to load them",
+   "category": "privacy",
+   "categoryLabel": "Privacy",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/ClickToLoad.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-ClickToLoad.js",
+   "sha256": "b14136328707e613dfe377b76c44aa34fd6a0851dcf2c21d3eea12030355be4f",
+   "size": 2738
+  },
+  {
+   "system": "taut",
+   "id": "CopyReacted",
+   "name": "Copy Reacted",
+   "description": "Copies the list of people who reacted to a message",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/CopyReacted.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-CopyReacted.js",
+   "sha256": "f02abdbd6da5a94e2ecd87c2a06b828da403ebf68f68662e4a04a83ace4bcde5",
+   "size": 3854
+  },
+  {
+   "system": "taut",
+   "id": "CustomNameRecording",
+   "name": "Custom Name Recording",
+   "description": "Uploads an audio file as your name recording, instead of recording one",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/CustomNameRecording.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-CustomNameRecording.js",
+   "sha256": "ed25c86cec5602c5f0b666427d7fcd851204a1e06161879e47e69c0f07bc5dd8",
+   "size": 3487
+  },
+  {
+   "system": "taut",
+   "id": "Experiments",
+   "name": "Experiments",
+   "description": "Adds a tab for trying Slack's unreleased features",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/Experiments.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-Experiments.js",
+   "sha256": "40ec105f7a5d24ae01e070a76a3480004f6d5e1800573139b34f21a9d16c3d07",
+   "size": 16196
+  },
+  {
+   "system": "taut",
+   "id": "FasterSlack",
+   "name": "Faster Slack",
+   "description": "Makes Slack faster and smoother",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/FasterSlack.ts",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-FasterSlack.js",
+   "sha256": "8f38c32e5301ed92e841437bf7517710daecee68997ef3b29a8f80d9e1b1e1d8",
+   "size": 1632
+  },
+  {
+   "system": "taut",
+   "id": "HaikuWarning",
+   "name": "Haiku Warning",
+   "description": "Warns before you send a haiku that Orpheus would repeat in the thread",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Izie",
+     "url": "https://izie.top",
+     "slackId": "U09KKMHLS15"
+    },
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": true,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/HaikuWarning.tsx",
+   "contributors": [
+    "Jeremy Woolley",
+    "izie",
+    "Izie"
+   ],
+   "file": "taut-HaikuWarning.js",
+   "sha256": "6c78d099821aed2898836b6859cb6c23cdb612a7ab0fe36a2b8175d2d8494027",
+   "size": 12087
+  },
+  {
+   "system": "taut",
+   "id": "HuddleActivity",
+   "name": "Huddle Activity",
+   "description": "Logs who did what in a huddle, including mutes and settings changes",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [
+    {
+     "name": "Izie",
+     "url": "https://izie.top",
+     "slackId": "U09KKMHLS15"
+    },
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/HuddleActivity.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-HuddleActivity.js",
+   "sha256": "3904aa84636188455c78aa65750d65183a8a6f8b95679950a90bebf658b95616",
+   "size": 9084
+  },
+  {
+   "system": "taut",
+   "id": "HumanCount",
+   "name": "Human Count",
+   "description": "Leaves apps, and optionally guests, out of the channel header's member count",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/HumanCount.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-HumanCount.js",
+   "sha256": "6510bfb56ec56085a18220435e2e22ffdf8b7972d1f897fd75b5cbd52e80440f",
+   "size": 873
+  },
+  {
+   "system": "taut",
+   "id": "IdvStatus",
+   "name": "IDV Status",
+   "description": "Underlines people who aren't IDV eligible in red, and IDV over 18 in orange",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [
+    {
+     "name": "Sahil",
+     "url": "https://sahil.ink",
+     "slackId": "U08PUHSMW4V"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": true,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/IdvStatus.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-IdvStatus.js",
+   "sha256": "65b02b15a467134b0202733579ca04c52b55fc312c5d70e659797e3834bd432d",
+   "size": 2410
+  },
+  {
+   "system": "taut",
+   "id": "InvisibleForward",
+   "name": "Invisible Forward",
+   "description": "Makes Slack links at the start of your messages invisible, like a forwarded message",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Cyril",
+     "url": "https://github.com/CyrilSLi",
+     "slackId": "U07FXPUDYDC"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/InvisibleForward.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-InvisibleForward.js",
+   "sha256": "8d23d8b864c512f92816606e4c59e4620d90e42a440c38ee60dd3d0b0cf6819f",
+   "size": 1461
+  },
+  {
+   "system": "taut",
+   "id": "LastSeen",
+   "name": "Last Seen",
+   "description": "Shows on someone's profile when they were last seen",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/LastSeen.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-LastSeen.js",
+   "sha256": "26864b791003ace4bd3af6b5ece9da0ad4a3de23883332afda2b909136a7b2e7",
+   "size": 5578
+  },
+  {
+   "system": "taut",
+   "id": "NativeAtChannel",
+   "name": "Native At Channel",
+   "description": "Sends @channel and @here through at-channel where you can't ping yourself",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": true,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/NativeAtChannel.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-NativeAtChannel.js",
+   "sha256": "b45a1292b1518fbfcd6121e07af656ce914b9eca6819d7526d848f13b50dea2b",
+   "size": 7866
+  },
+  {
+   "system": "taut",
+   "id": "Nicknames",
+   "name": "Nicknames",
+   "description": "Renames members across Slack",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Izie",
+     "url": "https://izie.top",
+     "slackId": "U09KKMHLS15"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/Nicknames.tsx",
+   "contributors": [
+    "Jeremy Woolley",
+    "izie"
+   ],
+   "file": "taut-Nicknames.js",
+   "sha256": "a35817f44fc8d8c37158e468e940afddfb3594ae9a0722165a1d3f27801306d0",
+   "size": 5907
+  },
+  {
+   "system": "taut",
+   "id": "NoTrack",
+   "name": "No Tracking",
+   "description": "Blocks Slack's built-in tracking and analytics requests",
+   "category": "privacy",
+   "categoryLabel": "Privacy",
+   "authors": [
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    },
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/NoTrack.ts",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-NoTrack.js",
+   "sha256": "126c768a80360b5834f555e41126a9ddcf4bd5685f11487eabc20ef6b2e853c8",
+   "size": 3238
+  },
+  {
+   "system": "taut",
+   "id": "OfficeHours",
+   "name": "Office Hours",
+   "description": "Sets you out of office or away on a weekly schedule",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/OfficeHours.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-OfficeHours.js",
+   "sha256": "fb04281d53a1236cb61d2de2d5b784967d18d87ea1bfd69c61f7656f3ccaa401",
+   "size": 10895
+  },
+  {
+   "system": "taut",
+   "id": "Oneko",
+   "name": "Oneko",
+   "description": "Adds a cute cat that chases your cursor, based on <https://github.com/adryd325/oneko.js|oneko.js>",
+   "category": "fun",
+   "categoryLabel": "Fun",
+   "authors": [
+    {
+     "name": "adryd",
+     "url": "https://adryd.com"
+    },
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/Oneko.ts",
+   "contributors": [
+    "Jeremy Woolley",
+    "Joshua Cohen"
+   ],
+   "file": "taut-Oneko.js",
+   "sha256": "5523c572b1608a00932edca8885045ffbded3de9cf0e997116391a845778f4a3",
+   "size": 5045
+  },
+  {
+   "system": "taut",
+   "id": "OwlMode",
+   "name": "Owl Mode",
+   "description": "Lets you reply and react anonymously as the author of your owl confessions",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": true,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/OwlMode.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-OwlMode.js",
+   "sha256": "2f18ffd27c28e479dba49158d6b4b66b72426323734f0cbd58c4b60aaa7343d0",
+   "size": 17084
+  },
+  {
+   "system": "taut",
+   "id": "PrivateChannel",
+   "name": "Private Channel",
+   "description": "Lets you see and mention private channels you aren't in (uses the <https://flaron.halceon.dev|flaron> index)",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": true,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/PrivateChannel.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-PrivateChannel.js",
+   "sha256": "bb7bde9bd47ea47dafd4599ff9565f0f6fdc611e53a307ce54caad549771d7bb",
+   "size": 10508
+  },
+  {
+   "system": "taut",
+   "id": "QuickJoin",
+   "name": "Quick Join",
+   "description": "Adds \"Join channel\" to the right-click menu of channels you're not in",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/QuickJoin.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-QuickJoin.js",
+   "sha256": "f032c1dbccf5841380a960d9a7cce99153262ba8ca7b50e0611aae539b3ec245",
+   "size": 972
+  },
+  {
+   "system": "taut",
+   "id": "RealMarkdown",
+   "name": "Real Markdown",
+   "description": "Formats standard Markdown as you type, instead of Slack's markup",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/RealMarkdown.ts",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-RealMarkdown.js",
+   "sha256": "743b42426857021041671a0e389ed1817746da4c83f85174d2cd96364d808da9",
+   "size": 2634
+  },
+  {
+   "system": "taut",
+   "id": "RestrictedChannelWarning",
+   "name": "Restricted Channel Warning",
+   "description": "Shows admins the \"Only certain people can post\" box where only admins can post",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Izie",
+     "url": "https://izie.top",
+     "slackId": "U09KKMHLS15"
+    },
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/RestrictedChannelWarning.tsx",
+   "contributors": [
+    "Jeremy Woolley",
+    "izie"
+   ],
+   "file": "taut-RestrictedChannelWarning.js",
+   "sha256": "68fb9919671c07fedad7a3c676bf798eba096ba74deade816fa6baaf9995727e",
+   "size": 2167
+  },
+  {
+   "system": "taut",
+   "id": "ShinigamiEyes",
+   "name": "Shinigami Eyes",
+   "description": "Displays Hackatime trust level indicators next to user names in Slack",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [
+    {
+     "name": "Miggy",
+     "url": "https://shymike.dev",
+     "slackId": "U07VC9705D4"
+    },
+    {
+     "name": "Scooter",
+     "url": "https://github.com/scooterthedev",
+     "slackId": "U046VA0KR8R"
+    },
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": true,
+   "defaultEnabled": false,
+   "upstreamDisabled": true,
+   "source": "plugins/ShinigamiEyes.disabled.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-ShinigamiEyes.disabled.js",
+   "sha256": "f3cc56fe3a70b48a0104b1226fcda9106c1e626690eeee14484858209c1856c3",
+   "size": 6218
+  },
+  {
+   "system": "taut",
+   "id": "ShowRealUser",
+   "name": "Show Real User",
+   "description": "Shows the user who sent a message via a bot like at-channel",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/ShowRealUser.tsx",
+   "contributors": [
+    "Jeremy Woolley",
+    "kyto-agent"
+   ],
+   "file": "taut-ShowRealUser.js",
+   "sha256": "441060dfc2402e7308121b41f0d04b113adffe58654da2c5393b4c3fc9bbfc31",
+   "size": 3749
+  },
+  {
+   "system": "taut",
+   "id": "ShowSendingBot",
+   "name": "Show Sending Bot",
+   "description": "Shows the bot used to send a user message",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/ShowSendingBot.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-ShowSendingBot.js",
+   "sha256": "517663fef910548ee8257200e1aa105f355ae712e32b0432b0b97cbdad8391b6",
+   "size": 8334
+  },
+  {
+   "system": "taut",
+   "id": "ShutUpSlackbot",
+   "name": "Shut Up Slackbot",
+   "description": "Marks Slackbot's \"an app took over your slash command\" DMs as read and silences them",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/ShutUpSlackbot.ts",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-ShutUpSlackbot.js",
+   "sha256": "8c9c3f390bdb138ce52da7b286d8f39294cdb94e74fda9d8cc350979ad06140a",
+   "size": 2899
+  },
+  {
+   "system": "taut",
+   "id": "SilentTyping",
+   "name": "Silent Typing",
+   "description": "Adds a button to hide your typing indicator, so others can't see when you're typing",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    },
+    {
+     "name": "Ani",
+     "url": "https://github.com/anirudhb",
+     "slackId": "U01D9DWGEB0"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/SilentTyping.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-SilentTyping.js",
+   "sha256": "80ef43eb4772328c5c05b134ac551959e30aa078d6dc9dc26109649d87ee3aa4",
+   "size": 1203
+  },
+  {
+   "system": "taut",
+   "id": "SlackFixes",
+   "name": "Slack Fixes",
+   "description": "Fixes small bugs in Slack's UI",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/SlackFixes.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-SlackFixes.js",
+   "sha256": "5e63a2633bb13e23b332b7136ba28087374c5ac0faa1d7f05244ddbec6fed507",
+   "size": 1629
+  },
+  {
+   "system": "taut",
+   "id": "SlimMessageBox",
+   "name": "Slim Message Box",
+   "description": "Fits the message box on one line and hides the buttons you don't use",
+   "category": "messageBox",
+   "categoryLabel": "Message Box",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/SlimMessageBox.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-SlimMessageBox.js",
+   "sha256": "3dcbfd6853b8c4890a3cd082674ec8a3aa3d7d2715f015196b56cb6e5837ce25",
+   "size": 7446
+  },
+  {
+   "system": "taut",
+   "id": "StreamerMode",
+   "name": "Streamer Mode",
+   "description": "Blurs private information while others may be able to see your screen",
+   "category": "privacy",
+   "categoryLabel": "Privacy",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    },
+    {
+     "name": "Miggy",
+     "url": "https://shymike.dev",
+     "slackId": "U07VC9705D4"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/StreamerMode.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-StreamerMode.js",
+   "sha256": "fc15b5d66d49dd6fa9f366b4666d2c7daf54d024636671125da8af6090bb2ef9",
+   "size": 9355
+  },
+  {
+   "system": "taut",
+   "id": "ThreadJump",
+   "name": "Thread Jump",
+   "description": "Lets you jump through long threads to the top, bottom or a date, or 100 replies at a time",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/ThreadJump.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-ThreadJump.js",
+   "sha256": "4cda9d7726e366ef9a5d69979c7328769eb373a6363de0b00c1fe8f3f916c6a0",
+   "size": 4601
+  },
+  {
+   "system": "taut",
+   "id": "UserPronouns",
+   "name": "User Pronouns",
+   "description": "Shows people's pronouns next to the timestamp on their messages",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": true,
+   "upstreamDisabled": false,
+   "source": "plugins/UserPronouns.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-UserPronouns.js",
+   "sha256": "ab90e904e46dffc5db350c9076103916b86dc705df4e576ff72db16f5351058a",
+   "size": 2131
+  },
+  {
+   "system": "taut",
+   "id": "WhoReacted",
+   "name": "Who Reacted",
+   "description": "Shows the avatars of everyone who reacted, next to each reaction",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [
+    {
+     "name": "Jeremy",
+     "url": "https://jeremywoolley.com",
+     "slackId": "U06UYA5GMB5"
+    },
+    {
+     "name": "Rowan",
+     "url": "https://3kh0.net",
+     "slackId": "U080A3QP42C"
+    }
+   ],
+   "hackClubOnly": false,
+   "defaultEnabled": false,
+   "upstreamDisabled": false,
+   "source": "plugins/WhoReacted.tsx",
+   "contributors": [
+    "Jeremy Woolley"
+   ],
+   "file": "taut-WhoReacted.js",
+   "sha256": "5d75f71c7550c6374f30ae4e0fa9af4a90f63dbca65c9412f281af5098ad2cad",
+   "size": 2157
+  },
+  {
+   "system": "slick",
+   "id": "AccountSwitcher",
+   "name": "Account Switcher",
+   "description": "Switch between saved accounts from the profile menu",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/AccountSwitcher/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-AccountSwitcher.js",
+   "sha256": "c1bb32bf75d06adbec699df09b9fa013f66fa01977a09fdda198dbeea4cb7a71",
+   "size": 17972,
+   "main": {
+    "file": "slick-AccountSwitcher.main.js",
+    "sha256": "640483b35518cbf1410210a2173752d8d87238a5af241770b47c4a5098f0d5c5",
+    "size": 18511
+   }
+  },
+  {
+   "system": "slick",
+   "id": "AdminBackend",
+   "name": "Admin Backend",
+   "description": "Open profiles in Hack Club admin tools",
+   "category": "hackclub",
+   "categoryLabel": "Hack Club Specialities",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/AdminBackend/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-AdminBackend.js",
+   "sha256": "c6e3481753c3d0b401d7a26dbf7045350ebb5867ae7a626a1bddca2aa44cd3f3",
+   "size": 4767,
+   "main": {
+    "file": "slick-AdminBackend.main.js",
+    "sha256": "604ca92c49febaf00e3fb522fd591b14856cdef766ee77b899892ba2a024c0b5",
+    "size": 2533
+   }
+  },
+  {
+   "system": "slick",
+   "id": "AnonymiseFileNames",
+   "name": "Anonymise File Names",
+   "description": "Replace uploaded file names with a random string. Toggle individual names from the attachment preview.",
+   "category": "privacy",
+   "categoryLabel": "Privacy",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/AnonymiseFileNames/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-AnonymiseFileNames.js",
+   "sha256": "34982cff4df6b438c750e6f97f9ff4cffc0635ea83d8e689e24f9b0940cb44ec",
+   "size": 11198
+  },
+  {
+   "system": "slick",
+   "id": "BetterBlock",
+   "name": "Better Blocking",
+   "description": "Make people disappear locally: messages, reactions, typing, and more. Huddles are untouched.",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/BetterBlock/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-BetterBlock.js",
+   "sha256": "5f7c764a27d2e7cb2b3665a8350ee2913f753f1395bb06aa88cfa8045ffc37ee",
+   "size": 39066
+  },
+  {
+   "system": "slick",
+   "id": "BetterGifs",
+   "name": "Better GIFs",
+   "description": "Enhances Slack’s GIF picker with a better search experience, favorites, and more.",
+   "category": "composer",
+   "categoryLabel": "Composer",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/BetterGifs/",
+   "contributors": [
+    "Echo",
+    "Izie"
+   ],
+   "file": "slick-BetterGifs.js",
+   "sha256": "a3ae4e61a636cf8bff3aa8c89529a4ce0f183282711c4f5b985d292129db7b32",
+   "size": 27030,
+   "main": {
+    "file": "slick-BetterGifs.main.js",
+    "sha256": "572ee6f222ed04f4a05b4c9cfe8c8fb22c80941c0d92ae909846ab0dca2f9f3f",
+    "size": 10862
+   }
+  },
+  {
+   "system": "slick",
+   "id": "BetterHuddles",
+   "name": "Better Huddles",
+   "description": "A lighter huddle client with its own window, optional in-page controls, and a direct Chime connection",
+   "category": "sounds",
+   "categoryLabel": "Huddles & sounds",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/BetterHuddles/",
+   "contributors": [
+    "Echo",
+    "Evan Gan"
+   ],
+   "file": "slick-BetterHuddles.js",
+   "sha256": "34881cb898289a6bfb79c1db727d4c5967dfbb7c8f5ba9bf7959a0ad3c7bbc8e",
+   "size": 2060856
+  },
+  {
+   "system": "slick",
+   "id": "BetterTypingIndicator",
+   "name": "Better Typing Indicator",
+   "description": "Show as many of the people typing as fit, with their profile pictures, and open their profiles from the indicator",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/BetterTypingIndicator/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-BetterTypingIndicator.js",
+   "sha256": "f7d90a020d093a96d4778efe8e92a858790b24dfc2f7952034b294f6b47c6819",
+   "size": 12672
+  },
+  {
+   "system": "slick",
+   "id": "CallTimer",
+   "name": "Call Timer",
+   "description": "Show how long you’ve been in a huddle",
+   "category": "sounds",
+   "categoryLabel": "Huddles & sounds",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/CallTimer/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-CallTimer.js",
+   "sha256": "e591ab703f9bd6f07c540cec25d4b7269199c6d2cbc77abb719ca21d0f5de1b3",
+   "size": 5792
+  },
+  {
+   "system": "slick",
+   "id": "Censorship",
+   "name": "Censorship",
+   "description": "There is no war in Ba Sing Se.",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/Censorship/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-Censorship.js",
+   "sha256": "2ebb07795d461349d271c0be2237e82a48085b6eb0717628a20fe7a0c0f00342",
+   "size": 10033
+  },
+  {
+   "system": "slick",
+   "id": "ChannelListTyping",
+   "name": "Channel List Typing",
+   "description": "Show who’s typing next to each channel and DM in the sidebar",
+   "category": "channels",
+   "categoryLabel": "Channels",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/ChannelListTyping/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-ChannelListTyping.js",
+   "sha256": "b72f5f1813e27bea0e24cdd49f0c54d6c7adb4311b41f57a0b1998b70388961e",
+   "size": 8409
+  },
+  {
+   "system": "slick",
+   "id": "CharacterCounter",
+   "name": "Character Counter",
+   "description": "Show how many characters your message has next to the send button",
+   "category": "composer",
+   "categoryLabel": "Composer",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/CharacterCounter/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-CharacterCounter.js",
+   "sha256": "9b6774c8e066bf1d5e608834065c9f2c9d49436f7a2a6a0a22dc57845f6f48f0",
+   "size": 7056
+  },
+  {
+   "system": "slick",
+   "id": "ChatTabs",
+   "name": "Chat Tabs",
+   "description": "Browser-like tabs for the real power users of Slack. Open channels, DMs, and threads in new tabs to keep organized.",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/ChatTabs/",
+   "contributors": [
+    "Echo",
+    "Ingo Wolf"
+   ],
+   "file": "slick-ChatTabs.js",
+   "sha256": "f9f9dcf4b4dcff1978d95d5b6a4bd3d2da9fabe46dd721c84dbfb4c4ceddd5d7",
+   "size": 63606,
+   "main": {
+    "file": "slick-ChatTabs.main.js",
+    "sha256": "3b12f9569a9393bb2598ad69b53bf82c23d5cd7fceb44a07bdf0e85d945f125c",
+    "size": 2939
+   }
+  },
+  {
+   "system": "slick",
+   "id": "ClearURLs",
+   "name": "Clear URLs",
+   "description": "Automatically removes tracking elements from URLs you send",
+   "category": "privacy",
+   "categoryLabel": "Privacy",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/ClearURLs/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-ClearURLs.js",
+   "sha256": "825efa1be6c391b6627ada5eda960b6497da1dae0d8301f9b681cc03c0a51111",
+   "size": 12887,
+   "main": {
+    "file": "slick-ClearURLs.main.js",
+    "sha256": "6944dbf124c6734a6b9d55a69bd13d5f4bbc10ba431d9c17eea38272dbf2c840",
+    "size": 2755
+   }
+  },
+  {
+   "system": "slick",
+   "id": "Click2Load",
+   "name": "Click to Load",
+   "description": "Replaces third-party media embeds with privacy-preserving click-to-load placeholders",
+   "category": "privacy",
+   "categoryLabel": "Privacy",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/Click2Load/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-Click2Load.js",
+   "sha256": "233556c90322884e8e0b6b92aeb8b714e5bda72ca3a41508a5029f092e784e37",
+   "size": 9209,
+   "main": {
+    "file": "slick-Click2Load.main.js",
+    "sha256": "6d2545f6a032f9ebd94089414d55e9e5128accc7ca75aac6e050b704302b94a0",
+    "size": 3671
+   }
+  },
+  {
+   "system": "slick",
+   "id": "CopyReacted",
+   "name": "Copy Reacted",
+   "description": "Copy the list of people who reacted to a message",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/CopyReacted/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-CopyReacted.js",
+   "sha256": "9a2e1f2a5472d5513ed1eab2afb0fd5e98d92284e8867ede053b59567cd5109b",
+   "size": 5844
+  },
+  {
+   "system": "slick",
+   "id": "CustomFonts",
+   "name": "Custom Fonts",
+   "description": "Use any installed system font or upload your own font file.",
+   "category": "appearance",
+   "categoryLabel": "Look & feel",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/CustomFonts/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-CustomFonts.js",
+   "sha256": "1c69800bfa8ecea650d4682a8befe7e1d9ffc1c0a3da3a23b270ffa58d699e20",
+   "size": 3550,
+   "main": {
+    "file": "slick-CustomFonts.main.js",
+    "sha256": "d1e6de6ad10df721bbca77ed90c4fca4fe212173ee828110996e4579b70ffc4b",
+    "size": 3733
+   }
+  },
+  {
+   "system": "slick",
+   "id": "CustomNameRecording",
+   "name": "Custom Name Recording",
+   "description": "Upload custom audio as your Slack name recording",
+   "category": "sounds",
+   "categoryLabel": "Huddles & sounds",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/CustomNameRecording/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-CustomNameRecording.js",
+   "sha256": "d4cf8a82598d79d42247fda20532e98fb4462dcde871fb1b33da7aded165c478",
+   "size": 5488
+  },
+  {
+   "system": "slick",
+   "id": "CustomSlackbot",
+   "name": "Custom Slackbot",
+   "description": "Customize the name and avatar used for workspace custom responses",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/CustomSlackbot/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-CustomSlackbot.js",
+   "sha256": "cf21b48ff67c9e420d2851304ff5d22ba467c3ddd6c5c199eda38b6fdb7f30c5",
+   "size": 4783
+  },
+  {
+   "system": "slick",
+   "id": "CustomSounds",
+   "name": "Custom Sounds",
+   "description": "Override Slack notification sounds with your own audio file.",
+   "category": "sounds",
+   "categoryLabel": "Huddles & sounds",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/CustomSounds/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-CustomSounds.js",
+   "sha256": "8ebe624a62e2e3fc14c96570bb467602b0c99bf9e6f5159c9e761c70a30ea3a8",
+   "size": 5467,
+   "main": {
+    "file": "slick-CustomSounds.main.js",
+    "sha256": "60cf220153cfcaed5b733276ee8f633903d95e7eae20c4841d396d9eac53e7fe",
+    "size": 6536
+   }
+  },
+  {
+   "system": "slick",
+   "id": "DeArrow",
+   "name": "DeArrow",
+   "description": "Replace clickbait YouTube titles and thumbnails with crowdsourced ones. Sends the IDs of YouTube videos you see to DeArrow (sponsor.ajay.app).",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/DeArrow/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-DeArrow.js",
+   "sha256": "8b9f4051cddc4e623bde7db69a6bbcb9f0dddd00ff7729640380f47d4d2a695e",
+   "size": 9707,
+   "main": {
+    "file": "slick-DeArrow.main.js",
+    "sha256": "60efad7db385ce7ec01d60ea011cbb0c9fe3afb78b2a388a6267cc68753ba6a8",
+    "size": 2612
+   }
+  },
+  {
+   "system": "slick",
+   "id": "Experiments",
+   "name": "Experiments",
+   "description": "Enable Access to Experiments & other dev-only features in Slack!",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/Experiments/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-Experiments.js",
+   "sha256": "e95600df21ab0420a799f662f2ef100eaa49d32a091ab474d61388f5e40d716b",
+   "size": 16532
+  },
+  {
+   "system": "slick",
+   "id": "HaikuWarning",
+   "name": "Haiku Warning",
+   "description": "Warn before sending a message that Orpheus would quote back as a haiku",
+   "category": "hackclub",
+   "categoryLabel": "Hack Club Specialities",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/HaikuWarning/",
+   "contributors": [
+    "Echo",
+    "qwikster"
+   ],
+   "file": "slick-HaikuWarning.js",
+   "sha256": "688c3c31dd5831cec4d406a6b6d792c33a6f604347e6523e2d338cb069028aa7",
+   "size": 109961
+  },
+  {
+   "system": "slick",
+   "id": "HcaStatus",
+   "name": "HCA Status",
+   "description": "Flag users who have not completed identity verification. Sends Slack user IDs to auth.hackclub.com for verification and age-category checks.",
+   "category": "hackclub",
+   "categoryLabel": "Hack Club Specialities",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/HcaStatus/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-HcaStatus.js",
+   "sha256": "343c65a5a44c6f97b3168276d1110842539750ec8d081c72c3f9ae50796001da",
+   "size": 4330,
+   "main": {
+    "file": "slick-HcaStatus.main.js",
+    "sha256": "b52adacbe99cc70927628852870652c5bf5644432470b120c7be19c622cea0ba",
+    "size": 2007
+   }
+  },
+  {
+   "system": "slick",
+   "id": "HideResolved",
+   "name": "Hide Resolved Tickets",
+   "description": "Hide resolved questions in help channels so only the open ones are left",
+   "category": "hackclub",
+   "categoryLabel": "Hack Club Specialities",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/HideResolved/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-HideResolved.js",
+   "sha256": "f44c649835e752578aa3477458238321ec0b8f103a9259eaa9da72c93f23c111",
+   "size": 9791
+  },
+  {
+   "system": "slick",
+   "id": "HuddleMuteDetector",
+   "name": "Huddle Mute Detector",
+   "description": "Show who muted you in a huddle",
+   "category": "sounds",
+   "categoryLabel": "Huddles & sounds",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/HuddleMuteDetector/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-HuddleMuteDetector.js",
+   "sha256": "f94ab6c9404c7f1637726cb0617600326bf6b45ed5a90e7e6b99d63eb7208d93",
+   "size": 3185
+  },
+  {
+   "system": "slick",
+   "id": "HumanCount",
+   "name": "Human Count",
+   "description": "Leave bots and apps out of the channel header's member count.",
+   "category": "channels",
+   "categoryLabel": "Channels",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/HumanCount/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-HumanCount.js",
+   "sha256": "4e0c15714a930fed044fd5dc8f132b1ca1938a0b26f9cdfdedb0fb71690b66c0",
+   "size": 3133
+  },
+  {
+   "system": "slick",
+   "id": "IgnoreTime",
+   "name": "Ignore Time",
+   "description": "Makes Slack not copy that stupid little timestamp",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": true,
+   "build": "build:plugin",
+   "source": "src/plugins/IgnoreTime/",
+   "contributors": [
+    "Izie"
+   ],
+   "file": "slick-IgnoreTime.js",
+   "sha256": "9f1f8921b06cff08089230b390553701239a0570e124f84330eb50c2c987054d",
+   "size": 2005
+  },
+  {
+   "system": "slick",
+   "id": "InstalledApps",
+   "name": "Installed Apps",
+   "description": "Show apps people authorized, who authorized an app, and its channel memberships.",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/InstalledApps/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-InstalledApps.js",
+   "sha256": "5fdf32990ab56e91faed10cf9516c8c380cba966771e183719bb90f85bd6ba31",
+   "size": 19194,
+   "main": {
+    "file": "slick-InstalledApps.main.js",
+    "sha256": "4fdaa820b43fa84a78f9cff8638841e8a4c158c410805ed5d0f5a6783b8bfcaa",
+    "size": 3644
+   }
+  },
+  {
+   "system": "slick",
+   "id": "LastSeen",
+   "name": "Last Seen",
+   "description": "Show a \"last seen\" time for other people, based on what your client can observe.",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/LastSeen/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-LastSeen.js",
+   "sha256": "4280b78c4480f06695cf4245767ed7116823b48fe12528780356360a69ce4f61",
+   "size": 9938
+  },
+  {
+   "system": "slick",
+   "id": "LetMeSee",
+   "name": "Let Me See",
+   "description": "Adds a Hide drawings button to the floating huddle bar shown during a screenshare",
+   "category": "sounds",
+   "categoryLabel": "Huddles & sounds",
+   "authors": [],
+   "defaultEnabled": true,
+   "build": "build:plugin",
+   "source": "src/plugins/LetMeSee/",
+   "contributors": [
+    "Izie"
+   ],
+   "file": "slick-LetMeSee.js",
+   "sha256": "d0685d4bfc66b9b68ff1b07baf0c28d229f3923f2fea8e77c46140bf2a9a6372",
+   "size": 10795
+  },
+  {
+   "system": "slick",
+   "id": "LocalTime",
+   "name": "Local Time",
+   "description": "Show each person's local time beside their messages and in their profile, even while they're away.",
+   "category": "other",
+   "categoryLabel": "Other",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/LocalTime/",
+   "contributors": [
+    "Echo",
+    "Izie"
+   ],
+   "file": "slick-LocalTime.js",
+   "sha256": "20ddabd1b4200c40bd39a9aaf011a50d0651c277e63008db93daa44708f9120f",
+   "size": 9085
+  },
+  {
+   "system": "slick",
+   "id": "MentionProfiles",
+   "name": "Mention Profiles",
+   "description": "Show profile pictures inside @mentions",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/MentionProfiles/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-MentionProfiles.js",
+   "sha256": "2287b3e63791527cf331c25a230054adcf782772809821372a2d99a02c3183e9",
+   "size": 3484
+  },
+  {
+   "system": "slick",
+   "id": "MessageLogger",
+   "name": "Message Logger",
+   "description": "Keep deleted and edited messages visible",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/MessageLogger/",
+   "contributors": [
+    "Echo",
+    "vxs",
+    "Devansh Awatramani",
+    "Izie"
+   ],
+   "file": "slick-MessageLogger.js",
+   "sha256": "f215d05f253cf66682e6bdaf52c5f3aae5a9d14a917d59e3aaf9fcdc8d19f101",
+   "size": 63140
+  },
+  {
+   "system": "slick",
+   "id": "Nicknames",
+   "name": "Nicknames",
+   "description": "Set local nicknames for users and apps",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [],
+   "defaultEnabled": true,
+   "build": "build:plugin",
+   "source": "src/plugins/Nicknames/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-Nicknames.js",
+   "sha256": "f3a997cccc6b8866989b71d8889bc3436b8ce4b3bdbb64291a4bfa664e6572ff",
+   "size": 10190
+  },
+  {
+   "system": "slick",
+   "id": "NoTrack",
+   "name": "No Track",
+   "description": "Disable Slack's built-in tracking and telemetry",
+   "category": "privacy",
+   "categoryLabel": "Privacy",
+   "authors": [],
+   "defaultEnabled": true,
+   "build": "page-build",
+   "source": "src/plugins/NoTrack/",
+   "contributors": [
+    "Echo",
+    "vxs"
+   ],
+   "file": "slick-NoTrack.js",
+   "sha256": "5c53f406db246d3c0cf8fa54b58133438694c10decd6068c17e493bb456ba235",
+   "size": 7795,
+   "main": {
+    "file": "slick-NoTrack.main.js",
+    "sha256": "6e95a05517d980e21194091143b5a3e48d2bb4d6690522943eb3f878f8be3859",
+    "size": 1885
+   }
+  },
+  {
+   "system": "slick",
+   "id": "NoUpsell",
+   "name": "NoUpsell",
+   "description": "Hide promotions, trial offers, and Slack bot AI nudges.",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/NoUpsell/",
+   "contributors": [
+    "Echo",
+    "TAKAHASHI Shuuji"
+   ],
+   "file": "slick-NoUpsell.js",
+   "sha256": "5b37d1a5c3392eb5ed9f297e84818fcfaef1b2ceb44b7c2c97335147c224e97f",
+   "size": 5060
+  },
+  {
+   "system": "slick",
+   "id": "NotShitMarkdown",
+   "name": "Not Shit Markdown",
+   "description": "Make the composer use normal Markdown instead of Slack markup",
+   "category": "composer",
+   "categoryLabel": "Composer",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/NotShitMarkdown/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-NotShitMarkdown.js",
+   "sha256": "fbb13d0dfa20aa3e105ee6e988c190ea32be3259aab7eea7aa08c842518401a7",
+   "size": 7766
+  },
+  {
+   "system": "slick",
+   "id": "OfficeHours",
+   "name": "Office Hours",
+   "description": "Set schedules for out-of-office and invisible status",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/OfficeHours/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-OfficeHours.js",
+   "sha256": "bc0ad3a3374a849a29a8af9752cfed2c92a6b29a3a613da2af8b39555e9a198e",
+   "size": 10073
+  },
+  {
+   "system": "slick",
+   "id": "OnlineCount",
+   "name": "Online Count",
+   "description": "Show how many of a channel's members are online, next to its member count",
+   "category": "channels",
+   "categoryLabel": "Channels",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/OnlineCount/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-OnlineCount.js",
+   "sha256": "62099228b189a7ee14968871e03c0e9e35d60647ad2528e967a46ca5cf4ecc71",
+   "size": 10908
+  },
+  {
+   "system": "slick",
+   "id": "PrivateChannelMapper",
+   "name": "Private Channel Mapper",
+   "description": "Name the private channels you can’t see, and mention the ones you are not in",
+   "category": "channels",
+   "categoryLabel": "Channels",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/PrivateChannelMapper/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-PrivateChannelMapper.js",
+   "sha256": "cc8315acef5fe39af26c3e58528829d219a53530de858fa969d4eacf8c46a68d",
+   "size": 19654,
+   "main": {
+    "file": "slick-PrivateChannelMapper.main.js",
+    "sha256": "84686180f6c6eb10d245c1fc1221292b5ac15f3ec21eecf6c767c422232260ee",
+    "size": 3429
+   }
+  },
+  {
+   "system": "slick",
+   "id": "QuickJoin",
+   "name": "Quick Join",
+   "description": "Join channels straight from a link to them, without opening each one first",
+   "category": "channels",
+   "categoryLabel": "Channels",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/QuickJoin/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-QuickJoin.js",
+   "sha256": "4b79243a4e88fa5a3531190571724c7f488b1b126e4ec20383e9e441005b8f55",
+   "size": 7667
+  },
+  {
+   "system": "slick",
+   "id": "QuietSpotify",
+   "name": "Quiet Spotify",
+   "description": "Customize the volume of Spotify embeds so they are not stupidly loud",
+   "category": "sounds",
+   "categoryLabel": "Huddles & sounds",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/QuietSpotify/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-QuietSpotify.js",
+   "sha256": "faf9bdd8a1a81370d3344745390aab12c3a0bff2a9ef19f770b8ad1291c484fb",
+   "size": 1955,
+   "main": {
+    "file": "slick-QuietSpotify.main.js",
+    "sha256": "868865df3102a8e461114387304a24226369db04e4fed05f115e0d2e1782a070",
+    "size": 3290
+   }
+  },
+  {
+   "system": "slick",
+   "id": "RestrictedChannelWarning",
+   "name": "Restricted Channel Warning",
+   "description": "Warn before posting in channels where only admins can post",
+   "category": "composer",
+   "categoryLabel": "Composer",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/RestrictedChannelWarning/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-RestrictedChannelWarning.js",
+   "sha256": "1c4e8da4afea57ecbc945b38748ce768c766efba9e1cf261c0782e69fb0e3ef6",
+   "size": 5196
+  },
+  {
+   "system": "slick",
+   "id": "SelfCare",
+   "name": "Self Care",
+   "description": "Take a break from Slack and pause notifications for a while.",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/SelfCare/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-SelfCare.js",
+   "sha256": "84f85de581c6bd9f20a08afaef5b52f155b214aa3f62d77977f1fa1b9c746048",
+   "size": 12440,
+   "main": {
+    "file": "slick-SelfCare.main.js",
+    "sha256": "3c9e66044fe18b5fc3f59877cf92a1f28a8916d2630caa5abf9118a3b93055e6",
+    "size": 5343
+   }
+  },
+  {
+   "system": "slick",
+   "id": "ShowRealUser",
+   "name": "Show Real User",
+   "description": "Show who actually sent a message when a relay bot posts on their behalf",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": true,
+   "build": "build:plugin",
+   "source": "src/plugins/ShowRealUser/",
+   "contributors": [
+    "Echo",
+    "kyto-agent",
+    "vxs"
+   ],
+   "file": "slick-ShowRealUser.js",
+   "sha256": "e92d6b0421e846ddc1573cafbe24f7b70086ebf890077017dada0a479e217316",
+   "size": 8479
+  },
+  {
+   "system": "slick",
+   "id": "ShowSendingBot",
+   "name": "Show Sending Bot",
+   "description": "Show which bot or app sent a message",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": true,
+   "build": "build:plugin",
+   "source": "src/plugins/ShowSendingBot/",
+   "contributors": [
+    "Echo",
+    "vxs"
+   ],
+   "file": "slick-ShowSendingBot.js",
+   "sha256": "1c4286906d4ae7b32309dcb3910ce4a10b2bc927766bcad207b814ffe67e405a",
+   "size": 14186
+  },
+  {
+   "system": "slick",
+   "id": "ShutUpSlackbot",
+   "name": "Shut Up Slackbot",
+   "description": "Mark Slackbot slash-command registration DMs as read and silence their notifications.",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/ShutUpSlackbot/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-ShutUpSlackbot.js",
+   "sha256": "ebe1ca4c6f76ace24d7e0ec118552719f4f322220a8d4d8d73cad15e255e3b69",
+   "size": 4115,
+   "main": {
+    "file": "slick-ShutUpSlackbot.main.js",
+    "sha256": "3a83d8a5aef09b3f75d6268dc6f9c851d35098c38d311a85862f5ddb252ffd2c",
+    "size": 2493
+   }
+  },
+  {
+   "system": "slick",
+   "id": "SilentTyping",
+   "name": "Silent Typing",
+   "description": "Never show the \"is typing…\" indicator to anyone else",
+   "category": "privacy",
+   "categoryLabel": "Privacy",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/SilentTyping/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-SilentTyping.js",
+   "sha256": "3ad8ead489876251ed94a4d1470ffc546b33c431118f869cdc9712143cb7a157",
+   "size": 5085
+  },
+  {
+   "system": "slick",
+   "id": "SlickMCP",
+   "name": "Slick MCP",
+   "description": "Connect local AI agents to Slack with search, messaging, and desktop controls.",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/SlickMCP/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-SlickMCP.js",
+   "sha256": "dc3857bdcacf88340cb63ab9edca70b4141bddfe2b2c2c12f4294402eac57c38",
+   "size": 31583,
+   "main": {
+    "file": "slick-SlickMCP.main.js",
+    "sha256": "6a2b858932e0fb52f6cd5e951743a7d5f2900b058c7b343655398304255c5ea3",
+    "size": 1738164
+   }
+  },
+  {
+   "system": "slick",
+   "id": "SlimMessageBox",
+   "name": "Slim Message Box",
+   "description": "ozempic for your message box!",
+   "category": "appearance",
+   "categoryLabel": "Look & feel",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/SlimMessageBox/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-SlimMessageBox.js",
+   "sha256": "7ca5018fcb1dbf0701155842e8ef8facbc2bea75386f8dfed04d1aa1084f417e",
+   "size": 11037
+  },
+  {
+   "system": "slick",
+   "id": "Snappy",
+   "name": "Snappy",
+   "description": "Make Slack feel more responsive by disabling animations and other slow features",
+   "category": "app",
+   "categoryLabel": "App",
+   "authors": [],
+   "defaultEnabled": true,
+   "build": "page-build",
+   "source": "src/plugins/Snappy/",
+   "contributors": [
+    "Echo",
+    "vxs"
+   ],
+   "file": "slick-Snappy.js",
+   "sha256": "17419c44e0d5bdfc19b4282f624e48ed415f5c9712d0c18ca7056dff57476df5",
+   "size": 24418,
+   "main": {
+    "file": "slick-Snappy.main.js",
+    "sha256": "a78c833b0d51064f6bef6345e9030fa9dec8880d5f96ed4eb3cb7c679c6e0e79",
+    "size": 2217
+   }
+  },
+  {
+   "system": "slick",
+   "id": "StreamerMode",
+   "name": "Streamer Mode",
+   "description": "Blur private information while others may be able to see your screen",
+   "category": "privacy",
+   "categoryLabel": "Privacy",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "page-build",
+   "source": "src/plugins/StreamerMode/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-StreamerMode.js",
+   "sha256": "d9b99f435a9ccef92aa54bc5c8b62f3b768f9f8d0a4288fd73c4334e89b98e17",
+   "size": 13516,
+   "main": {
+    "file": "slick-StreamerMode.main.js",
+    "sha256": "caf5afb58d36c34973cca0d3f5e85a3b1b8dbc4213a37162e22be64aaca6082c",
+    "size": 1874
+   }
+  },
+  {
+   "system": "slick",
+   "id": "UserPronouns",
+   "name": "User Pronouns",
+   "description": "Display users' pronouns next to their messages",
+   "category": "people",
+   "categoryLabel": "People",
+   "authors": [],
+   "defaultEnabled": true,
+   "build": "build:plugin",
+   "source": "src/plugins/UserPronouns/",
+   "contributors": [
+    "Echo",
+    "Ruben Sutton"
+   ],
+   "file": "slick-UserPronouns.js",
+   "sha256": "8b58d343615acb62f4552bf662cc8365eebef004fcf7dfa6abed63fc5cd574d1",
+   "size": 4864
+  },
+  {
+   "system": "slick",
+   "id": "WhoReacted",
+   "name": "Who Reacted",
+   "description": "Show the avatars of everyone who reacted next to each reaction",
+   "category": "messages",
+   "categoryLabel": "Messages",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/WhoReacted/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-WhoReacted.js",
+   "sha256": "c2ea1a6ca6f98aef8727ec3eb44a13d834d32de3165cd2c2270e0e57b0b1122c",
+   "size": 4458
+  },
+  {
+   "system": "slick",
+   "id": "bChannel",
+   "name": "bChannel",
+   "description": "Type @channel or @here and send, no permission hassles, even as a channel manager",
+   "category": "composer",
+   "categoryLabel": "Composer",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/bChannel/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-bChannel.js",
+   "sha256": "82313f35c53a11070e41f3d9521762ab5b1075e1fddd2125125dae9a09f8496b",
+   "size": 37931
+  },
+  {
+   "system": "slick",
+   "id": "oneko",
+   "name": "oneko",
+   "description": "cat follow mouse (real)",
+   "category": "appearance",
+   "categoryLabel": "Look & feel",
+   "authors": [],
+   "defaultEnabled": false,
+   "build": "build:plugin",
+   "source": "src/plugins/oneko/",
+   "contributors": [
+    "Echo"
+   ],
+   "file": "slick-oneko.js",
+   "sha256": "d3a16d9986094458d5bf72bf42dee85c009c8402c0f0a74b218ab4e839ea8750",
+   "size": 13352
+  }
+ ]
+}

@@ -109,7 +109,9 @@ func publishShotLibrary(l *libServer) {
 	}
 	ix := pluginlib.Index{Schema: 1, Sources: src, Plugins: []pluginlib.Entry{
 		entry(pluginlib.Taut, "ClearURLs", "Clear URLs", "Removes tracking parameters from links you send", "messageBox", []byte("a")),
-		entry(pluginlib.Slick, "clearUrls", "ClearURLs", "Strips tracking junk from links", "privacy", []byte("b")),
+		// Slick's composer is Taut's Message box: both versions file the row
+		// there, so it stays put when the bench's pick (below) is Slick's
+		entry(pluginlib.Slick, "clearUrls", "ClearURLs", "Strips tracking junk from links", "composer", []byte("b")),
 		entry(pluginlib.Taut, "SilentTyping", "Silent Typing", "Don't tell others when you're typing", "messageBox", silent),
 		entry(pluginlib.Slick, "silentTyping", "Silent Typing", "Hide your typing indicator", "privacy", []byte("c")),
 		entry(pluginlib.Slick, "messageLinks", "Message Links", "Previews links to Slack messages", "messages", []byte("d")),
@@ -351,8 +353,8 @@ func TestPluginsPrefsShots(t *testing.T) {
 		pp.lib.bench = &pluginbench.Data{Schema: 1, Plugins: []pluginbench.Plugin{{
 			Name: "Clear URLs", Winner: pluginlib.Slick, Reason: "works fully, 3.9x faster to load, 1.5x less JS memory",
 			Variants: []pluginbench.Variant{
-				{System: pluginlib.Taut, ID: clear.Entries[0].ID, SHA256: clear.Entries[0].SHA256},
-				{System: pluginlib.Slick, ID: clear.Entries[1].ID, SHA256: clear.Entries[1].SHA256},
+				{System: pluginlib.Taut, ID: clear.Entries[0].ID, SHA256: clear.Entries[0].SHA256, Checks: []pluginbench.Check{{Name: "tracking parameters removed", Pass: true}}},
+				{System: pluginlib.Slick, ID: clear.Entries[1].ID, SHA256: clear.Entries[1].SHA256, Checks: []pluginbench.Check{{Name: "tracking parameters removed", Pass: true}}},
 			},
 		}}}
 		if act := pp.lib.action(clear); act.label != "Install" || act.menu == nil {
