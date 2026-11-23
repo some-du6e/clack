@@ -598,6 +598,12 @@ func (p *parser) control(n *html.Node, st richtext.Style, depth int) []richtext.
 	case strings.HasPrefix(t, "#"):
 		return []richtext.Span{{Kind: richtext.Channel, Text: t, Style: st}}
 	}
+	// a canvas, file, message or list mention: Quip's view of each is an
+	// <a href> (quip-collab-editor: "Canvas link", "File link", "Message
+	// link"), so a control around a link is that link, not a date
+	if u := safeURL(firstLink(n, depth)); u != "" {
+		return []richtext.Span{{Kind: richtext.Link, Text: t, URL: u, Style: st}}
+	}
 	return []richtext.Span{{Kind: richtext.Date, Text: t, Style: st}}
 }
 
