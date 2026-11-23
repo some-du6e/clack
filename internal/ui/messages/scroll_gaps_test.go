@@ -1,7 +1,6 @@
 package messages
 
 import (
-	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -9,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +25,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -243,23 +244,18 @@ func (e *flingEnv) release() {
 	}
 }
 
+// flingForce, when set, runs before each of flingThrough's idle frames: the
+// proof run's (fling-22px) lookup answer landing just then.
+var flingForce func(e *flingEnv)
+
 func flingThrough(t *testing.T, e *flingEnv) {
+	// every name the history can show is in the store before it loads:
+	// an idle frame must have nothing arriving (knowNames; a channel name
+	// landing in the row on the anchor line moved the rows under it 22 px
+	// in files-filters-3's 44980164338, bk-modal-spacing's 45090826439 and
+	// upload-filetype-2's 45103177353)
+	e.knowNames()
 	until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.items) > 3 })
-	// the page's senders first: the store starts with the viewer alone,
-	// and their names land while the rows are drawn. A guess at
-	// files-filters-3's push ci 44980164338 (a row moved 22 px at frame 2,
-	// the users/info asks just answered), not proven: holding the names
-	// didn't move a row (flakes-1122's red3). EnsureUsers returns once they
-	// are all in, the asks already out too.
-	var ids []string
-	for _, en := range e.v.s.snap.msgs {
-		if en.m.User != "" {
-			ids = append(ids, en.m.User)
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	e.app.EnsureUsers(ctx, ids)
-	cancel()
 	for i := 0; i < 5; i++ {
 		e.frame()
 	}
@@ -273,12 +269,17 @@ func flingThrough(t *testing.T, e *flingEnv) {
 		key, y := e.firstMsg()
 		if f%3 == 2 {
 			// an idle frame (a page may land): nothing on screen moves
+			if flingForce != nil {
+				flingForce(e)
+			}
+			before := e.rowStates()
 			e.frame()
 			if len(e.v.s.snap.msgs) != n0 {
 				pages++
 			}
 			if ny, ok := e.yOf(key); key != "" && ok && ny != y {
 				t.Errorf("frame %d: %s moved from %d to %d with no scroll (msgs %d → %d)", f, key, y, ny, n0, len(e.v.s.snap.msgs))
+				e.logMove(f, before)
 				bad++
 			}
 		} else {
@@ -352,12 +353,20 @@ func TestPrependKeepsJoinSummaryInPlace(t *testing.T) {
 		}
 		all = append(all, m)
 	}
+	// the older page is held until the summary is at the top: Slack's
+	// list asks for it as soon as fewer than half a pane and 400px of rows
+	// are over the viewport (olderAhead), at the channel's open here
+	release := make(chan struct{})
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(free)
 	hook := func(method string, f url.Values) (any, bool) {
 		if method != "conversations.history" || f.Get("channel") != ch {
 			return nil, false
 		}
 		end := len(all)
 		if l := f.Get("latest"); l != "" {
+			<-release
 			for end > 0 && all[end-1]["ts"].(string) >= l {
 				end--
 			}
@@ -390,6 +399,7 @@ func TestPrependKeepsJoinSummaryInPlace(t *testing.T) {
 		t.Fatalf("first row %s, want the join summary %s", k0, key)
 	}
 	s.lastOlder = time.Time{}
+	free()
 	until(t, 10*time.Second, "the older page", e.frame, func() bool { return len(s.snap.msgs) >= 40 })
 	e.frame()
 	j := -1
@@ -435,6 +445,7 @@ func TestFlingPageArrivalEveryFrame(t *testing.T) {
 					close(gate)
 				}
 			})
+			e.knowNames() // its idle frames too: nothing lands but the page
 			until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.items) > 3 })
 			for i := 0; i < 30; i++ { // users, avatars and images settle
 				e.frame()
@@ -507,6 +518,84 @@ func (e *flingEnv) diag() {
 		e.t.Logf("item %d %s: cached %d col %v body %v name %q nameBL %d plain %d | fresh %d col %v body %v name %q nameBL %d plain %d | hovered %v reactions %d replies %d",
 			i, it.key, s.heights[i], r.col, r.bodyRect, r.name, r.nameBL, r.rv.PlainLen(), want, f.col, f.bodyRect, f.name, f.nameBL, f.rv.PlainLen(),
 			i == s.hoverIdx, len(r.m.Reactions), r.m.ReplyCount)
+	}
+}
+
+// rowsAt is the visible items' geometry and layout inputs after a frame,
+// with the hub's users revision (fling-22px's diagnostics: an idle frame
+// moved a row 22 px, one Compact line, and every row still matched a fresh
+// layout, so something a row reads had changed between the two frames).
+type rowsAt struct {
+	usersRev uint64
+	msgs     int
+	rows     []rowAt
+}
+
+type rowAt struct {
+	i, y, h int
+	key     string
+	state   string // everything else the row reads, as text
+}
+
+func (e *flingEnv) rowStates() rowsAt {
+	s := e.v.s
+	out := rowsAt{msgs: len(s.snap.msgs)}
+	s.hb.mu.Lock()
+	out.usersRev = s.hb.userRv
+	s.hb.mu.Unlock()
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items) && i < len(s.pos) && i < len(s.heights); i++ {
+		it := s.items[i]
+		ra := rowAt{i: i, y: s.pos[i], h: s.heights[i], key: it.key}
+		st := fmt.Sprintf("kind %v header %v group %d", it.kind, it.header, len(it.group))
+		if r := s.rows[it.key]; r != nil && it.kind == itMsg && r.rv != nil {
+			var ment []string
+			var kinds []richtext.BlockKind
+			for _, b := range r.m.Doc.Blocks {
+				kinds = append(kinds, b.Kind)
+				for _, sp := range b.Spans {
+					switch sp.Kind {
+					case richtext.User:
+						ment = append(ment, fmt.Sprintf("@%s %q", sp.ID, sp.Text))
+					case richtext.Channel:
+						ment = append(ment, fmt.Sprintf("#%s %q", sp.ID, sp.Text))
+					}
+				}
+			}
+			n := r.rv.PlainLen()
+			st += fmt.Sprintf(" | sender %s %q miss %v uRev %d | plain %d missing %v mentions %v | blocks %v reactions %d attachments %dB edited %v replies %d | text %q",
+				r.m.User, r.name, r.senderMiss(), r.uRev, n, r.rv.MissingMembers(), ment,
+				kinds, len(r.m.Reactions), len(r.m.Attachments), r.m.Edited, r.m.ReplyCount, r.rv.TextRange(0, min(n, 200)))
+		}
+		ra.state = st
+		out.rows = append(out.rows, ra)
+	}
+	return out
+}
+
+// logMove logs, for an idle frame that moved a row, every visible row
+// before the frame and after it, marking what changed.
+func (e *flingEnv) logMove(f int, before rowsAt) {
+	after := e.rowStates()
+	e.t.Logf("frame %d: users revision %d → %d, messages %d → %d, anchor line %d", f, before.usersRev, after.usersRev, before.msgs, after.msgs, e.v.s.linePx)
+	was := map[string]rowAt{}
+	for _, r := range before.rows {
+		was[r.key] = r
+	}
+	for _, r := range after.rows {
+		b, ok := was[r.key]
+		mark := "  "
+		switch {
+		case !ok:
+			mark = "+ "
+		case b.h != r.h || b.state != r.state:
+			mark = "* "
+		case b.y != r.y:
+			mark = "v "
+		}
+		e.t.Logf("%sitem %d %s y %d→%d h %d→%d: %s", mark, r.i, r.key, b.y, r.y, b.h, r.h, r.state)
+		if ok && b.state != r.state {
+			e.t.Logf("    before: %s", b.state)
+		}
 	}
 }
 

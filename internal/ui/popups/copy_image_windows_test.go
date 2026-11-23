@@ -4,15 +4,16 @@ package popups
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"image"
 	"image/png"
 	"os"
-	"runtime"
 	"testing"
 	"time"
 	"unsafe"
 
+	"gioui.org/app/winclip"
 	"golang.org/x/sys/windows"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -24,53 +25,43 @@ import (
 
 var (
 	ctUser32                    = windows.NewLazySystemDLL("user32.dll")
-	ctKernel32                  = windows.NewLazySystemDLL("kernel32.dll")
-	ctOpenClipboard             = ctUser32.NewProc("OpenClipboard")
-	ctCloseClipboard            = ctUser32.NewProc("CloseClipboard")
 	ctEmptyClipboard            = ctUser32.NewProc("EmptyClipboard")
-	ctGetClipboardData          = ctUser32.NewProc("GetClipboardData")
 	ctIsFormatAvailable         = ctUser32.NewProc("IsClipboardFormatAvailable")
 	ctRegisterFormat            = ctUser32.NewProc("RegisterClipboardFormatW")
-	ctGlobalLock                = ctKernel32.NewProc("GlobalLock")
-	ctGlobalUnlock              = ctKernel32.NewProc("GlobalUnlock")
-	ctGlobalSize                = ctKernel32.NewProc("GlobalSize")
-	ctRtlMoveMemory             = ctKernel32.NewProc("RtlMoveMemory")
 	ctCFDIB             uintptr = 8
 )
 
-// ctOpen opens the clipboard for this (locked) thread, retrying while
-// another process holds it.
-func ctOpen(t *testing.T) {
-	t.Helper()
-	for i := 0; i < 100; i++ {
-		if r, _, _ := ctOpenClipboard.Call(0); r != 0 {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatal("the clipboard stayed busy")
-}
-
-// ctRead is clipboard format f's bytes (nil when absent).
+// ctRead is clipboard format f's bytes (nil when absent), read in a
+// session like every reader in the process: Copy Image's own write
+// (clipimg) is one too, so the read comes after its close.
 func ctRead(t *testing.T, f uintptr) []byte {
 	t.Helper()
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	ctOpen(t)
-	defer ctCloseClipboard.Call()
-	h, _, _ := ctGetClipboardData.Call(f)
-	if h == 0 {
-		return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	snap, err := winclip.Read(ctx, func(g winclip.Format) int64 {
+		if uintptr(g.ID) == f {
+			return 64 << 20
+		}
+		return 0
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	n, _, _ := ctGlobalSize.Call(h)
-	p, _, _ := ctGlobalLock.Call(h)
-	if p == 0 || n == 0 {
-		return nil
-	}
-	defer ctGlobalUnlock.Call(h)
-	b := make([]byte, n)
-	ctRtlMoveMemory.Call(uintptr(unsafe.Pointer(&b[0])), p, n)
+	b, _ := snap.Bytes(uint32(f))
 	return b
+}
+
+// ctEmpty empties the clipboard, in a session.
+func ctEmpty(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := winclip.Session(ctx, 0, func() error {
+		ctEmptyClipboard.Call()
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func ctAvailable(f uintptr) bool {
@@ -91,13 +82,7 @@ func TestWinCopyImageRoundTrip(t *testing.T) {
 	if cfPNG == 0 {
 		t.Fatal("couldn't register the PNG format")
 	}
-	func() {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-		ctOpen(t)
-		ctEmptyClipboard.Call()
-		ctCloseClipboard.Call()
-	}()
+	ctEmpty(t)
 
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {

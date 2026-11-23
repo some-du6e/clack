@@ -59,6 +59,9 @@ type Router struct {
 	transfers []io.ReadCloser
 	// Clack patch 15: per-window values for gestures (Source.Value).
 	values map[any]any
+	// Clack patch 64: the handler typed text goes to while no handler has
+	// the focus (Source.SetUnfocusedText, clack_unfocused.go)
+	unfocusedText event.Tag
 	// Clack patch 48: the window's run of clicks (clack_clicks.go)
 	clicks clickrule.Run
 	// Clack patch 35: the frame in progress is the last one's ops again
@@ -562,9 +565,19 @@ func (q *Router) processEvent(e event.Event, system bool) {
 		var evts []taggedEvent
 		if f := state.focus; f != nil {
 			evts = append(evts, taggedEvent{tag: f, event: e})
+		} else if t := q.unfocusedTextFor(); t != nil {
+			evts = append(evts, taggedEvent{tag: t, event: e}) // Clack patch 64: an IME's marked text
 		}
 		q.changeState(e, state, evts)
-	case key.EditEvent, key.FocusEvent, key.SelectionEvent:
+	case key.EditEvent:
+		var evts []taggedEvent
+		if f := state.focus; f != nil {
+			evts = append(evts, taggedEvent{tag: f, event: e})
+		} else if t := q.unfocusedTextFor(); t != nil {
+			evts = append(evts, taggedEvent{tag: t, event: e}) // Clack patch 64
+		}
+		q.changeState(e, state, evts)
+	case key.FocusEvent, key.SelectionEvent:
 		var evts []taggedEvent
 		if f := state.focus; f != nil {
 			evts = append(evts, taggedEvent{tag: f, event: e})

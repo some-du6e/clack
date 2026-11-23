@@ -28,6 +28,7 @@ Clack is MIT licensed (see `LICENSE`). It includes or links the following third-
 | [wlynxg/anet](https://github.com/wlynxg/anet) | network interfaces | BSD-3-Clause |
 | [google/uuid](https://github.com/google/uuid) | ids | BSD-3-Clause |
 | [Chromium](https://chromium.googlesource.com/chromium/src)'s panning cursors, `ui/resources/cursors/pan_*.cur` (`third_party/gioui.org/app/clack_cursors`) | middle-click autoscroll's cursors on Windows (Gio patch 15) | BSD-3-Clause (`third_party/gioui.org/app/clack_cursors/LICENSE`) |
+| [Chromium](https://chromium.googlesource.com/chromium/src)'s broken image icon, `third_party/blink/public/default_{100,200}_percent/blink/broken_image.png` (`internal/ui/richview/brokenimage`) | a message emoji that failed to load, as Slack's broken `<img>` shows it | BSD-3-Clause (`internal/ui/richview/brokenimage/LICENSE`) |
 | Go standard library and `golang.org/x/*` | everything | BSD-3-Clause |
 
 ## LGPL-2.1 (goh264)

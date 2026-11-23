@@ -125,6 +125,10 @@ func notifyBlock(b *Block, st SpanText) string {
 		if b.DataViz != nil {
 			return b.DataViz.PlainTitle
 		}
+	case TimelineBlock:
+		if t := b.Timeline; t != nil {
+			return timelinePlain(t, st)
+		}
 	case DataTableBlock: // convertTableBlockToPlainText: every row
 		if t := b.DataTable; t != nil && !t.Err {
 			rows := make([]string, 0, len(t.Body)+1)

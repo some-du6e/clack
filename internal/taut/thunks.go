@@ -597,7 +597,10 @@ func (tt *thunkTable) installDefaults() {
 			if args.File.Name == "" && len(args.File.Data) == 0 {
 				return nil, errors.New("no file to upload")
 			}
-			up, err := t.app.PrepareUpload(ctx, core.UploadFile{Name: args.File.Name, Title: args.File.Name, Data: args.File.Data, Type: args.File.UploadType()}, nil)
+			// UploadQueue's: the File's subtype goes up with it (a name
+			// recording's slack_name_pronunciation), its duration and
+			// audio_wave_samples don't (taut.File)
+			up, err := t.app.PrepareUpload(ctx, core.UploadFile{Name: args.File.Name, Title: args.File.Name, Data: args.File.Data, Type: args.File.UploadType(), Subtype: args.File.Subtype}, nil)
 			if err != nil {
 				return nil, err
 			}

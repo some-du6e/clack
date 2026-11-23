@@ -12,6 +12,7 @@ import (
 	"weak"
 
 	"gioui.org/font"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -439,6 +440,11 @@ func (c *Composer) init() {
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
 	c.ed.Intercept = c.floatBarKey(c.ed.Intercept) // the floating bar's Escape first
+	// Escape is the input's own while it has something to do with it,
+	// handled (defaultPrevented) before the view's keydown, which marks the
+	// thread read or closes the pane: the floating bar hides, the
+	// autocomplete closes, an edit is cancelled (stopEditingMessage)
+	c.ed.OwnsEscape = func() bool { return c.edit != nil || c.fbar.shown || c.PopupOpen() }
 	accept := c.ac.OnAccept
 	c.ac.OnAccept = func(it acItem, start, end int) {
 		if it.Kind == acCommand && it.Command != nil {
@@ -478,6 +484,33 @@ func (c *Composer) Editing() bool { return c.edit != nil }
 
 // InsertText inserts plain text at the caret.
 func (c *Composer) InsertText(s string) { c.ed.InsertText(s); c.Focus() }
+
+// TypeText types s at the caret as the keyboard does (autoformat, emoji,
+// the autocomplete's trigger) and asks for the focus: a key the window
+// redirected to this input, Slack's shouldInputStealKeyEvent (the
+// message input's document keydown, the thread pane's onKeyDown), whose
+// character the browser types into the input it focused.
+func (c *Composer) TypeText(s string) {
+	lo, hi := c.ed.sel()
+	c.ed.typeAt(lo, hi, s)
+	c.Focus()
+}
+
+// StealKeys is TypeText for shortcuts the window redirected here in the
+// frame at (Mod+B, Mod+I, Mod+V: enableShortcuts): they go to the editor
+// once it has the focus, a paste reading the clipboard then. An editor
+// that doesn't get the focus at its next draw, or within a second, drops
+// them: a Mod+V parked in an undrawn input pasted whatever the clipboard
+// held when the input next had the focus.
+func (c *Composer) StealKeys(at time.Time, ks []key.Event) {
+	c.ed.stolen = stolenKeys{keys: append(c.ed.stolen.keys, ks...), at: at}
+	c.Focus()
+}
+
+// DrawnAt reports whether the composer's editor was last drawn (a live
+// draw, not a measure pass) in the frame of time at: the window steals
+// keys only into an input on screen (ui type_steal.go).
+func (c *Composer) DrawnAt(at time.Time) bool { return DrawnAt(c.ed, at) }
 
 // InsertEmoji inserts an emoji atom at the caret.
 func (c *Composer) InsertEmoji(name string) {
@@ -927,7 +960,11 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvPasted:
 			if c.field == nil { // Texty there has no onFilesSelected
 				// a paste whose files attach inserts no text (filePaste)
-				c.ed.filesRead = c.att.PasteClipboardImage()
+				if s := c.ed.clipSnap; s != nil {
+					c.ed.filesRead = c.att.pasteFromSnap(s) // the paste's one read (Windows)
+				} else {
+					c.ed.filesRead = c.att.PasteClipboardImage()
+				}
 			}
 		case EvPasteLimit:
 			c.pasteLimitDialog(c.ed.RefusedPaste())
@@ -2446,6 +2483,11 @@ func (c *Composer) Edits() uint64 { return c.userEdits }
 // click them like a user).
 func (c *Composer) SendRect() image.Rectangle     { return c.winRect(crSend) }
 func (c *Composer) ScheduleRect() image.Rectangle { return c.winRect(crSchedule) }
+
+// QuoteRect is the formatting bar's Blockquote button in window
+// coordinates as of the last frame, empty when not drawn (folded into the
+// bar's ⋯, or the bar hidden); tests click it like a user.
+func (c *Composer) QuoteRect() image.Rectangle { return c.winRect(crQuote) }
 
 // BoxRect is the input box (its border included) in window coordinates
 // as of the last frame, empty before it was drawn (tests measure the space

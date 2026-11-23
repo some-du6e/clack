@@ -67,6 +67,10 @@ type Options struct {
 	// nil = play() rejects with NotSupportedError, as a browser without a
 	// media pipeline does.
 	Media MediaHost
+	// Audio decodes and encodes audio for Web Audio's decodeAudioData and
+	// MediaRecorder (audio.go). nil = decodeAudioData rejects and
+	// MediaRecorder supports no type, as a browser without the codecs.
+	Audio AudioHost
 	// Language is navigator.language (default "en-US"); Platform is
 	// navigator.platform (default from GOOS: "MacIntel", "Win32", "Linux x86_64").
 	Language, Platform string

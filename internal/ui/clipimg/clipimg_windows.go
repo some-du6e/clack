@@ -7,18 +7,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"image"
-	"runtime"
-	"time"
 	"unsafe"
 
+	"gioui.org/app/winclip"
 	"golang.org/x/sys/windows"
 )
 
 var (
 	ciUser32                   = windows.NewLazySystemDLL("user32.dll")
 	ciKernel32                 = windows.NewLazySystemDLL("kernel32.dll")
-	ciOpenClipboard            = ciUser32.NewProc("OpenClipboard")
-	ciCloseClipboard           = ciUser32.NewProc("CloseClipboard")
 	ciEmptyClipboard           = ciUser32.NewProc("EmptyClipboard")
 	ciSetClipboardData         = ciUser32.NewProc("SetClipboardData")
 	ciRegisterClipboardFormatW = ciUser32.NewProc("RegisterClipboardFormatW")
@@ -54,33 +51,25 @@ func write(ctx context.Context, img image.Image, charge func(int64) error) error
 			ciGlobalFree.Call(dib)
 		}
 	}()
-	// The clipboard belongs to the thread that opened it.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	for i := 0; ; i++ {
-		if r, _, _ := ciOpenClipboard.Call(0); r != 0 {
-			break
-		}
-		if i == 20 || ctx.Err() != nil {
-			return errors.New("the clipboard is busy")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	defer ciCloseClipboard.Call()
-	if r, _, _ := ciEmptyClipboard.Call(); r == 0 {
-		return errors.New("couldn't empty the clipboard")
-	}
-	if r, _, _ := ciSetClipboardData.Call(cfDIB, dib); r == 0 {
-		return errors.New("the clipboard refused the image")
-	}
-	owned = true
 	// Apps that keep transparency (browsers, Office) read "PNG".
+	var fPNG uintptr
 	if name, err := windows.UTF16PtrFromString("PNG"); err == nil {
-		if f, _, _ := ciRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name))); f != 0 {
-			_ = setData(f, pngData)
-		}
+		fPNG, _, _ = ciRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
 	}
-	return nil
+	// the process's one clipboard session at a time (winclip)
+	return winclip.Session(ctx, 0, func() error {
+		if r, _, _ := ciEmptyClipboard.Call(); r == 0 {
+			return errors.New("couldn't empty the clipboard")
+		}
+		if r, _, _ := ciSetClipboardData.Call(cfDIB, dib); r == 0 {
+			return errors.New("the clipboard refused the image")
+		}
+		owned = true
+		if fPNG != 0 {
+			_ = setData(fPNG, pngData)
+		}
+		return nil
+	})
 }
 
 // setData hands a copy of data to the clipboard as format f.

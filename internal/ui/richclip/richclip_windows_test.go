@@ -6,34 +6,24 @@ import (
 	"context"
 	"os"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
-	"unsafe"
+
+	"gioui.org/app/winclip"
 )
 
 // readFormat reads clipboard format f's bytes (nil when absent).
 func readFormat(t *testing.T, f uintptr) []byte {
 	t.Helper()
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	if err := open(context.Background()); err != nil {
+	var b []byte
+	err := winclip.Session(context.Background(), 0, func() error {
+		b, _ = winclip.CopyData(uint32(f), 1<<30) // nil when absent
+		return nil
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer rcCloseClipboard.Call()
-	h, _, _ := rcGetClipboardData.Call(f)
-	if h == 0 {
-		return nil
-	}
-	n, _, _ := rcGlobalSize.Call(h)
-	p, _, _ := rcGlobalLock.Call(h)
-	if p == 0 || n == 0 {
-		return nil
-	}
-	defer rcGlobalUnlock.Call(h)
-	b := make([]byte, n)
-	rcRtlMoveMemory.Call(uintptr(unsafe.Pointer(&b[0])), p, n)
 	return b
 }
 

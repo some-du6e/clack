@@ -17,7 +17,9 @@ package messages
 // smaller one. Synthetic ids, names, text and URLs.
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"strconv"
 	"testing"
@@ -27,6 +29,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -143,5 +146,40 @@ func TestAvatarPictureForScaleLikeSlack(t *testing.T) {
 		if r := tv.s.rows[helpRoot]; r != nil && r.avDrawn != "" && r.avDrawn != alice.Avatar {
 			t.Errorf("at %vx the root's sender draws %q, want their only picture %q", c.scale, r.avDrawn, alice.Avatar)
 		}
+	}
+}
+
+// imgHost is coreHost with an image cache.
+type imgHost struct {
+	coreHost
+	im *imgcache.Cache
+}
+
+func (h imgHost) Images() *imgcache.Cache { return h.im }
+
+// The larger picture fails to load: the avatar draws the one asked for,
+// the 72px picture, never an empty box for good. Clack kept asking for
+// the larger one (the 72px one was never loaded, so never drawn).
+func TestAvatarLargerPictureFailsLikeSlack(t *testing.T) {
+	ch := helpThread(t)
+	im := imgcache.New(func(ctx context.Context, url string) ([]byte, error) {
+		if url == heidiPic(192) {
+			return nil, errors.New("synthetic: connection reset")
+		}
+		return idlePNG(72, 72), nil
+	}, "", nil)
+	h := imgHost{coreHost: ch, im: im}
+	const px = 108 // a 36px avatar at 3x
+	if got := avatarFor(h, heidiPic(72), px); got != heidiPic(192) {
+		t.Fatalf("at %d px Heidi's avatar asks for %q first, want the 192px picture: the case tests nothing", px, got)
+	}
+	for dl := time.Now().Add(5 * time.Second); !im.Failed(heidiPic(192), px); time.Sleep(10 * time.Millisecond) {
+		avatarFor(h, heidiPic(72), px) // a frame
+		if time.Now().After(dl) {
+			t.Fatal("the 192px picture's load never failed: the case tests nothing")
+		}
+	}
+	if got := avatarFor(h, heidiPic(72), px); got != heidiPic(72) {
+		t.Errorf("with the 192px picture failed the avatar draws %q, want the 72px one %q", got, heidiPic(72))
 	}
 }

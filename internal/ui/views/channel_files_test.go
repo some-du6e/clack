@@ -241,6 +241,7 @@ func TestChannelFilesRadiosAndPaging(t *testing.T) {
 	}
 	// Oldest: every browser again, timestamp asc
 	n := len(fs.SearchForms("search.modules.files"))
+	ln := len(fs.ChannelLinksForms())
 	v.sortOpen = true
 	e.frame()
 	v.setSort(core.ChannelFilesOldest)
@@ -250,8 +251,22 @@ func TestChannelFilesRadiosAndPaging(t *testing.T) {
 			t.Errorf("sort %s %s", f.Get("sort"), f.Get("sort_dir"))
 		}
 	}
-	if lf := fs.ChannelLinksForms(); lf[len(lf)-1].Get("sort_dir") != "asc" {
-		t.Errorf("links sort_dir %q", lf[len(lf)-1].Get("sort_dir"))
+	// the links read goes out on its own goroutine (as the search's does,
+	// TestChannelFilesSearch): wait for it, then every links read since the
+	// sort is oldest first (train-207's full-test 45177193228 read the
+	// last form before it landed: "links sort_dir \"desc\"")
+	e.until(t, "the oldest-first links read", func() bool {
+		for _, f := range fs.ChannelLinksForms()[ln:] {
+			if f.Get("sort_dir") == "asc" {
+				return true
+			}
+		}
+		return false
+	})
+	for _, f := range fs.ChannelLinksForms()[ln:] {
+		if f.Get("sort_dir") != "asc" {
+			t.Errorf("links sort_dir %q", f.Get("sort_dir"))
+		}
 	}
 	// the Links card in All, once the re-sorted links' page 1 is back
 	v.setType(cfAll)

@@ -116,6 +116,15 @@ func (a *attachments) draftFileIDs() []string {
 // uploaded. Files already attached are skipped. It doesn't notify: the
 // draft it came from already has them.
 func (a *attachments) restoreFiles(fs []core.DraftFile) {
+	// each named file's type before the lock: the server's mimetype, else
+	// the type Chromium gives its name (an id-only file's comes with
+	// files.info, metaDone)
+	types := make([]string, len(fs))
+	for i, f := range fs {
+		if f.Name != "" || f.Title != "" {
+			types[i] = firstNonEmpty(f.Mimetype, attFileType(attCleanName(firstNonEmpty(f.Name, f.Title, f.ID)), ""))
+		}
+	}
 	a.mu.Lock()
 	have := map[string]bool{}
 	for _, c := range a.chips {
@@ -125,14 +134,14 @@ func (a *attachments) restoreFiles(fs []core.DraftFile) {
 	}
 	added := false
 	var load []*attChip
-	for _, f := range fs {
+	for i, f := range fs {
 		if f.ID == "" || have[f.ID] || len(a.chips) >= attMaxFiles {
 			continue
 		}
 		name := attCleanName(firstNonEmpty(f.Name, f.Title, f.ID))
 		title := firstNonEmpty(f.Title, name)
 		c := &attChip{id: int(attNextID.Add(1)), name: name, title: title, kind: attKindOf(name, nil), thumbURL: f.Thumb,
-			prepared: &core.PreparedUpload{ID: f.ID, Name: name, Title: title, Size: f.Size}}
+			prepared: &core.PreparedUpload{ID: f.ID, Name: name, Title: title, Size: f.Size}, ftype: types[i]}
 		if f.PrettyType != "" {
 			c.kind.Label = f.PrettyType // PendingFile's getFileTypeDescription
 		}

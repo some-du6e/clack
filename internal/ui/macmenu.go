@@ -10,6 +10,7 @@ import (
 	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/ui/menubar"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // The macOS menu bar: Slack desktop's (4.53.276), whose menus come from two
@@ -359,16 +360,37 @@ func (a *App) findInConversation() {
 	}
 }
 
-// findInThread is Mod+F under find_in_thread with the thread pane
-// focused (rn2N: getFocusedContainer() === Secondary showing a thread):
-// openThreadSearch, the pane's search bar. False otherwise: Mod+F is the
-// conversation's search.
+// findInThread is Mod+F under find_in_thread (boot-render's keyboard
+// shortcut): openThreadSearch, the thread's search bar, for the thread
+// of the focused view container (getFocusedContainer): the Secondary's
+// (the side pane), the Split's (the split view), or the Primary's on the
+// Activity tab (its own pane beside the inbox). False otherwise: Mod+F
+// is the conversation's search.
 func (a *App) findInThread() bool {
-	s := &a.secondary
-	if s.kind != secThread || !s.open() || !(s.keyFocus || s.findFocus) {
-		return false
+	if s := &a.secondary; s.kind == secThread && s.open() && (s.keyFocus || s.findFocus) {
+		return openFindIn(a.convos[s.channel+"/"+s.ts])
 	}
-	c := a.convos[s.channel+"/"+s.ts]
+	if a.splitFocus { // the key focus in the split view's thread (focus_container.go), not the last press's side
+		if r := a.splitTop(); r.Thread() != "" {
+			found := false
+			a.inPane(paneSplit, func() { found = openFindIn(a.convos[r.Channel()+"/"+r.Thread()]) })
+			if found {
+				return true
+			}
+		}
+	}
+	if a.actPaneFocus {
+		if v, ok := a.views[Route("activity")].(*views.Activity); ok {
+			if ch, ts := v.PaneThread(); ts != "" {
+				return openFindIn(a.convos[ch+"/"+ts])
+			}
+		}
+	}
+	return false
+}
+
+// openFindIn opens c's thread search bar (false: no thread there).
+func openFindIn(c *convo) bool {
 	if c == nil {
 		return false
 	}

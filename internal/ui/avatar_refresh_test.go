@@ -30,11 +30,13 @@ func TestAvatarAfterRestartLikeSlack(t *testing.T) {
 	home := freezeHome(t)
 	ch := fs.ChannelIDs()[0]
 
-	// session 1: a member with a full profile posts; their row draws them
-	e := startEnv(t, fs, home)
-	e.waitReady()
+	// session 1: a member with a full profile posted before it started
+	// (a quiet post after the boot shows only on the 20 s poll); their
+	// row draws them
 	poster := fakeslack.ProfileID
 	ts, _ := fs.PostQuiet(ch, poster, "a synthetic message before the restart")
+	e := startEnv(t, fs, home)
+	e.waitReady()
 	e.openChannel(ch)
 	e.toLatest()
 	rowAvatar := func(e *perfEnv) string {
