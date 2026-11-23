@@ -1,8 +1,10 @@
 package richtext
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
+	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/chart"
 )
@@ -58,13 +60,7 @@ func isDataType(t string) bool { return t == "data_visualization" || t == "data_
 // its renderable reads only (bkDataViz, bkDataTable), so a key typed
 // unlike another block's fails nothing; false when raw is neither.
 func dataBlock(raw json.RawMessage) (bk, bool) {
-	var t struct {
-		Type any `json:"type"`
-	}
-	if json.Unmarshal(raw, &t) != nil {
-		return bk{}, false
-	}
-	switch typ, _ := t.Type.(string); typ {
+	switch typ := partType(raw); typ {
 	case "data_table":
 		var v bkDataTable
 		if json.Unmarshal(raw, &v) != nil {
@@ -81,12 +77,60 @@ func dataBlock(raw json.RawMessage) (bk, bool) {
 	return bk{}, false
 }
 
-// decodeBlocks decodes a list of blocks: one struct decode, then the data
-// blocks among them again by their own keys (dataBlock). Every other node
-// decodes as it always has, in the one pass. A block that doesn't decode
-// fails the list when strict (a container's children: the container
-// fails, as before), else is badBlock.
-func decodeBlocks(raw json.RawMessage, strict bool) ([]bk, error) {
+// partType is a block's "type" when it's a string, read off its keys up
+// to that one (the rest isn't decoded: a part's nested blocks cost
+// nothing here); "" otherwise.
+func partType(raw json.RawMessage) string {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return ""
+	}
+	for dec.More() {
+		k, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		if k == "type" {
+			var v any
+			if dec.Decode(&v) != nil {
+				return ""
+			}
+			s, _ := v.(string)
+			return s
+		}
+		var skip json.RawMessage
+		if dec.Decode(&skip) != nil {
+			return ""
+		}
+	}
+	return ""
+}
+
+// listDecodes counts the block lists decoded (decodeBlocks, child_blocks):
+// the tests hold it to one per list (TestBlockDecodeLinear).
+var listDecodes atomic.Int64
+
+// decodePart decodes one block, once: a data block by its own keys, else
+// as a struct (its child_blocks with it, each list once).
+func decodePart(p json.RawMessage) (bk, error) {
+	if isDataType(partType(p)) {
+		if b, ok := dataBlock(p); ok {
+			return b, nil
+		}
+	}
+	var b bk
+	err := json.Unmarshal(p, &b)
+	return b, err
+}
+
+// decodeBlocks decodes a message's (or a fallback's) list of blocks: one
+// struct decode, and the data blocks among them again by their own keys
+// (dataBlock). Every other node decodes as it always has, in the one
+// pass. When that pass fails, each block on its own, once (decodePart),
+// a bad one badBlock: a list nested in it doesn't decode again more than
+// that once.
+func decodeBlocks(raw json.RawMessage) ([]bk, error) {
+	listDecodes.Add(1)
 	var bs []bk
 	err := json.Unmarshal(raw, &bs)
 	if err == nil && !slices.ContainsFunc(bs, func(b bk) bool { return isDataType(b.Type) }) {
@@ -108,15 +152,8 @@ func decodeBlocks(raw json.RawMessage, strict bool) ([]bk, error) {
 	}
 	bs = make([]bk, 0, len(parts))
 	for _, p := range parts {
-		if b, ok := dataBlock(p); ok {
-			bs = append(bs, b)
-			continue
-		}
-		var b bk
-		if e := json.Unmarshal(p, &b); e != nil {
-			if strict {
-				return nil, e
-			}
+		b, err := decodePart(p)
+		if err != nil {
 			b = bk{Type: badBlock}
 		}
 		bs = append(bs, b)
@@ -124,13 +161,24 @@ func decodeBlocks(raw json.RawMessage, strict bool) ([]bk, error) {
 	return bs, nil
 }
 
-// bkChildren is a callout's or container's child_blocks (decodeBlocks).
+// bkChildren is a callout's or container's child_blocks: each child
+// decoded once (decodePart); one that doesn't decode fails the list, and
+// with it the container, as a []bk would.
 type bkChildren []bk
 
 func (l *bkChildren) UnmarshalJSON(data []byte) error {
-	bs, err := decodeBlocks(data, true)
-	if err != nil {
+	listDecodes.Add(1)
+	var parts []json.RawMessage
+	if err := json.Unmarshal(data, &parts); err != nil {
 		return err
+	}
+	bs := make([]bk, 0, len(parts))
+	for _, p := range parts {
+		b, err := decodePart(p)
+		if err != nil {
+			return err
+		}
+		bs = append(bs, b)
 	}
 	*l = bs
 	return nil
