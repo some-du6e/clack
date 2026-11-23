@@ -929,7 +929,11 @@ func (m *mirror) get(slice, key string) any {
 		if !ok || i < 0 {
 			return nil
 		}
-		sm, ok := a.S.Find(rest[i+1:], rest[:i]) // the one message, not its channel's bucket
+		// the one message, not its channel's bucket, with bucket's
+		// precedence: the timeline, windows, threads, then the messages
+		// fetched by id (Activity, Saved, the Threads view), which
+		// keys("reactions") lists too and Find leaves out
+		sm, ok := a.S.FindHeld(rest[i+1:], rest[:i])
 		if !ok || len(sm.Reactions) == 0 {
 			return nil
 		}
