@@ -3,9 +3,12 @@ package fakeslack
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
+	"github.com/some-du6e/clack/internal/media/mediatest"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -19,7 +22,8 @@ import (
 // thumb_360, like a pasted 1022x125 composer or a 223px crop), two images
 // Slack made no thumbs for (file cards, as in Slack), and a thread
 // whose replies are a single image and a "+ N" gallery. files.info answers
-// for every file here. Every image is this server's /img gradient;
+// for every file here, and two .txt files, one typed binary and one
+// text (FilesBinaryText, FilesPlainText). Every image is this server's /img gradient;
 // nothing is a real file. Messages go oldest first: FilesCases order.
 
 const (
@@ -43,6 +47,14 @@ type filesFixture struct {
 // FilesThread is the #files-gallery thread's root (FilesCases "thread").
 const FilesThread = "thread"
 
+// FilesBinaryText and FilesPlainText are a .txt Slack typed "binary"
+// (application/octet-stream, pretty_type Binary) and one it typed "text"
+// (text/plain, Plain Text): file cards, as in Slack.
+const (
+	FilesBinaryText = "binary txt"
+	FilesPlainText  = "plain text txt"
+)
+
 // FilesUnthumbedImage and FilesUnthumbedSized are #files-gallery images
 // Slack made no thumbnails for: the first without original_w/h too (as
 // Slack sends a 828×25208 screenshot), the second with them.
@@ -56,6 +68,32 @@ const (
 // serve mediatest's fixture (3 s, 320×180) with ranges, as
 // files.slack.com does.
 const FilesVideoID = "F0FILESVID01"
+
+// FilesAudioID and FilesClipID are #files-gallery's audio file (an mp3,
+// the "audio" case) and voice clip (a webm slack_audio, "voice clip"):
+// each url_private serves mediatest's audio fixture in its format (3 s of
+// tones) and each aac the AAC rendition, with ranges.
+const (
+	FilesAudioID = "F0FILESAUD01"
+	FilesClipID  = "F0FILESAUD02"
+)
+
+// serveAudio serves the audio files' bytes: the aac renditions (an m4a
+// name), else url_private's format. false: id isn't one of them.
+func serveAudio(w http.ResponseWriter, r *http.Request, id, tail string) bool {
+	if id != FilesAudioID && id != FilesClipID {
+		return false
+	}
+	switch {
+	case strings.HasSuffix(tail, ".m4a"):
+		mediatest.AudioHandler(mediatest.TonesAAC, "audio/mp4").ServeHTTP(w, r)
+	case id == FilesAudioID:
+		mediatest.AudioHandler(mediatest.TonesMP3, "audio/mpeg").ServeHTTP(w, r)
+	default:
+		mediatest.AudioHandler(mediatest.TonesWebM, "audio/webm").ServeHTTP(w, r)
+	}
+	return true
+}
 
 // FilesVideo is the video file the "video" case shares.
 func (s *Server) FilesVideo() slack.File {
@@ -137,13 +175,15 @@ func (s *Server) filesFixtures() []filesFixture {
 		MP4:        s.URL + "files-pri/" + TeamID + "-F0FILESVID01/demo-walkthrough.mp4",
 		ThumbVideo: s.URL + "img/1280x720/F0FILESVID01.png", ThumbVideoW: 1280, ThumbVideoH: 720,
 		OriginalW: 1280, OriginalH: 720, DurationMS: 83000, Permalink: s.URL + "files/F0FILESVID01/demo-walkthrough.mp4"}
-	audio := slack.File{ID: "F0FILESAUD01", Name: "standup-notes.mp3", Title: "standup-notes.mp3", Mimetype: "audio/mpeg",
+	audio := slack.File{ID: FilesAudioID, Name: "standup-notes.mp3", Title: "standup-notes.mp3", Mimetype: "audio/mpeg",
 		Filetype: "mp3", PrettyType: "MP3", Size: 900 << 10, Mode: "hosted", DurationMS: 154000,
-		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESAUD01/standup-notes.mp3", Permalink: s.URL + "files/F0FILESAUD01/standup-notes.mp3"}
-	clip := slack.File{ID: "F0FILESAUD02", Name: "audio_message.webm", Title: "Audio clip", Mimetype: "audio/webm",
+		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESAUD01/standup-notes.mp3", Permalink: s.URL + "files/F0FILESAUD01/standup-notes.mp3",
+		AAC: s.URL + "files-pri/" + TeamID + "-F0FILESAUD01/aac/standup-notes.m4a"}
+	clip := slack.File{ID: FilesClipID, Name: "audio_message.webm", Title: "Audio clip", Mimetype: "audio/webm",
 		Filetype: "webm", PrettyType: "WebM", Subtype: "slack_audio", Size: 60 << 10, Mode: "hosted", DurationMS: 12000,
 		AudioWaveSamples: []int{4, 9, 18, 30, 44, 61, 72, 80, 66, 52, 47, 58, 70, 84, 95, 88, 71, 55, 40, 33, 41, 57, 69, 62, 48, 35, 22, 14, 9, 5},
-		URLPrivate:       s.URL + "files-pri/" + TeamID + "-F0FILESAUD02/audio_message.webm", Permalink: s.URL + "files/F0FILESAUD02/audio_message.webm"}
+		URLPrivate:       s.URL + "files-pri/" + TeamID + "-F0FILESAUD02/audio_message.webm", Permalink: s.URL + "files/F0FILESAUD02/audio_message.webm",
+		AAC: s.URL + "files-pri/" + TeamID + "-F0FILESAUD02/aac/audio_message.m4a"}
 	pdf := slack.File{ID: "F0FILESPDF01", Name: "q3-report.pdf", Title: "Q3 report", Mimetype: "application/pdf", Filetype: "pdf",
 		PrettyType: "PDF", Size: 312 << 10, Mode: "hosted", ThumbPDF: s.URL + "img/612x792/F0FILESPDF01.png", ThumbPDFW: 612, ThumbPDFH: 792,
 		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESPDF01/q3-report.pdf", Permalink: s.URL + "files/F0FILESPDF01/q3-report.pdf"}
@@ -158,6 +198,15 @@ func (s *Server) filesFixtures() []filesFixture {
 	doc := slack.File{ID: "F0FILESDOC01", Name: "onboarding.docx", Title: "onboarding.docx", Mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 		Filetype: "docx", PrettyType: "Word Document", Size: 48 << 10, Mode: "hosted",
 		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESDOC01/onboarding.docx", Permalink: s.URL + "files/F0FILESDOC01/onboarding.docx"}
+	// a .txt Slack typed binary (Karim's information.txt, 2026-11-18:
+	// filetype "binary", application/octet-stream, pretty_type "Binary")
+	// and one it typed text
+	binTxt := slack.File{ID: "F0FILESTXT01", Name: "information.txt", Title: "information.txt", Mimetype: "application/octet-stream",
+		Filetype: "binary", PrettyType: "Binary", Size: 244542, Mode: "hosted",
+		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESTXT01/information.txt", Permalink: s.URL + "files/F0FILESTXT01/information.txt"}
+	textTxt := slack.File{ID: "F0FILESTXT02", Name: "notes.txt", Title: "notes.txt", Mimetype: "text/plain",
+		Filetype: "text", PrettyType: "Plain Text", Size: 1820, Mode: "hosted",
+		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESTXT02/notes.txt", Permalink: s.URL + "files/F0FILESTXT02/notes.txt"}
 	own := im(40, 1200, 800)
 	own.Name, own.Title, own.User = "my-screenshot.png", "my-screenshot.png", SelfID
 	mixed := im(30, 1600, 900)
@@ -200,6 +249,8 @@ func (s *Server) filesFixtures() []filesFixture {
 		{"tiny image", "a small paste", 1, []slack.File{tiny}, nil},
 		{FilesUnthumbedImage, "a very long screenshot", 2, []slack.File{unthumbed("F0FILESIMG43", "IMG_0001.png", 0, 0)}, nil},
 		{FilesUnthumbedSized, "the same, with its size", 3, []slack.File{unthumbed("F0FILESIMG44", "IMG_0002.png", 828, 25208)}, nil},
+		{FilesBinaryText, "", 1, []slack.File{binTxt}, nil},
+		{FilesPlainText, "", 2, []slack.File{textTxt}, nil},
 		{FilesThread, "A thread of images", 2, nil, []filesFixture{
 			{"thread image", "One in the thread", 1, ims(50, land), nil},
 			{"thread gallery", "Six in the thread", 3, ims(51, land, land, land, land, sq, port), nil},

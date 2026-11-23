@@ -6,6 +6,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"log"
@@ -193,6 +194,7 @@ type App struct {
 	chAgents        map[string]*agentApps  // channels' agents and apps (agent_count.go)
 	agentCountRect  image.Rectangle        // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
+	frameOrg        image.Point                // FrameOrigin
 	rzOverlayTag    int                        // .p-resizer-overlay (resizer.go)
 	sbWide          sbWideState                // Activity's and the DMs list's column (sidebar_wide.go)
 	sbXWide         sbWideState                // the activity_inbox Activity column (sidebar_wide.go)
@@ -242,11 +244,25 @@ type App struct {
 	pipWake time.Time
 	vidTips map[any]*popups.TipState
 
+	// the startup timeline's first FrameEvent and first frame of the
+	// client itself, not the boot placeholder (real-frame); firstFramed:
+	// the first frame of any kind went to the GPU (firstFrameDone)
+	frameEvented, realFramed, firstFramed bool
+	// winEvented: the window delivered its first event (its driver is
+	// up: perform may call Window.Perform from any goroutine)
+	winEvented atomic.Bool
+	// cacheRested: core heard the first real frame (FirstFrameDone)
+	cacheRested bool
+
 	title       string
 	firstPaint  bool
 	frameStats  frameStats
 	frameSeq    atomic.Uint64 // frames laid out (FrameSeq)
 	lastChannel string
+	// navHasStart: the navigation under way gives the primary a startTs
+	// (jumpViaRoutes' highlightRoot), so afterRoute doesn't enter the
+	// conversation as one without (ChannelView.Entered)
+	navHasStart bool
 	dock        dockState // the macOS Dock badge last set (dock.go)
 	// previewFrom is the channel-browser route previewFromCh was opened
 	// from ("Back to All channels", joinpane.go)
@@ -294,33 +310,37 @@ type App struct {
 	jump             jumpKey                    // what the jump list was last made from
 	resetPending     bool                       // a reset-window waits for the window
 	quitting         atomic.Bool                // Quit: the next close isn't runFromTray's (Slack's app.isQuitting)
+	exitWhy          atomic.Pointer[string]     // why Run is ending, for the exit line (ExitReason)
 	winMode          app.WindowMode             // the last ConfigEvent's (runFromTray leaves full screen first)
 	winPlace         bool                       // Gio places the window here (Windows, macOS): mainWindowSettings keeps its bounds (winbounds.go)
 	winSaveDue       bool                       // mainWindowSettings changed since ui.json was last written
 	winOpened        image.Rectangle            // where mainWindowPlace opened the window (logs, tests)
 	hideHook         func() bool                // tests: replaces Window.Hide (runfromtray.go)
 	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
-	update           updateState                // "Update available" banner
-	updatesOff       atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
-	updNow           chan struct{}              // Check now → updateLoop (cap 1)
-	updWake          chan struct{}              // focus came back: is a check due? (cap 1)
-	updProgressEvery time.Duration              // tests: the progress throttle (default updateProgressEvery)
-	hud              *huddleui.Controller       // the native huddle (huddle_wire.go)
-	hudOrigin        map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
-	ccStopping       map[string]bool            // code channels whose agent is being stopped (codechannel.go)
-	ccPending        map[string]bool            // context bar actions in flight, "channel:key"
-	starOrigin       map[string]*originTracker  // headers' star buttons by channel (the Move to… menu)
-	skipBody         int                        // tests: frames drawViewBody leaves the body out
-	skipAt           time.Time                  // tests: the frame being skipped
-	noKeepBody       bool                       // tests: no keepBody (KeepFocus alone)
-	body             bodyDraw                   // the primary body's last live draw (keepBody)
-	standIn          bool                       // keepBody's draw is running
-	standIns         int                        // keepBody draws so far
-	missedFrameLog   focusLog                   // the missed-frame log line (focus_log.go)
-	shownConvos      shownConvos                // the conversations the last frame showed (composer_release.go)
-	sw               startupWatch               // the startup timeline (startup.go)
-	rv               revealState                // the cover until the window is ready (reveal.go)
-	panelOrigin      image.Point                // the primary panel's window origin this frame
+	invalDone        chan struct{}              // closed by release: invalidator returns
+	invalStop        sync.Once
+	unhooks          unhooks                   // the process-wide listeners New and Run registered: release removes them
+	update           updateState               // "Update available" banner
+	updatesOff       atomic.Bool               // prefs.NoUpdateCheck, for updateLoop
+	updNow           chan struct{}             // Check now → updateLoop (cap 1)
+	updWake          chan struct{}             // focus came back: is a check due? (cap 1)
+	updProgressEvery time.Duration             // tests: the progress throttle (default updateProgressEvery)
+	hud              *huddleui.Controller      // the native huddle (huddle_wire.go)
+	hudOrigin        map[string]*originTracker // headers' huddle buttons by channel (caret menus)
+	ccStopping       map[string]bool           // code channels whose agent is being stopped (codechannel.go)
+	ccPending        map[string]bool           // context bar actions in flight, "channel:key"
+	starOrigin       map[string]*originTracker // headers' star buttons by channel (the Move to… menu)
+	skipBody         int                       // tests: frames drawViewBody leaves the body out
+	skipAt           time.Time                 // tests: the frame being skipped
+	noKeepBody       bool                      // tests: no keepBody (KeepFocus alone)
+	body             bodyDraw                  // the primary body's last live draw (keepBody)
+	standIn          bool                      // keepBody's draw is running
+	standIns         int                       // keepBody draws so far
+	missedFrameLog   focusLog                  // the missed-frame log line (focus_log.go)
+	shownConvos      shownConvos               // the conversations the last frame showed (composer_release.go)
+	sw               startupWatch              // the startup timeline (startup.go)
+	rv               revealState               // the cover until the window is ready (reveal.go)
+	panelOrigin      image.Point               // the primary panel's window origin this frame
 
 	// quiet frames (quiet.go): an Invalidate since the last frame (layout
 	// to do), an animation repaint since then, what the last full frame
@@ -343,6 +363,7 @@ type App struct {
 	split       splitState    // Slack's split view (split.go)
 	pane        string        // the view container being drawn or acted on: "" main, paneSplit
 	navSrc      navSource     // the main window's container being laid out (secondary.go)
+	openVia     string        // the navigation's source for clack.log ("": its caller; navlog.go)
 	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
 	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
 
@@ -370,14 +391,15 @@ func New(opts Options, images *imgcache.Cache) *App {
 		opts.Started = time.Now()
 	}
 	a := &App{
-		opts:    opts,
-		th:      theme.Bare(opts.Dark),
-		images:  images,
-		clicks:  clickables{},
-		views:   map[Route]View{},
-		inval:   make(chan struct{}, 1),
-		updNow:  make(chan struct{}, 1),
-		updWake: make(chan struct{}, 1),
+		opts:      opts,
+		th:        theme.Bare(opts.Dark),
+		images:    images,
+		clicks:    clickables{},
+		views:     map[Route]View{},
+		inval:     make(chan struct{}, 1),
+		invalDone: make(chan struct{}),
+		updNow:    make(chan struct{}, 1),
+		updWake:   make(chan struct{}, 1),
 	}
 	go a.invalidator()
 	theme.SetPrimary(a.th) // the text model follows this window's mode (theme/textgamma.go)
@@ -408,6 +430,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 		// one collection serves both modes; the UI font when its files
 		// are on this computer, else Lato until it has loaded
 		sh, o, pending := startupShaper(stored)
+		applog.Mark("fonts", "in "+time.Since(t).Round(time.Millisecond).String())
 		if h := a.opts.shaperHold; h != nil {
 			<-h
 		}
@@ -478,9 +501,14 @@ var invalidateHook func(*App)
 // invalidator forwards Invalidate requests to the window from a goroutine that
 // is never the main thread (see Invalidate).
 func (a *App) invalidator() {
-	for range a.inval {
-		if w := a.winLive.Load(); w != nil {
-			w.Invalidate()
+	for {
+		select {
+		case <-a.inval:
+			if w := a.winLive.Load(); w != nil {
+				w.Invalidate()
+			}
+		case <-a.invalDone: // release: the App is done
+			return
 		}
 	}
 }
@@ -497,18 +525,21 @@ func mainWindowOptions() []app.Option {
 
 // Run opens the window and blocks until it closes.
 func (a *App) Run() error {
+	applog.Mark("run", "")
 	a.timing("run", a.opts.Started)
 	setFrameMode()           // partial frames, unless CLACK_FULL_FRAMES (partial_frames.go)
 	startCaretBlinkWatcher() // Linux: GTK's caret blink, as Chromium's (caretblink_linux.go)
 	a.win = new(app.Window)
 	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
 	a.win.Option(mainWindowOptions()...)
-	// where it was: Slack's mainWindowSettings (winbounds.go)
-	a.win.Option(a.mainWindowPlace()...)
-	if a.startHidden() { // Keep in Background after a login launch (tray.go)
-		log.Print("ui: launched on login: the window stays in the notification area (Keep in Background)")
-		a.win.Option(app.StartHidden(true))
-	}
+	// Where it was: Slack's mainWindowSettings (winbounds.go). On macOS
+	// the displays are AppKit's, read on its main thread, which answers
+	// only once NSApplication runs (the launch it finishes is the Dock's
+	// bounce): asked here, they come during that launch, while everything
+	// below (the backend's disk reads and the plugin runtimes included)
+	// starts, and the window takes them just before it opens.
+	place := make(chan []app.Option, 1)
+	go func() { place <- a.mainWindowPlace() }()
 	a.wcoEnable()            // Windows: the top nav draws the caption buttons
 	a.macNav = macTitlebarOn // macOS: the top nav is the drag area under the traffic lights
 	a.winLive.Store(a.win)
@@ -536,7 +567,6 @@ func (a *App) Run() error {
 	if startNavGlue != nil {
 		startNavGlue(a)
 	}
-	a.startMenuBar()
 	if a.data != nil {
 		a.data.start(a)
 	}
@@ -547,8 +577,17 @@ func (a *App) Run() error {
 	wd.startRecorder(a.prefs.FlightRecorder)
 	a.wd = wd // drainIdle's stage
 	go wd.run()
+	// the window's place (above): a.winPlace and a.winOpened are set once
+	// this receives
+	a.win.Option(<-place...)
+	if a.startHidden() { // Keep in Background after a login launch (tray.go)
+		log.Print("ui: launched on login: the window stays in the notification area (Keep in Background)")
+		a.win.Option(app.StartHidden(true))
+	}
+	applog.Mark("event-loop", "")
 	for {
 		ev := a.win.Event()
+		a.winEvented.Store(true) // perform's Window.Perform (desktop.go)
 		// The OS waits while this goroutine handles ev (macOS: the AppKit
 		// main thread, every event and frame), so the watchdog times it.
 		wd.begin(&stageEvent)
@@ -567,23 +606,30 @@ func (a *App) Run() error {
 		nativemenu.NoteEvent(ev) // the window's HWND / NSView for native context menus
 		switch e := ev.(type) {
 		case app.DestroyEvent:
+			if e.Err != nil {
+				a.noteExit(fmt.Sprintf("the window ended with an error: %v", e.Err))
+			}
 			wd.end()
 			wd.stop()
-			a.closeVideos()   // no sound after the window is gone (video.go)
-			a.shutdownIntro() // the introduction's preview renderer and its folder (intro_preview.go)
+			a.closeVideos()       // no sound after the window is gone (video.go)
+			composer.CloseClips() // nor a microphone recording a clip
+			a.shutdownIntro()     // the introduction's preview renderer and its folder (intro_preview.go)
 			if a.hud != nil {
 				a.hud.Close() // leave the huddle cleanly (Chime LEAVE)
 			}
+			if a.winSaveDue { // a move or resize savePrefsSoon hasn't written yet
+				a.savePrefs()
+			}
+			// ui.json before the stop's wait: Windows ending the session
+			// gives the quit 3 s (cmd/clack's OnSessionEnd)
+			a.flushPrefs()
 			if a.data != nil {
 				select { // plugins' stop hooks, the metadata cache
 				case <-a.data.stop():
 				case <-time.After(5 * time.Second):
 				}
 			}
-			if a.winSaveDue { // a move or resize savePrefsSoon hasn't written yet
-				a.savePrefs()
-			}
-			a.flushPrefs() // the window is gone: nothing waits on this
+			a.flushPrefs() // what the stop changed; the window is gone: nothing waits on this
 			return e.Err
 		case *app.ClosingEvent:
 			// the close button, Alt+F4: Slack's MAIN_WINDOW_CLOSE keeps the
@@ -598,6 +644,7 @@ func (a *App) Run() error {
 			a.layoutDue.Store(true)
 			a.drainIdle()
 		case app.ConfigEvent:
+			applog.Mark("config", "")
 			a.layoutDue.Store(true)
 			a.winMode = e.Config.Mode
 			a.noteWindowPlace(e.Config) // mainWindowSettings (winbounds.go)
@@ -623,6 +670,10 @@ func (a *App) Run() error {
 			a.drainIdle()
 		case app.FrameEvent:
 			t0 := time.Now()
+			if !a.frameEvented {
+				a.frameEvented = true
+				applog.Mark("frame-event", "")
+			}
 			if a.th.Shaper == nil && !a.takeShaper() {
 				// The shaper (fonts) is still loading: paint the window's
 				// background and come back when it's ready, instead of
@@ -644,6 +695,7 @@ func (a *App) Run() error {
 				}
 				e.Frame(gtx.Ops)
 				applog.Mark("first-frame", "background, fonts loading")
+				a.firstFrameDone()
 				break
 			}
 			// patch points (slackc) are shared with the huddle call window
@@ -706,7 +758,21 @@ func (a *App) Run() error {
 			} else {
 				e.Frame(gtx.Ops)
 				a.inspectAfterFrame(gtx.Ops, e.Size) // a pick's screenshot (inspect_wire.go)
+				if !a.realFramed {
+					// the client itself, not the boot placeholder: what a
+					// launch is for (launch.py's budget)
+					a.realFramed = true
+					applog.Mark("real-frame", a.paletteNote())
+				}
+				if b := a.data; b != nil && !a.cacheRested {
+					a.cacheRested = true
+					b.core.FirstFrameDone() // meta.json's custom emoji and user groups now (core DeferCacheRest)
+				}
+				if b := a.data; b != nil && b.tautDeferJS {
+					b.startDeferredTaut(a) // the launch's first real frame is up (backend.start)
+				}
 			}
+			a.firstFrameDone()
 			if !a.firstPaint {
 				a.timing("first layout", t0)
 				a.timing("first GPU submit", tl)
@@ -727,6 +793,19 @@ func (a *App) Run() error {
 		}
 		wd.end()
 	}
+}
+
+// firstFrameDone runs once the window's first frame went to the GPU: what
+// the launch leaves until then. The macOS menu bar's install runs on
+// AppKit's main thread (9-13 ms warm, 35-80 ms with a cold file cache on
+// CI), which would otherwise build it after NSApplication finished
+// launching and before it made the window.
+func (a *App) firstFrameDone() {
+	if a.firstFramed {
+		return
+	}
+	a.firstFramed = true
+	a.startMenuBar()
 }
 
 // takeShaper installs the text shaper once New's goroutine built it, without

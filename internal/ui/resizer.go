@@ -22,7 +22,6 @@ package ui
 
 import (
 	"image"
-	"time"
 
 	"gioui.org/gesture"
 	"gioui.org/io/event"
@@ -37,12 +36,15 @@ type colResizer struct {
 	// gtx's frame; off the press's distance from it
 	edge int
 	off  float32
-	// lastPress is the last press: another within 500 ms is onReset's
-	// double click, and reset holds until its release (no drag follows)
-	lastPress time.Time
-	reset     bool
-	active    bool // a press is being dragged (BaseResizer allowDragEvents)
-	drawn     bool // area ran this frame (live)
+	// click counts the handle's presses by the platform's rule, as
+	// gesture.Click counts (Gio patch 48): a double click is onReset's
+	// dblclick, and reset holds until its release (no drag follows). A
+	// drag ends the run, so a press right after one is a new drag: in
+	// Chromium a double click can't follow a drag
+	click  gesture.ClickRun
+	reset  bool
+	active bool // a press is being dragged (BaseResizer allowDragEvents)
+	drawn  bool // area ran this frame (live)
 }
 
 type resizeKind uint8
@@ -74,19 +76,25 @@ func (r *colResizer) next(gtx layout.Context) (resizeEvent, bool) {
 			// take the pointer now, not after the touch slop: nothing else
 			// sees this gesture until the release
 			gtx.Execute(pointer.GrabCmd{Tag: &r.drag, ID: e.PointerID})
-			if !r.lastPress.IsZero() && gtx.Now.Sub(r.lastPress) < 500*time.Millisecond {
-				r.lastPress, r.reset, r.active = time.Time{}, true, false
+			if r.click.Press(gtx.Source, e) == 2 { // Chromium's dblclick: a click whose detail is 2
+				r.reset, r.active = true, false
 				return resizeEvent{kind: resizeReset}, true
 			}
-			r.lastPress, r.reset, r.active = gtx.Now, false, true
+			r.reset, r.active = false, true
 			r.off = e.Position.X - float32(r.edge)
 			return resizeEvent{kind: resizeStart}, true
 		case pointer.Drag:
+			r.click.Dragged(e)
 			if r.reset || !r.active {
 				continue
 			}
 			return resizeEvent{kind: resizeMove, pos: e.Position.X - r.off}, true
 		case pointer.Release, pointer.Cancel:
+			if e.Kind == pointer.Release {
+				r.click.Released(e)
+			} else {
+				r.click.Cancelled()
+			}
 			r.reset = false
 			if !r.active {
 				continue

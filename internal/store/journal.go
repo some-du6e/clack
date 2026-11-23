@@ -1,6 +1,7 @@
 package store
 
 import (
+	"maps"
 	"math"
 	"sync/atomic"
 
@@ -27,6 +28,7 @@ type journal struct {
 	msgs     map[string]uint64 // conversation -> its last new message (s.mu)
 	convs    map[string]uint64 // conversation -> its last local membership change or edit (s.mu)
 	sections uint64            // the last change to the section list (s.mu)
+	threads  uint64            // the last update_thread_state the threads' state took (s.mu)
 }
 
 // Seq is the journal's position now: a fetch notes it as it goes out.
@@ -134,11 +136,53 @@ func (s *Store) SetCountsSince(c *slack.Counts, since uint64) int {
 			merged++
 		}
 	}
-	s.ThreadsUnread = c.Threads.HasUnreads
-	s.ThreadMentions = c.Threads.MentionCount
-	s.ThreadsUnreadByChannel = c.Threads.UnreadCountByChannel
+	if s.jr.threads <= since { // an update_thread_state after the request went out is newer
+		s.ThreadsUnread = c.Threads.HasUnreads
+		s.ThreadMentions = c.Threads.MentionCount
+		s.ThreadsUnreadByChannel = c.Threads.UnreadCountByChannel
+	}
 	s.countsLive = true
 	return merged
+}
+
+// SetThreadState is update_thread_state's state, taken at once as Slack's
+// updateThreadState takes it: whether any followed thread has unread
+// replies, their mention count, and how many threads of each conversation
+// have unread replies (the reply bar's Unread mark). nil leaves a field as
+// it was; an event with none changes nothing. Journaled: a client.counts
+// answer requested before it keeps the event's (SetCountsSince), even when
+// the event changed no value. It reports whether a value changed.
+func (s *Store) SetThreadState(hasUnreads *bool, mentions *int, byChannel map[string]int) (changed bool) {
+	if hasUnreads == nil && mentions == nil && byChannel == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if hasUnreads != nil && s.ThreadsUnread != *hasUnreads {
+		s.ThreadsUnread, changed = *hasUnreads, true
+	}
+	if mentions != nil && s.ThreadMentions != *mentions {
+		s.ThreadMentions, changed = *mentions, true
+	}
+	if byChannel != nil && !maps.Equal(s.ThreadsUnreadByChannel, byChannel) {
+		s.ThreadsUnreadByChannel, changed = byChannel, true
+	}
+	s.jr.threads = s.jr.seq.Add(1)
+	return changed
+}
+
+// SetThreadsStateSince is the Threads view's answer's state (getView's
+// has_unreads and mention_count) for a request that went out at Seq since:
+// an update_thread_state taken after that is newer and stays. It reports
+// whether the answer's state went in.
+func (s *Store) SetThreadsStateSince(hasUnreads bool, mentions int, since uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jr.threads > since {
+		return false
+	}
+	s.ThreadsUnread, s.ThreadMentions = hasUnreads, mentions
+	return true
 }
 
 // dmUnreadCount is client-boot mtwS applyCountsToChannels' rule for an IM
@@ -205,6 +249,31 @@ func (s *Store) PutConvsSince(cs []slack.Conversation, since uint64) int {
 		s.putConvLocked(cs[i])
 	}
 	return skip
+}
+
+// PutInfoSince stores a conversations.info answer for a lookup asked for at
+// journal position since (core's lookups queued off the event pump), in the
+// member set when it is there already or the answer says the viewer is in it
+// (an IM, a group DM), else outside it (PutExtConv), unless this session
+// changed the conversation after since (DropConv, PutConvLocal): read before
+// a channel_left that the pump applied meanwhile, the answer put the left
+// channel back in the member set. One critical section, as PutConvsSince. It
+// reports whether it stored the answer.
+func (s *Store) PutInfoSince(c slack.Conversation, since uint64) bool {
+	if c.ID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jr.convs[c.ID] > since {
+		return false
+	}
+	if _, member := s.Convs[c.ID]; member || c.IsMember || c.IsIM || c.IsMPIM {
+		s.putConvLocked(c)
+		return true
+	}
+	s.putExtConvLocked(c)
+	return true
 }
 
 // SetSections installs a section list (a fresh users.channelSections.list,

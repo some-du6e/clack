@@ -303,7 +303,9 @@ void clack_menubar_install(CFTypeRef specRef) {
 	}
 	NSArray *spec = CFBridgingRelease(specRef);
 	dispatch_async(dispatch_get_main_queue(), ^{
+		CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
 		installNow(spec);
+		clackMenuInstalled((CFAbsoluteTimeGetCurrent() - t0) * 1e6); // the startup timeline (menubar_mark_darwin.go)
 	});
 }
 

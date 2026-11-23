@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense OR MIT
 
 // Package winclip runs a process's Windows clipboard sessions one at a
-// time (Clack patch, CLACK_PATCHES.md §55).
+// time (Clack patch, CLACK_PATCHES.md §62).
 //
 // GetClipboardData hands a reader its own copy of a format's data, a
 // handle the clipboard owns and that is good only while the clipboard is

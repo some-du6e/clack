@@ -478,7 +478,9 @@ func TestPluginSuggestionsRank(t *testing.T) {
 		// Slackbot, Custom Slackbot (an author is "messagebird"), DeArrow
 		// or Ignore Time, which are only filed under Messages
 		{"message", []string{"Message Logger", "Slim Message Box", "Copy Reacted", "Local Time"}},
-		{"slackbot", []string{"Bring Back Slackbot", "Custom Slackbot", "Shut Up Slackbot"}},
+		// Bring Back Slackbot and Custom Slackbot are one plugin, one row
+		// (docs/PLUGINS.md's pair table)
+		{"slackbot", []string{"Bring Back Slackbot", "Shut Up Slackbot"}},
 		{"time", []string{"Call Timer", "Ignore Time", "Local Time"}},
 		{"mesage", nil}, // a typo: no suggestion rather than a guess
 		{"copyreacted", []string{"Copy Reacted"}},

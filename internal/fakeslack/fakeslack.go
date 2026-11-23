@@ -38,6 +38,9 @@ import (
 
 // Size sets how big the workspace is.
 type Size struct {
+	// FreeTeam makes the workspace a free one outside any enterprise:
+	// team.info has no plan or enterprise_id, and Creds no EnterpriseID.
+	FreeTeam bool
 	// NoFixtureDocs leaves out the fake's own canvases and lists (Launch
 	// plan, Launch tracker, Team to-dos…): a workspace built on the fake
 	// (internal/demo) brings its own with AddCanvas and AddList.
@@ -97,12 +100,19 @@ type Size struct {
 	// app's bot_message posts with no user (system_dm.go, SystemDMID;
 	// PostSystemDMQuiet posts another).
 	SystemDM bool
+	// NewBots adds bot users and apps in the shapes of Hack Club's
+	// #new-bots: a stale profile.bot_id, an app posting with a newer bot
+	// than its member's, a live bot (new_bots.go).
+	NewBots bool
 	// Embeds adds #embeds-gallery: one message per way Slack draws a
 	// link preview (embeds.go).
 	Embeds bool
 	// Files adds #files-gallery: one message per way Slack draws shared
 	// files (files.go).
 	Files bool
+	// Emails adds #email-inbox: the Email app's email files, plain, HTML
+	// and with attachments (emails.go).
+	Emails bool
 	// ThreadHeader adds one thread in a conversation of each kind the
 	// thread pane's header names differently (threadheader.go).
 	ThreadHeader bool
@@ -122,6 +132,15 @@ type Size struct {
 	// ThreadsAudit adds #th-audit: one thread per way the thread pane
 	// marks unread replies, opens and counts (threads_audit.go).
 	ThreadsAudit bool
+	// ThreadOpen adds #open-top: a long channel with long threads,
+	// followed and read, unread past their first page, or not followed,
+	// for where a thread opens (thread_open.go).
+	ThreadOpen bool
+	// TombstoneThread adds an archived public channel the viewer is in,
+	// its history several pages long both ways around a thread whose root
+	// was deleted: a tombstone with TombstoneReplies replies
+	// (tombstone.go).
+	TombstoneThread bool
 	// PluginBench adds the plugin bench's channels (plugin_bench.go):
 	// #plugin-bench (500 messages), #admins-only and a Slackbot DM; the
 	// viewer becomes a workspace admin.
@@ -316,7 +335,7 @@ func (s *Server) variants() []slack.User {
 		{ID: AppUserID, TeamID: TeamID, Name: "deploybot", RealName: "Deploy Bot", IsBot: true, Profile: ap, Presence: "active"},
 		{ID: ExternalID, TeamID: ExternalTeamID, Name: "sam.partner", RealName: "Sam Partner", TZ: "Asia/Tokyo", TZOffset: 32400, Profile: x, Presence: "active"},
 		{ID: ExternalAppUserID, TeamID: ExternalTeamID, Name: "partnerbot", RealName: "Partner Bot", IsBot: true, Profile: xap},
-	}, s.roleUsers(prof)...) // roles.go
+	}, append(s.roleUsers(prof), s.newBotsUsers(prof)...)...) // roles.go, new_bots.go
 }
 
 // appProfile is apps.profile.get's app_profile for the fixed apps (the
@@ -358,6 +377,9 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 
 // Server is a running fake.
 type Server struct {
+	// client.counts' threads.unread_count_by_channel (threads_by_channel.go)
+	threadsByChan map[string]int
+
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
@@ -385,6 +407,12 @@ type Server struct {
 	// find_in_thread pages below the count asked for, so a test can
 	// page through a short thread.
 	FindInThreadPage int
+
+	// PagedReplies makes conversations.replies of a thread the test
+	// posted (PostReplyQuiet) answer a page at a time as live Slack does
+	// (replies_paging.go) instead of the whole thread at once. Set it
+	// before the client reads.
+	PagedReplies bool
 
 	srv   *http.Server
 	ln    net.Listener
@@ -456,7 +484,10 @@ type Server struct {
 
 	// Permissions are permissions/info's answers by channel_id ("" for a
 	// request without one). nil: every broadcast permission is allowed,
-	// MANAGE_CHANNEL_TABS for a channel, and without a channel Edit
+	// MANAGE_CHANNEL_TABS, SET_CHANNEL_TOPIC and SET_CHANNEL_PURPOSE for a
+	// channel (a workspace whose members edit topics and descriptions:
+	// Slack's client asks for the grants alone since the 2026-11-21
+	// drift, core/chperms.go), and without a channel Edit
 	// profile's UPDATE_NAME,
 	// UPDATE_DISPLAY_NAME and EDIT_PROFILE_PHOTO too.
 	// Set it before the calls.
@@ -467,12 +498,20 @@ type Server struct {
 	// org ones (the org dashboard's Groups page). Set them before the
 	// calls.
 	UsergroupEditor, UsergroupOrgAdmin bool
+	// OffGrid makes Creds a plain workspace's (no enterprise id or token):
+	// core then takes the off-grid paths, such as the user group
+	// directory's search.team. Set it before Creds.
+	OffGrid bool
 	// TeamPrefs is team.prefs.get's prefs (nil: none; Slack's client then
 	// never warns before @channel and has no large-channel limit), and
 	// ChannelPrefs channels.prefs.get's pref_value by channel and pref
 	// name (missing: {}, enabled). Set them before the calls.
 	TeamPrefs    map[string]any
 	ChannelPrefs map[string]map[string]any
+	// ListPrefs is conversations.listPrefs' prefs by channel (missing:
+	// {}; the composer's + reads can_upload_files in a Slack Connect
+	// conversation). Set it before the calls.
+	ListPrefs map[string]map[string]any
 	// ChannelManagers are admin.roles.entity.listAssignments' channel
 	// managers (role Rl0A) by channel (missing: none). Set it before the
 	// calls; admin.roles.addMembers and removeMembers change it after
@@ -744,6 +783,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.Files {
 		s.addFilesChannel() // files.go
 	}
+	if sz.Emails {
+		s.addEmailsChannel() // emails.go
+	}
 	if sz.Embeds {
 		s.addEmbedsChannel() // embeds.go
 	}
@@ -758,6 +800,12 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.ThreadsAudit {
 		s.addThreadsAudit() // threads_audit.go
+	}
+	if sz.ThreadOpen {
+		s.addThreadOpen() // thread_open.go
+	}
+	if sz.TombstoneThread {
+		s.addTombstoneThread() // tombstone.go
 	}
 	if sz.PluginBench {
 		s.addPluginBench() // plugin_bench.go
@@ -812,12 +860,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 
 // Close stops the server.
 func (s *Server) Close() error {
-	searchLogs.Delete(s)
-	pageLogs.Delete(s)
-	viewsStates.Delete(s)
-	threadsAuditStates.Delete(s)
-	agentDMStates.Delete(s)
-	photoStores.Delete(s)
+	s.forget() // its state beside it, in every perServer map (perserver.go)
 	if s.srv == nil {
 		return nil
 	}
@@ -834,8 +877,15 @@ const (
 // Creds returns credentials pointing every host (team, enterprise, edge) at
 // the fake.
 func (s *Server) Creds() slack.Creds {
-	return slack.Creds{Token: TeamToken, Cookie: "xoxd-fake", Team: TeamID, EnterpriseToken: OrgToken,
+	if s.OffGrid {
+		return slack.Creds{Token: TeamToken, Cookie: "xoxd-fake", Team: TeamID, UserID: SelfID, TeamURL: s.URL}
+	}
+	c := slack.Creds{Token: TeamToken, Cookie: "xoxd-fake", Team: TeamID, EnterpriseToken: OrgToken,
 		EnterpriseID: EnterpriseID, UserID: SelfID, TeamURL: s.URL, EnterpriseURL: s.URL}
+	if s.Size.FreeTeam {
+		c.EnterpriseID = ""
+	}
+	return c
 }
 
 // ChannelIDs returns the member channel ids in sidebar order.
@@ -1468,6 +1518,14 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	// the Files browser's searches, for FilesBrowserSearches (files_view.go)
+	s.recordFilesBrowserSearch(method, f)
+	if out, handled := s.handleHugeThread(method, f); handled { // huge_thread.go
+		return out
+	}
+	if out, handled := s.handleNewBots(method, f); handled { // new_bots.go
+		return out
+	}
 	if out, handled := s.handleSystemDM(method, f); handled { // system_dm.go
 		return out
 	}
@@ -1494,6 +1552,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleFilesView(method, f); handled { // files_view.go
+		return out
+	}
+	if out, handled := s.handleSlackConnectHub(method, f, edge); handled { // slack_connect_hub.go (before activity.go's connectInvites.list)
 		return out
 	}
 	if out, handled := s.handleInvites(method, f); handled { // invites.go
@@ -1538,10 +1599,16 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleFiles(method, f); handled { // files.go
 		return out
 	}
+	if out, handled := s.handleEmails(method, f); handled { // emails.go
+		return out
+	}
 	if out, handled := s.handleThreadHeader(method, f); handled { // threadheader.go
 		return out
 	}
 	if out, handled := s.handleThreadsAudit(method, f); handled { // threads_audit.go
+		return out
+	}
+	if out, handled := s.handleThreadOpen(method, f); handled { // thread_open.go
 		return out
 	}
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
@@ -1603,6 +1670,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if l, ok := s.codeLatest(c.ID); ok { // codechannels.go: read, at its fixture's latest message
 				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
 			}
+			if s.Size.ThreadOpen && c.ID == ThreadOpenChannel { // thread_open.go: read, at its newest message
+				l := ThreadOpenMsg(ThreadOpenMsgs - 1)
+				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
+			}
 			if closedDM(c) { // closed_dms.go: read
 				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
 			}
@@ -1616,7 +1687,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				chans = append(chans, e)
 			}
 		}
-		out := ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
+		threads := map[string]any{"has_unreads": true, "mention_count": 2}
+		if by := s.threadsByChannel(); by != nil {
+			threads["unread_count_by_channel"] = by // SetThreadsByChannel
+		}
+		out := ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", threads)
 		if av := s.activityV2(); av != nil { // activity_badges.go
 			out["activity_v2"] = av
 		}
@@ -1792,6 +1867,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			prefs = map[string]any{}
 		}
 		return ok("prefs", prefs)
+	case "conversations.listPrefs":
+		var p any = map[string]any{}
+		if lp, found := s.ListPrefs[f.Get("channel")]; found {
+			p = lp
+		}
+		return ok("prefs", p)
 	case "channels.prefs.get":
 		ch, name := f.Get("channel_id"), f.Get("pref_name")
 		var v any = map[string]any{}
@@ -1813,6 +1894,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			return ok("team", map[string]any{"id": ExternalTeamID, "name": "Partner Co", "domain": "partnerco",
 				"icon": map[string]any{"image_34": s.URL + "img/34x34/partner.png", "image_44": s.URL + "img/44x44/partner.png",
 					"image_88": s.URL + "img/88x88/partner.png"}})
+		}
+		if s.Size.FreeTeam {
+			return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",
+				"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"}, "plan": ""})
 		}
 		return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",
 			"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"},
@@ -1841,7 +1926,16 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		if msgs, found := s.quietThread(f.Get("channel"), f.Get("ts")); found {
+			if s.PagedReplies {
+				page, more, next := pageReplies(msgs, f)
+				return ok("messages", page, "has_more", more, "response_metadata", map[string]any{"next_cursor": next})
+			}
 			return ok("messages", msgs, "has_more", false)
+		}
+		if root := s.quietRootOf(f.Get("channel"), f.Get("ts")); root != "" { // a reply's ts: its thread (messages_list.go)
+			if msgs, found := s.quietThread(f.Get("channel"), root); found {
+				return ok("messages", msgs, "has_more", false)
+			}
 		}
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
@@ -1967,8 +2061,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		var ch string
 		_ = json.Unmarshal(edge["channel_id"], &ch)
 		allowed := []string{"CAN_AT_CHANNEL", "CAN_AT_EVERYONE"}
-		if ch != "" { // a Grid member manages a channel's tabs (useCanEditTabs' MANAGE_CHANNEL_TABS)
-			allowed = append(allowed, "MANAGE_CHANNEL_TABS")
+		if ch != "" { // a Grid member manages a channel's tabs (useCanEditTabs' MANAGE_CHANNEL_TABS) and sets its topic and description
+			allowed = append(allowed, "MANAGE_CHANNEL_TABS", "SET_CHANNEL_TOPIC", "SET_CHANNEL_PURPOSE")
 		}
 		if ch == "" { // the team's: Edit profile's grants (core/profile_grants.go)
 			allowed = append(allowed, "UPDATE_NAME", "UPDATE_DISPLAY_NAME", "EDIT_PROFILE_PHOTO")
@@ -2029,6 +2123,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleChannels(method, f); handled {
 		return out
 	}
+	if out, handled := s.handleChannelManage(method, f); handled { // channel_manage.go
+		return out
+	}
+	if method == "messages.list" { // what no fixture answered: any message the fake holds (messages_list.go)
+		return s.messagesList(f)
+	}
 	return unanswered{} // answers.go
 }
 
@@ -2080,6 +2180,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 			return s.users[n], true
 		}
 	}
+	if u, ok := s.synthMember(id); ok { // synth_members.go
+		return u, true
+	}
 	return slack.User{}, false
 }
 
@@ -2108,9 +2211,12 @@ func (s *Server) historyPage(f url.Values) any {
 		limit = 50
 	}
 	latest := f.Get("latest")
+	// inclusive keeps the messages at latest and oldest themselves (Slack
+	// sends inclusive: true on every call: fetchHistory, client-boot rGEL)
+	incl := f.Get("inclusive") == "true" || f.Get("inclusive") == "1"
 	start := 0
 	if latest != "" {
-		for start < len(msgs) && !slackTSLess(msgs[start].TS, latest) {
+		for start < len(msgs) && (slackTSLess(latest, msgs[start].TS) || !incl && msgs[start].TS == latest) {
 			start++
 		}
 	}
@@ -2118,7 +2224,6 @@ func (s *Server) historyPage(f url.Values) any {
 	if oldest := f.Get("oldest"); oldest != "" {
 		// Slack answers oldest (without latest) with the messages just
 		// after it, newest first; has_more when newer ones remain.
-		incl := f.Get("inclusive") == "true"
 		stop := start
 		for stop < len(msgs) && (slackTSLess(oldest, msgs[stop].TS) || incl && msgs[stop].TS == oldest) {
 			stop++

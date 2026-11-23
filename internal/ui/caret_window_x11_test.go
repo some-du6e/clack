@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -131,14 +132,20 @@ func caretReadback(t *testing.T, a *App, frames <-chan caretGPUFrame, blink time
 	// next is the next frame the window draws that ok takes
 	next := func(what string, d time.Duration, ok func(caretGPUFrame) bool) (caretGPUFrame, bool) {
 		dl := time.After(d)
+		t0 := time.Now()
+		var seen []string // the frames that came instead, for the failure
 		for {
 			select {
 			case f := <-frames:
 				if ok(f) {
 					return f, true
 				}
+				seen = append(seen, fmt.Sprintf("%v: partial %v, %d px damaged, %d draws, whole: %q", time.Since(t0).Round(time.Millisecond), f.partial, f.damagePx, f.draws, f.whole))
 			case <-dl:
-				t.Errorf("readback: no %s in %v", what, d)
+				if len(seen) == 0 {
+					seen = []string{"none"}
+				}
+				t.Errorf("readback: no %s in %v; the frames that came: %s", what, d, strings.Join(seen, "; "))
 				return caretGPUFrame{}, false
 			}
 		}
@@ -153,6 +160,18 @@ func caretReadback(t *testing.T, a *App, frames <-chan caretGPUFrame, blink time
 			t.Fatalf("readback: %v", err)
 		}
 		return img
+	}
+	// Partial frames came back on just now, after the whole-frames turns,
+	// and the window takes a few frames to draw partial again: a fresh
+	// frame texture fills, the sticky atlas's first repack makes the next
+	// frame's damage too big (whole, straight into the window), and two
+	// more fill the texture again (gpu.FrameStats.Whole says which). At
+	// 1440x900 that was four blinks, all of the 2.4 s the first wait gave
+	// (3 of 50 runs: 44960352218, 44963639630). So the window settles
+	// first.
+	drain()
+	if _, ok := next("partial frame since partial frames came back on", 10*blink, func(f caretGPUFrame) bool { return f.partial }); !ok {
+		return
 	}
 	for try := 0; try < 4; try++ {
 		drain()

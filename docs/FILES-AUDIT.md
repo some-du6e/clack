@@ -23,8 +23,8 @@ each way Slack draws a shared file (internal/fakeslack/files.go). The
 | Image + video | One flex gallery | the video on its own block | One gallery |
 | Generic file | `c-pillow_file`: 12px padding, radius 12, 36px icon, name 16px Bold, `FileSize` = `pretty_type` only ("Arugula" → "Post") | `PDF · 2 KB` | `PDF` |
 | Several documents | `c-file_gallery__mixed_file_format`: 40px columns, each file spans 7 (328px); `--compact` (≤664) one column ≤426; 8px gaps | stacked block by block | Grid |
-| Audio file | `AudioPlayer` in a pillow: 36px play `#e6eff6`/`#1264a3`, name 15px Bold, "2:34 (900 KB)" 13px .7; 12px down the scrubber (4px `#ddd` track, 12px paused thumb) and the duration | 64px card, link-blue circle, "Audio" | Same as Slack |
-| Voice clip (`slack_audio`) | flat `c-audio_player--audio_message`: 34px blue play, waveform (3px dots, 6px pitch, `min(6+34·s,34)`), 13px Bold time | same as audio | Same as Slack |
+| Audio file | `AudioPlayer` in a pillow: 36px play `#e6eff6`/`#1264a3`, name 15px Bold, "2:34 (900 KB)" 13px .7; 12px down the scrubber (4px `#ddd` track, 12px paused thumb) and the duration | 64px card, link-blue circle, "Audio"; the click opened the file's page | Same as Slack, and it plays in place ("The audio player" below) |
+| Voice clip (`slack_audio`) | flat `c-audio_player--audio_message`: 34px blue play, waveform (3px dots, 6px pitch, `min(6+34·s,34)`), 13px Bold time | same as audio | Same as Slack, and it plays in place, with the speed control and More |
 | Snippet | `FileSnippet`: no pillow header (MessageFileHeader returns null for a snippet; corrected by file-pillows), CodeMirror at 13px/1.5 with a 32px numbered gutter; 4/8/18px edge padding; collapsed at 200px with a 40px fade when expandable; no max width | 560 wide, name + "N lines", 12px code, no gutter | Same as Slack, with the highlight and Show more ("File pillows" below) |
 | File ⋯ / right-click menu | `buildFileContextMenuItems` templates: image `[download] [share_file, copy_link_to_file, copy_image, save_for_later] [open_in, edit_image_details, view_file_details, create_external_link] [add_to_folder, add_to_section] [delete_file]`; video `[generate_transcript, expand] [download, share_file, copy_link, save_for_later] [open_in, edit_thumbnail, view_file_details] [folder, section] [delete_file]`; other `[share_file, copy_image, copy_link_to_file, download, save_for_later]` | no Save for later, no Delete file | + Save for later / Remove from Later (`saveFile`/`removeFile`: `saved.add`/`saved.delete` `{item_type: file, item_id}`, file items tracked from `saved.list` and `saved_*` events); + Delete file on your own image/video files, through `DeleteFileDialog` ("Delete file", "Are you sure you want to delete this file permanently?", the pillow with "You • time", "Yes, Delete This File") → `files.delete {file}` |
 | Upload: attach | `UploadQueue` eager upload: `files.getUploadURL {filename, length}` → `{file, upload_url}`; multipart POST of one `file` part (XHR); `files.completeUpload {files: [{id,title}]}`, no channel | `files.getUploadURLExternal` → POST → nothing until send | Slack's sequence |
@@ -131,9 +131,49 @@ What TestRealWindowVideoFrames measured in those runs, playing the 320×180 fixt
 - The idle release keeps a CPU copy of the frame (Chromium keeps its last video frame).
 - The media viewer's progress bar follows the 4 Hz time updates.
 - Two copies of the same file don't sync their position while paused (fIJO's effect on `er`), and there's no Shift fine scrub with the mouse.
-- Audio still opens the file's page (no in-message audio player).
 - The visibility share comes from Gio patch 53 (io/input's Router.AreaBounds: the clipped area of a tag in the last frame), for every list.
 - A jump to a reply in a thread still puts two rows above it; Slack's thread list wasn't checked.
+
+## The audio player (audio-playback, 2026-11-22)
+
+Before this, nothing played on any OS: `messages.richHandler.OpenFile` sent an audio file's click to `openURL(f.Permalink)`, and richview's audio card was a static drawing. Sources: client-boot build 35b42de8b870, fetched without a cookie: `o/6F` (AudioPlayer), `pBrm` (FileAudio), `2bi5` (MessageFilePreview), `vITP` (fileIsPlayableAudio), `lqEY` (isAudioMessage), `upuT` (MediaPlaybackSpeedControl), `mWzn` (MediaTranscriptPopoverButton), `e+f5` (the speeds), `7foM` (secondsToAudioTime), `wfEe` (the playback coordinator), `nd` (use_media_elapsed) and `NlgV` (media progress).
+
+**Which files play.** `slack.FileIsPlayableAudio` is vITP: not a tombstone, hosted, and either an audio clip (`slack_audio`, `audio_story`, `slack_name_pronunciation`) of filetype m4a, mp3, wav, mp4, mov or webm, or a file of filetype m4a, mp3 or wav. Like Slack, an ogg, flac or aac upload stays a plain file card, and a webm upload that isn't a clip is a video. The player plays getMediaURL's `aac || url_private` (`richtext.File.MediaURL` is the aac rendition). Where the `aac` rendition can't be decoded (Linux has no AAC decoder), the player tries `url_private` once. `File.URL` stays the upload's url_private, so Download (url_private_download first, as Slack's), Open in new tab and the plugins' `url_private` get the uploaded file, not the transcode.
+
+**What it draws** (`internal/ui/videoplayer/audio.go`, in the pillow richview reserves as a media slot). An audio message gets MessageFilePreview's "default" style, the flat row: the 34px play button, the waveform scrubber (`audio_wave_samples`; a track when there are none), the bold time, the transcript button, MediaPlaybackSpeedControl and More (AudioClipOverflowMenu: Download or Share clip…, Copy link to audio clip, View details, Delete clip). Every other audio file gets the "card": the 36px button, the name with "m:ss (size)", Buffering or Error, then the track scrubber and the time. The card gets the speed and transcript controls only with `transcribe_opt_in_ui_v2`. The card's hover FileActions (Download, Share, More) draw over the player and take their own clicks. The time is the duration until the player is used (play or scrub), then the position.
+
+**What it does.**
+- The play button toggles. The first click mounts the player, playing.
+- A press on the scrubber seeks there and plays (Scrubber's setTime); dragging seeks as it moves.
+- playbackRate is `media_playback_speed` (Cv: .25 to 2; any other value is 1) for an audio message or the flat style, else 1. The speed control writes the pref.
+- One plays at a time (the Manager's coordinator). Where the viewer stopped is kept and sent with `media.progress.update`, as for videos.
+- It never docks into the mini player: MessageFilePreview gives FileAudio no `onOpenMiniPlayer` (2bi5), so AudioClipOverflowMenu has no Dock to corner in messages either. Scrolled away it plays on; when its message goes, it pauses, as a video does without clips_pip.
+- Its time and waveform fill move with every time update, the pointer anywhere.
+- The transcript button shows only when the team allows media transcriptions (`allow_media_transcriptions`) and the file's `is_transcription_region_supported`.
+
+**The backends.** `ui.playersBackend` chains the OS backend with Go audio (`internal/media/goaudio`, `media.Chain`). A player that fails before its metadata because it can't read the file (MEDIA_ERR_SRC_NOT_SUPPORTED or MEDIA_ERR_DECODE) hands the file to the next backend, with every call made so far. A source only one backend takes (every video; on Windows and Linux every audio file) gets that backend's own player, so a video keeps its FrameCopier (the 15 s idle release) and its Close. A chain's own Close returns at once and lets the players' events end in their own time. The review of c38b91b8 found the idle release disarmed for every video on Windows and macOS, and Handle.Close waiting for Media Foundation's engine shutdown under the controller's lock.
+- Go audio decodes WAV (PCM, float), MP3 (go-mp3), and Opus in Ogg, WebM and MP4 (plain and fragmented, as Chromium's MediaRecorder writes a clip) with the huddle's libopus. It trims each file's pre-skip, Matroska DiscardPadding, Ogg's last granule and MP4's sample durations. It folds more than two channels into stereo (front left and right as they are, the centre and the other side channels at -3 dB, the LFE dropped, each side's weights summing to 1 at most), then resamples to 48 kHz (a windowed sinc made once at 256 phases) and keeps the pitch at any rate (WSOLA). It plays out of the speakers chosen in Audio & video (playback only, never the mic), opened only while playing. With no sound card it keeps real time on a clock, as Chromium's fake audio sink does.
+- Its readers are total: no bytes panic them, hang them or make them allocate far past the file. Each checks every size and count a file states against the bytes left before making anything of it. MP4 boxes nest at most 12 deep, their 64-bit sizes are checked, and offsets are checked against the file; the sample table is walked once. WebM elements are read inside their parent. Ogg is read here (opus-go's reader allocated the OpusTags comment count the file states; the tags go unread). WAV takes at most 32 channels (Chromium's kMaxChannels). Files hold at most 2^21 packets. MP3 frames are indexed here with go-mp3's own header rules, stopping where go-mp3 would or where the sample rate changes, and a seek starts a new go-mp3 decoder a few frames back over a reader it can't seek. go-mp3 v0.3.4's own Seek indexed past its frame table when a file's frames changed MPEG version, and its ID3 skip allocated the tag's stated size, up to 535 MB. Every reader looks at the load's context, so Close ends a parse at once, and Close itself waits for nothing. A decoder that panics anyway (go-mp3, libopus) ends the file with MEDIA_ERR_DECODE, the card's Error (safe.go).
+- Windows: Go audio plays every audio file. What Go can't decode (AAC) it decodes with Media Foundation's Source Reader (mfdec_windows.c: the file from memory, float PCM, on a COM thread of its own; mfplat.dll and mfreadwrite.dll loaded at the first file). The Media Engine takes videos only (`mf.backend.Takes`). Its audio-only engine was tried first and failed every file before its metadata on the runners, which have no audio output: muted, it has nothing to render (ci run 44990778509). Before this an audio file's engine waited for a GPU ask that never comes, so nothing could have played.
+- macOS: AVFoundation plays m4a, mp3, wav and aac, and the clips' Opus in MP4 too (the runners played both of the Opus fixtures through). A paused audio-only item runs no 50 ms state watch. Go audio takes WebM and Ogg, which AVFoundation can't read.
+- Linux: Go audio alone.
+
+**Tests.**
+- goaudio: `TestDecodesTheFixtures`, `TestSeekLandsOnTheTone`, `TestAACIsNotSupported`, `TestResamplerKeepsTheTone`, `TestStretchKeepsThePitch`, `TestPlayerRendersTheFile`, `TestPlayerKeepsTimeWithoutASoundCard`, `TestPlayerRateAndEarlySeek`, `TestPlayerAACFails` and `TestChainFallsBackToGoAudio`. They run on mediatest's audio fixtures (testdata/gen-audio.sh: 3 s of 440, 660 and 880 Hz in each format), on Linux, Windows and macOS.
+- On Windows the same tests decode and play the AAC fixture through Media Foundation's Source Reader, and `TestMFTakesNoAudio` checks the Media Engine leaves audio to Go audio. AVFoundation: `TestAVFPlaysAudio` (AAC, MP3 and WAV with no window, played to the end on the clock), `TestAVFAudioSeekAndRate`, and `TestAVFOpusClipPlays` (a clip's Opus in MP4 played to its end through ui's chain).
+- The readers: `TestReadersAreTotal` (one file per gap the review found: an MP4 largesize that wrapped its bounds check, co64 and tfhd offsets past the end, boxes nested 100,000 deep, a 60,000-chunk sample table, WebM children past their parent, an 8-million-comment OpusTags, a 65535-channel WAV, an MP3 whose frames change MPEG version, a 535 MB ID3 size). Each must not panic, take over its limit or allocate over 64 MB. All 11 failed on c38b91b8 (proof run: ci 45013644000, on audio-playback-red1). Then `FuzzMP4`, `FuzzWebM`, `FuzzOgg`, `FuzzWAV` and `FuzzMP3`, seeded from the fixtures: go test runs their seeds, and ci's linux-build fuzzes each for 20 s without minimizing (with Go's default 60 s of minimizing each value that adds coverage, every target sat at 0 execs/sec from about its 3rd second; a probe that dumped any input running over 8 s found none). An input still running at 10 s crashes its worker with every goroutine's stack, so the fuzzer keeps it and the step fails.
+- The chain: `TestChainOneBackendIsItsOwnPlayer`, `TestChainCloseDoesNotWait`, and videoplayer's `TestIdlePlayerLetsGoThroughTheChain` (a paused video's idle release through ui's chain). The download: `TestAudioFileKeepsItsOriginal` (richtext). These four failed on c38b91b8 in the same proof run. `TestAudioDownloadIsTheUpload` (popups: url_private_download first) tests the new download source, which the old code didn't have.
+- videoplayer: `TestAudioTiles`, `TestAudioClipPlaysAndFallsBack`, `TestAudioMP3Plays`, `TestAudioSpeedPref`, `TestAudioScrubPlaysFromThere`, `TestAudioShownTime`, `TestAudioLayout`, `TestAudioSource`, `TestAudioRepaintsWhilePlaying` and `TestAudioDoesNotDock`. richview: `TestAudioCardSlot` and `TestAudioClipSlot`.
+- The App over fakeslack's #files-gallery: `TestAudioInlinePlay` clicks both players' play buttons, and they play with no page opened. files-shots saves `TestAudioPlayerShots` (idle, playing, paused and hovered, light and dark).
+
+**Divergences.**
+- The transcript button opens nothing: there's no transcript popover yet.
+- More leaves out Open in new window and Report to Slack.
+- The speed control's `margin_left_50` is taken as 8px.
+- Before the first click the duration comes from `duration_ms`, since Clack mounts no player before then (Slack's `<audio>` preloads its metadata).
+- Go audio decodes no Vorbis, and AAC only through Media Foundation (Windows). On Linux an AAC upload with no other rendition can't play.
+- An MP3 plays up to where its frames change MPEG version or sample rate (go-mp3 decodes one rate; Chromium's FFmpeg would go on).
+- Go audio plays out of the speakers picked for huddles in Audio & video. Slack's `<audio>` uses the system's default output, which is the same unless another speaker was picked.
 
 ## Not changed, or still open
 
@@ -143,7 +183,6 @@ What TestRealWindowVideoFrames measured in those runs, playing the 320×180 fixt
 - **`files.edit` args:** the method and the thunk (`fileId, title`) are in the source, but the fetcher's argument names are in a chunk I didn't fetch. Clack sends `file` and `title`.
 - **Snippet syntax colours, Show more, hover actions on files:** done on branch file-pillows; see "File pillows" below.
 - **The pillow's hover meta swap** to "View **PDF** in Slack" / "Download **Zip**" (FileSize's `c-pillow_file__swap`, `getActionText`): not done.
-- **Audio in place:** clicking the audio player's play button opens the file's permalink. Videos play: a lone one in place, a gallery's in the media viewer ("The inline video player" above).
 - **View file details, external links, folders, sections, transcripts, edit image details:** not in the menu, because Clack has no screens for them.
 - **`attachments_and_unfurls_max_width`:** with this experiment on, Slack caps the flex gallery at 716. Clack always uses 936.
 - **PDF first-page thumbnail:** the PDF pillow uses the icon tile. I didn't check whether Slack's message pillow shows `thumb_pdf` (the `p-file_card__preview` card that does is used on the Files page).
@@ -343,6 +382,71 @@ Not done, and why:
 - **Selected file rows.** Slack keeps the Files sidebar next to an open
   canvas or list and marks its row. Clack's docs/ and lists/ routes belong
   to Home, so a file row never shows as selected.
+
+## The Filters button's advanced filters (files-filters, 2026-11-21)
+
+Sources: CDN build 8f19be21ed7e (datamine capture of 2026-11-21) without a
+cookie: `gantry-v2-async-client-browse-unified-files-view` (lbOJ
+useUnifiedFilesExplorer: the `filter_file_types_main` control, the empty
+states), `…explorer_hooks_use-hosted-browser…` (te+0: jnm4
+useUnifiedFilesFilters with showAdvancedFilterModal, areAdvancedFiltersEqual
+and countAdvancedFilters, and BaseAdvancedSearchModal; qrHQ
+AdvancedSearchSelect, da0Y), `gantry-v2-async-client-boot-shared` (31Gm
+ExplorerControls' `modal` control), `client-boot` (nzlP
+querySuggestionFromQueryAndFilter, wBUp the browser fetch and
+getSearchAPIParams, pYM5 the query tokens, CNDf the query, mqlo, 7Nox,
+CniK SearchFilterDateRangeSelect, +hyT the range label, fhw7 the presets,
+fXsW ControlledMultiSelect behind YLpq, 4MqP, 4iNl getUserPref, iDUn
+Label, M6ch / P5wA / t/TJ / skWT / kXI9 / cC60 the modal parts) and
+`client-boot-styles.css` (cf726c4f2eaecc74). The expected queries in
+`TestFilesViewAdvancedFiltersQuery` are nzlP's own output, run in node over
+the same filters with pYM5's token toString code.
+
+| Area | Slack (source) | Clack before | Clack now |
+|---|---|---|---|
+| The button | ExplorerControls' `modal` control: p-explorer_controls__button (28px, padding 0 11px, radius 4, 13px bold) with the 18px `filters` icon and the value: "" or "{n} Filter(s) " (the filter count, setUnifiedFilesFilterCount), 4px after the icon (margin_right_25); `--active` (content-hgl-1 fill, white) while the value isn't "", and the "Filters" tooltip on top only while the count is 0 | an icon button that toasted "Search filters aren't supported here yet; use search modifiers like from:@name" | Slack's button, count, active fill and tooltip; it opens the modal |
+| Which filters | BaseAdvancedSearchModal with entity "files" draws From, In, With, Date, File types; useUnifiedFilesFilters excludes File types and With (filtersExcluded), and From too under "Created by you" | none | From, In and Date in that order; no From under Created by you |
+| The modal | c-sk-modal (520): "Filter by"; Labels (15px bold, 8px under) over each control, 12px under each (`.c-advanced_search_modal__select`); the footer (84px): "ⓘ Learn more about search" (HelpLink 202528808), Clear Filters (outline; hideFilterCount so no "(n)"; off while the count is 0) and Done (searchButtonText; off until something changes: the ax state) | none | the same (`popups/files_filters.go`) |
+| From / In | AdvancedSearchSelect: ControlledMultiSelect (tokens, medium, maxHeight 130, 32px rows), placeholders "ex. Zoe Maxwell" / "ex. #project-unicorn"; the Searcher over members (self, bots, deleted; no Slackbot) for From, and channels (public, private, group DMs, not archived), channel sections (none show: no includeTypes) and members for In; Backspace, Delete, ↑/↓, Enter, Escape as the multi-select has them | none | Clack's ugSelect (the user group dialogs' ControlledMultiSelect port, now taking people and channels in one list), ranked by the search box's Searcher port (srACRanker) with edge users/search and channels/search as its remote tier |
+| Date | SearchFilterDateRangeSelect behind an outline medium button (the label, weight 500, and caret-down 18; ↓ opens it): a 280px menu, bottom-left, offsetY -4: Any time (before: tomorrow), Today, Yesterday, Last 7 days, Last 30 days, Last 3 months, Last 12 months, Last 3 years (fhw7, months as dayjs counts them), the range's own row when no preset matches, a divider, On…, Before…, After…, Range…; the label is +hyT's ("Any time" when unset or before is tomorrow, "On Nov 3, 2026", "Nov 3 - Nov 10", Last 3 years within two days) | none | the same menu and labels; On…, Before…, After… pick on Clack's calendar (NewDatePickerRange: no day after today, After… no day after yesterday), Range… as two picks (start, then end). Slack asks those in a 358px dialog with a date input (675px for the range picker) |
+| The request | onSave → setAdvancedFilters: from, in, before, after (null when unset) on the browser; the fetch writes `querySuggestionFromQueryAndFilter(query, filters).toString().trim()`: the typed query's tokens, then from:<@U…>, in: (a channel `<#C…\|name>` with ">" taken out of the name, a group DM `<#G…>`, a DM or a person `<@U…>`), before:, after:, the type: tokens, creator:<@self>. getSearchAPIParams' files branch adds no params for them | from:/in: only by typing them, after the type: tokens | the same tokens in Slack's order (`core.FilesOpts` From / In / After / Before, `filesQuery`). The typed query now comes first too, as Slack's does (it was after the types) |
+| Sort | ea: with no query, the first filters switch to Last updated (NEWEST); taking the last ones off brings back the filter's default (Recently viewed; Shared with you's relevance; Created by you keeps its sort). With filters set the sort select offers Most relevant and Last updated (tH) | — | the same |
+| The count | aI: the search_exclude_bots pref (mapStateToProps' excludeBots) counts as a filter with From, In and the date; Clear Filters turns it off for that save only | — | the same, so with the pref on a date alone shows "2 Filters" |
+| Empty states | hasAdvancedFiltersSet (the filters differ from the browser's initial ones): All files "No results" / "You may want to try adjusting your filters." with Clear Filters even with every type on; Canvases and Lists leave their zero states for "No results" (th) | the empty states looked at the types and the search only | the same; Clear Filters (clearAdvancedFiltersAndShowAllFileTypes) also clears the filters and the count |
+
+Round 2 (files-filters-2, 2026-11-21; the review's findings, same build):
+
+| Area | Slack (source) | Clack before | Clack now |
+|---|---|---|---|
+| Clearing the search | onResetSearch (lbOJ t8). Without hasBrowseFilesSorts (agentic_ia and agentic_ia_browse_toolbar_search, neither in the account's groups): `eL !== RELEVANT \|\| et \|\| setSort(LAST_ENGAGED)`, so Most relevant goes back to Recently viewed only with no advanced filters, and any other sort stays. (With hasBrowseFilesSorts it moves to NEWEST when filters are set.) | always back to "": with filters set, sort=last_engaged went out under a "Most relevant" label no row matched | Slack's rule (`ui/views/files.go`) |
+| From under Created by you | onSave (te+0 aO) passes fromSelections whatever filtersExcluded says, and aI counts it | Done dropped the hidden From but the count kept it ("2 Filters", one applied) | From stays in the request and the count |
+| The typed query | the fetch tokenizes it (pYM5 rawTokensFromString / getTokenRegex, tokenListFromString, each token's fromString) and nzlP runs every pass with the browser's lists, so a typed from:, -from:, in:, -in:, before:, after:, on:, type:, -type:, has:, hasmy:, is:, -is:, with:, creator:, -creator: stays only when the filter holds the same value (then in its typed place, written as a token), the rest are dropped; what doesn't resolve (an unknown name, a bad date, `is:bogus`) stays as text; @name and <#C…> mentions resolve to ids; words join with one space | the typed text went first as it was, beside the filters' tokens | the same (`core/files_query.go`); `TestFilesViewTypedTokensQuery`'s values are Slack's tokenizer and nzlP run in node |
+| A picked group DM, reopened | the token is the option's entity: getDisplayNameForChannel (the custom name, else the members) | the raw mpdm- name | the option row's name |
+| Escape in From / In | MultiSelectInput onEscape: with the list expanded it closes it and stops the event; otherwise Escape reaches the modal | the modal took Escape first and closed with the picks unsaved; ugSelect also reopened a list it had closed on the next frame | the list closes first and stays closed until typing, ↓ or a click; a second Escape closes the modal. Round 3: the select claims plain Escape while expanded (shortcut.OwnEscape), so the shell's Close binding, read before the overlays, leaves it to the modal's OnEscape (`TestFilesFiltersEscapeThroughShell` drives the real shell); Enter picks only from a list that shows. Round 4: a select claims Escape only when its dialog sends Escape to it (ugEscape wires ModalOpts.OnEscape: Files filters, Edit members, Edit User Group's Channels, Add agent to channels), so a dialog that doesn't is left to the shell; and a modal whose CloseGuard keeps it open on Escape draws on (`TestUserGroupEditEscapeThroughShell`) |
+| Long queries (round 3, round 4) | rawTokensFromString re-runs its regex on the rest, `(.*)$` | the port did the same: quadratic in the query's length, and no ctx | the token regex at an advancing offset over a bounded span: the token's run of non-spaces, the value after "mod: ", and the closer its opening needs (the next `>`, `"`, “ or ”, from one backward pass), so an opening whose closer never comes (`x < y`, `<a <b`, a lone quote) costs its run, not the rest of the query; a word run joined once, the name indexes built once per query, ctx checked. `TestFilesViewQueryLongPaste` holds 30 KB pastes of each to 250 ms |
+| List pickers' typed tokens (round 3) | useListExplorer's query goes through the same tokenizer against the store | SearchLists resolved nothing (no lookup): typed from:, with: and @name stayed as text | the store lookup: from: / with: / in: go, @name becomes <@U…> |
+
+Not done:
+
+- **The search reset's other half.** t8 also runs resetFiltersForContentType
+  (the Types back to the view's default, Created by you / Shared with you
+  back to All) when the search is reset. Clack's box has no separate reset
+  event (an emptied box is a cleared search), so it doesn't do that.
+- **The omniswitcher's tokens.** The modal starts from the top search
+  box's from: / in: tokens when it has some; Clack starts it from the
+  browser's filters.
+- **Typed dates dayjs reads freely.** A typed before: / after: / on: is a
+  token for a year, an ISO date, today, yesterday, a weekday, week, month,
+  year, a month's name or a CJK date (7Nox); other strings dayjs would
+  parse (`Jan 5`) stay as text in Clack. -type: is always dropped (the
+  browser's handlers all set excludedFileType to []).
+- **A channel the client doesn't know.** InQuerySuggestionToken writes
+  `in:` with no value for one; Clack writes `in:<#C…>`. A picked channel
+  is always known.
+- **The date dialogs.** On…, Before…, After… and Range… use Clack's
+  calendar dropdown, not Slack's dialog with a typed date input.
+- **The compressed controls** (useCompressedControls: just the count) and
+  the footer's column layout under 640px wide.
 
 
 ## Files & links tab (files-links-tab, 2026-11-12)

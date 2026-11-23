@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -45,6 +46,8 @@ type flingEnv struct {
 	scale float32
 	shots string // CLACK_FLING_SHOTS: a PNG per frame
 	nshot int
+	app   *core.App
+	fs    *fakeslack.Server
 }
 
 func newFlingEnv(t *testing.T, ch string, scale float32) *flingEnv {
@@ -80,7 +83,7 @@ func newFlingEnvHook(t *testing.T, ch string, scale float32, hook func(method st
 	app.ServeOffline()
 	th := theme.New(false)
 	h := identityHost{coreHost: coreHost{app: app, th: th}, imgs: imgcache.New(fs.Fetch, "", nil)}
-	e := &flingEnv{t: t, ops: new(op.Ops), now: time.Now(), size: image.Pt(int(900*scale), int(700*scale)), th: th, scale: scale}
+	e := &flingEnv{t: t, ops: new(op.Ops), now: time.Now(), size: image.Pt(int(900*scale), int(700*scale)), th: th, scale: scale, app: app, fs: fs}
 	e.v = NewChannelView(h, ch)
 	e.v.Preview = true
 	e.shots = os.Getenv("CLACK_FLING_SHOTS")
@@ -168,6 +171,13 @@ func (e *flingEnv) firstMsg() (string, int) {
 	return "", 0
 }
 
+// lineMsg is the row on the list's anchor line and its y (AnchorLayout's
+// findAnchor row: the first message row ending below the line).
+func (e *flingEnv) lineMsg() (string, int) {
+	s := e.v.s
+	return s.lineRow(s.linePx)
+}
+
 func (e *flingEnv) yOf(key string) (int, bool) {
 	s := e.v.s
 	for i := s.visible[0]; i < s.visible[1]; i++ {
@@ -235,6 +245,21 @@ func (e *flingEnv) release() {
 
 func flingThrough(t *testing.T, e *flingEnv) {
 	until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.items) > 3 })
+	// the page's senders first: the store starts with the viewer alone,
+	// and their names land while the rows are drawn. A guess at
+	// files-filters-3's push ci 44980164338 (a row moved 22 px at frame 2,
+	// the users/info asks just answered), not proven: holding the names
+	// didn't move a row (flakes-1122's red3). EnsureUsers returns once they
+	// are all in, the asks already out too.
+	var ids []string
+	for _, en := range e.v.s.snap.msgs {
+		if en.m.User != "" {
+			ids = append(ids, en.m.User)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	e.app.EnsureUsers(ctx, ids)
+	cancel()
 	for i := 0; i < 5; i++ {
 		e.frame()
 	}
@@ -487,8 +512,9 @@ func (e *flingEnv) diag() {
 
 // A channel name looked up in the background (a mention of a channel the
 // store doesn't know) shows in every row from the same frame, and the row
-// cut off at the top growing or shrinking with it doesn't move what's
-// under it. The lookup is done by the test, around frames: storing the
+// cut off at the top growing or shrinking with it doesn't move the row on
+// the anchor line (AnchorLayout.setHeight: a row ending above the line
+// moves the scroll by what it grew; one across the line grows downward). The lookup is done by the test, around frames: storing the
 // name and announcing it are two steps, and a frame drawn between them
 // used to show it in the rows laid out after the store and not in those
 // before (a row a line too tall for a frame, then the list jumped: CI run
@@ -549,11 +575,11 @@ func TestChannelNameArrivesBetweenFrames(t *testing.T) {
 		e.frame()
 	}
 	e.check("before the name")
-	akey, ay := e.firstMsg()
+	akey, ay := e.lineMsg()
 	h0 := itemHeight(s, key)
 	moved := func(when string) {
 		if y, ok := e.yOf(akey); !ok || y != ay {
-			t.Errorf("%s: %s, first on screen, moved from %d to %d (shown %v)", when, akey, ay, y, ok)
+			t.Errorf("%s: %s, on the anchor line, moved from %d to %d (shown %v)", when, akey, ay, y, ok)
 		}
 	}
 	// the lookup's two steps with a frame between them

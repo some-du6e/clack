@@ -2,6 +2,7 @@ package slackc
 
 import (
 	"image"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -112,6 +113,21 @@ func (s *scope) events() {
 	}
 	moved := false
 	var last pointer.Event
+	// flushMove sends the frame's mousemove so far, coalesced to the newest
+	// position and to listening subtrees, before a discrete event: as a
+	// browser dispatches its pending coalesced moves ahead of the next
+	// mousedown or mouseup, a handler sees the pointer where it was pressed
+	// (a drag's start, a menu item's hover) before the press itself.
+	flushMove := func() {
+		if !moved {
+			return
+		}
+		moved = false
+		if t := s.hitTest(last.Position); t != nil && chainListens(t, lMove) {
+			v.dispatchPointer(s, t, "mousemove", &last, 0)
+			v.dispatchPointer(s, t, "pointermove", &last, 0)
+		}
+	}
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &s.ptag, Kinds: pointer.Move | pointer.Enter | pointer.Leave | pointer.Press | pointer.Release | pointer.Drag | pointer.Scroll | pointer.Cancel, ScrollX: sx, ScrollY: sy})
 		if !ok {
@@ -132,30 +148,29 @@ func (s *scope) events() {
 			moved = true
 			last = pe
 		case pointer.Leave:
+			flushMove()
 			if s.host == nil {
 				s.ptrIn = false
 				v.setHover(nil, s, &pe)
 			}
 		case pointer.Press:
+			flushMove()
 			s.ptr = pe.Position
 			s.press(&pe)
 		case pointer.Release:
+			flushMove()
 			s.release(&pe)
 		case pointer.Scroll:
+			flushMove()
 			s.ptr, s.ptrIn = pe.Position, true
 			s.scroll(&pe)
 		case pointer.Cancel:
+			flushMove()
 			v.pressK = 0
 			v.setActive(nil)
 		}
 	}
-	if moved {
-		// mousemove, throttled to one per frame and to listening subtrees
-		if t := s.hitTest(last.Position); t != nil && chainListens(t, lMove) {
-			v.dispatchPointer(s, t, "mousemove", &last, 0)
-			v.dispatchPointer(s, t, "pointermove", &last, 0)
-		}
-	}
+	flushMove()
 }
 
 func chainListens(t *box, bit uint32) bool {
@@ -410,7 +425,7 @@ func (s *scope) release(pe *pointer.Event) {
 		return
 	}
 	if btn == 0 {
-		v.click(s, target, pe)
+		v.click(s, target, pe, false)
 	} else if btn == 1 {
 		v.dispatchPointer(s, target, "auxclick", pe, btn)
 	}
@@ -431,19 +446,33 @@ func commonAncestor(a, b *box) *box {
 }
 
 // click dispatches click (and dblclick) and runs the default actions:
-// links, labels, checkboxes, selects and form submission.
-func (v *View) click(s *scope, t *box, pe *pointer.Event) {
+// links, labels, checkboxes, selects and form submission. kbd is a
+// keyboard's click (Enter or Space on a button, a link, a checkbox):
+// Blink's activation behaviour dispatches a simulated click, detail 0,
+// never a dblclick, and it doesn't count in the mouse's run.
+func (v *View) click(s *scope, t *box, pe *pointer.Event, kbd bool) {
 	if t.disabled() {
 		return
 	}
-	now := int64(pe.Time / time.Millisecond)
-	k := t.k()
-	if v.lastClk.k == k && now-v.lastClk.t < 500 {
-		v.lastClk.n++
-	} else {
-		v.lastClk.n = 1
+	// the click's detail: the window's count of the press (Gio patch 48,
+	// gio_patch48.go), as Blink's is the platform event's click_count
+	// whatever element it lands on; on stock Gio this element's within the
+	// double-click time
+	v.clickDetail = 0
+	if !kbd {
+		now := int64(pe.Time / time.Millisecond)
+		k := t.k()
+		if v.lastClk.k == k && time.Duration(now-v.lastClk.t)*time.Millisecond <= doubleClickTime() {
+			v.lastClk.n++
+		} else {
+			v.lastClk.n = 1
+		}
+		v.lastClk.k, v.lastClk.t = k, now
+		if n := clicksOf(*pe); n > 0 {
+			v.lastClk.n = n
+		}
+		v.clickDetail = v.lastClk.n
 	}
-	v.lastClk.k, v.lastClk.t = k, now
 	// checkbox/radio state flips before click handlers see it
 	ctrl := t
 	if t.repl != rCheck && t.repl != rRadio {
@@ -456,7 +485,7 @@ func (v *View) click(s *scope, t *box, pe *pointer.Event) {
 		}
 	}
 	v.dispatchPointer(s, t, "click", pe, 0)
-	if v.lastClk.n == 2 {
+	if !kbd && v.lastClk.n == 2 {
 		v.dispatchPointer(s, t, "dblclick", pe, 0)
 	}
 	if ctrl != nil && ctrl != t && !ctrl.disabled() {
@@ -549,6 +578,12 @@ func followLink(href string) {
 	e := env()
 	switch {
 	case strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") || strings.HasPrefix(href, "mailto:"):
+		if e.FollowLink != nil {
+			if !e.FollowLink(href) && e.OpenURL != nil {
+				e.OpenURL(href) // openPermalink's new tab: not a link Clack opens itself
+			}
+			return
+		}
 		if r := slackRoute(href); r != "" && e.Navigate != nil {
 			e.Navigate(r)
 			return
@@ -557,6 +592,9 @@ func followLink(href string) {
 			e.OpenURL(href)
 		}
 	default:
+		if e.FollowLink != nil && e.FollowLink(href) { // slack: links: handleDeepLink
+			return
+		}
 		if r := slackRoute(href); r != "" && e.Navigate != nil {
 			e.Navigate(r)
 		}
@@ -593,9 +631,13 @@ func slackRoute(href string) string {
 	if strings.HasPrefix(href, "http") && !strings.Contains(href[:i], "slack.com") {
 		return ""
 	}
-	parts := strings.Split(strings.SplitN(href[i+len("/archives/"):], "?", 2)[0], "/")
+	path, query, _ := strings.Cut(href[i+len("/archives/"):], "?")
+	parts := strings.Split(path, "/")
 	if len(parts) == 0 || parts[0] == "" {
 		return ""
+	}
+	if q, err := url.ParseQuery(query); err == nil && isMessageTS(q.Get("thread_ts")) {
+		return "c/" + parts[0] + "/t/" + q.Get("thread_ts") // a reply's link: its thread, never the reply as a root
 	}
 	if len(parts) > 1 && len(parts[1]) > 7 && parts[1][0] == 'p' {
 		ts := parts[1][1:]
@@ -605,6 +647,21 @@ func slackRoute(href string) string {
 		return "c/" + parts[0] + "/m/" + ts
 	}
 	return "c/" + parts[0]
+}
+
+// isMessageTS is a message timestamp as Slack writes one
+// ("1700000000.000100"), so a link's thread_ts can't add route segments.
+func isMessageTS(s string) bool {
+	a, b, ok := strings.Cut(s, ".")
+	if !ok || len(a) != 10 || len(b) != 6 {
+		return false
+	}
+	for _, r := range a + b {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *scope) scroll(pe *pointer.Event) {
@@ -758,10 +815,10 @@ func (v *View) keyEvents(s *scope, b *box) {
 		if ke.State == key.Press && (ke.Name == key.NameReturn || ke.Name == key.NameEnter || ke.Name == key.NameSpace) && b.n != nil {
 			switch b.n.T {
 			case "button", "a", "summary":
-				v.click(s, b, &pointer.Event{})
+				v.click(s, b, &pointer.Event{}, true)
 			}
 			if b.repl == rCheck || b.repl == rRadio {
-				v.click(s, b, &pointer.Event{})
+				v.click(s, b, &pointer.Event{}, true)
 			}
 		}
 	}
@@ -904,7 +961,7 @@ func (v *View) dispatchPointer(s *scope, t *box, typ string, pe *pointer.Event, 
 	}
 	if typ == "click" || typ == "dblclick" {
 		b = append(b, `,"detail":`...)
-		b = strconv.AppendInt(b, int64(max(v.lastClk.n, 1)), 10)
+		b = strconv.AppendInt(b, int64(v.clickDetail), 10)
 	}
 	v.endEvent(t, b)
 }

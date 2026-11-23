@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/some-du6e/clack/internal/logtag"
 )
 
 // ExperimentGroups returns the viewer's experiment assignments
@@ -273,7 +275,7 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
-			log.Printf("messages.list: %d channels: %v (%s)", len(g), err, strings.Join(chans, " "))
+			log.Printf("messages.list: %d channels: %v (%s)", len(g), err, logtag.IDs(chans))
 			errs = append(errs, err)
 			return
 		}
@@ -409,10 +411,13 @@ func (c *Client) SearchUsers(ctx context.Context, query string, count int) ([]Us
 // from app.slack.com, 2026-11-08: count 30, search_email, top_users =
 // the frecency list, default_workspace).
 type UserSearchOpts struct {
-	Count            int
-	SearchEmail      bool
-	TopUsers         []string
-	DefaultWorkspace string
+	Count int
+	// Filter and ExternalTeam are getRemoteMembers' filter (the clauses
+	// joined by " AND ") and external_team (onlyFromExternalTeamId).
+	Filter, ExternalTeam string
+	SearchEmail          bool
+	TopUsers             []string
+	DefaultWorkspace     string
 	// CurrentChannel is the composer's conversation (getRemoteMembers'
 	// current_channel). search_email is only sent when set, as Slack does.
 	CurrentChannel string
@@ -442,6 +447,12 @@ func (c *Client) SearchUsersWith(ctx context.Context, query string, o UserSearch
 	if o.DefaultWorkspace != "" {
 		body["default_workspace"] = o.DefaultWorkspace
 	}
+	if o.Filter != "" {
+		body["filter"] = o.Filter
+	}
+	if o.ExternalTeam != "" {
+		body["external_team"] = o.ExternalTeam
+	}
 	err := c.Edge(ctx, "users/search", body, &r)
 	return r.Results, err
 }
@@ -453,6 +464,7 @@ type ChannelSearchOpts struct {
 	Filter           string
 	TopChannels      []string
 	DefaultWorkspace string
+	ExternalTeam     string // getRemoteChannels' external_team (onlyFromTeamId)
 }
 
 // SearchChannelsWith is edge channels/search with the omniswitcher's args.
@@ -474,6 +486,9 @@ func (c *Client) SearchChannelsWith(ctx context.Context, query string, o Channel
 	}
 	if o.DefaultWorkspace != "" {
 		body["default_workspace"] = o.DefaultWorkspace
+	}
+	if o.ExternalTeam != "" {
+		body["external_team"] = o.ExternalTeam
 	}
 	err := c.Edge(ctx, "channels/search", body, &r)
 	return r.Results, err
@@ -743,6 +758,8 @@ func (c *Client) PrepareUpload(ctx context.Context, f UploadFile, progress func(
 type UploadedRef struct {
 	ID    string `json:"id"`
 	Title string `json:"title,omitempty"`
+	// Subtype is the File's ("slack_audio" for a voice clip).
+	Subtype string `json:"subtype,omitempty"`
 }
 
 // CompleteUpload is files.completeUpload with Slack's eager-upload args

@@ -75,19 +75,25 @@ func TestLeftComposerLetsGoOfFocus(t *testing.T) {
 	}
 
 	// the thread pane closes: the channel's composer takes the focus
+	// the pane draws its reply box once the thread has loaded and its
+	// newer replies have been read (ThreadView.HidesComposer: the
+	// loading-end row stands in its place until then); a load the frames
+	// didn't cover left nothing to focus (the boot channel's older page read
+	// meanwhile; mf-first-frame's full-test, the reopen below)
+	replyBox := func(what string) {
+		t.Helper()
+		e.until(what, 10*time.Second, func() bool {
+			c := e.a.convos[ch+"/"+root]
+			if c == nil {
+				return false
+			}
+			hc, ok := c.list.(interface{ HidesComposer() bool })
+			return !ok || !hc.HidesComposer()
+		})
+	}
 	e.a.OpenThread(ch, root)
 	e.frame()
-	// the pane draws its reply box once the thread has loaded
-	// (ThreadView.HidesComposer); a load the frames above didn't cover (the
-	// boot channel's older page read meanwhile) left nothing to focus
-	e.until("the thread's reply box", 10*time.Second, func() bool {
-		c := e.a.convos[ch+"/"+root]
-		if c == nil {
-			return false
-		}
-		hc, ok := c.list.(interface{ HidesComposer() bool })
-		return !ok || !hc.HidesComposer()
-	})
+	replyBox("the thread's reply box")
 	e.focusComposer(ch, root)
 	if !focused(ch, root) {
 		t.Fatal("the thread's composer didn't take the focus")
@@ -109,8 +115,12 @@ func TestLeftComposerLetsGoOfFocus(t *testing.T) {
 
 	// another thread in the pane: the first thread's composer lets go,
 	// and what is typed meanwhile isn't replayed into it when it's back
+	// the reopened pane draws its reply box once its thread is in
+	// (mf-first-frame's full-test: focused a frame after the reopen, the
+	// box wasn't drawn yet)
 	e.a.OpenThread(ch, root)
 	e.frame()
+	replyBox("the reopened thread's reply box")
 	e.focusComposer(ch, root)
 	if !focused(ch, root) {
 		t.Fatal("the thread's composer didn't take the focus again")

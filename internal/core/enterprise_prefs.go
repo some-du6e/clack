@@ -15,12 +15,14 @@ import (
 // the boot API lands.
 
 type enterprisePrefs struct {
-	mu     sync.Mutex
-	org    map[string]json.RawMessage
-	locked map[string]json.RawMessage
+	mu       sync.Mutex
+	org      map[string]json.RawMessage
+	locked   map[string]json.RawMessage
+	unlocked map[string]json.RawMessage
+	live     bool // enterprise.prefs.get answered this session
 }
 
-var entPrefsIndex sync.Map // *App → *enterprisePrefs
+var entPrefsIndex = newPerApp() // *App → *enterprisePrefs
 
 func (a *App) entPrefs() *enterprisePrefs {
 	v, _ := entPrefsIndex.LoadOrStore(a, &enterprisePrefs{})
@@ -34,8 +36,40 @@ func (a *App) LoadEnterprisePrefs(ctx context.Context) error {
 		return err
 	}
 	a.setEnterprisePrefs(raw)
+	ep := a.entPrefs()
+	ep.mu.Lock()
+	ep.live = true
+	ep.mu.Unlock()
+	if b, err := json.Marshal(raw); err == nil {
+		a.S.SetEnterprisePrefs(b) // the disk cache (installCachedEnterprisePrefs)
+	}
 	a.emit(Event{Type: "enterprise_prefs"})
 	return nil
+}
+
+// installCachedEnterprisePrefs reads the answer the last session's
+// enterprise.prefs.get left in the disk cache, unless this session's has
+// answered: Slack's enterprisePrefs store is persisted (TI4y,
+// persistenceEnabled), so a Grid org's prefs (Message history's unlocked
+// allow_retention_override, channel_retention.go) hold from the first
+// frame. A first start reads them unset until the call answers, as
+// Slack's does.
+func (a *App) installCachedEnterprisePrefs() {
+	b := a.S.CachedEnterprisePrefs()
+	if len(b) == 0 {
+		return
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(b, &raw) != nil {
+		return
+	}
+	ep := a.entPrefs()
+	ep.mu.Lock()
+	live := ep.live
+	ep.mu.Unlock()
+	if !live {
+		a.setEnterprisePrefs(raw)
+	}
 }
 
 // setEnterprisePrefs is updateEnterprisePrefs over the call's answer: the
@@ -47,12 +81,13 @@ func (a *App) setEnterprisePrefs(raw map[string]json.RawMessage) {
 			raw = inner
 		}
 	}
-	var org, locked map[string]json.RawMessage
+	var org, locked, unlocked map[string]json.RawMessage
 	_ = json.Unmarshal(raw["org_prefs"], &org)
 	_ = json.Unmarshal(raw["locked_prefs"], &locked)
+	_ = json.Unmarshal(raw["unlocked_prefs"], &unlocked)
 	ep := a.entPrefs()
 	ep.mu.Lock()
-	ep.org, ep.locked = org, locked
+	ep.org, ep.locked, ep.unlocked = org, locked, unlocked
 	ep.mu.Unlock()
 }
 
@@ -71,6 +106,15 @@ func (a *App) EnterpriseLockedPref(name string) json.RawMessage {
 	ep.mu.Lock()
 	defer ep.mu.Unlock()
 	return ep.locked[name]
+}
+
+// EnterpriseUnlockedPref is getUnlockedOrgPref (client-boot TI4y D1):
+// enterprisePrefs.unlocked_prefs[name], nil when unset.
+func (a *App) EnterpriseUnlockedPref(name string) json.RawMessage {
+	ep := a.entPrefs()
+	ep.mu.Lock()
+	defer ep.mu.Unlock()
+	return ep.unlocked[name]
 }
 
 // EnterpriseOrgPrefTrue is `!0 === getOrgPref(state, name)`.

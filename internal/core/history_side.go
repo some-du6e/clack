@@ -6,6 +6,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/logtag"
 )
 
 // History's side reads: what a conversation's header shows beside its
@@ -93,7 +95,7 @@ func (a *App) sideRead(ch, what string, f func(ctx context.Context)) <-chan stru
 		defer cancel()
 		t0 := time.Now()
 		f(ctx)
-		log.Printf("history %s: side %s %s", ch, what, time.Since(t0).Round(time.Millisecond))
+		log.Printf("history %s: side %s %s", logtag.ID(ch), what, time.Since(t0).Round(time.Millisecond))
 	}()
 	return done
 }

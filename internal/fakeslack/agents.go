@@ -238,7 +238,7 @@ type agentRec struct {
 	actions []url.Values
 }
 
-var agentRecs sync.Map // *Server → *agentRec
+var agentRecs = newPerServer() // *Server → *agentRec
 
 func (s *Server) agentRec() *agentRec {
 	v, _ := agentRecs.LoadOrStore(s, &agentRec{})

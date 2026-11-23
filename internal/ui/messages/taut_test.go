@@ -218,11 +218,16 @@ func listFrame(t testing.TB) func() {
 }
 
 // With a plugin system attached but nothing patched, a frame costs the
-// same as without one: no JS engine, no extra allocations.
+// same as without one: no JS engine, no extra allocations. Each side is
+// the fewest of five counts: testing.AllocsPerRun counts the whole
+// process's allocations, so a burst elsewhere (a goroutine an earlier test
+// left, the runtime) during one count raises its integer mean (51 vs 50,
+// topic-edit-mentions' full-test, run 44828300746), and a frame's own
+// allocations are in every count.
 func TestTautZeroCost(t *testing.T) {
 	SetTaut(nil)
 	f := listFrame(t)
-	base := testing.AllocsPerRun(100, f)
+	base := fewestAllocs(f)
 
 	app, _ := newTestApp(t)
 	tt := newTaut(t, app, taut.UIHooks{})
@@ -231,7 +236,7 @@ func TestTautZeroCost(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		f()
 	}
-	with := testing.AllocsPerRun(100, f)
+	with := fewestAllocs(f)
 	t.Logf("list frame: %v allocs without taut, %v with taut and no plugins", base, with)
 	if with > base {
 		t.Errorf("an idle plugin system costs %v allocs/frame (none: %v)", with, base)
@@ -239,6 +244,16 @@ func TestTautZeroCost(t *testing.T) {
 	if tt.Started() {
 		t.Error("the JS engine started without an enabled plugin")
 	}
+}
+
+// fewestAllocs is the fewest allocations a call of f made, over five
+// counts of testing.AllocsPerRun(100, f).
+func fewestAllocs(f func()) float64 {
+	least := testing.AllocsPerRun(100, f)
+	for range 4 {
+		least = min(least, testing.AllocsPerRun(100, f))
+	}
+	return least
 }
 
 func BenchmarkListFrame(b *testing.B) {

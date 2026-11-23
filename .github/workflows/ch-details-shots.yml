@@ -4,8 +4,10 @@ name: ch-details-shots
 # Member / Guest permissions, member suggestions, Copy members), the last
 # member's "Leave and archive", a DM's Add people modal, Start a Call ▾
 # and the channel email modal (W13), and W14's Posting permissions, apps
-# browser and Custom history (light and dark). Synthetic only: nothing
-# here talks to Slack, starts a call, sends an email or changes a setting.
+# browser and Custom history, and Settings' Message history and Export
+# with their modals and the state after converting and archiving (light
+# and dark). Synthetic only: nothing here talks to Slack, starts a call,
+# sends an email or changes a setting (fakeslack answers the writes).
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run ch-details-shots.yml --ref <branch>)
@@ -31,8 +33,19 @@ on:
       - "internal/ui/details_audit_test.go"
       - "internal/ui/details_host.go"
       - "internal/core/chdetails.go"
+      - "internal/ui/views/details_managing.go"
+      - "internal/ui/views/details_retention.go"
+      - "internal/ui/views/details_retention_test.go"
+      - "internal/ui/details_manage_state_test.go"
+      - "internal/core/channel_retention.go"
+      - "internal/fakeslack/channel_manage.go"
       - ".github/workflows/ch-details-shots.yml"
   workflow_dispatch:
+    inputs:
+      expect_fail:
+        description: "proof runs: the tests that must fail, comma-separated (TestA,TestB/sub); the run passes only if each fails and nothing else does (docs/CI-SPEED.md, Proof runs)"
+        required: false
+        default: ""
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
@@ -58,21 +71,56 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: details tests
         run: |
-          go test -count=1 -run 'TestDetails|TestHoverTriggerChannelMembers|TestHistoryBeginningLabel|TestPostingBullets' ./internal/ui/views/
-          go test -count=1 -run 'TestCallApps|TestStartCall|TestChannelEmail|TestPosting|TestChannelPostingPrefsCalls|TestFeatureAccess|TestApps|TestHistoryPreview' ./internal/core/
+          go test -count=1 -run 'TestDetails|TestHoverTriggerChannelMembers|TestHistoryBeginningLabel|TestPostingBullets|TestRetentionTextsLikeSlack' ./internal/ui/views/
+          go test -count=1 -run 'TestCallApps|TestStartCall|TestChannelEmail|TestPosting|TestChannelPostingPrefsCalls|TestFeatureAccess|TestApps|TestHistoryPreview|TestMessageHistoryShownLikeSlack|TestExportHistoryShownLikeSlack|TestShownRetentionLikeSlack|TestRetentionCalls|TestConvertToPrivateMarksStoredChannel' ./internal/core/
       - name: details screenshots
         env:
           PREVIEW_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestChannelDetailsSettingsSlackShot$|TestChannelDetailsLeaveArchiveShot$|TestChannelDetailsDMAddPeopleShot$|TestChannelDetailsMembersAndApps$|TestChannelDetailsTabsShot$|TestChannelDetailsCallEmailShots|TestChannelDetailsPostingShot$|TestChannelDetailsAppsBrowserShot$|TestChannelDetailsDMCustomHistoryShot$|TestChannelDetailsToPublicShot$|TestChannelDetailsManagingShot$|TestChannelDetailsHideLinkShot$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelDetailsSettingsSlackShot$|TestChannelDetailsLeaveArchiveShot$|TestChannelDetailsDMAddPeopleShot$|TestChannelDetailsMembersAndApps$|TestChannelDetailsTabsShot$|TestChannelDetailsCallEmailShots|TestChannelDetailsPostingShot$|TestChannelDetailsAppsBrowserShot$|TestChannelDetailsDMCustomHistoryShot$|TestChannelDetailsToPublicShot$|TestChannelDetailsManagingShot$|TestChannelDetailsHideLinkShot$|TestChannelDetailsManageState$|TestChannelDetailsRetentionShot$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: ch-details-shots
           path: dist/shots
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (tools/expectfail's TestWorkflowsWireExpectFail says so).
+  expect-fail:
+    needs:
+      - ch-details-shots
+    if: ${{ always() && inputs.expect_fail != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/expectfail
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: expect-fail-*
+          path: ${{ runner.temp }}/xf
+      - name: every listed test failed, nothing else did
+        env:
+          EXPECT_FAIL: ${{ inputs.expect_fail }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"

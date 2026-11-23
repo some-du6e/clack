@@ -81,7 +81,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$INTRO_VIDEO_DIR"
-          xvfb-run -a -s "-screen 0 1440x900x24" go test -count=1 -v -timeout 50m -run 'TestIntroVideo$|TestSignInVideo$' ./internal/ui/
+          xvfb-run -a -s "-screen 0 1440x900x24" go test -count=1 -v -timeout 15m -run 'TestIntroVideo$|TestSignInVideo$' ./internal/ui/
       - name: GIF, contact sheets
         if: ${{ !cancelled() }}
         working-directory: dist/intro

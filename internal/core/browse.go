@@ -8,6 +8,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/url"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -73,6 +75,13 @@ type FilesOpts struct {
 	// last_engaged, or score with a query), "timestamp" (Last updated)
 	// or "score" (Most relevant).
 	Sort string
+	// The browser's advanced filters (useUnifiedFilesFilters'
+	// advancedFilters, which the Filters modal sets): From are people
+	// (from:<@U…>), In conversations or people (in:<#C…|name>, in:<#G…>
+	// for a group DM, in:<@U…> for a person or a DM), After and Before
+	// exclusive YYYY-MM-DD dates (after:, before:).
+	From, In      []string
+	After, Before string
 }
 
 // Huddle is an active or past huddle.
@@ -170,6 +179,18 @@ type UsergroupOpts struct {
 	ExcludeDisabled bool
 	// Team is the Workspaces filter (search_only_team).
 	Team string
+	// Cursor is the previous page's UsergroupPage.Next ("" the first page).
+	Cursor string
+}
+
+// UsergroupPage is a page of the user group directory.
+type UsergroupPage struct {
+	Groups []Usergroup
+	// Total is num_found: every group the directory has for the query
+	// and filters (Slack pages until it has that many).
+	Total int
+	// Next is next_cursor_mark, the next page's Cursor ("" when done).
+	Next string
 }
 
 // Tab is one entry of a channel's tab bar, in server order. The UI adds
@@ -359,44 +380,52 @@ func (a *App) filePage(ctx context.Context, raws []browseFileRaw) []File {
 	return out
 }
 
-// filesParams builds search.modules.files params for the Files browser.
-func filesParams(o FilesOpts, self string) url.Values {
+// filesQuery is the browser's request query (client-boot nzlP
+// querySuggestionFromQueryAndFilter, then toString().trim();
+// files_query.go): the typed query's tokens first, those of a filter's
+// kind only when the filter holds them, then the filters' tokens in
+// Slack's order: from:, in:, before:, after:, the type: tokens, creator:.
+// lk resolves the typed tokens and the in: values (nil: none resolve).
+func filesQuery(ctx context.Context, o FilesOpts, self string, lk filesLookup) string {
+	var types []string
+	switch {
+	case o.Kind == "canvases":
+		types = []string{"quip"}
+	case o.Kind == "lists":
+		types = []string{"lists"}
+	case len(o.Types) > 0:
+		types = o.Types
+	case o.Mine || o.SharedWithMe:
+		types = strings.Fields(strings.ReplaceAll(fileTypesOwned, "type:", ""))
+	default:
+		types = strings.Fields(strings.ReplaceAll(fileTypesAll, "type:", ""))
+	}
+	var creator []string
+	if o.Mine {
+		creator = []string{self}
+	}
+	return filesQueryTokens(ctx, o.Query, o, types, creator, lk)
+}
+
+// filesParams builds search.modules.files params for the Files browser
+// (the query as filesQuery; ctx stops a long query's tokenizing).
+func filesParams(ctx context.Context, o FilesOpts, self string, lk filesLookup) url.Values {
 	page := o.Page
 	if page < 1 {
 		page = 1
 	}
-	types := fileTypesAll
-	switch {
-	case o.Kind == "canvases":
-		types = "type:quip"
-	case o.Kind == "lists":
-		types = "type:lists"
-	case len(o.Types) > 0:
-		ts := make([]string, 0, len(o.Types))
-		for _, t := range o.Types {
-			ts = append(ts, "type:"+t)
-		}
-		types = strings.Join(ts, " ")
-	case o.Mine || o.SharedWithMe:
-		types = fileTypesOwned
-	}
-	parts := []string{types}
 	sortBy := "last_engaged"
 	q := strings.TrimSpace(o.Query)
 	if q != "" || o.SharedWithMe {
 		sortBy = "score"
 	}
 	if o.Mine {
-		parts = append(parts, "creator:<@"+self+">")
 		sortBy = "timestamp"
 	}
 	if o.Sort != "" {
 		sortBy = o.Sort
 	}
-	if q != "" {
-		parts = append(parts, q)
-	}
-	p := url.Values{"module": {"files"}, "query": {strings.Join(parts, " ")}, "page": {strconv.Itoa(page)},
+	p := url.Values{"module": {"files"}, "query": {filesQuery(ctx, o, self, lk)}, "page": {strconv.Itoa(page)},
 		"count": {"50"}, "sort": {sortBy}, "search_context": {"desktop_files_browser"},
 		"include_files_shares": {"1"}, "extracts": {"1"}, "highlight": {"1"}, "max_extract_len": {"200"},
 		"extra_message_data": {"1"}, "no_user_profile": {"1"}, "file_title_only": {"false"},
@@ -414,7 +443,10 @@ func filesParams(o FilesOpts, self string) url.Values {
 // unified files view calls it).
 func (a *App) Files(ctx context.Context, o FilesOpts) (FilePage, error) {
 	t0 := time.Now()
-	p := filesParams(o, a.S.SelfID())
+	p := filesParams(ctx, o, a.S.SelfID(), newFilesLookup(a))
+	if err := ctx.Err(); err != nil { // the query's tokenizing stopped short
+		return FilePage{}, err
+	}
 	var res struct {
 		Pagination searchPagination `json:"pagination"`
 		Items      []browseFileRaw  `json:"items"`
@@ -857,8 +889,26 @@ func (a *App) BrowsePeople(ctx context.Context, o PeopleBrowseOpts) (PeoplePage,
 	return out, nil
 }
 
-// SearchUsergroups is the user group directory (usergroups.search).
-func (a *App) SearchUsergroups(ctx context.Context, o UsergroupOpts) ([]Usergroup, error) {
+// SearchUsergroups is one page of the user group directory, as Slack's
+// BrowseUserGroupsView fetches it (useBrowser's fetchUserGroups, client-boot
+// wBUp N; build a09b625d90aa, 2026-11-22): 50 groups a page, the next page
+// from the previous one's next_cursor_mark, the whole directory's size in
+// num_found.
+//
+//   - On a grid (isEnterprise, THpq: an enterprise id) userGroupsForSearcher
+//     (wBUp _) asks usergroups.search {keyword, sort, sort_dir,
+//     search_only_team?, include_hidden: false, include_disabled: !the
+//     "Exclude deactivated" filter, cursor_mark?, count: 50}.
+//   - Elsewhere fetchPaginatedUserGroupsWithQuery (D8Wa TC) asks
+//     search.team {query: {and: [is group, external false, a
+//     fuzzy_with_email clause per word]}, count: 50, sort, sort_dir,
+//     include_users: false, include_deleted: 1 unless deactivated groups
+//     are left out, cursor_mark?, org_wide_aware: true, search_only_team?}
+//     and reads its items.
+//
+// Both answers' groups go to the store (bulkAddGroups, d92s A), so a row's
+// User Group pane finds a group the boot list doesn't have (a disabled one).
+func (a *App) SearchUsergroups(ctx context.Context, o UsergroupOpts) (UsergroupPage, error) {
 	sortBy := o.Sort
 	switch sortBy {
 	case "date_create", "member_count":
@@ -869,30 +919,130 @@ func (a *App) SearchUsergroups(ctx context.Context, o UsergroupOpts) ([]Usergrou
 	if count <= 0 {
 		count = 50
 	}
-	p := url.Values{"keyword": {strings.TrimPrefix(strings.TrimSpace(o.Query), "@")}, "sort": {sortBy},
-		"sort_dir": {browseSortDir(o.Desc)}, "include_hidden": {"false"}, "include_disabled": {strconv.FormatBool(!o.ExcludeDisabled)},
-		"count": {strconv.Itoa(count)}}
-	if o.Team != "" {
-		p.Set("search_only_team", o.Team)
-	}
 	var res struct {
-		Usergroups []struct {
-			ID          string          `json:"id"`
-			Handle      string          `json:"handle"`
-			Name        string          `json:"name"`
-			Description string          `json:"description"`
-			UserCount   json.RawMessage `json:"user_count"`
-		} `json:"usergroups"`
+		Usergroups []usergroupRaw `json:"usergroups"`
+		Items      []usergroupRaw `json:"items"`
+		NumFound   int            `json:"num_found"`
+		NextCursor string         `json:"next_cursor_mark"`
 	}
-	if err := a.C.Call(ctx, "usergroups.search", p, &res); err != nil {
-		return nil, err
+	if a.C.Creds.EnterpriseID != "" {
+		p := url.Values{"keyword": {strings.TrimPrefix(strings.TrimSpace(o.Query), "@")}, "sort": {sortBy},
+			"sort_dir": {browseSortDir(o.Desc)}, "include_hidden": {"false"}, "include_disabled": {strconv.FormatBool(!o.ExcludeDisabled)},
+			"count": {strconv.Itoa(count)}}
+		if o.Team != "" {
+			p.Set("search_only_team", o.Team)
+		}
+		if o.Cursor != "" {
+			p.Set("cursor_mark", o.Cursor)
+		}
+		if err := a.C.Call(ctx, "usergroups.search", p, &res); err != nil {
+			return UsergroupPage{}, err
+		}
+	} else {
+		// getSortParams: the directory's date sorts are "date" here
+		if sortBy == "date_create" {
+			sortBy = "date"
+		}
+		clauses := []map[string]any{{"type": "is", "value": "group"}, {"type": "external", "value": false}}
+		for _, w := range strings.Split(o.Query, " ") {
+			if w != "" {
+				clauses = append(clauses, map[string]any{"type": "fuzzy_with_email", "value": w})
+			}
+		}
+		q, _ := json.Marshal(map[string]any{"type": "and", "clauses": clauses})
+		p := url.Values{"query": {string(q)}, "count": {strconv.Itoa(count)}, "sort": {sortBy}, "sort_dir": {browseSortDir(o.Desc)},
+			"include_users": {"false"}, "org_wide_aware": {"true"}}
+		if !o.ExcludeDisabled {
+			p.Set("include_deleted", "1")
+		}
+		if o.Cursor != "" {
+			p.Set("cursor_mark", o.Cursor)
+		}
+		if o.Team != "" {
+			p.Set("search_only_team", o.Team)
+		}
+		if err := a.C.Call(ctx, "search.team", p, &res); err != nil {
+			// fetchPaginatedUserGroupsWithQuery's catch: only a cancelled
+			// fetch fails; any other error is logged and answers an empty
+			// page ({items: [], num_found: 0}), the browser's "No results"
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+				return UsergroupPage{}, err
+			}
+			log.Printf("user groups: search.team: %v", err)
+			return UsergroupPage{Groups: []Usergroup{}}, nil
+		}
+		res.Usergroups = res.Items
 	}
-	out := make([]Usergroup, 0, len(res.Usergroups))
-	for _, g := range res.Usergroups {
-		out = append(out, Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description,
-			UserCount: int(looseInt(g.UserCount))})
+	out := UsergroupPage{Groups: make([]Usergroup, 0, len(res.Usergroups)), Total: res.NumFound, Next: res.NextCursor}
+	if out.Total == 0 {
+		out.Total = len(res.Usergroups) // userGroupsForSearcher: num_found ?? the page's length
+	}
+	for _, r := range res.Usergroups {
+		if r.ID == "" {
+			continue
+		}
+		out.Groups = append(out.Groups, usergroupOf(a.S.MergeUsergroup(r.ID, r.over)))
 	}
 	return out, nil
+}
+
+// usergroupRaw is a group as usergroups.search, search.team and
+// usergroups.create carry it (user_count a number or a numeric string),
+// with the keys it had: upsertEntity merges an answer over the stored
+// group ({...stored, ...answer}), so a key an answer leaves out (off a
+// grid search.team's items may lack team_id, auto_type, is_section,
+// date_update) keeps the stored value.
+type usergroupRaw struct {
+	has         map[string]bool
+	ID          string          `json:"id"`
+	Handle      string          `json:"handle"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	UserCount   json.RawMessage `json:"user_count"`
+	DateDelete  int64           `json:"date_delete"`
+	DateUpdate  int64           `json:"date_update"`
+	TeamID      string          `json:"team_id"`
+	AutoType    string          `json:"auto_type"`
+	IsSection   bool            `json:"is_section"`
+}
+
+func (r *usergroupRaw) UnmarshalJSON(b []byte) error {
+	type plain usergroupRaw
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err != nil {
+		return err
+	}
+	*r = usergroupRaw(p)
+	r.has = make(map[string]bool, len(keys))
+	for k := range keys {
+		r.has[k] = true
+	}
+	return nil
+}
+
+// over writes the answer's keys over g (MergeUsergroup's set).
+func (r usergroupRaw) over(g *slack.Usergroup) {
+	for k, set := range map[string]func(){
+		"handle":      func() { g.Handle = r.Handle },
+		"name":        func() { g.Name = r.Name },
+		"description": func() { g.Description = r.Description },
+		"date_delete": func() { g.DateDelete = r.DateDelete },
+		"date_update": func() { g.DateUpdate = r.DateUpdate },
+		"team_id":     func() { g.TeamID = r.TeamID },
+		"auto_type":   func() { g.AutoType = r.AutoType },
+		"is_section":  func() { g.IsSection = r.IsSection },
+	} {
+		if r.has[k] {
+			set()
+		}
+	}
+	// upsertEntity's user_count is parseInt(user_count) || 0 whether or not
+	// the answer has the key
+	g.UserCount = int(looseInt(r.UserCount))
 }
 
 // ---- channel tab bar ----
@@ -972,7 +1122,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			defer wg.Done()
 			bms, err := a.Bookmarks(ctx, ch)
 			if err != nil {
-				log.Printf("tabs %s: bookmarks.list: %v", ch, err)
+				log.Printf("tabs %s: bookmarks.list: %v", logtag.ID(ch), err)
 				for _, i := range folderTabs {
 					out[i].BookmarksUnknown = true
 				}
@@ -1000,7 +1150,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			defer func() { <-sem }()
 			f, err := a.tabFileTitle(ctx, t.FileID)
 			if err != nil {
-				log.Printf("tabs %s: files.info %s: %v", ch, t.FileID, err)
+				log.Printf("tabs %s: files.info %s: %v", logtag.ID(ch), logtag.ID(t.FileID), err)
 				t.TitleUnknown = true
 				return
 			}
@@ -1024,7 +1174,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 		}(&out[i])
 	}
 	wg.Wait()
-	log.Printf("tabs %s: %d tabs (%d files) in %s", ch, len(out), len(fileTabs), time.Since(t0).Round(time.Millisecond))
+	log.Printf("tabs %s: %d tabs (%d files) in %s", logtag.ID(ch), len(out), len(fileTabs), time.Since(t0).Round(time.Millisecond))
 	return out, nil
 }
 

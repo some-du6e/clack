@@ -61,12 +61,16 @@ var (
 	// dirPlaceholderNS: BrowsePeopleView's and BrowseUserGroupsView's
 	// browsers strings, BrowseChannelsView's search one
 	dirPlaceholderNS = [3]i18n.NS{"browsers", "search", "browsers"}
-	dirActions       = [3]string{"Invite People", "Create Channel", "Create user group"}
+	// dirActions: InvitePeopleButton, the channel browser's create button
+	// and CreateUserGroupButton ("Create User Group", HF/B).
+	dirActions = [3]string{"Invite People", "Create Channel", "Create User Group"}
 
 	dirSortLabels = [3][]string{
 		{"Most recommended", "A to Z", "Z to A"},
 		{"Most recommended", "A to Z", "Most members", "Newest"},
-		{"A to Z", "Z to A", "Most members", "Newest"},
+		// useUserGroupExplorer's sort options (HF/B J; the two-option
+		// Newest / Most members menu is the agentic browse toolbar's)
+		{"A to Z", "Z to A", "Newest user group", "Oldest user group", "Most members", "Fewest members"},
 	}
 	// dirChanSorts maps the channel sort menu to core.ChannelBrowseOpts
 	// (Sort, Desc).
@@ -74,11 +78,12 @@ var (
 		sort string
 		desc bool
 	}{{"", false}, {"name", false}, {"member_count", true}, {"created", true}}
-	// dirGroupSorts maps the user group sort menu to core.UsergroupOpts.
+	// dirGroupSorts maps the user group sort menu to core.UsergroupOpts
+	// (userGroupsForSearcher's sortField and sortDir, wBUp _).
 	dirGroupSorts = []struct {
 		sort string
 		desc bool
-	}{{"name", false}, {"name", true}, {"member_count", true}, {"date_create", true}}
+	}{{"name", false}, {"name", true}, {"date_create", true}, {"date_create", false}, {"member_count", true}, {"member_count", false}}
 
 	// The tabs' education banners (ExplorerEducationBanner, rhjZ). People's
 	// is BrowsePeopleView's (client-browse-people-view, build fa938a086569):
@@ -111,6 +116,15 @@ type dirChans struct {
 	list               []core.ChannelHit
 	total, page, pages int
 	q                  string
+}
+
+// dirGroups is the user group browser's accumulated result pages: the
+// groups so far, num_found and the next page's cursor.
+type dirGroups struct {
+	list  []core.Usergroup
+	total int
+	next  string
+	q     string
 }
 
 // dirJoinOp is an optimistic Join/Leave in flight. prev is the membership
@@ -208,6 +222,7 @@ type Directories struct {
 	heroBtn   [3]widget.Clickable
 	heroOff   [3]bool
 	pHero     dirPeopleHero // People's banner for this visit to the tab
+	gHero     dirPeopleHero // User Groups' banner for this visit to the tab
 	lastTab   int
 	peopleReq int // the page loadPeople last asked for
 	fclk      map[string]*widget.Clickable
@@ -259,9 +274,15 @@ type Directories struct {
 	facetAt   time.Time
 	teamAsked map[string]bool // EnsureTeam started
 
-	groups  async[[]core.Usergroup]
-	groupsQ string
-	groupL  widget.List
+	groups   async[dirGroups]
+	groupsQ  string
+	groupL   widget.List
+	gRows    map[string]*widget.Clickable
+	more     widget.Clickable            // the user group browser's "Load More"
+	ugRights async[core.UsergroupRights] // canCreateUserGroups (0dhJ Mm)
+
+	ext *scExternal // External: the Slack Connect hub (sc_external.go)
+	inv *scInvites  // Invitations (sc_invites.go)
 }
 
 // NewDirectories builds the Directories view (People tab selected).
@@ -279,6 +300,8 @@ func NewDirectories(h Host) *Directories {
 		wantFocus: 3,
 	}
 	d.rowMenu.sel = -1
+	d.tab.Hidden = d.tabHidden
+	d.ext, d.inv = newSCExternal(d), newSCInvites(d)
 	d.chanScope.labels, d.chanScope.ns = dirScopeLabels, nsSearch
 	d.chanType.labels, d.chanType.ns = dirTypeLabels, nsSearch
 	d.acct.labels, d.acct.ns = dirAcctLabels, nsSearch
@@ -304,8 +327,50 @@ func (d *Directories) ShowTab(i int) {
 	d.closeMenus()
 }
 
-// Tab is the selected tab's label ("Channels").
-func (d *Directories) Tab() string { return dirTabLabels[d.tab.Sel] }
+// Tab is the shown tab's label ("Channels").
+func (d *Directories) Tab() string { return dirTabLabels[d.cur()] }
+
+// tabHidden is UnifiedDirectoryTabs' list: User Groups only with
+// isUserGroupsTabVisible (Va2n fB: not a guest, the user_groups__manage
+// feature), External and Invitations only with isSlackConnectHubEnabled
+// (HE3L: not a guest). Neither waits on the network as Slack has them:
+// the viewer's is_restricted comes with the self user, and the
+// featureAccess store is persisted (core.FeatureAccess reads last
+// launch's answer until this one's), so the strip doesn't jump.
+func (d *Directories) tabHidden(i int) bool {
+	c := d.h.Core()
+	if c == nil {
+		return false
+	}
+	switch i {
+	case dirTabGroups:
+		if c.ViewerRestricted() {
+			return true
+		}
+		// with neither this launch's answer nor a persisted one the tab is
+		// drawn, and a later answer takes it away only for a viewer it
+		// doesn't apply to (Slack's blocking boot read never draws the
+		// strip without one)
+		on, known := c.FeatureState(core.FeatureUserGroupsManage)
+		return known && !on
+	case dirTabExternal, dirTabInvites:
+		return c.ViewerRestricted()
+	}
+	return false
+}
+
+// cur is the tab whose content shows: the selected one, or People when
+// that one isn't in the strip (UnifiedDirectoryTabsContent's fallback;
+// the selection stays, so the tab's content comes once it is allowed).
+func (d *Directories) cur() int {
+	if d.tabHidden(d.tab.Sel) {
+		return dirTabPeople
+	}
+	return d.tab.Sel
+}
+
+// TabShown reports whether tab i is in the strip.
+func (d *Directories) TabShown(i int) bool { return i >= 0 && i < len(d.tab.Labels) && !d.tabHidden(i) }
 
 func (d *Directories) closeMenus() {
 	for i := range d.sorts {
@@ -353,10 +418,13 @@ func (d *Directories) titleRow(gtx C) D {
 
 // update runs searches (debounced), first loads, menus and pending writes.
 func (d *Directories) update(gtx C) {
-	t := d.tab.Sel
+	t := d.cur()
 	if t != d.lastTab {
 		if d.lastTab == dirTabPeople { // BrowsePeopleView unmounted: a new visit next time
 			d.pHero, d.heroOff[dirTabPeople] = dirPeopleHero{}, false
+		}
+		if d.lastTab == dirTabGroups { // BrowseUserGroupsView unmounted
+			d.gHero, d.heroOff[dirTabGroups] = dirPeopleHero{}, false
 		}
 		d.lastTab = t
 	}
@@ -465,18 +533,22 @@ func (d *Directories) update(gtx C) {
 		// InvitePeopleButton and the banner's primaryCTAOnClick:
 		// openInviteModal({source: "people_browser"} / "people_browser_hero")
 		d.InvitePeople(hero)
+	case t == dirTabGroups && (action || hero):
+		// CreateUserGroupButton and the banner's primaryCTAOnClick
+		d.CreateUserGroup()
 	case action || hero:
 		// Slack's channel browser "Create Channel" opens the create modal
 		if cc, ok := d.h.(interface{ OpenCreateChannel() }); ok && t == dirTabChannels {
 			cc.OpenCreateChannel()
-		} else {
-			d.h.Toast(cdUnsupported)
 		}
 	}
 	if d.heroClose[t].Clicked(gtx) {
-		if t == dirTabPeople { // onCloseBanner: setUserPref({pref: prefName, value: true})
+		switch t { // onCloseBanner: setUserPref({pref: prefName, value: true})
+		case dirTabPeople:
 			d.ClosePeopleHero()
-		} else {
+		case dirTabGroups:
+			d.CloseGroupsHero()
+		default:
 			d.heroOff[t] = true
 		}
 	}
@@ -499,7 +571,7 @@ func (d *Directories) InvitePeople(hero bool) {
 // PeopleHero reports whether the People banner is up, and whether it has
 // its "Invite people" button.
 func (d *Directories) PeopleHero() (shown, button bool) {
-	if d.tab.Sel != dirTabPeople || !d.showPeopleHero() {
+	if d.cur() != dirTabPeople || !d.showPeopleHero() {
 		return false, false
 	}
 	return true, d.canSeeInvite()
@@ -510,6 +582,7 @@ func (d *Directories) PeopleHero() (shown, button bool) {
 // the banner's pref again.
 func (d *Directories) PageLeft() {
 	d.pHero, d.heroOff[dirTabPeople] = dirPeopleHero{}, false
+	d.gHero, d.heroOff[dirTabGroups] = dirPeopleHero{}, false
 }
 
 // PeopleLoaded reports the People tab's first page in, not loading.
@@ -524,7 +597,7 @@ func (d *Directories) InviteButtonShown() bool { return d.canSeeInvite() }
 // ClosePeopleHero is the banner's close button (onCloseBanner).
 func (d *Directories) ClosePeopleHero() {
 	d.heroOff[dirTabPeople] = true
-	d.pHero.markSeen(d.h)
+	d.pHero.markSeen(d.h, dirPrefSeenPeopleEdu)
 }
 
 // canSeeInvite is canUserSeeInviteModal (client-boot c1OI Lz):
@@ -552,9 +625,10 @@ type dirPeopleHero struct {
 	started bool // the visit read the pref
 	seen    bool // browsers_seen_initial_people_education at the visit's start
 	wrote   bool
+	up      bool // the banner was drawn last time the rule was read (User Groups)
 }
 
-func (p *dirPeopleHero) markSeen(h Host) {
+func (p *dirPeopleHero) markSeen(h Host, pref string) {
 	if p.wrote {
 		return
 	}
@@ -566,7 +640,7 @@ func (p *dirPeopleHero) markSeen(h Host) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_ = c.SetPref(ctx, dirPrefSeenPeopleEdu, true)
+		_ = c.SetPref(ctx, pref, true)
 	}()
 }
 
@@ -595,8 +669,107 @@ func (d *Directories) showPeopleHero() bool {
 	if h.seen && !(d.peopleInitial() && st.total < 7 && !c.PrefBool(dirPrefDismissedPeopleLowEdu, false)) {
 		return false
 	}
-	h.markSeen(d.h)
+	h.markSeen(d.h, dirPrefSeenPeopleEdu)
 	return true
+}
+
+// The User Groups banner's prefs (client-boot VpzY N_).
+const (
+	dirPrefSeenGroupsEdu         = "browsers_seen_initial_user_groups_education"
+	dirPrefDismissedGroupsLowEdu = "browsers_dismissed_user_groups_low_results_education"
+)
+
+// showGroupsHero is useUserGroupExplorer's banner rule (HF/B D):
+// canCreateUserGroups (0dhJ Mm) and showUserGroupsEducationBanner (puFU
+// Lf): not loading, no error, and the banner not seen yet, or the browser
+// in its initial state with fewer than 10 groups and the low-results
+// banner not dismissed. The banner is BrowseUserGroupsView's
+// ExplorerEducationBanner (view_once, prefName
+// SEEN_INITIAL_USER_GROUPS_BROWSER_EDUCATION), so like People's it writes
+// the pref the first time it shows. Slack reads the rule on every render
+// and the banner writes the pref as it unmounts: the first fetch after
+// it shows (Load More, a sort, a filter) takes it down, and with the pref
+// now seen it doesn't come back unless the low-results case holds.
+func (d *Directories) showGroupsHero() bool {
+	h := &d.gHero
+	live := d.groupsHeroLive()
+	if h.up && !live { // ExplorerEducationBanner's unmount: view_once writes the pref
+		h.seen = true
+		h.markSeen(d.h, dirPrefSeenGroupsEdu)
+	}
+	h.up = live
+	return live
+}
+
+func (d *Directories) groupsHeroLive() bool {
+	if d.heroOff[dirTabGroups] || !d.canCreateGroups() {
+		return false
+	}
+	c := d.h.Core()
+	if c == nil {
+		return false
+	}
+	st, loaded, err := d.groups.get()
+	if !loaded || err != nil || d.groups.busy() {
+		return false
+	}
+	h := &d.gHero
+	if !h.started {
+		h.started = true
+		h.seen = c.PrefBool(dirPrefSeenGroupsEdu, false)
+	}
+	if h.seen && !(d.groupsInitial() && st.total < 10 && !c.PrefBool(dirPrefDismissedGroupsLowEdu, false)) {
+		return false
+	}
+	h.markSeen(d.h, dirPrefSeenGroupsEdu)
+	return true
+}
+
+// groupsInitial is browserHasInitialState for the user group browser: no
+// query, no filters.
+func (d *Directories) groupsInitial() bool {
+	return d.groupsQ == "" && !d.exclDisabled && d.team[dirTabGroups] == ""
+}
+
+// GroupsHero reports whether the User Groups banner is up.
+func (d *Directories) GroupsHero() bool { return d.cur() == dirTabGroups && d.showGroupsHero() }
+
+// CloseGroupsHero is the User Groups banner's close button.
+func (d *Directories) CloseGroupsHero() {
+	d.heroOff[dirTabGroups] = true
+	d.gHero.markSeen(d.h, dirPrefSeenGroupsEdu)
+}
+
+// canCreateGroups is canCreateUserGroups (0dhJ Mm): not a guest, the
+// user_groups__manage feature, and CREATE_USER_GROUPS allowed in any of
+// the viewer's workspaces (core.UsergroupRights' CreateAny; the answers
+// are kept an hour). Without it Slack draws neither "Create User Group"
+// nor the banner.
+func (d *Directories) canCreateGroups() bool {
+	c := d.h.Core()
+	if c == nil {
+		return false
+	}
+	if r, ok := c.CachedUsergroupRights(""); ok {
+		return r.CreateAny
+	}
+	if !d.ugRights.busy() {
+		d.ugRights.load(d.h, true, func(ctx context.Context) (core.UsergroupRights, error) { return c.UsergroupRights(ctx, ""), nil })
+	}
+	r, _, _ := d.ugRights.get()
+	return r.CreateAny
+}
+
+// CreateGroupShown reports CreateUserGroupButton beside the search.
+func (d *Directories) CreateGroupShown() bool { return d.canCreateGroups() }
+
+// CreateUserGroup is CreateUserGroupButton's and the banner's onClick:
+// openModal(UserGroupEditCreateDialog, focusKey "") — Create User
+// Group's first step. Without canCreateUserGroups neither is drawn.
+func (d *Directories) CreateUserGroup() {
+	if ph, ok := d.h.(popups.Host); ok && d.canCreateGroups() {
+		popups.OpenUserGroupCreate(ph)
+	}
 }
 
 // peopleInitial is browserHasInitialState: no query and no filters.
@@ -605,7 +778,6 @@ func (d *Directories) peopleInitial() bool {
 }
 
 func (d *Directories) load(tab int, q string) {
-	c := d.h.Core()
 	switch tab {
 	case dirTabPeople:
 		d.peopleL.Position = layout.Position{}
@@ -616,19 +788,47 @@ func (d *Directories) load(tab int, q string) {
 	case dirTabGroups:
 		d.groupsQ = q
 		d.groupL.Position = layout.Position{}
-		gs := dirGroupSorts[min(d.sorts[dirTabGroups].sel, len(dirGroupSorts)-1)]
-		excl, team := d.exclDisabled, d.team[dirTabGroups]
-		d.groups.load(d.h, true, func(ctx context.Context) ([]core.Usergroup, error) {
-			out, err := c.SearchUsergroups(ctx, core.UsergroupOpts{Query: q, Sort: gs.sort, Desc: gs.desc, Count: 100, ExcludeDisabled: excl, Team: team})
-			if err != nil {
-				// usergroups.search failed: fall back to the cached list.
-				if fb, ferr := c.Usergroups(ctx, q, 100); ferr == nil {
-					return fb, nil
-				}
-			}
-			return out, err
-		})
+		d.loadGroups(q, "", false)
 	}
+}
+
+// loadGroups fetches a page of the user group directory (core.
+// SearchUsergroups, 50 a page), as getResults does for it (HKCz h):
+//
+//   - a new query, sort or filter (more false) starts from nothing: the
+//     results reset (uEfq), so the loading rows show until it answers;
+//   - Load More (more true) asks from the last answer's cursorMark (none
+//     if it had none: the first page again) and adds its groups to the
+//     ones shown (updateResultsAndPagination prepends results[page]).
+//
+// Slack's user group searcher never fails a fetch: on a grid
+// userGroupsForSearcher returns the error as its answer, which has no
+// items and no totalCount, and off a grid fetchPaginatedUserGroupsWithQuery
+// answers an empty page (core does that). So a failed fetch keeps what is
+// shown and drops Load More (no totalCount), and with nothing shown it is
+// "No results"; there is no error state.
+func (d *Directories) loadGroups(q, cursor string, more bool) {
+	gs := dirGroupSorts[min(d.sorts[dirTabGroups].sel, len(dirGroupSorts)-1)]
+	o := core.UsergroupOpts{Query: q, Sort: gs.sort, Desc: gs.desc, ExcludeDisabled: d.exclDisabled, Team: d.team[dirTabGroups], Cursor: cursor}
+	var prev []core.Usergroup
+	if more {
+		cur, _, _ := d.groups.get()
+		prev = append([]core.Usergroup(nil), cur.list...)
+	}
+	c := d.h.Core()
+	if c == nil {
+		return
+	}
+	d.groups.load(d.h, more, func(ctx context.Context) (dirGroups, error) {
+		pg, err := c.SearchUsergroups(ctx, o)
+		if err != nil {
+			if ctx.Err() != nil {
+				return dirGroups{}, err // superseded: async drops it
+			}
+			return dirGroups{list: prev, q: q}, nil
+		}
+		return dirGroups{list: append(prev, pg.Groups...), total: pg.Total, next: pg.Next, q: q}, nil
+	})
 }
 
 // loadPeople pages the people directory (core.BrowsePeople: an empty
@@ -866,12 +1066,12 @@ func (d *Directories) eff(h core.ChannelHit) core.ChannelHit {
 // with the hero banner, the filter bar and the results.
 func (d *Directories) body(gtx C) D {
 	fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, d.p.ReadFill)
-	t := d.tab.Sel
+	t := d.cur()
 	switch t {
 	case dirTabExternal:
-		return d.emptyState(gtx, "globe", "External", "Connecting with people and channels outside "+d.teamName()+" isn’t available in "+appName+" yet.", nil, "")
+		return d.ext.page(gtx)
 	case dirTabInvites:
-		return d.emptyState(gtx, "send", "Invitations", "Managing invitations isn’t available in "+appName+" yet.", nil, "")
+		return d.inv.layout(gtx)
 	}
 	return col(gtx,
 		vgap(16),
@@ -883,6 +1083,9 @@ func (d *Directories) body(gtx C) D {
 					}),
 					layout.Rigid(func(gtx C) D {
 						if t == dirTabPeople && !d.canSeeInvite() { // InvitePeopleButton: null
+							return D{}
+						}
+						if t == dirTabGroups && !d.canCreateGroups() { // CreateUserGroupButton: null
 							return D{}
 						}
 						return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D {
@@ -908,7 +1111,7 @@ func (d *Directories) body(gtx C) D {
 // heads returns the list items above the results: hero, filter bar.
 func (d *Directories) heads(t int) []W {
 	var out []W
-	if t == dirTabPeople && d.showPeopleHero() || t != dirTabPeople && dirHeroTitle[t] != "" && !d.heroOff[t] {
+	if t == dirTabPeople && d.showPeopleHero() || t == dirTabGroups && d.showGroupsHero() {
 		out = append(out, func(gtx C) D { return d.hero(gtx, t) })
 	}
 	return append(out, func(gtx C) D { return d.filterBar(gtx, t) })
@@ -1727,10 +1930,22 @@ func dirMembers(n int) string {
 
 // ---- user groups ----
 
+// groupsTab is useUserGroupExplorer's rows (HF/B): the banner and the
+// controls, a loading list while nothing has come, the groups, then
+// "No results" (no user groups at all: "No user groups have been
+// created yet"; else "You may want to try adjusting your filters."), and
+// Load More (ExplorerLoadMoreButton) while fewer than num_found are in,
+// its spinner (Button loading) while that page loads.
 func (d *Directories) groupsTab(gtx C) D {
-	gs, loaded, err := d.groups.get()
+	st, loaded, _ := d.groups.get()
 	head := d.heads(dirTabGroups)
-	n := len(gs)
+	list := st.list
+	n := len(list)
+	busy := d.groups.busy()
+	if d.more.Clicked(gtx) && !busy && n < st.total { // onLoadMore: totalCount && results < totalCount
+		d.loadGroups(st.q, st.next, true)
+		busy = true
+	}
 	body := max(n, 1)
 	return d.scrollList(gtx, &d.groupL, len(head)+body+1, func(gtx C, i int) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -1740,54 +1955,138 @@ func (d *Directories) groupsTab(gtx C) D {
 		i -= len(head)
 		switch {
 		case i == body:
-			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(24))}
-		case !loaded:
-			return layout.Inset{Left: dirPad - 20, Right: dirPad - 20}.Layout(gtx, func(gtx C) D { return d.skeleton(gtx, 6, 36) })
-		case err != nil && n == 0:
-			if d.retry.Clicked(gtx) {
-				d.load(dirTabGroups, d.groupsQ)
-			}
-			return dirListState(gtx, func(gtx C) D { return d.errorState(gtx, err, &d.retry) })
-		case n == 0:
-			if d.groupsQ == "" {
-				return dirListState(gtx, func(gtx C) D {
-					return d.emptyState(gtx, "people", "No user groups", d.teamName()+" doesn’t have any user groups yet.", nil, "")
+			if loaded && n > 0 && n < st.total {
+				// p-explorer_pagination margin_top_50: a centered outline
+				// medium button, 4px under the list; loading, Slack's
+				// LoadingButton (the spinner alone, 80px wide)
+				return layout.Inset{Top: 4, Bottom: 24}.Layout(gtx, func(gtx C) D {
+					return layout.Center.Layout(gtx, func(gtx C) D {
+						if busy {
+							return popups.LoadingButton(gtx, d.th, &d.more, popups.BtnMedium, 80)
+						}
+						return d.button(gtx, &d.more, btnOutline, false, nsBrowsers.T("Load More")) // medium: 36px
+					})
 				})
 			}
-			return dirListState(gtx, func(gtx C) D {
-				return d.emptyState(gtx, "search", "No results", "No user groups match “"+d.groupsQ+"”.", nil, "")
-			})
+			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(24))}
+		case !loaded || n == 0 && busy:
+			return layout.Inset{Left: dirPad - 20, Right: dirPad - 20}.Layout(gtx, func(gtx C) D { return d.skeleton(gtx, 6, 36) })
+		case n == 0:
+			desc := nsBrowsers.T("You may want to try adjusting your filters.")
+			if d.groupsInitial() { // isZeroState
+				desc = nsBrowsers.T("No user groups have been created yet")
+			}
+			return dirListState(gtx, func(gtx C) D { return d.emptyState(gtx, "", nsBrowsers.T("No results"), desc, nil, "") })
 		}
-		return layout.Inset{Left: dirPad, Right: dirPad}.Layout(gtx, func(gtx C) D { return d.groupRow(gtx, gs[i], i == 0, i == n-1) })
+		return layout.Inset{Left: dirPad, Right: dirPad}.Layout(gtx, func(gtx C) D { return d.groupRow(gtx, list[i], i == 0, i == n-1) })
 	})
 }
 
-// groupRow: h 65, padding 12px 20px. Name 15 700 then "@handle" 15 400
-// (8px apart); "N members · description" 13/18 muted.
+// GroupsShown is the user group browser's rows (tests): the groups in
+// order, num_found, and whether Load More is drawn.
+func (d *Directories) GroupsShown() (ids []string, total int, more bool) {
+	st, loaded, _ := d.groups.get()
+	for _, g := range st.list {
+		ids = append(ids, g.ID)
+	}
+	return ids, st.total, loaded && len(st.list) > 0 && len(st.list) < st.total
+}
+
+// GroupsLoadingMore reports Load More drawn loading.
+func (d *Directories) GroupsLoadingMore() bool {
+	_, _, more := d.GroupsShown()
+	return more && d.groups.busy()
+}
+
+// GroupsEmpty is the empty state's description when nothing is shown and
+// nothing loads ("" otherwise).
+func (d *Directories) GroupsEmpty() string {
+	st, loaded, _ := d.groups.get()
+	if !loaded || d.groups.busy() || len(st.list) > 0 {
+		return ""
+	}
+	if d.groupsInitial() {
+		return nsBrowsers.T("No user groups have been created yet")
+	}
+	return nsBrowsers.T("You may want to try adjusting your filters.")
+}
+
+// GroupsLoaded reports the browser's last fetch in, not loading.
+func (d *Directories) GroupsLoaded() bool {
+	_, loaded, _ := d.groups.get()
+	return loaded && !d.groups.busy()
+}
+
+// LoadMoreGroups is Load More's onClick.
+func (d *Directories) LoadMoreGroups() {
+	st, loaded, _ := d.groups.get()
+	if loaded && !d.groups.busy() && len(st.list) < st.total {
+		d.loadGroups(st.q, st.next, true)
+	}
+}
+
+// SortGroups picks the user group sort menu's option i (tests).
+func (d *Directories) SortGroups(i int) {
+	if i >= 0 && i < len(dirGroupSorts) && d.sorts[dirTabGroups].sel != i {
+		d.sorts[dirTabGroups].sel = i
+		d.load(dirTabGroups, d.groupsQ)
+	}
+}
+
+// OpenGroup is a group row's onListItemSelect: showUserGroupDetails
+// (SRkP q), the group's User Group pane.
+func (d *Directories) OpenGroup(id string) {
+	if o, ok := d.h.(interface{ OpenUserGroup(id string) }); ok {
+		o.OpenUserGroup(id)
+	}
+}
+
+// groupRow is BrowsePageUserGroup (NQBk; BaseBrowsePageUserGroupEntity,
+// Wq+H): h 65, padding 12px 20px. The name 15 700 (a deactivated group:
+// "{name} (Deactivated)", the row dim: content-sec text) then "@handle"
+// 15 400 8px after it; "N members  ·  description" 13/18 muted on one
+// line. The row opens the group's pane.
 func (d *Directories) groupRow(gtx C, g core.Usergroup, first, last bool) D {
+	if d.gRows == nil {
+		d.gRows = map[string]*widget.Clickable{}
+	}
+	rc := dirClick(d.gRows, g.ID)
+	if rc.Clicked(gtx) {
+		d.OpenGroup(g.ID)
+	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	name, fg := dirFirst(g.Name, g.Handle), d.p.Text
+	if g.DateDelete != 0 { // !isUserGroupActive: c-base_entity--dim
+		name, fg = nsSearch.T("{name} (Deactivated)", "name", name), d.p.Sec
+	}
 	m := op.Record(gtx.Ops)
 	dims := layout.Inset{Top: 12, Bottom: 12, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
 		return dirFill(gtx, func(gtx C) D {
 			return col(gtx,
 				layout.Rigid(func(gtx C) D {
 					return row(gtx, layout.Baseline,
-						layout.Rigid(func(gtx C) D { return d.label(gtx, 15, wBold, d.p.Text, dirFirst(g.Name, g.Handle)) }),
+						layout.Rigid(func(gtx C) D { return d.label(gtx, 15, wBold, fg, name) }),
 						layout.Flexed(1, func(gtx C) D {
 							return dirFill(gtx, func(gtx C) D {
-								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, 15, wReg, d.p.Text, "@"+g.Handle) })
+								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, 15, wReg, fg, "@"+g.Handle) })
 							})
 						}),
 					)
 				}),
 				layout.Rigid(func(gtx C) D {
-					return d.label(gtx, 13, wReg, d.p.Muted, dirJoin(" · ", dirMembers(g.UserCount), oneLine(g.Description)))
+					return d.label(gtx, 13, wReg, d.p.Muted, dirJoin("\u00a0\u00a0·\u00a0\u00a0", dirMembers(g.UserCount), oneLine(g.Description)))
 				}),
 			)
 		})
 	})
 	call := m.Stop()
 	dirRowShape(&d.base, gtx, dims.Size, first, last)
+	gg := gtx
+	gg.Constraints = layout.Exact(dims.Size)
+	rc.Layout(gg, func(gtx C) D {
+		pointerCursor(gtx)
+		return D{Size: dims.Size}
+	})
 	call.Add(gtx.Ops)
 	return dims
 }
@@ -1924,6 +2223,9 @@ func dirTabStrip(b *base, gtx C, t *tabs, icons, counts []string) D {
 func dirTabStripSel(b *base, gtx C, t *tabs, icons, selIcons, counts []string) D {
 	ch := make([]layout.FlexChild, 0, len(t.Labels))
 	for i := range t.Labels {
+		if t.Hidden != nil && t.Hidden(i) {
+			continue
+		}
 		ch = append(ch, layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 8, Right: 20}.Layout(gtx, func(gtx C) D {
 				return t.clicks[i].Layout(gtx, func(gtx C) D {
@@ -2120,7 +2422,17 @@ func (dd *dirDropdown) update(gtx C) bool {
 // 1px #5e5d60@.45, 13px bold, a caret 4px after the label. The menu opens
 // right-aligned under it.
 func (dd *dirDropdown) layoutSort(b *base, gtx C, label string) D {
-	dims := dd.btn.Layout(gtx, func(gtx C) D {
+	dims := dd.layoutSortButton(b, gtx, label)
+	if dd.open {
+		dd.menu(b, gtx, dims.Size, true)
+	}
+	return dims
+}
+
+// layoutSortButton is layoutSort's button alone (the caller places the
+// menu).
+func (dd *dirDropdown) layoutSortButton(b *base, gtx C, label string) D {
+	return dd.btn.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		tw := b.th.Measure(gtx, 13, wBold, label)
 		h, pad, chev := gtx.Dp(28), gtx.Dp(12), gtx.Dp(16)
@@ -2145,10 +2457,6 @@ func (dd *dirDropdown) layoutSort(b *base, gtx C, label string) D {
 		dirAt(gtx, image.Pt(pad+tw+gtx.Dp(4), (h-chev)/2), func(gtx C) D { return b.icon(gtx, ic, 16, b.p.Sec) })
 		return D{Size: sz}
 	})
-	if dd.open {
-		dd.menu(b, gtx, dims.Size, true)
-	}
-	return dims
 }
 
 // layoutSelect is a form select: w x 36, radius 8, 1px #7c7a7f, padding

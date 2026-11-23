@@ -29,14 +29,18 @@ var i18nViews = []i18nView{
 	{"activity", "activity", nil},
 	{"unreads", "unreads", nil},
 	{"dms", "dms", nil},
-	{"files", "files", nil},
+	// the starred collection's header is files.collections.list's name
+	// (LMEP createSidebarCollectionHeaderRow: label e.name), which the fake
+	// names in English; file sections are everyone's since the 2026-11-21
+	// drift
+	{"files", "files", []string{"Starred"}},
 	{"todos", "later", nil},
 	{"saved", "saved", nil},
 	{"drafts", "drafts", nil},
 	{"drafts-scheduled", "drafts?tab=scheduled", nil},
 	{"directories-people", "directories", nil},
 	{"directories-channels", "directories?tab=channels", nil},
-	{"directories-groups", "directories?tab=groups", nil},
+	{"directories-groups", "directories?tab=groups", []string{"Admins"}}, // the fake directory's Admins user group, drawn by its name
 	{"huddles", "huddles", nil},
 	{"canvas", "docs/" + fakeslack.CanvasChannel, nil},
 	{"list", "lists/" + fakeslack.ListKitchen, []string{ // the kitchen-sink list's columns, options and view

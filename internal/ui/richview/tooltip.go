@@ -102,6 +102,10 @@ func editedByTip(dateTime, name string) string {
 // (the Pins tab's message times).
 func FullTimestamp(ts string, now time.Time) string { return editedTip(ts, now) }
 
+// FullTimestampSeconds is getFullTimestamp with the seconds: a message
+// Timestamp's TimestampTooltip.
+func FullTimestampSeconds(ts string, now time.Time) string { return fullTimestamp(ts, now) }
+
 // fullTimestamp is getFullTimestamp (boot-shared n8t9), the tooltip of a
 // message card's time (AttachmentFooterTimestamp with compactTime: delay
 // 300): editedTip's "{date} at {time}" with the seconds.
@@ -151,7 +155,7 @@ func calendarDay(ts string, now time.Time) (time.Time, string, bool) {
 // and outside every clip.
 func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	name, ok := v.hoveredTip()
-	if !ok || !v.hovering {
+	if !ok || !v.hovering || v.tipGen != theme.TipGen() { // hidden (theme.HideTooltips) until the pointer leaves
 		return
 	}
 	if wait := v.tipAt.Add(EmojiTipDelay); !gtx.Now.IsZero() && gtx.Now.Before(wait) {

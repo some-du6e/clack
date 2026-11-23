@@ -62,12 +62,20 @@ func TestBrowseFilterParams(t *testing.T) {
 		t.Errorf("locations %+v (most people first)", pg.Locations)
 	}
 
+	f.reply["search.team"] = `{"ok":true,"items":[]}`
+	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{Team: "T2"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.last("search.team"); formVal(p, "search_only_team") != "T2" {
+		t.Errorf("usergroups search_only_team = %q", formVal(p, "search_only_team"))
+	}
 	f.reply["usergroups.search"] = `{"ok":true,"usergroups":[]}`
+	a.C.Creds.EnterpriseID = "E1"
 	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{Team: "T2"}); err != nil {
 		t.Fatal(err)
 	}
 	if p := f.last("usergroups.search"); formVal(p, "search_only_team") != "T2" {
-		t.Errorf("usergroups search_only_team = %q", formVal(p, "search_only_team"))
+		t.Errorf("grid usergroups search_only_team = %q", formVal(p, "search_only_team"))
 	}
 }
 

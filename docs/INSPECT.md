@@ -76,11 +76,23 @@ Then (at once for a Shift+click, on Enter for the review) Clack:
 
 Where the system can't copy images (Linux without wl-copy or xclip) the report's text goes on the clipboard instead, and the image is still saved. Where there is no shot at all (the headless capture failed) the report's text is copied at once, with no review.
 
+### Drawing on it
+
+The review has a pen too (Karim, 2026-11-21: "also add an drawing thing to the dev tools, optional tho"). P in the review turns it on, and the banner turns to "Draw: …". P in a session, frozen or not, grabs the whole window as a region (the report's capture row says `whole window`) and opens its review with the pen already on.
+
+- Drag over the shot to draw a freehand line. Hold Shift at the press for a rectangle. A switches drags to arrows and back.
+- 1, 2 and 3 pick red (the default), yellow and blue for the next line. Every line is 3 dp wide: 3 px at 1x, 6 at 2x, and as wide in the copy.
+- Z, Mod+Z, ⌫ or Delete takes the last line back. Esc mid-line drops only that line.
+- Esc or P goes back to blurring and keeps the lines. Esc again drops the review as before.
+- Enter or Mod+C copies the image with the lines burned in, on top of the blur and the outline.
+
+The lines are kept in the shot's pixels, as the blurred rectangles are. The review draws them over the shot with Gio, and the copy draws them on the CPU (`burnStrokes` in `internal/ui/inspect/draw.go`). The report doesn't change: its colours come from the shot as it was shot, and no row mentions the lines. With the tool off none of this is in the window: no key filter, no pointer area, no frame. `TestPenStrokesInCopy`, `TestPenUndo`, `TestPenEscBackToBlur` and `TestPenOffAddsNothing` pin all of this, and flake-check's `inspect-draw` job runs them.
+
 ## What the report says
 
 | row | what |
 |---|---|
-| capture | `dragged region` for a drag; absent for a click |
+| capture | `dragged region` for a drag, `whole window` for P's grab to draw on; absent for a click |
 | component | the innermost Slack component boundary under the pointer (`slackc.Render`/`Component`), and whether a plugin patches it. A dragged region has none |
 | element | its root element as a selector, Slack's classes and `data-qa` included; for a chrome element picked itself, that element |
 | within | the enclosing components, innermost first |
@@ -100,6 +112,17 @@ Where the system can't copy images (Linux without wl-copy or xclip) the report's
 The report is meant for #clack, so it holds no content. It never collects message text, names, topics, emails, search queries or tokens. It is built from component names, classes, sizes, colours and tags.
 
 An id becomes a tag: its kind and the first 6 hex digits of SHA-256 over a salt and the id (`ch:3fa2b1`, `user:77ab02`, `ts:9c01de`). Each report gets a new random salt, which is never written anywhere. Within one report the same channel always has the same tag, so "the same message" and "another one" stay apparent. Across reports, and for anyone without the salt, a tag says nothing. Routes keep their page (`c/`, `dms`) and tag every other segment. A run-time attribute value (a channel id in `data-qa-channel-sidebar-channel-id`) becomes a tag unless it is an enumeration such as `data-qa=add_reaction`.
+
+clack.log uses the same tags for what a report about a navigation needs (`internal/ui/navlog.go`), with one salt per run that is never written. Within one log the same message keeps its tag, and nothing in a line names a conversation or a message. No text is logged. A line is written for:
+
+- every thread pane that opens: `ui: thread opened: ch:… ts:… [at ts:…] [in the split view] (<source>)`. The source is what the entry point named (`a notification's click`, `a deep link`, `permalink from <caller>`, `message mention from <caller>`, `a message from <caller>` for a search result or Activity's Open in home, `its pane found the root was a reply`), else the first caller outside the router, as `ui/views.(*Activity).update activity.go:784`;
+- every jumpToMessage, with the thread it resolved (`-` for none): `ui: jumpToMessage: ch:… ts:… thread ts:… [in the split view] (<source>)`, and when its lookup found no message: `ui: jumpToMessage: ts:…'s thread_ts wasn't found; navigating without it (<source>)`;
+- a reply's ts that was turned into its thread (the guard for a slack://…thread_ts=<reply> link, docs/PARITY.md): `ui: jumpToMessage: its thread_ts ts:… is a reply in ts:…, whose thread opens at it (<source>)` or `ui: thread open: ts:… is a reply in ts:…, whose thread opens at it (<source>)`, or, when the pane only found out from conversations.replies, `ui: thread pane: its root ts:… is a reply in ts:…, whose thread opens at it [in the split view]`;
+- every click on or reply to one of Clack's notifications: `notify: clicked a notification: ch:… ts:… thread ts:… (id type "msg")` (`replied to` for a reply, whose text isn't logged), and a button: `notify: a notification's button 1 (a link: false)`;
+- every notification decision, for a message the socket brings and for the server's desktop_notification (a followed thread's reply): `notify: show ch:…/ts:…`, or `notify: skip <reason> ch:…/ts:…` with Slack's own number for the reason, as its maybeShowNotification logs them (6 a reply that doesn't mention you, 7 a desktop_notification that isn't a reply, 16 on screen in the focused window, 19 newer than every message the client took, 20 its thread read to it, 29 a hidden sender, …; `internal/ui/notify_decisions.go` lists them all), or a word for the checks Slack logs by text (`pref-disabled`) and the few Clack has alone (`ephemeral`, `deleted`). A notification that waits for a lookup writes its line once the lookup answers. A `notify: show` line is the rules' decision, not the display: a plugin's patch can still hold the toast (`notify: a Slick filter kept ch:…/ts:… from showing` for Slick's filters), and the system can refuse it, which its notifier logs with the same tags (`notify: Windows didn't show the toast for ch:…/ts:…`, `notify: Windows has Clack's toasts off …`, `notify: Focus Assist is on …`, `notify: macOS didn't show the notification for ch:…/ts:…`).
+- a slack: link Clack doesn't handle, by its command only: `ui: deep link not handled: slack://<command>` (`a https link` for anything else).
+
+The reads a navigation makes tag their ids the same way: `history ch:…: 120ms (network)`, `history ch:…: around ts:… in 80ms` (a jump's window), `history ch:…: older than ts:… in 60ms` and `history ch:…: newer than ts:… in 60ms` (its pages), `history ch:…: side <what> 40ms`, `tabs ch:…: 3 tabs (1 files) in 90ms`, and a failed lookup's `messages.list: 1 channels: <error> (ch:…)`.
 
 The image shows the picked element as the user saw it, and of the rest of the window only the blurred margin around it, or a dragged region as it was. Whatever the element or region holds (a picked message's text) is in it, unless the user blurs it out in the review. A click (or a drag over it) opens the review before anything is copied or saved, so the user decides what to share; a Shift+click copies the element as it is, for when nothing in it is private.
 

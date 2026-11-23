@@ -99,23 +99,71 @@ import "C"
 import (
 	"image"
 	"math"
+	"sync/atomic"
 )
 
 // displays is Displays on macOS: NSScreen.screens, read on the main
-// thread.
+// thread. The main thread serves its queue only once NSApplication
+// finished launching, so the launch's first call takes the screens
+// applicationWillFinishLaunching read (Clack patch, CLACK_PATCHES.md §56)
+// when they come first: a window placed from them waits for nothing but
+// the launch itself. Only during the launch: once the windows asked for
+// in it opened, the snapshot goes (retireLaunchScreens). Kept until a
+// first call, it was a later call's screens however late that came, as
+// they were at the launch: TestDisplaysMac, the test process's first
+// call, read the runner's Dock before it settled (a work area to 708
+// against NSScreen's 706 then, train-169's push ci 45045823814; 706
+// against 705, image-context-menu's 44990293041).
 func displays() []Display {
-	var ds []Display
-	done := make(chan struct{})
-	runOnMain(func() {
-		defer close(done)
-		var buf [32]C.gio_place_screen
-		n := int(C.gio_placeScreens(&buf[0], C.int(len(buf))))
-		for i := 0; i < n; i++ {
-			ds = append(ds, placeDisplay(buf[i]))
+	res := make(chan []Display, 1)
+	runOnMain(func() { res <- readScreens() })
+	select {
+	case ds := <-res:
+		return ds
+	case <-launchScreensReady:
+		if p := launchScreens.Swap(nil); p != nil {
+			return *p
 		}
-	})
-	<-done
+		return <-res
+	}
+}
+
+// readScreens is NSScreen.screens as Displays. Main thread.
+func readScreens() []Display {
+	var ds []Display
+	var buf [32]C.gio_place_screen
+	n := int(C.gio_placeScreens(&buf[0], C.int(len(buf))))
+	for i := 0; i < n; i++ {
+		ds = append(ds, placeDisplay(buf[i]))
+	}
 	return ds
+}
+
+// The screens at applicationWillFinishLaunching, for the launch's first
+// displays (once; Clack patch, CLACK_PATCHES.md §56).
+var (
+	launchScreensReady = make(chan struct{})
+	launchScreens      atomic.Pointer[[]Display]
+)
+
+// snapshotLaunchScreens reads the screens for the launch's first displays.
+// Main thread, in applicationWillFinishLaunching.
+func snapshotLaunchScreens() {
+	select {
+	case <-launchScreensReady:
+		return
+	default:
+	}
+	ds := readScreens()
+	launchScreens.Store(&ds)
+	close(launchScreensReady)
+}
+
+// retireLaunchScreens drops the launch's screens a call didn't take: the
+// launch is over (applicationDidFinishLaunching, after the windows asked
+// for in it opened). Main thread.
+func retireLaunchScreens() {
+	launchScreens.Store(nil)
 }
 
 func placeDisplay(s C.gio_place_screen) Display {

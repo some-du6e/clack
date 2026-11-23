@@ -14,11 +14,16 @@ import (
 
 	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -31,6 +36,13 @@ type backend struct {
 	slick *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
 	// tautStarting: startTautAsync is building the runtimes
 	tautStarting bool
+	// tautDeferJS: the real window's plugins (the JS engine) start after
+	// the launch's first real frame (startDeferredTaut); the runtimes
+	// themselves, with the theme and the user CSS, are made at once
+	tautDeferJS bool
+	// pluginStyled: this session's plugins added CSS of their own
+	// (ui.json's plugin_styled for the next start)
+	pluginStyled atomic.Bool
 
 	m       model
 	started bool
@@ -45,6 +57,7 @@ type backend struct {
 	selfID string
 	domain string
 	teamID string
+	notes  noteOrder            // notifications waiting for their lookups, in order (notify_conv.go)
 	ext    map[string]*convInfo // ResolveConv results for convs outside the sidebar
 	// extGen counts forgetExt calls per conversation: a resolve that
 	// started before one is stale and must not land (resolved).
@@ -83,6 +96,21 @@ type backend struct {
 	pluginsOnce  sync.Once
 	bookmarks    map[string][]core.Bookmark
 	fetched      map[string]time.Time
+	// headerGen numbers each channel's header reads (opened), and
+	// headerLanded is the newest whose tab read worked and landed: an
+	// answer older than that one is dropped. Each read posts once its
+	// three calls are back, so an older one could post last: a read that
+	// started before a Hide tab, its members call slow, put the hidden tab
+	// back on the bar after the read the hide asked for (files-filters-3's
+	// push ci, run 44980164338: reads of 1 tab, then 0 and 0, and the bar
+	// kept 1). A newer read that fails lands nothing, so an older good
+	// answer still lands after it (dropping on any newer read left a cold
+	// start's bar empty when the newer one failed: no cache, no retry).
+	headerGen, headerLanded map[string]int
+	// headerStarted and headerAnswered count the header reads opened
+	// started and the answers that came back to the UI goroutine (landed
+	// or dropped): tests wait for every read out to have answered
+	headerStarted, headerAnswered int
 	// side is what opened() read for a conversation's header (facepile,
 	// member count, topic), kept here so it lands whenever the
 	// conversation's row exists: the restored channel's read usually
@@ -191,11 +219,38 @@ func (b *backend) start(a *App) {
 	// "booted"), Block Kit, the restored channel's header (tabs, bookmarks,
 	// member count and facepile) and the drafts' sidebar markers. The
 	// window stays covered until they're in (reveal.go).
-	if a.inert {
+	switch {
+	case a.inert:
 		// the introduction's preview renderer: no plugin system at all (no
 		// Taut or Slick runtime, plugin config, storage or slots)
 		b.pluginsOnce.Do(func() { close(b.pluginsReady) })
-	} else {
+	default:
+		if a.rv.inRun {
+			// The real window's launch. The runtimes are made at once:
+			// taut.New and slick.New install the user CSS and the Slick
+			// theme (Go only, ms), which the reveal waits for, so the
+			// client's first frame is in the theme. What last session's
+			// plugins showed decides the rest (reveal.go): the components
+			// they patched are watched for in the first frames, and when
+			// they showed nothing (no patch, no CSS of their own) the
+			// plugins (the JS engine) start after the first real frame,
+			// so they don't take the CPU it needs; otherwise at once, as
+			// the reveal may wait for them. A cold start (no boot data)
+			// starts them at once too (below), and a window that draws
+			// nothing (started hidden) after tautDeferMax.
+			if !a.rv.done { // the launch's reveal, not a sign-in's later (it clears them)
+				slackc.SetExpected(a.prefs.PluginPatched)
+				// meta.json's custom emoji and user groups (6.6 MB and
+				// 0.4 MB on Hack Club) load after the first real frame:
+				// it doesn't draw them (the boot data has the few it
+				// does), and decoding them took the CPU it needs
+				b.core.DeferCacheRest()
+			}
+			if len(a.prefs.PluginPatched) == 0 && !a.prefs.PluginStyled {
+				b.tautDeferJS = true
+				time.AfterFunc(tautDeferMax, func() { a.Post(func() { b.startDeferredTaut(a) }) })
+			}
+		}
 		b.startTautAsync(a)
 	}
 	b.startBlockkit(a)
@@ -223,6 +278,9 @@ func (b *backend) start(a *App) {
 				if a.router.Current() == "" {
 					a.openDefault()
 				}
+			}
+			if b.warmAt.IsZero() {
+				b.startDeferredTaut(a) // not a warm start: its placeholder waits for the plugins
 			}
 			if ch := a.router.Current().Channel(); ch != "" {
 				b.headerFromCache(ch)
@@ -258,6 +316,32 @@ func (b *backend) start(a *App) {
 			b.a11yNewUserDefaults(a) // a11y_defaults.go
 		})
 	}()
+}
+
+// tautDeferMax is how long the real window's plugin runtimes wait at most
+// for its first real frame (a window started hidden draws none).
+const tautDeferMax = 2 * time.Second
+
+// startDeferredTaut starts the plugins the launch left for later, once
+// (UI goroutine): now when the runtimes are in, else as installTaut puts
+// them in (startTautAsync).
+func (b *backend) startDeferredTaut(a *App) {
+	if !b.tautDeferJS || a.data != b || b.ctx.Err() != nil {
+		return
+	}
+	b.tautDeferJS = false
+	startRuntimes(b.taut, b.slick)
+}
+
+// startRuntimes starts Taut's and Slick's plugins (made with DeferStart;
+// a no-op for runtimes already started).
+func startRuntimes(t *taut.Taut, s *slick.Slick) {
+	if t != nil {
+		t.Start()
+	}
+	if s != nil {
+		s.Start()
+	}
 }
 
 // maybePresencePrompt is maybeOpenPresencePromptDialog: once connected,
@@ -379,7 +463,15 @@ func (b *backend) stop() <-chan struct{} {
 		// (flushPendingChannelSectionCollapsedSync on teardown)
 		b.core.FlushSectionCollapsed()
 		closeTaut(s, t)
-		_ = b.core.Close()
+		_ = b.core.Close() // and its Release: core's maps keyed by the App
+		// what the UI's packages keep of the session beside it: its
+		// message hub, its app DMs, its plugin credit names (each kept the
+		// session in memory for good after a sign-out or a switch;
+		// ci-speed-3)
+		messages.ForgetCore(b.core)
+		blockkit.ForgetCore(b.core)
+		composer.ForgetCore(b.core)
+		forgetCreditNames(b.core.S)
 	}()
 	return done
 }
@@ -527,7 +619,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 		}
 		m.Sections = append(m.Sections, ss)
 	}
-	m.threadsUnread = s.Threads.Unread
+	m.threadsUnread, m.threadMentions = b.core.ThreadsLink()
 	b.recount()
 	m.version++
 	a.Invalidate()
@@ -731,6 +823,10 @@ func (b *backend) handle(a *App, ev core.Event) {
 		changed = changed || b.activityBadgeMoved()
 	case "activity_badges": // badge_counts_updated or a mark read (core activity_badges.go)
 		changed = b.activityBadgeMoved()
+	case "threads_state": // update_thread_state taken at once: the reply bars' Unread mark (core thread_unreads.go)
+		changed = true
+	case "thread_activity": // a channel's unread thread activity: its reply bars' Unread marks (core channel_thread_activity.go)
+		a.Invalidate()
 	case "presence":
 		for _, c := range m.Convs {
 			if c.Kind == "im" && (c.User == ev.UserID || contains(ev.Users, c.User)) {
@@ -827,6 +923,17 @@ func (b *backend) handle(a *App, ev core.Event) {
 		a.Invalidate()
 	case "pins_tab", "bookmarks": // the Pins tab's rows, the folders' bookmarks (core/channel_pins.go, bookmark_folders.go)
 		a.Invalidate()
+	case "list_prefs": // a conversation's list prefs: the composer's + reads can_upload_files (core/upload_gates.go)
+		a.Invalidate()
+	}
+	switch ev.Type {
+	case "threads_state", "counts", "marked", "activity_badges":
+		// the Threads link reads the threads' state and channel_badges'
+		// thread_mentions (core ThreadsLink)
+		if u, n := b.core.ThreadsLink(); u != m.threadsUnread || n != m.threadMentions {
+			m.threadsUnread, m.threadMentions = u, n
+			changed = true
+		}
 	}
 	if changed {
 		b.recount()
@@ -915,35 +1022,51 @@ func (b *backend) maybeNotify(a *App, ev core.Event) { b.maybeNotifyAfter(a, ev,
 // maybeNotifyAfter is maybeNotify; resolved: the lookups it needed ran
 // (noteResolve), so it shows what it has.
 func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
-	if ev.Msg == nil || ev.Msg.System || b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
+	if ev.Msg == nil || ev.Msg.System {
+		return // no message of Slack's to decide on
+	}
+	// every decision below writes its line (notify_decisions.go); a
+	// notification that waits for lookups writes it once they answer
+	skip := func(why noteSkip) { noteDecided(ev.Channel, ev.TS, why) }
+	if b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
+		skip(noteSkipEphemeral)
 		return
 	}
 	key := noteShownKey(ev.Channel, ev.TS)
 	if !resolved && b.noteWasShown(key) {
-		return // shown already (notify_dm.go)
+		skip(noteSkipShown) // shown already (notify_dm.go)
+		return
 	}
 	if !b.notePushOn(ev.Channel) {
-		return // "Skip pref-disabled push notification"
+		skip(noteSkipPushOff) // "Skip pref-disabled push notification"
+		return
 	}
 	if ev.Msg.Streaming() && b.core.Experiment("defer_notification_3p_streaming") == "on" {
+		skip(noteSkipStreaming)
 		return
 	}
 	if b.core.UserHidden(ev.Msg.User) {
-		return // a member the viewer hid (isUserHidden): no notification, no lookups for one
+		skip(noteSkipHidden) // a member the viewer hid (isUserHidden): no notification, no lookups for one
+		return
 	}
 	if c, ok := b.core.MessageChange(ev.Channel, ev.TS); ok && c.Deleted {
-		return // deleted while the lookups it waited for ran: nothing to show, or open
+		skip(noteSkipDeleted) // deleted while the lookups it waited for ran: nothing to show, or open
+		return
 	}
 	c, named := b.noteConv(ev.Channel)
 	if c != nil && c.Preview {
-		return // a channel the viewer isn't in (isMemberOfChannel: reason 2)
+		skip(noteSkipNotMember) // a channel the viewer isn't in (isMemberOfChannel: reason 2)
+		return
 	}
 	ignoreDND := b.noteDNDIgnored(ev.Channel, ev.TS)
+	var why noteSkip
 	if noteIsDM(ev, c) {
-		if b.noteDMHolds(a, ev, c, ignoreDND) {
-			return
-		}
-	} else if b.noteChannelHolds(a, ev, c, ignoreDND) {
+		why = b.noteDMReason(a, ev, c, ignoreDND)
+	} else {
+		why = b.noteChannelReason(a, ev, c, ignoreDND)
+	}
+	if why != noteShow {
+		skip(why)
 		return
 	}
 	// Slack records it as the showNotification thunk goes out, before the
@@ -953,9 +1076,10 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		// a conversation core doesn't know was looked up for this very
 		// message (core onMessage's refreshConv); one it knows without a
 		// name, and the channels the text mentions that nobody named
-		// yet, are looked up now
+		// yet, are looked up now. Not a group DM: its name is its members'
+		// (the people below), and Slack looks nothing else up for it
 		var ids []string
-		if c != nil && !named && c.Kind != "im" && c.Kind != "app" {
+		if c != nil && !named && c.Kind != "im" && c.Kind != "app" && c.Kind != "mpim" {
 			ids = append(ids, ev.Channel)
 		}
 		ids = append(ids, b.noteMentions(ev.Msg.Doc)...)
@@ -965,12 +1089,17 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		// and the messages its slugs link to (noteSlugs)
 		msgs := b.noteSlugs(ev.Msg.Doc)
 		if len(ids) > 0 || len(people) > 0 || len(msgs) > 0 {
-			b.noteResolve(a, ids, people, msgs, func() {
+			b.noteResolve(a, ev.Channel, ids, people, msgs, func() {
 				if len(people) > 0 {
 					ev = b.noteFresh(ev)
 				}
 				b.maybeNotifyAfter(a, ev, true)
 			})
+			return
+		}
+		// nothing to look up: now, unless an earlier notification of the
+		// conversation still waits for its lookups or is queued (noteOrder)
+		if b.notes.later(a, ev.Channel, func() { b.maybeNotifyAfter(a, ev, true) }) {
 			return
 		}
 	}
@@ -987,7 +1116,9 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	// plugins pass and then hides it (shouldHideNotificationText): a
 	// plugin's rewrite of the text never shows either
 	hidden := b.notifyHiddenBody(ev, c)
-	a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
+	// in order with the other notifications (showNotification: taut.DispatchSeq)
+	noteDecided(ev.Channel, ev.TS, noteShow)
+	a.showNotification(map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 		func(ctx context.Context, args map[string]any) (any, error) {
 			if t, text, ok := notificationText(args, msg, body); ok {
 				if b.core.Prefs().NoTextInNotifications {
@@ -997,6 +1128,30 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 			}
 			return nil, nil
 		})
+}
+
+// showNotification dispatches Slack's showNotification thunk for one
+// notification (UI goroutine): plugins may change or drop it, and native
+// shows it. Each goes out as it comes, without waiting for the ones
+// before, as Slack's messageReceived dispatches it for every message: its
+// JS call is queued now, in order with the socket's events and the store
+// updates before it (a dispatch's in-order lane, ahead of the queued
+// renders, as Slack shows the toast in the socket event's task; not the
+// user's lane, which is for input), and the natives run in the order the
+// plugins' patches call them, or the order of the calls with none
+// (taut.DispatchSeq). A goroutine each (App.dispatch) could show two in
+// reverse. However late its JS runs, its native still shows it. Slick's
+// filters ask the toast it shows as it's about to go to the system, with
+// its title and body (sendNote's slickAllows), so their patch of the thunk
+// lets it by (_clackToast; slick js 30_main.js), where they ask any other
+// dispatch over its arguments.
+func (a *App) showNotification(args map[string]any, native func(context.Context, map[string]any) (any, error)) {
+	args["_clackToast"] = true
+	taut.DispatchSeq(context.Background(), a.Taut(), "showNotification", args, native, func(_ any, err error) {
+		if err != nil {
+			log.Printf("ui: showNotification: %v", err)
+		}
+	})
 }
 
 func (b *backend) setCount(id string, cnt core.Count) bool {
@@ -1037,7 +1192,7 @@ func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
 }
 
 // notifyBody is getContentForNotification: the message's text
-// (notifyText: extractTextFromMessage, richtext.NotificationText, named by
+// (notifyText: extractTextFromMessage, richtext.NotificationMessageText, named by
 // noteNames), after "{sender}: " outside DMs, with its mentions written as
 // Slack's userToText and channelToText write them (notify_conv.go: never
 // the raw id). With no_text_in_notifications (shouldHideNotificationText)
@@ -1120,6 +1275,12 @@ func (b *backend) opened(ch string) {
 	b.fetched[ch] = time.Now()
 	b.headerFromCache(ch)
 	a := b.app
+	if b.headerGen == nil {
+		b.headerGen = map[string]int{}
+	}
+	b.headerGen[ch]++
+	gen := b.headerGen[ch]
+	b.headerStarted++
 	go func() {
 		ctx, cancel := context.WithTimeout(b.ctx, 20*time.Second)
 		defer cancel()
@@ -1154,7 +1315,7 @@ func (b *backend) opened(ch string) {
 		}
 		wg.Wait()
 		if err != nil {
-			log.Printf("ui: tabs %s: %v", ch, err)
+			log.Printf("ui: tabs %s: %v", logtag.ID(ch), err)
 		}
 		// Slack's tab bar (core.Tabs: canvases, lists, bookmarks, files…).
 		// A tab whose file or bookmarks read failed keeps what the last
@@ -1167,7 +1328,7 @@ func (b *backend) opened(ch string) {
 		tabs, bms := b.tabsOf(ts, notMember)
 		var members []string
 		if tried {
-			log.Printf("ui: members %s: %d err=%v", ch, len(us), merr)
+			log.Printf("ui: members %s: %d err=%v", logtag.ID(ch), len(us), merr)
 			if merr == nil {
 				for _, u := range us {
 					if len(members) == 3 {
@@ -1184,6 +1345,16 @@ func (b *backend) opened(ch string) {
 			return
 		}
 		a.Post(func() {
+			b.headerAnswered++
+			if gen < b.headerLanded[ch] {
+				return // a newer read of this header landed: its answer wins
+			}
+			if err == nil {
+				if b.headerLanded == nil {
+					b.headerLanded = map[string]int{}
+				}
+				b.headerLanded[ch] = gen
+			}
 			if b.tabsDone == nil {
 				b.tabsDone = map[string]bool{}
 			}
@@ -1790,8 +1961,8 @@ func (b *backend) signOut() {
 }
 
 // openURL opens a link in the system browser (http, https and mailto only;
-// see openurl.Check).
-func openURL(u string) { _ = openurl.Open(u) }
+// see openurl.Check). A var: tests catch what reaches the browser.
+var openURL = func(u string) { _ = openurl.Open(u) }
 
 // notificationMessage is showNotification's `message`: the message as
 // Slack's store keeps it, which plugins drop (ShutUpSlackbot, StreamerMode

@@ -35,14 +35,14 @@ func (e *Editor) HitPos(pt image.Point) int {
 // WordRange is the word around pos (a double click's selection).
 func (e *Editor) WordRange(pos int) (lo, hi int) {
 	e.init()
-	return edWordAt(e.doc, min(max(pos, 0), e.doc.Len()))
+	return edClickWord(e.doc, min(max(pos, 0), e.doc.Len()))
 }
 
-// LineRange is the line around pos (a triple click's selection).
+// LineRange is the paragraph around pos and its break (a triple click's
+// selection).
 func (e *Editor) LineRange(pos int) (lo, hi int) {
 	e.init()
-	l := e.doc.LineOf(min(max(pos, 0), e.doc.Len()))
-	return e.doc.LineStart(l), e.doc.LineEnd(l)
+	return edClickParagraph(e.doc, min(max(pos, 0), e.doc.Len()))
 }
 
 // SeedClick tells the editor about a click its host handled before the
@@ -54,14 +54,13 @@ func (e *Editor) SeedClick(now time.Time, pt image.Point) {
 	e.seedAt, e.seedPt, e.clickBias = now, pt, 0
 }
 
-// seedWindow is how close a press must follow the seeded click (and
-// gesture.Click's own double-click window).
-const seedWindow = 400 * time.Millisecond
-
+// seededClicks counts a press that follows the seeded click within the
+// platform's double-click time (gesture.Click's own, Gio patch 48) as its
+// next click.
 func (e *Editor) seededClicks(gtx layout.Context, ev gesture.ClickEvent) int {
 	if ev.NumClicks <= 1 {
 		e.clickBias = 0
-		if !e.seedAt.IsZero() && gtx.Now.Sub(e.seedAt) < seedWindow {
+		if !e.seedAt.IsZero() && gtx.Now.Sub(e.seedAt) <= gesture.DoubleClickTime() {
 			if d := ev.Position.Sub(e.seedPt); d.X*d.X+d.Y*d.Y <= 16 {
 				e.clickBias = 1
 			}

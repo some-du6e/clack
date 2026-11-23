@@ -6,6 +6,7 @@ package app
 
 import (
 	"image"
+	"slices"
 	"testing"
 	"time"
 
@@ -29,6 +30,23 @@ func sameScreen(d, p Display) bool {
 	return d.Bounds == p.Bounds && d.Primary == p.Primary && d.Scale == p.Scale && d.WorkArea.In(d.Bounds)
 }
 
+// macAfterLaunch waits until NSApplication finished launching: its
+// applicationDidFinishLaunching ran (launchOpened) and returned (a
+// main-thread round trip after it). A test can start while the launch is
+// still going on, and a Displays call then takes the launch's screens, as
+// it should (CLACK_PATCHES.md §56): TestDisplaysMacAfterLaunchReadsLive
+// did once in 10 processes (flakes-1122c's fl1122c-s-displays
+// 45056626963).
+func macAfterLaunch(t *testing.T) {
+	t.Helper()
+	macWaitUntil(t, "the launch's end", func() bool {
+		launchMu.Lock()
+		defer launchMu.Unlock()
+		return launchOpened
+	})
+	cocoatest.OnMain(func() {})
+}
+
 func (h *macTestWindow) config() Config {
 	if c := h.cfg.Load(); c != nil {
 		return *c
@@ -43,9 +61,33 @@ func TestDisplaysMac(t *testing.T) {
 	if !macWindowTestsEnabled() {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
 	}
-	ds := Displays()
+	macAfterLaunch(t) // this tests the reads after it
+	// Displays and NSScreen are two reads, and the runner's Dock may move
+	// the visible frame between them: compare a read of Displays taken
+	// between two NSScreen reads that agree. The steady misses (a work
+	// area 706 points down against NSScreen's 705, image-context-menu's
+	// push ci 44990293041; 708 against 706, train-169's 45045823814) were
+	// the launch's screens, which this first call of the process got
+	// (TestDisplaysMacAfterLaunchReadsLive).
+	screens := func() []cocoatest.Screen {
+		var ss []cocoatest.Screen
+		cocoatest.OnMain(func() { ss = cocoatest.Screens() })
+		return ss
+	}
+	var ds []Display
 	var ss []cocoatest.Screen
-	cocoatest.OnMain(func() { ss = cocoatest.Screens() })
+	for try := 0; ; try++ {
+		before := screens()
+		ds = Displays()
+		ss = screens()
+		if slices.Equal(before, ss) {
+			break
+		}
+		if try == 50 {
+			t.Fatalf("NSScreen never held still across a Displays read (50 tries): %+v, then %+v", before, ss)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	t.Logf("displays %+v; NSScreen %+v", ds, ss)
 	if len(ds) == 0 || len(ds) != len(ss) {
 		t.Fatalf("%d displays, NSScreen has %d", len(ds), len(ss))
@@ -58,6 +100,47 @@ func TestDisplaysMac(t *testing.T) {
 	if p := ds[0].Bounds.Min; p != (image.Point{}) {
 		t.Errorf("the primary screen's top left is %v, want the origin", p)
 	}
+}
+
+// After the launch Displays reads NSScreen afresh, on the main thread,
+// whenever it's called: held, the main thread holds the call, which then
+// gives the screens as they are. The launch's own screens (CLACK_PATCHES.md
+// §56) went to the process's first call however late it came, without the
+// main thread: TestDisplaysMac read the runner's Dock as it was at the
+// launch (a work area to 708 against NSScreen's 706, train-169's push ci
+// 45045823814). Run alone, this is the process's first call.
+func TestDisplaysMacAfterLaunchReadsLive(t *testing.T) {
+	if !macWindowTestsEnabled() {
+		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
+	}
+	macAfterLaunch(t)
+	held, release := make(chan struct{}), make(chan struct{})
+	go cocoatest.OnMain(func() {
+		close(held)
+		<-release
+	})
+	<-held
+	got := make(chan []Display, 1)
+	go func() { got <- Displays() }()
+	select {
+	case ds := <-got:
+		close(release)
+		t.Fatalf("Displays answered %+v with the main thread held: not NSScreen now (the launch's screens)", ds)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	var ds []Display
+	select {
+	case ds = <-got:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Displays never answered once the main thread was free")
+	}
+	var ss []cocoatest.Screen
+	cocoatest.OnMain(func() { ss = cocoatest.Screens() })
+	if len(ds) == 0 || len(ds) != len(ss) {
+		t.Fatalf("%d displays, NSScreen has %d", len(ds), len(ss))
+	}
+	t.Logf("displays %+v; NSScreen %+v", ds, ss)
 }
 
 // Bounds on macOS: the window opens at the frame asked for (points from

@@ -80,6 +80,7 @@ type sidebarState struct {
 	outboxTip   popups.TipState
 	codeTips    map[string]*codeRowTip // code channel rows' name tooltips (codechannel.go)
 	sharedTips  map[string]*codeRowTip // shared channel rows' name tooltips (sidebar_connect.go)
+	nameTips    map[string]*codeRowTip // other rows' truncated-name tooltips (sidebar_connect.go)
 	teamAsked   map[string]bool        // external teams asked for (sidebar_connect.go)
 
 	// ChannelSidebar (slick_shell.go)
@@ -589,6 +590,16 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		if r.key == "huddles" && a.huddles().Link().Unread && !a.focusQuiet() {
 			weight = theme.Black
 			col = c.SidebarTextUnread
+		}
+		// AllThreadsRowElement: hasUnreads (the threads' unread state)
+		// bolds it, but under focus mode, and channel_badges'
+		// thread_mentions is its badge (core ThreadsLink)
+		if r.key == "threads" {
+			if a.model().threadsUnread && !a.focusQuiet() {
+				weight = theme.Black
+				col = c.SidebarTextUnread
+			}
+			mentions = a.model().threadMentions
 		}
 	case sbHeading:
 		clickPrefix = "sbh."

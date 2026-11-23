@@ -103,16 +103,43 @@ type ugState struct {
 	channels []string // prefs.channels
 	groups   []string // prefs.groups (private channels)
 	updated  int64    // date_update
+	created  int64    // date_create
 }
 
 type ugEdits struct {
-	mu     sync.Mutex
-	m      map[string]*ugState
-	own    []fixtureGroup // SetUsergroups
-	ownSet bool
+	mu      sync.Mutex
+	m       map[string]*ugState
+	own     []fixtureGroup // SetUsergroups
+	ownSet  bool
+	made    []string                // usergroups.create's ids, in order
+	forms   map[string][]url.Values // UsergroupForms
+	disable map[string]bool         // SetUsergroupDisabled before any edit
 }
 
-var ugEditIndex sync.Map // *Server → *ugEdits
+// ugCreatedBase is the fixed groups' date_create: the generated group i
+// was made i hours after it, the fixtures a day before.
+const ugCreatedBase = 1700000000
+
+// UsergroupForms returns the forms of every call to method (usergroups.*,
+// search.team) in order.
+func (s *Server) UsergroupForms(method string) []url.Values {
+	e := s.ugEdits()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]url.Values(nil), e.forms[method]...)
+}
+
+func (s *Server) noteUsergroupForm(method string, f url.Values) {
+	e := s.ugEdits()
+	e.mu.Lock()
+	if e.forms == nil {
+		e.forms = map[string][]url.Values{}
+	}
+	e.forms[method] = append(e.forms[method], f)
+	e.mu.Unlock()
+}
+
+var ugEditIndex = newPerServer() // *Server → *ugEdits
 
 func (s *Server) ugEdits() *ugEdits {
 	v, _ := ugEditIndex.LoadOrStore(s, &ugEdits{m: map[string]*ugState{}})
@@ -132,24 +159,43 @@ func (s *Server) usergroupState(id string) (ugState, bool) {
 		e.mu.Unlock()
 		return out, true
 	}
+	off := e.disable[id]
 	e.mu.Unlock()
-	for _, f := range s.fixtureGroups() {
+	for j, f := range s.fixtureGroups() {
 		if f.g.ID == id {
-			return ugState{g: f.g, members: f.members, channels: f.channels}, true
+			st := ugState{g: f.g, members: f.members, channels: f.channels, created: ugCreatedBase - 86400 + int64(j)*60}
+			if off {
+				st.g.DateDelete = ugCreatedBase
+			}
+			return st, true
 		}
 	}
-	for i := 0; i < s.Size.Usergroups; i++ {
+	// a generated group's id holds its index (S0FAKE%05d): no scan, so
+	// usergroupsAll stays linear on the 2,003-group fake
+	if i, err := strconv.Atoi(strings.TrimPrefix(id, "S0FAKE")); err == nil && len(id) == len("S0FAKE00000") && strings.HasPrefix(id, "S0FAKE") && i >= 0 && i < s.Size.Usergroups {
 		g := s.generatedGroup(i)
-		if g.ID != id {
-			continue
-		}
 		var ids []string
 		for k := 1; k <= g.UserCount && k < len(s.users); k++ {
 			ids = append(ids, s.users[k].ID)
 		}
-		return ugState{g: g, members: ids}, true
+		if off {
+			g.DateDelete = ugCreatedBase
+		}
+		return ugState{g: g, members: ids, created: ugCreatedBase + int64(i)*3600}, true
 	}
 	return ugState{}, false
+}
+
+// SetUsergroupDisabled deactivates group id (date_delete set) before
+// any edit, as a group an admin disabled long ago (tests).
+func (s *Server) SetUsergroupDisabled(id string) {
+	e := s.ugEdits()
+	e.mu.Lock()
+	if e.disable == nil {
+		e.disable = map[string]bool{}
+	}
+	e.disable[id] = true
+	e.mu.Unlock()
 }
 
 // editUsergroup applies fn to group id's copy (made on first edit).
@@ -189,6 +235,10 @@ func (s *Server) usergroupsAll() []slack.Usergroup {
 	for _, f := range s.fixtureGroups() {
 		ids = append(ids, f.g.ID)
 	}
+	e := s.ugEdits()
+	e.mu.Lock()
+	ids = append(ids, e.made...)
+	e.mu.Unlock()
 	gs := make([]slack.Usergroup, 0, len(ids))
 	for _, id := range ids {
 		if st, ok := s.usergroupState(id); ok {
@@ -220,7 +270,7 @@ func (s *Server) liveMembers(ids []string) []string {
 func (s *Server) usergroupJSON(st ugState, withUsers bool) map[string]any {
 	g := st.g
 	m := map[string]any{"id": g.ID, "handle": g.Handle, "name": g.Name, "description": g.Description,
-		"user_count": g.UserCount, "date_delete": g.DateDelete, "date_update": st.updated, "team_id": g.TeamID, "is_usergroup": true, "is_subteam": true,
+		"user_count": g.UserCount, "date_delete": g.DateDelete, "date_update": st.updated, "date_create": st.created, "team_id": g.TeamID, "is_usergroup": true, "is_subteam": true,
 		"is_org_level": strings.HasPrefix(g.TeamID, "E"), "is_section": g.IsSection, "auto_type": nilIfEmpty(g.AutoType),
 		"prefs": map[string]any{"channels": nonNil(st.channels), "groups": nonNil(st.groups)}}
 	if withUsers {
@@ -328,21 +378,17 @@ func (s *Server) handleUsergroups(method string, f url.Values, edge map[string]j
 		}
 		return ok("usergroups", live), true
 	case "usergroups.search":
-		// UserGroupDetails' refresh: {keyword: the handle, count: 1}
-		kw := strings.ToLower(f.Get("keyword"))
-		n, _ := strconv.Atoi(f.Get("count"))
-		var out []map[string]any
-		for _, g := range s.usergroupsAll() {
-			if kw != "" && !strings.HasPrefix(g.Handle, kw) && !strings.Contains(strings.ToLower(g.Name), kw) {
-				continue
-			}
-			st, _ := s.usergroupState(g.ID)
-			out = append(out, s.usergroupJSON(st, false))
-			if n > 0 && len(out) >= n {
-				break
-			}
+		s.noteUsergroupForm(method, f)
+		return s.searchUsergroups(f), true
+	case "search.team":
+		if !strings.Contains(f.Get("query"), `"value":"group"`) {
+			return nil, false // people searches go on to search.go
 		}
-		return ok("usergroups", out), true
+		s.noteUsergroupForm(method, f)
+		return s.searchTeamUsergroups(f), true
+	case "usergroups.create":
+		s.noteUsergroupForm(method, f)
+		return s.createUsergroup(f), true
 	case "usergroups.users.list":
 		ids, g, found := s.usergroupMembers(f.Get("usergroup"))
 		if !found {
@@ -365,6 +411,7 @@ func (s *Server) handleUsergroups(method string, f url.Values, edge map[string]j
 	case "usergroups.update":
 		return s.updateUsergroup(f), true
 	case "usergroups.users.update":
+		s.noteUsergroupForm(method, f)
 		return s.updateUsergroupUsers(f), true
 	case "usergroups.disable", "usergroups.enable":
 		st, found := s.editUsergroup(f.Get("usergroup"), func(st *ugState) {
@@ -406,6 +453,193 @@ func (s *Server) handleUsergroups(method string, f url.Values, edge map[string]j
 		return ok(), true
 	}
 	return nil, false
+}
+
+// searchUsergroups is usergroups.search as the grid answers it: the
+// groups whose handle starts with the keyword or whose name holds it
+// (an exact handle first: UserGroupDetails' refresh asks {keyword: the
+// handle, count: 1}), include_disabled=false leaving out deactivated
+// ones, search_only_team keeping one team's, sorted by sort and sort_dir
+// when given (name, date_create, member_count), count a page (all
+// without one) from cursor_mark, with num_found and next_cursor_mark.
+func (s *Server) searchUsergroups(f url.Values) any {
+	kw := strings.ToLower(f.Get("keyword"))
+	team := f.Get("search_only_team")
+	var sts []ugState
+	for _, g := range s.usergroupsAll() {
+		if kw != "" && !strings.HasPrefix(g.Handle, kw) && !strings.Contains(strings.ToLower(g.Name), kw) {
+			continue
+		}
+		if f.Get("include_disabled") == "false" && g.DateDelete != 0 {
+			continue
+		}
+		if team != "" && g.TeamID != team {
+			continue
+		}
+		st, _ := s.usergroupState(g.ID)
+		sts = append(sts, st)
+	}
+	if f.Has("sort") {
+		desc := f.Get("sort_dir") == "desc"
+		less := func(a, b ugState) int { return strings.Compare(strings.ToLower(a.g.Name), strings.ToLower(b.g.Name)) }
+		switch f.Get("sort") {
+		case "date_create":
+			less = func(a, b ugState) int { return int(a.created - b.created) }
+		case "member_count":
+			less = func(a, b ugState) int { return a.g.UserCount - b.g.UserCount }
+		}
+		slices.SortStableFunc(sts, func(a, b ugState) int {
+			if desc {
+				return less(b, a)
+			}
+			return less(a, b)
+		})
+	}
+	if kw != "" {
+		slices.SortStableFunc(sts, func(a, b ugState) int {
+			ea, eb := a.g.Handle == kw, b.g.Handle == kw
+			switch {
+			case ea && !eb:
+				return -1
+			case eb && !ea:
+				return 1
+			}
+			return 0
+		})
+	}
+	total := len(sts)
+	from := 0
+	if c := f.Get("cursor_mark"); strings.HasPrefix(c, "ugc:") {
+		from, _ = strconv.Atoi(strings.TrimPrefix(c, "ugc:"))
+	}
+	from = min(max(from, 0), total)
+	to := total
+	if n, _ := strconv.Atoi(f.Get("count")); n > 0 {
+		to = min(from+n, total)
+	}
+	next := ""
+	if to < total {
+		next = "ugc:" + strconv.Itoa(to)
+	}
+	out := []map[string]any{}
+	for _, st := range sts[from:to] {
+		out = append(out, s.usergroupJSON(st, false))
+	}
+	return ok("usergroups", out, "num_found", total, "next_cursor_mark", next)
+}
+
+// searchTeamUsergroups is search.team's user group search off a grid
+// (fetchPaginatedUserGroupsWithQuery): query {and: [is group, external
+// false, fuzzy_with_email per word]} (each word in the handle or name),
+// include_deleted 1 keeping deactivated groups, search_only_team, sort
+// name / date / member_count with sort_dir, count a page from
+// cursor_mark; items, num_found, next_cursor_mark. Its items carry only
+// id, name, handle, description, user_count and date_delete (no team_id,
+// auto_type, is_section or date_update), so the client's upsert has to
+// keep the stored ones.
+func (s *Server) searchTeamUsergroups(f url.Values) any {
+	var q struct {
+		Clauses []struct {
+			Type  string `json:"type"`
+			Value any    `json:"value"`
+		} `json:"clauses"`
+	}
+	_ = json.Unmarshal([]byte(f.Get("query")), &q)
+	var words []string
+	for _, c := range q.Clauses {
+		if w, ok := c.Value.(string); ok && c.Type == "fuzzy_with_email" {
+			words = append(words, strings.ToLower(w))
+		}
+	}
+	g := url.Values{"search_only_team": {f.Get("search_only_team")}, "sort_dir": {f.Get("sort_dir")}} // every match, sorted
+	if f.Get("include_deleted") != "1" {
+		g.Set("include_disabled", "false")
+	}
+	switch f.Get("sort") {
+	case "date":
+		g.Set("sort", "date_create")
+	case "member_count", "name":
+		g.Set("sort", f.Get("sort"))
+	}
+	all := s.searchUsergroups(g).(map[string]any)["usergroups"].([]map[string]any)
+	var hits []map[string]any
+	for _, m := range all {
+		hay := strings.ToLower(m["handle"].(string) + " " + m["name"].(string))
+		keep := true
+		for _, w := range words {
+			keep = keep && strings.Contains(hay, w)
+		}
+		if keep {
+			hits = append(hits, map[string]any{"id": m["id"], "name": m["name"], "handle": m["handle"], "description": m["description"],
+				"user_count": m["user_count"], "date_delete": m["date_delete"]})
+		}
+	}
+	total := len(hits)
+	from := 0
+	if c := f.Get("cursor_mark"); strings.HasPrefix(c, "ugc:") {
+		from, _ = strconv.Atoi(strings.TrimPrefix(c, "ugc:"))
+	}
+	from = min(max(from, 0), total)
+	to := total
+	if n, _ := strconv.Atoi(f.Get("count")); n > 0 {
+		to = min(from+n, total)
+	}
+	next := ""
+	if to < total {
+		next = "ugc:" + strconv.Itoa(to)
+	}
+	items := append([]map[string]any{}, hits[from:to]...)
+	return ok("items", items, "num_found", total, "next_cursor_mark", next)
+}
+
+// createUsergroup is usergroups.create: a workspace group (team_id, or
+// the fake's team) with the name, handle, description, default channels
+// and enable_section asked for and no members yet, then subteam_created.
+// A viewer who isn't UsergroupEditor gets permission_denied; a name or
+// handle in use, name_already_exists or handle_already_exists; more than
+// 100 channels, too_many_linked_channels.
+func (s *Server) createUsergroup(f url.Values) any {
+	name, handle := strings.TrimSpace(f.Get("name")), f.Get("handle")
+	switch {
+	case !s.UsergroupEditor:
+		return map[string]any{"ok": false, "error": "permission_denied"}
+	case name == "":
+		return map[string]any{"ok": false, "error": "invalid_name"}
+	}
+	for _, g := range s.usergroupsAll() {
+		if strings.EqualFold(g.Name, name) {
+			return map[string]any{"ok": false, "error": "name_already_exists"}
+		}
+		if handle != "" && g.Handle == handle {
+			return map[string]any{"ok": false, "error": "handle_already_exists"}
+		}
+	}
+	var chans []string
+	for _, c := range strings.Split(f.Get("channels"), ",") {
+		if c != "" {
+			chans = append(chans, c)
+		}
+	}
+	if len(chans) > 100 {
+		return map[string]any{"ok": false, "error": "too_many_linked_channels"}
+	}
+	team := f.Get("team_id")
+	if team == "" {
+		team = TeamID
+	}
+	e := s.ugEdits()
+	e.mu.Lock()
+	id := fmt.Sprintf("S0FAKENEW%03d", len(e.made)+1)
+	now := time.Now().Unix()
+	st := &ugState{g: slack.Usergroup{ID: id, Handle: handle, Name: name, Description: f.Get("description"), TeamID: team,
+		IsSection: f.Get("enable_section") == "true", DateUpdate: now}, updated: now, created: now}
+	st.channels, st.groups = splitPrefs(chans)
+	e.m[id] = st
+	e.made = append(e.made, id)
+	out := *st
+	e.mu.Unlock()
+	s.emit(map[string]any{"type": "subteam_created", "subteam": s.usergroupJSON(out, true), "event_ts": fmt.Sprintf("%d.000200", now)})
+	return ok("usergroup", s.usergroupJSON(out, true))
 }
 
 // updateUsergroup is usergroups.update: name, handle, description,

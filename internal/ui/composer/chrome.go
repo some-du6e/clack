@@ -3,8 +3,10 @@ package composer
 import (
 	"image"
 	"image/color"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/gesture"
@@ -66,6 +68,7 @@ const (
 	caCancel                       // edit mode
 	caParagraph                    // ¶▾ button
 	caDivider                      // divider button: insert a divider line
+	caDrafts                       // the drafts button (DraftManagementButton): its menu
 )
 
 // chromeAction is something the user did in the chrome.
@@ -76,6 +79,9 @@ type chromeAction struct {
 	// Anchor is the button's rect in composer-local pixels (composer.go
 	// adds its window Origin).
 	Anchor image.Rectangle
+	// Clicks is a pointer click's count (gesture.Click's NumClicks: 2 for
+	// the second click of a double click); caAttach reads it.
+	Clicks int
 }
 
 // chromeState is what the chrome draws this frame.
@@ -101,6 +107,12 @@ type chromeState struct {
 	// disable_file_attach_after_send): the edit composer has no + and no
 	// attachments row
 	NoEditFiles bool
+	// UploadBlocked is the + button's N (core.SlackConnectFileSharingBlocked):
+	// no "Tip: double click to upload" under its tooltip
+	UploadBlocked bool
+	// PlusOpen is the + button's open state (ShortcutsMenuTriggerButton's
+	// S, attachments.plusOpen): p-shortcuts_menu_trigger_button--composer_ia-open
+	PlusOpen bool
 	// Invalid is WysiwygContainer's isInvalid (a Block Kit field with an
 	// error): c-basic_container--invalid
 	Invalid bool
@@ -143,8 +155,22 @@ type chromeState struct {
 	// OverLimit is how many characters the message is past the 12,000
 	// limit (TextyLengthWarning's numCharsOverLimit; charlimit.go).
 	OverLimit int
-	SelLo     int // selection start (TextyInput's quill.getSelection)
-	SelN      int // selected characters
+	// TooManyFiles: more than 10 files attached (isComposerDraftSendable's
+	// tooManyFiles), so the send is off.
+	TooManyFiles bool
+	// Drafts is the drafts button's count (DraftManagementButton,
+	// draft_button.go; 0: no button). DraftsBusy: a file still uploads
+	// (the button is aria-disabled).
+	Drafts     int
+	DraftsBusy bool
+	// Online is NotificationBar's wasRecentlyOnline (connected, or the
+	// connection changed under 10s ago; until OnlineUntil when it was
+	// lost) and MoreThanTwo its hasMoreThanTwoCharacters (the message is
+	// past 2 characters as Slack counts them): the hint bar's (hint_bar.go).
+	Online, MoreThanTwo bool
+	OnlineUntil         time.Time
+	SelLo               int // selection start (TextyInput's quill.getSelection)
+	SelN                int // selected characters
 	// TypingIDs / TypingNames: who Typing names, sorted by name.
 	TypingIDs, TypingNames []string
 	// TypingStatus is an app's assistant status (Typing is then
@@ -155,7 +181,7 @@ type chromeState struct {
 
 // sendOff is isSendingDisabledForTextState: nothing to send, or the
 // message is over the 12,000-character limit (isOverMaxLength).
-func (st *chromeState) sendOff() bool { return !st.CanSend || st.OverLimit > 0 }
+func (st *chromeState) sendOff() bool { return !st.CanSend || st.OverLimit > 0 || st.TooManyFiles }
 
 // crBtn names every clickable in the chrome.
 type crBtn uint8
@@ -187,6 +213,7 @@ const (
 	crCancel
 	crSave
 	crBroadcast
+	crDrafts // DraftManagementButton, left of the send button (draft_button.go)
 	crNumBtn
 )
 
@@ -228,6 +255,7 @@ var crInfo = [crNumBtn]crBtnInfo{
 	crCancel:    {kind: caCancel},
 	crSave:      {kind: caSave},
 	crBroadcast: {kind: caBroadcast},
+	crDrafts:    {kind: caDrafts},
 }
 
 var crIcChevron, crIcPara, crIcAa = icons.Get("chevron-down"), icons.Get("paragraph"), icons.Get("format")
@@ -267,7 +295,7 @@ type crPal struct {
 	bg, bar, fg, icon, iconDis             color.NRGBA
 	pressed, pressedHover, pressTint       color.NRGBA
 	sepBar, sepFoot                        color.NRGBA
-	footHover, plus, plusHover             color.NRGBA
+	footHover, plus, plusHover, plusOpen   color.NRGBA
 	border, borderFocus, line, lineFocus   color.NRGBA
 	ph, hint, typing                       color.NRGBA
 	send, sendHover, sendText, sendDiv     color.NRGBA
@@ -313,6 +341,7 @@ func crMakePal(th *theme.Theme) crPal {
 	p.sepFoot = crFade(ter, p.bg, .13)
 	p.plus = crFade(ink, p.bg, .06)
 	p.plusHover = crFade(ink, p.bg, .13)
+	p.plusOpen = crFade(ink, p.bg, .3) // :active and --composer_ia-open: sk_foreground_mid at .3
 	p.border = crFade(ink, p.bg, .13)
 	p.borderFocus = crFade(ter, p.bg, .45)
 	p.line = p.border
@@ -398,6 +427,7 @@ type chrome struct {
 	// plugRect is where Taut's composer.addButton buttons were last laid
 	// out in the toolbar (composer-local; empty when folded or none)
 	plugRect image.Rectangle
+	turn     crTurn // the + button's rotation (attachButton)
 	pxPerDp  float32
 	wBox     layout.Widget
 	wFoot    [crNumBtn]layout.Widget
@@ -405,6 +435,7 @@ type chrome struct {
 	suf      []crSuf
 	inlOne   [1]*slackc.Node // layoutInline's (it may run inside a row item)
 	inl      []crSuf
+	hint     crHint // the hint bar's formatting tip (hint_bar.go)
 }
 
 var crSpaceSizes = [3]unit.Sp{15, 12, 10.5}
@@ -471,6 +502,9 @@ func (c *chrome) disabled(st *chromeState, id crBtn) bool {
 	case crShortcut:
 		// SlashCommandsButton isDisabled: !isTextyInputEmpty
 		return !st.InputEmpty
+	case crDrafts:
+		// MenuTrigger isDisabled while a file uploads
+		return st.DraftsBusy
 	}
 	return false
 }
@@ -507,6 +541,10 @@ func (c *chrome) update(gtx layout.Context, h Host, st *chromeState) {
 		}
 	}
 	for id := crBtn(0); id < crNumBtn; id++ {
+		if id == crAttach {
+			c.plusClicks(gtx)
+			continue
+		}
 		if !c.btn[id].Clicked(gtx) || c.disabled(st, id) {
 			continue
 		}
@@ -523,6 +561,24 @@ func (c *chrome) update(gtx layout.Context, h Host, st *chromeState) {
 		default:
 			c.emit(c.actionFor(id, c.rect[id]))
 		}
+	}
+}
+
+// plusClicks queues every click on the + with its count (gesture.Click:
+// a press within its double-click window of the last one counts on).
+// Each is the menu trigger's click (BasePopoverTrigger onTrigger, a
+// toggle); Chromium follows a click whose detail is 2 with a dblclick
+// (MouseEvent::DispatchEvent), the button's onDoubleClick, and a third
+// click is a plain click again. The composer does both (plusClick).
+func (c *chrome) plusClicks(gtx layout.Context) {
+	for {
+		cl, ok := c.btn[crAttach].Update(gtx)
+		if !ok {
+			return
+		}
+		a := c.actionFor(crAttach, c.rect[crAttach])
+		a.Clicks = cl.NumClicks
+		c.emit(a)
 	}
 }
 
@@ -1009,6 +1065,9 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 			label = "Hide formatting"
 		}
 	}
+	if id == crAttach {
+		label = plusTip(st.UploadBlocked)
+	}
 	if id == crEmoji && c.f.h != nil && gifPickerOn(c.f.h.Core()) {
 		// EmojiToolbarButton: emoji_button "Add emoji and GIFs" when the
 		// GIF picker is on (XC3J BH && enableGifPicker), else "Emoji"
@@ -1019,10 +1078,17 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 	if label == "" {
 		return
 	}
+	// ComposerButton (aiGo: the formatting, insertion and footer buttons,
+	// FileMenuButton's attach and EmojiToolbarButton too): delay 500
+	c.tip[id].Delay = composerTipDelay
 	t := op.Offset(r.Min).Push(gtx.Ops)
 	popups.Tooltip(gtx, th, &c.tip[id], hov, r.Size(), popups.Above, label, keys)
 	t.Pop()
 }
+
+// composerTipDelay is ComposerButton's Tooltip delay (CDN build
+// 36d315d11944); SendButton's and the drafts button's keep BaseTooltip's.
+const composerTipDelay = 500 * time.Millisecond
 
 // icon draws button id's glyph centred in r.
 func (c *chrome) icon(gtx layout.Context, st *chromeState, id crBtn, r image.Rectangle, col color.NRGBA) {
@@ -1301,22 +1367,112 @@ func (c *chrome) skinTone() string {
 	return a.Prefs().SkinTone
 }
 
-// attachButton is the round + (rgba(29,28,29,.06), hover .13 + dark icon).
+// attachButton is the round + (rgba(29,28,29,.06), hover .13 + dark icon;
+// pressed or open .3 of sk_foreground_mid). While its menu is open
+// (--composer_ia-open) it's turned 135°, an ×, by transform's transition
+// (crTurn).
 func (c *chrome) attachButton(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, r image.Rectangle) {
 	hov := c.btn[crAttach].Hovered()
 	bg, ic := p.plus, p.icon
 	if hov {
 		bg, ic = p.plusHover, p.fg
 	}
+	if st.PlusOpen || c.btn[crAttach].Pressed() {
+		bg = p.plusOpen // :active, --composer_ia-open (after :hover in the sheet)
+	}
 	bg, ic = c.f.btn.Background(bg), c.f.btn.Color(ic)
 	fillRRect(gtx, r, r.Dx()/2, bg)
-	// Slack's plus svg at 18px, centred (the 28px button's 5px padding).
+	now := gtx.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	deg, turning := c.turn.at(now, st.PlusOpen)
+	if turning && c.f.h != nil {
+		// the next frame from the window, not an op.InvalidateCmd in the
+		// middle of this one: for that the router replays the frame's
+		// events no handler has read yet (the menu's scrim reads after the
+		// composer)
+		c.f.h.Invalidate()
+	}
+	// Slack's plus svg at 18px, centred (the 28px button's 5px padding),
+	// turned about the button's centre (transform-origin 50%); the
+	// button's area and its tooltip don't turn (the round box looks the
+	// same turned)
+	var rot op.TransformStack
+	if deg != 0 {
+		cen := f32.Pt(float32(r.Min.X+r.Max.X)/2, float32(r.Min.Y+r.Max.Y)/2)
+		rot = op.Affine(f32.Affine2D{}.Rotate(cen, float32(deg*math.Pi/180))).Push(gtx.Ops)
+	}
 	is := gtx.Dp(18)
 	t := op.Offset(r.Min.Add(image.Pt((r.Dx()-is)/2, (r.Dy()-is)/2))).Push(gtx.Ops)
 	crInfo[crAttach].icon(gtx, 18, ic)
 	t.Pop()
+	if deg != 0 {
+		rot.Pop()
+	}
 	c.hit(gtx, crAttach, r, true)
 	c.tooltip(gtx, th, st, crAttach, r)
+}
+
+// crTurn is the + button's transform transition: rotate(135deg) while
+// it's open, over .32s cubic-bezier(.34,1.56,.64,1) (it overshoots, then
+// settles) both ways, run as CSS Transitions starts one: from the angle
+// drawn when the state changes, and a change back to where a running
+// transition came from shortened by the reversing shortening factor.
+type crTurn struct {
+	set      bool
+	open     bool    // the state it goes to
+	from, to float64 // degrees: the start and end values
+	revStart float64 // the reversing-adjusted start value
+	factor   float64 // the reversing shortening factor
+	start    time.Time
+	dur      time.Duration // 0: not running
+}
+
+const (
+	crTurnDur  = 320 * time.Millisecond
+	crTurnOpen = 135.0
+)
+
+func crTurnEase(x float64) float64 { return attBezier(.34, 1.56, .64, 1, x) }
+
+// at is the angle drawn at now for state open, and whether it's turning.
+func (t *crTurn) at(now time.Time, open bool) (float64, bool) {
+	end := 0.0
+	if open {
+		end = crTurnOpen
+	}
+	if !t.set {
+		t.set, t.open, t.from, t.to, t.revStart, t.factor = true, open, end, end, end, 1
+		return end, false
+	}
+	if open != t.open {
+		t.open = open
+		cur, running := t.value(now)
+		if running && t.revStart == end {
+			// reversing: shortened by the old transition's progress
+			p := float64(now.Sub(t.start)) / float64(t.dur)
+			f := min(max(math.Abs(crTurnEase(p)*t.factor+(1-t.factor)), 0), 1)
+			t.revStart, t.factor, t.dur = t.to, f, time.Duration(float64(crTurnDur)*f)
+		} else {
+			t.revStart, t.factor, t.dur = cur, 1, crTurnDur
+		}
+		t.from, t.to, t.start = cur, end, now
+	}
+	return t.value(now)
+}
+
+// value is the running transition's angle at now.
+func (t *crTurn) value(now time.Time) (float64, bool) {
+	if t.dur <= 0 {
+		return t.to, false
+	}
+	p := float64(now.Sub(t.start)) / float64(t.dur)
+	if p >= 1 {
+		t.dur = 0
+		return t.to, false
+	}
+	return t.from + (t.to-t.from)*crTurnEase(max(p, 0)), true
 }
 
 // layoutSend draws the 60×28 split button (send 32 + chevron 28; 32×28
@@ -1573,6 +1729,21 @@ func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *
 // emojiButtonNS is EmojiToolbarButton's "emoji_button" I18n.
 var emojiButtonNS = i18n.NS("emoji_button")
 
+// plusNS is ShortcutsMenuTriggerButton's "app_action_picker" I18n.
+var plusNS = i18n.NS("app_action_picker")
+
+// plusTip is ShortcutsMenuTriggerButton's tip: "Attach" and, unless N
+// (blocked; or limitShortcutsMenuToFilesOnly, which Clack's composers
+// never set), "Tip: double click to upload" under it in the regular
+// weight (its div's .normal; the subtext colour rule is scoped to the
+// button, and the tip renders in a Popover, so it keeps the tip's).
+func plusTip(blocked bool) string {
+	if blocked {
+		return plusNS.T("Attach")
+	}
+	return plusNS.T("Attach") + "\n" + plusNS.T("Tip: double click to upload")
+}
+
 // msgInputNS is Slack's "msg_input" I18n: MessageInput's placeholder
 // (getPlaceholderText, txEg).
 var msgInputNS = i18n.NS("msg_input")
@@ -1596,17 +1767,25 @@ func placeholderText(name string) (text, pre, post string) {
 	return i18n.Plain(parts), pre, post
 }
 
-// layoutHint draws the 24px bar under the box (.p-notification_bar: 24px,
-// 12px left padding, inside the pane): the typing indicator on the left
-// (.p-notification_bar__section: .7em = 10.5px, 1rem line height,
-// sk_foreground_max_solid), or "Shift + Enter to add a new line" on the
-// right (bold keys, 70% ink, ending 8px inside) once there's something to
-// send. A plugin's TypingNames (BetterTypingIndicator) is laid out in that
-// section's text style, as it is in Slack's DOM.
+// layoutHint draws the 24px bar under the box: Slack's NotificationBar
+// (boot-shared V6lB; .p-notification_bar: 24px, 12px left padding and 8px
+// right, inside the pane). Its left section (.7em = 10.5px, 1rem line
+// height, sk_foreground_max_solid) has, in this order: while Slack isn't
+// recently online, "Slack is trying to connect." and the
+// cloud-offline-filled icon; or the typing line. With nothing there, the
+// right section has the formatting tip (hint_bar.go). A plugin's
+// TypingNames (BetterTypingIndicator) is laid out in the left section's
+// text style, as it is in Slack's DOM.
 func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, box image.Rectangle) {
 	ty := box.Max.Y + (gtx.Dp(24)-gtx.Dp(16))/2
 	maxW := box.Dx() - gtx.Dp(20)
+	if !st.Online {
+		c.hint.unmount()
+		c.layoutOffline(gtx, th, p, st, image.Pt(box.Min.X+gtx.Dp(12), ty), maxW)
+		return
+	}
 	if st.Typing != "" {
+		c.hint.unmount()
 		t := op.Offset(image.Pt(box.Min.X+gtx.Dp(12), ty)).Push(gtx.Ops)
 		g := gtx
 		g.Constraints = layout.Constraints{Max: image.Pt(max(maxW, 0), gtx.Dp(16))}
@@ -1626,50 +1805,7 @@ func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 		t.Pop()
 		return
 	}
-	if !st.CanSend {
-		return
-	}
-	// rt("<b>Shift + Enter</b> to add a new line") (SyrM, the
-	// notification_bar I18n): the keys bold, wherever the locale has them
-	pref := uipref.Get()
-	src := hintSource(shortcut.GOOS, pref.SendOnModEnter, pref.EnterIsSpecial, st.HintInPre)
-	type seg struct {
-		call op.CallOp
-		w    int
-		gap  bool // a space before it
-	}
-	var segs []seg
-	total, space := 0, false
-	for _, pt := range notificationBarNS.RT(src) {
-		txt := strings.TrimSpace(pt.Text)
-		gap := space || strings.HasPrefix(pt.Text, " ")
-		space = strings.HasSuffix(pt.Text, " ")
-		if txt == "" {
-			space = space || gap
-			continue
-		}
-		s := textStyle{Size: 10.5, LineHeight: 16, Color: p.hint, MaxLines: 1}
-		if pt.Tag == "b" {
-			s.Weight = theme.Bold
-		}
-		call, d := crRec(gtx, th.Shaper, maxW, s, txt)
-		gap = gap && len(segs) > 0
-		segs = append(segs, seg{call, d.Size.X, gap})
-		total += d.Size.X
-		if gap {
-			total += c.space(gtx, th.Shaper, 2)
-		}
-	}
-	x := box.Max.X - gtx.Dp(8) - total
-	for _, sg := range segs {
-		if sg.gap {
-			x += c.space(gtx, th.Shaper, 2)
-		}
-		t := op.Offset(image.Pt(x, ty)).Push(gtx.Ops)
-		sg.call.Add(gtx.Ops)
-		t.Pop()
-		x += sg.w
-	}
+	c.layoutFormattingTip(gtx, th, p, st, box, ty, maxW)
 }
 
 // hintSource is NotificationBar's renderFormattingTips (SyrM): Windows

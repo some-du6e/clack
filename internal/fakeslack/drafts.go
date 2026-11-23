@@ -2,6 +2,7 @@ package fakeslack
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -22,14 +23,16 @@ import (
 
 // Drafts and file uploads, as Slack's web client uses them:
 //
-//   - files.getUploadURL {filename, length} → {file, upload_url}; the
-//     bytes go to upload_url (this server's /api/upload/<id>) as a
-//     multipart POST, then files.completeUpload {files: [{id, title}]}
-//     finishes it (UploadQueue's eager upload). The file exists, unshared,
-//     from then on.
+//   - files.getUploadURL {filename, length, subtype} → {file,
+//     upload_url}; the bytes go to upload_url (this server's
+//     /api/upload/<id>) as a multipart POST, then files.completeUpload
+//     {files: [{id, title, subtype}]} finishes it (UploadQueue's eager
+//     upload). The file exists, unshared, from then on. A voice clip
+//     (subtype slack_audio) comes back as Slack processes one: subtype,
+//     audio/mp4, media_display_type audio and the MP4's duration_ms.
 //   - drafts.create {blocks, client_msg_id, destinations, file_ids,
-//     attachments, is_from_composer} and drafts.update {draft_id, …,
-//     client_last_updated_ts, date_scheduled} → {draft}; drafts.list
+//     attachments, is_from_composer, date_stashed} and drafts.update
+//     {draft_id, …, client_last_updated_ts, date_scheduled} → {draft}; drafts.list
 //     {is_active, limit} → {drafts}; drafts.delete {draft_id,
 //     client_last_updated_ts, skip_file_deletion}. A draft answers its
 //     file_ids and the file objects (files).
@@ -50,6 +53,7 @@ type Draft struct {
 	DateScheduled  int64           `json:"date_scheduled"`
 	LastUpdatedTS  string          `json:"last_updated_ts"`
 	IsFromComposer bool            `json:"is_from_composer"`
+	DateStashed    int64           `json:"date_stashed"`
 	IsSent         bool            `json:"is_sent"`
 	IsDeleted      bool            `json:"is_deleted"`
 	// SkipFileDeletion is what drafts.delete was asked (deleted drafts only).
@@ -60,14 +64,19 @@ type Draft struct {
 type UploadedFile struct {
 	ID, Name, Title string
 	Size            int64
-	Bytes           int  // bytes received at upload_url
-	Cookie          bool // the upload POST carried a cookie (Slack's XHR sends none)
-	Completed       bool // files.completeUpload finished it
-	Processed       bool // ProcessDelay after completion: thumbs, file_created
-	Shared          bool // files.share shared it
-	Deleted         bool // a drafts.delete without skip_file_deletion removed it
-	W, H            int  // an uploaded image's size (its bytes decode)
-	data            []byte
+	// Subtype is files.getUploadURL's subtype, CompleteSubtype the one in
+	// completeUpload's files entry (a voice clip sends slack_audio in both).
+	Subtype, CompleteSubtype string
+	// URLArgs is everything files.getUploadURL got.
+	URLArgs   url.Values
+	Bytes     int  // bytes received at upload_url
+	Cookie    bool // the upload POST carried a cookie (Slack's XHR sends none)
+	Completed bool // files.completeUpload finished it
+	Processed bool // ProcessDelay after completion: thumbs, file_created
+	Shared    bool // files.share shared it
+	Deleted   bool // a drafts.delete without skip_file_deletion removed it
+	W, H      int  // an uploaded image's size (its bytes decode)
+	data      []byte
 }
 
 // SharedFiles is one files.share call.
@@ -94,6 +103,14 @@ func (f *UploadedFile) object(base string) map[string]any {
 		"pretty_type": strings.ToUpper(strings.TrimPrefix(extOf(f.Name), ".")), "user": SelfID,
 		"is_external": false, "is_public": false, "file_access": "visible",
 		"url_private": base + "files-pri/" + f.ID + "/" + f.Name, "permalink": base + "files/" + SelfID + "/" + f.ID + "/" + f.Name}
+	if sub := firstSet(f.CompleteSubtype, f.Subtype); sub == "slack_audio" {
+		// a processed voice clip: Slack's transcode keeps it audio/mp4
+		o["subtype"], o["media_display_type"] = sub, "audio"
+		o["mimetype"], o["filetype"], o["pretty_type"] = "audio/mp4", "m4a", "MPEG 4 Audio"
+		if ms := mp4DurationMS(f.data); ms > 0 {
+			o["duration_ms"] = ms
+		}
+	}
 	if strings.HasPrefix(mimeOf(f.Name), "image/") {
 		o["thumb_360"] = base + "img/360x360/" + f.ID + ".png"
 		if f.W > 0 && f.H > 0 {
@@ -197,6 +214,63 @@ func (s *Server) processLater(up *UploadedFile) {
 	})
 }
 
+func firstSet(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// mp4DurationMS is a fragmented MP4's length (the last tfdt plus its
+// trun's sample durations, at mdhd's timescale) in ms; 0 if it isn't one.
+func mp4DurationMS(b []byte) int64 {
+	var scale, end uint64
+	var walk func(b []byte)
+	walk = func(b []byte) {
+		for len(b) >= 8 {
+			n := int(binary.BigEndian.Uint32(b))
+			if n < 8 || n > len(b) {
+				return
+			}
+			body := b[8:n]
+			switch string(b[4:8]) {
+			case "moov", "trak", "mdia", "moof", "traf":
+				walk(body)
+			case "mdhd":
+				if len(body) >= 24 && body[0] == 1 {
+					scale = uint64(binary.BigEndian.Uint32(body[20:]))
+				} else if len(body) >= 16 {
+					scale = uint64(binary.BigEndian.Uint32(body[12:]))
+				}
+			case "tfdt":
+				if len(body) >= 12 && body[0] == 1 {
+					end = binary.BigEndian.Uint64(body[4:])
+				} else if len(body) >= 8 {
+					end = uint64(binary.BigEndian.Uint32(body[4:]))
+				}
+			case "trun":
+				if len(body) < 12 || body[3]&0x01 == 0 || body[2]&0x03 != 0x03 {
+					break // only data offset + sample durations + sizes
+				}
+				cnt := int(binary.BigEndian.Uint32(body[4:]))
+				p := 12
+				for i := 0; i < cnt && p+8 <= len(body); i++ {
+					end += uint64(binary.BigEndian.Uint32(body[p:]))
+					p += 8
+				}
+			}
+			b = b[n:]
+		}
+	}
+	walk(b)
+	if scale == 0 {
+		return 0
+	}
+	return int64(end * 1000 / scale)
+}
+
 func extOf(name string) string {
 	if i := strings.LastIndexByte(name, '.'); i >= 0 {
 		return name[i:]
@@ -254,7 +328,13 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 			return fail("invalid_arguments"), true
 		}
 		id := s.newID("F")
-		s.files[id] = &UploadedFile{ID: id, Name: f.Get("filename"), Title: f.Get("filename"), Size: n}
+		args := url.Values{}
+		for k, v := range f {
+			if k != uploadCookieKey {
+				args[k] = v
+			}
+		}
+		s.files[id] = &UploadedFile{ID: id, Name: f.Get("filename"), Title: f.Get("filename"), Size: n, Subtype: f.Get("subtype"), URLArgs: args}
 		return ok("file", id, "upload_url", s.URL+"api/upload/"+id), true
 	case strings.HasPrefix(method, "upload/"):
 		if up := s.files[strings.TrimPrefix(method, "upload/")]; up != nil {
@@ -264,8 +344,9 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 		return []byte("OK - 1\n"), true
 	case method == "files.completeUpload":
 		var refs []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
+			ID      string `json:"id"`
+			Title   string `json:"title"`
+			Subtype string `json:"subtype"`
 		}
 		if json.Unmarshal([]byte(f.Get("files")), &refs) != nil || len(refs) == 0 {
 			return fail("invalid_arguments"), true
@@ -276,6 +357,7 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 				return fail("file_not_found"), true
 			}
 			up.Completed = true
+			up.CompleteSubtype = r.Subtype
 			if r.Title != "" {
 				up.Title = r.Title
 			}
@@ -339,6 +421,7 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 	case method == "drafts.create":
 		d := &Draft{ID: s.newID("Dr"), ClientMsgID: f.Get("client_msg_id"), DateCreated: now.Unix(),
 			LastUpdatedTS: strconv.FormatInt(now.UnixMilli(), 10), IsFromComposer: f.Get("is_from_composer") == "true"}
+		d.DateStashed, _ = strconv.ParseInt(f.Get("date_stashed"), 10, 64)
 		if err := s.fillDraft(d, f); err != "" {
 			return fail(err), true
 		}
@@ -354,6 +437,12 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 		}
 		if v := f.Get("date_scheduled"); v != "" {
 			d.DateScheduled, _ = strconv.ParseInt(v, 10, 64)
+		}
+		if v := f.Get("is_from_composer"); v != "" {
+			d.IsFromComposer = v == "true"
+		}
+		if v := f.Get("date_stashed"); v != "" {
+			d.DateStashed, _ = strconv.ParseInt(v, 10, 64)
 		}
 		d.LastUpdatedTS = strconv.FormatInt(now.UnixMilli(), 10)
 		return ok("draft", s.draftJSON(d)), true
@@ -484,6 +573,21 @@ func (s *Server) LiveDrafts() []Draft {
 	}
 	return out
 }
+
+// Uploads returns every file uploaded with files.getUploadURL, by id.
+func (s *Server) Uploads() []UploadedFile {
+	s.draftMu.Lock()
+	defer s.draftMu.Unlock()
+	out := make([]UploadedFile, 0, len(s.files))
+	for _, f := range s.files {
+		out = append(out, *f)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// Data is the file part the upload POST carried (a copy).
+func (f UploadedFile) Data() []byte { return append([]byte(nil), f.data...) }
 
 // File returns an uploaded file.
 func (s *Server) File(id string) (UploadedFile, bool) {

@@ -86,12 +86,12 @@ func (e *perfEnv) shotBoth(name string) {
 // Settings with Posting permissions, then PostingPermissionsModal as
 // loaded (Admins only) and on Everyone (no Allow threads).
 func TestChannelDetailsPostingShot(t *testing.T) {
-	e, fs := previewEnv(t)
-	w14Hooks(fs)
+	// Boot reads features.access.policies.list (as Slack's boot does),
+	// so the hooks go in before the app starts.
+	e, _ := previewEnvWith(t, w14Hooks)
 	ch := fakeslackMemberChannel(e)
 	e.openChannel(ch)
 	e.settle(200 * time.Millisecond)
-	e.a.Core().FeatureAccess(core.FeatureManageChannelPosting) // the boot read
 	e.a.OpenDetailsTab(ch, "Settings")
 	e.until("posting feature", 10*time.Second, func() bool { return e.a.Core().FeatureAccess(core.FeatureManageChannelPosting) })
 	e.settle(800 * time.Millisecond)

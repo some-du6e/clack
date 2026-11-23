@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"gioui.org/op"
-	"gioui.org/op/clip"
 	"gioui.org/text"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
@@ -352,6 +352,10 @@ type richEntry struct {
 	v   *richview.View
 	ver string
 	at  time.Time // the frame it was laid out in last (gtx.Now)
+	// ctx sees the context presses on the body (content_menu.go)
+	ctx bodyTag
+	// hand is the body's hand over it in a clickable row (handBody)
+	hand bodyTag
 }
 
 // richCache keeps one richview.View per message for a view.
@@ -420,8 +424,13 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 		e.v.SetOptions(o)
 	}
 	e.at = gtx.Now
+	b.notePress(gtx, e)
 	if maxLines <= 0 {
-		return e.v.Layout(gtx, b.style(), hostHandler{b.h})
+		rec := op.Record(gtx.Ops)
+		d := e.v.Layout(gtx, b.style(), hostHandler{b.h})
+		bodyParent(gtx, &e.ctx, d.Size, rec.Stop())
+		b.handOver(gtx, e, d.Size)
+		return d
 	}
 	lh := 22
 	if o.Compact {
@@ -438,16 +447,41 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 			d.Baseline = max(0, d.Size.Y-top)
 		}
 	}
-	st := clip.Rect{Max: d.Size}.Push(gtx.Ops)
-	call.Add(gtx.Ops)
-	st.Pop()
+	bodyParent(gtx, &e.ctx, d.Size, call) // clipped to the lines shown
+	b.handOver(gtx, e, d.Size)
 	return d
 }
 
 // hostHandler routes richview clicks to the Host.
 type hostHandler struct{ h Host }
 
-func (hh hostHandler) OpenURL(u string) {
+func (hh hostHandler) OpenURL(u string) { hh.follow(u, false) }
+
+// OpenMrkdwnLink is a mrkdwn or rich_text link's click (richview's
+// MrkdwnLinkHandler: BaseMrkdwnLink opens a thread's parent in its
+// thread).
+func (hh hostHandler) OpenMrkdwnLink(u, _ string) { hh.follow(u, true) }
+
+// OpenMessageMention is a message_mention pill's click: MessageMention's
+// jumpToMessage with the pill's own ids.
+func (hh hostHandler) OpenMessageMention(ch, ts, thread, u string) {
+	if mj, ok := hh.h.(interface{ JumpToMessage(ch, ts, thread string) }); ok {
+		mj.JumpToMessage(ch, ts, thread)
+		return
+	}
+	hh.follow(u, false)
+}
+
+// follow is Slack's Link click for a link in a view (the ui root's
+// FollowLink: a slack: link to handleDeepLink, a permalink through
+// openPermalink), else the browser.
+func (hh hostHandler) follow(u string, openRoot bool) {
+	if lf, ok := hh.h.(interface{ FollowLink(string, bool) bool }); ok {
+		if !lf.FollowLink(u, openRoot) {
+			go func() { _ = openurl.Open(u) }()
+		}
+		return
+	}
 	if o, ok := hh.h.(interface{ OpenURL(string) }); ok {
 		o.OpenURL(u)
 		return

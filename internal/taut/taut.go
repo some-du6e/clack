@@ -164,11 +164,17 @@ type Options struct {
 	LifecycleTimeout time.Duration
 	// NoAutoStart keeps New from starting enabled plugins (tests).
 	NoAutoStart bool
+	// DeferStart: New does everything but start the enabled plugins (and
+	// so the JS engine): Start does, later. The user CSS is installed by
+	// New either way (the UI's launch shows it from its first frame and
+	// starts the plugins after it, internal/ui/backend.go).
+	DeferStart bool
 }
 
 // Taut is the plugin system. All methods are safe for concurrent use.
 type Taut struct {
 	startDone chan struct{} // closed when the start-up StartEnabled returned (StartDone)
+	startOnce sync.Once     // Start's (and Close's, for a Taut never started)
 	opts      Options
 	app       *core.App
 	dir       string
@@ -192,6 +198,8 @@ type Taut struct {
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
+	// pluginsGen counts changes to the installed plugins (PluginsGen)
+	pluginsGen atomic.Uint64
 
 	running   atomic.Int32 // plugins with a live instance
 	crashes   []time.Time  // recent runtime crashes (restartAfterCrash; under mu)
@@ -258,20 +266,38 @@ func New(o Options) (*Taut, error) {
 		o.UI.SetStyle("user", t.userCSS)
 	}
 	t.stopWatch = make(chan struct{})
-	if !o.NoAutoStart {
+	switch {
+	case o.NoAutoStart:
+		t.startOnce.Do(func() { close(t.startDone) })
+	case o.DeferStart: // Start, later
+	default:
+		t.Start()
+	}
+	return t, nil
+}
+
+// Start starts the plugins enabled at start in the background and
+// watches the plugin folder (once). New calls it unless
+// Options.NoAutoStart or DeferStart; StartDone closes when they started.
+func (t *Taut) Start() {
+	t.startOnce.Do(func() {
+		if t.closed.Load() {
+			close(t.startDone)
+			return
+		}
 		go func() {
 			t0 := time.Now()
 			t.StartEnabled(context.Background())
 			applog.Mark("taut-started", fmt.Sprintf("%d running, in %s", t.running.Load(), time.Since(t0).Round(time.Millisecond)))
 			close(t.startDone)
 		}()
-		if len(t.plugins) > 0 {
+		t.mu.Lock()
+		has := len(t.plugins) > 0
+		t.mu.Unlock()
+		if has {
 			t.startWatch()
 		}
-	} else {
-		close(t.startDone)
-	}
-	return t, nil
+	})
 }
 
 // StartDone is closed once the plugins enabled at start have started (or
@@ -284,6 +310,9 @@ func (t *Taut) Close() error {
 	if !t.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	defer huddles.Delete(t) // its huddle state beside it (huddle.go)
+	defer t.closeSubscribers()
+	t.startOnce.Do(func() { close(t.startDone) }) // never started (DeferStart): nothing waits for it
 	ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 	defer cancel()
 	t.mu.Lock()
@@ -498,10 +527,33 @@ func (t *Taut) Subscribe() (<-chan struct{}, func()) {
 	t.changeCh[c] = struct{}{}
 	t.changeMu.Unlock()
 	return c, func() {
+		// whoever takes c out closes it (changed sends under changeMu): its
+		// range loop ends whether stop or Close comes first
 		t.changeMu.Lock()
-		delete(t.changeCh, c)
+		if _, live := t.changeCh[c]; live {
+			delete(t.changeCh, c)
+			close(c)
+		}
 		t.changeMu.Unlock()
 	}
+}
+
+// PluginsGen counts the changes to the installed plugins' files: one
+// read from disk, installed, replaced or removed (not one started,
+// stopped or set up). A reader that keeps what it read of them (the
+// plugin library's install states) reads again when it moves.
+func (t *Taut) PluginsGen() uint64 { return t.pluginsGen.Load() }
+
+// closeSubscribers closes every Subscribe channel (their range loops
+// end) and keeps no more: Close's, the Taut is done. Their goroutines kept
+// it, and the App they repainted, reachable for good (ci-speed-3).
+func (t *Taut) closeSubscribers() {
+	t.changeMu.Lock()
+	defer t.changeMu.Unlock()
+	for c := range t.changeCh {
+		close(c)
+	}
+	clear(t.changeCh)
 }
 
 func (t *Taut) changed() {

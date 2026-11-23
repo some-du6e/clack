@@ -223,6 +223,14 @@ func (a *App) afterRoute(prev, r Route) {
 			a.secondary = secondaryState{width: w}
 		}
 	}
+	if ch != "" && r.Message() == "" && prev.Channel() != ch && !a.navHasStart {
+		// entered with no message to start at (a sidebar click, Back):
+		// Slack's determineTimestamps, the newest messages when there are
+		// unreads, else where the conversation was left (ChannelView.Entered)
+		if e, ok := a.convoFor(ch, "").list.(interface{ Entered() }); ok {
+			e.Entered()
+		}
+	}
 	if ts := r.Thread(); ts != "" {
 		a.OpenThread(ch, ts)
 	}
@@ -630,6 +638,30 @@ func (a *App) OpenProfile(anchor image.Point, userID string) {
 	a.OpenUserProfile(userID)
 }
 
+// OpenSender is a message sender's click (messages.SenderOpener;
+// BaseMessageSender onClick → openProfile {memberId, serviceId}): botID is
+// the bot the sender's hover card asks for (core.App.SenderBot), so the
+// click opens the same app. A member that is an app's or a bot
+// (getBotIdFromMember finds its bot, as OpenProfile reads it) opens App
+// details for that bot; a bot with no member opens its App details; a
+// person, an Agentforce agent or a member the store doesn't hold yet opens
+// the profile.
+func (a *App) OpenSender(anchor image.Point, userID, botID string) {
+	if userID == "" {
+		if botID != "" {
+			a.OpenAppDetails("", botID)
+		}
+		return
+	}
+	if c := a.Core(); c != nil {
+		if u, ok := c.User(userID); ok && memberBotID(u) != "" && !u.Agentforce {
+			a.OpenAppDetails(userID, firstNonEmptyStr(botID, memberBotID(u)))
+			return
+		}
+	}
+	a.OpenUserProfile(userID)
+}
+
 // memberBotID is getBotIdFromMember: an app or bot member's
 // profile.bot_id ("" for a person).
 func memberBotID(u core.User) string {
@@ -646,7 +678,10 @@ func memberBotID(u core.User) string {
 func (a *App) OpenAppDetails(userID, botID string) {
 	cur := a.secondary
 	if cur.kind == secProfile && cur.user == userID && cur.open() {
-		if _, ok := cur.view.(*popups.AppDetailsView); ok {
+		// the same app's view already open: nothing to do. Another bot (a
+		// user-less bot's view and another's click, or a bot user's view
+		// and its member's message posted with another bot) is another app
+		if v, ok := cur.view.(*popups.AppDetailsView); ok && v.Bot() == botID {
 			return
 		}
 	}

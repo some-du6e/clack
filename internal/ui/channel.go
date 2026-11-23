@@ -174,7 +174,19 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			if k == "bell" {
 				name = a.headerBellIcon(ch, conv)
 			}
-			return iconButton(gtx, a.clicks.get("hdr."+k), name, 28, 20, c.FgMuted, c.BgHover, 8)
+			d := iconButton(gtx, a.clicks.get("hdr."+k), name, 28, 20, c.FgMuted, c.BgHover, 8)
+			if k == "bell" {
+				// NotificationsButton's Tooltip, below the button
+				dm := conv != nil && (conv.Kind == "im" || conv.Kind == "app")
+				muted := conv != nil && conv.Muted
+				hov := a.clicks.get("hdr.bell").Hovered()
+				var lines []popups.TipLine
+				if hov {
+					lines = popups.NotifyButtonTip(a, ch, dm, muted)
+				}
+				popups.TooltipLines(gtx, a.th, &a.hdrX().bellTip, hov, d.Size, popups.Below, lines)
+			}
+			return d
 		})
 		right -= gtx.Dp(6)
 	}
@@ -445,10 +457,8 @@ func (a *App) headerBellIcon(ch string, conv *convInfo) string {
 }
 
 // canSetTopic is canUserSetTopicForChannelWithReasonById (boot-shared
-// xjwB, core.CanSetTopic): permission data from permissions/info
-// (SET_CHANNEL_TOPIC) and, under
-// channel_topic_purpose_setting_restrict_to_channel_managers, only that
-// grant outside 1:1 DMs. A preview or a code channel never offers it.
+// iJOl, core.CanSetTopic): outside 1:1 DMs only permissions/info's
+// SET_CHANNEL_TOPIC grant. A preview or a code channel never offers it.
 func (a *App) canSetTopic(ch string, conv *convInfo) bool {
 	if conv == nil || conv.Archived || conv.Preview || conv.Code != nil {
 		return false

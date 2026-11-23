@@ -26,6 +26,11 @@ on:
       - "internal/core/writes.go"
       - "internal/core/manage.go"
       - "internal/fakeslack/files.go"
+      - "internal/fakeslack/emails.go"
+      - "internal/richtext/emailhtml.go"
+      - "internal/ui/richview/email.go"
+      - "internal/ui/email_pane.go"
+      - "internal/ui/email_files_test.go"
       - "internal/fakeslack/drafts.go"
       - "internal/ui/richview/cards.go"
       - "internal/ui/richview/blocks.go"
@@ -37,11 +42,28 @@ on:
       - "internal/ui/video_pip*.go"
       - "internal/ui/videoplayer/pip*.go"
       - "internal/ui/files_shots_test.go"
+      - "internal/ui/audio_test.go"
+      - "internal/ui/videoplayer/audio*.go"
+      - "internal/ui/richview/media*.go"
+      - "internal/media/goaudio/**"
+      - "internal/media/mediatest/audio.go"
       - "internal/ui/drop_overlay.go"
       - "internal/ui/drop_overlay_test.go"
       - "internal/ui/composer/taut.go"
+      - "internal/ui/richview/textfile_test.go"
+      - "internal/ui/views/files.go"
+      - "internal/ui/views/files_svgicon_test.go"
+      - "internal/ui/popups/search_rows.go"
+      - "internal/ui/popups/search_svgicon_test.go"
+      - "internal/ui/popups/files_filters.go"
+      - "internal/ui/views/files_filters_test.go"
       - ".github/workflows/files-shots.yml"
   workflow_dispatch:
+    inputs:
+      expect_fail:
+        description: "proof runs: the tests that must fail, comma-separated (TestA,TestB/sub); the run passes only if each fails and nothing else does (docs/CI-SPEED.md, Proof runs)"
+        required: false
+        default: ""
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
@@ -73,23 +95,30 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: geometry, uploads and the file menu
         run: |
-          go test -count=1 -v -run 'TestFileImage|TestMediaGallery|TestGalleryPair|TestGalleryBox|TestVideoCard|TestAudioCard|TestGenericFileCard|TestSnippet|TestPillowGrid|TestFileActions|TestGalleryExpandStillOpens|TestStillPlayButtonAndExpand|TestFileCardSectionButton' ./internal/ui/richview/
-          go test -count=1 -v -run 'TestTruncateHTML|TestParseCodeMirror|TestSnippetFields|TestFiles$' ./internal/richtext/
+          go test -count=1 -v -run 'TestFileImage|TestMediaGallery|TestGalleryPair|TestGalleryBox|TestVideoCard|TestAudioCard|TestGenericFileCard|TestSnippet|TestPillowGrid|TestFileActions|TestGalleryExpandStillOpens|TestStillPlayButtonAndExpand|TestFileCardSectionButton|TestEmailFile|TestTextFileCards|TestAudioCardSlot|TestAudioClipSlot' ./internal/ui/richview/
+          go test -count=1 -v -run 'TestTruncateHTML|TestParseCodeMirror|TestSnippetFields|TestFiles$|TestEmailFields|TestEmailBlocks' ./internal/richtext/
           go test -count=1 -v -run 'TestUploadProgressAndPrepared|TestUploadForInput|TestDraftFiles|TestExpandSnippet|TestSnippetDisplayCut' ./internal/core/
-          go test -count=1 -v -run 'TestFileMenuLaterAndDelete|TestContextMenuShapes' ./internal/ui/popups/
+          go test -count=1 -v -run 'TestFileMenuLaterAndDelete|TestContextMenuShapes|TestSearchFileTileSvgIcons' ./internal/ui/popups/
+          go test -count=1 -v -run 'TestFileTileSvgIcons' ./internal/ui/views/
       - name: render
-        run: xvfb-run -a go test -count=1 -v -run 'TestFilesChannel$|TestFileSnippetExpand$|TestFileDrop|TestDropSubtitle|TestDropTiming' ./internal/ui/
+        run: xvfb-run -a go test -count=1 -v -run 'TestFilesChannel$|TestFileSnippetExpand$|TestFileDrop|TestDropSubtitle|TestDropTiming|TestEmailInbox$|TestAudioInlinePlay$' ./internal/ui/
       - name: screenshots
         env:
           FILES_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$FILES_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 13m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$|TestEmailShots$|TestAudioPlayerShots$' ./internal/ui/
+          # the Files browser's Filters modal (docs/FILES-AUDIT.md)
+          xvfb-run -a go test -count=1 -v -run 'TestFilesViewFiltersShots$' ./internal/ui/views/
           ls -la "$FILES_SHOTS_DIR"
       - name: the media viewer plays videos, and the same checks on ui (before-ui)
         if: ${{ !cancelled() }}
@@ -97,12 +126,14 @@ jobs:
           FILES_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
+          "$GITHUB_WORKSPACE/.github/scripts/dump-before-budget.sh" 13 & wd=$!
+          trap 'kill $wd 2>/dev/null' EXIT
           set +e
           mkdir -p "$FILES_SHOTS_DIR"
           rc=0
           # the branch: a gallery's video, Expand and the Files tab open the
           # viewer playing; its keys, auto-hide and end; shots *-after.png
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 18m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ || rc=1
           go test -count=1 -v -run 'TestChannelFilesVideoViewer$' ./internal/ui/views/ || rc=1
           # ui, where there's no player (the stand-in hooks): every check
           # fails and the shots (*-before.png) show what ui does. Until ui
@@ -112,7 +143,7 @@ jobs:
           cp internal/ui/testdata/video_viewer_hooks_ui.go.txt before-ui/internal/ui/video_viewer_hooks_test.go
           cp internal/ui/testdata/video_pip_hooks_ui.go.txt before-ui/internal/ui/video_pip_hooks_test.go
           cp internal/ui/views/channel_files_video_test.go before-ui/internal/ui/views/
-          (cd before-ui && git log -1 --format='before = ui at %H' && VIDEO_VIEWER_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ > "$FILES_SHOTS_DIR/video-viewer-before-ui.log" 2>&1)
+          (cd before-ui && git log -1 --format='before = ui at %H' && VIDEO_VIEWER_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -timeout 18m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ > "$FILES_SHOTS_DIR/video-viewer-before-ui.log" 2>&1)
           (cd before-ui && go test -count=1 -v -run 'TestChannelFilesVideoViewer$' ./internal/ui/views/ > "$FILES_SHOTS_DIR/video-viewer-before-views.log" 2>&1)
           fixed=0
           grep -q 'func NewVideoViewer' before-ui/internal/ui/popups/lightbox_video.go 2>/dev/null && grep -q 'func (c \*Controller) PipOn' before-ui/internal/ui/videoplayer/pip.go 2>/dev/null && fixed=1
@@ -132,3 +163,34 @@ jobs:
         with:
           name: files-shots
           path: dist/shots
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (.github/scripts/expect_fail_wire.py adds it).
+  expect-fail:
+    needs:
+      - files-shots
+    if: ${{ always() && inputs.expect_fail != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/expectfail
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: expect-fail-*
+          path: ${{ runner.temp }}/xf
+      - name: every listed test failed, nothing else did
+        env:
+          EXPECT_FAIL: ${{ inputs.expect_fail }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"

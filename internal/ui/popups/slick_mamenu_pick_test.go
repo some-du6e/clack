@@ -11,6 +11,7 @@ package popups
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"reflect"
 	"strconv"
@@ -638,10 +639,19 @@ func TestMessageMenuOldMenuRows(t *testing.T) {
 			t.Errorf("%s: the #473 actions after the old row: %s", what, maKeys(m.items))
 		}
 		n := strings.Count(e.jsString(t, "globalThis.__oldRows.join(' ')"), "old_accept_delete")
+		// what the click aimed at, and on a miss the rows then: the click
+		// never came once with the #473 actions in the menu (ci-speed's
+		// full-test, run 44896761367), and the row index and the laid-out
+		// places can part when a patched MAMenu lays the menu out again
+		aimed := fmt.Sprintf("row %d of %s at %v", i, maKeys(m.items), m.RowRects()[i])
 		d.clickLabel(m.RowRects()[i])
-		d.until(what+": the old row's click", func() bool {
-			return strings.Count(e.jsString(t, "globalThis.__oldRows.join(' ')"), "old_accept_delete") == n+1
-		})
+		for dl := time.Now().Add(10 * time.Second); strings.Count(e.jsString(t, "globalThis.__oldRows.join(' ')"), "old_accept_delete") != n+1; {
+			if time.Now().After(dl) {
+				t.Fatalf("%s: the old row's click never came: aimed at %s; the rows now %s at %v", what, aimed, maKeys(m.items), m.RowRects())
+			}
+			d.frame()
+			time.Sleep(20 * time.Millisecond)
+		}
 		// its close (MessageActionsMenu's onTriggerClose) comes back as a
 		// queued Go call
 		d.until(what+": onTriggerClose closing the menu", m.Dismissed)

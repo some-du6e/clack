@@ -983,7 +983,7 @@ func (w *window) ReadClipboard() {
 	w.readClipboard()
 }
 
-// Clack patch (CLACK_PATCHES.md §55): the window's clipboard sessions are
+// Clack patch (CLACK_PATCHES.md §62): the window's clipboard sessions are
 // the process's (winclip.Session), one at a time, and the text is copied
 // out, bounded by its block, before the clipboard closes; the paste goes
 // to the window only after it closed. clipWait bounds the window thread's
@@ -1179,6 +1179,7 @@ func (w *window) Configure(options []Option) {
 		showMode = windows.SW_SHOWNOACTIVATE // Clack patch (CLACK_PATCHES.md §8)
 	}
 	windows.ShowWindow(w.hwnd, showMode)
+	startupWindowShown.mark() // Clack patch (CLACK_PATCHES.md §56)
 }
 
 func (w *window) WriteClipboard(mime string, s []byte) {

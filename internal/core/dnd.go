@@ -52,6 +52,10 @@ type dndState struct {
 	status DNDStatus
 	at     time.Time // when status was set
 	asked  time.Time // the last refetch DNDHeld started
+	// events counts the viewer's dnd_updated events applied
+	// (onDNDUpdated): a dnd.info read queued before the last one gives way
+	// to it (loadDNDAfter)
+	events uint64
 }
 
 // dndMaxAge is how long the viewer's DND status stays fresh: Slack keeps
@@ -167,10 +171,45 @@ func (a *App) onDNDUpdated(ctx context.Context, raw json.RawMessage) {
 	if st.ProfileStatus == nil {
 		st.ProfileStatus = prev // until dnd.info answers
 	}
-	a.SetDNDStatus(st)
+	a.dnd.mu.Lock()
+	a.dnd.known, a.dnd.status, a.dnd.at = true, st, time.Now()
+	a.dnd.events++
+	a.dnd.mu.Unlock()
 	if ctx != nil {
 		_ = a.LoadDND(ctx)
 	}
+}
+
+// dndEvents is how many of the viewer's dnd_updated events onDNDUpdated has
+// applied.
+func (a *App) dndEvents() uint64 {
+	a.dnd.mu.Lock()
+	defer a.dnd.mu.Unlock()
+	return a.dnd.events
+}
+
+// loadDNDAfter is LoadDND for the read a dnd_updated queued off the event
+// pump (pump_later.go) when gen of them had been applied: its answer
+// stands unless a newer dnd_updated came after the read was asked for,
+// whose own read follows it. An older answer landing late put back a
+// snooze the viewer had ended, and with the later read failing the toasts
+// stayed held until DNDHeld's refetch (dndMaxAge).
+func (a *App) loadDNDAfter(ctx context.Context, gen uint64) error {
+	raw, err := a.DND(ctx)
+	if err != nil {
+		return err
+	}
+	var st DNDStatus
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return err
+	}
+	a.dnd.mu.Lock()
+	defer a.dnd.mu.Unlock()
+	if a.dnd.events != gen {
+		return nil
+	}
+	a.dnd.known, a.dnd.status, a.dnd.at = true, st, time.Now()
+	return nil
 }
 
 // SelfStatusEmoji is the status emoji the control strip's user button

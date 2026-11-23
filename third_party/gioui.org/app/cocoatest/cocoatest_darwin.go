@@ -39,6 +39,7 @@ void cocoatest_order_front(uintptr_t view);
 void cocoatest_set_double_click(const char *v);
 int cocoatest_reopen(int visible, int *handled);
 void cocoatest_post_did_become_active(void);
+void cocoatest_terminate(void);
 int cocoatest_key_equivalent(const char *key, int mods);
 void cocoatest_on_main(uintptr_t h);
 void cocoatest_track(uintptr_t view);
@@ -205,6 +206,14 @@ func Reopen(hasVisibleWindows bool) (ret, handled bool) {
 	r := C.cocoatest_reopen(cint(hasVisibleWindows), &h)
 	return r != 0, h != 0
 }
+
+// Terminate sends NSApp terminate:, as the Dock's Quit, log out, restart
+// and a quit Apple Event do, from the main run loop (a perform the main
+// queue schedules, so the main queue stays free while terminate: waits),
+// and returns at once: while the app delegate answers NSTerminateLater
+// (Gio patch 58) AppKit's terminate: doesn't return until the app
+// replies. Any goroutine.
+func Terminate() { C.cocoatest_terminate() }
 
 // PostDidBecomeActive posts NSApplicationDidBecomeActiveNotification, as
 // AppKit does when the app comes to the front (⌘Tab, the Dock). Main

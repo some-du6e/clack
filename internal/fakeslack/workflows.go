@@ -136,7 +136,7 @@ func (s *Server) AddedBookmarks() []map[string]any {
 	return append([]map[string]any(nil), st.added...)
 }
 
-var wfStates sync.Map // *Server -> *wfState
+var wfStates = newPerServer() // *Server -> *wfState
 
 func (s *Server) wf() *wfState {
 	v, _ := wfStates.LoadOrStore(s, &wfState{})

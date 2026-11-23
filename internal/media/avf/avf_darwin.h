@@ -52,6 +52,11 @@ int clack_avf_snapshot(void *p, uint8_t *dst, size_t cap, int *w, int *h);
 void clack_avf_respond(void *p, uint64_t req, const void *bytes, int n);
 void clack_avf_finish(void *p, uint64_t req, int failed);
 void clack_avf_counts(void *p, int64_t *pulls, int64_t *frames, uint32_t *w, uint32_t *h);
+int clack_avf_watching(void *p); // the state watch timer runs (tests)
+// tests: players made while the history is on keep one; debug is it and
+// AVPlayer's state now, malloc'd (free it)
+void clack_avf_history(int on);
+char *clack_avf_debug(void *p);
 void clack_avf_close(void *p);
 void clack_avf_live(int32_t *out);
 void clack_avf_run_main_loop(void);

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/url"
 	"slices"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/frecency"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -86,7 +88,7 @@ type ugRightsCache struct {
 	known   bool
 }
 
-var ugRightsIndex sync.Map // *App → *ugRightsCache
+var ugRightsIndex = newPerApp() // *App → *ugRightsCache
 
 func (a *App) ugRights() *ugRightsCache {
 	v, _ := ugRightsIndex.LoadOrStore(a, &ugRightsCache{})
@@ -218,7 +220,7 @@ func (a *App) featuresNow(ctx context.Context) {
 		if known {
 			return
 		}
-		if !loading {
+		if !loading { // one read, then go on with what the store holds
 			a.loadFeatures(ctx)
 			return
 		}
@@ -302,6 +304,70 @@ func (a *App) SetUsergroupUsers(ctx context.Context, g Usergroup, users []string
 		a.S.SetUsergroupCount(res.Usergroup.ID, len(res.Usergroup.Users))
 	}
 	return nil
+}
+
+// UsergroupCreate is createUserGroup's arguments (the Create User Group
+// dialog's two steps).
+type UsergroupCreate struct {
+	TeamID      string // the workspace (the form's workspaceId: the current team)
+	Name        string // sent trimmed
+	Handle      string
+	Description string
+	Channels    []string // the default channels
+	// AdditionalChannels go only under internal_spaces, when there are any.
+	AdditionalChannels []string
+	EnableSection      bool
+	Users              []string // the members step's picks
+}
+
+// CreateUsergroup is createUserGroup (shared-js_modern_components_flexpane_
+// user-groups_user-group-edit-create-dialog_tsx X; build a09b625d90aa):
+// usergroups.create {name, team_id?, handle?, description?, channels,
+// enable_section, additional_channels?} (usergroupsCreateFetcher EZhO,
+// lists comma-joined as getFormData sends them), then, when there are
+// members, usergroups.users.update {usergroup: the new id, users}
+// (67Vu WZ, no team_id). Slack doesn't wait for or check the members
+// update before the dialog's "User group created!", so its error is
+// dropped here too. The new group goes to the store at once, so its
+// User Group pane (showUserGroupDetails) finds it before
+// subteam_created comes.
+func (a *App) CreateUsergroup(ctx context.Context, c UsergroupCreate) (Usergroup, error) {
+	p := url.Values{"name": {strings.TrimSpace(c.Name)}}
+	if c.TeamID != "" {
+		p.Set("team_id", c.TeamID)
+	}
+	if c.Handle != "" {
+		p.Set("handle", c.Handle)
+	}
+	if c.Description != "" {
+		p.Set("description", c.Description)
+	}
+	p.Set("channels", strings.Join(c.Channels, ","))
+	p.Set("enable_section", strconv.FormatBool(c.EnableSection))
+	if a.experiment("internal_spaces") == "on" && len(c.AdditionalChannels) > 0 {
+		p.Set("additional_channels", strings.Join(c.AdditionalChannels, ","))
+	}
+	var res struct {
+		Usergroup usergroupRaw `json:"usergroup"`
+	}
+	if err := a.C.Call(ctx, "usergroups.create", p, &res); err != nil {
+		return Usergroup{}, err
+	}
+	if res.Usergroup.ID == "" {
+		return Usergroup{}, errors.New("usergroups.create: no usergroup in the answer")
+	}
+	g := a.S.MergeUsergroup(res.Usergroup.ID, res.Usergroup.over)
+	if len(c.Channels) > 0 {
+		a.S.SetGroupChannels(g.ID, c.Channels)
+	}
+	if len(c.Users) > 0 {
+		// Slack dispatches it without waiting or a catch: a failure shows
+		// nothing (the group stays, without members); it is only logged
+		if err := a.SetUsergroupUsers(ctx, Usergroup{ID: g.ID}, c.Users); err != nil {
+			log.Printf("user groups: create %s: usergroups.users.update: %v", logtag.ID(g.ID), err)
+		}
+	}
+	return usergroupOf(g), nil
 }
 
 // RemoveUsergroupMember is removeUserGroupMember (client-channel-user-
@@ -515,7 +581,7 @@ func (a *App) StoredUsergroupProfile(id string) (UsergroupProfile, bool) {
 // usergroupOf is a stored record as core's Usergroup.
 func usergroupOf(g slack.Usergroup) Usergroup {
 	return Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: g.UserCount,
-		TeamID: g.TeamID, AutoType: g.AutoType, IsSection: g.IsSection, Updated: g.DateUpdate}
+		TeamID: g.TeamID, AutoType: g.AutoType, IsSection: g.IsSection, Updated: g.DateUpdate, DateDelete: g.DateDelete}
 }
 
 // splitGroupChannels undoes the store's channels-then-groups list: the

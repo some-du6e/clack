@@ -37,8 +37,9 @@ package richview
 //	                 a snippet's edit "Edit", a post's new-window "Edit in
 //	                 new window"
 //	renderExternal   new-window: "Open in new window" for a snippet the
-//	                 viewer can't edit (and an email, an uneditable
-//	                 space), "Open file on Google Drive" / Dropbox / Box /
+//	                 viewer can't edit (and an uneditable space, an email
+//	                 with new_email_rendering off), "Open file on Google
+//	                 Drive" / Dropbox / Box /
 //	                 OneDrive / "a web page" for an external file (a
 //	                 Google Drive one only when it's an image); never a
 //	                 docs or CSV file
@@ -67,6 +68,7 @@ import (
 	"strings"
 
 	"gioui.org/f32"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -188,6 +190,12 @@ func detailsLabel(f *richtext.File) string {
 // gallery image's (gallery: shouldUseMediaGallery). noAnim: animations
 // are off (renderExpand).
 func fileActions(f *richtext.File, gallery, noAnim bool) []barBtn {
+	return fileActionsFor(f, gallery, noAnim, false)
+}
+
+// fileActionsFor is fileActions with new_email_rendering off (emailV1):
+// renderCollapse and renderEmailExpand draw nothing for an email then.
+func fileActionsFor(f *richtext.File, gallery, noAnim, emailV1 bool) []barBtn {
 	var bs []barBtn
 	add := func(b barBtn) {
 		if b.w == 0 {
@@ -204,8 +212,17 @@ func fileActions(f *richtext.File, gallery, noAnim bool) []barBtn {
 	// fileActions.edit (KfB/): the owner's snippet or space (a space
 	// anyone may edit while it isn't locked)
 	edit := (f.Mode == "snippet" || f.Mode == "space") && viewerOwns(f)
-	if f.Expanded && !gallery {
-		add(barBtn{act: FileCollapse, icon: "arrow-collapse", tip: i18n.T("file", "Collapse")})
+	if f.Expanded && !gallery && !(f.Email != nil && emailV1) {
+		// renderCollapse: an email's (new_email_rendering) is reduce-diagonal
+		icon := "arrow-collapse"
+		if f.Email != nil {
+			icon = "collapse"
+		}
+		add(barBtn{act: FileCollapse, icon: icon, tip: i18n.T("file", "Collapse")})
+	}
+	if f.Email != nil && !emailV1 && !f.Expanded && !gallery {
+		// renderEmailExpand: expand-diagonal, fetchAndExpand (email.go)
+		add(barBtn{act: FileShowMore, icon: "expand", tip: i18n.T("file", "Expand")})
 	}
 	// fileActions.download (QjaE): a hosted or snippet file
 	if !ext && !remote && !post && (f.Mode == "hosted" || f.Mode == "snippet") {
@@ -225,7 +242,9 @@ func fileActions(f *richtext.File, gallery, noAnim bool) []barBtn {
 		add(barBtn{act: FileEditWindow, icon: "new-window", tip: i18n.T("file", "Edit in new window")})
 	}
 	extOK := ext && (f.ExternalType != "gdrive" || f.IsImage)
-	if (extOK || email || snippet && !edit || post && !edit && f.Mode != "post") && f.Mode != "docs" && !strings.EqualFold(f.Type, "csv") {
+	// renderExternal: never an email's with new_email_rendering on
+	// (isEmail && experimentNewEmailRenderingGroupOn)
+	if (extOK || email && emailV1 || snippet && !edit || post && !edit && f.Mode != "post") && f.Mode != "docs" && !strings.EqualFold(f.Type, "csv") {
 		tip := i18n.T("file", "Open in new window")
 		if ext {
 			tip = externalLabel(f)
@@ -274,7 +293,7 @@ func (l *lay) pillowBar(f *richtext.File, r image.Rectangle) {
 	if f == nil || l.opts.NoHoverCards || l.opts.Canvas || f.Pending {
 		return
 	}
-	l.d.bars = append(l.d.bars, fileBar{card: r, f: f, inset: 12, group: true, btns: fileActions(f, false, l.noAnim)})
+	l.d.bars = append(l.d.bars, fileBar{card: r, f: f, inset: 12, group: true, btns: fileActionsFor(f, false, l.noAnim, l.st.emailV1)})
 }
 
 // galleryBar adds gallery image tile r's FileActions.
@@ -282,7 +301,7 @@ func (l *lay) galleryBar(f *richtext.File, r image.Rectangle) {
 	if f == nil || l.opts.NoHoverCards || l.opts.Canvas || f.Pending || f.IsVideo {
 		return
 	}
-	l.d.bars = append(l.d.bars, fileBar{card: r, f: f, inset: 8, btns: fileActions(f, true, l.noAnim)})
+	l.d.bars = append(l.d.bars, fileBar{card: r, f: f, inset: 8, btns: fileActionsFor(f, true, l.noAnim, l.st.emailV1)})
 }
 
 // barRects is bar i's group and its buttons' boxes.
@@ -311,6 +330,40 @@ func (v *View) barRects(i int) (group image.Rectangle, btns []image.Rectangle) {
 // barShown reports whether bar i shows: its card is hovered.
 func (v *View) barShown(i int) bool {
 	return v.hovering && image.Pt(int(v.ptr.X), int(v.ptr.Y)).In(v.d.bars[i].card)
+}
+
+// barOverMedia reports whether bar i is on a card Options.Media draws (an
+// audio card's player): it draws, and takes its presses, over the player.
+func (v *View) barOverMedia(i int) bool {
+	c := v.d.bars[i].card
+	for k := range v.d.media {
+		if v.d.media[k].r == c {
+			return true
+		}
+	}
+	return false
+}
+
+// onMediaBar reports whether p is on a shown bar over a media card.
+func (v *View) onMediaBar(p f32.Point) bool {
+	bar, _, ok := v.barAt(p)
+	return ok && v.barOverMedia(bar)
+}
+
+// barCursors adds the hand cursor over the shown bars' buttons (those
+// over a media card, or the rest).
+func (v *View) barCursors(gtx layout.Context, overMedia bool) {
+	for i := range v.d.bars {
+		if !v.barShown(i) || v.barOverMedia(i) != overMedia {
+			continue
+		}
+		_, rs := v.barRects(i)
+		for _, r := range rs {
+			s := clip.Rect(r).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
+	}
 }
 
 // barAt is the shown bar button under p: its bar and index, ok false
@@ -397,15 +450,16 @@ func (v *View) groupCard(gtx layout.Context, p *Palette, r image.Rectangle) {
 }
 
 // drawFileBars draws the hovered files' FileActions and, while the
-// pointer rests on a button, its tooltip.
-func (v *View) drawFileBars(gtx layout.Context, st *Style) {
+// pointer rests on a button, its tooltip: those on a card Options.Media
+// draws (overMedia) or the rest.
+func (v *View) drawFileBars(gtx layout.Context, st *Style, overMedia bool) {
 	if !v.hovering || len(v.d.bars) == 0 {
 		return
 	}
 	p := &st.Palette
 	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
 	for i := range v.d.bars {
-		if !v.barShown(i) {
+		if !v.barShown(i) || v.barOverMedia(i) != overMedia {
 			continue
 		}
 		b := &v.d.bars[i]

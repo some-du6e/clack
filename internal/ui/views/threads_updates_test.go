@@ -397,8 +397,18 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			if c := v.cards[key]; c == nil || c.moreText != "" {
 				t.Errorf("a \"Show N more replies\" row (%q) with every reply shown", c.moreText)
 			}
-			// the gap's fetch, and the failed card's older replies
-			if got, want := fs.CallCount("conversations.replies"), map[bool]int64{false: 1, true: 2}[tc.fail]; got != want {
+			// the gap's fetch, and the failed card's older replies. Straddled,
+			// the replies sent while the refresh is out race its answer to the
+			// view: seen first, they make the answer stale, the next window
+			// starts after a hole and the gap is fetched; the answer first,
+			// it brings the third reply and the next window joins it, no gap
+			// and nothing to fetch (1 run in 20 under load: flakes-1122). The
+			// card ends the same either way; a gap is one fetch, never two.
+			got, want := fs.CallCount("conversations.replies"), map[bool]int64{false: 1, true: 2}[tc.fail]
+			switch {
+			case tc.straddle && got == 0:
+				t.Logf("straddle: the refresh's answer reached the view before its straddling replies: no gap to fetch")
+			case got != want:
 				t.Errorf("%d conversations.replies for one gap, want %d", got, want)
 			}
 			if tc.name != "burst" {
@@ -495,8 +505,17 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 // A load that sorts the list lands, and before the next frame settles it
 // another load starts (the frame's staleness check or the next page come
 // first). The landed load is settled first, its own mode: the mount's
-// floating loader stops asking for frames.
+// floating loader stops asking for frames. Checked at once and 150 ms on
+// (a slow runner: markVisible's check, 350 ms after each load that sorts
+// the list, is then a frame asked for within 250 ms, which
+// thrAnimating took for the loader).
 func TestThreadsSettleBeforeNextLoad(t *testing.T) {
+	for _, late := range []time.Duration{0, 150 * time.Millisecond} {
+		t.Run(fmt.Sprintf("checked %v on", late), func(t *testing.T) { threadsSettleBeforeNextLoad(t, late) })
+	}
+}
+
+func threadsSettleBeforeNextLoad(t *testing.T, late time.Duration) {
 	ch := fakeslack.ViewsChannel
 	app, fs := vaFake(t)
 	fs.SetHook(func(method string, _ url.Values) (any, bool) {
@@ -522,6 +541,7 @@ func TestThreadsSettleBeforeNextLoad(t *testing.T) {
 	v.load(actRefresh)
 	e.until(t, "the refresh", v.Settled)
 	e.frame()
+	time.Sleep(late)
 	if v.mounting || thrAnimating(e) {
 		t.Errorf("the reload that landed before the refresh started was never settled: mounting %v, the floating loader still drawn", v.mounting)
 	}

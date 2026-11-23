@@ -200,6 +200,11 @@ func (a *App) konamiKeys(src *input.Source) {
 		presses = append(presses, src.KeyPresses()...)
 	}
 	for _, e := range presses {
+		if e.Name == key.NameEscape {
+			// BaseTooltip's hoverEscHide: Escape, whoever takes it, hides
+			// the tooltip under the pointer
+			popups.HideTooltips()
+		}
 		if a.konami.press(e) {
 			a.setInspectTool(a.insp == nil)
 		}
@@ -507,6 +512,8 @@ func secKindName(k secKind) string {
 		return "workflow"
 	case secWorkObject:
 		return "work object"
+	case secEmail:
+		return "email"
 	}
 	return fmt.Sprintf("kind %d", k)
 }

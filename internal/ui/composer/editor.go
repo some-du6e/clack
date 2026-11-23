@@ -114,6 +114,12 @@ const (
 	// (onCmdKWhenSelected): the composer shows the coachmark and opens
 	// the jumper
 	EvCmdKSelected
+	// PageUp, PageDown, Home and End in an empty editor (MessagePane's
+	// document keydown hands them to the message list)
+	EvPageUpEmpty
+	EvPageDownEmpty
+	EvHomeEmpty
+	EvEndEmpty
 )
 
 // EditorEvent is reported by Editor.Update.
@@ -1129,12 +1135,11 @@ func (e *Editor) onClick(gtx layout.Context, ev gesture.ClickEvent) {
 	clicks := e.seededClicks(gtx, ev)
 	switch {
 	case clicks == 2:
-		lo, hi := edWordAt(d, pos)
+		lo, hi := edClickWord(d, pos)
 		e.anchor, e.caret = lo, hi
 		e.dragMode, e.dragLo, e.dragHi = edDragWord, lo, hi
 	case clicks >= 3:
-		l := d.LineOf(pos)
-		lo, hi := d.LineStart(l), d.LineEnd(l)
+		lo, hi := edClickParagraph(d, pos)
 		e.anchor, e.caret = lo, hi
 		e.dragMode, e.dragLo, e.dragHi = edDragLine, lo, hi
 	default:
@@ -1165,10 +1170,9 @@ func (e *Editor) onDrag(gtx layout.Context, ev pointer.Event) {
 	case edDragWord, edDragLine:
 		var lo, hi int
 		if e.dragMode == edDragWord {
-			lo, hi = edWordAt(d, pos)
+			lo, hi = edClickWord(d, pos)
 		} else {
-			l := d.LineOf(pos)
-			lo, hi = d.LineStart(l), d.LineEnd(l)
+			lo, hi = edClickParagraph(d, pos)
 		}
 		if lo < e.dragLo {
 			e.anchor, e.caret = e.dragHi, lo

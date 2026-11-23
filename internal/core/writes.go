@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -37,9 +38,55 @@ func isCode(err error, codes ...string) bool {
 	return false
 }
 
-// Edit replaces a message's text (and optional blocks).
+// Edit replaces a message's text (and optional blocks), as Slack's
+// saveMessageEdit (boot-shared IHC0) does: editMessage (wVuW u_) puts the
+// edit into the store first, so the list and anything reading the store
+// (Up, /s) see it at once. Like the reducer it sets the blocks when there
+// are any, else the text, and drops edited (the call passes no editTs:
+// "(edited)" comes back with message_changed). chat.update goes out next,
+// and a failure puts the message back as it was (text, blocks, edited,
+// files).
 func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
-	return a.C.Update(ctx, ch, ts, text, blocks)
+	prev, had := a.S.Find(ch, ts)
+	if had && !editUnchanged(&prev, text, blocks) {
+		if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) {
+			if len(blocks) > 0 {
+				x.Blocks = blocks
+			} else {
+				x.Text = text
+			}
+			x.Edited = nil
+		}); ok {
+			a.emitUpdate(ch, &upd)
+		}
+	}
+	err := a.C.Update(ctx, ch, ts, text, blocks)
+	if err != nil && had {
+		if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) {
+			x.Text, x.Blocks, x.Edited, x.Files = prev.Text, prev.Blocks, prev.Edited, prev.Files
+		}); ok {
+			a.emitUpdate(ch, &upd)
+		}
+	}
+	return err
+}
+
+// editUnchanged is editMessage's no-op: the same blocks (or, with none,
+// the same text) as the message has.
+func editUnchanged(m *slack.Message, text string, blocks json.RawMessage) bool {
+	if len(blocks) > 0 {
+		return bytes.Equal(bytes.TrimSpace(blocks), bytes.TrimSpace(m.Blocks))
+	}
+	return m.Text == text
+}
+
+// EndStale reports whether ch's window stops short of the conversation's
+// end: a slow connect's catch-up hasn't joined it to what the socket
+// brought (reached_end.go). Slack's getTimestampsByChannelId with no start
+// is empty until reachedEnd, so its edit-last selectors find nothing then.
+func (a *App) EndStale(ch string) bool {
+	t := a.S.Timeline(ch)
+	return t != nil && t.EndStale
 }
 
 // EditWithFiles saves an edit whose files changed (Slack's
@@ -184,6 +231,7 @@ func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) 
 	raws := make([]*PendingFile, len(o.Files))
 	for i, f := range o.Files {
 		raws[i] = NewPendingFile(f.Name, firstNonEmpty(f.Title, f.Name), f.Data)
+		raws[i].Subtype = f.Subtype
 	}
 	var ph *filePlaceholder
 	if o.Channel != "" {
@@ -317,9 +365,11 @@ func (a *App) PrepareUpload(ctx context.Context, f UploadFile, progress func(sen
 }
 
 // uploadOnce is one eager upload attempt: files.getUploadURL {filename,
-// length, snippet_type, alt_txt} (Slack's getUploadURL fetcher sends the
-// last two for snippets and for images with alt text), the multipart POST
-// to upload_url, files.completeUpload.
+// length, snippet_type, subtype, alt_txt} (Slack's getUploadURL fetcher
+// sends snippet_type for snippets, subtype for clips and alt_txt for
+// images with alt text), the multipart POST to upload_url,
+// files.completeUpload {files: [{id, title, subtype}]} (UploadQueue's
+// _getMultiFileUploadDataForApi adds subtype when the File has one).
 func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, total int64)) (string, error) {
 	t0 := time.Now()
 	var r struct {
@@ -331,6 +381,9 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 	args := url.Values{"filename": {f.Name}, "length": {strconv.Itoa(n)}}
 	if f.SnippetType != "" {
 		args.Set("snippet_type", f.SnippetType)
+	}
+	if f.Subtype != "" {
+		args.Set("subtype", f.Subtype)
 	}
 	if f.AltText != "" {
 		args.Set("alt_txt", f.AltText)
@@ -348,7 +401,7 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 		return "", err
 	}
 	log.Printf("upload: %s POST %d bytes in %s", id, n, time.Since(t0).Round(time.Millisecond))
-	if err := a.C.CompleteUpload(ctx, []slack.UploadedRef{{ID: id, Title: firstNonEmpty(f.Title, f.Name)}}); err != nil {
+	if err := a.C.CompleteUpload(ctx, []slack.UploadedRef{{ID: id, Title: firstNonEmpty(f.Title, f.Name), Subtype: f.Subtype}}); err != nil {
 		log.Printf("upload: %s completeUpload failed (%s)", id, uploadErrClass(err))
 		return "", err
 	}
@@ -460,6 +513,19 @@ func (a *App) Unsave(ctx context.Context, ch, ts string) error {
 	return nil
 }
 
+// ClearSaved is clearSavedItemImmediately's saved.delete (boot-shared
+// PxoD): saved_not_found, an item already cleared elsewhere, counts as
+// cleared, as Slack's catch skips it (_.RF.SavedNotFound).
+func (a *App) ClearSaved(ctx context.Context, ch, ts string) error {
+	if err := a.Unsave(ctx, ch, ts); err != nil {
+		if !isCode(err, "saved_not_found") {
+			return err
+		}
+		a.markSaved(ch, ts, false)
+	}
+	return nil
+}
+
 // UpdateSaved marks a saved item completed/archived or changes its due date.
 func (a *App) UpdateSaved(ctx context.Context, ch, ts string, u SavedUpdate) error {
 	p := savedParams(ch, ts)
@@ -518,8 +584,10 @@ func (a *App) MarkThread(ctx context.Context, ch, threadTS, ts string) error {
 	err := a.C.Call(ctx, "subscriptions.thread.mark", url.Values{"channel": {ch}, "thread_ts": {threadTS}, "ts": {ts}, "read": {"1"}}, nil)
 	if err == nil {
 		// setThreadLastRead: the subscription's last_read now, as the
-		// thread_marked event would set it
+		// thread_marked event would set it, and markThread's
+		// updateActivitiesUnreadState for the reply bars' items
 		a.setThreadLastRead(ch, threadTS, ts)
+		a.threadActivityRead(ch, threadTS, ts)
 		a.refreshCountsSoon()
 	}
 	return err

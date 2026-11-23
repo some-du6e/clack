@@ -89,6 +89,55 @@ func uptimeEditTS(ts string) string {
 // bundle with the reply as its latest; with activityFirst the entries come
 // before the message events. It returns the reply's ts.
 func (s *Server) PushReplyLive(ch, root, user, text string, activityFirst bool) string {
+	return s.pushReplyLive(ch, root, user, text, activityFirst, false)
+}
+
+// PushFollowedReplyLive is PushReplyLive for a thread the viewer
+// follows, one they started or replied in: after the reply's message
+// events the server sends the follower its desktop_notification
+// (FollowedReplyNotification), which is what Slack's client toasts a
+// reply without a mention from (shouldShowNotificationForChannelMessage
+// returns 6 for any reply that doesn't mention the viewer). It returns
+// the reply's ts.
+func (s *Server) PushFollowedReplyLive(ch, root, user, text string, activityFirst bool) string {
+	return s.pushReplyLive(ch, root, user, text, activityFirst, true)
+}
+
+// FollowedReplyNotification is the desktop_notification the server sends
+// a follower of root's thread about reply ts, with the fields Slack's
+// client reads: shouldShowNotificationForDesktopNotification's channel,
+// ts, thread_ts and user, maybeShowNotification's msg (its shown key),
+// content (the body, skip_formatting), launchUri, avatarImage and
+// imageUri. Synthetic data only.
+func (s *Server) FollowedReplyNotification(ch, root, ts, user, text string) map[string]any {
+	name := user
+	if u, ok := s.userByID(user); ok && u.Profile.DisplayName != "" {
+		name = u.Profile.DisplayName
+	}
+	sub := ch
+	if c, ok := s.conv(ch); ok && c.Name != "" {
+		sub = "#" + c.Name
+	}
+	return map[string]any{"type": "desktop_notification", "title": "Fake Club", "subtitle": sub,
+		"msg": ts, "ts": ts, "thread_ts": root, "channel": ch, "user": user, "content": name + ": " + text,
+		"launchUri":   "slack://channel?id=" + ch + "&message=" + strings.ReplaceAll(ts, ".", "") + "&thread_ts=" + root + "&team=" + TeamID,
+		"avatarImage": s.URL + "img/48x48/" + user + ".png", "ssbFilename": "knock_brush.mp3", "imageUri": nil,
+		"is_shared": false, "is_channel_invite": false, "event_ts": ts}
+}
+
+// FollowedThreadState is the update_thread_state the server sends a
+// follower once a followed thread of ch has a new reply at ts: unread
+// threads, n of them in ch, none mentioning the viewer, as the org-wide
+// event a Grid client takes (fakeslack's team is a Grid's: org_wide true;
+// Slack's updateThreadState rejects an event whose org_wide isn't the
+// client's).
+func FollowedThreadState(ch, ts string, n int) map[string]any {
+	return map[string]any{"type": "update_thread_state", "has_unreads": true, "mention_count": 0,
+		"unread_count_by_channel": map[string]int{ch: n}, "mention_count_by_channel": map[string]int{},
+		"timestamp": ts, "org_wide": true}
+}
+
+func (s *Server) pushReplyLive(ch, root, user, text string, activityFirst, followed bool) string {
 	ts := s.PostReplyQuiet(ch, root, user, text)
 	var rm map[string]any
 	s.histMu.Lock()
@@ -108,16 +157,28 @@ func (s *Server) PushReplyLive(ch, root, user, text string, activityFirst bool) 
 			s.Push(map[string]any{"type": "message", "subtype": "message_replied", "channel": ch, "hidden": true,
 				"message": rm, "event_ts": ts, "ts": ts})
 		}
+		if followed {
+			s.Push(s.FollowedReplyNotification(ch, root, ts, user, text))
+			s.Push(FollowedThreadState(ch, ts, 1))
+		}
 	}
 	entries := func() {
 		s.Push(map[string]any{"type": "activity", "subtype": "activity_updated", "entry": map[string]any{
 			"key": "thread_reply-" + ch + "-" + ts, "feed_ts": ts, "is_unread": true,
 			"item": map[string]any{"type": "thread_reply", "message": map[string]any{
 				"ts": ts, "channel": ch, "thread_ts": root, "author_user_id": user, "is_broadcast": false}}}})
-		s.Push(map[string]any{"type": "activity", "subtype": "activity_updated", "entry": map[string]any{
+		bundle := map[string]any{
 			"key": "thread_v2-" + ch + "-" + root, "feed_ts": ts, "is_unread": true,
 			"item": map[string]any{"type": "thread_v2", "bundle_info": map[string]any{"payload": map[string]any{
-				"thread_entry": map[string]any{"channel_id": ch, "thread_ts": root, "latest_ts": ts, "unread_msg_count": 1}}}}}})
+				"thread_entry": map[string]any{"channel_id": ch, "thread_ts": root, "latest_ts": ts, "unread_msg_count": 1}}}}}
+		if followed {
+			// the follower's feed lists the bundle from now on, as the
+			// server's does before it pushes it (UpsertActivity):
+			// fetchActivitiesForChannel finds it
+			s.Push(s.UpsertActivity(bundle))
+		} else {
+			s.Push(map[string]any{"type": "activity", "subtype": "activity_updated", "entry": bundle})
+		}
 	}
 	if activityFirst {
 		entries()

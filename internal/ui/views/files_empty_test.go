@@ -13,25 +13,31 @@ import (
 // (useUnifiedFilesExplorer, the canvases explorer, the lists NUX header).
 func TestFilesEmptyCopy(t *testing.T) {
 	for _, tc := range []struct {
-		kind           string
-		search, all    bool
-		title, desc    string
-		icon, button   string
-		descHasRecents bool
+		kind             string
+		search, adv, all bool
+		title, desc      string
+		icon, button     string
 	}{
-		{"", false, true, "No files yet", "Your recently viewed or updated files will be shown here.", "", "", true},
-		{"", true, true, "No results", "Your recently viewed or updated files will be shown here.", "", "", true},
-		{"", true, false, "No results", "You may want to try adjusting your filters.", "", "Clear Filters", false},
-		{"", false, false, "No files found", "It may be that you don’t have any files yet, or that there aren’t any that fit your current filters.", "", "Clear Filters", false},
-		{"canvases", false, true, "No canvases yet", "Your recently viewed or updated canvases will show up here.", "plus", "New Canvas", false},
-		{"canvases", true, true, "No results", "You may want to try adjusting your filters.", "", "", false},
-		{"lists", false, true, "No lists yet", "Your recently viewed or updated lists will be shown here.", "plus", "New List", false},
-		{"lists", true, true, "No results", "You may want to try adjusting your filters.", "", "", false},
+		{"", false, false, true, "No files yet", "Your recently viewed or updated files will be shown here.", "", ""},
+		{"", true, false, true, "No results", "Your recently viewed or updated files will be shown here.", "", ""},
+		{"", true, false, false, "No results", "You may want to try adjusting your filters.", "", "Clear Filters"},
+		{"", false, false, false, "No files found", "It may be that you don’t have any files yet, or that there aren’t any that fit your current filters.", "", "Clear Filters"},
+		// advanced filters (hasAdvancedFiltersSet) count as filtering
+		// with every type on, with or without a search
+		{"", false, true, true, "No results", "You may want to try adjusting your filters.", "", "Clear Filters"},
+		{"", true, true, true, "No results", "You may want to try adjusting your filters.", "", "Clear Filters"},
+		{"", false, true, false, "No results", "You may want to try adjusting your filters.", "", "Clear Filters"},
+		{"canvases", false, false, true, "No canvases yet", "Your recently viewed or updated canvases will show up here.", "plus", "New Canvas"},
+		{"canvases", true, false, true, "No results", "You may want to try adjusting your filters.", "", ""},
+		{"canvases", false, true, true, "No results", "You may want to try adjusting your filters.", "", ""},
+		{"lists", false, false, true, "No lists yet", "Your recently viewed or updated lists will be shown here.", "plus", "New List"},
+		{"lists", true, false, true, "No results", "You may want to try adjusting your filters.", "", ""},
+		{"lists", false, true, true, "No results", "You may want to try adjusting your filters.", "", ""},
 	} {
-		got := filesEmptyCopy(tc.kind, tc.search, tc.all)
+		got := filesEmptyCopy(tc.kind, tc.search, tc.adv, tc.all)
 		want := filesEmptyState{tc.title, tc.desc, tc.icon, tc.button}
 		if got != want {
-			t.Errorf("%q search=%v all=%v:\n got %+v\nwant %+v", tc.kind, tc.search, tc.all, got, want)
+			t.Errorf("%q search=%v adv=%v all=%v:\n got %+v\nwant %+v", tc.kind, tc.search, tc.adv, tc.all, got, want)
 		}
 	}
 	// Starred's empty row: Slack's sentence, the star a character between
@@ -43,23 +49,19 @@ func TestFilesEmptyCopy(t *testing.T) {
 	}
 }
 
-// The sidebar's Starred part follows custom_file_sections (the account's
-// team has it on): the starred file collection's header row, which a click
-// collapses (the client store's toggleCollectionCollapse), or the plain
-// "Starred" sub-header with no collapse.
+// The sidebar's Starred part is the starred file collection's header row,
+// which a click collapses (the client store's toggleCollectionCollapse),
+// never the old plain "Starred" sub-header: Slack dropped
+// custom_file_sections and kept its on path (the 2026-11-21 drift), so the
+// old gate forced off changes nothing.
 func TestFilesSidebarStarred(t *testing.T) {
 	v, h, e, _ := filesView(t)
 	app := h.Core()
 	app.SetExperimentGroup("custom_file_sections", "off")
-	e.frame()
-	if v.fileCollections() || !hasRow(v, "starred-canvas-header") {
-		t.Fatalf("custom_file_sections off: rows %s", rowKeys(v))
-	}
-	app.SetExperimentGroup("custom_file_sections", "on")
 	e.until(t, "files.collections.list", func() bool { _, ok := app.FileCollections(); return ok })
 	e.frame()
 	if !v.fileCollections() || hasRow(v, "starred-canvas-header") {
-		t.Fatalf("custom_file_sections on: rows %s", rowKeys(v))
+		t.Fatalf("custom_file_sections forced off: rows %s", rowKeys(v))
 	}
 	key := "coll:" + fakeslack.StarredCollectionID
 	if !hasRow(v, key) {
@@ -89,11 +91,9 @@ func TestFilesEmptyShots(t *testing.T) {
 		h.th = theme.New(dark)
 		app := h.Core()
 		app.SetExperimentGroup("unified_files_3p_primary_custom_sections", "on")
-		app.SetExperimentGroup("custom_file_sections", "on")
 		e.until(t, "files.collections.list", func() bool { _, ok := app.FileCollections(); return ok })
 		e.frame()
 		vaShot(t, e, "files-sidebar-collections", dark)
-		app.SetExperimentGroup("custom_file_sections", "off")
 		app.SetExperimentGroup("unified_files_3p_primary_custom_sections", "off")
 		e.frame()
 		vaShot(t, e, "files-sidebar-starred", dark)

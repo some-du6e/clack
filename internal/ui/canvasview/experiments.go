@@ -9,9 +9,6 @@ package canvasview
 //   - canvas_table_of_contents: Quip's CANVAS_ALLOW_SLACK_OUTLINE (feature
 //     188, client-boot-shared 65wK createInitConfig) and QuipEmbed's
 //     TableOfContentsDrawer (tshn), toc.go.
-//   - canvas_blockquote_layout: Quip's BLOCKQUOTE_LAYOUT (197) and the
-//     toolbars' blockquote layout (client-boot M6vS zk, foOi
-//     InsertionToolbarFormattingMenu / InsertionToolbarMenu), edit.go.
 //   - slackified_checkbox: Quip's useSlackCheckboxes (178), render.go.
 //   - canvas_comment_only_mode: QuipAccessIndicator (CQK3), access.go.
 

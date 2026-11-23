@@ -375,6 +375,7 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 	// the markers, before they go: compactCardBlocks' first highlighted
 	// block (exp_wave7.go)
 	marked := searchHitBlocks(raw)
+	matches := searchMatches(raw) // the card's attachments and files (search_matches.go)
 	if err := json.Unmarshal(stripHighlightJSON(raw), &res); err != nil {
 		return SearchResult{}, err
 	}
@@ -398,6 +399,7 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 		link    string
 		replied bool
 		hitAt   int
+		matches SearchMatches
 	}
 	var hits []hit
 	chans := map[string]bool{}
@@ -421,7 +423,7 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 			}
 			_ = json.Unmarshal(mr, &aux)
 			msgs = append(msgs, m)
-			hits = append(hits, hit{ch, m, aux.Permalink, aux.RequestorReplied, marked[[2]int{i, j}]})
+			hits = append(hits, hit{ch, m, aux.Permalink, aux.RequestorReplied, marked[[2]int{i, j}], matches[[2]int{i, j}]})
 		}
 	}
 	// the results' people are asked for as their rows draw (lazy_users.go)
@@ -429,6 +431,8 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 		v := a.message(hits[i].ch, &hits[i].m)
 		v.Permalink = hits[i].link
 		v.RequestorReplied, v.SearchHitBlock = hits[i].replied, hits[i].hitAt
+		sm := hits[i].matches
+		v.SearchMatches = &sm
 		out.Messages = append(out.Messages, v)
 	}
 	out.Convs = a.convRefs(chans)
@@ -758,13 +762,33 @@ func (a *App) ModuleCount(ctx context.Context, module, query string, s SearchSes
 	return 0, nil
 }
 
+// QuickMessageResultsOn is boot-shared Y/3h E, what replaced the
+// omni_quick_message_results experiment (build 8f19be21ed7e, the
+// 2026-11-21 drift; every reader moved to it: 4Rqi
+// omniswitcher_suggestions, PBTK, ZPUF SuggestionQuickMessage): not a
+// GovSlack team (/fn6 isSelfTeamGovSlack; Clack only signs in to
+// commercial Slack), and the current team is paid (DZwJ isPaidTeam: a
+// plan) or an enterprise or one of its workspaces (t5X0
+// isEnterpriseOrEnterpriseWorkspace: an enterprise_id). On, Recent
+// messages searches the viewer's recent conversations as cards; off, only
+// the open channel, as plain rows.
+func (a *App) QuickMessageResultsOn() bool {
+	if a.C.Creds.EnterpriseID != "" {
+		return true
+	}
+	t := a.teamPlan()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.plan != "" || t.enterpriseID != ""
+}
+
 // InlineOpts is a search.inline call (the popover's Recent messages,
 // Slack's searchInline thunk as suggestionsQuickMessages calls it).
 type InlineOpts struct {
 	Query string
 	Count int // 3
 	// Channel / User limit the search to a conversation (an in: filter,
-	// or the open channel with omni_quick_message_results off).
+	// or the open channel when QuickMessageResultsOn is false).
 	Channel, User string
 	// RecentChannels is recent_channels (nil: not sent).
 	RecentChannels []string

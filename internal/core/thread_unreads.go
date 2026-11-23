@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -13,9 +14,9 @@ import (
 //
 //   - unreadCounts.threadsUnreadCountByChannel (client-boot 82Kz aX) is
 //     client.counts' threads.unread_count_by_channel (h1EQ →
-//     threadsUnreadCountChanged). Clack reads client.counts again after
-//     thread_marked and update_thread_state (events.go), where Slack also
-//     takes update_global_thread_state.
+//     threadsUnreadCountChanged), and update_thread_state's at once
+//     (onUpdateThreadState). Clack reads client.counts again after
+//     thread_marked and update_thread_state too (events.go).
 //   - MessagePane maybeFetchUnreadThreadActivity (boot-render bU1n): with
 //     that count above 0 and the experiment on, once per mount while the
 //     channel's thread activity isn't loaded, fetchActivitiesForChannel
@@ -26,6 +27,39 @@ import (
 //     channel activity list per thread: isUnreadThreadReply (a thread ts,
 //     not read, not a reaction, a thread_v2 item or a reply).
 
+// onUpdateThreadState is updateThreadState (boot-render /+fI, build
+// 35b42de8b870), which takes the event's state at once: has_unreads,
+// mention_count and unread_count_by_channel for the threads' unread
+// state (the reply bar's Unread mark reads the count), and channel_badges
+// for the badges (updateChannelBadgesCounts). Clack only read
+// client.counts again 1.5 s later (refreshCountsSoon), so the Unread mark
+// came seconds after the reply it was for (Karim, 2026-11-22: "i swear i
+// saw your new reply before the Unread thing popped up"). An event whose
+// org_wide isn't the client's (isEnterprise: Grid clients take the
+// org-wide one) is rejected, as Slack rejects it; Clack takes no
+// update_global_thread_state, which only an org-unified client reads. It
+// reports whether the threads' unread state changed.
+func (a *App) onUpdateThreadState(raw json.RawMessage) bool {
+	var e struct {
+		HasUnreads           *bool          `json:"has_unreads"`
+		MentionCount         *int           `json:"mention_count"`
+		UnreadCountByChannel map[string]int `json:"unread_count_by_channel"`
+		ChannelBadges        map[string]int `json:"channel_badges"`
+		OrgWide              bool           `json:"org_wide"`
+	}
+	if json.Unmarshal(raw, &e) != nil || e.OrgWide != a.IsEnterprise() {
+		return false
+	}
+	if e.ChannelBadges != nil && a.mergeChannelBadges(e.ChannelBadges) {
+		a.emit(Event{Type: "activity_badges"}) // the app badge reads them (classic_badges.go)
+	}
+	changed := a.S.SetThreadState(e.HasUnreads, e.MentionCount, e.UnreadCountByChannel)
+	if e.UnreadCountByChannel != nil {
+		a.pruneThreadActivity(a.chActMark()) // a channel left with none has no reply bar marks (channel_thread_activity.go)
+	}
+	return changed
+}
+
 // ThreadsUnreadIn is client.counts' threads.unread_count_by_channel[ch]:
 // how many of ch's threads have unread replies.
 func (a *App) ThreadsUnreadIn(ch string) int {
@@ -35,24 +69,17 @@ func (a *App) ThreadsUnreadIn(ch string) int {
 }
 
 // ChannelUnreadThreads is fetchActivitiesForChannel for the reply bar:
-// ch's unread thread activity, as unread items per thread ts.
+// ch's unread thread activity, which replaces ch's list and loads it
+// (channel_thread_activity.go), as unread items per thread ts. The
+// socket's changes after the request went out stay over the answer.
 func (a *App) ChannelUnreadThreads(ctx context.Context, ch string) (map[string]int, error) {
+	since := a.chActBegin(ch)
 	p, err := a.Activity(ctx, ActivityOpts{Types: "thread_v2", Unread: true, Mode: "chrono_unreads", Limit: 10, ChannelIDs: []string{ch}})
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]int{}
-	for i := range p.Items {
-		if it := &p.Items[i]; unreadThreadReply(it) {
-			out[it.ThreadTS]++
-		}
-	}
-	return out, nil
-}
-
-// unreadThreadReply is 3x6A isUnreadThreadReply.
-func unreadThreadReply(it *ActivityItem) bool {
-	return it.ThreadTS != "" && it.Unread && it.Type != "message_reaction" && (it.Type == "thread_v2" || it.TS != it.ThreadTS)
+	a.installChannelActivity(ch, p.Items, since)
+	return a.unreadThreadCounts(ch), nil
 }
 
 // LooksLikeBotID is Slack's looksLikeBotId (2jcO): a bot id, not a member.
@@ -123,4 +150,27 @@ func (a *App) ReplyBarBotAvatar(m *Message, botID string, px int) string {
 	}
 	a.S.NoteMissingBot(botID)
 	return defaultBotAvatarAt(px)
+}
+
+// ThreadsLink is the sidebar's Threads link as Slack's
+// AllThreadsRowElement draws it (boot-render): bold while it hasUnreads
+// (vuTZ zx: threadsHasUnreads || threadsUnreadCount > 0, which "Update the
+// unread count for the all threads view" (client-boot BScm) sets from
+// has_unreads and unread_count_by_channel, every channel passing
+// shouldInboxViewsShowChannel in a client of one workspace), and a badge
+// of channel_badges' thread_mentions.
+func (a *App) ThreadsLink() (unread bool, mentions int) {
+	a.S.RLock()
+	unread = a.S.ThreadsUnread
+	for _, n := range a.S.ThreadsUnreadByChannel {
+		if n > 0 {
+			unread = true
+			break
+		}
+	}
+	a.S.RUnlock()
+	a.mu.Lock()
+	mentions = a.classic.channels["thread_mentions"]
+	a.mu.Unlock()
+	return unread, mentions
 }

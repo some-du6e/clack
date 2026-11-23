@@ -122,6 +122,9 @@ type ChannelPins struct {
 	list widget.List
 	kb   *vkList
 	rows map[string]*cpRow
+	// clicked are this frame's row clicks, opened after the layout
+	// (openClicked)
+	clicked []core.PinsTabItem
 
 	items  []core.PinsTabItem
 	loaded bool
@@ -269,6 +272,19 @@ func (v *ChannelPins) pointer() image.Point {
 	return image.Point{}
 }
 
+// openClicked opens the rows clicked this frame (update), but for one
+// whose press was a reaction pill's.
+func (v *ChannelPins) openClicked() {
+	cs := v.clicked
+	v.clicked = nil
+	for _, it := range cs {
+		if r := v.rows[it.Key()]; r != nil && pressedOn(&r.row, v.pillPress) {
+			continue
+		}
+		v.open(it)
+	}
+}
+
 func (v *ChannelPins) update(gtx C) {
 	for _, it := range v.items {
 		r := v.rows[it.Key()]
@@ -282,8 +298,11 @@ func (v *ChannelPins) update(gtx C) {
 				v.toolbar(it, i, r.tbRects[i])
 			}
 		}
+		// a reaction pill's click stops there, a link's opens the pin too
+		// (content_menu.go pressedOn): decided once the frame laid the
+		// pills out, which mark a press of theirs this frame
 		if r.row.Clicked(gtx) && !took {
-			v.open(it)
+			v.clicked = append(v.clicked, it)
 		}
 		for {
 			ev, ok := gtx.Event(pointer.Filter{Target: &r.ctx, Kinds: pointer.Press})
@@ -345,6 +364,7 @@ func (v *ChannelPins) Layout(gtx C) D {
 	v.cf.frame()
 	v.refresh()
 	v.update(gtx)
+	defer v.openClicked()
 	sz := gtx.Constraints.Max
 	if v.preview {
 		fill(gtx, image.Rectangle{Max: sz}, v.p.Surface)
@@ -586,7 +606,8 @@ func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 							layout.Rigid(func(gtx C) D { return v.para(gtx, 12, 17.6, wReg, v.p.Meta, 1, stamp) }),
 						)
 					}),
-					layout.Rigid(func(gtx C) D { return v.actPaneBody(gtx, m) }),
+					// the pin's unfurl is cursor: pointer (handBody)
+					layout.Rigid(func(gtx C) D { return v.handBody(gtx, func(gtx C) D { return v.actPaneBody(gtx, m) }) }),
 					layout.Rigid(func(gtx C) D {
 						if len(m.Reactions) == 0 {
 							return D{}
@@ -603,19 +624,20 @@ func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 	return r.row.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		v.box(gtx, sz, gtx.Dp(8), last)
+		// the row's hover and right-click target are the content's parent
+		// (threads.go msg): the body's links, mentions and images and the
+		// hover actions are hit first, and the row stays hovered over them
+		st := clip.Rect{Max: sz}.Push(gtx.Ops)
+		r.hv.Add(gtx.Ops)
+		event.Op(gtx.Ops, &r.ctx)
 		call.Add(gtx.Ops)
 		if (hovered || r.row.Hovered()) && !v.preview {
 			v.actions(gtx, r, it, sz)
 		}
+		st.Pop()
 		if ring {
 			v.vkRing(gtx, image.Rectangle{Max: sz}, gtx.Dp(8))
 		}
-		st := clip.Rect{Max: sz}.Push(gtx.Ops)
-		r.hv.Add(gtx.Ops)
-		pass := pointer.PassOp{}.Push(gtx.Ops)
-		event.Op(gtx.Ops, &r.ctx)
-		pass.Pop()
-		st.Pop()
 		return D{Size: sz}
 	})
 }

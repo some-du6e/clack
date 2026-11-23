@@ -210,9 +210,20 @@ type SenderView struct {
 	// slots (an agent block's is its whole block), as laid out.
 	Body  image.Rectangle
 	Slots []image.Rectangle
+	// Highlight is the jump highlight's strength the row painted in the
+	// last frame (0 none, 1 Slack's #f2c74433 at full)
+	Highlight float32
+	// Top is the row's top edge in the list, px under the list's top
+	// (negative: cut off above it), and ViewH the list's height, as the
+	// last frame laid them out.
+	Top, ViewH int
 	// Avatar is the picture the row drew (its URL; "" for a row without
 	// one), Badge the app badge after the name ("" for none).
 	Avatar, Badge string
+	// TimeTag is the pointer tag of the message's time link (the
+	// header's, else the gutter's; nil when neither was drawn), whose
+	// area the router knows (AreaBounds)
+	TimeTag event.Tag
 }
 
 // Senders lists the senders of the visible messages as of the last frame.
@@ -231,7 +242,10 @@ func (s *listState) senders() []SenderView {
 		if r == nil {
 			continue
 		}
-		sv := SenderView{TS: r.src.TS, User: r.m.User, Name: r.nameShown}
+		sv := SenderView{TS: r.src.TS, User: r.m.User, Name: r.nameShown, Highlight: r.hlDrawn, ViewH: s.size.Y}
+		if i < len(s.pos) {
+			sv.Top = s.pos[i]
+		}
 		if sv.Name == "" {
 			sv.Missing = r.senderMiss()
 		}
@@ -242,6 +256,11 @@ func (s *listState) senders() []SenderView {
 		}
 		sv.Body = r.bodyRect
 		sv.Avatar, sv.Badge = r.avDrawn, r.badge
+		if r.tsTip.link.Hovered() || r.tsTip.link.Shown() {
+			sv.TimeTag = r.tsTip.link.Tag()
+		} else if r.compactTip.link.Shown() {
+			sv.TimeTag = r.compactTip.link.Tag()
+		}
 		out = append(out, sv)
 	}
 	return out

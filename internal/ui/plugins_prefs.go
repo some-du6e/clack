@@ -12,6 +12,7 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/slick"
@@ -350,14 +351,13 @@ func (pp *pluginsPage) layout(gtx layout.Context) layout.Dimensions {
 	pp.lib.s.k.gtxNow = gtx
 	pp.taut.gtxNow = gtx
 	sz := gtx.Constraints.Max
+	if pp.mode == "browse" {
+		return pp.libraryList(gtx)
+	}
 	return panelList(gtx, &p.list.List, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
 		f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
-		if pp.mode == "browse" {
-			pp.libraryScreen(f)
-		} else {
-			pp.mainScreen(f)
-		}
+		pp.mainScreen(f)
 		f.gap(24)
 		return layout.Dimensions{Size: image.Pt(sz.X, f.y)}
 	})
@@ -412,7 +412,7 @@ func (pp *pluginsPage) navRows(f *flow) {
 func (pp *pluginsPage) libraryUpdates() int {
 	n := 0
 	if pp.lib.ix != nil {
-		for _, g := range libraryGroups(libraryEntries(pp.lib.ix)) {
+		for _, g := range pp.lib.allGroups() {
 			if _, u := pp.lib.groupStates(g); len(u) > 0 {
 				n++
 			}
@@ -633,15 +633,29 @@ func (v *libraryPage) suggest(words []string) []libGroup {
 	if v.ix == nil || len(words) == 0 {
 		return nil
 	}
-	return rankGroups(libraryGroups(libraryEntries(v.ix)), words, func(g libGroup) bool {
+	return v.rank(v.allGroups(), words, func(g libGroup) bool {
 		installed, _ := v.groupStates(g)
 		return len(installed) > 0
+	})
+}
+
+// rank is rankGroups with ties ordered as the rows are filed: by the name
+// of the version each shows before either is installed (home).
+func (v *libraryPage) rank(groups []libGroup, words []string, skip func(libGroup) bool) []libGroup {
+	return rankGroupsBy(groups, words, skip, func(g libGroup) string {
+		e := v.home(g)
+		return orStr(e.Name, e.ID)
 	})
 }
 
 // rankGroups is the rows of groups that words match (groupRank), best
 // match first, then by name; skip leaves rows out.
 func rankGroups(groups []libGroup, words []string, skip func(libGroup) bool) []libGroup {
+	return rankGroupsBy(groups, words, skip, func(g libGroup) string { return g.first().Name })
+}
+
+// rankGroupsBy is rankGroups, ties ordered by name(row).
+func rankGroupsBy(groups []libGroup, words []string, skip func(libGroup) bool, name func(libGroup) string) []libGroup {
 	type hit struct {
 		g    libGroup
 		rank int
@@ -659,7 +673,7 @@ func rankGroups(groups []libGroup, words []string, skip func(libGroup) bool) []l
 		if hits[i].rank != hits[j].rank {
 			return hits[i].rank < hits[j].rank
 		}
-		return strings.ToLower(hits[i].g.first().Name) < strings.ToLower(hits[j].g.first().Name)
+		return strings.ToLower(name(hits[i].g)) < strings.ToLower(name(hits[j].g))
 	})
 	out := make([]libGroup, len(hits))
 	for i, h := range hits {
@@ -668,16 +682,32 @@ func rankGroups(groups []libGroup, words []string, skip func(libGroup) bool) []l
 	return out
 }
 
+// suggestAction is a search suggestion's button: the library row's
+// action, but a plugin both running systems have asks which version
+// (Install…, the bench's pick first when it made one): the suggestion row
+// has no chevron to reach the other version.
+func (v *libraryPage) suggestAction(g libGroup) libAction {
+	act := v.action(g)
+	if act.label == "Install" && act.menu != nil {
+		return libAction{label: "Install…", kind: act.kind, do: act.menu}
+	}
+	return act
+}
+
 // suggestionRow is a library plugin in Taut's row: the name and its
 // description (in line with the installed rows' names, past the checkbox
-// column), and the library's own action for it (Install, or Install… when
-// both systems have it) at the right, with how it went under the name.
+// column), the other version's name where it has its own, and the
+// library's own action for it (Install, or Install… when both systems
+// have it: suggestAction) at the right, with how it went under the name.
+// Its name and description are the library row's face's.
 func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layout.Dimensions {
 	v, tp := pp.lib, pp.taut
 	cl := tp.colors()
-	e := g.first()
+	e := g.first() // the row's widgets, whichever version it shows
+	face, pick := v.face(g)
+	_, alias := v.versions(g, face, pick)
 	x := gtx.Dp(4+theme.NativeCheckSize+8) + gtx.Dp(4) // .taut-settings__row-spacer, then row-main's padding
-	act := v.action(g)
+	act := v.suggestAction(g)
 	kind := act.kind
 	if kind != popups.BtnDisabled {
 		kind = popups.BtnOutline // Taut's small outline buttons, quieter than the library's
@@ -696,9 +726,9 @@ func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layo
 	}
 	y := gtx.Dp(6)
 	y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-		return tp.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 20, Weight: theme.Bold, Color: cl.fg, MaxLines: 1}, e.Name)
+		return tp.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 20, Weight: theme.Bold, Color: cl.fg, MaxLines: 1}, face.Name)
 	}).Size.Y
-	if c := groupCompat(g); c.Line != "" { // how it works in Clack, before Install
+	if c := rowCompat(g, face, pick); c.Line != "" { // how it works in Clack, before Install
 		col := cl.fg2
 		if c.Status == pluginlib.CompatBroken {
 			col = cl.err
@@ -707,9 +737,14 @@ func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layo
 			return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: col, MaxLines: 1}, c.Line)
 		}).Size.Y
 	}
-	if d := plainMrkdwn(e.Description); d != "" {
+	if d := plainMrkdwn(rowDescription(g, face)); d != "" {
 		y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
 			return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.fg2, MaxLines: 1}, d)
+		}).Size.Y
+	}
+	if alias != "" { // a search by the other version's name found this
+		y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+			return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.fg3, MaxLines: 1}, alias)
 		}).Size.Y
 	}
 	if c := groupCredit(tp.a.credits(), g); c != "" { // the library row's "By …", as mentions
@@ -746,8 +781,83 @@ func groupCredit(cr creditResolver, g libGroup) string {
 	return cr.list(people) // each person once across the systems' entries
 }
 
-// libraryScreen is the plugin library as one of Taut's sub-screens: the
-// back link, its title, then its search, chips and rows.
+// libraryList is the plugin library screen as list elements: its head
+// (libraryScreen) as one, then each card's title and each of its rows as
+// their own (slickPage.cardRow) and the panel's bottom padding, so a
+// scroll lays out the rows in view, not the library's 71 (Karim, α.112:
+// "laggy?", "it feels capped"; Slack's pane scrolls on the compositor,
+// with no layout at all).
+func (pp *pluginsPage) libraryList(gtx layout.Context) layout.Dimensions {
+	p := pp.s
+	sz := gtx.Constraints.Max
+	// the search's typing first (its editor lays out later, in the head):
+	// the cards follow the text this frame draws in the box
+	for {
+		if _, ok := p.query.Update(gtx); !ok {
+			break
+		}
+	}
+	words := strings.Fields(strings.ToLower(p.query.Text()))
+	cards, empty := pp.lib.cards(words)
+	type el func(gtx layout.Context, w int) layout.Dimensions
+	els := []el{func(gtx layout.Context, w int) layout.Dimensions {
+		f := &flow{gtx: gtx, w: w}
+		pp.libraryScreen(f)
+		return layout.Dimensions{Size: image.Pt(w, f.y)}
+	}}
+	for _, c := range cards {
+		els = append(els, func(gtx layout.Context, w int) layout.Dimensions {
+			d := p.cardTitle(gtx, w, c.label, c.icon, nil)
+			return layout.Dimensions{Size: image.Pt(w, d.Size.Y+gtx.Dp(8))}
+		})
+		for i, g := range c.rows {
+			first, last := i == 0, i == len(c.rows)-1
+			els = append(els, func(gtx layout.Context, w int) layout.Dimensions {
+				d := p.cardRow(gtx, w, first, last, func(gtx layout.Context, w int) layout.Dimensions { return pp.lib.row(gtx, w, g) })
+				if last {
+					d.Size.Y += gtx.Dp(24) // the card's margin
+				}
+				return d
+			})
+		}
+	}
+	if empty != "" {
+		els = append(els, func(gtx layout.Context, w int) layout.Dimensions {
+			f := &flow{gtx: gtx, w: w}
+			p.empty(f, empty)
+			return layout.Dimensions{Size: image.Pt(w, f.y)}
+		})
+	}
+	els = append(els, func(gtx layout.Context, w int) layout.Dimensions {
+		return layout.Dimensions{Size: image.Pt(w, gtx.Dp(24))} // the panel's padding-bottom
+	})
+	constrain := func(gtx layout.Context) (layout.Context, int) {
+		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
+		return gtx, gtx.Constraints.Max.X
+	}
+	if p.list.Position.First > 0 && gtx.Focused(&p.query) {
+		// the head is out of view, the search focused: lay it out unseen so
+		// the field keeps the focus and its typing (an editor that isn't
+		// laid out loses it)
+		g, w := constrain(gtx)
+		m := op.Record(gtx.Ops)
+		els[0](g, w)
+		call := m.Stop()
+		hid := clip.Rect{}.Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		hid.Pop()
+	}
+	return panelListN(gtx, &p.list.List, len(els), func(gtx layout.Context, i int) layout.Dimensions {
+		g, w := constrain(gtx)
+		d := els[i](g, w)
+		return layout.Dimensions{Size: image.Pt(sz.X, d.Size.Y)}
+	})
+}
+
+// libraryScreen is the plugin library's head as one of Taut's
+// sub-screens: the back link, its title, its search and chips, then the
+// library's section head and intro (libraryPage.head); its cards are list
+// elements of their own (libraryList).
 func (pp *pluginsPage) libraryScreen(f *flow) {
 	p, tp := pp.s, pp.taut
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
@@ -767,7 +877,7 @@ func (pp *pluginsPage) libraryScreen(f *flow) {
 		return pp.lib.s.searchBar(gtx, &p.query, "Search the plugin library", fs)
 	})
 	f.gap(10)
-	pp.lib.body(f, strings.Fields(strings.ToLower(p.query.Text())))
+	pp.lib.head(f)
 }
 
 // setEnabled turns a plugin on or off in its own system.

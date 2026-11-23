@@ -27,6 +27,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -324,6 +325,8 @@ type base struct {
 	th   *theme.Theme
 	p    *pal
 	rich richCache
+	// press is the last context press on a message body (content_menu.go)
+	press bodyPress
 	// mediaPane names the view's video players (media.go): set, its
 	// messages' lone videos play in place, as in Slack's Threads, Unreads
 	// and Later views
@@ -339,6 +342,23 @@ type base struct {
 	tmemo map[string]*memoEntry
 	// addBtns are the messages' add-reaction buttons (reactions_slack.go)
 	addBtns map[string]*widget.Clickable
+	// addTips are their "Add reaction…" tooltips (ReactionAddButton's)
+	addTips map[string]*popups.TipState
+	// pillTips are the reaction pills' ReactionTips (reactions_slack.go)
+	pillTips map[string]*pillTip
+	// pillBtns are the reaction pills' buttons (handleReactionClick), by
+	// the bar's key and the group's name
+	pillBtns map[string]*widget.Clickable
+	// ctlPress and pillPress mark the frame of the last primary press on
+	// a body's link, mention, button or image, and on a reaction pill
+	// (content_menu.go pressedOn)
+	ctlPress, pillPress time.Time
+	// hand > 0 while a row draws bodies under its hand (handBody)
+	hand int
+	// rxnLocal are the viewer's reaction changes to messages the store
+	// doesn't hold, by ch/ts (reactions_local.go)
+	rxnMu    sync.Mutex
+	rxnLocal map[string][]rxnOp
 	// pv caches Activity's preview documents (activity_rows.go)
 	pv map[string]pvEntry
 	// vers caches msgVer per message copy (msgVerOf); vsrc is the
@@ -357,6 +377,11 @@ type base struct {
 	vready map[string]viewRev
 	vconv  map[string]uint64
 	vdiff  map[string]bool
+	// vheld is when viewMsg first saw a message's current revision: a hold
+	// of the revision before's view lasts taut.EditHold from it, the frame
+	// at its end asked for once (vwake)
+	vheld map[string]time.Time
+	vwake map[string]bool
 	// rec, while a row is described (recording), notes the members it
 	// drew without a name (missing_member.go); reads (recordingReads)
 	// every member it looked up
@@ -578,6 +603,9 @@ type tabs struct {
 	// Labels keep the English sources (Slack's keys); a view's own data
 	// (a custom view's name) passes through unchanged.
 	Tr func(i int, s string) string
+	// Hidden, when set, leaves tab i out of the strip (Directories' tabs
+	// a guest doesn't get); its index keeps its meaning.
+	Hidden func(i int) bool
 }
 
 // label is tab i's text as drawn.
@@ -1296,6 +1324,7 @@ type debounce struct {
 	at   time.Time
 	q    string
 	sent string
+	wk   *wake // dueVia's repaint
 }
 
 func (d *debounce) set(q string, now time.Time) { d.q, d.at = q, now }
@@ -1313,6 +1342,73 @@ func (d *debounce) due(gtx C, wait time.Duration) (string, bool) {
 	}
 	d.sent = d.q
 	return d.q, true
+}
+
+// dueVia is due with its repaint asked of the host (wake) rather than
+// an op.InvalidateCmd executed mid-layout.
+func (d *debounce) dueVia(h Host, gtx C, wait time.Duration) (string, bool) {
+	if d.q == d.sent {
+		return "", false
+	}
+	if left := wait - gtx.Now.Sub(d.at); left > 0 {
+		if d.wk == nil {
+			d.wk = &wake{}
+		}
+		d.wk.schedule(h, gtx.Now, d.at.Add(wait))
+		return "", false
+	}
+	d.sent = d.q
+	return d.q, true
+}
+
+// wake asks the host for a frame at a time: time.AfterFunc and
+// Host.Invalidate, once per time. An op.InvalidateCmd executed in the
+// middle of layout takes the router's immediate path and replays the
+// input no later handler has read yet, which loses clicks on whatever
+// lays out after the caller (overlay scrims, the secondary pane; the
+// composer's 11-17 bug).
+type wake struct {
+	mu      sync.Mutex
+	at      time.Time
+	pending bool
+}
+
+// schedule asks for a frame at at (now on the frame's clock): at once
+// when it's due, else one timer per time.
+func (w *wake) schedule(h Host, now, at time.Time) {
+	if !at.After(now) {
+		h.Invalidate()
+		return
+	}
+	w.mu.Lock()
+	if w.pending && w.at.Equal(at) {
+		w.mu.Unlock()
+		return
+	}
+	w.at, w.pending = at, true
+	w.mu.Unlock()
+	time.AfterFunc(at.Sub(now), func() {
+		w.mu.Lock()
+		if w.at.Equal(at) {
+			w.pending = false
+		}
+		w.mu.Unlock()
+		h.Invalidate()
+	})
+}
+
+// due reports the time a frame was asked for and whether its timer is
+// still out (tests).
+func (w *wake) due() (time.Time, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.at, w.pending
+}
+
+// tipWake is a TipState's Wake through w: the hover delay's repaint
+// asked of the host.
+func tipWake(h Host, w *wake) func(now, at time.Time) {
+	return func(now, at time.Time) { w.schedule(h, now, at) }
 }
 
 // ---- time ----

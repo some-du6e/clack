@@ -15,6 +15,7 @@ import (
 	"gioui.org/f32"
 	"gioui.org/font/gofont"
 	"gioui.org/gpu"
+	"gioui.org/internal/clickrule"
 	"gioui.org/internal/debug"
 	"gioui.org/internal/ops"
 	"gioui.org/io/event"
@@ -157,6 +158,7 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 				if err != nil {
 					return err
 				}
+				startupGPUContext.mark() // Clack patch (CLACK_PATCHES.md §56)
 				sync = true
 			}
 		}
@@ -188,6 +190,7 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 				return err
 			}
 			w.gpu = gpu
+			startupGPU.mark() // Clack patch (CLACK_PATCHES.md §56)
 		}
 		if w.gpu != nil {
 			if err := w.frame(frame, size); err != nil {
@@ -227,6 +230,9 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 		if w.gpu != nil {
 			err = w.ctx.Present()
 			w.ctx.Unlock()
+			if err == nil {
+				startupPresented.mark() // Clack patch (CLACK_PATCHES.md §56)
+			}
 		}
 		return err
 	}
@@ -689,6 +695,11 @@ func (w *Window) processEvent(e event.Event) bool {
 		if e2.Size == (image.Point{}) {
 			panic(errors.New("internal error: zero-sized Draw"))
 		}
+		if e2.Metric.PxPerDp != w.metric.PxPerDp {
+			// Clack patch 48: the window's scale for the gestures' tap
+			// rule, whose distances are dp (clickrule.Tap)
+			w.queue.Source().SetValue(clickrule.PxPerDp{}, e2.Metric.PxPerDp)
+		}
 		w.metric = e2.Metric
 		// Clack patch 35: what the window's own frames asked for (askFrame:
 		// not an Invalidate's), and what a frame the client hasn't been
@@ -870,6 +881,7 @@ func (w *Window) init() {
 	w.decorations.height = decoHeight
 	w.imeState.compose = key.Range{Start: -1, End: -1}
 	w.semantic.ids = make(map[input.SemanticID]input.SemanticNode)
+	startupGioInit.mark() // Clack patch (CLACK_PATCHES.md §56)
 	newWindow(&callbacks{w}, options)
 	for _, acts := range w.initialActions {
 		w.Perform(acts)

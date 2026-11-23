@@ -49,6 +49,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -98,7 +99,7 @@ type pinsTabChan struct {
 	items []PinsTabItem
 }
 
-var pinsTabs sync.Map // *App -> *pinsTabState
+var pinsTabs = newPerApp() // *App -> *pinsTabState
 
 func (a *App) pinsTab() *pinsTabState {
 	v, _ := pinsTabs.LoadOrStore(a, &pinsTabState{chs: map[string]*pinsTabChan{}, seen: map[string]bool{}})
@@ -149,9 +150,12 @@ func (a *App) liveMessage(ch, ts string) (*Message, bool) {
 }
 
 // slowConnections is the socket store's slowConnectionCount.
-var slowConnections sync.Map // *App → *atomic.Int64
+var slowConnections = newPerApp() // *App → *atomic.Int64
 
 func (a *App) slowConnectionCount() *atomic.Int64 {
+	if v, ok := slowConnections.Load(a); ok { // read every frame (the + button's gate): no allocation
+		return v.(*atomic.Int64)
+	}
 	v, _ := slowConnections.LoadOrStore(a, new(atomic.Int64))
 	return v.(*atomic.Int64)
 }
@@ -253,7 +257,7 @@ func (a *App) fetchPinsTab(ch string) {
 		st.chs[ch] = c
 	}
 	if err != nil {
-		log.Printf("pins tab %s: pins.list: %v", ch, err)
+		log.Printf("pins tab %s: pins.list: %v", logtag.ID(ch), err)
 		c.state = pinsNotLoaded
 		delete(st.seen, ch) // the next read tries again
 		st.mu.Unlock()

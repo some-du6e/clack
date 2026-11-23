@@ -55,15 +55,14 @@ var cdTabLabels = map[int]string{
 }
 
 const (
-	cdWidth       = 580 // dialog width
-	cdMaxH        = 765 // dialog height cap; window height minus 2x68 below that
-	cdMargin      = 68
-	cdRadius      = 8
-	cdPadX        = 28 // header, card and list side inset
-	cdHeadH       = 130
-	cdHeadDMH     = 188
-	cdLinkPrefix  = "https://hackclub.slack.com/archives/"
-	cdUnsupported = "Not supported yet"
+	cdWidth      = 580 // dialog width
+	cdMaxH       = 765 // dialog height cap; window height minus 2x68 below that
+	cdMargin     = 68
+	cdRadius     = 8
+	cdPadX       = 28 // header, card and list side inset
+	cdHeadH      = 130
+	cdHeadDMH    = 188
+	cdLinkPrefix = "https://hackclub.slack.com/archives/"
 )
 
 var cdTileBg = argb(0x1a1d9bd1) // #1d9bd1@0.1 icon tiles
@@ -504,6 +503,8 @@ func (d *ChannelDetails) Escape() bool {
 		if d.agents != nil {
 			d.agents.filt.open = false
 		}
+	case d.x.dlg.rt != nil && d.x.dlg.rt.unitDD.open: // the retention modal's Days / Years menu
+		d.x.dlg.rt.unitDD.open = false
 	case d.escapeDialog():
 	case d.editing:
 		d.editing, d.editErr = false, ""
@@ -771,6 +772,17 @@ func (d *ChannelDetails) update(gtx C) {
 	}
 	if (d.h.Core().Experiment("channel_details_agents_apps_tab") == "on") != d.tabsAgentsApps {
 		d.setTabs() // the group changed under the open dialog
+	}
+	if cdGroup(d.kind) != "channel" && d.settingsVisible() != slices.Contains(d.tabKinds, cdSettings) {
+		// a DM's Settings follows Message history and Export
+		// (details_retention.go), whose prefs and experiments may land
+		// after the dialog opened; Settings is last, so the selected tab
+		// keeps its place
+		sel := d.tab.Sel
+		d.setTabs()
+		if sel < len(d.tabKinds) {
+			d.tab.Sel = sel
+		}
 	}
 
 	d.updateAddApps(gtx) // "Add an App" / "Add agents and apps": the apps browser (details_more.go)

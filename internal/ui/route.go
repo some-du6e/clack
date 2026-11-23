@@ -133,6 +133,17 @@ func (h *router) Replace(r Route) {
 	h.note(r)
 }
 
+// dropRepeat drops the current entry when the one before it is the same
+// route (a Replace made them one), as Push never stacks a route on
+// itself: Back doesn't step onto what shows already.
+func (h *router) dropRepeat() {
+	if h.pos == 0 || h.pos >= len(h.stack) || h.stack[h.pos-1] != h.stack[h.pos] {
+		return
+	}
+	h.stack = append(h.stack[:h.pos], h.stack[h.pos+1:]...)
+	h.pos--
+}
+
 func (h *router) CanBack() bool    { return h.pos > 0 }
 func (h *router) CanForward() bool { return h.pos < len(h.stack)-1 }
 

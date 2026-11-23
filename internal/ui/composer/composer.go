@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"image"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+	"weak"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -64,6 +66,11 @@ type Composer struct {
 	// parent sets it each frame (Gio has no global transform query); menus
 	// and the emoji picker are anchored with it.
 	Origin image.Point
+	// boxSize is the composer's size in its last frame (the audio
+	// popover's overlay covers it).
+	boxSize image.Point
+	// clipPop is the open audio recorder popover (clips.go).
+	clipPop *audioPopover
 
 	// OnEditLast is called when Up is pressed in an empty composer (Slack
 	// edits your last message). The ui root wires it to the message list.
@@ -77,6 +84,11 @@ type Composer struct {
 	// (client-threads-view onDownArrowInEmptyInput, focusItemBelowInput);
 	// ThreadFooter's default and the channel's do nothing.
 	OnDownWhenEmpty func()
+	// OnPageKeyEmpty is MessagePane's document keydown (AEjl): with the
+	// channel's input focused and empty, PageUp, PageDown, Home and End
+	// (the key's name) go to the message list. A reply box's and the edit
+	// composer's stay theirs.
+	OnPageKeyEmpty func(name string)
 	// OnFocus runs on the UI goroutine when the box takes the keyboard
 	// focus: the thread pane's onFooterInputFocus, which lets the thread
 	// go from threadsManuallyMarkedUnread (the ui root wires it).
@@ -104,6 +116,10 @@ type Composer struct {
 	// every file the message keeps, in order (saveMessageEditWithFiles:
 	// chat.update's file_ids).
 	SaveEdit func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error
+	// SaveEditThen is SaveEdit queuing its JS work before it returns (UI
+	// goroutine) and telling done the outcome on another goroutine; the
+	// composer prefers it.
+	SaveEditThen func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error))
 
 	// editFiles0 is an edit's initialFileIds (the message's files)
 	editFiles0 []string
@@ -135,6 +151,17 @@ type Composer struct {
 	attVer  uint64
 	touched bool
 	srvGen  uint64
+	closed  bool // Close ran
+	// the drafts button's count (draftsCount, draft_button.go) and what
+	// it was counted for
+	dmN   int
+	dmKey dmCountKey
+	dmOK  bool
+	// hasMoreThanTwoCharacters at moreVer (the hint bar's, counted once
+	// per change)
+	moreVer uint64
+	more    bool
+	moreOK  bool
 
 	setBroadcastFn func(bool) // bound once: the plugin buttons' broadcast.set
 
@@ -145,7 +172,7 @@ type Composer struct {
 	paneP, inputP slackc.Props
 	sendJS        slackc.JSFunc // a patched prepareAndSendMessage (send checks)
 	pane          string        // the slackc pane LayoutIn drew it in ("" outside one)
-	pending       *outgoing     // the message sendJS is deciding on
+	pending       []*outgoing   // the messages sendJS is deciding on, oldest first (sendViaJS)
 	top           int           // context bar height above the box
 	ctxShowing    bool          // onIsContextBarShowing
 	sbar          scheduledBar  // the scheduled-send context bar (schedule_bar.go)
@@ -259,7 +286,54 @@ func New(h Host, channelID, threadTS string) *Composer {
 		c.ed.SetDoc(d)
 	}
 	c.lastVer = c.ed.Version()
+	liveComposers.Store(c.key(), weak.Make(c))
+	if _, dirty := draftKeyBusy(c.key()); dirty {
+		c.syncDraftSoon() // the text an earlier composer couldn't save
+	}
 	return c
+}
+
+// liveComposers is the open composer of each draft key (the last one
+// opened), for a pick that finds the slot open (SelectStashedDraft). It
+// holds them weakly: a composer its view dropped without Close (a session
+// ended, signed out) goes with its App (TestFinishedSessionIsCollected).
+var liveComposers sync.Map // draftKey → weak.Pointer[Composer]
+
+func liveComposer(key string) *Composer {
+	if v, ok := liveComposers.Load(key); ok {
+		if c := v.(weak.Pointer[Composer]).Value(); c != nil && !c.closed {
+			return c
+		}
+	}
+	return nil
+}
+
+// forgetLive drops a finished session's composers from liveComposers
+// (ForgetCore), so no pick finds one. Their timers are left to run out:
+// ForgetCore runs off the UI goroutine (a sign-out's), which owns them,
+// and what one queues after the session's Release is dropped (laterFor);
+// the retry's and the hint's hold their composer weakly.
+func forgetLive(a *core.App) {
+	liveComposers.Range(func(k, v any) bool {
+		if c := v.(weak.Pointer[Composer]).Value(); c == nil || c.api.a == a {
+			liveComposers.CompareAndDelete(k, v)
+		}
+		return true
+	})
+}
+
+// stopTimers stops what would wake the composer later (Close): its sync's
+// pause and retry, the hint bar's grace.
+func (c *Composer) stopTimers() {
+	if c.dsync.timer != nil {
+		c.dsync.timer.Stop()
+	}
+	if c.dsync.retry != nil {
+		c.dsync.retry.Stop()
+	}
+	if c.ui.hint.graceTimer != nil {
+		c.ui.hint.graceTimer.Stop()
+	}
 }
 
 // NewEdit returns an inline editor for m (one of the viewer's messages).
@@ -409,8 +483,17 @@ func (c *Composer) InsertEmoji(name string) {
 
 // Close stores the draft and releases background work.
 func (c *Composer) Close() {
+	if c.dsync.timer != nil && c.dsync.timer.Stop() {
+		c.syncDraftNow() // a save the pause was waiting on goes now
+	}
+	c.stopTimers()
+	c.closed = true
+	if !c.noDraft() {
+		liveComposers.CompareAndDelete(c.key(), weak.Make(c))
+	}
 	c.saveDraft()
 	c.ac.Close()
+	c.closeClip() // a recording in progress goes with it (clips.go)
 }
 
 func (c *Composer) emojiAtom(name string) *Atom {
@@ -535,6 +618,7 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	if live {
 		c.ui.endFrame()
 	}
+	c.boxSize = dims.Size
 
 	// Autocomplete after the editor laid out, anchored at the trigger,
 	// with what plugins changed on TextyAutocomplete.
@@ -685,10 +769,16 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		ViewContext:    c.viewContext(),
 		Count:          c.ed.Doc().Len(),
 		OverLimit:      c.overLimit(),
+		TooManyFiles:   c.tooManyFiles(),
 		Pending:        c.att.Len() > 0,
 	}
 	if isHeading(st.Block) && c.api.a != nil {
 		st.HeadingFormats = c.api.a.Experiment("rich_text_headers_and_dividers") == "on"
+	}
+	st.Online, st.OnlineUntil = recentlyOnline(c.h)
+	st.MoreThanTwo = c.moreThanTwo()
+	if n := c.draftsCount(); n > 0 {
+		st.Drafts, st.DraftsBusy = n, c.att.uploading()
 	}
 	if d := c.ed.Doc(); d.Len() == 0 && (len(d.Lines) == 0 || d.Lines[0].Kind == Para) {
 		st.InputEmpty = true // checkIfTextyIsEmptyOfTextOrFormats
@@ -724,6 +814,13 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	default:
 		st.Mode = modeChannel
 	}
+	if st.Mode != modeField && c.api.a != nil {
+		// the + button's N: its tooltip drops the double click tip (and a
+		// Slack Connect conversation's list prefs load as Slack's do when
+		// the button renders)
+		st.UploadBlocked = c.api.a.SlackConnectFileSharingBlocked(c.ch)
+	}
+	st.PlusOpen = c.att.plusOpen
 	if cv, ok := c.api.conv(c.ch); ok {
 		st.ChannelName = cv.Name
 		switch cv.Kind {
@@ -800,6 +897,10 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 			if c.edit == nil && c.OnDownWhenEmpty != nil {
 				c.OnDownWhenEmpty()
 			}
+		case EvPageUpEmpty, EvPageDownEmpty, EvHomeEmpty, EvEndEmpty:
+			if c.edit == nil && c.ts == "" && c.OnPageKeyEmpty != nil {
+				c.OnPageKeyEmpty(map[EditorEventKind]string{EvPageUpEmpty: "PageUp", EvPageDownEmpty: "PageDown", EvHomeEmpty: "Home", EvEndEmpty: "End"}[ev.Kind])
+			}
 		case EvUndoEmpty:
 			if !c.tryUnsend() {
 				c.ed.Undo()
@@ -873,8 +974,7 @@ func (c *Composer) changed() {
 	} else if time.Since(c.lastTyping) > 3*time.Second {
 		c.lastTyping = time.Now()
 		c.typingOn = true
-		api, ch, ts := c.api, c.ch, c.ts
-		go sendTyping(api, ch, ts)
+		startTyping(c.api, c.ch, c.ts) // queued now, ahead of an Enter after it
 	}
 }
 
@@ -903,12 +1003,14 @@ func (c *Composer) handleActions(gtx layout.Context) {
 			c.toggleShowFormatting()
 			c.ed.Focus(gtx)
 		case caAttach:
-			c.att.Menu(a.Anchor, c.plusMenu())
+			c.plusClick(a)
 		case caEmoji:
 			c.openEmojiPicker(a.Anchor) // gifs.go: picked GIFs go into the draft
 		case caMention:
 			c.mentionTrigger()
 			c.ed.Focus(gtx)
+		case caAudio:
+			c.openAudioRecorder(a.Anchor) // clips.go
 		case caShortcut:
 			// maybeTriggerSlashCommandsAutocomplete: only into an empty
 			// input without a block format (the button is disabled
@@ -932,9 +1034,42 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		case caDivider:
 			c.ed.InsertDivider()
 			c.ed.Focus(gtx)
+		case caDrafts:
+			c.draftsMenu(a.Anchor)
 		}
 		c.h.Invalidate()
 	}
+}
+
+// plusClick is a click on the + (ShortcutsMenuTrigger's MenuTrigger:
+// BasePopoverTrigger's onTrigger toggles the menu, so a click while it's
+// open closes it, with no onPopoverClose). The menu's scrim stays down
+// for its first 250 ms (attachments.Menu), so the second click of a
+// double click lands on the button: it closes the menu the first opened,
+// and as the double click's second click it is also the button's
+// onDoubleClick (plusDoubleClick).
+func (c *Composer) plusClick(a chromeAction) {
+	if !c.att.closePlusMenu() {
+		c.att.Menu(a.Anchor, c.plusMenu())
+	}
+	if a.Clicks == 2 {
+		c.plusDoubleClick()
+	}
+}
+
+// plusDoubleClick is ShortcutsMenuTriggerButton's onDoubleClick (R):
+// x(false) drops the button's open state (the toggle already closed the
+// menu) and E({action: DOUBLE_CLICK}) clicks the hidden file input, the
+// one Upload from your computer clicks (onUploadFromComputerClick),
+// unless N (core.SlackConnectFileSharingBlocked) or M
+// (core.RestrictedExternalHuddle). Its j() only resets
+// forceFileMenuOpen, which Clack's composers never set.
+func (c *Composer) plusDoubleClick() {
+	c.att.plusOpen = false // x(false)
+	if app := c.api.a; app != nil && (app.SlackConnectFileSharingBlocked(c.ch) || app.RestrictedExternalHuddle(c.ch)) {
+		return
+	}
+	uploadFromComputer(c.att)
 }
 
 // plusMenu is the + menu's composer side: the conversation and the
@@ -942,6 +1077,12 @@ func (c *Composer) handleActions(gtx layout.Context) {
 // Ctrl+Shift+Enter opens with the message).
 func (c *Composer) plusMenu() plusMenu {
 	pm := plusMenu{ch: c.ch}
+	if app := c.api.a; app != nil {
+		// the formatter's slackConnectFileSharingBlocked (rscm O) and
+		// isRestrictedExternalHuddle (uu7O f)
+		pm.blocked = app.SlackConnectFileSharingBlocked(c.ch)
+		pm.restricted = app.RestrictedExternalHuddle(c.ch)
+	}
 	if c.edit == nil {
 		// useComposerIAFormatter: no Text snippet (nor Workflow) when
 		// isMessageEdited && isEditMessageShortcutsButton
@@ -1040,7 +1181,7 @@ func (c *Composer) paragraphMenu(anchor image.Rectangle) {
 }
 
 func (c *Composer) scheduleMenu(anchor image.Rectangle) {
-	if c.overLimit() > 0 || c.ed.Empty() && c.att.Len() == 0 && c.att.gifCount() == 0 {
+	if c.overLimit() > 0 || c.tooManyFiles() || c.ed.Empty() && c.att.Len() == 0 && c.att.gifCount() == 0 {
 		return
 	}
 	// ScheduleSendMenu (schedule_menu.go): the rows for now, the Custom
@@ -1187,8 +1328,22 @@ func (c *Composer) deleteEmptiedEdit() {
 	popups.ConfirmDelete(c.h, *c.edit)
 }
 
+// moreThanTwo is MessagePaneInput's hasMoreThanTwoCharacters: the
+// message is past 2 characters as getMessageLengthForDelta counts them
+// (slackLength), counted once per document change.
+func (c *Composer) moreThanTwo() bool {
+	if v := c.ed.Version(); !c.moreOK || v != c.moreVer {
+		c.moreVer, c.more, c.moreOK = v, slackLength(c.ed.Doc()) > 2, true
+	}
+	return c.more
+}
+
 // overLimit is how far the message is past the 12,000-character limit
 // (charlimit.go), counted once per document change.
+// tooManyFiles is isComposerDraftSendable's tooManyFiles: the draft holds
+// more than 10 files (a clip attaches past the limit), and can't be sent.
+func (c *Composer) tooManyFiles() bool { return c.att.Len() > attMaxFiles }
+
 func (c *Composer) overLimit() int {
 	if v := c.ed.Version(); !c.limitOK || v != c.limitVer {
 		c.limitVer, c.limitOver, c.limitOK = v, charsOverLimit(c.ed.Doc()), true
@@ -1203,10 +1358,11 @@ func (c *Composer) submit() {
 		return
 	}
 	d := c.ed.Doc()
-	if c.overLimit() > 0 {
+	if c.overLimit() > 0 || c.tooManyFiles() {
 		// isSendingDisabled (isOverMaxLength): Enter does nothing and the
 		// send button is disabled; an edit can't be saved (cjbg maybeSave
-		// returns while textyExceedsMaxLength)
+		// returns while textyExceedsMaxLength); so with more than 10
+		// files (isComposerDraftSendable's tooManyFiles)
 		return
 	}
 	if d.Empty() && c.att.Len() == 0 && (c.edit != nil || c.att.gifCount() == 0) {
@@ -1232,9 +1388,24 @@ func (c *Composer) submit() {
 
 	if c.edit != nil {
 		m := c.edit
+		blocks := withKeptBlocks(blocks, m.Blocks) // saveMessageEdit keeps the message's other blocks (edit_blocks.go)
+		if then := c.SaveEditThen; then != nil {
+			// the edit's thunks and transforms are the user's: queued now,
+			// on the UI goroutine (taut.UserAction, DispatchThen), so a
+			// plugin click after Enter comes after them
+			then(taut.UserAction(context.Background()), m.Channel, m.TS, text, blocks, nil, func(err error) {
+				if err != nil {
+					c.later(func() { c.h.Toast("Couldn't save your edit: " + err.Error()) })
+				}
+			})
+			c.finishEdit()
+			return
+		}
 		save := c.SaveEdit
 		go func() {
-			ctx := context.Background()
+			// the edit's thunks and transforms are the user's, ahead of the
+			// queued renders, after the user's earlier input
+			ctx := taut.UserAction(context.Background())
 			var err error
 			if save != nil {
 				err = save(ctx, m.Channel, m.TS, text, blocks, nil)
@@ -1247,6 +1418,17 @@ func (c *Composer) submit() {
 			}
 		}()
 		c.finishEdit()
+		return
+	}
+
+	// handleSlashCommand's parseEditLastMessageCommand, ahead of every
+	// command: "/s/old/new" edits the viewer's last message here and is
+	// neither sent nor run (edit_last.go). The draft goes now; a failure
+	// puts it back (sendDraftMessage's restoreDraftOnFailure).
+	if cmd, ok := editLastFromDoc(doc); ok {
+		c.cmdPick = core.Command{}
+		c.clearAfterSend()
+		c.editLast(cmd, d)
 		return
 	}
 
@@ -1314,7 +1496,7 @@ func (c *Composer) submit() {
 		o.gifs = c.att.takeGifs()
 		o.attachments = gifAttachments(o.gifs, gifPickerOn(c.api.a))
 	}
-	c.clearAfterSend()
+	after := c.clearForSend()
 	switch {
 	case c.sendJS.ID != 0:
 		c.sendViaJS(o)
@@ -1323,6 +1505,7 @@ func (c *Composer) submit() {
 	default:
 		c.send(o)
 	}
+	after()
 }
 
 // outgoing is a message on its way out of the composer.
@@ -1338,6 +1521,9 @@ type outgoing struct {
 	// delta is the delta a plugin handed back to the composer's
 	// prepareAndSendMessage (bChannel's "/bchannel …"); nil: doc's
 	delta map[string]any
+	// viaJS is its id while a plugin's prepareAndSendMessage decides on
+	// it (sendViaJS)
+	viaJS int64
 }
 
 // send posts the message (with any attached files) through Slack's
@@ -1347,9 +1533,39 @@ type outgoing struct {
 // gone and the placeholder message shows them while their uploads
 // finish); a failed send puts them back.
 func (c *Composer) send(o *outgoing) {
+	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
+		// a plugin's prepareAndSendMessage: its JS call queued now, on the
+		// UI goroutine (taut.DispatchThen), in order with the clicks after
+		// Enter; from the send's goroutine a click in the same frame could
+		// go first
+		job, finish := c.newSendJob(o)
+		taut.DispatchThen(taut.SendLane(context.Background(), t), t, thPrepareAndSend, job.patchArgs(job.args()), job.native,
+			func(_ any, err error) { finish(err) })
+		return
+	}
+	go c.startSend(o)()
+}
+
+// startSend is send's part on the UI goroutine (the attached files leave
+// the composer, the job is built); it returns the rest, to run on any
+// goroutine but the UI's.
+func (c *Composer) startSend(o *outgoing) (run func()) {
+	job, finish := c.newSendJob(o)
+	return func() {
+		// its send transforms and thunks are the user's: ahead of the JS
+		// work queued before them, held together when the native goes back
+		// into JS (taut.SendLane)
+		finish(job.run(taut.SendLane(context.Background(), currentTaut())))
+	}
+}
+
+// newSendJob is startSend's part on the UI goroutine: the attached files
+// leave the composer and the job is built. finish takes the send's
+// outcome, on any goroutine.
+func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 	batch := c.att.takeForSend()
 	hasFiles := !batch.empty()
-	job := &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
+	job = &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
 		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast}
 	job.sent = func(cid string, files bool) {
 		c.later(func() {
@@ -1358,13 +1574,12 @@ func (c *Composer) send(o *outgoing) {
 			}
 		})
 	}
-	go func() {
-		err := job.run(context.Background())
+	return job, func(err error) {
 		if hasFiles && err != nil {
 			c.later(func() {
 				// the placeholder is gone and nothing was posted: the
-				// message (restore, below) and its files go back into the
-				// draft, and Slack's FileUploadErrorDialog says so (a
+				// message (restoreSend, below) and its files go back into
+				// the draft, and Slack's FileUploadErrorDialog says so (a
 				// dismissed warning or Slackbot's answer needs no dialog)
 				c.att.putBack(batch.chips)
 				if !isQuietSendStop(err) {
@@ -1375,15 +1590,14 @@ func (c *Composer) send(o *outgoing) {
 			c.later(func() { c.h.Toast("Message not sent: " + err.Error()) })
 		}
 		if err != nil {
-			c.restore(o.doc)
-			c.later(func() { c.att.putBackGifs(o.gifs) })
+			c.restoreSend(o)
 			return
 		}
 		c.later(func() {
 			c.unsendBy = time.Now().Add(unsendWindow)
 			c.att.dropPreviews(batch.chips...) // sent: no viewer shows them any more
 		})
-	}()
+	}
 }
 
 // unsendWindow is how long Mod+Z can unsend a message (15e3 ms).
@@ -1486,23 +1700,53 @@ type sendJob struct {
 }
 
 func (j *sendJob) run(ctx context.Context) error {
+	args := j.args()
+	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
+		_, err := taut.Dispatch(ctx, t, thPrepareAndSend, j.patchArgs(args), j.native)
+		return err
+	}
+	return j.prepareAndSend(ctx, args)
+}
+
+// checkThenRun is run behind the plugins' send checks c, in one JS call
+// with the prepareAndSendMessage patches (taut.CheckThenDispatch), queued
+// before it returns (UI goroutine), ahead of the composer's re-render:
+// Slack's prepareAndSendMessage awaits its checks and dispatches
+// sendMessage in one task, and the pending copy shows in the frame after
+// they ran. The checks' answer went through Go to dispatch the thunk, and
+// a render the loop started between the two held the send. done hears,
+// on another goroutine, whether the checks let the message go, and the
+// send's error.
+func (j *sendJob) checkThenRun(ctx context.Context, t *taut.Taut, c taut.ComposerContext, done func(sent bool, err error)) {
+	taut.CheckThenDispatch(ctx, t, c, thPrepareAndSend, j.patchArgs(j.args()), j.native, func(sent bool, _ any, err error) {
+		done(sent, err)
+	})
+}
+
+// args are prepareAndSendMessage's options for the job.
+func (j *sendJob) args() prepareSendArgs {
 	delta := j.o.delta
 	if delta == nil {
 		delta = j.o.doc.Delta()
 	}
-	args := prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
+	return prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
 		ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view,
 		IncludeBroadcastKeywordWarning: j.warn}
-	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
-		for _, p := range j.prepared {
-			args.FileIDs = append(args.FileIDs, p.ID)
-		}
-		_, err := taut.Dispatch(ctx, t, thPrepareAndSend, args, func(ctx context.Context, a prepareSendArgs) (any, error) {
-			return nil, j.prepareAndSend(ctx, a) // broadcast.go
-		})
-		return err
+}
+
+// patchArgs are args as the plugins' patches see them: with the files'
+// ids.
+func (j *sendJob) patchArgs(args prepareSendArgs) prepareSendArgs {
+	for _, p := range j.prepared {
+		args.FileIDs = append(args.FileIDs, p.ID)
 	}
-	return j.prepareAndSend(ctx, args)
+	return args
+}
+
+// native is prepareAndSendMessage's native core, where the patches call
+// the original.
+func (j *sendJob) native(ctx context.Context, a prepareSendArgs) (any, error) {
+	return nil, j.prepareAndSend(ctx, a) // broadcast.go
 }
 
 // deliver is prepareAndSendMessage's native: share the files with the
@@ -1531,14 +1775,48 @@ func (c *Composer) checkThenSend(o *outgoing) {
 		c.send(o)
 		return
 	}
-	check(SendCheck{ChannelID: c.ch, ThreadTS: c.ts, Blocks: o.blocks, Text: o.text}, func(ok bool) {
-		c.later(func() {
-			if ok {
-				c.send(o)
-			} else {
-				c.restore(o.doc)
+	// A message without files goes out from the checks' answer: its UI
+	// goroutine part is done now, and the rest starts as the answer comes,
+	// so the pending copy shows in the frame after it, as Slack's
+	// prepareAndSendMessage dispatches sendMessage when its checks resolve.
+	// It waited for the next composer frame first: with any plugin's send
+	// check an own message showed three frames after Enter (msg-latency).
+	// Files stay in the composer until the checks pass (a check may ask
+	// the user first).
+	m := SendCheck{ChannelID: c.ch, ThreadTS: c.ts, Blocks: o.blocks, Text: o.text}
+	if c.att.Len() == 0 && checkThenSendInJS() {
+		// the checks and the plugins' prepareAndSendMessage in one JS
+		// call (checkThenRun)
+		job, finish := c.newSendJob(o)
+		t := currentTaut()
+		job.checkThenRun(taut.SendLane(context.Background(), t), t, checkContext(m), func(sent bool, err error) {
+			if !sent {
+				c.restoreSend(o) // held back (done(false)): the message goes back
+				return
 			}
+			finish(err)
 		})
+		return
+	}
+	var run func()
+	if c.att.Len() == 0 {
+		run = c.startSend(o)
+	}
+	check(m, func(ok bool) {
+		switch {
+		case run != nil && ok:
+			go run() // never on the caller's goroutine: a check may answer on the UI's
+		case run != nil:
+			c.restoreSend(o) // held back (done(false)): the message goes back
+		default:
+			c.later(func() {
+				if ok {
+					c.send(o)
+				} else {
+					c.restoreSend(o)
+				}
+			})
+		}
 	})
 }
 
@@ -1546,26 +1824,55 @@ func (c *Composer) checkThenSend(o *outgoing) {
 // checks wrap it on MessagePaneInput / InputContainer). It calls back
 // into prepareAndSend to really send; a thrown error or rejected promise
 // puts the message back.
+//
+// Each message waits in c.pending until the plugin's call comes back with
+// it: the opts carry the message's own id (sendViaJSKey), which a plugin
+// that passes them on keeps, and a call without one takes the oldest. One
+// slot for all of them gave a second send's call the first message, and
+// lost the first (SlimMessageBox's Hidden thread replies behind a JS
+// backlog). The call runs on the user-blocking lane like a send's checks
+// (taut's Bridge.Call).
 func (c *Composer) sendViaJS(o *outgoing) {
-	c.pending = o
+	sendViaJSN++
+	o.viaJS = sendViaJSN
+	c.pending = append(c.pending, o)
 	opts := slackc.Props{
 		"delta":           o.doc.Delta(),
 		"channelId":       c.ch,
 		"shouldBroadcast": o.broadcast,
 		"blocks":          o.blocks,
 		"text":            o.text,
+		sendViaJSKey:      float64(o.viaJS),
 	}
 	if c.ts != "" {
 		opts["replyToTs"] = c.ts
 	}
 	c.sendJS.CallResult(func(_ any, err error) {
-		if c.pending == o {
-			c.pending = nil // a plugin sent it itself, or held it back
-		}
-		if err != nil {
-			c.restore(o.doc)
+		// still pending: the plugin sent it itself, or held it back; a
+		// message its call already passed on (prepareAndSend) is on its
+		// way, and an error after that leaves it there
+		if c.takePending(o.viaJS) != nil && err != nil {
+			c.restoreSend(o)
 		}
 	}, opts)
+}
+
+// sendViaJSKey is the opts key carrying a sendViaJS message's id.
+const sendViaJSKey = "clackSendId"
+
+// sendViaJSN numbers sendViaJS's messages (UI goroutine).
+var sendViaJSN int64
+
+// takePending removes and returns the pending message with id, or with
+// id 0 the oldest (UI goroutine).
+func (c *Composer) takePending(id int64) *outgoing {
+	for i, o := range c.pending {
+		if id == 0 || o.viaJS == id {
+			c.pending = append(c.pending[:i:i], c.pending[i+1:]...)
+			return o
+		}
+	}
+	return nil
 }
 
 // prepareAndSend is the prepareAndSendMessage({delta, channelId,
@@ -1574,8 +1881,11 @@ func (c *Composer) sendViaJS(o *outgoing) {
 // plugin's shouldBroadcast override (SlimMessageBox) and delta (bChannel
 // turns the message into its /bchannel command; sendJob runs it as one).
 func (c *Composer) prepareAndSend(opts slackc.Props) {
-	o := c.pending
-	c.pending = nil
+	var id int64
+	if v, ok := opts[sendViaJSKey].(float64); ok {
+		id = int64(v)
+	}
+	o := c.takePending(id) // its own (a plugin passed the opts on), else the oldest
 	if o == nil {
 		return
 	}
@@ -1588,37 +1898,73 @@ func (c *Composer) prepareAndSend(opts slackc.Props) {
 	c.checkThenSend(o)
 }
 
-func (c *Composer) clearAfterSend() {
+func (c *Composer) clearAfterSend() { c.clearForSend()() }
+
+// clearForSend is clearAfterSend for a message about to go out: the
+// composer clears now, and what that tells the plugins and Slack (the
+// server draft's deletion, the plugins' live draft, the typing's end) goes
+// when after is called, once the send's own JS call is queued. Slack's
+// MessagePaneInput.sendMessage clears the draft and the input first and
+// then dispatches prepareAndSendMessage, all in one task, so its plugins
+// see an empty draft in the send's checks and patches and the re-render
+// the clear causes comes after the send. Clack queues the clear's JS work
+// after the send's call to keep that re-render behind it: queued before,
+// the drafts' store update re-rendered the patched components ahead of
+// the send and the pending copy missed its frame.
+func (c *Composer) clearForSend() (after func()) {
 	c.ed.SetDoc(NewDoc())
 	c.lastVer = c.ed.Version()
-	c.deleteServerDraft("message_sent")
-	c.clearLiveDraft()
 	c.broadcast = false
 	c.lastTyping = time.Time{}
-	c.typingStopped()
 	clearDraft(c.ch, c.ts)
 	c.h.Invalidate()
+	return func() {
+		c.deleteServerDraft("message_sent")
+		c.clearLiveDraft()
+		c.typingStopped()
+	}
 }
 
 // restore puts an unsent message back if the user hasn't typed since.
-func (c *Composer) restore(d *Doc) {
+func (c *Composer) restore(d *Doc) { c.restoreWith(d, nil) }
+
+// restoreSend puts an unsent message back with its GIFs, if the user
+// hasn't typed since: the GIFs went back into a composer the user had
+// typed a new message in, and went out with it.
+func (c *Composer) restoreSend(o *outgoing) {
+	c.restoreWith(o.doc, func() { c.att.putBackGifs(o.gifs) })
+}
+
+// restoreWith is restore, running also (UI goroutine) once the message
+// is back.
+func (c *Composer) restoreWith(d *Doc, also func()) {
 	c.later(func() {
 		if c.ed.Empty() {
 			c.ed.SetDoc(d)
 			c.lastVer = c.ed.Version()
+			if also != nil {
+				also()
+			}
 			c.saveDraft()
 		}
 	})
 }
 
 // later runs f on the UI goroutine at the next composer Layout.
-func (c *Composer) later(f func()) { uiLater(c.h, f) }
+func (c *Composer) later(f func()) { laterFor(c.api.a, c.h, f) }
 
-// uiLater runs f on the UI goroutine at the next Layout of a composer or
-// a TextyInput (runRestores), waking h.
-func uiLater(h interface{ Invalidate() }, f func()) {
+// laterFor runs f on the UI goroutine at the next Layout of a composer or
+// a TextyInput (runRestores), for session a's UI (nil: whichever), waking
+// h. Once a is finished (core.App.Released) f is dropped: a draft op's
+// answer or a timer after a sign-out would wait in restoreQ for a Layout
+// that may never come (the sign-in screen has no composer), and keep the
+// session reachable until then (ForgetCore drops what it queued before).
+func laterFor(a *core.App, h interface{ Invalidate() }, f func()) {
+	if a != nil && a.Released() {
+		return
+	}
 	restoreQ.Lock()
-	restoreQ.fns = append(restoreQ.fns, f)
+	restoreQ.fns = append(restoreQ.fns, laterFn{a, f})
 	restoreQ.Unlock()
 	h.Invalidate()
 }
@@ -1650,7 +1996,7 @@ func (c *Composer) editFilesChanged() bool {
 // the message as it was (Slack restores the edit).
 func (c *Composer) saveEditWithFiles(doc *Doc) {
 	m := c.edit
-	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
+	text, blocks := doc.Mrkdwn(), withKeptBlocks(doc.RichTextBlocks(), m.Blocks)
 	files := c.att.takeForEdit()
 	save, api := c.SaveEdit, c.api
 	go func() {
@@ -1771,10 +2117,21 @@ func (c *Composer) finishEdit() {
 }
 
 // restoreQ runs editor mutations from background goroutines on the UI
-// goroutine (the next Layout of any composer).
+// goroutine (the next Layout of any composer). An entry keeps what its
+// func holds, a composer and through it its session, until then: in
+// TestFinishedSessionIsCollected a heap dump found a finished session
+// held by a draft sync its composer queued after the process's last
+// composer Layout. A finished session's entries are dropped (forgetLater)
+// or never queued (laterFor).
 var restoreQ struct {
 	sync.Mutex
-	fns []func()
+	fns []laterFn
+}
+
+// laterFn is a restoreQ entry: f, for session a's UI (nil: whichever).
+type laterFn struct {
+	a *core.App
+	f func()
 }
 
 func runRestores() {
@@ -1782,9 +2139,19 @@ func runRestores() {
 	fns := restoreQ.fns
 	restoreQ.fns = nil
 	restoreQ.Unlock()
-	for _, f := range fns {
-		f()
+	for _, l := range fns {
+		if l.a == nil || !l.a.Released() { // a finished session's has nothing to update
+			l.f()
+		}
 	}
+}
+
+// forgetLater drops what a finished session queued for the UI
+// (ForgetCore).
+func forgetLater(a *core.App) {
+	restoreQ.Lock()
+	restoreQ.fns = slices.DeleteFunc(restoreQ.fns, func(l laterFn) bool { return l.a == a }) // zeroes the tail
+	restoreQ.Unlock()
 }
 
 // ---- drafts (memory only: message contents never touch disk) ----

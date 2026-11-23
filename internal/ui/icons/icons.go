@@ -36,10 +36,16 @@ type part struct {
 }
 
 type def struct {
+	name  string
 	parts []part
 	once  sync.Once
 	segs  [][]seg
 }
+
+// DrawHook, when set (tests), sees the name of each icon drawn, the
+// registry's (a Slack name draws its counterpart, an unknown one
+// "missing").
+var DrawHook func(name string)
 
 const view = 20
 
@@ -68,7 +74,7 @@ func flw(w float32, d string) part { return part{d: d, stroke: w, fill: true} }
 
 const flEdge = 1.44
 
-func reg(name string, parts ...part) { registry[name] = &def{parts: parts} }
+func reg(name string, parts ...part) { registry[name] = &def{name: name, parts: parts} }
 
 // Get returns the named icon (a Clack name, or a Slack SvgIcon name the
 // set maps), or a visible placeholder box for unknown names (so a typo
@@ -147,6 +153,9 @@ func Names() []string {
 }
 
 func (d *def) draw(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dimensions {
+	if DrawHook != nil {
+		DrawHook(d.name)
+	}
 	d.once.Do(func() {
 		d.segs = make([][]seg, len(d.parts))
 		for i, p := range d.parts {

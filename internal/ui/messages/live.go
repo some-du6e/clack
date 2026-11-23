@@ -31,35 +31,40 @@ func Live(app *core.App, ch, ts, threadTS string, since time.Time, have uint64) 
 	if hb == nil {
 		return core.Message{}, 0, false
 	}
-	var ms [3]*model
+	ms := make([]*model, 0, 4)
 	hb.mu.Lock()
 	if threadTS != "" {
 		if tm := hb.thread[ch+"/"+threadTS]; tm != nil && !tm.drawn.Before(since) {
-			ms[0] = tm
+			ms = append(ms, tm)
 		}
 	} else if tm := hb.thread[ch+"/"+ts]; tm != nil && !tm.drawn.Before(since) {
 		// a message that may be a root (a copy read before its first
 		// reply names no thread): its own thread's pane, as for one that
 		// names it
-		ms[1] = tm
+		ms = append(ms, tm)
 	}
 	// the channel list holds its messages and thread roots, and a reply
 	// also sent to the channel (thread_broadcast): a reply looked for there
 	// that isn't one finds nothing
 	if cm := hb.chans[ch]; cm != nil && !cm.drawn.Before(since) {
-		ms[2] = cm
+		ms = append(ms, cm)
+	}
+	// a jump's window a list drew since: the copy it draws of a message
+	// far from the newest ones
+	for w := range hb.wins {
+		if w.ch == ch && !w.drawn.Before(since) {
+			ms = append(ms, w)
+		}
 	}
 	hb.mu.Unlock()
 	for _, md := range ms {
-		if md == nil {
-			continue
-		}
 		md.mu.Lock()
 		i := -1
 		// a model the hub let go and a list took back holds the window it
 		// had then until its reload lands (dropped): it missed every event
-		// while out, and its copy may be older than the one Activity drew
-		if md.loaded && !md.dropped {
+		// while out, and its copy may be older than the one Activity drew;
+		// so does a window reloading (a list took it back)
+		if md.loaded && !md.dropped && !(md.win && md.loading) {
 			i = md.find(ts)
 		}
 		if i < 0 {

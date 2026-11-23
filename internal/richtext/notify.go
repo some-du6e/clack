@@ -7,49 +7,34 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 )
 
-// NotificationText is extractTextFromMessage (boot-shared Eley), the body
-// Slack's notification shows for a message, but for its last line: the
-// caller writes "message {subtype} (message missing text)" for a message
-// with no files and no attachments. It reads convertMessageToPlainText
+// NotificationMessageText is the text boot-shared Eley's
+// extractTextFromMessage starts from: convertMessageToPlainText
 // (client-boot 2xQY) with blockSpacing "single" and the default
 // verbosity. That converter expands condition blocks only for message
 // summaries and has no fallback chain: each block goes through its own
 // converter (its eh table, notifyBlock), a type it has none for adds
 // nothing, each block's text is trimmed, and blocks that add no text leave
 // the message text as written (getMessageText, untrimmed: only a message
-// summary trims it). Only when both are empty does the body come from
-// what d draws after the blocks (its files) or from the attachments: a
-// message unfurl's blocks (convertBlocksToPlainText's default spacing, a
-// blank line apart), else the first attachment's fallback, text, pretext
-// or footer (textContentFromAttachments). Emoji are their text under
-// shouldRenderEmojiAsText (client-boot pfK8, emoji_mode as_text: r's
-// EmojiAsText), as FromMessageIn draws them. Not ported: a file subtype's
-// meta line (getFileMetaTextForMessage), which Slack reads for a
-// file_share message in place of its text, and for a file with no title.
-func NotificationText(r Resolver, m *slack.Message, d Doc, st SpanText) string {
+// summary trims it). Emoji are their text under shouldRenderEmojiAsText
+// (client-boot pfK8, emoji_mode as_text: r's EmojiAsText), as
+// FromMessageIn draws them. The rest of extractTextFromMessage (a clip's
+// line, a file's title or meta line, the attachments, the missing text)
+// is the caller's (ui notifyText), with NotificationAttachmentText.
+func NotificationMessageText(r Resolver, m *slack.Message, st SpanText) string {
 	nc := newBuilder(r, m, m.Channel)
 	nc.notify = true
 	if s := notifyBlocks(notifyEmoji(r, nc.blocks(parseBlocks(m.Blocks))), st, "\n"); s != "" {
 		return s
 	}
-	if s := PlainTextWith(Doc{Blocks: notifyEmoji(r, FromMrkdwn(r, m.Text))}, st); s != "" {
-		return s
-	}
-	// d's own part: what FromMessageIn drew for the blocks (or the text);
-	// its files follow (a file's title)
-	dc := newBuilder(r, m, m.Channel)
-	own := 0
-	if raw := dc.expanded(m.Blocks); !blocksDrawNothing(raw, parseBlocks(raw)) {
-		own = len(dc.blocks(parseBlocks(raw)))
-	}
-	if own == 0 && m.Text != "" && (!rendersBlocks(m) || dc.missing) {
-		own = len(FromMrkdwn(r, m.Text))
-	}
-	for _, b := range d.Blocks[min(own, len(d.Blocks)):] {
-		if b.Kind == FileBlock && b.File != nil {
-			return strings.TrimSpace(firstNonEmpty(b.File.Title, b.File.Name))
-		}
-	}
+	return PlainTextWith(Doc{Blocks: notifyEmoji(r, FromMrkdwn(r, m.Text))}, st)
+}
+
+// NotificationAttachmentText is extractTextFromMessage's body for a
+// message with attachments and no text of its own: a message unfurl's
+// blocks (getForwardedAttachmentBlocks, convertBlocksToPlainText's
+// default spacing, a blank line apart), else the first attachment's
+// fallback, text, pretext or footer (textContentFromAttachments).
+func NotificationAttachmentText(r Resolver, m *slack.Message, st SpanText) string {
 	for i := range m.Attachments { // getForwardedAttachmentBlocks
 		a := &m.Attachments[i]
 		if !a.IsMsgUnfurl {
@@ -59,6 +44,8 @@ func NotificationText(r Resolver, m *slack.Message, d Doc, st SpanText) string {
 		if len(parseBlocks(bs)) == 0 && len(a.MessageBlocks) > 0 {
 			bs = a.MessageBlocks[0].Message.Blocks
 		}
+		nc := newBuilder(r, m, m.Channel)
+		nc.notify = true
 		if s := notifyBlocks(notifyEmoji(r, nc.blocks(parseBlocks(bs))), st, "\n\n"); s != "" {
 			return s
 		}

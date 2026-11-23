@@ -7,6 +7,7 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/layout"
 
+	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/ui/menubar"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
@@ -77,7 +78,7 @@ func (a *App) macMenus() []menubar.Menu {
 			{ID: menuSignOutTeam, Title: "Sign Out", Do: on(a.signOut)}, // titled with the workspace (menuState)
 		}},
 		sep,
-		menubar.Item{ID: "menuitem-quit", Title: "Quit " + AppName, Key: "q", Mods: C, Do: a.Quit},
+		menubar.Item{ID: "menuitem-quit", Title: "Quit " + AppName, Key: "q", Mods: C, Do: func() { a.QuitBecause("Quit in the menu") }},
 	)
 	return []menubar.Menu{
 		{Title: AppName, Kind: "app", Items: app},
@@ -235,6 +236,10 @@ func (a *App) startMenuBar() {
 		return
 	}
 	a.mbar.on = true
+	menubar.OnInstalled(func(took time.Duration) { // main thread: hand it on
+		at := time.Now()
+		go applog.MarkAt("menu-bar", at, "in "+took.Round(100*time.Microsecond).String())
+	})
 	menubar.Install(a.macMenus(), func(route string) { a.Post(func() { a.Navigate(route) }) })
 	a.syncMenuBar()
 }

@@ -82,6 +82,14 @@ type backend struct{}
 
 func (backend) Name() string { return "mediafoundation" }
 
+// Takes is media.Taker's: every source but an audio file, which Go audio
+// plays (internal/media/goaudio, decoding AAC with Media Foundation's
+// source reader, out of its own sink). An audio file's Media Engine has
+// its audio renderer and nothing else to play: on a machine with no
+// audio output (the runners) it fails before its metadata, made muted or
+// not.
+func (backend) Takes(src media.Source) bool { return !media.IsAudio(src) }
+
 // Available is nil once mfplat.dll is loaded and MFStartup answered
 // (Windows N without the Media Feature Pack has no mfplat.dll).
 func (backend) Available() error {
@@ -104,6 +112,8 @@ func (b backend) New(src media.Source, frameReady func()) (media.Player, error) 
 	p := &player{src: src, frameReady: frameReady, wake: make(chan struct{}, 1), mfEv: make(chan mfEvent, 256),
 		bind: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{}), volume: 1, rate: 1, born: time.Now()}
 	p.Init()
+	p.framePts.Store(-1)
+	p.prevPts.Store(-1)
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	p.rs = media.NewRangeSource(src, media.RangeOptions{})
 	p.frames = media.NewFrameHandle(p)
@@ -175,15 +185,25 @@ func otherFormat(f uint32) uint32 {
 // format fallback).
 var forceTransferFailures atomic.Int32
 
+// delayFirstTransfer holds a player's first transfer until its clock is
+// this far in (nanoseconds; tests: a runner's first frame that came 1 to
+// 1.65 s after the engine played, so the clock ran through the video's
+// first second with nothing drawn). By the clock, not a time after
+// loadeddata: in a cold process the engine plays a while after its data,
+// and a fixed delay left the first frame short of the second it was to
+// miss.
+var delayFirstTransfer atomic.Int64
+
 // forceAudioRenderer makes engines with their audio renderer even where
 // there's no audio output (tests: the 2.2 s to the metadata, muted or not).
 var forceAudioRenderer atomic.Bool
 
 // The tests' hooks, set before any player is made: each of the demuxer's
-// reads as it ends (the file's id, where, the bytes it got), and each of
-// the engine's events as it comes (codes below 1000 are HTML5's).
+// reads as it ends (the file's id, where, the bytes it got, when the
+// engine asked for it), and each of the engine's events as it comes
+// (codes below 1000 are HTML5's).
 var (
-	testRead  func(id string, off int64, n int)
+	testRead  func(id string, off int64, n int, asked time.Time)
 	testEvent func(id string, code uint32)
 )
 
@@ -200,6 +220,14 @@ type mfEvent struct {
 // Gio's render thread, under askMu (which the ring's changes and Close
 // take too).
 type player struct {
+	// framePts is the presentation time of the frame transferred last
+	// (any goroutine; -1 before one): the tests check a drawn frame's
+	// colour at its own time, not at the clock's position
+	framePts atomic.Int64
+	// prevPts is the one transferred before it: the frame drawn can be
+	// either (the ring's draw takes a slot the newest transfer may not have
+	// reached yet)
+	prevPts atomic.Int64
 	media.Base
 	src        media.Source
 	rs         *media.RangeSource
@@ -778,6 +806,9 @@ func (p *player) tick() {
 	if time.Since(p.lastRefresh) > media.TimeUpdateEvery {
 		p.refresh()
 	}
+	if d := delayFirstTransfer.Load(); d > 0 && p.okTransfers == 0 && !p.tData.IsZero() && p.State().Pos < time.Duration(d) {
+		return
+	}
 	var hr C.int32_t
 	var pts C.int64_t
 	force := p.forceFrame
@@ -805,6 +836,8 @@ func (p *player) tick() {
 		p.emptyTicks = 0
 		if pts >= 0 { // a forced transfer's frame is the one presented
 			p.lastPts = time.Duration(pts) * 100
+			p.prevPts.Store(p.framePts.Load())
+			p.framePts.Store(int64(p.lastPts))
 		}
 		p.NTransfers.Add(1)
 		p.NFrames.Add(1)
@@ -1113,9 +1146,10 @@ func clackMFRead(h C.uintptr_t, req unsafe.Pointer, pb unsafe.Pointer, cb C.ulon
 			C.clack_me_read_done(req, 0, eAbort)
 			return
 		}
+		asked := time.Now()
 		n, err := p.readFull(unsafe.Slice((*byte)(pb), int(cb)), int64(off))
 		if testRead != nil {
-			testRead(p.src.FileID, int64(off), n)
+			testRead(p.src.FileID, int64(off), n, asked)
 		}
 		hr := C.int32_t(0)
 		if err != nil && n == 0 {
@@ -1134,9 +1168,10 @@ func clackMFReadSync(h C.uintptr_t, pb unsafe.Pointer, cb C.ulong, off C.longlon
 	if p == nil {
 		return -1
 	}
+	asked := time.Now()
 	n, err := p.readFull(unsafe.Slice((*byte)(pb), int(cb)), int64(off))
 	if testRead != nil {
-		testRead(p.src.FileID, int64(off), n)
+		testRead(p.src.FileID, int64(off), n, asked)
 	}
 	if err != nil && n == 0 {
 		return -1

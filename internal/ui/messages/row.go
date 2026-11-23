@@ -2,6 +2,7 @@ package messages
 
 import (
 	"encoding/json"
+	"gioui.org/f32"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/op/clip"
@@ -77,6 +78,12 @@ type row struct {
 	rv      *richview.View
 	handler richHandler
 	drawn   time.Time // last frame the row was laid out (sweepRows)
+	// hlDrawn: the jump highlight's strength the row last painted (0..1,
+	// highlightAlpha), for SenderView
+	hlDrawn float32
+	// under is the row's fill as last painted (paintRowFill), opaque: its
+	// see-through fills blend over it (seeFill, richview's SetUnder)
+	under color.NRGBA
 
 	// find in thread (thread_find.go): the query the body marks
 	// (findInThreadHighlightWords) and whether the row is the current
@@ -106,15 +113,26 @@ type row struct {
 	name      string
 	avatar    string
 	statusURL string
-	huddle    string // the huddle channel while the sender is in one (headphones by the name)
-	bot       bool
-	badge     string // the sender's app badge (core.SenderBadge: APP, AGENT, WORKFLOW…; "" for people)
+	// the custom status's Tooltip (BaseCustomStatus; status_tip.go): its
+	// text, expiration and the emoji's name for a status without text;
+	// the pointer over the icon (statusHov, statusPt in the icon's box,
+	// statusSize), drawn this frame (statusDrawn)
+	statusText, statusName string
+	statusExp              int64
+	statusTag              int
+	statusHov, statusDrawn bool
+	statusPt               f32.Point
+	statusSize             image.Point
+	huddle                 string // the huddle channel while the sender is in one (headphones by the name)
+	bot                    bool
+	badge                  string // the sender's app badge (core.SenderBadge: APP, AGENT, WORKFLOW…; "" for people)
 
 	needChan bool   // body mentions channels not resolved yet
 	allRich  bool   // richRaw's blocks are all rich_text (Compact: the text runs on after the sender)
 	richRaw  []byte // the msg.blocks allRich was read from
 
 	nameBtn, avatarBtn widget.Clickable
+	askBot             func() string     // askedBotFn's
 	nameHov, avatarHov hovercard.Trigger // Slack's ProfileHoverTrigger on both
 	nameCtx, avatarCtx ctxTag            // right-click → the member context menu
 	threadBtn          widget.Clickable
@@ -127,10 +145,18 @@ type row struct {
 	pinnedHov          hovercard.Trigger
 	addReact           widget.Clickable
 	groups             []reactGroup // getReactionGroups over m.Reactions (reaction_groups.go), one pill each
-	pills              []reactPill
-	reactExpand        widget.Clickable // ReactionBar's "N more" / "Show less"
-	reactExpanded      bool             // the bar's isExpanded (Slack keeps it per message)
-	expandTip          popups.TipState
+	// pills are the groups' pills in group order, each kept by its
+	// group's emoji (pillBy) as Slack keys its Reaction elements: a pill
+	// pressed while another group comes or goes stays that emoji's, at
+	// the same address, so its release is its own click
+	pills         []*reactPill
+	pillBy        map[string]*reactPill
+	reactExpand   widget.Clickable // ReactionBar's "N more" / "Show less"
+	reactExpanded bool             // the bar's isExpanded (Slack keeps it per message)
+	expandTip     popups.TipState
+	addTip        popups.TipState // ReactionAddButton's "Add reaction…"
+	tsTip         tsTipper        // the header's Timestamp tooltip (timestamp_tip.go)
+	compactTip    tsTipper        // the gutter's
 
 	// the broadcast's root preview (rootPreview), looked up once per list
 	// snapshot
@@ -143,8 +169,17 @@ type row struct {
 
 	// geometry of the last layout (row-local), for overlays
 	reactRects []image.Rectangle
-	addRect    image.Rectangle
-	height     int
+	// reactOff is !canReact (canAddReaction), as the bar last laid out:
+	// the pills are disabled (.c-reaction:disabled, pointer-events none)
+	reactOff bool
+	// laidPill is the pill whose Reaction slot the last laid-out bar
+	// child drew (-1 none): a plugin's ReactionBar children map to their
+	// pills through it, for the tooltip (layoutReactionBar)
+	laidPill int
+	// laidPills counts the pills the bar child drew
+	laidPills int
+	addRect   image.Rectangle
+	height    int
 
 	// plugin state (patched path only)
 	rc *rowCtx // this frame's inputs, for the natives
@@ -154,12 +189,17 @@ type row struct {
 
 	// plugin view of the message (taut patchMessageText…), see applyView;
 	// viewConv: the serial of the view's conversion it last compared
-	viewAt    time.Time
-	viewRev   uint32
-	viewed    bool
-	vmsg      *core.Message // the view itself (viewed): what the overrides lay over
-	viewWait  bool          // unviewed, a new revision (or a new row): its source until JS's copy of it is ready
-	viewReady bool          // the view it last read was ready (MessageViewState)
+	viewAt   time.Time
+	viewRev  uint32
+	viewed   bool
+	vmsg     *core.Message // the view itself (viewed): what the overrides lay over
+	viewWait bool          // unviewed, a new revision (or a new row): its source until JS's copy of it is ready
+	// heldTil: an edit's row the plugins left alone draws the view of
+	// the revision before (the text it drew) while JS answers for the
+	// edit under plugins that rewrite text (taut TextRewrites), until then
+	// at most (taut.EditHold)
+	heldTil   time.Time
+	viewReady bool // the view it last read was ready (MessageViewState)
 	viewConv  uint64
 	// need is the EmitSeq of the core event that wrote its message
 	// (entry.seq; a load's: core's EmitSeq as it came back): JS's copy is
@@ -267,6 +307,36 @@ type reactPill struct {
 	r   *row
 	i   int // the group, r.groups[i]
 	btn widget.Clickable
+	// where the pointer is on the pill, and the pill's size, for its
+	// ReactionTip when a plugin's bar child holds several pills and its
+	// box is no one pill's (pillPointer)
+	ptTag  int
+	pt     f32.Point
+	ptSize image.Point
+	// the native pill's parts as content laid them out last, in the
+	// pill's coordinates (reaction_menu.go): each emoji's <img> and the
+	// count's text; none when a plugin's children drew the pill
+	emojiAt []pillEmoji
+	countAt image.Rectangle
+	// the children a plugin's tree drew (a patched Reaction or
+	// ReactionBar): a right-click tag over each emoji and the count, and
+	// what the last context press there was on (reaction_menu.go)
+	emojiTags map[string]*ctxTag
+	countTag  ctxTag
+	ctxPart   pillPart
+}
+
+// pillPart is the part of a plugin-drawn pill a context press was on.
+type pillPart struct {
+	on    bool
+	count bool   // the count, else an emoji
+	url   string // the emoji's image
+}
+
+// pillEmoji is one emoji image in a reaction pill.
+type pillEmoji struct {
+	r   image.Rectangle
+	url string
 }
 
 // rowCtx carries per-frame inputs to a row layout.
@@ -526,11 +596,31 @@ func (r *row) dimPending() bool {
 
 func (r *row) growPills() {
 	r.groups = groupReactions(r.groups, r.m.Reactions)
-	if n := len(r.groups); len(r.pills) < n {
-		r.pills = append(r.pills, make([]reactPill, n-len(r.pills))...)
+	if r.pillBy == nil {
+		if len(r.groups) == 0 {
+			r.pills = r.pills[:0]
+			return // no reactions: no map (most rows)
+		}
+		r.pillBy = map[string]*reactPill{}
 	}
-	for i := range r.pills {
-		r.pills[i].r, r.pills[i].i = r, i
+	r.pills = r.pills[:0]
+	for i := range r.groups {
+		name := r.groups[i].name
+		pl := r.pillBy[name]
+		if pl == nil {
+			pl = &reactPill{}
+			r.pillBy[name] = pl
+		}
+		pl.r, pl.i = r, i
+		r.pills = append(r.pills, pl)
+	}
+	if len(r.pillBy) > len(r.pills) { // a group went: its pill goes with it
+		for name, pl := range r.pillBy {
+			if pl.i >= len(r.groups) || r.groups[pl.i].name != name {
+				pl.i = -1 // gone: a plugin's stale tree may still call its natives (group)
+				delete(r.pillBy, name)
+			}
+		}
 	}
 }
 
@@ -562,6 +652,7 @@ func (r *row) resolve(rc *rowCtx) {
 	// picture, badge); m.Name/m.Avatar only name user-less senders
 	// (core/sender.go).
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
+	r.statusText, r.statusName, r.statusExp = "", "", 0
 	r.huddle, r.miss = "", core.MemberKnown
 	if m.User != "" {
 		r.name, r.avatar = "", ""
@@ -569,7 +660,7 @@ func (r *row) resolve(rc *rowCtx) {
 	coreName := ""
 	r.badge = ""
 	if rc.h.Core() != nil {
-		r.badge = rc.h.Core().SenderBadge(m.User, m.BotID)
+		r.badge = rc.h.Core().SenderBadgeBP(m.User, m.BotID, m.BotProfile)
 	} else if r.bot {
 		r.badge = core.BadgeApp
 	}
@@ -594,6 +685,7 @@ func (r *row) resolve(rc *rowCtx) {
 				r.avatar = u.Avatar
 			}
 			r.statusURL = u.StatusEmojiURL
+			r.statusText, r.statusName, r.statusExp = statusTipOf(&u)
 			// qeNM: in_a_huddle with a channel and an unexpired state.
 			if u.Huddle && u.HuddleChannel != "" && u.HuddleExpires > 0 && time.Unix(u.HuddleExpires, 0).After(rc.now) {
 				r.huddle = u.HuddleChannel
@@ -979,13 +1071,25 @@ func (r *row) reactionBarProps() slackc.Props {
 	m := &r.m
 	kids := make([]any, 0, len(r.groups)+1)
 	for i := range r.groups {
-		pl := &r.pills[i]
+		pl := r.pills[i]
 		kids = append(kids, slackc.Child("Reaction", pl.props(), pl.layout))
 	}
-	kids = append(kids, slackc.Child("ReactionAddButton", r.addButtonProps(), r.layoutAddButton))
+	can := r.canReact()
+	if can { // addReactionButton "right" with canReact
+		kids = append(kids, slackc.Child("ReactionAddButton", r.addButtonProps(), r.layoutAddButton))
+	}
 	return r.pane(slackc.Props{"$key": r.ts, "reactionKey": reactionKey(m), "reactions": slackReactions(m.Reactions),
 		"currentUser": r.rc.selfID, "channelId": m.Channel, "className": "c-message_kit__reaction_bar c-reaction_bar",
-		"canReact": true, "children": kids})
+		"canReact": can, "children": kids})
+}
+
+// canReact is ReactionBar's canReact: canAddReaction for the message
+// (core.CanAddReaction).
+func (r *row) canReact() bool {
+	if r.rc == nil || r.rc.h == nil || r.rc.h.Core() == nil {
+		return true
+	}
+	return r.rc.h.Core().CanAddReaction(&r.src)
 }
 
 func (r *row) addButtonProps() slackc.Props {
@@ -994,16 +1098,29 @@ func (r *row) addButtonProps() slackc.Props {
 
 // props are Reaction's: ReactionBar hands each one its group's name,
 // count, users and reactions (getReactionGroups).
+// group is the pill's reaction group, nil once its group went: a plugin's
+// ReactionBar tree from before the change may still call the dropped
+// pill's natives, which then draw nothing.
+func (pl *reactPill) group() *reactGroup {
+	if pl.r == nil || pl.i < 0 || pl.i >= len(pl.r.groups) {
+		return nil
+	}
+	return &pl.r.groups[pl.i]
+}
+
 func (pl *reactPill) props() slackc.Props {
 	r := pl.r
-	g := &r.groups[pl.i]
+	g := pl.group()
+	if g == nil {
+		return slackc.Props{}
+	}
 	rs := make([]any, len(g.idx))
 	for k, i := range g.idx {
 		rs[k] = slackReaction(&r.m.Reactions[i])
 	}
 	p := slackc.Props{"name": g.name, "count": g.count, "users": strList(groupUsers(r.m.Reactions, g)), "reactions": rs}
 	p["$key"] = r.ts + ":" + g.name
-	p["currentUser"], p["reactionKey"], p["canReact"] = r.rc.selfID, reactionKey(&r.m), true
+	p["currentUser"], p["reactionKey"], p["canReact"] = r.rc.selfID, reactionKey(&r.m), !r.reactOff
 	// the pill button renders inside Reaction's React tree, so context a
 	// Reaction patch provides (WhoReacted's reactors) reaches the button
 	// its native draws the pill's box (fill, ring) itself: a rule a
@@ -1016,7 +1133,10 @@ func (pl *reactPill) props() slackc.Props {
 // group's emoji (the first ten), "…" past ten, and the count.
 func (pl *reactPill) buttonProps() slackc.Props {
 	r := pl.r
-	g := &r.groups[pl.i]
+	g := pl.group()
+	if g == nil {
+		return slackc.Props{}
+	}
 	cls := "c-button-unstyled c-reaction"
 	self := pl.reacted()
 	if self {
@@ -1086,11 +1206,14 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 			r.resolve(rc)
 		}
 	}
+	// MessageBackground wraps every row (Message's first child, b5pm), so
+	// a tombstone and a canvas comment root get its fill too: the hover and
+	// the jump highlight
 	if r.m.Tombstone {
-		return r.tombstoneLayout(gtx, rc)
+		return r.withRowFill(gtx, rc, func(gtx layout.Context) layout.Dimensions { return r.tombstoneLayout(gtx, rc) })
 	}
 	if rc.parent && rc.thread && r.m.IsCommentRoot() { // ThreadRootCanvas (thread_comment.go)
-		return r.commentRootLayout(gtx, rc)
+		return r.withRowFill(gtx, rc, func(gtx layout.Context) layout.Dimensions { return r.commentRootLayout(gtx, rc) })
 	}
 	if r.m.System && (!rc.parent || huddleSubtype(r.m.Subtype)) && !r.hiddenSystem(rc) {
 		// ThreadRootGeneric draws a huddle root as a redesigned system
@@ -1132,56 +1255,18 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		return layout.Dimensions{}
 	}
 
-	// Record content first; the background depends on the height.
-	rec := op.Record(gtx.Ops)
-	var opac paint.OpacityStack
-	dim := r.dimPending()
-	if dim {
-		opac = paint.PushOpacity(gtx.Ops, 0.5)
-	}
-	y := dp(gtx, padTop) - dp(gtx, 4)
-
-	// MessageLabels (boot-shared meLQ) draws one primary label: ephemeral,
-	// then a broadcast, then pinned, then Later (a saved message that
-	// isn't completed or archived, actions_rules.go laterLabelFor), then a
-	// custom response. Message (the channel row), ThreadRoot and
-	// ThreadReplyGeneric all wrap the row in it, so the thread pane shows
-	// pinned labels too; only ThreadReplyGeneric passes showBroadcast. A
-	// custom response gets no label line ("custom_response" ===
-	// primaryLabelType renders none), only the row's tint.
+	// The background first (the content's see-through fills blend over it:
+	// prepareUnder), then the content, recorded: the fill depends on its
+	// height. MessageLabels (boot-shared meLQ) draws one primary label:
+	// ephemeral, then a broadcast, then pinned, then Later (a saved message
+	// that isn't completed or archived, actions_rules.go laterLabelFor),
+	// then a custom response.
 	eph := ephemeral(rc, m)
 	broadcast := rc.thread && !rc.parent && m.Broadcast
-	var later bool
-	switch {
-	case eph:
-		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
-	case broadcast:
-		y += r.broadcastLabel(gtx, rc, y)
-	case m.Pinned:
-		y += r.labelRuns(gtx, rc, y, "pin", r.pinnedRuns(gtx, rc, nil)...)
-	default:
-		if ll, ok := laterLabelFor(rc.h.Core(), m, rc.now); ok {
-			later = true
-			y += r.laterLabelLine(gtx, rc, y, ll)
-		}
+	ll, later := laterLabel{}, false
+	if !eph && !broadcast && !m.Pinned {
+		ll, later = laterLabelFor(rc.h.Core(), m, rc.now)
 	}
-	r.col = image.Pt(cx, y)
-	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
-		return slackc.Component(gtx, "ProgressiveDisclosureSuccessCoachmarkWrapper", r, (*row).coachmarkProps, (*row).layoutCoachmark)
-	})
-	y += g.Size.Y
-	if dim {
-		opac.Pop()
-	}
-	content := rec.Stop()
-
-	h := y + dp(gtx, mt.padBottom) - dp(gtx, 8)
-	if rc.header && !rc.noAvatar() {
-		if mh := dp(gtx, padTop) + dp(gtx, mt.avatar) + dp(gtx, mt.padBottom); h < mh {
-			h = mh
-		}
-	}
-	size := image.Pt(w, h)
 	bg := c.Bg
 	bg.A = 0
 	switch {
@@ -1204,6 +1289,50 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		bg = c.Hover
 	}
 	bg = st.Background(bg)
+	r.prepareUnder(bg)
+
+	rec := op.Record(gtx.Ops)
+	var opac paint.OpacityStack
+	dim := r.dimPending()
+	if dim {
+		opac = paint.PushOpacity(gtx.Ops, 0.5)
+	}
+	y := dp(gtx, padTop) - dp(gtx, 4)
+
+	// Message (the channel row), ThreadRoot and ThreadReplyGeneric all wrap
+	// the row in MessageLabels, so the thread pane shows pinned labels too;
+	// only ThreadReplyGeneric passes showBroadcast. A custom response gets
+	// no label line ("custom_response" === primaryLabelType renders none),
+	// only the row's tint.
+	switch {
+	case eph:
+		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
+	case broadcast:
+		y += r.broadcastLabel(gtx, rc, y)
+	case m.Pinned:
+		y += r.labelRuns(gtx, rc, y, "pin", r.pinnedRuns(gtx, rc, nil)...)
+	default:
+		if later {
+			y += r.laterLabelLine(gtx, rc, y, ll)
+		}
+	}
+	r.col = image.Pt(cx, y)
+	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
+		return slackc.Component(gtx, "ProgressiveDisclosureSuccessCoachmarkWrapper", r, (*row).coachmarkProps, (*row).layoutCoachmark)
+	})
+	y += g.Size.Y
+	if dim {
+		opac.Pop()
+	}
+	content := rec.Stop()
+
+	h := y + dp(gtx, mt.padBottom) - dp(gtx, 8)
+	if rc.header && !rc.noAvatar() {
+		if mh := dp(gtx, padTop) + dp(gtx, mt.avatar) + dp(gtx, mt.padBottom); h < mh {
+			h = mh
+		}
+	}
+	size := image.Pt(w, h)
 	r.height, r.bgDrawn = h, bg
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.paintBackground(gtx, content, size, bg) })
@@ -1212,19 +1341,96 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 }
 
 func (r *row) paintBackground(gtx layout.Context, content op.CallOp, size image.Point, bg color.NRGBA) layout.Dimensions {
-	fill(gtx.Ops, image.Rectangle{Max: size}, bg)
-	if hl := r.rc.highlight; hl > 0 {
-		c := r.rc.c.Highlight
-		c.A = uint8(float32(c.A) * hl)
-		fill(gtx.Ops, image.Rectangle{Max: size}, c)
-	}
-	if fl := r.rc.findFlash; fl > 0 {
-		c := r.rc.c.ActiveThread
-		c.A = uint8(float32(c.A) * fl)
-		fill(gtx.Ops, image.Rectangle{Max: size}, c)
-	}
+	r.paintRowFill(gtx, size, bg)
 	content.Add(gtx.Ops)
 	return layout.Dimensions{Size: size}
+}
+
+// paintRowFill is MessageBackground's fill over a row of size: its own
+// background bg (transparent for none), the jump highlight over it
+// (c-message_kit__background--highlight: CSS animates the row's background
+// to #f2c74433 and back, so each frame is the sRGB mix of the two, painted
+// solid: Gio's linear-light blend of a scaled alpha drifts from it
+// mid-fade, most on dark rows), then thread find's flash. Every row layout
+// paints it, whatever it draws on top (a message, a tombstone, a system
+// message, a huddle or canvas comment root).
+func (r *row) paintRowFill(gtx layout.Context, size image.Point, bg color.NRGBA) {
+	r.hlDrawn = r.rc.highlight
+	if bg.A > 0 || r.rc.highlight > 0 {
+		fill(gtx.Ops, image.Rectangle{Max: size}, r.fillOf(bg))
+	}
+	if fl := r.rc.findFlash; fl > 0 {
+		f := r.rc.c.ActiveThread
+		f.A = uint8(float32(f.A) * fl)
+		fill(gtx.Ops, image.Rectangle{Max: size}, f)
+	}
+}
+
+// fillOf is the opaque fill paintRowFill paints for the row's own
+// background bg: bg (the pane when transparent), mixed with the jump
+// highlight in sRGB.
+func (r *row) fillOf(bg color.NRGBA) color.NRGBA {
+	c := r.rc.c
+	under := c.Bg
+	switch {
+	case bg.A == 255:
+		under = bg
+	case bg.A > 0:
+		under = richview.Over(bg, c.Bg)
+	}
+	if hl := r.rc.highlight; hl > 0 {
+		return srgbMix(under, c.Highlight, hl)
+	}
+	return under
+}
+
+// prepareUnder notes the fill the row paints this frame under its content
+// (fillOf) before the content is laid out, so its see-through fills (code
+// and mentions in the body, reaction pills, badges) blend over it: Slack's
+// rgba fills show the row's background through them.
+func (r *row) prepareUnder(bg color.NRGBA) {
+	r.under = r.fillOf(bg)
+	if r.rv != nil {
+		u := r.under
+		if u == r.rc.c.Bg {
+			u = color.NRGBA{} // the pane: the palette's own blend
+		}
+		r.rv.SetUnder(u)
+	}
+}
+
+// withRowFill lays out f, a row layout that paints no background of its
+// own, over the row's fill (paintRowFill): the hover, then the highlight.
+func (r *row) withRowFill(gtx layout.Context, rc *rowCtx, f layout.Widget) layout.Dimensions {
+	var bg color.NRGBA
+	if rc.hovered {
+		bg = rc.c.Hover
+	}
+	r.prepareUnder(bg)
+	rec := op.Record(gtx.Ops)
+	d := f(gtx)
+	call := rec.Stop()
+	r.paintRowFill(gtx, d.Size, bg)
+	call.Add(gtx.Ops)
+	return d
+}
+
+// seeFill is fill x (one of c's, pre-blended over the pane) with raw, the
+// rgba it's blended from (c.raw; zero for an opaque one), over the row's
+// fill instead, when the row has one of its own (its hover, its jump
+// highlight): Slack's rgba reaction pills and badges show the row's
+// background through them.
+func (r *row) seeFill(c *colors, x, raw color.NRGBA) color.NRGBA {
+	if r.under.A != 255 || r.under == c.Bg || raw.A == 0 {
+		return x
+	}
+	return richview.Over(raw, r.under)
+}
+
+// srgbMix is a and b mixed in sRGB, t of b (opaque).
+func srgbMix(a, b color.NRGBA, t float32) color.NRGBA {
+	m := func(x, y uint8) uint8 { return uint8(float32(x)*(1-t) + float32(y)*t + 0.5) }
+	return color.NRGBA{R: m(a.R, b.R), G: m(a.G, b.G), B: m(a.B, b.B), A: 255}
 }
 
 // layoutGutter is the gutter memo (filter-matched by its source marker
@@ -1348,8 +1554,8 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	url = st.BackgroundImage(url)
 	r.avDrawn = url
 	// Clicked before Layout: Clickable.Layout consumes pending clicks.
-	if ctxclick.Clicked(gtx, &r.avatarBtn) && r.m.User != "" {
-		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
+	if ctxclick.Clicked(gtx, &r.avatarBtn) {
+		r.openSender(rc)
 	}
 	size := image.Pt(s, s)
 	gtx.Constraints = layout.Exact(size)
@@ -1371,7 +1577,7 @@ func (r *row) avatarButton(gtx layout.Context, url string, size image.Point) lay
 		return layout.Dimensions{Size: size}
 	})
 	contextArea(gtx, &r.avatarCtx, d.Size)
-	r.avatarHov.LayoutBot(gtx, r.hoverUser(), r.hoverBot(), d.Size)
+	r.avatarHov.LayoutBotFn(gtx, r.hoverUser(), r.askedBotFn(), d.Size)
 	return d
 }
 
@@ -1419,6 +1625,7 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 		visible = p.Bool("visible")
 	}
 	if !visible {
+		r.compactTip.skip()
 		return layout.Dimensions{Size: box}
 	}
 	def := compactTSClass
@@ -1428,6 +1635,7 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	st := def.Enter(gtx, hoverState(rc.hovered), 0)
 	defer st.Leave()
 	if st.Hidden() {
+		r.compactTip.skip()
 		return layout.Dimensions{Size: box}
 	}
 	// getCompactGutter: renderTimestamp({meridiem: !(adjacent && light)}):
@@ -1453,6 +1661,7 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	dy := strutBaseline(gtx) - (d.Size.Y - d.Baseline)
 	t := op.Offset(image.Pt(box.X-sz.X, dy)).Push(gtx.Ops)
 	call.Add(gtx.Ops)
+	r.compactTip.layout(gtx, r, d, s.col)
 	t.Pop()
 	r.compactBL = dy + d.Size.Y - d.Baseline
 	return layout.Dimensions{Size: box}
@@ -1967,8 +2176,8 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		return layout.Dimensions{}
 	}
 	span := r.custom || r.hmName // not interactive: a span, no button (custom_response.go, huddle_msg.go)
-	if ctxclick.Clicked(gtx, &r.nameBtn) && r.m.User != "" && !span {
-		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
+	if ctxclick.Clicked(gtx, &r.nameBtn) && !span {
+		r.openSender(rc)
 	}
 	var bs slackc.Styled
 	if span {
@@ -2016,7 +2225,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		bw := sz.X + dp(gtx, 6)
 		bh := dp(gtx, 14)
 		top := baseline - dp(gtx, 11)
-		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), c.BadgeBg)
+		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), r.seeFill(c, c.BadgeBg, c.raw.BadgeBg))
 		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, badge) })
 		xx += bw
 	}
@@ -2042,6 +2251,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 			}
 			rrect(gtx.Ops, image.Rect(xx, top, xx+bs, top+bs), bs/2, bg)
 		}
+		r.statusArea(gtx, image.Rect(xx, top, xx+bs, top+bs))
 		is := dp(gtx, 16)
 		at(gtx, xx+(bs-is)/2, top+(bs-is)/2, func(gtx layout.Context) layout.Dimensions {
 			return icons.Get(icons.Slack("headphones"))(gtx, unit.Dp(16), c.Text)
@@ -2050,7 +2260,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		if dense {
 			xx += dp(gtx, 3)
 		}
-	} else if r.statusURL != "" {
+	} else if r.statusURL != "" && (r.statusExp <= 0 || gtx.Now.Unix() < r.statusExp) { // useMemberCustomStatusExpired: an expired status is gone
 		s := dp(gtx, mt.statusEmoji)
 		xx += dp(gtx, 4)
 		top := baseline - s + dp(gtx, 3)
@@ -2058,6 +2268,11 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 			xx += statusBorder(gtx, c, image.Rect(xx, top, xx+s, top+s))
 		}
 		drawEmoji(gtx, rc.h, r.statusURL, image.Rect(xx, top, xx+s, top+s))
+		r.statusArea(gtx, image.Rect(xx, top, xx+s, top+s))
+		if r.statusExp > 0 {
+			// a frame when it expires, which takes it away
+			gtx.Execute(op.InvalidateCmd{At: time.Unix(r.statusExp, 0)})
+		}
 		xx += s
 		if dense {
 			xx += dp(gtx, 3)
@@ -2089,7 +2304,7 @@ func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions
 		return d
 	})
 	contextArea(gtx, &r.nameCtx, d.Size)
-	r.nameHov.LayoutBot(gtx, r.hoverUser(), r.hoverBot(), d.Size)
+	r.nameHov.LayoutBotFn(gtx, r.hoverUser(), r.askedBotFn(), d.Size)
 	return d
 }
 
@@ -2102,11 +2317,40 @@ func (r *row) hoverUser() string {
 	return r.m.User
 }
 
-// hoverBot is the bot a sender with no user opens AppHoverCard for (Slack
-// passes the message's bot_id as ProfileHoverTrigger's serviceId).
+// hoverBot is the bot the sender's hover card asks for with the member:
+// MessageSender (JA+h) hands BaseMessageSender botId = Od's bot (Emf2
+// maybeGetBotAndMemberByIds: the message's bot_id, else its bot_profile's)
+// with or without a user, and ProfileHoverTrigger passes it as serviceId.
+// A bot user posting with its app's newer bot (Hack Club's #new-bots)
+// opens that bot's app card, not the stale one its profile names; a
+// human's card is the member's either way (useProfileHoverApp: no app for
+// a human).
 func (r *row) hoverBot() string {
-	if r.custom || r.m.User != "" {
+	return r.senderBot(r.nameHov.Hovered() || r.avatarHov.Hovered())
+}
+
+// askedBot is the sender's bot as its hover trigger reports it, while
+// the pointer is on the trigger (hovercard.LayoutBotFn): asking.
+func (r *row) askedBot() string { return r.senderBot(true) }
+
+// askedBotFn is askedBot as a func made once per row, not per frame.
+func (r *row) askedBotFn() func() string {
+	if r.askBot == nil {
+		r.askBot = r.askedBot
+	}
+	return r.askBot
+}
+
+// senderBot is hoverBot; ask (the sender's trigger or click in use) lets
+// core ask bots.info for a bot the pick waits on (core.App.SenderBot).
+func (r *row) senderBot(ask bool) string {
+	if r.custom {
 		return ""
+	}
+	if r.rc != nil && r.rc.h != nil {
+		if app := r.rc.h.Core(); app != nil {
+			return app.SenderBot(&r.m, ask) // Od's bot (core app_card.go)
+		}
 	}
 	if r.m.BotID != "" {
 		return r.m.BotID
@@ -2117,14 +2361,40 @@ func (r *row) hoverBot() string {
 	return ""
 }
 
+// SenderOpener is optional on a Host: BaseMessageSender's click with the
+// sender's member and its bot (the one its hover card asks for), which
+// opens the member's profile, or App details for that bot when the member
+// is an app's or there's no member.
+type SenderOpener interface {
+	OpenSender(anchor image.Point, userID, botID string)
+}
+
+// openSender is the sender's name and avatar click (BaseMessageSender
+// onClick: openProfile with memberId and serviceId, the same bot the
+// hover card opens).
+func (r *row) openSender(rc *rowCtx) {
+	user := r.m.User // a custom response's avatar opens its member too (its bot is none: hoverBot)
+	if so, ok := rc.h.(SenderOpener); ok {
+		if bot := r.senderBot(true); user != "" || bot != "" {
+			so.OpenSender(rc.origin(image.Point{}), user, bot)
+		}
+		return
+	}
+	if user != "" {
+		rc.h.OpenProfile(rc.origin(image.Point{}), user)
+	}
+}
+
 // layoutTimestamp is the header's Timestamp ("3:04 PM").
 func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if p.Has("visible") && !p.Bool("visible") {
+		r.tsTip.skip()
 		return layout.Dimensions{}
 	}
 	st := tsClass.Enter(gtx, 0, 0)
 	defer st.Leave()
 	if st.Hidden() {
+		r.tsTip.skip()
 		return layout.Dimensions{}
 	}
 	tsS := textStyle{size: float32(st.FontSize(12)), col: st.Color(r.rc.c.Text2)}
@@ -2139,10 +2409,14 @@ func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensi
 			gtx.Execute(op.InvalidateCmd{At: now.Add(time.Minute - age%time.Minute)})
 		}
 	}
+	var d layout.Dimensions
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, r.rc.th, st, tsS, tsText) })
+		d = st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, r.rc.th, st, tsS, tsText) })
+	} else {
+		d = label(gtx, r.rc.th, tsS, tsText)
 	}
-	return label(gtx, r.rc.th, tsS, tsText)
+	r.tsTip.layout(gtx, r, d, tsS.col)
+	return d
 }
 
 // labelLine draws a small gray label with an icon above the name ("Pinned").
@@ -2500,6 +2774,7 @@ func (r *row) reactionBar(gtx layout.Context, pos, origin image.Point, w int) in
 // children a plugin passed (its own buttons beside Slack's).
 func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	r.reactAs = p.StrOr("currentUser", "")
+	r.reactOff = !r.canReact()
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
 	// the className a plugin passes on (OwlMode's taut-owl-reactions, which
@@ -2514,10 +2789,20 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 		// Reaction and add-button slots a plugin passed on, its own
 		// buttons) are flex items, each placed like a pill
 		items := slackc.Items(e)
+		// each pill's place, for its ReactionTip as on the native path:
+		// the child a Reaction slot was drawn in (a plugin may wrap it)
+		r.reactRects = append(r.reactRects, make([]image.Rectangle, len(r.groups))...)
 		lay := func(gtx layout.Context) layout.Dimensions {
 			return r.flowPills(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
+				r.laidPill, r.laidPills = -1, 0
 				return slackc.LayoutElement(gtx, items[i])
-			}, nil)
+			}, func(i int, rect image.Rectangle) {
+				// a child holding one pill is its box; several, and
+				// their tips go by the pointer (pillPointer)
+				if k := r.laidPill; k >= 0 && k < len(r.reactRects) && r.laidPills == 1 {
+					r.reactRects[k] = rect.Add(r.reactAt)
+				}
+			}, true)
 		}
 		if st.Active() {
 			return st.Wrap(gtx, lay)
@@ -2539,10 +2824,14 @@ func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 	if more != 0 {
 		extra = 1
 	}
-	return r.flowPills(gtx, shown+extra+1, func(gtx layout.Context, i int) layout.Dimensions {
+	add := 1 // the add button, with canReact (ReactionBar's y)
+	if r.reactOff {
+		add = 0
+	}
+	return r.flowPills(gtx, shown+extra+add, func(gtx layout.Context, i int) layout.Dimensions {
 		switch {
 		case i < shown:
-			pl := &r.pills[i]
+			pl := r.pills[i]
 			return slackc.Component(gtx, "Reaction", pl, (*reactPill).props, (*reactPill).layout)
 		case i < shown+extra:
 			return r.expandButton(gtx, more, n-shown, sel)
@@ -2556,7 +2845,7 @@ func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 		case i >= shown+extra:
 			r.addRect = rect.Add(r.reactAt)
 		}
-	})
+	}, false)
 }
 
 // ReactionBar's buttons after the pills (reactionCollapse).
@@ -2618,7 +2907,7 @@ func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel 
 		return n, reactLess, false
 	}
 	for i := target; i < n; i++ {
-		if (&r.pills[i]).reacted() {
+		if r.pills[i].reacted() {
 			sel = true
 			break
 		}
@@ -2655,12 +2944,12 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 		rad := ph / 2
 		switch {
 		case sel:
-			rrect(gtx.Ops, rr, rad, c.ReactSelfBg)
+			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactSelfBg, c.raw.ReactSelfBg))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 		case r.reactExpand.Hovered():
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 		default:
-			rrect(gtx.Ops, rr, rad, c.ReactBg)
+			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactBg, c.raw.ReactBg))
 		}
 		at(gtx, dp(gtx, 8), (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, ts, txt) })
 		return layout.Dimensions{Size: size}
@@ -2673,10 +2962,10 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 }
 
 // flowPills places n items left to right in rows of pill height, wrapping
-// at the bar's width (the reaction bar's flex-wrap). placed, for the
-// native bar, gets each item's rect (kept for overlays).
-func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context, i int) layout.Dimensions, placed func(i int, rect image.Rectangle)) layout.Dimensions {
-	native := placed != nil
+// at the bar's width (the reaction bar's flex-wrap). placed gets each
+// item's rect (kept for overlays: the pills' tooltips). skipEmpty: a
+// plugin's children, where a null child takes no place.
+func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context, i int) layout.Dimensions, placed func(i int, rect image.Rectangle), skipEmpty bool) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	ph := dp(gtx, mt.reactH)
 	gap := dp(gtx, mt.reactGap)
@@ -2700,19 +2989,19 @@ func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context,
 		rec := op.Record(gtx.Ops)
 		d := item(g, i)
 		call := rec.Stop()
-		if !native && d.Size.X == 0 && d.Size.Y == 0 {
+		if skipEmpty && d.Size.X == 0 && d.Size.Y == 0 {
 			continue // a plugin's null child takes no place in the row
 		}
 		rect := place(call, d.Size)
 		bottom = rect.Max.Y
-		if native {
+		if placed != nil {
 			placed(i, rect)
 		}
 	}
 	return layout.Dimensions{Size: image.Pt(w, bottom)}
 }
 
-// layoutAddButton is ReactionAddButton (.c-reaction_add): always drawn
+// layoutAddButton is ReactionAddButton (.c-reaction_add): drawn (with canReact)
 // after the pills, like Slack (34×24, rgba(29,28,29,.06), not only on hover).
 func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	rc := r.rc
@@ -2730,12 +3019,25 @@ func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensi
 		return layout.Dimensions{Size: size}
 	}
 	gtx.Constraints = layout.Exact(size)
+	var d layout.Dimensions
 	if st.Active() {
 		// .c-reaction_add is a 9999px pill: a rule's box-shadow rings it
-		return st.WrapRounded(gtx, unit.Dp(mt.reactH/2), func(gtx layout.Context) layout.Dimensions { return r.addButton(gtx, st, size) })
+		d = st.WrapRounded(gtx, unit.Dp(mt.reactH/2), func(gtx layout.Context) layout.Dimensions { return r.addButton(gtx, st, size) })
+	} else {
+		d = r.addButton(gtx, st, size)
 	}
-	return r.addButton(gtx, st, size)
+	// ReactionAddButton's Tooltip (BaseTooltip, top): "Add reaction…"
+	// after 300 ms, as the button's aria-label says
+	r.addTip.Delay = reactionAddTipDelay
+	popups.Tooltip(gtx, rc.th, &r.addTip, r.addReact.Hovered(), size, popups.Above, reactionAddTip, "")
+	return d
 }
+
+// ReactionAddButton's tip and its delay (boot-shared, CDN a09b625d90aa).
+const (
+	reactionAddTip      = "Add reaction…"
+	reactionAddTipDelay = 300 * time.Millisecond
+)
 
 func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) layout.Dimensions {
 	c := r.rc.c
@@ -2750,7 +3052,7 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 			}
 			col = rgb(0xecb22e)
 		} else if !st.Has("background-color") { // a rule's fill WrapRounded paints, once
-			rrect(gtx.Ops, rr, ph/2, c.ReactBg)
+			rrect(gtx.Ops, rr, ph/2, r.seeFill(c, c.ReactBg, c.raw.ReactBg))
 		}
 		col = st.Color(col)
 		is := dp(gtx, 18)
@@ -2765,6 +3067,9 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 // group's reactions (the group's users include them; the viewer, unless
 // a plugin set ReactionBar's currentUser).
 func (pl *reactPill) reacted() bool {
+	if pl.group() == nil {
+		return false
+	}
 	r := pl.r
 	self := ""
 	if r.rc != nil {
@@ -2785,26 +3090,73 @@ func (pl *reactPill) reacted() bool {
 
 // layout is Reaction around the UnstyledButton pill.
 func (pl *reactPill) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	if e, ok := slackc.PropChildren(p); ok {
-		return slackc.LayoutElement(gtx, e) // the button JS rendered in Reaction's tree
+	if pl.group() == nil {
+		return layout.Dimensions{}
 	}
-	return slackc.Component(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
+	// the bar child this slot is drawn in is this pill's: its group's
+	// index now (pl.i follows the pill through regrouping)
+	pl.r.laidPill = pl.i
+	pl.r.laidPills++
+	var d layout.Dimensions
+	if e, ok := slackc.PropChildren(p); ok {
+		d = slackc.LayoutElement(gtx, e) // the button JS rendered in Reaction's tree
+	} else {
+		// the pill draws its box itself: under an UnstyledButton patch a
+		// rule its className brings is painted once, round
+		// (slackc.ComponentBox)
+		d = slackc.ComponentBox(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
+	}
+	pl.pillPointer(gtx, d.Size)
+	return d
+}
+
+// pillPointer follows the pointer over the pill (size, at the current
+// offset), letting it through: where it is on the pill places the
+// pill's ReactionTip when the bar child it was drawn in held others too.
+func (pl *reactPill) pillPointer(gtx layout.Context, size image.Point) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &pl.ptTag, Kinds: pointer.Enter | pointer.Move})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			pl.pt = e.Position
+		}
+	}
+	pl.ptSize = size
+	a := clip.Rect{Max: size}.Push(gtx.Ops)
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &pl.ptTag)
+	pass.Pop()
+	a.Pop()
 }
 
 // layoutButton is the pill: UnstyledButton data-qa="reactji", .c-reaction
 // (--reacted for the viewer's own). Its children are the emoji and the
 // count; a plugin may append to them (WhoReacted's avatars).
 func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if pl.group() == nil {
+		return layout.Dimensions{}
+	}
 	r := pl.r
 	rc := r.rc
-	if pl.btn.Clicked(gtx) && rc.onReactGroup != nil {
+	// a macOS Ctrl+click is the pill's context click, not a toggle
+	if !r.reactOff && ctxclick.Clicked(gtx, &pl.btn) && rc.onReactGroup != nil {
 		rc.onReactGroup(r, r.groups[pl.i].name) // handleReactionClick (reaction_groups.go)
 	}
+	pl.emojiAt, pl.countAt = pl.emojiAt[:0], image.Rectangle{}
 	var mods uint64
 	if pl.reacted() {
 		mods = 1
 	}
-	st := reactionClass.Enter(gtx, btnState(gtx, &pl.btn), mods)
+	// the className the button was rendered with: a class a plugin adds
+	// to it (an UnstyledButton or Reaction patch) is the pill's, and its
+	// .<class> rules reach the pill as in Slack
+	var bs css.State
+	if !r.reactOff {
+		bs = btnState(gtx, &pl.btn)
+	}
+	st := reactionClass.EnterClass(gtx, bs, mods, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
@@ -2835,11 +3187,23 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallOp, size image.Point, cy int) layout.Dimensions {
 	c := pl.r.rc.c
 	self := pl.reacted()
-	return pl.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	off := pl.r.reactOff
+	btn := func(gtx layout.Context, w layout.Widget) layout.Dimensions {
+		if off {
+			// disabled={!canReact}: .c-reaction:disabled is
+			// pointer-events none, so no hover, cursor, tooltip or
+			// click; the pointer is the message's under it
+			return w(gtx)
+		}
+		return pl.btn.Layout(gtx, w)
+	}
+	return btn(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: size}
-		pointerCursor(gtx, rr)
+		if !off {
+			pointerCursor(gtx, rr)
+		}
 		rad := size.Y / 2
-		hov := pl.btn.Hovered()
+		hov := !off && pl.btn.Hovered()
 		// Slack's reacted and hover rings are box-shadows
 		// (.c-reaction--reacted, .c-reaction:hover); a rule's box-shadow
 		// replaces them (OwlMode rings every pill in its colour)
@@ -2860,7 +3224,7 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 			}
 		case self:
-			fill(c.ReactSelfBg)
+			fill(pl.r.seeFill(c, c.ReactSelfBg, c.raw.ReactSelfBg))
 			if ring {
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 			}
@@ -2870,7 +3234,7 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 			}
 		default:
-			fill(c.ReactBg)
+			fill(pl.r.seeFill(c, c.ReactBg, c.raw.ReactBg))
 		}
 		t := op.Offset(image.Pt(dp(gtx, 8), cy)).Push(gtx.Ops)
 		content.Add(gtx.Ops)
@@ -2887,19 +3251,24 @@ func (pl *reactPill) content(gtx layout.Context, st slackc.Styled) layout.Dimens
 	gap := dp(gtx, 4)
 	g := &pl.r.groups[pl.i]
 	x := 0
+	// the content sits 8px in from the pill's left (layoutButton)
+	in := image.Pt(dp(gtx, 8), 0)
 	for k, i := range g.idx {
 		if k == reactEmojiMax {
 			break
 		}
 		re := &pl.r.m.Reactions[i]
 		at(gtx, x, (ph-es)/2, func(gtx layout.Context) layout.Dimensions { return pl.emoji(gtx, re) })
+		pl.emojiAt = append(pl.emojiAt, pillEmoji{r: image.Rect(x, (ph-es)/2, x+es, (ph-es)/2+es).Add(in), url: pl.emojiURL(re)})
 		x += es + gap
 	}
 	if len(g.idx) > reactEmojiMax {
 		d := at(gtx, x, (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return pl.truncation(gtx, st) })
 		x += d.Size.X + gap
 	}
-	d := at(gtx, x, (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return pl.count(gtx, st) })
+	cy := (ph - dp(gtx, 16)) / 2
+	d := at(gtx, x, cy, func(gtx layout.Context) layout.Dimensions { return pl.count(gtx, st) })
+	pl.countAt = image.Rect(x, cy, x+d.Size.X, cy+d.Size.Y).Add(in)
 	return layout.Dimensions{Size: image.Pt(x+d.Size.X, ph)}
 }
 
@@ -2907,7 +3276,10 @@ func (pl *reactPill) content(gtx layout.Context, st slackc.Styled) layout.Dimens
 // "emoji" prop names (the group's first without props).
 func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	r := pl.r
-	g := &r.groups[pl.i]
+	g := pl.group()
+	if g == nil || len(g.idx) == 0 {
+		return layout.Dimensions{}
+	}
 	re := &r.m.Reactions[g.idx[0]]
 	if name := p.StrOr("emoji", ""); name != "" {
 		for _, i := range g.idx {
@@ -2917,13 +3289,42 @@ func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dime
 			}
 		}
 	}
-	return pl.emoji(gtx, re)
+	if pl.emojiTags == nil {
+		pl.emojiTags = map[string]*ctxTag{}
+	}
+	tag := pl.emojiTags[re.Name]
+	if tag == nil {
+		tag = new(ctxTag)
+		pl.emojiTags[re.Name] = tag
+	}
+	pl.notePart(gtx, tag, pillPart{on: true, url: pl.emojiURL(re)})
+	d := pl.emoji(gtx, re)
+	contextArea(gtx, tag, d.Size)
+	return d
+}
+
+// notePart records a context press on a plugin-drawn pill's part (tag)
+// for the list's menu, which the press reaches too (contextArea passes it
+// on).
+func (pl *reactPill) notePart(gtx layout.Context, tag *ctxTag, part pillPart) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
+		if !ok {
+			return
+		}
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+			pl.ctxPart = part
+		}
+	}
 }
 
 // layoutTruncation is the pill's "…" after ten emoji
 // (span.c-reaction__truncation): its 16px line box, as content places
 // it, in the colour CSS gives the pill's text, like the count.
 func (pl *reactPill) layoutTruncation(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	if pl.group() == nil {
+		return layout.Dimensions{}
+	}
 	return pillLine(pl.truncation(gtx, slackc.CurrentScope().Child(reactionTruncClass, 0)), dp(gtx, 16))
 }
 
@@ -2943,6 +3344,16 @@ func (pl *reactPill) truncation(gtx layout.Context, st slackc.Styled) layout.Dim
 	}
 	cs.col = st.Color(cs.col)
 	return label(gtx, rc.th, cs, "\u2026")
+}
+
+// emojiURL is the image re's emoji draws: its custom emoji's, else the
+// standard emoji's on Slack's CDN.
+func (pl *reactPill) emojiURL(re *core.Reaction) string {
+	if re.URL != "" || pl.r.rc.h.Core() == nil {
+		return re.URL
+	}
+	u, _, _ := pl.r.rc.h.Core().Emoji(re.Name)
+	return u
 }
 
 // emoji draws re's emoji (its alt text while the image loads).
@@ -2970,7 +3381,13 @@ func (pl *reactPill) emoji(gtx layout.Context, re *core.Reaction) layout.Dimensi
 // text (OwlMode's reacted pill: content-pry), as the native count takes
 // it from the pill.
 func (pl *reactPill) layoutCount(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	return pillLine(pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0)), dp(gtx, 16))
+	if pl.group() == nil {
+		return layout.Dimensions{}
+	}
+	pl.notePart(gtx, &pl.countTag, pillPart{on: true, count: true})
+	d := pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0))
+	contextArea(gtx, &pl.countTag, d.Size)
+	return pillLine(d, dp(gtx, 16))
 }
 
 // ReactionDrawnHook, when set (tests: a reaction's frame,
@@ -3044,6 +3461,11 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	o.Compact = true
 	r.rv.SetOptions(o)
 	c := rc.c
+	var sysBg color.NRGBA // MessageBackground's own: the hover
+	if rc.hovered {
+		sysBg = c.Hover
+	}
+	r.prepareUnder(sysBg)
 	m := &r.m
 	w := gtx.Constraints.Max.X
 	padX := dp(gtx, rc.padX())
@@ -3103,9 +3525,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	}
 	content := rec.Stop()
 	h := y + dp(gtx, 8)
-	if rc.hovered {
-		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
-	}
+	r.paintRowFill(gtx, image.Pt(w, h), sysBg) // MessageBackground's: the hover, the jump highlight
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}
@@ -3166,6 +3586,11 @@ func (r *row) systemHideLink(gtx layout.Context, x, y int) int {
 // sender and time line over the text (it hides it only for "light").
 func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	c := rc.c
+	var sysBg color.NRGBA // MessageBackground's own: the hover
+	if rc.hovered {
+		sysBg = c.Hover
+	}
+	r.prepareUnder(sysBg)
 	m := &r.m
 	w := gtx.Constraints.Max.X
 	padX := dp(gtx, rc.padX())
@@ -3214,9 +3639,7 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 	}
 	content := rec.Stop()
 	h := y
-	if rc.hovered {
-		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
-	}
+	r.paintRowFill(gtx, image.Pt(w, h), sysBg) // MessageBackground's: the hover, the jump highlight
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}
@@ -3254,10 +3677,11 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	top := dp(gtx, mt.padTop)
 	av := dp(gtx, mt.avatar)
 	sq := image.Rect(padX, top, padX+av, top+av)
-	rrect(gtx.Ops, sq, dp(gtx, 8), c.BadgeBg)
+	sqFill := r.seeFill(c, c.TombBg, c.raw.TombBg)
+	rrect(gtx.Ops, sq, dp(gtx, 8), sqFill)
 	is := dp(gtx, 20)
 	at(gtx, padX+(av-is)/2, top+(av-is)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("trash")(gtx, unit.Dp(20), c.Text2)
+		return icons.Get("trash")(gtx, unit.Dp(20), richview.Over(c.TombGlyph, sqFill))
 	})
 	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
 	// .c-message_kit__tombstone__right { margin: -4px 0 }; its
@@ -3448,7 +3872,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 				if hov && latest != "" {
 					desc = lastReply(tsTime(latest), rc.now, count)
 				} else if !hov && rc.list != nil && !rc.thread {
-					unread = rc.list.unreadThreadsFor(m.TS)
+					unread = app.UnreadThreadsFor(rc.list.ch, m.TS) // getUnreadThreadsCountForMessage (unread_threads.go)
 				}
 			case hov:
 				desc = threadsNS.T("View thread") // the threads I18n
@@ -3500,7 +3924,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 // "さんが :tada: でリアクションしました" after it. The viewer alone reads
 // "You (click to remove)" (showClickToRemove). The runs are marked with
 // tipSubOn/tipSubOff (i18n.go).
-func reactionTip(h Host, re *core.Reaction, selfID string) string {
+func reactionTip(h TipHost, re *core.Reaction, selfID string) string {
 	return reactionTipLine(h, re, selfID, false)
 }
 
@@ -3508,7 +3932,7 @@ func reactionTip(h Host, re *core.Reaction, selfID string) string {
 // ReactionTip's E (the group's count past 50 over several reactions):
 // only the first ten users, and "others" once the reaction's count passes
 // 10.
-func reactionTipLine(h Host, re *core.Reaction, selfID string, cut bool) string {
+func reactionTipLine(h TipHost, re *core.Reaction, selfID string, cut bool) string {
 	emoji := ":" + re.Name + ":"
 	users, over := re.Users, re.Count > 50
 	if cut {
@@ -3538,7 +3962,19 @@ func reactionTipLine(h Host, re *core.Reaction, selfID string, cut bool) string 
 			// member users/info didn't return; never the id
 			switch u, ok := app.User(id); {
 			case ok:
+				// getPrefCompliantMemberNameById (R6Qy I): "Name
+				// hidden" for someone hidden, else under
+				// display_real_names getMemberRealName (hWCs wg:
+				// profile.real_name || real_name), else the display
+				// name; the sender line's rule (core.User.RealName,
+				// trimmed, and none for a lone U+200B, where Slack
+				// prints the invisible name)
 				n = u.Name
+				if app.UserHidden(id) {
+					n = membersNS.T("Name hidden")
+				} else if uipref.Get().DisplayRealNames && u.RealName != "" {
+					n = u.RealName
+				}
 			case app.MissingMember(id) == core.MemberNonExistent:
 				n = tipMissingGone
 			default:

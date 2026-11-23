@@ -414,7 +414,9 @@ func (a *App) ccItem(gtx layout.Context, ch string, it core.ContextBarItem, p cc
 	}
 	switch {
 	case link:
-		a.OpenURL(it.URL)
+		if !a.FollowLink(it.URL, false) { // Slack's Link: in the client, else the browser
+			openURL(it.URL)
+		}
 	case act && !off && a.data != nil && a.data.core != nil:
 		if a.ccPending == nil {
 			a.ccPending = map[string]bool{}

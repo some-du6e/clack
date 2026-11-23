@@ -48,7 +48,9 @@ const maxAhead = 100
 // ones): a send goes in past the window whatever the socket missed (the
 // Web API works while the socket is dead), so it says nothing about what
 // came before it, and a window read forward from it would skip the gap.
-// It reports how many windows it reset.
+// Every thread history's end goes stale in the same reset, as Slack's
+// resetReachedEnd({}) covers every key (thread_slices.go). It reports how
+// many windows and thread histories it reset.
 func (s *Store) ResetReachedEnd(mine map[string]bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,7 +70,7 @@ func (s *Store) ResetReachedEnd(mine map[string]bool) int {
 		}
 		n++
 	}
-	return n
+	return n + s.resetThreadEndsLocked("") // and every thread's (thread_slices.go)
 }
 
 // EndOf reports whether ch's window has a stale end and, if so, the
@@ -105,6 +107,7 @@ func (s *Store) IsAhead(ch, ts string) bool {
 func (s *Store) UpsertHeard(ch string, m slack.Message) (ahead bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedTSLocked(m.TS)
 	t := s.timelines[ch]
 	if t == nil {
 		return false
@@ -168,6 +171,7 @@ func (s *Store) CatchUp(ch, from string, gen uint64, msgs []slack.Message, hasMo
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs) // the page is the server's, whatever the window does with it
 	t := s.timelines[ch]
 	if t == nil || !t.EndStale || t.End != from {
 		return false, false
@@ -254,6 +258,7 @@ func (s *Store) PrependOlderAt(ch, before string, msgs []slack.Message, hasMore 
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs)
 	msgs = s.liveKeepLocked(ch, msgs, since)
 	s.readWindowLocked(ch, msgs, since)
 	t := s.timelines[ch]
@@ -313,6 +318,7 @@ func (s *Store) SetLatestReadAt(ch string, msgs []slack.Message, hasMore bool, s
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs) // the page's own, not the local sends it carries over
 	out := s.liveKeepLocked(ch, msgs, since)
 	s.readWindowLocked(ch, out, since)
 	old := s.timelines[ch]

@@ -326,7 +326,7 @@ func TestTautAnonymizeFilenames(t *testing.T) {
 			t.Errorf("%s: uploaded as %q, want a random name ending .png", what, name)
 		}
 	}
-	up, err := prepareFile(ctx, api, "vacation-at-home.png", []byte("\x89PNG synthetic"), nil)
+	up, err := prepareFile(ctx, api, core.UploadFile{Name: "vacation-at-home.png", Data: []byte("\x89PNG synthetic")}, nil)
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}

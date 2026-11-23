@@ -10,30 +10,22 @@ import (
 
 // FromMrkdwn parses Slack mrkdwn (the escaped `text` field of messages,
 // attachments and Block Kit mrkdwn objects) into blocks: paragraphs, quotes
-// (`>` and `>>>`) and preformatted (```) blocks. Inline formatting follows
-// Slack's rules (see prefixOK): *bold*, _italic_, ~strike~ and `code` need a
-// word boundary outside the markers and stay within one line; `code` spans,
-// <tokens> and resolved :emoji: are atomic and never formatted inside, except
-// that a link's label is itself mrkdwn.
+// (`>` and `>>>`) and preformatted (```) blocks, found as Slack's TSF finds
+// them (mrkdwnFences). Inline formatting follows Slack's rules (see
+// prefixOK): *bold*, _italic_, ~strike~ and `code` need a word boundary
+// outside the markers and stay within one line; `code` spans, <tokens> and
+// resolved :emoji: are atomic and never formatted inside, except that a
+// link's label is itself mrkdwn.
 func FromMrkdwn(r Resolver, text string) []Block {
 	if text == "" {
 		return nil
 	}
-	parts := strings.Split(text, "```")
-	if len(parts)%2 == 0 { // unterminated fence: the last one is literal
-		n := len(parts)
-		parts[n-2] += "```" + parts[n-1]
-		parts = parts[:n-1]
-	}
+	parts := mrkdwnFences(text)
 	var out []Block
 	for i, p := range parts {
 		if i%2 == 1 {
 			p = strings.TrimPrefix(p, "\n")
 			p = strings.TrimSuffix(p, "\n")
-			if strings.TrimSpace(p) == "" {
-				out = appendLines(r, out, "``````")
-				continue
-			}
 			out = append(out, Block{Kind: Preformatted, Spans: preSpans(r, p)})
 			continue
 		}
@@ -46,6 +38,83 @@ func FromMrkdwn(r Resolver, text string) []Block {
 		out = appendLines(r, out, p)
 	}
 	return out
+}
+
+// preBefore and preAfter are the characters TSF's pre_rx (Slack's
+// formatter, gantry-v2-vendors, build 031dbe6a7400) takes before an
+// opening ``` and after a closing one, besides whitespace, the text's
+// ends and the U+2000-U+206F and U+2E00-U+2E7F punctuation blocks.
+const (
+	preBefore = "_*?.,-!^;:{([%$#+=\""
+	preAfter  = "_*?.,-!^;:})]%$#+=\u2026\""
+)
+
+// preEdge reports whether r may stand next to a fence (set is preBefore
+// or preAfter).
+func preEdge(r rune, set string) bool {
+	return jsWhitespace(r) || strings.ContainsRune(set, r) || r >= 0x2000 && r <= 0x206f || r >= 0x2e00 && r <= 0x2e7f
+}
+
+// jsWhitespace is JavaScript's \s, which pre_rx's edges use: ASCII's
+// whitespace, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F,
+// U+205F, U+3000 and U+FEFF (not U+0085, which Go's unicode.IsSpace has).
+func jsWhitespace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ', 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff:
+		return true
+	}
+	return r >= 0x2000 && r <= 0x200a
+}
+
+// tsfBlank is whether s is blank to TSF (Haxe's StringTools.trim: only
+// \t, \n, \v, \f, \r and space), which keeps a block of only those as its
+// backticks.
+func tsfBlank(s string) bool { return strings.Trim(s, " \t\n\v\f\r") == "" }
+
+// mrkdwnFences splits text at its ``` blocks, as TSF's doSpecials finds
+// them with pre_rx: a ``` at the start or after whitespace or a preBefore
+// character opens one, and the first ``` after it that the end,
+// whitespace or a preAfter character follows closes it. A <…> token right
+// before a fence is an edge too: TSF swaps every token for a placeholder
+// ending in "-" (placeholdStr) before pre_rx runs, and the text is
+// escaped, so a raw '>' only ends a token. A block of only whitespace
+// stays as it was, backticks and all; so does a fence with no edge
+// (a```b```c) or no close. The odd parts are the blocks' contents.
+func mrkdwnFences(text string) []string {
+	var parts []string
+	last, pos := 0, 0 // the literal part's start; where the scan goes on
+	for {
+		i := strings.Index(text[pos:], "```")
+		if i < 0 {
+			break
+		}
+		i += pos
+		if r, _ := utf8.DecodeLastRuneInString(text[:i]); i > 0 && r != '>' && !preEdge(r, preBefore) {
+			pos = i + 1
+			continue
+		}
+		j := -1
+		for k := i + 3; j < 0; {
+			n := strings.Index(text[k:], "```")
+			if n < 0 {
+				break
+			}
+			n += k
+			if r, _ := utf8.DecodeRuneInString(text[n+3:]); n+3 == len(text) || preEdge(r, preAfter) {
+				j = n
+			}
+			k = n + 1
+		}
+		if j < 0 {
+			break // no fence after this one closes: none after it would
+		}
+		if body := text[i+3 : j]; !tsfBlank(body) {
+			parts = append(parts, text[last:i], body)
+			last = j + 3
+		}
+		pos = j + 3
+	}
+	return append(parts, text[last:])
 }
 
 // appendLines splits s into paragraph and quote blocks.

@@ -67,6 +67,7 @@ const (
 
 // srRow is one row of the popover list.
 type srRow struct {
+	ck       string // its button's key, made at rebuild (keyRows)
 	kind     srRowKind
 	id       string // conv / user / channel id, route, or query
 	conv     string // srRUser: DM id when one exists
@@ -91,13 +92,72 @@ type srRow struct {
 	segs  []srSeg
 	toks  []srTok
 	tokW  int
-	// plain is the quick message row omni_quick_message_results off draws
+	// plain is the quick message row the quick message results off (a free team) draw
 	// (the text first, then "name • date"); else the card.
 	plain bool
 }
 
 func (r *srRow) selectable() bool {
 	return r.kind != srRHeader && r.kind != srRDivider && r.kind != srRNote
+}
+
+// clickKey is row i's button key: its row's key, a non-selectable row's
+// (a header, a divider, a note: never clicked) its place.
+func (p *SearchPopover) clickKey(i int) string {
+	if k := p.rows[i].ck; k != "" {
+		return k // made at rebuild (keyRows)
+	}
+	if k := p.rows[i].key(); k != "" {
+		return k
+	}
+	return "\x00" + strconv.Itoa(i)
+}
+
+// keyRows gives each row its button key once a rebuild (clickKey's, not
+// per frame), a second row for the same entity (a channel in Unreads and
+// in Recent) its own: two rows never share a button, nor hover together.
+func (p *SearchPopover) keyRows() {
+	seen := make(map[string]int, len(p.rows))
+	for i := range p.rows {
+		r := &p.rows[i]
+		r.ck = ""
+		k := p.clickKey(i)
+		if n := seen[k]; n > 0 {
+			k += "\x01" + strconv.Itoa(n)
+		}
+		seen[p.clickKey(i)]++
+		r.ck = k
+	}
+}
+
+// click is row i's button, made on its first draw.
+func (p *SearchPopover) click(i int) *widget.Clickable {
+	k := p.clickKey(i)
+	b := p.clicks[k]
+	if b == nil {
+		if p.clicks == nil {
+			p.clicks = map[string]*widget.Clickable{}
+		}
+		b = new(widget.Clickable)
+		p.clicks[k] = b
+	}
+	return b
+}
+
+// pruneClicks lets the buttons of rows no longer listed go.
+func (p *SearchPopover) pruneClicks() {
+	if len(p.clicks) <= len(p.rows) {
+		return
+	}
+	keep := make(map[string]bool, len(p.rows))
+	for i := range p.rows {
+		keep[p.clickKey(i)] = true
+	}
+	for k := range p.clicks {
+		if !keep[k] {
+			delete(p.clicks, k)
+		}
+	}
 }
 
 func (r *srRow) key() string {
@@ -142,16 +202,22 @@ type SearchPopover struct {
 	learnMore                        widget.Clickable // "Results feel off? Learn more" (search_rows.go)
 	historyRect                      image.Rectangle
 
-	rows    []srRow
-	clicks  []widget.Clickable
+	rows []srRow
+	// clicks are the rows' buttons, kept by row (srRow.key) as Slack keys
+	// its rows: a row held while the rows change under it (a result
+	// arriving above it, a new query's rows) keeps its press and its row
+	clicks  map[string]*widget.Clickable
 	sel     int  // the row Enter opens: the picked row, else the first one
 	picked  bool // a row is selected (Slack's selectedIndex isn't null)
-	hover   int
 	ensure  bool
 	query   string
 	lastKey string
 	listHov gesture.Hover // the list (onMouseLeave resets the selection)
 	inList  bool
+	// listMove's address is the tag that hears the pointer move over the
+	// list (the rows' onMouseMove); not zero-size, so no other tag shares
+	// it
+	listMove byte
 
 	// local data (snapshot taken once when core is ready, again when a
 	// member it couldn't name is in: unnamed)
@@ -226,7 +292,7 @@ func NewQuickSwitcher(h Host) *SearchPopover {
 // NewSearchPopover opens the popover over the top-nav search pill (pill is
 // the pill's rect in window coords; empty = centered at the top).
 func NewSearchPopover(h Host, query string, pill image.Rectangle) *SearchPopover {
-	p := &SearchPopover{h: h, pill: pill, sel: -1, hover: -1, sess: core.NewSearchSession()}
+	p := &SearchPopover{h: h, pill: pill, sel: -1, sess: core.NewSearchSession()}
 	p.ed.SingleLine = true
 	p.ed.Submit = true
 	p.list.Axis = layout.Vertical
@@ -477,9 +543,8 @@ func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
 	}
 	p.full = rows
 	p.rows = p.visibleRows(rows)
-	for len(p.clicks) < len(p.rows) {
-		p.clicks = append(p.clicks, widget.Clickable{})
-	}
+	p.keyRows()
+	p.pruneClicks()
 	// a picked row stays picked while it's still listed; otherwise the
 	// first row is the pseudo-selected one, whatever arrived above it
 	sel := -1
@@ -832,15 +897,16 @@ func (p *SearchPopover) srExactFactsFor(q string) func(srCand) srExactFacts {
 	}
 }
 
-// srQuickOn is omni_quick_message_results "on".
+// srQuickOn is Y/3h E, which replaced omni_quick_message_results
+// (core.QuickMessageResultsOn: a paid or enterprise team).
 func (p *SearchPopover) srQuickOn() bool {
 	c := p.h.Core()
-	return c != nil && c.Experiment("omni_quick_message_results") == "on"
+	return c != nil && c.QuickMessageResultsOn()
 }
 
 func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRow {
 	// reorderSuggestionsForActiveQuery: with quick messages the places are
-	// cut to 5 (omni_quick_message_results on) or 8, else to 15
+	// cut to 5 (quick message results on) or 8, else to 15
 	total := 15
 	if len(p.msgs) > 0 {
 		total = 8
@@ -931,7 +997,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 			m := &p.msgs[i]
 			name, av := srAuthor(p.h, m)
 			r := srRow{kind: srRMsg, id: m.Channel + "/" + m.TS, msg: m, name: name, avatar: av,
-				when: srShortDay(tsTime(m.TS), now), segs: srHighlight(srFlatten(srBody(m)), terms), plain: !on}
+				when: srShortDay(tsTime(m.TS), now), segs: srRunSegs(srBodyRuns(p.h, m), terms, true), plain: !on}
 			if on {
 				r.where = p.srQuickWhere(m)
 			}
@@ -942,7 +1008,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 }
 
 // srQuickWhere is the quick message card's location (SuggestionQuickMessage
-// with omni_quick_message_results on): a DM reads "Direct Message with
+// with quick message results on): a DM reads "Direct Message with
 // {name}" ("Direct Message with you" in your own; an app's DM message only
 // names the app in a thread), else the conversation.
 func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
@@ -976,7 +1042,7 @@ func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
 // srQuickArgs is suggestionsQuickMessages' search.inline call for the
 // typed text, ok=false when Slack shows no quick messages: the text must
 // be words only (one STRING token), or words and one in: filter, and the
-// words at least 3 characters. With omni_quick_message_results on the
+// words at least 3 characters. With quick message results on the
 // search covers your recent conversations (from_me, with_me), an in:
 // filter its conversation; off, only the channel you're in.
 func (p *SearchPopover) srQuickArgs(text string) (core.InlineOpts, bool) {
@@ -1290,6 +1356,11 @@ func (p *SearchPopover) activate(i int) {
 	case srRConv, srRChan:
 		p.open("c/"+r.id, r.id)
 	case srRUser:
+		// searchAutocompleteSuggestionAccept (client-boot-render Gdrn)
+		// for a member: their DM (getDMIdForMember), else openDM
+		// (conversations.open) and then the DM; a DM Slack won't start
+		// (cannot_initiate_dm) shows the member's profile instead. Only
+		// a member-profile suggestion opens the profile otherwise.
 		if r.conv != "" {
 			p.open("c/"+r.conv, r.conv)
 			return
@@ -1303,6 +1374,12 @@ func (p *SearchPopover) activate(i int) {
 		pickedConversation()
 		p.Dismiss()
 		run(h, func(ctx context.Context) (core.Conv, error) { return c.OpenDM(ctx, uid) }, func(cv core.Conv, err error) {
+			if slackCode(err) == "cannot_initiate_dm" {
+				// searchAutocompleteSuggestionAccept: a DM Slack won't
+				// start shows the member's profile
+				pfOpenFull(h, uid)
+				return
+			}
 			if err != nil {
 				h.Toast("Couldn't open that conversation: " + errText(err))
 				return
@@ -1322,7 +1399,7 @@ func (p *SearchPopover) activate(i int) {
 	case srRMsg:
 		RecordRecentConversation(r.msg.Channel)
 		p.Dismiss()
-		p.h.Navigate(msgRoute(*r.msg))
+		openResult(p.h, *r.msg)
 	case srRFile:
 		f := p.fileByID[r.id]
 		p.Dismiss()
@@ -1539,8 +1616,11 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	p.qfAutoShow()
 	tbHit := p.tbClicks(gtx) // first: a toolbar button's click reaches its row too
-	for i := range p.rows {
-		if p.clicks[i].Clicked(gtx) {
+	// one row's click a frame, bounded by the live rows: activate can
+	// rebuild them (a "Show N more" / "Show fewer" row), and the rows after
+	// it are then others, or fewer
+	for i := 0; i < len(p.rows); i++ {
+		if p.click(i).Clicked(gtx) {
 			if tbHit && p.picked && i == p.sel {
 				continue // the button took it
 			}
@@ -1548,21 +1628,34 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 			if p.done {
 				return layout.Dimensions{}
 			}
+			break
 		}
 	}
-	// onMouseMove picks the row under the pointer; leaving the list
-	// (onMouseLeaveList) goes back to nothing selected.
-	hov := -1
-	for i := range p.rows {
-		if p.rows[i].selectable() && p.clicks[i].Hovered() {
-			hov = i
+	// A row's onMouseMove picks it (SuggestionItem, client-boot-shared
+	// XPKo: selectedIndex, setText false, navigationMethod "mouse"), so
+	// only the pointer moving picks a row: one that comes under a still
+	// pointer (results arriving, the list scrolling to a keyboard pick,
+	// the popover opening over it) gets no mousemove and stays unpicked,
+	// and Enter opens what the keys picked, else the top hit. Gio hit
+	// tests the still pointer again each frame (an Enter, no Move), so the
+	// row the pointer is over is the one hovered when a Move came.
+	// Leaving the list (onMouseLeaveList) goes back to nothing selected.
+	moved := false
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &p.listMove, Kinds: pointer.Move})
+		if !ok {
+			break
+		}
+		if pe, ok := ev.(pointer.Event); ok && pe.Kind == pointer.Move {
+			moved = true
 		}
 	}
-	if hov != p.hover {
-		if hov >= 0 {
-			p.pick(hov)
+	if moved {
+		for i := 0; i < len(p.rows); i++ {
+			if p.rows[i].selectable() && p.click(i).Hovered() && !(p.picked && p.sel == i) {
+				p.pick(i)
+			}
 		}
-		p.hover = hov
 	}
 	if in := p.listHov.Update(gtx.Source); in != p.inList {
 		p.inList = in
@@ -1664,6 +1757,7 @@ func (p *SearchPopover) layoutCard(gtx layout.Context, th *theme.Theme, cl *Colo
 			p.applySuggestions(pp)
 			defer clip.Rect{Max: image.Pt(w, listH)}.Push(gtx.Ops).Pop()
 			p.listHov.Add(gtx.Ops)
+			event.Op(gtx.Ops, &p.listMove)
 			return p.list.Layout(gtx, len(p.rows), func(gtx layout.Context, i int) layout.Dimensions {
 				return p.row(gtx, th, cl, i, w)
 			})
@@ -2054,8 +2148,8 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 		return layout.Dimensions{Size: sz}
 	case srRMore: // c-search_autocomplete__see_more (--selected: base-ter, underlined; :hover underlined)
 		sel := i == p.sel && p.picked
-		under := sel || p.clicks[i].Hovered()
-		return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		under := sel || p.click(i).Hovered()
+		return p.click(i).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			if sel {
 				fill(gtx, image.Rectangle{Max: sz}, cl.Selected)
 			}
@@ -2075,7 +2169,7 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 	}
 	sel := i == p.sel && p.picked
 	var state css.State
-	if sel || p.clicks[i].Hovered() {
+	if sel || p.click(i).Hovered() {
 		state = css.StateHover
 	}
 	if sel {
@@ -2104,7 +2198,7 @@ func (p *SearchPopover) suggestion(gtx layout.Context, th *theme.Theme, cl *Colo
 	r := &p.rows[i]
 	picked := i == p.sel && p.picked
 	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
-	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return p.click(i).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		switch {
 		case picked:
@@ -2296,7 +2390,7 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	sel := i == p.sel && p.picked
 	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
 	gtx.Constraints = layout.Exact(sz)
-	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return p.click(i).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		cr := image.Rect(dp(gtx, 16), dp(gtx, 6), sz.X-dp(gtx, 16), sz.Y-dp(gtx, 6))
 		rad := dp(gtx, 12)
@@ -2354,8 +2448,8 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	})
 }
 
-// msgRowPlain is SuggestionQuickMessage with omni_quick_message_results
-// off: a --multiline suggestion item (padding 4px 16px, the 36px avatar
+// msgRowPlain is SuggestionQuickMessage with the quick message results
+// off (a free team, core.QuickMessageResultsOn): a --multiline suggestion item (padding 4px 16px, the 36px avatar
 // 12px before the text) with the extract on top (15px, one line, …
 // where Slack cut it) and the metadata under it (13px at 70%: the
 // sender, "• " or "⟳ Reply in a thread • ", the date). The picked row is
@@ -2365,7 +2459,7 @@ func (p *SearchPopover) msgRowPlain(gtx layout.Context, th *theme.Theme, cl *Col
 	picked := i == p.sel && p.picked
 	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
 	gtx.Constraints = layout.Exact(sz)
-	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return p.click(i).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		fg, meta := cl.Fg, cl.Fg2
 		switch {
@@ -2580,10 +2674,382 @@ func srAvatarNative(gtx layout.Context, h Host, m *core.Message, url string, siz
 // srBody is a message's plain text (the unsupported-block card adds
 // none: search previews suppress it).
 func srBody(m *core.Message) string {
-	if s := richtext.SearchText(m.Doc); strings.TrimSpace(s) != "" {
+	if s := richtext.SearchText(richtext.Doc{Blocks: srBodyBlocks(m.Doc.Blocks)}); strings.TrimSpace(s) != "" {
 		return s
 	}
 	return m.Text
+}
+
+// srBodyBlocks are a message's body blocks: not its attachments (link
+// unfurls, shared messages) or files. Slack's search rows draw the text
+// (the server's extract of it); the result card draws matched
+// attachments and files apart (search_card_rich.go). They used to be
+// flattened into the text (an X unfurl's author and post under the
+// message).
+func srBodyBlocks(bs []richtext.Block) []richtext.Block {
+	var out []richtext.Block
+	for _, b := range bs {
+		switch {
+		case b.Kind == richtext.FileBlock, b.Kind == richtext.FileStatus:
+		case b.Kind == richtext.AttachmentBlock && b.Att != nil && b.Att.Huddle == nil:
+		default:
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// srRun is a piece of a row's text: plain text (with its newlines) or a
+// mention (mention: srMentionOther, or srMentionSelf for the viewer and
+// @here-style broadcasts), which draws as Slack's mention slug
+// (c-member_slug--mention) as the Mrkdwn the rows render does.
+type srRun struct {
+	text    string
+	mention uint8
+}
+
+const (
+	srMentionNone uint8 = iota
+	srMentionOther
+	srMentionSelf
+)
+
+// srBodyRuns are m's text line (the quick message rows, Search in channel,
+// the original-density card) as text and mention runs: its body
+// (srBodyBlocks) as the plain text path writes it, less the "can't be
+// fully displayed" card (search previews suppress it, richtext.SearchText);
+// when that says nothing (a caption-less upload, an attachment-only bot
+// post), its files and attachments; when they say nothing either, its
+// text read as mrkdwn.
+func srBodyRuns(h Host, m *core.Message) []srRun {
+	w := srNewRunWriter(h, false)
+	w.blocks(srBodyBlocks(m.Doc.Blocks))
+	if !w.says() {
+		w.out = nil
+		w.blocks(srRestBlocks(m.Doc.Blocks))
+	}
+	return w.done(h, m)
+}
+
+// srPreviewRuns are the dialogs' message preview (Forward, Share file,
+// Delete, Unsend, Remove from channel) as runs: the whole message as the
+// plain text path writes it, its files and attachments after its text,
+// as ShareDialogPreview draws the message as its unfurl (8DKN, CDN build
+// a09b625d90aa: the text, filesOnMessage, the attachments as children);
+// its text read as mrkdwn when nothing in it says anything.
+func srPreviewRuns(h Host, m *core.Message) []srRun {
+	w := srNewRunWriter(h, true)
+	w.blocks(m.Doc.Blocks)
+	return w.done(h, m)
+}
+
+// srRestBlocks are the blocks srBodyBlocks leaves out: files, their
+// upload status and attachments, in the message's order.
+func srRestBlocks(bs []richtext.Block) []richtext.Block {
+	var out []richtext.Block
+	for _, b := range bs {
+		switch {
+		case b.Kind == richtext.FileBlock, b.Kind == richtext.FileStatus:
+		case b.Kind == richtext.AttachmentBlock && b.Att != nil && b.Att.Huddle == nil:
+		default:
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// srRunWriter writes blocks as runs the way richtext.PlainText writes
+// them as text: a line per block, empty ones skipped, a quote's lines
+// after "> ", list items after "• " or "1. ", table cells joined by tabs,
+// a file's title or name, an attachment's pretext, title, text, fields
+// and children; mentions are mention runs.
+type srRunWriter struct {
+	self  string
+	cards bool // write the unsupported-block card's text (SearchText drops it)
+	out   []srRun
+}
+
+func srNewRunWriter(h Host, cards bool) *srRunWriter {
+	w := &srRunWriter{cards: cards}
+	if c := h.Core(); c != nil {
+		w.self = c.Self().ID
+	}
+	return w
+}
+
+// srAddText appends s to runs as text.
+func srAddText(runs []srRun, s string) []srRun {
+	if s == "" {
+		return runs
+	}
+	if n := len(runs); n > 0 && runs[n-1].mention == srMentionNone {
+		runs[n-1].text += s
+		return runs
+	}
+	return append(runs, srRun{text: s})
+}
+
+// spans are ss as runs, as spansText writes them: a line break "\n",
+// inline images nothing, mentions their slugs.
+func (w *srRunWriter) spans(ss []richtext.Span) []srRun {
+	var out []srRun
+	for _, sp := range ss {
+		switch sp.Kind {
+		case richtext.Break:
+			out = srAddText(out, "\n")
+		case richtext.InlineImage:
+		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
+			k := srMentionOther
+			if sp.Kind == richtext.Broadcast || (sp.Kind == richtext.User && sp.ID == w.self && w.self != "") {
+				k = srMentionSelf
+			}
+			out = append(out, srRun{text: sp.Text, mention: k})
+		default:
+			out = srAddText(out, sp.Text)
+		}
+	}
+	return out
+}
+
+func (w *srRunWriter) add(rs []srRun) {
+	for _, r := range rs {
+		if r.mention != srMentionNone {
+			w.out = append(w.out, r)
+		} else {
+			w.out = srAddText(w.out, r.text)
+		}
+	}
+}
+
+// line writes rs and a newline, unless rs is empty (PlainText's line).
+func (w *srRunWriter) line(rs []srRun) {
+	if len(rs) == 0 {
+		return
+	}
+	w.add(rs)
+	w.out = srAddText(w.out, "\n")
+}
+
+// srRunLines splits runs at the newlines in their text.
+func srRunLines(rs []srRun) [][]srRun {
+	lines := [][]srRun{nil}
+	for _, r := range rs {
+		if r.mention != srMentionNone {
+			lines[len(lines)-1] = append(lines[len(lines)-1], r)
+			continue
+		}
+		for j, part := range strings.Split(r.text, "\n") {
+			if j > 0 {
+				lines = append(lines, nil)
+			}
+			lines[len(lines)-1] = srAddText(lines[len(lines)-1], part)
+		}
+	}
+	return lines
+}
+
+func (w *srRunWriter) blocks(bs []richtext.Block) {
+	for i := range bs {
+		w.block(&bs[i])
+	}
+}
+
+func (w *srRunWriter) block(b *richtext.Block) {
+	switch b.Kind {
+	case richtext.UnknownBlock:
+		if w.cards {
+			w.line(w.spans(b.Spans))
+		}
+	case richtext.Quote:
+		for _, ln := range srRunLines(w.spans(b.Spans)) {
+			w.out = srAddText(w.out, "> ")
+			w.add(ln)
+			w.out = srAddText(w.out, "\n")
+		}
+	case richtext.List:
+		for i, it := range b.Items {
+			bullet := "• "
+			if b.Ordered {
+				bullet = strconv.Itoa(richtext.ListNumber(b, i)) + ". "
+			}
+			w.out = srAddText(w.out, strings.Repeat("    ", b.Indent)+bullet)
+			w.add(w.spans(it))
+			w.out = srAddText(w.out, "\n")
+		}
+	case richtext.Table:
+		for _, row := range b.Rows {
+			var cells []srRun
+			for j, cell := range row {
+				if j > 0 {
+					cells = srAddText(cells, "\t")
+				}
+				for _, r := range w.spans(cell) {
+					if r.mention == srMentionNone {
+						cells = srAddText(cells, strings.ReplaceAll(r.text, "\n", " "))
+					} else {
+						cells = append(cells, r)
+					}
+				}
+			}
+			// trailing empty cells add nothing (PlainText trims them)
+			if n := len(cells); n > 0 && cells[n-1].mention == srMentionNone {
+				if cells[n-1].text = strings.TrimRight(cells[n-1].text, "\t"); cells[n-1].text == "" {
+					cells = cells[:n-1]
+				}
+			}
+			w.line(cells)
+		}
+	case richtext.Divider, richtext.Actions:
+	case richtext.ImageBlock:
+		if img := b.Image; img != nil {
+			w.line(srAddText(nil, firstNonEmptyStr(img.Title, img.Alt)))
+		}
+	case richtext.FileBlock:
+		if f := b.File; f != nil {
+			w.line(srAddText(nil, firstNonEmptyStr(f.Title, f.Name)))
+		}
+	case richtext.CallBlock:
+		if c := b.Call; c != nil {
+			w.line(srAddText(nil, c.Title))
+			w.line(srAddText(nil, c.Status))
+		}
+	case richtext.AttachmentBlock:
+		if a := b.Att; a != nil {
+			w.line(w.spans(a.Pretext))
+			if a.IsShare {
+				w.line(srAddText(nil, a.AuthorName))
+			}
+			w.line(w.spans(a.Title))
+			w.blocks(a.Text)
+		}
+		for _, f := range b.Fields {
+			w.line(w.spans(f))
+		}
+		w.blocks(b.Children)
+	default: // Paragraph, Preformatted, Header, Context, Section, Tombstone…
+		w.line(w.spans(b.Spans))
+		w.blocks(b.Children)
+		for _, f := range b.Fields {
+			w.line(w.spans(f))
+		}
+	}
+}
+
+// says reports whether the runs hold a mention or any text but spaces.
+func (w *srRunWriter) says() bool {
+	for _, r := range w.out {
+		if r.mention != srMentionNone || strings.TrimSpace(r.text) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// done is the runs written, or m's text read as mrkdwn when they say
+// nothing (a block that draws nothing here), so a raw <@U…> or <url|label>
+// token never shows; m's text as it is without a resolver.
+func (w *srRunWriter) done(h Host, m *core.Message) []srRun {
+	if !w.says() && strings.TrimSpace(m.Text) != "" {
+		w.out = nil
+		if c := h.Core(); c != nil && c.S != nil {
+			w.blocks(richtext.FromMrkdwn(c.S, m.Text))
+		}
+		if !w.says() {
+			return []srRun{{text: m.Text}}
+		}
+	}
+	if n := len(w.out); n > 0 && w.out[n-1].mention == srMentionNone {
+		if w.out[n-1].text = strings.TrimRight(w.out[n-1].text, "\n"); w.out[n-1].text == "" {
+			w.out = w.out[:n-1]
+		}
+	}
+	return w.out
+}
+
+// srRunSegs are runs as highlighted segments: the text runs' terms
+// highlighted, the mentions whole. flat joins the lines with " … " as
+// srFlatten does (blank lines dropped), else the text keeps its lines,
+// trimmed at both ends.
+func srRunSegs(runs []srRun, terms []string, flat bool) []srSeg {
+	var out []srSeg
+	text := func(s string) {
+		if s != "" {
+			out = append(out, srHighlight(s, terms)...)
+		}
+	}
+	if !flat {
+		for i, r := range runs {
+			s := r.text
+			if i == 0 {
+				s = strings.TrimLeft(s, " \t\r\n")
+			}
+			if i == len(runs)-1 {
+				s = strings.TrimRight(s, " \t\r\n")
+			}
+			if r.mention != srMentionNone {
+				out = append(out, srSeg{Text: s, Mention: r.mention})
+				continue
+			}
+			text(s)
+		}
+		return out
+	}
+	// flat: lines of pieces, empty ones dropped
+	type piece struct {
+		s       string
+		mention uint8
+	}
+	var lines [][]piece
+	cur := []piece{}
+	for _, r := range runs {
+		if r.mention != srMentionNone {
+			cur = append(cur, piece{r.text, r.mention})
+			continue
+		}
+		parts := strings.Split(r.text, "\n")
+		for j, p := range parts {
+			if j > 0 {
+				lines = append(lines, cur)
+				cur = []piece{}
+			}
+			if p != "" {
+				cur = append(cur, piece{p, srMentionNone})
+			}
+		}
+	}
+	lines = append(lines, cur)
+	first := true
+	for _, ln := range lines {
+		// trim the line's ends
+		for len(ln) > 0 && ln[0].mention == srMentionNone && strings.TrimSpace(ln[0].s) == "" {
+			ln = ln[1:]
+		}
+		for len(ln) > 0 && ln[len(ln)-1].mention == srMentionNone && strings.TrimSpace(ln[len(ln)-1].s) == "" {
+			ln = ln[:len(ln)-1]
+		}
+		if len(ln) == 0 {
+			continue
+		}
+		if ln[0].mention == srMentionNone {
+			ln[0].s = strings.TrimLeft(ln[0].s, " \t\r")
+		}
+		if l := len(ln) - 1; ln[l].mention == srMentionNone {
+			ln[l].s = strings.TrimRight(ln[l].s, " \t\r")
+		}
+		if !first {
+			out = append(out, srSeg{Text: " … "})
+		}
+		first = false
+		for _, p := range ln {
+			if p.mention != srMentionNone {
+				out = append(out, srSeg{Text: p.s, Mention: p.mention})
+				continue
+			}
+			text(p.s)
+		}
+	}
+	return out
 }
 
 // srAuthor returns a message's display name and avatar.
@@ -2726,4 +3192,13 @@ func srShowResultsFor() string {
 		t += " "
 	}
 	return t
+}
+
+// srSegsText is segs' text joined.
+func srSegsText(segs []srSeg) string {
+	var b strings.Builder
+	for _, s := range segs {
+		b.WriteString(s.Text)
+	}
+	return b.String()
 }

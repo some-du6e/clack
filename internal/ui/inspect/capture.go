@@ -37,6 +37,10 @@ type capture struct {
 	region bool              // a dragged region: shot as it is, no margin, no outline
 	review bool              // a plain click: reviewed before it's copied (a region always is; a Shift+click never)
 	redact []image.Rectangle // the review's rects, px in the shot
+	// pen: a whole-window grab (P), its review drawing from the start;
+	// strokes, the lines drawn in the review (draw.go), px in the shot
+	pen     bool
+	strokes []Stroke
 
 	// once shot: the element and the pointer in the shot (px), and the
 	// shot's image px per window px
@@ -185,6 +189,20 @@ func (t *Tool) newRegionCapture(gtx layout.Context, rect image.Rectangle, ptr im
 	c := &capture{rep: r, rect: rect, ptr: ptr, scale: scale, region: true}
 	c.tm = capTimes{kind: "region", scale: scale, report: time.Since(t0)}
 	return c
+}
+
+// grabWindow is P in a session: the whole window (frozen, the frozen
+// frame) grabbed as a region is, into a review with the pen on (draw.go).
+func (t *Tool) grabWindow(gtx layout.Context) {
+	r := image.Rectangle{Max: t.win}
+	if r.Empty() {
+		return
+	}
+	t.release0()
+	c := t.newRegionCapture(gtx, r, image.Pt(int(t.ptr.X+.5), int(t.ptr.Y+.5)))
+	c.rep.Capture, c.pen, c.tm.kind = "whole window", true, "window (P)"
+	c.tm.pick, c.tm.pickN, c.tm.win = time.Now(), t.frameN, t.win
+	t.capture, t.state = c, picked
 }
 
 // Limits on the chains a report lists.
@@ -418,7 +436,7 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 		if shot != nil {
 			var err error
 			t1 := time.Now()
-			if img, err = Compose(shot, c.elem, c.scale*c.k, lines, c.redact...); err != nil {
+			if img, err = compose(shot, c.elem, c.scale*c.k, lines, c.redact, c.strokes); err != nil {
 				log.Printf("inspect: composing the report image: %v", err)
 				img = nil
 			} else {

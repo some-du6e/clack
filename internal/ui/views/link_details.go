@@ -84,9 +84,7 @@ func (v *LinkDetails) Layout(gtx C) D {
 		v.Close()
 	}
 	if v.urlBtn.Clicked(gtx) {
-		if o, ok := v.h.(interface{ OpenURL(string) }); ok {
-			o.OpenURL(v.link)
-		}
+		hostHandler{v.h}.follow(v.link, false) // Slack's Link: in the client, else the browser
 	}
 	shares, ok, _ := v.data.get()
 	for _, s := range shares {
@@ -234,6 +232,13 @@ func (v *LinkDetails) card(gtx C, s *core.LinkShare) D {
 		c = new(widget.Clickable)
 		v.cards[key] = c
 	}
+	return v.shareCard(gtx, c, s)
+}
+
+// shareCard is FileShareDetailsMessageEntity (boot-shared 0MIe): s's
+// message in a card, c its click (the link details' conversations, a
+// file's Shared in section: file_shares.go).
+func (v *base) shareCard(gtx C, c *widget.Clickable, s *core.LinkShare) D {
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		w := gtx.Constraints.Max.X
@@ -242,7 +247,7 @@ func (v *LinkDetails) card(gtx C, s *core.LinkShare) D {
 		inner := gtx
 		inner.Constraints = layout.Constraints{Max: image.Pt(max(0, w-2*pad-2*bw), 1<<20)}
 		macro := op.Record(gtx.Ops)
-		d := v.cardBody(inner, s)
+		d := v.shareCardBody(inner, s)
 		call := macro.Stop()
 		h := d.Size.Y + 2*pad + 2*bw
 		r := image.Rect(0, 0, w, h)
@@ -260,7 +265,7 @@ func (v *LinkDetails) card(gtx C, s *core.LinkShare) D {
 	})
 }
 
-func (v *LinkDetails) cardBody(gtx C, s *core.LinkShare) D {
+func (v *base) shareCardBody(gtx C, s *core.LinkShare) D {
 	m := &s.Message
 	where := s.Name
 	if where == "" {
@@ -311,7 +316,7 @@ func (v *LinkDetails) cardBody(gtx C, s *core.LinkShare) D {
 	)
 }
 
-func (v *LinkDetails) avatarOf(id string) string {
+func (v *base) avatarOf(id string) string {
 	if a := v.h.Core(); a != nil {
 		if u, ok := a.User(id); ok {
 			return u.Avatar

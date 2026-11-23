@@ -9,21 +9,19 @@ import (
 	"github.com/some-du6e/clack/internal/fakeslack"
 )
 
-// File collections (custom_file_sections): files.collections.list with
-// the names unescaped and the starred one first by position; a move and
+// File collections: files.collections.list with the names unescaped and
+// the starred one first by position, in every group (Slack dropped
+// custom_file_sections and kept its on path: the 2026-11-21 drift); a
+// server-side "recently_viewed" collection left out (u1Hg s6); a move and
 // its revert; create, rename, sort and delete as Slack's thunks send them;
 // the collapsed state the client keeps across a reload.
 func TestFilesViewCollections(t *testing.T) {
 	a, fs := filesViewFake(t)
 	ctx := context.Background()
 	launch := fs.AddFileCollection("Q&amp;A", ":rocket:", fakeslack.CanvasShared)
-	if err := a.FetchFileCollections(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if cs, ok := a.FileCollections(); ok || len(cs) != 0 {
-		t.Fatalf("custom_file_sections off: %d collections, loaded %v", len(cs), ok)
-	}
-	a.SetExperimentGroup("custom_file_sections", "on")
+	recent := fs.AddFileCollection("Recently viewed", "")
+	fs.SetFileCollectionType(recent, CollectionTypeRecentlyViewed)
+	a.SetExperimentGroup("custom_file_sections", "off") // the dropped gate forced off changes nothing
 	if err := a.FetchFileCollections(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -150,22 +148,18 @@ func TestFilesViewOpenFiles(t *testing.T) {
 	if got := strings.Join(b.RecentlyViewedFileIDs(), " "); got != id(1)+" "+id(2) {
 		t.Errorf("rehydrated %q", got)
 	}
-	// FileOpened: starred files (or with sections, files in one) stay out
+	// FileOpened: files in a collection stay out (c3), whatever the old
+	// starred list says
 	c, fs := filesViewFake(t)
-	c.SetFileStarred(fakeslack.CanvasDM, true)
-	c.FileOpened(fakeslack.CanvasDM)
-	c.FileOpened(fakeslack.CanvasShared)
-	if got := strings.Join(c.RecentlyViewedFileIDs(), " "); got != fakeslack.CanvasShared {
-		t.Errorf("FileOpened %q", got)
-	}
 	fs.AddFileCollection("Launch", "", fakeslack.CanvasChannel)
-	c.SetExperimentGroup("custom_file_sections", "on")
 	if err := c.FetchFileCollections(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	c.SetFileStarred(fakeslack.CanvasDM, true)
 	c.FileOpened(fakeslack.CanvasChannel)
+	c.FileOpened(fakeslack.CanvasShared)
 	if got := strings.Join(c.RecentlyViewedFileIDs(), " "); got != fakeslack.CanvasShared {
-		t.Errorf("a file in a section joined Recently viewed: %q", got)
+		t.Errorf("FileOpened %q (a file in a section joined Recently viewed?)", got)
 	}
 }
 
@@ -203,11 +197,11 @@ func TestFilesViewOrderKeys(t *testing.T) {
 
 // The browser's fileType filter and sort reach search.modules.files.
 func TestFilesViewSearchParams(t *testing.T) {
-	p := filesParams(FilesOpts{Types: []string{"quip", "images"}, Sort: "timestamp", Page: 2}, "U1")
+	p := filesParams(t.Context(), FilesOpts{Types: []string{"quip", "images"}, Sort: "timestamp", Page: 2}, "U1", nil)
 	if q := p.Get("query"); q != "type:quip type:images" || p.Get("sort") != "timestamp" || p.Get("page") != "2" {
 		t.Errorf("params %v", p)
 	}
-	if p := filesParams(FilesOpts{Query: "plan"}, "U1"); p.Get("sort") != "score" || !strings.HasPrefix(p.Get("query"), fileTypesAll) {
+	if p := filesParams(t.Context(), FilesOpts{Query: "plan"}, "U1", nil); p.Get("sort") != "score" || p.Get("query") != "plan "+fileTypesAll {
 		t.Errorf("search params %v", p)
 	}
 }

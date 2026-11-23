@@ -98,51 +98,84 @@ func noteIsDM(ev core.Event, c *convInfo) bool {
 	return ev.ConvKind == "im" || c != nil && (c.Kind == "im" || c.Kind == "app")
 }
 
-// noteQuietSubtypes are the subtypes both rules hold back: a channel
-// canvas's update (30, isChannelCanvasUpdateMessage), a tab canvas's
-// (31), a tab added (34) and a folder's item added (35), with their
-// _unread_ignore forms (BiCp).
-var noteQuietSubtypes = map[string]bool{
-	"channel_canvas_updated": true, "channel_canvas_updated_unread_ignore": true,
-	"tabbed_canvas_updated": true, "tabbed_canvas_updated_unread_ignore": true,
-	"channel_tab_added": true, "channel_tab_added_unread_ignore": true,
-	"folder_item_added": true, "folder_item_added_unread_ignore": true,
+// noteQuietSubtypes are the subtypes both rules hold back, with their
+// reasons: a channel canvas's update (30, isChannelCanvasUpdateMessage), a
+// tab canvas's (31), a tab added (34) and a folder's item added (35), with
+// their _unread_ignore forms (BiCp).
+var noteQuietSubtypes = map[string]noteSkip{
+	"channel_canvas_updated": noteSkipCanvasUpd, "channel_canvas_updated_unread_ignore": noteSkipCanvasUpd,
+	"tabbed_canvas_updated": noteSkipTabCanvas, "tabbed_canvas_updated_unread_ignore": noteSkipTabCanvas,
+	"channel_tab_added": noteSkipTabAdded, "channel_tab_added_unread_ignore": noteSkipTabAdded,
+	"folder_item_added": noteSkipFolder, "folder_item_added_unread_ignore": noteSkipFolder,
 }
 
-// noteDMHolds is RM for a DM's message: whether Slack holds its
-// notification back. ignoreDND: a dnd_override asked for it.
-func (b *backend) noteDMHolds(a *App, ev core.Event, c *convInfo, ignoreDND bool) bool {
+// noteDMReason is RM for a DM's message: why Slack holds its notification
+// back (noteShow: it doesn't), in RM's order. ignoreDND: a dnd_override
+// asked for it.
+func (b *backend) noteDMReason(a *App, ev core.Event, c *convInfo, ignoreDND bool) noteSkip {
 	m := ev.Msg
 	switch {
-	case m.NoDisplay, ev.Reply, b.noteOnScreen(a, ev.Channel), m.User != "" && m.User == b.selfID,
-		c != nil && c.Muted, m.NoNotifications, b.noteDNDHolds(ev, c, ignoreDND):
-		return true
+	case m.NoDisplay:
+		return noteSkipNoDisplay
+	case ev.Reply:
+		return noteSkipReply
+	case b.noteOnScreen(a, ev, ignoreDND || ev.StreamDone): // a dnd_override's re-check and a settled stream read the store's copy
+		return noteSkipOnScreen
+	case m.User != "" && m.User == b.selfID:
+		return noteSkipOwn
+	case c != nil && c.Muted:
+		return noteSkipMuted
+	case m.NoNotifications:
+		return noteSkipNoNotify
+	case b.noteDNDHolds(ev, c, ignoreDND):
+		return noteSkipDND
+	}
+	if why, ok := noteQuietSubtypes[m.Subtype]; ok {
+		return why
 	}
 	// isAiAssistantRootMsg, isAiAssistantInitialMsg (32): a DM's only
-	return noteQuietSubtypes[m.Subtype] || m.Subtype == "assistant_app_thread" || m.Subtype == "assistant_app_initial_thread"
+	if m.Subtype == "assistant_app_thread" || m.Subtype == "assistant_app_initial_thread" {
+		return noteSkipAssistant
+	}
+	return noteShow
 }
 
-// noteChannelHolds is rr for any other conversation's message: its
-// level (a channel's wantsNotify, a group DM's noteGroupDMLevel), a reply
-// only when it mentions the viewer (notify_threads.go), and the holds RM
-// shares with it.
-func (b *backend) noteChannelHolds(a *App, ev core.Event, c *convInfo, ignoreDND bool) bool {
+// noteChannelReason is rr for any other conversation's message: its level
+// (a channel's wantsNotify, a group DM's noteGroupDMLevel), a reply only
+// when it mentions the viewer (notify_threads.go), and the holds RM shares
+// with it, in rr's order.
+func (b *backend) noteChannelReason(a *App, ev core.Event, c *convInfo, ignoreDND bool) noteSkip {
 	m := ev.Msg
+	if m.NoDisplay {
+		return noteSkipNoDisplay
+	}
+	if !replyNotifies(b.core, ev) {
+		return noteSkipReply
+	}
 	wants := ev.Mention
 	if ev.ConvKind == "mpim" || c != nil && c.Kind == "mpim" {
 		wants = wants || b.noteGroupDMLevel(ev.Channel) == "everything"
 	} else {
 		wants = b.wantsNotify(ev.Channel, ev.Mention)
 	}
-	if !wants || !replyNotifies(b.core, ev) {
-		return true
-	}
 	switch {
-	case m.NoDisplay, b.noteOnScreen(a, ev.Channel), m.User != "" && m.User == b.selfID, m.NoNotifications,
-		c != nil && c.Muted, b.noteDNDHolds(ev, c, ignoreDND):
-		return true
+	case !wants:
+		return noteSkipNoMention
+	case b.noteOnScreen(a, ev, ignoreDND || ev.StreamDone): // a dnd_override's re-check and a settled stream read the store's copy
+		return noteSkipOnScreen
+	case m.User != "" && m.User == b.selfID:
+		return noteSkipOwn
+	case m.NoNotifications:
+		return noteSkipNoNotify
+	case c != nil && c.Muted:
+		return noteSkipMuted
+	case b.noteDNDHolds(ev, c, ignoreDND):
+		return noteSkipDND
 	}
-	return noteQuietSubtypes[m.Subtype]
+	if why, ok := noteQuietSubtypes[m.Subtype]; ok {
+		return why
+	}
+	return noteShow
 }
 
 // noteGroupDMLevel is getCalculatedDesktopNotifySetting for group DM ch,
@@ -164,10 +197,38 @@ func (b *backend) noteGroupDMLevel(ch string) string {
 	return level
 }
 
-// noteOnScreen is shouldSuppressNotificationInActiveChannel: the
-// conversation is the one open, in the focused window.
-func (b *backend) noteOnScreen(a *App, ch string) bool {
-	return a.router.Current().Channel() == ch && a.focused
+// noteOnScreen is shouldSuppressNotificationInActiveChannel (client-boot
+// Fpyc, build 548618a2169f2a90): the message's conversation is the main
+// view of the focused window (ey.pA, the Primary container) showing its
+// messages (WatJ: no tab past Messages selected), unless its text holds an
+// at-command (containsAtCommand: @channel, @everyone, …; not @here).
+// Slack's last check, a thread reply the conversation's view doesn't show
+// (_hidden_reply), reads a field only the store's copies carry (D8Sp
+// makeMsgObject): messageReceived hands maybeShowNotification the
+// socket's own message, so a thread reply of the conversation on screen
+// is on screen like any other (16). Only handleDndOverride's re-check and
+// messageChanged's settled stream (defer_notification_3p_streaming) hand
+// it the store's copy (getMessage), so storeCopy (noteDNDOverride's
+// re-check, a StreamDone update) lets such a reply through.
+func (b *backend) noteOnScreen(a *App, ev core.Event, storeCopy bool) bool {
+	m := ev.Msg
+	if m != nil && containsAtCommand(m.Text) {
+		return false
+	}
+	if !a.focused || a.router.Current().Channel() != ev.Channel {
+		return false
+	}
+	if _, other := a.selectedTab(ev.Channel); other {
+		return false // its canvas, files or another tab, not its messages
+	}
+	return !(storeCopy && m != nil && noteHiddenReply(m))
+}
+
+// noteHiddenReply is the message formatter's _hidden_reply (client-boot,
+// "!!thread_ts && thread_ts !== ts && subtype !== thread_broadcast"): a
+// thread reply that isn't also sent to the conversation.
+func noteHiddenReply(m *core.Message) bool {
+	return m.ThreadTS != "" && m.ThreadTS != m.TS && m.Subtype != "thread_broadcast"
 }
 
 // noteDNDHolds is Do Not Disturb (13): paused notifications
@@ -346,28 +407,25 @@ func noteMissingText(subtype string) string {
 }
 
 // notifyText is getContentForNotification's text for m (Eley):
-// extractTextFromMessage over the message as sent
-// (richtext.NotificationText: its blocks, each trimmed, else its text as
-// written, else its first file's title, else its attachments), with
-// noteMissingText for a message that has nothing to read and no files or
-// attachments, and the first ":simple_smile:" a ":)".
+// extractTextFromMessage over the message as sent: its converted text
+// (richtext.NotificationMessageText: its blocks, each trimmed, else its
+// text as written); the files' line (noteFilesText, notify_file.go: a
+// clip's line, else, with no text or under a file subtype, the first
+// file's title or meta line); else the text; else its attachments
+// (richtext.NotificationAttachmentText); with noteMissingText for a
+// message that has nothing to read and no files or attachments. The
+// first ":simple_smile:" becomes ":)".
 func notifyText(r richtext.Resolver, m *core.Message, st richtext.SpanText) string {
 	sm := slack.Message{TS: m.TS, Channel: m.Channel, User: m.User, BotID: m.BotID, Subtype: m.Subtype, Text: m.Text, Blocks: m.Blocks}
 	_ = json.Unmarshal(m.Attachments, &sm.Attachments)
-	s := richtext.NotificationText(r, &sm, m.Doc, st)
-	if s == "" && len(sm.Attachments) == 0 && !noteHasFiles(m.Doc) {
-		s = noteMissingText(m.Subtype)
-	}
-	return strings.Replace(s, ":simple_smile:", ":)", 1)
-}
-
-// noteHasFiles reports whether d draws a file (extractTextFromMessage's
-// t.files: a file's title, or nothing, never the missing text).
-func noteHasFiles(d richtext.Doc) bool {
-	for _, blk := range d.Blocks {
-		if blk.Kind == richtext.FileBlock {
-			return true
+	s := richtext.NotificationMessageText(r, &sm, st)
+	if fs, ok := noteFilesText(r, m, s); ok {
+		s = fs
+	} else if s == "" {
+		s = richtext.NotificationAttachmentText(r, &sm, st)
+		if s == "" && len(sm.Attachments) == 0 {
+			s = noteMissingText(m.Subtype)
 		}
 	}
-	return false
+	return strings.Replace(s, ":simple_smile:", ":)", 1)
 }

@@ -81,8 +81,10 @@ type Span struct {
 
 	// ChannelTab (tabslug.go): the channel's icon before its name ("" for
 	// "#name") and the channel's name. MessageMention (msgmention.go):
-	// Chan is the linked message's conversation id (ID its ts).
+	// Chan is the linked message's conversation id (ID its ts), ThreadTS
+	// its thread_ts; Slack's MessageMention jumps with the three.
 	ChIcon, Chan string
+	ThreadTS     string
 
 	// Hidden (User): a member the viewer hid, in a rollup or a system
 	// message's text (RollupName, boot-shared quVX): Text is "Name hidden"
@@ -330,6 +332,9 @@ type Attachment struct {
 	AuthorSubname  string // e.g. "@handle" next to the author name in unfurls
 	ShareChannelID string // shared message's channel id
 	VideoURL       string // video block: the playable/embeddable URL
+	// AppUnfurlURL is app_unfurl_url: an app's unfurl, the link
+	// getExternalSourceUrl falls back to after title_link and original_url.
+	AppUnfurlURL string
 
 	// MsgCard is a message permalink unfurl (is_msg_unfurl) drawn as
 	// Slack's MessageAttachmentSlackMessageCard: 36px avatar, author,
@@ -353,8 +358,12 @@ type Attachment struct {
 	// Hidden is attachment.hidden.
 	// Legacy: made from a message's attachments array (not a video or
 	// call block, a huddle card or a file).
-	Legacy      bool
-	ID          string
+	Legacy bool
+	ID     string
+	// Index is the attachment's place in the message's attachments array
+	// (the search answer's order: core.AttachmentKey keys an attachment
+	// without an id by it).
+	Index       int
 	OriginalURL string
 	ServiceURL  string
 	VideoHTML   bool
@@ -442,6 +451,18 @@ type File struct {
 	// player start there or at 0 (xnwb).
 	MediaOffsetMS int
 	MediaWatched  bool
+	// A playable audio file's (IsAudio, Slack's fileIsPlayableAudio):
+	// MediaURL is its aac rendition, which FileAudio plays first
+	// (getMediaURL's aac || url_private; a build that can't decode AAC
+	// plays URL, the upload, as do Download, Open in new tab and the
+	// plugins' url_private). Transcript is its transcription's status ("",
+	// none, processing, complete, failed, fatal), TranscriptRegion
+	// is_transcription_region_supported and VTT its captions' URL
+	// (MediaTranscriptPopoverButton).
+	MediaURL         string
+	Transcript       string
+	TranscriptRegion bool
+	VTT              string
 	// Salesforce is is_salesforce_file: its progress is never sent (9NKl)
 	Salesforce bool
 	// Pending: the viewer's own upload, not finished yet (drawn at .5
@@ -480,6 +501,50 @@ type File struct {
 	Expanded, Expanding bool
 	Content             *CodeMirror
 	ContentTruncated    bool
+
+	// Email is an email file's message (mode "email"; email.go), nil for
+	// any other file.
+	Email *Email
+}
+
+// Email is an email file as Slack's FileEmailV2 and EmailFileDetails
+// draw it (new_email_rendering): who sent it and to whom, the subject (the
+// file's title), the body (HTML is its preview's HTML, PlainText the
+// plain text whose length sizes the inline body), the files it carried,
+// the sender's DMARC check, and the email app that brought it in.
+type Email struct {
+	From, To, Cc []EmailAddress
+	Subject      string
+	HTML         string
+	PlainText    string
+	// Preview is preview_plain_text: the legacy FileEmail's (new_email_
+	// rendering off) collapsed view shows it.
+	Preview     string
+	Attachments []EmailAttachment
+	// Removed is how many of the email's attachments Slack dropped
+	// (original_attachment_count less the attachments and the inline
+	// ones): the legacy FileEmail says so.
+	Removed int
+	// Unverified: email_security.has_valid_dmarc is false (FileEmailV2's
+	// "Heads up" under From). An absent check counts as valid.
+	Unverified bool
+	// Timestamp is the email's own time (the file's timestamp).
+	Timestamp int64
+	// AppID and AppName are the app that posted it (renderEmailMetaText's
+	// "Email from {appName}").
+	AppID, AppName string
+}
+
+// EmailAddress is one of an email's senders or recipients: UserID is the
+// member who it is (slack_user_id), when Slack knows.
+type EmailAddress struct {
+	Name, Address, UserID string
+}
+
+// EmailAttachment is a file an email carried (FileID: its Slack file).
+type EmailAttachment struct {
+	Name, Mime, URL, FileID string
+	Size                    int64
 }
 
 // Doc is a whole message body.

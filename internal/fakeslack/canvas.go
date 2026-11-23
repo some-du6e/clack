@@ -71,7 +71,7 @@ type canvasStore struct {
 	shared  bool // the shared canvas's message is in the history
 }
 
-var canvasStores sync.Map // *Server -> *canvasStore
+var canvasStores = newPerServer() // *Server -> *canvasStore
 
 func (s *Server) canvasStore() *canvasStore {
 	if v, ok := canvasStores.Load(s); ok {
@@ -156,6 +156,23 @@ func (s *Server) EditCanvasAsOther(id, markdown string) {
 	cs.mu.Lock()
 	if c, ok := cs.byID[id]; ok {
 		c.Doc.Blocks, c.HTML = append(c.Doc.Blocks, canvas.ParseMarkdown(markdown, s.names())...), ""
+		c.Updated = time.Now().Unix()
+	}
+	cs.mu.Unlock()
+	s.pushDocumentUpdate(id)
+}
+
+// InsertCanvasAsOther is EditCanvasAsOther for blocks another user
+// inserts before the canvas's top-level block at (its end past the last):
+// the blocks after them keep their sections and move down.
+func (s *Server) InsertCanvasAsOther(id string, at int, markdown string) {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	if c, ok := cs.byID[id]; ok {
+		at = max(0, min(at, len(c.Doc.Blocks)))
+		bs := append([]canvas.Block(nil), c.Doc.Blocks[:at]...)
+		bs = append(bs, canvas.ParseMarkdown(markdown, s.names())...)
+		c.Doc.Blocks, c.HTML = append(bs, c.Doc.Blocks[at:]...), ""
 		c.Updated = time.Now().Unix()
 	}
 	cs.mu.Unlock()
@@ -783,6 +800,9 @@ func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 	}
 	if id == FilesVideoID { // the gallery's video: mediatest's fixture, with ranges (http.ServeContent)
 		mediatest.Handler(mediatest.GreyGreyRed, false).ServeHTTP(w, r)
+		return
+	}
+	if serveAudio(w, r, id, tail) { // the gallery's audio files (files.go)
 		return
 	}
 	if id == CanvasFile {

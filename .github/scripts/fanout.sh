@@ -12,7 +12,10 @@
 #
 # Fails if a process fails or runs no test, if a SET names a subtest that
 # didn't run, or if a subtest ran twice: together the processes run every
-# subtest once. Each process's output is printed in turn.
+# subtest once. Each process's output streams to the log as it comes, its
+# lines marked [i], so a job its budget stops keeps what was printed (a
+# Go timeout's panic and goroutine dump too); a failed process's output is
+# printed again at the end, whole.
 #
 #   cd internal/ui && fanout.sh "$RUNNER_TEMP/ui.test" TestIdleFrames motion 'views|unreads' 'pointer|code'
 set -u
@@ -44,8 +47,13 @@ i=0
 while [ "$i" -lt "$n" ]; do
 	args=(-test.v -test.count=1 -test.paniconexit0 "-test.run=${runs[$i]}")
 	[ -z "${skips[$i]}" ] || args+=("-test.skip=${skips[$i]}")
-	# shellcheck disable=SC2086 # FANOUT_FLAGS splits on purpose
-	"$bin" "${args[@]}" ${FANOUT_FLAGS:-} >"$out/$i.log" 2>&1 &
+	# the output to its file and, marked, to the log as it comes (awk's
+	# fflush: line by line on GNU, BSD and Git Bash); the exit code aside
+	{
+		# shellcheck disable=SC2086 # FANOUT_FLAGS splits on purpose
+		"$bin" "${args[@]}" ${FANOUT_FLAGS:-} 2>&1
+		echo "$?" >"$out/$i.rc"
+	} | tee "$out/$i.log" | awk -v p="[$i] " '{ print p $0; fflush() }' &
 	pids+=($!)
 	echo "process $i: ${args[*]} ${FANOUT_FLAGS:-}"
 	i=$((i + 1))
@@ -53,7 +61,8 @@ done
 rc=0
 i=0
 while [ "$i" -lt "$n" ]; do
-	if wait "${pids[$i]}"; then st=0; else st=$?; fi
+	wait "${pids[$i]}" # the stream's end: the process has exited
+	st=$(cat "$out/$i.rc" 2>/dev/null || echo 1)
 	log=$out/$i.log
 	what="-test.run=${runs[$i]}${skips[$i]:+ -test.skip=${skips[$i]}}"
 	if [ "$st" -eq 0 ] && grep -q '^testing: warning: no tests to run' "$log"; then
@@ -61,9 +70,7 @@ while [ "$i" -lt "$n" ]; do
 		st=1
 	fi
 	if [ "$st" -eq 0 ]; then
-		echo "::group::process $i passed: $what"
-		cat "$log"
-		echo "::endgroup::"
+		echo "process $i passed: $what"
 	else
 		echo "== process $i failed (exit $st): $what"
 		cat "$log"

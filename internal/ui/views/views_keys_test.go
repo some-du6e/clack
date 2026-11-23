@@ -920,14 +920,30 @@ func TestThreadsMountLoadLikeSlack(t *testing.T) {
 	}
 }
 
-// thrAnimating runs a frame and reports whether it asked for another
-// within an animation's time (InfiniteSpinner asks 16 ms on), not the
-// minutes a timestamp's next text is away.
+// thrAnimating runs frames and reports whether they keep asking for the
+// next one within an animation's time (InfiniteSpinner asks 16 ms on,
+// every frame), not the minutes a timestamp's next text is away, nor a
+// timer's one frame: 5 frames 50 ms apart, 4 of them asking within 40 ms.
+// A frame asked for once lands in one of them at most: markVisible's
+// check 350 ms after a load that sorts the list (visibleDue) came within
+// the 250 ms the single frame this was allowed once a slow runner took
+// 100 ms from that load to the frame (TestThreadsSettleBeforeNextLoad,
+// thread-header-hover-4's full-test 45033113108: mounting false, "the
+// floating loader still drawn").
 func thrAnimating(e *vaEnv) bool {
-	e.r.WakeupTime() // the frames before
-	e.frame()
-	at, ok := e.r.WakeupTime()
-	return ok && !at.IsZero() && time.Until(at) < 250*time.Millisecond
+	n := 0
+	for i := 0; i < 5; i++ {
+		if i > 0 {
+			time.Sleep(50 * time.Millisecond)
+		}
+		e.r.WakeupTime() // the frames before
+		f := time.Now()
+		e.frame()
+		if at, ok := e.r.WakeupTime(); ok && !at.IsZero() && at.Sub(f) < 40*time.Millisecond {
+			n++
+		}
+	}
+	return n >= 4
 }
 
 // A reload that fails, on a revisit or the sidebar row clicked again,
@@ -1241,6 +1257,29 @@ func TestTodosKeysAndRealtimeLikeSlack(t *testing.T) {
 		}
 	}
 	e.until(t, "saved.delete once the toast is gone", func() bool { return log.count("saved.delete", nil) == 1 })
+
+	// later_todos_immediate_clear (new in build 8f19be21ed7e, on for the
+	// test account on 2026-11-21): Delete sends saved.delete at once and
+	// toasts "To-do cleared" with no Undo; a second clear while that toast
+	// shows counts onto it
+	app.SetExperimentGroup(core.ExpLaterTodosImmediateClear, "on")
+	e.until(t, "settled before the immediate clears", func() bool { return laterSettled(l) })
+	plain := len(h.toasts())
+	kbPress(e, key.NameHome, 0)
+	kbPress(e, key.NameDeleteForward, 0)
+	e.until(t, "saved.delete at once", func() bool { return log.count("saved.delete", nil) == 2 })
+	e.until(t, "the plain toast", func() bool { ts := h.toasts(); return len(ts) > plain && ts[len(ts)-1] == "To-do cleared" })
+	kbPress(e, key.NameHome, 0)
+	kbPress(e, key.NameDeleteForward, 0)
+	e.until(t, "the second saved.delete", func() bool { return log.count("saved.delete", nil) == 3 })
+	e.until(t, "the counted toast", func() bool { ts := h.toasts(); return ts[len(ts)-1] == "2 to-dos cleared" })
+	h.mu.Lock()
+	undos = append([]string(nil), h.undos...)
+	h.mu.Unlock()
+	if len(undos) != 1 {
+		t.Errorf("an immediate clear offered Undo: %q", undos)
+	}
+	app.ClearExperimentGroup(core.ExpLaterTodosImmediateClear)
 
 	lists := log.count("saved.list", nil)
 	mu.Lock()

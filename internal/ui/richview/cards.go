@@ -5,6 +5,8 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -197,12 +199,15 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		l.leave(ct)
 	}
 	if len(a.Title) > 0 {
+		// .c-message_attachment__title{font-weight:700} in the text's
+		// colour; a title_link makes it all one link, else only its own
+		// <links> are (AttachmentTitle, boot-shared yvlf)
 		fs := l.bodyStyle()
 		fs.face.Weight = font.Bold
-		fs.col = p.Link
 		var tg int16 = -1
 		ct := l.enter(attTitleClass)
 		if a.TitleLink != "" { // AttachmentTitle's link (HbXx): underline links reaches it
+			fs.col = p.Link
 			tg = l.d.addTarget(target{kind: tLink, url: a.TitleLink, underline: true, website: true})
 			l.enter(linkClass)
 		}
@@ -250,43 +255,49 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		row(l.fields(b.Fields, b.FieldShort, cx, cy, cw))
 		l.leave(ct)
 	}
-	if a.Image != nil && !a.Legacy {
-		cy += l.dp(6)
-		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
-		row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
-		l.imageControls(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r) // AttachmentImage (animated.go)
-	} else if a.Image != nil && mediaExpanded() {
-		// AttachmentMedia (BAnD): getAdjustedImageDimensions at max
-		// 360x360, floored; 5px over the image container
-		cy += l.dp(5)
-		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
-		iw, ih := adjustedDims(a.Image.W, a.Image.H, 360, 360)
-		if a.Image.W <= 0 || a.Image.H <= 0 {
+	// media is AttachmentMedia's row. MessageAttachmentGeneric v1 (a bot's
+	// or an app's attachment: client-boot-render 1NOh) draws it after the
+	// footer and before the actions: author, title, text, fields, footer
+	// (YNNH), media (jtXh), actions (Ea). Other attachments keep it under
+	// the fields.
+	media := func() {
+		if a.Image != nil && !a.Legacy {
+			cy += l.dp(6)
+			tg := l.d.addTarget(target{kind: tImage, img: a.Image})
 			row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
-		} else {
-			r := image.Rect(cx, cy, cx+min(cw, l.dp(float32(iw))), cy+l.dp(float32(ih)))
-			if r.Dx() < l.dp(float32(iw)) { // narrower than the image: keep its aspect
-				r.Max.Y = cy + r.Dx()*ih/max(iw, 1)
+			l.imageControls(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r) // AttachmentImage (animated.go)
+		} else if a.Image != nil && mediaExpanded() {
+			// AttachmentMedia (BAnD): getAdjustedImageDimensions at max
+			// 360x360, floored; 5px over the image container
+			cy += l.dp(5)
+			// AttachmentImage's <a href>: externalSourceUrl || url
+			tg := l.d.addTarget(target{kind: tImage, img: a.Image, href: firstNonEmpty(externalSourceURL(a), a.Image.URL)})
+			iw, ih := adjustedDims(a.Image.W, a.Image.H, 360, 360)
+			if a.Image.W <= 0 || a.Image.H <= 0 {
+				row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
+			} else {
+				r := image.Rect(cx, cy, cx+min(cw, l.dp(float32(iw))), cy+l.dp(float32(ih)))
+				if r.Dx() < l.dp(float32(iw)) { // narrower than the image: keep its aspect
+					r.Max.Y = cy + r.Dx()*ih/max(iw, 1)
+				}
+				l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: a.Image.URL, radii: [4]int{l.dp(8), l.dp(8), l.dp(8), l.dp(8)}, target: tg, px: max(r.Dx(), r.Dy())})
+				l.imageControls(a.Image, len(l.d.imgs)-1, r)
+				l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+				row(r.Dy())
 			}
-			l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: a.Image.URL, radii: [4]int{l.dp(8), l.dp(8), l.dp(8), l.dp(8)}, target: tg, px: max(r.Dx(), r.Dy())})
-			l.imageControls(a.Image, len(l.d.imgs)-1, r)
-			l.d.hits = append(l.d.hits, hit{r: r, t: tg})
-			row(r.Dy())
 		}
+	}
+	v1 := kindOf(b) == akV1
+	if !v1 {
+		media()
 	}
 	if len(b.Children) > 0 {
 		cy += l.dp(4)
 		row(l.blocks(b.Children, cx, cy, cw, false))
 	}
-	if len(b.Buttons) > 0 {
-		cy += l.dp(8)
-		row(l.buttons(b.Buttons, cx, cy, cw))
-	}
-	v1 := kindOf(b) == akV1
 	if len(a.Footer) > 0 || a.TS > 0 || (a.IsShare && a.ShareChannel != "") || v1 && a.IsAppUnfurl && a.BotID != "" {
 		cy += l.dp(4)
 		ct := l.enter(attFooterClass)
-		defer l.leave(ct)
 		fs := l.small(p.Text2)
 		fs.size = l.sp(12)
 		fx := cx
@@ -314,7 +325,19 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 			l.addAttribution(a, &fs, k, fs.col, false)
 		}
 		h, _ := l.flow(fx, cy, x+w-fx, &fs)
+		l.leave(ct)
 		row(max(h, l.dp(18)))
+	}
+	if v1 {
+		media()
+	}
+	if len(b.Buttons) > 0 {
+		// MessageAttachmentGeneric's actions (Ea: c-message_attachment__row
+		// --actions) come after the footer and the media: 6px under the
+		// row before (.c-message_attachment__row+...--actions), each
+		// button's 2px top margin
+		cy += l.dp(8)
+		row(l.buttons(b.Buttons, cx, cy, cw))
 	}
 	if len(a.Text) == 0 && len(a.Title) == 0 && a.AuthorName == "" && a.Image == nil && cy == y {
 		// Fields-only or empty attachments still get a little bar.
@@ -378,7 +401,7 @@ func (l *lay) addSpansPlain(spans []richtext.Span, fs *flowStyle) {
 	for _, sp := range spans {
 		switch sp.Kind {
 		case richtext.Link: // a mrkdwn link (data-stringify-link)
-			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true})
+			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, mrkdwn: true})
 			k := l.faceFor(fs.face, fs.size, sp.Style)
 			l.addTextPart(&sp, fs, k, tg)
 		default:
@@ -639,6 +662,12 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 		return l.snippet(f, x, y, w) // snippet.go
 	case richtext.IsCanvasFile(f):
 		return l.canvasFile(f, x, y, w) // canvasfile.go
+	case isEmailFile(f) && l.st.emailV1: // new_email_rendering off: the legacy FileEmail
+		return l.emailLegacy(f, x, y, w)
+	case isEmailFile(f) && l.opts.EmailDetails:
+		return l.emailDetails(f, x, y, w) // email.go
+	case isEmailFile(f):
+		return l.emailFile(f, x, y, w) // email.go
 	}
 	return l.genericFile(f, x, y, w)
 }
@@ -1069,10 +1098,17 @@ func (l *lay) audio(f *richtext.File, x, y, w int) int {
 	if f.DurationMS > 0 {
 		dur = durationText(f.DurationMS)
 	}
-	if f.Subtype == "slack_audio" {
+	// Options.Media plays it (FileAudio): the pillow here, the player in it
+	slot := l.opts.Media != nil && l.opts.Media.MediaTile(f, 1, false)
+	if audioMessage(f) {
 		bs := l.dp(34)
 		h := pad + bs + pad + l.dp(2)
 		l.cardFrame(x, y, cw, h, tg)
+		if slot {
+			l.audioSlot(f, image.Rect(x, y, x+cw, y+h))
+			l.plainAdd(fileName(f))
+			return h
+		}
 		cy := y + l.dp(1) + pad
 		bx := x + l.dp(1) + pad
 		l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(bx, cy, bx+bs, cy+bs), fill: rgb(18, 100, 163), target: -1})
@@ -1098,6 +1134,11 @@ func (l *lay) audio(f *richtext.File, x, y, w int) int {
 	// FileActions (file_actions.go); a voice clip has none (MessageFile's
 	// showActions is off for an audio message)
 	l.pillowBar(f, image.Rect(x, y, x+cw, y+h))
+	if slot {
+		l.audioSlot(f, image.Rect(x, y, x+cw, y+h))
+		l.plainAdd(fileName(f))
+		return h
+	}
 	bx, by := x+l.dp(1)+pad, y+l.dp(1)+pad
 	l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(bx, by, bx+bs, by+bs), fill: rgb(0xe6, 0xef, 0xf6), target: -1})
 	l.playGlyph(image.Pt(bx+bs/2, by+bs/2), rgb(18, 100, 163))
@@ -1145,6 +1186,24 @@ func (l *lay) audio(f *richtext.File, x, y, w int) int {
 	return h
 }
 
+// audioMessage is lqEY's isAudioMessage: an audio story, a voice clip or
+// a name pronunciation, whose player is the flat row (MessageFilePreview's
+// "default" style).
+func audioMessage(f *richtext.File) bool {
+	switch f.Subtype {
+	case "audio_story", "slack_audio", "slack_name_pronunciation":
+		return true
+	}
+	return false
+}
+
+// audioSlot hands pillow r to Options.Media, which draws the player in
+// it and takes its input.
+func (l *lay) audioSlot(f *richtext.File, r image.Rectangle) {
+	l.d.media = append(l.d.media, mediaSlot{r: r, s: MediaSlot{File: f, At: r.Min, Poster: image.Rectangle{Max: r.Size()}, Files: 1,
+		Radius: l.dp(12), Border: l.st.Palette.Border, BorderW: l.dp(1)}})
+}
+
 // playGlyph draws play-filled centered at c.
 func (l *lay) playGlyph(c image.Point, col color.NRGBA) {
 	l.d.boxes = append(l.d.boxes, box{kind: bPlay, r: image.Rect(c.X-l.dp(4), c.Y-l.dp(6), c.X+l.dp(6), c.Y+l.dp(6)), fill: col, target: -1, layer: 1})
@@ -1180,8 +1239,12 @@ func (l *lay) waveform(samples []int, x, y, w, h int) {
 
 func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	p := &l.st.Palette
-	bg, fg := p.FileIconBg, p.FileIconText
+	bg, fg, see := p.FileIconBg, p.FileIconText, p.raw.FileIconBg
 	label := strings.ToUpper(f.Type)
+	if tile, glyph, ok := svgFileIcon(f.Type); ok {
+		l.svgIconTile(x, y, s, tile, glyph)
+		return
+	}
 	switch strings.ToLower(f.Type) {
 	case "quip", "canvas": // Slack's canvas tile: a white sheet on blue
 		r := image.Rect(x, y, x+s, y+s)
@@ -1191,9 +1254,9 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: sr, radius: l.dp(2), fill: rgb(255, 255, 255), target: -1})
 		return
 	case "pdf":
-		bg, fg = p.FileIconPDF, rgb(255, 255, 255)
+		bg, fg, see = p.FileIconPDF, rgb(255, 255, 255), color.NRGBA{}
 	case "zip", "gzip", "tar", "rar", "7z":
-		bg, fg = p.FileIconZip, rgb(255, 255, 255)
+		bg, fg, see = p.FileIconZip, rgb(255, 255, 255), color.NRGBA{}
 	}
 	if len(label) > 4 {
 		label = label[:4]
@@ -1202,11 +1265,33 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 		label = "FILE"
 	}
 	r := image.Rect(x, y, x+s, y+s)
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, target: -1})
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, see: see, target: -1})
 	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(10), lineH: l.dp(12), col: fg, emoji: l.dp(12), maxLines: 1, noSelect: true}
 	k := l.faceFor(fs.face, fs.size, 0)
 	tw := int(l.measure(label, k) + 0.5)
 	l.plainFlow(label, x+(s-tw)/2, y+(s-fs.lineH)/2, s, &fs, -1)
+}
+
+// svgFileIcon is FileEntityThumbnailIcon's svgicon for a file of filetype
+// ft, where Clack has Slack's glyph (getSVGIconType: the filetype when
+// Slack has an icon for it): binary (binary-4f9150d.svg, a #616061 tile)
+// and text (file-snippet-0a4c72a.svg, #1D9BD1).
+func svgFileIcon(ft string) (tile color.NRGBA, glyph string, ok bool) {
+	switch strings.ToLower(ft) {
+	case "binary":
+		return rgb(0x61, 0x60, 0x61), "file-binary", true
+	case "text":
+		return rgb(0x1d, 0x9b, 0xd1), "file-text", true
+	}
+	return color.NRGBA{}, "", false
+}
+
+// svgIconTile is a file svgicon at (x, y), s px: its tile (radius
+// 800/3600 of the side) and its white glyph.
+func (l *lay) svgIconTile(x, y, s int, tile color.NRGBA, glyph string) {
+	r := image.Rect(x, y, x+s, y+s)
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: (s*2 + 4) / 9, fill: tile, target: -1})
+	l.d.overlayIcons = append(l.d.overlayIcons, overlayIcon{r: r, name: glyph, col: rgb(255, 255, 255)})
 }
 
 // pillowGrid is FileGallery's mixed_file_format grid for several pillows:
@@ -1285,3 +1370,60 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	l.pillowBar(f, image.Rect(x, y, x+cw, y+h)) // FileActions (file_actions.go)
 	return h
 }
+
+// externalSourceURL is getExternalSourceUrl (Dv89 uN), AttachmentMedia's
+// externalSourceUrl: title_link, original_url or app_unfurl_url, else a
+// from_url that isn't on a Slack host (isValidSlackPermalinkHostName,
+// mMpZ: an apex domain of Slack's, /bpz isSlackUrl), with a query that
+// only escapes its ampersands unescaped.
+func externalSourceURL(a *richtext.Attachment) string {
+	t := firstNonEmpty(a.TitleLink, a.OriginalURL, a.AppUnfurlURL)
+	if t == "" && a.FromURL != "" {
+		if u, err := url.Parse(a.FromURL); err == nil && !slackPermalinkHost(u.Hostname()) {
+			t = a.FromURL
+		}
+	}
+	_, q, _ := strings.Cut(t, "?")
+	q, _, _ = strings.Cut(q, "?") // split("?")[1]
+	if strings.Contains(q, "&amp;") && !ampNotEscaped(q) {
+		t = lodashUnescape.Replace(t)
+	}
+	return t
+}
+
+// lodashUnescape is lodash's unescape (L7LR): the five entities escape
+// writes, nothing else.
+var lodashUnescape = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", `"`, "&#39;", "'")
+
+// ampNotEscaped is /&(?!amp;)/: an "&" that doesn't start "&amp;".
+func ampNotEscaped(q string) bool {
+	for i := 0; i < len(q); i++ {
+		if q[i] == '&' && !strings.HasPrefix(q[i:], "&amp;") {
+			return true
+		}
+	}
+	return false
+}
+
+// slackApexDomains are /bpz's S: Slack's commercial, dev, GovSlack and
+// military apex domains.
+var slackApexDomains = [...]string{"slack.com", "slack-dev.com", "slack-gov.com", "slack-gov-dev.com", "slack.mil", "slack-mil-dev.com"}
+
+// slackPermalinkHost is isValidSlackPermalinkHostName (mMpZ): host's apex
+// domain (its last two labels) is Slack's and host is a workspace host
+// (one label before the apex, or the enterprise/staging/dev/qa forms).
+func slackPermalinkHost(host string) bool {
+	host = strings.ToLower(host)
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	apex := strings.Join(labels[len(labels)-2:], ".")
+	ok := false
+	for _, d := range slackApexDomains {
+		ok = ok || d == apex
+	}
+	return ok && slackPermalinkHostRe.MatchString(host)
+}
+
+var slackPermalinkHostRe = regexp.MustCompile(`^[^.]*\.?(((enterprise\.)?(staging|staging-master|staging-sandbox|dev\d*|qa\d*)|enterprise)\.)?[^.]+\.[^.]+$`)

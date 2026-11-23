@@ -138,6 +138,9 @@ func (z *zones) volumeAt(p image.Point) float64 {
 // LayoutMedia is richview.Media's: the tile's player and overlay, in
 // gtx.Constraints (exactly the tile).
 func (r *Row) LayoutMedia(gtx layout.Context, s richview.MediaSlot) layout.Dimensions {
+	if s.File != nil && s.File.IsAudio {
+		return r.layoutAudio(gtx, s) // audio.go
+	}
 	c := r.c
 	sz := gtx.Constraints.Max
 	if s.File == nil || sz.X <= 0 || sz.Y <= 0 {
@@ -198,7 +201,7 @@ func (r *Row) keyAction(gtx layout.Context, t *tile, s richview.MediaSlot, more 
 	if more {
 		win := image.Rectangle{}
 		if full, _, ok := gtx.Source.AreaBounds(t); ok {
-			win = btn.Sub(s.At).Add(full.Min)
+			win = btn.Sub(s.At).Add(full.Min.Sub(c.frameOrigin()))
 		}
 		if mo, ok := r.h.(MenuOpener); ok {
 			c.mu.Lock()
@@ -312,7 +315,7 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 		c.mu.Unlock()
 		if more && r.h != nil { // VideoActionsButton's menu
 			if full, _, ok := gtx.Source.AreaBounds(t); ok {
-				win = btn.Sub(s.At).Add(full.Min)
+				win = btn.Sub(s.At).Add(full.Min.Sub(c.frameOrigin()))
 			}
 			if mo, ok := r.h.(MenuOpener); ok {
 				c.mu.Lock()

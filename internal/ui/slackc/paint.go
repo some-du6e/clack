@@ -125,11 +125,17 @@ func (p *painter) rect(b *box, r rectF) {
 	if p.hasXf {
 		sr = xfRect(p.xf, r)
 	}
-	if b.rectFr != p.v.frameNo || b.scope != p.s {
-		b.rect, b.rectFr = sr, p.v.frameNo
+	switch {
+	case measuring > 0:
+		// a measure pass (measureNative): its layout is discarded
+	case b.rectFr != p.v.frameNo || b.scope != p.s:
+		b.rect, b.rectFr, b.rectPaint = sr, p.v.frameNo, p.s.paintSeq
 		p.s.painted = append(p.s.painted, b)
-	} else {
-		b.rect = b.rect.union(sr)
+	case b.rectPaint != p.s.paintSeq:
+		// painted again this frame (its host drawn again): the later layout
+		b.rect, b.rectPaint = sr, p.s.paintSeq
+	default:
+		b.rect = b.rect.union(sr) // another fragment of this paint
 	}
 	if !p.hasXf {
 		sr = sr.inter(p.clip)
@@ -420,7 +426,7 @@ func (p *painter) content(b *box, x, y float32) {
 	}
 	saveU, saveUSet := p.under, p.uset
 	defer func() { p.under, p.uset = saveU, saveUSet }()
-	if visible && !b.ownBox() { // a native drawing its own box paints these itself
+	if visible && !b.ownBox() { // a native drawing its own box paints these itself (Host.PaintBox)
 		p.shadows(b, r, rad, false)
 		p.background(b, r, rad)
 		p.coverWith(st.Background.Color) // what the box's content is painted over
@@ -1538,4 +1544,13 @@ func (p *painter) native(b *box, x, y float32) {
 	b.natCall.Add(p.ops)
 	o()
 	t.Pop()
+	// a host component's children (Host.Children) flushed their rects
+	// while it laid them out, before it placed them inside it
+	// (Host.PlaceChildren) and before this layout pass put it where it is
+	// now: flush them from here, this frame
+	if b.hostEl != nil {
+		if s := p.v.subs[subKey{b: b, kind: 1}]; s != nil {
+			s.flushRects()
+		}
+	}
 }

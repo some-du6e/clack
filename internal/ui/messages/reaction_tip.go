@@ -12,6 +12,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -30,7 +31,7 @@ const tipPending = "\x00pending"
 // reactionTooltip is Slack's ReactionTip (boot-shared Qvn6) in its
 // Tooltip (F2XN, position "top") for one reaction: txt is reactionTip's
 // (whose count picks the width: tipCountFor), url its emoji.
-func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt, url string, pill, bounds image.Rectangle) {
+func reactionTooltip(gtx layout.Context, h TipHost, th *theme.Theme, c *colors, txt, url string, pill, bounds image.Rectangle) {
 	reactionGroupTooltip(gtx, h, th, c, &groupTip{lines: []string{txt}, urls: []string{url}, wide: tipCountFor(txt) > 9}, pill, bounds)
 }
 
@@ -54,7 +55,7 @@ func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt
 //     ("reacted with :name:", regular weight, inverse.secondary) inline,
 //     wrapped as one paragraph. Where the subtitle sits is the locale's
 //     (getTip's rich strings: ja-JP's follows the name with no space).
-func reactionGroupTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, gt *groupTip, pill, bounds image.Rectangle) {
+func reactionGroupTooltip(gtx layout.Context, h TipHost, th *theme.Theme, c *colors, gt *groupTip, pill, bounds image.Rectangle) {
 	padX, padY := dp(gtx, 12), dp(gtx, 8)
 	maxW := dp(gtx, 200)
 	if gt.wide {
@@ -162,8 +163,12 @@ func (gt *groupTip) text() string { return strings.Join(gt.lines, "\n") }
 // reactions in a group of several tones each line names its first ten
 // (getTip's isOverflow then: that reaction's count past 10).
 func (r *row) groupTip(h Host, k int, selfID string) groupTip {
-	g := &r.groups[k]
-	rs := r.m.Reactions
+	return groupTipOf(h, r.m.Reactions, &r.groups[k], selfID)
+}
+
+// groupTipOf is ReactionTip for group g of rs (row.groupTip; the views'
+// pills, NewReactionGroupTooltip).
+func groupTipOf(h TipHost, rs []core.Reaction, g *reactGroup, selfID string) groupTip {
 	gt := groupTip{wide: g.count > 9 || len(g.idx) > 4}
 	for _, i := range g.idx {
 		re := &rs[i]

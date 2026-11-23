@@ -61,12 +61,12 @@ func TestSavedMetaFromListAndEvents(t *testing.T) {
 		t.Error("an unsaved message has metadata")
 	}
 	f.reply["messages.list"] = `{"ok":true,"messages":{}}`
-	a.handle(rtm("saved_updated", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001",
+	a.handleNow(t, rtm("saved_updated", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001",
 		"todo_state": "completed", "date_created": 100, "date_completed": 6000}}))
 	if m, _ := a.SavedMeta("C1", "1.000001"); !m.Completed() || m.TodoState != "completed" || m.DateDue != 0 {
 		t.Errorf("after saved_updated: %+v", m)
 	}
-	a.handle(rtm("saved_deleted", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001"}}))
+	a.handleNow(t, rtm("saved_deleted", map[string]any{"saved": map[string]any{"item_id": "C1", "item_type": "message", "ts": "1.000001"}}))
 	if _, ok := a.SavedMeta("C1", "1.000001"); ok {
 		t.Error("saved_deleted kept the metadata")
 	}
@@ -179,5 +179,23 @@ func TestSavedMetaFollowsWrites(t *testing.T) {
 	}
 	if _, ok := a.SavedMeta("C1", "1.000001"); ok {
 		t.Error("Unsave kept the metadata")
+	}
+}
+
+// ClearSaved is clearSavedItemImmediately's saved.delete: saved_not_found
+// (cleared elsewhere already) counts as cleared; other errors stay errors.
+func TestClearSavedNotFoundIsCleared(t *testing.T) {
+	a, f := testApp(t)
+	a.markSaved("C1", "1.000001", true)
+	f.reply["saved.delete"] = `{"ok":false,"error":"saved_not_found"}`
+	if err := a.ClearSaved(context.Background(), "C1", "1.000001"); err != nil {
+		t.Fatalf("saved_not_found: %v", err)
+	}
+	if _, saved := a.SavedMeta("C1", "1.000001"); saved {
+		t.Error("saved_not_found left the item saved")
+	}
+	f.reply["saved.delete"] = `{"ok":false,"error":"internal_error"}`
+	if err := a.ClearSaved(context.Background(), "C1", "1.000002"); err == nil {
+		t.Error("internal_error counted as cleared")
 	}
 }

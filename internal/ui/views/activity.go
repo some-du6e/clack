@@ -39,6 +39,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -175,10 +176,18 @@ type actRow struct {
 	check widget.Clickable // the triage row's checkbox (RowCheckbox)
 	bar   widget.Clickable // hover area of the action bar
 	btns  [actBtnCount]widget.Clickable
-	ctx   struct{} // the row's context-menu press target
-	d     actDesc
-	built bool
-	gen   uint64 // i18n.Gen d was described in
+	// btnTips are the buttons' tooltips (MessageActionButton's label);
+	// menu is the More actions menu the bar opened, which holds the bar
+	// up while it is open (ActionsOverflowMenu's setActionsVisible)
+	btnTips [actBtnCount]popups.TipState
+	menu    interface{ Dismissed() bool }
+	// clickLater is a click whose press came in the same frame, decided
+	// in the next (ControlledClick's marks are this frame's layout's)
+	clickLater, clickSplit bool
+	ctx                    struct{} // the row's context-menu press target
+	d                      actDesc
+	built                  bool
+	gen                    uint64 // i18n.Gen d was described in
 
 	// This frame's row context, read by the Slack boundaries
 	// (ActivityItem and its parts) through method expressions.
@@ -437,7 +446,9 @@ type Activity struct {
 	offline  bool
 	// forked is the open IgnoreForkedModal's two choices (tests press
 	// them; the modal's rows call them).
-	forked [2]func()
+	forked     [2]func()
+	flights    scFlights // the invites whose Accept flow runs (sc_invite_actions.go)
+	flightWake wake      // their loading spinners' frames
 
 	// undo is the "cleared" snackbar after Clear, with its Undo link.
 	undo struct {
@@ -2292,7 +2303,25 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// marks the row read and doesn't open it (ControlledClick skips a
 	// BUTTON target)
 	onActions := v.agentActionsClicked(gtx, r)
+	late, split := r.clickLater, v.splitClick()
+	if late {
+		split = r.clickSplit // the click's own frame's
+	}
+	r.clickLater = false
 	clicked := r.click.Clicked(gtx) && !onActions
+	if h := r.click.History(); clicked && len(h) > 0 && h[len(h)-1].Start.Equal(gtx.Now) {
+		// pressed and released in this frame: what took the press (a
+		// pill, a link) marks it as this frame lays the row out, so the
+		// click is decided in the next, with this frame's modifiers
+		r.clickLater, r.clickSplit, clicked = true, split, false
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	clicked = clicked || late
+	if clicked && (pressedOn(&r.click, v.ctlPress) || pressedOn(&r.click, v.pillPress)) {
+		// ControlledClick: a link, mention, button or reaction pill took
+		// the click (content_menu.go)
+		clicked = false
+	}
 	if onActions && v.isUnread(it, key) {
 		v.markRead(it, key)
 	}
@@ -2303,7 +2332,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		// it); the list's focus moves to it
 		v.focusKey = key
 		switch {
-		case v.splitOpen(it, key): // a split modifier click (activity_split.go)
+		case v.splitOpenIf(split, it, key): // a split modifier click (activity_split.go)
 		case v.selOK && v.selKey == key:
 			v.selOK = false
 			v.closeSecondary()
@@ -2328,7 +2357,9 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		case actBtnRestore:
 			v.unclear(it, key)
 		case actBtnMore:
-			v.actMenuOpen(v.pointerAt(), *it, key, unread)
+			// ActionsOverflowMenu: a 300px menu at the button's
+			// bottom-right, 6px below it, holding the bar up while open
+			r.menu = v.actMenuAt(v.btnRect(gtx, &r.btns[b]), *it, key, unread)
 		case actBtnComplete:
 			v.markComplete(it)
 		case actBtnReschedule:
@@ -2343,7 +2374,18 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		v.markComplete(it)
 	}
 	for i, a := range v.inviteActions(it) {
-		if i < len(r.invC) && r.invC[i].Clicked(gtx) {
+		if i >= len(r.invC) {
+			continue
+		}
+		c := &r.invC[i]
+		if a != core.InviteActIgnore && it.Invite != nil && v.flights.busy(it.Invite.ID) {
+			for c.Clicked(gtx) { // Accept loading while its flow runs: not pressable
+			}
+			continue
+		}
+		if c.Clicked(gtx) {
+			for c.Clicked(gtx) { // one flow per frame (sc_invite_actions.go)
+			}
 			v.inviteClicked(it, a)
 		}
 	}
@@ -2419,7 +2461,10 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 			break
 		}
 	}
-	if (sel || focused || r.click.Hovered() || r.bar.Hovered()) && !v.underSticky(gtx, i) {
+	if r.menu != nil && r.menu.Dismissed() {
+		r.menu = nil // onPopoverClose: setActionsVisible(false)
+	}
+	if (sel || focused || r.click.Hovered() || r.bar.Hovered() || r.menu != nil) && !v.underSticky(gtx, i) {
 		// activity_multi_line_row_content__actions_toggle, inside the
 		// content box (the container's 12px padding): top 2px,
 		// translateY(-100%), above the row; --firstEntry (the row after
@@ -3786,10 +3831,10 @@ func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y, right int) {
 						return D{Size: image.Pt(d.Size.X+gtx.Dp(12), d.Size.Y)}
 					case actBtnReschedule:
 						if _, loading, _ := v.reminderSaved(r.it); loading {
-							return v.iconButton(gtx, &r.btns[b], icons.Slack(icon), 32, 18, v.p.Muted) // isDisabled
+							return v.actActionBtn(gtx, r, b, icon, true) // isDisabled
 						}
 					}
-					return v.iconButton(gtx, &r.btns[b], icons.Slack(icon), 32, 18, v.p.Text)
+					return v.actActionBtn(gtx, r, b, icon, false)
 				}))
 			}
 			row(g, layout.Middle, ch...)
@@ -3798,10 +3843,65 @@ func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y, right int) {
 	})
 }
 
+// actActionBtn is one of the bar's MessageActionButtons
+// (.c-message_actions__button: 32px, radius 8, 18px icon): the icon in
+// foreground_max_solid, on hover in primary_foreground over
+// foreground_min at 4%, as a channel's toolbar buttons; disabled
+// foreground_mid at 30% and no hover. Its tooltip is its label, above it.
+// It has no pressed or open look (Slack's has none: :active only lifts
+// its z-index).
+func (v *Activity) actActionBtn(gtx C, r *actRow, b actBtn, icon string, disabled bool) D {
+	c := &r.btns[b]
+	fg, hfg, hbg := rgb(0x616061), rgb(0x1d1c1d), argb(0x0a1d1c1d)
+	if v.th.Dark {
+		fg, hfg, hbg = rgb(0xababad), rgb(0xd1d2d3), argb(0x0ae8e8e8)
+	}
+	if disabled {
+		fg = argb(0x4d1d1c1d)
+		if v.th.Dark {
+			fg = argb(0x4de8e8e8)
+		}
+	}
+	d := c.Layout(gtx, func(gtx C) D {
+		s := gtx.Dp(32)
+		col := fg
+		if !disabled {
+			pointerCursor(gtx)
+			if c.Hovered() {
+				rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), hbg)
+				col = hfg
+			}
+		}
+		g := gtx
+		g.Constraints = layout.Exact(image.Pt(s, s))
+		layout.Center.Layout(g, func(gtx C) D { return v.icon(gtx, icons.Slack(icon), 18, col) })
+		return D{Size: image.Pt(s, s)}
+	})
+	_, label := actBtnIcon(b)
+	popups.Tooltip(gtx, v.th, &r.btnTips[b], c.Hovered() && r.menu == nil, d.Size, popups.Above, label, "")
+	return d
+}
+
+// btnRect is c's 32px button in window coordinates, from its last press
+// (the pointer, less where on the button it was).
+func (v *Activity) btnRect(gtx C, c *widget.Clickable) image.Rectangle {
+	at := v.pointerAt()
+	if h := c.History(); len(h) > 0 {
+		at = at.Sub(h[len(h)-1].Position)
+	}
+	s := gtx.Dp(32)
+	return image.Rectangle{Min: at, Max: at.Add(image.Pt(s, s))}
+}
+
 // pointerAt is where the pointer is, for menus opened from a press.
 func (v *Activity) pointerAt() image.Point {
 	if pp, ok := v.h.(interface{ PointerPos() image.Point }); ok {
 		return pp.PointerPos()
+	}
+	if theme.WindowPointer != nil { // the ui root's, for a host without one
+		if p, ok := theme.WindowPointer(); ok {
+			return p
+		}
 	}
 	return image.Point{}
 }
@@ -4171,49 +4271,70 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
 }
 
-// actPill is one reaction: 24px pill, 16px emoji, 11px bold count; blue
-// tint and border when the viewer reacted.
-func (b *base) actPill(gtx C, r *core.Reaction) D {
+// actPill is one reaction group's native pill (Reaction unpatched): a
+// 24px pill, the group's 16px emoji (ten, then "…"), the 11px bold count;
+// blue tint and border when the viewer reacted, the hover ring when hov.
+func (b *base) actPill(gtx C, m *core.Message, g messages.ReactionGroup, self, hov bool) D {
+	a := &actReact{b: b, m: m, g: g}
 	h := gtx.Dp(24)
-	cnt := strconv.Itoa(r.Count)
-	tw := b.th.Measure(gtx, 11, wBold, cnt)
-	es := gtx.Dp(16)
-	padL, gap, padR := gtx.Dp(6), gtx.Dp(4), gtx.Dp(8)
-	w := padL + es + gap + tw + padR
-	_, fg := b.actPillColors(r)
-	b.actPillBox(gtx, r, image.Pt(w, h))
-	st := op.Offset(image.Pt(padL, (h-es)/2)).Push(gtx.Ops)
-	b.emojiImg(gtx, r.URL, 16)
+	padL, padR := gtx.Dp(6), gtx.Dp(8)
+	rec := op.Record(gtx.Ops)
+	cg := gtx
+	cg.Constraints = layout.Constraints{Max: image.Pt(max(gtx.Constraints.Max.X-padL-padR, 0), h)}
+	cd := a.content(cg, slackc.Styled{})
+	call := rec.Stop()
+	size := image.Pt(padL+cd.Size.X+padR, h)
+	b.actPillBoxStyled(gtx, self, hov, size, slackc.Styled{})
+	st := op.Offset(image.Pt(padL, 0)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
 	st.Pop()
-	st = op.Offset(image.Pt(padL+es+gap, 0)).Push(gtx.Ops)
-	g := gtx
-	g.Constraints = layout.Exact(image.Pt(tw, h))
-	layout.W.Layout(g, func(gtx C) D { return b.label(gtx, 11, wBold, fg, cnt) })
-	st.Pop()
-	return D{Size: image.Pt(w, h)}
+	return D{Size: size}
 }
 
 // actPillColors are a pill's fill and text: blue when the viewer reacted.
-func (b *base) actPillColors(r *core.Reaction) (bg, fg color.NRGBA) {
-	if r.Self {
+func (b *base) actPillColors(self bool) (bg, fg color.NRGBA) {
+	if self {
 		return argb(0x1a1d9bd1), b.p.Link
 	}
 	return b.p.Chip, b.p.Muted
 }
 
-// actPillBox draws a pill's rounded fill (and the reacted border) at size.
-func (b *base) actPillBox(gtx C, r *core.Reaction, size image.Point) {
+// actPillBoxStyled draws a pill's rounded fill (and the reacted border)
+// at size, for the pill styled st: a rule's background replaces the fill
+// and its box-shadow the border (OwlMode rings every pill in its colour),
+// painted once by st's WrapRounded; filled here again, a translucent one
+// showed twice as strong. Hovered (.c-reaction:hover) a pill the viewer
+// didn't react with is the add button's hover: no fill, a 1px ring
+// (box-shadow 0 0 0 1px otl-pry); a reacted one keeps its look
+// (.c-reaction--reacted:hover).
+func (b *base) actPillBoxStyled(gtx C, self, hov bool, size image.Point, st slackc.Styled) {
 	rect := image.Rectangle{Max: size}
-	bg, _ := b.actPillColors(r)
-	rrect(gtx, rect, size.Y/2, bg)
-	if r.Self {
+	bg, _ := b.actPillColors(self)
+	if hov && !self {
+		if !st.Has("box-shadow") {
+			hb := rgb(0x7c7a7f)
+			if b.th.Dark {
+				hb = argb(0x4de8e8e8)
+			}
+			border(gtx, rect, size.Y/2, max(1, gtx.Dp(1)), hb)
+		}
+		return
+	}
+	if !st.Has("background-color") {
+		rrect(gtx, rect, size.Y/2, bg)
+	}
+	if self && !st.Has("box-shadow") {
 		border(gtx, rect, size.Y/2, max(1, gtx.Dp(1)), rgb(0x1d9bd1))
 	}
 }
 
 // actSpinner is Slack's loading ring (a 3/4 arc turning once a second) in
 // a d-pixel box; it keeps frames coming while drawn.
-func actSpinner(gtx C, d int, c color.NRGBA) D {
+func actSpinner(gtx C, d int, c color.NRGBA) D { return actSpinnerVia(gtx, d, c, nil) }
+
+// actSpinnerVia is actSpinner with its next frame asked through wake
+// (no op.InvalidateCmd mid-layout) when set.
+func actSpinnerVia(gtx C, d int, c color.NRGBA, wake func(now, at time.Time)) D {
 	t := float64(gtx.Now.UnixMilli()%1000) / 1000
 	r := float32(d)/2 - float32(gtx.Dp(2))/2
 	ctr := f32.Pt(float32(d)/2, float32(d)/2)
@@ -4226,6 +4347,10 @@ func actSpinner(gtx C, d int, c color.NRGBA) D {
 	paint.ColorOp{Color: c}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 	st.Pop()
+	if wake != nil {
+		wake(gtx.Now, gtx.Now.Add(33*time.Millisecond))
+		return D{Size: image.Pt(d, d)}
+	}
 	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
 	return D{Size: image.Pt(d, d)}
 }

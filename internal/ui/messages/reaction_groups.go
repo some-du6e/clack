@@ -193,43 +193,66 @@ func (s *listState) reactGroup(h Host, r *row, base, self string) {
 	if app == nil {
 		return
 	}
-	key := reactionKey(&r.src)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		_, err := taut.Dispatch(ctx, tautOf(), "changeReactionFromUserAction",
-			rxnUserArgs{Key: key, Name: base, ActionSource: reactionToggleButton, UseDefaultSkinToneForMultiSkinToneEmoji: true},
-			func(ctx context.Context, a rxnUserArgs) (any, error) {
-				if a.Add != nil || a.ActionSource != reactionToggleButton {
-					// a plugin turned it into a plain toggle of one name
-					on := !s.hasOwnReaction(a.Key, a.Name)
-					if a.Add != nil {
-						on = *a.Add
-					}
-					if on && !a.SkipFrecencyRecord {
-						app.RecordEmojiFrecency(a.Name, "")
-					}
-					return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
+	reactGroupWith(h, app, reactionKey(&r.src), base, self, s.reactionsOf,
+		func(ctx context.Context, key, name string, add bool) (any, error) {
+			return s.submitReaction(ctx, h, app, key, name, add, self)
+		})
+}
+
+// reactHost is what a pill's click reports to: its failure's toast.
+type reactHost interface{ Toast(text string) }
+
+// reactGroupWith is a pill's click on the message with reaction key key:
+// changeReactionFromUserAction (QOQU) over the message's reactions now
+// (reactionsOf), each change through submit (submitAddOrRemoveReaction).
+// The click's: queued now, on the user's lane (react's rule).
+func reactGroupWith(h reactHost, app *core.App, key, base, self string, reactionsOf func(key string) []core.Reaction,
+	submit func(ctx context.Context, key, name string, add bool) (any, error)) {
+	ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), 20*time.Second)
+	taut.DispatchThen(ctx, tautOf(), "changeReactionFromUserAction",
+		rxnUserArgs{Key: key, Name: base, ActionSource: reactionToggleButton, UseDefaultSkinToneForMultiSkinToneEmoji: true},
+		func(ctx context.Context, a rxnUserArgs) (any, error) {
+			if a.Add != nil || a.ActionSource != reactionToggleButton {
+				// a plugin turned it into a plain toggle of one name
+				on := !ownReaction(reactionsOf(a.Key), a.Name, self)
+				if a.Add != nil {
+					on = *a.Add
 				}
-				add, remove := toggleTargets(s.reactionsOf(a.Key), a.Name, self, app.Prefs().SkinTone)
-				if add != "" {
-					if !a.SkipFrecencyRecord {
-						app.RecordEmojiFrecency(add, "") // recordEmojiFrecencyEvent {emojiName, text: ""}
-					}
-					return s.submitReaction(ctx, h, app, a.Key, add, true, self)
+				if on && !a.SkipFrecencyRecord {
+					app.RecordEmojiFrecency(a.Name, "")
 				}
-				var first error
-				for _, name := range remove {
-					if _, err := s.submitReaction(ctx, h, app, a.Key, name, false, self); err != nil && first == nil {
-						first = err
-					}
+				return submit(ctx, a.Key, a.Name, on)
+			}
+			add, remove := toggleTargets(reactionsOf(a.Key), a.Name, self, app.Prefs().SkinTone)
+			if add != "" {
+				if !a.SkipFrecencyRecord {
+					app.RecordEmojiFrecency(add, "") // recordEmojiFrecencyEvent {emojiName, text: ""}
 				}
-				return nil, first
-			})
-		if err != nil {
-			h.Toast("Couldn't update reaction")
+				return submit(ctx, a.Key, add, true)
+			}
+			var first error
+			for _, name := range remove {
+				if _, err := submit(ctx, a.Key, name, false); err != nil && first == nil {
+					first = err
+				}
+			}
+			return nil, first
+		}, func(_ any, err error) {
+			cancel()
+			if err != nil {
+				h.Toast("Couldn't update reaction")
+			}
+		})
+}
+
+// ownReaction reports whether self reacted name among rs.
+func ownReaction(rs []core.Reaction, name, self string) bool {
+	for i := range rs {
+		if rs[i].Name == name {
+			return reactionHas(&rs[i], self, self)
 		}
-	}()
+	}
+	return false
 }
 
 // reactionsOf is a copy of the reactions on the message with Slack

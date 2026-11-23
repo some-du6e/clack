@@ -15,6 +15,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -51,6 +52,13 @@ type ugSelect struct {
 	// canPick, when set, is asked before a pick (shouldOptionBeSelected):
 	// false refuses it.
 	canPick func() bool
+	// rank, when set, is the Searcher's local tier, run on the UI
+	// goroutine for each filter (search is then unused); fetch, when set,
+	// asks the server for a filter once (the remote tier) and returns what
+	// to apply on the UI goroutine before rank runs again.
+	rank  func(q string) []ugOption
+	fetch func(ctx context.Context, q string) (apply func(), err error)
+	asked map[string]bool
 
 	ed       widget.Editor
 	picked   []ugOption
@@ -68,6 +76,31 @@ type ugSelect struct {
 	active   int
 	open     bool
 	focusReq bool
+	// escaped: Escape closed the list; it stays closed while the input
+	// keeps the focus, until typing, ↓ or a click opens it again
+	escaped bool
+	// escWired: the host's dialog sends Escape to CloseList (ugEscape), so
+	// the expanded select may claim it from the shell
+	escWired bool
+}
+
+// ugEscape wires sels to their dialog's Escape (ModalOpts.OnEscape):
+// MultiSelectInput's onEscape closes an expanded list and stops the event,
+// so the dialog stays. Only a wired select claims Escape from the shell:
+// one whose dialog doesn't ask it would hand Escape to a modal that
+// closes.
+func ugEscape(sels ...*ugSelect) func() bool {
+	for _, s := range sels {
+		s.escWired = true
+	}
+	return func() bool {
+		for _, s := range sels {
+			if s.CloseList() {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // ugOption is one option: a member or a channel.
@@ -76,7 +109,13 @@ type ugOption struct {
 	Avatar         string
 	Conv           core.Conv // channels: the icon
 	Deleted        bool
+	// User marks a member option in a select of both kinds (the advanced
+	// search modal's In: channels and people).
+	User bool
 }
+
+// isMember reports whether o draws as a member (avatar) or a channel.
+func (s *ugSelect) isMember(o ugOption) bool { return s.member || o.User }
 
 func newUGSelect(h Host, large bool, placeholder string) *ugSelect {
 	s := &ugSelect{h: h, large: large, placeholder: placeholder, sel: -1}
@@ -92,6 +131,18 @@ func (s *ugSelect) IDs() []string {
 	out := make([]string, len(s.picked))
 	for i, o := range s.picked {
 		out[i] = o.ID
+	}
+	return out
+}
+
+// Tag is the select's input, the focus target (tests).
+func (s *ugSelect) Tag() event.Tag { return &s.ed }
+
+// Labels are the picked options' labels, in order (tests).
+func (s *ugSelect) Labels() []string {
+	out := make([]string, len(s.picked))
+	for i, o := range s.picked {
+		out[i] = o.Label
 	}
 	return out
 }
@@ -134,7 +185,7 @@ func (s *ugSelect) notify() {
 func (s *ugSelect) Type(q string) {
 	s.ed.SetText(q)
 	s.q = q
-	s.open = true
+	s.open, s.escaped = true, false
 	s.query(q)
 }
 
@@ -154,6 +205,28 @@ func (s *ugSelect) Options() []ugOption {
 }
 
 func (s *ugSelect) query(q string) {
+	if s.rank != nil {
+		s.results, s.loaded, s.active = s.rank(q), q, 0
+		if s.fetch == nil || s.asked[q] {
+			return
+		}
+		if s.asked == nil {
+			s.asked = map[string]bool{}
+		}
+		s.asked[q] = true
+		fetch := s.fetch
+		run(s.h, func(ctx context.Context) (func(), error) { return fetch(ctx, q) }, func(apply func(), err error) {
+			if err != nil || apply == nil {
+				return
+			}
+			apply()
+			if s.q == q {
+				s.results, s.loaded = s.rank(q), q
+				s.h.Invalidate()
+			}
+		})
+		return
+	}
 	if s.search == nil || (strings.TrimSpace(q) == "" && !s.allowEmpty) {
 		s.results, s.loaded = nil, q
 		return
@@ -214,12 +287,12 @@ func (s *ugSelect) events(gtx layout.Context) {
 				s.active--
 			}
 		case key.NameDownArrow:
-			s.open = true
+			s.open, s.escaped = true, false
 			if s.active < len(opts)-1 {
 				s.active++
 			}
 		case key.NameEscape:
-			s.open = false
+			s.open, s.escaped = false, true
 		case key.NameDeleteBackward, key.NameDeleteForward:
 			// MultiSelectInput's onBackspace: no token selected selects the
 			// last; else it goes and the one before it is selected (none
@@ -248,11 +321,13 @@ func (s *ugSelect) events(gtx layout.Context) {
 		switch ev.(type) {
 		case widget.ChangeEvent:
 			if t := s.ed.Text(); t != s.q {
-				s.q, s.sel, s.open = t, -1, true
+				s.q, s.sel, s.open, s.escaped = t, -1, true, false
 				s.query(t)
 			}
 		case widget.SubmitEvent:
-			if s.active < len(opts) {
+			// only from a list that shows: with it closed (Escape) Enter
+			// picks nothing
+			if s.open && s.active < len(opts) {
 				s.Pick(opts[s.active])
 			}
 		}
@@ -279,20 +354,36 @@ func (s *ugSelect) events(gtx layout.Context) {
 	}
 	if s.boxClk.Clicked(gtx) {
 		gtx.Execute(key.FocusCmd{Tag: &s.ed})
-		s.open = true
+		s.open, s.escaped = true, false
 	}
 	pressed := s.boxClk.Pressed()
 	for i := range s.optClk {
 		pressed = pressed || s.optClk[i].Pressed()
 	}
 	if !focused && !pressed {
-		s.open = false
-	} else if focused && !s.open && (s.q != "" || s.allowEmpty) {
+		s.open, s.escaped = false, false
+	} else if focused && !s.open && !s.escaped && (s.q != "" || s.allowEmpty) {
 		s.open = true
 	}
 	if s.open && s.allowEmpty && s.loaded != s.q && s.gen == 0 {
 		s.query(s.q)
 	}
+}
+
+// Expanded reports whether the options list shows (selectState
+// isExpanded, as drawOptions draws it).
+func (s *ugSelect) Expanded() bool {
+	return s.open && !(len(s.Options()) == 0 && s.loaded == s.q && strings.TrimSpace(s.q) == "")
+}
+
+// CloseList closes the options list (MultiSelectInput's onEscape);
+// false when it wasn't open.
+func (s *ugSelect) CloseList() bool {
+	if !s.Expanded() {
+		return false
+	}
+	s.open, s.escaped = false, true
+	return true
 }
 
 // rmPressed reports token i's remove icon took the press.
@@ -316,7 +407,7 @@ func (s *ugSelect) tokenGeom(gtx layout.Context) (h int, fs float32, ic int, mem
 func (s *ugSelect) tokenW(gtx layout.Context, th *theme.Theme, o ugOption) int {
 	h, fs, ic, mp := s.tokenGeom(gtx)
 	lw := textW(gtx, th, fs, theme.Bold, o.Label)
-	if s.member {
+	if s.isMember(o) {
 		return h + mp + lw + dp(gtx, 4) + ic + dp(gtx, 4)
 	}
 	return dp(gtx, 4) + dp(gtx, 16) + dp(gtx, 2) + lw + dp(gtx, 4) + ic
@@ -326,6 +417,12 @@ func (s *ugSelect) tokenW(gtx layout.Context, th *theme.Theme, o ugOption) int {
 // the options list goes on top of everything (op.Defer).
 func (s *ugSelect) layout(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	s.events(gtx)
+	if s.escWired && s.Expanded() {
+		// the expanded list has plain Escape first (onEscape): the shell's
+		// Close binding, read before the overlays next frame, leaves it to
+		// the dialog, whose OnEscape (ugEscape) closes the list
+		shortcut.OwnEscape(&s.ed)
+	}
 	w := gtx.Constraints.Max.X
 	// multiSelectInput: min-height 36 (large 44), padding 0 28px 4px 4px
 	// (large: right 32), 15px (large 18px); with nothing picked (initial)
@@ -443,7 +540,7 @@ func (s *ugSelect) token(gtx layout.Context, th *theme.Theme, cl *Colors, o ugOp
 	rrect(gtx, image.Rect(0, 0, w, h), dp(gtx, 4), bg)
 	_, fs, ic, mp := s.tokenGeom(gtx)
 	x := 0
-	if s.member {
+	if s.isMember(o) {
 		func() { // c-token__avatar: the left corners round, the right square
 			defer clipRRect(gtx, image.Rect(0, 0, h+dp(gtx, 4), h), dp(gtx, 4)).Pop()
 			defer clipRRect(gtx, image.Rect(0, 0, h, h), 0).Pop()
@@ -452,7 +549,7 @@ func (s *ugSelect) token(gtx layout.Context, th *theme.Theme, cl *Colors, o ugOp
 		x = h + mp
 	} else {
 		icn := "hash"
-		if o.Conv.Kind == "private" {
+		if o.Conv.Kind == "private" || o.Conv.Kind == "mpim" { // a group DM is private (is_private)
 			icn = "lock"
 		}
 		at(gtx, image.Pt(dp(gtx, 4), (h-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
@@ -537,14 +634,14 @@ func (s *ugSelect) drawOptions(gtx layout.Context, th *theme.Theme, cl *Colors, 
 						fg, fg2 = cl.HighText, cl.HighText
 					}
 					x := dp(gtx, 24)
-					if s.member {
+					if s.isMember(o) {
 						at(gtx, image.Pt(x, (rowH-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
 							return avatar(gtx, s.h, o.Avatar, 20)
 						})
 						x += dp(gtx, 20) + dp(gtx, 8)
 					} else {
 						ic := "hash"
-						if o.Conv.Kind == "private" {
+						if o.Conv.Kind == "private" || o.Conv.Kind == "mpim" { // a group DM is private (is_private)
 							ic = "lock"
 						}
 						at(gtx, image.Pt(x, (rowH-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
@@ -589,7 +686,7 @@ func ugMemberOption(u core.User) ugOption {
 	if u.DisplaySet {
 		sub = u.RealName
 	}
-	return ugOption{ID: u.ID, Label: userName(u), Sub: sub, Avatar: u.Avatar, Deleted: u.Deleted}
+	return ugOption{ID: u.ID, Label: userName(u), Sub: sub, Avatar: u.Avatar, Deleted: u.Deleted, User: true}
 }
 
 // ugChannelOption is channel id as an option.

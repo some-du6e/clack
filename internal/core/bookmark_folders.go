@@ -44,6 +44,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/logtag"
 )
 
 type bmState struct {
@@ -52,7 +54,7 @@ type bmState struct {
 	seen map[string]bool
 }
 
-var bmStates sync.Map // *App -> *bmState
+var bmStates = newPerApp() // *App -> *bmState
 
 func (a *App) bmState() *bmState {
 	v, _ := bmStates.LoadOrStore(a, &bmState{chs: map[string]map[string]Bookmark{}, seen: map[string]bool{}})
@@ -132,7 +134,7 @@ func (a *App) fetchChannelBookmarks(ch string) {
 	st := a.bmState()
 	st.mu.Lock()
 	if err != nil {
-		log.Printf("bookmarks %s: bookmarks.list: %v", ch, err)
+		log.Printf("bookmarks %s: bookmarks.list: %v", logtag.ID(ch), err)
 		delete(st.seen, ch)
 		st.mu.Unlock()
 		a.emit(Event{Type: "bookmarks", Channel: ch})

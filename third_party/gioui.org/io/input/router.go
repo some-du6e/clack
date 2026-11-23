@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/internal/clickrule"
 	f32internal "gioui.org/internal/f32"
 	"gioui.org/internal/ops"
 	"gioui.org/io/clipboard"
@@ -49,18 +50,26 @@ type Router struct {
 	// InvalidateCmd summary.
 	wakeup     bool
 	wakeupTime time.Time
+	// Clack patch 57: the areas the frame being laid out read through
+	// FollowArea, and where they were (clack_follow.go)
+	follow map[event.Tag]followedArea
 	// Changes queued for next call to Frame.
 	commands []Command
 	// transfers is the pending transfer.DataEvent.Open functions.
 	transfers []io.ReadCloser
 	// Clack patch 15: per-window values for gestures (Source.Value).
 	values map[any]any
+	// Clack patch 48: the window's run of clicks (clack_clicks.go)
+	clicks clickrule.Run
 	// Clack patch 35: the frame in progress is the last one's ops again
 	// (Source.Replay): Frame keeps the handlers' filters
 	replay bool
 	// deferring is set if command execution and event delivery is deferred
 	// to the next frame.
 	deferring bool
+	// replayed counts the events a command's immediate execution queued
+	// again (Clack patch 61's tests).
+	replayed int
 	// scratchFilters is for garbage-free construction of ephemeral filters.
 	scratchFilters []taggedFilter
 	// Clack patch 28: the key presses for Source.KeyPresses.
@@ -431,6 +440,7 @@ func (q *Router) Frame(frame *op.Ops) {
 			h.active = false
 		}
 	}
+	q.followFrame() // Clack patch 57
 	q.executeCommands()
 	q.requeue(remaining...) // Clack patch 28: Queue, not logged again
 	st := q.lastState()
@@ -449,6 +459,9 @@ func (q *Router) Queue(events ...event.Event) {
 		se, system := e.(SystemEvent)
 		if system {
 			e = se.Event
+		}
+		if pe, ok := e.(pointer.Event); ok && !q.keyLog.replay {
+			e = q.countClick(pe) // Clack patch 48: the window's click count
 		}
 		q.noteKey(e) // Clack patch 28
 		noteInput(e) // Clack patch 33
@@ -542,6 +555,15 @@ func (q *Router) processEvent(e event.Event, system bool) {
 }
 
 func (q *Router) execute(c Command) {
+	// Clack patch 61: an InvalidateCmd changes no input state and sends no
+	// events; it only asks for a frame. It records its wakeup at once,
+	// deferring or not, and never takes the immediate path below, which
+	// replays every event still queued (a widget ticking in the middle of
+	// layout replayed the input of everything laid out after it).
+	if inv, ok := c.(op.InvalidateCmd); ok {
+		q.executeCommand(inv)
+		return
+	}
 	// The command can be executed immediately if event delivery is not frozen, and
 	// no event receiver has completed their event handling.
 	if !q.deferring {

@@ -4,8 +4,13 @@ name: huddle
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run huddle.yml --ref <branch>)
-    paths: ['internal/huddle/**', 'internal/ui/huddleui/**', 'internal/core/dnd*.go', 'internal/fakeslack/huddles.go', 'internal/ui/notify*.go', 'internal/ui/openurl/**', 'cmd/huddle-demo/**', 'packaging/macos/**', 'internal/ui/screenlock/**', 'internal/ui/globalkey/**', 'third_party/rnnoise-go/**', 'internal/tflite/**', 'internal/ui/prefs_pages.go', 'internal/ui/huddle_av.go', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
+    paths: ['internal/huddle/**', 'internal/clip/**', 'internal/ui/huddleui/**', 'internal/core/dnd*.go', 'internal/fakeslack/huddles.go', 'internal/ui/notify*.go', 'internal/ui/openurl/**', 'cmd/huddle-demo/**', 'packaging/macos/**', 'internal/ui/screenlock/**', 'internal/ui/globalkey/**', 'third_party/rnnoise-go/**', 'internal/tflite/**', 'internal/ui/prefs_pages.go', 'internal/ui/huddle_av.go', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
   workflow_dispatch:
+    inputs:
+      expect_fail:
+        description: "proof runs: the tests that must fail, comma-separated (TestA,TestB/sub); the run passes only if each fails and nothing else does (docs/CI-SPEED.md, Proof runs)"
+        required: false
+        default: ""
 
 # A newer run for the same branch, tag or PR cancels this one while it is
 # queued or running, so stale pushes don't pile up in the shared queue.
@@ -23,6 +28,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: deps (Xlib headers for the X11 screen capture; Xvfb and xsetroot to test it; OpenH264 to test its encoder)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq libx11-dev xvfb x11-xserver-utils libopenh264-dev
       - name: vet
@@ -33,6 +42,10 @@ jobs:
         # the X11 backend grabs a root painted by xsetroot; OpenH264's
         # screen-content mode encodes the test screen and goh264 decodes it
         run: xvfb-run -a go test -count=1 -v -run 'TestX11ScreenCapture|TestOpenH264Encode|TestFakeScreenShare' ./internal/huddle
+      - name: voice clips (Opus in MP4) read back by ffprobe and decoded by ffmpeg
+        run: |
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq ffmpeg
+          CLACK_FFPROBE=1 go test -count=1 -v ./internal/clip
       - name: test (no cgo)
         run: CGO_ENABLED=0 go test ./internal/huddle/...
       - name: probe
@@ -41,6 +54,8 @@ jobs:
         with:
           name: huddle-probe-linux-amd64
           path: dist/huddle-probe
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   demo:
     # the huddle UI against the fake Chime (cmd/huddle-demo)
@@ -52,6 +67,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
       - name: vet
@@ -93,6 +112,8 @@ jobs:
         with:
           name: huddle-demo-linux-amd64
           path: dist/huddle-demo
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   macos:
     # the cgo/Objective-C side: AVFoundation permission checks (TCC), Core
@@ -113,6 +134,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: vet
         run: go vet ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/...
       - name: opus on arm64 (the transpiled libopus was generated on linux/amd64)
@@ -120,6 +145,11 @@ jobs:
       - name: VideoToolbox + camera publish
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip|TestSCKList|TestFakeScreenShare' ./internal/huddle
+      # voice clips: the transpiled libopus on arm64, Chromium's MP4 layout,
+      # the recorder on a synthetic microphone
+      - name: voice clips
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v ./internal/clip
       - name: test
         if: ${{ !cancelled() }}
         run: go test -count=1 -v ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/... ./internal/ui/screenlock/... ./internal/ui/globalkey/... 2>&1 | tee test.log | grep -E '^(=== RUN|--- |ok|FAIL|panic)|opus' ; test "${PIPESTATUS[0]}" = 0
@@ -143,6 +173,8 @@ jobs:
       - name: build the demo
         if: ${{ !cancelled() }}
         run: CGO_ENABLED=1 go build -trimpath -o dist/huddle-demo ./cmd/huddle-demo
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   windows:
     # the Windows sides: WTS lock events, RegisterHotKey, and the
@@ -157,9 +189,53 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: vet
         run: go vet ./internal/ui/screenlock/... ./internal/ui/globalkey/...
+      # bash: a pwsh step reports only its last command's exit code
       - name: test
+        shell: bash
         run: |
-          go test -count=1 -v ./internal/ui/screenlock/... ./internal/ui/globalkey/...
-          go test -count=1 -v -run 'TestMic|TestPreview|TestVideoEffect|TestGDIShares|TestMFEncode|TestFakeScreenShare' ./internal/huddle
+          rc=0
+          go test -count=1 -v ./internal/ui/screenlock/... ./internal/ui/globalkey/... || rc=1
+          go test -count=1 -v -run 'TestMic|TestPreview|TestVideoEffect|TestGDIShares|TestMFEncode|TestFakeScreenShare' ./internal/huddle || rc=1
+          # voice clips: Chromium's MP4 layout, libopus, the recorder on a synthetic microphone
+          go test -count=1 -v ./internal/clip || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (.github/scripts/expect_fail_wire.py adds it).
+  expect-fail:
+    needs:
+      - huddle
+      - demo
+      - macos
+      - windows
+    if: ${{ always() && inputs.expect_fail != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/expectfail
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: expect-fail-*
+          path: ${{ runner.temp }}/xf
+      - name: every listed test failed, nothing else did
+        env:
+          EXPECT_FAIL: ${{ inputs.expect_fail }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"
