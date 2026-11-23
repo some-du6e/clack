@@ -276,8 +276,8 @@ type TipState struct {
 	Texty bool
 	// Wake, when set, asks the owner for the frame at the end of the hover
 	// delay (now is the frame's clock) instead of executing an
-	// op.InvalidateCmd mid-layout, which replays later handlers' unread
-	// input in Gio's router.
+	// op.InvalidateCmd mid-layout (which, until Gio patch 61, replayed
+	// later handlers' unread input; it only records its wakeup now).
 	Wake func(now, at time.Time)
 	// org is the target's window origin, so the tooltip keeps inside the
 	// window (theme.PlaceTooltip); last is where it was drawn (tests).
