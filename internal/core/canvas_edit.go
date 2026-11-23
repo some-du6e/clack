@@ -1284,26 +1284,45 @@ func (a *App) CanvasTitleSaveable(id string) (bool, string) {
 // CanvasBlockEditable reports whether a block shown as spans can be edited
 // through edit-document without losing what its section holds that the
 // block doesn't show (faithfulBlock), and why not; the title's own block
-// only while it's plain text (titleBlockEdit). It's true when core holds no
-// model of the canvas yet, or the block's text is another's than the
-// section's (the export is late: the save checks again).
+// only while it's plain text (titleBlockEdit). The section is as an edit
+// waiting to be saved leaves it. It's true when core holds no model of the
+// canvas yet, or the block's text is another's than the section's (the
+// export is late: the save checks again).
 func (a *App) CanvasBlockEditable(id, sectionID string, spans []richtext.Span) (bool, string) {
+	// a section with an edit waiting to be saved is as that edit leaves
+	// it: a block just edited (a word made bold, say) is held to its own
+	// save, not to the text before it
+	pending, has := "", false
+	s := a.saver(id)
+	s.mu.Lock()
+	for _, p := range s.pending {
+		if p.SectionID == sectionID && (p.Kind == quip.EditText || p.Kind == quip.EditNew) {
+			pending, has = p.RTML, true
+		}
+	}
+	s.mu.Unlock()
 	ok, why := true, ""
 	a.CanvasModel(id, func(d *quip.Doc) {
 		if d == nil {
 			return
 		}
 		sec := d.Section(d.RealID(sectionID))
-		if sec != nil && sec.Type != nil && *sec.Type == quip.TypeTitle {
-			if t, marks, pok := quip.ParseRTML(quip.SectionRTML(sec)); !pok || len(marks) > 0 || strings.Contains(t, "<control") || strings.Contains(t, "<br>") {
+		if sec == nil || sec.Type == nil {
+			return
+		}
+		rtml := quip.SectionRTML(sec)
+		if has {
+			rtml = pending
+		}
+		if *sec.Type == quip.TypeTitle {
+			if t, marks, pok := quip.ParseRTML(rtml); !pok || len(marks) > 0 || strings.Contains(t, "<control") || strings.Contains(t, "<br>") {
 				ok, why = false, "formatting, a link, a mention or a line break in the title"
 			}
 			return
 		}
-		if sec == nil || sec.Type == nil || *sec.Type != quip.TypeText {
+		if *sec.Type != quip.TypeText {
 			return
 		}
-		rtml := quip.SectionRTML(sec)
 		if plain, pok := quip.RTMLPlain(rtml); !pok || plainCompare(plain) != plainCompare(spansPlain(spans)) {
 			return
 		}
@@ -1827,3 +1846,10 @@ func (a *App) flushCanvasesOnQuit() {
 
 // quitSaveWait bounds the last save at quit.
 var quitSaveWait = 3 * time.Second
+
+// red-evidence stubs: the names the fixed tests use, doing nothing
+func (a *App) CanvasSectionInLayout(id, sectionID string) bool { return false }
+
+func (a *App) CanvasSplitMovesAnchors(id, sectionID string, orig, first []richtext.Span, rest []CanvasNewBlock) bool {
+	return false
+}

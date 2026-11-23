@@ -764,3 +764,12 @@ func TestCanvasQuipNewMentionKeepsText(t *testing.T) {
 		t.Errorf("%d edit-document calls for a refused mention", n)
 	}
 }
+
+func lastToast(h *testHost) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.toasts) == 0 {
+		return ""
+	}
+	return h.toasts[len(h.toasts)-1]
+}

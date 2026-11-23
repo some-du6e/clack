@@ -464,3 +464,26 @@ func matchUnits(bu, nu []unit) (match []int, partial bool) {
 	}
 	return match, false
 }
+
+// AnchoredUnits is how many characters each comment anchor of rtml covers,
+// by its id (nil when rtml doesn't parse). Red evidence: the fixed tree's
+// helper, which the tests read the saves with.
+func AnchoredUnits(rtml string) map[string]int {
+	t, marks, ok := ParseRTML(rtml)
+	if !ok {
+		return nil
+	}
+	us := units(t)
+	out := map[string]int{}
+	for _, m := range marks {
+		if m.Name != "annotation" {
+			continue
+		}
+		for _, u := range us {
+			if m.Start <= u.start && u.end <= m.End {
+				out[m.Value]++
+			}
+		}
+	}
+	return out
+}

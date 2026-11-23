@@ -1044,7 +1044,7 @@ func (e *editState) dropPlace(v *View, s *session) {
 
 // replaceLocal shows bs in place of b at once (optimistic).
 func (e *editState) replaceLocal(v *View, b *blk, bs []canvas.Block) {
-	nb := v.makeBlocks(v.shown, bs, nil)
+	nb := v.localBlocks(bs)
 	if i := indexOf(v.blocks, b); i >= 0 {
 		out := append([]*blk(nil), v.blocks[:i]...)
 		out = append(out, nb...)
@@ -1065,6 +1065,23 @@ func (e *editState) replaceLocal(v *View, b *blk, bs []canvas.Block) {
 	if len(nb) == 1 { // nested (a column, a cell): swap in place
 		*b = *nb[0]
 	}
+}
+
+// localBlocks are blocks an edit just made, drawn until the refetch: each
+// opens as the editor can hold it (editable), as its section will be what
+// the editor saved; core's check against the section (blockEditable)
+// comes again once the model has the save (recheckEditable).
+func (v *View) localBlocks(bs []canvas.Block) []*blk {
+	nb := v.makeBlocks(v.shown, bs, nil)
+	for _, b := range nb {
+		if b.b != nil {
+			b.edOK, b.edWhy = v.editable(*b.b)
+			if b.edOK && quipOn(v) && v.titleWhy != "" {
+				b.edOK, b.edWhy = false, v.titleWhy
+			}
+		}
+	}
+	return nb
 }
 
 // newEditor is a block's editor: lists no deeper than Slack's canvas
@@ -1089,7 +1106,7 @@ func unquote(bs []canvas.Block) []canvas.Block {
 }
 
 func (e *editState) insertLocal(v *View, after string, bs []canvas.Block) {
-	nb := v.makeBlocks(v.shown, bs, nil)
+	nb := v.localBlocks(bs)
 	i := len(v.blocks)
 	for j, b := range v.blocks {
 		if after != "" && b.b.ID == after {
