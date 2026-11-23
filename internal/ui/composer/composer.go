@@ -66,6 +66,11 @@ type Composer struct {
 	// parent sets it each frame (Gio has no global transform query); menus
 	// and the emoji picker are anchored with it.
 	Origin image.Point
+	// boxSize is the composer's size in its last frame (the audio
+	// popover's overlay covers it).
+	boxSize image.Point
+	// clipPop is the open audio recorder popover (clips.go).
+	clipPop *audioPopover
 
 	// OnEditLast is called when Up is pressed in an empty composer (Slack
 	// edits your last message). The ui root wires it to the message list.
@@ -488,6 +493,7 @@ func (c *Composer) Close() {
 	}
 	c.saveDraft()
 	c.ac.Close()
+	c.closeClip() // a recording in progress goes with it (clips.go)
 }
 
 func (c *Composer) emojiAtom(name string) *Atom {
@@ -612,6 +618,7 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	if live {
 		c.ui.endFrame()
 	}
+	c.boxSize = dims.Size
 
 	// Autocomplete after the editor laid out, anchored at the trigger,
 	// with what plugins changed on TextyAutocomplete.
@@ -762,6 +769,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		ViewContext:    c.viewContext(),
 		Count:          c.ed.Doc().Len(),
 		OverLimit:      c.overLimit(),
+		TooManyFiles:   c.tooManyFiles(),
 		Pending:        c.att.Len() > 0,
 	}
 	if isHeading(st.Block) && c.api.a != nil {
@@ -1001,6 +1009,8 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		case caMention:
 			c.mentionTrigger()
 			c.ed.Focus(gtx)
+		case caAudio:
+			c.openAudioRecorder(a.Anchor) // clips.go
 		case caShortcut:
 			// maybeTriggerSlashCommandsAutocomplete: only into an empty
 			// input without a block format (the button is disabled
@@ -1171,7 +1181,7 @@ func (c *Composer) paragraphMenu(anchor image.Rectangle) {
 }
 
 func (c *Composer) scheduleMenu(anchor image.Rectangle) {
-	if c.overLimit() > 0 || c.ed.Empty() && c.att.Len() == 0 && c.att.gifCount() == 0 {
+	if c.overLimit() > 0 || c.tooManyFiles() || c.ed.Empty() && c.att.Len() == 0 && c.att.gifCount() == 0 {
 		return
 	}
 	// ScheduleSendMenu (schedule_menu.go): the rows for now, the Custom
@@ -1330,6 +1340,10 @@ func (c *Composer) moreThanTwo() bool {
 
 // overLimit is how far the message is past the 12,000-character limit
 // (charlimit.go), counted once per document change.
+// tooManyFiles is isComposerDraftSendable's tooManyFiles: the draft holds
+// more than 10 files (a clip attaches past the limit), and can't be sent.
+func (c *Composer) tooManyFiles() bool { return c.att.Len() > attMaxFiles }
+
 func (c *Composer) overLimit() int {
 	if v := c.ed.Version(); !c.limitOK || v != c.limitVer {
 		c.limitVer, c.limitOver, c.limitOK = v, charsOverLimit(c.ed.Doc()), true
@@ -1344,10 +1358,11 @@ func (c *Composer) submit() {
 		return
 	}
 	d := c.ed.Doc()
-	if c.overLimit() > 0 {
+	if c.overLimit() > 0 || c.tooManyFiles() {
 		// isSendingDisabled (isOverMaxLength): Enter does nothing and the
 		// send button is disabled; an edit can't be saved (cjbg maybeSave
-		// returns while textyExceedsMaxLength)
+		// returns while textyExceedsMaxLength); so with more than 10
+		// files (isComposerDraftSendable's tooManyFiles)
 		return
 	}
 	if d.Empty() && c.att.Len() == 0 && (c.edit != nil || c.att.gifCount() == 0) {
