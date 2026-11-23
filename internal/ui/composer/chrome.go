@@ -160,6 +160,9 @@ type chromeState struct {
 	// OverLimit is how many characters the message is past the 12,000
 	// limit (TextyLengthWarning's numCharsOverLimit; charlimit.go).
 	OverLimit int
+	// TooManyFiles: more than 10 files attached (isComposerDraftSendable's
+	// tooManyFiles), so the send is off.
+	TooManyFiles bool
 	// Drafts is the drafts button's count (DraftManagementButton,
 	// draft_button.go; 0: no button). DraftsBusy: a file still uploads
 	// (the button is aria-disabled).
@@ -183,7 +186,7 @@ type chromeState struct {
 
 // sendOff is isSendingDisabledForTextState: nothing to send, or the
 // message is over the 12,000-character limit (isOverMaxLength).
-func (st *chromeState) sendOff() bool { return !st.CanSend || st.OverLimit > 0 }
+func (st *chromeState) sendOff() bool { return !st.CanSend || st.OverLimit > 0 || st.TooManyFiles }
 
 // crBtn names every clickable in the chrome.
 type crBtn uint8
@@ -1087,10 +1090,17 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 	if label == "" {
 		return
 	}
+	// ComposerButton (aiGo: the formatting, insertion and footer buttons,
+	// FileMenuButton's attach and EmojiToolbarButton too): delay 500
+	c.tip[id].Delay = composerTipDelay
 	t := op.Offset(r.Min).Push(gtx.Ops)
 	popups.Tooltip(gtx, th, &c.tip[id], hov, r.Size(), popups.Above, label, keys)
 	t.Pop()
 }
+
+// composerTipDelay is ComposerButton's Tooltip delay (CDN build
+// 36d315d11944); SendButton's and the drafts button's keep BaseTooltip's.
+const composerTipDelay = 500 * time.Millisecond
 
 // icon draws button id's glyph centred in r.
 func (c *chrome) icon(gtx layout.Context, st *chromeState, id crBtn, r image.Rectangle, col color.NRGBA) {

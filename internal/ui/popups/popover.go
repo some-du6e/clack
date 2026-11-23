@@ -49,6 +49,18 @@ type PopoverOpts struct {
 	// cubic-bezier(.33,1,.68,1)). NoMotion is prefers-reduced-motion
 	// (animation: none).
 	AnimateIn, NoMotion bool
+	// Bare draws the content as it is, without the card's background,
+	// border and shadow: Slack's .c-popover__content has none, the
+	// content brings its own (AudioPopover's strip).
+	Bare bool
+	// OnOverlayClick, when set, runs on a click outside the content
+	// instead of closing the popover (Slack's shouldCloseOnOverlayClick:
+	// false; AudioPopover flashes its speedbump).
+	OnOverlayClick func()
+	// OnEnter runs on Return or Space while the popover has the keyboard
+	// focus: the content's autoFocus button (AudioPopover's Stop
+	// recording).
+	OnEnter func()
 }
 
 // Popover is a card with arbitrary content anchored to a rectangle; it
@@ -99,12 +111,27 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 		p.Dismiss()
 		return layout.Dimensions{}
 	}
+	if p.o.OnEnter != nil && isTop(p) {
+		for {
+			e, ok := gtx.Event(key.Filter{Focus: p, Name: key.NameReturn}, key.Filter{Focus: p, Name: key.NameEnter},
+				key.Filter{Focus: p, Name: key.NameSpace})
+			if !ok {
+				break
+			}
+			if ke, ok := e.(key.Event); ok && ke.State == key.Press {
+				p.o.OnEnter()
+			}
+		}
+	}
 	if p.o.Modal {
 		fill(gtx, image.Rectangle{Max: win}, cl.Backdrop)
 	}
 	if !p.o.Peek && p.scrim.Layout(gtx) {
-		p.Dismiss()
-		return layout.Dimensions{}
+		if p.o.OnOverlayClick == nil {
+			p.Dismiss()
+			return layout.Dimensions{}
+		}
+		p.o.OnOverlayClick()
 	}
 	m := dp(gtx, 8)
 	maxW := win.X - 2*m
@@ -168,7 +195,13 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 	keyTarget(gtx, p, p.rect)
 	st := popoverClass.Enter(gtx, 0, 0)
 	var box image.Rectangle
-	if !st.Hidden() {
+	if !st.Hidden() && p.o.Bare {
+		t := op.Offset(pos).Push(gtx.Ops)
+		p.block.Layout(gtx, image.Rectangle{Max: d.Size})
+		call.Add(gtx.Ops)
+		t.Pop()
+		box = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
+	} else if !st.Hidden() {
 		styledCard(gtx, st, cl, pos, d.Size, dp(gtx, rad), false, func(gtx layout.Context) {
 			local := image.Rectangle{Max: d.Size}
 			p.block.Layout(gtx, local)
@@ -227,6 +260,10 @@ func cubicBezierY(x1, y1, x2, y2, x float64) float64 {
 type TipState struct {
 	since   time.Time
 	hovered bool
+	// gen is the TooltipManager generation the hover began in; shut, that
+	// HideTooltips ended it (it stays hidden until the pointer leaves)
+	gen  uint64
+	shut bool
 
 	// Delay overrides TipDelay for this tooltip (Slack's BaseTooltip
 	// defaults to delay 150; some callers pass longer ones).
@@ -254,14 +291,15 @@ type TipState struct {
 // Placed is where the tooltip last drew, in its widget's coordinates.
 func (st *TipState) Placed() theme.TipPlace { return st.last }
 
-// Showing reports whether the tooltip is up at now: hovered for its delay.
+// Showing reports whether the tooltip is up at now: hovered for its
+// delay, and not hidden since (HideTooltips).
 func (st *TipState) Showing(now time.Time) bool {
-	return st.hovered && !now.Before(st.since.Add(st.delay()))
+	return st.hovered && !st.shut && st.gen == theme.TipGen() && !now.Before(st.since.Add(st.delay()))
 }
 
 // Reset ends the hover: the next one waits the delay again (a target
 // that wasn't drawn this frame).
-func (st *TipState) Reset() { st.hovered = false }
+func (st *TipState) Reset() { st.hovered, st.shut = false, false }
 
 // delay is the tooltip's hover delay.
 func (st *TipState) delay() time.Duration {
@@ -274,8 +312,14 @@ func (st *TipState) delay() time.Duration {
 	return TipDelay
 }
 
-// TipDelay is how long the pointer must rest before a tooltip shows.
-const TipDelay = 450 * time.Millisecond
+// TipDelay is how long the pointer must rest before a tooltip shows:
+// BaseTooltip's default delay (client-boot HzHE, CDN build 36d315d11944:
+// delay 150). A site that passes its own (the composer's 500, a
+// message's time 300, the hover bar's 60) sets TipState.Delay.
+const TipDelay = 150 * time.Millisecond
+
+// HideTooltips is Slack's hideVisibleTooltip (theme.HideTooltips).
+func HideTooltips() { theme.HideTooltips() }
 
 // Tooltip shows a Slack tooltip for a widget of size sz laid out at the
 // current origin, while hovered. Call it right after laying the widget out.
@@ -320,12 +364,18 @@ func TooltipBox(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool,
 func tooltipWith(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz image.Point, side Side, box func(gtx layout.Context) layout.Dimensions) {
 	st.org.Track(gtx, image.Rectangle{Max: sz})
 	if !hovered {
-		st.hovered = false
+		st.hovered, st.shut = false, false
 		return
 	}
 	if !st.hovered {
-		st.hovered = true
+		st.hovered, st.gen, st.shut = true, theme.TipGen(), false
 		st.since = gtx.Now
+	}
+	if st.gen != theme.TipGen() {
+		st.shut = true // HideTooltips: hidden until the pointer leaves
+	}
+	if st.shut {
+		return
 	}
 	if wait := st.since.Add(st.delay()); gtx.Now.Before(wait) {
 		if st.Wake != nil {

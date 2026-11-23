@@ -29,8 +29,14 @@ func init() {
 	// SvgIcons as the inline y8g2 font icon, size inherit)
 	reg("plus-small", s("M10 6.5 V13.5 M6.5 10 H13.5"))
 	// U+E294 icon_times_small (c-icon--times-small): AttachmentDeleteButton's
-	// rail-style remove button left of classic and Block Kit unfurls.
+	// rail-style remove button left of classic and Block Kit unfurls, and
+	// AudioPopover's Cancel recording.
 	reg("times-small", s("M7.25 7.25 L12.75 12.75 M12.75 7.25 L7.25 12.75"))
+	// U+E319 icon_check_large_bold (c-icon--check-large-bold): AudioPopover's
+	// Stop recording (boot-shared VIJ/). The outline is a 2.5-unit round
+	// stroke; these are its centrelines (the caps' centres and the round
+	// join's).
+	reg("check-large-bold", sw(2.5, "M3.6 10.4 L6.99 15.24 L16.4 4.13"))
 
 	// The Activity rows' Slack Connect Ignore flow (rPCk IgnoreForkedModal,
 	// IgnoreForkedModalButton: the y8g2 font icons times-circle-medium,

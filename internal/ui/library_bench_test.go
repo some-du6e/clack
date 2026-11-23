@@ -12,7 +12,10 @@ import (
 // With plugin bench data for a plugin both systems offer, Install installs
 // the bench's pick directly and the chevron's "Install for" menu lists the
 // pick first, marked Recommended, with the bench's reason; without data
-// (or for another version of the ids) Install asks.
+// (or for another version of the ids) Install asks. So it does when the
+// data checked nothing either version does (costs only): Bring Back
+// Slackbot did nothing in Clack and won on frame cost (library-dupes'
+// review).
 func TestLibraryBenchPick(t *testing.T) {
 	a, _ := ttApp(t, t.TempDir())
 	ix := &pluginlib.Index{Schema: 1, Plugins: []pluginlib.Entry{
@@ -39,8 +42,8 @@ func TestLibraryBenchPick(t *testing.T) {
 		Winner: pluginlib.Slick,
 		Reason: "works fully, 3.0x faster to load",
 		Variants: []pluginbench.Variant{
-			{System: pluginlib.Taut, ID: "WhoReacted", SHA256: "aa"},
-			{System: pluginlib.Slick, ID: "WhoReacted", SHA256: "bb"},
+			{System: pluginlib.Taut, ID: "WhoReacted", SHA256: "aa", Checks: []pluginbench.Check{{Name: "reactors' avatars", Pass: true}}},
+			{System: pluginlib.Slick, ID: "WhoReacted", SHA256: "bb", Checks: []pluginbench.Check{{Name: "reactors' avatars", Pass: true}}},
 		},
 	}}}
 	var who, pronouns libGroup
@@ -80,5 +83,17 @@ func TestLibraryBenchPick(t *testing.T) {
 	}
 	if _, p, ok := v.benchPick(v.installChoices(who)); !ok || p.Exact || !strings.Contains(benchReason(p), "earlier build") {
 		t.Errorf("other version: %+v %v", p, ok)
+	}
+	// costs only (no behaviour check on either variant): no recommendation
+	for i := range v.bench.Plugins[0].Variants {
+		v.bench.Plugins[0].Variants[i].Checks = nil
+	}
+	if act := v.action(who); act.label != "Install…" || act.menu != nil {
+		t.Errorf("a pick from costs alone: %q (menu %v), want Install… asking which", act.label, act.menu != nil)
+	}
+	for _, it := range v.installMenu(v.installChoices(who)) {
+		if strings.Contains(it.Label, "recommended") {
+			t.Errorf("a pick from costs alone is recommended: %+v", it)
+		}
 	}
 }

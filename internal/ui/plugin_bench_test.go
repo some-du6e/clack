@@ -940,6 +940,49 @@ var benchScenarios = map[string]benchScenario{
 			}},
 		},
 	},
+	// Bring Back Slackbot (Taut) / Custom Slackbot (Slick): a workspace
+	// custom response (Slackbot's slackbot_response) drawn as sent by
+	// Slackbot, not as the team, so its avatar isn't the team's icon. Clack
+	// draws a custom response as Slack's client does now, as the team
+	// (TeamIcon), whatever reskin_custom_responses says: Taut's switch of that
+	// experiment changes nothing, while Slick's restyles the avatar (Slackbot's
+	// by default). The check doesn't ask for the name: it stays the team's in
+	// both, as in Slack, where with Slackbot AI on the sender is a span that
+	// Custom Slackbot's name rule (.c-message__sender_button) doesn't reach.
+	"bringbackslackbot": {
+		checks: []benchCheck{
+			{"a Slackbot custom response drawn with the plugin's avatar, not the team's icon", func(e *benchEnv) (bool, string) {
+				ts := fmt.Sprintf("%d.000300", time.Now().Unix()+5)
+				raw, _ := json.Marshal(map[string]any{"type": "message", "channel": fakeslack.BenchChannelID, "user": fakeslack.SlackbotID,
+					"subtype": "slackbot_response", "text": "a synthetic custom response: the bench wiki is at example.com/wiki", "ts": ts})
+				e.a.data.core.Inject(slack.Event{Type: "message", Channel: json.RawMessage(`"` + fakeslack.BenchChannelID + `"`), Raw: raw})
+				e.toBottom()
+				team := map[string]bool{"": true} // no picture is the team's placeholder
+				for _, px := range []int{34, 44, 68, 88, 102, 132, 230} {
+					_, icon := e.a.data.core.CustomResponseTeam(px)
+					team[icon] = true
+				}
+				found, av, name := false, "", ""
+				ok := e.wait(8*time.Second, func() bool {
+					if v := e.channelView(fakeslack.BenchChannelID); v != nil {
+						for _, sv := range v.Senders() {
+							if sv.TS == ts {
+								found, av, name = true, sv.Avatar, sv.Name
+							}
+						}
+					}
+					return found && !team[av]
+				})
+				switch {
+				case !found:
+					return false, "the custom response wasn't drawn"
+				case !ok:
+					return false, fmt.Sprintf("drawn as the team: its icon %q, named %q", av, name)
+				}
+				return true, fmt.Sprintf("avatar %s, named %q", av, name)
+			}},
+		},
+	},
 	"silenttyping": {
 		checks: []benchCheck{
 			{"a typing switch in the message box", func(e *benchEnv) (bool, string) {
@@ -1093,6 +1136,24 @@ func TestPluginBench(t *testing.T) {
 			pairs = append(pairs, g)
 		}
 	}
+	// the Library's pairs are the one source (pluginlib.Pairs, names):
+	// committed bench data for variants the Library doesn't list as one row
+	// is a pair pairs.go is missing, or one it dropped
+	inIndex := func(sys, id string) bool {
+		return slices.ContainsFunc(ix.Plugins, func(e pluginlib.Entry) bool { return e.System == sys && e.ID == id })
+	}
+	for _, bp := range pluginbench.Load().Plugins {
+		tv, sv := bp.Variant(pluginlib.Taut), bp.Variant(pluginlib.Slick)
+		if tv == nil || sv == nil || !inIndex(pluginlib.Taut, tv.ID) || !inIndex(pluginlib.Slick, sv.ID) {
+			continue // no longer offered in both
+		}
+		if !slices.ContainsFunc(pairs, func(g libGroup) bool {
+			return slices.ContainsFunc(g.Entries, func(e pluginlib.Entry) bool { return e.System == pluginlib.Taut && e.ID == tv.ID }) &&
+				slices.ContainsFunc(g.Entries, func(e pluginlib.Entry) bool { return e.System == pluginlib.Slick && e.ID == sv.ID })
+		}) {
+			t.Errorf("bench.json's %s (taut %s, slick %s) isn't one Library row: list it in pluginlib's pairs (pairs.go, docs/PLUGINS.md) or drop its result", bp.Name, tv.ID, sv.ID)
+		}
+	}
 	if only := os.Getenv("PLUGIN_BENCH_ONLY"); only != "" {
 		want := map[string]bool{}
 		for _, n := range strings.Split(only, ",") {
@@ -1122,6 +1183,9 @@ func TestPluginBench(t *testing.T) {
 				t.Logf("no scenario for %s: load, cost and idle only", name)
 			}
 			p := pluginbench.Plugin{Name: name, Notes: sc.notes}
+			if len(sc.checks) == 0 { // costs only: nothing tells a version that does nothing from one that works
+				p.Notes = strings.TrimSpace(p.Notes + " No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).")
+			}
 			var imgs []*image.RGBA
 			for _, e := range g.Entries {
 				if e.System != pluginlib.Taut && e.System != pluginlib.Slick {

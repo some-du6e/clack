@@ -342,3 +342,67 @@ func channelEntityName(c core.Conv) string {
 func NewChannelNotifyMenu(h Host, anchor image.Point, ch string) *Menu {
 	return NewMenuOpts(h, ChannelNotifyItems(h, ch), MenuOpts{Anchor: pointRect(anchor), AlignRight: true, Width: 300})
 }
+
+// NotifyButtonTip is the channel header's notifications button tooltip
+// (NotificationsButtonMenu in boot-shared, CDN build 36d315d11944, source
+// channelHeader: NotificationsButton's Tooltip, position bottom): in a
+// DM "Mute conversation" or "Unmute conversation"; in a channel "Edit
+// notifications" with the TooltipSubtitle "Current: {setting}" (B0: Muted,
+// All new posts, Just mentions, Nothing) and, when the mobile setting is
+// another, a second subtitle saying what mobile devices get.
+func NotifyButtonTip(h Host, ch string, dm, muted bool) []TipLine {
+	if dm {
+		if muted {
+			return []TipLine{{Text: i18n.T("channel_details", "Unmute conversation")}}
+		}
+		return []TipLine{{Text: i18n.T("channel_details", "Mute conversation")}}
+	}
+	var n core.ChannelNotify
+	var p core.Prefs
+	if a := h.Core(); a != nil {
+		n, p = a.NotifyPrefs(ch), a.Prefs()
+	}
+	level := func(v, global string) string {
+		if v == "" || v == "default" {
+			v = global
+		}
+		switch v {
+		case "everything", "nothing":
+			return v
+		}
+		return "mentions_dms"
+	}
+	desk, mob := level(n.Desktop, p.GlobalDesktop), level(n.Mobile, p.GlobalMobile)
+	var cur string
+	switch {
+	case muted:
+		cur = i18n.T("channel_sidebar", "Muted")
+	case desk == "everything":
+		cur = i18n.T("channel_sidebar", "All new posts")
+	case desk == "nothing":
+		cur = i18n.T("channel_sidebar", "Nothing")
+	default:
+		cur = i18n.T("channel_sidebar", "Just mentions")
+	}
+	lines := []TipLine{
+		{Text: i18n.T("channel_details", "Edit notifications")},
+		{Text: i18n.T("channel_details", "Current: {selectedNotificationSetting}", "selectedNotificationSetting", cur), Subtitle: true},
+	}
+	if mob != desk {
+		var m string
+		switch mob {
+		case "everything":
+			m = i18n.T("channel_details", "On mobile devices, you’ll get notifications for every message")
+		case "nothing":
+			m = i18n.T("channel_details", "Notifications are off on mobile devices")
+		default:
+			if n.SuppressAtChannel {
+				m = i18n.T("channel_details", "On mobile devices, you’ll get notifications for @mentions, except for @here and @channel")
+			} else {
+				m = i18n.T("channel_details", "On mobile devices, you’ll get notifications for @mentions, including @here and @channel")
+			}
+		}
+		lines = append(lines, TipLine{Text: m, Subtitle: true})
+	}
+	return lines
+}
