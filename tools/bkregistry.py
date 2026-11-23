@@ -28,6 +28,21 @@ import re
 import sys
 
 RENDERABLE = re.compile(r'type:"([a-z_]+)",component:\(\)=>')
+# a registration whose type is a variable (`J="rich_text_file",ee=E({type:J,
+# component:()=>…})`: rich text's file element, namespaced so it doesn't
+# clobber the file block in the type-keyed map)
+RENDERABLE_VAR = re.compile(r'type:([A-Za-z_$][A-Za-z0-9_$]*),component:\(\)=>')
+
+
+def renderable_types(src):
+    out = set(RENDERABLE.findall(src))
+    for m in RENDERABLE_VAR.finditer(src):
+        before = src[max(0, m.start() - 4000):m.start()]
+        defs = re.findall(r'\b' + re.escape(m.group(1)) + r'="([a-z_]+)"', before)
+        if not defs:
+            raise SystemExit(f"renderable type variable {m.group(1)} at {m.start()}: no assignment found")
+        out.add(defs[-1])
+    return sorted(out)
 # slack.ts: `interface XBlock extends Block<'x'>`, `Element<'x'>`, and the
 # @slack/types names it re-exports
 TS_GENERIC = re.compile(r"(?:Block|Element)<('[a-z_]+'(?:\s*\|\s*'[a-z_]+')*)>")
@@ -69,7 +84,7 @@ def ts_types(path, names):
 def main():
     build, chunk, blocks_ts, elements_ts = sys.argv[1:5]
     src = open(chunk, encoding="utf-8", errors="replace").read()
-    renderables = sorted(set(RENDERABLE.findall(src)))
+    renderables = renderable_types(src)
     cells = re.search(r"function renderCellContent\(.{0,800}", src)
     cell_types = sorted(set(re.findall(r'case"([a-z_]+)"', cells.group(0)))) if cells else []
     charts = re.search(r'function isCartesianChart\(e\)\{return(.*?)\}function isSupportedChart\(e\)\{return(.*?)\}', src)

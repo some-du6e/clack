@@ -69,7 +69,11 @@ type DataTableHandler interface {
 type TableControl struct {
 	Table  *richtext.DataTable
 	Column int // "sort": the column header clicked
-	st     *tableState
+	// Elements is the element host of the view the table is in (its
+	// message's): the fullscreen view draws the action cells' buttons
+	// through it, so they send block_actions as the inline ones do
+	Elements Elements
+	st       *tableState
 }
 
 // tableState is useDataTableState's reducer state: the page, the sort and
@@ -133,10 +137,14 @@ func (c *TableControl) SetFilter(s string) {
 // inline table's sort and filter: initialSortState, initialFilterText).
 func NewTableControl(t *richtext.DataTable, from *TableControl) *TableControl {
 	st := &tableState{sortCol: -1}
-	if from != nil && from.st != nil {
-		st.sortCol, st.desc, st.filter = from.st.sortCol, from.st.desc, from.st.filter
+	c := &TableControl{Table: t, st: st}
+	if from != nil {
+		c.Elements = from.Elements
+		if from.st != nil {
+			st.sortCol, st.desc, st.filter = from.st.sortCol, from.st.desc, from.st.filter
+		}
 	}
-	return &TableControl{Table: t, st: st}
+	return c
 }
 
 // SetTableControl makes c the state of v's data_table t (the fullscreen
@@ -355,7 +363,7 @@ func (l *lay) dataTable(b *richtext.Block, x, y, w int) int {
 	if !l.opts.FillBlocks && !dt.Full {
 		ww = min(w, l.dp(800))
 	}
-	ctl := &TableControl{Table: dt, st: st}
+	ctl := &TableControl{Table: dt, st: st, Elements: l.opts.Elements}
 	yy := y
 	if !dt.Full {
 		yy += l.dtHeader(dt, ctl, x, yy, ww)

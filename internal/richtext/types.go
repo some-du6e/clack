@@ -353,6 +353,9 @@ type Attachment struct {
 	// author, MsgTS its ts.
 	MsgCard  bool
 	AuthorID string
+	// Embed: a message_embed block's card (messageembed.go: MessageEmbed's
+	// .container, margin 12px 0)
+	Embed bool
 
 	// Unfurl fields Slack's MessageAttachment reads (gantry-v2 shared boot
 	// async, 2026-11): ID is the attachment's id (chat.deleteAttachment's

@@ -144,6 +144,10 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 			return 0, 0, 0
 		}
 		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.AttachmentBlock: // a message_embed's card: .container__Ij6XE{margin:12px 0}
+		if b.Att != nil && b.Att.Embed {
+			return l.dp(12), l.dp(12), l.dp(12)
+		}
 	case richtext.DataTableBlock: // .dataTableBlockOuterContainer{margin:4px 0}; the errorFallback has none
 		if b.DataTable != nil && (b.DataTable.Err || b.DataTable.Full) {
 			return 0, 0, 0

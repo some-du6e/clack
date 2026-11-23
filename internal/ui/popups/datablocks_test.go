@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/layout"
+	"gioui.org/unit"
+
 	"github.com/some-du6e/clack/internal/chart"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -182,5 +185,37 @@ func TestDataTableMenus(t *testing.T) {
 	}
 	if got, want := dt.TSV(), "Name\tPoints\na\t3"; got != want {
 		t.Errorf("Copy table's TSV %q, want %q", got, want)
+	}
+}
+
+// stubElements is an element host the fullscreen view must draw with.
+type stubElements struct{ n *int }
+
+func (s stubElements) ElementsSize(bs []richtext.Button, maxW int, _ bool, _ unit.Metric) (image.Point, bool) {
+	return image.Pt(min(80, maxW), 28), false
+}
+func (s stubElements) LayoutElements(gtx layout.Context, _ []richtext.Button, _ bool) layout.Dimensions {
+	*s.n++
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+func (stubElements) ElementsVersion() uint32 { return 0 }
+
+// View {caption}'s table draws its action cells through the inline
+// table's element host, so they send block_actions.
+func TestDataTableFullscreenElements(t *testing.T) {
+	h := chartHost(t, true)
+	d := richtext.FromMessage(h.a.S, &slack.Message{TS: "1.0", Text: "t", Blocks: []byte(`[{"type":"data_table","block_id":"dtact","caption":"Tasks","rows":[[{"type":"raw_text","text":"Task"},{"type":"raw_text","text":"Action"}],[{"type":"raw_text","text":"a"},{"type":"action_cell","element":{"type":"button","action_id":"done_a","text":{"type":"plain_text","text":"Mark done"},"value":"a"}}]]}]`)})
+	if len(d.Blocks) != 1 || d.Blocks[0].DataTable == nil {
+		t.Fatalf("not a data_table: %+v", d.Blocks)
+	}
+	var drawn int
+	c := richview.NewTableControl(d.Blocks[0].DataTable, nil)
+	c.Elements = stubElements{&drawn}
+	m, v := newDataTableFull(h, c, false)
+	if m == nil || v == nil {
+		t.Fatal("no fullscreen view")
+	}
+	if _, ok := v.Options().Elements.(stubElements); !ok {
+		t.Fatalf("the fullscreen table's element host is %T, want the inline table's", v.Options().Elements)
 	}
 }

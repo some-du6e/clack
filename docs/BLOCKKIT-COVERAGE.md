@@ -48,6 +48,26 @@ Clack before: only types missing from the enum fell back. Known types it couldn'
 
 The elements inside child blocks and fallback payloads are live, as in Slack, where the surface's `onAction` reaches them (Container `yWQF` provides the blockKit context, and Callout's `a+Oj` inherits it). Blockkit keeps the tree richtext draws (`Block.Nested`: a container's or a callout's `child_blocks`, and `richtext.FallbackItems`). Its lookups and the view state walk that tree, so a nested button sends `block_actions` with its own block's id. In modals and App Home, the Surface is the Elements host of the richview that draws those blocks. One gap remains there: an input block nested in a container draws as a section with its element (no hint, no error line), and the submit's checks skip it.
 
+## The coverage guard
+
+`TestSlackBlockTypesHaveRenderers` (`internal/richtext/coverage_guard_test.go`) holds Clack to Slack's current list. Its data, `internal/richtext/testdata/slack_block_types.json`, is `tools/bkregistry.py`'s output for one client build (9f450b8ad3db, boot-shared `6f5a26389f15555d`): every type the bundle registers a SUI renderable for (109: blocks, elements, the rich_text pieces and their inline elements share one map; `rich_text_file` is registered through a variable), the cell types DataTableBlock's renderCellContent draws, the chart types isSupportedChart takes, and slack.ts's block and element types. The test fails when:
+
+- fallback.go's `messageRenderables` differs from the bundle's list (a new type would take the fallback chain though Slack draws it);
+- a type has no Clack renderer: a block or text object reaches the builder's "Slack draws it, Clack doesn't" path or the fallback card, an element doesn't become a Button, an inline element in a rich_text section reaches the unknown path, a data_table cell isn't drawn, a chart type isn't supported; unless `notDrawn` names it with a reason;
+- `notDrawn` names a type Clack draws now, or one Slack no longer names.
+
+After a bundle update: `python3 -B -I tools/bkregistry.py BUILD boot-shared.js blocks.ts elements.ts > internal/richtext/testdata/slack_block_types.json`, and the test names each new type.
+
+`notDrawn` (2026-11-23): `condition` and `fallback_canary`, which Slack has no renderable for (expanded first; always the fallback), and the types later parts will draw:
+
+| part | types |
+|---|---|
+| 2a (in progress) | contact_card, event, share_prompt, timeline |
+| 2b (sideways scrolling) | carousel (Slack's LSo8 scroller with its arrows: the account has no a11y_carousel) |
+| 2d (inline rich text) | _canvas_mention, _theme_install_button, attachment_mention, canvas_message_unfurl, canvas_user_mention, citation, folder_mention, salesforce_data_field, skill, tag, unknown, variable, work_object_mention, workflowtoken |
+| 2e (elements) | feedback_buttons, file_input, password, split_button |
+| 2f (blocks) | attachment_reference, auth_provider, canvas_mermaid, canvas_table, channel_section, channel_set, layout, mcp_app, message, page, prototype, related_automation_decorator, salesforce_record_card, search_top_results, share_skill, share_workflow |
+
 ## Use in the probe account's conversations
 
 Top-level blocks; "in attachments" counts attachment `blocks`:
@@ -97,7 +117,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | input | `h/Gw` InputBlock | full in modals and App Home; partial in messages (label + placeholder) | same | |
 | loading (slack.ts) | `KSQB` | absent | **full** | |
 | markdown | none in messages (server-translated) | Clack converts it itself | same | Slack's client would show the fallback card if one arrived untranslated. Kept, because the agent-thread fixture (Karim's report, 2026-11-12) stores one |
-| message_embed (slack.ts) | `ACXQ` MessageEmbed | absent | absent | |
+| message_embed (slack.ts) | boot-shared `ACXQ` MessageEmbed (props: `j3iH` getMessageAttachmentProps; build 9f450b8ad3db) | absent | **partial**: the message the client holds at channel/ts as a message unfurl card (its blocks without related_automation_decorator, an mcp_app as "This content is only available in the original conversation.", else its first attachment's blocks; its author, channel, thread context and files), margin 12px 0; nothing for a message the client doesn't hold (`richtext/messageembed_test.go`) | the card's link to the message (fromUrl needs the team's domain), the message's other attachments, a Slack Connect source team; an embed made before its message loaded (or since changed) stays as it was until its own message redraws |
 | plan | `5mjF` PlanBlock | full | full | (agent.go) |
 | rich_text | `N5ZY` · `EAqS` → `qaNC` RichTextRenderer | full | full | see rich_text below |
 | section | `bzDH` | full | full | |

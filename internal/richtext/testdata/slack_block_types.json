@@ -76,6 +76,7 @@
   "related_automation_decorator",
   "rich_text",
   "rich_text_divider",
+  "rich_text_file",
   "rich_text_header",
   "rich_text_input",
   "rich_text_list",

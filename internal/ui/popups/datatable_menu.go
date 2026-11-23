@@ -12,7 +12,9 @@ package popups
 //     and Clear Sort (danger);
 //   - View {caption}: DataTableFullscreenModal, the caption as its title,
 //     the filter, then every row (DataTableFullscreenVirtualized) with the
-//     inline table's sort and filter to start from.
+//     inline table's sort and filter to start from; its action cells'
+//     buttons are the message's live elements (the inline table's element
+//     host), so they send block_actions.
 //
 // Copy table puts convertTableBlockToTsv's text on the clipboard (Slack
 // adds a slack/block-kit flavor, the block for pasting into its composer,
@@ -114,10 +116,19 @@ func (d dtFullHandler) DataTableAction(act string, c *richview.TableControl, btn
 // inline table's sort and filter to start from (focus: the filter takes
 // the keyboard focus, Search table).
 func OpenDataTableFull(h Host, c *richview.TableControl, focus bool) {
+	m, _ := newDataTableFull(h, c, focus)
+	h.ShowOverlay(m)
+}
+
+// newDataTableFull is OpenDataTableFull's modal and its table's richview,
+// which draws the action cells' buttons through the inline table's
+// element host (they send block_actions, as DataTableFullscreenModal's
+// rows pass the table's onAction).
+func newDataTableFull(h Host, c *richview.TableControl, focus bool) (*Modal, *richview.View) {
 	t := *c.Table
 	t.Full = true
 	full := richview.NewTableControl(&t, c)
-	v := richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.DataTableBlock, BlockID: t.BlockID, DataTable: &t}}}, richview.Options{NoHoverCards: true})
+	v := richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.DataTableBlock, BlockID: t.BlockID, DataTable: &t}}}, richview.Options{NoHoverCards: true, Elements: c.Elements})
 	v.SetTableControl(&t, full)
 	var ed widget.Editor
 	ed.SingleLine = true
@@ -156,5 +167,5 @@ func OpenDataTableFull(h Host, c *richview.TableControl, focus bool) {
 				return v.Layout(gtx, st, dtFullHandler{topicHandler{h}})
 			}))
 	}})
-	h.ShowOverlay(m)
+	return m, v
 }

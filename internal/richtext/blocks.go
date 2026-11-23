@@ -43,7 +43,9 @@ type bk struct {
 	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	TeamID      string          `json:"team_id"`
-	Name        bkStr           `json:"name"` // emoji; auth_provider's is a text object
+	Channel     bkStr           `json:"channel"` // message_embed (messageembed.go)
+	TS          bkStr           `json:"ts"`      // message_embed
+	Name        bkStr           `json:"name"`    // emoji; auth_provider's is a text object
 	Unicode     string          `json:"unicode"`
 	SkinTone    int             `json:"skin_tone"`
 	Range       string          `json:"range"`
@@ -432,7 +434,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", badBlock:
 		return true
 	}
 	return false
@@ -592,6 +594,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.cardBlock(b))
 	case "data_table":
 		return append(out, c.dataTableBlock(b))
+	case "message_embed":
+		return c.messageEmbed(out, b)
 	case "data_visualization":
 		return append(out, c.dataVizBlock(b))
 	case "markdown":
