@@ -402,9 +402,12 @@ func TestNotifyNamesABlockMention(t *testing.T) {
 		asks := 0
 		fs.SetEdgeHook(func(method string, body map[string]json.RawMessage) (any, bool) {
 			if method == "edge/users/info" {
-				var up map[string]int
+				var up map[string]int64
 				_ = json.Unmarshal(body["updated_ids"], &up)
-				if _, ok := up[mentioned]; ok {
+				// at 0: asked for as a member the store doesn't hold (a
+				// refetch of the copy it holds sends its updated stamp:
+				// core/member_fresh.go)
+				if st, ok := up[mentioned]; ok && st == 0 {
 					mu.Lock()
 					asks++
 					mu.Unlock()

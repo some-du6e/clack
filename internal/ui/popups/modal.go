@@ -218,6 +218,14 @@ type ModalOpts struct {
 	// Height fixes the card's height in dp (within the window); the body
 	// takes what the header and footer leave, scrolling past it.
 	Height float32
+	// MaxHeight caps the card's height in dp (.p-add_emoji_dialog's
+	// max-height: 700px); the body scrolls past it.
+	MaxHeight float32
+	// Prepare runs first in every frame, before the modal measures its
+	// header, body and footer: an owner whose views change the title,
+	// header or buttons (the Add emoji dialog's tabs and pack details)
+	// handles its clicks and sets them there, so the frame draws them.
+	Prepare func(gtx layout.Context)
 	// Contents paints the body and the footer with .p-about_modal__contents'
 	// background, rgb(var(--sk_foreground_min_solid)).
 	Contents bool
@@ -246,7 +254,10 @@ type Modal struct {
 	close widget.Clickable
 	list  layout.List
 	rect  image.Rectangle
-	focus bool
+	// bodyOrg is the body's origin in window coordinates as last drawn,
+	// its scroll taken off (tests hit the body's widgets through it)
+	bodyOrg image.Point
+	focus   bool
 	// keyboard focus (focus.go)
 	ring   bool      // the focused button shows Slack's focus ring
 	prev   event.Tag // focused before the modal opened (refocus)
@@ -415,6 +426,12 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	if m.done {
 		return layout.Dimensions{}
 	}
+	if m.o.Prepare != nil {
+		m.o.Prepare(gtx)
+		if m.done {
+			return layout.Dimensions{}
+		}
+	}
 	// backdrop
 	if o := m.scrimOpacity(gtx); o >= 1 {
 		fill(gtx, image.Rectangle{Max: win}, cl.Backdrop)
@@ -521,6 +538,15 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	if m.o.Height > 0 { // a fixed card: the body has what's left
 		fixed := min(dp(gtx, m.o.Height), win.Y-2*dp(gtx, 28))
 		maxBody = max(fixed-heroH-headH-footH, dp(gtx, 60))
+	}
+	if m.o.MaxHeight > 0 && m.o.Height == 0 {
+		pad := 0
+		if len(m.o.Buttons) == 0 && !m.o.Flush {
+			pad = dp(gtx, 28) // the bottom padding a footer-less card adds
+		}
+		if c := dp(gtx, m.o.MaxHeight) - heroH - headH - footH - pad; c < maxBody {
+			maxBody = max(c, dp(gtx, 60))
+		}
 	}
 	scroll := bodyH > maxBody
 	if scroll || m.o.Height > 0 {
@@ -656,15 +682,19 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				if m.o.Body != nil {
 					at(gtx, pos.Add(image.Pt(bodyX, headH)), func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints = layout.Constraints{Min: image.Pt(bodyW, 0), Max: image.Pt(bodyW, bodyH)}
+						m.bodyOrg = m.rect.Min.Add(pos).Add(image.Pt(bodyX, headH))
 						if !scroll {
 							gtx.Constraints.Min.X = 0
 							return m.o.Body(gtx)
 						}
 						defer clipRRect(gtx, image.Rect(0, 0, bodyW, bodyH), 0).Pop()
-						return m.list.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+						org := m.bodyOrg
+						d := m.list.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 							gtx.Constraints.Min.X = 0
 							return m.o.Body(gtx)
 						})
+						m.bodyOrg = org.Sub(image.Pt(0, m.list.Position.Offset))
+						return d
 					})
 				}
 				content.EndAt(gtx, image.Rect(pos.X+bodyX, pos.Y+headH, pos.X+bodyX+bodyW, pos.Y+headH+bodyH))

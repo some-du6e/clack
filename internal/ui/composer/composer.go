@@ -134,6 +134,7 @@ type Composer struct {
 	lastTyping time.Time
 	typingOn   bool // typing reported since the composer was last empty
 	lastVer    uint64
+	userEdits  uint64 // the text changes the user made (Edits)
 	emojiVer   uint64 // custom emoji set version the doc was last scanned at
 	// charsOverLimit at limitVer (overLimit: counted once per change)
 	limitVer  uint64
@@ -424,6 +425,7 @@ func (c *Composer) init() {
 	c.ed.Snippets = !c.noDraft()      // MessageInput's enableSnippetCreation; not the edit composer
 	c.ed.CmdKCoachmark = !c.noDraft() // MessageInput's onCmdKWhenSelected; the edit composer (cjbg) has none
 	c.bindSlugs()
+	c.bindLinkEditing() // link_menu.go, link_popover.go
 	if c.api.a != nil {
 		warmEmoji()
 		c.ed.emoji = c.lookupEmoji
@@ -545,7 +547,9 @@ func (c *Composer) syncEmojiSet() {
 	}
 	if v := c.api.emojiVersion(); v != c.emojiVer {
 		c.emojiVer = v
+		pre := c.ed.Version()
 		if c.ed.ConvertEmoji() {
+			c.ownCommit(pre) // the set landing, not the user's edit
 			c.h.Invalidate()
 		}
 	}
@@ -846,6 +850,9 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.UploadBlocked = c.api.a.SlackConnectFileSharingBlocked(c.ch)
 	}
 	st.PlusOpen = c.att.plusOpen
+	if st.Mode == modeChannel && c.api.a != nil && !c.InThreadsView {
+		st.EmojiBadge = c.api.a.EmojiPackInputBadge() // MessagePaneInput: enableEmojiButtonBadge
+	}
 	if cv, ok := c.api.conv(c.ch); ok {
 		st.ChannelName = cv.Name
 		switch cv.Kind {
@@ -975,12 +982,46 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 	}
 }
 
+// ownCommit takes in a change the composer made to the text itself, not
+// the user: a pasted link's slug landing (applySlugs), shortcodes
+// converting once the custom emoji set is in (syncEmojiSet). pre is the
+// editor's version before it. The draft follows the text, but the change
+// moves lastVer the way restore and clearForSend do, so it counts as no
+// edit of the user's (Edits: the ui root reveals a scrolled-away reply
+// box only for theirs) and starts no typing. A user edit still waiting for
+// changed() keeps it there: the two count as the user's.
+func (c *Composer) ownCommit(pre uint64) {
+	v := c.ed.Version()
+	if pre != c.lastVer || v == pre {
+		return
+	}
+	c.lastVer = v
+	if c.field != nil {
+		if c.field.OnChange != nil {
+			c.field.OnChange()
+		}
+		return
+	}
+	if c.edit != nil {
+		return
+	}
+	c.saveDraft()
+	c.syncDraftSoon()
+	c.liveDraftSoon()
+}
+
 func (c *Composer) changed() {
 	v := c.ed.Version()
 	if v == c.lastVer {
 		return
 	}
 	c.lastVer = v
+	if c.api.a != nil {
+		// ConditionalFetchManager.pauseRefetch: a keypress anywhere holds
+		// the members' refetches back for 2 s (core/member_fresh.go)
+		c.api.a.MemberRefetchTyping()
+	}
+	c.userEdits++
 	if c.field != nil {
 		if c.field.OnChange != nil {
 			c.field.OnChange()
@@ -1030,6 +1071,9 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		case caAttach:
 			c.plusClick(a)
 		case caEmoji:
+			if c.api.a != nil {
+				c.api.a.ClearEmojiPackInputBadge() // removeEmojiCollectionInputBadge
+			}
 			c.openEmojiPicker(a.Anchor) // gifs.go: picked GIFs go into the draft
 		case caMention:
 			c.mentionTrigger()
@@ -1145,40 +1189,112 @@ func (c *Composer) mentionTrigger() {
 	c.ed.Replace(start, hi, s)
 }
 
-// openLink is openTextyLinkFormBasedOnSelection (boot-shared NTqE): the
-// dialog's Text is editable unless the range holds an embed (emoji,
-// mention: "\uE000" in getContentsForRange's text) or, for a new link,
-// a line break; then ComposerLinkModal draws the range's rich text and
-// Save links it in place (saveLink's retain branch: didTextChange false).
+// openLink is openTextyLinkFormBasedOnSelection (boot-shared +BPJ, build
+// 83aff18a1847), Ctrl+Shift+U and the link button. The selection is
+// trimmed of leading and trailing punctuation, blanks and embeds
+// (getTrimLength); left with nothing but the caret in a link (its format
+// at the caret has one), the edit-link popover opens over that link (the
+// link op there, adjustSelectionToCoverLink) and the selection stays.
+// Otherwise the link dialog opens over the trimmed range: its text, the
+// URL the whole selection is linked to (getFormat(range).link), the Text
+// editable unless the range holds an embed or a line break.
 func (c *Composer) openLink() {
 	sl, sh := c.ed.Selection()
-	lo, hi, url := c.ed.LinkAt()
+	if sl > sh {
+		sl, sh = sh, sl
+	}
 	d := c.ed.Doc()
-	raw := d.String(lo, hi)
-	txt := raw
-	editing := sl == sh && url != "" // the caret in a link: the edit path
-	editable := !strings.ContainsRune(raw, ObjRune) && (editing || !strings.ContainsRune(raw, '\n'))
-	if strings.ContainsRune(txt, ObjRune) {
-		txt = d.Slice(lo, hi).Text()
+	selLink := d.rangeLink(sl, sh)
+	lo, hi := sl, sh
+	h := []rune(d.String(lo, hi))
+	if f := linkTrimLength(h, false); f > 0 {
+		h, lo = h[f:], lo+f
+		hi = lo + len(h)
 	}
-	if lo != hi {
-		c.ed.SetSelection(lo, hi)
+	if y := linkTrimLength(h, true); y > 0 {
+		h = h[:len(h)-y]
+		hi = lo + len(h)
 	}
-	save := func(text, url string) {
-		c.ed.SetLink(text, url)
-		c.Focus()
-	}
-	if editable || lo == hi {
-		openLinkDialog(c.h, txt, url, save, c.Focus)
+	if lo == hi && selLink != "" {
+		// the <a> the leaf at the caret is in (getLeaf, closest("a"))
+		leaf := lo - 1
+		if leaf < 0 || leaf < d.Len() && d.Runes[leaf] == '\n' {
+			leaf = lo
+		}
+		if leaf < 0 || leaf >= d.Len() || d.Attrs[leaf].Link == "" {
+			return
+		}
+		alo, ahi := d.linkElemRange(leaf)
+		glo, ghi := d.coverLink(lo, d.formatLinkAt(lo) != "")
+		t := d.String(glo, ghi)
+		c.ed.SetSelection(sl, sh)
+		c.openEditLinkPopover(alo, ahi, t, selLink, sl, sh, glo, ghi, !containsObj(t))
 		return
 	}
-	var r richtext.Resolver
-	if c.api.a != nil && c.api.a.S != nil {
-		r = c.api.resolver()
+	t := string(h)
+	c.openLinkForm(linkForm{lo: lo, hi: hi, text: t, url: selLink,
+		editable: !strings.ContainsRune(t, '\n') && !containsObj(t)})
+}
+
+// rangeLink is getFormat(range).link where it is one URL: every text rune
+// in [lo, hi) linked to it (Quill keeps a format only if every leaf has
+// it, and an embed has none); the caret's format when the range is empty.
+func (d *Doc) rangeLink(lo, hi int) string {
+	if lo == hi {
+		return d.formatLinkAt(lo)
 	}
-	// the text handed back is the range's own runes, so SetLink links
-	// them where they are
-	openLinkDialogRich(c.h, raw, url, linkPreview(r, d.Slice(lo, hi)), save, c.Focus)
+	url := ""
+	for i := lo; i < hi && i < d.Len(); i++ {
+		if d.Runes[i] == '\n' {
+			continue
+		}
+		a := d.Attrs[i]
+		if a.Atom != nil || a.Link == "" || url != "" && a.Link != url {
+			return ""
+		}
+		url = a.Link
+	}
+	return url
+}
+
+// openLinkForm is openTextyLinkFormModal: ComposerLinkModal over f's
+// range, applied when it's submitted (saveLink, insertPlainText,
+// removeLink); the editor focused again either way (onClose).
+func (c *Composer) openLinkForm(f linkForm) {
+	d := c.ed.Doc()
+	r := c.ed.liveRange(f.lo, f.hi)
+	ver, ok := c.ed.Version(), true
+	f.alive = func() bool {
+		if v := c.ed.Version(); v != ver {
+			ver = v
+			_, _, ok = c.ed.resolve(r)
+		}
+		return ok
+	}
+	if !f.editable && f.preview == nil && f.hi > f.lo {
+		// initialBlocks: the range's rich text, drawn for the Text field
+		var r richtext.Resolver
+		if c.api.a != nil && c.api.a.S != nil {
+			r = c.api.resolver()
+		}
+		f.preview = linkPreview(r, d.Slice(f.lo, f.hi))
+	}
+	openLinkDialog(c.h, f, func(res linkResult) {
+		lo, hi, ok := c.ed.resolve(r) // the range as it is now
+		if !ok {
+			c.Focus()
+			return
+		}
+		switch res.kind {
+		case linkSaved:
+			c.ed.saveLink(lo, hi, res.text, res.url, res.didTextChange, f.editingSlug)
+		case linkPlain:
+			c.ed.insertPlainLinkText(lo, hi, res.text)
+		case linkRemoved:
+			c.ed.removeFormLink(lo, hi, f.editingSlug)
+		}
+		c.Focus()
+	}, c.Focus)
 }
 
 func (c *Composer) paragraphMenu(anchor image.Rectangle) {
@@ -2075,7 +2191,7 @@ func (a *attachments) takeForEdit() []editFile {
 			c.pf.Title = c.title
 			out = append(out, editFile{pf: c.pf})
 		default:
-			out = append(out, editFile{raw: &core.UploadFile{Name: c.name, Title: c.title, Data: c.data}})
+			out = append(out, editFile{raw: &core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype(), Type: c.mime()}})
 		}
 	}
 	a.chips, a.total = nil, 0
@@ -2291,12 +2407,30 @@ func (c *Composer) DrawnLive(gtx layout.Context) bool { return DrawnLive(gtx, c.
 // up: Escape is the popup's then, not the thread pane's.
 func (c *Composer) PopupOpen() bool { return c.ac != nil && c.ac.Open() }
 
+// DismissPopup closes the autocomplete as Escape does, until its token
+// changes: the ui root's thread reply box scrolled out of its list's
+// view, which the list drawn deferred and unclipped would float over.
+func (c *Composer) DismissPopup() {
+	if c.ac != nil && c.ac.Open() {
+		c.ac.Dismiss()
+		c.h.Invalidate()
+	}
+}
+
 // TypingLine is the typing indicator's text under the composer as last
 // laid out ("" none; tests).
 func (c *Composer) TypingLine() string { return c.ui.cur.Typing }
 
 // DocText is the composer's text as plain characters (tests).
 func (c *Composer) DocText() string { return c.ed.Doc().Text() }
+
+// Edits counts the changes the user made to the text: typing, a paste, a
+// picker's insert, an undo (the editor's EvChange), not a draft put in,
+// the box emptied after a send, or the composer's own changes (ownCommit:
+// a slug landing, shortcodes converting). The ui root reveals a thread's reply
+// box scrolled out of view when it moves, as Chromium scrolls a focused
+// editor's caret into view after an edit.
+func (c *Composer) Edits() uint64 { return c.userEdits }
 
 // SendRect and ScheduleRect are the send split button's two halves in
 // window coordinates as of the last frame, empty when not drawn (tests

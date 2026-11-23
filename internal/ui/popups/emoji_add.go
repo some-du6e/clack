@@ -88,6 +88,7 @@ type emojiAddModal struct {
 
 	tab    int
 	tabBtn [2]widget.Clickable
+	tabR   [2]image.Rectangle // as last drawn, in the header under the title bar (tabsBelow)
 
 	words  []emojiAddWord
 	wordM  unit.Metric
@@ -110,12 +111,21 @@ type emojiAddModal struct {
 	name     string
 	taken    map[string]struct{} // nil until built
 	saving   bool
+
+	packs packsState // the Emoji packs tab (emoji_packs.go)
 }
 
-// NewAddEmojiModal builds Slack's "Add emoji" dialog (custom emoji upload).
-// Show it with h.ShowOverlay.
-func NewAddEmojiModal(h Host) *Modal {
-	s := &emojiAddModal{h: h}
+// NewAddEmojiModal builds Slack's "Add emoji" dialog (AddEmojiDialog with
+// showEmojiPacks): its Custom emoji tab (an upload) and its Emoji packs
+// tab (emoji_packs.go). Show it with h.ShowOverlay.
+func NewAddEmojiModal(h Host) *Modal { return newEmojiAdd(h, 0).modal }
+
+// NewAddEmojiPacksModal is the dialog opened on its Emoji packs tab
+// (initialTab PACKS: the picker's emoji pack call to action).
+func NewAddEmojiPacksModal(h Host) *Modal { return newEmojiAdd(h, 1).modal }
+
+func newEmojiAdd(h Host, tab int) *emojiAddModal {
+	s := &emojiAddModal{h: h, tab: tab}
 	s.ed.SingleLine = true
 	s.ed.Submit = true
 	s.ed.MaxLen = emojiAddMaxName
@@ -138,6 +148,11 @@ func NewAddEmojiModal(h Host) *Modal {
 	s.modal = NewModal(h, ModalOpts{
 		Title: nsEmojiList.T("Add emoji"),
 		Body:  s.layout,
+		// .p-add_emoji_dialog: max-height 700px, the tabs in the header
+		MaxHeight:      700,
+		HeaderBelow:    s.tabsBelow,
+		HeaderBelowPad: 16,
+		Prepare:        s.prepare,
 		Buttons: []*ModalButton{
 			{Label: nsEmojiList.T("Cancel"), Kind: BtnOutline},
 			{Label: nsEmojiList.T("Save"), Kind: BtnPrimary, Enabled: s.canSave, Do: func() bool {
@@ -146,8 +161,9 @@ func NewAddEmojiModal(h Host) *Modal {
 			}},
 		},
 	})
+	s.initPacks()
 	s.loadTaken()
-	return s.modal
+	return s
 }
 
 func emojiAddWords(team string, bold bool) []emojiAddWord {
@@ -499,11 +515,6 @@ func (s *emojiAddModal) usePath() {
 // ---- layout ----
 
 func (s *emojiAddModal) events(gtx layout.Context) {
-	for i := range s.tabBtn {
-		if s.tabBtn[i].Clicked(gtx) {
-			s.tab = i
-		}
-	}
 	if s.upload.Clicked(gtx) {
 		s.pick()
 	}
@@ -560,15 +571,15 @@ func (s *emojiAddModal) layout(gtx layout.Context) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	ind := dp(gtx, 16)
 	lh := dp(gtx, 22)
-	s.tabs(gtx, th, cl, w)
-	y := dp(gtx, 36)
-	if s.tab == 1 {
-		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, "Emoji packs aren’t available in "+appName+" yet.", 0)
-		})
-		return layout.Dimensions{Size: image.Pt(w, y+d.Size.Y+dp(gtx, 28))}
+	// the tabs are the header's (tabsBelow): the body starts under their
+	// 16px margin
+	switch {
+	case s.packs.detail != nil:
+		return s.detailsLayout(gtx, th, w)
+	case s.tab == 1:
+		return s.packsLayout(gtx, th, cl, w)
 	}
+	y := 0
 	y += s.intro(gtx, th, cl, w, y)
 	y += dp(gtx, 25)
 
@@ -629,8 +640,9 @@ func (s *emojiAddModal) layout(gtx layout.Context) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
-// tabs draws the tab strip from y -12 to 20 (it rides up into the
-// header's bottom padding, as in Slack) and the edge-to-edge rule.
+// tabs draws the tab strip from y -12 to 20 (it rides up into the title
+// bar's bottom padding, as in Slack) and the edge-to-edge rule, in the
+// header under the title bar.
 func (s *emojiAddModal) tabs(gtx layout.Context, th *theme.Theme, cl *Colors, w int) {
 	padX := dp(gtx, 28)
 	fill(gtx, image.Rect(-padX, dp(gtx, 19), w+padX, dp(gtx, 19)+1), cl.Divider)
@@ -643,6 +655,7 @@ func (s *emojiAddModal) tabs(gtx layout.Context, th *theme.Theme, cl *Colors, w 
 		if active || s.tabBtn[i].Hovered() {
 			col = cl.Fg
 		}
+		s.tabR[i] = image.Rect(x, -dp(gtx, 12), x+tw, -dp(gtx, 12)+bandH)
 		at(gtx, image.Pt(x, -dp(gtx, 12)), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(image.Pt(tw, bandH))
 			return clickBox(gtx, &s.tabBtn[i], nil, func(gtx layout.Context) layout.Dimensions {

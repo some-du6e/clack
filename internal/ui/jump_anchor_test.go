@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -421,14 +422,14 @@ func TestJumpWindowEndStaysPut(t *testing.T) {
 	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
 	e.a.Navigate("c/" + ch + "/m/" + target)
 	e.waitDrawn(t, "the old message, highlighted", 30*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return lit(rows, target) })
-	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+	var held atomic.Int32 // the newer pages the hook held (recordCalls replaced it once: none)
+	calls := e.recordCallsThen(func(method string, f url.Values) (any, bool) {
 		if method == "conversations.history" && f.Get("channel") == ch && f.Get("oldest") != "" && f.Get("latest") == "" {
+			held.Add(1)
 			time.Sleep(400 * time.Millisecond) // the newer page, a moment late
 		}
 		return nil, false
-	})
-	t.Cleanup(func() { e.fs.SetHook(nil) })
-	calls := e.recordCalls("conversations.history")
+	}, "conversations.history")
 	newer := func() int {
 		k := 0
 		for _, c := range calls.of("conversations.history", ch, "oldest", "latest") {
@@ -452,6 +453,9 @@ func TestJumpWindowEndStaysPut(t *testing.T) {
 		t.Fatal("nothing drawn at the window's end")
 	}
 	last := rows[len(rows)-1]
+	if held.Load() == 0 {
+		t.Fatal("the newer page wasn't held: it may land before the reader's place is read")
+	}
 	e.settle(3 * time.Second) // the page lands; no input
 	y, ok := topOf(e.paneRows("", ch, ""), last.TS)
 	if !ok || y != last.Top {
@@ -483,14 +487,14 @@ func TestJumpWindowLastPageStaysPut(t *testing.T) {
 	if cv := e.channelView(ch); cv == nil || !cv.InWindow() {
 		t.Fatal("the jump 90 back didn't show a window short of the newest messages")
 	}
-	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+	var held atomic.Int32 // the newer pages the hook held (recordCalls replaced it once: none)
+	calls := e.recordCallsThen(func(method string, f url.Values) (any, bool) {
 		if method == "conversations.history" && f.Get("channel") == ch && f.Get("oldest") != "" && f.Get("latest") == "" {
+			held.Add(1)
 			time.Sleep(300 * time.Millisecond) // the newer page, a moment late
 		}
 		return nil, false
-	})
-	t.Cleanup(func() { e.fs.SetHook(nil) })
-	calls := e.recordCalls("conversations.history")
+	}, "conversations.history")
 	newer := func() int {
 		k := 0
 		for _, c := range calls.of("conversations.history", ch, "oldest", "latest") {
@@ -514,6 +518,9 @@ func TestJumpWindowLastPageStaysPut(t *testing.T) {
 		t.Fatal("nothing drawn at the window's end")
 	}
 	last := rows[len(rows)-1]
+	if held.Load() == 0 {
+		t.Fatal("the newer page wasn't held: it may land before the reader's place is read")
+	}
 	e.settle(3 * time.Second) // the page lands and meets the newest messages; no input
 	rows = e.paneRows("", ch, "")
 	if y, ok := topOf(rows, last.TS); !ok || y != last.Top {

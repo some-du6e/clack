@@ -161,7 +161,7 @@ func (v *SearchView) srCompactBody(m *core.Message) []richtext.Block {
 // srRichOf is card i's views, built again when its message, the plugin
 // text, the query or its expanded state changes.
 func (v *SearchView) srRichOf(i int) *srCardRich {
-	c := &v.cards[i]
+	c := v.cards[i]
 	m := &v.msgs[i]
 	terms := v.q.Highlights()
 	key := m.Channel + "/" + m.TS + "\x00" + m.EditedTS + "\x00" + c.ovText + "\x00" + strings.Join(terms, "\x01") +
@@ -248,7 +248,7 @@ func (v *SearchView) srRichStyle(th *theme.Theme) *richview.Style {
 // srRichMeasure lays out card i's body and extras bw wide (recorded, not
 // yet drawn) and works out the clamps.
 func (v *SearchView) srRichMeasure(gtx layout.Context, th *theme.Theme, i, bw, lh int) srRichParts {
-	c := &v.cards[i]
+	c := v.cards[i]
 	r := v.srRichOf(i)
 	st := v.srRichStyle(th)
 	hd := srCardHandler{srWOHandler{v}, i}
@@ -372,6 +372,20 @@ func (h srCardHandler) PlainClick() {
 	m := h.v.msgs[h.i]
 	RecordRecentConversation(m.Channel)
 	openResult(h.v.h, m)
+}
+
+// ChartAction is a data_visualization block's More actions on the card:
+// its menu.
+func (h srCardHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
+	if mn := NewChartMenu(h.v.h, ActionAnchor(btn, window), dv); mn != nil {
+		h.v.h.ShowOverlay(mn)
+	}
+}
+
+// DataTableAction is a data_table's header button or column header on the
+// card.
+func (h srCardHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
+	DataTableAction(h.v.h, act, c, ActionAnchor(btn, c.Window))
 }
 
 func (h srCardHandler) OpenFile(f *richtext.File) {

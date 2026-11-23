@@ -139,6 +139,16 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(8), l.dp(8), l.dp(8)
 	case richtext.CardBlock: // .card{margin:8px 0}, kept on the first block
 		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.DataVizBlock: // .scrollContainer{margin:8px 0}; the errorFallback has none
+		if b.DataViz != nil && b.DataViz.Err {
+			return 0, 0, 0
+		}
+		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.DataTableBlock: // .dataTableBlockOuterContainer{margin:4px 0}; the errorFallback has none
+		if b.DataTable != nil && (b.DataTable.Err || b.DataTable.Full) {
+			return 0, 0, 0
+		}
+		return l.dp(4), l.dp(4), l.dp(4)
 	case richtext.ContainerBlock: // .containerBlock{margin-top:16px;margin-bottom:8px}, kept on the first block
 		return l.dp(16), l.dp(16), l.dp(8)
 	}
@@ -345,7 +355,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	}
 	editedDone := false
 	var gal []*richtext.File
-	if top && len(bs) > 0 && (bs[0].Kit || richMargined(bs[0].Kind)) {
+	if top && !l.opts.NoOuterMargins && len(bs) > 0 && (bs[0].Kit || richMargined(bs[0].Kind)) {
 		_, first, _ := l.margins(&bs[0])
 		y += first
 	}
@@ -486,7 +496,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		h, _ := l.flow(x, y, w, &fs)
 		y += h
 	}
-	if top && len(bs) > 0 && (bs[len(bs)-1].Kit || richMargined(bs[len(bs)-1].Kind)) && !(editedDone && editedAfter == len(bs)-1) {
+	if top && !l.opts.NoOuterMargins && len(bs) > 0 && (bs[len(bs)-1].Kit || richMargined(bs[len(bs)-1].Kind)) && !(editedDone && editedAfter == len(bs)-1) {
 		_, _, bottom := l.margins(&bs[len(bs)-1])
 		y += bottom
 	}
@@ -724,6 +734,12 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 
 	case richtext.CardBlock:
 		return l.card(b.Card, x, y, w)
+
+	case richtext.DataVizBlock:
+		return l.dataViz(b, x, y, w)
+
+	case richtext.DataTableBlock:
+		return l.dataTable(b, x, y, w)
 
 	case richtext.Table:
 		return l.table(b, x, y, w)
@@ -1500,7 +1516,7 @@ func fitSize(iw, ih, maxW, maxH int, l *lay) (int, int) {
 func (l *lay) table(b *richtext.Block, x, y, w int) int {
 	p := &l.st.Palette
 	rows := b.Rows
-	preview := b.Kit && len(rows) > 10
+	preview := b.Kit && !b.Whole && len(rows) > 10
 	if preview {
 		rows = rows[:10]
 	}

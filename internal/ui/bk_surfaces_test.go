@@ -182,6 +182,20 @@ func TestBlockKitSurfaces(t *testing.T) {
 	blockkit.CloseModal(a)
 	e.until("the inspect modal closed", 10*time.Second, func() bool { _, open := blockkit.OpenModal(a); return !open })
 
+	// a stretchy emoji app's modal (Karim, 2026-11-22): its preview's
+	// custom emoji tiles touch (richview's TestStretchyEmojiNoSeam), its
+	// blocks spaced as Slack's modal wrappers space them (blockkit's
+	// TestModalRhythmLikeSlack), the checkboxes on a row of their own
+	stretchy := core.AppShortcut{ActionID: "SURFA7", AppID: fakeslack.AppAppID, AppName: "Deploy Bot", Name: "Stretchy text", Type: "global_action"}
+	blockkit.RunShortcut(a, stretchy, ch, "")
+	if m := modal("the stretchy modal", func(m blockkit.ModalInfo) bool { return m.ViewID == fakeslack.SurfStretchyView }); m.Title != "Stretchy text" || m.Close != "Done" {
+		t.Errorf("stretchy modal: %+v", m)
+	}
+	e.settle(1500 * time.Millisecond) // the tiles load
+	shots("bk-surfaces-modal-stretchy")
+	blockkit.CloseModal(a)
+	e.until("the stretchy modal closed", 10*time.Second, func() bool { _, open := blockkit.OpenModal(a); return !open })
+
 	// an ephemeral message: "Only visible to you"
 	eph := map[string]any{"type": "message", "channel": ch, "ts": "1762515500.000100", "user": fakeslack.SlackbotID, "is_ephemeral": true,
 		"text": "Only you can see this synthetic note.", "blocks": []any{}}

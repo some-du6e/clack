@@ -161,7 +161,7 @@ func (e *Editor) slugCandidates(lo, hi int) []rtURLMatch {
 	rs := make([]rune, hi-lo)
 	for i := range rs {
 		a := d.Attrs[lo+i]
-		if a.Atom != nil || a.Style&Code != 0 {
+		if a.Atom != nil || a.Style&(Code|Unlink) != 0 {
 			continue
 		}
 		rs[i] = d.Runes[lo+i]
@@ -301,7 +301,9 @@ func (c *Composer) bindSlugs() {
 						atoms[u] = at
 					}
 				}
+				pre := c.ed.Version()
 				c.ed.applySlugs(atoms, urls)
+				c.ownCommit(pre) // chat.slugifyUrl's answer, not the user's edit
 				c.h.Invalidate()
 			})
 		}()

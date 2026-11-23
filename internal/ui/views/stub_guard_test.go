@@ -42,17 +42,16 @@ func TestNoUnsupportedToast(t *testing.T) {
 }
 
 // TestNoNotYetAvailable: no page under internal/ui says a feature "isn’t
-// available in Clack yet" (Directories' External and Invitations were the
-// last such pages; both are Slack's hub now). Emoji packs (popups) is the
-// one known page left, listed here so a new one fails.
+// available in Clack yet" (Directories' External and Invitations and the
+// Add emoji dialog's Emoji packs were the last such pages; all three are
+// Slack's now), with no exceptions.
 func TestNoNotYetAvailable(t *testing.T) {
-	known := map[string]bool{filepath.Join("..", "popups", "emoji_add.go"): true}
 	root := filepath.Join("..")
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") || known[p] {
+		if d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 			return nil
 		}
 		b, err := os.ReadFile(p)

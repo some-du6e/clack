@@ -542,12 +542,20 @@ type savedRaw struct {
 	DateDue       int64  `json:"date_due"`
 	DateCompleted int64  `json:"date_completed"`
 	IsArchived    bool   `json:"is_archived"`
+	// a list record's, a canvas section's and a list field's parts of the
+	// item's key (getIdForSavedItem), and a reminder's or a section's
+	// description (a Later reminder's text: getSavedReminderContent)
+	RecordID    string `json:"record_id"`
+	SectionID   string `json:"section_id"`
+	ColumnID    string `json:"column_id"`
+	Description string `json:"description"`
 }
 
 func savedItemOf(it *savedRaw) SavedItem {
 	v := SavedItem{ItemID: it.ItemID, ItemType: it.ItemType, TS: it.TS, State: firstNonEmpty(it.TodoState, it.State),
 		TodoState: it.TodoState, Progress: it.State, DateCreated: it.DateCreated, DateDue: it.DateDue,
-		DateCompleted: it.DateCompleted, Archived: it.IsArchived}
+		DateCompleted: it.DateCompleted, Archived: it.IsArchived,
+		RecordID: it.RecordID, SectionID: it.SectionID, ColumnID: it.ColumnID, Description: it.Description}
 	if it.ItemType == "message" {
 		v.Channel = it.ItemID
 	}
@@ -730,15 +738,26 @@ func (a *App) noteSavedEvent(typ string, raw json.RawMessage) SavedItem {
 }
 
 // announceSaved is a saved event's message lookup and its "saved" event
-// (off the event pump, in order with the saved events before it).
+// (off the event pump, in order with the saved events before it). A
+// saved_due is a Later reminder coming due (handleSavedDue, boot-render):
+// the item is held and its message looked up as for any saved event, and
+// its "saved" event (Name "due") is the one the UI notifies from
+// (shouldShowNotificationForSavedItem, ui/notify_saved.go).
 func (a *App) announceSaved(ctx context.Context, typ string, raw json.RawMessage, it SavedItem) {
+	if typ == "saved_due" && it.Channel != "" {
+		// handleSavedDue looks the conversation up before the message and
+		// before shouldShowNotificationForSavedItem asks for it (channelIds:
+		// [itemId], reason "handleSavedDue"): one nothing looked up this
+		// session (a channel the viewer isn't in) was skipped (3)
+		a.ResolveConv(ctx, it.Channel)
+	}
 	if typ != "saved_deleted" && it.Channel != "" {
 		got := a.hydrate(ctx, map[string][]string{it.Channel: {it.TS}})
 		if m, ok := got[savedKey(it.Channel, it.TS)]; ok {
 			it.Msg = a.messagePtr(it.Channel, &m)
 		}
 	}
-	name := map[string]string{"saved_added": "add", "saved_updated": "update", "saved_deleted": "delete"}[typ]
+	name := map[string]string{"saved_added": "add", "saved_updated": "update", "saved_deleted": "delete", "saved_due": "due"}[typ]
 	a.emit(Event{Type: "saved", Name: name, Channel: it.Channel, TS: it.TS, Saved: &it, Raw: raw})
 }
 
