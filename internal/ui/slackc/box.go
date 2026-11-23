@@ -81,8 +81,13 @@ type box struct {
 	cls    []string
 	// slotOwn: the Slot behind the "@" box draws its own box (Slot.OwnBox)
 	slotOwn bool
-	nprops  Props     // n.P plus "children" (the rendered children) for natives
-	rctx    renderCtx // curRender while this native draws
+	// none: an "@" host that renders no element of its own in Slack
+	// (RegisterHostNoElement: Tooltip): selectors see through it; tip is
+	// the hidden span Slack's puts after its child
+	none   bool
+	tip    *tipSpanEl
+	nprops Props     // n.P plus "children" (the rendered children) for natives
+	rctx   renderCtx // curRender while this native draws
 
 	// topLayer: a modal <dialog> (showModal): positioned against the
 	// window and painted above everything else in its tree, over
@@ -93,6 +98,9 @@ type box struct {
 	// up is the CSS parent of an extra tree's root laid out inside the
 	// elements a native entered (nativeAnchor); nil: parent.
 	up css.Element
+	// xt is the extra tree whose root b is (layoutNodesIn): its roots are
+	// b's siblings.
+	xt *extraTree
 
 	tc  *textCache // text node shaping cache
 	svg *svgDoc
@@ -239,6 +247,9 @@ func (b *box) Attr(name string) (string, bool) {
 	if b.n == nil {
 		return "", false
 	}
+	if name == "data-sk" && b.parent != nil && b.parent.none && b.xt == nil {
+		return "tooltip_parent", true // BaseTooltip's clone of its child sets it last
+	}
 	return b.n.AttrString(name)
 }
 
@@ -247,7 +258,10 @@ func (b *box) Parent() css.Element {
 		return b.up
 	}
 	p := b.parent
-	for p != nil && (p.kind == kAnon || p.kind == kPseudo) {
+	for p != nil && (p.kind == kAnon || p.kind == kPseudo || p.none) {
+		if p.none && p.up != nil {
+			return p.up // an extra tree's root without an element of its own
+		}
 		p = p.parent
 	}
 	if p != nil {
@@ -259,34 +273,21 @@ func (b *box) Parent() css.Element {
 	return nil
 }
 
+// Prev is the element before b among its parent's children, as selectors
+// see them (a host without an element stands for its own).
 func (b *box) Prev() css.Element {
 	if b.n == nil {
 		return nil
 	}
-	var sibs []*box
-	if b.parent != nil {
-		sibs = b.parent.kids
-	} else if b.v != nil {
-		sibs = b.v.top
-	}
-	var prev *box
-	for _, s := range sibs {
-		if s == b {
-			break
-		}
-		if s.kind == kElem || s.kind == kComp {
-			prev = s
-		}
-	}
-	if prev == nil {
-		return nil
-	}
-	return prev
+	return prevIn(b, siblingsOf(b))
 }
 
 func (b *box) Index() (int, int) {
 	if b.n == nil {
 		return 0, 0
+	}
+	if b.v != nil && b.v.anyNone { // a host without an element: positions as selectors see the siblings
+		return flatIndex(b, siblingsOf(b), "")
 	}
 	return b.n.index, b.n.nsib
 }
@@ -294,6 +295,9 @@ func (b *box) Index() (int, int) {
 func (b *box) TypeIndex() (int, int) {
 	if b.n == nil {
 		return 0, 0
+	}
+	if b.v != nil && b.v.anyNone {
+		return flatIndex(b, siblingsOf(b), b.Tag())
 	}
 	return b.n.tindex, b.n.ntsib
 }
@@ -324,13 +328,110 @@ func (b *box) Modal() bool {
 func (b *box) Kids() []css.Element {
 	if !b.ekidsOK {
 		b.ekidsOK = true
-		for _, k := range b.kids {
-			if k.kind == kElem || k.kind == kComp {
-				b.ekids = append(b.ekids, k)
-			}
-		}
+		b.ekids = appendElementKids(b.ekids, b.kids)
 	}
 	return b.ekids
+}
+
+// appendElementKids appends the elements among kids, as selectors see
+// them: a host without an element of its own (Tooltip) by its children and
+// the hidden span Slack's BaseTooltip puts after them.
+func appendElementKids(out []css.Element, kids []*box) []css.Element {
+	for _, k := range kids {
+		switch {
+		case k.none:
+			out = appendElementKids(out, k.kids)
+			if k.tip == nil {
+				k.tip = &tipSpanEl{tip: k}
+			}
+			out = append(out, k.tip)
+		case k.kind == kElem || k.kind == kComp:
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// siblingsOf is the elements of b's parent as selectors see them (b among
+// them): its element parent's children, the roots of the extra tree it's
+// in, or the tree's top elements.
+func siblingsOf(b *box) []css.Element {
+	c, p := b, b.parent
+	for c.xt == nil && p != nil && (p.kind == kAnon || p.kind == kPseudo || p.none) {
+		c, p = p, p.parent
+	}
+	switch {
+	case c.xt != nil:
+		return c.xt.elements()
+	case p != nil:
+		return p.Kids()
+	case b.v != nil:
+		return b.v.topElements()
+	}
+	return nil
+}
+
+// prevIn is the element before el in sibs (nil: first, or not in them).
+func prevIn(el css.Element, sibs []css.Element) css.Element {
+	var prev css.Element
+	for _, s := range sibs {
+		if s == el {
+			return prev
+		}
+		prev = s
+	}
+	return nil
+}
+
+// flatIndex is el's position among sibs (of tag's elements only, for
+// :nth-of-type, when tag isn't ""), and their number.
+func flatIndex(el css.Element, sibs []css.Element, tag string) (int, int) {
+	i, n := 0, 0
+	for _, s := range sibs {
+		if tag != "" && s.Tag() != tag {
+			continue
+		}
+		if s == el {
+			i = n
+		}
+		n++
+	}
+	return i, n
+}
+
+// tipSpanEl is the hidden span[data-sk=tooltip] Slack's BaseTooltip
+// renders after the child it clones (client-boot F2XN): no box of its own
+// (it's hidden), but one of the Tooltip's parent's children to selectors,
+// so its child isn't :last-child there and "+" doesn't reach past it.
+type tipSpanEl struct{ tip *box }
+
+func (e *tipSpanEl) Tag() string          { return "span" }
+func (e *tipSpanEl) ID() string           { return "" }
+func (e *tipSpanEl) HasClass(string) bool { return false }
+func (e *tipSpanEl) Classes() []string    { return nil }
+func (e *tipSpanEl) Attr(name string) (string, bool) {
+	switch name {
+	case "hidden":
+		return "", true
+	case "data-sk":
+		return "tooltip", true
+	}
+	return "", false
+}
+func (e *tipSpanEl) Parent() css.Element   { return e.tip.Parent() }
+func (e *tipSpanEl) Prev() css.Element     { return prevIn(e, siblingsOf(e.tip)) }
+func (e *tipSpanEl) Index() (int, int)     { return flatIndex(e, siblingsOf(e.tip), "") }
+func (e *tipSpanEl) TypeIndex() (int, int) { return flatIndex(e, siblingsOf(e.tip), "span") }
+func (e *tipSpanEl) State() css.State      { return css.StateEmpty }
+
+// topElements is the tree's top-level elements as selectors see them
+// (appendElementKids): a FlexItems native's children in Slack's DOM.
+func (v *View) topElements() []css.Element {
+	if !v.topElsOK {
+		v.topElsOK = true
+		v.topEls = appendElementKids(v.topEls[:0], v.top)
+	}
+	return v.topEls
 }
 
 // HasText reports text children (so :empty doesn't match).
@@ -411,6 +512,14 @@ func (v *View) buildBox(n *Node, parent *box) *box {
 		return b
 	case n.IsComponent():
 		b.kind = kComp
+		// a host without an element (Tooltip), unless it stands for a
+		// native here: a slot, or the patched component's <Original>
+		if hostWithoutElement(n.N) && n.N != v.name {
+			if _, slot := SlotOf(n); !slot {
+				b.none = true
+				v.anyNone = true
+			}
+		}
 	default:
 		b.kind = kElem
 		b.repl = replFor(n)
@@ -579,6 +688,16 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 			v.uaPost(b, nil, parent)
 			return
 		}
+	}
+	if b.none {
+		// no element of its own (RegisterHostNoElement): no rule reaches
+		// it, its children inherit their parent's, and it is as big as
+		// what it holds (an inline-flex box of one child)
+		b.st = inheritOnly(parent, e.Fg)
+		b.set = 0
+		b.st.Display = css.DisplayInlineFlex
+		b.cursor = b.st.Cursor
+		return
 	}
 	if Styles.Empty() && len(n.Style) == 0 && !Styles.HostStyled(b) {
 		// No CSS anywhere: the UA style alone.

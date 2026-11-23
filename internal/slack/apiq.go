@@ -71,6 +71,17 @@ func slackRetrying(ctx context.Context) bool {
 	return v
 }
 
+type noAnswerRetryKey struct{}
+
+// NoAnswerRetries marks ctx's calls, tried as SlackRetries says, to take
+// an {"ok":false} answer as final, internal_error included: Slack's
+// FlannelRequest (client-boot Ln2M) rejects every not-ok answer but a
+// rate limit at once, where SlackApiRequest's own shouldRetry (QCxN) tries
+// an internal_error again.
+func NoAnswerRetries(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noAnswerRetryKey{}, true)
+}
+
 // transportError is a request that got no answer: the connection failed,
 // timed out or was cut before the whole response was read (XHR's error,
 // timeout and abort). Its text is the underlying error's.
@@ -152,6 +163,11 @@ func (c *Client) retrySlack(ctx context.Context, method string, err error, again
 	for attempts := 1; err != nil; attempts++ {
 		if ctx.Err() != nil || c.SignedOut() {
 			return err
+		}
+		if final, _ := ctx.Value(noAnswerRetryKey{}).(bool); final {
+			if se := (*Error)(nil); errors.As(err, &se) {
+				return err // NoAnswerRetries: a not-ok answer is final
+			}
 		}
 		most := slackMaxAttempts(ctx)
 		wait, ok := slackRetryWaitUpTo(err, attempts, most)

@@ -5814,6 +5814,87 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # plugins-work-1 (2026-11-23, Karim: "then just go implement it?"):
+  # Slick's OnlineCount. Slack's flannel query export and the presence
+  # manager's getter settle as Slack's do (taut); a FlexItems native's
+  # :has() sees the patched tree through Tooltip, which renders no element
+  # of its own (slackc); OnlineCount from Slick's build at the slick
+  # workflow's pin over a booted fakeslack (slick) and from the published
+  # Library in the whole client (ui: plugin-bench's gaps job runs it too).
+  # Its review's fixes: plugins' subscriptions sit beside Clack's own
+  # presence set (core), queries go through Slack's ApiQ and
+  # membershipCounts waits for users/counts (taut), a Tooltip's child sits
+  # where Slack's DOM has it, before BaseTooltip's hidden span (slackc).
+  # COUNT runs each. Dispatch with only=plugins-work-1.
+  plugins-work-1:
+    if: ${{ !inputs.only || startsWith('plugins-work-1', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    env:
+      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        continue-on-error: true # GitHub release downloads sometimes 504 three times running
+        with:
+          bun-version: 1.4.4
+      - name: bun from npm (setup-bun's download failed)
+        if: steps.setup-bun.outcome == 'failure'
+        run: |
+          for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
+          bun --version
+      - name: clone slick at the slick workflow's pin
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - name: the published Library (index.json + bundles)
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (Slick, the Library); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the flannel query and its queue, the presence getter and set, the hook's :has(), Tooltip's DOM, OnlineCount in the harness and in the client, COUNT runs each
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^TestPluginSubscriptionsKeepClacksOwnPresence$' ./internal/core || rc=1
+          go test -count="$COUNT" -timeout 10m -run '^(TestFlannelQueryLikeSlack|TestFlannelQueueLikeSlack|TestPresenceSubscriptionGetterLikeSlack|TestPresenceSubscriptionLikeSlack|TestAPICallNotOkLikeSlack|TestMirrorShapes)$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestFlexItemsHasSeesTree|TestTooltipChildAsSlacksDOM|TestNativeKidsHas)$' ./internal/ui/slackc || rc=1
+          go test -count="$COUNT" -timeout 15m -run '^TestOnlineCountLikeSlack$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 15m -run '^TestPluginGapOnlineCount$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -5947,6 +6028,7 @@ jobs:
       - fl1122d-r-taut
       - canvas-quip
       - giant-messages-fixes
+      - plugins-work-1
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

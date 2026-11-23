@@ -654,19 +654,25 @@ func (c *Client) Edge(ctx context.Context, path string, body map[string]any, out
 	if tok == "" {
 		tok = c.Creds.Token
 	}
+	body["token"] = tok
+	body["enterprise_token"] = tok
+	b, _ := json.Marshal(body)
+	u := c.EdgeBase() + "/" + path + "?_x_app_name=client"
+	return c.post(ctx, "edge:"+path, u, "text/plain;charset=UTF-8", b, out)
+}
+
+// EdgeBase is the edge cache's URL for the signed-in enterprise (the team
+// off Grid), which Edge puts each method's path after: Slack's flannel URL.
+func (c *Client) EdgeBase() string {
 	ent := c.Creds.EnterpriseID
 	if ent == "" {
 		ent = c.Creds.Team
 	}
-	body["token"] = tok
-	body["enterprise_token"] = tok
-	b, _ := json.Marshal(body)
 	base := c.EdgeURL
 	if base == "" {
 		base = "https://edgeapi.slack.com/cache/"
 	}
-	u := base + ent + "/" + path + "?_x_app_name=client"
-	return c.post(ctx, "edge:"+path, u, "text/plain;charset=UTF-8", b, out)
+	return base + ent
 }
 
 // SlowCall is the duration above which a call's method name and timing are logged.

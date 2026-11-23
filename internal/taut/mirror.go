@@ -945,18 +945,15 @@ func (m *mirror) get(slice, key string) any {
 		}
 		return pruneEmpty(bot, false)
 	case "membershipCounts":
+		// users/counts' answer only, as Slack's store holds it: nothing
+		// until it answers (conversations.info's num_members would make
+		// the count change once it does, and a plugin keyed on it start
+		// over: OnlineCount listing a channel's people twice)
 		n, ok := a.MemberCountCached(key)
-		guests, apps := 0, 0
-		if ok {
-			guests, apps = a.GuestCountCached(key), a.AppCountCached(key)
-		}
 		if !ok {
-			c, have := a.S.Conv(key)
-			if !have || c.NumMembers == 0 {
-				return nil
-			}
-			n = c.NumMembers
+			return nil
 		}
+		guests, apps := a.GuestCountCached(key), a.AppCountCached(key)
 		team := a.C.Creds.EnterpriseID
 		if team == "" {
 			team = a.C.Creds.Team
