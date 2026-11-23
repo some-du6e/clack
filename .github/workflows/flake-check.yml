@@ -3423,8 +3423,8 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -v -timeout 20m -run '^(TestModalTitleWraps|TestModalTitleWrapsChannelEntity|TestModalTitleTruncates)$' ./internal/ui/popups || rc=1
-          if [ -f internal/ui/blockkit/confirm_title_test.go ]; then go test -count=$COUNT -v -timeout 20m -run '^TestConfirmObjectTitle$' ./internal/ui/blockkit || rc=1; fi
+          go test -count=$COUNT -v -timeout 5m -run '^(TestModalTitleWraps|TestModalTitleWrapsChannelEntity|TestModalTitleTruncates)$' ./internal/ui/popups || rc=1
+          if [ -f internal/ui/blockkit/confirm_title_test.go ]; then go test -count=$COUNT -v -timeout 5m -run '^TestConfirmObjectTitle$' ./internal/ui/blockkit || rc=1; fi
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
