@@ -152,11 +152,11 @@ func replyBoxFirstFrame(t *testing.T, e *perfEnv, root string, loading, fits boo
 		}
 		// what layoutConvo decided: the box under the thread (fitH, the
 		// pane's header and rows), or at the pane's bottom
-		if (c.fitH > 0) != fits {
-			t.Errorf("%s: the box %d px down under the thread (0: at the pane's bottom), want a thread that fits over its box: %v", when, c.fitH, fits)
+		if (c.fitHeight() > 0) != fits {
+			t.Errorf("%s: the box %d px down under the thread (0: at the pane's bottom), want a thread that fits over its box: %v", when, c.fitHeight(), fits)
 		}
-		if fits && bottom != tv.Origin.Y+c.fitH {
-			t.Errorf("%s: the newest reply ends at y=%d, top-aligned under the header it ends at %d", when, bottom, tv.Origin.Y+c.fitH)
+		if fits && bottom != tv.Origin.Y+c.fitHeight() {
+			t.Errorf("%s: the newest reply ends at y=%d, top-aligned under the header it ends at %d", when, bottom, tv.Origin.Y+c.fitHeight())
 		}
 		if !fits && paneBottom > 0 && c.compRect.Max.Y != paneBottom {
 			t.Errorf("%s: the composer ends at y=%d, want the pane's bottom, %d", when, c.compRect.Max.Y, paneBottom)

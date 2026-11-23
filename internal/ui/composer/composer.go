@@ -521,7 +521,9 @@ func (c *Composer) syncEmojiSet() {
 	}
 	if v := c.api.emojiVersion(); v != c.emojiVer {
 		c.emojiVer = v
+		pre := c.ed.Version()
 		if c.ed.ConvertEmoji() {
+			c.ownCommit(pre) // the set landing, not the user's edit
 			c.h.Invalidate()
 		}
 	}
@@ -949,6 +951,34 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 			c.focused = false
 		}
 	}
+}
+
+// ownCommit takes in a change the composer made to the text itself, not
+// the user: a pasted link's slug landing (applySlugs), shortcodes
+// converting once the custom emoji set is in (syncEmojiSet). pre is the
+// editor's version before it. The draft follows the text, but the change
+// moves lastVer the way restore and clearForSend do, so it counts as no
+// edit of the user's (Edits: the ui root reveals a scrolled-away reply
+// box only for theirs) and starts no typing. A user edit still waiting for
+// changed() keeps it there: the two count as the user's.
+func (c *Composer) ownCommit(pre uint64) {
+	v := c.ed.Version()
+	if pre != c.lastVer || v == pre {
+		return
+	}
+	c.lastVer = v
+	if c.field != nil {
+		if c.field.OnChange != nil {
+			c.field.OnChange()
+		}
+		return
+	}
+	if c.edit != nil {
+		return
+	}
+	c.saveDraft()
+	c.syncDraftSoon()
+	c.liveDraftSoon()
 }
 
 func (c *Composer) changed() {
@@ -2268,6 +2298,16 @@ func (c *Composer) DrawnLive(gtx layout.Context) bool { return DrawnLive(gtx, c.
 // up: Escape is the popup's then, not the thread pane's.
 func (c *Composer) PopupOpen() bool { return c.ac != nil && c.ac.Open() }
 
+// DismissPopup closes the autocomplete as Escape does, until its token
+// changes: the ui root's thread reply box scrolled out of its list's
+// view, which the list drawn deferred and unclipped would float over.
+func (c *Composer) DismissPopup() {
+	if c.ac != nil && c.ac.Open() {
+		c.ac.Dismiss()
+		c.h.Invalidate()
+	}
+}
+
 // TypingLine is the typing indicator's text under the composer as last
 // laid out ("" none; tests).
 func (c *Composer) TypingLine() string { return c.ui.cur.Typing }
@@ -2276,8 +2316,9 @@ func (c *Composer) TypingLine() string { return c.ui.cur.Typing }
 func (c *Composer) DocText() string { return c.ed.Doc().Text() }
 
 // Edits counts the changes the user made to the text: typing, a paste, a
-// picker's insert, an undo (the editor's EvChange), not a draft put in
-// or the box emptied after a send. The ui root reveals a thread's reply
+// picker's insert, an undo (the editor's EvChange), not a draft put in,
+// the box emptied after a send, or the composer's own changes (ownCommit:
+// a slug landing, shortcodes converting). The ui root reveals a thread's reply
 // box scrolled out of view when it moves, as Chromium scrolls a focused
 // editor's caret into view after an edit.
 func (c *Composer) Edits() uint64 { return c.userEdits }
