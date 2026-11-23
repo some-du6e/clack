@@ -136,7 +136,13 @@ func command(u string) *exec.Cmd {
 	case "windows":
 		c = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
 	default:
-		c = exec.Command("xdg-open", u)
+		// Electron's platform_util_linux.cc OpenExternal: a mailto: link to
+		// xdg-email, anything else to xdg-open
+		if strings.HasPrefix(u, "mailto:") {
+			c = exec.Command("xdg-email", u)
+		} else {
+			c = exec.Command("xdg-open", u)
+		}
 	}
 	c.WaitDelay = waitDelay
 	return c

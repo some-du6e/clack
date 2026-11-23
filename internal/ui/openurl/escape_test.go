@@ -1,6 +1,10 @@
 package openurl
 
-import "testing"
+import (
+	"path/filepath"
+	"runtime"
+	"testing"
+)
 
 // TestEscapeExternalHandlerValue: Chromium's EscapeExternalHandlerValue,
 // which Electron's shell.openExternal runs a URL through before Windows'
@@ -18,6 +22,20 @@ func TestEscapeExternalHandlerValue(t *testing.T) {
 	} {
 		if got := escapeExternalHandlerValue(c.in); got != c.want {
 			t.Errorf("escapeExternalHandlerValue(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestCommandLinux: off Windows and macOS a link goes where Electron's
+// platform_util_linux.cc OpenExternal sends it: mailto: to xdg-email,
+// everything else to xdg-open.
+func TestCommandLinux(t *testing.T) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		t.Skip("xdg-utils only")
+	}
+	for u, tool := range map[string]string{"https://example.test/a": "xdg-open", "mailto:a@example.test": "xdg-email"} {
+		if c := command(u); filepath.Base(c.Path) != tool && c.Args[0] != tool {
+			t.Errorf("%s goes to %q, want %s", u, c.Args, tool)
 		}
 	}
 }
