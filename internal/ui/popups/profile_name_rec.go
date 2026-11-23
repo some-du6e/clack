@@ -66,6 +66,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/videoplayer"
@@ -128,7 +129,10 @@ type epNameRec struct {
 	uploading bool
 	upErr     error
 	file      *slack.File
-	gen       int // a remove (or a new recording) drops the upload in flight
+	gen       int  // a remove (or a new recording) drops the upload in flight
+	removed   bool // a file was removed: useFileUploading's flag, initialFile stays null
+	// removeFocused: RemoveFileButton has the focus (this frame's)
+	removeFocused bool
 	// was is the profile's recording when the form opened (ea), cur the
 	// form's (eK): the uploaded recording's id, "" once removed
 	was, cur string
@@ -301,7 +305,7 @@ func (n *epNameRec) remove() {
 	}
 	n.gen++
 	n.cur, n.clip, n.file, n.upErr, n.uploading = "", nil, nil, nil, false
-	n.mode = nrButton
+	n.mode, n.removed = nrButton, true
 	n.f.uploadBusy(false) // onRemove: onFileUploadEnd
 }
 
@@ -441,19 +445,96 @@ func (n *epNameRec) layout(gtx layout.Context, th *theme.Theme, cl *Colors, fd *
 		})
 	})
 	y := lh + dp(gtx, 8)
-	var d layout.Dimensions
-	switch n.mode {
-	case nrRecording:
-		d = at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions { return n.recorder(gtx, th) })
-	case nrFile:
-		// the tile's status button reaches 10px over its top-right corner
-		y += dp(gtx, 10)
-		d = at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions { return n.tile(gtx, th) })
-	default:
-		d = at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions { return n.button(gtx, th, cl) })
-	}
+	// EditAudioButton, the plugin boundary BaseEditProfileField renders it
+	// at, with its props (CustomNameRecording appends its Upload audio)
+	d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
+		return slackc.RenderLazy(gtx, "EditAudioButton", n.audioProps, func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+			return n.control(gtx, th, cl)
+		})
+	})
 	y += d.Size.Y + dp(gtx, 24)
 	return layout.Dimensions{Size: image.Pt(w, y)}
+}
+
+// control is EditAudioButton's own output: PendingAudioFile while there is
+// a file, NamePronunciationAudioRecorder while recording, else Record
+// Audio Clip.
+func (n *epNameRec) control(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
+	switch n.mode {
+	case nrRecording:
+		return n.recorder(gtx, th)
+	case nrFile:
+		// the tile's status button reaches 10px over its top-right corner
+		o := dp(gtx, 10)
+		d := at(gtx, image.Pt(0, o), func(gtx layout.Context) layout.Dimensions { return n.tile(gtx, th) })
+		return layout.Dimensions{Size: image.Pt(d.Size.X+o, d.Size.Y+o)}
+	}
+	return n.button(gtx, th, cl)
+}
+
+// audioProps are EditAudioButton's props as BaseEditProfileField passes
+// them (rguE, from EditProfileFormPane's getAudioFileProps): onChangeFile
+// (te), initialFileId (the form's recording, eK), onFileUploadStart and
+// onFileUploadEnd (the form's loading, e7 and e9).
+func (n *epNameRec) audioProps() slackc.Props {
+	p := slackc.Props{
+		"$key": "edit-audio:" + n.f.user,
+		"onChangeFile": func(fileID any) {
+			id, _ := fileID.(string)
+			n.changeFile(id)
+		},
+		"onFileUploadStart": func() { n.f.uploadBusy(true) },
+		"onFileUploadEnd":   func() { n.f.uploadBusy(false) },
+	}
+	if n.cur != "" {
+		p["initialFileId"] = n.cur
+	}
+	return p
+}
+
+// changeFile is EditProfileFormPane's onChangeFile (te) from outside the
+// control (a plugin's upload): null deletes a recording made in the form
+// (e5) and the form has none; an id becomes the form's recording without
+// deleting one it replaces, as Slack's eG(e) doesn't. EditAudioButton
+// shows that file as its initialFile (useFileUploading: the store's file
+// for initialFileId), unless a file was removed from it before (its
+// removed flag keeps initialFile null) or a file of its own is up.
+func (n *epNameRec) changeFile(id string) {
+	if id == "" {
+		if n.cur != "" && n.cur != n.was {
+			n.deleteFile(n.cur)
+		}
+		if n.mode == nrFile && n.file != nil && n.file.ID == n.cur {
+			n.mode, n.file, n.clip = nrButton, nil, nil
+		}
+		n.cur = ""
+		n.f.h.Invalidate()
+		return
+	}
+	n.cur = id
+	n.f.h.Invalidate()
+	if n.removed {
+		return
+	}
+	a := n.f.h.Core()
+	if a == nil {
+		return
+	}
+	run(n.f.h, func(ctx context.Context) (*slack.File, error) {
+		return a.ProfileRecordingFile(ctx, id)
+	}, func(fl *slack.File, err error) {
+		if err != nil || fl == nil || n.cur != id || n.removed {
+			return
+		}
+		if n.rec != nil { // the file takes the recorder's place, which unmounts
+			n.rec.Cancel()
+			n.stopRec()
+		}
+		n.gen++ // an upload of the control's own no longer lands
+		n.mode, n.file, n.clip, n.upErr, n.uploading = nrFile, fl, nil, nil, false
+		n.f.h.Invalidate()
+	})
 }
 
 // button is "Record Audio Clip": an outline medium Kit button (36 tall,
@@ -624,18 +705,8 @@ func (n *epNameRec) tile(gtx layout.Context, th *theme.Theme) layout.Dimensions 
 	// is laid out whenever there is a file, drawing nothing at rest, so the
 	// Tab order reaches it as Slack's DOM always has it.
 	d := dp(gtx, 22)
-	focused := gtx.Focused(&n.removeBtn)
-	mode := 0
-	switch {
-	case n.removeBtn.Hovered() || focused:
-		mode = 3
-	case n.uploading:
-		mode = 1
-	case n.upErr != nil:
-		mode = 2
-	case n.tileHov.Hovered():
-		mode = 3
-	}
+	n.removeFocused = gtx.Focused(&n.removeBtn)
+	mode := n.status()
 	bp := image.Pt(sz.X-d+dp(gtx, 10), -dp(gtx, 10))
 	if n.f.m.ringOn(gtx, &n.removeBtn) {
 		focusRing(gtx, colorsOf(th), image.Rectangle{Min: bp, Max: bp.Add(image.Pt(d, d))}, d/2)
@@ -644,15 +715,15 @@ func (n *epNameRec) tile(gtx layout.Context, th *theme.Theme) layout.Dimensions 
 		gtx.Constraints = layout.Exact(image.Pt(d, d))
 		return n.removeBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			switch mode {
-			case 0:
-			case 1:
+			case nrStatusNone:
+			case nrStatusSpinner:
 				rrect(gtx, image.Rect(0, 0, d, d), d/2, pal.bg)
 				s := dp(gtx, 16)
 				at(gtx, image.Pt((d-s)/2, (d-s)/2), func(gtx layout.Context) layout.Dimensions {
 					InfiniteSpinner(gtx, s, true, th.C.FgMuted, th.C.Link)
 					return layout.Dimensions{Size: image.Pt(s, s)}
 				})
-			case 2:
+			case nrStatusWarning:
 				rrect(gtx, image.Rect(0, 0, d, d), d/2, pal.bg)
 				at(gtx, image.Pt((d-dp(gtx, 20))/2, (d-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
 					return icon(gtx, "warning-filled", 20, th.C.Danger)
@@ -664,14 +735,41 @@ func (n *epNameRec) tile(gtx layout.Context, th *theme.Theme) layout.Dimensions 
 					return icon(gtx, "close", 14, th.C.TooltipText)
 				})
 			}
-			if mode != 0 {
+			if mode != nrStatusNone {
 				pointerCursor(gtx, image.Pt(d, d))
 			}
-			Tooltip(gtx, th, &n.removeTip, mode != 0 && n.removeBtn.Hovered(), image.Pt(d, d), Above, nsDraftsFile.T("Remove audio clip"), "")
+			Tooltip(gtx, th, &n.removeTip, mode != nrStatusNone && n.removeBtn.Hovered(), image.Pt(d, d), Above, nsDraftsFile.T("Remove audio clip"), "")
 			return layout.Dimensions{Size: image.Pt(d, d)}
 		})
 	})
 	return layout.Dimensions{Size: sz}
+}
+
+// nrStatus is what RemoveFileButton holds (4dwn): nothing, the spinner
+// while the upload runs, the warning-filled icon when it failed, or the
+// remove button, hovered, focused or over a hovered tile.
+type nrStatus int
+
+const (
+	nrStatusNone nrStatus = iota
+	nrStatusSpinner
+	nrStatusWarning
+	nrStatusRemove
+)
+
+// status is RemoveFileButton's content now.
+func (n *epNameRec) status() nrStatus {
+	switch {
+	case n.removeBtn.Hovered() || n.removeFocused:
+		return nrStatusRemove
+	case n.uploading:
+		return nrStatusSpinner
+	case n.upErr != nil:
+		return nrStatusWarning
+	case n.tileHov.Hovered():
+		return nrStatusRemove
+	}
+	return nrStatusNone
 }
 
 // uploadedFile is the tile's file as FileAudio plays it (the upload's, or

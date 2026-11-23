@@ -305,16 +305,10 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	if v.secs.done && v.secs.err != nil {
 		addSound = true // no sections (RimetoProfileLegacyData): offer it
 	}
-	if edit && addSound {
-		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
+	if edit && addSound { // NamePronunciationAddLink: the link alone (EditAudioButton is Edit profile's)
+		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			return pfLinkRow(gtx, th, cl, &v.nameSndBtn, "Add name pronunciation", rowH)
 		})
-		if x := pad + d.Size.X + dp(gtx, 8); x < pad+inner {
-			at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(pad+inner-x, rowH)}
-				return slackc.RenderLazy(gtx, "EditAudioButton", v.audioProps, pfNoNative)
-			})
-		}
 		y += rowH
 	}
 	if len(pron) > 0 {
@@ -443,22 +437,6 @@ func (v *ProfileView) localTime(gtx layout.Context, th *theme.Theme, cl *Colors,
 	}, func(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		return childrenOr(gtx, p, "LocalTime", lt, native)
 	})
-}
-
-// audioProps are EditAudioButton's (the name-recording control; Clack
-// draws none, plugins append their own).
-func (v *ProfileView) audioProps() slackc.Props {
-	h := v.h
-	return slackc.Props{
-		"$key": "edit-audio:" + v.id,
-		"onChangeFile": func(fileID any) {
-			if s, ok := fileID.(string); ok && s != "" {
-				h.Toast("Name recording uploaded")
-			}
-		},
-		"onFileUploadStart": func() {},
-		"onFileUploadEnd":   func() {},
-	}
 }
 
 // pfNoNative draws nothing (boundaries Clack has no widget for).

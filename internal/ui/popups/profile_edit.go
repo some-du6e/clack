@@ -138,6 +138,18 @@ func OpenEditProfile(h Host, o EditProfileOpts) *EditProfileModal {
 	return e
 }
 
+// OpenUploadProfilePhoto is openUploadProfilePhotoModal (boot-shared UykV):
+// the Edit profile modal in its photoUpload mode, as the DM foreword's
+// Upload Profile Photo opens it. Slack starts that mode on the
+// select-photo pane (selectPane), which Clack doesn't have yet; its
+// Upload Photo is the file chooser, which this opens at once, and the
+// upload and crop panes follow as they do from the form's Upload Photo.
+func OpenUploadProfilePhoto(h Host) *EditProfileModal {
+	e := OpenEditProfile(h, EditProfileOpts{})
+	e.pickPhoto()
+	return e
+}
+
 // NewEditProfileModal builds the modal on its form pane.
 func NewEditProfileModal(h Host, o EditProfileOpts) *EditProfileModal {
 	e := &EditProfileModal{h: h, o: o}
