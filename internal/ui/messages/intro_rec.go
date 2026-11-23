@@ -11,46 +11,39 @@ import (
 	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
-// introRec is the DM foreword's name recording: Slack's
-// IMForewordMemberEntity (boot-shared VHud, build 9f450b8ad3db) puts the
-// member's NamePronunciationAudioPlayer after their name and presence
-// when the header data has a recording (namePronunciationAudioFileId).
-// Here the button follows the DM's title, the partner's name: their
-// header section (users.profile.getSections) and the recording's file
-// (files.info) are asked once per list.
+// introRec is the DM foreword's header data: Slack's IMForewordMemberEntity
+// (boot-shared VHud, build 9f450b8ad3db) reads the member's header section
+// (useUserProfileSectionsQuery, XpEt: users.profile.getSections) through
+// getHeaderData (oGjw w_): the Name Pronunciation text, which
+// PronounsAndNamePronunciation shows after the pronouns, and the Name
+// Recording's file, whose NamePronunciationAudioPlayer follows the name
+// and the presence. Both are asked once per list (the section, then the
+// recording's files.info).
 type introRec struct {
 	mu    sync.Mutex
 	user  string
 	asked bool
-	file  *slack.File
+	pron  string      // namePronunciationText
+	file  *slack.File // the recording, once files.info answered
 	btn   videoplayer.NameSoundButton
 }
 
-// introRecording is the DM partner user's name recording and the
-// window's players, nil until both are there.
-func (s *listState) introRecording(h Host, user string) (*richtext.File, *videoplayer.Controller) {
-	if user == "" {
-		return nil, nil
-	}
-	vh, ok := h.(interface {
-		Videos() *videoplayer.Controller
-	})
-	if !ok {
-		return nil, nil
-	}
-	ctl := vh.Videos()
+// introHeader is the DM partner user's header data: the pronunciation
+// text ("" until the section answers, or when there is none) and the
+// name recording with the window's players (nil until both are there).
+func (s *listState) introHeader(h Host, user string) (pron string, rec *richtext.File, ctl *videoplayer.Controller) {
 	app := h.Core()
-	if ctl == nil || !ctl.AudioAvailable() || app == nil {
-		return nil, nil
+	if user == "" || app == nil {
+		return "", nil, nil
 	}
 	r := &s.irec
 	r.mu.Lock()
 	if r.user != user {
-		r.user, r.asked, r.file = user, false, nil
+		r.user, r.asked, r.pron, r.file = user, false, "", nil
 	}
 	asked := r.asked
 	r.asked = true
-	f := r.file
+	pron, f := r.pron, r.file
 	r.mu.Unlock()
 	if !asked {
 		go func() {
@@ -61,6 +54,16 @@ func (s *listState) introRecording(h Host, user string) (*richtext.File, *videop
 				return
 			}
 			hd := core.HeaderOf(ps)
+			text := ""
+			if hd.Pronunciation != nil {
+				text = hd.Pronunciation.Text
+			}
+			r.mu.Lock()
+			if r.user == user {
+				r.pron = text
+			}
+			r.mu.Unlock()
+			h.Invalidate()
 			if hd.Record == nil || hd.Record.FileID == "" {
 				return
 			}
@@ -76,9 +79,16 @@ func (s *listState) introRecording(h Host, user string) (*richtext.File, *videop
 			h.Invalidate()
 		}()
 	}
-	rf := richtext.FileOf(f)
-	if rf == nil || rf.URL == "" {
-		return nil, nil
+	vh, ok := h.(interface {
+		Videos() *videoplayer.Controller
+	})
+	if !ok {
+		return pron, nil, nil
 	}
-	return rf, ctl
+	ctl = vh.Videos()
+	rf := richtext.FileOf(f)
+	if ctl == nil || !ctl.AudioAvailable() || rf == nil || rf.URL == "" {
+		return pron, nil, nil
+	}
+	return pron, rf, ctl
 }

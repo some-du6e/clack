@@ -390,7 +390,12 @@ func drawAvatar(gtx layout.Context, h Host, url string, r image.Rectangle, c *co
 // .c-avatar--no_image, rgba(var(--sk_foreground_low_solid)) in the
 // avatar's rounded square, until "names" resolves the row again.
 func paintAvatar(gtx layout.Context, imgs *imgcache.Cache, url string, r image.Rectangle, c *colors) {
-	radius := avatarRadius(r.Dx())
+	paintAvatarRadius(gtx, imgs, url, r, c, avatarRadius(r.Dx()))
+}
+
+// paintAvatarRadius is paintAvatar with the corners a class gives the
+// avatar (the DM foreword's .p-new_im_foreword-entity__avatar: 9px).
+func paintAvatarRadius(gtx layout.Context, imgs *imgcache.Cache, url string, r image.Rectangle, c *colors, radius int) {
 	if isDefaultBotAvatar(url) {
 		if img, ok := defaultBotAvatarImage(); ok {
 			richview.DrawImage(gtx.Ops, img, r, radius, true)
