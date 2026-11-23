@@ -5,6 +5,7 @@ package store
 // slices. Message contents stay in memory, as everywhere in the store.
 
 import (
+	"bytes"
 	"sort"
 	"strings"
 
@@ -52,6 +53,59 @@ func (s *Store) VisitMessages(ch string, thread func(root string), f func(m *sla
 		thread("fetched")
 		for _, m := range fs {
 			f(m)
+		}
+	}
+}
+
+// ShareContent points m's text and blocks at the store's own when ch's
+// copy of the message (by ts: the timeline, its windows, the threads,
+// the fetched) holds the same: a plugin that passes the messages slice
+// through hands each message back as new JSON, decoded into new strings
+// (taut's viewCache), and a channel of 908,000-character messages held
+// every one twice.
+func (s *Store) ShareContent(ch string, m *slack.Message) {
+	if m == nil || m.TS == "" {
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	share := func(o *slack.Message) bool {
+		if o.TS != m.TS {
+			return false
+		}
+		if o.Text == m.Text {
+			m.Text = o.Text
+		}
+		if o.Blocks != nil && bytes.Equal(o.Blocks, m.Blocks) {
+			m.Blocks = o.Blocks
+		}
+		return true
+	}
+	if t := s.timelines[ch]; t != nil {
+		for i := range t.Msgs {
+			if share(&t.Msgs[i]) {
+				return
+			}
+		}
+	}
+	for _, w := range s.windows[ch] {
+		for i := range w.Msgs {
+			if share(&w.Msgs[i]) {
+				return
+			}
+		}
+	}
+	if o := s.fetched[ch+"/"+m.TS]; o != nil && share(o) {
+		return
+	}
+	prefix := ch + "/"
+	for k, th := range s.threads {
+		if strings.HasPrefix(k, prefix) {
+			for i := range th {
+				if share(&th[i]) {
+					return
+				}
+			}
 		}
 	}
 }

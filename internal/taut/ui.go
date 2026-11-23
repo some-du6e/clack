@@ -2333,6 +2333,12 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 					continue
 				}
 				e.sm = decodeMessage(raw)
+				if e.sm != nil && len(raw) >= 32<<10 {
+					// passed through, a long message's text and blocks are
+					// core's bytes: held once (a channel of 908,000-character
+					// messages held each twice)
+					v.t.app.S.ShareContent(k.key, e.sm)
+				}
 				e.size = 3*len(raw) + 256 // the decoded message and its conversion
 			} else if k.key != "" {
 				e.bsum, e.blen = viewSum(raw), len(raw)

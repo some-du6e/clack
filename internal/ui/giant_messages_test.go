@@ -103,10 +103,43 @@ func giantHeapObjectsMB() float64 {
 	return float64(s[0].Value.Uint64()) / (1 << 20)
 }
 
+// giantPauses reads the process's stop-the-world histograms: the
+// collector's pauses, and of them the time spent stopping the world (a
+// goroutine in the plugin engine's wasm can't be preempted: memory
+// gc-stw-waits-on-wasm).
+func giantPauses() (total, stopping *metrics.Float64Histogram) {
+	s := []metrics.Sample{{Name: "/sched/pauses/total/gc:seconds"}, {Name: "/sched/pauses/stopping/gc:seconds"}}
+	metrics.Read(s)
+	if s[0].Value.Kind() != metrics.KindFloat64Histogram || s[1].Value.Kind() != metrics.KindFloat64Histogram {
+		return nil, nil
+	}
+	return s[0].Value.Float64Histogram(), s[1].Value.Float64Histogram()
+}
+
+// giantLongest is the lower bound of the longest bucket that b counted
+// more in than a: the longest pause between the two readings, about.
+func giantLongest(a, b *metrics.Float64Histogram) time.Duration {
+	if a == nil || b == nil || len(a.Counts) != len(b.Counts) {
+		return 0
+	}
+	for i := len(b.Counts) - 1; i >= 0; i-- {
+		if b.Counts[i] > a.Counts[i] {
+			if lo := b.Buckets[i]; lo > 0 {
+				return time.Duration(lo * float64(time.Second))
+			}
+			return 0
+		}
+	}
+	return 0
+}
+
 type giantFrame struct {
 	stage string
+	i     int // its index, the CPU profile's giant_frame label
 	d     time.Duration
 	r     time.Duration // of d, the GPU renderer's
+	gc    time.Duration // its longest collector's pause, about
+	stop  time.Duration // of that kind, its longest wait for the world to stop
 	heap  float64       // heap objects after it, MB
 	rss   float64       // VmRSS after it, MB
 }
@@ -274,14 +307,17 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 			aborted = fmt.Sprintf("%s: still driving frames 12 minutes on; stopped", stage)
 			return false
 		}
+		pt0, ps0 := giantPauses()
+		i := len(frames)
 		t0 := time.Now()
 		frameOf.Store(&stage)
 		frameAt.Store(t0.UnixNano())
-		e.frame()
+		pprof.Do(context.Background(), pprof.Labels("giant_frame", strconv.Itoa(i)), func(context.Context) { e.frame() })
 		frameAt.Store(0)
 		d := time.Since(t0)
+		pt1, ps1 := giantPauses()
 		st := giantProcStatus("VmRSS")
-		frames = append(frames, giantFrame{stage: stage, d: d, r: e.raster, heap: giantHeapObjectsMB(), rss: st["VmRSS"]})
+		frames = append(frames, giantFrame{stage: stage, i: i, d: d, r: e.raster, gc: giantLongest(pt0, pt1), stop: giantLongest(ps0, ps1), heap: giantHeapObjectsMB(), rss: st["VmRSS"]})
 		if g := st["VmRSS"] - baseRSS; g > giantAbortMB {
 			aborted = fmt.Sprintf("%s: RSS %.0f MB, %.0f MB over the %.0f MB before the channel opened; stopped driving frames", stage, st["VmRSS"], g, baseRSS)
 		}
@@ -490,11 +526,11 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 	}
 	fmt.Fprintf(&b, "\nlongest frames (an ordinary channel's open: %v, the GPU renderer's %v):\n\n", refMax.Round(time.Millisecond), refRaster.Round(time.Millisecond))
 	for _, f := range worst {
-		fmt.Fprintf(&b, "- %s: %v, the GPU renderer's %v (heap objects %.0f MB, RSS %.0f MB)\n", f.stage, f.d.Round(time.Millisecond), f.r.Round(time.Millisecond), f.heap, f.rss)
+		fmt.Fprintf(&b, "- %s (frame %d): %v, the GPU renderer's %v, a collector's pause of %v or more (%v of it stopping the world); heap objects %.0f MB, RSS %.0f MB\n", f.stage, f.i, f.d.Round(time.Millisecond), f.r.Round(time.Millisecond), f.gc.Round(time.Millisecond), f.stop.Round(time.Millisecond), f.heap, f.rss)
 	}
 	fmt.Fprintf(&b, "\nthe app's longest parts of a frame (less the GPU renderer's):\n\n")
 	for _, f := range app {
-		fmt.Fprintf(&b, "- %s: %v of %v\n", f.stage, (f.d - f.r).Round(time.Millisecond), f.d.Round(time.Millisecond))
+		fmt.Fprintf(&b, "- %s (frame %d): %v of %v\n", f.stage, f.i, (f.d - f.r).Round(time.Millisecond), f.d.Round(time.Millisecond))
 	}
 	t.Log("\n" + b.String())
 	if out != "" {
@@ -516,7 +552,7 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 	for _, f := range frames {
 		if a := f.d - f.r; a > giantFrameMax || f.d > giantWholeMax {
 			if slow < 5 {
-				t.Errorf("a %s frame took %v, the app %v of it (bounds %v whole, %v the app's)", f.stage, f.d.Round(time.Millisecond), a.Round(time.Millisecond), giantWholeMax, giantFrameMax)
+				t.Errorf("a %s frame (frame %d) took %v, the app %v of it, a collector's pause %v or more of that (%v stopping the world) (bounds %v whole, %v the app's)", f.stage, f.i, f.d.Round(time.Millisecond), a.Round(time.Millisecond), f.gc.Round(time.Millisecond), f.stop.Round(time.Millisecond), giantWholeMax, giantFrameMax)
 			}
 			slow++
 		}
