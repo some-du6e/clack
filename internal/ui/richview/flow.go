@@ -223,6 +223,10 @@ const (
 	// tSharePrompt is a share_prompt's Send to {agentName} (prompt: the
 	// block's; shareprompt.go)
 	tSharePrompt
+	// tEvent is an event card's RSVP option or Copy to Your Calendar (id:
+	// "rsvp:accepted", "rsvp:declined", "rsvp:tentative", "copy"; event:
+	// the card's; event.go)
+	tEvent
 	// tDate is a canvas's date control (Quip's CONTROL_SLACK_DATE_TYPE,
 	// span.slack-date-contents.mention): no link and no click here, but an
 	// editor's pointer is the hand over it (canvas-controller CSS:
@@ -319,6 +323,8 @@ type target struct {
 	timeline *richtext.TimelineSection
 	// prompt is a tSharePrompt's block (shareprompt.go)
 	prompt *richtext.SharePrompt
+	// event is a tEvent's card (event.go)
+	event *richtext.Event
 }
 
 type hit struct {

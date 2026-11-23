@@ -2097,6 +2097,12 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		if sh, ok := h.(SharePromptHandler); ok && tg.prompt != nil {
 			sh.SharePromptSend(tg.prompt)
 		}
+	case tEvent: // an event card's RSVP option or Copy to Your Calendar (event.go)
+		if eh, ok := h.(EventHandler); ok && tg.event != nil {
+			r, _ := v.targetRect(tg)
+			wr, win := v.actionRect(r)
+			eh.EventAction(tg.id, tg.event, v.opts.Channel, v.opts.TS, wr, win)
+		}
 	case tTimeline: // a timeline section's (Sources) (timeline.go)
 		if th, ok := h.(TimelineHandler); ok && tg.timeline != nil {
 			r, _ := v.targetRect(tg)

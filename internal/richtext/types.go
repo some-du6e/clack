@@ -218,6 +218,9 @@ const (
 	// SharePromptBlock is a share_prompt block (shareprompt.go): Prompt
 	// holds its prompt and agent.
 	SharePromptBlock
+	// EventBlock is an event block (event.go): Event holds the calendar
+	// event as the card reads it.
+	EventBlock
 )
 
 // Block is one vertical unit of a document.
@@ -284,6 +287,8 @@ type Block struct {
 	Contact *ContactCard
 	// Prompt is a SharePromptBlock's prompt and agent (shareprompt.go).
 	Prompt *SharePrompt
+	// Event is an EventBlock's calendar event (event.go).
+	Event *Event
 }
 
 // Container is a container block's header and options (Slack's

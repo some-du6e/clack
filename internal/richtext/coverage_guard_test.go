@@ -70,7 +70,6 @@ var pendingParts = map[string][]string{
 	"part 2f (the remaining blocks)": {"attachment_reference", "auth_provider", "canvas_mermaid", "canvas_table", "channel_section",
 		"channel_set", "layout", "mcp_app", "message", "page", "prototype", "related_automation_decorator", "salesforce_record_card",
 		"search_top_results", "share_skill", "share_workflow"},
-	"part 2a (Karim's named blocks, in progress)": {"event"},
 }
 
 func init() {
@@ -126,6 +125,7 @@ var guardSamples = map[string]string{
 	"timeline":           `{"type":"timeline","points":[{"id":"a","status":"complete","text":"x"}]}`,
 	"share_prompt":       `{"type":"share_prompt","prompt":"x","bot_user_id":"UAF"}`,
 	"contact_card":       `{"type":"contact_card","contact_user_id":"U1","contact_card_id":"CC1"}`,
+	"event":              `{"type":"event","event_id":"E1","event":{"title":"x","start":{"date_time":1700000000},"end":{"date_time":1700003600},"organizer":{"user_id":"U2"},"attendees":[]}}`,
 }
 
 // mustDraw are the block types whose builder may return nothing for a
@@ -137,6 +137,7 @@ var mustDraw = map[string]BlockKind{
 	"timeline":           TimelineBlock,
 	"share_prompt":       SharePromptBlock,
 	"contact_card":       ContactCardBlock,
+	"event":              EventBlock,
 }
 
 // guardRes is the guard's resolver: the test resolver, holding the

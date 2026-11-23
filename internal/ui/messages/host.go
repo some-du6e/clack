@@ -637,6 +637,13 @@ func (r *richHandler) SharePromptSend(p *richtext.SharePrompt) {
 	}
 }
 
+// EventAction is an event card's action (richview.EventHandler).
+func (r *richHandler) EventAction(act string, ev *richtext.Event, ch, ts string, btn image.Rectangle, window bool) {
+	if ph, ok := r.h.(popups.Host); ok {
+		popups.EventAction(ph, act, ev, ch, ts, popups.ActionAnchor(btn, window))
+	}
+}
+
 // TimelineSources is a timeline section's "(Sources)"
 // (richview.TimelineHandler): its sources modal.
 func (r *richHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
