@@ -68,7 +68,8 @@ type canvasStore struct {
 	edits   []url.Values // canvases.edit calls, as sent
 	asks    []url.Values // files.requestPermission calls, as sent
 	sockets map[*websocket.Conn]bool
-	shared  bool // the shared canvas's message is in the history
+	muted   map[*websocket.Conn]bool // MuteSockets: pongs only
+	shared  bool                     // the shared canvas's message is in the history
 }
 
 var canvasStores = newPerServer() // *Server -> *canvasStore
@@ -214,7 +215,7 @@ func (s *Server) Push(ev any) {
 	cs.mu.Lock()
 	var conns []*websocket.Conn
 	for c, live := range cs.sockets {
-		if live {
+		if live && !cs.muted[c] {
 			conns = append(conns, c)
 		}
 	}
@@ -241,7 +242,59 @@ func (s *Server) dropSocket(c *websocket.Conn) {
 	cs := s.canvasStore()
 	cs.mu.Lock()
 	delete(cs.sockets, c)
+	delete(cs.muted, c)
 	cs.mu.Unlock()
+}
+
+// MuteSockets quiets every realtime socket connected now the way Karim's
+// went quiet on 2026-11-22 (α.136, 01:57Z to 02:42Z): it still answers the
+// client's pings, but nothing else reaches it (no event pushed, no
+// reconnect_url), and it isn't closed. The client's liveness check sees a
+// live socket; its watchdog (slack rtm.go: nothing of Slack's own for
+// twice a reconnect_url's life) is what ends it. The sockets it connects
+// next aren't muted.
+func (s *Server) MuteSockets() {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	if cs.muted == nil {
+		cs.muted = map[*websocket.Conn]bool{}
+	}
+	for c := range cs.sockets {
+		cs.muted[c] = true
+	}
+	cs.mu.Unlock()
+}
+
+// reconnectURLSenders is each server's SendReconnectURLs ticker.
+var reconnectURLSenders = newPerServer() // *Server -> chan struct{} (closed to stop)
+
+// SendReconnectURLs makes the gateway send every live socket that isn't
+// muted a reconnect_url every d, as Slack's gateway does through a
+// connection's life, the frames a healthy idle socket gets (the client's
+// watchdog leaves such a socket be). 0 stops it, as does Close; off by
+// default, so the fake's reconnects stay slow ones.
+func (s *Server) SendReconnectURLs(d time.Duration) {
+	if v, ok := reconnectURLSenders.LoadAndDelete(s); ok {
+		close(v.(chan struct{}))
+	}
+	if d <= 0 {
+		return
+	}
+	stop := make(chan struct{})
+	reconnectURLSenders.Store(s, stop)
+	url := "ws" + strings.TrimPrefix(s.URL, "http") + "ws?fast=1"
+	go func() {
+		t := time.NewTicker(d)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+			}
+			s.Push(map[string]any{"type": "reconnect_url", "url": url})
+		}
+	}()
 }
 
 // StallSockets silences every realtime socket connected now, as a
