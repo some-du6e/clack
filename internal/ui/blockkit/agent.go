@@ -861,9 +861,9 @@ func (me *Message) animated(gtx C, st *agentState, key string, target int) int {
 	}
 	f := easeCSS(float64(p))
 	h := a.from + int(math.Round(float64(target-a.from)*f))
-	// size changes: relayout and a frame next, asked of the host, not an
-	// op.InvalidateCmd mid-layout (the router would replay the frame's
-	// unread events)
+	// size changes: relayout and a frame next, asked of the host (an
+	// op.InvalidateCmd mid-layout replayed the frame's unread events until
+	// Gio patch 61)
 	me.changed()
 	return h
 }
