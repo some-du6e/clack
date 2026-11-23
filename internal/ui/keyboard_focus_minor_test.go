@@ -77,9 +77,8 @@ func TestKeyboardFocusPressDropsPendingListFocus(t *testing.T) {
 	c.comp.Focus()
 	x.settle(200 * time.Millisecond)
 	x.kfUpToList(t, func() bool { return x.cv().KeyboardSelected() != "" })
-	x.root = fakeslack.ThreadOpenRead
-	x.wheelTo(x.root)
-	x.fs.SetFault("conversations.replies", fakeslack.Fault{Delay: 2 * time.Second, Times: 3})
+	x.root = fakeslack.ThreadOpenNewest // on screen: no wheel to it
+	x.fs.SetFault("conversations.replies", fakeslack.Fault{Delay: time.Second, Times: 3})
 	t.Cleanup(func() { x.fs.SetFault("conversations.replies", fakeslack.Fault{}) })
 	asked := x.fs.CallCount("conversations.replies")
 	x.a.OpenThread(x.ch, x.root)

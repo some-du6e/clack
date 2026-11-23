@@ -277,9 +277,8 @@ func TestThreadsAuditKeyboardModeOnlyFromNavigation(t *testing.T) {
 	if x.a.KeyboardMode() {
 		t.Fatal("← moving the caret in the message input turned keyboard mode on; Slack's comes only from a focus moved to something that isn't an input")
 	}
-	x.root = fakeslack.ThreadOpenRead
-	x.wheelTo(x.root)
-	x.a.OpenThread(x.ch, x.root) // as a notification's click: no press in the window
+	x.root = fakeslack.ThreadOpenNewest // on screen: no wheel to it
+	x.a.OpenThread(x.ch, x.root)        // as a notification's click: no press in the window
 	x.until("the thread drawn", 20*time.Second, func() bool {
 		tv := x.threadView(x.ch, x.root)
 		return tv != nil && tv.HasMessages()
