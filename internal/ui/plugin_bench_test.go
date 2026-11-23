@@ -1184,7 +1184,7 @@ func TestPluginBench(t *testing.T) {
 			}
 			p := pluginbench.Plugin{Name: name, Notes: sc.notes}
 			if len(sc.checks) == 0 { // costs only: nothing tells a version that does nothing from one that works
-				p.Notes = strings.TrimSpace(p.Notes + " No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).")
+				p.Notes = strings.TrimSpace(p.Notes + " No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs.")
 			}
 			var imgs []*image.RGBA
 			for _, e := range g.Entries {

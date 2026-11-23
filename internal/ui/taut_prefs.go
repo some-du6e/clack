@@ -1459,15 +1459,13 @@ func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 		if ix := lib.Cached(); ix != nil {
 			entries = ix.Plugins
 		} else if !p.aboutAsked {
-			p.aboutAsked = true // the index once, for its author data
+			p.aboutAsked = true // the index once, for its author data (the one request the Library has out)
 			a := p.a
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-				defer cancel()
-				if _, err := lib.Index(ctx, false); err == nil {
+			lib.Refresh(libraryTTL, false, func(_ *pluginlib.Index, err error) {
+				if err == nil {
 					a.Post(a.Invalidate)
 				}
-			}()
+			})
 		}
 	}
 	if who := cr.contributors(entries, p.a.installedPeople()); who != "" {
