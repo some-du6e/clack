@@ -25,7 +25,11 @@ var winIcon struct {
 	mu         sync.Mutex
 	hwnd       uintptr // the main window (0 once it's going)
 	png        []byte  // SetAppIcon's, nil for Clack's own
-	big, small uintptr // the icons set from png (destroyed when replaced)
+	set        bool    // SetAppIcon has changed the window's icon
+	big, small uintptr // the icons set from png
+	// the icons before those: a posted WM_SETICON may still be on its way
+	// with them, so they go only when the next change replaces them
+	oldBig, oldSmall uintptr
 }
 
 // SetWindowIcon is the main window's handle for SetAppIcon; the window's
@@ -44,7 +48,9 @@ func SetWindowIcon(ev event.Event, pngs ...[]byte) {
 	}
 	if e.HWND != winIcon.hwnd {
 		winIcon.hwnd = e.HWND
-		applyWinIconLocked()
+		if winIcon.set { // a window made again keeps the icon a plugin chose
+			applyWinIconLocked()
+		}
 	}
 }
 
@@ -54,15 +60,26 @@ func SetWindowIcon(ev event.Event, pngs ...[]byte) {
 func SetAppIcon(png []byte, _ ...[]byte) {
 	winIcon.mu.Lock()
 	defer winIcon.mu.Unlock()
-	winIcon.png = png
+	if png == nil && !winIcon.set {
+		return // never changed: the window has Clack's own already
+	}
+	winIcon.png, winIcon.set = png, true
 	applyWinIconLocked()
 }
 
+// applyWinIconLocked posts the window its icons: posted, never sent, as
+// the caller isn't the window's thread, which may be waiting on it (a sent
+// message would wait for that thread to pump messages).
 func applyWinIconLocked() {
 	if winIcon.hwnd == 0 {
 		return
 	}
-	oldBig, oldSmall := winIcon.big, winIcon.small
+	for _, h := range []uintptr{winIcon.oldBig, winIcon.oldSmall} {
+		if h != 0 {
+			procDestroyIcon.Call(h)
+		}
+	}
+	winIcon.oldBig, winIcon.oldSmall = winIcon.big, winIcon.small
 	winIcon.big, winIcon.small = 0, 0
 	if winIcon.png != nil {
 		// the big icon at its full size (the taskbar scales it), the small
@@ -74,13 +91,8 @@ func applyWinIconLocked() {
 		winIcon.small = iconFromPNG(winIcon.png, int(sx))
 	}
 	// a null icon falls back on the window class's: the exe's
-	procSendMessageW.Call(winIcon.hwnd, wmSetIcon, iconBig, winIcon.big)
-	procSendMessageW.Call(winIcon.hwnd, wmSetIcon, iconSmall, winIcon.small)
-	for _, h := range []uintptr{oldBig, oldSmall} {
-		if h != 0 {
-			procDestroyIcon.Call(h)
-		}
-	}
+	procPostMessageW.Call(winIcon.hwnd, wmSetIcon, iconBig, winIcon.big)
+	procPostMessageW.Call(winIcon.hwnd, wmSetIcon, iconSmall, winIcon.small)
 }
 
 // iconFromPNG is an HICON of b at size px (the PNG scaled to it first when
