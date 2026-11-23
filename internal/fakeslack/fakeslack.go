@@ -227,6 +227,11 @@ type Size struct {
 	// GIFs adds #gif-wall (GIFWallID) with this many messages, each a
 	// large animated GIF (gifs.go): the GIF memory test's channel.
 	GIFs int
+	// Giant adds #giant-wall (GiantWallID): of its latest Giant messages
+	// every twelfth is short and the rest are each about 908,000
+	// characters in about 92,000 lines (giant.go), then 60 older short
+	// ones: the giant message memory test's channel.
+	Giant int
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -395,6 +400,7 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 
 // Server is a running fake.
 type Server struct {
+	remote bool // Remote: a fakeslackd in another process
 	// client.counts' threads.unread_count_by_channel (threads_by_channel.go)
 	threadsByChan map[string]int
 
@@ -861,6 +867,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.GIFs > 0 {
 		s.addGIFWall() // gifs.go
 	}
+	if sz.Giant > 0 {
+		s.addGiantWall() // giant.go
+	}
 	if sz.AppPlans {
 		s.addAppPlans() // agents.go
 	}
@@ -931,8 +940,12 @@ func Remote(url string, sz Size) *Server {
 	if !strings.HasSuffix(url, "/") {
 		url += "/"
 	}
-	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}, prefs: DefaultPrefs()}
+	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}, prefs: DefaultPrefs(), remote: true}
 }
+
+// IsRemote reports a Server Remote describes: its fixture's data (users,
+// messages) is in the other process, not here.
+func (s *Server) IsRemote() bool { return s.remote }
 
 // CallCount returns how often method was called.
 func (s *Server) CallCount(method string) int64 {

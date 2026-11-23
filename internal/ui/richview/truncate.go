@@ -2,6 +2,7 @@ package richview
 
 import (
 	"sync"
+	"unicode/utf8"
 
 	"github.com/some-du6e/clack/internal/richtext"
 )
@@ -24,19 +25,23 @@ const (
 // cut reports whether anything was dropped.
 func truncateBlocks(bs []richtext.Block, maxChars, maxNewlines int) (out []richtext.Block, cut bool) {
 	chars, nl := 0, 0
-	// spans keeps spans until the budget runs out; ok=false means stop.
+	// spans keeps spans until the budget runs out; ok=false means stop. A
+	// raw span (a long text element kept whole) counts as the spans it
+	// stands for, and what's kept of it is those (richtext.Pieces).
 	spans := func(ss []richtext.Span) ([]richtext.Span, bool) {
 		var keep []richtext.Span
-		for _, sp := range ss {
+		ok := true
+		one := func(sp richtext.Span) bool {
 			if sp.Kind == richtext.Break {
 				nl++
 				if nl >= maxNewlines {
-					return keep, false
+					ok = false
+					return false
 				}
 				keep = append(keep, sp)
-				continue
+				return true
 			}
-			n := len([]rune(sp.Text))
+			n := utf8.RuneCountInString(sp.Text)
 			if sp.Kind == richtext.Emoji || sp.Kind == richtext.InlineImage {
 				n = 1
 			}
@@ -46,12 +51,19 @@ func truncateBlocks(bs []richtext.Block, maxChars, maxNewlines int) (out []richt
 					sp.Text = string(r[:max(0, maxChars-chars)]) + "…"
 					keep = append(keep, sp)
 				}
-				return keep, false
+				ok = false
+				return false
 			}
 			chars += n
 			keep = append(keep, sp)
+			return true
 		}
-		return keep, true
+		for _, sp := range ss {
+			if !richtext.Pieces(sp, one) {
+				break
+			}
+		}
+		return keep, ok
 	}
 	for i, b := range bs {
 		if i > 0 {

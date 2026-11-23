@@ -157,7 +157,11 @@ func benchStart(t *testing.T, fs *fakeslack.Server) *benchEnv {
 	if installHooks != nil {
 		installHooks(pe.a)
 	}
-	e := &benchEnv{perfEnv: pe, t: t, fs: fs, c: fs.Bench(), trees: map[uint64][]byte{}, styles: map[string]string{}, nextRoot: 1 << 40}
+	var c fakeslack.BenchCase
+	if !fs.IsRemote() { // a remote fake's fixture is in its own process (the giant messages test's)
+		c = fs.Bench()
+	}
+	e := &benchEnv{perfEnv: pe, t: t, fs: fs, c: c, trees: map[uint64][]byte{}, styles: map[string]string{}, nextRoot: 1 << 40}
 	deliverTap = e.record
 	styleTap = func(k, css string) {
 		e.mu.Lock()

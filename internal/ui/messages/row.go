@@ -382,6 +382,12 @@ type rowCtx struct {
 	// hiddenUser: the sender is someone the viewer hid (isUserHidden);
 	// unhidden: this message was shown anyway (hidden_msg.go)
 	hiddenUser, unhidden bool
+	// where the list is putting the row being laid out (listState.itemEdge):
+	// its top on screen, or its bottom with edgeBottom, in a list viewH
+	// tall; viewH 0 outside the list's layout of an item
+	edge       int
+	edgeBottom bool
+	viewH      int
 }
 
 // padX is the gutter's side padding: 20 in a channel, 16 in a thread
@@ -1782,6 +1788,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 			return slackc.Component(gtx, "BaseVisuallyHiddenMessageText", r, (*row).hiddenTextProps, (*row).layoutNothing)
 		})
 		y += hd.Size.Y
+		r.rv.SetWindow(r.bodyWindow(y))
 		body = at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
 			return slackc.Component(gtx, "MessageText", r, (*row).textProps, (*row).layoutMessageText)
@@ -1853,6 +1860,23 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 		y += r.channelCards(gtx, y, cw)
 	}
 	return layout.Dimensions{Size: image.Pt(cw, y)}
+}
+
+// bodyWindow is where the row's text, at column y, is on screen
+// (richview.Window): where the list is putting the row (rowCtx.edge) and
+// the text's place in it. A row the list fills in upward from the one
+// below knows its bottom only; the text's distance from it is last
+// frame's. A message taller than three screens then records only what's
+// within a screen of the screen (richview giant.go).
+func (r *row) bodyWindow(y int) richview.Window {
+	rc := r.rc
+	if rc == nil || rc.viewH <= 0 {
+		return richview.Window{}
+	}
+	if !rc.edgeBottom {
+		return richview.Window{Edge: rc.edge + r.col.Y + y, Height: rc.viewH}
+	}
+	return richview.Window{Edge: rc.edge - max(0, r.height-r.bodyRect.Max.Y), Bottom: true, Height: rc.viewH}
 }
 
 // textMargin: the body ends with Slack's 4px. MessageBlocks (iGDn) adds

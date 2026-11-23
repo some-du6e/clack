@@ -350,8 +350,12 @@ func sweepRows(now time.Time) {
 		if s.releaseEvicted() {
 			continue
 		}
+		// a big row of a list on screen goes in releaseBigRows, after its
+		// layout (a list drawn no frame for a second still shows it: the
+		// sweep runs before layout, and released it to lay it out again)
+		away := !s.onScreen()
 		for _, r := range s.rows {
-			if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > rowIdle {
+			if r.rv != nil && r.edit == nil && (now.Sub(r.drawn) > rowIdle || away && now.Sub(r.drawn) > bigRowIdle && r.rv.PlainLen() >= bigRowText) {
 				// the trees' msgs it remembered and laid over its message
 				// (slackc's sweep has let their roots go, and a remount
 				// hands the natives none until JS draws them again): not
@@ -1427,7 +1431,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		m := op.Record(gtx.Ops)
 		s.dayCalls = s.dayCalls[:0]
 		s.list.Layout(gtx, len(s.items), func(gtx layout.Context, i int) layout.Dimensions {
+			rc.edge, rc.edgeBottom = s.itemEdge(i)
+			rc.viewH = size.Y
 			d := s.layoutItem(gtx, h, rc, i)
+			rc.viewH = 0
 			s.heights[i] = d.Size.Y
 			s.measH[s.items[i].key] = d.Size.Y
 			if i >= len(s.items)-tailItems {
@@ -1471,6 +1478,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if s.thread && s.snap.loaded {
 		s.thrOpening = false // the pane shows its thread: a jump now is a re-highlight
 	}
+	s.releaseBigRows(gtx.Now)
 	defer s.pageSelect() // after the positions below (kbnav.go)
 	s.actionsScrollEnd(actD)
 
@@ -1613,6 +1621,47 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 	return layout.Dimensions{Size: size}
+}
+
+// itemEdge is where the list is about to put item i on screen, as its
+// Layout asks for it: an item at or after Position.First goes under the
+// ones laid out from First on, so its top is known; one before First
+// (the list filling the space above it) goes over First, so its bottom
+// is. A row hands it to its text (row.bodyWindow).
+func (s *listState) itemEdge(i int) (edge int, bottom bool) {
+	p := s.list.Position
+	if i < p.First {
+		return -p.Offset, true
+	}
+	y := -p.Offset
+	for j := p.First; j < i && j < len(s.heights); j++ {
+		y += s.heights[j]
+	}
+	return y, false
+}
+
+// A row whose text is large (a message of hundreds of thousands of
+// characters, richview giant.go) gives its layout back once it hasn't
+// been drawn for bigRowIdle, not rowIdle: such a layout is megabytes, and
+// Slack's virtual list unmounts a row as soon as it leaves the screen
+// and its overscan (half a screen each side: ftxy overscanRatio .5). Laid
+// out again, it costs tens of milliseconds.
+const (
+	bigRowText = 64 << 10
+	bigRowIdle = time.Second
+)
+
+// releaseBigRows releases the large layouts of rows off screen (unless a
+// selection may span them: copy reads their text).
+func (s *listState) releaseBigRows(now time.Time) {
+	if _, _, _, _, ok := s.ordered(); ok {
+		return
+	}
+	for _, r := range s.rows {
+		if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > bigRowIdle && r.rv.PlainLen() >= bigRowText {
+			r.rv.Release()
+		}
+	}
 }
 
 // laidRow is a message row as a layout put it on screen: its item's key,

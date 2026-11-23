@@ -1411,12 +1411,20 @@ type viewEntry struct {
 	bsum  uint64
 	blen  int
 	bkeys []store.MsgKey
+	// vals: a long bucket read in chunks keeps its entries, not raw (the
+	// same entries again, in one value: a channel of 908,000-character
+	// messages held 137 MB twice); get writes raw again from them
+	vals map[string]json.RawMessage
 
 	// same: the fetch found the value the installed entry it was handed
 	// holds, and decoded nothing (work keeps that entry, taking bsum and
 	// blen)
 	same bool
 }
+
+// viewLongBucket: a chunked bucket longer than this keeps its entries and
+// not its bytes whole (viewEntry.vals).
+const viewLongBucket = 4 << 20
 
 // viewInj is a message of a bucket that core didn't have; sum and rawLen
 // tell its bytes, so a refetch keeps it (decoded and converted) when
@@ -1801,6 +1809,9 @@ func (v *viewCache) get(slice, key, sub string) (json.RawMessage, bool) {
 	e := v.entry(slice, key, sub)
 	if e == nil {
 		return nil, false
+	}
+	if e.raw == nil && e.vals != nil {
+		return wholeJSON(e.vals), true // the bytes it was installed from
 	}
 	return e.raw, true
 }
@@ -2373,14 +2384,14 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 		return b
 	}
 	// a whole message bucket read in chunks, as one value: its entries
-	// encoded again (json sorts a map's keys, so the same entries make the
-	// same bytes), which the same-bytes check compares as it compared JS's
-	// encoding of the bucket whole
+	// written again in key order (the same entries make the same bytes),
+	// which the same-bytes check compares as it compared JS's encoding of
+	// the bucket whole
 	wholes := map[viewSK]json.RawMessage{}
 	whole := func(sk viewSK) json.RawMessage {
 		w, ok := wholes[sk]
 		if !ok {
-			w, _ = json.Marshal(bucket(sk))
+			w = wholeJSON(bucket(sk))
 			wholes[sk] = w
 		}
 		return w
@@ -2417,6 +2428,12 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 					continue
 				}
 				e.sm = decodeMessage(raw)
+				if e.sm != nil && len(raw) >= 32<<10 {
+					// passed through, a long message's text and blocks are
+					// core's bytes: held once (a channel of 908,000-character
+					// messages held each twice)
+					v.t.app.S.ShareContent(k.key, e.sm)
+				}
 				e.size = 3*len(raw) + 256 // the decoded message and its conversion
 			} else if k.key != "" {
 				e.bsum, e.blen = viewSum(raw), len(raw)
@@ -2431,6 +2448,9 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 					e.bkeys = append(e.bkeys, store.MsgKey{TS: ts, CID: clientMsgID(raw)})
 				}
 				e.size += 3*1024*len(e.inj) + 48*len(e.bkeys)
+				if chunked[sk] && len(raw) > viewLongBucket {
+					e.raw, e.sum, e.vals = nil, e.bsum, b // sameValue: sum and length
+				}
 			}
 		case "members":
 			if cur != nil && cur.mem != nil && bytes.Equal(cur.raw, raw) {
@@ -2946,4 +2966,36 @@ func errWithStack(err error) string {
 		lines[i] = strings.TrimSpace(l)
 	}
 	return err.Error() + " [" + strings.Join(lines, " | ") + "]"
+}
+
+// wholeJSON is a message bucket's entries as one JSON object, keys in
+// order: each entry's bytes as JS encoded them, not re-validated and
+// copied through encoding/json (a bucket of 908,000-character messages is
+// a hundred megabytes; encoding/json made three times that of garbage).
+func wholeJSON(b map[string]json.RawMessage) json.RawMessage {
+	if b == nil {
+		return json.RawMessage("null")
+	}
+	keys := make([]string, 0, len(b))
+	n := 2
+	for k, v := range b {
+		keys = append(keys, k)
+		n += len(k) + len(v) + 4
+	}
+	sort.Strings(keys)
+	out := make([]byte, 0, n)
+	out = append(out, '{')
+	for i, k := range keys {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = appendJSONString(out, k)
+		out = append(out, ':')
+		if v := b[k]; len(v) > 0 {
+			out = append(out, v...)
+		} else {
+			out = append(out, "null"...)
+		}
+	}
+	return append(out, '}')
 }

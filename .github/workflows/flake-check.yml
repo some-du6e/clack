@@ -2871,6 +2871,125 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # giant-messages-fixes (2026-11-23, giant-message-memory-2's review):
+  # the raw spans' and the answer reads' unit tests: a preformatted raw
+  # span highlighted mid-line stays preformatted (richtext), and an answer
+  # cut off mid-body is an error, as io.ReadAll's is (slack: Content-Length,
+  # chunked, gzip); a message held only as fetched by id has its
+  # reactions in the plugins' reactions slice (taut: keys and get agree).
+  # only=giant-messages runs it with giant-messages;
+  # only=giant-messages-fixes alone.
+  giant-messages-fixes:
+    if: ${{ !inputs.only || startsWith('giant-messages-fixes', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (taut's test binary links them)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: richtext raw spans, slack answer reads, taut reactions (every package, then the verdict)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 8m -run '^(TestRawPreHighlightMidLine|TestRawSpanMessage|TestRichTextPieces|TestTextIsAsDecoded|TestRichJumbo)$' ./internal/richtext || rc=1
+          go test -count=$COUNT -timeout 8m -run '^(TestReadBodyCutOff|TestReadBodyAsReadAll|TestAdaptiveRouting)$' ./internal/slack || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^(TestReactionsOfFetchedMessages|TestBucketJSONSameAsBucket)$' ./internal/taut || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # giant-messages (2026-11-20, restarted 2026-11-23): messages the shape
+  # of the channel Heliodex reported (opening it took Clack to 13 GB):
+  # #giant-wall (fakeslack Size.Giant, synthetic text), 92 of its latest
+  # 100 messages each about 908,000 characters in about 92,000 lines.
+  # TestGiantMessagesBounded opens it, scrolls, pages back to the 100th
+  # newest and jumps around, under the GPU renderer (llvmpipe), and fails
+  # past its live heap, peak RSS and frame time bounds or when a giant
+  # message doesn't draw what Slack draws; TestGiantMessagesPlugins is
+  # the same session under a plugin patching the messages slice. Heap
+  # profiles and reports are the giant-messages artifact. Dispatch with
+  # only=giant-messages (-f count=3 for a flake check).
+  giant-messages:
+    if: ${{ !inputs.only || startsWith('giant-messages', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (Xvfb, Mesa llvmpipe)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: TestGiantMessagesBounded (COUNT runs, each against a fresh fakeslackd, the first verbose), and TestGiantMessagesKeywords against the same fake, then TestGiantMessagesPlugins (COUNT runs, verbose)
+        env:
+          CLACK_GIANT_MESSAGES: "100"
+          CLACK_BENCH_GPU: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          set -o pipefail
+          go build -o "$RUNNER_TEMP/fakeslackd" ./internal/fakeslack/fakeslackd || exit 1
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui || exit 1
+          rc=0
+          for i in $(seq 1 "$COUNT"); do
+            # the fake in its own process: the RSS is the client's alone
+            "$RUNNER_TEMP/fakeslackd" -small -giant 100 -addr 127.0.0.1:8933 > "$RUNNER_TEMP/fakeslackd-$i.log" 2>&1 &
+            fp=$!
+            for _ in $(seq 1 200); do curl -s -o /dev/null http://127.0.0.1:8933/img/1x1/x.png && break; sleep 0.1; done
+            mkdir -p "$RUNNER_TEMP/giant/$i"
+            v=""
+            [ "$i" = 1 ] && v="-test.v"
+            # through expect_fail's wrapper when a proof run names it
+            # the whole output in the artifact (a watchdog's panic dumps
+            # every goroutine), its end in the log
+            (cd internal/ui && CLACK_FAKESLACK_URL=http://127.0.0.1:8933/ CLACK_GIANT_OUT="$RUNNER_TEMP/giant/$i" \
+              xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 $v -test.timeout 20m -test.run '^TestGiantMessagesBounded$' 2>&1 | tee "$RUNNER_TEMP/giant/$i/bounded.log" | tail -n 200) || rc=1
+            # the same session with Channel keywords, against the same fake
+            mkdir -p "$RUNNER_TEMP/giant/kw-$i"
+            (cd internal/ui && CLACK_FAKESLACK_URL=http://127.0.0.1:8933/ CLACK_GIANT_OUT="$RUNNER_TEMP/giant/kw-$i" \
+              xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 $v -test.timeout 20m -test.run '^TestGiantMessagesKeywords$' 2>&1 | tee "$RUNNER_TEMP/giant/kw-$i/keywords.log" | tail -n 200) || rc=1
+            kill $fp 2>/dev/null; wait $fp 2>/dev/null
+          done
+          # under a plugin that patches the messages slice, each against a
+          # fresh fakeslackd of its own (its peak RSS varies most: every run
+          # verbose)
+          for i in $(seq 1 "$COUNT"); do
+            "$RUNNER_TEMP/fakeslackd" -small -giant 100 -addr 127.0.0.1:8934 > "$RUNNER_TEMP/fakeslackd-plugins-$i.log" 2>&1 &
+            fp=$!
+            for _ in $(seq 1 200); do curl -s -o /dev/null http://127.0.0.1:8934/img/1x1/x.png && break; sleep 0.1; done
+            mkdir -p "$RUNNER_TEMP/giant/plugins-$i"
+            (cd internal/ui && CLACK_GIANT_PLUGINS=1 CLACK_FAKESLACK_URL=http://127.0.0.1:8934/ CLACK_GIANT_OUT="$RUNNER_TEMP/giant/plugins-$i" \
+              xvfb-run -a -s "-screen 0 1440x900x24" ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.count 1 -test.v -test.timeout 20m -test.run '^TestGiantMessagesPlugins$' 2>&1 | tee "$RUNNER_TEMP/giant/plugins-$i/plugins.log" | tail -n 200) || rc=1
+            kill $fp 2>/dev/null; wait $fp 2>/dev/null
+          done
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: giant-messages
+          path: ${{ runner.temp }}/giant
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # inspect-draw (2026-11-21): the inspect review's pen (draw.go): lines
   # burned into the copy where and as wide as they were drawn at 1x and
   # 2x, undo, Esc back to blurring with the app's input intact after, and
@@ -6332,6 +6451,7 @@ jobs:
       - composer-link-edit
       - library-dupes
       - rx-bar
+      - giant-messages
       - plugins-work-0
       - platform-mime-linux
       - platform-mime-windows
@@ -6339,6 +6459,7 @@ jobs:
       - fl1122d-r-jump
       - fl1122d-r-taut
       - canvas-quip
+      - giant-messages-fixes
       - plugins-work-1
       - plugins-work-2
       - quote-paste-win
