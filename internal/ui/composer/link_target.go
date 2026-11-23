@@ -273,5 +273,8 @@ func (e *Editor) onLinkRelease(gtx layout.Context, ev gesture.ClickEvent) {
 	}
 	lo, hi := d.coverLink(start+1, d.formatLinkAt(start+1) != "")
 	il, ih := e.sel()
+	// the click event comes after mouseup: the release's caret is placed
+	// already, and the selection the handler sets stands
+	e.dragging = false
 	e.OnLinkClick(gtx, linkClick{el: el, lo: lo, hi: hi, initLo: il, initHi: ih})
 }

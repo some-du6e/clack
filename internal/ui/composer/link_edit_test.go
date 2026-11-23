@@ -201,6 +201,12 @@ func (e *lkEnv) do(k string) {
 		if it.Key != k || it.Separator || it.Header != "" {
 			continue
 		}
+		// a click on the row: the menu closes, then the row acts
+		for _, o := range e.h.overlays {
+			if m, ok := o.(*popups.Menu); ok {
+				m.Dismiss()
+			}
+		}
 		switch {
 		case it.DoCtx != nil:
 			it.DoCtx(layout.Context{Ops: new(op.Ops), Source: e.r.Source(), Now: e.now})
@@ -344,6 +350,11 @@ func TestLinkMenuEditsALink(t *testing.T) {
 	for _, it := range e.items {
 		if it.Key == "copy" && it.DoCtx != nil {
 			it.DoCtx(layout.Context{Ops: new(op.Ops), Source: e.r.Source(), Now: e.now})
+		}
+	}
+	for _, o := range e.h.overlays {
+		if m, ok := o.(*popups.Menu); ok {
+			m.Dismiss()
 		}
 	}
 	if _, b, ok := e.r.WriteClipboard(); !ok || string(b) != "http://example.org/guide" {

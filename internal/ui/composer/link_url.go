@@ -2,6 +2,7 @@ package composer
 
 import (
 	"math"
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf16"
@@ -300,14 +301,14 @@ func urlPathHash(s string) (protocol string, deep bool) {
 		host = host[at+1:]
 	}
 	if c := strings.LastIndexByte(host, ':'); c >= 0 && !strings.HasSuffix(host, "]") {
-		if strings.Trim(host[c+1:], "0123456789") != "" {
+		port := host[c+1:]
+		if strings.Trim(port, "0123456789") != "" || len(strings.TrimLeft(port, "0")) > 5 || port != "" && atoiOK(port) > 65535 {
 			return "", false // not a port: new URL throws
 		}
 		host = host[:c]
 	}
-	bracketed := strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]")
-	if host == "" || strings.ContainsAny(host, " \t\n\r<>^|") || !bracketed && strings.ContainsAny(host, "[]") {
-		return "", false // a forbidden host code point: new URL throws, the empty object
+	if !whatwgHostOK(host) {
+		return "", false // new URL throws: the empty object
 	}
 	path, hash := tail, ""
 	if j := strings.IndexByte(path, '#'); j >= 0 {
@@ -316,7 +317,133 @@ func urlPathHash(s string) (protocol string, deep bool) {
 	if j := strings.IndexByte(path, '?'); j >= 0 {
 		path = path[:j]
 	}
-	return proto, path != "" && path != "/" && path != "\\" || hash != ""
+	path = whatwgPath(path)
+	return proto, path != "/" || hash != ""
+}
+
+func atoiOK(s string) int {
+	n := 0
+	for _, c := range s {
+		n = n*10 + int(c-'0')
+		if n > 1<<20 {
+			return n
+		}
+	}
+	return n
+}
+
+// whatwgHostOK is whether the URL parser takes host (a special URL's,
+// port gone): percent-decoded, no forbidden domain code point, and a host
+// ending in a number a valid IPv4 address.
+func whatwgHostOK(host string) bool {
+	if strings.HasPrefix(host, "[") {
+		return strings.HasSuffix(host, "]") && len(host) > 2
+	}
+	h, err := url.PathUnescape(host)
+	if err != nil {
+		h = host // a stray % stays, and is forbidden below
+	}
+	if h == "" {
+		return false
+	}
+	for _, r := range h {
+		if r <= 0x20 || r == 0x7f || strings.ContainsRune("#%/:<>?@[\\]^|", r) {
+			return false
+		}
+	}
+	labels := strings.Split(strings.ToLower(h), ".")
+	if len(labels) > 1 && labels[len(labels)-1] == "" {
+		labels = labels[:len(labels)-1] // a trailing dot
+	}
+	if _, ok := ipv4Number(labels[len(labels)-1]); !ok {
+		return true // a domain
+	}
+	// ends in a number: an IPv4 address, or a failure
+	if len(labels) > 4 {
+		return false
+	}
+	for i, l := range labels {
+		n, ok := ipv4Number(l)
+		if !ok {
+			return false
+		}
+		if i < len(labels)-1 && n > 255 {
+			return false
+		}
+		if i == len(labels)-1 && n >= 1<<(8*(5-len(labels))) {
+			return false
+		}
+	}
+	return true
+}
+
+// ipv4Number is the IPv4 number parser: decimal, 0x hex, 0 octal.
+func ipv4Number(s string) (uint64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	base := 10
+	switch {
+	case len(s) >= 2 && (s[:2] == "0x" || s[:2] == "0X"):
+		base, s = 16, s[2:]
+		if s == "" {
+			return 0, true
+		}
+	case len(s) >= 2 && s[0] == '0':
+		base, s = 8, s[1:]
+	}
+	var n uint64
+	for _, c := range s {
+		var d int
+		switch {
+		case c >= '0' && c <= '9':
+			d = int(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = int(c-'a') + 10
+		default:
+			return 0, false
+		}
+		if d >= base {
+			return 0, false
+		}
+		n = n*uint64(base) + uint64(d)
+		if n > 1<<40 {
+			return n, true
+		}
+	}
+	return n, true
+}
+
+// whatwgPath is a special URL's path as the parser leaves it, for
+// truncateUrl's "/" test: backslashes as slashes, "." and ".." segments
+// (%2e counts) resolved, "/" for none.
+func whatwgPath(p string) string {
+	p = strings.ReplaceAll(p, "\\", "/")
+	if p == "" {
+		return "/"
+	}
+	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	var out []string
+	for i, sg := range segs {
+		l := strings.ToLower(sg)
+		last := i == len(segs)-1
+		switch l {
+		case ".", "%2e":
+			if last {
+				out = append(out, "")
+			}
+		case "..", ".%2e", "%2e.", "%2e%2e":
+			if len(out) > 0 {
+				out = out[:len(out)-1]
+			}
+			if last {
+				out = append(out, "")
+			}
+		default:
+			out = append(out, sg)
+		}
+	}
+	return "/" + strings.Join(out, "/")
 }
 
 // truncateURL is psdB truncateUrl: a URL over 140 units (with at most one
