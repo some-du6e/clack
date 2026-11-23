@@ -16,16 +16,27 @@ package applog
 //     it). With no stderr, fd 2 is crash.log (STD_ERROR_HANDLE), so that
 //     report lands there.
 //   - On a thread Go doesn't own (a graphics driver's, the thread pool's),
-//     the runtime's handlers pass (there is no g), and Windows Error
-//     Reporting ends the process. An unhandled-exception filter, as
-//     Chromium's Crashpad installs (SetUnhandledExceptionFilter), writes
-//     the exception's code, where it happened (module and offset), the
-//     thread and where that thread started to crash.log first, then hands
-//     the exception on to the filter that was there before (mingw's CRT in
-//     a cgo build) and to Windows Error Reporting.
+//     the runtime's handlers pass (there is no g), and Windows ends the
+//     process. An unhandled-exception filter, as Chromium's Crashpad
+//     installs (SetUnhandledExceptionFilter), writes the exception's code,
+//     where it happened (module and offset), the thread and where that
+//     thread started to crash.log first, then hands the exception on to
+//     the filter that was there before (mingw's CRT in a cgo build) and to
+//     Windows Error Reporting.
+//   - A fail-fast (a heap corruption, 0xc0000374) runs no handler at all:
+//     only Windows Error Reporting sees it, and logs it (Application
+//     Error, event 1000: crashevent.go). Go's runtime keeps WER out of
+//     every crash at start (preventErrorDialogs: SEM_NOGPFAULTERRORBOX, so
+//     Windows ends the process unrecorded; GOTRACEBACK=wer is the
+//     runtime's way back, and turns every panic into a crash). armNative
+//     lets WER back in (werOn), as Chromium is: Go already turned WER's
+//     dialog off (WER_FAULT_REPORTING_NO_UI), so a crash is recorded, never
+//     shown. CI's runners logged no crash at all before (45202224745).
 //
-// Nothing is sent anywhere: crash.log stays on the disk, and the next start
-// copies it, redacted, into clack.log like a Go crash.
+// Clack sends nothing anywhere: crash.log stays on the disk, and the next
+// start copies it, redacted, into clack.log like a Go crash. Windows Error
+// Reporting treats a crash of Clack's as any app's (werOn): it records it,
+// and reports it or not as the PC's settings say.
 
 import (
 	"errors"
@@ -47,6 +58,8 @@ var (
 	ncNtdll                       = windows.NewLazySystemDLL("ntdll.dll")
 	ncSetUnhandledExceptionFilter = ncKernel32.NewProc("SetUnhandledExceptionFilter")
 	ncGetModuleHandleExW          = ncKernel32.NewProc("GetModuleHandleExW")
+	ncGetErrorMode                = ncKernel32.NewProc("GetErrorMode")
+	ncSetErrorMode                = ncKernel32.NewProc("SetErrorMode")
 	ncNtQueryInformationThread    = ncNtdll.NewProc("NtQueryInformationThread")
 )
 
@@ -97,6 +110,7 @@ func armNative(f *os.File, flush func()) bool {
 	native.once.Do(func() {
 		prev, _, _ := ncSetUnhandledExceptionFilter.Call(windows.NewCallback(unhandledFilter))
 		native.prev.Store(prev)
+		werOn()
 	})
 	if hasStderr() {
 		return false
@@ -110,6 +124,20 @@ func armNative(f *os.File, flush func()) bool {
 		return false
 	}
 	return true
+}
+
+// semNoGPFaultErrorBox is SetErrorMode's SEM_NOGPFAULTERRORBOX: with it,
+// Windows ends a crashing process without Windows Error Reporting.
+const semNoGPFaultErrorBox = 0x0002
+
+// werOn lets Windows Error Reporting record this process's crashes: it
+// clears the SEM_NOGPFAULTERRORBOX Go's runtime set at start, as the
+// runtime's own enableWER does for GOTRACEBACK=wer (the other error-mode
+// flags stay).
+func werOn() {
+	if mode, _, _ := ncGetErrorMode.Call(); mode&semNoGPFaultErrorBox != 0 {
+		ncSetErrorMode.Call(mode &^ semNoGPFaultErrorBox)
+	}
 }
 
 // releaseNative lets go of crash.log (tests: Windows can't remove an open

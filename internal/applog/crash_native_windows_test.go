@@ -109,9 +109,10 @@ func nativeCrashHelper(t *testing.T, mode, dir string) {
 	if err := windows.SetStdHandle(windows.STD_ERROR_HANDLE, 0); err != nil {
 		t.Fatal(err)
 	}
-	// and the runner shows no Windows Error Reporting dialog
-	const semFailCriticalErrors, semNoGPFaultErrorBox = 0x0001, 0x0002
-	windows.SetErrorMode(semFailCriticalErrors | semNoGPFaultErrorBox)
+	// as Go's runtime starts a process (captureCrashes' werOn then lets
+	// Windows Error Reporting record the crash; Go's
+	// WER_FAULT_REPORTING_NO_UI keeps it from showing a dialog)
+	windows.SetErrorMode(0x0001 | semNoGPFaultErrorBox) // SEM_FAILCRITICALERRORS
 	l := start(dir, nil, io.Discard)
 	if err := l.captureCrashes("helper run, " + mode); err != nil {
 		t.Fatal(err)

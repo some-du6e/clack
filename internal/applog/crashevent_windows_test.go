@@ -4,6 +4,7 @@ package applog
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -13,17 +14,28 @@ import (
 	"time"
 )
 
-// The real query: a child (this test binary again) ends in a fail-fast,
-// as a heap corruption ends a process (RaiseFailFastException: no handler
-// of Go's runs, nothing of Clack's can write), and Windows' Application
-// Error event for it is what CrashRecordFor finds, by the child's pid and
-// start; a start an hour off (another process with the pid) finds
-// nothing. It leaves a crash event in the runner's log, so it runs only
-// where CLACK_WINDOWS_WER_TESTS is set (ci's windows-applog job).
+// The real query: a child (this test binary again) starts its crash
+// capture as Clack does (captureCrashes), then ends in a fail-fast, as a
+// heap corruption ends a process (RaiseFailFastException: no handler of
+// Go's runs, nothing of Clack's can write), and Windows' Application Error
+// event for it is what CrashRecordFor finds, by the child's pid and start;
+// a start an hour off (another process with the pid) finds nothing. Go's
+// runtime keeps Windows Error Reporting out of a process's crashes
+// (SEM_NOGPFAULTERRORBOX) and the capture lets it back in (werOn):
+// without that, Windows logged nothing (45202224745, 45208811422). It
+// leaves a crash event in the runner's log, so it runs only where
+// CLACK_WINDOWS_WER_TESTS is set (ci's windows-applog job).
 func TestCrashRecordForRealEvent(t *testing.T) {
 	if os.Getenv("CLACK_CRASH_CHILD") == "1" {
 		fmt.Printf("child pid %d, started %s\n", os.Getpid(), time.Now().Format(time.RFC3339))
 		os.Stdout.Sync()
+		l := start(t.TempDir(), nil, io.Discard)
+		if err := l.captureCrashes("crash record child"); err != nil {
+			t.Fatal(err)
+		}
+		if mode, _, _ := ncGetErrorMode.Call(); mode&semNoGPFaultErrorBox != 0 {
+			fmt.Printf("child error mode %#x: Windows Error Reporting still kept out\n", mode)
+		}
 		k32 := syscall.NewLazyDLL("kernel32.dll")
 		k32.NewProc("RaiseFailFastException").Call(0, 0, 0)
 		os.Exit(3) // not reached

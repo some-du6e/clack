@@ -785,14 +785,13 @@ jobs:
         with:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
-      # TestCrashRecordForRealEvent needs Windows to log a crash (Application
-      # Error, event 1000): 45196009117 logged none, for its fail-fast or
-      # crash_native's access violation, and 45202224745 none with WerSvc
-      # running. The image sets AeDebug's Debugger to "-" (no JIT debugger):
-      # with a debugger set, a crash goes to it instead of Windows Error
-      # Reporting, and "-" starts nothing, so the process ends unrecorded.
-      # Without it, as on a user's PC, WER records the crash. What the image
-      # set, then reporting on
+      # TestCrashRecordForRealEvent: Windows logs a crash of Clack's
+      # (Application Error, event 1000) once applog's capture has let Windows
+      # Error Reporting back in (Go's runtime keeps it out:
+      # SEM_NOGPFAULTERRORBOX; 45202224745 and 45208811422 logged nothing,
+      # with WerSvc running and AeDebug's debugger gone). The runner as a
+      # user's PC is: WerSvc started, no JIT debugger (the image's "-");
+      # what the image set is printed first
       - name: Windows Error Reporting on (applog's crash record)
         shell: pwsh
         run: |
