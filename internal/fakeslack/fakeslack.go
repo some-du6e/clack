@@ -255,6 +255,10 @@ func (s *Server) LongChannelIDs() []string {
 	return out
 }
 
+// User is the directory's member id as users/info answers it (tests that
+// want the store to hold the fixture's members up front).
+func (s *Server) User(id string) (slack.User, bool) { return s.userByID(id) }
+
 // UserIDs are the directory's ids, in order.
 func (s *Server) UserIDs() []string {
 	out := make([]string, len(s.users))

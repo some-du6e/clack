@@ -1,7 +1,6 @@
 package messages
 
 import (
-	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -244,23 +243,18 @@ func (e *flingEnv) release() {
 	}
 }
 
+// flingForce, when set, runs before each of flingThrough's idle frames: the
+// proof run's (fling-22px) lookup answer landing just then.
+var flingForce func(e *flingEnv)
+
 func flingThrough(t *testing.T, e *flingEnv) {
+	// every name the history can show is in the store before it loads:
+	// an idle frame must have nothing arriving (knowNames; a channel name
+	// landing in the row on the anchor line moved the rows under it 22 px
+	// in files-filters-3's 44980164338, bk-modal-spacing's 45090826439 and
+	// upload-filetype-2's 45103177353)
+	e.knowNames()
 	until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.items) > 3 })
-	// the page's senders first: the store starts with the viewer alone,
-	// and their names land while the rows are drawn. A guess at
-	// files-filters-3's push ci 44980164338 (a row moved 22 px at frame 2,
-	// the users/info asks just answered), not proven: holding the names
-	// didn't move a row (flakes-1122's red3). EnsureUsers returns once they
-	// are all in, the asks already out too.
-	var ids []string
-	for _, en := range e.v.s.snap.msgs {
-		if en.m.User != "" {
-			ids = append(ids, en.m.User)
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	e.app.EnsureUsers(ctx, ids)
-	cancel()
 	for i := 0; i < 5; i++ {
 		e.frame()
 	}
@@ -274,6 +268,9 @@ func flingThrough(t *testing.T, e *flingEnv) {
 		key, y := e.firstMsg()
 		if f%3 == 2 {
 			// an idle frame (a page may land): nothing on screen moves
+			if flingForce != nil {
+				flingForce(e)
+			}
 			before := e.rowStates()
 			e.frame()
 			if len(e.v.s.snap.msgs) != n0 {
@@ -438,6 +435,7 @@ func TestFlingPageArrivalEveryFrame(t *testing.T) {
 					close(gate)
 				}
 			})
+			e.knowNames() // its idle frames too: nothing lands but the page
 			until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.items) > 3 })
 			for i := 0; i < 30; i++ { // users, avatars and images settle
 				e.frame()

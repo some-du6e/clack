@@ -5240,10 +5240,13 @@ jobs:
   # fling-22px: TestFlingScrollNoGapsCompact/history failed 3 times the same
   # way (an idle frame moved the first row on screen 22 px, one Compact
   # line: files-filters-3 44980164338, bk-modal-spacing 45090826439,
-  # upload-filetype-2 45103177353), reruns green. COUNT runs each on an
-  # idle runner, under 4 busy loops and under -race; a failed run prints
-  # every visible row before and after the frame (scroll_gaps_test.go
-  # logMove).
+  # upload-filetype-2 45103177353), reruns green. A channel's name, looked
+  # up as its mention first drew, landed in the row on the anchor line
+  # between two frames (diagnosed in 45172860772); the fling now starts
+  # with every name in the store (knowNames). COUNT runs each on an idle
+  # runner, under 4 busy loops and under -race; a failed run prints every
+  # visible row before and after the frame (scroll_gaps_test.go logMove;
+  # REPRO=1 keeps a reproduced move green while diagnosing).
   fling-22px:
     if: ${{ !inputs.only || startsWith('fling-22px', inputs.only) }}
     runs-on: ubuntu-latest
@@ -5262,19 +5265,14 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: the Compact fling's history case, an idle runner
-        env:
-          REPRO: "1" # the diagnostics phase: a reproduced move alone keeps the job green
         run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" idle
       - name: the same under 4 busy loops
         if: ${{ !cancelled() }}
         env:
-          REPRO: "1"
           BURN: "4"
         run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" burn
       - name: the same under -race
         if: ${{ !cancelled() }}
-        env:
-          REPRO: "1"
         run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" race -race
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
