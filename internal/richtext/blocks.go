@@ -18,6 +18,7 @@ type bk struct {
 	bkAgent                // plan, task_card (agent.go)
 	viz       *bkDataViz   // a data_visualization block's own keys (dataviz.go)
 	table     *bkDataTable // a data_table block's own keys (datatable.go)
+	timeline  *bkTimeline  // a timeline block's own keys (timeline.go)
 	Type      string       `json:"type"`
 	BlockID   string       `json:"block_id"`
 	Elements  []bk         `json:"elements"`
@@ -208,6 +209,10 @@ type builder struct {
 	// undrawn are the types Slack has a renderable for that reached no
 	// renderer of Clack's (the coverage guard reads it)
 	undrawn []string
+	// streamDone: the message's stream has finished (IiSM u: its
+	// ai_context.result_status, else its streaming_state), so a timeline's
+	// in-progress points no longer run
+	streamDone bool
 	// embedding are the messages (channel/ts) whose message_embed is being
 	// drawn on the way here, embedCards the embeds drawn so far
 	// (messageembed.go)
@@ -427,7 +432,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", badBlock:
 		return true
 	}
 	return false
@@ -589,6 +594,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.dataTableBlock(b))
 	case "message_embed":
 		return c.messageEmbed(out, b)
+	case "timeline":
+		return c.timelineBlock(out, b)
 	case "data_visualization":
 		return append(out, c.dataVizBlock(b))
 	case "markdown":

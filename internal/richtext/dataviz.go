@@ -53,13 +53,17 @@ type bkDataViz struct {
 	BlockID       json.RawMessage `json:"block_id"`
 }
 
-// isDataType is a block type decoded by its renderable's own keys.
-func isDataType(t string) bool { return t == "data_visualization" || t == "data_table" }
+// ownKeysType is a block type decoded by its renderable's own keys:
+// data_visualization, data_table and timeline.
+func ownKeysType(t string) bool {
+	return t == "data_visualization" || t == "data_table" || t == "timeline"
+}
 
-// dataBlock decodes a data_visualization or data_table block by the keys
-// its renderable reads only (bkDataViz, bkDataTable), so a key typed
-// unlike another block's fails nothing; false when raw is neither.
-func dataBlock(raw json.RawMessage) (bk, bool) {
+// ownKeysBlock decodes a data_visualization, data_table or timeline block
+// by the keys its renderable reads only (bkDataViz, bkDataTable,
+// bkTimeline), so a key typed unlike another block's fails nothing; false
+// when raw is none of them.
+func ownKeysBlock(raw json.RawMessage) (bk, bool) {
 	switch typ := partType(raw); typ {
 	case "data_table":
 		var v bkDataTable
@@ -73,6 +77,12 @@ func dataBlock(raw json.RawMessage) (bk, bool) {
 			return bk{}, false
 		}
 		return bk{Type: typ, BlockID: rawString(v.BlockID), viz: &v}, true
+	case "timeline":
+		var v bkTimeline
+		if json.Unmarshal(raw, &v) != nil {
+			return bk{}, false
+		}
+		return bk{Type: typ, BlockID: rawString(v.BlockID), timeline: &v}, true
 	}
 	return bk{}, false
 }
@@ -110,11 +120,11 @@ func partType(raw json.RawMessage) string {
 // the tests hold it to one per list (TestBlockDecodeLinear).
 var listDecodes atomic.Int64
 
-// decodePart decodes one block, once: a data block by its own keys, else
+// decodePart decodes one block, once: a data or timeline block by its own keys, else
 // as a struct (its child_blocks with it, each list once).
 func decodePart(p json.RawMessage) (bk, error) {
-	if isDataType(partType(p)) {
-		if b, ok := dataBlock(p); ok {
+	if ownKeysType(partType(p)) {
+		if b, ok := ownKeysBlock(p); ok {
 			return b, nil
 		}
 	}
@@ -133,7 +143,7 @@ func decodeBlocks(raw json.RawMessage) ([]bk, error) {
 	listDecodes.Add(1)
 	var bs []bk
 	err := json.Unmarshal(raw, &bs)
-	if err == nil && !slices.ContainsFunc(bs, func(b bk) bool { return isDataType(b.Type) }) {
+	if err == nil && !slices.ContainsFunc(bs, func(b bk) bool { return ownKeysType(b.Type) }) {
 		return bs, nil
 	}
 	var parts []json.RawMessage
@@ -142,8 +152,8 @@ func decodeBlocks(raw json.RawMessage) ([]bk, error) {
 	}
 	if err == nil && len(parts) == len(bs) {
 		for i := range bs {
-			if isDataType(bs[i].Type) {
-				if b, ok := dataBlock(parts[i]); ok {
+			if ownKeysType(bs[i].Type) {
+				if b, ok := ownKeysBlock(parts[i]); ok {
 					bs[i] = b
 				}
 			}

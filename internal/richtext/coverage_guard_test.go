@@ -70,7 +70,7 @@ var pendingParts = map[string][]string{
 	"part 2f (the remaining blocks)": {"attachment_reference", "auth_provider", "canvas_mermaid", "canvas_table", "channel_section",
 		"channel_set", "layout", "mcp_app", "message", "page", "prototype", "related_automation_decorator", "salesforce_record_card",
 		"search_top_results", "share_skill", "share_workflow"},
-	"part 2a (Karim's named blocks, in progress)": {"contact_card", "event", "share_prompt", "timeline"},
+	"part 2a (Karim's named blocks, in progress)": {"contact_card", "event", "share_prompt"},
 }
 
 func init() {
@@ -123,6 +123,7 @@ var guardSamples = map[string]string{
 	"data_visualization": `{"type":"data_visualization","title":"t","chart":{"type":"pie","segments":[{"label":"a","value":1}]}}`,
 	"table":              `{"type":"table","rows":[[{"type":"raw_text","text":"a"}]]}`,
 	"message_embed":      `{"type":"message_embed","channel":"C1","ts":"1.0"}`,
+	"timeline":           `{"type":"timeline","points":[{"id":"a","status":"complete","text":"x"}]}`,
 }
 
 // mustDraw are the block types whose builder may return nothing for a
@@ -131,6 +132,7 @@ var mustDraw = map[string]BlockKind{
 	"data_table":         DataTableBlock,
 	"data_visualization": DataVizBlock,
 	"message_embed":      AttachmentBlock,
+	"timeline":           TimelineBlock,
 }
 
 // guardRes is the guard's resolver: the test resolver, holding the

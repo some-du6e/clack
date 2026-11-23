@@ -163,6 +163,11 @@ func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, win
 	}
 }
 
+// TimelineSources is a timeline section's "(Sources)": its sources modal.
+func (s *surfHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
+	popups.OpenTimelineSources(s.h, sec)
+}
+
 // DataTableAction is a data_table's header button or column header.
 func (s *surfHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
 	popups.DataTableAction(s.h, act, c, popups.ActionAnchor(btn, c.Window))

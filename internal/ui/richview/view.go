@@ -2091,6 +2091,11 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		}
 	case tDataTable: // a data_table's buttons (datatable.go)
 		v.dataTableClick(tg, h)
+	case tTimeline: // a timeline section's (Sources) (timeline.go)
+		if th, ok := h.(TimelineHandler); ok && tg.timeline != nil {
+			r, _ := v.targetRect(tg)
+			th.TimelineSources(tg.timeline, r.Add(v.Origin))
+		}
 	case tSnippet: // a snippet's Show more / Show less (snippet.go)
 		if fh, ok := h.(FileActionHandler); ok && tg.file != nil {
 			fh.FileAction(tg.act, tg.file, image.Rectangle{Min: anchor, Max: anchor})
