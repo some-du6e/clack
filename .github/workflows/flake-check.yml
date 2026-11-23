@@ -5444,6 +5444,42 @@ jobs:
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
   # in its needs (.github/scripts/expect_fail_wire.py adds it).
+  # avatar-refresh: a member's new picture, name and status in every row
+  # (Karim, α.143 "two different pfps?"): the rows' redraw when the change
+  # comes while no list draws the member (messages), Slack's member
+  # freshness and user_change subscriptions (core), and a restart's stale
+  # offline copy fetched again (ui).
+  avatar-refresh:
+    if: ${{ !inputs.only || startsWith('avatar-refresh', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the avatar refresh tests (COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 10m -run '^(TestSenderFollowsMemberLikeSlack|TestBotThreadRowLikeSlack|TestAvatarPictureForScaleLikeSlack)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestMemberSubscribedFollowsUserChange|TestMemberRefetchedPastMaxAgeLikeSlack|TestMemberSubscriptionsAfterReconnect)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 15m -run '^TestAvatarAfterRestartLikeSlack$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 5m -run '^TestFamilySizeDrawsAtOnce$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestAppPaneIconFromTheMessageLikeSlack$' ./internal/ui/popups || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   expect-fail:
     needs:
       - go
@@ -5556,6 +5592,7 @@ jobs:
       - fl1122-s-win
       - emoji-packs
       - row-hit
+      - avatar-refresh
       - fl1122c-s-avf
       - fl1122c-r-views
       - fl1122c-s-displays

@@ -46,6 +46,10 @@ type RTM struct {
 	// (Slack's FAST_RECONNECTING; any other connect is a slow one)
 	fast atomic.Bool
 
+	// waiters are the frames Request sent on the current connection,
+	// by id, waiting for the gateway's reply (r.mu)
+	waiters map[int64]chan json.RawMessage
+
 	// OnHello runs after every (re)connect, e.g. to resend subscriptions.
 	OnHello func()
 	// OnDrop sees an event Events had no room for, on the reader
@@ -298,6 +302,10 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 	defer func() {
 		r.mu.Lock()
 		r.conn = nil
+		for id, ch := range r.waiters { // the connection went: no reply comes
+			close(ch)
+			delete(r.waiters, id)
+		}
 		r.mu.Unlock()
 		conn.CloseNow()
 		s.up = ReadClock().WallSince(upAt)
@@ -378,6 +386,9 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 			return s
 		}
 		pingAnswered(data)
+		if r.deliverReply(data) {
+			continue
+		}
 		var ev Event
 		if json.Unmarshal(data, &ev) != nil {
 			continue
@@ -508,6 +519,95 @@ func (r *RTM) Send(v map[string]any) error {
 	return conn.Write(ctx, websocket.MessageText, b)
 }
 
+// GatewayError is the gateway's refusal of a frame Request sent: its
+// reply's error (Slack's gatewayErrorCode: 12 the id cap, 15 a rate
+// limit).
+type GatewayError struct {
+	Code int
+	Msg  string
+}
+
+func (e *GatewayError) Error() string { return fmt.Sprintf("rtm: refused (%d): %s", e.Code, e.Msg) }
+
+// ErrNoReply is a Request whose connection went before its reply came.
+var ErrNoReply = errors.New("rtm: the connection closed before the reply")
+
+// Request sends a frame and waits for the gateway's reply to it (Slack's
+// sendMessage for socket requests, which resolves on the frame whose
+// reply_to is its id): nil when it's ok, a *GatewayError when it says
+// ok false, ErrNoReply when the connection went first, ctx's error when
+// it ends first.
+func (r *RTM) Request(ctx context.Context, v map[string]any) error {
+	id := r.next.Add(1)
+	v["id"] = id
+	ch := make(chan json.RawMessage, 1)
+	r.mu.Lock()
+	if r.conn == nil {
+		r.mu.Unlock()
+		return websocket.CloseError{Code: websocket.StatusGoingAway}
+	}
+	if r.waiters == nil {
+		r.waiters = map[int64]chan json.RawMessage{}
+	}
+	r.waiters[id] = ch
+	r.mu.Unlock()
+	drop := func() {
+		r.mu.Lock()
+		if r.waiters[id] == ch {
+			delete(r.waiters, id)
+		}
+		r.mu.Unlock()
+	}
+	if err := r.Send(v); err != nil {
+		drop()
+		return err
+	}
+	select {
+	case data, ok := <-ch:
+		if !ok {
+			return ErrNoReply
+		}
+		var rep struct {
+			OK    *bool `json:"ok"`
+			Error struct {
+				Code int    `json:"code"`
+				Msg  string `json:"msg"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(data, &rep)
+		if rep.OK != nil && !*rep.OK {
+			return &GatewayError{Code: rep.Error.Code, Msg: rep.Error.Msg}
+		}
+		return nil
+	case <-ctx.Done():
+		drop()
+		return ctx.Err()
+	}
+}
+
+// deliverReply hands a reply to the Request waiting for it (true: it was
+// one's).
+func (r *RTM) deliverReply(data []byte) bool {
+	if !bytes.Contains(data, []byte(`"reply_to"`)) {
+		return false
+	}
+	var rep struct {
+		ReplyTo int64 `json:"reply_to"`
+	}
+	if json.Unmarshal(data, &rep) != nil || rep.ReplyTo == 0 {
+		return false
+	}
+	r.mu.Lock()
+	ch := r.waiters[rep.ReplyTo]
+	delete(r.waiters, rep.ReplyTo)
+	r.mu.Unlock()
+	if ch == nil {
+		return false
+	}
+	ch <- data
+	return true
+}
+
 // Typing sends a typing indicator for a channel (optionally a thread).
 func (r *RTM) Typing(channel, threadTS string) error {
 	m := map[string]any{"type": "typing", "channel": channel}
@@ -526,20 +626,31 @@ func (r *RTM) SubscribePresence(ids []string) error {
 	return r.Send(map[string]any{"type": "presence_sub", "ids": ids})
 }
 
-// SubscribeUsers asks for user_change events for the given users (flannel
-// only pushes profile changes for users the client has subscribed to).
-// MaxUserSubs is the gateway's limit for one user_change subscription
-// (verified: 100 is accepted, 101 is "Too many updated ids").
+// SubscribeUsers asks for user_change events for ids, on top of those
+// already asked for (Slack's subscribeMembersById: flannel pushes profile
+// changes on Grid only for members the client subscribed to), and waits
+// for the gateway's answer. UnsubscribeUsers lets them go
+// (unsubscribeMembersById). MaxUserSubs is a request's limit (Slack's
+// batchMaximum; 101 ids are "Too many updated ids").
 const MaxUserSubs = 100
 
-func (r *RTM) SubscribeUsers(ids []string) error {
+func (r *RTM) SubscribeUsers(ctx context.Context, ids []string) error {
+	return r.userChangeRequest(ctx, "user_change_subscribe_request", ids)
+}
+
+// UnsubscribeUsers is SubscribeUsers' user_change_unsubscribe_request.
+func (r *RTM) UnsubscribeUsers(ctx context.Context, ids []string) error {
+	return r.userChangeRequest(ctx, "user_change_unsubscribe_request", ids)
+}
+
+func (r *RTM) userChangeRequest(ctx context.Context, subtype string, ids []string) error {
+	if len(ids) > MaxUserSubs {
+		return fmt.Errorf("rtm: %d ids for %s, at most %d", len(ids), subtype, MaxUserSubs)
+	}
 	if ids == nil {
 		ids = []string{}
 	}
-	if len(ids) > MaxUserSubs {
-		ids = ids[:MaxUserSubs]
-	}
-	return r.Send(map[string]any{"type": "subscription_update", "subtype": "user_change_subscribe_request", "ids": ids})
+	return r.Request(ctx, map[string]any{"type": "subscription_update", "subtype": subtype, "ids": ids})
 }
 
 // Connected reports whether the socket is currently up.

@@ -182,6 +182,13 @@ type Store struct {
 	// emojiPartial: the emoji map is the boot data's few only
 	emojiPartial atomic.Bool
 
+	// memberHit is told of every lookup that found a member the store
+	// holds and every TouchMember of one (SetMemberHit)
+	memberHit atomic.Pointer[func(id string)]
+	// avatarAlts is each stored member's 72px picture → their 192px and
+	// 512px ones (AvatarAt)
+	avatarMu   sync.RWMutex
+	avatarAlts map[string][2]string
 	missMu     sync.Mutex
 	missSeen   map[string]bool
 	missing    []string // "c"+id | "b"+id
@@ -670,7 +677,9 @@ func (s *Store) PutUsers(us []slack.User) {
 		s.userSeen[u.ID] = now
 		s.storedLocked(u.ID)
 	}
+	team := s.TeamID
 	s.mu.Unlock()
+	s.noteAvatars(team, us)
 	if len(us) > 0 {
 		s.gen.Add(1)
 	}
@@ -694,7 +703,16 @@ func (s *Store) putUserPtrs(us []*slack.User, seen map[string]int64) {
 		}
 		s.storedLocked(u.ID)
 	}
+	team := s.TeamID
 	s.mu.Unlock()
+	s.avatarMu.Lock()
+	if s.avatarAlts == nil {
+		s.avatarAlts = map[string][2]string{}
+	}
+	for _, u := range us {
+		s.noteAvatarLocked(team, u)
+	}
+	s.avatarMu.Unlock()
 	if len(us) > 0 {
 		s.gen.Add(1)
 	}
@@ -718,7 +736,80 @@ func (s *Store) User(id string) (*slack.User, bool) {
 	u, known := s.lookupLocked(id, now)
 	s.mu.RUnlock()
 	s.afterLookup(id, known)
+	if u != nil {
+		s.noteMemberHit(id)
+	}
 	return u, u != nil
+}
+
+// noteAvatars records members' larger pictures under their 72px one.
+func (s *Store) noteAvatars(team string, us []slack.User) {
+	if len(us) == 0 {
+		return
+	}
+	s.avatarMu.Lock()
+	defer s.avatarMu.Unlock()
+	if s.avatarAlts == nil {
+		s.avatarAlts = map[string][2]string{}
+	}
+	for i := range us {
+		s.noteAvatarLocked(team, &us[i])
+	}
+}
+
+func (s *Store) noteAvatarLocked(team string, u *slack.User) {
+	k := AvatarURL(u, 72, team)
+	if k == "" {
+		return
+	}
+	if a := [2]string{AvatarURL(u, 192, team), AvatarURL(u, 512, team)}; a[0] != k || a[1] != k {
+		s.avatarAlts[k] = a
+	}
+}
+
+// AvatarAt is the picture to draw for url, a member's 72px avatar, in a
+// box px device pixels across: Slack's getMemberProfileImage picks the
+// image_* for the box's size (and its 2x for the screen), so the 192px
+// one past 72 pixels and the 512px one past 192, never a smaller picture
+// scaled up where a larger exists (HiDPI screens, the inspect tool's
+// capture). A URL that isn't a stored member's comes back as it is.
+func (s *Store) AvatarAt(url string, px int) string {
+	if px <= 72 || url == "" {
+		return url
+	}
+	s.avatarMu.RLock()
+	a, ok := s.avatarAlts[url]
+	s.avatarMu.RUnlock()
+	if !ok {
+		return url
+	}
+	if px > 192 && a[1] != "" {
+		return a[1]
+	}
+	if a[0] != "" {
+		return a[0]
+	}
+	return url
+}
+
+// SetMemberHit sets what every getMemberById that finds a member is
+// told, after the store's lock is let go: a lookup hit (User) and a view's
+// TouchMember of a member the store holds. Core's member freshness
+// (Slack's maybeRefetch from getMemberById, core/member_fresh.go) checks
+// there whether the member is due to be fetched again. f must be cheap:
+// rows touch their senders on every frame they draw.
+func (s *Store) SetMemberHit(f func(id string)) {
+	if f == nil {
+		s.memberHit.Store(nil)
+		return
+	}
+	s.memberHit.Store(&f)
+}
+
+func (s *Store) noteMemberHit(id string) {
+	if f := s.memberHit.Load(); f != nil {
+		(*f)(id)
+	}
 }
 
 // RawUser is getRawMemberById: the member if the store holds it, without

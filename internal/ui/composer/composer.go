@@ -959,6 +959,11 @@ func (c *Composer) changed() {
 		return
 	}
 	c.lastVer = v
+	if c.api.a != nil {
+		// ConditionalFetchManager.pauseRefetch: a keypress anywhere holds
+		// the members' refetches back for 2 s (core/member_fresh.go)
+		c.api.a.MemberRefetchTyping()
+	}
 	if c.field != nil {
 		if c.field.OnChange != nil {
 			c.field.OnChange()

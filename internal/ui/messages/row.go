@@ -664,6 +664,9 @@ func (r *row) resolve(rc *rowCtx) {
 	} else if r.bot {
 		r.badge = core.BadgeApp
 	}
+	if m.User != "" && rc.list != nil && rc.list.hb != nil {
+		rc.list.hb.noteSender(m.User) // the row holds what it resolved: a change to them moves usersRev (hub.readMember)
+	}
 	if m.User != "" && rc.h.Core() != nil {
 		if u, ok := rc.h.Core().User(m.User); ok {
 			coreName = u.Name
@@ -1553,6 +1556,9 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	// (CustomSlackbot's custom-response avatar) replaces it.
 	url = st.BackgroundImage(url)
 	r.avDrawn = url
+	if a := rc.h.Core(); a != nil {
+		r.avDrawn = a.AvatarAt(url, s) // the image for the device pixels drawAvatar draws (the 72px one while it loads)
+	}
 	// Clicked before Layout: Clickable.Layout consumes pending clicks.
 	if ctxclick.Clicked(gtx, &r.avatarBtn) {
 		r.openSender(rc)

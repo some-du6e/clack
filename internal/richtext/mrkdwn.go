@@ -16,7 +16,15 @@ import (
 // outside the markers and stay within one line; `code` spans, <tokens> and
 // resolved :emoji: are atomic and never formatted inside, except that a
 // link's label is itself mrkdwn.
+//
+// Newlines that open the text draw nothing: Slack's mrkdwn renderer
+// (BaseMrkdwn over TSF) starts with the first line that says something.
+// Hack Club's help bots open their section text with "\n" (Heidi the
+// Helper, read 2026-11-23), and Slack draws the text right under the
+// sender's line, where Clack drew an 8px empty line first (Karim, α.146:
+// "theres a gap there on help bots").
 func FromMrkdwn(r Resolver, text string) []Block {
+	text = strings.TrimLeft(text, "\n")
 	if text == "" {
 		return nil
 	}

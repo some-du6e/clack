@@ -1980,15 +1980,15 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("ts", ts, "channel", f.Get("channel"), "message", msg)
 	case "edge/users/info":
-		var up map[string]int
+		var up map[string]int64
 		_ = json.Unmarshal(edge["updated_ids"], &up)
 		var res []any
-		for id := range up {
+		for id, stamp := range up {
 			if u, ok := s.systemDMUserJSON(id); ok { // system_dm.go: USLACK with the real answer's keys
 				res = append(res, u)
 				continue
 			}
-			if u, ok := s.userByID(id); ok {
+			if u, ok := s.userByID(id); ok && !conditionalMember(u, stamp) { // member_changes.go
 				res = append(res, u)
 			}
 		}
@@ -2142,6 +2142,21 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 }
 
 func (s *Server) userByID(id string) (slack.User, bool) {
+	u, ok := s.userByIDRaw(id)
+	if ok && u.Updated == 0 {
+		u.Updated = FakeUpdated // Slack's members always carry their updated stamp
+	}
+	return u, ok
+}
+
+// FakeUpdated is the updated stamp of a member the fake's tests never
+// changed (EditMember's are later).
+const FakeUpdated = 1762300000
+
+func (s *Server) userByIDRaw(id string) (slack.User, bool) {
+	if u, ok := s.editedUser(id); ok { // member_changes.go
+		return u, true
+	}
 	if id == SelfID {
 		return s.users[0], true
 	}
@@ -2320,6 +2335,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	// registered before hello: once the client is connected, Push reaches it
 	s.addSocket(c) // Push (canvas.go)
 	defer s.dropSocket(c)
+	s.newGatewayConnection() // member_changes.go: no user_change subscriptions yet
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
 		_, data, err := c.Read(ctx)
@@ -2327,6 +2343,12 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.noteFrame(data)
+		if rep := s.subscriptionReply(data); rep != nil { // member_changes.go
+			wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			_ = c.Write(wctx, websocket.MessageText, rep)
+			cancel()
+			continue
+		}
 		var f struct {
 			Type string `json:"type"`
 			ID   int64  `json:"id"`
