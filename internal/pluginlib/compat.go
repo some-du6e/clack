@@ -38,7 +38,7 @@ var compat = map[string]Compat{
 	Slick + "/Click2Load":           broken("Clack shows no iframes for it to hold back"),
 	Slick + "/CustomFonts":          broken("Clack can't load web fonts"),
 	Slick + "/CustomNameRecording":  partial("can't decode audio, so nothing uploads"),
-	Slick + "/CustomSounds":         broken("plugins can't play sounds in Clack"),
+	Slick + "/HideResolved":         partial("its header toggle isn't drawn; what it hides is unchecked"),
 	Slick + "/InstalledApps":        partial("the app marketplace page asks you to sign in"),
 	Slick + "/LetMeSee":             partial("Hide drawings does nothing"),
 	Slick + "/oneko":                partial("the cat runs but isn't drawn"),

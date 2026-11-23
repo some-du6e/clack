@@ -2274,6 +2274,53 @@ defineModule('flannel', { J8: FLANNEL_METHODS, P: query })
 const getPresenceSubscriptionByTeamId = named('getPresenceSubscriptionByTeamId', (teamId) => goOr(null, 'presenceSubscription', String(teamId ?? '')) ?? undefined)
 defineModule('presence-manager', { Wb: getPresenceSubscriptionByTeamId })
 
+// ---- Slack's sound playback (client-boot Ofe8, SOUND-PLAYBACK) ----
+// One <audio> element per sound url, cached; play restarts it from 0 (or
+// keeps its position), at the volume asked (1), looping or not, and logs
+// a failure as Slack does. Clack plays its notification sounds here
+// (Taut.PlaySound), so a plugin that patches HTMLMediaElement.prototype.play
+// sees them. Slack's maybeSetAudioSinkId does nothing without setSinkId,
+// which Clack's elements don't have: they play on the default output.
+const soundElements = {}
+const soundRepeatKey = (url) => `${url}-repeat`
+const getAudioElement = named('getAudioElement', (url) => soundElements[url])
+const createAudioElement = named('createAudioElement', (url, opts = {}) => {
+  const a = new Audio(url)
+  if (opts.ended) a.addEventListener('ended', opts.ended)
+  soundElements[opts.customCacheKey || url] = a
+  return a
+})
+const playSound = named('play', async (url, opts = {}) => {
+  if (!url) return null
+  const a = getAudioElement(url) || createAudioElement(url)
+  a.loop = !!opts.loop
+  if (!opts.preservePosition) a.currentTime = 0
+  a.volume = opts.volume ?? 1
+  try {
+    await a.play()
+  } catch (err) {
+    warn(`Failed to play sound: ${url} with reason: ${err}`)
+    opts.onError?.(err)
+  }
+})
+const stopSound = named('stop', (url, { logFailure = true } = {}) => {
+  const a = getAudioElement(url)
+  const repeat = getAudioElement(soundRepeatKey(url))
+  if (!a && !repeat) {
+    if (logFailure) warn(`Tried to stop sound, but no sound was playing matching url: ${url}. Available cached element urls are ${Object.keys(soundElements).join(', ')}`)
+    return
+  }
+  for (const el of [repeat, a]) {
+    if (!el) continue
+    el.pause()
+    const src = el.src
+    el.src = ''
+    el.src = src
+  }
+})
+defineModule('sound-playback', { Dd: getAudioElement, TQ: createAudioElement, ZH: playSound, ds: stopSound })
+T.playSound = (url) => void playSound(url)
+
 Object.assign(T, {
   members,
   channels,

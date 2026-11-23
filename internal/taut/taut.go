@@ -158,6 +158,10 @@ type Options struct {
 	// PickFiles shows the native file picker for <input type=file> (nil:
 	// file inputs do nothing). Return nil, nil on cancel.
 	PickFiles func(accept string, multiple bool) ([]jsrt.PickedFile, error)
+	// Media plays the page's <audio> and <video> elements (jsrt's
+	// Options.Media): Slack's sound playback (PlaySound) and whatever a
+	// plugin plays. nil: play() rejects, and PlaySound reports false.
+	Media jsrt.MediaHost
 	// TaskTimeout bounds one JS task (jsrt's Options.Timeout).
 	TaskTimeout time.Duration
 	// LifecycleTimeout is the start/stop limit (Taut: 5 s).
@@ -380,6 +384,22 @@ func (t *Taut) whileOpen(f func()) bool {
 // Runtime returns the JS runtime, starting it if needed (the ui root uses
 // it for slackc's DOM events, rects and viewport).
 func (t *Taut) Runtime() (*runtime, error) { return t.ensureRuntime() }
+
+// PlaySound plays url as Slack's sound playback does (client-boot Ofe8's
+// play: its <audio> element for the url, cached, restarted from 0 at
+// volume 1), on the page, so a plugin that patches
+// HTMLMediaElement.prototype.play sees it: Slick's CustomSounds swaps a
+// notification sound's source for the user's own. The element plays
+// through Options.Media. False, and nothing plays, while the runtime isn't
+// up or there is no media host: the caller plays the sound itself.
+func (t *Taut) PlaySound(url string) bool {
+	r := t.liveRuntime()
+	if r == nil || t.opts.Media == nil || url == "" {
+		return false
+	}
+	r.post("playSound", url)
+	return true
+}
 
 // Started reports whether the JS runtime is up, without starting it.
 func (t *Taut) Started() bool {

@@ -76,6 +76,7 @@ func (t *Taut) startRuntime() (*runtime, error) {
 		ClipboardRead:  t.opts.ClipboardRead,
 		Timeout:        t.opts.TaskTimeout,
 		PickFiles:      t.opts.PickFiles,
+		Media:          t.opts.Media,
 	}
 	rt, err := jsrt.New(opts)
 	if err != nil {

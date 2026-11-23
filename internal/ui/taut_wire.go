@@ -158,6 +158,7 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string, deferJS boo
 		ClipboardWrite: func(s string) error { a.Post(func() { a.copyText(s) }); return nil },
 		ClipboardRead:  func() (string, error) { return "", errors.New("clipboard reads aren't supported") },
 		PickFiles:      a.pickFiles,
+		Media:          pageMedia{}, // page_media.go: Slack's sound playback, and plugins'
 		UI: taut.UIHooks{
 			// Called for the first runtime and again for a fresh one after
 			// a crash: drop every mounted root (their JS instances are
