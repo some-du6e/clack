@@ -17,18 +17,19 @@ import (
 // messages.list's groups of 10 are channels 0-9, 10-19 and 20-22.
 func shChannel(i int) string { return fmt.Sprintf("C0SH%05d", i) }
 
-// A Saved page over 23 channels whose messages.list fails for one group
-// (too_many_channels) or for all of them: an item is Gone (deleted) only
-// when its channel's group answered without it. Before the split, one
-// failed call left every item without its message, and then a missing
-// message couldn't be told from a deleted one.
+// A Saved page over 23 channels whose messages.list fails for one channel
+// (too_many_channels, which fails its group, asked again channel by
+// channel) or for all of them: an item is Gone (deleted) only when its
+// channel's own call answered without it. Before the split, one failed
+// call left every item without its message, and then a missing message
+// couldn't be told from a deleted one.
 func TestSavedGoneOnlyWhereItsGroupAnswered(t *testing.T) {
 	const here, gone = "1762800100.000100", "1762800900.000100"
 	for _, c := range []struct {
 		name string
 		fail func(ch string) bool
 	}{
-		{"one group fails", func(ch string) bool { return ch == shChannel(12) }},
+		{"one channel fails", func(ch string) bool { return ch == shChannel(12) }},
 		{"every group fails", func(string) bool { return true }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -77,9 +78,7 @@ func TestSavedGoneOnlyWhereItsGroupAnswered(t *testing.T) {
 				t.Fatalf("%d items, want 46", len(p.Items))
 			}
 			for _, it := range p.Items {
-				var i int
-				_, _ = fmt.Sscanf(it.Channel, "C0SH%05d", &i)
-				answered := !c.fail(it.Channel) && !(c.name == "one group fails" && i >= 10 && i < 20)
+				answered := !c.fail(it.Channel)
 				switch {
 				case it.TS == here && (it.Msg != nil) != answered:
 					t.Errorf("%s/%s (answered %v): Msg %v", it.Channel, it.TS, answered, it.Msg != nil)

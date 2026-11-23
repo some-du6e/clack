@@ -184,8 +184,8 @@ type actRow struct {
 	// clickLater is a click whose press came in the same frame, decided
 	// in the next (ControlledClick's marks are this frame's layout's)
 	clickLater, clickSplit bool
-	clickAt                time.Time // the frame it came in (gtx.Now)
-	ctx                    struct{}  // the row's context-menu press target
+	clickFrame             uint64   // the frame it came in (frameNo)
+	ctx                    struct{} // the row's context-menu press target
 	d                      actDesc
 	built                  bool
 	gen                    uint64 // i18n.Gen d was described in
@@ -300,6 +300,10 @@ type Activity struct {
 	plusX int
 	seg   [2]widget.Clickable
 	dense bool
+	// frameAt and frameN count the frames the view laid out, for a host
+	// without a frame count (frameNo)
+	frameAt time.Time
+	frameN  uint64
 	// superNarrow is ActivityList's isSuperNarrowDense this frame (eH: the
 	// list's width under 625px; never in the peek, which has no column
 	// width): the list's --super_narrow_dense, the Dense row on two lines.
@@ -2311,8 +2315,8 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// not laid out then (scrolled off, the page changed) drops it
 	// (a row laid out again in its click's frame leaves it be)
 	late, split := false, v.splitClick()
-	if r.clickLater && gtx.Now.After(r.clickAt) { // a later frame (the view may lay out twice a frame: the peek)
-		late, r.clickLater = gtx.Now.Sub(r.clickAt) < actClickLaterMax, false
+	if fn := v.frameNo(gtx); r.clickLater && fn != r.clickFrame { // a later frame (the view may lay out twice a frame: the peek)
+		late, r.clickLater = fn == r.clickFrame+1, false
 		if late {
 			split = r.clickSplit // the click's own frame's
 		}
@@ -2322,7 +2326,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		// pressed and released in this frame: what took the press (a
 		// pill, a link) marks it as this frame lays the row out, so the
 		// click is decided in the next, with this frame's modifiers
-		r.clickLater, r.clickSplit, r.clickAt, clicked = true, split, gtx.Now, false
+		r.clickLater, r.clickSplit, r.clickFrame, clicked = true, split, v.frameNo(gtx), false
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	clicked = clicked || late
@@ -3667,11 +3671,14 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		return v.para(gtx, 15, 22, wReg, col, lines, d.body)
 	}
 	if r.msg() == nil {
-		if r.it.Channel == "" || r.msgGone {
+		if r.it.Channel == "" || r.msgGone || v.gaveUp(r.it) {
 			// ActivityRowContentDetails draws no body for a message the
 			// store doesn't have (deleted since: activity_msgs.go; or none
 			// at all: isNonExistent, MsgGone), the shimmer only for one
-			// it's still fetching (isUnknown)
+			// it's still fetching (isUnknown). One whose fetches failed
+			// until core gave up (MessageGaveUp) isn't deleted: its row
+			// stays, with no body and no skeleton for ever, until an
+			// answer brings the message
 			return D{}
 		}
 		return v.shimmerLine(gtx, 240)
@@ -3905,9 +3912,29 @@ func (v *Activity) btnRect(gtx C, c *widget.Clickable) image.Rectangle {
 	return image.Rectangle{Min: at, Max: at.Add(image.Pt(s, s))}
 }
 
-// actClickLaterMax is how long a deferred row click (clickLater) waits
-// for its next frame: a view not drawn meanwhile drops it.
-const actClickLaterMax = 500 * time.Millisecond
+// frameNo is the window's frame being laid out (the host's FrameSeq),
+// for a deferred row click (clickLater): its next frame decides it,
+// however long that frame took to come, and a frame that doesn't lay the
+// row out drops it. A host without a frame count: the frames this view
+// laid out (by gtx.Now; the peek's second layout of a frame is the same
+// frame).
+func (v *Activity) frameNo(gtx C) uint64 {
+	if fc, ok := v.h.(frameCounter); ok {
+		return fc.FrameSeq()
+	}
+	if !gtx.Now.Equal(v.frameAt) {
+		v.frameAt, v.frameN = gtx.Now, v.frameN+1
+	}
+	return v.frameN
+}
+
+// gaveUp reports whether core stopped fetching the row's message after
+// its fetches failed (core.MessageGaveUp).
+func (v *Activity) gaveUp(it *core.ActivityItem) bool {
+	k, _, ok := actMsgRef(it)
+	c := v.h.Core()
+	return ok && c != nil && c.MessageGaveUp(k.ch, k.ts)
+}
 
 // actRowGone is Slack's item components returning null for a message
 // that is no more: a mention's (ActivityAtMention and its kin: !a || W)

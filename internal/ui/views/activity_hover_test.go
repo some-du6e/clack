@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"image"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -241,13 +243,24 @@ func TestActivityEveryRowHasTheHand(t *testing.T) {
 }
 
 // A row click whose press and release came in one frame is decided in the
-// next (clickLater), however often that frame lays the row out; one whose
-// next frame never comes in time (the view not drawn, the row not laid
-// out) is dropped, not opened later.
+// next window frame (clickLater), however long that frame takes to come
+// and however often a frame lays the row out (the peek measures it, then
+// draws it); one whose next frame doesn't lay the row out (the view not
+// drawn) is dropped, not opened later.
 func TestActivityLateClickExpires(t *testing.T) {
-	v, _, e, _ := vaFakeActivity(t, false)
+	v, h, e, _ := vaFakeActivity(t, false)
+	fh := &actFrameHost{vaHost: h}
+	v.h = fh
 	e.size.Y = 2400
-	e.frame()
+	twice := func(gtx layout.Context) {
+		m := op.Record(gtx.Ops) // the peek's measure: laid out, not drawn
+		v.Layout(gtx)
+		m.Stop()
+		v.Layout(gtx)
+	}
+	e.draw = twice
+	frame := func() { fh.seq.Add(1); e.frame() }
+	frame()
 	const rowKey = "fa-dm-reacted"
 	r := v.rowFor(rowKey)
 	row, _, ok := e.r.AreaBounds(&r.click)
@@ -260,27 +273,35 @@ func TestActivityLateClickExpires(t *testing.T) {
 			{Kind: pointer.Press, Source: pointer.Mouse, Position: p, Buttons: pointer.ButtonPrimary},
 			{Kind: pointer.Release, Source: pointer.Mouse, Position: p}})...)
 	}
-	// the view isn't drawn after the click's frame: its click goes
-	draw := e.draw
+	// the view isn't drawn in the click's next frame: its click goes
 	click()
-	e.frame()
+	frame()
 	if v.selOK && v.selKey == rowKey {
 		t.Error("a press and release in one frame opened the row in that frame: what took the press isn't known yet")
 	}
 	e.draw = func(gtx layout.Context) {}
-	e.frame()
-	time.Sleep(actClickLaterMax + 100*time.Millisecond)
-	e.draw = draw
-	e.frame()
-	e.frame()
+	frame()
+	e.draw = twice
+	frame()
+	frame()
 	if v.selOK && v.selKey == rowKey {
-		t.Error("a deferred click opened the row long after it came")
+		t.Error("a deferred click opened the row frames after its next one")
 	}
-	// decided in the next frame, it opens the row
+	// its next frame comes late (a slow frame): it decides it, and opens
+	// the row
 	click()
-	e.frame()
-	e.frame()
+	frame()
+	time.Sleep(600 * time.Millisecond)
+	frame()
 	if !v.selOK || v.selKey != rowKey {
-		t.Errorf("a click decided in its next frame didn't open the row (open %v %q)", v.selOK, v.selKey)
+		t.Errorf("a click decided in its next frame, 600ms later, didn't open the row (open %v %q)", v.selOK, v.selKey)
 	}
 }
+
+// actFrameHost is vaHost with the window's frame count (frameNo).
+type actFrameHost struct {
+	*vaHost
+	seq atomic.Uint64
+}
+
+func (h *actFrameHost) FrameSeq() uint64 { return h.seq.Load() }

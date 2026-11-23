@@ -60,14 +60,15 @@ func (b *base) withLocalReactions(m *core.Message) *core.Message {
 }
 
 // storeTookBack reports whether core has the message ops change: the
-// store holds it (HeldMessage), or a change core made to it is newer
-// than the ops (MessageChange). Call with rxnMu held.
+// store holds it (HeldMessage) and the view draws the store's copy (not
+// ownCopy), or a change core made to it is newer than the ops
+// (MessageChange). Call with rxnMu held.
 func (b *base) storeTookBack(m *core.Message, ops []rxnOp) bool {
 	c := b.h.Core()
 	if c == nil {
 		return false
 	}
-	if _, ok := c.HeldMessage(m.Channel, m.TS); ok {
+	if _, ok := c.HeldMessage(m.Channel, m.TS); ok && (b.ownCopy == nil || !b.ownCopy(m.Channel, m.TS)) {
 		return true
 	}
 	if ch, ok := c.MessageChange(m.Channel, m.TS); ok {

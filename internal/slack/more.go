@@ -233,12 +233,12 @@ const (
 //
 // Slack's pMap stops starting groups after the first failure and
 // rejects the whole fetch; here every group is asked, so one failed
-// group costs only its own channels. A group Slack refuses (an API
-// error that answers for a channel: messagesRefused) is asked again
-// channel by channel, and a
-// channel refused on its own is answered: its messages are non-existent,
-// as Slack's UnknownFetchManager marks every id a failed fetch didn't
-// bring (unless offline). Network and HTTP failures answer nothing.
+// group costs only its own channels. A failed group of several channels
+// (any failure but a rate limit: splitGroup) is asked again channel by
+// channel, so one channel that fails can't take the others down. Only a
+// call that succeeded answers its channels: a failure, an API refusal
+// too, says nothing about the messages (Clack never reads one as a
+// deletion).
 func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (msgs map[string][]Message, answered map[string]bool, err error) {
 	type q struct {
 		Channel    string   `json:"channel"`
@@ -266,6 +266,9 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 		errs []error
 		next int
 		wg   sync.WaitGroup
+		// every call, a split group's too, takes one of Slack's
+		// MessagesListConcurrency slots
+		slots = make(chan struct{}, MessagesListConcurrency)
 	)
 	var ask func(g []q)
 	ask = func(g []q) {
@@ -273,33 +276,32 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 		var r struct {
 			Messages map[string][]Message `json:"messages"`
 		}
+		slots <- struct{}{}
 		err := c.Call(ctx, "messages.list", url.Values{"message_ids": {string(b)}, "org_wide_aware": {"true"}}, &r)
+		<-slots
 		chans := make([]string, len(g))
 		for i := range g {
 			chans[i] = g[i].Channel
 		}
-		var se *Error
-		refused := errors.As(err, &se) && messagesRefused[se.Code]
-		if refused && len(g) > 1 {
-			// Slack refused the group (one channel the viewer can't read,
-			// a message id it won't take): each channel on its own, so
-			// the others' messages come
+		if err != nil && len(g) > 1 && splitGroup(ctx, err) {
+			// one channel can fail its group every time (one the viewer
+			// can't read, a huge one that times out, too_many_channels):
+			// each channel on its own, all at once in the calls' slots,
+			// so the others' messages come
 			log.Printf("messages.list: %d channels: %v (%s); one by one", len(g), err, logtag.IDs(chans))
+			var sw sync.WaitGroup
 			for i := range g {
-				ask(g[i : i+1 : i+1])
+				sw.Add(1)
+				go func(one []q) {
+					defer sw.Done()
+					ask(one)
+				}(g[i : i+1 : i+1])
 			}
+			sw.Wait()
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if refused {
-			// the channel answered, with none of the messages: they are
-			// non-existent (Slack's UnknownFetchManager marks every id a
-			// fetch didn't bring so, unless it's offline)
-			log.Printf("messages.list: %s: %v: none of its %d messages", logtag.IDs(chans), err, len(g[0].Timestamps))
-			answered[chans[0]] = true
-			return
-		}
 		if err != nil {
 			log.Printf("messages.list: %d channels: %v (%s)", len(g), err, logtag.IDs(chans))
 			errs = append(errs, err)
@@ -332,13 +334,20 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 	return msgs, answered, errors.Join(errs...)
 }
 
-// messagesRefused are the messages.list errors that answer for the
-// channel: it can't be read (not found, not a member's, access denied) or
-// a message id is none (not found, a bad ts). Others (internal_error,
-// ratelimited, a timeout) say nothing about the messages: asked again.
-var messagesRefused = map[string]bool{
-	"channel_not_found": true, "not_in_channel": true, "access_denied": true,
-	"message_not_found": true, "thread_not_found": true, "invalid_ts": true, "invalid_message_ids": true,
+// splitGroup reports whether a failed messages.list group is asked again
+// channel by channel: any failure (a request timing out too, its caller's
+// ctx still live) but a rate limit (more calls would only be refused too)
+// and the caller giving up.
+func splitGroup(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, RateLimited) {
+		return false
+	}
+	var he *HTTPError
+	if errors.As(err, &he) && he.Status == 429 {
+		return false
+	}
+	var se *Error
+	return !errors.As(err, &se) || se.Code != "ratelimited"
 }
 
 // SearchMessages runs search.messages.

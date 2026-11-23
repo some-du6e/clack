@@ -521,3 +521,37 @@ func TestLocalReactionsEndWhenTheStoreHoldsIt(t *testing.T) {
 		t.Errorf("the local changes outlived the store taking the message: %v", v.rxnLocal)
 	}
 }
+
+// The Pins tab draws pins.list's copy of a pin, and core swaps in only a
+// timeline's (core.PinsTab): a copy another view fetched by id doesn't
+// end the tab's own reaction change, which would flip the pill back (and
+// a second click then read "reacted" and take the reaction off); a
+// timeline holding the message, the copy the tab draws then, does.
+func TestPinsLocalReactionOutlivesAFetchedCopy(t *testing.T) {
+	app, fs := pfCore(t)
+	h := pfHostFor(t, app, fs, false)
+	v := NewChannelPins(h, fakeslack.PinsChannelID)
+	ch, ts := fakeslack.PinsChannelID, "1762799999.000100"
+	m := core.Message{Channel: ch, TS: ts, User: "U0FAKE00001", Text: "a synthetic pinned message"}
+	l := &rxnLocalCopy{b: &v.base, m: m}
+	l.Change("tada", true, false)
+	if !reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Fatal("the local change doesn't show")
+	}
+	// another view fetches it by id: the store holds a copy the tab doesn't draw
+	app.S.PutFetched(ch, []slack.Message{{Type: "message", TS: ts, User: "U0FAKE00001", Text: "a synthetic pinned message"}}, app.S.LiveSeq())
+	if _, ok := app.HeldMessage(ch, ts); !ok {
+		t.Fatal("the store doesn't hold the fetched copy: the test checks nothing")
+	}
+	if !reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Error("a copy another view fetched ended the Pins tab's reaction change: its pill flips back")
+	}
+	// the channel's history holds it: the tab draws the store's copy now
+	app.S.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "U0FAKE00001", Text: "a synthetic pinned message"}}, false)
+	if reactedIn(v.withLocalReactions(&m).Reactions, "tada") {
+		t.Error("a timeline holds the message, and the tab's local change still shows over its copy")
+	}
+	if len(v.rxnLocal) != 0 {
+		t.Errorf("the local changes outlived the timeline taking the message: %v", v.rxnLocal)
+	}
+}
