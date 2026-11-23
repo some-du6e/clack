@@ -5254,7 +5254,7 @@ jobs:
       - name: clone slick at the slick workflow's pin
         run: |
           git clone -q https://github.com/3kh0/slick /tmp/slick
-          git -C /tmp/slick checkout -q b6392ababb7ad5206ed0f9e44feebfe729d0aa8e
+          git -C /tmp/slick checkout -q f6be3bde30f080a6ca4e33327ae99816d08bb131
           git -C /tmp/slick log --oneline -1
       - name: "install slick deps (no scripts)"
         working-directory: /tmp/slick

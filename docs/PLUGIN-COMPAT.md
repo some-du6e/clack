@@ -9,7 +9,7 @@ Clack runs Taut's and Slick's plugins natively, from the published plugin Librar
 | ❌ Doesn't work yet | 9 |
 
 A plugin both systems ship (under the same name or not) is one row in Preferences › Plugins › Browse; here each version has its own line.
-Compatibility follows the newest Clack release. Each row comes from `internal/pluginlib/compat.go`, which `TestCompatMatchesDocs` keeps in step with the per-system pages, [PLUGINS-live-taut.md](PLUGINS-live-taut.md) and [PLUGINS-live-slick.md](PLUGINS-live-slick.md); `tools/compatdoc/compatdoc.py` writes this page from it and the Library's index, and `TestCompatDocInStep` keeps the two in step.
+Compatibility follows the newest Clack release. Each row comes from `internal/pluginlib/compat.go`, which `TestCompatMatchesDocs` keeps in step with the per-system pages, [PLUGINS-live-taut.md](PLUGINS-live-taut.md) and [PLUGINS-live-slick.md](PLUGINS-live-slick.md). `go test ./internal/pluginlib -run TestCompatDocInStep -update` writes this page from it and the Library's index (`tools/compatdoc/index.json`), and the test fails while the page is out of step.
 
 ## ❌ Doesn't work yet
 
