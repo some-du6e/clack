@@ -32,12 +32,16 @@ const (
 	kernPhases = 256
 )
 
-func newResampler(inRate, ch int) *resampler {
-	r := &resampler{ratio: float64(inRate) / outRate, ch: ch}
+func newResampler(inRate, ch int) *resampler { return newRateResampler(inRate, outRate, ch) }
+
+// newRateResampler is newResampler to toRate (Decode's: a Web Audio
+// context's rate).
+func newRateResampler(inRate, toRate, ch int) *resampler {
+	r := &resampler{ratio: float64(inRate) / float64(toRate), ch: ch}
 	if r.passthrough() {
 		return r
 	}
-	cutoff := math.Min(1, outRate/float64(inRate))
+	cutoff := math.Min(1, float64(toRate)/float64(inRate))
 	w := float64(sincZeros) / cutoff // the kernel's half width, in input frames
 	r.half = int(math.Ceil(w))
 	r.taps = 2*r.half + 2

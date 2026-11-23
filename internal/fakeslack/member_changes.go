@@ -35,6 +35,8 @@ type memberChanges struct {
 	frames  []string // subscription_update subtypes with their ids, oldest first
 	clock   int64
 	refused int
+	hold    chan struct{} // HoldHello's: the next connections' hello waits for it
+	early   int           // subscription frames read before their connection's hello
 }
 
 var memberChangeStores = newPerServer() // *Server → *memberChanges
@@ -70,6 +72,23 @@ func (s *Server) EditMember(id string, edit func(u *slack.User)) (slack.User, bo
 	mc.clock, u.Updated = now, now
 	mc.edited[id] = u
 	return u, true
+}
+
+// touchUpdated stamps u updated now, later than any stamp before (the
+// viewer's own profile and photo writes: a conditional users/info then
+// answers the member as changed, as Slack's does).
+func (s *Server) touchUpdated(u *slack.User) {
+	mc := s.memberChanges()
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	now := time.Now().Unix()
+	if now <= mc.clock {
+		now = mc.clock + 1
+	}
+	if now <= u.Updated {
+		now = u.Updated + 1
+	}
+	mc.clock, u.Updated = now, now
 }
 
 // editedUser is id's edited copy, if EditMember changed it.
@@ -133,6 +152,59 @@ func (s *Server) newGatewayConnection() {
 	mc.mu.Lock()
 	mc.subs = map[string]bool{}
 	mc.mu.Unlock()
+}
+
+// HoldHello holds the hello of the connections opened from now on until
+// release; a subscription_update a client sends on one before its hello
+// isn't taken (EarlyFrames counts it, nothing answers it).
+func (s *Server) HoldHello() (release func()) {
+	mc := s.memberChanges()
+	ch := make(chan struct{})
+	mc.mu.Lock()
+	mc.hold = ch
+	mc.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			mc.mu.Lock()
+			if mc.hold == ch {
+				mc.hold = nil
+			}
+			mc.mu.Unlock()
+			close(ch)
+		})
+	}
+}
+
+// EarlyFrames is how many subscription_update frames came before their
+// connection's hello.
+func (s *Server) EarlyFrames() int {
+	mc := s.memberChanges()
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	return mc.early
+}
+
+func (s *Server) helloHold() chan struct{} {
+	mc := s.memberChanges()
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	return mc.hold
+}
+
+// earlyFrame notes data if it's a subscription_update sent before hello.
+func (s *Server) earlyFrame(data []byte) bool {
+	var f struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(data, &f) != nil || f.Type != "subscription_update" {
+		return false
+	}
+	mc := s.memberChanges()
+	mc.mu.Lock()
+	mc.early++
+	mc.mu.Unlock()
+	return true
 }
 
 // subscriptionReply answers a subscription_update frame (nil: not one).

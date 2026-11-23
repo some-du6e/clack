@@ -365,7 +365,7 @@ func AppPlanMessages() (msgs []slack.Message, names []string) {
 func (s *Server) addAppPlans() {
 	s.convs = append(s.convs, slack.Conversation{ID: AppPlanChannelID, Name: "plans", IsChannel: true, IsMember: true,
 		Created: 1700000000, Creator: SelfID, NumMembers: 2, ContextTeamID: TeamID})
-	s.users = append(s.users, slack.User{ID: AppPlanUserID, TeamID: TeamID, Name: "eth", IsBot: true,
+	s.users = append(s.users, slack.User{ID: AppPlanUserID, TeamID: TeamID, Name: "eth", IsBot: true, Updated: FakeUpdated,
 		Profile: slack.Profile{DisplayName: "eth", RealName: "eth", Team: TeamID}})
 	msgs, _ := AppPlanMessages()
 	s.hist[AppPlanChannelID] = msgs

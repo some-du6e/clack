@@ -508,6 +508,13 @@ func (hh hostHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, win
 	}
 }
 
+// TimelineSources is a timeline section's "(Sources)": its sources modal.
+func (hh hostHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
+	if ph, ok := hh.h.(popups.Host); ok {
+		popups.OpenTimelineSources(ph, sec)
+	}
+}
+
 // DataTableAction is a data_table's header button or column header.
 func (hh hostHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
 	if ph, ok := hh.h.(popups.Host); ok {

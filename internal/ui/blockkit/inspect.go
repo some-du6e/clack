@@ -107,7 +107,7 @@ func (s *Stack) fields() []FieldInfo {
 			continue
 		}
 		e := b.Element
-		w := sf.ws[b.BlockID+"\x00"+e.ActionID+"\x00"+e.Type]
+		w := sf.ws[surfKey(b, e)]
 		if w == nil {
 			continue
 		}
@@ -150,7 +150,7 @@ func ModalSelects(h Host) []FieldInfo {
 			continue
 		}
 		e := b.Element
-		w := sf.ws[b.BlockID+"\x00"+e.ActionID+"\x00"+e.Type]
+		w := sf.ws[surfKey(b, e)]
 		if w == nil {
 			continue
 		}

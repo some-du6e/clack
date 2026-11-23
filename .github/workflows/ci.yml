@@ -158,9 +158,14 @@ jobs:
 
   # `go test ./...`, split: internal/ui's and internal/ui/messages' top-level
   # tests packed into 4 shards by their recorded times (test-shard.py,
-  # .github/test-times.json: about 4 min of each package's tests per shard;
-  # hashed by name they ran 2.4 to 6.8 min), every other package in the
-  # rest shard. linux-coverage checks the shards ran every test once.
+  # .github/test-times.json: about 4 min of each package's tests per shard
+  # when packing began, 7.2 min of internal/ui's and 1.5 of messages' at
+  # the 2026-11-23 refresh; hashed by name they ran 2.4 to 6.8 min), every
+  # other package in the rest shard. Each shard runs as two shares of its
+  # own (--split 2: 8 shares, two test binaries per heavy package a job,
+  # at once), so each binary has half the time under Go's 10 min default
+  # -timeout, which internal/ui's quarter neared at 433 s. linux-coverage
+  # checks the shares ran every test once.
   linux-test:
     if: ${{ !inputs.only || startsWith('linux-test', inputs.only) }}
     runs-on: ubuntu-latest
@@ -189,7 +194,7 @@ jobs:
           SHARD: ${{ matrix.shard }}
           HEAVY: github.com/some-du6e/clack/internal/ui,github.com/some-du6e/clack/internal/ui/messages
         run: |
-          if [ "$SHARD" = rest ]; then set -- --rest; else set -- --shard "$SHARD" --times .github/test-times.json; fi
+          if [ "$SHARD" = rest ]; then set -- --rest; else set -- --shard "$SHARD" --split 2 --times .github/test-times.json; fi
           python3 .github/scripts/test-shard.py run --heavy "$HEAVY" "$@" --out "$RUNNER_TEMP/shard"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
@@ -219,18 +224,22 @@ jobs:
       - name: every test ran in some shard
         run: python3 .github/scripts/test-shard.py check "$RUNNER_TEMP"/shards/test-shard-*
 
-  # release.yml's test job, step for step: every package in one
-  # `go test` on a clean cache. The shards above split internal/ui
+  # release.yml's test job, step for step: every package at once in one
+  # job on a clean cache. The shards above split internal/ui
   # across jobs, so none of them carries the whole suite's load, and
   # timing races that only show under it (TestInspectKonami in α.82,
   # TestFilesViewSectionsSidebar in α.83) passed ci and failed the
   # tagged release. This fails the ui/main push instead. ui and main
   # only (~18 min), or any branch by hand (gh workflow run ci.yml --ref
   # <branch>); a newer push to the same ref cancels the older run.
+  # internal/ui runs as two test binaries of half its tests each, beside
+  # the other packages (test-shard.py full): Go's 30 min -timeout counts
+  # per binary, and the one ui.test reached 1,713 s (docs/CI-SPEED.md,
+  # "internal/ui's two binaries").
   full-test:
     if: ${{ (github.ref == 'refs/heads/ui' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && (!inputs.only || startsWith('full-test', inputs.only)) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40 # budget, min (p95 21.6; its go test -timeout is 30m): docs/CI-SPEED.md
+    timeout-minutes: 40 # budget, min (p95 32.0 over 40 runs before round 4's split, 14.5-15.0 after; its go test -timeout is 30m): docs/CI-SPEED.md
     concurrency:
       group: ci-full-test-${{ github.ref }}
       cancel-in-progress: true
@@ -265,7 +274,13 @@ jobs:
           .github/scripts/dump-before-budget.sh 35 & wd=$!
           .github/scripts/runner-load.sh 60 & rl=$!
           trap 'kill $wd $rl 2>/dev/null' EXIT
-          go test -timeout 30m ./...
+          python3 .github/scripts/test-shard.py full --heavy github.com/some-du6e/clack/internal/ui --split 2 --times .github/test-times.json --timeout 30m --out "$RUNNER_TEMP/full"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: full-test
+          path: ${{ runner.temp }}/full
+          retention-days: 7
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -772,7 +787,7 @@ jobs:
   windows-applog:
     if: ${{ !inputs.only || startsWith('windows-applog', inputs.only) }}
     runs-on: windows-latest
-    timeout-minutes: 20 # budget, min (p95 10.5): docs/CI-SPEED.md
+    timeout-minutes: 23 # budget, min (p95 13, with the quote paste): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -785,7 +800,35 @@ jobs:
         with:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
+      # TestCrashRecordForRealEvent: Windows logs a crash of Clack's
+      # (Application Error, event 1000) once applog's capture has let Windows
+      # Error Reporting back in (Go's runtime keeps it out:
+      # SEM_NOGPFAULTERRORBOX; 45202224745 and 45208811422 logged nothing,
+      # with WerSvc running and AeDebug's debugger gone). The runner as a
+      # user's PC is: WerSvc started, no JIT debugger (the image's "-");
+      # what the image set is printed first
+      - name: Windows Error Reporting on (applog's crash record)
+        shell: pwsh
+        run: |
+          $k = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+          $p = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting'
+          $ae = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug'
+          foreach ($x in @($k, $p, $ae)) { "--- $x"; Get-ItemProperty $x -ErrorAction SilentlyContinue | Select-Object * -ExcludeProperty PS* | Format-List | Out-String -Width 300 }
+          Get-Service WerSvc | Format-List Name,Status,StartType | Out-String
+          New-Item -Path $k -Force | Out-Null
+          Set-ItemProperty -Path $k -Name Disabled -Value 0 -Type DWord
+          Set-ItemProperty -Path $k -Name DontShowUI -Value 1 -Type DWord
+          if (Test-Path $p) { Remove-ItemProperty -Path $p -Name Disabled -ErrorAction SilentlyContinue }
+          foreach ($x in @($ae, 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug')) {
+            Remove-ItemProperty -Path $x -Name Debugger -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $x -Name Auto -ErrorAction SilentlyContinue
+          }
+          Set-Service WerSvc -StartupType Manual
+          Start-Service WerSvc -ErrorAction Continue
+          Get-Service WerSvc | Format-List Name,Status,StartType | Out-String
       - name: applog tests
+        env:
+          CLACK_WINDOWS_WER_TESTS: "1" # TestCrashRecordForRealEvent: a child's fail-fast, read back through wevtutil
         run: go test -count=1 -v ./internal/applog
       # Gio patches 37-44 on Direct3D 11 (WARP): the state caches change no
       # pixel, the window's drawing held to the old way (theme's
@@ -828,7 +871,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
-        run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy' ./internal/ui/composer
+        run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy|TestClipMalformed|TestPasteIntoQuote|TestTextyDocLines' ./internal/ui/composer
       # The image menu's Copy Image (Slack's webContents.copyImageAt) on a
       # fakeslack image: CF_DIB and "PNG" read back as its pixels.
       - name: copy image (CF_DIB, "PNG")
@@ -844,7 +887,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
-        run: go test -count=1 -v -run 'TestWinRichCopy|TestEncodeCustom|TestCFHTML' ./internal/ui/richclip
+        run: go test -count=1 -v -run 'TestWinRichCopy|TestEncodeCustom|TestCFHTML|TestClipMalformed' ./internal/ui/richclip
       # Files dragged onto a Gio window by another process through OLE
       # (PowerShell C#: DoDragDrop with a CF_HDROP DataObject, moving the
       # cursor), Esc's cancel, and WM_DROPFILES (Gio patch 11).
@@ -979,6 +1022,27 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_DBLCLICK_TESTS: "1"
         run: go test -count=1 -v -timeout 5m -run '^TestClackDoubleClickWindows$' gioui.org/app
+      # Karim's 2026-11-21 crash (α.113): a quote started in the composer
+      # (">" typed, or the Blockquote button), then Ctrl+V with each kind of
+      # copy on the real clipboard, in App.Run's own window (SendInput,
+      # PowerShell's WinForms clipboard): the window lives, and each paste
+      # lands as Slack's composer lands it (Gio patch 65: one clipboard
+      # session at a time in the process).
+      - name: paste into a quote (App.Run's window, the real clipboard)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -timeout 5m -run '^TestWinQuotePaste$' ./internal/ui
+      # Gio's own copy and paste (Gio patch 65: winclip sessions off the
+      # window thread, the paste back by _WM_CLACK_PASTE, a busy one
+      # reported), in a window of its own
+      - name: Gio's copy and paste (the real clipboard)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -timeout 3m -run '^TestWinGioClipboard$' gioui.org/app
       # a test binary that printed PASS and still failed crashed as it
       # exited (windows-shell's gioui.org/app, train-161's push ci
       # 45018881337: no panic, no exit status): Windows Error Reporting

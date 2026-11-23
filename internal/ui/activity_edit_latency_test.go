@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -131,9 +133,62 @@ func activityEditLatency(t *testing.T, mode string) {
 	}
 	t.Cleanup(func() { theme.DrawHook, richview.DrawnHook = nil, nil })
 	var asked atomic.Bool
+	// who asks for the edits' frames: each Invalidate's callers while the
+	// edits run, and the frames a router wake-up alone drew (logged, so a
+	// count past the bound below names what asked)
+	var recording atomic.Bool
+	var amu sync.Mutex
+	asks := map[string]int{}
 	prevHook := invalidateHook
-	invalidateHook = func(*App) { asked.Store(true) }
+	invalidateHook = func(*App) {
+		asked.Store(true)
+		if !recording.Load() {
+			return
+		}
+		var pcs [24]uintptr
+		fr := runtime.CallersFrames(pcs[:runtime.Callers(3, pcs[:])])
+		var names []string
+		for len(names) < 7 {
+			f, more := fr.Next()
+			name := f.Function
+			if i := strings.LastIndex(name, "/"); i >= 0 {
+				name = name[i+1:]
+			}
+			names = append(names, name)
+			if !more {
+				break
+			}
+		}
+		amu.Lock()
+		asks[strings.Join(names, " < ")]++
+		amu.Unlock()
+	}
 	t.Cleanup(func() { invalidateHook = prevHook })
+	wakeFrames := 0
+	// and which plugin views the view cache's worker asked frames for
+	views := map[string]int{}
+	var timeline []string // the first edits' marks and reads, in order
+	t0 := time.Now()
+	taut.TraceViews(func(slice, key, sub, why string) {
+		if !recording.Load() {
+			return
+		}
+		what := "the bucket"
+		if sub != "" {
+			what = "a message"
+		}
+		reason := why
+		if i := strings.Index(reason, " ("); i >= 0 {
+			reason = reason[:i]
+		}
+		amu.Lock()
+		views[fmt.Sprintf("%s %s, %s: %s", slice, key, what, reason)]++
+		if len(timeline) < 60 {
+			timeline = append(timeline, fmt.Sprintf("%8.1f ms  %s, %s: %s", float64(time.Since(t0).Microseconds())/1000, slice, what, why))
+		}
+		amu.Unlock()
+	})
+	t.Cleanup(func() { taut.TraceViews(nil) })
 	var frames int64
 	var lastFrame time.Time
 	const vsync = time.Second / 60
@@ -188,6 +243,7 @@ func activityEditLatency(t *testing.T, mode string) {
 	// an edit every 500 ms for 10 s, each drawn when a frame draws its
 	// text and no older one
 	startFrames := frames
+	recording.Store(true)
 	var ds []latDraw
 	n := 0
 	next := time.Now()
@@ -207,9 +263,13 @@ func activityEditLatency(t *testing.T, mode string) {
 			next = next.Add(500 * time.Millisecond)
 		}
 		wake, ok := e.r.WakeupTime()
-		if !asked.Swap(false) && !(ok && !wake.After(now)) {
+		a := asked.Swap(false)
+		if !a && !(ok && !wake.After(now)) {
 			time.Sleep(time.Millisecond)
 			continue
+		}
+		if !a {
+			wakeFrames++
 		}
 		ss := frame()
 		for i := range ds {
@@ -218,7 +278,21 @@ func activityEditLatency(t *testing.T, mode string) {
 			}
 		}
 	}
+	recording.Store(false)
 	latStats(t, mode, "an Activity row", ds)
+	amu.Lock()
+	t.Logf("%s: %d frames a router wake-up alone drew; the Invalidates while the edits ran, by caller:", mode, wakeFrames)
+	for k, n := range asks {
+		t.Logf("%s: %4d  %s", mode, n, k)
+	}
+	t.Logf("%s: the views the worker announced:", mode)
+	for k, n := range views {
+		t.Logf("%s: %4d  %s", mode, n, k)
+	}
+	for _, l := range timeline {
+		t.Logf("%s: %s", mode, l)
+	}
+	amu.Unlock()
 	// and with frames drawn only when asked, the first one after an edit is
 	// the one it asked for: Slack's row reads the live message, so the edit
 	// draws in it, past the odd one a frame already under way missed

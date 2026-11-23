@@ -144,6 +144,15 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 			return 0, 0, 0
 		}
 		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.TimelineBlock: // .container{margin:12px 0}; .firstBlock: none above
+		if b.Timeline == nil || b.Timeline.Hidden || len(b.Timeline.Points) == 0 {
+			return 0, 0, 0
+		}
+		return l.dp(12), 0, l.dp(12)
+	case richtext.AttachmentBlock: // a message_embed's card: .container__Ij6XE{margin:12px 0}
+		if b.Att != nil && b.Att.Embed {
+			return l.dp(12), l.dp(12), l.dp(12)
+		}
 	case richtext.DataTableBlock: // .dataTableBlockOuterContainer{margin:4px 0}; the errorFallback has none
 		if b.DataTable != nil && (b.DataTable.Err || b.DataTable.Full) {
 			return 0, 0, 0
@@ -741,6 +750,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.DataTableBlock:
 		return l.dataTable(b, x, y, w)
 
+	case richtext.TimelineBlock:
+		return l.timeline(b, x, y, w)
+
 	case richtext.Table:
 		return l.table(b, x, y, w)
 
@@ -1017,8 +1029,11 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 	}
 	if len(b.Fields) > 0 {
 		if b.Kit {
-			if h > 0 {
-				h += l.dp(12) // .p-section_block__fields:not(:first-child)
+			// .p-section_block__fields:not(:first-child): after the
+			// p-section_block__text div, there for any text object, even
+			// one TSF formats to nothing (Spans kept, empty)
+			if h > 0 || b.Spans != nil || len(b.Children) > 0 {
+				h += l.dp(12)
 			}
 			h += l.kitFields(b.Fields, x, y+h, tw, key)
 		} else {

@@ -721,13 +721,17 @@ func (c *Client) MediaProgressUpdate(ctx context.Context, file string, offsetMS,
 
 // Command is a slash command from commands.list.
 type Command struct {
-	Name    string         `json:"name"`
-	Desc    string         `json:"desc"`
-	Usage   string         `json:"usage"`
-	Type    string         `json:"type"`
-	AppID   string         `json:"app,omitempty"`
-	AppName string         `json:"app_name,omitempty"`
-	Icons   map[string]any `json:"icons,omitempty"` // image_32 … image_512 (+ non-string flags)
+	Name string `json:"name"`
+	// CanonicalName and Aliases are what else the command answers to
+	// (is_match_for_command: canonical_name ?? name, aliases).
+	CanonicalName string         `json:"canonical_name,omitempty"`
+	Aliases       []string       `json:"aliases,omitempty"`
+	Desc          string         `json:"desc"`
+	Usage         string         `json:"usage"`
+	Type          string         `json:"type"`
+	AppID         string         `json:"app,omitempty"`
+	AppName       string         `json:"app_name,omitempty"`
+	Icons         map[string]any `json:"icons,omitempty"` // image_32 … image_512 (+ non-string flags)
 	// RunnableFromThread is is_runnable_from_thread: the command may run
 	// in a thread (isSlashCommandEnabled's Lf).
 	RunnableFromThread bool `json:"is_runnable_from_thread,omitempty"`

@@ -10,6 +10,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -153,10 +154,18 @@ type row struct {
 	pillBy        map[string]*reactPill
 	reactExpand   widget.Clickable // ReactionBar's "N more" / "Show less"
 	reactExpanded bool             // the bar's isExpanded (Slack keeps it per message)
-	expandTip     popups.TipState
-	addTip        popups.TipState // ReactionAddButton's "Add reaction…"
-	tsTip         tsTipper        // the header's Timestamp tooltip (timestamp_tip.go)
-	compactTip    tsTipper        // the gutter's
+	// ReactionBar's own state (getDerivedStateFromProps, reactionCollapse):
+	// collapsed, the viewer's reactions when it last derived, and what it
+	// derived from (a change re-renders it: the reactions, isExpanded, the
+	// bar's width)
+	rxInit      bool
+	rxCollapsed bool
+	rxSel       []string
+	rxSig       string
+	expandTip   popups.TipState
+	addTip      popups.TipState // ReactionAddButton's "Add reaction…"
+	tsTip       tsTipper        // the header's Timestamp tooltip (timestamp_tip.go)
+	compactTip  tsTipper        // the gutter's
 
 	// the broadcast's root preview (rootPreview), looked up once per list
 	// snapshot
@@ -2864,23 +2873,34 @@ const (
 	reactLess = 2 // ReactionCollapseButton: "Show less"
 )
 
-// reactionCollapse is ReactionBar's collapse (boot-shared Ltiy,
-// getDerivedStateFromProps and render), over the pills (getReactionGroups).
-// With more than five pills Slack estimates each one (8px per digit of
-// its count, 18 per emoji in it, 18) and, in the bar's width w, takes
+// reactionCollapse is ReactionBar's collapse (boot-shared, build
+// 2c4b2e38fc70: getDerivedStateFromProps and render), over the pills
+// (getReactionGroups). With five reactions or more and a width, Slack
+// estimates each pill (8px per digit of its count, 18 per emoji in it,
+// 18) and, in the bar's width w, takes
 // l = the pills that fit one line,
 // collapseLimit = those that fit within the first line's pills plus w-38,
-// and collapseTarget = the same less 64 more. Past collapseLimit the bar
-// shows collapseTarget pills and "{n} more" until it's expanded, then all
-// of them and "Show less". sel: one of the hidden reactions is the
-// viewer's ("N more" takes the reacted look). Slack also opens the bar
-// when the viewer's own new reaction lands among the hidden ones (a
-// vendor helper this audit couldn't read); Clack doesn't.
+// and collapseTarget = the same less 64 more. Its state's collapsed
+// starts as !isExpanded and is derived again on each render: while the
+// bar isn't collapsed (or nothing passes the limit) it's !isExpanded once
+// more, and while it is, a reaction of the viewer's among the hidden ones
+// that wasn't theirs at the last derive (lodash difference against
+// selectedReactionNames) opens it: your new reaction, hidden, shows. The
+// render collapses past six pills and the limit: collapseTarget pills and
+// "{n} more" while collapsed, else all of them and "Show less". sel: one
+// of the hidden reactions is the viewer's ("N more" takes the reacted
+// look). Clack derives again when what Slack's would re-render on
+// changes: the reactions, isExpanded, the width.
 func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel bool) {
 	gs := r.groups
 	n := len(gs)
-	if n <= 5 || w <= 0 {
-		return n, 0, false
+	if !r.rxInit { // the constructor's state
+		r.rxInit = true
+		r.rxCollapsed = !r.reactExpanded
+		r.rxSel = r.ownReactions(0)
+	}
+	if len(r.m.Reactions) < 5 || w <= 0 {
+		return n, 0, false // getDerivedStateFromProps keeps its state; nothing collapses (fewer than 6 pills)
 	}
 	bar := float64(w) / float64(max(gtx.Metric.PxPerDp, 0.01))
 	est := func(i int) float64 {
@@ -2901,19 +2921,32 @@ func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel 
 		}
 		return n
 	}
-	l := fit(bar)
-	if l == 0 {
-		return n, 0, false // r[l-1] is undefined: Slack's limit is NaN and nothing collapses
+	limit, target := n, n // r[l-1] undefined: NaN, which sortedIndex puts past the end
+	if l := fit(bar); l > 0 {
+		first := 0.0
+		for i := 0; i < l; i++ {
+			first += est(i)
+		}
+		limit, target = fit(first+bar-38), fit(first+bar-38-64)
 	}
-	first := 0.0
-	for i := 0; i < l; i++ {
-		first += est(i)
+	if sig := r.reactionSig(w); sig != r.rxSig {
+		r.rxSig = sig
+		closed := !r.reactExpanded
+		if !r.rxCollapsed || n <= limit {
+			r.rxCollapsed = closed
+		} else {
+			opened := false
+			for _, name := range r.ownReactions(target) {
+				opened = opened || !slices.Contains(r.rxSel, name)
+			}
+			r.rxCollapsed = !opened && closed
+		}
+		r.rxSel = r.ownReactions(0)
 	}
-	limit, target := fit(first+bar-38), fit(first+bar-38-64)
-	if n <= limit {
+	if n <= 5 || n <= limit {
 		return n, 0, false
 	}
-	if r.reactExpanded {
+	if !r.rxCollapsed {
 		return n, reactLess, false
 	}
 	for i := target; i < n; i++ {
@@ -2923,6 +2956,39 @@ func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel 
 		}
 	}
 	return target, reactMore, sel
+}
+
+// ownReactions is the names of the groups from index from on that hold
+// the viewer's reaction (selectedReactionNames: users includes
+// currentUser).
+func (r *row) ownReactions(from int) []string {
+	var out []string
+	for i := from; i < len(r.groups) && i < len(r.pills); i++ {
+		if r.pills[i].reacted() {
+			out = append(out, r.groups[i].name)
+		}
+	}
+	return out
+}
+
+// reactionSig is what ReactionBar re-renders on: its reactions (names,
+// counts, the viewer's), isExpanded and its width.
+func (r *row) reactionSig(w int) string {
+	var b strings.Builder
+	for i := range r.m.Reactions {
+		re := &r.m.Reactions[i]
+		b.WriteString(re.Name)
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(re.Count))
+		if re.Self {
+			b.WriteByte('*')
+		}
+		b.WriteByte(',')
+	}
+	b.WriteString(strconv.FormatBool(r.reactExpanded))
+	b.WriteByte('/')
+	b.WriteString(strconv.Itoa(w))
+	return b.String()
 }
 
 // expandButton is ReactionExpandButton ("{n} more", the tooltip "Show
@@ -2935,6 +3001,11 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 	c := rc.c
 	if r.reactExpand.Clicked(gtx) {
 		r.reactExpanded = kind == reactMore
+		// the bar's state as the click leaves it: "Show less" after your
+		// own hidden reaction opened it (isExpanded still false, so
+		// nothing re-derives) collapses it too, as Slack's remounted bar
+		// starts collapsed
+		r.rxCollapsed = kind != reactMore
 		rc.h.Invalidate()
 	}
 	txt := "Show less"
@@ -3883,6 +3954,9 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 					desc = lastReply(tsTime(latest), rc.now, count)
 				} else if !hov && rc.list != nil && !rc.thread {
 					unread = app.UnreadThreadsFor(rc.list.ch, m.TS) // getUnreadThreadsCountForMessage (unread_threads.go)
+					if f, ok := rc.h.(SecondaryThreadFocuser); ok && f.SecondaryThreadFocused(rc.list.ch, m.TS) {
+						unread = 0 // MessageWrapper: the thread open in a focused secondary view counts none
+					}
 				}
 			case hov:
 				desc = threadsNS.T("View thread") // the threads I18n

@@ -42,6 +42,7 @@ type frag struct {
 	url    string // image
 	p0, p1 int32  // plain text byte range
 	alt    bool   // image frag has text fallback in plain (":name:")
+	broken bool   // an alt frag recorded with the broken image icon (its load failed)
 	comp   int16  // component tag (index+1 into display.comps), 0 = static
 	hov    int16  // hover layer (index+1 into display.hovers), 0 = none
 	part   uint8  // CSS part (css.go), 0 = none
@@ -214,6 +215,9 @@ const (
 	// "sort" with col, "prev", "next", "page:N") or row ("row", hover
 	// only; table: its state; datatable.go)
 	tDataTable
+	// tTimeline is a timeline section's "(Sources)" (timeline: the
+	// section; timeline.go)
+	tTimeline
 	// tDate is a canvas's date control (Quip's CONTROL_SLACK_DATE_TYPE,
 	// span.slack-date-contents.mention): no link and no click here, but an
 	// editor's pointer is the hand over it (canvas-controller CSS:
@@ -306,6 +310,8 @@ type target struct {
 	// table and col: a tDataTable's table state and column (datatable.go)
 	table *TableControl
 	col   int
+	// timeline is a tTimeline's section (timeline.go)
+	timeline *richtext.TimelineSection
 }
 
 type hit struct {

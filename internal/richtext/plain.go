@@ -61,6 +61,10 @@ func writeBlock(b *strings.Builder, blk *Block, text SpanText) {
 			line(b, strings.TrimRight(strings.Join(cells, "\t"), "\t")) // trailing empty cells add nothing (decision 2026-11-07: trim)
 		}
 	case Divider:
+	case TimelineBlock: // its points' titles (convertTimelineBlocksToPlainText)
+		if t := blk.Timeline; t != nil {
+			line(b, timelinePlain(t, text))
+		}
 	case DataVizBlock: // a chart's text is its title
 		if v := blk.DataViz; v != nil && !v.Err {
 			line(b, v.Title)

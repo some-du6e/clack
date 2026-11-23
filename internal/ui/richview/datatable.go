@@ -72,6 +72,10 @@ type DataTableHandler interface {
 type TableControl struct {
 	Table  *richtext.DataTable
 	Column int // "sort": the column header clicked
+	// Elements is the element host of the view the table is in (its
+	// message's): the fullscreen view draws the action cells' buttons
+	// through it, so they send block_actions as the inline ones do
+	Elements Elements
 	// Window: the action's rect is in window coordinates
 	Window bool
 	st     *tableState
@@ -138,10 +142,14 @@ func (c *TableControl) SetFilter(s string) {
 // inline table's sort and filter: initialSortState, initialFilterText).
 func NewTableControl(t *richtext.DataTable, from *TableControl) *TableControl {
 	st := &tableState{sortCol: -1}
-	if from != nil && from.st != nil {
-		st.sortCol, st.desc, st.filter = from.st.sortCol, from.st.desc, from.st.filter
+	c := &TableControl{Table: t, st: st}
+	if from != nil {
+		c.Elements = from.Elements
+		if from.st != nil {
+			st.sortCol, st.desc, st.filter = from.st.sortCol, from.st.desc, from.st.filter
+		}
 	}
-	return &TableControl{Table: t, st: st}
+	return c
 }
 
 // SetTableControl makes c the state of v's data_table t (the fullscreen
@@ -361,7 +369,7 @@ func (l *lay) dataTable(b *richtext.Block, x, y, w int) int {
 	if !l.opts.FillBlocks && !dt.Full {
 		ww = min(w, l.dp(800))
 	}
-	ctl := &TableControl{Table: dt, st: st}
+	ctl := &TableControl{Table: dt, st: st, Elements: l.opts.Elements}
 	yy := y
 	if !dt.Full {
 		yy += l.dtHeader(dt, ctl, x, yy, ww)
@@ -573,12 +581,13 @@ func (l *lay) dtRowHeight(row []richtext.DTCell, n int, colX func(int) int, minH
 	return h
 }
 
-// dtMeasureCell is a wrapped cell's content height.
+// dtMeasureCell is a wrapped cell's content height, laid out on a scratch
+// display: nothing of it (frags, element slots, targets, images) stays.
 func (l *lay) dtMeasureCell(c *richtext.DTCell, w int) int {
-	d := l.d
-	f0, b0, i0, h0, t0, n0, p0 := len(d.frags), len(d.boxes), len(d.imgs), len(d.hits), len(d.targets), len(d.lines), len(d.plain)
+	saved := l.d
+	l.d = &display{}
 	h := l.dtCellContent(c, 0, 0, max(w, 1), true)
-	d.frags, d.boxes, d.imgs, d.hits, d.targets, d.lines, d.plain = d.frags[:f0], d.boxes[:b0], d.imgs[:i0], d.hits[:h0], d.targets[:t0], d.lines[:n0], d.plain[:p0]
+	l.d = saved
 	return h
 }
 

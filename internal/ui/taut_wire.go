@@ -26,6 +26,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/webaudio"
 )
 
 // Taut returns the plugin system (nil until boot, or when it couldn't
@@ -159,7 +160,8 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string, deferJS boo
 		ClipboardWrite: func(s string) error { a.Post(func() { a.copyText(s) }); return nil },
 		ClipboardRead:  func() (string, error) { return "", errors.New("clipboard reads aren't supported") },
 		PickFiles:      a.pickFiles,
-		Media:          pageMedia{}, // page_media.go: Slack's sound playback, and plugins'
+		Media:          pageMedia{},     // page_media.go: Slack's sound playback, and plugins'
+		Audio:          webaudio.Host{}, // decodeAudioData and MediaRecorder (CustomNameRecording)
 		// a notification sound the page couldn't play (CustomSounds with a
 		// file Go audio and the OS can't decode): Slack's own, natively
 		SoundFailed: func(url string) {
@@ -413,6 +415,9 @@ func (a *App) showLogin() {
 // pickFiles backs plugins' <input type=file> with the Gio explorer (the
 // composer's attachment chooser). jsrt calls it off the UI goroutine.
 func (a *App) pickFiles(accept string, multiple bool) ([]jsrt.PickedFile, error) {
+	if h := pickFilesHook; h != nil {
+		return h(accept, multiple)
+	}
 	e := a.explorer
 	if e == nil {
 		return nil, errors.New("no file chooser on this platform")

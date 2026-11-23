@@ -432,6 +432,16 @@ func main() {
 	if !errors.Is(lerr, desktop.ErrAnotherInstance) {
 		if prev := logs.StartRun(desktop.InstanceKey(cfg), fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), started.Format(time.RFC3339))); prev != "" {
 			log.Print(prev)
+			// a run that ended without saying why: what Windows recorded
+			// of it (a native crash, a fail-fast), 10 s in, off the
+			// startup path (the Windows launch harness ends every warm
+			// launch with taskkill /F: its starts mustn't run wevtutil)
+			go func() {
+				time.Sleep(10 * time.Second)
+				if s := applog.CrashRecordFor(prev); s != "" {
+					log.Print(s)
+				}
+			}()
 		}
 	}
 	// Linux X11: a broken X connection ends the process in Xlib's IO error

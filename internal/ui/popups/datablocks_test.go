@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"gioui.org/io/key"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/chart"
 	"github.com/some-du6e/clack/internal/core"
@@ -192,6 +195,38 @@ func TestDataTableMenus(t *testing.T) {
 	}
 }
 
+// stubElements is an element host the fullscreen view must draw with.
+type stubElements struct{ n *int }
+
+func (s stubElements) ElementsSize(bs []richtext.Button, maxW int, _ bool, _ unit.Metric) (image.Point, bool) {
+	return image.Pt(min(80, maxW), 28), false
+}
+func (s stubElements) LayoutElements(gtx layout.Context, _ []richtext.Button, _ bool) layout.Dimensions {
+	*s.n++
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+func (stubElements) ElementsVersion() uint32 { return 0 }
+
+// View {caption}'s table draws its action cells through the inline
+// table's element host, so they send block_actions.
+func TestDataTableFullscreenElements(t *testing.T) {
+	h := chartHost(t, true)
+	d := richtext.FromMessage(h.a.S, &slack.Message{TS: "1.0", Text: "t", Blocks: []byte(`[{"type":"data_table","block_id":"dtact","caption":"Tasks","rows":[[{"type":"raw_text","text":"Task"},{"type":"raw_text","text":"Action"}],[{"type":"raw_text","text":"a"},{"type":"action_cell","element":{"type":"button","action_id":"done_a","text":{"type":"plain_text","text":"Mark done"},"value":"a"}}]]}]`)})
+	if len(d.Blocks) != 1 || d.Blocks[0].DataTable == nil {
+		t.Fatalf("not a data_table: %+v", d.Blocks)
+	}
+	var drawn int
+	c := richview.NewTableControl(d.Blocks[0].DataTable, nil)
+	c.Elements = stubElements{&drawn}
+	m, v := newDataTableFull(h, c, false)
+	if m == nil || v == nil {
+		t.Fatal("no fullscreen view")
+	}
+	if _, ok := v.Options().Elements.(stubElements); !ok {
+		t.Fatalf("the fullscreen table's element host is %T, want the inline table's", v.Options().Elements)
+	}
+}
+
 // dtRichStyle gives the popups' richviews a style for the test.
 func dtRichStyle(t *testing.T) {
 	t.Helper()
@@ -328,5 +363,42 @@ func TestDataTableFullscreenFilter(t *testing.T) {
 	e.settle()
 	if f.ed.Text() != "" || !focused(&f.ed) {
 		t.Errorf("Clear filter: field %q, focused %v; want it empty and focused", f.ed.Text(), focused(&f.ed))
+	}
+}
+
+// firingElements is stubElements whose message has sent n actions.
+type firingElements struct {
+	stubElements
+	n *uint64
+}
+
+func (f firingElements) ActionsFired() uint64 { return *f.n }
+
+// The fullscreen view closes once its element host sends an action (a
+// row's action cell: DataTableFullscreenModal's onAction runs it and
+// closes the modal), so a view of rows the message no longer has can't
+// send a second one.
+func TestDataTableFullscreenClosesAfterAction(t *testing.T) {
+	h := chartHost(t, true)
+	d := richtext.FromMessage(h.a.S, &slack.Message{TS: "1.0", Text: "t", Blocks: []byte(`[{"type":"data_table","block_id":"dtact","rows":[[{"type":"raw_text","text":"Task"},{"type":"raw_text","text":"Action"}],[{"type":"raw_text","text":"a"},{"type":"action_cell","element":{"type":"button","action_id":"done","text":{"type":"plain_text","text":"Done"},"value":"a"}}]]}]`)})
+	var drawn int
+	var sent uint64 = 3 // actions before the view opened
+	c := richview.NewTableControl(d.Blocks[0].DataTable, nil)
+	c.Elements = firingElements{stubElements{&drawn}, &sent}
+	f := newDTFull(h, c, false)
+	if !f.m.o.FillBody {
+		t.Errorf("the fullscreen view measures its rows (no FillBody)")
+	}
+	var ops op.Ops
+	gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(960, 600))}
+	f.layout(gtx)
+	if f.m.Dismissed() {
+		t.Fatal("closed before any action")
+	}
+	sent++
+	ops.Reset()
+	f.layout(gtx)
+	if !f.m.Dismissed() {
+		t.Error("an action from its rows left the view open")
 	}
 }

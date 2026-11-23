@@ -1210,6 +1210,17 @@ func keepFiles(m, old *slack.Message) {
 // follows), as most of a large workspace's profile changes are. The
 // member is read without a lookup, which would count as a view's.
 func (a *App) putUserLive(nu slack.User) {
+	a.putUserLiveWith(nu, func(u slack.User) bool { a.S.PutUsers([]slack.User{u}); return true })
+}
+
+// putUserLiveNotOlder is putUserLive unless the store holds a later copy
+// (store.PutUserNotOlder): a refetch's answer never overwrites a
+// user_change stored while it was out.
+func (a *App) putUserLiveNotOlder(nu slack.User) bool {
+	return a.putUserLiveWith(nu, a.S.PutUserNotOlder)
+}
+
+func (a *App) putUserLiveWith(nu slack.User, put func(slack.User) bool) bool {
 	seen := a.S.MemberAccessed(nu.ID)
 	// what message Docs read of the member, against both the last
 	// event's and the stored copy's (a status or huddle change converts
@@ -1220,10 +1231,13 @@ func (a *App) putUserLive(nu slack.User) {
 	if had && before != nil {
 		beforeFP = userDocFP(before)
 	}
-	a.S.PutUsers([]slack.User{nu})
+	if !put(nu) {
+		return false
+	}
 	if su, ok := a.S.RawUser(nu.ID); ok {
 		u := a.userOf(su)
 		same := a.noteUserDoc(su) && had && beforeFP == userDocFP(su)
 		a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: same})
 	}
+	return true
 }

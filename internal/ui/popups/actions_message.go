@@ -3,11 +3,14 @@ package popups
 import (
 	"context"
 	"image"
+	"image/color"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 
+	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -757,6 +760,27 @@ func actNewReminderModal(h Host, ch, ts string) *Modal {
 // actReminderModal is the Reminder dialog; save gets the chosen time
 // (unix s) once it's in the future.
 func actReminderModal(h Host, save func(dueAt int64)) *Modal {
+	return actReminderModalDesc(h, nil, save)
+}
+
+// ReminderDescription is the Reminder dialog's Description input, which
+// it has for a reminder of its own (openLaterCustomModal with no message,
+// file, record or item: "/remind" alone): the composer's TextyInput
+// (popups can't import the composer).
+type ReminderDescription interface {
+	Layout(gtx layout.Context, th *theme.Theme, col color.NRGBA) layout.Dimensions
+	Tag() event.Tag
+	Text() string // what it shows: Save is disabled while it's empty (LaterCustomModal's ec)
+}
+
+// NewReminderDescriptionModal is that dialog: When and Time, then
+// "Description" over desc ("Remind me to…"); Save, enabled once desc has
+// something, gives save the time.
+func NewReminderDescriptionModal(h Host, desc ReminderDescription, save func(dueAt int64)) *Modal {
+	return actReminderModalDesc(h, desc, save)
+}
+
+func actReminderModalDesc(h Host, desc ReminderDescription, save func(dueAt int64)) *Modal {
 	now := time.Now()
 	start := dtCeil(now, 30)
 	day := &dtDate{Day: dtDay(start), Min: dtDay(now)}
@@ -768,6 +792,7 @@ func actReminderModal(h Host, save func(dueAt int64)) *Modal {
 		return 0
 	}
 	var m *Modal
+	mounted := false // the Description input took the focus (focusOnMount)
 	body := func(gtx layout.Context) layout.Dimensions {
 		th := h.Theme()
 		cl := colorsOf(th)
@@ -792,12 +817,23 @@ func actReminderModal(h Host, save func(dueAt int64)) *Modal {
 			return tm.Layout(gtx, h, org.Add(image.Pt(0, y)), minInt(dp(gtx, 200), w), dtLarge)
 		})
 		y += dp(gtx, 36)
+		if desc != nil {
+			// the <br/>, then the Description field: its Label over a
+			// BasicContainer of 5 to 50 lines (focusOnMount)
+			y += dp(gtx, 26)
+			lbl(nsSaved.T("Description"))
+			dd := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+				return reminderDescBox(gtx, th, cl, desc, w, &mounted)
+			})
+			y += dd.Size.Y
+			return layout.Dimensions{Size: image.Pt(w, y)}
+		}
 		return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 26))}
 	}
-	// the saved item's reminder modal (4hLh, saved_for_later)
+	// the saved item's reminder modal (E8e8 LaterCustomModal, saved_for_later)
 	m = NewModal(h, ModalOpts{Title: nsSaved.T("Reminder"), Width: 500, Body: body, Buttons: []*ModalButton{
 		{Label: nsSaved.T("Cancel"), Kind: BtnOutline},
-		{Label: nsSaved.T("Save"), Kind: BtnPrimary, Do: func() bool {
+		{Label: nsSaved.T("Save"), Kind: BtnPrimary, Enabled: func() bool { return desc == nil || strings.TrimSpace(desc.Text()) != "" }, Do: func() bool {
 			due := dtAt(day.Day, tm.Mins)
 			if !due.After(time.Now()) {
 				h.Toast("Choose a time in the future")
@@ -808,6 +844,42 @@ func actReminderModal(h Host, save func(dueAt int64)) *Modal {
 		}},
 	}})
 	return m
+}
+
+// reminderDescBox draws the Description input in its box (padding 8 12,
+// radius 8, the focus ring), five 22px lines tall at least, fifty at most
+// (BasicContainer numMinLines 5, numMaxLines 50); it takes the focus when
+// first drawn (focusOnMount).
+func reminderDescBox(gtx layout.Context, th *theme.Theme, cl *Colors, desc ReminderDescription, w int, mounted *bool) layout.Dimensions {
+	if !*mounted {
+		*mounted = true
+		gtx.Execute(key.FocusCmd{Tag: desc.Tag()})
+	}
+	m := gtx
+	m.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 24), gtx.Sp(22)*50)}
+	call, td := record(m, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		gtx.Constraints.Min.Y = gtx.Sp(22) * 5
+		return desc.Layout(gtx, th, cl.Fg)
+	})
+	ih := td.Size.Y + dp(gtx, 16)
+	r := image.Rect(0, 0, w, ih)
+	rad := dp(gtx, 8)
+	if gtx.Focused(desc.Tag()) {
+		ring := dp(gtx, 5)
+		rrect(gtx, r.Inset(-ring), rad+ring, cl.FocusRing)
+		one := maxInt(1, dp(gtx, 1))
+		rrect(gtx, r.Inset(-one), rad+one, cl.Focus)
+		rrect(gtx, r, rad, cl.ModalBg)
+	} else {
+		rrect(gtx, r, rad, cl.InputBorder)
+		rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.ModalBg)
+	}
+	at(gtx, image.Pt(dp(gtx, 12), dp(gtx, 8)), func(gtx layout.Context) layout.Dimensions {
+		call.Add(gtx.Ops)
+		return td
+	})
+	return layout.Dimensions{Size: image.Pt(w, ih)}
 }
 
 // actReminderItems is useReminderTimeOptions (GufF, saved_for_later) for

@@ -4,6 +4,7 @@ import (
 	"image"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -86,7 +87,9 @@ func (s *listState) persistentActions(gtx layout.Context, h Host, rc *rowCtx, si
 		})
 		area.Pop()
 		if btn.Hovered() {
+			m := op.Record(gtx.Ops) // a body portal's: past the list's clip
 			tooltip(gtx, th, c, "Message actions", rr, theme.WindowBounds(s.origin), 1)
+			op.Defer(gtx.Ops, m.Stop())
 		}
 	}
 }

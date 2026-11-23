@@ -55,6 +55,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -365,7 +366,9 @@ func (v *ThreadView) layoutFindBar(gtx layout.Context, th *theme.Theme, c *color
 	f := &v.find
 	f.bar = image.Rectangle{}
 	// Enter, Shift+Enter and Escape are the bar's (its onKeyDown), not
-	// the input's
+	// the input's; Escape not the shell's "Close / mark as read" either,
+	// which reads keys first (ThreadSearchBar preventDefaults it)
+	shortcut.OwnEscape(&f.ed)
 	for {
 		e, ok := gtx.Event(
 			key.Filter{Focus: &f.ed, Name: key.NameReturn, Optional: key.ModShift},
