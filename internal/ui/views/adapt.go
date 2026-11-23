@@ -20,6 +20,7 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
@@ -497,6 +498,22 @@ func (hh hostHandler) OpenUsergroup(id string, at image.Point) {
 	}
 }
 func (hh hostHandler) OpenImage(img richtext.Image) { hh.h.OpenLightbox(img, core.Message{}) }
+
+// ChartAction is a data_visualization block's More actions: its menu.
+func (hh hostHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
+	if ph, ok := hh.h.(popups.Host); ok {
+		if mn := popups.NewChartMenu(ph, popups.ActionAnchor(btn, window), dv); mn != nil {
+			ph.ShowOverlay(mn)
+		}
+	}
+}
+
+// DataTableAction is a data_table's header button or column header.
+func (hh hostHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
+	if ph, ok := hh.h.(popups.Host); ok {
+		popups.DataTableAction(ph, act, c, popups.ActionAnchor(btn, c.Window))
+	}
+}
 func (hh hostHandler) OpenFile(f *richtext.File) {
 	if f != nil && f.Thumb != nil && f.IsImage {
 		hh.h.OpenLightbox(*f.Thumb, core.Message{})
