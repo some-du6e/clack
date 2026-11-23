@@ -1287,10 +1287,24 @@ type toastState struct {
 	// rect is the toast as last drawn (window coords): its box in the
 	// inspect tool's record
 	rect image.Rectangle
+	// gone runs once when the toast's time is up (Slack's Toast
+	// onCloseComplete: the emoji pack InstallToast badges the composer)
+	gone func()
+}
+
+// toastGone runs the current toast's gone, once (its time is up, or a
+// toast replaces it: Slack's Toast closes either way and calls
+// onCloseComplete).
+func (a *App) toastGone() {
+	if g := a.toast.gone; g != nil {
+		a.toast.gone = nil
+		g()
+	}
 }
 
 // Toast shows a short message at the bottom of the window.
 func (a *App) Toast(text string) {
+	a.toastGone() // the toast it replaces has closed
 	a.toast = toastState{text: text, until: time.Now().Add(3500 * time.Millisecond)}
 	a.Invalidate()
 }
@@ -1298,6 +1312,7 @@ func (a *App) Toast(text string) {
 // ToastUndo is Slack's toast with an "Undo" button (sections deleted,
 // conversations muted or marked read); undo runs once, on click.
 func (a *App) ToastUndo(text string, undo func()) {
+	a.toastGone() // the toast it replaces has closed
 	a.toast = toastState{text: text, until: time.Now().Add(6 * time.Second), undo: undo, btn: new(widget.Clickable)}
 	a.Invalidate()
 }
@@ -1305,6 +1320,7 @@ func (a *App) ToastUndo(text string, undo func()) {
 // ToastAction is a toast with an action button labelled label (Slack's
 // "{title} restored." with View); do runs once, on click.
 func (a *App) ToastAction(text, label string, do func()) {
+	a.toastGone() // the toast it replaces has closed
 	a.toast = toastState{text: text, until: time.Now().Add(6 * time.Second), undo: do, btn: new(widget.Clickable), label: label}
 	a.Invalidate()
 }
@@ -1312,6 +1328,7 @@ func (a *App) ToastAction(text, label string, do func()) {
 // undoToast clicks the toast's Undo (tests).
 func (a *App) undoToast() {
 	if u := a.toast.undo; u != nil {
+		a.toastGone() // the toast it replaces has closed
 		a.toast = toastState{}
 		u()
 	}
@@ -1324,6 +1341,7 @@ func (a *App) layoutToast(gtx layout.Context) {
 	now := time.Now()
 	if now.After(a.toast.until) {
 		a.toast.text = ""
+		a.toastGone()
 		return
 	}
 	gtx.Execute(op.InvalidateCmd{At: a.toast.until})

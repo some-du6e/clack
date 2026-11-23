@@ -207,6 +207,10 @@ func (a *App) handle(ev slack.Event) {
 		a.S.Unlock()
 		a.setTeamName(firstNonEmpty(e.TeamID, cur), e.Name)
 		a.emit(Event{Type: "team"})
+	case "emoji_collection_added": // emoji_packs.go
+		a.onEmojiCollectionAdded(ev.Raw)
+	case "emoji_collection_removed":
+		a.onEmojiCollectionRemoved(ev.Raw)
 	case "emoji_changed":
 		var e struct {
 			Subtype string   `json:"subtype"`

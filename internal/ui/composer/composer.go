@@ -821,6 +821,9 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.UploadBlocked = c.api.a.SlackConnectFileSharingBlocked(c.ch)
 	}
 	st.PlusOpen = c.att.plusOpen
+	if st.Mode == modeChannel && c.api.a != nil && !c.InThreadsView {
+		st.EmojiBadge = c.api.a.EmojiPackInputBadge() // MessagePaneInput: enableEmojiButtonBadge
+	}
 	if cv, ok := c.api.conv(c.ch); ok {
 		st.ChannelName = cv.Name
 		switch cv.Kind {
@@ -1005,6 +1008,9 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		case caAttach:
 			c.plusClick(a)
 		case caEmoji:
+			if c.api.a != nil {
+				c.api.a.ClearEmojiPackInputBadge() // removeEmojiCollectionInputBadge
+			}
 			c.openEmojiPicker(a.Anchor) // gifs.go: picked GIFs go into the draft
 		case caMention:
 			c.mentionTrigger()

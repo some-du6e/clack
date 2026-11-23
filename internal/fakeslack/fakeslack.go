@@ -569,6 +569,11 @@ func DefaultPrefs() map[string]any {
 			`"C0GENERAL":{"id":"C0GENERAL","count":12,"visits":[1762540000000]}}`,
 		"ia_theme":                    `{"primary":{"palette":"aubergine"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":true,"useCustomHex":false}`,
 		"window_background_gradients": true,
+		// the emoji pack prefs as Hack Club's read on 2026-11-22: the
+		// newest pack became available 2026-11-06 (no "new" pack after
+		// 11-20), nothing clicked (emoji_packs.go)
+		"emoji_packs_most_recent_available_time": 1793987493, "emoji_packs_clicked_collection_cta": false,
+		"emoji_packs_clicked_picker_cta": false, "emoji_packs_clicked_picker_post_install_cta": false,
 		// Preferences part A (prefs_a.go): Slack's server defaults
 		"show_sidebar_avatars": true, "home_unread_dot": true, "should_show_connect_section": true,
 		"mute_sounds": false, "mute_huddle_sounds": false,
@@ -1527,6 +1532,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleNewBots(method, f); handled { // new_bots.go
 		return out
 	}
+	if out, handled := s.handleEmojiPacks(method, f); handled { // emoji_packs.go
+		return out
+	}
 	if out, handled := s.handleSystemDM(method, f); handled { // system_dm.go
 		return out
 	}
@@ -1914,7 +1922,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return map[string]any{"ok": false, "error": "app_not_found"}
 	case "emoji.list":
-		return ok("emoji", s.emoji)
+		return ok("emoji", s.withPackEmoji(s.emoji)) // the installed packs' too (emoji_packs.go)
 	case "client.getWebSocketURL":
 		ws := "ws" + strings.TrimPrefix(s.URL, "http") + "ws"
 		return ok("primary_websocket_url", ws, "fallback_websocket_url", ws, "routing_context", "fake")

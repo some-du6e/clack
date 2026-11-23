@@ -5269,6 +5269,37 @@ jobs:
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
   # in its needs (.github/scripts/expect_fail_wire.py adds it).
+  # emoji-packs: the Add emoji dialog's Emoji packs tab (popups), Slack's
+  # 8DMj and its store, through the dialog's Layout against the fake:
+  # the list, a pack's details, adding and removing a pack, the picker's
+  # pack group, Stay tuned and a failed read.
+  emoji-packs:
+    if: ${{ !inputs.only || startsWith('emoji-packs', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the emoji pack tests (COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 20m -run '^(TestEmojiPacksTabLikeSlack|TestEmojiPackAddLikeSlack|TestEmojiPackOnlyCustomTabLikeSlack|TestEmojiPackRemoveLikeSlack|TestEmojiPacksSoonAndFailedRead)$' ./internal/ui/popups || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   expect-fail:
     needs:
       - go
@@ -5379,6 +5410,7 @@ jobs:
       - fl1122-s-views
       - fl1122-s-mac
       - fl1122-s-win
+      - emoji-packs
       - row-hit
       - fl1122c-s-avf
       - fl1122c-r-views

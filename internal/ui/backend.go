@@ -925,6 +925,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		a.Invalidate()
 	case "list_prefs": // a conversation's list prefs: the composer's + reads can_upload_files (core/upload_gates.go)
 		a.Invalidate()
+	case "emoji_packs": // the emoji pack store (core/emoji_packs.go): the Add emoji dialog, the picker's pack groups, the composer's badge
+		a.Invalidate()
 	}
 	switch ev.Type {
 	case "threads_state", "counts", "marked", "activity_badges":
