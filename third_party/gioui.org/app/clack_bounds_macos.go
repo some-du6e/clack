@@ -107,7 +107,13 @@ import (
 // finished launching, so the launch's first call takes the screens
 // applicationWillFinishLaunching read (Clack patch, CLACK_PATCHES.md §56)
 // when they come first: a window placed from them waits for nothing but
-// the launch itself.
+// the launch itself. Only during the launch: once the windows asked for
+// in it opened, the snapshot goes (retireLaunchScreens). Kept until a
+// first call, it was a later call's screens however late that came, as
+// they were at the launch: TestDisplaysMac, the test process's first
+// call, read the runner's Dock before it settled (a work area to 708
+// against NSScreen's 706 then, train-169's push ci 45045823814; 706
+// against 705, image-context-menu's 44990293041).
 func displays() []Display {
 	res := make(chan []Display, 1)
 	runOnMain(func() { res <- readScreens() })
@@ -151,6 +157,13 @@ func snapshotLaunchScreens() {
 	ds := readScreens()
 	launchScreens.Store(&ds)
 	close(launchScreensReady)
+}
+
+// retireLaunchScreens drops the launch's screens a call didn't take: the
+// launch is over (applicationDidFinishLaunching, after the windows asked
+// for in it opened). Main thread.
+func retireLaunchScreens() {
+	launchScreens.Store(nil)
 }
 
 func placeDisplay(s C.gio_place_screen) Display {

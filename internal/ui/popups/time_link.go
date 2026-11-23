@@ -70,21 +70,27 @@ func (t *TimeLink) Skip() {
 	t.tip.Reset()
 }
 
-// Begin starts a frame: Hovered is false until Layout runs.
+// Begin starts the time's owner's frame (a row's layout): until Layout
+// runs again Hovered is false, so a time the row no longer draws (a row
+// that became grouped, or a header again) can't hold a stale hover.
 func (t *TimeLink) Begin() { t.shown = false }
 
 // Layout makes the label laid out at the current offset (size, its
 // baseline from the top, its colour) the link: it reads the click, takes
 // the pointer over the label (the hand cursor), underlines the label while
-// hovered and shows tip (the full date) after 300 ms.
-func (t *TimeLink) Layout(gtx layout.Context, th *theme.Theme, size image.Point, baseline int, col color.NRGBA, tip string) TimeLinkClick {
+// hovered and shows tip's text (the full date; nil for none) after
+// 300 ms. tip is asked once the frame's events are read, so the frame the
+// pointer comes in starts the tooltip's delay.
+func (t *TimeLink) Layout(gtx layout.Context, th *theme.Theme, size image.Point, baseline int, col color.NRGBA, tip func() string) TimeLinkClick {
 	var c TimeLinkClick
 	for {
 		e, ok := t.click.Update(gtx.Source)
 		if !ok {
 			break
 		}
-		if e.Kind == gesture.KindClick {
+		// a Ctrl+click on macOS is a right-click (ctxclick.Context): the
+		// menu, not the link
+		if e.Kind == gesture.KindClick && !(ctxclick.Mac && e.Modifiers.Contain(key.ModCtrl)) {
 			c.Clicked, c.Cmd = true, e.Modifiers.Contain(key.ModShortcut)
 		}
 	}
@@ -114,8 +120,12 @@ func (t *TimeLink) Layout(gtx layout.Context, th *theme.Theme, size image.Point,
 		y := min(size.Y-lw, baseline+gtx.Dp(1))
 		paint.FillShape(gtx.Ops, col, clip.Rect{Min: image.Pt(0, y), Max: image.Pt(size.X, y+lw)}.Op())
 	}
+	txt := ""
+	if hov && tip != nil {
+		txt = tip()
+	}
 	t.tip.Delay = TimeLinkTipDelay
-	Tooltip(gtx, th, &t.tip, hov && tip != "", size, Above, tip, "")
+	Tooltip(gtx, th, &t.tip, hov && txt != "", size, Above, txt, "")
 	return c
 }
 

@@ -132,6 +132,10 @@ type Size struct {
 	// ThreadsAudit adds #th-audit: one thread per way the thread pane
 	// marks unread replies, opens and counts (threads_audit.go).
 	ThreadsAudit bool
+	// ThreadOpen adds #open-top: a long channel with long threads,
+	// followed and read, unread past their first page, or not followed,
+	// for where a thread opens (thread_open.go).
+	ThreadOpen bool
 	// TombstoneThread adds an archived public channel the viewer is in,
 	// its history several pages long both ways around a thread whose root
 	// was deleted: a tombstone with TombstoneReplies replies
@@ -796,6 +800,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.ThreadsAudit {
 		s.addThreadsAudit() // threads_audit.go
+	}
+	if sz.ThreadOpen {
+		s.addThreadOpen() // thread_open.go
 	}
 	if sz.TombstoneThread {
 		s.addTombstoneThread() // tombstone.go
@@ -1601,6 +1608,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleThreadsAudit(method, f); handled { // threads_audit.go
 		return out
 	}
+	if out, handled := s.handleThreadOpen(method, f); handled { // thread_open.go
+		return out
+	}
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
 		return out
 	}
@@ -1658,6 +1668,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				e = fx
 			}
 			if l, ok := s.codeLatest(c.ID); ok { // codechannels.go: read, at its fixture's latest message
+				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
+			}
+			if s.Size.ThreadOpen && c.ID == ThreadOpenChannel { // thread_open.go: read, at its newest message
+				l := ThreadOpenMsg(ThreadOpenMsgs - 1)
 				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
 			}
 			if closedDM(c) { // closed_dms.go: read

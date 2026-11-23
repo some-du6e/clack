@@ -82,6 +82,14 @@ type backend struct{}
 
 func (backend) Name() string { return "mediafoundation" }
 
+// Takes is media.Taker's: every source but an audio file, which Go audio
+// plays (internal/media/goaudio, decoding AAC with Media Foundation's
+// source reader, out of its own sink). An audio file's Media Engine has
+// its audio renderer and nothing else to play: on a machine with no
+// audio output (the runners) it fails before its metadata, made muted or
+// not.
+func (backend) Takes(src media.Source) bool { return !media.IsAudio(src) }
+
 // Available is nil once mfplat.dll is loaded and MFStartup answered
 // (Windows N without the Media Feature Pack has no mfplat.dll).
 func (backend) Available() error {

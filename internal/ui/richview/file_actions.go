@@ -68,6 +68,7 @@ import (
 	"strings"
 
 	"gioui.org/f32"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -331,6 +332,40 @@ func (v *View) barShown(i int) bool {
 	return v.hovering && image.Pt(int(v.ptr.X), int(v.ptr.Y)).In(v.d.bars[i].card)
 }
 
+// barOverMedia reports whether bar i is on a card Options.Media draws (an
+// audio card's player): it draws, and takes its presses, over the player.
+func (v *View) barOverMedia(i int) bool {
+	c := v.d.bars[i].card
+	for k := range v.d.media {
+		if v.d.media[k].r == c {
+			return true
+		}
+	}
+	return false
+}
+
+// onMediaBar reports whether p is on a shown bar over a media card.
+func (v *View) onMediaBar(p f32.Point) bool {
+	bar, _, ok := v.barAt(p)
+	return ok && v.barOverMedia(bar)
+}
+
+// barCursors adds the hand cursor over the shown bars' buttons (those
+// over a media card, or the rest).
+func (v *View) barCursors(gtx layout.Context, overMedia bool) {
+	for i := range v.d.bars {
+		if !v.barShown(i) || v.barOverMedia(i) != overMedia {
+			continue
+		}
+		_, rs := v.barRects(i)
+		for _, r := range rs {
+			s := clip.Rect(r).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
+	}
+}
+
 // barAt is the shown bar button under p: its bar and index, ok false
 // for none. Later bars are on top.
 func (v *View) barAt(p f32.Point) (bar, btn int, ok bool) {
@@ -415,15 +450,16 @@ func (v *View) groupCard(gtx layout.Context, p *Palette, r image.Rectangle) {
 }
 
 // drawFileBars draws the hovered files' FileActions and, while the
-// pointer rests on a button, its tooltip.
-func (v *View) drawFileBars(gtx layout.Context, st *Style) {
+// pointer rests on a button, its tooltip: those on a card Options.Media
+// draws (overMedia) or the rest.
+func (v *View) drawFileBars(gtx layout.Context, st *Style, overMedia bool) {
 	if !v.hovering || len(v.d.bars) == 0 {
 		return
 	}
 	p := &st.Palette
 	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
 	for i := range v.d.bars {
-		if !v.barShown(i) {
+		if !v.barShown(i) || v.barOverMedia(i) != overMedia {
 			continue
 		}
 		b := &v.d.bars[i]

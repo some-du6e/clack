@@ -67,6 +67,9 @@ func TestSearchCardTimeIsALink(t *testing.T) {
 	if !tl.Hovered() {
 		t.Error("the pointer on the result's time doesn't hover its link")
 	}
+	if !v.cards[0].hov {
+		t.Error("the pointer on the result's time unhovered the card (its background and hover bar)")
+	}
 	press(pointer.ButtonPrimary)
 	h.mu.Lock()
 	opens := append([]string(nil), h.opens...)
