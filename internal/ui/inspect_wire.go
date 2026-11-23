@@ -205,6 +205,7 @@ func (a *App) konamiKeys(src *input.Source) {
 			// the tooltip under the pointer
 			popups.HideTooltips()
 		}
+		a.noteKeyboardNav(e) // keyboard mode (keyboard_mode.go)
 		if a.konami.press(e) {
 			a.setInspectTool(a.insp == nil)
 		}

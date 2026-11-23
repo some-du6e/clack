@@ -11,6 +11,7 @@ import (
 	"weak"
 
 	"gioui.org/font"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -431,6 +432,11 @@ func (c *Composer) init() {
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
 	c.ed.Intercept = c.floatBarKey(c.ed.Intercept) // the floating bar's Escape first
+	// Escape is the input's own while it has something to do with it,
+	// handled (defaultPrevented) before the view's keydown, which marks the
+	// thread read or closes the pane: the floating bar hides, the
+	// autocomplete closes, an edit is cancelled (stopEditingMessage)
+	c.ed.OwnsEscape = func() bool { return c.edit != nil || c.fbar.shown || c.PopupOpen() }
 	accept := c.ac.OnAccept
 	c.ac.OnAccept = func(it acItem, start, end int) {
 		if it.Kind == acCommand && it.Command != nil {
@@ -470,6 +476,25 @@ func (c *Composer) Editing() bool { return c.edit != nil }
 
 // InsertText inserts plain text at the caret.
 func (c *Composer) InsertText(s string) { c.ed.InsertText(s); c.Focus() }
+
+// TypeText types s at the caret as the keyboard does (autoformat, emoji,
+// the autocomplete's trigger) and asks for the focus: a key the window
+// redirected to this input, Slack's shouldInputStealKeyEvent (the
+// message input's document keydown, the thread pane's onKeyDown), whose
+// character the browser types into the input it focused.
+func (c *Composer) TypeText(s string) {
+	lo, hi := c.ed.sel()
+	c.ed.typeAt(lo, hi, s)
+	c.Focus()
+}
+
+// StealKey is TypeText for a shortcut the window redirected here (Mod+B,
+// Mod+I, Mod+V: enableShortcuts): the key goes to the editor once it has
+// the focus, a paste reading the clipboard then.
+func (c *Composer) StealKey(k key.Event) {
+	c.ed.stolen = append(c.ed.stolen, k)
+	c.Focus()
+}
 
 // InsertEmoji inserts an emoji atom at the caret.
 func (c *Composer) InsertEmoji(name string) {

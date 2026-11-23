@@ -155,10 +155,15 @@ const (
 // value also works).
 type Editor struct {
 	missed []event.Event // key events KeepFocus read while it wasn't drawn (editor_focus.go)
+	stolen []key.Event   // shortcuts the window redirected here, run once focused (Composer.StealKey)
 	// Intercept, if set, is offered Enter, Tab, Up, Down, Escape (with
 	// modifiers) before the editor handles them; returning true consumes
 	// the key (used by the autocomplete popup).
 	Intercept func(name key.Name, mods key.Modifiers) bool
+	// OwnsEscape, if set, says plain Escape is the editor's while it
+	// holds (shortcut.OwnEscape: not the shell's "Close / mark as read"),
+	// as escapeClearsFormat does for a quote or code line
+	OwnsEscape func() bool
 
 	doc           *Doc
 	anchor, caret int
@@ -1175,6 +1180,15 @@ func (e *Editor) onDrag(gtx layout.Context, ev pointer.Event) {
 }
 
 func (e *Editor) processKeys(gtx layout.Context) {
+	if len(e.stolen) > 0 && gtx.Focused(e) {
+		// keys the window redirected here before the focus came
+		// (Composer.StealKey)
+		ks := e.stolen
+		e.stolen = nil
+		for _, k := range ks {
+			e.command(gtx, k)
+		}
+	}
 	for {
 		ev, ok := e.nextKeyEvent(gtx)
 		if !ok {
@@ -1332,9 +1346,10 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 			break
 		}
 	}
-	if e.escapeClearsFormat() {
-		// Escape clears this line's quote or code block (editor_keys.go):
-		// the key is the editor's, not the shell's "Close / mark as read"
+	if e.escapeClearsFormat() || e.OwnsEscape != nil && e.OwnsEscape() {
+		// Escape clears this line's quote or code block (editor_keys.go),
+		// or does what the editor's owner has for it: the key is the
+		// editor's, not the shell's "Close / mark as read"
 		shortcut.OwnEscape(e)
 	}
 	if !e.ensureLayout() {

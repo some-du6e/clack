@@ -72,7 +72,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_clicks.go`, `io/input/pointer_test.go`,
 `widget/clack_words.go`, `widget/clack_editor_clicks*_test.go`,
 `app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
-`app/clack_titlebar_darwin_test.go` and
+`app/clack_titlebar_darwin_test.go`,
+`io/input/clack_unfocused.go`, `io/input/clack_unfocused_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -3195,3 +3196,28 @@ linux-gio job. In Clack: `internal/ui/popups`' `TestTickersKeepLaterPresses`
 (a press on a button laid out after a tooltip in its delay, a loading
 spinner, a peek card animating in and a focused editor: one click each,
 and each ticker's wakeup on its cadence). Not in `UPSTREAM.patch`.
+
+## 62. io/input: typed text with nothing focused goes to a handler the window names
+
+`io/input/router.go` (`Router.processEvent`: a `key.EditEvent` with no
+focused handler goes to `Router.unfocusedText`) and
+`io/input/clack_unfocused.go` (`Source.SetUnfocusedText`). The focus
+itself stays empty: `Focused(nil)` still holds, so what reads it (the
+views' global scroll keys, a modal giving the focus back) sees nothing
+new.
+
+A browser types a key's character into whatever has the focus once the
+keydown is through. Slack's message input listens for keydown on the
+document and, for a printable key whose target is no input (its
+`shouldInputStealKeyEvent`), focuses itself during the keydown, so the
+character lands in it. Gio routes an `EditEvent` to the focused handler
+as it queues it and drops it with none; a `FocusCmd` executed from the
+key's handler doesn't bring it back, as the immediate path's replay
+queues again only events that had a receiver. Clack's App names a tag of
+its own and hands what it reads to the channel's composer.
+
+Tests: `io/input/clack_unfocused_test.go` (`TestClackUnfocusedText`:
+dropped with no handler named, read by the named one with the focus
+still empty, a focused editor's as before, dropped again after `nil`),
+in ci's linux-gio job. In Clack: `internal/ui`'s typing redirect tests.
+Not in `UPSTREAM.patch`.

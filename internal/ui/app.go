@@ -383,6 +383,12 @@ type App struct {
 	// the frame's layout
 	inspReset   bool
 	inspPresses []key.Event
+
+	// typeSteal's handler for typed text nothing has the focus for
+	// (type_steal.go; Gio patch 62)
+	stealTag int
+	// kbMode: the viewer moves around with the keyboard (keyboard_mode.go)
+	kbMode bool
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -919,6 +925,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.hoverBegin(gtx) // before any widget reads keys (Escape)
 	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
+	a.typeSteal(gtx) // after the shortcuts: a key they take is no typing
 	a.updateTitle()
 
 	// Slack's ancestor chain for plugin CSS (.p-client_container > .p-ia…);
