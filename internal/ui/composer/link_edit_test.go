@@ -360,6 +360,7 @@ func TestLinkMenuEditsALink(t *testing.T) {
 	if _, b, ok := e.r.WriteClipboard(); !ok || string(b) != "http://example.org/guide" {
 		t.Errorf("Copy link put %q (%v) on the clipboard", b, ok)
 	}
+	e.frame() // the menu's scrim gone from the window
 
 	// Remove link
 	e.rightClick(e.runeAt(6))
