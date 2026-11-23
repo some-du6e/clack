@@ -1079,6 +1079,14 @@ jobs:
         env:
           CLACK_WINDOWS_ASSOC_TESTS: "1" # TestURLHandlerShell changes the runner user's slack:// association
         run: go test -count=1 -v -run 'TestURLHandler|TestHandlerCommands|TestForwardOnWindows|TestURLLaunchArgs' ./internal/desktop
+      - name: a clicked link's hand-off (the message click, then ShellExecuteEx vs rundll32 to a clackstub:// handler under HKCU)
+        if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
+        run: |
+          rc=0
+          go test -count=1 -v -timeout 5m -run '^(TestOpenHandOffLatency|TestEscapeExternalHandlerValue|TestCheck)$' ./internal/ui/openurl || rc=1
+          go test -count=1 -v -timeout 5m -run '^TestLinkClickHandsOffAtOnce$' ./internal/ui/messages || rc=1
+          exit $rc
       - name: file types (the registry's Content Type between Chromium's lists; test extensions under HKCU\Software\Classes)
         if: ${{ !cancelled() }}
         env:
