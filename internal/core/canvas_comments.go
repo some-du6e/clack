@@ -285,24 +285,6 @@ func (a *App) IsCanvasComment(m *Message) bool {
 	return ok && r.Subtype == SubtypeCommentRoot
 }
 
-// CanAddReaction is canAddReaction's file channel rule (vtEK): a message
-// in a canvas's file channel can take a reaction when the canvas is
-// writeable, or commentable under canvas_comment_only_mode. Until the
-// canvas's files.info is known, and for every other message, it can.
-func (a *App) CanAddReaction(m *Message) bool {
-	if m == nil {
-		return false
-	}
-	if !strings.HasPrefix(m.Channel, "C") {
-		return true
-	}
-	info, ok := a.KnownCanvasInfo(FileOfChannel(m.Channel))
-	if !ok {
-		return true
-	}
-	return a.CanReactToComment(info)
-}
-
 // CanReactToComment is canAddReaction's canvas comment rule (vtEK): in a
 // canvas's file channel, a viewer who can't edit the canvas may react
 // only when it is commentable (access comment, write or owner) and

@@ -43,6 +43,9 @@ func (s *listState) reactionMenu(h Host, r *row, i int, p f32.Point, at image.Po
 	}
 	pt := image.Pt(int(p.X), int(p.Y)-s.pos[i]) // row-local, as reactRects
 	for k, rect := range r.reactRects {
+		if r.reactOff {
+			break // disabled pills take no pointer: the message's menu
+		}
 		if k >= len(r.pills) || !pt.In(rect) {
 			continue
 		}

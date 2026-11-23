@@ -1524,6 +1524,48 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # flake-fix (2026-11-14): each test that failed a first ci attempt, on two
+  # fresh runners (a first attempt's state: the cursor where ci's earlier
+  # steps left it, a notification service never crashed), COUNT runs each
+  # Gio patch 32 (mac-wake, 2026-11-16): ci's macOS wake, sleep and
+  # occlusion tests, each $COUNT times in one process (TestMain runs
+  # app.Main): AppKit's occlusion reports, the layer's one-second drawable
+  # timeout and the display link's restarts all have timing in them.
+  # The message audio player on AVFoundation (internal/media/avf's audio
+  # tests), COUNT times each. TestAVFAudioReplaysAt2x replays at 2x after
+  # the end and after a pause and a seek, which stalled while play started
+  # AVPlayer with play and then the rate (train-163, train-164). A proof
+  # run (expect_fail) runs the replay test alone. Dispatch only, with
+  # only=avf-audio: macos-idle runs these once on every push.
+  avf-audio:
+    if: ${{ inputs.only != '' && startsWith('avf-audio', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: TestAVFAudioReplaysAt2x
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count="$COUNT" -v -timeout 12m -run '^TestAVFAudioReplaysAt2x$' ./internal/media/avf
+      - name: the other audio tests
+        if: ${{ !cancelled() && inputs.expect_fail == '' }}
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count="$COUNT" -v -timeout 12m -run '^(TestAVFPlaysAudio|TestAVFAudioSeekAndRate|TestAVFOpusClipPlays)$' ./internal/media/avf
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   mac-wake:
     if: ${{ !inputs.only || startsWith('mac-wake', inputs.only) }}
     runs-on: macos-latest
@@ -4958,13 +5000,23 @@ jobs:
           retention-days: 7
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
-  # flakes-1122d: the jump window tests whose held (or failed) newer pages
-  # recordCalls once replaced (the page came back at once), COUNT each,
-  # then COUNT under two CPU burners.
-  fl1122d-r-jump:
-    if: ${{ !inputs.only || startsWith('fl1122d-r-jump', inputs.only) }}
+
+  # the Threads, Unreads and Pins rows reach their bodies and hover actions
+  # (the row's hover is the content's parent), and the invite modal's email
+  # chip takes a click on its remove button (icm-relatives)
+  row-hit:
+    if: ${{ !inputs.only || startsWith('row-hit', inputs.only) }}
+    name: "row-hit ${{ matrix.test }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { test: TestThreadsRowReachesTheBody, pkg: ./internal/ui/views }
+          - { test: TestUnreadsRowReachesTheBody, pkg: ./internal/ui/views }
+          - { test: TestPinsRowReachesItsActions, pkg: ./internal/ui/views }
+          - { test: TestInviteChipRemoveClick, pkg: ./internal/ui/popups }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -4979,53 +5031,13 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: ui (COUNT, then COUNT under load)
-        run: |
-          set +e
-          rc=0
-          tests='^(TestJumpWindowEndStaysPut|TestJumpWindowLastPageStaysPut|TestWindowNewerFailureDoesNotBlockOlder)$'
-          go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui || rc=1
-          for i in 1 2; do (while :; do :; done) & done
-          go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui || rc=1
-          kill $(jobs -p) 2>/dev/null
-          exit $rc
+      - name: "${{ matrix.test }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
-
-  # flakes-1122d: Taut's Close waits for a runtime starting
-  # (TestCloseWaitsForAStartingRuntime holds the start), then the two
-  # reaction pill tests with no GPU, as full-test runs them (they skip;
-  # skipped mid-start, their TempDir's cleanup found the boot's file),
-  # COUNT each.
-  fl1122d-r-taut:
-    if: ${{ !inputs.only || startsWith('fl1122d-r-taut', inputs.only) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 25 # budget, min (new job: no p95 yet)
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: taut, then the pill tests without a GPU (COUNT each)
-        run: |
-          set +e
-          rc=0
-          go test -count=$COUNT -timeout 10m -run '^TestCloseWaitsForAStartingRuntime$' ./internal/taut || rc=1
-          go test -count=$COUNT -timeout 10m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages || rc=1
-          go test -count=$COUNT -timeout 10m -run '^TestViewsPatchedReactionPillLikeNative$' ./internal/ui/views || rc=1
-          exit $rc
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
   # flakes-1122c, macOS: Displays after the launch reads NSScreen afresh
   # (TestDisplaysMacAfterLaunchReadsLive), and TestDisplaysMac as the
   # process's first call, each in COUNT processes of its own (the launch's
@@ -5178,6 +5190,117 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # the views' reaction pills as a channel's (Slack's ReactionBar: a
+  # click toggles, canAddReaction disables, one pill per skin-tone group),
+  # Activity's ControlledClick and the rows' cursor (views-reactions)
+  rx-bar:
+    if: ${{ !inputs.only || startsWith('rx-bar', inputs.only) }}
+    name: "rx-bar ${{ matrix.test }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { test: TestCanAddReactionLikeSlack, pkg: ./internal/core }
+          - { test: TestReactionBarDisabledLikeSlack, pkg: ./internal/ui/messages }
+          - { test: TestThreadsReactionPills, pkg: ./internal/ui/views }
+          - { test: TestUnreadsReactionPills, pkg: ./internal/ui/views }
+          - { test: TestPinsReactionPills, pkg: ./internal/ui/views }
+          - { test: TestActivityReactionPills, pkg: ./internal/ui/views }
+          - { test: TestRowLinkClicksAndCursorLikeSlack, pkg: ./internal/ui/views }
+          - { test: TestViewsReactionBarGroupsLikeSlack, pkg: ./internal/ui/views }
+          - { test: TestActivityHoverBarLikeSlack, pkg: ./internal/ui/views }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.test }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122d: the jump window tests whose held (or failed) newer pages
+  # recordCalls once replaced (the page came back at once), COUNT each,
+  # then COUNT under two CPU burners.
+  fl1122d-r-jump:
+    if: ${{ !inputs.only || startsWith('fl1122d-r-jump', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: ui (COUNT, then COUNT under load)
+        run: |
+          set +e
+          rc=0
+          tests='^(TestJumpWindowEndStaysPut|TestJumpWindowLastPageStaysPut|TestWindowNewerFailureDoesNotBlockOlder)$'
+          go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui || rc=1
+          for i in 1 2; do (while :; do :; done) & done
+          go test -count=$COUNT -timeout 12m -run "$tests" ./internal/ui || rc=1
+          kill $(jobs -p) 2>/dev/null
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # flakes-1122d: Taut's Close waits for a runtime starting
+  # (TestCloseWaitsForAStartingRuntime holds the start), then the two
+  # reaction pill tests with no GPU, as full-test runs them (they skip;
+  # skipped mid-start, their TempDir's cleanup found the boot's file),
+  # COUNT each.
+  fl1122d-r-taut:
+    if: ${{ !inputs.only || startsWith('fl1122d-r-taut', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: taut, then the pill tests without a GPU (COUNT each)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 10m -run '^TestCloseWaitsForAStartingRuntime$' ./internal/taut || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestViewsPatchedReactionPillLikeNative$' ./internal/ui/views || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -5296,9 +5419,10 @@ jobs:
       - fl1122c-s-avf
       - fl1122c-r-views
       - fl1122c-s-displays
+      - library-dupes
+      - rx-bar
       - fl1122d-r-jump
       - fl1122d-r-taut
-      - library-dupes
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
@@ -5320,84 +5444,3 @@ jobs:
           EXPECT_FAIL: ${{ inputs.expect_fail }}
           NEEDS: ${{ toJSON(needs) }}
         run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"
-
-
-  # flake-fix (2026-11-14): each test that failed a first ci attempt, on two
-  # fresh runners (a first attempt's state: the cursor where ci's earlier
-  # steps left it, a notification service never crashed), COUNT runs each
-  # Gio patch 32 (mac-wake, 2026-11-16): ci's macOS wake, sleep and
-  # occlusion tests, each $COUNT times in one process (TestMain runs
-  # app.Main): AppKit's occlusion reports, the layer's one-second drawable
-  # timeout and the display link's restarts all have timing in them.
-  # The message audio player on AVFoundation (internal/media/avf's audio
-  # tests), COUNT times each. TestAVFAudioReplaysAt2x replays at 2x after
-  # the end and after a pause and a seek, which stalled while play started
-  # AVPlayer with play and then the rate (train-163, train-164). A proof
-  # run (expect_fail) runs the replay test alone. Dispatch only, with
-  # only=avf-audio: macos-idle runs these once on every push.
-  avf-audio:
-    if: ${{ inputs.only != '' && startsWith('avf-audio', inputs.only) }}
-    runs-on: macos-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: TestAVFAudioReplaysAt2x
-        if: ${{ !cancelled() }}
-        env:
-          CLACK_MEDIA_TESTS: "1"
-        run: go test -count="$COUNT" -v -timeout 12m -run '^TestAVFAudioReplaysAt2x$' ./internal/media/avf
-      - name: the other audio tests
-        if: ${{ !cancelled() && inputs.expect_fail == '' }}
-        env:
-          CLACK_MEDIA_TESTS: "1"
-        run: go test -count="$COUNT" -v -timeout 12m -run '^(TestAVFPlaysAudio|TestAVFAudioSeekAndRate|TestAVFOpusClipPlays)$' ./internal/media/avf
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
-  # the Threads, Unreads and Pins rows reach their bodies and hover actions
-  # (the row's hover is the content's parent), and the invite modal's email
-  # chip takes a click on its remove button (icm-relatives)
-  row-hit:
-    if: ${{ !inputs.only || startsWith('row-hit', inputs.only) }}
-    name: "row-hit ${{ matrix.test }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 20 # budget, min (new job: no p95 yet)
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { test: TestThreadsRowReachesTheBody, pkg: ./internal/ui/views }
-          - { test: TestUnreadsRowReachesTheBody, pkg: ./internal/ui/views }
-          - { test: TestPinsRowReachesItsActions, pkg: ./internal/ui/views }
-          - { test: TestInviteChipRemoveClick, pkg: ./internal/ui/popups }
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "${{ matrix.test }}, every run counted"
-        env:
-          TEST: ${{ matrix.test }}
-          PKG: ${{ matrix.pkg }}
-        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
