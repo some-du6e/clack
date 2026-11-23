@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/logtag"
@@ -205,6 +206,9 @@ func (a *App) notifyActions(n huddleui.Notification) {
 		a.notify = newNotifier()
 	}
 	sl := a.Slick()
+	if n.Sound != "" { // a suggestion's desktop_sound, which the macOS app plays with it
+		go huddleui.PlaySlackSound(n.Sound)
+	}
 	if nn, ok := a.notify.(noteNotifier); ok && n.Channel != "" {
 		dn := a.huddleNote(n)
 		dn.Body = body
@@ -302,8 +306,10 @@ func (a *App) messageNote(ch, ts, thread string) *desktopNote {
 func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
 	team, ws := a.noteTeam()
 	now := time.Now()
-	// no reply box; silent: both come from an invite (notifIsFromInvite),
-	// which rings in its own window
+	// no reply box; silent: an invite's and a missed one's come from an
+	// invite (notifIsFromInvite), which rings in its own window; a
+	// suggestion's sound, when the macOS app has one, Clack plays
+	// (notifyActions)
 	n := &desktopNote{Team: team, Workspace: ws, Channel: h.Channel, Subtitle: h.Subtitle, Msg: huddleNotificationTag(h.Channel, now), Silent: true}
 	typ := noteTypeHuddle
 	if h.Missed {
@@ -311,13 +317,20 @@ func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
 		// (sharedHuddleNotificationOptions; notifyBrowser passes title "")
 		typ, n.Title = noteTypeHuddleMissed, h.Title
 	}
-	if a.noteActionsOn() {
+	switch {
+	case h.Recommend && a.noteActionsOn():
+		// desktopHuddleRecommendNotificationOptions: the conversation and
+		// the minute
+		n.ID = buildNotificationID(team, noteTypeHuddleRecommend, h.Channel, notificationMinuteBucket(now))
+	case h.Recommend:
+		n.ID = shellNoteID(team, n.Msg)
+	case a.noteActionsOn():
 		call := h.Call
 		if call == "" {
 			call = "t" + strconv.FormatInt(now.UnixMilli(), 10) // notificationDedupKey
 		}
 		n.ID = buildNotificationID(team, typ, h.Channel, call)
-	} else {
+	default:
 		n.ID = shellNoteID(team, n.Msg)
 	}
 	for _, b := range h.Buttons {
@@ -414,6 +427,11 @@ func (a *App) notificationClicked(ch, msg, thread, id string) {
 	}
 	if strings.HasPrefix(msg, "huddle") {
 		a.Navigate("c/" + ch)
+		return
+	}
+	if sch, sts, ok := core.ParseSavedItemID(msg); ok {
+		// a Later reminder's (looksLikeSavedItemId: openSavedForLaterView)
+		a.openSavedForLater(sch, sts, thread)
 		return
 	}
 	ts := ""

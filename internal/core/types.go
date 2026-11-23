@@ -807,7 +807,11 @@ type SavedItem struct {
 	Progress                            string // in_progress | completed | archived …
 	DateCreated, DateDue, DateCompleted int64
 	Archived                            bool
-	Msg                                 *Message
+	// RecordID, SectionID and ColumnID are the rest of a list record's, a
+	// canvas section's and a list field's key (getIdForSavedItem: SavedItemID);
+	// Description is a reminder's or a section's text.
+	RecordID, SectionID, ColumnID, Description string
+	Msg                                        *Message
 	// Gone: a saved message the history no longer has (messages.list
 	// answered without it): deleted, Later's tombstone.
 	Gone bool

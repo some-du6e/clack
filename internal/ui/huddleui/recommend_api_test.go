@@ -1,6 +1,6 @@
 package huddleui
 
-// The red commit's stub for the suggestion's test seam: the code before
-// it has no Notification.Recommend.
+// The suggestion's test seam (recommend.go). The red commit replaces this
+// file with a stub: the test then runs on the code before it.
 
-func isRecommend(n Notification) bool { return false }
+func isRecommend(n Notification) bool { return n.Recommend }

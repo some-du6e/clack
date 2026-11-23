@@ -805,6 +805,10 @@ func (b *backend) handle(a *App, ev core.Event) {
 		}
 	case "desktop_notification": // a followed thread's reply (notify_threads.go)
 		b.desktopNotification(a, ev)
+	case "saved":
+		if ev.Name == "due" { // a Later reminder coming due (notify_saved.go)
+			b.savedDue(a, ev)
+		}
 	case "dnd_override": // a sender's notify anyway (notify_dm.go)
 		b.noteDNDOverride(a, ev)
 	case "marked", "counts":

@@ -119,6 +119,11 @@ type Notification struct {
 	// conversation by its display name (macOS shows it; a missed one has
 	// none).
 	Subtitle string
+	// Recommend: a "join the huddle" suggestion (huddle_recommend,
+	// recommend.go), notification id type hudrec; Sound is the file the
+	// macOS app plays with it (desktop_sound; "" for none).
+	Recommend bool
+	Sound     string
 }
 
 // NotifyAction is one of a notification's buttons. URI is its
@@ -284,15 +289,31 @@ func (c *Controller) presentInvite(inv *incoming) {
 
 // mayNotifyHuddle is shouldShowNotificationForHuddle == 0.
 func (c *Controller) mayNotifyHuddle(ch string, dnd bool) bool {
+	return c.huddleNotifyReason(ch, dnd) == 0
+}
+
+// huddleNotifyReason is shouldShowNotificationForHuddle (HW) past its
+// permission check (the ui's notifyActions has it): Do Not Disturb 13, the
+// conversation muted 12, one the client doesn't know 3, else 0. Its level
+// check (14) never holds one: getCalculatedDesktopNotifySetting reads
+// "nothing" as mentions_dms (Clack held an invite in a conversation set
+// to Nothing). Without core, 3.
+func (c *Controller) huddleNotifyReason(ch string, dnd bool) int {
 	app := c.h.Core()
-	if app == nil || dnd {
-		return false
+	switch {
+	case app == nil:
+		return 3
+	case dnd:
+		return 13
 	}
 	conv, ok := app.Conv(ch)
-	// HW's level check (14) never holds one: getCalculatedDesktopNotifySetting
-	// reads "nothing" as mentions_dms. Clack held an invite in a
-	// conversation set to Nothing.
-	return ok && !conv.Muted
+	switch {
+	case ok && conv.Muted:
+		return 12
+	case !ok:
+		return 3
+	}
+	return 0
 }
 
 // inviteNotification is sharedHuddleNotificationOptions +

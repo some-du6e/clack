@@ -432,7 +432,7 @@ func (a *App) handle(ev slack.Event) {
 			// changes the group.
 			a.noteUsergroupEvent(ev.Raw, ev.Type == "subteam_created")
 		}
-	case "saved_added", "saved_updated", "saved_deleted":
+	case "saved_added", "saved_updated", "saved_deleted", "saved_due":
 		// the store's saved state now, on the pump; its message's lookup
 		// and the event after it, in order with the saved events before
 		// (pump_later.go)
