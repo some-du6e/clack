@@ -58,6 +58,18 @@ const (
 // Hidden is the timestamps the plugins' patches took out of a history.
 type Hidden struct{ ts map[string]bool }
 
+// HiddenOf is the Hidden of ts (nil for none): the lists' tests.
+func HiddenOf(ts ...string) *Hidden {
+	if len(ts) == 0 {
+		return nil
+	}
+	h := &Hidden{ts: make(map[string]bool, len(ts))}
+	for _, x := range ts {
+		h.ts[x] = true
+	}
+	return h
+}
+
 // Has reports whether ts is one of them.
 func (h *Hidden) Has(ts string) bool { return h != nil && h.ts[ts] }
 

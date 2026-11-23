@@ -233,8 +233,20 @@ func (h hdrSearch) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions 
 	cl := a.clicks.get("hdr.search")
 	d := iconButton(gtx, cl, "search", 28, 20, c.FgMuted, c.BgHover, 8)
 	popups.Tooltip(gtx, a.th, &a.hdrX().searchTip, cl.Hovered(), d.Size, popups.Below, h.tip(), "")
+	if hdrSearchTap != nil {
+		hdrSearchDrawn = d.Size
+	}
 	return d
 }
+
+// hdrSearchTap, when set (tests), sees where the channel header placed its
+// search button's component (a patch's tree and all: HideResolved's
+// toggle before it) for ch, and the size the button itself drew
+// (hdrSearchDrawn).
+var (
+	hdrSearchTap   func(ch string, placed image.Rectangle, button image.Point)
+	hdrSearchDrawn image.Point
+)
 
 // ---- BaseAvatarStack (#47, HumanCount) ----
 

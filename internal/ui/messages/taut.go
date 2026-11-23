@@ -596,17 +596,26 @@ func (s *listState) mergeInjected() {
 // change Go made that the patches may read (a jump's highlight).
 func (s *listState) historyHidden(t *taut.Taut) *taut.Hidden {
 	s.histOK = true
-	if t == nil || !t.SlicePatched("channelHistory") {
-		return nil
-	}
 	key := s.ch
 	if s.thread {
 		key = s.ch + "-" + s.ts
+	}
+	if f := historyHiddenHook; f != nil {
+		h, ok := f(key)
+		s.histOK = ok
+		return h
+	}
+	if t == nil || !t.SlicePatched("channelHistory") {
+		return nil
 	}
 	h, ok := t.HistoryHidden(key)
 	s.histOK = ok
 	return h
 }
+
+// historyHiddenHook, when set (tests), answers historyHidden for a key in
+// place of taut.
+var historyHiddenHook func(key string) (*taut.Hidden, bool)
 
 // noteViewHighlight tells plugins the channel view's highlightTs (Slack's
 // viewUiState: Taut.SetViewHighlight), the message a jump highlights, ""

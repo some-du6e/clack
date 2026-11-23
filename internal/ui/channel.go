@@ -176,6 +176,10 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			})
 			right -= d.Size.X
 			place(gtx, call, image.Pt(right, y+(btn-d.Size.Y)/2))
+			if hdrSearchTap != nil {
+				o := image.Pt(right, y+(btn-d.Size.Y)/2)
+				hdrSearchTap(ch, image.Rectangle{Min: o, Max: o.Add(d.Size)}, hdrSearchDrawn)
+			}
 			right -= gtx.Dp(6)
 			continue
 		}
