@@ -726,6 +726,15 @@ func (a *App) SaveCanvasDelete(ctx context.Context, id, sectionID string, orig [
 		if strings.ContainsRune(plain, quip.ControlMark) {
 			return nil, fmt.Errorf("%w: deleting a block with mentions, emoji or dates", quip.ErrUnsupported)
 		}
+		merges := false
+		a.CanvasModel(id, func(d *quip.Doc) {
+			if d != nil {
+				merges = d.DeleteMerges(d.RealID(sectionID))
+			}
+		})
+		if merges { // deleteSection would merge the two lists (or code blocks) around it
+			return nil, fmt.Errorf("%w: deleting a block between two lists or code blocks Slack's editor would merge", quip.ErrUnsupported)
+		}
 		return []quip.Edit{{Kind: quip.EditDelete, SectionID: sectionID, Base: b.seq}}, nil
 	})
 }

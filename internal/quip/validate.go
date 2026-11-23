@@ -205,6 +205,9 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 			if server.Type == nil || *server.Type != TypeText {
 				return refuse("section %s: deleting a section of type %v", id, server.Type)
 			}
+			if d.DeleteMerges(id) {
+				return refuse("section %s: deleting it leaves two sections Slack's editor would merge", id)
+			}
 		}
 	}
 	if len(byID) > 0 {

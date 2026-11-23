@@ -691,3 +691,34 @@ func TestCanvasSaveRestyle(t *testing.T) {
 		t.Errorf("%d edit-document calls for refused or empty edits", got-n)
 	}
 }
+
+// A paragraph between two lists of a style isn't deleted: Slack's editor
+// would merge the lists it leaves side by side (deleteSection's
+// maybeMergeAdjacentSections), which Clack doesn't save yet. One after a
+// list, with no list after it, is.
+func TestCanvasSaveDeleteMerges(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	const id = "F0MERGE0001"
+	txt := func(s string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: s}} }
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: id, Title: "Merges", Doc: canvas.Doc{Blocks: []canvas.Block{
+		{ID: "temp:C:MRG00001", Kind: canvas.Bullet, Spans: txt("one")},
+		{ID: "temp:C:MRG00002", Kind: canvas.Paragraph, Spans: txt("between")},
+		{ID: "temp:C:MRG00003", Kind: canvas.Bullet, Spans: txt("two")},
+		{ID: "temp:C:MRG00004", Kind: canvas.Paragraph, Spans: txt("tail")},
+	}}})
+	loadModel(t, a, id)
+	if err := a.SaveCanvasDelete(ctx, id, "temp:C:MRG00002", txt("between")); !errors.Is(err, quip.ErrUnsupported) {
+		t.Errorf("a paragraph between two bullet lists: %v", err)
+	}
+	if n := len(saves(fs)); n != 0 {
+		t.Errorf("%d edit-document calls for a refused delete", n)
+	}
+	if err := a.SaveCanvasDelete(ctx, id, "temp:C:MRG00004", txt("tail")); err != nil {
+		t.Errorf("a paragraph after the last list: %v", err)
+	}
+	fc, _ := fs.Canvas(id)
+	if fc.Doc.Find("temp:C:MRG00004") != nil || fc.Doc.Find("temp:C:MRG00002") == nil {
+		t.Errorf("the export after the deletes: %+v", fc.Doc.Blocks)
+	}
+}

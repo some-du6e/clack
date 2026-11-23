@@ -121,3 +121,33 @@ func isTextStyle(style int32) bool {
 	}
 	return false
 }
+
+// DeleteMerges reports whether deleting section id leaves two neighbours
+// Slack's editor would merge (deleteSection: maybeMergeAdjacentSections
+// on the sections before and after it): two lists of a style, two code
+// blocks, two quote paragraphs or two quote layouts, all top-level. Such
+// a delete isn't Slack's alone, so it isn't saved until the merge is.
+func (d *Doc) DeleteMerges(id string) bool {
+	var top []*Section
+	for _, s := range d.Sections() {
+		if s.Parents != nil && len(s.Parents.IDs) > 0 || s.SectionClass != nil && *s.SectionClass == ClassControl {
+			continue
+		}
+		top = append(top, s)
+	}
+	for i, s := range top {
+		if str(s.ID) != id || i == 0 || i == len(top)-1 {
+			continue
+		}
+		a, b := top[i-1], top[i+1]
+		if a.Style == nil || b.Style == nil || *a.Style != *b.Style {
+			return false
+		}
+		switch *a.Style {
+		case StyleBullet, StyleNumbered, StyleChecklist, StyleCode, StyleBlockquote:
+			return true
+		}
+		return a.Type != nil && b.Type != nil && *a.Type == TypeLayoutBlockquote && *b.Type == TypeLayoutBlockquote
+	}
+	return false
+}
