@@ -13,9 +13,10 @@ import (
 // rejects); removeMemberFromPresenceSubscription one fewer. A member's
 // first subscriber and its last one leaving each send presence_sub,
 // 100 ms after the last change (sendPresenceSubEvent: lodash debounce,
-// trailing), when the socket is up. Clack's own presence set (presenceIDs:
-// the viewer, DM partners, users recently shown) takes in every counted
-// member, so presence_sub carries them as long as they are counted.
+// trailing), when the socket is up. presence_sub carries every counted
+// member beside Clack's own presence set (presenceIDs: the viewer, DM
+// partners, users recently shown, which keep their 500), as long as they
+// are counted.
 
 // presenceSubDelay is sendPresenceSubEvent's debounce.
 const presenceSubDelay = 100 * time.Millisecond
