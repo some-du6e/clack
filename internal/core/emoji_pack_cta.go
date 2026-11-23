@@ -58,7 +58,8 @@ func (a *App) packNow() time.Time {
 	return time.Now()
 }
 
-// EmojiPackCanAdd is Llxp D as the last pack read found it.
+// EmojiPackCanAdd is Llxp D as the permission store holds it (false until
+// boot's permissions/info answered: LoadEmojiPermissions).
 func (a *App) EmojiPackCanAdd() bool {
 	ps := a.packs()
 	ps.mu.Lock()

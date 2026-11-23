@@ -2012,8 +2012,9 @@ jobs:
         run: |
           go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys|TestClackWindowOutlivesAnother)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 19m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
-          # rings drawn whole on Metal: ringAt, the intro's check badge, the spinner (Clack patch 62)
-          go test -count=1 -v -timeout 10m -run '^TestRingSeam' ./internal/ui
+          # rings drawn whole on Metal: ringAt, the intro's check badge, the spinner, and
+          # the stroker's closed rings on arm64, whose compiler fuses multiply-adds (Clack patch 62)
+          go test -count=1 -v -timeout 10m -run '^(TestRingSeam|TestClackRingSeam)' ./internal/ui gioui.org/internal/stroke
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |
           go test -count=1 -v ./internal/ui/uiguard

@@ -9,8 +9,8 @@ import (
 // RingPath is a whole circle (centre c, radius r) for stroking: four cubic
 // quarter arcs from its 3 o'clock point round and back to it exactly, as
 // clip.Ellipse builds one but at float precision. MoveTo + ArcTo(2π) +
-// Close doesn't land exactly: ArcTo steps a rotation matrix 34 times in
-// float32 and its pen ends a float's error from the start, so Close adds
+// Close doesn't land exactly: ArcTo steps a rotation matrix 32 times in
+// float32 (16 segments) and its pen ends a float's error from the start, so Close adds
 // a near-zero segment whose direction is rounding noise, and the stroke's
 // outline doubles back on itself at the seam (Karim's stray line under
 // the intro's check badge, 2026-11-22).
