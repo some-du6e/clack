@@ -444,12 +444,7 @@ func drawMarkRing(gtx layout.Context, c f32.Point, s, p float32) {
 	r := s * (0.55 + 0.7*p)
 	a := 0.42 * (1 - p) * (1 - p)
 	w := s * 0.018 * (1.4 - p)
-	var path clip.Path
-	path.Begin(gtx.Ops)
-	path.MoveTo(f32.Pt(c.X+r, c.Y))
-	path.ArcTo(c, c, 2*math.Pi)
-	path.Close()
-	paint.FillShape(gtx.Ops, alphaMul(hexc(0xc9bcff), a), clip.Stroke{Path: path.End(), Width: w}.Op())
+	paint.FillShape(gtx.Ops, alphaMul(hexc(0xc9bcff), a), clip.Stroke{Path: theme.RingPath(gtx.Ops, c, r), Width: w}.Op()) // closes exactly (ringAt)
 }
 
 // drawSprite draws img with its top-left at o, scaled by s.
