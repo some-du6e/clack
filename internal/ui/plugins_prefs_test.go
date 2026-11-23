@@ -185,7 +185,7 @@ func TestLibraryGroups(t *testing.T) {
 	a, _ := ttApp(t, t.TempDir())
 	ix := &pluginlib.Index{Schema: 1, Plugins: []pluginlib.Entry{
 		{System: pluginlib.Taut, ID: "ClearURLs", Name: "Clear URLs", Category: "messageBox", File: pluginlib.File{SHA256: "x"}},
-		{System: pluginlib.Slick, ID: "clearUrls", Name: "ClearURLs", Category: "privacy", File: pluginlib.File{SHA256: "x"}},
+		{System: pluginlib.Slick, ID: "ClearURLs", Name: "ClearURLs", Category: "privacy", File: pluginlib.File{SHA256: "x"}},
 		{System: pluginlib.Slick, ID: "oneko", Name: "Oneko", Category: "appearance", File: pluginlib.File{SHA256: "x"}},
 		{System: pluginlib.Taut, ID: "Oneko", Name: "oneko", Category: "fun", File: pluginlib.File{SHA256: "x"}},
 		{System: pluginlib.Taut, ID: "Solo", Name: "Solo", Category: "people", File: pluginlib.File{SHA256: "x"}},
@@ -248,7 +248,7 @@ func TestLibraryGroups(t *testing.T) {
 		t.Errorf("Slick not running: %q", act.label)
 	}
 	running[pluginlib.Slick] = true
-	installed["slick/clearUrls"] = true
+	installed["slick/ClearURLs"] = true
 	if act := v.action(clear); act.label != "Settings" {
 		t.Errorf("installed in Slick: %q", act.label)
 	}

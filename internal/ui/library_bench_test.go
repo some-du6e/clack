@@ -83,10 +83,14 @@ func TestLibraryInstallPick(t *testing.T) {
 		if want := "Install adds " + systemName(c.system) + "'s version: "; !strings.HasPrefix(line, want) || !strings.Contains(line, c.why) {
 			t.Errorf("%s's row says %q, want %q… %q", c.row, line, want, c.why)
 		}
-		// Install installs it, never asking; the chevron offers both
+		// Install installs it, never asking; the chevron offers both; a
+		// search suggestion's Install is the same, with no chevron
 		act := v.action(g)
 		if act.label != "Install" || act.do == nil || act.menu == nil {
 			t.Fatalf("%s: %q (do %v, menu %v), want Install with its chevron", c.row, act.label, act.do != nil, act.menu != nil)
+		}
+		if s := libSuggestAction(v, g); s.label != "Install" || s.menu != nil {
+			t.Errorf("%s's search suggestion: %q (menu %v), want Install", c.row, s.label, s.menu != nil)
 		}
 		// it starts installing the pick, and only it (installEntry marks
 		// what it installs busy before its download)
@@ -105,9 +109,6 @@ func TestLibraryInstallPick(t *testing.T) {
 		}
 		if strings.Contains(items[2].Label, "recommended") {
 			t.Errorf("%s's menu recommends both: %+v", c.row, items[2])
-		}
-		if s := libSuggestAction(v, g); s.label != "Install" || s.menu != nil {
-			t.Errorf("%s's search suggestion: %q (menu %v), want Install", c.row, s.label, s.menu != nil)
 		}
 	}
 }
