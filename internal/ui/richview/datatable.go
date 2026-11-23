@@ -575,12 +575,13 @@ func (l *lay) dtRowHeight(row []richtext.DTCell, n int, colX func(int) int, minH
 	return h
 }
 
-// dtMeasureCell is a wrapped cell's content height.
+// dtMeasureCell is a wrapped cell's content height, laid out on a scratch
+// display: nothing of it (frags, element slots, targets, images) stays.
 func (l *lay) dtMeasureCell(c *richtext.DTCell, w int) int {
-	d := l.d
-	f0, b0, i0, h0, t0, n0, p0 := len(d.frags), len(d.boxes), len(d.imgs), len(d.hits), len(d.targets), len(d.lines), len(d.plain)
+	saved := l.d
+	l.d = &display{}
 	h := l.dtCellContent(c, 0, 0, max(w, 1), true)
-	d.frags, d.boxes, d.imgs, d.hits, d.targets, d.lines, d.plain = d.frags[:f0], d.boxes[:b0], d.imgs[:i0], d.hits[:h0], d.targets[:t0], d.lines[:n0], d.plain[:p0]
+	l.d = saved
 	return h
 }
 
