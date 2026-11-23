@@ -117,6 +117,7 @@ type ccRow struct {
 
 // CanvasComments is the comment stream of one canvas.
 type CanvasComments struct {
+	clicked []ccClick // this frame's row clicks (openClicked)
 	base
 	file   string
 	filter string
@@ -297,6 +298,7 @@ func (v *CanvasComments) rows(d ccData) []ccRow {
 
 // Layout draws the stream.
 func (v *CanvasComments) Layout(gtx C) D {
+	defer v.openClicked()
 	v.frame()
 	v.notes.drain(v.h)
 	if v.h.Core() != nil {
@@ -479,6 +481,24 @@ func (v *CanvasComments) click(key string) *widget.Clickable {
 	return c
 }
 
+// ccClick is a row's click this frame, opened after the layout.
+type ccClick struct {
+	ck   *widget.Clickable
+	root *core.Message
+}
+
+// openClicked opens the rows clicked this frame, but for one whose press
+// was a reaction pill's.
+func (v *CanvasComments) openClicked() {
+	cs := v.clicked
+	v.clicked = nil
+	for _, c := range cs {
+		if !pressedOn(c.ck, v.pillPress) {
+			v.open(c.root)
+		}
+	}
+}
+
 // open is the rows' click: showQuipCommentThread for the root.
 func (v *CanvasComments) open(root *core.Message) {
 	ch := core.CanvasFileChannel(v.file)
@@ -502,7 +522,10 @@ func (v *CanvasComments) row(gtx C, r ccRow) D {
 	}
 	ck := v.click(r.key)
 	if ck.Clicked(gtx) && r.root != nil {
-		v.open(r.root)
+		// opened once the frame laid the row out: a reaction pill's
+		// press in it is marked then, and Reaction's click stops there
+		// (stopPropagation; content_menu.go pressedOn)
+		v.clicked = append(v.clicked, ccClick{ck, r.root})
 	}
 	rec := op.Record(gtx.Ops)
 	g := gtx

@@ -359,6 +359,10 @@ type base struct {
 	// doesn't hold, by ch/ts (reactions_local.go)
 	rxnMu    sync.Mutex
 	rxnLocal map[string][]rxnOp
+	// ownCopy, when set, reports whether the view draws its own copy of
+	// ch/ts though the store holds one (the Pins tab's pins.list copy:
+	// core swaps in only a timeline's), so its local changes stay
+	ownCopy func(ch, ts string) bool
 	// pv caches Activity's preview documents (activity_rows.go)
 	pv map[string]pvEntry
 	// vers caches msgVer per message copy (msgVerOf); vsrc is the

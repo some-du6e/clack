@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"image"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -132,8 +133,8 @@ func luItem(t *testing.T, l *Later, ch, ts string) core.SavedItem {
 func TestLaterCleanUpKeepsUnloadedMessages(t *testing.T) {
 	app, deletes, lists := luFake(t, func(string) bool { return true })
 	l, e := luPage(t, app)
-	if n := lists(); n != 2 {
-		t.Errorf("%d messages.list calls for %d channels, want 2 groups of up to 10", n, luChannels)
+	if n := lists(); n != 2+luChannels {
+		t.Errorf("%d messages.list calls for %d channels, want 2 groups of up to 10, then each channel on its own", n, luChannels)
 	}
 	for _, it := range l.feed.items {
 		if it.Msg != nil || it.Gone || laterTombstoned(&it) {
@@ -155,20 +156,21 @@ func TestLaterCleanUpKeepsUnloadedMessages(t *testing.T) {
 	}
 }
 
-// The second group (channels 10-11) fails: the first group's messages
-// still load and draw, its deleted message is Gone, while channel 11's
-// missing message says nothing (its group didn't answer). Clean-up 3
-// unsaves channel 0's deleted message and nothing else.
+// Channel 10 fails its group (channels 10-11), which is asked again
+// channel by channel: every other channel's messages load and draw, and
+// the deleted messages of channels 0 and 11 (answered) are Gone, while
+// channel 10's missing message says nothing (no answer). Clean-up 3
+// unsaves those two deleted messages and nothing else.
 func TestLaterCleanUpFailedGroupOnlyRemovesTombstones(t *testing.T) {
 	failed := map[string]bool{luChannel(10): true}
 	app, deletes, lists := luFake(t, func(ch string) bool { return failed[ch] })
 	l, e := luPage(t, app)
-	if n := lists(); n != 2 {
-		t.Errorf("%d messages.list calls for %d channels, want 2 groups of up to 10", n, luChannels)
+	if n := lists(); n != 2+2 {
+		t.Errorf("%d messages.list calls for %d channels, want 2 groups of up to 10, then the failed one's 2 channels", n, luChannels)
 	}
 	for i := range luChannels {
 		it := luItem(t, l, luChannel(i), luHereTS)
-		if loaded := i < 10; (it.Msg != nil) != loaded || it.Gone {
+		if loaded := i != 10; (it.Msg != nil) != loaded || it.Gone {
 			t.Errorf("%s (its group answered %v): Msg %v, Gone %v", luChannel(i), loaded, it.Msg != nil, it.Gone)
 		} else if loaded && it.Msg.Text != "a synthetic note in "+luChannel(i) {
 			t.Errorf("%s draws %q", luChannel(i), it.Msg.Text)
@@ -177,18 +179,20 @@ func TestLaterCleanUpFailedGroupOnlyRemovesTombstones(t *testing.T) {
 	if it := luItem(t, l, luChannel(0), luGoneTS); !it.Gone || !laterTombstoned(&it) {
 		t.Errorf("channel 0's deleted message isn't Gone: %+v", it)
 	}
-	if it := luItem(t, l, luChannel(11), luGoneTS); it.Gone || laterTombstoned(&it) {
-		t.Errorf("channel 11's message, whose group failed, is Gone: %+v", it)
+	if it := luItem(t, l, luChannel(11), luGoneTS); !it.Gone || !laterTombstoned(&it) {
+		t.Errorf("channel 11's deleted message, answered on its own, isn't Gone: %+v", it)
 	}
 	l.cleanUp(3)
-	want := luChannel(0) + "/" + luGoneTS
-	e.until(t, "the tombstone's saved.delete", func() bool { return len(deletes()) > 0 })
+	want := []string{luChannel(0) + "/" + luGoneTS, luChannel(11) + "/" + luGoneTS}
+	e.until(t, "the tombstones' saved.delete", func() bool { return len(deletes()) >= 2 })
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		e.frame()
 		time.Sleep(20 * time.Millisecond)
 	}
-	if d := deletes(); len(d) != 1 || d[0] != want {
-		t.Fatalf("saved.delete calls %v, want only %s", d, want)
+	d := deletes()
+	slices.Sort(d)
+	if !slices.Equal(d, want) {
+		t.Fatalf("saved.delete calls %v, want only %v", d, want)
 	}
 }

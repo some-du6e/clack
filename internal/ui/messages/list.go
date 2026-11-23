@@ -1896,7 +1896,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	// hover tooltip for reaction pills
 	if rc.hovered {
 		for k := range r.pills {
-			if k < len(r.reactRects) && k < len(r.groups) && r.pills[k].btn.Hovered() {
+			if k < len(r.reactRects) && k < len(r.groups) && r.pills[k].btn.Hovered() && !r.reactOff { // a disabled pill (canReact) has no tip
 				s.tipRect = r.reactRects[k] // row-local; positioned in overlays
 				if s.tipRect.Empty() {
 					// a plugin's bar child holding several pills: the
