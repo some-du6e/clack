@@ -27,6 +27,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -164,6 +165,21 @@ func activityEditLatency(t *testing.T, mode string) {
 	}
 	t.Cleanup(func() { invalidateHook = prevHook })
 	wakeFrames := 0
+	// and which plugin views the view cache's worker asked frames for
+	views := map[string]int{}
+	taut.TraceViews(func(slice, key, sub, why string) {
+		if !recording.Load() {
+			return
+		}
+		what := "the bucket"
+		if sub != "" {
+			what = "a message"
+		}
+		amu.Lock()
+		views[fmt.Sprintf("%s %s, %s: %s", slice, key, what, why)]++
+		amu.Unlock()
+	})
+	t.Cleanup(func() { taut.TraceViews(nil) })
 	var frames int64
 	var lastFrame time.Time
 	const vsync = time.Second / 60
@@ -258,6 +274,10 @@ func activityEditLatency(t *testing.T, mode string) {
 	amu.Lock()
 	t.Logf("%s: %d frames a router wake-up alone drew; the Invalidates while the edits ran, by caller:", mode, wakeFrames)
 	for k, n := range asks {
+		t.Logf("%s: %4d  %s", mode, n, k)
+	}
+	t.Logf("%s: the views the worker announced:", mode)
+	for k, n := range views {
 		t.Logf("%s: %4d  %s", mode, n, k)
 	}
 	amu.Unlock()

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strconv"
@@ -1854,6 +1855,27 @@ func (v *viewCache) stale(slice, key string) (onScreen bool) {
 
 // work is the fetch worker: one batch at a time until nothing is wanted,
 // so a busy runtime gets each key asked once, not once per frame.
+// viewTrace, when set (TraceViews), hears each view the worker announces
+// to the UI and why.
+var viewTrace atomic.Pointer[func(slice, key, sub, why string)]
+
+// TraceViews sets (nil clears) a hook that hears each view the view
+// cache's worker announces to the UI (it asks for a frame for it) and why:
+// for tests, which reads ask for the frames.
+func TraceViews(f func(slice, key, sub, why string)) {
+	if f == nil {
+		viewTrace.Store(nil)
+		return
+	}
+	viewTrace.Store(&f)
+}
+
+func traceView(k viewKey, why string) {
+	if f := viewTrace.Load(); f != nil {
+		(*f)(k.slice, k.key, k.sub, why)
+	}
+}
+
 func (v *viewCache) work() {
 	for {
 		v.mu.Lock()
@@ -1936,6 +1958,7 @@ func (v *viewCache) work() {
 					!v.msgMarksReadyLocked(k, was) && v.msgMarksReadyLocked(k, ver) {
 					changed = true
 					v.epoch.Add(1)
+					traceView(k, "ready: the same bytes, its marks behind them now")
 				}
 				if e.blen > 0 {
 					cur.bsum, cur.blen = e.bsum, e.blen
@@ -1955,6 +1978,10 @@ func (v *viewCache) work() {
 				if (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
 					changed = true
 					v.epoch.Add(1)
+					if viewTrace.Load() != nil {
+						traceView(k, fmt.Sprintf("a new value (first %v, marks ready %v, stale %v)", cur == nil,
+							k.slice != "messages" || k.sub == "" || v.msgMarksReadyLocked(k, ver), v.staleLocked(e, g, k.slice)))
+					}
 				}
 				g.subs[k.sub] = e
 				cur = e
