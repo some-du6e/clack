@@ -5290,6 +5290,7 @@ jobs:
           - { name: slack, test: "(TestCanvasCall.*|TestEncodeURIComponent)", pkg: ./internal/slack }
           - { name: core, test: "TestCanvas(Model|Save).*", pkg: ./internal/core }
           - { name: canvasview, test: "TestCanvasQuip.*", pkg: ./internal/ui/canvasview, gio: true }
+          - { name: canvas, test: "TestControlLink.*", pkg: ./internal/canvas }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

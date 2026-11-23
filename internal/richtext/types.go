@@ -109,6 +109,11 @@ type Span struct {
 	// a control as Quip's slack-control-missing-content skeleton, never
 	// its id (core NameCanvasMention, richview canvasMissing).
 	Pending bool
+
+	// Control (Link in a canvas): the link is a Quip control's, a canvas,
+	// file, message or list mention (canvas/parse.go), not a link in the
+	// text: a save has to keep the control, never write it as a link.
+	Control bool
 }
 
 // BrKind says how a Break draws. A rich_text text element's newlines go
