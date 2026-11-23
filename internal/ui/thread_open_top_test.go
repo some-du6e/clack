@@ -510,11 +510,17 @@ func TestThreadsAuditOpenAgainAfterAnother(t *testing.T) {
 }
 
 // toastAt clicks a reply's notification for x.root's thread (a fake
-// Notification Center, notify_mac.go): jumpToMessage, toThread with the
-// reply and highlightRoot.
+// Notification Center, notify_mac.go) from another conversation:
+// jumpToMessage, toThread with the reply and highlightRoot. From the
+// thread's own conversation the nested secondary view's jump highlights
+// nothing (openThreadAt's flash rule), so the click comes from another.
 func (x *rfEnv) toastAt(reply string) {
 	x.t.Helper()
 	a := x.a
+	other := x.fs.ChannelIDs()[1]
+	a.Navigate("c/" + other)
+	x.until("the other conversation", 10*time.Second, func() bool { return a.router.Current() == Route("c/"+other) })
+	x.settle(300 * time.Millisecond)
 	fc := newFakeCenter()
 	a.notify = newMacNotifier(fc)
 	n := a.messageNote(x.ch, reply, x.root)

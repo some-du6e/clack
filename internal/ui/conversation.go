@@ -182,6 +182,7 @@ type convo struct {
 // composer lays out first, the row takes its height, and the composer is
 // drawn where the list put the row.
 type threadInputRow interface {
+	SetInputRow(bool)
 	SetInputHeight(int)
 	InputRow() (y int, ok bool, list image.Rectangle)
 	ScrollToBottom()
@@ -259,6 +260,13 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	origin := c.org.get(fallback)
 	c.org.track(gtx, a)
 
+	// a thread's reply box is its list's last row unless a footer stands
+	// in its place: the list hears which before it builds its rows
+	foot := a.footerFor(c)
+	ir, _ := c.list.(threadInputRow)
+	if ir != nil {
+		ir.SetInputRow(c.ts != "" && foot == footNone)
+	}
 	// the list's copy of the conversation for this frame, the one it then
 	// draws (messages.ThreadView.Prepare): the reply box goes with it
 	if p, ok := c.list.(interface{ Prepare(layout.Context) }); ok {
@@ -290,7 +298,6 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	}
 	compH, mx, bannerH := 0, 0, 0
 	var call op.CallOp
-	foot := a.footerFor(c)
 	if foot != footPending && c.focusKnown {
 		// the navigation's focus, held while membership was unknown
 		// (focusAfterNavigate): MessagePaneInput's onFocusTransition once
@@ -397,7 +404,6 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	// the row takes the box's height, the list the whole pane, and the
 	// box goes where the list puts the row. A footer in its place stays
 	// under the list.
-	ir, _ := c.list.(threadInputRow)
 	inList := ir != nil && c.ts != "" && foot == footNone
 	if ir != nil {
 		h := 0

@@ -82,6 +82,17 @@ func (v *ThreadView) ContentHeight() int {
 	return v.top + v.s.contentH
 }
 
+// SetInputRow says whether the host draws the reply box in the thread's
+// "input" row (no footer in its place), before the frame's Prepare: the
+// row is then the list's last once its slice reaches the thread's end.
+// A host that never says so keeps the list without it.
+func (v *ThreadView) SetInputRow(on bool) {
+	if s := v.s; s.inputOn != on {
+		s.inputOn = on
+		s.snap.rev = 0 // the rows again, with or without it
+	}
+}
+
 // SetInputHeight gives the thread's "input" row the reply box's height
 // for the next Layout: Slack's reply box is the thread list's last row
 // (getThreadRowsAndKeys' "input", boot-shared eTbq), so it scrolls with

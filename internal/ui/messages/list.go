@@ -115,10 +115,11 @@ type listState struct {
 
 	list     layout.List
 	contentH int // total item height when all items fit (see layoutList)
-	// inputH is the thread's reply box height the host gives its "input"
-	// row this frame (ThreadView.SetInputHeight); inputY is where the last
-	// layout put the row, under the list's top (size.Y when the row was
-	// below the list)
+	// inputOn: the host draws the thread's reply box in its "input" row
+	// (ThreadView.SetInputRow), inputH the box's height this frame
+	// (SetInputHeight); inputY is where the last layout put the row, under
+	// the list's top (size.Y when the row was below the list)
+	inputOn        bool
 	inputH, inputY int
 	heights        []int
 	pos            []int // y of visible items (valid where heights > 0 this frame)
@@ -1066,10 +1067,10 @@ func (s *listState) build(h Host, now time.Time) {
 		// it no longer the last (prevReachedEnd false): it may hold what's
 		// being typed
 		s.items = append(s.items, item{kind: itLoading, key: "loading-end"})
-	} else if s.thread && len(msgs) > 0 {
+	} else if s.thread && len(msgs) > 0 && s.inputOn {
 		// getThreadRowsAndKeys' "input" row in its place: the reply box,
-		// one of the list's rows, scrolled with it (none drawn when the
-		// host draws no box: its height is then 0)
+		// one of the list's rows, scrolled with it (a host that draws the
+		// box elsewhere, or a footer instead, has none)
 		s.items = append(s.items, item{kind: itInput, key: "input"})
 	}
 	if cap(s.heights) < len(s.items) {
