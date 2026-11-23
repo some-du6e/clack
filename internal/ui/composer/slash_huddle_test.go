@@ -17,7 +17,8 @@ type huddleHost struct {
 func (h *huddleHost) SlashHuddle(ch string) { h.started = append(h.started, ch) }
 
 // /huddle starts or joins the huddle in the conversation (Slack's
-// startHuddle, through the ui root) instead of going to chat.command.
+// startHuddle, through the ui root) instead of going to chat.command,
+// after the processor and the broadcast warning like any command.
 func TestSlashHuddle(t *testing.T) {
 	app, fs := syntheticApp(t, func(*store.Store) {})
 	stubTyping(t)
@@ -28,7 +29,11 @@ func TestSlashHuddle(t *testing.T) {
 	d.Insert(0, "/huddle", Attr{})
 	c.ed.SetDoc(d)
 	c.submit()
-	time.Sleep(100 * time.Millisecond)
+	// handleSlashCommand runs in the send job; the huddle starts on the UI
+	// goroutine
+	for end := time.Now().Add(5 * time.Second); len(h.started) == 0 && time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		runRestores()
+	}
 	if len(h.started) != 1 || h.started[0] != tChGen {
 		t.Fatalf("SlashHuddle calls %q", h.started)
 	}

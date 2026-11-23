@@ -126,7 +126,10 @@ func TestTautNativeAtChannel(t *testing.T) {
 		t.Fatalf("%d chat.command calls, want 1", len(cmds)-before)
 	}
 	c := cmds[len(cmds)-1]
-	if c.Get("command") != "/channel" || c.Get("channel") != tChGen || !strings.Contains(c.Get("text"), "<!channel>") || !strings.Contains(c.Get("text"), "please") {
+	// handleSlashCommand on the relayed delta: the arguments as blocks
+	// (the keyword a broadcast element), no text
+	if c.Get("command") != "/channel" || c.Get("channel") != tChGen || c.Has("text") ||
+		!strings.Contains(c.Get("blocks"), `{"type":"broadcast","range":"channel"}`) || !strings.Contains(c.Get("blocks"), "please") {
 		t.Errorf("chat.command %v", c)
 	}
 	if n := len(e.slack.called("chat.postMessage")); n != 0 {
@@ -224,7 +227,8 @@ func TestSlickViewbChannelSend(t *testing.T) {
 		return len(e.slack.called("chat.command")) > 0
 	})
 	cmd := e.slack.called("chat.command")[0]
-	if cmd.Get("command") != "/bchannel" || cmd.Get("text") != "relay-"+strings.Repeat("a", 8) || cmd.Get("channel") != tChRandom {
+	want := `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"relay-` + strings.Repeat("a", 8) + `"}]}]}]`
+	if cmd.Get("command") != "/bchannel" || cmd.Has("text") || cmd.Get("blocks") != want || cmd.Get("channel") != tChRandom {
 		t.Errorf("chat.command %v", cmd)
 	}
 	if n := len(e.slack.called("chat.postMessage")); n != 0 {

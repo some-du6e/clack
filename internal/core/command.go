@@ -2,9 +2,13 @@ package core
 
 // Slash commands, as Slack's web client runs them (gantry-v2, 2026-11):
 //
-//   - chatCommandApi (application.js "Send a slash command to the API"):
-//     chat.command {command, disp, text, blocks?, channel, client_token,
-//     thread_ts?, team_id?, app_id?}. client_token comes from
+//   - chatCommandApi (boot-render pymN "Send a slash command to the
+//     API"): chat.command {command, disp, blocks?, channel, client_token,
+//     thread_ts?, team_id?, app_id?}. executeCommand passes no text: the
+//     arguments go only as blocks (convertDeltaToBlocks of
+//     deltaWithoutCmd), and blank arguments send neither. command is the
+//     matched command's name (else the typed word, lowercased), disp the
+//     word as typed. client_token comes from
 //     clientToken.generateAndEnqueue, the same queue blocks.actions and
 //     apps.actions.v2.execute use. An app answering the command with
 //     views.open(trigger_id) makes Slack push view_opened {client_token}
@@ -36,10 +40,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -172,18 +178,51 @@ func (f *failedCommands) mark(ch, cmd string, failed bool) {
 	f.m[ch+":"+cmd] = time.Now()
 }
 
-// knownCommand reports whether cmd is in the cached commands.list (false
-// before the list loaded), and its app.
+// knownCommand is executeCommand's lookup in the slash command store:
+// the first cached commands.list command cmd matches (false before the
+// list loaded).
 func (a *App) knownCommand(cmd string) (slack.Command, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	name := strings.ToLower(cmd)
 	for _, c := range a.cmdCache {
-		if strings.ToLower(c.Name) == name {
+		if commandMatches(c, cmd) {
 			return c, true
 		}
 	}
 	return slack.Command{}, false
+}
+
+// commandTrailingMark is is_match_for_command's /[`´ˆ¨˜]$/.
+var commandTrailingMark = regexp.MustCompile("[`" + `\x{b4}\x{2c6}\x{a8}\x{2dc}]$`)
+
+// commandMatches is is_match_for_command (JHuA) without partial matches:
+// the typed word lowercased, a leading full-width slash as "/",
+// deburred and without a trailing accent mark, is the command's deburred
+// name, canonical name or one of its aliases.
+func commandMatches(c slack.Command, typed string) bool {
+	if typed == "" {
+		return false
+	}
+	l := strings.ToLower(typed)
+	if rest, ok := strings.CutPrefix(l, "\uff0f"); ok {
+		l = "/" + rest
+	}
+	l = commandTrailingMark.ReplaceAllString(acrank.Deburr(l), "")
+	names := append([]string{c.Name, canonicalCommand(c)}, c.Aliases...)
+	for _, n := range names {
+		if acrank.Deburr(n) == l {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalCommand is getCommandCanonicalName: canonical_name ?? name.
+func canonicalCommand(c slack.Command) string {
+	if c.CanonicalName != "" {
+		return c.CanonicalName
+	}
+	return c.Name
 }
 
 // threadCommands and threadChannelCommands are isSlashCommandEnabled's
@@ -235,8 +274,12 @@ func (a *App) serverCommand(ctx context.Context, cmd string, o CommandOpts) (Com
 	ia4 := a.experiment("ia4_slash_command_fe") == "on"
 	if ia4 && o.AppID != "" {
 		// the slash command store keys commands by app and name: the one
-		// the autocomplete picked
-		if c, ok := a.appCommand(cmd, o.AppID); ok {
+		// the autocomplete picked (e.app === x && e.name === Y)
+		y := cmd
+		if isKnown {
+			y = known.Name
+		}
+		if c, ok := a.appCommand(y, o.AppID); ok {
 			known, isKnown = c, true
 		}
 	}
@@ -255,13 +298,18 @@ func (a *App) serverCommand(ctx context.Context, cmd string, o CommandOpts) (Com
 	if isKnown {
 		name = known.Name
 	}
-	p := url.Values{"command": {name}, "disp": {cmd}, "channel": {o.Channel},
+	disp := o.Disp
+	if disp == "" {
+		disp = cmd
+	}
+	p := url.Values{"command": {name}, "disp": {disp}, "channel": {o.Channel},
 		"client_token": {a.Interactive().ClientToken()}}
 	switch {
 	case len(o.Blocks) > 0:
 		// chatCommandApi from executeCommand: blocks and no text
 		p.Set("blocks", string(o.Blocks))
-	case o.Text != "":
+	case o.Text != "" && o.Params == nil:
+		// a caller without a composer (no parsed args): the text
 		p.Set("text", o.Text)
 	}
 	if o.ThreadTS != "" {

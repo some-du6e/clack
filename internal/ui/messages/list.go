@@ -2614,6 +2614,7 @@ func (s *listState) openEdit(h Host, m core.Message) {
 		s.endEdit(ed)
 		h.Invalidate()
 	})
+	ed.EditInThread = s.thread // IHC0's inThread: this list's view context
 	r.edit, s.edit, s.editCh, s.editTS = ed, ed, m.Channel, m.TS
 	app := h.Core()
 	r.edit.SaveEditThen = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {

@@ -204,6 +204,9 @@ type User struct {
 	HuddleExpires                 int64
 	Agent                         bool // agent_status consistently_an_agent (read for the badge only under support_lots_of_agents; sender.go)
 	Workflow, Agentforce, AppUser bool // is_workflow_bot, is_agentforce_bot, is_app_user (the sender badge; sender.go)
+	// ProfileOnly is is_profile_only_user, NoInteract interact false (an
+	// information barrier): the member searches leave both out.
+	ProfileOnly, NoInteract bool
 
 	// TeamID is the member's team as Slack's computeLocality reads it
 	// (the org on Enterprise Grid for org members, else team_id).
@@ -920,18 +923,41 @@ type Command struct {
 }
 
 type CommandOpts struct {
+	// Command is parseSlashCmdArgsFromDelta's cmd: the command word,
+	// lowercased (chat.command's command when the word is no known
+	// command's). Disp is the word as typed (chat.command's disp; Command
+	// when empty).
 	Channel, Command, Text, ThreadTS string
+	Disp                             string
 	// Blocks is the arguments as executeCommand sends them (the
-	// composer's CommandBlocks): with blocks, chat.command carries no
-	// text, as in Slack, and the server reads mentions from them. Text
-	// stays the plain words, for the local commands and for callers
-	// that have no blocks.
+	// composer's commandBlocks, convertDeltaToBlocks of deltaWithoutCmd):
+	// chat.command carries them and no text, as in Slack, and the server
+	// reads mentions from them; nil for blank arguments, when it gets
+	// neither. Text is for the local commands that read text (/topic: the
+	// arguments as the texty input's value) and for callers without
+	// blocks, whose chat.command carries it.
 	Blocks json.RawMessage
+	// Params are the parsed userParams the local commands read (the
+	// tokens after the command word: a mention's id, or a word). nil: the
+	// mention escapes in Text stand in (callers without a composer).
+	Params []CommandParam
 	// AppID is executeCommand's slashCommandAppId: the app whose command
 	// a plugin turned the message into (chat.command app_id).
 	AppID string
 	// TeamID is slashCommandApplicableTeamId (chat.command team_id).
 	TeamID string
+	// Submit is Text as submitChannelTopic sends it (s0VR:
+	// linkifyPhoneNumbers(clean_message_text_with_state(value)), the
+	// composer's TextyInput.Submit rule): the local /topic's topic ("":
+	// Text as it is).
+	Submit string
+}
+
+// CommandParam is one of a command's parsed arguments
+// (convertDeltaToSlashCommandParams): Type "mention" with the mentioned
+// id as Value, or "string" with a word.
+type CommandParam struct {
+	Type, Value string
 }
 
 type CommandResult struct {

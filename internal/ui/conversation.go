@@ -660,7 +660,7 @@ func (a *App) startEdit(c *convo, m core.Message) {
 	if mkEditComposer == nil {
 		return
 	}
-	c.edit = mkEditComposer(a, m, func() { a.Invalidate() })
+	c.edit = mkEditComposer(a, m, c.ts != "", func() { a.Invalidate() })
 	c.edit.Focus()
 	a.Invalidate()
 }
