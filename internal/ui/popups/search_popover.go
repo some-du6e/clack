@@ -2912,6 +2912,16 @@ func (w *srRunWriter) block(b *richtext.Block) {
 			w.line(cells)
 		}
 	case richtext.Divider, richtext.Actions:
+	case richtext.DataVizBlock: // a chart's title
+		if v := b.DataViz; v != nil && !v.Err {
+			w.line(srAddText(nil, v.Title))
+		}
+	case richtext.DataTableBlock: // a data_table's rows, tab-separated
+		if t := b.DataTable; t != nil && !t.Err {
+			for _, row := range t.TextRows() {
+				w.line(srAddText(nil, strings.TrimRight(strings.Join(row, "\t"), "\t")))
+			}
+		}
 	case richtext.ImageBlock:
 		if img := b.Image; img != nil {
 			w.line(srAddText(nil, firstNonEmptyStr(img.Title, img.Alt)))

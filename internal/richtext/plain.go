@@ -61,6 +61,16 @@ func writeBlock(b *strings.Builder, blk *Block, text SpanText) {
 			line(b, strings.TrimRight(strings.Join(cells, "\t"), "\t")) // trailing empty cells add nothing (decision 2026-11-07: trim)
 		}
 	case Divider:
+	case DataVizBlock: // a chart's text is its title
+		if v := blk.DataViz; v != nil && !v.Err {
+			line(b, v.Title)
+		}
+	case DataTableBlock: // a data_table's rows, as a table's
+		if t := blk.DataTable; t != nil && !t.Err {
+			for _, row := range t.TextRows() {
+				line(b, strings.TrimRight(strings.Join(row, "\t"), "\t"))
+			}
+		}
 	case ImageBlock:
 		if blk.Image != nil {
 			line(b, firstNonEmpty(blk.Image.Title, blk.Image.Alt))
