@@ -193,6 +193,8 @@ type hub struct {
 	wins   map[*model]bool   // the lists' window models (newWindow)
 	nextID uint32            // the last model's id (guarded by mu)
 	userRv uint64            // bumps on profile, name, pref and members-cache events
+	// senders are the members rows resolved as their senders (readMember)
+	senders map[string]bool
 	// authFailed stops every load after core's auth_failed (or an auth
 	// error) until the connection comes back or the user hits Retry.
 	authFailed atomic.Bool
@@ -309,18 +311,31 @@ func (hb *hub) drawsMember(ev core.Event) bool {
 	return frame.IsZero() || seen.UnixMilli() >= frame.UnixMilli()
 }
 
-// readMember reports whether a view has read ev's member since the
-// store last stored it fresh (store.MemberAccessed): a row may hold what
-// it resolved from it.
+// readMember reports whether a row resolved ev's member as its sender
+// (noteSender): it holds what it resolved (the name, the picture, the
+// status) until usersRev moves. A member only a mention or a preview
+// names isn't one: those convert again (reconvert).
 func (hb *hub) readMember(ev core.Event) bool {
-	if !ev.Seen.IsZero() {
-		return true
-	}
 	id := ev.UserID
 	if id == "" && ev.User != nil {
 		id = ev.User.ID
 	}
-	return id != "" && hb.app != nil && hb.app.S != nil && !hb.app.S.MemberAccessed(id).IsZero()
+	if id == "" {
+		return false
+	}
+	hb.mu.Lock()
+	defer hb.mu.Unlock()
+	return hb.senders[id]
+}
+
+// noteSender records that a row resolved member id as its sender.
+func (hb *hub) noteSender(id string) {
+	hb.mu.Lock()
+	if hb.senders == nil {
+		hb.senders = map[string]bool{}
+	}
+	hb.senders[id] = true
+	hb.mu.Unlock()
 }
 
 // redraws reports whether ev's change to the models shows: a

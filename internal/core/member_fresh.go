@@ -344,7 +344,9 @@ func (a *App) memberCycle(ctx context.Context, ids []string, conn uint64) {
 		}
 		now := time.Now()
 		for id := range want {
-			if m.freshLocked(id, now) {
+			// fresh by now, or let go meanwhile (the members cache's pass):
+			// a refetch is of copies the store holds, never one asked back
+			if _, held := a.S.RawUser(id); !held || m.freshLocked(id, now) {
 				delete(want, id)
 			}
 		}
@@ -521,10 +523,8 @@ func filterMemberIDs(ids []string) []string {
 func (a *App) refetchMembers(ctx context.Context, ids []string) {
 	stamps := make(map[string]int64, len(ids))
 	for _, id := range ids {
-		if su, ok := a.S.RawUser(id); ok && su != nil {
+		if su, ok := a.S.RawUser(id); ok && su != nil { // one the store let go isn't asked back
 			stamps[id] = su.Updated
-		} else {
-			stamps[id] = 0
 		}
 	}
 	if len(stamps) == 0 {
