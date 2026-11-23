@@ -62,11 +62,14 @@ func blockY(t *testing.T, r *pointerRig, id string) int {
 	if b == nil || b.rv == nil {
 		t.Fatalf("no block %s", id)
 	}
-	full, _, ok := r.router.AreaBounds(b.rv)
-	if !ok {
-		t.Fatalf("block %s's text has no input area", id)
+	for i := 0; i < 10; i++ { // the router names an area once a frame has asked for its events
+		if full, _, ok := r.router.AreaBounds(b.rv); ok {
+			return full.Min.Y
+		}
+		r.frame()
 	}
-	return full.Min.Y
+	t.Fatalf("block %s's text has no input area", id)
+	return 0
 }
 
 func quipBlock(fs *fakeslack.Server, id string) *canvas.Block {
@@ -188,9 +191,14 @@ func TestCanvasQuipSaves(t *testing.T) {
 // A block open when it came keeps its text, unsaved, until Escape.
 func TestCanvasQuipSaveBanner(t *testing.T) {
 	h, fs, v, s, frame := quipEnv(t)
-	r := &pointerRig{t: t, v: v, sz: image.Pt(1100, 900)} // the block's place in the window
-	r.frame()
-	before := blockY(t, r, quipFirstID)
+	// where a block sits in the window: the router knows an area from
+	// the frames after the one that laid it out
+	r := &pointerRig{t: t, v: v, sz: image.Pt(1100, 900)}
+	frames := func() {
+		for i := 0; i < 3; i++ {
+			r.frame()
+		}
+	}
 	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 2})
 	ck := findBlk(v, func(b *canvas.Block) bool { return b.ID == quipCheckID })
 	v.edit.toggleCheck(v, ck)
@@ -204,6 +212,10 @@ func TestCanvasQuipSaveBanner(t *testing.T) {
 	if v.edit.cur == nil {
 		t.Fatal("the paragraph didn't open after one failure")
 	}
+	// the block under it, as drawn with the editor open (an open block
+	// is the editor, not its text view)
+	frames()
+	before := blockY(t, r, quipSecondID)
 	v.edit.toggleCheck(v, findBlk(v, func(b *canvas.Block) bool { return b.ID == quipCheckID }))
 	settle(t, s, v, "the error state", func() bool { return h.a.CanvasSaveState(quipCanvasID).ReadOnly })
 	frame()
@@ -213,9 +225,9 @@ func TestCanvasQuipSaveBanner(t *testing.T) {
 	if v.edit.canEdit(v) {
 		t.Error("editing is open in the error state")
 	}
-	r.frame()
-	if after := blockY(t, r, quipFirstID); after < before+48 {
-		t.Errorf("the banner didn't push the canvas down: the first block at y %d, %d before", after, before)
+	frames()
+	if after := blockY(t, r, quipSecondID); after < before+48 {
+		t.Errorf("the banner didn't push the canvas down: the second paragraph at y %d, %d before", after, before)
 	}
 	// what the open paragraph holds stays there, unsent
 	ed := v.edit.cur.ed
