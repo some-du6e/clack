@@ -30,6 +30,10 @@ const MaxDecodeSamples = 1 << 25
 // ErrDecodeTooLong is a file whose audio is past MaxDecodeSamples.
 var ErrDecodeTooLong = errors.New("goaudio: the audio is too long to decode")
 
+// maxDecodeSamples is the cap Decode holds to: MaxDecodeSamples, which
+// tests lower to reach it with a short file.
+var maxDecodeSamples int64 = MaxDecodeSamples
+
 // Decode is Web Audio's decodeAudioData as Chromium does it: the whole
 // file decoded (AudioFileReader: every channel the file has, from the
 // formats a media element plays here: WAV, MP3, Opus or Vorbis in Ogg,
@@ -37,9 +41,11 @@ var ErrDecodeTooLong = errors.New("goaudio: the audio is too long to decode")
 // (AudioBus::CreateBySampleRateConverting; 0 keeps the file's rate) with
 // the players' windowed-sinc resampler. mime is the file's type when
 // known (the OS decoders' hint). An error is a file that isn't audio this
-// decodes: decodeAudioData's EncodingError.
+// decodes: decodeAudioData's EncodingError. The decoders run behind the
+// decode boundary, as the player's do (safe.go): one that panics on the
+// file (go-mp3 on an MPEG-2 granule with mixed blocks) is its error.
 func Decode(ctx context.Context, b []byte, mime string, rate int) (*PCM, error) {
-	s, err := open(ctx, b, mime)
+	s, err := safeOpen(ctx, b, mime)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +58,7 @@ func Decode(ctx context.Context, b []byte, mime string, rate int) (*PCM, error) 
 		rate = in
 	}
 	var inter []float32
-	if n := s.Frames(); n > 0 && n*int64(ch) <= MaxDecodeSamples {
+	if n := s.Frames(); n > 0 && n*int64(ch) <= maxDecodeSamples {
 		inter = make([]float32, 0, n*int64(ch))
 	}
 	buf := make([]float32, 4096*ch)
@@ -60,9 +66,9 @@ func Decode(ctx context.Context, b []byte, mime string, rate int) (*PCM, error) 
 		if done(ctx, step) {
 			return nil, ctx.Err()
 		}
-		n, err := s.Read(buf)
+		n, err := safeRead(s, buf)
 		inter = append(inter, buf[:n*ch]...)
-		if len(inter) > MaxDecodeSamples {
+		if int64(len(inter)) > maxDecodeSamples {
 			return nil, ErrDecodeTooLong
 		}
 		if err == io.EOF || err == nil && n == 0 {
@@ -75,7 +81,7 @@ func Decode(ctx context.Context, b []byte, mime string, rate int) (*PCM, error) 
 	frames := len(inter) / ch
 	if rate != in && frames > 0 {
 		outFrames := int(math.Ceil(float64(frames) * float64(rate) / float64(in)))
-		if int64(outFrames)*int64(ch) > MaxDecodeSamples {
+		if int64(outFrames)*int64(ch) > maxDecodeSamples {
 			return nil, ErrDecodeTooLong
 		}
 		r := newRateResampler(in, rate, ch)

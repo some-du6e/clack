@@ -84,8 +84,9 @@ func TestTautCustomNameRecordingUploadButton(t *testing.T) {
 // MP4), then uploads audio_name_pronunciation.m4a typed audio/mp4 with the
 // name recording's subtype, slack_name_pronunciation, in files.getUploadURL
 // and completeUpload's files entry, as Slack's UploadQueue sends a File's
-// subtype. The field takes the new file (onChangeFile): Edit profile reads
-// it (files.info) for its tile. Synthetic data only.
+// subtype. The field takes the new file (onChangeFile): it's the form's
+// recording, and the field shows it, read from its files.info. Synthetic
+// data only.
 func TestTautCustomNameRecordingConvertsAndUploads(t *testing.T) {
 	dir := os.Getenv("TAUT_PLUGINS_DIR")
 	if dir == "" {
@@ -123,7 +124,7 @@ func TestTautCustomNameRecordingConvertsAndUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.until("the plugin's patch", 30*time.Second, func() bool { return slackc.Patched("EditAudioButton") })
-	popups.OpenEditProfile(e.a, popups.EditProfileOpts{})
+	m := popups.OpenEditProfile(e.a, popups.EditProfileOpts{})
 	if !e.waitTree(30*time.Second, "taut-name-recording__upload") {
 		t.Fatal("no tree with CustomNameRecording's Upload audio")
 	}
@@ -131,7 +132,7 @@ func TestTautCustomNameRecordingConvertsAndUploads(t *testing.T) {
 	if click == 0 {
 		t.Fatal("the Upload audio button has no onClick")
 	}
-	before, infos := len(fs.Uploads()), fs.CallCount("files.info")
+	before := len(fs.Uploads())
 	tt.Bridge().Call(click, []byte("[]"), nil)
 	var up fakeslack.UploadedFile
 	e.until("the converted recording uploaded", 60*time.Second, func() bool {
@@ -153,7 +154,12 @@ func TestTautCustomNameRecordingConvertsAndUploads(t *testing.T) {
 		t.Errorf("the upload: %s typed %q, subtype %q/%q, %d bytes; want audio_name_pronunciation.m4a, audio/mp4, slack_name_pronunciation in both",
 			up.URLArgs.Get("filename"), up.PartType, up.Subtype, up.CompleteSubtype, up.Bytes)
 	}
-	e.until("Edit profile reading the new recording", 20*time.Second, func() bool { return fs.CallCount("files.info") > infos })
+	// not the upload's own files.info: the form takes the file as its
+	// recording and the field shows it
+	e.until("Edit profile taking the new recording", 20*time.Second, func() bool {
+		id, shown := m.NameRecording()
+		return id == up.ID && shown
+	})
 }
 
 // onClickWithClass is the onClick function id of the first node of a host

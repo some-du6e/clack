@@ -108,19 +108,20 @@ globalThis.convert = async (u8) => {
   if (!e) throw new Error("This browser cannot convert audio");
   let t = new AudioContext({ sampleRate: l.sampleRate });
   let mime = '';
-  let blob;
+  let blob, startAt = 0, stopAt = 0; // the context's clock when the recorder started and stopped
   try {
     await t.resume();
     let n = t.createBufferSource(); n.buffer = l;
     let s = t.createMediaStreamDestination(); n.connect(s);
     let r = new MediaRecorder(s.stream, { mimeType: e, audioBitsPerSecond: 128e3 }), o = [];
     for (const x of ['start', 'dataavailable', 'stop']) r.addEventListener(x, () => events.push(x));
-    n.addEventListener('ended', () => events.push('ended'));
+    n.addEventListener('ended', () => { events.push('ended'); stopAt = t.currentTime; });
     r.addEventListener("dataavailable", ev => o.push(ev.data));
     let i = new Promise(res => r.addEventListener("stop", res, { once: !0 }));
     n.addEventListener("ended", () => r.stop(), { once: !0 });
     r.addEventListener("start", () => n.start(t.currentTime + .05), { once: !0 });
     r.start();
+    startAt = t.currentTime;
     mime = r.mimeType;
     await i;
     blob = new Blob(o, { type: e });
@@ -128,7 +129,7 @@ globalThis.convert = async (u8) => {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return { type: e, blobType: blob.type, mime, events, wall: (performance.now() - t0) / 1000, rate: l.sampleRate, b64: btoa(bin) };
+  return { type: e, blobType: blob.type, mime, events, wall: (performance.now() - t0) / 1000, rate: l.sampleRate, recorded: stopAt - startAt, b64: btoa(bin) };
 };
 0`)
 		return err
@@ -190,7 +191,7 @@ globalThis.convert = async (u8) => {
 	var cv struct {
 		Type, BlobType, Mime, B64 string
 		Events                    []string
-		Wall                      float64
+		Wall, Recorded            float64
 		Rate                      int
 	}
 	call("convert", &cv, mediatest.TonesWAV)
@@ -211,10 +212,13 @@ globalThis.convert = async (u8) => {
 	if err != nil {
 		t.Fatalf("the converted file (%d bytes) isn't Opus in MP4: %v", len(b), err)
 	}
-	// the lead-in in, the last part of a 60 ms packet out (Chromium's encoder
-	// drops it) and the Opus pre-skip off: about the 3 s
-	if ch != 2 || dur < 2.9 || dur > 3.2 {
-		t.Errorf("the converted file: %d channels, %.3f s; want stereo, about the 3 s", ch, dur)
+	// what the recorder recorded by the context's clock, from start() to
+	// the stop() that ended's handler made (the 3 s, the lead-in and how
+	// late the timers came, which a busy runner stretches), less the last
+	// part of a 60 ms packet (Chromium's encoder drops it) and the Opus
+	// pre-skip
+	if ch != 2 || cv.Recorded < 3 || dur < cv.Recorded-0.07 || dur > cv.Recorded+0.01 {
+		t.Errorf("the converted file: %d channels, %.3f s; want stereo, the %.3f s the recorder recorded (at least the 3 s)", ch, dur, cv.Recorded)
 	}
 	for s, want := range mediatest.Tones {
 		from := int((float64(s) + 0.05 + 0.2) * 48000)

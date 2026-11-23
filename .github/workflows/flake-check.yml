@@ -5478,7 +5478,13 @@ jobs:
   # CustomNameRecording from Slick's build at the slick workflow's pin
   # (slick) and Taut's from Taut's at ui-taut's pin, converting a WAV and
   # uploading it from Edit profile in the whole client (ui); the compat
-  # page. COUNT runs each. Dispatch with only=plugins-work-2b.
+  # page. Its review's fixes: Decode runs the decoders behind the decode
+  # boundary and holds to its cap, FuzzMP3's seeds through it (goaudio);
+  # the audio host's calls reject when the host panics, keep to Web
+  # Audio's bounds, and recordings go to the host as they record, up to
+  # their cap, with a far-off clock timer armed once (jsrt); the encoder
+  # (clip); Edit profile taking the uploaded recording (ui). COUNT runs
+  # each. Dispatch with only=plugins-work-2b.
   plugins-work-2b:
     if: ${{ !inputs.only || startsWith('plugins-work-2b', inputs.only) }}
     runs-on: ubuntu-latest
@@ -5536,7 +5542,7 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
-      - name: decodeAudioData and MediaRecorder, the upload's fields, CustomNameRecording in the harness and in the client, COUNT runs each
+      - name: decodeAudioData and MediaRecorder, the decode boundary and the caps, the upload's fields, CustomNameRecording in the harness and in the client, COUNT runs each
         env:
           SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
@@ -5544,8 +5550,10 @@ jobs:
         run: |
           set +e
           rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestDecodeSurvivesADecoderPanic|TestDecodeStopsAtItsCap|FuzzMP3)$' ./internal/media/goaudio || rc=1
+          go test -count="$COUNT" -timeout 5m ./internal/clip || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestDecodeLikeChromium|TestEncodeOpusInMP4|TestWebAudioLikeChromium)$' ./internal/webaudio || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^(TestMediaElementPlays|TestFileInputPicker)$' ./internal/jsrt || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestMediaElementPlays|TestFileInputPicker|TestAudioHostPanicsReject|TestAudioHostClampsRateAndChannels|TestMediaRecorderStreamsToTheHost|TestMediaRecorderStopsAtTheCap|TestAudioClockTimerFarOff)$' ./internal/jsrt || rc=1
           go test -count="$COUNT" -timeout 5m -run '^TestUploadFileFieldsLikeSlack$' ./internal/taut || rc=1
           go test -count="$COUNT" -timeout 8m -run '^TestCustomNameRecordingLikeSlack$' ./internal/slick || rc=1
           xvfb-run -a go test -count="$COUNT" -timeout 10m -run '^TestTautCustomNameRecording' ./internal/ui || rc=1

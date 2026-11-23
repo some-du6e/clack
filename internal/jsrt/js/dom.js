@@ -1753,7 +1753,7 @@
   OptionCtor.prototype = htmlClasses.HTMLOptionElement.prototype;
   // ---- Web Audio and MediaRecorder ----
   // Chromium's, over Options.Audio (audio.go: H.audioDecode, H.audioSupports,
-  // H.audioEncode). An AudioContext keeps Chromium's clock: currentTime
+  // H.audioRecord*). An AudioContext keeps Chromium's clock: currentTime
   // moves on in render quanta (128 frames) while the context runs and
   // stands still while it is suspended or closed. decodeAudioData detaches
   // its ArrayBuffer and decodes the whole file into an AudioBuffer at the
@@ -1764,8 +1764,10 @@
   // stream carries what the nodes feeding it play (gain applied, channels up-
   // or down-mixed by the speakers rules); a MediaRecorder of that stream
   // records it from start() to stop() (pause() leaves a gap out), rendered
-  // as the context's clock moves, and the host encodes it at stop: one
-  // dataavailable with the whole file, then stop. Clack renders no sound to
+  // as the context's clock moves and handed to the host as it goes, which
+  // encodes it at stop: one dataavailable with the whole file, then stop
+  // (the host records up to about six minutes of stereo: a longer
+  // recording stops there with an error event). Clack renders no sound to
   // the speakers (the destination node plays nothing audible), records no
   // microphone (getUserMedia rejects), fires no timeslice fragments
   // (start(timeslice) records the one blob at stop; requestData() hands an
@@ -2078,6 +2080,9 @@
       this._timers.set(key, x);
       this._arm(key, x);
     }
+    // (a timer's delay is at most 2^31-1 ms: one further off fires that
+    // far ahead and re-arms, where setTimeout would take it as 0 and the
+    // timer would re-arm at once, over and over)
     _arm(key, x) {
       if (this._wall === null) return;
       clearTimeout(x.id);
@@ -2086,7 +2091,7 @@
         if (this.currentTime < x.time - 1e-9) { this._arm(key, x); return; }
         this._timers.delete(key);
         x.fn();
-      }, Math.max(0, (x.time - this.currentTime) * 1000));
+      }, Math.min(2147483647, Math.max(0, (x.time - this.currentTime) * 1000)));
     }
     createBuffer(numberOfChannels, length, sampleRate) { return new AudioBuffer({ numberOfChannels, length, sampleRate }); }
     createBufferSource() { return new AudioBufferSourceNode(this); }
@@ -2216,46 +2221,60 @@
       if (!track || !type || live.some((t) => t.kind === 'video')) throw new DOMException("Failed to execute 'start' on 'MediaRecorder': There was an error starting the MediaRecorder.", 'NotSupportedError');
       if (!/;\s*codecs=/i.test(type)) type += ';codecs=opus';
       const node = track._node, ctx = node._ctx;
-      const rec = { node, ctx, ch: Math.min(2, Math.max(1, node.channelCount)), rate: ctx.sampleRate, at: ctx.currentTime, paused: false, parts: [], frames: 0, tick: null };
+      const rec = { node, ctx, ch: Math.min(2, Math.max(1, node.channelCount)), rate: ctx.sampleRate, at: ctx.currentTime, paused: false, id: H.audioRecord(), full: false, tick: null };
       this._type = type; this._state = 'recording'; this._rec = rec;
-      rec.tick = setInterval(() => this._capture(rec), 100);
+      rec.tick = setInterval(() => {
+        this._capture(rec);
+        if (rec.full && this._rec === rec) this._finish(); // the host holds all it records: stopped there
+      }, 100);
       queueEvent(this, new Event('start'));
     }
-    // _capture renders what the stream carried since the last capture
+    // _capture renders what the stream carried since the last capture and
+    // hands it to the host, which keeps the recording (audioRecordPush):
+    // the page holds 100 ms of it at a time. Once the host holds all it
+    // records (jsrt's maxRecordSamples), full: the recorder stops.
     _capture(rec) {
       const now = rec.ctx.currentTime;
-      if (!rec.paused && now > rec.at) {
+      if (!rec.paused && !rec.full && now > rec.at) {
         const n = Math.round((now - rec.at) * rec.rate);
         if (n > 0) {
-          const out = Array.from({ length: rec.ch }, () => new Float32Array(n));
+          const ch = rec.ch, out = Array.from({ length: ch }, () => new Float32Array(n));
           mixInputs(rec.node, out, rec.at, rec.rate);
-          rec.parts.push(out);
-          rec.frames += n;
+          const pcm = new Float32Array(n * ch);
+          for (let i = 0; i < n; i++) for (let c = 0; c < ch; c++) pcm[i * ch + c] = out[c][i];
+          if (!H.audioRecordPush(rec.id, pcm)) rec.full = true;
         }
       }
       rec.at = now;
     }
     stop() {
       if (this._state === 'inactive') return;
+      this._capture(this._rec);
+      this._finish();
+    }
+    // _finish ends the recording: the host encodes what it holds, then
+    // dataavailable with the file and stop. One the host couldn't take
+    // all of (full) stops as on a fatal error (the spec's "stop media
+    // recorder with an error"): error first, then the file so far.
+    _finish() {
       const rec = this._rec;
-      this._capture(rec);
       clearInterval(rec.tick);
       this._rec = null; this._state = 'inactive';
-      const ch = rec.ch, pcm = new Float32Array(rec.frames * ch);
-      let f = 0;
-      for (const out of rec.parts) {
-        const n = out[0].length;
-        for (let i = 0; i < n; i++, f++) for (let c = 0; c < ch; c++) pcm[f * ch + c] = out[c][i];
-      }
       const type = this._type;
       const done = (bytes) => {
         this.dispatchEvent(new BlobEvent('dataavailable', { data: new Blob(bytes ? [bytes] : [], { type }) }));
         this.dispatchEvent(new Event('stop'));
       };
-      H.audioEncode(pcm, ch, rec.rate, this.audioBitsPerSecond, type).then(done, (e) => {
+      const fail = (message) => {
         const ev = new Event('error');
-        ev.error = new DOMException((e && e.message) || String(e), 'UnknownError');
+        ev.error = new DOMException(message, 'UnknownError');
         this.dispatchEvent(ev);
+      };
+      H.audioRecordEncode(rec.id, rec.ch, rec.rate, this.audioBitsPerSecond, type).then((bytes) => {
+        if (rec.full) fail('MediaRecorder: the recording is longer than this page records');
+        done(bytes);
+      }, (e) => {
+        fail((e && e.message) || String(e));
         done(null);
       });
     }
@@ -2263,6 +2282,7 @@
       if (this._state === 'inactive') throw new DOMException("Failed to execute 'pause' on 'MediaRecorder': The MediaRecorder's state is 'inactive'.", 'InvalidStateError');
       if (this._state === 'paused') return;
       this._capture(this._rec);
+      if (this._rec.full) { this._finish(); return; }
       this._rec.paused = true; this._state = 'paused';
       queueEvent(this, new Event('pause'));
     }
