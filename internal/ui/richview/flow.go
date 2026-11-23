@@ -216,6 +216,9 @@ const (
 	// tTimeline is a timeline section's "(Sources)" (timeline: the
 	// section; timeline.go)
 	tTimeline
+	// tContact is a contact card (id: its member): a click opens their
+	// profile, with no hover card (contact.go)
+	tContact
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no

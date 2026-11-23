@@ -388,6 +388,11 @@ func (h srCardHandler) DataTableAction(act string, c *richview.TableControl, btn
 	DataTableAction(h.v.h, act, c, ActionAnchor(btn, c.Window))
 }
 
+// ContactCardAction is a contact card's action on the card.
+func (h srCardHandler) ContactCardAction(act string, c *richtext.ContactCard, _ image.Rectangle, _ bool) {
+	ContactCardAction(h.v.h, act, c)
+}
+
 // TimelineSources is a timeline section's "(Sources)" on the card: its
 // sources modal.
 func (h srCardHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {

@@ -16,6 +16,9 @@ on:
       - "internal/ui/popups/datatable_menu.go"
       - "internal/ui/popups/datablocks_test.go"
       - "internal/ui/popups/timeline_sources*"
+      - "internal/ui/popups/contact_card*"
+      - "internal/ui/popups/share_contact*"
+      - "internal/store/contact*"
       - "internal/fakeslack/gallery*"
       - "internal/ui/bk_gallery_test.go"
       - "internal/ui/messages/row.go"
@@ -60,7 +63,8 @@ jobs:
       - name: block kit unit tests
         run: |
           go test -count=1 ./internal/richtext ./internal/fakeslack ./internal/ui/richview ./internal/ui/blockkit ./internal/chart
-          go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources' ./internal/ui/popups
+          go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources|TestContactCard|TestShareContact' ./internal/ui/popups
+          go test -count=1 -run 'TestContactMember' ./internal/store
       - name: gallery screenshots
         env:
           BK_SHOTS_DIR: ${{ github.workspace }}/dist/shots

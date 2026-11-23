@@ -621,6 +621,14 @@ func (r *richHandler) DataTableAction(act string, c *richview.TableControl, btn 
 	}
 }
 
+// ContactCardAction is a contact card's action
+// (richview.ContactCardHandler).
+func (r *richHandler) ContactCardAction(act string, c *richtext.ContactCard, _ image.Rectangle, _ bool) {
+	if ph, ok := r.h.(popups.Host); ok {
+		popups.ContactCardAction(ph, act, c)
+	}
+}
+
 // TimelineSources is a timeline section's "(Sources)"
 // (richview.TimelineHandler): its sources modal.
 func (r *richHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {

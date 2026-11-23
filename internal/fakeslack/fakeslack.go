@@ -1620,6 +1620,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleGroupDMs(method, f); handled { // groupdms.go
 		return out
 	}
+	if out, handled := s.handleContacts(method, f); handled { // contacts.go
+		return out
+	}
 	// the bench threads' replies: ahead of the switch, whose
 	// conversations.replies answers every other thread with none
 	if method == "conversations.replies" && s.Size.PluginBench {

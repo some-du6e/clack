@@ -613,6 +613,14 @@ type User struct {
 	// RestrictedUserType is "frontline_worker" for a frontline worker
 	// (Slack's u+N9 W), else empty.
 	RestrictedUserType string `json:"restricted_user_type,omitempty"`
+
+	// What a contact_card reads (DIay isProfileOnlyUser, isActiveMember;
+	// Mu7P's who_can_share_contact_card: EVERYONE, TEAM_MEMBERS or NO_ONE).
+	IsProfileOnlyUser      bool   `json:"is_profile_only_user,omitempty"`
+	IsInvitedUser          bool   `json:"is_invited_user,omitempty"`
+	IsForgotten            bool   `json:"is_forgotten,omitempty"`
+	IsSlackSecurityBot     bool   `json:"is_slacksecuritybot,omitempty"`
+	WhoCanShareContactCard string `json:"who_can_share_contact_card,omitempty"`
 }
 
 type EnterpriseUser struct {

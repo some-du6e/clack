@@ -164,6 +164,11 @@ func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, win
 }
 
 // TimelineSources is a timeline section's "(Sources)": its sources modal.
+// ContactCardAction is a contact card's action.
+func (s *surfHandler) ContactCardAction(act string, c *richtext.ContactCard, _ image.Rectangle, _ bool) {
+	popups.ContactCardAction(s.h, act, c)
+}
+
 func (s *surfHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
 	popups.OpenTimelineSources(s.h, sec)
 }

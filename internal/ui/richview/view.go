@@ -2027,6 +2027,8 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		}
 	case tDataTable: // a data_table's buttons (datatable.go)
 		v.dataTableClick(tg, h)
+	case tContact: // a contact card: its member's profile (contact.go)
+		h.OpenUser(tg.id, anchor)
 	case tTimeline: // a timeline section's (Sources) (timeline.go)
 		if th, ok := h.(TimelineHandler); ok && tg.timeline != nil {
 			r, _ := v.targetRect(tg)

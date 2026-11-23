@@ -753,6 +753,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.TimelineBlock:
 		return l.timeline(b, x, y, w)
 
+	case richtext.ContactCardBlock:
+		return l.contactCard(b, x, y, w)
+
 	case richtext.Table:
 		return l.table(b, x, y, w)
 
