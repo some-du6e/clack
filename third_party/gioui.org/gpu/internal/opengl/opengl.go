@@ -196,7 +196,7 @@ func newOpenGLDevice(api driver.OpenGL) (driver.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	floatTriple, ffboErr := floatTripleFor(f, ver, exts)
+	floatTriple, ffboErr := floatTripleFor(f, ver, gles, exts)
 	srgbaTriple, srgbErr := srgbaTripleFor(ver, exts)
 	gles31 := gles && (ver[0] > 3 || (ver[0] == 3 && ver[1] >= 1))
 	b := &Backend{
@@ -1432,8 +1432,17 @@ func (t *timer) Duration() (time.Duration, bool) {
 }
 
 // floatTripleFor determines the best texture triple for floating point FBOs.
-func floatTripleFor(f *gl.Functions, ver [2]int, exts []string) (textureTriple, error) {
+func floatTripleFor(f *gl.Functions, ver [2]int, gles bool, exts []string) (textureTriple, error) {
 	var triples []textureTriple
+	// Clack patch 62: path coverage in 32-bit float where it can be
+	// blended into (desktop GL 3; GLES 3 with EXT_color_buffer_float and
+	// EXT_float_blend): a stencil pass sums each segment's coverage down
+	// to the path's bottom, and in half float the sums of a ring's many
+	// segments don't cancel, leaving a faint column under it (Karim's
+	// stray line, 2026-11-22)
+	if ver[0] >= 3 && (!gles || hasExtension(exts, "GL_EXT_color_buffer_float") && hasExtension(exts, "GL_EXT_float_blend")) {
+		triples = append(triples, textureTriple{gl.R32F, gl.Enum(gl.RED), gl.Enum(gl.FLOAT)})
+	}
 	if ver[0] >= 3 {
 		triples = append(triples, textureTriple{gl.R16F, gl.Enum(gl.RED), gl.Enum(gl.HALF_FLOAT)})
 	}

@@ -456,12 +456,8 @@ func (a *App) OpenCanvas(ctx context.Context, id string) error {
 	st.mu.Lock()
 	st.open[id]++
 	first := st.open[id] == 1
-	watch := !st.watching
-	st.watching = true
 	st.mu.Unlock()
-	if watch {
-		go a.watchCanvases()
-	}
+	a.ensureCanvasWatch()
 	if !first {
 		return nil
 	}
@@ -474,6 +470,7 @@ func (a *App) OpenCanvas(ctx context.Context, id string) error {
 		"last_updated": {strconv.FormatInt(time.Now().UnixMilli(), 10)}}, &r); err != nil {
 		return err
 	}
+	a.followCanvasModel(id) // Slack's backlog fetch after files.open (canvas_quip.go)
 	vs := map[string]bool{}
 	var ids []string
 	for _, v := range r.Viewers {
@@ -558,6 +555,7 @@ func (a *App) CloseCanvas(ctx context.Context, id string) error {
 	if !last {
 		return nil
 	}
+	a.dropCanvasModel(id)
 	return a.C.Call(ctx, "files.close", url.Values{"file_id": {id}}, nil)
 }
 
@@ -569,8 +567,21 @@ func (a *App) CanvasOpen(id string) bool {
 	return st.open[id] > 0
 }
 
+// ensureCanvasWatch starts watchCanvases once.
+func (a *App) ensureCanvasWatch() {
+	st := a.canvases()
+	st.mu.Lock()
+	watch := !st.watching
+	st.watching = true
+	st.mu.Unlock()
+	if watch {
+		go a.watchCanvases()
+	}
+}
+
 // watchCanvases turns realtime events about open canvases into "canvas"
-// events (ID = file id) for the views, which then refetch.
+// events (ID = file id) for the views, which then refetch, and has every
+// canvas model core holds fetch what a document_update says changed.
 func (a *App) watchCanvases() {
 	evs, cancel := a.SubscribeRaw()
 	defer cancel()
@@ -587,7 +598,14 @@ func (a *App) watchCanvases() {
 				a.canvasViewerEvent(ev)
 				continue
 			}
-			if id := canvasEventFile(ev); id != "" && a.CanvasOpen(id) {
+			id := canvasEventFile(ev)
+			if id == "" {
+				continue
+			}
+			if ev.Type == "document_update" {
+				a.followCanvasModel(id) // Slack's fetchThreadChanges (canvas_quip.go)
+			}
+			if a.CanvasOpen(id) {
 				a.canvasChanged(id)
 			}
 		}
