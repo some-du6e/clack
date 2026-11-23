@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"gioui.org/f32"
-	"gioui.org/io/clipboard"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -732,8 +731,7 @@ func (e *Editor) contextItems(w *spellMenuWait, sugg []string) []popups.MenuItem
 		popups.MenuItem{Label: "Copy", Key: "copy", Hint: shortcut.Format("Mod+C"), Disabled: !has, DoCtx: func(gtx layout.Context) { e.copySel(gtx) }},
 		popups.MenuItem{Label: "Paste", Key: "paste", Hint: shortcut.Format("Mod+V"), DoCtx: func(gtx layout.Context) {
 			e.plainPaste = false
-			e.richRead, e.filesRead = startClipHTML(), nil
-			gtx.Execute(clipboard.ReadCmd{Tag: e})
+			e.startPaste(gtx, false)
 			e.emit(EvPasted)
 		}},
 	)

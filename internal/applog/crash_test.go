@@ -1,11 +1,11 @@
 package applog
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +49,7 @@ func TestCrashReachesTheLog(t *testing.T) {
 	// the next run copies it into the log and starts crash.log afresh
 	// (this process's crash output then holds crash.log open: Windows can't
 	// remove an open file, so hand it back before TempDir's cleanup)
-	t.Cleanup(func() { debug.SetCrashOutput(nil, debug.CrashOptions{}) })
+	t.Cleanup(releaseCrashCapture)
 	l := start(dir, nil, io.Discard)
 	if err := l.captureCrashes("next run"); err != nil {
 		t.Fatal(err)
@@ -88,5 +88,28 @@ func TestPreviousCrashRedactedAndCleanRunSilent(t *testing.T) {
 	os.Remove(p)
 	if rec := previousCrash(p); rec != "" {
 		t.Errorf("no file imported %q", rec)
+	}
+}
+
+// A second Clack (a launch that hands its link to the running one, then
+// exits) used to start crash.log afresh under the running one: its crash
+// would land past the new end of the file, or be imported by the next
+// start of the second. While a run's capture holds crash.log, another
+// capture leaves it alone.
+func TestCrashFileHeldByTheRunningClack(t *testing.T) {
+	dir := t.TempDir()
+	t.Cleanup(releaseCrashCapture)
+	l := start(dir, nil, io.Discard)
+	closeForCleanup(t, l)
+	if err := l.captureCrashes("the running one"); err != nil {
+		t.Fatal(err)
+	}
+	second := start(dir, nil, io.Discard)
+	closeForCleanup(t, second)
+	if err := second.captureCrashes("a launch handing its link over"); !errors.Is(err, errCrashFileHeld) {
+		t.Fatalf("a second capture: %v, want errCrashFileHeld", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, CrashFileName)); string(b) != crashHeaderPrefix+" the running one\n" {
+		t.Errorf("crash.log after the second capture: %q", b)
 	}
 }

@@ -184,6 +184,11 @@ type Editor struct {
 	richRead   *clipRead     // HTML read started by Ctrl/Cmd+V
 	pendPaste  *pendingPaste // plain text waiting for richRead and filesRead
 	filesRead  *filePaste    // the composer's file probe for that paste
+	// snap is the paste's one read of the clipboard where the platform
+	// reads it at once (Windows: pasteSnap); snapText, its text still to
+	// come (it stands for Gio's clipboard.ReadCmd there)
+	snap     *pasteSnap
+	snapText bool
 
 	events  []EditorEvent
 	filters []event.Filter
@@ -1072,6 +1077,7 @@ func (e *Editor) Update(gtx layout.Context) (EditorEvent, bool) {
 	if ev, ok := e.pop(); ok {
 		return ev, true
 	}
+	e.flushSnap(gtx)
 	e.flushPaste(gtx)
 	e.processPointer(gtx)
 	if len(e.events) == 0 {

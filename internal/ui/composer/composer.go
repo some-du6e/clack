@@ -914,7 +914,11 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvPasted:
 			if c.field == nil { // Texty there has no onFilesSelected
 				// a paste whose files attach inserts no text (filePaste)
-				c.ed.filesRead = c.att.PasteClipboardImage()
+				if s := c.ed.snap; s != nil {
+					c.ed.filesRead = c.att.pasteFromSnap(s) // the paste's one read (Windows)
+				} else {
+					c.ed.filesRead = c.att.PasteClipboardImage()
+				}
 			}
 		case EvPasteLimit:
 			c.pasteLimitDialog(c.ed.RefusedPaste())

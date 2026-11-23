@@ -274,11 +274,7 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 	case "V":
 		// Shift: paste and match style (plain text), like Slack.
 		e.plainPaste = shift
-		e.richRead, e.filesRead = nil, nil
-		if !shift {
-			e.richRead = startClipHTML()
-		}
-		gtx.Execute(clipboard.ReadCmd{Tag: e})
+		e.startPaste(gtx, shift)
 		e.emit(EvPasted) // the composer sets filesRead
 	case "Z":
 		switch {

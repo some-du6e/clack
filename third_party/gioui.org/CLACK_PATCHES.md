@@ -3200,8 +3200,8 @@ and each ticker's wakeup on its cadence). Not in `UPSTREAM.patch`.
 ## 62. app/winclip: one clipboard session at a time (Windows)
 
 `app/winclip/winclip.go`, `app/winclip/winclip_windows.go` (new),
-`app/os_windows.go` (`readClipboard`, `writeClipboard`, `clipWait`),
-`app/internal/windows/windows.go` (`GlobalSize`).
+`app/os_windows.go` (`readClipboard`, `writeClipboard`, `clipWait`,
+`clipMaxText`).
 
 Karim, 2026-11-21 (Windows, alpha.113): a quote started in the composer,
 then Ctrl+V, and Clack was gone, twice, with nothing in clack.log or
@@ -3220,9 +3220,25 @@ freed the copy the other was reading.
 
 - `winclip.Session(ctx, owner, f)` is the process's one way to open the
   clipboard: a one-slot semaphore (taken before the open, given back
-  after the close), a locked OS thread, `OpenClipboard(owner)` retried for
-  up to half a second while another app holds it (`ErrBusy` after that or
-  when ctx ends), `f`, `CloseClipboard`. `f` copies out what it reads.
+  after the close), a locked OS thread, `OpenClipboard(owner)` tried as
+  Chromium's `ScopedClipboard::Acquire` tries it (5 times, 5 ms apart,
+  while another app holds it; `ErrBusy` after that or when ctx ends), `f`,
+  `CloseClipboard`. `f` copies out what it reads.
+- A format's data is read only by `winclip.CopyData(id, limit)`, in a
+  session: no data (`ErrNoData`) for a null handle, an empty block or one
+  that won't lock; `ErrNotMemory` for a format whose handle isn't global
+  memory (`CF_BITMAP`, `CF_PALETTE`, the metafiles, owner-drawn ones:
+  `GlobalSize` and `GlobalLock` are wrong on them); `ErrTooBig` past the
+  caller's limit; else the block's `GlobalSize` bytes, copied while it is
+  locked (`RtlMoveMemory`, no uintptr turned into a Go pointer) and never
+  past it. `winclip.Read(ctx, want)` is one session's snapshot: the
+  formats in the order the owner put them (at most 512, with their names
+  for registered ones) and a copy of each `want` gives a limit, parsed by
+  the caller after the close. Clack's composer reads a whole paste in one
+  `Read` (its text, rich text, files and picture: one copy's, however the
+  clipboard changes meanwhile). `winclip.UTF16Text` decodes
+  `CF_UNICODETEXT` as Chromium's `ReadText` does: `GlobalSize / 2` code
+  units up to the first NUL, an odd last byte dropped.
   Clack's readers and writers (`internal/ui/richclip`,
   `internal/ui/composer`'s HTML read and file probe, `internal/ui/clipimg`)
   all go through it, and richclip's `TestClipboardOpensAreSessions` fails
@@ -3232,10 +3248,9 @@ freed the copy the other was reading.
   session: a thread holding one may be sending this window a message (an
   `EmptyClipboard` sends `WM_DESTROYCLIPBOARD` to the owner Gio's copy
   made), which the window thread takes only back in its message loop. The
-  paste's text is copied out within the block's `GlobalSize` (up to its
-  first NUL, where `UTF16PtrToString` read on past an unterminated block),
-  and the `DataEvent` goes to the window after the clipboard closed, so no
-  other session waits on the app.
+  paste's text is `CopyData` (at most `clipMaxText`, 256 MB) and
+  `UTF16Text`, and the `DataEvent` goes to the window after the clipboard
+  closed, so no other session waits on the app.
 
 Composer's `TestWinClipboardReadersOneAtATime` (four readers at once for
 4 s on the real clipboard, in a child process) and ui's

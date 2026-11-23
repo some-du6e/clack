@@ -13,27 +13,24 @@ import (
 )
 
 var (
-	rcUser32                     = windows.NewLazySystemDLL("user32.dll")
-	rcKernel32                   = windows.NewLazySystemDLL("kernel32.dll")
-	rcEmptyClipboard             = rcUser32.NewProc("EmptyClipboard")
-	rcSetClipboardData           = rcUser32.NewProc("SetClipboardData")
-	rcGetClipboardData           = rcUser32.NewProc("GetClipboardData")
-	rcIsClipboardFormatAvailable = rcUser32.NewProc("IsClipboardFormatAvailable")
-	rcRegisterClipboardFormatW   = rcUser32.NewProc("RegisterClipboardFormatW")
-	rcGlobalAlloc                = rcKernel32.NewProc("GlobalAlloc")
-	rcGlobalFree                 = rcKernel32.NewProc("GlobalFree")
-	rcGlobalLock                 = rcKernel32.NewProc("GlobalLock")
-	rcGlobalUnlock               = rcKernel32.NewProc("GlobalUnlock")
-	rcGlobalSize                 = rcKernel32.NewProc("GlobalSize")
-	rcRtlMoveMemory              = rcKernel32.NewProc("RtlMoveMemory")
+	rcUser32                   = windows.NewLazySystemDLL("user32.dll")
+	rcKernel32                 = windows.NewLazySystemDLL("kernel32.dll")
+	rcEmptyClipboard           = rcUser32.NewProc("EmptyClipboard")
+	rcSetClipboardData         = rcUser32.NewProc("SetClipboardData")
+	rcRegisterClipboardFormatW = rcUser32.NewProc("RegisterClipboardFormatW")
+	rcGlobalAlloc              = rcKernel32.NewProc("GlobalAlloc")
+	rcGlobalFree               = rcKernel32.NewProc("GlobalFree")
+	rcGlobalLock               = rcKernel32.NewProc("GlobalLock")
+	rcGlobalUnlock             = rcKernel32.NewProc("GlobalUnlock")
+	rcRtlMoveMemory            = rcKernel32.NewProc("RtlMoveMemory")
 )
 
 const (
 	cfUnicodeText = 13
 	gmemMoveable  = 0x0002
 	// Chromium's names (clipboard_format_type_win.cc)
-	fmtHTML   = "HTML Format"
-	fmtCustom = "Chromium Web Custom MIME Data Format"
+	fmtHTML   = HTMLFormat
+	fmtCustom = CustomFormat
 )
 
 func supported() bool { return rcUser32.Load() == nil && rcKernel32.Load() == nil }
@@ -111,34 +108,33 @@ func readCustom(ctx context.Context) (map[string]string, error) {
 	if !supported() {
 		return nil, ErrUnsupported
 	}
-	f := register(fmtCustom)
-	if f == 0 {
-		return nil, nil
-	}
-	if ok, _, _ := rcIsClipboardFormatAvailable.Call(f); ok == 0 {
-		return nil, nil
-	}
-	var b []byte
-	err := winclip.Session(ctx, 0, func() error {
-		h, _, _ := rcGetClipboardData.Call(f)
-		if h == 0 {
-			return nil
+	snap, err := winclip.Read(ctx, func(f winclip.Format) int64 {
+		if f.Name == fmtCustom {
+			return maxCustom
 		}
-		n, _, _ := rcGlobalSize.Call(h)
-		if n == 0 || n > maxCustom {
-			return nil
-		}
-		p, _, _ := rcGlobalLock.Call(h)
-		if p == 0 {
-			return nil
-		}
-		defer rcGlobalUnlock.Call(h)
-		b = make([]byte, n)
-		rcRtlMoveMemory.Call(uintptr(unsafe.Pointer(&b[0])), p, n)
-		return nil
+		return 0
 	})
-	if err != nil || b == nil {
+	if err != nil {
 		return nil, err
 	}
-	return DecodeCustom(b)
+	return CustomFrom(snap), nil
+}
+
+// CustomFrom is the web custom data in a snapshot, nil when it has none or
+// it doesn't decode (a paste reads it with its other formats in one
+// session: composer).
+func CustomFrom(snap *winclip.Snapshot) map[string]string {
+	f, ok := snap.Named(fmtCustom)
+	if !ok {
+		return nil
+	}
+	b, ok := snap.Bytes(f.ID)
+	if !ok {
+		return nil
+	}
+	m, err := DecodeCustom(b)
+	if err != nil {
+		return nil
+	}
+	return m
 }

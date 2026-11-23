@@ -16,6 +16,7 @@ package applog
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -52,19 +53,44 @@ func (l *Logger) captureCrashes(header string) error {
 		return err
 	}
 	path := filepath.Join(l.dir, CrashFileName)
-	if rec := previousCrash(path); rec != "" {
-		_, _ = l.w.Write([]byte(rec))
-		l.w.Flush(2 * time.Second) // in clack.log before crash.log starts afresh
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	// this run's alone while it runs (another Clack's launch that hands its
+	// link over and exits mustn't start the file afresh under the running
+	// one's crash output)
+	f, err := openCrashFile(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close() // SetCrashOutput keeps its own duplicate of the descriptor
+	defer f.Close() // the runtime and the native capture keep their own duplicates
+	if rec := previousCrashFrom(f); rec != "" {
+		_, _ = l.w.Write([]byte(rec))
+		l.w.Flush(2 * time.Second) // in clack.log before crash.log starts afresh
+	}
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintf(f, "%s %s\n", crashHeaderPrefix, header); err != nil {
 		return err
 	}
+	// Windows: a fault outside Go code leaves its record too, and with no
+	// stderr fd 2 is this file (crash_windows.go); the runtime's crash
+	// output would then write each Go crash twice
+	if armNative(f, func() { l.w.Flush(time.Second) }) {
+		return nil
+	}
 	return debug.SetCrashOutput(f, debug.CrashOptions{})
+}
+
+// errCrashFileHeld: another running Clack's crash output is crash.log.
+var errCrashFileHeld = errors.New("another Clack running from this log folder holds " + CrashFileName)
+
+// releaseCrashCapture hands crash.log back (tests: Windows can't remove
+// an open file).
+func releaseCrashCapture() {
+	_ = debug.SetCrashOutput(nil, debug.CrashOptions{})
+	releaseNative()
 }
 
 const crashHeaderPrefix = "clack crash output:"
@@ -77,6 +103,12 @@ func previousCrash(path string) string {
 		return ""
 	}
 	defer f.Close()
+	return previousCrashFrom(f)
+}
+
+// previousCrashFrom is previousCrash for the open file f (read from its
+// current offset, the start).
+func previousCrashFrom(f *os.File) string {
 	b, err := io.ReadAll(io.LimitReader(f, maxCrashImport+1))
 	if err != nil {
 		return ""

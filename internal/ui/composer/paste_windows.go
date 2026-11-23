@@ -5,65 +5,37 @@ package composer
 import (
 	"context"
 	"errors"
-	"unsafe"
 
 	"gioui.org/app/winclip"
-	"golang.org/x/sys/windows"
+
+	"github.com/some-du6e/clack/internal/ui/richclip"
 )
 
 // Windows: Gio reads only CF_UNICODETEXT; the HTML is the registered
-// "HTML Format" (CF_HTML), read here with user32 directly, in a
-// winclip.Session like every open of the clipboard in the process (the
-// paste's file probe reads it at the same time: attach_windows.go).
-
-var (
-	pwUser32                     = windows.NewLazySystemDLL("user32.dll")
-	pwKernel32                   = windows.NewLazySystemDLL("kernel32.dll")
-	pwGetClipboardData           = pwUser32.NewProc("GetClipboardData")
-	pwIsClipboardFormatAvailable = pwUser32.NewProc("IsClipboardFormatAvailable")
-	pwRegisterClipboardFormatW   = pwUser32.NewProc("RegisterClipboardFormatW")
-	pwGlobalLock                 = pwKernel32.NewProc("GlobalLock")
-	pwGlobalUnlock               = pwKernel32.NewProc("GlobalUnlock")
-	pwGlobalSize                 = pwKernel32.NewProc("GlobalSize")
-	pwRtlMoveMemory              = pwKernel32.NewProc("RtlMoveMemory")
-)
+// "HTML Format" (CF_HTML). A paste reads it with its text, files and
+// picture in one session (paste_snap_windows.go); this is the read on its
+// own, one winclip.Read too.
 
 var errClipNoHTML = errors.New("no html on the clipboard")
 
-func clipHTMLSupported() bool { return pwUser32.Load() == nil && pwKernel32.Load() == nil }
+func clipHTMLSupported() bool { return true }
 
 func clipReadHTML(ctx context.Context) ([]byte, error) {
-	name, err := windows.UTF16PtrFromString("HTML Format")
-	if err != nil {
-		return nil, err
-	}
-	f, _, _ := pwRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
-	if f == 0 {
-		return nil, errClipNoHTML
-	}
-	if ok, _, _ := pwIsClipboardFormatAvailable.Call(f); ok == 0 {
-		return nil, errClipNoHTML
-	}
-	var b []byte
-	err = winclip.Session(ctx, 0, func() error {
-		h, _, _ := pwGetClipboardData.Call(f)
-		if h == 0 {
-			return errClipNoHTML
+	snap, err := winclip.Read(ctx, func(f winclip.Format) int64 {
+		if f.Name == richclip.HTMLFormat {
+			return phMaxHTML + 4096
 		}
-		n, _, _ := pwGlobalSize.Call(h)
-		if n == 0 || n > phMaxHTML+4096 {
-			return errClipNoHTML
-		}
-		p, _, _ := pwGlobalLock.Call(h)
-		if p == 0 {
-			return errClipNoHTML
-		}
-		defer pwGlobalUnlock.Call(h)
-		b = make([]byte, n)
-		pwRtlMoveMemory.Call(uintptr(unsafe.Pointer(&b[0])), p, n)
-		return nil
+		return 0
 	})
 	if err != nil {
+		return nil, errClipNoHTML
+	}
+	f, ok := snap.Named(richclip.HTMLFormat)
+	if !ok {
+		return nil, errClipNoHTML
+	}
+	b, ok := snap.Bytes(f.ID)
+	if !ok {
 		return nil, errClipNoHTML
 	}
 	return cfHTML(b), nil

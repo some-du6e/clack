@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 	"unicode"
-	"unicode/utf16"
 	"unicode/utf8"
 	"unsafe"
 
@@ -993,29 +992,22 @@ func (w *window) ReadClipboard() {
 // its message loop.
 const clipWait = 250 * time.Millisecond
 
+// clipMaxText caps a text paste's copy (256 MB: CF_UNICODETEXT has no
+// limit of its own).
+const clipMaxText = 256 << 20
+
 func (w *window) readClipboard() error {
 	var content string
 	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), clipWait)
 	defer cancel()
 	err := winclip.Session(ctx, uintptr(w.hwnd), func() error {
-		mem, err := windows.GetClipboardData(windows.CF_UNICODETEXT)
+		// the block's bytes, checked and copied out (winclip.CopyData), then
+		// decoded up to the first NUL (winclip.UTF16Text)
+		b, err := winclip.CopyData(windows.CF_UNICODETEXT, clipMaxText)
 		if err != nil {
 			return err
 		}
-		n := windows.GlobalSize(mem) / 2
-		ptr, err := windows.GlobalLock(mem)
-		if err != nil {
-			return err
-		}
-		defer windows.GlobalUnlock(mem)
-		u := unsafe.Slice((*uint16)(ptr), n)
-		for i, c := range u {
-			if c == 0 {
-				u = u[:i]
-				break
-			}
-		}
-		content = string(utf16.Decode(u))
+		content = winclip.UTF16Text(b)
 		return nil
 	})
 	if err != nil {
