@@ -954,7 +954,7 @@ func (a *App) Boot(ctx context.Context) error {
 	// so the first emoji picker draws the pack call to action from its
 	// first frame instead of moving its list down under the pointer when
 	// the pack read learns it (emoji_packs.go)
-	go a.LoadEmojiPermissions(a.bg)
+	// red: no boot read (ADD_CUSTOM_EMOJI learned only by the pack read)
 	// The warm boot's files from this session's fresh state, once
 	// startup's work is done, then with the metadata cache every 5
 	// minutes, and at Close.

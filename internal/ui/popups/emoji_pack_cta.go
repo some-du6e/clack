@@ -254,9 +254,9 @@ func (p *EmojiPicker) layoutPackCTA(gtx layout.Context, th *theme.Theme, cl *Col
 				end = tx + td.Size.X + th.Measure(gtx, 15, theme.Bold, " ") + dp(gtx, 15)
 			}
 			c.btn = image.Rect(dp(gtx, 12), lineY, min(end, gtx.Constraints.Max.X), lineY+dp(gtx, 22))
-			at(gtx, c.btn.Min, func(gtx layout.Context) layout.Dimensions {
+			at(gtx, image.Point{}, func(gtx layout.Context) layout.Dimensions { // red: the whole box, as on emoji-packs-2
 				g := gtx
-				g.Constraints = layout.Exact(c.btn.Size())
+				g.Constraints = layout.Exact(gtx.Constraints.Max)
 				return c.cta.Layout(g, func(gtx layout.Context) layout.Dimensions {
 					pointerCursor(gtx, gtx.Constraints.Min)
 					return layout.Dimensions{Size: gtx.Constraints.Min}
