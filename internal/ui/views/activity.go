@@ -183,11 +183,11 @@ type actRow struct {
 	menu    interface{ Dismissed() bool }
 	// clickLater is a click whose press came in the same frame, decided
 	// in the next (ControlledClick's marks are this frame's layout's)
-	clickLater bool
-	ctx        struct{} // the row's context-menu press target
-	d          actDesc
-	built      bool
-	gen        uint64 // i18n.Gen d was described in
+	clickLater, clickSplit bool
+	ctx                    struct{} // the row's context-menu press target
+	d                      actDesc
+	built                  bool
+	gen                    uint64 // i18n.Gen d was described in
 
 	// This frame's row context, read by the Slack boundaries
 	// (ActivityItem and its parts) through method expressions.
@@ -2303,14 +2303,17 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// marks the row read and doesn't open it (ControlledClick skips a
 	// BUTTON target)
 	onActions := v.agentActionsClicked(gtx, r)
-	late := r.clickLater
+	late, split := r.clickLater, v.splitClick()
+	if late {
+		split = r.clickSplit // the click's own frame's
+	}
 	r.clickLater = false
 	clicked := r.click.Clicked(gtx) && !onActions
 	if h := r.click.History(); clicked && len(h) > 0 && h[len(h)-1].Start.Equal(gtx.Now) {
 		// pressed and released in this frame: what took the press (a
 		// pill, a link) marks it as this frame lays the row out, so the
-		// click is decided in the next
-		r.clickLater, clicked = true, false
+		// click is decided in the next, with this frame's modifiers
+		r.clickLater, r.clickSplit, clicked = true, split, false
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	clicked = clicked || late
@@ -2329,7 +2332,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		// it); the list's focus moves to it
 		v.focusKey = key
 		switch {
-		case v.splitOpen(it, key): // a split modifier click (activity_split.go)
+		case v.splitOpenIf(split, it, key): // a split modifier click (activity_split.go)
 		case v.selOK && v.selKey == key:
 			v.selOK = false
 			v.closeSecondary()
