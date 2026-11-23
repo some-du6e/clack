@@ -604,6 +604,10 @@ type User struct {
 	Updated           int64   `json:"updated,omitempty"`
 	Profile           Profile `json:"profile"`
 	Presence          string  `json:"presence,omitempty"`
+	// ManualPresence is the viewer's own manual_presence ("away" when they
+	// set themselves away, "active"; computeManualPresence keeps it on the
+	// viewer's member only): maybeTickleMS sends no tickle while it's away.
+	ManualPresence string `json:"manual_presence,omitempty"`
 	// EnterpriseUser lists the Grid workspaces the user belongs to.
 	EnterpriseUser *EnterpriseUser `json:"enterprise_user,omitempty"`
 	// IsStranger: a Slack Connect user from an org the viewer shares no

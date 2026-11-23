@@ -20,6 +20,7 @@ import (
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/inputidle"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -191,6 +192,11 @@ func (b *backend) start(a *App) {
 	b.started = true
 	b.app = a
 	b.ctx, b.cancel = context.WithCancel(context.Background())
+	if !a.inert { // the viewer's activity to the socket (presence_activity.go)
+		a.tickler.Store(b.core)
+		inputidle.OnPress(a.presencePressed)
+		go presencePoll(b.ctx, b.core)
+	}
 	installMemberRead(b.core) // mentions ask for their members as they draw (lazy_users.go)
 	// the sidebar rules keep a closed DM with a huddle on: they read the
 	// huddle UI's rooms (huddle_wire.go sbHuddleSync rebuilds on a change)
@@ -440,6 +446,9 @@ func (b *backend) loadDrafts(a *App) {
 // writes the metadata cache. The channel closes when all of it is done.
 func (b *backend) stop() <-chan struct{} {
 	s, t := b.slick, b.taut
+	if b.app != nil {
+		b.app.tickler.CompareAndSwap(b.core, nil) // this session's: no tickles once it ends
+	}
 	b.detachTaut()
 	b.stopBlockkit()
 	uninstallMemberRead(b.core)

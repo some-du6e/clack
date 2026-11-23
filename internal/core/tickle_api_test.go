@@ -5,11 +5,15 @@ import (
 	"time"
 )
 
-// The red commit's stubs for the tickle's test seams: the code before them
-// sends no tickle and keeps no manual presence.
+// The tickle's test seams (tickle.go). The red commit replaces this file
+// with stubs: the test then runs on the code before them.
 
-func tickle(a *App, reason string) {}
+func tickle(a *App, reason string) { a.Tickle(reason) }
 
-func tickleThrottle(t *testing.T, d time.Duration) {}
+func tickleThrottle(t *testing.T, d time.Duration) { t.Cleanup(SetTickleEvery(d)) }
 
-func manualPresence(a *App) string { return "" }
+func manualPresence(a *App) string {
+	a.S.RLock()
+	defer a.S.RUnlock()
+	return a.S.Self.ManualPresence
+}

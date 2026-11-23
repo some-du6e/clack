@@ -29,6 +29,7 @@ import (
 	"gioui.org/x/explorer"
 
 	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
@@ -232,6 +233,9 @@ type App struct {
 
 	// hud, for the image cache's goroutines (imagesReady, huddle_wire.go)
 	hudLive atomic.Pointer[huddleui.Controller]
+	// tickler is the session's core for the presence tickles of any
+	// goroutine (presence_activity.go): backend.start sets it, stop clears it
+	tickler atomic.Pointer[core.App]
 	// soundQuiet is message_sound_debounce's timers, by thread or
 	// conversation (notify.go soundDebounced)
 	soundMu    sync.Mutex

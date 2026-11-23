@@ -154,6 +154,8 @@ func (a *App) handle(ev slack.Event) {
 		a.S.Unlock()
 		a.presenceArrived()
 		a.emit(Event{Type: "presence", Users: us, Presence: e.Presence})
+	case "manual_presence_change":
+		a.onManualPresence(ev.Raw) // tickle.go
 	case "user_change", "user_profile_changed":
 		var e struct {
 			User slack.User `json:"user"`

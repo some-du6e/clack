@@ -37,6 +37,10 @@ type RTM struct {
 	mu   sync.Mutex
 	conn *websocket.Conn
 	next atomic.Int64
+	// activityAt is the socket manager's lastSocketActivity: when a frame
+	// that counts as the viewer's activity last went out (activityFrames),
+	// on the monotonic clock since rtmEpoch, +1 (0: none yet)
+	activityAt atomic.Int64
 	// reconnectURL is the gateway's last reconnect_url and reconnectAt
 	// when it arrived (Slack's _fastReconnectUrl and
 	// _fastReconnectUrlReceivedAtTime)
@@ -639,8 +643,21 @@ func (r *RTM) errorFrame(data []byte, fast bool) error {
 	return errors.New("rtm: " + msg)
 }
 
-// Send writes a JSON frame (assigning an id if absent).
+// activityFrames are the frames the socket manager's send counts as the
+// viewer's activity (boot-render's Ls, updateLastSocketActivity: "the time
+// we last sent a message over the socket"), the clock maybeTickleMS reads.
+var activityFrames = map[string]bool{"tickle": true, "typing": true, "user_typing": true}
+
+// rtmEpoch is activityAt's zero.
+var rtmEpoch = time.Now()
+
+// Send writes a JSON frame (assigning an id if absent). A tickle, a
+// typing indicator and a user_typing move the activity clock first, as
+// the socket manager's send does, whether or not the write goes through.
 func (r *RTM) Send(v map[string]any) error {
+	if t, _ := v["type"].(string); activityFrames[t] {
+		r.activityAt.Store(int64(time.Since(rtmEpoch)) + 1)
+	}
 	r.mu.Lock()
 	conn := r.conn
 	r.mu.Unlock()
@@ -654,6 +671,23 @@ func (r *RTM) Send(v map[string]any) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return conn.Write(ctx, websocket.MessageText, b)
+}
+
+// ClaimActivity is maybeTickleMS's throttle: true when nothing that counts
+// as activity went out in the last every (lastSocketActivity), and then
+// the clock reads now, as the tickle about to go will make it; false
+// otherwise. Two callers at once can't both have it.
+func (r *RTM) ClaimActivity(every time.Duration) bool {
+	for {
+		last := r.activityAt.Load()
+		now := int64(time.Since(rtmEpoch)) + 1
+		if last != 0 && now-last < int64(every) {
+			return false
+		}
+		if r.activityAt.CompareAndSwap(last, now) {
+			return true
+		}
+	}
 }
 
 // Typing sends a typing indicator for a channel (optionally a thread).

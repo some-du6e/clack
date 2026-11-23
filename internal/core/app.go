@@ -108,6 +108,9 @@ type App struct {
 	// limit (pump_watch.go)
 	pumpOn, actOn atomic.Pointer[pumpTask]
 	pumpDumps     stackdump.Limiter
+	// tickleAgain is the reason of a tickle whose send failed, sent once
+	// more when the socket is back (tickle.go)
+	tickleAgain atomic.Pointer[string]
 	// startedAt is when the session began (Slack's start_ms): an @here
 	// from before it doesn't badge (badge_rules.go)
 	startedAt time.Time
@@ -248,6 +251,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		if up {
 			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
 			go a.refreshCountsAfterGap(a.bg)           // what the socket missed (codechannel_close.go)
+			a.retryTickle()                            // a tickle that failed with the socket down (tickle.go)
 		}
 	}
 	a.RTM.OnHello = a.onHello
