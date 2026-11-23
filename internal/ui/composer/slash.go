@@ -62,7 +62,7 @@ func parseSlashArgs(q qDelta) slashArgs {
 // JavaScript's \s).
 func slashTokens(q qDelta) []core.CommandParam {
 	var out []core.CommandParam
-	for _, op := range q.ops {
+	for _, op := range qMergeMentions(q.ops) {
 		switch op.k {
 		case qEmb:
 			if op.emb != nil && op.emb.atom != nil && op.emb.atom.Kind == AtomEmoji {
@@ -79,6 +79,42 @@ func slashTokens(q qDelta) []core.CommandParam {
 		}
 	}
 	return out
+}
+
+// qMergeMentions joins neighbouring ops of one mention (the same id,
+// label and formats): Quill holds equal neighbours as one op ("@a@a"), so
+// convertDeltaToSlashCommandParams reads two chips in a row as one token.
+func qMergeMentions(ops []qOp) []qOp {
+	var out []qOp
+	for _, op := range ops {
+		if n := len(out); n > 0 && qSameMention(out[n-1], op) {
+			m := out[n-1]
+			m.text = append(append([]rune(nil), m.text...), op.text...)
+			out[n-1] = m
+			continue
+		}
+		out = append(out, op)
+	}
+	return out
+}
+
+// qSameMention: a and b are mention ops Quill's attributes would call
+// equal.
+func qSameMention(a, b qOp) bool {
+	if a.k != qIns || b.k != qIns || len(a.attrs) != len(b.attrs) {
+		return false
+	}
+	ra, ok := a.attrs["slackmention"].(qAtomRef)
+	rb, ok2 := b.attrs["slackmention"].(qAtomRef)
+	if !ok || !ok2 || ra.a == nil || rb.a == nil || ra.a.Kind != rb.a.Kind || ra.a.ID != rb.a.ID || ra.a.Text != rb.a.Text {
+		return false
+	}
+	for k, v := range a.attrs {
+		if w, ok := b.attrs[k]; k != "slackmention" && (!ok || w != v) {
+			return false
+		}
+	}
+	return true
 }
 
 // qMentionID is getMentionOpIdText for a mention op (Slack's slackmention

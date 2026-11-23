@@ -741,7 +741,7 @@ func (a *App) SetDND(ctx context.Context, minutes int) error {
 // opens shows here).
 func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error) {
 	cmd := o.Command
-	if !strings.HasPrefix(cmd, "/") {
+	if !strings.HasPrefix(cmd, "/") && !strings.HasPrefix(cmd, "\uff0f") { // a full-width slash stays (executeCommand's N)
 		cmd = "/" + cmd
 	}
 	// executeCommand's local commands (Zrd3 getCommands, slash-commands-
