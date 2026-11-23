@@ -5237,6 +5237,48 @@ jobs:
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
   # in its needs (.github/scripts/expect_fail_wire.py adds it).
+  # fling-22px: TestFlingScrollNoGapsCompact/history failed 3 times the same
+  # way (an idle frame moved the first row on screen 22 px, one Compact
+  # line: files-filters-3 44980164338, bk-modal-spacing 45090826439,
+  # upload-filetype-2 45103177353), reruns green. COUNT runs each on an
+  # idle runner, under 4 busy loops and under -race; a failed run prints
+  # every visible row before and after the frame (scroll_gaps_test.go
+  # logMove).
+  fling-22px:
+    if: ${{ !inputs.only || startsWith('fling-22px', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the Compact fling's history case, an idle runner
+        env:
+          REPRO: "1" # the diagnostics phase: a reproduced move alone keeps the job green
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" idle
+      - name: the same under 4 busy loops
+        if: ${{ !cancelled() }}
+        env:
+          REPRO: "1"
+          BURN: "4"
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" burn
+      - name: the same under -race
+        if: ${{ !cancelled() }}
+        env:
+          REPRO: "1"
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/fling-22px.sh" race -race
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   expect-fail:
     needs:
       - go
@@ -5353,6 +5395,7 @@ jobs:
       - fl1122c-s-displays
       - library-dupes
       - rx-bar
+      - fling-22px
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
