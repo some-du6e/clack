@@ -264,7 +264,7 @@ func checkColors(t *testing.T, samples []sample) {
 // each of the second's colour. A second the test's own draws stepped
 // over doesn't count: one stall, a gap between two draws of 300 ms or
 // more and 8 times the run's usual gap (its median), where the window
-// lies, that leaves less of the window than 3 usual gaps (on a loaded
+// lies, that leaves less of the window than 3 usual gaps or 100 ms (on a loaded
 // runner one draw took longer than the second's 400 ms window:
 // directories-usergroups-2's push ci 44999661783, 129 draws and second 2
 // none; the gap can begin or end inside the window too, TestAVFSilent's 2
@@ -293,9 +293,11 @@ func colorReport(samples []sample) (errs, logs []string) {
 				continue
 			}
 			// what of the window the stall leaves: fewer draws than 3
-			// usual gaps would fit
+			// usual gaps would fit, or under 100 ms (a runner still slow
+			// for a few draws after its stall: 2 draws 60 ms apart, the
+			// flakes-1122d review)
 			left := (w[1] - w[0]) - (min(b.at, w[1]) - max(a.at, w[0]))
-			if usual > 0 && left < 3*usual {
+			if usual > 0 && left < max(3*usual, 100*time.Millisecond) {
 				return gap, true
 			}
 		}
@@ -405,6 +407,12 @@ func TestColorReportStalls(t *testing.T) {
 			return w >= 290*time.Millisecond && w <= 700*time.Millisecond && w != 495*time.Millisecond
 		}, nil), false},
 		{"two draws, then a stall to past the window (TestAVFSilent's)", play(between(320*time.Millisecond, 720*time.Millisecond), nil), true},
+		{"a stall, then draws still slow for a while (60 ms apart)", play(func(w time.Duration) bool {
+			// every 15 ms to 285, a stall to 615, then 675 and 735: the
+			// window holds 615 and 675, and the stall leaves it 85 ms
+			return w > 285*time.Millisecond && w < 615*time.Millisecond ||
+				w > 615*time.Millisecond && w < 735*time.Millisecond && w != 675*time.Millisecond
+		}, nil), true},
 		{"a steady 350 ms between draws, all along", cadence(350 * time.Millisecond), false},
 		{"a steady 300 ms between draws, all along", cadence(300 * time.Millisecond), false},
 		{"a stall that leaves most of the window undrawn", play(func(w time.Duration) bool {
