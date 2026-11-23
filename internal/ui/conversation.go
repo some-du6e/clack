@@ -147,7 +147,6 @@ type convo struct {
 	edit     composerView // Up-to-edit / "Edit message" composer, replaces comp
 	org      originTracker
 	compH    int
-	fitH     int             // thread content height the composer was placed under (0: bottom)
 	compRect image.Rectangle // window coords (emoji picker anchor)
 	jp       *joinPane       // the join pane / archived bar in place of the composer (joinpane.go)
 	banner   *joinBanner     // the channel join banner over the composer (joinbanner.go)
@@ -166,6 +165,57 @@ type convo struct {
 	// row is mounted). The pass that first draws it again gives it a
 	// pending focusInput's focus (thread_focus_input.go).
 	inputShown bool
+	// place is where each layout of the convo in the last frame put its
+	// box, by the order of the frame's layouts (placeAt, placeN): a convo
+	// two containers draw in one frame (the side pane and Activity's
+	// persistent detail panel showing the same thread, ThreadPane) guesses
+	// each layout's place from that layout's last, where one place shared
+	// had each see the other's and ask for another frame, every frame
+	place   [2]boxPlace
+	placeAt time.Time
+	placeN  int
+	// edits is the user's edits to editsOf, the composer drawn here, as
+	// last seen
+	editsOf composerView
+	edits   uint64
+}
+
+// boxPlace is where one layout of a convo drew its composer or footer.
+// A thread's reply box is its list's last row (threadInputRow): inputY
+// is where the box went (the row's top, the pane's bottom with the row
+// out of view), inputYOK that it did, and inputVis that the box was
+// wholly in the list's view. fitH is a thread that fits the pane with its
+// box or footer: the box's top under it (0: it doesn't).
+type boxPlace struct {
+	inputY             int
+	inputYOK, inputVis bool
+	fitH               int
+}
+
+// fitHeight is the last layout's fitH (tests).
+func (c *convo) fitHeight() int { return c.place[c.placeN].fitH }
+
+// boxPlaceFor is this layout's boxPlace: the frame's first layout of c
+// gets the first, a second one in the same frame the next.
+func (c *convo) boxPlaceFor(now time.Time) *boxPlace {
+	switch {
+	case now.IsZero() || !now.Equal(c.placeAt):
+		c.placeAt, c.placeN = now, 0
+	case c.placeN < len(c.place)-1:
+		c.placeN++
+	}
+	return &c.place[c.placeN]
+}
+
+// threadInputRow is a thread list whose last row is the reply box
+// (messages.ThreadView: Slack's getThreadRowsAndKeys "input" row): the
+// composer lays out first, the row takes its height, and the composer is
+// drawn where the list put the row.
+type threadInputRow interface {
+	SetInputRow(bool)
+	SetInputHeight(int)
+	InputRow() (y int, ok bool, list image.Rectangle)
+	ScrollToBottom()
 }
 
 func (a *App) convoFor(ch, ts string) *convo {
@@ -225,19 +275,29 @@ func (a *App) attachComposer(c *convo) {
 // widget's window origin when known from layout (primary panel), used until
 // the origin tracker has seen the pointer.
 //
-// The composer (or the footer in its place) lays out first, and the list
-// gets the height it leaves. Slack top-aligns a short thread, its reply box
-// right under the last reply instead of at the pane's bottom: where that is
-// is known once the list has laid out in this frame, so the box goes there
-// after the list, which is clipped to the thread it drew. Every decision
-// is this frame's: a decision from the last frame's list left a thread's
-// reply box out of the frame that drew its replies, and with nothing else
-// to draw, the window drew no other frame until some input came.
+// The composer (or the footer in its place) lays out first. A channel's
+// list gets the height it leaves. A thread's reply box is the thread
+// list's last row, as Slack's is (getThreadRowsAndKeys' "input"): the row
+// takes the box's height, the list the whole pane, and the box goes where
+// the list put the row once it has laid out in this frame (placeInputRow),
+// so a short thread has it right under its last reply and a long one has
+// it at its end, scrolled with the replies. Every decision is this
+// frame's: a decision from the last frame's list left a thread's reply box
+// out of the frame that drew its replies, and with nothing else to draw,
+// the window drew no other frame until some input came.
 func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	origin := c.org.get(fallback)
 	c.org.track(gtx, a)
+	pl := c.boxPlaceFor(gtx.Now) // this layout's place: its last frame's guess
 
+	// a thread's reply box is its list's last row unless a footer stands
+	// in its place: the list hears which before it builds its rows
+	foot := a.footerFor(c)
+	ir, _ := c.list.(threadInputRow)
+	if ir != nil {
+		ir.SetInputRow(c.ts != "" && foot == footNone)
+	}
 	// the list's copy of the conversation for this frame, the one it then
 	// draws (messages.ThreadView.Prepare): the reply box goes with it
 	if p, ok := c.list.(interface{ Prepare(layout.Context) }); ok {
@@ -264,12 +324,14 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	// popups, rects): where the last frame put it; the list says where it
 	// goes in this frame
 	guess := sz.Y - c.compH
-	if c.fitH > 0 {
-		guess = c.fitH
+	switch {
+	case pl.inputYOK:
+		guess = pl.inputY // a thread's reply box: where its row was
+	case pl.fitH > 0:
+		guess = pl.fitH // a thread that fits over its footer (or box): right under it
 	}
 	compH, mx, bannerH := 0, 0, 0
 	var call op.CallOp
-	foot := a.footerFor(c)
 	if foot != footPending && c.focusKnown {
 		// the navigation's focus, held while membership was unknown
 		// (focusAfterNavigate): MessagePaneInput's onFocusTransition once
@@ -372,14 +434,57 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			a.Invalidate()
 		}
 	}
+	// a thread's reply box is its list's last row (Slack's "input" row):
+	// the row takes the box's height, the list the whole pane, and the
+	// box goes where the list puts the row. A footer in its place stays
+	// under the list.
+	inList := ir != nil && c.ts != "" && foot == footNone
+	if ir != nil {
+		h := 0
+		if inList && comp != nil {
+			h = compH
+		}
+		ir.SetInputHeight(h)
+	}
+	if inList && comp != nil {
+		// typing (or pasting) into a box scrolled out of the list's view
+		// brings it in, as Chromium scrolls a focused editor's caret into
+		// view after an edit; the box's own focus doesn't (Slack's texty
+		// focuses with preventScroll)
+		if ed, ok := comp.(interface{ Edits() uint64 }); ok {
+			n := ed.Edits()
+			if c.editsOf == comp && n != c.edits && !pl.inputVis {
+				ir.ScrollToBottom()
+			}
+			c.editsOf, c.edits = comp, n
+		}
+	}
 	// the list in what the composer leaves
 	availH := sz.Y - compH
+	if inList {
+		availH = sz.Y
+	}
 	if s, ok := c.list.(originSetter); ok {
 		s.SetOrigin(origin)
 	}
 	lm := op.Record(gtx.Ops)
 	atExact(gtx, image.Point{}, image.Pt(sz.X, availH), c.list.Layout)
 	lcall := lm.Stop()
+	if inList {
+		cl := clip.Rect{Max: image.Pt(sz.X, availH)}.Push(gtx.Ops)
+		lcall.Add(gtx.Ops)
+		cl.Pop()
+		if a.placeInputRow(gtx, c, pl, ir, comp, call, guess, mx, compH, origin, sz, hc) {
+			// it laid out where it wasn't (the thread loaded, scrolled,
+			// grew or shrank, the box's height changed), or it shows now:
+			// again, so what it anchors in window coordinates is where it is
+			a.Invalidate()
+		}
+		a.dropZone(c, image.Rectangle{Min: origin, Max: origin.Add(sz)}, foot)
+		a.layoutDropOverlay(gtx, c, sz)
+		return layout.Dimensions{Size: sz}
+	}
+	pl.inputYOK, pl.inputVis = false, false
 	// a thread that fits over its box ends where the list drew its last
 	// reply in this frame (messages.ThreadView.ContentHeight): the list is
 	// clipped there and the box goes under it
@@ -389,7 +494,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			fit = h
 		}
 	}
-	c.fitH = fit
+	pl.fitH = fit
 	listH := availH
 	if fit > 0 {
 		listH = fit
@@ -427,6 +532,54 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	a.dropZone(c, image.Rectangle{Min: origin, Max: origin.Add(sz)}, foot)
 	a.layoutDropOverlay(gtx, c, sz)
 	return layout.Dimensions{Size: sz}
+}
+
+// placeInputRow draws a thread's reply box (call: comp laid out compH tall
+// at guess) where its list put the "input" row this pass, clipped to the
+// list's view: right under the last reply at the thread's end, below the
+// view (clipped away, still laid out, so its focus and draft stay: Slack
+// keeps the row mounted) when the reader scrolled up. What the box
+// anchors in window coordinates (its popups, its rects) laid out at guess:
+// it reports whether the box needs the next pass, laid out where the row
+// is (or the box shows now, its list changed under the decision).
+func (a *App) placeInputRow(gtx layout.Context, c *convo, pl *boxPlace, ir threadInputRow, comp composerView, call op.CallOp, guess, mx, compH int,
+	origin, sz image.Point, hc interface{ HidesComposer() bool }) bool {
+	pl.fitH = 0
+	if comp == nil {
+		c.compRect = image.Rectangle{}
+		pl.inputYOK, pl.inputVis = false, false
+		return c.comp != nil && hc != nil && !hc.HidesComposer()
+	}
+	y, ok, lr := ir.InputRow()
+	view := image.Rect(0, 0, sz.X, sz.Y)
+	if ok {
+		view = lr.Intersect(view)
+	} else {
+		y = sz.Y - compH // no row this pass (the list changed under the decision): the pane's bottom
+	}
+	if ch, ok := c.list.(interface{ ContentHeight() int }); ok && ch.ContentHeight() > 0 {
+		pl.fitH = y // the thread and its box fit the pane: the box right under the thread
+	}
+	comp.SetOrigin(origin.Add(image.Pt(mx, y))) // BoxRect, popups
+	top := origin.Add(image.Pt(0, y))
+	c.compRect = image.Rectangle{Min: top, Max: top.Add(image.Pt(sz.X, compH))}
+	cl := clip.Rect(view).Push(gtx.Ops)
+	t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+	cl.Pop()
+	pl.inputY, pl.inputYOK = y, true
+	pl.inputVis = y >= view.Min.Y && y+compH <= view.Max.Y
+	if !pl.inputVis {
+		// the autocomplete open over a box the list's view no longer
+		// shows whole closes, as Escape does (until its token changes):
+		// its list is drawn deferred, unclipped, and would float over the
+		// replies; typing brings the box back and opens it again
+		if p, ok := comp.(interface{ DismissPopup() }); ok {
+			p.DismissPopup()
+		}
+	}
+	return y != guess
 }
 
 // editLast opens the edit composer on the viewer's newest message (Up in

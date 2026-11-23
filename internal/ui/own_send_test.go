@@ -11,7 +11,6 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
-	"image"
 	"strconv"
 	"testing"
 	"time"
@@ -186,8 +185,11 @@ func TestOwnReplyJumpsToTheEnd(t *testing.T) {
 		t.Fatal("the 40-reply thread you don't follow opened with its newest reply on screen")
 	}
 	c := e.a.convoFor(ch, root)
-	box := replyBoxRect(c)
-	e.click(box.Min.Add(image.Pt(60, box.Dy()/2)))
+	// the reply box is the thread list's last row, out of view with the
+	// thread at its root: it takes the focus as the reply bar's open gives
+	// it (focusInput), and typing brings it into view
+	c.comp.Focus()
+	e.frame()
 	e.frame()
 	const text = "a reply from the reply box"
 	e.typeText(text)
@@ -204,7 +206,7 @@ func TestOwnReplyJumpsToTheEnd(t *testing.T) {
 	})
 	e.settle(300 * time.Millisecond)
 	bottom, ok := tv.NewestRowBottom()
-	box = replyBoxRect(c)
+	box := replyBoxRect(c)
 	if !ok || box.Min.Y-bottom != slackThreadGap {
 		t.Errorf("the reply ends at %d (on screen %v), %d px over the reply box, want %d", bottom, ok, box.Min.Y-bottom, slackThreadGap)
 	}
