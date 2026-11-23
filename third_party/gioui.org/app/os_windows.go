@@ -45,6 +45,12 @@ type window struct {
 	hdc  syscall.Handle
 	w    *callbacks
 
+	// pastes are text pastes read off the window thread (readClipboard),
+	// waiting for _WM_CLACK_PASTE to deliver them (Clack patch,
+	// CLACK_PATCHES.md §65)
+	pasteMu sync.Mutex
+	pastes  []string
+
 	// cursorIn tracks whether the cursor was inside the window according
 	// to the most recent WM_SETCURSOR.
 	cursorIn bool
@@ -76,6 +82,10 @@ type window struct {
 }
 
 const _WM_WAKEUP = windows.WM_USER + iota
+
+// _WM_CLACK_PASTE delivers a paste read off the window thread (Clack
+// patch, CLACK_PATCHES.md §65).
+const _WM_CLACK_PASTE = windows.WM_USER + 0x61
 
 const copyDataURLType = 0xffffff00
 
@@ -525,6 +535,15 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 		if w.hiddenTitle() { // Clack patch (CLACK_PATCHES.md §22)
 			w.hiddenTitleLeave(w.mousePID)
 		}
+	case _WM_CLACK_PASTE:
+		w.pasteMu.Lock()
+		ps := w.pastes
+		w.pastes = nil
+		w.pasteMu.Unlock()
+		for _, c := range ps {
+			w.processDataEvent(c)
+		}
+		return 0
 	case _WM_CLACK_FRAME:
 		if w.hiddenTitle() { // Clack patch (CLACK_PATCHES.md §22)
 			w.refreshFrame()
@@ -983,38 +1002,66 @@ func (w *window) ReadClipboard() {
 }
 
 // Clack patch (CLACK_PATCHES.md §65): the window's clipboard sessions are
-// the process's (winclip.Session), one at a time, and the text is copied
-// out, bounded by its block, before the clipboard closes; the paste goes
-// to the window only after it closed. clipWait bounds the window thread's
-// wait for another session: a thread holding one may be sending this
-// window a message (an EmptyClipboard's WM_DESTROYCLIPBOARD to the owner
-// Gio's copy made), which the window thread takes only once it is back in
-// its message loop.
-const clipWait = 250 * time.Millisecond
+// the process's (winclip.Session), one at a time, and run off the window
+// thread, one after another in the order they were asked for (clipWork: a
+// copy then a paste in one frame pastes the copy). The window thread
+// waited for another session before, up to 250 ms, and a thread holding
+// one may be sending this window a message (an EmptyClipboard's
+// WM_DESTROYCLIPBOARD to the owner Gio's copy made), which the window
+// thread takes only back in its message loop. The paste's text is copied
+// out (winclip.CopyData, at most clipMaxText) and decoded
+// (winclip.UTF16Text), and its DataEvent goes to the window after the
+// clipboard closed. A session another app kept from opening is reported
+// (winclip.ReportBusy): Clack says the copy or paste didn't happen.
+const clipWait = 2 * time.Second
 
 // clipMaxText caps a text paste's copy (256 MB: CF_UNICODETEXT has no
 // limit of its own).
 const clipMaxText = 256 << 20
 
-func (w *window) readClipboard() error {
-	var content string
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), clipWait)
-	defer cancel()
-	err := winclip.Session(ctx, uintptr(w.hwnd), func() error {
-		// the block's bytes, checked and copied out (winclip.CopyData), then
-		// decoded up to the first NUL (winclip.UTF16Text)
-		b, err := winclip.CopyData(windows.CF_UNICODETEXT, clipMaxText)
-		if err != nil {
-			return err
-		}
-		content = winclip.UTF16Text(b)
-		return nil
+// clipWork runs the windows' clipboard sessions one after another, off
+// their threads.
+var clipWork = struct {
+	once sync.Once
+	q    chan func()
+}{q: make(chan func(), 64)}
+
+func clipDo(f func()) {
+	clipWork.once.Do(func() {
+		go func() {
+			for f := range clipWork.q {
+				f()
+			}
+		}()
 	})
-	if err != nil {
-		content = ""
-	}
-	w.processDataEvent(content)
-	return err
+	clipWork.q <- f
+}
+
+func (w *window) readClipboard() error {
+	hwnd := w.hwnd
+	clipDo(func() {
+		var content string
+		ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), clipWait)
+		defer cancel()
+		err := winclip.Session(ctx, uintptr(hwnd), func() error {
+			b, err := winclip.CopyData(windows.CF_UNICODETEXT, clipMaxText)
+			if err != nil {
+				return err
+			}
+			content = winclip.UTF16Text(b)
+			return nil
+		})
+		if errors.Is(err, winclip.ErrBusy) {
+			winclip.ReportBusy(false)
+		}
+		// to the window that asked, on its thread; a window gone since
+		// drops it (PostMessage fails)
+		w.pasteMu.Lock()
+		w.pastes = append(w.pastes, content)
+		w.pasteMu.Unlock()
+		_ = windows.PostMessage(hwnd, _WM_CLACK_PASTE, 0, 0)
+	})
+	return nil
 }
 
 func (w *window) processDataEvent(content string) {
@@ -1183,31 +1230,38 @@ func (w *window) writeClipboard(s string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), clipWait)
-	defer cancel()
-	return winclip.Session(ctx, uintptr(w.hwnd), func() error {
-		if err := windows.EmptyClipboard(); err != nil {
-			return err
+	hwnd := w.hwnd
+	clipDo(func() {
+		ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), clipWait)
+		defer cancel()
+		err := winclip.Session(ctx, uintptr(hwnd), func() error {
+			if err := windows.EmptyClipboard(); err != nil {
+				return err
+			}
+			n := len(u16) * int(unsafe.Sizeof(u16[0]))
+			mem, err := windows.GlobalAlloc(n)
+			if err != nil {
+				return err
+			}
+			ptr, err := windows.GlobalLock(mem)
+			if err != nil {
+				windows.GlobalFree(mem)
+				return err
+			}
+			u16v := unsafe.Slice((*uint16)(ptr), len(u16))
+			copy(u16v, u16)
+			windows.GlobalUnlock(mem)
+			if err := windows.SetClipboardData(windows.CF_UNICODETEXT, mem); err != nil {
+				windows.GlobalFree(mem)
+				return err
+			}
+			return nil
+		})
+		if errors.Is(err, winclip.ErrBusy) {
+			winclip.ReportBusy(true)
 		}
-		n := len(u16) * int(unsafe.Sizeof(u16[0]))
-		mem, err := windows.GlobalAlloc(n)
-		if err != nil {
-			return err
-		}
-		ptr, err := windows.GlobalLock(mem)
-		if err != nil {
-			windows.GlobalFree(mem)
-			return err
-		}
-		u16v := unsafe.Slice((*uint16)(ptr), len(u16))
-		copy(u16v, u16)
-		windows.GlobalUnlock(mem)
-		if err := windows.SetClipboardData(windows.CF_UNICODETEXT, mem); err != nil {
-			windows.GlobalFree(mem)
-			return err
-		}
-		return nil
 	})
+	return nil
 }
 
 func (w *window) SetCursor(cursor pointer.Cursor) {

@@ -98,3 +98,15 @@ func UTF16Text(b []byte) string {
 	}
 	return string(utf16.Decode(u))
 }
+
+// OnBusy, when set, hears of a window's copy or paste (Gio's own) that
+// failed because another app kept the clipboard open (write: a copy). It
+// runs on its own goroutine. Clack shows a toast: the copy didn't happen.
+var OnBusy func(write bool)
+
+// ReportBusy calls OnBusy.
+func ReportBusy(write bool) {
+	if f := OnBusy; f != nil {
+		go f(write)
+	}
+}
