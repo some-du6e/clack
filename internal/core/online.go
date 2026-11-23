@@ -173,6 +173,9 @@ func (a *App) setClientOnline(on bool) {
 	o.mu.Unlock()
 	if was != on {
 		a.emit(Event{Type: "client_online", Connected: on})
+		if on {
+			a.refetchOnline() // what failed while offline is asked for again
+		}
 	}
 }
 
