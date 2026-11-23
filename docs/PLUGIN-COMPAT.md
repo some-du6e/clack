@@ -4,12 +4,12 @@ Clack runs Taut's and Slick's plugins natively, from the published plugin Librar
 
 | | Plugins |
 |---|---:|
-| ✅ Works fully | 72 |
+| ✅ Works fully | 73 |
 | ⚠️ Partly works | 16 |
-| ❌ Doesn't work yet | 10 |
+| ❌ Doesn't work yet | 9 |
 
 A plugin both systems ship (under the same name or not) is one row in Preferences › Plugins › Browse; here each version has its own line.
-Compatibility follows the newest Clack release. Each row comes from `internal/pluginlib/compat.go`, which `TestCompatMatchesDocs` keeps in step with the per-system pages, [PLUGINS-live-taut.md](PLUGINS-live-taut.md) and [PLUGINS-live-slick.md](PLUGINS-live-slick.md); `tools/compatdoc/compatdoc.py` writes this page from it and the Library's index, and `TestCompatDocInStep` keeps the two in step.
+Compatibility follows the newest Clack release. Each row comes from `internal/pluginlib/compat.go`, which `TestCompatMatchesDocs` keeps in step with the per-system pages, [PLUGINS-live-taut.md](PLUGINS-live-taut.md) and [PLUGINS-live-slick.md](PLUGINS-live-slick.md). `go test ./internal/pluginlib -run TestCompatDocInStep -update` writes this page from it and the Library's index (`tools/compatdoc/index.json`), and the test fails while the page is out of step.
 
 ## ❌ Doesn't work yet
 
@@ -22,7 +22,6 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Custom Fonts | Slick | Use any installed system font or upload your own font file. | Clack can't load web fonts |
 | Custom Name Recording | Taut | Uploads an audio file as your name recording, instead of recording one | can't decode audio |
 | Custom Sounds | Slick | Override Slack notification sounds with your own audio file. | plugins can't play sounds in Clack |
-| Online Count | Slick | Show how many of a channel's members are online, next to its member count | needs Slack's presence query |
 | Quiet Spotify | Slick | Customize the volume of Spotify embeds so they are not stupidly loud | Clack has no Spotify players to quiet |
 | Slick MCP | Slick | Connect local AI agents to Slack with search, messaging, and desktop controls. | its MCP server needs Node's http module |
 
@@ -100,6 +99,7 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Office Hours | Slick | Set schedules for out-of-office and invisible status |
 | Office Hours | Taut | Sets you out of office or away on a weekly schedule |
 | Oneko | Taut | Adds a cute cat that chases your cursor, based on <https://github.com/adryd325/oneko.js\|oneko.js> |
+| Online Count | Slick | Show how many of a channel's members are online, next to its member count |
 | Owl Mode | Taut | Lets you reply and react anonymously as the author of your owl confessions |
 | Quick Join | Slick | Join channels straight from a link to them, without opening each one first |
 | Quick Join | Taut | Adds "Join channel" to the right-click menu of channels you're not in |

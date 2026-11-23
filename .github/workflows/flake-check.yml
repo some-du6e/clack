@@ -2903,39 +2903,6 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
-  # composer-link-edit (2026-11-22): the composer's link editing, Slack's
-  # (LinkContextMenu, SlugContextMenu, ComposerEditLinkPopover,
-  # ComposerLinkModal), through the real composer over fakeslack, and the
-  # URL helpers against Slack's own answers. Dispatch with
-  # only=composer-link-edit -f count=3.
-  composer-link-edit:
-    if: ${{ !inputs.only || startsWith('composer-link-edit', inputs.only) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: ./.github/actions/expect-fail
-        with:
-          tests: ${{ inputs.expect_fail }}
-          leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "link editing, COUNT runs"
-        run: |
-          set +e
-          rc=0
-          go test -count=$COUNT -v -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkShortcutOnSelection|TestLinkPasteOverSelection|TestLinkSlugRenameSends|TestLinkRenameDraftRoundTrip|TestLinkRenameInMessageEdit|TestLinkURLSlackOracle|TestLinkDialog\w*|TestLinkRemoveStaysUnlinked|TestNormalizeURL|TestW10LinkDialogRichText|TestLinkDialogFocusAfterMeasurePass|TestSetLink|TestEditComposerLinkSlug|TestLinkSlugPasteSendsTruncatedLink)$' ./internal/ui/composer || rc=1
-          go test -race -count=1 -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkSlugRenameSends|TestLinkDialogFollowsSlugAnswer)$' ./internal/ui/composer || rc=1
-          exit $rc
-      - if: ${{ always() && env.XF_ID }}
-        uses: ./.github/actions/expect-fail-report
-
   # theme-contrast round 4: the fade's continuity, the cascade per variable,
   # the DMs rows drawn (activity_inbox on and off, the peek card's scope),
   # the control strip's held press. Dispatch with only=theme-contrast-4
@@ -5323,6 +5290,273 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # plugins-work-0 (2026-11-23, library-dupes' follow-up): the bench's
+  # regression gate doesn't count a committed pick from costs alone (no
+  # behaviour check) as able to regress on correctness when a new check
+  # decides the pair (plugin-bench 45061897607); docs/PLUGIN-COMPAT.md
+  # (getclack.club/compat) stays in step with compat.go and the Library's
+  # index. COUNT runs each. Dispatch with only=plugins-work-0.
+  plugins-work-0:
+    if: ${{ !inputs.only || startsWith('plugins-work-0', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the bench's decisions and its regression gate, the compat page, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestRegressionsCostOnlyPick|TestDecide|TestDecideWithoutChecks|TestKeep|TestEmbedded)$' ./internal/pluginbench || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs|TestPairsMatchDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # plugins-work-1 (2026-11-23, Karim: "then just go implement it?"):
+  # Slick's OnlineCount. Slack's flannel query export and the presence
+  # manager's getter settle as Slack's do (taut); a FlexItems native's
+  # :has() sees the patched tree through Tooltip, which renders no element
+  # of its own (slackc); OnlineCount from Slick's build at the slick
+  # workflow's pin over a booted fakeslack (slick) and from the published
+  # Library in the whole client (ui: plugin-bench's gaps job runs it too).
+  # Its review's fixes: plugins' subscriptions sit beside Clack's own
+  # presence set (core), queries go through Slack's ApiQ and
+  # membershipCounts waits for users/counts (taut), a Tooltip's child sits
+  # where Slack's DOM has it, before BaseTooltip's hidden span (slackc).
+  # COUNT runs each. Dispatch with only=plugins-work-1.
+  plugins-work-1:
+    if: ${{ !inputs.only || startsWith('plugins-work-1', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    env:
+      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        continue-on-error: true # GitHub release downloads sometimes 504 three times running
+        with:
+          bun-version: 1.4.4
+      - name: bun from npm (setup-bun's download failed)
+        if: steps.setup-bun.outcome == 'failure'
+        run: |
+          for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
+          bun --version
+      - name: clone slick at the slick workflow's pin
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - name: the published Library (index.json + bundles)
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (Slick, the Library); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the flannel query and its queue, the presence getter and set, the hook's :has(), Tooltip's DOM, OnlineCount in the harness and in the client, COUNT runs each
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^TestPluginSubscriptionsKeepClacksOwnPresence$' ./internal/core || rc=1
+          go test -count="$COUNT" -timeout 10m -run '^(TestFlannelQueryLikeSlack|TestFlannelQueueLikeSlack|TestPresenceSubscriptionGetterLikeSlack|TestPresenceSubscriptionLikeSlack|TestAPICallNotOkLikeSlack|TestMirrorShapes)$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestFlexItemsHasSeesTree|TestTooltipChildAsSlacksDOM|TestNativeKidsHas)$' ./internal/ui/slackc || rc=1
+          go test -count="$COUNT" -timeout 15m -run '^TestOnlineCountLikeSlack$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 15m -run '^TestPluginGapOnlineCount$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (.github/scripts/expect_fail_wire.py adds it).
+  expect-fail:
+    needs:
+      - go
+      - avf-audio
+      - race-video
+      - members
+      - members-tab
+      - image-send
+      - search-recents
+      - ui-heap
+      - flakes-1121
+      - decode-memory
+      - emoji-anim
+      - huddle-polish
+      - huddle-bar
+      - huddle-bar-win
+      - huddle
+      - pixel
+      - owl-save
+      - slick
+      - pill-wrap
+      - flakes-1111
+      - flakes-1112
+      - flakes-1112-ole
+      - flakes-1112b-tray
+      - flakes-1114-taskbar
+      - flakes-1112b-share
+      - flakes-1112b-views
+      - threads-live
+      - flakes-1113
+      - flakes-1113c
+      - toast-1113-probe
+      - toast-1113-count
+      - mac-wake
+      - flake-fix-windows
+      - flake-fix-linux
+      - flake-fix-2-views
+      - release-suite
+      - flake-fix-gio-sequence
+      - patched-clicks
+      - patched-clicks-roots
+      - plugin-escape
+      - flakes-1116
+      - activity-live-msg
+      - activity-order
+      - edit-latency
+      - thread-replies
+      - agent-blocks
+      - toast-names
+      - activity-stamp
+      - sender-lookups
+      - reactions-live
+      - reactions-more
+      - activity-edits
+      - slice-gaps
+      - views-rewrites
+      - dm-badges
+      - system-dm-row
+      - plugin-render
+      - rw-video
+      - video
+      - gpu-cost
+      - gpu-cost-damage
+      - inspect-freeze
+      - inspect-draw
+      - theme-contrast-4
+      - plugin-api
+      - fileurl-dotdot
+      - dm-senders
+      - dm-senders-slugs
+      - profile-role-band
+      - inspect-blur-fast
+      - canvas-jumps
+      - system-dm-avatar
+      - caret-align
+      - composer-toolbar
+      - history-gap
+      - msg-lanes
+      - notify-order
+      - msg-latency
+      - reaction-pill
+      - system-dm-toast-linux
+      - system-dm-toast-windows
+      - thread-load
+      - thread-load-ship
+      - thread-open-root
+      - jump-reactions
+      - pump-lookups
+      - launch-speed-mac
+      - launch-budget
+      - launch-speed-linux
+      - launch-speed-windows
+      - preview-footer
+      - menu-click
+      - dm-slugs-load
+      - dblclick
+      - thread-reply-toast
+      - tb-click
+      - karim-1118-drafts
+      - karim-1118-r3-scroll
+      - karim-1118-r3-composer
+      - karim-1118-r4-review
+      - lost-click
+      - mf-late
+      - fl1122-r-ui
+      - fl1122-r-guard
+      - fl1122-r-pixel
+      - fl1122-s-views
+      - fl1122-s-mac
+      - fl1122-s-win
+      - emoji-packs
+      - row-hit
+      - avatar-refresh
+      - fl1122c-s-avf
+      - fl1122c-r-views
+      - fl1122c-s-displays
+      - composer-link-edit
+      - library-dupes
+      - rx-bar
+      - plugins-work-0
+      - platform-mime-linux
+      - platform-mime-windows
+      - platform-mime-macos
+      - fl1122d-r-jump
+      - fl1122d-r-taut
+      - canvas-quip
+      - plugins-work-1
+    if: ${{ always() && inputs.expect_fail != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/expectfail
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: expect-fail-*
+          path: ${{ runner.temp }}/xf
+      - name: every listed test failed, nothing else did
+        env:
+          EXPECT_FAIL: ${{ inputs.expect_fail }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"
+
+
   # the views' reaction pills as a channel's (Slack's ReactionBar: a
   # click toggles, canAddReaction disables, one pill per skin-tone group),
   # Activity's ControlledClick and the rows' cursor (views-reactions)
@@ -5366,16 +5600,15 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
-  # plugins-work-0 (2026-11-23, library-dupes' follow-up): the bench's
-  # regression gate doesn't count a committed pick from costs alone (no
-  # behaviour check) as able to regress on correctness when a new check
-  # decides the pair (plugin-bench 45061897607); docs/PLUGIN-COMPAT.md
-  # (getclack.club/compat) stays in step with compat.go and the Library's
-  # index. COUNT runs each. Dispatch with only=plugins-work-0.
-  plugins-work-0:
-    if: ${{ !inputs.only || startsWith('plugins-work-0', inputs.only) }}
+  # composer-link-edit (2026-11-22): the composer's link editing, Slack's
+  # (LinkContextMenu, SlugContextMenu, ComposerEditLinkPopover,
+  # ComposerLinkModal), through the real composer over fakeslack, and the
+  # URL helpers against Slack's own answers. Dispatch with
+  # only=composer-link-edit -f count=3.
+  composer-link-edit:
+    if: ${{ !inputs.only || startsWith('composer-link-edit', inputs.only) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # budget, min (new job: no p95 yet)
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -5388,12 +5621,14 @@ jobs:
         with:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: the bench's decisions and its regression gate, the compat page, COUNT runs each
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "link editing, COUNT runs"
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 5m -run '^(TestRegressionsCostOnlyPick|TestDecide|TestDecideWithoutChecks|TestKeep|TestEmbedded)$' ./internal/pluginbench || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs|TestPairsMatchDocs)$' ./internal/pluginlib || rc=1
+          go test -count=$COUNT -v -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkShortcutOnSelection|TestLinkPasteOverSelection|TestLinkSlugRenameSends|TestLinkRenameDraftRoundTrip|TestLinkRenameInMessageEdit|TestLinkURLSlackOracle|TestLinkDialog\w*|TestLinkRemoveStaysUnlinked|TestNormalizeURL|TestW10LinkDialogRichText|TestLinkDialogFocusAfterMeasurePass|TestSetLink|TestEditComposerLinkSlug|TestLinkSlugPasteSendsTruncatedLink)$' ./internal/ui/composer || rc=1
+          go test -race -count=1 -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkSlugRenameSends|TestLinkDialogFollowsSlugAnswer)$' ./internal/ui/composer || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -5644,155 +5879,3 @@ jobs:
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
-
-  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
-  # every listed test failed in some job and passed in none, nothing else
-  # failed, every job that ran succeeded. Proof runs only. A new job goes
-  # in its needs (.github/scripts/expect_fail_wire.py adds it).
-  expect-fail:
-    needs:
-      - go
-      - avf-audio
-      - race-video
-      - members
-      - members-tab
-      - image-send
-      - search-recents
-      - ui-heap
-      - flakes-1121
-      - decode-memory
-      - emoji-anim
-      - huddle-polish
-      - huddle-bar
-      - huddle-bar-win
-      - huddle
-      - pixel
-      - owl-save
-      - slick
-      - pill-wrap
-      - flakes-1111
-      - flakes-1112
-      - flakes-1112-ole
-      - flakes-1112b-tray
-      - flakes-1114-taskbar
-      - flakes-1112b-share
-      - flakes-1112b-views
-      - threads-live
-      - flakes-1113
-      - flakes-1113c
-      - toast-1113-probe
-      - toast-1113-count
-      - mac-wake
-      - flake-fix-windows
-      - flake-fix-linux
-      - flake-fix-2-views
-      - release-suite
-      - flake-fix-gio-sequence
-      - patched-clicks
-      - patched-clicks-roots
-      - plugin-escape
-      - flakes-1116
-      - activity-live-msg
-      - activity-order
-      - edit-latency
-      - thread-replies
-      - agent-blocks
-      - toast-names
-      - activity-stamp
-      - sender-lookups
-      - reactions-live
-      - reactions-more
-      - activity-edits
-      - slice-gaps
-      - views-rewrites
-      - dm-badges
-      - system-dm-row
-      - plugin-render
-      - rw-video
-      - video
-      - gpu-cost
-      - gpu-cost-damage
-      - inspect-freeze
-      - inspect-draw
-      - theme-contrast-4
-      - plugin-api
-      - fileurl-dotdot
-      - dm-senders
-      - dm-senders-slugs
-      - profile-role-band
-      - inspect-blur-fast
-      - canvas-jumps
-      - system-dm-avatar
-      - caret-align
-      - composer-toolbar
-      - history-gap
-      - msg-lanes
-      - notify-order
-      - msg-latency
-      - reaction-pill
-      - system-dm-toast-linux
-      - system-dm-toast-windows
-      - thread-load
-      - thread-load-ship
-      - thread-open-root
-      - jump-reactions
-      - pump-lookups
-      - launch-speed-mac
-      - launch-budget
-      - launch-speed-linux
-      - launch-speed-windows
-      - preview-footer
-      - menu-click
-      - dm-slugs-load
-      - dblclick
-      - thread-reply-toast
-      - tb-click
-      - karim-1118-drafts
-      - karim-1118-r3-scroll
-      - karim-1118-r3-composer
-      - karim-1118-r4-review
-      - lost-click
-      - mf-late
-      - fl1122-r-ui
-      - fl1122-r-guard
-      - fl1122-r-pixel
-      - fl1122-s-views
-      - fl1122-s-mac
-      - fl1122-s-win
-      - emoji-packs
-      - row-hit
-      - avatar-refresh
-      - fl1122c-s-avf
-      - fl1122c-r-views
-      - fl1122c-s-displays
-      - composer-link-edit
-      - library-dupes
-      - rx-bar
-      - plugins-work-0
-      - platform-mime-linux
-      - platform-mime-windows
-      - platform-mime-macos
-      - fl1122d-r-jump
-      - fl1122d-r-taut
-      - canvas-quip
-    if: ${{ always() && inputs.expect_fail != '' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-          sparse-checkout: tools/expectfail
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: expect-fail-*
-          path: ${{ runner.temp }}/xf
-      - name: every listed test failed, nothing else did
-        env:
-          EXPECT_FAIL: ${{ inputs.expect_fail }}
-          NEEDS: ${{ toJSON(needs) }}
-        run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"

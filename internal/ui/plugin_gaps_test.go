@@ -39,6 +39,12 @@ type gapEnv struct {
 // gapStart starts the bench client and installs the Library's sys
 // variant of the plugin listed as name, with opts set before enabling.
 func gapStart(t *testing.T, sys, name string, opts map[string]any) *gapEnv {
+	return gapStartWith(t, sys, name, opts, nil)
+}
+
+// gapStartWith is gapStart with setup run on the fake before the client
+// starts.
+func gapStartWith(t *testing.T, sys, name string, opts map[string]any, setup func(fs *fakeslack.Server)) *gapEnv {
 	dir := os.Getenv("PLUGIN_BENCH_LIBRARY")
 	if dir == "" {
 		t.Skip("PLUGIN_BENCH_LIBRARY not set: the plugin-bench workflow downloads the Library and runs this")
@@ -73,6 +79,9 @@ func gapStart(t *testing.T, sys, name string, opts map[string]any) *gapEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = fs.Close() })
+	if setup != nil {
+		setup(fs)
+	}
 	e := benchStart(t, fs)
 	e.waitReady()
 	e.until("Taut and Slick", 60*time.Second, func() bool { return e.a.Taut() != nil && e.a.Slick() != nil })
