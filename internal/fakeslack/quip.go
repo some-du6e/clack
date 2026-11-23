@@ -431,7 +431,7 @@ func (m *quipModel) writeBack(c *FakeCanvas) {
 				b.Kind = canvas.Code
 			}
 			if b.Kind == canvas.Code {
-				b.Code = strings.ReplaceAll(plainOfRTML(strings.ReplaceAll(quip.SectionRTML(s), "<br>", "\n")), " ", " ")
+				b.Code = codeOfRTML(quip.SectionRTML(s))
 			} else {
 				b.Spans = m.spans(quip.SectionRTML(s), live)
 			}
@@ -598,6 +598,16 @@ func mentionSpan(c *quip.Section, st richtext.Style) richtext.Span {
 }
 
 // plainOfRTML is RTML's text with the markup gone and entities read.
+// codeOfRTML is a code block's text: its RTML's characters with each
+// line break a newline and each no-break space a space. (A raw newline
+// can't stand in for a <br> before the parse: RTML text holds none, and
+// the parse makes one a space.)
+func codeOfRTML(rtml string) string {
+	plain, _ := quip.RTMLPlain(rtml)
+	plain = strings.ReplaceAll(plain, string(quip.ControlMark), "")
+	return strings.ReplaceAll(plain, "\u00a0", " ")
+}
+
 func plainOfRTML(rtml string) string {
 	text, _, _ := quip.ParseRTML(rtml)
 	var b strings.Builder
