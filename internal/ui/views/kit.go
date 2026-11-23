@@ -888,6 +888,15 @@ func (b *base) avatar(gtx C, url string, size unit.Dp) D {
 	rad := avatarRadius(gtx, size)
 	sz := image.Pt(s, s)
 	if url != "" && b.h.Images() != nil {
+		if a := b.h.Core(); a != nil {
+			// a member's larger picture past 72 device pixels (core.AvatarAt),
+			// their 72px one while it loads
+			if big := a.AvatarAt(url, s); big != url {
+				if img, ok := b.h.Images().Get(big, s); ok {
+					return theme.Image(gtx, img, sz, rad)
+				}
+			}
+		}
 		if img, ok := b.h.Images().Get(url, s); ok {
 			return theme.Image(gtx, img, sz, rad)
 		}

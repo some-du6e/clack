@@ -1985,6 +1985,18 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 // when the first line holds nothing.
 func (v *View) FirstBaseline() int { return v.d.firstBaseline() }
 
+// FirstTextTop is the top of the first text the view laid out, in its
+// own coordinates (-1 for none): where its first line that says
+// something starts.
+func (v *View) FirstTextTop() int {
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.kind == fText {
+			return f.top
+		}
+	}
+	return -1
+}
+
 // ElementSlots are the boxes Options.Elements drew its element runs in
 // (actions blocks, accessories), view-local, as of the last layout.
 func (v *View) ElementSlots() []image.Rectangle {

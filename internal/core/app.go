@@ -1506,6 +1506,10 @@ func (a *App) MemberAvatar(id string, size int) string {
 	return avatarURL(u, size, firstNonEmpty(a.C.Creds.Team, a.S.TeamID))
 }
 
+// AvatarAt is store.AvatarAt: the picture for a member's 72px avatar url
+// in a box px device pixels across (192px, 512px past those sizes).
+func (a *App) AvatarAt(url string, px int) string { return a.S.AvatarAt(url, px) }
+
 // Self returns the signed-in user.
 func (a *App) Self() User {
 	u, _ := a.User(a.S.SelfID())

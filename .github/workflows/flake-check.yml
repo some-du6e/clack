@@ -5184,7 +5184,7 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -timeout 10m -run '^TestSenderFollowsMemberLikeSlack$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestSenderFollowsMemberLikeSlack|TestBotThreadRowLikeSlack|TestAvatarPictureForScaleLikeSlack)$' ./internal/ui/messages || rc=1
           go test -count=$COUNT -timeout 10m -run '^(TestMemberSubscribedFollowsUserChange|TestMemberRefetchedPastMaxAgeLikeSlack|TestMemberSubscriptionsAfterReconnect)$' ./internal/core || rc=1
           go test -count=$COUNT -timeout 15m -run '^TestAvatarAfterRestartLikeSlack$' ./internal/ui || rc=1
           exit $rc

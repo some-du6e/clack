@@ -1538,6 +1538,9 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	// (CustomSlackbot's custom-response avatar) replaces it.
 	url = st.BackgroundImage(url)
 	r.avDrawn = url
+	if a := rc.h.Core(); a != nil {
+		r.avDrawn = a.AvatarAt(url, s) // the image for the device pixels drawAvatar draws (the 72px one while it loads)
+	}
 	// Clicked before Layout: Clickable.Layout consumes pending clicks.
 	if ctxclick.Clicked(gtx, &r.avatarBtn) {
 		r.openSender(rc)

@@ -28,6 +28,7 @@ const (
 	avBcast   = "1700100100.000100" // UALICE's reply, sent to the channel too
 	avPlain   = "1700140000.000100" // UALICE, eleven hours later
 	avBobOnly = "1700100300.000100"
+	avMarker  = "1700150100.000100" // UBOB, after the change
 	avNewPic  = "https://avatars.invalid/alice-new-48.png"
 	avNewName = "alice.renamed"
 	avNewStat = ":palm_tree:"
@@ -102,7 +103,7 @@ func TestSenderFollowsMemberLikeSlack(t *testing.T) {
 	for _, offScreen := range []bool{false, true} {
 		name := map[bool]string{false: "on screen", true: "while another list is drawn"}[offScreen]
 		t.Run(name, func(t *testing.T) {
-			v, f, _, other, h := avatarEnv(t)
+			v, f, otherList, other, h := avatarEnv(t)
 			old, _ := h.app.User("UALICE")
 			until(t, 5*time.Second, "UALICE's two rows", f, func() bool {
 				rs := alicesRows(v)
@@ -126,6 +127,17 @@ func TestSenderFollowsMemberLikeSlack(t *testing.T) {
 				}
 			}
 			aliceChanges(t, h)
+			if offScreen {
+				// a message in the other conversation after the change,
+				// and only that list drawn until it shows: the hub (which
+				// takes core's events in order, off this goroutine) took
+				// the change while no list drew UALICE
+				injectEvent(h.app, avOther, "message", "", map[string]any{"user": "UBOB", "ts": avMarker, "text": "after the change"})
+				until(t, 5*time.Second, "the marker in the other list", other, func() bool { return otherList.s.rows[avMarker] != nil })
+				if v.s.hb.drawsMember(core.Event{Type: "user", UserID: "UALICE"}) {
+					t.Fatal("UALICE counted as drawn when the change came: the case tests nothing")
+				}
+			}
 			now, _ := h.app.User("UALICE")
 			if now.Avatar == old.Avatar || now.Avatar == "" {
 				t.Fatalf("core's member has %q after user_change, the picture before it (%q)", now.Avatar, old.Avatar)

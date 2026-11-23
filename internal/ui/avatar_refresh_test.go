@@ -30,20 +30,10 @@ func TestAvatarAfterRestartLikeSlack(t *testing.T) {
 	home := freezeHome(t)
 	ch := fs.ChannelIDs()[0]
 
-	// session 1: someone boot doesn't fetch posts; their row draws them
+	// session 1: a member with a full profile posts; their row draws them
 	e := startEnv(t, fs, home)
 	e.waitReady()
-	c := e.a.Core()
-	poster := ""
-	for _, id := range fs.UserIDs() {
-		if _, held := c.S.RawUser(id); !held && id != fakeslack.SelfID && strings.HasPrefix(id, "U") {
-			poster = id
-			break
-		}
-	}
-	if poster == "" {
-		t.Fatal("boot fetched every member: the case tests nothing")
-	}
+	poster := fakeslack.ProfileID
 	ts, _ := fs.PostQuiet(ch, poster, "a synthetic message before the restart")
 	e.openChannel(ch)
 	e.toLatest()
