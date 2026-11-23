@@ -63,3 +63,32 @@ func mustJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// TestWholeJSONSameAsMarshal: a chunked bucket written whole (wholeJSON)
+// decodes to what encoding/json made of it, and the same entries always
+// make the same bytes (the same-bytes check's premise).
+func TestWholeJSONSameAsMarshal(t *testing.T) {
+	b := map[string]json.RawMessage{
+		"1700000300.000100": json.RawMessage(`{"ts":"1700000300.000100","text":"a \"quoted\" <b> & line\nbreak"}`),
+		"1700000100.000100": json.RawMessage(`{"ts":"1700000100.000100","blocks":[{"type":"rich_text"}],"text":"` + strings.Repeat("x", 100000) + `"}`),
+		"1700000200.000100": json.RawMessage(`{"ts":"1700000200.000100","reactions":[{"name":"tada","count":2}]}`),
+	}
+	want, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := wholeJSON(b)
+	var x, y any
+	if json.Unmarshal(want, &x) != nil || json.Unmarshal(got, &y) != nil {
+		t.Fatalf("wholeJSON %.200s isn't JSON", got)
+	}
+	if !reflect.DeepEqual(x, y) {
+		t.Errorf("wholeJSON decodes to something else than encoding/json's:\n%.300s\n%.300s", got, want)
+	}
+	if string(wholeJSON(b)) != string(got) {
+		t.Error("the same entries made different bytes")
+	}
+	if string(wholeJSON(nil)) != "null" {
+		t.Errorf("a nil bucket is %s", wholeJSON(nil))
+	}
+}

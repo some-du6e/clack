@@ -2289,14 +2289,14 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 		return b
 	}
 	// a whole message bucket read in chunks, as one value: its entries
-	// encoded again (json sorts a map's keys, so the same entries make the
-	// same bytes), which the same-bytes check compares as it compared JS's
-	// encoding of the bucket whole
+	// written again in key order (the same entries make the same bytes),
+	// which the same-bytes check compares as it compared JS's encoding of
+	// the bucket whole
 	wholes := map[viewSK]json.RawMessage{}
 	whole := func(sk viewSK) json.RawMessage {
 		w, ok := wholes[sk]
 		if !ok {
-			w, _ = json.Marshal(bucket(sk))
+			w = wholeJSON(bucket(sk))
 			wholes[sk] = w
 		}
 		return w
@@ -2827,4 +2827,36 @@ func errWithStack(err error) string {
 		lines[i] = strings.TrimSpace(l)
 	}
 	return err.Error() + " [" + strings.Join(lines, " | ") + "]"
+}
+
+// wholeJSON is a message bucket's entries as one JSON object, keys in
+// order: each entry's bytes as JS encoded them, not re-validated and
+// copied through encoding/json (a bucket of 908,000-character messages is
+// a hundred megabytes; encoding/json made three times that of garbage).
+func wholeJSON(b map[string]json.RawMessage) json.RawMessage {
+	if b == nil {
+		return json.RawMessage("null")
+	}
+	keys := make([]string, 0, len(b))
+	n := 2
+	for k, v := range b {
+		keys = append(keys, k)
+		n += len(k) + len(v) + 4
+	}
+	sort.Strings(keys)
+	out := make([]byte, 0, n)
+	out = append(out, '{')
+	for i, k := range keys {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = appendJSONString(out, k)
+		out = append(out, ':')
+		if v := b[k]; len(v) > 0 {
+			out = append(out, v...)
+		} else {
+			out = append(out, "null"...)
+		}
+	}
+	return append(out, '}')
 }
