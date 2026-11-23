@@ -1516,7 +1516,7 @@ func fitSize(iw, ih, maxW, maxH int, l *lay) (int, int) {
 func (l *lay) table(b *richtext.Block, x, y, w int) int {
 	p := &l.st.Palette
 	rows := b.Rows
-	preview := b.Kit && len(rows) > 10
+	preview := b.Kit && !b.Whole && len(rows) > 10
 	if preview {
 		rows = rows[:10]
 	}

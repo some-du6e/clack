@@ -83,8 +83,29 @@ func ChartPreview(dv *richtext.DataViz, dark bool) string {
 // table (the header row, then each series or segment) under the chart's
 // title.
 func OpenChartTable(h Host, dv *richtext.DataViz) {
+	v := richview.New(chartTableDoc(dv), richview.Options{NoHoverCards: true})
+	title := dv.Title
+	if title == "" {
+		title = nsBlockKit.T("Table")
+	}
+	m := NewModal(h, ModalOpts{Title: title, Width: 720, Body: func(gtx layout.Context) layout.Dimensions {
+		if RichStyle == nil {
+			return layout.Dimensions{}
+		}
+		st := RichStyle(h)
+		if st == nil {
+			return layout.Dimensions{}
+		}
+		return v.Layout(gtx, st, topicHandler{h})
+	}})
+	h.ShowOverlay(m)
+}
+
+// chartTableDoc is View as table's table: every row, as Slack's
+// TableFullscreenModal draws it (no TablePreview cut after 10 rows).
+func chartTableDoc(dv *richtext.DataViz) richtext.Doc {
 	headers, rows := dv.Chart.Table()
-	tb := richtext.Block{Kind: richtext.Table, Kit: true}
+	tb := richtext.Block{Kind: richtext.Table, Kit: true, Whole: true}
 	text := func(s string) [][]richtext.Span {
 		return [][]richtext.Span{{{Kind: richtext.Text, Text: s}}}
 	}
@@ -104,22 +125,7 @@ func OpenChartTable(h Host, dv *richtext.DataViz) {
 		}
 		tb.Rows = append(tb.Rows, cells)
 	}
-	v := richview.New(richtext.Doc{Blocks: []richtext.Block{tb}}, richview.Options{NoHoverCards: true})
-	title := dv.Title
-	if title == "" {
-		title = nsBlockKit.T("Table")
-	}
-	m := NewModal(h, ModalOpts{Title: title, Width: 720, Body: func(gtx layout.Context) layout.Dimensions {
-		if RichStyle == nil {
-			return layout.Dimensions{}
-		}
-		st := RichStyle(h)
-		if st == nil {
-			return layout.Dimensions{}
-		}
-		return v.Layout(gtx, st, topicHandler{h})
-	}})
-	h.ShowOverlay(m)
+	return richtext.Doc{Blocks: []richtext.Block{tb}}
 }
 
 // DownloadChartData is Download chart data: the chart's TSV as

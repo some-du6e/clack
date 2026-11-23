@@ -1,6 +1,7 @@
 package richtext
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -237,5 +238,32 @@ func TestDataBlocksNotificationText(t *testing.T) {
 	// a block that throws converts nothing: the message text stands in
 	if got := notificationTextOf(t, `{"ts":"1.0","text":"fallback","blocks":[{"type":"data_table","rows":{"a":1}}]}`); got != "fallback" {
 		t.Errorf("a broken table: %q, want the message text", got)
+	}
+}
+
+// Every node but a data block decodes as plain struct decoding does, in
+// one pass: bk has no UnmarshalJSON (one scans each nested node again at
+// every level, for every element of every message). Data blocks are
+// picked out where block lists are read: a message's blocks, a fallback's
+// items, a container's or callout's children. A mistyped key of a nested
+// chart's fails neither it nor its container.
+func TestDataBlocksDecodeEntryPoints(t *testing.T) {
+	if _, ok := any(&bk{}).(json.Unmarshaler); ok {
+		t.Error("bk decodes through an UnmarshalJSON")
+	}
+	viz := `{"type":"data_visualization","title":7,"chart":{"type":"pie","segments":[{"label":"a","value":1}]}}`
+	for _, c := range []struct{ name, blocks string }{
+		{"container", `[{"type":"container","child_blocks":[` + viz + `]}]`},
+		{"callout", `[{"type":"callout","child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"before"}},` + viz + `]}]`},
+	} {
+		d := blocksMsg(t, c.blocks)
+		if len(d.Blocks) != 1 || len(d.Blocks[0].Children) == 0 {
+			t.Errorf("%s: %s", c.name, dump(d.Blocks))
+			continue
+		}
+		ch := d.Blocks[0].Children
+		if last := ch[len(ch)-1]; last.Kind != DataVizBlock || last.DataViz == nil || last.DataViz.Title != "7" {
+			t.Errorf("%s: children %s", c.name, dump(ch))
+		}
 	}
 }

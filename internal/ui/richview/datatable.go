@@ -58,8 +58,11 @@ import (
 )
 
 // DataTableHandler is optional on a Handler: a data_table's header button
-// or a column header was clicked (btn: the button, window coordinates).
-// act is "search", "view", "more" or "sort" (TableControl.Column).
+// or a column header was clicked: btn is the button, in window coordinates
+// when TableControl.Window, else in the view's plus Origin (the owner maps
+// it). act is "search", "view", "more", "sort" (TableControl.Column) or
+// "clearfilter" (the empty filter's Clear filter, after the view cleared
+// it: an owner's filter field clears too).
 type DataTableHandler interface {
 	DataTableAction(act string, c *TableControl, btn image.Rectangle)
 }
@@ -69,6 +72,8 @@ type DataTableHandler interface {
 type TableControl struct {
 	Table  *richtext.DataTable
 	Column int // "sort": the column header clicked
+	// Window: the action's rect is in window coordinates
+	Window bool
 	st     *tableState
 }
 
@@ -218,6 +223,7 @@ func computeDTView(t *richtext.DataTable, s *tableState, all bool) dtView {
 	ps := pageSize(t)
 	v.pages = int(math.Ceil(float64(len(rows)) / ps))
 	v.page = min(s.page, max(0, v.pages-1))
+	s.page = v.page // computeView keeps the clamped pageIndex: prev steps from the page shown
 	start := float64(v.page) * ps
 	end := min(start+ps, float64(len(rows)))
 	if a, b := int(start), int(end); a < b {
@@ -464,7 +470,7 @@ func (l *lay) dtContainer(dt *richtext.DataTable, ctl *TableControl, vw *dtView,
 	rows := vw.rows
 	rowH := l.dp(48)
 	if vw.empty {
-		yy += l.dtEmpty(tx, yy, inner, vw, dt)
+		yy += l.dtEmpty(ctl, tx, yy, inner, vw, dt)
 	}
 	if len(rows) > 0 {
 		// the body's border (.dataTableBlockRowsContainer: the first and
@@ -687,7 +693,7 @@ func (l *lay) dtCellContent(c *richtext.DTCell, x, y, w int, wrap bool) int {
 
 // dtEmpty is the filter's empty state: "No results found." over Clear
 // filter, as tall as the header row and the page (36px + the rows).
-func (l *lay) dtEmpty(x, y, w int, vw *dtView, dt *richtext.DataTable) int {
+func (l *lay) dtEmpty(ctl *TableControl, x, y, w int, vw *dtView, dt *richtext.DataTable) int {
 	n := int(min(float64(len(dt.Body)), pageSize(dt)))
 	h := l.dp(36) + n*l.dp(48)
 	fs := l.bodyStyle()
@@ -698,8 +704,20 @@ func (l *lay) dtEmpty(x, y, w int, vw *dtView, dt *richtext.DataTable) int {
 	th := l.centredFlow(nsBlockKit.T("No results found."), x+l.dp(16), top, w-2*l.dp(16), &fs)
 	fs.col = l.tok("content-hgl-1")
 	fs.face.Weight = font.Bold
+	// Clear filter: a button (.dataTableBlockClearSearch, underlined on
+	// hover) that clears the filter
+	tg := l.d.addTarget(target{kind: tDataTable, id: "clearfilter", table: ctl, underline: true})
 	l.plainAdd("\n")
-	l.centredFlow(nsBlockKit.T("Clear filter"), x+l.dp(16), top+th+l.dp(4), w-2*l.dp(16), &fs)
+	f0 := len(l.d.frags)
+	ch := l.centredFlowTarget(nsBlockKit.T("Clear filter"), x+l.dp(16), top+th+l.dp(4), w-2*l.dp(16), &fs, tg)
+	if len(l.d.frags) > f0 {
+		r := fragRect(&l.d.frags[f0])
+		for i := f0 + 1; i < len(l.d.frags); i++ {
+			r = r.Union(fragRect(&l.d.frags[i]))
+		}
+		r.Min.Y, r.Max.Y = top+th+l.dp(4), top+th+l.dp(4)+ch
+		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+	}
 	return h
 }
 
@@ -851,16 +869,31 @@ func (v *View) dataTableClick(tg *target, h Handler) {
 		if p, err := strconv.Atoi(strings.TrimPrefix(tg.id, "page:")); err == nil && p >= 1 {
 			s.page = p - 1
 		}
+	case tg.id == "clearfilter": // the view clears it, then tells the owner (its filter field)
+		s.filter, s.page = "", 0
+		v.dirty, v.redraw = true, true
+		v.tableAction(tg, ctl, h)
+		return
 	default:
-		if dh, ok := h.(DataTableHandler); ok {
-			r, _ := v.targetRect(tg)
-			c := *ctl
-			c.Column = tg.col
-			dh.DataTableAction(tg.id, &c, r.Add(v.Origin))
-		}
+		v.tableAction(tg, ctl, h)
 		return
 	}
 	v.dirty, v.redraw = true, true
+}
+
+// tableAction hands target tg's action to the handler, with its button's
+// rect.
+func (v *View) tableAction(tg *target, ctl *TableControl, h Handler) {
+	dh, ok := h.(DataTableHandler)
+	if !ok {
+		return
+	}
+	r, _ := v.targetRect(tg)
+	c := *ctl
+	c.Column = tg.col
+	wr, win := v.actionRect(r)
+	c.Window = win
+	dh.DataTableAction(tg.id, &c, wr)
 }
 
 // ---- test API ----

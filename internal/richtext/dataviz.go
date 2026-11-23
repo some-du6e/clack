@@ -2,6 +2,7 @@ package richtext
 
 import (
 	"encoding/json"
+	"slices"
 
 	"github.com/some-du6e/clack/internal/chart"
 )
@@ -50,39 +51,88 @@ type bkDataViz struct {
 	BlockID       json.RawMessage `json:"block_id"`
 }
 
-// UnmarshalJSON decodes a block, and a data_visualization or data_table
-// block by the keys its renderable reads only.
-func (b *bk) UnmarshalJSON(data []byte) error {
-	type plain bk
-	err := json.Unmarshal(data, (*plain)(b))
-	typ := b.Type
+// isDataType is a block type decoded by its renderable's own keys.
+func isDataType(t string) bool { return t == "data_visualization" || t == "data_table" }
+
+// dataBlock decodes a data_visualization or data_table block by the keys
+// its renderable reads only (bkDataViz, bkDataTable), so a key typed
+// unlike another block's fails nothing; false when raw is neither.
+func dataBlock(raw json.RawMessage) (bk, bool) {
+	var t struct {
+		Type any `json:"type"`
+	}
+	if json.Unmarshal(raw, &t) != nil {
+		return bk{}, false
+	}
+	switch typ, _ := t.Type.(string); typ {
+	case "data_table":
+		var v bkDataTable
+		if json.Unmarshal(raw, &v) != nil {
+			return bk{}, false
+		}
+		return bk{Type: typ, BlockID: rawString(v.BlockID), table: &v}, true
+	case "data_visualization":
+		var v bkDataViz
+		if json.Unmarshal(raw, &v) != nil {
+			return bk{}, false
+		}
+		return bk{Type: typ, BlockID: rawString(v.BlockID), viz: &v}, true
+	}
+	return bk{}, false
+}
+
+// decodeBlocks decodes a list of blocks: one struct decode, then the data
+// blocks among them again by their own keys (dataBlock). Every other node
+// decodes as it always has, in the one pass. A block that doesn't decode
+// fails the list when strict (a container's children: the container
+// fails, as before), else is badBlock.
+func decodeBlocks(raw json.RawMessage, strict bool) ([]bk, error) {
+	var bs []bk
+	err := json.Unmarshal(raw, &bs)
+	if err == nil && !slices.ContainsFunc(bs, func(b bk) bool { return isDataType(b.Type) }) {
+		return bs, nil
+	}
+	var parts []json.RawMessage
+	if e := json.Unmarshal(raw, &parts); e != nil {
+		return nil, e
+	}
+	if err == nil && len(parts) == len(bs) {
+		for i := range bs {
+			if isDataType(bs[i].Type) {
+				if b, ok := dataBlock(parts[i]); ok {
+					bs[i] = b
+				}
+			}
+		}
+		return bs, nil
+	}
+	bs = make([]bk, 0, len(parts))
+	for _, p := range parts {
+		if b, ok := dataBlock(p); ok {
+			bs = append(bs, b)
+			continue
+		}
+		var b bk
+		if e := json.Unmarshal(p, &b); e != nil {
+			if strict {
+				return nil, e
+			}
+			b = bk{Type: badBlock}
+		}
+		bs = append(bs, b)
+	}
+	return bs, nil
+}
+
+// bkChildren is a callout's or container's child_blocks (decodeBlocks).
+type bkChildren []bk
+
+func (l *bkChildren) UnmarshalJSON(data []byte) error {
+	bs, err := decodeBlocks(data, true)
 	if err != nil {
-		var t struct {
-			Type any `json:"type"`
-		}
-		if json.Unmarshal(data, &t) != nil {
-			return err
-		}
-		typ, _ = t.Type.(string)
-	}
-	if typ == "data_table" {
-		var t bkDataTable
-		if json.Unmarshal(data, &t) != nil {
-			return err
-		}
-		*b = bk{Type: typ, table: &t}
-		b.BlockID = rawString(t.BlockID)
-		return nil
-	}
-	if typ != "data_visualization" {
 		return err
 	}
-	var v bkDataViz
-	if json.Unmarshal(data, &v) != nil {
-		return err
-	}
-	*b = bk{Type: typ, viz: &v}
-	b.BlockID = rawString(v.BlockID)
+	*l = bs
 	return nil
 }
 

@@ -99,7 +99,7 @@ type bk struct {
 	CallID     string   `json:"call_id"`
 	Call       *bkCall  `json:"call"` // call.go
 	// callout, container (kitcards.go)
-	ChildBlocks      []bk            `json:"child_blocks"`
+	ChildBlocks      bkChildren      `json:"child_blocks"`
 	BackgroundColor  string          `json:"background_color"`
 	RichTextTitle    *bk             `json:"rich_text_title"`
 	Subtitle         *textObj        `json:"subtitle"`
@@ -203,9 +203,6 @@ type builder struct {
 	// missing: a block Slack draws but Clack can't yet drew nothing (the
 	// message text then stands in, FromMessageIn)
 	missing bool
-	// undrawn are the types Slack has a renderable for that reached no
-	// renderer of Clack's (the coverage guard reads it)
-	undrawn []string
 	// notify converts for a notification's text (NotificationMessageText): a
 	// type with no renderable adds nothing, with no fallback chain
 	notify bool
@@ -218,23 +215,11 @@ func parseBlocks(raw json.RawMessage) []bk {
 	if len(raw) <= 2 || string(raw) == "null" {
 		return nil
 	}
-	var bs []bk
-	if json.Unmarshal(raw, &bs) == nil {
-		return bs
-	}
-	// One malformed block shouldn't drop the rest: decode them one by one;
-	// the bad ones become Slack's "This content could not be displayed."
-	var parts []json.RawMessage
-	if json.Unmarshal(raw, &parts) != nil {
+	// One malformed block shouldn't drop the rest: the bad ones become
+	// Slack's "This content could not be displayed."
+	bs, err := decodeBlocks(raw, false)
+	if err != nil {
 		return nil
-	}
-	bs = bs[:0]
-	for _, p := range parts {
-		var b bk
-		if json.Unmarshal(p, &b) != nil {
-			b = bk{Type: badBlock}
-		}
-		bs = append(bs, b)
 	}
 	return bs
 }
@@ -632,7 +617,6 @@ func (c *builder) block(out []Block, b *bk) []Block {
 	}
 	// a type Slack draws that Clack doesn't yet: its text object, if any
 	// (docs/BLOCKKIT-COVERAGE.md)
-	c.undrawn = append(c.undrawn, b.Type)
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)
 	}
@@ -1040,7 +1024,6 @@ func init() {
 // else the text, else nothing.
 func (c *builder) unknownInline(e *bk, m brMode) []Span {
 	if messageRenderables[e.Type] {
-		c.undrawn = append(c.undrawn, e.Type)
 		if e.Type != "citation" || e.Details != nil && (len(e.Details.CitationType) > 0 || len(e.Details.CitationTypeCamel) > 0) {
 			return unknownElement(e.textString(), e.URL)
 		}
