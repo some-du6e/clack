@@ -43,7 +43,11 @@ func TestFlexItemsHasSeesTree(t *testing.T) {
       .p-autoclog__hook:empty { --hook-empty: y; }`)
 	defer RemoveStyle("test:online-count")
 	hook := Class("p-autoclog__hook").FlexItems()
-	inner := Class("test-stack-inner")
+	// the stack's own element, a button as Slack's avatar stack's is: the
+	// first element a native enters is its root, and an inline one keeps
+	// the "@" inline-level (a div's would make it a block, as wide as the
+	// header when it lays out alone)
+	inner := Class("test-stack-inner").Tag("button")
 	var innerVar string // the stack's own element's --hook-has-count
 	stackNative := func(gtx layout.Context, p Props) layout.Dimensions {
 		s := inner.Enter(gtx, 0, 0)
