@@ -329,8 +329,6 @@ func (t *Taut) Close() error {
 	// closed is set, it sees it and closes what it made.
 	t.startMu.Lock()
 	t.startMu.Unlock()
-	t.dirMu.Lock() // a register's write in progress ends; later ones see closed (whileOpen)
-	t.dirMu.Unlock()
 	t.startOnce.Do(func() { close(t.startDone) }) // never started (DeferStart): nothing waits for it
 	ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 	defer cancel()
@@ -370,10 +368,7 @@ func (t *Taut) Close() error {
 func (t *Taut) whileOpen(f func()) bool {
 	t.dirMu.RLock()
 	defer t.dirMu.RUnlock()
-	if t.closed.Load() {
-		return false
-	}
-	f()
+	f() // red: whether Close came or not
 	return true
 }
 
