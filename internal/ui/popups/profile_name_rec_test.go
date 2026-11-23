@@ -306,7 +306,8 @@ func nrPlayers(t *testing.T, th *theme.Theme) (ctl *videoplayer.Controller, open
 	return ctl, opened
 }
 
-// nrShot saves v's top, its name row, at scale 2 as name.png under
+// nrShot saves v's name row (under the 256px photo: 280 to 480 of the
+// pane, the name, its button and the title) at scale 2 as name.png under
 // PROFILE_SHOTS_DIR (own-profile.yml), when that's set; no tofu.
 func nrShot(t *testing.T, v *ProfileView, name string) {
 	t.Helper()
@@ -315,7 +316,7 @@ func nrShot(t *testing.T, v *ProfileView, name string) {
 		return
 	}
 	const s = 2
-	win := image.Pt(pvW*s, 220*s)
+	win := image.Pt(pvW*s, 480*s)
 	var ops op.Ops
 	frame := func() {
 		ops.Reset()
@@ -337,7 +338,7 @@ func nrShot(t *testing.T, v *ProfileView, name string) {
 	if st := stop(); st.Notdef > 0 {
 		t.Errorf("%s: %d .notdef glyphs", name, st.Notdef)
 	}
-	epSaveShot(t, dir, name, pixeltest.Render(t, win.X, win.Y, &ops))
+	epSaveShot(t, dir, name, stCrop(pixeltest.Render(t, win.X, win.Y, &ops), image.Rect(0, 280*s, win.X, win.Y)))
 }
 
 // Screenshots, light and dark (PROFILE_SHOTS_DIR, own-profile.yml): the
