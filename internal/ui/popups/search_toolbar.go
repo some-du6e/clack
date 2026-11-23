@@ -281,6 +281,11 @@ func (p *SearchPopover) tbLayout(gtx layout.Context, th *theme.Theme, sz image.P
 	if tb.active > 0 && gtx.Now.After(tb.until) {
 		tb.active = 0
 	}
+	if tb.active > 0 {
+		// the active label's end, asked every frame it shows (asked once,
+		// at the copy, any frame in between dropped it)
+		gtx.Execute(op.InvalidateCmd{At: tb.until})
+	}
 	bs, gap := dp(gtx, 28), dp(gtx, 8)
 	x := sz.X - dp(gtx, 16) - len(acts)*bs - (len(acts)-1)*gap
 	y := (sz.Y - bs) / 2

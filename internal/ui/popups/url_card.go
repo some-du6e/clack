@@ -109,6 +109,11 @@ func (p *URLHoverCard) Layout(gtx layout.Context) layout.Dimensions {
 	if p.copy.Clicked(gtx) {
 		copyText(gtx, p.url)
 		p.copiedUntil = gtx.Now.Add(2 * time.Second)
+	}
+	if gtx.Now.Before(p.copiedUntil) {
+		// "Copied!"'s end, asked every frame until then: the window keeps
+		// only the earliest wakeup since its last frame, so asking once,
+		// at the click, lost it to any frame in between
 		gtx.Execute(op.InvalidateCmd{At: p.copiedUntil})
 	}
 

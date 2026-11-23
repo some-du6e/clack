@@ -1388,10 +1388,10 @@ func (c *chrome) attachButton(gtx layout.Context, th *theme.Theme, p *crPal, st 
 	}
 	deg, turning := c.turn.at(now, st.PlusOpen)
 	if turning && c.f.h != nil {
-		// the next frame from the window, not an op.InvalidateCmd in the
-		// middle of this one: for that the router replays the frame's
-		// events no handler has read yet (the menu's scrim reads after the
-		// composer)
+		// the next frame from the window (until Gio patch 61 an
+		// op.InvalidateCmd in the middle of this one replayed the frame's
+		// events no handler had read yet, and the menu's scrim reads after
+		// the composer; it only records its wakeup now)
 		c.f.h.Invalidate()
 	}
 	// Slack's plus svg at 18px, centred (the 28px button's 5px padding),

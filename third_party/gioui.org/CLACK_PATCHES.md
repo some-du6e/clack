@@ -3195,3 +3195,39 @@ linux-gio job. In Clack: `internal/ui/popups`' `TestTickersKeepLaterPresses`
 (a press on a button laid out after a tooltip in its delay, a loading
 spinner, a peek card animating in and a focused editor: one click each,
 and each ticker's wakeup on its cadence). Not in `UPSTREAM.patch`.
+
+## 64. io/input: a command's replay redoes everything queued
+
+`io/input/router.go`: each queued state change keeps what made it
+(`stateChange.replay`): its trigger, then every event merged into it that
+no handler asked for, and the window's `MoveFocus`, `ScrollFocus` and
+`ClickFocus` (`noteRedo`). A command that takes the immediate path, and
+`Frame` replaying a deferred command's frame, redo all of it in order
+(`replayItems`), where they requeued only each change's trigger. A
+`SystemEvent` is replayed as one (`replayItemFor`). `clipboard.WriteCmd`,
+which changes no input state, gets patch 61's treatment: it executes at
+once and replays nothing. The commands that change the input state
+(`FocusCmd`, `SelectionCmd`, `SnippetCmd`, `SoftKeyboardCmd`,
+`pointer.GrabCmd`, `clipboard.ReadCmd`, `transfer.OfferCmd`,
+`ResetPointers`) keep the immediate path. `Router.replayed` counts the
+immediate path's requeued events, `deferredReplayed` Frame's (tests).
+
+The fault: an event no handler asks for (the release of a press-only
+handler's press, a move, an unclaimed key) makes no change of its own;
+its state (the pointer's `pressed`, `last` and `entered`, `noteMouse`'s
+mouse) merges into the change before it. Replaying the triggers alone
+dropped that state: a press stored for a press-only scrim, its release
+unstored, then a focused editor laid out before the scrim executing a
+`SelectionCmd` or `SnippetCmd` (its text changed), and the pointer stayed
+down on the scrim. Once the scrim was gone the next press went nowhere,
+the 11-17 lost click by another command than patch 61's tick. A window
+focus move merged into a queued change was dropped the same way.
+
+Tests: `io/input/clack_replaystate_test.go`
+(`TestClackCommandReplaysUnstoredEvents`: every immediate command, then
+the pointer released, the mouse where the trailing move left it, the next
+click whole; `TestClackDeferredReplayKeepsUnstoredEvents`;
+`TestClackCommandReplaysMoveFocus`; `TestClackWriteCmdReplaysNothing`),
+in ci's linux-gio job; Clack's `internal/ui/popups`
+`TestScrimKeepsLaterPresses` (editor: patch 64; ticker: patch 61). Not
+in `UPSTREAM.patch`.

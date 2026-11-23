@@ -683,6 +683,11 @@ func TestSearchToolbar(t *testing.T) {
 	if p.tb.active != 1 {
 		t.Error("Copy search query didn't show Query copied!")
 	}
+	// a frame before its 3 s are up (the pointer moved) asks for the
+	// label's end again (clack_reverts_test.go)
+	if at := wakesDuring(d.frame); !asked(at, p.tb.until) {
+		t.Errorf("a frame while Query copied! shows asked for %v, not its end at %v", at, p.tb.until)
+	}
 	p.tb.run = 2
 	d.frame()
 	d.until(t, "search.delete", func() bool { return len(e.fs.SearchForms("search.delete")) == 1 })
