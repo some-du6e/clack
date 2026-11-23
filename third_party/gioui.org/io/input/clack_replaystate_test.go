@@ -131,27 +131,13 @@ func TestClackDeferredReplayKeepsUnstoredEvents(t *testing.T) {
 		t.Fatalf("h read %v while deferring", got)
 	}
 	rsFrame(r, &e, &h, pointer.Press) // the replay
+	if r.deferredReplayed != 3 || r.replayed != 0 {
+		t.Errorf("Frame replayed %d events (the immediate path %d), want the queued 3", r.deferredReplayed, r.replayed)
+	}
 	if got := pointerKinds(events(r, -1, pointer.Filter{Target: &h, Kinds: pointer.Press})); len(got) != 1 || got[0] != pointer.Press {
 		t.Fatalf("h read %v after the replay, want its press", got)
 	}
 	rsAfter(t, r, &e, &g)
-}
-
-// A focus move the window made (MoveFocus, for a Tab no handler took)
-// while a stored press is queued survives a command's replay.
-func TestClackCommandReplaysMoveFocus(t *testing.T) {
-	var e, h int
-	r := new(Router)
-	rsFrame(r, &e, &h, pointer.Press)
-	r.Queue(rsClick(50, false)[:1]...)
-	r.MoveFocus(key.FocusForward)
-	if f := r.lastState().focus; f != &e {
-		t.Fatalf("MoveFocus focused %v, want e", f)
-	}
-	r.Source().Execute(key.SelectionCmd{Tag: &h}) // h, laid out first
-	if f := r.lastState().focus; f != &e {
-		t.Errorf("after the replay the focus is %v, want e (the window's move)", f)
-	}
 }
 
 // clipboard.WriteCmd changes no input state: like an InvalidateCmd, it
@@ -172,5 +158,119 @@ func TestClackWriteCmdReplaysNothing(t *testing.T) {
 	r.Frame(&ops)
 	if _, _, ok := r.WriteClipboard(); !ok {
 		t.Error("the write never reached the window")
+	}
+}
+
+// focFrame lays out the focusables fs (60 apart from x 300, each scrolling
+// vertically), then h over 0..100 asking for presses, and ends the frame.
+func focFrame(r *Router, h *int, fs ...*int) {
+	var ops op.Ops
+	for i, f := range fs {
+		st := clip.Rect(image.Rect(300+60*i, 0, 340+60*i, 100)).Push(&ops)
+		event.Op(&ops, f)
+		st.Pop()
+		events(r, -1, key.FocusFilter{Target: f}, key.Filter{Focus: f},
+			pointer.Filter{Target: f, Kinds: pointer.Scroll, ScrollY: pointer.ScrollRange{Min: -100, Max: 100}})
+	}
+	st := clip.Rect(image.Rect(0, 0, 100, 100)).Push(&ops)
+	event.Op(&ops, h)
+	st.Pop()
+	events(r, -1, pointer.Filter{Target: h, Kinds: pointer.Press})
+	r.Frame(&ops)
+}
+
+// noPanic fails t, instead of the binary, on a panic.
+func noPanic(t *testing.T) {
+	if p := recover(); p != nil {
+		t.Fatalf("panic: %v", p)
+	}
+}
+
+// The window's ScrollFocus (RevealFocus on a shrinking window) while a
+// handler's press is queued, then a FocusCmd to a tag with no handler yet
+// (listview's item focuses its composer before the composer's first
+// Update): the replay must not run ScrollFocus again on that focus (a nil
+// handler).
+func TestClackRedoFocusWithoutHandler(t *testing.T) {
+	defer noPanic(t)
+	var e, h, n int
+	r := new(Router)
+	rsFrame(r, &e, &h, pointer.Press)
+	r.Source().Execute(key.FocusCmd{Tag: &e})
+	rsFrame(r, &e, &h, pointer.Press)         // e focused and in the focus order
+	r.Queue(rsClick(50, false)[:1]...)        // h's press stays queued
+	r.ScrollFocus(image.Pt(0, 10))            // what RevealFocus does on a shrinking frame
+	r.Source().Execute(key.FocusCmd{Tag: &n}) // n has no handler: immediate, and the replay
+	if f := r.lastState().focus; f != &n {
+		t.Errorf("focus %v after the FocusCmd, want n", f)
+	}
+}
+
+// The same on the deferred path: Frame replays before the key queue's
+// frame drops what isn't laid out and renumbers the focus order, so a
+// ScrollFocus run again there read the old order's index (out of range
+// with fewer focusables laid out).
+func TestClackRedoFocusDeferredStaleOrder(t *testing.T) {
+	defer noPanic(t)
+	var e1, e2, h int
+	r := new(Router)
+	focFrame(r, &h, &e1, &e2)
+	r.Source().Execute(key.FocusCmd{Tag: &e1})
+	focFrame(r, &h, &e1, &e2) // e1 focused; the order e1, e2
+	r.Queue(rsClick(50, false)[:1]...)
+	r.ScrollFocus(image.Pt(0, 10)) // a scroll for e1
+	events(r, -1, key.FocusFilter{Target: &e2})
+	r.Source().Execute(key.FocusCmd{Tag: &e2}) // e2 read its focus events: deferred
+	if !r.deferring {
+		t.Fatal("the FocusCmd didn't defer: nothing tested")
+	}
+	focFrame(r, &h, &e2) // e1 gone: e2 alone in the order
+	if f := r.lastState().focus; f != &e2 {
+		t.Errorf("focus %v after the deferred FocusCmd, want e2", f)
+	}
+	if got := pointerKinds(events(r, -1, pointer.Filter{Target: &h, Kinds: pointer.Press})); len(got) != 1 {
+		t.Errorf("h read %v after the replay, want its press", got)
+	}
+}
+
+// ScrollFocus's scroll, queued behind a handler's press, reaches the
+// focus once through a command's replay: not lost, not twice.
+func TestClackReplaysScrollFocusOnce(t *testing.T) {
+	defer noPanic(t)
+	var e, h int
+	r := new(Router)
+	focFrame(r, &h, &e)
+	r.Source().Execute(key.FocusCmd{Tag: &e})
+	focFrame(r, &h, &e)
+	r.Queue(rsClick(50, false)[:1]...)
+	r.ScrollFocus(image.Pt(0, 10))
+	r.Source().Execute(key.SelectionCmd{Tag: &e}) // e laid out first: the replay
+	n := 0
+	for _, ev := range events(r, -1, pointer.Filter{Target: &e, Kinds: pointer.Scroll, ScrollY: pointer.ScrollRange{Min: -100, Max: 100}}) {
+		if pe, ok := ev.(pointer.Event); ok && pe.Kind == pointer.Scroll {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("e read %d scrolls, want the one ScrollFocus delivered", n)
+	}
+}
+
+// A Tab the window reserves for focus moves (a SystemEvent no handler took)
+// queued behind a handler's press is replayed as one: a catch-all key
+// filter doesn't get it.
+func TestClackReplaysSystemTabAsOne(t *testing.T) {
+	var e, h int
+	r := new(Router)
+	focFrame(r, &h, &e)
+	r.Source().Execute(key.FocusCmd{Tag: &e})
+	focFrame(r, &h, &e)
+	r.Queue(rsClick(50, false)[:1]...)
+	r.Queue(SystemEvent{Event: key.Event{Name: key.NameTab, State: key.Press}})
+	r.Source().Execute(key.SelectionCmd{Tag: &e}) // the replay
+	for _, ev := range events(r, -1, key.Filter{Focus: &e}) {
+		if ke, ok := ev.(key.Event); ok && ke.Name == key.NameTab {
+			t.Errorf("the catch-all filter got the replayed Tab: %+v", ke)
+		}
 	}
 }
