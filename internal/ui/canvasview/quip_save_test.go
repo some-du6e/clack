@@ -176,7 +176,7 @@ func TestCanvasQuipSaves(t *testing.T) {
 	// a new block
 	v.StartNewBlock()
 	frame()
-	if v.edit.cur != nil || cantEdits(h) != 2 {
+	if v.edit.cur != nil || cantEdits(h) != 3 { // the mention's two, and this one
 		t.Errorf("a new block: editor %v, toasts %d", v.edit.cur != nil, cantEdits(h))
 	}
 	time.Sleep(200 * time.Millisecond)
