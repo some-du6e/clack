@@ -262,6 +262,33 @@ type Block struct {
 	kids []json.RawMessage
 }
 
+// dataTableActions are a data_table's action_cell elements, row by row
+// (renderCellContent's action_cell: the element with the table's block id
+// and the cell's own action_id).
+func dataTableActions(raw json.RawMessage) []Element {
+	var rows [][]json.RawMessage
+	if json.Unmarshal(raw, &rows) != nil {
+		return nil
+	}
+	var out []Element
+	for _, r := range rows {
+		for _, c := range r {
+			var cell struct {
+				Type    string          `json:"type"`
+				Element json.RawMessage `json:"element"`
+			}
+			if json.Unmarshal(c, &cell) != nil || cell.Type != "action_cell" || len(cell.Element) == 0 {
+				continue
+			}
+			var e Element
+			if json.Unmarshal(cell.Element, &e) == nil && e.Type != "" {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
+}
+
 // maxNesting is how deep blocks inside blocks are followed (containers'
 // and callouts' child_blocks, fallback payloads), as richtext follows
 // fallbacks (maxFallbackDepth); deeper ones are dropped. Without it a
@@ -274,6 +301,7 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 		plain
 		Elements    json.RawMessage `json:"elements"`
 		Actions     json.RawMessage `json:"actions"` // a card's buttons
+		Rows        json.RawMessage `json:"rows"`    // a data_table's action cells
 		ChildBlocks json.RawMessage `json:"child_blocks"`
 		Fallback    json.RawMessage `json:"fallback"`
 	}
@@ -287,6 +315,8 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 		_ = json.Unmarshal(p.Elements, &b.Elements)
 	case b.Type == "card" && len(p.Actions) > 0: // Card's actions (7Xkb), its block id theirs
 		_ = json.Unmarshal(p.Actions, &b.Elements)
+	case b.Type == "data_table" && len(p.Rows) > 0: // its action_cells' elements (DataTableBlockRow)
+		b.Elements = dataTableActions(p.Rows)
 	}
 	// the nested blocks wait for parseBlocks, which knows their depth
 	switch {
@@ -378,7 +408,7 @@ type ref struct {
 func elementsOf(b *Block) []*Element {
 	var out []*Element
 	switch b.Type {
-	case "actions", "card":
+	case "actions", "card", "data_table":
 		for i := range b.Elements {
 			out = append(out, &b.Elements[i])
 		}

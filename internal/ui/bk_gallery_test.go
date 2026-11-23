@@ -124,6 +124,12 @@ func TestBlockKitGallery(t *testing.T) {
 		})
 		e.settle(800 * time.Millisecond)
 		snap("gallery-thread-leaderboard-" + mode)
+		// its end: the reply's table
+		if tv := e.threadView(ch, bts); tv != nil {
+			tv.ScrollToBottom()
+		}
+		e.settle(800 * time.Millisecond)
+		snap("gallery-thread-leaderboard-table-" + mode)
 		// close it: the next pass pages the channel at its full width
 		e.a.CloseSecondary()
 		e.settle(300 * time.Millisecond)

@@ -407,8 +407,8 @@ func (l *lay) dtIconButton(ctl *TableControl, id, icon string, r image.Rectangle
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: in, radius: l.dp(8) - bw, target: tg, hover: l.tok("base-ter")})
 	l.d.hits = append(l.d.hits, hit{r: in, t: tg})
 	gs := l.dp(16)
-	gr := image.Rect(in.Min.X+(in.Dx()-gs)/2, in.Min.Y+(in.Dy()-gs)/2, 0, 0)
-	gr.Max = gr.Min.Add(image.Pt(gs, gs))
+	at := image.Pt(in.Min.X+(in.Dx()-gs)/2, in.Min.Y+(in.Dy()-gs)/2)
+	gr := image.Rectangle{Min: at, Max: at.Add(image.Pt(gs, gs))}
 	l.d.imgs = append(l.d.imgs, imgPrim{r: gr, url: iconURL + icon, target: -1, px: gs, tint: l.tok("content-sec")})
 	// :hover's content-pry glyph
 	k := l.newHover()
@@ -745,7 +745,13 @@ func (l *lay) dtFooter(ctl *TableControl, vw *dtView, dt *richtext.DataTable, x,
 			pw += b.w
 		}
 	}
-	shown := vw.paginate // .dataTableBlockPaginationHidden: visibility hidden
+	// .dataTableBlockPaginationHidden is visibility: hidden on the whole
+	// footer: with one page neither the pagination nor the Salesforce
+	// label shows, the 32px stay
+	shown := vw.paginate
+	if !shown {
+		return h
+	}
 	tw := pw
 	if sfW > 0 {
 		tw += sfW + gap
@@ -755,14 +761,9 @@ func (l *lay) dtFooter(ctl *TableControl, vw *dtView, dt *richtext.DataTable, x,
 		gs := l.dp(16)
 		gy := y + (h-gs)/2
 		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(cx, gy, cx+gs, gy+gs), url: iconURL + "sf-cloud-filled", target: -1, px: gs, tint: l.tok("plt-lagoon-50")})
-		if shown {
-			l.plainAdd("\n")
-			l.plainFlow(sfText, cx+gs+gap, y+(h-l.dp(18))/2, sfW-gs-gap+l.dp(1), &fs, -1)
-		}
+		l.plainAdd("\n")
+		l.plainFlow(sfText, cx+gs+gap, y+(h-l.dp(18))/2, sfW-gs-gap+l.dp(1), &fs, -1)
 		cx += sfW + gap
-	}
-	if !shown {
-		return h
 	}
 	bx := cx + l.dp(8)
 	s := l.dp(20)

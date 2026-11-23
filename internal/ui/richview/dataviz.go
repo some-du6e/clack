@@ -75,6 +75,11 @@ type chartPrim struct {
 	textCol    color.NRGBA // content-pry
 	pointerCol color.NRGBA // the axis pointer's line
 	label      string      // the chart's aria-label (role img)
+	// card is the entity card round the chart and its radius: overflow
+	// hidden, so the tooltip (ECharts' html tooltip, inside the chart's
+	// div) is cut at its edges
+	card    image.Rectangle
+	cardRad int
 }
 
 // chartPalette is useChartTokens in the layout's theme.
@@ -168,6 +173,9 @@ func (l *lay) dataViz(b *richtext.Block, x, y, w int) int {
 	yy += pad + bw
 	h := yy - y
 	frame := box{kind: bBorder, r: image.Rect(x, y, x+ww, y+h), radius: l.dp(12), fill: l.tok("base-pry"), stroke: l.tok("otl-ter"), bw: bw, target: -1}
+	if n := len(l.d.charts); n > 0 && l.d.charts[n-1].r.In(frame.r) {
+		l.d.charts[n-1].card, l.d.charts[n-1].cardRad = frame.r, frame.radius
+	}
 	l.d.boxes = append(l.d.boxes, box{})
 	copy(l.d.boxes[box0+1:], l.d.boxes[box0:])
 	l.d.boxes[box0] = frame
@@ -648,6 +656,11 @@ func (v *View) chartTooltip(gtx layout.Context, st *Style, c *chartPrim, t chart
 	tx, ty := chart.TipPlace(px, py, tl.W, tl.H, c.lay.W, c.lay.H)
 	rec := op.Record(gtx.Ops)
 	ops := gtx.Ops
+	// the card's overflow: hidden (popped before the macro ends)
+	var cs clip.Stack
+	if !c.card.Empty() {
+		cs = clip.UniformRRect(c.card, c.cardRad).Push(ops)
+	}
 	o := c.at(tx, ty)
 	sc := c.scale
 	box := image.Rect(int(o.X+0.5), int(o.Y+0.5), int(o.X+float32(tl.W)*sc+0.5), int(o.Y+float32(tl.H)*sc+0.5))
@@ -671,6 +684,9 @@ func (v *View) chartTooltip(gtx layout.Context, st *Style, c *chartPrim, t chart
 			x, y := at(r.Value.X, r.Value.Top)
 			v.chartText(ops, st, c.black, r.Value.Text, x, y, lineH, c.pal.Text)
 		}
+	}
+	if !c.card.Empty() {
+		cs.Pop()
 	}
 	op.Defer(gtx.Ops, rec.Stop())
 }

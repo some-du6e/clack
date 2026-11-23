@@ -93,6 +93,18 @@ func TestDataTableLayout(t *testing.T) {
 			t.Errorf("%s at %v, want %v", id, got, want)
 		}
 	}
+	// each header button draws its glyph inside it
+	for _, id := range []string{"more", "view", "search"} {
+		r, n := tb.Buttons[id], 0
+		for i := range v.d.imgs {
+			if im := &v.d.imgs[i]; strings.HasPrefix(im.url, iconURL) && im.r.In(r) && im.r.Dx() == 16 {
+				n++
+			}
+		}
+		if n == 0 {
+			t.Errorf("the %s button %v draws no 16px glyph", id, r)
+		}
+	}
 	if len(tb.Rows) != 5 || tb.Rows[0] != image.Rect(4, 86, 696, 134) || tb.Rows[4] != image.Rect(4, 278, 696, 326) {
 		t.Errorf("rows %v, want five 48px rows from y 86", tb.Rows)
 	}
