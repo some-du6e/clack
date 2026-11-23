@@ -337,6 +337,7 @@ func (m *mirror) invalidateMsg(ch, ts string) {
 	}
 	m.t.ui.views.msgPending(ch, ts, 1)
 	m.t.ui.views.msgStale(ch, ts)
+	m.t.ui.views.traceMsg(ch, ts, "event: pending, first mark")
 	m.mu.Lock()
 	m.pending = append(m.pending, change{Slice: "messages", Keys: []string{ch}, ts: ts})
 	if w := m.watched["messages"]; w != nil {
@@ -403,6 +404,7 @@ func (m *mirror) send() {
 		for _, c := range batch {
 			if c.ts != "" && !whole[c.Keys[0]] {
 				marked = m.t.ui.views.msgStale(c.Keys[0], c.ts) || marked
+				m.t.ui.views.traceMsg(c.Keys[0], c.ts, "send: posted, second mark")
 			}
 		}
 		if f := m.t.opts.UI.Invalidate; marked && f != nil {
