@@ -677,7 +677,8 @@ func (s *savedBase) itemBody(gtx C, it *core.SavedItem) D {
 						}),
 					)
 				}),
-				layout.Rigid(func(gtx C) D { return s.msgBody(gtx, m, false, 3) }),
+				// .p-saved_item--message is cursor: pointer (handBody)
+				layout.Rigid(func(gtx C) D { return s.handBody(gtx, func(gtx C) D { return s.msgBody(gtx, m, false, 3) }) }),
 			)
 		}),
 	)
