@@ -3954,6 +3954,9 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 					desc = lastReply(tsTime(latest), rc.now, count)
 				} else if !hov && rc.list != nil && !rc.thread {
 					unread = app.UnreadThreadsFor(rc.list.ch, m.TS) // getUnreadThreadsCountForMessage (unread_threads.go)
+					if f, ok := rc.h.(SecondaryThreadFocuser); ok && f.SecondaryThreadFocused(rc.list.ch, m.TS) {
+						unread = 0 // MessageWrapper: the thread open in a focused secondary view counts none
+					}
 				}
 			case hov:
 				desc = threadsNS.T("View thread") // the threads I18n

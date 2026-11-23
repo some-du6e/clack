@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gioui.org/io/key"
+	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 )
@@ -92,5 +93,37 @@ func TestKeyboardFocusPressDropsPendingListFocus(t *testing.T) {
 	x.settle(500 * time.Millisecond)
 	if tv := x.threadView(x.ch, x.root); x.kfListFocused(tv) || !x.kfBoxFocused(c) {
 		t.Errorf("the thread's replies arrived after a click in the message input: its list has the focus %v, the input %v; the click's focus stays", x.kfListFocused(tv), x.kfBoxFocused(c))
+	}
+}
+
+// TestKeyboardFocusFindBarTakesEscape: Escape in the thread's search bar
+// (Mod+F under find_in_thread) closes the bar, and only that: the shell's
+// "Close / mark as read" reads keys first and took it (the channel marked
+// read, the bar left open). ThreadSearchBar's onKeyDown handles Escape
+// itself (preventDefault, then close).
+func TestKeyboardFocusFindBarTakesEscape(t *testing.T) {
+	x := openTopEnv(t)
+	x.a.data.core.SetExperimentGroup("find_in_thread", "on")
+	x.root = fakeslack.ThreadOpenNewest // on screen: no wheel to it
+	x.a.OpenThread(x.ch, x.root)
+	x.until("the thread drawn", 20*time.Second, func() bool {
+		tv := x.threadView(x.ch, x.root)
+		return tv != nil && tv.HasMessages()
+	})
+	x.a.FocusThreadComposer(x.ch, x.root)
+	x.until("the thread with its reply box focused", 5*time.Second, x.threadFocused)
+	tv := x.threadView(x.ch, x.root)
+	x.key("F", key.ModShortcut)
+	x.until("the thread's search bar focused", 3*time.Second, func() bool { return findFocused(layout.Context{Source: x.r.Source()}, tv) })
+	x.settle(300 * time.Millisecond)
+	marks := x.fs.CallCount("conversations.mark")
+	x.key(key.NameEscape, 0)
+	x.until("Escape closing the search bar", 3*time.Second, func() bool { return tv.FindBar().Empty() })
+	x.settle(300 * time.Millisecond)
+	if !x.a.secondary.open() || x.a.secondary.kind != secThread {
+		t.Error("Escape in the search bar closed the thread pane")
+	}
+	if n := x.fs.CallCount("conversations.mark"); n != marks {
+		t.Errorf("Escape in the search bar marked the channel read (%d conversations.mark)", n-marks)
 	}
 }
