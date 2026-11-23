@@ -28,6 +28,7 @@ func (b *base) spanLine(gtx C, spans []richtext.Span, size unit.Sp, col color.NR
 	ell := b.th.Measure(gtx, size, theme.Regular, "…")
 	x := 0
 	pill := argb(0x1a1d9bd1)
+	spans = firstLineSpans(spans)
 	for _, s := range spans {
 		if s.Kind == richtext.Break {
 			break
@@ -112,4 +113,24 @@ func (c richLineCache) get(raw string, parse func(string) []richtext.Block, now 
 	}
 	c[raw] = &spanEntry{spans: spans, at: now, unresolved: unresolved}
 	return spans
+}
+
+// firstLineSpans is spans up to the first line break, a raw span (a long
+// rich_text element kept whole, richtext/rawtext.go) cut into the spans it
+// stands for as far as that break: one line is all spanLine draws.
+func firstLineSpans(spans []richtext.Span) []richtext.Span {
+	raw := false
+	for i := range spans {
+		raw = raw || richtext.IsRaw(&spans[i])
+	}
+	if !raw {
+		return spans
+	}
+	var out []richtext.Span
+	for _, s := range spans {
+		if !richtext.Pieces(s, func(p richtext.Span) bool { out = append(out, p); return p.Kind != richtext.Break }) {
+			break
+		}
+	}
+	return out
 }

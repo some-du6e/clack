@@ -25,6 +25,7 @@ func main() {
 	userIDs := flag.String("userids", "", "write the directory's user ids here, one per line (the memory workflow's driver loads them all)")
 	gallery := flag.Bool("gallery", false, "add #blockkit-gallery (every Block Kit fixture)")
 	gifs := flag.Int("gifs", 0, "add #gif-wall with this many messages, each a large animated GIF (the GIF memory test's channel)")
+	giant := flag.Int("giant", 0, "add #giant-wall: of its latest this many messages every twelfth is short and the rest each about 908,000 characters (the giant message memory test's channel)")
 	latency := flag.Duration("latency", 0, "added to every API call (a network round trip), e.g. 150ms")
 	imgLatency := flag.Duration("img-latency", 0, "added to every image download")
 	iaTheme := flag.String("ia-theme", "", "the account's users.prefs ia_theme (JSON), instead of Slack's default")
@@ -43,6 +44,7 @@ func main() {
 	}
 	sz.Gallery = *gallery
 	sz.GIFs = *gifs
+	sz.Giant = *giant
 	if *emojiN > 0 {
 		sz.Emoji = *emojiN
 	}
