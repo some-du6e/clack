@@ -135,7 +135,15 @@ type apiCalls struct {
 
 // recordCalls records the params of every call to methods from now on;
 // the calls get the fake's answers as before.
-func (e *perfEnv) recordCalls(methods ...string) *apiCalls {
+func (e *perfEnv) recordCalls(methods ...string) *apiCalls { return e.recordCallsThen(nil, methods...) }
+
+// recordCallsThen is recordCalls running next after it records (the
+// fake has one hook: a test's own, set before recordCalls, was replaced,
+// and the newer pages TestJumpWindowLastPageStaysPut held "a moment late"
+// came back at once: they landed before the test read where the reader
+// was, in flakes-1122d's push ci 45079268143, and the late names
+// after them moved the reader).
+func (e *perfEnv) recordCallsThen(next func(method string, f url.Values) (any, bool), methods ...string) *apiCalls {
 	c := &apiCalls{forms: map[string][]url.Values{}}
 	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
 		if slices.Contains(methods, method) {
@@ -146,6 +154,9 @@ func (e *perfEnv) recordCalls(methods ...string) *apiCalls {
 			c.mu.Lock()
 			c.forms[method] = append(c.forms[method], cp)
 			c.mu.Unlock()
+		}
+		if next != nil {
+			return next(method, f)
 		}
 		return nil, false
 	})
