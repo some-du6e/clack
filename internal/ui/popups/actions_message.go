@@ -159,27 +159,37 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if inThread {
 		markUnread.Key, markUnread.Action = "mark_thread_unread", "mark_thread_unread" // Slack's action ids (lq1n)
 	}
-	sa := SaveActionFor(h.Core(), &m)
-	items = append(items,
-		markUnread,
-		MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
+	// an ephemeral message has no Mark unread (canMarkUnread), save row
+	// (null on isEphemeral unless it's a saved to-do to move), reminder
+	// (canAddReminder) or Copy link (canCopyLink): actions_rules.go
+	app := h.Core()
+	eph := isEphemeral(app, &m)
+	if !eph {
+		items = append(items, markUnread)
+	}
+	if sa := SaveActionFor(app, &m); !eph || sa.Do == SaveMove {
+		items = append(items, MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			RunSaveAction(h, m) // oMi4 / aSBj (actions_todo.go)
-		}}.In(nsSaved),
-		MenuItem{Action: "remind", Label: ReminderLabel(h.Core(), &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage), // ih0g
-	)
+		}}.In(nsSaved))
+	}
+	if remindShown(app, &m) {
+		items = append(items, MenuItem{Action: "remind", Label: ReminderLabel(app, &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage)) // ih0g
+	}
 	if f, ok := actFollowItem(h, m, conv, root); ok {
 		items = append(items, f)
 	}
-	items = append(items,
-		Sep(),
-		MenuItem{Action: "copy_link", Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
+	items = append(items, Sep())
+	if copyLinkShown(app, &m) {
+		items = append(items, MenuItem{Action: "copy_link", Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, link()) // copyLink (5FS0): the clipboard only, no toast
-		}}.In(nsMessage),
-		MenuItem{Action: "copy_text", Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
+		}}.In(nsMessage))
+	}
+	if copyTextShown(&m) {
+		items = append(items, MenuItem{Action: "copy_text", Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
 			copyMessage(gtx, m)
-		}}.In(nsMessage),
-		Sep(),
-	)
+		}}.In(nsMessage))
+	}
+	items = append(items, Sep())
 
 	// getPinActionLabel (loUg): "…channel" in public and private channels,
 	// "…this conversation" in DMs and group DMs
@@ -191,11 +201,15 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if m.Pinned {
 		pin = MenuItem{Action: "pin", Label: unpinLabel, Icon: "pin", Hint: nsMessage.T("P"), Keys: KeyPin, Do: func() { actPin(h, ch, ts, false) }}.In(nsMessage)
 	}
-	items = append(items,
-		MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage),
-		// no "Forward message…" here: Slack keeps it on the hover toolbar
-		MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m)}.In(nsMessage),
-	)
+	// Organize and Connect to apps need isActionable (not ephemeral, a
+	// tombstone or temporary); no "Forward message…" here: Slack keeps it
+	// on the hover toolbar
+	if actionable(app, &m) {
+		items = append(items,
+			MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage),
+			MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m)}.In(nsMessage),
+		)
+	}
 
 	// the broadcast and workflow group: [send reply, remove reply, view
 	// workflow details, copy workflow ID]
@@ -270,13 +284,33 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if !flagged && !own && !m.Tombstone && m.TS != "" && actReporting(h) {
 		last = append(last, MenuItem{Key: "report_message", Action: "report_message", Label: "Report to Slack", Do: func() { reportMessage(h, link()) }}.In(nsMsgActionItems))
 	}
-	if own {
+	// canDeleteMessageHelper: your own message, and any ephemeral one
+	// (its first case), which the delete removes here alone
+	if own || eph {
 		last = append(last, MenuItem{Action: "delete_message", Label: "Delete message…", Hint: nsMessage.T("delete"), Keys: KeyDelete(), Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }}.In(nsMessage))
 	}
 	if len(last) > 0 {
 		items = append(append(items, Sep()), last...)
 	}
-	return items
+	return tidySeps(items)
+}
+
+// tidySeps drops the separators an empty group leaves (Slack's menu
+// filters empty groups out before it draws one divider between groups):
+// none first or last, never two together. An ephemeral message's menu
+// is Copy message, then Delete message…
+func tidySeps(items []MenuItem) []MenuItem {
+	out := items[:0]
+	for _, it := range items {
+		if it.Separator && (len(out) == 0 || out[len(out)-1].Separator) {
+			continue
+		}
+		out = append(out, it)
+	}
+	for len(out) > 0 && out[len(out)-1].Separator {
+		out = out[:len(out)-1]
+	}
+	return out
 }
 
 // actFollowItem is the follow row (ojBT): its label from the thread's
@@ -289,6 +323,11 @@ func actFollowItem(h Host, m core.Message, conv core.Conv, root string) (MenuIte
 	subscribed := m.FollowingThread
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
 		subscribed = actThreadSubscribed(h, ch, root)
+	} else if a := h.Core(); !CanStartOrOpenThread(a, &m) && (isEphemeral(a, &m) || a != nil && a.IsTempMsg(&m)) {
+		// canStartOrOpenThread on the thread's root (threadTs || ts): a
+		// top-level ephemeral or temporary message without replies has no
+		// thread to follow (a reply's row is its root's)
+		return MenuItem{}, false
 	}
 	if conv.Preview && !subscribed {
 		return MenuItem{}, false
@@ -489,6 +528,13 @@ func confirmDelete(h Host, m core.Message, del func(ctx context.Context, ch, ts 
 		func(gtx layout.Context) layout.Dimensions { return actMsgPreview(gtx, h, m, true) },
 		func() {
 			ch, ts := m.Channel, m.TS
+			// animateAndDeleteMessageApi: an ephemeral message (or a
+			// temporary ts) is only animated out and removed from the
+			// store (removeMessageAndTimestamp); chat.delete never goes out
+			if a := h.Core(); a != nil && a.IsEphemeral(&m) {
+				a.Interactive().DismissEphemeral(ch, ts)
+				return
+			}
 			actDo(h, "", func(ctx context.Context, _ *core.App) error { return deleteMessage(ctx, h, del, ch, ts) })
 		}).OldDialog() // BaseDeleteMessageDialog: DeprecatedBaseDialog, focusOnPrimaryButton
 }

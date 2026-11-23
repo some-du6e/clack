@@ -4,6 +4,8 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
+
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // Keyboard focus in the message list, for Accessibility > "Press ↑ in the
@@ -216,13 +218,13 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 				s.pageKey(e.Name)
 			case key.NameEscape:
 				s.kbLeave(gtx)
-			case "V": // Add to list…: a message the server has (not a local send)
+			case "V": // Add to list…: the toolbar's action (P2.ADD_TO_LIST), so none where it has none
 				r := s.rows[s.kb.ts]
-				if la, ok := h.(ListAdder); ok && r != nil && !r.src.Pending && !r.src.Failed {
+				if la, ok := h.(ListAdder); ok && r != nil && popups.ToolbarShown(h.Core(), &r.m) && popups.AddToListShown(h.Core(), &r.src) {
 					la.AddMessageToList(r.src)
 				}
-			default: // Enter, E: edit it when it's yours
-				if r := s.rows[s.kb.ts]; r != nil && h.Core() != nil && r.m.User == h.Core().Self().ID {
+			default: // Enter, E: edit it when it's yours (no keys on a temporary message: shouldRenderActions)
+				if r := s.rows[s.kb.ts]; r != nil && h.Core() != nil && r.m.User == h.Core().Self().ID && popups.ToolbarShown(h.Core(), &r.m) {
 					s.kbLeave(gtx)
 					s.startEdit(h, s.kb.ts)
 				}

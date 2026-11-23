@@ -2108,7 +2108,10 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	if rc.persist {
 		s.persistentActions(gtx, h, rc, size)
 	} else if s.hoverIdx >= s.visible[0] && s.hoverIdx < s.visible[1] && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
-		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed && !r.m.Tombstone {
+		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && popups.ToolbarShown(h.Core(), &r.m) {
+			// shouldRenderActions: none on a temporary (pending, failed
+			// or client-made ephemeral) message; a tombstone and a
+			// server ephemeral have one (popups/actions_rules.go)
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
 	}
@@ -2318,9 +2321,9 @@ func (s *listState) actionsAt(idx int, dense bool) int {
 	return actsDefault
 }
 
-// prepareButtons picks r's toolbar buttons and their labels: the thread
-// and share actions follow Slack's rules (actions_rules.go), the rest are
-// always there.
+// prepareButtons picks r's toolbar buttons and their labels, each by
+// Slack's rule for it (actions_rules.go, popups/actions_rules.go): an
+// ephemeral message keeps ⋮ alone.
 func (s *listState) prepareButtons(app *core.App, r *row) {
 	s.tbBtns = s.tbBtns[:0]
 	s.tbLabel, s.tbQAs = tbTips, tbQA
@@ -2339,7 +2342,18 @@ func (s *listState) prepareButtons(app *core.App, r *row) {
 			}
 			s.tbLabel[i], s.tbQAs[i] = l, qa
 		case tbTodo:
+			if !popups.TodoShown(app, &r.src) { // on3u: none on an ephemeral or automated message
+				continue
+			}
 			s.tbLabel[i] = todoAction(app, &r.src).Label // Yoyn: "Complete to-do" on a to-do
+		case tbList:
+			if !popups.AddToListShown(app, &r.src) { // shouldShowAddToList: !is_ephemeral
+				continue
+			}
+		case tbMore:
+			if !popups.MoreShown(app, &r.src) { // isOnlyDeletableHere
+				continue
+			}
 		case tbAddReact:
 			if !reactable(app, r, s.thread) {
 				continue
