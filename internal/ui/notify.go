@@ -119,12 +119,31 @@ func (a *App) soundDebounced(ch, thread string) bool {
 	if a.soundQuiet == nil {
 		a.soundQuiet = map[string]*time.Timer{}
 	}
-	a.soundQuiet[k] = time.AfterFunc(soundDebounce, func() {
-		a.soundMu.Lock()
-		delete(a.soundQuiet, k)
-		a.soundMu.Unlock()
+	var t *time.Timer
+	t = time.AfterFunc(soundDebounce, func() {
+		a.soundMu.Lock() // soundDebounced holds it until t is set
+		defer a.soundMu.Unlock()
+		a.soundQuietOverLocked(k, t)
 	})
+	a.soundQuiet[k] = t
 	return false
+}
+
+// soundQuietOver ends the quiet stretch timer t started for k, unless a
+// newer stretch holds k now: a Reset that comes as t fires runs t's func
+// again once more, and that run found the newer stretch's entry and
+// deleted it, so the next message in that stretch played a sound.
+func (a *App) soundQuietOver(k string, t *time.Timer) {
+	a.soundMu.Lock()
+	defer a.soundMu.Unlock()
+	a.soundQuietOverLocked(k, t)
+}
+
+// soundQuietOverLocked is soundQuietOver with soundMu held.
+func (a *App) soundQuietOverLocked(k string, t *time.Timer) {
+	if a.soundQuiet[k] == t {
+		delete(a.soundQuiet, k)
+	}
 }
 
 // soundPlayback is the shell's answer to SHOULD_PLAY_SOUND, which the web

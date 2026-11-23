@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// The message sound's test seams (notify.go), as the code before
-// soundQuietOver has them: its stretch timer's func deleted whatever held
-// the key.
+// The message sound's test seams (notify.go). The red commit replaces this
+// file with stubs: the tests then run on the code before them.
 
 func huddleOn(t *testing.T, on bool) {
 	old := inHuddle
@@ -21,9 +20,5 @@ func quietFor(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { soundDebounce = old })
 }
 
-// lateExpiry is the old stretch timer's func.
-func lateExpiry(a *App, k string, _ *time.Timer) {
-	a.soundMu.Lock()
-	delete(a.soundQuiet, k)
-	a.soundMu.Unlock()
-}
+// lateExpiry runs the func of stretch timer t of k (soundQuietOver).
+func lateExpiry(a *App, k string, t *time.Timer) { a.soundQuietOver(k, t) }
