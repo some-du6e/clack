@@ -43,7 +43,9 @@ type bk struct {
 	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	TeamID      string          `json:"team_id"`
-	Name        bkStr           `json:"name"` // emoji; auth_provider's is a text object
+	Channel     bkStr           `json:"channel"` // message_embed (messageembed.go)
+	TS          bkStr           `json:"ts"`      // message_embed
+	Name        bkStr           `json:"name"`    // emoji; auth_provider's is a text object
 	Unicode     string          `json:"unicode"`
 	SkinTone    int             `json:"skin_tone"`
 	Range       string          `json:"range"`
@@ -203,6 +205,14 @@ type builder struct {
 	// missing: a block Slack draws but Clack can't yet drew nothing (the
 	// message text then stands in, FromMessageIn)
 	missing bool
+	// undrawn are the types Slack has a renderable for that reached no
+	// renderer of Clack's (the coverage guard reads it)
+	undrawn []string
+	// embedding are the messages (channel/ts) whose message_embed is being
+	// drawn on the way here, embedCards the embeds drawn so far
+	// (messageembed.go)
+	embedding  map[string]bool
+	embedCards int
 	// notify converts for a notification's text (NotificationMessageText): a
 	// type with no renderable adds nothing, with no fallback chain
 	notify bool
@@ -417,7 +427,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", badBlock:
 		return true
 	}
 	return false
@@ -577,6 +587,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.cardBlock(b))
 	case "data_table":
 		return append(out, c.dataTableBlock(b))
+	case "message_embed":
+		return c.messageEmbed(out, b)
 	case "data_visualization":
 		return append(out, c.dataVizBlock(b))
 	case "markdown":
@@ -617,6 +629,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 	}
 	// a type Slack draws that Clack doesn't yet: its text object, if any
 	// (docs/BLOCKKIT-COVERAGE.md)
+	c.undrawn = append(c.undrawn, b.Type)
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)
 	}
@@ -1024,6 +1037,7 @@ func init() {
 // else the text, else nothing.
 func (c *builder) unknownInline(e *bk, m brMode) []Span {
 	if messageRenderables[e.Type] {
+		c.undrawn = append(c.undrawn, e.Type)
 		if e.Type != "citation" || e.Details != nil && (len(e.Details.CitationType) > 0 || len(e.Details.CitationTypeCamel) > 0) {
 			return unknownElement(e.textString(), e.URL)
 		}

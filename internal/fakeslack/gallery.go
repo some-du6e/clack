@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -229,9 +230,24 @@ func (s *Server) galleryEntries() []galleryEntry {
 			out = append(out, galleryEntry{spec: GalleryMessage{Name: name, Text: m.Text, Blocks: string(m.Blocks)}, msg: m})
 		}
 	}
+	// {gallery-ts:NAME} in a message's blocks is gallery message NAME's ts
+	// (a message_embed of it: gallery_embed.go)
+	tsOf := map[string]string{}
+	for _, e := range out {
+		tsOf[e.spec.Name] = e.msg.TS
+	}
+	for i := range out {
+		if b := out[i].msg.Blocks; strings.Contains(string(b), "{gallery-ts:") {
+			out[i].msg.Blocks = json.RawMessage(galleryTSRef.ReplaceAllStringFunc(string(b), func(m string) string {
+				return tsOf[strings.TrimSuffix(strings.TrimPrefix(m, "{gallery-ts:"), "}")]
+			}))
+		}
+	}
 	sort.SliceStable(out, func(i, j int) bool { return slackTSLess(out[i].msg.TS, out[j].msg.TS) })
 	return out
 }
+
+var galleryTSRef = regexp.MustCompile(`\{gallery-ts:[^}]+\}`)
 
 // replyTS is reply n's ts in the thread of parent (n from 1).
 func replyTS(parent string, n int) string {
