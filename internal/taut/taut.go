@@ -181,6 +181,13 @@ type Taut struct {
 
 	mu      sync.Mutex
 	startMu sync.Mutex // held while a runtime starts (ensureRuntime)
+	// dirMu: a write into dir that a plugin's register makes after its JS
+	// call (its cached metadata, a migrated config) holds it for reading
+	// and checks closed first (whileOpen); Close takes it once after
+	// setting closed, so nothing a register wrote lands after Close returns
+	// (a register past ensureRuntime when Close came wrote its meta.json
+	// after: the flakes-1122d review)
+	dirMu   sync.RWMutex
 	rt      *runtime
 	rtErr   error
 	plugins map[string]*plugin
@@ -206,6 +213,7 @@ type Taut struct {
 	stopWatch chan struct{}
 	watchOnce sync.Once
 	closed    atomic.Bool
+	detached  atomic.Bool // Detach: the UI let go of it
 }
 
 // New loads config.json, user.css and the installed plugins' metadata. If
@@ -321,6 +329,8 @@ func (t *Taut) Close() error {
 	// closed is set, it sees it and closes what it made.
 	t.startMu.Lock()
 	t.startMu.Unlock()
+	t.dirMu.Lock() // a register's write in progress ends; later ones see closed (whileOpen)
+	t.dirMu.Unlock()
 	t.startOnce.Do(func() { close(t.startDone) }) // never started (DeferStart): nothing waits for it
 	ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 	defer cancel()
@@ -353,6 +363,18 @@ func (t *Taut) Close() error {
 	}
 	t.setPluginExperiments(nil) // no runtime, no patches: core reads the server's groups again
 	return t.data.flush()
+}
+
+// whileOpen runs f, a write into dir, unless Close came first (dirMu); it
+// reports whether f ran.
+func (t *Taut) whileOpen(f func()) bool {
+	t.dirMu.RLock()
+	defer t.dirMu.RUnlock()
+	if t.closed.Load() {
+		return false
+	}
+	f()
+	return true
 }
 
 // Runtime returns the JS runtime, starting it if needed (the ui root uses
