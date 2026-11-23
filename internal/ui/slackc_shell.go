@@ -8,7 +8,10 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -44,6 +47,10 @@ var (
 	// OnlineCount's .p-autoclog__hook:has(> .slick-online-count) makes a
 	// flex row of the stack and its count
 	clsAutoclogHook = slackc.Class("p-autoclog__hook").FlexItems()
+	// the header's big buttons' row (ViewHeaderBigButton's
+	// div.p-view_header__actions.p-view_header__actions--gap-6px): a
+	// ViewHeaderSearch patch's tree is its flex items, 6px apart
+	clsHdrActions = slackc.Class("p-view_header__actions p-view_header__actions--gap-6px").FlexItems()
 
 	clsSidebar = slackc.Class("p-channel_sidebar p-channel_sidebar--classic-nav").Mods(invertedScope)
 	clsSbList  = slackc.Class("p-channel_sidebar__list p-channel_sidebar__static_list", "role", "tree")
@@ -167,6 +174,66 @@ func measured(gtx layout.Context, w layout.Widget) (op.CallOp, layout.Dimensions
 func place(gtx layout.Context, call op.CallOp, p image.Point) {
 	defer op.Offset(p).Push(gtx.Ops).Pop()
 	call.Add(gtx.Ops)
+}
+
+// ---- ViewHeaderSearch (HideResolved) ----
+
+// nsHdrSearch is ViewHeaderSearch's strings' namespace (its "search").
+var nsHdrSearch = i18n.NS("search")
+
+// hdrSearch is the channel header's search button: Slack's ViewHeaderSearch
+// (module 1au8), the "search" big button ViewHeaderBigButton renders last
+// but for code (3C61's list: every channel, DM and group DM), an IconButton
+// (medium: 28px, the 20px "search" icon, no border:
+// .p-view_header_search_action_button--no-border, data-qa
+// search_in_channel_button) under Tooltip "Search in channel (⌘F)", or
+// "Search in DM (⌘F)" in a DM or group DM (JM: isIm || isMpim), below it.
+// Its click is Search in channel (⌘F; Clack has no Find in channel
+// popover, whose flag swaps the strings and icon). A plugin patching it
+// draws beside it in .p-view_header__actions (HideResolved's toggle).
+type hdrSearch struct {
+	a    *App
+	ch   string
+	conv *convInfo
+	btn  int // px
+}
+
+// props: ViewHeaderSearch's ({channel, canOpenFindInChannelPopover}), the
+// channel as Slack's channels store has it.
+func (h hdrSearch) props() slackc.Props {
+	kind, name := "", ""
+	if h.conv != nil {
+		kind, name = h.conv.Kind, h.conv.Name
+	}
+	return slackc.Props{
+		"$key": "hdr-search:" + h.ch,
+		"channel": slackc.Props{
+			"id": h.ch, "name": name,
+			"is_channel": kind == "channel" || kind == "private", "is_group": kind == "private",
+			"is_private": kind == "private" || kind == "im" || kind == "mpim",
+			"is_im":      kind == "im", "is_mpim": kind == "mpim",
+		},
+		"canOpenFindInChannelPopover": true,
+	}
+}
+
+// tip is ViewHeaderSearch's tooltip.
+func (h hdrSearch) tip() string {
+	key := shortcut.Format("Mod+F")
+	if h.conv != nil && (h.conv.Kind == "im" || h.conv.Kind == "mpim") {
+		return nsHdrSearch.T("Search in DM ({shortcut})", "shortcut", key)
+	}
+	return nsHdrSearch.T("Search in channel ({shortcut})", "shortcut", key)
+}
+
+// layout draws the button at the origin with its tooltip.
+func (h hdrSearch) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	a := h.a
+	c := &a.th.C
+	cl := a.clicks.get("hdr.search")
+	d := iconButton(gtx, cl, "search", 28, 20, c.FgMuted, c.BgHover, 8)
+	popups.Tooltip(gtx, a.th, &a.hdrX().searchTip, cl.Hovered(), d.Size, popups.Below, h.tip(), "")
+	return d
 }
 
 // ---- BaseAvatarStack (#47, HumanCount) ----
