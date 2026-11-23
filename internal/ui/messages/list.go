@@ -206,9 +206,9 @@ type listState struct {
 	findFlashAt       time.Time
 	sel               selection
 	sb                scrollbar
-	// sbCall is the scrollbar the last layout drew for the host to draw
-	// over its reply box (sbDeferred until it does), in the frame at sbAt
-	// (a call is only good in the frame that recorded it)
+	// sbCall is the scrollbar the last layout recorded for the host to
+	// draw after its reply box (sbDeferred until it does), in the frame at
+	// sbAt (a call is only good in the frame that recorded it)
 	sbCall      op.CallOp
 	sbDeferred  bool
 	sbAt        time.Time
@@ -1449,9 +1449,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.contextMenu(h, origin)
 	s.overlays(gtx, h, rc, size)
 	if s.thread && s.inputOn {
-		// the host draws the reply box over the list's "input" row, and
-		// the scrollbar goes over it (ThreadView.DrawScrollbar): Slack's
-		// thread pane is one scroll container, its scrollbar over every
+		// the host draws the reply box in the list's "input" row, and the
+		// scrollbar goes after it (ThreadView.DrawScrollbar): Slack's
+		// thread pane is one scroll container, its scrollbar above every
 		// row, the input's too
 		m := op.Record(gtx.Ops)
 		s.layoutScrollbar(gtx, c, size, now)

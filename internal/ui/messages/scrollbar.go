@@ -39,7 +39,7 @@ type scrollbar struct {
 	thumb      image.Rectangle
 	// over: the pointer is over the list's box, the host's reply box in
 	// it too (.c-scrollbar:hover shows the bar over the whole scroll
-	// container): ThreadView.DrawScrollbar tracks it over the box
+	// container): ThreadView.DrawScrollbar tracks it above the box
 	over bool
 }
 

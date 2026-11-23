@@ -24,9 +24,9 @@ package ui
 //
 // The pane's scrollbar is that one scroll container's: Slack's legacy
 // Scrollbar over the virtual list, its track 8px wide and 4px in from the
-// list's edges, the content every row with the box's among them, the bar
-// over the box and shown while the pointer is anywhere in the pane
-// (.c-scrollbar:hover), so it can be dragged from there.
+// list's edges, so it runs down beside the box in the box's row, the
+// content every row with the box's among them, and the bar shown while the
+// pointer is anywhere in the pane, over the box too (.c-scrollbar:hover).
 
 import (
 	"fmt"
@@ -225,11 +225,12 @@ func TestThreadsAuditReplyBoxEndJumpsToTheEnd(t *testing.T) {
 }
 
 // TestThreadsAuditReplyBoxScrollbar: the thread pane's scrollbar at its
-// end runs over the reply box: the bar ends 4px above the pane's bottom,
-// 8px wide 4px in from its right (Slack's track); it shows with the
-// pointer over the box too; it is view²/content tall (at least 50px) for
-// the content a drag moves (content/track px a px: onDragStart's speed),
-// the box's row in it; and a drag that starts on the bar over the box
+// end runs down beside the reply box, in the box's row: the bar ends 4px
+// above the pane's bottom, 8px wide 4px in from its right (Slack's track;
+// the box keeps 16px from the pane's sides); it shows with the pointer
+// over the box too; it is view²/content tall (at least 50px) for the
+// content a drag moves (content/track px a px: onDragStart's speed), the
+// box's row in it; and a drag from where the bar is level with the box
 // scrolls the list, to its top and back to its end.
 func TestThreadsAuditReplyBoxScrollbar(t *testing.T) {
 	x := openTopEnv(t)
@@ -254,9 +255,9 @@ func TestThreadsAuditReplyBoxScrollbar(t *testing.T) {
 	if th.Max.Y != list.Max.Y-inset {
 		t.Errorf("at the thread's end the bar ends at y %d; Slack's track ends %d px above the pane's bottom (y %d)", th.Max.Y, inset, list.Max.Y-inset)
 	}
-	on := th.Intersect(box)
-	if on.Empty() {
-		t.Fatalf("at the thread's end the bar (%v) isn't over the reply box (%v)", th, box)
+	if th.Min.Y >= box.Max.Y || th.Max.Y <= box.Min.Y {
+		t.Fatalf("at the thread's end the bar (y %d to %d) isn't level with the reply box (y %d to %d): the track runs down the pane, the box's row included",
+			th.Min.Y, th.Max.Y, box.Min.Y, box.Max.Y)
 	}
 
 	// the pointer over the box, clear of the bar: still shown
@@ -266,8 +267,8 @@ func TestThreadsAuditReplyBoxScrollbar(t *testing.T) {
 		t.Error("the pointer over the reply box hides the bar; Slack's shows over the whole scroll container (.c-scrollbar:hover)")
 	}
 
-	// a drag from the bar where it is over the box
-	grab := image.Pt((on.Min.X+on.Max.X)/2, (on.Min.Y+on.Max.Y)/2)
+	// a drag from the bar where it is level with the box
+	grab := image.Pt((th.Min.X+th.Max.X)/2, (max(th.Min.Y, box.Min.Y)+min(th.Max.Y, box.Max.Y))/2)
 	before := x.paneTops()
 	x.rzPress(grab)
 	dy := x.px(20)
@@ -283,7 +284,7 @@ func TestThreadsAuditReplyBoxScrollbar(t *testing.T) {
 	}
 	if shift <= 0 {
 		x.rzRelease(grab)
-		t.Fatalf("a %d px drag up from the bar over the box moved the replies %d px (%s); it scrolls the list in Slack's (one scroll container)", dy, shift, x.otLabel(moved))
+		t.Fatalf("a %d px drag up from the bar beside the box moved the replies %d px (%s); it scrolls the list in Slack's (one scroll container)", dy, shift, x.otLabel(moved))
 	}
 	track := list.Dy() - 2*inset
 	content := shift * track / dy

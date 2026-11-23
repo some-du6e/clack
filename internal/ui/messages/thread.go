@@ -117,12 +117,13 @@ func (v *ThreadView) InputRow() (y int, ok bool, list image.Rectangle) {
 	return v.top + s.inputY, true, image.Rect(0, v.top, s.size.X, v.top+s.size.Y)
 }
 
-// DrawScrollbar draws the thread list's scrollbar over what the host drew
+// DrawScrollbar draws the thread list's scrollbar after what the host drew
 // on the list since Layout (the reply box in the "input" row): Slack's
 // thread pane is one scroll container with the input inside it, so the
-// scrollbar's track spans the box's row too, the thumb is over the box,
-// to be seen and dragged there, and the pointer over the box shows it
-// (.c-scrollbar:hover). Each Layout draws it once.
+// scrollbar's track runs down beside the box in its row (the box keeps
+// 16px from the sides, the track 4px), the bar is above everything in the
+// container (z-index 1), and the pointer over the box counts as over the
+// list, showing the bar (.c-scrollbar:hover). Each Layout draws it once.
 func (v *ThreadView) DrawScrollbar(gtx layout.Context) {
 	s := v.s
 	if !s.sbDeferred {
