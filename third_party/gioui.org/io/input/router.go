@@ -180,17 +180,22 @@ type stateChange struct {
 	events []taggedEvent
 	// replay is what made the change (Clack patch 66): its trigger, then
 	// every event merged into it that no handler asked for (a release of
-	// a press-only handler's press, a move) and the window's focus calls,
-	// in order. A command's replay redoes all of it; the triggers alone
-	// dropped what the others did to the state (a pointer left down).
+	// a press-only handler's press, a move) and the scrolls ScrollFocus
+	// delivered, in order. A command's replay redoes all of it; the
+	// triggers alone dropped what the others did to the state (a pointer
+	// left down).
 	replay []replayItem
 }
 
-// replayItem is an event to queue again or a window call to make again
-// (Clack patch 66).
+// replayItem is an event to queue again, or events the window's
+// ScrollFocus or ClickFocus delivered to put back as they were (Clack
+// patch 66). The
+// window's call isn't made again: a replay runs mid-layout, or in Frame
+// before the key queue's frame, where its focus may have no handler yet
+// and the focus order is last frame's.
 type replayItem struct {
-	event event.Event
-	redo  func()
+	event  event.Event
+	tagged []taggedEvent
 }
 
 // inputState represent a immutable snapshot of the state required
@@ -725,22 +730,25 @@ func (q *Router) replayItemFor(e event.Event) replayItem {
 	return replayItem{event: e}
 }
 
-// noteRedo records a window call that changed the queued state without
-// an event of its own (MoveFocus, ScrollFocus, ClickFocus) for a replay to
-// make again (Clack patch 66).
-func (q *Router) noteRedo(f func()) {
-	if n := len(q.changes); n > 1 {
-		q.changes[n-1].replay = append(q.changes[n-1].replay, replayItem{redo: f})
+// noteTagged records events the window delivered without an event of
+// its own (ScrollFocus's scroll, ClickFocus's press and release) into the
+// queued change they merged into, for a replay to put back as they were
+// (Clack patch 66). MoveFocus needs nothing: the window moves the focus
+// only when nothing is queued.
+func (q *Router) noteTagged(evts []taggedEvent) {
+	if n := len(q.changes); n > 1 && len(evts) > 0 {
+		q.changes[n-1].replay = append(q.changes[n-1].replay, replayItem{tagged: evts})
 	}
 }
 
-// replayItems queues the events again and makes the calls again, in
-// order (Clack patch 66); deferred is Frame's replay of a deferred
+// replayItems queues the events again and puts the window's scrolls back,
+// in order (Clack patch 66); deferred is Frame's replay of a deferred
 // command's frame.
 func (q *Router) replayItems(items []replayItem, deferred bool) {
 	for _, it := range items {
-		if it.redo != nil {
-			it.redo()
+		if it.tagged != nil {
+			q.changeState(nil, q.lastState(), it.tagged)
+			q.noteTagged(it.tagged)
 			continue
 		}
 		if deferred {
@@ -771,7 +779,6 @@ func (q *Router) MoveFocus(dir key.FocusDirection) {
 	kstate, evts := q.key.queue.MoveFocus(q.handlers, state.keyState, dir)
 	state.keyState = kstate
 	q.changeState(nil, state, evts)
-	q.noteRedo(func() { q.MoveFocus(dir) }) // Clack patch 66
 }
 
 // RevealFocus scrolls the current focus (if any) into viewport
@@ -812,12 +819,13 @@ func (q *Router) ScrollFocus(dist image.Point) {
 	}
 	kh := &q.handlers[focus].key
 	area := q.key.queue.AreaFor(kh)
-	q.changeState(nil, q.lastState(), q.pointer.queue.Deliver(q.handlers, area, pointer.Event{
+	evts := q.pointer.queue.Deliver(q.handlers, area, pointer.Event{
 		Kind:   pointer.Scroll,
 		Source: pointer.Touch,
 		Scroll: f32internal.FPt(dist),
-	}))
-	q.noteRedo(func() { q.ScrollFocus(dist) }) // Clack patch 66
+	})
+	q.changeState(nil, q.lastState(), evts)
+	q.noteTagged(evts) // Clack patch 66
 }
 
 func maxPoint(p1, p2 image.Point) image.Point {
@@ -861,10 +869,13 @@ func (q *Router) ClickFocus() {
 	area := q.key.queue.AreaFor(kh)
 	e.Kind = pointer.Press
 	state := q.lastState()
-	q.changeState(nil, state, q.pointer.queue.Deliver(q.handlers, area, e))
+	evts := q.pointer.queue.Deliver(q.handlers, area, e)
+	q.changeState(nil, state, evts)
+	q.noteTagged(evts) // Clack patch 66
 	e.Kind = pointer.Release
-	q.changeState(nil, state, q.pointer.queue.Deliver(q.handlers, area, e))
-	q.noteRedo(q.ClickFocus) // Clack patch 66
+	evts = q.pointer.queue.Deliver(q.handlers, area, e)
+	q.changeState(nil, state, evts)
+	q.noteTagged(evts)
 }
 
 // TextInputState returns the input state from the most recent

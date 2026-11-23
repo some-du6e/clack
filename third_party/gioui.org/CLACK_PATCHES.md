@@ -3305,10 +3305,15 @@ a stroke outline, on llvmpipe (linux-gio), Direct3D 11 WARP
 
 `io/input/router.go`: each queued state change keeps what made it
 (`stateChange.replay`): its trigger, then every event merged into it that
-no handler asked for, and the window's `MoveFocus`, `ScrollFocus` and
-`ClickFocus` (`noteRedo`). A command that takes the immediate path, and
-`Frame` replaying a deferred command's frame, redo all of it in order
-(`replayItems`), where they requeued only each change's trigger. A
+no handler asked for, and the events the window's `ScrollFocus` and
+`ClickFocus` delivered (`noteTagged`). A command that takes the
+immediate path, and `Frame` replaying a deferred command's frame, redo
+all of it in order (`replayItems`), where they requeued only each
+change's trigger. The events are queued again; the window's deliveries
+are put back as they were, never by calling `ScrollFocus` or
+`ClickFocus` again: a replay runs mid-layout, or in `Frame` before the
+key queue's frame, where the focus may have no handler yet and the focus
+order is last frame's (a nil handler, an index out of range). A
 `SystemEvent` is replayed as one (`replayItemFor`). `clipboard.WriteCmd`,
 which changes no input state, gets patch 61's treatment: it executes at
 once and replays nothing. The commands that change the input state
@@ -3325,14 +3330,19 @@ dropped that state: a press stored for a press-only scrim, its release
 unstored, then a focused editor laid out before the scrim executing a
 `SelectionCmd` or `SnippetCmd` (its text changed), and the pointer stayed
 down on the scrim. Once the scrim was gone the next press went nowhere,
-the 11-17 lost click by another command than patch 61's tick. A window
-focus move merged into a queued change was dropped the same way.
+the 11-17 lost click by another command than patch 61's tick. A scroll
+the window's `RevealFocus` delivered behind a queued event was dropped
+the same way. (`MoveFocus` needs nothing: the window moves the focus only
+when nothing is queued.)
 
 Tests: `io/input/clack_replaystate_test.go`
 (`TestClackCommandReplaysUnstoredEvents`: every immediate command, then
 the pointer released, the mouse where the trailing move left it, the next
 click whole; `TestClackDeferredReplayKeepsUnstoredEvents`;
-`TestClackCommandReplaysMoveFocus`; `TestClackWriteCmdReplaysNothing`),
-in ci's linux-gio job; Clack's `internal/ui/popups`
-`TestScrimKeepsLaterPresses` (editor: patch 66; ticker: patch 61). Not
-in `UPSTREAM.patch`.
+`TestClackWriteCmdReplaysNothing`; `TestClackRedoFocusWithoutHandler`
+and `TestClackRedoFocusDeferredStaleOrder`: a `ScrollFocus` behind a
+queued press, then a focus with no handler, or a deferred replay with
+fewer focusables laid out, no panic; `TestClackReplaysScrollFocusOnce`;
+`TestClackReplaysSystemTabAsOne`), in ci's linux-gio job; Clack's
+`internal/ui/popups` `TestScrimKeepsLaterPresses` (editor: patch 66;
+ticker: patch 61). Not in `UPSTREAM.patch`.

@@ -2,9 +2,9 @@ package popups
 
 // A timed revert ("Copied!" for 2 s, the toolbar's "Query copied!" for
 // 3 s) asks for its frame in every frame it's pending, not only in the
-// click's: the window keeps one wakeup, the earliest asked since its last
-// frame, so a frame in between (the pointer moved, a tooltip's delay ran
-// out) that didn't ask again left the label up until something else drew.
+// click's: a frame in between that asks for an earlier wakeup of its own
+// (a tooltip's delay) replaces the window's timer, and without asking
+// again the label stayed up until something else drew.
 
 import (
 	"image"
