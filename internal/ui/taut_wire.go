@@ -503,7 +503,7 @@ func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel stri
 	t0 := time.Now()
 	s, err := slick.New(slick.Options{Dir: a.inertPluginDir("slick"), Taut: t, OpenURL: openURL, OpenFile: a.openFilePath,
 		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: a.setSessionSpellChecker,
-		DeferStart: deferJS, Dark: dark})
+		DeferStart: deferJS, Dark: dark, SetAppIcon: a.opts.SetAppIcon, UserDefault: a.opts.UserDefault})
 	if err != nil {
 		log.Printf("slick: %v", err)
 		return nil

@@ -45,7 +45,7 @@ on:
 # redux.getStore). SlickMCP's main half still needs node:http and fails.
 # Acceptance passed 58/58 at it (slick run 45097512723).
 env:
-  SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131
+  SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979
 
 permissions:
   contents: read
@@ -114,6 +114,7 @@ jobs:
       - name: slick unit + acceptance tests
         env:
           SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          SLICK_SRC: /tmp/slick # Slick's source at the ref, for the tests that keep Clack's copies of its tables in step
           RUN: ${{ inputs.run }}
         run: |
           set -o pipefail

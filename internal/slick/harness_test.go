@@ -214,6 +214,29 @@ type harness struct {
 
 	spellMu sync.Mutex
 	spell   []bool // Options.SpellChecker calls (Electron's session spellchecker)
+
+	iconMu sync.Mutex
+	icons  [][]byte // Options.SetAppIcon calls (nil: Clack's own icon)
+	pick   string   // what Options.OpenFile answers ("" cancelled)
+}
+
+func (h *harness) setAppIcon(png []byte) {
+	h.iconMu.Lock()
+	h.icons = append(h.icons, png)
+	h.iconMu.Unlock()
+}
+
+// appIcons is the SetAppIcon calls so far.
+func (h *harness) appIcons() [][]byte {
+	h.iconMu.Lock()
+	defer h.iconMu.Unlock()
+	return append([][]byte(nil), h.icons...)
+}
+
+func (h *harness) openFile(title, accept string) (string, error) {
+	h.iconMu.Lock()
+	defer h.iconMu.Unlock()
+	return h.pick, nil
 }
 
 func (h *harness) spellChecker(on bool) {
@@ -297,7 +320,8 @@ func newHarnessApp(t *testing.T, api *fakeAPI, app *core.App) *harness {
 	}
 	h.tt = tt
 	s, err := New(Options{Taut: tt, Dir: filepath.Join(h.dir, "slick"), NoAutoStart: true, NoUpdates: true,
-		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: h.spellChecker})
+		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: h.spellChecker,
+		SetAppIcon: h.setAppIcon, OpenFile: h.openFile})
 	if err != nil {
 		t.Fatal(err)
 	}
