@@ -37,7 +37,6 @@ var compat = map[string]Compat{
 	Slick + "/ClearURLs":            partial("cleans links when you send, not when you paste"),
 	Slick + "/Click2Load":           broken("Clack shows no iframes for it to hold back"),
 	Slick + "/CustomFonts":          broken("Clack can't load web fonts"),
-	Slick + "/CustomNameRecording":  partial("can't decode audio, so nothing uploads"),
 	Slick + "/CustomSounds":         partial("Ogg Vorbis, FLAC or Linux AAC files play Slack's own sound"),
 	Slick + "/HideResolved":         partial("its header toggle isn't drawn; what it hides is unchecked"),
 	Slick + "/InstalledApps":        partial("the app marketplace page asks you to sign in"),
@@ -49,13 +48,12 @@ var compat = map[string]Compat{
 	Slick + "/ShowRealUser":         partial("forwarded copies aren't matched"),
 	Slick + "/SlickMCP":             broken("its MCP server needs Node's http module"),
 	// docs/PLUGINS-live-taut.md
-	Taut + "/BringBackSlackbot":   broken("Slack no longer reads the experiment it sets"),
-	Taut + "/BrowserPopouts":      broken("needs pop-out windows"),
-	Taut + "/ClickToLoad":         partial("Load shows Clack's media box, not a player"),
-	Taut + "/CustomNameRecording": broken("can't decode audio"),
-	Taut + "/PrivateChannel":      partial("unknown channel mentions aren't looked up"),
-	Taut + "/SlackFixes":          partial("two of its fixes have nothing to fix in Clack"),
-	Taut + "/StreamerMode":        partial("doesn't hide VIP badges or screen shares"),
+	Taut + "/BringBackSlackbot": broken("Slack no longer reads the experiment it sets"),
+	Taut + "/BrowserPopouts":    broken("needs pop-out windows"),
+	Taut + "/ClickToLoad":       partial("Load shows Clack's media box, not a player"),
+	Taut + "/PrivateChannel":    partial("unknown channel mentions aren't looked up"),
+	Taut + "/SlackFixes":        partial("two of its fixes have nothing to fix in Clack"),
+	Taut + "/StreamerMode":      partial("doesn't hide VIP badges or screen shares"),
 }
 
 // CompatOf is system/id's status in Clack (CompatOK with no line for a
