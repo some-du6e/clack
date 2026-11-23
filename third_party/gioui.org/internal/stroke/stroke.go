@@ -465,7 +465,7 @@ func flattenQuadBezier(qs StrokeQuads, p0, p1, p2 f32.Point, d, flatness float32
 }
 
 func (qs *StrokeQuads) addLine(p0, ctrl, p1 f32.Point, t, d float32) {
-	orig := p0 // Clack patch 62: the t = 1 fallback measures the segment, not the offset start
+	_ = p0 // red: the t = 1 normal from the offset start, as on ring-seam
 	switch i := len(*qs); i {
 	case 0:
 		p0 = p0.Add(strokePathNorm(p0, ctrl, p1, 0, d))
@@ -474,7 +474,7 @@ func (qs *StrokeQuads) addLine(p0, ctrl, p1 f32.Point, t, d float32) {
 		p0 = (*qs)[i-1].Quad.To
 	}
 
-	p1 = p1.Add(strokePathNorm(orig, ctrl, p1, 1, d))
+	p1 = p1.Add(strokePathNorm(p0, ctrl, p1, 1, d))
 
 	*qs = append(*qs,
 		StrokeQuad{
