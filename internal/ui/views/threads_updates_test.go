@@ -505,8 +505,17 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 // A load that sorts the list lands, and before the next frame settles it
 // another load starts (the frame's staleness check or the next page come
 // first). The landed load is settled first, its own mode: the mount's
-// floating loader stops asking for frames.
+// floating loader stops asking for frames. Checked at once and 150 ms on
+// (a slow runner: markVisible's check, 350 ms after each load that sorts
+// the list, is then a frame asked for within 250 ms, which
+// thrAnimating took for the loader).
 func TestThreadsSettleBeforeNextLoad(t *testing.T) {
+	for _, late := range []time.Duration{0, 150 * time.Millisecond} {
+		t.Run(fmt.Sprintf("checked %v on", late), func(t *testing.T) { threadsSettleBeforeNextLoad(t, late) })
+	}
+}
+
+func threadsSettleBeforeNextLoad(t *testing.T, late time.Duration) {
 	ch := fakeslack.ViewsChannel
 	app, fs := vaFake(t)
 	fs.SetHook(func(method string, _ url.Values) (any, bool) {
@@ -532,6 +541,7 @@ func TestThreadsSettleBeforeNextLoad(t *testing.T) {
 	v.load(actRefresh)
 	e.until(t, "the refresh", v.Settled)
 	e.frame()
+	time.Sleep(late)
 	if v.mounting || thrAnimating(e) {
 		t.Errorf("the reload that landed before the refresh started was never settled: mounting %v, the floating loader still drawn", v.mounting)
 	}
