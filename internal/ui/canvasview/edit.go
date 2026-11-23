@@ -73,6 +73,7 @@ type session struct {
 	level0   int
 	checked0 bool
 	code0    string // a code block's text when it began
+	seq0     int64  // its section's sequence when it began (core.CanvasSectionSeq; 0: unknown)
 	ed       *composer.Editor
 	focus    bool
 	ver      uint64
@@ -204,7 +205,7 @@ func (v *View) showSaveNotices(ns []core.CanvasSaveNotice) {
 // nothing and closes; a block emptied is deleted.
 func quipRefuses(v *View, s *session, md string, bs []canvas.Block) bool {
 	switch {
-	case !quipChanged(s, md):
+	case !quipChanged(s, md, bs):
 		return false
 	case s.def:
 		return true
@@ -286,6 +287,22 @@ func findBlockByID(bs []*blk, id string) *canvas.Block {
 	return nil
 }
 
+// blockEditable is editable for a block as drawn: with the switch on, its
+// section has to hold only what the block shows, else an edit would lose
+// the rest (core.CanvasBlockEditable: a link Clack's export drops,
+// formatting it can't hold). finish checks editable alone: the edited
+// blocks aren't the section any more.
+func (v *View) blockEditable(b canvas.Block) (bool, string) {
+	ok, why := v.editable(b)
+	if !ok || !quipOn(v) || b.ID == "" || b.Kind == canvas.Code {
+		return ok, why
+	}
+	if a := v.h.Core(); a != nil {
+		return a.CanvasBlockEditable(v.id, b.ID, b.Spans)
+	}
+	return true, ""
+}
+
 // quipTextKind: a block that is one text section in Quip (a paragraph, a
 // heading, a list item).
 func quipTextKind(k canvas.Kind) bool {
@@ -312,7 +329,11 @@ func (v *View) editable(b canvas.Block) (bool, string) {
 	}
 	for _, s := range b.Spans {
 		switch s.Kind {
-		case richtext.Text, richtext.Break, richtext.Emoji:
+		case richtext.Text, richtext.Emoji:
+		case richtext.Break:
+			// the editor makes each line a block of its own (toDoc's \n):
+			// the block would come back split, and save as sections
+			return false, "a line break"
 		case richtext.Link:
 			if s.Control {
 				return false, "a canvas, file or message mention"
@@ -335,10 +356,71 @@ func (v *View) editable(b canvas.Block) (bool, string) {
 	return true, ""
 }
 
-// quipChanged reports whether finishing a session with markdown md saves
-// anything (finish's cases that return without a save don't).
-func quipChanged(s *session, md string) bool {
-	return !(s.def && md == "") && !(s.target != nil && md == s.orig && !s.def) && !(s.target == nil && md == "")
+// quipChanged reports whether finishing a session with markdown md
+// (blocks bs) saves anything through edit-document (finish's cases that
+// return without a save don't).
+func quipChanged(s *session, md string, bs []canvas.Block) bool {
+	return !(s.def && md == "") && !(s.target != nil && !s.def && quipSame(s, bs)) && !(s.target == nil && md == "")
+}
+
+// quipSame reports whether a session's blocks bs are still the block it
+// began as, as edit-document saves a block: the same kind, level and box,
+// and the same text, formatting, links and mentions. Canvas markdown can't
+// tell: it has no underline, and writes a link whose text is its URL as
+// bare text, so an underline or the Link button alone looked like nothing.
+func quipSame(s *session, bs []canvas.Block) bool {
+	if s.quoted {
+		bs = unquote(bs)
+	}
+	if len(bs) != 1 {
+		return false
+	}
+	b := bs[0]
+	if b.Kind != s.kind0 || b.Level != s.level0 || b.Checked != s.checked0 {
+		return false
+	}
+	if b.Kind == canvas.Code {
+		return b.Code == s.code0
+	}
+	return spanKey(b.Spans) == spanKey(s.spans)
+}
+
+// spanKey is spans as a save sees them: each character with its
+// formatting and link, each line break, each mention or emoji by what it
+// names.
+func spanKey(sp []richtext.Span) string {
+	const styles = richtext.Bold | richtext.Italic | richtext.Underline | richtext.Strike | richtext.Code | richtext.Highlight
+	var b strings.Builder
+	for _, x := range sp {
+		switch x.Kind {
+		case richtext.Text, richtext.Link:
+			t, url := x.Text, ""
+			if x.Kind == richtext.Link {
+				url = x.URL
+				if t == "" {
+					t = x.URL
+				}
+			}
+			for _, r := range t {
+				b.WriteRune(r)
+				b.WriteRune(rune(x.Style & styles))
+				b.WriteString(url)
+				b.WriteByte(1)
+			}
+		case richtext.Break:
+			b.WriteString("\n\x01")
+		default:
+			id := x.ID
+			if id == "" {
+				id = x.Text
+			}
+			b.WriteByte(2)
+			b.WriteRune(rune(x.Kind))
+			b.WriteString(id)
+			b.WriteByte(1)
+		}
+	}
+	return b.String()
 }
 
 func (e *editState) editing(b *blk) bool {
@@ -686,6 +768,9 @@ func (e *editState) start(v *View, b *blk) {
 	s := &session{target: b, id: b.b.ID, kind: b.b.Kind, level: b.b.Level, checked: b.b.Checked, orig: canvas.Markdown(*b.b),
 		spans: append([]richtext.Span(nil), b.b.Spans...), kind0: b.b.Kind, level0: b.b.Level, checked0: b.b.Checked, code0: b.b.Code,
 		ed: newEditor(), focus: true}
+	if a := v.h.Core(); a != nil && quipOn(v) && b.b.ID != "" {
+		s.seq0 = a.CanvasSectionSeq(v.id, b.b.ID)
+	}
 	if b.parent != nil && b.parent.b.Kind == canvas.Quote && b.b.Kind == canvas.Paragraph {
 		// a quote's paragraph is a Quip section of its own (style 16):
 		// it saves as "> …" so it stays in the quote
@@ -728,7 +813,7 @@ func (e *editState) finish(v *View) bool {
 		}
 	}
 	var quipNew []string // new blocks' section ids (edit-document)
-	if md := blocksMarkdown(bs); quipOn(v) && quipChanged(s, md) {
+	if md := blocksMarkdown(bs); quipOn(v) && quipChanged(s, md, bs) {
 		switch {
 		case v.h.Core().CanvasSaveState(v.id).ReadOnly:
 			// the error state's lock (cant_sync): nothing saves until a
@@ -774,7 +859,7 @@ func (e *editState) finish(v *View) bool {
 	switch {
 	case s.def && md == "": // restoreDefaultContent_: the line is as it was
 		return true
-	case s.target != nil && md == s.orig && !s.def:
+	case s.target != nil && !s.def && (quipOn(v) && quipSame(s, bs) || !quipOn(v) && md == s.orig):
 		return true
 	case s.target != nil && md == "":
 		if s.id == "" {
@@ -809,7 +894,7 @@ func (e *editState) finish(v *View) bool {
 		e.insertLocal(v, s.afterID, local)
 	}
 	if quipOn(v) { // against what the session began from (session.spans)
-		id, from := s.id, s.spans
+		id, from, seq0 := s.id, s.spans, s.seq0
 		if ch.Operation == "delete" {
 			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasDelete(ctx, v.id, id, from) })
 			return true
@@ -824,14 +909,14 @@ func (e *editState) finish(v *View) bool {
 		case len(bs) > 1: // Enter: the block's own text and new blocks after it
 			first, rest := bs[0].Spans, newBlocks(bs[1:], quipNew)
 			e.saveQuip(v, func(ctx context.Context, a *core.App) error {
-				return a.SaveCanvasSplit(ctx, v.id, id, from, first, rest)
+				return a.SaveCanvasSplit(ctx, v.id, id, from, first, rest, seq0)
 			})
 		default: // the block's text, and its style, level or box when they changed
 			b := bs[0]
 			if s.quoted { // the quote's paragraph itself
 				b = unquote(bs)[0]
 			}
-			be := core.CanvasBlockEdit{SectionID: id, Orig: from, OrigKind: s.kind0, OrigLevel: s.level0, OrigChecked: s.checked0,
+			be := core.CanvasBlockEdit{SectionID: id, Orig: from, OrigKind: s.kind0, OrigLevel: s.level0, OrigChecked: s.checked0, OrigSeq: seq0,
 				Spans: b.Spans, Kind: b.Kind, Level: b.Level, Checked: b.Checked}
 			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasBlock(ctx, v.id, be) })
 		}

@@ -1055,7 +1055,7 @@ func (a *App) SaveCanvasDelete(ctx context.Context, id, sectionID string, orig [
 // message mention, highlighted text, a code block.
 func (a *App) SaveCanvasSpans(ctx context.Context, id, sectionID string, orig, spans []richtext.Span) error {
 	return a.queueSave(ctx, id, func(c *saveCtx) ([]quip.Edit, error) {
-		e, err := spansEdit(c.base, sectionID, orig, spans)
+		e, err := spansEdit(c.base, sectionID, orig, spans, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -1064,7 +1064,13 @@ func (a *App) SaveCanvasSpans(ctx context.Context, id, sectionID string, orig, s
 }
 
 // spansEdit is SaveCanvasSpans' edit of the section.
-func spansEdit(base func(string) (sectionBase, bool), sectionID string, orig, spans []richtext.Span) (quip.Edit, error) {
+//
+// origSeq is the section's sequence when the block opened (0: unknown):
+// when the block as it began doesn't write the section back, an edit over
+// it would lose what the section holds that the block doesn't show, and
+// that's someone else's change (ErrCanvasConflict) when the section moved
+// since, else something the editor can't hold (quip.ErrUnsupported).
+func spansEdit(base func(string) (sectionBase, bool), sectionID string, orig, spans []richtext.Span, origSeq int64) (quip.Edit, error) {
 	b, ok := base(sectionID)
 	switch {
 	case !ok:
@@ -1090,16 +1096,98 @@ func spansEdit(base func(string) (sectionBase, bool), sectionID string, orig, sp
 			return quip.Edit{}, fmt.Errorf("%w: a date, @-mention of a group or canvas, file or message mention", quip.ErrUnsupported)
 		}
 	}
+	tail, err := faithfulBlock(b.rtml, orig)
+	if err != nil {
+		if origSeq != 0 && b.seq != origSeq {
+			return quip.Edit{}, fmt.Errorf("%w: section %s", ErrCanvasConflict, sectionID)
+		}
+		return quip.Edit{}, err
+	}
 	ctls, _ := quip.RTMLControls(b.rtml)
 	runs, err := spanRuns(orig, spans, ctls)
 	if err != nil {
 		return quip.Edit{}, err
+	}
+	for k := 0; k < tail; k++ { // the section's trailing line breaks stay
+		runs = append(runs, quip.Run{Break: true})
 	}
 	rtml, err := quip.ApplyRuns(b.rtml, runs)
 	if err != nil {
 		return quip.Edit{}, err
 	}
 	return quip.Edit{Kind: quip.EditText, SectionID: sectionID, RTML: rtml, Base: b.seq}, nil
+}
+
+// faithfulBlock checks that a block shown as orig is all of a section of
+// RTML rtml: its runs (with the section's line breaks at its end, a blank
+// last line in Slack, which Clack's export drops) write the section back
+// as it is. Else an edit over the block would lose what the section holds
+// that the block doesn't show: someone else's formatting or link since, a
+// link Clack's export doesn't show (tel:, ftp:, an over-long URL), a mark
+// the editor can't hold, an empty comment anchor. It reports how many
+// trailing line breaks the block doesn't show, which an edit keeps.
+func faithfulBlock(rtml string, orig []richtext.Span) (int, error) {
+	ctls, _ := quip.RTMLControls(rtml)
+	runs, err := spanRuns(orig, orig, ctls)
+	if err != nil {
+		return 0, err
+	}
+	tail := 0
+	if plain, ok := quip.RTMLPlain(rtml); ok {
+		tail = len(plain) - len(strings.TrimRight(plain, "\n"))
+	}
+	for k := len(runs) - 1; k >= 0 && runs[k].Break && tail > 0; k-- {
+		tail-- // shown ones
+	}
+	for k := 0; k < tail; k++ {
+		runs = append(runs, quip.Run{Break: true})
+	}
+	if was, err := quip.ApplyRuns(rtml, runs); err != nil || !quip.SameRTML(was, rtml) {
+		return 0, fmt.Errorf("%w: the block holds formatting or links Clack's editor doesn't show", quip.ErrUnsupported)
+	}
+	return tail, nil
+}
+
+// CanvasSectionSeq is the section's sequence in core's model of the canvas
+// (0 when core holds no model, or no such section): a block's edit begun
+// now is made against it (CanvasBlockEdit.OrigSeq).
+func (a *App) CanvasSectionSeq(id, sectionID string) int64 {
+	var n int64
+	a.CanvasModel(id, func(d *quip.Doc) {
+		if d == nil {
+			return
+		}
+		if sec := d.Section(d.RealID(sectionID)); sec != nil && sec.Sequence != nil {
+			n = *sec.Sequence
+		}
+	})
+	return n
+}
+
+// CanvasBlockEditable reports whether a block shown as spans can be edited
+// through edit-document without losing what its section holds that the
+// block doesn't show (faithfulBlock), and why not. It's true when core
+// holds no model of the canvas yet, or the block's text is another's than
+// the section's (the export is late: the save checks again).
+func (a *App) CanvasBlockEditable(id, sectionID string, spans []richtext.Span) (bool, string) {
+	ok, why := true, ""
+	a.CanvasModel(id, func(d *quip.Doc) {
+		if d == nil {
+			return
+		}
+		sec := d.Section(d.RealID(sectionID))
+		if sec == nil || sec.Type == nil || *sec.Type != quip.TypeText {
+			return
+		}
+		rtml := quip.SectionRTML(sec)
+		if plain, pok := quip.RTMLPlain(rtml); !pok || plainCompare(plain) != plainCompare(spansPlain(spans)) {
+			return
+		}
+		if _, err := faithfulBlock(rtml, spans); err != nil {
+			ok, why = false, "formatting or links Clack can't show"
+		}
+	})
+	return ok, why
 }
 
 // CanvasBlockEdit is an edit of one block through edit-document: what the
@@ -1111,6 +1199,7 @@ type CanvasBlockEdit struct {
 	OrigKind    canvas.Kind
 	OrigLevel   int
 	OrigChecked bool
+	OrigSeq     int64 // the section's sequence when the block opened (CanvasSectionSeq; 0: unknown)
 	Spans       []richtext.Span
 	Kind        canvas.Kind
 	Level       int
@@ -1135,7 +1224,7 @@ func (a *App) SaveCanvasBlock(ctx context.Context, id string, be CanvasBlockEdit
 
 // blockEdit is SaveCanvasBlock's edit (Kind 0: nothing changed).
 func blockEdit(base func(string) (sectionBase, bool), be CanvasBlockEdit) (quip.Edit, error) {
-	e, err := spansEdit(base, be.SectionID, be.Orig, be.Spans)
+	e, err := spansEdit(base, be.SectionID, be.Orig, be.Spans, be.OrigSeq)
 	if err != nil {
 		return e, err
 	}
@@ -1163,17 +1252,10 @@ func blockEdit(base func(string) (sectionBase, bool), be CanvasBlockEdit) (quip.
 		}
 		e.Recheck, e.Checked = true, be.Checked
 	}
-	// the text as it was (the original spans written the same way): the
-	// style or attributes alone, as Slack's setters leave the content
-	same := e.RTML == b.rtml
-	if !same {
-		ctls, _ := quip.RTMLControls(b.rtml)
-		if runs, err := spanRuns(be.Orig, be.Orig, ctls); err == nil {
-			if r, err := quip.ApplyRuns(b.rtml, runs); err == nil && r == e.RTML {
-				same = true
-			}
-		}
-	}
+	// the text as it was (the block as it began writes the section back,
+	// faithfulBlock): the style or attributes alone, as Slack's setters
+	// leave the content
+	same := quip.SameRTML(e.RTML, b.rtml)
 	if same && !b.isNew {
 		switch {
 		case e.Recheck && !e.Restyle && !e.Reindent:
@@ -1286,9 +1368,9 @@ func (a *App) CanvasSectionID(id, sectionID string) string {
 // block (Enter in it): the block's own new content (first, checked
 // against orig as SaveCanvasSpans checks it), and new sections after it
 // (rest), as Slack's editor makes them, in one save.
-func (a *App) SaveCanvasSplit(ctx context.Context, id, sectionID string, orig, first []richtext.Span, rest []CanvasNewBlock) error {
+func (a *App) SaveCanvasSplit(ctx context.Context, id, sectionID string, orig, first []richtext.Span, rest []CanvasNewBlock, origSeq int64) error {
 	return a.queueSave(ctx, id, func(c *saveCtx) ([]quip.Edit, error) {
-		e, err := spansEdit(c.base, sectionID, orig, first)
+		e, err := spansEdit(c.base, sectionID, orig, first, origSeq)
 		if err != nil {
 			return nil, err
 		}

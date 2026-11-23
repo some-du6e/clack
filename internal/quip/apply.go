@@ -2,6 +2,8 @@ package quip
 
 import (
 	"html"
+	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -110,13 +112,67 @@ func RTMLPlain(rtml string) (string, bool) {
 	return b.String(), true
 }
 
+// SameRTML reports whether two RTMLs of a text section hold the same:
+// the same characters (as ParseRTML writes them), line breaks and
+// controls, the same marks (name and value) over each of them, and the
+// same empty marks where they are, however the marks are cut up
+// (<b>ab</b> and <b>a</b><b>b</b> are the same).
+func SameRTML(a, b string) bool {
+	if a == b {
+		return true
+	}
+	at, am, ok1 := ParseRTML(a)
+	bt, bm, ok2 := ParseRTML(b)
+	if !ok1 || !ok2 {
+		return false
+	}
+	au, bu := units(at), units(bt)
+	if len(au) != len(bu) {
+		return false
+	}
+	over := func(ms []Mark, u unit) string {
+		var keys []string
+		for _, m := range ms {
+			if m.Start < m.End && m.Start <= u.start && u.end <= m.End {
+				keys = append(keys, m.Name+"\x00"+m.Value)
+			}
+		}
+		slices.Sort(keys)
+		return strings.Join(slices.Compact(keys), "\x01")
+	}
+	for i := range au {
+		if au[i].s != bu[i].s || over(am, au[i]) != over(bm, bu[i]) {
+			return false
+		}
+	}
+	empty := func(ms []Mark, us []unit) []string {
+		var out []string
+		for _, m := range ms {
+			if m.Start == m.End {
+				at := len(us) // its place: the units before it
+				for i, u := range us {
+					if u.start >= m.Start {
+						at = i
+						break
+					}
+				}
+				out = append(out, m.Name+"\x00"+m.Value+"\x00"+strconv.Itoa(at))
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	return slices.Equal(empty(am, au), empty(bm, bu))
+}
+
 // ControlMark stands for a control in RTMLPlain (U+FFFC, the object
 // replacement character).
 const ControlMark = '\ufffc'
 
 // maxDiff bounds the diff that carries marks Clack's editor doesn't hold
-// (comment anchors) through an edit: past it, only the common start and
-// end of the text keep them.
+// (comment anchors, a link's own values) through an edit: past it, only
+// the common start and end of the text are followed, and an edit that
+// would lose such a mark in the rest is refused.
 const maxDiff = 4_000_000
 
 // ApplyRuns is a text section's RTML after an edit: the base section's
@@ -168,7 +224,27 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 			}
 		}
 	}
-	match := matchUnits(bu, nu) // base unit -> new unit, -1 when gone
+	match, partial := matchUnits(bu, nu) // base unit -> new unit, -1 when gone
+	if partial {
+		// past maxDiff only the common start and end are followed: a
+		// comment anchor, or a link's own values (nolink, a file id), over
+		// the rest would go, so the edit is refused rather than lose them
+		for _, m := range bm {
+			keep := m.Name == "annotation"
+			if m.Name == "a" {
+				l, ok := parseLinkValue(m.Value)
+				keep = !ok || m.Value != linkValue(l.href, false, "")
+			}
+			if !keep {
+				continue
+			}
+			for bi, u := range bu {
+				if match[bi] < 0 && m.Start <= u.start && u.end <= m.End {
+					return "", unsupported("a comment anchor or link in a stretch too long to follow")
+				}
+			}
+		}
+	}
 	for bi, ni := range match {
 		if ni >= 0 {
 			// the base's form: ParseRTML writes text as escapeText of the
@@ -192,15 +268,37 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 	text := b.String()
 
 	var marks []Mark
+	// a control the edit kept keeps the formatting around it in the base:
+	// an editor holds a mention or emoji as an atom it doesn't format
+	keptCtl := map[int]int{} // new unit -> its base unit
+	for bi, ni := range match {
+		if ni >= 0 && nu[ni].ctl != "" {
+			keptCtl[ni] = bi
+		}
+	}
+	baseHas := func(name string, bi int) bool {
+		for _, m := range bm {
+			if m.Name == name && m.Start <= bu[bi].start && bu[bi].end <= m.End {
+				return true
+			}
+		}
+		return false
+	}
 	// formatting: a mark over each stretch of units whose runs share it
-	style := func(name string, on func(Run) bool) {
+	style := func(name string, flag func(Run) bool) {
+		on := func(i int) bool {
+			if bi, ok := keptCtl[i]; ok {
+				return baseHas(name, bi)
+			}
+			return flag(runs[from[i]])
+		}
 		for i := 0; i < len(nu); {
-			if !on(runs[from[i]]) {
+			if !on(i) {
 				i++
 				continue
 			}
 			j := i
-			for j < len(nu) && on(runs[from[j]]) {
+			for j < len(nu) && on(j) {
 				j++
 			}
 			if nu[i].start < nu[j-1].end { // never an empty mark (a stretch of dropped characters)
@@ -292,8 +390,8 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 // matchUnits pairs base units with the new units that are the same
 // characters, as a diff does: the common start and end, then the longest
 // common subsequence of the rest when it's small enough to work out.
-func matchUnits(bu, nu []unit) []int {
-	match := make([]int, len(bu))
+func matchUnits(bu, nu []unit) (match []int, partial bool) {
+	match = make([]int, len(bu))
 	for i := range match {
 		match[i] = -1
 	}
@@ -308,8 +406,11 @@ func matchUnits(bu, nu []unit) []int {
 		s++
 	}
 	b, n := bu[p:len(bu)-s], nu[p:len(nu)-s]
-	if len(b) == 0 || len(n) == 0 || len(b)*len(n) > maxDiff {
-		return match
+	if len(b) == 0 || len(n) == 0 {
+		return match, false
+	}
+	if len(b)*len(n) > maxDiff {
+		return match, true
 	}
 	// LCS over the middle
 	w := len(n) + 1
@@ -335,5 +436,5 @@ func matchUnits(bu, nu []unit) []int {
 			j++
 		}
 	}
-	return match
+	return match, false
 }

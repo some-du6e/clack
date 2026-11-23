@@ -590,7 +590,7 @@ func TestCanvasSaveNewBlocks(t *testing.T) {
 	// Enter in the middle of the heading
 	tail := id()
 	if err := a.SaveCanvasSplit(ctx, fakeslack.CanvasShared, *head.ID, txt("Weekly sync"), txt("Weekly"),
-		[]CanvasNewBlock{{ID: tail, Kind: canvas.Paragraph, Spans: txt("sync")}}); err != nil {
+		[]CanvasNewBlock{{ID: tail, Kind: canvas.Paragraph, Spans: txt("sync")}}, 0); err != nil {
 		t.Fatalf("a split: %v", err)
 	}
 	if i := at(*head.ID); i < 0 || blocks()[i].Text() != "Weekly" || at(tail) != i+1 || blocks()[i+1].Text() != "sync" {
