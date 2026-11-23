@@ -37,8 +37,7 @@ func TestTautCustomNameRecordingUploadButton(t *testing.T) {
 	shots := os.Getenv("TAUT_SHOTS_DIR")
 	if shots != "" {
 		if w, err := pixeltest.NewWindow(e.size.X, e.size.Y); err == nil {
-			e.gpu = w
-			t.Cleanup(w.Release)
+			e.gpu = w // perfEnv.shutdown releases it (a second Release crashes headless)
 		} else {
 			t.Logf("no GPU renderer (%v): no screenshot", err)
 		}
