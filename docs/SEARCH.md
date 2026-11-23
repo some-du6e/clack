@@ -122,7 +122,7 @@ gets its request form ("from:<@U…>"); queries with refs open as tokens
 
 Slack's other surfaces that draw a search result or a message preview,
 from the web client (CDN build 36d315d11944), and how Clack draws each.
-Every result's controls are kept by the result, never by its index: Slack
+Every result's controls belong to their result, never to an index another result can take: Slack
 keys its list items by the result (`iid`, a file, channel or member id),
 and Gio routes a press by its handler's address, so a Clickable that
 moved when a page appended, or a row that changed under a held press,
@@ -130,7 +130,7 @@ lost or misdirected the click.
 
 | Surface | Slack | Clack | Keyed by result | Test |
 |---|---|---|---|---|
-| Results page: messages | SearchMessage card (`message-result`, variant card) | the card (search_view.go, search_card*.go) | yes: the cards are pointers, kept as pages append | `TestSearchCardsKeepTheirPlaceAcrossPages` |
+| Results page: messages | SearchMessage card (`message-result`, variant card) | the card (search_view.go, search_card*.go) | per page: a page's search replaces the cards (`search(page)` resets them), so none moves under a held press | — |
 | Results page: files, channels, people | their rows | their rows | yes (by id, from ui's 09a03631) | — |
 | Search in channel | SearchInChannelView: the same list renders `message-result` (variant card, keyed by `iid`; expanded per ts) | **the results page's card** (was rows of its own); clicks through the card's handlers | yes | `TestSearchInChannelDrawsResultCards` |
 | Popover: message suggestions, recent searches, people, channels | SearchAutocomplete rows | the popover's rows (search_popover.go) | yes (by row, from ui's 09a03631) | — |

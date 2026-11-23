@@ -29,7 +29,7 @@ func (h *pinTimeHost) OpenMessageTime(ch, ts, thread string, tile bool) {
 
 // A pin's time is BasePinnedMessage's MessageTimestamp (clickable, full):
 // the message's permalink as a link, whose click is handleTimestampClick
-// (not the row's open) and whose right-click is the link's menu.
+// (not the row's open); a right-click on it is the pin's own menu.
 func TestPinsTimeIsALink(t *testing.T) {
 	app, fs := pfCore(t)
 	ph := pfHostFor(t, app, fs, false)
@@ -71,6 +71,16 @@ func TestPinsTimeIsALink(t *testing.T) {
 	if want := fmt.Sprint([]string{fakeslack.PinsChannelID + "/" + key + "/false"}); got != want {
 		t.Errorf("a click on the pin's time opened %s, want %s (handleTimestampClick)", got, want)
 	}
+	// a right-click on the time is the pin's own menu, as on the rest of
+	// the row (BasePinnedMessage's row takes it before the <a>)
+	var want []string
+	for _, it := range v.Items() {
+		if it.Key() == key {
+			for _, mi := range v.menuItems(it) {
+				want = append(want, mi.Label)
+			}
+		}
+	}
 	n := len(ph.open())
 	press(pointer.ButtonSecondary)
 	os := ph.open()
@@ -78,7 +88,13 @@ func TestPinsTimeIsALink(t *testing.T) {
 		t.Fatal("a right-click on the pin's time showed no menu")
 	}
 	m, ok := os[len(os)-1].(*popups.Menu)
-	if !ok || len(m.Items()) < 2 || m.Items()[0].Label != "Copy Link" || m.Items()[1].Label != "Open Link" {
-		t.Errorf("the pin time's right-click showed %T, want the link menu (Copy Link, Open Link)", os[len(os)-1])
+	var labels []string
+	if ok {
+		for _, mi := range m.Items() {
+			labels = append(labels, mi.Label)
+		}
+	}
+	if !ok || len(want) == 0 || fmt.Sprint(labels) != fmt.Sprint(want) {
+		t.Errorf("the pin time's right-click showed %T %v, want the pin's menu %v", os[len(os)-1], labels, want)
 	}
 }

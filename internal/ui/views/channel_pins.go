@@ -294,13 +294,8 @@ func (v *ChannelPins) update(gtx C) {
 				break
 			}
 			if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) && !v.preview {
-				if ph, ok := v.h.(popups.Host); ok && r.time.Hovered() && it.Msg != nil {
-					// the time is an <a> to the message's permalink: the
-					// shell's link menu
-					m := it.Msg
-					ph.ShowOverlay(popups.TimeLinkMenu(ph, v.pointer(), m.Channel, m.TS, m.ThreadTS))
-					continue
-				}
+				// the pin's own menu, on its time too (BasePinnedMessage's
+				// row takes the right-click before the <a>)
 				v.openMenu(it, v.pointer())
 			}
 		}

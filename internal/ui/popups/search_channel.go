@@ -42,7 +42,6 @@ type SearchInChannel struct {
 	ch       string
 	ed       widget.Editor
 	focused  bool
-	list     layout.List
 	closeBtn widget.Clickable
 	fullBtn  widget.Clickable // "Go to full search" / "View full search"
 	allBtn   widget.Clickable // "View all N results"
@@ -53,6 +52,7 @@ type SearchInChannel struct {
 	sortBy   string      // score | timestamp | oldest
 	sortSt   srSortState // sort_forced_to_recent / disable_sort_override (search_view.go)
 	origin   image.Point
+	originOK bool // SetOrigin gave it; else the host's SecondaryOrigin, each frame
 	searched bool // a search ran (Slack's eu: the no-results state replaces "Nothing to show yet.")
 	// skelStart is when the loading skeleton's shimmer began
 	// (search_channel_states.go)
@@ -77,7 +77,6 @@ func NewSearchInChannel(h Host, ch string) *SearchInChannel {
 	v := &SearchInChannel{h: h, ch: ch, sortBy: DefaultSearchSort(h.Core())}
 	v.ed.SingleLine = true
 	v.ed.Submit = true
-	v.list.Axis = layout.Vertical
 	return v
 }
 
@@ -91,7 +90,6 @@ func (v *SearchInChannel) Search(q string) {
 	v.seq++
 	seq := v.seq
 	v.msgs, v.total, v.err, v.res = nil, 0, "", nil
-	v.list.Position = layout.Position{}
 	c := v.h.Core()
 	if q == "" || c == nil {
 		v.loading, v.searched = false, false
@@ -145,7 +143,11 @@ func (v *SearchInChannel) fullQuery() string {
 
 // SetOrigin tells the pane where its top-left corner is in window
 // coordinates (the sort menu opens under its select).
-func (v *SearchInChannel) SetOrigin(p image.Point) { v.origin = p }
+func (v *SearchInChannel) SetOrigin(p image.Point) { v.origin, v.originOK = p, true }
+
+// secondaryOrigin is the ui root's: where the secondary column (the ⌘F
+// pane's) is in the window.
+type secondaryOrigin interface{ SecondaryOrigin() image.Point }
 
 // sess is the pane's search session (one per pane).
 func (v *SearchInChannel) sess() core.SearchSession {
@@ -275,6 +277,11 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	if v.sortBtn.Clicked(gtx) {
 		v.sortMenu()
+	}
+	if so, ok := v.h.(secondaryOrigin); ok && !v.originOK {
+		// the pane's place in the window: the cards' More actions and
+		// attachments open there (SearchView.win)
+		v.origin = so.SecondaryOrigin()
 	}
 	if v.res != nil {
 		// the cards' clicks, each its own result's (SearchView.cardEvents)

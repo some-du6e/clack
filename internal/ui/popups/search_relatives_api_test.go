@@ -9,6 +9,3 @@ func sicCardsT(v *SearchInChannel) []*srCard {
 	}
 	return v.res.cards
 }
-
-// cardAddrT is result i's card's identity.
-func cardAddrT(v *SearchView, i int) any { return v.cards[i] }

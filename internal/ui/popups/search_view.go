@@ -383,7 +383,7 @@ type SearchView struct {
 	countQ  string
 
 	msgs  []core.Message
-	cards []*srCard // one per result, at a fixed address (a page appended moves none)
+	cards []*srCard // one per result of the page (search in channel shares them, search_channel.go)
 	// noStore: these results aren't the search store's (search in
 	// channel's own cards: Slack keeps them in searchInChannel's slice)
 	noStore bool
