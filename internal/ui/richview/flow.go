@@ -635,8 +635,11 @@ func (l *lay) plainAdd(s string) (int32, int32) {
 }
 
 func isCJK(r rune) bool {
-	return unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
-		unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r)
+	// none of the four scripts has a rune below Hangul's Jamo (U+1100):
+	// text in Latin script is never looked up (four table searches a
+	// rune were a third of laying out a 908,000-character message)
+	return r >= 0x1100 && (unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
+		unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r))
 }
 
 // addText splits s into word/space/break items.
@@ -683,7 +686,10 @@ func (l *lay) addTextRunAs(s string, fs *flowStyle, k faceKey, col color.NRGBA, 
 		start = -1
 	}
 	for i := 0; i < len(s); {
-		r, sz := utf8.DecodeRuneInString(s[i:])
+		r, sz := rune(s[i]), 1
+		if r >= utf8.RuneSelf {
+			r, sz = utf8.DecodeRuneInString(s[i:])
+		}
 		switch {
 		case r == '\n':
 			flush(i)
