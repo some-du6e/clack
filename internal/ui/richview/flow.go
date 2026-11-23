@@ -217,6 +217,12 @@ const (
 	// tTimeline is a timeline section's "(Sources)" (timeline: the
 	// section; timeline.go)
 	tTimeline
+	// tDate is a canvas's date control (Quip's CONTROL_SLACK_DATE_TYPE,
+	// span.slack-date-contents.mention): no link and no click here, but an
+	// editor's pointer is the hand over it (canvas-controller CSS:
+	// control.c68 .slack-date-contents:not(.read-only){cursor:pointer}),
+	// which View.HandCursors gives it; a viewer's stays the text cursor.
+	tDate
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no
@@ -965,6 +971,8 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			if sp.URL != "" {
 				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
 				col = p.Link
+			} else if l.opts.Canvas {
+				tg = l.d.addTarget(target{kind: tDate}) // Quip's date control (tDate)
 			}
 		}
 		if st&richtext.Code != 0 && !fs.pre && dc < 0 {
