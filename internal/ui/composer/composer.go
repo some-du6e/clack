@@ -2050,7 +2050,7 @@ func (a *attachments) takeForEdit() []editFile {
 			c.pf.Title = c.title
 			out = append(out, editFile{pf: c.pf})
 		default:
-			out = append(out, editFile{raw: &core.UploadFile{Name: c.name, Title: c.title, Data: c.data}})
+			out = append(out, editFile{raw: &core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype(), Type: c.mime()}})
 		}
 	}
 	a.chips, a.total = nil, 0

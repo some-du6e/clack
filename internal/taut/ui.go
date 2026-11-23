@@ -2782,6 +2782,16 @@ type File struct {
 	Data []byte
 }
 
+// UploadType is the type f's upload goes up with: Slack's FormData sends
+// a File's type, application/octet-stream when it has none (a plugin's new
+// File([..], name) without one), never a type guessed from its name.
+func (f File) UploadType() string {
+	if f.Type == "" {
+		return "application/octet-stream"
+	}
+	return f.Type
+}
+
 func (f File) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]any{"$file": map[string]any{"name": f.Name, "type": f.Type, "size": len(f.Data), "data": f.Data}})
 }

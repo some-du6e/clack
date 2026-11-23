@@ -259,7 +259,7 @@ func (a *attachments) Files() []core.UploadFile {
 	defer a.mu.Unlock()
 	var out []core.UploadFile
 	for _, c := range a.chips {
-		out = append(out, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype()})
+		out = append(out, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype(), Type: c.mime()})
 	}
 	return out
 }
@@ -268,6 +268,17 @@ func (a *attachments) Files() []core.UploadFile {
 func (c *attChip) subtype() string {
 	if c.clip != nil {
 		return c.clip.subtype
+	}
+	return ""
+}
+
+// mime is the upload part's type where the File has its own: a clip's is
+// the recorder's (audio/mp4, getAudioMIMEType's first in Chromium 156), not
+// the audio/x-m4a Chromium would give its .m4a name. "" elsewhere: the
+// part is typed by the name (slack.FileType).
+func (c *attChip) mime() string {
+	if c.clip != nil {
+		return c.clip.mime
 	}
 	return ""
 }
@@ -301,7 +312,7 @@ func (a *attachments) takeForSend() (b sendBatch) {
 			c.pf.Title = c.title
 			b.pending = append(b.pending, c.pf)
 		default:
-			b.raw = append(b.raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype()})
+			b.raw = append(b.raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype(), Type: c.mime()})
 		}
 	}
 	a.chips, a.total = nil, 0
@@ -396,7 +407,7 @@ func (a *attachments) prepare(c *attChip) {
 	}
 	a.mu.Lock()
 	c.preparing, c.ptotal = true, int64(len(c.data))
-	name, data, sub := c.name, c.data, c.subtype()
+	name, data, sub, typ := c.name, c.data, c.subtype(), c.mime()
 	a.mu.Unlock()
 	a.h.Invalidate()
 
@@ -430,7 +441,7 @@ func (a *attachments) prepare(c *attChip) {
 		}
 	}
 	// addAndUploadPendingFile (AnonymizeFilenames renames the file here).
-	pu, err := prepareFile(context.Background(), coreAPI{a.h.Core()}, core.UploadFile{Name: name, Title: name, Data: data, Subtype: sub}, prog)
+	pu, err := prepareFile(context.Background(), coreAPI{a.h.Core()}, core.UploadFile{Name: name, Title: name, Data: data, Subtype: sub, Type: typ}, prog)
 	a.mu.Lock()
 	c.preparing = false
 	var p core.PreparedUpload
