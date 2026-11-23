@@ -43,6 +43,9 @@ func TestToolbarFollowsItsMessageLikeSlack(t *testing.T) {
 	if !moved {
 		t.Fatal("the message above was never taken out: the case tests nothing")
 	}
+	if s.tbFor < 0 {
+		t.Fatalf("after the row above went, no toolbar is drawn; Slack's stays in %q's row, the pointer on it", tsCtxFile)
+	}
 	if s.tbFor >= 0 && s.tbKey != tsCtxFile {
 		t.Errorf("after the row above went, the toolbar is over %q (row %d); Slack's stays in %q's row", s.tbKey, s.tbFor, tsCtxFile)
 	}

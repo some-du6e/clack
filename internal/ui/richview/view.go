@@ -889,7 +889,9 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 				}
 				// a message emoji that failed: Chromium's broken <img>
 				// (brokenimage.go)
-				if f.broken = f.alt && imgFailed(st.Images, f.url, f.size); f.broken {
+				// once shown it stays until the image loads (a retry that's
+				// busy decoding isn't Failed, and drew a blank gap)
+				if f.broken = f.alt && (f.broken || imgFailed(st.Images, f.url, f.size)); f.broken {
 					paintBrokenEmoji(ops, int(f.x+0.5), f.y, f.size, v.laidPx)
 				}
 				continue

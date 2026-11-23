@@ -1540,7 +1540,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	// (openWindow), the conversation's newest messages when they hold it;
 	// sync() places it, or the first message after it, once they cover it
 	// (placeJump). One whose window gave way has nowhere to land.
-	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older && !s.snap.loading && s.snap.around == "" {
+	// an older page out (olderAhead's prefetch) doesn't hold the jump: the
+	// window it opens turns that page away when it lands (hub.loadOlder)
+	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.loading && s.snap.around == "" {
 		first, last, ok := s.ends()
 		older := ok && s.snap.hasMore && tsLess(s.pendingJump, first)
 		newer := s.win != nil && ok && tsLess(last, s.pendingJump)
@@ -1567,7 +1569,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.threadPaging(gtx, h, size, now) // pages before and after the slice (thread_load.go)
 	}
 	// infinite scroll up, ahead of the reader (olderAhead)
-	if !s.thread && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second && s.olderAhead(gtx, h, size) {
+	if !s.thread && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second && s.olderAhead(gtx, size) {
 		if s.hb.loadOlder(s.m) {
 			s.lastOlder = now
 		}
@@ -2024,12 +2026,19 @@ type dayCall struct {
 	r    image.Rectangle // the pill
 }
 
-// dayPillScroll is the list's wheel under a day pill drawn over it
-// (toolbar_scroll.go's actScroll): Slack's pill is inside the scroller,
-// so a wheel over it scrolls the pane. r is the pill in list coordinates;
-// the area reaches past its ring and shadow, which draw inside it.
-func (s *listState) dayPillScroll(gtx layout.Context, r image.Rectangle) clip.Stack {
-	return s.actionsScrollArea(gtx, r.Inset(-dp(gtx, 8)))
+// dayPillWheel is the list's wheel over a day pill drawn over it
+// (toolbar_scroll.go's actScroll): Slack's pill is inside the scroller, so
+// a wheel over it scrolls the pane. Only the pill's own box takes input
+// (its label is pointer-events: none, the 28px pill pointer-events: all;
+// its ring and shadow aren't hit): r is that box in list coordinates. The
+// area passes everything on to what is under it, the pill's button for a
+// click, so it only adds the wheel. Call it after the pill is drawn.
+func (s *listState) dayPillWheel(gtx layout.Context, r image.Rectangle) {
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	st := clip.Rect(r).Push(gtx.Ops)
+	s.actScroll.Add(gtx.Ops)
+	st.Pop()
+	pass.Pop()
 }
 
 func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.Dimensions {
@@ -2103,11 +2112,17 @@ func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.D
 // starts less than 400px from the list's top the older page is asked for,
 // while the reader still has half a pane and more to scroll. A row the
 // list hasn't measured counts as its heightCache's DEFAULT_HEIGHT
-// (getMessageListLayout: 80px in the light theme, 60 otherwise).
-func (s *listState) olderAhead(gtx layout.Context, h Host, size image.Point) bool {
+// (getMessageListLayout: 80px for the "light" messages theme, Clean, and
+// 60 for "dense", Compact; not the colour mode).
+//
+// That first row starts under 400px exactly when scrollTop - height/2 is
+// short of E, the end of the last row starting under 400px: so only the
+// rows to E and the content over the viewport up to E + height/2 are
+// walked, not every row loaded.
+func (s *listState) olderAhead(gtx layout.Context, size image.Point) bool {
 	p := s.list.Position
 	def := dp(gtx, 80)
-	if th := h.Theme(); th != nil && th.Dark {
+	if uipref.Get().Dense {
 		def = dp(gtx, 60)
 	}
 	rowH := func(i int) int {
@@ -2119,21 +2134,19 @@ func (s *listState) olderAhead(gtx layout.Context, h Host, size image.Point) boo
 		}
 		return def
 	}
-	n := min(p.First, len(s.items))
-	above := p.Offset // the content over the viewport's top
-	for i := 0; i < n; i++ {
-		above += rowH(i)
+	edge := dp(gtx, 400)
+	end := 0 // E
+	for i := 0; i < len(s.items) && end < edge; i++ {
+		end += rowH(i)
 	}
-	y0 := above - size.Y/2 // getBounds(scrollTop - overscan): its first row holds y0
-	top := 0
-	for i := 0; i < len(s.items) && top <= y0; i++ {
-		if hh := rowH(i); top+hh > y0 {
-			break
-		} else {
-			top += hh
+	limit := end + size.Y/2
+	above := p.Offset // the content over the viewport's top
+	for i := 0; i < min(p.First, len(s.items)); i++ {
+		if above += rowH(i); above >= limit {
+			return false
 		}
 	}
-	return top < dp(gtx, 400)
+	return above < limit
 }
 
 // overlays draws the hover toolbar, the sticky day pill, tooltips and the
@@ -2197,11 +2210,10 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		if dc.item == stuck || dc.item < s.visible[0] || dc.item >= s.visible[1] || dc.item >= len(s.pos) {
 			continue // the stuck one is drawn at the top below; one off screen isn't drawn
 		}
-		a := s.dayPillScroll(gtx, dc.r.Add(image.Pt(0, s.pos[dc.item])))
 		t := op.Offset(image.Pt(0, s.pos[dc.item])).Push(gtx.Ops)
 		dc.call.Add(gtx.Ops)
 		t.Pop()
-		a.Pop()
+		s.dayPillWheel(gtx, dc.r.Add(image.Pt(0, s.pos[dc.item])))
 	}
 	if stuck >= 0 {
 		// the stuck pill's place, before it's drawn: its rect at stickyAt
@@ -2211,9 +2223,8 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		if clicked {
 			s.dayReq = &dayMenuReq{day: stickyDay, item: -1, r: pr}
 		}
-		a := s.dayPillScroll(gtx, pr)
 		call.Add(gtx.Ops)
-		a.Pop()
+		s.dayPillWheel(gtx, pr)
 	}
 
 	// reaction tooltip

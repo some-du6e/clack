@@ -36,7 +36,7 @@ func installMemberRead(c *core.App) {
 		case ok:
 			// MemberSlug's name: the real name under forceRealNames
 			// (shouldDisplayRealNamesInMentions), else getMemberMentionName
-			return core.MentionName(u, c.MentionRealNames()), richview.MemberLoaded
+			return core.MentionName(u, c.RealNamesInMentions()), richview.MemberLoaded
 		case !core.LooksLikeMemberID(id):
 			// getMemberById makes any other id a non-existent member at
 			// once, which MemberSlug draws as "@id": the parsed text
@@ -53,7 +53,7 @@ func installMemberRead(c *core.App) {
 		u, ok := c.S.RawUser(id) // getRawMemberById: no access, nothing asked for
 		switch {
 		case ok && u != nil:
-			return core.MentionName(u, c.MentionRealNames()), richview.MemberLoaded
+			return core.MentionName(u, c.RealNamesInMentions()), richview.MemberLoaded
 		case !core.LooksLikeMemberID(id):
 			return "", richview.MemberLoaded
 		case c.MissingMember(id) == core.MemberNonExistent:

@@ -297,20 +297,14 @@ func slugMentionName(u *slack.User, real bool) string {
 	return realName
 }
 
-// MentionRealNames is shouldDisplayRealNamesInMentions (realNamesInMentions):
-// rich text's UserElement passes it to MemberSlug as forceRealNames, and
-// a mention then reads the member's real name (hWCs wg), else
-// getMemberMentionName.
-func (a *App) MentionRealNames() bool { return a.realNamesInMentions() }
-
 // MentionName is MemberSlug's name for member u: wg (their real name)
-// under forceRealNames, else getMemberMentionName (store.DisplayName).
+// under forceRealNames (RealNamesInMentions), else getMemberMentionName
+// (store.DisplayName). A real name Clack counts as none (memberRealName:
+// a lone U+200B, only spaces) names the member as getMemberMentionName
+// does, never a blank-looking "@".
 func MentionName(u *slack.User, real bool) string {
-	if real && u != nil {
-		if n := strings.TrimSpace(u.Profile.RealName); n != "" {
-			return n
-		}
-		if n := strings.TrimSpace(u.RealName); n != "" {
+	if real {
+		if n := memberRealName(u); n != "" {
 			return n
 		}
 	}

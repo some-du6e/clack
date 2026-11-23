@@ -74,7 +74,20 @@ func TestOwnHiddenReactionOpensTheBarLikeSlack(t *testing.T) {
 		f()
 	}
 	if saw(more) || !saw(less) {
-		t.Errorf("after the viewer's own hidden reaction the bar draws %q / %q; Slack's opens it (all the pills, \"Show less\")",
+		t.Fatalf("after the viewer's own hidden reaction the bar draws %q / %q; Slack's opens it (all the pills, \"Show less\")",
+			map[bool]string{true: "N more"}[saw(more)], map[bool]string{true: "Show less"}[saw(less)])
+	}
+	// "Show less" collapses it again
+	v.s.rows[ts].reactExpand.Click()
+	for i := 0; i < 3; i++ {
+		f()
+	}
+	reset()
+	for i := 0; i < 3; i++ {
+		f()
+	}
+	if !saw(more) || saw(less) {
+		t.Errorf("after \"Show less\" the bar draws %q / %q; it collapses (\"N more\")",
 			map[bool]string{true: "N more"}[saw(more)], map[bool]string{true: "Show less"}[saw(less)])
 	}
 }

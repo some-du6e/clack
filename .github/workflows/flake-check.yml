@@ -5714,7 +5714,7 @@ jobs:
         run: |
           set +e
           rc=0
-          xvfb-run -a go test -count=$COUNT -timeout 15m -run '^(TestOlderPageAheadOfScrollLikeSlack|TestDayPillStraddlingTheTopLikeSlack|TestToolbarTipOverTheListTopLikeSlack|TestToolbarFollowsItsMessageLikeSlack|TestOwnHiddenReactionOpensTheBarLikeSlack)$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 15m -run '^(TestOlderPageAheadOfScrollLikeSlack|TestDayPillStraddlingTheTopLikeSlack|TestToolbarTipOverTheListTopLikeSlack|TestToolbarFollowsItsMessageLikeSlack|TestOwnHiddenReactionOpensTheBarLikeSlack|TestDayPillInputIsItsOwnBoxLikeSlack)$' ./internal/ui/messages || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 5m -run '^TestFailedEmojiDrawsBrokenImageLikeSlack$' ./internal/ui/richview || rc=1
           go test -count=$COUNT -timeout 10m -run '^TestMentionPillRealNamesLikeSlack$' ./internal/ui || rc=1
           exit $rc

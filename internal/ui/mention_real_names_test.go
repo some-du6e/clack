@@ -27,11 +27,17 @@ func TestMentionPillRealNamesLikeSlack(t *testing.T) {
 		name       string
 		prefs      map[string]any
 		experiment string
+		real       string // the member's real name ("Zed Real" when empty)
 		want       string
 	}{
-		{"real names in mentions", map[string]any{"mentions_real_names_override": 1}, "on", "@Zed Real"},
-		{"display names in mentions", map[string]any{"mentions_real_names_override": -1}, "on", "@zz.disp"},
-		{"out of the experiment", map[string]any{"mentions_real_names_override": 1}, "off", "@zz.disp"},
+		{"real names in mentions", map[string]any{"mentions_real_names_override": 1}, "on", "", "@Zed Real"},
+		{"display names in mentions", map[string]any{"mentions_real_names_override": -1}, "on", "", "@zz.disp"},
+		{"out of the experiment", map[string]any{"mentions_real_names_override": 1}, "off", "", "@zz.disp"},
+		// Karim's profile: a real name that is a lone zero-width space
+		// names nobody (core.userOf's rule): the display name, never "@"
+		// and an invisible character
+		{"a zero-width real name", map[string]any{"mentions_real_names_override": 1}, "on", "\u200b", "@zz.disp"},
+		{"a real name of spaces", map[string]any{"mentions_real_names_override": 1}, "on", "   ", "@zz.disp"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			fs, err := fakeslack.Start(fakeslack.Small)
@@ -46,7 +52,11 @@ func TestMentionPillRealNamesLikeSlack(t *testing.T) {
 				t.Fatal(err)
 			}
 			ca.SetExperimentGroup("mentions_full_names_only_pref", c.experiment)
-			ca.S.PutUsers([]slack.User{namedUser(id, "zz.handle", "zz.disp", "Zed Real")})
+			real := "Zed Real"
+			if c.real != "" {
+				real = c.real
+			}
+			ca.S.PutUsers([]slack.User{namedUser(id, "zz.handle", "zz.disp", real)})
 			installMemberRead(ca)
 			t.Cleanup(func() { uninstallMemberRead(ca) })
 			sp := richtext.Span{Kind: richtext.User, ID: id}

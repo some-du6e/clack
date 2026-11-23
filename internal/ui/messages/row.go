@@ -3001,6 +3001,11 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 	c := rc.c
 	if r.reactExpand.Clicked(gtx) {
 		r.reactExpanded = kind == reactMore
+		// the bar's state as the click leaves it: "Show less" after your
+		// own hidden reaction opened it (isExpanded still false, so
+		// nothing re-derives) collapses it too, as Slack's remounted bar
+		// starts collapsed
+		r.rxCollapsed = kind != reactMore
 		rc.h.Invalidate()
 	}
 	txt := "Show less"

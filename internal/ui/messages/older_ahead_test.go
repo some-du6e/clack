@@ -5,7 +5,7 @@ package messages
 // half a pane past the viewport (the virtual list's overscanRatio .5) and
 // asks for the older page once the first of them starts within 400px of
 // the list's top (loadMore's loadPre), counting a row it hasn't measured
-// as 80px (getMessageListLayout's DEFAULT_HEIGHT in the light theme). So
+// as 80px (getMessageListLayout's DEFAULT_HEIGHT for Clean; 60px for Compact). So
 // the page loads while the reader has more than half a pane to scroll.
 // Clack asked only with the third row on screen. Synthetic data.
 
@@ -26,14 +26,19 @@ func TestOlderPageAheadOfScrollLikeSlack(t *testing.T) {
 		name  string
 		first int  // the row at the viewport's top, none above it measured
 		ask   bool // whether Slack's list asks for the older page
+		dense bool // Compact: an unmeasured row is 60px
 	}{
+		// Compact: 11 rows of 60px, 660px over a 700px pane; at 80px
+		// (Clean's) the overscan's first row would start past 400px
+		{"eleven rows above, Compact", 11, true, true},
 		// 6 rows of 80px over the viewport: the overscan reaches 480-h/2
 		// (the pane's height h is over 160px), a row starting under 400px
-		{"six rows above", 6, true},
+		{"six rows above", 6, true, false},
 		// 40 rows, 3200px: the overscan's first row is far past 400px
-		{"forty rows above", 40, false},
+		{"forty rows above", 40, false, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			setDense(t, c.dense)
 			app, _ := newTestApp(t)
 			app.S.PutConv(slack.Conversation{ID: ch, Name: "busy", IsChannel: true, IsMember: true, NumMembers: 8})
 			var msgs []slack.Message
