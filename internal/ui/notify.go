@@ -72,6 +72,7 @@ func (a *App) notifyMessage(title, body string, n *desktopNote) {
 		}
 	}
 	file := messageSound(c.GlobalNotifyString(pref))
+	t := a.Taut()
 	ch, thread := "", ""
 	if n != nil {
 		ch, thread = n.Channel, n.ThreadTS
@@ -85,7 +86,12 @@ func (a *App) notifyMessage(title, body string, n *desktopNote) {
 		// maybePlayNewMsgSound plays nothing while a huddle is on
 		// (getActiveHuddleCallId, isLiveVoiceCallRunning)
 		if (throughDND || !c.DNDActive(ctx)) && soundPlayback() && !(debounce && a.soundDebounced(ch, thread)) && !inHuddle(a) {
-			huddleui.PlaySlackSound(file)
+			// Slack's sound playback (Ofe8 play) on the plugins' page while
+			// they run, where a plugin may swap the sound (CustomSounds);
+			// else Clack plays it itself
+			if t == nil || !t.PlaySound(huddleui.SoundURL(file)) {
+				huddleui.PlaySlackSound(file)
+			}
 		}
 	}()
 }

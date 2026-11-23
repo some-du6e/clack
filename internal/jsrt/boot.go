@@ -391,6 +391,7 @@ func (r *Runtime) installHost() {
 			return p, nil
 		})
 	}
+	r.installMedia(def) // media.go: the <audio> and <video> elements' players
 	def("tz", func(js *Ctx, _ Value, a []Value) (any, error) {
 		return tzInfo(str(a, 0), num(a, 1))
 	})
