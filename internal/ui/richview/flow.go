@@ -10,6 +10,7 @@ import (
 	"gioui.org/font"
 	"golang.org/x/image/math/fixed"
 
+	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 	"github.com/some-du6e/clack/internal/workobject"
@@ -643,9 +644,18 @@ func (l *lay) addText(s string, fs *flowStyle, k faceKey, col color.NRGBA, st ri
 		}
 		p0, p1 := l.plainAdd(sg.text)
 		ep := fs.emoji
-		l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep), url: l.st.emojiURL(sg.stem), size: ep,
+		l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep) + l.nativeEmojiGap(), url: l.st.emojiURL(sg.stem), size: ep,
 			deco: dc, target: tg, p0: p0, p1: p1, brk: true, alt: true, part: l.curPart})
 	}
+}
+
+// nativeEmojiGap is the space after a standard emoji in px: the style's
+// NativeEmojiGap, at 1x only (Style).
+func (l *lay) nativeEmojiGap() float32 {
+	if l.st.NativeEmojiGap <= 0 || l.scale > 1 {
+		return 0
+	}
+	return l.dpf(l.st.NativeEmojiGap)
 }
 
 // addTextRun splits emoji-free text into word/space/break items.
@@ -800,7 +810,11 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.d.tips = append(l.d.tips, ":"+sp.ID+":")
 				tip = int16(len(l.d.tips))
 			}
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip, part: pt})
+			gap := float32(0)
+			if name, _, _ := strings.Cut(sp.ID, "::"); emoji.IsStandard(name) {
+				gap = l.nativeEmojiGap() // a canvas's native glyph span; a custom emoji is an <img>
+			}
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep) + gap, url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip, part: pt})
 			continue
 		case richtext.InlineImage:
 			if sp.URL == "" {

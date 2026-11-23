@@ -836,7 +836,8 @@ func editorStyle(th *theme.Theme, k canvas.Kind, h Host) composer.EditorStyle {
 	st.MentionColor, st.MentionBg, st.BroadcastColor, st.BroadcastBg = c.Mention, c.MentionBg, c.Fg, c.SelfMention
 	st.PlaceholderText = "" // Slack's empty line hint offers "/" commands, which Clack has no menu for
 	st.MaxHeight = 0
-	st.EmojiSize = unit.Dp(lineFor(k)) // control.c54 img: the section's line height (as render.go draws it)
+	st.EmojiSize = unit.Dp(lineFor(k))            // control.c54 img: the section's line height (as render.go draws it)
+	st.NativeEmojiGap = unit.Dp(nativeEmojiGap()) // as render.go draws it
 	if im := h.Images(); im != nil {
 		st.Images = im.Get
 	}

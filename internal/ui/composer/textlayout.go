@@ -173,6 +173,7 @@ type tlMetrics struct {
 	dividerBox             int // the divider line box height
 	dividerThick           int // the divider rule thickness
 	emoji                  int
+	nativeGap              int // after a standard emoji (EditorStyle.NativeEmojiGap, 1x only)
 	listIndent             int
 	Dp24, Dp3              int
 	markerGap              int
@@ -209,6 +210,10 @@ func tlMakeMetrics(m unit.Metric, st *EditorStyle) tlMetrics {
 		es = unit.Dp(float32(lh))
 	}
 	px1 := max(m.Dp(1), 1)
+	gap := 0
+	if st.NativeEmojiGap > 0 && m.PxPerDp <= 1 {
+		gap = m.Dp(st.NativeEmojiGap)
+	}
 	return tlMetrics{
 		ppem:     fixed.I(m.Sp(ts)),
 		codePpem: fixed.I(m.Sp(ts * 0.8)),
@@ -224,6 +229,7 @@ func tlMakeMetrics(m unit.Metric, st *EditorStyle) tlMetrics {
 		dividerBox:   max(m.Sp(ts*12/15), 1),
 		dividerThick: px1,
 		emoji:        m.Dp(es),
+		nativeGap:    gap,
 		listIndent:   m.Dp(28),
 		Dp24:         m.Dp(24),
 		Dp3:          m.Dp(3),
@@ -669,8 +675,13 @@ func (l *tlLayout) atomItem(a Attr, q int, k tlKey) tlItem {
 				it.shape = l.cache.get(l.sh, tlShapeKey{s: at.Uni, font: lato, ppem: m.ppem, loc: k.loc})
 			}
 			// .c-texty_input .ql-editor img.emoji: its size, no margin
-			// (Quill's guards around the embed are zero-width): emoji touch
+			// (Quill's guards around the embed are zero-width): emoji touch.
+			// A canvas's standard emoji is a native glyph span, with a
+			// margin-right on a 1x Mac (NativeEmojiGap)
 			it.w = fixed.I(m.emoji)
+			if at.Uni != "" {
+				it.w = fixed.I(m.emoji + m.nativeGap)
+			}
 			return it
 		}
 		label := at.Text

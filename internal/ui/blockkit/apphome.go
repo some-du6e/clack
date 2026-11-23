@@ -389,8 +389,14 @@ func (d *AppDM) LayoutBody(gtx C) D {
 		}
 		return d.list.Layout(gtx, 1, func(gtx C, _ int) D {
 			w := min(sz.X-dp(gtx, 40), dp(gtx, 1000))
-			// Slack: blocks at (24, 31) under the tabs, 969 wide at 1440 (45 right).
-			return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(45), Top: unit.Dp(31), Bottom: unit.Dp(24)}.Layout(gtx, func(gtx C) D {
+			// Slack: blocks at (24, 31) under the tabs, 969 wide at 1440 (45
+			// right), the fidelity audit's header-first Home (2026-11-08).
+			// The blocks' box (.p-app_home__blockkit, flow-root, padding-top
+			// 0 in a channel tab) starts 24 down: the first block's own top
+			// margin is inside it (Surface.Layout), so that Home's header
+			// stays where Clack drew it, 31 + 4 + 4 (the old first gap and
+			// the header's first margin), now 24 + its 1em.
+			return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(45), Top: unit.Dp(24), Bottom: unit.Dp(24)}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
 				return d.surf.Layout(gtx)
 			})
