@@ -536,12 +536,18 @@ func (me *Message) widgetFor(bt *richtext.Button) *ew {
 	if bt.BlockID == "" {
 		return me.legacyWidget(bt)
 	}
-	// a data_table's rows may share one action_id, each cell's button its
-	// own value (DataTableBlockRow renders each cell's element): the value
-	// tells them apart
-	k := bt.BlockID + "\x00" + bt.ActionID + "\x00" + bt.Value
+	k := bt.BlockID + "\x00" + bt.ActionID
 	if w := me.ws[k]; w != nil {
-		return w
+		if w.b.Type != "data_table" || w.e.Value == bt.Value {
+			return w
+		}
+		// a data_table's rows may share one action_id, each cell's button
+		// its own value (DataTableBlockRow renders each cell's element):
+		// another row's button has a widget of its own
+		k += "\x00" + bt.Value
+		if w := me.ws[k]; w != nil {
+			return w
+		}
 	}
 	if r, ok := findValue(me.blocks, bt.BlockID, bt.ActionID, bt.Value); ok {
 		w := newEW(me, r.block, r.el, r.block.Type == "input")

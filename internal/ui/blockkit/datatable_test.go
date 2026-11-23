@@ -46,4 +46,9 @@ func TestDataTableSharedActionID(t *testing.T) {
 	if k1, k2 := surfKey(&b, &b.Elements[0]), surfKey(&b, &b.Elements[1]); k1 == k2 {
 		t.Errorf("the rows share the widget key %q", k1)
 	}
+	// any other block keeps its key without the value
+	sec := Block{Type: "actions", BlockID: "a1"}
+	if k := surfKey(&sec, &Element{Type: "button", ActionID: "go", Value: "v"}); k != "a1\x00go\x00button" {
+		t.Errorf("an actions block's button key %q", k)
+	}
 }

@@ -417,10 +417,14 @@ func (s *Surface) fire(w *ew, action json.RawMessage, done func(error)) {
 func (s *Surface) loading(bid string) bool { return s.flying[bid] > 0 }
 
 // surfKey is an element's widget key: its block, action_id and type, and
-// its value (a data_table's rows may share one action_id, each cell's
-// button its own value).
+// in a data_table its value (the rows may share one action_id, each
+// cell's button its own value).
 func surfKey(b *Block, e *Element) string {
-	return b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type + "\x00" + e.Value
+	k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
+	if b.Type == "data_table" {
+		k += "\x00" + e.Value
+	}
+	return k
 }
 
 func (s *Surface) widget(b *Block, e *Element) *ew {
