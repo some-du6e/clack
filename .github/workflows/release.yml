@@ -42,7 +42,7 @@ jobs:
   # builders below lay out text 1px differently in internal/ui/slackc).
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 40 # budget, min (ci full-test's p95 21.6; its go test -timeout is 30m): docs/CI-SPEED.md
+    timeout-minutes: 40 # budget, min (ci full-test's p95 32.0 before round 4's split, 14.5-15.0 after; its go test -timeout is 30m): docs/CI-SPEED.md
     permissions:
       contents: read
       actions: read # prior: ci's runs and jobs

@@ -239,7 +239,7 @@ jobs:
   full-test:
     if: ${{ (github.ref == 'refs/heads/ui' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && (!inputs.only || startsWith('full-test', inputs.only)) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40 # budget, min (p95 21.6; its go test -timeout is 30m): docs/CI-SPEED.md
+    timeout-minutes: 40 # budget, min (p95 32.0 over 40 runs before round 4's split, 14.5-15.0 after; its go test -timeout is 30m): docs/CI-SPEED.md
     concurrency:
       group: ci-full-test-${{ github.ref }}
       cancel-in-progress: true
