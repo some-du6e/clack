@@ -13,9 +13,10 @@ import (
 // rejects); removeMemberFromPresenceSubscription one fewer. A member's
 // first subscriber and its last one leaving each send presence_sub,
 // 100 ms after the last change (sendPresenceSubEvent: lodash debounce,
-// trailing), when the socket is up. Clack's own presence set (presenceIDs:
-// the viewer, DM partners, users recently shown) takes in every counted
-// member, so presence_sub carries them as long as they are counted.
+// trailing), when the socket is up. presence_sub carries every counted
+// member beside Clack's own presence set (presenceIDs: the viewer, DM
+// partners, users recently shown, which keep their 500), as long as they
+// are counted.
 
 // presenceSubDelay is sendPresenceSubEvent's debounce.
 const presenceSubDelay = 100 * time.Millisecond
@@ -77,6 +78,29 @@ func (a *App) PresenceSubscriptions() map[string]int {
 	out := make(map[string]int, len(a.presSubs))
 	for id, n := range a.presSubs {
 		out[id] = n
+	}
+	return out
+}
+
+// PresenceSubscriptionOf is the presence manager's map for team
+// (getPresenceSubscriptionByTeamId, which OnlineCount sizes its own
+// subscriptions by, as Slack's server ignores a presence subscription of
+// about a thousand people): every member presence_sub carries, with its
+// count of subscribers. Clack's own set (the viewer, DM partners and the
+// people its views showed lately) counts one each, the members a plugin
+// subscribed what they were counted. nil for a team other than the
+// signed-in one or its enterprise. Like the next presence_sub, it lets
+// recently shown people past the set's bound go.
+func (a *App) PresenceSubscriptionOf(team string) map[string]int {
+	if team == "" || team != a.C.Creds.Team && team != a.C.Creds.EnterpriseID {
+		return nil
+	}
+	ids := a.presenceIDs(nil)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make(map[string]int, len(ids))
+	for _, id := range ids {
+		out[id] = max(a.presSubs[id], 1)
 	}
 	return out
 }

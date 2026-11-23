@@ -2338,7 +2338,8 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	// registered before hello: once the client is connected, Push reaches it
 	s.addSocket(c) // Push (canvas.go)
 	defer s.dropSocket(c)
-	s.newGatewayConnection() // member_changes.go: no user_change subscriptions yet
+	defer s.dropPresenceSub(c) // presence_sub.go
+	s.newGatewayConnection()   // member_changes.go: no user_change subscriptions yet
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
 		_, data, err := c.Read(ctx)
@@ -2353,18 +2354,24 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var f struct {
-			Type   string `json:"type"`
-			ID     int64  `json:"id"`
-			Reason string `json:"reason"`
+			Type   string   `json:"type"`
+			ID     int64    `json:"id"`
+			IDs    []string `json:"ids"`
+			Reason string   `json:"reason"`
 		}
-		if json.Unmarshal(data, &f) == nil && f.Type == "tickle" {
+		if json.Unmarshal(data, &f) != nil {
+			continue
+		}
+		switch {
+		case f.Type == "tickle":
 			s.noteTickle(f.Reason) // AutoAway (presence.go)
-		}
-		if f.Type == "ping" && s.liveSocket(c) {
+		case f.Type == "ping" && s.liveSocket(c):
 			b, _ := json.Marshal(map[string]any{"type": "pong", "reply_to": f.ID})
 			wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			_ = c.Write(wctx, websocket.MessageText, b)
 			cancel()
+		case f.Type == "presence_sub":
+			s.presenceSub(c, f.IDs) // presence_sub.go
 		}
 	}
 }
