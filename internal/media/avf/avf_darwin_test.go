@@ -297,7 +297,7 @@ func colorReport(samples []sample) (errs, logs []string) {
 			// for a few draws after its stall: 2 draws 60 ms apart, the
 			// flakes-1122d review)
 			left := (w[1] - w[0]) - (min(b.at, w[1]) - max(a.at, w[0]))
-			if usual > 0 && left < max(3*usual, 100*time.Millisecond) {
+			if usual > 0 && left < 3*usual {
 				return gap, true
 			}
 		}
