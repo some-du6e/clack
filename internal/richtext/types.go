@@ -236,6 +236,9 @@ type Block struct {
 	Rows       [][][]Span // Table: rows → cells → inline spans (multi-paragraph cells joined by Break)
 	ColAlign   []string   // Table: per-column "left" | "center" | "right" ("" = left)
 	ColWrap    []bool     // Table: per-column is_wrapped
+	// Whole: a Table drawn whole, as a modal's (TableFullscreenModal: a
+	// chart's View as table), not TablePreview's first 10 rows
+	Whole bool
 	// Kit marks a block made from a Block Kit layout block (section,
 	// context, header, divider, image, actions, table): it gets Slack's
 	// p-*_block margins and chrome. Canvases and attachments reuse the

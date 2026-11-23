@@ -159,17 +159,34 @@ func newValueScale(vs []float64, startValue bool) valueScale {
 	prec := getPrecision(interval) + 2
 	ext = [2]float64{roundTo(math.Floor(ext[0]/interval)*interval, prec), roundTo(math.Ceil(ext[1]/interval)*interval, prec)}
 	s.ext, s.interval = ext, interval
-	// Interval.getTicks over the niced extent
+	// Interval.getTicks over the niced extent: no ticks for a zero
+	// interval; the loop stops at a non-finite tick or one that rounding
+	// keeps where it was, and past its 3000-tick safe limit there are none
+	if interval == 0 || math.IsNaN(interval) || math.IsInf(interval, 0) {
+		return s
+	}
 	lo := roundTo(math.Ceil(ext[0]/interval)*interval, prec)
 	hi := roundTo(math.Floor(ext[1]/interval)*interval, prec)
 	if ext[0] < lo {
 		s.ticks = append(s.ticks, ext[0])
 	}
-	for t := lo; t <= hi && len(s.ticks) < 10000; t = roundTo(t+interval, prec) {
+	for t := lo; t <= hi && !math.IsInf(t, 0) && !math.IsNaN(t) && !math.IsInf(hi, 0); {
 		s.ticks = append(s.ticks, t)
+		next := roundTo(t+interval, prec)
+		if next == t {
+			break
+		}
+		if len(s.ticks) > tickSafeLimit {
+			s.ticks = nil
+			return s
+		}
+		t = next
 	}
 	if n := len(s.ticks); n > 0 && ext[1] > s.ticks[n-1] {
 		s.ticks = append(s.ticks, ext[1])
 	}
 	return s
 }
+
+// tickSafeLimit is Interval.getTicks' safeLimit.
+const tickSafeLimit = 3000

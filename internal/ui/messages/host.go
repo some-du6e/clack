@@ -612,7 +612,7 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 // DataTableAction is a data_table's header button or column header
 // (richview.DataTableHandler): its menus and the fullscreen view.
 func (r *richHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
-	if r.anchor != nil {
+	if r.anchor != nil && !c.Window {
 		min := r.anchor(btn.Min)
 		btn = image.Rectangle{Min: min, Max: min.Add(btn.Size())}
 	}
@@ -621,8 +621,8 @@ func (r *richHandler) DataTableAction(act string, c *richview.TableControl, btn 
 	}
 }
 
-func (r *richHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle) {
-	if r.anchor != nil {
+func (r *richHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
+	if r.anchor != nil && !window {
 		min := r.anchor(btn.Min)
 		btn = image.Rectangle{Min: min, Max: min.Add(btn.Size())}
 	}
