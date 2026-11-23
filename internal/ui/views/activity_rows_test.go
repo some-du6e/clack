@@ -34,7 +34,17 @@ import (
 // channel draft, your DM with Slackbot.
 func vaFakeActivity(t *testing.T, dark bool) (*Activity, *vaHost, *vaEnv, *fakeslack.Server) {
 	t.Helper()
+	return vaFakeActivityWith(t, dark, nil)
+}
+
+// vaFakeActivityWith is vaFakeActivity with before run on the fake before
+// the view reads the feed.
+func vaFakeActivityWith(t *testing.T, dark bool, before func(*fakeslack.Server)) (*Activity, *vaHost, *vaEnv, *fakeslack.Server) {
+	t.Helper()
 	app, fs := vaFake(t)
+	if before != nil {
+		before(fs)
+	}
 	app.SetExperimentGroup("slackbot_unread_v2", "on")
 	s := app.S
 	s.PutConv(slack.Conversation{ID: "D0FAKE00000", IsIM: true, User: "U0FAKE00001", IsMember: true})

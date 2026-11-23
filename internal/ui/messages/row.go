@@ -169,6 +169,9 @@ type row struct {
 
 	// geometry of the last layout (row-local), for overlays
 	reactRects []image.Rectangle
+	// reactOff is !canReact (canAddReaction), as the bar last laid out:
+	// the pills are disabled (.c-reaction:disabled, pointer-events none)
+	reactOff bool
 	// laidPill is the pill whose Reaction slot the last laid-out bar
 	// child drew (-1 none): a plugin's ReactionBar children map to their
 	// pills through it, for the tooltip (layoutReactionBar)
@@ -1074,10 +1077,22 @@ func (r *row) reactionBarProps() slackc.Props {
 		pl := r.pills[i]
 		kids = append(kids, slackc.Child("Reaction", pl.props(), pl.layout))
 	}
-	kids = append(kids, slackc.Child("ReactionAddButton", r.addButtonProps(), r.layoutAddButton))
+	can := r.canReact()
+	if can { // addReactionButton "right" with canReact
+		kids = append(kids, slackc.Child("ReactionAddButton", r.addButtonProps(), r.layoutAddButton))
+	}
 	return r.pane(slackc.Props{"$key": r.ts, "reactionKey": reactionKey(m), "reactions": slackReactions(m.Reactions),
 		"currentUser": r.rc.selfID, "channelId": m.Channel, "className": "c-message_kit__reaction_bar c-reaction_bar",
-		"canReact": true, "children": kids})
+		"canReact": can, "children": kids})
+}
+
+// canReact is ReactionBar's canReact: canAddReaction for the message
+// (core.CanAddReaction).
+func (r *row) canReact() bool {
+	if r.rc == nil || r.rc.h == nil || r.rc.h.Core() == nil {
+		return true
+	}
+	return r.rc.h.Core().CanAddReaction(&r.src)
 }
 
 func (r *row) addButtonProps() slackc.Props {
@@ -1108,7 +1123,7 @@ func (pl *reactPill) props() slackc.Props {
 	}
 	p := slackc.Props{"name": g.name, "count": g.count, "users": strList(groupUsers(r.m.Reactions, g)), "reactions": rs}
 	p["$key"] = r.ts + ":" + g.name
-	p["currentUser"], p["reactionKey"], p["canReact"] = r.rc.selfID, reactionKey(&r.m), true
+	p["currentUser"], p["reactionKey"], p["canReact"] = r.rc.selfID, reactionKey(&r.m), !r.reactOff
 	// the pill button renders inside Reaction's React tree, so context a
 	// Reaction patch provides (WhoReacted's reactors) reaches the button
 	// its native draws the pill's box (fill, ring) itself: a rule a
@@ -2765,6 +2780,7 @@ func (r *row) reactionBar(gtx layout.Context, pos, origin image.Point, w int) in
 // children a plugin passed (its own buttons beside Slack's).
 func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	r.reactAs = p.StrOr("currentUser", "")
+	r.reactOff = !r.canReact()
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
 	// the className a plugin passes on (OwlMode's taut-owl-reactions, which
@@ -2814,7 +2830,11 @@ func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 	if more != 0 {
 		extra = 1
 	}
-	return r.flowPills(gtx, shown+extra+1, func(gtx layout.Context, i int) layout.Dimensions {
+	add := 1 // the add button, with canReact (ReactionBar's y)
+	if r.reactOff {
+		add = 0
+	}
+	return r.flowPills(gtx, shown+extra+add, func(gtx layout.Context, i int) layout.Dimensions {
 		switch {
 		case i < shown:
 			pl := r.pills[i]
@@ -2987,7 +3007,7 @@ func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context,
 	return layout.Dimensions{Size: image.Pt(w, bottom)}
 }
 
-// layoutAddButton is ReactionAddButton (.c-reaction_add): always drawn
+// layoutAddButton is ReactionAddButton (.c-reaction_add): drawn (with canReact)
 // after the pills, like Slack (34×24, rgba(29,28,29,.06), not only on hover).
 func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	rc := r.rc
@@ -3127,7 +3147,7 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	r := pl.r
 	rc := r.rc
 	// a macOS Ctrl+click is the pill's context click, not a toggle
-	if ctxclick.Clicked(gtx, &pl.btn) && rc.onReactGroup != nil {
+	if !r.reactOff && ctxclick.Clicked(gtx, &pl.btn) && rc.onReactGroup != nil {
 		rc.onReactGroup(r, r.groups[pl.i].name) // handleReactionClick (reaction_groups.go)
 	}
 	pl.emojiAt, pl.countAt = pl.emojiAt[:0], image.Rectangle{}
@@ -3138,7 +3158,11 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	// the className the button was rendered with: a class a plugin adds
 	// to it (an UnstyledButton or Reaction patch) is the pill's, and its
 	// .<class> rules reach the pill as in Slack
-	st := reactionClass.EnterClass(gtx, btnState(gtx, &pl.btn), mods, slackc.ExtraClass(p))
+	var bs css.State
+	if !r.reactOff {
+		bs = btnState(gtx, &pl.btn)
+	}
+	st := reactionClass.EnterClass(gtx, bs, mods, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
@@ -3169,11 +3193,23 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallOp, size image.Point, cy int) layout.Dimensions {
 	c := pl.r.rc.c
 	self := pl.reacted()
-	return pl.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	off := pl.r.reactOff
+	btn := func(gtx layout.Context, w layout.Widget) layout.Dimensions {
+		if off {
+			// disabled={!canReact}: .c-reaction:disabled is
+			// pointer-events none, so no hover, cursor, tooltip or
+			// click; the pointer is the message's under it
+			return w(gtx)
+		}
+		return pl.btn.Layout(gtx, w)
+	}
+	return btn(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: size}
-		pointerCursor(gtx, rr)
+		if !off {
+			pointerCursor(gtx, rr)
+		}
 		rad := size.Y / 2
-		hov := pl.btn.Hovered()
+		hov := !off && pl.btn.Hovered()
 		// Slack's reacted and hover rings are box-shadows
 		// (.c-reaction--reacted, .c-reaction:hover); a rule's box-shadow
 		// replaces them (OwlMode rings every pill in its colour)
