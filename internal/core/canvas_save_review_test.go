@@ -22,6 +22,7 @@ import (
 // the caller hears it's pending, and it saves once a load succeeds.
 func TestCanvasSaveLoadFailureWaits(t *testing.T) {
 	fastSaves(t)
+	saveBackoffBase = time.Hour // the retry goes when the test runs it (retryNow)
 	a, fs := canvasApp(t)
 	ctx := context.Background()
 	loadModel(t, a, fakeslack.CanvasShared) // the fake gives its sections their ids
@@ -35,7 +36,10 @@ func TestCanvasSaveLoadFailureWaits(t *testing.T) {
 	if st := a.CanvasSaveState(fakeslack.CanvasShared); !st.Pending {
 		t.Errorf("the edit isn't pending: %+v", st)
 	}
-	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending })
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending {
+		t.Errorf("still pending after the retry: %+v", st)
+	}
 	fc, _ := fs.Canvas(fakeslack.CanvasShared)
 	if b := fc.Doc.Find(*head.ID); b == nil || b.Text() != "Weekly sync, after a failed load" {
 		t.Errorf("after the retry: %+v", b)
@@ -46,7 +50,7 @@ func TestCanvasSaveLoadFailureWaits(t *testing.T) {
 // first attempt failed) drops the edit with a notice for the view.
 func TestCanvasSaveRetryConflictNotice(t *testing.T) {
 	fastSaves(t)
-	saveBackoffBase = 300 * time.Millisecond // the other save lands before the retry
+	saveBackoffBase = time.Hour // the other save lands before the retry, which the test runs (retryNow)
 	a, fs := canvasApp(t)
 	ctx := context.Background()
 	loadModel(t, a, fakeslack.CanvasShared)
@@ -58,7 +62,10 @@ func TestCanvasSaveRetryConflictNotice(t *testing.T) {
 	if !fs.ReplaceCanvasBlockAsOther(fakeslack.CanvasShared, *head.ID, "# Weekly sync, B") {
 		t.Fatal("no heading to replace")
 	}
-	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending })
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending {
+		t.Errorf("the edit stayed after the conflict: %+v", st)
+	}
 	if ns := a.TakeCanvasSaveNotices(fakeslack.CanvasShared); len(ns) != 1 || !ns[0].Conflict {
 		t.Errorf("notices %+v, want the conflict", ns)
 	}
@@ -77,7 +84,9 @@ func TestCanvasSaveDeferredConflictNotice(t *testing.T) {
 	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
 	item := modelSection(t, a, fakeslack.CanvasShared, "Write the changelog")
 	before := fs.CallCount("canvas/edit-document")
-	fs.SetFault("canvas/edit-document", fakeslack.Fault{ReplyDelay: 700 * time.Millisecond, Times: 1})
+	// the first answer is held long enough for the edit and the other
+	// client's save to come before the deferred attempt
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{ReplyDelay: 2 * time.Second, Times: 1})
 	first := make(chan error, 1)
 	go func() {
 		first <- a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, one")
@@ -109,7 +118,7 @@ func TestCanvasSaveDeferredConflictNotice(t *testing.T) {
 // the box, in either order.
 func TestCanvasSaveTickAndText(t *testing.T) {
 	fastSaves(t)
-	saveBackoffBase = 300 * time.Millisecond // the second edit comes before the retry
+	saveBackoffBase = time.Hour // no retry: the second edit's attempt saves both
 	a, fs := canvasApp(t)
 	ctx := context.Background()
 	loadModel(t, a, fakeslack.CanvasShared)
@@ -175,6 +184,7 @@ func TestCanvasSaveTitleSectionModelGone(t *testing.T) {
 // fails, and the save goes after the backoff, caught up.
 func TestCanvasSaveCatchUpFailureStops(t *testing.T) {
 	fastSaves(t)
+	saveBackoffBase = time.Hour // the retry goes when the test runs it (retryNow)
 	a, fs := canvasApp(t)
 	ctx := context.Background()
 	loadModel(t, a, fakeslack.CanvasShared)
@@ -186,7 +196,10 @@ func TestCanvasSaveCatchUpFailureStops(t *testing.T) {
 	if n := len(saves(fs)); n != 0 {
 		t.Errorf("%d edit-document calls after a failed catch-up", n)
 	}
-	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending })
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending {
+		t.Errorf("still pending after the retry: %+v", st)
+	}
 	if n := len(saves(fs)); n != 1 {
 		t.Errorf("%d edit-document calls, want the retry's", n)
 	}
@@ -200,7 +213,7 @@ func TestCanvasSaveCatchUpFailureStops(t *testing.T) {
 // the edit, and with the queue empty the lock lifts.
 func TestCanvasSaveLockLiftsWhenEmpty(t *testing.T) {
 	fastSaves(t)
-	saveBackoffBase = 400 * time.Millisecond // the other save lands before the third attempt
+	saveBackoffBase = time.Hour // the other save lands before the third attempt, which the test runs (retryNow)
 	a, fs := canvasApp(t)
 	ctx := context.Background()
 	loadModel(t, a, fakeslack.CanvasShared)
@@ -209,11 +222,23 @@ func TestCanvasSaveLockLiftsWhenEmpty(t *testing.T) {
 	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, A"); err == nil {
 		t.Fatal("the first attempt went through")
 	}
-	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return s.ReadOnly })
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); !st.ReadOnly {
+		t.Fatalf("two failures, no lock: %+v", st)
+	}
 	if !fs.ReplaceCanvasBlockAsOther(fakeslack.CanvasShared, *head.ID, "# Weekly sync, B") {
 		t.Fatal("no heading to replace")
 	}
-	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending && !s.ReadOnly })
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending || st.ReadOnly {
+		t.Errorf("the lock stayed with nothing left to save: %+v", st)
+	}
+	if ns := a.TakeCanvasSaveNotices(fakeslack.CanvasShared); len(ns) != 1 || !ns[0].Conflict {
+		t.Errorf("notices %+v, want the conflict", ns)
+	}
+	if n := len(saves(fs)); n != 2 {
+		t.Errorf("%d edit-document calls, want the two failed ones", n)
+	}
 }
 
 // A save the server took whose answer was lost (a cut connection) isn't

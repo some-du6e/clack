@@ -68,6 +68,33 @@ func waitSaveState(t *testing.T, a *App, id string, d time.Duration, want func(C
 	}
 }
 
+// retryNow runs the saver's armed retry at once, as its timer would. A
+// test that holds the retries (saveBackoffBase an hour) runs each one once
+// it has checked the state between attempts, so no timer ends that state
+// before the test sees it.
+func retryNow(t *testing.T, a *App, id string) {
+	t.Helper()
+	s := a.saver(id)
+	s.mu.Lock()
+	tm := s.retry
+	s.retry = nil
+	s.mu.Unlock()
+	if tm == nil || !tm.Stop() {
+		t.Fatal("no retry armed")
+	}
+	ctx, cancel := context.WithTimeout(a.bg, 60*time.Second)
+	defer cancel()
+	_ = a.saveAttempt(ctx, id, s, false)
+}
+
+// retryArmed is whether the canvas's saver has a retry waiting.
+func retryArmed(a *App, id string) bool {
+	s := a.saver(id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retry != nil
+}
+
 func loadModel(t *testing.T, a *App, id string) {
 	t.Helper()
 	if err := a.LoadCanvasModel(context.Background(), id); err != nil {
@@ -155,7 +182,7 @@ func TestCanvasSaveCheckboxAndDelete(t *testing.T) {
 // state (the banner and the lock), and a success clears it.
 func TestCanvasSaveRetries(t *testing.T) {
 	fastSaves(t)
-	saveBackoffBase = 400 * time.Millisecond // long enough to see the error state between attempts
+	saveBackoffBase = time.Hour // each retry goes when the test runs it (retryNow)
 	a, fs := canvasApp(t)
 	ctx := context.Background()
 	loadModel(t, a, fakeslack.CanvasShared)
@@ -169,14 +196,17 @@ func TestCanvasSaveRetries(t *testing.T) {
 	if st := a.CanvasSaveState(fakeslack.CanvasShared); !st.Pending || st.ReadOnly {
 		t.Errorf("after one failure %+v", st)
 	}
-	st := waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return s.ReadOnly })
-	if st.Banner != "quipOffline" || st.Reason != "Server not reachable" {
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); !st.ReadOnly || st.Banner != "quipOffline" || st.Reason != "Server not reachable" {
 		t.Errorf("the error state %+v", st)
 	}
 	if err := a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditText, SectionID: *p.ID, RTML: "typed while locked"}); !errors.Is(err, ErrCanvasReadOnly) {
 		t.Errorf("an edit in the error state: %v", err)
 	}
-	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending && !s.ReadOnly })
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending || st.ReadOnly {
+		t.Errorf("after the third attempt %+v", st)
+	}
 	rs := saves(fs)
 	if len(rs) != 3 {
 		t.Fatalf("%d edit-document calls, want 3", len(rs))
@@ -193,30 +223,35 @@ func TestCanvasSaveRetries(t *testing.T) {
 
 func TestCanvasSaveTooLargeAndForbidden(t *testing.T) {
 	fastSaves(t)
-	saveBackoffBase = 400 * time.Millisecond
+	saveBackoffBase = time.Hour // each retry goes when the test runs it (retryNow)
 	a, fs := canvasApp(t)
 	ctx := context.Background()
 	loadModel(t, a, fakeslack.CanvasShared)
 	p := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
 	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusRequestEntityTooLarge, Times: 2})
 	_ = a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditText, SectionID: *p.ID, RTML: "big"})
-	st := waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return s.ReadOnly })
-	if st.Banner != "quipDocumentTooLarge" || st.Reason != "Document too large" {
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); !st.ReadOnly || st.Banner != "quipDocumentTooLarge" || st.Reason != "Document too large" {
 		t.Errorf("413 twice: %+v", st)
 	}
-	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending && !s.ReadOnly })
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending || st.ReadOnly {
+		t.Errorf("after the third attempt %+v", st)
+	}
 
 	// 403: the error at once, not counted, no lock, no retry
 	n := len(saves(fs))
 	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusForbidden})
 	_ = a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditText, SectionID: *p.ID, RTML: "forbidden"})
-	st = a.CanvasSaveState(fakeslack.CanvasShared)
+	st := a.CanvasSaveState(fakeslack.CanvasShared)
 	if st.Reason != "Thread closed" || st.Banner != "quipOffline" || st.ReadOnly || !st.Pending {
 		t.Errorf("403: %+v", st)
 	}
-	time.Sleep(200 * time.Millisecond)
+	if retryArmed(a, fakeslack.CanvasShared) {
+		t.Error("a 403 armed a retry")
+	}
 	if got := len(saves(fs)); got != n+1 {
-		t.Errorf("a 403 was retried: %d calls after %d", got, n)
+		t.Errorf("%d calls after %d, want the 403's", got, n)
 	}
 	fs.SetFault("canvas/edit-document", fakeslack.Fault{})
 }
