@@ -9,6 +9,8 @@ import (
 
 	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/logtag"
+	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -112,15 +114,24 @@ func (a *App) notifyShow(title, body string, n *desktopNote) bool {
 	if a.notify == nil {
 		a.notify = newNotifier()
 	}
+	sl := a.Slick()
 	if nn, ok := a.notify.(noteNotifier); ok {
 		if n == nil {
 			n = a.plainNote()
 		}
 		n.Title, n.Body = title, body
-		sendNote(func() { _ = nn.NotifyNote(n) }) // in order (notify_conv.go)
+		sendNote(func() { // in order (notify_conv.go)
+			if slickAllows(sl, n) {
+				_ = nn.NotifyNote(n)
+			}
+		})
 	} else {
 		nf := a.notify
-		sendNote(func() { _ = nf.Notify(title, body) })
+		sendNote(func() {
+			if slickAllows(sl, &desktopNote{Title: title, Body: body}) {
+				_ = nf.Notify(title, body)
+			}
+		})
 	}
 	a.bounceDock()        // mac_ssb_bounce
 	a.notificationShown() // Windows: the frame flash (windowFlashBehavior)
@@ -147,10 +158,15 @@ func (a *App) notifyActions(n huddleui.Notification) {
 	if a.notify == nil {
 		a.notify = newNotifier()
 	}
+	sl := a.Slick()
 	if nn, ok := a.notify.(noteNotifier); ok && n.Channel != "" {
 		dn := a.huddleNote(n)
 		dn.Body = body
-		go func() { _ = nn.NotifyNote(dn) }()
+		go func() {
+			if slickAllows(sl, dn) {
+				_ = nn.NotifyNote(dn)
+			}
+		}()
 		a.notificationShown()
 		return
 	}
@@ -161,6 +177,9 @@ func (a *App) notifyActions(n huddleui.Notification) {
 	acts := n.Actions
 	a.notificationShown()
 	go func() {
+		if !slickAllows(sl, &desktopNote{Title: n.Title, Body: body}) {
+			return
+		}
 		_ = a.notify.NotifyActions(n.Title, body, keys, func(key string) {
 			for _, ac := range acts {
 				if ac.Key == key && ac.Do != nil {
@@ -169,6 +188,19 @@ func (a *App) notifyActions(n huddleui.Notification) {
 			}
 		})
 	}()
+}
+
+// slickAllows is Slick's notification filters over toast n, just before
+// it goes to the system (slick.AllowNotification): Slick patches
+// Electron's Notification.prototype.show, so its filters see what is
+// about to show, and keep only the toast from showing (the sound and the
+// dock bounce Slack's renderer started stay). Off the UI goroutine.
+func slickAllows(sl *slick.Slick, n *desktopNote) bool {
+	if sl == nil || sl.AllowNotification(context.Background(), slick.NotificationOptions{Title: n.Title, Subtitle: n.Subtitle, Body: n.Body, Silent: n.Silent}) {
+		return true
+	}
+	log.Printf("notify: a Slick filter kept %s/%s from showing", logtag.ID(n.Channel), logtag.ID(n.Msg))
+	return false
 }
 
 // ---- the payloads (UI goroutine) ----

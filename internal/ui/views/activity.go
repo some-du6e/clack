@@ -437,7 +437,9 @@ type Activity struct {
 	offline  bool
 	// forked is the open IgnoreForkedModal's two choices (tests press
 	// them; the modal's rows call them).
-	forked [2]func()
+	forked     [2]func()
+	flights    scFlights // the invites whose Accept flow runs (sc_invite_actions.go)
+	flightWake wake      // their loading spinners' frames
 
 	// undo is the "cleared" snackbar after Clear, with its Undo link.
 	undo struct {
@@ -2343,7 +2345,18 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		v.markComplete(it)
 	}
 	for i, a := range v.inviteActions(it) {
-		if i < len(r.invC) && r.invC[i].Clicked(gtx) {
+		if i >= len(r.invC) {
+			continue
+		}
+		c := &r.invC[i]
+		if a != core.InviteActIgnore && it.Invite != nil && v.flights.busy(it.Invite.ID) {
+			for c.Clicked(gtx) { // Accept loading while its flow runs: not pressable
+			}
+			continue
+		}
+		if c.Clicked(gtx) {
+			for c.Clicked(gtx) { // one flow per frame (sc_invite_actions.go)
+			}
 			v.inviteClicked(it, a)
 		}
 	}
@@ -4224,7 +4237,11 @@ func (b *base) actPillBoxStyled(gtx C, r *core.Reaction, size image.Point, st sl
 
 // actSpinner is Slack's loading ring (a 3/4 arc turning once a second) in
 // a d-pixel box; it keeps frames coming while drawn.
-func actSpinner(gtx C, d int, c color.NRGBA) D {
+func actSpinner(gtx C, d int, c color.NRGBA) D { return actSpinnerVia(gtx, d, c, nil) }
+
+// actSpinnerVia is actSpinner with its next frame asked through wake
+// (no op.InvalidateCmd mid-layout) when set.
+func actSpinnerVia(gtx C, d int, c color.NRGBA, wake func(now, at time.Time)) D {
 	t := float64(gtx.Now.UnixMilli()%1000) / 1000
 	r := float32(d)/2 - float32(gtx.Dp(2))/2
 	ctr := f32.Pt(float32(d)/2, float32(d)/2)
@@ -4237,6 +4254,10 @@ func actSpinner(gtx C, d int, c color.NRGBA) D {
 	paint.ColorOp{Color: c}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 	st.Pop()
+	if wake != nil {
+		wake(gtx.Now, gtx.Now.Add(33*time.Millisecond))
+		return D{Size: image.Pt(d, d)}
+	}
 	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
 	return D{Size: image.Pt(d, d)}
 }

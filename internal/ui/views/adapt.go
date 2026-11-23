@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"gioui.org/op"
-	"gioui.org/op/clip"
 	"gioui.org/text"
 	"gioui.org/unit"
 
@@ -353,6 +352,8 @@ type richEntry struct {
 	v   *richview.View
 	ver string
 	at  time.Time // the frame it was laid out in last (gtx.Now)
+	// ctx sees the context presses on the body (content_menu.go)
+	ctx bodyTag
 }
 
 // richCache keeps one richview.View per message for a view.
@@ -421,8 +422,12 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 		e.v.SetOptions(o)
 	}
 	e.at = gtx.Now
+	b.notePress(gtx, e)
 	if maxLines <= 0 {
-		return e.v.Layout(gtx, b.style(), hostHandler{b.h})
+		rec := op.Record(gtx.Ops)
+		d := e.v.Layout(gtx, b.style(), hostHandler{b.h})
+		bodyParent(gtx, &e.ctx, d.Size, rec.Stop())
+		return d
 	}
 	lh := 22
 	if o.Compact {
@@ -439,9 +444,7 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 			d.Baseline = max(0, d.Size.Y-top)
 		}
 	}
-	st := clip.Rect{Max: d.Size}.Push(gtx.Ops)
-	call.Add(gtx.Ops)
-	st.Pop()
+	bodyParent(gtx, &e.ctx, d.Size, call) // clipped to the lines shown
 	return d
 }
 

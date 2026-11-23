@@ -1309,8 +1309,12 @@ func (m *InviteModal) emailField(gtx layout.Context, th *theme.Theme, cl *Colors
 			macroAt(gtx, call, p)
 			at(gtx, p, func(gtx layout.Context) layout.Dimensions {
 				hov := c.hv.Update(gtx.Source)
+				// the tooltip's hover passes the pointer on to the chip
+				// under it: its remove button stays clickable
 				area := clip.Rect{Max: d.Size}.Push(gtx.Ops)
+				pass := pointer.PassOp{}.Push(gtx.Ops)
 				c.hv.Add(gtx.Ops)
+				pass.Pop()
 				area.Pop()
 				if tip != "" {
 					Tooltip(gtx, th, &c.tip, hov, d.Size, Above, tip, "")

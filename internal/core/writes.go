@@ -578,8 +578,10 @@ func (a *App) MarkThread(ctx context.Context, ch, threadTS, ts string) error {
 	err := a.C.Call(ctx, "subscriptions.thread.mark", url.Values{"channel": {ch}, "thread_ts": {threadTS}, "ts": {ts}, "read": {"1"}}, nil)
 	if err == nil {
 		// setThreadLastRead: the subscription's last_read now, as the
-		// thread_marked event would set it
+		// thread_marked event would set it, and markThread's
+		// updateActivitiesUnreadState for the reply bars' items
 		a.setThreadLastRead(ch, threadTS, ts)
+		a.threadActivityRead(ch, threadTS, ts)
 		a.refreshCountsSoon()
 	}
 	return err

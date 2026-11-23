@@ -38,7 +38,14 @@ const (
 
 // SenderBadge is the badge Slack draws after the sender of a message from
 // user (or, user-less, from bot botID): "" for people and Slackbot.
-func (a *App) SenderBadge(user, botID string) string {
+func (a *App) SenderBadge(user, botID string) string { return a.SenderBadgeBP(user, botID, nil) }
+
+// SenderBadgeBP is SenderBadge with the message's bot_profile: a
+// user-less sender's bot is the store's (bots.info), else the bot_profile
+// (Emf2's bot: c = botProfile while getBotById hasn't it), whose
+// is_workflow_bot makes a Workflow Builder post WORKFLOW before (or
+// without) bots.info answering.
+func (a *App) SenderBadgeBP(user, botID string, bp *BotProfile) string {
 	if user != "" {
 		u, ok := a.User(user)
 		if !ok {
@@ -58,14 +65,21 @@ func (a *App) SenderBadge(user, botID string) string {
 		}
 		return BadgeApp
 	}
+	if botID == "" && bp != nil {
+		botID = bp.ID
+	}
 	if botID == "" {
 		return BadgeApp
 	}
-	b, _ := a.S.Bot(botID)
+	b, held := a.S.Bot(botID)
+	workflow := b.Workflow
+	if !held && bp != nil && bp.ID == botID {
+		workflow = bp.Workflow
+	}
 	switch {
 	case a.botIsAgent(botID):
 		return BadgeAgent
-	case b.Workflow:
+	case workflow:
 		return BadgeWorkflow
 	}
 	return BadgeApp
