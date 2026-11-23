@@ -135,10 +135,6 @@ type pendingPaste struct {
 // by itself.
 func (e *Editor) startPaste(gtx layout.Context, plain bool) bool {
 	e.richRead, e.filesRead, e.clipSnap, e.clipSnapText = nil, nil, nil, false
-	if e.clipWrote && e.clipDoc != nil && gtx.Now.Equal(e.clipWroteNow) {
-		e.receivePaste(gtx, e.clipText)
-		return false
-	}
 	if s := startPasteSnap(plain); s != nil {
 		e.clipSnap, e.clipSnapText = s, true
 		if s.rich != nil {
