@@ -1,6 +1,6 @@
 {
   "dimension": "quip-apply-runs",
-  "slack": {"kind": "slack-js", "build": "web client 5718bdb1b28b", "captured": "2026-11-23", "source": "CITi.F0 (renderToString: the save writer DI over the RTML's DOM)", "refresh": "quip-apply-runs", "notes": "Each case's rtml is what Clack's ApplyRuns writes for the base and the editor's runs; Slack's value is its save writer's RTML for the DOM that RTML builds, so a case holds when Slack's editor, loading Clack's RTML and saving it unchanged, sends the same bytes. (refused) cases are edits Clack refuses."},
+  "slack": {"kind": "slack-js", "build": "web client 5718bdb1b28b", "captured": "2026-11-23", "source": "CITi.F0 (renderToString: the save writer DI over the RTML's DOM)", "refresh": "quip-apply-runs", "notes": "Each case's rtml is what Clack's ApplyRuns writes for the base and the editor's runs; Slack's value is its save writer's RTML for the DOM that RTML builds, so a case holds when Slack's editor, loading Clack's RTML and saving it unchanged, sends the same bytes. (refused) cases are edits Clack refuses. Canvases are pre-wrap (the canvas editor's improvedWordWrapping), so typed spaces stay as typed; a kept character is written as DI writes the DOM's character (an &nbsp; entity as the no-break space itself)."},
   "cases": [
     {"name": "plain", "in": {"base": "Hello world", "runs": [{"text": "Hello there"}], "rtml": "Hello there"}, "slack": "Hello there"},
     {"name": "bold added", "in": {"base": "Hello world", "runs": [{"text": "Hello "}, {"text": "world", "bold": true}], "rtml": "Hello <b>world</b>"}, "slack": "Hello <b>world</b>"},
@@ -15,8 +15,8 @@
     {"name": "comment anchor carried", "in": {"base": "a <annotation id=\"c1\">commented</annotation> b", "runs": [{"text": "a very commented b"}], "rtml": "a very <annotation id=\"c1\">commented</annotation> b"}, "slack": "a very <annotation id=\"c1\">commented</annotation> b"},
     {"name": "typing inside a comment anchor", "in": {"base": "<annotation id=\"c1\">good text</annotation>", "runs": [{"text": "good new text"}], "rtml": "<annotation id=\"c1\">good new text</annotation>"}, "slack": "<annotation id=\"c1\">good new text</annotation>"},
     {"name": "comment anchor's text deleted", "in": {"base": "x <annotation id=\"c1\">gone</annotation> y", "runs": [{"text": "x y"}], "rtml": "x y"}, "slack": "x y"},
-    {"name": "typed double space", "in": {"base": "a b", "runs": [{"text": "a  b"}], "rtml": "(refused)"}, "slack": "(refused)"},
-    {"name": "typed trailing space", "in": {"base": "a", "runs": [{"text": "a "}], "rtml": "(refused)"}, "slack": "(refused)"},
+    {"name": "a double space typed (canvases are pre-wrap)", "in": {"base": "a b", "runs": [{"text": "a  b"}], "rtml": "a  b"}, "slack": "a  b"},
+    {"name": "a trailing space typed", "in": {"base": "a", "runs": [{"text": "a "}], "rtml": "a "}, "slack": "a "},
     {"name": "no-break space kept", "in": {"base": "a  b", "runs": [{"text": "a  b c"}], "rtml": "a  b c"}, "slack": "a  b c"},
     {"name": "a control the section lacks", "in": {"base": "x", "runs": [{"text": "x "}, {"control": "temp:C:NOPE"}], "rtml": "(refused)"}, "slack": "(refused)"},
     {"name": "line break", "in": {"base": "line one", "runs": [{"text": "line one"}, {"break": true}, {"text": "line two"}], "rtml": "line one<br>line two"}, "slack": "line one<br>line two"},
@@ -24,7 +24,11 @@
     {"name": "bold and italic overlapping", "in": {"base": "abcdef", "runs": [{"text": "ab", "bold": true}, {"text": "cd", "bold": true, "italic": true}, {"text": "ef", "italic": true}], "rtml": "<b>ab<i>cd</i></b><i>ef</i>"}, "slack": "<b>ab<i>cd</i></b><i>ef</i>"},
     {"name": "underline, strike, code", "in": {"base": "one two three", "runs": [{"text": "one", "underline": true}, {"text": " "}, {"text": "two", "strike": true}, {"text": " "}, {"text": "three", "code": true}], "rtml": "<u>one</u> <del>two</del> <code>three</code>"}, "slack": "<u>one</u> <del>two</del> <code>three</code>"},
     {"name": "formatting taken off", "in": {"base": "<b>bold</b> text", "runs": [{"text": "bold text"}], "rtml": "bold text"}, "slack": "bold text"},
-    {"name": "a space Enter left at the end", "in": {"base": "First paragraph", "runs": [{"text": "First "}], "rtml": "(refused)"}, "slack": "(refused)"},
-    {"name": "Enter at the end", "in": {"base": "First paragraph", "runs": [{"text": "First paragraph"}], "rtml": "First paragraph"}, "slack": "First paragraph"}
+    {"name": "a space Enter leaves at the end", "in": {"base": "First paragraph", "runs": [{"text": "First "}], "rtml": "First "}, "slack": "First "},
+    {"name": "Enter at the end", "in": {"base": "First paragraph", "runs": [{"text": "First paragraph"}], "rtml": "First paragraph"}, "slack": "First paragraph"},
+    {"name": "an entity no-break space written raw", "in": {"base": "a&nbsp;b", "runs": [{"text": "a b!"}], "rtml": "a b!"}, "slack": "a b!"},
+    {"name": "a quote entity written as its character", "in": {"base": "say &quot;hi&quot;", "runs": [{"text": "say \"hi\" now"}], "rtml": "say \"hi\" now"}, "slack": "say \"hi\" now"},
+    {"name": "a zero-width space dropped", "in": {"base": "a​b", "runs": [{"text": "a​bc"}], "rtml": "abc"}, "slack": "abc"},
+    {"name": "leading spaces typed", "in": {"base": "x", "runs": [{"text": "  x"}], "rtml": "  x"}, "slack": "  x"}
   ]
 }

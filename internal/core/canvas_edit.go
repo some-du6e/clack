@@ -935,6 +935,50 @@ func textStyle(k canvas.Kind) (int32, bool) {
 	return 0, false
 }
 
+// SaveCanvasCode saves a code block's new text: its lines written onto the
+// section's RTML as Slack's save writer writes the code block's DOM (each
+// character through escapeText, a kept one as the DOM holds it, a line
+// break between lines: quip.ApplyRuns), its language as it was. orig is
+// the code the edit began from, which the section has to hold still (else
+// ErrCanvasConflict).
+func (a *App) SaveCanvasCode(ctx context.Context, id, sectionID, orig, code string) error {
+	return a.queueSave(ctx, id, func(c *saveCtx) ([]quip.Edit, error) {
+		b, ok := c.base(sectionID)
+		switch {
+		case !ok:
+			return nil, fmt.Errorf("%w: section %s isn't in the canvas", ErrCanvasConflict, sectionID)
+		case b.typ != quip.TypeText || b.sty != quip.StyleCode:
+			return nil, fmt.Errorf("%w: section %s isn't a code block", quip.ErrUnsupported, sectionID)
+		}
+		plain, ok := quip.RTMLPlain(b.rtml)
+		switch {
+		case !ok:
+			return nil, fmt.Errorf("%w: RTML Slack can't parse", quip.ErrUnsupported)
+		case strings.ContainsRune(plain, quip.ControlMark):
+			return nil, fmt.Errorf("%w: a code block holding a mention", quip.ErrUnsupported)
+		case plainCompare(plain) != plainCompare(orig):
+			return nil, fmt.Errorf("%w: section %s", ErrCanvasConflict, sectionID)
+		}
+		var runs []quip.Run
+		for i, line := range strings.Split(code, "\n") {
+			if i > 0 {
+				runs = append(runs, quip.Run{Break: true})
+			}
+			if line != "" {
+				runs = append(runs, quip.Run{Text: line})
+			}
+		}
+		rtml, err := quip.ApplyRuns(b.rtml, runs)
+		if err != nil {
+			return nil, err
+		}
+		if rtml == b.rtml {
+			return nil, nil // as it was
+		}
+		return []quip.Edit{{Kind: quip.EditText, SectionID: sectionID, RTML: rtml, Base: b.seq}}, nil
+	})
+}
+
 // CanvasNewBlock is a block an edit made (Enter in a block, or typing
 // under the last one): its new section's id (NewCanvasSectionID, so a
 // later edit of the block reaches it), kind, level, box and spans.

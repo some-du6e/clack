@@ -64,8 +64,9 @@ func fieldsFor(e Edit) string {
 	return b.String()
 }
 
-// maxIndent is the deepest list level a save sets.
-const maxIndent = 8
+// maxIndent is the deepest list level a save sets: the canvas editor's
+// maxListIndentationLevel (changeIndentationLevel caps at it).
+const maxIndent = 4
 
 // savedTags are the tags Slack's save writer (CITi's DI) writes in a
 // canvas: sub, sup and f are the canvas's disallowedFormattingTags.

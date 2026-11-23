@@ -314,15 +314,11 @@ func activityRow(u, server *Section) (int32, bool) {
 }
 
 // TextRTML is the RTML Slack's save writer (CITi's DI over the editor's
-// DOM) makes of plain typed text: zero-width spaces and no-break spaces
-// out, then escapeText. Text whose spaces the browser would hold as
-// non-breaking ones (at either end, or two or more in a row) depends on
-// the browser's editing, so it's refused rather than guessed.
+// DOM) makes of plain typed text: zero-width spaces and byte order marks
+// out, then escapeText. Canvases are pre-wrap (improvedWordWrapping), so
+// typed spaces are in the DOM as typed.
 func TextRTML(text string) (string, error) {
 	t := strings.NewReplacer("\u200b", "", "\ufeff", "").Replace(text)
-	if strings.HasPrefix(t, " ") || strings.HasSuffix(t, " ") || strings.Contains(t, "  ") {
-		return "", unsupported("spaces at an end or two in a row (the browser keeps them as no-break spaces)")
-	}
 	if !utf8.ValidString(t) {
 		return "", unsupported("invalid UTF-8")
 	}

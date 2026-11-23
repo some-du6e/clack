@@ -168,23 +168,19 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 			}
 		}
 	}
-	match := matchUnits(bu, nu)   // base unit -> new unit, -1 when gone
-	from0 := make([]int, len(nu)) // new unit -> base unit, -1 when new
-	for i := range from0 {
-		from0[i] = -1
-	}
+	match := matchUnits(bu, nu) // base unit -> new unit, -1 when gone
 	for bi, ni := range match {
 		if ni >= 0 {
-			from0[ni] = bi
-			nu[ni].s = bu[bi].s // the base's own form: its entities, its no-break spaces
+			nu[ni].s = diForm(bu[bi]) // as Slack's save writer writes the character the DOM holds
 		}
 	}
-	if err := checkSpaces(nu, from0, len(bu)); err != nil {
-		return "", err
-	}
-	// the new text, and where each unit sits in it
+	// the new text, and where each unit sits in it (DI's text() drops
+	// zero-width spaces and byte order marks)
 	var b strings.Builder
 	for i := range nu {
+		if !nu[i].br && nu[i].ctl == "" && (nu[i].s == "\u200b" || nu[i].s == "\ufeff") {
+			nu[i].s = ""
+		}
 		nu[i].start = b.Len()
 		b.WriteString(nu[i].s)
 		nu[i].end = b.Len()
@@ -203,7 +199,9 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 			for j < len(nu) && on(runs[from[j]]) {
 				j++
 			}
-			marks = append(marks, Mark{Name: name, Flag: true, Start: nu[i].start, End: nu[j-1].end})
+			if nu[i].start < nu[j-1].end { // never an empty mark (a stretch of dropped characters)
+				marks = append(marks, Mark{Name: name, Flag: true, Start: nu[i].start, End: nu[j-1].end})
+			}
 			i = j
 		}
 	}
@@ -253,7 +251,9 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 		if !IsSafeURI(h, false) {
 			return "", unsupported("a link Slack wouldn't keep")
 		}
-		marks = append(marks, Mark{Name: "a", Value: val, Start: nu[i].start, End: nu[j-1].end})
+		if nu[i].start < nu[j-1].end {
+			marks = append(marks, Mark{Name: "a", Value: val, Start: nu[i].start, End: nu[j-1].end})
+		}
 		i = j
 	}
 	// comment anchors: over the first to the last of their characters
@@ -273,7 +273,7 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 				}
 			}
 		}
-		if lo < 0 {
+		if lo < 0 || nu[lo].start == nu[hi].end {
 			continue // all its characters gone: the anchor goes with them
 		}
 		marks = append(marks, Mark{Name: "annotation", Value: m.Value, Start: nu[lo].start, End: nu[hi].end})
@@ -285,47 +285,17 @@ func ApplyRuns(base string, runs []Run) (string, error) {
 	return out, nil
 }
 
-// checkSpaces refuses spaces where the browser would hold them as
-// no-break spaces: a space run of two or more, or one at the text's start,
-// its end or a line break, that the edit made, typed next to or moved
-// (Enter after a space leaves it at a block's end). A single space the
-// edit touched between two other characters is a plain space, as
-// Chromium's whitespace rebalancing leaves it; runs the edit didn't touch
-// keep the base's forms. from is each new unit's base unit (-1: new), nb
-// the base's length.
-func checkSpaces(nu []unit, from []int, nb int) error {
-	space := func(i int) bool { return i >= 0 && i < len(nu) && nu[i].key() == " " }
-	for i := 0; i < len(nu); {
-		if !space(i) {
-			i++
-			continue
-		}
-		j := i
-		for space(j) {
-			j++
-		}
-		// untouched: the same base units, in a row, with the same
-		// neighbours (or the same end of the text)
-		touched := false
-		for k := i; k < j && !touched; k++ {
-			touched = from[k] < 0 || k > i && from[k] != from[k-1]+1
-		}
-		if !touched {
-			first, last := from[i], from[j-1]
-			left := i == 0 && first == 0 || i > 0 && from[i-1] >= 0 && from[i-1] == first-1
-			right := j == len(nu) && last == nb-1 || j < len(nu) && from[j] >= 0 && from[j] == last+1
-			touched = !left || !right
-		}
-		edge := i == 0 || j == len(nu) || nu[i-1].br || nu[j].br
-		if touched && (j-i > 1 || edge) {
-			return unsupported("spaces the browser would hold as no-break spaces")
-		}
-		if touched {
-			nu[i].s = " "
-		}
-		i = j
+// diForm is a kept unit as Slack's save writer (CITi's DI) writes the
+// character the editor's DOM holds for it: a control and a line break as
+// they are, a character through escapeText (&, < and > as entities, a
+// no-break space as itself, any other entity as its character). Canvases
+// are pre-wrap (the canvas editor's improvedWordWrapping), so the browser
+// keeps typed spaces as they are and DI writes them so.
+func diForm(u unit) string {
+	if u.br || u.ctl != "" {
+		return u.s
 	}
-	return nil
+	return EscapeText(html.UnescapeString(u.s), false)
 }
 
 // matchUnits pairs base units with the new units that are the same

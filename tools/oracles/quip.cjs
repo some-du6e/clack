@@ -432,6 +432,29 @@ KINDS['quip-apply-runs'] = c => {
   if (c.in.rtml === '(refused)') return '(refused)';
   return req('CITi').F0(c.in.rtml, null, {});
 };
+// A code block's RTML of typed text, and its text again: 32AJ's
+// plainTextToCodeRtml and rtmlToPlainText (with its W77Y handler), module
+// private, so taken from the webapp chunk as written and run over 32AJ's
+// own modules (/XUt, W77Y).
+const codeFns = (() => {
+  let f;
+  return () => {
+    if (f) return f;
+    const src = fs.readFileSync(CHUNKS[0], 'utf8');
+    const i = src.indexOf('"32AJ":(function(e,t,n){');
+    const a = src.indexOf('class u extends r.mM{', i);
+    const b = src.indexOf('function canEdit(e)', a);
+    if (i < 0 || a < 0 || b < 0) throw new Error('32AJ: the code functions moved');
+    const body = src.slice(a, b) + '; return {plainTextToCodeRtml, rtmlToPlainText};';
+    f = new Function('r', 's', body)(req('W77Y'), req('/XUt'));
+    return f;
+  };
+})();
+KINDS['quip-code'] = c => {
+  const { plainTextToCodeRtml, rtmlToPlainText } = codeFns();
+  const rtml = plainTextToCodeRtml(c.in.text);
+  return { rtml, text: rtmlToPlainText(rtml) }; // a code section's getContent() is its RTML
+};
 module.exports = { req, classes, classOf, build, hexOf, pbu, KINDS };
 if (require.main === module) {
   const [kind, file] = process.argv.slice(2);

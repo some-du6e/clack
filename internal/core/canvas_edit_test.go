@@ -729,7 +729,7 @@ func TestCanvasSaveDeleteMerges(t *testing.T) {
 func TestCanvasSaveListDeletes(t *testing.T) {
 	a, fs := canvasApp(t)
 	ctx := context.Background()
-	const id = "F0LISTDEL01"
+	const id = "F0QUIPDEL01" // not F0LIST…: the fake keeps those for Slack lists
 	txt := func(s string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: s}} }
 	fs.AddCanvas(fakeslack.FakeCanvas{ID: id, Title: "List deletes", Doc: canvas.Doc{Blocks: []canvas.Block{
 		{ID: "temp:C:LDL00001", Kind: canvas.Paragraph, Spans: txt("before")},
@@ -768,5 +768,34 @@ func TestCanvasSaveListDeletes(t *testing.T) {
 		if b.Kind.IsList() {
 			t.Errorf("a list is left: %+v", fc.Doc.Blocks)
 		}
+	}
+}
+
+// A code block's text saves as Slack's save writer writes the code DOM:
+// the lines with line breaks between them, a tab as a space, two spaces as
+// two (canvases are pre-wrap), the language kept; from other text it's a
+// conflict.
+func TestCanvasSaveCode(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	fs.EditCanvasAsOther(fakeslack.CanvasShared, "```\nmake test\n```")
+	if err := a.fetchCanvasModel(ctx, fakeslack.CanvasShared, a.quipCanvas(fakeslack.CanvasShared)); err != nil {
+		t.Fatal(err)
+	}
+	code := modelSection(t, a, fakeslack.CanvasShared, "make test")
+	if err := a.SaveCanvasCode(ctx, fakeslack.CanvasShared, *code.ID, "make test", "make lint\n\tindented  twice"); err != nil {
+		t.Fatalf("a code block's text: %v", err)
+	}
+	after := modelSection(t, a, fakeslack.CanvasShared, "make lint")
+	if got := quip.SectionRTML(&after); got != "make lint<br> indented  twice" {
+		t.Errorf("the code block's RTML %q", got)
+	}
+	fc, _ := fs.Canvas(fakeslack.CanvasShared)
+	if b := fc.Doc.Find(*code.ID); b == nil || b.Kind != canvas.Code || b.Code != "make lint\n indented  twice" {
+		t.Errorf("the export's code block %+v", b)
+	}
+	if err := a.SaveCanvasCode(ctx, fakeslack.CanvasShared, *code.ID, "make test", "x"); !errors.Is(err, ErrCanvasConflict) {
+		t.Errorf("a code edit from old text: %v", err)
 	}
 }

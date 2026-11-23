@@ -72,6 +72,7 @@ type session struct {
 	kind0    canvas.Kind
 	level0   int
 	checked0 bool
+	code0    string // a code block's text when it began
 	ed       *composer.Editor
 	focus    bool
 	ver      uint64
@@ -179,6 +180,9 @@ func quipRefuses(v *View, s *session, md string, bs []canvas.Block) bool {
 	case len(bs) == 0:
 		return true
 	}
+	if s.target != nil && s.kind0 == canvas.Code { // a code block's text, nothing more
+		return len(bs) != 1 || bs[0].Kind != canvas.Code
+	}
 	news := bs
 	var kind canvas.Kind
 	var level int
@@ -263,6 +267,9 @@ func quipTextKind(k canvas.Kind) bool {
 func (v *View) editable(b canvas.Block) (bool, string) {
 	if !quipOn(v) {
 		return canvas.Editable(b)
+	}
+	if b.Kind == canvas.Code { // its text, line by line (core.SaveCanvasCode)
+		return true, ""
 	}
 	if !quipTextKind(b.Kind) {
 		return false, "this kind of block"
@@ -643,7 +650,7 @@ func (e *editState) start(v *View, b *blk) {
 		return
 	}
 	s := &session{target: b, id: b.b.ID, kind: b.b.Kind, level: b.b.Level, checked: b.b.Checked, orig: canvas.Markdown(*b.b),
-		spans: append([]richtext.Span(nil), b.b.Spans...), kind0: b.b.Kind, level0: b.b.Level, checked0: b.b.Checked,
+		spans: append([]richtext.Span(nil), b.b.Spans...), kind0: b.b.Kind, level0: b.b.Level, checked0: b.b.Checked, code0: b.b.Code,
 		ed: composer.NewEditor(), focus: true}
 	if b.parent != nil && b.parent.b.Kind == canvas.Quote && b.b.Kind == canvas.Paragraph {
 		// a quote's paragraph is a Quip section of its own (style 16):
@@ -776,6 +783,9 @@ func (e *editState) finish(v *View) bool {
 		case s.target == nil: // new blocks after the one the session followed
 			after, blocks := s.afterID, newBlocks(bs, quipNew)
 			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasNewBlocks(ctx, v.id, after, blocks) })
+		case s.kind0 == canvas.Code: // a code block's text
+			from, code := s.code0, bs[0].Code
+			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasCode(ctx, v.id, id, from, code) })
 		case len(bs) > 1: // Enter: the block's own text and new blocks after it
 			first, rest := bs[0].Spans, newBlocks(bs[1:], quipNew)
 			e.saveQuip(v, func(ctx context.Context, a *core.App) error {
