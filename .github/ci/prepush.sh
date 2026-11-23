@@ -20,9 +20,12 @@ if [ -z "$base" ]; then
 	exit 2
 fi
 # workflows: ci's linux-build checks every workflow's Go timeouts against
-# its job's budget (budget-check.py) and its expect_fail wiring (the
-# expectfail tests); both are quick, so they run here first (flakes-1122d
-# pushed fl1122d-r-jump with a 14 min timeout its budget couldn't hold)
+# its job's budget (budget-check.py), and its expectfail tests the wiring
+# of the workflows that take expect_fail; both are quick, so they run here
+# first (flakes-1122d pushed fl1122d-r-jump with a 14 min timeout its
+# budget couldn't hold). The wiring check is ci's rule (--ci), not
+# --check's: --check fails every workflow without the input (66 of 80),
+# which ci never looks at
 wfrc=0
 mapfile -t wfs < <({
 	git diff --name-only --diff-filter=ACMR "$base" HEAD
@@ -33,10 +36,12 @@ if [ ${#wfs[@]} -gt 0 ]; then
 		python3 -I .github/scripts/budget-check.py .github/workflows/*.yml 2>&1 | grep -v '^budget-check:' | sed 's/^/prepush: /'
 		wfrc=1
 	}
+	# the wiring as ci's TestWorkflowsWireExpectFail checks it (--ci):
+	# only workflows that take expect_fail, or must (its proofWorkflows)
 	for w in "${wfs[@]}"; do
 		[ -f "$w" ] || continue
-		python3 -I .github/scripts/expect_fail_wire.py --check "$w" >/dev/null 2>&1 || {
-			python3 -I .github/scripts/expect_fail_wire.py --check "$w" 2>&1 | sed 's/^/prepush: /'
+		python3 -I .github/scripts/expect_fail_wire.py --ci "$w" >/dev/null 2>&1 || {
+			python3 -I .github/scripts/expect_fail_wire.py --ci "$w" 2>&1 | sed 's/^/prepush: /'
 			wfrc=1
 		}
 	done
