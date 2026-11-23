@@ -2903,6 +2903,39 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # composer-link-edit (2026-11-22): the composer's link editing, Slack's
+  # (LinkContextMenu, SlugContextMenu, ComposerEditLinkPopover,
+  # ComposerLinkModal), through the real composer over fakeslack, and the
+  # URL helpers against Slack's own answers. Dispatch with
+  # only=composer-link-edit -f count=3.
+  composer-link-edit:
+    if: ${{ !inputs.only || startsWith('composer-link-edit', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "link editing, COUNT runs"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkShortcutOnSelection|TestLinkPasteOverSelection|TestLinkSlugRenameSends|TestLinkRenameDraftRoundTrip|TestLinkRenameInMessageEdit|TestLinkURLSlackOracle|TestLinkDialog\w*|TestLinkRemoveStaysUnlinked|TestNormalizeURL|TestW10LinkDialogRichText|TestLinkDialogFocusAfterMeasurePass|TestSetLink|TestEditComposerLinkSlug|TestLinkSlugPasteSendsTruncatedLink)$' ./internal/ui/composer || rc=1
+          go test -race -count=1 -run '^(TestLinkMenu\w*|TestLinkPopover\w*|TestLinkSlugRenameSends|TestLinkDialogFollowsSlugAnswer)$' ./internal/ui/composer || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # theme-contrast round 4: the fade's continuity, the cascade per variable,
   # the DMs rows drawn (activity_inbox on and off, the peek card's scope),
   # the control strip's held press. Dispatch with only=theme-contrast-4
@@ -5696,6 +5729,7 @@ jobs:
       - fl1122c-s-avf
       - fl1122c-r-views
       - fl1122c-s-displays
+      - composer-link-edit
       - library-dupes
       - rx-bar
       - plugins-work-0

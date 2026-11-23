@@ -424,6 +424,7 @@ func (c *Composer) init() {
 	c.ed.Snippets = !c.noDraft()      // MessageInput's enableSnippetCreation; not the edit composer
 	c.ed.CmdKCoachmark = !c.noDraft() // MessageInput's onCmdKWhenSelected; the edit composer (cjbg) has none
 	c.bindSlugs()
+	c.bindLinkEditing() // link_menu.go, link_popover.go
 	if c.api.a != nil {
 		warmEmoji()
 		c.ed.emoji = c.lookupEmoji
@@ -1163,40 +1164,112 @@ func (c *Composer) mentionTrigger() {
 	c.ed.Replace(start, hi, s)
 }
 
-// openLink is openTextyLinkFormBasedOnSelection (boot-shared NTqE): the
-// dialog's Text is editable unless the range holds an embed (emoji,
-// mention: "\uE000" in getContentsForRange's text) or, for a new link,
-// a line break; then ComposerLinkModal draws the range's rich text and
-// Save links it in place (saveLink's retain branch: didTextChange false).
+// openLink is openTextyLinkFormBasedOnSelection (boot-shared +BPJ, build
+// 83aff18a1847), Ctrl+Shift+U and the link button. The selection is
+// trimmed of leading and trailing punctuation, blanks and embeds
+// (getTrimLength); left with nothing but the caret in a link (its format
+// at the caret has one), the edit-link popover opens over that link (the
+// link op there, adjustSelectionToCoverLink) and the selection stays.
+// Otherwise the link dialog opens over the trimmed range: its text, the
+// URL the whole selection is linked to (getFormat(range).link), the Text
+// editable unless the range holds an embed or a line break.
 func (c *Composer) openLink() {
 	sl, sh := c.ed.Selection()
-	lo, hi, url := c.ed.LinkAt()
+	if sl > sh {
+		sl, sh = sh, sl
+	}
 	d := c.ed.Doc()
-	raw := d.String(lo, hi)
-	txt := raw
-	editing := sl == sh && url != "" // the caret in a link: the edit path
-	editable := !strings.ContainsRune(raw, ObjRune) && (editing || !strings.ContainsRune(raw, '\n'))
-	if strings.ContainsRune(txt, ObjRune) {
-		txt = d.Slice(lo, hi).Text()
+	selLink := d.rangeLink(sl, sh)
+	lo, hi := sl, sh
+	h := []rune(d.String(lo, hi))
+	if f := linkTrimLength(h, false); f > 0 {
+		h, lo = h[f:], lo+f
+		hi = lo + len(h)
 	}
-	if lo != hi {
-		c.ed.SetSelection(lo, hi)
+	if y := linkTrimLength(h, true); y > 0 {
+		h = h[:len(h)-y]
+		hi = lo + len(h)
 	}
-	save := func(text, url string) {
-		c.ed.SetLink(text, url)
-		c.Focus()
-	}
-	if editable || lo == hi {
-		openLinkDialog(c.h, txt, url, save, c.Focus)
+	if lo == hi && selLink != "" {
+		// the <a> the leaf at the caret is in (getLeaf, closest("a"))
+		leaf := lo - 1
+		if leaf < 0 || leaf < d.Len() && d.Runes[leaf] == '\n' {
+			leaf = lo
+		}
+		if leaf < 0 || leaf >= d.Len() || d.Attrs[leaf].Link == "" {
+			return
+		}
+		alo, ahi := d.linkElemRange(leaf)
+		glo, ghi := d.coverLink(lo, d.formatLinkAt(lo) != "")
+		t := d.String(glo, ghi)
+		c.ed.SetSelection(sl, sh)
+		c.openEditLinkPopover(alo, ahi, t, selLink, sl, sh, glo, ghi, !containsObj(t))
 		return
 	}
-	var r richtext.Resolver
-	if c.api.a != nil && c.api.a.S != nil {
-		r = c.api.resolver()
+	t := string(h)
+	c.openLinkForm(linkForm{lo: lo, hi: hi, text: t, url: selLink,
+		editable: !strings.ContainsRune(t, '\n') && !containsObj(t)})
+}
+
+// rangeLink is getFormat(range).link where it is one URL: every text rune
+// in [lo, hi) linked to it (Quill keeps a format only if every leaf has
+// it, and an embed has none); the caret's format when the range is empty.
+func (d *Doc) rangeLink(lo, hi int) string {
+	if lo == hi {
+		return d.formatLinkAt(lo)
 	}
-	// the text handed back is the range's own runes, so SetLink links
-	// them where they are
-	openLinkDialogRich(c.h, raw, url, linkPreview(r, d.Slice(lo, hi)), save, c.Focus)
+	url := ""
+	for i := lo; i < hi && i < d.Len(); i++ {
+		if d.Runes[i] == '\n' {
+			continue
+		}
+		a := d.Attrs[i]
+		if a.Atom != nil || a.Link == "" || url != "" && a.Link != url {
+			return ""
+		}
+		url = a.Link
+	}
+	return url
+}
+
+// openLinkForm is openTextyLinkFormModal: ComposerLinkModal over f's
+// range, applied when it's submitted (saveLink, insertPlainText,
+// removeLink); the editor focused again either way (onClose).
+func (c *Composer) openLinkForm(f linkForm) {
+	d := c.ed.Doc()
+	r := c.ed.liveRange(f.lo, f.hi)
+	ver, ok := c.ed.Version(), true
+	f.alive = func() bool {
+		if v := c.ed.Version(); v != ver {
+			ver = v
+			_, _, ok = c.ed.resolve(r)
+		}
+		return ok
+	}
+	if !f.editable && f.preview == nil && f.hi > f.lo {
+		// initialBlocks: the range's rich text, drawn for the Text field
+		var r richtext.Resolver
+		if c.api.a != nil && c.api.a.S != nil {
+			r = c.api.resolver()
+		}
+		f.preview = linkPreview(r, d.Slice(f.lo, f.hi))
+	}
+	openLinkDialog(c.h, f, func(res linkResult) {
+		lo, hi, ok := c.ed.resolve(r) // the range as it is now
+		if !ok {
+			c.Focus()
+			return
+		}
+		switch res.kind {
+		case linkSaved:
+			c.ed.saveLink(lo, hi, res.text, res.url, res.didTextChange, f.editingSlug)
+		case linkPlain:
+			c.ed.insertPlainLinkText(lo, hi, res.text)
+		case linkRemoved:
+			c.ed.removeFormLink(lo, hi, f.editingSlug)
+		}
+		c.Focus()
+	}, c.Focus)
 }
 
 func (c *Composer) paragraphMenu(anchor image.Rectangle) {

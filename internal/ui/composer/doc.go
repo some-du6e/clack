@@ -23,6 +23,11 @@ const (
 	Underline
 	Strike
 	Code
+	// Unlink is Texty's "unlink" format (formatText {link: false, unlink:
+	// true}): text whose link was taken off (Remove link, the link
+	// dialog's removeLink and insertPlainText) that no autolink makes a
+	// link again, typed, pasted or sent. It draws nothing.
+	Unlink
 )
 
 // BlockKind is the block format of a line. Consecutive lines with the same
