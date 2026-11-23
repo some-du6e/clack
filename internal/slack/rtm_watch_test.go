@@ -153,9 +153,65 @@ func TestRTMBufferFullIsNotSilence(t *testing.T) {
 	<-r.Events
 	_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"user_typing","channel":"C0SYNTH001","user":"U0SYNTH999"}`))
 	rtmWait(t, 5*time.Second, "the room-again line", func() bool {
-		return strings.Contains(logs.String(), "the event buffer has room again, after 28 events dropped")
+		out := logs.String()
+		return strings.Contains(out, "the event buffer has room again") && strings.Contains(out, "after 28 events dropped")
 	})
 	if strings.Contains(logs.String(), "nothing from Slack") {
 		t.Error("an overflow was taken for a quiet socket")
+	}
+}
+
+// A handler that takes events slower than they come: one line as the
+// buffer fills and none for each event it takes; room again only once it
+// has drained half the buffer. Clack logged "room again" and "full" again
+// for every event the handler took, about two lines per event.
+func TestRTMBufferSlowDrainLogsOnce(t *testing.T) {
+	fastBackoff(t)
+	pongTimers(t, 20*time.Millisecond, 3*time.Second)
+	logs := captureLog(t)
+	g, c := newPongGateway(t)
+	r := c.NewRTM()
+	r.Events = make(chan Event, 4)
+	var dropped atomic.Int32
+	r.OnDrop = func(Event) { dropped.Add(1) }
+	runRTM(t, r)
+	conn := g.takeConn(t)
+	select {
+	case ev := <-r.Events:
+		if ev.Type != "hello" {
+			t.Fatalf("the first event is %q, want hello", ev.Type)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no hello")
+	}
+	ctx := context.Background()
+	send := func(i int) {
+		_ = conn.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(`{"type":"user_typing","channel":"C0SYNTH001","user":"U0SYNTH%03d"}`, i)))
+	}
+	for i := 0; i < 5; i++ { // four fit, one is dropped
+		send(i)
+	}
+	rtmWait(t, 5*time.Second, "the first drop", func() bool { return dropped.Load() == 1 })
+	for i := 0; i < 5; i++ { // the handler takes one as two come: one fits, one is dropped
+		<-r.Events
+		send(100 + 2*i)
+		send(101 + 2*i)
+		want := int32(2 + i)
+		rtmWait(t, 5*time.Second, "the next drop", func() bool { return dropped.Load() == want })
+	}
+	out := logs.String()
+	if n := strings.Count(out, "event buffer full"); n != 1 {
+		t.Errorf("%d \"full\" lines while the handler drained slower than the events came, want one:\n%s", n, out)
+	}
+	if strings.Contains(out, "has room again") {
+		t.Errorf("\"room again\" while the buffer stayed full:\n%s", out)
+	}
+	for len(r.Events) > 0 { // it catches up
+		<-r.Events
+	}
+	send(999)
+	rtmWait(t, 5*time.Second, "the room-again line", func() bool { return strings.Contains(logs.String(), "has room again") })
+	if n := strings.Count(logs.String(), "has room again"); n != 1 {
+		t.Errorf("%d \"room again\" lines, want one:\n%s", n, logs.String())
 	}
 }

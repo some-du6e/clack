@@ -18,3 +18,6 @@ func stallTimers(t *testing.T, frames, ticks, every time.Duration) {
 func pumpTimers(t *testing.T, after, every time.Duration) {
 	t.Cleanup(setPumpTimers(after, every))
 }
+
+// forgetWake: the code before it keeps no wake.
+func forgetWake(t *testing.T) {}

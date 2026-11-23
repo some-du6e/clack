@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -142,5 +143,47 @@ func TestIdleSessionLogsNoStall(t *testing.T) {
 	}
 	if n := fs.CallCount("ws"); n != dials {
 		t.Errorf("an idle session's socket connected %d more times", n-dials)
+	}
+}
+
+// A handler is on an event when the machine sleeps an hour (the clock
+// jumps, the wall and the monotonic one both, as on Windows, which counts
+// a sleep in either): on wake the watchdog ages it from the wake, so the
+// time asleep isn't a stall and no goroutine dump comes, and its "took"
+// leaves the sleep out. Clack logged it as on its event for an hour, with
+// the dump, the moment the machine woke.
+func TestPumpSleepIsNotAStall(t *testing.T) {
+	pumpTimers(t, 2*time.Second, 50*time.Millisecond)
+	forgetWake(t) // the fake clock's wake isn't the next test's
+	logs := captureStallLogs(t)
+	start := time.Now()
+	var jump atomic.Int64
+	t.Cleanup(slack.SetClock(func() slack.ClockReading {
+		now, d := time.Now(), time.Duration(jump.Load())
+		return slack.ClockReading{Wall: now.Add(d).Round(0), Mono: now.Sub(start) + d}
+	}))
+	a, fs, _ := rtApp(t)
+	ch := fs.ChannelIDs()[2]
+	a.S.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			a.S.Unlock()
+		}
+	}()
+	fs.Push(map[string]any{"type": "user_typing", "channel": ch, "user": fs.UserIDs()[3]})
+	time.Sleep(300 * time.Millisecond) // the pump is on it
+	jump.Store(int64(time.Hour))       // the machine slept
+	time.Sleep(800 * time.Millisecond) // the watchdog looks a dozen times after the wake
+	for _, bad := range []string{"has been on", "all goroutines:"} {
+		if logs.has(bad) {
+			t.Errorf("a sleep made a stall: %q in the log", bad)
+		}
+	}
+	a.S.Unlock()
+	locked = false
+	time.Sleep(200 * time.Millisecond)
+	if logs.has("took 1h") {
+		t.Error("the handler's \"took\" counted the hour asleep")
 	}
 }

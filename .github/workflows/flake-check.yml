@@ -4486,6 +4486,34 @@ jobs:
           TEST: TestHuddleRecommendLikeSlack
           PKG: ./internal/ui/huddleui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives review fixes: the viewer's activity told to the
+      # socket (Slack's tickle), Later reminders of reminders and of
+      # conversations never looked up, the debounce's late timer, the
+      # watchdogs' sleep and full-buffer logging, the dump's cap
+      - name: "core: the tickle as Slack's maybeTickleMS sends it, and the pump's sleep isn't a stall (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestTickleLikeSlack|TestPumpSleepIsNotAStall)
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "slack: a slowly drained event buffer logs once (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestRTMBufferSlowDrainLogsOnce|TestRTMBufferFullIsNotSilence)
+          PKG: ./internal/slack
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "stackdump: one dump record stays under its cap (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestLogCapsTheDump
+          PKG: ./internal/stackdump
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the viewer's activity keeps them active, Later reminders open Later, the debounce's late timer (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestPresenceActivityLikeSlack|TestLaterReminderOfAReminderLikeSlack|TestLaterReminderInAChannelNeverLookedUp|TestSoundDebounceLateTimerKeepsNewerStretch)
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

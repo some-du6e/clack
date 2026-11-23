@@ -63,3 +63,27 @@ func TestMessageSoundDebounceLikeSlack(t *testing.T) {
 	a.notifyMessage("t", "b", note("", "1762520400.000400"))
 	waitFor(t, a, "the sound after the stretch", func() bool { return len(snd.got()) >= 3 })
 }
+
+// A stretch's timer whose func runs after a newer stretch took its key (a
+// Reset as the timer fires runs the func once more) leaves the newer
+// stretch alone: the next message in it plays no sound. Clack's func
+// deleted whatever held the key, and that message played one.
+func TestSoundDebounceLateTimerKeepsNewerStretch(t *testing.T) {
+	a, _, _ := fakePrefsApp(t)
+	quietFor(t, time.Hour) // no timer fires by itself here
+	const k = "C0SOUND002"
+	if a.soundDebounced(k, "") {
+		t.Fatal("the conversation's first message was debounced")
+	}
+	a.soundMu.Lock()
+	old := a.soundQuiet[k]
+	newer := time.AfterFunc(time.Hour, func() {})
+	a.soundQuiet[k] = newer // a newer stretch holds the key
+	a.soundMu.Unlock()
+	defer newer.Stop()
+	old.Stop()
+	lateExpiry(a, k, old) // the old stretch's func, late
+	if !a.soundDebounced(k, "") {
+		t.Error("the old stretch's late timer ended the newer one: its next message played a sound")
+	}
+}

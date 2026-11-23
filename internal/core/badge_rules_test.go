@@ -29,12 +29,13 @@ func TestSidebarMarksLikeSlack(t *testing.T) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	chs := fs.ChannelIDs()
-	ch, quiet, every := chs[2], chs[4], chs[5]
+	ch, quiet, every, mutedEvery := chs[2], chs[4], chs[5], chs[6]
 	prefs, _ := json.Marshal(map[string]any{
 		"global": map[string]any{"global_desktop": "mentions_dms", "global_mpdm_desktop": "mentions_dms", "global_keywords": "synthkeyword"},
 		"channels": map[string]any{
-			quiet: map[string]any{"suppress_at_channel": true},
-			every: map[string]any{"badge_all_unreads": true},
+			quiet:      map[string]any{"suppress_at_channel": true},
+			every:      map[string]any{"badge_all_unreads": true},
+			mutedEvery: map[string]any{"badge_all_unreads": true, "muted": true},
 		},
 	})
 	fs.SetPrefs(map[string]any{"all_notifications_prefs": string(prefs)})
@@ -58,7 +59,8 @@ func TestSidebarMarksLikeSlack(t *testing.T) {
 	if _, err := a.RefreshPrefs(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !a.NotifyPrefs(quiet).SuppressAtChannel || !a.NotifyPrefs(every).BadgeAllUnreads || len(a.S.HighlightWords()) == 0 {
+	if !a.NotifyPrefs(quiet).SuppressAtChannel || !a.NotifyPrefs(every).BadgeAllUnreads || len(a.S.HighlightWords()) == 0 ||
+		!a.NotifyPrefs(mutedEvery).BadgeAllUnreads || !a.S.IsMuted(mutedEvery) {
 		t.Fatalf("setup: the prefs didn't take (suppress_at_channel %v, badge_all_unreads %v, keywords %q)",
 			a.NotifyPrefs(quiet).SuppressAtChannel, a.NotifyPrefs(every).BadgeAllUnreads, a.S.HighlightWords())
 	}
@@ -124,6 +126,8 @@ func TestSidebarMarksLikeSlack(t *testing.T) {
 			"text": "set the channel topic: a synthetic topic"}, nil, false, 0},
 		{"a huddle's thread", ch, map[string]any{"subtype": "huddle_thread", "text": ""}, nil, false, 0},
 		{"a plain message where every message badges", every, map[string]any{"text": "a synthetic plain line"}, nil, true, 1},
+		// getShouldBadgeAllUnreadsForChannelId is `n && !isMuted`
+		{"a plain message where every message badges but the channel is muted", mutedEvery, map[string]any{"text": "a synthetic plain line"}, nil, true, 0},
 		{"the viewer added by someone", ch, map[string]any{"subtype": "channel_join", "user": fakeslack.SelfID, "inviter": sender,
 			"text": me + "has joined the channel"}, nil, true, 1},
 	} {

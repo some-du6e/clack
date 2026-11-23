@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/logtag"
 )
 
@@ -75,5 +76,50 @@ func TestLaterReminderLikeSlack(t *testing.T) {
 	}
 	if n := noteWith(e, rec, "nobody hears about", 300*time.Millisecond); n != nil {
 		t.Error("a reminder showed with global_desktop nothing")
+	}
+}
+
+// A reminder that is a Later reminder of its own (item_type reminder, an
+// "Sa…" id) says its description, and its click opens Later
+// (notificationClicked: looksLikeSavedItemId, then openSavedForLaterView,
+// which opens a message's beside the list and anything else on the page
+// alone). Clack's click took the id for a conversation and opened it.
+func TestLaterReminderOfAReminderLikeSlack(t *testing.T) {
+	e, fs, _, rec := followEnv(t)
+	logs := captureLog(t)
+	const id = "SaSYNTH0001"
+	now := time.Now().Unix()
+	fs.Push(map[string]any{"type": "saved_due", "saved": map[string]any{"item_id": id, "item_type": "reminder",
+		"description": "water the synthetic plants", "todo_state": "to_do", "date_created": now - 3600, "date_due": now}})
+	n := noteWith(e, rec, "water the synthetic plants", 15*time.Second)
+	if n == nil {
+		t.Fatalf("no notification for the reminder (its notify lines: %q)", logs.matching("notify: "))
+	}
+	if n.Title != "Reminder due" || n.Msg != id {
+		t.Errorf("the reminder: title %q, msg %q; want Reminder due and %q", n.Title, n.Msg, id)
+	}
+	click(t, e.a, n, "toast", 0)
+	if !e.untilSoft(10*time.Second, func() bool { return e.a.router.Current().Page() == "later" }) {
+		t.Errorf("after the click the route is %q, want Later", e.a.router.Current())
+	}
+}
+
+// A Later reminder on a message in a channel the viewer isn't in, which
+// nothing looked up this session, notifies: handleSavedDue looks the
+// conversation up first (channelIds: [itemId], "handleSavedDue"). Clack
+// skipped it as a conversation it didn't know (3).
+func TestLaterReminderInAChannelNeverLookedUp(t *testing.T) {
+	e, fs, c, rec := followEnv(t)
+	logs := captureLog(t)
+	ch := fakeslack.PreviewChannelID
+	if _, ok := c.Conv(ch); ok {
+		t.Fatal("setup: core knows the preview channel already")
+	}
+	ts, _ := fs.PostQuiet(ch, fs.UserIDs()[3], "a synthetic errand in a channel the viewer isn't in")
+	now := time.Now().Unix()
+	fs.Push(map[string]any{"type": "saved_due", "saved": map[string]any{"item_id": ch, "item_type": "message", "ts": ts,
+		"todo_state": "to_do", "state": "in_progress", "date_created": now - 3600, "date_due": now}})
+	if noteWith(e, rec, "in a channel the viewer isn't in", 15*time.Second) == nil {
+		t.Errorf("no notification for the reminder (its notify lines: %q)", logs.matching("notify: "))
 	}
 }
