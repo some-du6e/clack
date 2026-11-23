@@ -458,12 +458,15 @@ func warmMachine(t *testing.T) (time.Duration, string) {
 // TestMFWarmChild is TestMFColdStart's warm-up when the test binary is
 // its child (warmChildEnv set; otherwise it returns at once): the fixture
 // with its audio track, its engines made muted whatever the audio check
-// finds (forceMuted), to their metadata and first frame drawn, in BGRA
-// frames and then in RGBA (CLACK_MF_FORMAT=rgba, TestMFLateFirstTransfer's
-// and TestMFRGBA's), whose conversion runs code of its own: on
-// mf-cold-smoke's second round a cold RGBA engine took 9.4 s to its
-// metadata and drew no frame in 15 s. Then the files Media Foundation
-// reads for those are in the machine's memory.
+// finds (forceMuted), played to its end and drawn, in BGRA frames and then
+// in RGBA (CLACK_MF_FORMAT=rgba, TestMFLateFirstTransfer's and
+// TestMFRGBA's), whose conversion runs code of its own: on mf-cold-smoke's
+// second round a cold RGBA engine took 9.4 s to its metadata and drew no
+// frame in 15 s. To the end, not to the first frame: what plays after it
+// is code of its own too (on mf-cold's run 45284493245 a BGRA engine whose
+// warm-up stopped at the first frame transferred 19 frames in 3 s, none
+// in the third). Then the files Media Foundation reads for those are in
+// the machine's memory.
 func TestMFWarmChild(t *testing.T) {
 	if os.Getenv(warmChildEnv) == "" {
 		return
@@ -484,18 +487,24 @@ func TestMFWarmChild(t *testing.T) {
 		md := time.Since(t0)
 		audio, _ := r.audio()
 		r.p.Play()
-		drawn := false
-		for deadline := time.Now().Add(30 * time.Second); !drawn && time.Now().Before(deadline); {
+		var first time.Duration
+		ended := false
+		for deadline := time.Now().Add(30 * time.Second); !ended && time.Now().Before(deadline); {
 			select {
+			case ev := <-r.evC:
+				ended = ev.Kind == media.Ended
+				continue
 			case <-r.readyC:
 			case <-time.After(15 * time.Millisecond):
 			}
-			drawn = r.draw().A != 0
+			if r.draw().A != 0 && first == 0 {
+				first = time.Since(t0)
+			}
 		}
-		if !drawn {
-			t.Fatalf("%s: loadedmetadata %v after the player was made, and no frame drawn within 30 s of Play; the engine's events %s", formatName(r.p.format), md.Round(time.Millisecond), traceOf(r.id))
+		if first == 0 || !ended {
+			t.Fatalf("%s: loadedmetadata %v after the player was made, the first frame %v, and no end within 30 s of Play; the engine's events %s", formatName(r.p.format), md.Round(time.Millisecond), first.Round(time.Millisecond), traceOf(r.id))
 		}
-		t.Logf("%s: loadedmetadata %v and the first frame %v after the player was made (audio: %s)", formatName(r.p.format), md.Round(time.Millisecond), time.Since(t0).Round(time.Millisecond), audio)
+		t.Logf("%s: loadedmetadata %v, the first frame %v and the end %v after the player was made (audio: %s)", formatName(r.p.format), md.Round(time.Millisecond), first.Round(time.Millisecond), time.Since(t0).Round(time.Millisecond), audio)
 	}
 }
 
