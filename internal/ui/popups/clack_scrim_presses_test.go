@@ -35,21 +35,32 @@ func TestScrimKeepsLaterPresses(t *testing.T) {
 		name string
 		// before is laid out first, in frame n
 		before func(gtx layout.Context, ed *widget.Editor, n int)
+		// cmd is a command before executes in the frame with the press
+		cmd func(c input.Command) bool
 	}{
 		{"editor", func(gtx layout.Context, ed *widget.Editor, n int) {
 			if n == 0 {
 				gtx.Execute(key.FocusCmd{Tag: ed})
 			}
 			if n == 1 {
-				ed.SetText("synthetic draft") // its selection and snippet change in this frame's layout
+				// typed: the caret moves, so its selection and snippet
+				// change in this frame's layout (SetText puts the caret
+				// back at 0, and nothing changes)
+				ed.Insert("synthetic draft")
 			}
 			g := gtx
 			g.Constraints = layout.Exact(image.Pt(160, 24))
 			th.Editor(g, ed, 14, color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff}, color.NRGBA{R: 0xb3, G: 0xd7, B: 0xff, A: 0xff})
+		}, func(c input.Command) bool {
+			switch c.(type) {
+			case key.SelectionCmd, key.SnippetCmd:
+				return true
+			}
+			return false
 		}},
 		{"ticker", func(gtx layout.Context, ed *widget.Editor, n int) {
 			gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(500 * time.Millisecond)})
-		}},
+		}, func(c input.Command) bool { _, ok := c.(op.InvalidateCmd); return ok }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -100,7 +111,13 @@ func TestScrimKeepsLaterPresses(t *testing.T) {
 			}
 			frame() // the scrim up, the editor focused
 			click(time.Second)
+			ran := false
+			input.ExecuteHook = func(cmd input.Command) { ran = ran || c.cmd(cmd) }
 			frame() // the scrim takes the press and goes
+			input.ExecuteHook = nil
+			if !ran {
+				t.Fatalf("the %s executed no command in the frame with the press: nothing tested", c.name)
+			}
 			if shown {
 				t.Fatal("the scrim never read its press")
 			}
