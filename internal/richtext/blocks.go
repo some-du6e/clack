@@ -819,7 +819,7 @@ func (c *builder) element(e *bk, blockID string) (Button, bool) {
 		if e.Placeholder != nil && e.Placeholder.Text != "" {
 			btn.Text = e.Placeholder.Text
 		}
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "rich_text_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "rich_text_input", "password":
 		btn.Kind = "input"
 		if e.Placeholder != nil {
 			btn.Text = e.Placeholder.Text

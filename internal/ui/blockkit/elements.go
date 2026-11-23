@@ -184,6 +184,10 @@ func (w *ew) configure() {
 		}
 	}
 	w.ed.MaxLen = max(e.MaxLength, 0)
+	w.ed.Mask = 0
+	if e.Type == "password" { // PasswordElement: <input type="password">, Chromium's bullets
+		w.ed.Mask = '•'
+	}
 }
 
 func (w *ew) value() *Value {
@@ -305,7 +309,7 @@ func (w *ew) size(gtx C, maxW int, accessory bool) image.Point {
 		return image.Pt(2*fw+dp(gtx, 8), h36+dp(gtx, 4)+dp(gtx, 16))
 	case "checkboxes", "radio_buttons":
 		return image.Pt(maxW, w.optionsHeight(gtx, maxW))
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "password":
 		if w.e.Multiline {
 			return full(max(dp(gtx, 104), w.edHeight(gtx, maxW)))
 		}
@@ -391,7 +395,7 @@ func (w *ew) layout(gtx C, sz image.Point) D {
 		w.layoutDateTime(gtx, sz)
 	case "checkboxes", "radio_buttons":
 		w.layoutOptions(gtx, sz)
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "password":
 		w.layoutText(gtx, sz)
 	case "rich_text_input":
 		w.layoutRich(gtx, sz)
@@ -1031,6 +1035,8 @@ func (w *ew) textPlaceholder() string {
 		return "Enter a URL"
 	case "number_input":
 		return "Enter a number"
+	case "password":
+		return "Write something" // PasswordElement's
 	}
 	return ""
 }

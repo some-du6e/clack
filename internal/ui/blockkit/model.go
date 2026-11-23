@@ -219,7 +219,7 @@ func isMulti(t string) bool {
 
 func isTextInput(t string) bool {
 	switch t {
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "rich_text_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "rich_text_input", "password":
 		return true
 	}
 	return false
