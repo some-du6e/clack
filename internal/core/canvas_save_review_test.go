@@ -215,3 +215,58 @@ func TestCanvasSaveLockLiftsWhenEmpty(t *testing.T) {
 	}
 	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending && !s.ReadOnly })
 }
+
+// A save the server took whose answer was lost (a cut connection) isn't
+// someone else's: the retry's catch-up finds the section holding the
+// edit, so it's saved, with no notice and no second save.
+func TestCanvasSaveLostAnswer(t *testing.T) {
+	fastSaves(t)
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, AfterHandle: true, Times: 1})
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, once"); err == nil {
+		t.Fatal("the lost answer came")
+	}
+	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending })
+	if ns := a.TakeCanvasSaveNotices(fakeslack.CanvasShared); len(ns) != 0 {
+		t.Errorf("notices %+v for this client's own save", ns)
+	}
+	if n := len(saves(fs)); n != 1 {
+		t.Errorf("%d edit-document calls, want the one the server took", n)
+	}
+	if after := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync"); quip.SectionRTML(&after) != "Weekly sync, once" {
+		t.Errorf("saved %q", quip.SectionRTML(&after))
+	}
+}
+
+// Edits still pending when Clack quits go once more, as Slack saves on
+// unload; a released App's savers keep no timer.
+func TestCanvasSaveFlushOnQuit(t *testing.T) {
+	fastSaves(t)
+	saveBackoffBase = time.Hour // no retry before the quit
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 1})
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, at quit"); err == nil {
+		t.Fatal("the first attempt went through")
+	}
+	s := a.saver(fakeslack.CanvasShared)
+	a.Shutdown()
+	if n := len(saves(fs)); n != 2 {
+		t.Errorf("%d edit-document calls, want the quit's too", n)
+	}
+	fc, _ := fs.Canvas(fakeslack.CanvasShared)
+	if b := fc.Doc.Find(*head.ID); b == nil || b.Text() != "Weekly sync, at quit" {
+		t.Errorf("after the quit: %+v", b)
+	}
+	a.Release()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retry != nil || s.poll != nil {
+		t.Errorf("a released App's saver keeps timers: retry %v, poll %v", s.retry != nil, s.poll != nil)
+	}
+}

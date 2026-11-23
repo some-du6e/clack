@@ -690,10 +690,18 @@ func (a *App) postSave(ctx context.Context, id string, edits []quip.Edit, retrie
 		return nil, nil, errors.New("core: no canvas model")
 	}
 	var keep, dropped []quip.Edit
+	landed := map[string]int64{} // edits the model holds already, by section: their sequence
 	for _, e := range edits {
 		sec := d.Section(e.SectionID)
 		switch {
 		case sec == nil || sec.Deleted != nil && *sec.Deleted, sec.Sequence == nil || *sec.Sequence != e.Base:
+			if holdsEdit(sec, e) {
+				// the section holds the edit: this client's own save, its
+				// answer lost (a timeout, a cut connection), not someone
+				// else's
+				landed[e.SectionID] = *sec.Sequence
+				continue
+			}
 			// Slack's editor would merge someone else's save into the
 			// edit (mergeRtml); Clack can't, so it never writes over one
 			dropped = append(dropped, e)
@@ -703,6 +711,9 @@ func (a *App) postSave(ctx context.Context, id string, edits []quip.Edit, retrie
 	}
 	if len(keep) == 0 {
 		q.mu.Unlock()
+		if len(landed) > 0 {
+			return landed, dropped, nil
+		}
 		return nil, dropped, fmt.Errorf("%w: %d edits", ErrCanvasConflict, len(dropped))
 	}
 	edits = keep
@@ -743,7 +754,7 @@ func (a *App) postSave(ctx context.Context, id string, edits []quip.Edit, retrie
 	if err := quip.Unmarshal(b, &ans); err != nil {
 		return nil, dropped, err
 	}
-	saved := map[string]int64{}
+	saved := landed
 	q.mu.Lock()
 	if ans.Changed != nil && *ans.Changed && q.doc == d { // the same model: nothing reloaded it (q.net)
 		d.ApplySaved(&ans)
@@ -759,6 +770,68 @@ func (a *App) postSave(ctx context.Context, id string, edits []quip.Edit, retrie
 		a.canvasChanged(id) // open views refetch the export, as after canvases.edit
 	}
 	return saved, dropped, nil
+}
+
+// holdsEdit reports whether section sec holds edit e already (an answer
+// lost after the server took the save): the same text, the same box, or
+// deleted.
+func holdsEdit(sec *quip.Section, e quip.Edit) bool {
+	if sec == nil || sec.Sequence == nil {
+		return false
+	}
+	deleted := sec.Deleted != nil && *sec.Deleted
+	checked := func() bool {
+		return sec.Attributes != nil && sec.Attributes.Checked != nil && *sec.Attributes.Checked == e.Checked
+	}
+	switch e.Kind {
+	case quip.EditDelete:
+		return deleted
+	case quip.EditCheck:
+		return !deleted && checked()
+	case quip.EditText:
+		return !deleted && quip.SectionRTML(sec) == e.RTML && (!e.Recheck || checked())
+	}
+	return false
+}
+
+// flushAllCanvasSaves makes the last attempt for every canvas with edits
+// pending when Clack quits, as Slack saves once more on unload (and as a
+// canvas's last view closing does).
+func (a *App) flushAllCanvasSaves(ctx context.Context) {
+	st := a.savers()
+	st.mu.Lock()
+	ids := make([]string, 0, len(st.byID))
+	for id := range st.byID {
+		ids = append(ids, id)
+	}
+	st.mu.Unlock()
+	for _, id := range ids {
+		a.flushCanvasSaves(ctx, id)
+	}
+}
+
+// stopCanvasSavers stops the savers' timers (the retry, the dirty
+// warning's poll), so a released App leaves none behind.
+func (a *App) stopCanvasSavers() {
+	v, ok := saverStates.Load(a)
+	if !ok {
+		return
+	}
+	st := v.(*saverState)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, s := range st.byID {
+		s.mu.Lock()
+		if s.retry != nil {
+			s.retry.Stop()
+			s.retry = nil
+		}
+		if s.poll != nil {
+			s.poll.Stop()
+			s.poll = nil
+		}
+		s.mu.Unlock()
+	}
 }
 
 // flushCanvasSaves makes one last attempt for a canvas whose last view
@@ -913,3 +986,15 @@ func (a *App) SaveCanvasTitle(ctx context.Context, id, orig, title string) error
 		return []quip.Edit{{Kind: quip.EditText, SectionID: tid, RTML: rtml, Base: b.seq}}, nil
 	})
 }
+
+// flushCanvasesOnQuit is the canvases' last save when Clack quits: the
+// pending edits of every canvas go once more, briefly, on a context of
+// their own (the App's background is stopping).
+func (a *App) flushCanvasesOnQuit() {
+	ctx, cancel := context.WithTimeout(context.Background(), quitSaveWait)
+	defer cancel()
+	a.flushAllCanvasSaves(ctx)
+}
+
+// quitSaveWait bounds the last save at quit.
+var quitSaveWait = 3 * time.Second
