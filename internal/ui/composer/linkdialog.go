@@ -50,6 +50,9 @@ type linkForm struct {
 	editable    bool   // textIsEditable
 	editingSlug bool   // isEditingSlug
 	preview     *richview.View
+	// alive, set by the composer, reports that the range is still there
+	// (edRange): the dialog closes, with nothing saved, once it isn't
+	alive func() bool
 }
 
 // linkResult is how the dialog ended: what onSubmit did.
@@ -80,6 +83,8 @@ type crLinkDlg struct {
 	dirty      bool   // inputIsDirty
 	lastText   string // the fields as onChange last saw them
 	lastURL    string
+	urlOK      bool // isValid of lastURL
+	saveBtn    *popups.ModalButton
 	saveJS     slackc.JSFunc // a plugin's saveLink override
 	// preview is ComposerLinkModal's textIsEditable false: the selection
 	// holds an emoji or a mention (an embed, "\uE000" in its text), or a
@@ -108,6 +113,8 @@ func openLinkDialog(h Host, f linkForm, done func(linkResult), onCancel func()) 
 		d.link.SetCaret(n, n)
 	}
 	d.lastText, d.lastURL = d.text.Text(), d.link.Text()
+	d.saveBtn = &popups.ModalButton{Label: messageInputNS.T("Save"), Kind: popups.BtnPrimary, Enabled: d.canSave, Do: func() bool { d.save(); return true }}
+	d.urlOK = isLinkURLValid(d.lastURL)
 	// ComposerLinkModal (+Hdp, the message-input I18n): initialUrl ? "Edit
 	// link" : "Add link"
 	title := messageInputNS.T("Add link")
@@ -128,7 +135,7 @@ func openLinkDialog(h Host, f linkForm, done func(linkResult), onCancel func()) 
 		},
 		Buttons: []*popups.ModalButton{
 			{Label: messageInputNS.T("Cancel"), Kind: popups.BtnOutline},
-			{Label: messageInputNS.T("Save"), Kind: popups.BtnPrimary, Enabled: d.canSave, Do: func() bool { d.save(); return true }},
+			d.saveBtn,
 		},
 		OnClose: func() {
 			if !d.saved && onCancel != nil {
@@ -148,15 +155,18 @@ var linkDialogTap func(*crLinkDlg)
 // valid is isValid: no javascript: or about: link.
 func (d *crLinkDlg) valid() bool { return isLinkURLValid(d.link.Text()) }
 
-// canSave is the Save button: valid, and a field changed.
-func (d *crLinkDlg) canSave() bool { return d.valid() && d.dirty }
+// canSave is the Save button: valid, and a field changed (as onChange
+// last left them: the button asks every frame).
+func (d *crLinkDlg) canSave() bool { return d.urlOK && d.dirty }
 
-// noteEdits is onChange: when a field changed, inputIsDirty is whether
-// either now differs from the initial text and URL (hasUnsavedEdits).
+// noteEdits is onChange, run on a field's ChangeEvent: inputIsDirty is
+// whether either now differs from the initial text and URL
+// (hasUnsavedEdits), and isValid is the URL's.
 func (d *crLinkDlg) noteEdits() {
 	if t, u := d.text.Text(), d.link.Text(); t != d.lastText || u != d.lastURL {
 		d.lastText, d.lastURL = t, u
 		d.dirty = t != d.text0 || u != d.url0
+		d.urlOK = isLinkURLValid(u)
 	}
 }
 
@@ -213,6 +223,14 @@ func (d *crLinkDlg) saveLink(text, url string) {
 		d.saveJS.Call(slackc.Props{"didTextChange": text != d.text0, "text": text, "url": url})
 		return
 	}
+	d.saveLinkNative(text, url)
+}
+
+// saveLinkNative is the composer's own saveLink, the one ComposerLinkModal's
+// props hand a plugin: a wrapper that calls it falls through to the save,
+// not back into itself.
+func (d *crLinkDlg) saveLinkNative(text, url string) {
+	d.saved = true
 	linkSource = "link-dialog" // addLinkTransform's ctx.source
 	u := transformLink(url)
 	linkSource = "paste"
@@ -240,7 +258,7 @@ func (d *crLinkDlg) props() slackc.Props {
 		// textIsEditable (ComposerLinkModal's prop)
 		"textIsEditable": d.preview == nil,
 		"saveLink": func(a slackc.Props) {
-			d.saveLink(a.StrOr("text", d.text.Text()), normalizeLinkURL(a.StrOr("url", d.link.Text())))
+			d.saveLinkNative(a.StrOr("text", d.text.Text()), normalizeLinkURL(a.StrOr("url", d.link.Text())))
 		},
 		"onSave":  func() { d.save(); d.modal.Dismiss() },
 		"onClose": func() { d.modal.Dismiss() },
@@ -263,6 +281,10 @@ func (d *crLinkDlg) layoutBody(gtx layout.Context, p slackc.Props) layout.Dimens
 // ComposerLinkModal slackc measures this native with gtx.Disabled() first,
 // where the FocusCmd went nowhere and neither field ever got the caret.
 func (d *crLinkDlg) body(gtx layout.Context) layout.Dimensions {
+	if f := d.form.alive; f != nil && !d.saved && !f() {
+		d.modal.Dismiss() // its target went away: nothing to save into (onCancel refocuses the editor)
+		return layout.Dimensions{}
+	}
 	if !d.focused && gtx.Source.Enabled() {
 		d.focused = true
 		tag := &d.text // focusTextOnMount: no initial text
@@ -277,6 +299,10 @@ func (d *crLinkDlg) body(gtx layout.Context) layout.Dimensions {
 			if !ok {
 				break
 			}
+			if _, ok := ev.(widget.ChangeEvent); ok {
+				d.noteEdits()
+				continue
+			}
 			if _, ok := ev.(widget.SubmitEvent); !ok {
 				continue
 			}
@@ -288,7 +314,6 @@ func (d *crLinkDlg) body(gtx layout.Context) layout.Dimensions {
 			}
 		}
 	}
-	d.noteEdits()
 	th := d.h.Theme()
 	w := gtx.Constraints.Max.X
 	y := 0

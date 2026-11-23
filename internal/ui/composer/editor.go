@@ -1113,7 +1113,15 @@ func (e *Editor) hitPos(pt image.Point) int {
 }
 
 func (e *Editor) onClick(gtx layout.Context, ev gesture.ClickEvent) {
+	macCtx := ev.Source == pointer.Mouse && ctxclick.Mac && ev.Modifiers.Contain(key.ModCtrl)
 	switch {
+	case macCtx:
+		// a macOS Ctrl+click is a context click (spellContextEvents): it
+		// opens the link menu, and its click opens no popover
+		e.linkPressOK = false
+		if ev.Kind == gesture.KindClick {
+			return
+		}
 	case ev.Kind == gesture.KindPress && ev.Source == pointer.Mouse:
 		defer e.noteLinkPress(ev) // after the press placed the caret
 	case ev.Kind == gesture.KindClick && ev.Source == pointer.Mouse:

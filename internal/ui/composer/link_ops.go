@@ -20,6 +20,7 @@ func (e *Editor) unlinkRangeCaret(lo, hi, caret int) {
 	}
 	e.begin(edOther, true)
 	d.SetLink(lo, hi, "")
+	d.SetStyle(lo, hi, Unlink, true)
 	caret = d.clamp(caret)
 	e.anchor, e.caret = caret, caret
 	e.commit()
@@ -78,12 +79,13 @@ func (e *Editor) saveLink(lo, hi int, text, url string, didTextChange, editingSl
 	e.begin(edOther, true)
 	end := hi
 	if editingSlug || didTextChange || hi == lo {
-		st := e.typingAttr(lo, hi).Style
+		st := e.typingAttr(lo, hi).Style &^ Unlink // unlink: false
 		d.Delete(lo, hi)
 		end = d.Insert(lo, text, Attr{Style: st})
 		d.SetLink(lo, end, url)
 	} else {
 		d.SetLink(lo, hi, url)
+		d.SetStyle(lo, hi, Unlink, false)
 	}
 	caret := end
 	if hi == lo {
@@ -105,7 +107,7 @@ func (e *Editor) insertPlainLinkText(lo, hi int, text string) {
 	lo, hi = d.clamp(lo), d.clamp(hi)
 	e.begin(edOther, true)
 	d.Delete(lo, hi)
-	end := d.Insert(lo, text, Attr{})
+	end := d.Insert(lo, text, Attr{Style: Unlink}) // {unlink: true}
 	e.anchor, e.caret = end, end
 	e.commit()
 }
@@ -121,8 +123,66 @@ func (e *Editor) removeFormLink(lo, hi int, editingSlug bool) {
 		return
 	}
 	if a := d.Attrs[lo].Atom; editingSlug && hi-lo == 1 && a != nil {
-		e.replaceRange(lo, hi, a.Text, Attr{}, lo+len([]rune(a.Text)))
+		e.replaceRange(lo, hi, a.Text, Attr{Style: Unlink}, lo+len([]rune(a.Text)))
 		return
 	}
 	e.unlinkRange(lo, hi)
+}
+
+// edRange is a range the link menus, the popover's Edit and the link
+// dialog act on later, kept live: Quill's range is an index the editor's
+// own changes move (an async slug's answer swaps a pasted URL for a
+// one-rune slug while the dialog is open). It holds the document as it
+// was; resolve maps the range through what changed since.
+type edRange struct {
+	snap   *Doc
+	ver    uint64
+	lo, hi int
+}
+
+// liveRange is [lo, hi) of the document now.
+func (e *Editor) liveRange(lo, hi int) edRange {
+	e.init()
+	return edRange{snap: e.doc.Clone(), ver: e.version, lo: lo, hi: hi}
+}
+
+// resolve is r in the document now: the same runes, moved by any change
+// before them; ok is false when a change touched the range itself (its
+// target is gone, and the action does nothing).
+func (e *Editor) resolve(r edRange) (lo, hi int, ok bool) {
+	e.init()
+	if r.snap == nil {
+		return 0, 0, false
+	}
+	if e.version == r.ver {
+		return r.lo, r.hi, r.hi <= e.doc.Len()
+	}
+	old, cur := r.snap, e.doc
+	same := func(i, j int) bool {
+		if old.Runes[i] != cur.Runes[j] {
+			return false
+		}
+		a, b := old.Attrs[i], cur.Attrs[j]
+		if a.Style != b.Style || a.Link != b.Link || (a.Atom == nil) != (b.Atom == nil) {
+			return false
+		}
+		return a.Atom == nil || *a.Atom == *b.Atom
+	}
+	n := min(old.Len(), cur.Len())
+	pre := 0
+	for pre < n && same(pre, pre) {
+		pre++
+	}
+	suf := 0
+	for suf < n-pre && same(old.Len()-1-suf, cur.Len()-1-suf) {
+		suf++
+	}
+	switch {
+	case r.hi <= pre:
+		return r.lo, r.hi, true // before every change
+	case r.lo >= old.Len()-suf:
+		d := cur.Len() - old.Len()
+		return r.lo + d, r.hi + d, true // after them: moved with the text
+	}
+	return 0, 0, false
 }

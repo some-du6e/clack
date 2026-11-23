@@ -7,10 +7,12 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -19,6 +21,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -55,6 +58,7 @@ type lkEnv struct {
 	dlg    *crLinkDlg        // the last link dialog
 	pop    *linkPopover      // the last edit-link popover
 	opened []string          // links opened in the browser
+	desk   []popups.MenuItem // the last desktop (spelling) menu's rows
 }
 
 const (
@@ -81,6 +85,11 @@ func newLinkEnv(t *testing.T) *lkEnv {
 	linkDialogTap = func(d *crLinkDlg) { e.dlg = d }
 	linkPopoverTap = func(p *linkPopover) { e.pop = p }
 	t.Cleanup(func() { linkOpenURL, linkMenuTap, linkDialogTap, linkPopoverTap = prevOpen, nil, nil, nil })
+	// the desktop app's own menu, drawn into the env's overlays
+	prevHost := MenuHost
+	MenuHost = e.h
+	spellMenuTap = func(it []popups.MenuItem) { e.desk = it }
+	t.Cleanup(func() { MenuHost, spellMenuTap = prevHost, nil })
 	clearDraft(e.ch, "")
 	serverDraftIDs.Delete(draftKey(e.ch, ""))
 	t.Cleanup(func() { clearDraft(e.ch, ""); serverDraftIDs.Delete(draftKey(e.ch, "")) })
@@ -149,7 +158,7 @@ func (e *lkEnv) runeAt(i int) image.Point {
 func (e *lkEnv) rightClick(p image.Point) {
 	NotePointer(p)
 	pos := f32.Pt(float32(p.X), float32(p.Y))
-	e.items = nil
+	e.items, e.desk = nil, nil
 	e.r.Queue(
 		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pos, Time: e.ptr},
 		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonSecondary, Position: pos, Time: e.ptr},
@@ -165,7 +174,7 @@ func (e *lkEnv) click(p image.Point) {
 		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pos, Time: e.ptr},
 		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos, Time: e.ptr},
 		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos, Time: e.ptr + 40*time.Millisecond})
-	e.ptr += 400 * time.Millisecond // past the double-click window
+	e.ptr += gesture.DoubleClickTime() + 100*time.Millisecond // past the double-click window
 	e.frame()
 	e.frame()
 }
@@ -234,6 +243,7 @@ func (e *lkEnv) fill(text, link *string) {
 		e.dlg.link.SetText(*link)
 	}
 	e.frame()
+	e.dlg.noteEdits() // onChange
 }
 
 // save clicks the dialog's Save.
@@ -302,8 +312,8 @@ func TestLinkMenuEditsALink(t *testing.T) {
 			t.Errorf("row %q: %q, danger %v", it.Key, it.Label, it.Danger)
 		}
 	}
-	if len(e.h.overlays) != 1 || e.h.menus != 1 {
-		t.Fatalf("%d overlays (%d menus), want the link menu alone", len(e.h.overlays), e.h.menus)
+	if len(e.h.overlays) != 1 || e.h.menus != 1 || e.desk != nil {
+		t.Fatalf("%d overlays (%d menus), desktop rows %d: want the link menu alone", len(e.h.overlays), e.h.menus, len(e.desk))
 	}
 
 	// rename
@@ -430,6 +440,9 @@ func TestLinkMenuInQuoteListAndCode(t *testing.T) {
 	e.rightClick(e.runeAt(got.Len() - 2))
 	if e.items != nil {
 		t.Errorf("a code link's right-click opened Texty's menu %v", e.rows())
+	}
+	if !slices.ContainsFunc(e.desk, func(it popups.MenuItem) bool { return it.Key == "cut" }) {
+		t.Errorf("a code link's right-click: desktop rows %d, want the desktop menu (Cut, Copy, Paste)", len(e.desk))
 	}
 }
 
@@ -633,13 +646,18 @@ func TestLinkSlugRenameSends(t *testing.T) {
 // conversation's composer, hold the link with its text.
 func TestLinkRenameDraftRoundTrip(t *testing.T) {
 	e := newLinkEnv(t)
-	var blocks string
+	var mu sync.Mutex
+	var saved string
 	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
 		if method == "drafts.create" || method == "drafts.update" {
-			blocks = f.Get("blocks")
+			mu.Lock()
+			saved = f.Get("blocks")
+			mu.Unlock()
 		}
 		return nil, false
 	})
+	blocksNow := func() string { mu.Lock(); defer mu.Unlock(); return saved }
+	var blocks string
 	t.Cleanup(func() { e.fs.SetHook(nil) })
 	d := NewDoc()
 	end := d.Insert(0, "see ", Attr{})
@@ -650,7 +668,7 @@ func TestLinkRenameDraftRoundTrip(t *testing.T) {
 	e.fill(sp(lkRename), nil)
 	e.save()
 	e.c.syncDraftNow()
-	waitUntil(t, "drafts.create", func() bool { e.frame(); return blocks != "" })
+	waitUntil(t, "drafts.create", func() bool { e.frame(); blocks = blocksNow(); return blocks != "" })
 	if !strings.Contains(blocks, `"text":"`+lkRename+`"`) {
 		t.Fatalf("draft blocks %s", blocks)
 	}
@@ -710,5 +728,126 @@ func TestLinkRenameInMessageEdit(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Save didn't save")
+	}
+}
+
+// Remove link on a link whose text is its URL keeps it unlinked (Texty's
+// {link: false, unlink: true}): the send carries the URL as text, and a
+// space typed after it doesn't link it again.
+func TestLinkRemoveStaysUnlinked(t *testing.T) {
+	e := newLinkEnv(t)
+	posts := make(chan url.Values, 2)
+	e.fs.OnPost = func(f url.Values, _ map[string]any) { posts <- f }
+	d := NewDoc()
+	a := d.Insert(0, "see ", Attr{})
+	b := d.Insert(a, lkURL, Attr{})
+	d.SetLink(a, b, lkURL)
+	e.setDoc(d)
+	e.rightClick(e.runeAt(6))
+	e.do("remove-link")
+	e.c.ed.SetSelection(b, b)
+	e.typeOver(" ")
+	if got := e.c.ed.Doc(); len(linkRuns(got)) != 0 {
+		t.Fatalf("after Remove link and a space: links %v", linkRuns(got))
+	}
+	e.c.submit()
+	select {
+	case f := <-posts:
+		bl := f.Get("blocks")
+		if strings.Contains(bl, `"type":"link"`) || !strings.Contains(bl, `{"type":"text","text":"see `+lkURL+` "}`) {
+			t.Errorf("blocks %s, want the URL as text", bl)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no chat.postMessage")
+	}
+}
+
+// The dialog through real input: Ctrl+Shift+U on a selection focuses Link
+// (the text is set), the URL typed there and Enter save it; on an existing
+// link, emptying Link and clicking Save takes the link off, and a new text
+// with Link emptied leaves that text, plain (onSubmit's insertPlainText).
+// Enter in Text saves too (jRNC: the form submits), it doesn't move to Link.
+func TestLinkDialogRealInput(t *testing.T) {
+	e := newLinkEnv(t)
+	d := NewDoc()
+	d.Insert(0, "read docs now", Attr{})
+	e.setDoc(d)
+	e.click(e.runeAt(1))
+	e.c.ed.SetSelection(5, 9)
+	e.key("U", key.ModShortcut|key.ModShift)
+	if e.dlg == nil {
+		t.Fatal("no dialog")
+	}
+	e.frame()
+	field := func(ed *widget.Editor, s string) { // s typed over all of the focused field
+		e.r.Queue(key.EditEvent{Range: key.Range{Start: 0, End: ed.Len()}, Text: s})
+		e.frame()
+		e.frame()
+	}
+	field(&e.dlg.link, "example.com/docs")
+	if e.dlg.link.Text() != "example.com/docs" || !e.dlg.canSave() {
+		t.Fatalf("typed into Link: %q, Save %v", e.dlg.link.Text(), e.dlg.canSave())
+	}
+	e.key(key.NameReturn, 0)
+	if got := e.c.ed.Doc(); !slices.Equal(linkRuns(got), []string{"docs→http://example.com/docs"}) {
+		t.Fatalf("after Enter: %q %v", got.Text(), linkRuns(got))
+	}
+
+	// emptied Link, Save clicked: the link comes off, the text stays
+	e.setDoc(lkDoc())
+	e.rightClick(e.runeAt(6))
+	e.do("edit-link")
+	e.frame()
+	field(&e.dlg.link, "")
+	r := e.dlg.saveBtn.Rect()
+	if r.Empty() || !e.dlg.canSave() {
+		t.Fatalf("Save %v at %v", e.dlg.canSave(), r)
+	}
+	e.click(r.Min.Add(r.Size().Div(2)))
+	if got := e.c.ed.Doc(); got.Text() != "see the docs now" || len(linkRuns(got)) != 0 {
+		t.Fatalf("emptied Link, Save: %q %v", got.Text(), linkRuns(got))
+	}
+
+	// a new text with Link emptied: that text, plain
+	e.setDoc(lkDoc())
+	e.rightClick(e.runeAt(6))
+	e.do("edit-link")
+	e.frame()
+	field(&e.dlg.link, "")
+	e.key(key.NameTab, key.ModShift) // back to Text
+	field(&e.dlg.text, "our docs")
+	e.key(key.NameReturn, 0)
+	if got := e.c.ed.Doc(); got.Text() != "see our docs now" || len(linkRuns(got)) != 0 {
+		t.Fatalf("new text, emptied Link: %q %v", got.Text(), linkRuns(got))
+	}
+}
+
+// The popover's buttons clicked: Edit opens the dialog over the link,
+// the close button closes it with the click's caret back.
+func TestLinkPopoverClicks(t *testing.T) {
+	e := newLinkEnv(t)
+	e.setDoc(lkDoc())
+	e.click(e.runeAt(7))
+	p := e.pop
+	if p == nil || p.rEdit.Empty() {
+		t.Fatalf("popover %+v", p)
+	}
+	e.click(p.rEdit.Min.Add(p.rEdit.Size().Div(2)))
+	if !p.Dismissed() || e.dlg == nil || e.dlg.text.Text() != "the docs" {
+		t.Fatalf("Edit clicked: popover open %v, dialog %+v", !p.Dismissed(), e.dlg)
+	}
+	e.dlg.modal.Dismiss()
+	e.frame()
+
+	e.setDoc(lkDoc())
+	e.click(e.runeAt(7))
+	p = e.pop
+	at := p.initHi
+	e.click(p.rClose.Min.Add(p.rClose.Size().Div(2)))
+	if !p.Dismissed() {
+		t.Fatal("the close button left the popover open")
+	}
+	if lo, hi := e.c.ed.Selection(); lo != at || hi != at {
+		t.Errorf("close: selection %d-%d, want %d", lo, hi, at)
 	}
 }

@@ -1194,6 +1194,15 @@ func (d *Doc) rangeLink(lo, hi int) string {
 // removeLink); the editor focused again either way (onClose).
 func (c *Composer) openLinkForm(f linkForm) {
 	d := c.ed.Doc()
+	r := c.ed.liveRange(f.lo, f.hi)
+	ver, ok := c.ed.Version(), true
+	f.alive = func() bool {
+		if v := c.ed.Version(); v != ver {
+			ver = v
+			_, _, ok = c.ed.resolve(r)
+		}
+		return ok
+	}
 	if !f.editable && f.preview == nil && f.hi > f.lo {
 		// initialBlocks: the range's rich text, drawn for the Text field
 		var r richtext.Resolver
@@ -1203,13 +1212,18 @@ func (c *Composer) openLinkForm(f linkForm) {
 		f.preview = linkPreview(r, d.Slice(f.lo, f.hi))
 	}
 	openLinkDialog(c.h, f, func(res linkResult) {
+		lo, hi, ok := c.ed.resolve(r) // the range as it is now
+		if !ok {
+			c.Focus()
+			return
+		}
 		switch res.kind {
 		case linkSaved:
-			c.ed.saveLink(f.lo, f.hi, res.text, res.url, res.didTextChange, f.editingSlug)
+			c.ed.saveLink(lo, hi, res.text, res.url, res.didTextChange, f.editingSlug)
 		case linkPlain:
-			c.ed.insertPlainLinkText(f.lo, f.hi, res.text)
+			c.ed.insertPlainLinkText(lo, hi, res.text)
 		case linkRemoved:
-			c.ed.removeFormLink(f.lo, f.hi, f.editingSlug)
+			c.ed.removeFormLink(lo, hi, f.editingSlug)
 		}
 		c.Focus()
 	}, c.Focus)

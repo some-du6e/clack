@@ -504,49 +504,48 @@ func linkTrimLength(rs []rune, trailing bool) int {
 		}
 		run++
 	}
+	// each bracket's balance over what's left of the text, kept as the
+	// trim walks on (getTrimLength recounts it for every character)
+	sign := func(p [2]rune, r rune) int {
+		open, close := p[0], p[1]
+		if trailing {
+			open, close = close, open
+		}
+		switch r {
+		case open:
+			return 1
+		case close:
+			return -1
+		}
+		return 0
+	}
+	bal := make([]int, len(linkTrimPairs))
+	for i, p := range linkTrimPairs {
+		for _, r := range rs {
+			bal[i] += sign(p, r)
+		}
+	}
 	a := 0
 	for n := 0; n < run; n++ {
-		var o rune
+		o := rs[n]
 		if trailing {
 			o = rs[len(rs)-1-n]
-		} else {
-			o = rs[n]
 		}
-		var pair [2]rune
-		found := false
-		for _, p := range linkTrimPairs {
+		pi := -1
+		for i, p := range linkTrimPairs {
 			if !trailing && p[0] == o || trailing && p[1] == o {
-				pair, found = p, true
+				pi = i
 			}
 		}
-		if !found {
+		if pi < 0 {
 			a++
-			continue
-		}
-		m := 0
-		if trailing {
-			for i := len(rs) - 1 - n; i >= 0; i-- {
-				switch rs[i] {
-				case pair[1]:
-					m++
-				case pair[0]:
-					m--
-				}
-			}
-		} else {
-			for _, r := range rs[n:] {
-				switch r {
-				case pair[0]:
-					m++
-				case pair[1]:
-					m--
-				}
-			}
-		}
-		if m > 0 {
+		} else if bal[pi] > 0 {
 			a++
 		} else {
 			break
+		}
+		for i, p := range linkTrimPairs {
+			bal[i] -= sign(p, o) // o leaves what's left
 		}
 	}
 	return a

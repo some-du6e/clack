@@ -63,35 +63,46 @@ func (c *Composer) linkContext(el edElem, at image.Point) bool {
 	return true
 }
 
+// onRange runs f over the element's range as it is now (the menu's
+// range, kept live: an edit that came meanwhile moves it, one that
+// touched it leaves the row nothing to act on).
+func (c *Composer) onRange(r edRange, f func(lo, hi int)) func() {
+	return func() {
+		if lo, hi, ok := c.ed.resolve(r); ok {
+			f(lo, hi)
+		}
+	}
+}
+
 // linkMenuItems is LinkContextMenu's template for the <a> el.
 func (c *Composer) linkMenuItems(el edElem) []popups.MenuItem {
-	lo, hi, url := el.lo, el.hi, el.url
+	r, url := c.ed.liveRange(el.lo, el.hi), el.url
 	items := []popups.MenuItem{
 		{Key: "copy", Label: msgInputNS.T("Copy link"), Icon: "link", DoCtx: func(gtx layout.Context) { c.copyLink(gtx, url) }},
-		{Key: "edit-link", Label: msgInputNS.T("Edit link"), Icon: "edit", Do: func() { c.editLink(lo, hi, url) }},
+		{Key: "edit-link", Label: msgInputNS.T("Edit link"), Icon: "edit", Do: c.onRange(r, func(lo, hi int) { c.editLink(lo, hi, url) })},
 		popups.Sep(),
 	}
 	if el.text != url { // W = r !== a: the text isn't its URL
 		items = append(items,
 			popups.MenuItem{Key: "header-display-as", Header: msgInputNS.T("Display as")},
-			popups.MenuItem{Key: "url", Label: msgInputNS.T("URL"), Do: func() { c.displayAsURL(lo, hi, url) }},
+			popups.MenuItem{Key: "url", Label: msgInputNS.T("URL"), Do: c.onRange(r, func(lo, hi int) { c.displayAsURL(lo, hi, url) })},
 			popups.Sep())
 	}
 	return append(items, popups.MenuItem{Key: "remove-link", Label: msgInputNS.T("Remove link"), Danger: true,
-		Do: func() { c.ed.unlinkRange(lo, hi); c.Focus() }})
+		Do: c.onRange(r, func(lo, hi int) { c.ed.unlinkRange(lo, hi); c.Focus() })})
 }
 
 // slugMenuItems is SlugContextMenu's template for the slug el.
 func (c *Composer) slugMenuItems(el edElem) []popups.MenuItem {
 	at := el.atom
-	lo, hi, url := el.lo, el.hi, el.url
+	r, url := c.ed.liveRange(el.lo, el.hi), el.url
 	var items []popups.MenuItem
 	if url != "" {
 		items = append(items, popups.MenuItem{Key: "copy", Label: msgInputNS.T("Copy link"), Icon: "link",
 			DoCtx: func(gtx layout.Context) { c.copyLink(gtx, url) }})
 		if truncatedLinkSlug(at) {
 			items = append(items, popups.MenuItem{Key: "edit-link", Label: msgInputNS.T("Edit link"), Icon: "edit",
-				Do: func() { c.editLink(lo, hi, url) }})
+				Do: c.onRange(r, func(lo, hi int) { c.editLink(lo, hi, url) })})
 		}
 		items = append(items, popups.Sep())
 		if at.Kind == AtomLink { // "attachment" or "link"
@@ -113,7 +124,7 @@ func (c *Composer) slugMenuItems(el edElem) []popups.MenuItem {
 	if url != "" {
 		items = append(items,
 			popups.MenuItem{Key: "header-display-as", Header: msgInputNS.T("Display as")},
-			popups.MenuItem{Key: "url", Label: msgInputNS.T("URL"), Do: func() { c.displayAsURL(lo, hi, url) }})
+			popups.MenuItem{Key: "url", Label: msgInputNS.T("URL"), Do: c.onRange(r, func(lo, hi int) { c.displayAsURL(lo, hi, url) })})
 	}
 	return items
 }

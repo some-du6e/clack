@@ -3,8 +3,10 @@ package composer
 import (
 	"image"
 	"image/color"
+	"slices"
 
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -64,14 +67,58 @@ type linkPopover struct {
 	tert, urlLink          widget.Clickable
 	scrim, card            int
 	rect                   image.Rectangle // the card, window px, last layout
+
+	// ver is the editor's document version the popover was made for: an
+	// edit under it (a slug's answer, a send) closes it, as its offsets
+	// would point elsewhere
+	ver uint64
+	// the key focus (DeprecatedCoachmarkCloseButton focuses its button on
+	// mount: Remove, the last one mounted). focus is the focused stop;
+	// asked, the FocusCmd sent.
+	focus  lpStop
+	asked  bool
+	urlCut string // the URL as the box can show it
+	// the buttons as last laid out (window px)
+	rClose, rEdit, rRemove image.Rectangle
 }
+
+// lpStop is one of the card's tab stops, in DOM order: the close button,
+// the URL's link, the third button, Edit, Remove. The coachmark is a
+// ReactModal, which keeps Tab inside it.
+type lpStop uint8
+
+const (
+	lpStopClose lpStop = iota
+	lpStopURL
+	lpStopTert
+	lpStopEdit
+	lpStopRemove
+)
+
+// stops are the card's tab stops now.
+func (p *linkPopover) stops() []lpStop {
+	st := []lpStop{lpStopClose, lpStopURL}
+	if p.tertiary() != "" {
+		st = append(st, lpStopTert)
+	}
+	return append(st, lpStopEdit, lpStopRemove)
+}
+
+// lpURLMax is how much of a URL the box draws: its 9rem at 316px holds a
+// few hundred characters; the rest is never on screen.
+const lpURLMax = 2000
 
 // linkPopoverTap sees each popover as it opens (tests).
 var linkPopoverTap func(*linkPopover)
 
 // openEditLinkPopover is openTextyEditLinkModal.
 func (c *Composer) openEditLinkPopover(alo, ahi int, text, url string, initLo, initHi, lo, hi int, editable bool) {
-	p := &linkPopover{c: c, alo: alo, ahi: ahi, text: text, url: url, initLo: initLo, initHi: initHi, lo: lo, hi: hi, editable: editable}
+	p := &linkPopover{c: c, alo: alo, ahi: ahi, text: text, url: url, initLo: initLo, initHi: initHi, lo: lo, hi: hi, editable: editable,
+		ver: c.ed.Version(), focus: lpStopRemove}
+	p.urlCut = url
+	if rs := []rune(url); len(rs) > lpURLMax {
+		p.urlCut = string(rs[:lpURLMax])
+	}
 	p.truncated = text != "" && url != "" && truncatedLinkText(text, url)
 	p.canTruncate = !p.truncated && url == text && truncateURL(url) != url
 	if linkPopoverTap != nil {
@@ -146,6 +193,79 @@ func (p *linkPopover) onToggleTruncation() {
 	p.c.ed.replaceRange(p.lo, p.hi, t, Attr{Link: p.url}, p.lo+len([]rune(t)))
 	n := len([]rune(t))
 	p.hi, p.ahi = p.lo+n, p.alo+n
+	p.ver = p.c.ed.Version() // its own edit: the offsets above follow it
+}
+
+// activate is Enter (or Space) on the focused stop.
+func (p *linkPopover) activate(s lpStop) {
+	switch s {
+	case lpStopClose:
+		p.Dismiss()
+	case lpStopURL:
+		linkOpenURL(p.url)
+	case lpStopTert:
+		p.onToggleTruncation()
+	case lpStopEdit:
+		p.onEdit()
+	case lpStopRemove:
+		p.onRemove()
+	}
+}
+
+// keys reads the popover's keys: it has the focus while it's open (the
+// editor's selection stays, but no key reaches it), Escape closes it,
+// Tab and Shift+Tab move between its stops, Enter (on the press) and
+// Space (on the release, as Chromium clicks a button) press the focused
+// one.
+func (p *linkPopover) keys(gtx layout.Context) {
+	if !p.asked {
+		p.asked = true
+		gtx.Execute(key.FocusCmd{Tag: p})
+	}
+	shortcut.OwnEscape(p)
+	for {
+		ev, ok := gtx.Event(key.FocusFilter{Target: p},
+			key.Filter{Focus: p, Name: key.NameEscape},
+			key.Filter{Focus: p, Name: key.NameTab, Optional: key.ModShift},
+			key.Filter{Focus: p, Name: key.NameReturn},
+			key.Filter{Focus: p, Name: key.NameEnter},
+			key.Filter{Focus: p, Name: key.NameSpace})
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || p.done {
+			continue
+		}
+		switch {
+		case ke.Name == key.NameSpace && ke.State == key.Release:
+			p.activate(p.focus)
+		case ke.State != key.Press:
+		case ke.Name == key.NameEscape:
+			p.Dismiss()
+		case ke.Name == key.NameTab:
+			st := p.stops()
+			i := slices.Index(st, p.focus)
+			if ke.Modifiers.Contain(key.ModShift) {
+				i = (i - 1 + len(st)) % len(st)
+			} else {
+				i = (i + 1) % len(st)
+			}
+			p.focus = st[i]
+		case ke.Name == key.NameReturn || ke.Name == key.NameEnter:
+			p.activate(p.focus)
+		}
+	}
+	if !slices.Contains(p.stops(), p.focus) {
+		p.focus = lpStopRemove
+	}
+}
+
+// refocus puts the key focus back on the popover after a click in it
+// (a Clickable takes it on its press), the clicked stop focused.
+func (p *linkPopover) refocus(gtx layout.Context, s lpStop) {
+	p.focus = s
+	gtx.Execute(key.FocusCmd{Tag: p})
 }
 
 // tertiary is the third button's label, or "" when there's none.
@@ -230,8 +350,15 @@ func (p *linkPopover) Layout(gtx layout.Context) layout.Dimensions {
 		p.done = true
 		return layout.Dimensions{}
 	}
+	if c.ed.Version() != p.ver {
+		// the document changed under it (a slug's answer, a sent message):
+		// its range and anchor are gone
+		p.done = true
+		return layout.Dimensions{}
+	}
 	a, ok := p.anchor()
 	if !ok {
+		p.done = true // the anchor element went away
 		return layout.Dimensions{}
 	}
 	th := c.h.Theme()
@@ -248,8 +375,13 @@ func (p *linkPopover) Layout(gtx layout.Context) layout.Dimensions {
 		p.onEdit()
 	case p.tert.Clicked(gtx):
 		p.onToggleTruncation()
+		p.refocus(gtx, lpStopTert)
 	case p.urlLink.Clicked(gtx):
 		linkOpenURL(p.url)
+		p.refocus(gtx, lpStopURL)
+	}
+	if !p.done {
+		p.keys(gtx)
 	}
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &p.scrim, Kinds: pointer.Press})
@@ -280,7 +412,7 @@ func (p *linkPopover) Layout(gtx layout.Context) layout.Dimensions {
 	innerW := gtx.Dp(lpW - 2*lpPadX)
 	besideW := innerW - gtx.Dp(lpClose)
 	urlStyle := textStyle{Size: 15, LineHeight: lpLineH, Color: th.C.Link}
-	urlRec, urlDims := crRecWrap(gtx, th, besideW, urlStyle, p.url)
+	urlRec, urlDims := crRecWrap(gtx, th, besideW, urlStyle, p.urlCut)
 	urlH := min(urlDims.Size.Y, gtx.Dp(144)) // max-height 9rem, overflow auto
 	h := gtx.Dp(lpPadT) + gtx.Dp(lpLineH) + gtx.Dp(4) + urlH + gtx.Dp(lpFootMT) + gtx.Dp(lpBtnH) + gtx.Dp(lpPadB)
 	sz := image.Pt(gtx.Dp(lpW), h)
@@ -303,19 +435,28 @@ func (p *linkPopover) Layout(gtx layout.Context) layout.Dimensions {
 
 	rad := gtx.Dp(8)
 	theme.Shadow(gtx, card.Add(image.Pt(0, gtx.Dp(18))), rad, gtx.Dp(24), pal.shadow)
-	ring := max(1, gtx.Dp(1))
-	theme.RRect(gtx, card.Inset(-ring), rad+ring, pal.ring)
+	rw := max(1, gtx.Dp(1))
+	theme.RRect(gtx, card.Inset(-rw), rad+rw, pal.ring)
 	theme.RRect(gtx, card, rad, pal.bg)
 	linkPopArrow(gtx, card, k, top, pal)
 	func() {
 		defer clip.Rect(card).Push(gtx.Ops).Pop()
 		event.Op(gtx.Ops, &p.card)
+		event.Op(gtx.Ops, p) // the key focus's handler
 	}()
+	ring := theme.ButtonV2Focus(th)
+	focusRing := func(r image.Rectangle, s lpStop) {
+		if p.focus == s {
+			theme.Border(gtx, r.Inset(-gtx.Dp(2)), gtx.Dp(6), gtx.Dp(2), ring)
+		}
+	}
 
 	x0, y := card.Min.X+gtx.Dp(lpPadX), card.Min.Y+gtx.Dp(lpPadT)
 	// the close button: float right, relative top −8px right −12px
 	cb := image.Rect(x0+innerW-gtx.Dp(lpClose)+gtx.Dp(12), y-gtx.Dp(8), x0+innerW+gtx.Dp(12), y-gtx.Dp(8)+gtx.Dp(lpClose))
 	p.iconButton(gtx, th, cb, pal)
+	focusRing(cb, lpStopClose)
+	p.rClose = cb
 	// the text, bold, one line
 	crText(gtx, th.Shaper, x0, y, besideW, textStyle{Size: 15, LineHeight: lpLineH, Weight: theme.Bold, Color: pal.fg, MaxLines: 1}, p.text)
 	y += gtx.Dp(lpLineH) + gtx.Dp(4)
@@ -330,12 +471,15 @@ func (p *linkPopover) Layout(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
 		cl.Pop()
 	}()
+	focusRing(image.Rect(x0, y, x0+min(urlDims.Size.X, besideW), y+urlH), lpStopURL)
 	y += urlH + gtx.Dp(lpFootMT)
 	// the footer: [tertiary] … [Edit] 12px [Remove]
 	right := x0 + innerW
-	rw := p.button(gtx, th, &p.remove, popups.BtnDanger, messageInputNS.T("Remove"), right, y)
-	right -= rw + gtx.Dp(12)
-	p.button(gtx, th, &p.edit, popups.BtnOutline, messageInputNS.T("Edit"), right, y)
+	bw := p.button(gtx, th, &p.remove, popups.BtnDanger, messageInputNS.T("Remove"), right, y, p.focus == lpStopRemove)
+	p.rRemove = image.Rect(right-bw, y, right, y+gtx.Dp(lpBtnH))
+	right -= bw + gtx.Dp(12)
+	ew := p.button(gtx, th, &p.edit, popups.BtnOutline, messageInputNS.T("Edit"), right, y, p.focus == lpStopEdit)
+	p.rEdit = image.Rect(right-ew, y, right, y+gtx.Dp(lpBtnH))
 	if t := p.tertiary(); t != "" {
 		st := textStyle{Size: 15, LineHeight: lpLineH, Color: th.C.Link}
 		ty := y + (gtx.Dp(lpBtnH)-gtx.Dp(lpLineH))/2
@@ -346,17 +490,18 @@ func (p *linkPopover) Layout(gtx layout.Context) layout.Dimensions {
 			p.tert.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return d })
 			pointer.CursorPointer.Add(gtx.Ops)
 		}()
+		focusRing(image.Rect(x0, ty, x0+d.Size.X, ty+d.Size.Y), lpStopTert)
 	}
 	return layout.Dimensions{Size: win}
 }
 
 // button draws a medium Slack button with its right edge at right, top y,
 // and returns its width.
-func (p *linkPopover) button(gtx layout.Context, th *theme.Theme, clk *widget.Clickable, kind popups.BtnKind, label string, right, y int) int {
+func (p *linkPopover) button(gtx layout.Context, th *theme.Theme, clk *widget.Clickable, kind popups.BtnKind, label string, right, y int, focused bool) int {
 	m := op.Record(gtx.Ops)
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(lpW), gtx.Dp(lpBtnH))}
-	d := popups.Button(g, th, clk, kind, popups.BtnMedium, label, "", 80)
+	d := popups.FocusButton(g, th, clk, kind, popups.BtnMedium, label, "", 80, focused)
 	call := m.Stop()
 	defer op.Offset(image.Pt(right-d.Size.X, y)).Push(gtx.Ops).Pop()
 	call.Add(gtx.Ops)
