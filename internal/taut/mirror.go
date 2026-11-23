@@ -38,7 +38,7 @@ var wholeSlices = []string{
 	"dndV2", "drafts", "slashCommand", "experiments", "huddleEvents", "allCalls", "peers",
 	"messageEditWindow", "searchResults", "huddlesCanvas", "alert", "unreadCounts",
 	"mutedChannels", "starredChannels", "huddles", "messagesMeta", "threadSub", "userGroupMembership",
-	"clientHuddles", "appActions",
+	"clientHuddles", "appActions", "viewUiState",
 }
 
 type change struct {
@@ -71,6 +71,7 @@ type mirror struct {
 	typing     map[string]typingRec
 	membership map[string]map[string]membershipRec
 	editing    map[string]map[string]any
+	viewUI     map[string]viewUIRec  // Channel views' uiState by channel (SetViewHighlight)
 	drafts     map[string]core.Draft // server drafts by id (drafts.go)
 	local      map[string]localDraft // the composers' live drafts by client_draft_id (drafts.go)
 	search     json.RawMessage
@@ -162,7 +163,7 @@ const jsReadMax = 50000
 func newMirror(t *Taut) *mirror {
 	return &mirror{
 		t: t, typing: map[string]typingRec{}, membership: map[string]map[string]membershipRec{},
-		editing: map[string]map[string]any{}, drafts: map[string]core.Draft{}, local: map[string]localDraft{}, calls: map[string]json.RawMessage{},
+		editing: map[string]map[string]any{}, viewUI: map[string]viewUIRec{}, drafts: map[string]core.Draft{}, local: map[string]localDraft{}, calls: map[string]json.RawMessage{},
 		watched: map[string]map[string]uint64{},
 		jsRead:  map[string]map[string]struct{}{}, jsListed: map[string]bool{}, jsFull: map[string]bool{},
 	}
@@ -776,6 +777,36 @@ func (t *Taut) SetEditing(windowID, ch, ts string, open bool) {
 	t.mirror.invalidate("messageEditWindow")
 }
 
+// viewUIRec is a Channel view's uiState: the message its navigation
+// highlights and starts at ("" for none).
+type viewUIRec struct{ highlight, start string }
+
+// SetViewHighlight is a navigation to channel ch's view as Slack's
+// viewUiState keeps it (client-boot z9hu: an id-keyed store, a navigation
+// adding its view's uiState under the view's id, the channel's for a
+// Channel view: jhdg toMessage's {[channel]: {highlightTs}, ts}). ts is
+// the message a jump highlights (a permalink, a search result), "" for a
+// navigation with no message to start at, which drops the highlight.
+// Slick's HideResolved keeps a highlighted ticket shown.
+func (t *Taut) SetViewHighlight(ch, ts string) {
+	if ch == "" {
+		return
+	}
+	m := t.mirror
+	m.mu.Lock()
+	old, had := m.viewUI[ch]
+	next := viewUIRec{highlight: ts, start: ts}
+	changed := (had || ts != "") && old != next
+	if changed {
+		m.viewUI[ch] = next
+	}
+	m.mu.Unlock()
+	if changed && t.Started() {
+		m.invalidate("viewUiState")
+		t.retellHistory(ch) // a jump waits for the list's history as the patches see it now
+	}
+}
+
 // SetSearchResults shows a search response (Slack's search.modules /
 // search.messages JSON) to plugins under searchResults[instance].
 func (t *Taut) SetSearchResults(instance string, response json.RawMessage) {
@@ -1099,6 +1130,21 @@ func (m *mirror) get(slice, key string) any {
 		out := make(map[string]any, len(m.editing))
 		for k, v := range m.editing {
 			out[k] = v
+		}
+		return out
+	case "viewUiState":
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		out := make(map[string]any, len(m.viewUI))
+		for ch, v := range m.viewUI {
+			ui := map[string]any{ch: map[string]any{}}
+			if v.highlight != "" {
+				ui[ch] = map[string]any{"highlightTs": v.highlight}
+			}
+			if v.start != "" {
+				ui["ts"] = v.start
+			}
+			out[ch] = ui
 		}
 		return out
 	case "searchResults":

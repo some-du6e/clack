@@ -82,6 +82,16 @@ func (t *Taut) installHost(r *runtime) {
 		return nil, nil
 	})
 	sync("injecting", func(a []json.RawMessage) (any, error) { return nil, nil })
+	// what the patches took out of the channelHistory keys the lists show
+	// (history.go)
+	sync("historyHidden", func(a []json.RawMessage) (any, error) {
+		var changed map[string][]string
+		var call float64
+		jsonArg(a, 0, &changed)
+		jsonArg(a, 1, &call)
+		t.ui.history.tell(t, changed, uint64(call))
+		return nil, nil
+	})
 	// the groups the plugins' patches of the experiments slice force (experiments.go)
 	sync("experiments", func(a []json.RawMessage) (any, error) {
 		var forced map[string]*string

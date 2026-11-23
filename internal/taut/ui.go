@@ -140,12 +140,14 @@ type uiState struct {
 	roots   map[uint64]*jsrt.Root // slackc root → jsrt root
 	rootsMu sync.Mutex
 
-	views viewCache
+	views   viewCache
+	history historyView // channelHistory as the patches leave it (history.go)
 }
 
 func newUIState(t *Taut) *uiState {
 	u := &uiState{t: t, roots: map[uint64]*jsrt.Root{}}
 	u.views.init(t)
+	u.history.init()
 	return u
 }
 
