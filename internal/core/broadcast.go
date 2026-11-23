@@ -494,7 +494,40 @@ func (a *App) LoadBroadcastEnabled(ctx context.Context, ch string) bool {
 	if err := a.C.Call(ctx, "channels.prefs.get", url.Values{"channel_id": {ch}, "pref_name": {"enable_at_channel"}}, &r); err != nil {
 		return true
 	}
-	return BroadcastPrefEnabled(r.PrefValue)
+	on := BroadcastPrefEnabled(r.PrefValue)
+	ec := a.enabledPrefs()
+	ec.mu.Lock()
+	ec.m[ch] = on
+	ec.mu.Unlock()
+	return on
+}
+
+// enabledPrefs are the enable_at_channel values LoadBroadcastEnabled read,
+// by channel.
+type enabledPrefs struct {
+	mu sync.Mutex
+	m  map[string]bool
+}
+
+var enabledIndex = newPerApp() // *App → *enabledPrefs
+
+func (a *App) enabledPrefs() *enabledPrefs {
+	v, _ := enabledIndex.LoadOrStore(a, &enabledPrefs{m: map[string]bool{}})
+	return v.(*enabledPrefs)
+}
+
+// BroadcastEnabledCached is isBroadcastKeywordsEnabled from the store,
+// as the send's message processor reads it (rNCs): the channel's
+// enable_at_channel as last loaded, enabled when it never was (Slack:
+// prefs not loaded yet).
+func (a *App) BroadcastEnabledCached(ch string) bool {
+	ec := a.enabledPrefs()
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	if on, ok := ec.m[ch]; ok {
+		return on
+	}
+	return true
 }
 
 // BroadcastPrefEnabled reads an enable_at_channel value as Slack does:

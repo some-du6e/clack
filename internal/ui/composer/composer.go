@@ -1243,7 +1243,7 @@ func (c *Composer) schedule(t time.Time) {
 	if c.edit != nil || c.ed.Empty() || !t.After(time.Now()) {
 		return // the menu's times are ahead; the dialog only takes 5 min to 120 days out
 	}
-	doc := c.prepareSend(c.ed.Doc())
+	doc := c.prepareMessage(c.ed.Doc()) // prepareAndSendMessage with dateScheduled: the processor too
 	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
 	api, ch, ts := c.api, c.ch, c.ts
 	broadcast := c.broadcast && ts != ""
@@ -1377,14 +1377,19 @@ func (c *Composer) submit() {
 		c.deleteEmptiedEdit()
 		return
 	}
+	// prepareMessage: prepareSend's document through the message
+	// processor prepareAndSendMessage and saveMessageEdit both run (rNCs,
+	// slash_mentions.go): a typed @name, #channel or keyword naming
+	// exactly one is its mention from here on, in a message, an edit and
+	// a command alike
 	if c.edit != nil && c.editFilesChanged() {
-		c.saveEditWithFiles(c.prepareSend(d))
+		c.saveEditWithFiles(c.prepareMessage(d))
 		return
 	}
-	doc := c.prepareSend(d)
+	doc := c.prepareMessage(d)
 	text := doc.Mrkdwn()
 	blocks := doc.RichTextBlocks()
-	api, ch, ts := c.api, c.ch, c.ts
+	api, ts := c.api, c.ts
 
 	if c.edit != nil {
 		m := c.edit
@@ -1432,49 +1437,22 @@ func (c *Composer) submit() {
 		return
 	}
 
-	// Slash commands (only when the message starts with a known command
-	// or any /word; Slack sends unknown /words as commands too).
+	o := &outgoing{doc: doc, orig: d.Clone(), text: text, blocks: blocks, broadcast: c.broadcast && ts != ""}
 	if c.att.Len() == 0 {
-		plain := strings.TrimSpace(d.Text()) // as typed: markup mode must not eat a command's * or _
-		if strings.HasPrefix(plain, "/") && !strings.HasPrefix(plain, "//") {
-			cmd, rest, _ := strings.Cut(plain, " ")
-			if hs, ok := c.h.(slashHuddler); ok && strings.EqualFold(cmd, "/huddle") && ts == "" {
-				// /huddle starts or joins the huddle here (Slack's
-				// startHuddle), like the header button
-				c.clearAfterSend()
-				hs.SlashHuddle(ch)
-				return
+		// A slash command (the slash test on the processed delta, s4/N)
+		// goes through prepareAndSendMessage like a message: the broadcast
+		// warning, plugins' patches, then handleSlashCommand in the job
+		// (slash_send.go). MessagePaneInput passes slashCommandAppId, the
+		// app of the command picked from the list (the thread composer,
+		// InputContainer, passes none).
+		if q, _ := qFromDoc(doc); looksLikeSlashCommand(q) {
+			o.command = true
+			if p := c.cmdPick; p.AppID != "" && ts == "" && strings.TrimPrefix(jsToLower(p.Name), "/") == strings.TrimPrefix(parseSlashArgs(q).Cmd, "/") {
+				o.appID = p.AppID
 			}
-			// slashCommandAppId: the app of the command picked from the
-			// list, while the message still runs it
-			app := ""
-			if p := c.cmdPick; p.AppID != "" && strings.EqualFold(strings.TrimPrefix(p.Name, "/"), strings.TrimPrefix(cmd, "/")) {
-				app = p.AppID
-			}
-			c.cmdPick = core.Command{}
-			// executeCommand sends the arguments as blocks, so a mention
-			// goes out as its member, not as the name the chip shows
-			// (Text, the plain words, would let the server match "@karim"
-			// to someone else)
-			blocks := commandArgs(d).CommandBlocks()
-			c.clearAfterSend()
-			go func() {
-				// handleSlashCommand: the reply or the failure is
-				// Slackbot's ephemeral; the app's modal arrives as
-				// view_opened for the command's client_token
-				res, err := runCommand(context.Background(), api, core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), Blocks: blocks, ThreadTS: ts, AppID: app})
-				if err == nil && res.KeepInput {
-					c.restore(doc)
-				}
-				if inv := res.Invite; inv != nil && inv.AddPeople != "" { // the local /invite's invite modal
-					if o, ok := c.h.(inviteOpener); ok {
-						o.OpenInviteToChannel(inv.AddPeople, inv.AddUsers)
-					}
-				}
-			}()
-			return
 		}
 	}
+	c.cmdPick = core.Command{}
 
 	// prepareAndSendMessage's alt text speed bump
 	// (maybeOpenEditFileDialogForImages, editfile.go): images without alt
@@ -1488,8 +1466,7 @@ func (c *Composer) submit() {
 		return
 	}
 
-	o := &outgoing{doc: doc, text: text, blocks: blocks, broadcast: c.broadcast && ts != ""}
-	if c.att.Len() == 0 {
+	if c.att.Len() == 0 && !o.command {
 		// prepareAndSendMessage: the draft's GIFs as EwsX attachments.
 		// With files they wait in the draft: Clack shares files with
 		// files.share, which takes no attachments.
@@ -1510,7 +1487,14 @@ func (c *Composer) submit() {
 
 // outgoing is a message on its way out of the composer.
 type outgoing struct {
-	doc       *Doc
+	doc *Doc
+	// orig is the composer's document as it was (InputContainer's
+	// contents): what a failed send puts back (nil: doc)
+	orig *Doc
+	// command: the message is a slash command (no GIFs go with it); appID
+	// is its slashCommandAppId
+	command   bool
+	appID     string
 	text      string
 	blocks    json.RawMessage
 	broadcast bool
@@ -1566,7 +1550,8 @@ func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 	batch := c.att.takeForSend()
 	hasFiles := !batch.empty()
 	job = &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
-		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast}
+		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast,
+		store: c.slugStore(), ui: c.commandUI()}
 	job.sent = func(cid string, files bool) {
 		c.later(func() {
 			if c.OnSend != nil {
@@ -1697,6 +1682,11 @@ type sendJob struct {
 	// sent is called as the message goes out (Composer.OnSend), off the
 	// UI goroutine; nil for none.
 	sent func(cid string, files bool)
+	// store is what the message processor's searches read (the
+	// composer's, snapshotted on the UI goroutine); ui what a command
+	// needs from the composer (nil: nothing)
+	store slugStore
+	ui    *commandUI
 }
 
 func (j *sendJob) run(ctx context.Context) error {
@@ -1731,7 +1721,7 @@ func (j *sendJob) args() prepareSendArgs {
 	}
 	return prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
 		ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view,
-		IncludeBroadcastKeywordWarning: j.warn}
+		IncludeBroadcastKeywordWarning: j.warn, SlashCommandAppID: j.o.appID}
 }
 
 // patchArgs are args as the plugins' patches see them: with the files'
@@ -1932,7 +1922,11 @@ func (c *Composer) restore(d *Doc) { c.restoreWith(d, nil) }
 // hasn't typed since: the GIFs went back into a composer the user had
 // typed a new message in, and went out with it.
 func (c *Composer) restoreSend(o *outgoing) {
-	c.restoreWith(o.doc, func() { c.att.putBackGifs(o.gifs) })
+	d := o.doc
+	if o.orig != nil {
+		d = o.orig // P.setContents(O): the input as it was
+	}
+	c.restoreWith(d, func() { c.att.putBackGifs(o.gifs) })
 }
 
 // restoreWith is restore, running also (UI goroutine) once the message

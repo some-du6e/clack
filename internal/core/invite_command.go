@@ -1,9 +1,10 @@
 package core
 
-// Slack's local /invite (slash-commands-local QAQd inviteCommand, CDN
-// build fa938a086569, 2026-11-13). The command never reaches
+// Slack's local /invite (slash-commands-local kEyZ inviteCommand, build
+// 9f450b8ad3db; QAQd in fa938a086569). The command never reaches
 // chat.command in a channel: the client reads the people, user groups and
-// channel it names and invites them itself.
+// channels its parsed args mention (executeCommand's userParams, a
+// mention by its id; CommandOpts.Params) and invites them itself.
 //
 //   - invite_slash_command_in_threads (7R+y Z) on: the first channel
 //     named is the target (else this one; another workspace's channel
@@ -61,11 +62,27 @@ const (
 const channelExpertID = "UCHANNELEXPERT"
 
 var (
-	inviteUserRe    = regexp.MustCompile(`<@([UW][A-Z0-9]+)(?:\|[^>]*)?>`)
-	inviteGroupRe   = regexp.MustCompile(`<!subteam\^(S[A-Z0-9]+)(?:\|[^>]*)?>`)
-	inviteChannelRe = regexp.MustCompile(`<#([CG][A-Z0-9]+)(?:\|[^>]*)?>`)
-	inviteMentionRe = regexp.MustCompile(`<@[UW][A-Z0-9]+(?:\|[^>]*)?>|<!subteam\^S[A-Z0-9]+(?:\|[^>]*)?>`)
+	usergroupIDRe = regexp.MustCompile(`^S[A-Za-z0-9]{8,}$`)
+	// a command's mention escapes, for callers that pass only text
+	textMentionRe = regexp.MustCompile(`<(@|!subteam\^|#)([A-Z0-9]+)(?:\|[^>]*)?>`)
 )
+
+// looksLikeUsergroupID is emAa looksLikeUserGroupId.
+func looksLikeUsergroupID(id string) bool { return usergroupIDRe.MatchString(id) }
+
+// paramsFromText reads a command's text as parsed args: its mention
+// escapes as mentions, the other words as words.
+func paramsFromText(text string) []CommandParam {
+	var out []CommandParam
+	for _, w := range strings.Fields(text) {
+		if m := textMentionRe.FindStringSubmatch(w); m != nil && m[0] == w {
+			out = append(out, CommandParam{Type: "mention", Value: m[2]})
+			continue
+		}
+		out = append(out, CommandParam{Type: "string", Value: w})
+	}
+	return out
+}
 
 // InviteModalRequest is what the local /invite asks the shell for besides its
 // calls: AddPeople opens the channel's invite modal (Add people) with
@@ -91,25 +108,23 @@ func (a *App) inviteCommand(ctx context.Context, o CommandOpts, cmd string) (Com
 		// executeCommand's isSlashCommandEnabled, before any local command
 		return CommandResult{}, &CommandError{Command: cmd, Kind: CmdUnsupportedInThread}
 	}
-	text := o.Text
-	var ids []string // q: people and user groups, in order, once each
-	seen := map[string]bool{}
-	for _, m := range inviteMentionRe.FindAllString(text, -1) {
-		id := ""
-		if s := inviteUserRe.FindStringSubmatch(m); s != nil {
-			id = s[1]
-		} else if s := inviteGroupRe.FindStringSubmatch(m); s != nil {
-			id = s[1]
-		}
-		if id != "" && !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
+	// X: the people and user groups the parsed args mention, in order,
+	// once each; J: the channels (executeCommand hands its local commands
+	// userParams, where a mention is its id)
+	params := o.Params
+	if params == nil {
+		params = paramsFromText(o.Text)
 	}
-	var chans []string // J
-	for _, s := range inviteChannelRe.FindAllStringSubmatch(text, -1) {
-		if !contains(chans, s[1]) {
-			chans = append(chans, s[1])
+	var ids, chans []string
+	for _, p := range params {
+		if p.Type != "mention" {
+			continue
+		}
+		if (LooksLikeMemberID(p.Value) || looksLikeUsergroupID(p.Value)) && !contains(ids, p.Value) {
+			ids = append(ids, p.Value) // kflk looksLikeMemberId, emAa looksLikeUserGroupId
+		}
+		if looksLikeChannelID(p.Value) && !contains(chans, p.Value) { // nQiy looksLikeChannelId
+			chans = append(chans, p.Value)
 		}
 	}
 	inThreads := a.experiment("invite_slash_command_in_threads") == "on"

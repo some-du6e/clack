@@ -375,8 +375,9 @@ func cjkLastNon(rs []rune) int {
 	return 0
 }
 
-// detectURLs is detectUrls (7Jnr) with its defaults.
-func detectURLs(s string) []linkMatch {
+// detectURLsOpts is detectUrls (7Jnr); httpOnly is ignoreLinksWithoutHttp: a
+// match without a scheme (www., a bare domain) is skipped.
+func detectURLsOpts(s string, httpOnly bool) []linkMatch {
 	rs := []rune(s)
 	var out []linkMatch
 	for last := 0; last < len(rs); {
@@ -393,7 +394,7 @@ func detectURLs(s string) []linkMatch {
 		u := l.u
 		c := string(rs[l.u:l.end])
 		m := l.m
-		if l.p != "" && urlAfterUnderscore(rs, l.end) {
+		if httpOnly && m == "" || l.p != "" && urlAfterUnderscore(rs, l.end) {
 			continue
 		}
 		var g rune
@@ -623,13 +624,28 @@ func mergeMatches(e, t []linkMatch) []linkMatch {
 }
 
 // detectLinks is nVll's detectLinks with its defaults, sorted by offset.
-func detectLinks(s string) []linkMatch {
-	h := mergeMatches(detectURLs(s), detectEmails(s))
-	var phones []linkMatch
-	for _, p := range detectPhones(s) {
-		phones = append(phones, linkMatch{kind: "phone", at: p.at, n: p.n, text: p.text, url: p.url})
+func detectLinks(s string) []linkMatch { return detectLinksOpts(s, linkOpts{}) }
+
+// linkOpts are detectLinks' ignorePhoneMatches, ignoreEmailMatches and
+// ignoreLinksWithoutHttp (linkifyDeltaText sets all three in code blocks
+// with limitCodeBlockLinksToFullURLs).
+type linkOpts struct {
+	noPhones, noEmails, httpOnly bool
+}
+
+// detectLinksOpts is detectLinks with those options.
+func detectLinksOpts(s string, o linkOpts) []linkMatch {
+	h := detectURLsOpts(s, o.httpOnly)
+	if !o.noEmails {
+		h = mergeMatches(h, detectEmails(s))
 	}
-	h = mergeMatches(h, phones)
+	if !o.noPhones {
+		var phones []linkMatch
+		for _, p := range detectPhones(s) {
+			phones = append(phones, linkMatch{kind: "phone", at: p.at, n: p.n, text: p.text, url: p.url})
+		}
+		h = mergeMatches(h, phones)
+	}
 	slices.SortStableFunc(h, func(a, b linkMatch) int { return a.at - b.at })
 	return h
 }

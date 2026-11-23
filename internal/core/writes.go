@@ -735,25 +735,26 @@ func (a *App) SetDND(ctx context.Context, minutes int) error {
 	return a.C.Call(ctx, "dnd.endSnooze", nil, nil)
 }
 
-// Command runs a slash command. /shrug, /me and /topic are handled
-// locally like the official client; others go through chat.command
-// (command.go: client_token, so a modal the app opens shows here).
+// Command runs a slash command as executeCommand does: /topic and, in a
+// channel, /invite locally (Slack's slash-commands-local), the others
+// through chat.command (command.go: client_token, so a modal the app
+// opens shows here).
 func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error) {
 	cmd := o.Command
 	if !strings.HasPrefix(cmd, "/") {
 		cmd = "/" + cmd
 	}
-	switch cmd {
-	case "/shrug":
-		m, err := a.Send(ctx, SendOpts{Channel: o.Channel, Text: strings.TrimSpace(o.Text + ` ¯\_(ツ)_/¯`), ThreadTS: o.ThreadTS})
-		if err != nil {
-			return CommandResult{}, err
-		}
-		return CommandResult{Msg: &m}, nil
-	case "/me":
-		return CommandResult{}, a.C.Call(ctx, "chat.meMessage", url.Values{"channel": {o.Channel}, "text": {o.Text}}, nil)
+	// executeCommand's local commands (Zrd3 getCommands, slash-commands-
+	// local), by the matched command's canonical name; /shrug and /me are
+	// the server's, so they go to chat.command with their blocks (and
+	// thread) like any other
+	local := cmd
+	if k, ok := a.knownCommand(cmd); ok {
+		local = canonicalCommand(k)
+	}
+	switch local {
 	case "/topic":
-		return CommandResult{}, a.SetTopic(ctx, o.Channel, o.Text)
+		return a.topicCommand(ctx, o, cmd)
 	case "/invite":
 		if a.isLocalInvite(o.Channel) { // Slack's local inviteCommand (invite_command.go)
 			return a.inviteCommand(ctx, o, cmd)
