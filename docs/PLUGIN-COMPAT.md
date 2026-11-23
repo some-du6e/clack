@@ -1,21 +1,22 @@
 # Plugin compatibility in Clack
 
-Clack runs Taut's and Slick's plugins natively, from the published plugin Library (98 plugins: 40 from Taut, 58 from Slick). This page is how far each one works in Clack v0.1.0-alpha.148.
+Clack runs Taut's and Slick's plugins natively, from the published plugin Library (98 plugins: 40 from Taut, 58 from Slick). This page is how far each one works in Clack.
 
 | | Plugins |
 |---|---:|
-| ✅ Works fully | 73 |
+| ✅ Works fully | 72 |
 | ⚠️ Partly works | 16 |
-| ❌ Doesn't work yet | 9 |
+| ❌ Doesn't work yet | 10 |
 
 A plugin both systems ship (under the same name or not) is one row in Preferences › Plugins › Browse; here each version has its own line.
-Compatibility follows the newest Clack release. Each row comes from `internal/pluginlib/compat.go`, which `TestCompatMatchesDocs` keeps in step with the per-system pages, [PLUGINS-live-taut.md](PLUGINS-live-taut.md) and [PLUGINS-live-slick.md](PLUGINS-live-slick.md).
+Compatibility follows the newest Clack release. Each row comes from `internal/pluginlib/compat.go`, which `TestCompatMatchesDocs` keeps in step with the per-system pages, [PLUGINS-live-taut.md](PLUGINS-live-taut.md) and [PLUGINS-live-slick.md](PLUGINS-live-slick.md); `tools/compatdoc/compatdoc.py` writes this page from it and the Library's index, and `TestCompatDocInStep` keeps the two in step.
 
 ## ❌ Doesn't work yet
 
 | Plugin | From | What it does | In Clack |
 |---|---|---|---|
 | Better Huddles | Slick | A lighter huddle client with its own window, optional in-page controls, and a direct Chime connection | needs browser WebRTC |
+| Bring Back Slackbot | Taut | Shows Slackbot's custom responses as sent by Slackbot again | Slack no longer reads the experiment it sets |
 | Browser Pop-outs | Taut | Enables Slack's pop-out windows in the browser | needs pop-out windows |
 | Click to Load | Slick | Replaces third-party media embeds with privacy-preserving click-to-load placeholders | Clack shows no iframes for it to hold back |
 | Custom Fonts | Slick | Use any installed system font or upload your own font file. | Clack can't load web fonts |
@@ -59,7 +60,6 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Better GIFs | Slick | Enhances Slack’s GIF picker with a better search experience, favorites, and more. |
 | Better Typing Indicator | Slick | Show as many of the people typing as fit, with their profile pictures, and open their profiles from the indicator |
 | Better Typing Indicator | Taut | Shows as many typing people as possible and lets you view their profiles |
-| Bring Back Slackbot | Taut | Shows Slackbot's custom responses as sent by Slackbot again |
 | Call Timer | Slick | Show how long you’ve been in a huddle |
 | Censorship | Slick | There is no war in Ba Sing Se. |
 | Censorship | Taut | Masks words you choose in messages, only on your screen |

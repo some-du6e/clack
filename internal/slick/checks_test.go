@@ -80,6 +80,14 @@ func init() {
 			t.Errorf("not bolded: %s", out)
 		}
 	}
+	// NeutralPronouns (in the Library since slick f6be3bd): he/she in a sent
+	// message become they, and the verb after them agrees
+	checks["NeutralPronouns"] = func(t *testing.T, h *harness) {
+		out := string(h.tt.TransformSendBlocks(h.ctx(), richText("she is late and he was here")))
+		if !strings.Contains(out, "they are late and they were here") {
+			t.Errorf("not rewritten to they/them: %s", out)
+		}
+	}
 	checks["ClearURLs"] = func(t *testing.T, h *harness) {
 		in := richText("see https://example.com/page?utm_source=news&id=7")
 		var out json.RawMessage
