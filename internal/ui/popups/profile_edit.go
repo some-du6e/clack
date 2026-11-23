@@ -638,6 +638,12 @@ func (f *epForm) Save() {
 			refetch()
 		}
 		if !r.Closed {
+			if r.HeaderWritten {
+				// the profile's recording is the one saved now (Slack's refetch,
+				// then EditProfileFormPane's useEffect on ea): Cancel, Close &
+				// Discard and a remove no longer take it for a new one
+				f.nr.was = s.Recording
+			}
 			for name, fe := range r.FieldErrors {
 				if fd := f.byName[name]; fd != nil {
 					fd.err = fe
@@ -657,9 +663,14 @@ func (f *epForm) stops() []event.Tag {
 	vis := f.visible()
 	var out []event.Tag
 	add := func(fd *epField) {
-		if fd.kind == "options_list" {
+		switch {
+		case fd.kind == "options_list":
 			out = append(out, &fd.sel)
-		} else if !fd.disabled {
+		case fd.kind == "audio_recorder_button":
+			// EditAudioButton's own buttons in its mode; the field's editor
+			// never lays out, and Gio drops a focus on it at the frame's end
+			out = append(out, f.nr.focusStops()...)
+		case !fd.disabled:
 			out = append(out, &fd.ed)
 		}
 	}

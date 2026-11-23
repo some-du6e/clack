@@ -8,10 +8,14 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
+	"gioui.org/io/event"
+	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -561,5 +565,214 @@ func TestEditProfileNameRecordingPluginProps(t *testing.T) {
 	epUntil(t, m, "the save", m.Dismissed)
 	if got, want := headerElements(t, calls.get("users.profile.setSections"))["PeRECORD"], `{"element_id":"PeRECORD","file":{"fileId":"`+third+`"}}`; got != want {
 		t.Errorf("Name Recording written %s, want %s", got, want)
+	}
+}
+
+// Tab and Shift+Tab walk every stop of Edit profile and wrap (react-modal's
+// scopeTab), the name recording's Record Audio Clip among them, between
+// Pronouns and Name pronunciation, and each stop keeps the focus. The
+// field's stop was its editor, which never lays out: Gio dropped the focus
+// at the frame's end, the next Tab wrapped to Full name, and Name
+// pronunciation, Time zone, Cancel and Save were out of reach.
+func TestEditProfileTabOrder(t *testing.T) {
+	h, _ := epEnv(t, false)
+	m := NewEditProfileModal(h, EditProfileOpts{})
+	f := m.Form()
+	var r input.Router
+	var ops op.Ops
+	now := time.Now()
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: &ops, Source: r.Source(), Now: now, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(1440, 900))}
+		m.Layout(gtx)
+		r.Frame(&ops)
+		drain()
+		now = now.Add(16 * time.Millisecond)
+	}
+	for dl := time.Now().Add(10 * time.Second); f.secsLoading || f.grantsLoading; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("the form never loaded")
+		}
+		frame()
+	}
+	for i := 0; i < 4; i++ {
+		frame()
+	}
+	stops := f.m.stops()
+	if !slices.Contains(stops, event.Tag(&f.nr.recBtn)) {
+		t.Error("Record Audio Clip isn't a stop")
+	}
+	focused := func() int {
+		for i, s := range stops {
+			if r.Source().Focused(s) {
+				return i
+			}
+		}
+		return -1
+	}
+	if got := focused(); got != 0 {
+		t.Fatalf("on open the focus is on stop %d, want Full name's (0)", got)
+	}
+	tab := func(mods key.Modifiers) {
+		r.Queue(key.Event{Name: key.NameTab, Modifiers: mods, State: key.Press})
+		frame()
+		r.Queue(key.Event{Name: key.NameTab, Modifiers: mods, State: key.Release})
+		frame()
+		frame()
+	}
+	n := len(stops)
+	for k := 1; k <= n; k++ {
+		tab(0)
+		if got := focused(); got != k%n {
+			t.Fatalf("Tab %d: the focus is on stop %d, want %d of %d", k, got, k%n, n)
+		}
+	}
+	for k := 1; k <= n; k++ {
+		tab(key.ModShift)
+		if got, want := focused(), (n-k%n)%n; got != want {
+			t.Fatalf("Shift+Tab %d: the focus is on stop %d, want %d of %d", k, got, want, n)
+		}
+	}
+}
+
+// Saving a new recording over the profile's own never deletes a file the
+// profile still names. When users.profile.setSections fails, the profile
+// keeps its recording: nothing is deleted, and Cancel then deletes only the
+// new one. When the header is written but users.profile.set refuses a
+// field (the form stays open on its error), the profile's recording is the
+// new one from then: the replaced one goes, and Cancel deletes nothing.
+func TestEditProfileNameRecordingSaveFailures(t *testing.T) {
+	// a header write that fails
+	h, fs := epEnv(t, false)
+	calls := recordCalls(fs)
+	useNameMic(t, func() huddle.Device { return huddle.NewToneDevice(440) })
+	newOverOld := func(h *tzHost) (*EditProfileModal, string) {
+		t.Helper()
+		els := `[{"element_id":"PeRECORD","file":{"fileId":"` + fakeslack.NameRecordingID + `"}}]`
+		if err := h.a.C.Call(context.Background(), "users.profile.setSections", url.Values{"user": {fakeslack.SelfID}, "section": {"PsHEADER"}, "elements": {els}}, nil); err != nil {
+			t.Fatal(err)
+		}
+		m := NewEditProfileModal(h, EditProfileOpts{})
+		f := m.Form()
+		epUntil(t, m, "the profile's recording", func() bool { return f.nr.mode == nrFile && f.nr.file != nil })
+		f.RemoveName()
+		recordName(t, m)
+		time.Sleep(600 * time.Millisecond)
+		f.StopName()
+		epUntil(t, m, "the new recording's upload", func() bool { id, _, up, _ := f.Recording(); return id != "" && !up })
+		id, _, _, _ := f.Recording()
+		return m, id
+	}
+	deletedOf := func(calls *nrCalls, id string) bool {
+		for _, d := range calls.get("files.delete") {
+			if d.Get("file") == id {
+				return true
+			}
+		}
+		return false
+	}
+	m, fresh := newOverOld(h)
+	f := m.Form()
+	fs.SetFault("users.profile.setSections", fakeslack.Fault{Error: "fatal_error"})
+	f.Save()
+	epUntil(t, m, "the failed save", func() bool { return !f.Saving() })
+	for i := 0; i < 30; i++ {
+		epFrame(m)
+		time.Sleep(10 * time.Millisecond)
+	}
+	if deletedOf(calls, fakeslack.NameRecordingID) {
+		t.Error("the profile's recording was deleted though its header write failed")
+	}
+	fs.SetFault("users.profile.setSections", fakeslack.Fault{})
+	f.m.press(f.m.o.Buttons[0]) // Cancel
+	waitDeleted(t, calls, fresh)
+	if deletedOf(calls, fakeslack.NameRecordingID) {
+		t.Error("Cancel deleted the recording the profile names")
+	}
+
+	// a header written, then a field refused: the form stays open
+	h2, fs2 := epEnv(t, false)
+	calls2 := &nrCalls{m: map[string][]url.Values{}}
+	fs2.SetHook(func(method string, fv url.Values) (any, bool) {
+		calls2.mu.Lock()
+		calls2.m[method] = append(calls2.m[method], fv)
+		calls2.mu.Unlock()
+		if method == "users.profile.set" {
+			return map[string]any{"ok": false, "error": "invalid_name_specials", "field": "real_name"}, true
+		}
+		return nil, false
+	})
+	m2, fresh2 := newOverOld(h2)
+	f2 := m2.Form()
+	f2.Save()
+	epUntil(t, m2, "the field error", func() bool { return !f2.Saving() && f2.FieldError("real_name") != "" })
+	if m2.Dismissed() {
+		t.Fatal("the form closed on the field error")
+	}
+	waitDeleted(t, calls2, fakeslack.NameRecordingID) // the header names the new one now
+	f2.m.press(f2.m.o.Buttons[0])                     // Cancel
+	for i := 0; i < 30; i++ {
+		epFrame(m2)
+		time.Sleep(10 * time.Millisecond)
+	}
+	if deletedOf(calls2, fresh2) {
+		t.Errorf("Cancel deleted %s, which the profile's header names since the save", fresh2)
+	}
+}
+
+// A name recording that failed to load plays on the next click: the
+// button loads it again instead of seeking a player that has nothing.
+func TestProfileNameRecordingButtonRetries(t *testing.T) {
+	h0, _ := pfEnv(t)
+	_, opener := mediatest.Source(fakeslack.NameRecordingID, mediatest.TonesOpusFrag, false)
+	noCard := func(func([]int16)) (io.Closer, error) { return nil, errors.New("no sound card (the test's)") }
+	var mu sync.Mutex
+	opens := 0
+	ctl := videoplayer.New(videoplayer.Env{
+		Manager: media.NewManager(media.NewChain(nil, &goaudio.Backend{Output: noCard, Logf: t.Logf})),
+		Open: func(ctx context.Context, u string, off int64) (io.ReadCloser, media.Info, error) {
+			mu.Lock()
+			opens++
+			first := opens == 1
+			mu.Unlock()
+			if first {
+				return nil, media.Info{}, errors.New("the network went (the test's)")
+			}
+			return opener.Open(ctx, off)
+		},
+		Repaint: func() {},
+		Theme:   func() *theme.Theme { return h0.th },
+	})
+	t.Cleanup(ctl.CloseAll)
+	h := &nrHost{tzHost: h0, vids: ctl}
+	v := NewProfileView(h, fakeslack.ProfileID)
+	for dl := time.Now().Add(10 * time.Second); v.recFile == nil; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("Robin's recording never loaded")
+		}
+		nrFrame(v)
+	}
+	nrFrame(v)
+	rec, _ := v.recording(fakeslack.NameRecordingID)
+	state := func() videoplayer.State {
+		st, _ := ctl.TileState("profile", "name", fakeslack.ProfileID, fakeslack.NameRecordingID)
+		return st
+	}
+	ctl.ToggleNameSound("profile", fakeslack.ProfileID, rec)
+	for dl := time.Now().Add(10 * time.Second); state().Err == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatalf("the failed load never errored: %+v", state())
+		}
+		nrFrame(v)
+	}
+	ctl.ToggleNameSound("profile", fakeslack.ProfileID, rec)
+	for dl := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		nrFrame(v)
+		if st := state(); st.Playing && st.Elapsed > 200*time.Millisecond {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatalf("the click after the error didn't play it: %+v", state())
+		}
 	}
 }

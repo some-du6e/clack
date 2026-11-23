@@ -482,3 +482,29 @@ func TestSaveProfileFormNameRecording(t *testing.T) {
 		}
 	}
 }
+
+// A header write that fails deletes nothing: the profile still names the
+// recording the form would have replaced. The delete waits for the header
+// (Slack's handleSubmit starts it first, and a failed setSections left the
+// profile on a deleted file).
+func TestSaveProfileFormKeepsRecordingWhenHeaderFails(t *testing.T) {
+	a, fs, calls := pwEnv(t)
+	ctx := context.Background()
+	ps, err := a.ProfileSections(ctx, fakeslack.SelfID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := a.ProfileFormDefaults(fakeslack.SelfID)
+	s := ProfileFormSave{UserID: fakeslack.SelfID, Defaults: def, Changes: map[string]string{}, Header: HeaderOf(ps),
+		Title: def["title"], TitleWas: def["title"], Recording: "F0NEWREC0009", RecordingWas: "F0OLDREC0009"}
+	fs.SetFault("users.profile.setSections", fakeslack.Fault{Error: "fatal_error"})
+	if _, err := a.SaveProfileForm(ctx, s); err == nil {
+		t.Fatal("the save went through a failed header write")
+	}
+	time.Sleep(300 * time.Millisecond)
+	for _, d := range calls.get("files.delete") {
+		if d.Get("file") == "F0OLDREC0009" {
+			t.Error("deleted the recording the profile still names")
+		}
+	}
+}

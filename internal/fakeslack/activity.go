@@ -140,6 +140,19 @@ func (s *Server) SetActivityAgentActions(on bool) {
 	v.mu.Unlock()
 }
 
+// SetActivityMessage has messages.list answer m in place of the fixture's
+// message with its channel and ts (a test's own text or blocks).
+func (s *Server) SetActivityMessage(m slack.Message) {
+	v := s.views()
+	v.mu.Lock()
+	a := v.act()
+	if a.edits == nil {
+		a.edits = map[string]slack.Message{}
+	}
+	a.edits[m.Channel+"/"+m.TS] = m
+	v.mu.Unlock()
+}
+
 // activityEntries is the feed, newest first; base is the server's URL
 // (the inviting organisations' icons).
 func activityEntries(base string) []map[string]any {
@@ -237,7 +250,10 @@ type activityState struct {
 	// extraMsgs the messages messages.list answers for them
 	extra     []map[string]any
 	extraMsgs []slack.Message
-	live      []map[string]any // UpsertActivity's entries, one per key (activity_live.go)
+	// edits are fixture messages a test changed (SetActivityMessage),
+	// which messages.list answers in their place
+	edits map[string]slack.Message
+	live  []map[string]any // UpsertActivity's entries, one per key (activity_live.go)
 
 	// the channel invite's accept: the eligibility answer a test set (nil:
 	// eligible), the name and privacy it was accepted with, and whether
@@ -445,6 +461,11 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		out := map[string][]slack.Message{}
 		v.mu.Lock()
 		msgs := append(append([]slack.Message(nil), activityMsgs...), v.act().extraMsgs...)
+		for i := range msgs {
+			if m, ok := v.act().edits[msgs[i].Channel+"/"+msgs[i].TS]; ok {
+				msgs[i] = m
+			}
+		}
 		v.mu.Unlock()
 		for _, w := range want {
 			for _, ts := range w.Timestamps {

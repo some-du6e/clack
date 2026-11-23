@@ -52,6 +52,7 @@ import (
 	"sync"
 	"time"
 
+	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/widget"
@@ -119,6 +120,9 @@ type epNameRec struct {
 	rec     *vclip.Recorder
 	recCore *core.App // the session the recording was made in
 	alerted bool      // MicrophoneAccessErrorDialog shown for rec
+	// focusAttach: the recorder just mounted, and Stop recording takes the
+	// focus (both its buttons autoFocus, without the ring; the later wins)
+	focusAttach bool
 	// the file: the recording's bytes until its upload answers (clip), the
 	// uploaded file or the profile's own (file)
 	clip      *vclip.File
@@ -127,6 +131,8 @@ type epNameRec struct {
 	file      *slack.File
 	gen       int  // a remove (or a new recording) drops the upload in flight
 	removed   bool // a file was removed: useFileUploading's flag, initialFile stays null
+	// removeFocused: RemoveFileButton has the focus (this frame's)
+	removeFocused bool
 	// was is the profile's recording when the form opened (ea), cur the
 	// form's (eK): the uploaded recording's id, "" once removed
 	was, cur string
@@ -196,7 +202,7 @@ func (n *epNameRec) start() {
 	n.recCore = n.f.h.Core()
 	n.rec = vclip.Start(vclip.Options{AGC: agc, Device: dev, PlayStart: NameRecStartSound, OnChange: n.f.h.Invalidate,
 		TimeLimit: nameRecLimit, TimeWarning: nameRecWarning, FileName: NameRecFileName, Subtype: NameRecSubtype})
-	n.mode = nrRecording
+	n.mode, n.focusAttach = nrRecording, true
 	liveNameRecs.Lock()
 	if liveNameRecs.m == nil {
 		liveNameRecs.m = map[*epNameRec]struct{}{}
@@ -269,7 +275,9 @@ func (n *epNameRec) attach(f vclip.File) {
 	n.gen++
 	gen := n.gen
 	n.f.uploadBusy(true) // onFileUploadStart
-	run(n.f.h, func(ctx context.Context) (core.PreparedUpload, error) {
+	// the upload with Slack's processing poll (core.UploadPollFor), not
+	// run's 15 s: a slow file_created must not orphan it and hold Save
+	runFor(n.f.h, core.UploadPollFor+time.Minute, func(ctx context.Context) (core.PreparedUpload, error) {
 		return a.PrepareUpload(ctx, core.UploadFile{Name: f.Name, Title: f.Name, Data: f.Data, Subtype: f.Subtype}, nil)
 	}, func(pu core.PreparedUpload, err error) {
 		if gen != n.gen {
@@ -320,6 +328,19 @@ func (n *epNameRec) deleteFile(id string) {
 	run(n.f.h, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, a.DeleteFile(ctx, id)
 	}, func(struct{}, error) {})
+}
+
+// focusStops are EditAudioButton's tab stops in document order for its
+// mode: Record Audio Clip; the recorder's Cancel recording then Stop
+// recording; the tile's RemoveFileButton.
+func (n *epNameRec) focusStops() []event.Tag {
+	switch n.mode {
+	case nrRecording:
+		return []event.Tag{&n.cancelBtn, &n.attachBtn}
+	case nrFile:
+		return []event.Tag{&n.removeBtn}
+	}
+	return []event.Tag{&n.recBtn}
 }
 
 // Recording is the form's name recording (tests): its file id, and
@@ -523,8 +544,12 @@ func (n *epNameRec) button(gtx layout.Context, th *theme.Theme, cl *Colors) layo
 	h := dp(gtx, 36)
 	tw := textW(gtx, th, 15, theme.Bold, label)
 	w := dp(gtx, 8) + dp(gtx, 20) + dp(gtx, 4) + tw + dp(gtx, 8) + 2*border1(gtx)
+	ring := n.f.m.ringOn(gtx, &n.recBtn)
 	return clickBox(gtx, &n.recBtn, func(gtx layout.Context, sz image.Point, hovered bool) {
 		r := image.Rectangle{Max: sz}
+		if ring {
+			focusRing(gtx, cl, r, dp(gtx, 8))
+		}
 		bg := cl.BtnBg
 		if hovered {
 			bg = cl.BtnHover
@@ -551,10 +576,18 @@ func (n *epNameRec) button(gtx layout.Context, th *theme.Theme, cl *Colors) layo
 // after them, 16 in), 8px and 4px, the 36px Stop recording.
 func (n *epNameRec) recorder(gtx layout.Context, th *theme.Theme) layout.Dimensions {
 	pal := nrPalette(th)
+	cl := colorsOf(th)
 	r := n.rec
 	b := dp(gtx, 36)
 	x := 0
+	if n.focusAttach {
+		n.focusAttach = false
+		n.f.m.focusTo(gtx, &n.attachBtn, false) // autoFocus, visibleAutoFocus off
+	}
 	// Cancel recording
+	if n.f.m.ringOn(gtx, &n.cancelBtn) {
+		focusRing(gtx, cl, image.Rect(x, 0, x+b, b), dp(gtx, 4))
+	}
 	at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(b, b))
 		return n.cancelBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -609,6 +642,9 @@ func (n *epNameRec) recorder(gtx layout.Context, th *theme.Theme) layout.Dimensi
 	})
 	x += sw + dp(gtx, 8) + dp(gtx, 4)
 	// Stop recording (aria-label Attach recording)
+	if n.f.m.ringOn(gtx, &n.attachBtn) {
+		focusRing(gtx, cl, image.Rect(x, 0, x+b, b), dp(gtx, 4))
+	}
 	at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(b, b))
 		return n.attachBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -664,48 +700,54 @@ func (n *epNameRec) tile(gtx layout.Context, th *theme.Theme) layout.Dimensions 
 	})
 	// RemoveFileButton, over the tile's top-right corner and so outside the
 	// tile's Clickable (which clips what it holds to the tile): a spinner
-	// while it uploads, the warning when it failed, "Remove audio clip" on
-	// hover
+	// while it uploads, the warning when it failed, "Remove audio clip"
+	// hovered or focused (4dwn: onFocus shows it as onMouseEnter does). It
+	// is laid out whenever there is a file, drawing nothing at rest, so the
+	// Tab order reaches it as Slack's DOM always has it.
 	d := dp(gtx, 22)
+	n.removeFocused = gtx.Focused(&n.removeBtn)
 	mode := n.status()
-	if mode != nrStatusNone {
-		at(gtx, image.Pt(sz.X-d+dp(gtx, 10), -dp(gtx, 10)), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Exact(image.Pt(d, d))
-			return n.removeBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				switch mode {
-				case nrStatusSpinner:
-					rrect(gtx, image.Rect(0, 0, d, d), d/2, pal.bg)
-					s := dp(gtx, 16)
-					at(gtx, image.Pt((d-s)/2, (d-s)/2), func(gtx layout.Context) layout.Dimensions {
-						InfiniteSpinner(gtx, s, true, th.C.FgMuted, th.C.Link)
-						return layout.Dimensions{Size: image.Pt(s, s)}
-					})
-				case nrStatusWarning:
-					rrect(gtx, image.Rect(0, 0, d, d), d/2, pal.bg)
-					at(gtx, image.Pt((d-dp(gtx, 20))/2, (d-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
-						return icon(gtx, "warning-filled", 20, th.C.Danger)
-					})
-				default:
-					c := dp(gtx, 10)
-					rrect(gtx, image.Rect(d/2-c, d/2-c, d/2+c, d/2+c), c, th.C.Tooltip)
-					at(gtx, image.Pt((d-dp(gtx, 14))/2, (d-dp(gtx, 14))/2), func(gtx layout.Context) layout.Dimensions {
-						return icon(gtx, "close", 14, th.C.TooltipText)
-					})
-				}
-				pointerCursor(gtx, image.Pt(d, d))
-				Tooltip(gtx, th, &n.removeTip, n.removeBtn.Hovered(), image.Pt(d, d), Above, nsDraftsFile.T("Remove audio clip"), "")
-				return layout.Dimensions{Size: image.Pt(d, d)}
-			})
-		})
-	} else {
-		Tooltip(gtx, th, &n.removeTip, false, image.Pt(d, d), Above, "", "") // its hover delay starts over
+	bp := image.Pt(sz.X-d+dp(gtx, 10), -dp(gtx, 10))
+	if n.f.m.ringOn(gtx, &n.removeBtn) {
+		focusRing(gtx, colorsOf(th), image.Rectangle{Min: bp, Max: bp.Add(image.Pt(d, d))}, d/2)
 	}
+	at(gtx, bp, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Exact(image.Pt(d, d))
+		return n.removeBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			switch mode {
+			case nrStatusNone:
+			case nrStatusSpinner:
+				rrect(gtx, image.Rect(0, 0, d, d), d/2, pal.bg)
+				s := dp(gtx, 16)
+				at(gtx, image.Pt((d-s)/2, (d-s)/2), func(gtx layout.Context) layout.Dimensions {
+					InfiniteSpinner(gtx, s, true, th.C.FgMuted, th.C.Link)
+					return layout.Dimensions{Size: image.Pt(s, s)}
+				})
+			case nrStatusWarning:
+				rrect(gtx, image.Rect(0, 0, d, d), d/2, pal.bg)
+				at(gtx, image.Pt((d-dp(gtx, 20))/2, (d-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+					return icon(gtx, "warning-filled", 20, th.C.Danger)
+				})
+			default:
+				c := dp(gtx, 10)
+				rrect(gtx, image.Rect(d/2-c, d/2-c, d/2+c, d/2+c), c, th.C.Tooltip)
+				at(gtx, image.Pt((d-dp(gtx, 14))/2, (d-dp(gtx, 14))/2), func(gtx layout.Context) layout.Dimensions {
+					return icon(gtx, "close", 14, th.C.TooltipText)
+				})
+			}
+			if mode != nrStatusNone {
+				pointerCursor(gtx, image.Pt(d, d))
+			}
+			Tooltip(gtx, th, &n.removeTip, mode != nrStatusNone && n.removeBtn.Hovered(), image.Pt(d, d), Above, nsDraftsFile.T("Remove audio clip"), "")
+			return layout.Dimensions{Size: image.Pt(d, d)}
+		})
+	})
 	return layout.Dimensions{Size: sz}
 }
 
 // nrStatus is what RemoveFileButton holds (4dwn): nothing, the spinner
 // while the upload runs, the warning-filled icon when it failed, or the
-// remove button, hovered or over a hovered tile.
+// remove button, hovered, focused or over a hovered tile.
 type nrStatus int
 
 const (
@@ -718,7 +760,7 @@ const (
 // status is RemoveFileButton's content now.
 func (n *epNameRec) status() nrStatus {
 	switch {
-	case n.removeBtn.Hovered():
+	case n.removeBtn.Hovered() || n.removeFocused:
 		return nrStatusRemove
 	case n.uploading:
 		return nrStatusSpinner

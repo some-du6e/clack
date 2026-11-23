@@ -155,7 +155,7 @@ func calendarDay(ts string, now time.Time) (time.Time, string, bool) {
 // and outside every clip.
 func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	name, ok := v.hoveredTip()
-	if !ok || !v.hovering {
+	if !ok || !v.hovering || v.tipGen != theme.TipGen() { // hidden (theme.HideTooltips) until the pointer leaves
 		return
 	}
 	if wait := v.tipAt.Add(EmojiTipDelay); !gtx.Now.IsZero() && gtx.Now.Before(wait) {

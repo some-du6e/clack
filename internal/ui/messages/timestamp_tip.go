@@ -16,60 +16,40 @@ package messages
 // pointer 1. A time that isn't drawn lets its hover go (skip).
 
 import (
-	"image"
-	"time"
+	"image/color"
 
-	"gioui.org/io/event"
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op/clip"
 
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // timestampTipDelay is Timestamp's Tooltip delay.
-const timestampTipDelay = 300 * time.Millisecond
+const timestampTipDelay = popups.TimeLinkTipDelay
 
-// tsTipper is one Timestamp's tooltip trigger.
+// tsTipper is one Timestamp: MessageTimestamp's link to the message
+// (popups.TimeLink: the hand cursor, the underline under the pointer, the
+// full date's tooltip, handleTimestampClick on a click; a right-click is
+// the link's menu, context.go).
 type tsTipper struct {
-	tag int
-	hov bool // the pointer is over the label
-	tip popups.TipState
+	link popups.TimeLink
 }
 
-// update reads the trigger's pointer events.
-func (t *tsTipper) update(gtx layout.Context) {
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &t.tag, Kinds: pointer.Enter | pointer.Leave | pointer.Cancel})
-		if !ok {
-			break
-		}
-		if e, ok := ev.(pointer.Event); ok {
-			t.hov = e.Kind == pointer.Enter
-		}
-	}
-}
+// hovered reports whether the pointer is on the time.
+func (t *tsTipper) hovered() bool { return t.link.Hovered() }
+
+// begin starts the row's frame (popups.TimeLink.Begin).
+func (t *tsTipper) begin() { t.link.Begin() }
 
 // skip is a frame the time isn't drawn in: its hover and tooltip end.
-func (t *tsTipper) skip() {
-	t.hov = false
-	t.tip.Reset()
-}
+func (t *tsTipper) skip() { t.link.Skip() }
 
-// layout tracks the pointer over the label at the current offset (size,
-// letting it through to the row) and draws the tooltip above it.
-func (t *tsTipper) layout(gtx layout.Context, r *row, size image.Point) {
-	t.update(gtx)
-	a := clip.Rect{Max: size}.Push(gtx.Ops)
-	pass := pointer.PassOp{}.Push(gtx.Ops)
-	event.Op(gtx.Ops, &t.tag)
-	pass.Pop()
-	a.Pop()
-	t.tip.Delay = timestampTipDelay
-	txt := ""
-	if t.hov {
-		txt = richview.FullTimestampSeconds(r.m.TS, r.rc.now)
+// layout makes the label laid out at the current offset (d, in col) the
+// link to r's message.
+func (t *tsTipper) layout(gtx layout.Context, r *row, d layout.Dimensions, col color.NRGBA) {
+	tip := func() string { return richview.FullTimestampSeconds(r.m.TS, r.rc.now) }
+	if c := t.link.Layout(gtx, r.rc.th, d.Size, d.Size.Y-d.Baseline, col, tip); c.Clicked {
+		m := &r.src
+		popups.OpenMessageTime(r.rc.h, m.Channel, m.TS, m.ThreadTS, c.Cmd)
 	}
-	popups.Tooltip(gtx, r.rc.th, &t.tip, t.hov && txt != "", size, popups.Above, txt, "")
 }
