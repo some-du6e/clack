@@ -72,7 +72,6 @@ const (
 	QUERY_RESULT                          = 0x8866
 	QUERY_RESULT_AVAILABLE                = 0x8867
 	R16F                                  = 0x822d
-	R32F                                  = 0x822e // Clack patch 63
 	R8                                    = 0x8229
 	READ_FRAMEBUFFER                      = 0x8ca8
 	READ_FRAMEBUFFER_BINDING              = 0x8CAA

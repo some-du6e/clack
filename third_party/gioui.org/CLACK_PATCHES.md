@@ -3241,52 +3241,53 @@ column, WARP and Metal a faint mark or nothing), so Clack's ring tests
 short through the real renderer, on linux-gio, windows-applog (Direct3D
 11) and macos-idle (Metal). Not in `UPSTREAM.patch`.
 
-## 63. gpu: path coverage in 32-bit float on GL where it can be blended
+## 63. dropped: path coverage in 32-bit float on GL
 
-`gpu/internal/opengl/opengl.go` (`floatTripleFor`): `R32F` first on
-desktop GL 3, and on GLES 3 with `EXT_color_buffer_float` and
-`EXT_float_blend`; `R16F` stays the fallback.
+Dropped 2026-11-23 (ring-seam-2), before any release shipped it. It put
+`R32F` first in `gpu/internal/opengl/opengl.go`'s `floatTripleFor`
+(desktop GL 3, GLES 3 with `EXT_color_buffer_float` and
+`EXT_float_blend`), with a `gl.R32F` constant; both are gone, and GL is
+back on Gio's `R16F`.
 
-The stencil pass adds each outline segment's signed coverage into a float
-texture from the segment down to the path's bottom, and the segments of a
-closed outline cancel below it. In half float (11 bits) the many partial
-sums where an outline runs vertical (a ring's or a circle's left and
-right sides) leave up to 1% behind, a column under the shape to its
-bottom. On a light background that's invisible; on the intro's dark one,
-and in dark mode, sRGB turns 1% into 25/255: a faint line hanging off
-rings and filled circles (the same report as patch 62). In 32-bit float
-the sums cancel: on llvmpipe no ring, badge or spinner leaves a column.
+What it fixed: the stencil pass adds each outline segment's signed
+coverage into a float texture from the segment down to the path's
+bottom, and a closed outline's segments cancel below it. In half float
+(11 bits) the many partial sums where an outline runs vertical (a ring's
+or a circle's left and right sides) leave up to 1% behind, a column under
+the shape to its bottom: invisible on a light background, up to 23/255
+on black (sRGB). In 32-bit float the sums cancel on llvmpipe.
 
-What it costs (perf.yml's gated job, llvmpipe, 2026-11-23): the coverage
-and intersection atlases take 4 bytes a texel instead of 2 (about 36 MB
-instead of 18 for a 4K window), and the stencil pass's clear and One/One
-blend move twice the bytes. ui → ring-seam-2 (run 45125099421, which
-also carries RingPath): idle frame median 48.4 → 57.5 ms (+18.6%), scroll
-frame median 52.0 → 56.1 ms (+7.8%), idle RSS 313 → 333 MB; the gate
-fails on all three. ring-seam-2 → the same tree with R16F (45132400754,
-R32F alone): idle frame median 68.8 → 61.9 ms (-10.0%), scroll 69.1 →
-66.6 ms (-3.7%), idle RSS 321 → 311 MB. Every frame time and allocation
-count else is within noise. llvmpipe rasterizes on the CPU, so bandwidth
-is its worst case; a real GPU pays less. Direct3D 11, Metal and Vulkan
-don't change.
+Why it went: speed. The coverage and intersection atlases take 4 bytes a
+texel instead of 2 (about 36 MB instead of 18 for a 4K window), and the
+stencil pass's clear and One/One blend move twice the bytes. perf.yml's
+gated job on llvmpipe, 2026-11-23:
 
-`gpu.ClackCoverageBits` (each backend's `NewTexture` for
-`TextureFormatFloat`, through `driver.ClackCoverageBits`) says which
-coverage the last renderer made, 32 or 16: the ring tests set their
-off-band bar from it (16/255 with 32-bit coverage, 32/255 with half
-float), and `TestRingSeamCoverageBits` holds CI's llvmpipe to 32. Direct3D
-11, Metal and Vulkan stay on half float, and the column of under 1% under
-rings and filled circles stays there (up to 23/255 on black).
+- ui → ring-seam-2 with it (run 45125099421, which also carries
+  RingPath): idle frame median 48.4 → 57.5 ms (+18.6%), scroll frame
+  median 52.0 → 56.1 ms (+7.8%), idle RSS 313 → 333 MB. The gate failed
+  on all three.
+- ring-seam-2 → the same tree without it (45132400754, R32F alone): idle
+  frame median 68.8 → 61.9 ms (-10.0%), scroll 69.1 → 66.6 ms (-3.7%),
+  idle RSS 321 → 311 MB.
 
-Direct3D 11 (WARP) and Metal keep a column of under 1% (up to 21/255 on
-black) under such shapes with 32-bit coverage too (WARP was given
-R32_FLOAT, blendable), so its cause there is elsewhere; they keep R16 and
-that column, a known issue.
+llvmpipe rasterizes on the CPU, its worst case, but a 10-19% idle frame
+for a sub-1% column isn't worth it. Direct3D 11 (WARP) and Metal keep a
+column like it even with 32-bit coverage (WARP was given blendable
+R32_FLOAT), so its cause there is elsewhere.
 
-Tests: `internal/ui`'s `TestRingSeamRingAt` (ringAt at seven radii, four
-widths, four scales, sub-pixel centres), `TestRingSeamDoneBadge` (the
-intro's check badge through its pop) and `TestRingSeamSpinnerSweep`
-(`popups.InfiniteSpinner` through its turn): nothing drawn more than 3 px
-off the ring's band at 16/255 on llvmpipe (linux-gio), and at 32/255 on
-Direct3D 11 WARP (windows-applog) and Metal (macos-idle). Not in
-`UPSTREAM.patch`.
+Known issue, every backend: a column of under 1% (up to 23/255 on black)
+under rings and filled circles, from half-float coverage. Karim's line
+(patch 62) was a different, full-strength fault, and is fixed.
+
+What stays (patch 62's tests): `gpu.ClackCoverageBits` (each backend's
+`NewTexture` for `TextureFormatFloat`, through `driver.ClackCoverageBits`)
+says which coverage the last renderer made, 16 or 32 (GL's RGBA float
+fallback). The ring tests set their off-band bar from it: 32/255 on half
+float, 16/255 on 32-bit. `internal/ui`'s `TestRingSeamRingAt` (ringAt at
+seven radii, four widths, four scales, sub-pixel centres),
+`TestRingSeamDoneBadge` (the intro's check badge through its pop),
+`TestRingSeamSpinnerSweep` (`popups.InfiniteSpinner` through its turn)
+and `TestRingSeamCloseByFloatError`: nothing drawn more than 3 px off the
+ring's band, the ring drawn at its seam and across from it, and no NaN in
+a stroke outline, on llvmpipe (linux-gio), Direct3D 11 WARP
+(windows-applog) and Metal (macos-idle). Not in `UPSTREAM.patch`.

@@ -374,7 +374,7 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 	switch format {
 	case driver.TextureFormatFloat:
 		d3dfmt = b.floatFormat
-		bits := int32(16) // Clack patch 63, for tests
+		bits := int32(16) // for Clack patch 62's ring tests
 		switch d3dfmt {
 		case d3d11.DXGI_FORMAT_R32_FLOAT, d3d11.DXGI_FORMAT_R32G32_FLOAT, d3d11.DXGI_FORMAT_R32G32B32A32_FLOAT:
 			bits = 32

@@ -5,6 +5,7 @@ package driver
 import "sync/atomic"
 
 // ClackCoverageBits is the bits a channel of the last float texture (path
-// coverage, Clack patch 63) a backend made holds: 32 or 16, 0 before any.
+// coverage) a backend made holds: 32 or 16, 0 before any (Clack patch 62's
+// ring tests).
 // For tests: gpu.ClackCoverageBits.
 var ClackCoverageBits atomic.Int32

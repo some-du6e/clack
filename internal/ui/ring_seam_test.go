@@ -16,8 +16,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"os"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -36,12 +34,12 @@ import (
 
 // What counts as drawn off a ring: a channel above seamInk, more than
 // seamSlack px outside its band (antialiasing and Direct3D's soft edge
-// stay within 3). With 32-bit coverage (Gio patch 63, GL where it can be
-// blended), 16/255: no column at all (a 1% column shows as 25 on a dark
-// background, sRGB). With half float (Direct3D 11, Metal, a GL driver
-// without EXT_float_blend) the stencil sums leave a column of under 1%
-// (up to 23/255 on black) under any shape, filled or stroked: there the
-// tests catch a line from 32/255.
+// stay within 3). Gio's path coverage is half float on every backend, and
+// its stencil sums leave a column of under 1% (up to 23/255 on black)
+// under any shape, filled or stroked (a known Gio issue: patch 63 moved
+// GL to 32-bit float and was dropped for its frame cost), so the tests
+// catch a line from 32/255; should a renderer fall back to 32-bit
+// coverage (no column at all), from 16/255.
 const seamSlack = 3.0
 
 var coverageOnce sync.Once
@@ -107,21 +105,6 @@ func reportDrawn(t *testing.T, what string, img *image.RGBA, c f32.Point, R, hw,
 		if ink := bandInk(img, c, R, hw, side); ink < want {
 			t.Errorf("%s: %.2f px² of ink on the band at %d o'clock, want at least %.2f: the ring isn't drawn there", what, ink, map[int]int{1: 3, -1: 9}[side], want)
 		}
-	}
-}
-
-// CI's llvmpipe (linux-gio) blends 32-bit float: Gio patch 63 must pick
-// R32F there, or the 16/255 bar falls back to 32 and nothing would notice.
-func TestRingSeamCoverageBits(t *testing.T) {
-	if runtime.GOOS != "linux" || os.Getenv("GITHUB_ACTIONS") != "true" {
-		t.Skip("CI's linux-gio only: a local GL driver may lack EXT_float_blend")
-	}
-	var ops op.Ops
-	f := seamFrame(&ops, 64, 64, time.Unix(1_800_000_000, 0))
-	ringAt(f, f32.Pt(32, 32), 12, color.NRGBA{R: 0xff, A: 0xff}, 2)
-	renderRing(t, "coverage", 64, 64, &ops)
-	if bits := gpu.ClackCoverageBits(); bits != 32 {
-		t.Errorf("path coverage in %d-bit float on llvmpipe, want 32 (Gio patch 63)", bits)
 	}
 }
 
