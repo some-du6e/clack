@@ -177,6 +177,12 @@ func TestCommandModalAndTyping(t *testing.T) {
 		e.settle(800 * time.Millisecond)
 	}
 	shots("command-failed", false)
+	// the failed command came back (InputContainer's catch): clear it, or
+	// it outlives the test as the box's draft (drafts are process-global)
+	e.until("the command back", 10*time.Second, func() bool { return strings.Contains(cb.DocText(), "/ticket timeout") })
+	e.key("A", key.ModShortcut)
+	e.key(key.NameDeleteBackward, 0)
+	e.settle(200 * time.Millisecond)
 
 	// typing: one, two, several (user_typing on the socket)
 	typing := func(users ...string) {

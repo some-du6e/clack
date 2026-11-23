@@ -355,6 +355,25 @@ type inviteConv struct {
 	private, archived, member, otherTeam bool
 }
 
+// FromAnotherTeam is pS2E isFromAnotherTeam for a conversation the store
+// holds: its context team is neither the viewer's workspace nor its org.
+func (a *App) FromAnotherTeam(ch string) bool {
+	c, ok := a.convInfo(ch)
+	return ok && c.otherTeam
+}
+
+// CurrentTeamID is getCurrentTeamId (XgZX JY): the viewer's workspace, else
+// the org.
+func (a *App) CurrentTeamID() string {
+	if a.C == nil {
+		return ""
+	}
+	if a.C.Creds.Team != "" {
+		return a.C.Creds.Team
+	}
+	return a.C.Creds.EnterpriseID
+}
+
 func (a *App) convInfo(ch string) (inviteConv, bool) {
 	c, ok := a.S.Conv(ch)
 	if !ok {

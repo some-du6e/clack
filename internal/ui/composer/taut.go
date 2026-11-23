@@ -321,7 +321,7 @@ func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks 
 			}
 			files := make([]taut.File, len(raw))
 			for i, f := range raw {
-				files[i] = taut.File{Name: f.Name, Data: f.Data}
+				files[i] = taut.File{Name: f.Name, Type: f.FileType(), Data: f.Data}
 			}
 			ids := make([]string, len(prepared))
 			for i, p := range prepared {
@@ -338,7 +338,7 @@ func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks 
 						o.Blocks = blocks // a plugin that rewrites the comment sends it as text
 					}
 					for _, f := range a.Files {
-						o.Files = append(o.Files, core.UploadFile{Name: f.Name, Title: f.Name, Data: f.Data})
+						o.Files = append(o.Files, core.UploadFile{Name: f.Name, Title: f.Name, Data: f.Data, Type: f.UploadType()})
 					}
 					for _, id := range a.FileIDs {
 						if p, ok := byID[id]; ok {
@@ -365,21 +365,22 @@ func prepareFile(ctx context.Context, api coreAPI, f core.UploadFile, progress f
 	name, data := f.Name, f.Data
 	if t := currentTaut(); t.ThunkPatched(thPendingFile) {
 		var up core.PreparedUpload
-		ft := ""
-		if f.Subtype != "" {
-			ft = "audio/mp4" // a clip's File type (the blob's)
-		}
+		ft := f.FileType() // the File's type as Chromium gives it (a clip's the recorder's)
 		r, err := taut.Dispatch(ctx, t, thPendingFile, pendingFileArgs{File: taut.File{Name: name, Type: ft, Data: data}},
 			func(ctx context.Context, a pendingFileArgs) (pendingFileResult, error) {
-				n := a.File.Name
+				// the plugin's File goes up with its own type; handing
+				// nothing back keeps the original File
+				n, d, typ := a.File.Name, a.File.Data, a.File.UploadType()
+				if n == "" && len(d) == 0 {
+					typ = ft
+				}
 				if n == "" {
 					n = name
 				}
-				d := a.File.Data
 				if len(d) == 0 {
 					d = data
 				}
-				p, err := api.prepareUpload(ctx, core.UploadFile{Name: n, Title: n, Data: d, Subtype: f.Subtype}, progress)
+				p, err := api.prepareUpload(ctx, core.UploadFile{Name: n, Title: n, Data: d, Subtype: f.Subtype, Type: typ}, progress)
 				if err != nil {
 					return pendingFileResult{}, err
 				}
@@ -395,7 +396,7 @@ func prepareFile(ctx context.Context, api coreAPI, f core.UploadFile, progress f
 		}
 		return up, nil
 	}
-	return api.prepareUpload(ctx, core.UploadFile{Name: name, Title: name, Data: data, Subtype: f.Subtype}, progress)
+	return api.prepareUpload(ctx, core.UploadFile{Name: name, Title: name, Data: data, Subtype: f.Subtype, Type: f.Type}, progress)
 }
 
 // ---- hooks (composer.addSendCheck / addLinkTransform / patchInlineMarkup) ----

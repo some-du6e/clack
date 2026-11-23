@@ -37,8 +37,12 @@ func TestNotifyGroupDMLevelLikeSlack(t *testing.T) {
 		t.Helper()
 		posts++
 		ts := fmt.Sprintf("1762520500.%06d", 100+posts)
+		text := fmt.Sprintf("a synthetic line %d", posts)
+		if mention {
+			text = "<!here> " + text // @here: the group DM takes at-channel mentions (rr reads the text)
+		}
 		a.data.handle(a, core.Event{Type: "message", Channel: g, TS: ts, ConvKind: "mpim",
-			Msg: noteMsg(ts, "", fmt.Sprintf("a synthetic line %d", posts)), Mention: mention})
+			Msg: noteMsg(ts, "", text), Mention: mention})
 		if want {
 			shown++
 			if n := rec.wait(t, a, shown); n.Msg != ts {

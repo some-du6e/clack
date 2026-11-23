@@ -3,6 +3,7 @@ package composer
 import (
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -44,16 +45,13 @@ import (
 // are on) puts a text presentation selector after a "↔" outside code so
 // it doesn't turn into the emoji.
 
-// slugStore is what rNCs' searchFunc reads, snapshotted on the UI
-// goroutine at send.
+// slugStore is what rNCs' searchFunc reads. Its snapshot of the store
+// (members, groups, channels, keywords: slugData) is read on the first
+// search that needs it, once for all of the store's copies, so a message
+// with no "@" or "#" reads nothing, and the send job reuses the store
+// submit built.
 type slugStore struct {
-	users    []core.User
-	groups   []core.Usergroup
-	channels []slugChannel // public channels
-	keywords []string      // the broadcast keywords the viewer may use here (none in a thread)
-	selfID   string
-	rk       rankCtx
-	frec     *frecency.Cache
+	*slugData
 	// realNames is shouldDisplayRealNamesInMentions (mentions_real_names)
 	realNames bool
 	// smart: smart quotes and symbols are on (no disable_smart_symbols)
@@ -62,63 +60,164 @@ type slugStore struct {
 	find func(q string) []slugHit
 }
 
+// slugData is the store's snapshot: load fills it on first use (nil: the
+// fields are set already).
+type slugData struct {
+	once     sync.Once
+	load     func(*slugData)
+	users    []core.User
+	groups   []core.Usergroup
+	channels []slugChannel // public channels
+	selfID   string
+	rk       rankCtx
+	frec     *frecency.Cache
+	// keywords are the broadcast keywords the viewer may use here (none in
+	// a thread), asked of kwLoad on the first look-up of a keyword's name:
+	// BroadcastPerms loads the channel's permissions
+	kwOnce   sync.Once
+	kwLoad   func() []string
+	keywords []string
+	// the member search's candidates, built once for every query
+	candOnce sync.Once
+	cands    []acrank.Cand
+	hits     []slugHit
+}
+
+// data is the snapshot, loaded.
+func (st slugStore) data() *slugData {
+	d := st.slugData
+	if d == nil {
+		return &slugData{}
+	}
+	d.once.Do(func() {
+		if d.load != nil {
+			d.load(d)
+		}
+	})
+	return d
+}
+
+// keywordList is the keywords, asked for once.
+func (d *slugData) keywordList() []string {
+	d.kwOnce.Do(func() {
+		if d.kwLoad != nil {
+			d.keywords = d.kwLoad()
+		}
+	})
+	return d.keywords
+}
+
 // slugChannel is a channel the # search finds: fromAnotherTeam is a
-// channel of another workspace of the org (pS2E isFromAnotherTeam; the
-// composer's channels are the viewer's team's).
+// channel of another workspace of the org (pS2E isFromAnotherTeam).
 type slugChannel struct {
 	id, name  string
 	otherTeam bool
 }
 
-// slugStore snapshots the store for the composer's conversation.
+// slugStore is the composer's store, its snapshot read on first use.
 func (c *Composer) slugStore() slugStore {
 	a := c.api.a
 	if a == nil {
 		return slugStore{}
 	}
-	s := c.api.snapshot()
-	conv, haveConv := c.api.conv(c.ch)
-	st := slugStore{frec: a.FrecencyCache(), realNames: a.RealNamesInMentions(), smart: SmartSymbols(a)}
+	api, ch, ts := c.api, c.ch, c.mentionThread()
+	return slugStore{realNames: a.RealNamesInMentions(), smart: SmartSymbols(a),
+		slugData: &slugData{load: func(d *slugData) { loadSlugData(d, api, ch, ts) }}}
+}
+
+// loadSlugData snapshots what rNCs' searches read for conversation ch
+// (inThread: a thread's composer, no keywords): searchLocal's members
+// (slugMember), the user groups of the viewer's workspace (no
+// isXWSUserGroupsEnabled in Clack), the public channels, and the keywords
+// on demand. Members are read raw: Slack's search records no member-cache
+// hits.
+func loadSlugData(d *slugData, api coreAPI, ch string, inThread bool) {
+	a := api.a
+	s := api.snapshot()
+	conv, haveConv := api.conv(ch)
 	kind := ""
 	if haveConv {
 		kind = conv.Kind
 	}
-	st.rk = rankCtxFrom(c.api, s, kind)
+	d.rk = rankCtxFrom(api, s, kind)
+	d.frec = a.FrecencyCache()
 	seen := map[string]bool{}
 	add := func(u core.User) {
-		if u.ID == "" || u.ID == "USLACKBOT" || seen[u.ID] {
+		if u.ID == "" || seen[u.ID] || !slugMember(u) {
 			return
 		}
 		seen[u.ID] = true
-		st.users = append(st.users, u)
+		d.users = append(d.users, u)
 	}
 	if s.Self.ID != "" {
-		st.selfID = s.Self.ID
+		d.selfID = s.Self.ID
 		add(s.Self)
 	}
-	for _, u := range a.KnownUsers() {
+	for _, u := range a.KnownUsersRaw() {
 		add(u)
 	}
 	for _, id := range sortedKeys(s.Users) {
 		add(s.Users[id])
 	}
-	st.groups = a.StoredUsergroups()
-	for _, cv := range s.Convs {
-		if cv.Kind == "channel" && !cv.File {
-			st.channels = append(st.channels, slugChannel{id: cv.ID, name: cv.Name})
+	team := a.CurrentTeamID()
+	for _, g := range a.StoredUsergroups() {
+		if g.TeamID == "" || g.TeamID == team { // isUserGroupFromAnotherTeam: getUserGroupTeamId vs getCurrentTeamId
+			d.groups = append(d.groups, g)
 		}
 	}
-	if c.ts == "" && haveConv && a.BroadcastEnabledCached(c.ch) {
-		st.keywords = core.BroadcastKeywords(conv, a.BroadcastPerms(c.ch))
+	for _, cv := range s.Convs {
+		if cv.Kind == "channel" && !cv.File {
+			d.channels = append(d.channels, slugChannel{id: cv.ID, name: cv.Name, otherTeam: a.FromAnotherTeam(cv.ID)})
+		}
 	}
-	return st
+	if !inThread && haveConv {
+		d.kwLoad = func() []string {
+			if !a.BroadcastEnabledCached(ch) {
+				return nil
+			}
+			return core.BroadcastKeywords(conv, a.BroadcastPerms(ch))
+		}
+	}
+}
+
+// slugMember is getMemberFilterFunction for rNCs' member search (fRHe's
+// defaults with includeSelf and no Slackbot) and fetchLocal's interact
+// check: not Slackbot, Slack's system user, the search or channel-expert
+// bot or UTBD; no workflow bot (includeWorkflows), deactivated member
+// (includeDeleted) or profile-only user (includeProfileOnlyUsers); no
+// member an information barrier keeps from the viewer (interact false).
+func slugMember(u core.User) bool {
+	switch u.ID {
+	case "USLACKBOT", "USLACK", "USEARCH", "UCHANNELEXPERT", "UTBD":
+		return false
+	}
+	return !u.Workflow && !u.Deleted && !u.ProfileOnly && !u.NoInteract
+}
+
+// mentionThread is rNCs' inThread: a thread's reply box, or an edit made
+// in a thread pane or the Threads view (saveMessageEdit IHC0 reads the
+// view context, not the message's thread_ts: a thread's root edited in
+// the channel gets keywords).
+func (c *Composer) mentionThread() bool {
+	if c.edit != nil {
+		return c.EditInThread
+	}
+	return c.ts != ""
 }
 
 // prepareMessage is the document a send or a scheduled send serializes:
 // prepareSend's, then Slack's send processor (the smart-symbol pass and
 // the mention auto-slugging).
 func (c *Composer) prepareMessage(d *Doc) *Doc {
-	return processSend(c.prepareSend(d), c.slugStore())
+	doc, _ := c.prepareMessageStore(d)
+	return doc
+}
+
+// prepareMessageStore is prepareMessage with the store its processor
+// read, for the send job to reuse.
+func (c *Composer) prepareMessageStore(d *Doc) (*Doc, slugStore) {
+	st := c.slugStore()
+	return processSend(c.prepareSend(d), st), st
 }
 
 // processSend runs the processor over d; d itself when nothing changes.
@@ -338,8 +437,36 @@ func (h slugHit) kp() string {
 	return "@" + h.real
 }
 
-// slugNormalize is 8KmV normalizeName: i18n_deburr, then lowercase.
-func slugNormalize(s string) string { return jsToLower(acrank.Deburr(s)) }
+// slugNormalize is 8KmV normalizeName: i18n_deburr (J3F/: lodash deburr,
+// kN/G's fullToHalf, Cyrillic to Latin), then lowercase.
+func slugNormalize(s string) string { return jsToLower(slugFullToHalf(acrank.Deburr(s))) }
+
+// slugFullToHalf is kN/G's A: each character of U+3000–U+301F,
+// U+30A0–U+30FF and U+FF00–U+FFEF through fullToHalf (its table, else
+// U+FF00–U+FF5E shifted to ASCII). acrank.Deburr's deburr and Cyrillic
+// steps touch none of these, so the order is J3F/'s.
+func slugFullToHalf(s string) string {
+	conv := func(r rune) bool {
+		return r >= 0x3000 && r <= 0x301f || r >= 0x30a0 && r <= 0x30ff || r >= 0xff00 && r <= 0xffef
+	}
+	if !strings.ContainsFunc(s, conv) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case !conv(r):
+			b.WriteRune(r)
+		case slugHalfWidth[r] != nil:
+			b.WriteString(string(slugHalfWidth[r]))
+		case r >= 0xff00 && r <= 0xff5e:
+			b.WriteRune(r - 0xfee0)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 // slugGoodEnough is isNameMatchGoodEnoughForRealMention (8KmV fN): one
 // of the name's words (split on " ._", each up to its first "-") is the
@@ -452,13 +579,13 @@ func (st slugStore) memberMention(pm potentialMention, g []slugHit) (slugMention
 		if good && len(hits) == 1 && (spelled || !hits[0].group) {
 			return mk(hits[0], length), true
 		}
-		if good && len(hits) > 1 && st.frec != nil {
+		if frec := st.data().frec; good && len(hits) > 1 && frec != nil {
 			ids := make([]string, len(hits))
 			for i, h := range hits {
 				ids[i] = h.id
 			}
 			now := time.Now()
-			sc := st.frec.ScoreItems(st.frec.Hits(label, now), ids, now, nil)
+			sc := frec.ScoreItems(frec.Hits(label, now), ids, now, nil)
 			frecency.SortItems(sc)
 			if len(sc) > 1 && sc[0].RawFrecencyScore-sc[1].RawFrecencyScore >= 30 {
 				return mk(hits[sc[0].Index], length), true
@@ -485,34 +612,42 @@ func hitAtom(h slugHit, label string) *Atom {
 // search is rNCs' searchFunc for a member query: the keyword, else the
 // members and user groups the autocomplete's search ranks (25 at most).
 func (st slugStore) search(q string) []slugHit {
-	for _, k := range st.keywords {
-		if k == q || acrank.Deburr(k) == q {
-			return []slugHit{{id: broadcastRowID(k), keyword: true, name: k}}
+	d := st.data()
+	// a keyword's name (the keywords are ASCII: deburring changes none):
+	// only then does the search ask for the viewer's keywords here
+	switch q {
+	case core.KeywordEveryone, core.KeywordChannel, core.KeywordHere:
+		for _, k := range d.keywordList() {
+			if k == q || acrank.Deburr(k) == q {
+				return []slugHit{{id: broadcastRowID(k), keyword: true, name: k}}
+			}
 		}
 	}
 	if st.find != nil {
 		return st.find(q)
 	}
-	cands := make([]acrank.Cand, 0, len(st.users)+len(st.groups))
-	hits := make([]slugHit, 0, cap(cands))
-	ms := memberSources{selfID: st.selfID, rk: st.rk}
-	for _, u := range st.users {
-		cands = append(cands, st.rk.memberCand(u, ms, false))
-		disp := ""
-		if u.DisplaySet {
-			disp = u.Name
+	d.candOnce.Do(func() {
+		d.cands = make([]acrank.Cand, 0, len(d.users)+len(d.groups))
+		d.hits = make([]slugHit, 0, cap(d.cands))
+		ms := memberSources{selfID: d.selfID, rk: d.rk}
+		for _, u := range d.users {
+			d.cands = append(d.cands, d.rk.memberCand(u, ms, false))
+			disp := ""
+			if u.DisplaySet {
+				disp = u.Name
+			}
+			d.hits = append(d.hits, slugHit{id: u.ID, name: u.Name, display: disp, real: u.RealName})
 		}
-		hits = append(hits, slugHit{id: u.ID, name: u.Name, display: disp, real: u.RealName})
-	}
-	for _, g := range st.groups {
-		cands = append(cands, acrank.Cand{Kind: acrank.UserGroup, ID: g.ID, Name: g.Name, Handle: g.Handle})
-		hits = append(hits, slugHit{id: g.ID, group: true, name: g.Handle})
-	}
-	o := st.rk.opts(acrank.SourceTexty)
+		for _, g := range d.groups {
+			d.cands = append(d.cands, acrank.Cand{Kind: acrank.UserGroup, ID: g.ID, Name: g.Name, Handle: g.Handle})
+			d.hits = append(d.hits, slugHit{id: g.ID, group: true, name: g.Handle})
+		}
+	})
+	o := d.rk.opts(acrank.SourceTexty)
 	o.Limit = acMaxItems
 	var out []slugHit
-	for _, r := range acrank.Rank(q, cands, o) {
-		out = append(out, hits[r.Index])
+	for _, r := range acrank.Rank(q, d.cands, o) {
+		out = append(out, d.hits[r.Index])
 	}
 	return out
 }
@@ -522,8 +657,9 @@ func (st slugStore) search(q string) []slugHit {
 // the first.
 func (st slugStore) channelMention(pm potentialMention) (slugMention, bool) {
 	var first, same *slugChannel
-	for i := range st.channels {
-		c := &st.channels[i]
+	chans := st.data().channels
+	for i := range chans {
+		c := &chans[i]
 		if c.name != pm.bare {
 			continue
 		}

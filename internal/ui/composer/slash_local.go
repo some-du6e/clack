@@ -2,6 +2,7 @@ package composer
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -125,6 +126,9 @@ func (j *sendJob) msgSend(ctx context.Context, ch string, msg, orig qDelta) {
 	no := false
 	args := prepareSendArgs{ChannelID: ch, Delta: d.Delta(), Text: d.Mrkdwn(), Blocks: d.RichTextBlocks(), EnableSlashCommands: &no}
 	mj := &sendJob{api: j.api, ch: ch, o: &outgoing{doc: d, text: args.Text, blocks: args.Blocks}, store: j.store, ui: j.ui}
+	// the command's delta was processed once already (submit's pass): the
+	// message's job doesn't run the processor over it again
+	mj.handed, _ = json.Marshal(args.Delta)
 	var err error
 	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
 		_, err = taut.Dispatch(ctx, t, thPrepareAndSend, args, mj.native)

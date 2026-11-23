@@ -367,7 +367,7 @@ func (a *App) PrepareUpload(ctx context.Context, f UploadFile, progress func(sen
 // uploadOnce is one eager upload attempt: files.getUploadURL {filename,
 // length, snippet_type, subtype, alt_txt} (Slack's getUploadURL fetcher
 // sends snippet_type for snippets, subtype for clips and alt_txt for
-// images with alt text), the multipart POST to upload_url,
+// images with alt text), the multipart POST to upload_url (uploadPart),
 // files.completeUpload {files: [{id, title, subtype}]} (UploadQueue's
 // _getMultiFileUploadDataForApi adds subtype when the File has one).
 func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, total int64)) (string, error) {
@@ -396,7 +396,7 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 		return "", errors.New("core: files.getUploadURL returned no upload slot")
 	}
 	log.Printf("upload: %s slot for %d bytes", id, n)
-	if err := a.C.UploadBytes(ctx, r.UploadURL, f.Name, f.Data, progress); err != nil {
+	if err := a.C.UploadPart(ctx, r.UploadURL, uploadPart(f), progress); err != nil {
 		log.Printf("upload: %s POST failed after %s (%s)", id, time.Since(t0).Round(time.Millisecond), uploadErrClass(err))
 		return "", err
 	}
@@ -407,6 +407,31 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 	}
 	log.Printf("upload: %s complete; processing", id)
 	return id, nil
+}
+
+// uploadPart is the FormData entry Slack's UploadQueue posts for f: the
+// File, named f.Name, or a snippet's Blob, which FormData names "blob";
+// typed f.FileType() (UploadPart sends "" as application/octet-stream).
+func uploadPart(f UploadFile) slack.MultipartFile {
+	name := f.Name
+	if f.SnippetType != "" {
+		name = "blob"
+	}
+	return slack.MultipartFile{Field: "file", Name: name, Type: f.FileType(), Data: f.Data}
+}
+
+// FileType is f's type as Slack's client holds its File (or a snippet's
+// Blob): f.Type; else a snippet's text/plain; else the type Chromium gives
+// a File of f's name (slack.FileType, "" where its lists have none). The
+// upload's part goes up with it, and plugins see it as the File's type.
+func (f UploadFile) FileType() string {
+	switch {
+	case f.Type != "":
+		return f.Type
+	case f.SnippetType != "":
+		return "text/plain"
+	}
+	return slack.FileType(f.Name)
 }
 
 // retryableUpload: anything but a Slack API error, a sign-out or the

@@ -125,7 +125,9 @@ type Message struct {
 	// NoDisplay and NoNotifications are the server's no_display and
 	// no_notifications: no desktop notification for the message
 	// (client-boot Fpyc's reasons 4 and 5; ui/notify_dm.go).
-	NoDisplay, NoNotifications bool
+	// DNDSuppressed is dnd_suppressed: a mention held for Do Not Disturb
+	// (canCountAsUnreadForCurrentUser; core NotifyMention's callers).
+	NoDisplay, NoNotifications, DNDSuppressed bool
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
@@ -153,7 +155,7 @@ type BotProfile struct {
 	Icon                            string      // best icon URL
 	Icons                           SenderIcons // bot_profile.icons as sent
 	Deleted                         bool
-	Workflow                        bool // is_workflow_bot: a Workflow Builder bot (badged WORKFLOW)
+	Workflow                        bool // is_workflow_bot: a Workflow Builder bot (badged WORKFLOW), whose keywords count (shouldIgnoreHighlightWords)
 }
 
 type Reaction struct {
@@ -202,6 +204,9 @@ type User struct {
 	HuddleExpires                 int64
 	Agent                         bool // agent_status consistently_an_agent (read for the badge only under support_lots_of_agents; sender.go)
 	Workflow, Agentforce, AppUser bool // is_workflow_bot, is_agentforce_bot, is_app_user (the sender badge; sender.go)
+	// ProfileOnly is is_profile_only_user, NoInteract interact false (an
+	// information barrier): the member searches leave both out.
+	ProfileOnly, NoInteract bool
 
 	// TeamID is the member's team as Slack's computeLocality reads it
 	// (the org on Enterprise Grid for org members, else team_id).
@@ -517,6 +522,11 @@ type UploadFile struct {
 	// AltText is an image's alt text (the Edit file dialog),
 	// files.getUploadURL's alt_txt.
 	AltText string
+	// Type is the upload part's Content-Type: the Blob's type for a
+	// snippet (uploadSnippet), the recorder's for a clip (audio/mp4), a
+	// plugin File's own; else "" for slack.FileType(Name), the type
+	// Chromium gives a File of that name. Slack files the upload by it.
+	Type string
 	// Subtype is the File's subtype ("slack_audio" for a voice clip,
 	// internal/clip): UploadQueue sends it as files.getUploadURL's subtype
 	// and in completeUpload's files entry. "" for an ordinary file.
@@ -809,7 +819,11 @@ type SavedItem struct {
 	Progress                            string // in_progress | completed | archived …
 	DateCreated, DateDue, DateCompleted int64
 	Archived                            bool
-	Msg                                 *Message
+	// RecordID, SectionID and ColumnID are the rest of a list record's, a
+	// canvas section's and a list field's key (getIdForSavedItem: SavedItemID);
+	// Description is a reminder's or a section's text.
+	RecordID, SectionID, ColumnID, Description string
+	Msg                                        *Message
 	// Gone: a saved message the history no longer has (messages.list
 	// answered without it): deleted, Later's tombstone.
 	Gone bool
@@ -932,6 +946,11 @@ type CommandOpts struct {
 	AppID string
 	// TeamID is slashCommandApplicableTeamId (chat.command team_id).
 	TeamID string
+	// Submit is Text as submitChannelTopic sends it (s0VR:
+	// linkifyPhoneNumbers(clean_message_text_with_state(value)), the
+	// composer's TextyInput.Submit rule): the local /topic's topic ("":
+	// Text as it is).
+	Submit string
 }
 
 // CommandParam is one of a command's parsed arguments

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- internal/slack's XDG_DATA_DIRS fixture: update-mime-database . (in mime/) writes mime.cache -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-clack-go-share"><glob pattern="*.go"/></mime-type>
+  <mime-type type="text/x-clack-md-share"><glob pattern="*.md"/></mime-type>
+  <mime-type type="text/x-clack-rust"><glob pattern="*.rs"/></mime-type>
+  <mime-type type="text/x-clack-mov-share"><glob pattern="*.mov" weight="45"/></mime-type>
+</mime-info>

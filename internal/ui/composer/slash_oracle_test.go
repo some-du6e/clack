@@ -103,7 +103,7 @@ func TestAutoSlugLikeSlack(t *testing.T) {
 			if err := json.Unmarshal([]byte(c.channels), &chans); err != nil {
 				t.Fatal(err)
 			}
-			st := slugStore{find: func(q string) []slugHit { return hits[q] }}
+			st := slugStore{find: func(q string) []slugHit { return hits[q] }, slugData: &slugData{}}
 			for _, ch := range chans {
 				st.channels = append(st.channels, slugChannel{id: ch.ID, name: ch.Name, otherTeam: ch.OtherTeam})
 			}

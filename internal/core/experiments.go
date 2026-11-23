@@ -319,6 +319,7 @@ var experimentReads = map[string][]string{
 	"mentions_full_names_only_pref": on, // a message slug's DM partner, a mention's name (msg_slug.go: N1tw's k, realNamesInMentions)
 	// composer and autocomplete
 	"slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
+	"slack_seasonal_delight":         on, // the picker's Halloween emoji pack call to action (emoji_pack_cta.go: nkcv k)
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
 	// /feedback's dialog and its note (composer/slash_local.go, popups/user_feedback.go: tCkD, VhHZ)
 	"slash_feedback_in_modal": on, "slash_feedback_modal_warning": on,
@@ -354,7 +355,7 @@ var experimentReads = map[string][]string{
 	"omni_date_quick_filters": on, "surfaces_synth_view": on,
 	// prefs, status, focus, notifications, emoji picker
 	"emoji_skin_tone_picker_improvement": on, "focus_mode_custom_duration": {"treatment"},
-	"defer_notification_3p_streaming": on,
+	"defer_notification_3p_streaming": on, "message_sound_debounce": on,
 	// the standard emoji set everything reads (emoji_set.go)
 	ExpEmojiV17: on,
 	// desktop notifications (ui/notify.go, huddleui/invite.go): Slack's

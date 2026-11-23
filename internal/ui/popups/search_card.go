@@ -306,7 +306,7 @@ type srViewerReply struct {
 // result has requestor_replied, as SearchRepliesAction does once it's
 // drawn.
 func (v *SearchView) srAskViewerReply(i int) {
-	c, m := &v.cards[i], v.msgs[i]
+	c, m := v.cards[i], v.msgs[i]
 	if c.reply.asked || !m.RequestorReplied || m.ReplyCount == 0 {
 		return
 	}
@@ -792,7 +792,7 @@ func srMap(v any) map[string]any {
 // srOpenAttachments opens SearchAttachmentPreviewList for card i at the
 // pill (HoverCardTrigger position "top-left", openOnClick).
 func (v *SearchView) srOpenAttachments(gtx layout.Context, i int) {
-	c, m := &v.cards[i], v.msgs[i]
+	c, m := v.cards[i], v.msgs[i]
 	items := srAttachmentItems(&m)
 	y, ok := v.cardY(i)
 	if len(items) == 0 || !ok {

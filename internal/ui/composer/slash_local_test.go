@@ -54,15 +54,6 @@ func localComposer(t *testing.T, ts string, seed ...func(*store.Store)) (*Compos
 	return c, h, fs
 }
 
-func (f *fakeSlack) answer(method string, rep map[string]any) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.reply == nil {
-		f.reply = map[string]any{}
-	}
-	f.reply[method] = rep
-}
-
 // waitUI runs what the command queued for the UI goroutine until cond
 // holds.
 func waitUI(t *testing.T, what string, cond func() bool) {
