@@ -355,6 +355,8 @@ type richEntry struct {
 	at  time.Time // the frame it was laid out in last (gtx.Now)
 	// ctx sees the context presses on the body (content_menu.go)
 	ctx bodyTag
+	// hand is the body's hand over it in a clickable row (handBody)
+	hand bodyTag
 }
 
 // richCache keeps one richview.View per message for a view.
@@ -428,6 +430,7 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 		rec := op.Record(gtx.Ops)
 		d := e.v.Layout(gtx, b.style(), hostHandler{b.h})
 		bodyParent(gtx, &e.ctx, d.Size, rec.Stop())
+		b.handOver(gtx, e, d.Size)
 		return d
 	}
 	lh := 22
@@ -446,6 +449,7 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 		}
 	}
 	bodyParent(gtx, &e.ctx, d.Size, call) // clipped to the lines shown
+	b.handOver(gtx, e, d.Size)
 	return d
 }
 

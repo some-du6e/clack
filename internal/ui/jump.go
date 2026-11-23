@@ -488,3 +488,40 @@ var (
 	_ views.PaneJumper     = (*App)(nil)
 	_ popups.MessageOpener = (*App)(nil)
 )
+
+// OpenMessageTime is handleTimestampClick (boot-shared Gi27, CDN build
+// 36d315d11944) for a click on a message's time (popups.TimeLink): a Cmd
+// click (isCmdKey: Ctrl off macOS) on a reply, or on a message the
+// primary view isn't showing, opens the message's thread in the split
+// view with the message highlighted (openThreadInTile's shouldOpenInTile
+// and highlightTs); any other click opens the message's permalink
+// (openPermalink after focusing the message list at it), which routes to
+// the message and highlights it as an opened link does.
+func (a *App) OpenMessageTime(ch, ts, thread string, tile bool) {
+	if ch == "" || ts == "" {
+		return
+	}
+	reply := thread != "" && thread != ts
+	if tile && (reply || a.router.Current().Channel() != ch) && a.SplitViewOK() {
+		root := thread
+		if root == "" {
+			root = ts
+		}
+		route := Route("c/" + ch + "/t/" + root)
+		a.OpenSplit(string(route))
+		if a.splitTop() == route {
+			a.inPane(paneSplit, func() {
+				if j, ok := a.convoFor(ch, root).list.(interface{ JumpTo(ts string, flash bool) }); ok {
+					j.JumpTo(ts, true)
+				}
+			})
+		}
+		a.Invalidate()
+		return
+	}
+	if !a.OpenPermalink(popups.Permalink(a, ch, ts, thread), false) {
+		a.jumpToMessage(ch, ts, thread, false)
+	}
+}
+
+var _ popups.TimestampOpener = (*App)(nil)
