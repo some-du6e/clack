@@ -50,7 +50,9 @@ const sbInset, sbWidth, sbMinBar = 4, 8, 50
 func (s *listState) layoutScrollbar(gtx layout.Context, c *colors, size image.Point, now time.Time) {
 	sb := &s.sb
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &sb.over, Kinds: pointer.Move | pointer.Enter | pointer.Leave | pointer.Cancel})
+		// Enter and Leave are enough: Gio hit-tests a still pointer again
+		// after every frame
+		ev, ok := gtx.Event(pointer.Filter{Target: &sb.over, Kinds: pointer.Enter | pointer.Leave | pointer.Cancel})
 		if !ok {
 			break
 		}
