@@ -126,9 +126,9 @@ func (c *chrome) layoutFormattingTip(gtx layout.Context, th *theme.Theme, p *crP
 		now = time.Now()
 	}
 	vis := st.Online && st.MoreThanTwo
-	// Frames come from the host, never an InvalidateCmd mid-layout (it
-	// requeues the frame's unread events: a press after a click got lost
-	// that way, gio-midframe-invalidate-loses-clicks)
+	// Frames come from the host (until Gio patch 61 an InvalidateCmd
+	// mid-layout requeued the frame's unread events, and a press after a
+	// click got lost that way; it only records its wakeup now)
 	if st.Online && !st.OnlineUntil.IsZero() && !st.OnlineUntil.Equal(c.hint.graceFor) {
 		c.hint.graceFor = st.OnlineUntil // refreshRecentlyOnline: a frame when the grace ends
 		if c.hint.graceTimer != nil {
