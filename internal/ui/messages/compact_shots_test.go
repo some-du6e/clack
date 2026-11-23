@@ -95,8 +95,15 @@ func shotList(items ...string) map[string]any {
 // shotsApp is the synthetic #release channel and its thread.
 func shotsApp(t *testing.T) (*core.App, *fakeslack.Server, map[string]string) {
 	t.Helper()
+	return shotsAppSize(t, fakeslack.Small)
+}
+
+// shotsAppSize is shotsApp over a workspace of size sz (a test may empty
+// its generated history to post its own from the beginning).
+func shotsAppSize(t *testing.T, sz fakeslack.Size) (*core.App, *fakeslack.Server, map[string]string) {
+	t.Helper()
 	SetTaut(nil)
-	fs, err := fakeslack.Start(fakeslack.Small)
+	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
 	}

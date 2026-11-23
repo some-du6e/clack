@@ -58,6 +58,11 @@ var defaultExperimentGroups = map[string]string{
 	"unified_file_picker":  "on", // the folders' add menu (views/folder_tab_more.go), the account's group of 2026-11-13
 	"looping_video_option": "on", // the inline video player's loop (videoplayer), as the account has it
 	"clips_pip":            "on", // the mini player (videoplayer/pip.go), as the account has it
+	// the picker's Halloween emoji pack call to action (emoji_pack_cta.go):
+	// off, as the account has it
+	"slack_seasonal_delight": "off",
+	// a chart's Copy as image (popups/chart_menu.go), as the account has it
+	"data_visualization_copy_image": "on",
 	// the audio player's card gets the speed and transcript controls
 	// (videoplayer/audio.go), as the account has it
 	"transcribe_opt_in_ui_v2": "on",

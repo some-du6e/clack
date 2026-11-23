@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -16,10 +17,31 @@ import (
 // 500 ms × the round apart; ids still pending after that count as
 // missing.
 func (c *Client) MembersInfo(ctx context.Context, ids []string) MembersResult {
+	return c.membersInfo(ctx, ids, nil)
+}
+
+// MembersRefetch is fetchMembersById with fetchConditionally for members
+// the caller holds: each id goes in updated_ids with the updated stamp of
+// the copy held (stamps[id]), and users/info returns only the members
+// that changed since (Hack Club, read 2026-11-22: a member asked with its
+// current stamp comes back with no results). Users is what changed; an
+// id not returned is unchanged, not missing.
+func (c *Client) MembersRefetch(ctx context.Context, stamps map[string]int64) MembersResult {
+	ids := make([]string, 0, len(stamps))
+	for id := range stamps {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	r := c.membersInfo(ctx, ids, stamps)
+	r.Missing = nil
+	return r
+}
+
+func (c *Client) membersInfo(ctx context.Context, ids []string, stamps map[string]int64) MembersResult {
 	var out MembersResult
 	ask := ids
 	for round := 1; len(ask) > 0; round++ {
-		r := c.membersRound(ctx, ask)
+		r := c.membersRound(ctx, ask, stamps)
 		out.Users = append(out.Users, r.Users...)
 		out.Missing = append(out.Missing, r.Missing...)
 		out.Failed = append(out.Failed, r.Failed...)
@@ -69,7 +91,7 @@ type MembersResult struct {
 }
 
 // membersRound asks for ids once, chunk by chunk.
-func (c *Client) membersRound(ctx context.Context, ids []string) MembersResult {
+func (c *Client) membersRound(ctx context.Context, ids []string, stamps map[string]int64) MembersResult {
 	var (
 		mu  sync.Mutex
 		out MembersResult
@@ -83,7 +105,7 @@ func (c *Client) membersRound(ctx context.Context, ids []string) MembersResult {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			r := c.membersChunk(ctx, part)
+			r := c.membersChunk(ctx, part, stamps)
 			mu.Lock()
 			out.Users = append(out.Users, r.Users...)
 			out.Missing = append(out.Missing, r.Missing...)
@@ -101,10 +123,10 @@ func (c *Client) membersRound(ctx context.Context, ids []string) MembersResult {
 
 // membersChunk is one users/info request (fetchObjectsWithQuery, which
 // follows next_marker).
-func (c *Client) membersChunk(ctx context.Context, ids []string) MembersResult {
-	up := make(map[string]int, len(ids))
+func (c *Client) membersChunk(ctx context.Context, ids []string, stamps map[string]int64) MembersResult {
+	up := make(map[string]int64, len(ids))
 	for _, id := range ids {
-		up[id] = 0
+		up[id] = stamps[id] // 0 for a member not held
 	}
 	body := map[string]any{"check_interaction": true, "include_profile_only_users": true, "updated_ids": up}
 	var out MembersResult

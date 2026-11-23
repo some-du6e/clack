@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/stackdump"
 	"github.com/some-du6e/clack/internal/store"
 )
 
@@ -24,9 +25,11 @@ import (
 type App struct {
 	// botProfileTeams: bot id -> its messages' bot_profile.team_id (botHomeTeam)
 	botProfileTeams sync.Map
-	C               *slack.Client
-	S               *store.Store
-	RTM             *slack.RTM
+	// recFiles: name recordings' files by id (ProfileRecordingFile)
+	recFiles sync.Map
+	C        *slack.Client
+	S        *store.Store
+	RTM      *slack.RTM
 
 	usersAsked usersAsked // ids users/info was asked for (lazy_users.go)
 	usersOut   usersOut   // the members users/info has out (members.go)
@@ -77,6 +80,7 @@ type App struct {
 	presSeen     map[string]time.Time
 	presWaiters  []chan struct{}
 	presSubs     map[string]int // Slack's presence manager's counts (presence_subs.go)
+	mfresh       memberFresh    // the members' freshness and user_change subscriptions (member_fresh.go)
 	presSubTimer *time.Timer
 	countsTimer  *time.Timer
 	countsReread bool           // refreshCounts' next read is the one after a merged answer (it doesn't ask again)
@@ -103,6 +107,16 @@ type App struct {
 	actLaterMu sync.Mutex
 	actLaterQ  []func(context.Context)
 	actLaterOn bool
+	// what the pump and the Activity queue are on, and the stall dumps'
+	// limit (pump_watch.go)
+	pumpOn, actOn atomic.Pointer[pumpTask]
+	pumpDumps     stackdump.Limiter
+	// tickleAgain is the reason of a tickle whose send failed, sent once
+	// more when the socket is back (tickle.go)
+	tickleAgain atomic.Pointer[string]
+	// startedAt is when the session began (Slack's start_ms): an @here
+	// from before it doesn't badge (badge_rules.go)
+	startedAt time.Time
 	// the other socket events' lookups, off the event pump (pump_later.go)
 	pumpQ laterQueue
 	// convQs order the events held for their conversation's lookup, one
@@ -213,6 +227,8 @@ func New(c *slack.Client, s *store.Store) *App {
 	}
 	a.warm.dataReady, a.warm.done = make(chan struct{}), make(chan struct{})
 	a.warm.restReady = make(chan struct{})
+	a.pumpDumps.Every = 10 * time.Minute // a stall's goroutine dump (pump_watch.go)
+	a.startedAt = time.Now()
 	a.bg, a.stopBG = context.WithCancel(context.Background())
 	c.OnAuthFailed(a.onAuthFailed)
 	a.RTM = c.NewRTM()
@@ -238,9 +254,11 @@ func New(c *slack.Client, s *store.Store) *App {
 		if up {
 			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
 			go a.refreshCountsAfterGap(a.bg)           // what the socket missed (codechannel_close.go)
+			a.retryTickle()                            // a tickle that failed with the socket down (tickle.go)
 		}
 	}
 	a.RTM.OnHello = a.onHello
+	s.SetMemberHit(a.memberHit)     // getMemberById's maybeRefetch (member_fresh.go)
 	a.RTM.OnDrop = a.onDroppedEvent // a dropped message's ts still goes into maxTs (maxts_heard.go)
 	s.SetMembersOnline(a.membersOnline)
 	appsByStore.Store(s, a)
@@ -679,8 +697,9 @@ func (a *App) Boot(ctx context.Context) error {
 		// metadata cache doesn't hold stayed BaseMissingMember's bar until
 		// boot's last call (a slow users.conversations, a rate-limited
 		// step), or for good when boot failed.
-		go a.resolveLoop(a.bg) // unresolved channel/bot names
-		go a.memberLoop(a.bg)  // members lookups missed (members.go)
+		go a.resolveLoop(a.bg)     // unresolved channel/bot names
+		go a.memberLoop(a.bg)      // members lookups missed (members.go)
+		go a.memberFreshLoop(a.bg) // members due to be fetched again (member_fresh.go)
 		// the custom emoji and the user groups: after the window's first real
 		// frame when the UI asked (waitCacheRest), then the steps reading
 		// them (the emoji step) go on
@@ -938,7 +957,8 @@ func (a *App) Boot(ctx context.Context) error {
 	go a.codeChannelCloserLoop(a.bg) // code_channels_auto_close (codechannel_close.go)
 	go a.pump()
 	go a.prefetch(a.bg)
-	go a.membersLoop(a.bg) // the members cache's pass (members.go)
+	go a.membersLoop(a.bg)  // the members cache's pass (members.go)
+	a.memberFreshBootDone() // unpauseRefetchAfterBoot (member_fresh.go)
 	if a.C.Creds.EnterpriseID != "" {
 		go func() { _ = a.LoadEnterprisePrefs(a.bg) }() // enterprise_prefs.go
 	}
@@ -1093,8 +1113,17 @@ func (a *App) EnsureUsers(ctx context.Context, ids []string) {
 			log.Printf("users/info: %v", err)
 		}
 		a.S.PutUsers(us)
+		a.membersFetched(userIDs(us)) // fresh (member_fresh.go)
 	}()
 	waitUsers(ctx, wait)
+}
+
+func userIDs(us []slack.User) []string {
+	out := make([]string, 0, len(us))
+	for _, u := range us {
+		out = append(out, u.ID)
+	}
+	return out
 }
 
 // prefetch warms the history of unread conversations so opening them is
@@ -1493,6 +1522,10 @@ func (a *App) MemberAvatar(id string, size int) string {
 	return avatarURL(u, size, firstNonEmpty(a.C.Creds.Team, a.S.TeamID))
 }
 
+// AvatarAt is store.AvatarAt: the picture for a member's 72px avatar url
+// in a box px device pixels across (192px, 512px past those sizes).
+func (a *App) AvatarAt(url string, px int) string { return a.S.AvatarAt(url, px) }
+
 // Self returns the signed-in user.
 func (a *App) Self() User {
 	u, _ := a.User(a.S.SelfID())
@@ -1683,7 +1716,7 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	}
 	v.Pending, v.Failed = a.pendingState(m)
 	v.Ephemeral = m.IsEphemeral
-	v.NoDisplay, v.NoNotifications = m.NoDisplay, m.NoNotifications
+	v.NoDisplay, v.NoNotifications, v.DNDSuppressed = m.NoDisplay, m.NoNotifications, m.DNDSuppressed
 	if m.PinnedInfo != nil {
 		// getMessagePinnedInfo (client-boot): the label's pinnedBy is pinned_info.pinned_by
 		v.PinnedBy = m.PinnedInfo.PinnedBy
@@ -2179,9 +2212,8 @@ func (a *App) onHello() {
 	if err := a.RTM.SubscribePresence(ids); err != nil {
 		log.Printf("rtm: presence_sub: %v", err)
 	}
-	if err := a.RTM.SubscribeUsers(ids); err != nil {
-		log.Printf("rtm: user subscribe: %v", err)
-	}
+	// user_change subscriptions are the members' fetch manager's, not the
+	// presence manager's (member_fresh.go)
 }
 
 // presenceIDs merges add into the subscribed set and returns the full set:
@@ -2262,7 +2294,6 @@ func (a *App) SubscribePresence(ids []string) {
 	all := a.presenceIDs(ids)
 	if fresh && a.RTM.Connected() {
 		_ = a.RTM.SubscribePresence(all)
-		_ = a.RTM.SubscribeUsers(all)
 	}
 }
 

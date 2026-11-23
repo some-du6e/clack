@@ -20,9 +20,6 @@ func ShowInactive(uintptr) {}
 // Minimize is Windows' SC_MINIMIZE.
 func Minimize(uintptr) {}
 
-// SystemIdleTime is Windows' GetLastInputInfo idle time.
-func SystemIdleTime() int { return 0 }
-
 // ToastsEnabled is Windows' ToastNotifier.Setting.
 func ToastsEnabled() bool { return true }
 

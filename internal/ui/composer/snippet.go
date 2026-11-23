@@ -262,12 +262,27 @@ func (d *snippetDialog) cancel() {
 	d.c.Focus()
 }
 
-// snippetUpload is uploadSnippet's file.
+// snippetUpload is uploadSnippet's file: a Blob of the content, typed
+// snippetBlobType, named the snippet's name.
 func snippetUpload(name, typ, content string) core.UploadFile {
 	if name == "" {
 		name = i18n.T("snippet-dialog", "Untitled")
 	}
-	return core.UploadFile{Name: name, Data: []byte(content), SnippetType: typ}
+	return core.UploadFile{Name: name, Data: []byte(content), SnippetType: typ, Type: snippetBlobType(typ)}
+}
+
+// snippetBlobType is uploadSnippet's Blob type: its type's mime type from
+// SnippetFileTypes, text/plain for "auto", "text" and a type with none
+// (type: g && g.mimeType || "text/plain").
+func snippetBlobType(typ string) string {
+	if typ != "auto" && typ != "text" {
+		for _, t := range snippetTypes {
+			if t.Key == typ && t.Mime != "" {
+				return t.Mime
+			}
+		}
+	}
+	return "text/plain"
 }
 
 // submit is handleSubmit: upload (and share) off the UI goroutine, close.

@@ -25,10 +25,10 @@ package popups
 //     the photo without EDIT_PROFILE_PHOTO (a lock with "Locked by an
 //     Admin" before "Profile photo", Upload Photo and Remove Photo
 //     disabled; core/profile_grants.go; build fa938a086569),
-//     Pronouns when the team has display_pronouns, Name pronunciation
-//     when the header section has the element, and Time zone (a select
-//     led by "Please select an option"). Name recording is left out:
-//     Clack can't record audio here. Typing validates the field (NYcX);
+//     Pronouns when the team has display_pronouns, Name recording when the
+//     header section has its file element (profile_name_rec.go), Name
+//     pronunciation when it has that element, and Time zone (a select
+//     led by "Please select an option"). Typing validates the field (NYcX);
 //     Save Changes is disabled while one has an error. Cancel closes;
 //     closing any other way with unsaved changes shows the speed bump
 //     (Discard changes? Keep Editing / Close & Discard).
@@ -138,6 +138,18 @@ func OpenEditProfile(h Host, o EditProfileOpts) *EditProfileModal {
 	return e
 }
 
+// OpenUploadProfilePhoto is openUploadProfilePhotoModal (boot-shared UykV):
+// the Edit profile modal in its photoUpload mode, as the DM foreword's
+// Upload Profile Photo opens it. Slack starts that mode on the
+// select-photo pane (selectPane), which Clack doesn't have yet; its
+// Upload Photo is the file chooser, which this opens at once, and the
+// upload and crop panes follow as they do from the form's Upload Photo.
+func OpenUploadProfilePhoto(h Host) *EditProfileModal {
+	e := OpenEditProfile(h, EditProfileOpts{})
+	e.pickPhoto()
+	return e
+}
+
 // NewEditProfileModal builds the modal on its form pane.
 func NewEditProfileModal(h Host, o EditProfileOpts) *EditProfileModal {
 	e := &EditProfileModal{h: h, o: o}
@@ -185,8 +197,12 @@ func (e *EditProfileModal) FocusHome() event.Tag {
 // true}): Replay introduction closing everything).
 func (e *EditProfileModal) Close() { e.close() }
 
-// close is closeModal({force: true}).
+// close is closeModal({force: true}): the name recorder unmounts with
+// the form, dropping a recording in progress.
 func (e *EditProfileModal) close() {
+	if e.form != nil {
+		e.form.nr.unmount()
+	}
 	if e.m != nil {
 		e.m.Close()
 	}
@@ -202,6 +218,9 @@ func (e *EditProfileModal) Form() *epForm { return e.form }
 
 func (e *EditProfileModal) switchPane(p string) {
 	e.pane = p
+	if p != "formPane" && e.form != nil {
+		e.form.nr.unmount() // the form pane unmounts, and its recorder with it
+	}
 	switch p {
 	case "formPane":
 		e.m = e.form.m
@@ -284,6 +303,8 @@ type epForm struct {
 	pronSet       bool // the pronunciation editor took the header's text
 
 	saving   bool
+	nr       epNameRec // the name recording (profile_name_rec.go)
+	nrBusy   bool      // its upload runs: onFileUploadStart to End (the form's loading)
 	saveBtn  *ModalButton
 	upload   widget.Clickable
 	remove   widget.Clickable
@@ -305,9 +326,12 @@ func newEPForm(e *EditProfileModal) *epForm {
 	} else {
 		f.defaults = map[string]string{}
 	}
+	f.nr.f = f
 	f.buildFields()
-	f.saveBtn = &ModalButton{Label: nsEditProfile.T("Save Changes"), Kind: BtnPrimary, Enabled: f.canSave, Do: func() bool { f.Save(); return false }}
-	cancel := &ModalButton{Label: nsEditProfile.T("Cancel"), Kind: BtnOutline} // handleCancel: closeModal({force: true})
+	f.saveBtn = &ModalButton{Label: nsEditProfile.T("Save Changes"), Kind: BtnPrimary, Enabled: f.canSave, Do: func() bool { f.Save(); return false },
+		Loading: func() bool { return f.saving || f.nrBusy }} // loading: e_
+	// handleCancel: a recording not saved is deleted, closeModal({force: true})
+	cancel := &ModalButton{Label: nsEditProfile.T("Cancel"), Kind: BtnOutline, Do: func() bool { f.nr.cancelled(); return true }}
 	f.bumpKeep = &ModalButton{Label: nsSpeedBump.T("Keep Editing"), Kind: BtnOutline}
 	f.bumpGo = &ModalButton{Label: nsSpeedBump.T("Close & Discard"), Kind: BtnDanger}
 	f.m = NewModal(h, ModalOpts{
@@ -332,6 +356,9 @@ func newEPForm(e *EditProfileModal) *epForm {
 			return true
 		},
 		Over: f.over,
+		// however it closes, the name recorder unmounts with it: a
+		// recording in progress is dropped
+		OnClose: f.nr.unmount,
 	})
 	f.fetchSections()
 	f.fetchGrants()
@@ -417,7 +444,9 @@ func (f *epForm) buildFields() {
 		add(&epField{name: "pronouns", kind: "text", label: nsEditProfile.T("Pronouns"), placeholder: nsEditProfile.T("Ex. they/them/theirs"),
 			hint: nsEditProfile.T("Let people know which pronouns you use.")})
 	}
-	// name_recording (audio_recorder_button) is left out: Clack can't record
+	// name_recording: EditAudioButton (profile_name_rec.go), when the header
+	// section has the element
+	add(&epField{name: "name_recording", kind: "audio_recorder_button", label: nsEditProfile.T("Name recording")})
 	add(&epField{name: "name_pronunciation", kind: "text", label: nsEditProfile.T("Name pronunciation"),
 		placeholder: nsEditProfile.T("Zoe (pronounced 'zo-ee')"),
 		hint:        nsEditProfile.T("This could be a phonetic pronunciation, or an example of something your name sounds like.")})
@@ -447,6 +476,9 @@ func (f *epForm) visible() []*epField {
 	for _, fd := range f.fields {
 		if fd.name == "name_pronunciation" && f.header.Pronunciation == nil {
 			continue
+		}
+		if fd.name == "name_recording" && (f.header.Record == nil || f.header.Record.ElementID == "") {
+			continue // isNameRecordingEnabled: the element has an id
 		}
 		out = append(out, fd)
 	}
@@ -478,6 +510,9 @@ func (f *epForm) fetchSections() {
 			return
 		}
 		f.header = core.HeaderOf(ps)
+		if r := f.header.Record; r != nil && r.ElementID != "" {
+			f.nr.opened(r.FileID) // initialNamePronunciationFileId
+		}
 		if t := f.byName["title"]; t != nil {
 			t.disabled = f.header.Title == nil || !f.header.Title.EditableInUI
 		}
@@ -545,14 +580,18 @@ func (f *epForm) save() core.ProfileFormSave {
 	if p := f.byName["name_pronunciation"]; p != nil && f.header.Pronunciation != nil {
 		s.Pronunciation = p.ed.Text()
 	}
+	if f.header.Record != nil {
+		s.Recording, s.RecordingWas = f.nr.cur, f.nr.was
+	}
 	return s
 }
 
 func (f *epForm) dirty() bool { return f.save().Dirty() }
 
-// canSave is Save Changes' `disabled: some(errors)`, and not while saving.
+// canSave is Save Changes' `disabled: some(errors)`, and not while it's
+// loading (e_: saving, or the name recording uploading).
 func (f *epForm) canSave() bool {
-	if f.saving {
+	if f.saving || f.nrBusy {
 		return false
 	}
 	for _, fd := range f.fields {
@@ -565,6 +604,13 @@ func (f *epForm) canSave() bool {
 
 // Saving reports a save in flight.
 func (f *epForm) Saving() bool { return f.saving }
+
+// uploadBusy is onFileUploadStart (true) and onFileUploadEnd (false): the
+// form's loading state while the name recording uploads.
+func (f *epForm) uploadBusy(b bool) {
+	f.nrBusy = b
+	f.h.Invalidate()
+}
 
 // Save is handleSubmit.
 func (f *epForm) Save() {
@@ -579,7 +625,7 @@ func (f *epForm) Save() {
 	}
 	f.saving = true
 	refetch := f.e.o.Refetch
-	headerChanged := s.Header.Found && (s.Pronunciation != s.PronunciationWas || s.Title != s.TitleWas)
+	headerChanged := s.Header.Found && (s.Pronunciation != s.PronunciationWas || s.Title != s.TitleWas || s.Recording != s.RecordingWas)
 	run(f.h, func(ctx context.Context) (core.ProfileFormResult, error) {
 		return a.SaveProfileForm(ctx, s)
 	}, func(r core.ProfileFormResult, err error) {
@@ -592,6 +638,12 @@ func (f *epForm) Save() {
 			refetch()
 		}
 		if !r.Closed {
+			if r.HeaderWritten {
+				// the profile's recording is the one saved now (Slack's refetch,
+				// then EditProfileFormPane's useEffect on ea): Cancel, Close &
+				// Discard and a remove no longer take it for a new one
+				f.nr.was = s.Recording
+			}
 			for name, fe := range r.FieldErrors {
 				if fd := f.byName[name]; fd != nil {
 					fd.err = fe
@@ -611,9 +663,14 @@ func (f *epForm) stops() []event.Tag {
 	vis := f.visible()
 	var out []event.Tag
 	add := func(fd *epField) {
-		if fd.kind == "options_list" {
+		switch {
+		case fd.kind == "options_list":
 			out = append(out, &fd.sel)
-		} else if !fd.disabled {
+		case fd.kind == "audio_recorder_button":
+			// EditAudioButton's own buttons in its mode; the field's editor
+			// never lays out, and Gio drops a focus on it at the frame's end
+			out = append(out, f.nr.focusStops()...)
+		case !fd.disabled:
 			out = append(out, &fd.ed)
 		}
 	}
@@ -836,6 +893,9 @@ func epLinkButtonOff(gtx layout.Context, th *theme.Theme, cl *Colors, label stri
 // input (44px, 18px text) or select, the inline error, the hint (13/18)
 // and the workspace's rules, 20px under all of it.
 func (f *epForm) drawField(gtx layout.Context, th *theme.Theme, cl *Colors, fd *epField, org image.Point, w int) layout.Dimensions {
+	if fd.kind == "audio_recorder_button" {
+		return f.nr.layout(gtx, th, cl, fd, w) // profile_name_rec.go
+	}
 	y := 0
 	lh := dp(gtx, 22)
 	at(gtx, image.Pt(0, 0), func(gtx layout.Context) layout.Dimensions {
@@ -1002,7 +1062,8 @@ func (f *epForm) over(gtx layout.Context) {
 		f.m.focusTo(gtx, &f.bumpKeep.click, true) // Keep Editing has the focus (no autoFocusContinueButton)
 	}
 	if f.bump {
-		epSpeedBump(gtx, f.h, f.m, &f.veil, f.bumpKeep, f.bumpGo, func() { f.bump = false }, f.e.close)
+		// the speed bump's Close & Discard is handleCancel too
+		epSpeedBump(gtx, f.h, f.m, &f.veil, f.bumpKeep, f.bumpGo, func() { f.bump = false }, func() { f.nr.cancelled(); f.e.close() })
 	}
 }
 

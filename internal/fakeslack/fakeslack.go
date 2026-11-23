@@ -569,6 +569,11 @@ func DefaultPrefs() map[string]any {
 			`"C0GENERAL":{"id":"C0GENERAL","count":12,"visits":[1762540000000]}}`,
 		"ia_theme":                    `{"primary":{"palette":"aubergine"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":true,"useCustomHex":false}`,
 		"window_background_gradients": true,
+		// the emoji pack prefs as Hack Club's read on 2026-11-22: the
+		// newest pack became available 2026-11-06 (no "new" pack after
+		// 11-20), nothing clicked (emoji_packs.go)
+		"emoji_packs_most_recent_available_time": 1793987493, "emoji_packs_clicked_collection_cta": false,
+		"emoji_packs_clicked_picker_cta": false, "emoji_packs_clicked_picker_post_install_cta": false,
 		// Preferences part A (prefs_a.go): Slack's server defaults
 		"show_sidebar_avatars": true, "home_unread_dot": true, "should_show_connect_section": true,
 		"mute_sounds": false, "mute_huddle_sounds": false,
@@ -769,7 +774,8 @@ func Serve(ln net.Listener, sz Size) *Server {
 		s.addIdentity()
 	}
 	if sz.Gallery {
-		s.addGalleryConvs() // gallery.go
+		s.addGalleryConvs()  // gallery.go
+		s.addStretchyEmoji() // bkgallery_stretchy.go
 	}
 	if sz.ChannelLinks {
 		s.addChannelLinks() // channel_links.go
@@ -845,6 +851,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 	mux.HandleFunc("/img/", s.img)
 	mux.HandleFunc("/ws", s.ws)
 	mux.HandleFunc("/files-pri/", s.filesPri) // canvas exports (canvas.go)
+	mux.HandleFunc("/canvas/-/", s.quipCall)  // Quip's canvas calls (quip_endpoints.go)
 	mux.HandleFunc("/auth", s.authPage)       // the token page (auth_page.go)
 	mux.HandleFunc("/photos/", s.photosPage)  // users.preparePhoto's images (photo.go)
 	mux.HandleFunc("/", s.otherPage)          // any other page: logged, not found
@@ -860,6 +867,8 @@ func Serve(ln net.Listener, sz Size) *Server {
 
 // Close stops the server.
 func (s *Server) Close() error {
+	s.SendReconnectURLs(0)
+	s.AutoAway(0)
 	s.forget() // its state beside it, in every perServer map (perserver.go)
 	if s.srv == nil {
 		return nil
@@ -1526,6 +1535,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleNewBots(method, f); handled { // new_bots.go
 		return out
 	}
+	if out, handled := s.handleEmojiPacks(method, f); handled { // emoji_packs.go
+		return out
+	}
 	if out, handled := s.handleSystemDM(method, f); handled { // system_dm.go
 		return out
 	}
@@ -1913,7 +1925,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return map[string]any{"ok": false, "error": "app_not_found"}
 	case "emoji.list":
-		return ok("emoji", s.emoji)
+		return ok("emoji", s.withPackEmoji(s.emoji)) // the installed packs' too (emoji_packs.go)
 	case "client.getWebSocketURL":
 		ws := "ws" + strings.TrimPrefix(s.URL, "http") + "ws"
 		return ok("primary_websocket_url", ws, "fallback_websocket_url", ws, "routing_context", "fake")
@@ -1971,15 +1983,15 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("ts", ts, "channel", f.Get("channel"), "message", msg)
 	case "edge/users/info":
-		var up map[string]int
+		var up map[string]int64
 		_ = json.Unmarshal(edge["updated_ids"], &up)
 		var res []any
-		for id := range up {
+		for id, stamp := range up {
 			if u, ok := s.systemDMUserJSON(id); ok { // system_dm.go: USLACK with the real answer's keys
 				res = append(res, u)
 				continue
 			}
-			if u, ok := s.userByID(id); ok {
+			if u, ok := s.userByID(id); ok && !conditionalMember(u, stamp) { // member_changes.go
 				res = append(res, u)
 			}
 		}
@@ -2133,6 +2145,21 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 }
 
 func (s *Server) userByID(id string) (slack.User, bool) {
+	u, ok := s.userByIDRaw(id)
+	if ok && u.Updated == 0 {
+		u.Updated = FakeUpdated // Slack's members always carry their updated stamp
+	}
+	return u, ok
+}
+
+// FakeUpdated is the updated stamp of a member the fake's tests never
+// changed (EditMember's are later).
+const FakeUpdated = 1762300000
+
+func (s *Server) userByIDRaw(id string) (slack.User, bool) {
+	if u, ok := s.editedUser(id); ok { // member_changes.go
+		return u, true
+	}
 	if id == SelfID {
 		return s.users[0], true
 	}
@@ -2266,6 +2293,11 @@ func (s *Server) img(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if b, ct, ok := stretchImage(strings.TrimPrefix(r.URL.Path, "/img/")); ok { // stretchy emoji tiles (bkgallery_stretchy.go)
+		w.Header().Set("Content-Type", ct)
+		w.Write(b)
+		return
+	}
 	if b, ct, ok := gifImage(strings.TrimPrefix(r.URL.Path, "/img/")); ok { // animated GIFs and their stills (gifs.go)
 		w.Header().Set("Content-Type", ct)
 		w.Write(b)
@@ -2306,7 +2338,8 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	// registered before hello: once the client is connected, Push reaches it
 	s.addSocket(c) // Push (canvas.go)
 	defer s.dropSocket(c)
-	defer s.dropPresenceSub(c)
+	defer s.dropPresenceSub(c) // presence_sub.go
+	s.newGatewayConnection()   // member_changes.go: no user_change subscriptions yet
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
 		_, data, err := c.Read(ctx)
@@ -2314,22 +2347,31 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.noteFrame(data)
+		if rep := s.subscriptionReply(data); rep != nil { // member_changes.go
+			wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			_ = c.Write(wctx, websocket.MessageText, rep)
+			cancel()
+			continue
+		}
 		var f struct {
-			Type string   `json:"type"`
-			ID   int64    `json:"id"`
-			IDs  []string `json:"ids"`
+			Type   string   `json:"type"`
+			ID     int64    `json:"id"`
+			IDs    []string `json:"ids"`
+			Reason string   `json:"reason"`
 		}
 		if json.Unmarshal(data, &f) != nil {
 			continue
 		}
 		switch {
+		case f.Type == "tickle":
+			s.noteTickle(f.Reason) // AutoAway (presence.go)
 		case f.Type == "ping" && s.liveSocket(c):
 			b, _ := json.Marshal(map[string]any{"type": "pong", "reply_to": f.ID})
 			wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			_ = c.Write(wctx, websocket.MessageText, b)
 			cancel()
 		case f.Type == "presence_sub":
-			s.presenceSub(c, f.IDs) // presence.go
+			s.presenceSub(c, f.IDs) // presence_sub.go
 		}
 	}
 }
