@@ -319,6 +319,7 @@ var experimentReads = map[string][]string{
 	"mentions_full_names_only_pref": on, // a message slug's DM partner, a mention's name (msg_slug.go: N1tw's k, realNamesInMentions)
 	// composer and autocomplete
 	"slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
+	"slack_seasonal_delight":         on, // the picker's Halloween emoji pack call to action (emoji_pack_cta.go: nkcv k)
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},
