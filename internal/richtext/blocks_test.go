@@ -93,6 +93,20 @@ func TestRichJumbo(t *testing.T) {
 		{`[{"type":"rich_text","elements":[{"type":"rich_text_quote","elements":[{"type":"emoji","name":"smile"}]}]}]`, false},
 		{`[{"type":"divider"}]`, false},
 	}
+	// white space beside the emoji, as Slack's TrimSpace sees it, written
+	// every way JSON can: textBlank reads some from the JSON, decodes the rest
+	for _, sp := range []string{` `, `\n \t\r`, `\u00a0`, ` \u2003 `, "\u00a0", ` \n`, ``} {
+		cases = append(cases, struct {
+			blocks string
+			want   bool
+		}{`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"emoji","name":"smile"},{"type":"text","text":"` + sp + `"}]}]}]`, true})
+	}
+	for _, ink := range []string{`x`, ` \n.`, `\u0041`, `\"`, `\\`, ` \u00e9`, "é", `\u00a0b`, ` \/`} {
+		cases = append(cases, struct {
+			blocks string
+			want   bool
+		}{`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"emoji","name":"smile"},{"type":"text","text":"` + ink + `"}]}]}]`, false})
+	}
 	for _, c := range cases {
 		if d := blocksMsg(t, c.blocks); d.Jumbo != c.want {
 			t.Errorf("jumbo(%s) = %v, want %v", c.blocks, d.Jumbo, c.want)

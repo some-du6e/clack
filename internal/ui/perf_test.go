@@ -85,9 +85,12 @@ type perfEnv struct {
 	ops     op.Ops
 	size    image.Point
 	gpu     *headless.Window
-	now     time.Time
-	start   time.Time
-	scale   float32 // px per dp (0: 1)
+	// raster: how long the last frame's GPU renderer (llvmpipe on CI's
+	// runners) took to draw its ops, the rest of the frame being the app's
+	raster time.Duration
+	now    time.Time
+	start  time.Time
+	scale  float32 // px per dp (0: 1)
 	// frozen: the ops the last frame submitted when it was a frozen
 	// inspect session's (inspectFirst), nil when it was laid out
 	frozen *op.Ops
@@ -377,10 +380,13 @@ func (e *perfEnv) frame() {
 	}
 	a.noteFullFrame(e.size, gtx.Metric, app.Insets{}, false) // what quietFrame shows again
 	e.r.Frame(&e.ops)
+	e.raster = 0
 	if e.gpu != nil {
+		t0 := time.Now()
 		if err := e.gpu.Frame(&e.ops); err != nil {
 			e.tb.Fatal(err)
 		}
+		e.raster = time.Since(t0)
 	}
 }
 

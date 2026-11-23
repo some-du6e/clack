@@ -11,9 +11,9 @@ package ui
 //   - the live Go heap (after a collection) grows past giantHeapMB over
 //     what it was before the channel opened, or the process's peak RSS
 //     (VmHWM) past giantRSSMB over its RSS then;
-//   - any frame from the open on takes longer than giantFrameMax, or 1.5
-//     times the longest frame of an ordinary channel's open on this
-//     runner if that's more;
+//   - the app's part of any frame from the open on (events, layout, ops:
+//     all but the GPU renderer's drawing of them) takes longer than
+//     giantFrameMax, or a whole frame longer than giantWholeMax;
 //   - a giant message doesn't draw what Slack draws. Slack's message pane
 //     cuts nothing: Message (boot-shared b5pm) renders Blocks (lby4)
 //     without truncateLimits, so MessageBlocks (u33y) and the rich text
@@ -53,9 +53,15 @@ const (
 	// giantRSSMB bounds the peak RSS's growth over the RSS before the
 	// channel opened (+825 MB, the fake in its own process)
 	giantRSSMB = 1500
-	// giantFrameMax bounds every frame from the open on, unless a screen
-	// of ordinary text costs more on this runner (giantSession's reference).
+	// giantFrameMax bounds the app's part of every frame from the open on
+	// (a frame less its GPU raster: perfEnv.raster).
 	giantFrameMax = 300 * time.Millisecond
+	// giantWholeMax bounds every whole frame, raster and all. llvmpipe's
+	// path stenciling costs about the same for any new screen of text,
+	// whatever the messages' size (an ordinary channel's open: up to
+	// 124 ms on one runner, the giant channel's screens of nothing but
+	// text up to 304 ms on it), and runners differ by half again in it.
+	giantWholeMax = time.Second
 	// giantAbortMB: past this RSS growth the test stops driving frames
 	// (the bound is long gone; the runner keeps its memory).
 	giantAbortMB = 6000
@@ -100,8 +106,9 @@ func giantHeapObjectsMB() float64 {
 type giantFrame struct {
 	stage string
 	d     time.Duration
-	heap  float64 // heap objects after it, MB
-	rss   float64 // VmRSS after it, MB
+	r     time.Duration // of d, the GPU renderer's
+	heap  float64       // heap objects after it, MB
+	rss   float64       // VmRSS after it, MB
 }
 
 func TestGiantMessagesBounded(t *testing.T) {
@@ -196,23 +203,22 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 		defer f.Close()
 		_ = pprof.Lookup("heap").WriteTo(f, 0)
 	}
-	// the reference: a channel of ordinary messages opened the same way,
-	// each frame timed. A frame that draws a new screen of text costs the
-	// renderer (llvmpipe on the runners: mostly its path stenciling) about
-	// as much whatever the messages' size, and runners differ by half again
-	// in it; the giant channel's frames are held to what a screen of
-	// ordinary text costs here, or giantFrameMax if that's more.
+	// the reference, for the report: a channel of ordinary messages opened
+	// the same way, each frame timed. A frame that draws a new screen of
+	// text costs the renderer (llvmpipe on the runners: mostly its path
+	// stenciling) about as much whatever the messages' size.
 	ref := fs.ChannelIDs()[1]
 	e.a.Navigate("c/" + ref)
-	var refMax time.Duration
+	var refMax, refRaster time.Duration
 	for dl := time.Now().Add(3 * time.Second); time.Now().Before(dl); {
 		t0 := time.Now()
 		e.frame()
-		refMax = max(refMax, time.Since(t0))
+		if d := time.Since(t0); d > refMax {
+			refMax, refRaster = d, e.raster
+		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	frameMax := max(giantFrameMax, refMax*3/2)
-	t.Logf("reference: #%s's open, the longest frame %v; the giant channel's frame bound %v", ref, refMax.Round(time.Millisecond), frameMax.Round(time.Millisecond))
+	t.Logf("reference: #%s's open, the longest frame %v (the GPU renderer's %v)", ref, refMax.Round(time.Millisecond), refRaster.Round(time.Millisecond))
 	baseHeap := liveHeapMB()
 	_ = os.WriteFile("/proc/self/clear_refs", []byte("5"), 0) // VmHWM from here (Linux)
 	baseRSS := giantProcStatus("VmRSS")["VmRSS"]
@@ -249,7 +255,7 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 					if s := frameOf.Load(); s != nil {
 						stage = *s
 					}
-					t.Errorf("a %s frame has run for %v and counting (bound %v)", stage, time.Since(time.Unix(0, at)).Round(time.Millisecond), frameMax)
+					t.Errorf("a %s frame has run for %v and counting (bound %v)", stage, time.Since(time.Unix(0, at)).Round(time.Millisecond), giantWholeMax)
 				}
 				profile("watchdog")
 				panic(fmt.Sprintf("giant messages: RSS %.0f MB passed %d MB in one frame (before the channel: %.0f MB)", rss, giantPanicMB, baseRSS))
@@ -275,7 +281,7 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 		frameAt.Store(0)
 		d := time.Since(t0)
 		st := giantProcStatus("VmRSS")
-		frames = append(frames, giantFrame{stage: stage, d: d, heap: giantHeapObjectsMB(), rss: st["VmRSS"]})
+		frames = append(frames, giantFrame{stage: stage, d: d, r: e.raster, heap: giantHeapObjectsMB(), rss: st["VmRSS"]})
 		if g := st["VmRSS"] - baseRSS; g > giantAbortMB {
 			aborted = fmt.Sprintf("%s: RSS %.0f MB, %.0f MB over the %.0f MB before the channel opened; stopped driving frames", stage, st["VmRSS"], g, baseRSS)
 		}
@@ -467,6 +473,13 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 	if len(worst) > 12 {
 		worst = worst[:12]
 	}
+	// the app's longest parts of a frame
+	var app []giantFrame
+	app = append(app, frames...)
+	sort.Slice(app, func(i, j int) bool { return app[i].d-app[i].r > app[j].d-app[j].r })
+	if len(app) > 5 {
+		app = app[:5]
+	}
 	hwm := giantProcStatus("VmHWM")["VmHWM"]
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Giant messages (#giant-wall, %d latest)\n\n", n)
@@ -475,9 +488,13 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 	for _, m := range mems {
 		fmt.Fprintf(&b, "| %s | %.0f MB (+%.0f) | %.0f MB (+%.0f) |\n", m.name, m.heap, m.heap-baseHeap, m.rss, m.rss-baseRSS)
 	}
-	fmt.Fprintf(&b, "\nlongest frames:\n\n")
+	fmt.Fprintf(&b, "\nlongest frames (an ordinary channel's open: %v, the GPU renderer's %v):\n\n", refMax.Round(time.Millisecond), refRaster.Round(time.Millisecond))
 	for _, f := range worst {
-		fmt.Fprintf(&b, "- %s: %v (heap objects %.0f MB, RSS %.0f MB)\n", f.stage, f.d.Round(time.Millisecond), f.heap, f.rss)
+		fmt.Fprintf(&b, "- %s: %v, the GPU renderer's %v (heap objects %.0f MB, RSS %.0f MB)\n", f.stage, f.d.Round(time.Millisecond), f.r.Round(time.Millisecond), f.heap, f.rss)
+	}
+	fmt.Fprintf(&b, "\nthe app's longest parts of a frame (less the GPU renderer's):\n\n")
+	for _, f := range app {
+		fmt.Fprintf(&b, "- %s: %v of %v\n", f.stage, (f.d - f.r).Round(time.Millisecond), f.d.Round(time.Millisecond))
 	}
 	t.Log("\n" + b.String())
 	if out != "" {
@@ -497,14 +514,14 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 	}
 	slow := 0
 	for _, f := range frames {
-		if f.d > frameMax {
+		if a := f.d - f.r; a > giantFrameMax || f.d > giantWholeMax {
 			if slow < 5 {
-				t.Errorf("a %s frame took %v (bound %v: %v, or 1.5 times the reference's %v)", f.stage, f.d.Round(time.Millisecond), frameMax.Round(time.Millisecond), giantFrameMax, refMax.Round(time.Millisecond))
+				t.Errorf("a %s frame took %v, the app %v of it (bounds %v whole, %v the app's)", f.stage, f.d.Round(time.Millisecond), a.Round(time.Millisecond), giantWholeMax, giantFrameMax)
 			}
 			slow++
 		}
 	}
 	if slow > 5 {
-		t.Errorf("… %d frames in all over %v", slow, frameMax.Round(time.Millisecond))
+		t.Errorf("… %d frames in all over a bound", slow)
 	}
 }

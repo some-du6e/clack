@@ -132,6 +132,32 @@ func (b *bk) textString() string {
 	return t.Text
 }
 
+// textBlank reports whether the element's text is only white space
+// (strings.TrimSpace of textString empty), from its JSON where it can: a
+// string whose first byte past any spaces and \n, \t, \r escapes is
+// printable ASCII isn't, and needn't be decoded (a 908,000-character text
+// element, on every conversion of its message). Anything else, a \u
+// escape or a byte past ASCII, which might be a space TrimSpace knows,
+// decodes it.
+func (b *bk) textBlank() bool {
+	t := b.Text
+	if len(t) >= 2 && t[0] == '"' {
+	scan:
+		for i := 1; i < len(t)-1; i++ {
+			switch c := t[i]; {
+			case c == ' ':
+			case c == '\\' && (t[i+1] == 'n' || t[i+1] == 't' || t[i+1] == 'r'):
+				i++
+			case c > ' ' && c < 0x7f && c != '\\' && c != '"':
+				return false
+			default:
+				break scan
+			}
+		}
+	}
+	return strings.TrimSpace(b.textString()) == ""
+}
+
 func (b *bk) textObj() *textObj {
 	if len(b.Text) == 0 || b.Text[0] != '{' {
 		return nil
@@ -1166,7 +1192,7 @@ func richOnlyEmoji(bs []bk) bool {
 				case "emoji":
 					n++
 				case "text":
-					if strings.TrimSpace(el.textString()) != "" {
+					if !el.textBlank() {
 						return false
 					}
 				default:
