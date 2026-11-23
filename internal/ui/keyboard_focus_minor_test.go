@@ -104,10 +104,14 @@ func TestKeyboardFocusPressDropsPendingListFocus(t *testing.T) {
 func TestKeyboardFocusFindBarTakesEscape(t *testing.T) {
 	x := openTopEnv(t)
 	x.a.data.core.SetExperimentGroup("find_in_thread", "on")
-	x.root = fakeslack.ThreadOpenRead
-	x.wheelTo(x.root)
-	x.click(x.replyBar())
-	x.until("the thread with its reply box focused", 20*time.Second, x.threadFocused)
+	x.root = fakeslack.ThreadOpenNewest // on screen: no wheel to it
+	x.a.OpenThread(x.ch, x.root)
+	x.until("the thread drawn", 20*time.Second, func() bool {
+		tv := x.threadView(x.ch, x.root)
+		return tv != nil && tv.HasMessages()
+	})
+	x.a.FocusThreadComposer(x.ch, x.root)
+	x.until("the thread with its reply box focused", 5*time.Second, x.threadFocused)
 	tv := x.threadView(x.ch, x.root)
 	x.key("F", key.ModShortcut)
 	x.until("the thread's search bar focused", 3*time.Second, func() bool { return findFocused(layout.Context{Source: x.r.Source()}, tv) })

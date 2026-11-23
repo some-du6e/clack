@@ -107,8 +107,7 @@ func TestThreadsAuditFindInTheSplitViewsThread(t *testing.T) {
 func TestThreadsAuditFindAfterTheSplitView(t *testing.T) {
 	x := openTopEnv(t)
 	x.a.data.core.SetExperimentGroup("find_in_thread", "on")
-	x.root = fakeslack.ThreadOpenRead
-	x.wheelTo(x.root)
+	x.root = fakeslack.ThreadOpenNewest // on screen: its root loaded, no wheel to it
 	x.a.OpenSplit("c/" + x.ch + "/t/" + x.root)
 	var tv *messages.ThreadView
 	x.until("the split view's thread drawn", 20*time.Second, func() bool {
