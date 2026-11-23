@@ -24,6 +24,12 @@ func (a *App) ShowOverlay(o Overlay) {
 		popups.StripSplitView(m, !a.SplitViewOK())
 	}
 	a.overlays = append(a.overlays, o)
+	if !invisible(o) && !peeking(o) {
+		// a modal or a menu opening hides the tooltip up (Slack's
+		// hideVisibleTooltip on openModal and a Menu's onPopoverOpen);
+		// a hover peek isn't one
+		popups.HideTooltips()
+	}
 	if !invisible(o) && a.focused {
 		a.attLost++ // UserAttention goes (AttentionLost)
 	}

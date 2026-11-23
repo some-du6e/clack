@@ -94,6 +94,41 @@ func (a *App) sbOrgLabel(gtx layout.Context, conv *convInfo, x, base, avail int,
 	return gap + w
 }
 
+// nameRowTooltip is BaseChannelName's tooltip (boot-shared, CDN build
+// 36d315d11944: delay 600, position top) over a sidebar row's name that
+// didn't fit (isTruncated: the name parts' offsetWidth under their
+// scrollWidth): BaseChannelNameTooltipContent's name, the whole of it. A
+// name that fits has none. r is the name's bounds in the row.
+func (a *App) nameRowTooltip(gtx layout.Context, id, name string, r image.Rectangle, truncated bool) {
+	if r.Empty() || name == "" {
+		return
+	}
+	if !truncated {
+		if st := a.sidebar.nameTips[id]; st != nil {
+			st.tip.Reset()
+		}
+		return
+	}
+	if a.sidebar.nameTips == nil || len(a.sidebar.nameTips) > 500 {
+		a.sidebar.nameTips = map[string]*codeRowTip{}
+	}
+	st := a.sidebar.nameTips[id]
+	if st == nil {
+		st = &codeRowTip{}
+		st.tip.Delay = 600 * time.Millisecond
+		st.tip.MaxWidth = 200 // .c-tooltip__tip max-width
+		a.sidebar.nameTips[id] = st
+	}
+	t := op.Offset(r.Min).Push(gtx.Ops)
+	defer t.Pop()
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	area := clip.Rect(image.Rectangle{Max: r.Size()}).Push(gtx.Ops)
+	st.hover.Add(gtx.Ops)
+	area.Pop()
+	pass.Pop()
+	popups.Tooltip(gtx, a.th, &st.tip, st.hover.Update(gtx.Source), r.Size(), popups.Above, name, "")
+}
+
 // sharedRowTooltip is BaseChannelName's tooltip over an externally shared
 // channel's name (r: the name's bounds in the row; truncated: the name
 // didn't fit, so the sentence names the channel).

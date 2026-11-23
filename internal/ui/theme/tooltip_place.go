@@ -2,6 +2,7 @@ package theme
 
 import (
 	"image"
+	"sync/atomic"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
@@ -299,3 +300,21 @@ func WindowBounds(org image.Point) image.Rectangle {
 	}
 	return image.Rectangle{Max: sz}.Sub(org)
 }
+
+// ---- the TooltipManager ----
+
+// tipGen is the TooltipManager's generation: atomic, as the huddle,
+// popout, mini and preview windows draw their tooltips on their own
+// goroutines.
+var tipGen atomic.Uint64
+
+// HideTooltips is Slack's hideVisibleTooltip (client-boot HzHE's
+// TooltipManager.hideActive, CDN build 36d315d11944): the tooltip up, or
+// waiting its delay, goes, and comes back only once the pointer has left
+// its target and come back. Slack calls it when a modal or a menu opens;
+// BaseTooltip hides itself on Escape while hovered (hoverEscHide).
+func HideTooltips() { tipGen.Add(1) }
+
+// TipGen is the TooltipManager's generation: a tooltip's hover that began
+// in an older one was hidden (HideTooltips).
+func TipGen() uint64 { return tipGen.Load() }
