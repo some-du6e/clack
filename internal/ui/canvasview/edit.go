@@ -54,6 +54,9 @@ type editState struct {
 	pick       picker
 	saving     int // edits in flight
 	insBar     int // tag: the bottom toolbar's background
+	// local are the new blocks made here through edit-document that the
+	// export may not have yet (keepLocal)
+	local []localBlock
 }
 
 // session is one block being edited.
@@ -292,6 +295,25 @@ func newControl(s *session, bs []canvas.Block) bool {
 		if !found {
 			return true
 		}
+	}
+	return false
+}
+
+// quipNewInLayout reports whether a finished session makes a new block in
+// a callout or column (Enter in one of its paragraphs, or typing after
+// one), which core doesn't save yet.
+func quipNewInLayout(v *View, s *session, md string, bs []canvas.Block) bool {
+	a := v.h.Core()
+	switch {
+	case a == nil:
+		return false
+	case s.target != nil && len(bs) > 1:
+		if p := s.target.parent; p != nil && p.b != nil && p.b.Kind == canvas.Callout {
+			return true
+		}
+		return a.CanvasSectionInLayout(v.id, s.id)
+	case s.target == nil && md != "" && s.afterID != "":
+		return a.CanvasSectionInLayout(v.id, s.afterID)
 	}
 	return false
 }
@@ -875,6 +897,21 @@ func (e *editState) finish(v *View) bool {
 			s.refused = true
 			s.focus = true
 			return false
+		case quipNewInLayout(v, s, md, bs):
+			// Slack's new section there is the layout's child too
+			// (onChildSiblingCreated), which core can't make yet
+			v.h.Toast("Clack can't add a block inside a callout or column yet. Remove the new line, or press Escape again to discard your changes")
+			s.refused = true
+			s.focus = true
+			return false
+		case s.target != nil && len(bs) > 1 && s.kind0 != canvas.Code && v.h.Core().CanvasSplitMovesAnchors(v.id, s.id, s.spans, bs[0].Spans, newBlocks(bs[1:], nil)):
+			// Slack's split carries a comment's anchor with its text
+			// (moveComments); core can't yet, and the comment would lose
+			// its place
+			v.h.Toast("Clack can't move commented text into a new block yet. Undo the Enter, or press Escape again to discard your changes")
+			s.refused = true
+			s.focus = true
+			return false
 		case quipRefuses(v, s, md, bs):
 			// edit-document saves a block's own text (formatting, links,
 			// line breaks, its mentions and emoji), the block emptied, and
@@ -929,6 +966,7 @@ func (e *editState) finish(v *View) bool {
 		}
 		for i := 1; i < len(local) && i-1 < len(quipNew); i++ {
 			local[i].ID = quipNew[i-1]
+			e.noteLocal(local[i], local[i-1].ID)
 		}
 		e.replaceLocal(v, s.target, local)
 	default: // a new block
@@ -942,11 +980,19 @@ func (e *editState) finish(v *View) bool {
 		}
 		for i := 0; i < len(local) && i < len(quipNew); i++ {
 			local[i].ID = quipNew[i]
+			after := s.afterID
+			if i > 0 {
+				after = local[i-1].ID
+			}
+			e.noteLocal(local[i], after)
 		}
 		e.insertLocal(v, s.afterID, local)
 	}
 	if quipOn(v) { // against what the session began from (session.spans)
 		id, from, seq0 := s.id, s.spans, s.seq0
+		if s.kind0 == canvas.Code { // a code block holds its text as code, not spans
+			from = []richtext.Span{{Kind: richtext.Text, Text: s.code0}}
+		}
 		if ch.Operation == "delete" {
 			e.saveQuip(v, func(ctx context.Context, a *core.App) error { return a.SaveCanvasDelete(ctx, v.id, id, from) })
 			return true
@@ -1044,7 +1090,7 @@ func (e *editState) dropPlace(v *View, s *session) {
 
 // replaceLocal shows bs in place of b at once (optimistic).
 func (e *editState) replaceLocal(v *View, b *blk, bs []canvas.Block) {
-	nb := v.makeBlocks(v.shown, bs, nil)
+	nb := v.localBlocks(bs)
 	if i := indexOf(v.blocks, b); i >= 0 {
 		out := append([]*blk(nil), v.blocks[:i]...)
 		out = append(out, nb...)
@@ -1065,6 +1111,23 @@ func (e *editState) replaceLocal(v *View, b *blk, bs []canvas.Block) {
 	if len(nb) == 1 { // nested (a column, a cell): swap in place
 		*b = *nb[0]
 	}
+}
+
+// localBlocks are blocks an edit just made, drawn until the refetch: each
+// opens as the editor can hold it (editable), as its section will be what
+// the editor saved; core's check against the section (blockEditable)
+// comes again once the model has the save (recheckEditable).
+func (v *View) localBlocks(bs []canvas.Block) []*blk {
+	nb := v.makeBlocks(v.shown, bs, nil)
+	for _, b := range nb {
+		if b.b != nil {
+			b.edOK, b.edWhy = v.editable(*b.b)
+			if b.edOK && quipOn(v) && v.titleWhy != "" {
+				b.edOK, b.edWhy = false, v.titleWhy
+			}
+		}
+	}
+	return nb
 }
 
 // newEditor is a block's editor: lists no deeper than Slack's canvas
@@ -1089,7 +1152,7 @@ func unquote(bs []canvas.Block) []canvas.Block {
 }
 
 func (e *editState) insertLocal(v *View, after string, bs []canvas.Block) {
-	nb := v.makeBlocks(v.shown, bs, nil)
+	nb := v.localBlocks(bs)
 	i := len(v.blocks)
 	for j, b := range v.blocks {
 		if after != "" && b.b.ID == after {
@@ -1108,6 +1171,50 @@ func indexOf(bs []*blk, b *blk) int {
 		}
 	}
 	return -1
+}
+
+// localBlock is a new block this view made, with the section it follows,
+// kept until the export has it.
+type localBlock struct {
+	b     canvas.Block
+	after string
+}
+
+// noteLocal records new block b (after section after) made through
+// edit-document, so a refetch older than its save doesn't take it away.
+func (e *editState) noteLocal(b canvas.Block, after string) {
+	if b.ID != "" {
+		e.local = append(e.local, localBlock{b: b, after: after})
+	}
+}
+
+// keepLocal puts back the new blocks this view made whose sections a
+// refetch doesn't have yet (their save is pending, or the export is older
+// than it): a session on one stays, and blocks typed after it keep their
+// place. One the export has, or core no longer knows (it was dropped or
+// deleted), is let go.
+func (e *editState) keepLocal(v *View) {
+	if e == nil || len(e.local) == 0 {
+		return
+	}
+	a := v.h.Core()
+	if a == nil || !quipOn(v) {
+		e.local = nil
+		return
+	}
+	keep := e.local[:0]
+	for _, l := range e.local {
+		id := l.b.ID
+		if real := a.CanvasSectionID(v.id, id); findBlockByID(v.blocks, real) != nil || findBlockByID(v.blocks, id) != nil {
+			continue // the export has it
+		}
+		if !a.CanvasSectionKnown(v.id, id) {
+			continue
+		}
+		e.insertLocal(v, l.after, []canvas.Block{l.b})
+		keep = append(keep, l)
+	}
+	e.local = keep
 }
 
 // docChanged keeps the session on its block when a refetch rebuilds them.
@@ -1217,6 +1324,14 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 	// keys first: the editor's Layout drops events it didn't hand out
 	s.ed.Intercept = func(name key.Name, mods key.Modifiers) bool {
 		if e.pick.active() && e.pick.key(name) {
+			return true
+		}
+		if (name == key.NameReturn || name == key.NameEnter) && mods == key.ModShift && s.quip && s.kind != canvas.Code &&
+			s.ed.Doc().Lines[s.ed.Doc().LineOf(cursor(s.ed))].Kind != composer.CodeBlock {
+			// Slack's Shift+Enter is a line break inside the block (a <br>
+			// in its section); the editor would make it a block of its
+			// own, saved as a new section, so it isn't taken
+			v.h.Toast("Clack can't put a line break inside a canvas block yet. Press Enter for a new block")
 			return true
 		}
 		if (name == key.NameReturn || name == key.NameEnter) && mods == 0 && s.kind != canvas.Code {

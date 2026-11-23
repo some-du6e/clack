@@ -173,6 +173,7 @@ func (v *View) rebuild(d *core.CanvasDoc) {
 	v.nameMentions(d)
 	v.checkTitle()
 	v.blocks = v.makeBlocks(d, d.Doc.Blocks, old)
+	v.edit.keepLocal(v)
 	v.edit.docChanged(v)
 }
 

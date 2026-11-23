@@ -79,6 +79,9 @@ func newAttributes(after *Section, e Edit) *Attributes {
 			a.ParagraphIndentation = Ptr(*p.ParagraphIndentation)
 		}
 	}
+	if e.Reindent { // a level set before its first save (setSectionAttribute)
+		a.Indentation = Ptr(e.Indent)
+	}
 	if e.Checked {
 		a.Checked = Ptr(true)
 	}
@@ -128,22 +131,40 @@ func isTextStyle(style int32) bool {
 // blocks, two quote paragraphs or two quote layouts, all top-level. Such
 // a delete isn't Slack's alone, so it isn't saved until the merge is.
 func (d *Doc) DeleteMerges(id string) bool {
-	top := d.TopLevel()
-	for i, s := range top {
-		if str(s.ID) != id || i == 0 || i == len(top)-1 {
+	return d.DeletesMerge(func(x string) bool { return x == id })
+}
+
+// DeletesMerge reports whether deleting the top-level sections gone names
+// leaves two sections side by side that Slack's editor would merge (two
+// lists of one style, two code blocks, two quotes): every run of deleted
+// sections, between the live ones around it.
+func (d *Doc) DeletesMerge(gone func(id string) bool) bool {
+	var prev *Section
+	cut := false
+	for _, s := range d.TopLevel() {
+		if gone(str(s.ID)) {
+			cut = prev != nil
 			continue
 		}
-		a, b := top[i-1], top[i+1]
-		if a.Style == nil || b.Style == nil || *a.Style != *b.Style {
-			return false
-		}
-		switch *a.Style {
-		case StyleBullet, StyleNumbered, StyleChecklist, StyleCode, StyleBlockquote:
+		if cut && mergeable(prev, s) {
 			return true
 		}
-		return a.Type != nil && b.Type != nil && *a.Type == TypeLayoutBlockquote && *b.Type == TypeLayoutBlockquote
+		prev, cut = s, false
 	}
 	return false
+}
+
+// mergeable reports whether two top-level sections side by side are ones
+// Slack's deleteSection joins.
+func mergeable(a, b *Section) bool {
+	if a.Style == nil || b.Style == nil || *a.Style != *b.Style {
+		return false
+	}
+	switch *a.Style {
+	case StyleBullet, StyleNumbered, StyleChecklist, StyleCode, StyleBlockquote:
+		return true
+	}
+	return a.Type != nil && b.Type != nil && *a.Type == TypeLayoutBlockquote && *b.Type == TypeLayoutBlockquote
 }
 
 // TopLevel are the live sections Slack's editor takes for a top-level

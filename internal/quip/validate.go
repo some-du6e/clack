@@ -184,6 +184,9 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 			if !inList {
 				return refuse("section %s: a box or level outside a list", id)
 			}
+			if (e.Kind == EditCheck || e.Recheck) && !d.inChecklist(server) {
+				return refuse("section %s: a box on an item of a list that isn't a checklist", id)
+			}
 		}
 		if e.Reindent && (e.Indent < 0 || e.Indent > MaxListLevel) {
 			return refuse("section %s: list level %d", id, e.Indent)
@@ -252,6 +255,11 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 	if len(byID) > 0 {
 		return refuse("%d edits have no section", len(byID))
 	}
+	if len(deleted) > 0 && d.DeletesMerge(func(id string) bool { return deleted[id] }) {
+		// the deletes together, as the save makes them (a list with its
+		// last item, two blocks between two lists)
+		return refuse("the save's deletes leave two sections side by side Slack's editor would merge")
+	}
 	if len(deleted) > 0 { // never the last block: deleteEntity would make a new one in its place
 		left := false
 		for _, u := range made {
@@ -310,6 +318,11 @@ func (d *Doc) checkNew(u *Section, e Edit, s *Save, made map[string]*Section) er
 	if after == nil {
 		return refuse("new section %s: after %s, which isn't in the model or this save", id, e.After)
 	}
+	if after.HasLayoutParent != nil && *after.HasLayoutParent {
+		// createNewSection would make it the layout's child, and the
+		// layout would take it (onChildSiblingCreated): never one outside it
+		return refuse("new section %s: after %s, a callout's or column's child", id, e.After)
+	}
 	var parent *Section
 	if after.Parents != nil && len(after.Parents.IDs) > 0 {
 		parent = d.Section(after.Parents.IDs[0])
@@ -326,16 +339,12 @@ func (d *Doc) checkNew(u *Section, e Edit, s *Save, made map[string]*Section) er
 	case parent != nil && *u.Style != StylePlain, parent == nil && !isTextStyle(*u.Style):
 		return refuse("new section %s: style %d after a section with parents %v", id, *u.Style, parent != nil)
 	}
-	// its position: a :temp key right after the one it follows, before
-	// any other entity
+	// its position: a :temp key after the one it follows, as Slack's
+	// editor made it at Enter (generatePositionAfter) and saves it,
+	// whatever another client put after the same section since
 	p, ap := str(u.Position), str(after.Position)
 	if !IsTemp(p) || p != e.Position || !(p > ap) {
 		return refuse("new section %s: position %q after %q", id, p, ap)
-	}
-	for _, x := range d.sections {
-		if x.Position != nil && (x.Deleted == nil || !*x.Deleted) && *x.Position > ap && *x.Position < p {
-			return refuse("new section %s: position %q isn't next to %q (%s sits between)", id, p, ap, str(x.ID))
-		}
 	}
 	wantPath := p
 	if parent != nil && parent.Position != nil {
@@ -364,7 +373,16 @@ func (d *Doc) checkNew(u *Section, e Edit, s *Save, made map[string]*Section) er
 	if a := after.Attributes; a != nil {
 		want.Indentation, want.ParagraphIndentation = a.Indentation, a.ParagraphIndentation
 	}
+	if e.Reindent { // its level set before its first save
+		if parent == nil || e.Indent < 0 || e.Indent > MaxListLevel {
+			return refuse("new section %s: list level %d", id, e.Indent)
+		}
+		want.Indentation = Ptr(e.Indent)
+	}
 	if e.Checked {
+		if parent == nil || parent.Style == nil || *parent.Style != StyleChecklist {
+			return refuse("new section %s: a box outside a checklist", id)
+		}
 		want.Checked = Ptr(true)
 	}
 	if string(Marshal(want)) != string(Marshal(u.Attributes)) {
@@ -389,6 +407,15 @@ func (d *Doc) checkNew(u *Section, e Edit, s *Save, made map[string]*Section) er
 		return refuse("new section %s: activity row", id)
 	}
 	return nil
+}
+
+// inChecklist reports whether section s is an item of a checklist.
+func (d *Doc) inChecklist(s *Section) bool {
+	if s.Parents == nil || len(s.Parents.IDs) == 0 {
+		return false
+	}
+	p := d.Section(s.Parents.IDs[0])
+	return p != nil && p.Style != nil && *p.Style == StyleChecklist
 }
 
 func (d *Doc) checkParents(u, server *Section) error {

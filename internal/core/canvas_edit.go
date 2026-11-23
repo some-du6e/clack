@@ -331,14 +331,16 @@ type sectionBase struct {
 	listStyle int32 // the first parent's style (a list's), when it has one
 	indent    int32 // its indentation attribute, -1 when unset
 	isNew     bool  // a new section not saved yet (a pending EditNew)
+	layout    bool  // a layout's child (a callout's or column's: has_layout_parent)
 }
 
 // saveCtx is what queueSave's build makes edits against: each section's
 // base, and the positions and ids of the new sections not saved yet.
 type saveCtx struct {
-	base  func(sectionID string) (sectionBase, bool)
-	taken []string
-	news  []string // the new sections pending (queued or in flight)
+	base    func(sectionID string) (sectionBase, bool)
+	taken   []string
+	news    []string // the new sections pending (queued or in flight)
+	deletes []string // the sections whose delete is pending (queued or in flight)
 }
 
 // saveBuild makes a save's edits against each section's base.
@@ -413,6 +415,9 @@ func (a *App) saveCtxLocked(id string, s *canvasSaver) *saveCtx {
 				}
 				b = sectionBase{rtml: p.RTML, typ: quip.TypeText, sty: p.Style, pos: p.Position, parents: after.parents,
 					listStyle: after.listStyle, indent: after.indent, isNew: true}
+				if p.Reindent {
+					b.indent = p.Indent
+				}
 				return b, true
 			}
 		}
@@ -448,12 +453,19 @@ func (a *App) saveCtxLocked(id string, s *canvasSaver) *saveCtx {
 			if sec.Attributes != nil && sec.Attributes.Indentation != nil {
 				b.indent = *sec.Attributes.Indentation
 			}
+			b.layout = sec.HasLayoutParent != nil && *sec.HasLayoutParent
 		})
-		for _, p := range s.pending {
+		for _, p := range s.pending { // as the pending edit leaves it: its text, style and level (Slack's dirty fields)
 			if found && p.SectionID == sectionID {
 				b.seq = p.Base
 				if p.Kind == quip.EditText {
 					b.rtml = p.RTML
+				}
+				if p.Restyle {
+					b.sty = p.Style
+				}
+				if p.Reindent {
+					b.indent = p.Indent
 				}
 			}
 		}
@@ -461,9 +473,12 @@ func (a *App) saveCtxLocked(id string, s *canvasSaver) *saveCtx {
 	}
 	sc := &saveCtx{base: base}
 	for _, p := range s.pending {
-		if p.Kind == quip.EditNew {
+		switch p.Kind {
+		case quip.EditNew:
 			sc.taken = append(sc.taken, p.Position)
 			sc.news = append(sc.news, p.SectionID)
+		case quip.EditDelete:
+			sc.deletes = append(sc.deletes, p.SectionID)
 		}
 	}
 	return sc
@@ -508,7 +523,7 @@ func (s *canvasSaver) queueLocked(edits []quip.Edit) error {
 		}
 		flying := s.inFlight && slices.ContainsFunc(s.flight, func(f quip.Edit) bool { return f.SectionID == e.SectionID })
 		if pending[i].Kind == quip.EditNew && e.Kind == quip.EditDelete && !flying {
-			pending = slices.Delete(pending, i, i+1)
+			pending = dropNew(pending, i)
 			continue
 		}
 		m, err := mergeEdit(pending[i], e)
@@ -530,24 +545,39 @@ func (s *canvasSaver) queueLocked(edits []quip.Edit) error {
 	return nil
 }
 
+// dropNew takes pending new section i out of the queue (it was deleted
+// before its save, so it never was): the new sections made after it
+// follow the one it followed, as their positions already sort there
+// (Slack's position doesn't depend on the section before existing).
+func dropNew(pending []quip.Edit, i int) []quip.Edit {
+	gone := pending[i]
+	pending = slices.Delete(pending, i, i+1)
+	for k := range pending {
+		if pending[k].Kind == quip.EditNew && pending[k].After == gone.SectionID {
+			pending[k].After = gone.After
+		}
+	}
+	return pending
+}
+
 // mergeEdit is edit e of a section made while p of it is pending, as
 // Slack's dirty fields hold the two. A new section edited again before it
-// saved is still that new section, with the latest text, style or box (a
-// list item's level, which initSibling copies, isn't changed before the
-// first save yet). Two edits of a section are one: its text, style, level
-// and box, each the latest one set (a tick and typing: content and
-// attributes in one bundle section). A delete is the latest edit.
+// saved is still that new section, with the latest text, style, level
+// (initSibling's indentation, then setSectionAttribute's) or box. Two edits
+// of a section are one: its text, style, level and box, each the latest
+// one set (a tick and typing: content and attributes in one bundle
+// section). A delete is the latest edit.
 func mergeEdit(p, e quip.Edit) (quip.Edit, error) {
 	switch {
 	case p.Kind == quip.EditNew && e.Kind != quip.EditDelete:
-		if e.Reindent {
-			return p, fmt.Errorf("%w: a new list item's level before its first save", quip.ErrUnsupported)
-		}
 		if e.Kind == quip.EditText {
 			p.RTML = e.RTML
 		}
 		if e.Restyle {
 			p.Style = e.Style
+		}
+		if e.Reindent {
+			p.Reindent, p.Indent = true, e.Indent
 		}
 		if e.Kind == quip.EditCheck || e.Recheck {
 			p.Checked = e.Checked
@@ -695,7 +725,8 @@ func (a *App) saveAttempt(ctx context.Context, id string, s *canvasSaver, direct
 		for _, e := range edits {
 			i := slices.IndexFunc(s.pending, func(p quip.Edit) bool { return p.SectionID == e.SectionID })
 			if e.Kind == quip.EditNew && i >= 0 && s.pending[i].Kind == quip.EditDelete {
-				s.pending = slices.Delete(s.pending, i, i+1)
+				s.pending[i].After = e.After // dropNew re-points the ones after it
+				s.pending = dropNew(s.pending, i)
 			}
 		}
 		s.failLocked(a, id, err)
@@ -804,6 +835,7 @@ func (a *App) postSave(ctx context.Context, id string, edits []quip.Edit, retrie
 	var sent []string // the kept edits' own ids (a new section's temp id), in order
 	kept := map[string]bool{}
 	landed := map[string]int64{} // edits the model holds already, by the ids they were queued under: their sequence
+	gone := map[string]bool{}    // sections whose edit this save drops
 	for _, e := range edits {
 		live := func(id string) *quip.Section {
 			if sec := d.Section(d.RealID(id)); sec != nil && (sec.Deleted == nil || !*sec.Deleted) {
@@ -812,6 +844,12 @@ func (a *App) postSave(ctx context.Context, id string, edits []quip.Edit, retrie
 			return nil
 		}
 		switch sec := live(e.SectionID); {
+		case e.Kind == quip.EditNew && gone[e.After]:
+			// made after a section whose own edit is dropped (an Enter's
+			// first part, say): the two go together, never half a split
+			// with the moved text in both
+			dropped = append(dropped, e)
+			gone[e.SectionID] = true
 		case e.Kind == quip.EditNew && (kept[e.After] || live(e.After) != nil) && sec == nil:
 			// made after a section that's still there
 			keep, sent = append(keep, e), append(sent, e.SectionID)
@@ -828,6 +866,7 @@ func (a *App) postSave(ctx context.Context, id string, edits []quip.Edit, retrie
 			// Slack's editor would merge someone else's save into the
 			// edit (mergeRtml); Clack can't, so it never writes over one
 			dropped = append(dropped, e)
+			gone[e.SectionID] = true
 		default:
 			keep, sent = append(keep, e), append(sent, e.SectionID)
 			kept[e.SectionID] = true
@@ -1100,19 +1139,21 @@ func (a *App) SaveCanvasDelete(ctx context.Context, id, sectionID string, orig [
 				return
 			}
 			real := d.RealID(sectionID)
-			merges = d.DeleteMerges(real)
 			if sec := d.Section(real); sec != nil && sec.HasLayoutParent != nil && *sec.HasLayoutParent {
 				inLayout = true
 			}
 			gone := map[string]bool{real: true}
+			for _, x := range c.deletes { // deletes not saved yet: their sections go before this one
+				gone[d.RealID(x)] = true
+			}
 			if len(b.parents) > 0 && !newInList { // a list item: the last one takes its list with it (notifyDescendantDeleted_)
 				list, others := b.parents[0], 0
 				for _, c := range d.ListChildren(list) {
-					if c != real {
+					if !gone[c] {
 						others++
 					}
 				}
-				if others == 0 {
+				if others == 0 && !gone[list] {
 					listSeq := int64(0)
 					if sec := d.Section(list); sec != nil && sec.Sequence != nil {
 						listSeq = *sec.Sequence
@@ -1121,6 +1162,7 @@ func (a *App) SaveCanvasDelete(ctx context.Context, id, sectionID string, orig [
 					edits = append(edits, quip.Edit{Kind: quip.EditDelete, SectionID: list, Base: listSeq})
 				}
 			}
+			merges = d.DeletesMerge(func(id string) bool { return gone[id] })
 			left = newTop || !d.LeavesNoBlock(func(id string) bool { return gone[id] })
 		})
 		switch {
@@ -1284,26 +1326,45 @@ func (a *App) CanvasTitleSaveable(id string) (bool, string) {
 // CanvasBlockEditable reports whether a block shown as spans can be edited
 // through edit-document without losing what its section holds that the
 // block doesn't show (faithfulBlock), and why not; the title's own block
-// only while it's plain text (titleBlockEdit). It's true when core holds no
-// model of the canvas yet, or the block's text is another's than the
-// section's (the export is late: the save checks again).
+// only while it's plain text (titleBlockEdit). The section is as an edit
+// waiting to be saved leaves it. It's true when core holds no model of the
+// canvas yet, or the block's text is another's than the section's (the
+// export is late: the save checks again).
 func (a *App) CanvasBlockEditable(id, sectionID string, spans []richtext.Span) (bool, string) {
+	// a section with an edit waiting to be saved is as that edit leaves
+	// it: a block just edited (a word made bold, say) is held to its own
+	// save, not to the text before it
+	pending, has := "", false
+	s := a.saver(id)
+	s.mu.Lock()
+	for _, p := range s.pending {
+		if p.SectionID == sectionID && (p.Kind == quip.EditText || p.Kind == quip.EditNew) {
+			pending, has = p.RTML, true
+		}
+	}
+	s.mu.Unlock()
 	ok, why := true, ""
 	a.CanvasModel(id, func(d *quip.Doc) {
 		if d == nil {
 			return
 		}
 		sec := d.Section(d.RealID(sectionID))
-		if sec != nil && sec.Type != nil && *sec.Type == quip.TypeTitle {
-			if t, marks, pok := quip.ParseRTML(quip.SectionRTML(sec)); !pok || len(marks) > 0 || strings.Contains(t, "<control") || strings.Contains(t, "<br>") {
+		if sec == nil || sec.Type == nil {
+			return
+		}
+		rtml := quip.SectionRTML(sec)
+		if has {
+			rtml = pending
+		}
+		if *sec.Type == quip.TypeTitle {
+			if t, marks, pok := quip.ParseRTML(rtml); !pok || len(marks) > 0 || strings.Contains(t, "<control") || strings.Contains(t, "<br>") {
 				ok, why = false, "formatting, a link, a mention or a line break in the title"
 			}
 			return
 		}
-		if sec == nil || sec.Type == nil || *sec.Type != quip.TypeText {
+		if *sec.Type != quip.TypeText {
 			return
 		}
-		rtml := quip.SectionRTML(sec)
 		if plain, pok := quip.RTMLPlain(rtml); !pok || plainCompare(plain) != plainCompare(spansPlain(spans)) {
 			return
 		}
@@ -1535,12 +1596,109 @@ func (a *App) SaveCanvasSplit(ctx context.Context, id, sectionID string, orig, f
 		if err != nil {
 			return nil, err
 		}
+		if b, ok := c.base(sectionID); ok && splitMovesAnchors(b.rtml, orig, first, rest) {
+			return nil, fmt.Errorf("%w: %s", quip.ErrUnsupported, movesAnchors)
+		}
 		news, err := a.newBlockEdits(id, c, sectionID, rest)
 		if err != nil {
 			return nil, err
 		}
 		return append([]quip.Edit{e}, news...), nil
 	})
+}
+
+// movesAnchors is why an Enter that takes commented text out of its
+// section isn't saved: Slack's split carries the comment's anchor with the
+// text (moveComments); Clack can't yet, and the anchor would go.
+const movesAnchors = "an Enter that moves commented text into a new block"
+
+// splitMovesAnchors reports whether a split of a section of RTML rtml (its
+// first part kept, rest made new sections) takes characters a comment
+// anchor covers out of the section: the anchors keep fewer of them than
+// the same text left whole would.
+func splitMovesAnchors(rtml string, orig, first []richtext.Span, rest []CanvasNewBlock) bool {
+	if len(quip.AnnotationIDs(rtml)) == 0 {
+		return false
+	}
+	ctls, _ := quip.RTMLControls(rtml)
+	kept := func(sp []richtext.Span) map[string]int {
+		runs, err := spanRuns(orig, sp, ctls)
+		if err != nil {
+			return nil
+		}
+		out, err := quip.ApplyRuns(rtml, runs)
+		if err != nil {
+			return nil
+		}
+		return quip.AnchoredUnits(out)
+	}
+	all := append([]richtext.Span(nil), first...)
+	for _, b := range rest {
+		all = append(all, b.Spans...)
+	}
+	k1, k2 := kept(first), kept(all)
+	if k1 == nil || k2 == nil {
+		return true
+	}
+	for id, n := range k2 {
+		if k1[id] < n {
+			return true
+		}
+	}
+	return false
+}
+
+// CanvasSplitMovesAnchors reports whether an Enter in block sectionID
+// (first kept, rest new blocks) would move commented text out of it, which
+// SaveCanvasSplit refuses: the view asks while the text is still open.
+func (a *App) CanvasSplitMovesAnchors(id, sectionID string, orig, first []richtext.Span, rest []CanvasNewBlock) bool {
+	out := false
+	a.CanvasModel(id, func(d *quip.Doc) {
+		if d == nil {
+			return
+		}
+		if sec := d.Section(d.RealID(sectionID)); sec != nil {
+			out = splitMovesAnchors(quip.SectionRTML(sec), orig, first, rest)
+		}
+	})
+	return out
+}
+
+// CanvasSectionKnown reports whether section sectionID is one core's model
+// of the canvas holds, or a new one a pending save makes (queued or in
+// flight): a view keeps such a block across an export that's older.
+func (a *App) CanvasSectionKnown(id, sectionID string) bool {
+	s := a.saver(id)
+	s.mu.Lock()
+	pending := slices.ContainsFunc(s.pending, func(p quip.Edit) bool { return p.Kind == quip.EditNew && p.SectionID == sectionID })
+	s.mu.Unlock()
+	if pending {
+		return true
+	}
+	live := false
+	a.CanvasModel(id, func(d *quip.Doc) {
+		if d != nil {
+			if sec := d.Section(d.RealID(sectionID)); sec != nil && (sec.Deleted == nil || !*sec.Deleted) {
+				live = true
+			}
+		}
+	})
+	return live
+}
+
+// CanvasSectionInLayout reports whether section sectionID is a layout's
+// child (a callout's or a column's), where a new block can't go yet.
+func (a *App) CanvasSectionInLayout(id, sectionID string) bool {
+	out := false
+	a.CanvasModel(id, func(d *quip.Doc) {
+		if d == nil {
+			return
+		}
+		if sec := d.Section(d.RealID(sectionID)); sec != nil {
+			out = sec.HasLayoutParent != nil && *sec.HasLayoutParent
+		}
+	})
+	return out
 }
 
 // SaveCanvasNewBlocks saves blocks typed where there was none, after
@@ -1564,6 +1722,12 @@ func (a *App) newBlockEdits(id string, c *saveCtx, after string, blocks []Canvas
 		return nil, fmt.Errorf("%w: section %s isn't in the canvas", ErrCanvasConflict, after)
 	case ab.typ != quip.TypeText || ab.sty == quip.StyleCode || ab.sty == quip.StyleTitle:
 		return nil, fmt.Errorf("%w: a new block after a section of type %d, style %d", quip.ErrUnsupported, ab.typ, ab.sty)
+	case ab.layout:
+		// Slack's createNewSection makes it the layout's child too
+		// (hasLayoutParent, onChildSiblingCreated adds it to the layout's
+		// list, which saves with it); Clack can't yet, and outside the
+		// layout it would show in the wrong place
+		return nil, fmt.Errorf("%w: a new block in a callout or column", quip.ErrUnsupported)
 	}
 	inList := len(ab.parents) > 0
 	taken := append([]string(nil), c.taken...)

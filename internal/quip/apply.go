@@ -175,6 +175,28 @@ const ControlMark = '\ufffc'
 // would lose such a mark in the rest is refused.
 const maxDiff = 4_000_000
 
+// AnchoredUnits is how many characters each comment anchor of rtml covers,
+// by its id (nil when rtml doesn't parse).
+func AnchoredUnits(rtml string) map[string]int {
+	t, marks, ok := ParseRTML(rtml)
+	if !ok {
+		return nil
+	}
+	us := units(t)
+	out := map[string]int{}
+	for _, m := range marks {
+		if m.Name != "annotation" {
+			continue
+		}
+		for _, u := range us {
+			if m.Start <= u.start && u.end <= m.End {
+				out[m.Value]++
+			}
+		}
+	}
+	return out
+}
+
 // ApplyRuns is a text section's RTML after an edit: the base section's
 // text replaced by runs, written as the editor's getCompactRtml writes
 // text and marks. Formatting and links are the runs'. What the editor
