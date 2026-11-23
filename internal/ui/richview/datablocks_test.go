@@ -12,6 +12,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/chart"
 	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/icons"
 )
 
 // Synthetic fixtures only (internal/richtext's datablocks_test.go has the
@@ -91,6 +92,13 @@ func TestDataTableLayout(t *testing.T) {
 	} {
 		if got := tb.Buttons[id]; got != want {
 			t.Errorf("%s at %v, want %v", id, got, want)
+		}
+	}
+	// every glyph the table draws is one of Clack's icons (Slack's names
+	// differ: arrow-expand-full is fullscreen here)
+	for i := range v.d.imgs {
+		if name, ok := strings.CutPrefix(v.d.imgs[i].url, iconURL); ok && !icons.Has(name) {
+			t.Errorf("the table draws icon %q, which Clack's icons don't have", name)
 		}
 	}
 	// each header button draws its glyph inside it

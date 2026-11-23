@@ -377,8 +377,8 @@ func (l *lay) dtHeader(dt *richtext.DataTable, ctl *TableControl, x, y, w int) i
 	by := y + padY + (h-2*padY-bs)/2
 	_ = label // the buttons' aria-labels: "View {caption}", "More actions", "Search table"
 	for _, a := range []struct{ id, icon string }{
-		{"more", "ellipsis-vertical-filled"},
-		{"view", "arrow-expand-full"},
+		{"more", "kebab"},      // Slack's ellipsis-vertical-filled
+		{"view", "fullscreen"}, // Slack's arrow-expand-full
 		{"search", "search"},
 	} {
 		bx -= bs
@@ -548,7 +548,7 @@ func (l *lay) dtHeaderCell(ctl *TableControl, col int, text string, sorted, desc
 	// .dataTableBlockCellHeaderCaret: opacity 0 until the button's :hover
 	k := l.newHover()
 	nb, ni, nf := l.hoverFrom()
-	l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(right, gy, right+gs, gy+gs), url: iconURL + "caret-down", target: -1, px: gs, tint: col2})
+	l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(right, gy, right+gs, gy+gs), url: iconURL + "chevron-down", target: -1, px: gs, tint: col2}) // Slack's caret-down
 	l.hoverEnd(k, nb, ni, nf)
 	l.d.hovers[k-1].card, l.d.hovers[k-1].cardTo = tg, tg
 }
@@ -760,7 +760,7 @@ func (l *lay) dtFooter(ctl *TableControl, vw *dtView, dt *richtext.DataTable, x,
 	if dt.Salesforce {
 		gs := l.dp(16)
 		gy := y + (h-gs)/2
-		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(cx, gy, cx+gs, gy+gs), url: iconURL + "sf-cloud-filled", target: -1, px: gs, tint: l.tok("plt-lagoon-50")})
+		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(cx, gy, cx+gs, gy+gs), url: iconURL + "cloud", target: -1, px: gs, tint: l.tok("plt-lagoon-50")}) // Slack's sf-cloud-filled (Clack has the outline)
 		l.plainAdd("\n")
 		l.plainFlow(sfText, cx+gs+gap, y+(h-l.dp(18))/2, sfW-gs-gap+l.dp(1), &fs, -1)
 		cx += sfW + gap
