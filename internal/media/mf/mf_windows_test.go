@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"log"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync"
@@ -390,7 +391,20 @@ var colorWindows = [3][2]time.Duration{{300 * time.Millisecond, 700 * time.Milli
 // 6.8 s cold under load), which stays inside the budget. On a runner the
 // first engines of one process, made unmuted, didn't get there in 15 s;
 // with no output the engine is made muted.
+//
+// The machine's first read of Media Foundation's files is the machine's
+// too: a process of its own (TestMFWarmChild) plays the fixture first, its
+// engines made muted whatever the audio check finds, and its time is
+// logged. A runner's C: is a remote disk with a write cap (125 to 170
+// MB/s); behind writes at the cap each cold read of it took 50 ms to
+// 2.4 s (flake-check mf-cold-diag, 2026-11-23), and windows-idle's first
+// engine took 22 s to its metadata and then none in a minute
+// (keyboard-focus-2-206's push ci 45208586387 and 45225254730, goaudio's
+// Media Foundation decodes 50 and 70 s in the other process). This process
+// still makes its own first engine, and the audio renderer's files are
+// read cold if it's made with one.
 func TestMFColdStart(t *testing.T) {
+	warm, warmLog := warmMachine(t)
 	t0 := time.Now()
 	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
 	r.draw()
@@ -402,13 +416,86 @@ func TestMFColdStart(t *testing.T) {
 		t.Fatalf("loadedmetadata with no engine made; the engine's events %s", traceOf(r.id))
 	}
 	took := at.Sub(opened)
-	t.Logf("loadedmetadata %v after the engine was made; the platform's start (window, device, MFStartup, the audio check) %v before it (audio: %s); the engine's events %s; the demuxer's reads %v",
-		took, opened.Sub(t0), audio, traceOf(r.id), readsOf(r.id))
+	t.Logf("loadedmetadata %v after the engine was made; the platform's start (window, device, MFStartup, the audio check) %v before it (audio: %s); the engine's events %s; the demuxer's reads %v; the machine's first read of Media Foundation's files (TestMFWarmChild's process) %v before that: %s",
+		took, opened.Sub(t0), audio, traceOf(r.id), readsOf(r.id), warm.Round(time.Millisecond), warmLog)
 	if took > 10*time.Second {
 		t.Errorf("loadedmetadata %v after the engine was made, want under 10 s", took)
 	}
 	if d := md.State.Duration; d < 2950*time.Millisecond || d > 3050*time.Millisecond {
 		t.Errorf("duration %v", d)
+	}
+}
+
+// warmChildEnv makes the test binary TestMFColdStart's warm-up process.
+const warmChildEnv = "CLACK_MF_WARM_CHILD"
+
+// warmMachine runs TestMFWarmChild in a process of its own and returns
+// how long that took and the lines it logged. A warm-up that fails fails
+// the test.
+func warmMachine(t *testing.T) (time.Duration, string) {
+	t.Helper()
+	need(t, backend{}.Available())
+	t0 := time.Now()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestMFWarmChild$", "-test.count=1", "-test.v", "-test.timeout=6m")
+	cmd.Env = append(os.Environ(), warmChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	took := time.Since(t0)
+	// its own log lines (file:line), not its PASS or FAIL lines, which
+	// would read as this process's
+	var lines []string
+	for _, l := range strings.Split(string(out), "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "mf_windows_test.go:") || strings.Contains(l, "media: FMF") {
+			lines = append(lines, l)
+		}
+	}
+	logged := strings.Join(lines, " | ")
+	if err != nil {
+		t.Errorf("the warm-up process (TestMFWarmChild) failed after %v: %v: %s", took.Round(time.Millisecond), err, logged)
+	}
+	return took, logged
+}
+
+// TestMFWarmChild is TestMFColdStart's warm-up when the test binary is
+// its child (warmChildEnv set; otherwise it returns at once): the fixture
+// with its audio track, its engines made muted whatever the audio check
+// finds (forceMuted), to their metadata and first frame drawn, in BGRA
+// frames and then in RGBA (CLACK_MF_FORMAT=rgba, TestMFLateFirstTransfer's
+// and TestMFRGBA's), whose conversion runs code of its own: on
+// mf-cold-smoke's second round a cold RGBA engine took 9.4 s to its
+// metadata and drew no frame in 15 s. Then the files Media Foundation
+// reads for those are in the machine's memory.
+func TestMFWarmChild(t *testing.T) {
+	if os.Getenv(warmChildEnv) == "" {
+		return
+	}
+	forceMuted.Store(true)
+	for i, format := range []string{"", "rgba"} {
+		if format != "" {
+			t.Setenv("CLACK_MF_FORMAT", format)
+		}
+		within := 45 * time.Second // the second engine reads little the first didn't
+		if i == 0 {
+			within = 150 * time.Second
+		}
+		t0 := time.Now()
+		r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
+		r.draw()
+		r.wait(media.LoadedMetadata, within)
+		md := time.Since(t0)
+		audio, _ := r.audio()
+		r.p.Play()
+		drawn := false
+		for deadline := time.Now().Add(30 * time.Second); !drawn && time.Now().Before(deadline); {
+			select {
+			case <-r.readyC:
+			case <-time.After(15 * time.Millisecond):
+			}
+			drawn = r.draw().A != 0
+		}
+		if !drawn {
+			t.Fatalf("%s: loadedmetadata %v after the player was made, and no frame drawn within 30 s of Play; the engine's events %s", formatName(r.p.format), md.Round(time.Millisecond), traceOf(r.id))
+		}
+		t.Logf("%s: loadedmetadata %v and the first frame %v after the player was made (audio: %s)", formatName(r.p.format), md.Round(time.Millisecond), time.Since(t0).Round(time.Millisecond), audio)
 	}
 }
 
