@@ -76,8 +76,8 @@ func helpThread(t *testing.T) coreHost {
 	return coreHost{app: app, th: theme.New(true)}
 }
 
-// scaledFrame lays tv out at scale px per dp.
-func scaledFrame(tv *ThreadView, scale float32) func() {
+// threadFrameAt lays tv out at scale px per dp.
+func threadFrameAt(tv *ThreadView, scale float32) func() {
 	ops := new(op.Ops)
 	return func() {
 		ops.Reset()
@@ -92,7 +92,7 @@ func scaledFrame(tv *ThreadView, scale float32) func() {
 func TestBotThreadRowLikeSlack(t *testing.T) {
 	h := helpThread(t)
 	tv := NewThreadView(h, helpCh, helpRoot)
-	f := scaledFrame(tv, 1)
+	f := threadFrameAt(tv, 1)
 	until(t, 5*time.Second, "the replies", f, func() bool {
 		hr, br := tv.s.rows[helpHeidi], tv.s.rows[helpBob]
 		return hr != nil && br != nil && hr.rv != nil && br.rv != nil && hr.rv.FirstTextTop() >= 0 && br.rv.FirstTextTop() >= 0
@@ -127,7 +127,7 @@ func TestAvatarPictureForScaleLikeSlack(t *testing.T) {
 	} {
 		h := helpThread(t)
 		tv := NewThreadView(h, helpCh, helpRoot)
-		f := scaledFrame(tv, c.scale)
+		f := threadFrameAt(tv, c.scale)
 		until(t, 5*time.Second, "the replies", f, func() bool {
 			hr, rr := tv.s.rows[helpHeidi], tv.s.rows[helpRelay]
 			return hr != nil && rr != nil && hr.avDrawn != "" && rr.avDrawn != ""
