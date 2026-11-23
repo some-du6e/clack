@@ -159,6 +159,10 @@ type Editor struct {
 	// modifiers) before the editor handles them; returning true consumes
 	// the key (used by the autocomplete popup).
 	Intercept func(name key.Name, mods key.Modifiers) bool
+	// MaxIndent, if set, is the deepest list level Tab and a paste make
+	// (0-based) in place of the message composer's (a canvas's editor:
+	// maxListIndentationLevel 4).
+	MaxIndent int
 
 	doc           *Doc
 	anchor, caret int

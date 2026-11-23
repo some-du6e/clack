@@ -896,7 +896,7 @@ func blockEdit(base func(string) (sectionBase, bool), be CanvasBlockEdit) (quip.
 		e.Restyle, e.Style = true, ns
 	}
 	if be.Level != be.OrigLevel {
-		if !be.Kind.IsList() || be.Kind != be.OrigKind || len(b.parents) == 0 || be.Level < 0 || be.Level > 8 {
+		if !be.Kind.IsList() || be.Kind != be.OrigKind || len(b.parents) == 0 || be.Level < 0 || be.Level > quip.MaxListLevel {
 			return quip.Edit{}, fmt.Errorf("%w: a block's level changed outside a list", quip.ErrUnsupported)
 		}
 		e.Reindent, e.Indent = true, int32(be.Level)

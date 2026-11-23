@@ -193,6 +193,9 @@ func TestCanvasQuipSaves(t *testing.T) {
 	if v.edit.cur == nil {
 		t.Fatal("no new block under the last one")
 	}
+	if got := v.edit.cur.ed.MaxIndent; got != quip.MaxListLevel {
+		t.Errorf("a new block's editor makes lists %d deep, want %d", got, quip.MaxListLevel)
+	}
 	v.edit.cur.ed.InsertText("A new paragraph")
 	frame()
 	if !v.edit.finish(v) {
@@ -434,6 +437,9 @@ func TestCanvasQuipRestyle(t *testing.T) {
 	frame()
 	if v.edit.cur == nil {
 		t.Fatal("the paragraph didn't open")
+	}
+	if got := v.edit.cur.ed.MaxIndent; got != quip.MaxListLevel {
+		t.Errorf("the block's editor makes lists %d deep, want Slack's canvas editor's %d", got, quip.MaxListLevel)
 	}
 	v.edit.apply(v, "h2", image.Point{})
 	frame()

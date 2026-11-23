@@ -181,12 +181,14 @@ func (e *Editor) pasteRich(lo int, src *Doc) int {
 	line := d.LineOf(lo)
 	cur := d.Lines[line]
 	first := src.Lines[0]
+	// capEntityIndentation_: no deeper than the editor's lists go
+	capped := func(n int) int { return min(n, e.maxIndent()) }
 	switch {
 	case rtIsList(cur.Kind) && rtIsList(first.Kind):
 		base := cur.Indent - first.Indent
 		for i := range src.Lines {
 			if rtIsList(src.Lines[i].Kind) {
-				src.Lines[i].Indent = min(max(src.Lines[i].Indent+base, 0), edMaxIndent)
+				src.Lines[i].Indent = max(src.Lines[i].Indent+base, 0)
 			}
 		}
 	case cur.Kind == Para && first.Kind != Para:
@@ -194,7 +196,11 @@ func (e *Editor) pasteRich(lo int, src *Doc) int {
 			lo = d.Insert(lo, "\n", Attr{})
 			line++
 		}
+		first.Indent = capped(first.Indent)
 		d.Lines[line] = first
+	}
+	for i := range src.Lines {
+		src.Lines[i].Indent = capped(src.Lines[i].Indent)
 	}
 	return d.InsertDoc(lo, src)
 }

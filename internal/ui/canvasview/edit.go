@@ -655,7 +655,7 @@ func (e *editState) start(v *View, b *blk) {
 	}
 	s := &session{target: b, id: b.b.ID, kind: b.b.Kind, level: b.b.Level, checked: b.b.Checked, orig: canvas.Markdown(*b.b),
 		spans: append([]richtext.Span(nil), b.b.Spans...), kind0: b.b.Kind, level0: b.b.Level, checked0: b.b.Checked, code0: b.b.Code,
-		ed: composer.NewEditor(), focus: true}
+		ed: newEditor(), focus: true}
 	if b.parent != nil && b.parent.b.Kind == canvas.Quote && b.b.Kind == canvas.Paragraph {
 		// a quote's paragraph is a Quip section of its own (style 16):
 		// it saves as "> …" so it stays in the quote
@@ -843,7 +843,7 @@ func (v *View) StartNewBlock() {
 	place := &blk{b: &canvas.Block{Kind: canvas.Paragraph}}
 	v.blocks = append(v.blocks, place)
 	v.list.ScrollTo(len(v.blocks)) // the header row comes first: this is the new block's row
-	s := &session{afterID: after, place: place, kind: canvas.Paragraph, ed: composer.NewEditor(), focus: true}
+	s := &session{afterID: after, place: place, kind: canvas.Paragraph, ed: newEditor(), focus: true}
 	s.ed.SetDoc(composer.NewDoc())
 	e.cur = s
 	v.h.Invalidate()
@@ -881,6 +881,14 @@ func (e *editState) replaceLocal(v *View, b *blk, bs []canvas.Block) {
 	if len(nb) == 1 { // nested (a column, a cell): swap in place
 		*b = *nb[0]
 	}
+}
+
+// newEditor is a block's editor: lists no deeper than Slack's canvas
+// editor makes them (maxListIndentationLevel).
+func newEditor() *composer.Editor {
+	ed := composer.NewEditor()
+	ed.MaxIndent = quip.MaxListLevel
+	return ed
 }
 
 // unquote is a quoted session's blocks as the quote's own paragraphs.

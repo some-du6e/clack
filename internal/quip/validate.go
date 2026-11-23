@@ -64,9 +64,10 @@ func fieldsFor(e Edit) string {
 	return b.String()
 }
 
-// maxIndent is the deepest list level a save sets: the canvas editor's
-// maxListIndentationLevel (changeIndentationLevel caps at it).
-const maxIndent = 4
+// MaxListLevel is the deepest list level a save sets: the canvas editor's
+// maxListIndentationLevel (its config sets 4; Tab stops there, and a paste
+// is capped to it by capEntityIndentation_).
+const MaxListLevel = 4
 
 // savedTags are the tags Slack's save writer (CITi's DI) writes in a
 // canvas: sub, sup and f are the canvas's disallowedFormattingTags.
@@ -184,7 +185,7 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 				return refuse("section %s: a box or level outside a list", id)
 			}
 		}
-		if e.Reindent && (e.Indent < 0 || e.Indent > maxIndent) {
+		if e.Reindent && (e.Indent < 0 || e.Indent > MaxListLevel) {
 			return refuse("section %s: list level %d", id, e.Indent)
 		}
 		if e.Restyle {
@@ -232,7 +233,10 @@ func (d *Doc) Validate(data *DocumentData, edits []Edit, meta *TitleMeta, s *Sav
 					return refuse("section %s: deleting a list item of type %v", id, server.Type)
 				}
 			case server.Type != nil && *server.Type == TypeList:
-				// a list goes only with all its items
+				// a list goes only with all its items, and none new
+				if newIn[id] {
+					return refuse("section %s: deleting a list the save adds an item to", id)
+				}
 				for _, c := range d.ListChildren(id) {
 					if !deleted[c] {
 						return refuse("section %s: deleting a list with item %s left", id, c)

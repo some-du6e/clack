@@ -675,6 +675,13 @@ func TestCanvasSaveRestyle(t *testing.T) {
 		t.Errorf("the export after a tick: %+v", b)
 	}
 	n := len(saves(fs))
+	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *shots.ID, Orig: txt("Screenshots"), OrigKind: canvas.Check,
+		Spans: txt("Screenshots"), Kind: canvas.Check, Level: quip.MaxListLevel + 1}); !errors.Is(err, quip.ErrUnsupported) {
+		t.Errorf("an item past the canvas editor's deepest level: %v", err)
+	}
+	if err := a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditBlock, SectionID: *shots.ID, Reindent: true, Indent: quip.MaxListLevel + 1}); !errors.Is(err, quip.ErrRefused) {
+		t.Errorf("the validator took list level %d: %v", quip.MaxListLevel+1, err)
+	}
 	if err := a.SaveCanvasBlock(ctx, fakeslack.CanvasShared, CanvasBlockEdit{SectionID: *head.ID, Orig: txt("Weekly sync, now a paragraph"), OrigKind: canvas.Paragraph,
 		Spans: txt("Weekly sync, now a paragraph"), Kind: canvas.Bullet}); !errors.Is(err, quip.ErrUnsupported) {
 		t.Errorf("a paragraph made a bullet: %v", err)
@@ -711,6 +718,9 @@ func TestCanvasSaveDeleteMerges(t *testing.T) {
 	loadModel(t, a, id)
 	if err := a.SaveCanvasDelete(ctx, id, "temp:C:MRG00002", txt("between")); !errors.Is(err, quip.ErrUnsupported) {
 		t.Errorf("a paragraph between two bullet lists: %v", err)
+	}
+	if err := a.SaveCanvas(ctx, id, quip.Edit{Kind: quip.EditDelete, SectionID: "temp:C:MRG00002"}); !errors.Is(err, quip.ErrRefused) {
+		t.Errorf("the validator took the delete between two lists: %v", err)
 	}
 	if n := len(saves(fs)); n != 0 {
 		t.Errorf("%d edit-document calls for a refused delete", n)
@@ -826,6 +836,9 @@ func TestCanvasSaveQuoteParagraph(t *testing.T) {
 		Spans: txt("Keep it short, please."), Kind: canvas.Heading1}); !errors.Is(err, quip.ErrUnsupported) {
 		t.Errorf("a quote's paragraph made a heading: %v", err)
 	}
+	if err := a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditBlock, SectionID: *q.ID, Restyle: true, Style: quip.StyleH1}); !errors.Is(err, quip.ErrRefused) {
+		t.Errorf("the validator took a quote's paragraph made a heading: %v", err)
+	}
 }
 
 // The canvas's last block isn't deleted: Slack's deleteEntity would make
@@ -896,6 +909,15 @@ func TestCanvasSaveListItemReplaced(t *testing.T) {
 		{ID: "temp:C:RPL00002", Kind: canvas.Bullet, Spans: txt("one")},
 	}}})
 	loadModel(t, a, id)
+	// never the list deleted in a save that adds an item to it
+	x := modelSection(t, a, id, "one")
+	var pos string
+	a.CanvasModel(id, func(d *quip.Doc) { pos = d.PositionAfter(*x.Position, nil) })
+	err := a.SaveCanvas(ctx, id, quip.Edit{Kind: quip.EditDelete, SectionID: *x.ID}, quip.Edit{Kind: quip.EditDelete, SectionID: x.Parents.IDs[0]},
+		quip.Edit{Kind: quip.EditNew, SectionID: a.NewCanvasSectionID(id), After: *x.ID, Style: quip.StylePlain, Position: pos, RTML: "two"})
+	if !errors.Is(err, quip.ErrRefused) || !strings.Contains(err.Error(), "adds an item") {
+		t.Errorf("a list deleted in the save that adds an item to it: %v", err)
+	}
 	before := fs.CallCount("canvas/edit-document")
 	fs.SetFault("canvas/edit-document", fakeslack.Fault{ReplyDelay: 700 * time.Millisecond, Times: 1})
 	first := make(chan error, 1)

@@ -185,7 +185,7 @@ func (v *View) startNewAfter(after string) {
 	out = append(out, place)
 	v.blocks = append(out, v.blocks[i:]...)
 	v.list.ScrollTo(i + 1) // the header row comes first
-	s := &session{afterID: after, place: place, kind: canvas.Paragraph, ed: composer.NewEditor(), focus: true}
+	s := &session{afterID: after, place: place, kind: canvas.Paragraph, ed: newEditor(), focus: true}
 	s.ed.SetDoc(composer.NewDoc())
 	e.cur = s
 	v.h.Invalidate()
