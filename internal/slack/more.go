@@ -234,7 +234,8 @@ const (
 // Slack's pMap stops starting groups after the first failure and
 // rejects the whole fetch; here every group is asked, so one failed
 // group costs only its own channels. A group Slack refuses (an API
-// error, not a rate limit) is asked again channel by channel, and a
+// error that answers for a channel: messagesRefused) is asked again
+// channel by channel, and a
 // channel refused on its own is answered: its messages are non-existent,
 // as Slack's UnknownFetchManager marks every id a failed fetch didn't
 // bring (unless offline). Network and HTTP failures answer nothing.
@@ -278,7 +279,7 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 			chans[i] = g[i].Channel
 		}
 		var se *Error
-		refused := errors.As(err, &se) && se.Code != "ratelimited"
+		refused := errors.As(err, &se) && messagesRefused[se.Code]
 		if refused && len(g) > 1 {
 			// Slack refused the group (one channel the viewer can't read,
 			// a message id it won't take): each channel on its own, so
@@ -329,6 +330,15 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 	}
 	wg.Wait()
 	return msgs, answered, errors.Join(errs...)
+}
+
+// messagesRefused are the messages.list errors that answer for the
+// channel: it can't be read (not found, not a member's, access denied) or
+// a message id is none (not found, a bad ts). Others (internal_error,
+// ratelimited, a timeout) say nothing about the messages: asked again.
+var messagesRefused = map[string]bool{
+	"channel_not_found": true, "not_in_channel": true, "access_denied": true,
+	"message_not_found": true, "thread_not_found": true, "invalid_ts": true, "invalid_message_ids": true,
 }
 
 // SearchMessages runs search.messages.

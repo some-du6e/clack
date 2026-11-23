@@ -184,8 +184,7 @@ type actRow struct {
 	// clickLater is a click whose press came in the same frame, decided
 	// in the next (ControlledClick's marks are this frame's layout's)
 	clickLater, clickSplit bool
-	clickGen               uint32    // the frame it came in (base.tgen)
-	clickAt                time.Time // and when
+	clickAt                time.Time // the frame it came in (gtx.Now)
 	ctx                    struct{}  // the row's context-menu press target
 	d                      actDesc
 	built                  bool
@@ -2312,8 +2311,8 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	// not laid out then (scrolled off, the page changed) drops it
 	// (a row laid out again in its click's frame leaves it be)
 	late, split := false, v.splitClick()
-	if r.clickLater && v.tgen != r.clickGen {
-		late, r.clickLater = v.tgen == r.clickGen+1 && gtx.Now.Sub(r.clickAt) < actClickLaterMax, false
+	if r.clickLater && gtx.Now.After(r.clickAt) { // a later frame (the view may lay out twice a frame: the peek)
+		late, r.clickLater = gtx.Now.Sub(r.clickAt) < actClickLaterMax, false
 		if late {
 			split = r.clickSplit // the click's own frame's
 		}
@@ -2323,7 +2322,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		// pressed and released in this frame: what took the press (a
 		// pill, a link) marks it as this frame lays the row out, so the
 		// click is decided in the next, with this frame's modifiers
-		r.clickLater, r.clickSplit, r.clickGen, r.clickAt, clicked = true, split, v.tgen, gtx.Now, false
+		r.clickLater, r.clickSplit, r.clickAt, clicked = true, split, gtx.Now, false
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	clicked = clicked || late

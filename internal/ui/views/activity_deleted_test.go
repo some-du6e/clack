@@ -34,7 +34,7 @@ func TestActivityRefusedFetchLeavesNoSkeleton(t *testing.T) {
 	if n := e.v.shimmers - shimmers; n != 0 {
 		t.Errorf("%d loading shimmers in 10 frames after Slack refused the fetch: a row loads for ever", n)
 	}
-	if h := e.rowH(lmMentionKey); h != 0 {
+	if h := e.rowDrawnH(lmMentionKey); h != 0 {
 		t.Errorf("the mention whose fetch Slack refused is a %dpx row; Slack renders it null", h)
 	}
 	if h := e.rowH(lmThreadKey); h <= 0 {
@@ -62,6 +62,9 @@ func activityListed(v *Activity, key string) bool {
 	for li, i := range v.vis {
 		if i >= 0 && i < len(p.Items) && actKey(&p.Items[i]) == key {
 			h, ok := v.stk.h[li]
+			if li == 0 {
+				h -= v.stk.lead
+			}
 			return !ok || h > 0
 		}
 	}
