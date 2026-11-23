@@ -377,7 +377,14 @@ func (m *mirror) send() {
 		// old value: invalidate marked it stale before JS knew of the
 		// change, and its fetch could run first. Mark it stale again now
 		// that the change is queued ahead of any later read (the runtime
-		// runs posts and calls in order), and redraw so the UI asks.
+		// runs posts and calls in order), and redraw so the UI asks. The
+		// marks are at the post's version: a read that went to JS after
+		// the post holds the change, and staling it too had every edit's
+		// view, read at once by an idle JS thread on the in-order lane,
+		// read again for a frame that drew nothing new (flake-check's
+		// activity-edits: 80 frames for 20 edits under a messages-slice
+		// plugin, 61 before e0cab406c)
+		at := m.t.ui.views.postMark()
 		marked := false
 		// a whole slice's or bucket's change marks it whole again; one
 		// message's marks that message (and its bucket's fetch)
@@ -391,18 +398,18 @@ func (m *mirror) send() {
 		}
 		for _, c := range out {
 			if len(c.Keys) == 0 {
-				marked = m.t.ui.views.stale(c.Slice, "") || marked
+				marked = m.t.ui.views.staleAt(c.Slice, "", at) || marked
 			}
 			for _, k := range c.Keys {
 				if c.Slice == "messages" && !whole[k] {
 					continue // its messages' own marks, below
 				}
-				marked = m.t.ui.views.stale(c.Slice, k) || marked
+				marked = m.t.ui.views.staleAt(c.Slice, k, at) || marked
 			}
 		}
 		for _, c := range batch {
 			if c.ts != "" && !whole[c.Keys[0]] {
-				marked = m.t.ui.views.msgStale(c.Keys[0], c.ts) || marked
+				marked = m.t.ui.views.msgStaleAt(c.Keys[0], c.ts, at) || marked
 			}
 		}
 		if f := m.t.opts.UI.Invalidate; marked && f != nil {

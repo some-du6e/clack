@@ -1692,7 +1692,12 @@ func (v *viewCache) msgPending(ch, ts string, d int) {
 // msgStale marks message ch/ts's view stale: its bucket's fetch (the
 // group, as stale does) and its own readiness. Reports whether the bucket
 // is on screen (stale's).
-func (v *viewCache) msgStale(ch, ts string) (onScreen bool) {
+func (v *viewCache) msgStale(ch, ts string) (onScreen bool) { return v.msgStaleAt(ch, ts, 0) }
+
+// msgStaleAt is msgStale at version at (postMark's), 0 for a new one: a
+// mark at a change's post stales the reads that went to JS before it,
+// not the ones after, which hold the change.
+func (v *viewCache) msgStaleAt(ch, ts string, at uint64) (onScreen bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	defer func() {
@@ -1700,18 +1705,34 @@ func (v *viewCache) msgStale(ch, ts string) (onScreen bool) {
 			v.epoch.Add(1)
 		}
 	}()
-	v.seq++
+	if at == 0 {
+		v.seq++
+		at = v.seq
+	}
 	if len(v.msgVer) >= maxMsgMarks {
 		clear(v.msgVer)
 		v.sliceVer["messages"] = v.seq // every message stale once: as safe as the marks let go
 	}
-	v.msgVer[msgKey{ch, ts}] = v.seq
+	k := msgKey{ch, ts}
+	v.msgVer[k] = max(v.msgVer[k], at)
 	g := v.groups[viewSK{"messages", ch}]
 	if g == nil {
 		return false
 	}
-	g.ver = v.seq
+	g.ver = max(g.ver, at)
 	return len(g.subs) > 0 && v.visibleLocked(g)
+}
+
+// postMark is the version of a change the mirror just posted to JS. A
+// read (work's pass) that starts after it goes to JS behind the change
+// (the reads and the invalidates share the in-order lane) and holds it;
+// one that started before may hold JS's state from before it, which
+// send's marks at this version stale.
+func (v *viewCache) postMark() uint64 {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.seq++
+	return v.seq
 }
 
 // noteSeen records that the mirror handled core's event seq (its marks
@@ -1821,7 +1842,11 @@ func (v *viewCache) staleAll() {
 // stale marks the cached views of slice (key "" = all) stale, reporting
 // whether one of them is on screen (visibleLocked): those the UI reads
 // again soon; the rest are fetched again when next read.
-func (v *viewCache) stale(slice, key string) (onScreen bool) {
+func (v *viewCache) stale(slice, key string) (onScreen bool) { return v.staleAt(slice, key, 0) }
+
+// staleAt is stale at version at (postMark's), 0 for a new one, as
+// msgStaleAt.
+func (v *viewCache) staleAt(slice, key string, at uint64) (onScreen bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// what's on screen reads again at once (ViewEpoch); the rest when
@@ -1831,9 +1856,12 @@ func (v *viewCache) stale(slice, key string) (onScreen bool) {
 			v.epoch.Add(1)
 		}
 	}()
-	v.seq++
+	if at == 0 {
+		v.seq++
+		at = v.seq
+	}
 	if key == "" {
-		v.sliceVer[slice] = v.seq
+		v.sliceVer[slice] = max(v.sliceVer[slice], at)
 		return v.sliceN[slice] > 0 && v.sliceRead[slice] >= v.lastRead-v.onScreen
 	}
 	if slice == "messages" {
@@ -1843,13 +1871,13 @@ func (v *viewCache) stale(slice, key string) (onScreen bool) {
 			clear(v.chanVer)
 			v.sliceVer[slice] = v.seq
 		}
-		v.chanVer[key] = v.seq
+		v.chanVer[key] = max(v.chanVer[key], at)
 	}
 	g := v.groups[viewSK{slice, key}]
 	if g == nil {
 		return false
 	}
-	g.ver = v.seq
+	g.ver = max(g.ver, at)
 	return len(g.subs) > 0 && v.visibleLocked(g)
 }
 
