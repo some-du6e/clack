@@ -540,13 +540,15 @@ func (q *Router) processEvent(e event.Event, system bool) {
 		var evts []taggedEvent
 		if f := state.focus; f != nil {
 			evts = append(evts, taggedEvent{tag: f, event: e})
+		} else if t := q.unfocusedTextFor(); t != nil {
+			evts = append(evts, taggedEvent{tag: t, event: e}) // Clack patch 64: an IME's marked text
 		}
 		q.changeState(e, state, evts)
 	case key.EditEvent:
 		var evts []taggedEvent
 		if f := state.focus; f != nil {
 			evts = append(evts, taggedEvent{tag: f, event: e})
-		} else if t := q.unfocusedText; t != nil {
+		} else if t := q.unfocusedTextFor(); t != nil {
 			evts = append(evts, taggedEvent{tag: t, event: e}) // Clack patch 64
 		}
 		q.changeState(e, state, evts)

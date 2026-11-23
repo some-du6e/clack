@@ -16,7 +16,8 @@ package ui
 //     keyboard focus (BaseKeyboardNavigableList onScroll after onWheel);
 //   - a thread opened in keyboard mode gives its list the focus (the
 //     navigation's THREAD_MESSAGE_LIST), and one opened after a click its
-//     reply box.
+//     reply box. Keyboard mode comes on as Slack's does: an arrow (↑ in an
+//     empty input) moving the focus to the list.
 
 import (
 	"image"
@@ -80,15 +81,16 @@ func TestThreadsAuditTypingGoesToTheInput(t *testing.T) {
 	box := x.box(x.ch, "")
 	t.Cleanup(func() { x.kfClearDraft(c) })
 	x.kfNothingFocused(t)
+	before := box.DocText()
 	x.typeText(" ")
 	x.settle(200 * time.Millisecond)
-	if got := box.DocText(); strings.TrimSpace(got) != "" || !x.r.Source().Focused(nil) {
-		t.Fatalf("Space with nothing focused: the input holds %q, nothing focused %v; Slack's input takes no Space", got, x.r.Source().Focused(nil))
+	if got := box.DocText(); got != before || !x.r.Source().Focused(nil) {
+		t.Fatalf("Space with nothing focused: the input went from %q to %q, nothing focused %v; Slack's input takes no Space", before, got, x.r.Source().Focused(nil))
 	}
 	x.typeText("h")
 	x.until("the input focused by the typing", 2*time.Second, func() bool { return x.kfBoxFocused(c) })
-	if got := strings.TrimSpace(box.DocText()); got != "h" {
-		t.Fatalf("typed h with nothing focused: the channel's input holds %q", got)
+	if got, want := strings.TrimSpace(box.DocText()), strings.TrimSpace(before)+"h"; got != want {
+		t.Fatalf("typed h with nothing focused: the channel's input holds %q, want %q", got, want)
 	}
 
 	x.kfClearDraft(c)
@@ -111,15 +113,16 @@ func TestThreadsAuditTypingFromTheList(t *testing.T) {
 	t.Cleanup(func() { x.kfClearDraft(c) })
 	x.a.focusList(c)
 	x.until("the channel's list selecting its newest message", 5*time.Second, func() bool { return x.cv().KeyboardSelected() != "" })
+	before := box.DocText()
 	x.typeText("e")
 	x.settle(200 * time.Millisecond)
-	if got := strings.TrimSpace(box.DocText()); got != "" || x.cv().KeyboardSelected() == "" {
-		t.Fatalf("e on a selected message (its own key): the input holds %q, the list selects %q", got, x.cv().KeyboardSelected())
+	if got := box.DocText(); got != before || x.cv().KeyboardSelected() == "" {
+		t.Fatalf("e on a selected message (its own key): the input went from %q to %q, the list selects %q", before, got, x.cv().KeyboardSelected())
 	}
 	x.typeText("k")
 	x.until("the channel's input focused by the typing", 2*time.Second, func() bool { return x.kfBoxFocused(c) })
-	if got := strings.TrimSpace(box.DocText()); got != "k" {
-		t.Fatalf("typed k with a message selected: the channel's input holds %q", got)
+	if got, want := strings.TrimSpace(box.DocText()), strings.TrimSpace(before)+"k"; got != want {
+		t.Fatalf("typed k with a message selected: the channel's input holds %q, want %q", got, want)
 	}
 
 	x.root = fakeslack.ThreadOpenRead
@@ -134,10 +137,11 @@ func TestThreadsAuditTypingFromTheList(t *testing.T) {
 	tv := x.threadView(x.ch, x.root)
 	x.a.focusList(tc)
 	x.until("the thread's list selecting a reply", 5*time.Second, func() bool { return x.kfListFocused(tv) })
+	tbefore := x.box(x.ch, x.root).DocText()
 	x.typeText("q")
 	x.until("the reply box focused by the typing", 2*time.Second, func() bool { return x.kfBoxFocused(tc) })
-	if got := strings.TrimSpace(x.box(x.ch, x.root).DocText()); got != "q" {
-		t.Fatalf("typed q with a reply selected: the reply box holds %q", got)
+	if got, want := strings.TrimSpace(x.box(x.ch, x.root).DocText()), strings.TrimSpace(tbefore)+"q"; got != want {
+		t.Fatalf("typed q with a reply selected: the reply box holds %q, want %q", got, want)
 	}
 }
 
@@ -207,7 +211,9 @@ func TestThreadsAuditEscapeInThePane(t *testing.T) {
 	root = fakeslack.ThreadsAuditOwnFirst
 	mine := fakeslack.ThreadsAuditReply(root, 0)
 	c, tv = open(root)
-	e.key(key.NameLeftArrow, 0) // keyboard mode (in the empty input: the caret stays)
+	e.a.FocusThreadComposer(ch, root)
+	e.settle(300 * time.Millisecond)
+	e.kfUpToList(t, func() bool { return e.kfListFocused(tv) }) // keyboard mode: ↑ moves the focus to the list
 	tv.Edit(mine)
 	e.until("the inline edit open", 5*time.Second, func() bool { return tv.EditComposer() != nil })
 	e.settle(300 * time.Millisecond)
@@ -247,9 +253,10 @@ func TestThreadsAuditWheelDropsTheListFocus(t *testing.T) {
 	if s := x.cv().KeyboardSelected(); s != "" {
 		t.Fatalf("the wheel scrolled the selected message away and the list keeps the keyboard focus on %s; Slack's blurs it", s)
 	}
+	before := strings.TrimSpace(x.box(x.ch, "").DocText())
 	x.typeText("w")
 	x.until("the letter in the channel's input", 2*time.Second, func() bool {
-		return strings.TrimSpace(x.box(x.ch, "").DocText()) == "w" && x.kfBoxFocused(c)
+		return strings.TrimSpace(x.box(x.ch, "").DocText()) == before+"w" && x.kfBoxFocused(c)
 	})
 }
 
@@ -267,10 +274,10 @@ func TestThreadsAuditKeyboardModeOpensToTheList(t *testing.T) {
 	x.a.CloseSecondary()
 	x.settle(300 * time.Millisecond)
 
-	// keyboard mode: the menu's Reply in thread (setFocusInput, then the
-	// thread opens) focuses the list
-	x.key(key.NameLeftArrow, 0) // in the empty input: the caret stays (Up would edit the last message)
-	x.settle(100 * time.Millisecond)
+	// keyboard mode (↑ moving the focus from the empty input to the list):
+	// the menu's Reply in thread (setFocusInput, then the thread opens)
+	// focuses the thread's list
+	x.kfUpToList(t, func() bool { return x.cv().KeyboardSelected() != "" })
 	x.a.SetThreadFocusInput(x.ch, x.root)
 	x.a.OpenThread(x.ch, x.root)
 	var tv *messages.ThreadView

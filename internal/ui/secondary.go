@@ -331,10 +331,26 @@ func (a *App) CloseSecondary() {
 	}
 	w := a.secondary.width
 	a.secondary = secondaryState{width: w}
-	if ch := a.router.Current().Channel(); ch != "" && was != secNone {
-		a.focusChannelComposer(ch)
-	}
+	a.focusAfterClose(was)
 	a.Invalidate()
+}
+
+// focusAfterClose is onViewClosed (client-boot 1zp8): a closed secondary
+// view hands the focus to the Primary view, a channel's message input or
+// a list view's list (Activity's inbox, the Threads view), so the keys
+// after a pane opened from there and closed again work there, not
+// nowhere.
+func (a *App) focusAfterClose(was secKind) {
+	if was == secNone {
+		return
+	}
+	if ch := a.router.Current().Channel(); ch != "" {
+		a.focusChannelComposer(ch)
+		return
+	}
+	if v, ok := a.views[a.router.Current()].(interface{ FocusList() }); ok {
+		v.FocusList()
+	}
 }
 
 // threadEsc is Escape in the thread pane: Slack's secondary view is a
@@ -409,9 +425,7 @@ func (a *App) toggleSecondary() {
 	}
 	a.secondary.hidden = !a.secondary.hidden
 	if a.secondary.hidden {
-		if ch := a.router.Current().Channel(); ch != "" {
-			a.focusChannelComposer(ch)
-		}
+		a.focusAfterClose(a.secondary.kind)
 	}
 }
 
