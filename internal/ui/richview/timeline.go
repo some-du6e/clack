@@ -100,9 +100,9 @@ func (l *lay) timeline(b *richtext.Block, x, y, w int) int {
 	open := l.collapsed != nil && l.collapsed[k]
 	n := len(tl.Points)
 	last := &tl.Points[n-1]
-	steps := false
+	steps := false // e.some(e => e.steps && e.steps.length > 0)
 	for i := range tl.Points {
-		if len(tl.Points[i].Sections) > 0 {
+		if tl.Points[i].HasSteps {
 			steps = true
 		}
 	}
@@ -259,18 +259,26 @@ func (l *lay) timelineList(tl *richtext.Timeline, x, y, w int) int {
 			spans = r.sec.Title
 		}
 		l.plainAdd("\n")
-		th, tw := l.textFlowTarget(spans, tx, top+l.dp(2), max(w-(tx-x), 1), &fs, -1)
-		rh := max(th, fs.lineH) + 2*l.dp(2)
-		// "(Sources)": its section's sources modal
+		// the title, and "(Sources)" (its section's sources modal) inline
+		// after it, wrapping with it
+		l.addSpans(spans, &fs)
+		var stg int16 = -1
+		f0 := len(l.d.frags)
 		if r.sec != nil && r.sec.Sources > 0 {
-			sx := tx + tw + gap
 			sfs := fs
 			sfs.col = l.tok("content-hgl-1")
-			stg := l.d.addTarget(target{kind: tTimeline, timeline: r.sec})
-			l.plainAdd(" ")
-			_, sw := l.textFlowTarget([]richtext.Span{{Kind: richtext.Text, Text: nsTimeline.T("(Sources)")}}, sx, top+l.dp(2), max(w-(sx-x), 1), &sfs, stg)
-			l.d.hits = append(l.d.hits, hit{r: image.Rect(sx, top+l.dp(2), sx+sw, top+l.dp(2)+fs.lineH), t: stg})
+			stg = l.d.addTarget(target{kind: tTimeline, timeline: r.sec})
+			l.addSpansTarget([]richtext.Span{{Kind: richtext.Text, Text: " " + nsTimeline.T("(Sources)")}}, &sfs, stg)
 		}
+		th, _ := l.flow(tx, top+l.dp(2), max(w-(tx-x), 1), &fs)
+		if stg >= 0 {
+			for i := f0; i < len(l.d.frags); i++ {
+				if f := &l.d.frags[i]; f.target == stg {
+					l.d.hits = append(l.d.hits, hit{r: fragRect(f), t: stg})
+				}
+			}
+		}
+		rh := max(th, fs.lineH) + 2*l.dp(2)
 		// the step column: line, mark, line (the last row's bottom line
 		// clear)
 		lastRow := ri == len(rows)-1

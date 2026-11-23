@@ -108,6 +108,9 @@ type Message struct {
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
 	UploadStatus string `json:"-"`
+	// DNDSuppressed is dnd_suppressed: held for Do Not Disturb, so a
+	// mention in it notifies no one (canCountAsUnreadForCurrentUser).
+	DNDSuppressed bool `json:"dnd_suppressed,omitempty"`
 }
 
 // MessageDocumentComment is a canvas comment root's document_comment.
@@ -604,6 +607,10 @@ type User struct {
 	Updated           int64   `json:"updated,omitempty"`
 	Profile           Profile `json:"profile"`
 	Presence          string  `json:"presence,omitempty"`
+	// ManualPresence is the viewer's own manual_presence ("away" when they
+	// set themselves away, "active"; computeManualPresence keeps it on the
+	// viewer's member only): maybeTickleMS sends no tickle while it's away.
+	ManualPresence string `json:"manual_presence,omitempty"`
 	// EnterpriseUser lists the Grid workspaces the user belongs to.
 	EnterpriseUser *EnterpriseUser `json:"enterprise_user,omitempty"`
 	// IsStranger: a Slack Connect user from an org the viewer shares no

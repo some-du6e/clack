@@ -21,9 +21,15 @@ import (
 //     getMemberNameForMessage), whether it's a thread reply (the card's
 //     "From a thread in" context), its files.
 //
-// A message the client doesn't hold draws nothing. Left out: the unfurl's
-// link to the message (fromUrl needs the team's domain), its other
-// attachments (children) and a Slack Connect source team.
+// A message the client doesn't hold draws nothing. Slack's attachment
+// renders an embedded message's own message_embed blocks again, with no
+// bound of its own; Clack's builder draws an embed of a message already
+// being embedded on the way here (a cycle: a message embedding itself)
+// as nothing, and at most maxEmbedCards embeds in one conversion, so a
+// chain of messages that each embed the one before costs a bounded
+// number of cards. Left out: the unfurl's link to the message (fromUrl
+// needs the team's domain), its other attachments (children) and a Slack
+// Connect source team.
 
 // MessageFinder is optional on a Resolver: a message the client holds
 // (the store's FindHeld).
@@ -31,21 +37,34 @@ type MessageFinder interface {
 	FindHeld(ch, ts string) (slack.Message, bool)
 }
 
+// maxEmbedCards is how many message_embed cards one conversion draws.
+const maxEmbedCards = 20
+
 // messageEmbed builds a message_embed block.
 func (c *builder) messageEmbed(out []Block, b *bk) []Block {
 	ch, ts := string(b.Channel), string(b.TS)
 	mf, ok := c.r.(MessageFinder)
-	if !ok || ch == "" || ts == "" || c.depth >= maxFallbackDepth {
+	if !ok || ch == "" || ts == "" || c.depth >= maxFallbackDepth || c.embedCards >= maxEmbedCards {
 		return out
+	}
+	key := ch + "/" + ts
+	if c.embedding[key] {
+		return out // a message embedding itself, or one embedding it
 	}
 	m, ok := mf.FindHeld(ch, ts)
 	if !ok {
 		return out
 	}
 	a := embedAttachment(c.r, &m, ch)
+	c.embedCards++
+	if c.embedding == nil {
+		c.embedding = map[string]bool{}
+	}
+	c.embedding[key] = true
 	c.depth++ // an embed of a message that embeds this one
 	blk, ok := c.attachment(&a)
 	c.depth--
+	delete(c.embedding, key)
 	if !ok || blk.Att == nil {
 		return out
 	}

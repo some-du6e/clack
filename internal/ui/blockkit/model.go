@@ -260,6 +260,10 @@ type Block struct {
 	// kids are Nested's blocks as UnmarshalJSON found them, until
 	// parseBlocks decodes them at their depth (nest).
 	kids []json.RawMessage
+	// richFirst and richLast are a rich_text block's first and last
+	// elements' types, whose margins collapse through it (the Surface's
+	// blockMargins), read once here rather than from Raw every frame.
+	richFirst, richLast string
 }
 
 // dataTableActions are a data_table's action_cell elements, row by row
@@ -317,6 +321,13 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 		_ = json.Unmarshal(p.Actions, &b.Elements)
 	case b.Type == "data_table" && len(p.Rows) > 0: // its action_cells' elements (DataTableBlockRow)
 		b.Elements = dataTableActions(p.Rows)
+	case b.Type == "rich_text" && len(p.Elements) > 0:
+		var els []struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(p.Elements, &els) == nil && len(els) > 0 {
+			b.richFirst, b.richLast = els[0].Type, els[len(els)-1].Type
+		}
 	}
 	// the nested blocks wait for parseBlocks, which knows their depth
 	switch {
@@ -426,6 +437,29 @@ func elementsOf(b *Block) []*Element {
 
 // find returns the element with blockID/actionID (actionID may be empty
 // when the app didn't set one: then the first of its type at index n).
+// findValue is find preferring the element whose value is value (a
+// data_table's action cells sharing an action_id).
+func findValue(bs []Block, blockID, actionID, value string) (ref, bool) {
+	first, found := ref{}, false
+	for _, b := range allBlocks(bs) {
+		if blockID != "" && b.BlockID != blockID {
+			continue
+		}
+		for _, e := range elementsOf(b) {
+			if e.ActionID != actionID {
+				continue
+			}
+			if e.Value == value {
+				return ref{b, e}, true
+			}
+			if !found {
+				first, found = ref{b, e}, true
+			}
+		}
+	}
+	return first, found
+}
+
 func find(bs []Block, blockID, actionID string) (ref, bool) {
 	for _, b := range allBlocks(bs) {
 		if blockID != "" && b.BlockID != blockID {

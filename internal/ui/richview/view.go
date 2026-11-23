@@ -298,11 +298,82 @@ func (v *View) SelectedText() string {
 	return string(v.d.plain[a:b])
 }
 
-// Hovered reports whether the pointer is over a clickable item.
-func (v *View) Hovered() bool { return v.hover >= 0 }
+// Hovered reports whether the pointer is over a clickable item. A canvas's
+// date isn't one: an editor's pointer is the hand over it (HandCursors),
+// but it has no click here, so a press on it is the text's (canvasview's
+// press area: the editor, or its can't-edit feedback).
+func (v *View) Hovered() bool {
+	return v.hover >= 0 && (int(v.hover) >= len(v.d.targets) || v.d.targets[v.hover].kind != tDate)
+}
 
 // Pointer reports whether the pointer is inside the view.
 func (v *View) Pointer() bool { return v.hovering }
+
+// HandCursors adds the hand over v's links, mentions, cards and buttons
+// once more, in areas that pass every event on: for an input area laid
+// out over the view after its Layout, at the same origin (a canvas
+// editor's press area, which takes the text cursor for presses on plain
+// text), whose cursor would otherwise win over the view's own. dates
+// gives a canvas's dates the hand too: an editor's (Quip's
+// control.c68 .slack-date-contents:not(.read-only)).
+func (v *View) HandCursors(gtx layout.Context, dates bool) {
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	v.handAreas(gtx, dates)
+}
+
+// handAreas sets the hand over everything a click acts on (Layout's own
+// cursors, after its text cursor for the whole view).
+func (v *View) handAreas(gtx layout.Context, dates bool) {
+	for i := range v.d.hits {
+		hr := &v.d.hits[i]
+		if hr.r.Empty() {
+			continue
+		}
+		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly {
+			continue // no click: the text cursor stays
+		}
+		s := clip.Rect(hr.r).Push(gtx.Ops)
+		pointer.CursorPointer.Add(gtx.Ops)
+		s.Pop()
+	}
+	v.barCursors(gtx, false) // the shown FileActions' buttons
+	for i := range v.d.codes {
+		if c := &v.d.codes[i]; c.block {
+			s := clip.Rect(v.copyButton(c)).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
+	}
+	for i := range v.d.frags {
+		f := &v.d.frags[i]
+		if v.handFrag(f, dates) {
+			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
+	}
+}
+
+// handFrag reports whether frag f takes the hand: a link, a mention or a
+// card does; a chip that isn't a link (a channel the viewer can't see)
+// only in a canvas, where Quip draws it as an <a> all the same
+// (ChannelMentionView; .document a:not(.c-link):hover{cursor:pointer});
+// a canvas's date only for an editor (dates).
+func (v *View) handFrag(f *frag, dates bool) bool {
+	if f.target < 0 {
+		return false
+	}
+	if int(f.target) >= len(v.d.targets) {
+		return true
+	}
+	switch tg := &v.d.targets[f.target]; {
+	case tg.kind == tDate:
+		return dates
+	case tg.cardOnly:
+		return v.opts.Canvas
+	}
+	return true
+}
 
 func (v *View) selRange() (int32, int32) {
 	if v.selA <= v.selB {
@@ -518,34 +589,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	}
 	v.mounted(gtx, size)
 	pointer.CursorText.Add(gtx.Ops)
-	for i := range v.d.hits {
-		hr := &v.d.hits[i]
-		if hr.r.Empty() {
-			continue
-		}
-		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly {
-			continue // no click: the text cursor stays
-		}
-		s := clip.Rect(hr.r).Push(gtx.Ops)
-		pointer.CursorPointer.Add(gtx.Ops)
-		s.Pop()
-	}
-	v.barCursors(gtx, false) // the shown FileActions' buttons
-	for i := range v.d.codes {
-		if c := &v.d.codes[i]; c.block {
-			s := clip.Rect(v.copyButton(c)).Push(gtx.Ops)
-			pointer.CursorPointer.Add(gtx.Ops)
-			s.Pop()
-		}
-	}
-	for i := range v.d.frags {
-		f := &v.d.frags[i]
-		if f.target >= 0 && (int(f.target) >= len(v.d.targets) || !v.d.targets[f.target].cardOnly) {
-			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
-			pointer.CursorPointer.Add(gtx.Ops)
-			s.Pop()
-		}
-	}
+	v.handAreas(gtx, false)
 	// Element runs (Options.Elements) go last: their input areas must be
 	// above the cursor/hit areas of cards and links registered above.
 	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {
@@ -611,6 +655,27 @@ func (d *display) firstBaseline() int {
 
 func fragRect(f *frag) image.Rectangle {
 	return image.Rect(int(f.x), f.top, int(f.x+f.w+0.999), f.bot)
+}
+
+// fragSpan is frag f's extent across as hit tests take it, half-open like
+// Chromium's hit test rects ([left, right)). Where two frags touch
+// (consecutive emoji), the edge and the pixel column it falls in belong to
+// one frag only, the one that starts there. An image's box is where it is
+// painted (whole pixels, as Layout draws it). fragRect's floor and ceiling
+// gave a shared column to both, and the earlier one took it.
+func fragSpan(f *frag) (x0, x1 float32) {
+	if f.kind == fImage {
+		x := float32(int(f.x + 0.5))
+		return x, x + float32(f.size)
+	}
+	return f.x, f.x + f.w
+}
+
+// fragHas reports whether p is on frag f: fragSpan across, its line box
+// down.
+func fragHas(f *frag, p f32.Point) bool {
+	x0, x1 := fragSpan(f)
+	return p.X >= x0 && p.X < x1 && p.Y >= float32(f.top) && p.Y < float32(f.bot)
 }
 
 func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
@@ -1261,7 +1326,7 @@ func (v *View) targetAt(p f32.Point) int16 {
 	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if f.target >= 0 && pt.In(fragRect(f)) {
+		if f.target >= 0 && fragHas(f, p) {
 			return f.target
 		}
 	}
@@ -1295,9 +1360,8 @@ func (v *View) selectWord(off int32) {
 // else the word around p's offset (selectWord), the line's last word when
 // p is after the last word of a line that wraps (lineEndWord).
 func (v *View) wordAtPoint(p f32.Point) (int32, int32) {
-	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.frags {
-		if f := &v.d.frags[i]; f.kind != fText && f.p0 >= 0 && f.p1 > f.p0 && pt.In(fragRect(f)) {
+		if f := &v.d.frags[i]; f.kind != fText && f.p0 >= 0 && f.p1 > f.p0 && fragHas(f, p) {
 			return f.p0, f.p1
 		}
 	}
@@ -2065,6 +2129,18 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 // as a browser aligns inline content (firstBaseline); -1 before layout or
 // when the first line holds nothing.
 func (v *View) FirstBaseline() int { return v.d.firstBaseline() }
+
+// FirstTextTop is the top of the first text the view laid out, in its
+// own coordinates (-1 for none): where its first line that says
+// something starts.
+func (v *View) FirstTextTop() int {
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.kind == fText {
+			return f.top
+		}
+	}
+	return -1
+}
 
 // ElementSlots are the boxes Options.Elements drew its element runs in
 // (actions blocks, accessories), view-local, as of the last layout.

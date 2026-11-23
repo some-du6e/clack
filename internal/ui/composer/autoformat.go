@@ -305,7 +305,7 @@ func autoLinkBefore(d *Doc, pos int) bool {
 	m := ms[len(ms)-1]
 	a, b := start+m.start, start+m.end
 	for i := a; i < b; i++ {
-		if d.Attrs[i].Link != "" || d.Attrs[i].Style&Code != 0 {
+		if d.Attrs[i].Link != "" || d.Attrs[i].Style&(Code|Unlink) != 0 {
 			return false
 		}
 	}

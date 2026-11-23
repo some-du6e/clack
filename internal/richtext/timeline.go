@@ -44,6 +44,9 @@ type TimelinePoint struct {
 	// Sections are its steps' sections that have a rich_text_title, in
 	// order (a "sources" step's sources gathered on its first section).
 	Sections []TimelineSection
+	// HasSteps: steps isn't empty (the header expands, titled sections
+	// or not)
+	HasSteps bool
 }
 
 // TimelineSection is a step's section.
@@ -99,29 +102,58 @@ type bkTimelineSection struct {
 	Sources       json.RawMessage `json:"sources"`
 }
 
-// timelineBlock builds a timeline block (nothing for no points:
-// TimelineCondensed returns null).
+// timelineBlock builds a timeline block as Timeline and TimelineCondensed
+// read it: a task attribution block draws nothing before its points are
+// read; no points (an empty array or string) draw nothing; points that
+// aren't an array, and a null point, throw in TimelineCondensed (its
+// e.length and e.some), which is Slack's per-block error line; a point
+// that isn't an object is a point with nothing in it.
 func (c *builder) timelineBlock(out []Block, b *bk) []Block {
 	v := b.timeline
 	if v == nil {
-		return out
+		v = &bkTimeline{}
 	}
 	tl := &Timeline{BlockID: b.BlockID, Hidden: strings.HasPrefix(b.BlockID, "task_attribution_")}
-	var points []json.RawMessage
-	if json.Unmarshal(v.Points, &points) != nil {
-		return out
+	if tl.Hidden {
+		return append(out, Block{Kind: TimelineBlock, BlockID: b.BlockID, Timeline: tl})
 	}
-	for _, raw := range points {
-		var p bkTimelinePoint
-		if json.Unmarshal(raw, &p) != nil {
-			continue
+	pv, _ := rawValue(v.Points)
+	switch p := pv.(type) {
+	case []any:
+		if len(p) == 0 {
+			return out
 		}
+	case string:
+		if p == "" {
+			return out
+		}
+		return append(out, unsupported())
+	default: // undefined, null, a number, a boolean, an object
+		return append(out, unsupported())
+	}
+	var points []json.RawMessage
+	_ = json.Unmarshal(v.Points, &points)
+	for _, raw := range points {
+		if string(raw) == "null" {
+			return append(out, unsupported())
+		}
+		var p bkTimelinePoint
+		_ = json.Unmarshal(raw, &p) // a string or number point reads undefined fields
 		pt := TimelinePoint{ID: rawString(p.ID), Status: rawString(p.Status), Icon: rawString(p.Icon), IconURL: SafeImage(rawString(firstRaw(p.IconURL, p.IconCamel)))}
 		title := firstRaw(p.RichTextTitle, p.RichCamel)
 		if len(title) == 0 || string(title) == "null" {
 			title = p.Text
 		}
 		pt.Title = c.timelineText(title)
+		// e.steps && e.steps.length > 0: the header expands
+		if sv, ok := rawValue(p.Steps); ok {
+			switch s := sv.(type) {
+			case []any:
+				pt.HasSteps = len(s) > 0
+			case string:
+				pt.HasSteps = s != ""
+			}
+		}
 		var steps []bkTimelineStep
 		_ = json.Unmarshal(p.Steps, &steps)
 		for _, st := range steps {
@@ -136,7 +168,7 @@ func (c *builder) timelineBlock(out []Block, b *bk) []Block {
 			}
 			for _, sec := range secs {
 				t := firstRaw(sec.RichTextTitle, sec.RichCamel)
-				if len(t) == 0 || t[0] != '{' { // i.richTextTitle && …: a section without one is skipped
+				if tv, ok := rawValue(t); !ok || !jsTruthy(tv) { // i.richTextTitle && …: a section without one is skipped
 					continue
 				}
 				var srcs []json.RawMessage
@@ -267,4 +299,26 @@ func streamDone(m *slack.Message) bool {
 		return true
 	}
 	return m.StreamingState == "completed" || m.StreamingState == "errored"
+}
+
+// timelinePlain is convertTimelineBlocksToPlainText, a timeline's text in
+// notifications and plain text (convertMessageToPlainText: a code
+// channel's preview, a broadcast's root): each point's title, "In
+// progress: " and "Error: " before the running and failed ones.
+func timelinePlain(t *Timeline, st SpanText) string {
+	var parts []string
+	for i := range t.Points {
+		p := &t.Points[i]
+		prefix := ""
+		switch p.Status {
+		case "in_progress":
+			prefix = "In progress: "
+		case "error":
+			prefix = "Error: "
+		}
+		if s := strings.TrimSpace(prefix + spansText(p.Title, st)); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, " ")
 }

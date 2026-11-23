@@ -215,6 +215,11 @@ type builder struct {
 	// ai_context.result_status, else its streaming_state), so a timeline's
 	// in-progress points no longer run
 	streamDone bool
+	// embedding are the messages (channel/ts) whose message_embed is being
+	// drawn on the way here, embedCards the embeds drawn so far
+	// (messageembed.go)
+	embedding  map[string]bool
+	embedCards int
 	// notify converts for a notification's text (NotificationMessageText): a
 	// type with no renderable adds nothing, with no fallback chain
 	notify bool
@@ -229,7 +234,7 @@ func parseBlocks(raw json.RawMessage) []bk {
 	}
 	// One malformed block shouldn't drop the rest: the bad ones become
 	// Slack's "This content could not be displayed."
-	bs, err := decodeBlocks(raw, false)
+	bs, err := decodeBlocks(raw)
 	if err != nil {
 		return nil
 	}

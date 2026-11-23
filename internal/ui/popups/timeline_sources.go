@@ -3,37 +3,69 @@ package popups
 // A timeline section's "(Sources)": Slack's TimelineSourcesModal (boot-
 // shared +sSl, CDN build 9f450b8ad3db): "Sources" (820px at most), the
 // section's title, then its sources (de-duplicated by getSourceKey)
-// grouped as Messages, Files, Web and Memories. Each message is a link to
-// it ("Source message from {sender} in {channel}" and its text when the
-// client holds it, else the link itself), a file its name, a web page its title (else its
-// address) and snippet, a memory its topic.
+// grouped as Messages, Files, Web and Memories:
 //
-// Left out: the rows' looks (the message's avatar and timestamp, the
-// file's thumbnail, the page's favicon) and the batch fetch of messages
-// the client doesn't hold, which show as a link to the message.
+//   - a message (SourceMessageItem): its sender, its channel and its time
+//     ("{date_short_pretty} {time}", the link), then its text cut at 165
+//     characters or 3 lines ("…"); one the client doesn't hold, its
+//     channel and time only;
+//   - a file (FileSourceItem): its title, name, or the URL's file name;
+//   - a web page (WebSourceItem): its title, else the URL's host, and its
+//     snippet;
+//   - a memory (MemorySourceItem): a topic's rich_text_title, else its
+//     rich_text_content.
+//
+// A message's or a file's link closes the modal before it opens (their
+// closeModal); a web page's leaves it open.
+//
+// Left out: the rows' looks (the message's avatar, the file's thumbnail,
+// the page's favicon), the message's text drawn as its blocks (Clack
+// draws its plain text), the batch fetch of messages the client doesn't
+// hold, and a memory's click (Slackbot's Memories tab).
 
 import (
 	"encoding/json"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 var nsTimeline = i18n.NS("timeline")
+
+// sourcesHandler opens the modal's links: a message's or a file's after
+// closing the modal (closes), a web page's with it left open.
+type sourcesHandler struct {
+	topicHandler
+	m      **Modal
+	closes map[string]bool
+}
+
+func (s sourcesHandler) OpenURL(u string) {
+	if s.closes[u] && *s.m != nil {
+		(*s.m).Dismiss()
+	}
+	s.topicHandler.OpenURL(u)
+}
 
 // OpenTimelineSources is a timeline section's "(Sources)".
 func OpenTimelineSources(h Host, sec *richtext.TimelineSection) {
 	if sec == nil {
 		return
 	}
-	v := richview.New(timelineSourcesDoc(h, sec), richview.Options{NoHoverCards: true})
-	m := NewModal(h, ModalOpts{Title: nsTimeline.T("Sources"), Width: 820, Body: func(gtx layout.Context) layout.Dimensions {
+	doc, closes := timelineSourcesDoc(h, sec)
+	v := richview.New(doc, richview.Options{NoHoverCards: true})
+	var m *Modal
+	hd := sourcesHandler{topicHandler{h}, &m, closes}
+	m = NewModal(h, ModalOpts{Title: nsTimeline.T("Sources"), Width: 820, Body: func(gtx layout.Context) layout.Dimensions {
 		if RichStyle == nil {
 			return layout.Dimensions{}
 		}
@@ -41,7 +73,7 @@ func OpenTimelineSources(h Host, sec *richtext.TimelineSection) {
 		if st == nil {
 			return layout.Dimensions{}
 		}
-		return v.Layout(gtx, st, topicHandler{h})
+		return v.Layout(gtx, st, hd)
 	}})
 	h.ShowOverlay(m)
 }
@@ -57,12 +89,43 @@ type timelineSource struct {
 	Name      string          `json:"name"`
 	Snippet   string          `json:"snippet"`
 	MemoryID  json.RawMessage `json:"memory_id"`
-	Topic     string          `json:"topic_name"`
+	// a memory's: memory_type "topic" shows rich_text_title, else
+	// rich_text_content
+	MemoryType  string          `json:"memory_type"`
+	RichTitle   json.RawMessage `json:"rich_text_title"`
+	RichContent json.RawMessage `json:"rich_text_content"`
 }
 
-// timelineSourcesDoc is TimelineSourcesBody as a document.
-func timelineSourcesDoc(h Host, sec *richtext.TimelineSection) richtext.Doc {
+// sourceTextMax and sourceLinesMax cut a source message's text
+// (TruncatedText's maxCharacters 165, maxNewlines 3).
+const (
+	sourceTextMax  = 165
+	sourceLinesMax = 3
+)
+
+// cutSourceText is TruncatedText's cut: at 165 characters or the third
+// line break, with "…".
+func cutSourceText(s string) string {
+	r := []rune(s)
+	nl := 0
+	for i, c := range r {
+		if c == '\n' {
+			if nl++; nl >= sourceLinesMax {
+				return strings.TrimRight(string(r[:i]), " ") + "…"
+			}
+		}
+		if i >= sourceTextMax {
+			return strings.TrimRight(string(r[:i]), " ") + "…"
+		}
+	}
+	return s
+}
+
+// timelineSourcesDoc is TimelineSourcesBody as a document, and the links
+// that close the modal.
+func timelineSourcesDoc(h Host, sec *richtext.TimelineSection) (richtext.Doc, map[string]bool) {
 	var d richtext.Doc
+	closes := map[string]bool{}
 	if len(sec.Title) > 0 {
 		d.Blocks = append(d.Blocks, richtext.Block{Kind: richtext.Paragraph, Spans: sec.Title})
 	}
@@ -103,20 +166,33 @@ func timelineSourcesDoc(h Host, sec *richtext.TimelineSection) richtext.Doc {
 		for _, s := range msgs {
 			ch := firstNonEmptyStr(s.ChannelID, s.ChanCamel)
 			u := permalink(h, ch, s.Timestamp, "")
-			label, text := u, ""
+			var spans []richtext.Span
+			var m slack.Message
+			held := false
 			if c := h.Core(); c != nil {
-				if m, ok := c.S.FindHeld(ch, s.Timestamp); ok {
-					sender := c.S.UserName(m.User)
-					if sender == "" {
-						sender = m.Username
+				m, held = c.S.FindHeld(ch, s.Timestamp)
+				if held {
+					// getMemberRealName of its sender
+					if usr, ok := c.S.User(m.User); ok && usr.RealName != "" {
+						spans = append(spans, richtext.Span{Kind: richtext.Text, Text: usr.RealName, Style: richtext.Bold}, richtext.Span{Kind: richtext.Text, Text: " "})
 					}
-					label = nsTimeline.T("Source message from {sender} in {channel}", "sender", sender, "channel", "#"+strings.TrimPrefix(c.S.ChannelName(ch), "#"))
-					text = m.Text
+				}
+				if n := strings.TrimPrefix(c.S.ChannelName(ch), "#"); n != "" && n != ch {
+					spans = append(spans, richtext.Span{Kind: richtext.Text, Text: "#" + n + " "})
 				}
 			}
-			spans := []richtext.Span{link(label, u)}
-			if text != "" {
-				spans = append(spans, richtext.Span{Kind: richtext.Break}, richtext.Span{Kind: richtext.Text, Text: text})
+			when := s.Timestamp
+			if sec, err := strconv.ParseFloat(s.Timestamp, 64); err == nil {
+				when = richtext.FormatDate(time.Unix(int64(sec), 0), "{date_short_pretty} {time}")
+			}
+			spans = append(spans, link(when, u))
+			closes[richtext.SafeURL(u)] = true
+			if held {
+				if c := h.Core(); c != nil {
+					if t := cutSourceText(strings.TrimSpace(richtext.PlainText(richtext.FromMessage(c.S, &m)))); t != "" {
+						spans = append(spans, richtext.Span{Kind: richtext.Break}, richtext.Span{Kind: richtext.Text, Text: t})
+					}
+				}
 			}
 			d.Blocks = append(d.Blocks, richtext.Block{Kind: richtext.Paragraph, Spans: spans})
 		}
@@ -124,13 +200,14 @@ func timelineSourcesDoc(h Host, sec *richtext.TimelineSection) richtext.Doc {
 	if len(files) > 0 {
 		heading("Files")
 		for _, s := range files {
+			closes[richtext.SafeURL(s.URL)] = true
 			d.Blocks = append(d.Blocks, richtext.Block{Kind: richtext.Paragraph, Spans: []richtext.Span{link(firstNonEmptyStr(s.Title, s.Name, fileNameOf(s.URL)), s.URL)}})
 		}
 	}
 	if len(web) > 0 {
 		heading("Web")
 		for _, s := range web {
-			spans := []richtext.Span{link(firstNonEmptyStr(s.Title, s.URL), s.URL)}
+			spans := []richtext.Span{link(firstNonEmptyStr(s.Title, hostOf(s.URL)), s.URL)}
 			if s.Snippet != "" {
 				spans = append(spans, richtext.Span{Kind: richtext.Break}, richtext.Span{Kind: richtext.Text, Text: s.Snippet})
 			}
@@ -140,12 +217,46 @@ func timelineSourcesDoc(h Host, sec *richtext.TimelineSection) richtext.Doc {
 	if len(mems) > 0 {
 		heading("Memories")
 		for _, s := range mems {
-			if s.Topic != "" {
-				d.Blocks = append(d.Blocks, richtext.Block{Kind: richtext.Paragraph, Spans: []richtext.Span{{Kind: richtext.Text, Text: s.Topic}}})
+			raw := s.RichContent
+			if s.MemoryType == "topic" && len(s.RichTitle) > 0 && string(s.RichTitle) != "null" {
+				raw = s.RichTitle
+			}
+			if spans := richTextSpans(h, raw); len(spans) > 0 {
+				d.Blocks = append(d.Blocks, richtext.Block{Kind: richtext.Paragraph, Spans: spans})
 			}
 		}
 	}
-	return d
+	delete(closes, "")
+	return d, closes
+}
+
+// richTextSpans is a rich_text block's spans (a memory's title or
+// content), nothing for anything else.
+func richTextSpans(h Host, raw json.RawMessage) []richtext.Span {
+	if len(raw) == 0 || raw[0] != '{' {
+		return nil
+	}
+	c := h.Core()
+	if c == nil {
+		return nil
+	}
+	d := richtext.FromMessage(c.S, &slack.Message{Blocks: json.RawMessage("[" + string(raw) + "]")})
+	var out []richtext.Span
+	for _, b := range d.Blocks {
+		if len(out) > 0 {
+			out = append(out, richtext.Span{Kind: richtext.Break})
+		}
+		out = append(out, b.Spans...)
+	}
+	return out
+}
+
+// hostOf is new URL(url).hostname, else the URL itself.
+func hostOf(u string) string {
+	if p, err := url.Parse(u); err == nil && p.Hostname() != "" {
+		return p.Hostname()
+	}
+	return u
 }
 
 // fileNameOf is getFileNameFromUrl: the URL path's last part.
