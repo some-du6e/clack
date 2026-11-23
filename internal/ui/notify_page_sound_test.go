@@ -108,8 +108,8 @@ func (p *soundPlayer) Close() {
 // same sound again plays the same element again (no second open). A
 // source past the 32 MB cap isn't opened, and a page source is known by
 // its bytes before its URL. In tests the page's sounds reach PlayHook,
-// every one of them: a burst of six plays all arrive, and the page isn't
-// held up by them.
+// every one of them, not only the one that opened the element: a burst
+// of five more plays all arrive, and the page isn't held up by them.
 func TestNotifySoundOnThePage(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
@@ -177,7 +177,10 @@ func TestNotifySoundOnThePage(t *testing.T) {
 	huddleui.PlayHook = func(f string) { mu.Lock(); hooked = append(hooked, f); mu.Unlock() }
 	t.Cleanup(func() { huddleui.PlayHook = nil })
 	hummus := huddleui.SoundURL("hummus.mp3")
-	for i := 0; i < 6; i++ {
+	tt.PlaySound(hummus)
+	waitFor(t, a, "the first hooked sound", func() bool { mu.Lock(); defer mu.Unlock(); return len(hooked) == 1 })
+	time.Sleep(300 * time.Millisecond) // its element open: the rest play the one it opened
+	for i := 0; i < 5; i++ {
 		tt.PlaySound(hummus)
 	}
 	waitFor(t, a, "every hooked sound", func() bool { mu.Lock(); defer mu.Unlock(); return len(hooked) == 6 })
