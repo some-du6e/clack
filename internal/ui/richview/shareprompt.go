@@ -19,19 +19,24 @@ package richview
 //     after it. prompt_rich_text is TruncatedBlocks' instead: cut at 150
 //     characters or 3 line breaks with " Show more", "Show less" under it
 //     expanded. Then .promptCardActions (margin-top 12px): Send to
-//     {agentName}, a medium button with send-filled 4px before its label.
+//     {agentName}, a medium primary button (LoadingButton) with
+//     send-filled 4px before its label, its spinner over it while the
+//     send runs (no click then: popups' SharePromptSend).
 //
 // Only a SharePrompt richtext Shows draws. Left out: Forward prompt (the
 // header's hover button opens PromptShareDialog, a side effect this build
-// leaves to a module Clack doesn't have), the attached skills, the
-// button's loading spinner, the card's drop shadow, and the glyphs
-// (sparkles for ai-thread-summary, send for send-filled).
+// leaves to a module Clack doesn't have), the attached skills, the card's
+// drop shadow, and the glyphs (sparkles for ai-thread-summary, send for
+// send-filled).
 
 import (
 	"image"
 	"image/color"
 
 	"gioui.org/font"
+	"gioui.org/layout"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -41,6 +46,18 @@ var (
 	nsAgents       = i18n.NS("agents")
 	nsSlackConnect = i18n.NS("slack_connect")
 )
+
+// PromptSending reports whether a share_prompt's send is in flight (set
+// by popups, whose SharePromptSend keeps them): its button draws
+// LoadingButton's loading state, the spinner over it.
+var PromptSending func(p *richtext.SharePrompt) bool
+
+// promptBtn is a laid out Send to button, for its loading state.
+type promptBtn struct {
+	r  image.Rectangle
+	p  *richtext.SharePrompt
+	bg color.NRGBA
+}
 
 // SharePromptHandler is optional on a Handler: a share_prompt's Send to
 // {agentName} was clicked.
@@ -176,8 +193,9 @@ func (l *lay) promptRich(sp *richtext.SharePrompt, key sharePromptKey, x, y, w i
 	return h
 }
 
-// promptSend is Send to {agentName}: a medium button, send-filled 4px
-// before the label (one line, cut with an ellipsis).
+// promptSend is Send to {agentName}: a medium primary button (Slack Kit's
+// LoadingButton), send-filled 4px before the label (one line, cut with an
+// ellipsis).
 func (l *lay) promptSend(sp *richtext.SharePrompt, x, y, w int) int {
 	p := &l.st.Palette
 	label := nsAgents.T("Send to {agentName}", "agentName", sp.AgentName)
@@ -185,13 +203,15 @@ func (l *lay) promptSend(sp *richtext.SharePrompt, x, y, w int) int {
 	bs := l.bodyStyle()
 	bs.face.Weight = font.Bold
 	bs.lineH, bs.maxLines, bs.ellipsis, bs.noSelect = bh, 1, true, true
+	bs.col = p.PrimaryText
 	lw := int(l.measure(label, l.faceFor(bs.face, bs.size, 0)) + 0.999)
 	bw := min(in+icon+l.dp(4)+lw+in, w)
 	r := image.Rect(x, y, x+bw, y+bh)
 	tg := l.d.addTarget(target{kind: tSharePrompt, prompt: sp})
-	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: l.dp(8), fill: p.Panel, stroke: p.ButtonBorder, bw: l.dp(1), target: tg, hover: p.ButtonHoverBg})
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: p.Primary, target: tg})
+	l.d.promptBtns = append(l.d.promptBtns, promptBtn{r: r, p: sp, bg: p.Primary})
 	iy := y + (bh-icon)/2
-	l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(x+in, iy, x+in+icon, iy+icon), url: iconURL + "send", target: tg, px: icon, tint: p.Text})
+	l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(x+in, iy, x+in+icon, iy+icon), url: iconURL + "send", target: tg, px: icon, tint: p.PrimaryText})
 	lx := x + in + icon + l.dp(4)
 	l.plainAdd("\n")
 	l.plainFlow(label, lx, y-l.dp(1), max(x+bw-in-lx, 1), &bs, tg)
@@ -224,4 +244,24 @@ func (v *View) SharePromptRects() []SharePromptRect {
 		out = append(out, r)
 	}
 	return out
+}
+
+// drawPromptLoading draws LoadingButton's loading state over the Send to
+// buttons whose send is in flight: the label covered, a white spinner in
+// its middle.
+func (v *View) drawPromptLoading(gtx layout.Context, st *Style) {
+	if PromptSending == nil {
+		return
+	}
+	for i := range v.d.promptBtns {
+		b := &v.d.promptBtns[i]
+		if !PromptSending(b.p) {
+			continue
+		}
+		paint.FillShape(gtx.Ops, b.bg, clip.UniformRRect(b.r, v.px(8)).Op(gtx.Ops))
+		d := v.px(20)
+		c := b.r.Min.Add(b.r.Max).Div(2)
+		sp := spinPrim{r: image.Rect(c.X-d/2, c.Y-d/2, c.X-d/2+d, c.Y-d/2+d), white: true}
+		sp.draw(gtx, st)
+	}
 }

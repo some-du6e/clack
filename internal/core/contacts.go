@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"math/rand/v2"
 	"net/url"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // A contact_card's writes (Slack's ContactCard zb3H and ShareContactModal,
@@ -49,8 +51,11 @@ const SharedPromptLink = "shared_prompt_link"
 // Agentforce agent's prompt: the agent's DM (the open IM, else
 // conversations.open, as startImByMemberId does), and the prompt posted
 // there as a verbatim mrkdwn section (or prompt_rich_text's blocks) with
-// agent_message_source_type shared_prompt_link. It returns the DM and the
-// message's ts, whose thread the caller opens.
+// agent_message_source_type shared_prompt_link. It posts as Slack's
+// chatPostMessage (gzYT) does: the channel, the blocks and the source
+// type only, and no local copy, so a failed send leaves nothing in the
+// DM. It returns the DM and the message's ts, whose thread the caller
+// opens.
 func (a *App) SendSharedPrompt(ctx context.Context, agentUserID, prompt string, rich json.RawMessage) (ch, ts string, err error) {
 	ch = a.openIMWith(agentUserID)
 	if ch == "" {
@@ -70,7 +75,7 @@ func (a *App) SendSharedPrompt(ctx context.Context, agentUserID, prompt string, 
 	} else if len(blocks) > 0 && blocks[0] == '{' {
 		blocks = json.RawMessage("[" + string(blocks) + "]")
 	}
-	m, err := a.Send(ctx, SendOpts{Channel: ch, Text: prompt, Blocks: blocks, AgentMessageSourceType: SharedPromptLink})
+	m, err := a.C.Post(ctx, slack.PostOpts{Channel: ch, Blocks: blocks, BlocksOnly: true, AgentMessageSourceType: SharedPromptLink})
 	if err != nil {
 		return ch, "", err
 	}
