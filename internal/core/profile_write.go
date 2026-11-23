@@ -58,7 +58,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -723,23 +722,11 @@ type PhotoUpload struct {
 	Image []byte
 }
 
-// PhotoFileType is the type Chromium gives a picked file by its name's
-// extension, File.type (net/base/mime_util.cc: kPrimaryMappings, which the
-// platform can't override, then kSecondaryMappings): processUpload checks
-// it, and FormData sends the File as a part of that type. Only the types
-// processUpload lets through are named (image/gif, image/png,
-// image/jpeg); "" for any other extension, a type it refuses as well.
-func PhotoFileType(name string) string {
-	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(name), ".")) {
-	case "gif":
-		return "image/gif"
-	case "png":
-		return "image/png"
-	case "jpeg", "jpg", "jfif", "pjpeg", "pjp":
-		return "image/jpeg"
-	}
-	return ""
-}
+// PhotoFileType is the type Chromium gives a picked file by its name,
+// File.type (slack.FileType: mime_util.cc's kPrimaryMappings, then this
+// machine's OS, then kSecondaryMappings): processUpload checks it, and
+// FormData sends the File as a part of that type.
+func PhotoFileType(name string) string { return slack.FileType(name) }
 
 // CheckPhotoType is processUpload's first check, before it loads the
 // file: its type is image/gif, image/png or image/jpeg.

@@ -12,9 +12,9 @@ import (
 )
 
 // Each upload goes up as Slack's client posts it: one FormData part named
-// and typed as Chromium names and types the File (slack.FileType: Chromium's
-// own lists, never the OS's), application/octet-stream where they have no
-// type. A snippet goes up as its Blob, which FormData names "blob", of its
+// and typed as Chromium names and types the File (slack.FileType: its
+// lists, and between them the OS's type, here a Mac's for .py and .mov and
+// none for .ts or .go), application/octet-stream where none has a type. A snippet goes up as its Blob, which FormData names "blob", of its
 // snippet type's type; a voice clip with the recorder's type (audio/mp4, not
 // the audio/x-m4a its .m4a name gives); a File with a type of its own (a
 // plugin's) with that type. The part's type is what the client controls,
@@ -23,6 +23,8 @@ import (
 // octet-stream and came back filetype binary, mimetype
 // application/octet-stream, pretty_type Binary (2026-11-22).
 func TestUploadTypesLikeSlack(t *testing.T) {
+	mac := map[string]string{"py": "text/x-python-script", "mov": "video/quicktime"}
+	defer slack.SetPlatformMimeTypes(func(ext string) (string, bool) { m, ok := mac[ext]; return m, ok })()
 	a, fs, _ := rtApp(t)
 	ctx := context.Background()
 	files := map[string]*slack.File{}
@@ -34,7 +36,8 @@ func TestUploadTypesLikeSlack(t *testing.T) {
 		{f: UploadFile{Name: "BlockKitSend (2).js"}, partName: "BlockKitSend (2).js", part: "text/javascript"},
 		{f: UploadFile{Name: "index.ts"}, partName: "index.ts", part: "application/octet-stream"},
 		{f: UploadFile{Name: "main.go"}, partName: "main.go", part: "application/octet-stream"},
-		{f: UploadFile{Name: "script.py"}, partName: "script.py", part: "application/octet-stream"},
+		{f: UploadFile{Name: "script.py"}, partName: "script.py", part: "text/x-python-script"},
+		{f: UploadFile{Name: "walkthrough.mov"}, partName: "walkthrough.mov", part: "video/quicktime"},
 		{f: UploadFile{Name: "data.json"}, partName: "data.json", part: "application/json"},
 		{f: UploadFile{Name: "README.md"}, partName: "README.md", part: "text/markdown"},
 		{f: UploadFile{Name: "notes.txt"}, partName: "notes.txt", part: "text/plain"},
@@ -119,8 +122,10 @@ func TestUploadTypesLikeSlack(t *testing.T) {
 
 // UploadFile.FileType is the File's type as Slack's client holds it: its
 // own (a clip's, a plugin File's), a snippet Blob's text/plain, else the
-// type Chromium gives its name ("" where Chromium's lists have none).
+// type Chromium gives its name ("" where neither its lists nor, here, the
+// OS have one).
 func TestUploadFileType(t *testing.T) {
+	defer slack.SetPlatformMimeTypes(nil)()
 	for _, c := range []struct {
 		f    UploadFile
 		want string

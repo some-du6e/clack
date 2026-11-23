@@ -7,14 +7,17 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 )
 
 // Synthetic: FileType is the type Chromium 156 gives a File by its name,
-// without the OS's lists: the text after the last "." in either case, the
-// primary list before the secondary one, the first entry of each that has
-// the extension.
+// on an OS that gives no type: the text after the last "." in either case,
+// the primary list before the secondary one, the first entry of each that
+// has the extension.
 func TestFileTypeLikeChromium(t *testing.T) {
+	defer SetPlatformMimeTypes(nil)()
 	for _, c := range []struct{ name, want string }{
 		{"BlockKitSend (2).js", "text/javascript"}, // Karim's file (2026-11-22)
 		{"worker.mjs", "text/javascript"},
@@ -55,6 +58,43 @@ func TestFileTypeLikeChromium(t *testing.T) {
 	}
 }
 
+// Synthetic: Chromium asks the OS between its lists
+// (GetMimeTypeFromExtensionHelper): the primary list's type wins over the
+// OS's, the OS's over the secondary list's, which is left for what the OS
+// doesn't type. The OS gets the extension as the name has it, "" for a
+// name ending in "."; a name with no ".", or with a NUL or more than 65536
+// units in its extension, asks nothing.
+func TestFileTypeAsksTheOSBetweenLists(t *testing.T) {
+	var asked []string
+	types := map[string]string{"js": "application/x-os-js", "md": "text/x-os-markdown", "py": "text/x-python", "PY": "text/x-os-upper"}
+	defer SetPlatformMimeTypes(func(ext string) (string, bool) {
+		asked = append(asked, ext)
+		m, ok := types[ext]
+		return m, ok
+	})()
+	for _, c := range []struct {
+		name, want string
+		asked      []string
+	}{
+		{"BlockKitSend (2).js", "text/javascript", nil}, // primary: the OS isn't asked
+		{"README.md", "text/x-os-markdown", []string{"md"}},
+		{"script.py", "text/x-python", []string{"py"}},
+		{"SCRIPT.PY", "text/x-os-upper", []string{"PY"}},
+		{"notes.txt", "text/plain", []string{"txt"}}, // the OS has none: the secondary list's
+		{"main.go", "", []string{"go"}},
+		{"trailing.", "", []string{""}},
+		{"README", "", nil},
+		{"nul.p\x00y", "", nil},
+		{"long." + strings.Repeat("a", 65537), "", nil},
+		{"long." + strings.Repeat("a", 65536), "", []string{strings.Repeat("a", 65536)}},
+	} {
+		asked = nil
+		if got := FileType(c.name); got != c.want || !slices.Equal(asked, c.asked) {
+			t.Errorf("FileType(%.40q) = %q asking the OS %.40q; want %q asking %.40q", c.name, got, asked, c.want, c.asked)
+		}
+	}
+}
+
 // Synthetic: an upload is one "file" part, named and typed as a browser's
 // FormData names and types a File: UploadBytes types it by its name
 // (FileType; application/octet-stream when neither list has it), with the
@@ -62,6 +102,7 @@ func TestFileTypeLikeChromium(t *testing.T) {
 // which FormData names "blob". Go's CreateFormFile typed every part
 // application/octet-stream, and Slack filed a .js as Binary.
 func TestUploadPartLikeFormData(t *testing.T) {
+	defer SetPlatformMimeTypes(nil)() // main.go untyped, as on an OS without a type for .go
 	type part struct{ field, disp, ctype, body string }
 	var ctype string
 	var parts []part

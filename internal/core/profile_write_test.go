@@ -124,12 +124,13 @@ func pwPNG(t *testing.T, w, h int) []byte {
 // processUpload's checks: the File's type by its extension, as Chromium
 // types a picked file (and as FormData sends it), must be GIF, PNG or JPEG;
 // then the size it loads at, at least 36 and at most 4000 px a side, the
-// minimum first.
+// minimum first. Here the OS types .heic (as a Mac does) and nothing else.
 func TestCheckPhoto(t *testing.T) {
+	defer slack.SetPlatformMimeTypes(func(ext string) (string, bool) { return "image/heic", ext == "heic" })()
 	for name, want := range map[string]string{
 		"me.png": "image/png", "ME.PNG": "image/png", "a.gif": "image/gif", "a.jpg": "image/jpeg",
-		"a.JPEG": "image/jpeg", "a.jfif": "image/jpeg", "a.pjpeg": "image/jpeg", "a.pjp": "image/jpeg",
-		"a.webp": "", "a.heic": "", "a.bmp": "", "noext": "", "a.png.txt": "", "dir.png/x": "",
+		"a.JPEG": "image/jpeg", "a.jpe": "image/jpeg", "a.jfif": "image/jpeg", "a.pjpeg": "image/jpeg", "a.pjp": "image/jpeg",
+		"a.webp": "image/webp", "a.heic": "image/heic", "a.bmp": "image/bmp", "noext": "", "a.png.txt": "text/plain", "dir.png/x": "",
 	} {
 		if got := PhotoFileType(name); got != want {
 			t.Errorf("PhotoFileType(%q) = %q, want %q", name, got, want)
