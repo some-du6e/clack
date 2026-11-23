@@ -121,6 +121,26 @@ func notifyBlock(b *Block, st SpanText) string {
 		return strings.Join(parts, " ")
 	case List:
 		return notifyList(b, st)
+	case DataVizBlock: // convertDataVisualizationBlockToPlainText: its title
+		if b.DataViz != nil {
+			return b.DataViz.PlainTitle
+		}
+	case DataTableBlock: // convertTableBlockToPlainText: every row
+		if t := b.DataTable; t != nil && !t.Err {
+			rows := make([]string, 0, len(t.Body)+1)
+			row := func(cs []DTCell) string {
+				parts := make([]string, len(cs))
+				for i := range cs {
+					parts[i] = cs[i].Plain
+				}
+				return strings.Join(parts, ", ")
+			}
+			rows = append(rows, row(t.Header))
+			for _, r := range t.Body {
+				rows = append(rows, row(r))
+			}
+			return strings.Join(rows, "\n")
+		}
 	case ImageBlock:
 		if b.Image != nil {
 			return b.Image.Title

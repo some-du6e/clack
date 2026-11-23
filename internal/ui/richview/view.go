@@ -134,6 +134,9 @@ type View struct {
 	// the files' FileActions (file_actions.go): the button under the
 	// press (barKey; -1 the group between its buttons) and the pointer
 	barPress, barHot int
+	// the chart under the pointer (index+1, 0 none) and what it points
+	// at there (dataviz.go)
+	vizHot, vizIdx int
 	// remHot is the attachment remove button under the pointer (its
 	// index in removes, +1), for its "Remove preview" tooltip
 	remHot int
@@ -154,7 +157,10 @@ type View struct {
 	// change resets its toggle (ContainerBlock's useEffect).
 	collapsed    map[any]bool
 	collapseDefs map[string]uint8
-	redraw       bool // ask for a frame after this frame's events
+	// tables: each data_table's page, sort and filter (datatable.go), by
+	// its block_id
+	tables map[any]*tableState
+	redraw bool // ask for a frame after this frame's events
 
 	// lead: the first line's start (SetLead)
 	lead int
@@ -228,6 +234,7 @@ func (v *View) Set(doc richtext.Doc, o Options) {
 	v.selA, v.selB = 0, 0
 	v.hover, v.press = -1, -1
 	v.tipFrag = -1
+	v.vizHot, v.vizIdx = 0, -1 // a chart's hover from the doc before
 }
 
 // SetOptions changes only the options (e.g. edited flag, pending state).
@@ -334,6 +341,9 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if v.slugsChanged() {
 		v.dirty = true // a message slug's label reads otherwise now (slugs.go)
 	}
+	if v.tablesChanged() {
+		v.dirty = true // a data_table's menu sorted it (datatable.go)
+	}
 	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
@@ -427,6 +437,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.call.Add(gtx.Ops)
+	v.drawChartHover(gtx, st)
+	v.chartSemantics(gtx)
 	for _, i := range v.liveImgs { // animated GIFs: their frame now, over what's under them
 		v.drawImg(gtx.Ops, st, int(i), false)
 	}
@@ -435,7 +447,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	// over the recorded fill, under its text. Components draw their own.
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
-			if b := &v.d.boxes[i]; b.hoverOver && b.hov == 0 && b.comp == 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
+			if b := &v.d.boxes[i]; v.hoverOverShown(b) {
 				fillRadii(gtx.Ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
@@ -640,11 +652,14 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if v.playing == nil {
 		v.playing = map[string]bool{}
 	}
+	if v.tables == nil {
+		v.tables = map[any]*tableState{}
+	}
 	// JUMBOMOJI is off under Compact (client-boot Y9zX: jumbomoji &&
 	// messages_theme != "dense")
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
-		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations}
+		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations, tables: v.tables}
 	if v.opts.FillBlocks {
 		l.filled = 1 // a view's blocks (FillBlocks)
 	}
@@ -776,6 +791,9 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 				fillRadii(ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
+	}
+	if static {
+		v.paintCharts(ops, st)
 	}
 	if css && hp == 0 {
 		v.partBackgrounds(func(r image.Rectangle, c color.NRGBA) { fillRadii(ops, r, [4]int{}, c) }, comp)
@@ -940,6 +958,21 @@ func (v *View) staticText(t int16) bool {
 		}
 	}
 	return false
+}
+
+// hoverOverShown reports whether b's hover fill takes its fill's place
+// now: a pill's whose target is hovered, or a data_table row's when its
+// target or one inside it (target..tgTo) is. A box without a target (a
+// hidden channel's chip, a URL-less message or canvas slug) never shows
+// it.
+func (v *View) hoverOverShown(b *box) bool {
+	if !b.hoverOver || b.hov != 0 || b.comp != 0 || b.hover.A == 0 || b.target < 0 || v.hover < 0 {
+		return false
+	}
+	if b.target != v.hover && !(b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) {
+		return false
+	}
+	return v.pillHoverFill(b)
 }
 
 // pillHoverFill reports that b's own hover fill shows: no rule gives the
@@ -1552,7 +1585,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 						}
 					}
 				}
-				if pc, ok := h.(PlainClicker); ok && v.press < 0 && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) {
+				if pc, ok := h.(PlainClicker); ok && (v.press < 0 || v.menuOnlyAt(v.press)) && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) {
 					if d := e.Position.Sub(v.pressPos); d.X*d.X+d.Y*d.Y <= 16 {
 						pc.PlainClick()
 					}
@@ -1582,6 +1615,9 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 		v.expHot, v.copyTipAt = b, gtx.Now
 		v.copyGen = theme.TipGen()
 	}
+	if ci, h := v.chartAt(p); ci+1 != v.vizHot || h != v.vizIdx {
+		v.vizHot, v.vizIdx = ci+1, h
+	}
 	if bar, btn, _ := v.barAt(p); barKey(bar, btn) != v.barHot {
 		v.barHot, v.copyTipAt = barKey(bar, btn), gtx.Now
 		v.copyGen = theme.TipGen()
@@ -1601,6 +1637,7 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 func (v *View) left() {
 	v.hovering = false
 	v.tipFrag = -1
+	v.vizHot, v.vizIdx = 0, -1
 	// the buttons under it are left too: a return waits their tooltip's
 	// delay again (mouseleave)
 	v.copyHot, v.secHot, v.expHot, v.barHot, v.remHot = 0, 0, 0, 0, 0
@@ -1903,6 +1940,24 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 	v.activateTarget(&v.d.targets[t], v.targetText(t), anchor, h)
 }
 
+// menuOnlyAt reports whether target t takes no click (a data_table row, a
+// snippet's or an email card's menu-only area): a click there is the
+// view's plain click (a search card opens its result).
+func (v *View) menuOnlyAt(t int16) bool {
+	return t >= 0 && int(t) < len(v.d.targets) && v.d.targets[t].menuOnly
+}
+
+// actionRect is r (view coordinates) for a handler: in window coordinates
+// (true) when the view knows its window origin, which the pointer's last
+// move over it taught it, else plus Origin (false: the owner maps it, as
+// messages' rows do with their origin).
+func (v *View) actionRect(r image.Rectangle) (image.Rectangle, bool) {
+	if org, ok := v.WindowOrigin(); ok {
+		return r.Add(org), true
+	}
+	return r.Add(v.Origin), false
+}
+
 // targetRect is tg's (first) hit box, in the View's coordinates.
 func (v *View) targetRect(tg *target) (image.Rectangle, bool) {
 	for _, h := range v.d.hits {
@@ -1990,6 +2045,8 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 				wh.WorkflowCard(tg.id, c, r)
 			}
 		}
+	case tDataTable: // a data_table's buttons (datatable.go)
+		v.dataTableClick(tg, h)
 	case tSnippet: // a snippet's Show more / Show less (snippet.go)
 		if fh, ok := h.(FileActionHandler); ok && tg.file != nil {
 			fh.FileAction(tg.act, tg.file, image.Rectangle{Min: anchor, Max: anchor})

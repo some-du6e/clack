@@ -61,6 +61,8 @@ var defaultExperimentGroups = map[string]string{
 	// the picker's Halloween emoji pack call to action (emoji_pack_cta.go):
 	// off, as the account has it
 	"slack_seasonal_delight": "off",
+	// a chart's Copy as image (popups/chart_menu.go), as the account has it
+	"data_visualization_copy_image": "on",
 	// the audio player's card gets the speed and transcript controls
 	// (videoplayer/audio.go), as the account has it
 	"transcribe_opt_in_ui_v2": "on",

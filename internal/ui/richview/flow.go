@@ -210,6 +210,10 @@ const (
 	// tWorkflowCard is a share_shortcut card's click, Start Workflow or
 	// ⋮ (id: "open", "start", "more"; key: the card; shortcut.go)
 	tWorkflowCard
+	// tDataTable is a data_table's button (id: "search", "view", "more",
+	// "sort" with col, "prev", "next", "page:N") or row ("row", hover
+	// only; table: its state; datatable.go)
+	tDataTable
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no
@@ -293,6 +297,9 @@ type target struct {
 	menuOnly bool
 	// act is a tSnippet's action: FileShowMore or FileShowLess.
 	act FileAction
+	// table and col: a tDataTable's table state and column (datatable.go)
+	table *TableControl
+	col   int
 }
 
 type hit struct {
@@ -351,8 +358,10 @@ type display struct {
 	expands []expandBtn
 	// bars are the files' FileActions (file_actions.go), pills the
 	// snippets' Show more / Show less (snippet.go)
-	bars  []fileBar
-	pills []snipPill
+	bars []fileBar
+	// charts are the data_visualization blocks' charts (dataviz.go)
+	charts []chartPrim
+	pills  []snipPill
 	// ells counts the frags that are a clamp's "…" (frag.ell)
 	ells int
 }
@@ -408,6 +417,7 @@ func (d *display) reset() {
 	d.plays = d.plays[:0]
 	d.expands = d.expands[:0]
 	d.bars = d.bars[:0]
+	d.charts = d.charts[:0]
 	d.pills = d.pills[:0]
 	d.ells = 0
 }
@@ -564,6 +574,9 @@ type lay struct {
 	// noAnim: Accessibility > "Allow animations" is off
 	playing map[string]bool
 	noAnim  bool
+	// tables holds the data_tables' page, sort and filter (View state,
+	// datatable.go)
+	tables map[any]*tableState
 	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
 	titleFrags [2]int
 	// media is the card's AttachmentMedia part (fixedMedia), for
