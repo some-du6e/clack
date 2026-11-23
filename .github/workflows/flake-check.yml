@@ -5694,6 +5694,9 @@ jobs:
           $readers = $LASTEXITCODE
           Get-Content "$env:RUNNER_TEMP\readers.log" | Select-String -Pattern '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok)|_test\.go:\d+:|reads \(busy\)|Windows, two threads' | ForEach-Object { $_.Line }
           "TestWinClipboardReadersOneAtATime: exit code $readers"
+          # red2: only the readers test (the claim: it fails without the semaphore)
+          if ($readers -ne 0) { exit 1 }
+          exit 0
           go test -c -o "$env:RUNNER_TEMP\ui.test.exe" ./internal/ui
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Push-Location internal/ui

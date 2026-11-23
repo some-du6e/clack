@@ -56,12 +56,8 @@ const (
 // must not start another session. ctx bounds the wait for the session and
 // the open.
 func Session(ctx context.Context, owner uintptr, f func() error) error {
-	select {
-	case sem <- struct{}{}:
-	case <-ctx.Done():
-		return ErrBusy
-	}
-	defer func() { <-sem }()
+	// red2: no semaphore (proof run: TestWinClipboardReadersOneAtATime must fail)
+	_ = sem
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	for start := time.Now(); ; {
