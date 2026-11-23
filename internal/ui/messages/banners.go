@@ -485,11 +485,14 @@ func (s *listState) openDayMenu(h Host, req dayMenuReq, now time.Time, gtx layou
 }
 
 // jumpToTime is MessageList.jumpToDate: the zero time is the most recent
-// messages, else the first message at or after t, paging back until it
-// is loaded (layoutList's pendingDate). In a window short of the newest
-// messages, the zero time is jumpToTimestamp({ts: ""}) (jumpToDate(null)
-// takes the last timestamp only with reachedEnd, AEjl): the newest
-// messages, where the window's end was its top (Position{}).
+// messages, else the first message at or after t (layoutList's
+// pendingDate). A date outside what the list loaded loads the window
+// around it, as jumpToDate's jumpToTimestamp at the date shows the slice
+// holding it (AEjl), never a walk back from the newest page. In a window
+// short of the newest messages, the zero time is jumpToTimestamp({ts:
+// ""}) (jumpToDate(null) takes the last timestamp only with reachedEnd,
+// AEjl): the newest messages, where the window's end was its top
+// (Position{}).
 func (s *listState) jumpToTime(h Host, t time.Time) {
 	s.dateFor = ""
 	switch {
@@ -505,17 +508,21 @@ func (s *listState) jumpToTime(h Host, t time.Time) {
 	h.Invalidate()
 }
 
-// pendingDateJump pages back until a message at or before pendingDate is
-// loaded (or history ends), then shows the first message at or after it.
-// A window takes a date it doesn't reach the way jumpToDate's
-// jumpToTimestamp at the date does (AEjl): the conversation's newest
-// messages when they hold it, else the window around it.
+// pendingDateJump shows the first message at or after pendingDate: one the
+// list holds scrolls to it, and a date outside its range opens the window
+// around it (jumpToTimestamp at the date: the slice holding it, AEjl),
+// whether the list shows the newest messages or a window. A window takes
+// a date it doesn't reach the way jumpToDate does: the conversation's
+// newest messages when they hold it, else the window around it. A list
+// that can't open a window (no conversation model) pages back until the
+// date is loaded or history ends.
 func (s *listState) pendingDateJump(now time.Time) {
 	if s.pendingDate.IsZero() || s.thread || !s.snap.loaded || s.snap.older {
 		return
 	}
 	msgs := s.snap.msgs
-	if first, last, ok := s.ends(); s.win != nil && ok && s.snap.around == "" && !s.snap.newer {
+	first, last, ok := s.ends()
+	if ok && s.snap.around == "" && !s.snap.newer {
 		ts := strconv.FormatInt(s.pendingDate.Unix(), 10) + ".000000"
 		before := s.snap.hasMore && tsLess(ts, first)
 		after := s.snap.newestMissing && tsLess(last, ts)
@@ -529,7 +536,7 @@ func (s *listState) pendingDateJump(now time.Time) {
 			return
 		}
 	}
-	if first, _, ok := s.ends(); ok && s.snap.hasMore && tsTime(first).After(s.pendingDate) && s.jumpPages < 20 {
+	if ok && s.snap.hasMore && tsTime(first).After(s.pendingDate) && s.jumpPages < 20 {
 		if now.Sub(s.lastOlder) > 300*time.Millisecond && s.hb.loadOlder(s.m) {
 			s.jumpPages++
 			s.lastOlder = now

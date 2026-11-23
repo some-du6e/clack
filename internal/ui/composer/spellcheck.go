@@ -593,6 +593,13 @@ func (e *Editor) onContextPress(gtx layout.Context, pt image.Point) {
 		misspelled, mlo, mhi = m.word, m.lo, m.hi
 	}
 	at := winPointer
+	// TextyInput.onContextMenu: on a link or a slug Texty opens its own
+	// menu and calls preventDefault, so the desktop app's never comes
+	if e.OnElementContext != nil {
+		if el, ok := e.elemAt(pt); ok && !el.inner && e.OnElementContext(el, at) {
+			return
+		}
+	}
 	if MenuHost == nil {
 		return
 	}

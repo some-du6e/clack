@@ -51,6 +51,10 @@ type EditorStyle struct {
 	PlaceholderText                                      string
 	MaxHeight                                            unit.Dp
 	EmojiSize                                            unit.Dp
+	// NativeEmojiGap is the space after a standard emoji, at 1x only (0:
+	// none): a canvas's native glyph span's margin-right on a 1x Mac, as
+	// richview.Style's NativeEmojiGap.
+	NativeEmojiGap unit.Dp
 	// Embolden strokes text glyphs this many pixels wider (0 = off), to
 	// match richview's text where the editor replaces it (canvas blocks).
 	Embolden float32
@@ -198,6 +202,19 @@ type Editor struct {
 	// CmdKCoachmark is MessageInput's onCmdKWhenSelected (not the edit
 	// composer's).
 	CmdKCoachmark bool
+
+	// OnElementContext, set by the composer, is TextyInput.onContextMenu
+	// for a right-click whose target is a link or a slug (link_target.go):
+	// it opens Texty's own menu (LinkContextMenu, SlugContextMenu) at
+	// at (window px) and reports true, and the desktop menu doesn't open
+	// (Texty calls preventDefault).
+	OnElementContext func(el edElem, at image.Point) bool
+	// OnLinkClick, set by the composer, is TextyInput.onLinkClick: a click
+	// in a link (maybeHandleLinkClick) with the link's range selected.
+	OnLinkClick func(gtx layout.Context, c linkClick)
+	linkPress   edElem      // what the last primary press targeted
+	linkPressOK bool        // linkPress is set
+	linkPressAt image.Point // where it was (editor-local px)
 
 	// Input state.
 	clicker    gesture.Click
@@ -1120,6 +1137,23 @@ func (e *Editor) hitPos(pt image.Point) int {
 }
 
 func (e *Editor) onClick(gtx layout.Context, ev gesture.ClickEvent) {
+	macCtx := ev.Source == pointer.Mouse && ctxclick.Mac && ev.Modifiers.Contain(key.ModCtrl)
+	switch {
+	case macCtx:
+		// a macOS Ctrl+click is a context click (spellContextEvents): it
+		// opens the link menu, and its click opens no popover
+		e.linkPressOK = false
+		if ev.Kind == gesture.KindClick {
+			return
+		}
+	case ev.Kind == gesture.KindPress && ev.Source == pointer.Mouse:
+		defer e.noteLinkPress(ev) // after the press placed the caret
+	case ev.Kind == gesture.KindClick && ev.Source == pointer.Mouse:
+		e.onLinkRelease(gtx, ev) // the click event: Texty's onInputClick
+		return
+	case ev.Kind == gesture.KindCancel:
+		e.linkPressOK = false
+	}
 	if !((ev.Kind == gesture.KindPress && ev.Source == pointer.Mouse) ||
 		(ev.Kind == gesture.KindClick && ev.Source != pointer.Mouse)) {
 		return

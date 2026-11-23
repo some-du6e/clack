@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -71,16 +72,87 @@ type ThreadView struct {
 }
 
 // ContentHeight is the height the pane needs to show the whole thread (header,
-// parent, divider and replies) as of its last layout, or 0 when the thread
-// is taller than the pane. Slack top-aligns a short thread with its reply
-// composer right under the last reply: the list draws a short thread from
-// its top (Gio patch 45), and the ui root reads this right after laying it
-// out to put the composer under it in the same frame.
+// parent, divider and replies) as of its last layout, its reply box's row
+// aside, or 0 when the thread and its box are taller than the pane. Slack
+// top-aligns a short thread with its reply box right under the last reply:
+// the list draws a short thread from its top (Gio patch 45).
 func (v *ThreadView) ContentHeight() int {
 	if v.s.contentH <= 0 || len(v.s.items) == 0 {
 		return 0
 	}
 	return v.top + v.s.contentH
+}
+
+// SetInputRow says whether the host draws the reply box in the thread's
+// "input" row (no footer in its place), before the frame's Prepare: the
+// row is then the list's last once its slice reaches the thread's end.
+// A host that never says so keeps the list without it.
+func (v *ThreadView) SetInputRow(on bool) {
+	if s := v.s; s.inputOn != on {
+		s.inputOn = on
+		s.snap.rev = 0 // the rows again, with or without it
+	}
+}
+
+// SetInputHeight gives the thread's "input" row the reply box's height
+// for the next Layout: Slack's reply box is the thread list's last row
+// (getThreadRowsAndKeys' "input", boot-shared eTbq), so it scrolls with
+// the replies, sits right under the last one at the thread's end, and
+// takes room nothing else does. 0 when the host draws no box there.
+func (v *ThreadView) SetInputHeight(h int) { v.s.inputH = max(h, 0) }
+
+// InputRow is where the last Layout put the "input" row, for the host to
+// draw the reply box there: its top in the view's coordinates (the list's
+// bottom when the row was below the list's view, the box then drawn
+// clipped away: Slack keeps the row mounted, getPersistentKeys), whether
+// the list ends with the row (not while a slice short of the thread's end
+// shows its "loading" row instead), and the list's box in the view, which
+// the reply box is clipped to.
+func (v *ThreadView) InputRow() (y int, ok bool, list image.Rectangle) {
+	s := v.s
+	n := len(s.items) - 1
+	if n < 0 || s.items[n].kind != itInput {
+		return 0, false, image.Rectangle{}
+	}
+	return v.top + s.inputY, true, image.Rect(0, v.top, s.size.X, v.top+s.size.Y)
+}
+
+// DrawScrollbar draws the thread list's scrollbar after what the host drew
+// on the list since Layout (the reply box in the "input" row): Slack's
+// thread pane is one scroll container with the input inside it, so the
+// scrollbar's track runs down beside the box in its row (the box keeps
+// 16px from the sides, the track 4px), the bar is above everything in the
+// container (z-index 1), and the pointer over the box counts as over the
+// list, showing the bar (.c-scrollbar:hover). Each Layout draws it once.
+func (v *ThreadView) DrawScrollbar(gtx layout.Context) {
+	s := v.s
+	if !s.sbDeferred {
+		return
+	}
+	s.sbDeferred = false
+	if !gtx.Now.Equal(s.sbAt) {
+		return // recorded in another frame: its ops are gone
+	}
+	t := op.Offset(image.Pt(0, v.top)).Push(gtx.Ops)
+	s.sbCall.Add(gtx.Ops)
+	// the pointer anywhere over the list's box, the reply box drawn on it
+	// and the bar included: on top, pass-through, so the box, the rows
+	// and the bar get it as before
+	area := clip.Rect(image.Rectangle{Max: s.size}).Push(gtx.Ops)
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &s.sb.over)
+	pass.Pop()
+	area.Pop()
+	t.Pop()
+}
+
+// ScrollThumb is the list's scrollbar thumb in window coordinates as the
+// last frame drew it, empty while it was hidden (tests).
+func (v *ThreadView) ScrollThumb() image.Rectangle {
+	if r := v.s.sb.thumb; !r.Empty() {
+		return r.Add(v.s.origin)
+	}
+	return image.Rectangle{}
 }
 
 // NewestRowBottom is the window y of the newest reply's (or, with none,
@@ -104,6 +176,7 @@ func NewThreadView(h Host, ch, ts string) *ThreadView { return NewThreadViewIn(h
 // Slack's split view), with a list state of its own (stateIn).
 func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
 	v := &ThreadView{h: h, ch: ch, ts: ts, s: stateIn(h, ch, ts, pane)}
+	v.s.kb.jumpTo = v.JumpTo // End's jumpToReply (kbnav.go focusInput)
 	v.s.closeEdits()
 	v.Reopen()
 	v.s.hb.ensureLoaded(v.s.m)

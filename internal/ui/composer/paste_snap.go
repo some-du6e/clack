@@ -7,7 +7,7 @@ package composer
 // way (Gio's text, startClipHTML, the file probe). Windows' clipboard is
 // one global resource: one paste's several sessions let another app's
 // copy land between them, and two at once let one's close free the data
-// the other was reading (Karim's 2026-11-21 crash, CLACK_PATCHES.md §62).
+// the other was reading (Karim's 2026-11-21 crash, CLACK_PATCHES.md §65).
 type pasteSnap struct {
 	done chan struct{}
 	text string    // CF_UNICODETEXT ("" with none)

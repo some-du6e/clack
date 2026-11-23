@@ -122,6 +122,11 @@ type attChip struct {
 	// clip is a recorded voice clip's File fields (clips.go); nil for any
 	// other file.
 	clip *clipMeta
+	// ftype is its File's type (attFileType), worked out once from the
+	// name the File was made with: Chromium fixes File.type then, and a
+	// plugin renaming the file leaves it (fileTypeLocked).
+	ftype    string
+	ftypeSet bool
 	// loading: a restored file the draft named by id alone, whose
 	// files.info is out (Slack's unknown file: MissingText bars over an
 	// exception tile); gone: it never came (a non-existent file: "This
@@ -259,7 +264,7 @@ func (a *attachments) Files() []core.UploadFile {
 	defer a.mu.Unlock()
 	var out []core.UploadFile
 	for _, c := range a.chips {
-		out = append(out, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype()})
+		out = append(out, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype(), Type: c.mime()})
 	}
 	return out
 }
@@ -270,6 +275,28 @@ func (c *attChip) subtype() string {
 		return c.clip.subtype
 	}
 	return ""
+}
+
+// mime is the upload part's type where the File has its own: a clip's is
+// the recorder's (audio/mp4, getAudioMIMEType's first in Chromium 156), not
+// the audio/x-m4a Chromium would give its .m4a name. "" elsewhere: the
+// part is typed by the name (slack.FileType).
+func (c *attChip) mime() string {
+	if c.clip != nil {
+		return c.clip.mime
+	}
+	return ""
+}
+
+// fileTypeLocked is c's File type (ftype), looked up the first time it's
+// asked for: prepare asks before a plugin renames the file, Layout and
+// pendingLocked every frame, which mustn't ask the OS each time (the
+// registry, UTType). Call with attachments.mu held.
+func (c *attChip) fileTypeLocked() string {
+	if !c.ftypeSet {
+		c.ftype, c.ftypeSet = attFileType(c.name, c.mime()), true
+	}
+	return c.ftype
 }
 
 // sendBatch is what one send takes from the composer.
@@ -301,7 +328,7 @@ func (a *attachments) takeForSend() (b sendBatch) {
 			c.pf.Title = c.title
 			b.pending = append(b.pending, c.pf)
 		default:
-			b.raw = append(b.raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype()})
+			b.raw = append(b.raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype(), Type: c.mime()})
 		}
 	}
 	a.chips, a.total = nil, 0
@@ -396,13 +423,13 @@ func (a *attachments) prepare(c *attChip) {
 	}
 	a.mu.Lock()
 	c.preparing, c.ptotal = true, int64(len(c.data))
-	name, data, sub := c.name, c.data, c.subtype()
+	name, data, sub, typ, ft := c.name, c.data, c.subtype(), c.mime(), c.fileTypeLocked()
 	a.mu.Unlock()
 	a.h.Invalidate()
 
 	// The name the file goes out under: Slack's upload reads File.name,
 	// which plugins may redefine (AnonymiseFileNames).
-	if n := uploadName(name, attMime(name)); n != name {
+	if n := uploadName(name, ft); n != name {
 		a.mu.Lock()
 		if c.title == c.name { // not renamed meanwhile
 			c.title = n
@@ -430,7 +457,7 @@ func (a *attachments) prepare(c *attChip) {
 		}
 	}
 	// addAndUploadPendingFile (AnonymizeFilenames renames the file here).
-	pu, err := prepareFile(context.Background(), coreAPI{a.h.Core()}, core.UploadFile{Name: name, Title: name, Data: data, Subtype: sub}, prog)
+	pu, err := prepareFile(context.Background(), coreAPI{a.h.Core()}, core.UploadFile{Name: name, Title: name, Data: data, Subtype: sub, Type: typ}, prog)
 	a.mu.Lock()
 	c.preparing = false
 	var p core.PreparedUpload
@@ -1318,6 +1345,7 @@ type attView struct {
 	c         *attChip
 	name      string // the file name it uploads under
 	title     string // the name the chip shows
+	typ       string // its File's type (attFileType)
 	thumb     paint.ImageOp
 	thumbPx   int
 	preparing bool
@@ -1346,7 +1374,7 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 			c.thumbBusy = true
 			go a.makeThumb(c, px)
 		}
-		views[i] = attView{c: c, name: c.name, title: c.title, thumb: c.thumb, thumbPx: c.thumbPx,
+		views[i] = attView{c: c, name: c.name, title: c.title, typ: c.fileTypeLocked(), thumb: c.thumb, thumbPx: c.thumbPx,
 			preparing: c.preparing, failed: c.prepErr != nil && c.prepared == nil,
 			asImage: c.kind.Image && !c.thumbBad && !c.loading && !c.gone, size: c.size(),
 			loading: c.loading, gone: c.gone}
