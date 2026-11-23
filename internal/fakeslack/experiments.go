@@ -80,13 +80,14 @@ func AccountExperimentGroups() map[string]string {
 // of its sidebar set, so tests and shots run as the account does; tests
 // flip one with core's SetExperimentGroup.
 var accountExperiments = map[string]string{
-	"canvas_table_of_contents":    "on",
-	"canvas_blockquote_layout":    "on",
-	"canvas_comment_only_mode":    "on",
-	"slackified_checkbox":         "on",
-	"lists_file_backed_templates": "on",
-	"lists_export_enrichment":     "on",
-	"lists_grid_todos":            "on",
+	"data_visualization_copy_image": "on", // a chart's Copy as image (popups/chart_menu.go)
+	"canvas_table_of_contents":      "on",
+	"canvas_blockquote_layout":      "on",
+	"canvas_comment_only_mode":      "on",
+	"slackified_checkbox":           "on",
+	"lists_file_backed_templates":   "on",
+	"lists_export_enrichment":       "on",
+	"lists_grid_todos":              "on",
 	// email files draw as FileEmailV2 (core.ExpNewEmailRendering): the
 	// account's group, recorded in core/testdata/account_experiments.json
 	"new_email_rendering": "on",
