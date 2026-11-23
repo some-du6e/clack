@@ -16,6 +16,17 @@ import (
 // Slack's overlay scrollbar: a thin rounded thumb over the right edge that
 // shows while the pointer is over the list or for a moment after scrolling,
 // and can be dragged.
+//
+// Its geometry is Slack's legacy Scrollbar's (ySQw, the virtual list's
+// through okQl; the ScrollArea variant is the scroll_area session toggle,
+// off unless a session is assigned it): an 8px track 4px in from the
+// list's top, bottom and right edges (.c-scrollbar__track{width:8px;
+// top:4px;bottom:4px;right:4px}) with the bar filling its width; the bar
+// is view²/content tall, at least 50px, at scrollTop/(content-view) of
+// the track's free length (update()); a drag moves the content
+// content/track px per px (onDragStart's speed). The content is every row
+// (BaseList getContentHeight), a thread's reply box among them: the
+// thread pane is one scroll container with the box inside it.
 
 type scrollbar struct {
 	known      map[string]int // item key -> last measured height
@@ -26,10 +37,32 @@ type scrollbar struct {
 	dragY      float32
 	hover      bool
 	thumb      image.Rectangle
+	// over: the pointer is over the list's box, the host's reply box in
+	// it too (.c-scrollbar:hover shows the bar over the whole scroll
+	// container): ThreadView.DrawScrollbar tracks it above the box
+	over bool
 }
+
+// sbInset and sbWidth are the track's inset from the list's edges and
+// its width (.c-scrollbar__track); sbMinBar is update()'s least bar.
+const sbInset, sbWidth, sbMinBar = 4, 8, 50
 
 func (s *listState) layoutScrollbar(gtx layout.Context, c *colors, size image.Point, now time.Time) {
 	sb := &s.sb
+	for {
+		// Enter and Leave are enough: Gio hit-tests a still pointer again
+		// after every frame
+		ev, ok := gtx.Event(pointer.Filter{Target: &sb.over, Kinds: pointer.Enter | pointer.Leave | pointer.Cancel})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			sb.over = e.Kind != pointer.Leave && e.Kind != pointer.Cancel
+		}
+	}
+	if !(s.thread && s.inputOn) {
+		sb.over = false // no host box: DrawScrollbar tracks nothing
+	}
 	if sb.known == nil || sb.knownFG != theme.FontGen() {
 		// a new UI font: every row's height is new (the ones on screen
 		// were just measured with it)
@@ -44,6 +77,9 @@ func (s *listState) layoutScrollbar(gtx layout.Context, c *colors, size image.Po
 	}
 	for i, it := range s.items {
 		hgt, ok := sb.known[it.key]
+		if it.kind == itInput {
+			hgt, ok = s.inputH, true // the reply box's row: the host's box, laid out or not
+		}
 		if !ok {
 			continue
 		}
@@ -95,10 +131,10 @@ func (s *listState) layoutScrollbar(gtx layout.Context, c *colors, size image.Po
 			sb.dragging, sb.dragY = true, e.Position.Y
 		case pointer.Drag:
 			if sb.dragging {
-				track := size.Y - sb.thumb.Dy()
+				track := size.Y - 2*dp(gtx, sbInset)
 				if track > 0 {
 					dy := e.Position.Y - sb.dragY
-					px := int(dy * float32(total-size.Y) / float32(track))
+					px := int(dy * float32(total) / float32(track)) // onDragStart's speed
 					s.list.Position.BeforeEnd = true
 					s.list.Position.Offset += px
 					sb.dragY = e.Position.Y
@@ -111,23 +147,21 @@ func (s *listState) layoutScrollbar(gtx layout.Context, c *colors, size image.Po
 	}
 
 	recent := now.Sub(sb.lastScroll) < 1200*time.Millisecond
-	if !(s.pointerIn || recent || sb.dragging) {
+	if !(s.pointerIn || sb.over || sb.hover || recent || sb.dragging) {
 		sb.thumb = image.Rectangle{}
 		return
 	}
 	if recent {
 		gtx.Execute(op.InvalidateCmd{At: sb.lastScroll.Add(1250 * time.Millisecond)})
 	}
-	th := max(dp(gtx, 32), size.Y*size.Y/total)
-	ty := 0
+	inset, w := dp(gtx, sbInset), dp(gtx, sbWidth)
+	track := size.Y - 2*inset
+	th := min(max(dp(gtx, sbMinBar), size.Y*size.Y/total), max(track, 0))
+	ty := inset
 	if total > size.Y {
-		ty = (size.Y - th) * min(max(top, 0), total-size.Y) / (total - size.Y)
+		ty += (track - th) * min(max(top, 0), total-size.Y) / (total - size.Y)
 	}
-	w := dp(gtx, 8)
-	if sb.hover || sb.dragging {
-		w = dp(gtx, 10)
-	}
-	x := size.X - w - dp(gtx, 2)
+	x := size.X - inset - w
 	sb.thumb = image.Rect(x, ty, x+w, ty+th)
 	col := c.ScrollThumb
 	if sb.hover || sb.dragging {

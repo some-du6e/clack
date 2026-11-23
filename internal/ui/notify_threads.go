@@ -33,15 +33,24 @@ import (
 //     public channel, a private one's bare name, a group DM's members);
 //     the body outside DMs is "{sender}: {text}" (getContentForNotification).
 
-// replyNotifies is the message path's rule for replies.
+// replyNotifies is the message path's rule for replies (isReply, SPMg: a
+// thread_ts that isn't the message's ts, so a reply sent to the channel
+// too is one): in a DM none notifies, elsewhere one that mentions the
+// viewer. Clack took a broadcast for a channel message.
 func replyNotifies(app *core.App, ev core.Event) bool {
-	if !ev.Reply || ev.Msg == nil {
+	if !noteIsReply(ev) {
 		return true
 	}
 	if ev.ConvKind == "im" {
 		return false
 	}
 	return app != nil && app.MentionsViewerInReply(ev.Msg)
+}
+
+// noteIsReply is isReply (SPMg) of the event's message: core's Reply, or
+// a thread_ts that isn't its ts (a thread_broadcast's).
+func noteIsReply(ev core.Event) bool {
+	return ev.Msg != nil && (ev.Reply || ev.Msg.ThreadTS != "" && ev.Msg.ThreadTS != ev.Msg.TS)
 }
 
 // notifyChannelName is getDisplayNameForChannel for the title

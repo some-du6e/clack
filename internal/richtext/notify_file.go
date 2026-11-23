@@ -33,6 +33,9 @@ type NoteFiles struct {
 	// is an audio clip (isAudioClipSubtype).
 	Clips     int
 	AudioClip bool
+	// Email: a file is a forwarded email's (mode "email"), which
+	// shouldSuppressEmailShared holds back in the Slackbot DM (reason 22).
+	Email bool
 }
 
 // NoteFilesOf is fs's NoteFiles, nil for a message with no files (Eley's
@@ -55,6 +58,7 @@ func NoteFilesOf(fs []slack.File, first *slack.File) *NoteFiles {
 			}
 			n.Clips++
 		}
+		n.Email = n.Email || fs[i].Mode == "email"
 	}
 	return n
 }

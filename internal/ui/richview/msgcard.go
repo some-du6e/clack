@@ -42,7 +42,7 @@ func paintIconAt(ops *op.Ops, name string, r image.Rectangle, col color.NRGBA) {
 // addIcon adds an inline icon of px at the flow's position.
 func (l *lay) addIcon(name string, px int, k faceKey, col color.NRGBA, dc, tg int16) {
 	p0, p1 := l.plainAdd("")
-	l.items = append(l.items, item{kind: itImage, face: k, w: float32(px + 2*l.dp(1)), url: iconURL + name, size: px,
+	l.items = append(l.items, item{kind: itImage, face: k, w: float32(px + 2*l.dp(1)), edge: l.dpf(1), url: iconURL + name, size: px,
 		col: col, deco: dc, target: tg, p0: p0, p1: p1})
 }
 

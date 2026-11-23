@@ -85,7 +85,21 @@ func actNamesApp(t *testing.T) (app *core.App, calls func(ch string) int, releas
 		case "activity.feed":
 			_, _ = w.Write(feed)
 		case "messages.list":
-			write(`{"ok":true,"messages":{}}`)
+			// every message asked for exists (a mention's row with no
+			// message renders null, as Slack's ActivityAtMention does)
+			var want []struct {
+				Channel    string   `json:"channel"`
+				Timestamps []string `json:"timestamps"`
+			}
+			_ = json.Unmarshal([]byte(r.Form.Get("message_ids")), &want)
+			msgs := map[string][]map[string]any{}
+			for _, w := range want {
+				for _, ts := range w.Timestamps {
+					msgs[w.Channel] = append(msgs[w.Channel], map[string]any{"type": "message", "ts": ts, "user": "U1", "text": "a synthetic mention <@USELF>"})
+				}
+			}
+			b, _ := json.Marshal(map[string]any{"ok": true, "messages": msgs})
+			_, _ = w.Write(b)
 		case "activity.views":
 			write(`{"ok":true,"views":[{"id":"V1","view_type":"all","density":"compact"}],"prefs":{"sort":"newest","density":"compact"}}`)
 		case "conversations.info":

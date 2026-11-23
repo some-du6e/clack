@@ -778,6 +778,13 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: kept(ctx, data),
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
+		if bin, ok := out.(*canvasAnswer); ok { // a canvas call: binary protobuf (CanvasCall)
+			if err := canvasJSONError(method, resp, data); err != nil {
+				return err
+			}
+			bin.b = data
+			return nil
+		}
 		// {"ok":true…: no need to parse the whole body (7 MB for
 		// emoji.list) just to read "ok"; the decode below validates it
 		if !okFast(data) {
@@ -1309,25 +1316,49 @@ func unhex(c byte) byte {
 
 // UploadBytes sends file contents to an upload URL from
 // files.getUploadURL the way Slack's UploadQueue does: a multipart POST of
-// one "file" part. (Slack's XMLHttpRequest has no withCredentials, so a
+// one "file" part, named filename and typed as Chromium types a File of
+// that name (FileType; UploadPart). (Slack's XMLHttpRequest has no withCredentials, so a
 // browser sends no cookie to files.slack.com; Clack keeps sending the
 // session's cookies on every request, as its session tests require.)
 // progress (may be nil) is called as the body is written: every ~64 KB
 // and once at the end, with the multipart body size as total. It runs on
 // the calling goroutine.
 func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, data []byte, progress func(sent, total int64)) error {
+	return c.UploadPart(ctx, uploadURL, MultipartFile{Field: "file", Name: filename, Type: FileType(filename), Data: data}, progress)
+}
+
+// UploadPart posts f to upload_url as Slack's UploadQueue posts a file: a
+// FormData holding it as "file", nothing else. Its part is named and typed
+// as FormData writes a File: f.Name (", CR and LF percent-encoded) and
+// f.Type, application/octet-stream when that's "". A snippet is a Blob, so
+// FormData names it "blob" (uploadSnippet; the name goes to
+// files.getUploadURL). Go's CreateFormFile typed every part
+// application/octet-stream, and Slack filed every upload as Binary (a .js
+// came back filetype binary, 2026-11-22).
+func (c *Client) UploadPart(ctx context.Context, uploadURL string, f MultipartFile, progress func(sent, total int64)) error {
 	if c.Allow != nil {
 		return fmt.Errorf("%w: a file upload", ErrNotAllowed)
 	}
 	if c.SignedOut() {
 		return ErrSignedOut
 	}
+	field, typ := f.Field, f.Type
+	if field == "" {
+		field = "file"
+	}
+	if typ == "" {
+		typ = "application/octet-stream"
+	}
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	fw, err := mw.CreateFormFile("file", filename)
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", `form-data; name="`+formDataName.Replace(field)+`"; filename="`+formDataName.Replace(f.Name)+`"`)
+	h.Set("Content-Type", typ)
+	fw, err := mw.CreatePart(h)
 	if err != nil {
 		return err
 	}
+	data := f.Data
 	if _, err := fw.Write(data); err != nil {
 		return err
 	}
