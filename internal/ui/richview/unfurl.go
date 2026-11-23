@@ -411,7 +411,7 @@ func (l *lay) spansWidth(ss []richtext.Span, fs *flowStyle) int {
 		switch s.Kind {
 		case richtext.Emoji:
 			if s.URL != "" {
-				w += fs.emoji + 2*l.dp(1)
+				w += fs.emoji // its size, no margin: as flow lays it out (.c-emoji)
 				continue
 			}
 		case richtext.Break:
