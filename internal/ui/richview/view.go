@@ -105,6 +105,7 @@ type View struct {
 	ptr      f32.Point       // last pointer position (view coordinates)
 	tipFrag  int             // emoji frag under the pointer, -1 none
 	tipAt    time.Time       // when the pointer reached it (gtx.Now)
+	tipGen   uint64          // the TooltipManager generation then (theme.HideTooltips)
 	tipOrg   theme.TipOrigin // the view's window origin, so tooltips keep inside the window
 	dark     bool            // the last layout's Palette.Dark (MemberSlug's c-member_slug--dark)
 	hovMen   mentionKey      // the @mention last reported to the hover card
@@ -125,6 +126,7 @@ type View struct {
 	copied    int
 	copiedAt  time.Time
 	copyTipAt time.Time
+	copyGen   uint64 // the TooltipManager generation at copyTipAt
 	copyHot   int
 	// the file cards' section buttons (filesection.go): card index+1
 	// under the press, and under the pointer
@@ -135,6 +137,9 @@ type View struct {
 	// the chart under the pointer (index+1, 0 none) and what it points
 	// at there (dataviz.go)
 	vizHot, vizIdx int
+	// remHot is the attachment remove button under the pointer (its
+	// index in removes, +1), for its "Remove preview" tooltip
+	remHot int
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -1564,21 +1569,30 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 	v.tipOrg.Learn(p)
 	if b := v.copyButtonAt(p) + 1; b != v.copyHot {
 		v.copyHot, v.copyTipAt = b, gtx.Now
+		v.copyGen = theme.TipGen()
 	}
 	if b := v.fileSecAt(p) + 1; b != v.secHot {
 		v.secHot, v.copyTipAt = b, gtx.Now
+		v.copyGen = theme.TipGen()
 	}
 	if b := v.expandAt(st, p) + 1; b != v.expHot {
 		v.expHot, v.copyTipAt = b, gtx.Now
+		v.copyGen = theme.TipGen()
 	}
 	if ci, h := v.chartAt(p); ci+1 != v.vizHot || h != v.vizIdx {
 		v.vizHot, v.vizIdx = ci+1, h
 	}
 	if bar, btn, _ := v.barAt(p); barKey(bar, btn) != v.barHot {
 		v.barHot, v.copyTipAt = barKey(bar, btn), gtx.Now
+		v.copyGen = theme.TipGen()
+	}
+	if b := v.removeAt() + 1; b != v.remHot {
+		v.remHot, v.copyTipAt = b, gtx.Now
+		v.copyGen = theme.TipGen()
 	}
 	if f := v.emojiAt(p); f != v.tipFrag {
 		v.tipFrag, v.tipAt = f, gtx.Now
+		v.tipGen = theme.TipGen()
 	}
 }
 
@@ -1588,6 +1602,9 @@ func (v *View) left() {
 	v.hovering = false
 	v.tipFrag = -1
 	v.vizHot, v.vizIdx = 0, -1
+	// the buttons under it are left too: a return waits their tooltip's
+	// delay again (mouseleave)
+	v.copyHot, v.secHot, v.expHot, v.barHot, v.remHot = 0, 0, 0, 0, 0
 	if !v.dragging {
 		v.hover = -1
 	}
