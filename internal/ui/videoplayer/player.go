@@ -71,6 +71,13 @@ type Env struct {
 	// (media.progress.update: offset_ms of duration_ms), off the caller's
 	// goroutine; nil sends nothing.
 	ProgressUpdate func(file string, offsetMS, durationMS int64)
+	// TeamPref is a team pref as Slack sent it (the audio player's
+	// transcript button reads allow_media_transcriptions).
+	TeamPref func(name string) (json.RawMessage, bool)
+	// SpeedMenu opens MediaPlaybackSpeedControl's options (labels, the
+	// selected one) at anchor (window coordinates); pick gets the one
+	// chosen.
+	SpeedMenu func(anchor image.Rectangle, labels []string, selected int, pick func(i int))
 }
 
 // RowHost is what a message gives its tiles: the file actions (the
@@ -172,9 +179,13 @@ func New(env Env) *Controller {
 // FrameReady is the repaint the players ask for a new frame (tests).
 func (c *Controller) FrameReady() func() { return c.env.FrameReady }
 
+// videoHint is a source of the kind video tiles play (Manager.Takes: a
+// backend that plays only audio doesn't make videos play).
+var videoHint = media.Source{Mime: "video/mp4", Ext: "mp4"}
+
 // Available reports whether videos play in place here.
 func (c *Controller) Available() bool {
-	return c != nil && c.env.Manager != nil && c.env.Manager.Available() == nil
+	return c != nil && c.env.Manager != nil && c.env.Manager.Takes(videoHint)
 }
 
 // Row is a message's tiles (richview.Media): message ts in conversation
@@ -194,6 +205,9 @@ type Row struct {
 // only tile) plays in place, fIJO's tE; a gallery's tiles open the media
 // viewer, which doesn't play videos yet, so they stay as they were.
 func (r *Row) MediaTile(f *richtext.File, files int, overflow bool) bool {
+	if f != nil && f.IsAudio { // FileAudio (audio.go)
+		return r.c.audioPlays(f)
+	}
 	return r.c.Available() && f != nil && f.IsVideo && f.URL != "" && f.ID != "" && files == 1 && !overflow
 }
 
@@ -285,6 +299,8 @@ type tile struct {
 	// it played since its last pause
 	sentMS    int64
 	hasPlayed bool
+	// au is an audio file's player UI (audio.go), nil for a video
+	au *audioState
 }
 
 // tileLocked is the tile for k, made with f's progress if new; f is the
@@ -333,9 +349,20 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 	}
 	f := t.f
 	u := f.URL
-	src := media.Source{FileID: f.ID, Mime: f.Mime, Ext: ext(f), Open: func(ctx context.Context, off int64) (io.ReadCloser, media.Info, error) {
+	src := media.Source{FileID: f.ID, Mime: f.Mime, Ext: ext(f)}
+	if f.IsAudio { // FileAudio's source (audio.go)
+		if t.au == nil {
+			t.au = &audioState{}
+		}
+		if u = audioURL(f); t.au.alt && hasAlt(f) {
+			u = f.URL
+		}
+		src = audioSource(f, u)
+		t.au.rate = 0 // a new element: its playbackRate is set again
+	}
+	src.Open = func(ctx context.Context, off int64) (io.ReadCloser, media.Info, error) {
 		return c.env.Open(ctx, u, off)
-	}}
+	}
 	c.gen++
 	gen := c.gen
 	h, err := c.env.Manager.Open(src, c.env.FrameReady, func(ev media.Event) { c.onEvent(t, gen, ev) })
@@ -351,7 +378,7 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 	}
 	t.elapsed, t.sentMS, t.hasPlayed = start, start.Milliseconds(), false
 	c.applyLocked(t)
-	if !t.viewer && c.loops(f) {
+	if !t.viewer && !f.IsAudio && c.loops(f) {
 		h.SetLoop(true)
 	}
 	if t.size.X > 0 && t.size.Y > 0 {
@@ -457,19 +484,38 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 		return
 	}
 	st := ev.State
-	repaint := t.hover || t.shown // the overlay, or the viewer's footer, shows the time
+	// the overlay, or the viewer's footer, shows the time; an audio
+	// player always does (its time and its scrubber's fill)
+	repaint := t.hover || t.shown || t.au != nil
 	switch ev.Kind {
 	case media.Play: // onPlay (tI)
 		t.playing, t.played, t.ended, repaint = true, true, false, true
 	case media.Playing: // the spinner shows until it plays
 		t.playing, t.loading, repaint = true, false, true
+		if t.au != nil {
+			t.au.stalled = false
+		}
+	case media.Waiting: // the audio player's stalled: Buffering
+		if t.au != nil {
+			t.au.stalled, repaint = true, true
+		}
 	case media.Pause: // a pause stops the spinner too: nothing more is loading
 		t.playing, t.loading, repaint = false, false, true
 	case media.Ended:
 		t.playing, t.ended, repaint = false, true, true
 		c.progress[t.f.ID] = 0
 	case media.Error: // 1ERX: no error UI; the spinner stops
+		if t.f != nil && t.f.IsAudio && c.audioErrorLocked(t, st.Err) {
+			c.mu.Unlock() // a new player of url_private took over (audio.go)
+			if c.env.Repaint != nil {
+				c.env.Repaint()
+			}
+			return
+		}
 		t.errCode, t.loading, repaint = st.Err, false, true
+		if t.au != nil {
+			t.playing = false // an audio element's error ends its playing (no pause comes)
+		}
 	case media.LoadedMetadata, media.DurationChange, media.Seeked:
 		repaint = true
 	case media.FirstFrame: // a new player's own frame: the kept one goes
@@ -705,6 +751,10 @@ func (c *Controller) applyLocked(t *tile) {
 	if t.h == nil {
 		return
 	}
+	if t.f != nil && t.f.IsAudio {
+		c.applyAudioLocked(t)
+		return
+	}
 	if !t.applied || t.appMute != c.muted {
 		t.h.SetMuted(c.muted)
 		t.appMute = c.muted
@@ -810,6 +860,12 @@ type State struct {
 	// InPip is whether the mini player shows its video (only the pill
 	// here)
 	InPip bool
+	// An audio tile's (audio.go): its play button and scrubber as the
+	// last layout drew them (tile coordinates), the playbackRate it set,
+	// and whether it plays url_private (the aac rendition didn't decode)
+	AudioPlay, AudioScrub image.Rectangle
+	Rate                  float64
+	Alt                   bool
 }
 
 // Click is the tile's click (fIJO's tE), as a press and release on it
@@ -820,6 +876,13 @@ func (c *Controller) Click(pane, ch, ts, file string) bool {
 	t := c.tiles[key{pane, ch, ts, file}]
 	if t == nil {
 		return false
+	}
+	if t.f != nil && t.f.IsAudio { // the audio player's play button (eU)
+		if t.au == nil {
+			t.au = &audioState{}
+		}
+		c.audioClickLocked(t)
+		return true
 	}
 	c.clickLocked(t)
 	return true
@@ -838,6 +901,9 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen || t.focus >= 0, VolumeOpen: t.volOver || t.vol || t.volFocused(), Pill: t.pillShownLocked(), Still: t.stillOK, InPip: t.inPip}
 	if t.h != nil {
 		st.Player = t.h
+	}
+	if a := t.au; a != nil {
+		st.AudioPlay, st.AudioScrub, st.Rate, st.Alt = a.z.play, a.z.scrub, a.rate, a.alt
 	}
 	return st, true
 }

@@ -125,6 +125,34 @@ jobs:
         with:
           name: clack-linux-amd64
           path: dist/clack-linux-amd64
+      # A message's audio files come from whoever uploaded them: the audio
+      # readers (internal/media/goaudio: MP4, WebM, Ogg, WAV, MP3) take any
+      # bytes without a panic, a hang or an outsized allocation
+      # (TestReadersAreTotal, fuzz_test.go). Each fuzz target runs a fixed
+      # 20 s from its seeds (the fixtures), minimizing nothing: a value that
+      # adds coverage would go to the workers for minimizing (60 s by
+      # default) and the fuzzing stall behind it (execs at 0/sec from the
+      # 3rd second, ci 45016657944). An input still running at 10 s crashes
+      # its worker with every goroutine's stack. A failure keeps its input
+      # under testdata/fuzz (uploaded below; go test -run 'FuzzMP4/<name>'
+      # ./internal/media/goaudio/ replays it). XF_OFF: a proof run's
+      # expect_fail doesn't judge fuzzing's output.
+      - name: fuzz the audio readers (FuzzMP4, FuzzWebM, FuzzOgg, FuzzWAV, FuzzMP3)
+        if: ${{ !cancelled() }}
+        env:
+          XF_OFF: "1"
+        run: |
+          rc=0
+          for f in FuzzMP4 FuzzWebM FuzzOgg FuzzWAV FuzzMP3; do
+            go test -run '^$' -fuzz "^$f\$" -fuzztime 20s -fuzzminimizetime 0s -timeout 2m ./internal/media/goaudio/ || rc=1
+          done
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ failure() }}
+        with:
+          name: goaudio-fuzz-inputs
+          path: internal/media/goaudio/testdata/fuzz
+          if-no-files-found: ignore
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

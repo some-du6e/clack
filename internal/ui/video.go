@@ -7,6 +7,7 @@ import (
 	"image"
 	"io"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,7 +15,9 @@ import (
 	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/media"
+	"github.com/some-du6e/clack/internal/media/goaudio"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -24,10 +27,44 @@ import (
 )
 
 // videoBackend, when set (tests: media.NewFake), is the players'
-// backend; nil is the OS's (media.Default: Media Foundation on Windows,
-// AVFoundation on macOS; none on Linux, where a video tile's click opens
-// its page as before).
+// backend; nil is playersBackend: the OS's (media.Default: Media
+// Foundation on Windows, AVFoundation on macOS; none on Linux, where a
+// video tile's click opens its page as before) and Go audio for a
+// message's audio files (internal/media/goaudio).
 var videoBackend media.Backend
+
+// playersBackend is the OS's backend chained with Go audio: the OS plays
+// what it can (video, AAC, MP3, WAV), Go audio the Opus clips and every
+// audio file on Linux, and takes over a file the OS fails to decode.
+func playersBackend() media.Backend {
+	osb, _ := media.Default() // nil on Linux
+	return media.NewChain(audioOrder, osb, &goaudio.Backend{})
+}
+
+// audioOrder puts Go audio first for an audio file in an Opus container
+// (WebM, Ogg) the OS may not read, and the OS first for everything else.
+func audioOrder(src media.Source, bs []media.Backend) []media.Backend {
+	switch strings.ToLower(src.Ext) {
+	case "webm", "ogg", "opus":
+	default:
+		return bs
+	}
+	if !goaudio.IsAudio(src) {
+		return bs
+	}
+	out := make([]media.Backend, 0, len(bs))
+	for _, b := range bs {
+		if _, ok := b.(*goaudio.Backend); ok {
+			out = append(out, b)
+		}
+	}
+	for _, b := range bs {
+		if _, ok := b.(*goaudio.Backend); !ok {
+			out = append(out, b)
+		}
+	}
+	return out
+}
 
 // videos is the window's inline video players, made when a message list
 // first asks. A controller is one session's (closeVideos ends it), so its
@@ -39,8 +76,12 @@ func (a *App) videos() *videoplayer.Controller {
 	}
 	c := a.Core()
 	var writes serialQueue // users.prefs.set and media.progress.update, in the order the players made them
+	backend := videoBackend
+	if backend == nil {
+		backend = playersBackend()
+	}
 	a.vids = videoplayer.New(videoplayer.Env{
-		Manager: media.NewManager(videoBackend),
+		Manager: media.NewManager(backend),
 		Open: func(ctx context.Context, rawURL string, off int64) (io.ReadCloser, media.Info, error) {
 			return openVideo(ctx, c, rawURL, off)
 		},
@@ -93,6 +134,22 @@ func (a *App) videos() *videoplayer.Controller {
 			off := op.Offset(r.Min).Push(gtx.Ops)
 			popups.Tooltip(gtx, a.th, st, hovered, r.Size(), side, label, "")
 			off.Pop()
+		},
+		TeamPref: func(name string) (json.RawMessage, bool) {
+			if c != nil {
+				return c.TeamPref(name)
+			}
+			return nil, false
+		},
+		// MediaPlaybackSpeedControl's Select: "Playback speed" over the
+		// options, the current one checked (minOptionsListWidth 140)
+		SpeedMenu: func(anchor image.Rectangle, labels []string, sel int, pick func(int)) {
+			items := []popups.MenuItem{{Header: i18n.T("stories_av", "Playback speed")}}
+			for i, l := range labels {
+				i := i
+				items = append(items, popups.MenuItem{Label: l, Checked: i == sel, Do: func() { pick(i) }})
+			}
+			a.ShowOverlay(popups.NewMenuOpts(a, items, popups.MenuOpts{Anchor: anchor, Width: 140, Popover: "bottom-left", TryOpposite: true}))
 		},
 		ProgressUpdate: func(file string, offsetMS, durationMS int64) {
 			if c == nil {
@@ -207,7 +264,7 @@ func (a *App) ViewMedia(pane, ch, ts string, h interface {
 // list pane, nil where no backend plays video.
 func (a *App) MessageMedia(pane, ch, ts string, h messages.MediaRowHost) richview.Media {
 	v := a.videos()
-	if !v.Available() {
+	if !v.Available() && !v.AudioAvailable() {
 		return nil
 	}
 	return v.Row(pane, ch, ts, h)
