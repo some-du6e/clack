@@ -24,7 +24,7 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 // newBuilder is a builder for message m shown in channel ch: its sender,
 // its canvas unfurls' hints and its files.
 func newBuilder(r Resolver, m *slack.Message, ch string) *builder {
-	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS}
+	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS, msgText: m.Text}
 	c.hintsFrom(m)
 	if len(m.Files) > 0 {
 		c.files = make(map[string]*slack.File, len(m.Files))

@@ -512,7 +512,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if l.opts.MaxLines > 0 {
 			fs.maxLines, fs.ellipsis = l.opts.MaxLines, true
 		}
+		l.lazyW = float32(w) // a raw span's lines that can't wrap (giant.go)
 		l.addSpans(b.Spans, &fs)
+		l.lazyW = 0
 		if edited {
 			l.addEdited()
 		}
@@ -555,7 +557,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		bi := len(l.d.boxes)
 		l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.PreBg, see: p.raw.PreBg, stroke: p.PreBorder, bw: l.dp(1), radius: l.dp(4), target: -1, part: l.curPart})
 		c0 := int32(len(l.d.plain))
+		l.lazyW = float32(w - padL - l.dp(copyPadR)) // the flow's width below (giant.go)
 		l.addSpans(b.Spans, &fs)
+		l.lazyW = 0
 		c1 := int32(len(l.d.plain))
 		if edited {
 			l.addEdited()
@@ -591,7 +595,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 				// .c-mrkdwn__quote[data-stringify-border="1"]>.c-mrkdwn__br
 				fs.paraH = l.dp(22)
 			}
+			l.lazyW = float32(w - in) // giant.go
 			l.addSpans(b.Spans, &fs)
+			l.lazyW = 0
 			if edited {
 				l.addEdited()
 			}
@@ -1155,6 +1161,7 @@ func flattenBreaks(bs []richtext.Block) []richtext.Span {
 // mention shows its member's name and a plugin's channel name as
 // addSpans lays them out.
 func (l *lay) cellWidth(cell []richtext.Span, k faceKey, comp0 int, next *int) float32 {
+	cell = richtext.Expand(cell) // a raw span's lines (rawtext.go)
 	var w, line float32
 	pills := l.mode&modePills != 0 && !l.inAtt
 	for i := range cell {

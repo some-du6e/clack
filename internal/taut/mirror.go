@@ -844,14 +844,20 @@ func (m *mirror) keys(slice string) []string {
 		}
 		return out
 	case "reactions":
-		// Slack's reactions slice: _rxn_key → the message's reactions
+		// Slack's reactions slice: _rxn_key → the message's reactions;
+		// the store's messages read in place, as bucket would list them
+		// (the timeline's copy first), not each channel's converted
 		var out []string
 		for _, ch := range m.messageChannels() {
-			for ts, msg := range m.bucket(ch) {
-				if mm, ok := msg.(map[string]any); ok && mm["reactions"] != nil {
-					out = append(out, "message-"+ts+"-"+ch)
+			seen := map[string]bool{}
+			a.S.VisitMessages(ch, func(string) {}, func(sm *slack.Message) {
+				if !seen[sm.TS] {
+					seen[sm.TS] = true
+					if len(sm.Reactions) > 0 {
+						out = append(out, "message-"+sm.TS+"-"+ch)
+					}
 				}
-			}
+			})
 		}
 		sort.Strings(out)
 		return out
@@ -921,11 +927,11 @@ func (m *mirror) get(slice, key string) any {
 		if !ok || i < 0 {
 			return nil
 		}
-		msg, _ := m.bucket(rest[i+1:])[rest[:i]].(map[string]any)
-		if msg == nil || msg["reactions"] == nil {
+		sm, ok := a.S.Find(rest[i+1:], rest[:i]) // the one message, not its channel's bucket
+		if !ok || len(sm.Reactions) == 0 {
 			return nil
 		}
-		return msg["reactions"]
+		return messageJSON(rest[i+1:], &sm)["reactions"]
 	case "bots":
 		bi, ok := a.S.Bot(key)
 		if !ok {
@@ -1284,9 +1290,19 @@ func (m *mirror) member(u *slack.User) map[string]any {
 	return e
 }
 
-// messageJSON is a stored message as Slack's store keeps it.
+// messageJSON is a stored message as Slack's store keeps it. Its text
+// and blocks go as the store holds them, the text the store's string and
+// the blocks Slack's own JSON, not through toMap's encode and decode: a
+// message of 908,000 characters made 6 MB of garbage each time a plugin
+// read its channel.
 func messageJSON(ch string, sm *slack.Message) map[string]any {
-	e := toMap(sm)
+	small := *sm
+	small.Text, small.Blocks = "", nil
+	e := toMap(&small)
+	e["text"] = sm.Text
+	if len(sm.Blocks) > 0 {
+		e["blocks"] = sm.Blocks
+	}
 	// attachments exactly as Slack sent them (the typed ones drop fields
 	// and add zero values); blocks, metadata and bot_profile are already
 	// Slack's own JSON

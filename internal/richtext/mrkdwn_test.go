@@ -78,7 +78,7 @@ func checkInvariants(t *testing.T, name string, bs []Block) {
 	var spans func(where string, ss []Span)
 	spans = func(where string, ss []Span) {
 		for _, s := range ss {
-			if strings.Contains(s.Text, "\n") {
+			if strings.Contains(s.Text, "\n") && !IsRaw(&s) {
 				t.Errorf("%s: %s span %q contains a newline", name, where, s.Text)
 			}
 			if s.Kind == Break && s.Text != "" {

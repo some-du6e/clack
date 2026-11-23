@@ -163,6 +163,13 @@ type View struct {
 	// in a list): the View still handles clicks and hover but never changes
 	// its selection or takes focus; the owner calls SetSelection.
 	External bool
+
+	// win is where the owner says the View is on screen (SetWindow); a
+	// View taller than three screens records [clipA, clipB) of itself
+	// only (clipOn: the last recording did; giant.go)
+	win          Window
+	clipOn       bool
+	clipA, clipB int
 }
 
 // OffsetAt maps a point in View coordinates to a plain-text offset (valid
@@ -339,7 +346,7 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	} else if len(v.pending) > 0 && v.anyReady(st) {
 		v.recorded = false
 	}
-	if !v.recorded {
+	if !v.recorded || v.windowStale() {
 		v.record(st)
 	}
 	if v.probe.Missed() {
@@ -528,7 +535,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	}
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if f.target >= 0 && (int(f.target) >= len(v.d.targets) || !v.d.targets[f.target].cardOnly) {
+		if f.target >= 0 && (int(f.target) >= len(v.d.targets) || !v.d.targets[f.target].cardOnly) && v.inClip(f.top, f.bot) {
 			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
 			pointer.CursorPointer.Add(gtx.Ops)
 			s.Pop()
@@ -714,6 +721,8 @@ func (v *View) anyReady(st *Style) bool {
 // place in the stack (a gallery tile's outline, video pill and overflow
 // scrim over it).
 func (v *View) record(st *Style) {
+	v.setClip() // giant.go: a tall View near the screen only
+	v.materialize(st)
 	v.ops.Reset()
 	v.pending = v.pending[:0]
 	v.live = v.live[:0]
@@ -749,7 +758,7 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 	hp := v.hovPaint
 	static := comp == 0 && hp == 0 // the recording: it tracks pending and animated images
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp {
+		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp && v.rectInClip(b.r) {
 			v.drawBox(ops, b, css)
 			if hp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
 				fillRadii(ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
@@ -761,7 +770,7 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 	}
 	for i := range v.d.imgs {
 		im := &v.d.imgs[i]
-		if im.comp != comp || im.hov != hp {
+		if im.comp != comp || im.hov != hp || !v.rectInClip(im.r) {
 			continue
 		}
 		if static && v.liveImg(st, im) { // a recording would freeze it
@@ -778,7 +787,7 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	hp := v.hovPaint
 	static := comp == 0 && hp == 0
 	for i := range v.d.boxes { // over images, under text (gallery scrims, video pills)
-		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp && b.hov == hp {
+		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp && b.hov == hp && v.rectInClip(b.r) {
 			v.drawBox(ops, b, css)
 		}
 	}
@@ -793,6 +802,9 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		f := &v.d.frags[i]
 		if f.comp != comp || f.hov != hp || f.ell && static {
 			continue // a clamp's "…" is recorded on its own (paintEllipses)
+		}
+		if !v.inClip(f.top, f.bot) {
+			continue // far from the screen (giant.go)
 		}
 		switch f.kind {
 		case fImage:
@@ -846,7 +858,7 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 	}
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp && b.hov == hp {
+		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp && b.hov == hp && v.rectInClip(b.r) {
 			v.drawBox(ops, b, css)
 		}
 	}
@@ -1110,7 +1122,7 @@ func (v *View) paintSelection(gtx layout.Context, st *Style) {
 	fr := v.d.frags
 	for i := range fr {
 		f := &fr[i]
-		if f.line < 0 || f.p1 <= a || f.p0 >= b || f.p0 == f.p1 {
+		if f.line < 0 || f.p1 <= a || f.p0 >= b || f.p0 == f.p1 || !v.inClip(f.top, f.bot) {
 			continue
 		}
 		x0, x1 := f.x, f.x+f.w

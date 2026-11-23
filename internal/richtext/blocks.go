@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/slack"
@@ -207,6 +206,9 @@ type builder struct {
 	// keepEmoji: an emoji element the resolver doesn't know is an Emoji
 	// span without a URL, not its ":name:" text (CanvasTitle)
 	keepEmoji bool
+	// msgText is the message's text field: a long text element that says
+	// the same shares its string (raw spans, rawtext.go)
+	msgText string
 }
 
 func parseBlocks(raw json.RawMessage) []bk {
@@ -904,8 +906,16 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 		n := len(out)
 		switch e.Type {
 		case "text":
+			t := e.textString()
+			if len(t) == len(c.msgText) && t == c.msgText {
+				t = c.msgText // the message's text field: one copy of the text, not two
+			}
 			if pre {
-				for k, ln := range strings.Split(e.textString(), "\n") {
+				if strings.Count(t, "\n") >= RawLines {
+					out = append(out, Span{Kind: Text, Text: t, Br: BrRawPre}) // rawtext.go
+					break
+				}
+				for k, ln := range strings.Split(t, "\n") {
 					if k > 0 {
 						out = append(out, Span{Kind: Break})
 					}
@@ -915,7 +925,7 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 				}
 				break
 			}
-			out = appendRichText(out, e.textString(), i == 0 && m.lead, i == 0 && m.first)
+			out = appendRichText(out, t, i == 0 && m.lead, i == 0 && m.first)
 		case "link":
 			label := firstNonEmpty(e.textString(), strings.TrimPrefix(e.URL, "mailto:"))
 			if unlink {
@@ -1070,74 +1080,28 @@ func unknownElement(text, url string) []Span {
 
 // richRunRe is insertTextBreakPlaceholders' paragraph run (kWQh m): two
 // or more newlines with only spaces, tabs and no-break spaces between.
+// eachRichText finds it with nextRun (rawtext.go), which its tests check
+// against this.
 var richRunRe = regexp.MustCompile(`(?:\n[ \t\x{00A0}]*)+\n`)
 
 // appendRichText appends a rich_text text element's text: its lines as
 // Text spans, its newlines as Breaks drawn the way Slack's BaseText
-// draws them (BrKind). lead is isFirstElementInSection, first
-// isFirstElementInFirstSection.
+// draws them (BrKind, eachRichText). lead is isFirstElementInSection,
+// first isFirstElementInFirstSection. An element of RawLines newlines or
+// more is one raw span instead (rawtext.go).
 func appendRichText(out []Span, s string, lead, first bool) []Span {
-	text := func(t string) {
+	if strings.Count(s, "\n") >= RawLines {
+		return append(out, Span{Kind: Text, Text: s, Br: rawKind(lead, first)})
+	}
+	eachRichText(s, lead, first, func(t string) bool {
 		if t != "" {
 			out = append(out, Span{Kind: Text, Text: t})
 		}
-	}
-	brk := func(k BrKind) { out = append(out, Span{Kind: Break, Br: k}) }
-	if first {
-		// trimStart (h5n5): the leading whitespace is gone, so its
-		// newlines draw nothing and the rest starts on the first line
-		// (spaces at a line's start draw nothing either)
-		ws := len(s) - len(strings.TrimLeftFunc(s, unicode.IsSpace))
-		for _, ln := range strings.SplitAfter(s[:ws], "\n") {
-			if t, ok := strings.CutSuffix(ln, "\n"); ok {
-				text(t)
-				brk(BrNone)
-			} else {
-				text(ln)
-			}
-		}
-		s, lead = s[ws:], false
-	}
-	// isFirstElementInSection && /^\n/: one more "\n" in front (virt, no
-	// span of its own), which makes a leading newline a run
-	virt := lead && strings.HasPrefix(s, "\n")
-	if virt {
-		s = "\n" + s
-	}
-	for s != "" {
-		loc := richRunRe.FindStringIndex(s)
-		if loc == nil {
-			loc = []int{len(s), len(s)}
-		}
-		// before the run: single newlines are <br>
-		for k, ln := range strings.Split(s[:loc[0]], "\n") {
-			if k > 0 {
-				brk(BrLine)
-			}
-			text(ln)
-		}
-		if loc[0] == loc[1] {
-			break
-		}
-		// the run: k newlines are k-1 c-mrkdwn__br. The one left over
-		// (the added "\n", else the last) draws nothing; the spaces
-		// between them stay text at the start of an empty line, where
-		// they draw nothing either.
-		run := s[loc[0]:loc[1]]
-		k := strings.Count(run, "\n")
-		for j, ln := range strings.Split(run, "\n") {
-			switch {
-			case j == 0: // "" before the run's first "\n"
-			case virt && j == 1: // the added "\n"
-			case !virt && j == k:
-				brk(BrNone)
-			default:
-				brk(BrPara)
-			}
-			text(ln)
-		}
-		s, virt = s[loc[1]:], false
-	}
+		return true
+	}, func(k BrKind) bool {
+		out = append(out, Span{Kind: Break, Br: k})
+		return true
+	})
 	return out
 }
 

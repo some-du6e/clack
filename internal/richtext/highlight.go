@@ -371,6 +371,10 @@ func markSpansBy(spans []Span, find func([]rune) []Match, st Style) []Span {
 			out = append(out, sp)
 			continue
 		}
+		if IsRaw(&sp) {
+			out = markRaw(out, sp, on[starts[i]:], st)
+			continue
+		}
 		rs := []rune(sp.Text)
 		base := starts[i]
 		for j := 0; j < len(rs); {
@@ -385,6 +389,79 @@ func markSpansBy(spans []Span, find func([]rune) []Match, st Style) []Span {
 			}
 			out = append(out, part)
 			j = k
+		}
+	}
+	return out
+}
+
+// markRaw is markSpans for raw span sp (rawtext.go), on its marks from
+// its first rune: the same runs marked as in the spans it stands for. Cut
+// where its marks change, its parts are raw spans that stand for those
+// spans marked; a cut inside a paragraph run's newlines and spaces (or a
+// first element's trimmed lead) would change what the parts stand for, so
+// such a span is cut into its spans and those are marked instead.
+func markRaw(out []Span, sp Span, on []bool, st Style) []Span {
+	type cut struct{ b, r int } // byte and rune offsets
+	var cuts []cut
+	r := 0
+	for b := range sp.Text {
+		if r > 0 && on[r] != on[r-1] {
+			cuts = append(cuts, cut{b, r})
+		}
+		r++
+	}
+	if len(cuts) == 0 {
+		if len(on) > 0 && on[0] {
+			sp.Style |= st
+		}
+		return append(out, sp)
+	}
+	for _, c := range cuts {
+		if !rawCutSafe(sp.Text, c.b, sp.Br) {
+			pos := 0
+			Pieces(sp, func(p Span) bool {
+				if p.Kind == Break {
+					out = append(out, p)
+					pos++
+					return true
+				}
+				prs := []rune(p.Text)
+				for j := 0; j < len(prs); {
+					k := j
+					for k < len(prs) && on[pos+k] == on[pos+j] {
+						k++
+					}
+					part := p
+					part.Text = string(prs[j:k])
+					if on[pos+j] {
+						part.Style |= st
+					}
+					out = append(out, part)
+					j = k
+				}
+				pos += len(prs)
+				return true
+			})
+			return out
+		}
+	}
+	b0, r0 := 0, 0
+	for i := 0; i <= len(cuts); i++ {
+		b1 := len(sp.Text)
+		if i < len(cuts) {
+			b1 = cuts[i].b
+		}
+		part := sp
+		part.Text = sp.Text[b0:b1]
+		if i > 0 {
+			part.Br = BrRaw // only the element's start is first in its section
+		}
+		if on[r0] {
+			part.Style |= st
+		}
+		out = append(out, part)
+		if i < len(cuts) {
+			b0, r0 = cuts[i].b, cuts[i].r
 		}
 	}
 	return out

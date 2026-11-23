@@ -412,15 +412,20 @@ type Run struct {
 func (v *View) Runs(fn func(Run)) {
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if f.kind != fText || f.sh == nil {
+		if f.kind != fText || f.sh == nil && f.lazy == 0 {
 			continue
 		}
-		r := Run{Text: f.sh.str, Color: f.col, Comp: f.comp != 0}
+		r := Run{Color: f.col, Comp: f.comp != 0}
+		if f.sh != nil {
+			r.Text = f.sh.str
+		} else { // a lazy word away from the screen (giant.go)
+			r.Text = string(v.d.plain[f.p0:f.p1])
+		}
 		if ps := v.css.get(f.part); ps != nil {
 			r.Color = v.textCol(f)
 			r.Deco = ps.deco
 		}
-		r.Bold = f.sh != nil && f.weight >= font.SemiBold
+		r.Bold = f.weight >= font.SemiBold
 		fn(r)
 	}
 }
