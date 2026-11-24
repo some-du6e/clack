@@ -525,6 +525,7 @@ func (a *App) onAuthFailed(code string) {
 // that start many sessions in one process; the UI simply exits.
 func (a *App) Shutdown() {
 	defer a.side.wait() // History's side reads, which the stop below cancels
+	a.flushCanvasesOnQuit()
 	a.StopTraffic()
 	a.saves.Wait()   // a metadata save still writing (loadEmoji)
 	a.warm.wg.Wait() // the warm boot's files, if they were writing
@@ -1027,6 +1028,7 @@ func (a *App) Close() error {
 		// downloading, and its partial files go
 		v.(*Downloads).CancelAll()
 	}
+	a.flushCanvasesOnQuit()
 	a.saves.Wait()
 	a.checkpointClosedCodeChannels() // the closed code channels' watermarks (codechannel_close.go)
 	a.SaveWarm()
