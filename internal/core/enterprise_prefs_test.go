@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"net/url"
 	"sync"
@@ -20,7 +21,8 @@ import (
 // on oneko-data-images), and TestFlagMessageDialogLikeSlack found it off
 // before it went on. The fake takes boot's answer as the call comes in
 // (content review on) and holds it until a call made after it has
-// answered (off); the newer answer stays.
+// answered (off). Once boot's answer was dropped, the newer one stays, in
+// the disk cache too.
 func TestEnterprisePrefsLaterCallWins(t *testing.T) {
 	ctx := context.Background()
 	fs, err := fakeslack.Start(fakeslack.Small)
@@ -64,10 +66,24 @@ func TestEnterprisePrefsLaterCallWins(t *testing.T) {
 	if a.ContentReviewEnabled() {
 		t.Fatal("control: the later call's answer (content review off) didn't go in")
 	}
-	letGo() // boot's answer, from before, comes back now
-	for dl := time.Now().Add(500 * time.Millisecond); time.Now().Before(dl); time.Sleep(5 * time.Millisecond) {
-		if a.ContentReviewEnabled() {
-			t.Fatal("boot's enterprise.prefs.get, answered after a call made later, put the org's older prefs back (content review on again)")
+	cached := a.S.CachedEnterprisePrefs() // the later call's answer
+	letGo()                               // boot's answer, from before, comes back now
+	ep := a.entPrefs()
+	for dl := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
+		ep.mu.Lock()
+		dropped, answered := ep.dropped, ep.answered
+		ep.mu.Unlock()
+		if dropped == 1 {
+			break
 		}
+		if time.Now().After(dl) {
+			t.Fatalf("boot's enterprise.prefs.get answer, held until a call made later had answered, was never dropped (dropped %d, the newest answer in is call %d)", dropped, answered)
+		}
+	}
+	if a.ContentReviewEnabled() {
+		t.Fatal("boot's enterprise.prefs.get, answered after a call made later, put the org's older prefs back (content review on again)")
+	}
+	if got := a.S.CachedEnterprisePrefs(); !bytes.Equal(got, cached) {
+		t.Errorf("the disk cache holds %s after boot's older answer, want the later call's %s", got, cached)
 	}
 }

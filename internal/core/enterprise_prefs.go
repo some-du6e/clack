@@ -21,8 +21,9 @@ type enterprisePrefs struct {
 	unlocked map[string]json.RawMessage
 	live     bool // enterprise.prefs.get answered this session
 	// asked counts the enterprise.prefs.get calls made; answered is the
-	// newest of them whose answer went in (LoadEnterprisePrefs)
-	asked, answered uint64
+	// newest of them whose answer went in, dropped how many answers gave
+	// way to a newer call's (LoadEnterprisePrefs)
+	asked, answered, dropped uint64
 }
 
 var entPrefsIndex = newPerApp() // *App → *enterprisePrefs
@@ -32,14 +33,20 @@ func (a *App) entPrefs() *enterprisePrefs {
 	return v.(*enterprisePrefs)
 }
 
-// LoadEnterprisePrefs is the enterprise.prefs.get boot API. An answer that
-// comes after the answer of a call made after it is dropped: that one
-// read the org's prefs later. Boot's call (Boot's go LoadEnterprisePrefs)
-// and one asked while it was out came back in either order, and boot's,
-// the older, put its prefs back over the newer ones (popups'
-// TestMessageMenuFlagRowLikeSlack still drew "Flag this message…" after
-// content review went off, ci 45351365915; TestFlagMessageDialogLikeSlack
-// found it off before it went on).
+// LoadEnterprisePrefs is the enterprise.prefs.get boot API. The answer of
+// the call started last stands: an answer that comes after the answer of
+// a call started after it is dropped. Boot's call (Boot's go
+// LoadEnterprisePrefs) and one asked while it was out came back in either
+// order, and boot's, the older, put its prefs back over the newer ones
+// (popups' TestMessageMenuFlagRowLikeSlack still drew "Flag this
+// message…" after content review went off, ci 45351365915;
+// TestFlagMessageDialogLikeSlack found it off before it went on). The
+// order is the calls' starts, not when Slack read the prefs: a call
+// slack.Client sends again (after a 429's Retry-After, or over a pooled
+// connection that died) can read them after a call started later, and
+// its answer still gives way. Slack's own store takes the answers as
+// they come (setEnterprisePrefs); Clack asks only at boot (and in tests),
+// so the guard decides between boot's call and a test's.
 func (a *App) LoadEnterprisePrefs(ctx context.Context) error {
 	ep := a.entPrefs()
 	ep.mu.Lock()
@@ -54,6 +61,7 @@ func (a *App) LoadEnterprisePrefs(ctx context.Context) error {
 	b, berr := json.Marshal(raw)
 	ep.mu.Lock()
 	if n < ep.answered {
+		ep.dropped++
 		ep.mu.Unlock()
 		return nil
 	}
@@ -61,7 +69,11 @@ func (a *App) LoadEnterprisePrefs(ctx context.Context) error {
 	ep.org, ep.locked, ep.unlocked = org, locked, unlocked
 	ep.live = true
 	if berr == nil {
-		a.S.SetEnterprisePrefs(b) // the disk cache (installCachedEnterprisePrefs), in the answers' order
+		// the disk cache (installCachedEnterprisePrefs), in the answers'
+		// order. Lock order: ep.mu, then the store's (SetEnterprisePrefs
+		// takes s.mu), never the other way: nothing that holds the store's
+		// lock may read the enterprise prefs
+		a.S.SetEnterprisePrefs(b)
 	}
 	ep.mu.Unlock()
 	a.emit(Event{Type: "enterprise_prefs"})

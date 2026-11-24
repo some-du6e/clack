@@ -334,6 +334,25 @@ on:
       - "internal/ui/messages/scroll_gaps_test.go"
       - "internal/ui/messages/compact_test.go"
       - "third_party/gioui.org/app/clack_bounds_darwin_test.go"
+      # the 2026-11-24 flake jobs' own (counts-baseline, pagekey-day,
+      # sent-thread, reply-flush, entprefs, scroll-cpu, member-subs)
+      - "internal/core/history_changed.go"
+      - "internal/ui/messages/window_end_test.go"
+      - "internal/ui/messages/hub.go"
+      - "internal/ui/messages/thread_load.go"
+      - "internal/ui/messages/hub_sent_thread_test.go"
+      - "internal/core/pump_later.go"
+      - "internal/core/reply_count_test.go"
+      - "internal/core/activity_thread_reply_test.go"
+      - "internal/core/agent_thread_test.go"
+      - "internal/core/badge_rules_test.go"
+      - "internal/core/broadcast_footer_test.go"
+      - "internal/core/enterprise_prefs.go"
+      - "internal/core/enterprise_prefs_test.go"
+      - "internal/ui/prefs_scroll_cost_test.go"
+      - "internal/ui/threadcpu_*_test.go"
+      - "internal/core/member_fresh.go"
+      - "internal/core/member_fresh_test.go"
 
 permissions:
   contents: read
@@ -6748,7 +6767,7 @@ jobs:
           for i in $(seq 1 "$COUNT"); do
             ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/jsrt.test" -test.count=1 -test.v -test.timeout 10m -test.run "$JSRT_RUN" > "$RUNNER_TEMP/jsrt-$i.log" 2>&1 || rc=1
             echo "== process $i: $(grep -oE 'wasmmem: reserved address space: .*longest stop-the-world [0-9.]+ ms' "$RUNNER_TEMP/jsrt-$i.log" | grep -oE '[0-9.]+ ms$'); $(grep -oE 'populate wrote [0-9]+ MiB: [0-9]+ faults, [0-9]+ of them in populate.s reads, -?[0-9]+ elsewhere' "$RUNNER_TEMP/jsrt-$i.log"); $(grep -oE '[0-9]+ KiB of it resident' "$RUNNER_TEMP/jsrt-$i.log")"
-            grep -E -- '--- FAIL|wasmmem_(linux_|unix_)?test.go:[0-9]+: .*(cut|faults came|grew only|wrote|resident|counted|not compared)' "$RUNNER_TEMP/jsrt-$i.log" | head -6
+            grep -E -- '--- FAIL|wasmmem_(linux_|unix_)?test.go:[0-9]+: .*(cut|faults came|grew only|wrote|resident|counted|compared)' "$RUNNER_TEMP/jsrt-$i.log" | head -6
           done
           exit $rc
       # the rest of the package on this runner, its wasm memories populated;
@@ -7196,7 +7215,7 @@ jobs:
   # looked up before the fixture's, whose events wait for its lookup
   # (holdForConv). flush waits for every held conversation now, and the
   # fixture's lookup answers late in TestReplyCountEventOrders
-  # (slowLookup). The tests that flush, COUNT times. Dispatch with
+  # (slowLookup). The 10 tests that flush, COUNT times. Dispatch with
   # only=reply-flush.
   reply-flush:
     if: ${{ !inputs.only || startsWith('reply-flush', inputs.only) }}
@@ -7216,7 +7235,7 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: the tests that flush the socket's events, COUNT times
         env:
-          RF_RUN: "^(TestReplyCountEventOrders|TestReplyCountStaleReplied|TestReplyCountOwnSend|TestReplyCountBroadcast|TestReplyCountDeletedReply|TestActivityThreadReplyNotAMention|TestActivityThreadReplyWithMention|TestAgentThreadActivityNoMentions|TestAgentThreadFetchKeepsLiveEdit|TestAgentThreadEditKeepsThread|TestAgentAnswerNoEditedLabel|TestSidebarMarksLikeSlack|TestBroadcastNewerRepliesParentCached|TestBroadcastNewerRepliesRootOnly)$"
+          RF_RUN: "^(TestReplyCountEventOrders|TestReplyCountStaleReplied|TestReplyCountOwnSend|TestReplyCountBroadcast|TestReplyCountDeletedReply|TestActivityThreadReplyNotAMention|TestAgentThreadActivityNoMentions|TestSidebarMarksLikeSlack|TestBroadcastNewerRepliesParentCached|TestBroadcastNewerRepliesRootOnly)$"
         run: go test -count=$COUNT -timeout 12m -run "$RF_RUN" ./internal/core
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report

@@ -128,24 +128,34 @@ func TestWasmMemoryGrowsInPlace(t *testing.T) {
 	if strict && res.stw > float64(stwBound.Milliseconds()) {
 		t.Errorf("a stop-the-world waited %.2f ms during the growth (bound %v; %.2f ms with a Go slice)", res.stw, stwBound, heap.stw)
 	}
-	// On macOS the Go slice's figure counts only from a second
-	// (stwMeasurableMac, as TestStopTheWorldBounded's): under it, a quarter
-	// of it is inside the runner's own stop-the-world waits (up to 211 ms
-	// with no wasm running), and the reservation's figure can be one of
-	// them (469 to 137 ms on train-263's macos-15-intel, 45411757564).
-	// There TestWasmMemoryPopulated checks that populate took the growth's
-	// faults from the wasm.
-	measurable := stwMeasurable
+	// On macOS the runners stop the world for up to 211 ms with no wasm
+	// running (TestStopTheWorldBounded), so the reservation's figure can be
+	// one of those waits, not the growth's (469 to 137 ms on train-263's
+	// macos-15-intel, 45411757564): there it fails only past stwNoiseMac
+	// too. The Go slice's figure was 338 to 929 ms on macOS's runners and
+	// the reservation's 0.6 to 126 ms (jsrt-populate 45459123467, 40
+	// growths), so every growth is compared, and a reservation that copies
+	// like the slice fails. TestWasmMemoryPopulated checks that populate
+	// took the growth's faults from the wasm.
+	var noise time.Duration
 	if runtime.GOOS == "darwin" {
-		measurable = stwMeasurableMac
+		noise = stwNoiseMac
 	}
 	switch {
-	case heap.stw < float64(measurable.Milliseconds()):
-		t.Logf("wasmmem: not compared: %.2f ms with a Go slice, under %v here (%.2f ms reserved)", heap.stw, measurable, res.stw)
-	case res.stw > heap.stw/4:
+	case heap.stw < float64(stwMeasurable.Milliseconds()):
+		t.Logf("wasmmem: not compared: %.2f ms with a Go slice, under %v (%.2f ms reserved)", heap.stw, stwMeasurable, res.stw)
+	case res.stw > heap.stw/4 && res.stw > float64(noise.Milliseconds()):
 		t.Errorf("the reservation cut the longest stop-the-world only from %.2f to %.2f ms", heap.stw, res.stw)
+	default:
+		t.Logf("wasmmem: compared: %.2f ms with a Go slice, %.2f ms reserved", heap.stw, res.stw)
 	}
 }
+
+// stwNoiseMac is how long a stop-the-world on macOS's runners may wait on
+// its own, wasm or not, as far as TestWasmMemoryGrowsInPlace's growth is
+// concerned: above the 211 ms TestStopTheWorldBounded saw with no wasm
+// running, below the 338 ms a copying growth's least took.
+const stwNoiseMac = 300 * time.Millisecond
 
 // Options.MemoryLimit still caps the JS heap (an allocation past it
 // throws), and the wasm memory still stops at its cap (the reservation is
