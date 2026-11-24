@@ -667,7 +667,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		a := &Attachment{
 			ServiceName: b.ProviderName, ServiceIcon: SafeImage(b.ProviderIconURL), AuthorName: b.AuthorName,
 			TitleLink: SafeURL(b.TitleURL), VideoURL: SafeURL(b.VideoURL), IsUnfurl: true,
-			Image: image(b.ThumbnailURL, b.AltText, 0, 0),
+			Image:      image(b.ThumbnailURL, b.AltText, 0, 0),
+			VideoBlock: true, BlockID: b.BlockID,
 		}
 		if b.Title != nil {
 			a.Title = plainSpans(c.r, b.Title.Text)

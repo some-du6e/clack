@@ -776,6 +776,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if ol, ok := l.overLimit[b.Att]; ok { // MessageAttachmentOverLimitButton (overlimit.go)
 			return l.overLimitButton(ol, x, y, w)
 		}
+		if b.Att.VideoBlock { // a video block: VideoBlock, a block's renderer, not an attachment (videoblock.go)
+			return l.videoBlock(b, x, y, w)
+		}
 		l.attDepth++
 		defer func() { l.attDepth-- }()
 		if isWorkObjectBlock(b) {

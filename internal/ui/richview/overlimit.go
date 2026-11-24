@@ -91,7 +91,7 @@ func (l *lay) attachmentsOverLimit(bs []richtext.Block) []richtext.Block {
 
 // overLimitCounts reports whether b is one of MessageKitAttachments'
 // elements the limit counts: an attachment of the message's (not a
-// message_embed block's card, nor a huddle_thread's), one it shows
+// message_embed block's card, a huddle_thread's or a video block), one it shows
 // (getVisibleAttachmentsForMessage), and a work object only where it
 // draws among them (not rearranged into the files' gallery).
 func (l *lay) overLimitCounts(b *richtext.Block) bool {
@@ -99,7 +99,7 @@ func (l *lay) overLimitCounts(b *richtext.Block) bool {
 		return false
 	}
 	a := b.Att
-	if a.Embed || a.Huddle != nil || !shown(a) {
+	if a.Embed || a.Huddle != nil || a.VideoBlock || !shown(a) {
 		return false
 	}
 	return !isWorkObjectBlock(b) || !l.st.woFlags.Rearrange

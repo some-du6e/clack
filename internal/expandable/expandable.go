@@ -255,6 +255,17 @@ func CallID(m *slack.Message) string {
 	return ""
 }
 
+// VideoBlockKey is VideoBlock's expandable (u8h8): getExpandableKey(
+// "blockVideo", containerId, {blockId}) with processProps' blockId,
+// block_id ?? "": a video block without one keys as "block_video_<ts>_",
+// not "undefined". "" without a ts.
+func VideoBlockKey(ts, blockID string) string {
+	if ts == "" {
+		return ""
+	}
+	return "block_video_" + ts + "_" + blockID
+}
+
 // ReactionKey is a message's reaction key (KtEr J: the message's
 // _rxn_key, else 4kSE makeReactionKey("message", ts, channel),
 // `message-${ts}-${channel}`), which ReactionBar (uFSC) keeps its
