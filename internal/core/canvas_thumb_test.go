@@ -136,7 +136,9 @@ func TestCanvasCardThumbnail(t *testing.T) {
 // passes; one Quip won't load leaves the card without a preview.
 func TestCanvasCardThumbnailBackoff(t *testing.T) {
 	first, mx := CanvasPreviewRetryFirst, CanvasPreviewRetryMax
-	CanvasPreviewRetryFirst, CanvasPreviewRetryMax = 400*time.Millisecond, time.Second
+	// past the client's guard (slack guard.go: an identical failed request
+	// fails fast for a second), as the 30 s default always is
+	CanvasPreviewRetryFirst, CanvasPreviewRetryMax = 1200*time.Millisecond, 2*time.Second
 	t.Cleanup(func() { CanvasPreviewRetryFirst, CanvasPreviewRetryMax = first, mx })
 	a, fs := canvasApp(t)
 	const id = "F0CANVTHMB2"
@@ -154,10 +156,13 @@ func TestCanvasCardThumbnailBackoff(t *testing.T) {
 	if _, ok := a.S.CanvasPreview(id, f.CanvasUpdated); ok {
 		t.Fatal("a failed read left a preview")
 	}
-	// after it the card's next ask reads it
+	// after it the card, still on screen (it asks on each layout), reads it
 	time.Sleep(CanvasPreviewRetryFirst)
-	a.S.WantCanvasPreview(id, f.CanvasUpdated)
-	waitFor(t, "the read after the backoff", 10*time.Second, func() bool { _, ok := a.S.CanvasPreview(id, f.CanvasUpdated); return ok })
+	waitFor(t, "the read after the backoff", 10*time.Second, func() bool {
+		a.S.WantCanvasPreview(id, f.CanvasUpdated)
+		_, ok := a.S.CanvasPreview(id, f.CanvasUpdated)
+		return ok
+	})
 
 	// Quip refuses the thread: no preview, and no retry
 	const gone = "F0CANVTHMB3"
