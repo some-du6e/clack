@@ -114,7 +114,7 @@ func TestSentAcrossAThreadLoad(t *testing.T) {
 					app.S.UpsertLocal(c.ch, pending)
 				}
 				app.S.AddReplyLocal(c.ch, pending)
-				pm := core.Message{TS: localTS, Channel: c.ch, ThreadTS: rootTS, Subtype: subtype, User: fakeslack.SelfID, Text: text, Pending: true}
+				pm := core.Message{TS: localTS, Channel: c.ch, ThreadTS: rootTS, Subtype: subtype, Broadcast: c.broadcast, User: fakeslack.SelfID, Text: text, Pending: true}
 				if hb := hubOf(app); hb != nil {
 					hb.apply(core.Event{Type: "message", Channel: c.ch, TS: localTS, Msg: &pm, EmitSeq: app.EmitSeq()})
 				}
@@ -155,7 +155,7 @@ func TestSentAcrossAThreadLoad(t *testing.T) {
 				app.S.UpsertLocal(c.ch, confirmed)
 			}
 			app.S.AddReplyLocal(c.ch, confirmed)
-			cm := core.Message{TS: slackTS, Channel: c.ch, ThreadTS: rootTS, Subtype: subtype, User: fakeslack.SelfID, Text: text}
+			cm := core.Message{TS: slackTS, Channel: c.ch, ThreadTS: rootTS, Subtype: subtype, Broadcast: c.broadcast, User: fakeslack.SelfID, Text: text}
 			hubOf(app).apply(core.Event{Type: "sent", Channel: c.ch, TS: slackTS, ThreadTS: rootTS, ReplacesTS: localTS, Msg: &cm, Reply: true, EmitSeq: app.EmitSeq()})
 			release()
 
