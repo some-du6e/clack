@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -391,7 +392,9 @@ type display struct {
 	// cursorRegions are the card blocks' boxes (the default arrow outside
 	// their text), handRects pointer boxes without a click (cursors.go)
 	cursorRegions, handRects []image.Rectangle
-	pills                    []snipPill
+	// refreshAt is when an event card's state next changes (event.go)
+	refreshAt time.Time
+	pills     []snipPill
 	// ells counts the frags that are a clamp's "…" (frag.ell)
 	ells int
 }
@@ -451,6 +454,7 @@ func (d *display) reset() {
 	d.busyBtns = d.busyBtns[:0]
 	d.cursorRegions = d.cursorRegions[:0]
 	d.handRects = d.handRects[:0]
+	d.refreshAt = time.Time{}
 	d.pills = d.pills[:0]
 	d.ells = 0
 }

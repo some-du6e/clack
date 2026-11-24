@@ -2,6 +2,7 @@ package richview
 
 import (
 	"image"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func eventDoc(ev rt.Event) rt.Doc {
 func standup(now time.Time, start, end time.Duration) rt.Event {
 	return rt.Event{ID: "E1", Title: "Standup", Start: now.Add(start).Unix(), End: now.Add(end).Unix(), AttendeeCount: 5,
 		Accepted: []rt.EventGuest{{UserID: "USELF"}, {UserID: "U1"}}, Maybe: 1, No: 1, NoReply: 1, RSVP: "accepted", Attendee: true,
-		AppType: "gcal", MeetingProvider: "zoom", MeetingURL: "https://zoom.test/j", WebLink: "https://cal.test/e"}
+		AppType: "gcal", MeetingProvider: "zoom", MeetingURL: "https://zoom.test/j", WebLink: "https://cal.test/e", CopiesOK: true}
 }
 
 // oneEvent is the view's one event card.
@@ -184,4 +185,108 @@ func TestEventCalendarLabel(t *testing.T) {
 	if got := EventCalendarLabel("ocal_gcc"); got != "View on Outlook Calendar GCC High" {
 		t.Errorf("ocal_gcc: %q", got)
 	}
+}
+
+// Where the Copy row would draw from a copies with no includes, Slack's
+// card throws: the block's error line instead of the card.
+func TestEventCopyErrorLine(t *testing.T) {
+	now := evClock(t)
+	other := standup(now, time.Hour, 2*time.Hour)
+	other.Attendee, other.RSVP, other.CopiesOK = false, "", false
+	v := layoutAt(newTestStyle(), eventDoc(other), Options{}, 600)
+	if len(v.EventRects()) != 0 || !strings.Contains(evWords(v), "could not be displayed") {
+		t.Errorf("%q, want the error line and no card", evWords(v))
+	}
+	// a guest's card reads no copies: it draws
+	if v := layoutAt(newTestStyle(), eventDoc(func() rt.Event { e := standup(now, time.Hour, 2*time.Hour); e.CopiesOK = false; return e }()), Options{}, 600); len(v.EventRects()) != 1 {
+		t.Errorf("a guest's card without copies: no card")
+	}
+}
+
+// An invalid end is moment's invalid date: "Invalid date" for the end
+// time, and never past (Going? stays).
+func TestEventNoEnd(t *testing.T) {
+	now := evClock(t)
+	ev := standup(now, -2*time.Hour, -time.Hour)
+	ev.NoEnd = true
+	v := layoutAt(newTestStyle(), eventDoc(ev), Options{}, 600)
+	if w := evWords(v); !strings.Contains(w, "Invalid date") || !strings.Contains(w, "Going?") || strings.Contains(w, "ENDED") {
+		t.Errorf("%q, want Invalid date, Going? and no ENDED", w)
+	}
+}
+
+// The eighth face's overlay: "+N", "9+" past nine (BaseAvatar's
+// renderAdditionalOverlay).
+func TestEventOverlayCap(t *testing.T) {
+	now := evClock(t)
+	for _, c := range []struct {
+		n    int
+		want string
+	}{{12, "+4"}, {17, "+9"}, {18, "9+"}, {30, "9+"}} {
+		ev := standup(now, time.Hour, 2*time.Hour)
+		ev.Accepted = nil
+		for i := range c.n {
+			ev.Accepted = append(ev.Accepted, rt.EventGuest{UserID: "U" + strconv.Itoa(i)})
+		}
+		v := layoutAt(newTestStyle(), eventDoc(ev), Options{}, 600)
+		if !hasWord(v, c.want) {
+			t.Errorf("%d accepted: no %q in %q", c.n, c.want, evWords(v))
+		}
+	}
+}
+
+// shouldExcludeYear (Nmg4): no year this year, or last year within the 31
+// days before now; a later year keeps it.
+func TestShouldExcludeYear(t *testing.T) {
+	now := time.Date(2027, 1, 5, 12, 0, 0, 0, time.Local)
+	for _, c := range []struct {
+		t    time.Time
+		want bool
+	}{
+		{time.Date(2027, 3, 1, 9, 0, 0, 0, time.Local), true},
+		{time.Date(2026, 12, 28, 9, 0, 0, 0, time.Local), true},
+		{time.Date(2026, 11, 1, 9, 0, 0, 0, time.Local), false},
+		{time.Date(2028, 1, 2, 9, 0, 0, 0, time.Local), false},
+	} {
+		if got := shouldExcludeYear(c.t, now); got != c.want {
+			t.Errorf("%v: %v, want %v", c.t, got, c.want)
+		}
+	}
+}
+
+// The card lays out again when its state changes (it starts: NOW), with
+// one frame asked for then, not a frame loop.
+func TestEventRefresh(t *testing.T) {
+	now := evClock(t)
+	ev := standup(now, time.Minute, time.Hour)
+	hs := newHarness(eventDoc(ev), &evHandler{})
+	hs.w = 600
+	hs.frame()
+	if hasWord(hs.v, "NOW") {
+		t.Fatalf("NOW before it starts")
+	}
+	if at := hs.v.d.refreshAt; !at.Equal(time.Unix(ev.Start, 0)) {
+		t.Errorf("refresh at %v, want the start %v", at, time.Unix(ev.Start, 0))
+	}
+	later := now.Add(2 * time.Minute)
+	eventNow = func() time.Time { return later }
+	hs.frame()
+	hs.frame()
+	if !hasWord(hs.v, "NOW") {
+		t.Errorf("no NOW once it started: %q", evWords(hs.v))
+	}
+}
+
+// Over an event card the pointer is Slack's: the hand on Yes, the text
+// cursor on the title, the default arrow off them.
+func TestEventCursors(t *testing.T) {
+	now := evClock(t)
+	hs := newHarness(eventDoc(standup(now, time.Hour, 2*time.Hour)), &evHandler{})
+	hs.w = 600
+	hs.frame()
+	r := oneEvent(t, hs.v)
+	wantCursor(t, hs, "Yes", rectMid(r.Buttons["rsvp:accepted"]), pointer.CursorPointer)
+	wantCursor(t, hs, "the title", fragMid(findFrag(t, &hs.v.d, "Standup")), pointer.CursorText)
+	// the guests' row right of its two faces (the hover bar sits higher)
+	wantCursor(t, hs, "the guests' row's empty right", image.Pt(r.Card.Max.X-20, r.Card.Min.Y+70), pointer.CursorDefault)
 }

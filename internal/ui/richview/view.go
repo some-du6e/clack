@@ -591,7 +591,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	pointer.CursorText.Add(gtx.Ops)
 	v.regionCursors(gtx) // the card blocks' arrows, their text's I-beam and the charts' items (cursors.go)
 	v.handAreas(gtx, false)
-	v.drawBusy(gtx, st) // the writing buttons whose call is out (writes.go)
+	v.drawBusy(gtx, st)     // the writing buttons whose call is out (writes.go)
+	v.drawEventRefresh(gtx) // an event card's next change of state (event.go)
 	// Element runs (Options.Elements) go last: their input areas must be
 	// above the cursor/hit areas of cards and links registered above.
 	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {

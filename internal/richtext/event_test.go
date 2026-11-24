@@ -84,3 +84,53 @@ func TestEventDecodeErrors(t *testing.T) {
 		t.Errorf("attendees a string: %s, want the error line", dump(bs))
 	}
 }
+
+// The shapes 0lYF reads unlike a plain decode: an invalid start is the
+// error line (shouldExcludeYear throws), unless the event is cancelled (no
+// date then); an invalid end draws, never past; an organizer that's a
+// primitive draws; a null attendee is the error line (attendees.find);
+// copies has an includes as a list or a string, and none without one.
+func TestEventDecodeShapes(t *testing.T) {
+	ev := func(fields string) []Block {
+		return eventOf(t, `{"type":"event","event_id":"E1","event":{"title":"x",`+fields+`}}`)
+	}
+	const rest = `"organizer":{"user_id":"U2"},"attendees":[]`
+	isErr := func(bs []Block) bool { return len(bs) == 1 && bs[0].Kind == Unsupported }
+	if bs := ev(`"start":{},"end":{"date_time":2},` + rest); !isErr(bs) {
+		t.Errorf("no start time: %s, want the error line", dump(bs))
+	}
+	if bs := ev(`"status":"cancelled","start":{},"end":{"date_time":2},` + rest); len(bs) != 1 || bs[0].Kind != EventBlock {
+		t.Errorf("a cancelled event without a start time: %s, want the card", dump(bs))
+	}
+	if bs := ev(`"start":{"date_time":1},"end":{},` + rest); len(bs) != 1 || bs[0].Event == nil || !bs[0].Event.NoEnd {
+		t.Errorf("no end time: %s, want the card with NoEnd", dump(bs))
+	}
+	if bs := ev(`"start":{"date_time":1},"end":{"date_time":2},"organizer":7,"attendees":[]`); len(bs) != 1 || bs[0].Kind != EventBlock {
+		t.Errorf("a primitive organizer: %s, want the card", dump(bs))
+	}
+	if bs := ev(`"start":{"date_time":1},"end":{"date_time":2},"organizer":null,"attendees":[]`); !isErr(bs) {
+		t.Errorf("a null organizer: %s, want the error line", dump(bs))
+	}
+	if bs := ev(`"start":{"date_time":1},"end":{"date_time":2},"organizer":{"user_id":"U2"},"attendees":[null]`); !isErr(bs) {
+		t.Errorf("a null attendee: %s, want the error line", dump(bs))
+	}
+	if bs := ev(`"start":{"date_time":1},"end":{"date_time":2},"organizer":{"user_id":"U2"},"attendees":[7,{"user_id":"U3","rsvp":"declined"}]`); len(bs) != 1 || bs[0].Event == nil || bs[0].Event.No != 1 {
+		t.Errorf("a primitive attendee: %s, want it skipped", dump(bs))
+	}
+	for _, c := range []struct {
+		copies     string
+		ok, copied bool
+	}{
+		{`,"copies":["USELF"]`, true, true},
+		{`,"copies":"xUSELFx"`, true, true}, // String.prototype.includes
+		{`,"copies":[]`, true, false},
+		{``, false, false},
+		{`,"copies":null`, false, false},
+		{`,"copies":7`, false, false},
+	} {
+		bs := ev(`"start":{"date_time":1},"end":{"date_time":2},` + rest + c.copies)
+		if len(bs) != 1 || bs[0].Event == nil || bs[0].Event.CopiesOK != c.ok || bs[0].Event.Copied != c.copied {
+			t.Errorf("copies %q: %s, want ok %v copied %v", c.copies, dump(bs), c.ok, c.copied)
+		}
+	}
+}

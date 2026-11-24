@@ -71,7 +71,7 @@ jobs:
       - name: block kit unit tests
         run: |
           go test -count=1 ./internal/richtext ./internal/fakeslack ./internal/ui/richview ./internal/ui/blockkit ./internal/chart
-          go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources|TestContactCard|TestShareContact|TestSharePrompt|TestEventRSVP|TestEventCopy|TestEventMenu|TestMenuCursors' ./internal/ui/popups
+          go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources|TestContactCard|TestShareContact|TestSharePrompt|TestEventRSVP|TestEventCopy|TestEventMenu|TestEventWriteGuard|TestEventIdentity|TestMenuCursors' ./internal/ui/popups
           go test -count=1 -run 'TestContactMember' ./internal/store
           go test -count=1 -run 'TestCodeSummaryTimeline' ./internal/core
           go test -count=1 -run 'TestBroadcastPreambleTimelineRoot' ./internal/ui/messages
