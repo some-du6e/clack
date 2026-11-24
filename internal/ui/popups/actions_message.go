@@ -166,7 +166,6 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	// (null on isEphemeral unless it's a saved to-do to move), reminder
 	// (canAddReminder) or Copy link (canCopyLink): actions_rules.go
 	app := h.Core()
-	eph := isEphemeral(app, &m)
 	if MarkUnreadShown(app, &m, inThread) { // QRkh / RjOa: canMarkUnread and the redesign's exclusions
 		items = append(items, markUnread)
 	}
