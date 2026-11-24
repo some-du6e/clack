@@ -214,8 +214,8 @@ func TestImageActionsNoMenuHost(t *testing.T) {
 // TestImageActionsGroupHolds: the group stays up while its More menu is
 // open (p-attachment_image_actions--menu-open: the menu's scrim takes
 // the pointer and the View is left) until the host says the menu went,
-// and over a button that stands out of a small image (:hover holds over
-// the container's own buttons).
+// and over a button that stands out of a short image, here below it
+// over the next block (:hover holds over the container's own buttons).
 func TestImageActionsGroupHolds(t *testing.T) {
 	h := &imgMenus{}
 	hs := &harness{st: newTestStyle(), v: New(kitDoc(t, imgBlock), Options{Channel: "C1", TS: "1.0"}), h: h, w: 700}
@@ -238,9 +238,11 @@ func TestImageActionsGroupHolds(t *testing.T) {
 		t.Error("the group stayed up after its menu went")
 	}
 
-	// a 50x40 image: the 72px group stands out of its left edge
-	small := strings.Replace(strings.Replace(imgBlock, `"image_width":400`, `"image_width":50`, 1), `"image_height":200`, `"image_height":40`, 1)
-	hs = &harness{st: newTestStyle(), v: New(kitDoc(t, small), Options{Channel: "C1", TS: "2.0"}), h: h, w: 700}
+	// a 200x24 image over a section: the 40px group stands out of its
+	// bottom, over the section
+	short := strings.Replace(strings.Replace(imgBlock, `"image_width":400`, `"image_width":200`, 1), `"image_height":200`, `"image_height":24`, 1)
+	short = strings.TrimSuffix(short, "]") + `,{"type":"section","block_id":"s","text":{"type":"mrkdwn","text":"after the image"}}]`
+	hs = &harness{st: newTestStyle(), v: New(kitDoc(t, short), Options{Channel: "C1", TS: "2.0"}), h: h, w: 700}
 	hs.frame()
 	img = imgsWithURL(&hs.v.d, "https://img.test/a.png")[0]
 	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
