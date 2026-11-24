@@ -5107,6 +5107,47 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # scroll-cpu (2026-11-24): TestPrefsLibraryScrollCost read 10.6 ms at the
+  # median against 8 on select-line-end's full-test (45418696238), its
+  # frames 5.5 to 24 ms: they waited for a CPU other packages' tests had.
+  # A frame's cost is its layout thread's CPU time now (threadCPU). COUNT
+  # runs; then, not gating, runs beside a busy loop on every CPU, which
+  # log the CPU and the clock medians of the same frames. Dispatch with
+  # only=scroll-cpu.
+  scroll-cpu:
+    if: ${{ !inputs.only || startsWith('scroll-cpu', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the plugin library scrolled, COUNT runs
+        shell: bash
+        run: xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestPrefsLibraryScrollCost$' ./internal/ui | grep -E 'prefs_scroll_cost_test.go:[0-9]+: (a frame|[0-9]+ notches|a scroll)|^(--- |ok|FAIL|PASS)'
+      - name: beside a busy loop on every CPU, 3 runs (not gating)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          for i in $(seq 1 "$(nproc)"); do (while :; do :; done) & done
+          xvfb-run -a go test -count=3 -v -timeout 12m -run '^TestPrefsLibraryScrollCost$' ./internal/ui | grep -E 'prefs_scroll_cost_test.go:[0-9]+: (a frame|[0-9]+ notches|a scroll)|^(--- |ok|FAIL|PASS)'
+          rc=${PIPESTATUS[0]}
+          kill $(jobs -p) 2>/dev/null
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # flakes-1122: TestLeftComposerLetsGoOfFocus (the reopened thread's reply
   # box) and TestFilesTabHideAndLinkDetails (a header read out across a
   # Hide tab, its members call held: its race forced every run);
@@ -7158,6 +7199,7 @@ jobs:
       - counts-baseline
       - apt-stall
       - pagekey-day
+      - scroll-cpu
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
