@@ -219,6 +219,7 @@ on:
       - "internal/jsrt/loop.go"
       - "internal/taut/taut.go"
       - "internal/core/realtime_msgs_test.go"
+      - "internal/core/history_changed_test.go"
       - "internal/core/lists_test.go"
       - "internal/ui/channels_audit_test.go"
       - "internal/ui/listview/render_test.go"
