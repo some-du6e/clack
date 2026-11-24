@@ -30,6 +30,27 @@ type cmdHost struct {
 	mu       sync.Mutex
 	overlays []popups.Overlay
 	invites  []string
+	navs     []string
+	toggles  int // ToggleKeyboardShortcuts
+	searches int // OpenSearchFromCommand
+}
+
+func (h *cmdHost) Navigate(r string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.navs = append(h.navs, r)
+}
+
+func (h *cmdHost) ToggleKeyboardShortcuts() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.toggles++
+}
+
+func (h *cmdHost) OpenSearchFromCommand() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.searches++
 }
 
 func (h *cmdHost) ShowOverlay(o popups.Overlay) {
