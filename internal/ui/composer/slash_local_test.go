@@ -59,11 +59,11 @@ func localComposer(t *testing.T, ts string, seed ...func(*store.Store)) (*Compos
 }
 
 // waitUI runs what the command queued for the UI goroutine until cond
-// holds.
+// holds (a box's own work too: no composer is laid out here).
 func waitUI(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
-		runRestores()
+		runRestoresIn(nil, true)
 		if cond() {
 			return
 		}
@@ -101,6 +101,15 @@ func (h *cmdHost) navCount() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.navs)
+}
+
+func (h *cmdHost) lastNav() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.navs) == 0 {
+		return ""
+	}
+	return h.navs[len(h.navs)-1]
 }
 
 // slackbotSays waits for Slackbot's last temporary message in ch to be
@@ -148,22 +157,20 @@ func TestSlashSearchRunsOrOpens(t *testing.T) {
 		want string
 	}{
 		{cmdDoc("/search zephyr checklist"), "zephyr checklist"},
-		{cmdDoc("/s   zephyr    checklist  "), "zephyr checklist"},
+		{cmdDoc("/s   zephyr    launch  "), "zephyr launch"},
 		{cmdDoc("/search from:", bobbyChip, " \"launch  plan\""), "from:<@" + tBobby + "> \"launch  plan\""},
 		{cmdDoc("/search in:", &Atom{Kind: AtomChannel, ID: tChGen, Text: "#general"}), "in:<#" + tChGen + "|general>"},
 	} {
 		txt := tc.d.Text()
+		navs, saves := h.navCount(), len(fs.called("search.save"))
 		c.ed.SetDoc(tc.d)
 		c.submit()
 		nav := "search?q=" + url.QueryEscape(tc.want)
-		waitUI(t, nav, func() bool { return h.sawNav(nav) })
+		// this submit's own navigation and search.save, not an earlier one's
+		waitUI(t, nav, func() bool { return h.navCount() == navs+1 && h.lastNav() == nav })
 		waitUI(t, "search.save", func() bool {
-			for _, p := range fs.called("search.save") {
-				if p.Get("terms") == tc.want {
-					return true
-				}
-			}
-			return false
+			ss := fs.called("search.save")
+			return len(ss) == saves+1 && ss[saves].Get("terms") == tc.want
 		})
 		if _, n := h.counts(); n != 0 {
 			t.Errorf("%q opened the popover", txt)
@@ -464,4 +471,155 @@ func TestSlashLocalHelpers(t *testing.T) {
 	if got := searchQueryOf(rest("from:", bobbyChip, "  zephyr   ", "“go  live”")); got != "from:<@"+tBobby+"> zephyr “go  live”" {
 		t.Errorf("searchQueryOf %q", got)
 	}
+}
+
+// TestSlashMsgInTarget: /msg's message does in the conversation it goes
+// to what a send there does. That conversation's composer gets the
+// message's jump (OnSend with its client id) and the unsend window, the
+// box /msg was typed in neither; a command the message turns out to be
+// keeps its input in that composer (executeCommand's keep_input: its own
+// channel's message pane input); a failed send puts the /msg command
+// there too.
+func TestSlashMsgInTarget(t *testing.T) {
+	c, h, fs := localComposer(t, "")
+	clearDraft(tBobbyDM, "")
+	dm := New(h, tBobbyDM, "")
+	t.Cleanup(func() {
+		dm.Close()
+		clearDraft(tBobbyDM, "")
+	})
+	var sends []string
+	dm.OnSend = func(cid string, files bool) { sends = append(sends, cid) } // the UI goroutine's (waitUI)
+	c.OnSend = func(string, bool) { t.Error("the box /msg was typed in jumped") }
+	c.ed.SetDoc(cmdDoc("/msg ", bobbyChip, " hello there"))
+	c.submit()
+	waitUI(t, "the DM's jump and unsend window", func() bool { return len(sends) == 1 && !dm.unsendBy.IsZero() })
+	if p := fs.called("chat.postMessage"); len(p) != 1 || sends[0] == "" || p[0].Get("client_msg_id") != sends[0] {
+		t.Errorf("jumped to %q, the post %v", sends[0], p)
+	}
+	if !c.unsendBy.IsZero() {
+		t.Error("the box /msg was typed in armed its unsend window")
+	}
+
+	// the message is a command answering keep_input
+	fs.answer("chat.command", map[string]any{"ok": true, "keep_input": true})
+	c.ed.SetDoc(cmdDoc("/msg ", bobbyChip, " /giphy cats"))
+	c.submit()
+	waitUI(t, "the command back in the DM's box", func() bool { return dm.ed.Doc().Text() == "/giphy cats" })
+	if !c.ed.Doc().Empty() {
+		t.Errorf("the box /msg was typed in holds %q", c.ed.Doc().Text())
+	}
+
+	// the send fails: Slackbot in the DM, the /msg command in its box
+	dm.ed.SetDoc(NewDoc())
+	fs.answer("chat.postMessage", map[string]any{"ok": false, "error": "msg_too_long"})
+	d := cmdDoc("/msg ", bobbyChip, " hello")
+	typed := d.Text()
+	c.ed.SetDoc(d)
+	c.submit()
+	waitUI(t, "the command in the DM's box", func() bool {
+		m, ok := slackbotSaid(c.api.a, tBobbyDM)
+		return ok && m.Text == "Hmm, something went wrong. Try again?" && dm.ed.Doc().Text() == typed
+	})
+	if !c.ed.Doc().Empty() {
+		t.Errorf("the box /msg was typed in holds %q", c.ed.Doc().Text())
+	}
+}
+
+// TestCommandNavigatesFromItsBox: a command's navigation runs in the
+// Layout of the box it was typed in (laterHere), where the host knows
+// that box's view container, not in whichever box drains the queue first.
+func TestCommandNavigatesFromItsBox(t *testing.T) {
+	c, h, _ := localComposer(t, "")
+	clearDraft(tChRand, "")
+	other := New(h, tChRand, "")
+	t.Cleanup(func() {
+		other.Close()
+		clearDraft(tChRand, "")
+	})
+	c.ed.SetDoc(cmdDoc("/open"))
+	c.submit()
+	queued := func() bool { return queuedFor(c) }
+	for end := time.Now().Add(5 * time.Second); !queued() && time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		runRestoresIn(other, false)
+	}
+	if !queued() {
+		t.Fatal("/open queued nothing for its box")
+	}
+	runRestoresIn(other, false)
+	runRestores()
+	if n := h.navCount(); n != 0 {
+		t.Fatalf("another box's Layout navigated (%d)", n)
+	}
+	runRestoresIn(c, false)
+	if !h.sawNav("directories?tab=channels") {
+		t.Errorf("its own Layout didn't navigate: %v", h.navs)
+	}
+}
+
+// TestSlashFeedbackDisabledOrg: under feedback_disabled_orgs' treatment
+// /feedback is UNKNOWN_COMMAND (isSlashCommandEnabled): Slackbot's "not a
+// valid command", no dialog, no chat.command.
+func TestSlashFeedbackDisabledOrg(t *testing.T) {
+	c, h, fs := localComposer(t, "")
+	c.api.a.SetExperimentGroup(popups.ExpSlashFeedbackInModal, "on")
+	c.api.a.SetExperimentGroup("feedback_disabled_orgs", "treatment")
+	c.ed.SetDoc(cmdDoc("/feedback the sidebar"))
+	c.submit()
+	slackbotSays(t, c, tChGen, "*/feedback* is not a valid command. In Slack, all messages that start with the \"/\" character are interpreted as commands.\n\n"+
+		"If you are trying to send a message and not run a command, try preceding the \"/\" with an empty space.", "/feedback the sidebar")
+	if _, ok := shown[*popups.UserFeedbackModal](h); ok {
+		t.Error("the dialog opened")
+	}
+	noCommandCalls(t, fs)
+}
+
+// TestSlashCollapseExpand: /collapse and /expand run in the client (no
+// chat.command): in the channel's box every held message's previews
+// collapse (or expand) under the box's view context, Channel, and
+// Slackbot says so for good; in a thread's box only the thread's, under
+// Thread, and Slackbot says nothing.
+func TestSlashCollapseExpand(t *testing.T) {
+	const old, reply = "1690000000.000200", "1690000000.000300"
+	seed := func(s *store.Store) {
+		s.PrependOlder(tChGen, []slack.Message{{Type: "message", TS: old, User: "UALICE", Files: []slack.File{{ID: "F0SHOT"}}}}, false)
+		s.SetThread(tChGen, tReply, []slack.Message{{Type: "message", TS: tReply, User: "UALICE", Text: "root", ThreadTS: tReply},
+			{Type: "message", TS: reply, User: "UALICE", ThreadTS: tReply, Files: []slack.File{{ID: "F0REPLY"}}}})
+	}
+	c, _, fs := localComposer(t, "", seed)
+	expanded := func(k string) (bool, bool) { return expandedIn(c.api.a, k) }
+	chKey := "inline_files_msg_1690000000_000200F0SHOTChannel"
+	replyKey := "inline_files_msg_1690000000_000300F0REPLYChannel"
+	c.ed.SetDoc(cmdDoc("/collapse"))
+	c.submit()
+	slackbotSays(t, c, tChGen, "I’ve collapsed all files in this channel for you.", "")
+	for _, k := range []string{chKey, replyKey} {
+		if on, ok := expanded(k); !ok || on {
+			t.Errorf("/collapse: %s %v %v", k, on, ok)
+		}
+	}
+	if !c.ed.Doc().Empty() {
+		t.Errorf("the box holds %q", c.ed.Doc().Text())
+	}
+	c.ed.SetDoc(cmdDoc("/Expand"))
+	c.submit()
+	slackbotSays(t, c, tChGen, "I’ve expanded all files in this channel for you.", "")
+	if on, _ := expanded(chKey); !on {
+		t.Error("/expand didn't expand")
+	}
+	noCommandCalls(t, fs)
+
+	tc, _, tfs := localComposer(t, tReply, seed)
+	ta := tc.api.a
+	threadKey := "inline_files_msg_1690000000_000300F0REPLYThread"
+	tc.ed.SetDoc(cmdDoc("/collapse"))
+	tc.submit()
+	waitUI(t, "the thread's collapse", func() bool { on, ok := expandedIn(ta, threadKey); return ok && !on })
+	if _, ok := expandedIn(ta, "inline_files_msg_1690000000_000200F0SHOTThread"); ok {
+		t.Error("the thread's /collapse reached a channel message")
+	}
+	if m, ok := slackbotSaid(ta, tChGen); ok && strings.Contains(m.Text, "collapsed all files") {
+		t.Errorf("Slackbot spoke for a thread's /collapse: %q", m.Text)
+	}
+	noCommandCalls(t, tfs)
 }

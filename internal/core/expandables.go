@@ -386,8 +386,9 @@ func (a *App) readTeamSoon(team string) {
 // the command's view context, the composer's) set to on at once
 // (bulkSetExpanded). Outside a thread Slackbot says so in ch
 // (addEphemeralFeedback with temporary false: a message of Slackbot's
-// the next command doesn't take away); in a thread it says nothing.
-func (a *App) ExpandCommand(ch, threadTS, viewContext string, on bool) {
+// the next command doesn't take away); in a thread it says nothing. It
+// returns that message's ts ("" for none).
+func (a *App) ExpandCommand(ch, threadTS, viewContext string, on bool) string {
 	keys := map[string]bool{}
 	a.S.VisitMessages(ch, func(string) {}, func(m *slack.Message) {
 		if threadTS != "" && m.ThreadTS != threadTS {
@@ -399,13 +400,13 @@ func (a *App) ExpandCommand(ch, threadTS, viewContext string, on bool) {
 	})
 	a.BulkSetExpanded(keys)
 	if threadTS != "" {
-		return
+		return ""
 	}
 	text := "I’ve collapsed all files in this channel for you."
 	if on {
 		text = "I’ve expanded all files in this channel for you."
 	}
-	a.CommandNote(ch, text)
+	return a.CommandNote(ch, text)
 }
 
 // CommandNote is addEphemeralFeedback with temporary false: the

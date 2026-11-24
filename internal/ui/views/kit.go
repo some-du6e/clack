@@ -399,6 +399,10 @@ type base struct {
 
 func newBase(h Host) base { return base{h: h, rich: richCache{}} }
 
+// newBaseIn is newBase for a view whose messages Slack's list passes
+// viewCtx.
+func newBaseIn(h Host, viewCtx string) base { return base{h: h, rich: richCache{}, viewCtx: viewCtx} }
+
 // frame refreshes per-frame state; call at the top of Layout.
 func (b *base) frame() {
 	b.th = b.h.Theme()

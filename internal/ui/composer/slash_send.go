@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/emoji"
@@ -52,6 +53,10 @@ type commandUI struct {
 	// viewContext is the composer's view as prepareAndSendMessage gets
 	// it (executeCommand passes it on: /collapse and /expand's keys)
 	viewContext string
+	// target runs f with channel ch's composer on the UI goroutine once
+	// it is mounted (a few seconds at most): what a /msg message's send
+	// does there (its jump, its unsend window)
+	target func(ch string, f func(t *Composer))
 }
 
 // commandUI is the composer's.
@@ -79,8 +84,8 @@ func (c *Composer) commandUI() *commandUI {
 			return ok
 		},
 		search: func(q string, commit bool) bool {
-			if commit {
-				c.later(func() { popups.SubmitSearch(c.h, q) })
+			if commit { // the results page: in this box's view container
+				c.laterHere(func() { popups.SubmitSearch(c.h, q) })
 				return true
 			}
 			o, ok := c.h.(searchOpener)
@@ -90,7 +95,7 @@ func (c *Composer) commandUI() *commandUI {
 			return ok
 		},
 		show: func(browse string, t core.LocalTarget) {
-			c.later(func() {
+			c.laterHere(func() { // navigate from this box's view container
 				switch {
 				case t.Browse:
 					c.h.Navigate(browse)
@@ -109,13 +114,28 @@ func (c *Composer) commandUI() *commandUI {
 				}
 			})
 		},
-		viewContext: c.viewContext(),
+		viewContext: c.zhyrViewContext(),
+		target: func(ch string, f func(t *Composer)) {
+			// ch's composer may mount only once the navigation to it ran
+			end := time.Now().Add(3 * time.Second)
+			var try func()
+			try = func() {
+				if t := liveComposer(draftKey(ch, "")); t != nil && t.edit == nil {
+					f(t)
+				} else if time.Now().Before(end) {
+					c.later(try)
+				}
+			}
+			c.later(try)
+		},
 	}
 }
 
-// viewContext is the composer's view context (Zhyr Y): the channel's
-// message pane, a thread pane, the Threads view's reply box.
-func (c *Composer) viewContext() string {
+// zhyrViewContext is the composer's view as Slack's view context enum
+// (Zhyr Y) names it, the one expandable keys end with: the channel's
+// message pane, a thread pane, the Threads view's reply box. (Its
+// viewContext prop, slack.go, keeps the plugins' names.)
+func (c *Composer) zhyrViewContext() string {
 	switch {
 	case c.InThreadsView:
 		return expandable.ViewThreads

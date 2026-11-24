@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/taut"
@@ -118,6 +119,10 @@ func (j *sendJob) localCommand(ctx context.Context, a prepareSendArgs, q qDelta,
 		j.api.a.ExpandCommand(ch, ts, j.ui.viewContext, j.api.a.LocalCommand(args.Cmd) == "/expand")
 		return true, nil
 	case "/feedback":
+		if err := j.api.a.FeedbackCommandErr(args.Cmd); err != nil { // isSlashCommandEnabled: feedback_disabled_orgs
+			j.api.clearCommandFeedback(ts != "")
+			return true, failed(err)
+		}
 		if j.ui.feedback == nil || j.api.a.Experiment(popups.ExpSlashFeedbackInModal) != "on" {
 			return false, nil
 		}
@@ -128,14 +133,32 @@ func (j *sendJob) localCommand(ctx context.Context, a prepareSendArgs, q qDelta,
 	return false, nil
 }
 
-// msgSend is /msg's prepareAndSendMessage of the message into ch: a
-// failure is Slackbot's "Hmm, something went wrong. Try again?" in ch,
-// the command (orig, the processed delta) put in ch's composer.
+// msgSend is /msg's prepareAndSendMessage of the message into ch: what
+// its send does happens in ch (sendMessage's jumpToTimestamp there, its
+// unsend window, a command's keep_input in ch's message pane input, as
+// executeCommand puts it into its own channel's); a failure is
+// Slackbot's "Hmm, something went wrong. Try again?" in ch, the command
+// (orig, the processed delta) put in ch's composer.
 func (j *sendJob) msgSend(ctx context.Context, ch string, msg, orig qDelta) {
 	d, _ := qToDoc(qNormalize(msg))
 	no := false
 	args := prepareSendArgs{ChannelID: ch, Delta: d.Delta(), Text: d.Mrkdwn(), Blocks: d.RichTextBlocks(), EnableSlashCommands: &no}
-	mj := &sendJob{api: j.api, ch: ch, o: &outgoing{doc: d, text: args.Text, blocks: args.Blocks}, store: j.store, ui: j.ui}
+	ui := *j.ui
+	ui.keep = func(kd *Doc) {
+		if j.ui.contents != nil {
+			j.ui.contents(ch, kd)
+		}
+	}
+	mj := &sendJob{api: j.api, ch: ch, o: &outgoing{doc: d, text: args.Text, blocks: args.Blocks}, store: j.store, ui: &ui}
+	if j.ui.target != nil {
+		mj.sent = func(cid string, files bool) {
+			j.ui.target(ch, func(t *Composer) {
+				if t.OnSend != nil {
+					t.OnSend(cid, files)
+				}
+			})
+		}
+	}
 	// the command's delta was processed once already (submit's pass): the
 	// message's job doesn't run the processor over it again
 	mj.handed, _ = json.Marshal(args.Delta)
@@ -146,6 +169,9 @@ func (j *sendJob) msgSend(ctx context.Context, ch string, msg, orig qDelta) {
 		err = mj.prepareAndSend(ctx, args)
 	}
 	if err == nil {
+		if mj.posted.Load() && j.ui.target != nil { // updateMessageEligibleForUnsending in ch
+			j.ui.target(ch, func(t *Composer) { t.unsendBy = time.Now().Add(unsendWindow) })
+		}
 		return
 	}
 	j.api.commandFeedback(ch, "", "Hmm, something went wrong. Try again?")

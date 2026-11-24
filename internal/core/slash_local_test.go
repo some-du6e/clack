@@ -208,3 +208,43 @@ func TestMsgCommand(t *testing.T) {
 		t.Errorf("join channel_not_found: %v", err)
 	}
 }
+
+// A channel the viewer isn't in, picked from the composer's # list: only
+// the list's answer (edge channels/search) carries it. Slack's
+// getRemoteChannels upserts the hits into its channels store, so /join,
+// /open and /msg find it: /join joins it and shows it, /msg joins it
+// too, and another workspace's hit is turned down as such (not offered
+// the create-channel modal under an existing channel's name).
+func TestPickedChannelOpens(t *testing.T) {
+	ctx := context.Background()
+	a, f := slashLocalApp(t)
+	f.reply["search"] = `{"ok":true,"results":[` +
+		`{"id":"C0PICKED01","name":"plans","is_channel":true,"is_member":false,"num_members":12},` +
+		`{"id":"C0PICKED02","name":"plans-later","is_channel":true,"is_member":false},` +
+		`{"id":"C0PICKEDX1","name":"plans-there","is_channel":true,"is_member":false,"context_team_id":"T0OTHERWS1"}]}`
+	if _, ok := a.S.Conv("C0PICKED01"); ok {
+		t.Fatal("the hit is in the sidebar set before the search")
+	}
+	hits, err := a.AutocompleteChannels(ctx, "plans")
+	if err != nil || len(hits) != 3 {
+		t.Fatalf("hits %+v %v", hits, err)
+	}
+	if _, ok := a.S.Conv("C0PICKED01"); ok {
+		t.Error("the search put a channel the viewer isn't in into the sidebar set")
+	}
+	f.reply["conversations.join"] = `{"ok":true,"channel":{"id":"C0PICKED01","name":"plans","is_channel":true,"is_member":true}}`
+	if tg, err := a.OpenCommand(ctx, "/join", mention("C0PICKED01"), "plans"); err != nil || tg.Conv != "C0PICKED01" || tg.Create ||
+		f.last("conversations.join").Get("channel") != "C0PICKED01" {
+		t.Errorf("/join a picked channel: %+v %v, joins %d", tg, err, countCalls(f, "conversations.join"))
+	}
+	f.reply["conversations.join"] = `{"ok":true,"channel":{"id":"C0PICKED02","name":"plans-later","is_channel":true,"is_member":true}}`
+	if tg, err := a.MsgCommand(ctx, "/msg", mention("C0PICKED02"), true); err != nil || tg.Conv != "C0PICKED02" ||
+		f.last("conversations.join").Get("channel") != "C0PICKED02" {
+		t.Errorf("/msg a picked channel: %+v %v", tg, err)
+	}
+	joins := countCalls(f, "conversations.join")
+	if _, err := a.OpenCommand(ctx, "/join", mention("C0PICKEDX1"), "plans-there"); feedbackOf(err) != "*/join* can’t open or join channels outside this workspace." ||
+		countCalls(f, "conversations.join") != joins {
+		t.Errorf("another workspace's hit: %v", err)
+	}
+}

@@ -194,10 +194,8 @@ type savedBase struct {
 }
 
 func newSavedBase(h Host) savedBase {
-	b := newBase(h)
-	b.viewCtx = expandable.ViewSavedForLater // its previews' expandables (expander.go)
 	return savedBase{
-		base:  b,
+		base:  newBaseIn(h, expandable.ViewSavedForLater), // its previews' expandables (expander.go)
 		convs: map[string]core.ConvRef{},
 		rows:  map[string]*laterRow{},
 		gone:  map[string]time.Time{},

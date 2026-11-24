@@ -3,6 +3,7 @@ package blockkit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"net/mail"
@@ -1031,7 +1032,7 @@ func errMessage(err error) string {
 	if ae, ok := err.(*core.ActionError); ok {
 		return ae.Error()
 	}
-	if err == context.DeadlineExceeded {
+	if errors.Is(err, context.DeadlineExceeded) { // a 429's wait outlasting it too (slack.RateLimitWait)
 		return core.ActionErrorText("post_error")
 	}
 	return core.ActionErrorText("")

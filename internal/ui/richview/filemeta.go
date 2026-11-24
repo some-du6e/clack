@@ -3,7 +3,6 @@ package richview
 import (
 	"image"
 	"strconv"
-	"strings"
 
 	"gioui.org/font"
 

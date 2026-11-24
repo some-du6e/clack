@@ -547,6 +547,13 @@ func (a *App) channelHits(hs []slack.ChannelHit) []ChannelHit {
 		if h.Topic != nil {
 			v.Topic = h.Topic.Value
 		}
+		// Slack upserts the hits into its channels store (getRemoteChannels:
+		// "Fetches and upserts channels by query"), so a channel picked
+		// from the # list is one /open, /join and /msg find (getChannelById)
+		// though the viewer isn't in it: an ext conversation here, unless
+		// the store has its own copy
+		a.S.AddExtConv(slack.Conversation{ID: h.ID, Name: h.Name, IsChannel: h.IsChannel || !h.IsPrivate, IsPrivate: h.IsPrivate,
+			IsArchived: h.IsArchived, IsMember: v.IsMember, IsGeneral: h.IsGeneral, NumMembers: v.NumMembers, ContextTeamID: h.ContextTeamID})
 		a.S.PutName(h.ID, h.Name)
 		out = append(out, v)
 	}

@@ -77,15 +77,20 @@ func (a *App) CanCreateChannels(ctx context.Context) bool {
 // {product_area, product_feedback, source: slash_feedback} (the fetcher
 // sends its camelCase arguments in snake case).
 func (a *App) SubmitUserFeedback(ctx context.Context, area, feedback string) error {
-	return a.C.Call(ctx, "feedback.submitUserFeedback", url.Values{"product_area": {area}, "product_feedback": {feedback},
+	// the viewer's own Submit: always a request, never the guard's copy
+	// of the last failure (Slack's Submit always sends)
+	return a.C.Call(slack.NoBackoff(ctx), "feedback.submitUserFeedback", url.Values{"product_area": {area}, "product_feedback": {feedback},
 		"source": {"slash_feedback"}}, nil)
 }
 
 // RateLimited reports a failure the feedback modal calls the rate limit:
 // HTTP 429, or Slack's ratelimited answer with 200
-// (HTTP_429_TOO_MANY_REQUESTS, HTTP_200_RATELIMITED).
+// (HTTP_429_TOO_MANY_REQUESTS, HTTP_200_RATELIMITED), a 429 its
+// Retry-After outlasted the call's time for too (Slack's queue retries
+// and then rejects with the 429).
 func RateLimited(err error) bool {
-	if errors.Is(err, slack.RateLimited) {
+	var rw *slack.RateLimitWait
+	if errors.Is(err, slack.RateLimited) || errors.As(err, &rw) {
 		return true
 	}
 	var he *slack.HTTPError
@@ -262,4 +267,15 @@ func (a *App) joinToSwitch(ctx context.Context, id string, c inviteConv) error {
 		return nil
 	}
 	return err
+}
+
+// FeedbackCommandErr is isSlashCommandEnabled's /feedback rule (P+cE mE,
+// 9lMd v): in an org under feedback_disabled_orgs' treatment the command
+// is UNKNOWN_COMMAND, before anything runs it (the dialog, or the Help
+// pane's form with the experiment off). nil: it may run.
+func (a *App) FeedbackCommandErr(cmd string) error {
+	if a.Experiment("feedback_disabled_orgs") == "treatment" {
+		return &CommandError{Command: cmd, Kind: CmdUnknown}
+	}
+	return nil
 }
