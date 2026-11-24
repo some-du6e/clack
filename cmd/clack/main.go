@@ -621,8 +621,8 @@ func main() {
 		// Slack's does on quit (ui.Options.InstallUpdateOnQuit); not when
 		// Windows ends the session, which may kill the installer or the
 		// swap partway: the next quit installs it
-		if strings.Contains(why, "(WM_ENDSESSION)") {
-			log.Print("update: nothing installs as the Windows session ends")
+		if err := quitInstallBlocked(why); err != nil {
+			log.Printf("update: nothing installs on this quit: %v", err)
 		} else if tag, err := a.InstallUpdateOnQuit(); tag != "" {
 			switch {
 			case errors.Is(err, errNotOnQuit):

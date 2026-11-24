@@ -463,6 +463,12 @@ func CleanStages(target string) {
 	}
 }
 
+// SessionEndMark ends the exit reason of a quit Windows' WM_ENDSESSION
+// started (the tray's OnSessionEnd: sign-out, shut down, restart, an
+// installer's Restart Manager). Windows ends the process, and any helper
+// still in that session, soon after: nothing should install then.
+const SessionEndMark = "(WM_ENDSESSION)"
+
 // ErrNeedsUser: PrepareQuiet found the update needs the user (it would
 // have opened the package for them to install by hand).
 var ErrNeedsUser = errors.New("update: the user has to install this one")

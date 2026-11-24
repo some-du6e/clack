@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -186,6 +187,19 @@ func (u *updates) install(info ui.UpdateInfo) error {
 	return err
 }
 
+// quitInstallBlocked is why a quit with exit reason why installs nothing,
+// or nil: a quit as Windows ends the session (desktop.SessionEndMark) may
+// have its installer or swap killed halfway, Clack left broken, so the
+// update waits for the next quit (or Install and restart). The quit then
+// gets 3 s before Windows ends the process; the helper would be ended
+// with the session too.
+func quitInstallBlocked(why string) error {
+	if strings.Contains(why, desktop.SessionEndMark) {
+		return fmt.Errorf("%w: Windows is ending the session", errNotOnQuit)
+	}
+	return nil
+}
+
 // errNotOnQuit: installOnQuit ran nothing, and why.
 var errNotOnQuit = errors.New("update: not installed on quit")
 
@@ -196,13 +210,7 @@ var errNotOnQuit = errors.New("update: not installed on quit")
 // helper on what stageForQuit staged (quietKind installs); anything else
 // is errNotOnQuit with the reason, and waits.
 func (u *updates) installOnQuit(info ui.UpdateInfo) error {
-	// Only the macOS app for now: its swap is the path files-card's review
-	// read (wf_9ce08182-06e). Windows' silent installer and portable swap,
-	// and the AppImage's, wait for a review of the quits they would run
-	// under: a quit as Windows ends the session (WM_ENDSESSION, the tray's
-	// OnSessionEnd) can kill an installer halfway. They keep Install and
-	// restart.
-	if u.inst.Kind != desktop.KindMacApp {
+	if !quietKind(u.inst.Kind) {
 		return fmt.Errorf("%w: a %q install waits for Install and restart", errNotOnQuit, u.inst.Kind)
 	}
 	u.mu.Lock()

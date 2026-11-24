@@ -93,3 +93,32 @@ func TestInstallOnQuitNeedsAStage(t *testing.T) {
 		t.Errorf("downloaded, not staged: %v, want errNotOnQuit (nothing staged)", err)
 	}
 }
+
+// Windows' silent installer, the portable exe's swap and the AppImage's
+// install on quit again, but never on a quit Windows' WM_ENDSESSION
+// started (sign-out, shut down, restart, Restart Manager): Windows ends
+// the process and the session's helper with it, and an installer killed
+// halfway leaves Clack broken.
+func TestNoInstallOnQuitAsTheSessionEnds(t *testing.T) {
+	for _, why := range []string{
+		"Windows is signing the user out " + desktop.SessionEndMark,
+		"Windows is shutting down or restarting, forced " + desktop.SessionEndMark,
+		"an installer or update is replacing Clack's files (Windows Restart Manager closed it) " + desktop.SessionEndMark + " (render: device lost)",
+	} {
+		if err := quitInstallBlocked(why); !errors.Is(err, errNotOnQuit) {
+			t.Errorf("%q: %v, want errNotOnQuit", why, err)
+		}
+	}
+	for _, why := range []string{"Quit", "the window closed", "SIGTERM"} {
+		if err := quitInstallBlocked(why); err != nil {
+			t.Errorf("%q: %v, want it to install", why, err)
+		}
+	}
+	// the kinds that swap in silently go on quit once staged
+	for _, k := range []desktop.InstallKind{desktop.KindMacApp, desktop.KindWinInstaller, desktop.KindWinPortable, desktop.KindAppImage} {
+		u := &updates{inst: desktop.Install{Kind: k}, pkg: map[string]desktop.Package{}, plans: map[string]desktop.Plan{}}
+		if err := u.installOnQuit(ui.UpdateInfo{Tag: "v9.9.9"}); !errors.Is(err, errNotOnQuit) || !strings.Contains(err.Error(), "nothing staged") {
+			t.Errorf("%s, nothing staged: %v, want it to wait only for its stage", k, err)
+		}
+	}
+}

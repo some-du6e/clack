@@ -532,7 +532,7 @@ func endSessionReason(lp uintptr) string {
 	if lp&critical != 0 {
 		why += ", forced"
 	}
-	return why + " (WM_ENDSESSION)"
+	return why + " " + SessionEndMark
 }
 
 // Close removes the icon and stops the tray thread.
