@@ -16,6 +16,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/quip"
 )
 
 // defaultLinePos is a point on headEmpty's default line: 20px under the
@@ -32,37 +33,18 @@ func defaultLinePos(r *pointerRig) (x, y float32) {
 // sends nothing and keeps the default line; typing replaces it with an
 // ordinary section.
 func TestDefaultLineOpensEmpty(t *testing.T) {
+	// saving through edit-document (the default): leaving it empty sends
+	// nothing either way
+	_, qfs, qr := headRig(t, false, headEmpty)
+	defaultLineLeftEmpty(t, qfs, qr)
+
 	_, fs, r := headRigQuipOff(t, false, headEmpty) // checks the canvases.edit replace
 	v := r.v
-	def := v.blocks[1]
-	if !def.b.Default || v.placeholderRow() != def {
-		t.Fatalf("the default line isn't the placeholder row (default %v)", def.b.Default)
-	}
-	r.click(defaultLinePos(r))
-	s := v.edit.cur
-	if s == nil || s.target != def || !s.def {
-		t.Fatalf("the click didn't open the default line (session %+v)", s)
-	}
-	if n := s.ed.Doc().Len(); n != 0 {
-		t.Fatalf("the editor holds %d runes (%q), want none", n, string(s.ed.Doc().Runes))
-	}
-	s.ed.SetSelection(0, 40)
-	if a, b := s.ed.Selection(); a != 0 || b != 0 {
-		t.Errorf("selection %d-%d in the emptied line, want nothing to select", a, b)
-	}
-	if v.placeholderRow() != def {
-		t.Error("the placeholder left the focused, empty line")
-	}
-	if !v.edit.finish(v) || len(fs.CanvasEdits()) != 0 {
-		t.Fatalf("leaving the empty default line sent %d edits", len(fs.CanvasEdits()))
-	}
-	if !v.blocks[1].b.Default {
-		t.Error("the default line lost its default content")
-	}
+	defaultLineLeftEmpty(t, fs, r)
 
 	v.edit.start(v, v.blocks[1])
 	r.frame()
-	s = v.edit.cur
+	s := v.edit.cur
 	if s == nil || !s.def || s.ed.Doc().Len() != 0 {
 		t.Fatal("the default line didn't open again, emptied")
 	}
@@ -85,6 +67,94 @@ func TestDefaultLineOpensEmpty(t *testing.T) {
 	}
 	if b := findBlk(v, func(b *canvas.Block) bool { return b.ID == "temp:C:HEAD00011" }); b == nil || b.b.Default || b.b.Text() != "Plan for Monday" {
 		t.Error("the default line wasn't replaced by an ordinary section")
+	}
+}
+
+// defaultLineLeftEmpty clicks the new canvas's default line, checks it
+// opens empty under the placeholder, and leaves it empty: nothing is sent
+// (canvases.edit nor edit-document) and it keeps its default content.
+func defaultLineLeftEmpty(t *testing.T, fs *fakeslack.Server, r *pointerRig) {
+	t.Helper()
+	v := r.v
+	def := v.blocks[1]
+	if !def.b.Default || v.placeholderRow() != def {
+		t.Fatalf("the default line isn't the placeholder row (default %v)", def.b.Default)
+	}
+	r.click(defaultLinePos(r))
+	s := v.edit.cur
+	if s == nil || s.target != def || !s.def {
+		t.Fatalf("the click didn't open the default line (session %+v)", s)
+	}
+	if n := s.ed.Doc().Len(); n != 0 {
+		t.Fatalf("the editor holds %d runes (%q), want none", n, string(s.ed.Doc().Runes))
+	}
+	s.ed.SetSelection(0, 40)
+	if a, b := s.ed.Selection(); a != 0 || b != 0 {
+		t.Errorf("selection %d-%d in the emptied line, want nothing to select", a, b)
+	}
+	if v.placeholderRow() != def {
+		t.Error("the placeholder left the focused, empty line")
+	}
+	if !v.edit.finish(v) || len(fs.CanvasEdits()) != 0 || fs.CallCount("canvas/edit-document") != 0 {
+		t.Fatalf("leaving the empty default line sent %d canvases.edit and %d edit-document calls", len(fs.CanvasEdits()), fs.CallCount("canvas/edit-document"))
+	}
+	if !v.blocks[1].b.Default {
+		t.Error("the default line lost its default content")
+	}
+}
+
+// Typed over, the new canvas's default line can't save through
+// edit-document yet (Quip's default content, quipRefuses): finishing it
+// says so and keeps the text, and Escape then discards it, as the toast
+// says, instead of refusing again. The block closes showing what is
+// saved, and nothing is sent.
+func TestDefaultLineTypedOverEscapeDiscards(t *testing.T) {
+	h, fs, r := headRig(t, false, headEmpty)
+	v := r.v
+	deadline := time.Now().Add(20 * time.Second)
+	loaded := false
+	for !loaded {
+		if time.Now().After(deadline) {
+			t.Fatal("the canvas's model didn't load")
+		}
+		v.h.Core().CanvasModel(headEmpty, func(d *quip.Doc) { loaded = d != nil })
+		r.frame()
+		time.Sleep(10 * time.Millisecond)
+	}
+	r.frame()
+	r.click(defaultLinePos(r))
+	s := v.edit.cur
+	if s == nil || !s.def {
+		t.Fatalf("the click didn't open the default line (session %+v)", s)
+	}
+	s.ed.InsertText("Plan for Monday")
+	r.frame()
+	if v.edit.finish(v) || v.edit.cur == nil {
+		t.Fatal("the typed-over default line saved (or closed)")
+	}
+	h.mu.Lock()
+	toasts := append([]string(nil), h.toasts...)
+	h.mu.Unlock()
+	want := cantEdit + ". Remove it, or press Escape again to discard your changes"
+	if len(toasts) != 1 || toasts[0] != want {
+		t.Errorf("toasts %q, want [%q]", toasts, want)
+	}
+	if !v.edit.escape(v) || v.edit.cur != nil {
+		t.Fatal("Escape after the refusal didn't close the block")
+	}
+	r.frame()
+	h.mu.Lock()
+	n := len(h.toasts)
+	h.mu.Unlock()
+	if n != 1 {
+		t.Errorf("Escape refused again: %d toasts", n)
+	}
+	if b := v.blocks[1]; !b.b.Default || b.b.Text() == "Plan for Monday" {
+		t.Errorf("the block shows %q (default %v), want what's saved: the default line", b.b.Text(), b.b.Default)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if c := fs.CallCount("canvas/edit-document"); c != 0 || len(fs.CanvasEdits()) != 0 {
+		t.Errorf("%d edit-document and %d canvases.edit calls, want none", c, len(fs.CanvasEdits()))
 	}
 }
 
@@ -165,8 +235,8 @@ func TestAddCoverHover(t *testing.T) {
 		h.mu.Lock()
 		got := strings.Join(h.toasts, "|")
 		h.mu.Unlock()
-		if !strings.Contains(got, cantCover) || len(fs.CanvasEdits()) != 0 {
-			t.Errorf("click: toasts %q, %d edits", got, len(fs.CanvasEdits()))
+		if !strings.Contains(got, cantCover) || len(fs.CanvasEdits()) != 0 || fs.CallCount("canvas/edit-document") != 0 {
+			t.Errorf("click: toasts %q, %d canvases.edit and %d edit-document calls", got, len(fs.CanvasEdits()), fs.CallCount("canvas/edit-document"))
 		}
 	}
 
