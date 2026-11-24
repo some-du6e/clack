@@ -58,7 +58,8 @@ func (a *App) AttentionLost() uint64 { return a.attLost }
 func (a *App) setFocused(on bool) {
 	if on {
 		if !a.focused {
-			a.tickle("focus") // handleWindowFocusEvent (presence_activity.go)
+			a.tickle("focus")     // handleWindowFocusEvent (presence_activity.go)
+			go a.refreshLibrary() // a Library index past its TTL, fetched again (library_prefs.go)
 		}
 		a.focused = true
 		return
