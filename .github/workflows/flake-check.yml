@@ -7132,6 +7132,36 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # sent-thread (2026-11-24, msg-latency-sent's review wf_dcd747c5-297): a
+  # reply confirmed while its thread pane's load is out (the pane's first,
+  # or its slice reloading after a history change cleared it): the answer,
+  # read before the swap, lost the pending copy and gained nothing, and the
+  # pane drew neither until the slice was read again. TestSentAcrossAThreadLoad
+  # (a reply, and a broadcast one with the channel's reload out too) and
+  # TestSentAcrossALoad, COUNT times. Dispatch with only=sent-thread.
+  sent-thread:
+    if: ${{ !inputs.only || startsWith('sent-thread', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the sends across a list's load, COUNT times
+        run: go test -count=$COUNT -timeout 15m -run '^(TestSentAcrossALoad|TestSentAcrossAThreadLoad)$' ./internal/ui/messages
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7291,6 +7321,7 @@ jobs:
       - pagekey-day
       - files-card
       - err-toasts
+      - sent-thread
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
