@@ -248,8 +248,6 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 	if fs.reply == nil {
 		fs.reply = map[string]any{}
 	}
-	// loadClientAppCommands' list, in the merged object's order
-	fs.reply["client.appCommands"] = map[string]any{"ok": true, "commands": cmds, "app_actions": []any{}, "cache_ts": "1700000000"}
 	// the membership Slack's store holds, and the count its leave reads
 	members, nonMembers := []string{}, []string{}
 	for _, u := range slices.Sorted(maps.Keys(c.Membership)) {
@@ -289,6 +287,7 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 	}
 	fs.reply["edge/permissions/info"] = map[string]any{"ok": true, "allowed": allowed, "allowed_per_team": map[string]any{}}
 	fs.mu.Unlock()
+	srServeCommands(fs, cmds) // loadClientAppCommands' list, in the merged object's order
 	for k, v := range c.Experiments {
 		app.SetExperimentGroup(k, v)
 	}
@@ -301,16 +300,7 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 	// the channel's and the team's permissions, as the channel's views
 	// asked for them when it opened, and the membership the member
 	// autocomplete asked for
-	for _, ch := range []string{conv.ID, ""} {
-		if err := app.LoadChannelGrants(ctx, ch); err != nil {
-			t.Fatalf("permissions/info for %q: %v", ch, err)
-		}
-	}
-	if len(c.Membership) > 0 {
-		if got := app.ChannelMembershipInfo(ctx, conv.ID, slices.Sorted(maps.Keys(c.Membership))); len(got) != len(c.Membership) {
-			t.Fatalf("channels/membership: %v", got)
-		}
-	}
+	srWarm(t, app, conv.ID, slices.Sorted(maps.Keys(c.Membership)))
 	var markMu sync.Mutex
 	mark := ""
 	ranMark := func(name string) {
@@ -320,8 +310,8 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 			mark = name
 		}
 	}
-	clientCommandRan.Store(&ranMark)
-	t.Cleanup(func() { clientCommandRan.Store(nil) })
+	srMark(&ranMark)
+	t.Cleanup(func() { srMark(nil) })
 	marked := func() string {
 		markMu.Lock()
 		defer markMu.Unlock()
@@ -401,10 +391,10 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 		return nil
 	}
 	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
-		runRestores()
-		popups.Pump() // the leave flow's decision, a dialog's load (composer tests have no pump overlay)
+		runRestoresIn(nil, true) // the box's own work too: no composer is laid out here
+		popups.Pump()            // the leave flow's decision (composer tests have no pump overlay)
 		// before the drain: a job's feedback is out by the time it is done
-		settled := comp.jobsDone() && popups.Idle() && srQueueEmpty()
+		settled := comp.jobsDone() && srPopupsIdle() && srQueueEmpty()
 	drain:
 		for {
 			select {
@@ -547,10 +537,7 @@ func srLocalRan(h *cmdHost, fs *fakeSlack, ch string, from int, mark string) srL
 			note("/open") // openCommand, for a channel it can't find
 			continue
 		}
-		n := ""
-		if m, ok := o.(interface{ ModalName() string }); ok {
-			n = m.ModalName()
-		}
+		n := srModalName(o)
 		cmd, known := dialogs[n]
 		if !known {
 			note("unattributed")

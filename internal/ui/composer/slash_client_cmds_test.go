@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -20,9 +21,16 @@ func plainGeneral(s *store.Store) {
 
 // grants answers edge permissions/info with perms.
 func grants(fs *fakeSlack, perms ...string) {
-	fs.mu.Lock()
-	fs.reply["edge/permissions/info"] = map[string]any{"ok": true, "allowed": perms, "allowed_per_team": map[string]any{}}
-	fs.mu.Unlock()
+	fs.answer("edge/permissions/info", map[string]any{"ok": true, "allowed": perms, "allowed_per_team": map[string]any{}})
+}
+
+// grantsIn is grants with ch's answer in before anything is typed, as the
+// channel's views asked for it when it opened (isSlashCommandEnabled
+// reads the store without waiting).
+func grantsIn(t *testing.T, c *Composer, fs *fakeSlack, ch string, perms ...string) {
+	t.Helper()
+	grants(fs, perms...)
+	srWarm(t, c.api.a, ch, nil)
 }
 
 func saysSlackbot(t *testing.T, c *Composer, want string) {
@@ -36,7 +44,7 @@ func saysSlackbot(t *testing.T, c *Composer, want string) {
 func TestSlashRenameArchiveLeave(t *testing.T) {
 	t.Run("refused", func(t *testing.T) {
 		c, _, fs := localComposer(t, "", plainGeneral)
-		grants(fs)
+		grantsIn(t, c, fs, tChGen)
 		c.ed.SetDoc(cmdDoc("/rename new-name"))
 		c.submit()
 		saysSlackbot(t, c, "You don’t have permission to rename.")
@@ -53,7 +61,7 @@ func TestSlashRenameArchiveLeave(t *testing.T) {
 	})
 	t.Run("allowed", func(t *testing.T) {
 		c, h, fs := localComposer(t, "", plainGeneral)
-		grants(fs, "RENAME_CHANNEL", "ARCHIVE_CHANNEL")
+		grantsIn(t, c, fs, tChGen, "RENAME_CHANNEL", "ARCHIVE_CHANNEL")
 		c.ed.SetDoc(cmdDoc("/rename Q3 Plans"))
 		c.submit()
 		waitUI(t, "the rename modal", func() bool {
@@ -92,4 +100,43 @@ func TestSlashRenameArchiveLeave(t *testing.T) {
 			t.Errorf("%d calls for #general", n)
 		}
 	})
+}
+
+// /remove (/kick) is Slack's client command (p8LL removeCommand): it never
+// reaches chat.command. With the person mentioned a member of the channel
+// and REMOVE_FROM_CHANNEL, the roster's Remove from channel confirmation
+// opens for them (openRemoveMemberDialog), in a thread too; nothing is
+// removed until its Remove. Its refusals are Slackbot's.
+func TestSlashKick(t *testing.T) {
+	const alice = "U000ALICE" // member-shaped (looksLikeMemberId)
+	seed := func(s *store.Store) {
+		plainGeneral(s)
+		s.PutUsers([]slack.User{{ID: alice, Name: "alice", Profile: slack.Profile{DisplayName: "alice", RealName: "Alice"}}})
+	}
+	for _, ts := range []string{"", "1700000000.000100"} {
+		t.Run("thread="+ts, func(t *testing.T) {
+			c, h, fs := localComposer(t, ts, seed)
+			grantsIn(t, c, fs, tChGen, "REMOVE_FROM_CHANNEL")
+			fs.answer("edge/channels/membership", map[string]any{"ok": true, "members": []string{alice}, "non_members": []string{}})
+			srWarm(t, c.api.a, tChGen, []string{alice}) // as the member autocomplete asked when alice was picked
+			c.ed.SetDoc(cmdDoc("/kick ", &Atom{Kind: AtomUser, ID: alice, Text: "@alice"}, " "))
+			c.submit()
+			waitUI(t, "the remove dialog", func() bool {
+				d, ok := shown[*popups.RemoveMemberDialog](h)
+				return ok && strings.Contains(d.Copy.Title, "alice")
+			})
+			if n := len(fs.called("chat.command")) + len(fs.called("conversations.kick")); n != 0 {
+				t.Errorf("%d chat.command or conversations.kick calls before Remove", n)
+			}
+			if ts != "" {
+				return
+			}
+			c.ed.SetDoc(cmdDoc("/remove"))
+			c.submit()
+			saysSlackbot(t, c, "Please specify someone to remove!")
+			if n := len(fs.called("chat.command")); n != 0 {
+				t.Errorf("%d chat.command calls", n)
+			}
+		})
+	}
 }

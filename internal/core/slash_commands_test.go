@@ -69,6 +69,9 @@ func TestTopicCommandLocal(t *testing.T) {
 	f.reply["conversations.setTopic"] = `{"ok":true,"channel":{"id":"C1","name":"general"}}`
 	f.reply["info"] = `{"ok":true,"allowed":["SET_CHANNEL_TOPIC"]}` // edge permissions/info: isSlashCommandEnabled's check
 	ctx := context.Background()
+	if err := a.LoadChannelGrants(ctx, "C1"); err != nil { // as the channel's header asked when it opened
+		t.Fatal(err)
+	}
 	run := func(text string) error {
 		_, err := a.Command(ctx, CommandOpts{Channel: "C1", Command: "/topic", Disp: "/topic", Text: text, Params: []CommandParam{}})
 		return err

@@ -17,6 +17,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/refocus"
 )
 
@@ -328,7 +329,8 @@ func TestDeleteSectionKeys(t *testing.T) {
 func TestLeavePrivateChannelKeys(t *testing.T) {
 	h := hcEnv(t)
 	e := newMdEnv(t, h)
-	m := e.open(func() { leaveChannel(h, "C0FAKE00009", "private", "plans", false) })
+	h.a.S.PutConv(slack.Conversation{ID: "C0FAKE00009", Name: "plans", IsChannel: true, IsPrivate: true, IsMember: true})
+	m := e.open(func() { leaveChannelConfirm(h, "C0FAKE00009") })
 	if m.o.Title+m.o.TitleAfter != "Leave plans" {
 		t.Fatalf("title %q %q", m.o.Title, m.o.TitleAfter)
 	}

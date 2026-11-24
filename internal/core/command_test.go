@@ -107,9 +107,12 @@ func TestTicketCommandFakeslack(t *testing.T) {
 	ctx := context.Background()
 	cmds, err := a.Commands(ctx, "tick")
 	if err != nil || len(cmds) != 1 || cmds[0].AppID != fakeslack.AppAppID {
-		t.Fatalf("commands.list: %+v %v", cmds, err)
+		t.Fatalf("client.appCommands: %+v %v", cmds, err)
 	}
 	gal := fakeslack.BlockKitGalleryID
+	// the channel it's typed in, as the open channel is: the command's
+	// teams need one of its workspaces
+	a.S.PutConv(slack.Conversation{ID: gal, Name: "gallery", IsChannel: true, IsMember: true})
 	if _, err := a.Command(ctx, CommandOpts{Channel: gal, Command: fakeslack.TicketCommand, Text: "anchor"}); err != nil {
 		t.Fatal(err)
 	}

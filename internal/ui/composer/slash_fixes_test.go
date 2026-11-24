@@ -102,6 +102,7 @@ func TestSilenceErrorKeepsInputCleared(t *testing.T) {
 func TestSlashTopicSendsCleanedTopic(t *testing.T) {
 	c, _, fs := cmdComposer(t, "")
 	fs.answer("conversations.setTopic", map[string]any{"ok": true, "channel": map[string]any{"id": tChGen, "name": "general"}})
+	grantsIn(t, c, fs, tChGen, "SET_CHANNEL_TOPIC") // the header's topic check asked when the channel opened
 	p := submitWait(t, c, fs, cmdDoc("/topic R&D <sync> at 10"), "conversations.setTopic", 1)[0]
 	pref := uipref.Get()
 	raw := TextyValue(cmdDoc("R&D <sync> at 10"))
