@@ -133,6 +133,7 @@ func TestActivityPreviewInertKeyedApart(t *testing.T) {
 	v := NewActivity(h)
 	m := &core.Message{TS: "1700000000.000100", Channel: "C1", User: "U2", Text: "see the plan"}
 	m.Doc = richtext.Doc{Blocks: richtext.FromMrkdwn(nil, m.Text)}
+	v.frame() // the palette and the theme, as Layout sets them
 	var ops op.Ops
 	for range 2 {
 		gtx := actFrame(&ops, image.Pt(600, 200))
