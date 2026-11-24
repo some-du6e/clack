@@ -7,9 +7,11 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -48,6 +50,13 @@ type commandUI struct {
 	// contents puts d in ch's composer (addEphemeralFeedback's
 	// inputDelta), when it is open
 	contents func(ch string, d *Doc)
+	// viewContext is the composer's view as prepareAndSendMessage gets
+	// it (executeCommand passes it on: /collapse and /expand's keys)
+	viewContext string
+	// target runs f with channel ch's composer on the UI goroutine once
+	// it is mounted (a few seconds at most): what a /msg message's send
+	// does there (its jump, its unsend window)
+	target func(ch string, f func(t *Composer))
 }
 
 // commandUI is the composer's.
@@ -75,8 +84,8 @@ func (c *Composer) commandUI() *commandUI {
 			return ok
 		},
 		search: func(q string, commit bool) bool {
-			if commit {
-				c.later(func() { popups.SubmitSearch(c.h, q) })
+			if commit { // the results page: in this box's view container
+				c.laterHere(func() { popups.SubmitSearch(c.h, q) })
 				return true
 			}
 			o, ok := c.h.(searchOpener)
@@ -86,7 +95,7 @@ func (c *Composer) commandUI() *commandUI {
 			return ok
 		},
 		show: func(browse string, t core.LocalTarget) {
-			c.later(func() {
+			c.laterHere(func() { // navigate from this box's view container
 				switch {
 				case t.Browse:
 					c.h.Navigate(browse)
@@ -100,12 +109,55 @@ func (c *Composer) commandUI() *commandUI {
 		feedback: func() { c.later(func() { popups.NewUserFeedbackModal(c.h) }) },
 		contents: func(ch string, d *Doc) {
 			c.later(func() {
-				if t := liveComposer(draftKey(ch, "")); t != nil && t.edit == nil {
+				if t := c.sessionComposer(ch); t != nil {
 					t.setContents(d)
 				}
 			})
 		},
+		viewContext: c.zhyrViewContext(),
+		target: func(ch string, f func(t *Composer)) {
+			// ch's composer may mount only once the navigation to it ran:
+			// looked for again every targetPoll on a timer (a frame per
+			// look, not every frame) for up to 3 seconds
+			end := time.Now().Add(3 * time.Second)
+			var try func()
+			try = func() {
+				if t := c.sessionComposer(ch); t != nil {
+					f(t)
+				} else if time.Now().Before(end) {
+					time.AfterFunc(targetPoll, func() { c.later(try) })
+				}
+			}
+			c.later(try)
+		},
 	}
+}
+
+// targetPoll is how often commandUI.target looks for the box it waits for.
+const targetPoll = 50 * time.Millisecond
+
+// sessionComposer is channel ch's open composer (not an edit) of this
+// composer's session: a send's work never lands in another session's box
+// (one of an account switched to, or a later test's).
+func (c *Composer) sessionComposer(ch string) *Composer {
+	if t := liveComposer(draftKey(ch, "")); t != nil && t.edit == nil && t.api.a == c.api.a {
+		return t
+	}
+	return nil
+}
+
+// zhyrViewContext is the composer's view as Slack's view context enum
+// (Zhyr Y) names it, the one expandable keys end with: the channel's
+// message pane, a thread pane, the Threads view's reply box. (Its
+// viewContext prop, slack.go, keeps the plugins' names.)
+func (c *Composer) zhyrViewContext() string {
+	switch {
+	case c.InThreadsView:
+		return expandable.ViewThreads
+	case c.ts != "":
+		return expandable.ViewThread
+	}
+	return expandable.ViewChannel
 }
 
 // processed is prepareAndSendMessage's processedDelta for the thunk's

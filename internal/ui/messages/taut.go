@@ -587,6 +587,69 @@ func (s *listState) mergeInjected() {
 	s.snap.msgs = out
 }
 
+// historyHidden is what plugins' patches took out of the list's
+// channelHistory (Taut.HistoryHidden): the channel's, or the thread's
+// under ch-threadTs. Slack's lists draw that history, so a patch that
+// filters it (Slick's HideResolved, a help channel's resolved tickets)
+// hides rows. nil, one atomic load, while nothing patches channelHistory.
+// It sets histOK: false while taut waits on JS's answer as of the latest
+// change Go made that the patches may read (a jump's highlight).
+func (s *listState) historyHidden(t *taut.Taut) *taut.Hidden {
+	s.histOK = true
+	key := s.ch
+	if s.thread {
+		key = s.ch + "-" + s.ts
+	}
+	if f := historyHiddenHook; f != nil {
+		h, ok := f(key)
+		s.histOK = ok
+		return h
+	}
+	if t == nil || !t.SlicePatched("channelHistory") {
+		return nil
+	}
+	h, ok := t.HistoryHidden(key)
+	s.histOK = ok
+	return h
+}
+
+// historyHiddenHook, when set (tests), answers historyHidden for a key in
+// place of taut.
+var historyHiddenHook func(key string) (*taut.Hidden, bool)
+
+// noteViewHighlight tells plugins the channel view's highlightTs (Slack's
+// viewUiState: Taut.SetViewHighlight), the message a jump highlights, ""
+// after a navigation without one. A thread list's is Slack's
+// threadMetadata's, which Clack doesn't mirror.
+func (s *listState) noteViewHighlight(ts string) {
+	if t := tautOf(); t != nil && !s.thread {
+		t.SetViewHighlight(s.ch, ts)
+	}
+}
+
+// dropHidden takes what plugins' patches took out of the list's
+// channelHistory out of the snapshot (historyHidden). Only what the
+// history listed goes: a pending send, an ephemeral message, a message
+// the mirror hasn't shown JS yet, an injected one stay.
+func (s *listState) dropHidden() {
+	n := 0
+	for i := range s.snap.msgs {
+		if s.hid.Has(s.snap.msgs[i].m.TS) {
+			n++
+		}
+	}
+	if n == 0 {
+		return
+	}
+	out := make([]entry, 0, len(s.snap.msgs)-n)
+	for _, e := range s.snap.msgs {
+		if !s.hid.Has(e.m.TS) {
+			out = append(out, e)
+		}
+	}
+	s.snap.msgs = out
+}
+
 // ---- actionable message (edit) ----
 
 // pendingEdit is an edit waiting for its actionable message from JS.

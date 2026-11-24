@@ -57,6 +57,30 @@ func (s *Store) VisitMessages(ch string, thread func(root string), f func(m *sla
 	}
 }
 
+// VisitHistory walks what channelHistory[ch] lists (taut's mirror.history)
+// in place, under the read lock: slice before each of its slices (the
+// windows, then the timeline: their range, "" for the timeline's, and
+// whether older messages exist before it), f with each of its messages.
+// f must not keep a message or call into the store. (The mirror's sweep
+// fingerprints the history JS holds this way every 750 ms; Timeline and
+// WindowsIn copy.)
+func (s *Store) VisitHistory(ch string, slice func(start, end string, older bool), f func(m *slack.Message)) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, w := range s.windows[ch] {
+		slice(w.Start, w.End, w.HasOlder)
+		for i := range w.Msgs {
+			f(&w.Msgs[i])
+		}
+	}
+	if t := s.timelines[ch]; t != nil {
+		slice("", "", t.HasMore)
+		for i := range t.Msgs {
+			f(&t.Msgs[i])
+		}
+	}
+}
+
 // ShareContent points m's text and blocks at the store's own when ch's
 // copy of the message (by ts: the timeline, its windows, the threads,
 // the fetched) holds the same: a plugin that passes the messages slice

@@ -89,6 +89,9 @@ func TestMoreActionsMenu(t *testing.T) {
 	m.archived = true
 	buttons[1].Do() // Download JSON
 	e.waitList(v, "the JSON download", func() bool { return e.h.lastToast() == "JSON downloaded successfully" })
+	// the export streams to the folder off the UI goroutine (core's
+	// Downloads, the download toast), after the toast as in Slack
+	e.waitList(v, "the JSON request", func() bool { return len(e.fs.ListDownloads()) == 1 })
 	dls := e.fs.ListDownloads()
 	if len(dls) != 1 || !strings.Contains(dls[0], "/files-pri/"+fakeslack.TeamID+"-"+fakeslack.ListKitchen+"/json/") ||
 		!strings.Contains(dls[0], "lists_include_archived=true") || !strings.Contains(dls[0], "lists_include_threads=true") ||

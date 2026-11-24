@@ -311,10 +311,9 @@ func confirmationModal(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 			focus = nil
 		}
 		st.m = popups.NewModal(ph, popups.ModalOpts{
-			Title: title,
 			// Slack's ConfirmationModal titles are ModalTitleBar's h1 in
 			// .c-sk-modal_title_bar__text, which wraps (client-boot Fj8r, H4iZ)
-			TitleWrap: true,
+			Title:     title,
 			Buttons:   btns,
 			AutoFocus: focus,
 			OnClose:   func() { st.h.Call("onClose") },

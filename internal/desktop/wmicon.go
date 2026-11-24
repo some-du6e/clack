@@ -5,6 +5,8 @@ import (
 	"image"
 	"image/draw"
 	"image/png"
+
+	xdraw "golang.org/x/image/draw"
 )
 
 // decodeIcons decodes PNG icons to RGBA, skipping any that fail.
@@ -41,4 +43,37 @@ func netWMIcon(icons []*image.NRGBA) []uint64 {
 		}
 	}
 	return out
+}
+
+// iconSizes is m at the sizes a window manager picks from: fit to largest,
+// then each icon size under that down to 16 px, its aspect kept and never
+// larger than m.
+func iconSizes(m *image.NRGBA, largest int) []*image.NRGBA {
+	top := fitIcon(m, largest)
+	out := []*image.NRGBA{top}
+	side := max(top.Bounds().Dx(), top.Bounds().Dy())
+	for _, size := range []int{128, 64, 48, 32, 16} {
+		if size < side {
+			out = append(out, fitIcon(m, size))
+		}
+	}
+	return out
+}
+
+// fitIcon is m scaled down to fit size × size, its aspect kept (m itself
+// when it fits).
+func fitIcon(m *image.NRGBA, size int) *image.NRGBA {
+	b := m.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= size && h <= size {
+		return m
+	}
+	if w >= h {
+		w, h = size, max(1, h*size/w)
+	} else {
+		w, h = max(1, w*size/h), size
+	}
+	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), m, b, xdraw.Src, nil)
+	return dst
 }

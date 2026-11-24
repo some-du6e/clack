@@ -17,7 +17,9 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -32,6 +34,7 @@ type codeHTMLView struct {
 	err     error
 	urlPriv string
 	dlURL   string
+	title   string
 	agent   string
 }
 
@@ -52,11 +55,11 @@ func (v *codeHTMLView) load() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		_, err := ca.CodeChannelHTMLView(ctx, v.ch, v.view.ViewID)
-		_, priv, dl, ferr := ca.CodeViewFile(ctx, v.view.FileID)
+		title, priv, dl, ferr := ca.CodeViewFile(ctx, v.view.FileID)
 		a.Post(func() {
 			v.done, v.err = true, err
 			if ferr == nil {
-				v.urlPriv, v.dlURL = priv, dl
+				v.urlPriv, v.dlURL, v.title = priv, dl, title
 			}
 			a.Invalidate()
 		})
@@ -90,7 +93,9 @@ func (v *codeHTMLView) Layout(gtx layout.Context) layout.Dimensions {
 		})
 	}
 	if v.dlURL != "" && v.outlineButton(gtx, "download", "download", "Download", image.Pt(-1, pad), sz.X-pad) {
-		openURL(v.dlURL)
+		// downloadFile: in the app, with the download toast, never the
+		// browser (url_private_download is a Slack file)
+		popups.DownloadFile(a, &richtext.File{ID: v.view.FileID, Name: v.title, Title: v.title, Type: "html", PrettyType: "HTML", Download: v.dlURL})
 	}
 	// .content__COVya: 1px otl-ter, radius 12, margin 0 12 12
 	box := image.Rect(pad, hh, sz.X-pad, sz.Y-pad)

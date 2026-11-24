@@ -119,6 +119,13 @@ func (s *listState) contextMenuFor(h Host, r *row, i int, p f32.Point, at image.
 			return o
 		}
 	}
+	// MessageActionsContextMenu (DtN2) opens nothing on a moderated,
+	// thread_hidden, DLP, DSA or EKM message; the shell's own menus above
+	// (a selection's, the timestamp's link menu, a link's or an image's)
+	// aren't its, and open as on any message
+	if !popups.ContextMenuShown(&r.src) {
+		return nil
+	}
 	return s.messageMenu(h, r, at)
 }
 

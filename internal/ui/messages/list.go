@@ -238,6 +238,12 @@ type listState struct {
 	// re-highlight in an open thread pane: a message whose top is already
 	// on screen isn't scrolled to
 	jumpLazy bool
+	// hid: what plugins' patches took out of the list's channelHistory
+	// (Slick's HideResolved, a help channel's resolved tickets), and
+	// histOK whether taut's answer for it is as of the latest change Go
+	// made (a jump's highlight): a jump waits for it (historyHidden)
+	hid    *taut.Hidden
+	histOK bool
 	// thrOpening: the thread pane just opened (ThreadView.Reopen), so a jump
 	// starts it at getThreadStartPosition's message
 	thrOpening bool
@@ -757,6 +763,11 @@ func (s *listState) sync(h Host, now time.Time) {
 		}
 	}
 	s.viewsOn = views
+	// and what a patch of channelHistory took out (the list draws core's
+	// messages; Slack's draws that history)
+	if hid := s.historyHidden(t); hid != s.hid {
+		s.hid, s.snap.rev = hid, 0
+	}
 	// system messages follow system_messages_redesign_m1 (system.go): a new
 	// group re-reads the snapshot and rebuilds the rows; an actor's name
 	// arriving rebuilds the system rows
@@ -815,6 +826,9 @@ func (s *listState) sync(h Host, now time.Time) {
 	}
 	if changed && len(s.inj.msgs) > 0 {
 		s.mergeInjected()
+	}
+	if changed && s.hid.Len() > 0 {
+		s.dropHidden()
 	}
 	s.takeJump(now)
 	if m := s.pend.take(); m != nil {
@@ -994,7 +1008,9 @@ func (s *listState) build(h Host, now time.Time) {
 	s.items = s.items[:0]
 	msgs := s.snap.msgs
 	if !s.thread {
-		if s.snap.older || (s.snap.hasMore && len(msgs) > 0) {
+		// s.own: a page the patches hid entirely (dropHidden) has older
+		// pages before it all the same
+		if s.snap.older || (s.snap.hasMore && (len(msgs) > 0 || s.own[0] != "")) {
 			s.items = append(s.items, item{kind: itLoading, key: "loading"})
 		} else if s.snap.loaded {
 			s.items = append(s.items, item{kind: itIntro, key: "intro"})
@@ -1606,8 +1622,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	seen := pf.MarkReadImmediately || (!p.BeforeEnd && s.unreadSeen)
 	// a window short of the newest message never marks read: its last
 	// message isn't the conversation's
-	if !s.thread && !s.noMark && s.snap.loaded && !s.snap.newestMissing && seen && len(s.snap.msgs) > 0 {
-		latest := s.snap.msgs[len(s.snap.msgs)-1].m.TS
+	if !s.thread && !s.noMark && s.snap.loaded && !s.snap.newestMissing && seen && s.own[1] != "" {
+		// the loaded slice's last real message: a newest message a
+		// plugin's patch hides (dropHidden) is read with the rest
+		latest := s.own[1]
 		app := h.Core()
 		if latest != s.markedTS && app != nil && tsLess(app.Count(s.ch).LastRead, latest) && now.Sub(s.lastMark) > 1500*time.Millisecond {
 			s.markedTS, s.lastMark = latest, now
@@ -3071,8 +3089,10 @@ func (s *listState) placeJump(now time.Time) {
 	// findTimestampClosestToStartTs (find(timestamps, t => t >= startTs)),
 	// with nothing to flash (its highlightTs names no row); with nothing at
 	// or after it, the end (getOffsetForKey(undefined)). Nothing stays
-	// pending.
-	if s.thread || !s.jumpCovered() {
+	// pending, once taut's answer of what plugins' patches hide is as of
+	// the jump's highlight (Slack's highlightTs, which HideResolved reads
+	// to keep a linked ticket shown: historyHidden).
+	if s.thread || !s.jumpCovered() || !s.histOK {
 		return
 	}
 	if i := s.firstItemFrom(s.pendingJump); i >= 0 {

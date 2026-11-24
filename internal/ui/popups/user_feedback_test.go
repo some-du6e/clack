@@ -114,28 +114,44 @@ func TestUserFeedbackModal(t *testing.T) {
 
 // TestUserFeedbackModalFailures: a rate limit is Slack's rate limit text,
 // another failure its generic one, and the dialog stays with what was
-// typed.
+// typed. Each Submit is a request, the same text right after a failure
+// too (Slack's Submit always sends; the client's guard answers no
+// viewer's retry from its copy of the failure). A 429 whose Retry-After
+// outlasts the call is the rate limit as well.
 func TestUserFeedbackModalFailures(t *testing.T) {
 	e := srNewEnv(t, false)
 	m := NewUserFeedbackModal(e.h)
 	d := &srDrv{size: image.Pt(1280, 800), w: m}
 	m.Pick(0)
 	m.Fill("canvas", "Tables should paste.", true)
-	for i, tc := range []struct{ fault, want string }{
-		{"ratelimited", ufLimited},
-		{"invalid_arguments", ufFailed},
+	const method = "feedback.submitUserFeedback"
+	for _, tc := range []struct {
+		name string
+		f    fakeslack.Fault
+		want string
+	}{
+		{"ratelimited", fakeslack.Fault{Error: "ratelimited"}, ufLimited},
+		{"invalid_arguments", fakeslack.Fault{Error: "invalid_arguments"}, ufFailed},
+		{"invalid_arguments again", fakeslack.Fault{Error: "invalid_arguments"}, ufFailed},
+		{"a 429's long wait", fakeslack.Fault{Status: 429, RetryAfter: 30}, ufLimited},
 	} {
-		// a new request each time: the client answers an identical retry
-		// of a failed call with that failure (its backoff)
-		m.Fill("canvas", "Tables should paste. "+strings.Repeat("Again. ", i), true)
-		e.fs.SetFault("feedback.submitUserFeedback", fakeslack.Fault{Error: tc.fault})
+		if tc.f.Status != 0 { // the wait outlasts the call: run's limit shortened
+			old := asyncTimeout
+			asyncTimeout = 1500 * time.Millisecond
+			t.Cleanup(func() { asyncTimeout = old })
+		}
+		e.fs.SetFault(method, tc.f)
+		n := e.fs.CallCount(method)
 		m.Submit()
-		slUntil(t, 20*time.Second, tc.fault, d.frame, func() bool { return !m.busy && m.Err() == tc.want })
+		slUntil(t, 20*time.Second, tc.name, d.frame, func() bool { return !m.busy && m.Err() == tc.want })
+		if got := e.fs.CallCount(method) - n; got != 1 {
+			t.Errorf("%s: %d requests for one Submit, want 1", tc.name, got)
+		}
 		if m.Dismissed() || !m.CanSubmit() {
-			t.Errorf("%s: dismissed %v, Submit %v", tc.fault, m.Dismissed(), m.CanSubmit())
+			t.Errorf("%s: dismissed %v, Submit %v", tc.name, m.Dismissed(), m.CanSubmit())
 		}
 		if x := d.scan(); !srHas(x, tc.want) {
-			t.Errorf("%s: the Alert not drawn: %q", tc.fault, x)
+			t.Errorf("%s: the Alert not drawn: %q", tc.name, x)
 		}
 	}
 }

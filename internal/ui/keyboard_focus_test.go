@@ -104,20 +104,23 @@ func TestThreadsAuditTypingGoesToTheInput(t *testing.T) {
 }
 
 // TestThreadsAuditTypingFromTheList: a message selected in the channel's
-// list keeps its own keys (e: edit) but hands a letter to the channel's
-// input; one selected in a thread's list hands it to the reply box.
+// list keeps its own keys (l: copy link, which any ordinary message binds;
+// messages/kbnav.go) but hands a letter to the channel's input; one
+// selected in a thread's list hands it to the reply box.
 func TestThreadsAuditTypingFromTheList(t *testing.T) {
 	x := openTopEnv(t)
 	c := x.a.convos[x.ch+"/"]
 	box := x.box(x.ch, "")
 	t.Cleanup(func() { x.kfClearDraft(c) })
+	x.a.kbRelated = kbRelNav // as ↑ from the input moves there: keyboard mode, which the message keys need
 	x.a.focusList(c)
 	x.until("the channel's list selecting its newest message", 5*time.Second, func() bool { return x.cv().KeyboardSelected() != "" })
+	x.until("keyboard mode", 2*time.Second, func() bool { return x.a.KeyboardMode() })
 	before := box.DocText()
-	x.typeText("e")
+	x.typeText("l")
 	x.settle(200 * time.Millisecond)
 	if got := box.DocText(); got != before || x.cv().KeyboardSelected() == "" {
-		t.Fatalf("e on a selected message (its own key): the input went from %q to %q, the list selects %q", before, got, x.cv().KeyboardSelected())
+		t.Fatalf("l on a selected message (its own key): the input went from %q to %q, the list selects %q", before, got, x.cv().KeyboardSelected())
 	}
 	x.typeText("k")
 	x.until("the channel's input focused by the typing", 2*time.Second, func() bool { return x.kfBoxFocused(c) })

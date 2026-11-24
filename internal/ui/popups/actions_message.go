@@ -167,7 +167,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	// (canAddReminder) or Copy link (canCopyLink): actions_rules.go
 	app := h.Core()
 	eph := isEphemeral(app, &m)
-	if !eph {
+	if MarkUnreadShown(app, &m, inThread) { // QRkh / RjOa: canMarkUnread and the redesign's exclusions
 		items = append(items, markUnread)
 	}
 	if sa := SaveActionFor(app, &m); !eph || sa.Do == SaveMove {
@@ -208,8 +208,10 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	// tombstone or temporary); no "Forward message…" here: Slack keeps it
 	// on the hover toolbar
 	if actionable(app, &m) {
+		if PinShown(app, &m) { // Zn/q canPin; Organize holds only the pin row, and a submenu with none isn't drawn
+			items = append(items, MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage))
+		}
 		items = append(items,
-			MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage),
 			MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m)}.In(nsMessage),
 		)
 	}
@@ -326,10 +328,13 @@ func actFollowItem(h Host, m core.Message, conv core.Conv, root string) (MenuIte
 	subscribed := m.FollowingThread
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
 		subscribed = actThreadSubscribed(h, ch, root)
-	} else if a := h.Core(); !CanStartOrOpenThread(a, &m) && (isEphemeral(a, &m) || a != nil && a.IsTempMsg(&m)) {
-		// canStartOrOpenThread on the thread's root (threadTs || ts): a
-		// top-level ephemeral or temporary message without replies has no
-		// thread to follow (a reply's row is its root's)
+	} else if !canFollow(h.Core(), &m, subscribed && conv.IsArchived) {
+		// QdFb: canStartOrOpenThread on the thread's root (threadTs ||
+		// ts), ignoring membership for a thread followed in an archived
+		// channel: none on a message no thread can start from and with no
+		// replies (an ephemeral or temporary one, a channel_join, a
+		// file_share, one in a read-only channel…). A reply's row is its
+		// root's, which has replies.
 		return MenuItem{}, false
 	}
 	if conv.Preview && !subscribed {
@@ -531,10 +536,15 @@ func confirmDelete(h Host, m core.Message, del func(ctx context.Context, ch, ts 
 		func(gtx layout.Context) layout.Dimensions { return actMsgPreview(gtx, h, m, true) },
 		func() {
 			ch, ts := m.Channel, m.TS
-			// animateAndDeleteMessageApi: an ephemeral message (or a
-			// temporary ts) is only animated out and removed from the
-			// store (removeMessageAndTimestamp); chat.delete never goes out
-			if a := h.Core(); a != nil && a.IsEphemeral(&m) {
+			// animateAndDeleteMessageApi (Wsjb): an ephemeral message or
+			// a temporary one (isTempTs: a pending or failed send) is only
+			// animated out and removed from the store
+			// (removeMessageAndTimestamp); chat.delete never goes out
+			if a := h.Core(); a != nil && (a.IsEphemeral(&m) || a.IsTempMsg(&m)) {
+				if (m.Pending || m.Failed) && m.ClientMsgID != "" && !a.IsEphemeral(&m) {
+					a.DiscardPending(ch, m.ClientMsgID) // the send's own copy, its bookkeeping with it
+					return
+				}
 				a.Interactive().DismissEphemeral(ch, ts)
 				return
 			}

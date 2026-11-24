@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -503,11 +504,22 @@ type obj map[string]json.RawMessage
 // {id, viewType, params}), "" for a view Clack doesn't route to.
 func navigateLink(o obj) string {
 	var params struct {
-		ThreadID string `json:"threadId"`
+		ThreadID  string `json:"threadId"`
+		ParentTab string `json:"parentTab"`
+		TabID     string `json:"tabId"`
 	}
 	_ = json.Unmarshal(o["params"], &params)
 	id := o.str("id")
 	q := url.Values{}
+	// a view in one of a channel's header tabs (Slack's inChannelTab and
+	// toChannelTab: a canvas, a list, Files, Pins, its messages as
+	// "channel"; ChatTabs comes back to the one a channel had open): the
+	// channel's tab link, as getChannelTabPermalink opens that tab
+	if vt := o.str("viewType"); vt != "Thread" && params.TabID != "" && channelIDPattern.MatchString(params.ParentTab) {
+		q.Set("id", params.ParentTab)
+		q.Set("tab", params.TabID)
+		return "slack://channel?" + q.Encode()
+	}
 	switch o.str("viewType") {
 	case "Channel":
 		if id == "" {
@@ -534,6 +546,9 @@ func navigateLink(o obj) string {
 	}
 	return ""
 }
+
+// channelIDPattern is a conversation id (ChatTabs' channelPattern).
+var channelIDPattern = regexp.MustCompile(`^[CDG][A-Z0-9]+$`)
 
 func argObj(args []json.RawMessage) obj {
 	o := obj{}

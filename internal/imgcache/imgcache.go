@@ -1533,6 +1533,10 @@ func checkSizeWithin(data []byte, maxPixels, maxSide int) error {
 // tier (a no-op for everything else, e.g. message images and files).
 func (c *Cache) raw(u string) ([]byte, func(), error) {
 	nop := func() {}
+	if d, ok := strings.CutPrefix(u, pageData); ok { // a page's data: URL (dataurl.go): its own text, memory only
+		b, err := dataBody(d)
+		return b, nop, err
+	}
 	if localimg.Is(u) { // a file the viewer is uploading: memory only
 		if b, ok := localimg.Get(u); ok {
 			return b, nop, nil
