@@ -57,6 +57,7 @@ func TestPluginGapOneko(t *testing.T) {
 		return math.Hypot(c.Left+16-float64(p.X), c.Top+16-float64(p.Y)) < 48
 	}
 	var c cat
+	t.Logf("the pointer at %v; the cat at %.1f,%.1f", p, read().Left, read().Top)
 	e.until("the cat at rest by the pointer", 30*time.Second, func() bool {
 		c = read()
 		if !near(c) {
@@ -89,9 +90,8 @@ func TestPluginGapOneko(t *testing.T) {
 
 	// in the frame's px: its CSS px (1 a px here), under Gio's own title
 	// bar when there is one
-	box := image.Rect(int(math.Floor(c.Left)), int(math.Floor(c.Top)), 0, 0)
-	box.Max = box.Min.Add(image.Pt(32, 32))
-	box = box.Add(e.deco)
+	at := image.Pt(int(math.Floor(c.Left)), int(math.Floor(c.Top))).Add(e.deco)
+	box := image.Rectangle{Min: at, Max: at.Add(image.Pt(32, 32))}
 	changed := 0
 	for y := box.Min.Y; y < box.Max.Y; y++ {
 		for x := box.Min.X; x < box.Max.X; x++ {
