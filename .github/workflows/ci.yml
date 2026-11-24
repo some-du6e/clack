@@ -1014,6 +1014,7 @@ jobs:
           go test -count=1 -v -timeout 5m -run '^(TestDisplaysWindows|TestBoundsWindows)$' gioui.org/app || rc=1
           go test -c -o "$RUNNER_TEMP/ui-bounds.test.exe" ./internal/ui || exit 1
           cd internal/ui
+          "$RUNNER_TEMP/ui-bounds.test.exe" -test.v -test.count=1 -test.timeout 2m -test.run '^TestPrefsWrite' || rc=1
           for t in TestWindowBoundsWindow TestWindowBoundsOffScreenWindow TestWindowBoundsFullScreenWindow; do
             "$RUNNER_TEMP/ui-bounds.test.exe" -test.v -test.count=1 -test.timeout 6m -test.run "^$t\$" || rc=1
           done
