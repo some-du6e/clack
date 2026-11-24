@@ -231,6 +231,12 @@ const (
 	// TimelineBlock is a timeline block (timeline.go): Timeline holds its
 	// points.
 	TimelineBlock
+	// ContactCardBlock is a contact_card block (contact.go): Contact holds
+	// its member.
+	ContactCardBlock
+	// SharePromptBlock is a share_prompt block (shareprompt.go): Prompt
+	// holds its prompt and agent.
+	SharePromptBlock
 )
 
 // Block is one vertical unit of a document.
@@ -293,6 +299,10 @@ type Block struct {
 	DataTable *DataTable
 	// Timeline is a TimelineBlock's points (timeline.go).
 	Timeline *Timeline
+	// Contact is a ContactCardBlock's member (contact.go).
+	Contact *ContactCard
+	// Prompt is a SharePromptBlock's prompt and agent (shareprompt.go).
+	Prompt *SharePrompt
 }
 
 // Container is a container block's header and options (Slack's

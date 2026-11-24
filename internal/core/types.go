@@ -488,6 +488,9 @@ type SendOpts struct {
 	// composer passes its own so its message list can find the message
 	// it jumps to (messages.ChannelView.JumpToOwnSend).
 	ClientMsgID string
+	// AgentMessageSourceType goes out as agent_message_source_type (a
+	// shared prompt sent to its agent).
+	AgentMessageSourceType string
 }
 
 // UploadOpts share one or more files (held in memory, never spooled to disk).

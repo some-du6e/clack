@@ -54,15 +54,19 @@ type bkDataViz struct {
 }
 
 // ownKeysType is a block type decoded by its renderable's own keys:
-// data_visualization, data_table and timeline.
+// data_visualization, data_table, timeline, contact_card and share_prompt.
 func ownKeysType(t string) bool {
-	return t == "data_visualization" || t == "data_table" || t == "timeline"
+	switch t {
+	case "data_visualization", "data_table", "timeline", "contact_card", "share_prompt":
+		return true
+	}
+	return false
 }
 
-// ownKeysBlock decodes a data_visualization, data_table or timeline block
-// by the keys its renderable reads only (bkDataViz, bkDataTable,
-// bkTimeline), so a key typed unlike another block's fails nothing; false
-// when raw is none of them.
+// ownKeysBlock decodes a block ownKeysType names by the keys its
+// renderable reads only (bkDataViz, bkDataTable, bkTimeline,
+// bkContactCard, bkSharePrompt), so a key typed unlike another block's
+// fails nothing; false when raw is none of them.
 func ownKeysBlock(raw json.RawMessage) (bk, bool) {
 	switch typ := partType(raw); typ {
 	case "data_table":
@@ -83,6 +87,18 @@ func ownKeysBlock(raw json.RawMessage) (bk, bool) {
 			return bk{}, false
 		}
 		return bk{Type: typ, BlockID: rawString(v.BlockID), timeline: &v}, true
+	case "contact_card":
+		var v bkContactCard
+		if json.Unmarshal(raw, &v) != nil {
+			return bk{}, false
+		}
+		return bk{Type: typ, BlockID: rawString(v.BlockID), contact: &v}, true
+	case "share_prompt":
+		var v bkSharePrompt
+		if json.Unmarshal(raw, &v) != nil {
+			return bk{}, false
+		}
+		return bk{Type: typ, BlockID: rawString(v.BlockID), prompt: &v}, true
 	}
 	return bk{}, false
 }

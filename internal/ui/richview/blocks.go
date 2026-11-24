@@ -158,6 +158,11 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 			return 0, 0, 0
 		}
 		return l.dp(4), l.dp(4), l.dp(4)
+	case richtext.SharePromptBlock: // .promptCardMargin{margin:8px 0} outside canvases (canvasUnfurl); nothing when it draws nothing
+		if b.Prompt == nil || !b.Prompt.Shown || l.opts.Canvas {
+			return 0, 0, 0
+		}
+		return l.dp(8), l.dp(8), l.dp(8)
 	case richtext.ContainerBlock: // .containerBlock{margin-top:16px;margin-bottom:8px}, kept on the first block
 		return l.dp(16), l.dp(16), l.dp(8)
 	}
@@ -751,13 +756,29 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		return l.card(b.Card, x, y, w)
 
 	case richtext.DataVizBlock:
-		return l.dataViz(b, x, y, w)
+		h := l.dataViz(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.DataTableBlock:
-		return l.dataTable(b, x, y, w)
+		h := l.dataTable(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.TimelineBlock:
-		return l.timeline(b, x, y, w)
+		h := l.timeline(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
+
+	case richtext.ContactCardBlock:
+		h := l.contactCard(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
+
+	case richtext.SharePromptBlock:
+		h := l.sharePrompt(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.Table:
 		return l.table(b, x, y, w)

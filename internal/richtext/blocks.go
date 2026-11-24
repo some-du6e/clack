@@ -16,14 +16,16 @@ import (
 
 // bk is a generic Block Kit block / element / rich_text node.
 type bk struct {
-	bkAgent                // plan, task_card (agent.go)
-	viz       *bkDataViz   // a data_visualization block's own keys (dataviz.go)
-	table     *bkDataTable // a data_table block's own keys (datatable.go)
-	timeline  *bkTimeline  // a timeline block's own keys (timeline.go)
-	Type      string       `json:"type"`
-	BlockID   string       `json:"block_id"`
-	Elements  []bk         `json:"elements"`
-	Rows      bkRows       `json:"rows"` // table
+	bkAgent                  // plan, task_card (agent.go)
+	viz       *bkDataViz     // a data_visualization block's own keys (dataviz.go)
+	table     *bkDataTable   // a data_table block's own keys (datatable.go)
+	timeline  *bkTimeline    // a timeline block's own keys (timeline.go)
+	contact   *bkContactCard // a contact_card block's own keys (contact.go)
+	prompt    *bkSharePrompt // a share_prompt block's own keys (shareprompt.go)
+	Type      string         `json:"type"`
+	BlockID   string         `json:"block_id"`
+	Elements  []bk           `json:"elements"`
+	Rows      bkRows         `json:"rows"` // table
 	ColumnSet []struct {
 		Align     string `json:"align"`
 		IsWrapped bool   `json:"is_wrapped"`
@@ -533,7 +535,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", "contact_card", "share_prompt", badBlock:
 		return true
 	}
 	return false
@@ -713,6 +715,10 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return c.messageEmbed(out, b)
 	case "timeline":
 		return c.timelineBlock(out, b)
+	case "contact_card":
+		return append(out, c.contactCardBlock(b))
+	case "share_prompt":
+		return append(out, c.sharePromptBlock(b))
 	case "data_visualization":
 		return append(out, c.dataVizBlock(b))
 	case "markdown":
