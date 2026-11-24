@@ -187,8 +187,42 @@ func (v *View) rebuild(d *core.CanvasDoc) {
 	}
 	v.shown = d
 	v.nameMentions(d)
+	v.checkTitle()
 	v.blocks = v.makeBlocks(d, d.Doc.Blocks, old)
+	v.edit.keepLocal(v)
 	v.edit.docChanged(v)
+}
+
+// checkTitle notes whether the canvas's title lets edits save
+// (core.CanvasTitleSaveable), for this pass's blockEditable.
+func (v *View) checkTitle() {
+	v.titleWhy = ""
+	if a := v.h.Core(); a != nil && quipOn(v) {
+		if ok, why := a.CanvasTitleSaveable(v.id); !ok {
+			v.titleWhy = why
+		}
+	}
+}
+
+// recheckEditable checks again which blocks open in the editor once core
+// has the canvas's model, or it changed: blockEditable checks a block
+// against its section, and the title every save sends.
+func (v *View) recheckEditable() {
+	v.checkTitle()
+	var walk func(bs []*blk)
+	walk = func(bs []*blk) {
+		for _, b := range bs {
+			if b.b != nil && !b.inCell {
+				b.edOK, b.edWhy = v.blockEditable(*b.b)
+			}
+			walk(b.kids)
+			for _, c := range b.cols {
+				walk(c)
+			}
+		}
+	}
+	walk(v.blocks)
+	v.h.Invalidate()
 }
 
 // nameMentions names the document's user, channel and group mentions from
@@ -296,12 +330,12 @@ func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*
 		key := b.ID + "\x00" + string(rune('A'+b.Kind)) + "\x00" + canvas.Markdown(*b) + fileKey(d, b) + mentionKey(b)
 		if o, ok := old[key]; ok && len(b.Children) == 0 && len(b.Columns) == 0 && b.Kind != canvas.Table {
 			o.b = b
-			o.edOK, o.edWhy = canvas.Editable(*b)
+			o.edOK, o.edWhy = v.blockEditable(*b)
 			out = append(out, o)
 			continue
 		}
 		x := &blk{b: b, key: key}
-		x.edOK, x.edWhy = canvas.Editable(*b)
+		x.edOK, x.edWhy = v.blockEditable(*b)
 		switch b.Kind {
 		case canvas.Table:
 			x.cells = v.tableCells(d, b)

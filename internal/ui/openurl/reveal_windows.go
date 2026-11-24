@@ -13,8 +13,8 @@ func revealAttr(p string) *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{CmdLine: `explorer /select,"` + p + `"`}
 }
 
-// shellOpen is ShellExecuteW(NULL, "open", p, NULL, NULL, SW_SHOWNORMAL).
-func shellOpen(p string) error {
+// shellOpenPath is ShellExecuteW(NULL, "open", p, NULL, NULL, SW_SHOWNORMAL).
+func shellOpenPath(p string) error {
 	verb, err := windows.UTF16PtrFromString("open")
 	if err != nil {
 		return err

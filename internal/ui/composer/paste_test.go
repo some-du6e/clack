@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"gioui.org/io/key"
 )
 
 // phDump renders a Doc one line per entry: "kind[indent] text", with runs
@@ -269,6 +271,49 @@ func TestClipHTMLText(t *testing.T) {
 	}
 	if got := clipHTMLText([]byte("\xef\xbb\xbf<i>\xff</i>")); got != "<i>\uFFFD</i>" {
 		t.Errorf("bom + invalid: %q", got)
+	}
+}
+
+// Editor.MaxIndent caps the list level Tab and a paste make (a canvas's
+// editor: Slack's maxListIndentationLevel 4, capEntityIndentation_ on a
+// paste); unset, the composer's own.
+func TestEditorMaxIndent(t *testing.T) {
+	deepest := func(e *Editor) int {
+		n := 0
+		for _, l := range e.doc.Lines {
+			n = max(n, l.Indent)
+		}
+		return n
+	}
+	tabs := func(e *Editor) {
+		for i := 0; i < 9; i++ {
+			e.SetSelection(0, 0) // Slack's "indent" takes a collapsed caret at the item's start
+			edPress(e, key.NameTab, 0)
+		}
+	}
+	deep := strings.Repeat("<ul><li>x", 9) + strings.Repeat("</li></ul>", 9)
+	for _, c := range []struct {
+		max, want int
+	}{{0, edMaxIndent}, {4, 4}} {
+		e := NewEditor()
+		e.MaxIndent = c.max
+		edType(e, "- a")
+		tabs(e)
+		if got := e.doc.Lines[0].Indent; got != c.want {
+			t.Errorf("MaxIndent %d: Tab went to level %d, want %d", c.max, got, c.want)
+		}
+		e.SetSelection(e.doc.Len(), e.doc.Len())
+		e.newline()
+		e.pasteHTML("x", deep) // nested under the deepest item
+		if got := deepest(e); got != c.want {
+			t.Errorf("MaxIndent %d: a deep list pasted under an item reached level %d, want %d", c.max, got, c.want)
+		}
+		e = NewEditor()
+		e.MaxIndent = c.max
+		e.pasteHTML("x", deep)
+		if got := deepest(e); got != c.want {
+			t.Errorf("MaxIndent %d: a deep list pasted reached level %d, want %d", c.max, got, c.want)
+		}
 	}
 }
 

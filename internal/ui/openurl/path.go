@@ -41,7 +41,7 @@ func OpenPath(p string) error {
 	if runtime.GOOS == "windows" {
 		// shell.openPath's ShellExecuteW: the path in UTF-16, whatever
 		// its characters (rundll32's FileProtocolHandler reads ANSI)
-		return shellOpen(p)
+		return shellOpenPath(p)
 	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

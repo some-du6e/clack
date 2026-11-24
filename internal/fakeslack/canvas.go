@@ -168,6 +168,32 @@ func (s *Server) EditCanvasAsOther(id, markdown string) {
 	s.pushDocumentUpdate(id)
 }
 
+// ReplaceCanvasBlockAsOther is another user's save of the top-level block
+// whose section is sectionID: it becomes markdown's one block, with the
+// same id. It reports whether there was such a block.
+func (s *Server) ReplaceCanvasBlockAsOther(id, sectionID, markdown string) bool {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	ok := false
+	if c, has := cs.byID[id]; has {
+		nb := canvas.ParseMarkdown(markdown, s.names())
+		for i := range c.Doc.Blocks {
+			if c.Doc.Blocks[i].ID == sectionID && len(nb) == 1 {
+				nb[0].ID = sectionID
+				c.Doc.Blocks[i], c.HTML = nb[0], ""
+				c.Updated = time.Now().Unix()
+				ok = true
+				break
+			}
+		}
+	}
+	cs.mu.Unlock()
+	if ok {
+		s.pushDocumentUpdate(id)
+	}
+	return ok
+}
+
 // InsertCanvasAsOther is EditCanvasAsOther for blocks another user
 // inserts before the canvas's top-level block at (its end past the last):
 // the blocks after them keep their sections and move down.

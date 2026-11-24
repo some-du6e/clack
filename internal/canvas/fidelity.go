@@ -31,7 +31,11 @@ func Editable(b Block) (ok bool, why string) {
 	}
 	for _, s := range b.Spans {
 		switch s.Kind {
-		case richtext.Text, richtext.Link, richtext.Emoji:
+		case richtext.Text, richtext.Emoji:
+		case richtext.Link:
+			if s.Control { // canvas markdown would write it as a plain link
+				return false, "a canvas, file or message mention"
+			}
 		case richtext.User, richtext.Channel:
 			if s.ID == "" {
 				return false, "a mention Clack can't match to a person or channel"

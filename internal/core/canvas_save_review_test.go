@@ -1,0 +1,318 @@
+package core
+
+// The B2 review's blockers (wf_da55700d-6e0): saves that dropped an edit
+// without a word, a tick and typing that replaced each other, a panic, a
+// save on stale state and a lock that never lifted.
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/some-du6e/clack/internal/canvas"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/quip"
+)
+
+// An edit made while the canvas's model can't be loaded waits for it (the
+// load is part of the attempt, counted and retried like a failed save):
+// the caller hears it's pending, and it saves once a load succeeds.
+func TestCanvasSaveLoadFailureWaits(t *testing.T) {
+	fastSaves(t)
+	saveBackoffBase = time.Hour // the retry goes when the test runs it (retryNow)
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared) // the fake gives its sections their ids
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	a.dropCanvasModel(fakeslack.CanvasShared) // as when the canvas's last view closes: core holds no model
+	fs.SetFault("canvas/load-data", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 1})
+	err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, after a failed load")
+	if !errors.Is(err, ErrCanvasSavePending) {
+		t.Errorf("an edit whose model load failed: %v", err)
+	}
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); !st.Pending {
+		t.Errorf("the edit isn't pending: %+v", st)
+	}
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending {
+		t.Errorf("still pending after the retry: %+v", st)
+	}
+	fc, _ := fs.Canvas(fakeslack.CanvasShared)
+	if b := fc.Doc.Find(*head.ID); b == nil || b.Text() != "Weekly sync, after a failed load" {
+		t.Errorf("after the retry: %+v", b)
+	}
+}
+
+// A conflict found on a retry (someone else saved the section after the
+// first attempt failed) drops the edit with a notice for the view.
+func TestCanvasSaveRetryConflictNotice(t *testing.T) {
+	fastSaves(t)
+	saveBackoffBase = time.Hour // the other save lands before the retry, which the test runs (retryNow)
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 1})
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, A"); err == nil {
+		t.Fatal("the first attempt went through")
+	}
+	if !fs.ReplaceCanvasBlockAsOther(fakeslack.CanvasShared, *head.ID, "# Weekly sync, B") {
+		t.Fatal("no heading to replace")
+	}
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending {
+		t.Errorf("the edit stayed after the conflict: %+v", st)
+	}
+	if ns := a.TakeCanvasSaveNotices(fakeslack.CanvasShared); len(ns) != 1 || !ns[0].Conflict {
+		t.Errorf("notices %+v, want the conflict", ns)
+	}
+	fc, _ := fs.Canvas(fakeslack.CanvasShared)
+	if b := fc.Doc.Find(*head.ID); b == nil || b.Text() != "Weekly sync, B" {
+		t.Errorf("B's heading %+v", b)
+	}
+}
+
+// A conflict found on an attempt that waited behind another save (its
+// caller heard nil) is a notice too.
+func TestCanvasSaveDeferredConflictNotice(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	item := modelSection(t, a, fakeslack.CanvasShared, "Write the changelog")
+	before := fs.CallCount("canvas/edit-document")
+	// the first answer is held long enough for the edit and the other
+	// client's save to come before the deferred attempt
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{ReplyDelay: 2 * time.Second, Times: 1})
+	first := make(chan error, 1)
+	go func() {
+		first <- a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, one")
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for fs.CallCount("canvas/edit-document") == before {
+		if time.Now().After(deadline) {
+			t.Fatal("the first save never went out")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *item.ID, "Write the changelog", "Write the changelog, A"); err != nil {
+		t.Fatalf("an edit while a save is out: %v", err)
+	}
+	if !fs.ReplaceCanvasBlockAsOther(fakeslack.CanvasShared, *item.ID, "- [ ] Write the changelog, B") {
+		t.Fatal("no item to replace")
+	}
+	if err := <-first; err != nil {
+		t.Fatalf("the first save: %v", err)
+	}
+	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending && !s.Saving })
+	if ns := a.TakeCanvasSaveNotices(fakeslack.CanvasShared); len(ns) != 1 || !ns[0].Conflict {
+		t.Errorf("notices %+v, want the conflict", ns)
+	}
+}
+
+// A tick and typing in the same item before a save are one edit, as
+// Slack's dirty fields hold them: one bundle section with the text and
+// the box, in either order.
+func TestCanvasSaveTickAndText(t *testing.T) {
+	fastSaves(t)
+	saveBackoffBase = time.Hour // no retry: the second edit's attempt saves both
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	item := modelSection(t, a, fakeslack.CanvasShared, "Write the changelog")
+	block := func() *canvas.Block { fc, _ := fs.Canvas(fakeslack.CanvasShared); return fc.Doc.Find(*item.ID) }
+
+	// typing whose save failed once, then a tick
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 1})
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *item.ID, "Write the changelog", "Write the changelog today"); err == nil {
+		t.Fatal("the typing's first attempt went through")
+	}
+	if err := a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditCheck, SectionID: *item.ID, Checked: true}); err != nil {
+		t.Fatalf("the tick: %v", err)
+	}
+	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending })
+	if b := block(); b == nil || b.Text() != "Write the changelog today" || !b.Checked {
+		t.Errorf("after typing and a tick: %+v", b)
+	}
+	rs := saves(fs)
+	if r := rs[len(rs)-1]; len(r.Save.Sections) != 1 || !strings.HasPrefix(quip.FieldsString(&r.Save.Sections[0]), "1,2,9,12,13,16,19,20,33") {
+		t.Errorf("the save's sections: %d, fields %s", len(r.Save.Sections), quip.FieldsString(&r.Save.Sections[0]))
+	}
+
+	// an untick whose save failed once, then typing
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 1})
+	if err := a.SaveCanvas(ctx, fakeslack.CanvasShared, quip.Edit{Kind: quip.EditCheck, SectionID: *item.ID, Checked: false}); err == nil {
+		t.Fatal("the untick's first attempt went through")
+	}
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *item.ID, "Write the changelog today", "Write the changelog tomorrow"); err != nil {
+		t.Fatalf("the typing: %v", err)
+	}
+	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending })
+	if b := block(); b == nil || b.Text() != "Write the changelog tomorrow" || b.Checked {
+		t.Errorf("after an untick and typing: %+v", b)
+	}
+}
+
+// CanvasTitleSection doesn't panic when the canvas's model state goes
+// while it loads (the canvas's last view closed): it has no title section
+// to give.
+func TestCanvasSaveTitleSectionModelGone(t *testing.T) {
+	a, fs := canvasApp(t)
+	before := fs.CallCount("canvas/load-data")
+	fs.SetFault("canvas/load-data", fakeslack.Fault{ReplyDelay: 400 * time.Millisecond, Times: 1})
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for fs.CallCount("canvas/load-data") == before && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		a.dropCanvasModel(fakeslack.CanvasShared)
+	}()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("CanvasTitleSection panicked: %v", r)
+		}
+	}()
+	if _, err := a.CanvasTitleSection(context.Background(), fakeslack.CanvasShared); err == nil {
+		t.Error("a title section from a model that went")
+	}
+}
+
+// A failed catch-up stops the save (never on stale state): the attempt
+// fails, and the save goes after the backoff, caught up.
+func TestCanvasSaveCatchUpFailureStops(t *testing.T) {
+	fastSaves(t)
+	saveBackoffBase = time.Hour // the retry goes when the test runs it (retryNow)
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	fs.SetFault("canvas/fetch-latest", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 1})
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, caught up"); err == nil {
+		t.Error("the save went out after a failed catch-up")
+	}
+	if n := len(saves(fs)); n != 0 {
+		t.Errorf("%d edit-document calls after a failed catch-up", n)
+	}
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending {
+		t.Errorf("still pending after the retry: %+v", st)
+	}
+	if n := len(saves(fs)); n != 1 {
+		t.Errorf("%d edit-document calls, want the retry's", n)
+	}
+	if after := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync"); quip.SectionRTML(&after) != "Weekly sync, caught up" {
+		t.Errorf("saved %q", quip.SectionRTML(&after))
+	}
+}
+
+// Slack's error state ends once nothing is left to save: two failures lock
+// the canvas, the retry finds the section saved by someone else and drops
+// the edit, and with the queue empty the lock lifts.
+func TestCanvasSaveLockLiftsWhenEmpty(t *testing.T) {
+	fastSaves(t)
+	saveBackoffBase = time.Hour // the other save lands before the third attempt, which the test runs (retryNow)
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 2})
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, A"); err == nil {
+		t.Fatal("the first attempt went through")
+	}
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); !st.ReadOnly {
+		t.Fatalf("two failures, no lock: %+v", st)
+	}
+	if !fs.ReplaceCanvasBlockAsOther(fakeslack.CanvasShared, *head.ID, "# Weekly sync, B") {
+		t.Fatal("no heading to replace")
+	}
+	retryNow(t, a, fakeslack.CanvasShared)
+	if st := a.CanvasSaveState(fakeslack.CanvasShared); st.Pending || st.ReadOnly {
+		t.Errorf("the lock stayed with nothing left to save: %+v", st)
+	}
+	if ns := a.TakeCanvasSaveNotices(fakeslack.CanvasShared); len(ns) != 1 || !ns[0].Conflict {
+		t.Errorf("notices %+v, want the conflict", ns)
+	}
+	if n := len(saves(fs)); n != 2 {
+		t.Errorf("%d edit-document calls, want the two failed ones", n)
+	}
+}
+
+// A save the server took whose answer was lost (a cut connection) isn't
+// someone else's: the retry's catch-up finds the section holding the
+// edit, so it's saved, with no notice and no second save.
+func TestCanvasSaveLostAnswer(t *testing.T) {
+	fastSaves(t)
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, AfterHandle: true, Times: 1})
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, once"); err == nil {
+		t.Fatal("the lost answer came")
+	}
+	waitSaveState(t, a, fakeslack.CanvasShared, 5*time.Second, func(s CanvasSaveState) bool { return !s.Pending })
+	if ns := a.TakeCanvasSaveNotices(fakeslack.CanvasShared); len(ns) != 0 {
+		t.Errorf("notices %+v for this client's own save", ns)
+	}
+	if n := len(saves(fs)); n != 1 {
+		t.Errorf("%d edit-document calls, want the one the server took", n)
+	}
+	if after := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync"); quip.SectionRTML(&after) != "Weekly sync, once" {
+		t.Errorf("saved %q", quip.SectionRTML(&after))
+	}
+}
+
+// Edits still pending when Clack quits go once more, as Slack saves on
+// unload; a released App's savers keep no timer.
+func TestCanvasSaveFlushOnQuit(t *testing.T) {
+	fastSaves(t)
+	saveBackoffBase = time.Hour // no retry before the quit
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	loadModel(t, a, fakeslack.CanvasShared)
+	head := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+	fs.SetFault("canvas/edit-document", fakeslack.Fault{Status: http.StatusServiceUnavailable, Times: 1})
+	if err := a.SaveCanvasText(ctx, fakeslack.CanvasShared, *head.ID, "Weekly sync", "Weekly sync, at quit"); err == nil {
+		t.Fatal("the first attempt went through")
+	}
+	s := a.saver(fakeslack.CanvasShared)
+	a.Shutdown()
+	if n := len(saves(fs)); n != 2 {
+		t.Errorf("%d edit-document calls, want the quit's too", n)
+	}
+	fc, _ := fs.Canvas(fakeslack.CanvasShared)
+	if b := fc.Doc.Find(*head.ID); b == nil || b.Text() != "Weekly sync, at quit" {
+		t.Errorf("after the quit: %+v", b)
+	}
+	a.Release()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retry != nil || s.poll != nil {
+		t.Errorf("a released App's saver keeps timers: retry %v, poll %v", s.retry != nil, s.poll != nil)
+	}
+}
+
+// Renaming an untitled canvas: files.info calls it "Untitled" (or by its
+// first words), which its empty title section doesn't hold, so the rename
+// goes from whatever name it began with. Once named, a rename from a name
+// the canvas no longer has is a conflict again.
+func TestCanvasSaveRenameUntitled(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	const id = "F0QUIPUNT01"
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: id, Doc: canvas.Doc{Blocks: []canvas.Block{{ID: "temp:C:UNT00001", Kind: canvas.Paragraph}}}})
+	loadModel(t, a, id)
+	if err := a.SaveCanvasTitle(ctx, id, "Untitled", "Launch plan"); err != nil {
+		t.Fatalf("renaming an untitled canvas: %v", err)
+	}
+	if fc, _ := fs.Canvas(id); fc.Title != "Launch plan" {
+		t.Errorf("the canvas's title %q", fc.Title)
+	}
+	if err := a.SaveCanvasTitle(ctx, id, "Untitled", "Launch plan, again"); !errors.Is(err, ErrCanvasConflict) {
+		t.Errorf("a rename from a name the canvas no longer has: %v", err)
+	}
+}
