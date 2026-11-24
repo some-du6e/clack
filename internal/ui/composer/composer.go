@@ -42,6 +42,9 @@ type Composer struct {
 	// unsendBy is when the message just sent stops being unsendable
 	// (Slack's messageEligibleForUnsending, expiryTs = send + 15 s).
 	unsendBy time.Time
+	// jobs counts this composer's send jobs still running (jobsDone;
+	// TestSlashRoutingLikeSlack waits for them before it cleans up)
+	jobs     atomic.Int32
 	onDone   func()
 	done     bool
 	ed       *Editor
@@ -1696,8 +1699,21 @@ func (c *Composer) send(o *outgoing) {
 			func(_ any, err error) { finish(err) })
 		return
 	}
-	go c.startSend(o)()
+	c.goSend(c.startSend(o))
 }
+
+// goSend runs a send job's run on its own goroutine, counted in c.jobs.
+func (c *Composer) goSend(run func()) {
+	c.jobs.Add(1)
+	go func() {
+		defer c.jobs.Add(-1)
+		run()
+	}()
+}
+
+// jobsDone reports whether every send job this composer started has
+// finished (its outcome handed to the UI goroutine's queue).
+func (c *Composer) jobsDone() bool { return c.jobs.Load() == 0 }
 
 // startSend is send's part on the UI goroutine (the attached files leave
 // the composer, the job is built); it returns the rest, to run on any
@@ -1991,7 +2007,7 @@ func (c *Composer) checkThenSend(o *outgoing) {
 	check(m, func(ok bool) {
 		switch {
 		case run != nil && ok:
-			go run() // never on the caller's goroutine: a check may answer on the UI's
+			c.goSend(run) // never on the caller's goroutine: a check may answer on the UI's
 		case run != nil:
 			c.restoreSend(o) // held back (done(false)): the message goes back
 		default:
