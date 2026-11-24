@@ -6972,6 +6972,37 @@ jobs:
           done
           exit $rc
 
+  # pagekey-day (2026-11-24): TestPageKeyTakesTheDOMNames found no message
+  # row at the list's top to measure (train-238's linux-test 45304682517, at
+  # 01:31:50 UTC): the windows' synthetic history, started 7 h before the
+  # clock, took in midnight, and its day divider held the list's top.
+  # histDay puts that history on a day of its own. The tests on it, COUNT
+  # times. Dispatch with only=pagekey-day.
+  pagekey-day:
+    if: ${{ !inputs.only || startsWith('pagekey-day', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the tests on the windows' synthetic history, COUNT times
+        env:
+          PK_RUN: "^(TestWindowEndKeyLeavesWindow|TestPageUpMovesAPageLess21|TestPageKeyTakesTheDOMNames|TestNewMessageAfterPageUpKeepsPlace|TestShrinkingNearEndKeepsToIt|TestDeletedLineRowKeepsNextInPlace|TestEndStopsTheWheelCurve|TestWindowMostRecentLeavesWindow|TestWindowDownArrowOntoLastMessage|TestWindowFocusNewestLeavesWindow|TestWindowDateJumpPastItsEnd|TestListCacheKeepsShownWindow|TestDrawnWindowTakenBack|TestInjectedMessagesStayInTheirSlice|TestWindowPageKeepsLiveChanges|TestRenameDuringWindowPage|TestLiveReadsWindow|TestWindowJumpBackKeepsUnread|TestWindowJumpKeepsTheInlineEdit|TestWindowRowsDrawPluginViews|TestHistoryChangeAcrossALoad|TestHistoryPurgeKeepsTheInlineEdit)$"
+        run: xvfb-run -a go test -count=$COUNT -timeout 25m -run "$PK_RUN" ./internal/ui/messages
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7126,6 +7157,7 @@ jobs:
       - jsrt-stw-mac
       - counts-baseline
       - apt-stall
+      - pagekey-day
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
