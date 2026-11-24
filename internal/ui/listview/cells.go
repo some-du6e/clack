@@ -95,7 +95,7 @@ func (r *handler) OpenFile(f *richtext.File) {
 		if ph != nil {
 			popups.DownloadFile(ph, f)
 		}
-	})
+	}, func(f *richtext.File) bool { return ph != nil && popups.ViewFile(ph, f) })
 }
 func (r *handler) Button(b richtext.Button) {
 	if b.URL != "" {

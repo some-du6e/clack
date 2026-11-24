@@ -168,7 +168,15 @@ func (a *App) layoutDownloadToast(gtx layout.Context) {
 		}
 		t.core = c
 		if c != nil {
-			t.stop = c.Downloads().Subscribe(a.Invalidate)
+			// a frame for the downloads' progress only while something
+			// shows it (the toast, the Downloads modal): a closed toast
+			// costs no redraws however fast a download goes
+			ds := c.Downloads()
+			t.stop = ds.Subscribe(func() {
+				if len(ds.Active()) > 0 || popups.DownloadsShown() {
+					a.Invalidate()
+				}
+			})
 		}
 	}
 	if c == nil {

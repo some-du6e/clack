@@ -1,7 +1,7 @@
-//go:build !darwin
+//go:build !darwin && !windows
 
 package core
 
-// quarantine marks a completed download on macOS only
-// (download_quarantine_darwin.go).
-func quarantine(string) {}
+// MarkDownloaded marks a completed download on macOS (the quarantine
+// xattr) and Windows (the Zone.Identifier stream) only.
+func MarkDownloaded(string, string) {}

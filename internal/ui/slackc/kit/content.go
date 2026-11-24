@@ -347,6 +347,9 @@ func (richHandler) OpenFile(f *richtext.File) {
 		if d := envOf().DownloadFile; d != nil {
 			d(f)
 		}
+	}, func(f *richtext.File) bool {
+		v := envOf().ViewFile
+		return v != nil && v(f)
 	})
 }
 func (richHandler) Button(b richtext.Button) {}

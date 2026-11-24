@@ -542,7 +542,7 @@ func (hh hostHandler) OpenFile(f *richtext.File) {
 		if ph != nil {
 			popups.DownloadFile(ph, f)
 		}
-	})
+	}, func(f *richtext.File) bool { return ph != nil && popups.ViewFile(ph, f) })
 }
 
 // Button is a click on a Block Kit element richview drew itself: only a

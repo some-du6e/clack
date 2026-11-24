@@ -38,12 +38,15 @@ func OpenPath(p string) error {
 		return err
 	}
 	uiguard.OffUI("exec (open a file)")
+	if runtime.GOOS == "windows" {
+		// shell.openPath's ShellExecuteW: the path in UTF-16, whatever
+		// its characters (rundll32's FileProtocolHandler reads ANSI)
+		return shellOpenPath(p)
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
 		cmd = exec.Command("open", p) // an absolute path: never read as a flag
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", p)
 	default:
 		cmd = exec.Command("xdg-open", p)
 	}

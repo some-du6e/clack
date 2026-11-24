@@ -79,6 +79,9 @@ type Env struct {
 	// DownloadFile downloads a Slack file in the app (popups.DownloadFile:
 	// the download toast), as a file card's click does.
 	DownloadFile func(f *richtext.File)
+	// ViewFile shows a file in the media viewer when it can (an image, a
+	// video: popups.ViewFile); false when it can't.
+	ViewFile func(f *richtext.File) bool
 	// Navigate follows a Clack route ("c/<id>", …) for Slack-internal links.
 	Navigate func(route string)
 	// FollowLink is Slack's Link click for a plugin-drawn href: a slack:

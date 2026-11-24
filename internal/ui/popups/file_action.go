@@ -2,6 +2,7 @@ package popups
 
 import (
 	"strings"
+	"time"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -60,20 +61,51 @@ func fileHosted(f *richtext.File) bool {
 
 func fileIsPDF(f *richtext.File) bool { return strings.EqualFold(f.Type, "pdf") }
 
-// OpenFileCard is handleFileContainerClick for a file card whose viewers
-// (an image's, a video's, a canvas's or list's) the caller already
-// tried: a file Slack downloads downloads in the app (DownloadFile); a
-// remote or external file opens its own link with open (Slack's
-// window.open of url_private); a PDF, which Clack's viewer can't show,
-// takes openFileInNewWindow's permalink. Nothing else opens: a Slack
-// file never goes to the browser in Slack's place.
+// OpenFileCard is handleFileContainerClick for a file card in a surface
+// that has no viewers of its own: an image opens h's media viewer (a
+// video the video viewer, when h has one), a file Slack downloads
+// downloads in the app (DownloadFile), and the rest go as
+// OpenFileCardWith says.
 func OpenFileCard(h Host, f *richtext.File, open func(string)) {
-	OpenFileCardWith(f, open, func(f *richtext.File) { DownloadFile(h, f) })
+	OpenFileCardWith(f, open, func(f *richtext.File) { DownloadFile(h, f) }, func(f *richtext.File) bool { return ViewFile(h, f) })
 }
 
-// OpenFileCardWith is OpenFileCard with the download given (a host
-// without popups' Host: Slack Kit components; tests).
-func OpenFileCardWith(f *richtext.File, open func(string), download func(*richtext.File)) {
+// ViewFile is getMainFileAction's "view" where h can show it: an image
+// with a thumbnail in the media viewer (OpenLightbox, the original's
+// URL), a playable video in the video viewer when h has one. false: h
+// can't.
+func ViewFile(h Host, f *richtext.File) bool {
+	switch {
+	case f.IsImage && f.Thumb != nil:
+		img := *f.Thumb
+		if f.URL != "" {
+			img.URL, img.Proxy = f.URL, true
+		}
+		if img.Title == "" {
+			img.Title = f.Title
+		}
+		h.OpenLightbox(img, core.Message{})
+		return true
+	case f.IsVideo:
+		if vo, ok := h.(interface {
+			OpenVideoViewer(f *richtext.File, m core.Message, at time.Duration, autoplay bool) bool
+		}); ok {
+			return vo.OpenVideoViewer(f, core.Message{}, 0, true)
+		}
+	}
+	return false
+}
+
+// OpenFileCardWith is OpenFileCard with the download and the viewer given
+// (view nil: no viewer here):
+//   - "download": download (an .exe, a zip, a document, in the app);
+//   - "view" and "window": view, else the file's page (a PDF, Slack's
+//     openFileInNewWindow; an image, audio or video where nothing here
+//     shows it, as before);
+//   - "detail": the page, Clack's stand-in for the file details Slack
+//     opens (snippets, posts, emails, huddle transcripts);
+//   - "open", "remote", "external": the page, or the file's own link.
+func OpenFileCardWith(f *richtext.File, open func(string), download func(*richtext.File), view func(*richtext.File) bool) {
 	if f == nil {
 		return
 	}
@@ -82,12 +114,6 @@ func OpenFileCardWith(f *richtext.File, open func(string), download func(*richte
 		if download != nil {
 			download(f)
 		}
-	case "open":
-		// a canvas or a list the caller has no viewer for: its page,
-		// as before (the hosts with viewers open them first)
-		if f.Permalink != "" {
-			open(f.Permalink)
-		}
 	case "remote", "external":
 		if f.URL != "" {
 			open(f.URL)
@@ -95,14 +121,14 @@ func OpenFileCardWith(f *richtext.File, open func(string), download func(*richte
 			open(f.Permalink)
 		}
 	case "view", "window":
-		// a PDF (FSFV's, which Clack lacks: openFileInNewWindow), or a
-		// video where the caller has no player (Clack's fallback, as
-		// before: its page)
-		if (fileIsPDF(f) || f.IsVideo) && !f.IsImage && f.Permalink != "" {
+		if view != nil && view(f) {
+			return
+		}
+		if f.Permalink != "" {
 			open(f.Permalink)
 		}
-	case "detail":
-		if f.Permalink != "" && (f.Mode == "post" || f.Mode == "docs" || f.Mode == "space") {
+	default: // "open", "detail"
+		if f.Permalink != "" {
 			open(f.Permalink)
 		}
 	}

@@ -51,6 +51,7 @@ func (a *App) slackcFrame(gtx layout.Context) {
 			Toast:           a.Toast,
 			OpenURL:         openURL,
 			DownloadFile:    func(f *richtext.File) { popups.DownloadFile(a, f) },
+			ViewFile:        func(f *richtext.File) bool { return popups.ViewFile(a, f) },
 			Navigate:        a.Navigate,
 			FollowLink:      func(href string) bool { return a.FollowLink(href, false) },
 			Core:            c,
