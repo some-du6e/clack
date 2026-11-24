@@ -6863,6 +6863,43 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # counts-baseline (2026-11-24): TestCountsFirstAnswerIsBaseline counted
+  # the connect's catch-up of its window as its own history read, when
+  # boot's prefetch read the window before the slow connect made its end
+  # stale (full-test 45313234515). newHCEnv holds the socket's hello until
+  # the prefetch has read it, so the catch-up comes every run, and waits for
+  # it. The history_changed tests on that env, COUNT times with the
+  # catch-up's read held until the test's next counts call (HC_SLOW_CATCHUP:
+  # as late as on that runner, every time), then COUNT times as the suite
+  # runs them. Dispatch with only=counts-baseline.
+  counts-baseline:
+    if: ${{ !inputs.only || startsWith('counts-baseline', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the history_changed tests on newHCEnv, the catch-up late, COUNT times
+        env:
+          HC_SLOW_CATCHUP: "1"
+          HC_RUN: "^(TestHistoryChangedDropsCachedMessages|TestHistoryChangedDropsCachedReplies|TestHistoryChangedSubtypeIsNoMessage|TestCountsHistoryInvalidPurgesHistory|TestCountsUpdatedRereadsHistory|TestSocketHistoryChangeAdvancesHistoryInvalid|TestCountsFirstAnswerIsBaseline|TestCountsKeepNewerApplied|TestSocketDeleteAdvancesHistoryInvalid|TestFastReconnectFetchesNoCounts|TestFreshReadClearsStale)$"
+        run: go test -count=$COUNT -timeout 6m -run "$HC_RUN" ./internal/core
+      - name: the history_changed tests on newHCEnv, COUNT times
+        env:
+          HC_RUN: "^(TestHistoryChangedDropsCachedMessages|TestHistoryChangedDropsCachedReplies|TestHistoryChangedSubtypeIsNoMessage|TestCountsHistoryInvalidPurgesHistory|TestCountsUpdatedRereadsHistory|TestSocketHistoryChangeAdvancesHistoryInvalid|TestCountsFirstAnswerIsBaseline|TestCountsKeepNewerApplied|TestSocketDeleteAdvancesHistoryInvalid|TestFastReconnectFetchesNoCounts|TestFreshReadClearsStale)$"
+        run: go test -count=$COUNT -timeout 6m -run "$HC_RUN" ./internal/core
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7015,6 +7052,7 @@ jobs:
       - files-download
       - jsrt-populate
       - jsrt-stw-mac
+      - counts-baseline
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
