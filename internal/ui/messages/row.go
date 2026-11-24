@@ -3642,21 +3642,29 @@ func (pl *reactPill) count(gtx layout.Context, st slackc.Styled) layout.Dimensio
 	return label(gtx, rc.th, cs, reactionCount(pl.r.groups[pl.i].count))
 }
 
-// failedLine is "Message failed to send. Retry · Delete" under a failed
-// optimistic send.
+// failedLine is MessageResend's footer under a failed send (boot-shared,
+// build 83aff18a; client-boot-styles .c-message_kit__resend__footer): a
+// 4x16 bar (foreground_low at .13, radius 2, 8px before the text), "Slack
+// couldn’t send this message" in 13px at the resend's .7 foreground, an en
+// space's gap, then Try again and Cancel (removes the failed copy) with
+// "\u00a0|\u00a0" between them at .5; 4px under it.
 func (r *row) failedLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	c := rc.c
 	lh := dp(gtx, 20)
-	is := dp(gtx, 14)
-	at(gtx, x, y+(lh-is)/2+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("warning")(gtx, unit.Dp(14), c.FailedText)
+	tint := func(col color.NRGBA, a float32) color.NRGBA {
+		col.A = uint8(float32(col.A)*a + .5)
+		return col
+	}
+	bh := dp(gtx, 16)
+	fill(gtx.Ops, image.Rect(x, y+(lh-bh)/2, x+dp(gtx, 4), y+(lh-bh)/2+bh), tint(c.Text, .13))
+	s := textStyle{size: 13, col: tint(c.Text, .7), lineH: 20}
+	xx := x + dp(gtx, 4) + dp(gtx, 8)
+	d := at(gtx, xx, y, func(gtx layout.Context) layout.Dimensions {
+		return label(gtx, rc.th, s, i18n.T("message", "Slack couldn’t send this message"))
 	})
-	s := textStyle{size: 13, col: c.FailedText, lineH: 20}
-	xx := x + is + dp(gtx, 4)
-	d := at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, "Message failed to send.") })
-	xx += d.Size.X + dp(gtx, 4)
+	xx += d.Size.X + dp(gtx, 6) // the en space after it (half of 13px)
 	link := func(btn *widget.Clickable, txt string) {
-		d := at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions {
+		d := at(gtx, xx, y, func(gtx layout.Context) layout.Dimensions {
 			return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				ls := textStyle{size: 13, weight: theme.Bold, col: c.Link, lineH: 20}
 				dd := label(gtx, rc.th, ls, txt)
@@ -3675,10 +3683,12 @@ func (r *row) failedLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	if r.discardBtn.Clicked(gtx) && rc.onDiscard != nil {
 		rc.onDiscard(r)
 	}
-	link(&r.retryBtn, "Retry")
-	d = at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, " · ") })
+	link(&r.retryBtn, i18n.T("message", "Try again"))
+	d = at(gtx, xx, y, func(gtx layout.Context) layout.Dimensions {
+		return label(gtx, rc.th, textStyle{size: 13, col: tint(c.Text, .5), lineH: 20}, "\u00a0|\u00a0")
+	})
 	xx += d.Size.X
-	link(&r.discardBtn, "Delete")
+	link(&r.discardBtn, i18n.T("message", "Cancel"))
 	return lh + dp(gtx, 4)
 }
 
