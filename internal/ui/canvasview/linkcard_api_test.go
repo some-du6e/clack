@@ -7,7 +7,6 @@ import (
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
-	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // setUnfurl makes link's cards name the container ts in the fake's card
@@ -55,7 +54,7 @@ func embedText(v *View) string {
 
 func cardTextOf(c *linkCard) string {
 	var out []string
-	for _, rv := range append([]*richview.View{c.title, c.content, c.body, c.alert}, c.pub.views()...) {
+	for _, rv := range c.views() {
 		if rv != nil {
 			out = append(out, rv.TextRange(0, rv.PlainLen()))
 		}

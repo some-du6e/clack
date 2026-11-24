@@ -671,7 +671,11 @@ func (b *blk) views() []*richview.View {
 		}
 		return []*richview.View{b.rv}
 	}
-	c := b.card
+	return b.card.views()
+}
+
+// views are every view the card draws text with.
+func (c *linkCard) views() []*richview.View {
 	return append([]*richview.View{c.title, c.content, c.body, c.alert, c.mc.name, c.mc.sub, c.mc.body, c.fc.rv, c.cv.rv}, c.pub.views()...)
 }
 
