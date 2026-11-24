@@ -43,4 +43,4 @@ func addrPointer(p uintptr) unsafe.Pointer {
 
 // populate does nothing on Windows: committed pages fault in where the
 // wasm first writes them (wasmmem_unix.go's populate).
-func populate(b []byte) {}
+func populate(b []byte) error { return nil }

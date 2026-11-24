@@ -1,59 +1,91 @@
 package jsrt
 
 import (
+	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
-	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
-// The pages a growth commits are populated in populate's read syscall, so
-// the wasm's own writes to them fault on almost none: a fault the
-// goroutine running the wasm takes holds every stop-the-world until it's
-// done, one in a syscall doesn't (wasmmem_unix.go). Growing the memory by
-// 512 MiB of ArrayBuffers, the process's faults outside populate's reads
-// stay under a tenth of the pages grown. Unpopulated, the wasm faulted on
-// every one, and on the macOS runners some of those faults took 100-260
-// ms (TestWasmMemoryGrowsInPlace's longest stop-the-world on
-// macos-15-intel: 137, 211 and 262 ms in 3 of 7 jsrt runs since
-// 2026-11-16, 126 ms on train-229's 45256775420). Linux counts every
-// zero-fill fault in getrusage's ru_minflt.
-func TestWasmMemoryPopulated(t *testing.T) {
-	r := newTest(t, func(o *Options) {
-		o.Timeout = time.Minute
-		o.MemoryLimit = 1024 << 20
-	})
-	if r.wasmMem.reserved.Load() == 0 {
-		t.Fatal("no reservation: the wasm memory is a Go slice")
+// A fresh engine's initial memory isn't populated: populate is for the
+// pages a growth adds, where the wasm's first write to each faults inside
+// a stop-the-world's wait, and the initial memory is mostly the C stack
+// (-z stack-size, 8 MiB) that a runtime barely reaches into. Populated with
+// the rest (populate's first cut, jsrt-stw-populate 687521dc2), every
+// engine held all of it resident, about 9 MiB, before any JS ran. The
+// resident part is read with mincore; the process's RSS across four more
+// engines is logged alongside.
+func TestWasmMemoryInitialUnpopulated(t *testing.T) {
+	newTest(t) // the first engine: the module's compilation and the like
+	rss0, err := processRSS()
+	if err != nil {
+		t.Fatal(err)
 	}
-	var r0, r1 unix.Rusage
-	var m0, m1 uint32
-	p0 := populateFaults.Load()
-	err := r.Do(func(js *Ctx) error {
-		m0 = r.eng.mem.Size()
-		if err := unix.Getrusage(unix.RUSAGE_SELF, &r0); err != nil {
-			return err
+	var rs []*Runtime
+	for i := 0; i < 4; i++ {
+		rs = append(rs, newTest(t))
+	}
+	rss1, err := processRSS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := rs[len(rs)-1]
+	initial := r.wasmMem.initial.Load()
+	if r.wasmMem.reserved.Load() == 0 || initial == 0 {
+		t.Fatalf("no reservation (%d bytes) or no initial memory (%d bytes): the wasm memory is a Go slice", r.wasmMem.reserved.Load(), initial)
+	}
+	var res int64
+	err = r.Do(func(js *Ctx) error {
+		b, ok := r.eng.mem.Read(0, uint32(initial))
+		if !ok {
+			return fmt.Errorf("the memory (%d bytes) doesn't hold the initial %d", r.eng.mem.Size(), initial)
 		}
-		_, err := js.Eval("grow.js", `globalThis.keep = []; for (let i = 0; i < 128; i++) keep.push(new ArrayBuffer(4 << 20)); keep.length`)
-		if err := unix.Getrusage(unix.RUSAGE_SELF, &r1); err != nil {
-			return err
-		}
-		m1 = r.eng.mem.Size()
+		var err error
+		res, err = resident(b)
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pages := int64(m1-m0) / int64(os.Getpagesize())
-	total := r1.Minflt + r1.Majflt - r0.Minflt - r0.Majflt
-	in := populateFaults.Load() - p0
-	out := total - in
-	t.Logf("wasmmem: the memory grew %d → %d MiB (%d pages): %d faults, %d of them in populate's reads, %d elsewhere", m0>>20, m1>>20, pages, total, in, out)
-	if pages < 100<<20/int64(os.Getpagesize()) {
-		t.Fatalf("the memory grew only %d pages", pages)
+	t.Logf("wasmmem: a fresh engine's initial memory is %d KiB, %d KiB of it resident; the process's RSS went %d → %d MiB for 4 more engines (%.1f MiB each)",
+		initial>>10, res>>10, rss0>>20, rss1>>20, float64(rss1-rss0)/4/(1<<20))
+	if res > int64(initial)/2 {
+		t.Errorf("a fresh engine holds %d KiB of its %d KiB initial memory resident: it was populated", res>>10, initial>>10)
 	}
-	if out > pages/10 {
-		t.Errorf("growing the wasm memory by %d pages, %d faults came outside populate's reads (in the wasm, where a stop-the-world waits them out), %d in them", pages, out, in)
+}
+
+// resident is how much of b (page-aligned at its start) is in memory
+// (mincore).
+func resident(b []byte) (int64, error) {
+	ps := os.Getpagesize()
+	vec := make([]byte, (len(b)+ps-1)/ps)
+	if _, _, e := unix.Syscall(unix.SYS_MINCORE, uintptr(unsafe.Pointer(unsafe.SliceData(b))), uintptr(len(b)), uintptr(unsafe.Pointer(unsafe.SliceData(vec)))); e != 0 {
+		return 0, fmt.Errorf("mincore: %w", e)
 	}
+	var n int64
+	for _, v := range vec {
+		n += int64(v & 1)
+	}
+	return n * int64(ps), nil
+}
+
+// processRSS is the process's resident set (/proc/self/statm), in bytes.
+func processRSS() (int64, error) {
+	b, err := os.ReadFile("/proc/self/statm")
+	if err != nil {
+		return 0, err
+	}
+	f := strings.Fields(string(b))
+	if len(f) < 2 {
+		return 0, fmt.Errorf("/proc/self/statm reads %q", b)
+	}
+	n, err := strconv.ParseInt(f[1], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return n * int64(os.Getpagesize()), nil
 }

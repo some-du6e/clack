@@ -5072,10 +5072,14 @@ jobs:
   # on macos-15-intel, train-229's jsrt 45256775420 and 3 of 7 runs since
   # 2026-11-16): the first write to each page a growth commits faulted in
   # the wasm, where the world waits a fault out. Committed pages are
-  # populated in a read syscall now (wasmmem_unix.go populate).
-  # TestWasmMemoryGrowsInPlace in COUNT processes of their own on the
-  # macOS runners and Linux, and TestWasmMemoryPopulated (Linux: where the
-  # growth's faults came). Dispatch with only=jsrt-populate.
+  # populated in a read syscall now (wasmmem_unix.go populate), the pages
+  # growth adds only (the initial memory, mostly the C stack, isn't: about
+  # 9 MiB resident per engine when it was). In COUNT processes of their own
+  # on the macOS runners and Linux: TestWasmMemoryGrowsInPlace,
+  # TestWasmMemoryPopulated (populate wrote the growth and took its faults,
+  # counted by getrusage on both) and, on Linux,
+  # TestWasmMemoryInitialUnpopulated (the initial memory's resident part,
+  # mincore). Dispatch with only=jsrt-populate.
   jsrt-populate:
     if: ${{ !inputs.only || startsWith('jsrt-populate', inputs.only) }}
     name: "jsrt-populate (${{ matrix.os }})"
@@ -5100,7 +5104,7 @@ jobs:
       - name: the growth's stop-the-world and faults, COUNT processes
         shell: bash
         env:
-          JSRT_RUN: "^(TestWasmMemoryGrowsInPlace|TestWasmMemoryPopulated)$"
+          JSRT_RUN: "^(TestWasmMemoryGrowsInPlace|TestWasmMemoryPopulated|TestWasmMemoryInitialUnpopulated)$"
         run: |
           set +e
           rc=0
@@ -5108,8 +5112,8 @@ jobs:
           cd internal/jsrt
           for i in $(seq 1 "$COUNT"); do
             ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/jsrt.test" -test.count=1 -test.v -test.timeout 10m -test.run "$JSRT_RUN" > "$RUNNER_TEMP/jsrt-$i.log" 2>&1 || rc=1
-            echo "== process $i: $(grep -oE 'wasmmem: reserved address space: .*longest stop-the-world [0-9.]+ ms' "$RUNNER_TEMP/jsrt-$i.log" | grep -oE '[0-9.]+ ms$'); $(grep -oE '[0-9]+ faults, [0-9]+ of them in populate.s reads, -?[0-9]+ elsewhere' "$RUNNER_TEMP/jsrt-$i.log")"
-            grep -E -- '--- FAIL|wasmmem_(linux_)?test.go:[0-9]+: .*(cut|faults came|grew only)' "$RUNNER_TEMP/jsrt-$i.log" | head -6
+            echo "== process $i: $(grep -oE 'wasmmem: reserved address space: .*longest stop-the-world [0-9.]+ ms' "$RUNNER_TEMP/jsrt-$i.log" | grep -oE '[0-9.]+ ms$'); $(grep -oE 'populate wrote [0-9]+ MiB: [0-9]+ faults, [0-9]+ of them in populate.s reads, -?[0-9]+ elsewhere' "$RUNNER_TEMP/jsrt-$i.log"); $(grep -oE '[0-9]+ KiB of it resident' "$RUNNER_TEMP/jsrt-$i.log")"
+            grep -E -- '--- FAIL|wasmmem_(linux_|unix_)?test.go:[0-9]+: .*(cut|faults came|grew only|wrote|resident|counted)' "$RUNNER_TEMP/jsrt-$i.log" | head -6
           done
           exit $rc
       # the rest of the package on this runner, its wasm memories populated;

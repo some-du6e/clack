@@ -84,6 +84,7 @@ func ReservedWasmMemory() (bytes int64, n int) {
 type wasmMemStats struct {
 	size     atomic.Uint64 // the memory's length in bytes
 	reserved atomic.Uint64 // address space reserved for it; 0 = it's a Go slice
+	initial  atomic.Uint64 // its length at instantiation, which populate leaves alone
 }
 
 // wasmAllocator is the experimental.MemoryAllocator newEngine hands
@@ -91,6 +92,7 @@ type wasmMemStats struct {
 type wasmAllocator struct {
 	stats *wasmMemStats
 	heap  bool                      // a Go slice, as wazero's own (tests measuring the difference)
+	log   func(level, msg string)   // the engine's (Options.Log)
 	err   error                     // why no reservation was made (the memory is a Go slice)
 	mem   experimental.LinearMemory // the memory it made
 }
@@ -102,7 +104,7 @@ func (a *wasmAllocator) Allocate(capacity, max uint64) experimental.LinearMemory
 			reservedWasm.Add(int64(len(buf)))
 			reservations.Add(1)
 			a.stats.reserved.Store(uint64(len(buf)))
-			a.mem = &reservedMemory{buf: buf, stats: a.stats}
+			a.mem = &reservedMemory{buf: buf, stats: a.stats, log: a.log}
 			return a.mem
 		}
 		a.err = fmt.Errorf("reserving %d MiB of address space: %w", max>>20, err)
@@ -133,7 +135,10 @@ func (a *wasmAllocator) free() {
 type reservedMemory struct {
 	buf       []byte // the whole reservation, as reserve returned it; nil once freed
 	committed uint64 // bytes from buf's start that are committed
+	populated uint64 // bytes from buf's start populated, or left alone (the initial memory)
+	started   bool   // the instantiation's Reallocate came
 	stats     *wasmMemStats
+	log       func(level, msg string)
 }
 
 func (m *reservedMemory) Reallocate(size uint64) []byte {
@@ -147,13 +152,38 @@ func (m *reservedMemory) Reallocate(size uint64) []byte {
 			// QuickJS's malloc NULL, so the allocation throws in JS
 			return nil
 		}
-		if populateWanted() {
-			populate(m.buf[m.committed:end])
-		}
 		m.committed = end
+	}
+	switch {
+	case !m.started:
+		// the instantiation's: the module's initial memory, mostly the C
+		// stack (-z stack-size, 8 MiB) that a runtime barely reaches into,
+		// faults in where it's used. Populated too, every engine was about
+		// 9 MiB resident before any JS ran.
+		m.started = true
+		m.populated = size
+		m.stats.initial.Store(size)
+	case size > m.populated && populateWanted():
+		// a growth: the pages it adds and the rest committed with them
+		if err := populate(m.buf[m.populated:m.committed]); err != nil {
+			populateFailed(m.log, err)
+		}
+		m.populated = m.committed
 	}
 	m.stats.size.Store(size)
 	return m.buf[:size:size]
+}
+
+// populateLogged: the first populate that fails logs why, once a process
+// (its pages fault in where the wasm first writes them, as before populate).
+var populateLogged sync.Once
+
+func populateFailed(log func(level, msg string), err error) {
+	populateLogged.Do(func() {
+		if log != nil {
+			log("warn", fmt.Sprintf("jsrt: the wasm memory's new pages can't be populated (%v): the wasm's first write to each faults, and a Go stop-the-world waits each fault out", err))
+		}
+	})
 }
 
 func (m *reservedMemory) Free() {
