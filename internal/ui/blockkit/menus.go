@@ -173,7 +173,7 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 		// .overflow_ellipsis on the h1: a long title stays on one line, cut
 		// with an ellipsis, as Slack shows it.
 		Title: title,
-		Width: 520, PadX: 24, HeadH: 68,
+		Width: 520, CDialog: true,
 		TruncateTitle: true,
 		Body: func(gtx C) D {
 			if tv == nil {

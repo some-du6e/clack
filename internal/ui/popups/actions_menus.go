@@ -439,8 +439,12 @@ func leaveChannel(h Host, convID, kind, name string, general bool) {
 // Leave button runs it too (useChannelExplorer onClickLeave).
 func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 	if general {
-		// LeaveChannelError (the channels I18n) in a DeprecatedAlertDialog
-		m := NewModal(h, ModalOpts{Title: nsChannels.T("Membership is required in {channelName}", "channelName", "#"+name), EnterSubmits: true,
+		// LeaveChannelError (the channels I18n): renderAlert, a
+		// DeprecatedDialog with truncateTitle false (c-dialog metrics, the
+		// close button first, the title wrapping), its title the channel's
+		// InlineChannelEntity (a public channel's hash icon and name)
+		pre, post := entityTitle(nsChannels.RT("Membership is required in {channelName}", "channelName", "#"), "channelName")
+		m := NewModal(h, ModalOpts{Title: pre, TitleIcon: "hash", TitleAfter: name + post, CDialog: true, CloseFirst: true, EnterSubmits: true,
 			Body: func(gtx layout.Context) layout.Dimensions {
 				th := h.Theme()
 				return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg,
@@ -454,9 +458,36 @@ func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 		leave()
 		return
 	}
-	// LeaveChannel (the groups I18n)
-	Confirm(h, nsGroups.T("Leave {group}", "group", name), nsGroups.T("When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited."),
-		nsGroups.T("Leave Channel"), true, nil, leave)
+	// LeaveChannel (the groups I18n): a c-sk-modal whose ModalTitleBar
+	// title is "Leave {group}" with the channel's InlineChannelEntity (a
+	// private channel's lock and name), Cancel and the autofocused danger
+	// Leave Channel
+	pre, post := entityTitle(nsGroups.RT("Leave {group}", "group", "#"), "group")
+	ok := &ModalButton{Label: nsGroups.T("Leave Channel"), Kind: BtnDanger, Do: func() bool { leave(); return true }}
+	th := h.Theme()
+	h.ShowOverlay(NewModal(h, ModalOpts{Title: pre, TitleIcon: "lock", TitleAfter: name + post, AutoFocus: ok,
+		Body: func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg,
+				nsGroups.T("When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited."), 0)
+		},
+		Buttons: []*ModalButton{{Label: nsDialog.T("Cancel"), Kind: BtnOutline}, ok}}))
+}
+
+// entityTitle is an i18n title's text before and after its arg (a channel
+// entity the modal draws as TitleIcon and TitleAfter).
+func entityTitle(parts []i18n.Part, arg string) (pre, post string) {
+	seen := false
+	for _, p := range parts {
+		switch {
+		case p.Arg == arg:
+			seen = true
+		case seen:
+			post += p.Text
+		default:
+			pre += p.Text
+		}
+	}
+	return pre, post
 }
 
 func actLeave(h Host, convID, okMsg string) {
@@ -881,7 +912,7 @@ func actNewPauseModal(h Host) *Modal {
 		})
 		return layout.Dimensions{Size: image.Pt(w, dp(gtx, 176))}
 	}
-	m = NewModal(h, ModalOpts{Title: nsDND.T("Pause Notifications"), PadX: 24, HeadH: 66, Body: body, Buttons: []*ModalButton{
+	m = NewModal(h, ModalOpts{Title: nsDND.T("Pause Notifications"), CDialog: true, PadX: 24, HeadH: 66, Body: body, Buttons: []*ModalButton{
 		{Label: nsDND.T("Save"), Kind: BtnPrimary, Do: func() bool {
 			until, n := dtAt(day.Day, tm.Mins), time.Now()
 			if !until.After(n) {
