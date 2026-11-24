@@ -35,16 +35,18 @@ got_on() {
 }
 
 # run TOTAL STALL ARGS...: apt-get ARGS, stopped after TOTAL s, or once it
-# has got nowhere for STALL s (5 × STALL while dpkg works)
+# has got nowhere for STALL s (5 × STALL while dpkg works). sh has no
+# locals, so its limit is lim, not total: the fallback's update must not
+# shorten the install's last try
 run() {
-	total=$1 stall=$2
+	lim=$1 stall=$2
 	shift 2
 	: >"$st"
 	t0=$(date +%s)
 	# timeout puts apt-get in a process group of its own and passes a TERM
 	# on to all of it: the download methods, dpkg
 	# shellcheck disable=SC2086 # opts splits on purpose
-	timeout -k 10 "$total" apt-get $opts -o APT::Status-Fd=3 "$@" 3>"$st" &
+	timeout -k 10 "$lim" apt-get $opts -o APT::Status-Fd=3 "$@" 3>"$st" &
 	pid=$!
 	step='' at='' since=$t0
 	while kill -0 "$pid" 2>/dev/null; do

@@ -5076,7 +5076,7 @@ jobs:
   # try for want of progress, move to the kernel.org mirror and finish
   # inside 3 min. COUNT rounds, at most 20. Dispatch with only=apt-stall.
   apt-stall:
-    if: ${{ !inputs.only || startsWith('apt-stall', inputs.only) }}
+    if: ${{ inputs.only != '' && startsWith('apt-stall', inputs.only) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60 # budget, min (new job: no p95 yet)
     steps:
