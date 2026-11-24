@@ -426,7 +426,7 @@ func (w *ew) layoutIconButton(gtx C, sz image.Point) {
 	if w.main.clicked(gtx, h) && !off {
 		act := func() { w.send(actionPayload(w.bid, w.e, nil)) }
 		if w.e.Confirm != nil {
-			showConfirm(h, w.e.Confirm, act, nil)
+			w.confirm(w.e.Confirm, act, nil)
 		} else {
 			act()
 		}
@@ -461,7 +461,7 @@ func (w *ew) press() {
 				tripWorkflowButton(w.o.host(), link, inputs, w.e.ActionID, w.bid, w.o.channel(), w.messageTS())
 			}
 			if w.e.Confirm != nil {
-				showConfirm(w.o.host(), w.e.Confirm, act, nil)
+				w.confirm(w.e.Confirm, act, nil)
 				return
 			}
 			act()
@@ -476,7 +476,7 @@ func (w *ew) press() {
 		}
 	}
 	if w.e.Confirm != nil {
-		showConfirm(w.o.host(), w.e.Confirm, act, nil)
+		w.confirm(w.e.Confirm, act, nil)
 		return
 	}
 	act()
@@ -510,7 +510,7 @@ func (w *ew) commit(prev *Value) {
 	payload := actionPayload(w.bid, w.e, w.value())
 	if w.e.Confirm != nil {
 		cur := *w.value()
-		showConfirm(w.o.host(), w.e.Confirm, func() { w.send(payload) }, func() {
+		w.confirm(w.e.Confirm, func() { w.send(payload) }, func() {
 			// denied: back to the previous value
 			if prev != nil {
 				w.o.values().set(w.bid, w.e.ActionID, prev)

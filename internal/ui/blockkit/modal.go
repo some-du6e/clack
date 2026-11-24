@@ -84,12 +84,20 @@ type Stack struct {
 // autofocused), then the continue button (danger) 12px after it. Escape
 // cancels it; Tab and Shift+Tab stay on its two buttons. It slides up
 // in 0.2s in Slack; Clack shows it at once.
+//
+// A Block Kit element's confirm object in the modal comes up the same
+// way (BlockKitModal's showConfirmDialog): the header its title, the body
+// its text (mrkdwn as Mrkdwn, else plain; "Are you sure?" without one),
+// the buttons its deny ("Cancel") and confirm ("OK"), the continue type
+// its style, else primary. Cancel only closes it (resetConfirmDialog);
+// continue closes it, then acts (handleConfirmContinue).
 type leaveBump struct {
-	header, body, cont string
-	onContinue         func()
-	keep, leave        tap
-	veil               int
-	focused            bool
+	header, body, keepTxt, cont, style string
+	bodyView                           *textView // a mrkdwn body
+	onContinue, onKeep                 func()
+	keep, leave                        tap
+	veil                               int
+	focused                            bool
 }
 
 func newStack(h Host, v *core.View) *Stack {
@@ -102,6 +110,7 @@ func newStack(h Host, v *core.View) *Stack {
 func (s *Stack) surface(v *core.View) *Surface {
 	sf := newSurface(s.h, v)
 	sf.onAction = func() { s.banner, s.bannerRetry = "", false }
+	sf.confirm = s.showConfirmBump // its elements' confirms come up in the card
 	return sf
 }
 
@@ -211,9 +220,39 @@ func (s *Stack) showLeave(pushed bool, leave func()) {
 	// WizardSpeedBump's defaults (BlockKitModal passes no header or body;
 	// "you've" is ASCII there)
 	s.bump = &leaveBump{header: "Are you sure you want to leave?",
-		body: "It looks like you\u2019re still working on this. You may lose the info you've entered so far if you leave now.",
-		cont: cont, onContinue: leave}
+		body:    "It looks like you\u2019re still working on this. You may lose the info you've entered so far if you leave now.",
+		keepTxt: "Keep Editing", cont: cont, style: "danger", onContinue: leave}
 	s.h.Invalidate()
+}
+
+// showConfirmBump is BlockKitModal's showConfirmDialog: an element's
+// confirm object in the modal, as the in-card speed bump; deny (may be
+// nil) runs on its cancel.
+func (s *Stack) showConfirmBump(c *Confirm, ok, deny func()) {
+	b := &leaveBump{header: textOf(c.Title), keepTxt: firstNonEmpty(textOf(c.Deny), appViewNS.T("Cancel")),
+		cont: firstNonEmpty(textOf(c.Confirm), appViewNS.T("OK")), style: "primary", onContinue: ok, onKeep: deny}
+	if c.Style == "danger" {
+		b.style = "danger"
+	}
+	switch {
+	case c.Text == nil || textOf(c.Text) == "":
+		b.body = appViewNS.T("Are you sure?")
+	case c.Text.Type == "mrkdwn":
+		b.bodyView = newTextView(s.h, *c.Text)
+	default:
+		b.body = textOf(c.Text)
+	}
+	s.bump, s.focused = b, true
+	s.h.Invalidate()
+}
+
+// cancelBump is the speed bump's cancel: Keep Editing, its deny, Escape.
+func (s *Stack) cancelBump() {
+	b := s.bump
+	s.bump, s.focused = nil, false
+	if b != nil && b.onKeep != nil {
+		b.onKeep()
+	}
 }
 
 // leaveUp reports the leave prompt is showing (tests).
@@ -513,8 +552,7 @@ func (s *Stack) Layout(gtx C) D {
 		if ke, ok := e.(key.Event); ok && ke.State == key.Press {
 			if ke.Name == key.NameEscape {
 				if s.bump != nil { // WizardSpeedBump's escape: onCancel
-					s.bump = nil
-					s.focused = false
+					s.cancelBump()
 					continue
 				}
 				s.userBack()
@@ -538,12 +576,12 @@ func (s *Stack) Layout(gtx C) D {
 				break
 			}
 			if ke, ok := e.(key.Event); ok && ke.State == key.Press {
-				s.bump, s.focused = nil, false
+				s.cancelBump()
 				break
 			}
 		}
 		if s.bump != nil && b.keep.clicked(gtx, s.h) {
-			s.bump, s.focused = nil, false
+			s.cancelBump()
 		}
 		if s.bump != nil && b.leave.clicked(gtx, s.h) {
 			s.bump = nil
@@ -1067,7 +1105,12 @@ func (s *Stack) leaveSheet(gtx C, cl colors, mw, mh int) {
 	hd := para(g, th, 24, 28, theme.Bold, cl.Text, b.header)
 	hc := hm.Stop()
 	bm := op.Record(gtx.Ops)
-	bd := para(g, th, 15, 22, theme.Regular, cl.Text, b.body)
+	var bd D
+	if b.bodyView != nil {
+		bd = D{Size: image.Pt(tw, b.bodyView.layout(g, tw, cl.Text))}
+	} else {
+		bd = para(g, th, 15, 22, theme.Regular, cl.Text, b.body)
+	}
 	bc := bm.Stop()
 	bh := dp(gtx, 36)
 	line := max(1, dp(gtx, 1))
@@ -1099,6 +1142,6 @@ func (s *Stack) leaveSheet(gtx C, cl colors, mw, mh int) {
 		})
 		right -= dp(gtx, 12) // .c-wizard_speed_bump__button: margin-left 12px
 	}
-	btn(&b.leave, b.cont, "danger")
-	btn(&b.keep, "Keep Editing", "")
+	btn(&b.leave, b.cont, b.style)
+	btn(&b.keep, b.keepTxt, "")
 }

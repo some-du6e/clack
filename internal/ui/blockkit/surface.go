@@ -183,13 +183,16 @@ func (s *surfHandler) Button(b richtext.Button) {
 
 // Surface is a Block Kit surface: a modal's body or an App Home tab.
 type Surface struct {
-	h      Host
-	view   *core.View
-	blocks []Block
-	vals   Values
-	errs   map[string]string // block_id → error (response_action errors / validation)
-	ws     map[string]*ew
-	texts  map[string]*richview.View
+	h Host
+	// confirm, when set (a Block Kit modal's surface), shows its
+	// elements' confirm objects (confirmIn)
+	confirm func(c *Confirm, ok, deny func())
+	view    *core.View
+	blocks  []Block
+	vals    Values
+	errs    map[string]string // block_id → error (response_action errors / validation)
+	ws      map[string]*ew
+	texts   map[string]*richview.View
 	// prevTexts are the last view's block views, which a views.update
 	// takes over by key (textOf): ViewBlocks' SUIRenderer keeps each item
 	// by its React key, so ContainerBlock's collapse state survives
@@ -353,7 +356,18 @@ func (s *Surface) applyState(raw json.RawMessage) {
 }
 
 // owner implementation
-func (s *Surface) host() Host     { return s.h }
+func (s *Surface) host() Host { return s.h }
+
+// confirmIn shows an element's confirm object where the surface's
+// container does (a Block Kit modal: its in-card speed bump); false when
+// the surface has none and the caller opens the confirm dialog.
+func (s *Surface) confirmIn(c *Confirm, ok, deny func()) bool {
+	if s.confirm == nil {
+		return false
+	}
+	s.confirm(c, ok, deny)
+	return true
+}
 func (s *Surface) values() Values { return s.vals }
 func (s *Surface) channel() string {
 	if s.view != nil {
