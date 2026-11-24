@@ -31,6 +31,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
@@ -867,9 +868,19 @@ func (d *ChannelDetails) update(gtx C) {
 					// DeprecatedBaseDialog (FlDO) closes only on a resolved
 					// onGo, so the dialog stays open with the typed text and
 					// no message (useChannelPurposeInput has no error state)
+				case d.pendKind == cdEditName:
+					// the rename's ChannelNameInput warning
+					// (getErrorStringFromChannelNameErrors; Slack keeps its
+					// dialog open under it, Clack's rename is inline)
+					d.editing = false
+					team := ""
+					if c := d.h.Core(); c != nil {
+						team = c.SlackConnectTeamName()
+					}
+					d.h.Toast(core.ChannelNameErrorText(core.ChannelNameCode(err), team))
 				default:
 					d.editing = false
-					d.h.Toast("Couldn’t update the " + cdEditWhat[d.pendKind] + ": " + cdErr(err))
+					log.Printf("views: channel details edit: %v", err)
 				}
 			}
 		}
@@ -2703,7 +2714,9 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 			uid := d.inviteUser
 			d.inviteUser = ""
 			if err != nil {
-				d.h.Toast("Couldn’t add " + d.userName(uid) + ": " + cdErr(err))
+				// openConversation logs "failed to open conversation" and
+				// rethrows: nothing on screen
+				log.Printf("views: conversations.open with %s: %v", uid, err)
 			} else if conv.ID != "" {
 				d.inviting = false
 				d.closed = true
@@ -2716,7 +2729,10 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 			uid := d.inviteUser
 			d.inviteUser = ""
 			if err != nil {
-				d.h.Toast("Couldn’t add " + d.userName(uid) + ": " + cdErr(err))
+				// the add people modal's SUBMIT_ERROR fallback (its
+				// getInviteErrorMessage table isn't ported)
+				log.Printf("views: conversations.invite %s: %v", uid, err)
+				d.h.Toast(i18n.T("channel_invite", "Couldn’t add {erroredCount, plural, =1 {# person} other {# people}} to the channel. Please try again.", "erroredCount", 1))
 			} else {
 				d.added[uid] = true
 				d.h.Toast("Added " + d.userName(uid) + " to #" + inf.Conv.Name)

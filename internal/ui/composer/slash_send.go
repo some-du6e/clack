@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 
@@ -381,7 +382,9 @@ func (c *Composer) reminderModal(ch, ts string) (*popups.Modal, *TextyInput) {
 		desc := convertBlocks(q, false)
 		go func() {
 			if err := api.addReminder(context.Background(), desc, due); err != nil {
-				c.later(func() { c.h.Toast("Couldn\u2019t set the reminder: " + err.Error()) })
+				// addReminder reverts its optimistic add and logs "Failed to add
+				// reminder"; only a to-do's failure toasts (LaterTodoErrorToast)
+				log.Printf("composer: saved.add reminder: %v", err)
 			}
 		}()
 	})

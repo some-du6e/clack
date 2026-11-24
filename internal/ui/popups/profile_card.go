@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log"
 	"net/url"
 	"strings"
 	"sync"
@@ -1241,7 +1242,7 @@ func pfMessage(h Host, id string) {
 		return c.OpenDM(ctx, id)
 	}, func(cv core.Conv, err error) {
 		if err != nil {
-			h.Toast("Couldn't open the conversation: " + errText(err))
+			log.Printf("popups: conversations.open: %v", err) // openConversation logs "failed to open conversation" and rethrows: nothing on screen
 			return
 		}
 		if cv.ID != "" {

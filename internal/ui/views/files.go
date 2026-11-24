@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"log"
 	"regexp"
 	"strings"
 	"sync"
@@ -1834,7 +1835,9 @@ func (f *Files) fileMenuItems(it fileItem) []popups.MenuItem {
 			return a.SaveFile(ctx, id)
 		}, func(err error) {
 			if err != nil {
-				f.h.Toast("Couldn’t update your saved items: " + friendlyErr(err))
+				// maybeEnqueueLaterTodoGenericErrorToast (BulkActionErrorToast)
+				log.Printf("views: saved items write: %v", err)
+				f.h.Toast(nsLater.T("Something went wrong. Please try again."))
 			}
 		})
 	}})

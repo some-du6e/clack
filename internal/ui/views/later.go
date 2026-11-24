@@ -21,6 +21,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log"
 	"runtime"
 	"slices"
 	"sort"
@@ -422,7 +423,9 @@ func (s *savedBase) drainDone() {
 			if d.key != "" {
 				delete(s.gone, d.key)
 			}
-			s.h.Toast("Couldn’t update your saved items: " + friendlyErr(d.err))
+			// maybeEnqueueLaterTodoGenericErrorToast (BulkActionErrorToast)
+			log.Printf("views: saved items write: %v", d.err)
+			s.h.Toast(nsLater.T("Something went wrong. Please try again."))
 		} else if d.msg != "" {
 			s.h.Toast(d.msg)
 		}
