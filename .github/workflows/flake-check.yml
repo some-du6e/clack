@@ -7044,6 +7044,41 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # hmojis-emoji (2026-11-24): HMojis (izie's Taut plugin) registers each
+  # hidden emoji with Slack's upsertEmoji, its image an object URL its
+  # runtime made, and Clack had no such thunk (every registration
+  # rejected and was logged). upsertEmoji over core (emoji.Custom's
+  # upserts: kept through a list reload, never on disk), and blob: URL
+  # images from the plugins' runtime (imgcache's blob source). COUNT runs
+  # each. Dispatch with only=hmojis-emoji.
+  hmojis-emoji:
+    if: ${{ !inputs.only || startsWith('hmojis-emoji', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: upsertEmoji, the store's upserts and blob URL images, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 4m -run '^(TestCustomUpsertLikeSlacksStore|TestCustomUpsertBeforeTheList)$' ./internal/emoji || rc=1
+          go test -count="$COUNT" -timeout 4m -run '^(TestBlobURLImages|TestPageDataImages)$' ./internal/imgcache || rc=1
+          go test -count="$COUNT" -timeout 6m -run '^(TestPluginUpsertsEmojiWithObjectURL|TestAssetPackFresh)$' ./internal/taut ./internal/jsrt || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7200,6 +7235,7 @@ jobs:
       - apt-stall
       - pagekey-day
       - jsrt-webcrypto-idb
+      - hmojis-emoji
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

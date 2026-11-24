@@ -130,3 +130,19 @@ func (t *Taut) editFile(ctx context.Context, fileID, title string) (any, error) 
 	}
 	return nil, fmt.Errorf("editFileApi: no file %s in Clack", fileID)
 }
+
+// BlobURL is the bytes of a blob: URL the plugins' runtime made and still
+// holds (URL.createObjectURL): a custom emoji's image a plugin upserted
+// (HMojis'), which the UI's image cache loads from here, as Chromium loads
+// an object URL. false when no runtime runs, or it holds no such URL.
+func (t *Taut) BlobURL(u string) ([]byte, bool) {
+	if t == nil {
+		return nil, false
+	}
+	r := t.liveRuntime()
+	if r == nil {
+		return nil, false
+	}
+	b, _, ok := r.rt.BlobURL(u)
+	return b, ok
+}

@@ -209,10 +209,22 @@ func unicodeText(uni string) string {
 // It is copy-on-write: writers build a new map and swap it in, so a map
 // returned by Snapshot is never mutated afterwards and may be iterated
 // without locks while emoji_changed events arrive.
+//
+// Two writers fill it, as Slack's one custom emoji store has them: the
+// server's list (emoji.list, emoji_changed: Set, Put, Remove) and the
+// plugins' upsertEmoji (Upsert). Slack's store keeps whichever wrote a
+// name last and a reload upserts too, so a plugin's emoji survive Set
+// unless the list itself names them. The plugins' entries live only in
+// memory: ServerSnapshot and ServerVersion are the list's part, what the
+// disk cache keeps (a plugin's image can be an object URL that dies with
+// its runtime).
 type Custom struct {
-	mu  sync.RWMutex
-	m   map[string]string
-	ver uint64 // bumped by every change (the disk cache saves only on change)
+	mu     sync.RWMutex
+	m      map[string]string // what's read: the server's, the upserts over it
+	server map[string]string // the server's part when upserts differ it from m (nil: m)
+	up     map[string]string // the plugins' upserts still in force (nil: none)
+	ver    uint64            // bumped by every change
+	sver   uint64            // bumped by every change of the server's part
 }
 
 // Version changes whenever the map does.
@@ -222,30 +234,84 @@ func (c *Custom) Version() uint64 {
 	return c.ver
 }
 
-// Set replaces the whole map; the caller must not modify m afterwards.
+// ServerVersion changes whenever the server's part does (the disk cache
+// saves only on change).
+func (c *Custom) ServerVersion() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sver
+}
+
+func (c *Custom) serverLocked() map[string]string {
+	if c.server != nil {
+		return c.server
+	}
+	return c.m
+}
+
+// installLocked makes server the server's part, the upserts over it.
+func (c *Custom) installLocked(server map[string]string) {
+	if len(c.up) == 0 {
+		c.m, c.server, c.up = server, nil, nil
+	} else {
+		if server == nil { // never nil beside upserts: nil means "the same as m"
+			server = map[string]string{}
+		}
+		n := make(map[string]string, len(server)+len(c.up))
+		for k, v := range server {
+			n[k] = v
+		}
+		for k, v := range c.up {
+			n[k] = v
+		}
+		c.m, c.server = n, server
+	}
+	c.ver++
+	c.sver++
+}
+
+// dropUpsLocked forgets the upserts of names the server wrote since.
+func (c *Custom) dropUpsLocked(has func(name string) bool) {
+	if len(c.up) == 0 {
+		return
+	}
+	var keep map[string]string
+	for k, v := range c.up {
+		if !has(k) {
+			if keep == nil {
+				keep = map[string]string{}
+			}
+			keep[k] = v
+		}
+	}
+	c.up = keep
+}
+
+// Set replaces the server's part; the caller must not modify m afterwards.
 func (c *Custom) Set(m map[string]string) {
 	c.mu.Lock()
-	c.m = m
-	c.ver++
+	c.dropUpsLocked(func(name string) bool { _, ok := m[name]; return ok })
+	c.installLocked(m)
 	c.mu.Unlock()
 }
 
-// SetIfEmpty installs m only while the map is empty (nothing loaded yet)
-// and reports whether it did: a fuller map installed meanwhile stays.
+// SetIfEmpty installs m only while the server's part is empty (nothing
+// loaded yet) and reports whether it did: a fuller map installed
+// meanwhile stays.
 func (c *Custom) SetIfEmpty(m map[string]string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.m) > 0 {
+	if len(c.serverLocked()) > 0 {
 		return false
 	}
-	c.m = m
-	c.ver++
+	c.dropUpsLocked(func(name string) bool { _, ok := m[name]; return ok })
+	c.installLocked(m)
 	return true
 }
 
-func (c *Custom) clone(extra int) map[string]string {
-	n := make(map[string]string, len(c.m)+extra)
-	for k, v := range c.m {
+func cloneMap(m map[string]string, extra int) map[string]string {
+	n := make(map[string]string, len(m)+extra)
+	for k, v := range m {
 		n[k] = v
 	}
 	return n
@@ -253,20 +319,50 @@ func (c *Custom) clone(extra int) map[string]string {
 
 func (c *Custom) Put(name, v string) {
 	c.mu.Lock()
-	n := c.clone(1)
+	n := cloneMap(c.serverLocked(), 1)
 	n[name] = v
-	c.m = n
-	c.ver++
+	c.dropUpsLocked(func(k string) bool { return k == name })
+	c.installLocked(n)
 	c.mu.Unlock()
 }
 
 func (c *Custom) Remove(names ...string) {
 	c.mu.Lock()
-	n := c.clone(0)
+	n := cloneMap(c.serverLocked(), 0)
 	for _, name := range names {
 		delete(n, name)
 	}
-	c.m = n
+	c.dropUpsLocked(func(k string) bool {
+		for _, name := range names {
+			if k == name {
+				return true
+			}
+		}
+		return false
+	})
+	c.installLocked(n)
+	c.mu.Unlock()
+}
+
+// Upsert puts the plugins' entries over the map (Slack's upsertEmoji):
+// each name's url, or "alias:name". They stay until the server writes
+// the name (Set naming it, Put, Remove), and never reach the server's part.
+func (c *Custom) Upsert(entries map[string]string) {
+	if len(entries) == 0 {
+		return
+	}
+	c.mu.Lock()
+	server := c.serverLocked()
+	if server == nil { // nothing loaded yet: the server's part is empty, not the upserts
+		server = map[string]string{}
+	}
+	up := cloneMap(c.up, len(entries))
+	n := cloneMap(c.m, len(entries))
+	for k, v := range entries {
+		up[k] = v
+		n[k] = v
+	}
+	c.m, c.server, c.up = n, server, up
 	c.ver++
 	c.mu.Unlock()
 }
@@ -283,6 +379,14 @@ func (c *Custom) Snapshot() map[string]string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.m
+}
+
+// ServerSnapshot is the server's part of the map (Snapshot without the
+// plugins' upserts), as immutable as Snapshot's.
+func (c *Custom) ServerSnapshot() map[string]string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.serverLocked()
 }
 
 // AliasChain is the names an alias name resolves through (its target,

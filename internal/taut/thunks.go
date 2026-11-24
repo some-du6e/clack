@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -88,6 +89,8 @@ var ThunkCatalogue = []ThunkSpec{
 	{"submitView", "{viewId, values, …}", "ui/popups (app modals)", "submitting an app modal"},
 	{"apiCall", "{method, args, …}", "taut", "a Slack API call, settled as Slack's SlackApiRequest settles (05_slack.js apiCallThunk)"},
 	{"apiCallExpedited", "{method, args, …}", "taut", "apiCall with EXPEDITED, through apiCall's creator"},
+	{"upsertEmoji", "[{name, value: url | {apple, google}, updated, alias?, is_alias?, isNonExistent?}]", "taut",
+		"a plugin's custom emoji over the workspace's (core.UpsertEmoji: memory only); a blob: URL's image loads from the plugins' runtime (Taut.BlobURL)"},
 	// used by Slick's plugins (docs/PLUGINS-slick.md)
 	{"handleDeepLink", "{uri}", "ui (shell)", "opening a slack:// deep link (UIHooks.DeepLink)"},
 	{"navigate", "{id, viewType, params?, uiState?, options?}", "ui (shell)", "Slack's multi-view navigation: a Channel, Thread or Profile view through its deep link (UIHooks.DeepLink); resolves undefined, as Slack's"},
@@ -723,6 +726,44 @@ func (tt *thunkTable) installDefaults() {
 		},
 		"apiCall":          app().apiCall,
 		"apiCallExpedited": app().apiCall,
+		// Slack's upsertEmoji ("upsert emoji from flannel", client-boot
+		// oaam): each object's url is its value, or its value's emoji style
+		// (apple or google, as emoji.Style picks); an alias whose value
+		// starts "alias:" names its target; a non-existent one names no emoji
+		"upsertEmoji": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			var objs []struct {
+				Name          string          `json:"name"`
+				Value         json.RawMessage `json:"value"`
+				Alias         string          `json:"alias"`
+				IsAlias       json.RawMessage `json:"is_alias"`
+				IsNonExistent bool            `json:"isNonExistent"`
+			}
+			if len(a) > 0 {
+				if err := json.Unmarshal(a[0], &objs); err != nil {
+					return nil, fmt.Errorf("taut: upsertEmoji: %w", err)
+				}
+			}
+			entries := map[string]string{}
+			for _, o := range objs {
+				if o.Name == "" || o.IsNonExistent {
+					continue
+				}
+				var v string
+				if json.Unmarshal(o.Value, &v) != nil {
+					var styles map[string]string
+					_ = json.Unmarshal(o.Value, &styles)
+					v = styles[emoji.Style()]
+				}
+				if alias := string(o.IsAlias); (alias == "true" || alias == "1") && strings.HasPrefix(v, "alias:") {
+					v = "alias:" + o.Alias
+				}
+				if v != "" {
+					entries[o.Name] = v
+				}
+			}
+			t.app.UpsertEmoji(entries)
+			return nil, nil
+		},
 		"openPrefsModal": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			if f := t.opts.UI.OpenPreferences; f != nil {
 				o := argObj(a)

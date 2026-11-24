@@ -2759,7 +2759,7 @@ func (s *Store) LoadCacheBase() (rest func()) {
 		s.installCacheRest(&d)
 		s.saveMu.Lock()
 		if s.gen.Load() == gen || !s.saved { // nothing else changed between the parts
-			s.saved, s.savedGen, s.savedEmo = true, s.gen.Load(), s.CustomEmoji.Version()
+			s.saved, s.savedGen, s.savedEmo = true, s.gen.Load(), s.CustomEmoji.ServerVersion()
 		}
 		s.saveMu.Unlock()
 		if f := cacheLoadLog; f != nil {
@@ -2931,7 +2931,7 @@ func (s *Store) SaveCache() error {
 	if s.dropped.Load() {
 		return nil
 	}
-	gen, emo := s.gen.Load(), s.CustomEmoji.Version()
+	gen, emo := s.gen.Load(), s.CustomEmoji.ServerVersion()
 	if s.saved && gen == s.savedGen && emo == s.savedEmo {
 		return nil // unchanged since the last load or save
 	}
@@ -2940,7 +2940,7 @@ func (s *Store) SaveCache() error {
 	s.emojiAtMu.Unlock()
 	s.mu.RLock()
 	prefs := s.Prefs
-	d := diskCache{EmojiPacked: packEmoji(s.CustomEmoji.Snapshot()), Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,
+	d := diskCache{EmojiPacked: packEmoji(s.CustomEmoji.ServerSnapshot()), Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,
 		Names: map[string]string{}, Bots: map[string]BotInfo{}}
 	if !emojiAt.IsZero() {
 		d.EmojiAt = emojiAt.Unix()

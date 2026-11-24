@@ -1537,6 +1537,10 @@ func (c *Cache) raw(u string) ([]byte, func(), error) {
 		b, err := dataBody(d)
 		return b, nop, err
 	}
+	if isBlobURL(u) { // a plugin's object URL (bloburl.go): its runtime's bytes, memory only
+		b, err := blobData(u)
+		return b, nop, err
+	}
 	if localimg.Is(u) { // a file the viewer is uploading: memory only
 		if b, ok := localimg.Get(u); ok {
 			return b, nop, nil

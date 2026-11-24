@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
@@ -286,6 +287,8 @@ func (b *backend) installTaut(a *App, t *taut.Taut, s *slick.Slick) {
 	messages.SetTaut(t) // message list thunks, patched message views
 	composer.SetTaut(t) // composer buttons, send checks/transforms, drafts
 	blockkit.SetTaut(t) // sendActions, executeAppAction, submitView, blocksFormatFetcher
+	// a plugin's emoji images, from its object URLs (upsertEmoji)
+	imgcache.SetBlobSource(t.BlobURL)
 	// @mentions name the member as plugins present it (Nicknames)
 	richview.SetMemberLabel(newMentionLabels(t))
 	if s != nil {
@@ -325,6 +328,7 @@ func (b *backend) detachTaut() {
 	if b.taut != nil {
 		b.taut.Detach() // an Attached post after this binds nothing (its Close comes later)
 		popups.SetTaut(nil)
+		imgcache.SetBlobSource(nil)
 		messages.SetTaut(nil)
 		composer.SetTaut(nil)
 		richview.SetMemberLabel(nil)
