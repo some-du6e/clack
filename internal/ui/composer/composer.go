@@ -1513,6 +1513,26 @@ func (c *Composer) overLimit() int {
 	return c.limitOver
 }
 
+// TopRightToaster is a Host that shows Slack's Toast at the window's top
+// right (ui ToastPartsTopRight).
+type TopRightToaster interface {
+	ToastPartsTopRight(parts []i18n.Part, icon string, d time.Duration)
+}
+
+// offlineToast is onEnter's Toast while not recently online: the bold
+// "No connection.", a space and "You’ll be able to send messages as soon
+// as you’re back online." (msg_input), cloud-offline at 20, top-right,
+// Toast's default 6 s.
+func (c *Composer) offlineToast() {
+	parts := []i18n.Part{{Text: msgInputNS.T("No connection."), Tag: "b"}, {Text: " "},
+		{Text: msgInputNS.T("You\u2019ll be able to send messages as soon as you\u2019re back online.")}}
+	if t, ok := c.h.(TopRightToaster); ok {
+		t.ToastPartsTopRight(parts, "cloud-offline", 6*time.Second)
+		return
+	}
+	c.h.Toast(i18n.Plain(parts))
+}
+
 func (c *Composer) submit() {
 	if c.field != nil {
 		// enterCreatesNewlineOverride: Enter is a new line in the field
@@ -1538,6 +1558,16 @@ func (c *Composer) submit() {
 		// delete
 		c.deleteEmptiedEdit()
 		return
+	}
+	// MessageInput.onEnter (CPUF), after isSendingDisabled: while not
+	// recently online nothing is sent, the draft stays, and a toast says
+	// so (top-right, cloud-offline, 6 s). An edit saves offline (its
+	// input has no connectivity rule; the API queue holds the call).
+	if c.edit == nil {
+		if on, _ := recentlyOnline(c.h); !on {
+			c.offlineToast()
+			return
+		}
 	}
 	// prepareMessage: prepareSend's document through the message
 	// processor prepareAndSendMessage and saveMessageEdit both run (rNCs,

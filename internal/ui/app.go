@@ -1335,6 +1335,8 @@ type toastState struct {
 	parts   []i18n.Part
 	iconCol color.NRGBA
 	rich    bool
+	// top: position top-right (ToastPartsTopRight), not the bottom right
+	top bool
 	// linkHref is where the parts' <link> run goes (ToastLink)
 	linkHref string
 	// rect is the toast as last drawn (window coords): its box in the

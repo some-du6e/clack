@@ -185,8 +185,13 @@ type chromeState struct {
 }
 
 // sendOff is isSendingDisabledForTextState: nothing to send, or the
-// message is over the 12,000-character limit (isOverMaxLength).
-func (st *chromeState) sendOff() bool { return !st.CanSend || st.OverLimit > 0 || st.TooManyFiles }
+// message is over the 12,000-character limit (isOverMaxLength); and
+// SendButton's own disabled (Bv+q mapStateToProps): not recently online
+// (wasRecentlyOnline), which disables send and the schedule caret. An
+// edit's save isn't (BaseEditMessage has no connectivity rule).
+func (st *chromeState) sendOff() bool {
+	return !st.CanSend || st.OverLimit > 0 || st.TooManyFiles || !st.Online && st.Mode != modeEdit
+}
 
 // crBtn names every clickable in the chrome.
 type crBtn uint8

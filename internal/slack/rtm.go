@@ -49,6 +49,21 @@ type RTM struct {
 	fails        int
 	// kick cuts a backoff wait short (Reconnect)
 	kick chan struct{}
+	// now cuts a backoff wait short too, and only that (ConnectNow)
+	now chan struct{}
+	// waiting: Run is in its backoff wait
+	waiting atomic.Bool
+
+	// Trouble connecting, Slack's socket store troubleConnecting (5rVH)
+	// as the socket manager sets it (_maybeDispatchTroubleConnectingAction):
+	// hasConnected (a hello came on some connection of this RTM) and
+	// firstFail, the wall-clock time of the first failure of this run of
+	// them (zero: none), under mu; trouble is the flag.
+	hasConnected bool
+	firstFail    time.Time
+	trouble      atomic.Bool
+	// OnTrouble hears the flag change (on Run's goroutine).
+	OnTrouble func(on bool)
 	// fast: the current connection came from the gateway's reconnect_url
 	// (Slack's FAST_RECONNECTING; any other connect is a slow one)
 	fast atomic.Bool
@@ -79,7 +94,89 @@ type RTM struct {
 func (r *RTM) LastConnectFast() bool { return r.fast.Load() }
 
 func (c *Client) NewRTM() *RTM {
-	return &RTM{c: c, Events: make(chan Event, 1024), kick: make(chan struct{}, 1), dumps: stackdump.Limiter{Every: 10 * time.Minute}}
+	return &RTM{c: c, Events: make(chan Event, 1024), kick: make(chan struct{}, 1), now: make(chan struct{}, 1), dumps: stackdump.Limiter{Every: 10 * time.Minute}}
+}
+
+// The trouble-connecting thresholds (SocketManager
+// _getConnectionTroubleThreshold, _getConnectionAttemptCountTroubleThreshold):
+// once a connection has said hello, trouble starts at the troubleAfter-th
+// failed connect in a row once troubleWindow has passed since the first of
+// them; before any hello, at the first failure. Vars for tests
+// (SetTroubleThresholds).
+var (
+	troubleWindow atomic.Int64 // nanoseconds
+	troubleAfter  atomic.Int64
+)
+
+func init() {
+	troubleWindow.Store(int64(30 * time.Second))
+	troubleAfter.Store(3)
+}
+
+// SetTroubleThresholds sets the trouble-connecting window and count
+// (Slack's 30 s and 3) and returns the undo: for tests.
+func SetTroubleThresholds(window time.Duration, after int) (restore func()) {
+	w, n := troubleWindow.Swap(int64(window)), troubleAfter.Swap(int64(after))
+	return func() { troubleWindow.Store(w); troubleAfter.Store(n) }
+}
+
+// Trouble reports Slack's troubleConnecting: the socket keeps failing to
+// connect (see troubleWindow). A hello or the drop of a connection that
+// said one ends it, and so does Run's end.
+func (r *RTM) Trouble() bool { return r.trouble.Load() }
+
+func (r *RTM) setTrouble(on bool) {
+	if r.trouble.Swap(on) != on {
+		if on {
+			log.Printf("rtm: trouble connecting")
+		}
+		if r.OnTrouble != nil {
+			r.OnTrouble(on)
+		}
+	}
+}
+
+// connected is the socket manager's CONNECTED: the failures' count and
+// first time clear, and trouble ends.
+func (r *RTM) connected() {
+	r.mu.Lock()
+	r.hasConnected, r.firstFail = true, time.Time{}
+	r.mu.Unlock()
+	r.setTrouble(false)
+}
+
+// failed is _leaveState's ERROR for a connect: the fails-th failure in a
+// row, the first's time noted, and trouble when it's due
+// (_maybeDispatchTroubleConnectingAction).
+func (r *RTM) failed(fails int) {
+	now := ReadClock().Wall
+	r.mu.Lock()
+	if fails == 1 || r.firstFail.IsZero() {
+		r.firstFail = now
+	}
+	need, window := int64(1), time.Duration(0)
+	if r.hasConnected {
+		need, window = troubleAfter.Load(), time.Duration(troubleWindow.Load())
+	}
+	due := int64(fails) >= need && now.Sub(r.firstFail) >= window
+	r.mu.Unlock()
+	if due {
+		r.setTrouble(true)
+	}
+}
+
+// ConnectNow is the socket manager's reconnectImmediately (zNCe): a
+// socket waiting out its backoff connects now. It keeps the reconnect_url
+// and does nothing while the socket connects or is up (Reconnect drops
+// both).
+func (r *RTM) ConnectNow() {
+	if !r.waiting.Load() {
+		return
+	}
+	select {
+	case r.now <- struct{}{}:
+	default:
+	}
 }
 
 // MaxRTMFails is how many failed connects in a row (none reached hello)
@@ -212,6 +309,7 @@ func (r *RTM) Run(ctx context.Context) {
 	case <-r.kick:
 	default:
 	}
+	defer r.setTrouble(false) // no socket, no trouble connecting
 	backoff := rtmBackoffBase
 	for ctx.Err() == nil && !r.c.SignedOut() {
 		s := r.connect(ctx)
@@ -234,8 +332,10 @@ func (r *RTM) Run(ctx context.Context) {
 			r.fails = 0
 			backoff = rtmBackoffBase
 			wait = backoff
+			r.setTrouble(false) // the drop of a live connection (_handleDisconnectedSocket)
 		default:
 			r.fails++
+			r.failed(r.fails)
 		}
 		if rl, ok := s.err.(rateLimitedErr); ok {
 			wait = rl.wait
@@ -255,12 +355,20 @@ func (r *RTM) Run(ctx context.Context) {
 		default:
 			log.Printf("rtm: connect failed (%v), retrying in %s", s.err, wait)
 		}
+		select { // a ConnectNow from before this wait isn't for it
+		case <-r.now:
+		default:
+		}
+		r.waiting.Store(true)
 		select {
 		case <-ctx.Done():
+			r.waiting.Store(false)
 			return
 		case <-r.kick:
+		case <-r.now:
 		case <-time.After(wait):
 		}
+		r.waiting.Store(false)
 		if stale {
 			continue
 		}
@@ -558,6 +666,7 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		case "hello":
 			s.hello = true
 			log.Printf("rtm: connected in %s", time.Since(t0).Round(time.Millisecond))
+			r.connected()
 			if r.OnState != nil {
 				r.OnState(true)
 			}

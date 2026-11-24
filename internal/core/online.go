@@ -114,6 +114,16 @@ func (a *App) RecentlyOnline() (on bool, until time.Time) {
 	return time.Now().Before(until), until
 }
 
+// LastClientConnection is the connectivity store's lastClientConnection
+// (C4fL): when clientOnline last changed (the start, at first). The
+// OfflineChannelToast's "Last updated" reads it.
+func (a *App) LastClientConnection() time.Time {
+	o := &a.online
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.changed
+}
+
 func (a *App) watchOnline() {
 	probe, poll, throttle, fingerprint := clientOnlineProbe, clientOnlinePoll, clientOfflineThrottle, networkFingerprint
 	t := time.NewTicker(poll)

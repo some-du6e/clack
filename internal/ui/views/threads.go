@@ -45,6 +45,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
@@ -202,6 +203,14 @@ type thrMsg struct {
 // Threads is the Threads view.
 type Threads struct {
 	base
+
+	// degraded is the view's DegradedBanner (aQNV renderTopBanners;
+	// messages/degraded_banner.go)
+	degraded messages.DegradedBanner
+	// loadingSince: when the first load's MessageContainerLoading
+	// mounted; pagingSince: when the page out started (appendMoreThreads'
+	// 5 s timer for slowLoadingMore). Zero: not drawn.
+	loadingSince, pagingSince time.Time
 
 	data  async[thrData]
 	list  widget.List
@@ -476,7 +485,28 @@ func (v *Threads) Layout(gtx C) D {
 		h, hl := gtx.Dp(thrHeadH), max(1, gtx.Dp(1))
 		fill(gtx, image.Rect(0, h, size.X, h+hl), v.p.Border)
 	}
+	v.degradedBanner(gtx, size)
 	return D{Size: size}
+}
+
+// degradedBanner is the view's DegradedBanner in .p-threads_view__top_banners
+// (5px under the header, centred under IA4) while the socket has trouble
+// connecting. Its click is loadNewMessages for the Threads view
+// (requestOfflineHistory of allThreads: the threads reload, wy9s r8), with
+// client.counts and reconnectImmediately (core.DegradedLoad).
+func (v *Threads) degradedBanner(gtx C, size image.Point) {
+	c := v.h.Core()
+	trouble := c != nil && c.ConnectionTrouble()
+	v.degraded.Layout(gtx, v.h.Theme(), trouble, messages.BannerPill, gtx.Dp(thrHeadH)+gtx.Dp(5), size.X, func(done func()) {
+		v.reloadThreads()
+		go func() {
+			defer done()
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			c.DegradedLoad(ctx, "", "", "")
+			v.h.Invalidate()
+		}()
+	})
 }
 
 // The Threads header's bottom line (thrBorder*).
@@ -929,13 +959,28 @@ func (v *Threads) body(gtx C) D {
 		v.grew = nil
 		v.spendChecks(gtx)
 	}
+	loading := n == 0 && (!loaded || reloading && (v.mounting || err != nil))
+	if !loading {
+		v.loadingSince = time.Time{}
+	}
 	switch {
 	case v.loadErr != nil: // errored: the view's error state, whatever threads it holds
 		return v.emptyState(gtx, "", nsThreads.T(thrErrText), friendlyErr(v.loadErr), &v.retry, nsThreads.T("Try Again"))
-	case n == 0 && (!loaded || reloading && (v.mounting || err != nil)):
+	case n == 0 && !viewsClientOnline(v.h):
+		// render's isOffline && !threadsPresent: LargeOfflineIndicator
+		size := gtx.Constraints.Max
+		messages.LargeOfflineIndicator(gtx, v.h.Theme(), v.p.Text, size, nsThreads.T("Go online to get the latest threads."))
+		return D{Size: size}
+	case loading:
 		// no threads to show while the first load, a mount's or Try
-		// Again's is out: the loading view, not a stale error's
-		return layout.Inset{Top: 16}.Layout(gtx, func(gtx C) D { return v.skeleton(gtx, 5, 36) })
+		// Again's is out: MessageContainerLoading, "Loading threads…"
+		// (the standalone view; the Activity inbox's tab has its own)
+		if v.loadingSince.IsZero() {
+			v.loadingSince = gtx.Now
+		}
+		size := gtx.Constraints.Max
+		messages.MessageContainerLoading(gtx, v.h.Theme(), size, nsThreads.T("Loading threads\u2026"), v.loadingSince)
+		return D{Size: size}
 	case err != nil && n == 0:
 		return v.emptyState(gtx, "", nsThreads.T(thrErrText), friendlyErr(err), &v.retry, nsThreads.T("Try Again")) // MessageContainerError
 	case n == 0:
@@ -1138,10 +1183,39 @@ func (v *Threads) firstRead(page thrData) int {
 	return at
 }
 
+// loadingMoreThreads is LoadingMoreThreadsIndicator (aQNV, namespace
+// threads): .p-threads_view__loading_more_threads, centred, margin-bottom
+// 56px, "Loading more messages…", and "Still loading… sorry for the long
+// wait!" once appendMoreThreads has run 5 s (slowLoadingMore).
+func (v *Threads) loadingMoreThreads(gtx C) D {
+	if v.pagingSince.IsZero() {
+		v.pagingSince = gtx.Now
+	}
+	msg := nsThreads.T("Loading more messages\u2026")
+	if wait := v.pagingSince.Add(messages.StillLoadingAfter); gtx.Now.Before(wait) {
+		gtx.Execute(op.InvalidateCmd{At: wait})
+	} else {
+		msg = nsThreads.T("Still loading\u2026 sorry for the long wait!")
+	}
+	w := gtx.Constraints.Max.X
+	tw := v.th.Measure(gtx, 15, wReg, msg)
+	lh := gtx.Dp(22)
+	at := op.Offset(image.Pt((w-tw)/2, 0)).Push(gtx.Ops)
+	v.para(gtx, 15, 22, wReg, v.p.Text, 1, msg)
+	at.Pop()
+	return D{Size: image.Pt(w, lh+gtx.Dp(56))}
+}
+
 func (v *Threads) footer(gtx C, failed bool) D {
+	if !v.paging {
+		v.pagingSince = time.Time{}
+	}
 	switch {
+	case v.paging && !viewsClientOnline(v.h):
+		// the loading_more_threads row while isOffline
+		return messages.InlineOfflineIndicator(gtx, v.h.Theme(), v.p.Text, nsThreads.T("Go online to load more threads."))
 	case v.paging:
-		return v.skeleton(gtx, 2, 36)
+		return v.loadingMoreThreads(gtx)
 	case failed:
 		return layout.Inset{Top: 8, Bottom: 16}.Layout(gtx, func(gtx C) D {
 			return layout.Center.Layout(gtx, func(gtx C) D {

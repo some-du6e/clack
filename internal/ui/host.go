@@ -249,6 +249,9 @@ func (a *App) afterRoute(prev, r Route) {
 		}
 	}
 	if ch != "" {
+		if ch != a.lastChannel {
+			a.offlineChannelToast(ch)
+		}
 		a.lastChannel = ch
 		if a.data != nil {
 			a.data.opened(ch)

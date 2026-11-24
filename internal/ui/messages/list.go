@@ -319,6 +319,12 @@ type listState struct {
 	latestR     image.Rectangle              // the "Latest messages" pill drawn last frame (tests)
 	unreadTh    unreadThreads                // the reply bars' "Unread" marks (unread_threads.go)
 
+	// degraded is the pane's DegradedBanner (degraded_banner.go);
+	// degradedShown, whether the last frame drew it: the day pills don't
+	// stick then (useStickyDayDividers' !isDegradedMode)
+	degraded      DegradedBanner
+	degradedShown bool
+
 	// system messages under system_messages_redesign_m1 (system.go)
 	sysOn, sysInit, sysMissing bool
 	sysUsers                   uint64
@@ -1291,7 +1297,11 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 			area.Pop()
 			return layout.Dimensions{Size: size}
 		}
-		if s.snap.err != nil && !s.snap.loading {
+		if !s.thread && !clientOnline(h) {
+			// AEjl's render: a conversation with no messages while
+			// !isClientOnline is LargeOfflineIndicator, the default caption
+			LargeOfflineIndicator(gtx, h.Theme(), c.Text, size, "")
+		} else if s.snap.err != nil && !s.snap.loading {
 			s.layoutLoadError(gtx, h, c, size)
 		} else {
 			y := size.Y
@@ -1891,6 +1901,13 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		at(gtx, lx, -dp(gtx, 10), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), s, newTxt) })
 		return layout.Dimensions{Size: image.Pt(w, hh)}
 	case itLoading:
+		if !clientOnline(h) {
+			// MessageListInlineLoader (GSO8) and the thread's loading row
+			// (G9yo) while !isClientOnline: InlineOfflineIndicator
+			gg := gtx
+			gg.Constraints = layout.Exact(image.Pt(w, dp(gtx, 96)))
+			return InlineOfflineIndicator(gg, h.Theme(), c.Text, "")
+		}
 		if s.thread {
 			return s.loadingRepliesRow(gtx, h, c, w) // thread.go
 		}
@@ -2237,7 +2254,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// there (the divider's own pill until it would pass the top, then
 	// the same pill, stuck, pushed up by the next day's)
 	stuck, stickyAt, stickyDay := -1, 0, time.Time{}
-	if !s.thread {
+	if !s.thread && !s.degradedShown {
 		top := s.visible[0]
 		d := -1
 		for i := top; i >= 0 && i < len(s.items); i-- {
@@ -2343,7 +2360,13 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// message pane's (a thread pane has neither; its own banners are
 	// ThreadFloatingBanners, thread_banner.go)
 	s.archivesBanner(gtx, h, size)
-	s.paneUnreadBanner(gtx, h, rc, size)
+	// the top banners: the DegradedBanner first, and the unread pill
+	// hides under it (.p-message_pane__banner + .p-message_pane__banner)
+	if s.degradedShown = s.degradedBanner(gtx, h, size); s.degradedShown {
+		s.ub.text = ""
+	} else {
+		s.paneUnreadBanner(gtx, h, rc, size)
+	}
 	if req := s.dayReq; req != nil {
 		s.dayReq = nil
 		s.openDayMenu(h, *req, rc.now, gtx)

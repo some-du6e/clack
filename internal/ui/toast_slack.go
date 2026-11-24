@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"runtime"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -62,6 +64,47 @@ func (a *App) layoutSlackToast(gtx layout.Context) {
 			return a.th.Label(gtx, 15, theme.Regular, c.TooltipText, a.toast.text)
 		})
 	})
+}
+
+// ToastPartsTopRight is ToastParts with position "top-right" (the
+// composer's "No connection." toast): 14px from the window's right and
+// 70 + ci() from its top (ToastConfigProvider wO1/; nWRK ci() is 22 under
+// p-client_desktop--frameless-macos, 41 elsewhere in the desktop app).
+func (a *App) ToastPartsTopRight(parts []i18n.Part, icon string, d time.Duration) {
+	a.ToastParts(parts, icon, color.NRGBA{}, d)
+	a.toast.top = true
+}
+
+// offlineChannelToast is onChannelChange's showOfflineChannelToast
+// (boot-render RpHI OfflineChannelToast, offline_mode, build
+// 889ac449a32d): a conversation opened in the primary view while
+// !isClientOnline (any id looksLikeChannelId takes) toasts the bold "No
+// connection.", a space and "Last updated {clientLastOnline}." with
+// toTimeAgo of lastClientConnection, or "Go online to get the latest
+// messages." when the store holds none of its history
+// (channelHasAnyHistory). Top-right, cloud-offline at 20, 6 s.
+func (a *App) offlineChannelToast(ch string) {
+	c := a.Core()
+	if c == nil || !core.LooksLikeChannelID(ch) || c.ClientOnline() {
+		return
+	}
+	ns := i18n.NS("offline_mode")
+	tail := ns.RT("Go online to get the latest messages.")
+	if tl := c.S.Timeline(ch); tl != nil && len(tl.Msgs) > 0 {
+		ago := i18n.TimeAgo(i18n.Locale(), c.LastClientConnection(), time.Now(), false, false)
+		tail = ns.RT("Last updated {clientLastOnline}.", "clientLastOnline", ago)
+	}
+	parts := append([]i18n.Part{{Text: ns.T("No connection."), Tag: "strong"}, {Text: " "}}, tail...)
+	a.ToastPartsTopRight(parts, "cloud-offline", 6*time.Second)
+}
+
+// toastTopY is the top-right toasts' top: 70 + ci().
+func toastTopY(gtx layout.Context) int {
+	ci := 41
+	if runtime.GOOS == "darwin" {
+		ci = 22
+	}
+	return gtx.Dp(unit.Dp(70 + ci))
 }
 
 // ToastParts shows Slack's Toast with an rt() string's parts: <strong> and
@@ -121,6 +164,10 @@ func (a *App) layoutRichToast(gtx layout.Context) {
 	w, h := 2*px+is+gap+tw, 2*py+lines*lh
 	off := gtx.Dp(20)
 	r := image.Rect(sz.X-off-w, sz.Y-a.toastBottom(gtx)-h, sz.X-off, sz.Y-a.toastBottom(gtx))
+	if a.toast.top {
+		x, y := sz.X-gtx.Dp(14), toastTopY(gtx)
+		r = image.Rect(x-w, y, x, y+h)
+	}
 	a.toast.rect = r
 	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(4))), gtx.Dp(8), gtx.Dp(12), theme.WithAlpha(c.PanelShadow, 0x14))
 	theme.RRect(gtx, r.Inset(-max(1, gtx.Dp(1))), gtx.Dp(8)+1, theme.WithAlpha(c.Fg, 0x21))

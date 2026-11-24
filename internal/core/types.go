@@ -434,6 +434,9 @@ type Event struct {
 	// of the new copy)
 	Removes   bool
 	Connected bool // connection: socket up; realtime: live updates on
+	// Trouble (connection_trouble): the socket keeps failing to connect,
+	// Slack's troubleConnecting (App.ConnectionTrouble)
+	Trouble bool
 	// Fast (connection, up): the connect reused a reconnect_url, Slack's
 	// FAST_RECONNECTING (lastConnectWasFast); a slow one missed the gap
 	Fast bool

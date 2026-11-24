@@ -318,6 +318,29 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 	})
 }
 
+// degradedBanner is the message pane's DegradedBanner (AEjl
+// renderDegradedBanner, before the unread pill), 14px under the pane
+// while core's socket has trouble connecting. Its click asks for the
+// conversation's newest history and an open thread's replies again
+// (hub.degradedLoad). A thread pane has none.
+func (s *listState) degradedBanner(gtx layout.Context, h Host, size image.Point) bool {
+	trouble := !s.thread && connectionTrouble(h)
+	return s.degraded.Layout(gtx, h.Theme(), trouble, BannerPill, dp(gtx, 14), size.X, func(done func()) {
+		s.hb.degradedLoad(s.ch, func() { done(); h.Invalidate() })
+	})
+}
+
+// connectionTrouble is core's ConnectionTrouble (Slack's
+// troubleConnecting). A var for tests.
+var connectionTrouble = func(h Host) bool {
+	app := h.Core()
+	return app != nil && app.ConnectionTrouble()
+}
+
+// DegradedBannerState is the pane's DegradedBanner as the last frame drew
+// it (tests, the UI's own tests): its text and link and their rects.
+func (v *ChannelView) DegradedBannerState() *DegradedBanner { return &v.s.degraded }
+
 // tsPositive reports a last-read ts after 0 (Slack's since > 0).
 func tsPositive(ts string) bool {
 	f, err := strconv.ParseFloat(ts, 64)

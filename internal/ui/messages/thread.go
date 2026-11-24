@@ -1120,38 +1120,10 @@ func offlineAnnouncement() string {
 	return " " + offlineNS.T("No connection") + offlineNS.T("Go online to get the latest messages.")
 }
 
-// offlineIndicator is LargeOfflineIndicator (boot-shared nMFb), the
-// offline_mode I18n: .p-large_offline_indicator (absolute, inset 0: the
-// pane under its header; a centred flex column) holds two paragraphs:
-// __headline, 28px/1.2143 Black, the cloud-offline icon then " No
-// connection"; __caption, 13px/1.38463, "Go
-// online to get the latest messages." Neither sets a colour (the pane's
-// content-pry) or a margin, so each keeps the client's p margin (0 0 1rem,
-// as .github/scripts/threads_ref.py draws Slack's markup): flex items'
-// margins don't collapse, the column is 34+16+18+16px tall. The icon is
-// Slack Kit's Icon (gantry-v2-vendors utKz) at size "inherit", inline:
-// <svg data-yc6 class="is-inline">, [data-yc6] { width: 1em; height: 1em }
-// and .is-inline { vertical-align: -.125em } (modern.vendor CSS), so 28px
-// with its bottom 3.5px under Lato's baseline (27.8px down the 34px line):
-// its top 3px down the line.
+// offlineIndicator is the pane's LargeOfflineIndicator
+// (offline_indicators.go) with the default caption.
 func (s *listState) offlineIndicator(gtx layout.Context, h Host, c *colors, size image.Point) {
-	th := h.Theme()
-	head := textStyle{size: 28, weight: theme.Black, col: c.Text, lineH: 34}
-	capt := textStyle{size: 13, col: c.Text, lineH: 18}
-	hl := " " + offlineNS.T("No connection")
-	cl := offlineNS.T("Go online to get the latest messages.")
-	is := dp(gtx, 28)
-	hw := is + measure(gtx, th, head, hl).X
-	cw := measure(gtx, th, capt, cl).X
-	headH, capH, mb := dp(gtx, 34), dp(gtx, 18), dp(gtx, 16)
-	y := (size.Y - (headH + mb + capH + mb)) / 2
-	x := (size.X - hw) / 2
-	at(gtx, x, y+(headH-is)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("cloud-offline")(gtx, unit.Dp(28), c.Text)
-	})
-	at(gtx, x+is, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, head, hl) })
-	y += headH + mb
-	at(gtx, (size.X-cw)/2, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, capt, cl) })
+	LargeOfflineIndicator(gtx, h.Theme(), c.Text, size, "")
 	s.offlineDrawn = true
 }
 

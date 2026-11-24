@@ -2369,6 +2369,16 @@ func (s *Server) img(w http.ResponseWriter, r *http.Request) {
 // "reply_to":id}), until StallSockets silences it.
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	s.count("ws")
+	// SetFault("ws", …) before the upgrade: a Status refuses it, a HangUp
+	// drops the connection, a Delay holds it (a socket that can't connect)
+	if f, ok := s.takeFault("ws"); ok {
+		if f.Delay > 0 {
+			time.Sleep(f.Delay)
+		}
+		if s.applyFault(w, f) {
+			return
+		}
+	}
 	// the client sends Origin: https://app.slack.com, like the web client
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {

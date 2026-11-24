@@ -574,6 +574,39 @@ func (hb *hub) refresh(m *model) {
 	hb.ensureLoaded(m)
 }
 
+// degradedLoad is the DegradedBanner's loadNewMessages for a message pane
+// on ch (core.DegradedLoad): the conversation's newest history and the
+// replies of a thread drawn beside it are asked for again, then the two
+// lists read what came; done runs after.
+func (hb *hub) degradedLoad(ch string, done func()) {
+	hb.mu.Lock()
+	chm := hb.chans[ch]
+	var thm *model
+	for _, m := range hb.thread {
+		if m.drawn.Equal(hb.frame) {
+			thm = m
+			break
+		}
+	}
+	hb.mu.Unlock()
+	go func() {
+		defer done()
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		thCh, thTS := "", ""
+		if thm != nil {
+			thCh, thTS = thm.ch, thm.threadTS
+		}
+		hb.app.DegradedLoad(ctx, ch, thCh, thTS)
+		for _, m := range []*model{chm, thm} {
+			if m != nil {
+				hb.refresh(m)
+			}
+		}
+		hb.invalidate()
+	}()
+}
+
 // retry is the Retry link: forget the backoff (and an auth stop) and load.
 func (hb *hub) retry(m *model) {
 	hb.authFailed.Store(false)

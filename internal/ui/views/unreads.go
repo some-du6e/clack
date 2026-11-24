@@ -63,6 +63,7 @@ import (
 	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -106,6 +107,12 @@ type unrFetched struct {
 // Unreads is the Unreads view.
 type Unreads struct {
 	base
+
+	// degraded is the view's DegradedBanner (.p-unreads_view__top_banners;
+	// messages/degraded_banner.go)
+	degraded messages.DegradedBanner
+	// loadingSince: when the first load's MessageContainerLoading mounted
+	loadingSince time.Time
 
 	frames []*unrFrame
 	built  bool
@@ -669,6 +676,21 @@ func (v *Unreads) Layout(gtx C) D {
 		layout.Rigid(v.head),
 		layout.Flexed(1, v.body),
 	)
+	// the DegradedBanner in .p-unreads_view__top_banners: 23px under the
+	// header and 16px in from each side (no IA4 rule), under its band.
+	// Its click asks for no history (the view isn't a conversation), only
+	// client.counts and reconnectImmediately (core.DegradedLoad)
+	c := v.h.Core()
+	trouble := c != nil && c.ConnectionTrouble()
+	v.degraded.Layout(gtx, v.th, trouble, messages.BannerSpan, gtx.Dp(49)+gtx.Dp(23), size.X, func(done func()) {
+		go func() {
+			defer done()
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			c.DegradedLoad(ctx, "", "", "")
+			v.h.Invalidate()
+		}()
+	})
 	return D{Size: size}
 }
 
@@ -855,8 +877,22 @@ func (v *Unreads) openSortMenu() {
 // body is renderChannelContent.
 func (v *Unreads) body(gtx C) D {
 	if !v.built {
-		return layout.Center.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Muted, nsUnreads.T(unrLoadingText)) })
+		// before the unread channels are known: LargeOfflineIndicator
+		// while !isClientOnline, else MessageContainerLoading with
+		// "Loading unread messages…" (page-unreads-view), "Still loading…"
+		// after 5 s
+		size := gtx.Constraints.Max
+		if !viewsClientOnline(v.h) {
+			messages.LargeOfflineIndicator(gtx, v.th, v.p.Text, size, "")
+			return D{Size: size}
+		}
+		if v.loadingSince.IsZero() {
+			v.loadingSince = gtx.Now
+		}
+		messages.MessageContainerLoading(gtx, v.th, size, nsUnreads.T(unrLoadingText), v.loadingSince)
+		return D{Size: size}
 	}
+	v.loadingSince = time.Time{}
 	v.rows = unrRows(v.frames, gtx.Now, v.lastRead)
 	if !unrAnyUnread(v.frames) {
 		if !v.wasEmpty {
@@ -956,6 +992,9 @@ func (v *Unreads) drawRow(gtx C, r unrRow, i int) D {
 		return v.message(gtx, r)
 	case unrLoading:
 		v.fetch(r.f)
+		if !viewsClientOnline(v.h) { // a loading row while !isClientOnline
+			return messages.InlineOfflineIndicator(gtx, v.th, v.p.Text, "")
+		}
 		h := gtx.Dp(80)
 		g := gtx
 		g.Constraints = layout.Exact(image.Pt(w, h))

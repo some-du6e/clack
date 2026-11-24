@@ -156,6 +156,7 @@ type App struct {
 	dnd        dndState             // the viewer's Do Not Disturb (dnd.go)
 	mdnd       memberDNDState       // other members' Do Not Disturb (dnd_members.go)
 	mega       megaphoneState       // megaphone spaces, global and per channel (megaphone.go)
+	degraded   degradedState        // the DegradedBanner's throttles (degraded.go)
 	ssugg      searchSuggState      // the window's last search's filter suggestions (search_suggest.go)
 	selected   string               // the open conversation (SetSelected, preview.go)
 	temp       map[string]int64     // temporary memberships: channel -> expiration_ts (preview.go)
@@ -271,6 +272,7 @@ func New(c *slack.Client, s *store.Store) *App {
 			a.retryTickle() // a tickle that failed with the socket down (tickle.go)
 		}
 	}
+	a.RTM.OnTrouble = func(on bool) { a.emit(Event{Type: "connection_trouble", Trouble: on}) }
 	a.RTM.OnHello = a.onHello
 	s.SetMemberHit(a.memberHit)     // getMemberById's maybeRefetch (member_fresh.go)
 	a.RTM.OnDrop = a.onDroppedEvent // a dropped message's ts still goes into maxTs (maxts_heard.go)
@@ -317,6 +319,20 @@ func (a *App) SetRealtime(on bool) {
 		a.stopRealtime()
 	}
 	a.emit(Event{Type: "realtime", Connected: on})
+}
+
+// ConnectionTrouble is Slack's troubleConnecting (client-boot XE4p Ib):
+// live updates are on and the socket keeps failing to connect
+// (slack.RTM.Trouble). The DegradedBanner shows while it holds; the UI
+// hears "connection_trouble" when it changes.
+func (a *App) ConnectionTrouble() bool { return a.RTM != nil && a.RTM.Trouble() }
+
+// ConnectNow is reconnectImmediately: a socket waiting out its backoff
+// connects now (the DegradedBanner's "Load new messages").
+func (a *App) ConnectNow() {
+	if a.RTM != nil {
+		a.RTM.ConnectNow()
+	}
 }
 
 // Realtime reports whether live updates are turned on (not whether the

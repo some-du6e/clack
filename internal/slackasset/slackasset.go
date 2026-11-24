@@ -86,11 +86,26 @@ var calendarGoogle []byte
 //go:embed assets/ocal-app-dir-icon-e4661a9.png
 var calendarOutlook []byte
 
+// MessageContainerLoading's background (the message-kit chunk's q3Mq,
+// .p-message_container_loading, build 889ac449a32d): uv-loader@2x at
+// 200x200, its own file in the dark theme. 400x400, 96 and 103 frames.
+const (
+	UVLoader     = Base + "uv-loader@2x-747afde.gif"
+	UVLoaderDark = Base + "uv-loader-dark@2x-941a392.gif"
+)
+
+//go:embed assets/uv-loader@2x-747afde.gif
+var uvLoader []byte
+
+//go:embed assets/uv-loader-dark@2x-941a392.gif
+var uvLoaderDark []byte
+
 var bundled = map[string][]byte{
 	SlackLogoMark: slackLogoMark, SCHubHero: scHubHero, SCInvitesEmpty: scInvitesEmpty, SCPersonMing: scPersonMing,
 	SCPersonKyelie: scPersonKyelie, SCPersonMichael: scPersonMichael, SCLogoAirbnb: scLogoAirbnb, SCLogoOpenAI: scLogoOpenAI,
 	SCLogoOpenAIDark: scLogoOpenAIDark, SCLogoTime: scLogoTime, SCLogoHulu: scLogoHulu,
 	CalendarGoogle: calendarGoogle, CalendarOutlook: calendarOutlook,
+	UVLoader: uvLoader, UVLoaderDark: uvLoaderDark,
 }
 
 // Get returns the bundled bytes for url, if it is one of these assets.
