@@ -125,7 +125,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	}
 
 	var items []MenuItem
-	if own {
+	if EditShown(h.Core(), &m, self) { // Oi/D canEditMessage
 		items = append(items, MenuItem{Action: "edit_message", Label: "Edit message", Icon: "edit", Hint: nsMessage.T("E"), Keys: KeyEdit, Do: func() {
 			if o.OnEdit != nil {
 				o.OnEdit()
@@ -170,7 +170,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if MarkUnreadShown(app, &m, inThread) { // QRkh / RjOa: canMarkUnread and the redesign's exclusions
 		items = append(items, markUnread)
 	}
-	if sa := SaveActionFor(app, &m); !eph || sa.Do == SaveMove {
+	if sa := SaveActionFor(app, &m); SaveShown(app, &m) { // aHFc
 		items = append(items, MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			RunSaveAction(h, m) // oMi4 / aSBj (actions_todo.go)
 		}}.In(nsSaved))
@@ -214,10 +214,12 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 		if PinShown(app, &m) { // Zn/q canPin; Organize holds only the pin row, and a submenu with none isn't drawn
 			items = append(items, MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage))
 		}
-		items = append(items,
-			MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m),
-				SubLive: func() []MenuItem { return connectToApps(h, m) }}.In(nsMessage),
-		)
+		if connectToAppsShown(app, &m) {
+			items = append(items,
+				MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m),
+					SubLive: func() []MenuItem { return connectToApps(h, m) }}.In(nsMessage),
+			)
+		}
 	}
 
 	// the broadcast and workflow group: [send reply, remove reply, view
@@ -295,7 +297,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	}
 	// canDeleteMessageHelper: your own message, and any ephemeral one
 	// (its first case), which the delete removes here alone
-	if own || eph {
+	if DeleteShown(h.Core(), &m, self) { // n+vA canDeleteMessageHelper
 		last = append(last, MenuItem{Action: "delete_message", Label: "Delete message…", Hint: nsMessage.T("delete"), Keys: KeyDelete(), Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }}.In(nsMessage))
 	}
 	if len(last) > 0 {

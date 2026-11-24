@@ -147,6 +147,14 @@ func TestMessageActionsLikeSlack(t *testing.T) {
 	// there is, as on Slack's side
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/apps.actions.v2.list") {
+			// Slack's side has no app actions loaded (appActions'
+			// isLoaded false: "More message shortcuts…" opening the
+			// dialog); Clack's list stays unloaded the same way, whatever
+			// the timing, when its fetch is refused
+			_, _ = w.Write([]byte(`{"ok":false,"error":"not_loaded_in_parity"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	t.Cleanup(srv.Close)
