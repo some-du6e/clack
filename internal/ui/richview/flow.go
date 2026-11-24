@@ -600,6 +600,9 @@ type lay struct {
 	// state); expandAt is the one being laid out (truncate.go).
 	expanded map[*richtext.Attachment]bool
 	expandAt *richtext.Attachment
+	// overLimit marks the attachment blocks attachmentsOverLimit added:
+	// MessageAttachmentOverLimitButton's (overlimit.go)
+	overLimit map[*richtext.Attachment]overLimitBtn
 	// expandKey, when set, is the section whose "Show more" is being laid
 	// out (its blockText key, expander.go); expandAtKey expandAt's
 	// attachmentText key when Slack keeps its state in the store
