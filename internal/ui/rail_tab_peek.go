@@ -87,6 +87,9 @@ type tabPeekState struct {
 	lastChild Overlay // the card's menu under the pointer at the last move
 
 	content tabPeekContent
+	// bar: a channel tab's trigger (channel_tab_peek.go), unmounted by
+	// barPeekEndFrame after the views, not by the rail's end of frame
+	bar bool
 }
 
 // tabPeeks are the rail's tab peeks by rail key.
@@ -108,6 +111,9 @@ func (a *App) tabPeek(key string) *tabPeekState {
 
 // tabPeekContentFor is the tab's PeekView, nil for a tab without one.
 func (a *App) tabPeekContentFor(key string) tabPeekContent {
+	if p, ok := a.tpeeks.m[key]; ok && p.bar {
+		return a.barPeekContent(key)
+	}
 	switch key {
 	case "platform":
 		return a.agentsPeekView()
@@ -226,22 +232,29 @@ func (a *App) openTabPeek(key string) {
 	a.closeOtherPeeks(key)
 	p.content = c
 	var pop *popups.Popover
-	pop = popups.NewPopover(a, c.layout, popups.PopoverOpts{
+	o := popups.PopoverOpts{
 		Anchor: p.trig, Popover: "right-bottom", OffsetX: 6, OffsetY: -44, Radius: 12,
 		Peek: true, AnimateIn: true, NoMotion: a.reduceMotion(), // PeekView: p-peek_card--animate-in
-		OnClose: func() {
-			if p.pop != pop {
-				return
-			}
-			a.closeTabPeekChildren(pop) // its menus unmount with it
-			p.hasPrev, p.hasPending = false, false
-			p.inside, p.over, p.lastChild = false, false, nil
-			if p.hov && !p.pressed { // eI: Escape with the pointer still on the button
-				p.dismissed = true
-			}
-			a.Invalidate()
-		},
-	})
+	}
+	if pc, ok := c.(interface{ popover(o *popups.PopoverOpts) }); ok { // a channel tab's PeekTrigger
+		pc.popover(&o)
+	}
+	o.OnClose = func() {
+		if cl, ok := c.(interface{ closed() }); ok {
+			defer cl.closed()
+		}
+		if p.pop != pop {
+			return
+		}
+		a.closeTabPeekChildren(pop) // its menus unmount with it
+		p.hasPrev, p.hasPending = false, false
+		p.inside, p.over, p.lastChild = false, false, nil
+		if p.hov && !p.pressed { // eI: Escape with the pointer still on the button
+			p.dismissed = true
+		}
+		a.Invalidate()
+	}
+	pop = popups.NewPopover(a, c.layout, o)
 	p.pop = pop
 	p.hasPrev, p.hasPending, p.checkedAt = false, false, time.Time{}
 	p.inside, p.over, p.lastChild = false, false, nil
@@ -382,6 +395,9 @@ func (a *App) tabPeekInside(key string) bool {
 // closes.
 func (a *App) tabPeekEndFrame() {
 	for _, p := range a.tpeeks.m {
+		if p.bar {
+			continue // barPeekEndFrame's
+		}
 		p.mounted, p.seen = p.seen, false
 		if !p.mounted && a.tabPeekOpen(p.key) {
 			p.pop.Dismiss()

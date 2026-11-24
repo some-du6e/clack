@@ -942,6 +942,9 @@ func (b *backend) handle(a *App, ev core.Event) {
 		a.Invalidate()
 	case "emoji_packs": // the emoji pack store (core/emoji_packs.go): the Add emoji dialog, the picker's pack groups, the composer's badge
 		a.Invalidate()
+	case "file_gone": // file_deleted / file_undeleted (core/file_standin.go)
+		b.fileGone(ev.ID, ev.Name == "file_deleted")
+		a.Invalidate()
 	}
 	switch ev.Type {
 	case "threads_state", "counts", "marked", "activity_badges":
@@ -1724,6 +1727,54 @@ func (b *backend) tabs(ch string) []chTab {
 		}
 	}
 	return b.tabCache[ch]
+}
+
+// fileGone follows file_deleted and file_undeleted on the tab bars that
+// hold the file: filesDeleted's tombstoneFiles turns the tab into a
+// deleted file's at once (useTabLabel reads the store); filesUndeleted
+// refetches the file, so a restored tab comes back with its next header
+// read, which goes out now for a bar on screen. UI goroutine.
+func (b *backend) fileGone(id string, deleted bool) {
+	if id == "" {
+		return
+	}
+	for ch, src := range b.tabSrc {
+		held := false
+		ts := append([]core.Tab(nil), src.tabs...)
+		for i := range ts {
+			if ts[i].FileID != id {
+				continue
+			}
+			held = true
+			if deleted {
+				ts[i] = core.TombstoneTab(ts[i])
+			}
+		}
+		if !held {
+			continue
+		}
+		if !deleted {
+			if _, ok := b.fetched[ch]; ok {
+				b.fetched[ch] = time.Time{} // due: the next open reads it again
+			}
+			if b.stillShown(ch) {
+				b.opened(ch)
+			}
+			continue
+		}
+		src.tabs = ts
+		b.tabSrc[ch] = src
+		tabs, _ := b.tabsOf(ts, src.notMember)
+		if b.app != nil {
+			b.app.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
+		} else {
+			b.tabCache[ch] = tabs
+		}
+		if h, ok := b.core.CachedHeader(ch); ok { // the next start draws it too
+			h.Tabs = ts
+			b.core.SetCachedHeader(ch, h)
+		}
+	}
 }
 
 // tabRead is what a channel's tab bar was built from (tabs): the tab

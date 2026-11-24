@@ -892,6 +892,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		canEdit = false
 	}
 	a.tabDragEvents(gtx, ch, canEdit) // tab_drag.go: last frame's tab rects
+	a.barPeekEvents(gtx)              // the labels' peeks (channel_tab_peek.go)
 	drag := a.tabDrag()
 	rects := make([]tabRect, 0, len(all))
 	dropAt, dropOK := a.dragTarget(drag) // last frame's rects: the folder centre's fill goes under its tab
@@ -933,8 +934,9 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		at(gtx, image.Pt(x, 0), image.Pt(w, sz.Y), func(gtx layout.Context) layout.Dimensions {
 			defer insTab.Inspect(insMod(i == cur)).End(gtx, image.Pt(w, sz.Y))
 			return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hov bool) {
-				if hov && i != cur {
-					theme.RRect(gtx, image.Rect(0, gtx.Dp(5), s.X, s.Y-gtx.Dp(5)), gtx.Dp(6), c.BgHover)
+				peek := a.tabPeekOpen(barTabPeekKey(ch, chTabID(t)))
+				if (hov || peek) && !source && !drag.dragging { // :not(.channel_tab_dragging):hover, :has(--is-peek-visible)
+					a.tabHoverLook(gtx, s, hov && btn.Pressed(), i == cur)
 				}
 				if i == cur {
 					theme.Fill(gtx, image.Rect(0, s.Y-gtx.Dp(2), s.X, s.Y), c.Accent)
@@ -951,6 +953,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 			a.selectChannelTab(ch, i, t)
 		}
 		a.tabCtx(gtx, ch, t, image.Rect(x, 0, x+w, sz.Y)) // the tab's right-click menu (files_tab_more.go)
+		a.barTabPeekFrame(gtx, ch, t, image.Rect(x, 0, x+w, sz.Y), i == cur)
 		x += w + gtx.Dp(4)
 	}
 	if n := len(rects); n > 0 {
@@ -969,6 +972,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		a.tabsMoreFor(ch).hidden = nil
 	}
 	a.tabDragOverlay(gtx, sz)
+	a.barPeekArea(gtx, sz) // on top, passing through: the bar's pointer offset
 	if ci := a.model().conv(ch); ci != nil && ci.Preview {
 		return layout.Dimensions{Size: sz} // Slack: no "+" (add a tab) for a channel you aren't in
 	}

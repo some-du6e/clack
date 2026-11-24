@@ -299,6 +299,7 @@ type App struct {
 	scopeInv         bool                    // the chrome is in Slack's inverted theme scope (theme_scope.go)
 	scopeInvSide     bool                    // and the sidebar
 	tpeeks           tabPeeks                // the rail tabs' hover peeks (rail_tab_peek.go)
+	barPeeks         barPeekState            // the channel tab bars' (channel_tab_peek.go)
 	agPeek           *agentsPeek             // Agents & tools' (rail_peek_agents.go)
 	pgPeeks          map[string]*pageTabPeek // the DMs, Activity, Later and Files peeks (rail_peek_pages.go)
 	scopeVars        map[string]string
@@ -986,6 +987,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutSwipe(gtx, primary)
 	a.layoutVideoPip(gtx)  // the mini player: over the content, under the overlays (video_pip.go)
 	a.layoutHoverCard(gtx) // above the content, under the overlays
+	a.barPeekEndFrame()    // the channel tab bars' peeks (channel_tab_peek.go)
 	a.layoutOverlays(gtx)
 	a.layoutHoverCardOver(gtx) // over a dialog whose own list has triggers
 	a.slackcOverlays(gtx)
