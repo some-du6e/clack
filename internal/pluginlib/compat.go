@@ -40,7 +40,6 @@ var compat = map[string]Compat{
 	Slick + "/CustomSounds":         partial("Ogg Vorbis, FLAC or Linux AAC files play Slack's own sound"),
 	Slick + "/InstalledApps":        partial("the app marketplace page asks you to sign in"),
 	Slick + "/LetMeSee":             partial("Hide drawings does nothing"),
-	Slick + "/oneko":                partial("the cat runs but isn't drawn"),
 	Slick + "/PrivateChannelMapper": partial("the missing-channel pill never shows"),
 	Slick + "/QuietSpotify":         broken("Clack has no Spotify players to quiet"),
 	Slick + "/SelfCare":             partial("a break pauses notifications, not the app badge"),
