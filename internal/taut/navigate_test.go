@@ -100,3 +100,43 @@ func TestThunkRegisteredLater(t *testing.T) {
 		t.Errorf("the late thunk answered %q", got)
 	}
 }
+
+// A channel's header tab in Slack's view state (Slick's ChatTabs since
+// #504 comes back to the canvas, files or pins a channel had open): the
+// window showing one has Slack's view for it as the primary view, a
+// Canvas view in the channel's tab (inChannelTab) or the channel's view
+// with the tab's id (toChannelTab); a view naming another channel isn't
+// taken. navigate with such a view opens the channel's tab, Messages for
+// "channel", through the tab link (getChannelTabPermalink's).
+func TestNavigateHeaderTabs(t *testing.T) {
+	h := newHarness(t)
+	canvas := `{ id: 'Qp:F0CANVAS1', viewType: 'Canvas', params: { entityId: 'Qp:F0CANVAS1', parentTab: 'C0GENERAL1', tabId: 'Ct0CANVAS1' } }`
+	files := `{ id: 'C0GENERAL1', viewType: 'Channel', params: { tabId: 'files', parentTab: 'C0GENERAL1' } }`
+	var got []string
+	h.jsInto(`const out = []
+		for (const tab of [`+canvas+`, `+files+`, { id: 'C0OTHER001', viewType: 'Channel', params: { tabId: 'pins', parentTab: 'C0OTHER001' } }, null]) {
+			T.setView('C0GENERAL1', '', tab)
+			const s = T.redux.getStore().getState()
+			const p = s.view?.['v2::main::' + s.window?.main?.activeTab + '::primary']
+			out.push(p.viewType + ':' + p.id + ':' + (p.params?.tabId ?? '-'))
+		}
+		return out`, &got)
+	want := []string{"Canvas:Qp:F0CANVAS1:Ct0CANVAS1", "Channel:C0GENERAL1:files", "Channel:C0GENERAL1:-", "Channel:C0GENERAL1:-"}
+	if !slices.Equal(got, want) {
+		t.Errorf("views %q, want %q", got, want)
+	}
+	h.js(`for (const v of [` + canvas + `, ` + files + `, { id: 'C0GENERAL1', viewType: 'Channel', params: { tabId: 'channel', parentTab: 'C0GENERAL1' } }])
+			await T.redux.dispatchThunk('navigate', v)
+		return null`)
+	h.ui.mu.Lock()
+	links := slices.Clone(h.ui.links)
+	h.ui.mu.Unlock()
+	wantLinks := []string{
+		"slack://channel?id=C0GENERAL1&tab=Ct0CANVAS1",
+		"slack://channel?id=C0GENERAL1&tab=files",
+		"slack://channel?id=C0GENERAL1&tab=channel",
+	}
+	if !slices.Equal(links, wantLinks) {
+		t.Errorf("deep links %q, want %q", links, wantLinks)
+	}
+}

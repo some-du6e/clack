@@ -528,6 +528,7 @@ func (t *Taut) restartAfterCrash(dead *runtime) {
 	t.ui.setPatchedComponents(nil)
 	t.ui.setComposerHooks(composerHooks{})
 	t.ui.setStatePatched(statePatchInfo{})
+	t.ui.history.reset()
 	t.ui.setOverlays(nil)
 	t.setPluginExperiments(nil) // the dead runtime's patches are gone
 	t.mu.Lock()

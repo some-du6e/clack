@@ -134,21 +134,51 @@ const osShim = {
   homedir: () => go('os', 'home'),
   tmpdir: () => go('os', 'tmp'),
   platform: () => go('os', 'platform'),
+  arch: () => go('os', 'arch'),
   EOL: '\n',
 }
 let badgeCount = 0
+let dockBadge = ''
 const electronShim = {
   app: {
     isReady: () => true,
     whenReady: () => Promise.resolve(),
     getPath: (name) => go('os', name === 'home' ? 'home' : 'tmp'),
     getVersion: () => '0.0.0',
+    // Clack runs as a packaged app: Slick's dev-build fallbacks (its dev
+    // tile for the Dock) don't apply
+    isPackaged: true,
     // the app badge is Clack's own (dock.go): a main half's count is
     // accepted and kept, never drawn (SelfCare clears it during a break)
     getBadgeCount: () => badgeCount,
     setBadgeCount: (n) => {
       badgeCount = Number.isFinite(+n) && +n > 0 ? Math.floor(+n) : 0
       return true
+    },
+    // the app's events (appEvents): 'browser-window-focus' as Clack's
+    // window takes the focus; Clack's window exists before any main half,
+    // so 'browser-window-created' never comes
+    on: (e, f) => (appEvents.on(e, f), electronShim.app),
+    addListener: (e, f) => (appEvents.on(e, f), electronShim.app),
+    once: (e, f) => (appEvents.once(e, f), electronShim.app),
+    off: (e, f) => (appEvents.off(e, f), electronShim.app),
+    removeListener: (e, f) => (appEvents.off(e, f), electronShim.app),
+    listenerCount: (e) => appEvents.listenerCount(e),
+    // macOS only, as Electron's: setIcon is Clack's Dock icon (null puts
+    // Clack's own back); the badge is kept like the count above and the
+    // bounce is Clack's own (notify.go), so a main half's does nothing
+    get dock() {
+      if (processFor().platform !== 'darwin') return undefined
+      return (dockShim ??= {
+        setIcon: (image) => void go('appIcon', imagePNG(image)),
+        getBadge: () => dockBadge,
+        setBadge: (text) => void (dockBadge = String(text ?? '')),
+        bounce: () => 0,
+        cancelBounce() {},
+        isVisible: () => true,
+        show: () => Promise.resolve(),
+        hide() {},
+      })
     },
   },
   // the session's spellchecker is Clack's composer spellcheck: off here
@@ -170,8 +200,14 @@ const electronShim = {
   },
   shell: { openExternal: async (url) => void go('openURL', new URL(String(url)).href) },
   webContents: { getAllWebContents: () => [] },
-  BrowserWindow: { getAllWindows: () => [] },
+  // Clack's one window (clackWindow, below)
+  BrowserWindow: {
+    getAllWindows: () => [clackWindow()],
+    getFocusedWindow: () => (go('focused') === true ? clackWindow() : null),
+    fromWebContents: () => clackWindow(),
+  },
 }
+let dockShim
 
 // the rest of Node's builtins: loadable, and a clear error when a main half
 // actually uses a part Clack doesn't offer (CustomSounds' macOS afconvert)
@@ -249,6 +285,141 @@ class EventEmitter {
     return ls.length > 0
   }
 }
+const appEvents = new EventEmitter()
+
+// ---- nativeTheme: Clack's mode (the window's dark mode, SetDark) ----
+class NativeTheme extends EventEmitter {
+  themeSource = 'system'
+  get shouldUseDarkColors() {
+    return go('nativeTheme') === true
+  }
+  get shouldUseHighContrastColors() {
+    return false
+  }
+  get shouldUseInvertedColorScheme() {
+    return false
+  }
+  get inForcedColorsMode() {
+    return false
+  }
+}
+const nativeTheme = new NativeTheme()
+
+// ---- systemPreferences: macOS's user defaults ----
+const zeroOf = { string: '', boolean: false, integer: 0, float: 0, double: 0, url: '', array: [], dictionary: {} }
+const systemPreferences = {
+  getUserDefault: (key, type) => go('userDefault', String(key), String(type)) ?? structuredClone(zeroOf[type] ?? null),
+  on() {
+    return systemPreferences
+  },
+  off() {
+    return systemPreferences
+  },
+  subscribeNotification: () => 0,
+  unsubscribeNotification() {},
+}
+
+// ---- nativeImage: Electron's images, whose work is Go's (nativeimage.go) ----
+// An image is its PNG (base64) and size; the empty image holds none.
+const toB64 = (bytes) => {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes?.buffer ?? bytes ?? [], bytes?.byteOffset ?? 0, bytes?.byteLength)
+  let bin = ''
+  for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
+const fromB64 = (s) => Uint8Array.from(atob(s ?? ''), (c) => c.charCodeAt(0))
+const imageData = new WeakMap() // NativeImage → {png, w, h}
+const imagePNG = (image) => imageData.get(image)?.png ?? null
+class NativeImage {
+  constructor(img) {
+    imageData.set(this, img && typeof img.png === 'string' && img.png ? img : null)
+  }
+  isEmpty() {
+    return !imageData.get(this)
+  }
+  getSize() {
+    const d = imageData.get(this)
+    return { width: d?.w ?? 0, height: d?.h ?? 0 }
+  }
+  getAspectRatio() {
+    const { width, height } = this.getSize()
+    return height ? width / height : 1
+  }
+  resize(options = {}) {
+    const d = imageData.get(this)
+    if (!d) return new NativeImage(null)
+    return new NativeImage(go('image', 'resize', d, Math.floor(+options.width || 0), Math.floor(+options.height || 0), String(options.quality ?? 'best')))
+  }
+  toPNG() {
+    return fromB64(imagePNG(this))
+  }
+  toDataURL() {
+    return 'data:image/png;base64,' + (imagePNG(this) ?? '')
+  }
+  toBitmap() {
+    const d = imageData.get(this)
+    return d ? fromB64(go('image', 'bitmap', d)) : new Uint8Array()
+  }
+  getBitmap() {
+    return this.toBitmap()
+  }
+  isTemplateImage() {
+    return false
+  }
+  setTemplateImage() {}
+}
+// owner is the main half asking: a file it reads is one it may (host.go
+// imageFile: a file the user picked for it, Slack's installed icons)
+function nativeImageFor(owner) {
+  return {
+    NativeImage,
+    createEmpty: () => new NativeImage(null),
+    createFromDataURL: (url) => new NativeImage(go('image', 'fromDataURL', String(url))),
+    createFromPath: (path) => new NativeImage(go('image', 'fromPath', owner(), String(path))),
+    createFromBuffer: (buffer) => new NativeImage(go('image', 'fromBuffer', toB64(buffer))),
+    createFromBitmap(buffer, options) {
+      const img = go('image', 'fromBitmap', toB64(buffer), Math.floor(+options?.width || 0), Math.floor(+options?.height || 0))
+      if (!img) throw new Error('invalid buffer size')
+      return new NativeImage(img)
+    },
+    async createThumbnailFromPath(path, size) {
+      const img = go('image', 'thumbnail', owner(), String(path), Math.floor(+size?.width || 0), Math.floor(+size?.height || 0))
+      if (!img?.png) throw new Error(img?.error ?? 'Failed to get thumbnail from local thumbnail cache')
+      return new NativeImage(img)
+    },
+  }
+}
+
+// ---- Clack's window, as a BrowserWindow ----
+// Its icon is Clack's window icon (setIcon: Windows and Linux, as
+// Electron's; null puts Clack's own back), its webContents the page's.
+let clackWin
+function clackWindow() {
+  return (clackWin ??= Object.freeze({
+    id: 1,
+    webContents: fakeSender,
+    isDestroyed: () => false,
+    isFocused: () => go('focused') === true,
+    isVisible: () => true,
+    getTitle: () => fakeSender.getTitle(),
+    setIcon(image) {
+      if (processFor().platform !== 'darwin') go('appIcon', imagePNG(image))
+    },
+    on() {
+      return clackWindow()
+    },
+    once() {
+      return clackWindow()
+    },
+    off() {
+      return clackWindow()
+    },
+    removeListener() {
+      return clackWindow()
+    },
+  }))
+}
+
 const urlShim = {
   URL,
   URLSearchParams,
@@ -281,7 +452,12 @@ function processFor() {
   if (!processReady) {
     processReady = true
     try {
+      // Node's names (win32, x64), as Electron's process has them
       processShim.platform = go('os', 'platform')
+      processShim.arch = go('os', 'arch') || processShim.arch
+      // the installed Slack's, where Slick's main halves read Slack's own
+      // files (CustomAppIcon's Slack icon); "" without one
+      processShim.resourcesPath = go('os', 'resources') ?? ''
     } catch {}
   }
   return processShim
@@ -294,7 +470,20 @@ const bufferShim = {
   },
 }
 
-function requireMain(name) {
+// each main half's electron module, kept by its owner(), one per main-half
+// file (mainPluginFrom): its nativeImage asks whose it is when it reads a
+// file, since a bundle requires electron before it says (its id comes once
+// the file has run). Kept by the id instead, every main half got the first
+// one's module, and its reads that main half's picks.
+const electronOf = new WeakMap()
+function electronFor(owner) {
+  let e = electronOf.get(owner)
+  if (!e) electronOf.set(owner, (e = { ...electronShim, nativeImage: nativeImageFor(owner), nativeTheme, systemPreferences }))
+  return e
+}
+const noOwner = () => ''
+
+function requireMain(name, owner = noOwner) {
   switch (name.replace(/^node:/, '')) {
     case 'process':
       return processFor()
@@ -331,7 +520,7 @@ function requireMain(name) {
     case 'stream':
       return streamShim
     case 'electron':
-      return electronShim
+      return electronFor(owner)
     case '$slick':
       return slickModule
   }
@@ -681,7 +870,7 @@ function createMainCtx(id, main) {
     dialog: {
       async openFile(options) {
         need('dialog')
-        return (await go('openFile', options?.title ?? '', (options?.filters ?? []).flatMap((f) => f.extensions ?? []).join(','))) ?? ''
+        return (await go('openFile', options?.title ?? '', (options?.filters ?? []).flatMap((f) => f.extensions ?? []).join(','), id)) ?? ''
       },
     },
     sessions: {
@@ -729,8 +918,12 @@ function createMainCtx(id, main) {
 
 function mainPluginFrom(code) {
   const factory = factoryFrom(code, '__slickMainPlugins', 'main half')
-  const plugin = factory(requireMain)
+  // the file runs before it says whose it is: what it requires asks once
+  // it's running (its nativeImage's file reads)
+  let owner = ''
+  const plugin = factory((name) => requireMain(name, () => owner))
   if (!plugin || typeof plugin !== 'object' || typeof plugin.id !== 'string') throw new Error('the file has no default-exported SlickMainPlugin')
+  owner = plugin.id
   for (const cap of plugin.capabilities ?? []) if (!CAPABILITIES.has(cap)) throw new Error(`unknown capability ${cap}`)
   return plugin
 }
@@ -873,6 +1066,15 @@ S.previewSwitches = (id, settings) => {
     console.warn(`[slick] ${id}: boot (for its switches) threw:`, err)
   }
   return out
+}
+/** Go → JS: the app's events for main halves: 'theme' (Clack's mode changed), 'focus' (Clack's window took the focus) */
+S.mainEvent = (what) => {
+  try {
+    if (what === 'theme') nativeTheme.emit('updated')
+    else if (what === 'focus') appEvents.emit('browser-window-focus', { preventDefault() {} }, clackWindow())
+  } catch (err) {
+    console.error('[slick] a main half\'s', what, 'listener threw:', err)
+  }
 }
 S.hasMain = (id) => !!plugins.get(id)?.main
 S.callMain = callMain

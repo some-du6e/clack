@@ -336,31 +336,39 @@ func TestCanvasSaveUnsavedBanner(t *testing.T) {
 	}
 }
 
-// The switch is off unless asked for (docs/CANVAS-EDIT-PLAN.md, "Rules for
-// round 2"): a fresh App doesn't save through edit-document, ui.json's
-// canvas_quip_edit turns it on and off, and the environment's
-// CLACK_CANVAS_QUIP_EDIT=1 keeps it on.
-func TestCanvasSaveSwitchOff(t *testing.T) {
-	if quipEditEnv {
-		t.Skip("CLACK_CANVAS_QUIP_EDIT=1 in this test's environment")
+// The switch is on by default (alpha.164, docs/CANVAS-EDIT-PLAN.md "Rules
+// for round 2"): a fresh App saves through edit-document, ui.json's
+// canvas_quip_edit turns it off and on again, and the environment's
+// CLACK_CANVAS_QUIP_EDIT wins over ui.json both ways (0 off, 1 on).
+func TestCanvasSaveSwitchDefault(t *testing.T) {
+	if quipEditEnv != "" {
+		t.Skipf("CLACK_CANVAS_QUIP_EDIT=%q in this test's environment", quipEditEnv)
 	}
 	a, _ := canvasApp(t)
+	if !a.QuipEditOn() {
+		t.Fatal("saves don't go through edit-document by default")
+	}
+	a.SetQuipEdit(false)
 	if a.QuipEditOn() {
-		t.Fatal("saves go through edit-document by default")
+		t.Error("canvas_quip_edit false didn't turn it off")
 	}
 	a.SetQuipEdit(true)
 	if !a.QuipEditOn() {
-		t.Error("canvas_quip_edit didn't turn it on")
+		t.Error("canvas_quip_edit true didn't turn it back on")
 	}
-	a.SetQuipEdit(false)
+	t.Cleanup(func() { quipEditEnv = "" })
+	quipEditEnv = "0"
 	if a.QuipEditOn() {
-		t.Error("canvas_quip_edit didn't turn it off")
+		t.Error("CLACK_CANVAS_QUIP_EDIT=0 didn't turn it off over canvas_quip_edit true")
 	}
-	quipEditEnv = true
-	t.Cleanup(func() { quipEditEnv = false })
+	b, _ := canvasApp(t)
+	if b.QuipEditOn() {
+		t.Error("CLACK_CANVAS_QUIP_EDIT=0 didn't turn it off on a fresh App")
+	}
+	quipEditEnv = "1"
 	a.SetQuipEdit(false)
 	if !a.QuipEditOn() {
-		t.Error("CLACK_CANVAS_QUIP_EDIT=1 didn't keep it on")
+		t.Error("CLACK_CANVAS_QUIP_EDIT=1 didn't keep it on over canvas_quip_edit false")
 	}
 }
 

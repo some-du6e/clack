@@ -4,8 +4,8 @@ Clack runs Taut's and Slick's plugins natively, from the published plugin Librar
 
 | | Plugins |
 |---|---:|
-| ✅ Works fully | 75 |
-| ⚠️ Partly works | 16 |
+| ✅ Works fully | 77 |
+| ⚠️ Partly works | 14 |
 | ❌ Doesn't work yet | 7 |
 
 A plugin both systems ship (under the same name or not) is one row in Preferences › Plugins › Browse; here each version has its own line.
@@ -33,10 +33,8 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Chat Tabs | Slick | Browser-like tabs for the real power users of Slack. Open channels, DMs, and threads in new tabs to keep organized. | thread tabs open beside their channel |
 | Click to Load | Taut | Holds Spotify, SoundCloud and other music embeds until you click to load them | Load shows Clack's media box, not a player |
 | Custom Sounds | Slick | Override Slack notification sounds with your own audio file. | Ogg Vorbis, FLAC or Linux AAC files play Slack's own sound |
-| Hide Resolved Tickets | Slick | Hide resolved questions in help channels so only the open ones are left | its header toggle isn't drawn; what it hides is unchecked |
 | Installed Apps | Slick | Show apps people authorized, who authorized an app, and its channel memberships. | the app marketplace page asks you to sign in |
 | Let Me See | Slick | Adds a Hide drawings button to the floating huddle bar shown during a screenshare | Hide drawings does nothing |
-| oneko | Slick | cat follow mouse (real) | the cat runs but isn't drawn |
 | Private Channel | Taut | Lets you see and mention private channels you aren't in (uses the <https://flaron.halceon.dev\|flaron> index) | unknown channel mentions aren't looked up |
 | Private Channel Mapper | Slick | Name the private channels you can’t see, and mention the ones you are not in | the missing-channel pill never shows |
 | Self Care | Slick | Take a break from Slack and pause notifications for a while. | a break pauses notifications, not the app badge |
@@ -76,6 +74,7 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Haiku Warning | Slick | Warn before sending a message that Orpheus would quote back as a haiku |
 | Haiku Warning | Taut | Warns before you send a haiku that Orpheus would repeat in the thread |
 | HCA Status | Slick | Flag users who have not completed identity verification. Sends Slack user IDs to auth.hackclub.com for verification and age-category checks. |
+| Hide Resolved Tickets | Slick | Hide resolved questions in help channels so only the open ones are left |
 | Huddle Activity | Taut | Logs who did what in a huddle, including mutes and settings changes |
 | Huddle Mute Detector | Slick | Show who muted you in a huddle |
 | Human Count | Slick | Leave bots and apps out of the channel header's member count. |
@@ -98,6 +97,7 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | NoUpsell | Slick | Hide promotions, trial offers, and Slack bot AI nudges. |
 | Office Hours | Slick | Set schedules for out-of-office and invisible status |
 | Office Hours | Taut | Sets you out of office or away on a weekly schedule |
+| oneko | Slick | cat follow mouse (real) |
 | Oneko | Taut | Adds a cute cat that chases your cursor, based on <https://github.com/adryd325/oneko.js\|oneko.js> |
 | Online Count | Slick | Show how many of a channel's members are online, next to its member count |
 | Owl Mode | Taut | Lets you reply and react anonymously as the author of your owl confessions |

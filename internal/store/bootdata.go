@@ -36,6 +36,10 @@ import (
 const (
 	BootDataFile = "boot_data.json"
 	HeadersFile  = "headers.json"
+	// ExpandablesFile is the expandables store (core expandables.go):
+	// which previews the viewer collapsed or expanded, kept across
+	// sessions as Slack keeps its persisted store.
+	ExpandablesFile = "expandables.json"
 )
 
 // BootData is boot_data.json: the sidebar as the last session left it.

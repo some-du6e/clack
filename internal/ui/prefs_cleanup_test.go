@@ -91,7 +91,7 @@ func TestHuddleMotionRow(t *testing.T) {
 }
 
 // Advanced > Download location: the box asks each time (popups'
-// AskDownload says asked only while it's on), the folder is what
+// ChooseDownloadDir says asked only while it's on), the folder is what
 // popups saves into, Change… greys while the box is on.
 func TestDownloadLocationPref(t *testing.T) {
 	a, _, _ := fakePrefsApp(t)
@@ -102,7 +102,7 @@ func TestDownloadLocationPref(t *testing.T) {
 	if got := popups.DownloadDir(); got != "/tmp/clack-dl-test" {
 		t.Errorf("folder %q", got)
 	}
-	if _, asked, _ := a.askDownload("x.txt", nil); asked {
+	if _, asked, _ := a.chooseDownloadDir(); asked {
 		t.Error("asked with the box off")
 	}
 	change := func() prefsDrawn {

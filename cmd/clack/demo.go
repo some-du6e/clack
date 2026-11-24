@@ -226,6 +226,8 @@ func demoMain(args []string, stdout, stderr io.Writer) int {
 		OnWindowEvent: func(e event.Event) {
 			desktop.SetWindowIcon(e, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512)
 		},
+		SetAppIcon:  func(png []byte) { desktop.SetAppIcon(png, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512) },
+		UserDefault: desktop.UserDefault,
 	}
 	ui.SetVersion(version)
 	a := ui.New(uopts, images)

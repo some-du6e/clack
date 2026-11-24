@@ -88,6 +88,9 @@ func TestLiveChannelCanvas(t *testing.T) {
 		t.Fatal("no canvas")
 	}
 	a := core.New(cl, store.New(t.TempDir()))
+	// A read-only repro: a Full view would load Quip's model (load-data,
+	// on by default since alpha.164), a canvas method this test never sends.
+	a.SetQuipEdit(false)
 	var el struct {
 		Emoji map[string]string `json:"emoji"`
 	}

@@ -1426,7 +1426,15 @@ func (hb *hub) apply(ev core.Event) bool {
 	case "sent":
 		// A confirmed optimistic send: swap the pending copy (ReplacesTS) for
 		// the real message in place; views move the row to the new ts so it
-		// isn't re-laid out (no flicker).
+		// isn't re-laid out (no flicker). With a load out the swap is kept
+		// for its answer (noteLive), as an event's change is: read before the
+		// swap, the answer holds the pending copy core let go, or neither
+		// copy, and the list drew that until the next load. A member
+		// lookup's answer ("names") reloads the open channel: on
+		// msg-latency's busy socket one came as a send was confirmed, and
+		// the send drew 0.73 s late, at the next lookup's reload
+		// (TestSentAcrossALoad). Slack's views read the one store, where
+		// the confirmed message replaced the pending one at once.
 		if ev.Msg == nil {
 			return false
 		}
@@ -1437,13 +1445,17 @@ func (hb *hub) apply(ev core.Event) bool {
 			}
 			m.mu.Lock()
 			held := false
-			if ev.ReplacesTS != "" && ev.ReplacesTS != ev.Msg.TS && m.find(ev.ReplacesTS) >= 0 {
-				m.remove(ev.ReplacesTS)
-				m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
-				held = true
+			if ev.ReplacesTS != "" && ev.ReplacesTS != ev.Msg.TS {
+				if m.find(ev.ReplacesTS) >= 0 {
+					m.remove(ev.ReplacesTS)
+					m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
+					held = true
+				}
+				m.noteLive(ev.ReplacesTS, true)
 			}
 			if m != thm || held || m.find(ev.Msg.TS) >= 0 || m.loaded && m.threadCovers(ev.Msg.TS) {
 				m.upsert(*ev.Msg, ev.EmitSeq) // a thread's slice: where it reaches (thread_load.go)
+				m.noteLive(ev.Msg.TS, false)
 			}
 			m.rev++
 			m.mu.Unlock()
