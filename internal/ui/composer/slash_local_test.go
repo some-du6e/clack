@@ -539,7 +539,7 @@ func TestCommandNavigatesFromItsBox(t *testing.T) {
 	})
 	c.ed.SetDoc(cmdDoc("/open"))
 	c.submit()
-	queued := func() bool { return queuedFor(c) }
+	queued := func() bool { return queuedHere(c) }
 	for end := time.Now().Add(5 * time.Second); !queued() && time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
 		runRestoresIn(other, false)
 	}
