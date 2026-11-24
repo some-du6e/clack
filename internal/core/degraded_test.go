@@ -53,20 +53,27 @@ func TestDegradedLoadLikeSlack(t *testing.T) {
 	if n := fs.CallCount("conversations.history"); n != hist {
 		t.Errorf("with the socket up the history was read again (%d): hasSyncedConnection", n-hist)
 	}
-	if fs.CallCount("client.counts") != counts+1 {
-		t.Fatalf("the counts weren't asked for (%d)", fs.CallCount("client.counts")-counts)
+	if fs.CallCount("client.counts") <= counts { // the boot's own refreshes may come too
+		t.Fatal("the counts weren't asked for")
 	}
 	t.Cleanup(slack.SetTroubleThresholds(0, 1))
 	fs.SetFault("ws", fakeslack.Fault{Status: 503})
 	fs.DropSockets()
 	l.wait(t, "connection_trouble on", troubleIs(true))
-	hist, counts = fs.CallCount("conversations.history"), fs.CallCount("client.counts")
+	hist = fs.CallCount("conversations.history")
+	d := &a.degraded
+	d.mu.Lock()
+	at := d.countsAt
+	d.mu.Unlock()
 	a.DegradedLoad(ctx, ch, "", "")
 	if n := fs.CallCount("conversations.history"); n != hist+1 {
 		t.Errorf("the open conversation's history was read %d times, want once", n-hist)
 	}
-	if n := fs.CallCount("client.counts"); n != counts {
-		t.Errorf("client.counts went again within the minute (%d)", n-counts)
+	d.mu.Lock()
+	again := !d.countsAt.Equal(at)
+	d.mu.Unlock()
+	if again {
+		t.Error("the banner's client.counts went again within the minute")
 	}
 	a.DegradedLoad(ctx, ch, "", "")
 	if n := fs.CallCount("conversations.history"); n != hist+1 {

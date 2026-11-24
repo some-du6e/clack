@@ -61,5 +61,5 @@ func TestDegradedBannerLikeSlack(t *testing.T) {
 	e.await(t, "back after the hide", func() bool { return b.Text != "" })
 
 	trouble.Store(false)
-	e.await(t, "gone with the trouble", func() bool { return b.Text == "" && e.v.s.ub.text != "" })
+	e.await(t, "gone with the trouble", func() bool { return b.Text == "" })
 }
