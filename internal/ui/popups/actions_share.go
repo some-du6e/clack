@@ -52,15 +52,12 @@ func init() {
 // IsAutomatedSubtype is KC8h's isAutomatedSubtype.
 func IsAutomatedSubtype(s string) bool { return automatedSubtypes[s] }
 
-// canBeShared is p6HR canBeShared for what Clack keeps of a message: not
-// a file comment, and actionable (not a tombstone, ephemeral or
-// restricted message).
-func canBeShared(m *core.Message) bool {
-	switch m.Subtype {
-	case "file_comment", "tombstone":
-		return false
-	}
-	return !m.Tombstone && !m.Pending && !m.Failed
+// canBeShared is canBeShared (iub5 j1) for what Clack keeps of a
+// message: not a file comment, and actionable (isActionable: not a
+// tombstone, an ephemeral, temporary or restricted message;
+// actions_rules.go).
+func canBeShared(app *core.App, m *core.Message) bool {
+	return m.Subtype != "file_comment" && actionable(app, m)
 }
 
 // singleFile is iR00 isSingleFileMessageAction: one file and neither text
@@ -103,7 +100,7 @@ func ShareAction(app *core.App, m *core.Message, thread bool) (ShareActionInfo, 
 	if app != nil && app.Experiment("system_messages_redesign_m1") == "on" && (IsAutomatedSubtype(m.Subtype) || m.Subtype == "huddle_thread") {
 		return ShareActionInfo{}, false
 	}
-	if !canBeShared(m) {
+	if !canBeShared(app, m) {
 		return ShareActionInfo{}, false
 	}
 	if app != nil && app.Experiment("enable_new_channel_settings") == "on" {
