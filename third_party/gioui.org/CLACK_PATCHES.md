@@ -74,7 +74,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
 `app/clack_titlebar_darwin_test.go`,
 `io/input/clack_unfocused.go`, `io/input/clack_unfocused_test.go`,
-`app/winclip/` and
+`widget/clack_mask_copy_test.go`, `app/winclip/` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -3456,3 +3456,26 @@ fewer focusables laid out, no panic; `TestClackReplaysScrollFocusOnce`;
 `TestClackReplaysSystemTabAsOne`), in ci's linux-gio job; Clack's
 `internal/ui/popups` `TestScrimKeepsLaterPresses` (editor: patch 66;
 ticker: patch 61). Not in `UPSTREAM.patch`.
+
+## 67. widget: a masked Editor copies and cuts nothing
+
+`widget/editor.go`: an Editor with a `Mask` is a password field (Clack
+masks the sign-in link, plugin settings' secrets and the plugins'
+`type="password"` inputs), and Chromium copies and cuts nothing from an
+unrevealed one: Blink's `Editor::CanCopy` and `CanCut` are false there.
+Shortcut+C and Shortcut+X now do nothing in a masked Editor (no
+`clipboard.WriteCmd`, no delete); Paste, Select All and the rest are
+unchanged. Slack's Edit menu keeps Cut and Copy enabled (bare AppKit role
+items; Chromium keeps cut: and copy: enabled for the render view), and on
+macOS they send these same keys, so they copy nothing from a password
+field either.
+
+Nothing else reaches a masked Editor's text: Clack's plain Editors have
+no context menu (only the composer's own editor has one, and it is never
+masked), and an Editor is never a drag source (it takes text dropped on
+it, `transfer.TargetFilter`, and offers none), so its text can't be
+dragged out.
+
+Tests: `widget/clack_mask_copy_test.go`
+(`TestClackMaskedEditorCopiesNothing`: masked and plain, Shortcut+C and
+Shortcut+X), in ci's linux-gio.

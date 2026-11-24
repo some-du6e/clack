@@ -568,6 +568,11 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: .github/scripts/gio-layer-fix.sh xvfb-run -a
+      # patch 67: a masked Editor (a password field) copies and cuts
+      # nothing; Slack's Edit menu keeps Cut and Copy enabled
+      - name: Gio masked Editor copy (patch 67)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackMaskedEditorCopiesNothing$' gioui.org/widget
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
