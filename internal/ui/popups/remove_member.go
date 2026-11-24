@@ -168,8 +168,11 @@ func OpenRemoveMemberDialog(h Host, ch, member string, onRemove func()) *RemoveM
 		AutoFocus:  goBtn,
 		QuietFocus: true, // focusOnFormElements: the go button, no ring
 		CloseFirst: true, // DeprecatedDialog
-		Body:       func(gtx layout.Context) layout.Dimensions { return d.body(gtx, th) },
-		Buttons:    []*ModalButton{{Label: nsDialog.T("Cancel"), Kind: BtnOutline}, goBtn},
+		// no truncateTitle (gantry-v2-async-remove-member-dialog): the
+		// default true cuts a long title with an ellipsis (.overflow_ellipsis)
+		TruncateTitle: true,
+		Body:          func(gtx layout.Context) layout.Dimensions { return d.body(gtx, th) },
+		Buttons:       []*ModalButton{{Label: nsDialog.T("Cancel"), Kind: BtnOutline}, goBtn},
 	})
 	d.Modal = self
 	h.ShowOverlay(d)
