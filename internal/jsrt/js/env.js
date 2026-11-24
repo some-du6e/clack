@@ -377,6 +377,8 @@
     }
     if (seen.has(v)) return seen.get(v);
     let out;
+    // platform objects web.js can copy (a CryptoKey's internal slots)
+    if (jr.cloneHook && (out = jr.cloneHook(v)) !== undefined) { seen.set(v, out); return out; }
     const tag = Object.prototype.toString.call(v);
     switch (tag) {
       case '[object Date]': out = new Date(v.getTime()); break;

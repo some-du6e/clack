@@ -18,6 +18,8 @@ import (
 //
 //	storage/<namespace>.json  api.storage, api.Cache, localStorage: the
 //	                          plugin's own data (Taut keeps the same)
+//	storage/indexedDB.json    the plugins' IndexedDB databases (jsrt's
+//	                          "indexedDB" namespace), their own data too
 //	secrets.json (0600)       opt.secret values and saved accounts
 //	secrets/<namespace>.json  api.secrets (0600)
 //
@@ -327,6 +329,11 @@ func (d *dataStore) localStorage(ns string) *kv {
 		d.loaded["\x00session"] = true
 		d.mu.Unlock()
 		return &kv{d: d, ns: "\x00session"}
+	}
+	if ns == "indexedDB" {
+		// IndexedDB's records never show in localStorage (a key or length a
+		// plugin reads there)
+		return &kv{d: d, ns: "indexedDB"}
 	}
 	return &kv{d: d, ns: "localStorage"}
 }

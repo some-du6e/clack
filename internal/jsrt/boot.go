@@ -254,6 +254,14 @@ func (r *Runtime) installHost() {
 		}
 		return hh.Sum(nil), nil
 	})
+	// webcrypto is Web Crypto's AES-GCM and ECDSA arithmetic (webcrypto.go):
+	// web.js normalizes the algorithms and keeps the keys
+	def("webcrypto", func(js *Ctx, _ Value, a []Value) (any, error) {
+		if len(a) == 0 {
+			return nil, &JSError{Name: "NotSupportedError", Message: "webcrypto: no operation"}
+		}
+		return webCrypto(a[0].String(), a[1:])
+	})
 	// zlib backs CompressionStream / DecompressionStream ("gzip", "deflate"
 	// = zlib, "deflate-raw"): Chromium's are native, and plugins (Slick's
 	// HaikuWarning, its 1.4 MB dictionary) rely on them being fast; inflating

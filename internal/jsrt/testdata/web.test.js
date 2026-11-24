@@ -886,7 +886,8 @@ test('crypto.subtle.digest', async () => {
   assert((await crypto.subtle.digest('SHA-384', abc)) instanceof ArrayBuffer);
   await assertThrows(() => crypto.subtle.digest('MD5', abc), 'NotSupportedError');
   await assertThrows(() => crypto.subtle.digest('SHA-256', 'str'), 'TypeError');
-  await assertThrows(() => crypto.subtle.importKey('raw', abc, 'AES-GCM', false, ['encrypt']), 'NotSupportedError');
+  // algorithms jsrt doesn't have reject as one Chromium doesn't know does (AES-GCM and ECDSA: webcrypto.test.js)
+  await assertThrows(() => crypto.subtle.importKey('raw', abc, 'HMAC', false, ['sign']), 'NotSupportedError');
 });
 
 // ---- Storage ----
@@ -987,7 +988,7 @@ test('navigator basics', async () => {
   const sb = navigator.sendBeacon.bind(navigator);
   assertEq(sb('/relative'), true);
   assertEq(Object.prototype.toString.call(navigator), '[object Navigator]');
-  assertEq(typeof indexedDB, 'undefined');
+  assertEq(Object.prototype.toString.call(indexedDB), '[object IDBFactory]'); // indexeddb.test.js
   assertEq(typeof CompressionStream, 'function');
 });
 test('navigator.clipboard (no host clipboard in tests)', async () => {

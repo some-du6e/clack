@@ -64,7 +64,7 @@ func (t *Taut) startRuntime() (*runtime, error) {
 		Fetch: t.opts.Fetch,
 		Storage: func(ns string) jsrt.KV {
 			kv := t.data.localStorage(ns)
-			if ns == "sessionStorage" {
+			if ns == "sessionStorage" || ns == "indexedDB" {
 				return kv
 			}
 			return &virtualKV{base: kv, t: t}

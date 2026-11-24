@@ -3125,7 +3125,294 @@
   };
   const INT_ARRAYS = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'BigInt64Array', 'BigUint64Array'];
   const DIGESTS = { 'SHA-1': 'SHA-1', 'SHA-256': 'SHA-256', 'SHA-384': 'SHA-384', 'SHA-512': 'SHA-512' };
-  class CryptoKey { constructor() { throw illegal(); } }
+  // ---- Web Crypto: digest, AES-GCM, ECDSA ----
+  // As Blink and Chromium's webcrypto have them: each algorithm normalized
+  // (its name in any case, its params dictionary read and checked), the
+  // key's algorithm, type and usages checked before the operation, errors
+  // as Chromium's (TypeError for an argument of the wrong kind,
+  // NotSupportedError for an algorithm or format it doesn't have,
+  // InvalidAccessError for a key that can't do it, DataError for key data
+  // that isn't a key, SyntaxError for usages a key can't have,
+  // OperationError when the operation itself fails), and every method
+  // settling its promise, never throwing. The arithmetic is Go's
+  // (webcrypto.go); a key's material lives in its internal slots, and
+  // structuredClone and IndexedDB copy keys whole, extractable or not, as
+  // Chromium serializes them. Not here: RSA, HMAC, AES-CBC/CTR/KW, ECDH,
+  // Ed25519, X25519, PBKDF2 and HKDF, which reject with NotSupportedError
+  // as a name Chromium doesn't know does.
+  const KEY_USAGES = ['encrypt', 'decrypt', 'sign', 'verify', 'deriveKey', 'wrapKey', 'unwrapKey', 'deriveBits']; // Chromium's mask order
+  const KEY_FORMATS = ['raw', 'spki', 'pkcs8', 'jwk'];
+  const EC_CODES = ['', 'P-256', 'P-384', 'P-521']; // webcrypto.go's curveCode
+  const EC_BYTES = { 'P-256': 32, 'P-384': 48, 'P-521': 66 };
+  const EC_JWK_ALG = { 'P-256': 'ES256', 'P-384': 'ES384', 'P-521': 'ES512' };
+  const GCM_TAGS = [32, 64, 96, 104, 112, 120, 128];
+  // the algorithms each operation knows (normalizeAlgorithm's registry)
+  const OPS = {
+    digest: Object.keys(DIGESTS),
+    generateKey: ['AES-GCM', 'ECDSA'],
+    importKey: ['AES-GCM', 'ECDSA'],
+    encrypt: ['AES-GCM'],
+    decrypt: ['AES-GCM'],
+    sign: ['ECDSA'],
+    verify: ['ECDSA'],
+  };
+  const keySlots = new WeakMap();
+  class CryptoKey {
+    constructor(t) { if (t !== kToken) throw illegal(); }
+    get type() { return keyOf(this).type; }
+    get extractable() { return keyOf(this).extractable; }
+    get algorithm() { return keyOf(this).algorithmView; }
+    get usages() { return keyOf(this).usagesView; }
+  }
+  const keyOf = (k) => { const s = keySlots.get(k); if (!s) throw new TypeError('Illegal invocation'); return s; };
+  const inMaskOrder = (u) => KEY_USAGES.filter((x) => u.includes(x));
+  // a CryptoKey: its type ("secret", "public", "private"), algorithm
+  // ({name, length} or {name, namedCurve}), usages and material, the bytes
+  // webcrypto.go takes (an AES key; an EC key's x||y, or d||x||y)
+  const makeKey = (type, extractable, algorithm, usages, material) => {
+    const k = new CryptoKey(kToken);
+    const alg = { ...algorithm }, use = inMaskOrder(usages);
+    keySlots.set(k, { type, extractable: !!extractable, algorithm: alg, usages: use, material, algorithmView: { ...alg }, usagesView: use.slice() });
+    return k;
+  };
+  // structuredClone and IndexedDB (env.js, the IndexedDB section below)
+  const cloneKey = (k) => { const s = keyOf(k); return makeKey(s.type, s.extractable, s.algorithm, s.usages, s.material.slice()); };
+  jr.cloneHook = (v) => (keySlots.has(v) ? cloneKey(v) : undefined);
+  const failedOn = (method) => `Failed to execute '${method}' on 'SubtleCrypto': `;
+  const cryptoErr = (name, message) => new DOMException(message, name);
+  // webcrypto.go's errors are Errors named as Chromium's DOMExceptions (an
+  // OperationError's message may be empty, as Chromium's is)
+  const wc = (...args) => {
+    try {
+      return H.webcrypto(...args);
+    } catch (e) {
+      if (e instanceof DOMException) throw e;
+      throw new DOMException(e && typeof e.message === 'string' ? e.message : String(e), e && e.name && e.name !== 'Error' ? e.name : 'OperationError');
+    }
+  };
+  const toAB = (u8) => (u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength ? u8.buffer : u8.slice().buffer);
+  const b64url = (u8) => b64encode(u8).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const fromB64url = (s) => (typeof s === 'string' && /^[A-Za-z0-9_-]*$/.test(s) ? b64decode(s.replace(/-/g, '+').replace(/_/g, '/')) : null);
+  // normalizeAlgorithm: {name, params}: the registered name, the
+  // caller's dictionary (a string names the algorithm alone)
+  const normalize = (method, op, algorithm) => {
+    let name;
+    if (typeof algorithm === 'string') name = algorithm;
+    else if (isObj(algorithm)) {
+      if (algorithm.name === undefined) throw new TypeError(failedOn(method) + 'Algorithm: name: Missing or not a string');
+      name = String(algorithm.name);
+    } else throw new TypeError(failedOn(method) + 'Algorithm: Not an object');
+    const known = OPS[op].find((n) => n.toUpperCase() === name.toUpperCase());
+    if (!known) throw cryptoErr('NotSupportedError', failedOn(method) + 'Algorithm: Unrecognized name');
+    return { name: known, params: typeof algorithm === 'string' ? {} : algorithm };
+  };
+  const PARAMS = { 'AES-GCM': { encrypt: 'AesGcmParams', decrypt: 'AesGcmParams', generateKey: 'AesKeyGenParams' }, ECDSA: { sign: 'EcdsaParams', verify: 'EcdsaParams', generateKey: 'EcKeyGenParams', importKey: 'EcKeyImportParams' } };
+  const bufferParam = (method, dict, where, member, required) => {
+    const v = dict[member];
+    if (v === undefined && !required) return undefined;
+    const b = toBytes(v);
+    if (!b) throw new TypeError(`${failedOn(method)}${where}: ${member}: Missing or not a BufferSource`);
+    return b.slice();
+  };
+  // [EnforceRange] integers: finite, whole after truncation, in range
+  const intParam = (method, dict, where, member, max, required) => {
+    const v = dict[member];
+    if (v === undefined) {
+      if (required) throw new TypeError(`${failedOn(method)}${where}: ${member}: Missing or not a number`);
+      return undefined;
+    }
+    const n = Number(v);
+    if (!Number.isFinite(n)) throw new TypeError(`${failedOn(method)}${where}: ${member}: Outside of numeric range`);
+    const i = Math.trunc(n);
+    if (i < 0 || i > max) throw new TypeError(`${failedOn(method)}${where}: ${member}: Outside of numeric range`);
+    return i;
+  };
+  // the operation's params, read as Blink converts its dictionary
+  const params = (method, op, alg) => {
+    const where = PARAMS[alg.name]?.[op];
+    const d = alg.params;
+    switch (where) {
+      case 'AesGcmParams':
+        return { name: alg.name, iv: bufferParam(method, d, where, 'iv', true), additionalData: bufferParam(method, d, where, 'additionalData', false), tagLength: intParam(method, d, where, 'tagLength', 255, false) };
+      case 'AesKeyGenParams':
+        return { name: alg.name, length: intParam(method, d, where, 'length', 65535, true) };
+      case 'EcKeyGenParams': case 'EcKeyImportParams':
+        if (d.namedCurve === undefined) throw new TypeError(`${failedOn(method)}${where}: namedCurve: Missing or not a string`);
+        return { name: alg.name, namedCurve: String(d.namedCurve) };
+      case 'EcdsaParams':
+        if (d.hash === undefined) throw new TypeError(`${failedOn(method)}${where}: hash: Missing or not an AlgorithmIdentifier`);
+        return { name: alg.name, hash: normalize(method, 'digest', d.hash).name };
+    }
+    return { name: alg.name };
+  };
+  const usagesArg = (method, v) => {
+    if (!isObj(v) || typeof v[Symbol.iterator] !== 'function') throw new TypeError(failedOn(method) + 'The provided value cannot be converted to a sequence.');
+    const out = [];
+    for (const x of v) {
+      const s = String(x);
+      if (!KEY_USAGES.includes(s)) throw new TypeError(`${failedOn(method)}The provided value '${s}' is not a valid enum value of type KeyUsage.`);
+      if (!out.includes(s)) out.push(s);
+    }
+    return out;
+  };
+  const formatArg = (method, v) => {
+    const s = String(v);
+    if (!KEY_FORMATS.includes(s)) throw new TypeError(`${failedOn(method)}The provided value '${s}' is not a valid enum value of type KeyFormat.`);
+    return s;
+  };
+  const keyArg = (method, v, n) => {
+    if (!keySlots.has(v)) throw new TypeError(`${failedOn(method)}parameter ${n} is not of type 'CryptoKey'.`);
+    return v;
+  };
+  const dataArg = (method, v) => {
+    const b = toBytes(v);
+    if (!b) throw new TypeError(failedOn(method) + "The provided value is not of type '(ArrayBuffer or ArrayBufferView)'.");
+    return b.slice(); // a copy now: later writes to the caller's buffer don't count
+  };
+  const onlyUsages = (usages, allowed) => {
+    for (const u of usages) if (!allowed.includes(u)) throw cryptoErr('SyntaxError', 'Cannot create a key using the specified key usages.');
+  };
+  const notEmpty = (usages) => {
+    if (!usages.length) throw cryptoErr('SyntaxError', 'Usages cannot be empty when creating a key.');
+  };
+  // the key may do usage with name's algorithm
+  const keyFor = (key, name, usage) => {
+    const s = keyOf(key);
+    if (s.algorithm.name !== name) throw cryptoErr('InvalidAccessError', 'The requested operation is not valid for the provided key');
+    if (!s.usages.includes(usage)) throw cryptoErr('InvalidAccessError', 'key.usages does not permit this operation');
+    return s;
+  };
+  const curveOf = (name) => {
+    if (!(name in EC_BYTES)) throw cryptoErr('NotSupportedError', 'Unrecognized namedCurve');
+    return name;
+  };
+
+  // AES-GCM's encrypt and decrypt (Web Crypto §27.3)
+  const gcm = (seal, p, material, data) => {
+    const tag = p.tagLength === undefined ? 128 : p.tagLength;
+    if (!GCM_TAGS.includes(tag)) throw cryptoErr('OperationError', 'The tag length is invalid: Must be 32, 64, 96, 104, 112, 120, or 128 bits');
+    return toBytes(wc(seal ? 'aes-gcm-seal' : 'aes-gcm-open', material, p.iv, p.additionalData || EMPTY, tag, data));
+  };
+  const aesLength = (n) => {
+    if (n === 192) throw cryptoErr('OperationError', '192-bit AES keys are not supported');
+    if (n !== 128 && n !== 256) throw cryptoErr('OperationError', 'AES key length must be 128 or 256 bits');
+    return n;
+  };
+  const AES_USAGES = ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey'];
+  const jwkCheck = (jwk, extractable, usages, use) => {
+    if (jwk.use !== undefined && jwk.use !== use) throw cryptoErr('DataError', `The JWK "use" member was not "${use}"`);
+    if (jwk.key_ops !== undefined) {
+      if (!Array.isArray(jwk.key_ops) || jwk.key_ops.some((x) => typeof x !== 'string')) throw cryptoErr('DataError', 'The JWK "key_ops" member was not an array of strings');
+      if (usages.some((u) => !jwk.key_ops.includes(u))) throw cryptoErr('DataError', 'The JWK "key_ops" member was inconsistent with that specified by the Web Crypto call. The JWK usage must be a superset of those requested');
+    }
+    if (jwk.ext !== undefined && typeof jwk.ext !== 'boolean') throw cryptoErr('DataError', 'The JWK "ext" member was not a boolean');
+    if (jwk.ext === false && extractable) throw cryptoErr('DataError', 'The JWK "ext" member was inconsistent with that specified by the Web Crypto call. The JWK key may not be extractable');
+  };
+  const jwkBytes = (jwk, member, n) => {
+    if (typeof jwk[member] !== 'string') throw cryptoErr('DataError', `The required JWK member "${member}" was missing`);
+    const b = fromB64url(jwk[member]);
+    if (!b) throw cryptoErr('DataError', `The JWK "${member}" member could not be base64url decoded or contained padding`);
+    if (n !== undefined && b.length !== n) throw cryptoErr('DataError', `The JWK "${member}" member must be ${n} bytes`);
+    return b;
+  };
+  const importAES = (format, data, extractable, usages) => {
+    onlyUsages(usages, AES_USAGES);
+    let raw;
+    if (format === 'raw') raw = data;
+    else if (format === 'jwk') {
+      if (data.kty !== 'oct') throw cryptoErr('DataError', 'The JWK "kty" member was not "oct"');
+      raw = jwkBytes(data, 'k');
+      if (raw.length !== 16 && raw.length !== 32) throw cryptoErr('DataError', 'AES key data must be 128 or 256 bits');
+      const alg = `A${raw.length * 8}GCM`;
+      if (data.alg !== undefined && data.alg !== alg) throw cryptoErr('DataError', `The JWK "alg" member was not "${alg}"`);
+      jwkCheck(data, extractable, usages, 'enc');
+    } else throw cryptoErr('NotSupportedError', 'Unsupported import key format for algorithm');
+    if (raw.length !== 16 && raw.length !== 32) throw cryptoErr('DataError', 'AES key data must be 128 or 256 bits');
+    notEmpty(usages);
+    return makeKey('secret', extractable, { name: 'AES-GCM', length: raw.length * 8 }, usages, raw.slice());
+  };
+  const importEC = (format, data, curve, extractable, usages) => {
+    const n = EC_BYTES[curve];
+    const alg = { name: 'ECDSA', namedCurve: curve };
+    const pub = (xy) => { onlyUsages(usages, ['verify']); wc('ec-check-point', curve, xy); return makeKey('public', extractable, alg, usages, xy); };
+    const priv = (dxy) => { onlyUsages(usages, ['sign']); notEmpty(usages); wc('ec-check-pair', curve, dxy); return makeKey('private', extractable, alg, usages, dxy); };
+    const sameCurve = (code) => { if (EC_CODES[code] !== curve) throw cryptoErr('DataError', "The key's namedCurve doesn't match the one requested"); };
+    switch (format) {
+      case 'raw': {
+        if (data.length === 1 + 2 * n && data[0] === 4) return pub(data.slice(1));
+        if (data.length === 1 + n && (data[0] === 2 || data[0] === 3)) return pub(toBytes(wc('ec-decompress', curve, data)));
+        throw cryptoErr('DataError', 'Invalid keyData');
+      }
+      case 'spki': {
+        const out = toBytes(wc('ec-parse-spki', data));
+        sameCurve(out[0]);
+        return pub(out.slice(1));
+      }
+      case 'pkcs8': {
+        const out = toBytes(wc('ec-parse-pkcs8', data));
+        sameCurve(out[0]);
+        return priv(out.slice(1));
+      }
+      case 'jwk': {
+        if (data.kty !== 'EC') throw cryptoErr('DataError', 'The JWK "kty" member was not "EC"');
+        if (data.crv !== curve) throw cryptoErr('DataError', 'The JWK "crv" member did not match the expected value');
+        if (data.alg !== undefined && data.alg !== EC_JWK_ALG[curve]) throw cryptoErr('DataError', `The JWK "alg" member was not "${EC_JWK_ALG[curve]}"`);
+        jwkCheck(data, extractable, usages, 'sig');
+        const xy = concat([jwkBytes(data, 'x', n), jwkBytes(data, 'y', n)]);
+        if (data.d === undefined) return pub(xy);
+        return priv(concat([jwkBytes(data, 'd', n), xy]));
+      }
+    }
+    throw cryptoErr('NotSupportedError', 'Unsupported import key format for algorithm');
+  };
+  // exportKey's work for a key the caller may export (Web Crypto §14.3.10)
+  const exportOf = (format, s) => {
+    const { name } = s.algorithm;
+    if (name === 'AES-GCM') {
+      if (format === 'raw') return toAB(s.material.slice());
+      if (format === 'jwk') return { alg: `A${s.material.length * 8}GCM`, ext: s.extractable, k: b64url(s.material), key_ops: s.usages.slice(), kty: 'oct' };
+      throw cryptoErr('NotSupportedError', 'Unsupported export key format for algorithm');
+    }
+    const curve = s.algorithm.namedCurve, n = EC_BYTES[curve];
+    const xy = s.type === 'private' ? s.material.subarray(n) : s.material;
+    switch (format) {
+      case 'raw':
+        if (s.type !== 'public') throw cryptoErr('InvalidAccessError', 'The key is not of the expected type');
+        return toAB(concat([new Uint8Array([4]), xy]));
+      case 'spki':
+        if (s.type !== 'public') throw cryptoErr('InvalidAccessError', 'The key is not of the expected type');
+        return toAB(toBytes(wc('ec-spki', curve, xy)));
+      case 'pkcs8':
+        if (s.type !== 'private') throw cryptoErr('InvalidAccessError', 'The key is not of the expected type');
+        return toAB(toBytes(wc('ec-pkcs8', curve, s.material)));
+      case 'jwk': {
+        const j = { crv: curve };
+        if (s.type === 'private') j.d = b64url(s.material.subarray(0, n));
+        Object.assign(j, { ext: s.extractable, key_ops: s.usages.slice(), kty: 'EC', x: b64url(xy.subarray(0, n)), y: b64url(xy.subarray(n)) });
+        return j;
+      }
+    }
+    throw cryptoErr('NotSupportedError', 'Unsupported export key format for algorithm');
+  };
+  // importKey's work: p is the normalized algorithm's params
+  const importOf = (format, keyData, p, extractable, usages) =>
+    p.name === 'AES-GCM' ? importAES(format, keyData, extractable, usages) : importEC(format, keyData, curveOf(p.namedCurve), extractable, usages);
+  // importKey's keyData: a JsonWebKey for jwk, else BufferSource bytes (copied)
+  const keyDataArg = (method, format, v) => {
+    if (format === 'jwk') {
+      if (!isObj(v) || toBytes(v)) throw new TypeError(failedOn(method) + 'Key data must be an object for JWK import');
+      return { ...v };
+    }
+    const b = toBytes(v);
+    if (!b) throw new TypeError(failedOn(method) + 'Key data must be a BufferSource for non-JWK formats');
+    return b.slice();
+  };
+  // the promise of work(), its synchronous part's errors a rejection
+  const settle = (sync, work) => {
+    let args;
+    try { args = sync(); } catch (e) { return Promise.reject(e); }
+    return Promise.resolve().then(() => work(args));
+  };
   class SubtleCrypto {
     constructor(t) { if (t !== kToken) throw illegal(); }
     digest(algorithm, data) {
@@ -3146,9 +3433,118 @@
         return Promise.reject(e);
       }
     }
-  }
-  for (const m of ['encrypt', 'decrypt', 'sign', 'verify', 'generateKey', 'deriveKey', 'deriveBits', 'importKey', 'exportKey', 'wrapKey', 'unwrapKey']) {
-    def(SubtleCrypto.prototype, m, { [m]() { return Promise.reject(new DOMException(`Failed to execute '${m}' on 'SubtleCrypto': Algorithm: Unrecognized name`, 'NotSupportedError')); } }[m]);
+    generateKey(algorithm, extractable, keyUsages) {
+      const m = 'generateKey';
+      return settle(() => {
+        need(arguments, 3, m, 'SubtleCrypto');
+        return [params(m, m, normalize(m, m, algorithm)), !!extractable, usagesArg(m, keyUsages)];
+      }, ([p, ext, usages]) => {
+        if (p.name === 'AES-GCM') {
+          onlyUsages(usages, AES_USAGES);
+          const len = aesLength(p.length);
+          notEmpty(usages);
+          return makeKey('secret', ext, { name: 'AES-GCM', length: len }, usages, randBytes(len / 8).slice());
+        }
+        onlyUsages(usages, ['sign', 'verify']);
+        const curve = curveOf(p.namedCurve), n = EC_BYTES[curve];
+        const signs = usages.filter((u) => u === 'sign');
+        notEmpty(signs);
+        const dxy = toBytes(wc('ec-generate', curve));
+        const alg = { name: 'ECDSA', namedCurve: curve };
+        return {
+          publicKey: makeKey('public', true, alg, usages.filter((u) => u === 'verify'), dxy.slice(n)),
+          privateKey: makeKey('private', ext, alg, signs, dxy.slice()),
+        };
+      });
+    }
+    importKey(format, keyData, algorithm, extractable, keyUsages) {
+      const m = 'importKey';
+      return settle(() => {
+        need(arguments, 5, m, 'SubtleCrypto');
+        const f = formatArg(m, format);
+        return [f, keyDataArg(m, f, keyData), params(m, m, normalize(m, m, algorithm)), !!extractable, usagesArg(m, keyUsages)];
+      }, ([f, data, p, ext, usages]) => importOf(f, data, p, ext, usages));
+    }
+    exportKey(format, key) {
+      const m = 'exportKey';
+      return settle(() => {
+        need(arguments, 2, m, 'SubtleCrypto');
+        return [formatArg(m, format), keyArg(m, key, 2)];
+      }, ([f, k]) => {
+        const s = keyOf(k);
+        if (!s.extractable) throw cryptoErr('InvalidAccessError', 'key is not extractable');
+        return exportOf(f, s);
+      });
+    }
+    encrypt(algorithm, key, data) { return this.#cipher('encrypt', arguments, algorithm, key, data); }
+    decrypt(algorithm, key, data) { return this.#cipher('decrypt', arguments, algorithm, key, data); }
+    #cipher(m, args, algorithm, key, data) {
+      return settle(() => {
+        need(args, 3, m, 'SubtleCrypto');
+        return [params(m, m, normalize(m, m, algorithm)), keyArg(m, key, 2), dataArg(m, data)];
+      }, ([p, k, bytes]) => toAB(gcm(m === 'encrypt', p, keyFor(k, p.name, m).material, bytes)));
+    }
+    sign(algorithm, key, data) {
+      const m = 'sign';
+      return settle(() => {
+        need(arguments, 3, m, 'SubtleCrypto');
+        return [params(m, m, normalize(m, m, algorithm)), keyArg(m, key, 2), dataArg(m, data)];
+      }, ([p, k, bytes]) => {
+        const s = keyFor(k, p.name, 'sign');
+        if (s.type !== 'private') throw cryptoErr('InvalidAccessError', 'The requested operation is not valid for the provided key');
+        return toAB(toBytes(wc('ec-sign', s.algorithm.namedCurve, p.hash, s.material, bytes)));
+      });
+    }
+    verify(algorithm, key, signature, data) {
+      const m = 'verify';
+      return settle(() => {
+        need(arguments, 4, m, 'SubtleCrypto');
+        return [params(m, m, normalize(m, m, algorithm)), keyArg(m, key, 2), dataArg(m, signature), dataArg(m, data)];
+      }, ([p, k, sig, bytes]) => {
+        const s = keyFor(k, p.name, 'verify');
+        if (s.type !== 'public') throw cryptoErr('InvalidAccessError', 'The requested operation is not valid for the provided key');
+        return !!wc('ec-verify', s.algorithm.namedCurve, p.hash, s.material, sig, bytes);
+      });
+    }
+    // wrapKey and unwrapKey: exportKey then encrypt, decrypt then importKey
+    // (AES-GCM wraps through its encrypt, as the spec's fallback has it)
+    wrapKey(format, key, wrappingKey, wrapAlgorithm) {
+      const m = 'wrapKey';
+      return settle(() => {
+        need(arguments, 4, m, 'SubtleCrypto');
+        return [formatArg(m, format), keyArg(m, key, 2), keyArg(m, wrappingKey, 3), params(m, 'encrypt', normalize(m, 'encrypt', wrapAlgorithm))];
+      }, ([f, k, wk, p]) => {
+        const w = keyFor(wk, p.name, 'wrapKey');
+        const s = keyOf(k);
+        if (!s.extractable) throw cryptoErr('InvalidAccessError', 'key is not extractable');
+        const out = exportOf(f, s);
+        const bytes = f === 'jwk' ? utf8Encode(JSON.stringify(out)) : new Uint8Array(out);
+        return toAB(gcm(true, p, w.material, bytes));
+      });
+    }
+    unwrapKey(format, wrappedKey, unwrappingKey, unwrapAlgorithm, unwrappedKeyAlgorithm, extractable, keyUsages) {
+      const m = 'unwrapKey';
+      return settle(() => {
+        need(arguments, 7, m, 'SubtleCrypto');
+        return [formatArg(m, format), dataArg(m, wrappedKey), keyArg(m, unwrappingKey, 3), params(m, 'decrypt', normalize(m, 'decrypt', unwrapAlgorithm)),
+          params(m, 'importKey', normalize(m, 'importKey', unwrappedKeyAlgorithm)), !!extractable, usagesArg(m, keyUsages)];
+      }, ([f, wrapped, uk, p, ip, ext, usages]) => {
+        const u = keyFor(uk, p.name, 'unwrapKey');
+        const bytes = gcm(false, p, u.material, wrapped);
+        let data = bytes;
+        if (f === 'jwk') {
+          try { data = JSON.parse(utf8Text(bytes)); } catch { throw cryptoErr('DataError', 'The JWK could not be parsed'); }
+          if (!isObj(data)) throw cryptoErr('DataError', 'The JWK could not be parsed');
+        }
+        return importOf(f, data, ip, ext, usages);
+      });
+    }
+    deriveKey(algorithm, baseKey, derivedKeyType, extractable, keyUsages) {
+      return Promise.reject(cryptoErr('NotSupportedError', failedOn('deriveKey') + 'Algorithm: Unrecognized name'));
+    }
+    deriveBits(algorithm, baseKey, length) {
+      return Promise.reject(cryptoErr('NotSupportedError', failedOn('deriveBits') + 'Algorithm: Unrecognized name'));
+    }
   }
   const subtle = new SubtleCrypto(kToken);
   class Crypto {
@@ -3249,6 +3645,1170 @@
   };
   def(G, 'localStorage', makeStorage('localStorage'));
   def(G, 'sessionStorage', makeStorage('sessionStorage'));
+
+  // ---- IndexedDB ----
+  // IndexedDB 3.0, kept in the runtime's "indexedDB" storage namespace
+  // (Options.Storage): a database's description under "db\0<name>", each
+  // object store's records under "store\0<db>\0<store>", written when a
+  // transaction commits. What's read stays in memory; a record is kept as
+  // its structured serialization, so a get returns a new copy each time,
+  // and keys (CryptoKey) come back whole, as Chromium stores them.
+  // Transactions run one at a time per database, in the order they were
+  // made (the spec allows that order); each request is a task of its own,
+  // its success or error event fired with the transaction active, and a
+  // transaction commits once it has no requests left and the task that
+  // made it, or the last of its callbacks, has ended. An error event not
+  // cancelled, or a callback that throws, aborts it, rolling its stores
+  // back. Events take IndexedDB's path: request, transaction, database.
+  const IDB_NS = 'indexedDB';
+  const idbErr = (name, message) => new DOMException(message, name);
+  const idbLater = (fn) => G.setTimeout(fn, 0);
+
+  // keys (§2.3): {t: 'n' number, 'd' date, 's' string, 'b' binary, 'a' array, v}
+  const KEY_RANK = { n: 0, d: 1, s: 2, b: 3, a: 4 };
+  const toKey = (v, seen) => {
+    if (typeof v === 'number') return v !== v ? null : { t: 'n', v };
+    if (typeof v === 'string') return { t: 's', v };
+    if (!isObj(v)) return null;
+    const tag = Object.prototype.toString.call(v);
+    if (tag === '[object Date]') { const t = v.getTime(); return t !== t ? null : { t: 'd', v: t }; }
+    if (v instanceof ArrayBuffer || ArrayBuffer.isView(v)) return { t: 'b', v: toBytes(v).slice() };
+    if (Array.isArray(v)) {
+      seen = seen || new Set();
+      if (seen.has(v)) return null;
+      seen.add(v);
+      const out = [];
+      for (let i = 0; i < v.length; i++) {
+        if (!Object.prototype.hasOwnProperty.call(v, i)) return null;
+        const k = toKey(v[i], seen);
+        if (!k) return null;
+        out.push(k);
+      }
+      seen.delete(v);
+      return { t: 'a', v: out };
+    }
+    return null;
+  };
+  const cmpKey = (a, b) => {
+    if (a.t !== b.t) return KEY_RANK[a.t] < KEY_RANK[b.t] ? -1 : 1;
+    switch (a.t) {
+      case 'b': {
+        const n = Math.min(a.v.length, b.v.length);
+        for (let i = 0; i < n; i++) if (a.v[i] !== b.v[i]) return a.v[i] < b.v[i] ? -1 : 1;
+        return a.v.length === b.v.length ? 0 : a.v.length < b.v.length ? -1 : 1;
+      }
+      case 'a': {
+        const n = Math.min(a.v.length, b.v.length);
+        for (let i = 0; i < n; i++) { const c = cmpKey(a.v[i], b.v[i]); if (c) return c; }
+        return a.v.length === b.v.length ? 0 : a.v.length < b.v.length ? -1 : 1;
+      }
+    }
+    return a.v === b.v ? 0 : a.v < b.v ? -1 : 1;
+  };
+  const fromKey = (k) => {
+    switch (k.t) {
+      case 'd': return new Date(k.v);
+      case 'b': return k.v.slice().buffer;
+      case 'a': return k.v.map(fromKey);
+    }
+    return k.v;
+  };
+  const keyArgOf = (v) => { const k = toKey(v); if (!k) throw idbErr('DataError', 'The parameter is not a valid key.'); return k; };
+  const encKey = (k) => {
+    switch (k.t) {
+      case 'n': return ['n', Number.isFinite(k.v) && !Object.is(k.v, -0) ? k.v : String(Object.is(k.v, -0) ? '-0' : k.v)];
+      case 'b': return ['b', b64encode(k.v)];
+      case 'a': return ['a', k.v.map(encKey)];
+    }
+    return [k.t, k.v];
+  };
+  const decKey = (e) => {
+    switch (e[0]) {
+      case 'n': return { t: 'n', v: Number(e[1]) };
+      case 'b': return { t: 'b', v: b64decode(e[1]).slice() };
+      case 'a': return { t: 'a', v: e[1].map(decKey) };
+    }
+    return { t: e[0], v: e[1] };
+  };
+
+  // key ranges (§2.10)
+  let rangeOf, makeRange;
+  class IDBKeyRange {
+    #lower; #upper; #lo; #uo;
+    static {
+      rangeOf = (r) => ({ lower: r.#lower, upper: r.#upper, lowerOpen: r.#lo, upperOpen: r.#uo });
+      makeRange = (lower, upper, lo, uo) => { const r = new IDBKeyRange(kToken); r.#lower = lower; r.#upper = upper; r.#lo = !!lo; r.#uo = !!uo; return r; };
+    }
+    constructor(t) { if (t !== kToken) throw illegal(); }
+    get lower() { return this.#lower ? fromKey(this.#lower) : undefined; }
+    get upper() { return this.#upper ? fromKey(this.#upper) : undefined; }
+    get lowerOpen() { return this.#lo; }
+    get upperOpen() { return this.#uo; }
+    includes(key) {
+      need(arguments, 1, 'includes', 'IDBKeyRange');
+      return inRange(rangeOf(this), keyArgOf(key));
+    }
+    static only(value) { need(arguments, 1, 'only', 'IDBKeyRange'); const k = keyArgOf(value); return makeRange(k, k, false, false); }
+    static lowerBound(lower, open = false) { need(arguments, 1, 'lowerBound', 'IDBKeyRange'); return makeRange(keyArgOf(lower), null, open, true); }
+    static upperBound(upper, open = false) { need(arguments, 1, 'upperBound', 'IDBKeyRange'); return makeRange(null, keyArgOf(upper), true, open); }
+    static bound(lower, upper, lowerOpen = false, upperOpen = false) {
+      need(arguments, 2, 'bound', 'IDBKeyRange');
+      const l = keyArgOf(lower), u = keyArgOf(upper), c = cmpKey(l, u);
+      if (c > 0 || (c === 0 && (lowerOpen || upperOpen))) throw idbErr('DataError', 'The lower key is greater than the upper key.');
+      return makeRange(l, u, lowerOpen, upperOpen);
+    }
+  }
+  const inRange = (r, k) => {
+    if (r.lower) { const c = cmpKey(r.lower, k); if (c > 0 || (c === 0 && r.lowerOpen)) return false; }
+    if (r.upper) { const c = cmpKey(r.upper, k); if (c < 0 || (c === 0 && r.upperOpen)) return false; }
+    return true;
+  };
+  const ALL = { lower: null, upper: null, lowerOpen: false, upperOpen: false };
+  // convert a value to a key range (§3.? "convert a value to a key range")
+  const queryOf = (v, nullDisallowed) => {
+    if (v === undefined || v === null) {
+      if (nullDisallowed) throw idbErr('DataError', 'No key or key range specified.');
+      return ALL;
+    }
+    if (v instanceof IDBKeyRange) return rangeOf(v);
+    const k = keyArgOf(v);
+    return { lower: k, upper: k, lowerOpen: false, upperOpen: false };
+  };
+
+  // the structured serialization of a value (HTML's
+  // StructuredSerializeForStorage) as JSON text: a plain number, string,
+  // boolean or null as itself, anything else an array whose first item
+  // names it; an object seen before is a reference to its id
+  const ERROR_NAMES = ['Error', 'EvalError', 'RangeError', 'ReferenceError', 'SyntaxError', 'TypeError', 'URIError'];
+  const VIEWS = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float16Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array', 'DataView'];
+  const cloneErr = (what) => new DOMException(`${what} could not be cloned.`, 'DataCloneError');
+  const idbSerialize = (value) => {
+    const ids = new Map();
+    const num = (v) => (Number.isFinite(v) && !Object.is(v, -0) ? v : ['N', Object.is(v, -0) ? '-0' : String(v)]);
+    const ser = (v) => {
+      switch (typeof v) {
+        case 'undefined': return ['u'];
+        case 'boolean': case 'string': return v;
+        case 'number': return num(v);
+        case 'bigint': return ['I', v.toString()];
+        case 'symbol': throw cloneErr('Symbol()');
+        case 'function': throw cloneErr(String(v).slice(0, 60));
+      }
+      if (v === null) return null;
+      if (ids.has(v)) return ['R', ids.get(v)];
+      const id = ids.size;
+      ids.set(v, id);
+      if (keySlots.has(v)) {
+        const s = keyOf(v);
+        return ['K', id, s.type, s.extractable, s.algorithm, s.usages, b64encode(s.material)];
+      }
+      if (v instanceof Blob) {
+        const b = b64encode(blobBytes(v));
+        return v instanceof File ? ['F', id, b, v.type, v.name, v.lastModified] : ['BL', id, b, v.type];
+      }
+      const tag = Object.prototype.toString.call(v).slice(8, -1);
+      if (Array.isArray(v)) {
+        const props = [];
+        for (const k of Object.keys(v)) props.push([k, ser(v[k])]);
+        return ['A', id, v.length, props];
+      }
+      switch (tag) {
+        case 'Date': return ['D', id, num(v.getTime())];
+        case 'RegExp': return ['X', id, v.source, v.flags];
+        case 'Boolean': return ['BO', id, v.valueOf()];
+        case 'Number': return ['NO', id, num(v.valueOf())];
+        case 'String': return ['SO', id, v.valueOf()];
+        case 'BigInt': return ['IO', id, v.valueOf().toString()];
+        case 'ArrayBuffer': return ['AB', id, b64encode(new Uint8Array(v))];
+        case 'Map': { const e = []; for (const [k, x] of v) e.push([ser(k), ser(x)]); return ['M', id, e]; }
+        case 'Set': { const e = []; for (const x of v) e.push(ser(x)); return ['S', id, e]; }
+        case 'Error': {
+          const name = ERROR_NAMES.includes(v.name) ? v.name : 'Error';
+          const hasCause = Object.prototype.hasOwnProperty.call(v, 'cause');
+          return ['E', id, name, String(v.message), typeof v.stack === 'string' ? v.stack : null, hasCause, hasCause ? ser(v.cause) : null];
+        }
+      }
+      if (ArrayBuffer.isView(v)) return ['V', id, v instanceof DataView ? 'DataView' : tag, ser(v.buffer), v.byteOffset, v instanceof DataView ? v.byteLength : v.length];
+      if (['WeakMap', 'WeakSet', 'WeakRef', 'Promise', 'FinalizationRegistry', 'SharedArrayBuffer'].includes(tag) || (G.Node && v instanceof G.Node) || v instanceof EventTarget)
+        throw cloneErr(`#<${tag}>`);
+      const props = [];
+      for (const k of Object.keys(v)) props.push([k, ser(v[k])]);
+      return ['O', id, props];
+    };
+    return JSON.stringify(ser(value));
+  };
+  const idbDeserialize = (text) => {
+    const ids = [];
+    const num = (x) => (Array.isArray(x) ? Number(x[1]) : x);
+    const de = (x) => {
+      if (!Array.isArray(x)) return x;
+      let out;
+      switch (x[0]) {
+        case 'u': return undefined;
+        case 'N': return Number(x[1]);
+        case 'I': return BigInt(x[1]);
+        case 'R': return ids[x[1]];
+        case 'O': out = {}; ids[x[1]] = out; for (const [k, v] of x[2]) out[k] = de(v); return out;
+        case 'A': out = new Array(x[2]); ids[x[1]] = out; for (const [k, v] of x[3]) out[k] = de(v); return out;
+        case 'M': out = new Map(); ids[x[1]] = out; for (const [k, v] of x[2]) out.set(de(k), de(v)); return out;
+        case 'S': out = new Set(); ids[x[1]] = out; for (const v of x[2]) out.add(de(v)); return out;
+        case 'D': out = new Date(num(x[2])); break;
+        case 'X': out = new RegExp(x[2], x[3]); break;
+        case 'BO': out = new Boolean(x[2]); break;
+        case 'NO': out = new Number(num(x[2])); break;
+        case 'SO': out = new String(x[2]); break;
+        case 'IO': out = Object(BigInt(x[2])); break;
+        case 'AB': out = b64decode(x[2]).slice().buffer; break;
+        case 'V': {
+          ids[x[1]] = null;
+          const buf = de(x[3]);
+          out = x[2] === 'DataView' ? new DataView(buf, x[4], x[5]) : new G[x[2]](buf, x[4], x[5]);
+          break;
+        }
+        case 'BL': out = blobMake(b64decode(x[2]).slice(), x[3]); break;
+        case 'F': out = new File([b64decode(x[2])], x[4], { type: x[3], lastModified: x[5] }); break;
+        case 'K': out = makeKey(x[2], x[3], x[4], x[5], b64decode(x[6]).slice()); break;
+        case 'E': {
+          const C = ERROR_NAMES.includes(x[2]) ? G[x[2]] : Error;
+          out = new C(x[3]);
+          ids[x[1]] = out;
+          if (x[4] !== null) Object.defineProperty(out, 'stack', { value: x[4], writable: true, configurable: true });
+          if (x[5]) Object.defineProperty(out, 'cause', { value: de(x[6]), writable: true, configurable: true });
+          return out;
+        }
+        default: throw idbErr('DataError', 'Unreadable stored value');
+      }
+      ids[x[1]] = out;
+      return out;
+    };
+    return de(JSON.parse(text));
+  };
+
+  // key paths (§2.5)
+  const IDENT = /^[\p{ID_Start}$_][\p{ID_Continue}$‌‍]*$/u;
+  const validPath = (p) => typeof p === 'string' && (p === '' || p.split('.').every((x) => IDENT.test(x)));
+  const keyPathArg = (v) => {
+    if (v === null || v === undefined) return null;
+    if (Array.isArray(v)) {
+      const out = v.map(String);
+      if (!out.length || !out.every(validPath)) throw idbErr('SyntaxError', 'The keyPath option is not a valid key path.');
+      return out;
+    }
+    const s = String(v);
+    if (!validPath(s)) throw idbErr('SyntaxError', 'The keyPath option is not a valid key path.');
+    return s;
+  };
+  const FAIL = Symbol('no value');
+  const evalPath = (value, path) => {
+    if (Array.isArray(path)) {
+      const out = [];
+      for (const p of path) { const v = evalPath(value, p); if (v === FAIL) return FAIL; out.push(v); }
+      return out;
+    }
+    if (path === '') return value;
+    let v = value;
+    for (const id of path.split('.')) {
+      if (typeof v === 'string' && id === 'length') v = v.length;
+      else if (Array.isArray(v) && id === 'length') v = v.length;
+      else if (v instanceof Blob && (id === 'size' || id === 'type')) v = v[id];
+      else if (v instanceof File && (id === 'name' || id === 'lastModified')) v = v[id];
+      else if (isObj(v) && Object.prototype.hasOwnProperty.call(v, id)) v = v[id];
+      else return FAIL;
+      if (v === undefined) return FAIL;
+    }
+    return v;
+  };
+  const keyAtPath = (value, path) => {
+    const v = evalPath(value, path);
+    return v === FAIL ? null : toKey(v);
+  };
+  const canInject = (value, path) => {
+    const ids = path.split('.');
+    let v = value;
+    for (let i = 0; i < ids.length - 1; i++) {
+      if (!isObj(v)) return false;
+      if (!Object.prototype.hasOwnProperty.call(v, ids[i])) return true;
+      v = v[ids[i]];
+    }
+    return isObj(v);
+  };
+  const idbInject = (value, path, key) => {
+    const ids = path.split('.');
+    let v = value;
+    for (let i = 0; i < ids.length - 1; i++) {
+      if (!Object.prototype.hasOwnProperty.call(v, ids[i])) Object.defineProperty(v, ids[i], { value: {}, writable: true, enumerable: true, configurable: true });
+      v = v[ids[i]];
+    }
+    Object.defineProperty(v, ids[ids.length - 1], { value: fromKey(key), writable: true, enumerable: true, configurable: true });
+  };
+  const pathView = (p) => (Array.isArray(p) ? p.slice() : p);
+
+  // the databases: {name, version, stores: Map(name → store), connections, queue, running, waiting}
+  // a store: {name, keyPath, autoIncrement, current, indexes: Map(name → {name, keyPath, unique, multiEntry}), records}
+  const idbData = new Map();
+  const dbKey = (name) => 'db\0' + name;
+  const storeKey = (db, store) => 'store\0' + db + '\0' + store;
+  const loadDB = (name) => {
+    let d = idbData.get(name);
+    if (d) return d;
+    d = { name, version: 0, stores: new Map(), connections: new Set(), queue: [], running: null, waiting: [] };
+    const raw = H.storage(IDB_NS, 'get', dbKey(name));
+    if (typeof raw === 'string') {
+      try {
+        const meta = JSON.parse(raw);
+        d.version = meta.version;
+        for (const s of meta.stores) {
+          d.stores.set(s.name, { name: s.name, keyPath: s.keyPath, autoIncrement: s.autoIncrement, current: s.current, records: null,
+            indexes: new Map(s.indexes.map((i) => [i.name, { ...i }])) });
+        }
+      } catch {}
+    }
+    idbData.set(name, d);
+    return d;
+  };
+  const recordsOf = (d, s) => {
+    if (s.records) return s.records;
+    s.records = [];
+    const raw = H.storage(IDB_NS, 'get', storeKey(d.name, s.name));
+    if (typeof raw === 'string') {
+      try { s.records = JSON.parse(raw).map(([k, v]) => ({ k: decKey(k), v })); } catch {}
+    }
+    return s.records;
+  };
+  const saveMeta = (d) => {
+    const stores = [...d.stores.values()].map((s) => ({ name: s.name, keyPath: s.keyPath, autoIncrement: s.autoIncrement, current: s.current, indexes: [...s.indexes.values()] }));
+    H.storage(IDB_NS, 'set', dbKey(d.name), JSON.stringify({ version: d.version, stores }));
+  };
+  const saveStore = (d, s) => H.storage(IDB_NS, 'set', storeKey(d.name, s.name), JSON.stringify(recordsOf(d, s).map((r) => [encKey(r.k), r.v])));
+  // the first record at or after k (binary search)
+  const findAt = (records, k) => {
+    let lo = 0, hi = records.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (cmpKey(records[m].k, k) < 0) lo = m + 1; else hi = m; }
+    return lo;
+  };
+  const recordIn = (records, r) => {
+    for (let i = r.lower ? findAt(records, r.lower) : 0; i < records.length; i++) {
+      if (inRange(r, records[i].k)) return records[i];
+      if (r.upper && cmpKey(records[i].k, r.upper) > 0) break;
+    }
+    return null;
+  };
+  const recordsIn = (records, r, count) => {
+    const out = [];
+    for (let i = r.lower ? findAt(records, r.lower) : 0; i < records.length && (!count || out.length < count); i++) {
+      if (inRange(r, records[i].k)) out.push(records[i]);
+      else if (r.upper && cmpKey(records[i].k, r.upper) > 0) break;
+    }
+    return out;
+  };
+  // an index's entries: [{k: index key, p: primary key, v}], sorted by both
+  const indexKeys = (ix, value) => {
+    const v = evalPath(value, ix.keyPath);
+    if (v === FAIL) return [];
+    if (ix.multiEntry && Array.isArray(v)) {
+      const out = [];
+      for (const x of v) { const k = toKey(x); if (k && !out.some((y) => cmpKey(y, k) === 0)) out.push(k); }
+      return out;
+    }
+    const k = toKey(v);
+    return k ? [k] : [];
+  };
+  const indexEntries = (d, s, ix) => {
+    const out = [];
+    for (const r of recordsOf(d, s)) for (const k of indexKeys(ix, idbDeserialize(r.v))) out.push({ k, p: r.k, v: r.v });
+    out.sort((a, b) => cmpKey(a.k, b.k) || cmpKey(a.p, b.p));
+    return out;
+  };
+
+  // events
+  class IDBVersionChangeEvent extends Event {
+    constructor(type, init = {}) {
+      need(arguments, 1, null, 'IDBVersionChangeEvent');
+      super(type, init);
+      this.oldVersion = Number(init.oldVersion || 0);
+      this.newVersion = init.newVersion === undefined || init.newVersion === null ? null : Number(init.newVersion);
+    }
+  }
+  // one target's listeners for one phase; true when one threw
+  const idbInvoke = (target, ev, phase) => {
+    let threw = false;
+    const m = target[jr.kListeners];
+    const l = m && m.get(ev.type);
+    const prop = phase !== 1 ? target['on' + ev.type] : null;
+    if (!l && typeof prop !== 'function') return false;
+    ev.currentTarget = target;
+    if (l) {
+      for (const x of l.slice()) {
+        if (x.removed || (phase === 1 && !x.capture) || (phase === 3 && x.capture)) continue;
+        if (x.once) target.removeEventListener(ev.type, x.cb, { capture: x.capture });
+        ev[jr.kPassive] = x.passive;
+        try {
+          if (typeof x.cb === 'function') x.cb.call(target, ev);
+          else if (x.cb && typeof x.cb.handleEvent === 'function') x.cb.handleEvent(ev);
+        } catch (e) { threw = true; reportError(e); }
+        ev[jr.kPassive] = false;
+        if (ev[jr.kImmediate]) return threw;
+      }
+    }
+    if (typeof prop === 'function' && !ev[jr.kImmediate]) {
+      try { prop.call(target, ev); } catch (e) { threw = true; reportError(e); }
+    }
+    return threw;
+  };
+  // fire ev at path[0] through its parents path[1…] (capture down, bubble
+  // up); {canceled, threw}
+  const idbFire = (path, ev) => {
+    const target = path[0];
+    ev.target = ev.srcElement = target;
+    ev._path = path.slice();
+    let threw = false;
+    for (let i = path.length - 1; i > 0 && !ev[jr.kStop]; i--) { ev.eventPhase = 1; threw = idbInvoke(path[i], ev, 1) || threw; }
+    if (!ev[jr.kStop]) { ev.eventPhase = 2; threw = idbInvoke(target, ev, 2) || threw; }
+    if (ev.bubbles) for (let i = 1; i < path.length && !ev[jr.kStop]; i++) { ev.eventPhase = 3; threw = idbInvoke(path[i], ev, 3) || threw; }
+    ev.eventPhase = 0;
+    ev.currentTarget = null;
+    return { canceled: ev[jr.kCanceled], threw };
+  };
+
+  class DOMStringList {
+    #items;
+    constructor(t, items) {
+      if (t !== kToken) throw illegal();
+      this.#items = items;
+      items.forEach((x, i) => Object.defineProperty(this, i, { value: x, enumerable: true }));
+    }
+    get length() { return this.#items.length; }
+    item(i) { need(arguments, 1, 'item', 'DOMStringList'); const x = this.#items[Number(i) >>> 0]; return x === undefined ? null : x; }
+    contains(s) { need(arguments, 1, 'contains', 'DOMStringList'); return this.#items.includes(String(s)); }
+    *[Symbol.iterator]() { yield* this.#items; }
+  }
+  const stringList = (names) => new DOMStringList(kToken, [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+
+  // requests
+  class IDBRequest extends EventTarget {
+    constructor(t) { if (t !== kToken) throw illegal(); super(); this._r = { state: 'pending', result: undefined, error: null, source: null, tx: null }; }
+    get result() { if (this._r.state !== 'done') throw idbErr('InvalidStateError', 'The request has not finished.'); return this._r.result; }
+    get error() { if (this._r.state !== 'done') throw idbErr('InvalidStateError', 'The request has not finished.'); return this._r.error; }
+    get source() { return this._r.source; }
+    get transaction() { return this._r.tx ? this._r.tx.object : null; }
+    get readyState() { return this._r.state; }
+  }
+  class IDBOpenDBRequest extends IDBRequest {}
+  handlers(IDBRequest.prototype, ['success', 'error']);
+  handlers(IDBOpenDBRequest.prototype, ['blocked', 'upgradeneeded']);
+  const newRequest = (C, source, tx) => { const q = new C(kToken); q._r.source = source; q._r.tx = tx; return q; };
+  const requestPath = (q) => { const tx = q._r.tx; return tx ? [q, tx.object, tx.conn] : [q]; };
+
+  // transactions: {object, conn, d, scope, mode, state: active | inactive | committing | finished, pending, error, undo, stores}
+  class IDBTransaction extends EventTarget {
+    constructor(t) { if (t !== kToken) throw illegal(); super(); }
+    get objectStoreNames() { const tx = txOf(this); return stringList(tx.mode === 'versionchange' ? tx.d.stores.keys() : tx.scope); }
+    get mode() { return txOf(this).mode; }
+    get durability() { return 'default'; }
+    get db() { return txOf(this).conn; }
+    get error() { return txOf(this).error; }
+    objectStore(name) {
+      need(arguments, 1, 'objectStore', 'IDBTransaction');
+      const tx = txOf(this);
+      if (tx.state === 'finished') throw idbErr('InvalidStateError', 'The transaction has finished.');
+      name = String(name);
+      const s = tx.d.stores.get(name);
+      if (!s || (tx.mode !== 'versionchange' && !tx.scope.includes(name))) throw idbErr('NotFoundError', 'The specified object store was not found.');
+      return storeObject(tx, s);
+    }
+    commit() {
+      const tx = txOf(this);
+      if (tx.state !== 'active') throw idbErr('InvalidStateError', 'The transaction is not active.');
+      tx.state = 'committing';
+      idbLater(() => idbPump(tx.d)); // it completes in a task of its own, once its requests are done
+    }
+    abort() {
+      const tx = txOf(this);
+      if (tx.state === 'committing' || tx.state === 'finished') throw idbErr('InvalidStateError', 'The transaction has finished.');
+      abortTx(tx, null);
+    }
+  }
+  handlers(IDBTransaction.prototype, ['abort', 'complete', 'error']);
+  const txs = new WeakMap();
+  const txOf = (o) => { const tx = txs.get(o); if (!tx) throw new TypeError('Illegal invocation'); return tx; };
+  const newTx = (conn, d, scope, mode) => {
+    const object = new IDBTransaction(kToken);
+    const tx = { object, conn, d, scope, mode, state: 'active', pending: [], error: null, undo: null, stores: new Map(), started: false, onDone: null };
+    txs.set(object, tx);
+    d.queue.push(tx);
+    idbLater(() => { if (tx.state === 'active') tx.state = 'inactive'; idbPump(d); });
+    return tx;
+  };
+  // a request's operation, queued: op() is its result, or throws its error
+  const queueOp = (tx, source, op, request) => {
+    const q = request || newRequest(IDBRequest, source, tx);
+    tx.pending.push({ q, op });
+    return q;
+  };
+  const checkActive = (tx) => {
+    if (tx.state !== 'active') throw idbErr('TransactionInactiveError', 'The transaction is not active.');
+  };
+  // what the database does next: start the first transaction queued, run its next request, commit it
+  const idbPump = (d) => {
+    if (!d.running) {
+      const next = d.queue[0];
+      if (!next) return;
+      d.running = next;
+      next.started = true;
+      if (next.mode !== 'readonly' && !next.undo) next.undo = snapshotOf(d);
+    }
+    const tx = d.running;
+    if (tx.busy || tx.state === 'finished') return;
+    if (tx.pending.length) {
+      tx.busy = true;
+      idbLater(() => { tx.busy = false; idbStep(tx); });
+      return;
+    }
+    if (tx.state === 'inactive' || tx.state === 'committing') commitTx(tx);
+  };
+  // what a rollback restores: the database's version, and each store's
+  // name, description and records (null: not read yet, so read again from
+  // what was committed), kept on the same store objects
+  const snapshotOf = (d) => ({
+    version: d.version,
+    stores: [...d.stores.values()].map((s) => [s, { name: s.name, keyPath: s.keyPath, autoIncrement: s.autoIncrement, current: s.current,
+      indexes: new Map([...s.indexes].map(([k, v]) => [k, { ...v }])), records: s.records && s.records.slice() }]),
+  });
+  const restore = (d, u) => {
+    d.version = u.version;
+    d.stores = new Map();
+    for (const [s, saved] of u.stores) { Object.assign(s, saved); d.stores.set(saved.name, s); }
+  };
+  const idbStep = (tx) => {
+    if (tx.state === 'finished') return;
+    const item = tx.pending.shift();
+    if (!item) { idbPump(tx.d); return; }
+    const { q, op } = item;
+    let result, error = null;
+    try { result = op(); } catch (e) { error = e instanceof DOMException ? e : idbErr('UnknownError', String(e && e.message || e)); }
+    q._r.state = 'done';
+    if (tx.state === 'inactive') tx.state = 'active';
+    let out;
+    if (error) {
+      q._r.result = undefined;
+      q._r.error = error;
+      out = idbFire(requestPath(q), new Event('error', { bubbles: true, cancelable: true }));
+    } else {
+      q._r.result = result;
+      q._r.error = null;
+      out = idbFire(requestPath(q), new Event('success'));
+    }
+    if (tx.state === 'finished') return; // aborted from a callback
+    if (out.threw) { abortTx(tx, idbErr('AbortError', 'An exception was thrown in an event handler.')); return; }
+    if (error && !out.canceled) { abortTx(tx, error); return; }
+    // active through the callbacks' microtasks (a promise resolved in
+    // onsuccess goes on with the transaction, as in browsers, whose
+    // microtask checkpoint runs before it is made inactive): inactive from
+    // the next task
+    idbLater(() => { if (tx.state === 'active') tx.state = 'inactive'; idbPump(tx.d); });
+  };
+  const idbFinish = (tx) => {
+    tx.state = 'finished';
+    const d = tx.d;
+    d.queue = d.queue.filter((x) => x !== tx);
+    if (d.running === tx) d.running = null;
+    idbLater(() => idbPump(d));
+  };
+  const commitTx = (tx) => {
+    const d = tx.d;
+    if (tx.mode !== 'readonly') {
+      if (tx.metaChanged || tx.mode === 'versionchange') saveMeta(d);
+      for (const name of tx.dropped || []) H.storage(IDB_NS, 'del', storeKey(d.name, name));
+      for (const s of tx.written || []) if (d.stores.get(s.name) === s) saveStore(d, s);
+    }
+    idbFinish(tx);
+    idbFire([tx.object, tx.conn], new Event('complete'));
+    if (tx.onDone) tx.onDone(true);
+  };
+  const abortTx = (tx, error) => {
+    if (tx.state === 'finished') return;
+    const d = tx.d;
+    if (tx.undo) restore(d, tx.undo);
+    tx.error = error;
+    const pending = tx.pending;
+    tx.pending = [];
+    idbFinish(tx);
+    // "abort a transaction": rolled back and finished now, its events in a
+    // task of their own: each pending request's AbortError, then abort
+    idbLater(() => {
+      for (const { q } of pending) {
+        q._r.state = 'done';
+        q._r.result = undefined;
+        q._r.error = idbErr('AbortError', 'The transaction was aborted, so the request cannot be fulfilled.');
+        idbFire(requestPath(q), new Event('error', { bubbles: true, cancelable: true }));
+      }
+      idbFire([tx.object, tx.conn], new Event('abort', { bubbles: true }));
+      if (tx.onDone) tx.onDone(false);
+    });
+  };
+  const idbTouch = (tx, s) => {
+    if (!tx.written) tx.written = new Set();
+    tx.written.add(s);
+  };
+
+  // object stores and indexes, as one transaction sees them
+  const storeObjects = new WeakMap();
+  const storeObject = (tx, s) => {
+    let m = tx.stores;
+    let o = m.get(s);
+    if (!o) {
+      o = new IDBObjectStore(kToken);
+      storeObjects.set(o, { tx, s, indexes: new Map(), keyPathView: pathView(s.keyPath) });
+      m.set(s, o);
+    }
+    return o;
+  };
+  const storeOf = (o) => {
+    const x = storeObjects.get(o);
+    if (!x) throw new TypeError('Illegal invocation');
+    if (x.tx.d.stores.get(x.s.name) !== x.s) throw idbErr('InvalidStateError', 'The object store has been deleted.');
+    return x;
+  };
+  const writable = (tx) => {
+    checkActive(tx);
+    if (tx.mode === 'readonly') throw idbErr('ReadOnlyError', 'The transaction is read-only.');
+  };
+  // "store a record into an object store" (§5.1)
+  const storeRecord = (tx, s, value, key, noOverwrite) => {
+    const d = tx.d, records = recordsOf(d, s);
+    if (s.autoIncrement && !key) {
+      if (s.current > 2 ** 53) throw idbErr('ConstraintError', 'The key generator has reached its maximum value.');
+      key = { t: 'n', v: s.current++ };
+      tx.metaChanged = true;
+      if (s.keyPath !== null) {
+        const v = idbDeserialize(value);
+        idbInject(v, s.keyPath, key);
+        value = idbSerialize(v);
+      }
+    } else if (s.autoIncrement && key.t === 'n' && key.v >= s.current) {
+      s.current = Math.min(Math.floor(key.v) + 1, 2 ** 53 + 1);
+      tx.metaChanged = true;
+    }
+    const i = findAt(records, key);
+    const exists = i < records.length && cmpKey(records[i].k, key) === 0;
+    if (exists && noOverwrite) throw idbErr('ConstraintError', 'Key already exists in the object store.');
+    const parsed = s.indexes.size ? idbDeserialize(value) : null;
+    for (const ix of s.indexes.values()) {
+      if (!ix.unique) continue;
+      for (const k of indexKeys(ix, parsed)) {
+        for (const r of records) {
+          if (cmpKey(r.k, key) === 0) continue;
+          if (indexKeys(ix, idbDeserialize(r.v)).some((x) => cmpKey(x, k) === 0)) throw idbErr('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.');
+        }
+      }
+    }
+    if (exists) records[i] = { k: key, v: value };
+    else records.splice(i, 0, { k: key, v: value });
+    idbTouch(tx, s);
+    return fromKey(key);
+  };
+  const putOrAdd = (self, method, value, key, noOverwrite) => {
+    const { tx, s } = storeOf(self);
+    writable(tx);
+    if (s.keyPath !== null && key !== undefined) throw idbErr('DataError', 'The object store uses in-line keys and the key parameter was provided.');
+    if (s.keyPath === null && !s.autoIncrement && key === undefined) throw idbErr('DataError', 'The object store uses out-of-line keys and has no key generator and the key parameter was not provided.');
+    let k = key === undefined ? null : keyArgOf(key);
+    let enc = idbSerialize(value);
+    if (s.keyPath !== null) {
+      const clone = idbDeserialize(enc);
+      k = keyAtPath(clone, s.keyPath);
+      if (!k) {
+        if (!s.autoIncrement) throw idbErr('DataError', "Evaluating the object store's key path did not yield a value.");
+        if (!canInject(clone, s.keyPath)) throw idbErr('DataError', "Evaluating the object store's key path did not yield a value.");
+      }
+    }
+    return queueOp(tx, self, () => storeRecord(tx, s, enc, k, noOverwrite));
+  };
+  const cursorDirections = ['next', 'nextunique', 'prev', 'prevunique'];
+  const directionArg = (v, method, iface) => {
+    const s = v === undefined ? 'next' : String(v);
+    if (!cursorDirections.includes(s)) throw new TypeError(`Failed to execute '${method}' on '${iface}': The provided value '${s}' is not a valid enum value of type IDBCursorDirection.`);
+    return s;
+  };
+  const countArg = (v) => {
+    if (v === undefined) return 0;
+    const n = Math.trunc(Number(v));
+    if (!(n >= 0) || n > 2 ** 32 - 1) throw new TypeError('The count is out of range.');
+    return n;
+  };
+  class IDBObjectStore {
+    constructor(t) { if (t !== kToken) throw illegal(); }
+    get name() { return storeObjects.get(this).s.name; }
+    set name(v) {
+      const { tx, s } = storeOf(this);
+      v = String(v);
+      if (tx.mode !== 'versionchange') throw idbErr('InvalidStateError', 'The database is not running a version change transaction.');
+      checkActive(tx);
+      if (v === s.name) return;
+      if (tx.d.stores.has(v)) throw idbErr('ConstraintError', 'An object store with the specified name already exists.');
+      recordsOf(tx.d, s);
+      tx.d.stores.delete(s.name);
+      (tx.dropped = tx.dropped || new Set()).add(s.name);
+      s.name = v;
+      tx.d.stores.set(v, s);
+      tx.metaChanged = true;
+      idbTouch(tx, s);
+    }
+    get keyPath() { return storeObjects.get(this).keyPathView; }
+    get indexNames() { return stringList(storeObjects.get(this).s.indexes.keys()); }
+    get transaction() { return storeObjects.get(this).tx.object; }
+    get autoIncrement() { return storeObjects.get(this).s.autoIncrement; }
+    put(value, key = undefined) { need(arguments, 1, 'put', 'IDBObjectStore'); return putOrAdd(this, 'put', value, key, false); }
+    add(value, key = undefined) { need(arguments, 1, 'add', 'IDBObjectStore'); return putOrAdd(this, 'add', value, key, true); }
+    delete(query) {
+      need(arguments, 1, 'delete', 'IDBObjectStore');
+      const { tx, s } = storeOf(this);
+      writable(tx);
+      const r = queryOf(query, true);
+      return queueOp(tx, this, () => {
+        const records = recordsOf(tx.d, s);
+        s.records = records.filter((x) => !inRange(r, x.k));
+        idbTouch(tx, s);
+        return undefined;
+      });
+    }
+    clear() {
+      const { tx, s } = storeOf(this);
+      writable(tx);
+      return queueOp(tx, this, () => { recordsOf(tx.d, s); s.records = []; idbTouch(tx, s); return undefined; });
+    }
+    get(query) {
+      need(arguments, 1, 'get', 'IDBObjectStore');
+      const { tx, s } = storeOf(this);
+      checkActive(tx);
+      const r = queryOf(query, true);
+      return queueOp(tx, this, () => { const rec = recordIn(recordsOf(tx.d, s), r); return rec ? idbDeserialize(rec.v) : undefined; });
+    }
+    getKey(query) {
+      need(arguments, 1, 'getKey', 'IDBObjectStore');
+      const { tx, s } = storeOf(this);
+      checkActive(tx);
+      const r = queryOf(query, true);
+      return queueOp(tx, this, () => { const rec = recordIn(recordsOf(tx.d, s), r); return rec ? fromKey(rec.k) : undefined; });
+    }
+    getAll(query = undefined, count = undefined) {
+      const { tx, s } = storeOf(this);
+      checkActive(tx);
+      const r = queryOf(query, false), n = countArg(count);
+      return queueOp(tx, this, () => recordsIn(recordsOf(tx.d, s), r, n).map((x) => idbDeserialize(x.v)));
+    }
+    getAllKeys(query = undefined, count = undefined) {
+      const { tx, s } = storeOf(this);
+      checkActive(tx);
+      const r = queryOf(query, false), n = countArg(count);
+      return queueOp(tx, this, () => recordsIn(recordsOf(tx.d, s), r, n).map((x) => fromKey(x.k)));
+    }
+    count(query = undefined) {
+      const { tx, s } = storeOf(this);
+      checkActive(tx);
+      const r = queryOf(query, false);
+      return queueOp(tx, this, () => recordsIn(recordsOf(tx.d, s), r, 0).length);
+    }
+    openCursor(query = undefined, direction = undefined) { return openCursor(this, storeOf(this), null, query, direction, true, 'openCursor', 'IDBObjectStore'); }
+    openKeyCursor(query = undefined, direction = undefined) { return openCursor(this, storeOf(this), null, query, direction, false, 'openKeyCursor', 'IDBObjectStore'); }
+    index(name) {
+      need(arguments, 1, 'index', 'IDBObjectStore');
+      const x = storeOf(this);
+      if (x.tx.state === 'finished') throw idbErr('InvalidStateError', 'The transaction has finished.');
+      const ix = x.s.indexes.get(String(name));
+      if (!ix) throw idbErr('NotFoundError', 'The specified index was not found.');
+      let o = x.indexes.get(ix);
+      if (!o) { o = new IDBIndex(kToken); indexObjects.set(o, { store: this, x, ix, keyPathView: pathView(ix.keyPath) }); x.indexes.set(ix, o); }
+      return o;
+    }
+    createIndex(name, keyPath, options = {}) {
+      need(arguments, 2, 'createIndex', 'IDBObjectStore');
+      const x = storeOf(this), { tx, s } = x;
+      if (tx.mode !== 'versionchange') throw idbErr('InvalidStateError', 'The database is not running a version change transaction.');
+      checkActive(tx);
+      name = String(name);
+      if (s.indexes.has(name)) throw idbErr('ConstraintError', 'An index with the specified name already exists.');
+      const kp = keyPathArg(keyPath);
+      if (kp === null) throw idbErr('SyntaxError', 'The keyPath argument contains an invalid key path.');
+      const multiEntry = !!(options && options.multiEntry), unique = !!(options && options.unique);
+      if (Array.isArray(kp) && multiEntry) throw idbErr('InvalidAccessError', 'The keyPath argument was an array and the multiEntry option is true.');
+      const ix = { name, keyPath: kp, unique, multiEntry };
+      s.indexes.set(name, ix);
+      tx.metaChanged = true;
+      // existing records must satisfy a unique index: else the transaction aborts
+      if (unique) {
+        queueOp(tx, this, () => {
+          const seen = [];
+          for (const r of recordsOf(tx.d, s)) for (const k of indexKeys(ix, idbDeserialize(r.v))) {
+            if (seen.some((y) => cmpKey(y, k) === 0)) { idbLater(() => abortTx(tx, idbErr('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.'))); return undefined; }
+            seen.push(k);
+          }
+          return undefined;
+        });
+      }
+      return this.index(name);
+    }
+    deleteIndex(name) {
+      need(arguments, 1, 'deleteIndex', 'IDBObjectStore');
+      const { tx, s } = storeOf(this);
+      if (tx.mode !== 'versionchange') throw idbErr('InvalidStateError', 'The database is not running a version change transaction.');
+      checkActive(tx);
+      name = String(name);
+      if (!s.indexes.has(name)) throw idbErr('NotFoundError', 'The specified index was not found.');
+      s.indexes.delete(name);
+      tx.metaChanged = true;
+    }
+  }
+  const indexObjects = new WeakMap();
+  const indexOf = (o) => {
+    const i = indexObjects.get(o);
+    if (!i) throw new TypeError('Illegal invocation');
+    storeOf(i.store);
+    if (i.x.s.indexes.get(i.ix.name) !== i.ix) throw idbErr('InvalidStateError', 'The index has been deleted.');
+    return i;
+  };
+  const entryIn = (entries, r) => entries.find((e) => inRange(r, e.k)) || null;
+  class IDBIndex {
+    constructor(t) { if (t !== kToken) throw illegal(); }
+    get name() { return indexObjects.get(this).ix.name; }
+    get objectStore() { return indexObjects.get(this).store; }
+    get keyPath() { return indexObjects.get(this).keyPathView; }
+    get multiEntry() { return indexObjects.get(this).ix.multiEntry; }
+    get unique() { return indexObjects.get(this).ix.unique; }
+    get(query) {
+      need(arguments, 1, 'get', 'IDBIndex');
+      const { x, ix } = indexOf(this);
+      checkActive(x.tx);
+      const r = queryOf(query, true);
+      return queueOp(x.tx, this, () => { const e = entryIn(indexEntries(x.tx.d, x.s, ix), r); return e ? idbDeserialize(e.v) : undefined; });
+    }
+    getKey(query) {
+      need(arguments, 1, 'getKey', 'IDBIndex');
+      const { x, ix } = indexOf(this);
+      checkActive(x.tx);
+      const r = queryOf(query, true);
+      return queueOp(x.tx, this, () => { const e = entryIn(indexEntries(x.tx.d, x.s, ix), r); return e ? fromKey(e.p) : undefined; });
+    }
+    getAll(query = undefined, count = undefined) {
+      const { x, ix } = indexOf(this);
+      checkActive(x.tx);
+      const r = queryOf(query, false), n = countArg(count);
+      return queueOp(x.tx, this, () => { const out = indexEntries(x.tx.d, x.s, ix).filter((e) => inRange(r, e.k)); return (n ? out.slice(0, n) : out).map((e) => idbDeserialize(e.v)); });
+    }
+    getAllKeys(query = undefined, count = undefined) {
+      const { x, ix } = indexOf(this);
+      checkActive(x.tx);
+      const r = queryOf(query, false), n = countArg(count);
+      return queueOp(x.tx, this, () => { const out = indexEntries(x.tx.d, x.s, ix).filter((e) => inRange(r, e.k)); return (n ? out.slice(0, n) : out).map((e) => fromKey(e.p)); });
+    }
+    count(query = undefined) {
+      const { x, ix } = indexOf(this);
+      checkActive(x.tx);
+      const r = queryOf(query, false);
+      return queueOp(x.tx, this, () => indexEntries(x.tx.d, x.s, ix).filter((e) => inRange(r, e.k)).length);
+    }
+    openCursor(query = undefined, direction = undefined) { const i = indexOf(this); return openCursor(this, i.x, i.ix, query, direction, true, 'openCursor', 'IDBIndex'); }
+    openKeyCursor(query = undefined, direction = undefined) { const i = indexOf(this); return openCursor(this, i.x, i.ix, query, direction, false, 'openKeyCursor', 'IDBIndex'); }
+  }
+
+  // cursors (§2.11): its position is a key (and a primary key for an
+  // index's), the next entry found again on each step
+  const cursors = new WeakMap();
+  const curOf = (o) => { const c = cursors.get(o); if (!c) throw new TypeError('Illegal invocation'); return c; };
+  class IDBCursor {
+    constructor(t) { if (t !== kToken) throw illegal(); }
+    get source() { return curOf(this).source; }
+    get direction() { return curOf(this).direction; }
+    get key() { const c = curOf(this); return c.key ? fromKey(c.key) : undefined; }
+    get primaryKey() { const c = curOf(this); return c.primary ? fromKey(c.primary) : undefined; }
+    get request() { return curOf(this).q; }
+    advance(count) {
+      need(arguments, 1, 'advance', 'IDBCursor');
+      const n = Math.trunc(Number(count));
+      if (!(n >= 1) || n > 2 ** 32 - 1) throw new TypeError("Failed to execute 'advance' on 'IDBCursor': A count argument with value 0 (zero) was supplied, must be greater than 0.");
+      const c = curOf(this);
+      cursorReady(c);
+      cursorStep(c, n, null, null);
+    }
+    continue(key = undefined) {
+      const c = curOf(this);
+      cursorReady(c);
+      let k = null;
+      if (key !== undefined) {
+        k = keyArgOf(key);
+        const cmp = cmpKey(k, c.key);
+        if (c.direction.startsWith('next') ? cmp <= 0 : cmp >= 0) throw idbErr('DataError', 'The parameter is less than or equal to this cursor\'s position.');
+      }
+      cursorStep(c, 1, k, null);
+    }
+    continuePrimaryKey(key, primaryKey) {
+      need(arguments, 2, 'continuePrimaryKey', 'IDBCursor');
+      const c = curOf(this);
+      cursorReady(c);
+      if (!c.ix) throw idbErr('InvalidAccessError', "The cursor's source is not an index.");
+      if (c.direction.endsWith('unique')) throw idbErr('InvalidAccessError', "The cursor's direction is not 'next' or 'prev'.");
+      const k = keyArgOf(key), p = keyArgOf(primaryKey);
+      const cmp = cmpKey(k, c.key) || cmpKey(p, c.primary);
+      if (c.direction === 'next' ? cmp <= 0 : cmp >= 0) throw idbErr('DataError', 'The parameter is less than or equal to this cursor\'s position.');
+      cursorStep(c, 1, k, p);
+    }
+    update(value) {
+      need(arguments, 1, 'update', 'IDBCursor');
+      const c = curOf(this);
+      writable(c.x.tx);
+      if (!c.gotValue || c.done) throw idbErr('InvalidStateError', 'The cursor is being iterated or has iterated past its end.');
+      if (!c.withValue) throw idbErr('InvalidStateError', 'The cursor is a key cursor.');
+      const s = c.x.s;
+      const enc = idbSerialize(value);
+      if (s.keyPath !== null) {
+        const k = keyAtPath(idbDeserialize(enc), s.keyPath);
+        if (!k || cmpKey(k, c.primary) !== 0) throw idbErr('DataError', "The effective object store of this cursor uses in-line keys and evaluating the key path of the value parameter results in a different value than the cursor's effective key.");
+      }
+      const primary = c.primary;
+      return queueOp(c.x.tx, this, () => storeRecord(c.x.tx, s, enc, primary, false));
+    }
+    delete() {
+      const c = curOf(this);
+      writable(c.x.tx);
+      if (!c.gotValue || c.done) throw idbErr('InvalidStateError', 'The cursor is being iterated or has iterated past its end.');
+      if (!c.withValue) throw idbErr('InvalidStateError', 'The cursor is a key cursor.');
+      const primary = c.primary, s = c.x.s, tx = c.x.tx;
+      return queueOp(tx, this, () => { s.records = recordsOf(tx.d, s).filter((r) => cmpKey(r.k, primary) !== 0); idbTouch(tx, s); return undefined; });
+    }
+  }
+  class IDBCursorWithValue extends IDBCursor {
+    get value() { const c = curOf(this); return c.value; }
+  }
+  const cursorReady = (c) => {
+    checkActive(c.x.tx);
+    if (c.x.tx.d.stores.get(c.x.s.name) !== c.x.s) throw idbErr('InvalidStateError', 'The cursor\'s source has been deleted.');
+    if (!c.gotValue || c.done) throw idbErr('InvalidStateError', 'The cursor is being iterated or has iterated past its end.');
+  };
+  const openCursor = (self, x, ix, query, direction, withValue, method, iface) => {
+    checkActive(x.tx);
+    const r = queryOf(query, false);
+    const dir = directionArg(direction, method, iface);
+    const q = newRequest(IDBRequest, self, x.tx);
+    const c = { source: self, x, ix, range: r, direction: dir, withValue, q, key: null, primary: null, value: undefined, gotValue: false, done: false };
+    const o = new (withValue ? IDBCursorWithValue : IDBCursor)(kToken);
+    cursors.set(o, c);
+    c.object = o;
+    c.gotValue = true; // the first step finds the first entry
+    cursorStep(c, 1, null, null, true);
+    return q;
+  };
+  // queue the cursor's next step: count entries on, or to key (and primary)
+  const cursorStep = (c, count, key, primary, first) => {
+    c.gotValue = false;
+    if (!first) c.q._r.state = 'pending';
+    queueOp(c.x.tx, c.source, () => {
+      const tx = c.x.tx;
+      const forward = c.direction.startsWith('next'), unique = c.direction.endsWith('unique');
+      const entries = c.ix ? indexEntries(tx.d, c.x.s, c.ix) : recordsOf(tx.d, c.x.s).map((r) => ({ k: r.k, p: r.k, v: r.v }));
+      const list = forward ? entries : entries.slice().reverse();
+      let pos = c.key, ppos = c.primary, found = null;
+      for (let n = 0; n < count; n++) {
+        found = null;
+        for (const e of list) {
+          if (!inRange(c.range, e.k)) continue;
+          if (key && n === count - 1) {
+            const ck = cmpKey(e.k, key);
+            if (forward ? ck < 0 : ck > 0) continue;
+            if (primary && ck === 0) { const cp = cmpKey(e.p, primary); if (forward ? cp < 0 : cp > 0) continue; }
+          }
+          if (pos) {
+            const ck = cmpKey(e.k, pos);
+            if (unique) { if (forward ? ck <= 0 : ck >= 0) continue; }
+            else if (forward ? ck < 0 || (ck === 0 && cmpKey(e.p, ppos) <= 0) : ck > 0 || (ck === 0 && cmpKey(e.p, ppos) >= 0)) continue;
+          }
+          found = e;
+          break;
+        }
+        if (!found) break;
+        // prevunique: the first entry of the key, as the next direction sees it
+        if (unique && !forward) found = entries.find((e) => cmpKey(e.k, found.k) === 0 && inRange(c.range, e.k)) || found;
+        pos = found.k;
+        ppos = found.p;
+      }
+      if (!found) { c.done = true; c.key = c.primary = null; c.value = undefined; return null; }
+      c.key = found.k;
+      c.primary = found.p;
+      c.value = c.withValue ? idbDeserialize(found.v) : undefined;
+      c.gotValue = true;
+      return c.object;
+    }, c.q);
+  };
+
+  // connections
+  class IDBDatabase extends EventTarget {
+    constructor(t) { if (t !== kToken) throw illegal(); super(); }
+    get name() { return connOf(this).d.name; }
+    get version() { return connOf(this).version; }
+    get objectStoreNames() { const c = connOf(this); return stringList(c.upgrade ? c.d.stores.keys() : c.names); }
+    createObjectStore(name, options = {}) {
+      need(arguments, 1, 'createObjectStore', 'IDBDatabase');
+      const c = connOf(this), tx = c.upgrade;
+      if (!tx) throw idbErr('InvalidStateError', 'The database is not running a version change transaction.');
+      checkActive(tx);
+      name = String(name);
+      const keyPath = keyPathArg(options ? options.keyPath : undefined);
+      const autoIncrement = !!(options && options.autoIncrement);
+      if (c.d.stores.has(name)) throw idbErr('ConstraintError', 'An object store with the specified name already exists.');
+      if (autoIncrement && (keyPath === '' || Array.isArray(keyPath))) throw idbErr('InvalidAccessError', 'The autoIncrement option was set but the keyPath option was empty or an array.');
+      const s = { name, keyPath, autoIncrement, current: 1, indexes: new Map(), records: [] };
+      c.d.stores.set(name, s);
+      tx.metaChanged = true;
+      idbTouch(tx, s);
+      return storeObject(tx, s);
+    }
+    deleteObjectStore(name) {
+      need(arguments, 1, 'deleteObjectStore', 'IDBDatabase');
+      const c = connOf(this), tx = c.upgrade;
+      if (!tx) throw idbErr('InvalidStateError', 'The database is not running a version change transaction.');
+      checkActive(tx);
+      name = String(name);
+      if (!c.d.stores.has(name)) throw idbErr('NotFoundError', 'The specified object store was not found.');
+      c.d.stores.delete(name);
+      (tx.dropped = tx.dropped || new Set()).add(name);
+      tx.metaChanged = true;
+    }
+    transaction(storeNames, mode = 'readonly', options = undefined) {
+      need(arguments, 1, 'transaction', 'IDBDatabase');
+      const c = connOf(this);
+      if (c.closePending) throw idbErr('InvalidStateError', 'The database connection is closing.');
+      if (c.upgrade) throw idbErr('InvalidStateError', 'A version change transaction is running.');
+      const names = typeof storeNames === 'string' ? [storeNames] : [...storeNames].map(String);
+      mode = String(mode);
+      if (mode !== 'readonly' && mode !== 'readwrite') throw new TypeError(`Failed to execute 'transaction' on 'IDBDatabase': The provided value '${mode}' is not a valid enum value of type IDBTransactionMode.`);
+      const scope = [...new Set(names)];
+      for (const n of scope) if (!c.names.includes(n)) throw idbErr('NotFoundError', 'One of the specified object stores was not found.');
+      if (!scope.length) throw idbErr('InvalidAccessError', 'The storeNames parameter was empty.');
+      return newTx(this, c.d, scope, mode).object;
+    }
+    close() {
+      const c = connOf(this);
+      c.closePending = true;
+      c.d.connections.delete(this);
+      for (const w of c.d.waiting.splice(0)) w();
+    }
+  }
+  handlers(IDBDatabase.prototype, ['abort', 'close', 'error', 'versionchange']);
+  const conns = new WeakMap();
+  const connOf = (o) => { const c = conns.get(o); if (!c) throw new TypeError('Illegal invocation'); return c; };
+
+  // the factory (§4)
+  const versionArg = (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 1 || n > Number.MAX_SAFE_INTEGER) throw new TypeError("Failed to execute 'open' on 'IDBFactory': Value is outside the 'unsigned long long' value range.");
+    return Math.trunc(n);
+  };
+  // run(): once every other connection to d has closed, after telling them to (versionchange)
+  const whenAlone = (d, self, q, oldVersion, newVersion, run) => {
+    const others = [...d.connections].filter((x) => x !== self);
+    for (const o of others) if (!connOf(o).closePending) idbFire([o], new IDBVersionChangeEvent('versionchange', { oldVersion, newVersion }));
+    const open = () => [...d.connections].some((x) => x !== self && !connOf(x).closePending);
+    if (!open()) { run(); return; }
+    idbFire([q], new IDBVersionChangeEvent('blocked', { oldVersion, newVersion }));
+    const wait = () => { if (open()) d.waiting.push(wait); else idbLater(run); };
+    d.waiting.push(wait);
+  };
+  class IDBFactory {
+    constructor(t) { if (t !== kToken) throw illegal(); }
+    open(name, version = undefined) {
+      need(arguments, 1, 'open', 'IDBFactory');
+      name = String(name);
+      const wanted = version === undefined ? undefined : versionArg(version);
+      const q = newRequest(IDBOpenDBRequest, null, null);
+      idbLater(() => {
+        const d = loadDB(name);
+        const v = wanted === undefined ? (d.version || 1) : wanted;
+        if (d.version > v) {
+          q._r.state = 'done';
+          q._r.error = idbErr('VersionError', `The requested version (${v}) is less than the existing version (${d.version}).`);
+          idbFire([q], new Event('error', { bubbles: true, cancelable: true }));
+          return;
+        }
+        const conn = new IDBDatabase(kToken);
+        const c = { d, version: d.version, names: [...d.stores.keys()], upgrade: null, closePending: false };
+        conns.set(conn, c);
+        d.connections.add(conn);
+        const succeed = () => {
+          c.version = d.version;
+          c.names = [...d.stores.keys()];
+          q._r.state = 'done';
+          q._r.result = conn;
+          q._r.error = null;
+          q._r.tx = null;
+          idbFire([q], new Event('success'));
+        };
+        if (d.version === v) { succeed(); return; }
+        const old = d.version;
+        whenAlone(d, conn, q, old, v, () => {
+          const tx = newTx(conn, d, [], 'versionchange');
+          tx.undo = snapshotOf(d);
+          c.upgrade = tx;
+          d.version = v;
+          c.version = v;
+          tx.metaChanged = true;
+          q._r.state = 'done';
+          q._r.result = conn;
+          q._r.tx = tx;
+          tx.onDone = (ok) => {
+            c.upgrade = null;
+            if (ok) { idbLater(succeed); return; }
+            c.version = old;
+            c.closePending = true;
+            d.connections.delete(conn);
+            idbLater(() => {
+              q._r.result = undefined;
+              q._r.tx = null;
+              q._r.error = idbErr('AbortError', 'Version change transaction was aborted in upgradeneeded event handler.');
+              idbFire([q], new Event('error', { bubbles: true, cancelable: true }));
+            });
+          };
+          // the upgrade is the database's first transaction: ahead of any queued after the open
+          d.queue = [tx, ...d.queue.filter((x) => x !== tx)];
+          const out = idbFire([q], new IDBVersionChangeEvent('upgradeneeded', { oldVersion: old, newVersion: v }));
+          if (out.threw && tx.state !== 'finished') abortTx(tx, idbErr('AbortError', 'An exception was thrown in an event handler.'));
+        });
+      });
+      return q;
+    }
+    deleteDatabase(name) {
+      need(arguments, 1, 'deleteDatabase', 'IDBFactory');
+      name = String(name);
+      const q = newRequest(IDBOpenDBRequest, null, null);
+      idbLater(() => {
+        const d = loadDB(name);
+        const old = d.version;
+        whenAlone(d, null, q, old, null, () => {
+          for (const s of d.stores.keys()) H.storage(IDB_NS, 'del', storeKey(name, s));
+          H.storage(IDB_NS, 'del', dbKey(name));
+          idbData.delete(name);
+          q._r.state = 'done';
+          q._r.result = undefined;
+          idbFire([q], new IDBVersionChangeEvent('success', { oldVersion: old, newVersion: null }));
+        });
+      });
+      return q;
+    }
+    databases() {
+      const out = [];
+      for (const k of H.storage(IDB_NS, 'keys') || []) {
+        if (!k.startsWith('db\0')) continue;
+        const name = k.slice(3), d = idbData.get(name);
+        if (d && d.version === 0) continue;
+        try { out.push({ name, version: d ? d.version : JSON.parse(H.storage(IDB_NS, 'get', k)).version }); } catch {}
+      }
+      return Promise.resolve(out);
+    }
+    cmp(first, second) {
+      need(arguments, 2, 'cmp', 'IDBFactory');
+      return cmpKey(keyArgOf(first), keyArgOf(second));
+    }
+  }
+  for (const [n, C] of Object.entries({ IDBFactory, IDBDatabase, IDBTransaction, IDBRequest, IDBOpenDBRequest, IDBObjectStore, IDBIndex, IDBCursor, IDBCursorWithValue, IDBKeyRange, IDBVersionChangeEvent, DOMStringList })) expose(n, C);
+  def(G, 'indexedDB', new IDBFactory(kToken));
 
   // ---- BroadcastChannel ----
   const channels = new Map(); // name → Set<BroadcastChannel>
