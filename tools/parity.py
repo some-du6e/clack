@@ -821,7 +821,7 @@ def refresh_emoji_rank(cases, tmp):
 
 QUIP_ORACLE = os.path.join(ROOT, 'tools', 'oracles', 'quip.cjs')
 QUIP_SNAPSHOTS = ('quip-wire-encode', 'quip-wire-decode', 'quip-order', 'quip-rtml-text', 'quip-rtml-parse', 'quip-rtml-write',
-                  'quip-save-section', 'quip-save-title')
+                  'quip-save-section', 'quip-save-title', 'quip-apply-runs', 'quip-save-new-section')
 
 
 def quip_refresher(kind):

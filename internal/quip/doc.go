@@ -23,6 +23,32 @@ type Doc struct {
 	// added is the ids in the order they came into the model, the order
 	// of Slack's entitiesById_ map, which a save's bundle follows.
 	added []string
+	// renames are the real ids the server gave new sections (a save
+	// answer's temp_id, fetch-latest's temp_ids): temp id -> real id.
+	renames map[string]string
+}
+
+// RealID is the id the model holds section id under: its real id when the
+// server renamed it, else id.
+func (d *Doc) RealID(id string) string {
+	for i := 0; i < 8; i++ { // a rename of a rename, never a loop
+		r, ok := d.renames[id]
+		if !ok {
+			break
+		}
+		id = r
+	}
+	return id
+}
+
+func (d *Doc) noteRename(temp, real string) {
+	if temp == "" || real == "" || temp == real {
+		return
+	}
+	if d.renames == nil {
+		d.renames = map[string]string{}
+	}
+	d.renames[temp] = real
 }
 
 // ErrNotFound is load-data's answer without a response, which Slack's
@@ -175,6 +201,9 @@ func (d *Doc) ApplySaved(a *EditAnswer) []string {
 	var out []string
 	for i := range a.FinalData.Sections {
 		s := &a.FinalData.Sections[i]
+		if t := str(s.TempID); t != "" && t != str(s.ID) { // a new section's real id
+			d.rename(t, str(s.ID))
+		}
 		if d.put(s) {
 			out = append(out, str(s.ID))
 		}
@@ -268,6 +297,7 @@ func (d *Doc) rename(temp, real string) {
 	if temp == "" || real == "" || temp == real {
 		return
 	}
+	d.noteRename(temp, real)
 	if s := d.sections[temp]; s != nil {
 		c := *s
 		c.ID = Ptr(real)

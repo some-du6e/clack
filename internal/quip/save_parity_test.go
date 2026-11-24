@@ -15,8 +15,10 @@ type saveSectionIn struct {
 	Edit   struct {
 		Kind    string `json:"kind"`
 		RTML    string `json:"rtml"`
-		Checked *bool  `json:"checked"` // with "text": the box set too
-		Dirty   []int  `json:"dirty"`   // the dirty fields, when not the kind's own
+		Checked *bool  `json:"checked"`
+		Style   *int32 `json:"style"`
+		Indent  *int32 `json:"indent"`
+		Dirty   []int  `json:"dirty"` // the oracle's: Slack's setters' dirty fields
 	} `json:"edit"`
 	LocalSeq    int64  `json:"localSeq"`
 	Session     string `json:"session"`
@@ -38,18 +40,29 @@ func TestQuipSaveSectionLikeSlack(t *testing.T) {
 	s.Run(t, paritytest.Check[saveSectionIn, saveSectionOut]{Clack: func(t *testing.T, c saveSectionIn) saveSectionOut {
 		var server Section
 		build(t, reflect.ValueOf(&server).Elem(), c.Server)
-		e := Edit{SectionID: *server.ID, RTML: c.Edit.RTML, Checked: c.Edit.Checked != nil && *c.Edit.Checked}
+		e := Edit{SectionID: *server.ID, RTML: c.Edit.RTML}
+		if c.Edit.Checked != nil {
+			e.Checked = *c.Edit.Checked
+		}
 		switch c.Edit.Kind {
 		case "text":
 			e.Kind = EditText
-			e.Recheck = c.Edit.Checked != nil
 		case "check":
 			e.Kind = EditCheck
 		case "delete":
 			e.Kind = EditDelete
+		case "block":
+			e.Kind = EditBlock
 		default:
 			t.Fatalf("edit kind %q", c.Edit.Kind)
 		}
+		if c.Edit.Style != nil {
+			e.Restyle, e.Style = true, *c.Edit.Style
+		}
+		if c.Edit.Indent != nil {
+			e.Reindent, e.Indent = true, *c.Edit.Indent
+		}
+		e.Recheck = c.Edit.Checked != nil && e.Kind != EditCheck
 		trace := c.Session + "-" + strconv.FormatInt(c.SaveSeq, 10)
 		u, err := UpdateSection(&server, e, c.ParentStyle, trace, c.LocalSeq+1)
 		if err != nil {

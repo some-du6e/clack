@@ -32,6 +32,9 @@ const (
 	// EditDelete deletes the section: deleteSection marks STATUS and
 	// deleteEntity DELETED.
 	EditDelete
+	// EditBlock changes a section's style or attributes and not its text
+	// (Edit's Restyle, Reindent, Recheck).
+	EditBlock
 )
 
 func (k EditKind) String() string {
@@ -42,6 +45,10 @@ func (k EditKind) String() string {
 		return "check"
 	case EditDelete:
 		return "delete"
+	case EditNew:
+		return "new"
+	case EditBlock:
+		return "block"
 	}
 	return "edit(" + strconv.Itoa(int(k)) + ")"
 }
@@ -51,15 +58,23 @@ type Edit struct {
 	Kind      EditKind
 	SectionID string
 	RTML      string // EditText: the section's whole new RTML
-	Checked   bool   // EditCheck; EditText with Recheck
+	Checked   bool   // EditCheck; EditNew: a ticked checklist item
 	// Base is the section's sequence the edit was made against. A save
 	// goes only while the section is still there: one that moved since
 	// (someone else's save) isn't overwritten, as Clack can't merge.
 	Base int64
-	// Recheck, with EditText: the section's box set to Checked as well (a
-	// tick and typing in the same item before a save; Slack's dirty
-	// fields hold both, setSectionAttribute marking STATUS and ATTRIBUTES)
-	Recheck bool
+	// EditNew (newsection.go): the section it follows, its style and
+	// position.
+	After    string
+	Style    int32
+	Position string
+	// with EditText, EditCheck or EditBlock: the section's style changes
+	// to Style (setSectionStyle marks STYLE), its list level to Indent or
+	// its box to Checked (setSectionAttribute marks STATUS and ATTRIBUTES)
+	Restyle  bool
+	Reindent bool
+	Indent   int32
+	Recheck  bool
 }
 
 // Counters are a client session's save counters, as 7yDq keeps them for
@@ -85,6 +100,18 @@ type Save struct {
 	Trace    string
 	Sequence int64
 	local    map[string]int64
+}
+
+// Rename carries a new section's local sequence to the real id the server
+// gave it: Slack's entity is the same one, renamed (entityIdDidChange), so
+// its count goes on.
+func (c *Counters) Rename(temp, real string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n, ok := c.local[temp]; ok && temp != real {
+		c.local[real] = n
+		delete(c.local, temp)
+	}
 }
 
 // Begin reserves the next save: ids are the sections going into it, each
@@ -155,15 +182,26 @@ func UpdateSection(server *Section, e Edit, parentStyle *int32, trace string, lo
 		u.Attributes.Checked = Ptr(e.Checked)
 	case EditDelete:
 		u.Deleted = Ptr(true)
+	case EditBlock:
+		if !e.Restyle && !e.Reindent && !e.Recheck {
+			return nil, unsupported("a block edit that changes nothing")
+		}
 	default:
 		return nil, unsupported("edit kind %v", e.Kind)
 	}
-	if e.Recheck {
-		if e.Kind != EditText {
-			return nil, unsupported("a box set with a %v edit", e.Kind)
+	if e.Restyle {
+		u.Style = Ptr(e.Style)
+	}
+	if e.Reindent || e.Recheck {
+		if u.Attributes == nil {
+			u.Attributes = bundleAttributes(server.Attributes)
 		}
-		u.Attributes = bundleAttributes(server.Attributes)
-		u.Attributes.Checked = Ptr(e.Checked)
+		if e.Reindent {
+			u.Attributes.Indentation = Ptr(e.Indent)
+		}
+		if e.Recheck {
+			u.Attributes.Checked = Ptr(e.Checked)
+		}
 	}
 	if a, ok := activityRow(u, server); ok {
 		u.ActivityStackUpdate = Ptr(a)
@@ -276,15 +314,11 @@ func activityRow(u, server *Section) (int32, bool) {
 }
 
 // TextRTML is the RTML Slack's save writer (CITi's DI over the editor's
-// DOM) makes of plain typed text: zero-width spaces and no-break spaces
-// out, then escapeText. Text whose spaces the browser would hold as
-// non-breaking ones (at either end, or two or more in a row) depends on
-// the browser's editing, so it's refused rather than guessed.
+// DOM) makes of plain typed text: zero-width spaces and byte order marks
+// out, then escapeText. Canvases are pre-wrap (improvedWordWrapping), so
+// typed spaces are in the DOM as typed.
 func TextRTML(text string) (string, error) {
 	t := strings.NewReplacer("\u200b", "", "\ufeff", "").Replace(text)
-	if strings.HasPrefix(t, " ") || strings.HasSuffix(t, " ") || strings.Contains(t, "  ") {
-		return "", unsupported("spaces at an end or two in a row (the browser keeps them as no-break spaces)")
-	}
 	if !utf8.ValidString(t) {
 		return "", unsupported("invalid UTF-8")
 	}
@@ -519,6 +553,35 @@ func (d *Doc) Bundle(edits []Edit, s *Save) (*DocumentData, *TitleMeta, error) {
 		}
 		data.Sections = append(data.Sections, *u)
 		delete(byID, id)
+	}
+	// new sections, in the order they were made (entitiesById_: after
+	// every entity the model had)
+	made := map[string]*Section{}
+	for _, e := range edits {
+		if e.Kind != EditNew {
+			continue
+		}
+		if d.Section(e.SectionID) != nil {
+			return nil, nil, unsupported("new section %s is already in the document", e.SectionID)
+		}
+		after := made[e.After]
+		if after == nil {
+			after = d.Section(e.After)
+		}
+		if after == nil || after.Deleted != nil && *after.Deleted {
+			return nil, nil, unsupported("a new section after %s, which isn't in the document", e.After)
+		}
+		var parent *Section
+		if after.Parents != nil && len(after.Parents.IDs) > 0 {
+			parent = d.Section(after.Parents.IDs[0])
+		}
+		u, err := NewSection(e, after, parent, s.Trace, s.local[e.SectionID])
+		if err != nil {
+			return nil, nil, err
+		}
+		made[e.SectionID] = u
+		data.Sections = append(data.Sections, *u)
+		delete(byID, e.SectionID)
 	}
 	for id := range byID {
 		return nil, nil, unsupported("section %s isn't in the document", id)
