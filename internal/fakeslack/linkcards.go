@@ -46,9 +46,19 @@ func (s *Server) SetLinkUnfurl(link, ch, ts string, m *slack.Message) {
 	cs.unfurls[link] = linkUnfurl{ch: ch, ts: ts, msg: m}
 }
 
+// SetLinkUnfurlAt is SetLinkUnfurl for the n-th (from 0, in document
+// order) of the cards of url only: two cards of one URL, each with its
+// own container, as Slack gives each card its own.
+func (s *Server) SetLinkUnfurlAt(link string, n int, ch, ts string, m *slack.Message) {
+	s.SetLinkUnfurl(fmt.Sprintf("%s#%d", link, n), ch, ts, m)
+}
+
 // unfurlForLocked is url's container, a default one made the first time
 // (cs.mu held).
-func (cs *canvasStore) unfurlForLocked(link string) linkUnfurl {
+func (cs *canvasStore) unfurlForLocked(link string, n int) linkUnfurl {
+	if u, ok := cs.unfurls[fmt.Sprintf("%s#%d", link, n)]; ok {
+		return u
+	}
 	if u, ok := cs.unfurls[link]; ok {
 		return u
 	}
@@ -76,8 +86,8 @@ func defaultUnfurlContainer(link, ts string) *slack.Message {
 
 // linkCardSection is an Embed's card section, its content the card of its
 // URL's container (cs.mu held), and what it holds as a sig suffix.
-func (cs *canvasStore) linkCardSection(id, link string) (quip.Section, string) {
-	u := cs.unfurlForLocked(link)
+func (cs *canvasStore) linkCardSection(id, link string, n int) (quip.Section, string) {
+	u := cs.unfurlForLocked(link, n)
 	unfurled := u.msg != nil && u.msg.DocumentUnfurl != nil && u.msg.DocumentUnfurl.IsUnfurled
 	card := &quip.LinkUnfurlCard{URL: quip.Ptr(link), Type: quip.Ptr(quip.CardSlackUnfurl),
 		CardContent: &quip.CardContent{SlackUnfurl: &quip.CardUnfurl{SlackUnfurlID: quip.Ptr(quip.UnfurlID(TeamID, u.ch, u.ts))}},

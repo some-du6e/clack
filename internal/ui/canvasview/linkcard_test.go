@@ -8,11 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // A canvas link card in Quip's real export shape: no id, no anchor, only
@@ -194,4 +196,102 @@ func TestRenderLinkCard(t *testing.T) {
 			t.Errorf("text %q, want %q", txt, empty)
 		}
 	})
+}
+
+// Two cards of one URL, each with its own unfurl container (an export's
+// cards have no id): after the export is reloaded twice each still has a
+// block of its own and draws its own container, and messages.list isn't
+// asked again and again (the two used to share one block and refetch
+// both containers every 200 ms).
+func TestRenderLinkCardSameURL(t *testing.T) {
+	const id = "F0CANVCARD2"
+	html := `<div class="quip-canvas-content"><p class='embedded-link'>Link URL: ` + cardURL + `</p>` +
+		`<p id="temp:C:LC2p1" class="line">Between the cards</p><p class='embedded-link'>Link URL: ` + cardURL + `</p></div>`
+	h, fs := newEnv(t, false)
+	d, err := canvas.Parse(html)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: id, Title: "Two cards", HTML: html, Doc: d})
+	one, two := appUnfurl("1762500000.000201", true), appUnfurl("1762500000.000202", true)
+	one.Attachments[0].Title, two.Attachments[0].Title = "octo/one", "octo/two"
+	fs.SetLinkUnfurlAt(cardURL, 0, fakeslack.CardChannel, "1762500000.000201", one)
+	fs.SetLinkUnfurlAt(cardURL, 1, fakeslack.CardChannel, "1762500000.000202", two)
+	v := New(h, id, Full, Actions{FullView: func() {}, SideView: func() {}, Close: func() {}})
+	s := newShooter(t, image.Pt(1100, 900))
+	own := func() bool {
+		bs := cardBlocks(v.blocks)
+		return len(bs) == 2 && strings.Contains(cardTextOf(bs[0].card), "octo/one") && strings.Contains(cardTextOf(bs[1].card), "octo/two")
+	}
+	settle(t, s, v, "each card's container", func() bool { return v.Doc() != nil && own() })
+	for i := 0; i < 2; i++ {
+		prev := v.Doc()
+		v.Reload()
+		settle(t, s, v, "the export reloaded", func() bool { d := v.Doc(); return d != prev && v.shown == d })
+	}
+	bs := cardBlocks(v.blocks)
+	if len(bs) != 2 || bs[0] == bs[1] || bs[0].card == bs[1].card {
+		t.Fatalf("after two reloads the cards share a block (%d card blocks)", len(bs))
+	}
+	n := fs.CallCount("messages.list")
+	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); {
+		s.frame(func(gtx layout.Context) { v.Layout(gtx) })
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := fs.CallCount("messages.list") - n; got > 1 {
+		t.Errorf("%d messages.list calls in 2 s with nothing changing, want at most 1", got)
+	}
+	if !own() {
+		t.Errorf("the cards draw %q and %q, want octo/one and octo/two", cardTextOf(bs[0].card), cardTextOf(bs[1].card))
+	}
+}
+
+// On a canvas the viewer can edit, a click on a link in a card opens the
+// link and says nothing about editing (a card's links aren't its block's
+// richview: textArea asks the card's views).
+func TestRenderLinkCardLinkOpens(t *testing.T) {
+	h, _, _ := cardEnv(t, false, nil, cardTS, nil)
+	var opened []string
+	v := New(h, cardCanvasID, Full, Actions{FullView: func() {}, SideView: func() {}, Close: func() {}, OpenURL: func(u string) { opened = append(opened, u) }})
+	r := &pointerRig{t: t, v: v, sz: image.Pt(1100, 900)}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		r.frame()
+		if b := embedBlk(v); b != nil && b.card.title != nil && v.edit.canEdit(v) {
+			if k, _, _ := cardState(v); k == "empty" {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no empty card with its URL on an editable canvas")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	r.frame()
+	c := embedBlk(v).card
+	full, _, ok := r.router.AreaBounds(c.title)
+	if !ok {
+		t.Fatal("the card's title has no input area")
+	}
+	var at image.Point
+	for _, lr := range c.title.LinkRects() {
+		if lr.Kind == richview.HitLink {
+			at = full.Min.Add(lr.R.Min.Add(lr.R.Max).Div(2))
+		}
+	}
+	if at == (image.Point{}) {
+		t.Fatal("the card's title has no link")
+	}
+	r.queue(mouse(pointer.Move, float32(at.X), float32(at.Y)))
+	r.click(float32(at.X), float32(at.Y))
+	if len(opened) != 1 || opened[0] != cardURL {
+		t.Errorf("opened %q, want [%q]", opened, cardURL)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, m := range h.toasts {
+		if strings.HasPrefix(m, cantEdit) {
+			t.Errorf("a click on the card's link toasts %q", m)
+		}
+	}
 }

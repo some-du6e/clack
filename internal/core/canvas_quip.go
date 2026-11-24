@@ -246,6 +246,15 @@ func (a *App) fetchModelLocked(ctx context.Context, id string, q *quipCanvas) er
 	return nil
 }
 
+// DropUnopenedCanvasModel forgets the canvas's model when no view has the
+// canvas open (files.open): a peek's, once the peek closes. Without
+// files.open nothing keeps the model current.
+func (a *App) DropUnopenedCanvasModel(id string) {
+	if !a.CanvasOpen(id) {
+		a.dropCanvasModel(id)
+	}
+}
+
 // dropCanvasModel forgets the canvas's model (its last view closed).
 func (a *App) dropCanvasModel(id string) {
 	st := a.quipStates()

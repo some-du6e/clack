@@ -63,15 +63,19 @@ type linkCard struct {
 	held    bool            // the store holds cc's container
 	msg     slack.Message   // the container
 	attKey  string          // what msg's attachments are (body's key)
-	asked   bool            // its container was fetched
-	sig     string          // cc.Sig last seen: a change fetches again
-	mounted time.Time       // Card's mount: its first frame
-	kind    cardKind        // what the views below draw
-	line    string          // EmptyUnfurl's content line
-	drawn   string          // kind, line and attKey the views are of
-	title   *richview.View  // EmptyUnfurl's title (the card's URL)
-	content *richview.View  // EmptyUnfurl's line
-	body    *richview.View  // the fallback's attachment
+	asked   bool            // its container was fetched (cleared when the store lets it go)
+	sig     string          // cc.Sig last seen of section sigSec: a change fetches again
+	sigSec  string          // the section sig is of
+	// since is when Card's 20 s wait began: its first frame as a
+	// "fallback" card, again whenever its container changes (the
+	// effect's deps)
+	since   time.Time
+	kind    cardKind       // what the views below draw
+	line    string         // EmptyUnfurl's content line
+	drawn   string         // kind, line and attKey the views are of
+	title   *richview.View // EmptyUnfurl's title (the card's URL)
+	content *richview.View // EmptyUnfurl's line
+	body    *richview.View // the fallback's attachment
 	hover   bool
 	tag     struct{ _ byte } // the hover area
 	size    image.Point      // the card as last drawn
@@ -143,8 +147,11 @@ func (c *linkCard) decide(now time.Time) (k cardKind, line string, at time.Time)
 	}
 	// "fallback" (a public link card is drawn as one too until
 	// EmbeddedPublicLinkUnfurl is ported)
-	deadline := c.mounted.Add(cardTimeout)
-	timedOut := !c.mounted.IsZero() && !now.Before(deadline) || c.held && du != nil && tsAge(c.msg.TS, now) > cardOldUnfurl
+	if c.since.IsZero() {
+		c.since = now
+	}
+	deadline := c.since.Add(cardTimeout)
+	timedOut := !now.Before(deadline) || c.held && du != nil && tsAge(c.msg.TS, now) > cardOldUnfurl
 	if timedOut && att == nil {
 		return cardEmpty, unable, time.Time{}
 	}
@@ -179,6 +186,11 @@ func cardBlocks(bs []*blk) []*blk {
 			for _, c := range b.cols {
 				walk(c)
 			}
+			for _, row := range b.cells {
+				for _, c := range row {
+					walk(c.kids)
+				}
+			}
 		}
 	}
 	walk(bs)
@@ -196,6 +208,13 @@ func hasLinkCards(bs []canvas.Block) bool {
 		for _, c := range b.Columns {
 			if hasLinkCards(c) {
 				return true
+			}
+		}
+		for _, row := range b.Rows {
+			for _, c := range row {
+				if hasLinkCards(c.Blocks) {
+					return true
+				}
 			}
 		}
 	}
@@ -216,6 +235,11 @@ func (v *View) refreshCards() {
 		urls[i] = b.card.url
 	}
 	cards, ok := a.CanvasCards(v.id, urls)
+	if !ok && a.CanvasModelError(v.id) == nil {
+		// core let the model go (the view's last files.close: a tab left
+		// for a while) or never had it: load it again
+		v.loadCardModel()
+	}
 	var fetch, again []core.CanvasCard
 	for i, b := range bs {
 		c := b.card
@@ -224,6 +248,7 @@ func (v *View) refreshCards() {
 		if ok {
 			c.cc = cards[i]
 		}
+		wasHeld, oldKey := c.held, c.attKey
 		c.msg, c.held = a.CanvasCardContainer(c.cc)
 		c.attKey = ""
 		if c.held {
@@ -233,9 +258,15 @@ func (v *View) refreshCards() {
 			}{c.msg.Attachments, c.msg.DocumentUnfurl})
 			c.attKey = string(k)
 		}
+		if c.attKey != oldKey { // Card's wait starts again with its container
+			c.since = time.Time{}
+		}
+		if wasHeld && !c.held { // the store let it go: ask once more
+			c.asked = false
+		}
 		switch {
 		case !c.cc.HasContainer():
-		case c.sig != "" && c.cc.Sig != c.sig: // a document_update changed the card
+		case c.sigSec == c.cc.Section && c.sig != "" && c.cc.Sig != c.sig: // a document_update changed this section's card
 			again = append(again, c.cc)
 		case !c.held && !c.asked:
 			fetch = append(fetch, c.cc)
@@ -243,7 +274,7 @@ func (v *View) refreshCards() {
 		if c.cc.HasContainer() {
 			c.asked = true
 		}
-		c.sig = c.cc.Sig
+		c.sig, c.sigSec = c.cc.Sig, c.cc.Section
 	}
 	for _, f := range []struct {
 		cards []core.CanvasCard
@@ -308,9 +339,6 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 	now := gtx.Now
 	if now.IsZero() {
 		now = time.Now()
-	}
-	if c.mounted.IsZero() {
-		c.mounted = now
 	}
 	k, line, at := c.decide(now)
 	c.kind, c.line = k, line
@@ -440,4 +468,36 @@ func easeInOut(x float64) float64 {
 		t = (lo + hi) / 2
 	}
 	return bez(0, 1, t)
+}
+
+// views are what block b draws text with: its richview, or its link
+// card's views.
+func (b *blk) views() []*richview.View {
+	if b.card == nil {
+		if b.rv == nil {
+			return nil
+		}
+		return []*richview.View{b.rv}
+	}
+	return []*richview.View{b.card.title, b.card.content, b.card.body}
+}
+
+// hovered: a link or mention of b's is under the pointer.
+func (b *blk) hovered() bool {
+	for _, rv := range b.views() {
+		if rv != nil && rv.Hovered() {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSelection: text of b's is selected.
+func (b *blk) hasSelection() bool {
+	for _, rv := range b.views() {
+		if rv != nil && rv.HasSelection() {
+			return true
+		}
+	}
+	return false
 }

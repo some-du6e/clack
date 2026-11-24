@@ -190,12 +190,12 @@ type cell struct{ kids []*blk }
 // rebuild makes blocks for a newly fetched doc, keeping the laid-out ones
 // that didn't change (a live update re-fetches the whole export).
 func (v *View) rebuild(d *core.CanvasDoc) {
-	old := map[string]*blk{}
+	old := map[string][]*blk{} // by key, in document order (makeBlocks takes each once)
 	var collect func(bs []*blk)
 	collect = func(bs []*blk) {
 		for _, b := range bs {
 			if b.key != "" {
-				old[b.key] = b
+				old[b.key] = append(old[b.key], b)
 			}
 		}
 	}
@@ -342,12 +342,17 @@ func sameSpans(a, b []richtext.Span) bool {
 	return true
 }
 
-func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*blk) []*blk {
+func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string][]*blk) []*blk {
 	out := make([]*blk, 0, len(bs))
 	for i := range bs {
 		b := &bs[i]
 		key := b.ID + "\x00" + string(rune('A'+b.Kind)) + "\x00" + canvas.Markdown(*b) + fileKey(d, b) + mentionKey(b)
-		if o, ok := old[key]; ok && len(b.Children) == 0 && len(b.Columns) == 0 && b.Kind != canvas.Table {
+		if prev := old[key]; len(prev) > 0 && len(b.Children) == 0 && len(b.Columns) == 0 && b.Kind != canvas.Table {
+			// an old block is reused once, in order: two blocks drawing
+			// the same (two link cards of one URL: an export's card has
+			// no id) keep a block each, never one between them
+			o := prev[0]
+			old[key] = prev[1:]
 			o.b = b
 			o.edOK, o.edWhy = v.blockEditable(*b)
 			out = append(out, o)

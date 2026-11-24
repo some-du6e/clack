@@ -128,6 +128,7 @@ func (cs *canvasStore) quipSync(s *Server, c *FakeCanvas, m *quipModel) {
 	for i := range bs {
 		assignIDs(&bs[i], cs.secID)
 	}
+	cardN := map[string]int{} // each URL's link cards so far (SetLinkUnfurlAt)
 	for i := 0; i < len(bs); i++ {
 		b := &bs[i]
 		switch {
@@ -181,7 +182,8 @@ func (cs *canvasStore) quipSync(s *Server, c *FakeCanvas, m *quipModel) {
 				Content: &quip.Content{HorizontalRule: &quip.HorizontalRule{}}}, blockSig(b))
 		case b.Kind == canvas.Embed: // a link card: its unfurl container's card (linkcards.go)
 			m.opaque[b.ID] = *b
-			sec, card := cs.linkCardSection(b.ID, b.URL)
+			sec, card := cs.linkCardSection(b.ID, b.URL, cardN[b.URL])
+			cardN[b.URL]++
 			add(sec, blockSig(b)+card)
 		default: // a block Clack doesn't edit: a section of its type, kept whole
 			m.opaque[b.ID] = *b
