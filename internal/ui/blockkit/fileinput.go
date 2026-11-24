@@ -363,8 +363,18 @@ func fiButtonContent(gtx C, th *theme.Theme, sz image.Point, ic string, isDp flo
 // fiAlertText lays out an alert's message (15px/1.46668: 22px lines) at
 // width w.
 func fiAlertText(gtx C, th *theme.Theme, w int, col color.NRGBA, msg string) D {
-	gtx.Constraints = layout.Constraints{Max: image.Pt(max(w, 1), 1<<20)}
-	return para(gtx, th, 15, 22, theme.Regular, col, msg)
+	// one 22px line box per line, as Chromium lays out 15px/1.46668 (Gio's
+	// own line height for a paragraph is 1.2 times what it's given, and a
+	// lone line its font's height)
+	lh := dp(gtx, 22)
+	lines := wrapWeight(gtx, th, 15, theme.Regular, msg, max(w, 1))
+	for i, ln := range lines {
+		at(gtx, image.Pt(0, i*lh), func(gtx C) D {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(w, 1), lh)}
+			return vcenter(gtx, lh, func(gtx C) D { return th.Label(gtx, unit.Sp(15), theme.Regular, col, ln) })
+		})
+	}
+	return D{Size: image.Pt(w, len(lines)*lh)}
 }
 
 // fiAlertWidth is the message's room in an alert w wide: the border,

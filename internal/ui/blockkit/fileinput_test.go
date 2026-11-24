@@ -267,9 +267,10 @@ func TestFileInputUploadFails(t *testing.T) {
 	if h, a := w.fileHeight(gtx, 900), fiAlertHeight(gtx, e.h.th, 900, want); h != a+16+36 || a != 2+24+22 {
 		t.Errorf("the element is %dpx with a %dpx alert, want the alert (one 22px line in its padding and border), 16 and the button", h, a)
 	}
-	// a new upload clears the errors
+	// a new upload clears the errors (another file: the client fails an
+	// identical failed request fast for a second, as its guard does)
 	e.fs.SetFault("files.getUploadURL", fakeslack.Fault{})
-	w.uploadFiles([]core.UploadFile{{Name: "plan.txt", Data: []byte("synthetic")}})
+	w.uploadFiles([]core.UploadFile{{Name: "notes.txt", Data: []byte("synthetic notes")}})
 	if len(w.fi.errs) != 0 {
 		t.Errorf("uploadFiles kept the errors %v", w.fi.errs)
 	}
@@ -318,19 +319,22 @@ func TestFileInputChecks(t *testing.T) {
 		}
 		return out
 	}
+	// mgGk counts before it weighs: too many files is the error even when
+	// they're too large too
 	for _, c := range []struct {
-		files        []core.UploadFile
-		existing     int
-		maxBytes     int64
-		wantID, want string
+		files              []core.UploadFile
+		existing, maxFiles int
+		maxBytes           int64
+		wantID, want       string
 	}{
-		{f("a.pdf"), 2, 100, "too-many-files", "You have selected too many files. The limit is 2."},
-		{f("a.pdf"), 0, 3, "files-too-large", "The file a.pdf is too large. Our max file size is 3 B."},
-		{f("a.pdf", "b.pdf"), 0, 3, "files-too-large", "The files a.pdf and b.pdf are too large. Our max file size is 3 B."},
-		{f("a.pdf", "b.pdf", "c.pdf"), 0, 3, "files-too-large", "The files a.pdf, b.pdf and c.pdf are too large. Our max file size is 3 B."},
-		{f("a.pdf"), 1, 100, "", ""},
+		{f("a.pdf"), 2, 2, 100, "too-many-files", "You have selected too many files. The limit is 2."},
+		{f("a.pdf", "b.pdf", "c.pdf"), 0, 2, 3, "too-many-files", "You have selected too many files. The limit is 2."},
+		{f("a.pdf"), 0, 2, 3, "files-too-large", "The file a.pdf is too large. Our max file size is 3 B."},
+		{f("a.pdf", "b.pdf"), 0, 2, 3, "files-too-large", "The files a.pdf and b.pdf are too large. Our max file size is 3 B."},
+		{f("a.pdf", "b.pdf", "c.pdf"), 0, 3, 3, "files-too-large", "The files a.pdf, b.pdf and c.pdf are too large. Our max file size is 3 B."},
+		{f("a.pdf"), 1, 2, 100, "", ""},
 	} {
-		e := fiLimits(c.files, c.existing, 2, c.maxBytes)
+		e := fiLimits(c.files, c.existing, c.maxFiles, c.maxBytes)
 		switch {
 		case c.wantID == "" && e != nil:
 			t.Errorf("%d files: %+v, want none", len(c.files), e)

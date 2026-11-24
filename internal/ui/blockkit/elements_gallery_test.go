@@ -209,8 +209,12 @@ func (e *bkEnv) frame() []slotRect {
 	if e.cur != "" {
 		slots = e.layoutMessage(gtx)
 	}
-	live := e.h.overlays[:0]
-	for _, o := range e.h.overlays {
+	// by index, into a slice of its own: an overlay shown during another's
+	// Layout (a Block Kit modal's file_input opening its Add file dialog)
+	// is laid out this frame and kept, not lost to the filter
+	var live []popups.Overlay
+	for i := 0; i < len(e.h.overlays); i++ {
+		o := e.h.overlays[i]
 		g := gtx
 		g.Constraints = layout.Constraints{Max: e.size}
 		o.Layout(g)
