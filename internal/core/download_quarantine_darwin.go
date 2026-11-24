@@ -25,5 +25,6 @@ func quarantine(path string) {
 	ts := strconv.FormatInt(time.Now().Unix(), 16)
 	cmd := exec.Command("/usr/bin/xattr", "-w", "com.apple.quarantine", "0002;"+ts+";Clack;"+uuid, path)
 	cmd.Env = []string{}
+	cmd.WaitDelay = 2 * time.Second
 	_ = cmd.Run()
 }
