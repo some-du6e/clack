@@ -6284,7 +6284,7 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
-      - name: the patched history's hidden rows, channelHistory following loads, viewUiState's highlight, ViewHeaderSearch, HideResolved in the harness and in the client, COUNT runs each
+      - name: the patched history's hidden rows and the marks over them, channelHistory following loads, viewUiState's highlight, ViewHeaderSearch, HideResolved in the harness and in the client, COUNT runs each
         env:
           SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
           PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
@@ -6293,7 +6293,7 @@ jobs:
           set +e
           rc=0
           go test -count="$COUNT" -timeout 5m -run '^(TestHistoryHiddenFollowsPatches|TestChannelHistoryFollowsLoads)$' ./internal/taut || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^TestHiddenHistoryRows$' ./internal/ui/messages || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestHiddenHistoryRows|TestHiddenNewestBannerMarksLatest|TestHiddenNewestMarkedImmediately)$' ./internal/ui/messages || rc=1
           go test -count="$COUNT" -timeout 15m -run '^TestHideResolvedLikeSlack$' ./internal/slick || rc=1
           xvfb-run -a go test -count="$COUNT" -timeout 15m -run '^TestPluginGapHideResolved$' ./internal/ui || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1

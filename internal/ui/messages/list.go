@@ -1619,8 +1619,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	seen := pf.MarkReadImmediately || (!p.BeforeEnd && s.unreadSeen)
 	// a window short of the newest message never marks read: its last
 	// message isn't the conversation's
-	if !s.thread && !s.noMark && s.snap.loaded && !s.snap.newestMissing && seen && len(s.snap.msgs) > 0 {
-		latest := s.snap.msgs[len(s.snap.msgs)-1].m.TS
+	if !s.thread && !s.noMark && s.snap.loaded && !s.snap.newestMissing && seen && s.own[1] != "" {
+		// the loaded slice's last real message: a newest message a
+		// plugin's patch hides (dropHidden) is read with the rest
+		latest := s.own[1]
 		app := h.Core()
 		if latest != s.markedTS && app != nil && tsLess(app.Count(s.ch).LastRead, latest) && now.Sub(s.lastMark) > 1500*time.Millisecond {
 			s.markedTS, s.lastMark = latest, now
