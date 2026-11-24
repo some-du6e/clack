@@ -234,6 +234,7 @@ func (r *row) commentRootLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 		call := rec2.Stop()
 		placeCall(gtx, call, bx, y)
 		r.bodyRect = image.Rectangle{Min: image.Pt(bx, y), Max: image.Pt(bx+body.Size.X, y+body.Size.Y)}
+		r.selW = cw
 		y += body.Size.Y
 	} else { // MessageTombstone's customDeletedText
 		d := at(gtx, bx, y, func(gtx layout.Context) layout.Dimensions {
