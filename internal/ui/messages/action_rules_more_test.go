@@ -62,7 +62,7 @@ func TestMenuRowsByMessageKindLikeSlack(t *testing.T) {
 		for _, row := range []struct {
 			action string
 			want   bool
-		}{{"subscribe", c.follow}, {"remind", c.remind}, {"copy_text", c.copy}} {
+		}{{"subscribe", c.follow}, {"remind_later", c.remind}, {"copy_text", c.copy}} {
 			if _, ok := ephItem(its, row.action); ok != row.want {
 				t.Errorf("%s: %s row %v, want %v", c.name, row.action, ok, row.want)
 			}

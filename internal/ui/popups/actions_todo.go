@@ -55,6 +55,9 @@ func TodoActionFor(app *core.App, m *core.Message) TodoAction {
 // ReminderLabel is ih0g's name for the reminder row on m (the message
 // I18n's source string).
 func ReminderLabel(app *core.App, m *core.Message) string {
+	if app != nil && app.Experiment("later_todos") != "on" { // 40eY: isLaterTodosEnabled (GAJO tj)
+		return "Remind me"
+	}
 	if IsTodo(app, m) {
 		return "Edit reminder"
 	}

@@ -255,7 +255,7 @@ var maDecide = maPlugin("DecideSlick", `[]`, `
       if (props.autoClogProps?.uiComponentName !== "message_actions_menu" || typeof props.onSelectAction !== "function") return React.createElement(Original, props);
       return React.createElement(Original, { ...props, onSelectAction: (event, action, context) => {
         globalThis.__decided.push(action?.id + "@" + context?.ts + "/" + event?.type);
-        if (action?.id === "copy_link" || action?.id === "remind") return true;
+        if (action?.id === "copy_link" || action?.id === "remind_later") return true;
         if (action?.id === "later") throw new Error("the plugin's handler failed");
         if (action?.id === "subscribe") return Promise.resolve(false);
         return props.onSelectAction(event, action, context);
@@ -343,10 +343,10 @@ func TestMessageMenuSelectActionDecides(t *testing.T) {
 	}
 
 	// a reminder preset picks through the root's onSelectAction as
-	// {id: "remind"} (Slack's RemindSubmenu): the plugin takes it, so no
+	// {id: "remind_later"} (Slack's RemindSubmenu): the plugin takes it, so no
 	// reminder is saved
 	_, d = open("the menu for Remind")
-	presets := d.openSub("remind")
+	presets := d.openSub("remind_later")
 	d.click(presets.rows[0])
 	if !answer(d, maTaken) || !strings.HasSuffix(decided(), ",remind"+at) {
 		t.Errorf("a reminder preset: not taken, or asked %q", decided())
@@ -529,12 +529,12 @@ func TestMessageMenuNativeRowsThroughPlugin(t *testing.T) {
 		t.Errorf("Mark unread from Organize: marked %d times, asked %q", n, passed())
 	}
 
-	// a reminder preset (Slack's RemindSubmenu): asked as {id: "remind"}
+	// a reminder preset (Slack's RemindSubmenu): asked as {id: "remind_later"}
 	// through the root's onSelectAction, then saved with its due date
 	saved := e.api.called("saved.add")
 	m = menu()
 	d = open(m, "the menu for Remind")
-	sub := d.openSub("remind")
+	sub := d.openSub("remind_later")
 	if len(sub.items) == 0 {
 		t.Fatal("no reminder presets")
 	}

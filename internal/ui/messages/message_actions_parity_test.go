@@ -22,6 +22,7 @@ import (
 	"github.com/some-du6e/clack/internal/paritytest"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -130,6 +131,10 @@ func maDecode(t *testing.T, what string, raw json.RawMessage, v any) {
 
 func TestMessageActionsLikeSlack(t *testing.T) {
 	t.Cleanup(uipref.Reset)
+	// Connect to apps' rows, as the shell wires them (ui/blockkit_wire.go)
+	prevShortcuts := popups.MessageShortcuts
+	popups.MessageShortcuts = func(h popups.Host, m core.Message) []popups.MenuItem { return blockkit.MessageShortcutItems(h, m) }
+	t.Cleanup(func() { popups.MessageShortcuts = prevShortcuts })
 	maThreadsView(t)
 	s := paritytest.Load[maIn, maOut](t, "testdata/parity/message-actions.json")
 	var base maIn

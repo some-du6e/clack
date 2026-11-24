@@ -18,7 +18,7 @@ func TestMAMenuRowIDs(t *testing.T) {
 	ran := ""
 	do := func(what string) func() { return func() { ran = what } }
 	items := []MenuItem{
-		{Action: "remind", Label: "Remind me about this", Sub: []MenuItem{
+		{Action: "remind_later", Label: "Remind me about this", Sub: []MenuItem{
 			{Key: LabelKey("In 30 mins"), Label: "In 30 mins", Do: do("remind in 30")},
 		}},
 		Sep(),

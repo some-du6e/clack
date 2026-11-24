@@ -47,7 +47,7 @@ func MessageKeyAction(h Host, at image.Point, m core.Message, where MessageConte
 		return nil, false
 	}
 	switch {
-	case it.Action == "remind":
+	case it.Action == "remind_later":
 		ch, ts := m.Channel, m.TS
 		return func(layout.Context) { h.ShowOverlay(actNewReminderModal(h, ch, ts)) }, true
 	case it.DoCtx != nil:

@@ -18,6 +18,9 @@ var sidebarExperiments = map[string]string{
 	"agents_in_dm_sidebar": "on", "agents_in_dm_sidebar_pref": "on",
 	"suggested_sections_auto_sort_v2": "on",
 	"lists_tabbing_navigation":        "on",
+	// later_todos as the account has it (to-dos; the reminder row's name:
+	// "Add a reminder", "Remind me" without it, 40eY)
+	"later_todos": "on",
 	// the mini player (videoplayer/pip.go: a playing video docks)
 	"clips_pip": "on",
 	// channel details' Agents & apps / Automations tabs and Settings'

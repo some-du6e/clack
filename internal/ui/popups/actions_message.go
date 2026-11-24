@@ -176,7 +176,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 		}}.In(nsSaved))
 	}
 	if remindShown(app, &m) {
-		items = append(items, MenuItem{Action: "remind", Label: ReminderLabel(app, &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage)) // ih0g
+		items = append(items, MenuItem{Action: "remind_later", QA: "remind_me", Label: ReminderLabel(app, &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage)) // ih0g
 	}
 	if f, ok := actFollowItem(h, m, conv, root); ok {
 		items = append(items, f)

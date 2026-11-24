@@ -425,7 +425,7 @@ func PinShown(app *core.App, m *core.Message) bool {
 var msgFrecency = map[string]string{
 	"add_reaction": "MAadd_reaction", "comment": "MAthread_reply", "share_message": "MAshare",
 	"add_to_later_todos": "add_to_later_todos", "later": "later",
-	"mark_unread": "MAmark_unread", "mark_thread_unread": "MAmark_thread_unread", "remind": "MAremind_later",
+	"mark_unread": "MAmark_unread", "mark_thread_unread": "MAmark_thread_unread", "remind_later": "MAremind_later",
 	"copy_link": "MAcopy_link", "copy_text": "MAcopy_text", "edit_message": "MAedit", "delete_message": "MAdelete",
 	"broadcast_message": "MAbroadcast_message", "remove_broadcast": "MAremove",
 	"flag_message": "MAflag_message", "report_message": "MAreport_message",
@@ -454,7 +454,7 @@ func withFrecency(items []MenuItem) []MenuItem {
 		}
 		if len(it.Sub) > 0 {
 			it.Sub = withFrecency(append([]MenuItem(nil), it.Sub...))
-			if it.Action == "remind" {
+			if it.Action == "remind_later" {
 				for j := range it.Sub {
 					if it.Sub[j].Frecency == "" && !it.Sub[j].Separator {
 						it.Sub[j].Frecency = it.Frecency
