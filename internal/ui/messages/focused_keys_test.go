@@ -207,6 +207,7 @@ func TestFocusedMessageKeysLikeSlack(t *testing.T) {
 			k.quiet() // the ordinary message's writes land first
 			k.stolen = ""
 			k.selectMsg(t, tsEph)
+			k.quiet() // and what selecting it sets off
 			before = k.effects()
 			k.press(c.key, c.mods, c.text)
 			did := k.settleFor(before, c.did)
@@ -294,11 +295,25 @@ func TestFocusedReplyKeysLikeSlack(t *testing.T) {
 		key  key.Name
 		text string
 	}{{"U", "u"}, {"R", "r"}} {
+		k.quiet() // what selecting the reply sets off (the thread's read mark) lands first
 		k.stolen = ""
 		before := k.effects()
 		k.press(c.key, 0, c.text)
-		if k.settleFor(before, func(b, a effects) bool { return a.overlays > b.overlays || a.calls > b.calls }) {
-			t.Errorf("%s on the ephemeral reply did something", c.key)
+		// no picker, and no thread marked unread from it
+		// (subscriptions.thread.mark read=0: the read marks selecting a
+		// reply sends are no key's)
+		unreadFrom := func() int {
+			n := 0
+			for _, f := range k.f.called("subscriptions.thread.mark") {
+				if f.Get("read") == "0" && f.Get("ts") == tsEphR2 {
+					n++
+				}
+			}
+			return n
+		}
+		marks := unreadFrom()
+		if k.settleFor(before, func(b, a effects) bool { return a.overlays > b.overlays || unreadFrom() > marks }) {
+			t.Errorf("%s on the ephemeral reply did something (%d overlays more, %d unread marks)", c.key, k.effects().overlays-before.overlays, unreadFrom()-marks)
 		}
 		if k.stolen != c.text {
 			t.Errorf("%s on the ephemeral reply: the reply box got %q", c.key, k.stolen)
