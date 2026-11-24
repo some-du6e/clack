@@ -1,36 +1,49 @@
 package richtext
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// A canvas preview's mentions hold only the ids Quip's export gives
-// (canvas parse.go: Text "#C1", "@U1"); a message names them through its
-// resolver on each conversion, as Slack's FileQuip renders the thumbnail's
-// Block Kit, and the stored blocks are left alone.
-func TestNamedPreviewMentions(t *testing.T) {
-	stored := []Block{
-		{Kind: Header, Spans: []Span{{Kind: Channel, ID: "C1", Text: "#C1"}, tx(" Guidelines")}},
-		{Kind: Paragraph, Spans: []Span{tx("plain")}},
-		{Kind: List, Items: [][]Span{{tx("first")}, {{Kind: User, ID: "U1", Text: "@U1", Style: Bold}, tx(" and "), {Kind: Usergroup, ID: "S1", Text: "@S1"}}}},
+// A canvas preview's mentions are the thumbnail's Block Kit mentions,
+// ids only: a message names them through its resolver on each
+// conversion, as Slack's FileQuip renders the thumbnail's Block Kit with
+// the message renderer (BaseMrkdwnChannel, MemberSlug, UserGroup).
+func TestCanvasPreviewMentions(t *testing.T) {
+	sec := func(els string) string {
+		return `{"type":"rich_text_section","elements":[` + els + `]}`
 	}
-	got := namedPreview(R, stored)
-	if s := got[0].Spans[0]; s.Text != "#general" || s.ID != "C1" {
+	thumb := `{"blocks":[{"type":"header","text":{"type":"plain_text","text":"Title"}},` +
+		`{"type":"rich_text","elements":[` + sec(`{"type":"channel","channel_id":"C1"},{"type":"text","text":" Guidelines"}`) + `]},` +
+		`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[` +
+		sec(`{"type":"text","text":"first"}`) + `,` +
+		sec(`{"type":"user","user_id":"U1","style":{"bold":true}},{"type":"text","text":" and "},{"type":"usergroup","usergroup_id":"S1"}`) +
+		`]}]}]}`
+	r := &thumbRes{fakeRes: R, thumbs: map[string]string{"F1": thumb}}
+	f := canvasFileOf(t, r, "F1")
+	var spans []Span
+	for _, b := range f.CanvasPreview {
+		spans = append(spans, b.Spans...)
+		for _, it := range b.Items {
+			spans = append(spans, it...)
+		}
+	}
+	find := func(k SpanKind, id string) *Span {
+		for i := range spans {
+			if spans[i].Kind == k && spans[i].ID == id {
+				return &spans[i]
+			}
+		}
+		t.Fatalf("no %v %s in the preview %+v", k, id, spans)
+		return nil
+	}
+	if s := find(Channel, "C1"); !strings.Contains(s.Text, "general") {
 		t.Errorf("channel: %+v", s)
 	}
-	if s := got[2].Items[1][0]; s.Text != "@alice" || s.Style != Bold {
+	if s := find(User, "U1"); !strings.Contains(s.Text, "alice") || s.Style&Bold == 0 {
 		t.Errorf("user in a list item: %+v", s)
 	}
-	if s := got[2].Items[1][2]; s.Text != "@design" {
+	if s := find(Usergroup, "S1"); !strings.Contains(s.Text, "design") {
 		t.Errorf("group: %+v", s)
-	}
-	if got[1].Spans[0].Text != "plain" || got[2].Items[0][0].Text != "first" {
-		t.Errorf("text blocks: %+v", got)
-	}
-	if stored[0].Spans[0].Text != "#C1" || stored[2].Items[1][0].Text != "@U1" {
-		t.Errorf("the stored preview changed: %+v", stored)
-	}
-	// no mentions: the same blocks back
-	plain := []Block{{Kind: Paragraph, Spans: []Span{tx("x")}}}
-	if out := namedPreview(R, plain); &out[0] != &plain[0] {
-		t.Error("a preview without mentions was copied")
 	}
 }

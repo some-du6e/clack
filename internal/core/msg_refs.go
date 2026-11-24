@@ -360,9 +360,9 @@ func (r *refNames) CanvasSection(fileID, sectionID string) (json.RawMessage, boo
 	return r.msgNames.CanvasSection(fileID, sectionID)
 }
 
-func (r *refNames) CanvasPreview(fileID string) ([]richtext.Block, bool) {
+func (r *refNames) CanvasPreview(fileID string, updated int64) (json.RawMessage, bool) {
 	r.file(fileID)
-	return r.msgNames.CanvasPreview(fileID)
+	return r.msgNames.CanvasPreview(fileID, updated)
 }
 
 func (r *refNames) ListRecordName(fileID, recordID string) (json.RawMessage, string, bool) {

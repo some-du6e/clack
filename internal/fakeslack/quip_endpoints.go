@@ -263,6 +263,14 @@ func (cs *canvasStore) quipLoad(s *Server, req *QuipRequest) (int, []byte, strin
 	if len(l.ObjectIDs) == 1 {
 		thread = l.ObjectIDs[0]
 	}
+	if len(l.IndexIDs) == 0 && l.UserAction == nil && l.UserActionSequence == nil && len(l.BulkLoads) == 0 {
+		switch {
+		case thread != "" && len(l.Parcels) == 0: // the syncer's loadObject: the thread alone
+			return cs.quipThreadObject(s, req, thread)
+		case len(l.ObjectIDs) == 0 && len(l.Parcels) == 1: // a parcel (HVRg.loadParcel)
+			return cs.quipParcel(s, req, &l.Parcels[0])
+		}
+	}
 	// srhK.reloadThreadBulkLoad's request, and nothing else
 	if thread == "" || len(l.IndexIDs) > 0 || l.UserAction != nil || l.UserActionSequence != nil || len(l.BulkLoads) != 1 ||
 		quip.FieldsString(&l.BulkLoads[0]) != "1,2" || *l.BulkLoads[0].Type != quip.BulkThread || *l.BulkLoads[0].Arg0 != thread {
@@ -278,6 +286,44 @@ func (cs *canvasStore) quipLoad(s *Server, req *QuipRequest) (int, []byte, strin
 	m := cs.quip(s, c)
 	req.Status = http.StatusOK
 	return http.StatusOK, quip.Marshal(m.loadAnswer(c, cs.quipPreserialize)), ""
+}
+
+// quipThreadObject answers load-data for a thread object alone: the
+// thread, with its document id and updated_usec (the canvas's Updated).
+func (cs *canvasStore) quipThreadObject(s *Server, req *QuipRequest, thread string) (int, []byte, string) {
+	c := cs.quipCanvas(thread)
+	req.Status = http.StatusOK
+	if c == nil {
+		return http.StatusOK, quip.Marshal(&quip.LoadWrapper{Response: &quip.LoadResponse{Success: quip.Ptr(false),
+			Failures: []quip.Failure{{Reason: quip.Ptr(quip.FailNotFound)}}}}), ""
+	}
+	th, _ := cs.quip(s, c).objects(c)
+	th.UpdatedUsec = quip.Ptr(c.Updated * 1e6)
+	return http.StatusOK, quip.Marshal(&quip.LoadWrapper{Response: &quip.LoadResponse{Success: quip.Ptr(true),
+		Objects: &quip.Payload{Threads: []quip.Thread{th}}}}), ""
+}
+
+// quipParcel answers load-data for one parcel: a canvas's
+// BLOCK_KIT_THUMBNAIL as threadBlockKitThumbnailImpl asks for it (type,
+// its document id as the key, the thread's updated_usec as the version,
+// the thread id; no hash) and nothing else.
+func (cs *canvasStore) quipParcel(s *Server, req *QuipRequest, p *quip.Parcel) (int, []byte, string) {
+	var c *FakeCanvas
+	if p.ThreadID != nil {
+		c = cs.quipCanvas(*p.ThreadID)
+	}
+	if c == nil || quip.FieldsString(p) != "1,2,3,6" || p.Type == nil || *p.Type != quip.ParcelBlockKitThumbnail ||
+		p.Key == nil || *p.Key != quipDocID(c) || p.Version == nil || *p.Version != strconv.FormatInt(c.Updated*1e6, 10) {
+		req.Status, req.Why = http.StatusBadRequest, "not threadBlockKitThumbnail's parcel (BLOCK_KIT_THUMBNAIL, the document id, updated_usec, the thread)"
+		return http.StatusBadRequest, nil, ""
+	}
+	c.ThumbnailLoads++
+	out := quip.Parcel{Type: p.Type, Key: p.Key, Version: p.Version, ThreadID: p.ThreadID}
+	if c.Thumbnail != "" {
+		out.Data = []byte(c.Thumbnail)
+	}
+	req.Status = http.StatusOK
+	return http.StatusOK, quip.Marshal(&quip.LoadWrapper{Response: &quip.LoadResponse{Success: quip.Ptr(true), Parcels: []quip.Parcel{out}}}), ""
 }
 
 // thread and document are the model's thread and document objects.

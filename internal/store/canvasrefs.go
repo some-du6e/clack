@@ -15,10 +15,11 @@ import (
 type canvasRefs struct {
 	mu      sync.Mutex
 	refs    map[string]richtext.CanvasRef
-	secs    map[string]json.RawMessage  // file id + "_" + section id
-	prev    map[string][]richtext.Block // file id -> a message card's preview (richtext canvasfile.go)
-	seen    map[string]bool             // asked for already
-	pending []string                    // "f"+file id | "s"+file id+"_"+section id | "p"+file id
+	secs    map[string]json.RawMessage // file id + "_" + section id
+	prev    map[string]canvasThumb     // file id -> a message card's preview (richtext canvasfile.go)
+	want    map[string]int64           // file id -> the newest updated time a card asked for
+	seen    map[string]bool            // asked for already
+	pending []string                   // "f"+file id | "s"+file id+"_"+section id | "p"+file id
 }
 
 var canvasRefsOf sync.Map // *Store -> *canvasRefs
@@ -28,7 +29,7 @@ func (s *Store) canvasRefs() *canvasRefs {
 		return v.(*canvasRefs)
 	}
 	v, _ := canvasRefsOf.LoadOrStore(s, &canvasRefs{refs: map[string]richtext.CanvasRef{},
-		secs: map[string]json.RawMessage{}, prev: map[string][]richtext.Block{}, seen: map[string]bool{}})
+		secs: map[string]json.RawMessage{}, prev: map[string]canvasThumb{}, want: map[string]int64{}, seen: map[string]bool{}})
 	if s.released.Load() { // Release ran meanwhile, or before
 		canvasRefsOf.CompareAndDelete(s, v)
 	}
@@ -70,23 +71,62 @@ func (s *Store) CanvasSection(fileID, sectionID string) (json.RawMessage, bool) 
 	return r, ok
 }
 
-// CanvasPreview is richtext.CanvasPreviewer: a canvas's preview blocks.
-func (s *Store) CanvasPreview(fileID string) ([]richtext.Block, bool) {
-	c := s.canvasRefs()
-	c.mu.Lock()
-	b, ok := c.prev[fileID]
-	c.mu.Unlock()
-	if !ok {
-		s.noteCanvas("p" + fileID)
-	}
-	return b, ok
+// canvasThumb is a canvas's Block Kit thumbnail (nil: it has no preview)
+// as of the file's updated time when it was read.
+type canvasThumb struct {
+	thumb   json.RawMessage
+	updated int64
 }
 
-// PutCanvasPreview records a canvas's preview blocks (nil: none).
-func (s *Store) PutCanvasPreview(fileID string, b []richtext.Block) {
+// CanvasPreview is richtext.CanvasPreviewer: a canvas's Block Kit
+// thumbnail, if one read since the file's updated time is held (ok false
+// otherwise; nil thumb: the canvas has none). It asks for nothing: a card
+// on screen asks with WantCanvasPreview.
+func (s *Store) CanvasPreview(fileID string, updated int64) (json.RawMessage, bool) {
 	c := s.canvasRefs()
 	c.mu.Lock()
-	c.prev[fileID] = b
+	t, ok := c.prev[fileID]
+	c.mu.Unlock()
+	if !ok || t.updated < updated {
+		return nil, false
+	}
+	return t.thumb, true
+}
+
+// WantCanvasPreview queues a canvas's thumbnail for core's resolve loop:
+// a message card drew without one read since the file's updated time. It
+// asks once per updated time (until ForgetCanvasPreview).
+func (s *Store) WantCanvasPreview(fileID string, updated int64) {
+	c := s.canvasRefs()
+	c.mu.Lock()
+	if t, ok := c.prev[fileID]; ok && t.updated >= updated {
+		c.mu.Unlock()
+		return
+	}
+	if c.want[fileID] < updated {
+		c.want[fileID] = updated
+		delete(c.seen, "p"+fileID) // a newer file than the last asked for
+	}
+	c.mu.Unlock()
+	s.noteCanvas("p" + fileID)
+}
+
+// PutCanvasPreview records a canvas's Block Kit thumbnail (nil: none) as
+// of the file's updated time, and as current for every time a card asked
+// with (files.info may answer an older one than a message carries).
+func (s *Store) PutCanvasPreview(fileID string, thumb json.RawMessage, updated int64) {
+	c := s.canvasRefs()
+	c.mu.Lock()
+	c.prev[fileID] = canvasThumb{thumb: thumb, updated: max(updated, c.want[fileID])}
+	c.mu.Unlock()
+}
+
+// ForgetCanvasPreview lets a canvas's card ask for its thumbnail again
+// (after a failed read's backoff).
+func (s *Store) ForgetCanvasPreview(fileID string) {
+	c := s.canvasRefs()
+	c.mu.Lock()
+	delete(c.seen, "p"+fileID)
 	c.mu.Unlock()
 }
 

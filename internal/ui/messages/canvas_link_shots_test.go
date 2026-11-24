@@ -24,8 +24,6 @@ import (
 
 	"gioui.org/op"
 
-	"github.com/some-du6e/clack/internal/canvas"
-	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
@@ -163,21 +161,24 @@ func TestCanvasFileShots(t *testing.T) {
 		s := app.S
 		s.SetEmojiList(map[string]string{"faq-q": fs.URL + "img/64x64/faqq.png"})
 		const file = "F0CANVFAQ09"
-		sp := func(t string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: t}} }
-		d := canvas.Doc{Blocks: []canvas.Block{
-			{ID: "temp:C:Q1", Kind: canvas.Heading1, Spans: sp("FAQ")},
-			{ID: "temp:C:Q2", Kind: canvas.Heading2, Spans: sp("Getting started")},
-			{ID: "temp:C:Q3", Kind: canvas.Paragraph, Spans: []richtext.Span{{Kind: richtext.Text, Text: "Read the "},
-				{Kind: richtext.Link, Text: "setup guide", URL: "https://example.invalid/setup"}, {Kind: richtext.Text, Text: " and run "},
-				{Kind: richtext.Text, Text: "make setup", Style: richtext.Code}, {Kind: richtext.Text, Text: " once."}}},
-			{ID: "temp:C:Q4", Kind: canvas.Heading2, Spans: sp("Asking for help")},
-			{ID: "temp:C:Q5", Kind: canvas.Paragraph, Spans: sp("Say what you tried and what you expected to happen.")},
-			{ID: "temp:C:Q6", Kind: canvas.Bullet, Spans: sp("Include the error text")},
-			{ID: "temp:C:Q7", Kind: canvas.Bullet, Spans: sp("Say which version you run")},
-			{ID: "temp:C:Q8", Kind: canvas.Heading2, Spans: sp("Common problems")},
-			{ID: "temp:C:Q9", Kind: canvas.Paragraph, Spans: sp("If the build fails, clear the cache and try again.")},
-		}}
-		s.PutCanvasPreview(file, core.CanvasPreviewBlocks(d))
+		// the canvas's Block Kit thumbnail, as Quip's BLOCK_KIT_THUMBNAIL parcel
+		// has it (the title's header first; the card drops it)
+		hdr := func(t string) string {
+			return `{"type":"header","text":{"type":"plain_text","text":"` + t + `","emoji":true}}`
+		}
+		para := func(els string) string {
+			return `{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[` + els + `]}]}`
+		}
+		txt := func(t string) string { return `{"type":"text","text":"` + t + `"}` }
+		thumb := `{"blocks":[` + hdr("FAQ") + `,` + hdr("Getting started") + `,` +
+			para(txt("Read the ")+`,{"type":"link","url":"https://example.invalid/setup","text":"setup guide"},`+txt(" and run ")+
+				`,{"type":"text","text":"make setup","style":{"code":true}},`+txt(" once.")) + `,` +
+			hdr("Asking for help") + `,` + para(txt("Say what you tried and what you expected to happen.")) + `,` +
+			`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[` +
+			`{"type":"rich_text_section","elements":[` + txt("Include the error text") + `]},` +
+			`{"type":"rich_text_section","elements":[` + txt("Say which version you run") + `]}]}]},` +
+			hdr("Common problems") + `,` + para(txt("If the build fails, clear the cache and try again.")) + `]}`
+		s.PutCanvasPreview(file, json.RawMessage(thumb), 0)
 		day := time.Now()
 		ts := fmt.Sprintf("%d.350659", time.Date(day.Year(), day.Month(), day.Day(), 10, 5, 0, 0, time.Local).Unix())
 		sec := strings.Split(ts, ".")[0]
