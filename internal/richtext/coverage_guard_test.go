@@ -65,7 +65,7 @@ var pendingParts = map[string][]string{
 	"part 2d (rich text's inline types)": {"_canvas_mention", "_theme_install_button", "attachment_mention", "canvas_message_unfurl",
 		"canvas_user_mention", "citation", "folder_mention", "salesforce_data_field", "skill", "tag", "unknown", "variable",
 		"work_object_mention", "workflowtoken"},
-	"part 2e (interactive elements)": {"feedback_buttons", "file_input", "password", "split_button"},
+	"part 2e (interactive elements)": {"file_input", "split_button"},
 	"part 2f (the remaining blocks)": {"attachment_reference", "auth_provider", "canvas_mermaid", "canvas_table", "channel_section",
 		"channel_set", "layout", "mcp_app", "message", "page", "prototype", "related_automation_decorator", "salesforce_record_card",
 		"search_top_results", "share_skill", "share_workflow"},
@@ -179,6 +179,15 @@ func drawn(t *testing.T, typ string) bool {
 	t.Helper()
 	c := &builder{r: guardRes}
 	switch {
+	case typ == "feedback_buttons":
+		// only in a context_actions block (Slack's schema), whose Agent
+		// block the message's element host draws (blockkit agent.go)
+		var b bk
+		if err := json.Unmarshal([]byte(`{"type":"context_actions","elements":[`+guardSample(typ)+`]}`), &b); err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+		out := c.block(nil, &b)
+		return len(out) == 1 && out[0].Kind == Agent && !slices.Contains(c.undrawn, typ)
 	case elementTypes[typ]:
 		var e bk
 		if err := json.Unmarshal([]byte(guardSample(typ)), &e); err != nil {
