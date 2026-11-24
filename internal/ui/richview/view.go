@@ -141,6 +141,9 @@ type View struct {
 	// remHot is the attachment remove button under the pointer (its
 	// index in removes, +1), for its "Remove preview" tooltip
 	remHot int
+	// spinHot is the pending upload spinner under the pointer (its index
+	// in pendSpins, +1), for its "Uploading… n%" tooltip
+	spinHot int
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -597,6 +600,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.drawFileBars(gtx, st, false) // file_actions.go
 	v.drawHoverLayers(gtx, st)
 	v.drawRemoves(gtx, st)
+	v.pendSpinTip(gtx, st) // pending.go
 	if v.opts.Dim {
 		opac.Pop()
 	}
@@ -896,9 +900,16 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			v.drawBox(ops, b, css)
 		}
 	}
-	if static {
+	if hp == 0 {
 		for i := range v.d.overlayIcons {
 			o := &v.d.overlayIcons[i]
+			if o.comp != comp || !v.rectInClip(o.r) {
+				continue
+			}
+			if o.art {
+				paintArtAt(ops, o.name, o.r, o.alpha)
+				continue
+			}
 			paintIconAt(ops, o.name, o.r, o.col)
 		}
 	}
@@ -1713,6 +1724,10 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 		v.remHot, v.copyTipAt = b, gtx.Now
 		v.copyGen = theme.TipGen()
 	}
+	if b := v.pendSpinAt(p) + 1; b != v.spinHot {
+		v.spinHot, v.copyTipAt = b, gtx.Now
+		v.copyGen = theme.TipGen()
+	}
 	if f := v.emojiAt(p); f != v.tipFrag {
 		v.tipFrag, v.tipAt = f, gtx.Now
 		v.tipGen = theme.TipGen()
@@ -1727,7 +1742,7 @@ func (v *View) left() {
 	v.vizHot, v.vizIdx = 0, -1
 	// the buttons under it are left too: a return waits their tooltip's
 	// delay again (mouseleave)
-	v.copyHot, v.secHot, v.expHot, v.barHot, v.remHot = 0, 0, 0, 0, 0
+	v.copyHot, v.secHot, v.expHot, v.barHot, v.remHot, v.spinHot = 0, 0, 0, 0, 0, 0
 	if !v.dragging {
 		v.hover = -1
 	}
@@ -2107,6 +2122,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tRemove:
 		if rm, ok := h.(AttachmentRemover); ok && tg.id != "" {
 			rm.RemoveAttachment(tg.id)
+		}
+	case tRemoveFile:
+		if rm, ok := h.(FileRemover); ok && tg.file != nil {
+			rm.RemoveFile(tg.file, tg.id == "delete")
 		}
 	case tBot:
 		if bo, ok := h.(BotOpener); ok && tg.id != "" {

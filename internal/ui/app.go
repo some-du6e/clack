@@ -99,6 +99,11 @@ type Options struct {
 	// update helper starts the new version; ErrUpdateManual: the system
 	// installer opened instead.
 	InstallUpdate func(u UpdateInfo) error
+	// InstallUpdateOnQuit installs the downloaded u as Clack quits, with
+	// no restart (App.InstallUpdateOnQuit, after Run): Slack desktop's
+	// downloaded update applies on quit, so a Clack that's quit and
+	// opened again runs it instead of downloading it once more.
+	InstallUpdateOnQuit func(u UpdateInfo) error
 	// LaunchOnLogin and SetLaunchOnLogin are Preferences > Advanced >
 	// "Launch app on login" (Slack's DesktopPref launchOnStartup; cmd/clack:
 	// desktop's autostart entry or Run key). nil: the row is greyed.

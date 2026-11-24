@@ -827,9 +827,15 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 			return l.compFile(b, x, y, w)
 		}
 		if b.File.Pending { // c-pending_files__generic_file--pending: the pillow at .5
-			nb, nf := len(l.d.boxes), len(l.d.frags)
+			nb, nf, no := len(l.d.boxes), len(l.d.frags), len(l.d.overlayIcons)
 			h := l.file(b.File, x, y, w)
 			l.fade(nb, nf)
+			for i := no; i < len(l.d.overlayIcons); i++ {
+				l.d.overlayIcons[i].alpha = 0.5 // the icon is the pillow's too
+			}
+			if genericPillow(b.File) {
+				l.pendingSpinner(b.File, x+min(w, l.dp(426)), y) // PendingFilesSpinner, not faded
+			}
 			return h
 		}
 		return l.file(b.File, x, y, w)

@@ -35,6 +35,36 @@ var artRef = []struct {
 }{
 	{"slack-logo-mark", "slack_logo_mark-8890ba0.svg", 20},
 	{"focus-telescope", "focus-d8ca34d.svg", 64},
+	// the file-type svgicons (file_icons.go), at a pillow's 36px
+	{"fileicon-archive", "archive-4f1161f.svg", 36},
+	{"fileicon-binary", "binary-4f9150d.svg", 36},
+	{"fileicon-code", "code-0bc11dc.svg", 36},
+	{"fileicon-css", "css-783bfd2.svg", 36},
+	{"fileicon-email", "email-5606c9a.svg", 36},
+	{"fileicon-file-audio", "file-audio-d14bae1.svg", 36},
+	{"fileicon-file-excel", "file-excel-6b1196f.svg", 36},
+	{"fileicon-file-google-document", "file-google-document-dcaf469.svg", 36},
+	{"fileicon-file-google-presentation", "file-google-presentation-2af45fd.svg", 36},
+	{"fileicon-file-google-spreadsheet", "file-google-spreadsheet-55f60ac.svg", 36},
+	{"fileicon-file-illustrator", "file-illustrator-6b9428f.svg", 36},
+	{"fileicon-file-image", "file-image-ba11488.svg", 36},
+	{"fileicon-file-indesign", "file-indesign-efa9016.svg", 36},
+	{"fileicon-file-lucidchart", "file-lucidchart-cda1932.svg", 36},
+	{"fileicon-file-lucidpress", "file-lucidpress-e83f9f9.svg", 36},
+	{"fileicon-file-lucidspark", "file-lucidspark-1a50065.svg", 36},
+	{"fileicon-file-pdf", "file-pdf-0922d15.svg", 36},
+	{"fileicon-file-photoshop", "file-photoshop-1ef50cb.svg", 36},
+	{"fileicon-file-powerpoint", "file-powerpoint-ee70589.svg", 36},
+	{"fileicon-file-sketch", "file-sketch-6d4d19b.svg", 36},
+	{"fileicon-file-snippet", "file-snippet-0a4c72a.svg", 36},
+	{"fileicon-file-text-post", "file-text-post-caa3b6f.svg", 36},
+	{"fileicon-file-text-quip", "file-text-quip-fdaf2cb.svg", 36},
+	{"fileicon-file-video", "file-video-3dda18b.svg", 36},
+	{"fileicon-file-word", "file-word-68a194e.svg", 36},
+	{"fileicon-file-zoho-show", "file-zoho-show-e5b4196.svg", 36},
+	{"fileicon-generic", "generic-b556cfe.svg", 36},
+	{"fileicon-html", "html-dcbdfbf.svg", 36},
+	{"fileicon-php", "php-f34c36d.svg", 36},
 }
 
 // The tolerances TestArtMatchesSlack holds each colour's shapes to: the
@@ -75,7 +105,7 @@ func TestArtMatchesSlack(t *testing.T) {
 		}
 		fills := map[uint32]bool{}
 		for _, p := range def.parts {
-			fills[p.fill] = true
+			fills[p.fill&0xffffff] = true
 		}
 		for _, l := range layers {
 			if !fills[l.fill] {
@@ -233,8 +263,11 @@ type svgLayer struct {
 }
 
 var (
-	svgShapeRe = regexp.MustCompile(`<(path|rect|circle)\b[^>]*>`)
+	svgShapeRe = regexp.MustCompile(`<(path|rect|circle|polygon)\b[^>]*>`)
 	svgViewRe  = regexp.MustCompile(`viewBox="0 0 ([0-9.]+) [0-9.]+"`)
+	svgSizeRe  = regexp.MustCompile(`<svg\b[^>]*\bwidth="([0-9.]+)"`)
+	svgGFillRe = regexp.MustCompile(`(?s)<g\b[^>]*\bfill="([^"]+)"[^>]*>(.*?)</g>`)
+	svgShortRe = regexp.MustCompile(`fill="#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])"`)
 	svgRotRe   = regexp.MustCompile(`rotate\(([-0-9.]+)[ ,]+([-0-9.]+)[ ,]+([-0-9.]+)\)`)
 )
 
@@ -242,7 +275,18 @@ var (
 // <circle> elements by fill colour, in order of first use, and its view.
 func svgLayers(t *testing.T, svg string) ([]svgLayer, float32) {
 	t.Helper()
+	// the file-type icons' forms: named and #rgb fills, a <g>'s fill on
+	// its shapes, no viewBox (its width then)
+	svg = strings.NewReplacer(`fill="white"`, `fill="#ffffff"`, `fill="black"`, `fill="#000000"`).Replace(svg)
+	svg = svgShortRe.ReplaceAllString(svg, `fill="#$1$1$2$2$3$3"`)
+	svg = svgGFillRe.ReplaceAllStringFunc(svg, func(g string) string {
+		m := svgGFillRe.FindStringSubmatch(g)
+		return regexp.MustCompile(`<(path|rect|circle|polygon)\b`).ReplaceAllString(m[2], `<$1 fill="`+m[1]+`"`)
+	})
 	m := svgViewRe.FindStringSubmatch(svg)
+	if m == nil {
+		m = svgSizeRe.FindStringSubmatch(svg)
+	}
 	if m == nil {
 		t.Fatal("no viewBox")
 	}
@@ -271,6 +315,18 @@ func svgLayers(t *testing.T, svg string) ([]svgLayer, float32) {
 		switch tag[1] {
 		case "path":
 			sh.d = a["d"]
+		case "polygon":
+			ps := strings.FieldsFunc(a["points"], func(r rune) bool { return r == ' ' || r == ',' })
+			var b strings.Builder
+			for i := 0; i+1 < len(ps); i += 2 {
+				if i == 0 {
+					b.WriteString("M")
+				} else {
+					b.WriteString(" L")
+				}
+				b.WriteString(ps[i] + " " + ps[i+1])
+			}
+			sh.d = b.String() + " Z"
 		case "circle":
 			cx, cy, r := num(a, "cx"), num(a, "cy"), num(a, "r")
 			sh.d = fmt.Sprintf("M%g %g A%g %g 0 1 1 %g %g A%g %g 0 1 1 %g %gZ", cx-r, cy, r, r, cx+r, cy, r, r, cx-r, cy)

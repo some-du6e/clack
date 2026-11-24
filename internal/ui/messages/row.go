@@ -566,7 +566,49 @@ func (r *row) rvOpts() richview.Options {
 	} else if r.m.Stopped { // insertMessageLabelIntoBlocks: "(stopped)" only without "(edited)"
 		o.Stopped, o.StoppedBy = true, r.stoppedBy()
 	}
+	if own {
+		o.FileRemoves = richview.FileRemovesOf(fileRemoves(&r.m, r.rc.selfID))
+	}
 	return o
+}
+
+// fileRemoves is the gallery's removableFileIds for the viewer's own
+// message m (QD+H): every file, taken out of the message, when all of
+// them were uploaded with it (canRemoveFileFromMessage: x_files holds
+// each); else the files shared into it that the viewer owns, deleted
+// (deletableFileIds, DeleteFileDialog). Canvases, lists and surfaces
+// shared in (fileIsSharedNotUploaded) get none. nil when no file has one.
+func fileRemoves(m *core.Message, self string) map[string]bool {
+	var files []*richtext.File
+	for i := range m.Doc.Blocks {
+		if b := &m.Doc.Blocks[i]; b.Kind == richtext.FileBlock && b.File != nil && b.File.ID != "" {
+			files = append(files, b.File)
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	x := map[string]bool{}
+	for _, id := range m.XFiles {
+		x[id] = true
+	}
+	all := len(m.XFiles) > 0
+	for _, f := range files {
+		all = all && x[f.ID]
+	}
+	out := map[string]bool{}
+	for _, f := range files {
+		switch {
+		case all:
+			out[f.ID] = false
+		case !x[f.ID] && f.User == self && !core.IsCanvasFile(f.Type, f.Mode, f.PrettyType) && !core.IsListFile(f.Type, f.Mode, f.PrettyType):
+			out[f.ID] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // stoppedBy is the name in StoppedLabel's "(stopped by {name})" (J825):

@@ -68,6 +68,13 @@ type AttachmentRemover interface {
 	RemoveAttachment(id string)
 }
 
+// FileRemover is optional on a Handler: a file card's x (FileRemoveButton,
+// Options.FileRemoves); deletion says it deletes the file rather than
+// takes it out of the message.
+type FileRemover interface {
+	RemoveFile(f *richtext.File, deletion bool)
+}
+
 // BotOpener is a Handler that opens a bot's profile card: "Added by
 // <app>" under a Block Kit attachment (renderAttributionMaybe wraps the
 // name in ProfileCardTrigger with the bot as serviceId). anchor is the
@@ -500,6 +507,12 @@ type Options struct {
 	// Own: the viewer sent the message (and it isn't a pinned_item), so
 	// its link previews get Slack's remove button (canDelete, 4BNQ).
 	Own bool
+	// FileRemoves are the message's files with FileRemoveButton's x (the
+	// gallery's removableFileIds), as FileRemovesOf writes them (a string,
+	// so Options stays comparable): each id taken out of the message
+	// (chat.removeFile) or, for a file shared into it, deleted
+	// (DeleteFileDialog). FileRemover hears the click.
+	FileRemoves string
 	// HoverCard lays the doc's attachment out as Slack's link preview
 	// hover card (MessageAttachmentDefaultV3HoverCard, unfurl_hover.go).
 	HoverCard bool

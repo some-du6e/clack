@@ -1251,53 +1251,20 @@ func (l *lay) waveform(samples []int, x, y, w, h int) {
 	}
 }
 
+// fileIcon is FileEntityThumbnailIcon's icon for f, s px at (x, y): a
+// canvas's QuipIcon tile, else the file's svgicon (FileIconArt: Slack's
+// generic blue page for an .exe, its archive for a zip, …), drawn over
+// the card as art.
 func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
-	p := &l.st.Palette
-	bg, fg, see := p.FileIconBg, p.FileIconText, p.raw.FileIconBg
-	label := strings.ToUpper(f.Type)
-	if tile, glyph, ok := svgFileIcon(f.Type); ok {
-		l.svgIconTile(x, y, s, tile, glyph)
-		return
-	}
-	switch strings.ToLower(f.Type) {
-	case "quip", "canvas": // Slack's canvas tile: a white sheet on blue
+	if richtext.IsCanvasFile(f) || strings.EqualFold(f.Type, "canvas") { // Slack's canvas tile: a white sheet on blue
 		r := image.Rect(x, y, x+s, y+s)
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: rgb(0x1d, 0x9b, 0xd1), target: -1})
 		sw, sh := s*2/5, s/2
 		sr := image.Rect(x+(s-sw)/2, y+(s-sh)/2, x+(s+sw)/2, y+(s+sh)/2)
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: sr, radius: l.dp(2), fill: rgb(255, 255, 255), target: -1})
 		return
-	case "pdf":
-		bg, fg, see = p.FileIconPDF, rgb(255, 255, 255), color.NRGBA{}
-	case "zip", "gzip", "tar", "rar", "7z":
-		bg, fg, see = p.FileIconZip, rgb(255, 255, 255), color.NRGBA{}
 	}
-	if len(label) > 4 {
-		label = label[:4]
-	}
-	if label == "" {
-		label = "FILE"
-	}
-	r := image.Rect(x, y, x+s, y+s)
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, see: see, target: -1})
-	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(10), lineH: l.dp(12), col: fg, emoji: l.dp(12), maxLines: 1, noSelect: true}
-	k := l.faceFor(fs.face, fs.size, 0)
-	tw := int(l.measure(label, k) + 0.5)
-	l.plainFlow(label, x+(s-tw)/2, y+(s-fs.lineH)/2, s, &fs, -1)
-}
-
-// svgFileIcon is FileEntityThumbnailIcon's svgicon for a file of filetype
-// ft, where Clack has Slack's glyph (getSVGIconType: the filetype when
-// Slack has an icon for it): binary (binary-4f9150d.svg, a #616061 tile)
-// and text (file-snippet-0a4c72a.svg, #1D9BD1).
-func svgFileIcon(ft string) (tile color.NRGBA, glyph string, ok bool) {
-	switch strings.ToLower(ft) {
-	case "binary":
-		return rgb(0x61, 0x60, 0x61), "file-binary", true
-	case "text":
-		return rgb(0x1d, 0x9b, 0xd1), "file-text", true
-	}
-	return color.NRGBA{}, "", false
+	l.d.overlayIcons = append(l.d.overlayIcons, overlayIcon{r: image.Rect(x, y, x+s, y+s), name: FileIconArt(f), art: true})
 }
 
 // svgIconTile is a file svgicon at (x, y), s px: its tile (radius
@@ -1381,7 +1348,8 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	meta := pillowMeta(f)
 	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
 	l.plainFlow(meta, tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
-	l.pillowBar(f, image.Rect(x, y, x+cw, y+h)) // FileActions (file_actions.go)
+	l.pillowBar(f, image.Rect(x, y, x+cw, y+h))            // FileActions (file_actions.go)
+	l.fileRemoveButton(f, tg, image.Rect(x, y, x+cw, y+h)) // FileRemoveButton (unfurl.go)
 	return h
 }
 

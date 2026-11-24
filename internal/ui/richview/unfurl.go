@@ -4,6 +4,7 @@ import (
 	"image"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -362,6 +363,82 @@ func (l *lay) removeButton(a *richtext.Attachment, cardT int16, r image.Rectangl
 	if n := len(l.d.cards); n > 0 && l.d.cards[n-1].card == cardT {
 		l.d.cards[n-1].del = t
 	}
+}
+
+// fileRemoveButton is FileRemoveButton's PreviewRemoveButton on a file
+// card r (cardT its target): the attachment remove button's look (20px,
+// top -9px right -9px, while the card is hovered), its tooltip getRemoveLabel's
+// "Remove {fileName} from message" or "Delete {fileName}".
+func (l *lay) fileRemoveButton(f *richtext.File, cardT int16, r image.Rectangle) {
+	del, ok := fileRemoval(l.opts.FileRemoves, f.ID)
+	if !ok || f.ID == "" || f.Pending {
+		return
+	}
+	s, off := l.dp(20), l.dp(9)
+	br := image.Rect(r.Max.X+off-s, r.Min.Y-off, r.Max.X+off, r.Min.Y-off+s)
+	id := ""
+	if del {
+		id = "delete"
+	}
+	t := l.d.addTarget(target{kind: tRemoveFile, file: f, id: id})
+	l.d.hits = append(l.d.hits, hit{r: br, t: t})
+	l.d.removes = append(l.d.removes, removeBtn{r: br, card: cardT, del: t, cardTo: t - 1, tip: fileRemoveLabel(f, del)})
+}
+
+// FileRemovesOf is Options.FileRemoves for removable file ids (true:
+// the x deletes the file): "id=r" or "id=d" for each, sorted, ";"
+// between them.
+func FileRemovesOf(m map[string]bool) string {
+	ids := make([]string, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var b strings.Builder
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		b.WriteString(id)
+		if m[id] {
+			b.WriteString("=d")
+		} else {
+			b.WriteString("=r")
+		}
+	}
+	return b.String()
+}
+
+// fileRemoval reads FileRemovesOf's s for file id: whether it has an x,
+// and whether the x deletes it.
+func fileRemoval(s, id string) (del, ok bool) {
+	for s != "" {
+		var e string
+		e, s, _ = strings.Cut(s, ";")
+		k, v, _ := strings.Cut(e, "=")
+		if k == id {
+			return v == "d", true
+		}
+	}
+	return false, false
+}
+
+// fileRemoveLabel is getRemoveLabel for a file: the title, else the
+// name, in "Delete {fileName}" or "Remove {fileName} from message".
+func fileRemoveLabel(f *richtext.File, del bool) string {
+	name := f.Title
+	if name == "" {
+		name = f.Name
+	}
+	switch {
+	case del && name != "":
+		return i18n.T("files", "Delete {fileName}", "fileName", name)
+	case del:
+		return i18n.T("files", "Delete file")
+	case name != "":
+		return i18n.T("files", "Remove {fileName} from message", "fileName", name)
+	}
+	return i18n.T("files", "Remove from message")
 }
 
 // ---------- shared rows ----------
@@ -744,7 +821,7 @@ func (l *lay) fixedMedia(a *richtext.Attachment, k attKind, x, y, w int, cardT i
 	}
 	// everything from here is AttachmentMedia's (the right box's hairline
 	// above isn't): compBlock makes it its own component
-	defer l.noteMedia(r, radii, len(l.d.frags), len(l.d.boxes), len(l.d.imgs))
+	defer l.noteMedia(r, radii, len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.overlayIcons))
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, fill: rgb(255, 255, 255), target: -1, perCorner: true, corners: radii})
 	s := r.Dy() * 60 / 200
 	c := r.Min.Add(r.Max).Div(2)
@@ -961,7 +1038,11 @@ func (v *View) removeTip(gtx layout.Context, st *Style, i int) {
 	if v.remHot != i+1 {
 		return
 	}
-	v.btnTip(gtx, st, v.d.removes[i].r, i18n.T("inline_attachments", "Remove preview"), false, removeTipDelay)
+	tip := v.d.removes[i].tip
+	if tip == "" {
+		tip = i18n.T("inline_attachments", "Remove preview")
+	}
+	v.btnTip(gtx, st, v.d.removes[i].r, tip, false, removeTipDelay)
 }
 
 // removeTipDelay is BaseTooltip's default delay.

@@ -134,3 +134,35 @@ func (u *updates) install(info ui.UpdateInfo) error {
 	_, err = desktop.StartHelper(plan)
 	return err
 }
+
+// installOnQuit installs the downloaded info as Clack quits, without
+// starting it again: Slack desktop's update is applied when the app quits
+// (Squirrel installs a downloaded update on quit; its quitAndInstall is
+// the restart button's), so the next launch runs it. Only installs that
+// swap in silently: never the system installer or a password prompt
+// (a .deb or .rpm waits for Install and restart).
+func (u *updates) installOnQuit(info ui.UpdateInfo) error {
+	switch u.inst.Kind {
+	case desktop.KindMacApp, desktop.KindWinInstaller, desktop.KindWinPortable, desktop.KindAppImage:
+	default:
+		return nil
+	}
+	u.mu.Lock()
+	pkg, ok := u.pkg[info.Tag]
+	u.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	plan, err := desktop.Prepare(ctx, u.inst, pkg)
+	if errors.Is(err, desktop.ErrManual) {
+		return nil // it opened for the user to finish, as Install and restart's does
+	}
+	if err != nil {
+		return err
+	}
+	plan.Relaunch = nil // quitting: the user starts Clack again
+	_, err = desktop.StartHelper(plan)
+	return err
+}
