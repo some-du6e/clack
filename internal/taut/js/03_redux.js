@@ -548,6 +548,81 @@ T.views = (pairs) => {
   })
 }
 
+// ---- channelHistory as the patches leave it (Clack's message lists) ----
+
+/**
+ * Slack's message lists draw channelHistory[key] (a channel's slices, a
+ * thread's under `${ch}-${threadTs}`), and a patch may filter it: Slick's
+ * HideResolved takes resolved tickets out of help channels. Clack's lists
+ * draw core's messages, so Go names the keys they show (watchHistory) and
+ * is told, whenever the store changes (each change a list's useSelector
+ * re-reads), which of each key's timestamps the patched history doesn't
+ * list. Only what the patches took out goes: a message core has that the
+ * mirror's history doesn't list yet is never hidden.
+ */
+let historyWatch = new Map() // key → the hidden timestamps Go was last told, joined
+let historyRefs = new Map() // key → [raw, patched] channelHistory[key] as last read: unchanged, nothing to read again
+let historyCall = 0 // the last watchHistory call's number: Go waits on a key until a tell as of a call it made
+function historyHidden(raw, view) {
+  if (!raw || !Array.isArray(raw.slices)) return []
+  if (view === raw) return []
+  const listed = (h) => (Array.isArray(h?.slices) ? h.slices : []).flatMap((s) => (Array.isArray(s?.timestamps) ? s.timestamps : []))
+  const kept = new Set(listed(view))
+  return listed(raw).filter((ts) => typeof ts === 'string' && !kept.has(ts))
+}
+const tellGoHistory = batcher(() => {
+  if (!historyWatch.size) return
+  // patched as Go is told it is (statePatched: a slice layer, or a patch of the whole state)
+  if (!sliceLayers.has('channelHistory') && !(statePatches.size > (sliceLayers.size ? 1 : 0))) {
+    // nothing patches it any more: stop (Go posts the keys again when a patch comes)
+    historyWatch = new Map()
+    historyRefs = new Map()
+    return
+  }
+  const changed = {}
+  let any = false
+  let rawState, viewState
+  try {
+    rawState = getRawState()
+    viewState = getState()
+  } catch (err) {
+    error('reading a patched channelHistory threw', err) // as nothing hidden
+  }
+  for (const [key, told] of historyWatch) {
+    const raw = rawState?.channelHistory?.[key]
+    const view = viewState?.channelHistory?.[key]
+    const seen = historyRefs.get(key)
+    if (told !== undefined && seen && seen[0] === raw && seen[1] === view) continue // the same history, patched the same
+    historyRefs.set(key, [raw, view])
+    let hidden
+    try {
+      hidden = historyHidden(raw, view)
+    } catch (err) {
+      error('reading a patched channelHistory threw', err)
+      hidden = []
+    }
+    const now = hidden.join(',')
+    if (now === told) continue
+    historyWatch.set(key, now)
+    changed[key] = hidden
+    any = true
+  }
+  if (any) goOr(null, 'historyHidden', changed, historyCall)
+})
+subscribe(tellGoHistory)
+/**
+ * Go → JS: the channelHistory keys Clack's lists show now. Every one is
+ * told at once, those watched before too: Go starts a key over whenever it
+ * posts it again (a call that failed, a key let go and asked for again).
+ */
+T.watchHistory = (keys, call) => {
+  historyCall = typeof call === 'number' ? call : historyCall
+  historyWatch = new Map()
+  historyRefs = new Map()
+  for (const k of Array.isArray(keys) ? keys : []) if (typeof k === 'string') historyWatch.set(k, undefined)
+  tellGoHistory()
+}
+
 // ---- thunks ----
 
 const thunkWraps = new Set()

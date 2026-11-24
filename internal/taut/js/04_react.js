@@ -225,7 +225,7 @@ const KNOWN_COMPONENTS = ('MessageBackground;MessageWrapper;MessageListItem;Sear
   'HuddleInviteWindowWithPreviewContent;HuddleMiniPanel;HuddleMvaWindowTitle;HuddleRecordingIndicator;LocalTimeRow;MemberProfileBaseEntity;' +
   'MemberSlug;Menu;Message;MessageActionsMenu;MessageAttachmentYouTube;MessageFile;MessageFiles;MessageKitAttachments;MessageText;' +
   'MultiFileUploadItem;PeopleGrid;Presence;ProfileHoverCard;ProgressiveDisclosureSuccessCoachmarkWrapper;ReplyBarAvatar;SearchAutocomplete;' +
-  'SearchInputBox;SendButton;TextyAutocomplete;ThreadReplies;ThreadReplyGeneric;MessageAvatar;MessageKitGutter;' +
+  'SearchInputBox;SendButton;TextyAutocomplete;ThreadReplies;ThreadReplyGeneric;MessageAvatar;MessageKitGutter;ViewHeaderSearch;' +
   // Slick's api.menu.addMessageActions (since #473) and BetterMessageMenu;
   // the message actions submenus, each with a MAMenu of its own
   'MAMenu;OrganizeMessageActionsSubmenu;ConnectToAppsMessageActionsSubmenu').split(';')

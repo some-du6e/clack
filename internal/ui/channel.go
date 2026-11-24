@@ -166,6 +166,24 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	hdrBtns, hudBtn, narrow := a.headerFit(gtx, sz.X, conv, hdrBtns, !appDM && a.huddles().SupportsHuddles(ch))
 	for _, k := range hdrBtns {
 		k := k
+		if k == "search" {
+			// ViewHeaderSearch, a boundary a plugin may widen (HideResolved's
+			// toggle before it): measured, then right-aligned
+			call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(max(right-x, 0), btn)} // the room left, as the other boundaries
+				acts := clsHdrActions.Enter(gtx, 0, 0)
+				defer acts.Leave()
+				return slackc.Component(gtx, "ViewHeaderSearch", hdrSearch{a: a, ch: ch, conv: conv, btn: btn}, hdrSearch.props, hdrSearch.layout)
+			})
+			right -= d.Size.X
+			place(gtx, call, image.Pt(right, y+(btn-d.Size.Y)/2))
+			if hdrSearchTap != nil {
+				o := image.Pt(right, y+(btn-d.Size.Y)/2)
+				hdrSearchTap(ch, image.Rectangle{Min: o, Max: o.Add(d.Size)}, hdrSearchDrawn)
+			}
+			right -= gtx.Dp(6)
+			continue
+		}
 		right -= btn
 		if k == "kebab" {
 			kebabX = right
