@@ -6,7 +6,6 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/icons"
-	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // A file row's 36px tile is FileThumbnail's for a file with no thumb to
@@ -15,8 +14,9 @@ import (
 // file icon vs our EXE tile") and Karim's information.txt (filetype
 // "binary", 2026-11-18) the binary tile; a canvas is QuipIcon's
 // canvas-content-filled on lagoon, a list BaseListIcon's lists-filled on
-// honeycomb, each with its dark theme shades; a playable video and an
-// audio file are MediaFileThumbnail's.
+// honeycomb, a folder its folder tile, each with its dark theme shades; a
+// playable video and a playable audio file are MediaFileThumbnail's, any
+// other audio file IconThumbnail's.
 func TestFileTileSvgIcons(t *testing.T) {
 	for _, c := range []struct {
 		f   core.File
@@ -33,6 +33,10 @@ func TestFileTileSvgIcons(t *testing.T) {
 		{core.File{Name: "logs.zip", Filetype: "zip", PrettyType: "Zip"}, "fileicon-archive"},
 		{core.File{Name: "main.go", Filetype: "go", PrettyType: "Go"}, "fileicon-code"},
 		{core.File{Name: "IMG_0002.png", Filetype: "png", Mime: "image/png", PrettyType: "PNG"}, "fileicon-file-image"}, // no thumbs: not fileIsImage
+		// fileIsPlayableAudio is an m4a, mp3 or wav: an ogg is IconThumbnail's
+		// file-audio svgicon, a flac (no svgicon of its own) the generic page
+		{core.File{Name: "memo.ogg", Filetype: "ogg", Mime: "audio/ogg", PrettyType: "Ogg"}, "fileicon-file-audio"},
+		{core.File{Name: "take.flac", Filetype: "flac", Mime: "audio/flac", PrettyType: "FLAC"}, "fileicon-generic"},
 	} {
 		for _, dark := range []bool{false, true} {
 			lk := fileLook(&fileItem{c.f}, dark)
@@ -50,16 +54,24 @@ func TestFileTileSvgIcons(t *testing.T) {
 		bg, fg color.NRGBA
 		glyph  string
 	}{
-		{core.File{Name: "Roadmap", Filetype: "quip", IsCanvas: true}, false, theme.PltColor("lagoon", "40", false), theme.PltColor("lagoon", "0", false), "canvas-content-filled"},
-		{core.File{Name: "Roadmap", Filetype: "quip", IsCanvas: true}, true, theme.PltColor("lagoon", "60", true), theme.PltColor("lagoon", "100", true), "canvas-content-filled"},
-		{core.File{Name: "Bugs", Filetype: "list", IsList: true}, false, theme.PltColor("honeycomb", "40", false), theme.PltColor("honeycomb", "0", false), "list-tab-filled"},
-		{core.File{Name: "Bugs", Filetype: "list", IsList: true}, true, theme.PltColor("honeycomb", "50", true), theme.PltColor("honeycomb", "100", true), "list-tab-filled"},
+		// Slack's kit values: lagoon-40/-0 light, lagoon-60/-100 dark;
+		// honeycomb-40/-0 light, honeycomb-50/-100 dark
+		{core.File{Name: "Roadmap", Filetype: "quip", IsCanvas: true}, false, rgb(0x1cb6eb), rgb(0xe3f8ff), "canvas-content-filled"},
+		{core.File{Name: "Roadmap", Filetype: "quip", IsCanvas: true}, true, rgb(0x2ba5ce), rgb(0xd8eef6), "canvas-content-filled"},
+		{core.File{Name: "Bugs", Filetype: "list", IsList: true}, false, rgb(0xe19b06), rgb(0xfcf2d9), "list-tab-filled"},
+		{core.File{Name: "Bugs", Filetype: "list", IsList: true}, true, rgb(0xc48305), rgb(0xf4e9ce), "list-tab-filled"},
+		// p-file_thumbnail__folder_icon: white folder-filled on gray-50;
+		// --skill-set: indigo-60 book on indigo-5
+		{core.File{Name: "Designs", Filetype: "folder"}, false, rgb(0x7c7a7f), rgb(0xffffff), "folder-filled"},
+		{core.File{Name: "Designs", Filetype: "folder"}, true, rgb(0x797c81), rgb(0xffffff), "folder-filled"},
+		{core.File{Name: "Onboarding", Filetype: "folder_skill_set"}, false, rgb(0xdce3fa), rgb(0x3651c0), "book"},
+		{core.File{Name: "Onboarding", Filetype: "folder_skill_set"}, true, rgb(0x0a165a), rgb(0x657ace), "book"},
 		// MediaFileThumbnail: the frame under a 20% black overlay and
-		// play-filled; an audio file overlay_audio's lagoon-50 and
+		// play-filled; a playable audio file overlay_audio's lagoon-50 and
 		// sound-filled
 		{core.File{Name: "demo.mp4", Filetype: "mp4", Mime: "video/mp4", IsVideo: true, Thumb: "https://files.slack.test/thumb_video.jpg"}, false, color.NRGBA{A: 0x33}, rgb(0xffffff), "play-filled"},
-		{core.File{Name: "memo.mp3", Filetype: "mp3", Mime: "audio/mpeg"}, false, theme.PltColor("lagoon", "50", false), rgb(0xffffff), "sound-filled"},
-		{core.File{Name: "memo.mp3", Filetype: "mp3", Mime: "audio/mpeg"}, true, theme.PltColor("lagoon", "50", true), rgb(0xffffff), "sound-filled"},
+		{core.File{Name: "memo.mp3", Filetype: "mp3", Mime: "audio/mpeg", IsAudio: true}, false, rgb(0x0e9dd3), rgb(0xffffff), "sound-filled"},
+		{core.File{Name: "memo.mp3", Filetype: "mp3", Mime: "audio/mpeg", IsAudio: true}, true, rgb(0x1699ca), rgb(0xffffff), "sound-filled"},
 	} {
 		lk := fileLook(&fileItem{c.f}, c.dark)
 		if lk.art != "" || lk.bg != c.bg || lk.fg != c.fg || lk.glyph != c.glyph {

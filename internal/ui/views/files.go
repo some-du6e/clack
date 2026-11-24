@@ -1460,72 +1460,95 @@ func fileKindLabel(it *fileItem) string {
 // fileTile is a file row's 36px FileEntityThumbnailIcon (the
 // MediumFileEntity of Slack's c-pillow_file rows: FileThumbnail, CDN
 // build bv1-13): an image's thumb (ImageThumbnail, cover), else fileLook's
-// tile.
+// tile. An image's and a playable video's tile (p-file_thumbnail__container
+// --image, --video) has a 4% rgba(sk_foreground_min) wash under it and
+// c-file_entity_thumbnail_icon--img-border's ring over it, so a video's
+// square shows before its frame loads in either theme; an audio tile has
+// no ring (--img-border__audio).
 func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 	s := gtx.Dp(size)
+	sz := image.Pt(s, s)
+	rad := gtx.Dp(8)
 	if it.Thumb != "" && it.isImage() && f.h.Images() != nil {
+		rrect(gtx, image.Rectangle{Max: sz}, rad, f.th.C.CodeBg)
 		if img, ok := f.h.Images().Get(it.Thumb, s*2); ok {
-			return themeImage(gtx, img, image.Pt(s, s), gtx.Dp(8))
+			themeImage(gtx, img, sz, rad)
+		} else {
+			f.th.Placeholder(gtx, sz, rad)
 		}
-		return f.th.Placeholder(gtx, image.Pt(s, s), gtx.Dp(8))
+		imgBorder(gtx, sz, rad, f.th.C.Border)
+		return D{Size: sz}
 	}
 	lk := fileLook(it, f.th.Dark)
 	if lk.art != "" {
 		return icons.Art(gtx, lk.art, s)
 	}
-	if lk.video && it.Thumb != "" && f.h.Images() != nil {
-		// MediaFileThumbnail's thumb: the video's thumb_video, cover
-		if img, ok := f.h.Images().Get(it.Thumb, s*2); ok {
-			themeImage(gtx, img, image.Pt(s, s), gtx.Dp(8))
+	if lk.video {
+		rrect(gtx, image.Rectangle{Max: sz}, rad, f.th.C.CodeBg)
+		if it.Thumb != "" && f.h.Images() != nil {
+			// MediaFileThumbnail's thumb: the video's thumb_video, cover
+			if img, ok := f.h.Images().Get(it.Thumb, s*2); ok {
+				themeImage(gtx, img, sz, rad)
+			}
 		}
 	}
-	rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), lk.bg)
+	rrect(gtx, image.Rectangle{Max: sz}, rad, lk.bg)
 	g := gtx
-	g.Constraints = layout.Exact(image.Pt(s, s))
+	g.Constraints = layout.Exact(sz)
 	layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, lk.glyph, 20, lk.fg) })
-	return D{Size: image.Pt(s, s)}
+	if lk.video {
+		imgBorder(gtx, sz, rad, f.th.C.Border)
+	}
+	return D{Size: sz}
+}
+
+// imgBorder is c-file_entity_thumbnail_icon--img-border's :after, a 1px
+// rgba(sk_foreground_low, .13) ring inside the tile's radius 8 (the
+// palette's Border, the same token): a 2px stroke of the tile's outline
+// clipped to the tile.
+func imgBorder(gtx C, sz image.Point, rad int, c color.NRGBA) {
+	r := image.Rectangle{Max: sz}
+	defer clip.UniformRRect(r, rad).Push(gtx.Ops).Pop()
+	theme.Border(gtx, r, rad, 2*max(1, gtx.Dp(1)), c)
 }
 
 // tileLook is what a file's tile draws: an svgicon (art), or a 20px glyph
-// on a filled tile (radius 8), over a video's frame (video).
+// on a filled tile (radius 8), over a video's frame (video); audio is a
+// playable audio file's MediaFileThumbnail.
 type tileLook struct {
-	art    string
-	bg, fg color.NRGBA
-	glyph  string
-	video  bool
+	art          string
+	bg, fg       color.NRGBA
+	glyph        string
+	video, audio bool
 }
 
-// fileLook is FileThumbnail's pick for a file with no thumb to show
-// (IconThumbnail): a canvas's QuipIcon (useIa4Icon: canvas-content-filled,
-// lagoon-0 on lagoon-40; lagoon-100 on lagoon-60 in the dark theme), a
-// list's BaseListIcon (lists-filled, Clack's list-tab-filled: honeycomb-0
-// on honeycomb-40; honeycomb-100 on honeycomb-50 dark), else the file's
-// svgicon (getSVGIconType, richview.FileIconArt): Slack's generic blue
-// page for an .exe, its PDF, Word, Excel or code tile for those. A
-// playable video or an audio file is MediaFileThumbnail first
-// (FileThumbnail takes media before IconThumbnail): the video's
-// thumb_video, cover, under its 20% black overlay and the white
-// play-filled; an audio file's overlay_audio, lagoon-50, under the white
-// sound-filled (the waveform under that overlay doesn't show).
+// fileLook is FileThumbnail's pick for a file with no thumb to show (CDN
+// build bv1-13, boot-shared PQXV): playable media is MediaFileThumbnail,
+// the video's thumb_video, cover, under its 20% black overlay and the
+// white play-filled, a playable audio file's (fileIsPlayableAudio: an
+// m4a, mp3 or wav, not every audio/* file) overlay_audio, lagoon-50,
+// under the white sound-filled (the waveform under that overlay doesn't
+// show); anything else is IconThumbnail: a canvas's QuipIcon, a list's
+// BaseListIcon, a folder's tile, else the file's svgicon
+// (richview.FileIconLook): Slack's generic blue page for an .exe, its
+// PDF, Word, Excel or code tile for those.
 func fileLook(it *fileItem, dark bool) tileLook {
 	white := rgb(0xffffff)
 	switch {
-	case it.isCanvas():
-		if dark {
-			return tileLook{bg: theme.PltColor("lagoon", "60", true), fg: theme.PltColor("lagoon", "100", true), glyph: "canvas-content-filled"}
-		}
-		return tileLook{bg: theme.PltColor("lagoon", "40", false), fg: theme.PltColor("lagoon", "0", false), glyph: "canvas-content-filled"}
-	case it.isList():
-		if dark {
-			return tileLook{bg: theme.PltColor("honeycomb", "50", true), fg: theme.PltColor("honeycomb", "100", true), glyph: "list-tab-filled"}
-		}
-		return tileLook{bg: theme.PltColor("honeycomb", "40", false), fg: theme.PltColor("honeycomb", "0", false), glyph: "list-tab-filled"}
 	case it.IsVideo:
 		return tileLook{bg: color.NRGBA{A: 0x33}, fg: white, glyph: "play-filled", video: true}
-	case strings.HasPrefix(it.Mime, "audio/"):
-		return tileLook{bg: theme.PltColor("lagoon", "50", dark), fg: white, glyph: "sound-filled"}
+	case it.IsAudio:
+		return tileLook{bg: theme.PltColor("lagoon", "50", dark), fg: white, glyph: "sound-filled", audio: true}
+	case it.isCanvas():
+		return iconTile(richview.QuipIconLook(dark))
+	case it.isList():
+		return iconTile(richview.ListIconLook(dark))
 	}
-	return tileLook{art: richview.FileIconArt(&richtext.File{Type: it.Filetype, Mode: it.Mode, Mime: it.Mime, IsImage: it.isImage(), IsVideo: it.IsVideo})}
+	return iconTile(richview.FileIconLook(&richtext.File{Type: it.Filetype, Mode: it.Mode, Mime: it.Mime, IsImage: it.isImage(), IsVideo: it.IsVideo}, dark))
+}
+
+func iconTile(l richview.IconLook) tileLook {
+	return tileLook{art: l.Art, bg: l.Bg, fg: l.Fg, glyph: l.Glyph}
 }
 
 // clipRR pushes a rounded-rect clip with per-corner radii.

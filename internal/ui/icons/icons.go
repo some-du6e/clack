@@ -44,7 +44,7 @@ type def struct {
 
 // DrawHook, when set (tests), sees the name of each icon drawn, the
 // registry's (a Slack name draws its counterpart, an unknown one
-// "missing").
+// "missing"), and of each illustration Art draws.
 var DrawHook func(name string)
 
 const view = 20

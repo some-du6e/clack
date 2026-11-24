@@ -99,6 +99,7 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -342,81 +343,70 @@ func srFileTitle(f core.File) string {
 	return f.Name
 }
 
-// srFileTile is FileEntityThumbnailIcon at s dp: an image's thumb (with
-// the img-border ring), else the type tile (views' fileTileStyle).
+// srFileTile is FileEntityThumbnailIcon at s dp (FileThumbnail, CDN
+// build bv1-13, boot-shared PQXV), as the Files browser draws it (views'
+// fileTile): an image's thumb; a playable video's thumb_video, cover,
+// under its 20% black overlay and the white play-filled; a playable audio
+// file's lagoon-50 tile and white sound-filled; else IconThumbnail
+// (richview.FileIconLook): a canvas's QuipIcon, a list's BaseListIcon, a
+// folder's tile, else the file's svgicon (an .exe's generic blue page, a
+// binary's 01, a text file's snippet page). An image's and a video's tile
+// has the 4% rgba(sk_foreground_min) wash under it (the --image and
+// --video p-file_thumbnail__container) and the img-border ring over it.
 func srFileTile(gtx layout.Context, h Host, th *theme.Theme, f core.File, s float32) layout.Dimensions {
 	px := dp(gtx, s)
 	sz := image.Pt(px, px)
 	rad := dp(gtx, 8)
+	box := image.Rectangle{Max: sz}
+	dark := th != nil && th.Dark
+	wash := func() {
+		if th != nil {
+			rrect(gtx, box, rad, th.C.CodeBg) // rgba(var(--sk_foreground_min), .04)
+		}
+	}
+	ring := func() { stroke(gtx, box, rad, border1(gtx), srTokFgLow13.of(th)) }
 	if f.IsImage && f.Thumb != "" && h.Images() != nil {
+		wash()
 		if img, ok := h.Images().Get(f.Thumb, 2*px); ok {
 			theme.Image(gtx, img, sz, rad)
 		} else {
 			th.Placeholder(gtx, sz, rad)
 		}
-		stroke(gtx, image.Rectangle{Max: sz}, rad, border1(gtx), srTokFgLow13.of(th))
+		ring()
 		return layout.Dimensions{Size: sz}
 	}
-	bg, fg, name := srFileTileStyle(f, th != nil && th.Dark)
-	rrect(gtx, image.Rectangle{Max: sz}, rad, bg)
-	gs := float32(20)
-	if strings.HasPrefix(name, "file-") { // a svgicon's glyph is drawn on the whole tile
-		gs = s
-	}
-	g := dp(gtx, gs)
-	at(gtx, image.Pt((px-g)/2, (px-g)/2), func(gtx layout.Context) layout.Dimensions {
-		return icon(gtx, name, gs, fg)
-	})
-	return layout.Dimensions{Size: sz}
-}
-
-// srFileTileStyle is the per-type tile (views/files.go fileTileStyle).
-func srFileTileStyle(f core.File, dark bool) (bg, fg color.NRGBA, name string) {
 	white := rgb(0xffffff)
-	ft := f.Filetype
-	in := func(set ...string) bool {
-		for _, s := range set {
-			if ft == s {
-				return true
+	var lk richview.IconLook
+	switch {
+	case f.IsVideo: // MediaFileThumbnail
+		wash()
+		if f.Thumb != "" && h.Images() != nil {
+			if img, ok := h.Images().Get(f.Thumb, 2*px); ok {
+				theme.Image(gtx, img, sz, rad)
 			}
 		}
-		return false
-	}
-	switch {
-	case f.IsList:
-		if dark {
-			return rgb(0xaa6c00), rgb(0x361e00), "list-view"
-		}
-		return rgb(0xe19b06), rgb(0xfcf2d9), "list-view"
+		lk = richview.IconLook{Bg: color.NRGBA{A: 0x33}, Fg: white, Glyph: "play-filled"}
+	case f.IsAudio: // MediaFileThumbnail's overlay_audio
+		lk = richview.IconLook{Bg: theme.PltColor("lagoon", "50", dark), Fg: white, Glyph: "sound-filled"}
 	case f.IsCanvas:
-		return rgb(0x1d9bd1), white, "canvas"
-	case ft == "email" || f.Mode == "email":
-		return rgb(0x1d9bd1), white, "file-email" // c-icon--file-email-svgicon
-	case ft == "binary":
-		return rgb(0x616061), white, "file-binary" // c-icon--file-binary-svgicon
-	case ft == "text":
-		return rgb(0x1d9bd1), white, "file-text" // c-icon--file-text-svgicon
-	case ft == "pdf":
-		return rgb(0xe01e5a), white, "files"
-	case in("xls", "xlsx", "csv", "gsheet", "ods", "numbers") || strings.Contains(f.Mime, "spreadsheet"):
-		return rgb(0x2eb67d), white, "list-view"
-	case in("ppt", "pptx", "gpres", "key", "odp") || strings.Contains(f.Mime, "presentation"):
-		return rgb(0xe8912d), white, "image"
-	case strings.HasPrefix(f.Mime, "image/"):
-		return rgb(0x1264a3), white, "image"
-	case strings.HasPrefix(f.Mime, "video/"):
-		return rgb(0x1264a3), white, "video"
-	case strings.HasPrefix(f.Mime, "audio/"):
-		return rgb(0x7c3085), white, "volume"
-	case f.Mode == "snippet" || ft == "text" || in("go", "javascript", "python", "c", "cpp", "java", "rust", "shell", "json", "yaml", "html", "css", "markdown", "typescript", "ruby", "php", "sql", "swift", "kotlin"):
-		if dark {
-			return rgb(0x3b3d42), white, "code"
-		}
-		return rgb(0x1d1c1d), white, "code"
-	case in("doc", "docx", "gdoc", "odt", "rtf", "pages", "md") || strings.Contains(f.Mime, "wordprocessing") || strings.Contains(f.Mime, "msword"):
-		return rgb(0x1264a3), white, "files"
+		lk = richview.QuipIconLook(dark)
+	case f.IsList:
+		lk = richview.ListIconLook(dark)
+	default:
+		lk = richview.FileIconLook(&richtext.File{Type: f.Filetype, Mode: f.Mode, Mime: f.Mime, IsImage: f.IsImage, IsVideo: f.IsVideo}, dark)
 	}
-	return rgb(0x616061), white, "files"
+	if lk.Art != "" {
+		return icons.Art(gtx, lk.Art, px)
+	}
+	rrect(gtx, box, rad, lk.Bg)
+	g := dp(gtx, 20)
+	at(gtx, image.Pt((px-g)/2, (px-g)/2), func(gtx layout.Context) layout.Dimensions {
+		return icon(gtx, lk.Glyph, 20, lk.Fg)
+	})
+	if f.IsVideo {
+		ring()
+	}
+	return layout.Dimensions{Size: sz}
 }
 
 // srFileDetail is FileEntityUserTimestamp with displaySharedBy and

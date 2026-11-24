@@ -18,9 +18,13 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"sort"
 	"sync"
+
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 type fileStars struct {
@@ -125,6 +129,33 @@ func (a *App) FileInfo(ctx context.Context, id string) (File, error) {
 		return File{}, err
 	}
 	return r.File.file(), nil
+}
+
+// FileInfoObject is FileInfo with the file object as a message draws it
+// (richtext.FileOf of files.info's file), nil when that doesn't decode: a
+// draft's file named by id alone, whose chip is the store's file in Slack
+// (draftComposerFiles), so the chip goes by its filetype and draws a
+// playable video or audio file as media.
+func (a *App) FileInfoObject(ctx context.Context, id string) (File, *richtext.File, error) {
+	var r struct {
+		File json.RawMessage `json:"file"`
+	}
+	if err := a.C.Call(ctx, "files.info", url.Values{"file": {id}, "count": {"0"}}, &r); err != nil {
+		return File{}, nil, err
+	}
+	if len(r.File) == 0 {
+		return File{}, nil, nil
+	}
+	var raw browseFileRaw
+	if err := json.Unmarshal(r.File, &raw); err != nil {
+		return File{}, nil, err
+	}
+	var obj *richtext.File
+	var sf slack.File
+	if json.Unmarshal(r.File, &sf) == nil {
+		obj = richtext.FileOf(&sf)
+	}
+	return raw.file(), obj, nil
 }
 
 // EditFile is editFileApi (Rv7W over NQkX editFile) for an image's

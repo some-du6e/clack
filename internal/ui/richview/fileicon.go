@@ -12,9 +12,11 @@ package richview
 // file's name without its hash.
 
 import (
+	"image/color"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 func setOf(xs ...string) map[string]bool {
@@ -95,4 +97,55 @@ func fileKind(f *richtext.File) string {
 		return "docs"
 	}
 	return "generic"
+}
+
+// IconLook is what IconThumbnail (PQXV) draws in a file's 36px tile: a
+// tile of its own (Bg, radius 8) under a 20px Glyph in Fg, or the file's
+// svgicon (Art, its own rounded tile).
+type IconLook struct {
+	Art    string
+	Bg, Fg color.NRGBA
+	Glyph  string
+}
+
+// FileIconLook is IconThumbnail for f (CDN build bv1-13, boot-shared
+// PQXV), the tile FileEntityThumbnailIcon draws for a file that isn't an
+// image or playable media: a canvas's QuipIcon (useIa4Icon), a list's
+// BaseListIcon, a folder's p-file_thumbnail__folder_icon, else the file's
+// svgicon. A skill canvas's ai-skills, a surface's SurfaceIcon
+// (gauge-filled) and Miro's MiroIcon (brand-miro-filled) have no glyph
+// here yet: those files get the svgicon.
+func FileIconLook(f *richtext.File, dark bool) IconLook {
+	switch {
+	case richtext.IsCanvasFile(f):
+		return QuipIconLook(dark)
+	case f.Mode == "list" || isListFile(f):
+		return ListIconLook(dark)
+	case f.Type == "folder" || f.Type == "folder_skill_set": // fileIsFolder
+		if f.Type == "folder_skill_set" { // fileIsSkillSet: --skill-set
+			return IconLook{Bg: theme.PltColor("indigo", "5", dark), Fg: theme.PltColor("indigo", "60", dark), Glyph: "book"}
+		}
+		return IconLook{Bg: theme.PltColor("gray", "50", dark), Fg: color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, Glyph: "folder-filled"}
+	}
+	return IconLook{Art: FileIconArt(f)}
+}
+
+// QuipIconLook is QuipIcon with useIa4Icon: canvas-content-filled,
+// lagoon-0 on lagoon-40 (p-quip_icon_container__ia4_icon); lagoon-100 on
+// lagoon-60 in the dark theme (p-file_thumbnail__container--dark-theme).
+func QuipIconLook(dark bool) IconLook {
+	if dark {
+		return IconLook{Bg: theme.PltColor("lagoon", "60", true), Fg: theme.PltColor("lagoon", "100", true), Glyph: "canvas-content-filled"}
+	}
+	return IconLook{Bg: theme.PltColor("lagoon", "40", false), Fg: theme.PltColor("lagoon", "0", false), Glyph: "canvas-content-filled"}
+}
+
+// ListIconLook is BaseListIcon (isFilled): lists-filled, Clack's
+// list-tab-filled, honeycomb-0 on honeycomb-40 (p-list_icon--light);
+// honeycomb-100 on honeycomb-50 dark.
+func ListIconLook(dark bool) IconLook {
+	if dark {
+		return IconLook{Bg: theme.PltColor("honeycomb", "50", true), Fg: theme.PltColor("honeycomb", "100", true), Glyph: "list-tab-filled"}
+	}
+	return IconLook{Bg: theme.PltColor("honeycomb", "40", false), Fg: theme.PltColor("honeycomb", "0", false), Glyph: "list-tab-filled"}
 }

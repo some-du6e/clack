@@ -46,6 +46,9 @@ func Art(gtx layout.Context, name string, px int) layout.Dimensions {
 		noteMissing(name, "nothing")
 		return layout.Dimensions{Size: image.Pt(px, px)}
 	}
+	if DrawHook != nil {
+		DrawHook(name)
+	}
 	return d.draw(gtx, px, nil)
 }
 

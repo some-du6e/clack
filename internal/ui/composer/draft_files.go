@@ -145,7 +145,27 @@ func (a *attachments) restoreFiles(fs []core.DraftFile) {
 		if f.PrettyType != "" {
 			c.kind.Label = f.PrettyType // PendingFile's getFileTypeDescription
 		}
-		if f.Thumb != "" {
+		switch {
+		case f.File != nil:
+			// the store's file (draftComposerFiles): its icon goes by its
+			// filetype; DraftImageFile for an image (fileIsImage), and
+			// DraftVideoFile's poster for a playable video (attach_media.go).
+			// The chip's own copy: the player may write to it.
+			sf := *f.File
+			c.server = &sf
+			switch {
+			case sf.IsImage:
+				if c.thumbURL == "" && sf.Thumb != nil {
+					c.thumbURL = sf.Thumb.URL
+				}
+				c.kind.Image = c.thumbURL != ""
+			case sf.IsVideo:
+				c.thumbURL = ""
+				if sf.Thumb != nil {
+					c.thumbURL = sf.Thumb.URL
+				}
+			}
+		case f.Thumb != "":
 			c.kind.Image = true // Slack made a thumbnail: draw it like the image it is
 		}
 		if f.Name == "" && f.Title == "" {

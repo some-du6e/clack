@@ -19,15 +19,20 @@ import (
 // subtype is until the server names its filetype.
 const attIconPx = 36
 
-// attIconArt is v's svgicon, as richview.FileIconArt names it: a restored
-// file's by its own filetype (getSVGIconType of the file object), else the
-// File's.
-func attIconArt(v attView) string {
+// attIconLook is v's FileEntityThumbnailIcon: a restored file's is
+// IconThumbnail of the file object (its QuipIcon, BaseListIcon or folder
+// tile, else the svgicon its own filetype picks: getSVGIconType of the
+// file object), a File's the svgicon its MIME type picks.
+func attIconLook(v attView, dark bool) richview.IconLook {
 	if v.server != nil {
-		return richview.FileIconArt(v.server)
+		return richview.FileIconLook(v.server, dark)
 	}
-	return richview.FileIconArt(&richtext.File{Type: attSVGType(v.c.subtype(), v.typ)})
+	return richview.IconLook{Art: richview.FileIconArt(&richtext.File{Type: attSVGType(v.c.subtype(), v.typ)})}
 }
+
+// attIconArt is attIconLook's svgicon in the light theme ("" for a tile
+// of its own).
+func attIconArt(v attView) string { return attIconLook(v, false).Art }
 
 // attSVGType is getSVGIconType for a File of subtype sub and MIME type
 // mime.

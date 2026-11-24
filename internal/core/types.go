@@ -879,6 +879,13 @@ type DraftFile struct {
 	ID, Name, Title, Mimetype, PrettyType string
 	Size                                  int64
 	Thumb                                 string // thumb_360 for images ("" for other files)
+	// File is the file object as a message draws it (drafts.list's, or
+	// the edited message's): Slack's draft chip is the store's file
+	// (draftComposerFiles, createBaseDraftFileByFile), so its icon goes by
+	// its filetype and mode and a playable video or audio file draws as
+	// media. nil for a file the draft names by id alone. Read-only: drafts
+	// and composers share it.
+	File *richtext.File
 }
 
 // DraftOpts create (ID == "") or update a draft. Without Blocks, Text is

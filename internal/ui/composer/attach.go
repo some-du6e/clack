@@ -1336,7 +1336,11 @@ type attView struct {
 	preparing bool
 	failed    bool
 	asImage   bool
-	size      int64 // bytes (or Slack's size of a restored file)
+	// pendingVideo, draftVideo and audio are maybeRenderImageFile's media
+	// tiles (attach_media.go): a video File uploaded this session, a
+	// restored playable video, a restored playable audio file
+	pendingVideo, draftVideo, audio bool
+	size                            int64 // bytes (or Slack's size of a restored file)
 	// loading and gone are the chip's (draft_meta.go)
 	loading, gone bool
 }
@@ -1355,14 +1359,18 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 	gifs := append([]*draftGif(nil), a.gifs...)
 	views := make([]attView, len(a.chips))
 	for i, c := range a.chips {
-		if c.kind.Image && !c.thumbBad && c.thumbPx != px && !c.thumbBusy {
+		asImage := c.kind.Image && !c.thumbBad && !c.loading && !c.gone
+		draftVideo := !asImage && c.draftVideoLocked()
+		// a draft video's thumb is its poster (thumb_video), cover
+		if (c.kind.Image || draftVideo && c.thumbURL != "") && !c.thumbBad && c.thumbPx != px && !c.thumbBusy {
 			c.thumbBusy = true
 			go a.makeThumb(c, px)
 		}
 		views[i] = attView{c: c, name: c.name, title: c.title, typ: c.fileTypeLocked(), server: c.server, thumb: c.thumb, thumbPx: c.thumbPx,
 			preparing: c.preparing, failed: c.prepErr != nil && c.prepared == nil,
-			asImage: c.kind.Image && !c.thumbBad && !c.loading && !c.gone, size: c.size(),
-			loading: c.loading, gone: c.gone}
+			asImage: asImage, size: c.size(), loading: c.loading, gone: c.gone,
+			pendingVideo: !asImage && c.pendingVideoLocked(), draftVideo: draftVideo,
+			audio: !asImage && c.clip == nil && c.restoredAudioLocked()}
 	}
 	a.mu.Unlock()
 
@@ -1376,11 +1384,11 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 	avail := max(gtx.Constraints.Max.X-2*pad, px)
 	x, y := 0, 0
 	for _, v := range views {
-		w := px
+		w := px // an image, PendingVideoFile and DraftVideoFile: 62px
 		switch {
-		case v.c.clip != nil: // the pillow around the 184px audio player
+		case v.c.clip != nil || v.audio: // the pillow around the 184px audio player
 			w = min(gtx.Dp(attClipW), avail)
-		case !v.asImage:
+		case !v.asImage && !v.pendingVideo && !v.draftVideo:
 			w = min(gtx.Dp(attCardW), avail)
 		}
 		if x > 0 && x+w > avail {
@@ -1441,8 +1449,14 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 			c.open.Add(gtx.Ops)
 			pointer.CursorPointer.Add(gtx.Ops)
 		}()
+	} else if v.pendingVideo {
+		a.drawPendingVideo(gtx, th, v, r, rad) // attach_media.go
+	} else if v.draftVideo {
+		a.drawDraftVideo(gtx, th, v, r, rad)
 	} else if c.clip != nil {
 		a.drawClipCard(gtx, th, v, r, rad) // clips.go
+	} else if v.audio {
+		a.drawAudioCard(gtx, th, v, r, rad)
 	} else {
 		a.drawCard(gtx, th, v, r, rad)
 	}
@@ -1586,18 +1600,31 @@ func (a *attachments) drawCard(gtx layout.Context, th *theme.Theme, v attView, r
 	k := v.c.kind
 	fillRRect(gtx, r, rad, th.C.Bg)
 	strokeRRect(gtx, r, rad, max(1, gtx.Dp(1)), th.C.Border)
+	// c-pillow_file's 1px border and 12px padding: the icon 13px in, the
+	// text 12px after it; the two lines (22 + 18) centred down the card
+	inset := gtx.Dp(13)
 	pad := gtx.Dp(11)
 	tile := gtx.Dp(attIconPx) // FileEntityThumbnailIcon at medium (attach_icon.go)
 	if v.loading || v.gone {
-		a.drawMetaCard(gtx, th, v, pad, tile, r)
+		a.drawMetaCard(gtx, th, v, inset, pad, tile, r)
 		return
 	}
-	// the File's svgicon (its own rounded tile), centred down the card
-	offset(gtx, pad, (r.Dy()-tile)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Art(gtx, attIconArt(v), tile)
+	// the file's IconThumbnail (an svgicon is its own rounded tile),
+	// centred down the card
+	lk := attIconLook(v, th.Dark)
+	offset(gtx, inset, (r.Dy()-tile)/2, func(gtx layout.Context) layout.Dimensions {
+		if lk.Art != "" {
+			return icons.Art(gtx, lk.Art, tile)
+		}
+		fillRRect(gtx, image.Rect(0, 0, tile, tile), gtx.Dp(8), lk.Bg)
+		ic := gtx.Dp(20)
+		offset(gtx, (tile-ic)/2, (tile-ic)/2, func(gtx layout.Context) layout.Dimensions {
+			return icons.Get(lk.Glyph)(gtx, unit.Dp(20), lk.Fg)
+		})
+		return layout.Dimensions{Size: image.Pt(tile, tile)}
 	})
-	tx := pad + tile + gtx.Dp(12) // c-base_entity--medium's avatar: margin-right 12px
-	tw := max(r.Dx()-tx-gtx.Dp(12), 0)
+	tx := inset + tile + gtx.Dp(12) // c-base_entity--medium's avatar: margin-right 12px
+	tw := max(r.Dx()-tx-inset, 0)
 	sh := th.Shaper
 	offset(gtx, tx, pad, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, gtx.Dp(22))}
