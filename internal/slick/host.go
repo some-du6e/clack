@@ -176,7 +176,9 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 		case "tmp":
 			return os.TempDir(), nil
 		case "platform":
-			return runtime.GOOS, nil
+			return nodePlatform(runtime.GOOS), nil
+		case "arch":
+			return nodeArch(runtime.GOARCH), nil
 		case "cwd":
 			wd, _ := os.Getwd()
 			return wd, nil
@@ -243,8 +245,12 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 		case "fromDataURL":
 			return nativeFromDataURL(strArg(a, 1)), nil
 		case "fromBuffer":
-			b, err := base64.StdEncoding.DecodeString(strArg(a, 1))
-			if err != nil || len(b) > maxImageFile {
+			s64 := strArg(a, 1)
+			if base64.StdEncoding.DecodedLen(len(s64)) > maxImageFile {
+				return nil, nil
+			}
+			b, err := base64.StdEncoding.DecodeString(s64)
+			if err != nil {
 				return nil, nil
 			}
 			m, err := decodeImageBytes(b)
@@ -289,7 +295,11 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 			}
 			return base64.StdEncoding.EncodeToString(b), nil
 		case "fromBitmap":
-			b, err := base64.StdEncoding.DecodeString(strArg(a, 1))
+			s64 := strArg(a, 1)
+			if base64.StdEncoding.DecodedLen(len(s64)) > maxNativeBytes {
+				return nil, nil
+			}
+			b, err := base64.StdEncoding.DecodeString(s64)
 			if err != nil {
 				return nil, nil
 			}
@@ -316,14 +326,19 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 			s.opts.SetAppIcon(nil)
 			return nil, nil
 		}
+		if base64.StdEncoding.DecodedLen(len(*b64)) > maxImageFile {
+			return nil, errNoImage
+		}
 		b, err := base64.StdEncoding.DecodeString(*b64)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := decodeImageBytes(b); err != nil {
+		// within the limits and fit to what an OS draws (appIconPNG)
+		icon, err := appIconPNG(b)
+		if err != nil {
 			return nil, err
 		}
-		s.opts.SetAppIcon(b)
+		s.opts.SetAppIcon(icon)
 		return nil, nil
 	})
 	// nativeTheme.shouldUseDarkColors, a window's isFocused, and
@@ -644,4 +659,32 @@ func newUUID() string {
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// nodePlatform is GOOS as Node's process.platform (and Electron's) names
+// it: "win32" on Windows, which a main half's Windows branch tests for
+// (CustomAppIcon reads Slack's icon from slack.exe there).
+func nodePlatform(goos string) string {
+	switch goos {
+	case "windows":
+		return "win32"
+	case "solaris", "illumos":
+		return "sunos"
+	}
+	return goos // darwin, linux, freebsd, openbsd, aix, android
+}
+
+// nodeArch is GOARCH as Node's process.arch names it.
+func nodeArch(goarch string) string {
+	switch goarch {
+	case "amd64":
+		return "x64"
+	case "386":
+		return "ia32"
+	case "mipsle":
+		return "mipsel"
+	case "ppc64le":
+		return "ppc64"
+	}
+	return goarch // arm, arm64, loong64, mips, ppc64, riscv64, s390x
 }

@@ -421,9 +421,12 @@ type App struct {
 
 	// chTabPicked: a tab of the channel was picked (its tab bar, a tab
 	// link), so Slack's view for it is the tab's, Messages' too
-	// (slackTabView); tabViewKey is the view last told to Slick
+	// (slackTabView); tabViewKey is the view last told to Slick, the
+	// instance tabViewTo (a new one after the backend restarts is told
+	// again)
 	chTabPicked map[string]bool
 	tabViewKey  string
+	tabViewTo   *slick.Slick
 }
 
 // New creates the app. Call Run on the UI goroutine (main).

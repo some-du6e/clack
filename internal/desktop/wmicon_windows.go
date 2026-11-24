@@ -14,22 +14,27 @@ import (
 	xdraw "golang.org/x/image/draw"
 )
 
-// WM_SETICON's message and icon kinds.
+// WM_SETICON's message and icon kinds, and SendMessageTimeout's.
 const (
-	wmSetIcon = 0x0080
-	iconSmall = 0
-	iconBig   = 1
+	wmSetIcon       = 0x0080
+	iconSmall       = 0
+	iconBig         = 1
+	smtoAbortIfHung = 0x0002
+	iconSendWait    = 2000 // ms
 )
 
+var procSendMessageTimeoutW = user32.NewProc("SendMessageTimeoutW")
+
 var winIcon struct {
-	mu         sync.Mutex
-	hwnd       uintptr // the main window (0 once it's going)
-	png        []byte  // SetAppIcon's, nil for Clack's own
-	set        bool    // SetAppIcon has changed the window's icon
-	big, small uintptr // the icons set from png
-	// the icons before those: a posted WM_SETICON may still be on its way
-	// with them, so they go only when the next change replaces them
-	oldBig, oldSmall uintptr
+	mu   sync.Mutex
+	hwnd uintptr // the main window (0 once it's going)
+	png  []byte  // SetAppIcon's, nil for Clack's own
+	set  bool    // SetAppIcon has changed the window's icon
+	// dirty: a change sendIcons hasn't made yet; sending: it runs
+	dirty, sending bool
+	// ours: the icons made here and not freed, freed once WM_SETICON
+	// hands one back as the icon it replaced
+	ours map[uintptr]bool
 }
 
 // SetWindowIcon is the main window's handle for SetAppIcon; the window's
@@ -49,7 +54,8 @@ func SetWindowIcon(ev event.Event, pngs ...[]byte) {
 	if e.HWND != winIcon.hwnd {
 		winIcon.hwnd = e.HWND
 		if winIcon.set { // a window made again keeps the icon a plugin chose
-			applyWinIconLocked()
+			winIcon.dirty = true
+			startIconsLocked()
 		}
 	}
 }
@@ -63,36 +69,67 @@ func SetAppIcon(png []byte, _ ...[]byte) {
 	if png == nil && !winIcon.set {
 		return // never changed: the window has Clack's own already
 	}
-	winIcon.png, winIcon.set = png, true
-	applyWinIconLocked()
+	winIcon.png, winIcon.set, winIcon.dirty = png, true, true
+	startIconsLocked()
 }
 
-// applyWinIconLocked posts the window its icons: posted, never sent, as
-// the caller isn't the window's thread, which may be waiting on it (a sent
-// message would wait for that thread to pump messages).
-func applyWinIconLocked() {
-	if winIcon.hwnd == 0 {
-		return
+func startIconsLocked() {
+	if !winIcon.sending && winIcon.hwnd != 0 {
+		winIcon.sending = true
+		go sendIcons()
 	}
-	for _, h := range []uintptr{winIcon.oldBig, winIcon.oldSmall} {
-		if h != 0 {
-			procDestroyIcon.Call(h)
+}
+
+// sendIcons gives the window its latest icons, from a goroutine of its
+// own: sent rather than posted, so WM_SETICON hands back the icon it
+// replaced, which is freed then and not while the window may still show
+// it, as several changes posted in a row could free; never from the UI
+// goroutine, whose window thread may be waiting on it. A send that times
+// out keeps both icons: a leak rather than a freed icon on screen.
+func sendIcons() {
+	for {
+		winIcon.mu.Lock()
+		if !winIcon.dirty || winIcon.hwnd == 0 {
+			winIcon.sending = false
+			winIcon.mu.Unlock()
+			return
+		}
+		winIcon.dirty = false
+		hwnd, b := winIcon.hwnd, winIcon.png
+		winIcon.mu.Unlock()
+		var big, small uintptr
+		if b != nil {
+			// the big icon at its full size (the taskbar scales it), the
+			// small one at the title bar's size, both from the PNG as
+			// Vista's icon resources hold them
+			lx, _, _ := procGetSystemMetrics.Call(smCxIcon)
+			sx, _, _ := procGetSystemMetrics.Call(smCxSmIcon)
+			big, small = iconFromPNG(b, max(int(lx), 256)), iconFromPNG(b, int(sx))
+		}
+		for _, x := range [...]struct{ kind, icon uintptr }{{iconBig, big}, {iconSmall, small}} {
+			winIcon.mu.Lock()
+			if x.icon != 0 {
+				if winIcon.ours == nil {
+					winIcon.ours = map[uintptr]bool{}
+				}
+				winIcon.ours[x.icon] = true
+			}
+			winIcon.mu.Unlock()
+			// a null icon falls back on the window class's: the exe's
+			var prev uintptr
+			r, _, _ := procSendMessageTimeoutW.Call(hwnd, wmSetIcon, x.kind, x.icon, smtoAbortIfHung, iconSendWait,
+				uintptr(unsafe.Pointer(&prev)))
+			if r == 0 || prev == 0 {
+				continue
+			}
+			winIcon.mu.Lock()
+			if winIcon.ours[prev] {
+				delete(winIcon.ours, prev)
+				procDestroyIcon.Call(prev)
+			}
+			winIcon.mu.Unlock()
 		}
 	}
-	winIcon.oldBig, winIcon.oldSmall = winIcon.big, winIcon.small
-	winIcon.big, winIcon.small = 0, 0
-	if winIcon.png != nil {
-		// the big icon at its full size (the taskbar scales it), the small
-		// one at the title bar's size, both from the PNG as Vista's icon
-		// resources hold them
-		lx, _, _ := procGetSystemMetrics.Call(smCxIcon)
-		sx, _, _ := procGetSystemMetrics.Call(smCxSmIcon)
-		winIcon.big = iconFromPNG(winIcon.png, max(int(lx), 256))
-		winIcon.small = iconFromPNG(winIcon.png, int(sx))
-	}
-	// a null icon falls back on the window class's: the exe's
-	procPostMessageW.Call(winIcon.hwnd, wmSetIcon, iconBig, winIcon.big)
-	procPostMessageW.Call(winIcon.hwnd, wmSetIcon, iconSmall, winIcon.small)
 }
 
 // iconFromPNG is an HICON of b at size px (the PNG scaled to it first when

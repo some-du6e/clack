@@ -7,15 +7,20 @@ package desktop
 #cgo LDFLAGS: -framework AppKit
 #import <AppKit/AppKit.h>
 
+// Called from any thread, the JS host's too: its pool releases the
+// autoreleased NSData once the block (which retains it) has it, as a Go
+// thread has no pool of its own and never exits to drain one.
 static void clack_set_dock_icon(const void *b, int n) {
-	NSData *d = [NSData dataWithBytes:b length:n];
-	dispatch_async(dispatch_get_main_queue(), ^{
-		NSImage *img = [[NSImage alloc] initWithData:d];
-		if (img != nil) {
-			[NSApp setApplicationIconImage:img];
-			[img release]; // MRC: the app keeps its own reference
-		}
-	});
+	@autoreleasepool {
+		NSData *d = [NSData dataWithBytes:b length:n];
+		dispatch_async(dispatch_get_main_queue(), ^{
+			NSImage *img = [[NSImage alloc] initWithData:d];
+			if (img != nil) {
+				[NSApp setApplicationIconImage:img];
+				[img release]; // MRC: the app keeps its own reference
+			}
+		});
+	}
 }
 
 // the bundle's icon again (nil: AppKit draws Clack.app's clack.icns)

@@ -1134,10 +1134,10 @@ func (a *App) publishTabView(ch string, all []chTab, cur int) {
 	if a.chTabPicked[ch] {
 		key += "\x00picked"
 	}
-	if key == a.tabViewKey {
+	if key == a.tabViewKey && s == a.tabViewTo {
 		return
 	}
-	a.tabViewKey = key
+	a.tabViewKey, a.tabViewTo = key, s
 	s.SetTabView(ch, slackTabView(ch, all[cur], a.chTabPicked[ch]))
 }
 
