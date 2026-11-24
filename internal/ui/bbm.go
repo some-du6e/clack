@@ -481,14 +481,21 @@ func (a *App) bbmNavButton(gtx layout.Context, org image.Point, key, icon string
 	at(gtx, org, sz, func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hovered bool) {
 			bg := c.SearchBg
-			if hovered && !disabled {
+			switch {
+			case disabled: // the .45 takes the tile too (opacity is the button's)
+				bg = theme.WithAlpha(bg, uint8(int(bg.A)*0x73/0xff))
+			case hovered:
 				bg = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x2e}
 			}
 			a.chrome(gtx, org, image.Rectangle{Max: s}, gtx.Dp(4), bg)
 		}, func(gtx layout.Context) layout.Dimensions {
 			col := c.ChromeText
 			if disabled {
-				col = theme.WithAlpha(col, 0x73)
+				// opacity .45 composited in sRGB, as Chrome does: over the
+				// dimmed tile over the chrome
+				mid := org.Add(sz.Div(2))
+				tile := theme.Over(theme.WithAlpha(c.SearchBg, uint8(int(c.SearchBg.A)*0x73/0xff)), a.chromeBase(mid))
+				col = theme.Over(theme.WithAlpha(col, 0x73), tile)
 			}
 			at(gtx, image.Pt(gtx.Dp(8), (sz.Y-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 				return icons.Get(icon)(gtx, 16, col)
