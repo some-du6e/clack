@@ -456,6 +456,7 @@ func (l *lay) snippet(f *richtext.File, x, y, w int) int {
 		l.d.pills[pill].card = r
 	}
 	l.pillowBar(f, r)
+	l.fileRemoveButton(f, card, r) // FileGallery's PreviewRemoveButton (unfurl.go)
 	return h
 }
 

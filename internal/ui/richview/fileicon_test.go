@@ -209,3 +209,44 @@ func fileCardRect(v *View) image.Rectangle {
 	}
 	return image.Rectangle{}
 }
+
+// FileGallery gives every removable file shown its PreviewRemoveButton,
+// not only a generic card: an image tile, a gallery of two images (each
+// tile), an audio file, a snippet and an email, each at its own top right
+// (-9/-9). The "+ N" overflow tile gets none.
+func TestFileRemoveButtonOnEveryTile(t *testing.T) {
+	img := func(id string) *rt.File {
+		return &rt.File{ID: id, Name: id + ".png", Title: id + ".png", Type: "png", Mode: "hosted", IsImage: true,
+			Thumb: &rt.Image{URL: "https://files.test/" + id + ".png", W: 320, H: 240}, OrigW: 320, OrigH: 240}
+	}
+	audio := &rt.File{ID: "F0RMVAUD", Name: "memo.mp3", Title: "memo.mp3", Type: "mp3", Mode: "hosted", IsAudio: true, Mime: "audio/mpeg"}
+	snip := &rt.File{ID: "F0RMVSNP", Name: "a.go", Title: "a.go", Type: "go", Mode: "snippet", IsSnippet: true, Preview: "package main"}
+	mail := &rt.File{ID: "F0RMVEML", Name: "Hello", Title: "Hello", Type: "email", Mode: "email", Email: &rt.Email{Subject: "Hello"}}
+	for _, c := range []struct {
+		name  string
+		files []*rt.File
+	}{
+		{"one image", []*rt.File{img("F0RMVIMG1")}},
+		{"two images", []*rt.File{img("F0RMVIMG1"), img("F0RMVIMG2")}},
+		{"audio", []*rt.File{audio}},
+		{"snippet", []*rt.File{snip}},
+		{"email", []*rt.File{mail}},
+	} {
+		var bs []rt.Block
+		rm := map[string]bool{}
+		for _, f := range c.files {
+			bs = append(bs, fileBlock(f))
+			rm[f.ID] = false
+		}
+		v := layoutAt(newTestStyle(), doc(bs...), Options{Own: true, FileRemoves: FileRemovesOf(rm)}, 800)
+		if len(v.d.removes) != len(c.files) {
+			t.Errorf("%s: %d remove buttons, want %d", c.name, len(v.d.removes), len(c.files))
+			continue
+		}
+		for _, r := range v.d.removes {
+			if r.r.Dx() != 20 || r.r.Dy() != 20 {
+				t.Errorf("%s: the x is %v, want 20px", c.name, r.r)
+			}
+		}
+	}
+}

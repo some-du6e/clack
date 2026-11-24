@@ -1006,6 +1006,9 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 	}
 	if !overflow { // FileGallery: the overflow tile's showActions is off
 		l.galleryBar(f, r) // FileActions (file_actions.go)
+		// renderFiles: every removable tile but the overflow one gets its
+		// PreviewRemoveButton (unfurl.go), images and videos too
+		l.fileRemoveButton(f, tg, r)
 	}
 	if overflow {
 		l.galleryOverflow(r, count)
@@ -1103,7 +1106,16 @@ func (l *lay) cardFrame(x, y, w, h int, tg int16) int {
 // (subtype slack_audio, c-audio_player--audio_message, the flat variant)
 // is one row: the 34px blue play button, the waveform (3px dots 3px
 // apart, min(6+34·sample, 34) tall) and the duration in 13px Bold.
+// audio is an audio file's card with FileGallery's PreviewRemoveButton
+// on it when it has one (audioCard draws the card).
 func (l *lay) audio(f *richtext.File, x, y, w int) int {
+	card := int16(len(l.d.targets)) // audioCard's first target is the card's
+	h := l.audioCard(f, x, y, w)
+	l.fileRemoveButton(f, card, image.Rect(x, y, x+min(w, l.dp(426)), y+h))
+	return h
+}
+
+func (l *lay) audioCard(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
 	cw := min(w, l.dp(426))
 	pad := l.dp(12)

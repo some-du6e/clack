@@ -142,7 +142,8 @@ func (l *lay) emailFile(f *richtext.File, x, y, w int) int {
 	r := image.Rect(x, y, x+cw, y+h)
 	l.d.boxes[bi].r = r
 	l.d.hits[hi].r = r
-	l.pillowBar(f, r) // FileActions (file_actions.go)
+	l.pillowBar(f, r)              // FileActions (file_actions.go)
+	l.fileRemoveButton(f, card, r) // FileGallery's PreviewRemoveButton (unfurl.go)
 	return h
 }
 
