@@ -3461,15 +3461,14 @@ ticker: patch 61). Not in `UPSTREAM.patch`.
 
 `widget/editor.go`: an Editor with a `Mask` is a password field (Clack
 masks the sign-in link, plugin settings' secrets and the plugins'
-`type="password"` inputs), and Chromium copies
-and cuts nothing from one: `Editor::CanCopy` and `CanCut` are false in a
-password field, so Ctrl/Cmd+C and Ctrl/Cmd+X do nothing there, and its
-Edit menu greys Cut and Copy. Shortcut+C and Shortcut+X now do nothing
-in a masked Editor (no `clipboard.WriteCmd`, no delete); Paste, Select
-All and the rest are unchanged. `MaskedFocus`, when set, is called from
-`Layout` while a masked Editor has the key focus: the ui's menus grey
-Edit's Cut and Copy for the next frame (`internal/ui/macmenu.go`),
-which macOS's Edit menu shows and whose roles send Gio those same keys.
+`type="password"` inputs), and Chromium copies and cuts nothing from an
+unrevealed one: Blink's `Editor::CanCopy` and `CanCut` are false there.
+Shortcut+C and Shortcut+X now do nothing in a masked Editor (no
+`clipboard.WriteCmd`, no delete); Paste, Select All and the rest are
+unchanged. Slack's Edit menu keeps Cut and Copy enabled (bare AppKit role
+items; Chromium keeps cut: and copy: enabled for the render view), and on
+macOS they send these same keys, so they copy nothing from a password
+field either.
 
 Nothing else reaches a masked Editor's text: Clack's plain Editors have
 no context menu (only the composer's own editor has one, and it is never
@@ -3479,5 +3478,4 @@ dragged out.
 
 Tests: `widget/clack_mask_copy_test.go`
 (`TestClackMaskedEditorCopiesNothing`: masked and plain, Shortcut+C and
-Shortcut+X; `TestClackMaskedFocusHook`: the hook only for a focused
-masked Editor) and `internal/ui`'s `TestMenuStateMaskedFocus`.
+Shortcut+X), in ci's linux-gio.

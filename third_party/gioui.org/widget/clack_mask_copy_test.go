@@ -74,26 +74,3 @@ func TestClackMaskedEditorCopiesNothing(t *testing.T) {
 		}
 	}
 }
-
-// A masked Editor with the key focus calls MaskedFocus as it lays out,
-// each frame; an unmasked one, or a masked one without the focus, doesn't.
-func TestClackMaskedFocusHook(t *testing.T) {
-	calls := 0
-	MaskedFocus = func() { calls++ }
-	t.Cleanup(func() { MaskedFocus = nil })
-	m := newMaskEd('•', "hunter2")
-	if calls == 0 {
-		t.Errorf("a focused password field: MaskedFocus not called")
-	}
-	m.gtx.Execute(key.FocusCmd{Tag: nil})
-	m.frame()
-	calls = 0
-	m.frame()
-	if calls != 0 {
-		t.Errorf("a password field without the focus: MaskedFocus called %d times", calls)
-	}
-	newMaskEd(0, "plain")
-	if calls != 0 {
-		t.Errorf("a focused unmasked Editor: MaskedFocus called %d times", calls)
-	}
-}

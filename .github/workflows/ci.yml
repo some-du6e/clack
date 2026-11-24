@@ -567,11 +567,10 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: .github/scripts/gio-layer-fix.sh xvfb-run -a
       # patch 67: a masked Editor (a password field) copies and cuts
-      # nothing, and the Edit menu greys Cut and Copy while one has the focus
+      # nothing; Slack's Edit menu keeps Cut and Copy enabled
       - name: Gio masked Editor copy (patch 67)
-        run: |
-          go test -count=1 -v -run '^(TestClackMaskedEditorCopiesNothing|TestClackMaskedFocusHook)$' gioui.org/widget
-          xvfb-run -a go test -count=1 -v -run '^TestMenuStateMaskedFocus$' ./internal/ui
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackMaskedEditorCopiesNothing$' gioui.org/widget
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

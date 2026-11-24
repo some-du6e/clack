@@ -790,12 +790,6 @@ func (e *Editor) updateIMEState(gtx layout.Context) {
 	}
 }
 
-// MaskedFocus, when set, is called from the Layout of a masked Editor
-// (Mask != 0: a password field) that has the key focus, on the frame's
-// goroutine. The program greys its Edit menu's Cut and Copy then, as
-// Chromium's are in a password field (Clack patch 67).
-var MaskedFocus func()
-
 // Layout lays out the editor using the provided textMaterial as the paint material
 // for the text glyphs+caret and the selectMaterial as the paint material for the
 // selection rectangle.
@@ -805,9 +799,6 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper, font font.Font, siz
 		if !ok {
 			break
 		}
-	}
-	if e.Mask != 0 && MaskedFocus != nil && gtx.Source.Focused(e) {
-		MaskedFocus() // Clack patch 67
 	}
 
 	e.text.Layout(gtx, lt, font, size)

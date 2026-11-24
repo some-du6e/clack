@@ -6,7 +6,6 @@ import (
 
 	"gioui.org/io/event"
 	"gioui.org/layout"
-	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/ui/menubar"
@@ -224,16 +223,7 @@ type menuKey struct {
 	update                       string
 	updateOff                    bool // the update item is greyed out
 	noCanvas, noInvite           bool // File's New Canvas and Invite People are left out (fileMenuGates)
-	maskedFocus                  bool // a password field has the key focus: Edit's Cut and Copy grey out
 }
-
-// maskedFocusSeen is whether a password field (a masked widget.Editor)
-// had the key focus as this frame laid out (Gio patch 67's
-// widget.MaskedFocus), maskedFocusLast the last frame's, which the menus
-// show. UI goroutine.
-var maskedFocusSeen, maskedFocusLast bool
-
-func init() { widget.MaskedFocus = func() { maskedFocusSeen = true } }
 
 // menuBar is the installed menu bar's state (macOS only).
 type menuBar struct {
@@ -279,7 +269,6 @@ func (a *App) menuKeyNow() menuKey {
 		sidebar: a.sidebar.hidden, team: a.teamName(),
 		cur: a.router.Current(), depth: len(a.router.stack), pos: a.router.pos,
 		tick: time.Now().Unix() / 2, recents: len(a.router.Recents()),
-		maskedFocus: maskedFocusLast,
 	}
 	if c := a.Core(); c != nil {
 		k.historyMenu = c.HistoryMenuExperiment()
@@ -300,12 +289,6 @@ func (a *App) menuState(k menuKey) *menubar.State {
 	if k.update != "" { // also on the sign-in screen: the shell's own item
 		s.Titles[menuUpdate] = k.update
 		s.Disabled[menuUpdate] = k.updateOff
-	}
-	if k.maskedFocus {
-		// a password field: Chromium copies and cuts nothing from one, and
-		// its Edit menu greys Cut and Copy (validateUserInterfaceItem)
-		s.Disabled["menuitem-cut"] = true
-		s.Disabled["menuitem-copy"] = true
 	}
 	if !k.signedIn {
 		for id := range menuWorkspaceOnly {
