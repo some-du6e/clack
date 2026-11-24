@@ -7163,6 +7163,33 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # Karim, α.165 macOS: with the sidebar hidden (Cmd+Shift+D) the top nav
+  # lost its back arrow (drawn at x -29) and put forward and history under
+  # the traffic lights; Slack lays the nav out from the window alone, and
+  # its history button draws the clock (topnav-sidebar-hidden).
+  topnav-sidebar-hidden:
+    if: ${{ !inputs.only || startsWith('topnav-sidebar-hidden', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the top nav, sidebar hidden and shown, COUNT runs"
+        run: go test -count=$COUNT -v -timeout 10m -run '^(TestTopNavSidebarHidden|TestMacNavCaption|TestWcoTopNav|TestWcoNarrowNav)$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7174,6 +7201,7 @@ jobs:
       - go
       - modal-title-wrap
       - modal-bump
+      - topnav-sidebar-hidden
       - avf-audio
       - race-video
       - members
