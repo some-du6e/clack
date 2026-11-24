@@ -851,3 +851,27 @@ func TestLinkPopoverClicks(t *testing.T) {
 		t.Errorf("close: selection %d-%d, want %d", lo, hi, at)
 	}
 }
+
+// TestLinkDialogIsDeprecatedDialog: ComposerLinkModal is a _FormDialog,
+// FlDO's DeprecatedDialog (boot-shared qph5): c-dialog's 68px header,
+// its close button at top 16px, right 16px (align-self flex-start,
+// margin-right -8px in the 24px padding), not c-sk-modal's 20px.
+func TestLinkDialogIsDeprecatedDialog(t *testing.T) {
+	e := newLinkEnv(t)
+	e.setDoc(lkDoc())
+	e.rightClick(e.runeAt(6))
+	e.do("edit-link")
+	e.frame()
+	if e.dlg == nil {
+		t.Fatal("Edit link opened no dialog")
+	}
+	e.frame()
+	m := e.dlg.modal
+	w := m.Rect().Dx()
+	if bar := m.TitleBar().Dy(); bar != 68 {
+		t.Errorf("the header is %dpx, want c-dialog's 68px", bar)
+	}
+	if cr := m.CloseRect(); cr.Min.Y != 16 || cr.Max.X != w-16 || cr.Dx() != 36 {
+		t.Errorf("the close button is at %v in a %dpx card, want 36px at top 16px, right 16px", cr, w)
+	}
+}

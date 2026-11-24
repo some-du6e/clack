@@ -477,6 +477,11 @@ type Attachment struct {
 	// draws such an attachment as MessageAttachmentWorkObject, an entity
 	// card, instead of an unfurl.
 	WorkObject *WorkObject
+
+	// VideoBlock: a video block's, which Slack draws as VideoBlock (u8h8),
+	// not an unfurl; BlockID is its block_id ("" without one).
+	VideoBlock bool
+	BlockID    string
 }
 
 // File is a file shared in a message.

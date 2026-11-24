@@ -164,7 +164,7 @@ func TestBlockKit(t *testing.T) {
 		{Kind: Section, Kit: true, Spans: []Span{st("Name", Bold)}, Buttons: []Button{{Kind: "input", Text: "Type here"}}},
 		{Kind: AttachmentBlock, Att: &Attachment{ServiceName: "VidSite", ServiceIcon: "https://v.test/i.png", AuthorName: "Someone",
 			Title: []Span{tx("Demo")}, TitleLink: "https://v.test/w", VideoURL: "https://v.test/embed", IsUnfurl: true,
-			Image: &Image{URL: "https://v.test/t.jpg", Alt: "demo"}, Text: []Block{para(tx("A demo"))}}},
+			Image: &Image{URL: "https://v.test/t.jpg", Alt: "demo"}, Text: []Block{para(tx("A demo"))}, VideoBlock: true}},
 		// SUIRendererItem: a type Slack doesn't know is UnsupportedBlockFallback,
 		// or its own fallback payload when it carries one
 		{Kind: UnknownBlock, Spans: []Span{tx("This message can’t be fully displayed.")}},

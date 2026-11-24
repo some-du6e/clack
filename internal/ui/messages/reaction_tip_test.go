@@ -15,6 +15,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
@@ -138,9 +139,13 @@ func TestReactionBarCollapseLikeSlack(t *testing.T) {
 	if _, _, sel := bar(12, 11).reactionCollapse(gtx, 300); !sel {
 		t.Errorf("hidden own reaction: not selected")
 	}
-	// expanded: everything, then "Show less"
+	// expanded (the bar's reactionKey open in the expandables store):
+	// everything, then "Show less"
 	r := bar(12, -1)
-	r.reactExpanded = true
+	r.m.TS, r.m.Channel = "1700600000.000200", "C0RXTIP01"
+	key := r.reactionKey()
+	richview.SetExpandable(key, true)
+	t.Cleanup(func() { richview.SetExpandable(key, false) })
 	if shown, more, _ := r.reactionCollapse(gtx, 300); shown != 12 || more != reactLess {
 		t.Errorf("expanded: %d shown, button %d", shown, more)
 	}
