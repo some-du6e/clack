@@ -1,5 +1,5 @@
 // slash_commands.cjs: what Slack's composer does with each case's typed
-// slash command (internal/ui/composer/testdata/parity/slash-routing.json),
+// slash command (internal/ui/composer/testdata/parity/slash-commands.json),
 // from Slack's own send path run in node over the web client's public CDN
 // chunks (build 66e72b57ade1):
 //
@@ -9,7 +9,7 @@
 // where they come from), plus the two chunks the client commands load
 // lazily (Zrd3's n.e calls): gantry-v2-async-slash-commands-local and
 // gantry-v2-async-shared-js_modern_redux_stores_slack-connect-prefs-store_selectors_ts
-// of the same build. tools/parity.py --refresh slash-routing runs it.
+// of the same build. tools/parity.py --refresh slash-commands runs it.
 //
 // The composer hands a typed message to handleSlashCommand (vHCW, "Intercept
 // and handle a slash commands when sending a message"), which runs Slack's

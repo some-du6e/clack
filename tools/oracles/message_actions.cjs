@@ -21,8 +21,9 @@
 //     toolbar's classes): text added to their export lists, nothing else.
 //   - the store: each case's conversation, message, people, prefs and
 //     experiments go in through Slack's own reducers (the reducer
-//     manager's team map) and Slack's own action creators, found by their
-//     descriptions ("Add messages", "Bulk add channels [proto]"...).
+//     manager's team map), Slack's own action creators, found by their
+//     descriptions ("Add messages", "Bulk add members [proto]"...), and
+//     Slack's Upsert channels thunk for the conversation.
 //
 // For each case it prints:
 //   toolbar: null when actions_MessageActions.shouldRenderActions is
@@ -30,10 +31,11 @@
 //     order: "quick_reactions" when the quick reactions block is there,
 //     each button's action id, "more" when MessageActionButtonEllipsis (⋮)
 //     renders.
-//   menu: the ⋮ menu (MessageActionsMenu's actions, `ap` at
-//     menuUsageLocation overflow), [] when there's no ⋮: its groups, each
+//   menu: the ⋮ menu (the ellipsis' MessageActionsOverflowMenu, then
+//     MessageActionsMenu's actions), [] when there's no ⋮: its groups, each
 //     action "id: name", a submenu's actions after " > ".
-//   context: the right-click menu, the same at menuUsageLocation context.
+//   context: the right-click menu, MessageActionsContextMenu (DtN2) as the
+//     lists render it: null when it opens none, else its groups.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -51,15 +53,28 @@ const err = console.error.bind(console);
 console.log = console.info = console.debug = console.warn = quiet; // modules log at load
 
 const connected = [];
+let hookState = null;
+function withState(state, fn) {
+  hookState = state;
+  try {
+    return fn();
+  } finally {
+    hookState = null;
+  }
+}
 const rt = makeRuntime({
   dir: CHUNKS,
   realAll: true,
   patch: {
     JuvA: [['a.d(t,{A:()=>nb})', 'a.d(t,{A:()=>nb,__ap:()=>ap})']],
-    RwAt: [['a.d(t,{A:()=>aZ})', 'a.d(t,{A:()=>aZ,__MessageActions:()=>MessageActions,__actions_MessageActions:()=>actions_MessageActions,__connectedActions:()=>aU,__connectedEllipsis:()=>eW,__Ellipsis:()=>MessageActionButtonEllipsis})']],
+    RwAt: [['a.d(t,{A:()=>aZ})', 'a.d(t,{A:()=>aZ,__MessageActions:()=>MessageActions,__actions_MessageActions:()=>actions_MessageActions,__connectedActions:()=>aU,__connectedEllipsis:()=>eW,__Ellipsis:()=>MessageActionButtonEllipsis,__OverflowMenu:()=>MessageActionsOverflowMenu})']],
   },
   partial: {
     ...(globalThis.__parityPartial || {}), // a debugging hook
+    // react-redux's useSelector, for the function components the oracle
+    // calls (MessageActionsContextMenu, MessageActionsOverflowMenu): their
+    // selectors read the case's state
+    WjYQ: { d4: (req, orig) => (sel, eq) => hookState ? sel(hookState) : orig(sel, eq) },
     qqaQ: {
       N: () => (mapState, mapDispatch) => Inner => {
         const c = function ConnectedStandIn() {};
@@ -98,7 +113,9 @@ function reduce(state, act) {
 //   self, users: users.info objects (self is the viewer)
 //   team: {id, domain, enterprise_id}
 //   conv: a conversations.info object; msg: the message as history has
-//     it (its channel is conv.id); root: a reply's thread root, if any
+//     it (its channel is conv.id; a saved one carries message.saved,
+//     which also goes into the saved store as saved.list's item); root: a
+//     reply's thread root, if any
 //   where: "channel", "thread" or "threads" (the container)
 //   subscribed: the viewer follows the thread (threadSub), default false
 //   experiments: {name: group}; prefs: user prefs; team_prefs;
@@ -110,6 +127,8 @@ function reduce(state, act) {
 const WHERE = { channel: Zhyr.MESSAGE_PANE, thread: Zhyr.THREAD, threads: Zhyr.THREADS_VIEW };
 const threadSubId = rt.req('7Kqu').Iu;
 const stores = rt.req('W+Gl');
+const savedItem = rt.req('GDwF').x;
+const upsertChannels = rt.req('4XO+').U;
 
 function merge(base, inp) {
   const r = { ...base, ...inp };
@@ -147,11 +166,25 @@ function storeFor(c) {
   d(action('Sets team permission objects')({ memberId: c.self.id, teamId: team, permissions: perms(c.permissions.team) }));
   d(action('Sets channel permission objects')({ memberId: c.self.id, channelId: c.conv.id, permissions: perms(c.permissions.channel), timestamp: 1700000000 }));
   d(action('Bulk add members [proto]')({ objects: [c.self, ...c.users].map(u => JSON.parse(JSON.stringify(u))) }));
-  d(action('Bulk add channels [proto]')({ objects: [JSON.parse(JSON.stringify(c.conv))] }));
+  // the conversation as Slack's client takes one in: Upsert channels
+  // (4XO+), whose processChannel (340b) also keeps its read-only and
+  // thread-only state (properties.posting_restricted_to,
+  // threads_restricted_to) before it bulk-adds the channel
+  const upserted = upsertChannels({ channels: [JSON.parse(JSON.stringify(c.conv))], skipRecentlyLeftGuard: true })(d, store.getState, () => ({}));
+  if (!Array.isArray(upserted) || upserted.length !== 1) throw new Error('message_actions: Upsert channels gave ' + JSON.stringify(upserted));
   const msgs = [c.root, c.msg].filter(Boolean).map(m => ({ ...JSON.parse(JSON.stringify(m)), channel: c.conv.id }));
   d(action('Add messages')(msgs));
+  // a saved message: history carries message.saved, and saved.list the same
+  // item, which Slack's saved store keeps (GDwF savedApiToSavedItem)
+  for (const m of msgs) {
+    if (m.saved) d(action('Add saved item')(savedItem({ ...m.saved, item_type: 'message', item_id: c.conv.id, ts: m.ts })));
+  }
+  // the thread's subscription, under the root's key and the message's own
+  // (the channel list's right-click keys a broadcast reply's follow row on
+  // its own ts, whose fetch answers the thread's state)
   const rootTs = c.msg.thread_ts || c.msg.ts;
-  d(action('Bulk add threadSub [proto]')({ objects: [{ id: threadSubId(c.conv.id, rootTs), subscribed: !!c.subscribed }] }));
+  const subs = [...new Set([rootTs, c.msg.ts])].map(ts => ({ id: threadSubId(c.conv.id, ts), subscribed: !!c.subscribed }));
+  d(action('Bulk add threadSub [proto]')({ objects: subs }));
   return store;
 }
 
@@ -182,12 +215,16 @@ function toolbar(state, msg, where) {
   // a button's tooltip is its action's name (renderButtonForAction's label)
   const names = new Map((props.actionsForButtons || []).map(a => [a.id, a.name]));
   const found = [];
+  let ellipsis = null;
   (function walk(n) {
     if (!n || typeof n !== 'object') return;
     if (Array.isArray(n)) return n.forEach(walk);
     if (n.type === RwAt.__connectedEllipsis) {
       const p = { ...n.props, ...n.type.mapState(state, n.props) };
-      if (RwAt.__Ellipsis.prototype.render.call({ props: p, renderMoreActionsMenu() {}, handlePopOverOpen() {} })) found.push('more');
+      if (RwAt.__Ellipsis.prototype.render.call({ props: p, renderMoreActionsMenu() {}, handlePopOverOpen() {} })) {
+        found.push('more');
+        ellipsis = p;
+      }
       return;
     }
     if (n.key && /_button$/.test(n.key)) {
@@ -204,11 +241,39 @@ function toolbar(state, msg, where) {
     }
     if (n.props) walk(n.props.children);
   })(inst.renderMessageActions());
-  return found;
+  return { buttons: found, ellipsis };
 }
 
-function menu(state, msg, where, loc) {
-  return groups(JuvA.__ap(state, { channelId: msg.channel, ts: msg.ts, threadTs: msg.thread_ts, messageContainerType: where, menuUsageLocation: loc, showJumpActionInOverflow: false }));
+// fromMenu is MessageActionsMenu's actions for the props an element hands
+// it: `ap` with them, as MessageActionsMenu calls it (its additionalActions
+// come from the toolbar's width presentation, which no case has).
+function fromMenu(state, el) {
+  const p = el.props;
+  if (p.additionalActions && p.additionalActions.length) throw new Error('message_actions: additionalActions are not modelled');
+  return groups(JuvA.__ap(state, { channelId: p.channelId, ts: p.ts, threadTs: p.threadTs, messageContainerType: p.messageContainerType,
+    menuUsageLocation: p.menuUsageLocation, showJumpActionInOverflow: p.showJumpActionInOverflow, rollup: p.rollup }));
+}
+
+// overflowMenu is the ⋮ menu: the ellipsis' renderMoreActionsMenu, then
+// MessageActionsOverflowMenu (its location from persistActions), then
+// MessageActionsMenu.
+function overflowMenu(state, ellipsisProps) {
+  const ov = RwAt.__Ellipsis.prototype.renderMoreActionsMenu.call({ props: ellipsisProps }, { onTriggerClose() {}, onMenuItemSelected() {}, targetBounds: undefined });
+  const mm = withState(state, () => ov.type(ov.props));
+  return fromMenu(state, mm);
+}
+
+// contextMenu is the right-click menu: MessageActionsContextMenu (DtN2)
+// as each list renders it, its own guard included (no menu at all on a
+// moderated, DLP tombstone, DSA-restricted or EKM-denied message: null).
+// The channel list (AEjl renderContextMenuForItem) passes no threadTs;
+// the thread pane (6xF9) passes the thread's, as does the Threads view.
+function contextMenu(state, msg, where) {
+  const props = { ts: msg.ts, channelId: msg.channel, messageContainerType: where };
+  if (where !== Zhyr.MESSAGE_PANE) props.threadTs = msg.thread_ts || msg.ts;
+  const el = withState(state, () => rt.req('DtN2').A(props));
+  if (!el) return null;
+  return fromMenu(state, el.props.children);
 }
 
 function run(c) {
@@ -219,12 +284,10 @@ function run(c) {
   if (!where) throw new Error('message_actions: where ' + c.where);
   const tb = toolbar(state, msg, where);
   return {
-    toolbar: tb,
-    // the ⋮ menu opens from ⋮ alone; the right-click menu from any row
-    // the message pane lists (renderContextMenuForItem, AEjl: all but a
-    // blurred one)
-    menu: tb && tb.includes('more') ? menu(state, msg, where, bCH2.OVERFLOW) : [],
-    context: menu(state, msg, where, bCH2.CONTEXT),
+    toolbar: tb && tb.buttons,
+    // the ⋮ menu opens from ⋮ alone
+    menu: tb && tb.ellipsis ? overflowMenu(state, tb.ellipsis) : [],
+    context: contextMenu(state, msg, where),
   };
 }
 
@@ -256,4 +319,4 @@ if (require.main === module) {
   process.exit(0);
 }
 
-module.exports = { rt, JuvA, RwAt, uAhD, Zhyr, bCH2, reducers, creators, action, reduce, connected, storeFor, merge, run, toolbar, menu, out, err };
+module.exports = { rt, JuvA, RwAt, uAhD, Zhyr, bCH2, reducers, creators, action, reduce, connected, storeFor, merge, run, toolbar, overflowMenu, contextMenu, out, err };

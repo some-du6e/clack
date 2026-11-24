@@ -82,10 +82,6 @@ const (
 
 var tbTips = [tbCount]string{"Add reaction…", "Reply in thread", "Forward message…", "Add to-do", "Add to list…", "More actions"} // aria-labels of the live 2026 client
 
-// tbActions are the buttons' Slack action ids (uAhD), which Slack's
-// MessageActions keys each button by (renderButtonForAction's
-// `${id}_button`); ⋮ is MessageActionButtonEllipsis, Slack's "more".
-var tbActions = [tbCount]string{"add_reaction", "comment", "share_message", "add_to_later_todos", "add_to_list", "more"}
 var tbIcons = [tbCount]string{"add-reaction", "comment-lines", "forward-msg", "todo-add", "list-add", "kebab"}
 
 // listState is the per-conversation UI state shared by channel and thread
@@ -2423,11 +2419,8 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	y := s.pos[idx] + dp(gtx, actionsTop[at])
 	s.tbRow, s.tbSize, s.tbHov, s.tbAt = r, size, -1, at
 	s.tilt.mount(r)
-	s.quick.prepare(h, s.ch, r)
+	s.quick.prepare(h, s.ch, r, s.thread) // quickReactionsShown
 	s.prepareButtons(h.Core(), r)
-	if !reactable(h.Core(), &r.src, s.thread) { // canAddReaction; ThreadRootCanvas: no quick reactions
-		s.quick.names = s.quick.names[:0]
-	}
 	// message_actions_truncate (L2dv calculateResponsiveActions): the
 	// quick reactions go when the toolbar with them is wider than the
 	// message from its left edge to the toolbar's right edge

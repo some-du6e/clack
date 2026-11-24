@@ -41,7 +41,11 @@ type quickBar struct {
 
 // quickReactionsOn is whether conversation ch's toolbar has the quick
 // reactions (before canAddReaction): the pref is on and it isn't
-// Slackbot's DM (isSlackbotIm).
+// Slackbot's DM. Slack's hasQuickReactionsBlock drops them only in
+// Slackbot AI's DM: its isSlackbotIm is isChannelSlackbotAiIm (piaJ),
+// Slackbot's DM with the ACCESS_SLACK_AI_SLACKBOT permission, so without
+// Slack AI Slackbot's DM keeps them (the message-actions parity cases
+// "Slackbot's DM" and "Slackbot's DM, Slackbot AI on").
 func quickReactionsOn(app *core.App, ch string) bool {
 	if app == nil || !uipref.Get().QuickReactions {
 		return false
@@ -50,11 +54,20 @@ func quickReactionsOn(app *core.App, ch string) bool {
 	return !ok || !c.IsIM || c.User != "USLACKBOT"
 }
 
-// prepare picks the row's quick reactions (none when they're off).
-func (q *quickBar) prepare(h Host, ch string, r *row) {
+// quickReactionsShown is whether the toolbar draws the quick reactions
+// on m in conversation ch: quickReactionsOn, and m takes reactions
+// (canAddReaction; a thread root canvas takes none). The toolbar and the
+// message-actions parity test both ask it.
+func quickReactionsShown(app *core.App, ch string, m *core.Message, thread bool) bool {
+	return quickReactionsOn(app, ch) && reactable(app, m, thread)
+}
+
+// prepare picks the row's quick reactions (none when quickReactionsShown
+// says so).
+func (q *quickBar) prepare(h Host, ch string, r *row, thread bool) {
 	q.names = q.names[:0]
 	app := h.Core()
-	if r == nil || !quickReactionsOn(app, ch) {
+	if r == nil || !quickReactionsShown(app, ch, &r.src, thread) {
 		return
 	}
 	p := uipref.Get()
