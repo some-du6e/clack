@@ -95,6 +95,10 @@ var accountExperiments = map[string]string{
 	// and system alerts count
 	"lists_monster_step":        "on",
 	"generic_system_user_alert": "on",
+	// /feedback's dialog and its note (composer/slash_local.go,
+	// popups/user_feedback.go): the account's groups
+	"slash_feedback_in_modal":      "on",
+	"slash_feedback_modal_warning": "on",
 }
 
 // withAccountExperiments adds accountExperiments to an

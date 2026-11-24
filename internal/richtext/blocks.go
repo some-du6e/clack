@@ -649,7 +649,9 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			img.Title = unescape(b.Title.Text)
 		}
 		img.Bytes = b.ImageBytes
-		return append(out, Block{Kind: ImageBlock, Image: img})
+		// block_id: the image's expandable (getExpandableKey("blockImage",
+		// ts, {blockId}), richview's caret and /collapse alike)
+		return append(out, Block{Kind: ImageBlock, Image: img, BlockID: b.BlockID})
 	case "actions":
 		blk := Block{Kind: Actions}
 		self := c.r.SelfID()

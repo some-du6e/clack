@@ -10,6 +10,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -436,6 +437,11 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 			y += mh
 			if !shown {
 				y -= l.dp(4) // collapsed: only the line
+				if l.filesDisclosure(files) {
+					// !isExpanded && shouldShowUnverifiedDisclosure: the
+					// UnverifiedDisclosure pillow under it
+					y += l.unverifiedDisclosure(l.filesKey(files), x, y, w, true)
+				}
 				i, prev = k-1, k-1
 				continue
 			}
@@ -718,7 +724,7 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 			return 0
 		}
 		if b.Kit {
-			return l.kitImage(b.Image, x, y, w)
+			return l.kitImage(b.Image, b.BlockID, x, y, w)
 		}
 		h := 0
 		if b.Image.Title != "" {
@@ -1316,13 +1322,19 @@ func naturalWidth(items []item) int {
 	return int(max(w, line) + 0.999)
 }
 
-// kitImage lays out an image block like Slack's Image: a title row
-// (.p-image_block_title: the title in 15px rgb(97,96,97), " (12 kB)" when
-// Slack sent image_bytes, and the hide/show toggle), then 5px down the
-// image, at most 600×400 (scaled by min(600/w, 400/h) and floored, as
-// Slack does) with radius 8 and a 1px inset otl-ter border. The toggle
-// hides the image until it's clicked again.
-func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
+// kitImage lays out an image block like Slack's Image (8plt): a title
+// row (.p-image_block_title: the title in 15px rgb(97,96,97), then the
+// AttachmentMediaTrigger: " (12 kB)" when Slack sent image_bytes, or
+// the too-large warning, and the caret), then 5px down the image in its
+// ExpandableContainer, at most 600×400 (scaled by min(600/w, 400/h) and
+// floored, as Slack does) with radius 8 and a 1px inset otl-ter border.
+// In a message the container and the caret read and set the image's
+// expandable, getExpandableKey("blockImage", the message's ts,
+// {blockId}), with the attachment rules (expander.go: hidden with
+// expand_inline_imgs off, over 20 MB, from an unverified outsider in a
+// DM: then the UnverifiedDisclosure under the title); a doc that is no
+// message's keeps the View's own toggle.
+func (l *lay) kitImage(img *richtext.Image, blockID string, x, y, w int) int {
 	p := &l.st.Palette
 	fs := l.bodyStyle()
 	fs.col = p.Text2
@@ -1343,25 +1355,47 @@ func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
 		}
 	}
 	lastTop := y + rowH - fs.lineH
-	if img.Bytes > 0 {
-		cs := fs
-		cs.size = l.sp(13)
-		_, sw := l.plainFlow(" ("+sizeText(img.Bytes)+")", endX, lastTop, l.dp(120), &cs, -1)
-		endX += sw
+	key := ""
+	if l.opts.TS != "" {
+		key = expandable.Key(expandable.BlockImage, l.opts.TS, expandable.Opts{BlockID: blockID})
 	}
-	// the toggle: a small blue caret after a space, centred on the line
-	collapsed := l.collapsed[img]
-	tg := l.d.addTarget(target{kind: tCollapse, img: img})
-	cx := endX + l.dp(4) + l.dp(4)
-	cy := lastTop + fs.lineH/2
-	kind, cr := bCaret, image.Rect(cx-l.dp(4), cy-l.dp(2), cx+l.dp(4), cy+l.dp(3))
-	if collapsed {
-		kind, cr = bCaretRight, image.Rect(cx-l.dp(2), cy-l.dp(4), cx+l.dp(3), cy+l.dp(4))
-	}
-	l.d.boxes = append(l.d.boxes, box{kind: kind, r: cr, fill: p.Link, target: -1})
-	l.d.hits = append(l.d.hits, hit{r: image.Rect(cx-l.dp(8), cy-l.dp(8), cx+l.dp(8), cy+l.dp(8)), t: tg})
-	if collapsed {
-		return rowH
+	if key == "" {
+		// no message: the View's toggle, a small blue caret after the size
+		if img.Bytes > 0 {
+			cs := fs
+			cs.size = l.sp(13)
+			_, sw := l.plainFlow(" ("+sizeText(img.Bytes)+")", endX, lastTop, l.dp(120), &cs, -1)
+			endX += sw
+		}
+		collapsed := l.collapsed[img]
+		tg := l.d.addTarget(target{kind: tCollapse, img: img})
+		cx := endX + l.dp(4) + l.dp(4)
+		cy := lastTop + fs.lineH/2
+		kind, cr := bCaret, image.Rect(cx-l.dp(4), cy-l.dp(2), cx+l.dp(4), cy+l.dp(3))
+		if collapsed {
+			kind, cr = bCaretRight, image.Rect(cx-l.dp(2), cy-l.dp(4), cx+l.dp(3), cy+l.dp(4))
+		}
+		l.d.boxes = append(l.d.boxes, box{kind: kind, r: cr, fill: p.Link, target: -1})
+		l.d.hits = append(l.d.hits, hit{r: image.Rect(cx-l.dp(8), cy-l.dp(8), cx+l.dp(8), cy+l.dp(8)), t: tg})
+		if collapsed {
+			return rowH
+		}
+	} else {
+		// the trigger's imageBytes: none for a Giphy or Tenor GIF
+		tb := img.Bytes
+		if giphyGIF(img.URL) {
+			tb = 0
+		}
+		sender, ch := l.opts.Sender, l.opts.Channel
+		open := xp().AttachmentExpanded(key, tb, sender, ch)
+		_, top := l.mediaTrigger(key, img.URL, tb, open, xp().ImageTooLarge(key, tb), x, endX, lastTop, w, fs)
+		rowH = max(rowH, top+fs.lineH-y)
+		if !containerExpanded(key, img.Bytes, sender, ch, true, true) {
+			if xp().UnverifiedDisclosure(key, img.Bytes, sender, ch) {
+				return rowH + l.unverifiedDisclosure(key, x, y+rowH, w, false)
+			}
+			return rowH
+		}
 	}
 	iy := y + rowH + l.dp(5)
 	iw, ih := l.kitImageSize(img, w)
@@ -1372,7 +1406,7 @@ func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
 	// proxy (imgcache.PublicFetch), drawn as the box's CSS background, so
 	// the box is empty while it loads and if it fails (bare)
 	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: [4]int{rad, rad, rad, rad}, target: itg, px: max(iw, ih), bare: true})
-	l.imageControls(img, len(l.d.imgs)-1, r) // AttachmentImage (animated.go)
+	l.imageActions(img, len(l.d.imgs)-1, r, img.URL, key) // AttachmentImage's actions (animated.go)
 	l.d.hits = append(l.d.hits, hit{r: r, t: itg})
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: p.Border, bw: max(1, l.dp(1)), target: -1, layer: 1})
 	return iy + ih - y

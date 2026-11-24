@@ -3,6 +3,7 @@ package blockkit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"net/mail"
@@ -174,6 +175,13 @@ func (s *surfHandler) SharePromptSend(p *richtext.SharePrompt) { popups.SharePro
 // EventAction is an event card's action.
 func (s *surfHandler) EventAction(act string, ev *richtext.Event, ch, ts string, btn image.Rectangle, window bool) {
 	popups.EventAction(s.h, act, ev, ch, ts, popups.ActionAnchor(btn, window))
+}
+
+// ImageMenu is an image's More actions (AttachmentImageActions' menu, which
+// Slack's app views keep): Copy link, and Hide image when it has an
+// expandable.
+func (s *surfHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	s.h.ShowOverlay(popups.NewImageActionsMenu(s.h, popups.ActionAnchor(btn, false), href, key, closed))
 }
 
 // TimelineSources is a timeline section's "(Sources)": its sources modal.
@@ -1044,7 +1052,7 @@ func errMessage(err error) string {
 	if ae, ok := err.(*core.ActionError); ok {
 		return ae.Error()
 	}
-	if err == context.DeadlineExceeded {
+	if errors.Is(err, context.DeadlineExceeded) { // a 429's wait outlasting it too (slack.RateLimitWait)
 		return core.ActionErrorText("post_error")
 	}
 	return core.ActionErrorText("")

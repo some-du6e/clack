@@ -418,7 +418,12 @@ type Attachment struct {
 	// Index is the attachment's place in the message's attachments array
 	// (the search answer's order: core.AttachmentKey keys an attachment
 	// without an id by it).
-	Index       int
+	Index int
+	// MediaKey is the attachment's media expandable without the view's
+	// context (getExpandableKey("attachment", the message's ts, {id,
+	// imageUrl, …}): richview appends Options.ViewContext; "" for an
+	// attachment without image, audio or video).
+	MediaKey    string
 	OriginalURL string
 	ServiceURL  string
 	VideoHTML   bool

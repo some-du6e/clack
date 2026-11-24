@@ -34,6 +34,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
@@ -515,7 +516,8 @@ type Activity struct {
 // NewActivity builds the Activity view; it loads on first Layout.
 func NewActivity(h Host) *Activity {
 	v := &Activity{
-		base:     newBase(h),
+		// its rows' expandables: the page's wS({id: ACTIVITY_PAGE})
+		base:     newBaseIn(h, expandable.ViewActivityPage),
 		tabs:     newTabs(actTabLabels...),
 		query:    newSearchIn(nsActivity, "Type to filter"), // ActivityFilterSearch
 		rows:     map[string]*actRow{},
@@ -4391,9 +4393,12 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	if len(m.Doc.Blocks) == 0 {
 		return b.body(gtx, m.Doc, m.Text, 0)
 	}
-	// the message's identity: its Block Kit cards act on it (an event's
-	// RSVP and Copy, MessageTruncatedBlocks' channelId and messageTs)
-	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System, Channel: m.Channel, TS: m.TS}, 0)
+	// the message's identity (its Block Kit cards act on it: an event's
+	// RSVP and Copy, MessageTruncatedBlocks' channelId and messageTs) and
+	// sender: its previews' expandables (the Pins tab's BasePinnedMessage
+	// draws MessageFiles with the msg)
+	o := richview.Options{Edited: m.DisplaysEdited(), Muted: m.System, Channel: m.Channel, TS: m.TS, Sender: m.User, ViewContext: b.viewCtx}
+	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, o, 0)
 }
 
 // actPill is one reaction group's native pill (Reaction unpatched): a

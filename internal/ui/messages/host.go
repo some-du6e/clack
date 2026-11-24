@@ -606,6 +606,20 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 	}
 }
 
+// ImageMenu is an image's AttachmentImageActions More actions
+// (richview.ImageMenuHandler): Copy link, Hide image.
+func (r *richHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	if r.anchor != nil {
+		min := r.anchor(btn.Min)
+		btn = image.Rectangle{Min: min, Max: min.Add(btn.Size())}
+	}
+	if ph, ok := r.h.(popups.Host); ok {
+		ph.ShowOverlay(popups.NewImageActionsMenu(ph, btn, href, key, closed))
+	} else if closed != nil {
+		closed()
+	}
+}
+
 // ChartAction is a data_visualization block's More actions
 // (richview.ChartActionHandler): its menu (popups.NewChartMenu) at the
 // button.

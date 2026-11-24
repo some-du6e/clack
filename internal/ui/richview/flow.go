@@ -239,6 +239,14 @@ const (
 	// control.c68 .slack-date-contents:not(.read-only){cursor:pointer}),
 	// which View.HandCursors gives it; a viewer's stays the text cursor.
 	tDate
+	// tExpandable sets an expandable key (id) in the expandables store to
+	// on (expander.go): a file list's caret, an image block's trigger,
+	// "Hide image", "expand it anyway", "just show this one", a "Show
+	// more" / "Show less" Slack keeps there
+	tExpandable
+	// tAllowPreviews is UnverifiedDisclosure's "Allow all previews from
+	// {memberName}" (id: the member; expander.go)
+	tAllowPreviews
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no
@@ -331,6 +339,8 @@ type target struct {
 	prompt *richtext.SharePrompt
 	// event is a tEvent's card (event.go)
 	event *richtext.Event
+	// on is what a tExpandable sets its key to
+	on bool
 }
 
 type hit struct {
@@ -617,8 +627,9 @@ type lay struct {
 	expanded map[*richtext.Attachment]bool
 	expandAt *richtext.Attachment
 	// expandKey, when set, is the section whose "Show more" is being laid
-	// out (its key in kitExpanded).
-	expandKey string
+	// out (its blockText key, expander.go); expandAtKey expandAt's
+	// attachmentText key when Slack keeps its state in the store
+	expandKey, expandAtKey string
 	// expandColl, when set, is the View-local toggle (collapsed) of the
 	// "Show more" being laid out: a share_prompt's (shareprompt.go).
 	expandColl any
@@ -934,7 +945,9 @@ func (l *lay) addSpan(sp *richtext.Span, fs *flowStyle) {
 		if sp.URL == expandURL && l.expandColl != nil { // a share_prompt's Show more / Show less (shareprompt.go)
 			tg = l.d.addTarget(target{kind: tCollapse, key: l.expandColl, underline: true})
 		} else if sp.URL == expandURL && l.expandKey != "" { // section Show more / Show less (truncate.go)
-			tg = l.d.addTarget(target{kind: tExpand, id: l.expandKey, underline: true})
+			tg = l.d.addTarget(target{kind: tExpandable, id: l.expandKey, on: !xpOn(l.expandKey), underline: true})
+		} else if sp.URL == expandURL && l.expandAtKey != "" { // AttachmentText's (cards.go)
+			tg = l.d.addTarget(target{kind: tExpandable, id: l.expandAtKey, on: !xpOn(l.expandAtKey), underline: true})
 		} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
 			tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
 		} else {

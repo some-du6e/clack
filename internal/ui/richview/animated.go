@@ -28,8 +28,13 @@ package richview
 //     More actions (file_actions.go); AttachmentImageActions' Expand
 //     (NANx: search, "Expand", only while its PlayPauseAnimations is
 //     on), a 32px icon button in its c-message_actions__group at top 10,
-//     right 10, alone (its Download, Share and More actions aren't drawn
-//     by Clack yet).
+//     right 10. An image block's and a v1 or v2 attachment's image
+//     (disableImageActions unset) have the whole group there: Open in
+//     new window (open-in-window, the image's link), Expand, and More
+//     actions (ellipsis-vertical-filled: a menu of Copy link and, with
+//     an expandable, "Hide image", which collapses the image's
+//     expandable; expander.go). Its Download, for an image that is a
+//     Slack file, isn't drawn (Clack's images don't know their file).
 
 import (
 	"image"
@@ -64,13 +69,37 @@ type playCtl struct {
 	known bool   // a file's deanimate says it animates; else the decoded image does
 }
 
-// expandBtn is an attachment image's Expand button, shown while card is
-// hovered (a file's is in its FileActions: file_actions.go).
+// expandBtn is an attachment image's AttachmentImageActions, shown while
+// card is hovered (a file's Expand is in its FileActions:
+// file_actions.go): Expand alone, or with full the whole group.
 type expandBtn struct {
 	card  image.Rectangle // the image's box
 	inset int             // Dp from its top and right
 	img   *richtext.Image // opens the image's viewer
-	play  int             // the playCtl it shows with (only while that's on)
+	play  int             // the playCtl Expand shows with (only while that's on)
+	// full: Open in new window, Expand (while play is on), More actions;
+	// href is their link (externalSourceUrl || url), key the image's
+	// expandable ("" none: no Hide image)
+	full      bool
+	href, key string
+}
+
+// The group's buttons, in their order (UvHM: Download, Open in new
+// window, Expand, More actions).
+const (
+	imgActOpen = iota
+	imgActExpand
+	imgActMore
+	imgActs
+)
+
+// ImageMenuHandler is optional on a Handler: AttachmentImageActions' More
+// actions, its menu at btn (View coordinates plus Origin): Copy link
+// copies href; Hide image, with a key, collapses it (setExpanded false).
+// The host calls closed when the menu goes: the group stays up while it
+// is open (p-attachment_image_actions--menu-open).
+type ImageMenuHandler interface {
+	ImageMenu(href, key string, btn image.Rectangle, closed func())
 }
 
 // playable makes image i (just added) a PlayPauseAnimations: drawn
@@ -110,6 +139,23 @@ func (l *lay) imageControls(img *richtext.Image, i int, r image.Rectangle) {
 	p := l.playable(i, img.URL, false)
 	if !l.opts.NoHoverCards && !l.opts.Canvas {
 		l.d.expands = append(l.d.expands, expandBtn{card: r, inset: 10, img: img, play: p})
+	}
+}
+
+// imageActions adds an image block's or a v1/v2 attachment's
+// AttachmentImageActions (the whole group, its Expand with animations
+// off) and PlayPauseAnimations, the image at imgs index i in r; href is
+// the image's link, key its expandable.
+func (l *lay) imageActions(img *richtext.Image, i int, r image.Rectangle, href, key string) {
+	if img == nil || img.URL == "" {
+		return
+	}
+	p := -1
+	if l.noAnim {
+		p = l.playable(i, img.URL, false)
+	}
+	if !l.opts.NoHoverCards && !l.opts.Canvas {
+		l.d.expands = append(l.d.expands, expandBtn{card: r, inset: 10, img: img, play: p, full: true, href: href, key: key})
 	}
 }
 
@@ -259,54 +305,132 @@ func (v *View) drawPlays(gtx layout.Context, st *Style) {
 	}
 }
 
-// expandOn reports whether Expand button i shows: its image hovered and
-// its PlayPauseAnimations on.
+// expandOn reports whether group i shows: its image hovered (and for
+// Expand alone, its PlayPauseAnimations on), or the pointer on the group
+// itself (its buttons stand out of a small image, and :hover holds over
+// them as they're the container's), or its More menu open (the group's
+// --menu-open: opacity 1). The View hears the pointer only within its own
+// bounds (its input area nests in its clip), so a part of the group that
+// stands out of the View (a narrow image at its left edge) still lets go.
 func (v *View) expandOn(st *Style, i int) bool {
 	e := &v.d.expands[i]
-	if !v.hovering || !image.Pt(int(v.ptr.X), int(v.ptr.Y)).In(e.card) {
+	if e.full && e.img != nil && e.img == v.menuImg {
+		return true
+	}
+	if !v.hovering {
 		return false
 	}
-	return e.play < 0 || v.playOn(st, &v.d.plays[e.play])
+	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
+	if !pt.In(e.card) {
+		if bar, _ := v.expandBar(i, len(v.expandActs(st, i))); !pt.In(bar) {
+			return false
+		}
+	}
+	return e.full || v.playOnly(st, e)
 }
 
-// expandBar is button i's group and the button in it.
-func (v *View) expandBar(i int) (bar, btn image.Rectangle) {
+// playOnly reports whether group e's Expand shows: its
+// PlayPauseAnimations on.
+func (v *View) playOnly(st *Style, e *expandBtn) bool {
+	if e.play < 0 {
+		return !e.full
+	}
+	return v.playOn(st, &v.d.plays[e.play])
+}
+
+// expandActs is group i's buttons, in order.
+func (v *View) expandActs(st *Style, i int) []int {
+	e := &v.d.expands[i]
+	if !e.full {
+		return []int{imgActExpand}
+	}
+	acts := []int{imgActOpen}
+	if v.playOnly(st, e) {
+		acts = append(acts, imgActExpand)
+	}
+	if !v.imgMenu {
+		return acts // a host without the menu: no More actions
+	}
+	return append(acts, imgActMore)
+}
+
+// expandBar is group i's box and its n buttons' (32px each, 4px of
+// padding round them), right-aligned inset from the image's top right.
+func (v *View) expandBar(i, n int) (bar image.Rectangle, btns []image.Rectangle) {
 	e := &v.d.expands[i]
 	in, s, pad := v.px(e.inset), v.px(32), v.px(4)
-	bar = image.Rect(e.card.Max.X-in-s-2*pad, e.card.Min.Y+in, e.card.Max.X-in, e.card.Min.Y+in+s+2*pad)
-	return bar, bar.Inset(pad)
+	bar = image.Rect(e.card.Max.X-in-n*s-2*pad, e.card.Min.Y+in, e.card.Max.X-in, e.card.Min.Y+in+s+2*pad)
+	for k := range n {
+		x := bar.Min.X + pad + k*s
+		btns = append(btns, image.Rect(x, bar.Min.Y+pad, x+s, bar.Min.Y+pad+s))
+	}
+	return bar, btns
 }
 
-// expandAt is the shown Expand button under p, or -1.
+// expandAt is the shown button under p, i*imgActs + its action, or -1.
 func (v *View) expandAt(st *Style, p f32.Point) int {
 	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.expands {
-		if _, btn := v.expandBar(i); pt.In(btn) && v.expandOn(st, i) {
-			return i
+		if !v.expandOn(st, i) {
+			continue
+		}
+		acts := v.expandActs(st, i)
+		_, btns := v.expandBar(i, len(acts))
+		for k, b := range btns {
+			if pt.In(b) {
+				return i*imgActs + acts[k]
+			}
 		}
 	}
 	return -1
 }
 
-// expand opens button i's viewer (AttachmentImageActions' onExpand: the
-// image's media viewer).
-func (v *View) expand(i int, h Handler) {
-	if h == nil || i < 0 || i >= len(v.d.expands) {
+// expand runs button id (expandAt's): Expand opens the image's media
+// viewer (onExpand), Open in new window its link, More actions its menu.
+func (v *View) expand(st *Style, id int, h Handler) {
+	i, act := id/imgActs, id%imgActs
+	if h == nil || id < 0 || i >= len(v.d.expands) {
 		return
 	}
-	if e := &v.d.expands[i]; e.img != nil {
-		h.OpenImage(*e.img)
+	e := &v.d.expands[i]
+	switch act {
+	case imgActExpand:
+		if e.img != nil {
+			h.OpenImage(*e.img)
+		}
+	case imgActOpen:
+		if e.href != "" {
+			h.OpenURL(e.href)
+		}
+	case imgActMore:
+		mh, ok := h.(ImageMenuHandler)
+		if !ok {
+			return
+		}
+		acts := v.expandActs(st, i)
+		_, btns := v.expandBar(i, len(acts))
+		img := e.img
+		v.menuImg = img
+		mh.ImageMenu(e.href, e.key, btns[len(btns)-1].Add(v.Origin), func() {
+			if v.menuImg == img {
+				v.menuImg = nil
+				v.redraw = true
+			}
+		})
 	}
 }
 
 // drawExpands draws the hovered image's Expand button and, while the
 // pointer rests on it, its tooltip.
 func (v *View) drawExpands(gtx layout.Context, st *Style) {
-	if !v.hovering || len(v.d.expands) == 0 {
+	if (!v.hovering && v.menuImg == nil) || len(v.d.expands) == 0 {
 		return
 	}
 	p := &st.Palette
 	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
+	if !v.hovering {
+		pt = image.Pt(-1<<20, -1<<20) // the menu's scrim has the pointer: no button is hot
+	}
 	icon, hoverIcon, hoverBg := actionBtnColors(p.Dark)
 	bg := rgb(255, 255, 255)
 	if p.Dark {
@@ -317,17 +441,27 @@ func (v *View) drawExpands(gtx layout.Context, st *Style) {
 		if !v.expandOn(st, i) {
 			continue
 		}
-		bar, btn := v.expandBar(i)
+		acts := v.expandActs(st, i)
+		bar, btns := v.expandBar(i, len(acts))
 		v.groupCard(gtx, p, bar) // c-message_actions__group
-		hot := pt.In(btn)
-		col := icon
-		if hot {
-			paint.FillShape(gtx.Ops, hoverBg, clip.UniformRRect(btn, v.px(8)).Op(gtx.Ops))
-			col = hoverIcon
-		}
-		v.barIcon(gtx, "search", btn, 18, col)
-		if hot {
-			v.copyTip(gtx, st, btn, i18n.T("attachment_media", "Expand"))
+		for k, btn := range btns {
+			hot := pt.In(btn)
+			col := icon
+			if hot {
+				paint.FillShape(gtx.Ops, hoverBg, clip.UniformRRect(btn, v.px(8)).Op(gtx.Ops))
+				col = hoverIcon
+			}
+			name, tip := "search", "Expand"
+			switch acts[k] {
+			case imgActOpen:
+				name, tip = "open-in-window", "Open in new window"
+			case imgActMore:
+				name, tip = "ellipsis-vertical-filled", "More actions"
+			}
+			v.barIcon(gtx, name, btn, 18, col)
+			if hot {
+				v.copyTip(gtx, st, btn, i18n.T("attachment_media", tip))
+			}
 		}
 	}
 }

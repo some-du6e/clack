@@ -192,6 +192,9 @@ func (v *SearchView) srRichOf(i int) *srCardRich {
 	r.capped = capped
 	r.long = len([]rune(richtext.PlainText(richtext.Doc{Blocks: extra}))) > 600
 	r.body, r.extra = nil, nil
+	// no ViewContext: SearchResult sits under no MessageContainerContext
+	// provider, so a result's expandable keys carry none (expandable's
+	// view contexts)
 	o := richview.Options{Channel: m.Channel, TS: m.TS}
 	if len(body) > 0 {
 		bo := o
@@ -380,6 +383,12 @@ func (h srCardHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, wi
 	if mn := NewChartMenu(h.v.h, ActionAnchor(btn, window), dv); mn != nil {
 		h.v.h.ShowOverlay(mn)
 	}
+}
+
+// ImageMenu is an image's More actions on the card (AttachmentImageActions'
+// menu): Copy link, and Hide image when it has an expandable.
+func (h srCardHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	h.v.h.ShowOverlay(NewImageActionsMenu(h.v.h, ActionAnchor(btn, false), href, key, closed))
 }
 
 // DataTableAction is a data_table's header button or column header on the
