@@ -2,6 +2,7 @@ package canvasview
 
 import (
 	"image"
+	"image/color"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -54,7 +55,7 @@ func embedText(v *View) string {
 
 func cardTextOf(c *linkCard) string {
 	var out []string
-	for _, rv := range []*richview.View{c.title, c.content, c.body} {
+	for _, rv := range append([]*richview.View{c.title, c.content, c.body, c.alert}, c.pub.views()...) {
 		if rv != nil {
 			out = append(out, rv.TextRange(0, rv.PlainLen()))
 		}
@@ -71,10 +72,35 @@ func cardState(v *View) (kind string, size image.Point, borderless bool) {
 		return "", image.Point{}, false
 	}
 	c := b.card
-	kind = map[cardKind]string{cardEmpty: "empty", cardLoading: "loading", cardFallback: "fallback"}[c.kind]
+	kind = map[cardKind]string{cardEmpty: "empty", cardLoading: "loading", cardFallback: "fallback", cardPublic: "public",
+		cardPublicLoading: "public-loading", cardWorkObject: "work-object"}[c.kind]
 	if c.kind == cardFallback && c.body != nil {
 		att := c.body.Doc().Blocks[0].Att
 		borderless = att != nil && att.HideBorder && att.NoMaxWidth
 	}
 	return kind, c.size, borderless
+}
+
+// urlSafeOf is isUrlSafeFromXSS (false: the "Double-check this link" banner).
+func urlSafeOf(s string) bool { return urlSafe(s) }
+
+// permalinkOf is parsePermalink's type and ts.
+func permalinkOf(s string) (typ, ts string, ok bool) {
+	p, ok := parsePermalink(s)
+	return p.typ, p.ts, ok
+}
+
+// publicShape is shouldRenderPublicLinkCard.
+func publicShape(a *slack.Attachment) bool { return publicLinkCard(a) }
+
+// titleHot: the first card's title last drew in its hover colour.
+func titleHot(v *View) bool {
+	b := embedBlk(v)
+	return b != nil && b.card.titleHot
+}
+
+// titleLinkColours are the empty card's title link colours at rest and
+// while hovered.
+func titleLinkColours(v *View) (rest, hot color.NRGBA) {
+	return v.styles.cardTitle.Palette.Link, v.styles.cardTitleHot.Palette.Link
 }

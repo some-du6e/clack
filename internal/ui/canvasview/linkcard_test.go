@@ -2,6 +2,7 @@ package canvasview
 
 import (
 	"fmt"
+	"html"
 	"image"
 	"net/http"
 	"strings"
@@ -31,13 +32,20 @@ const (
 // messages.list answers without it), and opens it in mode at sz.
 func cardEnv(t *testing.T, dark bool, m *slack.Message, ts string, prep func(fs *fakeslack.Server)) (*testHost, *fakeslack.Server, func(Mode, image.Point) (*View, *shooter)) {
 	t.Helper()
+	return cardEnvURL(t, dark, cardURL, m, ts, prep)
+}
+
+// cardEnvURL is cardEnv for a card of link.
+func cardEnvURL(t *testing.T, dark bool, link string, m *slack.Message, ts string, prep func(fs *fakeslack.Server)) (*testHost, *fakeslack.Server, func(Mode, image.Point) (*View, *shooter)) {
+	t.Helper()
 	h, fs := newEnv(t, dark)
-	d, err := canvas.Parse(cardHTML)
+	doc := strings.Replace(cardHTML, "Link URL: "+cardURL, "Link URL: "+html.EscapeString(link), 1)
+	d, err := canvas.Parse(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs.AddCanvas(fakeslack.FakeCanvas{ID: cardCanvasID, Title: "Cards", HTML: cardHTML, Doc: d})
-	setUnfurl(fs, cardURL, ts, m)
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: cardCanvasID, Title: "Cards", HTML: doc, Doc: d})
+	setUnfurl(fs, link, ts, m)
 	if prep != nil {
 		prep(fs)
 	}
