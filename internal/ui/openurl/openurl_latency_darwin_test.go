@@ -86,6 +86,9 @@ func macStubApp(t *testing.T, dir string) string {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>com.clack.test.openurlstub</string>
+<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
 <key>CFBundleName</key><string>ClackStub</string>
 <key>CFBundleExecutable</key><string>clackstub</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -104,6 +107,12 @@ func macStubApp(t *testing.T, dir string) string {
 	}
 	if out, err := exec.Command(lsregister, "-f", app).CombinedOutput(); err != nil {
 		t.Fatalf("lsregister: %v %s", err, out)
+	}
+	// the scheme's default handler, through LSSetDefaultHandlerForURLScheme
+	// (JXA: test files can't use cgo)
+	js := `ObjC.import('CoreServices'); $.LSSetDefaultHandlerForURLScheme($('` + macStubScheme + `'), $('com.clack.test.openurlstub'))`
+	if out, err := exec.Command("osascript", "-l", "JavaScript", "-e", js).CombinedOutput(); err != nil {
+		t.Logf("LSSetDefaultHandlerForURLScheme: %v %s", err, out)
 	}
 	return filepath.Join(dir, "stub-times.txt")
 }
@@ -165,6 +174,12 @@ func TestOpenHandOffLatencyMac(t *testing.T) {
 			break
 		}
 		if time.Now().After(dl) {
+			out, _ := exec.Command(lsregister, "-dump").Output()
+			for _, l := range strings.Split(string(out), "\n") {
+				if strings.Contains(l, "ClackStub") || strings.Contains(l, macStubScheme) {
+					t.Logf("lsregister -dump: %.200s", l)
+				}
+			}
 			t.Fatal("Launch Services never found ClackStub.app for clackstub:")
 		}
 	}
