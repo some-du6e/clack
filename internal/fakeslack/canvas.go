@@ -75,6 +75,8 @@ type canvasStore struct {
 	quips            map[string]*quipModel
 	quipLog          []QuipRequest
 	quipPreserialize bool
+	// unfurls are the link cards' unfurl containers, by url (linkcards.go)
+	unfurls map[string]linkUnfurl
 }
 
 var canvasStores = newPerServer() // *Server -> *canvasStore

@@ -170,12 +170,19 @@ func (v *View) load(keep bool) {
 			ids := []string{d.Info.Creator}
 			ids = append(ids, d.Info.Editors...)
 			a.EnsureUsers(ctx, ids)
-			if a.QuipEditOn() && d.Info.Editable && v.mode != Peek { // edits are made against Quip's model
+			// edits are made against Quip's model, and link cards are drawn
+			// from it, read-only canvases' and peeks' too (linkcard.go):
+			// Slack's client always draws from the model
+			cards := hasLinkCards(d.Doc.Blocks)
+			if cards || a.QuipEditOn() && d.Info.Editable && v.mode != Peek {
 				go func() {
 					mctx, mcancel := context.WithTimeout(context.Background(), 60*time.Second)
 					defer mcancel()
 					if err := a.LoadCanvasModel(mctx, v.id); err != nil {
 						log.Printf("canvasview: canvas %s: the model didn't load: %v", v.id, err)
+					}
+					if cards {
+						v.post(v.refreshCards)
 					}
 				}()
 			}
@@ -231,6 +238,7 @@ func (v *View) goLive() {
 				}
 				if ev.Type == "canvas_model" && ev.ID == v.id { // what opens is checked against the model (blockEditable)
 					v.post(v.recheckEditable)
+					v.post(v.refreshCards) // a card's section changed: its container anew (linkcard.go)
 				}
 				if ev.Type == "canvas_save" && ev.ID == v.id { // the save banner and lock (banner.go)
 					if ns := a.TakeCanvasSaveNotices(v.id); len(ns) > 0 {

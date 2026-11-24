@@ -83,8 +83,14 @@ type styleSet struct {
 	dark                        bool
 	gen                         uint64
 	body, h1, h2, h3, title, sm *richview.Style
-	ph                          *richview.Style // the empty canvas's placeholder
-	titlePh                     *richview.Style // the empty title's placeholder
+	// card, cardTitle and cardSm are a link card's (linkcard.go): Slack's
+	// message components in the card-view, in its ink (content-pry, not
+	// the document's): the fallback's attachment, EmptyUnfurl's title
+	// (15px/1.46668, its link in the text's colour) and its line
+	// (13px/1.38463)
+	card, cardTitle, cardSm *richview.Style
+	ph                      *richview.Style // the empty canvas's placeholder
+	titlePh                 *richview.Style // the empty title's placeholder
 }
 
 func (s *styleSet) sync(th *theme.Theme, h Host) {
@@ -97,6 +103,7 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 		imgs = im
 	}
 	ink := docText(th.Dark)
+	msgInk := false // mk's styles take the document's ink, unless set
 	mk := func(size, line float32, heading bool) *richview.Style {
 		st := richview.NewStyle(th.Shaper, imgs, richview.LightPalette())
 		st.Face = theme.Typeface
@@ -115,9 +122,11 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 		if tp, ok := richview.Themed(th); ok { // stylesheet theme tokens
 			p = tp
 		}
-		p.Text = ink
+		if !msgInk {
+			p.Text = ink
+		}
 		st.SetPalette(p)
-		st.Embolden = theme.BodyEmboldenFor(ink)
+		st.Embolden = theme.BodyEmboldenFor(p.Text)
 		return st
 	}
 	s.body = mk(bodySize, bodyLine, false)
@@ -126,6 +135,14 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 	s.h3 = mk(h3Size, h3Line, true)
 	s.title = mk(titleSize, titleLine, true)
 	s.sm = mk(13, 18, false)
+	msgInk = true
+	s.card = mk(15, 22, false)
+	s.cardTitle = mk(15, 22, false)
+	tp := s.cardTitle.Palette
+	tp.Link = tp.Text // .p-empty_unfurl__title .c-link:not(:hover)
+	s.cardTitle.SetPalette(tp)
+	s.cardSm = mk(13, 18, false)
+	msgInk = false
 	s.ph = mk(bodySize, bodyLine, false)
 	pp := s.ph.Palette
 	pp.Text = placeholderText(th.Dark)
@@ -160,9 +177,10 @@ type blk struct {
 	edOK  bool             // canvas.Editable: opens in the editor
 	edWhy string           // else what is in the way
 
-	parent *blk     // the quote or callout holding this block
-	inCell bool     // a table cell's block: drawn, not edited (tables don't open in Clack's editor)
-	cells  [][]cell // Table: the rows' cells
+	parent *blk      // the quote or callout holding this block
+	inCell bool      // a table cell's block: drawn, not edited (tables don't open in Clack's editor)
+	card   *linkCard // Embed: its link card (linkcard.go)
+	cells  [][]cell  // Table: the rows' cells
 	tscr   tableScroll
 }
 
@@ -191,6 +209,7 @@ func (v *View) rebuild(d *core.CanvasDoc) {
 	v.blocks = v.makeBlocks(d, d.Doc.Blocks, old)
 	v.edit.keepLocal(v)
 	v.edit.docChanged(v)
+	v.refreshCards()
 }
 
 // checkTitle notes whether the canvas's title lets edits save
@@ -351,6 +370,8 @@ func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*
 			for _, c := range b.Columns {
 				x.cols = append(x.cols, v.makeBlocks(d, c, old))
 			}
+		case canvas.Embed:
+			x.card = &linkCard{url: b.URL}
 		default:
 			if doc, ok := v.richDoc(d, b); ok {
 				x.rv = richview.New(doc, richview.Options{Secondary: b.Kind == canvas.Check && b.Checked, Canvas: true,
@@ -436,22 +457,8 @@ func (v *View) richDoc(d *core.CanvasDoc, b *canvas.Block) (richtext.Doc, bool) 
 			f.IsImage = cf.IsImage
 		}
 		return one(richtext.Block{Kind: richtext.FileBlock, File: f})
-	case canvas.Embed:
-		u := b.URL
-		host := u
-		if pu, err := url.Parse(u); err == nil && pu.Host != "" {
-			host = strings.TrimPrefix(pu.Host, "www.")
-		}
-		title := b.Title
-		if title == "" {
-			title = u
-		}
-		att := &richtext.Attachment{IsUnfurl: true, ServiceName: host, TitleLink: u, FromURL: u,
-			Title: []richtext.Span{{Kind: richtext.Link, Text: title, URL: u}}}
-		if u == "" {
-			att.Title = []richtext.Span{{Kind: richtext.Text, Text: title}}
-		}
-		return one(richtext.Block{Kind: richtext.AttachmentBlock, Att: att})
+	case canvas.Embed: // a link card: drawn from Quip's model (linkcard.go), never the export's text
+		return richtext.Doc{}, false
 	}
 	return richtext.Doc{}, false
 }
@@ -598,6 +605,11 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, top int) layout.Dimension
 			defer op.Offset(image.Pt(0, pad)).Push(gtx.Ops).Pop()
 			call.Add(gtx.Ops)
 		}()
+	case k == canvas.Embed && b.card != nil:
+		h = v.layoutCard(gtx, b, w)
+		if v.edit.canEdit(v) && !b.inCell { // a click explains it can't be edited yet
+			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
+		}
 	case k == canvas.Columns:
 		n := len(b.cols)
 		gp := gtx.Dp(20)

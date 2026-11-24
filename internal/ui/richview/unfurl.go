@@ -893,7 +893,11 @@ func (l *lay) v2Card(b *richtext.Block, x, y, w int) int {
 	p := &l.st.Palette
 	bar := l.dp(4)
 	bi := len(l.d.boxes)
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: parseColor(a.Color, p.Placeholder), radius: l.dp(8), target: -1})
+	barCol := parseColor(a.Color, p.Placeholder)
+	if a.HideBorder { // renderV2Attachment drops the border as v1 does
+		bar, barCol.A = 0, 0
+	}
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: barCol, radius: l.dp(8), target: -1})
 	cx := x + bar + l.dp(12)
 	cy := y + l.dp(2)
 	h := l.blocks(a.Text[min(a.KitFrom, len(a.Text)):], cx, cy, x+w-cx, false)

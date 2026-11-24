@@ -179,6 +179,10 @@ func (cs *canvasStore) quipSync(s *Server, c *FakeCanvas, m *quipModel) {
 		case b.Kind == canvas.Divider:
 			add(quip.Section{ID: quip.Ptr(b.ID), Type: quip.Ptr(quip.TypeHorizontalRule), Style: quip.Ptr(quip.StyleHorizontalRule),
 				Content: &quip.Content{HorizontalRule: &quip.HorizontalRule{}}}, blockSig(b))
+		case b.Kind == canvas.Embed: // a link card: its unfurl container's card (linkcards.go)
+			m.opaque[b.ID] = *b
+			sec, card := cs.linkCardSection(b.ID, b.URL)
+			add(sec, blockSig(b)+card)
 		default: // a block Clack doesn't edit: a section of its type, kept whole
 			m.opaque[b.ID] = *b
 			add(quip.Section{ID: quip.Ptr(b.ID), Type: quip.Ptr(opaqueType(b.Kind)), Style: quip.Ptr(int32(0)),
