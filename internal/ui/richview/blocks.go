@@ -366,8 +366,10 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	y0 := y
 	if top && !l.inAtt {
-		bs = l.arrangeWorkObjects(bs)   // where MessageFiles / MessageKitAttachments draw them (workobject.go)
-		bs = l.attachmentsOverLimit(bs) // MessageKitAttachments' 20 (overlimit.go)
+		bs = l.arrangeWorkObjects(bs) // where MessageFiles / MessageKitAttachments draw them (workobject.go)
+		if !l.opts.NoAttachmentLimit {
+			bs = l.attachmentsOverLimit(bs) // MessageKitAttachments' 20 (overlimit.go)
+		}
 	}
 	edited, editedAfter := -1, -1
 	if top && l.hasLabel() {

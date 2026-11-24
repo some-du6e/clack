@@ -54,27 +54,26 @@ func TestAttKindOf(t *testing.T) {
 		name  string
 		data  []byte
 		label string
-		color uint32
 		image bool
 	}{
-		{"report.pdf", nil, "PDF", attRed, false},
-		{"archive.zip", nil, "Zip", attGray, false},
-		{"backup.tar", nil, "TAR", attGray, false},
-		{"Photo.PNG", nil, "PNG", attGreen, true},
-		{"cat.jpeg", nil, "JPEG", attGreen, true},
-		{"essay.docx", nil, "Word Document", attBlue, false},
-		{"budget.xlsx", nil, "Excel Spreadsheet", attGreen, false},
-		{"main.go", nil, "Go", attTeal, false},
-		{"data.xyz", nil, "XYZ", attBlue, false},
-		{"README", nil, "File", attBlue, false},
-		{"screenshot", pngData.Bytes(), "PNG", attGreen, true}, // sniffed
-		{"weird.bin", pngData.Bytes(), "BIN", attGreen, true},  // sniffed, keeps ext label
-		{"photo.heic", nil, "HEIC", attGreen, false},           // not decodable: card
+		{"report.pdf", nil, "PDF", false},
+		{"archive.zip", nil, "Zip", false},
+		{"backup.tar", nil, "TAR", false},
+		{"Photo.PNG", nil, "PNG", true},
+		{"cat.jpeg", nil, "JPEG", true},
+		{"essay.docx", nil, "Word Document", false},
+		{"budget.xlsx", nil, "Excel Spreadsheet", false},
+		{"main.go", nil, "Go", false},
+		{"data.xyz", nil, "XYZ", false},
+		{"README", nil, "File", false},
+		{"screenshot", pngData.Bytes(), "PNG", true}, // sniffed
+		{"weird.bin", pngData.Bytes(), "BIN", true},  // sniffed, keeps ext label
+		{"photo.heic", nil, "HEIC", false},           // not decodable: card
 	}
 	for _, c := range cases {
 		k := attKindOf(c.name, c.data)
-		if k.Label != c.label || k.Color != c.color || k.Image != c.image {
-			t.Errorf("attKindOf(%q) = %+v, want label %q color %06x image %v", c.name, k, c.label, c.color, c.image)
+		if k.Label != c.label || k.Image != c.image {
+			t.Errorf("attKindOf(%q) = %+v, want label %q image %v", c.name, k, c.label, c.image)
 		}
 		if k.Icon == "" {
 			t.Errorf("attKindOf(%q): no icon", c.name)

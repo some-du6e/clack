@@ -546,6 +546,11 @@ type Options struct {
 	// (c-message_kit__blocks--focused-result), so its FindHighlight runs
 	// draw in FindFocused.
 	FindFocused bool
+	// NoAttachmentLimit: the doc's attachments all draw, as a search
+	// result's do (SearchResult, boot-shared IT2K: renderAttachments draws
+	// each with renderFullAttachment, never through MessageKitAttachments
+	// and its 20, overlimit.go).
+	NoAttachmentLimit bool
 }
 
 // lightEmbolden is the extra outline (px) for glyph color c at scale pxPerDp.
