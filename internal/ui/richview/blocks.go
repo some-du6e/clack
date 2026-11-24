@@ -819,19 +819,7 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if l.mode&modeAtts != 0 && !l.inAtt {
 			return l.compFile(b, x, y, w)
 		}
-		if b.File.Pending { // c-pending_files__generic_file--pending: the pillow at .5
-			nb, nf, no := len(l.d.boxes), len(l.d.frags), len(l.d.overlayIcons)
-			h := l.file(b.File, x, y, w)
-			l.fade(nb, nf)
-			for i := no; i < len(l.d.overlayIcons); i++ {
-				l.d.overlayIcons[i].alpha = 0.5 // the icon is the pillow's too
-			}
-			if genericPillow(b.File) {
-				l.pendingSpinner(b.File, x+min(w, l.dp(426)), y) // PendingFilesSpinner, not faded
-			}
-			return h
-		}
-		return l.file(b.File, x, y, w)
+		return l.filePending(b.File, x, y, w, func() int { return l.file(b.File, x, y, w) })
 
 	case richtext.FileStatus:
 		return l.fileStatus(b, x, y, w)
@@ -1732,4 +1720,25 @@ func (l *lay) shift(f0, b0, h0, dx int) {
 	for i := h0; i < len(l.d.hits); i++ {
 		l.d.hits[i].r = l.d.hits[i].r.Add(image.Pt(dx, 0))
 	}
+}
+
+// filePending lays f out with lay and, while f is the viewer's upload
+// still pending, draws it as c-pending_files__generic_file--pending does:
+// the pillow at .5, its icon too, and a generic pillow's
+// PendingFilesSpinner at its top right (not faded). A lone file, each
+// cell of a pillow grid (FileGallery) and a MessageFile component take it.
+func (l *lay) filePending(f *richtext.File, x, y, w int, lay func() int) int {
+	if !f.Pending {
+		return lay()
+	}
+	nb, nf, no := len(l.d.boxes), len(l.d.frags), len(l.d.overlayIcons)
+	h := lay()
+	l.fade(nb, nf)
+	for i := no; i < len(l.d.overlayIcons); i++ {
+		l.d.overlayIcons[i].alpha = 0.5 // the icon is the pillow's too
+	}
+	if genericPillow(f) {
+		l.pendingSpinner(f, x+min(w, l.dp(426)), y) // PendingFilesSpinner, not faded
+	}
+	return h
 }

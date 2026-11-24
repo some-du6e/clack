@@ -22,15 +22,17 @@ type updates struct {
 	inst desktop.Install
 	dl   *desktop.Updater
 
-	mu  sync.Mutex
-	pkg map[string]desktop.Package // verified downloads, by tag
+	mu    sync.Mutex
+	pkg   map[string]desktop.Package // verified downloads, by tag
+	plans map[string]desktop.Plan    // their staged installs (stageForQuit), by tag
 }
 
 func newUpdates(dir string) *updates {
 	u := &updates{
-		inst: desktop.DetectInstall(),
-		dl:   &desktop.Updater{Dir: dir, UserAgent: "clack/" + updateVersion()},
-		pkg:  map[string]desktop.Package{},
+		inst:  desktop.DetectInstall(),
+		dl:    &desktop.Updater{Dir: dir, UserAgent: "clack/" + updateVersion()},
+		pkg:   map[string]desktop.Package{},
+		plans: map[string]desktop.Plan{},
 	}
 	if raw := os.Getenv("CLACK_UPDATE_URL"); raw != "" {
 		if p, err := url.Parse(raw); err == nil && p.Hostname() != "" {
@@ -40,6 +42,7 @@ func newUpdates(dir string) *updates {
 		}
 	}
 	desktop.CleanHelpers()
+	desktop.CleanStages(u.inst.Target)
 	log.Printf("update: this copy is a %q install", u.inst.Kind)
 	return u
 }
@@ -99,7 +102,48 @@ func (u *updates) download(ctx context.Context, info ui.UpdateInfo, progress fun
 	u.mu.Lock()
 	u.pkg[r.Tag] = pkg
 	u.mu.Unlock()
+	u.stageForQuit(ctx, r.Tag, pkg)
 	return nil
+}
+
+// quietKinds are the installs that swap in silently, so they may go in
+// as Clack quits: never the system installer or a password prompt (a
+// .deb or .rpm waits for Install and restart).
+func quietKind(k desktop.InstallKind) bool {
+	switch k {
+	case desktop.KindMacApp, desktop.KindWinInstaller, desktop.KindWinPortable, desktop.KindAppImage:
+		return true
+	}
+	return false
+}
+
+// stageForQuit gets a verified download ready to install while Clack
+// still runs (the dmg mounted and its app copied beside Clack.app, the
+// archive unpacked), so quitting only starts the helper: staging inside
+// the quitting process left hdiutil and ditto runs behind when its exit
+// came first. A copy Slack would call unable to update itself
+// (getIsUpdateSupported), or one that needs the user, isn't staged and
+// waits for Install and restart.
+func (u *updates) stageForQuit(ctx context.Context, tag string, pkg desktop.Package) {
+	if !quietKind(u.inst.Kind) {
+		return
+	}
+	if why := desktop.UpdateUnsupported(u.inst); why != "" {
+		log.Printf("update: %s installs only from Install and restart: %s", tag, why)
+		return
+	}
+	plan, err := desktop.PrepareQuiet(ctx, u.inst, pkg)
+	if err != nil {
+		log.Printf("update: %s not staged to install on quit: %v", tag, err)
+		return
+	}
+	u.mu.Lock()
+	if old, ok := u.plans[tag]; ok && old.Stage != "" && old.Stage != plan.Stage {
+		os.RemoveAll(old.Stage)
+	}
+	u.plans[tag] = plan
+	u.mu.Unlock()
+	log.Printf("update: %s staged to install as Clack quits", tag)
 }
 
 // uiProgress maps the downloader's stages onto the UI's.
@@ -124,7 +168,14 @@ func (u *updates) install(info ui.UpdateInfo) error {
 	if !ok {
 		return fmt.Errorf("update: %s isn't downloaded", info.Tag)
 	}
-	plan, err := desktop.Prepare(context.Background(), u.inst, pkg)
+	u.mu.Lock()
+	plan, staged := u.plans[info.Tag]
+	delete(u.plans, info.Tag)
+	u.mu.Unlock()
+	var err error
+	if !staged { // staged for the quit already: the same plan, relaunch and all
+		plan, err = desktop.Prepare(context.Background(), u.inst, pkg)
+	}
 	if errors.Is(err, desktop.ErrManual) {
 		return fmt.Errorf("%w: %v", ui.ErrUpdateManual, err)
 	}
@@ -135,34 +186,27 @@ func (u *updates) install(info ui.UpdateInfo) error {
 	return err
 }
 
+// errNotOnQuit: installOnQuit ran nothing, and why.
+var errNotOnQuit = errors.New("update: not installed on quit")
+
 // installOnQuit installs the downloaded info as Clack quits, without
 // starting it again: Slack desktop's update is applied when the app quits
 // (Squirrel installs a downloaded update on quit; its quitAndInstall is
-// the restart button's), so the next launch runs it. Only installs that
-// swap in silently: never the system installer or a password prompt
-// (a .deb or .rpm waits for Install and restart).
+// the restart button's), so the next launch runs it. It only starts the
+// helper on what stageForQuit staged (quietKind installs); anything else
+// is errNotOnQuit with the reason, and waits.
 func (u *updates) installOnQuit(info ui.UpdateInfo) error {
-	switch u.inst.Kind {
-	case desktop.KindMacApp, desktop.KindWinInstaller, desktop.KindWinPortable, desktop.KindAppImage:
-	default:
-		return nil
+	if !quietKind(u.inst.Kind) {
+		return fmt.Errorf("%w: a %q install waits for Install and restart", errNotOnQuit, u.inst.Kind)
 	}
 	u.mu.Lock()
-	pkg, ok := u.pkg[info.Tag]
+	plan, ok := u.plans[info.Tag]
+	delete(u.plans, info.Tag)
 	u.mu.Unlock()
 	if !ok {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	plan, err := desktop.Prepare(ctx, u.inst, pkg)
-	if errors.Is(err, desktop.ErrManual) {
-		return nil // it opened for the user to finish, as Install and restart's does
-	}
-	if err != nil {
-		return err
+		return fmt.Errorf("%w: nothing staged for it", errNotOnQuit)
 	}
 	plan.Relaunch = nil // quitting: the user starts Clack again
-	_, err = desktop.StartHelper(plan)
+	_, err := desktop.StartHelper(plan)
 	return err
 }
