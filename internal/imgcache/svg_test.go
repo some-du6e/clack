@@ -142,7 +142,15 @@ func TestRasterSVGRefusesWhatItCannotDraw(t *testing.T) {
 		"transform":    head + `<path d="M0 0h16v16z" transform="scale(2)"/></svg>`,
 		"evenodd":      head + `<path d="M0 0h16v16z" fill-rule="evenodd"/></svg>`,
 		"url fill":     head + `<path d="M0 0h16v16z" fill="url(#g)"/></svg>`,
-		"named fill":   head + `<path d="M0 0h16v16z" fill="red"/></svg>`,
+		"currentcolor": head + `<path d="M0 0h16v16z" fill="currentColor"/></svg>`,
+		"rect":         head + `<rect width="16" height="16"/></svg>`,
+		"clip rx":      head + `<defs><clipPath id="c"><rect width="8" height="8" rx="2"/></clipPath></defs></svg>`,
+		"clip g":       head + `<defs><clipPath id="c"><g/></clipPath></defs></svg>`,
+		"clip units":   head + `<defs><clipPath id="c" clipPathUnits="objectBoundingBox"><rect width="1" height="1"/></clipPath></defs></svg>`,
+		"no clip":      head + `<path d="M0 0h16v16z" clip-path="url(#nope)"/></svg>`,
+		"clip ref":     head + `<path d="M0 0h16v16z" clip-path="inset(2px)"/></svg>`,
+		"path in defs": head + `<defs><path d="M0 0h16v16z"/></defs></svg>`,
+		"clip twice":   head + `<defs><clipPath id="c"><rect width="1" height="1"/></clipPath><clipPath id="c"><rect width="1" height="1"/></clipPath></defs></svg>`,
 		"image":        head + `<image href="https://example.com/x.png"/></svg>`,
 		"use":          head + `<use href="#a"/></svg>`,
 		"style":        head + `<style>path{fill:red}</style></svg>`,
@@ -268,5 +276,111 @@ func TestParsePathData(t *testing.T) {
 		if _, err := parsePathData(bad); err == nil && bad != "" {
 			t.Errorf("%q parsed", bad)
 		}
+	}
+}
+
+// A fill can be a CSS color keyword, in any case ("Black" is black);
+// transparent draws nothing.
+func TestRasterSVGNamedFills(t *testing.T) {
+	const head = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">`
+	b := NewBudget()
+	defer b.Release()
+	for fill, want := range map[string]color.NRGBA{
+		"red": {0xff, 0, 0, 0xff}, "Black": {0, 0, 0, 0xff}, "rebeccapurple": {0x66, 0x33, 0x99, 0xff}, "transparent": {},
+	} {
+		img, err := rasterSVG([]byte(head+`<path d="M0 0h16v16H0z" fill="`+fill+`"/></svg>`), 0, b)
+		if err != nil {
+			t.Fatalf("%s: %v", fill, err)
+		}
+		if got := nrgbaAt(img, 8, 8); !near(got, want, 1) {
+			t.Errorf("fill %s: %v, want %v", fill, got, want)
+		}
+	}
+}
+
+// clip-path="url(#id)" draws a <g>'s or <path>'s shapes only inside the
+// clipPath's rects and paths, united; a clipPath can come after its use
+// (in a closing <defs>); a group's clip and its path's own both apply.
+func TestRasterSVGClipPath(t *testing.T) {
+	const head = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">`
+	b := NewBudget()
+	defer b.Release()
+	draw := func(name, s string) *image.RGBA {
+		t.Helper()
+		img, err := rasterSVG([]byte(s), 0, b)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return img
+	}
+	black := color.NRGBA{A: 0xff}
+	left := draw("left half", head+`<g clip-path="url(#l)"><path d="M0 0h16v16H0z" fill="black"/></g>`+
+		`<defs><clipPath id="l"><rect width="8" height="16" fill="white"/></clipPath></defs></svg>`)
+	if got := nrgbaAt(left, 4, 8); !near(got, black, 1) {
+		t.Errorf("inside the clip: %v, want black", got)
+	}
+	if got := nrgbaAt(left, 12, 8); got.A != 0 {
+		t.Errorf("outside the clip: %v, want nothing", got)
+	}
+	union := draw("two rects", head+`<defs><clipPath id="u"><rect width="4" height="16"/><rect x="12" width="4" height="16"/></clipPath></defs>`+
+		`<path d="M0 0h16v16H0z" clip-path="url(#u)"/></svg>`)
+	for _, c := range []struct {
+		x    int
+		want bool
+	}{{2, true}, {8, false}, {14, true}} {
+		if got := nrgbaAt(union, c.x, 8).A != 0; got != c.want {
+			t.Errorf("two rects at x=%d: drawn %v, want %v", c.x, got, c.want)
+		}
+	}
+	both := draw("group and path clips", head+`<defs><clipPath id="l"><rect width="8" height="16"/></clipPath>`+
+		`<clipPath id="t"><path d="M0 0h16v8H0z"/></clipPath></defs>`+
+		`<g clip-path="url(#l)"><path d="M0 0h16v16H0z" clip-path="url(#t)"/></g></svg>`)
+	for _, c := range []struct {
+		x, y int
+		want bool
+	}{{4, 4, true}, {12, 4, false}, {4, 12, false}} {
+		if got := nrgbaAt(both, c.x, c.y).A != 0; got != c.want {
+			t.Errorf("both clips at (%d, %d): drawn %v, want %v", c.x, c.y, got, c.want)
+		}
+	}
+}
+
+// The file_input dialog's sad cloud (slackasset.EmptyStateLowConnection,
+// n9p0's RUFH) draws from the bytes Clack ships. Its fills are named
+// ("black") and its clipPath covers the whole canvas, so it draws exactly
+// as the same SVG without the clip does, with its purples and its
+// near-white face.
+func TestBundledEmptyStateCloudDraws(t *testing.T) {
+	data, ok := slackasset.Get(slackasset.EmptyStateLowConnection)
+	if !ok || !slackasset.IsSVG(slackasset.EmptyStateLowConnection) {
+		t.Fatal("the cloud isn't a bundled SVG")
+	}
+	b := NewBudget()
+	defer b.Release()
+	img, err := rasterSVG(data, 224, b)
+	if err != nil {
+		t.Fatalf("the cloud: %v", err)
+	}
+	const clip = ` clip-path="url(#clip0_11458_14667)"`
+	if !strings.Contains(string(data), clip) {
+		t.Fatal("the cloud's group has no clip-path")
+	}
+	plain, err := rasterSVG([]byte(strings.Replace(string(data), clip, "", 1)), 224, b)
+	if err != nil {
+		t.Fatalf("the cloud without its clip: %v", err)
+	}
+	if img.Bounds() != plain.Bounds() || string(img.Pix) != string(plain.Pix) {
+		t.Error("the whole-canvas clip changed the picture")
+	}
+	purple, face := false, false
+	for y := 0; y < img.Bounds().Dy(); y++ {
+		for x := 0; x < img.Bounds().Dx(); x++ {
+			c := nrgbaAt(img, x, y)
+			purple = purple || near(c, color.NRGBA{0x83, 0x38, 0x8a, 0xff}, 2)
+			face = face || near(c, color.NRGBA{0xf7, 0xf4, 0xf7, 0xff}, 2)
+		}
+	}
+	if !purple || !face {
+		t.Errorf("purple %v, near-white face %v: want both drawn", purple, face)
 	}
 }
