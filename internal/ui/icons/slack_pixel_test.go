@@ -144,12 +144,13 @@ func TestIconsMatchSlack(t *testing.T) {
 	// of ink and 4-connected holes in them, a pixel ink when at least half
 	// inked. Ink and shape can't see a dropped piece or a hole opened to
 	// the outside (the apple without its leaf passed both, and an Android
-	// eye leaking out of the head). A part a pixel from another (VIP's V
-	// and I) can touch it at one threshold and not at the next, so
+	// eye leaking out of the head), or a stroke's loop wound against its
+	// lines (pdf-file's: see TestStrokeLoopsWound). A part a pixel from
+	// another can touch it at one threshold and not at the next, so
 	// Clack's counts may match at 0.35, 0.5 or 0.65. The font's and the
 	// inline glyphs keep the ink and shape checks only.
 	for _, c := range cases {
-		if _, ok := slackRef[c.name]; !ok {
+		if _, ok := slackRef[c.name]; !ok || !Has(c.name) { // unregistered: reported above
 			continue
 		}
 		for _, ink := range inks {
