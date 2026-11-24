@@ -222,6 +222,27 @@ func (s *Server) PostBotBlocksQuiet(ch, botID, username, text string, blocks jso
 	return ts
 }
 
+// tsTakenLocked reports whether a message of ch (h, its history, or one
+// of its quiet threads' replies) has ts. histMu held.
+func (s *Server) tsTakenLocked(ch string, h []slack.Message, ts string) bool {
+	for _, m := range h {
+		if m.TS == ts {
+			return true
+		}
+	}
+	for k, rs := range s.quietReplies {
+		if !strings.HasPrefix(k, ch+"/") {
+			continue
+		}
+		for _, m := range rs {
+			if m.TS == ts {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // PostReplyQuiet adds a reply from user to the thread under root (a
 // message of ch's history, which gets the reply metadata) and returns its
 // ts. conversations.replies then serves the root and its replies.
@@ -238,6 +259,12 @@ func (s *Server) PostReplyQuiet(ch, root, user, text string) string {
 	}
 	n := len(s.quietReplies[k])
 	ts := fmt.Sprintf("%d.%06d", sec+int64(n), 100)
+	// a ts no other message of ch has, as Slack's are: sec+n is per
+	// thread, so two threads' replies in one second shared one, and the
+	// UI's shown-toast key (channel:ts) took the second for the first
+	for us := 101; us < 1e6 && s.tsTakenLocked(ch, h, ts); us++ {
+		ts = fmt.Sprintf("%d.%06d", sec+int64(n), us)
+	}
 	m := slack.Message{Type: "message", TS: ts, User: user, Text: text, ThreadTS: root, ClientMsgID: "quiet-" + ts}
 	if s.quietReplies == nil {
 		s.quietReplies = map[string][]slack.Message{}

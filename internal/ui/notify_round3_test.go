@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -226,9 +227,18 @@ func TestThreadsLinkLikeSlack(t *testing.T) {
 		if unread {
 			by[ch] = 1
 		}
+		// the server's state first, as Slack's is when it sends the event: a
+		// counts read sent after the push (the event's refreshCountsSoon, or
+		// one armed before it) answers it. The fake's own answer, unread
+		// threads, put has_unreads back before the wait below saw the
+		// event's "nothing unread" (files-card's full-test 45435247094)
+		fs.SetThreadsState(unread, mentions)
+		fs.SetThreadsByChannel(by)
+		n, pushed := fs.CallCount("client.counts"), time.Now()
 		fs.Push(map[string]any{"type": "update_thread_state", "has_unreads": unread, "mention_count": mentions,
 			"unread_count_by_channel": by, "mention_count_by_channel": map[string]int{}, "org_wide": c.IsEnterprise(),
 			"channel_badges": map[string]int{"thread_mentions": mentions}})
+		countsReadAfter(e, fs, n, pushed)
 		e.until("the threads' state", 10*time.Second, func() bool { return c.ThreadsState().Unread == unread })
 		e.settle(100 * time.Millisecond)
 	}
@@ -244,6 +254,24 @@ func TestThreadsLinkLikeSlack(t *testing.T) {
 	if !badge {
 		t.Error("with 37 thread mentions the Threads link has no badge (channel_badges' thread_mentions)")
 	}
+}
+
+// countsReadAfter, with THREADS_COUNTS_AFTER_PUSH set, waits out a
+// client.counts read core sent after an update_thread_state the test
+// pushed at pushed (n counts calls before it), and its answer: the
+// event's refreshCountsSoon sends one 1.5 s after it, or sooner when a
+// timer armed before it was running. core takes that answer's threads
+// state over the event's (store.SetCountsSince), so the wait after it sees
+// what the server answered, as when a read went out just after the push
+// on a slow runner (files-card's full-test 45435247094).
+func countsReadAfter(e *perfEnv, fs *fakeslack.Server, n int64, pushed time.Time) {
+	if os.Getenv("THREADS_COUNTS_AFTER_PUSH") == "" {
+		return
+	}
+	e.until("a counts read after the push", 10*time.Second, func() bool {
+		return fs.CallCount("client.counts") > n && time.Since(pushed) > 1600*time.Millisecond
+	})
+	e.settle(500 * time.Millisecond) // its answer goes in
 }
 
 // slickProbe is a Slick plugin in build:plugin's and build.mjs's shapes:
@@ -394,9 +422,13 @@ func TestReplyUnreadMarkInTheReplysFrame(t *testing.T) {
 	})
 	cv := e.channelView(ch)
 	// the threads' state with nothing unread first: the first reply's moves
-	// the channel's unread thread count from 0
+	// the channel's unread thread count from 0. The server's state too, so a
+	// counts read after the push answers it (TestThreadsLinkLikeSlack)
+	fs.SetThreadsState(false, 0)
+	n, pushed := fs.CallCount("client.counts"), time.Now()
 	fs.Push(map[string]any{"type": "update_thread_state", "has_unreads": false, "mention_count": 0,
 		"unread_count_by_channel": map[string]int{}, "mention_count_by_channel": map[string]int{}, "org_wide": c.IsEnterprise()})
+	countsReadAfter(e, fs, n, pushed)
 	e.until("no unread threads", 10*time.Second, func() bool { return c.ThreadsUnreadIn(ch) == 0 && !c.ThreadsState().Unread })
 	e.settle(100 * time.Millisecond)
 	feeds := fs.CallCount("activity.feed")

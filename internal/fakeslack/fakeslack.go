@@ -401,8 +401,10 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 // Server is a running fake.
 type Server struct {
 	remote bool // Remote: a fakeslackd in another process
-	// client.counts' threads.unread_count_by_channel (threads_by_channel.go)
+	// client.counts' threads.unread_count_by_channel and its has_unreads
+	// and mention_count (threads_by_channel.go)
 	threadsByChan map[string]int
+	threadsState  *countsThreads
 
 	Size Size
 	URL  string // http://127.0.0.1:port/
@@ -1739,7 +1741,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				chans = append(chans, s.countWithMutations(e))
 			}
 		}
-		threads := map[string]any{"has_unreads": true, "mention_count": 2}
+		unread, mentions := s.threadsUnread()
+		threads := map[string]any{"has_unreads": unread, "mention_count": mentions} // SetThreadsState
 		if by := s.threadsByChannel(); by != nil {
 			threads["unread_count_by_channel"] = by // SetThreadsByChannel
 		}
