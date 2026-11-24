@@ -50,3 +50,21 @@ func TestNoLinkingMentionsAreInert(t *testing.T) {
 		}
 	}
 }
+
+// Under NoLinking (pointer-events:none) the mentions and links don't set
+// the hand either; without it they do.
+func TestNoLinkingTakesNoHand(t *testing.T) {
+	d := doc(para(txt("see "), rt.Span{Kind: rt.Channel, Text: "#plans", ID: "C0NOLINK01"}, txt(" at "),
+		rt.Span{Kind: rt.Link, Text: "doc", URL: "https://example.invalid/doc"}))
+	for _, inert := range []bool{false, true} {
+		hs := newHarness(d, &recHandler{})
+		hs.v.SetOptions(Options{NoLinking: inert})
+		hs.frame()
+		for _, label := range []string{"#plans", "doc"} {
+			f := findFrag(t, &hs.v.d, label)
+			if got := hs.v.handFrag(f, false); got == inert {
+				t.Errorf("NoLinking %v: %s takes the hand %v", inert, label, got)
+			}
+		}
+	}
+}
