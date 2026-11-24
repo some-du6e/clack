@@ -142,8 +142,14 @@ func (u *updates) install(info ui.UpdateInfo) error {
 // swap in silently: never the system installer or a password prompt
 // (a .deb or .rpm waits for Install and restart).
 func (u *updates) installOnQuit(info ui.UpdateInfo) error {
+	// Only the macOS app for now: its swap is the path files-card's review
+	// read (wf_9ce08182-06e). Windows' silent installer and portable swap,
+	// and the AppImage's, wait for a review of the quits they would run
+	// under: a quit as Windows ends the session (WM_ENDSESSION, the tray's
+	// OnSessionEnd) can kill an installer halfway. They keep Install and
+	// restart.
 	switch u.inst.Kind {
-	case desktop.KindMacApp, desktop.KindWinInstaller, desktop.KindWinPortable, desktop.KindAppImage:
+	case desktop.KindMacApp:
 	default:
 		return nil
 	}
