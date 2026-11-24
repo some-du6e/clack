@@ -38,7 +38,7 @@ on:
 # reviewed commit TAUT_PIN; dispatch with ref=main (or any ref) to test upstream.
 env:
   TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37
-  SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+  SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
 
 permissions:

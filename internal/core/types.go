@@ -405,9 +405,12 @@ type Event struct {
 	User     *User
 	Conv     *Conv
 	Count    *Count // message, marked: the conversation's new unread state
-	Reply    bool   // message: a thread reply
-	Mention  bool   // message: mentions the viewer
-	ConvKind string // message: kind of the conversation
+	// BadgesGen (marked, thread_read): ActivityBadgesGen when the read
+	// came, for the Activity view's decrement (DecActivityBadges)
+	BadgesGen uint64
+	Reply     bool   // message: a thread reply
+	Mention   bool   // message: mentions the viewer
+	ConvKind  string // message: kind of the conversation
 	// Ahead (message, update): a top-level message past the end of a
 	// window whose end went stale at a slow connect (store
 	// UpsertHeard): the channel's lists don't draw it until the window is
@@ -491,6 +494,9 @@ type SendOpts struct {
 	// composer passes its own so its message list can find the message
 	// it jumps to (messages.ChannelView.JumpToOwnSend).
 	ClientMsgID string
+	// AgentMessageSourceType goes out as agent_message_source_type (a
+	// shared prompt sent to its agent).
+	AgentMessageSourceType string
 }
 
 // UploadOpts share one or more files (held in memory, never spooled to disk).

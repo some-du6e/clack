@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/taut"
@@ -36,6 +37,12 @@ import (
 //     Slackbot says "Hmm, something went wrong. Try again?" there and the
 //     command lands in that conversation's composer (addEphemeralFeedback's
 //     inputDelta).
+//   - /collapse, /expand: collapseCommand, expandCommand (229d, s/xk;
+//     core.App.ExpandCommand): every preview of every message held for
+//     the conversation (in a thread, the thread's) collapsed or expanded
+//     in this composer's view (the expandables store), and outside a
+//     thread Slackbot's "I’ve collapsed all files in this channel for
+//     you." (or expanded), which stays.
 //   - /feedback: feedbackCommand (tCkD) under slash_feedback_in_modal:
 //     UserFeedbackModal (popups/user_feedback.go). With the experiment off
 //     Slack opens its Help pane's feedback form, which Clack doesn't have:
@@ -107,7 +114,15 @@ func (j *sendJob) localCommand(ctx context.Context, a prepareSendArgs, q qDelta,
 			j.msgSend(ctx, t.Conv, msg, q)
 		}
 		return true, nil
+	case "/collapse", "/expand":
+		j.api.clearCommandFeedback(ts != "")
+		j.api.a.ExpandCommand(ch, ts, j.ui.viewContext, j.api.a.LocalCommand(args.Cmd) == "/expand")
+		return true, nil
 	case "/feedback":
+		if err := j.api.a.FeedbackCommandErr(args.Cmd); err != nil { // isSlashCommandEnabled: feedback_disabled_orgs
+			j.api.clearCommandFeedback(ts != "")
+			return true, failed(err)
+		}
 		if j.ui.feedback == nil || j.api.a.Experiment(popups.ExpSlashFeedbackInModal) != "on" {
 			return false, nil
 		}
@@ -118,14 +133,38 @@ func (j *sendJob) localCommand(ctx context.Context, a prepareSendArgs, q qDelta,
 	return false, nil
 }
 
-// msgSend is /msg's prepareAndSendMessage of the message into ch: a
-// failure is Slackbot's "Hmm, something went wrong. Try again?" in ch,
-// the command (orig, the processed delta) put in ch's composer.
+// msgSend is /msg's prepareAndSendMessage of the message into ch: what
+// its send does happens in ch (sendMessage's jumpToTimestamp there, its
+// unsend window, a command's keep_input in ch's message pane input, as
+// executeCommand puts it into its own channel's); a failure is
+// Slackbot's "Hmm, something went wrong. Try again?" in ch, the command
+// (orig, the processed delta) put in ch's composer.
 func (j *sendJob) msgSend(ctx context.Context, ch string, msg, orig qDelta) {
 	d, _ := qToDoc(qNormalize(msg))
 	no := false
 	args := prepareSendArgs{ChannelID: ch, Delta: d.Delta(), Text: d.Mrkdwn(), Blocks: d.RichTextBlocks(), EnableSlashCommands: &no}
-	mj := &sendJob{api: j.api, ch: ch, o: &outgoing{doc: d, text: args.Text, blocks: args.Blocks}, store: j.store, ui: j.ui}
+	ui := *j.ui
+	// what goes back into ch's box (keep_input's text, the command after
+	// a failure) waits for that box to mount, as the send's jump does
+	put := func(pd *Doc) {
+		switch {
+		case j.ui.target != nil:
+			j.ui.target(ch, func(t *Composer) { t.setContents(pd) })
+		case j.ui.contents != nil:
+			j.ui.contents(ch, pd)
+		}
+	}
+	ui.keep = put
+	mj := &sendJob{api: j.api, ch: ch, o: &outgoing{doc: d, text: args.Text, blocks: args.Blocks}, store: j.store, ui: &ui}
+	if j.ui.target != nil {
+		mj.sent = func(cid string, files bool) {
+			j.ui.target(ch, func(t *Composer) {
+				if t.OnSend != nil {
+					t.OnSend(cid, files)
+				}
+			})
+		}
+	}
 	// the command's delta was processed once already (submit's pass): the
 	// message's job doesn't run the processor over it again
 	mj.handed, _ = json.Marshal(args.Delta)
@@ -136,13 +175,15 @@ func (j *sendJob) msgSend(ctx context.Context, ch string, msg, orig qDelta) {
 		err = mj.prepareAndSend(ctx, args)
 	}
 	if err == nil {
+		if mj.posted.Load() && j.ui.target != nil { // updateMessageEligibleForUnsending in ch: the window runs from the send
+			by := time.Now().Add(unsendWindow)
+			j.ui.target(ch, func(t *Composer) { t.unsendBy = by })
+		}
 		return
 	}
 	j.api.commandFeedback(ch, "", "Hmm, something went wrong. Try again?")
-	if j.ui.contents != nil {
-		od, _ := qToDoc(qNormalize(orig))
-		j.ui.contents(ch, od)
-	}
+	od, _ := qToDoc(qNormalize(orig))
+	put(od)
 }
 
 // msgRest is /msg's message: deltaWithoutCmd without its first op (the

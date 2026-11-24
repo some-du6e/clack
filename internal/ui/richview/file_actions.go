@@ -123,17 +123,23 @@ type barBtn struct {
 	mr      int  // Dp after it (c-message_actions__button--gallery_v3_margin)
 	icon    string
 	tip     string
-	right   bool // the tooltip at top-right (the menu's)
-	starred bool // FileStar on a starred canvas: c-file__unstar_button
+	right   bool   // the tooltip at top-right (the menu's)
+	starred bool   // FileStar on a starred canvas: c-file__unstar_button
+	cact    string // a contact card's action (contact.go)
 }
 
 // fileBar is one FileActions group over a file card.
 type fileBar struct {
-	card  image.Rectangle // the card: the group shows while it's hovered
-	f     *richtext.File
-	viz   *richtext.DataViz // a data_visualization block's More actions (dataviz.go)
-	inset int               // Dp from the card's top and right
-	group bool              // a c-message_actions__group (pillows); else gallery_v3's bare group
+	card image.Rectangle // the card: the group shows while it's hovered
+	f    *richtext.File
+	viz  *richtext.DataViz // a data_visualization block's More actions (dataviz.go)
+	// contact is a contact card's actions (contact.go)
+	contact *richtext.ContactCard
+	// event is an event card's actions: Share event, More actions
+	// (event.go)
+	event *richtext.Event
+	inset int  // Dp from the card's top and right
+	group bool // a c-message_actions__group (pillows); else gallery_v3's bare group
 	btns  []barBtn
 }
 
@@ -409,6 +415,20 @@ func (v *View) barAction(bar, btn int, h Handler) {
 		if ch, ok := h.(ChartActionHandler); ok {
 			wr, win := v.actionRect(rs[btn])
 			ch.ChartAction(b.viz, wr, win)
+		}
+		return
+	}
+	if b.contact != nil {
+		if ch, ok := h.(ContactCardHandler); ok {
+			wr, win := v.actionRect(rs[btn])
+			ch.ContactCardAction(b.btns[btn].cact, b.contact, wr, win)
+		}
+		return
+	}
+	if b.event != nil {
+		if eh, ok := h.(EventHandler); ok {
+			wr, win := v.actionRect(rs[btn])
+			eh.EventAction(b.btns[btn].cact, b.event, v.opts.Channel, v.opts.TS, wr, win)
 		}
 		return
 	}

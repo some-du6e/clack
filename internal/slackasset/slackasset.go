@@ -72,10 +72,25 @@ var scLogoTime []byte
 //go:embed assets/hulu-logo-4f54e67.png
 var scLogoHulu []byte
 
+// The event block's calendar icons (EventHeader's getCalAppIcon, 0lYF:
+// J43V for appType "gcal", OImZ for every other; build 9f450b8ad3db),
+// 512x512, drawn at 36px.
+const (
+	CalendarGoogle  = Base + "gcal-app-dir-icon-54998fd.png"
+	CalendarOutlook = Base + "ocal-app-dir-icon-e4661a9.png"
+)
+
+//go:embed assets/gcal-app-dir-icon-54998fd.png
+var calendarGoogle []byte
+
+//go:embed assets/ocal-app-dir-icon-e4661a9.png
+var calendarOutlook []byte
+
 var bundled = map[string][]byte{
 	SlackLogoMark: slackLogoMark, SCHubHero: scHubHero, SCInvitesEmpty: scInvitesEmpty, SCPersonMing: scPersonMing,
 	SCPersonKyelie: scPersonKyelie, SCPersonMichael: scPersonMichael, SCLogoAirbnb: scLogoAirbnb, SCLogoOpenAI: scLogoOpenAI,
 	SCLogoOpenAIDark: scLogoOpenAIDark, SCLogoTime: scLogoTime, SCLogoHulu: scLogoHulu,
+	CalendarGoogle: calendarGoogle, CalendarOutlook: calendarOutlook,
 }
 
 // Get returns the bundled bytes for url, if it is one of these assets.

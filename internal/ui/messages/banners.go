@@ -112,12 +112,30 @@ func (s *listState) unreadPlacement(since, newest string) int {
 	return 3
 }
 
-// newestTS is the newest loaded message's ts.
+// newestTS is the newest loaded message's ts that the list draws.
 func (s *listState) newestTS() string {
 	if n := len(s.snap.msgs); n > 0 {
 		return s.snap.msgs[n-1].m.TS
 	}
 	return ""
+}
+
+// latestTS is the ts marking the channel read marks: Slack's getLatestTs
+// (markMostRecentMsgRead), the newer of the channel's latest (latest,
+// channelLatests) and the loaded slice's last real message. That's the
+// newest message whether or not a plugin's patch takes it out of the list
+// (dropHidden: s.own is read before the drop), so a hidden newest message
+// is marked read with the rest. "" when it's before the read cursor
+// (lastRead): marking never moves the cursor back.
+func (s *listState) latestTS(latest, lastRead string) string {
+	ts := s.own[1]
+	if tsLess(ts, latest) {
+		ts = latest
+	}
+	if ts == "" || tsLess(ts, lastRead) {
+		return ""
+	}
+	return ts
 }
 
 // paneUnreadBanner draws the message pane's UnreadBanner (the thread pane has
@@ -196,12 +214,17 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 	act := func(mark bool) {
 		if mark {
 			ub.marked, ub.shown, ub.fadeAt = newest, false, time.Time{}
-			ch := s.ch
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-				defer cancel()
-				_ = markRead(ctx, app, ch, newest) // markMostRecentMsgRead
-			}()
+			if ts := s.latestTS(cnt.Latest, cnt.LastRead); ts != "" { // markMostRecentMsgRead
+				if tsLess(newest, ts) {
+					ub.marked = ts // shown again for a message newer than what's marked
+				}
+				ch := s.ch
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+					defer cancel()
+					_ = markRead(ctx, app, ch, ts)
+				}()
+			}
 		} else if ui := s.unreadIndex(); ui >= 0 { // jumpToUnread
 			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, ui-1)}
 			s.stopScroll()

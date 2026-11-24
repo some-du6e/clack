@@ -85,6 +85,7 @@ type tzHost struct {
 	overlays []taut.Overlay
 	trees    map[uint64][]byte
 	clip     []string
+	threads  []string // OpenThread's channel/ts
 }
 
 func (h *tzHost) Core() *core.App         { return h.a }
@@ -96,8 +97,12 @@ func (h *tzHost) Navigate(r string) {
 	h.navs = append(h.navs, r)
 	h.mu.Unlock()
 }
-func (h *tzHost) OpenThread(ch, ts string) {}
-func (h *tzHost) CloseSecondary()          {}
+func (h *tzHost) OpenThread(ch, ts string) {
+	h.mu.Lock()
+	h.threads = append(h.threads, ch+"/"+ts)
+	h.mu.Unlock()
+}
+func (h *tzHost) CloseSecondary() {}
 func (h *tzHost) ShowOverlay(o Overlay) {
 	h.mu.Lock()
 	h.shown = append(h.shown, o)

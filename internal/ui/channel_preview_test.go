@@ -9,12 +9,15 @@ package ui
 // workflow) each state is saved as a screenshot.
 
 import (
+	"context"
 	"encoding/json"
 	"image"
 	"image/png"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -130,6 +133,95 @@ func TestChannelPreviewJoin(t *testing.T) {
 	e.shot("channel-archived")
 	e.openChannel(fs.ChannelIDs()[1])
 	e.until("archived row gone", 10*time.Second, func() bool { return !e.sidebarHas(fakeslack.ArchivedChannelID) })
+}
+
+// A channel the viewer isn't in, listed before it's opened (Browse
+// channels, then the composer's # list), opens as one opened by id: the
+// lists' hits are kept apart from the conversations Conv answers
+// (store.ChannelHit, read only by the commands' lookup), so opening it
+// reads it with conversations.info, and the join pane draws its
+// description. The hits used to be stored as the channel's copy: partial
+// (no purpose, no Slack Connect teams), it stopped the read, and the
+// pane lost the description. /open still finds the listed channel.
+func TestChannelPreviewAfterListing(t *testing.T) {
+	e, fs := previewEnv(t)
+	ch := fakeslack.PreviewChannelID
+	const purpose = "A channel you can read before joining. Ask questions, share what you made."
+	var mu sync.Mutex
+	infos := 0
+	fs.SetHook(func(method string, form url.Values) (any, bool) {
+		switch method {
+		case "search.modules.channels": // Browse channels
+			if form.Get("search_context") != "desktop_channel_browser" {
+				return nil, false
+			}
+			return map[string]any{"ok": true, "items": []any{map[string]any{"id": ch, "name": "lounge-preview", "is_member": false,
+				"member_count": 4210, "context_team_id": fakeslack.TeamID}},
+				"pagination": map[string]any{"total_count": 1, "page": 1, "page_count": 1}}, true
+		case "conversations.info":
+			if form.Get("channel") == ch {
+				mu.Lock()
+				infos++
+				mu.Unlock()
+			}
+		}
+		return nil, false
+	})
+	fs.SetEdgeHook(func(method string, _ map[string]json.RawMessage) (any, bool) {
+		if method != "edge/channels/search" { // the # list
+			return nil, false
+		}
+		return map[string]any{"ok": true, "results": []any{map[string]any{"id": ch, "name": "lounge-preview", "is_channel": true,
+			"is_member": false, "num_members": 4210, "context_team_id": fakeslack.TeamID}}}, true
+	})
+	t.Cleanup(func() {
+		fs.SetHook(nil)
+		fs.SetEdgeHook(nil)
+	})
+	svc := e.a.data.core
+	ctx := context.Background()
+	pg, err := svc.BrowseChannelsWith(ctx, core.ChannelBrowseOpts{Query: "lounge"})
+	if err != nil || len(pg.Channels) != 1 || pg.Channels[0].ID != ch {
+		t.Fatalf("Browse channels: %+v %v", pg, err)
+	}
+	if hits, err := svc.AutocompleteChannels(ctx, "lounge"); err != nil || len(hits) != 1 || hits[0].ID != ch || hits[0].IsMember {
+		t.Fatalf("# list: %+v %v", hits, err)
+	}
+	if _, ok := svc.S.ChannelHit(ch); !ok {
+		t.Fatal("the lists' hit isn't kept (the commands' lookup reads it)")
+	}
+	mu.Lock()
+	before := infos
+	mu.Unlock()
+
+	e.openChannel(ch)
+	c := e.a.convoFor(ch, "")
+	e.until("join pane", 20*time.Second, func() bool { return e.a.footerFor(c) == footPreview && c.jp != nil && !c.jp.joinRect.Empty() })
+	e.until("the channel's description", 10*time.Second, func() bool {
+		ci := e.a.convOf(ch)
+		return ci != nil && ci.Purpose == purpose
+	})
+	mu.Lock()
+	after := infos
+	mu.Unlock()
+	if after == before {
+		t.Error("opening the listed channel sent no conversations.info")
+	}
+	if cv, ok := svc.Conv(ch); !ok || cv.Purpose != purpose {
+		t.Errorf("core's copy %+v %v: not conversations.info's", cv, ok)
+	}
+	e.settle(200 * time.Millisecond)
+	if drew := frameStrings(e); !drew[purpose] {
+		t.Error("the join pane draws no description")
+	}
+	if c.jp.caretRect.Empty() {
+		t.Error("no Join… caret on a public channel")
+	}
+
+	// /open still finds the listed channel (its hit, or conversations.info's copy)
+	if tg, err := svc.OpenCommand(ctx, "/open", []core.CommandParam{{Type: "mention", Value: ch}}, "lounge-preview"); err != nil || tg.Conv != ch {
+		t.Errorf("/open the listed channel: %+v %v", tg, err)
+	}
 }
 
 func TestChannelPreviewTempJoin(t *testing.T) {

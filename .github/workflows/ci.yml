@@ -475,6 +475,8 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -v -timeout 5m -run '^TestFrameEventAskedX11$' gioui.org/app
           # patch 59: a window whose X server goes away says so first (its own private Xvfb)
           go test -count=1 -v -timeout 3m -run '^TestX11ConnectionLost$' gioui.org/app
+          # a plugin's app icon on X11: set at the window's next event, within the server's request size
+          xvfb-run -a go test -count=1 -v -timeout 3m -run '^TestSetAppIconX11$' ./internal/desktop
       # Signals and Clack's exit line (review of karim-1118), the real
       # binary on X11: under nohup a SIGHUP stays ignored (Notify would
       # have made it quit Clack), and a SIGTERM ends Clack by its own quit,
@@ -566,6 +568,11 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: .github/scripts/gio-layer-fix.sh xvfb-run -a
+      # patch 67: a masked Editor (a password field) copies and cuts
+      # nothing; Slack's Edit menu keeps Cut and Copy enabled
+      - name: Gio masked Editor copy (patch 67)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackMaskedEditorCopiesNothing$' gioui.org/widget
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -1465,7 +1472,7 @@ jobs:
           BADGE_SHOTS_DIR: ${{ runner.temp }}\toast-shots
         run: |
           rc=0
-          go test -count=1 -v -timeout 7m -run 'TestTaskbar|TestSystemIdleTime|TestBadge|TestLanczos' ./internal/desktop || rc=1
+          go test -count=1 -v -timeout 7m -run 'TestTaskbar|TestSystemIdleTime|TestBadge|TestLanczos|TestSetAppIconWindows' ./internal/desktop || rc=1
           go test -count=1 -v -timeout 8m -run '^(TestTaskbarWindow|TestTaskbarOverlayFollowsCount|TestFlashOnNotification|TestCloseKeepsAppInTaskbar|TestWindowsAppearancePref|TestCloseToTray|TestTitleDockTaskbarAgreeLikeSlack)$' ./internal/ui || rc=1
           exit $rc
       # Focus Assist's modes set through IQuietHoursSettings, each read back
