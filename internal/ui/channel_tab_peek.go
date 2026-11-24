@@ -35,7 +35,12 @@ import (
 //     popups.PeekContainer) slides and fades in itself.
 //   - No trigger on the selected tab, on a label in a menu row (the More
 //     menu), or for a type isPreviewEnabled (client-boot) leaves out; the
-//     channel type renders an empty fragment, so Messages has none.
+//     channel type renders an empty fragment, so Messages has none. Nor
+//     while a tab is held for a drag (Clack's: dnd-kit holds the pointer
+//     then, and an opening card would cover the drop targets).
+//   - A press on any trigger closes the open peek (onMouseDown's closePeek
+//     clears the one activePeekId), so a click on another tab closes the
+//     card even when the pointer crept there along the safe area's edge.
 //   - The trigger is the label: .channel_tab_label__WjErI's flex box,
 //     padding 8px around the icon box, the 4px gap and the text, centred in
 //     the 38px tab (.channel_tab__B1pww is an inline-flex, align-items
@@ -115,7 +120,9 @@ func (a *App) barTabPeekFrame(gtx layout.Context, ch string, t chTab, box image.
 	lh := gtx.Dp(unit.Dp(32.25))
 	trig := image.Rect(box.Min.X, box.Min.Y+(box.Dy()-lh)/2, box.Max.X, box.Min.Y+(box.Dy()-lh)/2+lh).Add(st.off)
 	hov := st.known && a.ptrOK && a.ptrWin.In(trig)
-	a.tabPeekFrame(gtx, key, trig, hov, selected || !barPeekTypes[t.typ] || !st.known)
+	d := a.tabDrag()
+	held := d.pressed || d.dragging // a tab held for a drag (the bar's or the More menu's): dnd-kit has the pointer
+	a.tabPeekFrame(gtx, key, trig, hov, selected || !barPeekTypes[t.typ] || !st.known || held)
 	a.tabPeek(key).bar = true // after: a reset trigger keeps being the bar's
 }
 

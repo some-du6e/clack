@@ -82,6 +82,23 @@ func dtEnv(t *testing.T) (*perfEnv, *fakeslack.Server, string) {
 	return e, fs, ch
 }
 
+// dtMid is the middle of ch's tab key (its label's centre line), and the
+// tab's x span: tbSpan's point is the tab's top edge, which may sit above
+// the 32.25px label.
+func dtMid(t *testing.T, e *perfEnv, ch, key string) (p image.Point, x0, x1 int) {
+	t.Helper()
+	p, x0, x1 = tbSpan(t, e, ch, key)
+	btn := e.a.clicks.get("tab." + ch + "." + key)
+	y := p.Y
+	for btn.Hovered() && y < p.Y+200 {
+		y++
+		e.move(f32.Pt(float32(p.X), float32(y)))
+	}
+	p.Y = (p.Y + y - 1) / 2
+	e.move(f32.Pt(float32(p.X), float32(p.Y)))
+	return p, x0, x1
+}
+
 // dtTab is ch's tab with tabz id id, and its index in the bar.
 func dtTab(t *testing.T, e *perfEnv, ch, id string) (chTab, int) {
 	t.Helper()
@@ -115,10 +132,9 @@ func TestDeletedTabLabels(t *testing.T) {
 		}
 		t.Errorf("no tab %s", id)
 	}
-	if e.a.Core().Experiment("list_channel_tab_show_view_name_fe") != "on" {
-		t.Fatal("list_channel_tab_show_view_name_fe isn't on")
-	}
-	tabs := e.a.channelTabs(ch)
+	// the account's groups: list_channel_tab_show_view_name_fe on
+	e.a.Core().SetExperimentGroup("list_channel_tab_show_view_name_fe", "on")
+	tabs, _ := e.a.data.tabsOf(e.a.data.tabSrc[ch].tabs, false)
 	check(tabs, dtDelCanvas, "trash", "Deleted file", true)
 	check(tabs, dtDelLabeled, "canvas", "Roadmap", false)
 	check(tabs, dtDelList, "list-tab", "Untitled", false)
@@ -239,10 +255,13 @@ func TestChannelTabPeek(t *testing.T) {
 	e, _, ch := dtEnv(t)
 	calls := e.recordCalls("files.open")
 	key := dtTabPeekKey(ch, dtLive)
-	p, x0, x1 := tbSpan(t, e, ch, "tab:"+dtLive)
-	away := image.Pt(p.X, p.Y+200)
+	p, x0, x1 := dtMid(t, e, ch, "tab:"+dtLive)
+	away := image.Pt(p.X, p.Y-60) // the channel header: off the label and the card
 	e.move(f32.Pt(float32(away.X), float32(away.Y)))
-	e.settle(50 * time.Millisecond)
+	e.settle(100 * time.Millisecond)
+	if k := e.a.anyTabPeekOpen(); k != "" {
+		t.Fatalf("peek %q still open with the pointer in the header", k)
+	}
 	// hover: nothing before 300 ms, the card from then on
 	t0 := time.Now()
 	e.move(f32.Pt(float32(p.X), float32(p.Y)))
@@ -288,6 +307,9 @@ func TestChannelTabPeek(t *testing.T) {
 		t.Errorf("with the pointer on the card the tab drew no hover look (looks %v)", looks)
 	}
 	dtLookHook(nil)
+	if n := len(calls.of("files.open", "", "file")); n > 0 {
+		t.Errorf("a canvas peek called files.open %d times", n)
+	}
 	// a press on the label closes it and selects the tab
 	e.click(p)
 	e.settle(100 * time.Millisecond)
@@ -306,7 +328,7 @@ func TestChannelTabPeek(t *testing.T) {
 		t.Error("the selected tab opened a peek")
 	}
 	// Messages: none either (an empty fragment)
-	mp, _, _ := tbSpan(t, e, ch, "messages")
+	mp, _, _ := dtMid(t, e, ch, "messages")
 	e.click(mp)
 	e.settle(100 * time.Millisecond)
 	e.move(f32.Pt(float32(mp.X), float32(mp.Y)))
@@ -315,7 +337,7 @@ func TestChannelTabPeek(t *testing.T) {
 		t.Errorf("hovering Messages opened %q", k)
 	}
 	// a deleted canvas's peek: QuipDeletedState
-	dp, _, _ := tbSpan(t, e, ch, "tab:"+dtDelCanvas)
+	dp, _, _ := dtMid(t, e, ch, "tab:"+dtDelCanvas)
 	e.move(f32.Pt(float32(away.X), float32(away.Y)))
 	e.settle(50 * time.Millisecond)
 	e.move(f32.Pt(float32(dp.X), float32(dp.Y)))
@@ -330,9 +352,6 @@ func TestChannelTabPeek(t *testing.T) {
 	e.settle(100 * time.Millisecond)
 	if e.a.tabPeekOpen(dkey) {
 		t.Error("leaving the label upward left the peek open")
-	}
-	if n := len(calls.of("files.open", "", "file")); n > 0 {
-		t.Errorf("a canvas peek called files.open %d times", n)
 	}
 }
 

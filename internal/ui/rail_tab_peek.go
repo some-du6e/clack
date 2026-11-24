@@ -274,6 +274,21 @@ func (a *App) closeTabPeek(key string) {
 // button's onMouseMove / onMouseDown (pe in window coordinates).
 func (a *App) tabPeekPointer(pe pointer.Event) {
 	pt := image.Pt(int(pe.Position.X+.5), int(pe.Position.Y+.5))
+	if pe.Kind == pointer.Press {
+		// onMouseDown's closePeek clears the one activePeekId: a press on
+		// any trigger closes the peek that's open, not only its own
+		for _, p := range a.tpeeks.m {
+			if p.mounted && pt.In(p.trig) {
+				for _, q := range a.tpeeks.m {
+					if q != p && a.tabPeekOpen(q.key) && !q.pop.InsideCard(pt) {
+						q.pop.Dismiss()
+						a.Invalidate()
+					}
+				}
+				break
+			}
+		}
+	}
 	for _, p := range a.tpeeks.m {
 		if !p.mounted {
 			continue

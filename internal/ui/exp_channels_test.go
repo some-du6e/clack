@@ -472,18 +472,19 @@ func TestDetailsAgentsAppsTabExperiment(t *testing.T) {
 	e.shot("details-tabs-integrations")
 }
 
-// useTabLabel under list_channel_tab_show_view_name_fe: a list tab without
-// its own label whose default view is one of the list's reads
-// "<title>: <view>".
+// useTabLabel under list_channel_tab_show_view_name_fe: a list tab (by its
+// type) without its own label whose default view is one of the list's
+// reads "<title>: <view>".
 func TestListTabViewName(t *testing.T) {
-	base := chTab{label: "Roadmap", icon: "list-tab", viewName: "Board"}
+	base := chTab{label: "Roadmap", icon: "list-tab", typ: "list", viewName: "Board"}
 	if got := withListViewName(base).label; got != "Roadmap: Board" {
 		t.Errorf("label %q", got)
 	}
 	for _, tb := range []chTab{
-		{label: "Roadmap", icon: "list-tab", viewName: "Board", labeled: true},
-		{label: "Roadmap", icon: "list-tab"},
-		{label: "Notes", icon: "canvas", viewName: "Board"},
+		{label: "Roadmap", icon: "list-tab", typ: "list", viewName: "Board", labeled: true},
+		{label: "Roadmap", icon: "list-tab", typ: "list"},
+		{label: "Notes", icon: "canvas", typ: "canvas", viewName: "Board"},
+		{label: "Roadmap", icon: "trash", typ: "list", viewName: "Board", labeled: true}, // a gone list's type decides, not its icon
 	} {
 		if got := withListViewName(tb).label; got != tb.label {
 			t.Errorf("%+v: %q", tb, got)
