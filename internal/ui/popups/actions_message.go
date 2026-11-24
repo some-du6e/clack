@@ -169,13 +169,24 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if MarkUnreadShown(app, &m, inThread) { // QRkh / RjOa: canMarkUnread and the redesign's exclusions
 		items = append(items, markUnread)
 	}
-	if sa := SaveActionFor(app, &m); SaveShown(app, &m) { // aHFc
+	todos := app == nil || app.Experiment("later_todos") == "on"   // GAJO tj: eY puts the save row in only with later_todos
+	if sa := SaveActionFor(app, &m); todos && SaveShown(app, &m) { // aHFc
 		items = append(items, MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			RunSaveAction(h, m) // oMi4 / aSBj (actions_todo.go)
 		}}.In(nsSaved))
 	}
 	if remindShown(app, &m) {
 		items = append(items, MenuItem{Action: "remind_later", QA: "remind_me", Label: ReminderLabel(app, &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage)) // ih0g
+	}
+	if todos && app != nil && ClearTodoShown(app, &m) { // JuvA eD, after the reminder row
+		label, icon := "Clear to-do", "eraser"
+		if app.Experiment("activity_in_home_prototype") == "on" { // 2bTe isDeleteTodoWordingEnabled
+			label, icon = "Delete to-do", "trash"
+		}
+		items = append(items, MenuItem{Action: "clear_later_todo", Label: label, Icon: icon, Danger: true, Frecency: "clear_later_todo",
+			QA: "clear_later_todo", Do: func() {
+				actDo(h, "", func(ctx context.Context, a *core.App) error { return a.Unsave(ctx, ch, ts) })
+			}}.In(nsSaved))
 	}
 	if f, ok := actFollowItem(h, m, conv, root); ok {
 		items = append(items, f)

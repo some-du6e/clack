@@ -659,3 +659,17 @@ func connectToAppsShown(app *core.App, m *core.Message) bool {
 	}
 	return !redesignedHuddle(app, m)
 }
+
+// ClearTodoShown is JuvA eD's Clear to-do for m (later_todos aside): a
+// to-do (Tx), not an ephemeral message, nor an automated one (but a code
+// channel's actionable ones).
+func ClearTodoShown(app *core.App, m *core.Message) bool {
+	if isEphemeral(app, m) {
+		return false
+	}
+	actionableCode := m.Subtype == "code_channel_lifecycle" || m.Subtype == "code_channel_review_submitted"
+	if IsAutomatedSubtype(m.Subtype) && !actionableCode {
+		return false
+	}
+	return IsTodo(app, m)
+}
