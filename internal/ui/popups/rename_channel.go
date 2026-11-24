@@ -43,6 +43,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -71,6 +72,7 @@ type RenameChannelModal struct {
 	ed      widget.Editor
 	focused bool
 	name    string // b: what Save sends
+	last    string // the input's text as last read: a ChangeEvent without a new text is no edit
 	changed bool   // f: hasChanges
 	gen     int    // bumped by every edit: stale checks are dropped
 	code    string // the check's problem (core channel name codes)
@@ -90,7 +92,7 @@ func NewRenameChannelModal(h Host, ch, name string) *RenameChannelModal {
 	if name == "" {
 		name = m.current
 	}
-	m.name, m.changed = name, name != m.current
+	m.name, m.changed, m.last = name, name != m.current, name
 	m.ed.SingleLine = true
 	m.ed.SetText(name)
 	n := utf8.RuneCountInString(name)
@@ -144,7 +146,11 @@ func (m *RenameChannelModal) Save() bool {
 	}
 	m.saving, m.err = true, ""
 	ch, name := m.ch, m.name
-	run(m.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Rename(ctx, ch, name) },
+	// the viewer's own Save always sends (never the guard's copy of the
+	// last failure), as Slack's does
+	run(m.h, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, a.Rename(slack.NoBackoff(ctx), ch, name)
+	},
 		func(_ struct{}, err error) {
 			m.saving = false
 			if err == nil {
@@ -176,7 +182,7 @@ func (m *RenameChannelModal) onEdit() {
 		m.ed.SetText(norm)
 		m.ed.SetCaret(n, n)
 	}
-	m.name, m.changed = norm, true
+	m.name, m.changed, m.last = norm, true, norm
 	m.gen++
 	gen := m.gen
 	time.AfterFunc(rnDebounce, func() {
@@ -210,8 +216,8 @@ func (m *RenameChannelModal) layout(gtx layout.Context) layout.Dimensions {
 		if !ok {
 			break
 		}
-		if _, ok := e.(widget.ChangeEvent); ok {
-			m.onEdit()
+		if _, ok := e.(widget.ChangeEvent); ok && m.ed.Text() != m.last {
+			m.onEdit() // the editor reports SetText too: only a new text is an edit
 		}
 	}
 	th := m.h.Theme()

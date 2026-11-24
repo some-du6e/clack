@@ -76,10 +76,12 @@ func TestCheckCommandRename(t *testing.T) {
 	a.S.PutConv(slack.Conversation{ID: "C0SALESFRC", Name: "sf", IsChannel: true, IsMember: true,
 		Properties: json.RawMessage(`{"record_channel":{"record_id":"S:org:001"}}`)})
 	a.S.PutConv(slack.Conversation{ID: "G0GROUPDM1", Name: "mpdm-a--b-1", IsMPIM: true, IsMember: true})
+	a.S.PutConv(slack.Conversation{ID: "D0DIRECT01", IsIM: true, User: "U1"}) // jq: a channel-shaped id
 	allow(f)
 	for ch, want := range map[string]string{
 		"C0RENAMENO": noPerm,
-		"D1":         "Direct messages don’t even have a name! Ergo, regrettably, you can’t change it.",
+		"D1":         noPerm, // not channel-shaped (jq): InvalidParams
+		"D0DIRECT01": "Direct messages don’t even have a name! Ergo, regrettably, you can’t change it.",
 		"G0GROUPDM1": "Direct messages don’t even have a name! Ergo, regrettably, you can’t change it.",
 		"C0MEETING1": "This channel can’t be renamed.",
 		"C0RECORD01": "This channel can’t be renamed.",
@@ -140,7 +142,8 @@ func TestCheckCommandArchive(t *testing.T) {
 			t.Errorf("%s: %v, want unknown", id, err)
 		}
 	}
-	if err := check(a, "D1", "/archive", ""); !isKind(err, CmdUnknown) {
+	a.S.PutConv(slack.Conversation{ID: "D0DIRECT02", IsIM: true, User: "U1", IsMember: true})
+	if err := check(a, "D0DIRECT02", "/archive", ""); !isKind(err, CmdUnknown) {
 		t.Errorf("a DM: %v", err)
 	}
 	// an admin needn't be a member

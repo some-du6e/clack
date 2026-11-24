@@ -19,6 +19,7 @@ import (
 
 	"gioui.org/layout"
 
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -102,7 +103,9 @@ func (m *ArchiveChannelModal) Archive() {
 	}
 	m.pending, m.err = true, ""
 	ch := m.ch
-	run(m.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Archive(ctx, ch) },
+	// the viewer's own click always sends (never the guard's copy of the
+	// last failure), as Slack's does
+	run(m.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Archive(slack.NoBackoff(ctx), ch) },
 		func(_ struct{}, err error) {
 			m.pending = false
 			if err == nil {
