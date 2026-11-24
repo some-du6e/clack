@@ -7190,6 +7190,37 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # reply-flush (2026-11-24): TestReplyCountEventOrders read the parent
+  # before its message_replied went in ("parent reply_count 2 … want 3",
+  # full-test 45351461160, on oneko-data-images): flush's own channel was
+  # looked up before the fixture's, whose events wait for its lookup
+  # (holdForConv). flush waits for every held conversation now, and the
+  # fixture's lookup answers late in TestReplyCountEventOrders
+  # (slowLookup). The tests that flush, COUNT times. Dispatch with
+  # only=reply-flush.
+  reply-flush:
+    if: ${{ !inputs.only || startsWith('reply-flush', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the tests that flush the socket's events, COUNT times
+        env:
+          RF_RUN: "^(TestReplyCountEventOrders|TestReplyCountStaleReplied|TestReplyCountOwnSend|TestReplyCountBroadcast|TestReplyCountDeletedReply|TestActivityThreadReplyNotAMention|TestActivityThreadReplyWithMention|TestAgentThreadActivityNoMentions|TestAgentThreadFetchKeepsLiveEdit|TestAgentThreadEditKeepsThread|TestAgentAnswerNoEditedLabel|TestSidebarMarksLikeSlack|TestBroadcastNewerRepliesParentCached|TestBroadcastNewerRepliesRootOnly)$"
+        run: go test -count=$COUNT -timeout 12m -run "$RF_RUN" ./internal/core
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7351,6 +7382,7 @@ jobs:
       - files-card
       - err-toasts
       - sent-thread
+      - reply-flush
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
