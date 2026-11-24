@@ -30,6 +30,14 @@ const (
 	ExpBasicSelectPlaceholderOption     = "basic_select_placeholder_option"
 )
 
+// /feedback (gantry-v2-async-slash-commands-local tCkD feedbackCommand,
+// VhHZ): slash_feedback_in_modal opens UserFeedbackModal, whose feedback
+// box has slash_feedback_modal_warning's note under it.
+const (
+	ExpSlashFeedbackInModal      = "slash_feedback_in_modal"
+	ExpSlashFeedbackModalWarning = "slash_feedback_modal_warning"
+)
+
 // expOn is `"on" === getGroupForUser(state, name)`.
 func expOn(h Host, name string) bool {
 	if h == nil {

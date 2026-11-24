@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,9 @@ import (
 //     removing it puts the app's own back.
 //   - Stopped, the app's own icon is back.
 func TestCustomAppIconLikeSlack(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("macOS: the plugin's own icon is the Dock's (app.dock.setIcon(null)), which this test's icons don't follow")
+	}
 	dir := pluginsDir(t)
 	h := newHarness(t)
 	clack, err := os.ReadFile(filepath.Join("..", "..", "assets", "icon", "clack-512.png"))
@@ -132,7 +136,8 @@ func TestCustomAppIconLikeSlack(t *testing.T) {
 	if err := h.s.SetOption(h.ctx(), "CustomAppIcon", "icon", "custom"); err != nil {
 		t.Fatal(err)
 	}
-	custom := icon("the uploaded icon", func(m *image.NRGBA) bool { return m.Bounds().Dx() == 256 })
+	// the next icon up (Pride's is 256 px wide too)
+	custom := icon("the uploaded icon", func(m *image.NRGBA) bool { return !samePixels(m, pride) })
 	if s := custom.Bounds().Size(); s != image.Pt(256, 170) {
 		t.Errorf("the uploaded 300 × 200 image went up as %v, want 256 × 170 (fitted, its aspect kept)", s)
 	}

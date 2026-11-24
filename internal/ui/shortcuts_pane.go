@@ -29,6 +29,10 @@ func (a *App) toggleKeyboardShortcuts() {
 	a.Invalidate()
 }
 
+// ToggleKeyboardShortcuts is /shortcuts (/keys): toggleKeyboardShortcuts,
+// the composer's shortcutsToggler (UI goroutine).
+func (a *App) ToggleKeyboardShortcuts() { a.toggleKeyboardShortcuts() }
+
 // shortcutListOpts are shortcutsData's inputs.
 func (a *App) shortcutListOpts() shortcut.ListOpts {
 	o := shortcut.ListOpts{

@@ -421,9 +421,12 @@ type App struct {
 
 	// chTabPicked: a tab of the channel was picked (its tab bar, a tab
 	// link), so Slack's view for it is the tab's, Messages' too
-	// (slackTabView); tabViewKey is the view last told to Slick
+	// (slackTabView); tabViewKey is the view last told to Slick, the
+	// instance tabViewTo (a new one after the backend restarts is told
+	// again)
 	chTabPicked map[string]bool
 	tabViewKey  string
+	tabViewTo   *slick.Slick
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -591,6 +594,9 @@ func (a *App) Run() error {
 	a.rv.inRun = true // the real window: covered until revealed (reveal.go)
 	applog.Mark("window", "")
 	go a.updateLoop(a.updateSchedule(), realUpdateClock())
+	libStop := make(chan struct{})
+	defer close(libStop)
+	go a.libraryLoop(libStop) // the plugin Library's index, hourly (library_prefs.go)
 	a.watchOSTheme()
 	if a.motionOverride == 0 {
 		watchOSMotion() // wheel scrolling animates unless the OS asks for less motion (syncWheelAnimation)

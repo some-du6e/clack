@@ -134,6 +134,7 @@ const osShim = {
   homedir: () => go('os', 'home'),
   tmpdir: () => go('os', 'tmp'),
   platform: () => go('os', 'platform'),
+  arch: () => go('os', 'arch'),
   EOL: '\n',
 }
 let badgeCount = 0
@@ -451,7 +452,9 @@ function processFor() {
   if (!processReady) {
     processReady = true
     try {
+      // Node's names (win32, x64), as Electron's process has them
       processShim.platform = go('os', 'platform')
+      processShim.arch = go('os', 'arch') || processShim.arch
       // the installed Slack's, where Slick's main halves read Slack's own
       // files (CustomAppIcon's Slack icon); "" without one
       processShim.resourcesPath = go('os', 'resources') ?? ''
@@ -467,16 +470,20 @@ const bufferShim = {
   },
 }
 
-// each main half's electron module: its nativeImage knows whose it is
-const electronOf = new Map()
+// each main half's electron module, kept by its owner(), one per main-half
+// file (mainPluginFrom): its nativeImage asks whose it is when it reads a
+// file, since a bundle requires electron before it says (its id comes once
+// the file has run). Kept by the id instead, every main half got the first
+// one's module, and its reads that main half's picks.
+const electronOf = new WeakMap()
 function electronFor(owner) {
-  const id = owner()
-  let e = electronOf.get(id)
-  if (!e) electronOf.set(id, (e = { ...electronShim, nativeImage: nativeImageFor(owner), nativeTheme, systemPreferences }))
+  let e = electronOf.get(owner)
+  if (!e) electronOf.set(owner, (e = { ...electronShim, nativeImage: nativeImageFor(owner), nativeTheme, systemPreferences }))
   return e
 }
+const noOwner = () => ''
 
-function requireMain(name, owner = () => '') {
+function requireMain(name, owner = noOwner) {
   switch (name.replace(/^node:/, '')) {
     case 'process':
       return processFor()

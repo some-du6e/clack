@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,14 +34,48 @@ type nativeImg struct {
 	H   int    `json:"h"`
 }
 
-// maxNativeImage bounds what an image may be (Electron's are a renderer's
-// bitmaps): a side past it, or a file past maxImageFile, is an empty image.
+// The limits of what an image may be (Electron's are a renderer's
+// bitmaps): a side past maxNativeImage, a pixel buffer (width × height × 4)
+// past maxNativeBytes, or a file past maxImageFile is the empty image.
+// Sizes are read from the image's header before anything is decoded, as
+// Go's decoders make the whole pixel buffer from the header's size.
 const (
 	maxNativeImage = 8192
+	maxNativeBytes = 64 << 20
 	maxImageFile   = 64 << 20
+	// maxAppIcon is the largest icon handed to the OS (app.dock.setIcon,
+	// a window's setIcon): macOS's Dock draws 512 points at 2x
+	maxAppIcon = 1024
 )
 
 var errNoImage = errors.New("slick: not an image Electron reads")
+
+var (
+	pngMagic  = []byte("\x89PNG\r\n\x1a\n")
+	jpegMagic = []byte{0xff, 0xd8, 0xff}
+)
+
+// nativeSizeOK reports whether w × h is within the limits.
+func nativeSizeOK(w, h int) bool {
+	return w > 0 && h > 0 && w <= maxNativeImage && h <= maxNativeImage && int64(w)*int64(h)*4 <= maxNativeBytes
+}
+
+// imageConfig is a PNG's or a JPEG's size as its header gives it, and its
+// decoder; errNoImage for anything else.
+func imageConfig(b []byte) (image.Config, func(io.Reader) (image.Image, error), error) {
+	var decode func(io.Reader) (image.Image, error)
+	var config func(io.Reader) (image.Config, error)
+	switch {
+	case bytes.HasPrefix(b, pngMagic):
+		decode, config = png.Decode, png.DecodeConfig
+	case bytes.HasPrefix(b, jpegMagic):
+		decode, config = jpeg.Decode, jpeg.DecodeConfig
+	default:
+		return image.Config{}, nil, errNoImage
+	}
+	c, err := config(bytes.NewReader(b))
+	return c, decode, err
+}
 
 func toNRGBA(m image.Image) *image.NRGBA {
 	if n, ok := m.(*image.NRGBA); ok && n.Rect.Min == (image.Point{}) {
@@ -62,38 +97,63 @@ func encodeNative(m image.Image) (*nativeImg, error) {
 	return &nativeImg{PNG: base64.StdEncoding.EncodeToString(buf.Bytes()), W: b.Dx(), H: b.Dy()}, nil
 }
 
-// decodeNative is a main half's image (its PNG, base64) decoded.
+// decodeNative is a main half's image (its PNG, base64) decoded, within
+// the limits as decodeImageBytes reads them: a main half can hand any
+// object with a png string to resize and toBitmap.
 func decodeNative(b64 string) (*image.NRGBA, error) {
+	if base64.StdEncoding.DecodedLen(len(b64)) > maxImageFile {
+		return nil, errNoImage
+	}
 	b, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
 		return nil, err
 	}
-	m, err := png.Decode(bytes.NewReader(b))
+	if !bytes.HasPrefix(b, pngMagic) {
+		return nil, errNoImage
+	}
+	m, err := decodeImageBytes(b)
 	if err != nil {
 		return nil, err
 	}
 	return toNRGBA(m), nil
 }
 
-// decodeImageBytes is PNG or JPEG bytes as nativeImage reads them.
+// decodeImageBytes is PNG or JPEG bytes as nativeImage reads them: the
+// header's size first, and an image past the limits is the empty image
+// before any pixel buffer is made.
 func decodeImageBytes(b []byte) (image.Image, error) {
-	var m image.Image
-	var err error
-	switch {
-	case bytes.HasPrefix(b, []byte("\x89PNG\r\n\x1a\n")):
-		m, err = png.Decode(bytes.NewReader(b))
-	case bytes.HasPrefix(b, []byte{0xff, 0xd8, 0xff}):
-		m, err = jpeg.Decode(bytes.NewReader(b))
-	default:
-		return nil, errNoImage
-	}
+	c, decode, err := imageConfig(b)
 	if err != nil {
 		return nil, err
 	}
-	if s := m.Bounds().Size(); s.X <= 0 || s.Y <= 0 || s.X > maxNativeImage || s.Y > maxNativeImage {
+	if !nativeSizeOK(c.Width, c.Height) {
+		return nil, errNoImage
+	}
+	m, err := decode(bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	if s := m.Bounds().Size(); !nativeSizeOK(s.X, s.Y) {
 		return nil, errNoImage
 	}
 	return m, nil
+}
+
+// appIconPNG is an image a main half gave app.dock.setIcon or a window's
+// setIcon as the PNG the OS gets: within the limits, fit to maxAppIcon.
+func appIconPNG(b []byte) ([]byte, error) {
+	m, err := decodeImageBytes(b)
+	if err != nil {
+		return nil, err
+	}
+	if s := m.Bounds().Size(); s.X <= maxAppIcon && s.Y <= maxAppIcon && bytes.HasPrefix(b, pngMagic) {
+		return b, nil
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, fitWithin(m, maxAppIcon, maxAppIcon)); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // nativeFromDataURL is nativeImage.createFromDataURL: a data: URL of a
@@ -101,6 +161,9 @@ func decodeImageBytes(b []byte) (image.Image, error) {
 func nativeFromDataURL(u string) *nativeImg {
 	head, data, ok := strings.Cut(u, ",")
 	if !ok || !strings.HasPrefix(head, "data:") {
+		return nil
+	}
+	if len(data) > maxImageFile*4/3+4 {
 		return nil
 	}
 	var b []byte
@@ -163,6 +226,7 @@ func nativeThumbnail(path string, w, h int) (*nativeImg, error) {
 	if w <= 0 || h <= 0 {
 		return nil, errors.New("slick: a thumbnail needs a size")
 	}
+	w, h = min(w, maxNativeImage), min(h, maxNativeImage)
 	b, err := readImageFile(path)
 	if err != nil {
 		return nil, errors.New("Failed to get thumbnail from local thumbnail cache")
@@ -223,7 +287,7 @@ func nativeResize(img *nativeImg, w, h int, quality string) (*nativeImg, error) 
 	case h <= 0:
 		h = max(1, s.Y*w/max(s.X, 1))
 	}
-	if w > maxNativeImage || h > maxNativeImage {
+	if !nativeSizeOK(w, h) {
 		return nil, errNoImage
 	}
 	return encodeNative(scaled(m, w, h, quality))
@@ -251,7 +315,7 @@ func nativeBitmap(img *nativeImg) ([]byte, error) {
 // height}): toBitmap's format back. A buffer that isn't width × height × 4
 // bytes is an error, as Electron's.
 func nativeFromBitmap(bgra []byte, w, h int) (*nativeImg, error) {
-	if w <= 0 || h <= 0 || w > maxNativeImage || h > maxNativeImage || len(bgra) != w*h*4 {
+	if !nativeSizeOK(w, h) || len(bgra) != w*h*4 {
 		return nil, errors.New("invalid buffer size")
 	}
 	m := image.NewNRGBA(image.Rect(0, 0, w, h))
@@ -277,15 +341,18 @@ func largestICNS(b []byte) (image.Image, error) {
 		return nil, errNoImage
 	}
 	end := min(int(binary.BigEndian.Uint32(b[4:8])), len(b))
-	var best image.Image
+	// the largest PNG entry within the limits, by its header's size; only
+	// it is decoded
+	var best []byte
+	bestW := 0
 	for off := 8; off+8 <= end; {
 		n := int(binary.BigEndian.Uint32(b[off+4 : off+8]))
 		if n < 8 || off+n > end {
 			break
 		}
-		if data := b[off+8 : off+n]; bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) {
-			if m, err := decodeImageBytes(data); err == nil && (best == nil || m.Bounds().Dx() > best.Bounds().Dx()) {
-				best = m
+		if data := b[off+8 : off+n]; bytes.HasPrefix(data, pngMagic) {
+			if c, _, err := imageConfig(data); err == nil && nativeSizeOK(c.Width, c.Height) && c.Width > bestW {
+				best, bestW = data, c.Width
 			}
 		}
 		off += n
@@ -293,7 +360,7 @@ func largestICNS(b []byte) (image.Image, error) {
 	if best == nil {
 		return nil, errNoImage
 	}
-	return best, nil
+	return decodeImageBytes(best)
 }
 
 // PE resource types: RT_ICON, RT_GROUP_ICON.
@@ -457,7 +524,7 @@ func decodeIconDIB(b []byte) (image.Image, bool) {
 	hdr := int(binary.LittleEndian.Uint32(b))
 	w := int(int32(binary.LittleEndian.Uint32(b[4:])))
 	h := int(int32(binary.LittleEndian.Uint32(b[8:]))) / 2
-	if bpp := binary.LittleEndian.Uint16(b[14:]); bpp != 32 || w <= 0 || h <= 0 || w > 1024 || h > 1024 {
+	if bpp := binary.LittleEndian.Uint16(b[14:]); bpp != 32 || w <= 0 || h <= 0 || w > 1024 || h > 1024 || hdr > len(b) {
 		return nil, false
 	}
 	px := b[hdr:]
