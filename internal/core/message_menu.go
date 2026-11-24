@@ -150,6 +150,9 @@ func (a *App) BroadcastReply(ctx context.Context, ch, ts string) error {
 		a.emitUpdate(ch, &m)
 	}
 	err := a.C.Call(ctx, "chat.update", url.Values{"channel": {ch}, "ts": {ts}, "reply_broadcast": {"true"}}, nil)
+	if err == nil {
+		a.ownMutation(ch, false) // history_changed.go
+	}
 	if err != nil && before.TS != "" {
 		if m, ok := a.S.MutateNoted(ch, ts, func(m *slack.Message) { m.Subtype, m.ReplyBroadcast = before.Subtype, before.ReplyBroadcast }); ok {
 			a.emitUpdate(ch, &m)
@@ -166,6 +169,7 @@ func (a *App) BroadcastReply(ctx context.Context, ch, ts string) error {
 func (a *App) RemoveBroadcast(ctx context.Context, ch, ts string) error {
 	err := a.C.Call(ctx, "chat.delete", url.Values{"channel": {ch}, "ts": {ts}, "broadcast_delete": {"true"}}, nil)
 	if err == nil {
+		a.ownMutation(ch, true) // history_changed.go
 		// what the server's message_changed brings: a plain reply, which
 		// the conversation's list no longer shows
 		if m, ok := a.S.MutateNoted(ch, ts, func(m *slack.Message) {

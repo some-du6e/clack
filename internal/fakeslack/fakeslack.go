@@ -227,6 +227,11 @@ type Size struct {
 	// GIFs adds #gif-wall (GIFWallID) with this many messages, each a
 	// large animated GIF (gifs.go): the GIF memory test's channel.
 	GIFs int
+	// Giant adds #giant-wall (GiantWallID): of its latest Giant messages
+	// every twelfth is short and the rest are each about 908,000
+	// characters in about 92,000 lines (giant.go), then 60 older short
+	// ones: the giant message memory test's channel.
+	Giant int
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -395,6 +400,7 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 
 // Server is a running fake.
 type Server struct {
+	remote bool // Remote: a fakeslackd in another process
 	// client.counts' threads.unread_count_by_channel (threads_by_channel.go)
 	threadsByChan map[string]int
 
@@ -861,6 +867,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.GIFs > 0 {
 		s.addGIFWall() // gifs.go
 	}
+	if sz.Giant > 0 {
+		s.addGiantWall() // giant.go
+	}
 	if sz.AppPlans {
 		s.addAppPlans() // agents.go
 	}
@@ -931,8 +940,12 @@ func Remote(url string, sz Size) *Server {
 	if !strings.HasSuffix(url, "/") {
 		url += "/"
 	}
-	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}, prefs: DefaultPrefs()}
+	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}, prefs: DefaultPrefs(), remote: true}
 }
+
+// IsRemote reports a Server Remote describes: its fixture's data (users,
+// messages) is in the other process, not here.
+func (s *Server) IsRemote() bool { return s.remote }
 
 // CallCount returns how often method was called.
 func (s *Server) CallCount(method string) int64 {
@@ -1674,7 +1687,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("channels", cs, "response_metadata", map[string]string{"next_cursor": ""})
 	case "client.counts":
-		var chans, ims []slack.CountEntry
+		// slack.CountEntry, with history_invalid when set (history_rewrite.go)
+		var chans, ims []any
 		s.convMu.Lock() // a leave or a join rewrites the list meanwhile
 		convs := append([]slack.Conversation(nil), s.convs...)
 		s.convMu.Unlock()
@@ -1712,9 +1726,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			e = s.postedCount(c.ID, e) // count_posts.go: CountsFollowPosts
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
-				ims = append(ims, e)
+				ims = append(ims, s.countWithMutations(e))
 			} else {
-				chans = append(chans, e)
+				chans = append(chans, s.countWithMutations(e))
 			}
 		}
 		threads := map[string]any{"has_unreads": true, "mention_count": 2}

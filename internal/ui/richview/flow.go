@@ -58,6 +58,10 @@ type frag struct {
 	// an element's spaces too, so a decorated run of words is one line,
 	// not a line per word.
 	ulT, ulU float32
+	// lazy is a word laid out before it was shaped (giant.go): its face is
+	// display.faces[lazy-1], its text plain[p0:p1]; sh is nil until its
+	// line is near the screen, and w its width bound until then
+	lazy uint16
 }
 
 // box.cut sides
@@ -386,6 +390,10 @@ type display struct {
 	pills  []snipPill
 	// ells counts the frags that are a clamp's "…" (frag.ell)
 	ells int
+	// faces are the lazy frags' faces (frag.lazy), lazyN how many lazy
+	// frags there are (giant.go)
+	faces []faceKey
+	lazyN int
 }
 
 // hoverLayer is drawn while the View's hovered target is in card..cardTo
@@ -442,6 +450,8 @@ func (d *display) reset() {
 	d.charts = d.charts[:0]
 	d.pills = d.pills[:0]
 	d.ells = 0
+	d.faces = d.faces[:0]
+	d.lazyN = 0
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -534,6 +544,8 @@ type item struct {
 	part uint8
 	tip  int16
 	br   richtext.BrKind // itBreak: how it draws (richtext.BrKind)
+	// lazy: a word not shaped yet (giant.go), w its width bound
+	lazy bool
 }
 
 // flowStyle configures one inline flow.
@@ -566,7 +578,10 @@ type lay struct {
 	// lead is where the first line of the doc's first paragraph starts
 	// (px): Compact's sender sits inline before it (View.SetLead). The
 	// first flow consumes it.
-	lead  float32
+	lead float32
+	// lazyW is the width of the flow the spans being added go into, while
+	// its raw spans' lines may be laid out unshaped (giant.go); 0: never
+	lazyW float32
 	items []item
 	decos []deco
 	// decoLines is each deco's lines in a flow (its fragments' ends,
@@ -662,8 +677,11 @@ func (l *lay) plainAdd(s string) (int32, int32) {
 }
 
 func isCJK(r rune) bool {
-	return unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
-		unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r)
+	// none of the four scripts has a rune below Hangul's Jamo (U+1100):
+	// text in Latin script is never looked up (four table searches a
+	// rune were a third of laying out a 908,000-character message)
+	return r >= 0x1100 && (unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
+		unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r))
 }
 
 // addText splits s into word/space/break items.
@@ -696,19 +714,33 @@ func (l *lay) nativeEmojiGap() float32 {
 
 // addTextRun splits emoji-free text into word/space/break items.
 func (l *lay) addTextRun(s string, fs *flowStyle, k faceKey, col color.NRGBA, st richtext.Style, dc, tg int16) {
+	l.addTextRunAs(s, fs, k, col, st, dc, tg, 0)
+}
+
+// addTextRunAs is addTextRun; with bound > 0 its words aren't shaped yet
+// (lazy items, giant.go), each as wide as bound a rune.
+func (l *lay) addTextRunAs(s string, fs *flowStyle, k faceKey, col color.NRGBA, st richtext.Style, dc, tg int16, bound float32) {
 	start := -1
 	flush := func(end int) {
 		if start < 0 {
 			return
 		}
 		w := s[start:end]
-		sh := l.st.word(k, w)
 		p0, p1 := l.plainAdd(w)
+		if bound > 0 {
+			l.items = append(l.items, item{kind: itWord, face: k, w: bound * float32(utf8.RuneCountInString(w)), col: col, style: st, deco: dc, target: tg, p0: p0, p1: p1, part: l.curPart, lazy: true})
+			start = -1
+			return
+		}
+		sh := l.st.word(k, w)
 		l.items = append(l.items, item{kind: itWord, sh: sh, face: k, w: sh.adv, col: col, style: st, deco: dc, target: tg, p0: p0, p1: p1, part: l.curPart})
 		start = -1
 	}
 	for i := 0; i < len(s); {
-		r, sz := utf8.DecodeRuneInString(s[i:])
+		r, sz := rune(s[i]), 1
+		if r >= utf8.RuneSelf {
+			r, sz = utf8.DecodeRuneInString(s[i:])
+		}
 		switch {
 		case r == '\n':
 			flush(i)
@@ -786,281 +818,289 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 	if l.css != nil {
 		defer func() { l.curPart = ctrPart }()
 	}
-	p := &l.st.Palette
 	for i := range spans {
-		sp := &spans[i]
-		st := sp.Style
-		var pt uint8
-		if l.css != nil {
-			pt = l.spanPart(sp)
-			l.curPart = pt
+		if sp := &spans[i]; richtext.IsRaw(sp) {
+			l.addRaw(sp, fs) // a long text element kept whole (rawtext.go): its spans one by one
+		} else {
+			l.addSpan(sp, fs)
 		}
-		col := fs.col
-		size := fs.size
-		base := fs.face
-		var dc int16 = -1
-		var tg int16 = -1
-		if st&richtext.Code != 0 && !fs.pre {
-			base = font.Font{Typeface: l.st.Mono}
-			size = l.sp(12)
-			col = p.CodeText
+	}
+}
+
+// addSpan converts one span into items.
+func (l *lay) addSpan(sp *richtext.Span, fs *flowStyle) {
+	p := &l.st.Palette
+	st := sp.Style
+	var pt uint8
+	if l.css != nil {
+		pt = l.spanPart(sp)
+		l.curPart = pt
+	}
+	col := fs.col
+	size := fs.size
+	base := fs.face
+	var dc int16 = -1
+	var tg int16 = -1
+	if st&richtext.Code != 0 && !fs.pre {
+		base = font.Font{Typeface: l.st.Mono}
+		size = l.sp(12)
+		col = p.CodeText
+	}
+	k := l.faceFor(base, size, st)
+	if pt != 0 {
+		k = l.partFace(k, pt)
+	}
+	noAt := false
+	var swatch color.NRGBA // a colour element's swatch, after its value
+	// a pill's component state (compState: its ::before and ::after,
+	// the margin and border a rule gives its ends); pill: it has one
+	var ps compState
+	pill := false
+	n0 := len(l.items)
+	var cmp int16 // a mention pill laid out as a Slack component
+	txt := sp.Text
+	switch sp.Kind {
+	case richtext.Break:
+		p0, p1 := l.plainAdd("\n")
+		l.items = append(l.items, item{kind: itBreak, face: k, deco: -1, target: -1, p0: p0, p1: p1, br: sp.Br})
+		return
+	case richtext.Emoji:
+		if sp.URL == "" {
+			txt := sp.Text
+			if txt == "" {
+				txt = ":" + sp.ID + ":"
+			}
+			l.addText(txt, fs, k, col, st, -1, -1)
+			return
 		}
-		k := l.faceFor(base, size, st)
-		if pt != 0 {
-			k = l.partFace(k, pt)
+		// the copy text is the image's data-stringify-emoji, the
+		// Emoji's text prop: ":name:" (with ::skin-tone-N), not the
+		// unicode character
+		alt := sp.Text
+		if sp.ID != "" {
+			alt = ":" + sp.ID + ":"
 		}
-		noAt := false
-		var swatch color.NRGBA // a colour element's swatch, after its value
-		// a pill's component state (compState: its ::before and ::after,
-		// the margin and border a rule gives its ends); pill: it has one
-		var ps compState
-		pill := false
-		n0 := len(l.items)
-		var cmp int16 // a mention pill laid out as a Slack component
-		txt := sp.Text
+		p0, p1 := l.plainAdd(alt)
+		ep := fs.emoji
+		var tip int16
+		if sp.ID != "" && !l.opts.NoEmojiTips { // Slack's emoji tooltip: the :name: (with ::skin-tone-N)
+			l.d.tips = append(l.d.tips, ":"+sp.ID+":")
+			tip = int16(len(l.d.tips))
+		}
+		gap := float32(0)
+		if name, _, _ := strings.Cut(sp.ID, "::"); emoji.IsStandard(name) {
+			gap = l.nativeEmojiGap() // a canvas's native glyph span; a custom emoji is an <img>
+		}
+		l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep) + gap, url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip, part: pt})
+		return
+	case richtext.InlineImage:
+		if sp.URL == "" {
+			break
+		}
+		p0, p1 := l.plainAdd(sp.Text)
+		ip := max(fs.emoji, l.dp(16))
+		l.items = append(l.items, item{kind: itImage, face: k, w: float32(ip + 2*l.dp(1)), edge: l.dpf(1), url: sp.URL, size: ip, deco: -1, target: -1, p0: p0, p1: p1, brk: true, part: pt})
+		return
+	case richtext.ColorSwatch:
+		if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 && !uipref.Get().HideHexSwatch {
+			swatch = c // after the value
+		}
+	case richtext.Link:
+		if sp.Truncated && sp.URL != expandURL {
+			l.truncatedLink(sp, fs, k, pt) // msgcard.go
+			return
+		}
+		if sp.URL == expandURL && l.expandKey != "" { // section Show more / Show less (truncate.go)
+			tg = l.d.addTarget(target{kind: tExpandable, id: l.expandKey, on: !xpOn(l.expandKey), underline: true})
+		} else if sp.URL == expandURL && l.expandAtKey != "" { // AttachmentText's (cards.go)
+			tg = l.d.addTarget(target{kind: tExpandable, id: l.expandAtKey, on: !xpOn(l.expandAtKey), underline: true})
+		} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
+			tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
+		} else {
+			tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, urlCard: true, mrkdwn: true})
+		}
+		if st&richtext.Code == 0 {
+			col = p.Link
+			if l.linkInk.A != 0 {
+				col, st = l.linkInk, st|richtext.Underline
+			}
+		}
+	case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
+		if sp.Pending && l.opts.Canvas {
+			l.canvasMissing(sp.ID, k, col) // its model is loading (msgcard.go)
+			return
+		}
+		if sp.Kind == richtext.User && sp.Hidden {
+			l.hiddenMember(sp, fs, k, pt) // msgcard.go
+			return
+		}
+		kind := tUser
 		switch sp.Kind {
-		case richtext.Break:
-			p0, p1 := l.plainAdd("\n")
-			l.items = append(l.items, item{kind: itBreak, face: k, deco: -1, target: -1, p0: p0, p1: p1, br: sp.Br})
-			continue
-		case richtext.Emoji:
-			if sp.URL == "" {
-				txt := sp.Text
-				if txt == "" {
-					txt = ":" + sp.ID + ":"
+		case richtext.Channel:
+			kind = tChannel
+		case richtext.Usergroup:
+			kind = tUsergroup
+		case richtext.User:
+			// the member as plugins present it (Nicknames); one the
+			// store can't name is MemberSlug's BaseMissingMember, and
+			// RollupName's "" in a system message (Muted)
+			var miss MemberMiss
+			if txt, miss = l.mentionText(sp.ID, txt); miss != MemberLoaded && !l.opts.Muted {
+				if l.opts.Canvas && miss == MemberLoading {
+					// a canvas's user control draws Quip's skeleton
+					// while its model loads (hu: hs)
+					l.canvasMissing(sp.ID, k, col)
+					return
 				}
-				l.addText(txt, fs, k, col, st, -1, -1)
-				continue
+				l.missingMember(miss, k, col) // msgcard.go
+				return
 			}
-			// the copy text is the image's data-stringify-emoji, the
-			// Emoji's text prop: ":name:" (with ::skin-tone-N), not the
-			// unicode character
-			alt := sp.Text
-			if sp.ID != "" {
-				alt = ":" + sp.ID + ":"
+		}
+		if l.opts.Muted && sp.Kind == richtext.User {
+			// System messages show member names as plain text that
+			// underlines on hover (Slack's rollup_member).
+			tg = l.d.addTarget(target{kind: kind, id: sp.ID, underline: true})
+			noAt = true
+			break
+		}
+		if sp.Kind == richtext.Channel && sp.Off && sp.Lock {
+			// BaseMissingChannel's Nonexistent chip (richtext channel.go)
+			l.privateChannel(sp, fs, k, pt)
+			return
+		}
+		if sp.Kind == richtext.Channel && sp.URL != "" && !sp.Off {
+			// a channel-tab slug (tab_id): the link opens the tab
+			tg = l.d.addTarget(target{kind: tLink, url: sp.URL, id: sp.ID, tab: tabOfSlug(sp.URL)})
+		} else if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
+			tg = l.d.addTarget(target{kind: kind, id: sp.ID, self: sp.Self})
+		} // a hidden channel with a fallback name: plain text, no card (BaseMrkdwnChannel returns the span before the trigger)
+		bg, fg, see := p.MentionBg, p.MentionText, p.raw.MentionBg
+		if sp.Self {
+			// c-member_slug--mention / c-mrkdwn__user_group--mention
+			// over the --link look: surf-hgl-3, the link color (content-
+			// hgl-3 in dark)
+			bg, fg, see = p.SelfMentionBg, p.SelfLinkText, p.raw.SelfMentionBg
+		}
+		if sp.Kind == richtext.Broadcast {
+			bg, fg, see = p.SelfMentionBg, p.SelfMentionText, p.raw.SelfMentionBg
+			k = l.faceFor(base, size, st|richtext.Bold)
+			if pt != 0 {
+				k = l.partFace(k, pt)
 			}
-			p0, p1 := l.plainAdd(alt)
-			ep := fs.emoji
-			var tip int16
-			if sp.ID != "" && !l.opts.NoEmojiTips { // Slack's emoji tooltip: the :name: (with ::skin-tone-N)
-				l.d.tips = append(l.d.tips, ":"+sp.ID+":")
-				tip = int16(len(l.d.tips))
+		}
+		col = fg
+		pad, padV := l.dpf(2), l.dpf(1)
+		if fs.pre || st&richtext.Code != 0 {
+			pad, padV = 0, 0
+		}
+		l.decos = append(l.decos, deco{kind: 1, bg: bg, see: see, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast, part: pt})
+		dc = int16(len(l.decos) - 1)
+		if l.mode&modePills != 0 && !l.inAtt && (sp.Kind == richtext.User || sp.Kind == richtext.Channel) {
+			kind := compUser
+			if sp.Kind == richtext.Channel {
+				kind = compChannel
 			}
-			gap := float32(0)
-			if name, _, _ := strings.Cut(sp.ID, "::"); emoji.IsStandard(name) {
-				gap = l.nativeEmojiGap() // a canvas's native glyph span; a custom emoji is an <img>
-			}
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep) + gap, url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip, part: pt})
-			continue
-		case richtext.InlineImage:
-			if sp.URL == "" {
-				break
-			}
-			p0, p1 := l.plainAdd(sp.Text)
-			ip := max(fs.emoji, l.dp(16))
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ip + 2*l.dp(1)), edge: l.dpf(1), url: sp.URL, size: ip, deco: -1, target: -1, p0: p0, p1: p1, brk: true, part: pt})
-			continue
-		case richtext.ColorSwatch:
-			if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 && !uipref.Get().HideHexSwatch {
-				swatch = c // after the value
-			}
-		case richtext.Link:
-			if sp.Truncated && sp.URL != expandURL {
-				l.truncatedLink(sp, fs, k, pt) // msgcard.go
-				continue
-			}
-			if sp.URL == expandURL && l.expandKey != "" { // section Show more / Show less (truncate.go)
-				tg = l.d.addTarget(target{kind: tExpandable, id: l.expandKey, on: !xpOn(l.expandKey), underline: true})
-			} else if sp.URL == expandURL && l.expandAtKey != "" { // AttachmentText's (cards.go)
-				tg = l.d.addTarget(target{kind: tExpandable, id: l.expandAtKey, on: !xpOn(l.expandAtKey), underline: true})
-			} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
-				tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
-			} else {
-				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, urlCard: true, mrkdwn: true})
-			}
-			if st&richtext.Code == 0 {
-				col = p.Link
-				if l.linkInk.A != 0 {
-					col, st = l.linkInk, st|richtext.Underline
-				}
-			}
-		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
-			if sp.Pending && l.opts.Canvas {
-				l.canvasMissing(sp.ID, k, col) // its model is loading (msgcard.go)
-				continue
-			}
-			if sp.Kind == richtext.User && sp.Hidden {
-				l.hiddenMember(sp, fs, k, pt) // msgcard.go
-				continue
-			}
-			kind := tUser
-			switch sp.Kind {
-			case richtext.Channel:
-				kind = tChannel
-			case richtext.Usergroup:
-				kind = tUsergroup
-			case richtext.User:
-				// the member as plugins present it (Nicknames); one the
-				// store can't name is MemberSlug's BaseMissingMember, and
-				// RollupName's "" in a system message (Muted)
-				var miss MemberMiss
-				if txt, miss = l.mentionText(sp.ID, txt); miss != MemberLoaded && !l.opts.Muted {
-					if l.opts.Canvas && miss == MemberLoading {
-						// a canvas's user control draws Quip's skeleton
-						// while its model loads (hu: hs)
-						l.canvasMissing(sp.ID, k, col)
-						continue
-					}
-					l.missingMember(miss, k, col) // msgcard.go
-					continue
+			cmp = l.addComp(compBox{kind: kind, span: *sp, em: float32(k.size) / 64})
+			l.decos[dc].comp = cmp
+			if n := l.compState(cmp).name; n != "" && kind == compChannel {
+				txt = n
+				if !sp.Lock {
+					txt = "#" + n
 				}
 			}
-			if l.opts.Muted && sp.Kind == richtext.User {
-				// System messages show member names as plain text that
-				// underlines on hover (Slack's rollup_member).
-				tg = l.d.addTarget(target{kind: kind, id: sp.ID, underline: true})
-				noAt = true
-				break
+			if kind == compUser && l.compState(cmp).noAt {
+				noAt = true // MemberSlug supressMentionAtSymbol
 			}
-			if sp.Kind == richtext.Channel && sp.Off && sp.Lock {
-				// BaseMissingChannel's Nonexistent chip (richtext channel.go)
-				l.privateChannel(sp, fs, k, pt)
-				continue
-			}
-			if sp.Kind == richtext.Channel && sp.URL != "" && !sp.Off {
-				// a channel-tab slug (tab_id): the link opens the tab
-				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, id: sp.ID, tab: tabOfSlug(sp.URL)})
-			} else if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
-				tg = l.d.addTarget(target{kind: kind, id: sp.ID, self: sp.Self})
-			} // a hidden channel with a fallback name: plain text, no card (BaseMrkdwnChannel returns the span before the trigger)
-			bg, fg, see := p.MentionBg, p.MentionText, p.raw.MentionBg
-			if sp.Self {
-				// c-member_slug--mention / c-mrkdwn__user_group--mention
-				// over the --link look: surf-hgl-3, the link color (content-
-				// hgl-3 in dark)
-				bg, fg, see = p.SelfMentionBg, p.SelfLinkText, p.raw.SelfMentionBg
-			}
-			if sp.Kind == richtext.Broadcast {
-				bg, fg, see = p.SelfMentionBg, p.SelfMentionText, p.raw.SelfMentionBg
-				k = l.faceFor(base, size, st|richtext.Bold)
-				if pt != 0 {
-					k = l.partFace(k, pt)
-				}
-			}
-			col = fg
-			pad, padV := l.dpf(2), l.dpf(1)
-			if fs.pre || st&richtext.Code != 0 {
-				pad, padV = 0, 0
-			}
-			l.decos = append(l.decos, deco{kind: 1, bg: bg, see: see, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast, part: pt})
-			dc = int16(len(l.decos) - 1)
-			if l.mode&modePills != 0 && !l.inAtt && (sp.Kind == richtext.User || sp.Kind == richtext.Channel) {
-				kind := compUser
-				if sp.Kind == richtext.Channel {
-					kind = compChannel
-				}
-				cmp = l.addComp(compBox{kind: kind, span: *sp, em: float32(k.size) / 64})
-				l.decos[dc].comp = cmp
-				if n := l.compState(cmp).name; n != "" && kind == compChannel {
-					txt = n
-					if !sp.Lock {
-						txt = "#" + n
-					}
-				}
-				if kind == compUser && l.compState(cmp).noAt {
-					noAt = true // MemberSlug supressMentionAtSymbol
-				}
-				ps, pill = *l.compState(cmp), true
-			}
-		case richtext.MessageMention:
-			l.messageMention(sp, fs, k, pt)
-			continue
-		case richtext.Canvas:
-			l.canvasSlug(sp, fs, k, pt)
-			continue
-		case richtext.ChannelTab:
-			l.channelTabSlug(sp, fs, k, pt) // canvasslug.go
-			continue
-		case richtext.Date:
-			if sp.URL != "" {
-				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
-				col = p.Link
-			} else if l.opts.Canvas {
-				tg = l.d.addTarget(target{kind: tDate}) // Quip's date control (tDate)
-			}
+			ps, pill = *l.compState(cmp), true
 		}
-		if st&richtext.Code != 0 && !fs.pre && dc < 0 {
-			l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, see: p.raw.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, part: pt})
-			dc = int16(len(l.decos) - 1)
-		} else if st&richtext.FindHighlight != 0 && dc < 0 {
-			// over a keyword highlight: only the find span draws
-			bg, see := p.FindHighlight, p.raw.FindHighlight
-			if l.opts.FindFocused {
-				bg, see = p.FindFocused, p.raw.FindFocused
-			}
-			l.decos = append(l.decos, deco{kind: 3, bg: bg, see: see, face: k, target: -1, part: pt})
-			dc = int16(len(l.decos) - 1)
-		} else if st&richtext.Highlight != 0 && dc < 0 {
-			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, see: p.raw.Highlight, face: k, target: -1, part: pt})
-			dc = int16(len(l.decos) - 1)
+	case richtext.MessageMention:
+		l.messageMention(sp, fs, k, pt)
+		return
+	case richtext.Canvas:
+		l.canvasSlug(sp, fs, k, pt)
+		return
+	case richtext.ChannelTab:
+		l.channelTabSlug(sp, fs, k, pt) // canvasslug.go
+		return
+	case richtext.Date:
+		if sp.URL != "" {
+			tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
+			col = p.Link
+		} else if l.opts.Canvas {
+			tg = l.d.addTarget(target{kind: tDate}) // Quip's date control (tDate)
 		}
-		if pill && ps.edge[0] != 0 {
-			l.addOpen(ps.edge[0], -1, k) // a rule's margin and border before the pill's box
+	}
+	if st&richtext.Code != 0 && !fs.pre && dc < 0 {
+		l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, see: p.raw.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, part: pt})
+		dc = int16(len(l.decos) - 1)
+	} else if st&richtext.FindHighlight != 0 && dc < 0 {
+		// over a keyword highlight: only the find span draws
+		bg, see := p.FindHighlight, p.raw.FindHighlight
+		if l.opts.FindFocused {
+			bg, see = p.FindFocused, p.raw.FindFocused
 		}
-		if dc >= 0 && l.decos[dc].padL > 0 {
-			l.addOpen(l.decos[dc].padL, dc, k)
+		l.decos = append(l.decos, deco{kind: 3, bg: bg, see: see, face: k, target: -1, part: pt})
+		dc = int16(len(l.decos) - 1)
+	} else if st&richtext.Highlight != 0 && dc < 0 {
+		l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, see: p.raw.Highlight, face: k, target: -1, part: pt})
+		dc = int16(len(l.decos) - 1)
+	}
+	if pill && ps.edge[0] != 0 {
+		l.addOpen(ps.edge[0], -1, k) // a rule's margin and border before the pill's box
+	}
+	if dc >= 0 && l.decos[dc].padL > 0 {
+		l.addOpen(l.decos[dc].padL, dc, k)
+	}
+	if pill && ps.pseudo[0] > 0 && dc >= 0 {
+		// the slug's ::before (MentionProfiles' picture) inside the pill,
+		// first in it: its place goes on the pill's first line, where
+		// the component draws it (comps.go)
+		l.addPseudoSlot(0, ps.pseudo[0], ps.pbox[0], dc, k, col)
+	}
+	if sp.Kind == richtext.Channel && sp.Lock {
+		// a private channel the viewer is in: lock-filled, then its
+		// name without "#"
+		l.addIcon("lock-filled", fs.size, k, col, dc, tg)
+	}
+	if noAt {
+		txt = strings.TrimPrefix(txt, "@")
+	}
+	if !fs.pre && st&richtext.Code != 0 {
+		// Inline code wraps normally.
+		txt = strings.ReplaceAll(txt, "\n", " ")
+	}
+	c0 := int32(len(l.d.plain))
+	l.addText(txt, fs, k, col, st, dc, tg)
+	if !fs.pre && st&richtext.Code != 0 {
+		l.addCodeRun(c0, int32(len(l.d.plain)))
+	}
+	if pill && ps.pseudo[1] > 0 && dc >= 0 {
+		l.addPseudoSlot(1, ps.pseudo[1], ps.pbox[1], dc, k, col) // its ::after, last in it
+	}
+	if swatch.A > 0 && dc >= 0 && l.decos[dc].kind == 2 {
+		// a code-styled colour: WithFormattingStyles (UqHX) wraps
+		// Color's children, the value and its swatch, in the code
+		// element, so the swatch sits inside the chip, before its end
+		// padding
+		l.addSwatch(swatch, dc, col, k)
+		swatch = color.NRGBA{}
+	}
+	if dc >= 0 && l.decos[dc].padR > 0 {
+		l.addClose(l.decos[dc].padR, dc, k)
+	}
+	if pill && ps.edge[1] != 0 {
+		l.addClose(ps.edge[1], -1, k) // a rule's border and margin after it
+	}
+	if cmp != 0 {
+		for i := n0; i < len(l.items); i++ {
+			l.items[i].comp = cmp
 		}
-		if pill && ps.pseudo[0] > 0 && dc >= 0 {
-			// the slug's ::before (MentionProfiles' picture) inside the pill,
-			// first in it: its place goes on the pill's first line, where
-			// the component draws it (comps.go)
-			l.addPseudoSlot(0, ps.pseudo[0], ps.pbox[0], dc, k, col)
+		if ex := l.compState(cmp).extra; ex != 0 {
+			l.addClose(float32(ex), -1, k) // the plugin's pill is wider/narrower
 		}
-		if sp.Kind == richtext.Channel && sp.Lock {
-			// a private channel the viewer is in: lock-filled, then its
-			// name without "#"
-			l.addIcon("lock-filled", fs.size, k, col, dc, tg)
-		}
-		if noAt {
-			txt = strings.TrimPrefix(txt, "@")
-		}
-		if !fs.pre && st&richtext.Code != 0 {
-			// Inline code wraps normally.
-			txt = strings.ReplaceAll(txt, "\n", " ")
-		}
-		c0 := int32(len(l.d.plain))
-		l.addText(txt, fs, k, col, st, dc, tg)
-		if !fs.pre && st&richtext.Code != 0 {
-			l.addCodeRun(c0, int32(len(l.d.plain)))
-		}
-		if pill && ps.pseudo[1] > 0 && dc >= 0 {
-			l.addPseudoSlot(1, ps.pseudo[1], ps.pbox[1], dc, k, col) // its ::after, last in it
-		}
-		if swatch.A > 0 && dc >= 0 && l.decos[dc].kind == 2 {
-			// a code-styled colour: WithFormattingStyles (UqHX) wraps
-			// Color's children, the value and its swatch, in the code
-			// element, so the swatch sits inside the chip, before its end
-			// padding
-			l.addSwatch(swatch, dc, col, k)
-			swatch = color.NRGBA{}
-		}
-		if dc >= 0 && l.decos[dc].padR > 0 {
-			l.addClose(l.decos[dc].padR, dc, k)
-		}
-		if pill && ps.edge[1] != 0 {
-			l.addClose(ps.edge[1], -1, k) // a rule's border and margin after it
-		}
-		if cmp != 0 {
-			for i := n0; i < len(l.items); i++ {
-				l.items[i].comp = cmp
-			}
-			if ex := l.compState(cmp).extra; ex != 0 {
-				l.addClose(float32(ex), -1, k) // the plugin's pill is wider/narrower
-			}
-		}
-		if swatch.A > 0 {
-			l.addSwatch(swatch, -1, col, k)
-		}
+	}
+	if swatch.A > 0 {
+		l.addSwatch(swatch, -1, col, k)
 	}
 }
 
@@ -1219,6 +1259,10 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		} else if it.kind == itWord {
 			d.frags = append(d.frags, frag{kind: fText, x: float32(x0) + x, w: w, size: int(it.face.size >> 6), sh: sh, col: it.col, style: it.style, target: it.target, p0: p0, p1: p1, comp: it.comp,
 				part: it.part, boxed: it.deco >= 0, weight: it.face.f.Weight, tip: it.tip})
+			if it.lazy {
+				d.frags[len(d.frags)-1].lazy = d.faceIndex(it.face)
+				d.lazyN++
+			}
 		}
 		x += w
 	}
@@ -1355,6 +1399,10 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 				continue
 			}
 			if it.kind == itWord && x+it.w > maxWf && it.w > 0 {
+				if it.lazy { // never by its bound (giant.go); shaped all the same
+					it.sh, it.lazy = l.st.word(it.face, string(d.plain[it.p0:it.p1])), false
+					it.w = it.sh.adv
+				}
 				// Forced break inside a word that cannot fit.
 				sh := it.sh
 				p0 := it.p0

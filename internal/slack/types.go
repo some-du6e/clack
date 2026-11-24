@@ -792,6 +792,11 @@ type CountEntry struct {
 	Updated      string `json:"updated"`
 	MentionCount int    `json:"mention_count"`
 	HasUnreads   bool   `json:"has_unreads"`
+
+	// HistoryInvalid is history_invalid: when the conversation's history
+	// last changed on Slack's side (a bulk delete, retention); with
+	// Updated, its channelMutationTimestamps (core/history_changed.go)
+	HistoryInvalid string `json:"history_invalid,omitempty"`
 }
 
 type Counts struct {

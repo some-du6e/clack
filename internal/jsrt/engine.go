@@ -563,7 +563,26 @@ func (e *engine) stringify(h uint32) ([]byte, error) {
 		return []byte("null"), nil
 	}
 	defer e.release(s)
-	return []byte(e.toString(s)), nil
+	return e.toBytes(s), nil
+}
+
+// toBytes is toString's UTF-8 as bytes, copied out of the engine's memory
+// once (a string and then bytes copied a stringified value twice: a
+// channel of 908,000-character messages' slice, 2 × 88 MB a read).
+func (e *engine) toBytes(h uint32) []byte {
+	pl := e.call("jr_to_string", uint64(h))
+	if pl == 0 {
+		x := uint32(e.call("jr_exception")) &^ excBit
+		e.release(x)
+		return []byte{}
+	}
+	p, n := unpack(pl)
+	b := e.read(p, n)
+	e.call("jr_free_cstr", uint64(p))
+	if b == nil {
+		b = []byte{}
+	}
+	return b
 }
 
 func (e *engine) bytes(h uint32) []byte {

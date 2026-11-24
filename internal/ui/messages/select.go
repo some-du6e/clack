@@ -11,6 +11,7 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -281,6 +282,17 @@ func (s *listState) selectedRich(h Host) (text, slackHTML, cleanHTML string) {
 				line("  " + clock(tsTime(r.m.TS)))
 			}
 			brk()
+		}
+		if r.rv.PlainLen() == 0 && i > i0 && i < i1 {
+			// a row between the ends whose layout went (a big row off
+			// screen: releaseBigRows) copies its message's text, not
+			// nothing: no layout, no marks
+			t := richtext.PlainText(r.m.Doc)
+			b.WriteString(t)
+			h := strings.ReplaceAll(html.EscapeString(t), "\n", "<br>")
+			sb.WriteString(h)
+			cb.WriteString(h)
+			continue
 		}
 		b.WriteString(r.rv.TextRange(a, z))
 		sh, ch := r.rv.HTMLRange(a, z)
