@@ -309,7 +309,9 @@ func (v *View) drawPlays(gtx layout.Context, st *Style) {
 // Expand alone, its PlayPauseAnimations on), or the pointer on the group
 // itself (its buttons stand out of a small image, and :hover holds over
 // them as they're the container's), or its More menu open (the group's
-// --menu-open: opacity 1).
+// --menu-open: opacity 1). The View hears the pointer only within its own
+// bounds (its input area nests in its clip), so a part of the group that
+// stands out of the View (a narrow image at its left edge) still lets go.
 func (v *View) expandOn(st *Style, i int) bool {
 	e := &v.d.expands[i]
 	if e.full && e.img != nil && e.img == v.menuImg {
