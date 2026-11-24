@@ -1,7 +1,9 @@
 package messages
 
 import (
+	"context"
 	"image"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -10,6 +12,7 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // Keyboard focus in the message list, for Accessibility > "Press ↑ in the
@@ -18,7 +21,12 @@ import (
 // draws as hovered (its highlight and hover actions); ↑/↓ move it, ↓ past
 // the newest message or Escape hands focus back to the composer, Enter or
 // E edits a message of yours, and V is its "Add to list…" (6r+G's
-// shortcut, EtVr P2.ADD_TO_LIST).
+// shortcut, EtVr P2.ADD_TO_LIST). The selected message's other action
+// keys are Slack's MessageActions key commands (popups/actions_keys.go):
+// R, T, P, S or F, U, A, M, L, Delete (and Backspace on macOS), Mod+C and
+// Mod+Shift+S, each only where its action's rule gives the message that
+// action (popups/actions_rules.go); a letter it doesn't take goes on to
+// the conversation's input as any other.
 
 type kbNav struct {
 	on       bool   // the list has keyboard focus
@@ -45,26 +53,95 @@ type kbNav struct {
 	jumpTo    func(ts string, flash bool)
 }
 
-// msgActionKeys are a selected message's own keys (EtVr P2's single
-// letters: edit, react, thread, pin, share, save, mark unread, remind,
-// copy link, add to list): its key commands take them, so the input
-// doesn't (shouldInputStealKeyEvent's defaultPrevented).
+// msgActionKeys are the single letters a selected message's actions can
+// bind (EtVr P2: edit, react, thread, pin, share, save, mark unread,
+// remind, copy link, add to list): the letter its key commands take, the
+// input doesn't (shouldInputStealKeyEvent's defaultPrevented); one its
+// actions don't take isn't bound, so the input steals it like any other.
 const msgActionKeys = "ertpsfaumlv"
 
 // stealsKey is shouldInputStealKeyEvent for typed text a list has the
-// focus for: one printable character, not Space, nor one of the selected
-// message's own keys.
-func stealsKey(s string) bool {
+// focus for: one printable character, not Space, nor a letter the
+// selected message binds (binds, nil: every msgActionKeys letter).
+func stealsKey(s string, binds func(k string) bool) bool {
 	r, n := utf8.DecodeRuneInString(s)
 	if n == 0 || n != len(s) || r == ' ' || !unicode.IsPrint(r) {
 		return false
 	}
-	for _, k := range msgActionKeys {
-		if r == k {
-			return false
-		}
+	if strings.ContainsRune(msgActionKeys, r) && (binds == nil || binds(string(r))) {
+		return false
 	}
 	return true
+}
+
+// kbKeyID is key e's P2 key id: the lower-case letter, "mod+c" and
+// "mod+shift+s" with the shortcut modifier, "del" and "backspace".
+func kbKeyID(e key.Event) string {
+	switch e.Name {
+	case key.NameDeleteForward:
+		return "del"
+	case key.NameDeleteBackward:
+		return "backspace"
+	}
+	id := strings.ToLower(string(e.Name))
+	if e.Modifiers.Contain(key.ModShortcut) {
+		if e.Modifiers.Contain(key.ModShift) {
+			return "mod+shift+" + id
+		}
+		return "mod+" + id
+	}
+	return id
+}
+
+// kbAction is what key id does on the selected message: its action's
+// key command (popups.MessageKeyAction), ok false when the message has no
+// action taking id: no message selected, one being edited, a temporary
+// one (no MessageActions, so no key commands: shouldRenderActions).
+func (s *listState) kbAction(h Host, id string) (func(gtx layout.Context), bool) {
+	r := s.rows[s.kb.ts]
+	app := h.Core()
+	if r == nil || r.edit != nil || !popups.ToolbarShown(app, &r.m) {
+		return nil, false
+	}
+	m := r.src
+	switch id {
+	case "e", "v":
+		return nil, false // Enter, E and V: kbKeys' own
+	}
+	where := popups.InChannel
+	if s.thread {
+		where = popups.InThread
+	}
+	// onReact's anchor: the message (its element's rect), at its right
+	at := s.origin.Add(image.Pt(s.size.X-60, 0))
+	if i := s.kbIndex(); i >= 0 && i < len(s.pos) {
+		at.Y += s.pos[i]
+	}
+	return popups.MessageKeyAction(h, at, m, where, popups.MessageMenuOpts{
+		Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
+		OnEdit:  func() { s.startEdit(h, m.TS) },
+		OnReply: func() { h.OpenThread(m.Channel, threadRoot(&m)) },
+		OnTodo:  func() { s.toggleTodo(h, m) },
+	}, id)
+}
+
+// kbBinds reports whether the selected message binds letter k (Enter, E
+// and V included): what the input mustn't steal.
+func (s *listState) kbBinds(h Host, k string) bool {
+	r := s.rows[s.kb.ts]
+	app := h.Core()
+	if r == nil || r.edit != nil || !popups.ToolbarShown(app, &r.m) {
+		return false
+	}
+	switch k {
+	case "e":
+		return app != nil && r.m.User == app.Self().ID
+	case "v":
+		_, ok := h.(ListAdder)
+		return ok && popups.AddToListShown(app, &r.src)
+	}
+	_, ok := s.kbAction(h, k)
+	return ok
 }
 
 // kbWheelBlur is BaseKeyboardNavigableList's onScroll after an onWheel:
@@ -240,6 +317,15 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		key.Filter{Focus: &s.kb, Name: key.NameReturn},
 		key.Filter{Focus: &s.kb, Name: "E"},
 		key.Filter{Focus: &s.kb, Name: "V"},
+		// the message's action keys (kbAction), no modifier but their own
+		key.Filter{Focus: &s.kb, Name: "R"}, key.Filter{Focus: &s.kb, Name: "T"},
+		key.Filter{Focus: &s.kb, Name: "P"}, key.Filter{Focus: &s.kb, Name: "S"},
+		key.Filter{Focus: &s.kb, Name: "F"}, key.Filter{Focus: &s.kb, Name: "A"},
+		key.Filter{Focus: &s.kb, Name: "U"}, key.Filter{Focus: &s.kb, Name: "M"},
+		key.Filter{Focus: &s.kb, Name: "L"},
+		key.Filter{Focus: &s.kb, Name: key.NameDeleteForward}, key.Filter{Focus: &s.kb, Name: key.NameDeleteBackward},
+		key.Filter{Focus: &s.kb, Name: "C", Required: key.ModShortcut},
+		key.Filter{Focus: &s.kb, Name: "S", Required: key.ModShortcut | key.ModShift},
 		// enableShortcuts: Mod+B, Mod+I and Mod+V go to the input (not
 		// with Alt: AltGr, ui type_steal.go)
 		key.Filter{Focus: &s.kb, Name: "B", Required: key.ModShortcut, Optional: key.ModShift},
@@ -261,7 +347,7 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		case key.EditEvent:
 			// a character typed with a message selected: the input's,
 			// with the frame's others (StealText)
-			s.kb.typed.Edit(e, func(t string) bool { return s.kb.on && stealsKey(t) })
+			s.kb.typed.Edit(e, func(t string) bool { return s.kb.on && stealsKey(t, func(k string) bool { return s.kbBinds(h, k) }) })
 		case key.CompositionEvent:
 			s.kb.typed.Composition(e) // an IME's marked text stays out
 		case key.Event:
@@ -269,7 +355,12 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 				continue
 			}
 			if e.Modifiers.Contain(key.ModShortcut) {
-				s.kb.typed.Key(e) // Mod+B, Mod+I, Mod+V
+				switch id := kbKeyID(e); id {
+				case "mod+c", "mod+shift+s": // copy message, save
+					s.kbRun(gtx, h, id)
+				default:
+					s.kb.typed.Key(e) // Mod+B, Mod+I, Mod+V
+				}
 				continue
 			}
 			if s.kb.typed.Started() {
@@ -310,6 +401,8 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 				s.pageKey(e.Name)
 			case key.NameEscape:
 				s.kbLeave(gtx)
+			case "R", "T", "P", "S", "F", "A", "U", "M", "L", key.NameDeleteForward, key.NameDeleteBackward:
+				s.kbRun(gtx, h, kbKeyID(e))
 			case "V": // Add to list…: the toolbar's action (P2.ADD_TO_LIST), so none where it has none
 				r := s.rows[s.kb.ts]
 				if la, ok := h.(ListAdder); ok && r != nil && popups.ToolbarShown(h.Core(), &r.m) && popups.AddToListShown(h.Core(), &r.src) {
@@ -328,6 +421,22 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		s.kbSteal(gtx, text, keys)
 	}
 	event.Op(gtx.Ops, &s.kb)
+}
+
+// kbRun runs key id's action on the selected message, if it has one.
+// Mod+C copies the selection instead while there is one (onCopyText
+// returns when the window's selection reaches into the message: the
+// browser's copy is the selection's).
+func (s *listState) kbRun(gtx layout.Context, h Host, id string) {
+	if id == "mod+c" && s.sel.active {
+		if t, sh, ch := s.selectedRich(h); t != "" {
+			richview.CopyRich(gtx, t, sh, ch)
+			return
+		}
+	}
+	if run, ok := s.kbAction(h, id); ok {
+		run(gtx)
+	}
 }
 
 // pageKey is BaseKeyboardNavigableList's PageUp, PageDown, Home and End

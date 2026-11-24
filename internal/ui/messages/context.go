@@ -73,6 +73,9 @@ func (s *listState) contextMenu(h Host, origin image.Point) {
 	if r == nil || r.edit != nil || r.src.TS == "" {
 		return // the inline editor has its own (Cut/Copy/Paste) menu
 	}
+	if !popups.ContextMenuShown(&r.src) {
+		return // MessageActionsContextMenu (DtN2) opens nothing on it
+	}
 	at := s.anchor(h, origin, image.Point{})
 	if o := s.contextMenuFor(h, r, i, p.pos, at); o != nil {
 		h.ShowOverlay(o)
