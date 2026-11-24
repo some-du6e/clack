@@ -330,14 +330,22 @@ S.setPage = (href, css) => {
  * (getCurrentChannelId, the active team) and Slack's view state
  * (Taut's setView: ChatTabs' current tab)
  */
-S.setRoute = (team, channel, thread) => {
+S.setRoute = (team, channel, thread, tabView) => {
   const path = team ? `/client/${team}${channel ? '/' + channel : ''}` : '/client'
   try {
     if (G.location?.pathname !== path) G.history?.replaceState?.(G.history.state ?? null, '', path)
   } catch (err) {
     console.warn('[slick] could not set the route', err)
   }
-  T.setView?.(channel || '', thread || '')
+  // tabView: the channel's header tab the window shows (Slick.SetTabView's
+  // JSON), "" for the channel itself
+  let tab = null
+  if (tabView) {
+    try {
+      tab = JSON.parse(tabView)
+    } catch {}
+  }
+  T.setView?.(channel || '', thread || '', tab)
 }
 
 S.introspect = () => ({
