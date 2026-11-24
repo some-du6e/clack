@@ -114,7 +114,8 @@ func (c *Composer) saveThenPick(d core.Draft) {
 		case errors.Is(err, errDraftUploading):
 			c.h.Toast(draftsHangTight())
 		case err != nil:
-			log.Printf("composer: save draft: %v", err) // the drafts sync logs a failure ("Draft updates failed to sync"): no toast
+			log.Printf("composer: save draft: %v", err)
+			c.h.Toast("Couldn’t save your draft") // the text stays: say so (karim-1118), not the error
 		default:
 			SelectStashedDraft(c.h, c, c.ch, c.ts, *want)
 		}
@@ -154,7 +155,8 @@ func saveSlotThenPick(h Host, ch, ts string, d core.Draft) {
 	queueDraftOp(key, draftOp{api: api, save: &args, done: func(err error) {
 		laterFor(api.a, h, func() {
 			if err != nil {
-				log.Printf("composer: save draft: %v", err) // the drafts sync logs a failure ("Draft updates failed to sync"): no toast
+				log.Printf("composer: save draft: %v", err)
+				h.Toast("Couldn’t save your draft") // the text stays: say so (karim-1118), not the error
 				return
 			}
 			SelectStashedDraft(h, nil, ch, ts, d)
