@@ -762,6 +762,7 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		}
 		att.TitleLink = SafeURL(a.TitleLink)
 		att.Text = c.attachmentText(a)
+		att.HasBlocks = len(bytes.TrimSpace(a.Blocks)) > 0 && string(bytes.TrimSpace(a.Blocks)) != "null"
 		if kb := c.topBlocks(a.Blocks); len(kb) > 0 {
 			att.Kit, att.KitFrom = true, len(att.Text)
 			att.Text = append(att.Text, kb...)

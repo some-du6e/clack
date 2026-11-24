@@ -499,8 +499,6 @@ func (hh hostHandler) OpenUsergroup(id string, at image.Point) {
 }
 func (hh hostHandler) OpenImage(img richtext.Image) { hh.h.OpenLightbox(img, core.Message{}) }
 
-// ImageMenu is an image's AttachmentImageActions More actions: Copy
-// link, Hide image.
 // DownloadImageFile is an image's AttachmentImageActions Download: the
 // image's Slack file.
 func (hh hostHandler) DownloadImageFile(f *richtext.File) {
@@ -509,6 +507,8 @@ func (hh hostHandler) DownloadImageFile(f *richtext.File) {
 	}
 }
 
+// ImageMenu is an image's AttachmentImageActions More actions: Copy
+// link, Hide image.
 func (hh hostHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
 	if ph, ok := hh.h.(popups.Host); ok {
 		ph.ShowOverlay(popups.NewImageActionsMenu(ph, popups.ActionAnchor(btn, false), href, key, closed))
@@ -516,6 +516,13 @@ func (hh hostHandler) ImageMenu(href, key string, btn image.Rectangle, closed fu
 		closed()
 	}
 }
+
+// The image hover group's Download and More actions: without these a
+// view's images would lose them with no test going red.
+var (
+	_ richview.ImageDownloadHandler = hostHandler{}
+	_ richview.ImageMenuHandler     = hostHandler{}
+)
 
 // ChartAction is a data_visualization block's More actions: its menu.
 func (hh hostHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {

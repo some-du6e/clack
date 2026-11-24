@@ -619,6 +619,13 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 	}
 }
 
+// The image hover group's Download and More actions: without these the
+// images here would lose them with no test going red.
+var (
+	_ richview.ImageDownloadHandler = (*richHandler)(nil)
+	_ richview.ImageMenuHandler     = (*richHandler)(nil)
+)
+
 // DownloadImageFile is an image's AttachmentImageActions Download
 // (richview.ImageDownloadHandler): the image's Slack file, downloaded as
 // its FileActions' Download does.
