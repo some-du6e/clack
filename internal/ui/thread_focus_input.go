@@ -28,6 +28,7 @@ package ui
 // ThreadsFlexpanes showed last frame (their unmounts).
 type threadFocusState struct {
 	key   string // ch+"/"+ts, as a.convos; "" none
+	list  string // keyboard mode's: the thread whose list takes the focus once it draws (keyboard_mode.go)
 	pane  string // the side pane's thread last frame ("" none shown)
 	split string // the split view's thread last frame ("" none shown)
 }
@@ -78,6 +79,9 @@ func (a *App) threadFocusUnmount() {
 	a.threadPaneLeft(f.split, split, side)
 	if f.pane != "" && side == "" {
 		a.cancelThreadFocusInput(f.pane)
+	}
+	if f.list != "" && f.list != side && f.list != split {
+		f.list = "" // keyboard mode's list focus goes with the pane it was for
 	}
 	if f.split != "" && split == "" {
 		a.cancelThreadFocusInput(f.split)

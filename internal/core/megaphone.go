@@ -66,14 +66,15 @@ var MegaphoneMessageInputNotifications = []string{
 	"plus_request_to_purchase_channel_banner",
 }
 
-// megaphoneBootSpaces2 is the boot load's second chunk (i2+v's l[1]),
+// megaphoneBootSpaces2 is the boot load's second chunk (i2+v's l[1];
+// 17Qm L in build 66e72b57ade1: 33 spaces, later_page_today gone from xu),
 // loaded beside the first: the menus' and pages' spaces, among them
 // generic_new_badge, whose badges list turns on Slack's "New" tags
 // (temp_mute_new_badge on the bell's More options).
 var megaphoneBootSpaces2 = []string{
 	"workspace_menu_primary_plan_info", "workspace_menu_secondary_plan_info", "workspace_menu_upsell", "emoji_drawer",
 	"invite_modal_learn_more_about_guests_cta", "create_channel_make_shared_cta", "guests_modal_dropdown", "main_menu",
-	"profile_menu", "sidebar_menu_header", "later_page_today", "workflow_builder_header", "app_header",
+	"profile_menu", "sidebar_menu_header", "workflow_builder_header", "app_header",
 	"all_workflows_header", "workflows_more_actions_menu", "more_peek_menu", "search_modal_footer",
 	"huddle_invite_modal", "huddle_toolbar", "automations_tab_coachmarks", "search_modal_header",
 	"workspace_add_menu", "workspace_team_switcher_menu", "canvas_create_menu", SpaceGenericNewBadge,
@@ -158,8 +159,9 @@ func (a *App) megaphoneSet(space, ch, name string) {
 
 // loadMegaphone is loadMegaphoneNotificationData: megaphone.notifications.list
 // {event, channel_id, reason} and each answered space filed as Slack
-// files it. extra are more form fields (is_team_on_trial). It returns
-// space -> notification name as answered.
+// files it, the ones its client knows only (megaphoneSpaces). extra are
+// more form fields (is_team_on_trial). It returns space -> notification
+// name as answered and filed.
 func (a *App) loadMegaphone(ctx context.Context, event map[string]any, ch, reason string, extra url.Values) (map[string]string, error) {
 	ev, _ := json.Marshal(event)
 	p := url.Values{"event": {string(ev)}, "reason": {reason}}
@@ -180,6 +182,9 @@ func (a *App) loadMegaphone(ctx context.Context, event map[string]any, ch, reaso
 	}
 	out := make(map[string]string, len(r.Notifications))
 	for space, n := range r.Notifications {
+		if !megaphoneSpaces[space] {
+			continue // a space Slack's client doesn't know (megaphone_spaces.go)
+		}
 		name := ""
 		if n != nil {
 			name = n.Name

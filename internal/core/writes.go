@@ -61,6 +61,9 @@ func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMess
 		}
 	}
 	err := a.C.Update(ctx, ch, ts, text, blocks)
+	if err == nil {
+		a.ownMutation(ch, false) // history_changed.go
+	}
 	if err != nil && had {
 		if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) {
 			x.Text, x.Blocks, x.Edited, x.Files = prev.Text, prev.Blocks, prev.Edited, prev.Files
@@ -93,11 +96,21 @@ func (a *App) EndStale(ch string) bool {
 // saveMessageEditWithFiles): chat.update with file_ids, the files the
 // message keeps after the edit followed by those added while editing.
 func (a *App) EditWithFiles(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
-	return a.C.UpdateWithFiles(ctx, ch, ts, text, blocks, fileIDs)
+	err := a.C.UpdateWithFiles(ctx, ch, ts, text, blocks, fileIDs)
+	if err == nil {
+		a.ownMutation(ch, false) // history_changed.go
+	}
+	return err
 }
 
 // Delete deletes a message.
-func (a *App) Delete(ctx context.Context, ch, ts string) error { return a.C.Delete(ctx, ch, ts) }
+func (a *App) Delete(ctx context.Context, ch, ts string) error {
+	err := a.C.Delete(ctx, ch, ts)
+	if err == nil {
+		a.ownMutation(ch, true) // history_changed.go
+	}
+	return err
+}
 
 // DeleteAttachment removes a link preview from a message, as Slack's
 // removeAttachmentsIncludingChildren: the attachment (and the others
@@ -143,6 +156,39 @@ func (a *App) DeleteAttachment(ctx context.Context, ch, ts, id string) error {
 	return nil
 }
 
+// RemoveFileFromMessage is chatRemoveFile (boot-shared QD+H):
+// chat.removeFile {channel, ts, file} takes the file out of the message
+// without deleting it. Slack's store hears of it from the socket's
+// message_changed; the stored message here drops the file once the
+// answer is ok, the same change, so a session without the socket shows
+// it too.
+func (a *App) RemoveFileFromMessage(ctx context.Context, ch, ts, fileID string) error {
+	// the viewer's own click each time: never the guard's backoff (Slack
+	// sends every one)
+	if err := a.C.Call(slack.NoBackoff(ctx), "chat.removeFile", url.Values{"channel": {ch}, "ts": {ts}, "file": {fileID}}, nil); err != nil {
+		return err
+	}
+	if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) {
+		kept := x.Files[:0:0]
+		for _, f := range x.Files {
+			if f.ID != fileID {
+				kept = append(kept, f)
+			}
+		}
+		x.Files = kept
+		xs := x.XFiles[:0:0]
+		for _, id := range x.XFiles {
+			if id != fileID {
+				xs = append(xs, id)
+			}
+		}
+		x.XFiles = xs
+	}); ok {
+		a.emitUpdate(ch, &upd)
+	}
+	return nil
+}
+
 // Mark moves the read cursor of ch to ts and returns the new unread state.
 // Marking an earlier ts keeps the conversation unread (see MarkUnread).
 func (a *App) Mark(ctx context.Context, ch, ts string) (Count, error) {
@@ -164,7 +210,7 @@ func (a *App) Mark(ctx context.Context, ch, ts string) (Count, error) {
 	}
 	e := a.S.MarkRead(ch, ts)
 	cv := a.Count(ch)
-	a.emit(Event{Type: "marked", Channel: ch, TS: ts, Count: &cv})
+	a.emit(Event{Type: "marked", Channel: ch, TS: ts, Count: &cv, BadgesGen: a.ActivityBadgesGen()})
 	if e.HasUnreads {
 		a.refreshCountsSoon() // the server knows the mention count below the new cursor
 	}
@@ -482,6 +528,7 @@ func (a *App) Pin(ctx context.Context, ch, ts string) error {
 	a.pinsTabPrepend(ch, it)
 	err := a.C.Call(ctx, "pins.add", url.Values{"channel": {ch}, "timestamp": {ts}, "reason": {"pin-message"}}, nil)
 	if err == nil || isCode(err, "already_pinned") {
+		a.ownMutation(ch, false) // history_changed.go
 		return nil
 	}
 	a.pinsTabRemove(ch, it)
@@ -613,6 +660,7 @@ func (a *App) MarkThread(ctx context.Context, ch, threadTS, ts string) error {
 		// updateActivitiesUnreadState for the reply bars' items
 		a.setThreadLastRead(ch, threadTS, ts)
 		a.threadActivityRead(ch, threadTS, ts)
+		a.emitThreadRead(ch, threadTS, ts) // the Activity rows of the thread (manage.go)
 		a.refreshCountsSoon()
 	}
 	return err
@@ -760,25 +808,23 @@ func (a *App) SetDND(ctx context.Context, minutes int) error {
 	return a.C.Call(ctx, "dnd.endSnooze", nil, nil)
 }
 
-// Command runs a slash command. /shrug, /me and /topic are handled
-// locally like the official client; others go through chat.command
-// (command.go: client_token, so a modal the app opens shows here).
+// Command runs a slash command as executeCommand does: /topic and, in a
+// channel, /invite locally (Slack's slash-commands-local), the others
+// through chat.command (command.go: client_token, so a modal the app
+// opens shows here).
 func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error) {
 	cmd := o.Command
-	if !strings.HasPrefix(cmd, "/") {
+	if !strings.HasPrefix(cmd, "/") && !strings.HasPrefix(cmd, "\uff0f") { // a full-width slash stays (executeCommand's N)
 		cmd = "/" + cmd
 	}
-	switch cmd {
-	case "/shrug":
-		m, err := a.Send(ctx, SendOpts{Channel: o.Channel, Text: strings.TrimSpace(o.Text + ` ¯\_(ツ)_/¯`), ThreadTS: o.ThreadTS})
-		if err != nil {
-			return CommandResult{}, err
-		}
-		return CommandResult{Msg: &m}, nil
-	case "/me":
-		return CommandResult{}, a.C.Call(ctx, "chat.meMessage", url.Values{"channel": {o.Channel}, "text": {o.Text}}, nil)
+	// executeCommand's local commands (Zrd3 getCommands, slash-commands-
+	// local), by the matched command's canonical name; /shrug and /me are
+	// the server's, so they go to chat.command with their blocks (and
+	// thread) like any other. The ones that need the app (/shortcuts,
+	// /search, /open, /msg, /feedback) the composer runs itself.
+	switch a.LocalCommand(cmd) { // slash_local.go
 	case "/topic":
-		return CommandResult{}, a.SetTopic(ctx, o.Channel, o.Text)
+		return a.topicCommand(ctx, o, cmd)
 	case "/invite":
 		if a.isLocalInvite(o.Channel) { // Slack's local inviteCommand (invite_command.go)
 			return a.inviteCommand(ctx, o, cmd)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"image/color"
 	"image/png"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
+
+	"gioui.org/app/winclip"
 )
 
 // The real Windows clipboard: PowerShell (Windows PowerShell 5.1, STA) puts
@@ -182,5 +185,63 @@ func TestWinClipboardFiles(t *testing.T) {
 	}
 	if _, _, err := attClipboardImage(winClipCtx(t), false); err != errAttNoClipImage {
 		t.Errorf("image on a file-list clipboard: %v", err)
+	}
+}
+
+// winclip.CopyData on the real clipboard (a WinForms SetImage: CF_BITMAP,
+// and Windows' CF_DIB and CF_DIBV5 made from it): the bitmap's handle is
+// a GDI one, which GlobalSize and GlobalLock are wrong on, so it is
+// refused (ErrNotMemory); the DIB, global memory, copies within its size
+// and decodes; a limit under its size is ErrTooBig; a format not there is
+// ErrNoData. One winclip.Read lists them all in one session.
+func TestWinClipboardCopyDataChecks(t *testing.T) {
+	winClipEnabled(t)
+	winClipSet(t, "[System.Windows.Forms.Clipboard]::SetImage($b)\n")
+	var bitmap, dib, tooBig, missing error
+	var dibLen int
+	if err := winclip.Session(winClipCtx(t), 0, func() error {
+		_, bitmap = winclip.CopyData(2, 1<<30) // CF_BITMAP
+		var b []byte
+		b, dib = winclip.CopyData(attCFDIB, 1<<30)
+		dibLen = len(b)
+		_, tooBig = winclip.CopyData(attCFDIB, 8)
+		_, missing = winclip.CopyData(attCFHDROP, 1<<30)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(bitmap, winclip.ErrNotMemory) {
+		t.Errorf("CF_BITMAP: %v, want ErrNotMemory", bitmap)
+	}
+	if dib != nil || dibLen < 40 {
+		t.Errorf("CF_DIB: %d bytes, %v", dibLen, dib)
+	}
+	if !errors.Is(tooBig, winclip.ErrTooBig) {
+		t.Errorf("CF_DIB under an 8-byte limit: %v, want ErrTooBig", tooBig)
+	}
+	if !errors.Is(missing, winclip.ErrNoData) {
+		t.Errorf("CF_HDROP on a bitmap clipboard: %v, want ErrNoData", missing)
+	}
+	snap, err := winclip.Read(winClipCtx(t), func(f winclip.Format) int64 {
+		if f.ID == attCFDIB || f.ID == 2 {
+			return 1 << 30
+		}
+		return 0
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snap.Has(2) || !snap.Has(attCFDIB) {
+		t.Errorf("the snapshot's formats %v lack CF_BITMAP or CF_DIB", snap.Formats)
+	}
+	if _, ok := snap.Bytes(2); ok {
+		t.Error("the snapshot copied CF_BITMAP's GDI handle as memory")
+	}
+	b, ok := snap.Bytes(attCFDIB)
+	if !ok {
+		t.Fatal("the snapshot has no CF_DIB")
+	}
+	if _, err := attDIBToPNG(b); err != nil {
+		t.Errorf("the snapshot's CF_DIB: %v", err)
 	}
 }

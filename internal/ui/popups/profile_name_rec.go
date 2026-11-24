@@ -493,6 +493,16 @@ func (n *epNameRec) audioProps() slackc.Props {
 	return p
 }
 
+// NameRecording is the form's name recording (eK: "" for none) and
+// whether the field shows that file, read from its files.info (tests).
+func (e *EditProfileModal) NameRecording() (id string, shown bool) {
+	if e.form == nil {
+		return "", false
+	}
+	n := &e.form.nr
+	return n.cur, n.cur != "" && n.mode == nrFile && n.file != nil && n.file.ID == n.cur
+}
+
 // changeFile is EditProfileFormPane's onChangeFile (te) from outside the
 // control (a plugin's upload): null deletes a recording made in the form
 // (e5) and the form has none; an id becomes the form's recording without
@@ -878,7 +888,6 @@ func ShowMicrophoneAccessError(h Host) {
 	closeBtn := &ModalButton{Label: nsStoriesAV.T("Close"), Kind: BtnOutline}
 	m := NewModal(h, ModalOpts{
 		Title:     nsStoriesAV.T("Can’t access microphone"),
-		TitleWrap: true,
 		Buttons:   []*ModalButton{closeBtn},
 		AutoFocus: closeBtn,
 		Body: func(gtx layout.Context) layout.Dimensions {

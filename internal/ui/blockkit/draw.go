@@ -118,6 +118,9 @@ type colors struct {
 	Text, InputText, Text2, Hint, Placeholder color.NRGBA
 	SelectBorder, CheckBorder, Check          color.NRGBA
 	ErrorText, Hover, FooterBorder            color.NRGBA
+	// BumpLine is the leave prompt's top line (.c-wizard_speed_bump:
+	// border-top 1px rgba(var(--sk_foreground_low_solid)))
+	BumpLine color.NRGBA
 }
 
 var (
@@ -150,6 +153,7 @@ var bkTokens = []struct {
 	{func(c *colors) *color.NRGBA { return &c.ErrorText }, theme.Both("var(--dt_color-content-imp)")},
 	{func(c *colors) *color.NRGBA { return &c.Hover }, theme.Both("var(--dt_color-base-pry-hover)")},
 	{func(c *colors) *color.NRGBA { return &c.FooterBorder }, theme.Both("var(--dt_color-otl-ter)")},
+	{func(c *colors) *color.NRGBA { return &c.BumpLine }, theme.Both("rgb(var(--sk_foreground_low_solid))")},
 }
 
 var (
@@ -216,12 +220,14 @@ func measuredColors(th *theme.Theme) colors {
 		c.Text, c.InputText, c.Text2, c.Hint, c.Placeholder = rgb(0xd1d2d3), rgb(0xf8f8f8), rgb(0xababad), rgb(0x9a9b9e), rgb(0xababad)
 		c.SelectBorder, c.CheckBorder, c.Check = rgb(0x797c81), theme.LinearAlpha(rgba(0x797c81, .5), bg), rgb(0x0a77a7)
 		c.ErrorText, c.Hover, c.FooterBorder = rgb(0xe8577e), theme.LinearAlpha(rgba(0xffffff, .04), bg), rgb(0x35373b)
+		c.BumpLine = rgb(0x35373b) // sk_foreground_low_solid 53,55,59
 	} else {
 		bg := rgb(0xffffff)
 		pc.Primary, pc.PrimaryText, pc.DangerBg = rgb(0x007a5a), rgb(0xffffff), rgb(0xe01e5a)
 		c.Text, c.InputText, c.Text2, c.Hint, c.Placeholder = rgb(0x1d1c1d), rgb(0x1d1c1d), rgb(0x616061), rgb(0x5e5d60), rgb(0x616061)
 		c.SelectBorder, c.CheckBorder, c.Check = rgb(0x7c7a7f), theme.LinearAlpha(rgba(0x5e5d60, .45), bg), rgb(0x1264a3)
 		c.ErrorText, c.Hover, c.FooterBorder = rgb(0xe01e5a), rgb(0xf8f8f8), theme.LinearAlpha(rgba(0x5e5d60, .13), bg)
+		c.BumpLine = rgb(0xdddddd) // sk_foreground_low_solid 221,221,221
 	}
 	palettes[i] = c
 	return *c

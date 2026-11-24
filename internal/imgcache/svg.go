@@ -14,14 +14,10 @@ package imgcache
 // It reads the subset those assets use and refuses the rest rather than
 // drawing it differently: an <svg> root with width/height and viewBox
 // (preserveAspectRatio's default, xMidYMid meet), <g> and <path> with a
-// d, and fill as #rgb, #rrggbb, a CSS color keyword ("black",
-// "transparent") or none (inherited, black by default) under the nonzero
-// rule; a <defs> of <clipPath>s (userSpaceOnUse) whose <rect>s and
-// <path>s, united, are the region a clip-path="url(#id)" on a <g> or
-// <path> draws in (the empty-state cloud's whole-canvas clip). Any other
-// element or attribute that changes the picture (transform, stroke,
-// opacity, style, class, fill-rule evenodd, a url() fill, a rect outside a
-// clipPath or with rx) is an error.
+// d, and fill as #rgb, #rrggbb or none (inherited, black by default) under
+// the nonzero rule. Any other element or attribute that changes the
+// picture (transform, stroke, opacity, style, class, fill-rule evenodd, a
+// url() or named fill) is an error.
 
 import (
 	"bytes"
@@ -33,13 +29,10 @@ import (
 	"image/draw"
 	"io"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 
 	"golang.org/x/image/vector"
-
-	"github.com/some-du6e/clack/internal/csscolor"
 )
 
 // svgMaxSide bounds a rasterized asset (ScaleBudget's default bound).
@@ -73,14 +66,6 @@ type svgFill struct {
 type svgShape struct {
 	d    []svgSeg
 	fill svgFill
-	// clips are the clipPaths (ids) its element and its groups clip it to
-	clips []string
-}
-
-// svgClip is a clipPath: its children's outlines (rect and path, user
-// units), whose union, nonzero, is the region the clipped shapes draw in.
-type svgClip struct {
-	d [][]svgSeg
 }
 
 // svgSeg is one drawing command in user units, absolute: 'M' (p0), 'L'
@@ -94,7 +79,6 @@ type svgDoc struct {
 	w, h   float64    // intrinsic size, CSS px
 	vb     [4]float64 // viewBox
 	shapes []svgShape
-	clips  map[string]*svgClip // by id
 }
 
 // svgFloatAbove is x/image/vector's floatingPointMathThreshold: a
@@ -153,28 +137,22 @@ func rasterSVG(data []byte, size int, b *Budget) (*image.RGBA, error) {
 		x, y := p[0]*k+tx, p[1]*k+ty
 		return !(math.Abs(x) <= svgMaxDevice && math.Abs(y) <= svgMaxDevice)
 	}
-	outlines := make([][]svgSeg, 0, len(doc.shapes))
 	for _, s := range doc.shapes {
-		outlines = append(outlines, s.d)
-	}
-	for _, c := range doc.clips {
-		outlines = append(outlines, c.d...)
-	}
-	for _, d := range outlines {
-		for _, g := range d {
+		for _, g := range s.d {
 			if g.op != 'Z' && (far(g.p0) || (g.op == 'C' && (far(g.p1) || far(g.p2)))) {
 				return nil, svgErr("path point outside the drawable area")
 			}
 		}
 	}
 	z := vector.NewRasterizer(iw, ih)
-	// feed gives z the outline d (reset first), every subpath closed, as
-	// a fill closes them
-	feed := func(d []svgSeg, op draw.Op) {
+	z.DrawOp = draw.Over
+	for _, s := range doc.shapes {
+		if s.fill.none || s.fill.c.A == 0 || len(s.d) == 0 {
+			continue
+		}
 		z.Reset(iw, ih)
-		z.DrawOp = op
 		open := false
-		for _, g := range d {
+		for _, g := range s.d {
 			switch g.op {
 			case 'M':
 				if open {
@@ -197,62 +175,9 @@ func rasterSVG(data []byte, size int, b *Budget) (*image.RGBA, error) {
 			}
 		}
 		if open {
-			z.ClosePath()
+			z.ClosePath() // a fill closes every subpath
 		}
-	}
-	// a clipPath's region: its outlines' coverage, united, one mask each
-	masks := map[string]*image.Alpha{}
-	mask := func() (*image.Alpha, error) {
-		if err := b.Charge(int64(iw) * int64(ih)); err != nil {
-			return nil, budgetErr(err)
-		}
-		return image.NewAlpha(dst.Bounds()), nil
-	}
-	clipMask := func(id string) (*image.Alpha, error) {
-		if m := masks[id]; m != nil {
-			return m, nil
-		}
-		m, err := mask()
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range doc.clips[id].d {
-			feed(d, draw.Over)
-			z.Draw(m, m.Bounds(), image.Opaque, image.Point{})
-		}
-		masks[id] = m
-		return m, nil
-	}
-	var cover *image.Alpha // a clipped shape's coverage
-	for _, s := range doc.shapes {
-		if s.fill.none || s.fill.c.A == 0 || len(s.d) == 0 {
-			continue
-		}
-		if len(s.clips) == 0 {
-			feed(s.d, draw.Over)
-			z.Draw(dst, dst.Bounds(), image.NewUniform(s.fill.c), image.Point{})
-			continue
-		}
-		// clipped: the shape's coverage times each clip's, its fill drawn
-		// through that
-		if cover == nil {
-			var err error
-			if cover, err = mask(); err != nil {
-				return nil, err
-			}
-		}
-		feed(s.d, draw.Src)
-		z.Draw(cover, cover.Bounds(), image.Opaque, image.Point{})
-		for _, id := range s.clips {
-			m, err := clipMask(id)
-			if err != nil {
-				return nil, err
-			}
-			for i, a := range m.Pix {
-				cover.Pix[i] = uint8((uint32(cover.Pix[i])*uint32(a) + 127) / 255)
-			}
-		}
-		draw.DrawMask(dst, dst.Bounds(), image.NewUniform(s.fill.c), image.Point{}, cover, image.Point{}, draw.Over)
+		z.Draw(dst, dst.Bounds(), image.NewUniform(s.fill.c), image.Point{})
 	}
 	return dst, nil
 }
@@ -265,16 +190,11 @@ func parseSVG(data []byte) (*svgDoc, error) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.Strict = true
 	var (
-		doc     *svgDoc
-		fills   []svgFill  // the inherited fill at each open element
-		kinds   []string   // each open element's name
-		clipsAt [][]string // the clipPaths each open element's content is clipped to
-		clipID  string     // the open clipPath's id
-		depth   int
-		segs    int // every path's commands
-		parts   int // paths and clip outlines
+		doc   *svgDoc
+		fills []svgFill // the inherited fill at each open element
+		depth int
+		segs  int // every path's commands
 	)
-	in := func(name string) bool { return slices.Contains(kinds, name) }
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -309,114 +229,41 @@ func parseSVG(data []byte) (*svgDoc, error) {
 			if err != nil {
 				return nil, err
 			}
-			var clips []string
-			if len(clipsAt) > 0 {
-				clips = clipsAt[len(clipsAt)-1]
-			}
-			if v, ok := attrs["clip-path"]; ok {
-				id, err := svgClipRef(v)
-				if err != nil {
-					return nil, err
-				}
-				if id != "" {
-					clips = append(slices.Clip(clips), id)
-				}
-			}
-			outline := func(d []svgSeg) error {
-				if parts++; parts > svgMaxShapes {
-					return svgErr("more than %d paths", svgMaxShapes)
-				}
-				if segs += len(d); segs > svgMaxSegs {
-					return svgErr("paths too long")
-				}
-				return nil
-			}
 			switch {
-			case in("clipPath"):
-				// a clipPath's outlines: their geometry only (fill is ignored)
-				var d []svgSeg
-				switch t.Name.Local {
-				case "rect":
-					if err := svgOnly(attrs, "x", "y", "width", "height", "fill"); err != nil {
-						return nil, err
-					}
-					if d, err = svgRect(attrs); err != nil {
-						return nil, err
-					}
-				case "path":
-					if err := svgOnly(attrs, "d", "fill", "clip-rule"); err != nil {
-						return nil, err
-					}
-					if r, ok := attrs["clip-rule"]; ok && strings.TrimSpace(r) != "nonzero" {
-						return nil, svgErr("clip-rule %q", r)
-					}
-					if d, err = parsePathData(attrs["d"]); err != nil {
-						return nil, err
-					}
-				default:
-					return nil, svgErr("element <%s> in a clipPath", t.Name.Local)
-				}
-				if err := outline(d); err != nil {
-					return nil, err
-				}
-				doc.clips[clipID].d = append(doc.clips[clipID].d, d)
-			case depth > 0 && t.Name.Local == "defs":
-				if err := svgOnly(attrs); err != nil {
-					return nil, err
-				}
-			case depth > 0 && t.Name.Local == "clipPath":
-				// clipPathUnits' default (userSpaceOnUse) only
-				if err := svgOnly(attrs, "id", "clipPathUnits"); err != nil {
-					return nil, err
-				}
-				if u, ok := attrs["clipPathUnits"]; ok && strings.TrimSpace(u) != "userSpaceOnUse" {
-					return nil, svgErr("clipPathUnits %q", u)
-				}
-				clipID = strings.TrimSpace(attrs["id"])
-				if clipID == "" || doc.clips[clipID] != nil {
-					return nil, svgErr("clipPath id %q", attrs["id"])
-				}
-				if doc.clips == nil {
-					doc.clips = map[string]*svgClip{}
-				}
-				doc.clips[clipID] = &svgClip{}
-			case in("defs"):
-				return nil, svgErr("element <%s> in defs", t.Name.Local)
 			case depth == 0 && t.Name.Local == "svg":
 				if doc, err = svgRoot(attrs); err != nil {
 					return nil, err
 				}
 			case depth > 0 && t.Name.Local == "g":
-				if err := svgOnly(attrs, "fill", "clip-path"); err != nil {
+				if err := svgOnly(attrs, "fill"); err != nil {
 					return nil, err
 				}
 			case depth > 0 && t.Name.Local == "path":
-				if err := svgOnly(attrs, "fill", "d", "fill-rule", "clip-path"); err != nil {
+				if err := svgOnly(attrs, "fill", "d", "fill-rule"); err != nil {
 					return nil, err
 				}
 				if r, ok := attrs["fill-rule"]; ok && strings.TrimSpace(r) != "nonzero" {
 					return nil, svgErr("fill-rule %q", r)
 				}
+				if len(doc.shapes) >= svgMaxShapes {
+					return nil, svgErr("more than %d paths", svgMaxShapes)
+				}
 				d, err := parsePathData(attrs["d"])
 				if err != nil {
 					return nil, err
 				}
-				if err := outline(d); err != nil {
-					return nil, err
+				if segs += len(d); segs > svgMaxSegs {
+					return nil, svgErr("paths too long")
 				}
-				doc.shapes = append(doc.shapes, svgShape{d: d, fill: f, clips: clips})
+				doc.shapes = append(doc.shapes, svgShape{d: d, fill: f})
 			default:
 				return nil, svgErr("element <%s>", t.Name.Local)
 			}
 			fills = append(fills, f)
-			kinds = append(kinds, t.Name.Local)
-			clipsAt = append(clipsAt, clips)
 			depth++
 		case xml.EndElement:
 			depth--
 			fills = fills[:len(fills)-1]
-			kinds = kinds[:len(kinds)-1]
-			clipsAt = clipsAt[:len(clipsAt)-1]
 		case xml.CharData:
 			if len(bytes.TrimSpace(t)) != 0 {
 				return nil, svgErr("text content")
@@ -429,74 +276,7 @@ func parseSVG(data []byte) (*svgDoc, error) {
 	if doc == nil {
 		return nil, svgErr("no <svg> root")
 	}
-	// a clip-path may name a clipPath defined after it (in a closing defs)
-	for _, sh := range doc.shapes {
-		for _, id := range sh.clips {
-			if doc.clips[id] == nil {
-				return nil, svgErr("clip-path url(#%s): no such clipPath", id)
-			}
-		}
-	}
 	return doc, nil
-}
-
-// svgClipRef is a clip-path attribute's clipPath id: url(#id), or "" for
-// none.
-func svgClipRef(v string) (string, error) {
-	v = strings.TrimSpace(v)
-	if v == "none" {
-		return "", nil
-	}
-	in, ok := strings.CutPrefix(v, "url(")
-	if in, ok = strings.CutSuffix(in, ")"); !ok {
-		return "", svgErr("clip-path %q", v)
-	}
-	in = strings.Trim(strings.TrimSpace(in), `"'`)
-	id, ok := strings.CutPrefix(in, "#")
-	if !ok || id == "" {
-		return "", svgErr("clip-path %q", v)
-	}
-	return id, nil
-}
-
-// svgRect is a clipPath rect's outline: x, y (default 0), width and
-// height (both needed, above 0), as M L L L Z.
-func svgRect(attrs map[string]string) ([]svgSeg, error) {
-	num := func(k string, need bool) (float64, error) {
-		s, ok := attrs[k]
-		if !ok {
-			if need {
-				return 0, svgErr("rect without %s", k)
-			}
-			return 0, nil
-		}
-		v, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(s), "px"), 64)
-		if err != nil || !(math.Abs(v) <= svgMaxCoord) {
-			return 0, svgErr("rect %s %q", k, s)
-		}
-		return v, nil
-	}
-	x, err := num("x", false)
-	if err != nil {
-		return nil, err
-	}
-	y, err := num("y", false)
-	if err != nil {
-		return nil, err
-	}
-	w, err := num("width", true)
-	if err != nil {
-		return nil, err
-	}
-	h, err := num("height", true)
-	if err != nil {
-		return nil, err
-	}
-	if w <= 0 || h <= 0 {
-		return nil, svgErr("rect %gx%g", w, h)
-	}
-	return []svgSeg{{op: 'M', p0: [2]float64{x, y}}, {op: 'L', p0: [2]float64{x + w, y}},
-		{op: 'L', p0: [2]float64{x + w, y + h}}, {op: 'L', p0: [2]float64{x, y + h}}, {op: 'Z'}}, nil
 }
 
 // svgOnly refuses attributes other than allowed (and the fill every
@@ -581,9 +361,6 @@ func svgFillOf(attrs map[string]string, parent svgFill) (svgFill, error) {
 				return svgFill{c: color.NRGBA{R: r, G: g, B: b, A: 0xff}}, nil
 			}
 		}
-	}
-	if c, ok := csscolor.Named(s); ok { // a CSS color keyword ("black")
-		return svgFill{c: c}, nil
 	}
 	return svgFill{}, svgErr("fill %q", s)
 }

@@ -192,7 +192,11 @@ func (v *SearchView) srRichOf(i int) *srCardRich {
 	r.capped = capped
 	r.long = len([]rune(richtext.PlainText(richtext.Doc{Blocks: extra}))) > 600
 	r.body, r.extra = nil, nil
-	o := richview.Options{Channel: m.Channel, TS: m.TS}
+	// no ViewContext: SearchResult sits under no MessageContainerContext
+	// provider, so a result's expandable keys carry none (expandable's
+	// view contexts); and no MessageKitAttachments: renderAttachments
+	// draws every attachment (IT2K), none past a limit
+	o := richview.Options{Channel: m.Channel, TS: m.TS, NoAttachmentLimit: true}
 	if len(body) > 0 {
 		bo := o
 		bo.Edited = m.DisplaysEdited()
@@ -382,6 +386,20 @@ func (h srCardHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, wi
 	}
 }
 
+// DownloadImageFile is an image's AttachmentImageActions Download on the
+// card: the image's Slack file.
+func (h srCardHandler) DownloadImageFile(f *richtext.File) {
+	if f != nil {
+		DownloadFile(h.v.h, f)
+	}
+}
+
+// ImageMenu is an image's More actions on the card (AttachmentImageActions'
+// menu): Copy link, and Hide image when it has an expandable.
+func (h srCardHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	h.v.h.ShowOverlay(NewImageActionsMenu(h.v.h, ActionAnchor(btn, false), href, key, closed))
+}
+
 // DataTableAction is a data_table's header button or column header on the
 // card.
 func (h srCardHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
@@ -407,16 +425,11 @@ func (h srCardHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Re
 	OpenTimelineSources(h.v.h, sec)
 }
 
+// OpenFile is handleFileContainerClick (OpenFileCard): a hosted .exe or
+// zip downloads in the app; only a remote or external file's own link
+// and a PDF's page open the browser.
 func (h srCardHandler) OpenFile(f *richtext.File) {
-	if f == nil {
-		return
-	}
-	switch {
-	case f.Permalink != "":
-		lbOpen(h.v.h, f.Permalink)
-	case f.URL != "":
-		lbOpen(h.v.h, f.URL)
-	}
+	OpenFileCard(h.v.h, f, func(u string) { lbOpen(h.v.h, u) })
 }
 
 // richPlain is the card's drawn text (tests): the body's and extras'

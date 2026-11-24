@@ -4,10 +4,12 @@ import (
 	"image"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -51,7 +53,7 @@ func (s *listState) persistentActions(gtx layout.Context, h Host, rc *rowCtx, si
 			continue
 		}
 		r := s.rows[it.key]
-		if r == nil || r.edit != nil || r.m.Pending || r.m.Failed || r.m.Tombstone {
+		if r == nil || r.edit != nil || !popups.ToolbarShown(h.Core(), &r.m) || !popups.MoreShown(h.Core(), &r.src) {
 			continue
 		}
 		btn := s.pbtn[it.key]
@@ -85,7 +87,9 @@ func (s *listState) persistentActions(gtx layout.Context, h Host, rc *rowCtx, si
 		})
 		area.Pop()
 		if btn.Hovered() {
+			m := op.Record(gtx.Ops) // a body portal's: past the list's clip
 			tooltip(gtx, th, c, "Message actions", rr, theme.WindowBounds(s.origin), 1)
+			op.Defer(gtx.Ops, m.Stop())
 		}
 	}
 }

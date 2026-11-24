@@ -99,6 +99,11 @@ type Options struct {
 	// update helper starts the new version; ErrUpdateManual: the system
 	// installer opened instead.
 	InstallUpdate func(u UpdateInfo) error
+	// InstallUpdateOnQuit installs the downloaded u as Clack quits, with
+	// no restart (App.InstallUpdateOnQuit, after Run): Slack desktop's
+	// downloaded update applies on quit, so a Clack that's quit and
+	// opened again runs it instead of downloading it once more.
+	InstallUpdateOnQuit func(u UpdateInfo) error
 	// LaunchOnLogin and SetLaunchOnLogin are Preferences > Advanced >
 	// "Launch app on login" (Slack's DesktopPref launchOnStartup; cmd/clack:
 	// desktop's autostart entry or Run key). nil: the row is greyed.
@@ -112,6 +117,13 @@ type Options struct {
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
+	// SetAppIcon is Clack's Dock or window icon from now on: png, a PNG,
+	// nil for Clack's own (cmd/clack: desktop.SetAppIcon). Slick's main
+	// halves set it (CustomAppIcon). nil: nothing changes it.
+	SetAppIcon func(png []byte)
+	// UserDefault reads the user's macOS defaults for Slick's main halves
+	// (systemPreferences.getUserDefault; cmd/clack: desktop.UserDefault).
+	UserDefault func(key, typ string) any
 	// shaperHold (tests): the startup shaper reaches the UI goroutine only
 	// once it's closed, so the fonts load late.
 	shaperHold <-chan struct{}
@@ -307,6 +319,7 @@ type App struct {
 	font             fontState             // Appearance > Font (prefs_font.go)
 	explorer         *explorer.Explorer    // native file chooser (set in onWindow)
 	dl               downloadPrefs         // Download location, for the savers' goroutines (downloads.go)
+	dlToast          downloadToastState    // the download toast (downloads.go)
 	tautGen          int                   // bumps when a (new) plugin runtime attaches
 	tautTabs         []taut.PreferencesTab // plugins' Preferences tabs
 	switchAt         time.Time             // navigation time, for the channel-switch latency log
@@ -376,6 +389,11 @@ type App struct {
 	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
 	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
 
+	// secFocused: the side pane is the focused view container;
+	// splitFocus, actPaneFocus: the split view's thread is, the thread the
+	// Activity tab's own pane draws is (focus_container.go)
+	secFocused, splitFocus, actPaneFocus bool
+
 	insp    *inspect.Tool // the inspect tool, nil unless gated on (inspect_wire.go)
 	inspKey key.Filter    // its shortcut
 	konami  konami        // the code that turns it on and off
@@ -392,6 +410,30 @@ type App struct {
 	// the frame's layout
 	inspReset   bool
 	inspPresses []key.Event
+
+	// typeSteal's handler for typed text nothing has the focus for
+	// (type_steal.go; Gio patch 64), and the frame's text for it
+	stealTag  int
+	stealText messages.StealText
+	// this frame's time and the last one's (canSteal: an input drawn)
+	frameNow, prevNow time.Time
+	// kbMode: the viewer moves around with the keyboard; kbRelated the
+	// last key or press, kbFocus the focus it saw last (keyboard_mode.go)
+	kbMode    bool
+	kbRelated kbRelated
+	kbFocus   event.Tag
+	// noMoveFocus: an open that keeps the focus where it is
+	// (PreventMoveFocus: Activity's option+up/down)
+	noMoveFocus bool
+
+	// chTabPicked: a tab of the channel was picked (its tab bar, a tab
+	// link), so Slack's view for it is the tab's, Messages' too
+	// (slackTabView); tabViewKey is the view last told to Slick, the
+	// instance tabViewTo (a new one after the backend restarts is told
+	// again)
+	chTabPicked map[string]bool
+	tabViewKey  string
+	tabViewTo   *slick.Slick
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -552,12 +594,16 @@ func (a *App) Run() error {
 	a.wcoEnable()            // Windows: the top nav draws the caption buttons
 	a.macNav = macTitlebarOn // macOS: the top nav is the drag area under the traffic lights
 	a.winLive.Store(a.win)
+	a.watchClipBusy() // Windows: a copy or paste another app's hold of the clipboard stopped (clipbusy.go)
 	if startMacWindow != nil {
 		startMacWindow(a) // macOS: the Dock icon and the app's activation show a hidden window (window_darwin.go)
 	}
 	a.rv.inRun = true // the real window: covered until revealed (reveal.go)
 	applog.Mark("window", "")
 	go a.updateLoop(a.updateSchedule(), realUpdateClock())
+	libStop := make(chan struct{})
+	defer close(libStop)
+	go a.libraryLoop(libStop) // the plugin Library's index, hourly (library_prefs.go)
 	a.watchOSTheme()
 	if a.motionOverride == 0 {
 		watchOSMotion() // wheel scrolling animates unless the OS asks for less motion (syncWheelAnimation)
@@ -896,6 +942,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.winSize = sz
 	windowActive.Store(a.focused) // the indicators turn only in an active window (indicatorFrame)
 	a.frameSeq.Add(1)
+	a.prevNow, a.frameNow = a.frameNow, gtx.Now
 	a.syncWheelAnimation()
 	a.syncThemeTokens()
 	a.focusFadeFrame(gtx) // focus mode's view transition (focus_fade.go)
@@ -916,6 +963,7 @@ func (a *App) frame(gtx layout.Context) {
 	// the inspect tool, before anything reads input: while a session runs
 	// the window lays out hover-only and the tool reads the clicks and
 	// keys (inspect_wire.go)
+	a.keyboardModeFrame(gtx) // where the last frame left the focus, before this frame's keys (keyboard_mode.go)
 	winGtx := gtx
 	gtx = a.inspectBegin(gtx)
 
@@ -928,6 +976,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.hoverBegin(gtx) // before any widget reads keys (Escape)
 	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
+	a.typeSteal(gtx) // after the shortcuts: a key they take is no typing
 	a.updateTitle()
 
 	// Slack's ancestor chain for plugin CSS (.p-client_container > .p-ia…);
@@ -965,7 +1014,8 @@ func (a *App) frame(gtx layout.Context) {
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.layoutWorkflowRunToast(gtx)
-	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
+	a.layoutDownloadToast(gtx) // Slack's download toast (downloads.go)
+	a.layoutIntroOverlay(gtx)  // Replay introduction, over everything
 	// middle-click autoscroll's window-wide area: over everything but the
 	// tracker
 	a.autoscroll.End(gtx.Ops, gtx.Source, sz)

@@ -3,10 +3,8 @@ package composer
 import (
 	"context"
 	"errors"
-	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -25,11 +23,13 @@ import (
 //     effect", the message still in the composer. Its Send button
 //     dispatches the thunk again with includeBroadcastKeywordWarning
 //     false; Clack's job waits for the answer and goes on.
-//  2. handleSlashCommand: a message whose delta starts with a /command
-//     runs as that command. Clack's composer runs typed commands before
-//     the thunk, so here this is a plugin's rewrite: Taut's
-//     NativeAtChannel turns a message Slack would refuse into at-channel's
-//     "/channel …" (slashCommandAppId set) and calls the original thunk.
+//  2. handleSlashCommand: a delta that passes the slash test (s4/N, on
+//     the processed delta: mentions auto-slugged, links linkified) runs as
+//     its command (slash_send.go): a typed one, or a plugin's rewrite (Taut's
+//     NativeAtChannel turns a message Slack would refuse into
+//     at-channel's "/channel …" with slashCommandAppId and calls the
+//     original thunk; bChannel's "/bchannel …"). The keywords the warning
+//     and the check read are the processed delta's too.
 //  3. hasProhibitedKeywords (core.ProhibitedBroadcast): a keyword the
 //     viewer may not use stops the send, Slackbot says why ("Only visible
 //     to you") and the message goes back in the composer.
@@ -75,7 +75,8 @@ type broadcastAsk struct {
 // when no plugin patched it). a is the thunk's options as the plugins
 // left them.
 func (j *sendJob) prepareAndSend(ctx context.Context, a prepareSendArgs) error {
-	used := deltaKeywords(a.Delta)
+	q := j.processed(a) // processedDelta (slash_send.go)
+	used := qKeywords(q)
 	enabled := true
 	if len(used) > 0 {
 		pctx, cancel := context.WithTimeout(ctx, broadcastPermsWait)
@@ -86,11 +87,8 @@ func (j *sendJob) prepareAndSend(ctx context.Context, a prepareSendArgs) error {
 		!j.confirmed(ctx, broadcastAsk{Channel: a.ChannelID, Used: used}, enabled) {
 		return errShoutyRooster
 	}
-	if !j.files {
-		if cmd, text, ok := deltaCommand(a.Delta); ok {
-			return j.command(ctx, core.CommandOpts{Channel: a.ChannelID, ThreadTS: a.ReplyToTs, Command: cmd, Text: text,
-				AppID: a.SlashCommandAppID})
-		}
+	if !j.files && looksLikeSlashCommand(q) {
+		return j.slashCommand(ctx, a, q)
 	}
 	if len(used) > 0 {
 		if msg, no := j.prohibited(ctx, a.ChannelID, a.ReplyToTs, used, enabled); no {
@@ -129,19 +127,7 @@ func (j *sendJob) prohibited(ctx context.Context, ch, ts string, used []string, 
 		Disabled: !enabled, Restricted: j.api.self().Guest})
 }
 
-// command runs a slash command a plugin made of the message; its reply
-// or failure shows as Slackbot's ephemeral, as in Slack (runCommand).
-func (j *sendJob) command(ctx context.Context, o core.CommandOpts) error {
-	_, err := runCommand(ctx, j.api, o)
-	return err
-}
-
 // ---- Slack's delta ----
-
-// slashCommandRe is Slack's "starts with a command" test (also
-// NativeAtChannel's SLASH_COMMAND_RE): a slash, full-width too, then not
-// another slash or a space.
-var slashCommandRe = regexp.MustCompile(`^[/／][^/／\s]`)
 
 // asMap reads a JSON object that crossed from JS (map or slackc.Props).
 func asMap(v any) map[string]any {
@@ -187,70 +173,14 @@ func deltaKeywords(delta map[string]any) []string {
 	return out
 }
 
-// deltaCommand reports whether the delta is a slash command and splits
-// it into the command and its text (mentions as Slack's escapes).
-func deltaCommand(delta map[string]any) (cmd, text string, ok bool) {
-	ops := deltaOps(delta)
-	if len(ops) == 0 {
-		return "", "", false
-	}
-	if s, _ := ops[0]["insert"].(string); !slashCommandRe.MatchString(s) {
-		return "", "", false
-	}
-	var b strings.Builder
-	for _, op := range ops {
-		if ins, ok := op["insert"].(string); ok {
-			if id := mentionID(op); id != "" {
-				b.WriteString(mentionToken(id, ins))
-			} else {
-				b.WriteString(ins)
-			}
-		} else if e := asMap(op["insert"]); e != nil {
-			b.WriteString(embedToken(e))
+// qKeywords lists the broadcast keywords a processed delta mentions
+// (its mention ops whose id starts with "BK").
+func qKeywords(q qDelta) []string {
+	var out []string
+	for _, op := range q.ops {
+		if id, ok := qMentionID(op); ok && strings.HasPrefix(id, "BK") && len(id) > 2 {
+			out = append(out, id[2:])
 		}
 	}
-	full := strings.TrimSpace(b.String())
-	i := strings.IndexFunc(full, unicode.IsSpace)
-	if i < 0 {
-		i = len(full)
-	}
-	cmd, text = full[:i], strings.TrimSpace(full[i:])
-	if rest, ok := strings.CutPrefix(cmd, "／"); ok {
-		cmd = "/" + rest
-	}
-	return cmd, text, true
-}
-
-// mentionToken is a mention op as mrkdwn.
-func mentionToken(id, label string) string {
-	switch {
-	case strings.HasPrefix(id, "BK"):
-		return "<!" + id[2:] + ">"
-	case strings.HasPrefix(id, "S"):
-		return "<!subteam^" + id + ">"
-	case strings.HasPrefix(id, "U"), strings.HasPrefix(id, "W"):
-		return "<@" + id + ">"
-	case strings.HasPrefix(id, "C"), strings.HasPrefix(id, "G"):
-		return "<#" + id + ">"
-	}
-	return label
-}
-
-// embedToken is one of Clack's embeds (deltaEmbed) as mrkdwn.
-func embedToken(e map[string]any) string {
-	field := func(k, f string) string {
-		s, _ := asMap(e[k])[f].(string)
-		return s
-	}
-	switch {
-	case field("slackuser", "id") != "":
-		return "<@" + field("slackuser", "id") + ">"
-	case field("slackchannel", "id") != "":
-		return "<#" + field("slackchannel", "id") + ">"
-	case field("slackusergroup", "id") != "":
-		return "<!subteam^" + field("slackusergroup", "id") + ">"
-	case field("slackemoji", "name") != "":
-		return ":" + field("slackemoji", "name") + ":"
-	}
-	return ""
+	return out
 }

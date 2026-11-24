@@ -128,6 +128,7 @@ func (cs *canvasStore) quipSync(s *Server, c *FakeCanvas, m *quipModel) {
 	for i := range bs {
 		assignIDs(&bs[i], cs.secID)
 	}
+	cardN := map[string]int{} // each URL's link cards so far (SetLinkUnfurlAt)
 	for i := 0; i < len(bs); i++ {
 		b := &bs[i]
 		switch {
@@ -179,6 +180,11 @@ func (cs *canvasStore) quipSync(s *Server, c *FakeCanvas, m *quipModel) {
 		case b.Kind == canvas.Divider:
 			add(quip.Section{ID: quip.Ptr(b.ID), Type: quip.Ptr(quip.TypeHorizontalRule), Style: quip.Ptr(quip.StyleHorizontalRule),
 				Content: &quip.Content{HorizontalRule: &quip.HorizontalRule{}}}, blockSig(b))
+		case b.Kind == canvas.Embed: // a link card: its unfurl container's card (linkcards.go)
+			m.opaque[b.ID] = *b
+			sec, card := cs.linkCardSection(b.ID, b.URL, cardN[b.URL])
+			cardN[b.URL]++
+			add(sec, blockSig(b)+card)
 		default: // a block Clack doesn't edit: a section of its type, kept whole
 			m.opaque[b.ID] = *b
 			add(quip.Section{ID: quip.Ptr(b.ID), Type: quip.Ptr(opaqueType(b.Kind)), Style: quip.Ptr(int32(0)),
@@ -431,7 +437,7 @@ func (m *quipModel) writeBack(c *FakeCanvas) {
 				b.Kind = canvas.Code
 			}
 			if b.Kind == canvas.Code {
-				b.Code = strings.ReplaceAll(plainOfRTML(strings.ReplaceAll(quip.SectionRTML(s), "<br>", "\n")), " ", " ")
+				b.Code = codeOfRTML(quip.SectionRTML(s))
 			} else {
 				b.Spans = m.spans(quip.SectionRTML(s), live)
 			}
@@ -598,6 +604,16 @@ func mentionSpan(c *quip.Section, st richtext.Style) richtext.Span {
 }
 
 // plainOfRTML is RTML's text with the markup gone and entities read.
+// codeOfRTML is a code block's text: its RTML's characters with each
+// line break a newline and each no-break space a space. (A raw newline
+// can't stand in for a <br> before the parse: RTML text holds none, and
+// the parse makes one a space.)
+func codeOfRTML(rtml string) string {
+	plain, _ := quip.RTMLPlain(rtml)
+	plain = strings.ReplaceAll(plain, string(quip.ControlMark), "")
+	return strings.ReplaceAll(plain, "\u00a0", " ")
+}
+
 func plainOfRTML(rtml string) string {
 	text, _, _ := quip.ParseRTML(rtml)
 	var b strings.Builder

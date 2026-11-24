@@ -7,10 +7,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"weak"
 
 	"gioui.org/font"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -103,6 +105,11 @@ type Composer struct {
 	// (messages.ChannelView.JumpToOwnSend, ThreadView.JumpToOwnSend).
 	OnSend func(cid string, files bool)
 
+	// EditInThread marks an edit composer opened in a thread pane or the
+	// Threads view, set by whoever opens it: saveMessageEdit (IHC0) runs
+	// the processor with inThread from the view context, so such an edit
+	// resolves no broadcast keywords and one in the channel does.
+	EditInThread bool
 	// InThreadsView marks the Threads view's inline reply composer:
 	// .p-threads_view .p-threads_footer__input_container has margin 0 20px,
 	// so none of the flexpane's 12px over the box.
@@ -433,6 +440,11 @@ func (c *Composer) init() {
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
 	c.ed.Intercept = c.floatBarKey(c.ed.Intercept) // the floating bar's Escape first
+	// Escape is the input's own while it has something to do with it,
+	// handled (defaultPrevented) before the view's keydown, which marks the
+	// thread read or closes the pane: the floating bar hides, the
+	// autocomplete closes, an edit is cancelled (stopEditingMessage)
+	c.ed.OwnsEscape = func() bool { return c.edit != nil || c.fbar.shown || c.PopupOpen() }
 	accept := c.ac.OnAccept
 	c.ac.OnAccept = func(it acItem, start, end int) {
 		if it.Kind == acCommand && it.Command != nil {
@@ -472,6 +484,33 @@ func (c *Composer) Editing() bool { return c.edit != nil }
 
 // InsertText inserts plain text at the caret.
 func (c *Composer) InsertText(s string) { c.ed.InsertText(s); c.Focus() }
+
+// TypeText types s at the caret as the keyboard does (autoformat, emoji,
+// the autocomplete's trigger) and asks for the focus: a key the window
+// redirected to this input, Slack's shouldInputStealKeyEvent (the
+// message input's document keydown, the thread pane's onKeyDown), whose
+// character the browser types into the input it focused.
+func (c *Composer) TypeText(s string) {
+	lo, hi := c.ed.sel()
+	c.ed.typeAt(lo, hi, s)
+	c.Focus()
+}
+
+// StealKeys is TypeText for shortcuts the window redirected here in the
+// frame at (Mod+B, Mod+I, Mod+V: enableShortcuts): they go to the editor
+// once it has the focus, a paste reading the clipboard then. An editor
+// that doesn't get the focus at its next draw, or within a second, drops
+// them: a Mod+V parked in an undrawn input pasted whatever the clipboard
+// held when the input next had the focus.
+func (c *Composer) StealKeys(at time.Time, ks []key.Event) {
+	c.ed.stolen = stolenKeys{keys: append(c.ed.stolen.keys, ks...), at: at}
+	c.Focus()
+}
+
+// DrawnAt reports whether the composer's editor was last drawn (a live
+// draw, not a measure pass) in the frame of time at: the window steals
+// keys only into an input on screen (ui type_steal.go).
+func (c *Composer) DrawnAt(at time.Time) bool { return DrawnAt(c.ed, at) }
 
 // InsertEmoji inserts an emoji atom at the caret.
 func (c *Composer) InsertEmoji(name string) {
@@ -568,7 +607,7 @@ func (c *Composer) LayoutIn(gtx layout.Context, pane string) layout.Dimensions {
 // they're given (margins included) and size their height to the content;
 // edit composers draw just the box.
 func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
-	runRestores()
+	runRestoresIn(c, false)
 	c.drawnAt = gtx.Now
 	// the pane its roots are keyed in (vanish.go remounts those): LayoutIn's,
 	// or the list's an edit composer or a Block Kit field is drawn inside
@@ -921,7 +960,11 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvPasted:
 			if c.field == nil { // Texty there has no onFilesSelected
 				// a paste whose files attach inserts no text (filePaste)
-				c.ed.filesRead = c.att.PasteClipboardImage()
+				if s := c.ed.clipSnap; s != nil {
+					c.ed.filesRead = c.att.pasteFromSnap(s) // the paste's one read (Windows)
+				} else {
+					c.ed.filesRead = c.att.PasteClipboardImage()
+				}
 			}
 		case EvPasteLimit:
 			c.pasteLimitDialog(c.ed.RefusedPaste())
@@ -1359,7 +1402,10 @@ func (c *Composer) schedule(t time.Time) {
 	if c.edit != nil || c.ed.Empty() || !t.After(time.Now()) {
 		return // the menu's times are ahead; the dialog only takes 5 min to 120 days out
 	}
-	doc := c.prepareSend(c.ed.Doc())
+	// a refused or failed schedule puts back what was typed (orig), as a
+	// send's restore does, not the processed document's chips
+	orig := c.ed.Doc().Clone()
+	doc := c.prepareMessage(c.ed.Doc()) // prepareAndSendMessage with dateScheduled: the processor too
 	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
 	api, ch, ts := c.api, c.ch, c.ts
 	broadcast := c.broadcast && ts != ""
@@ -1374,12 +1420,12 @@ func (c *Composer) schedule(t time.Time) {
 			j := &sendJob{api: api, ch: ch, ts: ts, confirm: c.confirmBroadcast}
 			enabled := api.broadcastEnabled(ctx, ch)
 			if !j.confirmed(ctx, broadcastAsk{Channel: ch, Used: used, Scheduled: true}, enabled) {
-				c.restore(doc)
+				c.restore(orig)
 				return
 			}
 			if msg, no := j.prohibited(ctx, ch, ts, used, enabled); no {
 				api.localEphemeral(ch, ts, msg)
-				c.restore(doc)
+				c.restore(orig)
 				return
 			}
 		}
@@ -1389,7 +1435,7 @@ func (c *Composer) schedule(t time.Time) {
 			// scheduleSendMessage's failure: a local ephemeral
 			// (scheduleSendError); the message stays a draft
 			api.localEphemeral(ch, ts, scheduleFailedText)
-			c.restore(doc)
+			c.restore(orig)
 		}
 		// success says nothing: Slack's context bar shows the schedule
 	}()
@@ -1493,14 +1539,19 @@ func (c *Composer) submit() {
 		c.deleteEmptiedEdit()
 		return
 	}
+	// prepareMessage: prepareSend's document through the message
+	// processor prepareAndSendMessage and saveMessageEdit both run (rNCs,
+	// slash_mentions.go): a typed @name, #channel or keyword naming
+	// exactly one is its mention from here on, in a message, an edit and
+	// a command alike
 	if c.edit != nil && c.editFilesChanged() {
-		c.saveEditWithFiles(c.prepareSend(d))
+		c.saveEditWithFiles(c.prepareMessage(d))
 		return
 	}
-	doc := c.prepareSend(d)
+	doc, store := c.prepareMessageStore(d)
 	text := doc.Mrkdwn()
 	blocks := doc.RichTextBlocks()
-	api, ch, ts := c.api, c.ch, c.ts
+	api, ts := c.api, c.ts
 
 	if c.edit != nil {
 		m := c.edit
@@ -1548,49 +1599,22 @@ func (c *Composer) submit() {
 		return
 	}
 
-	// Slash commands (only when the message starts with a known command
-	// or any /word; Slack sends unknown /words as commands too).
+	o := &outgoing{doc: doc, orig: d.Clone(), text: text, blocks: blocks, broadcast: c.broadcast && ts != "", store: &store, processed: true}
 	if c.att.Len() == 0 {
-		plain := strings.TrimSpace(d.Text()) // as typed: markup mode must not eat a command's * or _
-		if strings.HasPrefix(plain, "/") && !strings.HasPrefix(plain, "//") {
-			cmd, rest, _ := strings.Cut(plain, " ")
-			if hs, ok := c.h.(slashHuddler); ok && strings.EqualFold(cmd, "/huddle") && ts == "" {
-				// /huddle starts or joins the huddle here (Slack's
-				// startHuddle), like the header button
-				c.clearAfterSend()
-				hs.SlashHuddle(ch)
-				return
+		// A slash command (the slash test on the processed delta, s4/N)
+		// goes through prepareAndSendMessage like a message: the broadcast
+		// warning, plugins' patches, then handleSlashCommand in the job
+		// (slash_send.go). MessagePaneInput passes slashCommandAppId, the
+		// app of the command picked from the list (the thread composer,
+		// InputContainer, passes none).
+		if q, _ := qFromDoc(doc); looksLikeSlashCommand(q) {
+			o.command = true
+			if p := c.cmdPick; p.AppID != "" && ts == "" && strings.TrimPrefix(jsToLower(p.Name), "/") == strings.TrimPrefix(parseSlashArgs(q).Cmd, "/") {
+				o.appID = p.AppID
 			}
-			// slashCommandAppId: the app of the command picked from the
-			// list, while the message still runs it
-			app := ""
-			if p := c.cmdPick; p.AppID != "" && strings.EqualFold(strings.TrimPrefix(p.Name, "/"), strings.TrimPrefix(cmd, "/")) {
-				app = p.AppID
-			}
-			c.cmdPick = core.Command{}
-			// executeCommand sends the arguments as blocks, so a mention
-			// goes out as its member, not as the name the chip shows
-			// (Text, the plain words, would let the server match "@karim"
-			// to someone else)
-			blocks := commandArgs(d).CommandBlocks()
-			c.clearAfterSend()
-			go func() {
-				// handleSlashCommand: the reply or the failure is
-				// Slackbot's ephemeral; the app's modal arrives as
-				// view_opened for the command's client_token
-				res, err := runCommand(context.Background(), api, core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), Blocks: blocks, ThreadTS: ts, AppID: app})
-				if err == nil && res.KeepInput {
-					c.restore(doc)
-				}
-				if inv := res.Invite; inv != nil && inv.AddPeople != "" { // the local /invite's invite modal
-					if o, ok := c.h.(inviteOpener); ok {
-						o.OpenInviteToChannel(inv.AddPeople, inv.AddUsers)
-					}
-				}
-			}()
-			return
 		}
 	}
+	c.cmdPick = core.Command{}
 
 	// prepareAndSendMessage's alt text speed bump
 	// (maybeOpenEditFileDialogForImages, editfile.go): images without alt
@@ -1604,8 +1628,7 @@ func (c *Composer) submit() {
 		return
 	}
 
-	o := &outgoing{doc: doc, text: text, blocks: blocks, broadcast: c.broadcast && ts != ""}
-	if c.att.Len() == 0 {
+	if c.att.Len() == 0 && !o.command {
 		// prepareAndSendMessage: the draft's GIFs as EwsX attachments.
 		// With files they wait in the draft: Clack shares files with
 		// files.share, which takes no attachments.
@@ -1626,7 +1649,20 @@ func (c *Composer) submit() {
 
 // outgoing is a message on its way out of the composer.
 type outgoing struct {
-	doc       *Doc
+	doc *Doc
+	// store is what the processor read for doc (prepareMessageStore): the
+	// job's searches reuse it (nil: the job takes the composer's).
+	// processed: doc is the processor's output already, so the job doesn't
+	// run it a second time over the same delta (Slack's rNCs runs once)
+	store     *slugStore
+	processed bool
+	// orig is the composer's document as it was (InputContainer's
+	// contents): what a failed send puts back (nil: doc)
+	orig *Doc
+	// command: the message is a slash command (no GIFs go with it); appID
+	// is its slashCommandAppId
+	command   bool
+	appID     string
 	text      string
 	blocks    json.RawMessage
 	broadcast bool
@@ -1682,7 +1718,13 @@ func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 	batch := c.att.takeForSend()
 	hasFiles := !batch.empty()
 	job = &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
-		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast}
+		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast,
+		ui: c.commandUI()}
+	if o.store != nil {
+		job.store = *o.store
+	} else {
+		job.store = c.slugStore()
+	}
 	job.sent = func(cid string, files bool) {
 		c.later(func() {
 			if c.OnSend != nil {
@@ -1709,8 +1751,15 @@ func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 			c.restoreSend(o)
 			return
 		}
+		// Mod+Z's unsend window opens for a message the job posted
+		// (prepareAndSendMessage's updateMessageEligibleForUnsending, past
+		// handleSlashCommand): a command, the reminder modal or a huddle
+		// returns nil without posting, and Mod+Z then undoes as before
+		posted := job.posted.Load()
 		c.later(func() {
-			c.unsendBy = time.Now().Add(unsendWindow)
+			if posted {
+				c.unsendBy = time.Now().Add(unsendWindow)
+			}
 			c.att.dropPreviews(batch.chips...) // sent: no viewer shows them any more
 		})
 	}
@@ -1813,6 +1862,17 @@ type sendJob struct {
 	// sent is called as the message goes out (Composer.OnSend), off the
 	// UI goroutine; nil for none.
 	sent func(cid string, files bool)
+	// store is what the message processor's searches read (the
+	// composer's, snapshotted on the UI goroutine); ui what a command
+	// needs from the composer (nil: nothing)
+	store slugStore
+	ui    *commandUI
+	// posted is set once deliver's post or files share went through: what
+	// arms the unsend window (a command never gets there)
+	posted atomic.Bool
+	// handed is the processed delta args handed out, as JSON: the one the
+	// processor already ran over (processed)
+	handed []byte
 }
 
 func (j *sendJob) run(ctx context.Context) error {
@@ -1844,10 +1904,13 @@ func (j *sendJob) args() prepareSendArgs {
 	delta := j.o.delta
 	if delta == nil {
 		delta = j.o.doc.Delta()
+		if j.o.processed {
+			j.handed, _ = json.Marshal(delta)
+		}
 	}
 	return prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
 		ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view,
-		IncludeBroadcastKeywordWarning: j.warn}
+		IncludeBroadcastKeywordWarning: j.warn, SlashCommandAppID: j.o.appID}
 }
 
 // patchArgs are args as the plugins' patches see them: with the files'
@@ -1878,9 +1941,13 @@ func (j *sendJob) deliver(ctx context.Context, ch, ts, text string, blocks json.
 			// (no jumpToTimestamp there), then the uploads and files.share
 			j.sent("", true)
 		}
-		return sendFiles(ctx, j.api, ch, ts, comment, blocks, broadcast, j.prepared, j.pending, j.raw)
+		err := sendFiles(ctx, j.api, ch, ts, comment, blocks, broadcast, j.prepared, j.pending, j.raw)
+		j.posted.Store(err == nil)
+		return err
 	}
-	return postMessage(ctx, j.api, ch, ts, text, blocks, broadcast, j.sent, j.o.attachments)
+	err := postMessage(ctx, j.api, ch, ts, text, blocks, broadcast, j.sent, j.o.attachments)
+	j.posted.Store(err == nil)
+	return err
 }
 
 // checkThenSend runs the SendChecks hook (composer.addSendCheck) and
@@ -2048,7 +2115,11 @@ func (c *Composer) restore(d *Doc) { c.restoreWith(d, nil) }
 // hasn't typed since: the GIFs went back into a composer the user had
 // typed a new message in, and went out with it.
 func (c *Composer) restoreSend(o *outgoing) {
-	c.restoreWith(o.doc, func() { c.att.putBackGifs(o.gifs) })
+	d := o.doc
+	if o.orig != nil {
+		d = o.orig // P.setContents(O): the input as it was
+	}
+	c.restoreWith(d, func() { c.att.putBackGifs(o.gifs) })
 }
 
 // restoreWith is restore, running also (UI goroutine) once the message
@@ -2080,9 +2151,30 @@ func laterFor(a *core.App, h interface{ Invalidate() }, f func()) {
 		return
 	}
 	restoreQ.Lock()
-	restoreQ.fns = append(restoreQ.fns, laterFn{a, f})
+	restoreQ.fns = append(restoreQ.fns, laterFn{a: a, f: f})
 	restoreQ.Unlock()
 	h.Invalidate()
+}
+
+// laterHere is later for work that has to run in this composer's own
+// Layout: a command's navigation. The host routes a navigation by the
+// view container being laid out (a conversation opened from the split
+// view's box stays in the split view), as Slack's navigate goes by the
+// container its dispatcher is in (aYa+: sourceContainer,
+// shouldNavigateInContext); run in another box's Layout, it would go
+// wherever that box is. Once c closed, or hereMax after (a box no longer
+// drawn), any Layout runs it.
+func (c *Composer) laterHere(f func()) {
+	if a := c.api.a; a != nil && a.Released() {
+		return
+	}
+	restoreQ.Lock()
+	restoreQ.fns = append(restoreQ.fns, laterFn{a: c.api.a, f: f, here: c, at: time.Now()})
+	restoreQ.Unlock()
+	c.h.Invalidate()
+	// a box no longer drawn: past hereMax any Layout runs it, so wake the
+	// UI then too (an idle app would wait for the next unrelated frame)
+	time.AfterFunc(hereMax+10*time.Millisecond, c.h.Invalidate)
 }
 
 // editFilesChanged is prepareAndSaveEditMessage's C: the edit's files
@@ -2244,18 +2336,40 @@ var restoreQ struct {
 	fns []laterFn
 }
 
-// laterFn is a restoreQ entry: f, for session a's UI (nil: whichever).
+// laterFn is a restoreQ entry: f, for session a's UI (nil: whichever);
+// here, when set, the composer whose own Layout runs it (laterHere),
+// queued at at.
 type laterFn struct {
-	a *core.App
-	f func()
+	a    *core.App
+	f    func()
+	here *Composer
+	at   time.Time
 }
 
-func runRestores() {
+// hereMax is how long a laterHere entry waits for its composer's Layout.
+const hereMax = 2 * time.Second
+
+// runRestores runs restoreQ's entries any Layout may run.
+func runRestores() { runRestoresIn(nil, false) }
+
+// runRestoresIn runs restoreQ: the entries any Layout may run, and c's
+// own (laterHere) when c is set; all runs every one (tests). The rest
+// stay queued, in order.
+func runRestoresIn(c *Composer, all bool) {
 	restoreQ.Lock()
 	fns := restoreQ.fns
 	restoreQ.fns = nil
-	restoreQ.Unlock()
+	var run, keep []laterFn
 	for _, l := range fns {
+		if l.here != nil && l.here != c && !all && !l.here.closed && time.Since(l.at) < hereMax {
+			keep = append(keep, l)
+		} else {
+			run = append(run, l)
+		}
+	}
+	restoreQ.fns = keep
+	restoreQ.Unlock()
+	for _, l := range run {
 		if l.a == nil || !l.a.Released() { // a finished session's has nothing to update
 			l.f()
 		}
@@ -2412,6 +2526,11 @@ func (c *Composer) Edits() uint64 { return c.userEdits }
 // click them like a user).
 func (c *Composer) SendRect() image.Rectangle     { return c.winRect(crSend) }
 func (c *Composer) ScheduleRect() image.Rectangle { return c.winRect(crSchedule) }
+
+// QuoteRect is the formatting bar's Blockquote button in window
+// coordinates as of the last frame, empty when not drawn (folded into the
+// bar's ⋯, or the bar hidden); tests click it like a user.
+func (c *Composer) QuoteRect() image.Rectangle { return c.winRect(crQuote) }
 
 // BoxRect is the input box (its border included) in window coordinates
 // as of the last frame, empty before it was drawn (tests measure the space

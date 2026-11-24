@@ -56,9 +56,13 @@ func (a *App) AttentionLost() uint64 { return a.attLost }
 // setFocused is the window's focus as a ConfigEvent has it (a loss
 // counts: AttentionLost).
 func (a *App) setFocused(on bool) {
+	if s := a.Slick(); s != nil {
+		s.SetFocused(on) // Electron's browser-window-focus for main halves
+	}
 	if on {
 		if !a.focused {
-			a.tickle("focus") // handleWindowFocusEvent (presence_activity.go)
+			a.tickle("focus")     // handleWindowFocusEvent (presence_activity.go)
+			go a.refreshLibrary() // a Library index past its TTL, fetched again (library_prefs.go)
 		}
 		a.focused = true
 		return

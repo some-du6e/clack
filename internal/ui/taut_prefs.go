@@ -44,7 +44,7 @@ import (
 type tautPage struct {
 	a       *App
 	pcc     prefsColorsCache // colors()
-	screen  string           // main (none: the list is Preferences > Plugins) | plugin | appearance | advanced | about
+	screen  string           // main (none: the list is Preferences > Plugins) | plugin | appearance | advanced | about | import
 	plugin  string
 	list    widget.List
 	clicks  map[string]*widget.Clickable
@@ -54,6 +54,8 @@ type tautPage struct {
 	subGen  int // App.tautGen the subs were mounted for
 
 	aboutAsked bool // About read the plugin library's index for its credits
+
+	imp importScreen // Bring over your plugins (plugin_import.go)
 
 	// async state
 	busy    string
@@ -374,6 +376,8 @@ func (p *tautPage) layout(gtx layout.Context) layout.Dimensions {
 			p.advancedScreen(f, t, s)
 		case "about":
 			p.aboutScreen(f, t, s)
+		case "import":
+			p.importScreenLayout(f)
 		} // "main": the list is Preferences > Plugins (plugins_prefs.go)
 		f.gap(24)
 		return layout.Dimensions{Size: image.Pt(f.w, f.y)}
@@ -1459,15 +1463,13 @@ func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 		if ix := lib.Cached(); ix != nil {
 			entries = ix.Plugins
 		} else if !p.aboutAsked {
-			p.aboutAsked = true // the index once, for its author data
+			p.aboutAsked = true // the index once, for its author data (the one request the Library has out)
 			a := p.a
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-				defer cancel()
-				if _, err := lib.Index(ctx, false); err == nil {
+			lib.Refresh(libraryTTL, false, func(_ *pluginlib.Index, err error) {
+				if err == nil {
 					a.Post(a.Invalidate)
 				}
-			}()
+			})
 		}
 	}
 	if who := cr.contributors(entries, p.a.installedPeople()); who != "" {

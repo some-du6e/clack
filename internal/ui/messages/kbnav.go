@@ -1,9 +1,15 @@
 package messages
 
 import (
+	"image"
+	"unicode"
+	"unicode/utf8"
+
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
+
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // Keyboard focus in the message list, for Accessibility > "Press ↑ in the
@@ -24,11 +30,81 @@ type kbNav struct {
 	// page: a PageUp/PageDown/Home/End scrolled the list; the next layout
 	// selects the first (PageUp, Home) or last message in view (pageKey)
 	page key.Name
+	// firstInView: the next layout selects the first message in view
+	// (FocusFirstInView)
+	firstInView bool
+	// steal is the host's way to the conversation's input for keys the
+	// list doesn't take (SetSteal): it types them there and returns the
+	// input's focus tag; typed gathers a frame's (StealText)
+	steal func(gtx layout.Context, text string, keys []key.Event) event.Tag
+	typed StealText
 	// inputWant: End's jump to the thread's latest reply is out (a slice
 	// short of the end has no "input" row); its row then takes the focus
 	// (focusInput's jumpToReplyCallback). jumpTo is the pane's JumpTo.
 	inputWant bool
 	jumpTo    func(ts string, flash bool)
+}
+
+// msgActionKeys are a selected message's own keys (EtVr P2's single
+// letters: edit, react, thread, pin, share, save, mark unread, remind,
+// copy link, add to list): its key commands take them, so the input
+// doesn't (shouldInputStealKeyEvent's defaultPrevented).
+const msgActionKeys = "ertpsfaumlv"
+
+// stealsKey is shouldInputStealKeyEvent for typed text a list has the
+// focus for: one printable character, not Space, nor one of the selected
+// message's own keys.
+func stealsKey(s string) bool {
+	r, n := utf8.DecodeRuneInString(s)
+	if n == 0 || n != len(s) || r == ' ' || !unicode.IsPrint(r) {
+		return false
+	}
+	for _, k := range msgActionKeys {
+		if r == k {
+			return false
+		}
+	}
+	return true
+}
+
+// kbWheelBlur is BaseKeyboardNavigableList's onScroll after an onWheel:
+// a wheel (the list's own scrolling, Gio patch 50's ScrollDelta, not a
+// drag of it) that leaves the selected row wholly above or below the view
+// (isItemAboveView, isItemBelowView) blurs it when the list has the
+// keyboard focus (shouldBlurItemScrolledOutOfView: always for a channel's
+// list, a thread's unless its reply box has the focus, which the list
+// then hasn't). The focus goes to nothing (activeElement.blur()); a key
+// typed then goes to the channel's input (typeSteal). PageUp and a drag of
+// the scrollbar keep it.
+func (s *listState) kbWheelBlur(gtx layout.Context, size image.Point) {
+	if !s.kb.on || s.kb.ts == "" || s.list.ScrollDelta() == 0 || s.list.Dragging() {
+		return
+	}
+	for _, r := range s.laid {
+		if r.key == s.kb.ts && r.y+r.h >= 0 && r.y <= size.Y {
+			return // some of it still in view
+		}
+	}
+	s.kb.on = false
+	gtx.Execute(key.FocusCmd{Tag: nil})
+}
+
+// kbSteal hands the frame's keys the list has the focus for to the
+// conversation's input, which takes the focus at once (so the keys after
+// them go there too): for a channel's list MessagePaneInput's
+// handleKeyDown, which steals a list item's key as any other outside the
+// thread pane; for a thread's ThreadsFlexpane onKeyDown, whose
+// focusOnKey("input") moves the focus to the reply box with the key.
+func (s *listState) kbSteal(gtx layout.Context, text string, keys []key.Event) {
+	if s.kb.steal == nil {
+		return
+	}
+	t := s.kb.steal(gtx, text, keys)
+	if t == nil {
+		return
+	}
+	s.kb.on = false
+	gtx.Execute(key.FocusCmd{Tag: t})
 }
 
 // inputRow is the thread list's "input" row: its item index, and whether
@@ -163,7 +239,12 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		key.Filter{Focus: &s.kb, Name: key.NameEscape},
 		key.Filter{Focus: &s.kb, Name: key.NameReturn},
 		key.Filter{Focus: &s.kb, Name: "E"},
-		key.Filter{Focus: &s.kb, Name: "V"}}
+		key.Filter{Focus: &s.kb, Name: "V"},
+		// enableShortcuts: Mod+B, Mod+I and Mod+V go to the input (not
+		// with Alt: AltGr, ui type_steal.go)
+		key.Filter{Focus: &s.kb, Name: "B", Required: key.ModShortcut, Optional: key.ModShift},
+		key.Filter{Focus: &s.kb, Name: "I", Required: key.ModShortcut, Optional: key.ModShift},
+		key.Filter{Focus: &s.kb, Name: "V", Required: key.ModShortcut, Optional: key.ModShift}}
 	if i, _, _ := s.inputRow(); i >= 0 {
 		// Tab to the thread's reply box (tabToInput); Shift+Tab and a
 		// list with no box row keep Gio's own focus order
@@ -177,9 +258,22 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		switch e := ev.(type) {
 		case key.FocusEvent:
 			s.kb.on = e.Focus
+		case key.EditEvent:
+			// a character typed with a message selected: the input's,
+			// with the frame's others (StealText)
+			s.kb.typed.Edit(e, func(t string) bool { return s.kb.on && stealsKey(t) })
+		case key.CompositionEvent:
+			s.kb.typed.Composition(e) // an IME's marked text stays out
 		case key.Event:
 			if e.State != key.Press {
 				continue
+			}
+			if e.Modifiers.Contain(key.ModShortcut) {
+				s.kb.typed.Key(e) // Mod+B, Mod+I, Mod+V
+				continue
+			}
+			if s.kb.typed.Started() {
+				continue // the input's from the frame's first stolen key on
 			}
 			i := s.kbIndex()
 			switch e.Name {
@@ -216,19 +310,22 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 				s.pageKey(e.Name)
 			case key.NameEscape:
 				s.kbLeave(gtx)
-			case "V": // Add to list…: a message the server has (not a local send)
+			case "V": // Add to list…: the toolbar's action (P2.ADD_TO_LIST), so none where it has none
 				r := s.rows[s.kb.ts]
-				if la, ok := h.(ListAdder); ok && r != nil && !r.src.Pending && !r.src.Failed {
+				if la, ok := h.(ListAdder); ok && r != nil && popups.ToolbarShown(h.Core(), &r.m) && popups.AddToListShown(h.Core(), &r.src) {
 					la.AddMessageToList(r.src)
 				}
-			default: // Enter, E: edit it when it's yours
-				if r := s.rows[s.kb.ts]; r != nil && h.Core() != nil && r.m.User == h.Core().Self().ID {
+			default: // Enter, E: edit it when it's yours (no keys on a temporary message: shouldRenderActions)
+				if r := s.rows[s.kb.ts]; r != nil && h.Core() != nil && r.m.User == h.Core().Self().ID && popups.ToolbarShown(h.Core(), &r.m) {
 					s.kbLeave(gtx)
 					s.startEdit(h, s.kb.ts)
 				}
 			}
 			h.Invalidate()
 		}
+	}
+	if text, keys := s.kb.typed.Take(); text != "" || len(keys) > 0 {
+		s.kbSteal(gtx, text, keys)
 	}
 	event.Op(gtx.Ops, &s.kb)
 }
@@ -287,11 +384,11 @@ func (v *ChannelView) PageKey(name string) {
 
 // pageSelect is pageKey's selection, after the layout that scrolled.
 func (s *listState) pageSelect() {
-	if s.kb.page == "" {
+	if s.kb.page == "" && !s.kb.firstInView {
 		return
 	}
-	first := s.kb.page == key.NamePageUp || s.kb.page == key.NameHome
-	s.kb.page = ""
+	first := s.kb.firstInView || s.kb.page == key.NamePageUp || s.kb.page == key.NameHome
+	s.kb.page, s.kb.firstInView = "", false
 	pick := ""
 	for _, r := range s.laid {
 		in := r.y >= 0 && r.y+r.h <= s.size.Y
@@ -372,12 +469,45 @@ func (v *ChannelView) FocusNewest(leave func()) bool {
 	return v.s.focusNewest()
 }
 
+// SetSteal gives the list its way to the conversation's input for keys
+// it has the focus for and doesn't take (kbSteal): f types them there and
+// returns the input's focus tag (nil: no input to take them).
+func (v *ChannelView) SetSteal(f func(gtx layout.Context, text string, keys []key.Event) event.Tag) {
+	v.s.kb.steal = f
+}
+
+// ListKeyFocus reports whether the thread's message list has the key
+// focus (a reply selected): the shell's Escape is then the pane's, as
+// from its reply box.
+func (v *ThreadView) ListKeyFocus(gtx layout.Context) bool { return gtx.Focused(&v.s.kb) }
+
 // KeyboardSelected is ChannelView.KeyboardSelected for a thread's replies.
 func (v *ThreadView) KeyboardSelected() string {
 	if !v.s.kb.on {
 		return ""
 	}
 	return v.s.kb.ts
+}
+
+// HasMessages reports whether the thread's list has messages to draw in
+// this frame (Prepare's copy).
+func (v *ThreadView) HasMessages() bool { return v.s.snap.loaded && len(v.s.snap.msgs) > 0 }
+
+// FocusFirstInView is BaseKeyboardNavigableList.focus with no message to
+// go to (keyboard mode's focus for a thread just opened): the list takes
+// the keyboard focus with the first message in view selected; leave runs
+// when the focus goes back (↓ past the end).
+func (v *ThreadView) FocusFirstInView(leave func()) bool {
+	s := v.s
+	s.kb.leave = leave
+	s.kb.focusReq, s.kb.firstInView = true, true
+	v.h.Invalidate()
+	return true
+}
+
+// SetSteal is ChannelView.SetSteal for a thread's replies: the reply box.
+func (v *ThreadView) SetSteal(f func(gtx layout.Context, text string, keys []key.Event) event.Tag) {
+	v.s.kb.steal = f
 }
 
 // FocusNewest is ChannelView.FocusNewest for a thread's replies.

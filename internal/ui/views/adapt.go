@@ -398,7 +398,7 @@ func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines
 	// starred_message block contexts: long sections truncate.
 	// "(edited)": shouldDisplayAsEdited (none on an app's message)
 	o := richview.Options{Edited: m.DisplaysEdited(), Compact: compact, Muted: m.System, Secondary: muted && !m.System,
-		Channel: m.Channel, TS: m.TS, Truncate: true}
+		Channel: m.Channel, TS: m.TS, Truncate: true, ViewContext: b.viewCtx, Sender: m.User}
 	if live {
 		o.Elements = b.liveElements(m)
 		o.Media = b.mediaFor(orig) // a lone video plays in place (media.go)
@@ -499,6 +499,24 @@ func (hh hostHandler) OpenUsergroup(id string, at image.Point) {
 }
 func (hh hostHandler) OpenImage(img richtext.Image) { hh.h.OpenLightbox(img, core.Message{}) }
 
+// ImageMenu is an image's AttachmentImageActions More actions: Copy
+// link, Hide image.
+// DownloadImageFile is an image's AttachmentImageActions Download: the
+// image's Slack file.
+func (hh hostHandler) DownloadImageFile(f *richtext.File) {
+	if ph, ok := hh.h.(popups.Host); ok && f != nil {
+		popups.DownloadFile(ph, f)
+	}
+}
+
+func (hh hostHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	if ph, ok := hh.h.(popups.Host); ok {
+		ph.ShowOverlay(popups.NewImageActionsMenu(ph, popups.ActionAnchor(btn, false), href, key, closed))
+	} else if closed != nil {
+		closed()
+	}
+}
+
 // ChartAction is a data_visualization block's More actions: its menu.
 func (hh hostHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
 	if ph, ok := hh.h.(popups.Host); ok {
@@ -547,9 +565,23 @@ func (hh hostHandler) OpenFile(f *richtext.File) {
 		hh.h.OpenLightbox(*f.Thumb, core.Message{})
 		return
 	}
-	if f != nil {
-		openFile(hh.h, fileFromRich(f)) // files.go
+	if f == nil {
+		return
 	}
+	it := fileFromRich(f)
+	if it.isCanvas() || it.isList() || (it.isImage() && it.URL != "") {
+		openFile(hh.h, it) // files.go: the canvas, list and image viewers
+		return
+	}
+	// a message's file (FILE_ATTACHED_TO_MESSAGE): handleFileContainerClick
+	// as the message list has it (popups.OpenFileCard): a hosted .exe or
+	// zip downloads in the app, never in the browser
+	ph, _ := hh.h.(popups.Host)
+	popups.OpenFileCardWith(f, func(u string) { hh.follow(u, false) }, func(f *richtext.File) {
+		if ph != nil {
+			popups.DownloadFile(ph, f)
+		}
+	}, func(f *richtext.File) bool { return ph != nil && popups.ViewFile(ph, f) })
 }
 
 // Button is a click on a Block Kit element richview drew itself: only a

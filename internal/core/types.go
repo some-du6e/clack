@@ -19,15 +19,18 @@ import (
 // Message is a UI-ready message: metadata plus a structured document.
 type Message struct {
 	TS, Channel, User, BotID string
-	Name                     string       // the sender's name when it isn't a member's (user-less bots: username or the bot's name); sender.go
-	Avatar                   string       // the avatar of a user-less sender (icon_emoji, icons, the bot's, Slack's default); sender.go
-	Username                 string       // msg.username as sent (chat.postMessage username)
-	Icons                    *SenderIcons // msg.icons as sent (icon_emoji / icon_url)
-	Subtype, Text            string       // Text: raw mrkdwn (editing, copy, search)
-	ThreadTS, LatestReply    string
-	EditedTS                 string
-	EditedBy                 string // edited.user: who made the last edit (EditedLabel names them on a workflow message)
-	Permalink                string // set on search results
+	// XFiles are the files uploaded with the message (x_files: the ones
+	// its sender may remove from it)
+	XFiles                []string
+	Name                  string       // the sender's name when it isn't a member's (user-less bots: username or the bot's name); sender.go
+	Avatar                string       // the avatar of a user-less sender (icon_emoji, icons, the bot's, Slack's default); sender.go
+	Username              string       // msg.username as sent (chat.postMessage username)
+	Icons                 *SenderIcons // msg.icons as sent (icon_emoji / icon_url)
+	Subtype, Text         string       // Text: raw mrkdwn (editing, copy, search)
+	ThreadTS, LatestReply string
+	EditedTS              string
+	EditedBy              string // edited.user: who made the last edit (EditedLabel names them on a workflow message)
+	Permalink             string // set on search results
 	// Search results only (search.go): requestor_replied (the viewer
 	// replied in the thread) and the index of the first block that held a
 	// highlight marker (0 when none), compactCardBlocks' start
@@ -204,6 +207,9 @@ type User struct {
 	HuddleExpires                 int64
 	Agent                         bool // agent_status consistently_an_agent (read for the badge only under support_lots_of_agents; sender.go)
 	Workflow, Agentforce, AppUser bool // is_workflow_bot, is_agentforce_bot, is_app_user (the sender badge; sender.go)
+	// ProfileOnly is is_profile_only_user, NoInteract interact false (an
+	// information barrier): the member searches leave both out.
+	ProfileOnly, NoInteract bool
 
 	// TeamID is the member's team as Slack's computeLocality reads it
 	// (the org on Enterprise Grid for org members, else team_id).
@@ -399,9 +405,12 @@ type Event struct {
 	User     *User
 	Conv     *Conv
 	Count    *Count // message, marked: the conversation's new unread state
-	Reply    bool   // message: a thread reply
-	Mention  bool   // message: mentions the viewer
-	ConvKind string // message: kind of the conversation
+	// BadgesGen (marked, thread_read): ActivityBadgesGen when the read
+	// came, for the Activity view's decrement (DecActivityBadges)
+	BadgesGen uint64
+	Reply     bool   // message: a thread reply
+	Mention   bool   // message: mentions the viewer
+	ConvKind  string // message: kind of the conversation
 	// Ahead (message, update): a top-level message past the end of a
 	// window whose end went stale at a slow connect (store
 	// UpsertHeard): the channel's lists don't draw it until the window is
@@ -923,18 +932,41 @@ type Command struct {
 }
 
 type CommandOpts struct {
+	// Command is parseSlashCmdArgsFromDelta's cmd: the command word,
+	// lowercased (chat.command's command when the word is no known
+	// command's). Disp is the word as typed (chat.command's disp; Command
+	// when empty).
 	Channel, Command, Text, ThreadTS string
+	Disp                             string
 	// Blocks is the arguments as executeCommand sends them (the
-	// composer's CommandBlocks): with blocks, chat.command carries no
-	// text, as in Slack, and the server reads mentions from them. Text
-	// stays the plain words, for the local commands and for callers
-	// that have no blocks.
+	// composer's commandBlocks, convertDeltaToBlocks of deltaWithoutCmd):
+	// chat.command carries them and no text, as in Slack, and the server
+	// reads mentions from them; nil for blank arguments, when it gets
+	// neither. Text is for the local commands that read text (/topic: the
+	// arguments as the texty input's value) and for callers without
+	// blocks, whose chat.command carries it.
 	Blocks json.RawMessage
+	// Params are the parsed userParams the local commands read (the
+	// tokens after the command word: a mention's id, or a word). nil: the
+	// mention escapes in Text stand in (callers without a composer).
+	Params []CommandParam
 	// AppID is executeCommand's slashCommandAppId: the app whose command
 	// a plugin turned the message into (chat.command app_id).
 	AppID string
 	// TeamID is slashCommandApplicableTeamId (chat.command team_id).
 	TeamID string
+	// Submit is Text as submitChannelTopic sends it (s0VR:
+	// linkifyPhoneNumbers(clean_message_text_with_state(value)), the
+	// composer's TextyInput.Submit rule): the local /topic's topic ("":
+	// Text as it is).
+	Submit string
+}
+
+// CommandParam is one of a command's parsed arguments
+// (convertDeltaToSlashCommandParams): Type "mention" with the mentioned
+// id as Value, or "string" with a word.
+type CommandParam struct {
+	Type, Value string
 }
 
 type CommandResult struct {

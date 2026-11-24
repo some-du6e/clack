@@ -39,6 +39,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/chanent"
@@ -319,6 +320,7 @@ type thrKBRow struct {
 func NewThreads(h Host) *Threads {
 	v := &Threads{base: newBase(h), cards: map[string]*thrCard{}, read: map[string]string{}, sizes: map[int]int{},
 		kbRows: map[string]thrKBRow{}, marks: map[string]string{}}
+	v.viewCtx = expandable.ViewThreads // their previews' expandables (expander.go)
 	v.list.Axis = layout.Vertical
 	v.kb = newVKList(&v.list)
 	v.kb.onFocus = v.kbFocus
@@ -2147,6 +2149,13 @@ func (v *Threads) typeInto(gtx C, active, text string) {
 		v.kb.scrollTo(footer)
 	}
 	gtx.Execute(op.InvalidateCmd{})
+}
+
+// FocusList gives the threads list the key focus at its next draw
+// (onViewClosed: a thread opened from it, with →, closed again).
+func (v *Threads) FocusList() {
+	v.kb.focusIt = true
+	v.h.Invalidate()
 }
 
 // thrPrintable is isPrintableKeyEvent (client-boot 3NzO: e.key is one

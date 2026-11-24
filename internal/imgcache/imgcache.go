@@ -646,6 +646,11 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 	}
 	e := el.Value.(*entry)
 	e.used = now.UnixMilli()
+	if e.interim && !c.inflight[k] {
+		// a scaled copy whose exact load isn't out (it failed): asked for
+		// again once its retry is due (startLocked keeps a failure's wait)
+		c.startLocked(k, true)
+	}
 	if e.gen != c.gen { // this frame's (FrameRedrawn)
 		e.gen = c.gen
 		c.genEls = append(c.genEls, el)
@@ -1528,6 +1533,10 @@ func checkSizeWithin(data []byte, maxPixels, maxSide int) error {
 // tier (a no-op for everything else, e.g. message images and files).
 func (c *Cache) raw(u string) ([]byte, func(), error) {
 	nop := func() {}
+	if d, ok := strings.CutPrefix(u, pageData); ok { // a page's data: URL (dataurl.go): its own text, memory only
+		b, err := dataBody(d)
+		return b, nop, err
+	}
 	if localimg.Is(u) { // a file the viewer is uploading: memory only
 		if b, ok := localimg.Get(u); ok {
 			return b, nop, nil

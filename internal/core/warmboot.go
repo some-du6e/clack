@@ -164,6 +164,14 @@ func (a *App) loadWarm(cacheBase <-chan struct{}) {
 	defer close(a.warm.done)
 	t0 := time.Now()
 	team, user := a.bootAccount()
+	// the account's expandables (expandables.go), not a warm boot file:
+	// read alongside boot_data, and in before the first frame draws a
+	// preview (every path below waits for it)
+	exp := make(chan struct{})
+	go func() {
+		defer close(exp)
+		a.loadExpandables(team, user)
+	}()
 	var d *store.BootData
 	if !noWarmBoot {
 		d = a.S.ReadBootData(team, user)
@@ -172,6 +180,7 @@ func (a *App) loadWarm(cacheBase <-chan struct{}) {
 		a.loadHeaders("", "") // none: headers come from their reads, as before the warm boot
 	}
 	<-cacheBase // the users, prefs and experiments the snapshot reads
+	<-exp
 	switch {
 	case noWarmBoot:
 		a.FirstFrameDone() // a cold start: nothing to hold meta.json's rest for
@@ -267,6 +276,7 @@ func (a *App) installConvs(convs []slack.Conversation, since uint64) {
 // Slack's state, worth reading once more.
 func (a *App) installCounts(c *slack.Counts, since uint64) bool {
 	merged := a.S.SetCountsSince(c, since)
+	a.applyMutationTimestamps(c) // history_invalid and updated (history_changed.go)
 	badges := c.ActivityV2 == nil || a.setActivityBadgesSince(c.ActivityV2, since)
 	a.mergeChannelBadges(c.ChannelBadges) // h1EQ: updateChannelBadgesCounts, resetAllUserAlertsUnreadCounts (classic_badges.go)
 	a.resetAlerts(c.Alerts)

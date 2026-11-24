@@ -426,6 +426,15 @@ func logCode(code string) string {
 // RateLimited is returned when Slack answers 429 too many times in a row.
 var RateLimited = errors.New("slack: rate limited")
 
+// RateLimitWait is a call whose context ended while it waited out a
+// 429's Retry-After: it is the context's error (errors.Is), and a rate
+// limit to the callers that ask for one (core.RateLimited: the feedback
+// dialog's text, as Slack's queue rejects such a call with its 429).
+type RateLimitWait struct{ Err error }
+
+func (e *RateLimitWait) Error() string { return "slack: rate limited: " + e.Err.Error() }
+func (e *RateLimitWait) Unwrap() error { return e.Err }
+
 // cookieHeader sends d only. d-s is never sent: Slack re-sets it on every
 // response to the current Unix time (a last-seen stamp), so a pasted d-s is
 // already older than the one the browser sends next. Presenting an older
@@ -768,12 +777,18 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			log.Printf("slack: %s rate limited, retrying in %ds", method, wait)
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return &RateLimitWait{ctx.Err()}
 			case <-time.After(time.Duration(wait) * time.Second):
 			}
 			continue
 		}
-		data, err := io.ReadAll(resp.Body)
+		var rd io.Reader = resp.Body
+		hint := resp.ContentLength
+		if _, ok := out.(*canvasAnswer); ok {
+			rd = io.LimitReader(resp.Body, MaxCanvasAnswer+1) // past quip's cap nothing would read it
+			hint = min(hint, MaxCanvasAnswer+1)
+		}
+		data, err := readBody(rd, hint)
 		resp.Body.Close()
 		if err != nil {
 			unanswered(ctx, u, err) // cut off before the whole answer came
@@ -785,6 +800,9 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		if bin, ok := out.(*canvasAnswer); ok { // a canvas call: binary protobuf (CanvasCall)
+			if len(data) > MaxCanvasAnswer {
+				return fmt.Errorf("slack %s: an answer over %d bytes", method, MaxCanvasAnswer)
+			}
 			if err := canvasJSONError(method, resp, data); err != nil {
 				return err
 			}
@@ -1417,4 +1435,47 @@ func (p *progressReader) Read(b []byte) (int, error) {
 		p.f(p.sent, p.total)
 	}
 	return n, err
+}
+
+// readBody reads r to its end as io.ReadAll does, in chunks that double
+// to 4 MB and then one copy of the whole: io.ReadAll grows one slice by a
+// quarter at a time once it's large, allocating about five times a long
+// answer (a page of 908,000-character messages, 120 MB: 600 MB of
+// garbage), where this allocates twice it. hint is the answer's
+// Content-Length when known (-1 otherwise: a gzipped answer the
+// transport decompresses), and the first chunk is that long. Like
+// io.ReadAll it reads with plain Reads: io.EOF ends the answer, any other
+// error (io.ErrUnexpectedEOF from a connection cut mid-answer, a body
+// shorter than its Content-Length, a gzip stream cut short) comes back
+// with what came before it.
+func readBody(r io.Reader, hint int64) ([]byte, error) {
+	size := 8 << 10
+	if hint > 0 && hint < 1<<30 {
+		size = int(hint) + 1 // the byte more sees the end without a second chunk
+	}
+	var chunks [][]byte
+	c := make([]byte, 0, size)
+	for {
+		n, err := r.Read(c[len(c):cap(c)])
+		c = c[:len(c)+n]
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			if len(chunks) == 0 {
+				if len(c) >= cap(c)/2 {
+					return c, err
+				}
+				return bytes.Clone(c), err // not a mostly empty chunk kept
+			}
+			return bytes.Join(append(chunks, c), nil), err
+		}
+		if len(c) == cap(c) {
+			chunks = append(chunks, c)
+			if size < 4<<20 {
+				size = min(size*2, 4<<20)
+			}
+			c = make([]byte, 0, size)
+		}
+	}
 }

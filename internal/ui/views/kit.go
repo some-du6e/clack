@@ -331,7 +331,11 @@ type base struct {
 	// messages' lone videos play in place, as in Slack's Threads, Unreads
 	// and Later views
 	mediaPane string
-	media     map[string]*viewMedia
+	// viewCtx is the view context Slack's list passes its messages
+	// (expandable.ViewThreads, …): their collapsible previews' keys end
+	// with it ("" where Clack hasn't matched the view's)
+	viewCtx string
+	media   map[string]*viewMedia
 	// bkView is this view's drawing of its messages' elements
 	// (blockkit.InView, elements.go)
 	bkView uint64
@@ -394,6 +398,10 @@ type base struct {
 }
 
 func newBase(h Host) base { return base{h: h, rich: richCache{}} }
+
+// newBaseIn is newBase for a view whose messages Slack's list passes
+// viewCtx.
+func newBaseIn(h Host, viewCtx string) base { return base{h: h, rich: richCache{}, viewCtx: viewCtx} }
 
 // frame refreshes per-frame state; call at the top of Layout.
 func (b *base) frame() {
@@ -1375,11 +1383,12 @@ func (d *debounce) dueVia(h Host, gtx C, wait time.Duration) (string, bool) {
 }
 
 // wake asks the host for a frame at a time: time.AfterFunc and
-// Host.Invalidate, once per time. An op.InvalidateCmd executed in the
-// middle of layout takes the router's immediate path and replays the
-// input no later handler has read yet, which loses clicks on whatever
-// lays out after the caller (overlay scrims, the secondary pane; the
-// composer's 11-17 bug).
+// Host.Invalidate, once per time. Until Gio patch 61 an op.InvalidateCmd
+// executed in the middle of layout took the router's immediate path and
+// replayed the input no later handler had read yet, which lost clicks on
+// whatever laid out after the caller (overlay scrims, the secondary pane;
+// the composer's 11-17 bug); it only records its wakeup now, and this
+// stays the views' way to ask.
 type wake struct {
 	mu      sync.Mutex
 	at      time.Time

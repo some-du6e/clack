@@ -5,74 +5,38 @@ package composer
 import (
 	"context"
 	"errors"
-	"runtime"
-	"time"
-	"unsafe"
 
-	"golang.org/x/sys/windows"
+	"gioui.org/app/winclip"
+
+	"github.com/some-du6e/clack/internal/ui/richclip"
 )
 
 // Windows: Gio reads only CF_UNICODETEXT; the HTML is the registered
-// "HTML Format" (CF_HTML), read here with user32 directly.
-
-var (
-	pwUser32                     = windows.NewLazySystemDLL("user32.dll")
-	pwKernel32                   = windows.NewLazySystemDLL("kernel32.dll")
-	pwOpenClipboard              = pwUser32.NewProc("OpenClipboard")
-	pwCloseClipboard             = pwUser32.NewProc("CloseClipboard")
-	pwGetClipboardData           = pwUser32.NewProc("GetClipboardData")
-	pwIsClipboardFormatAvailable = pwUser32.NewProc("IsClipboardFormatAvailable")
-	pwRegisterClipboardFormatW   = pwUser32.NewProc("RegisterClipboardFormatW")
-	pwGlobalLock                 = pwKernel32.NewProc("GlobalLock")
-	pwGlobalUnlock               = pwKernel32.NewProc("GlobalUnlock")
-	pwGlobalSize                 = pwKernel32.NewProc("GlobalSize")
-	pwRtlMoveMemory              = pwKernel32.NewProc("RtlMoveMemory")
-)
+// "HTML Format" (CF_HTML). A paste reads it with its text, files and
+// picture in one session (paste_snap_windows.go); this is the read on its
+// own, one winclip.Read too.
 
 var errClipNoHTML = errors.New("no html on the clipboard")
 
-func clipHTMLSupported() bool { return pwUser32.Load() == nil && pwKernel32.Load() == nil }
+func clipHTMLSupported() bool { return true }
 
 func clipReadHTML(ctx context.Context) ([]byte, error) {
-	name, err := windows.UTF16PtrFromString("HTML Format")
+	snap, err := winclip.Read(ctx, func(f winclip.Format) int64 {
+		if f.Name == richclip.HTMLFormat {
+			return phMaxHTML + 4096
+		}
+		return 0
+	})
 	if err != nil {
-		return nil, err
-	}
-	f, _, _ := pwRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
-	if f == 0 {
 		return nil, errClipNoHTML
 	}
-	if ok, _, _ := pwIsClipboardFormatAvailable.Call(f); ok == 0 {
+	f, ok := snap.Named(richclip.HTMLFormat)
+	if !ok {
 		return nil, errClipNoHTML
 	}
-	// The clipboard belongs to the thread that opened it.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	// Another window (Gio reading the text) may hold it for a moment.
-	for i := 0; ; i++ {
-		if r, _, _ := pwOpenClipboard.Call(0); r != 0 {
-			break
-		}
-		if i == 20 || ctx.Err() != nil {
-			return nil, errClipNoHTML
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	defer pwCloseClipboard.Call()
-	h, _, _ := pwGetClipboardData.Call(f)
-	if h == 0 {
+	b, ok := snap.Bytes(f.ID)
+	if !ok {
 		return nil, errClipNoHTML
 	}
-	n, _, _ := pwGlobalSize.Call(h)
-	if n == 0 || n > phMaxHTML+4096 {
-		return nil, errClipNoHTML
-	}
-	p, _, _ := pwGlobalLock.Call(h)
-	if p == 0 {
-		return nil, errClipNoHTML
-	}
-	b := make([]byte, n)
-	pwRtlMoveMemory.Call(uintptr(unsafe.Pointer(&b[0])), p, n)
-	pwGlobalUnlock.Call(h)
 	return cfHTML(b), nil
 }

@@ -68,6 +68,13 @@ type AttachmentRemover interface {
 	RemoveAttachment(id string)
 }
 
+// FileRemover is optional on a Handler: a file card's x (FileRemoveButton,
+// Options.FileRemoves); deletion says it deletes the file rather than
+// takes it out of the message.
+type FileRemover interface {
+	RemoveFile(f *richtext.File, deletion bool)
+}
+
 // BotOpener is a Handler that opens a bot's profile card: "Added by
 // <app>" under a Block Kit attachment (renderAttributionMaybe wraps the
 // name in ProfileCardTrigger with the bot as serviceId). anchor is the
@@ -355,6 +362,9 @@ type Style struct {
 	// wordBytes is roughly what the current generation's words hold
 	wordBytes int
 	space     map[faceKey]spaceMetrics
+	// bound is each face's width bound for a printable ASCII rune
+	// (advBound, giant.go)
+	bound map[faceKey]float32
 }
 
 // NewStyle builds a Style with Slack's defaults.
@@ -477,6 +487,14 @@ type Options struct {
 	// Channel and TS identify the message, for the Slack-shaped props of
 	// its attachment components (activeChannelId, messageTs).
 	Channel, TS string
+	// ViewContext is the view showing the message, as Slack's lists pass
+	// it (expandable.ViewChannel, ViewThread, …): the expandable keys of
+	// its file list, link previews and attachment text end with it, so a
+	// preview collapsed in the channel stays open in the thread.
+	ViewContext string
+	// Sender is the message's author (senderMemberId): an unverified
+	// outsider's previews in a DM start hidden (expander.go).
+	Sender string
 	// Elements, if set, draws the doc's interactive elements (see
 	// Elements). Use a comparable (pointer) implementation.
 	Elements Elements
@@ -492,6 +510,12 @@ type Options struct {
 	// Own: the viewer sent the message (and it isn't a pinned_item), so
 	// its link previews get Slack's remove button (canDelete, 4BNQ).
 	Own bool
+	// FileRemoves are the message's files with FileRemoveButton's x (the
+	// gallery's removableFileIds), as FileRemovesOf writes them (a string,
+	// so Options stays comparable): each id taken out of the message
+	// (chat.removeFile) or, for a file shared into it, deleted
+	// (DeleteFileDialog). FileRemover hears the click.
+	FileRemoves string
 	// HoverCard lays the doc's attachment out as Slack's link preview
 	// hover card (MessageAttachmentDefaultV3HoverCard, unfurl_hover.go).
 	HoverCard bool
@@ -522,6 +546,11 @@ type Options struct {
 	// (c-message_kit__blocks--focused-result), so its FindHighlight runs
 	// draw in FindFocused.
 	FindFocused bool
+	// NoAttachmentLimit: the doc's attachments all draw, as a search
+	// result's do (SearchResult, boot-shared IT2K: renderAttachments draws
+	// each with renderFullAttachment, never through MessageKitAttachments
+	// and its 20, overlimit.go).
+	NoAttachmentLimit bool
 }
 
 // lightEmbolden is the extra outline (px) for glyph color c at scale pxPerDp.

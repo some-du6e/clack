@@ -59,8 +59,10 @@ func init() {
 		}
 		return composerBox{c}
 	}
-	mkEditComposer = func(a *App, m core.Message, onDone func()) composerView {
-		return composerBox{composer.NewEdit(a, m, onDone)}
+	mkEditComposer = func(a *App, m core.Message, inThread bool, onDone func()) composerView {
+		c := composer.NewEdit(a, m, onDone)
+		c.EditInThread = inThread
+		return composerBox{c}
 	}
 	// gioui.org/x/explorer: file picker for composer attachments; it must
 	// see every window event.

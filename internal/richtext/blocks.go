@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/slack"
@@ -145,6 +146,103 @@ func (b *bk) textString() string {
 	return t.Text
 }
 
+// textIs reports whether the element's text, as textString decodes it,
+// is s: compared in the JSON, nothing decoded (a long message's text
+// element is its text field, 908,000 characters decoded on every
+// conversion of the message). A surrogate escape or a byte that isn't
+// UTF-8, which decoding would change, says no: textString decides.
+func (b *bk) textIs(s string) bool {
+	t := b.Text
+	if len(t) < 2 || t[0] != '"' || t[len(t)-1] != '"' {
+		return false
+	}
+	t = t[1 : len(t)-1]
+	j := 0
+	for i := 0; i < len(t); {
+		c := t[i]
+		switch {
+		case c == '\\':
+			if i+1 >= len(t) {
+				return false
+			}
+			var r rune
+			n := 2
+			switch t[i+1] {
+			case '"', '\\', '/':
+				r = rune(t[i+1])
+			case 'b':
+				r = '\b'
+			case 'f':
+				r = '\f'
+			case 'n':
+				r = '\n'
+			case 'r':
+				r = '\r'
+			case 't':
+				r = '\t'
+			case 'u':
+				if i+6 > len(t) {
+					return false
+				}
+				v, err := strconv.ParseUint(string(t[i+2:i+6]), 16, 32)
+				if err != nil || utf16.IsSurrogate(rune(v)) {
+					return false
+				}
+				r, n = rune(v), 6
+			default:
+				return false
+			}
+			var enc [utf8.UTFMax]byte
+			k := utf8.EncodeRune(enc[:], r)
+			if j+k > len(s) || s[j:j+k] != string(enc[:k]) {
+				return false
+			}
+			i, j = i+n, j+k
+		case c < utf8.RuneSelf:
+			if j >= len(s) || s[j] != c {
+				return false
+			}
+			i, j = i+1, j+1
+		default:
+			r, k := utf8.DecodeRune(t[i:])
+			if r == utf8.RuneError && k == 1 {
+				return false
+			}
+			if j+k > len(s) || s[j:j+k] != string(t[i:i+k]) {
+				return false
+			}
+			i, j = i+k, j+k
+		}
+	}
+	return j == len(s)
+}
+
+// textBlank reports whether the element's text is only white space
+// (strings.TrimSpace of textString empty), from its JSON where it can: a
+// string whose first byte past any spaces and \n, \t, \r escapes is
+// printable ASCII isn't, and needn't be decoded (a 908,000-character text
+// element, on every conversion of its message). Anything else, a \u
+// escape or a byte past ASCII, which might be a space TrimSpace knows,
+// decodes it.
+func (b *bk) textBlank() bool {
+	t := b.Text
+	if len(t) >= 2 && t[0] == '"' {
+	scan:
+		for i := 1; i < len(t)-1; i++ {
+			switch c := t[i]; {
+			case c == ' ':
+			case c == '\\' && (t[i+1] == 'n' || t[i+1] == 't' || t[i+1] == 'r'):
+				i++
+			case c > ' ' && c < 0x7f && c != '\\' && c != '"':
+				return false
+			default:
+				break scan
+			}
+		}
+	}
+	return strings.TrimSpace(b.textString()) == ""
+}
+
 func (b *bk) textObj() *textObj {
 	if len(b.Text) == 0 || b.Text[0] != '{' {
 		return nil
@@ -231,6 +329,9 @@ type builder struct {
 	// keepEmoji: an emoji element the resolver doesn't know is an Emoji
 	// span without a URL, not its ":name:" text (CanvasTitle)
 	keepEmoji bool
+	// msgText is the message's text field: a long text element that says
+	// the same shares its string (raw spans, rawtext.go)
+	msgText string
 }
 
 func parseBlocks(raw json.RawMessage) []bk {
@@ -456,10 +557,16 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.richText(b.Elements)...)
 	case "section":
 		blk := Block{Kind: Section, BlockID: b.BlockID, Expand: b.Expand}
-		tb := c.textBlocks(b.textObj())
-		if len(tb) == 1 && tb[0].Kind == Paragraph {
+		to := b.textObj()
+		tb := c.textBlocks(to)
+		switch {
+		case len(tb) == 1 && tb[0].Kind == Paragraph:
 			blk.Spans = tb[0].Spans
-		} else {
+		case len(tb) == 0 && to != nil && to.Text != "":
+			// text that formats to nothing ("\n", TSF's trim): Slack's
+			// section keeps its box, an empty text in it
+			blk.Spans = []Span{}
+		default:
 			blk.Children = tb
 		}
 		for i := range b.Fields {
@@ -489,6 +596,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		// image or text its own box): Children keeps them apart, Spans
 		// has them joined for plain-text consumers.
 		blk := Block{Kind: Context}
+		kept := false // a text element that formats to nothing: its box stays
 		for i := range b.Elements {
 			e := &b.Elements[i]
 			var ss []Span
@@ -505,6 +613,12 @@ func (c *builder) block(out []Block, b *bk) []Block {
 				ss = c.textSpans(t)
 				if len(ss) > 0 {
 					blk.Children = append(blk.Children, Block{Kind: Paragraph, Spans: ss})
+				} else if t.Text != "" {
+					// Context renders a p-context_block_element for every
+					// element, its 16px spacing after it: an element whose
+					// text formats to nothing keeps its (empty) box
+					blk.Children = append(blk.Children, Block{Kind: Paragraph, Spans: []Span{}})
+					kept = true
 				}
 			}
 			if len(ss) == 0 {
@@ -516,7 +630,10 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			blk.Spans = append(blk.Spans, ss...)
 		}
 		if len(blk.Spans) == 0 {
-			return out
+			if !kept {
+				return out
+			}
+			blk.Spans = []Span{}
 		}
 		return append(out, blk)
 	case "header":
@@ -536,7 +653,9 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			img.Title = unescape(b.Title.Text)
 		}
 		img.Bytes = b.ImageBytes
-		return append(out, Block{Kind: ImageBlock, Image: img})
+		// block_id: the image's expandable (getExpandableKey("blockImage",
+		// ts, {blockId}), richview's caret and /collapse alike)
+		return append(out, Block{Kind: ImageBlock, Image: img, BlockID: b.BlockID})
 	case "actions":
 		blk := Block{Kind: Actions}
 		self := c.r.SelfID()
@@ -555,7 +674,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		a := &Attachment{
 			ServiceName: b.ProviderName, ServiceIcon: SafeImage(b.ProviderIconURL), AuthorName: b.AuthorName,
 			TitleLink: SafeURL(b.TitleURL), VideoURL: SafeURL(b.VideoURL), IsUnfurl: true,
-			Image: image(b.ThumbnailURL, b.AltText, 0, 0),
+			Image:      image(b.ThumbnailURL, b.AltText, 0, 0),
+			VideoBlock: true, BlockID: b.BlockID,
 		}
 		if b.Title != nil {
 			a.Title = plainSpans(c.r, b.Title.Text)
@@ -950,8 +1070,18 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 		n := len(out)
 		switch e.Type {
 		case "text":
+			var t string
+			if len(c.msgText) >= 64<<10 && e.textIs(c.msgText) {
+				t = c.msgText // read in place: not decoded again each conversion
+			} else if t = e.textString(); len(t) == len(c.msgText) && t == c.msgText {
+				t = c.msgText // the message's text field: one copy of the text, not two
+			}
 			if pre {
-				for k, ln := range strings.Split(e.textString(), "\n") {
+				if strings.Count(t, "\n") >= RawLines {
+					out = append(out, Span{Kind: Text, Text: t, Br: BrRawPre}) // rawtext.go
+					break
+				}
+				for k, ln := range strings.Split(t, "\n") {
 					if k > 0 {
 						out = append(out, Span{Kind: Break})
 					}
@@ -961,7 +1091,7 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 				}
 				break
 			}
-			out = appendRichText(out, e.textString(), i == 0 && m.lead, i == 0 && m.first)
+			out = appendRichText(out, t, i == 0 && m.lead, i == 0 && m.first)
 		case "link":
 			label := firstNonEmpty(e.textString(), strings.TrimPrefix(e.URL, "mailto:"))
 			if unlink {
@@ -1117,74 +1247,28 @@ func unknownElement(text, url string) []Span {
 
 // richRunRe is insertTextBreakPlaceholders' paragraph run (kWQh m): two
 // or more newlines with only spaces, tabs and no-break spaces between.
+// eachRichText finds it with nextRun (rawtext.go), which its tests check
+// against this.
 var richRunRe = regexp.MustCompile(`(?:\n[ \t\x{00A0}]*)+\n`)
 
 // appendRichText appends a rich_text text element's text: its lines as
 // Text spans, its newlines as Breaks drawn the way Slack's BaseText
-// draws them (BrKind). lead is isFirstElementInSection, first
-// isFirstElementInFirstSection.
+// draws them (BrKind, eachRichText). lead is isFirstElementInSection,
+// first isFirstElementInFirstSection. An element of RawLines newlines or
+// more is one raw span instead (rawtext.go).
 func appendRichText(out []Span, s string, lead, first bool) []Span {
-	text := func(t string) {
+	if strings.Count(s, "\n") >= RawLines {
+		return append(out, Span{Kind: Text, Text: s, Br: rawKind(lead, first)})
+	}
+	eachRichText(s, lead, first, func(t string) bool {
 		if t != "" {
 			out = append(out, Span{Kind: Text, Text: t})
 		}
-	}
-	brk := func(k BrKind) { out = append(out, Span{Kind: Break, Br: k}) }
-	if first {
-		// trimStart (h5n5): the leading whitespace is gone, so its
-		// newlines draw nothing and the rest starts on the first line
-		// (spaces at a line's start draw nothing either)
-		ws := len(s) - len(strings.TrimLeftFunc(s, unicode.IsSpace))
-		for _, ln := range strings.SplitAfter(s[:ws], "\n") {
-			if t, ok := strings.CutSuffix(ln, "\n"); ok {
-				text(t)
-				brk(BrNone)
-			} else {
-				text(ln)
-			}
-		}
-		s, lead = s[ws:], false
-	}
-	// isFirstElementInSection && /^\n/: one more "\n" in front (virt, no
-	// span of its own), which makes a leading newline a run
-	virt := lead && strings.HasPrefix(s, "\n")
-	if virt {
-		s = "\n" + s
-	}
-	for s != "" {
-		loc := richRunRe.FindStringIndex(s)
-		if loc == nil {
-			loc = []int{len(s), len(s)}
-		}
-		// before the run: single newlines are <br>
-		for k, ln := range strings.Split(s[:loc[0]], "\n") {
-			if k > 0 {
-				brk(BrLine)
-			}
-			text(ln)
-		}
-		if loc[0] == loc[1] {
-			break
-		}
-		// the run: k newlines are k-1 c-mrkdwn__br. The one left over
-		// (the added "\n", else the last) draws nothing; the spaces
-		// between them stay text at the start of an empty line, where
-		// they draw nothing either.
-		run := s[loc[0]:loc[1]]
-		k := strings.Count(run, "\n")
-		for j, ln := range strings.Split(run, "\n") {
-			switch {
-			case j == 0: // "" before the run's first "\n"
-			case virt && j == 1: // the added "\n"
-			case !virt && j == k:
-				brk(BrNone)
-			default:
-				brk(BrPara)
-			}
-			text(ln)
-		}
-		s, virt = s[loc[1]:], false
-	}
+		return true
+	}, func(k BrKind) bool {
+		out = append(out, Span{Kind: Break, Br: k})
+		return true
+	})
 	return out
 }
 
@@ -1249,7 +1333,7 @@ func richOnlyEmoji(bs []bk) bool {
 				case "emoji":
 					n++
 				case "text":
-					if strings.TrimSpace(el.textString()) != "" {
+					if !el.textBlank() {
 						return false
 					}
 				default:

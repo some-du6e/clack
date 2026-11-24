@@ -34,7 +34,9 @@ func (s *Server) messagesList(f url.Values) any {
 	out := map[string][]slack.Message{}
 	for _, w := range want {
 		for _, ts := range w.Timestamps {
-			if m, found := s.messageAt(w.Channel, ts); found {
+			if m, found := s.cardContainer(w.Channel, ts); found { // a link card's unfurl container (linkcards.go)
+				out[w.Channel] = append(out[w.Channel], m)
+			} else if m, found := s.messageAt(w.Channel, ts); found {
 				out[w.Channel] = append(out[w.Channel], m)
 			}
 		}
@@ -107,7 +109,9 @@ func (s *Server) messagesByID(f url.Values) (any, bool) {
 	out := map[string][]slack.Message{}
 	for _, w := range want {
 		for _, ts := range w.Timestamps {
-			if m, ok := s.messageByTS(w.Channel, ts); ok {
+			if m, ok := s.cardContainer(w.Channel, ts); ok { // linkcards.go
+				out[w.Channel] = append(out[w.Channel], m)
+			} else if m, ok := s.messageByTS(w.Channel, ts); ok {
 				out[w.Channel] = append(out[w.Channel], m)
 			}
 		}

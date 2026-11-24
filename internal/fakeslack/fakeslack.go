@@ -227,6 +227,11 @@ type Size struct {
 	// GIFs adds #gif-wall (GIFWallID) with this many messages, each a
 	// large animated GIF (gifs.go): the GIF memory test's channel.
 	GIFs int
+	// Giant adds #giant-wall (GiantWallID): of its latest Giant messages
+	// every twelfth is short and the rest are each about 908,000
+	// characters in about 92,000 lines (giant.go), then 60 older short
+	// ones: the giant message memory test's channel.
+	Giant int
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -254,6 +259,10 @@ func (s *Server) LongChannelIDs() []string {
 	}
 	return out
 }
+
+// User is the directory's member id as users/info answers it (tests that
+// want the store to hold the fixture's members up front).
+func (s *Server) User(id string) (slack.User, bool) { return s.userByID(id) }
 
 // UserIDs are the directory's ids, in order.
 func (s *Server) UserIDs() []string {
@@ -326,7 +335,7 @@ func (s *Server) variants() []slack.User {
 	x.Team = ExternalTeamID
 	xap := prof("", "Partner Bot", "", "xapp")
 	xap.Team, xap.BotID, xap.APIAppID = ExternalTeamID, ExternalAppBotID, ExternalAppAppID
-	return append([]slack.User{
+	return stampUpdated(append([]slack.User{
 		{ID: ProfileID, TeamID: TeamID, Name: "robin", RealName: "Robin Example", TZ: "Europe/Berlin", TZLabel: "Central European Time", TZOffset: 3600, Profile: p, Presence: "active"},
 		{ID: AdminID, TeamID: TeamID, Name: "avery.admin", RealName: "Avery Admin", IsAdmin: true, TZ: "America/Los_Angeles", TZOffset: -28800, Profile: a},
 		{ID: DeactivatedID, TeamID: TeamID, Name: "gone.user", RealName: "Gone User", Deleted: true, TZ: "America/New_York", TZOffset: -18000, Profile: g},
@@ -335,7 +344,21 @@ func (s *Server) variants() []slack.User {
 		{ID: AppUserID, TeamID: TeamID, Name: "deploybot", RealName: "Deploy Bot", IsBot: true, Profile: ap, Presence: "active"},
 		{ID: ExternalID, TeamID: ExternalTeamID, Name: "sam.partner", RealName: "Sam Partner", TZ: "Asia/Tokyo", TZOffset: 32400, Profile: x, Presence: "active"},
 		{ID: ExternalAppUserID, TeamID: ExternalTeamID, Name: "partnerbot", RealName: "Partner Bot", IsBot: true, Profile: xap},
-	}, append(s.roleUsers(prof), s.newBotsUsers(prof)...)...) // roles.go, new_bots.go
+	}, append(s.roleUsers(prof), s.newBotsUsers(prof)...)...)) // roles.go, new_bots.go
+}
+
+// stampUpdated gives every member without one the updated stamp Slack's
+// members always carry: variants(), the generated members and the app
+// bots here; members built inline elsewhere get it when users.info
+// answers them (userByID). The viewer's profile and photo writes move it
+// (touchUpdated).
+func stampUpdated(us []slack.User) []slack.User {
+	for i := range us {
+		if us[i].Updated == 0 {
+			us[i].Updated = FakeUpdated
+		}
+	}
+	return us
 }
 
 // appProfile is apps.profile.get's app_profile for the fixed apps (the
@@ -377,6 +400,7 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 
 // Server is a running fake.
 type Server struct {
+	remote bool // Remote: a fakeslackd in another process
 	// client.counts' threads.unread_count_by_channel (threads_by_channel.go)
 	threadsByChan map[string]int
 
@@ -450,7 +474,9 @@ type Server struct {
 	histMu sync.Mutex
 	// delAtts: chat.deleteAttachment calls (embeds.go)
 	delAtts []DeletedAttachment
-	hist    map[string][]slack.Message // channel -> all messages, newest first
+	// removedFiles: chat.removeFile calls (embeds.go)
+	removedFiles []DeletedAttachment
+	hist         map[string][]slack.Message // channel -> all messages, newest first
 	// quietReplies: replies PostReplyQuiet added, by channel/root ts,
 	// oldest first (pins.go)
 	quietReplies map[string][]slack.Message
@@ -843,6 +869,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.GIFs > 0 {
 		s.addGIFWall() // gifs.go
 	}
+	if sz.Giant > 0 {
+		s.addGiantWall() // giant.go
+	}
 	if sz.AppPlans {
 		s.addAppPlans() // agents.go
 	}
@@ -913,8 +942,12 @@ func Remote(url string, sz Size) *Server {
 	if !strings.HasSuffix(url, "/") {
 		url += "/"
 	}
-	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}, prefs: DefaultPrefs()}
+	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}, prefs: DefaultPrefs(), remote: true}
 }
+
+// IsRemote reports a Server Remote describes: its fixture's data (users,
+// messages) is in the other process, not here.
+func (s *Server) IsRemote() bool { return s.remote }
 
 // CallCount returns how often method was called.
 func (s *Server) CallCount(method string) int64 {
@@ -981,7 +1014,7 @@ func (s *Server) generate() {
 			}
 			return s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/u" + strconv.Itoa(i) + ".png"
 		}
-		u := slack.User{ID: id, TeamID: TeamID, Name: handle, RealName: first + " " + last, TZ: "America/New_York",
+		u := slack.User{ID: id, TeamID: TeamID, Name: handle, RealName: first + " " + last, TZ: "America/New_York", Updated: FakeUpdated,
 			TZLabel: "Eastern Standard Time", TZOffset: -18000, Color: fmt.Sprintf("%06x", r.Intn(1<<24)),
 			Profile: slack.Profile{RealName: first + " " + last, DisplayName: handle, FirstName: first, LastName: last,
 				Title: title(word(2) + " " + word(3)), AvatarHash: hash,
@@ -1662,7 +1695,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("channels", cs, "response_metadata", map[string]string{"next_cursor": ""})
 	case "client.counts":
-		var chans, ims []slack.CountEntry
+		// slack.CountEntry, with history_invalid when set (history_rewrite.go)
+		var chans, ims []any
 		s.convMu.Lock() // a leave or a join rewrites the list meanwhile
 		convs := append([]slack.Conversation(nil), s.convs...)
 		s.convMu.Unlock()
@@ -1700,9 +1734,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			e = s.postedCount(c.ID, e) // count_posts.go: CountsFollowPosts
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
-				ims = append(ims, e)
+				ims = append(ims, s.countWithMutations(e))
 			} else {
-				chans = append(chans, e)
+				chans = append(chans, s.countWithMutations(e))
 			}
 		}
 		threads := map[string]any{"has_unreads": true, "mention_count": 2}
@@ -1975,6 +2009,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return s.bulkLeave(f)
 	case "chat.deleteAttachment":
 		return s.deleteAttachment(f)
+	case "chat.removeFile":
+		return s.removeFileFromMessage(f)
 	case "chat.postMessage":
 		ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().Nanosecond()/1000)
 		msg := map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")}
@@ -2349,13 +2385,37 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer s.dropSocket(c)
 	defer s.dropPresenceSub(c) // presence_sub.go
 	s.newGatewayConnection()   // member_changes.go: no user_change subscriptions yet
-	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
+	said := make(chan struct{})
+	hello := func() {
+		// said first: a frame the client sends once it has hello is read
+		// after it, never counted as early
+		close(said)
+		_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
+	}
+	if hold := s.helloHold(); hold != nil { // HoldHello (member_changes.go)
+		go func() {
+			select {
+			case <-hold:
+				hello()
+			case <-ctx.Done():
+			}
+		}()
+	} else {
+		hello()
+	}
 	for {
 		_, data, err := c.Read(ctx)
 		if err != nil {
 			return
 		}
 		s.noteFrame(data)
+		select {
+		case <-said:
+		default:
+			if s.earlyFrame(data) { // before hello: not taken
+				continue
+			}
+		}
 		if rep := s.subscriptionReply(data); rep != nil { // member_changes.go
 			wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			_ = c.Write(wctx, websocket.MessageText, rep)

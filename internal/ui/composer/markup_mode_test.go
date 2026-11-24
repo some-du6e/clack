@@ -173,6 +173,14 @@ func TestMarkupModeSend(t *testing.T) {
 		}
 	}
 
+	// what the viewer typed goes out as typed: TSF trims what it renders,
+	// not the markup parse, so the first line keeps its indent
+	ind := NewDoc()
+	ind.Insert(0, "    x = 1\n    y = 2", Attr{})
+	if got := string(parseMarkup(ind, s).RichTextBlocks()); !strings.Contains(got, `"text":"    x = 1`) {
+		t.Errorf("indented lines sent as %s, want them as typed", got)
+	}
+
 	// end to end through the composer and the fake chat.postMessage
 	for _, on := range []bool{true, false} {
 		c, fs, _ := composerEnv(t, nil)

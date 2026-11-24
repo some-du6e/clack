@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -350,17 +352,63 @@ func (pp *pluginsPage) layout(gtx layout.Context) layout.Dimensions {
 	p.k.gtxNow = gtx
 	pp.lib.s.k.gtxNow = gtx
 	pp.taut.gtxNow = gtx
+	// the Library's index on every screen of the list, refreshed once
+	// stale: Plugin library's "updates to install", the search's
+	// suggestions and Browse show what's new with no click (once the
+	// pointer is off the pane: trackPointer)
+	pp.trackPointer(gtx)
+	pp.lib.follow()
 	sz := gtx.Constraints.Max
+	var d layout.Dimensions
 	if pp.mode == "browse" {
-		return pp.libraryList(gtx)
+		d = pp.libraryList(gtx)
+	} else {
+		d = panelList(gtx, &p.list.List, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
+			f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
+			pp.mainScreen(f)
+			f.gap(24)
+			return layout.Dimensions{Size: image.Pt(sz.X, f.y)}
+		})
 	}
-	return panelList(gtx, &p.list.List, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
-		f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
-		pp.mainScreen(f)
-		f.gap(24)
-		return layout.Dimensions{Size: image.Pt(sz.X, f.y)}
-	})
+	pp.pointerArea(gtx, d.Size)
+	return d
+}
+
+// trackPointer keeps whether the pointer is over the pane and whether a
+// press is down there (libraryPage.ptrIn, ptrDown), from what pointerArea
+// saw: a refreshed Library index waits while either holds (follow).
+func (pp *pluginsPage) trackPointer(gtx layout.Context) {
+	v := pp.lib
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &v.ptrIn, Kinds: pointer.Enter | pointer.Leave | pointer.Press | pointer.Release | pointer.Cancel})
+		if !ok {
+			break
+		}
+		e, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		switch e.Kind {
+		case pointer.Enter:
+			v.ptrIn = true
+		case pointer.Leave:
+			v.ptrIn = false
+		case pointer.Press:
+			v.ptrIn, v.ptrDown = true, true
+		case pointer.Release, pointer.Cancel:
+			v.ptrDown = false
+		}
+	}
+}
+
+// pointerArea is trackPointer's: the pane's sz, every event passed on to
+// what's under it (the rows' buttons). Its tag is ptrIn's address, as a
+// field of no size may share one.
+func (pp *pluginsPage) pointerArea(gtx layout.Context, sz image.Point) {
+	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, &pp.lib.ptrIn)
 }
 
 // mainScreen is Taut's main screen: the rows to the other screens, then
@@ -387,12 +435,16 @@ func (pp *pluginsPage) navRows(f *flow) {
 	} else if n > 1 {
 		desc = strconv.Itoa(n) + " updates to install"
 	}
-	for _, r := range []nav{
+	rows := []nav{
 		{"appearance", "Appearance", "Custom CSS", "paintbrush"},
 		{"advanced", "Advanced", "Installing plugins, config.json", "settings"}, // Taut's, without safe mode (Clack has none)
 		{"about", "About", "Credits", "info"},
 		{"library", "Plugin library", desc, "apps"},
-	} {
+	}
+	if pp.taut.importsFound() { // Slick's or Taut's plugins on this computer (plugin_import.go)
+		rows = append(rows, nav{"import", "Bring over your plugins", "From Slick or Taut on this computer", "download"})
+	}
+	for _, r := range rows {
 		f.put(0, func(gtx layout.Context) layout.Dimensions {
 			d, c := pp.taut.navRow(gtx, "nav."+r.key, r.icon, r.label, r.desc)
 			if c {
@@ -590,9 +642,7 @@ const maxSuggestions = 5
 // none (or isn't loaded yet): then the plain empty state shows.
 func (pp *pluginsPage) suggestions(f *flow, words []string) bool {
 	v := pp.lib
-	if v.ix == nil && !v.loading && v.loadErr == "" {
-		v.load(false) // the cached index at once, then a fresh one
-	}
+	v.follow() // the cached index at once, then a fresh one when stale
 	hits := v.suggest(words)
 	if len(hits) == 0 {
 		return false
@@ -683,22 +733,20 @@ func rankGroupsBy(groups []libGroup, words []string, skip func(libGroup) bool, n
 }
 
 // suggestAction is a search suggestion's button: the library row's
-// action, but a plugin both running systems have asks which version
-// (Install…, the bench's pick first when it made one): the suggestion row
-// has no chevron to reach the other version.
+// action, Install putting in the better version (installPick) as the
+// library row's does. The suggestion row has no chevron; the other
+// version is on the library row it links to.
 func (v *libraryPage) suggestAction(g libGroup) libAction {
 	act := v.action(g)
-	if act.label == "Install" && act.menu != nil {
-		return libAction{label: "Install…", kind: act.kind, do: act.menu}
-	}
+	act.menu = nil
 	return act
 }
 
 // suggestionRow is a library plugin in Taut's row: the name and its
 // description (in line with the installed rows' names, past the checkbox
 // column), the other version's name where it has its own, and the
-// library's own action for it (Install, or Install… when both systems
-// have it: suggestAction) at the right, with how it went under the name.
+// library's own action for it (suggestAction) at the right, with how it
+// went under the name.
 // Its name and description are the library row's face's.
 func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layout.Dimensions {
 	v, tp := pp.lib, pp.taut

@@ -198,6 +198,7 @@ func (v *ThreadView) Reopen() {
 	v.s.thrOpening = true // a new pane: a jump starts it at getThreadStartPosition's message
 	v.closeFind(false)    // ThreadSearchBar unmounts with the pane
 	v.s.thr = threadRead{}
+	v.s.mountLoaded = false    // initializing: a new mount loads first (HidesComposer)
 	v.s.rootHandedOn = false   // opened with a reply's ts again: hand on again (ReplyRootRedirector)
 	v.s.snap.rev = 0           // rebuild the rows with the new marker
 	v.s.hb.repickThread(v.s.m) // a list mounting after a thread switch: getThreadStartTs again
@@ -1065,7 +1066,8 @@ func (s *listState) threadLoading() bool {
 //
 //   - with no timestamps, while initializing: ThreadsFlexpane starts with
 //     initializing = isEmpty(timestamps) and fetchReplies clears it, so a
-//     loading thread has no reply box;
+//     loading thread has no reply box; one loaded since it was shown and
+//     loading again keeps it (mountLoaded);
 //   - with timestamps, until reachedEnd or prevReachedEnd: the
 //     "loading-end" row takes its place (a slice short of the thread's
 //     end: thread_load.go); a pane that was at the end when a slow
@@ -1087,6 +1089,12 @@ func (v *ThreadView) HidesComposer() bool {
 	}
 	if s.threadOffline(v.h) {
 		return true
+	}
+	if s.mountLoaded && s.snap.err == nil {
+		// loaded since the pane was shown, now loading again (a history
+		// change let its replies go: hub_history_changed.go): Slack's
+		// initializing is the mount's, so the box stays, with its draft
+		return false
 	}
 	if s.snap.err != nil && !s.snap.loading {
 		return s.threadErrored(v.h) // with the root known, the list keeps the box

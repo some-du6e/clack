@@ -86,25 +86,7 @@ var calendarGoogle []byte
 //go:embed assets/ocal-app-dir-icon-e4661a9.png
 var calendarOutlook []byte
 
-// The file_input's Add file dialog (n9p0 FileInputDialog, build
-// 9f450b8ad3db): its drop zone's sad cloud (RUFH, empty-state-low-
-// connection, sha256 a8a39573…, 1213 bytes: named fills and a whole-canvas
-// clipPath, which imgcache's SVG subset draws) and the drag-and-drop
-// sprite sheet its cards and the panes' drop overlays cut (client-boot-
-// styles' ./dragdrop_sprites@2x-ca59764.png, sha256 c3005b52…).
-const (
-	EmptyStateLowConnection = Base + "empty-state-low-connection-d95898d.svg"
-	DragDropSprites         = Base + "dragdrop_sprites@2x-ca59764.png"
-)
-
-//go:embed assets/empty-state-low-connection-d95898d.svg
-var emptyStateLowConnection []byte
-
-//go:embed assets/dragdrop_sprites@2x-ca59764.png
-var dragDropSprites []byte
-
 var bundled = map[string][]byte{
-	EmptyStateLowConnection: emptyStateLowConnection, DragDropSprites: dragDropSprites,
 	SlackLogoMark: slackLogoMark, SCHubHero: scHubHero, SCInvitesEmpty: scInvitesEmpty, SCPersonMing: scPersonMing,
 	SCPersonKyelie: scPersonKyelie, SCPersonMichael: scPersonMichael, SCLogoAirbnb: scLogoAirbnb, SCLogoOpenAI: scLogoOpenAI,
 	SCLogoOpenAIDark: scLogoOpenAIDark, SCLogoTime: scLogoTime, SCLogoHulu: scLogoHulu,
@@ -119,4 +101,4 @@ func Get(url string) ([]byte, bool) {
 
 // IsSVG reports whether url is a bundled SVG asset (imgcache rasterizes
 // those, and no other SVG).
-func IsSVG(url string) bool { return url == SlackLogoMark || url == EmptyStateLowConnection }
+func IsSVG(url string) bool { return url == SlackLogoMark }

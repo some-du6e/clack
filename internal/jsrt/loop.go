@@ -84,6 +84,9 @@ type Runtime struct {
 	running   atomic.Pointer[task] // the macrotask on the JS thread, for timeout lines (nil = none)
 
 	interrupts atomic.Uint64 // watchdog interrupts (Interrupts)
+	fired      atomic.Uint64 // timers fired (tests: a timer re-arming itself at 0 ms)
+
+	audioRecs audioRecordings // the MediaRecorders' PCM (audio.go)
 
 	// For freeze reports (Snapshots), written on the JS thread.
 	lastExit  atomic.Int64  // monoNow the JS thread last polled its interrupt or yielded
@@ -1196,6 +1199,7 @@ func (r *Runtime) fireTimer(t *timer) {
 		r.urgentTimers--
 	}
 	id := t.id
+	r.fired.Add(1)
 	r.runTask(task{kind: "timer", what: strconv.Itoa(id), urgent: t.root != 0, root: t.root, chainSeq: t.chainSeq, f: func() { r.eng.fireTimer(r.js, id) }})
 }
 

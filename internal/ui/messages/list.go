@@ -187,6 +187,10 @@ type listState struct {
 
 	lastTyping time.Time
 
+	// mountLoaded: the pane loaded its thread since it was shown
+	// (ThreadsFlexpane's initializing cleared: HidesComposer)
+	mountLoaded bool
+
 	// the open inline editor (one per list, as Slack's messageEditWindow
 	// holds one per window) and its message: its row draws it, and a row
 	// made again for the message (a jump's window and back, a rebuild)
@@ -220,6 +224,7 @@ type listState struct {
 	findFlash         string
 	findFlashAt       time.Time
 	sel               selection
+	editFromInput     string // the message Up in the conversation's empty input edits (editLast), until its editor opens
 	sb                scrollbar
 	// sbCall is the scrollbar the last layout recorded for the host to
 	// draw after its reply box (sbDeferred until it does), in the frame at
@@ -232,6 +237,12 @@ type listState struct {
 	// re-highlight in an open thread pane: a message whose top is already
 	// on screen isn't scrolled to
 	jumpLazy bool
+	// hid: what plugins' patches took out of the list's channelHistory
+	// (Slick's HideResolved, a help channel's resolved tickets), and
+	// histOK whether taut's answer for it is as of the latest change Go
+	// made (a jump's highlight): a jump waits for it (historyHidden)
+	hid    *taut.Hidden
+	histOK bool
 	// thrOpening: the thread pane just opened (ThreadView.Reopen), so a jump
 	// starts it at getThreadStartPosition's message
 	thrOpening bool
@@ -270,6 +281,8 @@ type listState struct {
 	laidH     int            // its height (setContainerHeight)
 	pageH     int            // a PageUp's or PageDown's scroll, px (pageKey)
 	tailH     map[string]int // the last tailItems items' heights as last laid out, by key (gapToEnd)
+	measH     map[string]int // every item's height as last laid out, by key (the heightCache olderAhead reads)
+	dayCalls  []dayCall      // the day dividers' pills this layout drew, for overlays to place
 	// preparedAt is the frame (gtx.Now) prepare synced the list for:
 	// layoutList draws that copy and doesn't sync again in that frame
 	preparedAt time.Time
@@ -343,8 +356,12 @@ func sweepRows(now time.Time) {
 		if s.releaseEvicted() {
 			continue
 		}
+		// a big row of a list on screen goes in releaseBigRows, after its
+		// layout (a list drawn no frame for a second still shows it: the
+		// sweep runs before layout, and released it to lay it out again)
+		away := !s.onScreen()
 		for _, r := range s.rows {
-			if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > rowIdle {
+			if r.rv != nil && r.edit == nil && (now.Sub(r.drawn) > rowIdle || away && now.Sub(r.drawn) > bigRowIdle && r.rv.PlainLen() >= bigRowText) {
 				// the trees' msgs it remembered and laid over its message
 				// (slackc's sweep has let their roots go, and a remount
 				// hands the natives none until JS draws them again): not
@@ -745,6 +762,11 @@ func (s *listState) sync(h Host, now time.Time) {
 		}
 	}
 	s.viewsOn = views
+	// and what a patch of channelHistory took out (the list draws core's
+	// messages; Slack's draws that history)
+	if hid := s.historyHidden(t); hid != s.hid {
+		s.hid, s.snap.rev = hid, 0
+	}
 	// system messages follow system_messages_redesign_m1 (system.go): a new
 	// group re-reads the snapshot and rebuilds the rows; an actor's name
 	// arriving rebuilds the system rows
@@ -771,6 +793,9 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.snap.rev = 0
 	}
 	changed := s.m.snapshot(&s.snap)
+	if s.snap.loaded {
+		s.mountLoaded = true
+	}
 	handed := false
 	if s.win != nil && s.m == s.win && s.snap.merged && s.handOver() {
 		changed, handed = s.m.snapshot(&s.snap), true
@@ -800,6 +825,9 @@ func (s *listState) sync(h Host, now time.Time) {
 	}
 	if changed && len(s.inj.msgs) > 0 {
 		s.mergeInjected()
+	}
+	if changed && s.hid.Len() > 0 {
+		s.dropHidden()
 	}
 	s.takeJump(now)
 	if m := s.pend.take(); m != nil {
@@ -979,7 +1007,9 @@ func (s *listState) build(h Host, now time.Time) {
 	s.items = s.items[:0]
 	msgs := s.snap.msgs
 	if !s.thread {
-		if s.snap.older || (s.snap.hasMore && len(msgs) > 0) {
+		// s.own: a page the patches hid entirely (dropHidden) has older
+		// pages before it all the same
+		if s.snap.older || (s.snap.hasMore && (len(msgs) > 0 || s.own[0] != "")) {
 			s.items = append(s.items, item{kind: itLoading, key: "loading"})
 		} else if s.snap.loaded {
 			s.items = append(s.items, item{kind: itIntro, key: "intro"})
@@ -1384,6 +1414,15 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 		s.tailH = keep
 	}
+	if s.measH == nil || len(s.measH) > 2*len(s.items)+256 {
+		keep := make(map[string]int, len(s.items))
+		for _, it := range s.items {
+			if h, ok := s.measH[it.key]; ok {
+				keep[it.key] = h
+			}
+		}
+		s.measH = keep
+	}
 	selfID := ""
 	if h.Core() != nil {
 		selfID = h.Core().Self().ID
@@ -1406,9 +1445,14 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	defer ls.Leave()
 	lay := func() op.CallOp {
 		m := op.Record(gtx.Ops)
+		s.dayCalls = s.dayCalls[:0]
 		s.list.Layout(gtx, len(s.items), func(gtx layout.Context, i int) layout.Dimensions {
+			rc.edge, rc.edgeBottom = s.itemEdge(i)
+			rc.viewH = size.Y
 			d := s.layoutItem(gtx, h, rc, i)
+			rc.viewH = 0
 			s.heights[i] = d.Size.Y
+			s.measH[s.items[i].key] = d.Size.Y
 			if i >= len(s.items)-tailItems {
 				s.tailH[s.items[i].key] = d.Size.Y
 			}
@@ -1450,6 +1494,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if s.thread && s.snap.loaded {
 		s.thrOpening = false // the pane shows its thread: a jump now is a re-highlight
 	}
+	s.releaseBigRows(gtx.Now)
 	defer s.pageSelect() // after the positions below (kbnav.go)
 	s.actionsScrollEnd(actD)
 
@@ -1466,6 +1511,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		y += s.heights[i]
 		s.visible[1] = i + 1
 	}
+	s.kbWheelBlur(gtx, size) // after the positions: the selected row's (kbnav.go)
 	// MessageBackground's componentWillUnmount: the highlighted row leaving
 	// the drawn rows (scrolled out of the virtual list) ends its flash
 	if s.highlight != "" {
@@ -1527,7 +1573,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	// (openWindow), the conversation's newest messages when they hold it;
 	// sync() places it, or the first message after it, once they cover it
 	// (placeJump). One whose window gave way has nowhere to land.
-	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older && !s.snap.loading && s.snap.around == "" {
+	// an older page out (olderAhead's prefetch) doesn't hold the jump: the
+	// window it opens turns that page away when it lands (hub.loadOlder)
+	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.loading && s.snap.around == "" {
 		first, last, ok := s.ends()
 		older := ok && s.snap.hasMore && tsLess(s.pendingJump, first)
 		newer := s.win != nil && ok && tsLess(last, s.pendingJump)
@@ -1553,8 +1601,8 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if s.thread {
 		s.threadPaging(gtx, h, size, now) // pages before and after the slice (thread_load.go)
 	}
-	// infinite scroll up
-	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
+	// infinite scroll up, ahead of the reader (olderAhead)
+	if !s.thread && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second && s.olderAhead(gtx, size) {
 		if s.hb.loadOlder(s.m) {
 			s.lastOlder = now
 		}
@@ -1573,8 +1621,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	seen := pf.MarkReadImmediately || (!p.BeforeEnd && s.unreadSeen)
 	// a window short of the newest message never marks read: its last
 	// message isn't the conversation's
-	if !s.thread && !s.noMark && s.snap.loaded && !s.snap.newestMissing && seen && len(s.snap.msgs) > 0 {
-		latest := s.snap.msgs[len(s.snap.msgs)-1].m.TS
+	if !s.thread && !s.noMark && s.snap.loaded && !s.snap.newestMissing && seen && s.own[1] != "" {
+		// the loaded slice's last real message: a newest message a
+		// plugin's patch hides (dropHidden) is read with the rest
+		latest := s.own[1]
 		app := h.Core()
 		if latest != s.markedTS && app != nil && tsLess(app.Count(s.ch).LastRead, latest) && now.Sub(s.lastMark) > 1500*time.Millisecond {
 			s.markedTS, s.lastMark = latest, now
@@ -1589,6 +1639,47 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 	return layout.Dimensions{Size: size}
+}
+
+// itemEdge is where the list is about to put item i on screen, as its
+// Layout asks for it: an item at or after Position.First goes under the
+// ones laid out from First on, so its top is known; one before First
+// (the list filling the space above it) goes over First, so its bottom
+// is. A row hands it to its text (row.bodyWindow).
+func (s *listState) itemEdge(i int) (edge int, bottom bool) {
+	p := s.list.Position
+	if i < p.First {
+		return -p.Offset, true
+	}
+	y := -p.Offset
+	for j := p.First; j < i && j < len(s.heights); j++ {
+		y += s.heights[j]
+	}
+	return y, false
+}
+
+// A row whose text is large (a message of hundreds of thousands of
+// characters, richview giant.go) gives its layout back once it hasn't
+// been drawn for bigRowIdle, not rowIdle: such a layout is megabytes, and
+// Slack's virtual list unmounts a row as soon as it leaves the screen
+// and its overscan (half a screen each side: ftxy overscanRatio .5). Laid
+// out again, it costs tens of milliseconds.
+const (
+	bigRowText = 64 << 10
+	bigRowIdle = time.Second
+)
+
+// releaseBigRows releases the large layouts of rows off screen (unless a
+// selection may span them: copy reads their text).
+func (s *listState) releaseBigRows(now time.Time) {
+	if _, _, _, _, ok := s.ordered(); ok {
+		return
+	}
+	for _, r := range s.rows {
+		if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > bigRowIdle && r.rv.PlainLen() >= bigRowText {
+			r.rv.Release()
+		}
+	}
 }
 
 // laidRow is a message row as a layout put it on screen: its item's key,
@@ -1993,10 +2084,37 @@ func (s *listState) dayDivider(gtx layout.Context, h Host, c *colors, i int, day
 		btn = &widget.Clickable{}
 		s.dayBtns[key] = btn
 	}
-	if pr, clicked := s.dayPill(gtx, h, c, btn, dayLabel(day, now), w/2, (hh-dp(gtx, mt.dayPillH))/2); clicked {
+	// the pill is drawn by overlays, over the rows (its z-index 2 against
+	// .c-message__actions' 1), unless it's the one stuck to the list's top
+	m := op.Record(gtx.Ops)
+	pr, clicked := s.dayPill(gtx, h, c, btn, dayLabel(day, now), w/2, (hh-dp(gtx, mt.dayPillH))/2)
+	if clicked {
 		s.dayReq = &dayMenuReq{day: day, item: i, r: pr}
 	}
+	s.dayCalls = append(s.dayCalls, dayCall{item: i, call: m.Stop(), r: pr})
 	return layout.Dimensions{Size: image.Pt(w, hh)}
+}
+
+// dayCall is a day divider's pill, in the divider's coordinates.
+type dayCall struct {
+	item int
+	call op.CallOp
+	r    image.Rectangle // the pill
+}
+
+// dayPillWheel is the list's wheel over a day pill drawn over it
+// (toolbar_scroll.go's actScroll): Slack's pill is inside the scroller, so
+// a wheel over it scrolls the pane. Only the pill's own box takes input
+// (its label is pointer-events: none, the 28px pill pointer-events: all;
+// its ring and shadow aren't hit): r is that box in list coordinates. The
+// area passes everything on to what is under it, the pill's button for a
+// click, so it only adds the wheel. Call it after the pill is drawn.
+func (s *listState) dayPillWheel(gtx layout.Context, r image.Rectangle) {
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	st := clip.Rect(r).Push(gtx.Ops)
+	s.actScroll.Add(gtx.Ops)
+	st.Pop()
+	pass.Pop()
 }
 
 func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.Dimensions {
@@ -2063,6 +2181,50 @@ func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.D
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
+// olderAhead is BaseDynamicList.loadMore's loadPre test (boot-shared
+// akeQ, build 2c4b2e38fc70), run after every update of Slack's message
+// list: the rows it renders reach scrollTop - height*overscanRatio (the
+// virtual list's 0.5) above the viewport, and once the first of them
+// starts less than 400px from the list's top the older page is asked for,
+// while the reader still has half a pane and more to scroll. A row the
+// list hasn't measured counts as its heightCache's DEFAULT_HEIGHT
+// (getMessageListLayout: 80px for the "light" messages theme, Clean, and
+// 60 for "dense", Compact; not the colour mode).
+//
+// That first row starts under 400px exactly when scrollTop - height/2 is
+// short of E, the end of the last row starting under 400px: so only the
+// rows to E and the content over the viewport up to E + height/2 are
+// walked, not every row loaded.
+func (s *listState) olderAhead(gtx layout.Context, size image.Point) bool {
+	p := s.list.Position
+	def := dp(gtx, 80)
+	if uipref.Get().Dense {
+		def = dp(gtx, 60)
+	}
+	rowH := func(i int) int {
+		if i >= p.First && i < len(s.heights) && s.heights[i] > 0 {
+			return s.heights[i]
+		}
+		if hh, ok := s.measH[s.items[i].key]; ok && hh > 0 {
+			return hh
+		}
+		return def
+	}
+	edge := dp(gtx, 400)
+	end := 0 // E
+	for i := 0; i < len(s.items) && end < edge; i++ {
+		end += rowH(i)
+	}
+	limit := end + size.Y/2
+	above := p.Offset // the content over the viewport's top
+	for i := 0; i < min(p.First, len(s.items)); i++ {
+		if above += rowH(i); above >= limit {
+			return false
+		}
+	}
+	return above < limit
+}
+
 // overlays draws the hover toolbar, the sticky day pill, tooltips and the
 // jump-to-recent button on top of the list.
 func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.Point) {
@@ -2070,7 +2232,11 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	th := h.Theme()
 	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
 
-	// sticky day pill
+	// sticky day pill: Slack's label is position: sticky inside its
+	// divider, one pill that stays at the list's top while its day is
+	// there (the divider's own pill until it would pass the top, then
+	// the same pill, stuck, pushed up by the next day's)
+	stuck, stickyAt, stickyDay := -1, 0, time.Time{}
 	if !s.thread {
 		top := s.visible[0]
 		d := -1
@@ -2093,10 +2259,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 						break
 					}
 				}
-				day := s.items[d].day
-				if pr, clicked := s.dayPill(gtx, h, c, &s.stickyDay, dayLabel(day, rc.now), size.X/2, pillY); clicked {
-					s.dayReq = &dayMenuReq{day: day, item: -1, r: pr}
-				}
+				stuck, stickyAt, stickyDay = d, pillY, s.items[d].day
 			}
 		}
 	}
@@ -2108,12 +2271,39 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	if rc.persist {
 		s.persistentActions(gtx, h, rc, size)
 	} else if s.hoverIdx >= s.visible[0] && s.hoverIdx < s.visible[1] && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
-		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed && !r.m.Tombstone {
+		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && popups.ToolbarShown(h.Core(), &r.m) {
+			// shouldRenderActions: none on a temporary (pending, failed
+			// or client-made ephemeral) message; a tombstone and a
+			// server ephemeral have one (popups/actions_rules.go)
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
 	}
 	if s.tbFor < 0 { // no toolbar: the next one mounts at rest
 		s.tilt = toolbarTilt{}
+	}
+
+	// the day pills, over the rows and their hover toolbars
+	// (.c-message_list__day_divider__label__pill's z-index 2, 201 in the
+	// older client, against .c-message__actions' 1)
+	for _, dc := range s.dayCalls {
+		if dc.item == stuck || dc.item < s.visible[0] || dc.item >= s.visible[1] || dc.item >= len(s.pos) {
+			continue // the stuck one is drawn at the top below; one off screen isn't drawn
+		}
+		t := op.Offset(image.Pt(0, s.pos[dc.item])).Push(gtx.Ops)
+		dc.call.Add(gtx.Ops)
+		t.Pop()
+		s.dayPillWheel(gtx, dc.r.Add(image.Pt(0, s.pos[dc.item])))
+	}
+	if stuck >= 0 {
+		// the stuck pill's place, before it's drawn: its rect at stickyAt
+		m := op.Record(gtx.Ops)
+		pr, clicked := s.dayPill(gtx, h, c, &s.stickyDay, dayLabel(stickyDay, rc.now), size.X/2, stickyAt)
+		call := m.Stop()
+		if clicked {
+			s.dayReq = &dayMenuReq{day: stickyDay, item: -1, r: pr}
+		}
+		call.Add(gtx.Ops)
+		s.dayPillWheel(gtx, pr)
 	}
 
 	// reaction tooltip
@@ -2277,7 +2467,11 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	}
 	if a := s.tilt.tipAlpha(gtx, key); a > 0 && s.tbTipGen == theme.TipGen() { // hidden (HideTooltips) until the pointer leaves the button
 		btn := image.Rect(cx-bs/2, y+pad, cx-bs/2+bs, y+pad+bs)
+		// deferred: BaseTooltip is a body portal, over the header past the
+		// list's top (its clip), as the reaction and status tips are
+		m := op.Record(gtx.Ops)
 		tooltip(gtx, th, c, tip, btn, theme.WindowBounds(s.origin), a)
+		op.Defer(gtx.Ops, m.Stop())
 	}
 }
 
@@ -2318,9 +2512,9 @@ func (s *listState) actionsAt(idx int, dense bool) int {
 	return actsDefault
 }
 
-// prepareButtons picks r's toolbar buttons and their labels: the thread
-// and share actions follow Slack's rules (actions_rules.go), the rest are
-// always there.
+// prepareButtons picks r's toolbar buttons and their labels, each by
+// Slack's rule for it (actions_rules.go, popups/actions_rules.go): an
+// ephemeral message keeps ⋮ alone.
 func (s *listState) prepareButtons(app *core.App, r *row) {
 	s.tbBtns = s.tbBtns[:0]
 	s.tbLabel, s.tbQAs = tbTips, tbQA
@@ -2339,7 +2533,18 @@ func (s *listState) prepareButtons(app *core.App, r *row) {
 			}
 			s.tbLabel[i], s.tbQAs[i] = l, qa
 		case tbTodo:
+			if !popups.TodoShown(app, &r.src) { // on3u: none on an ephemeral or automated message
+				continue
+			}
 			s.tbLabel[i] = todoAction(app, &r.src).Label // Yoyn: "Complete to-do" on a to-do
+		case tbList:
+			if !popups.AddToListShown(app, &r.src) { // shouldShowAddToList: !is_ephemeral
+				continue
+			}
+		case tbMore:
+			if !popups.MoreShown(app, &r.src) { // isOnlyDeletableHere
+				continue
+			}
 		case tbAddReact:
 			if !reactable(app, r, s.thread) {
 				continue
@@ -2609,11 +2814,15 @@ func (s *listState) openEdit(h Host, m core.Message) {
 		t.SetEditing("main", m.Channel, m.TS, true) // patchMessageText leaves it alone
 	}
 	r.editFrames = 0
+	fromInput := s.editFromInput == m.TS
+	s.editFromInput = ""
 	var ed *composer.Composer
 	ed = composer.NewEdit(h, m, func() {
 		s.endEdit(ed)
+		s.editStopped(h, m, fromInput) // stopEditingMessage's focus
 		h.Invalidate()
 	})
+	ed.EditInThread = s.thread // IHC0's inThread: this list's view context
 	r.edit, s.edit, s.editCh, s.editTS = ed, ed, m.Channel, m.TS
 	app := h.Core()
 	r.edit.SaveEditThen = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {
@@ -2624,6 +2833,45 @@ func (s *listState) openEdit(h Host, m core.Message) {
 	}
 	s.scrollTo(m.TS)
 	h.Invalidate()
+}
+
+// InputFocuser is a Host that can give a conversation's input the focus:
+// channel's (thread "") or its thread's reply box.
+type InputFocuser interface {
+	FocusInput(channel, thread string)
+}
+
+// KeyboardModer is a Host that knows whether the viewer is moving around
+// with the keyboard (Slack's FocusEventManager.hasKeyboardFocus: Tab, F6
+// or an arrow pressed since the last click).
+type KeyboardModer interface {
+	KeyboardMode() bool
+}
+
+func keyboardMode(h Host) bool {
+	k, ok := h.(KeyboardModer)
+	return ok && k.KeyboardMode()
+}
+
+// editStopped is MessageEditInput's stopEditingMessage, an edit saved or
+// cancelled: one started from the conversation's input (Up in it,
+// editStartedFromComposer) gives the input the focus back; in keyboard
+// mode the list takes it at the message (transitionFocusTo the message
+// list with its ts); otherwise the focus stays where it went (the
+// transition to the input isn't forced, and a mouse user's is dropped).
+func (s *listState) editStopped(h Host, m core.Message, fromInput bool) {
+	switch {
+	case fromInput:
+		if f, ok := h.(InputFocuser); ok {
+			thread := ""
+			if s.thread {
+				thread = s.ts
+			}
+			f.FocusInput(m.Channel, thread)
+		}
+	case keyboardMode(h):
+		s.kb.ts, s.kb.focusReq = m.TS, true
+	}
 }
 
 // editLast edits the viewer's most recent message in this list.
@@ -2639,6 +2887,7 @@ func (s *listState) editLast(h Host) bool {
 			if s.thread && m.TS == s.ts && len(s.snap.msgs) > 1 {
 				continue // in a thread, Up edits your last reply first
 			}
+			s.editFromInput = m.TS // stopEditingMessage: the focus goes back to the input
 			s.startEdit(h, m.TS)
 			return true
 		}
@@ -2833,8 +3082,10 @@ func (s *listState) placeJump(now time.Time) {
 	// findTimestampClosestToStartTs (find(timestamps, t => t >= startTs)),
 	// with nothing to flash (its highlightTs names no row); with nothing at
 	// or after it, the end (getOffsetForKey(undefined)). Nothing stays
-	// pending.
-	if s.thread || !s.jumpCovered() {
+	// pending, once taut's answer of what plugins' patches hide is as of
+	// the jump's highlight (Slack's highlightTs, which HideResolved reads
+	// to keep a linked ticket shown: historyHidden).
+	if s.thread || !s.jumpCovered() || !s.histOK {
 		return
 	}
 	if i := s.firstItemFrom(s.pendingJump); i >= 0 {

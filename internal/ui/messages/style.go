@@ -104,7 +104,9 @@ var lightColors = colors{
 	Tooltip: theme.LightPalette.Tooltip, TooltipText: theme.LightPalette.TooltipText, Skeleton: rgb(0xeaeaea), // theme/tooltip.go
 	ThreadBorder: rgba(0x1d1c1d, 0.13), ThreadBg: rgb(0xffffff), JumpBg: rgb(0x1264a3),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0x1d1c1d, 0.3),
-	Editing: rgba(0xf2c744, 0.2), ScrollThumb: rgba(0x1d1c1d, 0.3), ScrollThumbHover: rgba(0x1d1c1d, 0.5), Selection: rgba(0x1d9bd1, 0.3),
+	// .c-scrollbar__bar: rgba(var(--sk_primary_foreground), .52), the same
+	// under the pointer (hover only shows it)
+	Editing: rgba(0xf2c744, 0.2), ScrollThumb: rgba(0x1d1c1d, 0.52), ScrollThumbHover: rgba(0x1d1c1d, 0.52), Selection: rgba(0x1d9bd1, 0.3),
 	SystemText: rgb(0x454447), HeaderBorder: rgba(0x1d1c1d, 0.13), CloseHover: rgba(0x1d1c1d, 0.06),
 	HuddleLive: rgb(0x007a5a), HuddleJoin: rgb(0x007a5a), HuddleJoinHover: rgba(0x0a4032, 0x21/255.0),
 	HuddleTile: rgba(0x1d1c1d, 0.13), HuddleTileLive: rgb(0x178f65), HuddleMissedBg: rgb(0xffe8ef),
@@ -135,7 +137,9 @@ var darkColors = colors{
 	Tooltip: theme.DarkPalette.Tooltip, TooltipText: theme.DarkPalette.TooltipText, Skeleton: rgb(0x2c2d30), // theme/tooltip.go
 	ThreadBorder: rgba(0xe8e8e8, 0.13), ThreadBg: rgb(0x1a1d21), JumpBg: rgb(0x1d9bd1),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0xe8e8e8, 0.3),
-	Editing: rgba(0xf2c744, 0.14), ScrollThumb: rgba(0xe8e8e8, 0.3), ScrollThumbHover: rgba(0xe8e8e8, 0.5), Selection: rgba(0x1d9bd1, 0.4),
+	// .c-scrollbar__bar over the dark theme's sk_primary_foreground
+	// (209, 210, 211)
+	Editing: rgba(0xf2c744, 0.14), ScrollThumb: rgba(0xd1d2d3, 0.52), ScrollThumbHover: rgba(0xd1d2d3, 0.52), Selection: rgba(0x1d9bd1, 0.4),
 	SystemText: rgb(0xababad), HeaderBorder: rgba(0xe8e8e8, 0.13), CloseHover: rgba(0xe8e8e8, 0.06),
 	HuddleLive: rgb(0x3daa7c), HuddleJoin: rgb(0x177e56), HuddleJoinHover: rgba(0xd8f5e9, 0x14/255.0),
 	HuddleTile: rgba(0xe8e8e8, 0.13), HuddleTileLive: rgb(0x3daa7c), HuddleMissedBg: rgb(0x300005),
@@ -192,6 +196,11 @@ func flatten(c colors) colors {
 		&c.FindBorder} {
 		*p = richview.Over(*p, bg)
 	}
+	// the scrollbar's bar stays see-through (over rows, images, the
+	// hover), its alpha such that over the pane it lands where Slack's
+	// sRGB blend does
+	c.ScrollThumb = theme.LinearAlpha(c.ScrollThumb, bg)
+	c.ScrollThumbHover = theme.LinearAlpha(c.ScrollThumbHover, bg)
 	return c
 }
 
@@ -393,10 +402,15 @@ func avatarFor(h Host, url string, px int) string {
 	if big == url || h.Images() == nil {
 		return url
 	}
-	if _, ok := h.Images().Get(big, px); ok || !h.Images().Loaded(url) {
+	if _, ok := h.Images().Get(big, px); ok {
 		return big
 	}
-	return url
+	// the larger one isn't there: the one asked for while it loads, and
+	// for good if it failed (never an empty box where a picture loads)
+	if h.Images().Failed(big, px) || h.Images().Loaded(url) {
+		return url
+	}
+	return big
 }
 
 // paintAvatar is BaseAvatar (client-boot xc3R) in r: the picture, or

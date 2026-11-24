@@ -4,9 +4,9 @@ Clack runs Taut's and Slick's plugins natively, from the published plugin Librar
 
 | | Plugins |
 |---|---:|
-| ✅ Works fully | 72 |
-| ⚠️ Partly works | 18 |
-| ❌ Doesn't work yet | 8 |
+| ✅ Works fully | 76 |
+| ⚠️ Partly works | 15 |
+| ❌ Doesn't work yet | 7 |
 
 A plugin both systems ship (under the same name or not) is one row in Preferences › Plugins › Browse; here each version has its own line.
 Compatibility follows the newest Clack release. Each row comes from `internal/pluginlib/compat.go`, which `TestCompatMatchesDocs` keeps in step with the per-system pages, [PLUGINS-live-taut.md](PLUGINS-live-taut.md) and [PLUGINS-live-slick.md](PLUGINS-live-slick.md). `go test ./internal/pluginlib -run TestCompatDocInStep -update` writes this page from it and the Library's index (`tools/compatdoc/index.json`), and the test fails while the page is out of step.
@@ -20,7 +20,6 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Browser Pop-outs | Taut | Enables Slack's pop-out windows in the browser | needs pop-out windows |
 | Click to Load | Slick | Replaces third-party media embeds with privacy-preserving click-to-load placeholders | Clack shows no iframes for it to hold back |
 | Custom Fonts | Slick | Use any installed system font or upload your own font file. | Clack can't load web fonts |
-| Custom Name Recording | Taut | Uploads an audio file as your name recording, instead of recording one | can't decode audio |
 | Quiet Spotify | Slick | Customize the volume of Spotify embeds so they are not stupidly loud | Clack has no Spotify players to quiet |
 | Slick MCP | Slick | Connect local AI agents to Slack with search, messaging, and desktop controls. | its MCP server needs Node's http module |
 
@@ -34,12 +33,9 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Chat Tabs | Slick | Browser-like tabs for the real power users of Slack. Open channels, DMs, and threads in new tabs to keep organized. | thread tabs open beside their channel |
 | Clear URLs | Slick | Automatically removes tracking elements from URLs you send | cleans links when you send, not when you paste |
 | Click to Load | Taut | Holds Spotify, SoundCloud and other music embeds until you click to load them | Load shows Clack's media box, not a player |
-| Custom Name Recording | Slick | Upload custom audio as your Slack name recording | can't decode audio, so nothing uploads |
 | Custom Sounds | Slick | Override Slack notification sounds with your own audio file. | Ogg Vorbis, FLAC or Linux AAC files play Slack's own sound |
-| Hide Resolved Tickets | Slick | Hide resolved questions in help channels so only the open ones are left | its header toggle isn't drawn; what it hides is unchecked |
 | Installed Apps | Slick | Show apps people authorized, who authorized an app, and its channel memberships. | the app marketplace page asks you to sign in |
 | Let Me See | Slick | Adds a Hide drawings button to the floating huddle bar shown during a screenshare | Hide drawings does nothing |
-| oneko | Slick | cat follow mouse (real) | the cat runs but isn't drawn |
 | Private Channel | Taut | Lets you see and mention private channels you aren't in (uses the <https://flaron.halceon.dev\|flaron> index) | unknown channel mentions aren't looked up |
 | Private Channel Mapper | Slick | Name the private channels you can’t see, and mention the ones you are not in | the missing-channel pill never shows |
 | Self Care | Slick | Take a break from Slack and pause notifications for a while. | a break pauses notifications, not the app badge |
@@ -68,6 +64,8 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Clear URLs | Taut | Strips tracking parameters from links you paste into messages (rules from <https://github.com/ClearURLs/Rules\|ClearURLs>) |
 | Copy Reacted | Slick | Copy the list of people who reacted to a message |
 | Copy Reacted | Taut | Copies the list of people who reacted to a message |
+| Custom Name Recording | Slick | Upload custom audio as your Slack name recording |
+| Custom Name Recording | Taut | Uploads an audio file as your name recording, instead of recording one |
 | Custom Slackbot | Slick | Customize the name and avatar used for workspace custom responses |
 | DeArrow | Slick | Replace clickbait YouTube titles and thumbnails with crowdsourced ones. Sends the IDs of YouTube videos you see to DeArrow (sponsor.ajay.app). |
 | Experiments | Slick | Enable Access to Experiments & other dev-only features in Slack! |
@@ -76,6 +74,7 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Haiku Warning | Slick | Warn before sending a message that Orpheus would quote back as a haiku |
 | Haiku Warning | Taut | Warns before you send a haiku that Orpheus would repeat in the thread |
 | HCA Status | Slick | Flag users who have not completed identity verification. Sends Slack user IDs to auth.hackclub.com for verification and age-category checks. |
+| Hide Resolved Tickets | Slick | Hide resolved questions in help channels so only the open ones are left |
 | Huddle Activity | Taut | Logs who did what in a huddle, including mutes and settings changes |
 | Huddle Mute Detector | Slick | Show who muted you in a huddle |
 | Human Count | Slick | Leave bots and apps out of the channel header's member count. |
@@ -98,6 +97,7 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | NoUpsell | Slick | Hide promotions, trial offers, and Slack bot AI nudges. |
 | Office Hours | Slick | Set schedules for out-of-office and invisible status |
 | Office Hours | Taut | Sets you out of office or away on a weekly schedule |
+| oneko | Slick | cat follow mouse (real) |
 | Oneko | Taut | Adds a cute cat that chases your cursor, based on <https://github.com/adryd325/oneko.js\|oneko.js> |
 | Online Count | Slick | Show how many of a channel's members are online, next to its member count |
 | Owl Mode | Taut | Lets you reply and react anonymously as the author of your owl confessions |

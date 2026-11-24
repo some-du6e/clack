@@ -58,8 +58,15 @@ func (v *Activity) listFocusArea(gtx C, r image.Rectangle) clip.Stack {
 	return area
 }
 
-// listFocusEvents handles the presses listFocusArea saw.
+// listFocusEvents handles the presses listFocusArea saw, and gives the
+// list the focus FocusList or openStep asked for.
 func (v *Activity) listFocusEvents(gtx C) {
+	if v.focusList {
+		v.focusList = false
+		if !gtx.Focused(&v.kbTag) {
+			gtx.Execute(key.FocusCmd{Tag: &v.kbTag})
+		}
+	}
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &v.kbTag, Kinds: pointer.Press})
 		if !ok {
@@ -323,8 +330,26 @@ func (v *Activity) openStep(d int, unreadOnly bool) {
 		return
 	}
 	v.focusKey = next.key
-	v.choose(next.it, next.key, v.rowFor(next.key))
+	// option+up/down's open keeps the focus in the inbox
+	// (ClientKeyboardShortcutsActivity's preventMoveFocus, true outside
+	// Simplified layout): the item opens beside it, and the focus goes to
+	// the list (handleOnClickActivityItem: VIEW_ACTIVITY_LIST), from
+	// wherever it was
+	if pm, ok := v.h.(interface{ PreventMoveFocus(func()) }); ok {
+		pm.PreventMoveFocus(func() { v.choose(next.it, next.key, v.rowFor(next.key)) })
+	} else {
+		v.choose(next.it, next.key, v.rowFor(next.key))
+	}
+	v.focusList = true
 	v.scrollToKey(next.key)
+}
+
+// FocusList gives the inbox the key focus at its next draw (onViewClosed:
+// the item closed beside it hands the focus back to the Primary view's
+// list).
+func (v *Activity) FocusList() {
+	v.focusList = true
+	v.h.Invalidate()
 }
 
 // bulkKeyRead is Alt+U (mark the picked rows read; the selection stays)
@@ -350,7 +375,8 @@ func (v *Activity) bulkKeyRead(clearToo bool) {
 	} else {
 		v.h.Toast(nsActivity.T("{numItems} {numItems, plural, =1 {item} other {items}} marked as read", "numItems", n))
 	}
-	v.write("Couldn’t update the items: ", func(ctx context.Context, c *core.App) error {
+	ended := v.recordMarks(keys, items, false) // pErv ph (activity_marks.go)
+	v.writeThen("Couldn’t update the items: ", func(ctx context.Context, c *core.App) error {
 		if err := c.MarkActivityReadBulk(ctx, items...); err != nil || !clearToo {
 			return err
 		}
@@ -363,7 +389,7 @@ func (v *Activity) bulkKeyRead(clearToo bool) {
 			}
 		}
 		v.dirty = true
-	})
+	}, ended)
 }
 
 // runItemKey runs the focused row's item menu row with that key (A:

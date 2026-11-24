@@ -58,6 +58,13 @@ type prefs struct {
 	// save dialog (downloads.go).
 	DownloadPath string `json:"download_path,omitempty"`
 	DownloadAsk  bool   `json:"download_ask,omitempty"`
+	// CanvasQuipEdit saves canvas edits through Quip's edit-document, as
+	// Slack's canvas editor does, instead of canvases.edit (which refuses
+	// session tokens) (docs/CANVAS-EDIT-PLAN.md, "Rules for round 2").
+	// nil is on (the default since alpha.164), false turns it off; the
+	// environment's CLACK_CANVAS_QUIP_EDIT (0 off, 1 on) wins over it
+	// (core.QuipEditOn).
+	CanvasQuipEdit *bool `json:"canvas_quip_edit,omitempty"`
 	// UpdateCheckedAt is when GitHub last answered an update check, and
 	// UpdateLimitedUntil when its rate limit ends (unix seconds): a
 	// restart waits out both (update_check.go).

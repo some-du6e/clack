@@ -26,6 +26,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/webaudio"
 )
 
 // Taut returns the plugin system (nil until boot, or when it couldn't
@@ -159,7 +160,8 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string, deferJS boo
 		ClipboardWrite: func(s string) error { a.Post(func() { a.copyText(s) }); return nil },
 		ClipboardRead:  func() (string, error) { return "", errors.New("clipboard reads aren't supported") },
 		PickFiles:      a.pickFiles,
-		Media:          pageMedia{}, // page_media.go: Slack's sound playback, and plugins'
+		Media:          pageMedia{},     // page_media.go: Slack's sound playback, and plugins'
+		Audio:          webaudio.Host{}, // decodeAudioData and MediaRecorder (CustomNameRecording)
 		// a notification sound the page couldn't play (CustomSounds with a
 		// file Go audio and the OS can't decode): Slack's own, natively
 		SoundFailed: func(url string) {
@@ -299,6 +301,7 @@ func (b *backend) installTaut(a *App, t *taut.Taut, s *slick.Slick) {
 		}()
 	}
 	go b.watchTaut(a, t)
+	a.resumePendingImport() // the introduction's picks of Slick's and Taut's plugins (plugin_import.go)
 }
 
 // watchTaut repaints when the plugin model changes (Preferences > Taut).
@@ -413,6 +416,9 @@ func (a *App) showLogin() {
 // pickFiles backs plugins' <input type=file> with the Gio explorer (the
 // composer's attachment chooser). jsrt calls it off the UI goroutine.
 func (a *App) pickFiles(accept string, multiple bool) ([]jsrt.PickedFile, error) {
+	if h := pickFilesHook; h != nil {
+		return h(accept, multiple)
+	}
 	e := a.explorer
 	if e == nil {
 		return nil, errors.New("no file chooser on this platform")
@@ -501,9 +507,13 @@ func argStr(args map[string]any, k string) string {
 // Go).
 func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel string, deferJS bool) *slick.Slick {
 	t0 := time.Now()
+	var setIcon func([]byte)
+	if a.opts.SetAppIcon != nil {
+		setIcon = a.setAppIcon
+	}
 	s, err := slick.New(slick.Options{Dir: a.inertPluginDir("slick"), Taut: t, OpenURL: openURL, OpenFile: a.openFilePath,
 		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: a.setSessionSpellChecker,
-		DeferStart: deferJS, Dark: dark})
+		DeferStart: deferJS, Dark: dark, SetAppIcon: setIcon, UserDefault: a.opts.UserDefault})
 	if err != nil {
 		log.Printf("slick: %v", err)
 		return nil
@@ -514,6 +524,14 @@ func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel stri
 		log.Printf("timing: slick.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
 	}
 	return s
+}
+
+// setAppIcon is Slick's app icon (Options.SetAppIcon), then a frame: X11
+// sets a window's icon at its next event, on the goroutine that reads them
+// (desktop.SetAppIcon), and an idle window has none coming.
+func (a *App) setAppIcon(png []byte) {
+	a.opts.SetAppIcon(png)
+	a.Invalidate()
 }
 
 // slickSetDark tells Slick the mode off the UI goroutine (a mode change

@@ -221,7 +221,7 @@ func (a *App) noteChannelThreadActivity(raw json.RawMessage) {
 		Subtype string      `json:"subtype"`
 		Entry   activityRaw `json:"entry"`
 	}
-	if json.Unmarshal(raw, &e) != nil || e.Subtype != "activity_updated" || !activityLiveType(e.Entry.Item.Type) {
+	if json.Unmarshal(raw, &e) != nil || e.Subtype != "activity_updated" || !a.activityLiveType(e.Entry.Item.Type) {
 		return // onActivityEvent drops an entry of any other type before a store sees it
 	}
 	it, _ := activityItem(&e.Entry)

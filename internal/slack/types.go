@@ -26,12 +26,18 @@ type Message struct {
 	// and replies roots do; the socket's message_changed doesn't), which
 	// is what Slack's slurpThreadSubscriptions takes a thread's
 	// subscription from (store/thread_subs.go). Decoding sets it.
-	SubscribedSet  bool            `json:"-"`
-	Edited         *Edited         `json:"edited,omitempty"`
-	Reactions      []Reaction      `json:"reactions,omitempty"`
-	Files          []File          `json:"files,omitempty"`
-	Blocks         json.RawMessage `json:"blocks,omitempty"`
-	Attachments    []Attachment    `json:"attachments,omitempty"`
+	SubscribedSet bool       `json:"-"`
+	Edited        *Edited    `json:"edited,omitempty"`
+	Reactions     []Reaction `json:"reactions,omitempty"`
+	Files         []File     `json:"files,omitempty"`
+	// XFiles are the files uploaded with the message (x_files), which
+	// its sender may take out of it (getRemovableFileIds: chat.removeFile)
+	XFiles      []string        `json:"x_files,omitempty"`
+	Blocks      json.RawMessage `json:"blocks,omitempty"`
+	Attachments []Attachment    `json:"attachments,omitempty"`
+	// DocumentUnfurl is a canvas link card's unfurl container's state
+	// (Quip's slack_unfurl message; fetchAndFormatUnfurlContainer reads it).
+	DocumentUnfurl *DocumentUnfurl `json:"document_unfurl,omitempty"`
 	RawAttachments json.RawMessage `json:"-"`                  // attachments exactly as Slack sent them (memory only)
 	Metadata       json.RawMessage `json:"metadata,omitempty"` // app metadata {event_type, event_payload}
 	Icons          *Icons          `json:"icons,omitempty"`
@@ -583,30 +589,37 @@ type DocumentSection struct {
 
 // User is a (subset of a) Slack user object.
 type User struct {
-	ID                string  `json:"id"`
-	TeamID            string  `json:"team_id,omitempty"`
-	Name              string  `json:"name"`
-	Deleted           bool    `json:"deleted,omitempty"`
-	Color             string  `json:"color,omitempty"`
-	RealName          string  `json:"real_name,omitempty"`
-	TZ                string  `json:"tz,omitempty"`
-	TZLabel           string  `json:"tz_label,omitempty"`
-	TZOffset          int     `json:"tz_offset,omitempty"`
-	IsAdmin           bool    `json:"is_admin,omitempty"`
-	IsOwner           bool    `json:"is_owner,omitempty"`
-	IsPrimaryOwner    bool    `json:"is_primary_owner,omitempty"`
-	IsBot             bool    `json:"is_bot,omitempty"`
-	IsAppUser         bool    `json:"is_app_user,omitempty"`
-	IsSlackbot        bool    `json:"is_slackbot,omitempty"` // gmjA: Slackbot (with id USLACKBOT)
-	IsRestricted      bool    `json:"is_restricted,omitempty"`
-	IsUltraRestricted bool    `json:"is_ultra_restricted,omitempty"`
-	AgentStatus       string  `json:"agent_status,omitempty"`      // not_an_agent | consistently_an_agent | check_required (bot users)
-	IsWorkflowBot     bool    `json:"is_workflow_bot,omitempty"`   // Workflow Builder's bot user: badged WORKFLOW
-	IsAgentforceBot   bool    `json:"is_agentforce_bot,omitempty"` // a Salesforce Agentforce agent: badged AGENTFORCE
-	IsSidekickBot     bool    `json:"is_sidekick_bot,omitempty"`   // 7jev isSidekickMember (bD9l keeps it out of Slack Connect channels)
-	Updated           int64   `json:"updated,omitempty"`
-	Profile           Profile `json:"profile"`
-	Presence          string  `json:"presence,omitempty"`
+	ID                string `json:"id"`
+	TeamID            string `json:"team_id,omitempty"`
+	Name              string `json:"name"`
+	Deleted           bool   `json:"deleted,omitempty"`
+	Color             string `json:"color,omitempty"`
+	RealName          string `json:"real_name,omitempty"`
+	TZ                string `json:"tz,omitempty"`
+	TZLabel           string `json:"tz_label,omitempty"`
+	TZOffset          int    `json:"tz_offset,omitempty"`
+	IsAdmin           bool   `json:"is_admin,omitempty"`
+	IsOwner           bool   `json:"is_owner,omitempty"`
+	IsPrimaryOwner    bool   `json:"is_primary_owner,omitempty"`
+	IsBot             bool   `json:"is_bot,omitempty"`
+	IsAppUser         bool   `json:"is_app_user,omitempty"`
+	IsSlackbot        bool   `json:"is_slackbot,omitempty"` // gmjA: Slackbot (with id USLACKBOT)
+	IsRestricted      bool   `json:"is_restricted,omitempty"`
+	IsUltraRestricted bool   `json:"is_ultra_restricted,omitempty"`
+	AgentStatus       string `json:"agent_status,omitempty"`      // not_an_agent | consistently_an_agent | check_required (bot users)
+	IsWorkflowBot     bool   `json:"is_workflow_bot,omitempty"`   // Workflow Builder's bot user: badged WORKFLOW
+	IsAgentforceBot   bool   `json:"is_agentforce_bot,omitempty"` // a Salesforce Agentforce agent: badged AGENTFORCE
+	IsSidekickBot     bool   `json:"is_sidekick_bot,omitempty"`   // 7jev isSidekickMember (bD9l keeps it out of Slack Connect channels)
+	// IsProfileOnlyUser is is_profile_only_user (DIay isProfileOnlyUser):
+	// the member searches leave such a member out unless asked
+	// (includeProfileOnlyUsers).
+	IsProfileOnlyUser bool `json:"is_profile_only_user,omitempty"`
+	// Interact is interact: false for a member information barriers keep
+	// from the viewer (th9D zP), whom the local member search drops.
+	Interact *bool   `json:"interact,omitempty"`
+	Updated  int64   `json:"updated,omitempty"`
+	Profile  Profile `json:"profile"`
+	Presence string  `json:"presence,omitempty"`
 	// ManualPresence is the viewer's own manual_presence ("away" when they
 	// set themselves away, "active"; computeManualPresence keeps it on the
 	// viewer's member only): maybeTickleMS sends no tickle while it's away.
@@ -621,9 +634,9 @@ type User struct {
 	// (Slack's u+N9 W), else empty.
 	RestrictedUserType string `json:"restricted_user_type,omitempty"`
 
-	// What a contact_card reads (DIay isProfileOnlyUser, isActiveMember;
-	// Mu7P's who_can_share_contact_card: EVERYONE, TEAM_MEMBERS or NO_ONE).
-	IsProfileOnlyUser      bool   `json:"is_profile_only_user,omitempty"`
+	// What a contact_card reads (DIay isActiveMember, and isProfileOnlyUser
+	// from IsProfileOnlyUser above; Mu7P's who_can_share_contact_card:
+	// EVERYONE, TEAM_MEMBERS or NO_ONE).
 	IsInvitedUser          bool   `json:"is_invited_user,omitempty"`
 	IsForgotten            bool   `json:"is_forgotten,omitempty"`
 	IsSlackSecurityBot     bool   `json:"is_slacksecuritybot,omitempty"`
@@ -793,6 +806,11 @@ type CountEntry struct {
 	Updated      string `json:"updated"`
 	MentionCount int    `json:"mention_count"`
 	HasUnreads   bool   `json:"has_unreads"`
+
+	// HistoryInvalid is history_invalid: when the conversation's history
+	// last changed on Slack's side (a bulk delete, retention); with
+	// Updated, its channelMutationTimestamps (core/history_changed.go)
+	HistoryInvalid string `json:"history_invalid,omitempty"`
 }
 
 type Counts struct {
@@ -883,4 +901,29 @@ type AgentChannelUnfurl struct {
 	JoinableFromChannelID string `json:"joinable_from_channel_id"`
 	WorkflowName          string `json:"workflow_name,omitempty"`
 	WorkflowTriggerID     string `json:"workflow_trigger_id,omitempty"`
+}
+
+// DocumentUnfurl is an unfurl container message's document_unfurl: whether
+// Slack has unfurled the canvas card's link yet (formatFetchUnfurlContainer
+// Result's isUnfurling is !is_unfurled), and why it shows no preview
+// (canvas_unfurl_state: "exact_link_blocked", "all_links_from_domain",
+// "msg_non_existent", …; EmptyUnfurl's lines). A field of an unexpected
+// type is left unset, never failing the message.
+type DocumentUnfurl struct {
+	IsUnfurled        bool   `json:"is_unfurled,omitempty"`
+	CanvasUnfurlState string `json:"canvas_unfurl_state,omitempty"`
+}
+
+// UnmarshalJSON reads each field on its own, so one Slack sends in another
+// shape doesn't fail the messages.list answer it came in.
+func (d *DocumentUnfurl) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(b, &raw) != nil {
+		*d = DocumentUnfurl{}
+		return nil
+	}
+	*d = DocumentUnfurl{}
+	_ = json.Unmarshal(raw["is_unfurled"], &d.IsUnfurled)
+	_ = json.Unmarshal(raw["canvas_unfurl_state"], &d.CanvasUnfurlState)
+	return nil
 }

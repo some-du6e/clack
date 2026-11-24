@@ -87,6 +87,8 @@ jobs:
           get /tmp/slack-icons/slack-icons-v2-05e8fec.woff2 "$cdn/slack-icons-v2-05e8fec.woff2"
           get /tmp/slack-icons/art/focus-d8ca34d.svg "$cdn/focus-d8ca34d.svg"
           get /tmp/slack-icons/art/slack_logo_mark-8890ba0.svg "$cdn/slack_logo_mark-8890ba0.svg"
+          # the file-type svgicons (icons/file_icons.go)
+          for f in archive-4f1161f.svg binary-4f9150d.svg code-0bc11dc.svg css-783bfd2.svg email-5606c9a.svg file-audio-d14bae1.svg file-excel-6b1196f.svg file-google-document-dcaf469.svg file-google-presentation-2af45fd.svg file-google-spreadsheet-55f60ac.svg file-illustrator-6b9428f.svg file-image-ba11488.svg file-indesign-efa9016.svg file-lucidchart-cda1932.svg file-lucidpress-e83f9f9.svg file-lucidspark-1a50065.svg file-pdf-0922d15.svg file-photoshop-1ef50cb.svg file-powerpoint-ee70589.svg file-sketch-6d4d19b.svg file-snippet-0a4c72a.svg file-text-post-caa3b6f.svg file-text-quip-fdaf2cb.svg file-video-3dda18b.svg file-word-68a194e.svg file-zoho-show-e5b4196.svg generic-b556cfe.svg html-dcbdfbf.svg php-f34c36d.svg; do get "/tmp/slack-icons/art/$f" "$cdn/$f"; done
           python3 -m pip install --quiet fonttools brotli
           python3 "$GITHUB_WORKSPACE/.github/scripts/slack_icon_font.py" /tmp/slack-icons/slack-icons-v2-05e8fec.woff2 /tmp/slack-icons/font.json
           ls -l /tmp/slack-icons /tmp/slack-icons/art

@@ -1,11 +1,13 @@
 package richtext
 
 import (
+	"bytes"
 	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -24,7 +26,7 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 // newBuilder is a builder for message m shown in channel ch: its sender,
 // its canvas unfurls' hints and its files.
 func newBuilder(r Resolver, m *slack.Message, ch string) *builder {
-	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS, streamDone: streamDone(m)}
+	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS, streamDone: streamDone(m), msgText: m.Text}
 	c.hintsFrom(m)
 	if len(m.Files) > 0 {
 		c.files = make(map[string]*slack.File, len(m.Files))
@@ -124,7 +126,7 @@ func metaEventType(raw json.RawMessage) string {
 // hasCalendarEvent is isCalendarEventMessage: an attachment with a
 // calendar_event.
 func hasCalendarEvent(raw json.RawMessage) bool {
-	if !strings.Contains(string(raw), `"calendar_event"`) {
+	if !bytes.Contains(raw, []byte(`"calendar_event"`)) {
 		return false
 	}
 	var as []struct {
@@ -146,7 +148,7 @@ func hasCalendarEvent(raw json.RawMessage) bool {
 // meetingReminder is isMeetingReminderMsg (kbmb): a block whose
 // accessory's action_id starts with "meeting_join_".
 func meetingReminder(raw json.RawMessage) bool {
-	if !strings.Contains(string(raw), "meeting_join_") {
+	if !bytes.Contains(raw, []byte("meeting_join_")) {
 		return false
 	}
 	var parts []json.RawMessage
@@ -269,6 +271,9 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 					at.ID = strconv.Itoa(a.ID)
 				}
 				at.Index = i
+				// the media's expandable (getExpandableKey("attachment"):
+				// the view's context ends it, richview appends it)
+				at.MediaKey = expandable.AttachmentKey(a, m.TS, "")
 				at.BotID = firstNonEmpty(a.BotID, m.BotID)
 				at.BotName = botName(r, m, at.BotID)
 				at.LinkedInText = a.FromURL != "" && linksURL(m, a.FromURL)
@@ -788,9 +793,15 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		att.Footer = flatten(FromMrkdwn(c.r, a.Footer))
 		att.FooterIcon = SafeImage(a.FooterIcon)
 		blk.Buttons = legacyActions(a.Actions)
+		// MessageAttachmentGeneric renders only what Dv89's ov finds
+		// (hasAuthor, hasTitle, hasText, hasFields, hasFooter, hasMedia,
+		// hasActions); hasFooter is footer, footer_icon, a ts, or an app
+		// unfurl's bot. Its fallback div shows only when no other prop is
+		// set: text made of spaces (TSF trims it to nothing) rules it out.
+		footer := a.Footer != "" || a.FooterIcon != "" || att.TS != 0 || att.IsAppUnfurl && a.BotID != ""
 		if att.Title == nil && att.Text == nil && att.Pretext == nil && blk.Fields == nil && att.Image == nil &&
-			att.Thumb == nil && att.AuthorName == "" && att.ServiceName == "" && blk.Buttons == nil && len(a.Files) == 0 {
-			if a.Fallback == "" {
+			att.Thumb == nil && att.AuthorName == "" && att.ServiceName == "" && blk.Buttons == nil && len(a.Files) == 0 && !footer {
+			if a.Fallback == "" || a.Text != "" {
 				return Block{}, false
 			}
 			att.Text = FromMrkdwn(c.r, a.Fallback)

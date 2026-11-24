@@ -166,6 +166,10 @@ type Options struct {
 	// asked for that the page's sound playback couldn't play (a plugin
 	// swapped in a file Clack can't decode): the caller plays it itself.
 	SoundFailed func(url string)
+	// Audio decodes and encodes the page's audio (jsrt's Options.Audio):
+	// decodeAudioData and MediaRecorder, which CustomNameRecording reads
+	// and converts the file it uploads with. nil: neither works.
+	Audio jsrt.AudioHost
 	// TaskTimeout bounds one JS task (jsrt's Options.Timeout).
 	TaskTimeout time.Duration
 	// LifecycleTimeout is the start/stop limit (Taut: 5 s).
@@ -517,6 +521,7 @@ func (t *Taut) restartAfterCrash(dead *runtime) {
 	t.ui.setPatchedComponents(nil)
 	t.ui.setComposerHooks(composerHooks{})
 	t.ui.setStatePatched(statePatchInfo{})
+	t.ui.history.reset()
 	t.ui.setOverlays(nil)
 	t.setPluginExperiments(nil) // the dead runtime's patches are gone
 	t.mu.Lock()

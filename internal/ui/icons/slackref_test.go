@@ -367,6 +367,12 @@ var slackRef = map[string]string{
 	"text":                         "text",
 	"three-d-graphic":              "three-d-graphic",
 	"zip":                          "zip",
+	// getFileTypeSvgIconName's outline glyphs (search's type filter, rich_text file slugs)
+	"binary":     "binary",
+	"document":   "document",
+	"gauge":      "gauge",
+	"pdf-file":   "pdf-file",
+	"transcript": "transcript",
 }
 
 // fontRef names, for each glyph of Slack's icon font the set draws (the
@@ -391,6 +397,7 @@ var fontRef = map[string]rune{
 	"real-checkbox-checked":   0xE323,
 	"circle-checkbox-checked": 0xE326, // the Add emoji dialog's installed pack (8DMj)
 	"form-checkbox-dash":      0xE706,
+	"exclamation-circle-font": 0xE210, // the files UnverifiedDisclosure's pillow (ljcx)
 	"pencil-glyph":            0xE024,
 	"scheduled-send-glyph":    0xE07A,
 	"arrow-up-medium":         0xE292,

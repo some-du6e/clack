@@ -130,6 +130,12 @@ func (s *Server) editConv(ch string, f func(c *slack.Conversation)) bool {
 	return false
 }
 
+// SetConvName renames ch before the client reads it (tests: a long
+// channel name for the details header); false when unknown.
+func (s *Server) SetConvName(ch, name string) bool {
+	return s.editConv(ch, func(c *slack.Conversation) { c.Name = name })
+}
+
 // dropConv removes ch from the workspace.
 func (s *Server) dropConv(ch string) {
 	s.convMu.Lock()

@@ -168,7 +168,7 @@ func newEngine(r *Runtime) (*engine, error) {
 			r.opts.Log("warn", "jsrt: CLACK_JSRT_HEAP_MEMORY is set: the engines' wasm memory is a Go slice, and growing it copies all of it (as before wasmmem.go)")
 		})
 	}
-	alloc := &wasmAllocator{stats: &r.wasmMem, heap: heap}
+	alloc := &wasmAllocator{stats: &r.wasmMem, heap: heap, log: r.opts.Log}
 	mod, err := wrt.InstantiateModule(experimental.WithMemoryAllocator(ctx, alloc), cm, mc)
 	if err != nil {
 		alloc.free() // a failed instantiation leaves wazero nothing to free it with
@@ -563,7 +563,26 @@ func (e *engine) stringify(h uint32) ([]byte, error) {
 		return []byte("null"), nil
 	}
 	defer e.release(s)
-	return []byte(e.toString(s)), nil
+	return e.toBytes(s), nil
+}
+
+// toBytes is toString's UTF-8 as bytes, copied out of the engine's memory
+// once (a string and then bytes copied a stringified value twice: a
+// channel of 908,000-character messages' slice, 2 × 88 MB a read).
+func (e *engine) toBytes(h uint32) []byte {
+	pl := e.call("jr_to_string", uint64(h))
+	if pl == 0 {
+		x := uint32(e.call("jr_exception")) &^ excBit
+		e.release(x)
+		return []byte{}
+	}
+	p, n := unpack(pl)
+	b := e.read(p, n)
+	e.call("jr_free_cstr", uint64(p))
+	if b == nil {
+		b = []byte{}
+	}
+	return b
 }
 
 func (e *engine) bytes(h uint32) []byte {

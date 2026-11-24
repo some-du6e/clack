@@ -63,7 +63,7 @@ const (
 // Span is one run of inline content.
 type Span struct {
 	Kind  SpanKind
-	Text  string // display text, already unescaped and resolved ("@karim", "#general", "@here", formatted date); never contains "\n" (see Break)
+	Text  string // display text, already unescaped and resolved ("@karim", "#general", "@here", formatted date); never contains "\n" (see Break) unless Br is a raw kind
 	Style Style
 	URL   string // Link: target. Emoji: image URL (custom or Slack CDN standard).
 	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N); Broadcast: "here"|"channel"|"everyone"; Date: unix seconds
@@ -101,7 +101,9 @@ type Span struct {
 
 	// Br (Break) is how a rich_text newline draws (BrKind). Every "\n"
 	// stays one Break whatever its Br, so plain text, copy and the
-	// newline budgets count the newlines the message has.
+	// newline budgets count the newlines the message has. On a Text span
+	// a raw kind (BrRaw…) says Text is a long rich_text element's text
+	// kept whole (rawtext.go), its newlines in it.
 	Br BrKind
 
 	// Pending (User, Channel, Usergroup in a canvas): the store can't
@@ -109,6 +111,11 @@ type Span struct {
 	// a control as Quip's slack-control-missing-content skeleton, never
 	// its id (core NameCanvasMention, richview canvasMissing).
 	Pending bool
+
+	// Control (Link in a canvas): the link is a Quip control's, a canvas,
+	// file, message or list mention (canvas/parse.go), not a link in the
+	// text: a save has to keep the control, never write it as a link.
+	Control bool
 }
 
 // BrKind says how a Break draws. A rich_text text element's newlines go
@@ -145,6 +152,18 @@ const (
 	BrPara
 	// BrNone draws nothing (a newline Slack's placeholders swallow).
 	BrNone
+
+	// The raw kinds go on a Text span, never on a Break: its Text is a
+	// rich_text text element's text kept whole, newlines and all, and it
+	// stands for the Text and Break spans the element would be cut into
+	// (rawtext.go: RawLines, Pieces). BrRaw is an element after its
+	// section's first, BrRawLead isFirstElementInSection, BrRawFirst
+	// isFirstElementInFirstSection, BrRawPre a rich_text_preformatted
+	// element's text (rawLineBreaks: each "\n" a BrPlain Break).
+	BrRaw
+	BrRawLead
+	BrRawFirst
+	BrRawPre
 )
 
 // BlockKind says what a block is.
@@ -404,7 +423,12 @@ type Attachment struct {
 	// Index is the attachment's place in the message's attachments array
 	// (the search answer's order: core.AttachmentKey keys an attachment
 	// without an id by it).
-	Index       int
+	Index int
+	// MediaKey is the attachment's media expandable without the view's
+	// context (getExpandableKey("attachment", the message's ts, {id,
+	// imageUrl, …}): richview appends Options.ViewContext; "" for an
+	// attachment without image, audio or video).
+	MediaKey    string
 	OriginalURL string
 	ServiceURL  string
 	VideoHTML   bool
@@ -426,6 +450,12 @@ type Attachment struct {
 	BotName      string
 	LinkedInText bool
 	Hidden       bool
+	// HideBorder is MessageAttachment's hideBorder (a canvas link card's
+	// EmbeddedFallbackUnfurl): no colour bar. NoMaxWidth is its
+	// unsetWidthStyle (.p-embedded_fallback_unfurl .c-message_attachment
+	// {max-width:none}): the card's width, not the 600px cap.
+	HideBorder bool
+	NoMaxWidth bool
 	// Kit: the attachment has Block Kit blocks (Slack draws it as
 	// MessageAttachmentDefaultV2: the color bar and the blocks only);
 	// they are Text[KitFrom:].
@@ -458,6 +488,11 @@ type Attachment struct {
 	// draws such an attachment as MessageAttachmentWorkObject, an entity
 	// card, instead of an unfurl.
 	WorkObject *WorkObject
+
+	// VideoBlock: a video block's, which Slack draws as VideoBlock (u8h8),
+	// not an unfurl; BlockID is its block_id ("" without one).
+	VideoBlock bool
+	BlockID    string
 }
 
 // File is a file shared in a message.

@@ -21,7 +21,6 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/i18n"
-	"github.com/some-du6e/clack/internal/slackasset"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
@@ -647,8 +646,8 @@ func dropSprite(gtx layout.Context, img paint.ImageOp, pos, t, sz f32.Point, deg
 
 // ---- the sprites ----
 
-// the sprite sheet is slackasset's (blockkit's file_input dialog cuts it too)
-var dropSpritesPNG, _ = slackasset.Get(slackasset.DragDropSprites)
+//go:embed assets/dragdrop/dragdrop_sprites@2x-ca59764.png
+var dropSpritesPNG []byte
 
 //go:embed assets/dragdrop/dragdrop_threads_sprites@2x-f3aaf0a.png
 var dropThreadSpritesPNG []byte

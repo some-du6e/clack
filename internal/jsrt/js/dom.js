@@ -1751,25 +1751,551 @@
   AudioCtor.prototype = htmlClasses.HTMLAudioElement.prototype;
   const OptionCtor = function Option(text = '', value, defSel, sel) { const o = document.createElement('option'); o.textContent = text; if (value !== undefined) o.value = value; if (defSel) o.defaultSelected = true; if (sel) o.selected = true; return o; };
   OptionCtor.prototype = htmlClasses.HTMLOptionElement.prototype;
-  // Web Audio / media capture are not available natively; constructing
-  // them works, using them fails like a browser without permission.
-  const notSupported = (what) => () => Promise.reject(new DOMException(what + ' is not supported in Clack', 'NotSupportedError'));
-  class AudioContext extends EventTarget {
-    constructor() { super(); this.state = 'suspended'; this.sampleRate = 48000; this.currentTime = 0; this.destination = { maxChannelCount: 2 }; }
-    resume() { return Promise.resolve(); } suspend() { return Promise.resolve(); } close() { this.state = 'closed'; return Promise.resolve(); }
-    decodeAudioData(buf, ok, err) { const p = notSupported('decodeAudioData')(); if (err) p.catch(err); return p; }
-    createGain() { return { gain: { value: 1, setValueAtTime() {} }, connect() {}, disconnect() {} }; }
-    createOscillator() { return { frequency: { value: 440 }, connect() {}, disconnect() {}, start() {}, stop() {} }; }
-    createBufferSource() { return { buffer: null, connect() {}, disconnect() {}, start() {}, stop() {}, addEventListener() {} }; }
-    createMediaStreamDestination() { return { stream: new MediaStream(), connect() {}, disconnect() {} }; }
-    createAnalyser() { return { connect() {}, disconnect() {}, getByteFrequencyData() {}, fftSize: 2048 }; }
+  // ---- Web Audio and MediaRecorder ----
+  // Chromium's, over Options.Audio (audio.go: H.audioDecode, H.audioSupports,
+  // H.audioRecord*). An AudioContext keeps Chromium's clock: currentTime
+  // moves on in render quanta (128 frames) while the context runs and
+  // stands still while it is suspended or closed. decodeAudioData detaches
+  // its ArrayBuffer and decodes the whole file into an AudioBuffer at the
+  // context's rate. A buffer source plays its buffer from its start time
+  // (linear interpolation where its rate or playbackRate differs, as
+  // Chromium's AudioBufferSourceNode reads it), and fires ended once it has
+  // played out or reached its stop time. A MediaStreamAudioDestinationNode's
+  // stream carries what the nodes feeding it play (gain applied, channels up-
+  // or down-mixed by the speakers rules); a MediaRecorder of that stream
+  // records it from start() to stop() (pause() leaves a gap out), rendered
+  // as the context's clock moves and handed to the host as it goes, which
+  // encodes it at stop: one dataavailable with the whole file, then stop
+  // (the host records up to about six minutes of stereo: a longer
+  // recording stops there with an error event). Clack renders no sound to
+  // the speakers (the destination node plays nothing audible), records no
+  // microphone (getUserMedia rejects), fires no timeslice fragments
+  // (start(timeslice) records the one blob at stop; requestData() hands an
+  // empty one, so the blobs still join into the recording) and applies
+  // param automation at once.
+  const QUANTUM = 128;
+  const RATE_MIN = 3000, RATE_MAX = 768000;
+  const queueEvent = (t, ev) => setTimeout(() => t.dispatchEvent(ev), 0);
+  class AudioParam {
+    constructor(value, min = -3.4028234663852886e38, max = 3.4028234663852886e38) {
+      this.value = value; this.defaultValue = value; this.minValue = min; this.maxValue = max; this.automationRate = 'a-rate';
+    }
+    setValueAtTime(v) { this.value = +v; return this; }
+    linearRampToValueAtTime(v) { this.value = +v; return this; }
+    exponentialRampToValueAtTime(v) { this.value = +v; return this; }
+    setTargetAtTime(v) { this.value = +v; return this; }
+    setValueCurveAtTime(c) { if (c && c.length) this.value = +c[c.length - 1]; return this; }
+    cancelScheduledValues() { return this; }
+    cancelAndHoldAtTime() { return this; }
   }
-  class MediaStream extends EventTarget { constructor() { super(); this.id = crypto.randomUUID(); this.active = false; } getTracks() { return []; } getAudioTracks() { return []; } getVideoTracks() { return []; } addTrack() {} removeTrack() {} clone() { return new MediaStream(); } }
+  class AudioNode extends EventTarget {
+    constructor(context, ins, outs, channels = 2) {
+      super();
+      if (!(context instanceof BaseAudioContext)) throw new TypeError("Failed to construct 'AudioNode': parameter 1 is not of type 'BaseAudioContext'.");
+      def(this, '_ctx', context);
+      this.numberOfInputs = ins; this.numberOfOutputs = outs;
+      this.channelCount = channels; this.channelCountMode = 'max'; this.channelInterpretation = 'speakers';
+      def(this, '_ins', new Set()); def(this, '_outs', new Set());
+    }
+    get context() { return this._ctx; }
+    connect(dest, output = 0, input = 0) {
+      if (dest instanceof AudioParam) return undefined; // modulation isn't rendered
+      if (!(dest instanceof AudioNode)) throw new TypeError("Failed to execute 'connect' on 'AudioNode': parameter 1 is not of type 'AudioNode'.");
+      if (dest._ctx !== this._ctx) throw new DOMException("Failed to execute 'connect' on 'AudioNode': cannot connect to an AudioNode belonging to a different audio context.", 'InvalidAccessError');
+      if (output >= this.numberOfOutputs) throw new DOMException(`Failed to execute 'connect' on 'AudioNode': output index (${output}) exceeds number of outputs (${this.numberOfOutputs}).`, 'IndexSizeError');
+      if (input >= dest.numberOfInputs) throw new DOMException(`Failed to execute 'connect' on 'AudioNode': input index (${input}) exceeds number of inputs (${dest.numberOfInputs}).`, 'IndexSizeError');
+      this._outs.add(dest); dest._ins.add(this);
+      return dest;
+    }
+    disconnect(dest) {
+      if (dest === undefined || typeof dest === 'number') {
+        for (const d of this._outs) d._ins.delete(this);
+        this._outs.clear();
+        return;
+      }
+      if (!this._outs.has(dest)) throw new DOMException("Failed to execute 'disconnect' on 'AudioNode': the given destination is not connected.", 'InvalidAccessError');
+      this._outs.delete(dest); dest._ins.delete(this);
+    }
+  }
+  // mixInputs adds what node's inputs play over out's frames, from context
+  // time t0 at rate, into out (one Float32Array per channel).
+  const mixInputs = (node, out, t0, rate, depth = 0) => {
+    if (depth > 64) return;
+    for (const src of node._ins) {
+      if (src._render) { src._render(out, t0, rate); continue; }
+      const g = src instanceof GainNode ? +src.gain.value : src instanceof AnalyserNode ? 1 : 0;
+      if (!g) continue;
+      const tmp = out.map((c) => new Float32Array(c.length));
+      mixInputs(src, tmp, t0, rate, depth + 1);
+      for (let c = 0; c < out.length; c++) {
+        const o = out[c], x = tmp[c];
+        for (let i = 0; i < o.length; i++) o[i] += g * x[i];
+      }
+    }
+  };
+  // addFrame adds one frame of src channels into out's channels at i, by
+  // the speakers rules: mono to every front channel, 5.1 down to stereo,
+  // stereo down to mono; otherwise channel to channel.
+  const addFrame = (out, i, s) => {
+    const n = out.length, m = s.length;
+    if (m === n) { for (let c = 0; c < n; c++) out[c][i] += s[c]; return; }
+    if (m === 1) { out[0][i] += s[0]; if (n > 1) out[1][i] += s[0]; return; }
+    if (n === 1) { out[0][i] += m === 2 ? (s[0] + s[1]) / 2 : s[0]; return; }
+    if (m === 6 && n === 2) {
+      out[0][i] += s[0] + Math.SQRT1_2 * (s[2] + s[4]);
+      out[1][i] += s[1] + Math.SQRT1_2 * (s[2] + s[5]);
+      return;
+    }
+    for (let c = 0; c < Math.min(n, m); c++) out[c][i] += s[c];
+  };
+  class AudioScheduledSourceNode extends AudioNode {
+    constructor(context) {
+      super(context, 0, 1);
+      this.onended = null;
+      def(this, '_startAt', null); def(this, '_stopAt', Infinity); def(this, '_ended', false);
+    }
+    start(when = 0) {
+      if (this._startAt !== null) throw new DOMException("Failed to execute 'start' on 'AudioScheduledSourceNode': cannot call start more than once.", 'InvalidStateError');
+      when = +when;
+      if (!(when >= 0)) throw new RangeError(`Failed to execute 'start' on 'AudioScheduledSourceNode': The start time provided (${when}) is less than the minimum bound (0).`);
+      this._startAt = Math.max(when, this._ctx.currentTime);
+      this._schedule();
+    }
+    stop(when = 0) {
+      if (this._startAt === null) throw new DOMException("Failed to execute 'stop' on 'AudioScheduledSourceNode': cannot call stop without calling start first.", 'InvalidStateError');
+      when = +when;
+      if (!(when >= 0)) throw new RangeError(`Failed to execute 'stop' on 'AudioScheduledSourceNode': The stop time provided (${when}) is less than the minimum bound (0).`);
+      this._stopAt = Math.max(when, this._ctx.currentTime);
+      this._schedule();
+    }
+    _end() { return this._startAt === null ? Infinity : this._stopAt; }
+    _schedule() {
+      if (this._ended || this._startAt === null) return;
+      this._ctx._at(this, this._end(), () => {
+        if (this._ended) return;
+        this._ended = true;
+        this.dispatchEvent(new Event('ended'));
+      });
+    }
+  }
+  class AudioBufferSourceNode extends AudioScheduledSourceNode {
+    constructor(context, opts = {}) {
+      super(context);
+      def(this, '_buffer', null); def(this, '_offset', 0); def(this, '_dur', Infinity);
+      this.loop = !!opts.loop; this.loopStart = +opts.loopStart || 0; this.loopEnd = +opts.loopEnd || 0;
+      this.playbackRate = new AudioParam(opts.playbackRate ?? 1);
+      this.detune = new AudioParam(opts.detune ?? 0);
+      if (opts.buffer) this.buffer = opts.buffer;
+    }
+    get buffer() { return this._buffer; }
+    set buffer(b) {
+      if (b !== null && !(b instanceof AudioBuffer)) throw new TypeError("Failed to set the 'buffer' property on 'AudioBufferSourceNode': The provided value is not of type 'AudioBuffer'.");
+      if (b && this._buffer) throw new DOMException("Failed to set the 'buffer' property on 'AudioBufferSourceNode': Cannot set buffer to non-null after it has been already been set to a non-null buffer", 'InvalidStateError');
+      this._buffer = b;
+      this._schedule();
+    }
+    start(when = 0, offset = 0, duration = undefined) {
+      if (this._startAt !== null) throw new DOMException("Failed to execute 'start' on 'AudioScheduledSourceNode': cannot call start more than once.", 'InvalidStateError');
+      if (duration !== undefined && !(+duration >= 0)) throw new RangeError(`Failed to execute 'start' on 'AudioBufferSourceNode': The duration provided (${duration}) is less than the minimum bound (0).`);
+      if (!(+offset >= 0)) throw new RangeError(`Failed to execute 'start' on 'AudioBufferSourceNode': The offset provided (${offset}) is less than the minimum bound (0).`);
+      this._offset = +offset; this._dur = duration === undefined ? Infinity : +duration;
+      super.start(when);
+    }
+    _rate() { return +this.playbackRate.value * Math.pow(2, (+this.detune.value || 0) / 1200); }
+    _end() {
+      if (this._startAt === null) return Infinity;
+      const b = this._buffer, r = this._rate();
+      let end = this._stopAt;
+      if (b && r > 0) {
+        const left = this.loop ? this._dur : Math.min(this._dur, Math.max(0, b.duration - this._offset));
+        if (left !== Infinity) end = Math.min(end, this._startAt + left / r);
+      }
+      return end;
+    }
+    _render(out, t0, rate) {
+      const b = this._buffer, r = this._rate();
+      if (!b || this._startAt === null || !(r > 0)) return;
+      const start = this._startAt, end = this._end(), n = out[0].length, br = b.sampleRate, len = b.length;
+      const ls = this.loop && this.loopEnd > this.loopStart ? Math.max(0, this.loopStart) * br : 0;
+      const le = this.loop && this.loopEnd > this.loopStart ? Math.min(this.loopEnd * br, len) : len;
+      const chans = [];
+      for (let c = 0; c < b.numberOfChannels; c++) chans.push(b._data[c]);
+      const s = new Float32Array(chans.length);
+      const first = Math.max(0, Math.ceil((start - t0) * rate - 1e-9)), last = Math.min(n, Math.ceil((end - t0) * rate - 1e-9));
+      for (let i = first; i < last; i++) {
+        let pos = this._offset * br + (t0 + i / rate - start) * br * r;
+        if (this.loop && le > ls && pos >= le) pos = ls + ((pos - ls) % (le - ls));
+        if (pos < 0 || pos >= len) continue;
+        const j = Math.floor(pos), f = pos - j, k = j + 1 < (this.loop ? le : len) ? j + 1 : this.loop ? Math.floor(ls) : -1;
+        for (let c = 0; c < chans.length; c++) {
+          const x = chans[c];
+          s[c] = k < 0 ? x[j] * (1 - f) : x[j] + f * (x[k] - x[j]);
+        }
+        addFrame(out, i, s);
+      }
+    }
+  }
+  class OscillatorNode extends AudioScheduledSourceNode {
+    constructor(context, opts = {}) {
+      super(context);
+      this.type = opts.type || 'sine';
+      this.frequency = new AudioParam(opts.frequency ?? 440);
+      this.detune = new AudioParam(opts.detune ?? 0);
+    }
+    setPeriodicWave() { this.type = 'custom'; }
+    _render(out, t0, rate) {
+      if (this._startAt === null) return;
+      const n = out[0].length, f = +this.frequency.value * Math.pow(2, (+this.detune.value || 0) / 1200);
+      const first = Math.max(0, Math.ceil((this._startAt - t0) * rate - 1e-9)), last = Math.min(n, Math.ceil((this._end() - t0) * rate - 1e-9));
+      const s = new Float32Array(1);
+      for (let i = first; i < last; i++) {
+        const ph = (((t0 + i / rate - this._startAt) * f) % 1 + 1) % 1;
+        switch (this.type) {
+          case 'square': s[0] = ph < 0.5 ? 1 : -1; break;
+          case 'sawtooth': s[0] = 2 * ph - 1; break;
+          case 'triangle': s[0] = ph < 0.5 ? 4 * ph - 1 : 3 - 4 * ph; break;
+          case 'custom': s[0] = 0; break;
+          default: s[0] = Math.sin(2 * Math.PI * ph);
+        }
+        addFrame(out, i, s);
+      }
+    }
+  }
+  class GainNode extends AudioNode {
+    constructor(context, opts = {}) { super(context, 1, 1); this.gain = new AudioParam(opts.gain ?? 1); }
+  }
+  class AnalyserNode extends AudioNode {
+    constructor(context, opts = {}) {
+      super(context, 1, 1);
+      this.fftSize = opts.fftSize ?? 2048; this.minDecibels = -100; this.maxDecibels = -30; this.smoothingTimeConstant = 0.8;
+    }
+    get frequencyBinCount() { return this.fftSize / 2; }
+    getByteFrequencyData(a) { a.fill(0); } getFloatFrequencyData(a) { a.fill(-Infinity); }
+    getByteTimeDomainData(a) { a.fill(128); } getFloatTimeDomainData(a) { a.fill(0); }
+  }
+  class AudioDestinationNode extends AudioNode {
+    constructor(context, channels = 2) { super(context, 1, 0, channels); this.maxChannelCount = channels; this.channelCountMode = 'explicit'; }
+  }
+  class MediaStreamTrack extends EventTarget {
+    constructor(kind, node = null) {
+      super();
+      def(this, '_node', node);
+      this.kind = kind; this.id = crypto.randomUUID(); this.label = node ? 'MediaStreamAudioDestinationNode' : '';
+      this.enabled = true; this.muted = false; this.readyState = 'live'; this.contentHint = '';
+      this.onended = null; this.onmute = null; this.onunmute = null;
+    }
+    stop() { this.readyState = 'ended'; }
+    clone() { const t = new MediaStreamTrack(this.kind, this._node); t.enabled = this.enabled; return t; }
+    getSettings() { return this._node ? { channelCount: this._node.channelCount, sampleRate: this._node._ctx.sampleRate, deviceId: '', groupId: '' } : {}; }
+    getCapabilities() { return {}; }
+    getConstraints() { return {}; }
+    applyConstraints() { return Promise.resolve(); }
+  }
+  class MediaStream extends EventTarget {
+    constructor(x) {
+      super();
+      this.id = crypto.randomUUID();
+      def(this, '_tracks', x instanceof MediaStream ? x.getTracks() : Array.isArray(x) ? x.filter((t) => t instanceof MediaStreamTrack) : []);
+      this.onaddtrack = null; this.onremovetrack = null;
+    }
+    get active() { return this._tracks.some((t) => t.readyState === 'live'); }
+    getTracks() { return this._tracks.slice(); }
+    getAudioTracks() { return this._tracks.filter((t) => t.kind === 'audio'); }
+    getVideoTracks() { return this._tracks.filter((t) => t.kind === 'video'); }
+    getTrackById(id) { return this._tracks.find((t) => t.id === id) || null; }
+    addTrack(t) { if (t instanceof MediaStreamTrack && !this._tracks.includes(t)) this._tracks.push(t); }
+    removeTrack(t) { const i = this._tracks.indexOf(t); if (i >= 0) this._tracks.splice(i, 1); }
+    clone() { return new MediaStream(this._tracks.map((t) => t.clone())); }
+  }
+  class MediaStreamAudioDestinationNode extends AudioNode {
+    constructor(context, opts = {}) {
+      super(context, 1, 0, opts.channelCount ?? 2);
+      this.channelCountMode = 'explicit';
+      def(this, '_stream', new MediaStream([new MediaStreamTrack('audio', this)]));
+    }
+    get stream() { return this._stream; }
+  }
+  class AudioBuffer {
+    constructor(opts) {
+      if (!opts || typeof opts !== 'object') throw new TypeError("Failed to construct 'AudioBuffer': 1 argument required, but only 0 present.");
+      const ch = opts.numberOfChannels === undefined ? 1 : Math.floor(+opts.numberOfChannels), length = Math.floor(+opts.length), rate = +opts.sampleRate;
+      if (!(ch >= 1 && ch <= 32)) throw new DOMException(`Failed to construct 'AudioBuffer': The number of channels provided (${opts.numberOfChannels}) is outside the range [1, 32].`, 'NotSupportedError');
+      if (!(length >= 1)) throw new DOMException(`Failed to construct 'AudioBuffer': The number of frames provided (${opts.length}) is less than or equal to the minimum bound (0).`, 'NotSupportedError');
+      if (!(rate >= RATE_MIN && rate <= RATE_MAX)) throw new DOMException(`Failed to construct 'AudioBuffer': The sample rate provided (${opts.sampleRate}) is outside the range [${RATE_MIN}, ${RATE_MAX}].`, 'NotSupportedError');
+      def(this, '_rate', rate); def(this, '_len', length);
+      def(this, '_data', Array.from({ length: ch }, () => new Float32Array(length)));
+    }
+    get sampleRate() { return this._rate; }
+    get length() { return this._len; }
+    get duration() { return this._len / this._rate; }
+    get numberOfChannels() { return this._data.length; }
+    getChannelData(c) {
+      if (!(c >= 0 && c < this._data.length)) throw new DOMException(`Failed to execute 'getChannelData' on 'AudioBuffer': channel index (${c}) exceeds number of channels (${this._data.length})`, 'IndexSizeError');
+      return this._data[c];
+    }
+    copyFromChannel(dest, c, start = 0) {
+      const x = this.getChannelData(c);
+      if (start < x.length) dest.set(x.subarray(start, start + Math.min(dest.length, x.length - start)));
+    }
+    copyToChannel(src, c, start = 0) {
+      const x = this.getChannelData(c);
+      if (start < x.length) x.set(src.subarray(0, Math.min(src.length, x.length - start)), start);
+    }
+  }
+  class BaseAudioContext extends EventTarget {
+    constructor(rate, channels = 2) {
+      super();
+      def(this, '_rate', rate); def(this, '_t0', 0); def(this, '_wall', null); def(this, '_state', 'suspended'); def(this, '_timers', new Map());
+      this.onstatechange = null;
+      def(this, '_dest', new AudioDestinationNode(this, channels));
+    }
+    get sampleRate() { return this._rate; }
+    get state() { return this._state; }
+    get destination() { return this._dest; }
+    get currentTime() {
+      let t = this._t0;
+      if (this._wall !== null) t += (performance.now() - this._wall) / 1000;
+      return Math.floor(t * this._rate / QUANTUM + 1e-9) * QUANTUM / this._rate;
+    }
+    _setState(s) {
+      if (this._state === s) return;
+      this._state = s;
+      queueEvent(this, new Event('statechange'));
+    }
+    // the clock runs (resume) or stands (suspend, close)
+    _run() {
+      if (this._wall === null) this._wall = performance.now();
+      for (const [k, x] of this._timers) this._arm(k, x);
+    }
+    _halt() {
+      if (this._wall !== null) { this._t0 += (performance.now() - this._wall) / 1000; this._wall = null; }
+      for (const [, x] of this._timers) clearTimeout(x.id);
+    }
+    // _at runs fn once the clock reaches time (for key, replacing its last)
+    _at(key, time, fn) {
+      const old = this._timers.get(key);
+      if (old) clearTimeout(old.id);
+      if (!Number.isFinite(time)) { this._timers.delete(key); return; }
+      const x = { time, fn, id: null };
+      this._timers.set(key, x);
+      this._arm(key, x);
+    }
+    // (a timer's delay is at most 2^31-1 ms: one further off fires that
+    // far ahead and re-arms, where setTimeout would take it as 0 and the
+    // timer would re-arm at once, over and over)
+    _arm(key, x) {
+      if (this._wall === null) return;
+      clearTimeout(x.id);
+      x.id = setTimeout(() => {
+        if (this._timers.get(key) !== x || this._wall === null) return;
+        if (this.currentTime < x.time - 1e-9) { this._arm(key, x); return; }
+        this._timers.delete(key);
+        x.fn();
+      }, Math.min(2147483647, Math.max(0, (x.time - this.currentTime) * 1000)));
+    }
+    createBuffer(numberOfChannels, length, sampleRate) { return new AudioBuffer({ numberOfChannels, length, sampleRate }); }
+    createBufferSource() { return new AudioBufferSourceNode(this); }
+    createOscillator() { return new OscillatorNode(this); }
+    createGain() { return new GainNode(this); }
+    createAnalyser() { return new AnalyserNode(this); }
+    decodeAudioData(audioData, ok, err) {
+      const settle = (p) => {
+        p.then((b) => { if (typeof ok === 'function') ok(b); }, (e) => { if (typeof err === 'function') err(e); });
+        return p;
+      };
+      if (!(audioData instanceof ArrayBuffer)) return settle(Promise.reject(new TypeError("Failed to execute 'decodeAudioData' on 'BaseAudioContext': parameter 1 is not of type 'ArrayBuffer'.")));
+      if (audioData.detached === true) return settle(Promise.reject(new DOMException("Failed to execute 'decodeAudioData' on 'BaseAudioContext': Cannot decode detached ArrayBuffer", 'DataCloneError')));
+      if (!H.audioDecode) return settle(Promise.reject(new DOMException('Unable to decode audio data', 'EncodingError')));
+      const p = H.audioDecode(audioData, this._rate); // the host reads the bytes now
+      try { if (typeof audioData.transfer === 'function') audioData.transfer(0); } catch {}
+      return settle(p.then((d) => {
+        const b = new AudioBuffer({ numberOfChannels: d.channels, length: d.length, sampleRate: d.rate });
+        const all = new Float32Array(d.data.buffer, d.data.byteOffset, d.channels * d.length);
+        for (let c = 0; c < d.channels; c++) b._data[c].set(all.subarray(c * d.length, (c + 1) * d.length));
+        return b;
+      }, () => { throw new DOMException('Unable to decode audio data', 'EncodingError'); }));
+    }
+  }
+  class AudioContext extends BaseAudioContext {
+    constructor(opts = {}) {
+      const rate = opts && opts.sampleRate !== undefined ? +opts.sampleRate : 48000;
+      if (!(rate >= RATE_MIN && rate <= RATE_MAX)) throw new DOMException(`Failed to construct 'AudioContext': The provided sample rate (${opts.sampleRate}) is outside the range [${RATE_MIN}, ${RATE_MAX}].`, 'NotSupportedError');
+      super(rate);
+      this.baseLatency = QUANTUM / rate; this.outputLatency = 0; this.sinkId = '';
+      // allowed to start (Electron's autoplay policy): running at once
+      this._setState('running');
+      this._run();
+    }
+    resume() {
+      if (this._state === 'closed') return Promise.reject(new DOMException('Cannot resume a context that has been closed', 'InvalidStateError'));
+      this._setState('running');
+      this._run();
+      return Promise.resolve();
+    }
+    suspend() {
+      if (this._state === 'closed') return Promise.reject(new DOMException('Cannot suspend a context that has been closed', 'InvalidStateError'));
+      this._halt();
+      this._setState('suspended');
+      return Promise.resolve();
+    }
+    close() {
+      if (this._state === 'closed') return Promise.reject(new DOMException('Cannot close a context that is being closed or has already been closed.', 'InvalidStateError'));
+      this._halt();
+      this._timers.clear();
+      this._setState('closed');
+      return Promise.resolve();
+    }
+    getOutputTimestamp() { return { contextTime: this.currentTime, performanceTime: performance.now() }; }
+    createMediaStreamDestination(opts) { return new MediaStreamAudioDestinationNode(this, opts); }
+  }
+  class OfflineAudioContext extends BaseAudioContext {
+    constructor(a, b, c) {
+      const o = a !== null && typeof a === 'object' ? a : { numberOfChannels: a, length: b, sampleRate: c };
+      const ch = o.numberOfChannels === undefined ? 1 : Math.floor(+o.numberOfChannels), length = Math.floor(+o.length), rate = +o.sampleRate;
+      if (!(ch >= 1 && ch <= 32)) throw new DOMException(`Failed to construct 'OfflineAudioContext': The number of channels provided (${o.numberOfChannels}) is outside the range [1, 32].`, 'NotSupportedError');
+      if (!(length >= 1)) throw new DOMException(`Failed to construct 'OfflineAudioContext': The number of frames provided (${o.length}) is less than or equal to the minimum bound (0).`, 'NotSupportedError');
+      if (!(rate >= RATE_MIN && rate <= RATE_MAX)) throw new DOMException(`Failed to construct 'OfflineAudioContext': The sampleRate provided (${o.sampleRate}) is outside the range [${RATE_MIN}, ${RATE_MAX}].`, 'NotSupportedError');
+      super(rate, ch);
+      def(this, '_length', length); def(this, '_rendered', false);
+      this.oncomplete = null;
+    }
+    get length() { return this._length; }
+    startRendering() {
+      if (this._rendered) return Promise.reject(new DOMException("Failed to execute 'startRendering' on 'OfflineAudioContext': cannot call startRendering more than once", 'InvalidStateError'));
+      this._rendered = true;
+      this._setState('running');
+      const ch = this._dest.channelCount, out = Array.from({ length: ch }, () => new Float32Array(this._length));
+      mixInputs(this._dest, out, 0, this._rate);
+      const buf = new AudioBuffer({ numberOfChannels: ch, length: this._length, sampleRate: this._rate });
+      out.forEach((x, i) => buf._data[i].set(x));
+      this._t0 = this._length / this._rate;
+      const due = [...this._timers].filter(([, x]) => x.time <= this._t0 + 1e-9).sort((p, q) => p[1].time - q[1].time);
+      for (const [k] of due) this._timers.delete(k);
+      return new Promise((resolve) => setTimeout(() => {
+        for (const [, x] of due) x.fn();
+        this._setState('closed');
+        const ev = new Event('complete');
+        ev.renderedBuffer = buf;
+        this.dispatchEvent(ev);
+        resolve(buf);
+      }, 0));
+    }
+    resume() { return Promise.reject(new DOMException("Failed to execute 'resume' on 'OfflineAudioContext': cannot resume an offline context that has not started", 'InvalidStateError')); }
+    suspend() { return Promise.reject(new DOMException("Failed to execute 'suspend' on 'OfflineAudioContext': cannot suspend an offline context", 'NotSupportedError')); }
+  }
+  class BlobEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      if (!init || !(init.data instanceof Blob)) throw new TypeError("Failed to construct 'BlobEvent': required member data is undefined.");
+      this.data = init.data;
+      this.timecode = init.timecode ?? 0;
+    }
+  }
+  // what a recorder records with no mimeType: the first type it supports
+  const recorderTypes = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
   class MediaRecorder extends EventTarget {
-    constructor(stream, opts) { super(); this.stream = stream; this.state = 'inactive'; this.mimeType = (opts && opts.mimeType) || ''; }
-    static isTypeSupported() { return false; }
-    start() { throw new DOMException('MediaRecorder is not supported in Clack', 'NotSupportedError'); }
-    stop() {} pause() {} resume() {} requestData() {}
+    constructor(stream, options = {}) {
+      super();
+      if (!(stream instanceof MediaStream)) throw new TypeError("Failed to construct 'MediaRecorder': parameter 1 is not of type 'MediaStream'.");
+      const mime = options && options.mimeType != null ? String(options.mimeType) : '';
+      if (mime && !MediaRecorder.isTypeSupported(mime)) throw new DOMException(`Failed to construct 'MediaRecorder': Failed to initialize native MediaRecorder the type provided (${mime}) is not supported.`, 'NotSupportedError');
+      def(this, '_stream', stream); def(this, '_mime', mime); def(this, '_type', null); def(this, '_state', 'inactive'); def(this, '_rec', null);
+      this.audioBitsPerSecond = (options && (options.audioBitsPerSecond ?? options.bitsPerSecond)) || 128000;
+      this.videoBitsPerSecond = (options && options.videoBitsPerSecond) || 0;
+      this.audioBitrateMode = (options && options.audioBitrateMode) || 'variable';
+      this.onstart = null; this.onstop = null; this.ondataavailable = null; this.onpause = null; this.onresume = null; this.onerror = null;
+    }
+    get stream() { return this._stream; }
+    get state() { return this._state; }
+    get mimeType() { return this._type ?? this._mime; }
+    static isTypeSupported(type) {
+      if (type === '') return true;
+      return typeof type === 'string' && typeof H.audioSupports === 'function' && H.audioSupports(type) === true;
+    }
+    start(timeslice) {
+      if (this._state !== 'inactive') throw new DOMException(`Failed to execute 'start' on 'MediaRecorder': The MediaRecorder's state is '${this._state}'.`, 'InvalidStateError');
+      const live = this._stream.getTracks().filter((t) => t.readyState === 'live');
+      if (!live.length) throw new DOMException("Failed to execute 'start' on 'MediaRecorder': The MediaRecorder cannot start because there are no audio or video tracks available.", 'NotSupportedError');
+      const track = live.find((t) => t.kind === 'audio' && t._node);
+      let type = this._mime || recorderTypes.find((t) => MediaRecorder.isTypeSupported(t));
+      if (!track || !type || live.some((t) => t.kind === 'video')) throw new DOMException("Failed to execute 'start' on 'MediaRecorder': There was an error starting the MediaRecorder.", 'NotSupportedError');
+      if (!/;\s*codecs=/i.test(type)) type += ';codecs=opus';
+      const node = track._node, ctx = node._ctx;
+      const rec = { node, ctx, ch: Math.min(2, Math.max(1, node.channelCount)), rate: ctx.sampleRate, at: ctx.currentTime, paused: false, id: H.audioRecord(), full: false, tick: null };
+      this._type = type; this._state = 'recording'; this._rec = rec;
+      rec.tick = setInterval(() => {
+        this._capture(rec);
+        if (rec.full && this._rec === rec) this._finish(); // the host holds all it records: stopped there
+      }, 100);
+      queueEvent(this, new Event('start'));
+    }
+    // _capture renders what the stream carried since the last capture and
+    // hands it to the host, which keeps the recording (audioRecordPush):
+    // the page holds 100 ms of it at a time. Once the host holds all it
+    // records (jsrt's maxRecordSamples), full: the recorder stops.
+    _capture(rec) {
+      const now = rec.ctx.currentTime;
+      if (!rec.paused && !rec.full && now > rec.at) {
+        const n = Math.round((now - rec.at) * rec.rate);
+        if (n > 0) {
+          const ch = rec.ch, out = Array.from({ length: ch }, () => new Float32Array(n));
+          mixInputs(rec.node, out, rec.at, rec.rate);
+          const pcm = new Float32Array(n * ch);
+          for (let i = 0; i < n; i++) for (let c = 0; c < ch; c++) pcm[i * ch + c] = out[c][i];
+          if (!H.audioRecordPush(rec.id, pcm)) rec.full = true;
+        }
+      }
+      rec.at = now;
+    }
+    stop() {
+      if (this._state === 'inactive') return;
+      this._capture(this._rec);
+      this._finish();
+    }
+    // _finish ends the recording: the host encodes what it holds, then
+    // dataavailable with the file and stop. One the host couldn't take
+    // all of (full) stops as on a fatal error (the spec's "stop media
+    // recorder with an error"): error first, then the file so far.
+    _finish() {
+      const rec = this._rec;
+      clearInterval(rec.tick);
+      this._rec = null; this._state = 'inactive';
+      const type = this._type;
+      const done = (bytes) => {
+        this.dispatchEvent(new BlobEvent('dataavailable', { data: new Blob(bytes ? [bytes] : [], { type }) }));
+        this.dispatchEvent(new Event('stop'));
+      };
+      const fail = (message) => {
+        const ev = new Event('error');
+        ev.error = new DOMException(message, 'UnknownError');
+        this.dispatchEvent(ev);
+      };
+      H.audioRecordEncode(rec.id, rec.ch, rec.rate, this.audioBitsPerSecond, type).then((bytes) => {
+        if (rec.full) fail('MediaRecorder: the recording is longer than this page records');
+        done(bytes);
+      }, (e) => {
+        fail((e && e.message) || String(e));
+        done(null);
+      });
+    }
+    pause() {
+      if (this._state === 'inactive') throw new DOMException("Failed to execute 'pause' on 'MediaRecorder': The MediaRecorder's state is 'inactive'.", 'InvalidStateError');
+      if (this._state === 'paused') return;
+      this._capture(this._rec);
+      if (this._rec.full) { this._finish(); return; }
+      this._rec.paused = true; this._state = 'paused';
+      queueEvent(this, new Event('pause'));
+    }
+    resume() {
+      if (this._state === 'inactive') throw new DOMException("Failed to execute 'resume' on 'MediaRecorder': The MediaRecorder's state is 'inactive'.", 'InvalidStateError');
+      if (this._state === 'recording') return;
+      this._rec.paused = false; this._rec.at = this._rec.ctx.currentTime; this._state = 'recording';
+      queueEvent(this, new Event('resume'));
+    }
+    requestData() {
+      if (this._state === 'inactive') throw new DOMException("Failed to execute 'requestData' on 'MediaRecorder': The MediaRecorder's state is 'inactive'.", 'InvalidStateError');
+      queueEvent(this, new BlobEvent('dataavailable', { data: new Blob([], { type: this.mimeType }) }));
+    }
   }
 
   // ---- CSSOM ----
@@ -2602,7 +3128,9 @@
     SubmitEvent, AnimationEvent, TransitionEvent, ToggleEvent, StorageEvent, HashChangeEvent, PopStateEvent, BeforeUnloadEvent, DataTransfer,
     MutationObserver, WebKitMutationObserver: MutationObserver, ResizeObserver, IntersectionObserver, MediaQueryList, Animation,
     Range, Selection: Object, TreeWalker, NodeIterator: TreeWalker, CanvasRenderingContext2D, OffscreenCanvas, OffscreenCanvasRenderingContext2D: CanvasRenderingContext2D,
-    Image: ImageCtor, Audio: AudioCtor, Option: OptionCtor, AudioContext, webkitAudioContext: AudioContext, OfflineAudioContext: AudioContext,
+    Image: ImageCtor, Audio: AudioCtor, Option: OptionCtor, AudioContext, webkitAudioContext: AudioContext, OfflineAudioContext, BaseAudioContext,
+    AudioBuffer, AudioNode, AudioParam, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode, GainNode, AnalyserNode,
+    AudioDestinationNode, MediaStreamAudioDestinationNode, MediaStreamTrack, BlobEvent,
     MediaStream, MediaRecorder, CSSStyleSheet, CSSStyleDeclaration: Object, NodeList: Array, HTMLCollection: Array,
     CSSRule, CSSStyleRule, CSSGroupingRule, CSSConditionRule, CSSMediaRule, CSSSupportsRule, CSSContainerRule, CSSLayerBlockRule, CSSLayerStatementRule,
     CSSStartingStyleRule, CSSKeyframesRule, CSSKeyframeRule, CSSFontFaceRule, CSSImportRule, MediaList, CSSRuleList: Array, StyleSheetList: Array,

@@ -226,3 +226,17 @@ func (a *App) KnownUsers() []User {
 	}
 	return out
 }
+
+// KnownUsersRaw is KnownUsers read as getRawMemberById reads a member: no
+// access recorded for the member cache's eviction (the send processor's
+// member search, for which Slack records none).
+func (a *App) KnownUsersRaw() []User {
+	ids := a.S.UserIDs()
+	out := make([]User, 0, len(ids))
+	for _, id := range ids {
+		if u, ok := a.RawUser(id); ok {
+			out = append(out, u)
+		}
+	}
+	return out
+}

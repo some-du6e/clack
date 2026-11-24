@@ -74,10 +74,11 @@ func growJS(t *testing.T, heap bool, bufs int) growth {
 
 // The wasm memory grows in place: no copy (its base address stays), no Go
 // heap allocation and no Go collection for it, and a stop-the-world never
-// waits on a growth. The same growth with the memory in a Go slice grown
-// like wazero's own (the engine before wasmmem.go) is measured alongside:
-// it moves, allocates the memory's size several times over and holds a
-// stop-the-world for the length of each copy.
+// waits on a growth, nor on the first writes to the pages it commits
+// (populated in a read syscall: populate). The same growth with the memory
+// in a Go slice grown like wazero's own (the engine before wasmmem.go) is
+// measured alongside: it moves, allocates the memory's size several times
+// over and holds a stop-the-world for the length of each copy.
 func TestWasmMemoryGrowsInPlace(t *testing.T) {
 	if testing.Short() {
 		t.Skip("grows a JS heap by 512 MiB")
@@ -88,7 +89,11 @@ func TestWasmMemoryGrowsInPlace(t *testing.T) {
 	res := growJS(t, false, bufs)
 	t.Logf("wasmmem: reserved address space: %v", res)
 	t.Logf("wasmmem: snapshot: %s", res.snap)
-	if res.memAfter < res.memBefore+bufs*(4<<20) {
+	// about that much: the first buffers fill what the boot left free in
+	// the JS heap (more as the page's own scripts grow: 1.5 MiB once dom.js
+	// had Web Audio), so the growth may fall short by that, never by more
+	// than a fresh runtime's heap holds
+	if res.memAfter < res.memBefore+bufs*(4<<20)-16<<20 {
 		t.Fatalf("the wasm memory grew %d → %d bytes for %d MiB of ArrayBuffers", res.memBefore, res.memAfter, bufs*4)
 	}
 	if heapMemoryWanted() {

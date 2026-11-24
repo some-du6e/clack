@@ -392,6 +392,7 @@ func (r *Runtime) installHost() {
 		})
 	}
 	r.installMedia(def) // media.go: the <audio> and <video> elements' players
+	r.installAudio(def) // audio.go: decodeAudioData's decoder, MediaRecorder's encoders
 	def("tz", func(js *Ctx, _ Value, a []Value) (any, error) {
 		return tzInfo(str(a, 0), num(a, 1))
 	})

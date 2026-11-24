@@ -10,6 +10,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -366,6 +367,9 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	y0 := y
 	if top && !l.inAtt {
 		bs = l.arrangeWorkObjects(bs) // where MessageFiles / MessageKitAttachments draw them (workobject.go)
+		if !l.opts.NoAttachmentLimit {
+			bs = l.attachmentsOverLimit(bs) // MessageKitAttachments' 20 (overlimit.go)
+		}
 	}
 	edited, editedAfter := -1, -1
 	if top && l.hasLabel() {
@@ -438,6 +442,11 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 			y += mh
 			if !shown {
 				y -= l.dp(4) // collapsed: only the line
+				if l.filesDisclosure(files) {
+					// !isExpanded && shouldShowUnverifiedDisclosure: the
+					// UnverifiedDisclosure pillow under it
+					y += l.unverifiedDisclosure(l.filesKey(files), x, y, w, true)
+				}
 				i, prev = k-1, k-1
 				continue
 			}
@@ -540,7 +549,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if l.opts.MaxLines > 0 {
 			fs.maxLines, fs.ellipsis = l.opts.MaxLines, true
 		}
+		l.lazyW = float32(w) // a raw span's lines that can't wrap (giant.go)
 		l.addSpans(b.Spans, &fs)
+		l.lazyW = 0
 		if edited {
 			l.addEdited()
 		}
@@ -583,7 +594,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		bi := len(l.d.boxes)
 		l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.PreBg, see: p.raw.PreBg, stroke: p.PreBorder, bw: l.dp(1), radius: l.dp(4), target: -1, part: l.curPart})
 		c0 := int32(len(l.d.plain))
+		l.lazyW = float32(w - padL - l.dp(copyPadR)) // the flow's width below (giant.go)
 		l.addSpans(b.Spans, &fs)
+		l.lazyW = 0
 		c1 := int32(len(l.d.plain))
 		if edited {
 			l.addEdited()
@@ -619,7 +632,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 				// .c-mrkdwn__quote[data-stringify-border="1"]>.c-mrkdwn__br
 				fs.paraH = l.dp(22)
 			}
+			l.lazyW = float32(w - in) // giant.go
 			l.addSpans(b.Spans, &fs)
+			l.lazyW = 0
 			if edited {
 				l.addEdited()
 			}
@@ -714,7 +729,7 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 			return 0
 		}
 		if b.Kit {
-			return l.kitImage(b.Image, x, y, w)
+			return l.kitImage(b.Image, b.BlockID, x, y, w)
 		}
 		h := 0
 		if b.Image.Title != "" {
@@ -795,6 +810,12 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if b.Att == nil {
 			return 0
 		}
+		if ol, ok := l.overLimit[b.Att]; ok { // MessageAttachmentOverLimitButton (overlimit.go)
+			return l.overLimitButton(ol, x, y, w)
+		}
+		if b.Att.VideoBlock { // a video block: VideoBlock, a block's renderer, not an attachment (videoblock.go)
+			return l.videoBlock(b, x, y, w)
+		}
 		l.attDepth++
 		defer func() { l.attDepth-- }()
 		if isWorkObjectBlock(b) {
@@ -815,9 +836,15 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 			return l.compFile(b, x, y, w)
 		}
 		if b.File.Pending { // c-pending_files__generic_file--pending: the pillow at .5
-			nb, nf := len(l.d.boxes), len(l.d.frags)
+			nb, nf, no := len(l.d.boxes), len(l.d.frags), len(l.d.overlayIcons)
 			h := l.file(b.File, x, y, w)
 			l.fade(nb, nf)
+			for i := no; i < len(l.d.overlayIcons); i++ {
+				l.d.overlayIcons[i].alpha = 0.5 // the icon is the pillow's too
+			}
+			if genericPillow(b.File) {
+				l.pendingSpinner(b.File, x+min(w, l.dp(426)), y) // PendingFilesSpinner, not faded
+			}
 			return h
 		}
 		return l.file(b.File, x, y, w)
@@ -1064,8 +1091,11 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 	}
 	if len(b.Fields) > 0 {
 		if b.Kit {
-			if h > 0 {
-				h += l.dp(12) // .p-section_block__fields:not(:first-child)
+			// .p-section_block__fields:not(:first-child): after the
+			// p-section_block__text div, there for any text object, even
+			// one TSF formats to nothing (Spans kept, empty)
+			if h > 0 || b.Spans != nil || len(b.Children) > 0 {
+				h += l.dp(12)
 			}
 			h += l.kitFields(b.Fields, x, y+h, tw, key)
 		} else {
@@ -1218,6 +1248,7 @@ func flattenBreaks(bs []richtext.Block) []richtext.Span {
 // mention shows its member's name and a plugin's channel name as
 // addSpans lays them out.
 func (l *lay) cellWidth(cell []richtext.Span, k faceKey, comp0 int, next *int) float32 {
+	cell = richtext.Expand(cell) // a raw span's lines (rawtext.go)
 	var w, line float32
 	pills := l.mode&modePills != 0 && !l.inAtt
 	for i := range cell {
@@ -1313,13 +1344,19 @@ func naturalWidth(items []item) int {
 	return int(max(w, line) + 0.999)
 }
 
-// kitImage lays out an image block like Slack's Image: a title row
-// (.p-image_block_title: the title in 15px rgb(97,96,97), " (12 kB)" when
-// Slack sent image_bytes, and the hide/show toggle), then 5px down the
-// image, at most 600×400 (scaled by min(600/w, 400/h) and floored, as
-// Slack does) with radius 8 and a 1px inset otl-ter border. The toggle
-// hides the image until it's clicked again.
-func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
+// kitImage lays out an image block like Slack's Image (8plt): a title
+// row (.p-image_block_title: the title in 15px rgb(97,96,97), then the
+// AttachmentMediaTrigger: " (12 kB)" when Slack sent image_bytes, or
+// the too-large warning, and the caret), then 5px down the image in its
+// ExpandableContainer, at most 600×400 (scaled by min(600/w, 400/h) and
+// floored, as Slack does) with radius 8 and a 1px inset otl-ter border.
+// In a message the container and the caret read and set the image's
+// expandable, getExpandableKey("blockImage", the message's ts,
+// {blockId}), with the attachment rules (expander.go: hidden with
+// expand_inline_imgs off, over 20 MB, from an unverified outsider in a
+// DM: then the UnverifiedDisclosure under the title); a doc that is no
+// message's keeps the View's own toggle.
+func (l *lay) kitImage(img *richtext.Image, blockID string, x, y, w int) int {
 	p := &l.st.Palette
 	fs := l.bodyStyle()
 	fs.col = p.Text2
@@ -1340,25 +1377,47 @@ func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
 		}
 	}
 	lastTop := y + rowH - fs.lineH
-	if img.Bytes > 0 {
-		cs := fs
-		cs.size = l.sp(13)
-		_, sw := l.plainFlow(" ("+sizeText(img.Bytes)+")", endX, lastTop, l.dp(120), &cs, -1)
-		endX += sw
+	key := ""
+	if l.opts.TS != "" {
+		key = expandable.Key(expandable.BlockImage, l.opts.TS, expandable.Opts{BlockID: blockID})
 	}
-	// the toggle: a small blue caret after a space, centred on the line
-	collapsed := l.collapsed[img]
-	tg := l.d.addTarget(target{kind: tCollapse, img: img})
-	cx := endX + l.dp(4) + l.dp(4)
-	cy := lastTop + fs.lineH/2
-	kind, cr := bCaret, image.Rect(cx-l.dp(4), cy-l.dp(2), cx+l.dp(4), cy+l.dp(3))
-	if collapsed {
-		kind, cr = bCaretRight, image.Rect(cx-l.dp(2), cy-l.dp(4), cx+l.dp(3), cy+l.dp(4))
-	}
-	l.d.boxes = append(l.d.boxes, box{kind: kind, r: cr, fill: p.Link, target: -1})
-	l.d.hits = append(l.d.hits, hit{r: image.Rect(cx-l.dp(8), cy-l.dp(8), cx+l.dp(8), cy+l.dp(8)), t: tg})
-	if collapsed {
-		return rowH
+	if key == "" {
+		// no message: the View's toggle, a small blue caret after the size
+		if img.Bytes > 0 {
+			cs := fs
+			cs.size = l.sp(13)
+			_, sw := l.plainFlow(" ("+sizeText(img.Bytes)+")", endX, lastTop, l.dp(120), &cs, -1)
+			endX += sw
+		}
+		collapsed := l.collapsed[img]
+		tg := l.d.addTarget(target{kind: tCollapse, img: img})
+		cx := endX + l.dp(4) + l.dp(4)
+		cy := lastTop + fs.lineH/2
+		kind, cr := bCaret, image.Rect(cx-l.dp(4), cy-l.dp(2), cx+l.dp(4), cy+l.dp(3))
+		if collapsed {
+			kind, cr = bCaretRight, image.Rect(cx-l.dp(2), cy-l.dp(4), cx+l.dp(3), cy+l.dp(4))
+		}
+		l.d.boxes = append(l.d.boxes, box{kind: kind, r: cr, fill: p.Link, target: -1})
+		l.d.hits = append(l.d.hits, hit{r: image.Rect(cx-l.dp(8), cy-l.dp(8), cx+l.dp(8), cy+l.dp(8)), t: tg})
+		if collapsed {
+			return rowH
+		}
+	} else {
+		// the trigger's imageBytes: none for a Giphy or Tenor GIF
+		tb := img.Bytes
+		if giphyGIF(img.URL) {
+			tb = 0
+		}
+		sender, ch := l.opts.Sender, l.opts.Channel
+		open := xp().AttachmentExpanded(key, tb, sender, ch)
+		_, top := l.mediaTrigger(key, img.URL, tb, open, xp().ImageTooLarge(key, tb), x, endX, lastTop, w, fs)
+		rowH = max(rowH, top+fs.lineH-y)
+		if !containerExpanded(key, img.Bytes, sender, ch, true, true) {
+			if xp().UnverifiedDisclosure(key, img.Bytes, sender, ch) {
+				return rowH + l.unverifiedDisclosure(key, x, y+rowH, w, false)
+			}
+			return rowH
+		}
 	}
 	iy := y + rowH + l.dp(5)
 	iw, ih := l.kitImageSize(img, w)
@@ -1369,7 +1428,7 @@ func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
 	// proxy (imgcache.PublicFetch), drawn as the box's CSS background, so
 	// the box is empty while it loads and if it fails (bare)
 	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: [4]int{rad, rad, rad, rad}, target: itg, px: max(iw, ih), bare: true})
-	l.imageControls(img, len(l.d.imgs)-1, r) // AttachmentImage (animated.go)
+	l.imageActions(img, len(l.d.imgs)-1, r, img.URL, key) // AttachmentImage's actions (animated.go)
 	l.d.hits = append(l.d.hits, hit{r: r, t: itg})
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: p.Border, bw: max(1, l.dp(1)), target: -1, layer: 1})
 	return iy + ih - y

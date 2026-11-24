@@ -86,6 +86,7 @@ type App struct {
 	countsReread bool           // refreshCounts' next read is the one after a merged answer (it doesn't ask again)
 	actBadges    map[string]int // client.counts activity_v2 (activity_badges.go)
 	actBadgesAt  uint64         // the store journal's position at their last change (setActivityBadgesSince)
+	actBadgesGen atomic.Uint64  // server badge sets installed (ActivityBadgesGen)
 	classic      classicBadges  // channel_badges and the alerts' counts (classic_badges.go)
 	savedOverdue int            // saved.list counts.uncompleted_overdue_count (app_badge.go)
 	cmdCache     []slack.Command
@@ -146,6 +147,7 @@ type App struct {
 	exp        *sidebarExp          // experiments the sidebar rules read (nil: defaults)
 	expGroups  map[string]string    // the groups every check reads (experiments.go)
 	icon       teamIconState        // the rail's workspace icon (team_icon.go)
+	expd       expandablesState     // Slack's expandables store: previews collapsed or expanded (expandables.go)
 	rxn        reactState           // the viewer's reactions in flight (reactions.go)
 	frec       frecencyState        // the frecency pref's save throttle and Frequently Used cache (frecency.go)
 	rec        recentsState         // recent searches and places: the recents pref, visits (search_recents.go)
@@ -236,6 +238,10 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.mu.Lock()
 		a.connected = up
 		a.mu.Unlock()
+		// countsNotYetApplied: the connect's client.counts is still to come
+		// (refreshCountsAfterGap), and until it is in the socket's changes
+		// don't advance the mutation timestamps (history_changed.go)
+		a.countsNotYetApplied()
 		// Merging msg-latency: its OnState block (socketConnected(fast)
 		// and firstUp before the emit, socketDown on a drop) replaces this
 		// emit; keep its block and give its emit Fast: up &&
@@ -252,9 +258,17 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.emit(Event{Type: "connection", Connected: up, Fast: up && a.RTM.LastConnectFast()})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
-			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
-			go a.refreshCountsAfterGap(a.bg)           // what the socket missed (codechannel_close.go)
-			a.retryTickle()                            // a tickle that failed with the socket down (tickle.go)
+			fast := a.RTM.LastConnectFast()
+			a.socketConnected(fast) // the refetchers' slow reconnects (channel_pins.go)
+			if fast {
+				// fetchAndApplyReconnectCounts: a fast reconnect fetches no
+				// counts (the socket replays what it missed), and they count
+				// as applied (history_changed.go)
+				a.countsApplied()
+			} else {
+				go a.refreshCountsAfterGap(a.bg) // what the socket missed (codechannel_close.go)
+			}
+			a.retryTickle() // a tickle that failed with the socket down (tickle.go)
 		}
 	}
 	a.RTM.OnHello = a.onHello
@@ -513,6 +527,7 @@ func (a *App) onAuthFailed(code string) {
 // that start many sessions in one process; the UI simply exits.
 func (a *App) Shutdown() {
 	defer a.side.wait() // History's side reads, which the stop below cancels
+	a.flushCanvasesOnQuit()
 	a.StopTraffic()
 	a.saves.Wait()   // a metadata save still writing (loadEmoji)
 	a.warm.wg.Wait() // the warm boot's files, if they were writing
@@ -1010,6 +1025,12 @@ func (a *App) Boot(ctx context.Context) error {
 // save still writing).
 func (a *App) Close() error {
 	a.side.wait() // History's side reads (StopTraffic, before it, cancelled them)
+	if v, ok := downloadStates.Load(a); ok {
+		// cancelInProgressDownloadsEpic: quitting cancels what's still
+		// downloading, and its partial files go
+		v.(*Downloads).CancelAll()
+	}
+	a.flushCanvasesOnQuit()
 	a.saves.Wait()
 	a.checkpointClosedCodeChannels() // the closed code channels' watermarks (codechannel_close.go)
 	a.SaveWarm()
@@ -1208,10 +1229,12 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// only an hour after it was last used (evict.go)
 	a.noteLoaded(ch)
 	pins, subs, live, gen := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq(), a.S.EndGen()
+	stale := a.staleMark()
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {
 		return err
 	}
+	defer a.readFresh(ch, stale) // a stale mark from before the read is answered (history_changed.go)
 	// its people are asked for as rows draw them (lazy_users.go); the
 	// reactions the socket brought while the request was out stay, and a
 	// revision the store held another of reaches every copy and the views
@@ -1421,7 +1444,7 @@ func avatarURL(u *slack.User, size int, viewerTeam string) string {
 func (a *App) userOf(u *slack.User) User {
 	viewer := firstNonEmpty(a.C.Creds.Team, a.S.TeamID)
 	v := User{
-		ID: u.ID, Name: store.DisplayName(u), RealName: strings.TrimSpace(firstNonEmpty(u.Profile.RealName, u.RealName)), Handle: u.Name,
+		ID: u.ID, Name: store.DisplayName(u), RealName: memberRealName(u), Handle: u.Name,
 		DisplaySet: strings.TrimSpace(u.Profile.DisplayName) != "",
 		Avatar:     avatarURL(u, 72, viewer), Avatar192: avatarURL(u, 192, viewer), Avatar512: avatarURL(u, 512, viewer),
 		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, Email: u.Profile.Email, StatusText: u.Profile.StatusText,
@@ -1432,15 +1455,13 @@ func (a *App) userOf(u *slack.User) User {
 		HuddleChannel: u.Profile.HuddleChannel, HuddleExpires: u.Profile.HuddleExpires,
 		Stranger: u.IsStranger, BotID: u.Profile.BotID, AppID: u.Profile.APIAppID,
 		Workflow: u.IsWorkflowBot, Agentforce: u.IsAgentforceBot, AppUser: u.IsAppUser,
+		ProfileOnly: u.IsProfileOnlyUser, NoInteract: u.Interact != nil && !*u.Interact,
 		DisplayName: strings.TrimSpace(u.Profile.DisplayName), FirstName: u.Profile.FirstName, LastName: u.Profile.LastName,
 	}
 	if eu := u.EnterpriseUser; eu != nil {
 		v.EnterpriseID, v.Teams, v.EnterpriseAdmin = eu.EnterpriseID, eu.Teams, eu.IsAdmin
 	}
 	v.TeamID, v.External = a.locality(u)
-	if v.RealName == "​" {
-		v.RealName = ""
-	}
 	// the status emoji through its status_emoji_display_info entry (by
 	// emoji_name, not the list's first: status_emoji.go)
 	v.StatusEmojiInfo = parseStatusEmojiInfo(u.Profile.StatusEmojiDisplay)
@@ -1684,6 +1705,7 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	}
 	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
 	v.ReplyUserIcons = m.ReplyUserIcons
+	v.XFiles = m.XFiles
 	v.NoteFiles, v.Upload = a.noteFiles(m, false), m.Upload // note_files.go
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
@@ -2380,4 +2402,19 @@ func chanID(raw json.RawMessage) string {
 	}
 	_ = json.Unmarshal(raw, &c)
 	return c.ID
+}
+
+// memberRealName is the member's real name as Clack names people: the
+// profile's, else the member's, trimmed, and none for a lone U+200B (Hack
+// Club profiles that set their real name to a zero-width space to leave
+// it blank, Karim's among them).
+func memberRealName(u *slack.User) string {
+	if u == nil {
+		return ""
+	}
+	n := strings.TrimSpace(firstNonEmpty(u.Profile.RealName, u.RealName))
+	if n == "\u200b" {
+		return ""
+	}
+	return n
 }

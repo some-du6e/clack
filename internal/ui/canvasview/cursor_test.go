@@ -320,4 +320,7 @@ func TestCanvasDateClickRefuses(t *testing.T) {
 	if es := fs.CanvasEdits(); len(es) != 0 {
 		t.Errorf("%d canvases.edit calls, want 0: %v", len(es), es)
 	}
+	if n := fs.CallCount("canvas/edit-document"); n != 0 {
+		t.Errorf("%d edit-document calls, want 0", n)
+	}
 }

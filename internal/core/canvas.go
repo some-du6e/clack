@@ -65,10 +65,14 @@ type CanvasInfo struct {
 // CanvasFile is an embedded Slack file's display data (images, file cards).
 type CanvasFile struct {
 	ID, Name, Title, Mime, PrettyType string
-	Thumb                             string // best thumbnail (files.slack.com, needs the cookie)
-	ThumbW, ThumbH                    int
-	Permalink                         string
-	IsImage                           bool
+	// Filetype and Mode are files.info's; URL and Download its
+	// url_private and url_private_download (the file card's icon, click
+	// and download)
+	Filetype, Mode, URL, Download string
+	Thumb                         string // best thumbnail (files.slack.com, needs the cookie)
+	ThumbW, ThumbH                int
+	Permalink                     string
+	IsImage                       bool
 }
 
 // CanvasDoc is one fetched canvas.
@@ -97,6 +101,7 @@ type canvasFileJSON struct {
 	Editors         []string        `json:"editors"`
 	Permalink       string          `json:"permalink"`
 	URLPrivate      string          `json:"url_private"`
+	URLPrivDownload string          `json:"url_private_download"`
 	Channels        []string        `json:"channels"`
 	Groups          []string        `json:"groups"`
 	IMs             []string        `json:"ims"`
@@ -129,13 +134,13 @@ func IsCanvasFile(filetype, mode, prettyType string) bool {
 
 // canvasState is per-App canvas bookkeeping (kept off App's struct).
 type canvasState struct {
-	mu       sync.Mutex
-	open     map[string]int             // file id -> open views
-	pending  map[string]bool            // a refetch is scheduled
-	titles   map[string]bool            // a CanvasRef refresh is scheduled (onFileChange)
-	viewers  map[string]map[string]bool // file id -> users viewing it (files.open, file_opened/closed)
-	watching bool
-	infos    map[string]CanvasInfo // the last files.info of each canvas read (KnownCanvasInfo)
+	mu      sync.Mutex
+	open    map[string]int             // file id -> open views
+	pending map[string]bool            // a refetch is scheduled
+	titles  map[string]bool            // a CanvasRef refresh is scheduled (onFileChange)
+	viewers map[string]map[string]bool // file id -> users viewing it (files.open, file_opened/closed)
+	watch   sync.Once                  // watchCanvases' subscription, made once
+	infos   map[string]CanvasInfo      // the last files.info of each canvas read (KnownCanvasInfo)
 }
 
 var canvasStates = newPerApp() // *App -> *canvasState
@@ -257,6 +262,7 @@ func (a *App) Canvas(ctx context.Context, id string) (*CanvasDoc, error) {
 				return
 			}
 			cf := CanvasFile{ID: ff.ID, Name: ff.Name, Title: ff.Title, Mime: ff.Mimetype, PrettyType: ff.PrettyType,
+				Filetype: ff.Filetype, Mode: ff.Mode, URL: ff.URLPrivate, Download: ff.URLPrivDownload,
 				Permalink: ff.Permalink, IsImage: strings.HasPrefix(ff.Mimetype, "image/")}
 			switch {
 			case ff.Thumb1024 != "":
@@ -555,6 +561,7 @@ func (a *App) CloseCanvas(ctx context.Context, id string) error {
 	if !last {
 		return nil
 	}
+	a.flushCanvasSaves(ctx, id) // Slack saves once more on unload (canvas_edit.go)
 	a.dropCanvasModel(id)
 	return a.C.Call(ctx, "files.close", url.Values{"file_id": {id}}, nil)
 }
@@ -569,21 +576,19 @@ func (a *App) CanvasOpen(id string) bool {
 
 // ensureCanvasWatch starts watchCanvases once.
 func (a *App) ensureCanvasWatch() {
-	st := a.canvases()
-	st.mu.Lock()
-	watch := !st.watching
-	st.watching = true
-	st.mu.Unlock()
-	if watch {
-		go a.watchCanvases()
-	}
+	// subscribed before the caller's first canvas call goes out, so the
+	// events that call brings (a document_update just after files.open
+	// or a load) aren't missed; a caller racing the first waits for it
+	a.canvases().watch.Do(func() {
+		evs, cancel := a.SubscribeRaw()
+		go a.watchCanvases(evs, cancel)
+	})
 }
 
 // watchCanvases turns realtime events about open canvases into "canvas"
 // events (ID = file id) for the views, which then refetch, and has every
 // canvas model core holds fetch what a document_update says changed.
-func (a *App) watchCanvases() {
-	evs, cancel := a.SubscribeRaw()
+func (a *App) watchCanvases(evs <-chan slack.Event, cancel func()) {
 	defer cancel()
 	done := a.bg.Done()
 	for {

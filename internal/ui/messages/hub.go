@@ -68,6 +68,11 @@ type model struct {
 	// messages"); merged: it met the newest messages and the list goes
 	// back to the conversation's model
 	win, newestMissing, merged bool
+	// cut, cutSet: a history change came while a load was out
+	// (historyChanged): what is before cut ("": everything) goes again
+	// when the load lands, its answer being maybe from before the change
+	cut    string
+	cutSet bool
 	// around: the message a window's load is out for; newer: loading the
 	// page after its end (loadNewer)
 	around string
@@ -508,6 +513,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			} else {
 				m.failed(hb, err, false, time.Now())
 			}
+			m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
 			m.markLoadChanged()
 			m.rev++
 			m.mu.Unlock()
@@ -628,6 +634,7 @@ func (hb *hub) loadOlder(m *model) bool {
 			m.err = err
 			m.failed(hb, err, true, time.Now())
 		}
+		m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
@@ -781,6 +788,7 @@ func (hb *hub) loadWindow(m *model, ts string) {
 			m.failed(hb, err, false, time.Now())
 			m.loaded, m.merged, m.newestMissing = true, true, false
 		}
+		m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
@@ -864,6 +872,7 @@ func (hb *hub) loadWindowPage(m *model, older bool) bool {
 				hb.authFailed.Store(true)
 			}
 		}
+		m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
@@ -1037,6 +1046,15 @@ func (m *model) evict(oldest string) {
 	}
 	m.evictGen++
 	m.rev++
+}
+
+// evictThread is a thread model whose slice lost messages wherever they
+// were: the next draw reads the store's slice again (thread_load.go).
+// m.mu is held.
+func (m *model) evictThread() {
+	t := m.th
+	m.evict("")
+	m.th = threadState{start: t.start, picked: t.picked, repick: t.repick, root: t.root, gen: t.gen + 1}
 }
 
 func (m *model) prepend(page []core.Message, hasMore bool) {
@@ -1408,7 +1426,15 @@ func (hb *hub) apply(ev core.Event) bool {
 	case "sent":
 		// A confirmed optimistic send: swap the pending copy (ReplacesTS) for
 		// the real message in place; views move the row to the new ts so it
-		// isn't re-laid out (no flicker).
+		// isn't re-laid out (no flicker). With a load out the swap is kept
+		// for its answer (noteLive), as an event's change is: read before the
+		// swap, the answer holds the pending copy core let go, or neither
+		// copy, and the list drew that until the next load. A member
+		// lookup's answer ("names") reloads the open channel: on
+		// msg-latency's busy socket one came as a send was confirmed, and
+		// the send drew 0.73 s late, at the next lookup's reload
+		// (TestSentAcrossALoad). Slack's views read the one store, where
+		// the confirmed message replaced the pending one at once.
 		if ev.Msg == nil {
 			return false
 		}
@@ -1419,13 +1445,17 @@ func (hb *hub) apply(ev core.Event) bool {
 			}
 			m.mu.Lock()
 			held := false
-			if ev.ReplacesTS != "" && ev.ReplacesTS != ev.Msg.TS && m.find(ev.ReplacesTS) >= 0 {
-				m.remove(ev.ReplacesTS)
-				m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
-				held = true
+			if ev.ReplacesTS != "" && ev.ReplacesTS != ev.Msg.TS {
+				if m.find(ev.ReplacesTS) >= 0 {
+					m.remove(ev.ReplacesTS)
+					m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
+					held = true
+				}
+				m.noteLive(ev.ReplacesTS, true)
 			}
 			if m != thm || held || m.find(ev.Msg.TS) >= 0 || m.loaded && m.threadCovers(ev.Msg.TS) {
 				m.upsert(*ev.Msg, ev.EmitSeq) // a thread's slice: where it reaches (thread_load.go)
+				m.noteLive(ev.Msg.TS, false)
 			}
 			m.rev++
 			m.mu.Unlock()
@@ -1480,16 +1510,14 @@ func (hb *hub) apply(ev core.Event) bool {
 		}
 		m.mu.Lock()
 		if m.threadTS != "" {
-			// a thread's slice lost messages wherever they were: the next
-			// draw reads the store's slice again (thread_load.go)
-			t := m.th
-			m.evict("")
-			m.th = threadState{start: t.start, picked: t.picked, repick: t.repick, root: t.root, gen: t.gen + 1}
+			m.evictThread()
 		} else {
 			m.evict(ev.TS)
 		}
 		m.mu.Unlock()
 		return true
+	case "history_changed":
+		return hb.historyChanged(ev.Channel, ev.TS)
 	case "typing":
 		chm, thm := hb.models(ev.Channel, ev.ThreadTS)
 		m := chm

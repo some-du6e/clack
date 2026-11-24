@@ -150,6 +150,9 @@ type Store struct {
 	bots        map[string]BotInfo
 	// botsGone are bot ids nothing returned (PutNonexistentBots)
 	botsGone map[string]bool
+	// hits are the channels lists and searches answered (PutChannelHit),
+	// kept apart from ext
+	hits map[string]*slack.Conversation
 
 	// userSeen is when each user was last fetched (unix seconds; from the
 	// disk cache for users it restored): what SaveCache keeps.
@@ -189,6 +192,8 @@ type Store struct {
 	// 512px ones (AvatarAt)
 	avatarMu   sync.RWMutex
 	avatarAlts map[string][2]string
+	avatarKey  map[string]string // member id → their 72px picture (avatarAlts' key)
+	avatarRefs map[string]int    // members per key (Slack's default avatars are shared)
 	missMu     sync.Mutex
 	missSeen   map[string]bool
 	missing    []string // "c"+id | "b"+id
@@ -685,6 +690,34 @@ func (s *Store) PutUsers(us []slack.User) {
 	}
 }
 
+// PutUserNotOlder is PutUsers for one member, unless the copy the store
+// holds has a later updated stamp (a user_change that landed while an
+// older answer was out): decided under the store's lock, so nothing
+// stored in between is overwritten. It reports whether u was stored.
+func (s *Store) PutUserNotOlder(u slack.User) bool {
+	now := time.Now().Unix()
+	s.mu.Lock()
+	old, had := s.Users[u.ID]
+	if had && old != nil && old.Updated > u.Updated {
+		s.mu.Unlock()
+		return false
+	}
+	if s.userSeen == nil {
+		s.userSeen = map[string]int64{}
+	}
+	if had && old != nil && old.Presence != "" {
+		u.Presence = old.Presence
+	}
+	s.Users[u.ID] = &u
+	s.userSeen[u.ID] = now
+	s.storedLocked(u.ID)
+	team := s.TeamID
+	s.mu.Unlock()
+	s.noteAvatars(team, []slack.User{u})
+	s.gen.Add(1)
+	return true
+}
+
 // putUserPtrs is PutUsers for users the store may keep as they are (the
 // metadata cache's, decoded one by one: no second copy), fetched at the
 // times seen says.
@@ -759,11 +792,47 @@ func (s *Store) noteAvatars(team string, us []slack.User) {
 
 func (s *Store) noteAvatarLocked(team string, u *slack.User) {
 	k := AvatarURL(u, 72, team)
+	if s.avatarKey == nil {
+		s.avatarKey = map[string]string{}
+	}
+	if s.avatarRefs == nil {
+		s.avatarRefs = map[string]int{}
+	}
+	a := [2]string{AvatarURL(u, 192, team), AvatarURL(u, 512, team)}
+	if old, ok := s.avatarKey[u.ID]; ok {
+		if old == k {
+			s.avatarAlts[k] = a // the same picture (its larger sizes as now)
+			return
+		}
+		s.unrefAvatarLocked(u.ID, old) // their previous picture
+	}
 	if k == "" {
 		return
 	}
-	if a := [2]string{AvatarURL(u, 192, team), AvatarURL(u, 512, team)}; a[0] != k || a[1] != k {
+	if a[0] != k || a[1] != k {
 		s.avatarAlts[k] = a
+		s.avatarKey[u.ID] = k
+		s.avatarRefs[k]++
+	}
+}
+
+func (s *Store) unrefAvatarLocked(id, k string) {
+	delete(s.avatarKey, id)
+	if s.avatarRefs[k]--; s.avatarRefs[k] <= 0 {
+		delete(s.avatarRefs, k)
+		delete(s.avatarAlts, k)
+	}
+}
+
+// forgetAvatars drops members' pictures from avatarAlts (the members
+// pass let them go): it holds only stored members'.
+func (s *Store) forgetAvatars(ids []string) {
+	s.avatarMu.Lock()
+	defer s.avatarMu.Unlock()
+	for _, id := range ids {
+		if k, ok := s.avatarKey[id]; ok {
+			s.unrefAvatarLocked(id, k)
+		}
 	}
 }
 
@@ -1348,6 +1417,59 @@ func (s *Store) ExtConv(id string) (*slack.Conversation, bool) {
 	defer s.mu.RUnlock()
 	c, ok := s.ext[id]
 	return c, ok
+}
+
+// PutChannelHit remembers c, a channel a list or a search answered (the
+// composer's # list, the search popover and its Channels tab, the channel
+// directory, Block Kit channel menus), as Slack's getRemoteChannels
+// upserts its hits into its channels store: the channel /open, /join and
+// /msg find (getChannelById) though the viewer isn't in it. A hit is a
+// partial copy (no connected teams, no is_ext_shared), so it is kept apart
+// from what Conv and ExtConv answer: a channel opened from a list is still
+// read with conversations.info, its description, Slack Connect teams and
+// topic with it. A later hit replaces an earlier one, keeping its
+// workspace when the new hit names none (the directory's carry none).
+func (s *Store) PutChannelHit(c slack.Conversation) {
+	if c.ID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hits == nil {
+		s.hits = map[string]*slack.Conversation{}
+	}
+	if old, ok := s.hits[c.ID]; ok && c.ContextTeamID == "" {
+		c.ContextTeamID = old.ContextTeamID
+	}
+	s.hits[c.ID] = &c
+}
+
+// ChannelHit returns the copy PutChannelHit kept for id.
+func (s *Store) ChannelHit(id string) (*slack.Conversation, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.hits[id]
+	return c, ok
+}
+
+// ConnectedTeam reports whether team is a connected team
+// (connected_team_ids) of a conversation the store holds, in the sidebar
+// or out of it: Slack's externalTeamIds, which setConnectedTeamIds fills
+// from every channel it stores (j08h addExternalTeamId).
+func (s *Store) ConnectedTeam(team string) bool {
+	if team == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, m := range []map[string]*slack.Conversation{s.Convs, s.ext} {
+		for _, c := range m {
+			if c != nil && slices.Contains(c.ConnectedTeamIDs, team) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ConvJSON is the conversation the store holds for id, a sidebar one or

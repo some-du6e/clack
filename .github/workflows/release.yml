@@ -42,7 +42,7 @@ jobs:
   # builders below lay out text 1px differently in internal/ui/slackc).
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 40 # budget, min (ci full-test's p95 21.6; its go test -timeout is 30m): docs/CI-SPEED.md
+    timeout-minutes: 40 # budget, min (ci full-test's p95 32.0 before round 4's split, 14.5-15.0 after; its go test -timeout is 30m): docs/CI-SPEED.md
     permissions:
       contents: read
       actions: read # prior: ci's runs and jobs
@@ -85,21 +85,26 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: test
         if: ${{ steps.prior.outputs.passed != 'true' }}
-        # one job runs every package (ci shards internal/ui across jobs);
-        # internal/ui alone passed Go's 10m default on 2026-11-13 (v0.1.0-alpha.64's
-        # run 43503494822 timed out), so give the whole suite room; and as ci's
-        # full-test, whatever still runs 35 min in prints its goroutines inside
-        # the budget, and runner-load.sh logs the runner's memory and load
-        # each minute (the scripts from this run's own commit, as meta's)
+        # one job runs every package (ci's linux-test shards internal/ui across
+        # jobs); internal/ui alone passed Go's 10m default on 2026-11-13
+        # (v0.1.0-alpha.64's run 43503494822 timed out), so give the whole
+        # suite room, and, as ci's full-test, run internal/ui as two test
+        # binaries beside the rest (test-shard.py full: the one binary reached
+        # 1,713 s of its 30 min); whatever still runs 35 min in prints its
+        # goroutines inside the budget, and runner-load.sh logs the runner's
+        # memory and load each minute (the scripts and test times from this
+        # run's own commit, as meta's)
         run: |
           git fetch -q --depth=1 origin "$GITHUB_SHA"
           for s in dump-before-budget runner-load; do
             git show "$GITHUB_SHA:.github/scripts/$s.sh" > "$RUNNER_TEMP/$s.sh"
           done
+          git show "$GITHUB_SHA:.github/scripts/test-shard.py" > "$RUNNER_TEMP/test-shard.py"
+          git show "$GITHUB_SHA:.github/test-times.json" > "$RUNNER_TEMP/test-times.json"
           bash "$RUNNER_TEMP/dump-before-budget.sh" 35 & wd=$!
           bash "$RUNNER_TEMP/runner-load.sh" 60 & rl=$!
           trap 'kill $wd $rl 2>/dev/null' EXIT
-          go test -timeout 30m ./... # no GOMEMLIMIT since ci-speed-3, as ci's full-test
+          python3 "$RUNNER_TEMP/test-shard.py" full --heavy github.com/some-du6e/clack/internal/ui --split 2 --times "$RUNNER_TEMP/test-times.json" --timeout 30m --out "$RUNNER_TEMP/full" # no GOMEMLIMIT since ci-speed-3, as ci's full-test
 
   linux:
     name: linux-${{ matrix.arch }}
@@ -208,12 +213,12 @@ jobs:
           d="-v $PWD/dist:/dist:ro -v $RUNNER_TEMP/check.sh:/check.sh:ro"
           for img in debian:12 ubuntu:22.04 ubuntu:24.04; do
             echo "::group::$img"
-            docker run --rm $d $img sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq /dist/*.deb >/dev/null && sh /check.sh && apt-get remove -y -qq clack >/dev/null && ! test -e /usr/bin/clack'
+            docker run --rm $d $img sh -c 'export DEBIAN_FRONTEND=noninteractive; o="-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"; timeout 300 apt-get $o update -qq && timeout 600 apt-get $o install -y -qq /dist/*.deb >/dev/null && sh /check.sh && apt-get remove -y -qq clack >/dev/null && ! test -e /usr/bin/clack'
             echo "::endgroup::"
           done
           for img in fedora:41 fedora:42; do
             echo "::group::$img"
-            docker run --rm $d $img sh -c 'dnf install -y -q /dist/*.rpm && sh /check.sh && dnf remove -y -q clack && ! test -e /usr/bin/clack'
+            docker run --rm $d $img sh -c 'timeout 600 dnf install -y -q --setopt=timeout=30 --setopt=retries=3 /dist/*.rpm && sh /check.sh && dnf remove -y -q clack && ! test -e /usr/bin/clack'
             echo "::endgroup::"
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -336,7 +341,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) {
-            choco install innosetup -y --no-progress
+            choco install innosetup -y --no-progress --execution-timeout=300
             if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
           }
           & $iscc /Qp "/DAppVersion=$env:VERSION" "/DAppVersionNum=$env:NUM.0" "/DSourceExe=$PWD\build\windows-amd64\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss

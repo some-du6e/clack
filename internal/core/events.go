@@ -43,9 +43,12 @@ func (a *App) handle(ev slack.Event) {
 	ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
 	defer cancel()
 	ch := chanID(ev.Channel)
+	a.advanceFromEvent(ev) // the mutation timestamps the event moves (history_changed.go)
 	switch ev.Type {
 	case "message":
 		a.onMessage(ctx, ch, ev)
+	case "channel_history_changed", "group_history_changed", "im_history_changed", "mpim_history_changed":
+		a.onHistoryChanged(ch, ev) // history_changed.go
 	case "search_frecency": // handleSearchFrecencyPrefsUpdate
 		var e struct {
 			Value string `json:"value"`
@@ -132,7 +135,7 @@ func (a *App) handle(ev slack.Event) {
 		if cv.Unread || cv.Mentions > 0 { // marked unread elsewhere: the DM badges read its member (members.go)
 			a.readBadgePerson(ch)
 		}
-		a.emit(Event{Type: "marked", Channel: ch, TS: e.TS, Count: &cv})
+		a.emit(Event{Type: "marked", Channel: ch, TS: e.TS, Count: &cv, BadgesGen: a.ActivityBadgesGen()})
 	case "presence_change":
 		var e struct {
 			User     string   `json:"user"`
@@ -721,6 +724,14 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		return
 	}
 	switch e.Subtype {
+	case "channel_history_changed", "group_history_changed", "im_history_changed", "mpim_history_changed":
+		return // messageReceived ignores them: the events of those names carry the change (history_changed.go)
+	case "message_deleted":
+		a.advanceMutation(ch, e.EventTS, true) // maybeAdvanceChannelHistoryInvalidTimestamp (history_changed.go)
+	case "message_changed", "message_replied":
+		a.advanceMutation(ch, e.EventTS, false) // maybeAdvanceChannelUpdatedTimestamp
+	}
+	switch e.Subtype {
 	case "message_changed", "message_deleted", "message_locked", "message_replied":
 		// A change to a message of a conversation whose messages wait for
 		// its lookup (holdForConv) waits behind them, as Slack's
@@ -884,6 +895,7 @@ func (a *App) announceMessage(ch string, mp *slack.Message, isReply, mention, ah
 // msgSubEvent is a message event's fields for its change subtypes.
 type msgSubEvent struct {
 	Subtype   string         `json:"subtype"`
+	EventTS   string         `json:"event_ts"`
 	Message   *slack.Message `json:"message"`
 	Previous  *slack.Message `json:"previous_message"`
 	DeletedTS string         `json:"deleted_ts"`
@@ -1210,6 +1222,17 @@ func keepFiles(m, old *slack.Message) {
 // follows), as most of a large workspace's profile changes are. The
 // member is read without a lookup, which would count as a view's.
 func (a *App) putUserLive(nu slack.User) {
+	a.putUserLiveWith(nu, func(u slack.User) bool { a.S.PutUsers([]slack.User{u}); return true })
+}
+
+// putUserLiveNotOlder is putUserLive unless the store holds a later copy
+// (store.PutUserNotOlder): a refetch's answer never overwrites a
+// user_change stored while it was out.
+func (a *App) putUserLiveNotOlder(nu slack.User) bool {
+	return a.putUserLiveWith(nu, a.S.PutUserNotOlder)
+}
+
+func (a *App) putUserLiveWith(nu slack.User, put func(slack.User) bool) bool {
 	seen := a.S.MemberAccessed(nu.ID)
 	// what message Docs read of the member, against both the last
 	// event's and the stored copy's (a status or huddle change converts
@@ -1220,10 +1243,13 @@ func (a *App) putUserLive(nu slack.User) {
 	if had && before != nil {
 		beforeFP = userDocFP(before)
 	}
-	a.S.PutUsers([]slack.User{nu})
+	if !put(nu) {
+		return false
+	}
 	if su, ok := a.S.RawUser(nu.ID); ok {
 		u := a.userOf(su)
 		same := a.noteUserDoc(su) && had && beforeFP == userDocFP(su)
 		a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: same})
 	}
+	return true
 }

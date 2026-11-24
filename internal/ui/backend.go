@@ -24,6 +24,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -170,6 +171,9 @@ func newBackend(c *core.App, cacheDir string) *backend {
 
 // Attach connects the app to core. Call before Run, or after login.
 func (a *App) Attach(c *core.App, cacheDir string) {
+	if on := a.prefs.CanvasQuipEdit; on != nil { // ui.json's canvas_quip_edit; unset is core's default, on (canvas_edit.go)
+		c.SetQuipEdit(*on)
+	}
 	a.data = newBackend(c, cacheDir)
 	a.data.onSignOut = a.opts.SignOut
 	if a.win != nil && a.login == nil {
@@ -198,6 +202,9 @@ func (b *backend) start(a *App) {
 		go presencePoll(b.ctx, b.core)
 	}
 	installMemberRead(b.core) // mentions ask for their members as they draw (lazy_users.go)
+	// every message view reads and writes the account's expandables
+	// (Slack's expandables store: collapsed previews, core expandables.go)
+	richview.SetExpander(b.core)
 	// the sidebar rules keep a closed DM with a huddle on: they read the
 	// huddle UI's rooms (huddle_wire.go sbHuddleSync rebuilds on a change)
 	b.core.SetHuddleChannels(a.huddles().HuddleChannels)
@@ -779,6 +786,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 	m := &b.m
 	changed := false
 	switch ev.Type {
+	case "expandables": // a preview collapsed or expanded (a caret, /collapse, /expand): the views lay out again (their gen check)
 	case "experiments": // a group changed (experiments.getByUser, a plugin's override): the sidebar rules and names read them
 		b.resnapshot(a)
 		b.loadDrafts(a) // which drafts a row counts follows the draft experiments
@@ -820,6 +828,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		}
 	case "dnd_override": // a sender's notify anyway (notify_dm.go)
 		b.noteDNDOverride(a, ev)
+	case "activity_breakthrough": // an activity entry breaking focus mode (focus_mode.go)
+		a.focusBreakthrough(ev.Channel)
 	case "marked", "counts":
 		if ev.Count != nil && ev.Channel != "" {
 			changed = b.setCount(ev.Channel, *ev.Count)

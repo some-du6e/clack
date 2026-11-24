@@ -336,7 +336,7 @@ func TestReadersAreTotal(t *testing.T) {
 			if limit == 0 {
 				limit = 2 * time.Second
 			}
-			err := totally(t, limit, func() error {
+			run := func() error {
 				if c.check != nil {
 					s, err := parse(c.b, c.mime)
 					if err != nil {
@@ -348,14 +348,27 @@ func TestReadersAreTotal(t *testing.T) {
 					}
 				}
 				return exercise(c.b, c.mime)
-			})
+			}
+			// The first run reads the code it runs from disk: the test
+			// binary's, and on Windows Media Foundation's, which opens
+			// what Go's readers refuse (wav_channels_capped's 65535
+			// channels). That read is the machine's: a runner's C: behind
+			// writes at its cap read in 50 ms to 2.4 s (flake-check
+			// mf-cold-diag), and on windows-idle wav_channels_capped took
+			// 2 s, its limit (keyboard-focus-2-206's push ci 45208586387,
+			// 2026-11-23). The first run is held to a minute (a hang),
+			// the second to the case's limit.
+			t0 := time.Now()
+			totally(t, time.Minute, run)
+			first := time.Since(t0)
+			err := totally(t, limit, run)
 			if err != nil && strings.Contains(err.Error(), "opened, but") {
 				t.Error(err)
 			}
 			if c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
 				t.Errorf("error %v, want one saying %q", err, c.want)
 			}
-			t.Logf("%s: %v", c.name, err)
+			t.Logf("%s: %v (the first run %v)", c.name, err, first.Round(time.Millisecond))
 		})
 	}
 }

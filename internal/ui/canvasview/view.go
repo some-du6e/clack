@@ -37,6 +37,11 @@ type View struct {
 
 	sectionTip popups.TipState // the header's section button (section_button.go)
 
+	// titleWhy is why no edit of the canvas saves through edit-document
+	// ("": none): its title is one every save's metadata can't carry
+	// (core.CanvasTitleSaveable), checked once per pass over the blocks
+	titleWhy string
+
 	mu      sync.Mutex
 	doc     *core.CanvasDoc
 	err     error
@@ -72,6 +77,8 @@ type View struct {
 	queue []func() // post: run on the UI goroutine at the next frame
 
 	live     atomic.Bool  // files.open sent, watching events
+	modelLd  atomic.Bool  // loadCardModel's load is out
+	peekWait atomic.Bool  // watchPeekModel is watching
 	lastSeen atomic.Int64 // unix ms of the last frame that drew the view
 	stop     context.CancelFunc
 }
@@ -165,6 +172,12 @@ func (v *View) load(keep bool) {
 			ids := []string{d.Info.Creator}
 			ids = append(ids, d.Info.Editors...)
 			a.EnsureUsers(ctx, ids)
+			// edits are made against Quip's model, and link cards are drawn
+			// from it, read-only canvases' and peeks' too (linkcard.go):
+			// Slack's client always draws from the model
+			if hasLinkCards(d.Doc.Blocks) || a.QuipEditOn() && d.Info.Editable && v.mode != Peek {
+				v.loadCardModel()
+			}
 		}
 		v.mu.Lock()
 		if gen == v.gen {
@@ -175,6 +188,51 @@ func (v *View) load(keep bool) {
 		}
 		v.mu.Unlock()
 		v.h.Invalidate()
+	}()
+}
+
+// loadCardModel loads the canvas's Quip model off the UI goroutine, one
+// load at a time, then refreshes the link cards: edits are made against
+// the model, and link cards are drawn from it. A peek, which never sends
+// files.open, lets the model go again once it closes (watchPeekModel).
+func (v *View) loadCardModel() {
+	a := v.h.Core()
+	if a == nil || !v.modelLd.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer v.modelLd.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if err := a.LoadCanvasModel(ctx, v.id); err != nil {
+			log.Printf("canvasview: canvas %s: the model didn't load: %v", v.id, err)
+		}
+		v.post(v.refreshCards)
+		if v.mode == Peek {
+			v.watchPeekModel()
+		}
+	}()
+}
+
+// watchPeekModel drops the model a peek loaded once the peek hasn't been
+// drawn for a while (it closed; the shell has no unmount hook), unless a
+// view has the canvas open: nothing keeps a model current without
+// files.open, and a later editing view would build on it stale.
+func (v *View) watchPeekModel() {
+	a := v.h.Core()
+	if a == nil || !v.peekWait.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer v.peekWait.Store(false)
+		tick := time.NewTicker(2 * time.Second)
+		defer tick.Stop()
+		for range tick.C {
+			if time.Since(time.UnixMilli(v.lastSeen.Load())) > 6*time.Second {
+				a.DropUnopenedCanvasModel(v.id)
+				return
+			}
+		}
 	}()
 }
 
@@ -193,6 +251,7 @@ func (v *View) goLive() {
 		oc, ocancel := context.WithTimeout(ctx, 20*time.Second)
 		_ = a.OpenCanvas(oc, v.id)
 		ocancel()
+		v.post(v.refreshCards) // live again: a model let go meanwhile loads again (linkcard.go)
 		tick := time.NewTicker(2 * time.Second)
 		defer tick.Stop()
 		lastPoll := time.Now()
@@ -213,6 +272,16 @@ func (v *View) goLive() {
 					v.load(true)
 				}
 				if ev.Type == "canvas_viewers" && ev.ID == v.id {
+					v.h.Invalidate()
+				}
+				if ev.Type == "canvas_model" && ev.ID == v.id { // what opens is checked against the model (blockEditable)
+					v.post(v.recheckEditable)
+					v.post(v.refreshCards) // a card's section changed: its container anew (linkcard.go)
+				}
+				if ev.Type == "canvas_save" && ev.ID == v.id { // the save banner and lock (banner.go)
+					if ns := a.TakeCanvasSaveNotices(v.id); len(ns) > 0 {
+						v.post(func() { v.showSaveNotices(ns) })
+					}
 					v.h.Invalidate()
 				}
 			case <-tick.C:
@@ -362,6 +431,11 @@ func (v *View) layout(gtx layout.Context) layout.Dimensions {
 		v.layoutBar(gtx, d, image.Pt(sz.X, top))
 	}
 	defer v.layoutAccessPopover(gtx, d) // over everything, in the view's coordinates
+	if b := v.saveBanner(); b != "" && d != nil {
+		off := op.Offset(image.Pt(0, top)).Push(gtx.Ops)
+		top += v.layoutSaveBanner(gtx, b, sz.X)
+		off.Pop()
+	}
 	body := image.Rect(0, top, sz.X, sz.Y)
 	defer op.Offset(body.Min).Push(gtx.Ops).Pop()
 	gtx.Constraints = layout.Exact(body.Size())

@@ -103,7 +103,34 @@ type testUI struct {
 	overlays []taut.Overlay
 	tabs     []taut.PreferencesTab
 	toasts   []string
-	goCalls  []int64 // the {"$gofn"} ids JS called (UIHooks.CallGo)
+	goCalls  []int64  // the {"$gofn"} ids JS called (UIHooks.CallGo)
+	goArgs   [][]byte // each call's arguments (JSON), as goCalls
+}
+
+// argsOf is the arguments (JSON) of each call JS made to Go func id.
+func (u *testUI) argsOf(id int64) []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var out []string
+	for i, c := range u.goCalls {
+		if c == id {
+			out = append(out, string(u.goArgs[i]))
+		}
+	}
+	return out
+}
+
+// callOrder is the Go funcs among ids JS called, in call order.
+func (u *testUI) callOrder(ids ...int64) []int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var out []int64
+	for _, c := range u.goCalls {
+		if slices.Contains(ids, c) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // called reports how many times JS called Go func id.
@@ -130,6 +157,7 @@ func (u *testUI) hooks() taut.UIHooks {
 		CallGo: func(id int64, args []byte) ([]byte, error) {
 			u.mu.Lock()
 			u.goCalls = append(u.goCalls, id)
+			u.goArgs = append(u.goArgs, append([]byte(nil), args...))
 			u.mu.Unlock()
 			return []byte("null"), nil
 		},
@@ -207,6 +235,10 @@ type harness struct {
 	ui    *testUI
 	dir   string
 
+	pickMu  sync.Mutex
+	picks   [][]jsrt.PickedFile // what the next choosers give (willPick), oldest first
+	accepts []string            // each chooser's accept attribute
+
 	fetchMu sync.Mutex
 	fetches map[string]string // URL prefix → JSON body
 	fetched []string
@@ -214,6 +246,29 @@ type harness struct {
 
 	spellMu sync.Mutex
 	spell   []bool // Options.SpellChecker calls (Electron's session spellchecker)
+
+	iconMu sync.Mutex
+	icons  [][]byte // Options.SetAppIcon calls (nil: Clack's own icon)
+	pick   string   // what Options.OpenFile answers ("" cancelled)
+}
+
+func (h *harness) setAppIcon(png []byte) {
+	h.iconMu.Lock()
+	h.icons = append(h.icons, png)
+	h.iconMu.Unlock()
+}
+
+// appIcons is the SetAppIcon calls so far.
+func (h *harness) appIcons() [][]byte {
+	h.iconMu.Lock()
+	defer h.iconMu.Unlock()
+	return append([][]byte(nil), h.icons...)
+}
+
+func (h *harness) openFile(title, accept string) (string, error) {
+	h.iconMu.Lock()
+	defer h.iconMu.Unlock()
+	return h.pick, nil
 }
 
 func (h *harness) spellChecker(on bool) {
@@ -291,13 +346,16 @@ func newHarnessApp(t *testing.T, api *fakeAPI, app *core.App) *harness {
 		},
 	}
 	withPageMedia(&opts, h.media) // media_api_test.go
+	withPageAudio(&opts)          // audio_api_test.go: decodeAudioData and MediaRecorder, as the client has them
+	opts.PickFiles = h.pickFiles  // what a file input's chooser gives (willPick)
 	tt, err := taut.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.tt = tt
 	s, err := New(Options{Taut: tt, Dir: filepath.Join(h.dir, "slick"), NoAutoStart: true, NoUpdates: true,
-		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: h.spellChecker})
+		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: h.spellChecker,
+		SetAppIcon: h.setAppIcon, OpenFile: h.openFile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,6 +432,34 @@ func seed(s *store.Store) {
 	}, false)
 	s.SetLatest(dmAlice, []slack.Message{{Type: "message", TS: "1700000010.000100", User: aliceID, Text: "hi"}}, false)
 	s.PutBot("B0BOT00001", store.BotInfo{Name: "Helper Bot"})
+}
+
+// willPick makes the next file chooser a page opens give files (none:
+// the user cancels it).
+func (h *harness) willPick(files ...jsrt.PickedFile) {
+	h.pickMu.Lock()
+	h.picks = append(h.picks, files)
+	h.pickMu.Unlock()
+}
+
+// pickFiles is the harness's file chooser (taut.Options.PickFiles).
+func (h *harness) pickFiles(accept string, multiple bool) ([]jsrt.PickedFile, error) {
+	h.pickMu.Lock()
+	defer h.pickMu.Unlock()
+	h.accepts = append(h.accepts, accept)
+	if len(h.picks) == 0 {
+		return nil, nil
+	}
+	files := h.picks[0]
+	h.picks = h.picks[1:]
+	return files, nil
+}
+
+// choosers is the accept attribute of each file chooser a page opened.
+func (h *harness) choosers() []string {
+	h.pickMu.Lock()
+	defer h.pickMu.Unlock()
+	return append([]string(nil), h.accepts...)
 }
 
 func (h *harness) ctx() context.Context {

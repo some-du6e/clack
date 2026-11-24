@@ -628,11 +628,11 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 // still held. Otherwise the scrim would come up under that press (the
 // composer's +, a double click's second press): the router's next frame
 // moves the pressed pointer off its widget, whose release is then a
-// cancel. The frame the delay ends in is asked of the window, not with an
-// op.InvalidateCmd here: the rows read their events after this, and for
-// a command mid-frame the router replays the events no handler has read
-// yet, which lost clicks while the composer's + asked for its turn's
-// frames that way.
+// cancel. The frame the delay ends in is asked of the window (until Gio
+// patch 61 an op.InvalidateCmd here replayed the events the rows, which
+// read theirs after this, hadn't read yet, which lost clicks while the
+// composer's + asked for its turn's frames that way; it only records its
+// wakeup now).
 func (m *Menu) scrimUp(gtx layout.Context) bool {
 	d := m.opts.ScrimAfter
 	if d <= 0 {

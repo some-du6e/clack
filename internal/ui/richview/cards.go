@@ -14,6 +14,7 @@ import (
 	"gioui.org/font"
 	"golang.org/x/image/math/fixed"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -122,7 +123,7 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	}
 	p := &l.st.Palette
 	y0 := y
-	if w > l.dp(600) {
+	if w > l.dp(600) && !a.NoMaxWidth {
 		w = l.dp(600)
 	}
 	if len(a.Pretext) > 0 {
@@ -137,6 +138,9 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	bar := l.dp(4)
 	bi := len(l.d.boxes)
 	barCol := parseColor(a.Color, p.Placeholder)
+	if a.HideBorder { // renderV1Attachment: no jC.A border element (its body keeps its 12px padding)
+		bar, barCol.A = 0, 0
+	}
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: barCol, radius: l.dp(8), target: -1})
 	cx := x + bar + l.dp(12)
 	cw := x + w - cx
@@ -229,14 +233,21 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		if a.IsShare {
 			maxC, maxN = shareMaxChars, shareMaxNewlines
 		}
+		// AttachmentText keeps its state in the expandables store,
+		// getExpandableKey("attachmentText", ts, {id, viewContext}); a
+		// share's TruncatedBlocks in the component (the View's)
+		key := ""
+		if a.Legacy && !a.IsShare {
+			key = expandable.Key(expandable.AttachmentText, l.opts.TS, expandable.Opts{ID: a.ID, ViewContext: l.opts.ViewContext})
+		}
 		if short, cut := truncateBlocks(text, maxC, maxN); cut {
-			if l.expanded[k] {
+			if key != "" && xpOn(key) || key == "" && l.expanded[k] {
 				text = withExpander(append([]richtext.Block(nil), text...), false)
 			} else {
 				text = withExpander(short, true)
 			}
 		}
-		l.expandAt = k
+		l.expandAt, l.expandAtKey = k, key
 		ct := l.enter(attTextClass)
 		if a.IsShare {
 			l.filled++
@@ -246,7 +257,7 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 			l.filled--
 		}
 		l.leave(ct)
-		l.expandAt = nil
+		l.expandAt, l.expandAtKey = nil, ""
 		l.plainAdd("\n")
 	}
 	if len(b.Fields) > 0 {
@@ -266,22 +277,28 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 			tg := l.d.addTarget(target{kind: tImage, img: a.Image})
 			row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
 			l.imageControls(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r) // AttachmentImage (animated.go)
-		} else if a.Image != nil && mediaExpanded() {
+		} else if a.Image != nil && l.mediaDisclosure(a) {
+			// the collapsed ExpandableContainer's UnverifiedDisclosure
+			row(l.unverifiedDisclosure(l.mediaKey(a), cx, cy, cw, false))
+		} else if a.Image != nil && l.mediaShown(a) {
 			// AttachmentMedia (BAnD): getAdjustedImageDimensions at max
 			// 360x360, floored; 5px over the image container
 			cy += l.dp(5)
 			// AttachmentImage's <a href>: externalSourceUrl || url
-			tg := l.d.addTarget(target{kind: tImage, img: a.Image, href: firstNonEmpty(externalSourceURL(a), a.Image.URL)})
+			href := firstNonEmpty(externalSourceURL(a), a.Image.URL)
+			tg := l.d.addTarget(target{kind: tImage, img: a.Image, href: href})
 			iw, ih := adjustedDims(a.Image.W, a.Image.H, 360, 360)
 			if a.Image.W <= 0 || a.Image.H <= 0 {
 				row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
+				// AttachmentImageActions (v1, v2: animated.go)
+				l.imageActions(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r, href, l.mediaKey(a))
 			} else {
 				r := image.Rect(cx, cy, cx+min(cw, l.dp(float32(iw))), cy+l.dp(float32(ih)))
 				if r.Dx() < l.dp(float32(iw)) { // narrower than the image: keep its aspect
 					r.Max.Y = cy + r.Dx()*ih/max(iw, 1)
 				}
 				l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: a.Image.URL, radii: [4]int{l.dp(8), l.dp(8), l.dp(8), l.dp(8)}, target: tg, px: max(r.Dx(), r.Dy())})
-				l.imageControls(a.Image, len(l.d.imgs)-1, r)
+				l.imageActions(a.Image, len(l.d.imgs)-1, r, href, l.mediaKey(a)) // AttachmentImageActions (animated.go)
 				l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 				row(r.Dy())
 			}
@@ -512,7 +529,7 @@ func (l *lay) videoCard(a *richtext.Attachment, x, y, w int) int {
 }
 
 func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
-	noImg := uipref.Get().NoInlineImgs || ImageTooLarge(a.Image) // expand_inline_imgs off: the card without its image
+	noImg := !l.mediaShown(a) // collapsed (expand_inline_imgs off, too large, /collapse…): the card without its image
 	if isVideoUnfurl(a) && !noImg {
 		return l.videoCard(a, x, y, w)
 	}
@@ -1237,53 +1254,20 @@ func (l *lay) waveform(samples []int, x, y, w, h int) {
 	}
 }
 
+// fileIcon is FileEntityThumbnailIcon's icon for f, s px at (x, y): a
+// canvas's QuipIcon tile, else the file's svgicon (FileIconArt: Slack's
+// generic blue page for an .exe, its archive for a zip, …), drawn over
+// the card as art.
 func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
-	p := &l.st.Palette
-	bg, fg, see := p.FileIconBg, p.FileIconText, p.raw.FileIconBg
-	label := strings.ToUpper(f.Type)
-	if tile, glyph, ok := svgFileIcon(f.Type); ok {
-		l.svgIconTile(x, y, s, tile, glyph)
-		return
-	}
-	switch strings.ToLower(f.Type) {
-	case "quip", "canvas": // Slack's canvas tile: a white sheet on blue
+	if richtext.IsCanvasFile(f) || strings.EqualFold(f.Type, "canvas") { // Slack's canvas tile: a white sheet on blue
 		r := image.Rect(x, y, x+s, y+s)
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: rgb(0x1d, 0x9b, 0xd1), target: -1})
 		sw, sh := s*2/5, s/2
 		sr := image.Rect(x+(s-sw)/2, y+(s-sh)/2, x+(s+sw)/2, y+(s+sh)/2)
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: sr, radius: l.dp(2), fill: rgb(255, 255, 255), target: -1})
 		return
-	case "pdf":
-		bg, fg, see = p.FileIconPDF, rgb(255, 255, 255), color.NRGBA{}
-	case "zip", "gzip", "tar", "rar", "7z":
-		bg, fg, see = p.FileIconZip, rgb(255, 255, 255), color.NRGBA{}
 	}
-	if len(label) > 4 {
-		label = label[:4]
-	}
-	if label == "" {
-		label = "FILE"
-	}
-	r := image.Rect(x, y, x+s, y+s)
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, see: see, target: -1})
-	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(10), lineH: l.dp(12), col: fg, emoji: l.dp(12), maxLines: 1, noSelect: true}
-	k := l.faceFor(fs.face, fs.size, 0)
-	tw := int(l.measure(label, k) + 0.5)
-	l.plainFlow(label, x+(s-tw)/2, y+(s-fs.lineH)/2, s, &fs, -1)
-}
-
-// svgFileIcon is FileEntityThumbnailIcon's svgicon for a file of filetype
-// ft, where Clack has Slack's glyph (getSVGIconType: the filetype when
-// Slack has an icon for it): binary (binary-4f9150d.svg, a #616061 tile)
-// and text (file-snippet-0a4c72a.svg, #1D9BD1).
-func svgFileIcon(ft string) (tile color.NRGBA, glyph string, ok bool) {
-	switch strings.ToLower(ft) {
-	case "binary":
-		return rgb(0x61, 0x60, 0x61), "file-binary", true
-	case "text":
-		return rgb(0x1d, 0x9b, 0xd1), "file-text", true
-	}
-	return color.NRGBA{}, "", false
+	l.d.overlayIcons = append(l.d.overlayIcons, overlayIcon{r: image.Rect(x, y, x+s, y+s), name: FileIconArt(f), art: true})
 }
 
 // svgIconTile is a file svgicon at (x, y), s px: its tile (radius
@@ -1367,7 +1351,8 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	meta := pillowMeta(f)
 	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
 	l.plainFlow(meta, tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
-	l.pillowBar(f, image.Rect(x, y, x+cw, y+h)) // FileActions (file_actions.go)
+	l.pillowBar(f, image.Rect(x, y, x+cw, y+h))            // FileActions (file_actions.go)
+	l.fileRemoveButton(f, tg, image.Rect(x, y, x+cw, y+h)) // FileRemoveButton (unfurl.go)
 	return h
 }
 

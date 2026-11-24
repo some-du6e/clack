@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/layout"
 
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
@@ -570,6 +571,7 @@ func (v *View) layoutReplaced(b *box, cw, ch, avail float32, c lc) (float32, flo
 		src, _ := n.AttrString("src")
 		if natW < 0 || natH < 0 {
 			if im := env().Images; im != nil && src != "" {
+				src = imgcache.PageURL(src) // a plugin's (img's paint draws it under this one)
 				im.Prefetch(src, 0)
 				if sz, ok := im.Size(src, 0); ok && sz.X > 0 && sz.Y > 0 {
 					iw, ih := float32(sz.X)*v.dp, float32(sz.Y)*v.dp

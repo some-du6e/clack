@@ -48,6 +48,7 @@ type View struct {
 	laidGen uint32
 	laidEl  uint32 // Options.Elements version the layout was made with
 	laidPf  uint32 // uipref.Gen the layout was made with (jumbomoji, swatches, link underlines, inline media)
+	laidXp  uint64 // the expandables' generation it was made with (expander.go: collapsed previews)
 	dirty   bool
 
 	ops      op.Ops
@@ -140,6 +141,9 @@ type View struct {
 	// remHot is the attachment remove button under the pointer (its
 	// index in removes, +1), for its "Remove preview" tooltip
 	remHot int
+	// spinHot is the pending upload spinner under the pointer (its index
+	// in pendSpins, +1), for its "Uploading… n%" tooltip
+	spinHot int
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -166,6 +170,17 @@ type View struct {
 	// lay out with it)
 	layH   Handler
 	redraw bool // ask for a frame after this frame's events
+	// imgMenu: the handler opens AttachmentImageActions' menu
+	// (ImageMenuHandler), so the hover group has its More actions; a
+	// host without one gets no More (a button that would do nothing)
+	imgMenu bool
+	// imgDL: the handler downloads an image's Slack file
+	// (ImageDownloadHandler), so the group can lead with Download
+	imgDL bool
+	// menuImg is the image whose group's More menu is open: the group
+	// stays up until the host says the menu went
+	// (p-attachment_image_actions--menu-open)
+	menuImg *richtext.Image
 
 	// lead: the first line's start (SetLead)
 	lead int
@@ -174,6 +189,13 @@ type View struct {
 	// in a list): the View still handles clicks and hover but never changes
 	// its selection or takes focus; the owner calls SetSelection.
 	External bool
+
+	// win is where the owner says the View is on screen (SetWindow); a
+	// View taller than three screens records [clipA, clipB) of itself
+	// only (clipOn: the last recording did; giant.go)
+	win          Window
+	clipOn       bool
+	clipA, clipB int
 }
 
 // OffsetAt maps a point in View coordinates to a plain-text offset (valid
@@ -358,7 +380,7 @@ func (v *View) handAreas(gtx layout.Context, dates bool) {
 	}
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if v.handFrag(f, dates) {
+		if v.handFrag(f, dates) && v.inClip(f.top, f.bot) {
 			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
 			pointer.CursorPointer.Add(gtx.Ops)
 			s.Pop()
@@ -398,6 +420,8 @@ func (v *View) selRange() (int32, int32) {
 func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimensions {
 	v.layH = h
 	v.dark = st != nil && st.Palette.Dark
+	_, v.imgMenu = h.(ImageMenuHandler)
+	_, v.imgDL = h.(ImageDownloadHandler)
 	if st != nil {
 		v.hitImgs = st.Images
 	}
@@ -428,12 +452,12 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if v.tablesChanged() {
 		v.dirty = true // a data_table's menu sorted it (datatable.go)
 	}
-	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
+	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf || expGen() != v.laidXp {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
 		v.recorded = false
 	}
-	if !v.recorded {
+	if !v.recorded || v.windowStale() {
 		v.record(st)
 	}
 	if v.probe.Missed() {
@@ -589,6 +613,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.drawFileBars(gtx, st, false) // file_actions.go
 	v.drawHoverLayers(gtx, st)
 	v.drawRemoves(gtx, st)
+	v.pendSpinTip(gtx, st) // pending.go
 	if v.opts.Dim {
 		opac.Pop()
 	}
@@ -702,6 +727,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	}
 	v.d.reset()
 	v.laidPf = uipref.Gen()
+	v.laidXp = expGen()
 	v.tipFrag = -1
 	if v.expanded == nil {
 		v.expanded = map[*richtext.Attachment]bool{}
@@ -745,45 +771,22 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		h = l.blocks(v.doc.Blocks, 0, 0, w, true)
 	}
 	v.d.pillRects()
-	maxX := 0
-	for i := range v.d.frags {
-		if x := int(v.d.frags[i].x + v.d.frags[i].w + 0.999); x > maxX {
-			maxX = x
-		}
-	}
 	for i := range v.d.boxes {
-		if x := v.d.boxes[i].r.Max.X; x > maxX {
-			maxX = x
-		}
 		if y := v.d.boxes[i].r.Max.Y; y > h {
 			h = y
 		}
 	}
 	for i := range v.d.imgs {
-		if x := v.d.imgs[i].r.Max.X; x > maxX {
-			maxX = x
-		}
 		if y := v.d.imgs[i].r.Max.Y; y > h {
 			h = y
 		}
 	}
-	for i := range v.d.removes { // a remove button sits 9px past its card
-		if x := v.d.removes[i].r.Max.X; x > maxX {
-			maxX = x
-		}
-	}
 	for i := range v.d.carousels { // the cards are Views of their own: the scroller is the carousel's box
-		if x := v.d.carousels[i].r.Max.X; x > maxX {
-			maxX = x
-		}
 		if y := v.d.carousels[i].r.Max.Y; y > h {
 			h = y
 		}
 	}
-	if maxX > w {
-		maxX = w
-	}
-	v.d.size = image.Pt(maxX, h)
+	v.d.size = image.Pt(v.d.contentWidth(w), h)
 	v.laidW, v.laidPx, v.laidSp, v.laidGen, v.laidMode = w, pxdp, pxsp, st.gen, mode
 	v.dirty = false
 	v.recorded = false
@@ -793,6 +796,30 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if int(v.hover) >= len(v.d.targets) {
 		v.hover = -1
 	}
+}
+
+// contentWidth is how wide what's laid out reaches, at most w: its words,
+// boxes, images and remove buttons (one sits 9px past its card).
+func (d *display) contentWidth(w int) int {
+	maxX := 0
+	for i := range d.frags {
+		if x := int(d.frags[i].x + d.frags[i].w + 0.999); x > maxX {
+			maxX = x
+		}
+	}
+	for i := range d.boxes {
+		maxX = max(maxX, d.boxes[i].r.Max.X)
+	}
+	for i := range d.imgs {
+		maxX = max(maxX, d.imgs[i].r.Max.X)
+	}
+	for i := range d.removes {
+		maxX = max(maxX, d.removes[i].r.Max.X)
+	}
+	for i := range d.carousels { // the cards are Views of their own: the scroller is the carousel's box
+		maxX = max(maxX, d.carousels[i].r.Max.X)
+	}
+	return min(maxX, w)
 }
 
 func (v *View) anyReady(st *Style) bool {
@@ -811,6 +838,9 @@ func (v *View) anyReady(st *Style) bool {
 			if _, ok := st.Images.Get(f.url, f.size); ok {
 				return true
 			}
+			if f.alt && !f.broken && imgFailed(st.Images, f.url, f.size) {
+				return true // it failed since: its broken icon
+			}
 		}
 	}
 	return false
@@ -822,6 +852,8 @@ func (v *View) anyReady(st *Style) bool {
 // place in the stack (a gallery tile's outline, video pill and overflow
 // scrim over it).
 func (v *View) record(st *Style) {
+	v.setClip() // giant.go: a tall View near the screen only
+	v.materialize(st)
 	v.ops.Reset()
 	v.pending = v.pending[:0]
 	v.live = v.live[:0]
@@ -857,7 +889,7 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 	hp := v.hovPaint
 	static := comp == 0 && hp == 0 // the recording: it tracks pending and animated images
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp {
+		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp && v.rectInClip(b.r) {
 			v.drawBox(ops, b, css)
 			if hp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
 				fillRadii(ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
@@ -872,7 +904,7 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 	}
 	for i := range v.d.imgs {
 		im := &v.d.imgs[i]
-		if im.comp != comp || im.hov != hp {
+		if im.comp != comp || im.hov != hp || !v.rectInClip(im.r) {
 			continue
 		}
 		if static && v.liveImg(st, im) { // a recording would freeze it
@@ -889,13 +921,20 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	hp := v.hovPaint
 	static := comp == 0 && hp == 0
 	for i := range v.d.boxes { // over images, under text (gallery scrims, video pills)
-		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp && b.hov == hp {
+		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp && b.hov == hp && v.rectInClip(b.r) {
 			v.drawBox(ops, b, css)
 		}
 	}
-	if static {
+	if hp == 0 {
 		for i := range v.d.overlayIcons {
 			o := &v.d.overlayIcons[i]
+			if o.comp != comp || !v.rectInClip(o.r) {
+				continue
+			}
+			if o.art {
+				paintArtAt(ops, o.name, o.r, o.alpha)
+				continue
+			}
 			paintIconAt(ops, o.name, o.r, o.col)
 		}
 	}
@@ -904,6 +943,9 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		f := &v.d.frags[i]
 		if f.comp != comp || f.hov != hp || f.ell && static {
 			continue // a clamp's "…" is recorded on its own (paintEllipses)
+		}
+		if !v.inClip(f.top, f.bot) {
+			continue // far from the screen (giant.go)
 		}
 		switch f.kind {
 		case fImage:
@@ -928,7 +970,14 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			}
 			if !ok {
 				if static {
-					v.pending = append(v.pending, ^int32(i))
+					v.pending = append(v.pending, ^int32(i)) // drawn once it loads (a retry)
+				}
+				// a message emoji that failed: Chromium's broken <img>
+				// (brokenimage.go)
+				// once shown it stays until the image loads (a retry that's
+				// busy decoding isn't Failed, and drew a blank gap)
+				if f.broken = f.alt && (f.broken || imgFailed(st.Images, f.url, f.size)); f.broken {
+					paintBrokenEmoji(ops, int(f.x+0.5), f.y, f.size, v.laidPx)
 				}
 				continue
 			}
@@ -957,7 +1006,7 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 	}
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp && b.hov == hp {
+		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp && b.hov == hp && v.rectInClip(b.r) {
 			v.drawBox(ops, b, css)
 		}
 	}
@@ -1236,7 +1285,7 @@ func (v *View) paintSelection(gtx layout.Context, st *Style) {
 	fr := v.d.frags
 	for i := range fr {
 		f := &fr[i]
-		if f.line < 0 || f.p1 <= a || f.p0 >= b || f.p0 == f.p1 {
+		if f.line < 0 || f.p1 <= a || f.p0 >= b || f.p0 == f.p1 || !v.inClip(f.top, f.bot) {
 			continue
 		}
 		x0, x1 := f.x, f.x+f.w
@@ -1309,7 +1358,7 @@ func (v *View) lineAt(p f32.Point) int {
 	lines := v.d.lines
 	x, y := p.X, int(p.Y)
 	best := -1
-	bestD := 1 << 30
+	bestD := 1 << 62
 	for i, ln := range lines {
 		if ln.f1 <= ln.f0 {
 			continue
@@ -1329,10 +1378,12 @@ func (v *View) lineAt(p f32.Point) int {
 		} else if x > f1.x+f1.w {
 			dx = int(x - f1.x - f1.w)
 		}
-		d := dy*4 + dx/8
-		if dy == 0 {
-			d = dx / 8
-		}
+		// the nearest line by its block offset, as Chromium's
+		// PositionForPoint takes it (InlineCursor::PositionForPoint
+		// InInlineFormattingContext); the horizontal distance only between
+		// lines as near (side-by-side fields on one row): a press right of
+		// a short line takes that line's end, never a longer neighbour's
+		d := dy<<16 + min(dx, 1<<16-1)
 		if d < bestD {
 			bestD, best = d, i
 		}
@@ -1616,7 +1667,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if b := v.expPress; b != 0 {
 					v.expPress = 0
 					if v.expandAt(st, e.Position)+1 == b {
-						v.expand(b-1, h)
+						v.expand(st, b-1, h)
 					}
 					continue
 				}
@@ -1698,6 +1749,10 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 		v.remHot, v.copyTipAt = b, gtx.Now
 		v.copyGen = theme.TipGen()
 	}
+	if b := v.pendSpinAt(p) + 1; b != v.spinHot {
+		v.spinHot, v.copyTipAt = b, gtx.Now
+		v.copyGen = theme.TipGen()
+	}
 	if f := v.emojiAt(p); f != v.tipFrag {
 		v.tipFrag, v.tipAt = f, gtx.Now
 		v.tipGen = theme.TipGen()
@@ -1712,7 +1767,7 @@ func (v *View) left() {
 	v.vizHot, v.vizIdx = 0, -1
 	// the buttons under it are left too: a return waits their tooltip's
 	// delay again (mouseleave)
-	v.copyHot, v.secHot, v.expHot, v.barHot, v.remHot = 0, 0, 0, 0, 0
+	v.copyHot, v.secHot, v.expHot, v.barHot, v.remHot, v.spinHot = 0, 0, 0, 0, 0, 0
 	if !v.dragging {
 		v.hover = -1
 	}
@@ -2093,6 +2148,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		if rm, ok := h.(AttachmentRemover); ok && tg.id != "" {
 			rm.RemoveAttachment(tg.id)
 		}
+	case tRemoveFile:
+		if rm, ok := h.(FileRemover); ok && tg.file != nil {
+			rm.RemoveFile(tg.file, tg.id == "delete")
+		}
 	case tBot:
 		if bo, ok := h.(BotOpener); ok && tg.id != "" {
 			bo.OpenBot(tg.id, anchor)
@@ -2150,6 +2209,12 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 			v.dirty = true
 			v.redraw = true
 		}
+	case tExpandable: // a key of the expandables store (expander.go)
+		xp().SetExpanded(tg.id, tg.on)
+		v.dirty = true
+		v.redraw = true
+	case tAllowPreviews: // the sender joins allowed_unfurl_senders (expander.go)
+		xp().AllowPreviewsFrom(tg.id)
 	case tExpand:
 		if tg.id != "" {
 			setKitExpanded(tg.id, !kitIsExpanded(tg.id))

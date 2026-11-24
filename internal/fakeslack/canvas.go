@@ -75,6 +75,8 @@ type canvasStore struct {
 	quips            map[string]*quipModel
 	quipLog          []QuipRequest
 	quipPreserialize bool
+	// unfurls are the link cards' unfurl containers, by url (linkcards.go)
+	unfurls map[string]linkUnfurl
 }
 
 var canvasStores = newPerServer() // *Server -> *canvasStore
@@ -166,6 +168,32 @@ func (s *Server) EditCanvasAsOther(id, markdown string) {
 	}
 	cs.mu.Unlock()
 	s.pushDocumentUpdate(id)
+}
+
+// ReplaceCanvasBlockAsOther is another user's save of the top-level block
+// whose section is sectionID: it becomes markdown's one block, with the
+// same id. It reports whether there was such a block.
+func (s *Server) ReplaceCanvasBlockAsOther(id, sectionID, markdown string) bool {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	ok := false
+	if c, has := cs.byID[id]; has {
+		nb := canvas.ParseMarkdown(markdown, s.names())
+		for i := range c.Doc.Blocks {
+			if c.Doc.Blocks[i].ID == sectionID && len(nb) == 1 {
+				nb[0].ID = sectionID
+				c.Doc.Blocks[i], c.HTML = nb[0], ""
+				c.Updated = time.Now().Unix()
+				ok = true
+				break
+			}
+		}
+	}
+	cs.mu.Unlock()
+	if ok {
+		s.pushDocumentUpdate(id)
+	}
+	return ok
 }
 
 // InsertCanvasAsOther is EditCanvasAsOther for blocks another user
@@ -855,6 +883,9 @@ func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 		if s.serveListDownload(w, r, id, kind) { // lists.go
 			return
 		}
+	}
+	if s.serveBigFile(w, r, id) { // generated big files (bigfile.go)
+		return
 	}
 	if id == FilesVideoID { // the gallery's video: mediatest's fixture, with ranges (http.ServeContent)
 		mediatest.Handler(mediatest.GreyGreyRed, false).ServeHTTP(w, r)

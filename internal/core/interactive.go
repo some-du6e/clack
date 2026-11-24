@@ -45,6 +45,7 @@ package core
 // only; nothing here is written to disk.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1160,7 +1161,7 @@ func (ix *Interactive) MessageContainer(m *Message, attachmentID int) BlockActio
 // quipFeedbackBlocks is Slack's hasQuipMigrationFeedbackBlocks: a block
 // whose block_id starts with "quip_migration_feedback".
 func quipFeedbackBlocks(raw json.RawMessage) bool {
-	if !strings.Contains(string(raw), "quip_migration_feedback") {
+	if !bytes.Contains(raw, []byte("quip_migration_feedback")) {
 		return false
 	}
 	var bs []struct {

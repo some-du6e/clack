@@ -45,6 +45,7 @@ func (a *App) Release() {
 	// a subscriber from here gets a closed channel
 	a.released.Store(true)
 	a.closeSubscribers()
+	a.stopCanvasSavers() // their retry and poll timers held the App
 	// a temporary mute's expiry: its timer kept the App until then (hours
 	// on; the runtime's timer heap is a root)
 	a.mu.Lock()
@@ -61,12 +62,14 @@ func (a *App) Release() {
 	}
 	// its catch-ups' keys (catchUpKey holds the App): a catch-up still
 	// reading when the App is released would keep it until it ends
-	catchingUp.Range(func(k, _ any) bool {
-		if k.(catchUpKey).a == a {
-			catchingUp.Delete(k)
-		}
-		return true
-	})
+	for _, m := range []*sync.Map{&catchingUp, &staleReading} { // and its stale reads' (history_changed.go)
+		m.Range(func(k, _ any) bool {
+			if k.(catchUpKey).a == a {
+				m.Delete(k)
+			}
+			return true
+		})
+	}
 	store.Release(a.S)
 }
 

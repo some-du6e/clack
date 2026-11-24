@@ -3,11 +3,14 @@ package popups
 import (
 	"context"
 	"image"
+	"image/color"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 
+	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -159,27 +162,37 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if inThread {
 		markUnread.Key, markUnread.Action = "mark_thread_unread", "mark_thread_unread" // Slack's action ids (lq1n)
 	}
-	sa := SaveActionFor(h.Core(), &m)
-	items = append(items,
-		markUnread,
-		MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
+	// an ephemeral message has no Mark unread (canMarkUnread), save row
+	// (null on isEphemeral unless it's a saved to-do to move), reminder
+	// (canAddReminder) or Copy link (canCopyLink): actions_rules.go
+	app := h.Core()
+	eph := isEphemeral(app, &m)
+	if !eph {
+		items = append(items, markUnread)
+	}
+	if sa := SaveActionFor(app, &m); !eph || sa.Do == SaveMove {
+		items = append(items, MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			RunSaveAction(h, m) // oMi4 / aSBj (actions_todo.go)
-		}}.In(nsSaved),
-		MenuItem{Action: "remind", Label: ReminderLabel(h.Core(), &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage), // ih0g
-	)
+		}}.In(nsSaved))
+	}
+	if remindShown(app, &m) {
+		items = append(items, MenuItem{Action: "remind", Label: ReminderLabel(app, &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage)) // ih0g
+	}
 	if f, ok := actFollowItem(h, m, conv, root); ok {
 		items = append(items, f)
 	}
-	items = append(items,
-		Sep(),
-		MenuItem{Action: "copy_link", Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
+	items = append(items, Sep())
+	if copyLinkShown(app, &m) {
+		items = append(items, MenuItem{Action: "copy_link", Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, link()) // copyLink (5FS0): the clipboard only, no toast
-		}}.In(nsMessage),
-		MenuItem{Action: "copy_text", Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
+		}}.In(nsMessage))
+	}
+	if copyTextShown(&m) {
+		items = append(items, MenuItem{Action: "copy_text", Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
 			copyMessage(gtx, m)
-		}}.In(nsMessage),
-		Sep(),
-	)
+		}}.In(nsMessage))
+	}
+	items = append(items, Sep())
 
 	// getPinActionLabel (loUg): "…channel" in public and private channels,
 	// "…this conversation" in DMs and group DMs
@@ -191,11 +204,15 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if m.Pinned {
 		pin = MenuItem{Action: "pin", Label: unpinLabel, Icon: "pin", Hint: nsMessage.T("P"), Keys: KeyPin, Do: func() { actPin(h, ch, ts, false) }}.In(nsMessage)
 	}
-	items = append(items,
-		MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage),
-		// no "Forward message…" here: Slack keeps it on the hover toolbar
-		MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m)}.In(nsMessage),
-	)
+	// Organize and Connect to apps need isActionable (not ephemeral, a
+	// tombstone or temporary); no "Forward message…" here: Slack keeps it
+	// on the hover toolbar
+	if actionable(app, &m) {
+		items = append(items,
+			MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage),
+			MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m)}.In(nsMessage),
+		)
+	}
 
 	// the broadcast and workflow group: [send reply, remove reply, view
 	// workflow details, copy workflow ID]
@@ -270,13 +287,33 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if !flagged && !own && !m.Tombstone && m.TS != "" && actReporting(h) {
 		last = append(last, MenuItem{Key: "report_message", Action: "report_message", Label: "Report to Slack", Do: func() { reportMessage(h, link()) }}.In(nsMsgActionItems))
 	}
-	if own {
+	// canDeleteMessageHelper: your own message, and any ephemeral one
+	// (its first case), which the delete removes here alone
+	if own || eph {
 		last = append(last, MenuItem{Action: "delete_message", Label: "Delete message…", Hint: nsMessage.T("delete"), Keys: KeyDelete(), Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }}.In(nsMessage))
 	}
 	if len(last) > 0 {
 		items = append(append(items, Sep()), last...)
 	}
-	return items
+	return tidySeps(items)
+}
+
+// tidySeps drops the separators an empty group leaves (Slack's menu
+// filters empty groups out before it draws one divider between groups):
+// none first or last, never two together. An ephemeral message's menu
+// is Copy message, then Delete message…
+func tidySeps(items []MenuItem) []MenuItem {
+	out := items[:0]
+	for _, it := range items {
+		if it.Separator && (len(out) == 0 || out[len(out)-1].Separator) {
+			continue
+		}
+		out = append(out, it)
+	}
+	for len(out) > 0 && out[len(out)-1].Separator {
+		out = out[:len(out)-1]
+	}
+	return out
 }
 
 // actFollowItem is the follow row (ojBT): its label from the thread's
@@ -289,6 +326,11 @@ func actFollowItem(h Host, m core.Message, conv core.Conv, root string) (MenuIte
 	subscribed := m.FollowingThread
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
 		subscribed = actThreadSubscribed(h, ch, root)
+	} else if a := h.Core(); !CanStartOrOpenThread(a, &m) && (isEphemeral(a, &m) || a != nil && a.IsTempMsg(&m)) {
+		// canStartOrOpenThread on the thread's root (threadTs || ts): a
+		// top-level ephemeral or temporary message without replies has no
+		// thread to follow (a reply's row is its root's)
+		return MenuItem{}, false
 	}
 	if conv.Preview && !subscribed {
 		return MenuItem{}, false
@@ -489,6 +531,13 @@ func confirmDelete(h Host, m core.Message, del func(ctx context.Context, ch, ts 
 		func(gtx layout.Context) layout.Dimensions { return actMsgPreview(gtx, h, m, true) },
 		func() {
 			ch, ts := m.Channel, m.TS
+			// animateAndDeleteMessageApi: an ephemeral message (or a
+			// temporary ts) is only animated out and removed from the
+			// store (removeMessageAndTimestamp); chat.delete never goes out
+			if a := h.Core(); a != nil && a.IsEphemeral(&m) {
+				a.Interactive().DismissEphemeral(ch, ts)
+				return
+			}
 			actDo(h, "", func(ctx context.Context, _ *core.App) error { return deleteMessage(ctx, h, del, ch, ts) })
 		}).OldDialog() // BaseDeleteMessageDialog: DeprecatedBaseDialog, focusOnPrimaryButton
 }
@@ -711,6 +760,27 @@ func actNewReminderModal(h Host, ch, ts string) *Modal {
 // actReminderModal is the Reminder dialog; save gets the chosen time
 // (unix s) once it's in the future.
 func actReminderModal(h Host, save func(dueAt int64)) *Modal {
+	return actReminderModalDesc(h, nil, save)
+}
+
+// ReminderDescription is the Reminder dialog's Description input, which
+// it has for a reminder of its own (openLaterCustomModal with no message,
+// file, record or item: "/remind" alone): the composer's TextyInput
+// (popups can't import the composer).
+type ReminderDescription interface {
+	Layout(gtx layout.Context, th *theme.Theme, col color.NRGBA) layout.Dimensions
+	Tag() event.Tag
+	Text() string // what it shows: Save is disabled while it's empty (LaterCustomModal's ec)
+}
+
+// NewReminderDescriptionModal is that dialog: When and Time, then
+// "Description" over desc ("Remind me to…"); Save, enabled once desc has
+// something, gives save the time.
+func NewReminderDescriptionModal(h Host, desc ReminderDescription, save func(dueAt int64)) *Modal {
+	return actReminderModalDesc(h, desc, save)
+}
+
+func actReminderModalDesc(h Host, desc ReminderDescription, save func(dueAt int64)) *Modal {
 	now := time.Now()
 	start := dtCeil(now, 30)
 	day := &dtDate{Day: dtDay(start), Min: dtDay(now)}
@@ -722,6 +792,7 @@ func actReminderModal(h Host, save func(dueAt int64)) *Modal {
 		return 0
 	}
 	var m *Modal
+	mounted := false // the Description input took the focus (focusOnMount)
 	body := func(gtx layout.Context) layout.Dimensions {
 		th := h.Theme()
 		cl := colorsOf(th)
@@ -746,12 +817,23 @@ func actReminderModal(h Host, save func(dueAt int64)) *Modal {
 			return tm.Layout(gtx, h, org.Add(image.Pt(0, y)), minInt(dp(gtx, 200), w), dtLarge)
 		})
 		y += dp(gtx, 36)
+		if desc != nil {
+			// the <br/>, then the Description field: its Label over a
+			// BasicContainer of 5 to 50 lines (focusOnMount)
+			y += dp(gtx, 26)
+			lbl(nsSaved.T("Description"))
+			dd := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+				return reminderDescBox(gtx, th, cl, desc, w, &mounted)
+			})
+			y += dd.Size.Y
+			return layout.Dimensions{Size: image.Pt(w, y)}
+		}
 		return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 26))}
 	}
-	// the saved item's reminder modal (4hLh, saved_for_later)
+	// the saved item's reminder modal (E8e8 LaterCustomModal, saved_for_later)
 	m = NewModal(h, ModalOpts{Title: nsSaved.T("Reminder"), Width: 500, Body: body, Buttons: []*ModalButton{
 		{Label: nsSaved.T("Cancel"), Kind: BtnOutline},
-		{Label: nsSaved.T("Save"), Kind: BtnPrimary, Do: func() bool {
+		{Label: nsSaved.T("Save"), Kind: BtnPrimary, Enabled: func() bool { return desc == nil || strings.TrimSpace(desc.Text()) != "" }, Do: func() bool {
 			due := dtAt(day.Day, tm.Mins)
 			if !due.After(time.Now()) {
 				h.Toast("Choose a time in the future")
@@ -762,6 +844,42 @@ func actReminderModal(h Host, save func(dueAt int64)) *Modal {
 		}},
 	}})
 	return m
+}
+
+// reminderDescBox draws the Description input in its box (padding 8 12,
+// radius 8, the focus ring), five 22px lines tall at least, fifty at most
+// (BasicContainer numMinLines 5, numMaxLines 50); it takes the focus when
+// first drawn (focusOnMount).
+func reminderDescBox(gtx layout.Context, th *theme.Theme, cl *Colors, desc ReminderDescription, w int, mounted *bool) layout.Dimensions {
+	if !*mounted {
+		*mounted = true
+		gtx.Execute(key.FocusCmd{Tag: desc.Tag()})
+	}
+	m := gtx
+	m.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 24), gtx.Sp(22)*50)}
+	call, td := record(m, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		gtx.Constraints.Min.Y = gtx.Sp(22) * 5
+		return desc.Layout(gtx, th, cl.Fg)
+	})
+	ih := td.Size.Y + dp(gtx, 16)
+	r := image.Rect(0, 0, w, ih)
+	rad := dp(gtx, 8)
+	if gtx.Focused(desc.Tag()) {
+		ring := dp(gtx, 5)
+		rrect(gtx, r.Inset(-ring), rad+ring, cl.FocusRing)
+		one := maxInt(1, dp(gtx, 1))
+		rrect(gtx, r.Inset(-one), rad+one, cl.Focus)
+		rrect(gtx, r, rad, cl.ModalBg)
+	} else {
+		rrect(gtx, r, rad, cl.InputBorder)
+		rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.ModalBg)
+	}
+	at(gtx, image.Pt(dp(gtx, 12), dp(gtx, 8)), func(gtx layout.Context) layout.Dimensions {
+		call.Add(gtx.Ops)
+		return td
+	})
+	return layout.Dimensions{Size: image.Pt(w, ih)}
 }
 
 // actReminderItems is useReminderTimeOptions (GufF, saved_for_later) for
@@ -842,4 +960,58 @@ func connectToApps(h Host, m core.Message) []MenuItem {
 		}
 	}
 	return []MenuItem{{Label: "No apps", Disabled: true}}
+}
+
+// RemoveFileFromMessage is removeFileFromMessage (boot-shared QD+H): a
+// file card's x on the viewer's own message. The file that is all the
+// message has left (no text, no blocks, no other file) asks to delete the
+// message instead (openDeleteMessageDialog); else Slack's
+// RemoveFileFromMessageDialog: "Remove file?" ("Remove canvas?", "Remove
+// list?"), "It will be removed from the message, but it won’t be
+// deleted.", the danger "Remove", then chatRemoveFile
+// (core.RemoveFileFromMessage); a failure toasts "Can’t remove that from
+// the message. Try again." with the warning icon.
+func RemoveFileFromMessage(h Host, m core.Message, f *richtext.File) {
+	if f == nil || f.ID == "" {
+		return
+	}
+	if fileIsTheLastContent(&m, f.ID) {
+		ConfirmDelete(h, m)
+		return
+	}
+	title := "Remove file?"
+	switch {
+	case core.IsCanvasFile(f.Type, f.Mode, f.PrettyType):
+		title = "Remove canvas?"
+	case core.IsListFile(f.Type, f.Mode, f.PrettyType):
+		title = "Remove list?"
+	}
+	ch, ts, id := m.Channel, m.TS, f.ID
+	Confirm(h, nsFiles.T(title), nsFiles.T("It will be removed from the message, but it won’t be deleted."), nsFiles.T("Remove"), true, nil, func() {
+		a := h.Core()
+		if a == nil {
+			return
+		}
+		run(h, func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, a.RemoveFileFromMessage(ctx, ch, ts, id)
+		}, func(_ struct{}, err error) {
+			if err != nil {
+				toastIcon(h, nsFiles.T("Can’t remove that from the message. Try again."), "warning")
+			}
+		})
+	})
+}
+
+// fileIsTheLastContent is isFileTheLastContent: m has no text, no blocks
+// (hasMessageBlocks) and no file but id.
+func fileIsTheLastContent(m *core.Message, id string) bool {
+	if strings.TrimSpace(m.Text) != "" || len(m.Blocks) > 0 && string(m.Blocks) != "null" && string(m.Blocks) != "[]" {
+		return false
+	}
+	for i := range m.Doc.Blocks {
+		if b := &m.Doc.Blocks[i]; b.Kind == richtext.FileBlock && b.File != nil && b.File.ID != id {
+			return false
+		}
+	}
+	return true
 }

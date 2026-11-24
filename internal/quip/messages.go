@@ -1,8 +1,9 @@
 package quip
 
 // The messages, field for field from Slack's descriptors (web client
-// build 9685e6ce144b; the whole schema: tools/oracles/quip_schema.cjs).
-// Only what Clack reads or writes is here; Unmarshal skips the rest.
+// build 9685e6ce144b; the whole schema was dumped from Slack's chunks
+// with round 1's tools, docs/CANVAS-EDIT-PLAN.md). Only what Clack reads
+// or writes is here; Unmarshal skips the rest.
 
 // LoadRequest is syncer.LoadData.Request: load-data's request_binary.
 type LoadRequest struct {
@@ -184,6 +185,7 @@ type Content struct {
 	HorizontalRule   *HorizontalRule   `pb:"43"`
 	SlackUser        *SlackUser        `pb:"44"`
 	SlackEmoji       *SlackEmoji       `pb:"48"`
+	LinkUnfurl       *LinkUnfurlCard   `pb:"50"` // a link card (TypeLinkUnfurlCard, linkcard.go)
 	Title            *ContentTitle     `pb:"58"`
 	SlackDate        *SlackDate        `pb:"62"`
 	LayoutBlockquote *LayoutBlockquote `pb:"65"`
@@ -274,6 +276,7 @@ type Attributes struct {
 	ListPosition                  *int32  `pb:"11"`
 	DefaultContent                *int32  `pb:"13"`
 	TextAlignment                 *int32  `pb:"26"`
+	VerticalAlignment             *int32  `pb:"30"` // [default = 5]: a save sends it when the server didn't
 	IsNewDocumentDefaultContent   *bool   `pb:"34"`
 	ContinuePreviousListNumbering *bool   `pb:"47"`
 	RestartListNumberingAt        *int32  `pb:"48"`

@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strconv"
 	"time"
 
 	"gioui.org/f32"
@@ -13,6 +14,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 )
 
@@ -131,4 +133,64 @@ func bezierAt(x1, y1, x2, y2, x float64) float64 {
 	}
 	mt := 1 - t
 	return 3*mt*mt*t*y1 + 3*mt*t*t*y2 + t*t*t
+}
+
+// pendSpin is a pending generic file's PendingFilesSpinner (boot-shared
+// IDty, under PendingFilesGalleryGenericFile Ujly): its box and tooltip.
+type pendSpin struct {
+	r   image.Rectangle
+	tip string
+}
+
+// genericPillow reports whether file lays out as the generic pillow
+// (lay.file's fallback): the file PendingFilesGalleryGenericFile draws
+// while it uploads.
+func genericPillow(f *richtext.File) bool {
+	return !isListFile(f) && !mediaFile(f) && !f.IsAudio && !f.IsSnippet && !richtext.IsCanvasFile(f) && !isEmailFile(f)
+}
+
+// pendingSpinner is PendingFilesSpinner beside a pending generic file
+// whose pillow's top right corner is (right, top): InfiniteSpinner medium
+// (16px), blue, on a primary_background circle at top -8px, right -8px
+// (.c-pending_files__spinner), outside the pillow's .5 opacity; its
+// Tooltip (delay 0) says how the upload goes.
+func (l *lay) pendingSpinner(f *richtext.File, right, top int) {
+	d := l.dp(16)
+	r := image.Rect(right+l.dp(8)-d, top-l.dp(8), right+l.dp(8), top-l.dp(8)+d)
+	l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: r, fill: l.st.Palette.Panel, target: -1, layer: 1})
+	l.d.spinners = append(l.d.spinners, spinPrim{r: r})
+	l.d.pendSpins = append(l.d.pendSpins, pendSpin{r: r, tip: pendingSpinnerTip(f.Percent)})
+}
+
+// pendingSpinnerTip is PendingFilesSpinner's tip for percentComplete p:
+// "Uploading… {percent}%" under 99, "Processing…" from 99, "Waiting to
+// upload…" before the first byte.
+func pendingSpinnerTip(p int) string {
+	switch {
+	case p <= 0:
+		return i18n.T("stories_av", "Waiting to upload…")
+	case p < 99:
+		return i18n.T("stories_av", "Uploading… {percent}%", "percent", strconv.Itoa(p))
+	}
+	return i18n.T("stories_av", "Processing…")
+}
+
+// pendSpinAt is the pending upload spinner at p (View coordinates), or -1.
+func (v *View) pendSpinAt(p f32.Point) int {
+	pt := image.Pt(int(p.X), int(p.Y))
+	for i := range v.d.pendSpins {
+		if pt.In(v.d.pendSpins[i].r) {
+			return i
+		}
+	}
+	return -1
+}
+
+// pendSpinTip is the hovered spinner's Tooltip, at once (delay 0).
+func (v *View) pendSpinTip(gtx layout.Context, st *Style) {
+	if !v.hovering || v.spinHot <= 0 || v.spinHot > len(v.d.pendSpins) {
+		return
+	}
+	s := &v.d.pendSpins[v.spinHot-1]
+	v.btnTip(gtx, st, s.r, s.tip, false, 0)
 }

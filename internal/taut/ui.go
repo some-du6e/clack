@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strconv"
@@ -140,12 +141,14 @@ type uiState struct {
 	roots   map[uint64]*jsrt.Root // slackc root → jsrt root
 	rootsMu sync.Mutex
 
-	views viewCache
+	views   viewCache
+	history historyView // channelHistory as the patches leave it (history.go)
 }
 
 func newUIState(t *Taut) *uiState {
 	u := &uiState{t: t, roots: map[uint64]*jsrt.Root{}}
 	u.views.init(t)
+	u.history.init()
 	return u
 }
 
@@ -182,10 +185,17 @@ func (u *uiState) setStatePatched(s statePatchInfo) {
 	// which slices plugins patch changed (a patch added or gone): the UI
 	// starts or stops reading views of them, which it does only in a frame
 	moved := u.state.All != s.All || !slices.Equal(u.state.Slices, s.Slices)
+	had := slices.Contains(u.state.Slices, "channelHistory") || u.state.All
 	u.state = s
 	u.mu.Unlock()
 	if moved {
 		u.textRewrites.Store(false) // what rewrote text may be gone: seen again if not
+	}
+	if had && !s.All && !slices.Contains(s.Slices, "channelHistory") {
+		// JS stops watching channelHistory once nothing patches it
+		// (tellGoHistory): a patch that comes back is posted every key
+		// again
+		u.history.reset()
 	}
 	if !s.All && len(s.Slices) == 0 {
 		u.patchedSlices.Store(nil)
@@ -1167,7 +1177,7 @@ func (t *Taut) MessagesChanged(ch string, tss []string) {
 // and the mark that takes them to JS takes ch off the sweep's watch, so
 // nothing else would tell JS the history changed.
 func (t *Taut) WindowLoaded(ch string) {
-	if t == nil || ch == "" || !t.SlicePatched("messages") {
+	if t == nil || ch == "" || !t.SlicePatched("messages") && !t.SlicePatched("channelHistory") {
 		return
 	}
 	t.mirror.invalidate("channelHistory", ch)
@@ -1187,7 +1197,17 @@ func (t *Taut) WindowLoaded(ch string) {
 // again (a jump's window around the message its thread lookup fetched)
 // doesn't mark it twice.
 func (t *Taut) MessagesAdded(ch string, tss []string) {
-	if t == nil || ch == "" || len(tss) == 0 || !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
+	if t == nil || ch == "" || len(tss) == 0 {
+		return
+	}
+	// channelHistory[ch] lists them now (mirror.history): a copy JS read
+	// before the load lacks them. It goes at once rather than at the
+	// sweep's next look (historyFP): a help channel's first load left its
+	// resolved tickets drawn under HideResolved until then
+	if t.SlicePatched("channelHistory") && t.mirror.watching("channelHistory", ch) {
+		t.mirror.invalidate("channelHistory", ch)
+	}
+	if !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
 		return
 	}
 	if held := t.app.S.FetchedHas(ch, tss); slices.Contains(held, true) {
@@ -1410,12 +1430,20 @@ type viewEntry struct {
 	bsum  uint64
 	blen  int
 	bkeys []store.MsgKey
+	// vals: a long bucket read in chunks keeps its entries, not raw (the
+	// same entries again, in one value: a channel of 908,000-character
+	// messages held 137 MB twice); get writes raw again from them
+	vals map[string]json.RawMessage
 
 	// same: the fetch found the value the installed entry it was handed
 	// holds, and decoded nothing (work keeps that entry, taking bsum and
 	// blen)
 	same bool
 }
+
+// viewLongBucket: a chunked bucket longer than this keeps its entries and
+// not its bytes whole (viewEntry.vals).
+const viewLongBucket = 4 << 20
 
 // viewInj is a message of a bucket that core didn't have; sum and rawLen
 // tell its bytes, so a refetch keeps it (decoded and converted) when
@@ -1681,10 +1709,24 @@ func (v *viewCache) entryStateNeed(slice, key, sub string, need uint64) (*viewEn
 // posted to it (d -1).
 func (v *viewCache) msgPending(ch, ts string, d int) {
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	k := msgKey{ch, ts}
+	ready := false
 	if v.pendMsg[k] += d; v.pendMsg[k] <= 0 {
 		delete(v.pendMsg, k)
+		// the last change posted: a view of it work installed while it was
+		// queued, with its marks behind it, was held back (work announces
+		// no pending message); it's ready now, and the row waiting on it
+		// reads it again when the epoch moves
+		if g := v.groups[viewSK{"messages", ch}]; d < 0 && g != nil && v.visibleLocked(g) {
+			if e := g.subs[ts]; e != nil && v.msgMarksReadyLocked(viewKey{"messages", ch, ts}, e.ver) {
+				ready = true
+				v.epoch.Add(1)
+			}
+		}
+	}
+	v.mu.Unlock()
+	if f := v.t.opts.UI.Invalidate; ready && f != nil {
+		f()
 	}
 }
 
@@ -1787,6 +1829,9 @@ func (v *viewCache) get(slice, key, sub string) (json.RawMessage, bool) {
 	if e == nil {
 		return nil, false
 	}
+	if e.raw == nil && e.vals != nil {
+		return wholeJSON(e.vals), true // the bytes it was installed from
+	}
 	return e.raw, true
 }
 
@@ -1854,6 +1899,40 @@ func (v *viewCache) stale(slice, key string) (onScreen bool) {
 
 // work is the fetch worker: one batch at a time until nothing is wanted,
 // so a busy runtime gets each key asked once, not once per frame.
+// viewTrace, when set (TraceViews), hears each view the worker announces
+// to the UI and why.
+var viewTrace atomic.Pointer[func(slice, key, sub, why string)]
+
+// TraceViews sets (nil clears) a hook that hears each view the view
+// cache's worker announces to the UI (it asks for a frame for it) and why:
+// for tests, which reads ask for the frames.
+func TraceViews(f func(slice, key, sub, why string)) {
+	if f == nil {
+		viewTrace.Store(nil)
+		return
+	}
+	viewTrace.Store(&f)
+}
+
+func traceView(k viewKey, why string) {
+	if f := viewTrace.Load(); f != nil {
+		(*f)(k.slice, k.key, k.sub, why)
+	}
+}
+
+// traceMsg traces message ch/ts's marks: the version, its own mark and
+// the pending count now.
+func (v *viewCache) traceMsg(ch, ts, what string) {
+	if viewTrace.Load() == nil {
+		return
+	}
+	v.mu.Lock()
+	mk := msgKey{ch, ts}
+	why := fmt.Sprintf("%s (seq %d, its mark %d, pending %d)", what, v.seq, v.msgVer[mk], v.pendMsg[mk])
+	v.mu.Unlock()
+	traceView(viewKey{"messages", ch, ts}, why)
+}
+
 func (v *viewCache) work() {
 	for {
 		v.mu.Lock()
@@ -1933,9 +2012,13 @@ func (v *viewCache) work() {
 				// a frame comes 250 ms on, which an idle window never lays
 				// out: the masked word stayed in clear until a mouse move
 				if k.slice == "messages" && k.key != "" && k.sub != "" && (dropped || v.visibleLocked(g)) &&
-					!v.msgMarksReadyLocked(k, was) && v.msgMarksReadyLocked(k, ver) {
+					!v.msgMarksReadyLocked(k, was) && v.msgMarksReadyLocked(k, ver) && v.pendMsg[msgKey{k.key, k.sub}] == 0 {
 					changed = true
 					v.epoch.Add(1)
+					if viewTrace.Load() != nil {
+						traceView(k, fmt.Sprintf("ready: the same bytes, its marks behind them now (was %d, ver %d, its mark %d, pending %d)",
+							was, ver, v.msgVer[msgKey{k.key, k.sub}], v.pendMsg[msgKey{k.key, k.sub}]))
+					}
 				}
 				if e.blen > 0 {
 					cur.bsum, cur.blen = e.bsum, e.blen
@@ -1952,9 +2035,26 @@ func (v *viewCache) work() {
 				// its injected list, which may have come back as it was
 				// (the same messages, kept decoded and converted)
 				bucket := k.slice == "messages" && k.key != "" && k.sub == ""
-				if (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
+				// a message with a change still queued for JS (pendMsg)
+				// isn't ready, whatever its marks: this answer is from
+				// before the change, and no row draws it. The message's
+				// read once the change is posted announces it (send's
+				// marks stale this one), or msgPending does when its
+				// count goes to 0 with this one ready. Announced here, an
+				// idle runtime's at-once answer on the in-order lane, 8 ms
+				// before the post, asked for a frame that drew nothing new
+				// on every edit under a plugin patching the messages slice
+				// (flake-check's activity-edits: 80 frames for 20 edits,
+				// 61 before e0cab406c)
+				held := k.slice == "messages" && k.key != "" && k.sub != "" && v.pendMsg[msgKey{k.key, k.sub}] > 0
+				if !held && (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
 					changed = true
 					v.epoch.Add(1)
+					if viewTrace.Load() != nil {
+						traceView(k, fmt.Sprintf("a new value (first %v, marks ready %v, stale %v, ver %d, its mark %d, pending %d)", cur == nil,
+							k.slice != "messages" || k.sub == "" || v.msgMarksReadyLocked(k, ver), v.staleLocked(e, g, k.slice),
+							ver, v.msgVer[msgKey{k.key, k.sub}], v.pendMsg[msgKey{k.key, k.sub}]))
+					}
 				}
 				g.subs[k.sub] = e
 				cur = e
@@ -2303,14 +2403,14 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 		return b
 	}
 	// a whole message bucket read in chunks, as one value: its entries
-	// encoded again (json sorts a map's keys, so the same entries make the
-	// same bytes), which the same-bytes check compares as it compared JS's
-	// encoding of the bucket whole
+	// written again in key order (the same entries make the same bytes),
+	// which the same-bytes check compares as it compared JS's encoding of
+	// the bucket whole
 	wholes := map[viewSK]json.RawMessage{}
 	whole := func(sk viewSK) json.RawMessage {
 		w, ok := wholes[sk]
 		if !ok {
-			w, _ = json.Marshal(bucket(sk))
+			w = wholeJSON(bucket(sk))
 			wholes[sk] = w
 		}
 		return w
@@ -2347,6 +2447,12 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 					continue
 				}
 				e.sm = decodeMessage(raw)
+				if e.sm != nil && len(raw) >= 32<<10 {
+					// passed through, a long message's text and blocks are
+					// core's bytes: held once (a channel of 908,000-character
+					// messages held each twice)
+					v.t.app.S.ShareContent(k.key, e.sm)
+				}
 				e.size = 3*len(raw) + 256 // the decoded message and its conversion
 			} else if k.key != "" {
 				e.bsum, e.blen = viewSum(raw), len(raw)
@@ -2361,6 +2467,9 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 					e.bkeys = append(e.bkeys, store.MsgKey{TS: ts, CID: clientMsgID(raw)})
 				}
 				e.size += 3*1024*len(e.inj) + 48*len(e.bkeys)
+				if chunked[sk] && len(raw) > viewLongBucket {
+					e.raw, e.sum, e.vals = nil, e.bsum, b // sameValue: sum and length
+				}
 			}
 		case "members":
 			if cur != nil && cur.mem != nil && bytes.Equal(cur.raw, raw) {
@@ -2794,6 +2903,17 @@ type File struct {
 	Name string
 	Type string
 	Data []byte
+	// Subtype, Duration (seconds) and AudioWaveSamples are the File's own
+	// upload fields, as Slack's recorder (useAudioWaveformRecorder) sets
+	// them on the File and CustomNameRecording does from decodeAudioData.
+	// Slack's UploadQueue (boot-shared HnCu) sends the subtype with the
+	// upload (files.getUploadURL and files.completeUpload); duration and
+	// audio_wave_samples stay on the pending File for the tiles that draw
+	// it while it uploads, and the server's file record has its own once
+	// it is processed.
+	Subtype          string
+	Duration         float64
+	AudioWaveSamples []float64
 }
 
 // UploadType is the type f's upload goes up with: Slack's FormData sends
@@ -2807,21 +2927,35 @@ func (f File) UploadType() string {
 }
 
 func (f File) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{"$file": map[string]any{"name": f.Name, "type": f.Type, "size": len(f.Data), "data": f.Data}})
+	o := map[string]any{"name": f.Name, "type": f.Type, "size": len(f.Data), "data": f.Data}
+	if f.Subtype != "" {
+		o["subtype"] = f.Subtype
+	}
+	if f.Duration > 0 {
+		o["duration"] = f.Duration
+	}
+	if f.AudioWaveSamples != nil {
+		o["audio_wave_samples"] = f.AudioWaveSamples
+	}
+	return json.Marshal(map[string]any{"$file": o})
 }
 
 func (f *File) UnmarshalJSON(b []byte) error {
 	var v struct {
 		F *struct {
-			Name string `json:"name"`
-			Type string `json:"type"`
-			Data []byte `json:"data"`
+			Name             string    `json:"name"`
+			Type             string    `json:"type"`
+			Data             []byte    `json:"data"`
+			Subtype          string    `json:"subtype"`
+			Duration         float64   `json:"duration"`
+			AudioWaveSamples []float64 `json:"audio_wave_samples"`
 		} `json:"$file"`
 	}
 	if err := json.Unmarshal(b, &v); err != nil || v.F == nil {
 		return nil
 	}
 	f.Name, f.Type, f.Data = v.F.Name, v.F.Type, v.F.Data
+	f.Subtype, f.Duration, f.AudioWaveSamples = v.F.Subtype, v.F.Duration, v.F.AudioWaveSamples
 	return nil
 }
 
@@ -2851,4 +2985,36 @@ func errWithStack(err error) string {
 		lines[i] = strings.TrimSpace(l)
 	}
 	return err.Error() + " [" + strings.Join(lines, " | ") + "]"
+}
+
+// wholeJSON is a message bucket's entries as one JSON object, keys in
+// order: each entry's bytes as JS encoded them, not re-validated and
+// copied through encoding/json (a bucket of 908,000-character messages is
+// a hundred megabytes; encoding/json made three times that of garbage).
+func wholeJSON(b map[string]json.RawMessage) json.RawMessage {
+	if b == nil {
+		return json.RawMessage("null")
+	}
+	keys := make([]string, 0, len(b))
+	n := 2
+	for k, v := range b {
+		keys = append(keys, k)
+		n += len(k) + len(v) + 4
+	}
+	sort.Strings(keys)
+	out := make([]byte, 0, n)
+	out = append(out, '{')
+	for i, k := range keys {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = appendJSONString(out, k)
+		out = append(out, ':')
+		if v := b[k]; len(v) > 0 {
+			out = append(out, v...)
+		} else {
+			out = append(out, "null"...)
+		}
+	}
+	return append(out, '}')
 }

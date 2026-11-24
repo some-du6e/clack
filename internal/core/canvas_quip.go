@@ -25,10 +25,13 @@ type quipStates struct {
 	byID map[string]*quipCanvas // by file id
 }
 
-// quipCanvas is one canvas's model: one call at a time, a fetch asked
-// for during one runs once more after it.
+// quipCanvas is one canvas's model: one call at a time (load, fetch or
+// save), a fetch asked for during one runs once more after it. The model
+// itself is held only to read or change it, never across a call, so a
+// reader (CanvasModel, the frame) never waits on the network.
 type quipCanvas struct {
-	mu       sync.Mutex // the model; held for a call
+	net      sync.Mutex // one call at a time; taken before mu
+	mu       sync.Mutex // thread, doc and err
 	thread   string
 	doc      *quip.Doc
 	err      error // the last load's failure
@@ -60,6 +63,20 @@ var ErrNoQuipThread = errors.New("core: the canvas has no Quip thread")
 // after it, the model follows the canvas's changes. A failed load is kept
 // (CanvasModelError) and the next call tries again.
 func (a *App) LoadCanvasModel(ctx context.Context, id string) error {
+	q := a.quipCanvasFor(id)
+	q.mu.Lock()
+	loaded := q.doc != nil
+	q.mu.Unlock()
+	if loaded { // a call in flight (a save, a fetch) doesn't hold it up
+		return nil
+	}
+	q.net.Lock()
+	defer q.net.Unlock()
+	return a.loadModelLocked(ctx, id, q)
+}
+
+// quipCanvasFor is the canvas's model state, made if core has none.
+func (a *App) quipCanvasFor(id string) *quipCanvas {
 	st := a.quipStates()
 	st.mu.Lock()
 	q := st.byID[id]
@@ -69,25 +86,38 @@ func (a *App) LoadCanvasModel(ctx context.Context, id string) error {
 	}
 	st.mu.Unlock()
 	a.ensureCanvasWatch()
+	return q
+}
+
+// loadModelLocked is LoadCanvasModel with q.net held.
+func (a *App) loadModelLocked(ctx context.Context, id string, q *quipCanvas) error {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.doc != nil {
+	loaded, thread := q.doc != nil, q.thread
+	q.mu.Unlock()
+	if loaded {
 		return nil
 	}
-	if q.thread == "" {
+	fail := func(err error) error {
+		q.mu.Lock()
+		q.err = err
+		q.mu.Unlock()
+		return err
+	}
+	if thread == "" {
 		f, err := a.canvasFileInfo(ctx, id)
 		if err != nil {
-			q.err = err
-			return err
+			return fail(err)
 		}
 		if f.QuipThreadID == "" {
-			q.err = ErrNoQuipThread
-			return q.err
+			return fail(ErrNoQuipThread)
 		}
-		q.thread = f.QuipThreadID
+		thread = f.QuipThreadID
 	}
-	d, err := a.quipLoad(ctx, q.thread)
+	d, err := a.quipLoad(ctx, thread)
+	q.mu.Lock()
+	q.thread = thread
 	q.doc, q.err = d, err
+	q.mu.Unlock()
 	if err == nil {
 		a.emit(Event{Type: "canvas_model", ID: id})
 	}
@@ -171,12 +201,21 @@ func (a *App) followCanvasModel(id string) {
 // reload Slack would do instead (backlog_reload_model_data, an index
 // reload) loads the thread again.
 func (a *App) fetchCanvasModel(ctx context.Context, id string, q *quipCanvas) error {
+	q.net.Lock()
+	defer q.net.Unlock()
+	return a.fetchModelLocked(ctx, id, q)
+}
+
+// fetchModelLocked is fetchCanvasModel with q.net held.
+func (a *App) fetchModelLocked(ctx context.Context, id string, q *quipCanvas) error {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	if q.doc == nil {
+		q.mu.Unlock()
 		return nil
 	}
-	b, err := a.C.CanvasCall(ctx, "fetch-latest", []slack.CanvasField{{Name: "request_binary", Value: quip.MarshalBase64(q.doc.FetchRequest())}})
+	req, thread := quip.MarshalBase64(q.doc.FetchRequest()), q.thread
+	q.mu.Unlock()
+	b, err := a.C.CanvasCall(ctx, "fetch-latest", []slack.CanvasField{{Name: "request_binary", Value: req}})
 	if err != nil {
 		return err
 	}
@@ -184,20 +223,36 @@ func (a *App) fetchCanvasModel(ctx context.Context, id string, q *quipCanvas) er
 	if err := quip.Unmarshal(b, &r); err != nil {
 		return fmt.Errorf("core: fetch-latest: %w", err)
 	}
+	q.mu.Lock()
 	changed, reload := q.doc.Apply(&r)
+	q.mu.Unlock()
 	if reload {
-		d, err := a.quipLoad(ctx, q.thread)
+		d, err := a.quipLoad(ctx, thread)
+		q.mu.Lock()
 		if err != nil {
 			q.err = err
+		} else {
+			q.doc, q.err = d, nil
+		}
+		q.mu.Unlock()
+		if err != nil {
 			return err
 		}
-		q.doc, q.err = d, nil
 		changed = []string{""}
 	}
 	if len(changed) > 0 {
 		a.emit(Event{Type: "canvas_model", ID: id})
 	}
 	return nil
+}
+
+// DropUnopenedCanvasModel forgets the canvas's model when no view has the
+// canvas open (files.open): a peek's, once the peek closes. Without
+// files.open nothing keeps the model current.
+func (a *App) DropUnopenedCanvasModel(id string) {
+	if !a.CanvasOpen(id) {
+		a.dropCanvasModel(id)
+	}
 }
 
 // dropCanvasModel forgets the canvas's model (its last view closed).

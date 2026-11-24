@@ -54,6 +54,9 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Mod+G", "Search", func(a *App) { a.openSearch("") })
 	add("Mod+F", "Search in conversation", func(a *App) { a.findInConversation() })
 	add("Mod+J", "Jump to the first unread reply", func(a *App) { a.threadJumpUnread() })
+	// Slack's "View all downloads" (the shortcuts list's Navigation):
+	// openDownloadsModal, the desktop's Downloads
+	add("Mod+Shift+J", "View all downloads", func(a *App) { a.openDownloadsModal() })
 	add("Mod+Shift+A", "All unreads", func(a *App) { a.Navigate("unreads") })
 	add("Mod+Shift+T", "Threads", func(a *App) { a.Navigate("threads") })
 	add("Mod+Shift+K", "DMs", func(a *App) { a.Navigate("dms") })
@@ -201,8 +204,9 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 		}
 	}
 	globalKeys := slackc.WantsGlobal("keydown") || slackc.WantsGlobal("keyup")
-	a.secondary.keyFocus = a.threadPaneFocused(gtx) || a.secChannelFocused(gtx) // for the pane's Escape
+	a.secondary.keyFocus = a.threadPaneFocused(gtx) || a.threadListFocused(gtx) || a.secChannelFocused(gtx) // for the pane's Escape
 	a.secondary.findFocus = a.threadFindFocused(gtx)
+	a.noteFocusedContainer(gtx) // focus_container.go
 	for {
 		e, ok := gtx.Event(filters...)
 		if !ok {
