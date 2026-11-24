@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/workobject"
@@ -803,7 +804,7 @@ func (h woPaneHandler) OpenUser(id string, anchor image.Point) { h.a.OpenProfile
 func (h woPaneHandler) OpenChannel(id string)                  { h.a.Navigate("c/" + id) }
 func (h woPaneHandler) OpenUsergroup(string, image.Point)      {}
 func (h woPaneHandler) OpenImage(img richtext.Image)           { openURL(img.URL) }
-func (h woPaneHandler) OpenFile(f *richtext.File)              { openURL(firstNonEmptyStr(f.Permalink, f.URL)) }
+func (h woPaneHandler) OpenFile(f *richtext.File)              { popups.OpenFileCard(h.a, f, openURL) }
 func (h woPaneHandler) Button(b richtext.Button) {
 	if b.URL != "" {
 		openURL(b.URL)

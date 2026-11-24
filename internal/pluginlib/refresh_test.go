@@ -14,7 +14,9 @@ import (
 // window's focus, the hourly check), sends one request at a time, only
 // for a copy past maxAge unless forced, and after a failure holds back
 // unforced ones: a minute, doubling with each failure in a row up to an
-// hour, cleared by a success. A copy on disk is as old as its file.
+// hour, cleared by a success. A copy on disk is as old as its file. A
+// maxAge of 0 makes any copy stale whatever the clock's resolution
+// (Windows' monotonic clock moves in timer ticks).
 func TestRefreshOneAtATimeWithBackoff(t *testing.T) {
 	files := bundles()
 	index := testIndex(t, files, nil)
@@ -69,27 +71,27 @@ func TestRefreshOneAtATimeWithBackoff(t *testing.T) {
 	if l.Refresh(time.Hour, false, done) || hits.Load() != 1 {
 		t.Fatal("a fresh copy was fetched again")
 	}
-	if !l.Refresh(time.Nanosecond, false, done) || answer() != nil || hits.Load() != 2 {
+	if !l.Refresh(0, false, done) || answer() != nil || hits.Load() != 2 {
 		t.Fatal("a copy past maxAge wasn't fetched again")
 	}
 
 	// a failure keeps the copy and holds unforced requests back a minute
 	failing.Store(true)
 	kept := l.Cached()
-	if !l.Refresh(time.Nanosecond, false, done) || answer() == nil {
+	if !l.Refresh(0, false, done) || answer() == nil {
 		t.Fatal("a failing release answered")
 	}
 	if l.Cached() != kept || l.backoff != time.Minute || time.Until(l.retryAt) < 50*time.Second {
 		t.Fatalf("after a failure: index kept %v, backoff %v, retry in %v", l.Cached() == kept, l.backoff, time.Until(l.retryAt))
 	}
-	if l.Refresh(time.Nanosecond, false, done) || hits.Load() != 3 {
+	if l.Refresh(0, false, done) || hits.Load() != 3 {
 		t.Fatal("an unforced request went out during the backoff")
 	}
 	// a forced one isn't held back; each failure in a row doubles the
 	// wait, to an hour at most
 	want := []time.Duration{2, 4, 8, 16, 32, 60, 60}
 	for _, m := range want {
-		if !l.Refresh(time.Nanosecond, true, done) || answer() == nil {
+		if !l.Refresh(0, true, done) || answer() == nil {
 			t.Fatal("a forced request was held back, or a failing release answered")
 		}
 		if l.backoff != m*time.Minute {
@@ -98,10 +100,10 @@ func TestRefreshOneAtATimeWithBackoff(t *testing.T) {
 	}
 	// a success clears it
 	failing.Store(false)
-	if !l.Refresh(time.Nanosecond, true, done) || answer() != nil || l.backoff != 0 || !l.retryAt.IsZero() {
+	if !l.Refresh(0, true, done) || answer() != nil || l.backoff != 0 || !l.retryAt.IsZero() {
 		t.Fatalf("after a success: backoff %v, retry at %v", l.backoff, l.retryAt)
 	}
-	if !l.Refresh(time.Nanosecond, false, done) || answer() != nil {
+	if !l.Refresh(0, false, done) || answer() != nil {
 		t.Fatal("an unforced request was still held back after a success")
 	}
 

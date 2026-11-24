@@ -173,9 +173,9 @@ return { id: "NoTrack", capabilities: [] };
 	}
 
 	// No Tracking / No Track: both work fully in Clack, so Install adds the
-	// plugin bench's pick on its costs (Taut's, 3.0x faster to load),
-	// never asking, and the row says which and why and names the other
-	// version
+	// plugin bench's pick on its costs, never asking, and the row says
+	// which and why (what the bench measured: built from bench.json, which
+	// a bench run rewrites) and names the other version
 	entry := func(g libGroup, sys string) pluginlib.Entry {
 		for _, e := range g.Entries {
 			if e.System == sys {
@@ -189,7 +189,14 @@ return { id: "NoTrack", capabilities: [] };
 	if act := lp.action(nt); act.label != "Install" || act.menu == nil {
 		t.Errorf("No Tracking / No Track: %q (menu %v), want Install with its chevron", act.label, act.menu != nil)
 	}
-	ask := "Install adds Taut's version: 3.0x faster to load on the plugin bench. In Slick it's “No Track”."
+	ntIDs := []pluginbench.Entry{{System: pluginlib.Taut, ID: "NoTrack"}, {System: pluginlib.Slick, ID: "NoTrack"}}
+	ntPick, ok := pluginbench.Load().For(ntIDs)
+	if !ok || benchChecked(ntPick) || ntPick.Winner != pluginlib.Taut {
+		t.Fatalf("bench.json's No Tracking / No Track: %+v (data %v), want Taut's on costs only", ntPick, ok)
+	}
+	// this test's bundles aren't the ones the bench measured
+	ntWhy := benchCost(ntPick) + " on the plugin bench (measured on an earlier build)"
+	ask := "Install adds Taut's version: " + ntWhy + ". In Slick it's “No Track”."
 	if face, line := libFace(lp, nt); face.System != pluginlib.Taut || line != ask {
 		t.Errorf("the row shows %s's %q with %q, want Taut's %q with %q", face.System, face.Name, line, tautNT.Name, ask)
 	}
@@ -201,14 +208,9 @@ return { id: "NoTrack", capabilities: [] };
 		t.Errorf("the list drew %q or %q on its own: a second row for the other version", slickNT.Name, slickNT.Description)
 	}
 	menu := lp.installMenu(lp.installChoices(nt))
-	// (this test's bundles aren't the ones the bench measured)
-	if len(menu) != 3 || menu[1].Label != "Taut (recommended)" || menu[1].Subtitle != "3.0x faster to load on the plugin bench (measured on an earlier build)" ||
+	if len(menu) != 3 || menu[1].Label != "Taut (recommended)" || menu[1].Subtitle != strings.ToUpper(ntWhy[:1])+ntWhy[1:] ||
 		menu[2].Label != "Slick" || menu[2].Subtitle != "Slick's version, “No Track”" {
 		t.Fatalf("Install for: %+v, want Taut's version recommended with why, then Slick's named", menu)
-	}
-	ntIDs := []pluginbench.Entry{{System: pluginlib.Taut, ID: "NoTrack"}, {System: pluginlib.Slick, ID: "NoTrack"}}
-	if pick, ok := pluginbench.Load().For(ntIDs); !ok || benchChecked(pick) || pick.Winner != pluginlib.Taut {
-		t.Errorf("bench.json's No Tracking / No Track: %+v (data %v), want Taut's on costs only", pick, ok)
 	}
 
 	installedIn := func(sys string) bool {

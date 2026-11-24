@@ -234,6 +234,7 @@ func TestEditBlockquoteLayoutToolbars(t *testing.T) {
 	}
 
 	h, fs := newEnv(t, false)
+	quipOff(h) // the toggles' canvases.edit markdown
 	addLookCanvases(fs)
 	var menu []MenuItem
 	v := New(h, lookStarter, Tab, Actions{Menu: func(m []MenuItem) { menu = m }})
@@ -322,6 +323,7 @@ func TestRenderSlackifiedCheckbox(t *testing.T) {
 			suffix = "dark"
 		}
 		h, fs := newEnv(t, dark)
+		quipOff(h) // the tick's canvases.edit markdown
 		v := New(h, fakeslack.CanvasShared, Tab, Actions{})
 		s := newShooter(t, image.Pt(900, 600))
 		settle(t, s, v, "the canvas", func() bool { return v.Doc() != nil })

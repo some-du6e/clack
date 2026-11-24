@@ -15,6 +15,8 @@ import (
 //	  meta.json       the user directory, custom emoji, usergroups, prefs (SaveCache)
 //	  boot_data.json  the sidebar a warm boot renders first (bootdata.go)
 //	  headers.json    recently opened channels' tab bars and facepiles (bootdata.go)
+//	  expandables.json  which previews were collapsed or expanded, by Slack's
+//	                  expandable keys (core expandables.go)
 //	  img/            avatars and emoji (imgcache)
 //
 // Every file is 0600 and every directory 0700; nothing in it is message
@@ -115,6 +117,7 @@ func (s *Store) CacheDir() string { return s.cacheDir }
 // cacheFiles are the files DropDisk removes from the account directory.
 var cacheFiles = []string{"meta.json", "meta.json.tmp", "sidebar.json", "boot.json", "history.json",
 	BootDataFile, HeadersFile, // the warm boot's (bootdata.go)
+	ExpandablesFile,                                            // core's expandables store (expandables.go)
 	"code_channel_reopen.json", "code_channel_reopen.json.tmp", // core's codeChannelReopen (codechannel_close.go)
 	"code_channel_closed.json", "code_channel_closed.json.tmp", // core's closed code channels (codechannel_close.go)
 	"channel_managers.json"} // core's channel managers store (channel_managers.go)

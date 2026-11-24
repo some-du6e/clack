@@ -186,7 +186,8 @@ func (s *Server) filesFixtures() []filesFixture {
 		AAC: s.URL + "files-pri/" + TeamID + "-F0FILESAUD02/aac/audio_message.m4a"}
 	pdf := slack.File{ID: "F0FILESPDF01", Name: "q3-report.pdf", Title: "Q3 report", Mimetype: "application/pdf", Filetype: "pdf",
 		PrettyType: "PDF", Size: 312 << 10, Mode: "hosted", ThumbPDF: s.URL + "img/612x792/F0FILESPDF01.png", ThumbPDFW: 612, ThumbPDFH: 792,
-		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESPDF01/q3-report.pdf", Permalink: s.URL + "files/F0FILESPDF01/q3-report.pdf"}
+		URLPrivate:         s.URL + "files-pri/" + TeamID + "-F0FILESPDF01/q3-report.pdf",
+		URLPrivateDownload: s.URL + "files-pri/" + TeamID + "-F0FILESPDF01/download/q3-report.pdf", Permalink: s.URL + "files/F0FILESPDF01/q3-report.pdf"}
 	snippet := slack.File{ID: "F0FILESSNP01", Name: "fib.py", Title: "fib.py", Mimetype: "text/plain", Filetype: "python",
 		PrettyType: "Python", Size: 160, Mode: "snippet", Lines: 7,
 		Preview: cmPlain(fibLines()), PreviewHighlight: cmServer(fibLines()), // snippets.go
@@ -194,19 +195,23 @@ func (s *Server) filesFixtures() []filesFixture {
 		EditLink: s.URL + "files/F0FILESSNP01/fib.py/edit"}
 	zip := slack.File{ID: "F0FILESZIP01", Name: "assets.zip", Title: "assets.zip", Mimetype: "application/zip", Filetype: "zip",
 		PrettyType: "Zip", Size: 7 << 20, Mode: "hosted",
-		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESZIP01/assets.zip", Permalink: s.URL + "files/F0FILESZIP01/assets.zip"}
+		URLPrivate:         s.URL + "files-pri/" + TeamID + "-F0FILESZIP01/assets.zip",
+		URLPrivateDownload: s.URL + "files-pri/" + TeamID + "-F0FILESZIP01/download/assets.zip", Permalink: s.URL + "files/F0FILESZIP01/assets.zip"}
 	doc := slack.File{ID: "F0FILESDOC01", Name: "onboarding.docx", Title: "onboarding.docx", Mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 		Filetype: "docx", PrettyType: "Word Document", Size: 48 << 10, Mode: "hosted",
-		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESDOC01/onboarding.docx", Permalink: s.URL + "files/F0FILESDOC01/onboarding.docx"}
+		URLPrivate:         s.URL + "files-pri/" + TeamID + "-F0FILESDOC01/onboarding.docx",
+		URLPrivateDownload: s.URL + "files-pri/" + TeamID + "-F0FILESDOC01/download/onboarding.docx", Permalink: s.URL + "files/F0FILESDOC01/onboarding.docx"}
 	// a .txt Slack typed binary (Karim's information.txt, 2026-11-18:
 	// filetype "binary", application/octet-stream, pretty_type "Binary")
 	// and one it typed text
 	binTxt := slack.File{ID: "F0FILESTXT01", Name: "information.txt", Title: "information.txt", Mimetype: "application/octet-stream",
 		Filetype: "binary", PrettyType: "Binary", Size: 244542, Mode: "hosted",
-		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESTXT01/information.txt", Permalink: s.URL + "files/F0FILESTXT01/information.txt"}
+		URLPrivate:         s.URL + "files-pri/" + TeamID + "-F0FILESTXT01/information.txt",
+		URLPrivateDownload: s.URL + "files-pri/" + TeamID + "-F0FILESTXT01/download/information.txt", Permalink: s.URL + "files/F0FILESTXT01/information.txt"}
 	textTxt := slack.File{ID: "F0FILESTXT02", Name: "notes.txt", Title: "notes.txt", Mimetype: "text/plain",
 		Filetype: "text", PrettyType: "Plain Text", Size: 1820, Mode: "hosted",
-		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESTXT02/notes.txt", Permalink: s.URL + "files/F0FILESTXT02/notes.txt"}
+		URLPrivate:         s.URL + "files-pri/" + TeamID + "-F0FILESTXT02/notes.txt",
+		URLPrivateDownload: s.URL + "files-pri/" + TeamID + "-F0FILESTXT02/download/notes.txt", Permalink: s.URL + "files/F0FILESTXT02/notes.txt"}
 	own := im(40, 1200, 800)
 	own.Name, own.Title, own.User = "my-screenshot.png", "my-screenshot.png", SelfID
 	mixed := im(30, 1600, 900)

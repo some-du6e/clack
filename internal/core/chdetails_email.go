@@ -557,6 +557,15 @@ func (a *App) paidTeam() bool {
 	return t.known && t.plan != ""
 }
 
+// freeTeam is isFreeTeam as canUserShareContacts reads it: team.info
+// answered without a plan.
+func (a *App) freeTeam() bool {
+	t := a.teamPlan()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.known && t.plan == ""
+}
+
 // ShowChannelEmail is showChannelEmailAddress (uFgA ut): emailBase on a
 // paid team with the CREATE_CHANNEL_EMAIL_ADDRESSES grant.
 func (a *App) ShowChannelEmail(ch string) bool {

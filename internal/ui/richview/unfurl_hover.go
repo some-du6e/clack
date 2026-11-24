@@ -371,7 +371,7 @@ func (l *lay) hoverMedia(a *richtext.Attachment, x, y, w int) int {
 	case a.VideoHTML && a.Thumb != nil:
 		img = a.Thumb // AttachmentVideo's poster
 	}
-	if img == nil || !thumbOnly(a) && !mediaExpanded() {
+	if img == nil || !thumbOnly(a) && !l.mediaShown(a) {
 		return l.dp(12)
 	}
 	top := y + l.dp(12)

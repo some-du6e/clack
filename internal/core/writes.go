@@ -177,7 +177,7 @@ func (a *App) Mark(ctx context.Context, ch, ts string) (Count, error) {
 	}
 	e := a.S.MarkRead(ch, ts)
 	cv := a.Count(ch)
-	a.emit(Event{Type: "marked", Channel: ch, TS: ts, Count: &cv})
+	a.emit(Event{Type: "marked", Channel: ch, TS: ts, Count: &cv, BadgesGen: a.ActivityBadgesGen()})
 	if e.HasUnreads {
 		a.refreshCountsSoon() // the server knows the mention count below the new cursor
 	}
@@ -627,6 +627,7 @@ func (a *App) MarkThread(ctx context.Context, ch, threadTS, ts string) error {
 		// updateActivitiesUnreadState for the reply bars' items
 		a.setThreadLastRead(ch, threadTS, ts)
 		a.threadActivityRead(ch, threadTS, ts)
+		a.emitThreadRead(ch, threadTS, ts) // the Activity rows of the thread (manage.go)
 		a.refreshCountsSoon()
 	}
 	return err

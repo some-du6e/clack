@@ -192,6 +192,9 @@ func (v *SearchView) srRichOf(i int) *srCardRich {
 	r.capped = capped
 	r.long = len([]rune(richtext.PlainText(richtext.Doc{Blocks: extra}))) > 600
 	r.body, r.extra = nil, nil
+	// no ViewContext: SearchResult sits under no MessageContainerContext
+	// provider, so a result's expandable keys carry none (expandable's
+	// view contexts)
 	o := richview.Options{Channel: m.Channel, TS: m.TS}
 	if len(body) > 0 {
 		bo := o
@@ -382,10 +385,29 @@ func (h srCardHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, wi
 	}
 }
 
+// ImageMenu is an image's More actions on the card (AttachmentImageActions'
+// menu): Copy link, and Hide image when it has an expandable.
+func (h srCardHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	h.v.h.ShowOverlay(NewImageActionsMenu(h.v.h, ActionAnchor(btn, false), href, key, closed))
+}
+
 // DataTableAction is a data_table's header button or column header on the
 // card.
 func (h srCardHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {
 	DataTableAction(h.v.h, act, c, ActionAnchor(btn, c.Window))
+}
+
+// ContactCardAction is a contact card's action on the card.
+func (h srCardHandler) ContactCardAction(act string, c *richtext.ContactCard, _ image.Rectangle, _ bool) {
+	ContactCardAction(h.v.h, act, c)
+}
+
+// SharePromptSend is a share_prompt's Send to {agentName} on the card.
+func (h srCardHandler) SharePromptSend(p *richtext.SharePrompt) { SharePromptSend(h.v.h, p) }
+
+// EventAction is an event card's action on the card.
+func (h srCardHandler) EventAction(act string, ev *richtext.Event, ch, ts string, btn image.Rectangle, window bool) {
+	EventAction(h.v.h, act, ev, ch, ts, ActionAnchor(btn, window))
 }
 
 // TimelineSources is a timeline section's "(Sources)" on the card: its
@@ -394,16 +416,11 @@ func (h srCardHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Re
 	OpenTimelineSources(h.v.h, sec)
 }
 
+// OpenFile is handleFileContainerClick (OpenFileCard): a hosted .exe or
+// zip downloads in the app; only a remote or external file's own link
+// and a PDF's page open the browser.
 func (h srCardHandler) OpenFile(f *richtext.File) {
-	if f == nil {
-		return
-	}
-	switch {
-	case f.Permalink != "":
-		lbOpen(h.v.h, f.Permalink)
-	case f.URL != "":
-		lbOpen(h.v.h, f.URL)
-	}
+	OpenFileCard(h.v.h, f, func(u string) { lbOpen(h.v.h, u) })
 }
 
 // richPlain is the card's drawn text (tests): the body's and extras'

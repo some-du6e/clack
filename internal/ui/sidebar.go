@@ -617,7 +617,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		// organize mode highlights the picks, not the open conversation
 		// (isChannelUiSelected = isEditModeSelected)
 		sel = (route.Channel() == conv.ID || sbDocSelected(conv, route)) && !a.sidebar.edit.on
-		if conv.Unread && !conv.Muted && !a.focusQuiet() { // focus mode: no bolding (focus_mode.go)
+		if conv.Unread && !conv.Muted && !a.focusQuietIn(conv.ID) { // focus mode: no bolding (focus_mode.go)
 			weight = theme.Black
 			col = c.SidebarTextUnread
 		}
@@ -664,7 +664,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	switch {
 	case conv != nil:
 		var mods uint64
-		if conv.Unread && !a.focusQuiet() {
+		if conv.Unread && !a.focusQuietIn(conv.ID) {
 			mods |= 1
 		}
 		if conv.Muted {
@@ -933,7 +933,11 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			m := op.Record(gtx.Ops)
 			bd := a.badge(gtx, rs.mentions, c.Badge, c.BadgeText)
 			call := m.Stop()
-			if a.focusQuiet() && !btn.Hovered() {
+			quiet := a.focusQuiet()
+			if conv != nil {
+				quiet = a.focusQuietIn(conv.ID) // a breakthrough's conversation keeps its count
+			}
+			if quiet && !btn.Hovered() {
 				// focus mode: c-badge--dot, the pill clipped to a 16px circle
 				// at scale .4445 (the count shows again on hover)
 				ctr := image.Pt(right-bd.Size.X/2, rowH/2)

@@ -23,8 +23,15 @@ func (a *App) setActivityBadges(m map[string]int) {
 	a.mu.Lock()
 	a.actBadges = cp
 	a.actBadgesAt = a.S.NextSeq()
+	a.actBadgesGen.Add(1)
 	a.mu.Unlock()
 }
+
+// ActivityBadgesGen counts the server's badge sets installed (a
+// badge_counts_updated, a client.counts answer). A read the Activity view
+// hears and applies later takes its decrement only when no set came in
+// between: a newer set already counts it read.
+func (a *App) ActivityBadgesGen() uint64 { return a.actBadgesGen.Load() }
 
 // setActivityBadgesSince installs a client.counts answer's activity_v2
 // fetched at the store journal's position since, unless the badges
@@ -51,6 +58,7 @@ func (a *App) setActivityBadgesSince(m map[string]int, since uint64) bool {
 		return false
 	}
 	a.actBadges = cp
+	a.actBadgesGen.Add(1)
 	a.mu.Unlock()
 	return true
 }
@@ -119,12 +127,29 @@ func (a *App) onActivityBadges(raw json.RawMessage) {
 	a.emit(ev)
 }
 
+// DecActivityBadges is decrementBadgeCounts for items marked read here
+// alone, with no write (the Activity view's thread and channel reads:
+// getOptimisticUpdates), when the server's badges are still the set
+// numbered gen (ActivityBadgesGen): a set installed since then already
+// counts them read. It reports whether it took them off.
+func (a *App) DecActivityBadges(items []ActivityItem, gen uint64) bool {
+	return a.decActivityBadgesAt(items, gen, true)
+}
+
 // decActivityBadges is P0K2 decrementBadgeCounts after
 // markItemsReadAcrossLists: each unread item marked read takes one off
 // its type's count (never below 0), before the server's
 // badge_counts_updated confirms it.
-func (a *App) decActivityBadges(items []ActivityItem) {
+func (a *App) decActivityBadges(items []ActivityItem) { a.decActivityBadgesAt(items, 0, false) }
+
+// decActivityBadgesAt is decActivityBadges, when check is set only while
+// the server's set installed is still gen's.
+func (a *App) decActivityBadgesAt(items []ActivityItem, gen uint64, check bool) bool {
 	a.mu.Lock()
+	if check && a.actBadgesGen.Load() != gen {
+		a.mu.Unlock()
+		return false
+	}
 	changed := false
 	if a.actBadges != nil {
 		cp := make(map[string]int, len(a.actBadges))
@@ -149,6 +174,7 @@ func (a *App) decActivityBadges(items []ActivityItem) {
 	if changed {
 		a.emit(Event{Type: "activity_badges"})
 	}
+	return true
 }
 
 // ActivityBadgeCount is the rail's Activity badge: 3x6A
@@ -180,8 +206,20 @@ func (a *App) activityBadgeTypes() map[string]bool {
 	for _, k := range []string{"thread_v2", "channel", "internal_channel_invite", "list_record_edited", "bot_dm_bundle",
 		"at_user", "at_user_group", "at_channel", "at_everyone", "keyword", "list_record_assigned", "list_user_mentioned",
 		"external_channel_invite", "external_dm_invite", "shared_workspace_invite", "unjoined_channel_mention",
-		"quietly_added_to_channel", "prejoin_dm_welcome_party_alert", "list_todo_notification"} {
+		"quietly_added_to_channel", "prejoin_dm_welcome_party_alert"} {
 		t[k] = true
+	}
+	// 9OWn j (build 66e72b57ade1): the to-dos' and the approvals' behind
+	// their lists experiments (c4db Dq, ci), system alerts behind
+	// generic_system_user_alert (YwqI j0)
+	if a.experiment("lists_monster_step") == "on" {
+		t["list_todo_notification"] = true
+	}
+	if a.experiment("approvals_in_todos") == "on" {
+		t["list_approval_request"], t["list_approval_reviewed"] = true, true
+	}
+	if a.experiment("generic_system_user_alert") == "on" {
+		t["generic_system_alert"] = true
 	}
 	if a.ActivityInbox() && a.GlobalNotifyBool("global_reminders_in_activity", true) {
 		t["saved_reminder"] = true // 5Ns/ ah
@@ -193,6 +231,15 @@ func (a *App) activityBadgeTypes() map[string]bool {
 		t["code_review_requested"] = true // ysZt f
 	}
 	return t
+}
+
+// The experiments the All badge's kinds read (TestExperimentReadsListed);
+// lists_monster_step and approvals_in_todos are classic_badges.go's.
+func init() {
+	experimentReads["generic_system_user_alert"] = on
+	// the account's group (account_experiments.json) before
+	// experiments.getByUser answers (TestDefaultExperimentsMatchAccount)
+	defaultExperimentGroups["generic_system_user_alert"] = "on"
 }
 
 // activityMentionTypes is 3x6A V: the Mentions tab's sum.
