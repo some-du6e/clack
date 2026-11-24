@@ -198,6 +198,10 @@ type overlayIcon struct {
 	// svgicon), drawn at alpha (0: opaque) instead of col
 	art   bool
 	alpha float32
+	// comp is the component the icon is painted with (0: the static pass),
+	// as frags, boxes and imgs carry theirs (tagFrom): a file card's
+	// svgicon goes with its MessageFile, over the card's own fill
+	comp int16
 }
 
 type targetKind uint8

@@ -882,9 +882,12 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			v.drawBox(ops, b, css)
 		}
 	}
-	if static {
+	if hp == 0 {
 		for i := range v.d.overlayIcons {
 			o := &v.d.overlayIcons[i]
+			if o.comp != comp || !v.rectInClip(o.r) {
+				continue
+			}
 			if o.art {
 				paintArtAt(ops, o.name, o.r, o.alpha)
 				continue
