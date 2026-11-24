@@ -1,8 +1,9 @@
 package quip
 
 // The messages, field for field from Slack's descriptors (web client
-// build 9685e6ce144b; the whole schema: tools/oracles/quip_schema.cjs).
-// Only what Clack reads or writes is here; Unmarshal skips the rest.
+// build 9685e6ce144b; the whole schema was dumped from Slack's chunks
+// with round 1's tools, docs/CANVAS-EDIT-PLAN.md). Only what Clack reads
+// or writes is here; Unmarshal skips the rest.
 
 // LoadRequest is syncer.LoadData.Request: load-data's request_binary.
 type LoadRequest struct {
@@ -274,6 +275,7 @@ type Attributes struct {
 	ListPosition                  *int32  `pb:"11"`
 	DefaultContent                *int32  `pb:"13"`
 	TextAlignment                 *int32  `pb:"26"`
+	VerticalAlignment             *int32  `pb:"30"` // [default = 5]: a save sends it when the server didn't
 	IsNewDocumentDefaultContent   *bool   `pb:"34"`
 	ContinuePreviousListNumbering *bool   `pb:"47"`
 	RestartListNumberingAt        *int32  `pb:"48"`

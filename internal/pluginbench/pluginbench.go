@@ -198,8 +198,9 @@ type Pick struct {
 	Exact  bool // every offered bundle is the version the bench measured
 	// Checked: the bench checked what the plugin does (a check on either
 	// variant). Without one the pick is costs only, which can't tell a
-	// version that does nothing from one that works: the Library doesn't
-	// recommend it (Install asks which)
+	// version that does nothing from one that works: the Library goes by
+	// how each version works in Clack (compat.go) first, and by the pick
+	// only between versions that work as well (ui installPick)
 	Checked bool
 }
 

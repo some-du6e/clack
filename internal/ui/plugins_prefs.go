@@ -350,6 +350,10 @@ func (pp *pluginsPage) layout(gtx layout.Context) layout.Dimensions {
 	p.k.gtxNow = gtx
 	pp.lib.s.k.gtxNow = gtx
 	pp.taut.gtxNow = gtx
+	// the Library's index on every screen of the list, refreshed once
+	// stale: Plugin library's "updates to install", the search's
+	// suggestions and Browse show what's new with no click
+	pp.lib.follow()
 	sz := gtx.Constraints.Max
 	if pp.mode == "browse" {
 		return pp.libraryList(gtx)
@@ -590,9 +594,7 @@ const maxSuggestions = 5
 // none (or isn't loaded yet): then the plain empty state shows.
 func (pp *pluginsPage) suggestions(f *flow, words []string) bool {
 	v := pp.lib
-	if v.ix == nil && !v.loading && v.loadErr == "" {
-		v.load(false) // the cached index at once, then a fresh one
-	}
+	v.follow() // the cached index at once, then a fresh one when stale
 	hits := v.suggest(words)
 	if len(hits) == 0 {
 		return false
@@ -683,22 +685,20 @@ func rankGroupsBy(groups []libGroup, words []string, skip func(libGroup) bool, n
 }
 
 // suggestAction is a search suggestion's button: the library row's
-// action, but a plugin both running systems have asks which version
-// (Install…, the bench's pick first when it made one): the suggestion row
-// has no chevron to reach the other version.
+// action, Install putting in the better version (installPick) as the
+// library row's does. The suggestion row has no chevron; the other
+// version is on the library row it links to.
 func (v *libraryPage) suggestAction(g libGroup) libAction {
 	act := v.action(g)
-	if act.label == "Install" && act.menu != nil {
-		return libAction{label: "Install…", kind: act.kind, do: act.menu}
-	}
+	act.menu = nil
 	return act
 }
 
 // suggestionRow is a library plugin in Taut's row: the name and its
 // description (in line with the installed rows' names, past the checkbox
 // column), the other version's name where it has its own, and the
-// library's own action for it (Install, or Install… when both systems
-// have it: suggestAction) at the right, with how it went under the name.
+// library's own action for it (suggestAction) at the right, with how it
+// went under the name.
 // Its name and description are the library row's face's.
 func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layout.Dimensions {
 	v, tp := pp.lib, pp.taut

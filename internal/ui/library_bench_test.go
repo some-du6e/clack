@@ -9,91 +9,106 @@ import (
 	"github.com/some-du6e/clack/internal/pluginlib"
 )
 
-// With plugin bench data for a plugin both systems offer, Install installs
-// the bench's pick directly and the chevron's "Install for" menu lists the
-// pick first, marked Recommended, with the bench's reason; without data
-// (or for another version of the ids) Install asks. So it does when the
-// data checked nothing either version does (costs only): Bring Back
-// Slackbot did nothing in Clack and won on frame cost (library-dupes'
-// review).
-func TestLibraryBenchPick(t *testing.T) {
+// TestLibraryInstallPick: Install never asks which version of a plugin
+// both running systems have (Karim, 2026-11-23: "is this not the same
+// shit? just download the best thing"); it installs installPick's, and
+// the row says which and why in one line:
+//
+//   - the one that works in Clack, by compat.go: Bring Back Slackbot's
+//     Taut version doesn't work and Slick's Custom Slackbot does, so
+//     Slick's, whatever the bench's costs say (library-dupes' review: a
+//     version that does nothing won on frame cost);
+//   - of two that work fully, the plugin bench's pick on its costs: IDV
+//     Status (Taut) and HCA Status (Slick), where the bench measured
+//     Taut's smaller bundle;
+//   - with no bench data, Slick's, the recommended system.
+//
+// The chevron's "Install for" menu still offers each version, the pick
+// first, "(recommended)", with why; a search suggestion's Install is the
+// pick too.
+func TestLibraryInstallPick(t *testing.T) {
 	a, _ := ttApp(t, t.TempDir())
 	ix := &pluginlib.Index{Schema: 1, Plugins: []pluginlib.Entry{
-		{System: pluginlib.Taut, ID: "WhoReacted", Name: "Who Reacted", Category: "messages", File: pluginlib.File{SHA256: "aa"}},
-		{System: pluginlib.Slick, ID: "WhoReacted", Name: "Who Reacted", Category: "messages", File: pluginlib.File{SHA256: "bb"}},
-		{System: pluginlib.Taut, ID: "UserPronouns", Name: "User Pronouns", Category: "messages", File: pluginlib.File{SHA256: "cc"}},
-		{System: pluginlib.Slick, ID: "UserPronouns", Name: "User Pronouns", Category: "people", File: pluginlib.File{SHA256: "dd"}},
+		{System: pluginlib.Taut, ID: "IdvStatus", Name: "IDV Status", Category: "hackclub", File: pluginlib.File{SHA256: "a1"}},
+		{System: pluginlib.Slick, ID: "HcaStatus", Name: "HCA Status", Category: "hackclub", File: pluginlib.File{SHA256: "a2"}},
+		{System: pluginlib.Taut, ID: "BringBackSlackbot", Name: "Bring Back Slackbot", Category: "fun", File: pluginlib.File{SHA256: "b1"}},
+		{System: pluginlib.Slick, ID: "CustomSlackbot", Name: "Custom Slackbot", Category: "fun", File: pluginlib.File{SHA256: "b2"}},
+		{System: pluginlib.Taut, ID: "WhoReacted", Name: "Who Reacted", Category: "messages", File: pluginlib.File{SHA256: "c1"}},
+		{System: pluginlib.Slick, ID: "WhoReacted", Name: "Who Reacted", Category: "messages", File: pluginlib.File{SHA256: "c2"}},
 	}}
-	var installs []string
 	v := newLibraryPage(a, nil)
 	defer v.close()
 	v.ix = ix
 	v.hosts = func(sys string) (libraryHost, bool) {
 		return libraryHost{
 			installed: func(string) (string, string) { return "", "" },
-			install: func(ctx context.Context, e pluginlib.Entry, code, main []byte, update bool) error {
-				installs = append(installs, e.System+"/"+e.ID)
-				return nil
-			},
+			install:   func(ctx context.Context, e pluginlib.Entry, code, main []byte, update bool) error { return nil },
 		}, true
 	}
-	v.bench = &pluginbench.Data{Schema: 1, Plugins: []pluginbench.Plugin{{
-		Name:   "Who Reacted",
-		Winner: pluginlib.Slick,
-		Reason: "works fully, 3.0x faster to load",
-		Variants: []pluginbench.Variant{
-			{System: pluginlib.Taut, ID: "WhoReacted", SHA256: "aa", Checks: []pluginbench.Check{{Name: "reactors' avatars", Pass: true}}},
-			{System: pluginlib.Slick, ID: "WhoReacted", SHA256: "bb", Checks: []pluginbench.Check{{Name: "reactors' avatars", Pass: true}}},
-		},
-	}}}
-	var who, pronouns libGroup
-	for _, g := range libraryGroups(libraryEntries(ix)) {
-		switch g.first().ID {
-		case "WhoReacted":
-			who = g
-		case "UserPronouns":
-			pronouns = g
+	// the bench's own data for the first two pairs; none for Who Reacted
+	shipped := pluginbench.Load()
+	v.bench = &pluginbench.Data{Schema: 1}
+	for _, p := range shipped.Plugins {
+		if p.Name == "IDV Status" || p.Name == "Bring Back Slackbot" {
+			v.bench.Plugins = append(v.bench.Plugins, p)
 		}
 	}
-	act := v.action(who)
-	if act.label != "Install" || act.menu == nil {
-		t.Fatalf("with bench data: %q, menu %v", act.label, act.menu != nil)
+	if len(v.bench.Plugins) != 2 {
+		t.Fatalf("the shipped bench data has %d of IDV Status and Bring Back Slackbot", len(v.bench.Plugins))
 	}
-	if w, _, ok := v.benchPick(v.installChoices(who)); !ok || w.System != pluginlib.Slick {
-		t.Fatalf("pick %v %v", w.System, ok)
+	groups := map[string]libGroup{}
+	for _, g := range libraryGroups(libraryEntries(ix)) {
+		if len(g.Entries) != 2 {
+			t.Fatalf("%s isn't one row of both versions: %+v", g.first().ID, g.Entries)
+		}
+		groups[g.first().Name] = g
 	}
-	items := v.installMenu(v.installChoices(who))
-	if len(items) != 3 || items[0].Label != "Install for" || !items[0].Disabled {
-		t.Fatalf("menu %+v", items)
-	}
-	if items[1].Label != "Slick (recommended)" || items[1].Subtitle != "Works fully, 3.0x faster to load" {
-		t.Errorf("first row %+v", items[1])
-	}
-	if items[2].Label != "Taut" || items[2].Subtitle != systemBlurb(pluginlib.Taut) {
-		t.Errorf("second row %+v", items[2])
-	}
-	if act := v.action(pronouns); act.label != "Install…" || act.menu != nil {
-		t.Errorf("no bench data: %q", act.label)
-	}
-	// another version of the same ids: still the pick, flagged
-	ix.Plugins[1].SHA256 = "b2"
-	who = libraryGroups(libraryEntries(ix))[0]
-	if who.first().ID != "WhoReacted" {
-		who = libraryGroups(libraryEntries(ix))[1]
-	}
-	if _, p, ok := v.benchPick(v.installChoices(who)); !ok || p.Exact || !strings.Contains(benchReason(p), "earlier build") {
-		t.Errorf("other version: %+v %v", p, ok)
-	}
-	// costs only (no behaviour check on either variant): no recommendation
-	for i := range v.bench.Plugins[0].Variants {
-		v.bench.Plugins[0].Variants[i].Checks = nil
-	}
-	if act := v.action(who); act.label != "Install…" || act.menu != nil {
-		t.Errorf("a pick from costs alone: %q (menu %v), want Install… asking which", act.label, act.menu != nil)
-	}
-	for _, it := range v.installMenu(v.installChoices(who)) {
-		if strings.Contains(it.Label, "recommended") {
-			t.Errorf("a pick from costs alone is recommended: %+v", it)
+	for _, c := range []struct {
+		row, system, why string
+	}{
+		{"IDV Status", pluginlib.Taut, "smaller bundle"},
+		{"Bring Back Slackbot", pluginlib.Slick, "it works fully in Clack, Taut's doesn't work"},
+		{"Who Reacted", pluginlib.Slick, "the recommended system (no plugin bench data)"},
+	} {
+		g, ok := groups[c.row]
+		if !ok {
+			t.Fatalf("no %s row", c.row)
+		}
+		w, why := v.installPick(v.installChoices(g))
+		if w.System != c.system || !strings.Contains(why, c.why) {
+			t.Errorf("%s: Install adds %s's, %q; want %s's, %q", c.row, w.System, why, c.system, c.why)
+		}
+		// the row's line: which and why
+		_, line := libFace(v, g)
+		if want := "Install adds " + systemName(c.system) + "'s version: "; !strings.HasPrefix(line, want) || !strings.Contains(line, c.why) {
+			t.Errorf("%s's row says %q, want %q… %q", c.row, line, want, c.why)
+		}
+		// Install installs it, never asking; the chevron offers both; a
+		// search suggestion's Install is the same, with no chevron
+		act := v.action(g)
+		if act.label != "Install" || act.do == nil || act.menu == nil {
+			t.Fatalf("%s: %q (do %v, menu %v), want Install with its chevron", c.row, act.label, act.do != nil, act.menu != nil)
+		}
+		if s := libSuggestAction(v, g); s.label != "Install" || s.menu != nil {
+			t.Errorf("%s's search suggestion: %q (menu %v), want Install", c.row, s.label, s.menu != nil)
+		}
+		// it starts installing the pick, and only it (installEntry marks
+		// what it installs busy before its download)
+		act.do()
+		for _, e := range g.Entries {
+			if busy := v.busy[libKey(e)]; busy != (e.System == w.System) {
+				t.Errorf("%s: Install left %s's version busy %v", c.row, e.System, busy)
+			}
+		}
+		items := v.installMenu(v.installChoices(g))
+		if len(items) != 3 || items[0].Label != "Install for" || !items[0].Disabled {
+			t.Fatalf("%s's menu %+v", c.row, items)
+		}
+		if items[1].Label != systemName(c.system)+" (recommended)" || !strings.Contains(strings.ToLower(items[1].Subtitle), strings.ToLower(c.why)) {
+			t.Errorf("%s's menu, its first row %+v", c.row, items[1])
+		}
+		if strings.Contains(items[2].Label, "recommended") {
+			t.Errorf("%s's menu recommends both: %+v", c.row, items[2])
 		}
 	}
 }

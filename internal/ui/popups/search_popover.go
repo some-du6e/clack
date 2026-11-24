@@ -1276,16 +1276,27 @@ func (p *SearchPopover) open(route, conv string) {
 	p.h.Navigate(route)
 }
 
-func (p *SearchPopover) submit(q string) {
+func (p *SearchPopover) submit(q string) { submitSearch(p.h, q, p.Dismiss) }
+
+// SubmitSearch runs a search for q as the popover's Enter does, without
+// the popover: Slack's open search UI with commitSearch, which /search
+// with text does (openFromSlashCommand).
+func SubmitSearch(h Host, q string) { submitSearch(h, q, nil) }
+
+// submitSearch records q (the recent search, search.save) and shows its
+// results; before runs ahead of the navigation (the popover closes).
+func submitSearch(h Host, q string, before func()) {
 	q = strings.TrimSpace(q)
 	srRecordQuery(q)
-	if c := p.h.Core(); c != nil && q != "" {
+	if c := h.Core(); c != nil && q != "" {
 		c.RecordRecentSearch(q, core.RecentSearchSlack) // maybeRecordRecentSearchEvent
-		run(p.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SaveSearch(ctx, q) },
+		run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SaveSearch(ctx, q) },
 			func(struct{}, error) {})
 	}
-	p.Dismiss()
-	p.h.Navigate("search?q=" + url.QueryEscape(q))
+	if before != nil {
+		before()
+	}
+	h.Navigate("search?q=" + url.QueryEscape(q))
 }
 
 // openFeedback is the footer's "Give feedback" (Footer's feedbackLinkProps:

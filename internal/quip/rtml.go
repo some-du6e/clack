@@ -44,10 +44,14 @@ var rtmlTags = map[string]bool{
 // they close. ok is false where Slack's parse throws (a tag nested in the
 // same tag: its mark bookkeeping loses the outer one), and then, as in
 // Slack, the text is rtml itself and there are no marks.
+//
+// A fragment Clack's HTML parser refuses (over 512 elements deep: Chromium
+// would hang the rest under the 512th) is a parse Slack's doesn't make:
+// ok is false and the text is rtml, never an empty section.
 func ParseRTML(rtml string) (text string, marks []Mark, ok bool) {
 	root := rtmlRoot(rtml)
 	p := &textAndMarks{opens: map[string]openMark{}}
-	if root != nil && !walkRTML(root, p) {
+	if root == nil || !walkRTML(root, p) {
 		return rtml, nil, false
 	}
 	return p.buf.String(), p.marks, true
@@ -244,27 +248,52 @@ func getAttr(n *html.Node, name string) (string, bool) {
 	return "", false
 }
 
-// textContent is the DOM's textContent: every text node under n.
-func textContent(n *html.Node) string {
-	var b strings.Builder
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			switch c.Type {
-			case html.TextNode:
-				b.WriteString(c.Data)
-			case html.ElementNode:
-				walk(c)
-			}
+// rtmlMemo holds what walkRTML works out per node, so a walk is linear in
+// the tree's size: a crafted section (marks hundreds deep, then hundreds
+// of looked-through tags, then a million lines) cost minutes when every
+// node searched the open marks for each of its ancestors and every mark
+// rebuilt its subtree's text.
+type rtmlMemo struct {
+	text    map[*html.Node]bool       // hasText
+	control map[*html.Node]bool       // isControlAncestor
+	near    map[*html.Node]*html.Node // a node's nearest pushed ancestor (nil: none)
+	at      map[*html.Node]int        // a pushed element's index in the stack
+}
+
+func newRTMLMemo() *rtmlMemo {
+	return &rtmlMemo{text: map[*html.Node]bool{}, control: map[*html.Node]bool{}, near: map[*html.Node]*html.Node{}, at: map[*html.Node]int{}}
+}
+
+// hasText is textContent(n) != "": a non-empty text node under n.
+func (m *rtmlMemo) hasText(n *html.Node) bool {
+	if v, ok := m.text[n]; ok {
+		return v
+	}
+	v := false
+	for c := n.FirstChild; c != nil && !v; c = c.NextSibling {
+		switch c.Type {
+		case html.TextNode:
+			v = c.Data != ""
+		case html.ElementNode:
+			v = m.hasText(c)
 		}
 	}
-	walk(n)
-	return b.String()
+	m.text[n] = v
+	return v
 }
 
 // isControlAncestor is W77Y's: every child that isn't an empty text node
 // is a control, or a tag of the set that is itself one.
-func isControlAncestor(n *html.Node) bool {
+func (m *rtmlMemo) isControlAncestor(n *html.Node) bool {
+	if v, ok := m.control[n]; ok {
+		return v
+	}
+	v := isControlAncestorOf(n, m.isControlAncestor)
+	m.control[n] = v
+	return v
+}
+
+func isControlAncestorOf(n *html.Node, kid func(*html.Node) bool) bool {
 	some := false
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.TextNode && c.Data == "" {
@@ -275,11 +304,31 @@ func isControlAncestor(n *html.Node) bool {
 			return false
 		}
 		name := nodeName(c)
-		if name != "CONTROL" && !(rtmlTags[name] && isControlAncestor(c)) {
+		if name != "CONTROL" && !(rtmlTags[name] && kid(c)) {
 			return false
 		}
 	}
 	return some
+}
+
+// nearest is the nearest ancestor of e under root that the walk pushed.
+// It's fixed once e is reached: the walk reaches ancestors first, and an
+// element stays on the stack until the walk leaves its subtree, so the
+// stack is always the pushed ancestors of where the walk is.
+func (m *rtmlMemo) nearest(e, root *html.Node) *html.Node {
+	p := e.Parent
+	if p == nil || p == root {
+		return nil
+	}
+	if _, ok := m.at[p]; ok {
+		return p
+	}
+	if v, ok := m.near[p]; ok {
+		return v
+	}
+	v := m.nearest(p, root)
+	m.near[p] = v
+	return v
 }
 
 type stackEntry struct{ n *html.Node }
@@ -290,18 +339,19 @@ type stackEntry struct{ n *html.Node }
 // they're never walked.
 func walkRTML(root *html.Node, p rtmlHandler) bool {
 	w := &treeWalker{root: root, cur: root}
+	m := newRTMLMemo()
 	var stack []stackEntry
+	push := func(e *html.Node) {
+		m.at[e] = len(stack)
+		stack = append(stack, stackEntry{n: e})
+	}
 	adjust := func(e *html.Node) bool {
+		// pop the marks e isn't inside: those above its nearest pushed
+		// ancestor (W77Y.adjustStack_ compares e's ancestors to the stack)
 		n := 0
 		if e != nil {
-		find:
-			for a := e.Parent; a != nil && a != root; a = a.Parent {
-				for j := len(stack) - 1; j >= 0; j-- {
-					if stack[j].n == a {
-						n = j + 1
-						break find
-					}
-				}
+			if a := m.nearest(e, root); a != nil {
+				n = m.at[a] + 1
 			}
 		}
 		for len(stack) > n {
@@ -369,11 +419,11 @@ func walkRTML(root *html.Node, p rtmlHandler) bool {
 				skipKids = true
 			} else {
 				p.annotationStart(id)
-				stack = append(stack, stackEntry{n: e})
+				push(e)
 			}
 			continue
 		}
-		if textContent(e) == "" && !isControlAncestor(e) {
+		if !m.hasText(e) && !m.isControlAncestor(e) {
 			continue
 		}
 		switch name {
@@ -387,7 +437,7 @@ func walkRTML(root *html.Node, p rtmlHandler) bool {
 				fileID, _ = getAttr(e, "data-slack-file-id")
 			}
 			p.linkStart(href, nolink, fileID)
-			stack = append(stack, stackEntry{n: e})
+			push(e)
 		case "B", "I", "U", "DEL", "CODE", "F", "SUB", "SUP":
 			// the DOM keeps an attribute's first occurrence; x/net/html
 			// keeps them all
@@ -400,7 +450,7 @@ func walkRTML(root *html.Node, p rtmlHandler) bool {
 				}
 			}
 			p.formattingStart(strings.ToLower(name), strings.Join(attrs, " "), len(attrs) == 0)
-			stack = append(stack, stackEntry{n: e})
+			push(e)
 		}
 	}
 	return adjust(nil)
