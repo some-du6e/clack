@@ -46,6 +46,9 @@ type kbNav struct {
 	// input's focus tag; typed gathers a frame's (StealText)
 	steal func(gtx layout.Context, text string, keys []key.Event) event.Tag
 	typed StealText
+	// ate is the letter an action just took (kbRun): its text, which
+	// follows the key, goes nowhere, whatever its case (CapsLock)
+	ate string
 	// inputWant: End's jump to the thread's latest reply is out (a slice
 	// short of the end has no "input" row); its row then takes the focus
 	// (focusInput's jumpToReplyCallback). jumpTo is the pane's JumpTo.
@@ -130,8 +133,8 @@ func (s *listState) kbAction(h Host, id string) (func(gtx layout.Context), bool)
 func (s *listState) kbBinds(h Host, k string) bool {
 	r := s.rows[s.kb.ts]
 	app := h.Core()
-	if r == nil || r.edit != nil || !popups.ToolbarShown(app, &r.m) {
-		return false
+	if r == nil || r.edit != nil || !popups.ToolbarShown(app, &r.m) || !keyboardMode(h) {
+		return false // MessageActions binds its keys only with keyboard focus (hasKeyboardFocus)
 	}
 	switch k {
 	case "e":
@@ -347,7 +350,15 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		case key.EditEvent:
 			// a character typed with a message selected: the input's,
 			// with the frame's others (StealText)
-			s.kb.typed.Edit(e, func(t string) bool { return s.kb.on && stealsKey(t, func(k string) bool { return s.kbBinds(h, k) }) })
+			s.kb.typed.Edit(e, func(t string) bool {
+				if ate := s.kb.ate; ate != "" {
+					s.kb.ate = ""
+					if strings.EqualFold(t, ate) {
+						return false // the letter an action just took (its capital under CapsLock too)
+					}
+				}
+				return s.kb.on && stealsKey(t, func(k string) bool { return s.kbBinds(h, k) })
+			})
 		case key.CompositionEvent:
 			s.kb.typed.Composition(e) // an IME's marked text stays out
 		case key.Event:
@@ -356,7 +367,7 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 			}
 			if e.Modifiers.Contain(key.ModShortcut) {
 				switch id := kbKeyID(e); id {
-				case "mod+c", "mod+shift+s": // copy message, save
+				case "mod+c", "mod+shift+s": // copy message, save (kbRun: with keyboard focus only)
 					s.kbRun(gtx, h, id)
 				default:
 					s.kb.typed.Key(e) // Mod+B, Mod+I, Mod+V
@@ -402,14 +413,19 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 			case key.NameEscape:
 				s.kbLeave(gtx)
 			case "R", "T", "P", "S", "F", "A", "U", "M", "L", key.NameDeleteForward, key.NameDeleteBackward:
-				s.kbRun(gtx, h, kbKeyID(e))
+				// without keyboard focus (a click since the last nav key)
+				// MessageActions binds nothing: the letter is typed, and
+				// goes to the input as its text (kbBinds)
+				if id := kbKeyID(e); s.kbRun(gtx, h, id) && len(id) == 1 {
+					s.kb.ate = id
+				}
 			case "V": // Add to list…: the toolbar's action (P2.ADD_TO_LIST), so none where it has none
 				r := s.rows[s.kb.ts]
-				if la, ok := h.(ListAdder); ok && r != nil && popups.ToolbarShown(h.Core(), &r.m) && popups.AddToListShown(h.Core(), &r.src) {
+				if la, ok := h.(ListAdder); ok && r != nil && keyboardMode(h) && popups.ToolbarShown(h.Core(), &r.m) && popups.AddToListShown(h.Core(), &r.src) {
 					la.AddMessageToList(r.src)
 				}
-			default: // Enter, E: edit it when it's yours (no keys on a temporary message: shouldRenderActions)
-				if r := s.rows[s.kb.ts]; r != nil && h.Core() != nil && r.m.User == h.Core().Self().ID && popups.ToolbarShown(h.Core(), &r.m) {
+			default: // Enter, E: edit it when it's yours (no keys on a temporary message: shouldRenderActions; E a message key, with keyboard focus only)
+				if r := s.rows[s.kb.ts]; r != nil && (e.Name != "E" || keyboardMode(h)) && h.Core() != nil && r.m.User == h.Core().Self().ID && popups.ToolbarShown(h.Core(), &r.m) {
 					s.kbLeave(gtx)
 					s.startEdit(h, s.kb.ts)
 				}
@@ -427,16 +443,25 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 // Mod+C copies the selection instead while there is one (onCopyText
 // returns when the window's selection reaches into the message: the
 // browser's copy is the selection's).
-func (s *listState) kbRun(gtx layout.Context, h Host, id string) {
+func (s *listState) kbRun(gtx layout.Context, h Host, id string) (ran bool) {
 	if id == "mod+c" && s.sel.active {
 		if t, sh, ch := s.selectedRich(h); t != "" {
 			richview.CopyRich(gtx, t, sh, ch)
-			return
+			return true
 		}
+	}
+	// MessageActions binds its key commands only while the viewer has
+	// keyboard focus (RwAt: hasKeyboardFocus && bindContextualShortcuts;
+	// FocusEventManager drops it on any mousedown): a click into the list
+	// (a pinned message opened, a row clicked) leaves no letter bound
+	if !keyboardMode(h) {
+		return false
 	}
 	if run, ok := s.kbAction(h, id); ok {
 		run(gtx)
+		return true
 	}
+	return false
 }
 
 // pageKey is BaseKeyboardNavigableList's PageUp, PageDown, Home and End

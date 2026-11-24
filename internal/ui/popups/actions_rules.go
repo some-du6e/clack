@@ -308,3 +308,112 @@ func ContextMenuShown(m *core.Message) bool {
 	}
 	return true
 }
+
+// canMarkUnread is L4xk canMarkUnread: not an ephemeral message (iub5 aw)
+// nor an archived canvas comment ($Q), in a conversation that isn't
+// archived (+NpH) and that the viewer is a member of (crlq g6:
+// is_member, or a file channel's transparent membership, which Clack's
+// conversations never are). DMs and group DMs are the viewer's.
+func canMarkUnread(app *core.App, m *core.Message) bool {
+	if isEphemeral(app, m) || (m.DocumentComment != nil && m.DocumentComment.IsArchived) {
+		return false
+	}
+	if app == nil {
+		return true
+	}
+	conv, ok := app.S.Conv(m.Channel)
+	if !ok {
+		return true // not stored: Slack's selector has no channel to refuse
+	}
+	if conv.IsArchived {
+		return false
+	}
+	return conv.IsIM || conv.IsMPIM || conv.IsMember
+}
+
+// MarkUnreadShown is whether the Mark unread action exists for m: in the
+// conversation QRkh (none on an automated message, but a code channel's
+// actionable ones, under system_messages_redesign_m1, nor on a
+// redesigned huddle system message), in a thread or the Threads view RjOa
+// (none on a redesigned huddle system message); both need canMarkUnread.
+// Its key, U, is the action's shortcut, so U is unbound wherever the row
+// isn't (getActionsForKeyboardShortcuts).
+func MarkUnreadShown(app *core.App, m *core.Message, inThread bool) bool {
+	if !inThread && app != nil && app.Experiment("system_messages_redesign_m1") == "on" && IsAutomatedSubtype(m.Subtype) &&
+		m.Subtype != "code_channel_lifecycle" && m.Subtype != "code_channel_review_submitted" {
+		return false
+	}
+	if redesignedHuddle(app, m) {
+		return false
+	}
+	return canMarkUnread(app, m)
+}
+
+// pinRuleSubtypes are the subtypes canPinMessage and canUnpinMessage
+// refuse at once.
+var pinRuleSubtypes = map[string]bool{"pinned_item": true, "unpinned_item": true, "sh_room_created": true, "sh_room_shared": true}
+
+// canPinHere is gUAL h: the viewer may post in the conversation
+// (canUserPostInChannel, FS2H: not archived, not read-only; Clack's
+// PostingIn) and, in a channel, is a member of it (silw V: public or
+// private channel, crlq bl).
+func canPinHere(app *core.App, ch string) bool {
+	if app == nil {
+		return true
+	}
+	conv, ok := app.S.Conv(ch)
+	if !ok {
+		return false // EmXR OL: no channel, no pin
+	}
+	if conv.IsArchived || !app.PostingFor(conv).CanPost() {
+		return false
+	}
+	if (conv.IsChannel || conv.IsGroup || conv.IsPrivate) && !conv.IsIM && !conv.IsMPIM && !conv.IsMember {
+		return false
+	}
+	return true
+}
+
+// PinShown is the pin action's rule (Zn/q): canPin, that is canPinMessage
+// (XRuW) for a message not pinned here or canUnpinMessage for one that is,
+// and none on a redesigned huddle system message that isn't pinned.
+//   - canPinMessage: not ephemeral, nor pinned_item, unpinned_item,
+//     sh_room_created or sh_room_shared; canPinHere; not a tombstone,
+//     moderated or retention_threshold message, nor a reply in a locked
+//     thread, nor a channel_join, channel_leave, group_join or group_leave
+//     message, nor in a channel shared with another org a channel_topic,
+//     channel_purpose, channel_name, group_topic, group_purpose or
+//     group_name one.
+//   - canUnpinMessage: the same first checks and canPinHere, not a
+//     tombstone.
+//
+// Its key, P, is the action's shortcut, so P is unbound wherever it isn't.
+func PinShown(app *core.App, m *core.Message) bool {
+	if !m.Pinned && redesignedHuddle(app, m) {
+		return false
+	}
+	if isEphemeral(app, m) || pinRuleSubtypes[m.Subtype] || !canPinHere(app, m.Channel) {
+		return false
+	}
+	tomb := m.Tombstone || m.Subtype == "tombstone"
+	if m.Pinned {
+		return !tomb
+	}
+	switch m.Subtype {
+	case "moderated", "retention_threshold", "channel_join", "channel_leave", "group_join", "group_leave":
+		return false
+	case "channel_topic", "channel_purpose", "channel_name", "group_topic", "group_purpose", "group_name":
+		if app != nil {
+			if conv, ok := app.S.Conv(m.Channel); ok && conv.IsExtShared {
+				return false
+			}
+		}
+	}
+	if tomb {
+		return false
+	}
+	if app != nil && isReplyMsg(m) && app.ThreadLocked(m.Channel, m.ThreadTS) {
+		return false
+	}
+	return true
+}

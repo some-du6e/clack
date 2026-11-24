@@ -23,9 +23,14 @@ import (
 type keysHost struct {
 	*ctxHost
 	threads []string
+	clicked bool // a click since the last nav key: no keyboard mode
 }
 
 func (h *keysHost) OpenThread(ch, ts string) { h.threads = append(h.threads, ch+"/"+ts) }
+
+// KeyboardMode is the shell's (messages.KeyboardModer): these tests
+// select messages with the keyboard, unless one sets clicked.
+func (h *keysHost) KeyboardMode() bool { return !h.clicked }
 
 // keysEnv is newEphEnv's #eph in a list over keysHost (the channel's or
 // the thread pane's), with what its input steals gathered.

@@ -167,7 +167,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	// (canAddReminder) or Copy link (canCopyLink): actions_rules.go
 	app := h.Core()
 	eph := isEphemeral(app, &m)
-	if !eph {
+	if MarkUnreadShown(app, &m, inThread) { // QRkh / RjOa: canMarkUnread and the redesign's exclusions
 		items = append(items, markUnread)
 	}
 	if sa := SaveActionFor(app, &m); !eph || sa.Do == SaveMove {
@@ -208,8 +208,10 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	// tombstone or temporary); no "Forward message…" here: Slack keeps it
 	// on the hover toolbar
 	if actionable(app, &m) {
+		if PinShown(app, &m) { // Zn/q canPin; Organize holds only the pin row, and a submenu with none isn't drawn
+			items = append(items, MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage))
+		}
 		items = append(items,
-			MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage),
 			MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m)}.In(nsMessage),
 		)
 	}

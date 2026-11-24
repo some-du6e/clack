@@ -2089,8 +2089,8 @@ func (v *Threads) focusBelowFooter(thread string) {
 func (v *Threads) kbKey(gtx C, e key.Event, active string) bool {
 	r := v.kbRows[active]
 	v.kbAte = ""
-	if v.kbMsgKey(gtx, e, r) && (v.kbAte != "" || !thrPrintable(e)) {
-		return true
+	if v.kbMsgKey(gtx, e, r) {
+		return true // onMessageAction stops the keydown: ThreadsView.onKeyDown never sees it
 	}
 	switch e.Name {
 	case key.NameReturn, key.NameEnter:
@@ -2131,7 +2131,7 @@ func (v *Threads) kbKey(gtx C, e key.Event, active string) bool {
 func (v *Threads) kbText(gtx C, text, active string) {
 	if ate := v.kbAte; ate != "" {
 		v.kbAte = ""
-		if text == ate {
+		if strings.EqualFold(text, ate) { // CapsLock types the capital: the action's still
 			return
 		}
 	}
@@ -2142,15 +2142,24 @@ func (v *Threads) kbText(gtx C, text, active string) {
 // MessageActions ones, popups/actions_keys.go, with messageContainerType
 // threads_view): R, T (View thread), P, S or F, U, A, M, L, Delete (and
 // Backspace on macOS), Mod+C and Mod+Shift+S, each where its action's
-// rule gives the message that action. They're bound on the row itself
-// (parentId), and ThreadsView's onKeyDown runs after them for the same
-// key: it moves a printable key to the reply box unless the focus is in
-// an input by then, which it is once R's picker or S's, F's or M's
-// dialog has opened (kbAte). So A, U, P, L and T run and the letter still
-// goes to the box, as one no action takes does. E and V aren't here: the
-// view has no inline edit, no list adder.
+// rule gives the message that action.
+//   - MessageActions binds them only while the viewer has keyboard focus
+//     (RwAt: hasKeyboardFocus && bindContextualShortcuts), which any
+//     mousedown ends (FocusEventManager): after a click on a row, a letter
+//     is no action's, and ThreadsView's onKeyDown moves it to the reply
+//     box, so typing a reply after a click types it.
+//   - A key an action takes goes no further: onMessageAction stops the
+//     keydown's propagation, so ThreadsView's onKeyDown never runs for it.
+//     The focus stays on the message and the letter is typed nowhere
+//     (kbAte drops its text); U's unread mark isn't undone by the reply
+//     box's focus marking the thread read.
+//
+// E and V aren't here: the view has no inline edit, no list adder.
 func (v *Threads) kbMsgKey(gtx C, e key.Event, r thrKBRow) bool {
 	if (r.kind != "root" && r.kind != "reply") || r.ts == "" {
+		return false
+	}
+	if km, ok := v.h.(interface{ KeyboardMode() bool }); !ok || !km.KeyboardMode() {
 		return false
 	}
 	id := thrKeyID(e)
@@ -2174,7 +2183,7 @@ func (v *Threads) kbMsgKey(gtx C, e key.Event, r thrKBRow) bool {
 		return false
 	}
 	run(gtx)
-	if strings.Contains("rsfm", id) && len(id) == 1 {
+	if len(id) == 1 { // the letter's text, which follows the key, is the action's too
 		v.kbAte = id
 	}
 	return true

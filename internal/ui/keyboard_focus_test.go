@@ -112,8 +112,10 @@ func TestThreadsAuditTypingFromTheList(t *testing.T) {
 	c := x.a.convos[x.ch+"/"]
 	box := x.box(x.ch, "")
 	t.Cleanup(func() { x.kfClearDraft(c) })
+	x.a.kbRelated = kbRelNav // as ↑ from the input moves there: keyboard mode, which the message keys need
 	x.a.focusList(c)
 	x.until("the channel's list selecting its newest message", 5*time.Second, func() bool { return x.cv().KeyboardSelected() != "" })
+	x.until("keyboard mode", 2*time.Second, func() bool { return x.a.KeyboardMode() })
 	before := box.DocText()
 	x.typeText("l")
 	x.settle(200 * time.Millisecond)
