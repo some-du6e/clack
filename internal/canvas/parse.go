@@ -602,7 +602,7 @@ func (p *parser) control(n *html.Node, st richtext.Style, depth int) []richtext.
 	// <a href> (quip-collab-editor: "Canvas link", "File link", "Message
 	// link"), so a control around a link is that link, not a date
 	if u := safeURL(firstLink(n, depth)); u != "" {
-		return []richtext.Span{{Kind: richtext.Link, Text: t, URL: u, Style: st}}
+		return []richtext.Span{{Kind: richtext.Link, Text: t, URL: u, Style: st, Control: true}}
 	}
 	return []richtext.Span{{Kind: richtext.Date, Text: t, Style: st}}
 }

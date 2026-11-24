@@ -92,6 +92,10 @@ func insertChange(after, md string) core.CanvasChange {
 
 // insertBlocks inserts md (shown at once as local) at the insert point.
 func (e *editState) insertBlocks(v *View, md string, local []canvas.Block) {
+	if quipOn(v) { // inserts through edit-document come with new sections (B3)
+		v.h.Toast(cantEdit)
+		return
+	}
 	after, ok := e.insertPoint(v)
 	if !ok {
 		return
@@ -157,6 +161,10 @@ func (v *View) startNewAfter(after string) {
 	if e == nil || !e.canEdit(v) || !e.finish(v) {
 		return
 	}
+	if quipOn(v) { // a new section through edit-document comes in B3
+		v.h.Toast(cantEdit)
+		return
+	}
 	i := len(v.blocks)
 	for j, b := range v.blocks {
 		if after != "" && b.b.ID == after {
@@ -192,6 +200,10 @@ func (v *View) startNewAfter(after string) {
 func (e *editState) insertUpload(v *View, image bool) {
 	a := v.h.Core()
 	if a == nil {
+		return
+	}
+	if quipOn(v) { // nothing is uploaded for a canvas that can't take it yet (B3, B4)
+		v.h.Toast(cantEdit)
 		return
 	}
 	after, ok := e.insertPoint(v)

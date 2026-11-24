@@ -215,6 +215,12 @@ func (v *View) goLive() {
 				if ev.Type == "canvas_viewers" && ev.ID == v.id {
 					v.h.Invalidate()
 				}
+				if ev.Type == "canvas_save" && ev.ID == v.id { // the save banner and lock (banner.go)
+					if ns := a.TakeCanvasSaveNotices(v.id); len(ns) > 0 {
+						v.post(func() { v.showSaveNotices(ns) })
+					}
+					v.h.Invalidate()
+				}
 			case <-tick.C:
 				if time.Since(time.UnixMilli(v.lastSeen.Load())) > 6*time.Second {
 					cc, ccancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -362,6 +368,11 @@ func (v *View) layout(gtx layout.Context) layout.Dimensions {
 		v.layoutBar(gtx, d, image.Pt(sz.X, top))
 	}
 	defer v.layoutAccessPopover(gtx, d) // over everything, in the view's coordinates
+	if b := v.saveBanner(); b != "" && d != nil {
+		off := op.Offset(image.Pt(0, top)).Push(gtx.Ops)
+		top += v.layoutSaveBanner(gtx, b, sz.X)
+		off.Pop()
+	}
 	body := image.Rect(0, top, sz.X, sz.Y)
 	defer op.Offset(body.Min).Push(gtx.Ops).Pop()
 	gtx.Constraints = layout.Exact(body.Size())
