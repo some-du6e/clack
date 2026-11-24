@@ -1,6 +1,8 @@
 package richview
 
 import (
+	"encoding/json"
+	"fmt"
 	"image"
 	"strings"
 	"sync"
@@ -25,6 +27,14 @@ type fakeExp struct {
 	mu         sync.Mutex
 	unverified map[string]bool // sender/channel pairs the rule hides
 	allowed    []string
+	files      map[string]*rt.File // the Slack files images' urls are (ImageFile)
+}
+
+func (x *fakeExp) ImageFile(u string) (*rt.File, bool) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	f, ok := x.files[u]
+	return f, ok
 }
 
 func (x *fakeExp) hides(sender, ch string) bool {
@@ -195,6 +205,55 @@ func TestImageActionsGroup(t *testing.T) {
 	hs.send(press(open, 1e9), release(open, 1e9+20*1e6))
 	if len(h.urls) != 1 || h.urls[0] != "https://img.test/a.png" || len(h.images) != 0 {
 		t.Errorf("Open in new window: urls %v images %v", h.urls, h.images)
+	}
+}
+
+// dlHandler records the group's downloads (ImageDownloadHandler).
+type dlHandler struct {
+	imgMenus
+	dl []*rt.File
+}
+
+func (h *dlHandler) DownloadImageFile(f *rt.File) { h.dl = append(h.dl, f) }
+
+// TestImageActionsDownload: an image that is a Slack file the client
+// holds (Expander.ImageFile) leads its group with Download (UvHM:
+// Download, Open in new window, More actions), which downloads the file.
+// A host that can't download, or an image that isn't a file, has none.
+func TestImageActionsDownload(t *testing.T) {
+	file := &rt.File{ID: "F0IMAGE0001", Name: "shot.png", Download: "https://files.slack.com/files-pri/T1-F0IMAGE0001/download/shot.png"}
+	useExpander(t, &fakeExp{files: map[string]*rt.File{"https://img.test/a.png": file}})
+	h := &dlHandler{}
+	hs := &harness{st: newTestStyle(), v: New(kitDoc(t, imgBlock), Options{Channel: "C1", TS: "1.0"}), h: h, w: 700}
+	hs.frame()
+	img := imgsWithURL(&hs.v.d, "https://img.test/a.png")[0]
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
+	acts := hs.v.expandActs(hs.st, 0)
+	if len(acts) != 3 || acts[0] != imgActDownload || acts[1] != imgActOpen || acts[2] != imgActMore {
+		t.Fatalf("the group %v, want Download, Open in new window, More actions", acts)
+	}
+	_, btns := hs.v.expandBar(0, len(acts))
+	dl := rectCenter(btns[0])
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: dl})
+	hs.send(press(dl, 0), release(dl, 20*1e6))
+	if len(h.dl) != 1 || h.dl[0] != file {
+		t.Errorf("Download: %v", h.dl)
+	}
+
+	// a host that can't download: no Download
+	hs = &harness{st: newTestStyle(), v: New(kitDoc(t, imgBlock), Options{Channel: "C1", TS: "1.0"}), h: &imgMenus{}, w: 700}
+	hs.frame()
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
+	if acts := hs.v.expandActs(hs.st, 0); len(acts) == 0 || acts[0] == imgActDownload {
+		t.Errorf("the group %v: Download without a host that downloads", acts)
+	}
+	// an image that isn't a file: no Download
+	useExpander(t, &fakeExp{})
+	hs = &harness{st: newTestStyle(), v: New(kitDoc(t, imgBlock), Options{Channel: "C1", TS: "1.0"}), h: &dlHandler{}, w: 700}
+	hs.frame()
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
+	if acts := hs.v.expandActs(hs.st, 0); len(acts) == 0 || acts[0] == imgActDownload {
+		t.Errorf("the group %v: Download for an image that isn't a file", acts)
 	}
 }
 
@@ -372,5 +431,72 @@ func TestAttachmentMediaInStore(t *testing.T) {
 	}
 	if !strings.Contains(string(v.d.plain), "A page") {
 		t.Errorf("the card went with its image: %q", v.d.plain)
+	}
+}
+
+// TestAttachmentsOverLimit: a message draws its first 20 attachments and
+// "+ N more attachments" (MessageAttachmentOverLimitButton); the button
+// opens the rest, which then end with "Show fewer attachments", under
+// getExpandableKey("attachmentsOverLimit", ts, {limit: 20, viewContext}).
+// With an attachment that has blocks the limit is 10.
+func TestAttachmentsOverLimit(t *testing.T) {
+	st := newTestStyle()
+	msg := func(n int, kit bool) slack.Message {
+		m := slack.Message{TS: "1700000000.000100"}
+		for i := 1; i <= n; i++ {
+			m.Attachments = append(m.Attachments, slack.Attachment{ID: i, Text: fmt.Sprintf("att-%02d", i)})
+		}
+		if kit {
+			m.Attachments[0].Blocks = json.RawMessage(`[{"type":"section","block_id":"k","text":{"type":"mrkdwn","text":"att-kit"}}]`)
+		}
+		return m
+	}
+	m := msg(22, false)
+	o := Options{Channel: "C1", TS: m.TS, ViewContext: expandable.ViewChannel}
+	key := expandable.Key(expandable.AttachmentsOverLimit, m.TS, expandable.Opts{Limit: 20, ViewContext: expandable.ViewChannel})
+	if key != "attach_over_20_1700000000.000100Channel" {
+		t.Fatalf("key %q", key)
+	}
+	t.Cleanup(func() { forgetExpandable(key) })
+	d := rt.FromMessage(codeRes{}, &m)
+	v := layoutAt(st, d, o, 700)
+	plain := string(v.d.plain)
+	if !strings.Contains(plain, "att-20") || strings.Contains(plain, "att-21") || !strings.Contains(plain, "+ 2 more attachments") {
+		t.Fatalf("collapsed: plain %q", plain)
+	}
+	btn := fragWith(t, &v.d, "+")
+	if tg := v.d.targets[btn.target]; tg.kind != tExpandable || tg.id != key || !tg.on {
+		t.Fatalf("the button's target %+v, want %s on", tg, key)
+	}
+	v.activate(btn.target, image.Point{}, nil)
+	if on, ok := xp().Expanded(key); !ok || !on {
+		t.Fatalf("the button left %v %v", on, ok)
+	}
+	v.relayout(st, 700, 1, 1)
+	plain = string(v.d.plain)
+	if !strings.Contains(plain, "att-22") || !strings.Contains(plain, "Show fewer attachments") ||
+		strings.Index(plain, "Show fewer attachments") < strings.Index(plain, "att-22") {
+		t.Errorf("open: plain %q", plain)
+	}
+	// another View of the message reads the store: open too
+	if w := layoutAt(st, d, o, 700); !strings.Contains(string(w.d.plain), "att-22") {
+		t.Error("a new View of the message is collapsed again")
+	}
+
+	// one attachment with blocks: 10, "+ 1 more attachment" for 11
+	k := msg(11, true)
+	k.TS = "1700000000.000200"
+	kd := rt.FromMessage(codeRes{}, &k)
+	v = layoutAt(st, kd, Options{Channel: "C1", TS: k.TS, ViewContext: expandable.ViewChannel}, 700)
+	plain = string(v.d.plain)
+	if !strings.Contains(plain, "att-10") || strings.Contains(plain, "att-11") || !strings.Contains(plain, "+ 1 more attachment") ||
+		strings.Contains(plain, "attachments") {
+		t.Errorf("an attachment with blocks: plain %q", plain)
+	}
+
+	// twenty draw whole: no button
+	twenty := msg(20, false)
+	if w := layoutAt(st, rt.FromMessage(codeRes{}, &twenty), o, 700); strings.Contains(string(w.d.plain), "more attachment") {
+		t.Error("a button for twenty attachments")
 	}
 }
