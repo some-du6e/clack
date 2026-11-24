@@ -74,8 +74,8 @@ func newHistEnv(t *testing.T) *winEnv {
 // message 219, and TestPageKeyTakesTheDOMNames found no message row
 // there to measure.
 func histDay() int64 {
-	y, m, d := time.Now().AddDate(0, 0, -1).Date()
-	return time.Date(y, m, d, 12, 0, 0, 0, time.Local).Unix()
+	y, m, d := time.Now().Date()
+	return time.Date(y, m, d-1, 12, 0, 0, 0, time.Local).Unix() // yesterday by the calendar, not today's clock a day back
 }
 
 func (e *winEnv) newest() string { return e.tss[len(e.tss)-1] }

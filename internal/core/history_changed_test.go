@@ -311,6 +311,9 @@ func TestCountsUpdatedRereadsHistory(t *testing.T) {
 	e.fs.SetMutationTimestamps(e.ch, hi, hi)
 	e.a.refreshCounts(ctx)
 	e.page()
+	// newHCEnv's own catch-up said history_caught_up already: only the
+	// re-read's counts
+	mark := len(e.log.all())
 	target := e.tss[len(e.tss)-3]
 	if !e.fs.EditQuiet(e.ch, target, "synthetic edited quietly") {
 		t.Fatal("control: the fake has no such message")
@@ -327,8 +330,8 @@ func TestCountsUpdatedRereadsHistory(t *testing.T) {
 		e.page() // a list reading the conversation
 		return strings.Contains(text(), "edited quietly")
 	})
-	e.log.wait(t, "history_caught_up", func(evs []Event) bool {
-		for _, ev := range evs {
+	e.log.wait(t, "history_caught_up after the re-read", func(evs []Event) bool {
+		for _, ev := range evs[mark:] {
 			if ev.Type == "history_caught_up" && ev.Channel == e.ch {
 				return true
 			}
