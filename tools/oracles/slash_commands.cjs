@@ -1,12 +1,12 @@
 // slash_commands.cjs: what Slack's composer does with each case's typed
-// slash command (internal/ui/composer/testdata/parity/slash-routing.json),
+// slash command (internal/ui/composer/testdata/parity/slash-commands.json),
 // from Slack's own send path run in node over the web client's public CDN
 // chunks (build 66e72b57ade1):
 //
 //   node tools/oracles/slash_commands.cjs SNAPSHOT.json > out.json
 //
 // SLACK_CHUNKS and JSDOM as for message_actions.cjs (its header says
-// where they come from). tools/parity.py --refresh slash-routing runs it.
+// where they come from). tools/parity.py --refresh slash-commands runs it.
 //
 // The composer hands a typed message to handleSlashCommand (vHCW, "Intercept
 // and handle a slash commands when sending a message"), which runs Slack's

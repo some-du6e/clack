@@ -868,7 +868,7 @@ def refresh_message_actions(cases, tmp, base=None):
 SLASH_ORACLE = os.path.join(ROOT, 'tools', 'oracles', 'slash_commands.cjs')
 
 
-def refresh_slash_routing(cases, tmp, base=None):
+def refresh_slash_commands(cases, tmp, base=None):
     """What Slack's composer does with each case's typed command: tools/oracles/slash_commands.cjs runs Slack's
     send path (handleSlashCommand, executeCommand) in node over its CDN chunks (SLACK_CHUNKS, JSDOM)."""
     node = shutil.which('node')
@@ -883,7 +883,7 @@ def refresh_slash_routing(cases, tmp, base=None):
     return json.loads(p.stdout.rstrip('\n').split('\n')[-1])
 
 
-REFRESHERS = {'emoji-rank': refresh_emoji_rank, 'message-actions': refresh_message_actions, 'slash-routing': refresh_slash_routing,
+REFRESHERS = {'emoji-rank': refresh_emoji_rank, 'message-actions': refresh_message_actions, 'slash-commands': refresh_slash_commands,
               **{k: quip_refresher(k) for k in QUIP_SNAPSHOTS}}
 
 
