@@ -209,7 +209,8 @@ func TestEventIdentity(t *testing.T) {
 	}
 	EventAction(h, "copy", ev, "C0EV", "11.0", image.Rectangle{}) // then a whole one
 	rec.wait(t, "calendar.event.copy", map[string]string{"channel": "C0EV", "message_ts": "11.0"}, 10*time.Second)
-	maUntil(t, "the actions' calls settled", asyncIdle)
+	maUntil(t, "the copy settled", idleWrite(richview.EventKey("C0EV", "11.0", "E11")))
+	settleAsync(5 * time.Second) // the shares' reads, had any gone out
 	if n, m := callCount(rec, "calendar.event.rsvp"), callCount(rec, "calendar.event.copy"); n != 0 || m != 1 {
 		t.Errorf("%d rsvp and %d copy calls, want 0 and 1 (none without the message)", n, m)
 	}
@@ -225,11 +226,19 @@ func TestEventIdentity(t *testing.T) {
 	}
 }
 
-// asyncIdle reports no popups work in flight (run's) and none queued.
-func asyncIdle() bool {
-	asyncMu.Lock()
-	defer asyncMu.Unlock()
-	return inflight == 0 && len(asyncQueue) == 0
+// settleAsync drains popups' async work (run's) until none is in flight
+// or queued, for at most d: work an earlier test left running (held up to
+// asyncTimeout) doesn't fail this one.
+func settleAsync(d time.Duration) {
+	for end := time.Now().Add(d); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		drain()
+		asyncMu.Lock()
+		idle := inflight == 0 && len(asyncQueue) == 0
+		asyncMu.Unlock()
+		if idle {
+			return
+		}
+	}
 }
 
 // overlaysShown counts the overlays shown but run's async pump, which the
