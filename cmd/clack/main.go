@@ -367,6 +367,8 @@ func main() {
 		OnWindowEvent: func(e event.Event) {
 			desktop.SetWindowIcon(e, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512)
 		},
+		SetAppIcon:  func(png []byte) { desktop.SetAppIcon(png, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512) },
+		UserDefault: desktop.UserDefault,
 	}
 	if desktop.Released(version) || os.Getenv("CLACK_UPDATE_URL") != "" {
 		u := newUpdates(filepath.Join(cfg, "cache", "updates"))
@@ -616,12 +618,19 @@ func main() {
 			}
 		}
 		// a downloaded update the user didn't restart into goes in now, as
-		// Slack's does on quit (ui.Options.InstallUpdateOnQuit)
-		if tag, err := a.InstallUpdateOnQuit(); tag != "" {
-			if err != nil {
+		// Slack's does on quit (ui.Options.InstallUpdateOnQuit); not when
+		// Windows ends the session, which may kill the installer or the
+		// swap partway: the next quit installs it
+		if strings.Contains(why, "(WM_ENDSESSION)") {
+			log.Print("update: nothing installs as the Windows session ends")
+		} else if tag, err := a.InstallUpdateOnQuit(); tag != "" {
+			switch {
+			case errors.Is(err, errNotOnQuit):
+				log.Printf("update: %s isn't installing as Clack quits: %v", tag, err)
+			case err != nil:
 				log.Printf("update: install on quit %s: %v", tag, err)
-			} else {
-				log.Printf("update: %s installs as Clack quits", tag)
+			default:
+				log.Printf("update: the update helper is installing %s as Clack quits", tag)
 			}
 		}
 		// the reason and the run record before the instance socket goes: a

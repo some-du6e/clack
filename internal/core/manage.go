@@ -778,7 +778,23 @@ var activityLiveTypes = []string{"thread_v2", "at_user", "at_user_group", "at_ch
 	"list_approval_reviewed", "bot_dm_bundle", "saved_reminder", "dm", "channel", "mpdm", "generic_system_alert",
 	"prejoin_dm_welcome_party_alert"}
 
-func activityLiveType(t string) bool { return slices.Contains(activityLiveTypes, t) }
+// activityLiveTypesV1 is activityUpdatedV1's allow-list (boot-shared Gfjq
+// `et`, build 66e72b57ade1): V2's without dm, channel and mpdm, the
+// conversations' own entries, which only the inbox shows.
+var activityLiveTypesV1 = slices.DeleteFunc(slices.Clone(activityLiveTypes), func(t string) bool {
+	return t == "dm" || t == "channel" || t == "mpdm"
+})
+
+// activityLiveType reports whether a realtime activity_updated of entry
+// type t reaches the stores: handleActivityRTMEvent runs activityUpdatedV2
+// with the activity inbox and activityUpdatedV1 without it, each with its
+// own list.
+func (a *App) activityLiveType(t string) bool {
+	if a.ActivityInbox() {
+		return slices.Contains(activityLiveTypes, t)
+	}
+	return slices.Contains(activityLiveTypesV1, t)
+}
 
 // onActivityEvent is an activity event's work, on the activity queue
 // (activity_later.go); seq is MessageChangeSeq when the socket brought it
@@ -791,10 +807,13 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage, seq uint
 	}
 	_ = json.Unmarshal(raw, &e)
 	ev := Event{Type: "activity", Name: e.Subtype, ID: firstNonEmpty(e.Key, e.Entry.Key), Raw: raw}
-	if e.Subtype == "activity_updated" && !activityLiveType(e.Entry.Item.Type) {
-		// activityUpdatedV2: "received invalid activity_updated event with
-		// entryType …", dropped before any store sees it
+	if e.Subtype == "activity_updated" && !a.activityLiveType(e.Entry.Item.Type) {
+		// activityUpdatedV2 (V1): "received invalid activity_updated event
+		// with entryType …", dropped before any store sees it; its
+		// breakthrough still counts, as handleActivityRTMEvent's check
+		// follows the update whatever it did
 		log.Printf("activity: dropped an activity_updated %q entry", e.Entry.Item.Type)
+		a.activityBreakthrough(e.Entry)
 		return
 	}
 	if e.Entry.Key != "" || e.Entry.Item.Type != "" {
@@ -806,6 +825,83 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage, seq uint
 		}
 	}
 	a.emit(ev)
+	if e.Subtype == "activity_updated" {
+		a.activityBreakthrough(e.Entry)
+	}
+}
+
+// activityBreakthrough is handleActivityRTMEvent's is_breakthrough: an
+// entry that breaks through focus mode adds its conversation to the
+// silent sidebar's DND overrides (addDndOverrideChannel, while
+// isSilentSidebarActive: the UI checks that, ui/focus_mode.go), so its
+// row is bold and badged again. The conversation is the formatter's
+// channelId (activityFormatChannel), read off the entry with no fetch.
+func (a *App) activityBreakthrough(e activityRaw) {
+	if !e.IsBreakthrough {
+		return
+	}
+	if ch := activityFormatChannel(&e); ch != "" {
+		a.emit(Event{Type: "activity_breakthrough", Channel: ch})
+	}
+}
+
+// activityFormatChannel is YfTA W's channelId (build 66e72b57ade1), the
+// entry's conversation as handleActivityRTMEvent's breakthrough reads it:
+// "" for the types it formats without one (invites from outside, lists,
+// saved reminders, calendar events, system alerts) and the ones it
+// doesn't format (bot_dm and thread_reply are null; mpdm and any other
+// type is "unknown item type").
+func activityFormatChannel(e *activityRaw) string {
+	it := &e.Item
+	msg := func(m *msgRef) string {
+		if m == nil {
+			return ""
+		}
+		return m.Channel
+	}
+	pay := func(p *actPayload) string {
+		if p == nil {
+			return ""
+		}
+		return p.ChannelID
+	}
+	latest := func(en *actEntry) string {
+		if en == nil {
+			return ""
+		}
+		return msg(en.LatestMessage)
+	}
+	switch it.Type {
+	case "at_user", "at_user_group", "at_channel", "at_everyone", "keyword", "internal_channel_invite", "message_reaction":
+		return msg(it.Message)
+	case "quietly_added_to_channel":
+		return pay(it.QuietlyAdded)
+	case "unjoined_channel_mention":
+		return pay(it.Unjoined)
+	case "code_review_requested":
+		return pay(it.CodeReview)
+	case "team_joiner_invite":
+		return pay(it.TeamJoiner)
+	case "prejoin_dm_welcome_party_alert":
+		return pay(it.Prejoin)
+	}
+	b := it.BundleInfo
+	if b == nil {
+		return ""
+	}
+	switch it.Type {
+	case "bot_dm_bundle":
+		return msg(b.Payload.Message)
+	case "dm":
+		return latest(b.Payload.DMEntry)
+	case "channel":
+		return latest(b.Payload.ChannelEntry)
+	case "thread_v2":
+		if t := b.Payload.ThreadEntry; t != nil {
+			return t.ChannelID
+		}
+	}
+	return ""
 }
 
 func (a *App) onThreadSubscription(raw json.RawMessage, on bool) {
@@ -851,6 +947,16 @@ func (a *App) onThreadMarked(raw json.RawMessage) {
 	// threadMarked's updateActivitiesUnreadState: the reply bars' items of
 	// the thread up to its new last read go (channel_thread_activity.go)
 	a.threadActivityRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead)
+	a.emitThreadRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead)
+}
+
+// emitThreadRead tells the Activity view that thread ch/threadTS is read up
+// to lastRead: updateUnreadActivityItemByThreadKey (client-boot tsND), which
+// marks the thread's unread items read at once, before any activity_updated.
+func (a *App) emitThreadRead(ch, threadTS, lastRead string) {
+	if ch != "" && threadTS != "" && lastRead != "" {
+		a.emit(Event{Type: "thread_read", Channel: ch, ThreadTS: threadTS, TS: lastRead, BadgesGen: a.ActivityBadgesGen()})
+	}
 }
 
 // setThreadLastRead records a thread's last read reply (Slack's

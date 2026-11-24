@@ -176,10 +176,14 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 		case "tmp":
 			return os.TempDir(), nil
 		case "platform":
-			return runtime.GOOS, nil
+			return nodePlatform(runtime.GOOS), nil
+		case "arch":
+			return nodeArch(runtime.GOARCH), nil
 		case "cwd":
 			wd, _ := os.Getwd()
 			return wd, nil
+		case "resources":
+			return s.slackResources(), nil
 		}
 		return nil, nil
 	})
@@ -216,7 +220,136 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 		if err != nil {
 			return "", nil
 		}
+		s.notePick(strArg(a, 2), p) // a main half's pick: its id last
 		return p, nil
+	})
+
+	// Electron's nativeImage for main halves (nativeimage.go): an image is
+	// {png, w, h}; the empty image is null
+	sync("image", func(a []json.RawMessage) (any, error) {
+		img := func(i int) *nativeImg {
+			var n nativeImg
+			if i < len(a) && json.Unmarshal(a[i], &n) == nil && n.PNG != "" {
+				return &n
+			}
+			return nil
+		}
+		num := func(i int) int {
+			var n float64
+			if i < len(a) {
+				_ = json.Unmarshal(a[i], &n)
+			}
+			return int(n)
+		}
+		switch strArg(a, 0) {
+		case "fromDataURL":
+			return nativeFromDataURL(strArg(a, 1)), nil
+		case "fromBuffer":
+			s64 := strArg(a, 1)
+			if base64.StdEncoding.DecodedLen(len(s64)) > maxImageFile {
+				return nil, nil
+			}
+			b, err := base64.StdEncoding.DecodeString(s64)
+			if err != nil {
+				return nil, nil
+			}
+			m, err := decodeImageBytes(b)
+			if err != nil {
+				return nil, nil
+			}
+			return encodeNative(m)
+		case "fromPath":
+			p := s.imageFile(strArg(a, 1), strArg(a, 2))
+			if p == "" {
+				return nil, nil
+			}
+			return nativeFromPath(p), nil
+		case "thumbnail":
+			p := s.imageFile(strArg(a, 1), strArg(a, 2))
+			if p == "" {
+				return map[string]any{"error": "Failed to get thumbnail from local thumbnail cache"}, nil
+			}
+			n, err := nativeThumbnail(p, num(3), num(4))
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return n, nil
+		case "resize":
+			in := img(1)
+			if in == nil {
+				return nil, nil
+			}
+			n, err := nativeResize(in, num(2), num(3), strArg(a, 4))
+			if err != nil {
+				return nil, nil
+			}
+			return n, nil
+		case "bitmap":
+			in := img(1)
+			if in == nil {
+				return "", nil
+			}
+			b, err := nativeBitmap(in)
+			if err != nil {
+				return "", nil
+			}
+			return base64.StdEncoding.EncodeToString(b), nil
+		case "fromBitmap":
+			s64 := strArg(a, 1)
+			if base64.StdEncoding.DecodedLen(len(s64)) > maxNativeBytes {
+				return nil, nil
+			}
+			b, err := base64.StdEncoding.DecodeString(s64)
+			if err != nil {
+				return nil, nil
+			}
+			n, err := nativeFromBitmap(b, num(2), num(3))
+			if err != nil {
+				return nil, nil
+			}
+			return n, nil
+		}
+		return nil, fmt.Errorf("slick: image %s", strArg(a, 0))
+	})
+
+	// app.dock.setIcon and a window's setIcon: Clack's Dock or window icon
+	// (null: Clack's own)
+	sync("appIcon", func(a []json.RawMessage) (any, error) {
+		if s.opts.SetAppIcon == nil {
+			return nil, nil
+		}
+		var b64 *string
+		if len(a) > 0 {
+			_ = json.Unmarshal(a[0], &b64)
+		}
+		if b64 == nil || *b64 == "" {
+			s.opts.SetAppIcon(nil)
+			return nil, nil
+		}
+		if base64.StdEncoding.DecodedLen(len(*b64)) > maxImageFile {
+			return nil, errNoImage
+		}
+		b, err := base64.StdEncoding.DecodeString(*b64)
+		if err != nil {
+			return nil, err
+		}
+		// within the limits and fit to what an OS draws (appIconPNG)
+		icon, err := appIconPNG(b)
+		if err != nil {
+			return nil, err
+		}
+		s.opts.SetAppIcon(icon)
+		return nil, nil
+	})
+	// nativeTheme.shouldUseDarkColors, a window's isFocused, and
+	// systemPreferences.getUserDefault
+	sync("nativeTheme", func(a []json.RawMessage) (any, error) { return s.dark.Load(), nil })
+	sync("focused", func(a []json.RawMessage) (any, error) { return s.focused.Load(), nil })
+	sync("userDefault", func(a []json.RawMessage) (any, error) {
+		if s.opts.UserDefault == nil {
+			return nil, nil
+		}
+		return s.opts.UserDefault(strArg(a, 0), strArg(a, 1)), nil
 	})
 
 	// node:crypto createHash for main halves
@@ -399,6 +532,68 @@ func (s *Slick) allowedFile(path string) string {
 	return ""
 }
 
+// slackResources is the installed Slack's resources folder (cached):
+// process.resourcesPath for main halves.
+func (s *Slick) slackResources() string {
+	s.resources.once.Do(func() { s.resources.path = slackResources() })
+	return s.resources.path
+}
+
+// notePick keeps a file the user picked through main half owner's
+// dialog.openFile: the image is that plugin's to decode (imageFile), though
+// never its bytes to read.
+func (s *Slick) notePick(owner, path string) {
+	c := canonical(path)
+	if owner == "" || c == "" {
+		return
+	}
+	s.pickedMu.Lock()
+	defer s.pickedMu.Unlock()
+	if s.picked == nil {
+		s.picked = map[string]map[string]bool{}
+	}
+	if s.picked[owner] == nil {
+		s.picked[owner] = map[string]bool{}
+	}
+	s.picked[owner][c] = true
+}
+
+// systemIconDirs are where Linux keeps installed apps' icons (Slack's
+// /usr/share/pixmaps/slack.png among them): images any app may show.
+var systemIconDirs = []string{"/usr/share/pixmaps", "/usr/share/icons"}
+
+// imageFile is path's canonical form when main half owner's nativeImage
+// may decode it, or "": a file the user picked for it (its
+// dialog.openFile), one of the plugins' file settings (allowedFile), or
+// Slack's own icons, in the installed Slack's resources or the system's
+// icon folders. A decode gives only an image's pixels, never a file's
+// bytes, and never from Clack's own folders (readablePath).
+func (s *Slick) imageFile(owner, path string) string {
+	want := s.readablePath(expandHome(path))
+	if want == "" {
+		return ""
+	}
+	s.pickedMu.Lock()
+	picked := s.picked[owner][want]
+	s.pickedMu.Unlock()
+	if picked {
+		return want
+	}
+	roots := append([]string(nil), systemIconDirs...)
+	if r := canonical(s.slackResources()); r != "" {
+		roots = append(roots, r)
+		if runtime.GOOS == "windows" {
+			roots = append(roots, filepath.Dir(r)) // resources\..\slack.exe
+		}
+	}
+	for _, root := range roots {
+		if c := canonical(root); c != "" && within(want, c) {
+			return want
+		}
+	}
+	return s.allowedFile(want)
+}
+
 // ---- shell.openExternal ----
 
 const (
@@ -464,4 +659,32 @@ func newUUID() string {
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// nodePlatform is GOOS as Node's process.platform (and Electron's) names
+// it: "win32" on Windows, which a main half's Windows branch tests for
+// (CustomAppIcon reads Slack's icon from slack.exe there).
+func nodePlatform(goos string) string {
+	switch goos {
+	case "windows":
+		return "win32"
+	case "solaris", "illumos":
+		return "sunos"
+	}
+	return goos // darwin, linux, freebsd, openbsd, aix, android
+}
+
+// nodeArch is GOARCH as Node's process.arch names it.
+func nodeArch(goarch string) string {
+	switch goarch {
+	case "amd64":
+		return "x64"
+	case "386":
+		return "ia32"
+	case "mipsle":
+		return "mipsel"
+	case "ppc64le":
+		return "ppc64"
+	}
+	return goarch // arm, arm64, loong64, mips, ppc64, riscv64, s390x
 }

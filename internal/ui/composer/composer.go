@@ -608,7 +608,7 @@ func (c *Composer) LayoutIn(gtx layout.Context, pane string) layout.Dimensions {
 // they're given (margins included) and size their height to the content;
 // edit composers draw just the box.
 func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
-	runRestores()
+	runRestoresIn(c, false)
 	c.drawnAt = gtx.Now
 	// the pane its roots are keyed in (vanish.go remounts those): LayoutIn's,
 	// or the list's an edit composer or a Block Kit field is drawn inside
@@ -2154,9 +2154,30 @@ func laterFor(a *core.App, h interface{ Invalidate() }, f func()) {
 		return
 	}
 	restoreQ.Lock()
-	restoreQ.fns = append(restoreQ.fns, laterFn{a, f})
+	restoreQ.fns = append(restoreQ.fns, laterFn{a: a, f: f})
 	restoreQ.Unlock()
 	h.Invalidate()
+}
+
+// laterHere is later for work that has to run in this composer's own
+// Layout: a command's navigation. The host routes a navigation by the
+// view container being laid out (a conversation opened from the split
+// view's box stays in the split view), as Slack's navigate goes by the
+// container its dispatcher is in (aYa+: sourceContainer,
+// shouldNavigateInContext); run in another box's Layout, it would go
+// wherever that box is. Once c closed, or hereMax after (a box no longer
+// drawn), any Layout runs it.
+func (c *Composer) laterHere(f func()) {
+	if a := c.api.a; a != nil && a.Released() {
+		return
+	}
+	restoreQ.Lock()
+	restoreQ.fns = append(restoreQ.fns, laterFn{a: c.api.a, f: f, here: c, at: time.Now()})
+	restoreQ.Unlock()
+	c.h.Invalidate()
+	// a box no longer drawn: past hereMax any Layout runs it, so wake the
+	// UI then too (an idle app would wait for the next unrelated frame)
+	time.AfterFunc(hereMax+10*time.Millisecond, c.h.Invalidate)
 }
 
 // editFilesChanged is prepareAndSaveEditMessage's C: the edit's files
@@ -2318,18 +2339,40 @@ var restoreQ struct {
 	fns []laterFn
 }
 
-// laterFn is a restoreQ entry: f, for session a's UI (nil: whichever).
+// laterFn is a restoreQ entry: f, for session a's UI (nil: whichever);
+// here, when set, the composer whose own Layout runs it (laterHere),
+// queued at at.
 type laterFn struct {
-	a *core.App
-	f func()
+	a    *core.App
+	f    func()
+	here *Composer
+	at   time.Time
 }
 
-func runRestores() {
+// hereMax is how long a laterHere entry waits for its composer's Layout.
+const hereMax = 2 * time.Second
+
+// runRestores runs restoreQ's entries any Layout may run.
+func runRestores() { runRestoresIn(nil, false) }
+
+// runRestoresIn runs restoreQ: the entries any Layout may run, and c's
+// own (laterHere) when c is set; all runs every one (tests). The rest
+// stay queued, in order.
+func runRestoresIn(c *Composer, all bool) {
 	restoreQ.Lock()
 	fns := restoreQ.fns
 	restoreQ.fns = nil
-	restoreQ.Unlock()
+	var run, keep []laterFn
 	for _, l := range fns {
+		if l.here != nil && l.here != c && !all && !l.here.closed && time.Since(l.at) < hereMax {
+			keep = append(keep, l)
+		} else {
+			run = append(run, l)
+		}
+	}
+	restoreQ.fns = keep
+	restoreQ.Unlock()
+	for _, l := range run {
 		if l.a == nil || !l.a.Released() { // a finished session's has nothing to update
 			l.f()
 		}

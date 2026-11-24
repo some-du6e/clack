@@ -38,6 +38,11 @@ type teamIconState struct {
 	useWS     bool                       // use_workspace_icon_for_single_workspace_users
 	prefKnown bool
 	lastFetch time.Time
+	// teams: team.info's enterprise and is_verified by team (the
+	// unverified sender rule, expandables.go); teamReads: the teams it
+	// read for that rule this session
+	teams     map[string]teamRecord
+	teamReads map[string]bool
 }
 
 // pickTeamIcon is getIconImage(icon, 2*size): the smallest image_N >= 2*size
@@ -179,6 +184,7 @@ func (a *App) fetchTeam(ctx context.Context, team string) bool {
 			Icon         json.RawMessage `json:"icon"`
 			Plan         string          `json:"plan"`
 			EnterpriseID string          `json:"enterprise_id"`
+			IsVerified   bool            `json:"is_verified"`
 		} `json:"team"`
 	}
 	var p url.Values
@@ -194,6 +200,9 @@ func (a *App) fetchTeam(ctx context.Context, team string) bool {
 		a.setTeamPlan(r.Team.Plan, r.Team.EnterpriseID)
 	}
 	a.setTeamName(firstNonEmpty(r.Team.ID, team), r.Team.Name)
+	if team != "" { // another team: what the unverified sender rule reads
+		a.setTeamRecord(team, teamRecord{enterpriseID: r.Team.EnterpriseID, verified: r.Team.IsVerified})
+	}
 	changed := a.setTeamIcon(firstNonEmpty(r.Team.ID, team), r.Team.Icon)
 	if team != "" && r.Team.ID != team {
 		a.setTeamName(team, r.Team.Name)

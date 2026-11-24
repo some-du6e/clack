@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,6 +26,9 @@ type Fault struct {
 	ReplyDelay time.Duration
 	// Times is how many calls it hits (0: every call).
 	Times int
+	// RetryAfter is the Retry-After header (seconds) of a Status answer
+	// (a 429's wait)
+	RetryAfter int
 }
 
 // SetFault injects f into method's calls ("files.getUploadURL",
@@ -75,6 +79,9 @@ func (s *Server) applyFault(w http.ResponseWriter, f Fault) bool {
 		w.WriteHeader(http.StatusBadGateway)
 		return true
 	case f.Status != 0:
+		if f.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(f.RetryAfter))
+		}
 		w.WriteHeader(f.Status)
 		return true
 	case f.Error != "":

@@ -84,6 +84,11 @@ func init() {
 	// indeterminate menu row's mark (the Move to… menu over several
 	// conversations).
 	reg("form-checkbox-dash", sw(2, "M7 10 H13"))
+	// U+E210 icon_exclamation_circle (c-icon--exclamation-circle): the
+	// files list's UnverifiedDisclosure pillow (ljcx, an xjlK Icon of type
+	// exclamation-circle): the ring (9 out, 7.5 in), the bar's stadium
+	// (9 to 11 across, 5 to 11 down) and the dot (r 1.25).
+	reg("exclamation-circle-font", s(circle(10, 10, 8.25)), sw(2, "M10 6 V10"), disc(10, 13.75, 1.25))
 
 	// TextyAutocompleteMenu's keyboard help (boot-shared WOwF):
 	// "{arrowUp} {arrowDown} to navigate" draws the inline y8g2 icons

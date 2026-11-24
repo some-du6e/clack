@@ -43,7 +43,7 @@ func (a *App) takeTabLink(ch string, tabs []chTab) int {
 		return -1
 	}
 	for i, t := range tabs {
-		if t.key == "tab:"+id {
+		if t.key == "tab:"+id || id == "channel" && t.key == "messages" { // "channel": Messages (navigate's)
 			delete(w, ch)
 			return i
 		}

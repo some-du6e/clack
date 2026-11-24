@@ -215,6 +215,11 @@ type focusMode struct {
 	dateRect, timeRect     image.Rectangle // card coords
 	gearTip                popups.TipState
 	btnOrigin              image.Point
+
+	// override is dndOverrideChannelIds: the conversations an activity
+	// entry broke focus mode for (is_breakthrough), loud again until focus
+	// mode next turns on or off
+	override map[string]bool
 }
 
 var focusModes = map[*App]*focusMode{} // UI goroutine only
@@ -252,8 +257,31 @@ func (a *App) focusModeActive() bool {
 	return a.focusModeOn() && a.focusExp() > time.Now().Unix()
 }
 
-// focusQuiet is shouldSuppressUnreadEmphasis for the sidebar's rows.
+// focusQuiet is shouldSuppressUnreadEmphasis for the sidebar's rows that
+// aren't a conversation's (the Huddles and Threads links).
 func (a *App) focusQuiet() bool { return a.focusModeActive() }
+
+// focusQuietIn is shouldSuppressUnreadEmphasis for conversation ch's row:
+// focus mode is on and ch isn't one an activity entry broke through for
+// (isChannelDndOverride).
+func (a *App) focusQuietIn(ch string) bool { return a.focusModeActive() && !a.fm().override[ch] }
+
+// focusBreakthrough is handleActivityRTMEvent's is_breakthrough: while
+// the silent sidebar is active, the entry's conversation is a DND override
+// (addDndOverrideChannel), its row bold and badged again.
+func (a *App) focusBreakthrough(ch string) {
+	if ch == "" || !a.focusModeActive() {
+		return
+	}
+	f := a.fm()
+	if f.override == nil {
+		f.override = map[string]bool{}
+	}
+	if !f.override[ch] {
+		f.override[ch] = true
+		a.Invalidate()
+	}
+}
 
 // setFocusExp writes focus_mode_expiration_ts, optimistically (Slack
 // updates its store first and puts the old value back on failure).
@@ -303,6 +331,10 @@ func (a *App) toggleFocusMode() {
 func (a *App) focusChanged() {
 	f := a.fm()
 	on, inv := a.focusModeActive(), a.focusInverted()
+	if on != f.wasActive {
+		// setFocusModeActiveStartTs resets dndOverrideChannelIds
+		f.override = nil
+	}
 	if on != f.wasActive || on && inv != f.wasInv {
 		toggled := on != f.wasActive && f.fadeNext
 		f.wasActive, f.wasInv = on, inv

@@ -16,6 +16,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -878,7 +879,7 @@ func (p *painter) bgImage(b *box, r rectF, rad [4]float32) {
 		return
 	}
 	bg := &b.st.Background
-	img, ok := im.Get(bg.Image, 0)
+	img, ok := im.Get(imgcache.PageURL(bg.Image), 0) // a plugin's: a data: URL decodes from itself, as in Chromium
 	if !ok {
 		p.v.pendingImg = true
 		return

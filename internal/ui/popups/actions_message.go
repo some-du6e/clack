@@ -988,19 +988,37 @@ func RemoveFileFromMessage(h Host, m core.Message, f *richtext.File) {
 		title = "Remove list?"
 	}
 	ch, ts, id := m.Channel, m.TS, f.ID
-	Confirm(h, nsFiles.T(title), nsFiles.T("It will be removed from the message, but it won’t be deleted."), nsFiles.T("Remove"), true, nil, func() {
+	// RemoveFileFromMessageDialog: Remove is pending while chat.removeFile
+	// runs; the dialog closes once it worked, and stays open after the
+	// warning toast when it didn't
+	pending := false
+	var md *Modal
+	remove := &ModalButton{Label: nsFiles.T("Remove"), Kind: BtnDanger, Loading: func() bool { return pending }, Do: func() bool {
 		a := h.Core()
-		if a == nil {
-			return
+		if a == nil || pending {
+			return false
 		}
+		pending = true
 		run(h, func(ctx context.Context) (struct{}, error) {
 			return struct{}{}, a.RemoveFileFromMessage(ctx, ch, ts, id)
 		}, func(_ struct{}, err error) {
+			pending = false
 			if err != nil {
+				log.Printf("popups: chat.removeFile: %v", err)
 				toastIcon(h, nsFiles.T("Can’t remove that from the message. Try again."), "warning")
+				return
 			}
+			md.Dismiss()
 		})
-	})
+		return false
+	}}
+	th := h.Theme()
+	md = NewModal(h, ModalOpts{Title: nsFiles.T(title), AutoFocus: remove, // focusOnPrimaryButton
+		Body: func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg, nsFiles.T("It will be removed from the message, but it won’t be deleted."), 0)
+		},
+		Buttons: []*ModalButton{{Label: nsDialog.T("Cancel"), Kind: BtnOutline}, remove}})
+	h.ShowOverlay(md)
 }
 
 // fileIsTheLastContent is isFileTheLastContent: m has no text, no blocks

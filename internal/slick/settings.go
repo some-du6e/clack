@@ -99,6 +99,9 @@ type OptionInfo struct {
 	Live                          bool // applies without restarting the plugin
 	Relaunch                      bool // needs an app restart
 	RestartRequired               bool
+	// Hidden: the plugin edits it from its own panel, so Preferences
+	// draws no row for it (Slick's PluginDetail filters it out)
+	Hidden bool
 }
 
 // ThemeCard is one theme choice.
@@ -239,7 +242,7 @@ func (s *Slick) infoLocked(p *plugin, ws string) PluginInfo {
 			Value: resolved[k], Default: set.defaultValue(), Stored: isStored,
 			Min: set.Min, Max: set.Max, MaxLength: set.MaxLength, Accept: set.Accept,
 			Options: set.Options, Statuses: set.Statuses,
-			Live: live[k], Relaunch: relaunch[k], RestartRequired: set.RestartRequired,
+			Live: live[k], Relaunch: relaunch[k], RestartRequired: set.RestartRequired, Hidden: set.Hidden,
 		})
 	}
 	return info

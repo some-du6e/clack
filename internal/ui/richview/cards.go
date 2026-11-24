@@ -14,6 +14,7 @@ import (
 	"gioui.org/font"
 	"golang.org/x/image/math/fixed"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -229,14 +230,21 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		if a.IsShare {
 			maxC, maxN = shareMaxChars, shareMaxNewlines
 		}
+		// AttachmentText keeps its state in the expandables store,
+		// getExpandableKey("attachmentText", ts, {id, viewContext}); a
+		// share's TruncatedBlocks in the component (the View's)
+		key := ""
+		if a.Legacy && !a.IsShare {
+			key = expandable.Key(expandable.AttachmentText, l.opts.TS, expandable.Opts{ID: a.ID, ViewContext: l.opts.ViewContext})
+		}
 		if short, cut := truncateBlocks(text, maxC, maxN); cut {
-			if l.expanded[k] {
+			if key != "" && xpOn(key) || key == "" && l.expanded[k] {
 				text = withExpander(append([]richtext.Block(nil), text...), false)
 			} else {
 				text = withExpander(short, true)
 			}
 		}
-		l.expandAt = k
+		l.expandAt, l.expandAtKey = k, key
 		ct := l.enter(attTextClass)
 		if a.IsShare {
 			l.filled++
@@ -246,7 +254,7 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 			l.filled--
 		}
 		l.leave(ct)
-		l.expandAt = nil
+		l.expandAt, l.expandAtKey = nil, ""
 		l.plainAdd("\n")
 	}
 	if len(b.Fields) > 0 {
@@ -266,22 +274,28 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 			tg := l.d.addTarget(target{kind: tImage, img: a.Image})
 			row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
 			l.imageControls(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r) // AttachmentImage (animated.go)
-		} else if a.Image != nil && mediaExpanded() {
+		} else if a.Image != nil && l.mediaDisclosure(a) {
+			// the collapsed ExpandableContainer's UnverifiedDisclosure
+			row(l.unverifiedDisclosure(l.mediaKey(a), cx, cy, cw, false))
+		} else if a.Image != nil && l.mediaShown(a) {
 			// AttachmentMedia (BAnD): getAdjustedImageDimensions at max
 			// 360x360, floored; 5px over the image container
 			cy += l.dp(5)
 			// AttachmentImage's <a href>: externalSourceUrl || url
-			tg := l.d.addTarget(target{kind: tImage, img: a.Image, href: firstNonEmpty(externalSourceURL(a), a.Image.URL)})
+			href := firstNonEmpty(externalSourceURL(a), a.Image.URL)
+			tg := l.d.addTarget(target{kind: tImage, img: a.Image, href: href})
 			iw, ih := adjustedDims(a.Image.W, a.Image.H, 360, 360)
 			if a.Image.W <= 0 || a.Image.H <= 0 {
 				row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
+				// AttachmentImageActions (v1, v2: animated.go)
+				l.imageActions(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r, href, l.mediaKey(a))
 			} else {
 				r := image.Rect(cx, cy, cx+min(cw, l.dp(float32(iw))), cy+l.dp(float32(ih)))
 				if r.Dx() < l.dp(float32(iw)) { // narrower than the image: keep its aspect
 					r.Max.Y = cy + r.Dx()*ih/max(iw, 1)
 				}
 				l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: a.Image.URL, radii: [4]int{l.dp(8), l.dp(8), l.dp(8), l.dp(8)}, target: tg, px: max(r.Dx(), r.Dy())})
-				l.imageControls(a.Image, len(l.d.imgs)-1, r)
+				l.imageActions(a.Image, len(l.d.imgs)-1, r, href, l.mediaKey(a)) // AttachmentImageActions (animated.go)
 				l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 				row(r.Dy())
 			}
@@ -512,7 +526,7 @@ func (l *lay) videoCard(a *richtext.Attachment, x, y, w int) int {
 }
 
 func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
-	noImg := uipref.Get().NoInlineImgs || ImageTooLarge(a.Image) // expand_inline_imgs off: the card without its image
+	noImg := !l.mediaShown(a) // collapsed (expand_inline_imgs off, too large, /collapse…): the card without its image
 	if isVideoUnfurl(a) && !noImg {
 		return l.videoCard(a, x, y, w)
 	}
@@ -1294,7 +1308,8 @@ func (l *lay) pillowGrid(files []*richtext.File, x, y, w int) int {
 		if isListFile(f) {
 			h = l.listFile(f, cx, y, min(cell, x+w-cx), true) // listcard.go
 		} else {
-			h = l.genericFile(f, cx, y, min(cell, x+w-cx))
+			cw := min(cell, x+w-cx)
+			h = l.filePending(f, cx, y, cw, func() int { return l.genericFile(f, cx, y, cw) })
 		}
 		rowH = max(rowH, h)
 	}

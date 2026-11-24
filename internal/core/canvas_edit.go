@@ -1045,23 +1045,33 @@ func (a *App) flushCanvasSaves(ctx context.Context, id string) {
 }
 
 // The switch (docs/CANVAS-EDIT-PLAN.md "Rules for round 2"): canvas edits
-// save through edit-document only when it's on. Off by default; on with
-// CLACK_CANVAS_QUIP_EDIT=1 or ui.json's canvas_quip_edit (SetQuipEdit).
-var quipEditEnv = os.Getenv("CLACK_CANVAS_QUIP_EDIT") == "1"
+// save through edit-document only when it's on. On by default since
+// alpha.164; ui.json's canvas_quip_edit (SetQuipEdit) or the environment
+// turns it off.
+//
+// quipEditEnv is CLACK_CANVAS_QUIP_EDIT: "1" turns the switch on and "0"
+// turns it off, whatever ui.json says; anything else leaves it to ui.json.
+var quipEditEnv = os.Getenv("CLACK_CANVAS_QUIP_EDIT")
 
-var quipEditOn = newPerApp() // *App -> bool
+var quipEditOn = newPerApp() // *App -> bool, ui.json's canvas_quip_edit when it has one
 
 // QuipEditOn reports whether canvas edits save through edit-document.
 func (a *App) QuipEditOn() bool {
+	switch quipEditEnv {
+	case "1":
+		return true
+	case "0":
+		return false
+	}
 	if v, ok := quipEditOn.Load(a); ok {
 		return v.(bool)
 	}
-	return quipEditEnv
+	return true
 }
 
 // SetQuipEdit turns saving through edit-document on or off (ui.json's
-// canvas_quip_edit; the environment's switch still turns it on).
-func (a *App) SetQuipEdit(on bool) { quipEditOn.Store(a, on || quipEditEnv) }
+// canvas_quip_edit; CLACK_CANVAS_QUIP_EDIT, when set, still wins).
+func (a *App) SetQuipEdit(on bool) { quipEditOn.Store(a, on) }
 
 // SaveCanvasText saves a block's new plain text: the section's RTML as
 // Slack's save writer makes it of typed text (quip.TextRTML). orig is the

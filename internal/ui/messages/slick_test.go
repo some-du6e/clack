@@ -285,8 +285,11 @@ func TestSlickViewShowSendingBot(t *testing.T) {
 	})
 }
 
-// BetterBlock: a blocked person's messages collapse (Message /
-// MessageWrapper / ThreadReplyGeneric render nothing), their avatar
+// BetterBlock: a blocked person's messages leave the list (its
+// channelHistory patch takes them out, "collapse virtual rows via
+// history", and Clack's list hides what it took out as Slack's draws that
+// history: Taut.HistoryHidden; Message / MessageWrapper /
+// ThreadReplyGeneric render nothing for them too), their avatar
 // leaves the reply bar (ThreadReplies' msg, ReplyBarAvatar), and mentions
 // of them leave others' text (MessageText / Blocks msg overrides). Slick
 // keeps only Slack-shaped ids in a names setting, hence UCAROL001.
@@ -319,8 +322,8 @@ func TestSlickViewBetterBlock(t *testing.T) {
 	v := NewChannelView(e.h, ch)
 	v.Preview = true
 	f := frameFn(v)
-	e.waitFor(t, "Carol's message collapsed, the others drawn", f, func() bool {
-		return itemHeight(v.s, tsCarol) == 0 && itemHeight(v.s, tsRoot) > 0 && itemHeight(v.s, tsOK) > 0
+	e.waitFor(t, "Carol's message out of the list, the others drawn", f, func() bool {
+		return itemHeight(v.s, tsCarol) < 0 && itemHeight(v.s, tsRoot) > 0 && itemHeight(v.s, tsOK) > 0
 	})
 	e.waitFor(t, "the mention of Carol gone from Alice's text", f, func() bool {
 		txt := rowText(v.s.rows[tsMention])
@@ -342,11 +345,12 @@ func TestSlickViewBetterBlock(t *testing.T) {
 		}
 		return alice
 	})
-	// the thread pane: Carol's reply collapses, Alice's stay
+	// the thread pane: Carol's reply leaves it (the patch takes it out of
+	// the thread's channelHistory too, ch-threadTs), Alice's stay
 	tv := NewThreadView(e.h, ch, tsRoot)
 	ft := frameFn(tv)
-	e.waitFor(t, "Carol's reply collapsed in the thread", ft, func() bool {
-		return itemHeight(tv.s, tsReplyCarol) == 0 && itemHeight(tv.s, tsReplyAlice) > 0 && itemHeight(tv.s, tsRoot) > 0
+	e.waitFor(t, "Carol's reply out of the thread", ft, func() bool {
+		return itemHeight(tv.s, tsReplyCarol) < 0 && itemHeight(tv.s, tsReplyAlice) > 0 && itemHeight(tv.s, tsRoot) > 0
 	})
 }
 

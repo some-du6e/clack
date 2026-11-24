@@ -34,6 +34,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
@@ -438,6 +439,9 @@ type Activity struct {
 	freshMu  sync.Mutex
 	fresh    actAnswered
 
+	// pending is the marks whose writes are out (activity_marks.go)
+	pending actPending
+
 	// Reminder rows' saved items (saved.get), by compound key: known,
 	// non-existent, asked for; the files reminder footers name.
 	saved      map[string]core.SavedItem
@@ -512,7 +516,8 @@ type Activity struct {
 // NewActivity builds the Activity view; it loads on first Layout.
 func NewActivity(h Host) *Activity {
 	v := &Activity{
-		base:     newBase(h),
+		// its rows' expandables: the page's wS({id: ACTIVITY_PAGE})
+		base:     newBaseIn(h, expandable.ViewActivityPage),
 		tabs:     newTabs(actTabLabels...),
 		query:    newSearchIn(nsActivity, "Type to filter"), // ActivityFilterSearch
 		rows:     map[string]*actRow{},
@@ -652,6 +657,22 @@ func (v *Activity) watchItems() {
 				}
 				continue
 			}
+			if ev.Type == "thread_read" || ev.Type == "marked" {
+				// a thread's last read (thread_marked, the viewer's
+				// subscriptions.thread.mark) or a conversation's
+				// (channel_marked, conversations.mark): its rows up to it
+				// are read now, in order with the entries around it
+				// (activity_marks.go)
+				if ev.Channel != "" && ev.TS != "" {
+					v.notes.mu.Lock()
+					v.notes.items = append(v.notes.items, actPatch{read: &actReadUpTo{ch: ev.Channel, thread: ev.ThreadTS, cursor: ev.TS, gen: ev.BadgesGen}})
+					v.notes.mu.Unlock()
+					if shown {
+						v.h.Invalidate()
+					}
+				}
+				continue
+			}
 			if ev.Type != "activity" {
 				continue
 			}
@@ -750,7 +771,11 @@ func (v *Activity) applyPatches() {
 			p.Items = kept
 		}
 		for _, in := range items {
-			if in.zero {
+			if in.fn != nil {
+				in.fn()
+			} else if in.read != nil {
+				v.readUpTo(p, *in.read) // activity_marks.go
+			} else if in.zero {
 				v.readAllLocal(p)
 			} else {
 				v.liveUpsert(p, in.it) // activity_live.go
@@ -2896,14 +2921,16 @@ func (v *Activity) setRead(key string, read bool, item core.ActivityItem, fail s
 	prev, had := v.override[key]
 	v.override[key] = read
 	v.dirty = true
-	v.write(fail, func(ctx context.Context, c *core.App) error { return write(ctx, c, item) }, func() {
+	// a mark the realtime entries meanwhile can't undo (activity_marks.go)
+	id := v.pending.record(key, !read, item.FeedTS)
+	v.writeThen(fail, func(ctx context.Context, c *core.App) error { return write(ctx, c, item) }, func() {
 		if had {
 			v.override[key] = prev
 		} else {
 			delete(v.override, key)
 		}
 		v.dirty = true
-	})
+	}, func() { v.pending.clear(key, id) })
 }
 
 // markAllRead is select-all's "Mark as read": the whole inbox at once
@@ -2933,8 +2960,9 @@ func (v *Activity) markAllRead() {
 		v.override[k] = true
 	}
 	v.dirty = true
+	ended := v.recordMarks(keys, items, false) // markItemsAsReadOrUnread's pending marks (activity_marks.go)
 	all := !v.filtered() && !v.showCleared
-	v.write("Couldn’t mark as read: ", func(ctx context.Context, c *core.App) error {
+	v.writeThen("Couldn’t mark as read: ", func(ctx context.Context, c *core.App) error {
 		if all {
 			return c.MarkAllActivityRead(ctx, "all")
 		}
@@ -2948,7 +2976,7 @@ func (v *Activity) markAllRead() {
 			}
 		}
 		v.dirty = true
-	})
+	}, ended)
 }
 
 // clear archives an item (activity.archive): it leaves the inbox at once
@@ -3005,21 +3033,39 @@ func (v *Activity) unclear(it *core.ActivityItem, key string) {
 // toasts and runs revert on the UI goroutine. Writes run one at a time so
 // Clear then Undo reach Slack in that order.
 func (v *Activity) write(fail string, f func(context.Context, *core.App) error, revert func()) {
+	v.writeThen(fail, f, revert, nil)
+}
+
+// writeThen is write, with after run on the UI goroutine once f answered
+// (failed or not): the end of a pending mark (activity_marks.go). With an
+// after, the answer (revert, then after) is applied in order with the
+// realtime entries (applyPatches): one that came before the answer still
+// meets the mark, and one after it the reverted state.
+func (v *Activity) writeThen(fail string, f func(context.Context, *core.App) error, revert, after func()) {
 	c := v.h.Core()
 	go func() {
 		v.wmu.Lock()
 		defer v.wmu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		if err := f(ctx, c); err != nil {
-			v.notes.mu.Lock()
-			if fail != "" {
-				v.notes.msgs = append(v.notes.msgs, fail+friendlyErr(err))
-			}
-			v.notes.fns = append(v.notes.fns, revert)
-			v.notes.mu.Unlock()
-			v.h.Invalidate()
+		err := f(ctx, c)
+		if err == nil && after == nil {
+			return
 		}
+		v.notes.mu.Lock()
+		if err != nil && fail != "" {
+			v.notes.msgs = append(v.notes.msgs, fail+friendlyErr(err))
+		}
+		switch {
+		case after == nil:
+			v.notes.fns = append(v.notes.fns, revert)
+		case err != nil:
+			v.notes.items = append(v.notes.items, actPatch{fn: func() { revert(); after() }})
+		default:
+			v.notes.items = append(v.notes.items, actPatch{fn: after})
+		}
+		v.notes.mu.Unlock()
+		v.h.Invalidate()
 	}()
 }
 
@@ -3092,6 +3138,8 @@ type actNotes struct {
 type actPatch struct {
 	it   core.ActivityItem
 	zero bool
+	read *actReadUpTo // a thread or conversation read (activity_marks.go)
+	fn   func()       // a mark's write answered (writeThen)
 }
 
 func (n *actNotes) add(h Host, s string) {
@@ -4345,7 +4393,12 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	if len(m.Doc.Blocks) == 0 {
 		return b.body(gtx, m.Doc, m.Text, 0)
 	}
-	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
+	// the message's identity (its Block Kit cards act on it: an event's
+	// RSVP and Copy, MessageTruncatedBlocks' channelId and messageTs) and
+	// sender: its previews' expandables (the Pins tab's BasePinnedMessage
+	// draws MessageFiles with the msg)
+	o := richview.Options{Edited: m.DisplaysEdited(), Muted: m.System, Channel: m.Channel, TS: m.TS, Sender: m.User, ViewContext: b.viewCtx}
+	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, o, 0)
 }
 
 // actPill is one reaction group's native pill (Reaction unpatched): a

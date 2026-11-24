@@ -554,6 +554,9 @@ type ChannelHit struct {
 	Creator     string   `json:"creator"`
 	Topic       *Purpose `json:"topic"`
 	Purpose     *Purpose `json:"purpose"`
+	// ContextTeamID is the workspace the channel belongs to (filter xws
+	// answers other workspaces' channels too)
+	ContextTeamID string `json:"context_team_id,omitempty"`
 }
 
 func (c *Client) SearchChannels(ctx context.Context, query string, count int) ([]ChannelHit, error) {

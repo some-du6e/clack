@@ -959,12 +959,17 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 			},
 		})
 	}
-	if len(pl.Options) > 0 {
-		rows := make([]func(gtx layout.Context, w int) layout.Dimensions, len(pl.Options))
-		for i, o := range pl.Options {
-			o := o
-			rows[i] = func(gtx layout.Context, w int) layout.Dimensions { return p.settingRow(gtx, w, pl, o) }
+	// the settings' rows, but for those the plugin edits from its own
+	// panel (Slick's PluginDetail: entries without setting.hidden)
+	var rows []func(gtx layout.Context, w int) layout.Dimensions
+	for _, o := range pl.Options {
+		if o.Hidden {
+			continue
 		}
+		o := o
+		rows = append(rows, func(gtx layout.Context, w int) layout.Dimensions { return p.settingRow(gtx, w, pl, o) })
+	}
+	if len(rows) > 0 {
 		p.card(f, "Settings", "", nil, rows)
 	}
 	if pl.Panel {

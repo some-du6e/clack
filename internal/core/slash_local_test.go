@@ -208,3 +208,93 @@ func TestMsgCommand(t *testing.T) {
 		t.Errorf("join channel_not_found: %v", err)
 	}
 }
+
+// A channel the viewer isn't in, picked from the composer's # list: only
+// the list's answer (edge channels/search) carries it. Slack's
+// getRemoteChannels upserts the hits into its channels store, so /join,
+// /open and /msg find it: /join joins it and shows it, /msg joins it
+// too, and another workspace's hit is turned down as such (not offered
+// the create-channel modal under an existing channel's name).
+// A channel a list or a search answered is a hit (store.ChannelHit), not
+// a conversation Conv answers: ResolveConv still reads it with
+// conversations.info, which has what a hit lacks (the purpose as set, the
+// Slack Connect teams), while /open, /join and /msg find it. A hit keeps
+// its workspace: a later hit that names none (the directory's) doesn't
+// drop it, and one that names it adds it, so /open refuses another
+// workspace's channel whichever list saw it first.
+func TestListedChannelHits(t *testing.T) {
+	ctx := context.Background()
+	a, f := slashLocalApp(t)
+	f.reply["search.modules.channels"] = `{"ok":true,"items":[` +
+		`{"id":"C0LISTED01","name":"listed","is_member":false,"member_count":12,"purpose":{"value":"From the directory"}},` +
+		`{"id":"C0LISTEDX1","name":"listed-there","is_member":false}],` +
+		`"pagination":{"total_count":2,"page":1,"page_count":1}}`
+	if pg, err := a.BrowseChannelsWith(ctx, ChannelBrowseOpts{Query: "listed"}); err != nil || len(pg.Channels) != 2 {
+		t.Fatalf("Browse channels: %+v %v", pg, err)
+	}
+	if _, ok := a.Conv("C0LISTED01"); ok {
+		t.Fatal("a directory hit is a conversation Conv answers: opening it reads no conversations.info")
+	}
+	if h, ok := a.S.ChannelHit("C0LISTED01"); !ok || h.Purpose == nil || h.Purpose.Value != "From the directory" {
+		t.Errorf("the hit %+v %v: no purpose", h, ok)
+	}
+	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"C0LISTED01","name":"listed","is_channel":true,"is_ext_shared":true,` +
+		`"connected_team_ids":["T1","T0PARTNER1"],"purpose":{"value":"Shared with a partner"}}}`
+	infos := countCalls(f, "conversations.info")
+	cv, ok := a.ResolveConv(ctx, "C0LISTED01")
+	if !ok || countCalls(f, "conversations.info") != infos+1 || cv.Purpose != "Shared with a partner" || !cv.IsShared {
+		t.Errorf("ResolveConv of a listed channel: %+v %v, %d reads", cv, ok, countCalls(f, "conversations.info")-infos)
+	}
+
+	// the # list names C0LISTEDX1's workspace after the directory didn't
+	f.reply["search"] = `{"ok":true,"results":[{"id":"C0LISTEDX1","name":"listed-there","is_channel":true,"is_member":false,"context_team_id":"T0OTHERWS1"}]}`
+	if _, err := a.AutocompleteChannels(ctx, "listed"); err != nil {
+		t.Fatal(err)
+	}
+	joins := countCalls(f, "conversations.join")
+	if _, err := a.OpenCommand(ctx, "/open", mention("C0LISTEDX1"), "listed-there"); feedbackOf(err) != "*/open* can’t open or join channels outside this workspace." ||
+		countCalls(f, "conversations.join") != joins {
+		t.Errorf("another workspace's listed channel: %v", err)
+	}
+	// a later directory answer without it keeps it
+	if _, err := a.BrowseChannelsWith(ctx, ChannelBrowseOpts{Query: "listed"}); err != nil {
+		t.Fatal(err)
+	}
+	if !a.FromAnotherTeam("C0LISTEDX1") {
+		t.Error("a later hit without a workspace dropped the channel's")
+	}
+}
+
+func TestPickedChannelOpens(t *testing.T) {
+	ctx := context.Background()
+	a, f := slashLocalApp(t)
+	f.reply["search"] = `{"ok":true,"results":[` +
+		`{"id":"C0PICKED01","name":"plans","is_channel":true,"is_member":false,"num_members":12},` +
+		`{"id":"C0PICKED02","name":"plans-later","is_channel":true,"is_member":false},` +
+		`{"id":"C0PICKEDX1","name":"plans-there","is_channel":true,"is_member":false,"context_team_id":"T0OTHERWS1"}]}`
+	if _, ok := a.S.Conv("C0PICKED01"); ok {
+		t.Fatal("the hit is in the sidebar set before the search")
+	}
+	hits, err := a.AutocompleteChannels(ctx, "plans")
+	if err != nil || len(hits) != 3 {
+		t.Fatalf("hits %+v %v", hits, err)
+	}
+	if _, ok := a.S.Conv("C0PICKED01"); ok {
+		t.Error("the search put a channel the viewer isn't in into the sidebar set")
+	}
+	f.reply["conversations.join"] = `{"ok":true,"channel":{"id":"C0PICKED01","name":"plans","is_channel":true,"is_member":true}}`
+	if tg, err := a.OpenCommand(ctx, "/join", mention("C0PICKED01"), "plans"); err != nil || tg.Conv != "C0PICKED01" || tg.Create ||
+		f.last("conversations.join").Get("channel") != "C0PICKED01" {
+		t.Errorf("/join a picked channel: %+v %v, joins %d", tg, err, countCalls(f, "conversations.join"))
+	}
+	f.reply["conversations.join"] = `{"ok":true,"channel":{"id":"C0PICKED02","name":"plans-later","is_channel":true,"is_member":true}}`
+	if tg, err := a.MsgCommand(ctx, "/msg", mention("C0PICKED02"), true); err != nil || tg.Conv != "C0PICKED02" ||
+		f.last("conversations.join").Get("channel") != "C0PICKED02" {
+		t.Errorf("/msg a picked channel: %+v %v", tg, err)
+	}
+	joins := countCalls(f, "conversations.join")
+	if _, err := a.OpenCommand(ctx, "/join", mention("C0PICKEDX1"), "plans-there"); feedbackOf(err) != "*/join* can’t open or join channels outside this workspace." ||
+		countCalls(f, "conversations.join") != joins {
+		t.Errorf("another workspace's hit: %v", err)
+	}
+}
