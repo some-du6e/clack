@@ -17,6 +17,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/listview"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 func init() {
@@ -125,6 +126,9 @@ func (a *App) listActions() listview.Actions {
 			a.menu(p, listMenuItems(items))
 		},
 		People: a.listPeople,
+		Restore: func(f core.DeletedFile, restored func()) {
+			views.ConfirmRestoreFile(a, f, restored)
+		},
 	}
 }
 

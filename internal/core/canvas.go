@@ -120,6 +120,19 @@ type canvasFileJSON struct {
 	OriginalH       int             `json:"original_h"`
 	AccessRequestTS json.RawMessage `json:"most_recent_access_request_ts"`
 	QuipThreadID    string          `json:"quip_thread_id"`
+	// shouldShowFile's inputs (fileGoneOf), and getDLPTombstoneMessage's
+	IsDeleted   bool   `json:"is_deleted"`
+	FileAccess  string `json:"file_access"`
+	HiddenLimit bool   `json:"is_hidden_by_limit"`
+	Tombstoned  bool   `json:"is_tombstoned"`
+	Preview     string `json:"preview"`
+}
+
+// gone is f's FileGone, ok false for a file Slack shows.
+func (f *canvasFileJSON) gone() (FileGone, bool) {
+	ff := filesInfoFile{Title: f.Title, IsDeleted: f.IsDeleted, Filetype: f.Filetype, Mode: f.Mode, FileAccess: f.FileAccess,
+		HiddenLimit: f.HiddenLimit, Tombstoned: f.Tombstoned, Preview: f.Preview}
+	return fileGoneOf(&ff)
 }
 
 // IsCanvasFile reports whether a file (filetype/mode/pretty_type) is a canvas.
@@ -201,9 +214,15 @@ func (a *App) canvasInfo(ctx context.Context, f *canvasFileJSON) CanvasInfo {
 
 // CanvasInfo reads a canvas's header only.
 func (a *App) CanvasInfo(ctx context.Context, id string) (CanvasInfo, error) {
+	if g, ok := a.tombstoned(id); ok {
+		return CanvasInfo{}, &FileGoneError{ID: id, Gone: g}
+	}
 	f, err := a.canvasFileInfo(ctx, id)
 	if err != nil {
-		return CanvasInfo{}, err
+		return CanvasInfo{}, fileGoneErr(id, err)
+	}
+	if g, ok := f.gone(); ok {
+		return CanvasInfo{}, &FileGoneError{ID: id, Gone: g}
 	}
 	if !IsCanvasFile(f.Filetype, f.Mode, f.PrettyType) {
 		return CanvasInfo{}, errNotCanvas
@@ -214,9 +233,15 @@ func (a *App) CanvasInfo(ctx context.Context, id string) (CanvasInfo, error) {
 // Canvas fetches a canvas: files.info, then the HTML export (never cached:
 // a canvas changes under the viewer), then files.info for embedded files.
 func (a *App) Canvas(ctx context.Context, id string) (*CanvasDoc, error) {
+	if g, ok := a.tombstoned(id); ok {
+		return nil, &FileGoneError{ID: id, Gone: g}
+	}
 	f, err := a.canvasFileInfo(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, fileGoneErr(id, err)
+	}
+	if g, ok := f.gone(); ok { // useQuipDoc: QuipEmbedWithEntityId's QuipDeletedState
+		return nil, &FileGoneError{ID: id, Gone: g}
 	}
 	if !IsCanvasFile(f.Filetype, f.Mode, f.PrettyType) {
 		return nil, errNotCanvas

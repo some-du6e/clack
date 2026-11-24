@@ -1159,15 +1159,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 				return
 			}
 			if f.gone != nil {
-				// the tab keeps its own label (useTabLabel), but a gated file
-				// (ChannelTabLabelBaseComponent's eye-closed swap) and an
-				// unlabeled one read the file's Name: its status string first
-				// (maaT → maybeGetFileStatusString)
-				g := *f.gone
-				t.Gone, t.Deleted = &g, g.Status == "deleted"
-				if t.Label == "" || g.Gated {
-					t.Title = g.Name
-				}
+				t.applyGone(*f.gone)
 			} else {
 				t.FileTitle = f.title
 			}
@@ -1202,6 +1194,9 @@ type tabFile struct {
 // tabFileTitle reads a tab file's title, title_blocks, deleted and unread
 // state and, for a list, its views' names.
 func (a *App) tabFileTitle(ctx context.Context, fileID string) (tabFile, error) {
+	if g, ok := a.tombstoned(fileID); ok { // the store's tombstone (file_deleted)
+		return tabFile{gone: &g}, nil
+	}
 	var r struct {
 		File struct {
 			filesInfoFile

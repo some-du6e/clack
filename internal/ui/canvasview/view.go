@@ -45,6 +45,7 @@ type View struct {
 	mu      sync.Mutex
 	doc     *core.CanvasDoc
 	err     error
+	gone    goneState // QuipDeletedState's pick and Request Access (gone.go)
 	loading bool
 	gen     int
 
@@ -226,6 +227,12 @@ func (v *View) goLive() {
 				if ev.Type == "canvas" && ev.ID == v.id {
 					v.load(true)
 				}
+				if ev.Type == "file_gone" && ev.ID == v.id {
+					// tombstoneFiles: the deleted state at once (core answers
+					// with the tombstone, no fetch); file_undeleted: the
+					// canvas again
+					v.load(ev.Name != "file_deleted")
+				}
 				if ev.Type == "canvas_viewers" && ev.ID == v.id {
 					v.h.Invalidate()
 				}
@@ -396,6 +403,9 @@ func (v *View) layout(gtx layout.Context) layout.Dimensions {
 	defer clip.Rect{Max: body.Size()}.Push(gtx.Ops).Pop()
 	switch {
 	case d == nil && err != nil:
+		if g, ok := goneOf(err); ok {
+			return v.layoutGone(gtx, err, g)
+		}
 		v.layoutError(gtx, err)
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	case d == nil:

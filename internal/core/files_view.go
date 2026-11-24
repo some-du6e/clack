@@ -185,5 +185,32 @@ func (a *App) RecentlyDeleted(ctx context.Context, fileType string) ([]DeletedFi
 // UndeleteFile is undeleteFile: files.undelete {file_id} (createApiMethodFetcher's
 // fileId, snake-cased).
 func (a *App) UndeleteFile(ctx context.Context, id string) error {
-	return a.C.Call(ctx, "files.undelete", url.Values{"file_id": {id}}, nil)
+	if err := a.C.Call(ctx, "files.undelete", url.Values{"file_id": {id}}, nil); err != nil {
+		return err
+	}
+	a.untombstone(id) // a read after the restore sees the file, file_undeleted or not
+	return nil
+}
+
+// CanUndeleteFile is filesCanUndeleteFetcher: files.canUndelete {file_id}
+// (reason "canUndelete": Clack's calls carry no _x_reason), which
+// BaseListErrorState asks on mount in every
+// state. ok is can_undelete; f is the answer's file (id, title,
+// date_delete) for UndeleteFileDialog, its FileType the caller's.
+func (a *App) CanUndeleteFile(ctx context.Context, id string) (ok bool, f DeletedFile, err error) {
+	var r struct {
+		CanUndelete bool `json:"can_undelete"`
+		File        *struct {
+			ID         string `json:"id"`
+			Title      string `json:"title"`
+			DateDelete int64  `json:"date_delete"`
+		} `json:"file"`
+	}
+	if err := a.C.Call(ctx, "files.canUndelete", url.Values{"file_id": {id}}, &r); err != nil {
+		return false, DeletedFile{}, err
+	}
+	if r.File != nil {
+		f = DeletedFile{ID: r.File.ID, Title: r.File.Title, DateDelete: r.File.DateDelete}
+	}
+	return r.CanUndelete, f, nil
 }

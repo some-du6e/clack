@@ -202,6 +202,16 @@ func (f *Files) deletedUpdate(gtx C) {
 	}
 }
 
+// ConfirmRestoreFile is UndeleteFileDialog away from the Deleted page:
+// BaseListErrorState's "Restore this list" (fileType "list"). restored
+// runs on the UI goroutine once files.undelete answered
+// (onSuccessfulUndelete), after the "{title} restored." toast.
+func ConfirmRestoreFile(h Host, r core.DeletedFile, restored func()) {
+	f := sectionHelper(h)
+	f.restored = restored
+	f.confirmRestore(r)
+}
+
 // confirmRestore is UndeleteFileDialog.
 func (f *Files) confirmRestore(r core.DeletedFile) {
 	ph, ok := f.h.(popups.Host)
@@ -223,7 +233,13 @@ func (f *Files) restoreFile(r core.DeletedFile) {
 			f.h.Toast(nsFiles.T("Oops! We couldn’t restore that {fileType, select, quip {canvas} other {list}}", "fileType", deletedFT(r.FileType)))
 			return
 		}
+		if f.del.gone == nil { // a ConfirmRestoreFile helper never loaded the page
+			f.del.gone = map[string]bool{}
+		}
 		f.del.gone[r.ID] = true
+		if f.restored != nil {
+			defer f.restored()
+		}
 		msg := nsFiles.T("{title} restored.", "title", r.Title)
 		view := func() { f.viewRestored(r) }
 		if t, ok := f.h.(interface {

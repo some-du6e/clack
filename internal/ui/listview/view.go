@@ -66,14 +66,17 @@ const (
 
 // Actions are the shell's handlers (nil hides a button or does nothing).
 type Actions struct {
-	Close     func()                             // side panel ×
-	FullView  func()                             // "Open in full view"
-	SideView  func()                             // "Open in side panel"
-	OpenURL   func(url string)                   // links that aren't Slack's own
-	Canvas    func(id string)                    // a canvas cell or link
-	OpenItem  func(listID, recordID string)      // an item's pane (the secondary view)
-	Menu      func(m []MenuItem)                 // menus: the shell's menu at the pointer
-	MenuAt    func(p image.Point, m []MenuItem)  // a menu at a window position (a cell's editor opened by keyboard)
+	Close    func()                            // side panel ×
+	FullView func()                            // "Open in full view"
+	SideView func()                            // "Open in side panel"
+	OpenURL  func(url string)                  // links that aren't Slack's own
+	Canvas   func(id string)                   // a canvas cell or link
+	OpenItem func(listID, recordID string)     // an item's pane (the secondary view)
+	Menu     func(m []MenuItem)                // menus: the shell's menu at the pointer
+	MenuAt   func(p image.Point, m []MenuItem) // a menu at a window position (a cell's editor opened by keyboard)
+	// Restore opens UndeleteFileDialog for a deleted list (the error
+	// state's "Restore this list"); restored runs after files.undelete
+	Restore   func(f core.DeletedFile, restored func())
 	Copy      func(s string)                     // clipboard
 	People    func() []string                    // people to offer in a person field (besides the list's)
 	OpenFile  func(id string)                    // an attachment
@@ -118,6 +121,7 @@ type View struct {
 	mu      sync.Mutex
 	doc     *core.ListDoc
 	err     error
+	gone    listGone // BaseListErrorState (gone.go)
 	loading bool
 	gen     int
 	queue   []func()
@@ -255,6 +259,11 @@ func (v *View) goLive() {
 				if ev.Type == "list" && ev.ID == v.id {
 					v.refresh()
 				}
+				if ev.Type == "file_gone" && ev.ID == v.id {
+					// tombstoneFiles: the error state at once (core answers
+					// with the tombstone); file_undeleted: the list again
+					v.load(ev.Name != "file_deleted")
+				}
 			case <-tick.C:
 				if time.Since(time.UnixMilli(v.lastSeen.Load())) > 6*time.Second {
 					a.CloseList(v.id)
@@ -351,6 +360,9 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 	defer clip.Rect{Max: body.Size()}.Push(gtx.Ops).Pop()
 	switch {
 	case d == nil && err != nil:
+		if g, ok := goneOf(err); ok {
+			return v.layoutGone(gtx, err, g)
+		}
 		return v.layoutError(gtx, err)
 	case d == nil:
 		return v.layoutSkeleton(gtx)

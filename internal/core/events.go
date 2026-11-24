@@ -524,7 +524,9 @@ func (a *App) handle(ev slack.Event) {
 		go a.onFileChange(ev) // files.info off the event pump
 	case "file_deleted", "file_undeleted":
 		// filesDeleted / filesUndeleted: the Files view's deleted list
-		// follows them (under file_trash_updates); Raw has file_id(s)
+		// follows them (under file_trash_updates); Raw has file_id(s).
+		// The tombstones go first: a view the event reloads reads them
+		a.onFileTrash(ev.Type, ev.Raw)
 		a.emit(Event{Type: "file_trash", Name: ev.Type, Raw: ev.Raw})
 	case "file_created":
 		a.onFileCreated(ev) // an upload in PROCESSING resolves (upload_send.go)

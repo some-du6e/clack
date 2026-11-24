@@ -88,6 +88,7 @@ type filesInfoFile struct {
 	FileAccess   string `json:"file_access"`
 	HiddenLimit  bool   `json:"is_hidden_by_limit"`
 	Tombstoned   bool   `json:"is_tombstoned"`
+	Preview      string `json:"preview"` // getDLPTombstoneMessage
 	IsSkill      bool   `json:"is_skill"`
 	FolderType   string `json:"folder_type"`
 	ListMetadata struct {

@@ -152,6 +152,8 @@ type Files struct {
 	// detached: a helper outside the Files page (SectionMenuItems):
 	// nothing drains done, so post goes through the host's Post
 	detached bool
+	// restored is ConfirmRestoreFile's onSuccessfulUndelete
+	restored func()
 
 	editName widget.Editor // Edit file details' File name
 

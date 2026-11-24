@@ -127,6 +127,12 @@ type listFileJSON struct {
 	DownloadURL   string          `json:"url_private_download"`
 	CSVURL        string          `json:"list_csv_download_url"`
 	TemplateMode  string          `json:"list_template_mode"`
+	// shouldShowFile's inputs (fileGoneOf), and getDLPTombstoneMessage's
+	IsDeleted   bool   `json:"is_deleted"`
+	FileAccess  string `json:"file_access"`
+	HiddenLimit bool   `json:"is_hidden_by_limit"`
+	Tombstoned  bool   `json:"is_tombstoned"`
+	Preview     string `json:"preview"`
 }
 
 var errNotList = errors.New("core: not a list")
@@ -156,16 +162,25 @@ func (a *App) listInfo(f *listFileJSON) (ListInfo, lists.Meta, error) {
 }
 
 func (a *App) listFile(ctx context.Context, id string) (*listFileJSON, error) {
+	if g, ok := a.tombstoned(id); ok {
+		return nil, &FileGoneError{ID: id, Gone: g}
+	}
 	var r struct {
 		File listFileJSON `json:"file"`
 	}
 	if err := a.C.Call(ctx, "files.info", url.Values{"file": {id}, "count": {"0"}}, &r); err != nil {
-		return nil, err
+		return nil, fileGoneErr(id, err)
 	}
-	if !IsListFile(r.File.Filetype, r.File.Mode, r.File.PrettyType) {
+	f := &r.File
+	ff := filesInfoFile{Title: f.Title, IsDeleted: f.IsDeleted, Filetype: f.Filetype, Mode: f.Mode, FileAccess: f.FileAccess,
+		HiddenLimit: f.HiddenLimit, Tombstoned: f.Tombstoned, Preview: f.Preview}
+	if g, ok := fileGoneOf(&ff); ok { // the list view's BaseListErrorState
+		return nil, &FileGoneError{ID: id, Gone: g}
+	}
+	if !IsListFile(f.Filetype, f.Mode, f.PrettyType) {
 		return nil, errNotList
 	}
-	return &r.File, nil
+	return f, nil
 }
 
 // listRecords reads every item (lists.records.list, following the cursor).
