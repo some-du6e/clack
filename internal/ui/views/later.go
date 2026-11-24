@@ -1132,7 +1132,7 @@ func (a *todoAdd) body(gtx C) D {
 	case !loaded:
 		return l.skeleton(gtx, 3, laterAvatar)
 	case err != nil:
-		return msg("Couldn’t load your saved items: " + friendlyErr(err))
+		return msg("Couldn’t load your saved items.")
 	case len(items) == 0:
 		return msg("Pick a saved message to turn into a to-do. Nothing is saved yet: save a message, or use Add to-do on any message.")
 	}

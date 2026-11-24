@@ -9,6 +9,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -1239,7 +1240,8 @@ func (b *base) skeleton(gtx C, rows int, avatar unit.Dp) D {
 func (b *base) errorState(gtx C, err error, retry *widget.Clickable) D {
 	// the views' shared error state: the files namespace's words, which
 	// Slack's own views use for theirs
-	return b.emptyState(gtx, "", i18n.T("files", "Something went wrong"), friendlyErr(err), retry, i18n.T("files", "Try again"))
+	log.Printf("views: load: %v", err)
+	return b.emptyState(gtx, "", i18n.T("files", "Something went wrong"), "", retry, i18n.T("files", "Try again"))
 }
 
 func friendlyErr(err error) string {

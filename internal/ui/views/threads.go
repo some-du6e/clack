@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"log"
 	"slices"
 	"sort"
 	"strconv"
@@ -883,7 +884,7 @@ func (v *Threads) sendRead(t *thrItem) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := c.MarkThread(ctx, ch, root, ts); err != nil {
-			v.notes.add(v.h, "Couldn’t mark the thread as read: "+friendlyErr(err))
+			log.Printf("views: mark thread read: %v", err) // the thread mark is logged, nothing on screen
 		}
 	}()
 }
@@ -931,13 +932,13 @@ func (v *Threads) body(gtx C) D {
 	}
 	switch {
 	case v.loadErr != nil: // errored: the view's error state, whatever threads it holds
-		return v.emptyState(gtx, "", nsThreads.T(thrErrText), friendlyErr(v.loadErr), &v.retry, nsThreads.T("Try Again"))
+		return v.emptyState(gtx, "", nsThreads.T(thrErrText), "", &v.retry, nsThreads.T("Try Again")) // the error is logged, not shown
 	case n == 0 && (!loaded || reloading && (v.mounting || err != nil)):
 		// no threads to show while the first load, a mount's or Try
 		// Again's is out: the loading view, not a stale error's
 		return layout.Inset{Top: 16}.Layout(gtx, func(gtx C) D { return v.skeleton(gtx, 5, 36) })
 	case err != nil && n == 0:
-		return v.emptyState(gtx, "", nsThreads.T(thrErrText), friendlyErr(err), &v.retry, nsThreads.T("Try Again")) // MessageContainerError
+		return v.emptyState(gtx, "", nsThreads.T(thrErrText), "", &v.retry, nsThreads.T("Try Again")) // MessageContainerError: its title and Try Again
 	case n == 0:
 		return v.empty(gtx)
 	}

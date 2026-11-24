@@ -43,6 +43,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log"
 	"math/rand"
 	"strings"
 	"sync"
@@ -454,7 +455,8 @@ func (v *Unreads) run(fail string, f func(ctx context.Context, c *core.App) erro
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := f(ctx, c); err != nil {
-			v.notes.add(v.h, fail+": "+friendlyErr(err))
+			log.Printf("views: unreads: %s: %v", fail, err)
+			v.notes.add(v.h, fail)
 		}
 	}()
 }

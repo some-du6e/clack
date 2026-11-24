@@ -1125,7 +1125,7 @@ func (d *DMs) layoutRows(gtx C, p slackc.Props) D {
 	case len(d.items) == 0 && !loaded:
 		return d.dmsSkeleton(gtx, 8)
 	case len(d.items) == 0 && err != nil:
-		return d.notice(gtx, "Couldn’t load your direct messages", friendlyErr(err), &d.retry, nsSearch.T("Try again"))
+		return d.notice(gtx, "Couldn’t load your direct messages", "", &d.retry, nsSearch.T("Try again"))
 	case len(view) == 0 && q != "":
 		if d.people.busy() || d.deb.q != d.deb.sent {
 			return d.dmsSkeleton(gtx, 2)

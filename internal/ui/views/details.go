@@ -2219,7 +2219,7 @@ func (d *ChannelDetails) membersFooter(gtx C, q string, filtering, loaded bool, 
 	case busy:
 		return msg("Loading members…")
 	case err != nil && shown == 0:
-		return msg("Couldn’t load members: " + friendlyErr(err))
+		return msg("Couldn’t load members.")
 	case next != "" && (filtering || err != nil):
 		return layout.Inset{Top: 8, Bottom: 16, Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
 			return d.button(gtx, &d.moreMembers, btnOutline, true, "Load more members")
@@ -2270,7 +2270,7 @@ func (d *ChannelDetails) appsItems() []W {
 	if err != nil {
 		rows = append(rows, func(gtx C) D {
 			return layout.Inset{Top: 8, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
-				return d.para(gtx, 13, 18, wReg, d.p.Muted, 0, "Couldn’t load agents and apps: "+friendlyErr(err))
+				return d.para(gtx, 13, 18, wReg, d.p.Muted, 0, "Couldn’t load agents and apps.")
 			})
 		})
 	}
@@ -2918,7 +2918,7 @@ func (d *ChannelDetails) invitePanel(gtx C, members []core.User) D {
 		case err != nil:
 			ch = append(ch, layout.Rigid(func(gtx C) D {
 				return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
-					return d.para(gtx, 13, 18, wReg, d.p.Muted, 2, "Couldn’t search: "+friendlyErr(err))
+					return d.para(gtx, 13, 18, wReg, d.p.Muted, 2, "Couldn’t search.")
 				})
 			}))
 		case loaded && len(res) == 0 && !d.inviteRes.busy():
@@ -3010,6 +3010,20 @@ func cdTabsRows(ts []core.Tab) []cdTabRow {
 }
 
 // cdErr is a short reason for a failed channel write.
+// cdErrText is an inline error's sentence (the agents' add form): a code
+// cdErr knows in words, capitalized, else Slack's generic "Something went
+// wrong. Please try again." with the error logged, never its text.
+func cdErrText(err error) string {
+	if s := cdErr(err); s != dirErr(err) {
+		return strings.ToUpper(s[:1]) + s[1:] + "."
+	}
+	if t := dirErr(err); t != friendlyErr(err) {
+		return strings.ToUpper(t[:1]) + t[1:] + "."
+	}
+	log.Printf("views: %v", err)
+	return "Something went wrong. Please try again."
+}
+
 func cdErr(err error) string {
 	s := err.Error()
 	switch {

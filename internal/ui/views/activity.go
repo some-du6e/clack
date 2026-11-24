@@ -12,6 +12,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log"
 	"maps"
 	"math"
 	"strconv"
@@ -3054,7 +3055,8 @@ func (v *Activity) writeThen(fail string, f func(context.Context, *core.App) err
 		}
 		v.notes.mu.Lock()
 		if err != nil && fail != "" {
-			v.notes.msgs = append(v.notes.msgs, fail+friendlyErr(err))
+			log.Printf("views: activity: %s%v", fail, err)
+			v.notes.msgs = append(v.notes.msgs, strings.TrimRight(strings.TrimSpace(fail), ":"))
 		}
 		switch {
 		case after == nil:

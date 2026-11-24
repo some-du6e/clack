@@ -895,7 +895,7 @@ func (d *ChannelDetails) updateAgentInvite(gtx C, a *cdAddPeople) {
 		if _, done, err := dl.op.get(); done {
 			dl.pending = false
 			if err != nil { // ChannelInviteFormInlineError
-				dl.err = cdErr(err)
+				dl.err = cdErrText(err)
 				return
 			}
 			ag := d.ag()
