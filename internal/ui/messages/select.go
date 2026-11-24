@@ -107,7 +107,7 @@ func (s *listState) selPointer(gtx layout.Context, h Host, e pointer.Event, size
 			return
 		}
 		i, r, local := s.rowAt(e.Position)
-		inBody := r != nil && local.X >= 0 && local.Y >= 0 && int(local.X) <= r.bodyRect.Dx()+4 && int(local.Y) < r.bodyRect.Dy()
+		inBody := r != nil && local.X >= 0 && local.Y >= 0 && int(local.X) <= max(r.bodyRect.Dx(), r.selW)+4 && int(local.Y) < r.bodyRect.Dy()
 		if !inBody || r.edit != nil {
 			s.clearSelection()
 			return
