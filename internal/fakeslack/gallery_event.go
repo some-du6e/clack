@@ -3,6 +3,7 @@ package fakeslack
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -12,6 +13,18 @@ import (
 // hold whenever the gallery is drawn.
 
 func init() { RegisterGallery("20-event", galleryEvent) }
+
+var (
+	evBaseOnce sync.Once
+	evBase     time.Time
+)
+
+// evNow is the gallery events' "now": the first time the channel is read,
+// so every read gives the same times.
+func evNow() time.Time {
+	evBaseOnce.Do(func() { evBase = time.Now() })
+	return evBase
+}
 
 type evFx struct {
 	id, title, app, provider, url, status string
@@ -23,7 +36,7 @@ type evFx struct {
 }
 
 func (f evFx) block() string {
-	now := time.Now()
+	now := evNow()
 	atts := []map[string]any{}
 	for _, a := range f.attendees {
 		atts = append(atts, map[string]any{"user_id": a[0], "rsvp": a[1]})

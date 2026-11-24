@@ -127,6 +127,21 @@ func TestSharePromptSendOpensThread(t *testing.T) {
 	if n := len(h.threadList()); n != 2 {
 		t.Errorf("%d threads opened, want 2 (the failed send opens none)", n)
 	}
+
+	// a send that failed goes out again on the next click, as Slack's does:
+	// prompt_rich_text posts the same body, which the client's backoff after
+	// a failure would hold
+	posts := func() int {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return len(rec.calls["chat.postMessage"])
+	}
+	rp := &richtext.SharePrompt{Prompt: "Summarise this week", PromptID: "P4", BotUserID: agent, RichRaw: json.RawMessage(raw), Shown: true}
+	SharePromptSend(h, rp)
+	maUntil(t, "the rich send that fails", func() bool { return posts() == 4 })
+	maUntil(t, "its send settled", idleWrite(richview.SharePromptKey(rp)))
+	SharePromptSend(h, rp)
+	maUntil(t, "the rich send again", func() bool { return posts() == 5 })
 }
 
 // A second click on Send while its send runs posts nothing (Slack's
@@ -146,7 +161,7 @@ func TestSharePromptSendOnce(t *testing.T) {
 	}
 	SharePromptSend(h, p)
 	maUntil(t, "the first post", func() bool { return posts() == 1 })
-	if !richview.PromptSending(p) {
+	if _, busy := richview.Busy(richview.SharePromptKey(p)); !busy {
 		t.Errorf("not sending while its post is out")
 	}
 	// the double click's second, and the same prompt decoded again
@@ -157,7 +172,7 @@ func TestSharePromptSendOnce(t *testing.T) {
 	if n := posts(); n != 1 {
 		t.Fatalf("%d chat.postMessage calls, want 1", n)
 	}
-	if richview.PromptSending(p) {
+	if _, busy := richview.Busy(richview.SharePromptKey(p)); busy {
 		t.Errorf("still sending after the answer")
 	}
 	SharePromptSend(h, p)

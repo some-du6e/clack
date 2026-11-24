@@ -43,6 +43,10 @@ type Event struct {
 	// NeedsRefetch is needsRefetch: a non-attendee, non-organizer viewer
 	// fetches the message again for the next set of attendees.
 	NeedsRefetch bool
+	// NoEnd: end.dateTime isn't a time (moment's invalid date: never past,
+	// its time "Invalid date"). CopiesOK: copies has an includes (a list or
+	// a string); else BaseEventCopyToCalendar's props throw.
+	NoEnd, CopiesOK bool
 }
 
 // EventGuest is an accepted attendee: the member and their picture.
@@ -126,24 +130,35 @@ func (c *builder) eventBlock(out []Block, b *bk) []Block {
 	if m == nil {
 		return append(out, unsupported()) // e.start.dateTime of a primitive's undefined
 	}
+	// mapStateToProps reads end.dateTime, organizer.userId and attendees
+	// before anything draws: one missing throws (a primitive organizer
+	// destructures to undefined and draws)
 	start, sok := m["start"].(map[string]any)
 	end, eok := m["end"].(map[string]any)
-	org, ook := m["organizer"].(map[string]any)
+	ov, hasOrg := m["organizer"]
 	atts, aok := m["attendees"].([]any)
-	if !sok || !eok || !ook || !aok {
+	if !sok || !eok || !hasOrg || ov == nil || !aok {
 		return append(out, unsupported())
 	}
+	org, _ := ov.(map[string]any)
 	ev := &Event{ID: rawString(firstRaw(v.EventID, v.IDCamel)), MeetingURL: stringKey(m, "meetingUrl"),
 		MeetingProvider: stringKey(m, "meetingProvider"), WebLink: stringKey(m, "webLink"), AppType: stringKey(m, "appType")}
 	if t, ok := m["title"].(string); ok {
 		ev.Title = t
 	}
-	ev.Start, _ = unixOf(start["dateTime"])
-	ev.End, _ = unixOf(end["dateTime"])
+	var startOK, endOK bool
+	ev.Start, startOK = unixOf(start["dateTime"])
+	ev.End, endOK = unixOf(end["dateTime"])
 	if n, ok := m["attendeeCount"].(float64); ok {
 		ev.AttendeeCount = int(n)
 	}
 	ev.Cancelled = m["status"] == "cancelled"
+	// EventHeader's shouldExcludeYear throws on an invalid start (its
+	// non-cancelled branch): the error line
+	if !startOK && !ev.Cancelled {
+		return append(out, unsupported())
+	}
+	ev.NoEnd = !endOK
 	ev.NeedsRefetch = jsTruthy(m["needsRefetch"])
 	self := ""
 	if c.r != nil {
@@ -151,9 +166,12 @@ func (c *builder) eventBlock(out []Block, b *bk) []Block {
 	}
 	ev.Organizer = self != "" && org["userId"] == self
 	for _, a := range atts {
+		if a == nil {
+			return append(out, unsupported()) // attendees.find(e => e.userId …) of null throws
+		}
 		at, _ := a.(map[string]any)
 		if at == nil {
-			continue
+			continue // a primitive's userId is undefined
 		}
 		uid, _ := at["userId"].(string)
 		rsvp, _ := at["rsvp"].(string)
@@ -179,12 +197,17 @@ func (c *builder) eventBlock(out []Block, b *bk) []Block {
 			ev.NoReply++
 		}
 	}
-	if cs, ok := m["copies"].([]any); ok && self != "" {
+	switch cs := m["copies"].(type) {
+	case []any:
+		ev.CopiesOK = true
 		for _, u := range cs {
-			if u == self {
+			if self != "" && u == self {
 				ev.Copied = true
 			}
 		}
+	case string: // String.prototype.includes
+		ev.CopiesOK = true
+		ev.Copied = self != "" && strings.Contains(cs, self)
 	}
 	return append(out, Block{Kind: EventBlock, BlockID: b.BlockID, Event: ev})
 }
