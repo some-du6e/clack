@@ -47,6 +47,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -955,6 +956,9 @@ func (v *Threads) body(gtx C) D {
 	v.kb.setItems(v.kbItems(page.items))
 	v.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: v.kbClick, Key: func(e key.Event, active string) bool { return v.kbKey(gtx, e, active) },
 		Text: func(text, active string) { v.kbText(gtx, text, active) }, Extra: v.typeFilters()})
+	if v.kb.focused && v.kbMsgBinds("mod+shift+s") { // the message's save before the shell's Later
+		shortcut.OwnMessageKey(v.kb, "Mod+Shift+S")
+	}
 	v.kb.begin()
 	d := v.scrollList(gtx, &v.list, n+1, func(gtx C, i int) D {
 		if i >= n {
@@ -2187,6 +2191,28 @@ func (v *Threads) kbMsgKey(gtx C, e key.Event, r thrKBRow) bool {
 		v.kbAte = id
 	}
 	return true
+}
+
+// kbMsgBinds reports whether the active row's message binds key id now
+// (kbMsgKey's checks, without running it).
+func (v *Threads) kbMsgBinds(id string) bool {
+	r := v.kbRows[v.kb.active]
+	if (r.kind != "root" && r.kind != "reply") || r.ts == "" {
+		return false
+	}
+	if km, ok := v.h.(interface{ KeyboardMode() bool }); !ok || !km.KeyboardMode() {
+		return false
+	}
+	ph, ok := v.h.(popups.Host)
+	if !ok {
+		return false
+	}
+	m, ok := v.thrMessage(r)
+	if !ok || !popups.ToolbarShown(v.h.Core(), &m) {
+		return false
+	}
+	_, ok = popups.MessageKeyAction(ph, image.Point{}, m, popups.InThreadsView, popups.MessageMenuOpts{}, id)
+	return ok
 }
 
 // thrKeyID is key e's P2 key id for kbMsgKey: a letter alone (Mousetrap

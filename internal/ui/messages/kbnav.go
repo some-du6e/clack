@@ -13,6 +13,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 // Keyboard focus in the message list, for Accessibility > "Press ↑ in the
@@ -435,6 +436,11 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 	}
 	if text, keys := s.kb.typed.Take(); text != "" || len(keys) > 0 {
 		s.kbSteal(gtx, text, keys)
+	}
+	if s.kb.on && keyboardMode(h) { // the message's save before the shell's Later
+		if _, ok := s.kbAction(h, "mod+shift+s"); ok {
+			shortcut.OwnMessageKey(&s.kb, "Mod+Shift+S")
+		}
 	}
 	event.Op(gtx.Ops, &s.kb)
 }

@@ -73,9 +73,6 @@ func (s *listState) contextMenu(h Host, origin image.Point) {
 	if r == nil || r.edit != nil || r.src.TS == "" {
 		return // the inline editor has its own (Cut/Copy/Paste) menu
 	}
-	if !popups.ContextMenuShown(&r.src) {
-		return // MessageActionsContextMenu (DtN2) opens nothing on it
-	}
 	at := s.anchor(h, origin, image.Point{})
 	if o := s.contextMenuFor(h, r, i, p.pos, at); o != nil {
 		h.ShowOverlay(o)
@@ -121,6 +118,13 @@ func (s *listState) contextMenuFor(h Host, r *row, i int, p f32.Point, at image.
 		if o, ok := popups.ContentMenu(h, at, r.rv, local, m, r.handler.OpenURL); ok {
 			return o
 		}
+	}
+	// MessageActionsContextMenu (DtN2) opens nothing on a moderated,
+	// thread_hidden, DLP, DSA or EKM message; the shell's own menus above
+	// (a selection's, the timestamp's link menu, a link's or an image's)
+	// aren't its, and open as on any message
+	if !popups.ContextMenuShown(&r.src) {
+		return nil
 	}
 	return s.messageMenu(h, r, at)
 }
