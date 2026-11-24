@@ -214,22 +214,50 @@ func simpleMessageUnfurl(m *slack.Message, raws []json.RawMessage) bool {
 // "link" icon (Truncated) is the message's own renderer's. d is not
 // changed: what holds a truncated link is copied.
 func PreviewLinks(d Doc) Doc {
-	if bs, ok := previewLinkBlocks(d.Blocks); ok {
+	if bs, ok := previewLinkBlocks(d.Blocks, previewLinkSpans); ok {
 		d.Blocks = bs
 	}
 	return d
 }
 
-func previewLinkBlocks(bs []Block) ([]Block, bool) {
+// PreviewNoLinks is d as SimpleRichTextPreview draws it without
+// withHyperlinks (ActivityMessage's withFormat false): a link is its text,
+// or else its URL, as plain text. d is not changed.
+func PreviewNoLinks(d Doc) Doc {
+	if bs, ok := previewLinkBlocks(d.Blocks, plainLinkSpans); ok {
+		d.Blocks = bs
+	}
+	return d
+}
+
+func plainLinkSpans(ss []Span) ([]Span, bool) {
+	var out []Span
+	for i := range ss {
+		if ss[i].Kind != Link {
+			continue
+		}
+		if out == nil {
+			out = append([]Span(nil), ss...)
+		}
+		t := out[i].Text
+		if t == "" {
+			t = out[i].URL
+		}
+		out[i] = Span{Kind: Text, Text: t, Style: out[i].Style}
+	}
+	return out, out != nil
+}
+
+func previewLinkBlocks(bs []Block, spans func([]Span) ([]Span, bool)) ([]Block, bool) {
 	var out []Block
 	for i := range bs {
 		b, changed := bs[i], false
-		if s, ok := previewLinkSpans(b.Spans); ok {
+		if s, ok := spans(b.Spans); ok {
 			b.Spans, changed = s, true
 		}
 		copied := false
 		for j := range b.Items {
-			if s, ok := previewLinkSpans(b.Items[j]); ok {
+			if s, ok := spans(b.Items[j]); ok {
 				if !copied {
 					b.Items, copied = append([][]Span(nil), b.Items...), true
 				}
@@ -238,14 +266,14 @@ func previewLinkBlocks(bs []Block) ([]Block, bool) {
 		}
 		copied = false
 		for j := range b.Fields {
-			if s, ok := previewLinkSpans(b.Fields[j]); ok {
+			if s, ok := spans(b.Fields[j]); ok {
 				if !copied {
 					b.Fields, copied = append([][]Span(nil), b.Fields...), true
 				}
 				b.Fields[j], changed = s, true
 			}
 		}
-		if c, ok := previewLinkBlocks(b.Children); ok {
+		if c, ok := previewLinkBlocks(b.Children, spans); ok {
 			b.Children, changed = c, true
 		}
 		if !changed {

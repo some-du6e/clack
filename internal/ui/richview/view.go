@@ -1345,11 +1345,24 @@ func bytesForRunes(s string, r int) int {
 }
 
 // targetAt returns the clickable target under p.
+// noLinkingKind reports whether a target of kind k is one noLinking takes
+// the pointer from: a mention's, a link's, a date's.
+func noLinkingKind(k targetKind) bool {
+	switch k {
+	case tLink, tUser, tChannel, tUsergroup, tDate:
+		return true
+	}
+	return false
+}
+
 func (v *View) targetAt(p f32.Point) int16 {
 	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
 		if f.target >= 0 && fragHas(f, p) {
+			if v.opts.NoLinking && int(f.target) < len(v.d.targets) && noLinkingKind(v.d.targets[f.target].kind) {
+				continue // noLinking: drawn, not a link (Options.NoLinking)
+			}
 			return f.target
 		}
 	}

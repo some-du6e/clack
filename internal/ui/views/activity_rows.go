@@ -948,6 +948,27 @@ func (v *Activity) entryExtras(gtx C, r *actRow) D {
 	return col(gtx, kids...)
 }
 
+// inertPreview is ActivityMessage's withFormat false in Slack's rows
+// (boot-shared 69nH, build 66e72b57ade1): the Dense layout's mention,
+// reaction and thread rows pass it (ActivityMentionWrapped's,
+// ActivityReaction's and ActivityThread's dense branches), so their
+// preview's channel, user and group mentions, links and dates are drawn
+// but take no hover card and no click; the row takes them. Detailed rows,
+// the DM rows (ActivityDM), system alerts and welcome-party alerts keep
+// them live, as do the Threads view's messages and Saved's previews.
+// Slack also sends an at_user row to ActivityReply under a Replies
+// filter, which Clack doesn't have.
+func (r *actRow) inertPreview() bool {
+	if !r.v.dense || r.it == nil {
+		return false
+	}
+	switch r.it.Type {
+	case "dm", "mpdm", "channel", "generic_system_alert", "prejoin_dm_welcome_party_alert", "thread":
+		return false
+	}
+	return true // thread_v2 (ActivityThread), message_reaction (ActivityReaction), the rest (ActivityMention)
+}
+
 // ---- the subtext run inline ----
 
 // previewSub is ActivityMessage (/ad9) with a subtext: the
@@ -960,7 +981,7 @@ func (r *actRow) previewSub(gtx C, lines int, sub string) D {
 	if st.Hidden() {
 		return D{}
 	}
-	draw := func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, sub) } // under the row's hand (itemBody)
+	draw := func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, sub, r.inertPreview()) } // under the row's hand (itemBody)
 	if !st.Active() {
 		return draw(gtx)
 	}
@@ -973,13 +994,20 @@ func (r *actRow) previewSub(gtx C, lines int, sub string) D {
 // Block Kit, files or "(edited)"), with sub run into it (actSubtextDoc).
 // Read rows draw it in the secondary colour. Cached apart from the plain
 // body (the same message can be another row's body without a subtext).
-func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub string) D {
+//
+// inert is ActivityMessage's withFormat false (inertPreview): the
+// preview's mentions, links and dates are drawn, not links
+// (SimpleRichTextPreview without withSlackLinks and withHyperlinks).
+func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub string, inert bool) D {
 	if m == nil {
 		return D{}
 	}
 	orig := m
 	m = b.viewMsg(m)
 	doc := b.actPreviewDoc(m)
+	if inert {
+		doc = richtext.PreviewNoLinks(doc) // a link is its text (withHyperlinks false)
+	}
 	// the row's colour: content-pry unread, content-sec read (the message
 	// inherits it; richview's palette Text is the message list's)
 	col := b.p.Text
@@ -998,7 +1026,10 @@ func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub 
 	if m != orig {
 		ver += ":p" // a plugin's view of it: never the source's layout
 	}
-	o := richview.Options{Muted: m.System, Secondary: muted && !m.System, Channel: m.Channel, TS: m.TS, Truncate: true}
+	if inert {
+		ver += ":i"
+	}
+	o := richview.Options{Muted: m.System, Secondary: muted && !m.System, Channel: m.Channel, TS: m.TS, Truncate: true, NoLinking: inert}
 	if !m.System {
 		o.Color = col
 	}

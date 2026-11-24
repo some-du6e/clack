@@ -1422,6 +1422,10 @@ Karim (α.102): "kinda messed up on canvas pings". The Dense row's location read
   - **Fixtures:** fakeslack `AddCanvasMention` (a canvas long enough that the mention sits below the fold), `AddCanvasCommentActivity` and `AddListCommentActivity`.
   - **Shots (activity-shots):** `activity-canvas-mention-*` (views, drawn with the fake's pictures: the harness's own host has no image cache; the title's emoji is a solid magenta fixture image), `shell-canvas-mention-thread-light.png` (the thread view beside the inbox) and `shell-canvas-mention-pane-light.png` (the persistent panel's pane, scrolled to the mention).
 
+## Links in a row's preview (2026-11-23, branch `activity-preview-inert`)
+
+Karim (α.161, Windows): "u sure u can click from here", over a mention row whose #channel chip opened the channel hover card. Slack's ActivityMessage (boot-shared `69nH`, build 66e72b57ade1) passes its `withFormat` (default true) to SimpleMessagePreview's `withSlackLinks` and `withHyperlinks`; without them SimpleRichTextPreview (`EtoB`) gives every mention `noLinking`, and BaseMrkdwnChannel (`eOp3`) draws a noLinking channel as a plain `c-member_slug` span with no ChannelHoverCard (a linked one opens the channel on click, stopping the row's, and has the card). Only the Dense layout's rows pass `withFormat: false`: ActivityMentionWrapped's, ActivityReaction's and ActivityThread's dense branches. Detailed (and Compact) rows, ActivityDM, ActivityReply, system and welcome-party alerts keep their links, so Karim's chip in a Detailed row is Slack's too; the Threads view draws whole messages and Saved's rows (`wviZ`) call ActivityMessage with the default, so theirs are links as well. Clack: `richview.Options.NoLinking` (no target under the pointer for mentions, links and dates, so no card, no click, no hand) and `richtext.PreviewNoLinks` (a link as its text), set by `actRow.inertPreview` for the Dense layout's mention, reaction and thread rows. `TestActivityDenseMentionPreviewIsInert`, `TestNoLinkingMentionsAreInert`.
+
 ## Not done
 
 - The channel accept's other workspaces, start-trial modal and other
