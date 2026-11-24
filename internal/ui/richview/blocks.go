@@ -789,6 +789,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 			nb, nf := len(l.d.boxes), len(l.d.frags)
 			h := l.file(b.File, x, y, w)
 			l.fade(nb, nf)
+			if genericPillow(b.File) {
+				l.pendingSpinner(b.File, x+min(w, l.dp(426)), y) // PendingFilesSpinner, not faded
+			}
 			return h
 		}
 		return l.file(b.File, x, y, w)

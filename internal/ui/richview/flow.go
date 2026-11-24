@@ -355,6 +355,9 @@ type display struct {
 	overlayIcons []overlayIcon
 	// spinners are InfiniteSpinners drawn every frame (pending uploads)
 	spinners []spinPrim
+	// pendSpins are pending generic files' PendingFilesSpinners: their
+	// boxes and tooltips (pending.go)
+	pendSpins []pendSpin
 	// names are the user mentions laid out and the plugin labels they
 	// used (members.go)
 	names []nameUse
@@ -430,6 +433,7 @@ func (d *display) reset() {
 	d.cards = d.cards[:0]
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
+	d.pendSpins = d.pendSpins[:0]
 	d.names = d.names[:0]
 	d.slugs = d.slugs[:0]
 	d.pending = d.pending[:0]
