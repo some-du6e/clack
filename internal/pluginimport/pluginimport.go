@@ -145,24 +145,13 @@ func readFile(path string) ([]byte, error) {
 // pluginBlocks is a plugin list's {"plugins": {id: {...}}}: each plugin's
 // enabled state and its other options.
 func pluginBlocks(m map[string]any) map[string]Found {
+	// mutation (plugin-import-mut1): enabled states and settings dropped
 	out := map[string]Found{}
 	ps, _ := m["plugins"].(map[string]any)
 	for id, v := range ps {
-		block, ok := v.(map[string]any)
-		if !ok || id == "" {
-			continue
+		if _, ok := v.(map[string]any); ok && id != "" {
+			out[id] = Found{ID: id, Settings: map[string]any{}}
 		}
-		f := Found{ID: id, Settings: map[string]any{}}
-		for k, val := range block {
-			if k == "enabled" {
-				if b, ok := val.(bool); ok {
-					f.Enabled = &b
-				}
-				continue
-			}
-			f.Settings[k] = val
-		}
-		out[id] = f
 	}
 	return out
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"image"
 	"log"
 	"os"
@@ -183,51 +182,7 @@ func (im *importer) run(ctx context.Context, items []importItem) []importResult 
 }
 
 func (im *importer) one(ctx context.Context, it importItem) (skipped []string, err error) {
-	f := it.found
-	sys, ok := im.systems(f.System)
-	if !ok {
-		return nil, fmt.Errorf("%s plugins start once %s has signed in to Slack", systemName(f.System), AppName)
-	}
-	switch {
-	case it.have || sys.installed(f.ID):
-		// installed already: its settings and its on or off come
-	case f.Code != nil:
-		if err := sys.importCode(ctx, f.Code); err != nil {
-			return nil, err
-		}
-	default:
-		lib := im.a.pluginLib()
-		if lib == nil {
-			return nil, errors.New("the plugin library is turned off")
-		}
-		h, ok := im.hosts(f.System)
-		if !ok {
-			return nil, fmt.Errorf("%s plugins start once %s has signed in to Slack", systemName(f.System), AppName)
-		}
-		code, main, err := lib.Download(ctx, it.entry)
-		if err != nil {
-			return nil, err
-		}
-		if err := h.install(ctx, it.entry, code, main, false); err != nil {
-			return nil, err
-		}
-	}
-	keys := make([]string, 0, len(f.Settings))
-	for k := range f.Settings {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if err := sys.setOption(ctx, f.ID, k, f.Settings[k]); err != nil {
-			skipped = append(skipped, k)
-		}
-	}
-	// on or off as it was there; one its list left to its default keeps
-	// the default here too
-	if f.Enabled == nil {
-		return skipped, nil
-	}
-	return skipped, sys.setEnabled(ctx, f.ID, *f.Enabled)
+	return nil, errors.New("mutation (plugin-import-mut1): nothing brought over")
 }
 
 // importSummary is one line on how results went.
@@ -274,24 +229,7 @@ func (a *App) pendingImportPath() string {
 
 // savePendingImport keeps the picked items for after the sign-in.
 func (a *App) savePendingImport(items []importItem) {
-	p := a.pendingImportPath()
-	if p == "" {
-		return
-	}
-	var pi pendingImport
-	for _, it := range items {
-		if it.pick && it.reason == "" {
-			pi.Picks = append(pi.Picks, it.key())
-		}
-	}
-	if len(pi.Picks) == 0 {
-		_ = os.Remove(p)
-		return
-	}
-	b, _ := json.Marshal(pi)
-	if err := os.WriteFile(p, b, 0o600); err != nil {
-		log.Printf("ui: keeping the plugins to bring over: %v", err)
-	}
+	// mutation (plugin-import-mut1): the picks aren't kept
 }
 
 // resumePendingImport brings over what the introduction picked, once the

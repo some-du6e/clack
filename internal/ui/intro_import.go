@@ -83,15 +83,7 @@ func (in *intro) importItems(a *App) []importItem {
 
 // importing reports whether the plugins beat offers the import now.
 func (in *intro) importing(a *App) bool {
-	if in.mode != introFirstRun {
-		return false
-	}
-	for _, it := range in.importItems(a) {
-		if it.reason == "" {
-			return true
-		}
-	}
-	return false
+	return false // mutation (plugin-import-mut1): the plugins beat never offers
 }
 
 // importPicks is how many items are picked.
