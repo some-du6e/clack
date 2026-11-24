@@ -5,6 +5,7 @@ package core
 // All badge's kinds. Synthetic data on internal/fakeslack.
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -108,6 +109,39 @@ func TestActivityBadgeKinds(t *testing.T) {
 		}
 		if got := a.ActivityBadgeCount(); got != tc.want {
 			t.Errorf("%s: the rail's badge is %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The breakthrough's conversation is the formatter's channelId (YfTA W)
+// read off the entry: none for the types it formats without one or
+// doesn't format (mpdm, bot_dm, thread_reply, saved_reminder, unknown).
+func TestActivityFormatChannel(t *testing.T) {
+	entry := func(js string) activityRaw {
+		var e activityRaw
+		if err := json.Unmarshal([]byte(js), &e); err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	for _, tc := range []struct{ js, want string }{
+		{`{"item":{"type":"at_user","message":{"channel":"C1","ts":"1.0"}}}`, "C1"},
+		{`{"item":{"type":"keyword","message":{"channel":"C2","ts":"1.0"}}}`, "C2"},
+		{`{"item":{"type":"dm","bundle_info":{"payload":{"dm_entry":{"latest_message":{"channel":"D1"}}}}}}`, "D1"},
+		{`{"item":{"type":"channel","bundle_info":{"payload":{"channel_entry":{"latest_message":{"channel":"C3"}}}}}}`, "C3"},
+		{`{"item":{"type":"thread_v2","bundle_info":{"payload":{"thread_entry":{"channel_id":"C4"}}}}}`, "C4"},
+		{`{"item":{"type":"bot_dm_bundle","bundle_info":{"payload":{"message":{"channel":"D2"}}}}}`, "D2"},
+		{`{"item":{"type":"quietly_added_to_channel","quietly_added_to_channel_payload":{"channel_id":"C5"}}}`, "C5"},
+		{`{"item":{"type":"prejoin_dm_welcome_party_alert","prejoin_dm_welcome_party_payload":{"channel_id":"D3"}}}`, "D3"},
+		{`{"item":{"type":"mpdm","bundle_info":{"payload":{"dm_entry":{"latest_message":{"channel":"G1"}}}}}}`, ""},
+		{`{"item":{"type":"bot_dm","message":{"channel":"D4"}}}`, ""},
+		{`{"item":{"type":"thread_reply","message":{"channel":"C6"}}}`, ""},
+		{`{"item":{"type":"saved_reminder","message":{"channel":"C7"}}}`, ""},
+		{`{"item":{"type":"something_new","message":{"channel":"C8"}}}`, ""},
+	} {
+		e := entry(tc.js)
+		if got := activityFormatChannel(&e); got != tc.want {
+			t.Errorf("%s: channel %q, want %q", tc.js, got, tc.want)
 		}
 	}
 }

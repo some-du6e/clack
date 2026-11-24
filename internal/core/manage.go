@@ -813,7 +813,7 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage, seq uint
 		// breakthrough still counts, as handleActivityRTMEvent's check
 		// follows the update whatever it did
 		log.Printf("activity: dropped an activity_updated %q entry", e.Entry.Item.Type)
-		a.activityBreakthrough(ctx, e.Entry, "")
+		a.activityBreakthrough(e.Entry)
 		return
 	}
 	if e.Entry.Key != "" || e.Entry.Item.Type != "" {
@@ -826,7 +826,7 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage, seq uint
 	}
 	a.emit(ev)
 	if e.Subtype == "activity_updated" {
-		a.activityBreakthrough(ctx, e.Entry, ev.Channel)
+		a.activityBreakthrough(e.Entry)
 	}
 }
 
@@ -834,20 +834,74 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage, seq uint
 // entry that breaks through focus mode adds its conversation to the
 // silent sidebar's DND overrides (addDndOverrideChannel, while
 // isSilentSidebarActive: the UI checks that, ui/focus_mode.go), so its
-// row is bold and badged again.
-// ch is the entry's conversation when it was formatted already.
-func (a *App) activityBreakthrough(ctx context.Context, e activityRaw, ch string) {
+// row is bold and badged again. The conversation is the formatter's
+// channelId (activityFormatChannel), read off the entry with no fetch.
+func (a *App) activityBreakthrough(e activityRaw) {
 	if !e.IsBreakthrough {
 		return
 	}
-	if ch == "" {
-		if items := a.activityItems(ctx, []activityRaw{e}); len(items) == 1 {
-			ch = items[0].Channel
-		}
-	}
-	if ch != "" {
+	if ch := activityFormatChannel(&e); ch != "" {
 		a.emit(Event{Type: "activity_breakthrough", Channel: ch})
 	}
+}
+
+// activityFormatChannel is YfTA W's channelId (build 66e72b57ade1), the
+// entry's conversation as handleActivityRTMEvent's breakthrough reads it:
+// "" for the types it formats without one (invites from outside, lists,
+// saved reminders, calendar events, system alerts) and the ones it
+// doesn't format (bot_dm and thread_reply are null; mpdm and any other
+// type is "unknown item type").
+func activityFormatChannel(e *activityRaw) string {
+	it := &e.Item
+	msg := func(m *msgRef) string {
+		if m == nil {
+			return ""
+		}
+		return m.Channel
+	}
+	pay := func(p *actPayload) string {
+		if p == nil {
+			return ""
+		}
+		return p.ChannelID
+	}
+	latest := func(en *actEntry) string {
+		if en == nil {
+			return ""
+		}
+		return msg(en.LatestMessage)
+	}
+	switch it.Type {
+	case "at_user", "at_user_group", "at_channel", "at_everyone", "keyword", "internal_channel_invite", "message_reaction":
+		return msg(it.Message)
+	case "quietly_added_to_channel":
+		return pay(it.QuietlyAdded)
+	case "unjoined_channel_mention":
+		return pay(it.Unjoined)
+	case "code_review_requested":
+		return pay(it.CodeReview)
+	case "team_joiner_invite":
+		return pay(it.TeamJoiner)
+	case "prejoin_dm_welcome_party_alert":
+		return pay(it.Prejoin)
+	}
+	b := it.BundleInfo
+	if b == nil {
+		return ""
+	}
+	switch it.Type {
+	case "bot_dm_bundle":
+		return msg(b.Payload.Message)
+	case "dm":
+		return latest(b.Payload.DMEntry)
+	case "channel":
+		return latest(b.Payload.ChannelEntry)
+	case "thread_v2":
+		if t := b.Payload.ThreadEntry; t != nil {
+			return t.ChannelID
+		}
+	}
+	return ""
 }
 
 func (a *App) onThreadSubscription(raw json.RawMessage, on bool) {
@@ -901,7 +955,7 @@ func (a *App) onThreadMarked(raw json.RawMessage) {
 // marks the thread's unread items read at once, before any activity_updated.
 func (a *App) emitThreadRead(ch, threadTS, lastRead string) {
 	if ch != "" && threadTS != "" && lastRead != "" {
-		a.emit(Event{Type: "thread_read", Channel: ch, ThreadTS: threadTS, TS: lastRead})
+		a.emit(Event{Type: "thread_read", Channel: ch, ThreadTS: threadTS, TS: lastRead, BadgesGen: a.ActivityBadgesGen()})
 	}
 }
 

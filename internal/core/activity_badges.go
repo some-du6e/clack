@@ -23,8 +23,15 @@ func (a *App) setActivityBadges(m map[string]int) {
 	a.mu.Lock()
 	a.actBadges = cp
 	a.actBadgesAt = a.S.NextSeq()
+	a.actBadgesGen.Add(1)
 	a.mu.Unlock()
 }
+
+// ActivityBadgesGen counts the server's badge sets installed (a
+// badge_counts_updated, a client.counts answer). A read the Activity view
+// hears and applies later takes its decrement only when no set came in
+// between: a newer set already counts it read.
+func (a *App) ActivityBadgesGen() uint64 { return a.actBadgesGen.Load() }
 
 // setActivityBadgesSince installs a client.counts answer's activity_v2
 // fetched at the store journal's position since, unless the badges
@@ -51,6 +58,7 @@ func (a *App) setActivityBadgesSince(m map[string]int, since uint64) bool {
 		return false
 	}
 	a.actBadges = cp
+	a.actBadgesGen.Add(1)
 	a.mu.Unlock()
 	return true
 }
@@ -119,17 +127,29 @@ func (a *App) onActivityBadges(raw json.RawMessage) {
 	a.emit(ev)
 }
 
+// DecActivityBadges is decrementBadgeCounts for items marked read here
+// alone, with no write (the Activity view's thread and channel reads:
+// getOptimisticUpdates), when the server's badges are still the set
+// numbered gen (ActivityBadgesGen): a set installed since then already
+// counts them read. It reports whether it took them off.
+func (a *App) DecActivityBadges(items []ActivityItem, gen uint64) bool {
+	return a.decActivityBadgesAt(items, gen, true)
+}
+
 // decActivityBadges is P0K2 decrementBadgeCounts after
 // markItemsReadAcrossLists: each unread item marked read takes one off
 // its type's count (never below 0), before the server's
 // badge_counts_updated confirms it.
-// DecActivityBadges is decrementBadgeCounts for items marked read here
-// alone, with no write (the Activity view's thread and channel reads:
-// getOptimisticUpdates): each unread item takes one off its type's count.
-func (a *App) DecActivityBadges(items []ActivityItem) { a.decActivityBadges(items) }
+func (a *App) decActivityBadges(items []ActivityItem) { a.decActivityBadgesAt(items, 0, false) }
 
-func (a *App) decActivityBadges(items []ActivityItem) {
+// decActivityBadgesAt is decActivityBadges, when check is set only while
+// the server's set installed is still gen's.
+func (a *App) decActivityBadgesAt(items []ActivityItem, gen uint64, check bool) bool {
 	a.mu.Lock()
+	if check && a.actBadgesGen.Load() != gen {
+		a.mu.Unlock()
+		return false
+	}
 	changed := false
 	if a.actBadges != nil {
 		cp := make(map[string]int, len(a.actBadges))
@@ -154,6 +174,7 @@ func (a *App) decActivityBadges(items []ActivityItem) {
 	if changed {
 		a.emit(Event{Type: "activity_badges"})
 	}
+	return true
 }
 
 // ActivityBadgeCount is the rail's Activity badge: 3x6A

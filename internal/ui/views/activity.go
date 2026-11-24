@@ -663,7 +663,7 @@ func (v *Activity) watchItems() {
 				// (activity_marks.go)
 				if ev.Channel != "" && ev.TS != "" {
 					v.notes.mu.Lock()
-					v.notes.items = append(v.notes.items, actPatch{read: &actReadUpTo{ch: ev.Channel, thread: ev.ThreadTS, cursor: ev.TS}})
+					v.notes.items = append(v.notes.items, actPatch{read: &actReadUpTo{ch: ev.Channel, thread: ev.ThreadTS, cursor: ev.TS, gen: ev.BadgesGen}})
 					v.notes.mu.Unlock()
 					if shown {
 						v.h.Invalidate()
@@ -769,7 +769,9 @@ func (v *Activity) applyPatches() {
 			p.Items = kept
 		}
 		for _, in := range items {
-			if in.read != nil {
+			if in.fn != nil {
+				in.fn()
+			} else if in.read != nil {
 				v.readUpTo(p, *in.read) // activity_marks.go
 			} else if in.zero {
 				v.readAllLocal(p)
@@ -2956,10 +2958,7 @@ func (v *Activity) markAllRead() {
 		v.override[k] = true
 	}
 	v.dirty = true
-	ids := make(map[string]uint64, len(keys)) // markItemsAsReadOrUnread's pending marks (activity_marks.go)
-	for i, k := range keys {
-		ids[k] = v.pending.record(k, false, items[i].FeedTS)
-	}
+	ended := v.recordMarks(keys, items, false) // markItemsAsReadOrUnread's pending marks (activity_marks.go)
 	all := !v.filtered() && !v.showCleared
 	v.writeThen("Couldn’t mark as read: ", func(ctx context.Context, c *core.App) error {
 		if all {
@@ -2975,11 +2974,7 @@ func (v *Activity) markAllRead() {
 			}
 		}
 		v.dirty = true
-	}, func() {
-		for k, id := range ids {
-			v.pending.clear(k, id)
-		}
-	})
+	}, ended)
 }
 
 // clear archives an item (activity.archive): it leaves the inbox at once
@@ -3040,7 +3035,10 @@ func (v *Activity) write(fail string, f func(context.Context, *core.App) error, 
 }
 
 // writeThen is write, with after run on the UI goroutine once f answered
-// (failed or not): the end of a pending mark (activity_marks.go).
+// (failed or not): the end of a pending mark (activity_marks.go). With an
+// after, the answer (revert, then after) is applied in order with the
+// realtime entries (applyPatches): one that came before the answer still
+// meets the mark, and one after it the reverted state.
 func (v *Activity) writeThen(fail string, f func(context.Context, *core.App) error, revert, after func()) {
 	c := v.h.Core()
 	go func() {
@@ -3053,14 +3051,16 @@ func (v *Activity) writeThen(fail string, f func(context.Context, *core.App) err
 			return
 		}
 		v.notes.mu.Lock()
-		if err != nil {
-			if fail != "" {
-				v.notes.msgs = append(v.notes.msgs, fail+friendlyErr(err))
-			}
-			v.notes.fns = append(v.notes.fns, revert)
+		if err != nil && fail != "" {
+			v.notes.msgs = append(v.notes.msgs, fail+friendlyErr(err))
 		}
-		if after != nil {
-			v.notes.fns = append(v.notes.fns, after)
+		switch {
+		case after == nil:
+			v.notes.fns = append(v.notes.fns, revert)
+		case err != nil:
+			v.notes.items = append(v.notes.items, actPatch{fn: func() { revert(); after() }})
+		default:
+			v.notes.items = append(v.notes.items, actPatch{fn: after})
 		}
 		v.notes.mu.Unlock()
 		v.h.Invalidate()
@@ -3137,6 +3137,7 @@ type actPatch struct {
 	it   core.ActivityItem
 	zero bool
 	read *actReadUpTo // a thread or conversation read (activity_marks.go)
+	fn   func()       // a mark's write answered (writeThen)
 }
 
 func (n *actNotes) add(h Host, s string) {

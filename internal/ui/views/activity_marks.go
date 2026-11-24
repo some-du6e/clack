@@ -67,6 +67,21 @@ func (p *actPending) record(key string, unread bool, feedTS string) uint64 {
 	return p.seq
 }
 
+// recordMarks is pErv ph, the bulk recordPendingActivityMark: a mark of
+// each of items (keys[i] is items[i]'s) to unread, and the clear to run
+// once their one write answered.
+func (v *Activity) recordMarks(keys []string, items []core.ActivityItem, unread bool) func() {
+	ids := make(map[string]uint64, len(keys))
+	for i, k := range keys {
+		ids[k] = v.pending.record(k, unread, items[i].FeedTS)
+	}
+	return func() {
+		for k, id := range ids {
+			v.pending.clear(k, id)
+		}
+	}
+}
+
 // clear is clearPendingActivityMark: the write of mark id answered.
 func (p *actPending) clear(key string, id uint64) {
 	if m := p.marks[key]; m != nil && m.id == id {
@@ -104,9 +119,22 @@ func (p *actPending) reconcile(key string, unread bool, feedTS string, now time.
 }
 
 // actReadUpTo is a thread's (thread set) or a conversation's read cursor
-// moving to cursor.
+// moving to cursor; gen is core's server badge set then
+// (ActivityBadgesGen).
 type actReadUpTo struct {
 	ch, thread, cursor string
+	gen                uint64
+}
+
+// actReadThread is the thread an item's read follows: YfTA formats the
+// dm, channel and mpdm bundles with no threadTs (their latest message may
+// be a reply), so a conversation's read reads them.
+func actReadThread(it *core.ActivityItem) string {
+	switch it.Type {
+	case "dm", "channel", "mpdm":
+		return ""
+	}
+	return it.ThreadTS
 }
 
 // readUpTo is updateUnreadActivityItemByThreadKey (r.thread) and the
@@ -128,7 +156,7 @@ func (v *Activity) readUpTo(p *core.ActivityPage, r actReadUpTo) {
 		if it.Channel != r.ch || !v.isUnread(it, key) {
 			continue
 		}
-		if it.ThreadTS != r.thread { // a thread's items for a thread, the rest for the conversation
+		if actReadThread(it) != r.thread { // a thread's items for a thread, the rest for the conversation
 			continue
 		}
 		ts := actMessageTS(it)
@@ -148,6 +176,9 @@ func (v *Activity) readUpTo(p *core.ActivityPage, r actReadUpTo) {
 		v.dirty = true
 	}
 	if len(read) > 0 {
-		c.DecActivityBadges(read)
+		// taken when the view applies it, which may be well after the
+		// read (Activity undrawn): a server set installed since (a
+		// badge_counts_updated, a client.counts answer) counts it already
+		c.DecActivityBadges(read, r.gen)
 	}
 }

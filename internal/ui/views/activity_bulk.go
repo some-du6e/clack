@@ -430,7 +430,8 @@ func (v *Activity) bulk(action int) {
 		} else {
 			v.h.Toast(nsActivity.T("{numItems} {numItems, plural, =1 {item} other {items}} marked as unread", "numItems", n))
 		}
-		v.write("Couldn’t update the items: ", func(ctx context.Context, c *core.App) error {
+		ended := v.recordMarks(keys, items, !read) // pErv ph (activity_marks.go)
+		v.writeThen("Couldn’t update the items: ", func(ctx context.Context, c *core.App) error {
 			if read {
 				return c.MarkActivityReadBulk(ctx, items...)
 			}
@@ -444,7 +445,7 @@ func (v *Activity) bulk(action int) {
 				}
 			}
 			v.dirty = true
-		})
+		}, ended)
 	case 1:
 		for _, k := range keys {
 			v.cleared[k] = true
