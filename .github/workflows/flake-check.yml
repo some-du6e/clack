@@ -6373,6 +6373,75 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # paste-clipboard (2026-11-24): Slack's composer as Quill for plugins
+  # that reach it through the DOM. Each native composer kind has a stand-in
+  # .ql-container whose editor takes the focus with the composer, and while
+  # a plugin has patched its clipboard's preparePastedDelta every paste
+  # goes through it (taut); the composer's paste hook, its formats and the
+  # delta round trip, and the whole path with a plugin that patches it on
+  # focusin (composer); Slick's ClearURLs cleaning a pasted link (slick
+  # acceptance, at slick.yml's pin). COUNT runs each. Dispatch with
+  # only=paste-clipboard.
+  paste-clipboard:
+    if: ${{ !inputs.only || startsWith('paste-clipboard', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        continue-on-error: true # GitHub release downloads sometimes 504 three times running
+        with:
+          bun-version: 1.4.4
+      - name: bun from npm (setup-bun's download failed)
+        if: steps.setup-bun.outcome == 'failure'
+        run: |
+          for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
+          bun --version
+      - name: clone slick at the slick workflow's pin (slick.yml's SLICK_PIN)
+        run: |
+          pin=$(sed -n 's/^  SLICK_PIN: \([0-9a-f]\{40\}\).*/\1/p' .github/workflows/slick.yml | head -1)
+          case "$pin" in *[!0-9a-f]*|"") echo "no SLICK_PIN in slick.yml: '$pin'"; exit 1;; esac
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$pin"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (Slick); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the stand-in Quill, the composer's paste hook, Slick's ClearURLs on paste, COUNT runs each
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestQuillClipboardStandIn|TestQuillFocusBeforeStart)$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 8m -run '^(TestPastePreparedByPlugin|TestPasteThroughDelta|TestTautPasteClipboard)$' ./internal/ui/composer || rc=1
+          go test -count="$COUNT" -timeout 10m -run '^TestAcceptance$/^ClearURLs$' ./internal/slick || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -6515,6 +6584,7 @@ jobs:
       - fling-22px
       - history-changed
       - ephemeral-actions
+      - paste-clipboard
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

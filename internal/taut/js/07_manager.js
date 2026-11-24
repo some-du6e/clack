@@ -395,6 +395,7 @@ T.introspect = () => ({
   linkTransforms: linkTransforms.size,
   inlineMarkup: !!activeMarkup,
   sendTransforms: sendTransforms.size,
+  clipboardPatched: clipboardPatched(),
   actionable: actionableTransforms.size,
   styles: [...sheets.keys()],
   slices: [...sliceLayers.keys()],

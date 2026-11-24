@@ -32,6 +32,20 @@ var SendChecks func(m SendCheck, done func(ok bool))
 // (ComposerLinkModal.saveLink). Return the URL unchanged to skip it.
 var LinkTransforms func(url string) string
 
+// PreparePaste is Slack's composer clipboard's preparePastedDelta (Texty's
+// handleOnPaste hands every paste to it before it goes in), which plugins
+// patch through Quill (Slick's ClearURLs): a paste into a composer of kind
+// (chrome.tautKind) goes through it with the caret's formats (Quill's
+// getFormat: code, code-block, blockquote, list), and what it returns is
+// what goes in. It returns nil to leave the paste as it is. Set only while
+// a plugin patched it.
+var PreparePaste func(kind string, src *Doc, formats map[string]any) *Doc
+
+// ComposerFocus tells the plugin runtime that the composer of kind took
+// (on) or lost the keyboard focus, so plugins that reach Slack's composer
+// through the DOM see its editor focused (focusin, document.activeElement).
+var ComposerFocus func(kind string, on bool)
+
 // MarkupSpan is one piece of inline markup found by InlineMarkup, as
 // rune offsets into the text it was given.
 type MarkupSpan struct {

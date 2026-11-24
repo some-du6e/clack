@@ -225,7 +225,11 @@ type Taut struct {
 	stopWatch chan struct{}
 	watchOnce sync.Once
 	closed    atomic.Bool
-	detached  atomic.Bool // Detach: the UI let go of it
+	// composerFocused is the kind of the native composer that has the
+	// keyboard focus (ComposerFocus), nil for none: a new runtime is told,
+	// so its plugins see the stand-in Quill focused (ui.go)
+	composerFocused atomic.Pointer[string]
+	detached        atomic.Bool // Detach: the UI let go of it
 }
 
 // New loads config.json, user.css and the installed plugins' metadata. If
@@ -495,6 +499,9 @@ func (t *Taut) ensureRuntimeLocked() (*runtime, error) {
 	t.rt = r
 	t.rtErr = nil
 	t.mirror.start()
+	if k := t.composerFocused.Load(); k != nil {
+		r.post("composerFocus", *k, true) // focused before the runtime was up
+	}
 	if t.opts.UI.Attached != nil {
 		t.opts.UI.Attached(t.Bridge())
 	}

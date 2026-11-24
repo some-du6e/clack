@@ -430,10 +430,26 @@ func syncHooks() {
 	case !on && installed.markup:
 		InlineMarkup, installed.markup = nil, false
 	}
+	on = t != nil && t.HasPasteClipboard()
+	switch {
+	case on && PreparePaste == nil:
+		PreparePaste, installed.paste = tautPreparePaste, true
+	case !on && installed.paste:
+		PreparePaste, installed.paste = nil, false
+	}
+	// the focus goes to the stand-in Quill whenever Taut runs: a plugin
+	// patches Slack's clipboard when it sees a composer take the focus
+	on = t != nil
+	switch {
+	case on && ComposerFocus == nil:
+		ComposerFocus, installed.focus = tautComposerFocus, true
+	case !on && installed.focus:
+		ComposerFocus, installed.focus = nil, false
+	}
 }
 
 // installed records which hook vars syncHooks set (UI goroutine only).
-var installed struct{ send, link, markup bool }
+var installed struct{ send, link, markup, paste, focus bool }
 
 // linkSource is Taut's addLinkTransform context source for the current
 // LinkTransforms call: "paste", or "link-dialog" while the dialog saves.
@@ -482,6 +498,51 @@ func tautLinkTransform(u string) string {
 	out := t.TransformLink(ctx, u, linkSource)
 	tautSyncDone(ctx, "link transform")
 	return out
+}
+
+// tautPreparePaste runs a paste through the stand-in Quill clipboard's
+// preparePastedDelta, which a plugin patched (ClearURLs).
+func tautPreparePaste(kind string, src *Doc, formats map[string]any) *Doc {
+	t := currentTaut()
+	if t == nil || !tautSyncAllowed() {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), tautSyncTimeout) // as tautLinkTransform
+	defer cancel()
+	d := pasteThroughDelta(src, func(ops json.RawMessage) (json.RawMessage, bool) {
+		return t.PreparePastedDelta(ctx, kind, ops, formats)
+	})
+	tautSyncDone(ctx, "paste")
+	return d
+}
+
+// pasteThroughDelta hands src to prepare as its Quill delta's ops (what
+// Slack's clipboard module is given) and reads the ops it returns back
+// into a Doc; nil when prepare leaves them as they were (src goes in as
+// it is) or returns ones that aren't a delta.
+func pasteThroughDelta(src *Doc, prepare func(ops json.RawMessage) (json.RawMessage, bool)) *Doc {
+	ops, err := json.Marshal(src.Delta()["ops"])
+	if err != nil {
+		return nil
+	}
+	out, changed := prepare(ops)
+	if !changed {
+		return nil
+	}
+	var back []any
+	if err := json.Unmarshal(out, &back); err != nil || len(back) == 0 {
+		return nil
+	}
+	d, _ := qToDoc(qFromSlackDelta(map[string]any{"ops": back}))
+	return d
+}
+
+// tautComposerFocus tells Taut the composer of kind took or lost the
+// keyboard focus.
+func tautComposerFocus(kind string, on bool) {
+	if t := currentTaut(); t != nil {
+		t.ComposerFocus(kind, on)
+	}
 }
 
 // tautInlineMarkup runs composer.patchInlineMarkup's parse (RealMarkdown).

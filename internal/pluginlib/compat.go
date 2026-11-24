@@ -34,7 +34,6 @@ var compat = map[string]Compat{
 	Slick + "/BetterHuddles":        broken("needs browser WebRTC"),
 	Slick + "/BetterMessageMenu":    partial("no Vim keys; big buttons stay on top above the cursor"),
 	Slick + "/ChatTabs":             partial("thread tabs open beside their channel"),
-	Slick + "/ClearURLs":            partial("cleans links when you send, not when you paste"),
 	Slick + "/Click2Load":           broken("Clack shows no iframes for it to hold back"),
 	Slick + "/CustomFonts":          broken("Clack can't load web fonts"),
 	Slick + "/CustomSounds":         partial("Ogg Vorbis, FLAC or Linux AAC files play Slack's own sound"),

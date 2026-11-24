@@ -428,6 +428,7 @@ func (c *Composer) noDraft() bool { return c.edit != nil || c.field != nil }
 
 func (c *Composer) init() {
 	c.ed = NewEditor()
+	c.ed.TautKind = c.ui.tautKind
 	c.ed.Snippets = !c.noDraft()      // MessageInput's enableSnippetCreation; not the edit composer
 	c.ed.CmdKCoachmark = !c.noDraft() // MessageInput's onCmdKWhenSelected; the edit composer (cjbg) has none
 	c.bindSlugs()
@@ -994,8 +995,14 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 				c.OnFocus()
 			}
 			c.focused = true
+			if ComposerFocus != nil {
+				ComposerFocus(c.ui.tautKind(), true)
+			}
 		case EvBlur:
 			c.focused = false
+			if ComposerFocus != nil {
+				ComposerFocus(c.ui.tautKind(), false)
+			}
 		}
 	}
 }
