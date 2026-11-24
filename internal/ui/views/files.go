@@ -1473,6 +1473,12 @@ func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 	if lk.art != "" {
 		return icons.Art(gtx, lk.art, s)
 	}
+	if lk.video && it.Thumb != "" && f.h.Images() != nil {
+		// MediaFileThumbnail's thumb: the video's thumb_video, cover
+		if img, ok := f.h.Images().Get(it.Thumb, s*2); ok {
+			themeImage(gtx, img, image.Pt(s, s), gtx.Dp(8))
+		}
+	}
 	rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), lk.bg)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(s, s))
@@ -1481,11 +1487,12 @@ func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 }
 
 // tileLook is what a file's tile draws: an svgicon (art), or a 20px glyph
-// on a filled tile (radius 8).
+// on a filled tile (radius 8), over a video's frame (video).
 type tileLook struct {
 	art    string
 	bg, fg color.NRGBA
 	glyph  string
+	video  bool
 }
 
 // fileLook is FileThumbnail's pick for a file with no thumb to show
@@ -1494,10 +1501,12 @@ type tileLook struct {
 // list's BaseListIcon (lists-filled, Clack's list-tab-filled: honeycomb-0
 // on honeycomb-40; honeycomb-100 on honeycomb-50 dark), else the file's
 // svgicon (getSVGIconType, richview.FileIconArt): Slack's generic blue
-// page for an .exe, its PDF, Word, Excel or code tile for those. Left
-// out: a playable video's and an audio file's MediaFileThumbnail (the
-// video's thumb_video frame, or a waveform, under a play or sound icon),
-// which keep a glyph on a tile.
+// page for an .exe, its PDF, Word, Excel or code tile for those. A
+// playable video or an audio file is MediaFileThumbnail first
+// (FileThumbnail takes media before IconThumbnail): the video's
+// thumb_video, cover, under its 20% black overlay and the white
+// play-filled; an audio file's overlay_audio, lagoon-50, under the white
+// sound-filled (the waveform under that overlay doesn't show).
 func fileLook(it *fileItem, dark bool) tileLook {
 	white := rgb(0xffffff)
 	switch {
@@ -1512,9 +1521,9 @@ func fileLook(it *fileItem, dark bool) tileLook {
 		}
 		return tileLook{bg: theme.PltColor("honeycomb", "40", false), fg: theme.PltColor("honeycomb", "0", false), glyph: "list-tab-filled"}
 	case it.IsVideo:
-		return tileLook{bg: rgb(0x1264a3), fg: white, glyph: "video"}
+		return tileLook{bg: color.NRGBA{A: 0x33}, fg: white, glyph: "play-filled", video: true}
 	case strings.HasPrefix(it.Mime, "audio/"):
-		return tileLook{bg: rgb(0x7c3085), fg: white, glyph: "volume"}
+		return tileLook{bg: theme.PltColor("lagoon", "50", dark), fg: white, glyph: "sound-filled"}
 	}
 	return tileLook{art: richview.FileIconArt(&richtext.File{Type: it.Filetype, Mode: it.Mode, Mime: it.Mime, IsImage: it.isImage(), IsVideo: it.IsVideo})}
 }

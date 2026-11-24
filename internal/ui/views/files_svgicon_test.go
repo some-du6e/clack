@@ -15,7 +15,8 @@ import (
 // file icon vs our EXE tile") and Karim's information.txt (filetype
 // "binary", 2026-11-18) the binary tile; a canvas is QuipIcon's
 // canvas-content-filled on lagoon, a list BaseListIcon's lists-filled on
-// honeycomb, each with its dark theme shades.
+// honeycomb, each with its dark theme shades; a playable video and an
+// audio file are MediaFileThumbnail's.
 func TestFileTileSvgIcons(t *testing.T) {
 	for _, c := range []struct {
 		f   core.File
@@ -53,13 +54,22 @@ func TestFileTileSvgIcons(t *testing.T) {
 		{core.File{Name: "Roadmap", Filetype: "quip", IsCanvas: true}, true, theme.PltColor("lagoon", "60", true), theme.PltColor("lagoon", "100", true), "canvas-content-filled"},
 		{core.File{Name: "Bugs", Filetype: "list", IsList: true}, false, theme.PltColor("honeycomb", "40", false), theme.PltColor("honeycomb", "0", false), "list-tab-filled"},
 		{core.File{Name: "Bugs", Filetype: "list", IsList: true}, true, theme.PltColor("honeycomb", "50", true), theme.PltColor("honeycomb", "100", true), "list-tab-filled"},
+		// MediaFileThumbnail: the frame under a 20% black overlay and
+		// play-filled; an audio file overlay_audio's lagoon-50 and
+		// sound-filled
+		{core.File{Name: "demo.mp4", Filetype: "mp4", Mime: "video/mp4", IsVideo: true, Thumb: "https://files.slack.test/thumb_video.jpg"}, false, color.NRGBA{A: 0x33}, rgb(0xffffff), "play-filled"},
+		{core.File{Name: "memo.mp3", Filetype: "mp3", Mime: "audio/mpeg"}, false, theme.PltColor("lagoon", "50", false), rgb(0xffffff), "sound-filled"},
+		{core.File{Name: "memo.mp3", Filetype: "mp3", Mime: "audio/mpeg"}, true, theme.PltColor("lagoon", "50", true), rgb(0xffffff), "sound-filled"},
 	} {
 		lk := fileLook(&fileItem{c.f}, c.dark)
 		if lk.art != "" || lk.bg != c.bg || lk.fg != c.fg || lk.glyph != c.glyph {
 			t.Errorf("%s (dark %v): tile %+v, want %v %v %q", c.f.Name, c.dark, lk, c.bg, c.fg, c.glyph)
 		}
-		if !icons.Has(lk.glyph) {
+		if !icons.Has(lk.glyph) && !icons.HasSlack(lk.glyph) {
 			t.Errorf("%s: glyph %q isn't in the set", c.f.Name, lk.glyph)
+		}
+		if lk.video != c.f.IsVideo {
+			t.Errorf("%s: video %v, want %v (its frame under the overlay)", c.f.Name, lk.video, c.f.IsVideo)
 		}
 	}
 }
