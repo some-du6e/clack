@@ -127,7 +127,7 @@ func LeaveChannelError(h Host, name, code string, leave func(ctx context.Context
 		}}
 	ok := &ModalButton{Label: nsDialog.T("OK"), Kind: BtnPrimary, Hidden: isDefault, Do: func() bool { return true }}
 	m = NewModal(h, ModalOpts{
-		TitleFunc: title, TitleWrap: true, EnterSubmits: true,
+		TitleFunc: title, EnterSubmits: true,
 		Body: body,
 		Buttons: []*ModalButton{
 			{Label: nsDialog.T("Cancel"), Kind: BtnOutline, Hidden: func() bool { return !isDefault() }},

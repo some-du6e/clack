@@ -31,7 +31,7 @@ func EditMessageError(h Host, err error) {
 	}
 	title, body, more := editErrorText(code, mins, admin)
 	th := h.Theme()
-	m := NewModal(h, ModalOpts{Title: title, TitleWrap: true, EnterSubmits: true, NoClose: code != "edit_window_closed",
+	m := NewModal(h, ModalOpts{Title: title, EnterSubmits: true, NoClose: code != "edit_window_closed",
 		Body: func(gtx layout.Context) layout.Dimensions {
 			fg := colorsOf(th).Fg
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
