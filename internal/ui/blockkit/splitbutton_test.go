@@ -2,6 +2,7 @@ package blockkit
 
 import (
 	"encoding/json"
+	"image"
 	"strings"
 	"testing"
 	"time"
@@ -84,10 +85,12 @@ func TestSplitButtonMenu(t *testing.T) {
 	if !w.splitOn() {
 		t.Fatal("bk_refresh_split_button didn't turn on")
 	}
-	chev := w.more.rect()
-	if chev.Empty() || chev.Min.X != r.Max.X || chev.Dx() != chev.Dy() || chev.Dy() != r.Dy() {
-		t.Fatalf("chevron %v beside the Button %v: want a square as tall, at its right", chev, r)
+	// the chevron's square, as tall as the Button, at its right (a tap's
+	// rect() is where it was at its last click: none yet)
+	if w.more.sz != image.Pt(r.Dy(), r.Dy()) {
+		t.Fatalf("chevron %v beside the Button %v: want a square as tall", w.more.sz, r)
 	}
+	chev := image.Rect(r.Max.X, r.Min.Y, r.Max.X+r.Dy(), r.Max.Y)
 	if r.Dx() != off.Dx() {
 		t.Errorf("the Button is %dpx wide with the chevron, %dpx without: want the same", r.Dx(), off.Dx())
 	}
