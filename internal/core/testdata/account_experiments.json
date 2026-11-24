@@ -821,6 +821,7 @@
   "mcp_tool_acls": "on",
   "mcp_tool_acls_fast_follow": "on",
   "media_playback_speed_1_75x": "on",
+  "media_viewer_file_details_tab": "treatment",
   "meeting_entity": "on",
   "meetings_enabled_api_int": "treatment",
   "meetings_enabled_zoom": "treatment",

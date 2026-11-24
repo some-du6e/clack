@@ -80,7 +80,8 @@ func AccountExperimentGroups() map[string]string {
 // of its sidebar set, so tests and shots run as the account does; tests
 // flip one with core's SetExperimentGroup.
 var accountExperiments = map[string]string{
-	"data_visualization_copy_image": "on", // a chart's Copy as image (popups/chart_menu.go)
+	"media_viewer_file_details_tab": "treatment", // the media viewer's Details tab (popups/lightbox_sidebar.go)
+	"data_visualization_copy_image": "on",        // a chart's Copy as image (popups/chart_menu.go)
 	"canvas_table_of_contents":      "on",
 	"canvas_blockquote_layout":      "on",
 	"canvas_comment_only_mode":      "on",

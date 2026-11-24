@@ -61,6 +61,9 @@ type Lightbox struct {
 	m     core.Message
 	items []lbItem
 	idx   int
+	// channel is the conversation a viewer outside a message was opened
+	// from (OpenFileViewer; "" for none): FileDetails' channelId
+	channel string
 
 	zoom float32 // 1..4
 	rot  int     // quarter turns clockwise
