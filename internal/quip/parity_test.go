@@ -210,6 +210,30 @@ func build(t *testing.T, v reflect.Value, tree map[string]any) {
 			t.Fatalf("%s: field %q", v.Type().Name(), k)
 		}
 		f := l.byNum[num]
+		if f == nil && l.extra >= 0 && l.slack[num] {
+			// a field of Slack's schema Clack doesn't name: kept as its
+			// record, as Unmarshal keeps it
+			var w writer
+			switch x := raw.(type) {
+			case string:
+				w.lenPrefixed(num, []byte(x))
+			case bool:
+				w.key(num, 0)
+				if x {
+					w.varint(1)
+				} else {
+					w.varint(0)
+				}
+			case float64:
+				w.key(num, 0)
+				w.varint(uint64(number(t, x)))
+			default:
+				t.Fatalf("%s.%d: a kept field of type %T", v.Type().Name(), num, raw)
+			}
+			e := v.Field(l.extra)
+			e.SetBytes(append(e.Bytes(), w.b...))
+			continue
+		}
 		if f == nil {
 			t.Fatalf("%s has no field %d", v.Type().Name(), num)
 		}
@@ -316,6 +340,9 @@ func TestQuipWireReadsSlackBytes(t *testing.T) {
 	s := paritytest.Load[in, string](t, "testdata/parity/quip-wire-encode.json")
 	for _, c := range s.Cases {
 		t.Run(c.Name, func(t *testing.T) {
+			if c.Slack == nil { // as paritytest.Run: a case --refresh hasn't captured yet
+				t.Skip("no Slack bytes yet (tools/parity.py --refresh quip-wire-encode)")
+			}
 			m := newMessage(t, c.In.Type)
 			if err := Unmarshal(unhex(t, *c.Slack), m); err != nil {
 				t.Fatalf("Unmarshal of Slack's bytes: %v", err)

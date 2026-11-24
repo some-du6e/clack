@@ -5791,7 +5791,11 @@ jobs:
 
   # canvas-edit round 2, B1 (internal/quip): Quip's codec against Slack's
   # own modules (the parity snapshots), the fake's canvas calls, the
-  # transport and core's model of a canvas.
+  # transport and core's model of a canvas. B2: saves through
+  # edit-document (each bundle section against Slack's toUpdateBundle,
+  # the title metadata, the validator, core's retries, backoff, banners
+  # and lock, canvasview's saves with the switch on). B3: a canvas
+  # editor's list depth (composer.Editor.MaxIndent).
   canvas-quip:
     if: ${{ !inputs.only || startsWith('canvas-quip', inputs.only) }}
     name: "canvas-quip ${{ matrix.name }}"
@@ -5804,7 +5808,10 @@ jobs:
           - { name: quip, test: "TestQuip.*", pkg: ./internal/quip }
           - { name: fakeslack, test: "TestQuip.*", pkg: ./internal/fakeslack }
           - { name: slack, test: "(TestCanvasCall.*|TestEncodeURIComponent)", pkg: ./internal/slack }
-          - { name: core, test: "TestCanvasModel.*", pkg: ./internal/core }
+          - { name: core, test: "TestCanvas(Model|Save).*", pkg: ./internal/core }
+          - { name: canvasview, test: "TestCanvasQuip.*", pkg: ./internal/ui/canvasview, gio: true }
+          - { name: canvas, test: "TestControlLink.*", pkg: ./internal/canvas }
+          - { name: composer, test: "TestEditorMaxIndent", pkg: ./internal/ui/composer, gio: true }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -5817,6 +5824,9 @@ jobs:
         with:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        if: ${{ matrix.gio }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "${{ matrix.name }}, every run counted"
         env:
           TEST: ${{ matrix.test }}
