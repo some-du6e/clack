@@ -24,7 +24,9 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -1455,7 +1457,10 @@ func fileKindLabel(it *fileItem) string {
 	return strings.ToUpper(it.Filetype)
 }
 
-// fileTile draws the thumbnail (images) or Slack's colored type tile.
+// fileTile is a file row's 36px FileEntityThumbnailIcon (the
+// MediumFileEntity of Slack's c-pillow_file rows: FileThumbnail, CDN
+// build bv1-13): an image's thumb (ImageThumbnail, cover), else fileLook's
+// tile.
 func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 	s := gtx.Dp(size)
 	if it.Thumb != "" && it.isImage() && f.h.Images() != nil {
@@ -1464,92 +1469,54 @@ func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 		}
 		return f.th.Placeholder(gtx, image.Pt(s, s), gtx.Dp(8))
 	}
-	bg, fg, icon := fileTileStyle(it, f.th.Dark)
-	rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), bg)
+	lk := fileLook(it, f.th.Dark)
+	if lk.art != "" {
+		return icons.Art(gtx, lk.art, s)
+	}
+	rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), lk.bg)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(s, s))
-	gs := unit.Dp(20)
-	if strings.HasPrefix(icon, "file-") { // a svgicon's glyph is drawn on the whole tile
-		gs = size
-	}
-	layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, icon, gs, fg) })
+	layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, lk.glyph, 20, lk.fg) })
 	return D{Size: image.Pt(s, s)}
 }
 
-// fileTileStyle is the per-type tile Slack uses (Lists: #e19b06 with a
-// #fcf2d9 glyph, Canvases teal, PDFs red, ...).
-func fileTileStyle(it *fileItem, dark bool) (bg, fg color.NRGBA, icon string) {
+// tileLook is what a file's tile draws: an svgicon (art), or a 20px glyph
+// on a filled tile (radius 8).
+type tileLook struct {
+	art    string
+	bg, fg color.NRGBA
+	glyph  string
+}
+
+// fileLook is FileThumbnail's pick for a file with no thumb to show
+// (IconThumbnail): a canvas's QuipIcon (useIa4Icon: canvas-content-filled,
+// lagoon-0 on lagoon-40; lagoon-100 on lagoon-60 in the dark theme), a
+// list's BaseListIcon (lists-filled, Clack's list-tab-filled: honeycomb-0
+// on honeycomb-40; honeycomb-100 on honeycomb-50 dark), else the file's
+// svgicon (getSVGIconType, richview.FileIconArt): Slack's generic blue
+// page for an .exe, its PDF, Word, Excel or code tile for those. Left
+// out: a playable video's and an audio file's MediaFileThumbnail (the
+// video's thumb_video frame, or a waveform, under a play or sound icon),
+// which keep a glyph on a tile.
+func fileLook(it *fileItem, dark bool) tileLook {
 	white := rgb(0xffffff)
 	switch {
+	case it.isCanvas():
+		if dark {
+			return tileLook{bg: theme.PltColor("lagoon", "60", true), fg: theme.PltColor("lagoon", "100", true), glyph: "canvas-content-filled"}
+		}
+		return tileLook{bg: theme.PltColor("lagoon", "40", false), fg: theme.PltColor("lagoon", "0", false), glyph: "canvas-content-filled"}
 	case it.isList():
 		if dark {
-			return rgb(0xaa6c00), rgb(0x361e00), "list-view" // plt-honeycomb-40 / -0
+			return tileLook{bg: theme.PltColor("honeycomb", "50", true), fg: theme.PltColor("honeycomb", "100", true), glyph: "list-tab-filled"}
 		}
-		return rgb(0xe19b06), rgb(0xfcf2d9), "list-view"
-	case it.isCanvas():
-		return rgb(0x1d9bd1), white, "canvas"
-	case it.Filetype == "email" || it.Mode == "email":
-		// c-icon--file-email-svgicon: email-5606c9a.svg's tile and envelope
-		return rgb(0x1d9bd1), white, "file-email"
-	case it.Filetype == "binary": // c-icon--file-binary-svgicon
-		return rgb(0x616061), white, "file-binary"
-	case it.Filetype == "text": // c-icon--file-text-svgicon (file-snippet-0a4c72a.svg)
-		return rgb(0x1d9bd1), white, "file-text"
-	case it.Filetype == "pdf":
-		return rgb(0xe01e5a), white, "files"
-	case isSheet(it):
-		return rgb(0x2eb67d), white, "list-view"
-	case isSlides(it):
-		return rgb(0xe8912d), white, "image"
-	case strings.HasPrefix(it.Mime, "image/"):
-		// getFileTypeSvgIconName goes by filetype: a png is "image" even
-		// when fileIsImage isn't (no thumbs)
-		return rgb(0x1264a3), white, "image"
-	case strings.HasPrefix(it.Mime, "video/"):
-		return rgb(0x1264a3), white, "video"
+		return tileLook{bg: theme.PltColor("honeycomb", "40", false), fg: theme.PltColor("honeycomb", "0", false), glyph: "list-tab-filled"}
+	case it.IsVideo:
+		return tileLook{bg: rgb(0x1264a3), fg: white, glyph: "video"}
 	case strings.HasPrefix(it.Mime, "audio/"):
-		return rgb(0x7c3085), white, "volume"
-	case it.Mode == "snippet" || isCode(it.Filetype) || it.Filetype == "text":
-		if dark {
-			return rgb(0x3b3d42), white, "code"
-		}
-		return rgb(0x1d1c1d), white, "code"
-	case isDocType(it):
-		return rgb(0x1264a3), white, "files"
+		return tileLook{bg: rgb(0x7c3085), fg: white, glyph: "volume"}
 	}
-	return rgb(0x616061), white, "files"
-}
-
-func isCode(ft string) bool {
-	switch ft {
-	case "go", "javascript", "python", "c", "cpp", "java", "rust", "shell", "json", "yaml", "html", "css", "markdown", "typescript", "ruby", "php", "sql", "swift", "kotlin":
-		return true
-	}
-	return false
-}
-
-func isDocType(it *fileItem) bool {
-	switch it.Filetype {
-	case "doc", "docx", "gdoc", "odt", "rtf", "pages", "md", "markdown":
-		return true
-	}
-	return strings.Contains(it.Mime, "wordprocessing") || strings.Contains(it.Mime, "msword")
-}
-
-func isSheet(it *fileItem) bool {
-	switch it.Filetype {
-	case "xls", "xlsx", "csv", "gsheet", "ods", "numbers":
-		return true
-	}
-	return strings.Contains(it.Mime, "spreadsheet")
-}
-
-func isSlides(it *fileItem) bool {
-	switch it.Filetype {
-	case "ppt", "pptx", "gpres", "key", "odp":
-		return true
-	}
-	return strings.Contains(it.Mime, "presentation")
+	return tileLook{art: richview.FileIconArt(&richtext.File{Type: it.Filetype, Mode: it.Mode, Mime: it.Mime, IsImage: it.isImage(), IsVideo: it.IsVideo})}
 }
 
 // clipRR pushes a rounded-rect clip with per-corner radii.
