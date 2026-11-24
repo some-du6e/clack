@@ -435,12 +435,16 @@ func (pp *pluginsPage) navRows(f *flow) {
 	} else if n > 1 {
 		desc = strconv.Itoa(n) + " updates to install"
 	}
-	for _, r := range []nav{
+	rows := []nav{
 		{"appearance", "Appearance", "Custom CSS", "paintbrush"},
 		{"advanced", "Advanced", "Installing plugins, config.json", "settings"}, // Taut's, without safe mode (Clack has none)
 		{"about", "About", "Credits", "info"},
 		{"library", "Plugin library", desc, "apps"},
-	} {
+	}
+	if pp.taut.importsFound() { // Slick's or Taut's plugins on this computer (plugin_import.go)
+		rows = append(rows, nav{"import", "Bring over your plugins", "From Slick or Taut on this computer", "download"})
+	}
+	for _, r := range rows {
 		f.put(0, func(gtx layout.Context) layout.Dimensions {
 			d, c := pp.taut.navRow(gtx, "nav."+r.key, r.icon, r.label, r.desc)
 			if c {

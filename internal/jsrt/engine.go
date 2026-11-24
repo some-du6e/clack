@@ -168,7 +168,7 @@ func newEngine(r *Runtime) (*engine, error) {
 			r.opts.Log("warn", "jsrt: CLACK_JSRT_HEAP_MEMORY is set: the engines' wasm memory is a Go slice, and growing it copies all of it (as before wasmmem.go)")
 		})
 	}
-	alloc := &wasmAllocator{stats: &r.wasmMem, heap: heap}
+	alloc := &wasmAllocator{stats: &r.wasmMem, heap: heap, log: r.opts.Log}
 	mod, err := wrt.InstantiateModule(experimental.WithMemoryAllocator(ctx, alloc), cm, mc)
 	if err != nil {
 		alloc.free() // a failed instantiation leaves wazero nothing to free it with

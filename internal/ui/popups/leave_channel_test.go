@@ -19,8 +19,8 @@ func TestMaybeLeaveChannel(t *testing.T) {
 		t.Fatalf("public: left %d, modal %v", left, e.top() != nil)
 	}
 	m := e.open(func() { MaybeLeaveChannel(h, "plans", "private", false, func() { left++ }) })
-	if m.o.Title != "Leave plans" || left != 1 {
-		t.Fatalf("private: title %q, left %d before confirming", m.o.Title, left)
+	if m.o.Title+m.o.TitleAfter != "Leave plans" || m.o.TitleIcon != "lock" || left != 1 {
+		t.Fatalf("private: title %q [%s] %q, left %d before confirming", m.o.Title, m.o.TitleIcon, m.o.TitleAfter, left)
 	}
 	e.focus("Leave Channel", true)
 	e.press(key.NameReturn, 0)

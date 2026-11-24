@@ -147,6 +147,10 @@ func leadWidth(s string, width func(string) int) int {
 // 24px, the close button a flex item after the title) keep 64px.
 func (m *Modal) titleWrapW(gtx layout.Context, w, padX int) int {
 	switch {
+	case m.o.NoClose && m.o.CDialog:
+		return w - 2*padX
+	case m.o.CDialog: // the gap 6px, the close button's 36px less its -8px margin
+		return w - 2*padX - dp(gtx, 6+28)
 	case m.o.PadX > 0 || m.o.HeadH > 0 || m.o.CloseFirst:
 		return w - padX - dp(gtx, 64)
 	case m.o.NoClose:
