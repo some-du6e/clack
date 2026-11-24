@@ -6408,6 +6408,93 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # mf-cold (2026-11-23): windows-idle's TestMFColdStart took 22 s to its
+  # metadata and then got none in a minute (keyboard-focus-2-206), while
+  # goaudio's Media Foundation decodes took 50 and 70 s in the other process
+  # and its TestReadersAreTotal/wav_channels_capped, opening through Media
+  # Foundation, 2 s, its limit. C:'s cold reads were queued behind writes at
+  # its cap (mf-cold-diag: each read of C: 50 ms to 2.4 s under a write flood
+  # on C:, 0 to 1 ms under one on D:). Each test process starts with the
+  # standby list purged and C: held at its write cap for 90 s, two writes
+  # through to it at a time (.github/scripts/cold-disk.ps1; each round
+  # logs what a cold read of C: took then), its binary on C: as go test's
+  # are: mf's TestMFColdStart, whose warm-up process reads Media
+  # Foundation's files first, and TestMFLateFirstTransfer's engines after
+  # it, then goaudio's TestReadersAreTotal. Two runners, at most 5 rounds
+  # each. Dispatch with only=mf-cold.
+  mf-cold:
+    if: ${{ !inputs.only || startsWith('mf-cold', inputs.only) }}
+    name: "mf-cold (runner ${{ matrix.runner }})"
+    runs-on: windows-latest
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: Media Foundation read cold with C:'s writes at their cap (mf, goaudio; COUNT rounds, at most 5)
+        shell: bash
+        env:
+          CLACK_MEDIA_TESTS: "1"
+          MF_RUN: "^(TestMFColdStart|TestMFLateFirstTransfer)$"
+          GOAUDIO_RUN: "^TestReadersAreTotal$"
+        run: |
+          set +e
+          rc=0
+          # on C:, where go test links and runs its binaries
+          bin=$(cygpath -u "$TEMP")/clack-mf-cold
+          mkdir -p "$bin"
+          go test -c -o "$bin/mf.test.exe" ./internal/media/mf || exit 1
+          go test -c -o "$bin/goaudio.test.exe" ./internal/media/goaudio || exit 1
+          ps1=$(cygpath -w "$GITHUB_WORKSPACE/.github/scripts/cold-disk.ps1")
+          stop="$RUNNER_TEMP\\clack-flood.stop"
+          stop_u=$(cygpath -u "$stop")
+          probe="$USERPROFILE\\clack-probe.bin"
+          pwsh -NoProfile -File "$ps1" probe "$probe" || exit 1 # made
+          # one test binary from its package's dir, its files cold, C: flooded
+          cold() {
+            local pkg=$1 run=$2 log=$3
+            rm -f "$stop_u"
+            pwsh -NoProfile -File "$ps1" purge || exit 1
+            pwsh -NoProfile -File "$ps1" flood "$USERPROFILE\\clack-flood-1.bin" "$stop" 90 &
+            local f1=$!
+            pwsh -NoProfile -File "$ps1" flood "$USERPROFILE\\clack-flood-2.bin" "$stop" 90 &
+            local f2=$!
+            sleep 8 # the floods at the cap, 82 s of them left
+            pwsh -NoProfile -File "$ps1" probe "$probe"
+            (cd "internal/media/$pkg" && ${XF_BIN:+"$XF_BIN"} "$bin/$pkg.test.exe" -test.count=1 -test.v -test.timeout 8m -test.run "$run") > "$log" 2>&1 || rc=1
+            touch "$stop_u"
+            wait "$f1" "$f2"
+            echo "== $pkg: $(grep -c -- '--- FAIL' "$log") FAIL lines"
+            grep -E -- '--- FAIL|took over|mf_windows_test.go:[0-9]+: (loadedmetadata|no |the warm-up|first frame [0-9])' "$log" | cut -c1-700 | head -14
+          }
+          n=$COUNT; [ "$n" -gt 5 ] && n=5
+          for i in $(seq 1 "$n"); do
+            echo "== round $i"
+            cold mf "$MF_RUN" "$RUNNER_TEMP/mf-cold-mf-$i.log"
+            cold goaudio "$GOAUDIO_RUN" "$RUNNER_TEMP/mf-cold-goaudio-$i.log"
+          done
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: mf-cold-logs-${{ matrix.runner }}
+          path: ${{ runner.temp }}/mf-cold-*.log
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -6551,6 +6638,7 @@ jobs:
       - fling-22px
       - history-changed
       - ephemeral-actions
+      - mf-cold
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

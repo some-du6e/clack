@@ -198,6 +198,12 @@ var delayFirstTransfer atomic.Int64
 // there's no audio output (tests: the 2.2 s to the metadata, muted or not).
 var forceAudioRenderer atomic.Bool
 
+// forceMuted makes engines muted whatever the audio check found (tests:
+// TestMFColdStart's warm-up process reads Media Foundation's files for a
+// muted engine and none of the audio renderer's, which the process it
+// warms reads cold if its engine is made with one).
+var forceMuted atomic.Bool
+
 // The tests' hooks, set before any player is made: each of the demuxer's
 // reads as it ends (the file's id, where, the bytes it got, when the
 // engine asked for it), and each of the engine's events as it comes
@@ -533,6 +539,10 @@ func (p *player) run() {
 				}
 			} else {
 				p.audio = "the default output"
+			}
+			if forceMuted.Load() && !p.noAudio {
+				p.noAudio = true
+				p.audio += ": the engine is made muted all the same (the test's)"
 			}
 		case <-lateC:
 			p.audioKnown, p.noAudio = true, true
