@@ -592,11 +592,13 @@ type EmailAttachment struct {
 type Doc struct {
 	Blocks []Block
 	Jumbo  bool // emoji-only, render emoji 32px
-	// Text is the message's text when its blocks drew instead
-	// (FromMessage): what PlainText reads when the blocks give no text,
-	// as convertMessageToPlainText falls back to getMessageText.
-	Text    string
-	textRes Resolver
+	// Fallback is the message's own text, converted, when its blocks
+	// drew instead and give no plain text (FromMessage: a carousel of
+	// cards): what PlainText reads then, as convertMessageToPlainText
+	// falls back to getMessageText. Plain data like the rest of Doc: a
+	// conversion again of the same message is DeepEqual to this one
+	// (messages' takeConverted).
+	Fallback []Block
 }
 
 // MemberNamer is an optional Resolver extension: a member's name as

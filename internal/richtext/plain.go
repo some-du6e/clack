@@ -22,12 +22,25 @@ func PlainTextWith(d Doc, text SpanText) string {
 	var b strings.Builder
 	writeBlocks(&b, d.Blocks, text)
 	s := strings.TrimRight(b.String(), "\n")
-	if s == "" && d.Text != "" {
+	if s == "" && len(d.Fallback) > 0 {
 		// convertMessageToPlainText: blocks that give no text (a carousel
 		// of cards) read as the message's own text (getMessageText)
-		return PlainTextWith(Doc{Blocks: FromMrkdwn(d.textRes, d.Text)}, text)
+		return PlainTextWith(Doc{Blocks: d.Fallback}, text)
 	}
 	return s
+}
+
+// blocksHaveText reports whether bs give any plain text, the walk ending
+// at the first block that does.
+func blocksHaveText(bs []Block) bool {
+	var b strings.Builder
+	for i := range bs {
+		writeBlock(&b, &bs[i], nil)
+		if strings.TrimRight(b.String(), "\n") != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func writeBlocks(b *strings.Builder, bs []Block, text SpanText) {
