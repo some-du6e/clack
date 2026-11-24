@@ -70,6 +70,22 @@ func inState(states ...DownloadState) func(Download, bool) bool {
 	}
 }
 
+// settled is a download that has ended, completed or interrupted, with its
+// runner gone. A cut body is Interrupted for a moment before its
+// auto-resume (as Electron's item is), and that moment isn't the end.
+func settled(a *App, id string) func(Download, bool) bool {
+	return func(d Download, found bool) bool {
+		if !found || (d.State != DownloadCompleted && d.State != DownloadInterrupted) {
+			return false
+		}
+		ds := a.Downloads()
+		ds.mu.Lock()
+		defer ds.mu.Unlock()
+		it := ds.items[id]
+		return it != nil && it.cancel == nil
+	}
+}
+
 // sameAsBigFile reads p and checks it is big file id, size bytes, byte
 // for byte (streamed: neither copy is held).
 func sameAsBigFile(t *testing.T, p, id string, size int64) {
@@ -151,7 +167,7 @@ func TestDownloadStreamsFileOver64MB(t *testing.T) {
 		}
 	}()
 	dlStart(a, sf, dir)
-	d := dlWait(t, a, sf.ID, 2*time.Minute, inState(DownloadCompleted, DownloadInterrupted))
+	d := dlWait(t, a, sf.ID, 2*time.Minute, settled(a, sf.ID))
 	close(stop)
 	<-sampled
 	var m1 runtime.MemStats
@@ -228,7 +244,7 @@ func TestDownloadCutOffIsNeverComplete(t *testing.T) {
 	// cut every time at 1 MB: interrupted after the auto-resumes
 	sf := fs.AddBigFile("F0BIGEXE03", fakeslack.BigFile{Name: "cut.exe", Size: 3 << 20, Cut: 100, CutAt: 1 << 20})
 	dlStart(a, sf, dir)
-	d := dlWait(t, a, sf.ID, 30*time.Second, inState(DownloadCompleted, DownloadInterrupted))
+	d := dlWait(t, a, sf.ID, 30*time.Second, settled(a, sf.ID))
 	if d.State != DownloadInterrupted {
 		t.Fatalf("a body cut off every time ended %s", d.State)
 	}
@@ -253,7 +269,7 @@ func TestDownloadCutOffIsNeverComplete(t *testing.T) {
 	// a server that answers no ranges can't be resumed: one cut ends it
 	sf = fs.AddBigFile("F0BIGEXE04", fakeslack.BigFile{Name: "whole.exe", Size: 3 << 20, Cut: 1, CutAt: 1 << 20, NoRanges: true})
 	dlStart(a, sf, dir)
-	d = dlWait(t, a, sf.ID, 30*time.Second, inState(DownloadCompleted, DownloadInterrupted))
+	d = dlWait(t, a, sf.ID, 30*time.Second, settled(a, sf.ID))
 	if d.State != DownloadInterrupted {
 		t.Errorf("a cut-off whole answer ended %s", d.State)
 	}
@@ -264,7 +280,7 @@ func TestDownloadCutOffIsNeverComplete(t *testing.T) {
 	// cut once: the resume brings the rest, and the file is whole
 	sf = fs.AddBigFile("F0BIGEXE05", fakeslack.BigFile{Name: "once.exe", Size: 5<<20 + 7, Cut: 1, CutAt: 2 << 20})
 	dlStart(a, sf, dir)
-	d = dlWait(t, a, sf.ID, 30*time.Second, inState(DownloadCompleted, DownloadInterrupted))
+	d = dlWait(t, a, sf.ID, 30*time.Second, settled(a, sf.ID))
 	if d.State != DownloadCompleted {
 		t.Fatalf("a body cut once ended %s", d.State)
 	}
@@ -289,7 +305,7 @@ func TestDownloadPauseResume(t *testing.T) {
 	}
 	fs.ReleaseBigFile(sf.ID)
 	a.Downloads().Resume(sf.ID)
-	d = dlWait(t, a, sf.ID, 30*time.Second, inState(DownloadCompleted, DownloadInterrupted))
+	d = dlWait(t, a, sf.ID, 30*time.Second, settled(a, sf.ID))
 	if d.State != DownloadCompleted {
 		t.Fatalf("the resumed download ended %s", d.State)
 	}
