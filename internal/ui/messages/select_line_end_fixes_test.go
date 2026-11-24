@@ -44,7 +44,21 @@ func TestToolbarClickOverRowAbove(t *testing.T) {
 				t.Fatalf("Add reaction at %v isn't over the row above's text (row %d, local %v): the test proves nothing", p, i, local)
 			}
 			n := len(e.h.overlays)
-			e.selEvents(selPress(p, 0), selRelease(p, 40*time.Millisecond))
+			// a real click: the press in one frame, the release frames
+			// later (a drag started by the press hides the toolbar between)
+			e.clock += time.Second
+			pr := selPress(p, 0)
+			pr.Time += e.clock
+			e.r.Queue(pr)
+			for k := 0; k < 3; k++ {
+				e.frame()
+			}
+			rl := selRelease(p, 0)
+			rl.Time = pr.Time + 80*time.Millisecond
+			e.r.Queue(rl)
+			for k := 0; k < 3; k++ {
+				e.frame()
+			}
 			if len(e.h.overlays) != n+1 {
 				t.Errorf("a click on Add reaction opened %d overlays, want the reaction picker", len(e.h.overlays)-n)
 			}
