@@ -1771,7 +1771,7 @@ func (f *Files) createFromTemplate(t fileTemplate) {
 		return err
 	}, func(err error) {
 		if err != nil {
-			f.h.Toast("Couldn't create the list: " + friendlyErr(err))
+			popups.FailedToast(f.h, "views: lists create", err)
 			return
 		}
 		if lo, ok := f.h.(interface{ OpenListFull(id string) }); ok {

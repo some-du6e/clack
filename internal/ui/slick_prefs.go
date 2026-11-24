@@ -100,7 +100,7 @@ func (p *slickPage) write(f func(ctx context.Context, s *slick.Slick) error) {
 		defer cancel()
 		if err := f(ctx, s); err != nil {
 			log.Printf("slick: %v", err)
-			p.a.Post(func() { p.a.Toast(err.Error()) })
+			p.a.Post(func() { popups.FailedToast(p.a, "slick: settings write", err) })
 		}
 		p.a.Invalidate()
 	}
@@ -1355,7 +1355,8 @@ func (p *slickPage) fileControl(gtx layout.Context, key, label string, o slick.O
 		go func() {
 			path, err := a.openFilePath(label, accept)
 			if err != nil {
-				a.Post(func() { a.Toast(err.Error()) })
+				log.Printf("slick: file option: %v", err)
+				a.Post(func() { a.Toast("This computer has no file chooser " + AppName + " can open") })
 				return
 			}
 			if path != "" {

@@ -1614,7 +1614,7 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 	case cdDlgHide:
 		d.closeDialog()
 		if err != nil {
-			d.h.Toast("Couldn’t hide " + dl.userName + ": " + friendlyErr(err))
+			popups.FailedToast(d.h, "views: hide member", err)
 			return
 		}
 		d.closed = true
@@ -1813,7 +1813,7 @@ func (d *ChannelDetails) updateHeaderDM(gtx C, inf core.ChannelDetails) {
 		if _, done, err := d.x.hideOp.get(); done {
 			d.x.hidePending = false
 			if err != nil {
-				d.h.Toast("Couldn’t unhide " + displayName(u) + ": " + friendlyErr(err))
+				popups.FailedToast(d.h, "views: unhide member", err)
 			}
 		}
 	}

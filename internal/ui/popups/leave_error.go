@@ -9,6 +9,7 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -162,4 +163,19 @@ func LeaveChannelError(h Host, name, code string, leave func(ctx context.Context
 		},
 	})
 	return m
+}
+
+// Toaster is any host's Toast.
+type Toaster interface{ Toast(text string) }
+
+// FailedToast is a write's failure where Slack's code has no text of its
+// own for it: the error goes to the log (with what failed) and the toast
+// is Slack's generic "Something went wrong. Please try again." (its most
+// used failure text, as later_todos' BulkActionErrorToast and the agent
+// task actions show it), never the error chain.
+func FailedToast(h Toaster, what string, err error) {
+	log.Printf("%s: %v", what, err)
+	if h != nil {
+		h.Toast(i18n.T("general", "Something went wrong. Please try again."))
+	}
 }

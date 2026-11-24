@@ -1182,7 +1182,8 @@ func (d *Drafts) drainDone() {
 			if e := d.edit; e != nil && e.id == x.closeEdit {
 				e.busy = false
 			}
-			d.h.Toast(x.errMsg + ": " + friendlyErr(x.err))
+			log.Printf("views: drafts: %s: %v", x.errMsg, x.err)
+			d.h.Toast(x.errMsg)
 		} else {
 			if x.saved != nil {
 				l := d.all()
