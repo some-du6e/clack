@@ -2,8 +2,8 @@
 # apt-get for GitHub's runners, same arguments. On 2026-11-11 their
 # lookups of *.ubuntu.com failed or hung for hours (no timeout: jobs sat
 # 20+ min in "apt-get update"), so an update is limited to 5 min and an
-# install to 10, and after a failure the Ubuntu sources move to the
-# kernel.org mirror for one more try. On 2026-11-24 the first try's
+# install to 10, and after a failure the Ubuntu mirrors move to kernel.org's
+# for one more try. On 2026-11-24 the first try's
 # install stood still for its whole 10 min, the fallback's start then too
 # late for the job's budget: huddle's ffmpeg on train-238 (45306370027) and
 # windows' gcc-mingw-w64-x86-64 on bk-data-viz-5 (45313713198), both
@@ -78,8 +78,16 @@ total=600
 [ "$1" = update ] && total=300
 run "$total" 60 "$@" && exit 0
 echo "::warning::apt-get $1 failed; using mirrors.edge.kernel.org"
-sed -i -E 's#https?://(azure\.archive|archive|security)\.ubuntu\.com/ubuntu/?#http://mirrors.edge.kernel.org/ubuntu/#g' \
-	/etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null
+# The runners' sources name no host: they read mirror+file:/etc/apt/
+# apt-mirrors.txt (azure.archive.ubuntu.com, then archive and security,
+# runner-images' configure-apt-sources.sh), which apt moves down only when
+# a mirror errors, not when it stands still. Rewriting the sources alone
+# moved nothing there (flake-check apt-stall 45351732813: every fallback
+# went back to the hung mirror), so the list's hosts move too. ARM's
+# ports.ubuntu.com stays: kernel.org has no ubuntu-ports.
+sed -i -E 's#https?://(azure\.archive|archive|security|[a-z0-9-]+\.ec2\.archive)\.ubuntu\.com/ubuntu/?#http://mirrors.edge.kernel.org/ubuntu/#g' \
+	/etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null
+echo "apt.sh: the Ubuntu archive is now $(grep -hoE 'https?://[^[:space:]]+' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null | sort -u | tr '\n' ' ')"
 if [ "$1" != update ]; then
 	timeout 300 dpkg --configure -a || true
 	run 300 120 update -qq || true
