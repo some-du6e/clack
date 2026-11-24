@@ -1007,7 +1007,9 @@ func (s *listState) build(h Host, now time.Time) {
 	s.items = s.items[:0]
 	msgs := s.snap.msgs
 	if !s.thread {
-		if s.snap.older || (s.snap.hasMore && len(msgs) > 0) {
+		// s.own: a page the patches hid entirely (dropHidden) has older
+		// pages before it all the same
+		if s.snap.older || (s.snap.hasMore && (len(msgs) > 0 || s.own[0] != "")) {
 			s.items = append(s.items, item{kind: itLoading, key: "loading"})
 		} else if s.snap.loaded {
 			s.items = append(s.items, item{kind: itIntro, key: "intro"})

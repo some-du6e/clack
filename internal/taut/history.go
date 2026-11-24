@@ -37,7 +37,14 @@ type historyView struct {
 	// at (viewNow): a key just watched, or one a change Go made may move
 	// (retell: a jump's highlight)
 	waiting map[string]historyWait
+	// last: what JS last told of keys let go (sweepLocked), at most
+	// historyLastMax of them: a list back on one draws it until JS answers
+	// again, rather than everything the patches hid for a moment
+	last map[string]*Hidden
 }
+
+// historyLastMax bounds historyView.last.
+const historyLastMax = 64
 
 type historyWait struct {
 	need uint64
@@ -111,20 +118,33 @@ func (t *Taut) HistoryHidden(key string) (h *Hidden, ok bool) {
 	}
 	hv.mu.Unlock()
 	if post {
+		// what Go queued for the mirror goes first (a jump's viewUiState
+		// highlight, SetViewHighlight, which retells only watched keys),
+		// so a key watched anew is answered with the patches reading it
+		t.mirror.send()
 		t.postHistoryWatch()
 	}
 	return h, ok
 }
 
 // sweepLocked makes the watched keys the ones a list asked for within
-// historyIdle, letting the rest go (and what JS told of them: watched
-// again, a key starts from nothing), and reports whether they changed.
-// A key watched anew waits for the call that will name it (mu).
+// historyIdle, letting the rest go (what JS told of them kept in last),
+// and reports whether they changed. A key watched anew waits for the call
+// that will name it, with what JS last told of it meanwhile (mu).
 func (hv *historyView) sweepLocked(now int64) (changed bool) {
 	hv.swept = now
 	next := make(map[string]bool, len(hv.read))
 	for k, at := range hv.read {
 		if now-at > historyIdle {
+			if h, told := hv.hidden[k]; told {
+				for o := range hv.last {
+					if len(hv.last) < historyLastMax {
+						break
+					}
+					delete(hv.last, o)
+				}
+				hv.last[k] = h
+			}
 			delete(hv.read, k)
 			delete(hv.hidden, k)
 			delete(hv.waiting, k)
@@ -134,6 +154,10 @@ func (hv *historyView) sweepLocked(now int64) (changed bool) {
 		if !hv.watched[k] {
 			changed = true
 			hv.waiting[k] = historyWait{hv.nextCallLocked(), now}
+			if h, kept := hv.last[k]; kept {
+				hv.hidden[k] = h // drawn until JS tells it again
+				delete(hv.last, k)
+			}
 		}
 	}
 	if !changed && len(next) == len(hv.watched) {
@@ -261,6 +285,7 @@ func (hv *historyView) reset() {
 	clear(hv.hidden)
 	clear(hv.watched)
 	clear(hv.waiting)
+	clear(hv.last)
 	hv.swept = 0
 }
 
@@ -269,6 +294,7 @@ func (hv *historyView) init() {
 	hv.hidden = map[string]*Hidden{}
 	hv.watched = map[string]bool{}
 	hv.waiting = map[string]historyWait{}
+	hv.last = map[string]*Hidden{}
 }
 
 func sameHidden(a, b *Hidden) bool {

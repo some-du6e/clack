@@ -561,11 +561,10 @@ T.views = (pairs) => {
  * mirror's history doesn't list yet is never hidden.
  */
 let historyWatch = new Map() // key → the hidden timestamps Go was last told, joined
+let historyRefs = new Map() // key → [raw, patched] channelHistory[key] as last read: unchanged, nothing to read again
 let historyCall = 0 // the last watchHistory call's number: Go waits on a key until a tell as of a call it made
-function historyHidden(key) {
-  const raw = getRawState()?.channelHistory?.[key]
+function historyHidden(raw, view) {
   if (!raw || !Array.isArray(raw.slices)) return []
-  const view = getState()?.channelHistory?.[key]
   if (view === raw) return []
   const listed = (h) => (Array.isArray(h?.slices) ? h.slices : []).flatMap((s) => (Array.isArray(s?.timestamps) ? s.timestamps : []))
   const kept = new Set(listed(view))
@@ -573,12 +572,30 @@ function historyHidden(key) {
 }
 const tellGoHistory = batcher(() => {
   if (!historyWatch.size) return
+  if (!sliceLayers.has('channelHistory')) {
+    // nothing patches it any more: stop (Go posts the keys again when a patch comes)
+    historyWatch = new Map()
+    historyRefs = new Map()
+    return
+  }
   const changed = {}
   let any = false
+  let rawState, viewState
+  try {
+    rawState = getRawState()
+    viewState = getState()
+  } catch (err) {
+    error('reading a patched channelHistory threw', err) // as nothing hidden
+  }
   for (const [key, told] of historyWatch) {
+    const raw = rawState?.channelHistory?.[key]
+    const view = viewState?.channelHistory?.[key]
+    const seen = historyRefs.get(key)
+    if (told !== undefined && seen && seen[0] === raw && seen[1] === view) continue // the same history, patched the same
+    historyRefs.set(key, [raw, view])
     let hidden
     try {
-      hidden = historyHidden(key)
+      hidden = historyHidden(raw, view)
     } catch (err) {
       error('reading a patched channelHistory threw', err)
       hidden = []
@@ -600,6 +617,7 @@ subscribe(tellGoHistory)
 T.watchHistory = (keys, call) => {
   historyCall = typeof call === 'number' ? call : historyCall
   historyWatch = new Map()
+  historyRefs = new Map()
   for (const k of Array.isArray(keys) ? keys : []) if (typeof k === 'string') historyWatch.set(k, undefined)
   tellGoHistory()
 }

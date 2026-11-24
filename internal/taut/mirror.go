@@ -491,6 +491,20 @@ func (m *mirror) watching(slice, key string) bool {
 	return ok
 }
 
+// historyKeysOf is the channelHistory keys JS read of channel ch: its
+// own and its threads' (ch-threadTs).
+func (m *mirror) historyKeysOf(ch string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var keys []string
+	for k := range m.watched["channelHistory"] {
+		if k == ch || strings.HasPrefix(k, ch+"-") {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
 // watch records what JS just read, so sweep can tell when it changes
 // without an event (a history page core loaded on the UI's request).
 func (m *mirror) watch(slice, key string, fp uint64) {
@@ -551,7 +565,11 @@ func (m *mirror) sweep() {
 		if fp != it.fp {
 			m.invalidate(it.slice, it.key)
 			if it.slice == "messages" {
-				m.invalidate("channelHistory")
+				// the channel's history and its threads', not every one
+				// JS read (each a rebuild in Go)
+				if keys := m.historyKeysOf(it.key); len(keys) > 0 {
+					m.invalidate("channelHistory", keys...)
+				}
 				m.invalidate("reactions")
 			}
 		}

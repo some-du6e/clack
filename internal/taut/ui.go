@@ -185,10 +185,17 @@ func (u *uiState) setStatePatched(s statePatchInfo) {
 	// which slices plugins patch changed (a patch added or gone): the UI
 	// starts or stops reading views of them, which it does only in a frame
 	moved := u.state.All != s.All || !slices.Equal(u.state.Slices, s.Slices)
+	had := slices.Contains(u.state.Slices, "channelHistory") || u.state.All
 	u.state = s
 	u.mu.Unlock()
 	if moved {
 		u.textRewrites.Store(false) // what rewrote text may be gone: seen again if not
+	}
+	if had && !s.All && !slices.Contains(s.Slices, "channelHistory") {
+		// JS stops watching channelHistory once nothing patches it
+		// (tellGoHistory): a patch that comes back is posted every key
+		// again
+		u.history.reset()
 	}
 	if !s.All && len(s.Slices) == 0 {
 		u.patchedSlices.Store(nil)

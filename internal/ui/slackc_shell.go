@@ -227,11 +227,32 @@ func (h hdrSearch) tip() string {
 	return nsHdrSearch.T("Search in channel ({shortcut})", "shortcut", key)
 }
 
+// clsHdrSearch is the search button's element as Slack's IconButton
+// renders it (medium, no border), with its data-qa and aria-label, for
+// plugins' selectors; clsHdrSearchDM is a DM's or group DM's.
+var (
+	clsHdrSearch   = slackc.Class("c-button-unstyled c-icon_button c-icon_button--size_medium p-view_header_search_action_button--no-border c-icon_button--default", "data-qa", "search_in_channel_button", "aria-label", "Search in channel").Tag("button")
+	clsHdrSearchDM = slackc.Class("c-button-unstyled c-icon_button c-icon_button--size_medium p-view_header_search_action_button--no-border c-icon_button--default", "data-qa", "search_in_channel_button", "aria-label", "Search in DM").Tag("button")
+)
+
 // layout draws the button at the origin with its tooltip.
 func (h hdrSearch) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	a := h.a
 	c := &a.th.C
 	cl := a.clicks.get("hdr.search")
+	def := clsHdrSearch
+	if h.conv != nil && (h.conv.Kind == "im" || h.conv.Kind == "mpim") {
+		def = clsHdrSearchDM
+	}
+	var st css.State
+	if cl.Hovered() {
+		st |= css.StateHover
+	}
+	el := def.Enter(gtx, st, 0)
+	defer el.Leave()
+	if el.Hidden() {
+		return layout.Dimensions{}
+	}
 	d := iconButton(gtx, cl, "search", 28, 20, c.FgMuted, c.BgHover, 8)
 	popups.Tooltip(gtx, a.th, &a.hdrX().searchTip, cl.Hovered(), d.Size, popups.Below, h.tip(), "")
 	if hdrSearchTap != nil {
