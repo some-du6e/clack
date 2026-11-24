@@ -238,7 +238,7 @@
       ],
       "winner": "taut",
       "reason": "no behaviour checks, both load, 8.5x less JS memory",
-      "notes": "No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which)."
+      "notes": "No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs."
     },
     {
       "name": "Better Typing Indicator",
@@ -1097,7 +1097,7 @@
       ],
       "winner": "taut",
       "reason": "no behaviour checks, both load; costs within noise, smaller bundle (2.4 KB vs 6.2 KB)",
-      "notes": "No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which)."
+      "notes": "No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs."
     },
     {
       "name": "Last Seen",
@@ -1340,7 +1340,7 @@
       ],
       "winner": "taut",
       "reason": "no behaviour checks, both load, 3.0x faster to load, 3.4x less JS memory",
-      "notes": "No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which)."
+      "notes": "No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs."
     },
     {
       "name": "Office Hours",
@@ -1569,7 +1569,7 @@
       ],
       "winner": "taut",
       "reason": "no behaviour checks, both load, 1.4x faster to load, 1.5x less frame overhead",
-      "notes": "No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which)."
+      "notes": "No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs."
     },
     {
       "name": "Quick Join",
@@ -1709,7 +1709,7 @@
       ],
       "winner": "taut",
       "reason": "no behaviour checks, both load; costs within noise, smaller bundle (2.6 KB vs 7.6 KB)",
-      "notes": "No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which)."
+      "notes": "No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs."
     },
     {
       "name": "Restricted Channel Warning",
