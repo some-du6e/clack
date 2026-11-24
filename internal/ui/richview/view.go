@@ -336,7 +336,7 @@ func (v *View) handAreas(gtx layout.Context, dates bool) {
 		if hr.r.Empty() {
 			continue
 		}
-		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly {
+		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly || v.inert(hr.t) {
 			continue // no click: the text cursor stays
 		}
 		s := clip.Rect(hr.r).Push(gtx.Ops)
@@ -1344,7 +1344,6 @@ func bytesForRunes(s string, r int) int {
 	return b
 }
 
-// targetAt returns the clickable target under p.
 // noLinkingKind reports whether a target of kind k is one noLinking takes
 // the pointer from: a mention's, a link's, a date's.
 func noLinkingKind(k targetKind) bool {
@@ -1355,12 +1354,13 @@ func noLinkingKind(k targetKind) bool {
 	return false
 }
 
+// targetAt returns the clickable target under p.
 func (v *View) targetAt(p f32.Point) int16 {
 	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
 		if f.target >= 0 && fragHas(f, p) {
-			if v.opts.NoLinking && int(f.target) < len(v.d.targets) && noLinkingKind(v.d.targets[f.target].kind) {
+			if v.inert(f.target) {
 				continue // noLinking: drawn, not a link (Options.NoLinking)
 			}
 			return f.target
@@ -1368,11 +1368,16 @@ func (v *View) targetAt(p f32.Point) int16 {
 	}
 	// Later hits are on top (cards contain their images).
 	for i := len(v.d.hits) - 1; i >= 0; i-- {
-		if pt.In(v.d.hits[i].r) {
+		if pt.In(v.d.hits[i].r) && !v.inert(v.d.hits[i].t) { // a mention's pill too
 			return v.d.hits[i].t
 		}
 	}
 	return -1
+}
+
+// inert reports whether Options.NoLinking takes target t's pointer.
+func (v *View) inert(t int16) bool {
+	return v.opts.NoLinking && t >= 0 && int(t) < len(v.d.targets) && noLinkingKind(v.d.targets[t].kind)
 }
 
 // selectWord selects what a double click at off does (HandleDoubleClick):
