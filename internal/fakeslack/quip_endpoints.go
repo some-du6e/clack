@@ -271,8 +271,8 @@ func (cs *canvasStore) quipLoad(s *Server, req *QuipRequest) (int, []byte, strin
 			return cs.quipParcel(s, req, &l.Parcels[0])
 		}
 	}
-	// srhK.reloadThreadBulkLoad's request, and nothing else
-	if thread == "" || len(l.IndexIDs) > 0 || l.UserAction != nil || l.UserActionSequence != nil || len(l.BulkLoads) != 1 ||
+	// srhK.reloadThreadBulkLoad's request, and nothing else (no parcels)
+	if thread == "" || len(l.IndexIDs) > 0 || l.UserAction != nil || l.UserActionSequence != nil || len(l.Parcels) > 0 || len(l.BulkLoads) != 1 ||
 		quip.FieldsString(&l.BulkLoads[0]) != "1,2" || *l.BulkLoads[0].Type != quip.BulkThread || *l.BulkLoads[0].Arg0 != thread {
 		req.Status, req.Why = http.StatusBadRequest, "not load-data's request for one thread (object_ids [t], bulk_loads [{THREAD, t}])"
 		return http.StatusBadRequest, nil, ""
