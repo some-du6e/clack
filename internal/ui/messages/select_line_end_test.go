@@ -63,17 +63,17 @@ func TestSelectLineEnd(t *testing.T) {
 			} {
 				p := e.selAtIn(c.ts, c.sub, 1)
 				far := f32.Pt(880, p.Y) // well past the line's right end, inside the view
-				if got := e.sleDrag(p, far); got != c.toEnd {
+				if got, _ := e.sleDrag(p, far); got != c.toEnd {
 					t.Errorf("%s %s: mid-line → past its end selected %q, want %q", mode, c.ts, got, c.toEnd)
 				}
-				got := e.sleDrag(p, f32.Pt(p.X, 695)) // below the last message
+				got, b := e.sleDrag(p, f32.Pt(p.X, 695)) // below the last message
 				if !strings.HasPrefix(got, c.below) || !strings.HasSuffix(got, "second block text") {
 					t.Errorf("%s %s: mid-line → below the list selected %q, want %q… through the last message's end", mode, c.ts, got, c.below)
 				}
-				if b := e.v.s.sel.b; b.key != sleTwo || b.off != e.row(sleTwo).rv.PlainLen() {
+				if b.key != sleTwo || b.off != e.row(sleTwo).rv.PlainLen() {
 					t.Errorf("%s %s: below the list ended at %v, want the last message's end", mode, c.ts, b)
 				}
-				if got := e.sleDrag(far, e.selAtIn(c.ts, c.next, 1)); got != c.fromEnd {
+				if got, _ := e.sleDrag(far, e.selAtIn(c.ts, c.next, 1)); got != c.fromEnd {
 					t.Errorf("%s %s: a press past the line's end dragged to the next line selected %q, want %q", mode, c.ts, got, c.fromEnd)
 				}
 			}
@@ -82,13 +82,13 @@ func TestSelectLineEnd(t *testing.T) {
 }
 
 // sleDrag presses at from, drags to to, releases, and returns what's
-// selected; then a click elsewhere clears it.
-func (e *ctxEnv) sleDrag(from, to f32.Point) string {
+// selected and where the selection ends; then a click elsewhere clears it.
+func (e *ctxEnv) sleDrag(from, to f32.Point) (string, selPoint) {
 	e.selEvents(selMove(from, 0), selPress(from, 10*time.Millisecond), selDrag(from.Add(f32.Pt(6, 0)), 30*time.Millisecond),
 		selDrag(to, 60*time.Millisecond), selRelease(to, 90*time.Millisecond))
-	got := e.selected()
-	defer e.selEvents(selClicks(f32.Pt(5, 5), 1, 0)...)
-	return got
+	got, b := e.selected(), e.v.s.sel.b
+	e.selEvents(selClicks(f32.Pt(5, 5), 1, 0)...)
+	return got, b
 }
 
 // sleEnv shows a bot's three-line rich_text and a two-block message in
