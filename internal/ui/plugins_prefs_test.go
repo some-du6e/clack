@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/pluginbench"
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
@@ -182,8 +183,7 @@ func TestUnifiedPlugins(t *testing.T) {
 // version and its chevron offers both. installPick goes by how each works
 // in Clack first (Account Switcher's Taut version works fully, Slick's
 // partly), then the plugin bench, then Slick's: both Clear URLs work
-// fully and the bench doesn't know these synthetic files, so Install adds
-// Slick's.
+// fully, so with no bench data Install adds Slick's.
 func TestLibraryGroups(t *testing.T) {
 	a, _ := ttApp(t, t.TempDir())
 	ix := &pluginlib.Index{Schema: 1, Plugins: []pluginlib.Entry{
@@ -237,6 +237,7 @@ func TestLibraryGroups(t *testing.T) {
 	if act := v.action(clear); act.label != "Install" || act.menu == nil {
 		t.Errorf("both running, neither installed: %q (menu %v), want Install with its chevron", act.label, act.menu != nil)
 	}
+	v.bench = &pluginbench.Data{} // no bench data: how they work, then Slick's
 	if w, why := v.installPick(v.installChoices(clear)); w.System != pluginlib.Slick || !strings.Contains(why, "recommended system") {
 		t.Errorf("Install adds %s's Clear URLs (%q), want Slick's: both work fully, no bench data", w.System, why)
 	}
