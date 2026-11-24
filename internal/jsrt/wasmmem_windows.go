@@ -40,3 +40,7 @@ func release(b []byte) error {
 func addrPointer(p uintptr) unsafe.Pointer {
 	return *(*unsafe.Pointer)(unsafe.Pointer(&p))
 }
+
+// populate does nothing on Windows: committed pages fault in where the
+// wasm first writes them (wasmmem_unix.go's populate).
+func populate(b []byte) {}

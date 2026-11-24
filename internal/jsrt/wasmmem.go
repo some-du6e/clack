@@ -51,6 +51,17 @@ func heapMemoryWanted() bool {
 // CLACK_JSRT_HEAP_MEMORY logs it.
 var heapMemoryLogged sync.Once
 
+// populateWanted reports whether committed pages are populated
+// (populate) before the wasm uses them: unless CLACK_JSRT_POPULATE is 0,
+// off, false or no (for comparing).
+func populateWanted() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CLACK_JSRT_POPULATE"))) {
+	case "0", "off", "false", "no":
+		return false
+	}
+	return true
+}
+
 // commitStep is how much more of a reservation is committed at a time (at
 // least what the memory grows by): dlmalloc grows the wasm memory a few
 // pages at a time, and one mprotect per MiB is plenty.
@@ -135,6 +146,9 @@ func (m *reservedMemory) Reallocate(size uint64) []byte {
 			// out of memory or commit charge: memory.grow returns -1 and
 			// QuickJS's malloc NULL, so the allocation throws in JS
 			return nil
+		}
+		if populateWanted() {
+			populate(m.buf[m.committed:end])
 		}
 		m.committed = end
 	}
