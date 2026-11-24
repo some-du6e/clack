@@ -511,6 +511,19 @@ func (t *Taut) SetOption(ctx context.Context, id, key string, value any) error {
 	return t.applyConfigLocked(ctx, p, wasRunning)
 }
 
+// SecretOption reports whether plugin id's option key is a secret (kept
+// in secret storage, not config.json): SetOption with "" clears it.
+func (t *Taut) SecretOption(id, key string) bool {
+	unlock := t.lock(id)
+	defer unlock()
+	p := t.get(id)
+	if p == nil || p.meta == nil {
+		return false
+	}
+	o := p.meta.option(key)
+	return o != nil && o.Kind.Type == "secret"
+}
+
 // ResetOption drops a saved option so the default applies again.
 func (t *Taut) ResetOption(ctx context.Context, id, key string) error {
 	unlock := t.lock(id)

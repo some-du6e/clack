@@ -32,15 +32,15 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// guardEnv is a channel of 240 messages 90 s apart (each by self when
-// self(i)), its list at its newest messages; setup runs before the view
-// opens.
+// guardEnv is a channel of 240 messages 90 s apart (histDay; each by self
+// when self(i)), its list at its newest messages; setup runs before the
+// view opens.
 func guardEnv(t *testing.T, ch string, self func(i int) bool, setup func(app *core.App, fs *fakeslack.Server, tss []string)) (*winEnv, *fakeslack.Server) {
 	t.Helper()
 	app, fs, _ := shotsApp(t)
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "jump-guards", IsChannel: true, IsMember: true, NumMembers: 12})
 	e := &winEnv{h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}}}
-	base := time.Now().Add(-7 * time.Hour).Unix()
+	base := histDay()
 	for i := 0; i < 240; i++ {
 		ts := fmt.Sprintf("%d.000100", base+int64(i)*90)
 		user, text := "UBEN00001", fmt.Sprintf("message %d", i)

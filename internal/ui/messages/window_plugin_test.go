@@ -20,7 +20,7 @@ func TestWindowRowsDrawPluginViews(t *testing.T) {
 	app, fs, _ := shotsApp(t)
 	const ch = "C0WINPLUG1"
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "careers", IsChannel: true, IsMember: true, NumMembers: 12})
-	base := time.Now().Add(-7 * time.Hour).Unix()
+	base := histDay()
 	var tss []string
 	for i := 0; i < 240; i++ {
 		ts := fmt.Sprintf("%d.000100", base+int64(i)*90)

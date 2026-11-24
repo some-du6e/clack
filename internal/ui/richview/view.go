@@ -169,6 +169,9 @@ type View struct {
 	// (ImageMenuHandler), so the hover group has its More actions; a
 	// host without one gets no More (a button that would do nothing)
 	imgMenu bool
+	// imgDL: the handler downloads an image's Slack file
+	// (ImageDownloadHandler), so the group can lead with Download
+	imgDL bool
 	// menuImg is the image whose group's More menu is open: the group
 	// stays up until the host says the menu went
 	// (p-attachment_image_actions--menu-open)
@@ -405,6 +408,7 @@ func (v *View) selRange() (int32, int32) {
 func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimensions {
 	v.dark = st != nil && st.Palette.Dark
 	_, v.imgMenu = h.(ImageMenuHandler)
+	_, v.imgDL = h.(ImageDownloadHandler)
 	if st != nil {
 		v.hitImgs = st.Images
 	}

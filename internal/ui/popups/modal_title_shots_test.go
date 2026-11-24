@@ -40,6 +40,8 @@ func TestModalTitleShots(t *testing.T) {
 			{"modal-title-make-manager", OpenMakeChannelManagerModal(h, ch, member).Modal},
 			{"modal-title-remove-manager", OpenRemoveManagerModal(h, ch, member).Modal},
 			{"modal-title-remove-member", OpenRemoveMemberDialog(h, ch, member, nil).Modal},
+			{"modal-title-membership", mtShown(h, func() { MaybeLeaveChannel(h, ch+"-announcements-for-everyone", "channel", true, nil) })},
+			{"modal-title-leave", mtShown(h, func() { MaybeLeaveChannel(h, ch, "private", false, func() {}) })},
 		}
 		for _, s := range shots {
 			var ops op.Ops
@@ -108,4 +110,12 @@ func TestModalTitleLinePixels(t *testing.T) {
 			break
 		}
 	}
+}
+
+// mtShown runs open and returns the modal it showed last.
+func mtShown(h *tzHost, open func()) *Modal {
+	open()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.shown[len(h.shown)-1].(*Modal)
 }

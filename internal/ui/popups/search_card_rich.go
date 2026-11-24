@@ -385,6 +385,14 @@ func (h srCardHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, wi
 	}
 }
 
+// DownloadImageFile is an image's AttachmentImageActions Download on the
+// card: the image's Slack file.
+func (h srCardHandler) DownloadImageFile(f *richtext.File) {
+	if f != nil {
+		DownloadFile(h.v.h, f)
+	}
+}
+
 // ImageMenu is an image's More actions on the card (AttachmentImageActions'
 // menu): Copy link, and Hide image when it has an expandable.
 func (h srCardHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {

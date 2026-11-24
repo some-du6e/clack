@@ -364,7 +364,8 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	y0 := y
 	if top && !l.inAtt {
-		bs = l.arrangeWorkObjects(bs) // where MessageFiles / MessageKitAttachments draw them (workobject.go)
+		bs = l.arrangeWorkObjects(bs)   // where MessageFiles / MessageKitAttachments draw them (workobject.go)
+		bs = l.attachmentsOverLimit(bs) // MessageKitAttachments' 20 (overlimit.go)
 	}
 	edited, editedAfter := -1, -1
 	if top && l.hasLabel() {
@@ -799,6 +800,12 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.AttachmentBlock:
 		if b.Att == nil {
 			return 0
+		}
+		if ol, ok := l.overLimit[b.Att]; ok { // MessageAttachmentOverLimitButton (overlimit.go)
+			return l.overLimitButton(ol, x, y, w)
+		}
+		if b.Att.VideoBlock { // a video block: VideoBlock, a block's renderer, not an attachment (videoblock.go)
+			return l.videoBlock(b, x, y, w)
 		}
 		l.attDepth++
 		defer func() { l.attDepth-- }()
