@@ -113,6 +113,11 @@ type prepareSendArgs struct {
 	DraftID         string          `json:"draftId,omitempty"`
 	ViewContext     string          `json:"viewContext,omitempty"`
 	FileIDs         []string        `json:"fileIds,omitempty"`
+	// PendingFileIDs are the attached files not uploaded yet, by their
+	// pendingFileId: Slack's sendDraftMessage passes the draft's unsent
+	// pending files (getUnsentPendingFileIds, pIyR) beside its file_ids,
+	// so a plugin that takes a send over (Block Kit Send) sees them too.
+	PendingFileIDs []string `json:"pendingFileIds,omitempty"`
 	// SlashCommandAppID picks the app whose command a plugin turned the
 	// message into (NativeAtChannel: at-channel's /channel).
 	SlashCommandAppID string `json:"slashCommandAppId,omitempty"`

@@ -1717,7 +1717,7 @@ func (c *Composer) startSend(o *outgoing) (run func()) {
 func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 	batch := c.att.takeForSend()
 	hasFiles := !batch.empty()
-	job = &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
+	job = &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw, pendingIDs: batch.pendingIDs,
 		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast,
 		ui: c.commandUI()}
 	if o.store != nil {
@@ -1852,6 +1852,7 @@ type sendJob struct {
 	prepared      []core.PreparedUpload
 	pending       []*core.PendingFile // eager uploads still running: the share waits for them
 	raw           []core.UploadFile
+	pendingIDs    []string // the pending and raw files' pendingFileIds (sendBatch.pendingIDs)
 	files         bool
 	draftID, view string
 	// warn is includeBroadcastKeywordWarning (the channel composer, not
@@ -1913,12 +1914,15 @@ func (j *sendJob) args() prepareSendArgs {
 		IncludeBroadcastKeywordWarning: j.warn, SlashCommandAppID: j.o.appID}
 }
 
-// patchArgs are args as the plugins' patches see them: with the files'
-// ids.
+// patchArgs are args as the plugins' patches see them: with the
+// uploaded files' ids, and the pendingFileIds of those still uploading
+// (or uploaded at send), as Slack's sendDraftMessage passes fileIds and
+// pendingFileIds.
 func (j *sendJob) patchArgs(args prepareSendArgs) prepareSendArgs {
 	for _, p := range j.prepared {
 		args.FileIDs = append(args.FileIDs, p.ID)
 	}
+	args.PendingFileIDs = append(args.PendingFileIDs, j.pendingIDs...)
 	return args
 }
 

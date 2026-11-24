@@ -7003,6 +7003,42 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # blockkitsend (2026-11-24): Karim's Block Kit Send, a Taut plugin of
+  # their own outside the Library, in Clack. It says why it won't send a
+  # message with Slack's addEphemeralFeedback, which Clack didn't define,
+  # so Slackbot's note never came; and it leaves a send with files to
+  # Slack, but Clack's prepareAndSendMessage named only the uploaded
+  # files, so it took over a send whose file was still uploading and the
+  # file was lost (pendingFileIds, as Slack's sendDraftMessage passes
+  # them). COUNT runs each. Dispatch with only=blockkitsend.
+  blockkitsend:
+    if: ${{ !inputs.only || startsWith('blockkitsend', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: addEphemeralFeedback in core and as Slack's thunk, a refused send's Slackbot note, a send's pendingFileIds, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestAddEphemeralFeedbackLikeSlack|TestCommandFeedbackReplaced)$' ./internal/core || rc=1
+          go test -count="$COUNT" -timeout 8m -run '^(TestRefusedSendPostsSlackbotNote|TestAddEphemeralFeedbackThunk)$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 8m -run '^TestSendArgsCarryPendingFileIDs$' ./internal/ui/composer || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7158,6 +7194,7 @@ jobs:
       - counts-baseline
       - apt-stall
       - pagekey-day
+      - blockkitsend
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

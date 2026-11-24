@@ -490,34 +490,7 @@ func (a *App) ExpandCommand(ch, threadTS, viewContext string, on bool) string {
 // CommandNote is addEphemeralFeedback with temporary false: the
 // channel's command feedback goes (removeEphemeralMsgsByType), then
 // Slackbot's text stays in ch, untouched by later commands
-// (addEphemeralBotMessage with no type).
+// (addEphemeralBotMessage with no type; ephemeral_feedback.go).
 func (a *App) CommandNote(ch, text string) string {
-	a.clearCommandFeedbackIn(ch)
-	return a.LocalEphemeral(ch, "", text)
-}
-
-// clearCommandFeedbackIn is removeEphemeralMsgsByType for the channel
-// command feedback of ch alone.
-func (a *App) clearCommandFeedbackIn(ch string) {
-	ix := a.Interactive()
-	ix.mu.Lock()
-	keys := ix.feedback[feedbackType]
-	var keep, drop []string
-	for _, k := range keys {
-		if c, _, _ := strings.Cut(k, "/"); c == ch {
-			drop = append(drop, k)
-		} else {
-			keep = append(keep, k)
-		}
-	}
-	if len(drop) > 0 {
-		ix.feedback[feedbackType] = keep
-	}
-	ix.mu.Unlock()
-	for _, k := range drop {
-		c, ts, _ := strings.Cut(k, "/")
-		if ix.Ephemeral(c, ts) {
-			ix.DismissEphemeral(c, ts)
-		}
-	}
+	return a.AddEphemeralFeedback(FeedbackNote{Message: slack.Message{Channel: ch, Text: text}, Lasting: true})
 }

@@ -631,33 +631,10 @@ func (a *App) BroadcastWarningAdmin() (admin bool, settingsURL string) {
 
 // LocalEphemeral adds a Slackbot message only the viewer sees ("Only
 // visible to you") to ch, or to the thread threadTS, on this client
-// alone: Slack's addEphemeralMessage({temporary: true}), which the send
-// checks use to say why a message wasn't sent. It returns the local ts.
-// Callers are off the UI goroutine: Slackbot's profile (name, avatar) is
-// loaded first when the store doesn't have it yet, as Slack's member
-// store always does.
+// alone: Slack's addEphemeralMessage, which the send checks use to say
+// why a message wasn't sent, filed under no ephemeral type. It returns
+// the local ts. Callers are off the UI goroutine (putEphemeral loads
+// Slackbot's profile first when the store doesn't have it).
 func (a *App) LocalEphemeral(ch, threadTS, text string) string {
-	if len(a.S.MissingUsers([]string{"USLACKBOT"})) > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		a.EnsureUsers(ctx, []string{"USLACKBOT"})
-		cancel()
-	}
-	ts := a.pendingTS(ch, threadTS)
-	// Slack's shape (addEphemeralMessage): user USLACKBOT, is_ephemeral, so
-	// plugins reading the messages slice see what they see in Slack.
-	m := slack.Message{Type: "message", TS: ts, User: "USLACKBOT", Text: text, ThreadTS: threadTS, IsEphemeral: true, Channel: ch}
-	ix := a.Interactive()
-	ix.mu.Lock()
-	ix.ephem[ch+"/"+ts] = threadTS
-	if len(ix.local) > 2000 {
-		clear(ix.local)
-	}
-	ix.local[ch+"/"+ts] = true
-	ix.mu.Unlock()
-	a.putLocal(ch, m)
-	v := a.message(ch, &m)
-	a.emit(Event{Type: "message", Channel: ch, TS: ts, ThreadTS: threadTS, UserID: m.User, Msg: &v,
-		Reply: !isTopLevel(&m), ConvKind: a.kindOf(ch)})
-	ix.emit(ViewEvent{Kind: "ephemeral", Channel: ch, TS: ts})
-	return ts
+	return a.putEphemeral(slack.Message{Channel: ch, ThreadTS: threadTS, Text: text})
 }

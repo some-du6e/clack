@@ -694,6 +694,20 @@ function nativeThunk(name) {
   if (name === 'apiCall') return defineThunk(name, (args, d, getState) => apiCallThunk(args[0], getState))
   if (name === 'apiCallExpedited')
     return defineThunk(name, (args, d) => d((thunkCreators.get('apiCall') ?? nativeThunk('apiCall'))({ ...args[0], EXPEDITED: true })))
+  // Slack's addEphemeralFeedback (client-boot w0M8): its args as Slack
+  // reads them (a note is temporary unless temporary is false), the input
+  // back in the conversation's composer (feedbackInput, 05_slack.js), then
+  // Slackbot's note, which Go keeps (core.AddEphemeralFeedback); it
+  // resolves undefined
+  if (name === 'addEphemeralFeedback')
+    return defineThunk(name, async (args) => {
+      const o = args[0]
+      const message = o.message
+      const channelId = message.channel // a call without a message throws, as Slack's does
+      if ((o.inputText || o.inputDelta) && channelId) feedbackInput(channelId, message.thread_ts, o.inputText, o.inputDelta)
+      await go('thunk', name, [{ message: await encodeAsync(message), ephemeralType: o.ephemeralType || '', ignoreExistingMessage: !!o.ignoreExistingMessage, lasting: o.temporary === false }])
+      return undefined
+    })
   const changes = THUNK_CHANGES[name]
   if (!changes) return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(nativeArgs(name, args)))))
   return defineThunk(name, async (args) => {

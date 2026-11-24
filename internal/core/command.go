@@ -367,19 +367,7 @@ func (a *App) ClearCommandFeedback(thread bool) {
 
 // CommandFeedback is addEphemeralFeedback for a command: Slackbot's
 // temporary "Only visible to you" message in ch (or the thread), removed
-// by the next command's ClearCommandFeedback.
+// by the next command's ClearCommandFeedback (ephemeral_feedback.go).
 func (a *App) CommandFeedback(ch, threadTS, text string) string {
-	ts := a.LocalEphemeral(ch, threadTS, text)
-	typ := feedbackType
-	if threadTS != "" {
-		typ = threadFeedbackType
-	}
-	ix := a.Interactive()
-	ix.mu.Lock()
-	if ix.feedback == nil {
-		ix.feedback = map[string][]string{}
-	}
-	ix.feedback[typ] = append(ix.feedback[typ], ch+"/"+ts)
-	ix.mu.Unlock()
-	return ts
+	return a.AddEphemeralFeedback(FeedbackNote{Message: slack.Message{Channel: ch, ThreadTS: threadTS, Text: text}})
 }

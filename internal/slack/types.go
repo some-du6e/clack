@@ -39,6 +39,7 @@ type Message struct {
 	PinnedTo       []string        `json:"pinned_to,omitempty"`
 	PinnedInfo     *PinnedInfo     `json:"pinned_info,omitempty"`
 	ClientMsgID    string          `json:"client_msg_id,omitempty"`
+	SlackbotFeels  string          `json:"slackbot_feels,omitempty"` // a Slackbot note's mood: "sad_surprise" when something failed (addEphemeralFeedback's callers)
 	Hidden         bool            `json:"hidden,omitempty"`
 	// NoDisplay and NoNotifications hold the message's desktop
 	// notification back (client-boot Fpyc's reasons 4 and 5).

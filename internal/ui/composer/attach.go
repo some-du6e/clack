@@ -300,6 +300,9 @@ type sendBatch struct {
 	prepared []core.PreparedUpload // uploaded and processed
 	pending  []*core.PendingFile   // eager uploads still running
 	raw      []core.UploadFile     // no eager upload (it failed): uploaded at send
+	// pendingIDs are the pendingFileIds of the files not uploaded yet
+	// (pending and raw), in the composer's order
+	pendingIDs []string
 }
 
 func (b sendBatch) empty() bool { return len(b.chips) == 0 }
@@ -322,8 +325,10 @@ func (a *attachments) takeForSend() (b sendBatch) {
 		case c.pf != nil && c.prepErr == nil && a.h.Core() != nil:
 			c.pf.Title = c.title
 			b.pending = append(b.pending, c.pf)
+			b.pendingIDs = append(b.pendingIDs, attPendingID(c.id))
 		default:
 			b.raw = append(b.raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data, Subtype: c.subtype(), Type: c.mime()})
+			b.pendingIDs = append(b.pendingIDs, attPendingID(c.id))
 		}
 	}
 	a.chips, a.total = nil, 0

@@ -1872,8 +1872,23 @@ const getInputProxy = named('getInputProxy', (where) => {
     setContents: ({ contents }) => go('input', 'setContents', w, encode(contents?.ops ?? contents)),
     focus: () => go('input', 'focus', w),
     insertText: (t) => go('input', 'insertText', w, t),
+    // Slack's proxy setText is its input's value(text): the text alone, as the contents
+    setText: (t) => go('input', 'setContents', w, encode([{ insert: `${t}` }])),
   }
 })
+/**
+ * addEphemeralFeedback's input part (client-boot w0M8): the text or delta
+ * back in the conversation's composer, or in a thread its thread inputs'
+ * (populateThreadInputs, mHmV: the thread pane's and the Threads view's)
+ */
+function feedbackInput(channelId, threadTs, inputText, inputDelta) {
+  for (const viewContext of threadTs ? ['THREADS_FLEXPANE', 'THREADS_VIEW'] : ['MESSAGE_PANE']) {
+    const input = getInputProxy({ viewContext, channelId, threadTs })
+    if (!input) continue
+    if (inputDelta) input.setContents({ contents: inputDelta.ops })
+    else if (inputText) input.setText(inputText)
+  }
+}
 const isInputRegistered = named('isInputRegistered', (where) => [...inputs.values()].some((x) => x.channelId === where?.channelId && (!where.viewContext || x.viewContext === where.viewContext)))
 
 const viewContexts = Object.freeze({

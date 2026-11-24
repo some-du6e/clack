@@ -88,6 +88,8 @@ var ThunkCatalogue = []ThunkSpec{
 	{"submitView", "{viewId, values, …}", "ui/popups (app modals)", "submitting an app modal"},
 	{"apiCall", "{method, args, …}", "taut", "a Slack API call, settled as Slack's SlackApiRequest settles (05_slack.js apiCallThunk)"},
 	{"apiCallExpedited", "{method, args, …}", "taut", "apiCall with EXPEDITED, through apiCall's creator"},
+	{"addEphemeralFeedback", "{message: {channel, thread_ts?, text, slackbot_feels?, …}, ephemeralType?, ignoreExistingMessage?, temporary?, inputText?, inputDelta?}", "taut",
+		"Slackbot's \"Only visible to you\" note (core.AddEphemeralFeedback); inputText or inputDelta back in the conversation's composer (Slack's input proxy)"},
 	// used by Slick's plugins (docs/PLUGINS-slick.md)
 	{"handleDeepLink", "{uri}", "ui (shell)", "opening a slack:// deep link (UIHooks.DeepLink)"},
 	{"navigate", "{id, viewType, params?, uiState?, options?}", "ui (shell)", "Slack's multi-view navigation: a Channel, Thread or Profile view through its deep link (UIHooks.DeepLink); resolves undefined, as Slack's"},
@@ -723,6 +725,24 @@ func (tt *thunkTable) installDefaults() {
 		},
 		"apiCall":          app().apiCall,
 		"apiCallExpedited": app().apiCall,
+		// Slack's addEphemeralFeedback (client-boot w0M8): its JS thunk
+		// (03_redux.js) has read Slack's args and put the input back; this
+		// is Slackbot's note, as core keeps it (core.AddEphemeralFeedback)
+		"addEphemeralFeedback": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			var o struct {
+				Message        slack.Message `json:"message"`
+				Type           string        `json:"ephemeralType"`
+				IgnoreExisting bool          `json:"ignoreExistingMessage"`
+				Lasting        bool          `json:"lasting"`
+			}
+			if len(a) > 0 {
+				if err := json.Unmarshal(a[0], &o); err != nil {
+					return nil, fmt.Errorf("taut: addEphemeralFeedback: %w", err)
+				}
+			}
+			t.app.AddEphemeralFeedback(core.FeedbackNote{Message: o.Message, Type: o.Type, IgnoreExisting: o.IgnoreExisting, Lasting: o.Lasting})
+			return nil, nil
+		},
 		"openPrefsModal": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			if f := t.opts.UI.OpenPreferences; f != nil {
 				o := argObj(a)
