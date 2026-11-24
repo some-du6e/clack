@@ -85,6 +85,7 @@ func TestTitleEmoji(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		th, fs := newEnv(t, dark)
+		quipOff(th) // checks the title's canvases.edit markdown
 		h := emojiHost{th}
 		v := New(h, fakeslack.CanvasChannel, Full, Actions{})
 		s := newShooter(t, image.Pt(1100, 700))

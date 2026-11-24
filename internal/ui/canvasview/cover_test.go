@@ -32,7 +32,7 @@ func defaultLinePos(r *pointerRig) (x, y float32) {
 // sends nothing and keeps the default line; typing replaces it with an
 // ordinary section.
 func TestDefaultLineOpensEmpty(t *testing.T) {
-	_, fs, r := headRig(t, false, headEmpty)
+	_, fs, r := headRigQuipOff(t, false, headEmpty) // checks the canvases.edit replace
 	v := r.v
 	def := v.blocks[1]
 	if !def.b.Default || v.placeholderRow() != def {

@@ -37,7 +37,7 @@ Remote branch `canvases-2026-11-07` (4e510d1a, `internal/core/canvas_quip.go`) s
 - **Plain content only.** Clack has no Automerge, so it saves text the way Slack does when its CRDT copy is unusable: `content.text`, no `crdt_session` (CANVASES.md "Concurrent edits"). It never writes a `crdt_session`, a lock (`status`), a transient section or `document_change`.
 - **Refuse rather than guess.** A save that doesn't fit what Slack's client would send is refused before it leaves Clack (see "Validation").
 - **Honest headers.** The canvas calls go through `slack.Client`'s transport: Clack's User-Agent, no Origin or Referer.
-- **A gate.** The new path ships behind a switch that is off by default (a `ui.json` key, `canvasQuipEdit`, plus `CLACK_CANVAS_QUIP_EDIT=1`). While it's off, editing a real account's canvas can only fail, so the plan makes the canvas view-only then instead of offering edits that error. Both choices, and when to turn it on, are Karim's.
+- **A gate.** The new path ships behind a switch. It was off by default through alpha.163 and is on from alpha.164 (Karim: "test in prod bud"). `ui.json`'s `"canvas_quip_edit": false` or `CLACK_CANVAS_QUIP_EDIT=0` turns it off, and `CLACK_CANVAS_QUIP_EDIT=1` turns it on; the environment wins over `ui.json`. While it's off, editing a real account's canvas can only fail, so the plan makes the canvas view-only then instead of offering edits that error. Both choices are Karim's.
 
 ## Code layout
 
