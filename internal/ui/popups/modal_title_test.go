@@ -125,12 +125,21 @@ func TestModalTitleTruncates(t *testing.T) {
 	if head := mtFrame(t, m); head != 70 {
 		t.Errorf("a truncated title's header is %dpx, want 70px", head)
 	}
-	if lines := mtLines(m); len(lines) != 1 {
-		t.Errorf("a truncated title drew %d lines %q, want one", len(lines), lines)
+	if !m.TitleCut() {
+		t.Errorf("a truncated long title wasn't cut with an ellipsis (lines %q)", mtLines(m))
 	}
 	o := mtModal(ModalOpts{Title: mtLong}).OldDialog()
-	if head := mtFrame(t, o); head != 70 {
-		t.Errorf("an OldDialog's header is %dpx, want 70px (one line, cut)", head)
+	if head := mtFrame(t, o); head != 70 || !o.TitleCut() {
+		t.Errorf("an OldDialog's header is %dpx, cut %v; want 70px, one line cut", head, o.TitleCut())
+	}
+	// a wrapped title is never cut, a short one fits
+	w := mtModal(ModalOpts{Title: mtLong})
+	if mtFrame(t, w); w.TitleCut() {
+		t.Error("a wrapped title reports a cut")
+	}
+	sh := mtModal(mtTruncated(ModalOpts{Title: "Delete file"}))
+	if mtFrame(t, sh); sh.TitleCut() {
+		t.Error("a short truncating title reports a cut")
 	}
 }
 

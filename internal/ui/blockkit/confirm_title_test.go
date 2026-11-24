@@ -69,8 +69,8 @@ func TestConfirmObjectTitle(t *testing.T) {
 	if bar := m.TitleBar().Dy(); bar != 68 {
 		t.Errorf("the header is %dpx, want .c-dialog__header's 68px (16px + the 36px close button + 16px)", bar)
 	}
-	if lines := m.TitleLines(); len(lines) != 1 || lines[0] != long {
-		t.Errorf("the title drew %q, want it whole on one line (cut there with an ellipsis)", lines)
+	if lines := m.TitleLines(); len(lines) != 1 || !m.TitleCut() {
+		t.Errorf("the title drew %q (cut %v), want it on one line cut with an ellipsis", lines, m.TitleCut())
 	}
 	if len(labels) != 2 || labels[0] != "Cancel" || labels[1] != "Add" {
 		t.Errorf("buttons %q, want the deny then the confirm text: [Cancel Add]", labels)

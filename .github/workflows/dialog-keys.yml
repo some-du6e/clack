@@ -63,7 +63,7 @@ jobs:
       - name: popups dialogs through the router
         run: go test -count=1 -v -timeout 10m -run "$POPUP_TESTS" ./internal/ui/popups
       - name: Block Kit confirm and modal
-        run: go test -count=1 -v -timeout 10m -run 'TestConfirmObjectKeys|TestBlockKitModalKeys|TestConfirmObjectTitle$' ./internal/ui/blockkit
+        run: go test -count=1 -v -timeout 10m -run 'TestConfirmObjectKeys|TestBlockKitModalKeys|TestConfirmObjectTitle$|TestLeaveBumpIsWizardSpeedBump$' ./internal/ui/blockkit
       - name: Notify N people over a real composer editor
         run: go test -count=1 -v -timeout 10m -run 'TestBroadcastWarningKeys|TestBroadcastConfirm' ./internal/ui/composer
       - name: Edit topic over channel details
@@ -77,7 +77,7 @@ jobs:
           mkdir -p "$DIALOG_KEYS_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -timeout 10m -run 'TestDialogKeysShots$' ./internal/ui/
           # long titles: wrapped (c-sk-modal) and cut (DeprecatedDialog)
-          CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -timeout 10m -run 'TestModalTitleShots$' ./internal/ui/popups/
+          CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -timeout 10m -run '^(TestModalTitleShots|TestModalTitleLinePixels)$' ./internal/ui/popups/
           CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -timeout 10m -run 'TestConfirmObjectTitleShots$' ./internal/ui/blockkit/
           ls -l "$DIALOG_KEYS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

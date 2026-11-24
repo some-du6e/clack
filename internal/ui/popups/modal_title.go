@@ -82,42 +82,62 @@ func titleUnits(title, ic, after string) []titleUnit {
 }
 
 // fillTitleLines puts units on lines greedily, as Chrome's line breaker
-// does: a unit joins the line when it fits without its trailing spaces
-// (they hang past the line's end); one too wide for a line of its own
-// takes a line anyway (its end is cut with an ellipsis when drawn).
+// does: a unit joins the line when the line with it fits without its
+// trailing spaces (they hang past the line's end); one too wide for a
+// line of its own takes a line anyway (its end is cut with an ellipsis
+// when drawn). Each candidate line is measured whole, as Chrome shapes
+// it, so kerning across words counts and no per-word rounding adds up.
 // width measures a string on one line, iconW is the icon's advance.
 func fillTitleLines(units []titleUnit, maxW, iconW int, width func(string) int) []titleLine {
 	var lines []titleLine
 	var cur titleLine
-	x, empty := 0, true
+	empty := true
 	for _, u := range units {
-		w := width(strings.TrimRight(u.text, " "))
+		cand := cur
 		if u.icon != "" {
-			w += iconW
+			cand.icon = u.icon
 		}
-		if !empty && x+w > maxW {
-			lines = append(lines, cur)
-			cur, x, empty = titleLine{}, 0, true
-		}
-		if u.icon != "" {
-			cur.icon = u.icon
-		}
-		if cur.icon != "" {
-			cur.post += u.text
+		if cand.icon != "" {
+			cand.post += u.text
 		} else {
-			cur.pre += u.text
+			cand.pre += u.text
 		}
-		full := width(u.text)
-		if u.icon != "" {
-			full += iconW
+		if !empty && lineWidth(cand, iconW, width) > maxW {
+			lines = append(lines, cur)
+			cand = titleLine{icon: u.icon}
+			if u.icon != "" {
+				cand.post = u.text
+			} else {
+				cand.pre = u.text
+			}
 		}
-		x += full
-		empty = false
+		cur, empty = cand, false
 	}
 	if !empty {
 		lines = append(lines, cur)
 	}
 	return lines
+}
+
+// lineWidth is a line's width without its trailing spaces: pre whole
+// when nothing follows it, else up to the icon, its spaces included.
+func lineWidth(ln titleLine, iconW int, width func(string) int) int {
+	if ln.icon == "" {
+		return width(strings.TrimRight(ln.pre, " "))
+	}
+	return leadWidth(ln.pre, width) + iconW + width(strings.TrimRight(ln.post, " "))
+}
+
+// leadWidth is s's width with its trailing spaces, each counted as one
+// space's advance: measured on their own, a right-to-left word's
+// trailing space is a separate run the shaper gives no advance (go-text
+// wrapping.go postProcessLine), so "דוד " would measure as "דוד".
+func leadWidth(s string, width func(string) int) int {
+	t := strings.TrimRight(s, " ")
+	if n := len(s) - len(t); n > 0 {
+		return width(t) + n*(width("x x")-width("xx"))
+	}
+	return width(t)
 }
 
 // titleWrapW is the width a title wraps in: .c-sk-modal_title_bar's
@@ -151,7 +171,15 @@ func (m *Modal) titleLines(gtx layout.Context, th *theme.Theme, cl *Colors, sz, 
 		c.maxW == maxW && c.size == sz && c.lh == lh && c.iconGap == gtx.Metric.PxPerDp {
 		return c.lines
 	}
-	width := func(s string) int {
+	width := titleWidthFunc(gtx, th, cl, sz, lh)
+	lines := fillTitleLines(titleUnits(title, o.TitleIcon, o.TitleAfter), maxW, dp(gtx, 22), width)
+	*c = titleWrap{th: th, title: title, ic: o.TitleIcon, after: o.TitleAfter, maxW: maxW, size: sz, lh: lh, iconGap: gtx.Metric.PxPerDp, lines: lines}
+	return lines
+}
+
+// titleWidthFunc measures a string as a title line draws it, on one line.
+func titleWidthFunc(gtx layout.Context, th *theme.Theme, cl *Colors, sz, lh float32) func(string) int {
+	return func(s string) int {
 		if s == "" {
 			return 0
 		}
@@ -160,23 +188,23 @@ func (m *Modal) titleLines(gtx layout.Context, th *theme.Theme, cl *Colors, sz, 
 		})
 		return d.Size.X
 	}
-	lines := fillTitleLines(titleUnits(title, o.TitleIcon, o.TitleAfter), maxW, dp(gtx, 22), width)
-	*c = titleWrap{th: th, title: title, ic: o.TitleIcon, after: o.TitleAfter, maxW: maxW, size: sz, lh: lh, iconGap: gtx.Metric.PxPerDp, lines: lines}
-	return lines
 }
 
 // drawTitleLines draws a wrapped title, each line lh below the last.
 func drawTitleLines(gtx layout.Context, th *theme.Theme, cl *Colors, sz, lhSp float32, maxW int, lines []titleLine) layout.Dimensions {
 	lh := dp(gtx, lhSp)
+	width := titleWidthFunc(gtx, th, cl, sz, lhSp)
 	for i, ln := range lines {
 		y := i * lh
 		x := 0
 		if ln.pre != "" {
-			d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, lh)}
 				return para(gtx, th, sz, lhSp, theme.Black, cl.Fg, ln.pre, 1)
 			})
-			x = d.Size.X
+			if ln.icon != "" {
+				x = leadWidth(ln.pre, width)
+			}
 		}
 		if ln.icon != "" {
 			at(gtx, image.Pt(x, y+dp(gtx, 6)), func(gtx layout.Context) layout.Dimensions {
@@ -210,6 +238,11 @@ func (m *Modal) TitleLines() []string {
 	}
 	return out
 }
+
+// TitleCut reports that the last frame drew a plain title on one line
+// cut with an ellipsis: it is wider than its line (TruncateTitle, or a
+// single unbreakable word).
+func (m *Modal) TitleCut() bool { return m.cut }
 
 // TitleBar and CloseRect are the title bar's and the close button's
 // rectangles in the card as last drawn (tests).

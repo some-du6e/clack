@@ -282,6 +282,11 @@ type Modal struct {
 	wrap               titleWrap
 	drawnLines         []titleLine
 	barRect, closeRect image.Rectangle
+	// a one-line title cut with an ellipsis (TitleCut), cached by title
+	// and width
+	cutTitle string
+	cutW     int
+	cut      bool
 }
 
 // SetPeek sets ModalOpts.Peek on an open modal (Preferences sets it on
@@ -478,6 +483,14 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	m.drawnLines = wrapped
 	titleH = headH
+	if titleLines == 1 && m.o.Header == nil && m.o.TitleIcon == "" && m.o.TitleAfter == "" {
+		if t := m.Title(); t != m.cutTitle || titleW != m.cutW {
+			m.cutTitle, m.cutW = t, titleW
+			m.cut = t != "" && titleWidthFunc(gtx, th, cl, titleSz, titleLH)(t) > titleW
+		}
+	} else {
+		m.cutTitle, m.cutW, m.cut = "", 0, false
+	}
 	var belowCall op.CallOp
 	if m.o.HeaderBelow != nil {
 		var d layout.Dimensions
