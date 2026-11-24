@@ -1417,7 +1417,7 @@ jobs:
           }
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) {
-            choco install innosetup -y --no-progress
+            choco install innosetup -y --no-progress --execution-timeout=300
             if ($LASTEXITCODE -ne 0) { throw 'choco install innosetup failed' }
           }
           & $iscc /Qp '/DAppVersion=0.0.1' '/DAppVersionNum=0.0.1.0' "/DSourceExe=$PWD\build\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
