@@ -1027,13 +1027,30 @@ func (r *row) senderProps() slackc.Props {
 	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "isInteractive": true, "visible": true, "viewContext": r.viewContext()})
 }
 
+// baseSenderProps are the connected MessageSender's (JA+h) props for
+// BaseMessageSender, the ones plugins patching it read: the sender's name
+// (a user-less bot's username override first: xbeB), its member and bot,
+// the bot_profile, and memberIsHuman (false for an app's or a user-less
+// sender: the APP label's rule; a username or icons override is never a
+// person's).
 func (r *row) baseSenderProps() slackc.Props {
-	p := slackc.Props{"$key": r.ts, "className": "c-message__sender c-message_kit__sender", "isInteractive": true, "msg": r.message()}
+	p := slackc.Props{"$key": r.ts, "className": "c-message__sender c-message_kit__sender", "isInteractive": true, "msg": r.message(),
+		"name": r.m.Name, "memberIsHuman": r.badge == ""}
 	if r.m.User != "" {
 		p["userId"] = r.m.User
 	}
-	if r.m.BotID != "" {
-		p["botId"] = r.m.BotID
+	if bot := r.senderBot(false); bot != "" {
+		p["botId"] = bot
+	}
+	if bp := r.m.BotProfile; bp != nil {
+		prof := slackc.Props{"id": bp.ID, "name": bp.Name}
+		if bp.AppID != "" {
+			prof["app_id"] = bp.AppID
+		}
+		if bp.UserID != "" {
+			prof["user_id"] = bp.UserID
+		}
+		p["botProfile"] = prof
 	}
 	return r.pane(p)
 }

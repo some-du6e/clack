@@ -600,15 +600,24 @@ func (m *mirror) onEvent(ev core.Event) {
 		m.invalidate("presence", ev.Users...)
 	case "names":
 		// members (and names) core fetched for lookups that missed: the
-		// ones the JS side read as absent are there now
-		var ids []string
+		// ones the JS side read as absent are there now; and the bots
+		// bots.info answered for (resolveLoop), which state.bots read as
+		// a bare id until now (a relayed post's sender: ShowSendingBot's
+		// badge needs the bot's name or icons)
+		var ids, bots []string
 		for _, id := range ev.Users {
-			if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
+			switch {
+			case strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W"):
 				ids = append(ids, id)
+			case strings.HasPrefix(id, "B"):
+				bots = append(bots, id)
 			}
 		}
 		if len(ids) > 0 {
 			m.invalidate("members", ids...)
+		}
+		if len(bots) > 0 {
+			m.invalidate("bots", bots...)
 		}
 	case "typing":
 		m.startTyping(ev.Channel, ev.ThreadTS, ev.UserID)
