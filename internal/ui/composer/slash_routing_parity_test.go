@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ import (
 )
 
 // The slash-commands parity dimension's routing half (docs/PARITY.md): for
-// each case of testdata/parity/slash-routing.json, where the composer's
+// each case of testdata/parity/slash-commands.json, where the composer's
 // send takes a typed command, against what Slack's own send path does with
 // it (tools/oracles/slash_commands.cjs runs handleSlashCommand and
 // executeCommand over Slack's CDN build; `tools/parity.py --refresh
@@ -33,13 +34,18 @@ import (
 // asks none, so they're accepted here and not fed anywhere.
 //
 // The answer, as the oracle gives it: {"route": ...} with
-//   - message: the composer sent it as a message (chat.postMessage);
+//   - message: the composer sent it as a message (chat.postMessage) in the
+//     case's conversation;
 //   - edit: the /s/old/new/ edit of the last message (chat.update), its
-//     fields from the parse the send used;
+//     fields from the parse the send used (editLastFromDoc); what the
+//     chat.update carried isn't compared;
 //   - server: chat.command, its command, disp, channel, thread_ts, team_id,
-//     app_id, and blocks as "string" (their JSON) when sent;
-//   - local: a client command ran (no chat.command), by the canonical name
-//     the send looked it up by;
+//     app_id, and blocks as "string" when sent (that blocks went, not
+//     their content);
+//   - local: a client command ran (no chat.command), by its canonical
+//     name, which Clack's side reads from what ran (srLocalRan: the host
+//     hook or the API call each client command makes), not from the
+//     typed name;
 //   - remind: the reminder dialog; feedback: Slackbot's ephemeral text.
 
 // srIn is a case's inputs and the snapshot's base (the same fields).
@@ -99,7 +105,7 @@ func srDecode(t *testing.T, what string, raw json.RawMessage, v any) {
 }
 
 func TestSlashRoutingLikeSlack(t *testing.T) {
-	s := paritytest.Load[srIn, map[string]any](t, "testdata/parity/slash-routing.json")
+	s := paritytest.Load[srIn, map[string]any](t, "testdata/parity/slash-commands.json")
 	var base srIn
 	dec := json.NewDecoder(bytes.NewReader(s.Base))
 	dec.DisallowUnknownFields()
@@ -145,10 +151,12 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 	}
 	fs.reply["commands.list"] = map[string]any{"ok": true, "commands": cmds}
 	// the newest messages an /s/old/new/ edit looks through, and the DM
-	// /msg and /dm open
+	// /msg and /dm open: conversations.open with return_im answers the
+	// whole IM, as Slack does
 	fs.reply["conversations.history"] = map[string]any{"ok": true, "has_more": false,
 		"messages": []any{map[string]any{"type": "message", "ts": "1700000000.000050", "user": tSelf, "text": srOwnText, "blocks": elBlocks(elText(srOwnText))}}}
-	fs.reply["conversations.open"] = map[string]any{"ok": true, "channel": map[string]any{"id": "D000ALICE"}}
+	fs.reply["conversations.open"] = map[string]any{"ok": true, "channel": map[string]any{"id": srDM, "is_im": true, "user": srDMUser,
+		"is_open": true, "created": 1600000000, "is_org_shared": false, "last_read": "0000000000.000000", "priority": 0}}
 	fs.mu.Unlock()
 	for k, v := range c.Experiments {
 		app.SetExperimentGroup(k, v)
@@ -178,7 +186,7 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 	feedback := ""
 	took := func() map[string]any {
 		if calls := fs.called("chat.update"); len(calls) > 0 {
-			e, _ := parseEditLast(q)
+			e, _ := editLastFromDoc(doc) // the send's parse of the same doc
 			return map[string]any{"route": "edit", "prev": e.Prev, "next": e.Next, "replaceAll": e.ReplaceAll, "ignoreCase": e.IgnoreCase}
 		}
 		if calls := fs.called("chat.command"); len(calls) > 0 {
@@ -194,11 +202,15 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 			}
 			return o
 		}
-		if len(fs.called("chat.postMessage")) > 0 {
-			return map[string]any{"route": "message"}
+		// a post here is the message; one to another conversation is
+		// /msg's send of what follows the name, part of the client command
+		for _, p := range fs.called("chat.postMessage") {
+			if p.Get("channel") == conv.ID {
+				return map[string]any{"route": "message"}
+			}
 		}
 		h.mu.Lock()
-		overlays, local := append([]popups.Overlay(nil), h.overlays...), h.toggles+h.searches+len(h.navs)+len(h.invites) > 0
+		overlays := append([]popups.Overlay(nil), h.overlays...)
 		h.mu.Unlock()
 		for _, o := range overlays {
 			if m, ok := o.(*popups.Modal); ok && m.Title() == "Reminder" {
@@ -207,11 +219,8 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 		}
 		// a client command that ran (and may have answered with feedback
 		// of its own) before Slackbot's feedback on a command that didn't
-		for _, m := range []string{"conversations.setTopic", "conversations.rename", "conversations.archive", "conversations.leave", "conversations.join", "conversations.invite", "conversations.open"} {
-			local = local || len(fs.called(m)) > 0
-		}
-		if local || len(overlays) > 0 {
-			return map[string]any{"route": "local", "name": app.LocalCommand(parseSlashArgs(linkifyQ(q)).Cmd)}
+		if ran := srLocalRan(h, fs, conv.ID); ran != "" {
+			return map[string]any{"route": "local", "name": ran}
 		}
 		if feedback != "" {
 			return map[string]any{"route": "feedback", "text": feedback}
@@ -232,9 +241,92 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 			}
 		}
 		if o := took(); o != nil {
+			// the job's outcome (a failed command's restore) reaches the UI
+			// queue before the composer closes, never after cleanup
+			for !comp.jobsDone() && time.Now().Before(end) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !comp.jobsDone() {
+				t.Fatalf("the send job is still running")
+			}
+			runRestores()
 			return o
 		}
 	}
 	t.Logf("the send went nowhere: %s", strings.TrimSpace(doc.Text()))
 	return map[string]any{"route": "none"}
+}
+
+// The DM /msg and /dm open (the cases mention alice).
+const (
+	srDM     = "D000ALICE"
+	srDMUser = "U000ALICE"
+)
+
+// srLocalRan is the client command that ran, by its canonical name, read
+// from what each one does (the composer's commandUI hooks and core's
+// client commands, slash_local.go and writes.go's Command): "" when none
+// did; several are joined by "+", and anything else a command did is
+// "unattributed", so neither can pass for one command.
+func srLocalRan(h *cmdHost, fs *fakeSlack, ch string) string {
+	h.mu.Lock()
+	toggles, searches, invites := h.toggles, h.searches, len(h.invites)
+	navs := append([]string(nil), h.navs...)
+	overlays := append([]popups.Overlay(nil), h.overlays...)
+	h.mu.Unlock()
+	ran := map[string]bool{}
+	if toggles > 0 {
+		ran["/shortcuts"] = true // ToggleKeyboardShortcuts
+	}
+	if searches > 0 {
+		ran["/search"] = true // OpenSearchFromCommand: the popover
+	}
+	if invites > 0 || len(fs.called("conversations.invite")) > 0 {
+		ran["/invite"] = true // inviteCommand
+	}
+	opened := len(fs.called("conversations.open")) > 0
+	for _, r := range navs {
+		switch {
+		case strings.HasPrefix(r, "search"):
+			ran["/search"] = true // SubmitSearch: the results page
+		case r == "directories?tab=channels":
+			ran["/open"] = true // openCommand's channel browser
+		case r == "dms":
+			ran["/msg"] = true // msgCommand's DMs
+		case r == "c/"+srDM && opened:
+			ran["/msg"] = true // the DM msgCommand opened
+		case strings.HasPrefix(r, "c/") && !opened:
+			// the channel openCommand showed (a /msg to a channel would read
+			// so too; no case has one)
+			ran["/open"] = true
+		default:
+			ran["unattributed"] = true
+		}
+	}
+	for _, p := range fs.called("chat.postMessage") {
+		if p.Get("channel") != ch {
+			ran["/msg"] = true // msgSend: what followed the name, in the DM
+		}
+	}
+	for _, o := range overlays {
+		if inv, ok := o.(interface{ Invisible() bool }); ok && inv.Invisible() {
+			continue // popups' async pump, which draws nothing
+		}
+		switch o.(type) {
+		case *popups.UserFeedbackModal:
+			ran["/feedback"] = true // feedbackCommand's dialog
+		case *popups.CreateChannelModal:
+			ran["/open"] = true // openCommand, for a channel it can't find
+		default:
+			ran["unattributed"] = true
+		}
+	}
+	for m, cmd := range map[string]string{"conversations.setTopic": "/topic", "conversations.rename": "/rename", "conversations.archive": "/archive",
+		"conversations.leave": "/leave", "conversations.join": "/open"} {
+		if len(fs.called(m)) > 0 {
+			ran[cmd] = true
+		}
+	}
+	names := slices.Sorted(maps.Keys(ran))
+	return strings.Join(names, "+")
 }
