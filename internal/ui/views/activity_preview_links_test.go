@@ -2,10 +2,10 @@ package views
 
 // A mention row's preview in Activity, as Slack's ActivityMessage draws
 // it (boot-shared 69nH, build 66e72b57ade1): the Dense layout passes
-// withFormat false, so its channel mention is drawn but no link
-// (SimpleRichTextPreview without withSlackLinks: BaseMrkdwnChannel's
-// noLinking span, no ChannelHoverCard); the Detailed layout keeps it a
-// link, with its hover card. Karim (α.161, Windows): "u sure u can click
+// withFormat false, so its member and channel mentions are drawn but no
+// links (SimpleRichTextPreview without withSlackLinks: BaseMrkdwnChannel's
+// noLinking span, no ChannelHoverCard, no profile card); the Detailed
+// layout keeps them links, with their hover cards. Karim (α.161, Windows): "u sure u can click
 // from here". Synthetic data on internal/fakeslack.
 
 import (
@@ -21,9 +21,9 @@ import (
 	"github.com/some-du6e/clack/internal/fakeslack"
 )
 
-// channels sweeps the pointer over size and returns every channel whose
-// hover card a trigger reported.
-func (s *hvSweep) channels(size image.Point, draw func(gtx layout.Context)) map[string]bool {
+// cards sweeps the pointer over size and returns every member and
+// channel whose hover card a trigger reported.
+func (s *hvSweep) cards(size image.Point, draw func(gtx layout.Context)) map[string]bool {
 	out := map[string]bool{}
 	s.frame(size, draw)
 	for y := 2; y < size.Y; y += 5 {
@@ -31,8 +31,8 @@ func (s *hvSweep) channels(size image.Point, draw func(gtx layout.Context)) map[
 			s.ptr = image.Pt(x, y)
 			s.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(x), float32(y))})
 			s.frame(size, draw)
-			if req, ok := s.ctl.Pending(); ok && req.ChannelID != "" {
-				out[req.ChannelID] = true
+			if req, ok := s.ctl.Pending(); ok {
+				out[req.UserID+req.ChannelID] = true
 			}
 		}
 	}
@@ -76,9 +76,14 @@ func TestActivityDenseMentionPreviewIsInert(t *testing.T) {
 		v.dense, v.densitySet, v.dirty = tc.dense, true, true
 		v.rows = map[string]*actRow{}
 		s := newHvSweep(t)
-		got := s.channels(size, draw)
-		if got[ch] != tc.card {
-			t.Errorf("%s: the mention row's #channel reports its hover card %v, want %v (Slack's ActivityMessage withFormat %v)", tc.name, got[ch], tc.card, !tc.dense)
+		got := s.cards(size, draw)
+		// the @mention opens the viewer's card, the #channel its own; one
+		// line in Dense: the #channel is cut off there, the @mention not
+		if got[fakeslack.SelfID] != tc.card {
+			t.Errorf("%s: the mention row's @mention reports its hover card %v, want %v (Slack's ActivityMessage withFormat %v)", tc.name, got[fakeslack.SelfID], tc.card, !tc.dense)
+		}
+		if got[ch] && !tc.card || tc.name == "detailed" && !got[ch] {
+			t.Errorf("%s: the mention row's #channel reports its hover card %v, want %v", tc.name, got[ch], tc.card)
 		}
 	}
 }
