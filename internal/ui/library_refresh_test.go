@@ -9,7 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
+	"gioui.org/io/input"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/pluginlib"
@@ -230,6 +235,120 @@ func TestLibraryRefreshesStale(t *testing.T) {
 		}
 		if !strings.Contains(draw(), "404") {
 			t.Error("Browse doesn't show Refresh's error")
+		}
+		// the release answers again, and a refresh the pane didn't start
+		// (the hourly check's) lands: the notice goes with the old index
+		ls.publish(libTestPlugin("one"))
+		lib := a.pluginLib()
+		if !lib.Refresh(libraryTTL, true, func(*pluginlib.Index, error) { a.Invalidate() }) {
+			t.Fatal("the background refresh didn't start")
+		}
+		until(t, "the background refresh on screen", draw, func() bool { return !lib.Refreshing() && has(lp.ix, "LibSlick") })
+		if text := draw(); lp.loadErr != "" || strings.Contains(text, "404") {
+			t.Errorf("after a refresh that worked, the error stays: %q", lp.loadErr)
+		}
+	})
+
+	t.Run("no copy: focus and the hourly check send nothing", func(t *testing.T) {
+		ls := newLibServer(t)
+		ls.publish(libTestPlugin("one"))
+		a, _ := ttApp(t, t.TempDir()) // nothing cached: the Library was never opened
+		a.setFocused(false)
+		a.setFocused(true)
+		a.refreshLibrary() // the hourly check's call
+		if lib := a.pluginLib(); lib.Refreshing() {
+			t.Error("a refresh went out with no index cached")
+		}
+		time.Sleep(300 * time.Millisecond) // the focus's goroutine
+		if n := ls.asked("index.json"); n != 0 {
+			t.Errorf("the index was asked for %d times by someone who never opened the Library, want 0", n)
+		}
+		// the hourly check stops with the window
+		stop, done := make(chan struct{}), make(chan struct{})
+		go func() {
+			a.libraryLoop(stop)
+			close(done)
+		}()
+		close(stop)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("libraryLoop didn't stop once its window ended")
+		}
+	})
+
+	t.Run("pointer over the pane", func(t *testing.T) {
+		ls, a := setup(t, time.Minute)
+		pm := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+		pm.selectTab(libraryTabID) // Plugins > Browse
+		t.Cleanup(pm.close)
+		pp := pm.pluginsPage()
+		lp := pp.lib
+		// the pane alone, through an input router: real pointer events
+		var r input.Router
+		ops := new(op.Ops)
+		frame := func() {
+			a.drain()
+			ops.Reset()
+			gtx := layout.Context{Ops: ops, Now: time.Now(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+				Constraints: layout.Exact(image.Pt(800, 900)), Source: r.Source()}
+			pp.layout(gtx)
+			r.Frame(ops)
+		}
+		move := func(p f32.Point) {
+			r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p})
+			frame()
+		}
+		for range 3 {
+			frame()
+		}
+		if lp.ix == nil || has(lp.ix, "LibSlick") {
+			t.Fatal("the pane didn't open on the copy on disk")
+		}
+		move(f32.Pt(400, 400))
+		if !lp.ptrIn {
+			t.Fatal("the pointer over the pane isn't seen")
+		}
+		// a refresh lands while the pointer is over the rows: held
+		lib := a.pluginLib()
+		if !lib.Refresh(libraryTTL, true, func(*pluginlib.Index, error) { a.Invalidate() }) {
+			t.Fatal("the background refresh didn't start")
+		}
+		deadline := time.Now().Add(30 * time.Second)
+		for lib.Refreshing() || !has(lib.Cached(), "LibSlick") {
+			if time.Now().After(deadline) {
+				t.Fatal("the background refresh didn't land")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		for range 5 {
+			frame()
+		}
+		if has(lp.ix, "LibSlick") {
+			t.Error("the rows changed under the pointer")
+		}
+		// a press down, the pointer dragged off: held until the release
+		r.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(400, 400)})
+		frame()
+		// a move with the button down: the router makes it a drag
+		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(900, 400)})
+		frame()
+		frame()
+		if has(lp.ix, "LibSlick") || !lp.ptrDown {
+			t.Errorf("the rows changed with a press down (down %v)", lp.ptrDown)
+		}
+		r.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(900, 400)})
+		frame()
+		move(f32.Pt(901, 400)) // off the pane: its Leave, if the press held it back
+		frame()
+		if lp.ptrIn || lp.ptrDown {
+			t.Errorf("off the pane, released: in %v, down %v", lp.ptrIn, lp.ptrDown)
+		}
+		if !has(lp.ix, "LibSlick") {
+			t.Error("the refreshed index wasn't taken once the pointer left")
+		}
+		if n := ls.asked("index.json"); n != 1 {
+			t.Errorf("%d requests, want the one refresh", n)
 		}
 	})
 }

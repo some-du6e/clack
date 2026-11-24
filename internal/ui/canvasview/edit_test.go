@@ -199,6 +199,7 @@ func TestEditRoundTrip(t *testing.T) {
 func editEnv(t *testing.T) (*testHost, *fakeslack.Server, *View, *shooter, func()) {
 	t.Helper()
 	h, fs := newEnv(t, false)
+	quipOff(h) // these tests check the canvases.edit calls the switch-off path makes
 	v := New(h, fakeslack.CanvasChannel, Full, Actions{})
 	s := newShooter(t, image.Pt(1100, 900))
 	frame := func() { s.frame(func(gtx layout.Context) { v.Layout(gtx) }) }

@@ -888,7 +888,6 @@ func ShowMicrophoneAccessError(h Host) {
 	closeBtn := &ModalButton{Label: nsStoriesAV.T("Close"), Kind: BtnOutline}
 	m := NewModal(h, ModalOpts{
 		Title:     nsStoriesAV.T("Can’t access microphone"),
-		TitleWrap: true,
 		Buttons:   []*ModalButton{closeBtn},
 		AutoFocus: closeBtn,
 		Body: func(gtx layout.Context) layout.Dimensions {

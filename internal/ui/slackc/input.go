@@ -19,6 +19,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -63,6 +64,7 @@ func (p *painter) img(b *box, r rectF) {
 	if im == nil || src == "" || r.empty() {
 		return
 	}
+	src = imgcache.PageURL(src) // a plugin's: a data: URL decodes from itself, as in Chromium
 	img, ok := im.Get(src, 0)
 	if !ok {
 		if im.Failed(src, 0) {

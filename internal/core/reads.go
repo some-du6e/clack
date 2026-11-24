@@ -307,13 +307,16 @@ func (a *App) RefreshPrefs(ctx context.Context) (Prefs, error) {
 // installPrefs keeps users.prefs.get's map and its parsed Prefs.
 func (a *App) installPrefs(raw map[string]json.RawMessage) {
 	a.prefsMu.Lock()
-	defer a.prefsMu.Unlock()
 	a.S.RLock()
 	old := a.S.RawPrefs
 	a.S.RUnlock()
 	a.sectionCollapsePending(old, raw) // a collapse write still waiting (section_collapse.go)
 	keepFrecency(old, raw)             // only a named fetch carries the account's frecency (frecency.go)
-	a.installPrefsLocked(raw)
+	exp := a.installPrefsLocked(raw)
+	a.prefsMu.Unlock()
+	if exp {
+		a.expandablesPrefsChanged()
+	}
 }
 
 // mergePrefs sets kv over the current raw prefs and installs them. The
@@ -321,7 +324,6 @@ func (a *App) installPrefs(raw map[string]json.RawMessage) {
 // SetPref, a pref_change reload) can't be undone by this one's older copy.
 func (a *App) mergePrefs(kv map[string]json.RawMessage) {
 	a.prefsMu.Lock()
-	defer a.prefsMu.Unlock()
 	a.S.RLock()
 	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+len(kv))
 	for k, v := range a.S.RawPrefs {
@@ -331,11 +333,17 @@ func (a *App) mergePrefs(kv map[string]json.RawMessage) {
 	for k, v := range kv {
 		raw[k] = v
 	}
-	a.installPrefsLocked(raw)
+	exp := a.installPrefsLocked(raw)
+	a.prefsMu.Unlock()
+	if exp {
+		a.expandablesPrefsChanged()
+	}
 }
 
-// installPrefsLocked is installPrefs with prefsMu held.
-func (a *App) installPrefsLocked(raw map[string]json.RawMessage) {
+// installPrefsLocked is installPrefs with prefsMu held. It reports
+// whether a pref the expandables' defaults read changed (expandables.go):
+// the caller lays the previews out again once the lock is let go.
+func (a *App) installPrefsLocked(raw map[string]json.RawMessage) bool {
 	a.S.RLock()
 	old := a.S.RawPrefs
 	a.S.RUnlock()
@@ -344,6 +352,7 @@ func (a *App) installPrefsLocked(raw map[string]json.RawMessage) {
 	p, muted := store.ParsePrefs(raw)
 	a.S.SetPrefs(p, a.withTempMutes(p, muted)) // temp_mute's muted-until (temp_mute.go)
 	a.notePrefsInstalled()                     // what Docs converted until now read moved? (msg_refs.go)
+	return expandablesPrefsDiffer(old, raw)
 }
 
 // Pref returns one users.prefs.get value as Slack sent it (ok: present).
@@ -554,6 +563,16 @@ func (a *App) channelHits(hs []slack.ChannelHit) []ChannelHit {
 		if h.Topic != nil {
 			v.Topic = h.Topic.Value
 		}
+		// Slack upserts the hits into its channels store (getRemoteChannels:
+		// "Fetches and upserts channels by query"), so a channel picked
+		// from the # list is one /open, /join and /msg find (getChannelById)
+		// though the viewer isn't in it. The copy is the store's channel
+		// hit, not a conversation Conv answers: opening the channel still
+		// reads it with conversations.info (ResolveConv), which has what a
+		// hit lacks (is_ext_shared, the connected teams)
+		a.S.PutChannelHit(slack.Conversation{ID: h.ID, Name: h.Name, IsChannel: h.IsChannel || !h.IsPrivate, IsPrivate: h.IsPrivate,
+			IsArchived: h.IsArchived, IsMember: v.IsMember, IsGeneral: h.IsGeneral, NumMembers: v.NumMembers, ContextTeamID: h.ContextTeamID,
+			Topic: h.Topic, Purpose: h.Purpose, Created: h.Created, Creator: h.Creator})
 		a.S.PutName(h.ID, h.Name)
 		out = append(out, v)
 	}

@@ -152,20 +152,20 @@ func (c *compBox) origin() image.Rectangle {
 // mediaNote is the media part of the card being laid out: its box and
 // the primitives from f0/b0/i0 on (fixedMedia, read by compBlock).
 type mediaNote struct {
-	set        bool
-	r          image.Rectangle
-	radii      [4]int
-	f0, b0, i0 int
-	f1, b1, i1 int
+	set            bool
+	r              image.Rectangle
+	radii          [4]int
+	f0, b0, i0, o0 int
+	f1, b1, i1, o1 int
 }
 
 // noteMedia records the media part fixedMedia just drew (its primitives
 // from f0/b0/i0 to now) while a card lays out as a component.
-func (l *lay) noteMedia(r image.Rectangle, radii [4]int, f0, b0, i0 int) {
+func (l *lay) noteMedia(r image.Rectangle, radii [4]int, f0, b0, i0, o0 int) {
 	if !l.inAtt || l.mode&modeAtts == 0 {
 		return
 	}
-	l.media = mediaNote{set: true, r: r, radii: radii, f0: f0, b0: b0, i0: i0, f1: len(l.d.frags), b1: len(l.d.boxes), i1: len(l.d.imgs)}
+	l.media = mediaNote{set: true, r: r, radii: radii, f0: f0, b0: b0, i0: i0, o0: o0, f1: len(l.d.frags), b1: len(l.d.boxes), i1: len(l.d.imgs), o1: len(l.d.overlayIcons)}
 }
 
 // compState is what a component's plugin tree told the layout, kept
@@ -234,11 +234,11 @@ func (l *lay) compBlock(b *richtext.Block, x, y, w int) int {
 		bb.Att = &a
 		b = &bb
 	}
-	f0, b0, i0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs)
+	f0, b0, i0, o0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.overlayIcons)
 	l.inAtt, l.authorImg, l.titleFrags, l.media = true, 0, [2]int{}, mediaNote{}
 	h := l.attachment(b, x, y, w)
 	l.inAtt = false
-	l.tagFrom(tag, f0, b0, i0)
+	l.tagFrom(tag, f0, b0, i0, o0)
 	if m := l.media; m.set {
 		// the card's media: its own component (AttachmentMedia), drawn by
 		// the card inside MessageAttachment's tree, so a plugin's patch
@@ -252,6 +252,9 @@ func (l *lay) compBlock(b *richtext.Block, x, y, w int) int {
 		}
 		for i := m.i0; i < m.i1; i++ {
 			l.d.imgs[i].comp = mt
+		}
+		for i := m.o0; i < m.o1; i++ {
+			l.d.overlayIcons[i].comp = mt
 		}
 		l.d.comps[tag-1].media = mt
 		l.media = mediaNote{}
@@ -277,17 +280,20 @@ func (l *lay) compBlock(b *richtext.Block, x, y, w int) int {
 func (l *lay) compFile(b *richtext.Block, x, y, w int) int {
 	tag := l.addComp(compBox{kind: compFile, att: b})
 	cs := l.compState(tag)
-	f0, b0, i0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs)
+	f0, b0, i0, o0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.overlayIcons)
 	l.inAtt = true
 	h := l.file(b.File, x, y, w)
 	l.inAtt = false
-	l.tagFrom(tag, f0, b0, i0)
+	l.tagFrom(tag, f0, b0, i0, o0)
 	l.d.comps[tag-1].r = image.Rect(x, y, x+w, y+h)
 	return max(0, h+cs.extra)
 }
 
-// tagFrom marks the primitives added since f0/b0/i0 as component tag's.
-func (l *lay) tagFrom(tag int16, f0, b0, i0 int) {
+// tagFrom marks the primitives added since f0/b0/i0/o0 as component tag's.
+func (l *lay) tagFrom(tag int16, f0, b0, i0, o0 int) {
+	for i := o0; i < len(l.d.overlayIcons); i++ {
+		l.d.overlayIcons[i].comp = tag
+	}
 	for i := f0; i < len(l.d.frags); i++ {
 		l.d.frags[i].comp = tag
 	}

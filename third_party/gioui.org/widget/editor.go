@@ -620,6 +620,12 @@ func (e *Editor) command(gtx layout.Context, k key.Event) (EditorEvent, bool) {
 			}
 		// Copy or Cut selection -- ignored if nothing selected.
 		case "C", "X":
+			// Clack patch 67: a masked Editor is a password field, which
+			// Chromium copies and cuts nothing from (Editor::CanCopy and
+			// CanCut are false there)
+			if e.Mask != 0 {
+				break
+			}
 			e.scratch = e.text.SelectedText(e.scratch)
 			if text := string(e.scratch); text != "" {
 				gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(text))})

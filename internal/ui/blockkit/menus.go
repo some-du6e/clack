@@ -131,15 +131,15 @@ func (x *watch) Dismiss() {
 // showConfirm shows a Block Kit confirmation dialog; ok runs on
 // Confirm, deny (may be nil) on Cancel / Escape.
 func showConfirm(h Host, c *Confirm, ok, deny func()) {
+	// AttachmentActionConfirmDialog's title has no default (title = "",
+	// an empty h1); its body is "Are you sure?" when there's neither text
+	// nor title, and openConfirm's defaults give a Block Kit confirm
+	// without text that body too, with "OK" and "Cancel"
 	title := textOf(c.Title)
-	if title == "" {
-		title = appViewNS.T("Are you sure?")
-	}
 	body := ""
 	if c.Text != nil {
 		body = textOf(c.Text)
 	}
-	// openConfirm's defaults: "OK", "Cancel", body "Are you sure?"
 	yes, no := textOf(c.Confirm), textOf(c.Deny)
 	if yes == "" {
 		yes = appViewNS.T("OK")
@@ -147,7 +147,7 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 	if no == "" {
 		no = appViewNS.T("Cancel")
 	}
-	if c.Text == nil {
+	if c.Text == nil || (body == "" && title == "") {
 		body = appViewNS.T("Are you sure?")
 	}
 	kind := popups.BtnPrimary
@@ -156,7 +156,7 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 	}
 	decided := false
 	var tv *textView
-	if c.Text != nil {
+	if c.Text != nil && body == textOf(c.Text) {
 		tv = newTextView(h, *c.Text)
 	}
 	btns := []*popups.ModalButton{
@@ -164,8 +164,17 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 		{Label: yes, Kind: kind, Do: func() bool { decided = true; ok(); return true }},
 	}
 	m := popups.NewModal(h, popups.ModalOpts{
+		// AttachmentActionConfirmDialog (boot-shared RtPN), which Block Kit
+		// confirms open too (om6X openConfirm), is a DeprecatedDialog
+		// (FlDO): .c-dialog__content is 32.5rem wide, .c-dialog__header
+		// padding 16px 24px around the 30px title and the 36px close
+		// button (68px), .c-dialog__body and __footer 24px in. It passes no
+		// truncateTitle, so DeprecatedBaseDialog's default (true) puts
+		// .overflow_ellipsis on the h1: a long title stays on one line, cut
+		// with an ellipsis, as Slack shows it.
 		Title: title,
-		Width: 440,
+		Width: 520, PadX: 24, HeadH: 68,
+		TruncateTitle: true,
 		Body: func(gtx C) D {
 			if tv == nil {
 				return para(gtx, h.Theme(), 15, 22, theme.Regular, colorsOf(h.Theme()).Text, body)

@@ -161,9 +161,41 @@ func shown(a *richtext.Attachment) bool {
 	return media && blocksBlank(a.Text)
 }
 
-// mediaExpanded is isAttachmentExpanded (maUm) without a toggle: Slack
-// collapses attachment media when expand_inline_imgs is off.
-func mediaExpanded() bool { return !uipref.Get().NoInlineImgs }
+// mediaKey is attachment a's media expandable in this view
+// (getExpandableKey("attachment", the message's ts, {id, imageUrl,
+// audioHtml, videoHtml, thumbUrl, viewContext})): "" without media or
+// outside a message.
+func (l *lay) mediaKey(a *richtext.Attachment) string {
+	if a == nil || a.MediaKey == "" || l.opts.TS == "" {
+		return ""
+	}
+	return a.MediaKey + l.opts.ViewContext
+}
+
+// mediaBytes is AttachmentMedia's imageBytes: the image's, which only
+// its image's container passes.
+func mediaBytes(a *richtext.Attachment) int64 {
+	if a.Image != nil {
+		return a.Image.Bytes
+	}
+	return 0
+}
+
+// mediaShown is AttachmentMedia's ExpandableContainer (pOD6 with the
+// attachment rules, expander.go) for a's media: the key's state, else
+// the defaults. Without a key (a doc drawn outside a message) the
+// defaults alone, the 20 MB rule with them, as isAttachmentExpanded reads
+// an empty key.
+func (l *lay) mediaShown(a *richtext.Attachment) bool {
+	return xp().AttachmentExpanded(l.mediaKey(a), mediaBytes(a), l.opts.Sender, l.opts.Channel)
+}
+
+// mediaDisclosure reports whether a's collapsed media show the
+// UnverifiedDisclosure in their place.
+func (l *lay) mediaDisclosure(a *richtext.Attachment) bool {
+	k := l.mediaKey(a)
+	return k != "" && xp().UnverifiedDisclosure(k, mediaBytes(a), l.opts.Sender, l.opts.Channel)
+}
 
 // isV3 reports whether b draws in a v3 hover wrapper (MessageAttachmentDefaultV3's tm).
 func isV3(b *richtext.Block) bool {
@@ -657,8 +689,8 @@ func (l *lay) v3Side(a *richtext.Attachment, r image.Rectangle, radii [4]int, ca
 		}
 		return
 	}
-	if !thumbOnly(a) && !mediaExpanded() {
-		return // the collapsed ExpandableContainer: an empty box
+	if !thumbOnly(a) && !l.mediaShown(a) {
+		return // the collapsed ExpandableContainer: an empty box (v3 hides the disclosure)
 	}
 	tg := cardT // the thumb and a video's poster: the card's link
 	if img == a.Image {
@@ -789,12 +821,12 @@ func (l *lay) fixedMedia(a *richtext.Attachment, k attKind, x, y, w int, cardT i
 	}
 	// everything from here is AttachmentMedia's (the right box's hairline
 	// above isn't): compBlock makes it its own component
-	defer l.noteMedia(r, radii, len(l.d.frags), len(l.d.boxes), len(l.d.imgs))
+	defer l.noteMedia(r, radii, len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.overlayIcons))
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, fill: rgb(255, 255, 255), target: -1, perCorner: true, corners: radii})
 	s := r.Dy() * 60 / 200
 	c := r.Min.Add(r.Max).Div(2)
 	l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(c.X-s/2, c.Y-s/2, c.X-s/2+s, c.Y-s/2+s), url: iconURL + "image", target: -1, px: s, tint: rgb(142, 141, 142)})
-	if !mediaExpanded() {
+	if !l.mediaShown(a) {
 		return r, true
 	}
 	img := a.Image
@@ -899,7 +931,7 @@ func (l *lay) imageCard(a *richtext.Attachment, x, y, w int) int {
 	if img == nil {
 		img = a.Thumb
 	}
-	if img != nil && mediaExpanded() {
+	if img != nil && l.mediaShown(a) {
 		rr := l.dp(12) - bw
 		ir := r.Inset(bw)
 		tg := cardT // a thumb_url alone: the card's link
