@@ -6700,6 +6700,108 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # jsrt-populate (2026-11-23): the wasm memory's growth on macOS held a
+  # stop-the-world for 100-260 ms in some runs (TestWasmMemoryGrowsInPlace
+  # on macos-15-intel, train-229's jsrt 45256775420 and 3 of 7 runs since
+  # 2026-11-16): the first write to each page a growth commits faulted in
+  # the wasm, where the world waits a fault out. Committed pages are
+  # populated in a read syscall now (wasmmem_unix.go populate), the pages
+  # growth adds only (the initial memory, mostly the C stack, isn't: about
+  # 9 MiB resident per engine when it was). In COUNT processes of their own
+  # on the macOS runners and Linux: TestWasmMemoryGrowsInPlace,
+  # TestWasmMemoryPopulated (populate wrote the growth and took its faults,
+  # counted by getrusage on both) and, on Linux,
+  # TestWasmMemoryInitialUnpopulated (the initial memory's resident part,
+  # mincore). Dispatch with only=jsrt-populate.
+  jsrt-populate:
+    if: ${{ !inputs.only || startsWith('jsrt-populate', inputs.only) }}
+    name: "jsrt-populate (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the growth's stop-the-world and faults, COUNT processes
+        shell: bash
+        env:
+          JSRT_RUN: "^(TestWasmMemoryGrowsInPlace|TestWasmMemoryPopulated|TestWasmMemoryInitialUnpopulated)$"
+        run: |
+          set +e
+          rc=0
+          go test -c -o "$RUNNER_TEMP/jsrt.test" ./internal/jsrt/ || exit 1
+          cd internal/jsrt
+          for i in $(seq 1 "$COUNT"); do
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/jsrt.test" -test.count=1 -test.v -test.timeout 10m -test.run "$JSRT_RUN" > "$RUNNER_TEMP/jsrt-$i.log" 2>&1 || rc=1
+            echo "== process $i: $(grep -oE 'wasmmem: reserved address space: .*longest stop-the-world [0-9.]+ ms' "$RUNNER_TEMP/jsrt-$i.log" | grep -oE '[0-9.]+ ms$'); $(grep -oE 'populate wrote [0-9]+ MiB: [0-9]+ faults, [0-9]+ of them in populate.s reads, -?[0-9]+ elsewhere' "$RUNNER_TEMP/jsrt-$i.log"); $(grep -oE '[0-9]+ KiB of it resident' "$RUNNER_TEMP/jsrt-$i.log")"
+            grep -E -- '--- FAIL|wasmmem_(linux_|unix_)?test.go:[0-9]+: .*(cut|faults came|grew only|wrote|resident|counted)' "$RUNNER_TEMP/jsrt-$i.log" | head -6
+          done
+          exit $rc
+      # the rest of the package on this runner, its wasm memories populated;
+      # TestStopTheWorldBounded has jsrt-stw-mac
+      - name: "the jsrt package, but TestStopTheWorldBounded"
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: go test -count=1 -timeout 20m -skip '^TestStopTheWorldBounded$' ./internal/jsrt/
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # jsrt-stw-mac (2026-11-23): TestStopTheWorldBounded on the macOS
+  # runners, where Go alone waits up to 211 ms for a stop-the-world with no
+  # wasm running (jsrt-stw-diag): a case is compared only when its
+  # yields-off figure is a second or more (stwMeasurableMac), each other
+  # logged with its figure, and a run comparing none fails. COUNT
+  # processes, at most 20. Dispatch with only=jsrt-stw-mac.
+  jsrt-stw-mac:
+    if: ${{ !inputs.only || startsWith('jsrt-stw-mac', inputs.only) }}
+    name: "jsrt-stw-mac (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: TestStopTheWorldBounded, COUNT processes (at most 20)
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -c -o "$RUNNER_TEMP/jsrt.test" ./internal/jsrt/ || exit 1
+          cd internal/jsrt
+          n=$COUNT; [ "$n" -gt 20 ] && n=20
+          for i in $(seq 1 "$n"); do
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/jsrt.test" -test.count=1 -test.v -test.timeout 8m -test.run '^TestStopTheWorldBounded$' > "$RUNNER_TEMP/stw-$i.log" 2>&1 || rc=1
+            echo "== process $i: $(grep -oE '[0-9]+ of [0-9]+ cases compared' "$RUNNER_TEMP/stw-$i.log")"
+            grep -E -- '--- FAIL|stw_test.go:[0-9]+: .*(cut the longest|waited|none was compared|no yields)' "$RUNNER_TEMP/stw-$i.log" | head -6
+          done
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -6848,6 +6950,8 @@ jobs:
       - mf-cold
       - oneko-data-images
       - files-download
+      - jsrt-populate
+      - jsrt-stw-mac
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
