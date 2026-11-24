@@ -635,9 +635,9 @@ func (d *snippetDialog) openConvList(gtx layout.Context, x, w int) {
 		return
 	}
 	// the footer's select: its row is the card's bottom less the footer's
-	// 20px padding, from 28px in
+	// 20px padding, from c-dialog__footer's 24px in (FooterLeft's x)
 	r := d.m.Rect()
-	left := r.Min.X + gtx.Dp(28) + x
+	left := r.Min.X + gtx.Dp(24) + x
 	anchor := image.Rect(left, r.Max.Y-gtx.Dp(20)-popups.SelectFieldHeight(gtx), left+w, r.Max.Y-gtx.Dp(20))
 	d.chOv = newConvPicker(d, anchor)
 	d.h.ShowOverlay(d.chOv)
