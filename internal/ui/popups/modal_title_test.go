@@ -208,3 +208,24 @@ func TestCDialogTitleWraps(t *testing.T) {
 		}
 	}
 }
+
+// TestLeaveDialogsTitles: "Membership is required in {channelName}" is
+// LeaveChannelError's renderAlert, a DeprecatedDialog with truncateTitle
+// false (c-dialog metrics, the close button first, the title wrapping),
+// its channel an InlineChannelEntity (the hash icon); "Leave {group}" is
+// LeaveChannel's c-sk-modal, its private channel's lock beside the name,
+// Leave Channel focused.
+func TestLeaveDialogsTitles(t *testing.T) {
+	h := &tzHost{th: theme.New(false)}
+	m := mtShown(h, func() { MaybeLeaveChannel(h, "general", "channel", true, nil) })
+	if !m.o.CDialog || !m.o.CloseFirst || m.o.TruncateTitle || m.o.TitleIcon != "hash" || m.o.Title+m.o.TitleAfter != "Membership is required in general" {
+		t.Errorf("membership alert: cdialog %v closeFirst %v truncate %v, title %q [%s] %q", m.o.CDialog, m.o.CloseFirst, m.o.TruncateTitle, m.o.Title, m.o.TitleIcon, m.o.TitleAfter)
+	}
+	l := mtShown(h, func() { MaybeLeaveChannel(h, "plans", "private", false, func() {}) })
+	if l.o.CDialog || l.o.TruncateTitle || l.o.TitleIcon != "lock" || l.o.Title+l.o.TitleAfter != "Leave plans" {
+		t.Errorf("leave: cdialog %v truncate %v, title %q [%s] %q", l.o.CDialog, l.o.TruncateTitle, l.o.Title, l.o.TitleIcon, l.o.TitleAfter)
+	}
+	if l.o.AutoFocus == nil || l.o.AutoFocus.Label != "Leave Channel" || l.o.AutoFocus.Kind != BtnDanger {
+		t.Errorf("leave: autofocus %+v, want the danger Leave Channel", l.o.AutoFocus)
+	}
+}
