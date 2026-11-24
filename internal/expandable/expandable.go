@@ -255,6 +255,19 @@ func CallID(m *slack.Message) string {
 	return ""
 }
 
+// ReactionKey is a message's reaction key (KtEr J: the message's
+// _rxn_key, else 4kSE makeReactionKey("message", ts, channel),
+// `message-${ts}-${channel}`), which ReactionBar (uFSC) keeps its
+// isExpanded under in the expandables store: its "N more" set it, its
+// "Show less" cleared it. "" without a ts or channel (makeReactionKey
+// throws).
+func ReactionKey(ts, channel string) string {
+	if ts == "" || channel == "" {
+		return ""
+	}
+	return "message-" + ts + "-" + channel
+}
+
 // OnDisk reports whether key may be written to disk: not the keys whose
 // attachment had no id, which carry the media's URL or embed HTML.
 func OnDisk(key string) bool {

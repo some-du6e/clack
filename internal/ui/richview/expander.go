@@ -61,6 +61,10 @@ func SetExpander(e Expander) {
 // "Hide image").
 func SetExpandable(key string, on bool) { xp().SetExpanded(key, on) }
 
+// Expandable is getObjectById on the store every View reads: key's
+// state, ok false for none (the reaction bar's isExpanded).
+func Expandable(key string) (on, ok bool) { return xp().Expanded(key) }
+
 // xp is the store in use.
 func xp() Expander {
 	if b := expanderNow.Load(); b != nil {
