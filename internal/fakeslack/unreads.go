@@ -271,9 +271,20 @@ func (s *Server) PutUnreadMessage(ch string, m slack.Message) string {
 
 func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 	if !s.Size.Unreads {
-		// SetNewBadges answers the boot load's generic_new_badge in any fake
-		if method == "megaphone.notifications.list" && f.Get("channel_id") == "" {
-			if out := s.newBadgeSpaces(f); out != nil {
+		// SetNewBadges answers the boot load's generic_new_badge in any
+		// fake, SetMegaphoneSpace its spaces
+		if method == "megaphone.notifications.list" {
+			var out map[string]any
+			if f.Get("channel_id") == "" {
+				out = s.newBadgeSpaces(f)
+			}
+			for sp, n := range s.setSpaces(f) {
+				if out == nil {
+					out = map[string]any{}
+				}
+				out[sp] = n
+			}
+			if out != nil {
 				return ok("notifications", out), true
 			}
 		}
@@ -339,13 +350,11 @@ func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 		_ = json.Unmarshal([]byte(f.Get("event")), &ev)
 		out := map[string]any{}
 		ch := f.Get("channel_id")
+		set := s.setSpaces(f)
 		for _, sp := range ev.Spaces {
 			out[sp] = nil
-			u.mu.Lock()
-			name := u.spaces[sp]
-			u.mu.Unlock()
-			if name != "" {
-				out[sp] = map[string]any{"name": name, "data": map[string]any{}}
+			if n, ok := set[sp]; ok {
+				out[sp] = n
 				continue
 			}
 			if sp == "generic_new_badge" && ch == "" {
@@ -383,6 +392,28 @@ func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 		return ok(), true
 	}
 	return nil, false
+}
+
+// setSpaces is the notifications SetMegaphoneSpace set for the spaces a
+// megaphone.notifications.list asks for.
+func (s *Server) setSpaces(f url.Values) map[string]any {
+	var ev struct {
+		Spaces []string `json:"spaces"`
+	}
+	_ = json.Unmarshal([]byte(f.Get("event")), &ev)
+	u := s.unreads()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var out map[string]any
+	for _, sp := range ev.Spaces {
+		if name := u.spaces[sp]; name != "" {
+			if out == nil {
+				out = map[string]any{}
+			}
+			out[sp] = map[string]any{"name": name, "data": map[string]any{}}
+		}
+	}
+	return out
 }
 
 // newBadgeSpaces is a megaphone.notifications.list answer naming only the
