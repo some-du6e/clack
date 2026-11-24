@@ -14,6 +14,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -88,7 +89,8 @@ func (a *attachments) loadMeta(c *attChip) {
 		f, err := a.core.FileInfo(ctx, id)
 		cancel()
 		if err == nil && (f.Name != "" || f.Title != "") {
-			a.metaDone(c, &attMeta{name: f.Name, title: f.Title, pretty: f.PrettyType, thumb: f.Thumb, mime: f.Mime, image: f.IsImage, size: f.Size}, true)
+			a.metaDone(c, &attMeta{name: f.Name, title: f.Title, pretty: f.PrettyType, thumb: f.Thumb, mime: f.Mime, image: f.IsImage, size: f.Size,
+				filetype: f.Filetype, mode: f.Mode, video: f.IsVideo}, true)
 			return
 		}
 		if err == nil {
@@ -108,7 +110,8 @@ func (a *attachments) loadMeta(c *attChip) {
 type attMeta struct {
 	name, title, pretty, thumb string
 	mime                       string // files.info's mimetype
-	image                      bool
+	filetype, mode             string // its filetype and mode (the icon's)
+	image, video               bool
 	size                       int64
 }
 
@@ -128,6 +131,7 @@ func (a *attachments) metaDone(c *attChip, m *attMeta, ok bool) {
 	} else {
 		title := firstNonEmpty(m.title, name)
 		c.name, c.title, c.ftype = name, title, ft
+		c.server = &richtext.File{Type: m.filetype, Mode: m.mode, IsImage: m.image, IsVideo: m.video}
 		c.kind = attKindOf(name, nil)
 		if m.pretty != "" {
 			c.kind.Label = m.pretty
@@ -155,7 +159,8 @@ func (a *attachments) drawMetaCard(gtx layout.Context, th *theme.Theme, v attVie
 	if th.Dark {
 		exc, bar = rgb(0x35373b), rgb(0x2c2d30)
 	}
-	fillRRect(gtx, image.Rect(pad, pad, pad+tile, pad+tile), gtx.Dp(8), exc)
+	ty := (r.Dy() - tile) / 2 // where drawCard puts the svgicon
+	fillRRect(gtx, image.Rect(pad, ty, pad+tile, ty+tile), gtx.Dp(8), exc)
 	tx := pad + tile + gtx.Dp(12)
 	if v.loading {
 		// MissingText (size medium: 120px, 8px tall, pill), one for the
@@ -168,7 +173,7 @@ func (a *attachments) drawMetaCard(gtx layout.Context, th *theme.Theme, v attVie
 		return
 	}
 	ic := gtx.Dp(20)
-	offset(gtx, pad+(tile-ic)/2, pad+(tile-ic)/2, func(gtx layout.Context) layout.Dimensions {
+	offset(gtx, pad+(tile-ic)/2, ty+(tile-ic)/2, func(gtx layout.Context) layout.Dimensions {
 		return icons.Get("trash")(gtx, unit.Dp(20), th.C.FgMuted)
 	})
 	tw := max(r.Dx()-tx-gtx.Dp(12), 0)
