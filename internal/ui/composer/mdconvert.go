@@ -723,7 +723,7 @@ func qAttr(at qAttrs) Attr {
 	for _, s := range [...]struct {
 		st Style
 		k  string
-	}{{Bold, "bold"}, {Italic, "italic"}, {Underline, "underline"}, {Strike, "strike"}, {Code, "code"}} {
+	}{{Bold, "bold"}, {Italic, "italic"}, {Underline, "underline"}, {Strike, "strike"}, {Code, "code"}, {Unlink, "unlink"}} {
 		if truthy(at[s.k]) {
 			a.Style |= s.st
 		}

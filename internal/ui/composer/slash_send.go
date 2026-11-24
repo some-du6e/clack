@@ -243,6 +243,16 @@ func qFromSlackDelta(delta map[string]any) qDelta {
 		seq++
 		return qAtomRef{a: a, seq: seq}
 	}
+	// run is the text ops in a row with the same formats, which Delta.push
+	// merges into one: gathered here and pushed once, as push merging them
+	// one at a time copies the whole run for each, quadratic in a long
+	// paste's lines (a run of plain lines is one op)
+	var run []rune
+	var runAt qAttrs
+	flush := func() {
+		q = q.insertRunes(run, runAt) // push copies it
+		run = run[:0]
+	}
 	for _, op := range deltaOps(delta) {
 		raw := asMap(op["attributes"])
 		at := qAttrsFromJSON(raw)
@@ -262,7 +272,10 @@ func qFromSlackDelta(delta map[string]any) qDelta {
 					at = withAttr(at, "slackslug", ref(a))
 				}
 			}
-			q = q.insert(ins, at)
+			if !attrsEqual(at, runAt) {
+				flush()
+			}
+			run, runAt = append(run, []rune(ins)...), at
 		default:
 			e := asMap(op["insert"])
 			if e == nil {
@@ -287,6 +300,7 @@ func qFromSlackDelta(delta map[string]any) qDelta {
 				if label == "" {
 					label = id
 				}
+				flush()
 				q = q.insert(label, withAttr(at, "slackmention", ref(&Atom{Kind: kind, ID: id, Text: label})))
 			case asMap(e["slackemoji"]) != nil:
 				name := field("slackemoji", "name")
@@ -305,12 +319,15 @@ func qFromSlackDelta(delta map[string]any) qDelta {
 						uni = text
 					}
 				}
+				flush()
 				q.push(qOp{k: qEmb, emb: &qEmbed{atom: &Atom{Kind: AtomEmoji, ID: name, Text: ":" + name + ":", Uni: uni}}, attrs: at})
 			case truthy(e["divider"]) || truthy(e["slackhorizontalrule"]):
+				flush()
 				q.push(qOp{k: qEmb, emb: &qEmbed{hr: true}, attrs: at})
 			}
 		}
 	}
+	flush()
 	return q
 }
 

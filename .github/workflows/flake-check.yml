@@ -7010,8 +7010,13 @@ jobs:
   # goes through it (taut); the composer's paste hook, its formats and the
   # delta round trip, and the whole path with a plugin that patches it on
   # focusin (composer); Slick's ClearURLs cleaning a pasted link (slick
-  # acceptance, at slick.yml's pin). COUNT runs each. Dispatch with
-  # only=paste-clipboard.
+  # acceptance, at slick.yml's pin). The review round: a paste a plugin
+  # leaves goes in as it was (& < > in Go's JSON aren't a change), one it
+  # changes keeps what ops don't carry and reads back in linear memory,
+  # only Slack's Texty inputs paste through it (with their kinds), and the
+  # composer's deadline bounds a running plugin call (jsrt LeaveRunning).
+  # COUNT runs each.
+  # Dispatch with only=paste-clipboard.
   paste-clipboard:
     if: ${{ !inputs.only || startsWith('paste-clipboard', inputs.only) }}
     runs-on: ubuntu-latest
@@ -7064,8 +7069,9 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 5m -run '^(TestQuillClipboardStandIn|TestQuillFocusBeforeStart)$' ./internal/taut || rc=1
-          go test -count="$COUNT" -timeout 8m -run '^(TestPastePreparedByPlugin|TestPasteThroughDelta|TestTautPasteClipboard)$' ./internal/ui/composer || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestQuillClipboardStandIn|TestQuillFocusBeforeStart|TestPreparePasteBoundedWhileRunning)$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 8m -run '^(TestPastePreparedByPlugin|TestPasteThroughDelta|TestTautPasteClipboard|TestPasteUnchangedOpsKeepTheirDoc|TestPasteRebuildIsLinear|TestPasteHookOnlyInTextyInputs|TestPasteOwnCopyAndRichThroughClipboard)$' ./internal/ui/composer || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestLeaveRunningEndsARunningCall$' ./internal/jsrt || rc=1
           go test -count="$COUNT" -timeout 10m -run '^TestAcceptance$/^ClearURLs$' ./internal/slick || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
           exit $rc

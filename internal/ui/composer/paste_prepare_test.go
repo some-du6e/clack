@@ -26,6 +26,7 @@ func TestPastePreparedByPlugin(t *testing.T) {
 		return d
 	}))
 	ed := NewEditor()
+	setTautKind(ed, "channel") // a composer's editor: only those paste through Slack's clipboard
 	ed.paste(dirty)
 	if got := ed.Doc().Text(); got != clean {
 		t.Errorf("rich paste: %q, want %q", got, clean)
@@ -38,6 +39,7 @@ func TestPastePreparedByPlugin(t *testing.T) {
 		t.Errorf("plain paste: %q, want %q", got, clean)
 	}
 	ed = NewEditor()
+	setTautKind(ed, "channel")
 	ed.Doc().Lines[0].Kind = CodeBlock
 	ed.Touch()
 	ed.paste("keep https://example.com/?id=7")
@@ -140,6 +142,7 @@ func TestTautPasteClipboard(t *testing.T) {
 		return pasteHookOn()
 	})
 	ed := NewEditor()
+	setTautKind(ed, "channel")
 	ed.paste(dirty)
 	if got := ed.Doc().Text(); got != clean {
 		t.Errorf("pasted %q, want %q", got, clean)

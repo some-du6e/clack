@@ -735,6 +735,7 @@ func (d *Drafts) startEdit(dr *core.Draft) {
 		}
 	}
 	e := &draftsEdit{id: dr.ID, ed: composer.NewEditor()}
+	e.ed.TautKind = func() string { return "draft" } // Taut's draft composer: a Texty input in Slack
 	e.ed.SetDoc(doc)
 	d.edit = e
 	d.dirty = true

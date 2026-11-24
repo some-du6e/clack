@@ -159,8 +159,11 @@ const (
 // value also works).
 type Editor struct {
 	// TautKind is the kind of composer this editor is for Taut's
-	// ComposerContext (chrome.tautKind), which PreparePaste is told; nil
-	// is a channel composer's.
+	// ComposerContext (chrome.tautKind; "draft" and "other" for the drafts
+	// list's editor and the Texty inputs), which PreparePaste is told: the
+	// editors that are Texty's Quill in Slack, whose clipboard module
+	// plugins patch. nil for one that isn't (a canvas's or a list cell's,
+	// Quip's editor in Slack), whose pastes no clipboard patch sees.
 	TautKind func() string
 
 	missed []event.Event // key events KeepFocus read while it wasn't drawn (editor_focus.go)
@@ -1048,11 +1051,13 @@ func (e *Editor) pasteClip(s, html string, texty *Doc) {
 		}
 	}
 	ownDoc := e.clipDoc
-	if PreparePaste != nil {
+	if kind := e.tautKind(); PreparePaste != nil && kind != "" {
 		// Texty's handleOnPaste hands the pasted delta to the clipboard
 		// module's preparePastedDelta with the caret's formats before it
-		// goes in, whatever it came as; a plugin may have patched it
-		kind, formats := e.tautKind(), pasteFormats(a, d.Lines[line])
+		// goes in, whatever it came as; a plugin may have patched it. Only
+		// Slack's Texty inputs (TautKind) have it: a canvas or a list cell
+		// pastes as it is, never as a channel composer's paste
+		formats := pasteFormats(a, d.Lines[line])
 		switch {
 		case own:
 			if p := PreparePaste(kind, e.clipDoc.Clone(), formats); p != nil {
@@ -1098,14 +1103,16 @@ func (e *Editor) pasteClip(s, html string, texty *Doc) {
 	}
 }
 
-// tautKind is TautKind's answer, "channel" without one.
+// tautKind is TautKind's answer ("channel" when it gives none), "" for
+// an editor that isn't one of Slack's Texty inputs (no TautKind).
 func (e *Editor) tautKind() string {
 	if e.TautKind != nil {
 		if k := e.TautKind(); k != "" {
 			return k
 		}
+		return "channel"
 	}
-	return "channel"
+	return "" // not one of Slack's Texty inputs: no Quill, no clipboard module
 }
 
 // pasteFormats is Quill's getFormat at a paste's caret, as Texty's

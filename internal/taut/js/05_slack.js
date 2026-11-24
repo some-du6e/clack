@@ -1619,13 +1619,18 @@ T.composerFocus = (kind, on) => {
  */
 T.preparePastedDelta = (kind, ops, formats) => {
   const h = quillHost(kind)
-  if (!h || !Array.isArray(ops)) return ops
+  if (!h || !Array.isArray(ops)) return null
   try {
+    // null: unchanged, compared by this engine's own JSON (Go writes & < >
+    // and U+2028/U+2029 escaped, so its bytes never equal ours), from
+    // before the plugin ran (it may change the delta it's given in place)
+    const before = JSON.stringify(ops)
     const out = h.clipboard.preparePastedDelta({ pastedDelta: new Delta(ops), formats: formats ?? {} })
-    return Array.isArray(out?.ops) ? out.ops : ops
+    if (!Array.isArray(out?.ops)) return null
+    return JSON.stringify(out.ops) === before ? null : out.ops
   } catch (err) {
     error('Paste preparation failed:', err)
-    return ops
+    return null
   }
 }
 

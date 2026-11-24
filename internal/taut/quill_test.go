@@ -1,6 +1,7 @@
 package taut
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -73,6 +74,56 @@ return { Seen: __seen, Active: c ? c.getAttribute('data-composer') + ' ' + a.cla
 	eventually(t, 5*time.Second, "the restore told to Go", func() bool { return !pasteClipboardOn(h.tt) })
 	if out, changed := preparePaste(ctx, h.tt, "channel", ops, nil); changed {
 		t.Errorf("after the restore the paste changed: %s", out)
+	}
+}
+
+// slowOnPaste patches the composer clipboard as patchOnFocus does, with a
+// preparePastedDelta that takes 3 s and then changes the paste.
+const slowOnPaste = `globalThis.__ran = 0
+document.addEventListener('focusin', (e) => {
+  const c = e.target.closest && e.target.closest('.ql-container')
+  const cb = c && c.__quill && c.__quill.getModule('clipboard')
+  const proto = cb && Object.getPrototypeOf(cb)
+  if (!proto || typeof proto.preparePastedDelta !== 'function' || globalThis.__slow) return
+  const prepare = proto.preparePastedDelta
+  globalThis.__slow = true
+  proto.preparePastedDelta = function (args) {
+    const end = Date.now() + 3000
+    while (Date.now() < end) {}
+    __ran++
+    return prepare.call(this, { ...args, pastedDelta: new args.pastedDelta.constructor([{ insert: 'late\n' }]) })
+  }
+}, true)
+return 0`
+
+// The composer's deadline bounds a plugin's preparePastedDelta while it
+// runs, not only while it waits for the JS thread: the paste goes in as
+// it came at the deadline, and the call runs on to its end, its answer
+// dropped. It held the UI goroutine until the plugin returned, up to
+// jsrt's task limit.
+func TestPreparePasteBoundedWhileRunning(t *testing.T) {
+	h := newHarness(t)
+	h.js(slowOnPaste)
+	composerFocus(h.tt, "channel", true)
+	eventually(t, 5*time.Second, "the plugin's patch told to Go", func() bool { return pasteClipboardOn(h.tt) })
+	h.js(`return 0`) // nothing queued ahead of the paste: its call runs at once
+	ops := json.RawMessage(`[{"insert":"see https://example.com/\n"}]`)
+	// the composer's is 150 ms; 500 so a slow runner surely starts the call first
+	ctx, cancel := context.WithTimeout(UserAction(context.Background()), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	out, changed := preparePaste(ctx, h.tt, "channel", ops, nil)
+	took := time.Since(start)
+	if changed || string(out) != string(ops) {
+		t.Errorf("a paste whose plugin call ran past the deadline came back %s (changed %v); want it as it came", out, changed)
+	}
+	if took > 2*time.Second {
+		t.Errorf("the paste waited %v for a 3 s plugin call, past its 500 ms", took)
+	}
+	var ran int
+	h.jsInto(`return __ran`, &ran) // after the call: it holds the JS thread
+	if ran != 1 {
+		t.Errorf("the plugin's call ran %d times, want once, to its end", ran)
 	}
 }
 

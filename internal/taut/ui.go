@@ -955,7 +955,9 @@ func (t *Taut) HasPasteClipboard() bool { h := t.composer(); return h != nil && 
 // handleOnPaste hands the pasted delta to the clipboard module: ops are
 // the pasted delta's, formats the caret's (Quill's getFormat). It returns
 // the ops to insert, and false when they're the ones given (no plugin
-// changed them, or JS didn't answer).
+// changed them, or JS didn't answer). ctx bounds the plugin's call too,
+// not only its wait for the JS thread (jsrt.LeaveRunning): a paste whose
+// call runs past it goes in as it came, the call left to finish.
 func (t *Taut) PreparePastedDelta(ctx context.Context, kind string, ops json.RawMessage, formats map[string]any) (json.RawMessage, bool) {
 	if !t.HasPasteClipboard() {
 		return ops, false
@@ -968,7 +970,7 @@ func (t *Taut) PreparePastedDelta(ctx context.Context, kind string, ops json.Raw
 		formats = map[string]any{}
 	}
 	var out json.RawMessage
-	if err := rt.call(ctx, "preparePastedDelta", &out, kind, ops, formats); err != nil || len(out) == 0 || string(out) == "null" {
+	if err := rt.call(jsrt.LeaveRunning(ctx), "preparePastedDelta", &out, kind, ops, formats); err != nil || len(out) == 0 || string(out) == "null" {
 		return ops, false
 	}
 	return out, !bytes.Equal(out, ops)
