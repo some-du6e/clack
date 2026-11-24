@@ -62,6 +62,16 @@ type unreadsState struct {
 	noQueue   bool                      // the boot load answers no join banner (QueueJoinBanner)
 	badges    []string                  // generic_new_badge's notificationData.badges (SetNewBadges)
 	spaces    map[string]map[string]any // space -> the notification any load answers (SetMegaphoneSpace)
+	loads     []url.Values              // every megaphone.notifications.list's form (MegaphoneLoads)
+}
+
+// MegaphoneLoads returns the form of every megaphone.notifications.list
+// so far, in any fake, in order.
+func (s *Server) MegaphoneLoads() []url.Values {
+	u := s.unreads()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]url.Values(nil), u.loads...)
 }
 
 // SetMegaphoneSpace makes every megaphone.notifications.list that asks for
@@ -284,6 +294,12 @@ func (s *Server) PutUnreadMessage(ch string, m slack.Message) string {
 }
 
 func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
+	if method == "megaphone.notifications.list" {
+		u := s.unreads()
+		u.mu.Lock()
+		u.loads = append(u.loads, f)
+		u.mu.Unlock()
+	}
 	if !s.Size.Unreads {
 		// SetNewBadges answers the boot load's generic_new_badge in any
 		// fake, SetMegaphoneSpace its spaces
