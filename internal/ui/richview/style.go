@@ -500,10 +500,11 @@ type Options struct {
 	// its link previews get Slack's remove button (canDelete, 4BNQ).
 	Own bool
 	// FileRemoves are the message's files with FileRemoveButton's x (the
-	// gallery's removableFileIds) by id: false takes the file out of the
-	// message (chat.removeFile), true deletes it (a file shared into it,
-	// DeleteFileDialog). FileRemover hears the click.
-	FileRemoves map[string]bool
+	// gallery's removableFileIds), as FileRemovesOf writes them (a string,
+	// so Options stays comparable): each id taken out of the message
+	// (chat.removeFile) or, for a file shared into it, deleted
+	// (DeleteFileDialog). FileRemover hears the click.
+	FileRemoves string
 	// HoverCard lays the doc's attachment out as Slack's link preview
 	// hover card (MessageAttachmentDefaultV3HoverCard, unfurl_hover.go).
 	HoverCard bool

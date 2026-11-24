@@ -107,7 +107,7 @@ func TestFileRemoveButton(t *testing.T) {
 	}
 	for _, del := range []bool{false, true} {
 		h := &fileRemoveRec{}
-		hs := &harness{st: newTestStyle(), v: New(doc(fileBlock(f)), Options{Own: true, FileRemoves: map[string]bool{f.ID: del}}), h: h, w: 600}
+		hs := &harness{st: newTestStyle(), v: New(doc(fileBlock(f)), Options{Own: true, FileRemoves: FileRemovesOf(map[string]bool{f.ID: del})}), h: h, w: 600}
 		hs.frame()
 		if len(hs.v.d.removes) != 1 {
 			t.Fatalf("deletion %v: %d remove buttons", del, len(hs.v.d.removes))
@@ -136,7 +136,7 @@ func TestFileRemoveButton(t *testing.T) {
 	// a file still uploading has none
 	p := *f
 	p.Pending = true
-	if v := layoutAt(newTestStyle(), doc(fileBlock(&p)), Options{Own: true, FileRemoves: map[string]bool{f.ID: false}}, 600); len(v.d.removes) != 0 {
+	if v := layoutAt(newTestStyle(), doc(fileBlock(&p)), Options{Own: true, FileRemoves: FileRemovesOf(map[string]bool{f.ID: false})}, 600); len(v.d.removes) != 0 {
 		t.Error("an x on a pending upload")
 	}
 }
@@ -160,7 +160,7 @@ func TestFileCardHoverShots(t *testing.T) {
 		for _, kind := range []string{"hover", "uploading"} {
 			st := NewStyle(themeShaper(), noImages{}, pal)
 			ff := *f
-			o := Options{Own: true, FileRemoves: map[string]bool{f.ID: false}}
+			o := Options{Own: true, FileRemoves: FileRemovesOf(map[string]bool{f.ID: false})}
 			if kind == "uploading" {
 				ff.Pending, ff.Percent = true, 42
 			}

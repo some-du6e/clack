@@ -4,6 +4,7 @@ import (
 	"image"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -337,7 +338,7 @@ func (l *lay) removeButton(a *richtext.Attachment, cardT int16, r image.Rectangl
 // top -9px right -9px, while the card is hovered), its tooltip getRemoveLabel's
 // "Remove {fileName} from message" or "Delete {fileName}".
 func (l *lay) fileRemoveButton(f *richtext.File, cardT int16, r image.Rectangle) {
-	del, ok := l.opts.FileRemoves[f.ID]
+	del, ok := fileRemoval(l.opts.FileRemoves, f.ID)
 	if !ok || f.ID == "" || f.Pending {
 		return
 	}
@@ -350,6 +351,44 @@ func (l *lay) fileRemoveButton(f *richtext.File, cardT int16, r image.Rectangle)
 	t := l.d.addTarget(target{kind: tRemoveFile, file: f, id: id})
 	l.d.hits = append(l.d.hits, hit{r: br, t: t})
 	l.d.removes = append(l.d.removes, removeBtn{r: br, card: cardT, del: t, cardTo: t - 1, tip: fileRemoveLabel(f, del)})
+}
+
+// FileRemovesOf is Options.FileRemoves for removable file ids (true:
+// the x deletes the file): "id=r" or "id=d" for each, sorted, ";"
+// between them.
+func FileRemovesOf(m map[string]bool) string {
+	ids := make([]string, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var b strings.Builder
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		b.WriteString(id)
+		if m[id] {
+			b.WriteString("=d")
+		} else {
+			b.WriteString("=r")
+		}
+	}
+	return b.String()
+}
+
+// fileRemoval reads FileRemovesOf's s for file id: whether it has an x,
+// and whether the x deletes it.
+func fileRemoval(s, id string) (del, ok bool) {
+	for s != "" {
+		var e string
+		e, s, _ = strings.Cut(s, ";")
+		k, v, _ := strings.Cut(e, "=")
+		if k == id {
+			return v == "d", true
+		}
+	}
+	return false, false
 }
 
 // fileRemoveLabel is getRemoveLabel for a file: the title, else the

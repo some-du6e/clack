@@ -555,7 +555,7 @@ func (r *row) rvOpts() richview.Options {
 		o.Stopped, o.StoppedBy = true, r.stoppedBy()
 	}
 	if own {
-		o.FileRemoves = fileRemoves(&r.m, r.rc.selfID)
+		o.FileRemoves = richview.FileRemovesOf(fileRemoves(&r.m, r.rc.selfID))
 	}
 	return o
 }
