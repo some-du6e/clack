@@ -50,6 +50,8 @@ type tap struct {
 	// Space press it on release, as widget.Clickable does.
 	keys    bool
 	keyDown key.Name
+	// byPtr: the last click was the pointer's (not Enter or Space)
+	byPtr bool
 }
 
 func (t *tap) clicked(gtx C, h Host) bool {
@@ -60,7 +62,7 @@ func (t *tap) clicked(gtx C, h Host) bool {
 			break
 		}
 		if e.Kind == gesture.KindClick {
-			hit = true
+			hit, t.byPtr = true, true
 			t.org = pointerAt(h, e.Position).Sub(e.Position)
 		}
 	}
@@ -77,7 +79,7 @@ func (t *tap) clicked(gtx C, h Host) bool {
 				t.keyDown = e.Name
 			} else if t.keyDown == e.Name {
 				t.keyDown = ""
-				hit = true
+				hit, t.byPtr = true, false
 			}
 		}
 	}
@@ -508,7 +510,7 @@ func (w *ew) commit(prev *Value) {
 		return
 	}
 	payload := actionPayload(w.bid, w.e, w.value())
-	if w.e.Confirm != nil {
+	if w.commitAsks() {
 		cur := *w.value()
 		w.confirm(w.e.Confirm, func() { w.send(payload) }, func() {
 			// denied: back to the previous value
@@ -521,6 +523,11 @@ func (w *ew) commit(prev *Value) {
 		return
 	}
 	w.send(payload)
+}
+
+// commitAsks reports that commit asks the element's confirm first.
+func (w *ew) commitAsks() bool {
+	return w.e.Confirm != nil && !w.inDialog && (!w.input || w.b.DispatchAction)
 }
 
 func (w *ew) snapshot() *Value {

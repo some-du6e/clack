@@ -595,7 +595,10 @@ func (m *selectMenu) pick(i int) {
 			v.SelectedChans = append(append([]string(nil), v.SelectedChans...), it.id)
 		}
 	}
-	if !multi {
+	if !multi || w.commitAsks() {
+		// a confirm takes the focus (its cancel button's autoFocus): the
+		// select blurs and its menu closes, so a second pick can't put a
+		// second confirm over the first
 		m.Dismiss()
 	} else {
 		m.ed.SetText("")

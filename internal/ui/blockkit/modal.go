@@ -70,6 +70,13 @@ type Stack struct {
 	card  image.Rectangle
 	// bump is the leave prompt while it's up (WizardSpeedBump)
 	bump *leaveBump
+	// prevTaken: prev was read when the stack first took the focus (a
+	// bump's cancel takes it again, and must not read the modal's own
+	// editor as where to go back to); bumpGone is when a press on the
+	// bump's buttons put it away (the double click's second press lands
+	// on the footer's Submit under it)
+	prevTaken bool
+	bumpGone  time.Time
 }
 
 // leaveBump is BlockKitModal's speed bump (boot-render D5xX
@@ -171,6 +178,14 @@ func (s *Stack) Dismiss() {
 		return
 	}
 	s.h.ShowOverlay(s)
+	if s.bump != nil {
+		// WizardSpeedBump binds Escape on the document while it's up and
+		// cancels (onCancel); the shell reads Escape before the stack's
+		// own filters, so the cancel is here too
+		s.cancelBump()
+		s.h.Invalidate()
+		return
+	}
 	s.userBack()
 }
 
@@ -229,6 +244,11 @@ func (s *Stack) showLeave(pushed bool, leave func()) {
 // confirm object in the modal, as the in-card speed bump; deny (may be
 // nil) runs on its cancel.
 func (s *Stack) showConfirmBump(c *Confirm, ok, deny func()) {
+	if s.bump != nil {
+		// one bump at a time: the one up is answered as cancelled, so its
+		// deny puts its element back (resetConfirmDialog keeps one)
+		s.cancelBump()
+	}
 	b := &leaveBump{header: textOf(c.Title), keepTxt: firstNonEmpty(textOf(c.Deny), appViewNS.T("Cancel")),
 		cont: firstNonEmpty(textOf(c.Confirm), appViewNS.T("OK")), style: "primary", onContinue: ok, onKeep: deny}
 	if c.Style == "danger" {
@@ -253,6 +273,25 @@ func (s *Stack) cancelBump() {
 	if b != nil && b.onKeep != nil {
 		b.onKeep()
 	}
+}
+
+// noteBumpGone records a click on the bump's button t that put it away.
+func (s *Stack) noteBumpGone(gtx C, t *tap) {
+	if t.byPtr {
+		s.bumpGone = gtx.Now
+	}
+}
+
+// bumpDoubleClick is how soon after a click put the bump away a click on
+// Submit is the same double click's second (the OS double-click time:
+// 500ms by default on Windows and macOS).
+const bumpDoubleClick = 500 * time.Millisecond
+
+// secondOfDouble: Submit's pointer click is the second click of a double
+// click whose first answered the bump (its continue button sits on
+// Submit).
+func (s *Stack) secondOfDouble(gtx C) bool {
+	return s.submit.byPtr && !s.bumpGone.IsZero() && gtx.Now.Sub(s.bumpGone) < bumpDoubleClick
 }
 
 // leaveUp reports the leave prompt is showing (tests).
@@ -350,11 +389,12 @@ func (s *Stack) keys(gtx C) {
 	}
 	if !s.focused {
 		s.focused = true
-		if !slackc.FocusInPluginLayer(gtx) {
+		if !s.prevTaken && !slackc.FocusInPluginLayer(gtx) {
 			// opened from a plugin's layer, the window's overlay stack gives
 			// the focus back there (slackc layers.go)
 			s.prev = refocus.Last(gtx.Now)
 		}
+		s.prevTaken = true
 		st := s.stops()
 		gtx.Execute(key.FocusCmd{Tag: st[len(st)-1]})
 	}
@@ -558,7 +598,7 @@ func (s *Stack) Layout(gtx C) D {
 				s.userBack()
 				return D{}
 			}
-			if s.top().view.Submit != nil {
+			if s.bump == nil && s.top().view.Submit != nil { // the bump is answered first
 				s.doSubmit()
 			}
 		}
@@ -582,9 +622,11 @@ func (s *Stack) Layout(gtx C) D {
 		}
 		if s.bump != nil && b.keep.clicked(gtx, s.h) {
 			s.cancelBump()
+			s.noteBumpGone(gtx, &b.keep)
 		}
 		if s.bump != nil && b.leave.clicked(gtx, s.h) {
 			s.bump = nil
+			s.noteBumpGone(gtx, &b.leave)
 			b.onContinue()
 			if s.done {
 				return D{}
@@ -602,7 +644,7 @@ func (s *Stack) Layout(gtx C) D {
 	if s.done {
 		return D{}
 	}
-	if s.submit.clicked(gtx, s.h) || s.retry.clicked(gtx, s.h) {
+	if sub := s.submit.clicked(gtx, s.h); sub && !s.secondOfDouble(gtx) || s.retry.clicked(gtx, s.h) {
 		s.doSubmit()
 	}
 

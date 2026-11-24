@@ -63,7 +63,7 @@ jobs:
       - name: popups dialogs through the router
         run: go test -count=1 -v -timeout 10m -run "$POPUP_TESTS" ./internal/ui/popups
       - name: Block Kit confirm and modal
-        run: go test -count=1 -v -timeout 10m -run 'TestConfirmObjectKeys|TestBlockKitModalKeys|TestConfirmObjectTitle$|TestLeaveBumpIsWizardSpeedBump$|TestModalConfirmIsSpeedBump$' ./internal/ui/blockkit
+        run: go test -count=1 -v -timeout 10m -run 'TestConfirmObjectKeys|TestBlockKitModalKeys|TestConfirmObjectTitle$|TestLeaveBumpIsWizardSpeedBump$|TestModalConfirmIsSpeedBump$|TestBumpDoubleClickKeepsSubmit$' ./internal/ui/blockkit
       - name: Notify N people over a real composer editor
         run: go test -count=1 -v -timeout 10m -run 'TestBroadcastWarningKeys|TestBroadcastConfirm' ./internal/ui/composer
       - name: Edit topic over channel details
@@ -85,3 +85,5 @@ jobs:
         with:
           name: dialog-keys-shots
           path: dist/shots
+      - name: a Block Kit modal's speed bump and Escape through the shell
+        run: go test -count=1 -v -timeout 10m -run '^TestModalBumpEscapeThroughShell$' ./internal/ui
