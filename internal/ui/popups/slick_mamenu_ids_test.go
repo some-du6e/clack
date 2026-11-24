@@ -64,7 +64,7 @@ func TestMAMenuRowIDs(t *testing.T) {
 			t.Errorf("submenu action %d: %v, want %v", i, got[i], want[i])
 		}
 	}
-	if id := maID(&m.ma.native[0].Sub[0]); id != "remind/"+LabelKey("In 30 mins") {
+	if id := maID(&m.ma.native[0].Sub[0]); id != "remind_later/"+LabelKey("In 30 mins") {
 		t.Errorf("the reminder preset's id %q", id)
 	}
 

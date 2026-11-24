@@ -219,7 +219,7 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 		}
 		// a client command that ran (and may have answered with feedback
 		// of its own) before Slackbot's feedback on a command that didn't
-		if ran := srLocalRan(h, fs, conv.ID); ran != "" {
+		if ran := srLocalRan(h, fs, conv.ID, feedback); ran != "" {
 			return map[string]any{"route": "local", "name": ran}
 		}
 		if feedback != "" {
@@ -268,7 +268,7 @@ const (
 // client commands, slash_local.go and writes.go's Command): "" when none
 // did; several are joined by "+", and anything else a command did is
 // "unattributed", so neither can pass for one command.
-func srLocalRan(h *cmdHost, fs *fakeSlack, ch string) string {
+func srLocalRan(h *cmdHost, fs *fakeSlack, ch, note string) string {
 	h.mu.Lock()
 	toggles, searches, invites := h.toggles, h.searches, len(h.invites)
 	navs := append([]string(nil), h.navs...)
@@ -320,6 +320,15 @@ func srLocalRan(h *cmdHost, fs *fakeSlack, ch string) string {
 		default:
 			ran["unattributed"] = true
 		}
+	}
+	// collapseCommand and expandCommand (Zrd3 s/xk) change only local
+	// state and say so in Slackbot's own words (addEphemeralFeedback,
+	// temporary false: core.ExpandCommand's CommandNote)
+	switch note {
+	case "I’ve collapsed all files in this channel for you.":
+		ran["/collapse"] = true
+	case "I’ve expanded all files in this channel for you.":
+		ran["/expand"] = true
 	}
 	for m, cmd := range map[string]string{"conversations.setTopic": "/topic", "conversations.rename": "/rename", "conversations.archive": "/archive",
 		"conversations.leave": "/leave", "conversations.join": "/open"} {

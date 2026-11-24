@@ -346,6 +346,11 @@ const maThreadsViewMenu = `{
 // Threads view's code calls none while it draws no hover toolbar.
 var maThreadsViewToolbar = map[string]bool{"ToolbarShown": true, "MoreShown": true, "NewMessageMenuOpts": true, "TodoShown": true, "AddToListShown": true}
 
+// maThreadsViewKeys are the Threads view's functions for a focused row's
+// key commands: they ask shouldRenderActions (popups.ToolbarShown), as
+// Slack binds no key where there's no toolbar, and draw nothing.
+var maThreadsViewKeys = map[string]bool{"kbMsgKey": true, "kbMsgBinds": true}
+
 // maThreadsView checks the Threads view's code that clackMessageActions
 // mirrors: messageMenu's code is maThreadsViewMenu, and its files
 // (threads*.go) call none of the toolbar's rules. Either changing fails
@@ -373,6 +378,9 @@ func maThreadsView(t *testing.T) {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.FuncDecl:
+				if maThreadsViewKeys[n.Name.Name] && n.Recv != nil {
+					return false // the key commands' rules, not a toolbar
+				}
 				if n.Name.Name == "messageMenu" && n.Recv != nil && len(n.Recv.List) == 1 && maRecvType(n.Recv.List[0].Type) == "*Threads" {
 					found = true
 					var b bytes.Buffer

@@ -348,7 +348,7 @@ func TestMessageMenuSelectActionDecides(t *testing.T) {
 	_, d = open("the menu for Remind")
 	presets := d.openSub("remind_later")
 	d.click(presets.rows[0])
-	if !answer(d, maTaken) || !strings.HasSuffix(decided(), ",remind"+at) {
+	if !answer(d, maTaken) || !strings.HasSuffix(decided(), ",remind_later"+at) {
 		t.Errorf("a reminder preset: not taken, or asked %q", decided())
 	}
 	if e.api.called("saved.add") != saved {
@@ -542,7 +542,7 @@ func TestMessageMenuNativeRowsThroughPlugin(t *testing.T) {
 	d.click(sub.rows[0]) // In 30 mins
 	d.until("the preset saving the reminder", func() bool { return e.api.called("saved.add") > saved })
 	d.settle()
-	if n := e.api.called("saved.add") - saved; n != 1 || !strings.HasSuffix(passed(), ",remind") {
+	if n := e.api.called("saved.add") - saved; n != 1 || !strings.HasSuffix(passed(), ",remind_later") {
 		t.Errorf("the preset saved %d times (want once), asked %q", n, passed())
 	}
 	if f := e.api.forms("saved.add"); len(f) > 0 {
