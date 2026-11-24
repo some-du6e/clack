@@ -498,7 +498,7 @@ func ufHeroBg(th *theme.Theme) color.NRGBA {
 // the note and Close; no close button.
 func newUserFeedbackThanks(h Host) *Modal {
 	th := h.Theme()
-	return NewModal(h, ModalOpts{Title: nsUserFeedback.T(ufThanks), TitleWrap: true, NoClose: true, EnterSubmits: true,
+	return NewModal(h, ModalOpts{Title: nsUserFeedback.T(ufThanks), NoClose: true, EnterSubmits: true,
 		HeroH: 199 + 24,
 		Hero: func(gtx layout.Context) layout.Dimensions {
 			sz := gtx.Constraints.Max

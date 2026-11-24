@@ -69,6 +69,12 @@ func newEnv(t *testing.T, dark bool) (*testHost, *fakeslack.Server) {
 	return h, fs
 }
 
+// quipOff turns saving through edit-document off (ui.json's
+// "canvas_quip_edit": false, or CLACK_CANVAS_QUIP_EDIT=0; on by default
+// since alpha.164), for a test of the canvases.edit path that Clack then
+// saves through. Call it before New, so the view doesn't load Quip's model.
+func quipOff(h *testHost) { h.a.SetQuipEdit(false) }
+
 func gtxFor(ops *op.Ops, sz image.Point) layout.Context {
 	return layout.Context{Ops: ops, Now: time.Now(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(sz)}
 }

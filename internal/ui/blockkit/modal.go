@@ -68,6 +68,28 @@ type Stack struct {
 	// drawn (ModalFields); card, the card's (Rect)
 	bodyR image.Rectangle
 	card  image.Rectangle
+	// bump is the leave prompt while it's up (WizardSpeedBump)
+	bump *leaveBump
+}
+
+// leaveBump is BlockKitModal's speed bump (boot-render D5xX
+// WizardSpeedBump, rendered by WizardModal's maybeRenderConfirm when a
+// close or a back would lose what's entered): a sheet in the card, not a
+// dialog of its own. c-wizard_speed_bump_overlay veils the card
+// (rgba(primary background, .7), radius 8px); the c-wizard_speed_bump
+// sheet sits at its bottom (primary background, border-top 1px
+// foreground_low_solid, radius 0 0 8px 8px, padding 20px 24px): the h3
+// header (24px/28px bold, margin-bottom 8px), the body (margin-bottom
+// 12px), and the button row at the right: Keep Editing (outline,
+// autofocused), then the continue button (danger) 12px after it. Escape
+// cancels it; Tab and Shift+Tab stay on its two buttons. It slides up
+// in 0.2s in Slack; Clack shows it at once.
+type leaveBump struct {
+	header, body, cont string
+	onContinue         func()
+	keep, leave        tap
+	veil               int
+	focused            bool
 }
 
 func newStack(h Host, v *core.View) *Stack {
@@ -175,18 +197,27 @@ func (s *Stack) speedbump(pushed bool, leave func()) {
 		leave()
 		return
 	}
-	cont, style := "Leave", "danger"
-	if pushed {
-		cont, style = "Continue", "primary"
-	}
-	showConfirm(s.h, &Confirm{
-		Title:   &Text{Type: "plain_text", Text: "Are you sure you want to leave?"},
-		Text:    &Text{Type: "plain_text", Text: "It looks like you’re still working on this. You may lose the info you’ve entered so far if you leave now."},
-		Confirm: &Text{Type: "plain_text", Text: cont},
-		Deny:    &Text{Type: "plain_text", Text: "Keep Editing"},
-		Style:   style,
-	}, leave, nil)
+	s.showLeave(pushed, leave)
 }
+
+// showLeave puts the leave prompt up over the card.
+func (s *Stack) showLeave(pushed bool, leave func()) {
+	// getShouldShowSpeedBump: a back from a pushed view says "Continue";
+	// the type stays the state's default, danger
+	cont := "Leave"
+	if pushed {
+		cont = "Continue"
+	}
+	// WizardSpeedBump's defaults (BlockKitModal passes no header or body;
+	// "you've" is ASCII there)
+	s.bump = &leaveBump{header: "Are you sure you want to leave?",
+		body: "It looks like you\u2019re still working on this. You may lose the info you've entered so far if you leave now.",
+		cont: cont, onContinue: leave}
+	s.h.Invalidate()
+}
+
+// leaveUp reports the leave prompt is showing (tests).
+func (s *Stack) leaveUp() bool { return s.bump != nil }
 
 // userBack / userCloseAll are the user's Close, Escape, back and ×.
 func (s *Stack) userBack() {
@@ -256,6 +287,9 @@ func (s *Stack) FocusHome() event.Tag {
 // c-dialog, then the footer's Close and Submit. The body's inputs take
 // the focus with the mouse.
 func (s *Stack) stops() []event.Tag {
+	if b := s.bump; b != nil {
+		return []event.Tag{&b.keep, &b.leave}
+	}
 	var out []event.Tag
 	if len(s.views) > 1 {
 		out = append(out, &s.backTap)
@@ -478,6 +512,11 @@ func (s *Stack) Layout(gtx C) D {
 		}
 		if ke, ok := e.(key.Event); ok && ke.State == key.Press {
 			if ke.Name == key.NameEscape {
+				if s.bump != nil { // WizardSpeedBump's escape: onCancel
+					s.bump = nil
+					s.focused = false
+					continue
+				}
 				s.userBack()
 				return D{}
 			}
@@ -487,6 +526,33 @@ func (s *Stack) Layout(gtx C) D {
 		}
 	}
 
+	if b := s.bump; b != nil {
+		b.keep.keys, b.leave.keys = true, true
+		if !b.focused {
+			b.focused = true
+			gtx.Execute(key.FocusCmd{Tag: &b.keep}) // the cancel button's autoFocus
+		}
+		for {
+			e, ok := gtx.Event(key.Filter{Focus: &b.keep, Name: key.NameEscape}, key.Filter{Focus: &b.leave, Name: key.NameEscape})
+			if !ok {
+				break
+			}
+			if ke, ok := e.(key.Event); ok && ke.State == key.Press {
+				s.bump, s.focused = nil, false
+				break
+			}
+		}
+		if s.bump != nil && b.keep.clicked(gtx, s.h) {
+			s.bump, s.focused = nil, false
+		}
+		if s.bump != nil && b.leave.clicked(gtx, s.h) {
+			s.bump = nil
+			b.onContinue()
+			if s.done {
+				return D{}
+			}
+		}
+	}
 	sf := s.top()
 	v := sf.view
 	if s.closeTap.clicked(gtx, s.h) {
@@ -619,6 +685,9 @@ func (s *Stack) Layout(gtx C) D {
 			s.footer(gtx, image.Pt(0, y), mw, footH, v)
 			wm.EndAt(gtx, image.Rect(0, y, mw, y+footH))
 			fm.EndAt(gtx, image.Rect(0, y, mw, y+footH))
+		}
+		if s.bump != nil {
+			s.leaveSheet(gtx, cl, mw, mh)
 		}
 	})
 	slackc.InspectCard(gtx, image.Rectangle{Min: pos, Max: pos.Add(image.Pt(mw, mh))}) // the inspect tool: the card is the modal's box
@@ -965,3 +1034,71 @@ func (m modalView) props() slackc.Props {
 }
 
 func (m modalView) layout(gtx C, _ slackc.Props) D { return m.sf.Layout(gtx) }
+
+// macroAt replays a recorded call at p.
+func macroAt(gtx C, c op.CallOp, p image.Point) {
+	defer op.Offset(p).Push(gtx.Ops).Pop()
+	c.Add(gtx.Ops)
+}
+
+// leaveSheet draws the leave prompt over the card (mw × mh): the veil,
+// which takes the card's presses, and the sheet at its bottom.
+func (s *Stack) leaveSheet(gtx C, cl colors, mw, mh int) {
+	b := s.bump
+	th := s.h.Theme()
+	veil := cl.Bg
+	veil.A = uint8(float32(veil.A)*.7 + .5)
+	rrect(gtx, image.Rect(0, 0, mw, mh), dp(gtx, 8), veil)
+	for {
+		if _, ok := gtx.Event(pointer.Filter{Target: &b.veil, Kinds: pointer.Press | pointer.Scroll,
+			ScrollY: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}}); !ok {
+			break
+		}
+	}
+	func() {
+		defer clip.Rect{Max: image.Pt(mw, mh)}.Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, &b.veil)
+	}()
+	padX, padY := dp(gtx, 24), dp(gtx, 20)
+	tw := mw - 2*padX
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(tw, 1<<20)}
+	hm := op.Record(gtx.Ops)
+	hd := para(g, th, 24, 28, theme.Bold, cl.Text, b.header)
+	hc := hm.Stop()
+	bm := op.Record(gtx.Ops)
+	bd := para(g, th, 15, 22, theme.Regular, cl.Text, b.body)
+	bc := bm.Stop()
+	bh := dp(gtx, 36)
+	line := max(1, dp(gtx, 1))
+	sh := line + padY + hd.Size.Y + dp(gtx, 8) + bd.Size.Y + dp(gtx, 12) + bh + padY
+	sh = min(sh, mh)
+	top := mh - sh
+	r8 := dp(gtx, 8)
+	// the sheet: radius 0 0 8px 8px under its 1px top line
+	func() {
+		defer clip.RRect{Rect: image.Rect(0, top, mw, mh), SE: r8, SW: r8}.Push(gtx.Ops).Pop()
+		rrect(gtx, image.Rect(0, top, mw, mh), 0, cl.Bg)
+		rrect(gtx, image.Rect(0, top, mw, top+line), 0, cl.BumpLine)
+	}()
+	y := top + line + padY
+	macroAt(gtx, hc, image.Pt(padX, y))
+	y += hd.Size.Y + dp(gtx, 8)
+	macroAt(gtx, bc, image.Pt(padX, y))
+	y += bd.Size.Y + dp(gtx, 12)
+	right := mw - padX
+	btn := func(t *tap, txt, style string) {
+		w := max(measure(gtx, th, 15, theme.Bold, txt)+2*dp(gtx, 16), dp(gtx, 80))
+		right -= w
+		at(gtx, image.Pt(right, y), func(gtx C) D {
+			sz := image.Pt(w, bh)
+			s.ringAt(gtx, t, image.Rectangle{Max: sz})
+			drawButton(gtx, th, sz, style, txt, 8, 15, t.g.Hovered(), false, false)
+			t.add(gtx, sz)
+			return D{}
+		})
+		right -= dp(gtx, 12) // .c-wizard_speed_bump__button: margin-left 12px
+	}
+	btn(&b.leave, b.cont, "danger")
+	btn(&b.keep, "Keep Editing", "")
+}

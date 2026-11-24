@@ -112,6 +112,13 @@ type Options struct {
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
+	// SetAppIcon is Clack's Dock or window icon from now on: png, a PNG,
+	// nil for Clack's own (cmd/clack: desktop.SetAppIcon). Slick's main
+	// halves set it (CustomAppIcon). nil: nothing changes it.
+	SetAppIcon func(png []byte)
+	// UserDefault reads the user's macOS defaults for Slick's main halves
+	// (systemPreferences.getUserDefault; cmd/clack: desktop.UserDefault).
+	UserDefault func(key, typ string) any
 	// shaperHold (tests): the startup shaper reaches the UI goroutine only
 	// once it's closed, so the fonts load late.
 	shaperHold <-chan struct{}
@@ -306,6 +313,7 @@ type App struct {
 	font             fontState             // Appearance > Font (prefs_font.go)
 	explorer         *explorer.Explorer    // native file chooser (set in onWindow)
 	dl               downloadPrefs         // Download location, for the savers' goroutines (downloads.go)
+	dlToast          downloadToastState    // the download toast (downloads.go)
 	tautGen          int                   // bumps when a (new) plugin runtime attaches
 	tautTabs         []taut.PreferencesTab // plugins' Preferences tabs
 	switchAt         time.Time             // navigation time, for the channel-switch latency log
@@ -411,6 +419,15 @@ type App struct {
 	// noMoveFocus: an open that keeps the focus where it is
 	// (PreventMoveFocus: Activity's option+up/down)
 	noMoveFocus bool
+
+	// chTabPicked: a tab of the channel was picked (its tab bar, a tab
+	// link), so Slack's view for it is the tab's, Messages' too
+	// (slackTabView); tabViewKey is the view last told to Slick, the
+	// instance tabViewTo (a new one after the backend restarts is told
+	// again)
+	chTabPicked map[string]bool
+	tabViewKey  string
+	tabViewTo   *slick.Slick
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -991,7 +1008,8 @@ func (a *App) frame(gtx layout.Context) {
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.layoutWorkflowRunToast(gtx)
-	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
+	a.layoutDownloadToast(gtx) // Slack's download toast (downloads.go)
+	a.layoutIntroOverlay(gtx)  // Replay introduction, over everything
 	// middle-click autoscroll's window-wide area: over everything but the
 	// tracker
 	a.autoscroll.End(gtx.Ops, gtx.Source, sz)

@@ -70,7 +70,6 @@ var pendingParts = map[string][]string{
 	"part 2f (the remaining blocks)": {"attachment_reference", "auth_provider", "canvas_mermaid", "canvas_table", "channel_section",
 		"channel_set", "layout", "mcp_app", "message", "page", "prototype", "related_automation_decorator", "salesforce_record_card",
 		"search_top_results", "share_skill", "share_workflow"},
-	"part 2a (Karim's named blocks, in progress)": {"contact_card", "event", "share_prompt"},
 }
 
 func init() {
@@ -124,6 +123,9 @@ var guardSamples = map[string]string{
 	"table":              `{"type":"table","rows":[[{"type":"raw_text","text":"a"}]]}`,
 	"message_embed":      `{"type":"message_embed","channel":"C1","ts":"1.0"}`,
 	"timeline":           `{"type":"timeline","points":[{"id":"a","status":"complete","text":"x"}]}`,
+	"share_prompt":       `{"type":"share_prompt","prompt":"x","bot_user_id":"UAF"}`,
+	"contact_card":       `{"type":"contact_card","contact_user_id":"U1","contact_card_id":"CC1"}`,
+	"event":              `{"type":"event","event_id":"E1","event":{"title":"x","start":{"date_time":1700000000},"end":{"date_time":1700003600},"organizer":{"user_id":"U2"},"attendees":[]}}`,
 }
 
 // mustDraw are the block types whose builder may return nothing for a
@@ -133,11 +135,33 @@ var mustDraw = map[string]BlockKind{
 	"data_visualization": DataVizBlock,
 	"message_embed":      AttachmentBlock,
 	"timeline":           TimelineBlock,
+	"share_prompt":       SharePromptBlock,
+	"contact_card":       ContactCardBlock,
+	"event":              EventBlock,
 }
 
 // guardRes is the guard's resolver: the test resolver, holding the
-// message message_embed's sample embeds.
-var guardRes = embedRes{msgs: map[string]slack.Message{"C1/1.0": {TS: "1.0", Channel: "C1", User: "U1", Text: "embedded"}}}
+// message message_embed's sample embeds, share_prompt's agent and
+// contact_card's member.
+var guardRes = guardResolver{embedRes{msgs: map[string]slack.Message{"C1/1.0": {TS: "1.0", Channel: "C1", User: "U1", Text: "embedded"}}}}
+
+type guardResolver struct{ embedRes }
+
+// PromptAgent knows share_prompt's sample agent, an Agentforce one.
+func (guardResolver) PromptAgent(id string) (name, avatar string, agentforce, ok bool) {
+	if id == "UAF" {
+		return "Pipeline Agent", "https://img.test/a.png", true, true
+	}
+	return "", "", false, false
+}
+
+// ContactMember knows contact_card's sample member.
+func (guardResolver) ContactMember(id string) (ContactMember, bool) {
+	if id == "U1" {
+		return ContactMember{Name: "Robin", Team: "Fake Club", CanInteract: true}, true
+	}
+	return ContactMember{}, false
+}
 
 func guardSample(typ string) string {
 	if s, ok := guardSamples[typ]; ok {
@@ -289,7 +313,9 @@ func dtCellSample(typ string) string {
 	return `{"type":"` + typ + `"}`
 }
 
-// drawsError reports a data block that draws its error state.
+// drawsError reports a block that draws its error state instead (a data
+// block's), or nothing (a share_prompt Slack wouldn't show).
 func drawsError(b *Block) bool {
-	return b.DataViz != nil && b.DataViz.Err || b.DataTable != nil && b.DataTable.Err
+	return b.DataViz != nil && b.DataViz.Err || b.DataTable != nil && b.DataTable.Err ||
+		b.Kind == SharePromptBlock && (b.Prompt == nil || !b.Prompt.Shown) // draws nothing
 }

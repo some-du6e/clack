@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const [slickRoot, outDir, ...only] = process.argv.slice(2);
 if (!slickRoot || !outDir) {
@@ -67,6 +67,18 @@ async function pageBuild(dir, id) {
   await writeFile(path.join(out, `${id}.js`), `// slick-plugin ${JSON.stringify({ id })}\n${code}\n//# sourceURL=slick:///plugins/${id}.js\n`);
 }
 
+// Slick's own app icon, its desktop build's branding (src/desktop/appIcon.ts
+// defaultAppIcon: the icon a main half puts back, CustomAppIcon's on stop
+// and for its "Slick" design in the system appearance), is the host app's:
+// here Clack's, so a main half never leaves Slick's logo on Clack's window.
+const clackIcon = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'assets', 'icon', 'clack-512.png');
+const hostBranding = {
+  name: 'clack-host-branding',
+  setup(b) {
+    b.onResolve({ filter: /(^|[\\/])assets[\\/](desktop-dev\.png|desktop-linux[\\/]512\.png)$/ }, () => ({ path: clackIcon }));
+  },
+};
+
 async function mainBuild(dir, id) {
   const { outputFiles } = await build({
     absWorkingDir: root,
@@ -80,7 +92,7 @@ async function mainBuild(dir, id) {
     external: ['electron'],
     loader: { '.gif': 'dataurl', '.png': 'dataurl', '.svg': 'dataurl', '.woff2': 'dataurl', '.txt': 'text' },
     define: { __SLICK_VERSION__: '"clack"', __SLICK_BUILD__: '0', __SLICK_LOADER__: '"electron"' },
-    plugins: [slickExternal, ...pagePlugins.filter((p) => p.name !== 'slick-shared-alias')],
+    plugins: [slickExternal, hostBranding, ...pagePlugins.filter((p) => p.name !== 'slick-shared-alias')],
   });
   // Node's globals, from the host (a main half runs in Electron's main process)
   const globals = 'var process = require("node:process"), Buffer = require("node:buffer").Buffer;\n';

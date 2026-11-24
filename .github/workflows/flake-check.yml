@@ -296,6 +296,8 @@ on:
       - "internal/store/reached_end*.go"
       - "internal/core/reached_end*.go"
       - "internal/ui/messages/reached_end_test.go"
+      # the msg-latency job's own
+      - "internal/ui/messages/hub_sent_load_test.go"
       - "internal/ui/reached_end_list_test.go"
       - "internal/fakeslack/count_posts.go"
       # the readiness the latency guards wait on, and where Activity reads it
@@ -3515,6 +3517,39 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # 2026-11-23 (Karim, alpha.157: "fucked text"): modal titles wrap as
+  # Slack's .c-sk-modal_title_bar__text does, by whole 30px lines, a
+  # channel entity with its icon; DeprecatedDialog titles stay cut
+  # (truncateTitle), Block Kit confirms included.
+  modal-title-wrap:
+    if: ${{ !inputs.only || startsWith('modal-title-wrap', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the title wrap, COUNT runs"
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 5m -run '^(TestModalTitleWraps|TestModalTitleWrapsChannelEntity|TestModalTitleTruncates)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -v -timeout 5m -run '^(TestConfirmObjectTitle|TestLeaveBumpIsWizardSpeedBump)$' ./internal/ui/blockkit || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # 2026-11-20 (Karim, α.113): "i swear i just saw the [/] icon flicker
   # like crazy" in a thread composer under OwlMode's patches. The footer's
   # layout across a sweep of widths, frame after frame, with and without
@@ -3699,7 +3734,10 @@ jobs:
   # drawn as the window draws them, without plugins: others' messages
   # from people it holds and people it never fetched, own sends and their
   # echoes, quiet and under a busy workspace's socket (Karim's α.102 "like
-  # a second and they come in clumped"). One verbose run, then COUNT.
+  # a second and they come in clumped"). One verbose run, then COUNT;
+  # and TestSentAcrossALoad (messages): a send confirmed while a reload of
+  # its list is out (the busy pass's second send, 0.73 s late, when a
+  # member lookup's answer reloaded the open channel as it was confirmed).
   # Dispatch with only=msg-latency.
   msg-latency:
     if: ${{ !inputs.only || startsWith('msg-latency', inputs.only) }}
@@ -3726,6 +3764,7 @@ jobs:
           rc=0
           go test -count=1 -v -timeout 20m -run '^TestMessageLatency$' ./internal/ui || rc=1
           go test -count=$COUNT -timeout 60m -run '^TestMessageLatency$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 20m -run '^TestSentAcrossALoad$' ./internal/ui/messages || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -5446,8 +5485,10 @@ jobs:
   # were two Library rows): a plugin both systems ship is one row under
   # either version's name (docs/PLUGINS.md's pair table), over the
   # published Library's metadata, through Preferences > Plugins > Browse;
-  # a pick from costs alone isn't recommended, and Bring Back Slackbot's
-  # dead version isn't; the doc table, pluginlib's pairs and bench.json
+  # Install adds the better version, never asking (the one that works in
+  # Clack, then the bench's pick: Bring Back Slackbot's dead version never
+  # wins on its costs), with why; the Library's index refreshes itself
+  # (library-pick-refresh); the doc table, pluginlib's pairs and bench.json
   # agree; a bench run limited to some plugins keeps the rest of the data,
   # matched by id. COUNT runs each. Dispatch with only=library-dupes.
   library-dupes:
@@ -5472,8 +5513,8 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 20m -run '^(TestLibraryOneRowPerPlugin|TestLibraryBenchPick|TestLibraryMergesTautAndSlick|TestBenchPairsAreLibraryRows|TestPluginSuggestionsRank)$' ./internal/ui || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^(TestPairsMatchDocs|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          go test -count="$COUNT" -timeout 20m -run '^(TestLibraryOneRowPerPlugin|TestLibraryInstallPick|TestBenchCostShapes|TestLibraryMergesTautAndSlick|TestBenchPairsAreLibraryRows|TestPluginSuggestionsRank|TestLibraryRefreshesStale)$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestPairsMatchDocs|TestCompatMatchesDocs|TestRefreshOneAtATimeWithBackoff)$' ./internal/pluginlib || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestKeep|TestDecide|TestDecideWithoutChecks|TestEmbedded)$' ./internal/pluginbench || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
@@ -5852,7 +5893,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -5930,7 +5971,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -6161,7 +6202,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
       TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37 # Taut (MIT, third-party), same pin as ui-taut.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -6229,6 +6270,41 @@ jobs:
           go test -count="$COUNT" -timeout 8m -run '^TestCustomNameRecordingLikeSlack$' ./internal/slick || rc=1
           xvfb-run -a go test -count="$COUNT" -timeout 10m -run '^TestTautCustomNameRecording' ./internal/ui || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # slick-v162 (2026-11-24): its review's fixes. An image's size is read
+  # from its header and checked against nativeImage's limits (8192 px a
+  # side, a 64 MiB pixel buffer) before it's decoded, whichever way a main
+  # half hands it in (slick); a plugin's X11 app icon is set at the
+  # window's next event, as the set from 256 px down, within the server's
+  # request size, under Xvfb (desktop); the header tab's view through
+  # setRoute to Slack's view state (slick). COUNT runs each. Dispatch with
+  # only=slick-v162.
+  slick-v162:
+    if: ${{ !inputs.only || startsWith('slick-v162', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb
+      - name: nativeImage's size limits, the tab view's path, the X11 app icon under Xvfb, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestNativeImageSizeLimits|TestNativeImageLikeElectron|TestSetTabViewReachesTheStore)$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 5m -run '^TestSetAppIconX11$' ./internal/desktop || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -6373,6 +6449,257 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # mf-cold (2026-11-23): windows-idle's TestMFColdStart took 22 s to its
+  # metadata and then got none in a minute (keyboard-focus-2-206), while
+  # goaudio's Media Foundation decodes took 50 and 70 s in the other process
+  # and its TestReadersAreTotal/wav_channels_capped, opening through Media
+  # Foundation, 2 s, its limit. C:'s cold reads were queued behind writes at
+  # its cap (mf-cold-diag: each read of C: 50 ms to 2.4 s under a write flood
+  # on C:, 0 to 1 ms under one on D:). Each test process starts with the
+  # standby list purged and C: held at its write cap for 90 s, two writes
+  # through to it at a time (.github/scripts/cold-disk.ps1; each round
+  # logs what a cold read of C: took then), its binary on C: as go test's
+  # are: mf's TestMFColdStart, whose warm-up process reads Media
+  # Foundation's files first, and TestMFLateFirstTransfer's engines after
+  # it, then goaudio's TestReadersAreTotal. Two runners, at most 5 rounds
+  # each. Dispatch with only=mf-cold.
+  mf-cold:
+    if: ${{ !inputs.only || startsWith('mf-cold', inputs.only) }}
+    name: "mf-cold (runner ${{ matrix.runner }})"
+    runs-on: windows-latest
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: Media Foundation read cold with C:'s writes at their cap (mf, goaudio; COUNT rounds, at most 5)
+        shell: bash
+        env:
+          CLACK_MEDIA_TESTS: "1"
+          MF_RUN: "^(TestMFColdStart|TestMFLateFirstTransfer)$"
+          GOAUDIO_RUN: "^TestReadersAreTotal$"
+        run: |
+          set +e
+          rc=0
+          # on C:, where go test links and runs its binaries
+          bin=$(cygpath -u "$TEMP")/clack-mf-cold
+          mkdir -p "$bin"
+          go test -c -o "$bin/mf.test.exe" ./internal/media/mf || exit 1
+          go test -c -o "$bin/goaudio.test.exe" ./internal/media/goaudio || exit 1
+          ps1=$(cygpath -w "$GITHUB_WORKSPACE/.github/scripts/cold-disk.ps1")
+          stop="$RUNNER_TEMP\\clack-flood.stop"
+          stop_u=$(cygpath -u "$stop")
+          probe="$USERPROFILE\\clack-probe.bin"
+          pwsh -NoProfile -File "$ps1" probe "$probe" || exit 1 # made
+          # one test binary from its package's dir, its files cold, C: flooded
+          cold() {
+            local pkg=$1 run=$2 log=$3
+            rm -f "$stop_u"
+            pwsh -NoProfile -File "$ps1" purge || exit 1
+            pwsh -NoProfile -File "$ps1" flood "$USERPROFILE\\clack-flood-1.bin" "$stop" 90 &
+            local f1=$!
+            pwsh -NoProfile -File "$ps1" flood "$USERPROFILE\\clack-flood-2.bin" "$stop" 90 &
+            local f2=$!
+            sleep 8 # the floods at the cap, 82 s of them left
+            pwsh -NoProfile -File "$ps1" probe "$probe"
+            (cd "internal/media/$pkg" && ${XF_BIN:+"$XF_BIN"} "$bin/$pkg.test.exe" -test.count=1 -test.v -test.timeout 8m -test.run "$run") > "$log" 2>&1 || rc=1
+            touch "$stop_u"
+            wait "$f1" "$f2"
+            echo "== $pkg: $(grep -c -- '--- FAIL' "$log") FAIL lines"
+            grep -E -- '--- FAIL|took over|mf_windows_test.go:[0-9]+: (loadedmetadata|no |the warm-up|first frame [0-9])' "$log" | cut -c1-700 | head -14
+          }
+          n=$COUNT; [ "$n" -gt 5 ] && n=5
+          for i in $(seq 1 "$n"); do
+            echo "== round $i"
+            cold mf "$MF_RUN" "$RUNNER_TEMP/mf-cold-mf-$i.log"
+            cold goaudio "$GOAUDIO_RUN" "$RUNNER_TEMP/mf-cold-goaudio-$i.log"
+          done
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: mf-cold-logs-${{ matrix.runner }}
+          path: ${{ runner.temp }}/mf-cold-*.log
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # oneko-data-images (2026-11-24): a plugin's own images as data: URLs
+  # (Slick's build inlines every plugin's .gif, .png and .svg as one)
+  # decode from their own text, as Chromium decodes them, with no request,
+  # nothing on disk and the decode limits of any image, while message
+  # content's are still refused (imgcache); a plugin element's data:
+  # background-image and <img> are drawn (slackc, GPU pixels); the
+  # Library's oneko in the whole client: the cat runs to the pointer and a
+  # frame of its sprite is drawn there (ui, GPU pixels). COUNT runs each.
+  # Dispatch with only=oneko-data-images.
+  oneko-data-images:
+    if: ${{ !inputs.only || startsWith('oneko-data-images', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: the published Library (index.json + bundles)
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (the Library); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "data: URLs a page draws, a plugin element's data: images, oneko in the client, COUNT runs each"
+        env:
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          CLACK_PIXEL_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestDataBody|TestPageURL|TestPageDataImages|TestPageDataLimits)$' ./internal/imgcache || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 5m -run '^TestBackgroundDataImage$' ./internal/ui/slackc || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 12m -run '^TestPluginGapOneko$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # files-download (2026-11-23, Karim's 64 MB+ .exe): downloads stream to
+  # disk with no size cap and bounded memory (core: a 96 MB file
+  # byte-exact, cancel, cut-off bodies, pause and resume, Slack's unique
+  # names), Slack's download toast over them (popups), and a file card's
+  # click downloads a hosted .exe or zip in the app instead of opening the
+  # browser (messages: getMainFileAction). Dispatch with
+  # only=files-download.
+  files-download:
+    if: ${{ !inputs.only || startsWith('files-download', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (popups' and messages' test binaries link them)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: core downloads, the download toast, file card clicks (every package, then the verdict)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 10m -v -run '^(TestDownload[A-Za-z0-9]*|TestUniqueSavePath|TestZoneIdentifier|TestCleanFileNameLimits)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^(TestDownloadToast[A-Za-z]*|TestConvertFilesize|TestDownloadLocation|TestOpenFileCardActions|TestAudioDownloadIsTheUpload)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -timeout 10m -v -run '^(TestFileClicks|TestFileClicksUnderPatches)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^TestCanvasFileClick$' ./internal/ui/canvasview || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # plugins-work-3 (2026-11-23): Slick's HideResolved. channelHistory as
+  # the plugins' patches leave it hides the list's rows (Taut.HistoryHidden,
+  # pushed from JS on every store change: taut, messages), viewUiState's
+  # highlightTs keeps a ticket a jump went to shown (taut), and the
+  # header's search button is Slack's ViewHeaderSearch, a patch's tree
+  # beside it in .p-view_header__actions (ui). HideResolved from Slick's
+  # build at the slick workflow's pin in the harness (slick), and from the
+  # published Library in the whole client (ui). COUNT runs each. Dispatch
+  # with only=plugins-work-3.
+  plugins-work-3:
+    if: ${{ !inputs.only || startsWith('plugins-work-3', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    env:
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        continue-on-error: true # GitHub release downloads sometimes 504 three times running
+        with:
+          bun-version: 1.4.4
+      - name: bun from npm (setup-bun's download failed)
+        if: steps.setup-bun.outcome == 'failure'
+        run: |
+          for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
+          bun --version
+      - name: clone slick at the slick workflow's pin
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - name: the published Library (index.json + bundles)
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (Slick, the Library); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the patched history's hidden rows and the marks over them, channelHistory following loads, viewUiState's highlight, ViewHeaderSearch, HideResolved in the harness and in the client, COUNT runs each
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestHistoryHiddenFollowsPatches|TestChannelHistoryFollowsLoads)$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestHiddenHistoryRows|TestHiddenNewestBannerMarksLatest|TestHiddenNewestMarkedImmediately)$' ./internal/ui/messages || rc=1
+          go test -count="$COUNT" -timeout 15m -run '^TestHideResolvedLikeSlack$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 15m -run '^TestPluginGapHideResolved$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # focused-keys (2026-11-23): a focused message's keys, Slack's
   # MessageActions key commands (popups/actions_keys.go): R, T, S, F, A,
   # U, P, M, L, Mod+Shift+S, Mod+C and Delete on an ordinary and an
@@ -6418,6 +6745,7 @@ jobs:
   expect-fail:
     needs:
       - go
+      - modal-title-wrap
       - avf-audio
       - race-video
       - members
@@ -6549,11 +6877,16 @@ jobs:
       - quote-paste-win
       - message-polish
       - plugins-work-2b
+      - slick-v162
+      - plugins-work-3
       - channel-files-race
       - fling-22px
       - history-changed
       - ephemeral-actions
       - focused-keys
+      - mf-cold
+      - oneko-data-images
+      - files-download
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

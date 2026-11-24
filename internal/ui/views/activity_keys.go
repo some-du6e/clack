@@ -375,7 +375,8 @@ func (v *Activity) bulkKeyRead(clearToo bool) {
 	} else {
 		v.h.Toast(nsActivity.T("{numItems} {numItems, plural, =1 {item} other {items}} marked as read", "numItems", n))
 	}
-	v.write("Couldn’t update the items: ", func(ctx context.Context, c *core.App) error {
+	ended := v.recordMarks(keys, items, false) // pErv ph (activity_marks.go)
+	v.writeThen("Couldn’t update the items: ", func(ctx context.Context, c *core.App) error {
 		if err := c.MarkActivityReadBulk(ctx, items...); err != nil || !clearToo {
 			return err
 		}
@@ -388,7 +389,7 @@ func (v *Activity) bulkKeyRead(clearToo bool) {
 			}
 		}
 		v.dirty = true
-	})
+	}, ended)
 }
 
 // runItemKey runs the focused row's item menu row with that key (A:

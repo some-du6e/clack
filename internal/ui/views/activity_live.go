@@ -27,6 +27,7 @@ import (
 	"image"
 	"slices"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -88,6 +89,15 @@ func (v *Activity) liveAccepts(it *core.ActivityItem) bool {
 // slice: a load in flight may still read the old one).
 func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 	key := actKey(&in)
+	// applyPendingMarkToActivityUpdate: a mark whose write is out wins over
+	// the server's state from before it (activity_marks.go)
+	// The entry keeps the server's state and the row the mark's, as an
+	// override: a write that fails then reverts to the server's.
+	unread, held := v.pending.reconcile(key, in.Unread, in.FeedTS, time.Now())
+	shown := in // the entry as the row draws it
+	if held {
+		shown.Unread = unread
+	}
 	at := -1
 	for i := range p.Items {
 		if actKey(&p.Items[i]) == key {
@@ -95,8 +105,12 @@ func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 			break
 		}
 	}
-	if at >= 0 {
+	if held {
+		v.override[key] = !unread
+	} else if at >= 0 {
 		delete(v.override, key)
+	}
+	if at >= 0 {
 		delete(v.zeroRead, key) // the server's state, newer than the zero
 		if in.Archived != v.showCleared {
 			// activityUpdatedV2: cleared elsewhere (or restored) leaves the list
@@ -109,7 +123,7 @@ func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 			in.Msg, in.Root, in.MsgGone, in.RootGone = old.Msg, old.Root, old.MsgGone, old.RootGone
 			in.MsgSeq = min(in.MsgSeq, old.MsgSeq)
 		}
-	} else if !v.liveAccepts(&in) {
+	} else if !v.liveAccepts(&shown) {
 		return
 	}
 	// tsND N upsertActivityRtmItem (getUpsertedActivityRtmItems,
@@ -133,7 +147,7 @@ func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 	// ActivityUnreadsBanner: activityUpdatedV2 takes any unread entry it
 	// pushed that's newer than the one before (hasNewUnreadsFeedTs: e <
 	// T.feed_ts), a thread's new reply too
-	if in.Unread && (v.newUnreadTS == "" || actTSLess(v.newUnreadTS, in.FeedTS)) {
+	if shown.Unread && (v.newUnreadTS == "" || actTSLess(v.newUnreadTS, in.FeedTS)) {
 		v.newUnreadTS = in.FeedTS
 	}
 }
