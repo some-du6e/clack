@@ -22,6 +22,7 @@ type bk struct {
 	timeline  *bkTimeline    // a timeline block's own keys (timeline.go)
 	contact   *bkContactCard // a contact_card block's own keys (contact.go)
 	prompt    *bkSharePrompt // a share_prompt block's own keys (shareprompt.go)
+	event     *bkEvent       // an event block's own keys (event.go)
 	Type      string         `json:"type"`
 	BlockID   string         `json:"block_id"`
 	Elements  []bk           `json:"elements"`
@@ -535,7 +536,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", "contact_card", "share_prompt", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", "contact_card", "share_prompt", "event", badBlock:
 		return true
 	}
 	return false
@@ -719,6 +720,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.contactCardBlock(b))
 	case "share_prompt":
 		return append(out, c.sharePromptBlock(b))
+	case "event":
+		return c.eventBlock(out, b)
 	case "data_visualization":
 		return append(out, c.dataVizBlock(b))
 	case "markdown":

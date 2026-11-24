@@ -171,6 +171,11 @@ func (s *surfHandler) ContactCardAction(act string, c *richtext.ContactCard, _ i
 // SharePromptSend is a share_prompt's Send to {agentName}.
 func (s *surfHandler) SharePromptSend(p *richtext.SharePrompt) { popups.SharePromptSend(s.h, p) }
 
+// EventAction is an event card's action.
+func (s *surfHandler) EventAction(act string, ev *richtext.Event, ch, ts string, btn image.Rectangle, window bool) {
+	popups.EventAction(s.h, act, ev, ch, ts, popups.ActionAnchor(btn, window))
+}
+
 // TimelineSources is a timeline section's "(Sources)": its sources modal.
 func (s *surfHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
 	popups.OpenTimelineSources(s.h, sec)

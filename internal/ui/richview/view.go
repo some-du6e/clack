@@ -598,7 +598,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.textCursors(gtx, size) // the text cursor, the card blocks' boxes left to their own (cursors.go)
 	v.regionCursors(gtx)     // the card blocks' text's I-beam, hands and the charts' items (cursors.go)
 	v.handAreas(gtx, false)
-	v.drawBusy(gtx, st) // the writing buttons whose call is out (writes.go)
+	v.drawBusy(gtx, st)     // the writing buttons whose call is out (writes.go)
+	v.drawEventRefresh(gtx) // an event card's next change of state (event.go)
 	// Element runs (Options.Elements) go last: their input areas must be
 	// above the cursor/hit areas of cards and links registered above.
 	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {
@@ -2121,6 +2122,12 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tSharePrompt: // a share_prompt's Send to {agentName} (shareprompt.go)
 		if sh, ok := h.(SharePromptHandler); ok && tg.prompt != nil {
 			sh.SharePromptSend(tg.prompt)
+		}
+	case tEvent: // an event card's RSVP option or Copy to Your Calendar (event.go)
+		if eh, ok := h.(EventHandler); ok && tg.event != nil {
+			r, _ := v.targetRect(tg)
+			wr, win := v.actionRect(r)
+			eh.EventAction(tg.id, tg.event, v.opts.Channel, v.opts.TS, wr, win)
 		}
 	case tTimeline: // a timeline section's (Sources) (timeline.go)
 		if th, ok := h.(TimelineHandler); ok && tg.timeline != nil {

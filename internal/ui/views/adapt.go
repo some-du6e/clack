@@ -522,6 +522,13 @@ func (hh hostHandler) SharePromptSend(p *richtext.SharePrompt) {
 	}
 }
 
+// EventAction is an event card's action.
+func (hh hostHandler) EventAction(act string, ev *richtext.Event, ch, ts string, btn image.Rectangle, window bool) {
+	if ph, ok := hh.h.(popups.Host); ok {
+		popups.EventAction(ph, act, ev, ch, ts, popups.ActionAnchor(btn, window))
+	}
+}
+
 // TimelineSources is a timeline section's "(Sources)": its sources modal.
 func (hh hostHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
 	if ph, ok := hh.h.(popups.Host); ok {
