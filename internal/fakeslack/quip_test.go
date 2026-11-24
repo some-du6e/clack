@@ -279,7 +279,7 @@ func save(t *testing.T, c *slack.Client, d *quip.Doc, seq int, title string, dat
 			rtml = quip.SectionRTML(&sec)
 		}
 	}
-	meta, err := quip.TitleMetadata(rtml)
+	meta, err := quip.TitleMetadata(rtml, d.TitleControls())
 	if err != nil {
 		t.Fatalf("the title's metadata: %v", err)
 	}

@@ -24,6 +24,8 @@ import (
 
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/media/mediatest"
+	"github.com/some-du6e/clack/internal/quip"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -58,6 +60,13 @@ type FakeCanvas struct {
 	// title_blocks (default: none).
 	HTML        string
 	TitleBlocks []any
+	// TitleSpans, when set, is what the title section holds: text with
+	// mentions, emoji, links and line breaks, its controls made as a
+	// block's are (Title stays the title's text, as files.info gives it).
+	// TitleEmojiInfo is the emoji info the title section holds, as Slack's
+	// last save left it. A save that changes the title drops both.
+	TitleSpans     []richtext.Span
+	TitleEmojiInfo []quip.EmojiInfo
 }
 
 type canvasStore struct {
@@ -137,6 +146,18 @@ func (s *Server) Canvas(id string) (FakeCanvas, bool) {
 		return FakeCanvas{}, false
 	}
 	return *c, true
+}
+
+// SetCanvasRichTitle gives canvas id a title section with mentions, emoji,
+// links or line breaks (FakeCanvas.TitleSpans) and the emoji info Slack's
+// last save left on it; title is its text, as files.info gives it.
+func (s *Server) SetCanvasRichTitle(id, title string, spans []richtext.Span, info []quip.EmojiInfo) {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if c := cs.byID[id]; c != nil {
+		c.Title, c.TitleSpans, c.TitleEmojiInfo = title, spans, info
+	}
 }
 
 // CanvasEdits returns the canvases.edit calls received (tests).

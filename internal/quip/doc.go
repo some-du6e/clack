@@ -26,6 +26,10 @@ type Doc struct {
 	// renames are the real ids the server gave new sections (a save
 	// answer's temp_id, fetch-latest's temp_ids): temp id -> real id.
 	renames map[string]string
+	// ChannelPrivate is a channel's is_private as the client knows it
+	// (known false: it doesn't), which a title's channel mention reads
+	// (TitleControls); nil knows none.
+	ChannelPrivate func(id string) (private, known bool)
 }
 
 // RealID is the id the model holds section id under: its real id when the

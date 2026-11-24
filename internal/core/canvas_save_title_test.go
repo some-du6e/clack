@@ -6,7 +6,6 @@ package core
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/some-du6e/clack/internal/canvas"
@@ -55,9 +54,11 @@ func TestCanvasSaveTitleBlock(t *testing.T) {
 	}
 }
 
-// A title every save's metadata can't carry yet (a control in it: an
-// emoji, a mention) is told, so the view keeps the canvas's blocks out of
-// the editor instead of refusing what's typed in them.
+// A title every save's metadata can't carry yet is told, so the view keeps
+// the canvas's blocks out of the editor instead of refusing what's typed
+// in them; a control the document doesn't hold isn't in the title Slack's
+// export makes, so it doesn't stop the saves (a date does:
+// TestCanvasRichTitleDateRefused).
 func TestCanvasSaveTitleSaveable(t *testing.T) {
 	a, _ := canvasApp(t)
 	loadModel(t, a, fakeslack.CanvasShared)
@@ -71,7 +72,7 @@ func TestCanvasSaveTitleSaveable(t *testing.T) {
 			}
 		}
 	})
-	if ok, why := a.CanvasTitleSaveable(fakeslack.CanvasShared); ok || !strings.Contains(why, "emoji") {
-		t.Errorf("a title with a control: %v (%q)", ok, why)
+	if ok, why := a.CanvasTitleSaveable(fakeslack.CanvasShared); !ok {
+		t.Errorf("a title with a control the document doesn't hold: %q", why)
 	}
 }

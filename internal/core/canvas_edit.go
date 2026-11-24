@@ -1323,14 +1323,20 @@ func (a *App) CanvasTitleSaveable(id string) (bool, string) {
 		}
 		for _, t := range d.Sections() {
 			if t.Type != nil && *t.Type == quip.TypeTitle {
-				if _, err := quip.TitleMetadata(quip.SectionRTML(t)); err != nil {
-					ok, why = false, "the canvas's title has an emoji, a mention, a link or a line break, which Clack can't save yet"
+				if _, err := quip.TitleMetadata(quip.SectionRTML(t), d.TitleControls()); err != nil {
+					ok, why = false, titleRefusal(err)
 				}
 				return
 			}
 		}
 	})
 	return ok, why
+}
+
+// titleRefusal is why a title stops every save, from quip.TitleMetadata's
+// refusal ("the title has a date").
+func titleRefusal(err error) string {
+	return strings.TrimPrefix(err.Error(), quip.ErrUnsupported.Error()+": ") + ", which Clack can't save yet"
 }
 
 // CanvasBlockEditable reports whether a block shown as spans can be edited

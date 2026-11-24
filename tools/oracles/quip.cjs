@@ -28,6 +28,12 @@ const CHUNKS = (process.env.QUIP_CHUNKS || [
   SCRATCH + '/b2/gantry-v2-async-quip-collab-editor.2b9ea24acdaf8782.min.js',
 ].join(',')).split(',');
 const JSDOM_DIR = process.env.JSDOM || SCRATCH + '/npm';
+// Modules the collab chunks import but don't hold, taken from the client's
+// boot chunk (gantry-v2-async-client-boot-shared.29563e274bf72a20.min.js,
+// same CDN): e9rp is the emoji-name pattern 2U5W.parseSlackEmojiId tests an
+// emoji control's id with. Only these ids come from it; the rest stay stubs.
+const BOOT = process.env.QUIP_BOOT_CHUNK || SCRATCH + '/cdn-boot/gantry-v2-async-client-boot-shared.29563e274bf72a20.min.js';
+const BOOT_MODULES = ['e9rp'];
 
 // --- a browser for the modules: jsdom's window as the global scope
 const { JSDOM } = require(path.join(JSDOM_DIR, 'node_modules', 'jsdom'));
@@ -61,6 +67,16 @@ const starts = texts.map((t, fi) => {
   st.forEach(([, id], si) => { if (!where.has(id)) where.set(id, [fi, si]); });
   return st;
 });
+{
+  const t = fs.readFileSync(BOOT, 'utf8'), st = [];
+  START.lastIndex = 0;
+  let m;
+  while ((m = START.exec(t))) st.push([m.index, m[1] || m[2]]);
+  texts.push(t);
+  starts.push(st);
+  st.forEach(([, id], si) => { if (BOOT_MODULES.includes(id) && !where.has(id)) where.set(id, [texts.length - 1, si]); });
+  for (const id of BOOT_MODULES) if (!where.has(id)) throw new Error('the boot chunk has no module ' + id);
+}
 function factoryOf(id) {
   const w = where.get(id);
   if (!w) return null;
@@ -404,25 +420,111 @@ KINDS['quip-save-new-section'] = c => {
   }
   return { hex: hexOf(pbu.Rm(b)), localSeq: e.localSequence_ };
 };
-// The title metadata extractTitleMetadata(true) gives every save: the
-// title section exported (CITi's lE over W77Y.parse, as getRtmlContent_
-// runs it on the title's DOM; the RTML stands for that DOM), its text and
-// the title rich text (30B3.convertSectionsToRichTextApiPb).
+// The title metadata extractTitleMetadata(true) gives every save, run as
+// Slack's document model has it (the method cut from the webapp chunk's
+// nZa/ module, over its own imports: W77Y, u21E, 30B3, fmyk, the class's
+// MAX_TITLE_LENGTH): the title section exported (CITi's lE over
+// W77Y.parse, as getRtmlContent_ runs it on the title's DOM; the RTML
+// stands for that DOM), its text, the title rich text
+// (30B3.convertSectionsToRichTextApiPb) and the emoji info of the title's
+// controls (referencedControls: W77Y's control id collector over the
+// RTML), each as Slack's protobuf encoder writes it.
+const titleFns = (() => {
+  let f;
+  return () => {
+    if (f) return f;
+    const web = texts[0], ed = texts[1];
+    const i = web.indexOf('extractTitleMetadata(e,t){let n=e;');
+    if (i < 0) throw new Error('extractTitleMetadata moved');
+    let d = 0, k = web.indexOf('{', i);
+    for (; k < web.length; k++) {
+      if (web[k] === '{') d++;
+      else if (web[k] === '}' && --d === 0) break;
+    }
+    const max = /static\{this\.MAX_TITLE_LENGTH=(\d+)\}/.exec(web);
+    if (!max) throw new Error('MAX_TITLE_LENGTH moved');
+    const method = 'function ' + web.slice(i, k + 1);
+    const extract = new Function('ew', 'P', 'nB', 'c', 'il', 'ii', 'R', 'v', 'return ' + method)(
+      req('W77Y'), req('u21E'), req('30B3'), req('fmyk'), { MAX_TITLE_LENGTH: +max[1] }, { t: s => s }, null, null);
+    // the editor chunk's emojiInfoOf (esJb), over o3+F
+    const j = ed.indexOf('function emojiInfoOf(e,t,n){');
+    const je = ed.indexOf('return r&&i.setDisplayUrl(r),i}', j);
+    if (j < 0 || je < 0) throw new Error('emojiInfoOf moved');
+    const emojiInfoOf = new Function('i8', 'return ' + ed.slice(j, je + 'return r&&i.setDisplayUrl(r),i}'.length))(req('o3+F'));
+    f = { extract, emojiInfoOf };
+    return f;
+  };
+})();
+// A title's controls (c.in.controls, by id): stand-ins for the editor's
+// control objects with what extractTitleMetadata and 30B3 read of each,
+// their altRtml as the editor's control contents write it (user and
+// channel: the rendered link, its label "user" / "channel" / "private
+// channel" when not for an external paste; emoji ":name:" of its stored
+// name; date dJkV.lC's text; broadcast "<!range>"). An emoji's k.info is
+// the emoji store's model of it (uu.U), absent while not loaded;
+// getEmojiInfo is emojiInfoOf over it, as the editor's emoji control does.
+function titleControl(id, k) {
+  const kind = k.kind === 'usergroup' ? 'user' : k.kind;
+  const is = want => () => kind === want;
+  const model = k.info && {
+    getTeamIdOrDefault: () => k.info.teamId || '', getDisplayName: () => k.info.displayName,
+    getUnicode: () => k.info.unicode, getDisplayUrl: () => k.info.displayUrl,
+  };
+  const content = {
+    altRtml(e, t, n) {
+      switch (kind) {
+        case 'user': return '<a href="https://example.slack.com/team/' + k.id + '">@user</a>';
+        case 'channel': return '<a href="https://example.slack.com/archives/' + k.id + '">#' + (k.private ? 'private channel' : 'channel') + '</a>';
+        case 'emoji': return k.name ? ':' + k.name + ':' : '';
+        case 'date': {
+          const txt = req('dJkV').lC(k.ms, { verbose: false, dynamic: false, useExcludeYearHelper: true });
+          return (n || e) && k.ms ? `<span data-slack-date-timestamp='${k.ms}'>${txt}</span>` : txt;
+        }
+        case 'broadcast': return k.range ? `<!${k.range}>` : '';
+      }
+      return '';
+    },
+    getSyncerObject() {
+      return { slackUserId: () => k.id, slackChannelId: () => k.id, id: () => k.slackEmojiId || '' };
+    },
+    chipLabel() { return undefined; },
+    getEmojiInfo() { return model ? titleFns().emojiInfoOf(model, k.name, k.fallbackUrl) : null; },
+    getHeldEmojiInfo() { return null; },
+    getUnloadableEmojiName() { return null; },
+    getPlaceholderText() { return null; },
+    getUtcDateMs() { return k.ms; },
+    getBroadcastRange() { return k.range; },
+  };
+  const none = () => false;
+  return {
+    isControl: () => true, id: () => id, controlContent: () => content,
+    isSlackUser: is('user'), isSlackChannel: is('channel'), isSlackEmoji: is('emoji'), isSlackDate: is('date'), isSlackBroadcast: is('broadcast'),
+    isSlackTemplate: none, isSlackSearchFilter: none, isSlackSalesforceDataMention: none, isSlackUnfurl: none, isSlackDocument: none,
+    isSlackFile: none, isSlackList: none, isSlackListRecord: none,
+  };
+}
+
 KINDS['quip-save-title'] = c => {
-  const CITi = req('CITi'), W = req('W77Y'), U = req('u21E'), R = req('30B3');
+  const CITi = req('CITi'), W = req('W77Y');
+  const controls = {};
+  for (const [id, k] of Object.entries(c.in.controls || {})) controls[id] = titleControl(id, k);
+  const lookup = { lookupControl: (node, id) => (controls[id] ? { id, control: controls[id] } : null) };
   const exportOf = target => {
     const o = { fromLocalDisplay: true, forExternalPaste: target === 1 || target === 6, dropEmojiControls: target === 6, forRichText: target === 5 };
     const h = new CITi.lE(o, false, null);
-    W.qg(c.in.rtml, h, null);
+    W.qg(c.in.rtml, h, lookup);
     return '<h1>' + h.output() + '</h1>';
   };
-  // extractTitleMetadata's extractText: P.qy's wrapper, getOrNull, W77Y.extractText, trim
-  const node = U.qy(exportOf(0)).getOrNull();
-  const text = node ? W.Xz(node).trim() : '';
-  const section = { sectionContent: () => ({ exportToHtml: o => exportOf(o.exportTarget) }) };
-  const opts = { maxLength: 2e3, flattenLists: true, inlineHeadings: true, useTextTypeForLinks: true, omitBreakNewlines: true, normalizeSpaces: true, escapeText: true };
-  if (!text) return { title: 'Untitled', richText: hexOf(pbu.Rm(R.Uw('Untitled'))) };
-  return { title: text.substring(0, 255), richText: hexOf(pbu.Rm(R.oc([section], () => null, opts))) };
+  const ids = new W.lz();
+  W.qg(c.in.rtml, ids, null);
+  const content = {
+    exportToHtml: o => exportOf(o && o.exportTarget),
+    referencedControls: () => ids.controlIds.map(id => controls[id]).filter(Boolean),
+  };
+  const section = { isDeleted: () => false, isTitle: () => true, sectionContent: () => content };
+  const doc = { sections: () => [section], getControlForId: id => controls[id] || null };
+  const m = titleFns().extract.call(doc, true);
+  return { title: m.title, richText: hexOf(pbu.Rm(m.titleRichText)), emojiInfo: m.emojiInfo.map(x => hexOf(pbu.Rm(x))) };
 };
 // Slack's save writer over a section's RTML: CITi.F0 (renderToString,
 // the DI handler over W77Y's parse of the DOM the RTML builds). A case

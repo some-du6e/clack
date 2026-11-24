@@ -8,8 +8,6 @@ import (
 	"sync"
 	"unicode/utf16"
 	"unicode/utf8"
-
-	"golang.org/x/net/html"
 )
 
 // Saving (docs/CANVASES.md "edit-document"): a save is the sections Slack's
@@ -325,171 +323,6 @@ func TextRTML(text string) (string, error) {
 	return EscapeText(t, false), nil
 }
 
-// TitleMeta is extractTitleMetadata(true)'s answer: the form's title, the
-// title's emoji info and its rich text.
-type TitleMeta struct {
-	Title     string
-	EmojiInfo []EmojiInfo
-	RichText  *RichTextAPI
-}
-
-// MaxTitleLength is MAX_TITLE_LENGTH, in UTF-16 units.
-const MaxTitleLength = 255
-
-// titleRichTextMax is convertSectionsToRichTextApiPb's maxLength for the
-// title.
-const titleRichTextMax = 2000
-
-// titleTags are the formatting tags a title's rich text carries as
-// styles; any other markup is refused for now.
-var titleTags = map[string]func(*RichTextStyle){
-	"b":    func(s *RichTextStyle) { s.Bold = Ptr(true) },
-	"i":    func(s *RichTextStyle) { s.Italic = Ptr(true) },
-	"del":  func(s *RichTextStyle) { s.Strike = Ptr(true) },
-	"code": func(s *RichTextStyle) { s.Code = Ptr(true) },
-	"u":    func(s *RichTextStyle) { s.Underline = Ptr(true) },
-}
-
-// TitleMetadata is what every save sends for the title section's RTML:
-// the title exported (CITi's lE over W77Y.parse: text with no-break,
-// zero-width and BOM characters normalized, then escaped, the formatting
-// tags as they are), its text (W77Y.extractText) trimmed and cut to
-// MaxTitleLength, "Untitled" when empty; and the rich text 30B3 makes of
-// the export, one text element per text node. A title with a mention,
-// emoji, link, line break, annotation or other markup is refused for now.
-func TitleMetadata(rtml string) (*TitleMeta, error) {
-	text, marks, ok := ParseRTML(rtml)
-	if !ok {
-		return nil, unsupported("the title's RTML doesn't parse")
-	}
-	if strings.Contains(text, "<control") || strings.Contains(text, "<br>") {
-		return nil, unsupported("the title has a mention, emoji, date or line break")
-	}
-	for _, m := range marks {
-		if titleTags[m.Name] == nil || !m.Flag {
-			return nil, unsupported("the title has %s markup", m.Name)
-		}
-	}
-	runs := titleRuns(rtml)
-	var all strings.Builder
-	for _, r := range runs {
-		all.WriteString(r.text)
-	}
-	title := strings.TrimFunc(all.String(), jsSpace)
-	if title == "" {
-		return &TitleMeta{Title: "Untitled", RichText: plainRichText("Untitled")}, nil
-	}
-	cut, ok := cutUTF16(title, MaxTitleLength)
-	if !ok {
-		return nil, unsupported("the title's 255th character splits a surrogate pair")
-	}
-	sec := &RichTextSection{Type: Ptr("rich_text_section")}
-	n := 0
-	for _, r := range runs {
-		if n >= titleRichTextMax {
-			return nil, unsupported("the title's rich text runs past %d characters over several runs", titleRichTextMax)
-		}
-		t := r.text
-		if l := utf16Len(t); n+l > titleRichTextMax {
-			if len(runs) > 1 {
-				return nil, unsupported("the title's rich text runs past %d characters over several runs", titleRichTextMax)
-			}
-			if t, ok = cutUTF16(t, titleRichTextMax); !ok {
-				return nil, unsupported("the title's rich text cut splits a surrogate pair")
-			}
-		}
-		n += utf16Len(t)
-		b := RichTextBlock{Type: Ptr("text"), Text: Ptr(t)}
-		if r.style != nil {
-			b.Style = r.style
-		}
-		sec.Elements = append(sec.Elements, b)
-	}
-	return &TitleMeta{Title: cut, RichText: &RichTextAPI{Type: Ptr("rich_text"), Elements: []RichTextSection{*sec}}}, nil
-}
-
-func plainRichText(t string) *RichTextAPI {
-	return &RichTextAPI{Type: Ptr("rich_text"), Elements: []RichTextSection{{Type: Ptr("rich_text_section"),
-		Elements: []RichTextBlock{{Type: Ptr("text"), Text: Ptr(t)}}}}}
-}
-
-type titleRun struct {
-	text  string
-	style *RichTextStyle
-}
-
-// titleRuns are the export's text nodes (with the formatting around each):
-// lE writes text and tags as the walk meets them, so text the walk reads
-// in a row (across a tag it looks through) is one node of the export.
-func titleRuns(rtml string) []titleRun {
-	root := rtmlRoot(rtml)
-	if root == nil {
-		return nil
-	}
-	h := &exportHandler{}
-	walkRTML(root, h)
-	h.flush()
-	return h.runs
-}
-
-// exportHandler is CITi's lE for the subset TitleMetadata takes: text
-// normalized (normalizeSpaces) and escaped, formatting tags; the runs are
-// the text nodes of what it writes, read back.
-type exportHandler struct {
-	buf   strings.Builder
-	open  []string
-	runs  []titleRun
-	dirty bool
-}
-
-func (h *exportHandler) style() *RichTextStyle {
-	if len(h.open) == 0 {
-		return nil
-	}
-	s := &RichTextStyle{}
-	for _, t := range h.open {
-		titleTags[t](s)
-	}
-	return s
-}
-
-func (h *exportHandler) flush() {
-	if !h.dirty {
-		return
-	}
-	// the export's text reads back as html (entities decoded)
-	t := html.UnescapeString(h.buf.String())
-	h.runs = append(h.runs, titleRun{text: t, style: h.style()})
-	h.buf.Reset()
-	h.dirty = false
-}
-
-func (h *exportHandler) text(s string) {
-	s = strings.NewReplacer("\u00a0", " ", "\u200b", "", "\ufeff", "").Replace(s)
-	h.buf.WriteString(EscapeText(s, false))
-	h.dirty = true
-}
-func (h *exportHandler) lineBreak()                     {}
-func (h *exportHandler) control(string)                 {}
-func (h *exportHandler) annotationStart(string)         {}
-func (h *exportHandler) linkStart(string, bool, string) {}
-func (h *exportHandler) formattingStart(name, attrs string, flag bool) {
-	h.flush()
-	h.open = append(h.open, name)
-}
-func (h *exportHandler) markEnd(name string) bool {
-	if name != "annotation" && name != "a" {
-		h.flush()
-		for i := len(h.open) - 1; i >= 0; i-- {
-			if h.open[i] == name {
-				h.open = append(h.open[:i], h.open[i+1:]...)
-				break
-			}
-		}
-	}
-	return true
-}
-
 // jsSpace is what String.prototype.trim takes off: WhiteSpace and
 // LineTerminator.
 func jsSpace(r rune) bool {
@@ -597,7 +430,7 @@ func (d *Doc) Bundle(edits []Edit, s *Save) (*DocumentData, *TitleMeta, error) {
 	if e, ok := find(edits, *title.ID); ok && e.Kind == EditDelete {
 		return nil, nil, unsupported("deleting the title")
 	}
-	meta, err := TitleMetadata(rtml)
+	meta, err := TitleMetadata(rtml, d.TitleControls())
 	if err != nil {
 		return nil, nil, err
 	}

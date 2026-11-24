@@ -485,22 +485,43 @@ func (cs *canvasStore) quipSave(s *Server, req *QuipRequest) (int, []byte, strin
 	// the title metadata every save sends: the title section's, after
 	// this save (Slack's extractTitleMetadata, quip.TitleMetadata)
 	titleRTML := ""
+	var stored []quip.EmojiInfo
 	for _, sec := range m.secs {
 		if sec.Type != nil && *sec.Type == quip.TypeTitle && (sec.Deleted == nil || !*sec.Deleted) {
 			titleRTML = quip.SectionRTML(sec)
+			if sec.Content != nil && sec.Content.Title != nil {
+				stored = sec.Content.Title.EmojiInfo
+			}
 			if b := inBundle[*sec.ID]; b != nil && b.Content != nil && b.Content.Title != nil {
 				titleRTML = quip.SectionRTML(b)
 			}
 		}
 	}
-	if want, err := quip.TitleMetadata(titleRTML); err == nil {
+	// its controls as the document holds them after this save, the
+	// emoji info Slack's last save left on it, channels as
+	// conversations.info has them
+	tc := quip.TitleControls{EmojiInfo: stored,
+		Section: func(id string) *quip.Section {
+			if b := inBundle[id]; b != nil {
+				return b
+			}
+			return m.secs[id]
+		},
+		ChannelPrivate: func(id string) (bool, bool) {
+			c, ok := s.conv(id)
+			if !ok || c.IsIM || c.IsMPIM {
+				return false, false
+			}
+			return c.IsPrivate, true
+		}}
+	if want, err := quip.TitleMetadata(titleRTML, tc); err == nil {
 		switch {
 		case f.Get("title") != want.Title:
 			return bad(http.StatusBadRequest, "title %q, the title section gives %q", f.Get("title"), want.Title)
 		case string(quip.Marshal(d.TitleRichText)) != string(quip.Marshal(want.RichText)):
 			return bad(http.StatusBadRequest, "title_rich_text_api isn't the title section's")
-		case len(d.TitleSlackEmojiInfo) != 0:
-			return bad(http.StatusBadRequest, "title emoji info for a title without emoji")
+		case !sameEmojiInfo(d.TitleSlackEmojiInfo, want.EmojiInfo):
+			return bad(http.StatusBadRequest, "title_slack_emoji_info isn't the title's emoji's")
 		}
 	}
 	// apply: each set field replaces the stored one; a new sequence each
@@ -566,4 +587,17 @@ func (cs *canvasStore) quipSave(s *Server, req *QuipRequest) (int, []byte, strin
 	req.Status = http.StatusOK
 	return http.StatusOK, quip.Marshal(&quip.EditAnswer{Changed: quip.Ptr(true), FinalData: &quip.DocumentData{Sections: out},
 		IsNewEditSession: quip.Ptr(first)}), ""
+}
+
+// sameEmojiInfo reports whether two emoji info lists encode the same.
+func sameEmojiInfo(a, b []quip.EmojiInfo) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if string(quip.Marshal(&a[i])) != string(quip.Marshal(&b[i])) {
+			return false
+		}
+	}
+	return true
 }

@@ -308,17 +308,18 @@ type RichTextSection struct {
 
 // RichTextBlock is proto.threads.RichTextApi.RichTextSection.RichTextBlock.
 type RichTextBlock struct {
-	Type      *string        `pb:"1"`
-	Text      *string        `pb:"2"`
-	ChannelID *string        `pb:"3"`
-	UserID    *string        `pb:"4"`
-	Style     *RichTextStyle `pb:"5"`
-	Name      *string        `pb:"6"`
-	URL       *string        `pb:"7"`
-	SkinTone  *string        `pb:"8"`
-	Timestamp *int64         `pb:"17"`
-	Unicode   *string        `pb:"20"`
-	Other     []byte         `pb:"extra" slack:"1-28"`
+	Type       *string        `pb:"1"`
+	Text       *string        `pb:"2"`
+	ChannelID  *string        `pb:"3"`
+	UserID     *string        `pb:"4"`
+	Style      *RichTextStyle `pb:"5"`
+	Name       *string        `pb:"6"`
+	URL        *string        `pb:"7"`
+	SkinTone   *string        `pb:"8"`
+	Timestamp  *int64         `pb:"17"`
+	Unicode    *string        `pb:"20"`
+	DisplayURL *string        `pb:"25"`
+	Other      []byte         `pb:"extra" slack:"1-28"`
 }
 
 // RichTextStyle is proto.threads.RichTextApi.RichTextSection.RichTextBlock.Style.

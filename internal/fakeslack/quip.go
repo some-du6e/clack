@@ -35,7 +35,9 @@ type quipModel struct {
 	// embeds, columns, callouts), kept whole for the way back.
 	opaque  map[string]canvas.Block
 	titleID string
-	listOf  map[string]string // list item -> its LIST section
+	// titleRTML is the title section's RTML as TitleSpans made it
+	titleRTML string
+	listOf    map[string]string // list item -> its LIST section
 	// sessions are the edit sessions' last sequences (edit-document's
 	// session and sequence fields).
 	sessions map[string]int64
@@ -80,8 +82,31 @@ type derived struct {
 func (cs *canvasStore) quipSync(s *Server, c *FakeCanvas, m *quipModel) {
 	var want []derived
 	add := func(sec quip.Section, sig string) { want = append(want, derived{sec, sig}) }
+	titleRTML, titleSig := quip.EscapeText(c.Title, false), "title:"+c.Title
+	var titleCtls []derived
+	if c.TitleSpans != nil {
+		n := 0
+		titleRTML = spansRTML(c.TitleSpans, func(x richtext.Span) string {
+			id := fmt.Sprintf("%s-c%d", m.titleID, n)
+			n++
+			sec, ok := controlSection(id, x)
+			if !ok {
+				return ""
+			}
+			if e := sec.Content.SlackEmoji; e != nil {
+				e.EmojiName = quip.Ptr(x.ID) // the editor's toPb writes the name
+			}
+			b, _ := json.Marshal(x)
+			titleCtls = append(titleCtls, derived{sec, "control:" + string(b)})
+			return id
+		})
+		b, _ := json.Marshal(c.TitleSpans)
+		titleSig = "title:" + string(b)
+	}
+	m.titleRTML = titleRTML
 	add(quip.Section{ID: quip.Ptr(m.titleID), Type: quip.Ptr(quip.TypeTitle), Style: quip.Ptr(quip.StyleTitle),
-		Content: &quip.Content{Title: &quip.ContentTitle{Text: quip.Ptr(quip.EscapeText(c.Title, false))}}}, "title:"+c.Title)
+		Content: &quip.Content{Title: &quip.ContentTitle{Text: quip.Ptr(titleRTML), EmojiInfo: c.TitleEmojiInfo}}}, titleSig)
+	want = append(want, titleCtls...)
 	// keep holds an unchanged block's section as it is, with the controls
 	// its RTML names (made by a save, they keep the client's ids)
 	keep := func(id, sig string) bool {
@@ -413,6 +438,10 @@ func (m *quipModel) writeBack(c *FakeCanvas) {
 		}
 		switch t {
 		case quip.TypeTitle:
+			if c.TitleSpans != nil && quip.SectionRTML(s) == m.titleRTML {
+				continue // as TitleSpans made it: its spans and source stay
+			}
+			c.TitleSpans, c.TitleEmojiInfo = nil, nil
 			if s.Content != nil && s.Content.Title != nil {
 				c.Title = plainOfRTML(quip.SectionRTML(s))
 			}

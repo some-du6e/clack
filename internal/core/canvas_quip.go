@@ -133,7 +133,22 @@ func (a *App) quipLoad(ctx context.Context, thread string) (*quip.Doc, error) {
 	if err := quip.Unmarshal(b, &w); err != nil {
 		return nil, fmt.Errorf("core: load-data: %w", err)
 	}
-	return quip.ReadLoad(thread, &w)
+	d, err := quip.ReadLoad(thread, &w)
+	if d != nil {
+		d.ChannelPrivate = a.canvasChannelPrivate
+	}
+	return d, err
+}
+
+// canvasChannelPrivate is a channel's is_private for a canvas title's
+// channel mention, as Slack's channel store has it; not known for a
+// conversation the store doesn't hold, or a DM.
+func (a *App) canvasChannelPrivate(id string) (private, known bool) {
+	c, ok := a.S.Conv(id)
+	if !ok || c.IsIM || c.IsMPIM {
+		return false, false
+	}
+	return c.IsPrivate, true
 }
 
 // CanvasModel calls f with the canvas's model while holding it (nil when

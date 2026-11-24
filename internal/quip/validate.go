@@ -554,7 +554,7 @@ func (d *Doc) checkTitle(data *DocumentData, edits []Edit, meta *TitleMeta) erro
 	if e, ok := find(edits, str(title.ID)); ok && e.Kind == EditText {
 		rtml = e.RTML
 	}
-	want, err := TitleMetadata(rtml)
+	want, err := TitleMetadata(rtml, d.TitleControls())
 	if err != nil {
 		return refuse("the title: %v", err)
 	}
@@ -563,8 +563,23 @@ func (d *Doc) checkTitle(data *DocumentData, edits []Edit, meta *TitleMeta) erro
 		return refuse("title %q, the title section gives %q", meta.Title, want.Title)
 	case string(Marshal(data.TitleRichText)) != string(Marshal(want.RichText)):
 		return refuse("the title's rich text isn't the title section's")
-	case len(data.TitleSlackEmojiInfo) != len(want.EmojiInfo) || data.DocumentID != nil || len(data.Other) > 0:
+	case !sameEmojiInfo(data.TitleSlackEmojiInfo, want.EmojiInfo):
+		return refuse("the title's emoji info isn't the title section's")
+	case data.DocumentID != nil || len(data.Other) > 0:
 		return refuse("the document data carries more than the sections and the title")
 	}
 	return nil
+}
+
+// sameEmojiInfo reports whether two emoji info lists encode the same.
+func sameEmojiInfo(a, b []EmojiInfo) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if string(Marshal(&a[i])) != string(Marshal(&b[i])) {
+			return false
+		}
+	}
+	return true
 }

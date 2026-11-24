@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"reflect"
+	"sort"
 	"strconv"
 	"testing"
 
@@ -73,27 +74,97 @@ func TestQuipSaveSectionLikeSlack(t *testing.T) {
 }
 
 type saveTitleOut struct {
-	Title    string `json:"title"`
-	RichText string `json:"richText"`
+	Title     string   `json:"title"`
+	RichText  string   `json:"richText"`
+	EmojiInfo []string `json:"emojiInfo"`
+}
+
+// titleCtl is a case's control, as the oracle's stand-in takes it: its
+// kind, Slack id, name, emoji id, the emoji store's model of it (Info,
+// absent while not loaded), a channel's privacy and a broadcast's range.
+type titleCtl struct {
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Private bool   `json:"private"`
+	Name    string `json:"name"`
+	EmojiID string `json:"slackEmojiId"`
+	Info    *struct {
+		TeamID      string `json:"teamId"`
+		DisplayName string `json:"displayName"`
+		Unicode     string `json:"unicode"`
+		DisplayURL  string `json:"displayUrl"`
+	} `json:"info"`
+	Range string `json:"range"`
+	Ms    int64  `json:"ms"`
+}
+
+// titleControlsOf is what the case's document holds: each control's
+// section, the emoji info Slack's last save left on the title (each loaded
+// emoji's emojiInfoOf), the channels' privacy.
+func titleControlsOf(ctls map[string]titleCtl) TitleControls {
+	secs := map[string]*Section{}
+	private := map[string]bool{}
+	var info []EmojiInfo
+	ids := make([]string, 0, len(ctls))
+	for id := range ctls {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	opt := func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return Ptr(s)
+	}
+	for _, id := range ids {
+		k := ctls[id]
+		c := &Content{}
+		switch k.Kind {
+		case "user", "usergroup":
+			c.SlackUser = &SlackUser{SlackUserID: Ptr(UserID(k.ID))}
+		case "channel":
+			c.SlackChannel = &SlackChannel{SlackChannelID: Ptr(ChannelID(k.ID))}
+			private[k.ID] = k.Private
+		case "emoji":
+			c.SlackEmoji = &SlackEmoji{EmojiName: opt(k.Name), SlackEmojiID: opt(k.EmojiID)}
+			if k.Info != nil {
+				info = append(info, EmojiInfo{TeamID: Ptr(k.Info.TeamID), DisplayName: Ptr(k.Info.DisplayName),
+					Unicode: opt(k.Info.Unicode), DisplayURL: opt(k.Info.DisplayURL)})
+			}
+		case "broadcast":
+			c.SlackBroadcast = &SlackBroadcast{Range: opt(k.Range)}
+		case "date":
+			c.SlackDate = &SlackDate{UTCDateMs: Ptr(k.Ms)}
+		}
+		secs[id] = &Section{ID: Ptr(id), SectionClass: Ptr(ClassControl), Content: c}
+	}
+	return TitleControls{EmojiInfo: info,
+		Section: func(id string) *Section { return secs[id] },
+		ChannelPrivate: func(id string) (bool, bool) {
+			p, ok := private[id]
+			return p, ok
+		}}
 }
 
 // TestQuipSaveTitleLikeSlack is the title metadata every save sends.
 func TestQuipSaveTitleLikeSlack(t *testing.T) {
 	type in struct {
-		RTML string `json:"rtml"`
+		RTML     string              `json:"rtml"`
+		Controls map[string]titleCtl `json:"controls"`
 	}
 	s := paritytest.Load[in, saveTitleOut](t, "testdata/parity/quip-save-title.json")
 	s.Run(t, paritytest.Check[in, saveTitleOut]{Clack: func(t *testing.T, c in) saveTitleOut {
-		m, err := TitleMetadata(c.RTML)
+		m, err := TitleMetadata(c.RTML, titleControlsOf(c.Controls))
 		if errors.Is(err, ErrUnsupported) {
 			return saveTitleOut{Title: "(refused)"} // a known divergence names the case
 		}
 		if err != nil {
 			t.Fatalf("TitleMetadata: %v", err)
 		}
-		if len(m.EmojiInfo) != 0 {
-			t.Errorf("emoji info %v for a title without emoji", m.EmojiInfo)
+		out := saveTitleOut{Title: m.Title, RichText: hex.EncodeToString(Marshal(m.RichText)), EmojiInfo: []string{}}
+		for i := range m.EmojiInfo {
+			out.EmojiInfo = append(out.EmojiInfo, hex.EncodeToString(Marshal(&m.EmojiInfo[i])))
 		}
-		return saveTitleOut{Title: m.Title, RichText: hex.EncodeToString(Marshal(m.RichText))}
+		return out
 	}})
 }
