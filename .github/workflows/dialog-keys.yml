@@ -86,4 +86,4 @@ jobs:
           name: dialog-keys-shots
           path: dist/shots
       - name: a Block Kit modal's speed bump and Escape through the shell
-        run: go test -count=1 -v -timeout 10m -run '^TestModalBumpEscapeThroughShell$' ./internal/ui
+        run: go test -count=1 -v -timeout 4m -run '^TestModalBumpEscapeThroughShell$' ./internal/ui
