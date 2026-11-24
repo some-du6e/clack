@@ -5067,6 +5067,71 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # apt-stall (2026-11-24): .github/apt.sh past an Ubuntu mirror that
+  # hangs without going quiet for apt's 30 s read timeout (a byte every 20
+  # s: .github/scripts/apt-trickle.py, the runner's mirror hosts pointed at
+  # it in /etc/hosts), as huddle's ffmpeg and windows' gcc-mingw-w64 stood
+  # still for their first try's whole 10 min on 2026-11-24. Each round: an
+  # update, and every other round an install of hello, must stop the first
+  # try for want of progress, move to the kernel.org mirror and finish
+  # inside 3 min. COUNT rounds, at most 20. Dispatch with only=apt-stall.
+  apt-stall:
+    if: ${{ !inputs.only || startsWith('apt-stall', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: apt.sh past a mirror that hangs, COUNT rounds (at most 20)
+        run: |
+          set -u +e
+          sudo python3 .github/scripts/apt-trickle.py &
+          echo "127.0.0.1 azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com" | sudo tee -a /etc/hosts >/dev/null
+          srcs="/etc/apt/sources.list.d/*.sources /etc/apt/sources.list"
+          lists=/var/lib/apt/lists
+          grep -hE '^(URIs:|deb )' $srcs 2>/dev/null | sort -u | head -5
+          rc=0
+          n=$COUNT; [ "$n" -gt 20 ] && n=20
+          for i in $(seq 1 "$n"); do
+            # the runner's own mirror again, which now hangs
+            sudo sed -i -E 's#http://mirrors.edge.kernel.org/ubuntu/#http://azure.archive.ubuntu.com/ubuntu/#g' $srcs 2>/dev/null
+            what="update -qq"
+            if [ $((i % 2)) = 0 ]; then
+              # an install after an update that worked (huddle's, windows'):
+              # the last update's lists as the runner's mirror's (that update
+              # dropped those), and hello to fetch from it again
+              for f in "$lists"/mirrors.edge.kernel.org_ubuntu_*; do
+                [ -e "$f" ] && sudo cp "$f" "$lists/azure.archive.ubuntu.com_ubuntu_${f#"$lists"/mirrors.edge.kernel.org_ubuntu_}"
+              done
+              sudo apt-get remove -y -qq hello >/dev/null 2>&1
+              sudo apt-get clean
+              what="install -y -qq hello"
+            fi
+            t0=$(date +%s)
+            # $what splits on purpose; the log is the runner's, not root's
+            # shellcheck disable=SC2086,SC2024
+            sudo sh .github/apt.sh $what > "$RUNNER_TEMP/apt-$i.log" 2>&1
+            got=$?
+            took=$(( $(date +%s) - t0 ))
+            moved=$(grep -c 'mirrors.edge.kernel.org' $srcs 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')
+            echo "== round $i: apt.sh $what: exit $got after $took s; kernel.org lines in the sources: $moved"
+            grep -E 'no progress|failed; using|apt.sh: apt-get' "$RUNNER_TEMP/apt-$i.log" | cut -c1-160
+            if [ "$got" != 0 ] || [ "$took" -gt 180 ] || [ "$moved" = 0 ]; then
+              echo "::error::round $i: apt.sh $what exited $got after $took s (want 0, inside 180 s, on the kernel.org mirror)"
+              rc=1
+            fi
+            if ! grep -q 'no progress for 60 s' "$RUNNER_TEMP/apt-$i.log"; then
+              echo "::error::round $i: the first try wasn't stopped for getting nowhere (apt failed it itself, or it got through)"
+              rc=1
+            fi
+            if [ $((i % 2)) = 0 ] && ! dpkg -s hello >/dev/null 2>&1; then
+              echo "::error::round $i: hello isn't installed"
+              rc=1
+            fi
+          done
+          exit $rc
+
   # flakes-1122: TestLeftComposerLetsGoOfFocus (the reopened thread's reply
   # box) and TestFilesTabHideAndLinkDetails (a header read out across a
   # Hide tab, its members call held: its race forced every run);
@@ -6515,6 +6580,7 @@ jobs:
       - fling-22px
       - history-changed
       - ephemeral-actions
+      - apt-stall
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
