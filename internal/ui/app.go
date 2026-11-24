@@ -1314,6 +1314,7 @@ type toastState struct {
 	btn   *widget.Clickable // its "Undo"
 	label string            // the button's label ("" is "Undo")
 	icon  string            // ToastIcon: Slack's Toast with this icon (toast_slack.go)
+	top   bool              // ToastTop: at the top right
 	// ToastParts: Slack's Toast with rt() parts (bold and link runs), an
 	// optional icon in iconCol (toast_slack.go)
 	parts   []i18n.Part

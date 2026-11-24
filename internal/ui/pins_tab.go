@@ -13,6 +13,7 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/canvasview"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
 
@@ -128,7 +129,12 @@ var openBookmarkURL = openURL
 
 // OpenBookmark is openBookmark for a folder's link (views.BookmarkOpener):
 // a workflow bookmark trips (workflows_wire.go), a channel tab's link
-// opens the tab, anything else the browser.
+// opens the tab, and the rest go as handleUrlOpen ("Handle the opening of
+// bookmarks", boot-shared) sends them: a file bookmark whose link is a
+// list opens the list view and one whose link is a canvas the canvas view
+// (source BOOKMARK_BAR), whatever the file's state (a deleted canvas's
+// QuipDeletedState), a Slack permalink goes through openPermalink
+// (FollowLink), and a plain link to the browser.
 func (a *App) OpenBookmark(ch string, b core.Bookmark) {
 	if a.tripBookmark(ch, b) {
 		return
@@ -137,9 +143,20 @@ func (a *App) OpenBookmark(ch string, b core.Bookmark) {
 		a.openChannelTab(c, tab)
 		return
 	}
-	if b.Link != "" {
-		openBookmarkURL(b.Link)
+	if b.Type == "file" && b.EntityID != "" {
+		if l, _ := ListLinkID(b.Link); l != "" {
+			a.OpenList(b.EntityID)
+			return
+		}
+		if canvasview.CanvasLinkID(b.Link) != "" {
+			a.OpenCanvas(b.EntityID)
+			return
+		}
 	}
+	if b.Link == "" || a.FollowLink(b.Link, false) {
+		return
+	}
+	openBookmarkURL(b.Link)
 }
 
 // TabsChanged re-reads ch's tab bar (views.FolderHost: a folder renamed).

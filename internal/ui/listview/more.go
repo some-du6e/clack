@@ -288,8 +288,12 @@ func (m *downloadModal) layout(gtx layout.Context, th *theme.Theme) layout.Dimen
 }
 
 // confirmDelete is DeleteFileDialog for the list: "Delete list" / "Are
-// you sure you want to delete this list?" / "Delete list"; then
-// files.delete, and the view leaves the list.
+// you sure you want to delete this list?" / "Delete list". Its onGo: when
+// the channel's current tab holds the list, Messages opens and the tab is
+// removed first (navigateToChannelTab, removeTab: Actions.LeaveTab); then
+// files.delete, whose success tombstones the file (core.DeleteFile) and
+// runs useFileDeleteSuccessHandler: from the tab, its "This list was
+// deleted." toast (Actions.Deleted); elsewhere the view leaves the list.
 func (v *View) confirmDelete(d *core.ListDoc) {
 	ph, ok := v.h.(popups.Host)
 	if !ok {
@@ -297,13 +301,17 @@ func (v *View) confirmDelete(d *core.ListDoc) {
 	}
 	id := d.Info.ID
 	popups.Confirm(ph, nsLists.T("Delete list"), nsLists.T("Are you sure you want to delete this list?"), nsLists.T("Delete list"), true, nil, func() {
+		wasTab := v.act.LeaveTab != nil && v.act.LeaveTab()
 		v.write(func(ctx context.Context, a *core.App) error {
 			if err := a.DeleteFile(ctx, id); err != nil {
 				v.h.Toast(nsLists.T("Oops! We couldn’t delete that file"))
 				return nil
 			}
 			v.post(func() {
-				if v.act.Close != nil {
+				switch {
+				case wasTab && v.act.Deleted != nil:
+					v.act.Deleted()
+				case !wasTab && v.act.Close != nil:
 					v.act.Close()
 				}
 			})

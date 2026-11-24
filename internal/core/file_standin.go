@@ -258,18 +258,28 @@ func (a *App) onFileTrash(typ string, raw json.RawMessage) {
 	if e.FileID != "" {
 		ids = append(ids, e.FileID)
 	}
+	a.trashFiles(ids, typ == "file_deleted")
+}
+
+// trashFiles tombstones ids (deleted) or clears their tombstones, and
+// says so (Event "file_gone").
+func (a *App) trashFiles(ids []string, deleted bool) {
 	t := a.fileTombs()
 	t.mu.Lock()
 	for _, id := range ids {
-		if typ == "file_deleted" {
+		if deleted {
 			t.m[id] = true
 		} else {
 			delete(t.m, id)
 		}
 	}
 	t.mu.Unlock()
+	name := "file_undeleted"
+	if deleted {
+		name = "file_deleted"
+	}
 	for _, id := range ids {
-		a.emit(Event{Type: "file_gone", ID: id, Name: typ})
+		a.emit(Event{Type: "file_gone", ID: id, Name: name})
 	}
 }
 

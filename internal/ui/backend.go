@@ -1979,11 +1979,8 @@ func (b *backend) leave(ch string) {
 
 func (b *backend) openBookmark(ch, id string) {
 	for _, bm := range b.bookmarks[ch] {
-		if bm.ID == id && b.app != nil && b.app.tripBookmark(ch, bm) { // workflows_wire.go
-			return
-		}
-		if bm.ID == id && bm.Link != "" {
-			openURL(bm.Link)
+		if bm.ID == id && b.app != nil {
+			b.app.OpenBookmark(ch, bm) // handleUrlOpen (pins_tab.go)
 			return
 		}
 	}

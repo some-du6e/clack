@@ -91,6 +91,10 @@ func (a *App) newListView(id string, mode listview.Mode) *listview.View {
 		}
 	case listview.Tab:
 		act.FullView = func() { a.OpenListFull(id) }
+		act.LeaveTab = func() bool { return a.leaveFileTab(id) }
+		act.Deleted = func() { // useFileDeleteSuccessHandler from the tab
+			a.ToastTop([]i18n.Part{{Text: i18n.Plain(i18n.NS("slack-docs").RT("This list was deleted.")), Tag: "b"}}, "trash", 5*time.Second) // div.bold
+		}
 	}
 	// FileSectionDropdownButton (file_section_button.go); source as
 	// Slack's: the header's "list_header", the tab menu's

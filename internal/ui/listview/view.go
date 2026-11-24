@@ -76,7 +76,12 @@ type Actions struct {
 	MenuAt   func(p image.Point, m []MenuItem) // a menu at a window position (a cell's editor opened by keyboard)
 	// Restore opens UndeleteFileDialog for a deleted list (the error
 	// state's "Restore this list"); restored runs after files.undelete
-	Restore   func(f core.DeletedFile, restored func())
+	Restore func(f core.DeletedFile, restored func())
+	// LeaveTab is DeleteFileDialog's tab step for the list: when the
+	// channel's current tab holds it, Messages opens and the tab goes
+	// (true); Deleted is the toast after a delete from the tab
+	LeaveTab  func() bool
+	Deleted   func()
 	Copy      func(s string)                     // clipboard
 	People    func() []string                    // people to offer in a person field (besides the list's)
 	OpenFile  func(id string)                    // an attachment

@@ -152,10 +152,10 @@ func (a *App) barPeekContent(key string) tabPeekContent {
 // barTabPeek is ChannelTabPeek on the bar: the slug peek's card, placed by
 // the Popover (Bare: the container brings its own chrome).
 type barTabPeek struct {
-	a      *App
-	key    string
-	sp     *slugPeek
-	opened time.Time
+	a     *App
+	key   string
+	sp    *slugPeek
+	start time.Time
 }
 
 func (b *barTabPeek) popover(o *popups.PopoverOpts) {
@@ -199,12 +199,12 @@ func (b *barTabPeek) layout(gtx layout.Context) layout.Dimensions {
 		h = min(d.Size.Y, maxH)
 	}
 	sz := image.Pt(w, h)
-	if b.opened.IsZero() {
-		b.opened = gtx.Now
+	if b.start.IsZero() {
+		b.start = gtx.Now
 	}
 	var draw image.Point
 	if !a.reduceMotion() { // .containerAnimateIn__p1IDs (off with a11y_animations off)
-		if el := gtx.Now.Sub(b.opened); el < popups.PeekAnimateIn {
+		if el := gtx.Now.Sub(b.start); el < popups.PeekAnimateIn {
 			x := float64(el) / float64(popups.PeekAnimateIn)
 			draw.Y += int(float64(gtx.Dp(-8)) * (1 - ccBezier(.25, 1, .5, 1, x)))
 			defer paint.PushOpacity(gtx.Ops, float32(ccBezier(.33, 1, .68, 1, x))).Pop()

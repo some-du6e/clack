@@ -48,8 +48,7 @@ func (a *App) layoutSlackToast(gtx layout.Context) {
 		tw = max
 	}
 	w, h := 2*px+is+gap+tw, 2*py+lh
-	off := gtx.Dp(20)
-	r := image.Rect(sz.X-off-w, sz.Y-a.toastBottom(gtx)-h, sz.X-off, sz.Y-a.toastBottom(gtx))
+	r := a.toastBox(gtx, sz, w, h)
 	a.toast.rect = r
 	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(4))), gtx.Dp(8), gtx.Dp(12), theme.WithAlpha(c.PanelShadow, 0x14))
 	theme.RRect(gtx, r.Inset(-max(1, gtx.Dp(1))), gtx.Dp(8)+1, theme.WithAlpha(c.Fg, 0x21))
@@ -119,8 +118,7 @@ func (a *App) layoutRichToast(gtx layout.Context) {
 	maxW := gtx.Dp(350) - 2*px - is - gap
 	words, lines, tw := a.wrapToastParts(gtx, a.toast.parts, maxW)
 	w, h := 2*px+is+gap+tw, 2*py+lines*lh
-	off := gtx.Dp(20)
-	r := image.Rect(sz.X-off-w, sz.Y-a.toastBottom(gtx)-h, sz.X-off, sz.Y-a.toastBottom(gtx))
+	r := a.toastBox(gtx, sz, w, h)
 	a.toast.rect = r
 	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(4))), gtx.Dp(8), gtx.Dp(12), theme.WithAlpha(c.PanelShadow, 0x14))
 	theme.RRect(gtx, r.Inset(-max(1, gtx.Dp(1))), gtx.Dp(8)+1, theme.WithAlpha(c.Fg, 0x21))
@@ -220,6 +218,26 @@ func (a *App) toastLink(gtx layout.Context, r image.Rectangle, href string) {
 	defer clip.Rect(r).Push(gtx.Ops).Pop()
 	pointer.CursorPointer.Add(gtx.Ops)
 	a.toastClick.Add(gtx.Ops)
+}
+
+// toastBox is the toast's box for a w×h toast in a window sz: at the
+// bottom right (20px in, toastBottom up), or a "top-right" Toast's place,
+// ToastConfigProvider's {x: 14, y: 70 + the desktop title bar's
+// extra} (Clack draws no extra bar: 70).
+func (a *App) toastBox(gtx layout.Context, sz image.Point, w, h int) image.Rectangle {
+	if a.toast.top {
+		x, y := gtx.Dp(14), gtx.Dp(70)
+		return image.Rect(sz.X-x-w, y, sz.X-x, y+h)
+	}
+	off := gtx.Dp(20)
+	return image.Rect(sz.X-off-w, sz.Y-a.toastBottom(gtx)-h, sz.X-off, sz.Y-a.toastBottom(gtx))
+}
+
+// ToastTop is ToastParts at "top-right": useFileDeleteSuccessHandler's
+// "This canvas was deleted." (bold, the trash icon, 5 s).
+func (a *App) ToastTop(parts []i18n.Part, icon string, d time.Duration) {
+	a.ToastParts(parts, icon, color.NRGBA{}, d)
+	a.toast.top = true
 }
 
 // toastBottom is a bottom-right Toast's distance from the window's bottom

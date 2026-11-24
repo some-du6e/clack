@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"context"
 	"image"
 	"image/color"
+	"log"
 	"strings"
+	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
@@ -866,6 +869,33 @@ func (a *App) spansWidthEmoji(gtx layout.Context, spans []richtext.Span, size un
 		w += a.th.Measure(gtx, size, wt, s.Text)
 	}
 	return w
+}
+
+// leaveFileTab is DeleteFileDialog's tab step: when the open channel's
+// current tab holds fileID, Messages opens (navigateToChannelTab with the
+// channel tab) and the tab is removed (removeTab: conversations.removeTab,
+// reason "remove-channel-tab"); true when it did. UI goroutine.
+func (a *App) leaveFileTab(fileID string) bool {
+	ch := a.router.Current().Channel()
+	c := a.Core()
+	if ch == "" || c == nil {
+		return false
+	}
+	all := a.channelTabs(ch)
+	cur := a.chTab[ch]
+	if cur <= 0 || cur >= len(all) || all[cur].fileID != fileID {
+		return false
+	}
+	id := chTabID(all[cur])
+	a.selectChannelTab(ch, 0, all[0])
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := c.RemoveChannelTab(ctx, ch, id, false); err != nil {
+			log.Printf("ui: remove tab %s of %s: %v", logTag(id), logTag(ch), err)
+		}
+	}()
+	return true
 }
 
 func (a *App) channelTabs(ch string) []chTab {

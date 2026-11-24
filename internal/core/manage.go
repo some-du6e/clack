@@ -391,7 +391,13 @@ func (a *App) UnsaveFile(ctx context.Context, id string) error {
 // DeleteFile deletes a file (DeleteFileDialog's deleteFile: files.delete
 // {file}). Slack then sends file_deleted and the message's update.
 func (a *App) DeleteFile(ctx context.Context, id string) error {
-	return a.C.Call(ctx, "files.delete", url.Values{"file": {id}}, nil)
+	if err := a.C.Call(ctx, "files.delete", url.Values{"file": {id}}, nil); err != nil {
+		return err
+	}
+	// DeleteFileDialog's tombstoneFileOnSuccessfulDelete: the store's
+	// tombstone, as file_deleted makes it (file_standin.go)
+	a.trashFiles([]string{id}, true)
+	return nil
 }
 
 // loadSaved builds the saved/to-do set used for Message.Saved.
