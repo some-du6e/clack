@@ -36,8 +36,40 @@ type Found struct {
 	// Settings are its options as that app keeps them, "enabled" aside
 	Settings map[string]any
 	// Code is a user plugin's file (one installed there from a file or a
-	// URL, not one of the app's own); nil for the app's own plugins
+	// URL, not one of the app's own) once read; nil for the app's own
+	// plugins. Find leaves it to ReadCode: the list needs only its name.
 	Code []byte
+	// CodePath is that file, for ReadCode ("" for the app's own plugins)
+	CodePath string
+}
+
+// User reports whether f is a user plugin (its own file).
+func (f Found) User() bool { return f.Code != nil || f.CodePath != "" }
+
+// ReadCode is a user plugin's file, read when it's brought over (at most
+// maxFile bytes, a regular file); nil for the app's own plugins.
+func (f Found) ReadCode() ([]byte, error) {
+	if f.Code != nil || f.CodePath == "" {
+		return f.Code, nil
+	}
+	b, err := readFile(f.CodePath)
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil, fmt.Errorf("%s is empty", filepath.Base(f.CodePath))
+	}
+	return b, nil
+}
+
+// maxUserPlugins bounds the user plugin files one app's list takes.
+const maxUserPlugins = 100
+
+// userPlugin is the user plugin file at path for the list: a regular file
+// of at most maxFile bytes, not read.
+func userPlugin(path string) bool {
+	st, err := os.Lstat(path)
+	return err == nil && st.Mode().IsRegular() && st.Size() > 0 && st.Size() <= maxFile
 }
 
 // Install is an app's plugins on this machine.
@@ -68,11 +100,11 @@ func SlickDir() string {
 	home, _ := os.UserHomeDir()
 	switch runtime.GOOS {
 	case "darwin":
-		return filepath.Join(home, "Library", "Application Support", "Slick")
+		return absOrNone(filepath.Join(home, "Library", "Application Support", "Slick"))
 	case "windows":
-		return filepath.Join(appData(home), "Slick")
+		return absOrNone(filepath.Join(appData(home), "Slick"))
 	}
-	return filepath.Join(xdgConfig(home), "slick")
+	return absOrNone(filepath.Join(xdgConfig(home), "slick"))
 }
 
 // TautDir is Taut's config folder, as Taut's desktop app has it
@@ -87,11 +119,21 @@ func TautDir() string {
 	home, _ := os.UserHomeDir()
 	switch runtime.GOOS {
 	case "darwin":
-		return filepath.Join(home, "Library", "Application Support", "Taut")
+		return absOrNone(filepath.Join(home, "Library", "Application Support", "Taut"))
 	case "windows":
-		return filepath.Join(appData(home), "Taut")
+		return absOrNone(filepath.Join(appData(home), "Taut"))
 	}
-	return filepath.Join(xdgConfig(home), "Taut")
+	return absOrNone(filepath.Join(xdgConfig(home), "Taut"))
+}
+
+// absOrNone is d when it's absolute, else "": with no home folder (and no
+// APPDATA or XDG_CONFIG_HOME) the fallback would be relative to wherever
+// Clack runs, never another app's folder.
+func absOrNone(d string) string {
+	if filepath.IsAbs(d) {
+		return d
+	}
+	return ""
 }
 
 func appData(home string) string {
@@ -113,17 +155,27 @@ func xdgConfig(home string) string {
 // plugins), Slick's first. An app never run here has none.
 func Find() []Install {
 	var out []Install
-	if in, ok := ReadSlick(SlickDir()); ok {
-		out = append(out, in)
+	if d := SlickDir(); d != "" {
+		if in, ok := ReadSlick(d); ok {
+			out = append(out, in)
+		}
 	}
-	if in, ok := ReadTaut(TautDir()); ok {
-		out = append(out, in)
+	if d := TautDir(); d != "" {
+		if in, ok := ReadTaut(d); ok {
+			out = append(out, in)
+		}
 	}
 	return out
 }
 
 // readFile is a file of at most maxFile bytes; os.ErrNotExist for none.
 func readFile(path string) ([]byte, error) {
+	// its type before it's opened: a FIFO or device would block or never end
+	if st, err := os.Lstat(path); err != nil {
+		return nil, err
+	} else if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s isn't a file", filepath.Base(path))
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -195,18 +247,22 @@ func ReadSlick(dir string) (Install, bool) {
 	// as Slick's blob store writes it)
 	users := filepath.Join(settings, "storage", "user-plugins")
 	if ents, err := os.ReadDir(users); err == nil {
+		n := 0
 		for _, e := range ents {
 			name := e.Name()
 			if e.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".tmp") {
 				continue
 			}
 			id := strings.ReplaceAll(strings.TrimSuffix(name, ".json"), "%3A", ":")
-			code, err := readFile(filepath.Join(users, name))
-			if err != nil || len(bytes.TrimSpace(code)) == 0 {
+			path := filepath.Join(users, name)
+			if !userPlugin(path) {
 				continue
 			}
+			if n++; n > maxUserPlugins {
+				break
+			}
 			f := blocks[id]
-			f.ID, f.Code = id, code
+			f.ID, f.CodePath = id, path
 			blocks[id] = f
 			found = true
 		}
@@ -219,13 +275,16 @@ func ReadSlick(dir string) (Install, bool) {
 }
 
 // ReadTaut is Taut's plugins in its config folder dir: config.json's
-// ({plugins: {id: {enabled, ...options}}}; before Taut 3.0 commented JSON)
-// and its user plugins (user-plugins/<id>.js). ok is false when it has
-// neither.
+// ({plugins: {id: {enabled, ...options}}}), or before Taut 3.0
+// config.jsonc's (the same, commented), and its user plugins
+// (user-plugins/<id>.js). ok is false when it has neither.
 func ReadTaut(dir string) (Install, bool) {
 	in := Install{System: Taut, Dir: dir}
 	blocks := map[string]Found{}
 	b, err := readFile(filepath.Join(dir, "config.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		b, err = readFile(filepath.Join(dir, "config.jsonc")) // before Taut 3.0
+	}
 	found := err == nil
 	switch {
 	case err == nil:
@@ -245,18 +304,22 @@ func ReadTaut(dir string) (Install, bool) {
 	}
 	users := filepath.Join(dir, "user-plugins")
 	if ents, err := os.ReadDir(users); err == nil {
+		n := 0
 		for _, e := range ents {
 			name := e.Name()
 			if e.IsDir() || !strings.HasSuffix(name, ".js") {
 				continue
 			}
 			id := strings.TrimSuffix(name, ".js")
-			code, err := readFile(filepath.Join(users, name))
-			if err != nil || len(bytes.TrimSpace(code)) == 0 {
+			path := filepath.Join(users, name)
+			if !userPlugin(path) {
 				continue
 			}
+			if n++; n > maxUserPlugins {
+				break
+			}
 			f := blocks[id]
-			f.ID, f.Code = id, code
+			f.ID, f.CodePath = id, path
 			blocks[id] = f
 			found = true
 		}

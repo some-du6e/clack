@@ -108,7 +108,7 @@ func TestFindReadsPluginsOnly(t *testing.T) {
 			if f.System != in.System {
 				t.Errorf("%s's %s says it's %s's", in.System, f.ID, f.System)
 			}
-			out = append(out, row{f.ID, f.Enabled, f.Settings, f.Code != nil})
+			out = append(out, row{f.ID, f.Enabled, f.Settings, f.User()})
 		}
 		return out
 	}

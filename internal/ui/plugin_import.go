@@ -42,6 +42,7 @@ type importItem struct {
 	inLib bool
 	name  string // the Library's name for it, else its id
 	on    bool   // turned on there (or by its default)
+	known bool   // whether on is known: an unset plugin's default needs the index
 	// reason it can't come over ("": it can): it doesn't work in Clack, or
 	// the Library hasn't got it and the app no file of it
 	reason string
@@ -64,7 +65,22 @@ func importItems(ix *pluginlib.Index, installs []pluginimport.Install, installed
 	}
 	var out []importItem
 	for _, in := range installs {
-		for _, f := range in.Plugins {
+		plugins := in.Plugins
+		if ix != nil {
+			// the app's own plugins on by default that its list leaves
+			// alone: on there, as untouched (Slick and Taut keep only
+			// what's set)
+			listed := map[string]bool{}
+			for _, f := range plugins {
+				listed[f.ID] = true
+			}
+			for _, e := range ix.Plugins {
+				if e.System == in.System && e.DefaultEnabled && !listed[e.ID] {
+					plugins = append(plugins, pluginimport.Found{System: e.System, ID: e.ID})
+				}
+			}
+		}
+		for _, f := range plugins {
 			it := importItem{found: f, app: systemName(in.System), name: f.ID}
 			e, ok := lib[f.System+"/"+f.ID]
 			if ok {
@@ -73,15 +89,20 @@ func importItems(ix *pluginlib.Index, installs []pluginimport.Install, installed
 			switch c := pluginlib.CompatOf(f.System, f.ID); {
 			case c.Status == pluginlib.CompatBroken:
 				it.reason = c.Line
-			case f.Code == nil && ix != nil && !ok:
+			case !f.User() && ix != nil && !ok:
 				it.reason = "Not in the plugin Library"
 			case c.Status == pluginlib.CompatPartial:
 				it.line = c.Line
 			}
-			if f.Enabled != nil {
-				it.on = *f.Enabled
-			} else {
-				it.on = ok && e.DefaultEnabled
+			// on or off there: as its list has it, else the plugin's
+			// default, which only the index tells (known: false without)
+			switch {
+			case f.Enabled != nil:
+				it.on, it.known = *f.Enabled, true
+			case ok:
+				it.on, it.known = e.DefaultEnabled, true
+			case ix != nil:
+				it.known = true
 			}
 			it.have = installed != nil && installed(f.System, f.ID)
 			it.pick = it.on && it.reason == "" && !in.Off
@@ -111,6 +132,9 @@ type importSystem struct {
 	importCode func(ctx context.Context, code []byte) error // a user plugin's file
 	setOption  func(ctx context.Context, id, key string, value any) error
 	setEnabled func(ctx context.Context, id string, on bool) error
+	// isSecret reports whether a plugin's option is a secret (Taut keeps
+	// them out of config.json); nil: the system has none
+	isSecret func(id, key string) bool
 }
 
 // importer brings items over (off the UI goroutine): systems and hosts
@@ -145,6 +169,7 @@ func (a *App) importSystem(system string) (importSystem, bool) {
 			},
 			setOption:  t.SetOption,
 			setEnabled: t.SetEnabled,
+			isSecret:   t.SecretOption,
 		}, true
 	case pluginlib.Slick:
 		s := a.Slick()
@@ -167,9 +192,10 @@ func (a *App) importSystem(system string) (importSystem, bool) {
 // run brings the picked items over, one after another, and returns how
 // each went.
 func (im *importer) run(ctx context.Context, items []importItem) []importResult {
+	skip := im.pairedSkips(items)
 	var out []importResult
 	for _, it := range items {
-		if !it.pick || it.reason != "" {
+		if !it.pick || it.reason != "" || skip[it.key()] {
 			continue
 		}
 		r := importResult{it: it}
@@ -182,6 +208,41 @@ func (im *importer) run(ctx context.Context, items []importItem) []importResult 
 	return out
 }
 
+// pairedSkips is the picked items whose paired version (the same plugin
+// written for the other system: libraryGroups) is picked too: one of them
+// comes over, the one the Library installs itself (installPick), as
+// Clack shows the two as one plugin.
+func (im *importer) pairedSkips(items []importItem) map[string]bool {
+	var entries []pluginlib.Entry
+	byKey := map[string]string{} // Library key → item key
+	for _, it := range items {
+		if it.pick && it.reason == "" && it.inLib {
+			entries = append(entries, it.entry)
+			byKey[libKey(it.entry)] = it.key()
+		}
+	}
+	skip := map[string]bool{}
+	if len(entries) < 2 || im.a == nil {
+		return skip
+	}
+	lp := newLibraryPage(im.a, nil)
+	for _, g := range libraryGroups(entries) {
+		if len(g.Entries) < 2 {
+			continue
+		}
+		keep, _ := lp.installPick(g.Entries)
+		if keep.ID == "" {
+			continue
+		}
+		for _, e := range g.Entries {
+			if libKey(e) != libKey(keep) {
+				skip[byKey[libKey(e)]] = true
+			}
+		}
+	}
+	return skip
+}
+
 func (im *importer) one(ctx context.Context, it importItem) (skipped []string, err error) {
 	f := it.found
 	sys, ok := im.systems(f.System)
@@ -191,8 +252,12 @@ func (im *importer) one(ctx context.Context, it importItem) (skipped []string, e
 	switch {
 	case it.have || sys.installed(f.ID):
 		// installed already: its settings and its on or off come
-	case f.Code != nil:
-		if err := sys.importCode(ctx, f.Code); err != nil {
+	case f.User():
+		code, err := f.ReadCode()
+		if err != nil {
+			return nil, err
+		}
+		if err := sys.importCode(ctx, code); err != nil {
 			return nil, err
 		}
 	default:
@@ -218,7 +283,16 @@ func (im *importer) one(ctx context.Context, it importItem) (skipped []string, e
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		if err := sys.setOption(ctx, f.ID, k, f.Settings[k]); err != nil {
+		v := f.Settings[k]
+		if sys.isSecret != nil && sys.isSecret(f.ID, k) {
+			// an empty secret (Taut leaves one in config.json once it
+			// moved it to its secret storage) never clears the one Clack
+			// holds
+			if s, ok := v.(string); !ok || s == "" {
+				continue
+			}
+		}
+		if err := sys.setOption(ctx, f.ID, k, v); err != nil {
 			skipped = append(skipped, k)
 		}
 	}
@@ -288,6 +362,7 @@ func (a *App) savePendingImport(items []importItem) {
 		_ = os.Remove(p)
 		return
 	}
+	sort.Strings(pi.Picks) // the same file whatever order the card lists them in
 	b, _ := json.Marshal(pi)
 	if err := os.WriteFile(p, b, 0o600); err != nil {
 		log.Printf("ui: keeping the plugins to bring over: %v", err)
@@ -306,9 +381,9 @@ func (a *App) resumePendingImport() {
 	if err != nil {
 		return
 	}
-	_ = os.Remove(p)
 	var pi pendingImport
 	if json.Unmarshal(b, &pi) != nil || len(pi.Picks) == 0 {
+		_ = os.Remove(p)
 		return
 	}
 	picked := map[string]bool{}
@@ -321,18 +396,52 @@ func (a *App) resumePendingImport() {
 		defer cancel()
 		var ix *pluginlib.Index
 		if lib := a.pluginLib(); lib != nil {
-			ix, _ = lib.Index(ctx, false)
+			var err error
+			if ix, err = lib.Index(ctx, false); err != nil {
+				// the picks stay for the next start: nothing was tried
+				log.Printf("ui: bringing plugins over: the plugin Library: %v", err)
+				a.Post(func() {
+					a.Toast("Couldn't reach the plugin Library to bring your plugins over. " + AppName + " will try again when it next starts.")
+				})
+				return
+			}
 		}
 		items := importItems(ix, pluginimport.Find(), nil)
 		for i := range items {
 			items[i].pick = picked[items[i].key()] && items[i].reason == ""
 		}
 		rs := im.run(ctx, items)
+		// the picks that failed stay for the next start; the rest are done
+		var again []string
+		for _, r := range rs {
+			if r.err != nil {
+				again = append(again, r.it.key())
+				log.Printf("ui: bringing %s over: %v", r.it.key(), r.err)
+			}
+		}
+		if len(again) == 0 {
+			_ = os.Remove(p)
+		} else if b, err := json.Marshal(pendingImport{Picks: again}); err == nil {
+			_ = os.WriteFile(p, b, 0o600)
+		}
 		if len(rs) == 0 {
 			return
 		}
-		a.Post(func() { a.ToastIcon(importSummary(rs), "check") })
+		a.Post(func() {
+			if len(again) == 0 {
+				a.ToastIcon(importSummary(rs), "check")
+				return
+			}
+			a.Toast(importSummary(rs) + " " + AppName + " will try again when it next starts.")
+		})
 	}()
+}
+
+// clearPendingImport forgets what an earlier introduction picked (Skip).
+func (a *App) clearPendingImport() {
+	if p := a.pendingImportPath(); p != "" {
+		_ = os.Remove(p)
+	}
 }
 
 // ---- Preferences > Plugins > Bring over your plugins ----
@@ -422,8 +531,15 @@ func (p *tautPage) importScreenLayout(f *flow) {
 		return
 	}
 	items := p.importItemsNow()
+	// an app whose plugin list couldn't be read says why, whatever else
+	// came of it (not "didn't find")
+	for _, in := range s.installs {
+		if in.Err != nil {
+			p.muted(f, systemName(in.System)+"'s plugin list couldn't be read: "+in.Err.Error())
+		}
+	}
 	if len(items) == 0 {
-		p.muted(f, "Clack didn't find Slick's or Taut's plugins on this computer.")
+		p.muted(f, AppName+" didn't find Slick's or Taut's plugins on this computer.")
 		return
 	}
 	p.muted(f, "Plugins from Slick and Taut on this computer, with their settings. Each one comes over as the plugin Library has it, and the other app is left as it is.")
@@ -445,16 +561,17 @@ func (p *tautPage) importScreenLayout(f *flow) {
 			if it.reason == "" && !s.running {
 				if _, c := p.checkbox(gtx, k, it.pick); c {
 					it.pick = !it.pick
+					p.a.Invalidate() // drawn as it was: the next frame draws the flip
 				}
 			}
 			title := it.name
-			if !it.on {
+			if !it.on && it.known {
 				title += " (off there)"
 			}
 			if it.have {
 				title += " (in Clack already: its settings)"
 			}
-			if it.found.Code != nil {
+			if it.found.User() {
 				title += " (its own file)"
 			}
 			col := cl.fg

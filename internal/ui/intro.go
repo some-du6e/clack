@@ -260,6 +260,7 @@ func (in *intro) update(gtx layout.Context, a *App) {
 	importing := in.cur == beatPlugins && !in.signIn && in.importing(a)
 	if importing {
 		in.readImportClicks(gtx)
+		in.askIndex(a) // the card shows: now the plugins' names
 	}
 	switch {
 	case in.closing || in.signIn:
@@ -268,6 +269,9 @@ func (in *intro) update(gtx layout.Context, a *App) {
 			in.closing, in.closeAt = true, now
 		}
 	case skip:
+		if in.mode == introFirstRun {
+			a.clearPendingImport() // Skip brings nothing, an earlier run's picks included
+		}
 		in.goTo(a, now, beatFinal)
 	case next:
 		if importing {

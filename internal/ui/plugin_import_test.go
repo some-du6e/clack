@@ -87,7 +87,7 @@ func importFixtures(t *testing.T) (slick, taut string, ls *libServer) {
 	}}`)
 	writeFixture(t, filepath.Join(slick, "profile", "Cookies"), "session data")
 	writeFixture(t, filepath.Join(taut, "config.json"), `{"plugins": {
-		"LibTest": {"enabled": true, "speed": 5},
+		"LibTest": {"enabled": true, "speed": 5, "token": ""},
 		"Ghost": {"enabled": true}
 	}}`)
 	writeFixture(t, filepath.Join(taut, "user-plugins", "MyTaut.js"), "(() => { class MyTaut {}; return MyTaut })()")
@@ -145,6 +145,7 @@ func (fk *fakeImport) importer(a *App) *importer {
 					fk.note(fmt.Sprintf("%s %s on=%v", sys, id, on))
 					return nil
 				},
+				isSecret: func(_, key string) bool { return key == "token" },
 			}, true
 		},
 		hosts: func(sys string) (libraryHost, bool) {
@@ -233,6 +234,56 @@ func TestPluginImportBringsPluginsOver(t *testing.T) {
 	}
 	if !reflect.DeepEqual(dirSnapshot(t, slick), beforeSlick) || !reflect.DeepEqual(dirSnapshot(t, taut), beforeTaut) {
 		t.Error("the import changed something in Slick's or Taut's folder")
+	}
+}
+
+// A pick that fails (its download, here) stays for the next start, and
+// the toast says what failed, without the check mark; the picks that came
+// over go.
+func TestPluginImportKeepsFailedPicks(t *testing.T) {
+	importFixtures(t)
+	a, _ := ttApp(t, t.TempDir())
+	ix, err := a.pluginLib().Index(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := importItems(ix, pluginimport.Find(), nil)
+	for i := range items {
+		items[i].pick = items[i].reason == "" && (items[i].found.ID == "LibTest" || items[i].found.ID == "LibSlick")
+	}
+	a.savePendingImport(items)
+	fk := &fakeImport{}
+	old := importerFor
+	importerFor = func(a *App) *importer {
+		im := fk.importer(a)
+		hosts := im.hosts
+		im.hosts = func(sys string) (libraryHost, bool) {
+			h, ok := hosts(sys)
+			if sys == pluginlib.Slick {
+				h.install = func(context.Context, pluginlib.Entry, []byte, []byte, bool) error {
+					return fmt.Errorf("the Library's download stopped")
+				}
+			}
+			return h, ok
+		}
+		return im
+	}
+	t.Cleanup(func() { importerFor = old })
+	a.resumePendingImport()
+	deadline := time.Now().Add(30 * time.Second)
+	for a.toast.text == "" {
+		if time.Now().After(deadline) {
+			t.Fatalf("no toast (calls %q)", fk.got())
+		}
+		a.drain()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(a.toast.text, "Couldn't bring over Lib Slick") || !strings.Contains(a.toast.text, "try again") {
+		t.Errorf("toast %q", a.toast.text)
+	}
+	b, err := os.ReadFile(a.pendingImportPath())
+	if err != nil || string(b) != `{"picks":["slick/LibSlick"]}` {
+		t.Errorf("the kept picks: %s, %v; want the one that failed", b, err)
 	}
 }
 

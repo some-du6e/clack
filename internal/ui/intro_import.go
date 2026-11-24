@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,8 @@ type introImport struct {
 	items    []importItem
 	ix       *pluginlib.Index // the index items were made with
 	btns     map[string]*widget.Clickable
+	asked    bool            // the Library's index asked for (the card's first draw)
+	toggled  map[string]bool // the picks the user changed: kept when the index comes
 }
 
 // introImportRows is how many plugins the card lists; Preferences > Plugins
@@ -37,7 +40,8 @@ type introImport struct {
 const introImportRows = 4
 
 // findImports looks for Slick and Taut on this computer, off the UI
-// goroutine, and asks for the Library's index for the plugins' names.
+// goroutine; the card asks for the Library's index (the plugins' names)
+// when it first shows (askIndex), not before.
 func (in *intro) findImports(a *App) {
 	go func() {
 		found := pluginimport.Find()
@@ -49,10 +53,18 @@ func (in *intro) findImports(a *App) {
 			in.imp.items = nil
 			a.Invalidate()
 		})
-		if lib := a.pluginLib(); lib != nil {
-			lib.Refresh(libraryTTL, false, func(*pluginlib.Index, error) { a.Invalidate() })
-		}
 	}()
+}
+
+// askIndex asks for the Library's index once, when the card first shows.
+func (in *intro) askIndex(a *App) {
+	if in.imp.asked {
+		return
+	}
+	in.imp.asked = true
+	if lib := a.pluginLib(); lib != nil {
+		go lib.Refresh(libraryTTL, false, func(*pluginlib.Index, error) { a.Invalidate() })
+	}
 }
 
 // importItems is the offer's items, made again once the Library's index
@@ -73,10 +85,13 @@ func (in *intro) importItems(a *App) []importItem {
 		}
 		ii.items, ii.ix = importItems(ix, ii.installs, nil), ix
 		for i := range ii.items {
-			if v, ok := picks[ii.items[i].key()]; ok && ii.items[i].reason == "" {
-				ii.items[i].pick = v
+			if k := ii.items[i].key(); ii.toggled[k] && ii.items[i].reason == "" {
+				ii.items[i].pick = picks[k]
 			}
 		}
+		// the card lists the picked first (and doesn't move a row its
+		// switch turns)
+		sort.SliceStable(ii.items, func(i, j int) bool { return ii.items[i].pick && !ii.items[j].pick })
 	}
 	return ii.items
 }
@@ -128,6 +143,10 @@ func (in *intro) readImportClicks(gtx layout.Context) {
 		it := &in.imp.items[i]
 		if b := in.imp.btns[it.key()]; b != nil && b.Clicked(gtx) {
 			it.pick = !it.pick
+			if in.imp.toggled == nil {
+				in.imp.toggled = map[string]bool{}
+			}
+			in.imp.toggled[it.key()] = true
 		}
 	}
 }
@@ -191,7 +210,10 @@ func (in *intro) drawImportStage(f *introFrame, g introGeom, start time.Time, st
 			theme.RRect(f.gtx, cr, cr.Dy()/2, bg)
 			f.label(image.Pt(cr.Min.X+f.d(6), cr.Min.Y+(cr.Dy()-f.d(12.5))/2), 10, theme.Black, fg, chip)
 			sub := "On in " + it.app
-			if !it.on {
+			switch {
+			case !it.known:
+				sub = "As " + it.app + " has it"
+			case !it.on:
 				sub = "Off in " + it.app
 			}
 			if it.line != "" {
