@@ -594,6 +594,9 @@ func (a *App) Run() error {
 	a.rv.inRun = true // the real window: covered until revealed (reveal.go)
 	applog.Mark("window", "")
 	go a.updateLoop(a.updateSchedule(), realUpdateClock())
+	libStop := make(chan struct{})
+	defer close(libStop)
+	go a.libraryLoop(libStop) // the plugin Library's index, hourly (library_prefs.go)
 	a.watchOSTheme()
 	if a.motionOverride == 0 {
 		watchOSMotion() // wheel scrolling animates unless the OS asks for less motion (syncWheelAnimation)

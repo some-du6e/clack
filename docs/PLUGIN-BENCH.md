@@ -42,7 +42,9 @@ cheaper one wins on the costs above, each compared only past a noise
 floor; a tie goes to the smaller bundle. A pair with no behaviour check on
 either side is decided on costs alone, which can't tell a version that
 does nothing in Clack from one that works: its reason says "no behaviour
-checks", and the Library recommends neither (Install asks which). The CI workflow
+checks". The Library's Install goes by how each version works in Clack
+(compat.go) first and by these costs only between versions that work as
+well, so it never asks which. The CI workflow
 (`.github/workflows/plugin-bench.yml`) re-runs the bench and fails
 when a committed winner regresses (stops loading, starts re-rendering,
 passes fewer checks, or loses on correctness).
@@ -182,7 +184,7 @@ Bundles: slick 34f2c25, slick b582605, slick f6be3bd, taut 6fe5123, taut efe682d
 
 ### Anonymize Filenames
 
-**Taut**: no behaviour checks, both load, 8.5x less JS memory. No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+**Taut**: no behaviour checks, both load, 8.5x less JS memory. No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs.
 
 | | Taut | Slick |
 |---|---|---|
@@ -402,7 +404,7 @@ Bundles: slick 34f2c25, slick b582605, slick f6be3bd, taut 6fe5123, taut efe682d
 
 ### IDV Status
 
-**Taut**: no behaviour checks, both load; costs within noise, smaller bundle (2.4 KB vs 6.2 KB). No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+**Taut**: no behaviour checks, both load; costs within noise, smaller bundle (2.4 KB vs 6.2 KB). No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs.
 
 | | Taut | Slick |
 |---|---|---|
@@ -462,7 +464,7 @@ Bundles: slick 34f2c25, slick b582605, slick f6be3bd, taut 6fe5123, taut efe682d
 
 ### No Tracking
 
-**Taut**: no behaviour checks, both load, 3.0x faster to load, 3.4x less JS memory. No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+**Taut**: no behaviour checks, both load, 3.0x faster to load, 3.4x less JS memory. No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs.
 
 | | Taut | Slick |
 |---|---|---|
@@ -522,7 +524,7 @@ Bundles: slick 34f2c25, slick b582605, slick f6be3bd, taut 6fe5123, taut efe682d
 
 ### Private Channel
 
-**Taut**: no behaviour checks, both load, 1.4x faster to load, 1.5x less frame overhead. No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+**Taut**: no behaviour checks, both load, 1.4x faster to load, 1.5x less frame overhead. No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs.
 
 | | Taut | Slick |
 |---|---|---|
@@ -561,7 +563,7 @@ Bundles: slick 34f2c25, slick b582605, slick f6be3bd, taut 6fe5123, taut efe682d
 
 ### Real Markdown
 
-**Taut**: no behaviour checks, both load; costs within noise, smaller bundle (2.6 KB vs 7.6 KB). No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).
+**Taut**: no behaviour checks, both load; costs within noise, smaller bundle (2.6 KB vs 7.6 KB). No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs.
 
 | | Taut | Slick |
 |---|---|---|

@@ -75,14 +75,17 @@ return { id: "LibSlick", capabilities: [] };
 type libServer struct {
 	mu    sync.Mutex
 	files map[string][]byte
+	hits  map[string]int // requests, by file name
 	srv   *httptest.Server
 }
 
 func newLibServer(t *testing.T) *libServer {
-	l := &libServer{files: map[string][]byte{}}
+	l := &libServer{files: map[string][]byte{}, hits: map[string]int{}}
 	l.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/rel/")
 		l.mu.Lock()
-		b, ok := l.files[strings.TrimPrefix(r.URL.Path, "/rel/")]
+		l.hits[name]++
+		b, ok := l.files[name]
 		l.mu.Unlock()
 		if !ok {
 			http.NotFound(w, r)
@@ -91,8 +94,21 @@ func newLibServer(t *testing.T) *libServer {
 		_, _ = w.Write(b)
 	}))
 	t.Cleanup(l.srv.Close)
-	t.Setenv("CLACK_PLUGIN_LIBRARY", l.srv.URL+"/rel/index.json")
+	u := l.srv.URL + "/rel/index.json"
+	t.Setenv("CLACK_PLUGIN_LIBRARY", u)
+	t.Cleanup(func() { // a later server on this port starts with a Library of its own
+		pluginLibMu.Lock()
+		delete(pluginLibs, u)
+		pluginLibMu.Unlock()
+	})
 	return l
+}
+
+// asked is how many requests name has had.
+func (l *libServer) asked(name string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.hits[name]
 }
 
 // publish writes index.json for tautCode / the Slick pair, plus listing-only
