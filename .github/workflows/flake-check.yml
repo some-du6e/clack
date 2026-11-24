@@ -7366,6 +7366,44 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # focused-keys (2026-11-23): a focused message's keys, Slack's
+  # MessageActions key commands (popups/actions_keys.go): R, T, S, F, A,
+  # U, P, M, L, Mod+Shift+S, Mod+C and Delete on an ordinary and an
+  # ephemeral message, in the channel list and the thread pane, with
+  # modifiers and a local notice; the follow, reminder and Copy message
+  # rows by message kind, no right-click menu on restricted messages, a
+  # failed send's Delete kept local (messages); Threads' typed text
+  # (views); typing from the list and with nothing focused still reaching
+  # the input (ui). COUNT runs each. Dispatch with only=focused-keys.
+  focused-keys:
+    if: ${{ !inputs.only || startsWith('focused-keys', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: messages, views, ui (COUNT runs)
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -v -timeout 12m -run '^(TestFocusedMessageKeysLikeSlack|TestFocusedMessageKeysExactly|TestFocusedReplyKeysLikeSlack|TestMenuRowsByMessageKindLikeSlack|TestContextMenuNotOnRestrictedMessages|TestFailedSendDeleteIsLocal|TestAddToListShortcut|TestEphemeralAddToListKeyIsNoOp|TestEphemeralMenuActionsLikeSlack|TestContextMenuOnMessageBody|TestFocusedKeysFollowPinAndUnreadRules)$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count="$COUNT" -v -timeout 6m -run '^(TestThreadsTypedTextLikeSlack|TestThreadsKeysNeedKeyboardFocus)$' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count="$COUNT" -v -timeout 8m -run '^(TestThreadsAuditTypingFromTheList|TestThreadsAuditTypingGoesToTheInput)$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7532,6 +7570,7 @@ jobs:
       - scroll-cpu
       - member-subs
       - connect-to-apps
+      - focused-keys
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

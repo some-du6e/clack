@@ -48,6 +48,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -289,7 +290,11 @@ type Threads struct {
 	// (get_rows_and_keys); kbRows maps a row key to its thread and ts.
 	kb     *vkList
 	kbRows map[string]thrKBRow
-	keyFs  []key.Filter
+	// kbAte is the letter whose key command just opened a popup
+	// (kbMsgKey): its typed text (the key.EditEvent after the key) stays
+	// out of the reply box
+	kbAte string
+	keyFs []key.Filter
 
 	// marks are thread_marked last_reads waiting for the UI goroutine
 	// (threadMarked patches the thread in place: no reload).
@@ -953,6 +958,9 @@ func (v *Threads) body(gtx C) D {
 	v.kb.setItems(v.kbItems(page.items))
 	v.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: v.kbClick, Key: func(e key.Event, active string) bool { return v.kbKey(gtx, e, active) },
 		Text: func(text, active string) { v.kbText(gtx, text, active) }, Extra: v.typeFilters()})
+	if v.kb.focused && v.kbMsgBinds("mod+shift+s") { // the message's save before the shell's Later
+		shortcut.OwnMessageKey(v.kb, "Mod+Shift+S")
+	}
 	v.kb.begin()
 	d := v.scrollList(gtx, &v.list, n+1, func(gtx C, i int) D {
 		if i >= n {
@@ -2086,6 +2094,10 @@ func (v *Threads) focusBelowFooter(thread string) {
 // character.
 func (v *Threads) kbKey(gtx C, e key.Event, active string) bool {
 	r := v.kbRows[active]
+	v.kbAte = ""
+	if v.kbMsgKey(gtx, e, r) {
+		return true // onMessageAction stops the keydown: ThreadsView.onKeyDown never sees it
+	}
 	switch e.Name {
 	case key.NameReturn, key.NameEnter:
 		if (r.kind == "root" || r.kind == "reply") && active != "" {
@@ -2123,7 +2135,123 @@ func (v *Threads) kbKey(gtx C, e key.Event, active string) bool {
 // without a key Clack names (a dead key's letter, an IME's) runs
 // onKeyDown's move as well: isPrintableKeyEvent saw a one-character key.
 func (v *Threads) kbText(gtx C, text, active string) {
+	if ate := v.kbAte; ate != "" {
+		v.kbAte = ""
+		if strings.EqualFold(text, ate) { // CapsLock types the capital: the action's still
+			return
+		}
+	}
 	v.typeInto(gtx, active, text)
+}
+
+// kbMsgKey is the focused root's or reply's key commands (Slack's
+// MessageActions ones, popups/actions_keys.go, with messageContainerType
+// threads_view): R, T (View thread), P, S or F, U, A, M, L, Delete (and
+// Backspace on macOS), Mod+C and Mod+Shift+S, each where its action's
+// rule gives the message that action.
+//   - MessageActions binds them only while the viewer has keyboard focus
+//     (RwAt: hasKeyboardFocus && bindContextualShortcuts), which any
+//     mousedown ends (FocusEventManager): after a click on a row, a letter
+//     is no action's, and ThreadsView's onKeyDown moves it to the reply
+//     box, so typing a reply after a click types it.
+//   - A key an action takes goes no further: onMessageAction stops the
+//     keydown's propagation, so ThreadsView's onKeyDown never runs for it.
+//     The focus stays on the message and the letter is typed nowhere
+//     (kbAte drops its text); U's unread mark isn't undone by the reply
+//     box's focus marking the thread read.
+//
+// E and V aren't here: the view has no inline edit, no list adder.
+func (v *Threads) kbMsgKey(gtx C, e key.Event, r thrKBRow) bool {
+	if (r.kind != "root" && r.kind != "reply") || r.ts == "" {
+		return false
+	}
+	if km, ok := v.h.(interface{ KeyboardMode() bool }); !ok || !km.KeyboardMode() {
+		return false
+	}
+	id := thrKeyID(e)
+	if id == "" || id == "e" || id == "v" {
+		return false
+	}
+	ph, ok := v.h.(popups.Host)
+	if !ok {
+		return false
+	}
+	m, ok := v.thrMessage(r)
+	if !ok || !popups.ToolbarShown(v.h.Core(), &m) {
+		return false
+	}
+	var at image.Point
+	if pp, ok := v.h.(interface{ PointerPos() image.Point }); ok {
+		at = pp.PointerPos()
+	}
+	run, ok := popups.MessageKeyAction(ph, at, m, popups.InThreadsView, popups.MessageMenuOpts{}, id)
+	if !ok {
+		return false
+	}
+	run(gtx)
+	if len(id) == 1 { // the letter's text, which follows the key, is the action's too
+		v.kbAte = id
+	}
+	return true
+}
+
+// kbMsgBinds reports whether the active row's message binds key id now
+// (kbMsgKey's checks, without running it).
+func (v *Threads) kbMsgBinds(id string) bool {
+	r := v.kbRows[v.kb.active]
+	if (r.kind != "root" && r.kind != "reply") || r.ts == "" {
+		return false
+	}
+	if km, ok := v.h.(interface{ KeyboardMode() bool }); !ok || !km.KeyboardMode() {
+		return false
+	}
+	ph, ok := v.h.(popups.Host)
+	if !ok {
+		return false
+	}
+	m, ok := v.thrMessage(r)
+	if !ok || !popups.ToolbarShown(v.h.Core(), &m) {
+		return false
+	}
+	_, ok = popups.MessageKeyAction(ph, image.Point{}, m, popups.InThreadsView, popups.MessageMenuOpts{}, id)
+	return ok
+}
+
+// thrKeyID is key e's P2 key id for kbMsgKey: a letter alone (Mousetrap
+// matches modifiers exactly: Shift+R is no r), "mod+c", "mod+shift+s",
+// "del" or "backspace"; "" for any other.
+func thrKeyID(e key.Event) string {
+	mods := e.Modifiers
+	switch {
+	case e.Name == key.NameDeleteForward && mods == 0:
+		return "del"
+	case e.Name == key.NameDeleteBackward && mods == 0:
+		return "backspace"
+	case e.Name == "C" && mods == key.ModShortcut:
+		return "mod+c"
+	case e.Name == "S" && mods == key.ModShortcut|key.ModShift:
+		return "mod+shift+s"
+	case mods == 0 && len(e.Name) == 1 && e.Name[0] >= 'A' && e.Name[0] <= 'Z':
+		return strings.ToLower(string(e.Name))
+	}
+	return ""
+}
+
+// thrMessage is root or reply row r's message.
+func (v *Threads) thrMessage(r thrKBRow) (core.Message, bool) {
+	t, _ := v.item(r.key)
+	if t == nil {
+		return core.Message{}, false
+	}
+	if t.Root.TS == r.ts {
+		return t.Root, true
+	}
+	for _, m := range t.Replies {
+		if m.TS == r.ts {
+			return m, true
+		}
+	}
+	return core.Message{}, false
 }
 
 // typeInto is onKeyDown's move for a printable key: the keyboard thread's
@@ -2181,6 +2309,9 @@ func (v *Threads) typeFilters() []key.Filter {
 	for _, s := range strings.Split("0 1 2 3 4 5 6 7 8 9 , . / ; ' [ ] \\ - = `", " ") {
 		fs = append(fs, key.Filter{Focus: v.kb, Name: key.Name(s), Optional: key.ModShift})
 	}
+	// a focused message's other keys (kbMsgKey)
+	fs = append(fs, key.Filter{Focus: v.kb, Name: key.NameDeleteForward}, key.Filter{Focus: v.kb, Name: key.NameDeleteBackward},
+		key.Filter{Focus: v.kb, Name: "C", Required: key.ModShortcut}, key.Filter{Focus: v.kb, Name: "S", Required: key.ModShortcut | key.ModShift})
 	v.keyFs = fs
 	return fs
 }
