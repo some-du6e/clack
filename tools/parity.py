@@ -881,7 +881,26 @@ def refresh_slash_routing(cases, tmp, base=None):
     return json.loads(p.stdout.rstrip('\n').split('\n')[-1])
 
 
+UNREAD_ORACLE = os.path.join(ROOT, 'tools', 'oracles', 'unread_counts.cjs')
+
+
+def refresh_unread_counts(cases, tmp, base=None):
+    """What Slack's counts code makes of each case's client.counts answer: tools/oracles/unread_counts.cjs runs
+    applyCountsToChannels and refreshFilteredUnreadChannelCounts in node over its CDN chunks (SLACK_CHUNKS, JSDOM)."""
+    node = shutil.which('node')
+    if not node:
+        raise Unavailable('no node on PATH')
+    f = os.path.join(tmp, 'snapshot.json')
+    with open(f, 'w', encoding='utf-8') as fh:
+        json.dump({'base': base or {}, 'cases': cases}, fh, ensure_ascii=False)
+    p = subprocess.run([node, UNREAD_ORACLE, f], capture_output=True, text=True, timeout=900)
+    if p.returncode:
+        raise Unavailable(f'the harness failed ({p.returncode}): {p.stderr.strip()[-500:]}')
+    return json.loads(p.stdout.rstrip('\n').split('\n')[-1])
+
+
 REFRESHERS = {'emoji-rank': refresh_emoji_rank, 'message-actions': refresh_message_actions, 'slash-routing': refresh_slash_routing,
+              'unread-counts': refresh_unread_counts,
               **{k: quip_refresher(k) for k in QUIP_SNAPSHOTS}}
 
 
