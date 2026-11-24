@@ -296,6 +296,8 @@ on:
       - "internal/store/reached_end*.go"
       - "internal/core/reached_end*.go"
       - "internal/ui/messages/reached_end_test.go"
+      # the msg-latency job's own
+      - "internal/ui/messages/hub_sent_load_test.go"
       - "internal/ui/reached_end_list_test.go"
       - "internal/fakeslack/count_posts.go"
       # the readiness the latency guards wait on, and where Activity reads it
@@ -3699,7 +3701,10 @@ jobs:
   # drawn as the window draws them, without plugins: others' messages
   # from people it holds and people it never fetched, own sends and their
   # echoes, quiet and under a busy workspace's socket (Karim's α.102 "like
-  # a second and they come in clumped"). One verbose run, then COUNT.
+  # a second and they come in clumped"). One verbose run, then COUNT;
+  # and TestSentAcrossALoad (messages): a send confirmed while a reload of
+  # its list is out (the busy pass's second send, 0.73 s late, when a
+  # member lookup's answer reloaded the open channel as it was confirmed).
   # Dispatch with only=msg-latency.
   msg-latency:
     if: ${{ !inputs.only || startsWith('msg-latency', inputs.only) }}
@@ -3726,6 +3731,7 @@ jobs:
           rc=0
           go test -count=1 -v -timeout 20m -run '^TestMessageLatency$' ./internal/ui || rc=1
           go test -count=$COUNT -timeout 60m -run '^TestMessageLatency$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 20m -run '^TestSentAcrossALoad$' ./internal/ui/messages || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
