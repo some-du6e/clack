@@ -747,18 +747,7 @@ func filePillowPreview(gtx layout.Context, h Host, f *richtext.File) layout.Dime
 		})
 	}
 	ht := maxInt(ic, nd.Size.Y+dp(gtx, 4)+dd.Size.Y) + 2*pad
-	label := strings.ToUpper(f.Type)
-	if len(label) > 4 {
-		label = label[:4]
-	}
-	if label == "" {
-		label = "FILE"
-	}
-	rrect(gtx, image.Rect(pad, pad, pad+ic, pad+ic), dp(gtx, 8), cl.Ring)
-	lc, ld := record(loose(gtx, image.Pt(ic, ic)), func(gtx layout.Context) layout.Dimensions {
-		return text(gtx, th, 10, theme.Black, cl.Muted, label)
-	})
-	macroAt(gtx, lc, image.Pt(pad+(ic-ld.Size.X)/2, pad+(ic-ld.Size.Y)/2))
+	fileIconTile(gtx, th, f, image.Pt(pad, pad), ic)
 	macroAt(gtx, nc, image.Pt(tx, pad-dp(gtx, 1)))
 	if detail != "" {
 		macroAt(gtx, dc, image.Pt(tx, pad+nd.Size.Y+dp(gtx, 4)))

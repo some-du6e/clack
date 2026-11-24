@@ -2,10 +2,13 @@ package richview
 
 // The pointer over the Block Kit blocks this view draws as cards
 // (data_visualization, data_table and its fullscreen view, timeline,
-// contact_card, share_prompt): a browser's `cursor: auto`, the text
-// cursor over their selectable text and the default arrow everywhere else
-// (Karim, α.160: "text thingy instead of pointer" over a chart), the hand
-// on what a click acts on. Over a chart, ECharts' (zrender's) cursors:
+// contact_card, share_prompt, event, card, and a carousel's scroller): a
+// browser's `cursor: auto`, the text cursor over their selectable text
+// and the default arrow everywhere else (Karim, α.160: "text thingy
+// instead of pointer" over a chart), the hand on what a click acts on.
+// An area without a cursor of its own shows its parents' (Gio's hit), so
+// a carousel's cards, views of their own drawn in the scroller, show the
+// arrow only when the carousel's box is a region too. Over a chart, ECharts' (zrender's) cursors:
 // the canvas' default arrow, and `cursor: 'pointer'` over a hoverable
 // series item, a bar, a pie segment or a line's symbol. A contact card is
 // .p-contact_card__container{cursor:pointer}, a click on it opening the

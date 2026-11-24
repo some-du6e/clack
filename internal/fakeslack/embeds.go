@@ -225,3 +225,53 @@ func (s *Server) deleteAttachment(f url.Values) map[string]any {
 	}
 	return map[string]any{"ok": false, "error": "message_not_found"}
 }
+
+// removeFileFromMessage is chat.removeFile: the file leaves the viewer's
+// own message (files and x_files), the file itself stays.
+func (s *Server) removeFileFromMessage(f url.Values) map[string]any {
+	ch, ts, id := f.Get("channel"), f.Get("ts"), f.Get("file")
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	msgs := s.hist[ch]
+	for i := range msgs {
+		if msgs[i].TS != ts {
+			continue
+		}
+		if msgs[i].User != SelfID {
+			return map[string]any{"ok": false, "error": "cant_update_message"}
+		}
+		kept := msgs[i].Files[:0:0]
+		found := false
+		for _, x := range msgs[i].Files {
+			if x.ID == id {
+				found = true
+				continue
+			}
+			kept = append(kept, x)
+		}
+		if !found {
+			return map[string]any{"ok": false, "error": "file_not_found"}
+		}
+		msgs[i].Files = kept
+		xs := msgs[i].XFiles[:0:0]
+		for _, x := range msgs[i].XFiles {
+			if x != id {
+				xs = append(xs, x)
+			}
+		}
+		msgs[i].XFiles = xs
+		embedsMu.Lock()
+		s.removedFiles = append(s.removedFiles, DeletedAttachment{Channel: ch, TS: ts, Attachment: id})
+		embedsMu.Unlock()
+		return ok()
+	}
+	return map[string]any{"ok": false, "error": "message_not_found"}
+}
+
+// RemovedFiles are the chat.removeFile calls that took a file out of a
+// message (Attachment holds the file id).
+func (s *Server) RemovedFiles() []DeletedAttachment {
+	embedsMu.Lock()
+	defer embedsMu.Unlock()
+	return append([]DeletedAttachment(nil), s.removedFiles...)
+}

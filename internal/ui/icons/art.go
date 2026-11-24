@@ -19,7 +19,7 @@ import (
 
 type artPart struct {
 	d    string
-	fill uint32 // 0xRRGGBB
+	fill uint32 // 0xRRGGBB, or 0xAARRGGBB for a part drawn at AA's opacity
 }
 
 type artDef struct {
@@ -64,7 +64,7 @@ func (d *artDef) draw(gtx layout.Context, px int, ink func(fill uint32) (color.N
 		c := hexRGB(p.fill)
 		if ink != nil {
 			var ok bool
-			if c, ok = ink(p.fill); !ok {
+			if c, ok = ink(p.fill & 0xffffff); !ok {
 				continue
 			}
 		}
@@ -74,7 +74,11 @@ func (d *artDef) draw(gtx layout.Context, px int, ink func(fill uint32) (color.N
 }
 
 func hexRGB(v uint32) color.NRGBA {
-	return color.NRGBA{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
+	a := uint8(v >> 24)
+	if a == 0 {
+		a = 0xff // 0xRRGGBB: opaque
+	}
+	return color.NRGBA{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: a}
 }
 
 func init() {

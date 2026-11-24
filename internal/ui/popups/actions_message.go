@@ -1011,3 +1011,57 @@ func connectToApps(h Host, m core.Message) []MenuItem {
 	}
 	return []MenuItem{{Label: "No apps", Disabled: true}}
 }
+
+// RemoveFileFromMessage is removeFileFromMessage (boot-shared QD+H): a
+// file card's x on the viewer's own message. The file that is all the
+// message has left (no text, no blocks, no other file) asks to delete the
+// message instead (openDeleteMessageDialog); else Slack's
+// RemoveFileFromMessageDialog: "Remove file?" ("Remove canvas?", "Remove
+// list?"), "It will be removed from the message, but it won’t be
+// deleted.", the danger "Remove", then chatRemoveFile
+// (core.RemoveFileFromMessage); a failure toasts "Can’t remove that from
+// the message. Try again." with the warning icon.
+func RemoveFileFromMessage(h Host, m core.Message, f *richtext.File) {
+	if f == nil || f.ID == "" {
+		return
+	}
+	if fileIsTheLastContent(&m, f.ID) {
+		ConfirmDelete(h, m)
+		return
+	}
+	title := "Remove file?"
+	switch {
+	case core.IsCanvasFile(f.Type, f.Mode, f.PrettyType):
+		title = "Remove canvas?"
+	case core.IsListFile(f.Type, f.Mode, f.PrettyType):
+		title = "Remove list?"
+	}
+	ch, ts, id := m.Channel, m.TS, f.ID
+	Confirm(h, nsFiles.T(title), nsFiles.T("It will be removed from the message, but it won’t be deleted."), nsFiles.T("Remove"), true, nil, func() {
+		a := h.Core()
+		if a == nil {
+			return
+		}
+		run(h, func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, a.RemoveFileFromMessage(ctx, ch, ts, id)
+		}, func(_ struct{}, err error) {
+			if err != nil {
+				toastIcon(h, nsFiles.T("Can’t remove that from the message. Try again."), "warning")
+			}
+		})
+	})
+}
+
+// fileIsTheLastContent is isFileTheLastContent: m has no text, no blocks
+// (hasMessageBlocks) and no file but id.
+func fileIsTheLastContent(m *core.Message, id string) bool {
+	if strings.TrimSpace(m.Text) != "" || len(m.Blocks) > 0 && string(m.Blocks) != "null" && string(m.Blocks) != "[]" {
+		return false
+	}
+	for i := range m.Doc.Blocks {
+		if b := &m.Doc.Blocks[i]; b.Kind == richtext.FileBlock && b.File != nil && b.File.ID != id {
+			return false
+		}
+	}
+	return true
+}

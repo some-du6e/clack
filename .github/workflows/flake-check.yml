@@ -3546,7 +3546,7 @@ jobs:
           rc=0
           go test -count=$COUNT -v -timeout 5m -run '^(TestModalTitleWraps|TestModalTitleWrapsChannelEntity|TestModalTitleTruncates|TestModalCloseButtonPlace|TestCDialogTitleWraps|TestLeaveDialogsTitles)$' ./internal/ui/popups || rc=1
           go test -count=$COUNT -v -timeout 3m -run '^TestCDTitleLines$' ./internal/ui/views || rc=1
-          go test -count=$COUNT -v -timeout 5m -run '^(TestConfirmObjectTitle|TestLeaveBumpIsWizardSpeedBump)$' ./internal/ui/blockkit || rc=1
+          go test -count=$COUNT -v -timeout 5m -run '^(TestConfirmObjectTitle|TestLeaveBumpIsWizardSpeedBump|TestModalConfirmIsSpeedBump)$' ./internal/ui/blockkit || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -7003,6 +7003,100 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # A Block Kit modal's speed bump (the leave prompt, an element's
+  # confirm) and Escape through the real shell, which reads Escape before
+  # the overlays: Escape put the prompt straight back, and on a confirm
+  # backed out of the modal (bk-modal-confirm's review, wf_741a535b-475);
+  # a double click on the bump's OK reached Submit under it.
+  modal-bump:
+    if: ${{ !inputs.only || startsWith('modal-bump', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the speed bump's Escape and double click, COUNT runs"
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 10m -run '^TestModalBumpEscapeThroughShell$' ./internal/ui || rc=1
+          go test -count=$COUNT -v -timeout 5m -run '^(TestBumpDoubleClickKeepsSubmit|TestModalConfirmIsSpeedBump|TestLeaveBumpIsWizardSpeedBump)$' ./internal/ui/blockkit || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # 2026-11-23 (Karim, alpha.102; backlog P54): a drag past a line's end
+  # in plugin-patched rich_text doesn't select to the line's end.
+  select-line-end:
+    if: ${{ !inputs.only || startsWith('select-line-end', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "drags past a line's end, plain and patched, COUNT runs"
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 8m -run '^(TestSelectLineEnd|TestToolbarClickOverRowAbove|TestClickRightOfTextKeepsTyping)$' ./internal/ui/messages || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # files-card: a single file card's svgicon in component mode (a theme or
+  # plugin stylesheet, a patched MessageFile) and the svgicon pick, drawn
+  # (CLACK_PIXEL_TESTS). Dispatch with only=files-card.
+  files-card:
+    if: ${{ !inputs.only || startsWith('files-card', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: richview file icons in and out of component mode, COUNT runs
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -timeout 15m -v -run '^(TestFileIconInComponentMode|TestFileIconArt|TestFileIconShots)$' ./internal/ui/richview
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # focused-keys (2026-11-23): a focused message's keys, Slack's
   # MessageActions key commands (popups/actions_keys.go): R, T, S, F, A,
   # U, P, M, L, Mod+Shift+S, Mod+C and Delete on an ordinary and an
@@ -7111,8 +7205,10 @@ jobs:
   expect-fail:
     needs:
       - link-open-mac
+      - select-line-end
       - go
       - modal-title-wrap
+      - modal-bump
       - avf-audio
       - race-video
       - members
@@ -7259,6 +7355,7 @@ jobs:
       - counts-baseline
       - apt-stall
       - pagekey-day
+      - files-card
       - focused-keys
       - connect-to-apps
       - parity-actions

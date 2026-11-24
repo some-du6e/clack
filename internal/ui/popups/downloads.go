@@ -42,7 +42,9 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -630,21 +632,12 @@ func dlProgressBar(gtx layout.Context, r image.Rectangle, p float64) {
 	rrect(gtx, in, rad, color.NRGBA{R: 0x1d, G: 0x9b, B: 0xd1, A: 0xff})
 }
 
-// fileIconTile is a file's 36px type tile at p (the pillows' icon).
+// fileIconTile is a file's ic px svgicon at p, the pillows' icon
+// (FileEntityThumbnailIcon: richview.FileIconArt's art).
 func fileIconTile(gtx layout.Context, th *theme.Theme, f *richtext.File, p image.Point, ic int) {
-	cl := colorsOf(th)
-	label := strings.ToUpper(f.Type)
-	if len(label) > 4 {
-		label = label[:4]
-	}
-	if label == "" {
-		label = "FILE"
-	}
-	rrect(gtx, image.Rectangle{Min: p, Max: p.Add(image.Pt(ic, ic))}, dp(gtx, 8), cl.Ring)
-	lc, ld := record(loose(gtx, image.Pt(ic, ic)), func(gtx layout.Context) layout.Dimensions {
-		return text(gtx, th, 10, theme.Black, cl.Muted, label)
+	at(gtx, p, func(gtx layout.Context) layout.Dimensions {
+		return icons.Art(gtx, richview.FileIconArt(f), ic)
 	})
-	macroAt(gtx, lc, p.Add(image.Pt((ic-ld.Size.X)/2, (ic-ld.Size.Y)/2)))
 }
 
 // ConvertFilesize is Slack's convertFilesize (R9ib): 1000s, rounded,

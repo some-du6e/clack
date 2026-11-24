@@ -190,6 +190,12 @@ type row struct {
 	addRect   image.Rectangle
 	height    int
 
+	// selW is the text column's width: Slack's rich_text sections are
+	// blocks across it, so a press anywhere right of the text, past the
+	// end of a line, starts a selection there (Chromium hit-tests the
+	// block: LayoutBlockFlow PositionForPoint, then the nearest line's
+	// end). bodyRect is only as wide as the widest line.
+	selW int
 	// plugin state (patched path only)
 	rc *rowCtx // this frame's inputs, for the natives
 	// truncate: in a thread pane, long Block Kit sections cut at "Show
@@ -560,7 +566,49 @@ func (r *row) rvOpts() richview.Options {
 	} else if r.m.Stopped { // insertMessageLabelIntoBlocks: "(stopped)" only without "(edited)"
 		o.Stopped, o.StoppedBy = true, r.stoppedBy()
 	}
+	if own {
+		o.FileRemoves = richview.FileRemovesOf(fileRemoves(&r.m, r.rc.selfID))
+	}
 	return o
+}
+
+// fileRemoves is the gallery's removableFileIds for the viewer's own
+// message m (QD+H): every file, taken out of the message, when all of
+// them were uploaded with it (canRemoveFileFromMessage: x_files holds
+// each); else the files shared into it that the viewer owns, deleted
+// (deletableFileIds, DeleteFileDialog). Canvases, lists and surfaces
+// shared in (fileIsSharedNotUploaded) get none. nil when no file has one.
+func fileRemoves(m *core.Message, self string) map[string]bool {
+	var files []*richtext.File
+	for i := range m.Doc.Blocks {
+		if b := &m.Doc.Blocks[i]; b.Kind == richtext.FileBlock && b.File != nil && b.File.ID != "" {
+			files = append(files, b.File)
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	x := map[string]bool{}
+	for _, id := range m.XFiles {
+		x[id] = true
+	}
+	all := len(m.XFiles) > 0
+	for _, f := range files {
+		all = all && x[f.ID]
+	}
+	out := map[string]bool{}
+	for _, f := range files {
+		switch {
+		case all:
+			out[f.ID] = false
+		case !x[f.ID] && f.User == self && !core.IsCanvasFile(f.Type, f.Mode, f.PrettyType) && !core.IsListFile(f.Type, f.Mode, f.PrettyType):
+			out[f.ID] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // stoppedBy is the name in StoppedLabel's "(stopped by {name})" (J825):
@@ -1818,6 +1866,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 		})
 	}
 	r.bodyRect = image.Rectangle{Min: image.Pt(0, y), Max: image.Pt(body.Size.X, y+body.Size.Y)}.Add(r.col)
+	r.selW = cw
 	if inline {
 		// the sender sits on the body's first line, baselines together
 		dy := y
@@ -3624,6 +3673,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		return r.rv.Layout(gtx, rc.st, &r.handler)
 	})
 	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	r.selW = cw
 	// <time class="timestamp__bfLC8">: 12px inline after the text
 	// (margin-inline-end 8px), on its baseline
 	ts := clock(tsTime(m.TS))
@@ -3768,6 +3818,7 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 		return r.rv.Layout(gtx, rc.st, &r.handler)
 	})
 	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	r.selW = cw
 	y += max(body.Size.Y, dp(gtx, 20)) + dp(gtx, 4) + dp(gtx, 4)
 	if len(m.Reactions) > 0 {
 		y += r.reactionBar(gtx, image.Pt(cx, y), image.Point{}, cw)
@@ -3839,6 +3890,7 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	ty := y + (box-body.Size.Y)/2
 	placeCall(gtx, call, cx, ty)
 	r.bodyRect = image.Rectangle{Min: image.Pt(cx, ty), Max: image.Pt(cx+body.Size.X, ty+body.Size.Y)}
+	r.selW = cw
 	y += box
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
@@ -3884,6 +3936,7 @@ func (r *row) denseTombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimens
 	ty := y + (box-body.Size.Y)/2
 	placeCall(gtx, call, x, ty)
 	r.bodyRect = image.Rectangle{Min: image.Pt(x, ty), Max: image.Pt(x+body.Size.X, ty+body.Size.Y)}
+	r.selW = cw
 	y += box + dp(gtx, mt.bodyMarginBottom)
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}

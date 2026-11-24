@@ -294,7 +294,7 @@ func dataTableActions(raw json.RawMessage) []Element {
 }
 
 // maxNesting is how deep blocks inside blocks are followed (containers'
-// and callouts' child_blocks, fallback payloads), as richtext follows
+// and callouts' child_blocks, carousels' cards, fallback payloads), as richtext follows
 // fallbacks (maxFallbackDepth); deeper ones are dropped. Without it a
 // sender's containers nested 30 deep held the UI goroutine.
 const maxNesting = 8
@@ -333,6 +333,8 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 	switch {
 	case b.Type == "container" || b.Type == "callout":
 		b.kids = blockParts(p.ChildBlocks)
+	case b.Type == "carousel": // CarouselBlock's elements are blocks of their own (renderBlocks): its cards and their actions
+		b.kids = blockParts(p.Elements)
 	case len(p.Fallback) > 0:
 		b.kids = richtext.FallbackItems(b.Type, p.Fallback)
 	}
