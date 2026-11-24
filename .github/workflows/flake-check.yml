@@ -6402,7 +6402,7 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -v -timeout 10m -run '^(TestConnectToAppsOrderLikeSlack|TestConnectToAppsBrowseRowLikeSlack|TestConnectToAppsFollowsOtherDevices)$' ./internal/ui/blockkit || rc=1
+          go test -count="$COUNT" -v -timeout 10m -run '^(TestConnectToAppsOrderLikeSlack|TestConnectToAppsBrowseRowLikeSlack|TestConnectToAppsFollowsOtherDevices|TestConnectToAppsGuestsKeepBrowse)$' ./internal/ui/blockkit || rc=1
           go test -count="$COUNT" -v -timeout 8m -run '^(TestMessageMenuPickRecordsFrecency|TestMessageContextMenuThreadAction|TestMenuHintsPerOS)$' ./internal/ui/popups || rc=1
           go test -count="$COUNT" -v -timeout 4m ./internal/frecency || rc=1
           exit $rc
