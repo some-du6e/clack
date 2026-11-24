@@ -1,8 +1,10 @@
 package openurl
 
 import (
+	"errors"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -37,5 +39,42 @@ func TestCommandLinux(t *testing.T) {
 		if c := command(u); filepath.Base(c.Path) != tool && c.Args[0] != tool {
 			t.Errorf("%s goes to %q, want %s", u, c.Args, tool)
 		}
+	}
+}
+
+// TestLaunchRemembersTheWayThatWorked: as Slack's openExternal flips
+// isOpenExternalShellForced after a retry worked, a link whose first way
+// failed and whose retry opened it makes the retry's way go first for
+// the next links; off Windows (errNoShell) the tool is the only way.
+func TestLaunchRemembersTheWayThatWorked(t *testing.T) {
+	t.Cleanup(func() { rundllFirst.Store(false) })
+	var calls []string
+	shellOK, toolOK := false, true
+	shell := func() error {
+		calls = append(calls, "shell")
+		if shellOK {
+			return nil
+		}
+		return errors.New("ShellExecuteEx failed")
+	}
+	tool := func() error {
+		calls = append(calls, "rundll32")
+		if toolOK {
+			return nil
+		}
+		return errors.New("rundll32 failed")
+	}
+	launchWith(shell, tool)
+	launchWith(shell, tool)
+	shellOK, toolOK = true, false
+	launchWith(shell, tool)
+	launchWith(shell, tool)
+	if got, want := strings.Join(calls, " "), "shell rundll32 rundll32 rundll32 shell shell"; got != want {
+		t.Errorf("the ways tried: %q, want %q", got, want)
+	}
+	calls = nil
+	launchWith(func() error { calls = append(calls, "shell"); return errNoShell }, tool)
+	if got := strings.Join(calls, " "); got != "shell rundll32" {
+		t.Errorf("off Windows: %q, want the tool after errNoShell", got)
 	}
 }

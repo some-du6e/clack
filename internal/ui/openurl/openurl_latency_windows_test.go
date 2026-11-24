@@ -59,11 +59,20 @@ func TestOpenStubHandler(t *testing.T) {
 // registerStub makes this binary the clackstub: handler for the test.
 func registerStub(t *testing.T) {
 	t.Helper()
+	if os.Getenv("CLACK_WINDOWS_ASSOC_TESTS") == "" {
+		// it registers a URL scheme for the user and opens console windows
+		t.Skip("CLACK_WINDOWS_ASSOC_TESTS unset (windows-shell sets it)")
+	}
+	root := `Software\Classes\` + stubScheme
+	t.Cleanup(func() { // before any write, so a failed one is undone too
+		for _, p := range []string{root + `\shell\open\command`, root + `\shell\open`, root + `\shell`, root} {
+			_ = registry.DeleteKey(registry.CURRENT_USER, p)
+		}
+	})
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := `Software\Classes\` + stubScheme
 	k, _, err := registry.CreateKey(registry.CURRENT_USER, root, registry.ALL_ACCESS)
 	if err != nil {
 		t.Fatal(err)
@@ -83,11 +92,6 @@ func registerStub(t *testing.T) {
 	if err := c.SetStringValue("", `"`+exe+`" -test.run=^TestOpenStubHandler$ "%1"`); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		for _, p := range []string{root + `\shell\open\command`, root + `\shell\open`, root + `\shell`, root} {
-			_ = registry.DeleteKey(registry.CURRENT_USER, p)
-		}
-	})
 }
 
 // handOff is one open's times from the call: when the call returned

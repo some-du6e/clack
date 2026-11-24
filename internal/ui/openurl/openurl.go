@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/ui/uiguard"
@@ -73,25 +74,63 @@ func Check(raw string) (string, error) {
 // command's tool.
 var errNoShell = errors.New("openurl: no shell hand-off here")
 
+// rundllFirst is Slack's isOpenExternalShellForced turned off: after
+// one way failed and the other opened the link, later links go the way
+// that worked first (openExternal's catch: `if (await li(i, …), a !== i)
+// return ag({isOpenExternalShellForced: !t})`), the other as their retry.
+// Process-wide, as Slack's setting is per app.
+var rundllFirst atomic.Bool
+
 // launch hands an already-checked URL to the OS and returns once it took
 // it. Off the UI goroutine. On Windows that is shellOpen, Slack's
 // shell.openExternal, with rundll32 as Slack's retry after it fails
-// (openExternal's catch runs the other method); elsewhere command's tool.
+// (openExternal's catch runs the other method), and whichever worked on a
+// retry goes first after it; elsewhere command's tool.
 func launch(u string) {
 	uiguard.OffUI("open a link")
-	err := shellOpen(u)
-	if err == nil {
+	launchWith(func() error { return shellOpen(u) }, func() error { return runTool(u) })
+}
+
+// launchWith is launch with its two ways (tests).
+func launchWith(shell, tool func() error) {
+	first, retry := shell, tool
+	if rundllFirst.Load() {
+		first, retry = tool, shell
+	}
+	err := first()
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, errNoShell): // macOS and Linux: the tool only
+		if err := tool(); err != nil {
+			log.Printf("openurl: %v", err)
+		}
 		return
 	}
-	if err != errNoShell {
-		log.Printf("openurl: ShellExecuteEx: %v; trying rundll32", err)
+	log.Printf("openurl: %v; trying the other way", err)
+	if err := retry(); err != nil {
+		log.Printf("openurl: retry: %v", err)
+		return
 	}
+	rundllFirst.Store(!rundllFirst.Load())
+}
+
+// runTool runs command's tool for u and waits for it: a start error or
+// a non-zero exit is a failure (Slack's spawned RunDll32 rejects on any
+// other exit code). A mailto: link whose xdg-email isn't installed (an
+// xdg-open replacement without xdg-utils) goes to xdg-open, as before.
+func runTool(u string) error {
 	cmd := command(u)
-	if err := cmd.Start(); err != nil {
-		log.Printf("openurl: %v", err)
-		return
+	err := cmd.Start()
+	if err != nil && errors.Is(err, exec.ErrNotFound) && len(cmd.Args) > 0 && cmd.Args[0] == "xdg-email" {
+		cmd = exec.Command("xdg-open", u)
+		cmd.WaitDelay = waitDelay
+		err = cmd.Start()
 	}
-	_ = cmd.Wait()
+	if err != nil {
+		return err
+	}
+	return cmd.Wait()
 }
 
 // externalHandlerCharmap is Chromium's kExternalHandlerCharmap

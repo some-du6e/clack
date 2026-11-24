@@ -1494,6 +1494,9 @@ jobs:
       - name: a clicked link's hand-off (the message click, then ShellExecuteEx vs rundll32 to a clackstub:// handler under HKCU)
         if: ${{ !cancelled() }}
         shell: bash # every go test counts (pwsh steps fail only on the last command)
+        env:
+          CGO_ENABLED: "0" # as the job's other internal/ui steps build
+          CLACK_WINDOWS_ASSOC_TESTS: "1" # TestOpenHandOffLatency registers clackstub: under HKCU and removes it
         run: |
           rc=0
           go test -count=1 -v -timeout 5m -run '^(TestOpenHandOffLatency|TestEscapeExternalHandlerValue|TestCheck)$' ./internal/ui/openurl || rc=1
