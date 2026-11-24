@@ -395,7 +395,27 @@ func Unmarshal(b []byte, m any) error {
 	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
 		panic(fmt.Sprintf("quip: Unmarshal into %T", m))
 	}
-	return readMessage(b, v.Elem(), 0)
+	return readMessage(b, v.Elem(), 0, &budget{left: decodeBudget(len(b))})
+}
+
+// decodeBudget is how many bytes of repeated values Unmarshal may make of
+// an answer n bytes long. A record can be two bytes and still a whole
+// struct (an empty Section is 416 bytes of fields), so a 16 MiB answer of
+// empty sections decoded to about 3.5 GB; real answers come to a few
+// times their size (a list's bare container section, the smallest, about
+// 7).
+func decodeBudget(n int) int64 { return budgetRatio*int64(n) + 4<<20 }
+
+const budgetRatio = 24
+
+// budget is what's left of decodeBudget while a message decodes.
+type budget struct{ left int64 }
+
+func (b *budget) take(n int64) error {
+	if b.left -= n; b.left < 0 {
+		return fmt.Errorf("%w: it decodes to over %d times its size", ErrMalformed, budgetRatio)
+	}
+	return nil
 }
 
 // UnmarshalBase64 is Unmarshal of a base64 form value.
@@ -487,7 +507,7 @@ func (r *reader) skip(num, wt, depth int) error {
 	return fmt.Errorf("%w: wire type %d", ErrMalformed, wt)
 }
 
-func readMessage(b []byte, v reflect.Value, depth int) error {
+func readMessage(b []byte, v reflect.Value, depth int, bud *budget) error {
 	if depth > maxDepth {
 		return fmt.Errorf("%w: nested deeper than %d", ErrMalformed, maxDepth)
 	}
@@ -513,12 +533,15 @@ func readMessage(b []byte, v reflect.Value, depth int) error {
 				e.SetBytes(append(e.Bytes(), r.b[start:r.i]...))
 			}
 			if l.unknown >= 0 {
+				if err := bud.take(4); err != nil {
+					return err
+				}
 				u := v.Field(l.unknown)
 				u.Set(reflect.Append(u, reflect.ValueOf(int32(num))))
 			}
 			continue
 		}
-		if err := readField(r, f, wt, v.Field(f.idx), depth); err != nil {
+		if err := readField(r, f, wt, v.Field(f.idx), depth, bud); err != nil {
 			return fmt.Errorf("%s.%d: %w", v.Type().Name(), num, err)
 		}
 	}
@@ -532,7 +555,7 @@ func wantWire(wt, want int) error {
 	return nil
 }
 
-func readField(r *reader, f *field, wt int, fv reflect.Value, depth int) error {
+func readField(r *reader, f *field, wt int, fv reflect.Value, depth int, bud *budget) error {
 	scalar := func() (uint64, error) {
 		if err := wantWire(wt, 0); err != nil {
 			return 0, err
@@ -627,6 +650,16 @@ func readField(r *reader, f *field, wt int, fv reflect.Value, depth int) error {
 			fv.SetBytes(append([]byte{}, b...))
 		case kRaw:
 			fv.Set(reflect.ValueOf(Raw(append([]byte{}, b...))))
+		case kRepString, kRepBytes, kRepRaw:
+			if err := bud.take(24 + int64(len(b))); err != nil {
+				return err
+			}
+		case kRepMsg, kRepMsgPtr:
+			if err := bud.take(8 + int64(f.elem.Size())); err != nil {
+				return err
+			}
+		}
+		switch f.kind {
 		case kRepString:
 			fv.Set(reflect.Append(fv, reflect.ValueOf(string(b))))
 		case kRepBytes:
@@ -637,13 +670,13 @@ func readField(r *reader, f *field, wt int, fv reflect.Value, depth int) error {
 			// a new message each time: Slack's decoder sets a fresh
 			// instance, so a field seen twice is the later one
 			e := reflect.New(f.elem)
-			if err := readMessage(b, e.Elem(), depth+1); err != nil {
+			if err := readMessage(b, e.Elem(), depth+1, bud); err != nil {
 				return err
 			}
 			fv.Set(e)
 		case kRepMsg, kRepMsgPtr:
 			e := reflect.New(f.elem)
-			if err := readMessage(b, e.Elem(), depth+1); err != nil {
+			if err := readMessage(b, e.Elem(), depth+1, bud); err != nil {
 				return err
 			}
 			if f.kind == kRepMsg {
@@ -653,7 +686,10 @@ func readField(r *reader, f *field, wt int, fv reflect.Value, depth int) error {
 			}
 		}
 	case kRepInt32, kRepInt64, kRepBool:
-		add := func(u uint64) {
+		add := func(u uint64) error {
+			if err := bud.take(8); err != nil {
+				return err
+			}
 			switch f.kind {
 			case kRepInt32:
 				fv.Set(reflect.Append(fv, reflect.ValueOf(int32(u))))
@@ -662,6 +698,7 @@ func readField(r *reader, f *field, wt int, fv reflect.Value, depth int) error {
 			case kRepBool:
 				fv.Set(reflect.Append(fv, reflect.ValueOf(u != 0)))
 			}
+			return nil
 		}
 		switch wt {
 		case 0:
@@ -669,7 +706,7 @@ func readField(r *reader, f *field, wt int, fv reflect.Value, depth int) error {
 			if err != nil {
 				return err
 			}
-			add(u)
+			return add(u)
 		case 2:
 			n, err := r.varint()
 			if err != nil {
@@ -685,7 +722,9 @@ func readField(r *reader, f *field, wt int, fv reflect.Value, depth int) error {
 				if err != nil {
 					return err
 				}
-				add(u)
+				if err := add(u); err != nil {
+					return err
+				}
 			}
 		default:
 			return fmt.Errorf("%w: wire type %d for repeated numbers", ErrMalformed, wt)
