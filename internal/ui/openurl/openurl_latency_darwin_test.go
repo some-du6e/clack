@@ -167,7 +167,20 @@ func TestOpenHandOffLatencyMac(t *testing.T) {
 	if os.Getenv("CLACK_MACOS_OPENURL_TESTS") == "" {
 		t.Skip("CLACK_MACOS_OPENURL_TESTS unset: it registers a URL scheme with Launch Services")
 	}
-	times := macStubApp(t, t.TempDir())
+	// Launch Services keeps apps under the temporary folders out of URL
+	// handling (ClackStub.app in t.TempDir was registered and claimed the
+	// scheme, and URLForApplicationToOpenURL still found nothing), so the
+	// bundle goes under ~/Applications
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, "Applications", fmt.Sprintf("clack-openurl-test-%d", os.Getpid()))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	times := macStubApp(t, dir)
 	// Launch Services takes a moment to learn the scheme
 	for dl := time.Now().Add(10 * time.Second); ; time.Sleep(200 * time.Millisecond) {
 		if err := shellOpen(macStubScheme + ":probe"); !errors.Is(err, errNoApp) {
