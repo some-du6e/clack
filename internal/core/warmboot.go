@@ -164,7 +164,14 @@ func (a *App) loadWarm(cacheBase <-chan struct{}) {
 	defer close(a.warm.done)
 	t0 := time.Now()
 	team, user := a.bootAccount()
-	a.loadExpandables(team, user) // not a warm boot file: the account's state (expandables.go)
+	// the account's expandables (expandables.go), not a warm boot file:
+	// read alongside boot_data, and in before the first frame draws a
+	// preview (every path below waits for it)
+	exp := make(chan struct{})
+	go func() {
+		defer close(exp)
+		a.loadExpandables(team, user)
+	}()
 	var d *store.BootData
 	if !noWarmBoot {
 		d = a.S.ReadBootData(team, user)
@@ -173,6 +180,7 @@ func (a *App) loadWarm(cacheBase <-chan struct{}) {
 		a.loadHeaders("", "") // none: headers come from their reads, as before the warm boot
 	}
 	<-cacheBase // the users, prefs and experiments the snapshot reads
+	<-exp
 	switch {
 	case noWarmBoot:
 		a.FirstFrameDone() // a cold start: nothing to hold meta.json's rest for

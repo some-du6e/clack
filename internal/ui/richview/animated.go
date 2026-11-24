@@ -96,8 +96,10 @@ const (
 // ImageMenuHandler is optional on a Handler: AttachmentImageActions' More
 // actions, its menu at btn (View coordinates plus Origin): Copy link
 // copies href; Hide image, with a key, collapses it (setExpanded false).
+// The host calls closed when the menu goes: the group stays up while it
+// is open (p-attachment_image_actions--menu-open).
 type ImageMenuHandler interface {
-	ImageMenu(href, key string, btn image.Rectangle)
+	ImageMenu(href, key string, btn image.Rectangle, closed func())
 }
 
 // playable makes image i (just added) a PlayPauseAnimations: drawn
@@ -304,11 +306,23 @@ func (v *View) drawPlays(gtx layout.Context, st *Style) {
 }
 
 // expandOn reports whether group i shows: its image hovered (and for
-// Expand alone, its PlayPauseAnimations on).
+// Expand alone, its PlayPauseAnimations on), or the pointer on the group
+// itself (its buttons stand out of a small image, and :hover holds over
+// them as they're the container's), or its More menu open (the group's
+// --menu-open: opacity 1).
 func (v *View) expandOn(st *Style, i int) bool {
 	e := &v.d.expands[i]
-	if !v.hovering || !image.Pt(int(v.ptr.X), int(v.ptr.Y)).In(e.card) {
+	if e.full && e.img != nil && e.img == v.menuImg {
+		return true
+	}
+	if !v.hovering {
 		return false
+	}
+	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
+	if !pt.In(e.card) {
+		if bar, _ := v.expandBar(i, len(v.expandActs(st, i))); !pt.In(bar) {
+			return false
+		}
 	}
 	return e.full || v.playOnly(st, e)
 }
@@ -331,6 +345,9 @@ func (v *View) expandActs(st *Style, i int) []int {
 	acts := []int{imgActOpen}
 	if v.playOnly(st, e) {
 		acts = append(acts, imgActExpand)
+	}
+	if !v.imgMenu {
+		return acts // a host without the menu: no More actions
 	}
 	return append(acts, imgActMore)
 }
@@ -390,18 +407,28 @@ func (v *View) expand(st *Style, id int, h Handler) {
 		}
 		acts := v.expandActs(st, i)
 		_, btns := v.expandBar(i, len(acts))
-		mh.ImageMenu(e.href, e.key, btns[len(btns)-1].Add(v.Origin))
+		img := e.img
+		v.menuImg = img
+		mh.ImageMenu(e.href, e.key, btns[len(btns)-1].Add(v.Origin), func() {
+			if v.menuImg == img {
+				v.menuImg = nil
+				v.redraw = true
+			}
+		})
 	}
 }
 
 // drawExpands draws the hovered image's Expand button and, while the
 // pointer rests on it, its tooltip.
 func (v *View) drawExpands(gtx layout.Context, st *Style) {
-	if !v.hovering || len(v.d.expands) == 0 {
+	if (!v.hovering && v.menuImg == nil) || len(v.d.expands) == 0 {
 		return
 	}
 	p := &st.Palette
 	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
+	if !v.hovering {
+		pt = image.Pt(-1<<20, -1<<20) // the menu's scrim has the pointer: no button is hot
+	}
 	icon, hoverIcon, hoverBg := actionBtnColors(p.Dark)
 	bg := rgb(255, 255, 255)
 	if p.Dark {

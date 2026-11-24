@@ -385,6 +385,12 @@ func (h srCardHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, wi
 	}
 }
 
+// ImageMenu is an image's More actions on the card (AttachmentImageActions'
+// menu): Copy link, and Hide image when it has an expandable.
+func (h srCardHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	h.v.h.ShowOverlay(NewImageActionsMenu(h.v.h, ActionAnchor(btn, false), href, key, closed))
+}
+
 // DataTableAction is a data_table's header button or column header on the
 // card.
 func (h srCardHandler) DataTableAction(act string, c *richview.TableControl, btn image.Rectangle) {

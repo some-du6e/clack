@@ -162,6 +162,14 @@ type View struct {
 	// its block_id
 	tables map[any]*tableState
 	redraw bool // ask for a frame after this frame's events
+	// imgMenu: the handler opens AttachmentImageActions' menu
+	// (ImageMenuHandler), so the hover group has its More actions; a
+	// host without one gets no More (a button that would do nothing)
+	imgMenu bool
+	// menuImg is the image whose group's More menu is open: the group
+	// stays up until the host says the menu went
+	// (p-attachment_image_actions--menu-open)
+	menuImg *richtext.Image
 
 	// lead: the first line's start (SetLead)
 	lead int
@@ -393,6 +401,7 @@ func (v *View) selRange() (int32, int32) {
 // Layout draws the doc at the constraints' max width and returns its size.
 func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimensions {
 	v.dark = st != nil && st.Palette.Dark
+	_, v.imgMenu = h.(ImageMenuHandler)
 	if st != nil {
 		v.hitImgs = st.Images
 	}

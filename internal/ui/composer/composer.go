@@ -2172,6 +2172,9 @@ func (c *Composer) laterHere(f func()) {
 	restoreQ.fns = append(restoreQ.fns, laterFn{a: c.api.a, f: f, here: c, at: time.Now()})
 	restoreQ.Unlock()
 	c.h.Invalidate()
+	// a box no longer drawn: past hereMax any Layout runs it, so wake the
+	// UI then too (an idle app would wait for the next unrelated frame)
+	time.AfterFunc(hereMax+10*time.Millisecond, c.h.Invalidate)
 }
 
 // editFilesChanged is prepareAndSaveEditMessage's C: the edit's files

@@ -501,9 +501,11 @@ func (hh hostHandler) OpenImage(img richtext.Image) { hh.h.OpenLightbox(img, cor
 
 // ImageMenu is an image's AttachmentImageActions More actions: Copy
 // link, Hide image.
-func (hh hostHandler) ImageMenu(href, key string, btn image.Rectangle) {
+func (hh hostHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
 	if ph, ok := hh.h.(popups.Host); ok {
-		ph.ShowOverlay(popups.NewImageActionsMenu(ph, popups.ActionAnchor(btn, false), href, key))
+		ph.ShowOverlay(popups.NewImageActionsMenu(ph, popups.ActionAnchor(btn, false), href, key, closed))
+	} else if closed != nil {
+		closed()
 	}
 }
 

@@ -3,6 +3,7 @@ package richview
 import (
 	"image"
 	"strconv"
+	"strings"
 
 	"gioui.org/font"
 
@@ -41,7 +42,8 @@ import (
 const fileMetaLineH = 22
 
 // filesKey is the files' expandables key: getExpandableKey("files", ts,
-// {fileIds, viewContext}), the message's ts and the view's context.
+// {fileIds, viewContext}), the message's ts and the view's context; ""
+// in a doc drawn without a message ts (filesLocalKey).
 func (l *lay) filesKey(files []*richtext.File) string {
 	ids := make([]string, len(files))
 	for i, f := range files {
@@ -50,13 +52,35 @@ func (l *lay) filesKey(files []*richtext.File) string {
 	return expandable.Key(expandable.Files, l.opts.TS, expandable.Opts{FileIDs: ids, ViewContext: l.opts.ViewContext})
 }
 
+// filesLocalKey is the files' toggle in the View's own state, in a doc
+// drawn without a message ts (a plugin's Blocks host, kit content), where
+// the store has no key for them: set, the files show the opposite of
+// their default.
+func filesLocalKey(files []*richtext.File) string {
+	ids := make([]string, len(files))
+	for i, f := range files {
+		ids[i] = f.ID
+	}
+	return "files:" + strings.Join(ids, "_")
+}
+
 // filesExpanded is FilesMetaTextWrapper's isExpanded: the key's state,
-// else collapsed for an unverified outsider's files in a DM or when one
-// is an image and expand_internal_inline_imgs is off.
+// else filesDefault; without a key the View's toggle of the default.
 func (l *lay) filesExpanded(files []*richtext.File) bool {
-	if on, ok := xp().Expanded(l.filesKey(files)); ok {
+	k := l.filesKey(files)
+	if k == "" {
+		return l.filesDefault(files) != l.collapsed[filesLocalKey(files)]
+	}
+	if on, ok := xp().Expanded(k); ok {
 		return on
 	}
+	return l.filesDefault(files)
+}
+
+// filesDefault is isExpanded with no state: collapsed for an unverified
+// outsider's files in a DM or when one is an image and
+// expand_internal_inline_imgs is off.
+func (l *lay) filesDefault(files []*richtext.File) bool {
 	if l.filesFromUnverified() {
 		return false
 	}
@@ -76,7 +100,11 @@ func (l *lay) filesFromUnverified() bool {
 // filesDisclosure is shouldShowUnverifiedDisclosure: collapsed by the
 // unverified rule, with no state of the viewer's.
 func (l *lay) filesDisclosure(files []*richtext.File) bool {
-	if _, ok := xp().Expanded(l.filesKey(files)); ok {
+	k := l.filesKey(files)
+	if k == "" { // no key: "just show this one" would have nothing to set
+		return false
+	}
+	if _, ok := xp().Expanded(k); ok {
 		return false
 	}
 	return l.filesFromUnverified()
@@ -172,7 +200,12 @@ func (l *lay) fileMetaWith(files []*richtext.File, wos, x, y, w int) (int, bool)
 	l.plainAdd("\n")
 	// the button: an 8x7 caret 11.5px after the text, on the x-height;
 	// toggleExpanded sets the opposite of what shows
-	tg := l.d.addTarget(target{kind: tExpandable, id: l.filesKey(files), on: !expanded})
+	var tg int16
+	if k := l.filesKey(files); k != "" {
+		tg = l.d.addTarget(target{kind: tExpandable, id: k, on: !expanded})
+	} else {
+		tg = l.d.addTarget(target{kind: tCollapse, key: filesLocalKey(files)}) // the View's toggle
+	}
 	cx := endX + l.dp(11.5) + l.dp(4)
 	cy := y + lineH/2 + l.dp(1)
 	kind, cr := bCaret, image.Rect(cx-l.dp(4), cy-l.dp(3), cx+l.dp(4), cy+l.dp(4))

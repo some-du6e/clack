@@ -160,10 +160,6 @@ func shown(a *richtext.Attachment) bool {
 	return media && blocksBlank(a.Text)
 }
 
-// mediaExpanded is isAttachmentExpanded (FDIC) without a key: Slack
-// collapses attachment media when expand_inline_imgs is off.
-func mediaExpanded() bool { return !uipref.Get().NoInlineImgs }
-
 // mediaKey is attachment a's media expandable in this view
 // (getExpandableKey("attachment", the message's ts, {id, imageUrl,
 // audioHtml, videoHtml, thumbUrl, viewContext})): "" without media or
@@ -186,13 +182,11 @@ func mediaBytes(a *richtext.Attachment) int64 {
 
 // mediaShown is AttachmentMedia's ExpandableContainer (pOD6 with the
 // attachment rules, expander.go) for a's media: the key's state, else
-// the defaults; without a key the pref alone.
+// the defaults. Without a key (a doc drawn outside a message) the
+// defaults alone, the 20 MB rule with them, as isAttachmentExpanded reads
+// an empty key.
 func (l *lay) mediaShown(a *richtext.Attachment) bool {
-	k := l.mediaKey(a)
-	if k == "" {
-		return mediaExpanded()
-	}
-	return xp().AttachmentExpanded(k, mediaBytes(a), l.opts.Sender, l.opts.Channel)
+	return xp().AttachmentExpanded(l.mediaKey(a), mediaBytes(a), l.opts.Sender, l.opts.Channel)
 }
 
 // mediaDisclosure reports whether a's collapsed media show the

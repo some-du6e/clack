@@ -144,11 +144,17 @@ func (j *sendJob) msgSend(ctx context.Context, ch string, msg, orig qDelta) {
 	no := false
 	args := prepareSendArgs{ChannelID: ch, Delta: d.Delta(), Text: d.Mrkdwn(), Blocks: d.RichTextBlocks(), EnableSlashCommands: &no}
 	ui := *j.ui
-	ui.keep = func(kd *Doc) {
-		if j.ui.contents != nil {
-			j.ui.contents(ch, kd)
+	// what goes back into ch's box (keep_input's text, the command after
+	// a failure) waits for that box to mount, as the send's jump does
+	put := func(pd *Doc) {
+		switch {
+		case j.ui.target != nil:
+			j.ui.target(ch, func(t *Composer) { t.setContents(pd) })
+		case j.ui.contents != nil:
+			j.ui.contents(ch, pd)
 		}
 	}
+	ui.keep = put
 	mj := &sendJob{api: j.api, ch: ch, o: &outgoing{doc: d, text: args.Text, blocks: args.Blocks}, store: j.store, ui: &ui}
 	if j.ui.target != nil {
 		mj.sent = func(cid string, files bool) {
@@ -169,16 +175,15 @@ func (j *sendJob) msgSend(ctx context.Context, ch string, msg, orig qDelta) {
 		err = mj.prepareAndSend(ctx, args)
 	}
 	if err == nil {
-		if mj.posted.Load() && j.ui.target != nil { // updateMessageEligibleForUnsending in ch
-			j.ui.target(ch, func(t *Composer) { t.unsendBy = time.Now().Add(unsendWindow) })
+		if mj.posted.Load() && j.ui.target != nil { // updateMessageEligibleForUnsending in ch: the window runs from the send
+			by := time.Now().Add(unsendWindow)
+			j.ui.target(ch, func(t *Composer) { t.unsendBy = by })
 		}
 		return
 	}
 	j.api.commandFeedback(ch, "", "Hmm, something went wrong. Try again?")
-	if j.ui.contents != nil {
-		od, _ := qToDoc(qNormalize(orig))
-		j.ui.contents(ch, od)
-	}
+	od, _ := qToDoc(qNormalize(orig))
+	put(od)
 }
 
 // msgRest is /msg's message: deltaWithoutCmd without its first op (the

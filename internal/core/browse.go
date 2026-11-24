@@ -767,18 +767,25 @@ type channelItemRaw struct {
 	IsPrivate   bool            `json:"is_private"`
 	IsArchived  bool            `json:"is_archived"`
 	IsMember    bool            `json:"is_member"`
+	IsChannel   bool            `json:"is_channel"`
+	IsGeneral   bool            `json:"is_general"`
 	IsMPIM      bool            `json:"is_mpim"`
 	NumMembers  int             `json:"num_members"`
 	MemberCount int             `json:"member_count"`
 	Created     json.RawMessage `json:"created"`
 	Timestamp   json.RawMessage `json:"timestamp"`
+	Creator     string          `json:"creator"`
 	Purpose     json.RawMessage `json:"purpose"`
 	Topic       json.RawMessage `json:"topic"`
+	// ContextTeamID is the channel's workspace (on Grid, another
+	// workspace's channels list too): /open and /msg refuse those
+	ContextTeamID string `json:"context_team_id"`
 }
 
 func (r *channelItemRaw) hit() slack.ChannelHit {
 	h := slack.ChannelHit{ID: r.ID, Name: r.Name, IsPrivate: r.IsPrivate, IsArchived: r.IsArchived, IsMember: r.IsMember,
-		IsMPIM: r.IsMPIM, NumMembers: r.NumMembers, MemberCount: r.MemberCount, Created: looseInt(r.Created)}
+		IsChannel: r.IsChannel, IsGeneral: r.IsGeneral, IsMPIM: r.IsMPIM, NumMembers: r.NumMembers, MemberCount: r.MemberCount,
+		Created: looseInt(r.Created), Creator: r.Creator, ContextTeamID: r.ContextTeamID}
 	if h.Created == 0 {
 		h.Created = looseInt(r.Timestamp)
 	}

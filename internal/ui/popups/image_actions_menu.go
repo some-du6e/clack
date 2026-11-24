@@ -16,11 +16,13 @@ var nsAttachmentMedia = i18n.NS("attachment_media")
 // offsetX -4) at btn. Copy link puts href (the image's link,
 // externalSourceUrl || url) on the clipboard; with an expandable key,
 // "Hide image" collapses it (setExpanded false: the image goes until
-// /expand, or its caret where it has one, shows it again).
-func NewImageActionsMenu(h Host, btn image.Rectangle, href, key string) *Menu {
+// /expand, or its caret where it has one, shows it again). closed runs
+// when the menu goes (the group's p-attachment_image_actions--menu-open
+// ends).
+func NewImageActionsMenu(h Host, btn image.Rectangle, href, key string, closed func()) *Menu {
 	items := []MenuItem{{Label: nsAttachmentMedia.T("Copy link"), DoCtx: func(gtx layout.Context) { copyText(gtx, href) }}}
 	if key != "" {
 		items = append(items, MenuItem{Label: nsAttachmentMedia.T("Hide image"), Do: func() { richview.SetExpandable(key, false) }})
 	}
-	return NewMenuOpts(h, items, MenuOpts{Anchor: btn, Popover: "left-bottom", OffsetX: -4})
+	return NewMenuOpts(h, items, MenuOpts{Anchor: btn, Popover: "left-bottom", OffsetX: -4, OnClose: closed})
 }

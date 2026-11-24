@@ -99,6 +99,31 @@ func TestFileMetaLine(t *testing.T) {
 	}
 }
 
+// TestFileMetaCaretWithoutTS: a doc drawn without a message ts (a
+// plugin's Blocks host, kit content) has no files key, so the caret flips
+// the View's own state: it still collapses the files and opens them
+// again.
+func TestFileMetaCaretWithoutTS(t *testing.T) {
+	st := newTestStyle()
+	f := &rt.File{ID: "F9", Name: "image.png", IsImage: true, Thumb: &rt.Image{URL: "https://files.test/n.png", W: 800, H: 400}}
+	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
+	carets := boxesOf(&v.d, bCaret)
+	if len(carets) != 1 || len(v.d.imgs) != 1 {
+		t.Fatalf("%d carets, %d images", len(carets), len(v.d.imgs))
+	}
+	v.activate(v.targetAt(rectCenter(carets[0].r)), image.Point{}, nil)
+	v.relayout(st, 600, 1, 1)
+	right := boxesOf(&v.d, bCaretRight)
+	if len(v.d.imgs) != 0 || len(right) != 1 {
+		t.Fatalf("the caret didn't collapse the files: %d images, %d right carets", len(v.d.imgs), len(right))
+	}
+	v.activate(v.targetAt(rectCenter(right[0].r)), image.Point{}, nil)
+	v.relayout(st, 600, 1, 1)
+	if len(v.d.imgs) != 1 {
+		t.Error("the caret didn't open them again")
+	}
+}
+
 // fileKeyFor is the files' expandable in o's view: getExpandableKey("files", ts, {fileIds, viewContext}).
 func fileKeyFor(o Options, ids ...string) string {
 	return expandable.Key(expandable.Files, o.TS, expandable.Opts{FileIDs: ids, ViewContext: o.ViewContext})

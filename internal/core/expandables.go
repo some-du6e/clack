@@ -1,8 +1,11 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"log"
 	"slices"
 	"strings"
@@ -28,9 +31,11 @@ import (
 // The state lives here for the whole account, as Slack's does, and is
 // kept in expandables.json (store.ExpandablesFile) the moment it changes
 // (persistImmediately): a preview collapsed before a restart is still
-// collapsed after it. The keys of an attachment without an id carry its
-// image URL or embed HTML; those stay in memory (no message content goes
-// to disk).
+// collapsed after it. Only keys made of ids go to disk (expandable.OnDisk):
+// those of an attachment without an id carry its image URL or embed
+// HTML, and stay in memory (no message content goes to disk). Like
+// Slack's (Ua4u), the store is never pruned. Sign-out deletes the file
+// with the account's directory (store's cacheFiles).
 //
 // The defaults (isAttachmentExpanded, FDIC; isImageTooLarge, WGgb;
 // shouldCollapseFromUnverifiedUser, Ns/U) read the account's prefs and,
@@ -52,9 +57,16 @@ type expandablesState struct {
 	mu     sync.Mutex
 	m      map[string]bool
 	loaded bool // the disk's copy is in (or there is none)
+	// keep: the file was there but couldn't be read (a sharing
+	// violation, EIO), so this session writes nothing over the choices
+	// it may hold
+	keep   bool
 	dirty  bool // changed since the last write
 	saving bool // a write is under way (saveExpandablesSoon's goroutine)
 	gen    atomic.Uint64
+	// allowMu serialises AllowUnfurlsFrom: each reads the list the one
+	// before it wrote
+	allowMu sync.Mutex
 }
 
 type expandablesDisk struct {
@@ -114,14 +126,23 @@ func (a *App) BulkSetExpanded(m map[string]bool) {
 func (a *App) ExpandablesGen() uint64 { return a.expd.gen.Load() }
 
 // loadExpandables reads expandables.json for the account (team, user) once,
-// at Boot's warm load: the keys set this session already keep their
-// state.
+// at Boot's warm load, alongside boot_data: the keys set this session
+// already keep their state. A missing file is an empty store, as is one
+// that doesn't decode (or another layout's or account's): the next change
+// replaces it. A file that is there but can't be read is left alone:
+// nothing this session writes replaces the choices it may hold.
 func (a *App) loadExpandables(team, user string) {
 	var d expandablesDisk
-	ok := false
+	ok, keep := false, false
 	if team != "" || user != "" {
 		b, err := a.S.ReadFile(store.ExpandablesFile)
-		ok = err == nil && json.Unmarshal(b, &d) == nil && d.V == store.CacheVersion && d.Team == team && d.User == user
+		switch {
+		case err == nil:
+			ok = json.Unmarshal(b, &d) == nil && d.V == store.CacheVersion && d.Team == team && d.User == user
+		case !errors.Is(err, fs.ErrNotExist):
+			keep = true
+			log.Printf("cache: expandables: %v (kept: nothing is written over it this session)", err)
+		}
 	}
 	x := &a.expd
 	x.mu.Lock()
@@ -129,7 +150,7 @@ func (a *App) loadExpandables(team, user string) {
 		x.mu.Unlock()
 		return
 	}
-	x.loaded = true
+	x.loaded, x.keep = true, keep
 	dirty := x.dirty // set this session before the read: written with it
 	n := 0
 	if ok {
@@ -159,22 +180,27 @@ func (a *App) expandablesWriting() bool {
 	x := &a.expd
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	return x.saving || x.dirty && x.loaded
+	return x.saving || x.dirty && x.loaded && !x.keep
 }
 
 // saveExpandablesSoon writes the store now, off the caller's goroutine
 // (persistImmediately); a change during a write is written after it.
+// Shutdown and Close wait for the write (a.saves).
 func (a *App) saveExpandablesSoon() {
 	x := &a.expd
 	x.mu.Lock()
 	x.dirty = true
-	if x.saving || !x.loaded { // not before the disk's copy is in: it would be lost (loadExpandables writes then)
+	// not before the disk's copy is in (it would be lost: loadExpandables
+	// writes then), nor over a file that couldn't be read
+	if x.saving || !x.loaded || x.keep {
 		x.mu.Unlock()
 		return
 	}
 	x.saving = true
 	x.mu.Unlock()
+	a.saves.Add(1)
 	go func() {
+		defer a.saves.Done()
 		for {
 			x.mu.Lock()
 			if !x.dirty {
@@ -220,12 +246,13 @@ func (a *App) inlineImgsOff() bool {
 }
 
 // ImageTooLarge is isImageTooLarge (WGgb zE): key has no state, linked
-// images expand, and bytes is over 20 MB with obey_inline_img_limit on.
+// images expand, and bytes is over 20 MB with obey_inline_img_limit on
+// (on without the pref, as the store's Prefs and Preferences read it).
 func (a *App) ImageTooLarge(key string, bytes int64) bool {
 	if _, ok := a.Expanded(key); ok {
 		return false
 	}
-	return !a.inlineImgsOff() && bytes > inlineMediaLimit && a.PrefBool("obey_inline_img_limit", false)
+	return !a.inlineImgsOff() && bytes > inlineMediaLimit && a.PrefBool("obey_inline_img_limit", true)
 }
 
 // AttachmentExpanded is isAttachmentExpanded (FDIC $): key's state, else
@@ -263,9 +290,10 @@ func (a *App) allowedUnfurlSenders() []string {
 // (allowed_unfurl_senders) whose team (Xt53 Ux: the viewer's own for a
 // member of the viewer's workspace, else the member's team_id) is
 // external (MPZo isTeamExternal: neither the viewer's team nor org, not
-// in the viewer's enterprise) and not verified (z17y). A team core hasn't
-// read yet isn't external (Slack's getTeamById finds none): it is read
-// (team.info), and the parts lay out again when it arrives.
+// in the viewer's enterprise, one of externalTeamIds) and not verified
+// (z17y). A team core hasn't read yet isn't external (Slack's getTeamById
+// finds none): it is read (team.info), and the parts lay out again when
+// it arrives.
 func (a *App) CollapseFromUnverifiedUser(sender, ch string) bool {
 	if sender == "" || ch == "" {
 		return false
@@ -287,6 +315,16 @@ func (a *App) CollapseFromUnverifiedUser(sender, ch string) bool {
 		team = mine
 	}
 	if team == "" || team == mine || team == a.EnterpriseID() {
+		return false
+	}
+	// isTeamExternal's last test (V/NW Rr): the team is one of
+	// externalTeamIds, the connected teams Slack's setConnectedTeamIds adds
+	// from every conversation's connected_team_ids (j08h
+	// addExternalTeamId). A team no conversation the client holds is
+	// connected to isn't external (a former Slack Connect org in an old
+	// DM), and isn't read either. (Slack keeps the set across restarts;
+	// Clack reads it from the conversations it holds.)
+	if !a.S.ConnectedTeam(team) {
 		return false
 	}
 	rec, known := a.teamRecord(team)
@@ -330,12 +368,39 @@ func (a *App) PrefMemberName(id string) string {
 
 // AllowUnfurlsFrom is UnverifiedDisclosure's "Allow all previews from
 // {memberName}": the member joins allowed_unfurl_senders.
+// Calls run one at a time: a second sender allowed before the first's
+// users.prefs.set answered is added to the list the first one wrote. The
+// pref landing lays the previews out again (expandablesPrefsChanged).
 func (a *App) AllowUnfurlsFrom(ctx context.Context, member string) error {
+	a.expd.allowMu.Lock()
+	defer a.expd.allowMu.Unlock()
 	list := a.allowedUnfurlSenders()
 	if slices.Contains(list, member) {
 		return nil
 	}
 	return a.SetPref(ctx, "allowed_unfurl_senders", strings.Join(append(list, member), ","))
+}
+
+// expandablesPrefs are the prefs the expandables' defaults read.
+var expandablesPrefs = []string{"allowed_unfurl_senders", "expand_inline_imgs", "obey_inline_img_limit", "expand_internal_inline_imgs"}
+
+// expandablesPrefsDiffer reports whether old and raw disagree on one of
+// expandablesPrefs.
+func expandablesPrefsDiffer(old, raw map[string]json.RawMessage) bool {
+	for _, k := range expandablesPrefs {
+		if !bytes.Equal(old[k], raw[k]) {
+			return true
+		}
+	}
+	return false
+}
+
+// expandablesPrefsChanged lays the previews out again: a pref their
+// defaults read changed (users.prefs, a pref_change, "Allow all previews
+// from {memberName}"), as Slack's selectors re-render them.
+func (a *App) expandablesPrefsChanged() {
+	a.expd.gen.Add(1)
+	a.emit(Event{Type: "expandables"})
 }
 
 // teamRecord is what team.info said of team: its enterprise and whether
