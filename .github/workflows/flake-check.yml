@@ -6373,6 +6373,55 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # oneko-data-images (2026-11-24): a plugin's own images as data: URLs
+  # (Slick's build inlines every plugin's .gif, .png and .svg as one)
+  # decode from their own text, as Chromium decodes them, with no request,
+  # nothing on disk and the decode limits of any image, while message
+  # content's are still refused (imgcache); a plugin element's data:
+  # background-image and <img> are drawn (slackc, GPU pixels); the
+  # Library's oneko in the whole client: the cat runs to the pointer and a
+  # frame of its sprite is drawn there (ui, GPU pixels). COUNT runs each.
+  # Dispatch with only=oneko-data-images.
+  oneko-data-images:
+    if: ${{ !inputs.only || startsWith('oneko-data-images', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: the published Library (index.json + bundles)
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (the Library); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "data: URLs a page draws, a plugin element's data: images, oneko in the client, COUNT runs each"
+        env:
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          CLACK_PIXEL_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestDataBody|TestPageURL|TestPageDataImages|TestPageDataLimits)$' ./internal/imgcache || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 5m -run '^TestBackgroundDataImage$' ./internal/ui/slackc || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 12m -run '^TestPluginGapOneko$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -6515,6 +6564,7 @@ jobs:
       - fling-22px
       - history-changed
       - ephemeral-actions
+      - oneko-data-images
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
