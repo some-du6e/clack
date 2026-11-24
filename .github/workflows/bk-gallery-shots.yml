@@ -23,6 +23,8 @@ on:
       - "internal/core/calendar.go"
       - "internal/slackasset/**"
       - "internal/fakeslack/calendar_events.go"
+      - "internal/ui/messages/carousel_row_test.go"
+      - "internal/ui/wheel_latch.go"
       - "internal/ui/popups/writes.go"
       - "internal/ui/popups/menu.go"
       - "internal/ui/popups/menu_cursor_test.go"
@@ -74,7 +76,7 @@ jobs:
           go test -count=1 -run 'TestChartMenu|TestCopyChartImage|TestDataTable|TestChartTable|TestActionAnchor|TestSearchCardDataBlock|TestTimelineSources|TestContactCard|TestShareContact|TestSharePrompt|TestEventRSVP|TestEventCopy|TestEventMenu|TestEventWriteGuard|TestEventIdentity|TestMenuCursors' ./internal/ui/popups
           go test -count=1 -run 'TestContactMember' ./internal/store
           go test -count=1 -run 'TestCodeSummaryTimeline' ./internal/core
-          go test -count=1 -run 'TestBroadcastPreambleTimelineRoot' ./internal/ui/messages
+          go test -count=1 -run 'TestBroadcastPreambleTimelineRoot|TestBroadcastPreambleCarouselRoot|TestCarouselInARow' ./internal/ui/messages
       - name: gallery screenshots
         env:
           BK_SHOTS_DIR: ${{ github.workspace }}/dist/shots

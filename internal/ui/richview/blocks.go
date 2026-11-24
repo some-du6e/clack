@@ -161,6 +161,8 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(4), l.dp(4), l.dp(4)
 	case richtext.EventBlock: // .p-event-container{margin:8px 0}
 		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.CarouselBlock: // .carousel{margin:8px 0}
+		return l.dp(8), l.dp(8), l.dp(8)
 	case richtext.SharePromptBlock: // .promptCardMargin{margin:8px 0} outside canvases (canvasUnfurl); nothing when it draws nothing
 		if b.Prompt == nil || !b.Prompt.Shown || l.opts.Canvas {
 			return 0, 0, 0
@@ -791,6 +793,11 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 
 	case richtext.EventBlock:
 		h := l.event(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
+
+	case richtext.CarouselBlock:
+		h := l.carousel(b, x, y, w)
 		l.kitRegion(x, y, w, h)
 		return h
 

@@ -441,6 +441,9 @@ type Options struct {
 	// block's top and the last's bottom (a modal's block, whose margins
 	// collapse with Slack's block wrappers: blockkit's Surface)
 	NoOuterMargins bool
+	// CardHeight is a carousel card's height: a card block's frame
+	// stretches to it (align-items: stretch; carousel.go)
+	CardHeight int
 	// CheckLists: rich_text check lists draw their checkboxes, as the
 	// rich_text renderable allows in a message or a thread (allowCheckList:
 	// s3Wf sS's blocks container contexts); elsewhere they're bullet lists
@@ -536,6 +539,9 @@ type Options struct {
 	// gives EditedLabel as editedByUserId (a workflow message's
 	// edited.user): the tooltip reads "{dateTime} by {name}".
 	EditedBy string
+	// carouselDepth is how many carousels' cards this view is in
+	// (carousel.go's crMaxDepth)
+	carouselDepth int
 	// FindFocused: the message is find in thread's current result
 	// (c-message_kit__blocks--focused-result), so its FindHighlight runs
 	// draw in FindFocused.

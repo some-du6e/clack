@@ -240,6 +240,9 @@ const (
 	// EventBlock is an event block (event.go): Event holds the calendar
 	// event as the card reads it.
 	EventBlock
+	// CarouselBlock is a carousel block (carousel.go): Children are its
+	// cards, Carousel its label.
+	CarouselBlock
 )
 
 // Block is one vertical unit of a document.
@@ -308,6 +311,8 @@ type Block struct {
 	Prompt *SharePrompt
 	// Event is an EventBlock's calendar event (event.go).
 	Event *Event
+	// Carousel is a CarouselBlock's label (carousel.go).
+	Carousel *Carousel
 }
 
 // Container is a container block's header and options (Slack's
@@ -622,6 +627,13 @@ type EmailAttachment struct {
 type Doc struct {
 	Blocks []Block
 	Jumbo  bool // emoji-only, render emoji 32px
+	// Fallback is the message's own text, converted, when its blocks
+	// drew instead and give no plain text (FromMessage: a carousel of
+	// cards): what PlainText reads then, as convertMessageToPlainText
+	// falls back to getMessageText. Plain data like the rest of Doc: a
+	// conversion again of the same message is DeepEqual to this one
+	// (messages' takeConverted).
+	Fallback []Block
 }
 
 // MemberNamer is an optional Resolver extension: a member's name as
