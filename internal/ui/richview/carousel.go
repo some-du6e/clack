@@ -385,3 +385,11 @@ func NoteWheel(t time.Duration, now time.Time) {
 func wheelGoing(now time.Time) bool {
 	return !wheelG.lastAt.IsZero() && now.Sub(wheelG.lastAt) < WheelLatch
 }
+
+// WheelElsewhere reports whether the wheel gesture going on at now began
+// before seen, the first of its events a scroller saw (so that scroller
+// takes none of it, as a carousel doesn't), and when the gesture will
+// have ended: blockkit's file gallery latches as the carousels do.
+func WheelElsewhere(now time.Time, seen time.Duration) (bool, time.Time) {
+	return wheelGoing(now) && seen != wheelG.start, wheelG.lastAt.Add(WheelLatch)
+}

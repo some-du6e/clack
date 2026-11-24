@@ -10,6 +10,12 @@ var (
 	appViewNS   = i18n.NS("app_view")
 	searchNS    = i18n.NS("search") // TruncationExpandButton / TruncationCollapseButton (a task's Show more, Show less)
 	appDialogNS = i18n.NS("app_dialog")
+	// file_input (fileinput.go): FileInputElement and its dialog's
+	// strings (block_kit), RemoveButton's tooltip (sk_entities) and
+	// convertFilesize's units (filesize)
+	blockKitNS   = i18n.NS("block_kit")
+	skEntitiesNS = i18n.NS("sk_entities")
+	filesizeNS   = i18n.NS("filesize")
 )
 
 // bkSubmit is the submit button's fallback label.

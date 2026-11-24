@@ -381,5 +381,5 @@ Ctrl/Cmd+V keeps formatting like Slack's composer. Gio v0.10.3's `clipboard.Read
 
 UI wiring (minimal wraps): richview `Options.Elements` gives each run of elements (actions block, section accessory, attachment buttons) a slot in the cached layout that blockkit sizes and draws per frame; messages' rows pass `blockkit.MessageElements`; the ui root calls `blockkit.Start` after boot, `blockkit.SetTaut`, `AppDMFor` for app DM tabs, and sets `popups.MessageShortcuts` / `composer.ShortcutItems`. Taut thunks: `sendActions`, `executeAppAction`, `submitView` are dispatched with Slack's args; natives for those and `blocksFormatFetcher` are registered.
 
-Not done yet: `rich_text_input` edits as plain text; `file_input` toasts; the read-only Messages tab of some apps doesn't replace the composer (composer owns it: `AppDM.ReadOnly()`); speedbump on closing a changed modal; workflow unfurl cards.
+Not done yet: `rich_text_input` edits as plain text; `file_input` takes no drops or pastes yet (its dialog draws the drop target); the read-only Messages tab of some apps doesn't replace the composer (composer owns it: `AppDM.ReadOnly()`); speedbump on closing a changed modal; workflow unfurl cards.
 

@@ -261,7 +261,7 @@ func (s *Stack) stops() []event.Tag {
 		out = append(out, &s.backTap)
 	}
 	out = append(out, &s.closeTap, &s.cancel)
-	if v := s.top().view; (v.Submit != nil || s.dialog != nil) && !v.SubmitDisabled && !s.busy {
+	if v := s.top().view; (v.Submit != nil || s.dialog != nil) && !v.SubmitDisabled && !s.busy && !s.top().uploading() {
 		out = append(out, &s.submit)
 	}
 	return out
@@ -363,7 +363,9 @@ func (s *Stack) closeViews(id, root string) {
 
 // doSubmit validates and submits the top view.
 func (s *Stack) doSubmit() {
-	if s.busy {
+	// shouldDisableNextButton: submitting, or a file_input upload pending
+	// (isAllAsyncActionsResolved)
+	if s.busy || s.top().uploading() {
 		return
 	}
 	sf := s.top()
@@ -777,7 +779,7 @@ func (s *Stack) footer(gtx C, org image.Point, mw, fh int, v *core.View) {
 		if s.dialog != nil {
 			txt = firstNonEmpty(s.dialog.SubmitLabel, bkSubmit())
 		}
-		btn(&s.submit, firstNonEmpty(txt, bkSubmit()), "primary", v.SubmitDisabled || s.busy)
+		btn(&s.submit, firstNonEmpty(txt, bkSubmit()), "primary", v.SubmitDisabled || s.busy || s.top().uploading())
 	}
 	// renderBackButton: the view's close text, else "Close"
 	closeTxt := firstNonEmpty(titleOf(v.Close), appViewNS.T("Close"))

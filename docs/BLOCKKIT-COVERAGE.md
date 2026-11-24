@@ -58,12 +58,11 @@ The elements inside child blocks and fallback payloads are live, as in Slack, wh
 
 After a bundle update: `python3 -B -I tools/bkregistry.py BUILD boot-shared.js blocks.ts elements.ts > internal/richtext/testdata/slack_block_types.json`, and the test names each new type.
 
-`notDrawn` (2026-11-23): `condition` and `fallback_canary`, which Slack has no renderable for (expanded first; always the fallback), and the types later parts will draw:
+`notDrawn` (2026-11-24): `condition` and `fallback_canary`, which Slack has no renderable for (expanded first; always the fallback), and the types later parts will draw:
 
 | part | types |
 |---|---|
 | 2d (inline rich text) | _canvas_mention, _theme_install_button, attachment_mention, canvas_message_unfurl, canvas_user_mention, citation, folder_mention, salesforce_data_field, skill, tag, unknown, variable, work_object_mention, workflowtoken |
-| 2e (elements) | feedback_buttons, file_input, password, split_button |
 | 2f (blocks) | attachment_reference, auth_provider, canvas_mermaid, canvas_table, channel_section, channel_set, layout, mcp_app, message, page, prototype, related_automation_decorator, salesforce_record_card, search_top_results, share_skill, share_workflow |
 
 ## Use in the probe account's conversations
@@ -140,7 +139,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | datepicker, timepicker, datetimepicker | `KoX7`, `MUoz`, `UXHZ` | full | full | |
 | plain_text_input, email_text_input, url_text_input, number_input | `5/Mo`, `EZY9`, `MjMC`, `kdgU` | full | full | |
 | rich_text_input | `5gdY` | full | full | |
-| file_input | `ISYo` | full (modals) | full | |
+| file_input | `ISYo` → boot-shared `n9p0` FileInputElement (upload hook `Yt0k`, checks `mgGk`, gallery `nPCK` on Kit file entities `aJif`/`PASQ`/`zLDk`/`/9HR`, errors `SCvc` as Kit Alerts `MlDl`; build 9f450b8ad3db) | partial (a drop zone of Clack's own, rows with a %, toasts) | **full** (`fileinput.go`): the files in FileGallery's GalleryScroller as Kit file cards (an image a 60px thumbnail of its own pixels, then its thumb; anything else a 220x62 compact card with FileEntityIcon's tile and the name and pretty_type, a spinner while it uploads), shrinking to fit as a flex row and scrolling past that, each with its hover remove button (an uploaded file is deleted, as Slack's removeFile does); the errors as boxed error Alerts; the outline Upload File button (16px file-upload, its tooltip; off under disable_file_uploads `disable_all`, with Slack's error) opening the stacked Add file dialog: the dashed drop target with the dragdrop sprite cards (the sad cloud after an error), the prompt and the primary Upload File button opening the chooser (accept per `iSZO`), Slack's checks (empty files, filetypes by extension, images only under `disable_all_except_images`, the max_files limit, 100 MB) and errors with Try Another File. The value is `files: [{id}]`, and a modal's submit waits while an upload is pending (isAllAsyncActionsResolved) | dropping files onto the dialog and pasting them (part 10); the a11y_bk_file_input list (`VuR3`); screen reader announcements |
 | overflow | `tZYQ` | full | full | |
 | radio_buttons | `DNgy` | full | full | |
 | workflow_button | `wDHu` | full | full | |

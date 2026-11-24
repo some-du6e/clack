@@ -827,6 +827,10 @@ func (c *builder) element(e *bk, blockID string) (Button, bool) {
 		if e.Placeholder != nil {
 			btn.Text = e.Placeholder.Text
 		}
+	case "file_input":
+		// drawn by blockkit (fileinput.go: FileInputElement's gallery,
+		// errors and Upload File button)
+		btn.Kind = "input"
 	case "split_button":
 		// drawn by blockkit (splitbutton.go); elsewhere its primary
 		// action's button
