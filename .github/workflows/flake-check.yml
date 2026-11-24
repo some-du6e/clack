@@ -334,6 +334,11 @@ on:
       - "internal/ui/messages/scroll_gaps_test.go"
       - "internal/ui/messages/compact_test.go"
       - "third_party/gioui.org/app/clack_bounds_darwin_test.go"
+      # the pins-grant job's own
+      - "internal/ui/views/pins_time_link_test.go"
+      - "internal/ui/views/channel_pins.go"
+      - "internal/core/chperms.go"
+      - "internal/core/channel_managers.go"
 
 permissions:
   contents: read
@@ -7330,6 +7335,43 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # pins-grant (2026-11-24): TestPinsTimeIsALink read the pin's menu
+  # before the tab grant (edge permissions/info, Grid's
+  # MANAGE_CHANNEL_TABS) was in and the right-click's after it: "showed
+  # [Copy link Remove pin], want the pin's menu [Copy link]"
+  # (bk-file-icons-2's full-test 45448790432). It waits for the grant
+  # first now, as TestChannelPinsRows does. The pins tests COUNT times,
+  # then the time's link COUNT times with the grant half a second late
+  # (PINS_LATE_GRANT). Dispatch with only=pins-grant.
+  pins-grant:
+    if: ${{ !inputs.only || startsWith('pins-grant', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the pins' menus, COUNT runs, then the time's with a late grant"
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 8m -run '^(TestPinsTimeIsALink|TestChannelPinsRows)$' ./internal/ui/views || rc=1
+          PINS_LATE_GRANT=1 go test -count=$COUNT -v -timeout 8m -run '^TestPinsTimeIsALink$' ./internal/ui/views || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7495,6 +7537,7 @@ jobs:
       - entprefs
       - scroll-cpu
       - member-subs
+      - pins-grant
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

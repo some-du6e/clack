@@ -3,6 +3,7 @@ package views
 import (
 	"fmt"
 	"image"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -32,12 +33,24 @@ func (h *pinTimeHost) OpenMessageTime(ch, ts, thread string, tile bool) {
 // (not the row's open); a right-click on it is the pin's own menu.
 func TestPinsTimeIsALink(t *testing.T) {
 	app, fs := pfCore(t)
+	if os.Getenv("PINS_LATE_GRANT") != "" {
+		// the tab grant answering after the pins, as on a slow runner
+		// (bk-file-icons-2's full-test 45448790432)
+		fs.SetFault("edge/permissions/info", fakeslack.Fault{Delay: 500 * time.Millisecond})
+	}
 	ph := pfHostFor(t, app, fs, false)
 	h := &pinTimeHost{pfHost: ph}
 	v := NewChannelPins(h, fakeslack.PinsChannelID)
 	e := &vaEnv{size: image.Pt(1100, 900)}
 	pfDraw(e, ph, v.Layout)
 	e.until(t, "the pins", func() bool { return v.Loaded() && len(v.Items()) == 4 })
+	// useCanEditTabs on Grid: the pin's menu has Remove pin once the
+	// MANAGE_CHANNEL_TABS grant (edge permissions/info, asked for the first
+	// time anything reads it) is in. Read before it, the menu below was Copy
+	// link alone, and the right-click's, built after it, had Remove pin
+	loaded := time.Now()
+	e.until(t, "the tab grant", func() bool { return app.CanEditTabs(fakeslack.PinsChannelID) })
+	t.Logf("the tab grant came %v after the pins (edge permissions/info calls: %d)", time.Since(loaded).Round(time.Millisecond), fs.CallCount("edge/permissions/info"))
 	e.frame()
 	key := fakeslack.PinnedTS[0]
 	r := v.rows[key]
@@ -80,6 +93,9 @@ func TestPinsTimeIsALink(t *testing.T) {
 				want = append(want, mi.Label)
 			}
 		}
+	}
+	if fmt.Sprint(want) != "[Copy link Remove pin]" {
+		t.Fatalf("the pin's menu is %v, want [Copy link Remove pin] (PinsListMessageContextMenu with the tab grant)", want)
 	}
 	n := len(ph.open())
 	press(pointer.ButtonSecondary)
