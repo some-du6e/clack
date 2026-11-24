@@ -132,6 +132,7 @@ func launchWith(shell, tool func() error, withTool bool) {
 // other exit code). A mailto: link whose xdg-email isn't installed (an
 // xdg-open replacement without xdg-utils) goes to xdg-open, as before.
 func runTool(u string) error {
+	uiguard.OffUI("exec (open a link)") // exec.Command looks the tool up in PATH
 	cmd := command(u)
 	err := cmd.Start()
 	if err != nil && errors.Is(err, exec.ErrNotFound) && len(cmd.Args) > 0 && cmd.Args[0] == "xdg-email" {
