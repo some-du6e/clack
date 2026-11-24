@@ -26,10 +26,13 @@ type Message struct {
 	// and replies roots do; the socket's message_changed doesn't), which
 	// is what Slack's slurpThreadSubscriptions takes a thread's
 	// subscription from (store/thread_subs.go). Decoding sets it.
-	SubscribedSet  bool            `json:"-"`
-	Edited         *Edited         `json:"edited,omitempty"`
-	Reactions      []Reaction      `json:"reactions,omitempty"`
-	Files          []File          `json:"files,omitempty"`
+	SubscribedSet bool       `json:"-"`
+	Edited        *Edited    `json:"edited,omitempty"`
+	Reactions     []Reaction `json:"reactions,omitempty"`
+	Files         []File     `json:"files,omitempty"`
+	// XFiles are the files uploaded with the message (x_files), which
+	// its sender may take out of it (getRemovableFileIds: chat.removeFile)
+	XFiles         []string        `json:"x_files,omitempty"`
 	Blocks         json.RawMessage `json:"blocks,omitempty"`
 	Attachments    []Attachment    `json:"attachments,omitempty"`
 	RawAttachments json.RawMessage `json:"-"`                  // attachments exactly as Slack sent them (memory only)

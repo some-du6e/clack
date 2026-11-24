@@ -19,15 +19,18 @@ import (
 // Message is a UI-ready message: metadata plus a structured document.
 type Message struct {
 	TS, Channel, User, BotID string
-	Name                     string       // the sender's name when it isn't a member's (user-less bots: username or the bot's name); sender.go
-	Avatar                   string       // the avatar of a user-less sender (icon_emoji, icons, the bot's, Slack's default); sender.go
-	Username                 string       // msg.username as sent (chat.postMessage username)
-	Icons                    *SenderIcons // msg.icons as sent (icon_emoji / icon_url)
-	Subtype, Text            string       // Text: raw mrkdwn (editing, copy, search)
-	ThreadTS, LatestReply    string
-	EditedTS                 string
-	EditedBy                 string // edited.user: who made the last edit (EditedLabel names them on a workflow message)
-	Permalink                string // set on search results
+	// XFiles are the files uploaded with the message (x_files: the ones
+	// its sender may remove from it)
+	XFiles                []string
+	Name                  string       // the sender's name when it isn't a member's (user-less bots: username or the bot's name); sender.go
+	Avatar                string       // the avatar of a user-less sender (icon_emoji, icons, the bot's, Slack's default); sender.go
+	Username              string       // msg.username as sent (chat.postMessage username)
+	Icons                 *SenderIcons // msg.icons as sent (icon_emoji / icon_url)
+	Subtype, Text         string       // Text: raw mrkdwn (editing, copy, search)
+	ThreadTS, LatestReply string
+	EditedTS              string
+	EditedBy              string // edited.user: who made the last edit (EditedLabel names them on a workflow message)
+	Permalink             string // set on search results
 	// Search results only (search.go): requestor_replied (the viewer
 	// replied in the thread) and the index of the first block that held a
 	// highlight marker (0 when none), compactCardBlocks' start

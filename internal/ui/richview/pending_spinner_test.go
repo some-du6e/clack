@@ -30,8 +30,8 @@ func TestPendingGenericFileSpinner(t *testing.T) {
 	if s.tip != "Uploading… 42%" {
 		t.Errorf("tooltip %q", s.tip)
 	}
-	if want := 426 + 8; s.r.Max.X != want {
-		t.Errorf("the spinner ends at x %d, want the pillow's right edge + 8 (%d)", s.r.Max.X, want)
+	if card := fileCardRect(v); s.r.Max.X != card.Max.X+8 || s.r.Min.Y != card.Min.Y-8 {
+		t.Errorf("the spinner is %v for the card %v, want top -8px, right -8px", s.r, card)
 	}
 	found := false
 	for _, sp := range v.d.spinners {

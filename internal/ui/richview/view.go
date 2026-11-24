@@ -885,6 +885,10 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	if static {
 		for i := range v.d.overlayIcons {
 			o := &v.d.overlayIcons[i]
+			if o.art {
+				paintArtAt(ops, o.name, o.r, o.alpha)
+				continue
+			}
 			paintIconAt(ops, o.name, o.r, o.col)
 		}
 	}
@@ -2095,6 +2099,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tRemove:
 		if rm, ok := h.(AttachmentRemover); ok && tg.id != "" {
 			rm.RemoveAttachment(tg.id)
+		}
+	case tRemoveFile:
+		if rm, ok := h.(FileRemover); ok && tg.file != nil {
+			rm.RemoveFile(tg.file, tg.id == "delete")
 		}
 	case tBot:
 		if bo, ok := h.(BotOpener); ok && tg.id != "" {

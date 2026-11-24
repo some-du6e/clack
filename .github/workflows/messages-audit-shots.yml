@@ -177,6 +177,18 @@ jobs:
             fi
           done
           [ "$bad" = 0 ]
+          # file cards' svgicons (files-card): Slack's icon for every type
+          # (an .exe's generic blue page, not a dark "EXE" tile), here and on
+          # ui, where the .exe check fails until ui draws the art
+          # (richview.FileIconArt)
+          xvfb-run -a go test -count=1 -v -run 'TestFileIconShots|TestFileIconArt|TestFileRemoveButton|TestPendingGenericFileSpinner' ./internal/ui/richview
+          cp internal/ui/richview/file_icon_shots_test.go before-ui/internal/ui/richview/
+          (cd before-ui && FILE_ICON_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestFileIconShots' ./internal/ui/richview > "$MESSAGES_AUDIT_SHOTS_DIR/file-icons-before.log" 2>&1) || true
+          grep -E '^\s*--- (PASS|FAIL)|_test.go:[0-9]+: ' "$MESSAGES_AUDIT_SHOTS_DIR/file-icons-before.log" || true
+          if ! grep -q 'func FileIconArt' before-ui/internal/ui/richview/*.go && ! grep -q -- '--- FAIL' "$MESSAGES_AUDIT_SHOTS_DIR/file-icons-before.log"; then
+            echo "::error::ui passed the copied file icon check (or didn't build): the before/after comparison shows nothing"
+            exit 1
+          fi
           ls -la "$MESSAGES_AUDIT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

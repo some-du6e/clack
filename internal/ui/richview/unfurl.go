@@ -332,6 +332,44 @@ func (l *lay) removeButton(a *richtext.Attachment, cardT int16, r image.Rectangl
 	}
 }
 
+// fileRemoveButton is FileRemoveButton's PreviewRemoveButton on a file
+// card r (cardT its target): the attachment remove button's look (20px,
+// top -9px right -9px, while the card is hovered), its tooltip getRemoveLabel's
+// "Remove {fileName} from message" or "Delete {fileName}".
+func (l *lay) fileRemoveButton(f *richtext.File, cardT int16, r image.Rectangle) {
+	del, ok := l.opts.FileRemoves[f.ID]
+	if !ok || f.ID == "" || f.Pending {
+		return
+	}
+	s, off := l.dp(20), l.dp(9)
+	br := image.Rect(r.Max.X+off-s, r.Min.Y-off, r.Max.X+off, r.Min.Y-off+s)
+	id := ""
+	if del {
+		id = "delete"
+	}
+	t := l.d.addTarget(target{kind: tRemoveFile, file: f, id: id})
+	l.d.hits = append(l.d.hits, hit{r: br, t: t})
+	l.d.removes = append(l.d.removes, removeBtn{r: br, card: cardT, del: t, cardTo: t - 1, tip: fileRemoveLabel(f, del)})
+}
+
+// fileRemoveLabel is getRemoveLabel for a file: the title, else the
+// name, in "Delete {fileName}" or "Remove {fileName} from message".
+func fileRemoveLabel(f *richtext.File, del bool) string {
+	name := f.Title
+	if name == "" {
+		name = f.Name
+	}
+	switch {
+	case del && name != "":
+		return i18n.T("files", "Delete {fileName}", "fileName", name)
+	case del:
+		return i18n.T("files", "Delete file")
+	case name != "":
+		return i18n.T("files", "Remove {fileName} from message", "fileName", name)
+	}
+	return i18n.T("files", "Remove from message")
+}
+
 // ---------- shared rows ----------
 
 // v3TitleRow is .c-message_attachment__left__title_author: a flex row
@@ -929,7 +967,11 @@ func (v *View) removeTip(gtx layout.Context, st *Style, i int) {
 	if v.remHot != i+1 {
 		return
 	}
-	v.btnTip(gtx, st, v.d.removes[i].r, i18n.T("inline_attachments", "Remove preview"), false, removeTipDelay)
+	tip := v.d.removes[i].tip
+	if tip == "" {
+		tip = i18n.T("inline_attachments", "Remove preview")
+	}
+	v.btnTip(gtx, st, v.d.removes[i].r, tip, false, removeTipDelay)
 }
 
 // removeTipDelay is BaseTooltip's default delay.

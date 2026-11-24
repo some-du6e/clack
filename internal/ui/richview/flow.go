@@ -185,6 +185,8 @@ type removeBtn struct {
 	// the button's own hover, v2).
 	rail      bool
 	col, area image.Rectangle
+	// tip is the button's tooltip ("" is "Remove preview")
+	tip string
 }
 
 // overlayIcon is a vector icon painted over images (video play buttons).
@@ -192,6 +194,10 @@ type overlayIcon struct {
 	r    image.Rectangle
 	name string
 	col  color.NRGBA
+	// art: name is an icons.Art illustration in its own colours (a file's
+	// svgicon), drawn at alpha (0: opaque) instead of col
+	art   bool
+	alpha float32
 }
 
 type targetKind uint8
@@ -208,6 +214,7 @@ const (
 	tExpand     // attachment "Show more" / "Show less" (id: attachment number)
 	tCollapse   // a hide / show toggle (img: an image block's image, else key: a call card, a container)
 	tRemove     // an unfurl's remove button (id: the attachment id)
+	tRemoveFile // a file card's x (file; id "delete" when it deletes the file)
 	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
 	tWorkObject // a work object card or one of its buttons (id: the action; workobject.go)
