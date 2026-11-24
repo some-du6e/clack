@@ -87,7 +87,7 @@ echo "::warning::apt-get $1 failed; using mirrors.edge.kernel.org"
 # ports.ubuntu.com stays: kernel.org has no ubuntu-ports.
 sed -i -E 's#https?://(azure\.archive|archive|security|[a-z0-9-]+\.ec2\.archive)\.ubuntu\.com/ubuntu/?#http://mirrors.edge.kernel.org/ubuntu/#g' \
 	/etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null
-echo "apt.sh: the Ubuntu archive is now $(grep -hoE 'https?://[^[:space:]]+' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null | sort -u | tr '\n' ' ')"
+echo "apt.sh: the Ubuntu archive is now $(grep -hoE 'https?://(mirrors\.edge\.kernel\.org|[a-z0-9.-]*archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com)/ubuntu(-ports)?/?' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null | sort -u | tr '\n' ' ')"
 if [ "$1" != update ]; then
 	timeout 300 dpkg --configure -a || true
 	run 300 120 update -qq || true
