@@ -539,7 +539,7 @@ func (lb *Lightbox) videoChrome(gtx layout.Context, th *theme.Theme, panel image
 		o := paint.PushOpacity(gtx.Ops, a)
 		defer o.Pop()
 		defer op.Offset(image.Pt(0, -slide)).Push(gtx.Ops).Pop()
-		pc := clipRRect(gtx, panel, dp(gtx, 8))
+		pc := clipRRect(gtx, lb.side.row, dp(gtx, 8)) // the modal's corners
 		lbGradient(gtx, hr, true)
 		pc.Pop()
 		lb.headBlock.Layout(gtx, hr)
@@ -549,7 +549,7 @@ func (lb *Lightbox) videoChrome(gtx layout.Context, th *theme.Theme, panel image
 		o := paint.PushOpacity(gtx.Ops, a)
 		defer o.Pop()
 		defer op.Offset(image.Pt(0, slide)).Push(gtx.Ops).Pop()
-		pc := clipRRect(gtx, panel, dp(gtx, 8))
+		pc := clipRRect(gtx, lb.side.row, dp(gtx, 8)) // the modal's corners
 		lbGradient(gtx, fr, false)
 		pc.Pop()
 		lb.footBlock.Layout(gtx, fr)
@@ -616,7 +616,13 @@ func (lb *Lightbox) videoFooter(gtx layout.Context, th *theme.Theme, panel image
 	}()
 
 	// MediaViewerControls: 12px apart, from the footer's 12px padding
-	x := panel.Min.X + dp(gtx, 12)
+	// (4px and 4px compact: lbCompact)
+	compact := lbCompact(gtx, panel)
+	pad, gap, clkSize, clkMargin := float32(12), float32(12), float32(15), float32(8)
+	if compact {
+		pad, gap, clkSize, clkMargin = 4, 4, 12, 2 // --compact .p-media_controls__timestamp: 12px, margin 0 2px
+	}
+	x := panel.Min.X + dp(gtx, pad)
 	playLabel, playIcon := nsViewer.T("Play"), "play"
 	if st.Playing {
 		playLabel, playIcon = nsViewer.T("Pause"), "pause"
@@ -627,7 +633,7 @@ func (lb *Lightbox) videoFooter(gtx layout.Context, th *theme.Theme, panel image
 		return d
 	})
 	v.playR = image.Rect(x, y, x+dp(gtx, 36), y+dp(gtx, 36)).Add(image.Pt(0, slide))
-	x += dp(gtx, 36) + dp(gtx, 12)
+	x += dp(gtx, 36) + dp(gtx, gap)
 	muteLabel := nsViewer.T("Mute")
 	vol := st.Volume
 	if st.Muted {
@@ -687,16 +693,17 @@ func (lb *Lightbox) videoFooter(gtx layout.Context, th *theme.Theme, panel image
 		defer clip.Rect(ctl).Push(gtx.Ops).Pop()
 		event.Op(gtx.Ops, &v.volHoverTag)
 	}()
-	x = ctl.Max.X + dp(gtx, 12) + dp(gtx, 8)
+	x = ctl.Max.X + dp(gtx, gap) + dp(gtx, clkMargin)
 	clk := videoplayer.ViewerClock(st.Elapsed) + " / " + videoplayer.ViewerClock(st.Duration)
 	at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, dp(gtx, 36), func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Regular, white, clk)
+			return text(gtx, th, clkSize, theme.Regular, white, clk)
 		})
 	})
 
 	// MediaViewerActions for a video: Show thread, More actions (with
-	// Download in it)
+	// Download in it); compact (isCompact) without the thread toggle and
+	// the PiP button
 	btn := func(x int, c *widget.Clickable, ic string, tip *TipState, label string) image.Rectangle {
 		p := image.Pt(x, y)
 		d := at(gtx, p, func(gtx layout.Context) layout.Dimensions {
@@ -706,16 +713,17 @@ func (lb *Lightbox) videoFooter(gtx layout.Context, th *theme.Theme, panel image
 		})
 		return image.Rectangle{Min: p, Max: p.Add(d.Size)}
 	}
-	rx := panel.Max.X - dp(gtx, 12) - dp(gtx, 36)
+	rx := panel.Max.X - dp(gtx, pad) - dp(gtx, 36)
+	step := dp(gtx, 36+gap)
 	lb.moreRect = btn(rx, &lb.moreBtn, "more", &lb.tips[4], nsViewer.T("More actions"))
-	if lb.m.Channel != "" && lb.m.TS != "" {
-		rx -= dp(gtx, 48)
-		btn(rx, &lb.threadBtn, "panel-right", &lb.tips[6], nsViewer.T("Show thread"))
+	if lb.m.Channel != "" && lb.m.TS != "" && !compact {
+		rx -= step
+		btn(rx, &lb.threadBtn, "panel-right", &lb.tips[6], lb.threadTip())
 	}
 	// MediaViewerPipButton (before Show thread in FileViewerActions'
 	// children): any playable video, where the host docks it
-	if _, ok := lb.h.(VideoDocker); ok && lb.vid.p != nil {
-		rx -= dp(gtx, 48)
+	if _, ok := lb.h.(VideoDocker); ok && lb.vid.p != nil && !compact {
+		rx -= step
 		lb.vid.dockR = btn(rx, &lb.vid.dockBtn, "surface", &lb.vid.dockTip, nsViewer.T("Dock to corner"))
 	} else {
 		lb.vid.dockR = image.Rectangle{}

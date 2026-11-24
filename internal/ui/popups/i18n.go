@@ -79,6 +79,10 @@ var (
 	// the media viewer's toolbar: MediaViewerActions (file, the thread
 	// toggle stories_av's) and the zoom controls (image_viewer)
 	nsViewer = i18n.NewChain("file", "stories_av", "image_viewer")
+	// MediaViewer itself (bDav's e9): the sidebar's tabs ("Details") and
+	// its close ("Close details", "Close"); VideoActionsButton's (aRSD)
+	// "View details"
+	nsMediaViewer = i18n.NS("stories_av")
 	// a page's name in the switcher's Recent places: getLabelFunctionForPage
 	// (client: Huddles, Drafts & sent, Activity, …), the sidebar's Threads
 	// and Directories

@@ -31,6 +31,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -85,6 +86,12 @@ type Lightbox struct {
 
 	// vid is the video item's player and footer (lightbox_video.go)
 	vid lbVideo
+
+	// side is the sidebar and its Details tab (lightbox_sidebar.go)
+	side lbSidebar
+	// focusIn is the widget the viewer drew that held the key focus last
+	// frame (keepFocus), quiet one the viewer focused itself (no ring)
+	focusIn, quiet event.Tag
 
 	// pending is the pending file viewer (NewPendingViewer): a file not
 	// sent yet, with its title and "Edit file details" in the header.
@@ -321,11 +328,18 @@ func (lb *Lightbox) Layout(gtx layout.Context) layout.Dimensions {
 	cl := colorsOf(th)
 	win := gtx.Constraints.Max
 	top := isTop(lb)
-	if !lb.focus || (top && !gtx.Focused(lb)) {
+	if !lb.focus {
 		gtx.Execute(key.FocusCmd{Tag: lb})
 		lb.focus = true
 	}
-	lb.keys(gtx, top)
+	// the focus at the frame's start, and whether something drawn before
+	// the viewer asked for it: keepFocus takes it back at the frame's end
+	// unless the viewer drew it
+	ft := slackc.FocusTarget(gtx)
+	before := ft != nil && slackc.TakesFocus(gtx, ft)
+	defer lb.keepFocus(gtx, top, ft, before)
+	lb.sideTabsInput(gtx)
+	lb.keys(gtx, top, ft)
 	if lb.done {
 		return layout.Dimensions{}
 	}
@@ -355,6 +369,16 @@ func (lb *Lightbox) Layout(gtx layout.Context) layout.Dimensions {
 	if panel.Dx() < dp(gtx, 200) || panel.Dy() < dp(gtx, 200) {
 		panel = full
 	}
+	// MediaViewerSidebarRow: the media column, and the sidebar on its
+	// right while it's open with a tab (lightbox_sidebar.go)
+	lb.syncSide()
+	media, side := panel, image.Rectangle{}
+	if lb.side.shown {
+		w := sideWidth(gtx, win, panel)
+		side = image.Rect(panel.Max.X-w, panel.Min.Y, panel.Max.X, panel.Max.Y)
+		media.Max.X = side.Min.X
+	}
+	lb.side.row, lb.side.media = panel, media
 	// key focus target lowest, then the full-window input catcher.
 	keyTarget(gtx, lb, panel)
 	lbArea(gtx, full, &lb.bgTag, pointer.CursorDefault)
@@ -372,10 +396,13 @@ func (lb *Lightbox) Layout(gtx layout.Context) layout.Dimensions {
 	fill(gtx, panel, theme.Mix(under, rgb(0x000000), .7))
 
 	if lb.cur().video {
-		lb.videoItem(gtx, th, panel, now)
+		lb.videoItem(gtx, th, media, now)
 		pc.Pop()
 		if lb.cur().video {
-			lb.videoChrome(gtx, th, panel, now)
+			lb.videoChrome(gtx, th, media, now)
+			if lb.side.shown {
+				lb.layoutSide(gtx, th, panel, side)
+			}
 			return layout.Dimensions{Size: win}
 		}
 		pc = clipRRect(gtx, panel, rad) // the end moved on to an image
@@ -383,39 +410,55 @@ func (lb *Lightbox) Layout(gtx layout.Context) layout.Dimensions {
 		lb.closeVideo()
 	}
 	headH, footH := dp(gtx, 85), dp(gtx, 85)
-	side := dp(gtx, 36)
-	area := image.Rect(panel.Min.X+side, panel.Min.Y+headH, panel.Max.X-side, panel.Max.Y-footH)
+	sideM := dp(gtx, 36)
+	area := image.Rect(media.Min.X+sideM, media.Min.Y+headH, media.Max.X-sideM, media.Max.Y-footH)
 	if area.Dx() < 1 || area.Dy() < 1 {
-		area = panel
+		area = media
 	}
-	lb.drawImage(gtx, th, panel, area)
+	lb.drawImage(gtx, th, media, area)
 
 	// gradients
-	hr := image.Rect(panel.Min.X, panel.Min.Y, panel.Max.X, panel.Min.Y+headH)
-	fr := image.Rect(panel.Min.X, panel.Max.Y-footH, panel.Max.X, panel.Max.Y)
+	hr := image.Rect(media.Min.X, media.Min.Y, media.Max.X, media.Min.Y+headH)
+	fr := image.Rect(media.Min.X, media.Max.Y-footH, media.Max.X, media.Max.Y)
 	lbGradient(gtx, hr, true)
 	lbGradient(gtx, fr, false)
 	pc.Pop()
 	lb.headBlock.Layout(gtx, hr)
 	lb.footBlock.Layout(gtx, fr)
 
-	lb.header(gtx, th, panel)
-	lb.footer(gtx, th, panel)
-	lb.arrows(gtx, panel)
+	lb.header(gtx, th, media)
+	lb.footer(gtx, th, media)
+	lb.arrows(gtx, media)
+	if lb.side.shown {
+		lb.layoutSide(gtx, th, panel, side)
+	}
 	return layout.Dimensions{Size: win}
 }
 
-func (lb *Lightbox) keys(gtx layout.Context, top bool) {
-	for {
-		e, ok := gtx.Event(
-			key.Filter{Focus: lb, Name: key.NameEscape},
-			key.Filter{Focus: lb, Name: key.NameLeftArrow},
-			key.Filter{Focus: lb, Name: key.NameRightArrow},
-			key.Filter{Focus: lb, Name: "+", Optional: key.ModShift},
-			key.Filter{Focus: lb, Name: "=", Optional: key.ModShift},
-			key.Filter{Focus: lb, Name: "-", Optional: key.ModShift},
-			key.Filter{Focus: lb, Name: "0"},
+// keys are the viewer's own (Escape, ← and →, the zoom keys) while it
+// has the focus. With a widget the viewer drew focused instead (focusIn:
+// a toolbar button, the sidebar's close, the Details pane's links)
+// Escape, ← and → still work, as Slack's use_key_commands binds them on
+// the overlay; the tab has its own (sideTabsInput).
+func (lb *Lightbox) keys(gtx layout.Context, top bool, ft event.Tag) {
+	filters := []event.Filter{
+		key.Filter{Focus: lb, Name: key.NameEscape},
+		key.Filter{Focus: lb, Name: key.NameLeftArrow},
+		key.Filter{Focus: lb, Name: key.NameRightArrow},
+		key.Filter{Focus: lb, Name: "+", Optional: key.ModShift},
+		key.Filter{Focus: lb, Name: "=", Optional: key.ModShift},
+		key.Filter{Focus: lb, Name: "-", Optional: key.ModShift},
+		key.Filter{Focus: lb, Name: "0"},
+	}
+	if f := lb.focusIn; f != nil && f == ft && f != event.Tag(lb) && f != event.Tag(&lb.side.tabFocus) {
+		filters = append(filters,
+			key.Filter{Focus: f, Name: key.NameEscape},
+			key.Filter{Focus: f, Name: key.NameLeftArrow},
+			key.Filter{Focus: f, Name: key.NameRightArrow},
 		)
+	}
+	for {
+		e, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}
@@ -450,8 +493,12 @@ func (lb *Lightbox) keys(gtx layout.Context, top bool) {
 func (lb *Lightbox) clicks(gtx layout.Context) {
 	h := lb.h
 	if lb.closeBtn.Clicked(gtx) {
-		lb.Dismiss()
-		return
+		if lb.side.shown && lb.closeClosesDetails() {
+			lb.closeDetails() // aO: the sidebar only
+		} else {
+			lb.Dismiss() // ag: closeModal
+			return
+		}
 	}
 	if lb.editBtn.Clicked(gtx) && lb.onEdit != nil {
 		lb.onEdit() // stacked over the viewer (isStackable)
@@ -483,7 +530,12 @@ func (lb *Lightbox) clicks(gtx layout.Context) {
 		return
 	}
 	if lb.threadBtn.Clicked(gtx) {
-		if lb.m.Channel == "" || lb.m.TS == "" {
+		if lb.side.shown {
+			// MediaViewerThreadToggleButton's aC with the sidebar open
+			// ("Hide thread"): Details resets (aM) and the sidebar closes
+			lb.resetDetails()
+			lb.side.open = false
+		} else if lb.m.Channel == "" || lb.m.TS == "" {
 			h.Toast("This image isn't part of a conversation")
 		} else {
 			root := lb.m.ThreadTS
@@ -499,23 +551,40 @@ func (lb *Lightbox) clicks(gtx layout.Context) {
 		lbOpen(h, lb.cur().windowURL())
 	}
 	if lb.moreBtn.Clicked(gtx) {
-		if lb.cur().video {
-			// a video's: the file's actions, Download among them (the
-			// viewer's FileViewerActions with showDownloadMenuItem)
-			h.ShowOverlay(NewVideoActionsMenu(h, lb.moreRect, lb.m, lb.cur().file, false))
-			return
+		if mn := lb.moreMenu(); mn != nil {
+			h.ShowOverlay(mn)
 		}
-		it := lb.cur()
-		link := it.linkURL()
-		items := []MenuItem{
-			{Label: "Copy image link", Icon: "link", DoCtx: func(gtx layout.Context) {
-				copyText(gtx, link)
-				h.Toast("Link copied")
-			}},
-			{Label: "Open in browser", Icon: "external", Do: func() { lbOpen(h, link) }},
-		}
-		h.ShowOverlay(NewMenuOpts(h, items, MenuOpts{Anchor: lb.moreRect, Side: Above, AlignRight: true, Width: 240}))
 	}
+}
+
+// moreMenu is the footer's More actions (FileViewerActions +2gl
+// renderFileActions). A video's is VideoActionsButton (aRSD): the file's
+// actions, Download among them (showDownloadMenuItem), its View details
+// the viewer's viewFileDetails. Anything else's is Clack's image menu
+// with Y4Ir's getViewFileDetailsMenuItem where Y4Ir has it: after the
+// Open ▸ item (Open in browser), before the separator and Copy link (Copy
+// image link), shown while the item has details (bDav passes
+// viewFileDetails only when tr).
+func (lb *Lightbox) moreMenu() *Menu {
+	h := lb.h
+	it := lb.cur()
+	if it.video {
+		return newVideoActionsMenu(h, lb.moreRect, lb.m, it.file, false, nil, func() { lb.viewFileDetails(true) })
+	}
+	link := it.linkURL()
+	items := []MenuItem{
+		{Label: "Open in browser", Icon: "external", Do: func() { lbOpen(h, link) }},
+	}
+	if lb.detailsAvailable() {
+		items = append(items, MenuItem{Label: "View file details", QA: "view_file_details",
+			Do: func() { lb.viewFileDetails(false) }}.In(nsFile))
+	}
+	items = append(items, Sep(),
+		MenuItem{Label: "Copy image link", Icon: "link", DoCtx: func(gtx layout.Context) {
+			copyText(gtx, link)
+			h.Toast("Link copied")
+		}})
+	return NewMenuOpts(h, items, MenuOpts{Anchor: lb.moreRect, Side: Above, AlignRight: true, Width: 240})
 }
 
 // pointerEvents handles the background, image and slider areas (last
@@ -720,6 +789,9 @@ func (lb *Lightbox) drawImage(gtx layout.Context, th *theme.Theme, panel, area i
 	}
 }
 
+// header is MediaViewerModalHeader across the media column (panel here),
+// with the close button in it while the sidebar is closed
+// (renderCloseButton inside the media group: the dark style).
 func (lb *Lightbox) header(gtx layout.Context, th *theme.Theme, panel image.Rectangle) {
 	white := rgb(0xffffff)
 	if lb.pending {
@@ -757,10 +829,13 @@ func (lb *Lightbox) header(gtx layout.Context, th *theme.Theme, panel image.Rect
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 18))}
 		return para(gtx, th, 13, 18, theme.Regular, white, lb.subLine(gtx), 1)
 	})
+	if lb.side.shown {
+		return // the close button is the sidebar's (layoutSideClose)
+	}
 	cp := image.Pt(panel.Max.X-dp(gtx, 8)-dp(gtx, 36), panel.Min.Y+dp(gtx, 8))
 	at(gtx, cp, func(gtx layout.Context) layout.Dimensions {
 		d := iconButton(gtx, &lb.closeBtn, "close", 36, 20, white, rgba(0xffffff, .1), 8)
-		Tooltip(gtx, th, &lb.tips[8], lb.closeBtn.Hovered(), d.Size, Below, "Close", "Esc")
+		Tooltip(gtx, th, &lb.tips[8], lb.closeBtn.Hovered(), d.Size, Below, nsMediaViewer.T("Close"), "Esc")
 		return d
 	})
 }
@@ -835,9 +910,33 @@ func (lb *Lightbox) subLine(gtx layout.Context) string {
 	return b.String()
 }
 
+// lbCompact is yksA's shouldCompactFooter on the media column: wider than
+// 0 and narrower than 480 (an open sidebar can make it so). A compact
+// footer is padded 4px instead of 12 (.p-media_viewer_modal__footer--
+// compact), its controls 4px apart, and MediaViewerActions (isCompact)
+// drops the thread toggle and the PiP button.
+func lbCompact(gtx layout.Context, media image.Rectangle) bool {
+	return media.Dx() > 0 && media.Dx() < dp(gtx, 480)
+}
+
+// threadTip is MediaViewerThreadToggleButton's tip: "Hide thread" while
+// the sidebar is open (aria-pressed), else "Show thread".
+func (lb *Lightbox) threadTip() string {
+	if lb.side.shown {
+		return nsViewer.T("Hide thread")
+	}
+	return nsViewer.T("Show thread")
+}
+
+// footer is the media column's footer (panel here).
 func (lb *Lightbox) footer(gtx layout.Context, th *theme.Theme, panel image.Rectangle) {
 	white := rgb(0xffffff)
 	hover := rgba(0xffffff, .1)
+	pad, gap := float32(12), float32(12)
+	compact := lbCompact(gtx, panel) && !lb.pending // the pending FileViewer (W9QH) has no compact footer
+	if compact {
+		pad, gap = 4, 4
+	}
 	y := panel.Max.Y - dp(gtx, 45)
 	btn := func(x int, c *widget.Clickable, ic string, tip *TipState, label, sc string) image.Rectangle {
 		p := image.Pt(x, y)
@@ -849,7 +948,7 @@ func (lb *Lightbox) footer(gtx layout.Context, th *theme.Theme, panel image.Rect
 		return image.Rectangle{Min: p, Max: p.Add(d.Size)}
 	}
 	hosted := lb.cur().hosted()
-	x := panel.Min.X + dp(gtx, 12)
+	x := panel.Min.X + dp(gtx, pad)
 	if hosted || lb.pending {
 		lb.zoomControls(gtx, btn, x, y)
 	}
@@ -868,24 +967,27 @@ func (lb *Lightbox) footer(gtx layout.Context, th *theme.Theme, panel image.Rect
 		})
 	}
 
-	x = panel.Max.X - dp(gtx, 12) - dp(gtx, 36)
+	x = panel.Max.X - dp(gtx, pad) - dp(gtx, 36)
+	step := dp(gtx, 36+gap)
 	if !hosted {
 		// MediaViewerActions without a file: the thread toggle (only
 		// with a conversation: toggleThread needs the channel and
 		// thread), then Open in new window.
 		btn(x, &lb.winBtn, "external", &lb.tips[5], nsViewer.T("Open in new window"), "")
-		if lb.m.Channel != "" && lb.m.TS != "" {
-			x -= dp(gtx, 48)
-			btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], nsViewer.T("Show thread"), "")
+		if lb.m.Channel != "" && lb.m.TS != "" && !compact {
+			x -= step
+			btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], lb.threadTip(), "")
 		}
 		return
 	}
 	lb.moreRect = btn(x, &lb.moreBtn, "more", &lb.tips[4], nsViewer.T("More actions"), "")
-	x -= dp(gtx, 48)
+	x -= step
 	btn(x, &lb.winBtn, "external", &lb.tips[5], nsViewer.T("Open in new window"), "")
-	x -= dp(gtx, 48)
-	btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], nsViewer.T("Show thread"), "")
-	x -= dp(gtx, 48)
+	if !compact {
+		x -= step
+		btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], lb.threadTip(), "")
+	}
+	x -= step
 	btn(x, &lb.dlBtn, "download", &lb.tips[7], nsViewer.T("Download"), "")
 }
 

@@ -21,7 +21,8 @@ import (
 // Left out until Clack has them: Open in new window (Slack's pop-out
 // player window), Edit thumbnail…, Add to folder and Add to section, and
 // Report to Slack. View details opens the file's page, as FileActions'
-// View file details does. (Dock to corner is only with
+// View file details does; the media viewer's menu gives it the viewer's
+// Details tab instead (Lightbox.moreMenu). (Dock to corner is only with
 // showPlaybackSettings, the media viewer's menu: the viewer's own Dock
 // button docks it there.)
 // inThread: the message shows in a thread pane.
@@ -33,6 +34,14 @@ func NewVideoActionsMenu(h Host, btn image.Rectangle, m core.Message, f *richtex
 // the menu closes (frPc's onPopoverClose: the player's overlay stays
 // active while it's open).
 func NewVideoActionsMenuClosing(h Host, btn image.Rectangle, m core.Message, f *richtext.File, inThread bool, onClose func()) *Menu {
+	return newVideoActionsMenu(h, btn, m, f, inThread, onClose, nil)
+}
+
+// newVideoActionsMenu is the menu with viewDetails, when set, as its View
+// details: the media viewer's (aRSD's eq: onViewFileDetails, the viewer's
+// td, or else previewFile), shown for every file there (show: true) in
+// stories_av's words. Without it, View details opens the file's page.
+func newVideoActionsMenu(h Host, btn image.Rectangle, m core.Message, f *richtext.File, inThread bool, onClose, viewDetails func()) *Menu {
 	var items []MenuItem
 	group := func(g ...MenuItem) {
 		var keep []MenuItem
@@ -72,7 +81,10 @@ func NewVideoActionsMenuClosing(h Host, btn image.Rectangle, m core.Message, f *
 		thread := MenuItem{Label: "Open in thread", Do: func() { h.OpenThread(m.Channel, root) }}.In(nsFile)
 		openIn = MenuItem{Label: "Open in", Sub: []MenuItem{thread}}.In(nsFile)
 	}
-	if f.Permalink != "" {
+	switch {
+	case viewDetails != nil:
+		details = MenuItem{Label: "View details", Do: viewDetails}.In(nsMediaViewer)
+	case f.Permalink != "":
 		details = MenuItem{Label: "View details", Do: func() { lbOpen(h, f.Permalink) }}.In(nsFile)
 	}
 	group(openIn, details)
