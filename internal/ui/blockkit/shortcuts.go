@@ -56,35 +56,162 @@ func RunShortcut(h Host, s core.AppShortcut, ch, ts string) {
 	})
 }
 
-// MessageShortcutItems are the message menu's app shortcuts: the recent
-// message shortcuts, then "More message shortcuts…" (Slack's message
-// actions menu).
-func MessageShortcutItems(h Host, m core.Message) []popups.MenuItem {
-	var items []popups.MenuItem
-	recentMu.Lock()
-	rs := append([]core.AppShortcut(nil), recent...)
-	recentMu.Unlock()
-	n := 0
-	for _, s := range rs {
-		if s.Type != "message_action" || n >= 3 {
+// The message menu's Connect to apps submenu, as Slack's (JuvA e8 over
+// 2LNc selectMessageActions and qGxq, build 83aff18a1847b8e9):
+//
+//   - its actions are the team's app actions of type message_action (the
+//     apps.actions.v2.list answer, core Interactive.CachedShortcuts) for
+//     the apps installed where the channel is (teams), in the frecency
+//     store's order: the ten message actions used most (tyx1 rM,
+//     core.App.MessageActionFrecency, the "frecency" pref every device
+//     writes, so the order follows the account), then the rest in the
+//     list's order. The first three are rows (appActionToMessageAction,
+//     WzzR): the action's name, its app's name beside it, data-qa
+//     app_action_<id>, frecencyId "MA<id>", which a pick records.
+//   - then the browse row: "More message shortcuts…" while the list loads
+//     or once it has any action, "Add a message shortcut…" without one. It
+//     opens the shortcuts dialog (app_message_actions_dialog) while the list
+//     loads or when there are more than three, else it is a link to the
+//     app directory's shortcuts collection (app_directory_link).
+//   - no shortcut rows for a viewer who can't run app actions
+//     (canUserRunAppAction, RS5d: a single-channel guest; a guest when the
+//     team's commands_only_regular is on), nor on a message they don't run
+//     on (canRunAppAction, iub5 N$: actionable, no subtype or bot_message
+//     or thread_broadcast); the browse row is there for everyone (e8 builds
+//     it outside RS5d's check), so the submenu is never empty.
+//   - every row is disabled offline (e8: disabled = !Pb, isClientOnline).
+
+// appDirectoryShortcuts is the browse row's href without enough actions.
+const appDirectoryShortcuts = "apps/collection/shortcuts?utm_source=in-prod&utm_medium=inprod-get_more_app_actions-message_action_dialog-click"
+
+// canUserRunAppAction is RS5d for the viewer.
+func canUserRunAppAction(a *core.App) bool {
+	u, ok := a.S.User(a.S.SelfID())
+	if !ok || u == nil {
+		return true
+	}
+	if u.IsUltraRestricted {
+		return false
+	}
+	v, _ := a.TeamPref("commands_only_regular")
+	return string(v) != "true" || !u.IsRestricted
+}
+
+// canRunAppAction is iub5 N$ for m.
+func canRunAppAction(a *core.App, m *core.Message) bool {
+	if m.Subtype == "file_comment" || !a.Actionable(m) {
+		return false
+	}
+	return m.Subtype == "" || m.Subtype == "bot_message" || m.Subtype == "thread_broadcast"
+}
+
+// MessageActions is selectMessageActions for channel ch: the message
+// shortcuts in Slack's order, and whether the list is loaded.
+func MessageActions(a *core.App, ch string) (acts []core.AppShortcut, loaded bool) {
+	all, loaded := a.Interactive().CachedShortcuts()
+	teams := channelTeams(a, ch)
+	byKey := map[string]core.AppShortcut{}
+	var order []string
+	for _, s := range all {
+		if s.Type != "" && s.Type != "message_action" {
 			continue
 		}
-		s := s
-		n++
-		// Slack's appActionToMessageAction (oyTq): the shortcut's action id,
-		// data-qa app_action_<id>
-		it := popups.MenuItem{Action: s.ActionID, Label: s.Name, Right: s.AppName, Do: func() { RunShortcut(h, s, m.Channel, m.TS) }}
-		if s.ActionID != "" {
-			it.QA = "app_action_" + s.ActionID
+		if len(teams) > 0 && len(s.Teams) > 0 && !anyIn(s.Teams, teams) {
+			continue
 		}
-		items = append(items, it)
+		k := core.MessageActionFrecencyPrefix + s.ActionID
+		if _, dup := byKey[k]; !dup {
+			order = append(order, k)
+		}
+		byKey[k] = s
+	}
+	for _, id := range a.MessageActionFrecency() {
+		if s, ok := byKey[id]; ok {
+			acts = append(acts, s)
+			delete(byKey, id)
+		}
+	}
+	for _, k := range order {
+		if s, ok := byKey[k]; ok {
+			acts = append(acts, s)
+			delete(byKey, k)
+		}
+	}
+	return acts, loaded
+}
+
+// channelTeams are the workspaces whose apps a channel's message actions
+// come from (UaAK getRelevantWorkspaceIdsForChannel): an org-wide
+// channel's workspaces (internal_team_ids), a DM's every workspace of the
+// viewer's (nil: no filter, Clack doesn't list them), else the team.
+func channelTeams(a *core.App, ch string) []string {
+	if c, ok := a.S.Conv(ch); ok {
+		if len(c.InternalTeamIDs) > 0 {
+			return c.InternalTeamIDs
+		}
+		if c.IsIM || c.IsMPIM {
+			return nil
+		}
+	}
+	if t, _ := a.S.TeamIDs(); t != "" {
+		return []string{t}
+	}
+	return nil
+}
+
+func anyIn(xs, set []string) bool {
+	for _, x := range xs {
+		for _, y := range set {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// MessageShortcutItems are the Connect to apps submenu's rows for m.
+func MessageShortcutItems(h Host, m core.Message) []popups.MenuItem {
+	a := h.Core()
+	if a == nil {
+		return nil
+	}
+	acts, loaded := MessageActions(a, m.Channel)
+	var items []popups.MenuItem
+	if canUserRunAppAction(a) && canRunAppAction(a, &m) { // RS5d and N$ gate the shortcut rows only
+		for i, s := range acts {
+			if i == 3 {
+				break
+			}
+			s := s
+			it := popups.MenuItem{Action: s.ActionID, Label: s.Name, Right: s.AppName, Frecency: core.MessageActionFrecencyPrefix + s.ActionID,
+				Do: func() { RunShortcut(h, s, m.Channel, m.TS) }}
+			if s.ActionID != "" {
+				it.QA = "app_action_" + s.ActionID
+			}
+			items = append(items, it)
+		}
 	}
 	ch, ts := m.Channel, m.TS
-	// Slack's browse_apps row (2rcC e3): app_message_actions_dialog when it
-	// opens the shortcuts dialog
-	items = append(items, popups.MenuItem{Action: "browse_apps", QA: "app_message_actions_dialog", Label: "More message shortcuts…", Icon: "lightning", Do: func() {
-		OpenShortcuts(h, pointerAt(h, image.Point{}), "message_action", ch, ts)
-	}})
+	label := "Add a message shortcut…"
+	if !loaded || len(acts) > 0 {
+		label = "More message shortcuts…"
+	}
+	browse := popups.MenuItem{Action: "browse_apps", Label: label}
+	if !loaded || len(acts) > 3 {
+		browse.QA = "app_message_actions_dialog"
+		browse.Do = func() { OpenShortcuts(h, pointerAt(h, image.Point{}), "message_action", ch, ts) }
+	} else {
+		browse.QA = "app_directory_link"
+		u := strings.TrimSuffix(a.TeamURL(), "/") + "/" + appDirectoryShortcuts
+		browse.Do = func() { openURL(u) }
+	}
+	items = append(items, browse)
+	if !a.ClientOnline() { // e8: every row disabled offline (Pb isClientOnline)
+		for i := range items {
+			items[i].Disabled = true
+		}
+	}
 	return items
 }
 
@@ -102,6 +229,13 @@ func OpenShortcuts(h Host, anchor image.Point, kind, ch, ts string) {
 		p.loading = false
 		if err != nil {
 			p.err = "Couldn't load shortcuts"
+			return
+		}
+		if kind == "message_action" {
+			// the dialog's actions are selectMessageActions' (2LNc), in
+			// its order: the store has the list this fetch brought
+			p.all, _ = MessageActions(h.Core(), ch)
+			p.filter()
 			return
 		}
 		for _, s := range all {
@@ -144,6 +278,10 @@ func (p *picker) Dismissed() bool { return p.done }
 func (p *picker) Dismiss()        { p.done = true; p.h.Invalidate() }
 
 func (p *picker) filter() {
+	if p.kind == "message_action" {
+		p.filterMessageActions()
+		return
+	}
 	q := strings.ToLower(strings.TrimSpace(p.ed.Text()))
 	p.rows = p.rows[:0]
 	if q == "" && p.kind == "global_action" {
@@ -174,11 +312,49 @@ func (p *picker) filter() {
 	p.h.Invalidate()
 }
 
+// filterMessageActions is BaseAppActionsDialog's search
+// (searchLocalMessageActions): the actions whose name or app name
+// (appActionToMessageAction's description) holds every word of the query,
+// sorted by frecency for it (sortByFrecency, each known by "MA<id>").
+func (p *picker) filterMessageActions() {
+	words := strings.Fields(strings.ToLower(p.ed.Text()))
+	p.rows = p.rows[:0]
+	for _, s := range p.all {
+		name, app := strings.ToLower(s.Name), strings.ToLower(s.AppName)
+		ok := name != ""
+		for _, w := range words {
+			if !strings.Contains(name, w) && !strings.Contains(app, w) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			p.rows = append(p.rows, s)
+		}
+	}
+	if a := p.h.Core(); a != nil {
+		p.rows = core.FrecencySortBy(a.FrecencyCache(), p.ed.Text(), p.rows, func(s core.AppShortcut) string {
+			return core.MessageActionFrecencyPrefix + s.ActionID
+		})
+	}
+	if p.sel >= len(p.rows) {
+		p.sel = 0
+	}
+	p.h.Invalidate()
+}
+
 func (p *picker) pick(i int) {
 	if i < 0 || i >= len(p.rows) {
 		return
 	}
 	s := p.rows[i]
+	if p.kind == "message_action" {
+		// onSelectAction's recordFrecencyEvent {frecencyId, query: the
+		// filter's text}
+		if a := p.h.Core(); a != nil {
+			a.RecordFrecency(core.MessageActionFrecencyPrefix+s.ActionID, p.ed.Text())
+		}
+	}
 	p.Dismiss()
 	RunShortcut(p.h, s, p.ch, p.ts)
 }

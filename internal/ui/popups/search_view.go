@@ -2345,7 +2345,9 @@ func srResultItems(h Host, m core.Message) []MenuItem {
 	// the save and reminder rows are the message menu's (gap-w7,
 	// actions_todo.go): oMi4's save row and its aSBj click, ih0g's name
 	sa := SaveActionFor(h.Core(), &m)
-	return []MenuItem{
+	// the rows are MessageActionsMenu's, as on every message: their
+	// frecencyIds (withFrecency) and Connect to apps' own rows
+	return withFrecency([]MenuItem{
 		MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			RunSaveAction(h, m)
 		}}.In(nsSaved),
@@ -2360,8 +2362,9 @@ func srResultItems(h Host, m core.Message) []MenuItem {
 			copyMessage(gtx, m)
 		}}.In(nsMessage),
 		Sep(),
-		MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}}.In(nsMessage),
-	}
+		MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m),
+			SubLive: func() []MenuItem { return connectToApps(h, m) }}.In(nsMessage),
+	})
 }
 
 func (v *SearchView) replyChip(gtx layout.Context, th *theme.Theme, cl *Colors, c *widget.Clickable, n int) layout.Dimensions {

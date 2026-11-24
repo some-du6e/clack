@@ -148,7 +148,7 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	// `{id: addToLaterTodos, name: S ? "Complete to-do" : "Add to-do"}`;
 	// clear_later_todo is Slack's separate, danger "Clear to-do")
 	if !TodoShown(h.Core(), &m) { // on3u: none on an ephemeral or automated message
-		return items
+		return withFrecency(items)
 	}
 	ta := TodoActionFor(h.Core(), &m)
 	todo := MenuItem{Action: "add_to_later_todos", Label: ta.Label, Icon: ta.MenuIcon, Hint: nsSaved.T("A"), Keys: KeyLaterTodos}.In(nsSaved)
@@ -159,7 +159,7 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 		}
 		RunTodoAction(h, m)
 	}
-	return append(items, todo)
+	return withFrecency(append(items, todo))
 }
 
 // LinkMenu is what NewLinkMenu needs.

@@ -6738,6 +6738,42 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # connect-to-apps (2026-11-23): the message menu's Connect to apps as
+  # Slack's: the message shortcuts in the frecency pref's order (the one
+  # every device writes), three of them, the browse row by count, a change
+  # from another device through pref_change (blockkit); a pick recording
+  # its frecencyId and the pref going out only then (popups); with the
+  # menus' tests they touch. COUNT runs each. Dispatch with
+  # only=connect-to-apps.
+  connect-to-apps:
+    if: ${{ !inputs.only || startsWith('connect-to-apps', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: blockkit, popups, frecency (COUNT runs)
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -v -timeout 10m -run '^(TestConnectToAppsOrderLikeSlack|TestConnectToAppsBrowseRowLikeSlack|TestConnectToAppsFollowsOtherDevices|TestConnectToAppsGuestsKeepBrowse)$' ./internal/ui/blockkit || rc=1
+          go test -count="$COUNT" -v -timeout 8m -run '^(TestMessageMenuPickRecordsFrecency|TestMessageContextMenuThreadAction|TestMenuHintsPerOS)$' ./internal/ui/popups || rc=1
+          go test -count="$COUNT" -v -timeout 4m ./internal/frecency || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -6884,6 +6920,7 @@ jobs:
       - history-changed
       - ephemeral-actions
       - focused-keys
+      - connect-to-apps
       - mf-cold
       - oneko-data-images
       - files-download

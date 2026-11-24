@@ -93,6 +93,22 @@ func (a *App) FrecencyCache() *frecency.Cache {
 	return frecency.Parse(v)
 }
 
+// MessageActionFrecencyPrefix starts a message action's frecency id
+// (getMessageActionsFrecencyId, 52Ue: "MA" + the action id).
+const MessageActionFrecencyPrefix = "MA"
+
+// MessageActionFrecency is the frecency store's v selector (tyx1 rM):
+// the ten message actions used most (MostCommonWithPrefix "MA"), their
+// frecency ids, highest first. The pref is the one every device writes,
+// so the list follows the account (frecencyPrefsChanged).
+func (a *App) MessageActionFrecency() []string {
+	var ids []string
+	for _, c := range a.FrecencyCache().MostCommonWithPrefix(MessageActionFrecencyPrefix, 10, a.frecNow()) {
+		ids = append(ids, c.ID)
+	}
+	return ids
+}
+
 // RecordFrecency is recordFrecencyEvent {id, text}: the pref changes
 // locally at once and is saved through the throttle.
 func (a *App) RecordFrecency(id, text string) {
