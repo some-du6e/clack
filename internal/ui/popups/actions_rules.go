@@ -2,8 +2,6 @@ package popups
 
 import (
 	"encoding/json"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -563,14 +561,6 @@ func EditShown(app *core.App, m *core.Message, self string) bool {
 		return false
 	}
 	return true
-}
-
-// tsTime is a message ts as a time.
-func tsTime(ts string) time.Time {
-	sec, frac, _ := strings.Cut(ts, ".")
-	s, _ := strconv.ParseInt(sec, 10, 64)
-	us, _ := strconv.ParseInt((frac + "000000")[:6], 10, 64)
-	return time.Unix(s, us*1000)
 }
 
 // canUserPostIn is canUserPostInChannel (FS2H c) as far as Clack knows
