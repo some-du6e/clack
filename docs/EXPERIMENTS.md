@@ -221,7 +221,7 @@ A datamine-feed scan said Slack had reshuffled two gates Clack reads. Both claim
 
 Seen on the way and left alone (outside this branch):
 
-- `3x6A`'s All set gates more than Clack does. `list_todo_notification` needs `lists_monster_step` (Hm0j isListsNewTodoWorkflowsEnabled; `on` for the account, so Clack, which counts it ungated, agrees today). `list_approval_request` / `list_approval_reviewed` need `approvals_in_todos` (Hm0j isApprovalsInTodosEnabled; not assigned, and Clack doesn't count them). `generic_system_alert` needs `generic_system_user_alert` (I87A `j0`; **on for the account**, and Clack doesn't count it), so Slack's All count includes unread system alerts that Clack's leaves out.
+- `3x6A`'s All set gates more than Clack did. `list_todo_notification` needs `lists_monster_step` (Hm0j isListsNewTodoWorkflowsEnabled; `on` for the account), `list_approval_request` / `list_approval_reviewed` need `approvals_in_todos` (Hm0j isApprovalsInTodosEnabled; not assigned), and `generic_system_alert` needs `generic_system_user_alert` (I87A `j0`; `on` for the account). Clack counted to-dos ungated and left out the approvals and system alerts. Since branch activity-read-state (2026-11-23, build 66e72b57ade1, 9OWn `j`) it gates all three as Slack does (`core/activity_badges.go` activityBadgeTypes), so the account's All count now includes unread system alerts. `TestActivityBadgeKinds`
 - `biaa.ud` (artifact tabs) is also on with `session_channels` and `session_channels_artifact_tabs_exp` `treatment`. `CodeChannelViewsOn` checks only `session_channels_code_tab_pr`. The account is in `control`, so the pane is right today.
 
 ## 2026-11-15 wave 7 (branch exp-wave-7, build c07ab895506f)

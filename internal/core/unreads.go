@@ -88,7 +88,7 @@ func (a *App) MarkMarkers(ctx context.Context, markers map[string]string) error 
 	for ch, ts := range markers {
 		e := a.S.MarkRead(ch, ts)
 		cv := a.Count(ch)
-		a.emit(Event{Type: "marked", Channel: ch, TS: ts, Count: &cv})
+		a.emit(Event{Type: "marked", Channel: ch, TS: ts, Count: &cv, BadgesGen: a.ActivityBadgesGen()})
 		again = again || e.HasUnreads
 	}
 	if again {

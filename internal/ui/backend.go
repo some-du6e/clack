@@ -821,6 +821,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		}
 	case "dnd_override": // a sender's notify anyway (notify_dm.go)
 		b.noteDNDOverride(a, ev)
+	case "activity_breakthrough": // an activity entry breaking focus mode (focus_mode.go)
+		a.focusBreakthrough(ev.Channel)
 	case "marked", "counts":
 		if ev.Count != nil && ev.Channel != "" {
 			changed = b.setCount(ev.Channel, *ev.Count)

@@ -86,6 +86,7 @@ type App struct {
 	countsReread bool           // refreshCounts' next read is the one after a merged answer (it doesn't ask again)
 	actBadges    map[string]int // client.counts activity_v2 (activity_badges.go)
 	actBadgesAt  uint64         // the store journal's position at their last change (setActivityBadgesSince)
+	actBadgesGen atomic.Uint64  // server badge sets installed (ActivityBadgesGen)
 	classic      classicBadges  // channel_badges and the alerts' counts (classic_badges.go)
 	savedOverdue int            // saved.list counts.uncompleted_overdue_count (app_badge.go)
 	cmdCache     []slack.Command
