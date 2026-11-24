@@ -27,6 +27,14 @@ type fakeExp struct {
 	mu         sync.Mutex
 	unverified map[string]bool // sender/channel pairs the rule hides
 	allowed    []string
+	files      map[string]*rt.File // the Slack files images' urls are (ImageFile)
+}
+
+func (x *fakeExp) ImageFile(u string) (*rt.File, bool) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	f, ok := x.files[u]
+	return f, ok
 }
 
 func (x *fakeExp) hides(sender, ch string) bool {
@@ -197,6 +205,55 @@ func TestImageActionsGroup(t *testing.T) {
 	hs.send(press(open, 1e9), release(open, 1e9+20*1e6))
 	if len(h.urls) != 1 || h.urls[0] != "https://img.test/a.png" || len(h.images) != 0 {
 		t.Errorf("Open in new window: urls %v images %v", h.urls, h.images)
+	}
+}
+
+// dlHandler records the group's downloads (ImageDownloadHandler).
+type dlHandler struct {
+	imgMenus
+	dl []*rt.File
+}
+
+func (h *dlHandler) DownloadImageFile(f *rt.File) { h.dl = append(h.dl, f) }
+
+// TestImageActionsDownload: an image that is a Slack file the client
+// holds (Expander.ImageFile) leads its group with Download (UvHM:
+// Download, Open in new window, More actions), which downloads the file.
+// A host that can't download, or an image that isn't a file, has none.
+func TestImageActionsDownload(t *testing.T) {
+	file := &rt.File{ID: "F0IMAGE0001", Name: "shot.png", Download: "https://files.slack.com/files-pri/T1-F0IMAGE0001/download/shot.png"}
+	useExpander(t, &fakeExp{files: map[string]*rt.File{"https://img.test/a.png": file}})
+	h := &dlHandler{}
+	hs := &harness{st: newTestStyle(), v: New(kitDoc(t, imgBlock), Options{Channel: "C1", TS: "1.0"}), h: h, w: 700}
+	hs.frame()
+	img := imgsWithURL(&hs.v.d, "https://img.test/a.png")[0]
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
+	acts := hs.v.expandActs(hs.st, 0)
+	if len(acts) != 3 || acts[0] != imgActDownload || acts[1] != imgActOpen || acts[2] != imgActMore {
+		t.Fatalf("the group %v, want Download, Open in new window, More actions", acts)
+	}
+	_, btns := hs.v.expandBar(0, len(acts))
+	dl := rectCenter(btns[0])
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: dl})
+	hs.send(press(dl, 0), release(dl, 20*1e6))
+	if len(h.dl) != 1 || h.dl[0] != file {
+		t.Errorf("Download: %v", h.dl)
+	}
+
+	// a host that can't download: no Download
+	hs = &harness{st: newTestStyle(), v: New(kitDoc(t, imgBlock), Options{Channel: "C1", TS: "1.0"}), h: &imgMenus{}, w: 700}
+	hs.frame()
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
+	if acts := hs.v.expandActs(hs.st, 0); len(acts) == 0 || acts[0] == imgActDownload {
+		t.Errorf("the group %v: Download without a host that downloads", acts)
+	}
+	// an image that isn't a file: no Download
+	useExpander(t, &fakeExp{})
+	hs = &harness{st: newTestStyle(), v: New(kitDoc(t, imgBlock), Options{Channel: "C1", TS: "1.0"}), h: &dlHandler{}, w: 700}
+	hs.frame()
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
+	if acts := hs.v.expandActs(hs.st, 0); len(acts) == 0 || acts[0] == imgActDownload {
+		t.Errorf("the group %v: Download for an image that isn't a file", acts)
 	}
 }
 

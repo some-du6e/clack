@@ -164,6 +164,14 @@ func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, win
 	}
 }
 
+// DownloadImageFile is an image's AttachmentImageActions Download: the
+// image's Slack file.
+func (s *surfHandler) DownloadImageFile(f *richtext.File) {
+	if f != nil {
+		popups.DownloadFile(s.h, f)
+	}
+}
+
 // ImageMenu is an image's More actions (AttachmentImageActions' menu, which
 // Slack's app views keep): Copy link, and Hide image when it has an
 // expandable.
