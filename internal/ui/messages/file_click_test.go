@@ -184,10 +184,10 @@ func fileClicks(t *testing.T, label string, h *fileClickHost, v clickView, size 
 					t.Errorf("%s: clicking the snippet %s opened %v (viewer %v)", name, want.ID, (*opened)[nu:], gotV != nv)
 				}
 			case strings.HasPrefix(want.Mimetype, "video/"):
-				// "view": the media viewer (this host has none), never the
-				// browser or a download
-				if len(*opened) != nu || len(*downloaded) != nd {
-					t.Errorf("%s: clicking the video %s opened %v (downloads %v)", name, want.ID, (*opened)[nu:], (*downloaded)[nd:])
+				// "view": the media viewer; this host has no player, so
+				// Clack's fallback, its page, and never a download
+				if len(*opened) != nu+1 || (*opened)[len(*opened)-1] != want.Permalink || len(*downloaded) != nd {
+					t.Errorf("%s: clicking the video %s opened %v (downloads %v), want its permalink", name, want.ID, (*opened)[nu:], (*downloaded)[nd:])
 				}
 			case strings.HasPrefix(want.Mimetype, "audio/"):
 				// fileIsPlayableAudio: MessageFile gives its pillow no click

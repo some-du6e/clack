@@ -95,7 +95,10 @@ func OpenFileCardWith(f *richtext.File, open func(string), download func(*richte
 			open(f.Permalink)
 		}
 	case "view", "window":
-		if fileIsPDF(f) && !f.IsImage && !f.IsVideo && f.Permalink != "" {
+		// a PDF (FSFV's, which Clack lacks: openFileInNewWindow), or a
+		// video where the caller has no player (Clack's fallback, as
+		// before: its page)
+		if (fileIsPDF(f) || f.IsVideo) && !f.IsImage && f.Permalink != "" {
 			open(f.Permalink)
 		}
 	case "detail":

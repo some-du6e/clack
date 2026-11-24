@@ -2117,20 +2117,21 @@ func openFile(h Host, it fileItem) {
 		h.OpenLightbox(richtext.Image{URL: it.URL, Alt: it.title(), W: it.ThumbW, H: it.ThumbH, Title: it.title(), Proxy: true}, core.Message{})
 		return
 	}
-	// handleFileContainerClick's rest (popups.OpenFileCard): an .exe, a
-	// zip or a document downloads in the app; a remote or external file's
-	// own link and a PDF's page (openFileInNewWindow) go through
-	// hostHandler's follow (a link the client opens itself, else the
-	// browser), never the deep-link handler, which opens only slack: links
-	rf := cfRich(&it)
-	rf.Mode = it.Mode
-	follow := func(u string) { hostHandler{h}.follow(u, false) }
-	ph, _ := h.(popups.Host)
-	popups.OpenFileCardWith(rf, follow, func(f *richtext.File) {
-		if ph != nil {
-			popups.DownloadFile(ph, f)
-		}
-	})
+	u := it.Permalink
+	if u == "" {
+		u = it.URL
+	}
+	if u == "" {
+		return
+	}
+	// the Files explorer's click: under
+	// unified_files_3p_primary_custom_sections (the account's) Slack's
+	// handleFileContainerClick opens the file's own view (its primary
+	// view, in the app), which Clack hasn't ported: the file's page, in
+	// the browser, or a link the client opens itself (hostHandler's
+	// follow), never the deep-link handler, which opens only slack: links.
+	// A message's file goes the message way (hostHandler.OpenFile).
+	hostHandler{h}.follow(u, false)
 }
 
 // fileFromRich is a message attachment as a Files item, for openFile.

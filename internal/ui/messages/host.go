@@ -445,12 +445,12 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 // openFileAction is handleFileContainerClick's rest for a click the
 // viewers above didn't take (popups.OpenFileCard): an .exe, a zip or a
 // document downloads in the app; only a remote or external file's own
-// link, and a PDF (openFileInNewWindow's fallback: Clack has no PDF
-// viewer), open the browser. A playable audio file has no click
-// (MessageFile gives fileIsPlayableAudio none).
+// link, a PDF (openFileInNewWindow's fallback: Clack has no PDF viewer)
+// and a video where the host has no player open the browser. A playable
+// audio file has no click (MessageFile gives fileIsPlayableAudio none).
 func openFileAction(h Host, f *richtext.File) {
-	if f.IsAudio || f.IsImage || f.IsVideo {
-		return // the viewers' (or the player's) own
+	if f.IsAudio || f.IsImage {
+		return // the viewer's (or the player's) own
 	}
 	popups.OpenFileCardWith(f, openURL, func(f *richtext.File) {
 		if ph, ok := h.(popups.Host); ok {
