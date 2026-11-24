@@ -38,8 +38,12 @@ func TestAgentToggleIconAlignsWithTitle(t *testing.T) {
 				if !ok {
 					t.Fatal("no toggle line drawn")
 				}
-				if d := math.Abs(icon - text); d > float64(scale) {
-					t.Errorf("the icon's middle is %.1fpx from the title's x-height middle (icon %.1f, text %.1f), want within 1dp", d, icon, text)
+				// .toggleBarIconInline's top -.5px lifts the box over the
+				// x-height middle; the glyphs' ink sits within a dp of
+				// their box's middle (the triangle's about .75px over it)
+				want := text - 0.5*float64(scale)
+				if d := math.Abs(icon - want); d > float64(scale) {
+					t.Errorf("the icon's middle is %.1fpx from where Slack puts it, half a dp over the title's x-height middle (icon %.1f, text %.1f), want within 1dp", d, icon, text)
 				}
 			})
 		}
