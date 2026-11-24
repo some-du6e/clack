@@ -43,7 +43,7 @@ var compat = map[string]Compat{
 	Slick + "/PrivateChannelMapper": partial("the missing-channel pill never shows"),
 	Slick + "/QuietSpotify":         broken("Clack has no Spotify players to quiet"),
 	Slick + "/SelfCare":             partial("a break pauses notifications, not the app badge"),
-	Slick + "/ShowRealUser":         partial("forwarded copies aren't matched"),
+	Slick + "/ShowRealUser":         partial("forwards with a numeric ts aren't matched, as in Slack"),
 	Slick + "/SlickMCP":             broken("its MCP server needs Node's http module"),
 	// docs/PLUGINS-live-taut.md
 	Taut + "/BringBackSlackbot": broken("Slack no longer reads the experiment it sets"),

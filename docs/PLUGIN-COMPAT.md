@@ -39,7 +39,7 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Private Channel | Taut | Lets you see and mention private channels you aren't in (uses the <https://flaron.halceon.dev\|flaron> index) | unknown channel mentions aren't looked up |
 | Private Channel Mapper | Slick | Name the private channels you can’t see, and mention the ones you are not in | the missing-channel pill never shows |
 | Self Care | Slick | Take a break from Slack and pause notifications for a while. | a break pauses notifications, not the app badge |
-| Show Real User | Slick | Show who actually sent a message when a relay bot posts on their behalf | forwarded copies aren't matched |
+| Show Real User | Slick | Show who actually sent a message when a relay bot posts on their behalf | forwards with a numeric ts aren't matched, as in Slack |
 | Slack Fixes | Taut | Fixes small bugs in Slack's UI | two of its fixes have nothing to fix in Clack |
 | Streamer Mode | Taut | Blurs private information while others may be able to see your screen | doesn't hide VIP badges or screen shares |
 

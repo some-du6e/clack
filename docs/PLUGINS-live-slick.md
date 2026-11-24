@@ -73,7 +73,7 @@ Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌
 | QuietSpotify | ❌ | — | No Spotify embeds or frames in Clack. |
 | RestrictedChannelWarning | ✅ | CI (acceptance check) | "Post anyway" in the roadblock of an admin-only channel. Not testable live (needs such a channel). |
 | SelfCare | ⚠️ | CI (acceptance check; its main half's shape: `TestMainHalfBreakHooks`) | Its main half starts and, during a break, holds notifications back with its notification filter. The badge it clears and the window it mutes for the break are Electron's: Clack's shim keeps what it sets and changes nothing, so the app badge keeps its count. Its main half used to throw during a break (no `app.getBadgeCount` or `isAudioMuted` in the shim) and leave its filter behind. Not run live. |
-| ShowRealUser | ⚠️ | — | Direct relay posts work; forwarded copies carry a numeric `ts`. |
+| ShowRealUser | ⚠️ | — | Direct relay posts work. A forwarded copy whose attachment `ts` is a JSON number, as Slack sends it for some forwards, isn't matched, and isn't in Slack either: Slack's client keeps an attachment's `ts` as the API sent it (makeAttachmentObject, client-boot `D8Sp`, build 35b42de8b870, clones each attachment and normalizes only `video_html_width`/`video_html_height`, `id` and `message_blocks`), so the plugin looks the copy up under the number's string (`1700000000.0001`), which never equals the reply's `ts` (`1700000000.000100`). Clack hands plugins Slack's JSON as it is, so it behaves the same. |
 | ShowSendingBot | ✅ | CI (`TestSlickViewShowSendingBot`, messages and shell) | The bot's badge on the avatar of a message a bot posted for a person. |
 | ShutUpSlackbot | ✅ | CI | Slash-command notices are dropped, other notifications shown. |
 | SilentTyping | ✅ | live | Its composer toggle. |
@@ -166,4 +166,4 @@ Related theme fixes: importing selects the theme (`fcc7ac9`); pausing Slick keep
 | ui, slackc | Plugin elements in the top nav and sidebar resolve Slack's inverted theme scope (`sk-client-theme--light-inverted-sidebar`); a `FlexItems` native's patch lays out as its parent row's items (StreamerMode's toggle beside the help button); a native that draws nothing (Slack's null) is no flex item |
 | slackc/kit | `SvgIcon` resolves Slack's names through the icon set's own table (`eye-open`, StreamerMode's toggle, had drawn the fallback dot) |
 
-Still open: SlimMessageBox's `@container` cases; ClearURLs' paste-time cleaning (Quill's Clipboard); CustomFonts, CustomSounds, PrivateChannelMapper's pill, ShowRealUser's forwarded copies; BetterHuddles' own call client; and every *CI*-only row's live re-check.
+Still open: SlimMessageBox's `@container` cases; ClearURLs' paste-time cleaning (Quill's Clipboard); CustomFonts, CustomSounds, PrivateChannelMapper's pill; BetterHuddles' own call client; (ShowRealUser's numeric-`ts` forwards are the plugin's own limit, the same in Slack); and every *CI*-only row's live re-check.
