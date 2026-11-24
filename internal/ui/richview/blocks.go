@@ -784,7 +784,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		return h
 
 	case richtext.CarouselBlock:
-		return l.carousel(b, x, y, w)
+		h := l.carousel(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.Table:
 		return l.table(b, x, y, w)
