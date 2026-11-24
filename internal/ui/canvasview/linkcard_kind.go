@@ -100,8 +100,8 @@ func parsePermalink(raw string) (permalink, bool) {
 	case "member":
 		id := at(1)
 		return permalink{typ: typ}, permalinkUser.MatchString(id) || permalinkUsers[id]
-	case "quip": // /docs/<team>/<F…>, and a workspace host (never app.slack.com)
-		return permalink{typ: typ}, permalinkFile.MatchString(at(2)) && sub != "" && sub != "app"
+	case "quip": // /docs/<team>/<F…>, on any host but app.slack.com
+		return permalink{typ: typ}, permalinkFile.MatchString(at(2)) && sub != "app"
 	case "list":
 		return permalink{typ: typ}, permalinkFile.MatchString(at(2))
 	case "canvas":
@@ -110,12 +110,15 @@ func parsePermalink(raw string) (permalink, bool) {
 	return permalink{typ: typ}, true
 }
 
+// jsWS is JavaScript's \s (Unicode whitespace; Go's \s is ASCII only).
+const jsWS = `[\t\n\v\f\r \x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}]`
+
 // xssPatterns are I5QS's.
 var xssPatterns = func() []*regexp.Regexp {
 	var out []*regexp.Regexp
 	for _, p := range []string{`javascript:`, `vbscript:`, `<script`, `</script`, `onerror=`, `onload=`, `onclick=`, `onmouseover=`,
-		`onfocus=`, `onblur=`, `alert\s*?\(`, `confirm\s*?\(`, `prompt\s*?\(`, `eval\s*?\(`, `expression\s*?\(`,
-		`setInterval\s*?\(`, `setTimeout\s*?\(`, `%3Cscript`, `%3C/script`, `%3Conerror`, `%3Conload`, `%3Conclick`,
+		`onfocus=`, `onblur=`, `alert` + jsWS + `*?\(`, `confirm` + jsWS + `*?\(`, `prompt` + jsWS + `*?\(`, `eval` + jsWS + `*?\(`, `expression` + jsWS + `*?\(`,
+		`setInterval` + jsWS + `*?\(`, `setTimeout` + jsWS + `*?\(`, `%3Cscript`, `%3C/script`, `%3Conerror`, `%3Conload`, `%3Conclick`,
 		`%3Conmouseover`, `%3Confocus`, `%3Conblur`, `%3Calert`, `%3Cconfirm`, `%3Cprompt`, `%3Ceval`,
 		`%3Cexpression`, `%3CsetInterval`, `%3CsetTimeout`, `<alert`, `<confirm`, `<prompt`, `<eval`,
 		`<expression`, `<setInterval`, `<setTimeout`} {

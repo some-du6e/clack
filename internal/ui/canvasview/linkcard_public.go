@@ -63,6 +63,7 @@ type publicCard struct {
 	topIcon  string         // a tweet's author icon (the generic top row has none)
 	title    *richview.View // the top row: the title, linked to title_link
 	text     *richview.View // ContentText (nil with no text, or text previews off)
+	lines    int            // the line cap text was last laid out with
 	botIcon  string         // the bottom row's icon, service_icon || author_icon
 	source   *richview.View // "sourceName | Added on …"
 	thumb    string         // thumb_url || image_url
@@ -103,7 +104,7 @@ func tsTime(ts string) (time.Time, bool) {
 }
 
 // newPublicCard builds the card's views from the container's attachment.
-func newPublicCard(a *slack.Attachment, containerTS string, now time.Time) *publicCard {
+func newPublicCard(r richtext.Resolver, a *slack.Attachment, containerTS string, now time.Time) *publicCard {
 	p := &publicCard{}
 	twitter := a.ServiceName == "twitter"
 	// the top row: a tweet's author, else the attachment's title
@@ -125,8 +126,22 @@ func newPublicCard(a *slack.Attachment, containerTS string, now time.Time) *publ
 		}
 		p.title = richview.New(para(sp), richview.Options{MaxLines: 1})
 	}
-	if a.Text != "" && !uipref.Get().NoTextPreviews { // expand_non_media_attachments
-		p.text = richview.New(para(richtext.Span{Kind: richtext.Text, Text: a.Text}), richview.Options{MaxLines: 6})
+	if a.Text != "" && !uipref.Get().NoTextPreviews { // expand_non_media_attachments: ContentText's Mrkdwn
+		var text []richtext.Block
+		if r != nil {
+			att := *a
+			att.Title, att.TitleLink, att.Fields, att.Blocks = "", "", nil, nil
+			for _, b := range richtext.FromMessage(r, &slack.Message{Type: "message", Attachments: []slack.Attachment{att}}).Blocks {
+				if b.Kind == richtext.AttachmentBlock && b.Att != nil {
+					text = append(text, b.Att.Text...)
+				}
+			}
+		}
+		if len(text) == 0 {
+			text = para(richtext.Span{Kind: richtext.Text, Text: a.Text}).Blocks
+		}
+		p.text = richview.New(richtext.Doc{Blocks: text}, richview.Options{MaxLines: 6})
+		p.lines = 6
 	}
 	// the bottom row: the source and when the link was added
 	srcName, srcURL := firstNonEmpty(a.ServiceName, a.AuthorName), firstNonEmpty(a.ServiceURL, a.AuthorLink)
@@ -186,13 +201,21 @@ func (v *View) layoutPublic(gtx layout.Context, c *linkCard, w int) int {
 	}
 	ink := cardInks(v.h.Theme().Dark)
 	pad := gtx.Dp(12)
-	thumb := p.hasThumb && w >= gtx.Dp(400) && !uipref.Get().NoInlineImgs
+	// r: at 400 px or more with a thumb_url or image_url the text takes 2
+	// lines (whatever the images pref), and the thumbnail shows with
+	// images on
+	wide := p.hasThumb && w >= gtx.Dp(400)
+	thumb := wide && !uipref.Get().NoInlineImgs
 	thumbW := 0
 	if thumb {
 		thumbW = gtx.Dp(120) + gtx.Dp(12)
-		if p.text != nil {
-			p.text = richview.New(p.text.Doc(), richview.Options{MaxLines: 2})
-		}
+	}
+	if lines := map[bool]int{true: 2, false: 6}[wide]; p.text != nil && lines != p.lines {
+		// the same view, its cap changed: a new view every frame would be
+		// a new pointer tag every frame (a frame loop under a resting
+		// pointer, its links dead)
+		p.text.SetOptions(richview.Options{MaxLines: lines})
+		p.lines = lines
 	}
 	cw := max(0, w-2*pad-thumbW)
 	y := pad
@@ -266,7 +289,10 @@ func (v *View) layoutPublicSkeleton(gtx layout.Context, w int, now time.Time) in
 	sz := gtx.Dp(120)
 	h := v.layoutCardSkeletonIn(gtx, max(0, w-sz), now)
 	col := v.skeletonInk(gtx, now)
-	theme.RRect(gtx, image.Rect(w-sz, 0, w, sz), 0, col)
+	func() { // the card's overflow:hidden rounds its right corners
+		defer clip.UniformRRect(image.Rect(0, 0, w, max(h, sz)), gtx.Dp(12)).Push(gtx.Ops).Pop()
+		theme.RRect(gtx, image.Rect(w-sz, 0, w, sz), 0, col)
+	}()
 	return max(h, sz)
 }
 

@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"strings"
+	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
@@ -103,4 +104,27 @@ func titleHot(v *View) bool {
 // while hovered.
 func titleLinkColours(v *View) (rest, hot color.NRGBA) {
 	return v.styles.cardTitle.Palette.Link, v.styles.cardTitleHot.Palette.Link
+}
+
+// setCardTimeout makes Card's wait d for a test; the func puts it back.
+func setCardTimeout(d time.Duration) func() {
+	old := cardTimeout
+	cardTimeout = d
+	return func() { cardTimeout = old }
+}
+
+// bodyWidth is the first card's work object card's width as drawn.
+func bodyWidth(v *View) int {
+	if b := embedBlk(v); b != nil {
+		return b.card.bodyW
+	}
+	return 0
+}
+
+// publicText is the first card's public link text view (nil: none).
+func publicText(v *View) *richview.View {
+	if b := embedBlk(v); b != nil && b.card.pub != nil {
+		return b.card.pub.text
+	}
+	return nil
 }

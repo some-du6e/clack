@@ -76,6 +76,8 @@ type View struct {
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
+	skelStill bool // the card being drawn has shimmered long enough (linkcard.go)
+
 	live     atomic.Bool  // files.open sent, watching events
 	modelLd  atomic.Bool  // loadCardModel's load is out
 	peekWait atomic.Bool  // watchPeekModel is watching
