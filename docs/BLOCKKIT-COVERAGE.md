@@ -147,7 +147,8 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | icon_button | `RVG0` | full | full; it hides itself from members its `visible_to_user_ids` doesn't list, wherever it is (`X2Vm`). In an actions block its empty action box stays (8px) | a hidden icon_button accessory (outside @slack/types, which allows icon_button only in context_actions) takes no room; Slack keeps its empty 8px accessory box |
 | feedback_buttons | `1ou8` | full | full | (context_actions) |
 | image (element) | in section/context/card | full | full | |
-| split_button, password (client only) | `jHw9`, `nvsC` | absent | absent | |
+| split_button (client only) | `jHw9` → boot-shared `wAPv` SplitButtonElementBase (build 9f450b8ad3db) | absent | **full**: with `bk_refresh_split_button` off (the accounts Clack follows don't list it) the primary action's Button alone; on, one ButtonGroup with the caret-down-filled chevron, whose Menu (bottom-right) lists the secondary actions and whose tooltip is "More options for {primary_text}". A click sends `{type: split_button, action_id, block_id, text, value}` (its confirm first, then its url); the primary's clicks within a second of the last send nothing; `disabled` and `is_loading`; getButtonType's primary / danger / ghost / outline and getButtonSize's medium / small, with c-button--grouped's corners and divider (`splitbutton.go`) | the primary label's tooltip when it's cut; the menu labels' emoji |
+| password (client only) | `nvsC` → `mm++` PasswordElement | absent | **full**: an `<input type="password">`'s bullets, its placeholder or "Write something", and its state `{type: password, value}`, trimmed and null when empty | Chromium's password field takes no copy or cut; Gio's masked editor copies its text |
 
 ## Composition objects
 

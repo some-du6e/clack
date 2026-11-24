@@ -270,6 +270,9 @@ var experimentReads = map[string][]string{
 	// a data_visualization block's More actions: Copy as image
 	// (popups/chart_menu.go, canvas-data-visualization-block v4Jz)
 	"data_visualization_copy_image": on,
+	// a split_button's chevron and its Menu of the secondary actions
+	// (ui/blockkit/splitbutton.go, boot-shared wAPv); not the account's
+	"bk_refresh_split_button": on,
 	// sidebar (sidebar_rules.go, section menus, prefs)
 	"filter_dormant_channels": on, "improve_mute_pref": on, "dm_recency_sort_rollout": {"without_edu", "with_edu"},
 	"programmable_sidebar_dm_history": on, "vip_section_pref": on, "agents_in_dm_sidebar": on, "agents_in_dm_sidebar_pref": on,
