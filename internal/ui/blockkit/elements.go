@@ -278,6 +278,8 @@ func (w *ew) size(gtx C, maxW int, accessory bool) image.Point {
 		return image.Pt(min(bw, maxW), h28)
 	case "overflow":
 		return image.Pt(dp(gtx, 30), h28)
+	case "split_button":
+		return w.splitSize(gtx, maxW) // splitbutton.go
 	case "icon_button":
 		return image.Pt(h28, h28)
 	case "static_select", "external_select", "users_select", "conversations_select", "channels_select":
@@ -380,6 +382,8 @@ func (w *ew) layout(gtx C, sz image.Point) D {
 		w.layoutButton(gtx, sz)
 	case "overflow":
 		w.layoutOverflow(gtx, sz)
+	case "split_button":
+		w.layoutSplit(gtx, sz)
 	case "icon_button":
 		w.layoutIconButton(gtx, sz)
 	case "static_select", "external_select", "users_select", "conversations_select", "channels_select",

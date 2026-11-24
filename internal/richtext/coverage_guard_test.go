@@ -65,7 +65,7 @@ var pendingParts = map[string][]string{
 	"part 2d (rich text's inline types)": {"_canvas_mention", "_theme_install_button", "attachment_mention", "canvas_message_unfurl",
 		"canvas_user_mention", "citation", "folder_mention", "salesforce_data_field", "skill", "tag", "unknown", "variable",
 		"work_object_mention", "workflowtoken"},
-	"part 2e (interactive elements)": {"file_input", "split_button"},
+	"part 2e (interactive elements)": {"file_input"},
 	"part 2f (the remaining blocks)": {"attachment_reference", "auth_provider", "canvas_mermaid", "canvas_table", "channel_section",
 		"channel_set", "layout", "mcp_app", "message", "page", "prototype", "related_automation_decorator", "salesforce_record_card",
 		"search_top_results", "share_skill", "share_workflow"},
