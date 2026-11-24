@@ -58,9 +58,26 @@ type unreadsState struct {
 	mu        sync.Mutex
 	lastRead  map[string]string // initial read cursors
 	calls     []UnreadsCall
-	dismissed map[string]bool // channel -> join banner dismissed
-	noQueue   bool            // the boot load answers no join banner (QueueJoinBanner)
-	badges    []string        // generic_new_badge's notificationData.badges (SetNewBadges)
+	dismissed map[string]bool   // channel -> join banner dismissed
+	noQueue   bool              // the boot load answers no join banner (QueueJoinBanner)
+	badges    []string          // generic_new_badge's notificationData.badges (SetNewBadges)
+	spaces    map[string]string // space -> notification any load answers (SetMegaphoneSpace)
+}
+
+// SetMegaphoneSpace makes every megaphone.notifications.list that asks for
+// space answer notification name in it ("" puts it back to null).
+func (s *Server) SetMegaphoneSpace(space, name string) {
+	u := s.unreads()
+	u.mu.Lock()
+	if u.spaces == nil {
+		u.spaces = map[string]string{}
+	}
+	if name == "" {
+		delete(u.spaces, space)
+	} else {
+		u.spaces[space] = name
+	}
+	u.mu.Unlock()
 }
 
 // SetNewBadges makes the megaphone boot load answer the generic_new_badge
@@ -324,6 +341,13 @@ func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 		ch := f.Get("channel_id")
 		for _, sp := range ev.Spaces {
 			out[sp] = nil
+			u.mu.Lock()
+			name := u.spaces[sp]
+			u.mu.Unlock()
+			if name != "" {
+				out[sp] = map[string]any{"name": name, "data": map[string]any{}}
+				continue
+			}
 			if sp == "generic_new_badge" && ch == "" {
 				u.mu.Lock()
 				if len(u.badges) > 0 {
