@@ -1,15 +1,18 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/some-du6e/clack/internal/expandable"
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 )
@@ -113,15 +116,52 @@ func TestExpandablesPersist(t *testing.T) {
 	}
 }
 
+// A file that is there but can't be read is left alone: nothing this
+// session writes replaces the choices it may hold (only a missing file
+// is an empty store). Its state still works for the session.
+func TestExpandablesUnreadableFileKept(t *testing.T) {
+	dir := t.TempDir()
+	creds := slack.Creds{Token: "xoxc-test", UserID: "USELF", Team: "T1", TeamURL: "http://127.0.0.1:1/"}
+	a := New(slack.New(creds), store.New(dir))
+	path := filepath.Join(dir, store.ExpandablesFile)
+	if err := os.Mkdir(path, 0o700); err != nil { // reading it fails, and not as a missing file
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for end := time.Now().Add(5 * time.Second); a.expandablesWriting() && time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		}
+	})
+	a.loadExpandables("T1", "USELF")
+	a.SetExpanded("inline_files_msg_1_2F1Channel", false)
+	if a.expandablesWriting() {
+		t.Error("a write over a file that couldn't be read")
+	}
+	if on, ok := a.Expanded("inline_files_msg_1_2F1Channel"); !ok || on {
+		t.Errorf("this session's state %v %v", on, ok)
+	}
+	if st, err := os.Stat(path); err != nil || !st.IsDir() {
+		t.Errorf("the unreadable file was replaced: %v %v", st, err)
+	}
+}
+
 // isAttachmentExpanded (FDIC), isImageTooLarge (WGgb) and
 // ExpandableContainer's disclosure rule (pOD6): the stored state first;
 // else collapsed with expand_inline_imgs false, or an image over 20 MB
-// under obey_inline_img_limit, or an unverified outsider's in a DM.
+// under obey_inline_img_limit (on without the pref, as the store's Prefs
+// and Preferences read it), or an unverified outsider's in a DM. An empty
+// key (a doc outside a message) gets the defaults.
 func TestAttachmentExpandedRules(t *testing.T) {
 	a, _ := testApp(t)
 	const key, big = "img_msg_1.21Channel", 0x1400000 + 1
-	if !a.AttachmentExpanded(key, 0, "", "C1") || a.ImageTooLarge(key, big) {
-		t.Error("defaults: collapsed (or too large without obey_inline_img_limit)")
+	if !a.AttachmentExpanded(key, 0, "", "C1") {
+		t.Error("defaults: collapsed")
+	}
+	if !a.ImageTooLarge(key, big) || a.ImageTooLarge(key, big-1) || a.AttachmentExpanded(key, big, "", "C1") || a.AttachmentExpanded("", big, "", "") {
+		t.Error("the 20 MB limit without obey_inline_img_limit")
+	}
+	a.mergePrefs(map[string]json.RawMessage{"obey_inline_img_limit": json.RawMessage("false")})
+	if a.ImageTooLarge(key, big) || !a.AttachmentExpanded(key, big, "", "C1") {
+		t.Error("obey_inline_img_limit false: still too large")
 	}
 	a.mergePrefs(map[string]json.RawMessage{"obey_inline_img_limit": json.RawMessage("true")})
 	if !a.ImageTooLarge(key, big) || a.ImageTooLarge(key, big-1) || a.AttachmentExpanded(key, big, "", "C1") {
@@ -142,17 +182,24 @@ func TestAttachmentExpandedRules(t *testing.T) {
 
 // shouldCollapseFromUnverifiedUser (Ns/U): only in a DM or a group DM,
 // for a member of a team that isn't the viewer's, isn't in the viewer's
-// enterprise and isn't verified (team.info), unless the viewer allowed
-// them (allowed_unfurl_senders). An unknown team is read with team.info
-// and counts once it answered. The disclosure shows only without state.
+// enterprise, is one of externalTeamIds (a conversation's connected
+// team) and isn't verified (team.info), unless the viewer allowed them
+// (allowed_unfurl_senders). An unknown team is read with team.info and
+// counts once it answered; a team no conversation connects isn't read.
+// The disclosure shows only without state. "Allow all previews" lays the
+// previews out again once the pref lands, and two of them in a row keep
+// both senders.
 func TestCollapseFromUnverifiedUser(t *testing.T) {
 	a, f := testApp(t)
 	a.S.PutUsers([]slack.User{{ID: "UEXT", Name: "ext", TeamID: "T9"}, {ID: "UNEW", Name: "new", TeamID: "T8"},
-		{ID: "UOWN", Name: "own", TeamID: "T1"}})
-	a.S.PutConv(slack.Conversation{ID: "D9", IsIM: true, User: "UEXT"})
+		{ID: "UOWN", Name: "own", TeamID: "T1"}, {ID: "UOLD", Name: "old", TeamID: "T7"}})
+	a.S.PutConv(slack.Conversation{ID: "D9", IsIM: true, User: "UEXT", ConnectedTeamIDs: []string{"T1", "T9"}})
 	a.S.PutConv(slack.Conversation{ID: "G9", IsMPIM: true})
 	a.S.PutConv(slack.Conversation{ID: "D8", IsIM: true, User: "UNEW"})
+	a.S.PutConv(slack.Conversation{ID: "C8", Name: "shared-8", IsChannel: true, ConnectedTeamIDs: []string{"T8"}})
+	a.S.PutConv(slack.Conversation{ID: "D7", IsIM: true, User: "UOLD"})
 	a.setTeamRecord("T9", teamRecord{})
+	a.setTeamRecord("T7", teamRecord{}) // a former Slack Connect org: unverified, but no conversation connects it
 	for _, c := range []struct {
 		sender, ch string
 		want       bool
@@ -195,8 +242,20 @@ func TestCollapseFromUnverifiedUser(t *testing.T) {
 		t.Errorf("team.info %v", p)
 	}
 
-	// Allow all previews from them
+	// isTeamExternal's externalTeamIds: no conversation connects T7
+	reads := countCalls(f, "team.info")
+	a.setTeamRecord("T7", teamRecord{})
+	if a.CollapseFromUnverifiedUser("UOLD", "D7") {
+		t.Error("a team no conversation connects (externalTeamIds) counted as external")
+	}
+	if countCalls(f, "team.info") != reads {
+		t.Error("team.info for a team that can't be external")
+	}
+
+	// Allow all previews from them: the previews lay out again once the
+	// pref landed
 	f.reply["users.prefs.set"] = `{"ok":true}`
+	gen := a.ExpandablesGen()
 	if err := a.AllowUnfurlsFrom(t.Context(), "UEXT"); err != nil {
 		t.Fatal(err)
 	}
@@ -206,9 +265,67 @@ func TestCollapseFromUnverifiedUser(t *testing.T) {
 	if a.CollapseFromUnverifiedUser("UEXT", "D9") {
 		t.Error("an allowed sender")
 	}
+	if a.ExpandablesGen() == gen {
+		t.Error("allowing a sender didn't lay the previews out again")
+	}
 	a.mergePrefs(map[string]json.RawMessage{"allowed_unfurl_senders": json.RawMessage(`"UEXT,UNEW"`)})
 	if a.CollapseFromUnverifiedUser("UNEW", "D8") {
 		t.Error("the second allowed sender")
+	}
+
+	// two more at once: each reads the list the one before it wrote
+	var wg sync.WaitGroup
+	for _, m := range []string{"UONE", "UTWO"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := a.AllowUnfurlsFrom(t.Context(), m); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := a.allowedUnfurlSenders(); !slices.Contains(got, "UONE") || !slices.Contains(got, "UTWO") || !slices.Contains(got, "UNEW") {
+		t.Errorf("allowed_unfurl_senders %q: an allow lost another's", got)
+	}
+}
+
+// Sign-out deletes expandables.json with the account's other files (the
+// store's cacheFiles), as Slack's persisted stores go with the session:
+// the account directory goes with it.
+func TestSignOutForgetsExpandables(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	dir := t.TempDir()
+	a := New(slack.New(fs.Creds()), store.New(dir))
+	t.Cleanup(a.Shutdown)
+	if err := a.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.SetExpanded("inline_files_msg_1700000000_000100F0SIGNOUT1Channel", false)
+	path := filepath.Join(dir, store.ExpandablesFile)
+	for end := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Stat(path); err == nil && !a.expandablesWriting() {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatal("expandables.json never written")
+		}
+	}
+	a.Shutdown()
+	<-a.DropCache() // sign-out
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("sign-out left %s (%v)", store.ExpandablesFile, err)
+	}
+	if es, err := os.ReadDir(dir); err == nil {
+		for _, e := range es {
+			if e.Name() == store.ExpandablesFile || strings.HasPrefix(e.Name(), "."+store.ExpandablesFile) {
+				t.Errorf("sign-out left %s", e.Name())
+			}
+		}
 	}
 }
 

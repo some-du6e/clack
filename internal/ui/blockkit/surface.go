@@ -164,6 +164,13 @@ func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, win
 	}
 }
 
+// ImageMenu is an image's More actions (AttachmentImageActions' menu, which
+// Slack's app views keep): Copy link, and Hide image when it has an
+// expandable.
+func (s *surfHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	s.h.ShowOverlay(popups.NewImageActionsMenu(s.h, popups.ActionAnchor(btn, false), href, key, closed))
+}
+
 // TimelineSources is a timeline section's "(Sources)": its sources modal.
 func (s *surfHandler) TimelineSources(sec *richtext.TimelineSection, _ image.Rectangle) {
 	popups.OpenTimelineSources(s.h, sec)

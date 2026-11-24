@@ -4347,7 +4347,10 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	if len(m.Doc.Blocks) == 0 {
 		return b.body(gtx, m.Doc, m.Text, 0)
 	}
-	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
+	// the message's channel, ts and sender: its previews' expandables
+	// (the Pins tab's BasePinnedMessage draws MessageFiles with the msg)
+	o := richview.Options{Edited: m.DisplaysEdited(), Muted: m.System, Channel: m.Channel, TS: m.TS, Sender: m.User, ViewContext: b.viewCtx}
+	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, o, 0)
 }
 
 // actPill is one reaction group's native pill (Reaction unpatched): a

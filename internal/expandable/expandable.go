@@ -268,8 +268,29 @@ func ReactionKey(ts, channel string) string {
 	return "message-" + ts + "-" + channel
 }
 
-// OnDisk reports whether key may be written to disk: not the keys whose
-// attachment had no id, which carry the media's URL or embed HTML.
+// OnDisk reports whether key may be written to disk: an allowlist of the
+// keys made of ids alone (a message ts, file, call and attachment ids, a
+// view context, a block id): letters, digits, ".", "_" and "-", and in a
+// block key's block id also "+", "/" and "=" (Slack's generated block_ids
+// hold them). The key of an attachment without an id embeds its image
+// URL, audio HTML or thumbnail URL ("https://", a protocol-relative "//",
+// a data: URI, "<audio>"), and a pending upload's file id ("pending:1"):
+// those stay in memory, as does a key past maxDiskKey bytes.
 func OnDisk(key string) bool {
-	return key != "" && !strings.Contains(key, "://") && !strings.ContainsAny(key, "<>")
+	if key == "" || len(key) > maxDiskKey {
+		return false
+	}
+	block := strings.HasPrefix(key, "block_text_") || strings.HasPrefix(key, "block_image_") || strings.HasPrefix(key, "block_video_")
+	for i := 0; i < len(key); i++ {
+		switch c := key[i]; {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9', c == '.', c == '_', c == '-':
+		case block && (c == '+' || c == '/' || c == '='):
+		default:
+			return false
+		}
+	}
+	return true
 }
+
+// maxDiskKey bounds a key OnDisk lets through (a block_id is up to 255).
+const maxDiskKey = 512

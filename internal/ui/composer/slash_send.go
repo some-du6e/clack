@@ -116,20 +116,25 @@ func (c *Composer) commandUI() *commandUI {
 		},
 		viewContext: c.zhyrViewContext(),
 		target: func(ch string, f func(t *Composer)) {
-			// ch's composer may mount only once the navigation to it ran
+			// ch's composer may mount only once the navigation to it ran:
+			// looked for again every targetPoll on a timer (a frame per
+			// look, not every frame) for up to 3 seconds
 			end := time.Now().Add(3 * time.Second)
 			var try func()
 			try = func() {
 				if t := c.sessionComposer(ch); t != nil {
 					f(t)
 				} else if time.Now().Before(end) {
-					c.later(try)
+					time.AfterFunc(targetPoll, func() { c.later(try) })
 				}
 			}
 			c.later(try)
 		},
 	}
 }
+
+// targetPoll is how often commandUI.target looks for the box it waits for.
+const targetPoll = 50 * time.Millisecond
 
 // sessionComposer is channel ch's open composer (not an edit) of this
 // composer's session: a send's work never lands in another session's box

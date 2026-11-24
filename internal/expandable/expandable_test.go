@@ -76,11 +76,19 @@ func TestMessageKeysLikeSlack(t *testing.T) {
 // embed HTML: those never go to disk.
 func TestOnDisk(t *testing.T) {
 	for k, want := range map[string]bool{
-		"inline_files_msg_1700000000_000100F0AAAChannel":     true,
-		"img_msg_1700000000.0007001Channel":                  true,
-		"block_image_1700000000.001100_pic":                  true,
-		"img_msg_1700000000.000800https://e.com/b.pngThread": false,
-		"aud_msg_1700000000.000800<audio></audio>Thread":     false,
+		"inline_files_msg_1700000000_000100F0AAAChannel":                    true,
+		"img_msg_1700000000.0007001Channel":                                 true,
+		"block_image_1700000000.001100_pic":                                 true,
+		"block_image_1700000000.001100_Xk9+/=":                              true, // a generated block_id
+		"block_text_1700000000.001100_undefined":                            true,
+		"attach_over_20_1700000000.001100saved-for-later-page":              true,
+		"img_msg_1700000000.000800https://e.com/b.pngThread":                false,
+		"img_msg_1700000000.000800//cdn.e.com/b.pngChannel":                 false, // protocol-relative
+		"img_msg_1700000000.000800data:image/png;base64,iVBORw0KGgoChannel": false,
+		"aud_msg_1700000000.000800<audio></audio>Thread":                    false,
+		"vid_msg_1700000000.000800https://e.com/t.jpgChannel":               false,
+		"inline_files_msg_1700000000_000100pending:1Channel":                false,
+		"block_image_1700000000.001100_has space":                           false,
 		"": false,
 	} {
 		if got := OnDisk(k); got != want {

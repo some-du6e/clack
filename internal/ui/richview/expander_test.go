@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"gioui.org/f32"
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/expandable"
@@ -155,11 +156,13 @@ func TestImageBlockTooLarge(t *testing.T) {
 // imgMenus records ImageMenu calls.
 type imgMenus struct {
 	recHandler
-	menus [][2]string
+	menus  [][2]string
+	closed func() // the open menu's
 }
 
-func (h *imgMenus) ImageMenu(href, key string, _ image.Rectangle) {
+func (h *imgMenus) ImageMenu(href, key string, _ image.Rectangle, closed func()) {
 	h.menus = append(h.menus, [2]string{href, key})
+	h.closed = closed
 }
 
 // TestImageActionsGroup: hovering an image block's image shows
@@ -192,6 +195,70 @@ func TestImageActionsGroup(t *testing.T) {
 	hs.send(press(open, 1e9), release(open, 1e9+20*1e6))
 	if len(h.urls) != 1 || h.urls[0] != "https://img.test/a.png" || len(h.images) != 0 {
 		t.Errorf("Open in new window: urls %v images %v", h.urls, h.images)
+	}
+}
+
+// TestImageActionsNoMenuHost: a host without ImageMenuHandler gets the
+// group without More actions, a button that would do nothing (and a
+// corner of the image that no longer opened it).
+func TestImageActionsNoMenuHost(t *testing.T) {
+	hs := &harness{st: newTestStyle(), v: New(kitDoc(t, imgBlock), Options{Channel: "C1", TS: "1.0"}), h: &recHandler{}, w: 700}
+	hs.frame()
+	img := imgsWithURL(&hs.v.d, "https://img.test/a.png")[0]
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
+	if acts := hs.v.expandActs(hs.st, 0); len(acts) != 1 || acts[0] != imgActOpen {
+		t.Errorf("the group's buttons %v, want Open in new window alone", acts)
+	}
+}
+
+// TestImageActionsGroupHolds: the group stays up while its More menu is
+// open (p-attachment_image_actions--menu-open: the menu's scrim takes
+// the pointer and the View is left) until the host says the menu went,
+// and over a button that stands out of a small image (:hover holds over
+// the container's own buttons).
+func TestImageActionsGroupHolds(t *testing.T) {
+	h := &imgMenus{}
+	hs := &harness{st: newTestStyle(), v: New(kitDoc(t, imgBlock), Options{Channel: "C1", TS: "1.0"}), h: h, w: 700}
+	hs.frame()
+	img := imgsWithURL(&hs.v.d, "https://img.test/a.png")[0]
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
+	_, btns := hs.v.expandBar(0, len(hs.v.expandActs(hs.st, 0)))
+	more := rectCenter(btns[len(btns)-1])
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: more})
+	hs.send(press(more, 0), release(more, 20*1e6))
+	if len(h.menus) != 1 || h.closed == nil {
+		t.Fatalf("More actions: %v", h.menus)
+	}
+	hs.v.left() // the menu's scrim has the pointer
+	if !hs.v.expandOn(hs.st, 0) {
+		t.Error("the group hid while its menu is open")
+	}
+	h.closed()
+	if hs.v.menuImg != nil || hs.v.expandOn(hs.st, 0) {
+		t.Error("the group stayed up after its menu went")
+	}
+
+	// a 50x40 image: the 72px group stands out of its left edge
+	small := strings.Replace(strings.Replace(imgBlock, `"image_width":400`, `"image_width":50`, 1), `"image_height":200`, `"image_height":40`, 1)
+	hs = &harness{st: newTestStyle(), v: New(kitDoc(t, small), Options{Channel: "C1", TS: "2.0"}), h: h, w: 700}
+	hs.frame()
+	img = imgsWithURL(&hs.v.d, "https://img.test/a.png")[0]
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: rectCenter(img.r)})
+	_, btns = hs.v.expandBar(0, len(hs.v.expandActs(hs.st, 0)))
+	var out f32.Point
+	found := false
+	for _, b := range btns {
+		if c := rectCenter(b); !image.Pt(int(c.X), int(c.Y)).In(img.r) {
+			out, found = c, true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no button outside the %v image: %v", img.r, btns)
+	}
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: out})
+	if !hs.v.expandOn(hs.st, 0) {
+		t.Error("the group hid with the pointer on its own button")
 	}
 }
 

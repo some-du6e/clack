@@ -151,8 +151,8 @@ type row struct {
 	// group's emoji (pillBy) as Slack keys its Reaction elements: a pill
 	// pressed while another group comes or goes stays that emoji's, at
 	// the same address, so its release is its own click
-	pills         []*reactPill
-	pillBy        map[string]*reactPill
+	pills       []*reactPill
+	pillBy      map[string]*reactPill
 	reactExpand widget.Clickable // ReactionBar's "N more" / "Show less"
 	// ReactionBar's own state (getDerivedStateFromProps, reactionCollapse):
 	// collapsed, the viewer's reactions when it last derived, and what it
