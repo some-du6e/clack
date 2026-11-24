@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
@@ -32,7 +33,7 @@ var mailtoParams = map[string]bool{"subject": true, "body": true, "cc": true, "b
 // characters or spaces, are refused. The URL is re-serialized, so it always
 // starts with its scheme (never "-", which xdg-open/open would read as a flag).
 func Check(raw string) (string, error) {
-	if raw == "" || len(raw) > 8192 || strings.ContainsAny(raw, " \t\r\n\\\"`<>") {
+	if raw == "" || len(raw) > 8192 || !utf8.ValidString(raw) || strings.ContainsAny(raw, " \t\r\n\\\"`<>") {
 		return "", ErrRefused
 	}
 	for _, r := range raw {
@@ -105,8 +106,9 @@ func launchWith(shell, tool func() error, withTool bool) {
 		}
 		return
 	}
+	rf := rundllFirst.Load() // the order this launch uses, as Slack's ln(e, t) reads t once
 	first, retry := shell, tool
-	if rundllFirst.Load() {
+	if rf {
 		first, retry = tool, shell
 	}
 	err := first()
@@ -124,7 +126,10 @@ func launchWith(shell, tool func() error, withTool bool) {
 		log.Printf("openurl: retry: %v", err)
 		return
 	}
-	rundllFirst.Store(!rundllFirst.Load())
+	// Slack's ag({isOpenExternalShellForced: !t}): the inverse of what
+	// this launch started from, so two overlapping launches don't undo
+	// each other's flip
+	rundllFirst.CompareAndSwap(rf, !rf)
 }
 
 // runTool runs command's tool for u and waits for it: a start error or
@@ -158,6 +163,52 @@ var externalHandlerCharmap = [8]uint32{0xffffffff, 0x50000025, 0x50000000, 0xb80
 // keep_escaped true), so a %XX already there stays and any other % is
 // escaped.
 func escapeExternalHandlerValue(s string) string {
+	return chromiumEscape(s, &externalHandlerCharmap)
+}
+
+// nsURLCharmap is Chromium's kNSURLCharmap (base/strings/escape.cc,
+// Apple only): controls, space, " # % < > [ \ ] ^ ` { | }, DEL and every
+// non-ASCII byte.
+var nsURLCharmap = [8]uint32{0xffffffff, 0x5000002d, 0x78000000, 0xb8000001, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff}
+
+// nsURLPrecursor is what Chromium's NSURLWithGURL (net/base/apple/
+// url_conversions.mm) hands NSURL: the path, the query and the ref each
+// run through EscapeNSURLPrecursor (kNSURLCharmap, %XX kept), the scheme
+// and authority as they are. NSURL before macOS 14 refuses `|{}^[]`, a
+// bare % and raw non-ASCII there, and Electron's shell.openExternal
+// opens such links (a Grafana ?var-x={a,b}, ?q=café).
+func nsURLPrecursor(s string) string {
+	i := strings.IndexByte(s, ':') + 1
+	if strings.HasPrefix(s[i:], "//") {
+		j := strings.IndexAny(s[i+2:], "/?#")
+		if j < 0 {
+			return s
+		}
+		i += 2 + j
+	}
+	rest, out := s[i:], s[:i]
+	ref, hasRef := "", false
+	if k := strings.IndexByte(rest, '#'); k >= 0 {
+		rest, ref, hasRef = rest[:k], rest[k+1:], true
+	}
+	q, hasQ := "", false
+	if k := strings.IndexByte(rest, '?'); k >= 0 {
+		rest, q, hasQ = rest[:k], rest[k+1:], true
+	}
+	out += chromiumEscape(rest, &nsURLCharmap)
+	if hasQ {
+		out += "?" + chromiumEscape(q, &nsURLCharmap)
+	}
+	if hasRef {
+		out += "#" + chromiumEscape(ref, &nsURLCharmap)
+	}
+	return out
+}
+
+// chromiumEscape is Chromium's Escape(text, charmap, use_plus false,
+// keep_escaped true): every byte in charmap as %XX, a %XX already there
+// kept.
+func chromiumEscape(s string, charmap *[8]uint32) string {
 	const hex = "0123456789ABCDEF"
 	isHex := func(c byte) bool { return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F' }
 	var b strings.Builder
@@ -167,7 +218,7 @@ func escapeExternalHandlerValue(s string) string {
 		switch {
 		case c == '%' && i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]):
 			b.WriteByte('%')
-		case externalHandlerCharmap[c>>5]&(1<<(c&31)) != 0:
+		case charmap[c>>5]&(1<<(c&31)) != 0:
 			b.WriteByte('%')
 			b.WriteByte(hex[c>>4])
 			b.WriteByte(hex[c&15])

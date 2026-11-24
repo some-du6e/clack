@@ -2,6 +2,7 @@ package openurl
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -92,4 +93,72 @@ func median(ds []time.Duration) time.Duration {
 	s := slices.Clone(ds)
 	slices.Sort(s)
 	return s[len(s)/2]
+}
+
+// TestCheckRefusesInvalidUTF8: a link whose text isn't UTF-8 (plugin JS
+// can make one through window.open or an anchor's href) is refused on
+// every OS; on macOS it would have been a nil NSString.
+func TestCheckRefusesInvalidUTF8(t *testing.T) {
+	if _, err := Check("https://example.com:70000/?q=\xed\xa0\x80"); err != ErrRefused {
+		t.Errorf("Check of a surrogate's bytes: %v, want ErrRefused", err)
+	}
+}
+
+// TestNSURLPrecursor: Chromium's NSURLWithGURL escaping before NSURL
+// (macOS 11-13 refuse these raw): the path, query and ref escaped with
+// kNSURLCharmap, %XX kept, the authority untouched.
+func TestNSURLPrecursor(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"https://grafana.test/d/x?var-x={a,b}", "https://grafana.test/d/x?var-x=%7Ba,b%7D"},
+		{"https://maps.test/?q=a|b^c", "https://maps.test/?q=a%7Cb%5Ec"},
+		{"https://x.test/?q=café", "https://x.test/?q=caf%C3%A9"},
+		{"https://x.test/p%41/[1]?q=%zz#frag[2]#x", "https://x.test/p%41/%5B1%5D?q=%25zz#frag%5B2%5D%23x"},
+		{"https://[::1]:8080/a~b", "https://[::1]:8080/a~b"},
+		{"https://x.test", "https://x.test"},
+		{"mailto:a@example.test?subject=hi%20there", "mailto:a@example.test?subject=hi%20there"},
+	} {
+		if got := nsURLPrecursor(c.in); got != c.want {
+			t.Errorf("nsURLPrecursor(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestRunToolMailtoFallback: a mailto: link goes to xdg-email, and to
+// xdg-open when xdg-email isn't installed (an xdg-open replacement
+// without xdg-utils); fake tools on PATH record what they got.
+func TestRunToolMailtoFallback(t *testing.T) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		t.Skip("xdg-utils only")
+	}
+	dir := t.TempDir()
+	tool := func(name string) string {
+		out := filepath.Join(dir, name+".argv")
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\necho \"$@\" > '"+out+"'\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	read := func(p string) string { b, _ := os.ReadFile(p); return strings.TrimSpace(string(b)) }
+	t.Setenv("PATH", dir)
+	const u = "mailto:a@example.test"
+	openArgv := tool("xdg-open")
+	if err := runTool(u); err != nil {
+		t.Fatalf("no xdg-email: %v", err)
+	}
+	if got := read(openArgv); got != u {
+		t.Errorf("no xdg-email: xdg-open got %q, want %q", got, u)
+	}
+	if err := os.Remove(openArgv); err != nil {
+		t.Fatal(err)
+	}
+	emailArgv := tool("xdg-email")
+	if err := runTool(u); err != nil {
+		t.Fatalf("with xdg-email: %v", err)
+	}
+	if got := read(emailArgv); got != u {
+		t.Errorf("xdg-email got %q, want %q", got, u)
+	}
+	if _, err := os.Stat(openArgv); err == nil {
+		t.Error("xdg-open ran though xdg-email is there")
+	}
 }

@@ -19,7 +19,11 @@ package openurl
 static int clackOpenURL(const char *s, int activate, double wait) {
 	int rc;
 	@autoreleasepool {
-		NSURL *url = [NSURL URLWithString:[NSString stringWithUTF8String:s]];
+		NSString *str = [NSString stringWithUTF8String:s];
+		if (str == nil) { // not UTF-8 (Check refuses it first)
+			return 1;
+		}
+		NSURL *url = [NSURL URLWithString:str];
 		if (url == nil) {
 			return 1;
 		}
@@ -50,6 +54,7 @@ import "C"
 
 import (
 	"errors"
+	"log"
 	"unsafe"
 )
 
@@ -67,7 +72,7 @@ var errNoApp = errors.New("openurl: no application to open the link")
 // link's browser in front (activate unless the link asked for a
 // background tab, which Clack's links never do).
 func shellOpen(u string) error {
-	cs := C.CString(u)
+	cs := C.CString(nsURLPrecursor(u)) // NSURLWithGURL's escaping
 	defer C.free(unsafe.Pointer(cs))
 	switch C.clackOpenURL(cs, 1, 10) {
 	case 0:
@@ -79,7 +84,12 @@ func shellOpen(u string) error {
 	case 3:
 		return errors.New("openurl: NSWorkspace couldn't open the link")
 	}
-	return errors.New("openurl: NSWorkspace gave no answer in 10 s")
+	// no answer in 10 s (a slow first start of the browser, a Gatekeeper
+	// prompt): handed over, not failed, so no retry opens it twice;
+	// Electron's callback waits on the same answer and Slack retries only
+	// on an error
+	log.Printf("openurl: NSWorkspace gave no answer in 10 s; taken as opened")
+	return nil
 }
 
 // retryWithTool: Slack's macOS retry is the same shell.openExternal.
