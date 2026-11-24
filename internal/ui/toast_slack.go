@@ -85,7 +85,7 @@ func (a *App) ToastPartsTopRight(parts []i18n.Part, icon string, d time.Duration
 // (channelHasAnyHistory). Top-right, cloud-offline at 20, 6 s.
 func (a *App) offlineChannelToast(ch string) {
 	c := a.Core()
-	if c == nil || !core.LooksLikeChannelID(ch) || c.ClientOnline() {
+	if c == nil || !core.LooksLikeChannelID(ch) || clientOnlineFor(c) {
 		return
 	}
 	ns := i18n.NS("offline_mode")
@@ -97,6 +97,9 @@ func (a *App) offlineChannelToast(ch string) {
 	parts := append([]i18n.Part{{Text: ns.T("No connection."), Tag: "strong"}, {Text: " "}}, tail...)
 	a.ToastPartsTopRight(parts, "cloud-offline", 6*time.Second)
 }
+
+// clientOnlineFor is isClientOnline (core ClientOnline): a var for tests.
+var clientOnlineFor = func(c *core.App) bool { return c.ClientOnline() }
 
 // toastTopY is the top-right toasts' top: 70 + ci().
 func toastTopY(gtx layout.Context) int {
