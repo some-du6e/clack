@@ -309,7 +309,7 @@ type previewRetries struct {
 	delay map[string]time.Duration
 }
 
-var previewRetriesOf sync.Map // *App -> *previewRetries
+var previewRetriesOf = newPerApp() // *App -> *previewRetries; Release drops an App's
 
 func (a *App) previewRetries() *previewRetries {
 	v, _ := previewRetriesOf.LoadOrStore(a, &previewRetries{delay: map[string]time.Duration{}})
