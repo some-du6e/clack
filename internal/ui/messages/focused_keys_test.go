@@ -146,6 +146,22 @@ var focusedKeys = []fkey{
 	{name: "Delete", key: key.NameDeleteForward, did: overlayShown, what: "the delete dialog"},
 }
 
+// quiet lays frames out until the API calls stop coming (600 ms without
+// one, at most 5 s): the writes an earlier key set off land before the
+// next key's effects are measured.
+func (k *keysEnv) quiet() {
+	n, last := k.effects().calls, time.Now()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		k.frame()
+		time.Sleep(20 * time.Millisecond)
+		if m := k.effects().calls; m != n {
+			n, last = m, time.Now()
+		} else if time.Since(last) > 600*time.Millisecond {
+			return
+		}
+	}
+}
+
 // settleFor lays frames out until did holds or 2s pass (the writes run off
 // the UI goroutine), and reports whether it held.
 func (k *keysEnv) settleFor(before effects, did func(b, a effects) bool) bool {
@@ -188,6 +204,7 @@ func TestFocusedMessageKeysLikeSlack(t *testing.T) {
 			// the ephemeral message: Copy message and Delete still, the rest
 			// unbound
 			onEph := c.copyC || c.key == key.NameDeleteForward
+			k.quiet() // the ordinary message's writes land first
 			k.stolen = ""
 			k.selectMsg(t, tsEph)
 			before = k.effects()
@@ -269,7 +286,9 @@ func TestFocusedReplyKeysLikeSlack(t *testing.T) {
 			t.Errorf("%s on a reply: the reply box got %q too", c.key, k.stolen)
 		}
 	}
-	// its ephemeral reply: neither
+	// its ephemeral reply: neither (the calls the reply's U set off, the
+	// thread's mark and what follows it, land first)
+	k.quiet()
 	k.selectMsg(t, tsEphR2)
 	for _, c := range []struct {
 		key  key.Name
