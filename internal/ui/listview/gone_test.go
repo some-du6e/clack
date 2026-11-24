@@ -36,10 +36,10 @@ func TestRenderListGoneStates(t *testing.T) {
 			{"F0LVGONE03", "not-visible", "You don’t have access to this list.", "", false},
 		} {
 			var restored []core.DeletedFile
-			v := New(h, c.id, Tab, Actions{Restore: func(f core.DeletedFile, done func()) { restored = append(restored, f) }})
+			v := New(h, c.id, Tab, lvActions(func(f core.DeletedFile, done func()) { restored = append(restored, f) }, nil, nil, nil))
 			s := newShooter(t, image.Pt(900, 640))
 			draw := func(gtx layout.Context) { v.Layout(gtx) }
-			settle(t, s, draw, c.name+"'s state", func() bool { _, gone := v.Gone(); return gone })
+			settle(t, s, draw, c.name+"'s state", func() bool { return lvGone(v) })
 			settle(t, s, draw, "files.canUndelete", func() bool {
 				for _, f := range fs.CanUndeleteCalls() {
 					if f.Get("file_id") == c.id {
@@ -52,7 +52,7 @@ func TestRenderListGoneStates(t *testing.T) {
 				s.frame(draw)
 				time.Sleep(10 * time.Millisecond)
 			}
-			title, sub, link := v.GoneText()
+			title, sub, link := lvText(v)
 			if title != c.title || sub != c.sub || link != c.restore {
 				t.Errorf("%s: %q / %q link %v, want %q / %q %v", c.name, title, sub, link, c.title, c.sub, c.restore)
 			}
@@ -60,7 +60,7 @@ func TestRenderListGoneStates(t *testing.T) {
 			if !c.restore {
 				continue
 			}
-			v.GoneRestore()
+			lvRestore(v)
 			s.frame(draw)
 			if len(restored) != 1 || restored[0].ID != c.id || restored[0].Title != "Groceries" || restored[0].FileType != "list" {
 				t.Errorf("%s: restore opened %+v, want UndeleteFileDialog for %s", c.name, restored, c.id)
@@ -79,15 +79,12 @@ func TestDeleteListLeavesTab(t *testing.T) {
 		var mu sync.Mutex
 		var steps []string
 		note := func(s string) { mu.Lock(); steps = append(steps, s); mu.Unlock() }
-		v := New(h, fakeslack.ListTodos, Tab, Actions{
-			LeaveTab: func() bool { note("leave"); return fromTab },
-			Deleted:  func() { note("toast") },
-			Close:    func() { note("close") },
-		})
+		v := New(h, fakeslack.ListTodos, Tab, lvActions(nil, func() bool { note("leave"); return fromTab },
+			func() { note("toast") }, func() { note("close") }))
 		s := newShooter(t, image.Pt(900, 640))
 		draw := func(gtx layout.Context) { v.Layout(gtx) }
 		settle(t, s, draw, "the list", func() bool { return v.Doc() != nil })
-		v.deleteConfirmed(fakeslack.ListTodos)
+		lvDelete(v, fakeslack.ListTodos)
 		want := []string{"leave", "toast"}
 		if !fromTab {
 			want = []string{"leave", "close"}
@@ -98,7 +95,7 @@ func TestDeleteListLeavesTab(t *testing.T) {
 			t.Errorf("from the tab %v: %v, want %v", fromTab, steps, want)
 		}
 		mu.Unlock()
-		if _, err := h.a.List(context.Background(), fakeslack.ListTodos); !isGone(err) {
+		if _, err := h.a.List(context.Background(), fakeslack.ListTodos); !lvIsGone(err) {
 			t.Errorf("the deleted list's read: %v", err)
 		}
 		if err := h.a.UndeleteFile(context.Background(), fakeslack.ListTodos); err != nil {
@@ -106,5 +103,3 @@ func TestDeleteListLeavesTab(t *testing.T) {
 		}
 	}
 }
-
-func isGone(err error) bool { _, ok := goneOf(err); return ok }

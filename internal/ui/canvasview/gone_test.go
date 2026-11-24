@@ -27,8 +27,8 @@ func TestRenderGoneStates(t *testing.T) {
 		fs.SetFileGone("F0CVGONE02", "file_not_found", nil)
 		fs.SetFileGone("F0CVGONE03", "not_visible", map[string]any{"filetype": "quip", "title": "Secret plan"})
 		fs.SetFileInfoFile("F0CVGONE04", map[string]any{"id": "F0CVGONE04", "mode": "tombstone"})
-		pickDeleted = func() int { return 2 }
-		t.Cleanup(func() { pickDeleted = func() int { return 0 } })
+		cvPick(2)
+		t.Cleanup(func() { cvPick(0) })
 		for _, c := range []struct {
 			id, name, title, button string
 			mode                    Mode
@@ -41,12 +41,12 @@ func TestRenderGoneStates(t *testing.T) {
 		} {
 			v := New(h, c.id, c.mode, Actions{FullView: func() {}, SideView: func() {}, Close: func() {}})
 			s := newShooter(t, image.Pt(900, 640))
-			settle(t, s, v, c.name+"'s state", func() bool { _, gone := v.Gone(); return gone })
+			settle(t, s, v, c.name+"'s state", func() bool { return cvGone(v) })
 			for i := 0; i < 20; i++ { // the emoji decodes
 				s.frame(func(gtx layout.Context) { v.Layout(gtx) })
 				time.Sleep(10 * time.Millisecond)
 			}
-			title, btn := v.GoneTitle()
+			title, btn := cvTitle(v)
 			if title != c.title || btn != c.button {
 				t.Errorf("%s: title %q button %q, want %q %q", c.name, title, btn, c.title, c.button)
 			}
@@ -54,7 +54,7 @@ func TestRenderGoneStates(t *testing.T) {
 			if c.button == "" {
 				continue
 			}
-			v.GoneRequestAccess()
+			cvRequest(v)
 			s.frame(func(gtx layout.Context) { v.Layout(gtx) })
 			settle(t, s, v, "the access request", func() bool { return len(fs.GoneAccessRequests()) > 0 })
 			got := fs.GoneAccessRequests()[0]
@@ -62,21 +62,21 @@ func TestRenderGoneStates(t *testing.T) {
 				t.Errorf("%s: files.requestPermission %v", c.name, got)
 			}
 			s.frame(func(gtx layout.Context) { v.Layout(gtx) })
-			if _, btn := v.GoneTitle(); btn != "Request Sent" {
+			if _, btn := cvTitle(v); btn != "Request Sent" {
 				t.Errorf("%s: button after the click %q, want Request Sent", c.name, btn)
 			}
 		}
 		// the deleted title is picked once for a load's answer, not per frame
-		pickDeleted = func() int { return 4 }
+		cvPick(4)
 		v := New(h, "F0CVGONE01", Tab, Actions{})
 		s := newShooter(t, image.Pt(900, 640))
-		settle(t, s, v, "the deleted state", func() bool { _, gone := v.Gone(); return gone })
+		settle(t, s, v, "the deleted state", func() bool { return cvGone(v) })
 		s.frame(func(gtx layout.Context) { v.Layout(gtx) })
-		pickDeleted = func() int { return 1 }
+		cvPick(1)
 		for i := 0; i < 5; i++ {
 			s.frame(func(gtx layout.Context) { v.Layout(gtx) })
 		}
-		if title, _ := v.GoneTitle(); title != "This canvas was retired" {
+		if title, _ := cvTitle(v); title != "This canvas was retired" {
 			t.Errorf("the deleted title changed between frames: %q", title)
 		}
 	}

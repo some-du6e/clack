@@ -139,14 +139,13 @@ func TestDeletedTabLabels(t *testing.T) {
 		{dtNotFound, "hidden", "Hidden file", false},
 		{dtHidden, "hidden", "Private canvas", true},
 	} {
-		var got *core.FileGone
 		for _, tb := range e.a.data.tabSrc[ch].tabs {
-			if tb.ID == c.id {
-				got = tb.Gone
+			if tb.ID != c.id {
+				continue
 			}
-		}
-		if got == nil || got.Status != c.status || got.Name != c.name || got.Gated != c.gated {
-			t.Errorf("tab %s: Gone %+v, want status %q name %q gated %v", c.id, got, c.status, c.name, c.gated)
+			if st, name, gated, ok := dtTabGone(tb); !ok || st != c.status || name != c.name || gated != c.gated {
+				t.Errorf("tab %s: gone %v %q %q gated %v, want %q %q %v", c.id, ok, st, name, gated, c.status, c.name, c.gated)
+			}
 		}
 	}
 }
@@ -167,16 +166,11 @@ func TestDeletedTabOpensInPlace(t *testing.T) {
 		if !ok || v.ID() != id {
 			return false
 		}
-		_, gone := v.Gone()
-		return gone
+		return dtCanvasGone(v)
 	}
 	listGone := func() bool {
 		v, ok := e.a.listTabView(ch).(*listview.View)
-		if !ok {
-			return false
-		}
-		_, gone := v.Gone()
-		return gone
+		return ok && dtListGone(v)
 	}
 	toMessages := func() {
 		e.a.chTab[ch] = 0
@@ -191,7 +185,7 @@ func TestDeletedTabOpensInPlace(t *testing.T) {
 	}
 	v := e.a.canvasTabView(ch).(*canvasview.View)
 	e.settle(100 * time.Millisecond)
-	title, _ := v.GoneTitle()
+	title, _ := dtCanvasTitle(v)
 	if !slices.ContainsFunc(dtDeletedTitles, func(s string) bool { return s == title }) {
 		t.Errorf("deleted canvas title %q, want one of QuipDeletedState's six", title)
 	}
@@ -201,8 +195,8 @@ func TestDeletedTabOpensInPlace(t *testing.T) {
 	e.until("the deleted list in its tab", 10*time.Second, listGone)
 	e.settle(300 * time.Millisecond)
 	lv := e.a.listTabView(ch).(*listview.View)
-	e.until("files.canUndelete's answer", 5*time.Second, func() bool { _, _, r := lv.GoneText(); return r })
-	if ti, sub, _ := lv.GoneText(); ti != "This list was deleted." || sub != "Was that a mistake? Restore this list." {
+	e.until("files.canUndelete's answer", 5*time.Second, func() bool { _, _, r := dtListText(lv); return r })
+	if ti, sub, _ := dtListText(lv); ti != "This list was deleted." || sub != "Was that a mistake? Restore this list." {
 		t.Errorf("deleted list %q / %q", ti, sub)
 	}
 	if calls := fs.CanUndeleteCalls(); len(calls) == 0 || calls[0].Get("file_id") != dtFDelList {
@@ -212,7 +206,7 @@ func TestDeletedTabOpensInPlace(t *testing.T) {
 	toMessages()
 	e.a.OpenChannelTabLink("https://fakeclub.slack.com/archives/" + ch + "/tabs/" + dtNotFound)
 	e.until("the not-found canvas from its link", 10*time.Second, func() bool { return canvasGone(dtFNotFound) })
-	if title, _ := e.a.canvasTabView(ch).(*canvasview.View).GoneTitle(); title != "This canvas was not found." {
+	if title, _ := dtCanvasTitle(e.a.canvasTabView(ch).(*canvasview.View)); title != "This canvas was not found." {
 		t.Errorf("not-found canvas title %q", title)
 	}
 	// the not-visible canvas: its Request Access button
@@ -220,7 +214,7 @@ func TestDeletedTabOpensInPlace(t *testing.T) {
 	e.a.OpenChannelTabLink("https://fakeclub.slack.com/archives/" + ch + "/tabs/" + dtHidden)
 	e.until("the not-visible canvas", 10*time.Second, func() bool { return canvasGone(dtFHidden) })
 	e.settle(100 * time.Millisecond)
-	if title, btn := e.a.canvasTabView(ch).(*canvasview.View).GoneTitle(); title != "You don’t have access to this canvas." || btn != "Request Access" {
+	if title, btn := dtCanvasTitle(e.a.canvasTabView(ch).(*canvasview.View)); title != "You don’t have access to this canvas." || btn != "Request Access" {
 		t.Errorf("not-visible canvas %q, button %q", title, btn)
 	}
 	mu.Lock()
@@ -244,7 +238,7 @@ var dtDeletedTitles = []string{"This canvas has gone fishing", "This canvas has 
 func TestChannelTabPeek(t *testing.T) {
 	e, _, ch := dtEnv(t)
 	calls := e.recordCalls("files.open")
-	key := barTabPeekKey(ch, dtLive)
+	key := dtTabPeekKey(ch, dtLive)
 	p, x0, x1 := tbSpan(t, e, ch, "tab:"+dtLive)
 	away := image.Pt(p.X, p.Y+200)
 	e.move(f32.Pt(float32(away.X), float32(away.Y)))
@@ -281,8 +275,8 @@ func TestChannelTabPeek(t *testing.T) {
 	}
 	// the hover look while the card shows
 	var looks []string
-	tabLookHook = func(k string) { looks = append(looks, k) }
-	t.Cleanup(func() { tabLookHook = nil })
+	dtLookHook(func(k string) { looks = append(looks, k) })
+	t.Cleanup(func() { dtLookHook(nil) })
 	e.move(f32.Pt(float32(r.Min.X+20), float32(r.Min.Y+20)))
 	e.settle(50 * time.Millisecond)
 	if !e.a.tabPeekOpen(key) {
@@ -293,7 +287,7 @@ func TestChannelTabPeek(t *testing.T) {
 	if !slices.Contains(looks, "tab:"+dtLive) {
 		t.Errorf("with the pointer on the card the tab drew no hover look (looks %v)", looks)
 	}
-	tabLookHook = nil
+	dtLookHook(nil)
 	// a press on the label closes it and selects the tab
 	e.click(p)
 	e.settle(100 * time.Millisecond)
@@ -325,22 +319,11 @@ func TestChannelTabPeek(t *testing.T) {
 	e.move(f32.Pt(float32(away.X), float32(away.Y)))
 	e.settle(50 * time.Millisecond)
 	e.move(f32.Pt(float32(dp.X), float32(dp.Y)))
-	dkey := barTabPeekKey(ch, dtDelCanvas)
+	dkey := dtTabPeekKey(ch, dtDelCanvas)
 	e.until("the deleted canvas's peek", 3*time.Second, func() bool { return e.a.tabPeekOpen(dkey) })
-	b, ok := e.a.tpeeks.m[dkey].content.(*barTabPeek)
-	if !ok {
-		t.Fatalf("peek content %T", e.a.tpeeks.m[dkey].content)
-	}
-	cp, ok := b.sp.body.(*canvasTabPeek)
-	if !ok {
-		t.Fatalf("peek body %T, want CanvasTabPeek", b.sp.body)
-	}
 	e.until("the peek's deleted state", 5*time.Second, func() bool {
-		if cp.v == nil {
-			return false
-		}
-		_, gone := cp.v.Gone()
-		return gone
+		v := dtTabPeekCanvas(e, dkey)
+		return v != nil && dtCanvasGone(v)
 	})
 	// leaving past the safe triangle closes it
 	e.move(f32.Pt(float32(dp.X), float32(dp.Y-60)))
@@ -369,7 +352,7 @@ func TestDeletedTabLive(t *testing.T) {
 		tb, _ := dtTab(t, e, ch, dtLive)
 		return tb.icon == "trash" && tb.label == "Deleted file"
 	})
-	e.until("the canvas's deleted state", 10*time.Second, func() bool { _, gone := cv().Gone(); return gone })
+	e.until("the canvas's deleted state", 10*time.Second, func() bool { return dtCanvasGone(cv()) })
 	fs.PushFileUndeleted(fakeslack.CanvasChannel)
 	e.until("the canvas again", 10*time.Second, func() bool { v := cv(); return v.Doc() != nil })
 	e.until("the tab again", 15*time.Second, func() bool {
@@ -394,11 +377,7 @@ func TestDeletedTabRelatives(t *testing.T) {
 		Link: "https://fakeclub.slack.com/docs/" + fakeslack.TeamID + "/" + dtFDelCanvas})
 	e.until("the bookmarked canvas's view", 10*time.Second, func() bool {
 		v, ok := e.a.secondary.view.(*canvasview.View)
-		if !ok || v.ID() != dtFDelCanvas {
-			return false
-		}
-		_, gone := v.Gone()
-		return gone
+		return ok && v.ID() == dtFDelCanvas && dtCanvasGone(v)
 	})
 	mu.Lock()
 	if len(opened) > 0 {
@@ -412,7 +391,7 @@ func TestDeletedTabRelatives(t *testing.T) {
 	e.click(p)
 	_, li := dtTab(t, e, ch, dtLiveList)
 	e.until("the list tab", 10*time.Second, func() bool { return e.a.chTab[ch] == li })
-	if !e.a.leaveFileTab(fakeslack.ListTodos) {
+	if !dtLeaveFileTab(e, fakeslack.ListTodos) {
 		t.Fatal("leaveFileTab didn't take the list's own tab")
 	}
 	if e.a.chTab[ch] != 0 {
@@ -421,7 +400,7 @@ func TestDeletedTabRelatives(t *testing.T) {
 	e.until("conversations.removeTab", 5*time.Second, func() bool {
 		return slices.Contains(calls.of("conversations.removeTab", "", "id", "channel_id"), "id="+dtLiveList+" channel_id="+ch)
 	})
-	if e.a.leaveFileTab(fakeslack.ListTodos) {
+	if dtLeaveFileTab(e, fakeslack.ListTodos) {
 		t.Error("leaveFileTab took a tab with Messages selected")
 	}
 }
