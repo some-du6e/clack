@@ -227,7 +227,7 @@ func (p *avPrefs) write(prefs map[string]any) {
 	if a == nil {
 		return
 	}
-	do(p.h, "", func(ctx context.Context) error { return avWritePrefs(ctx, a, prefs) })
+	doLogged(p.h, "users.prefs.set (working hours)", func(ctx context.Context) error { return avWritePrefs(ctx, a, prefs) })
 	p.h.Invalidate()
 }
 
@@ -237,7 +237,7 @@ func (p *avPrefs) setPref(name string, value any) {
 	if a == nil || !p.loaded {
 		return
 	}
-	do(p.h, "", func(ctx context.Context) error { return a.SetPref(ctx, name, value) })
+	doLogged(p.h, "users.prefs.set", func(ctx context.Context) error { return a.SetPref(ctx, name, value) })
 	p.h.Invalidate()
 }
 

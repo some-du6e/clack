@@ -617,7 +617,7 @@ func (f *flagDialog) submitted(gtx layout.Context, th *theme.Theme, cl *Colors) 
 	if f.mute.Clicked(gtx) && !f.muting {
 		f.muting = true
 		ch := f.conv.ID
-		actDo(f.h, "", func(ctx context.Context, a *core.App) error { return cxMute(ctx, f.h, ch, true) })
+		doLogged(f.h, "mute", func(ctx context.Context) error { return cxMute(ctx, f.h, ch, true) })
 	}
 	if f.leave.Clicked(gtx) && !f.leaving {
 		f.leaving = true

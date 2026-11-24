@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 )
 
 // Files dropped on a pane from the OS (Gio patch 11's FileDropEvent; the
@@ -43,7 +44,8 @@ func (c *Composer) SharePaths(paths []string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		if _, err := c.api.upload(ctx, core.UploadOpts{Channel: ch, ThreadTS: ts, Files: files}); err != nil {
-			c.att.toast("Couldn't upload: " + err.Error())
+			log.Printf("composer: upload of dropped files: %v", err)
+			c.att.toast(i18n.T("file-upload", "Your file couldn’t be uploaded")) // FileUploadErrorDialog's title
 		}
 	}()
 }

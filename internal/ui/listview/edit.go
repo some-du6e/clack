@@ -77,7 +77,7 @@ func canEdit(d *core.ListDoc, c *lists.Column, f *lists.Field) error {
 func (k *ctl) refuse(err error) {
 	var u lists.Unsupported
 	if errors.As(err, &u) {
-		k.h.Toast("This field can't be edited in Clack yet (" + u.Error() + ")")
+		k.h.Toast("This field can't be edited in Clack yet (it has " + u.What + ")")
 	}
 }
 

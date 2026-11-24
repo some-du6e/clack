@@ -304,7 +304,7 @@ func (b *backend) start(a *App) {
 		t0 := time.Now()
 		if err := b.core.Boot(b.ctx); err != nil {
 			log.Printf("ui: boot: %v", err)
-			a.Post(func() { a.Toast("We had some trouble connecting.") }) // Slack's connection trouble text; the error is logged above
+			a.Post(func() { a.Toast("We had some trouble connecting. Please try again.") }) // Slack's (boot-shared); the error is logged above
 		}
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))

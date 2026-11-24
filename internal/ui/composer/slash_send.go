@@ -435,8 +435,9 @@ func (c *Composer) reminderModal(ch, ts string) (*popups.Modal, *TextyInput) {
 		go func() {
 			if err := api.addReminder(context.Background(), desc, due); err != nil {
 				// addReminder reverts its optimistic add and logs "Failed to add
-				// reminder"; only a to-do's failure toasts (LaterTodoErrorToast)
-				log.Printf("composer: saved.add reminder: %v", err)
+				// reminder", the Later row's going its sign; Clack adds no row
+				// first, so a toast says it instead
+				c.later(func() { popups.FailedToast(c.h, "composer: saved.add reminder", err) })
 			}
 		}()
 	})

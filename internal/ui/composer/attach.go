@@ -526,6 +526,29 @@ func attCheckAdd(count int, total, size int64) error {
 	return nil
 }
 
+// The paste's own sentences (its errors carry them too).
+const (
+	txtNoClipImage = "There's no image on the clipboard"
+	txtClipTools   = "Pasting images needs xclip (X11) or wl-clipboard (Wayland)"
+	txtClipNone    = "Pasting images isn't supported on this system yet"
+	txtClipBusy    = "The clipboard is busy. Try pasting again."
+)
+
+// attPasteText is a failed image paste's toast: the paste's own sentence
+// for its known failures, else a plain one (the error logged).
+func attPasteText(err error) string {
+	for _, k := range []struct {
+		err  error
+		text string
+	}{{errAttNoClipImage, txtNoClipImage}, {errAttClipTools, txtClipTools}, {errAttClipNone, txtClipNone}, {errAttClipBusy, txtClipBusy}} {
+		if errors.Is(err, k.err) {
+			return k.text
+		}
+	}
+	log.Printf("composer: paste: %v", err)
+	return "Couldn't paste the image"
+}
+
 func attRejectText(name string, err error) string {
 	switch {
 	case errors.Is(err, errAttTooBig):
@@ -1119,13 +1142,13 @@ func (a *attachments) addReaders(rcs []io.ReadCloser) {
 // ---- clipboard images ----
 
 var (
-	errAttNoClipImage = errors.New("There's no image on the clipboard")
-	errAttClipTools   = errors.New("Pasting images needs xclip (X11) or wl-clipboard (Wayland)")
-	errAttClipNone    = errors.New("Pasting images isn't supported on this system yet")
+	errAttNoClipImage = errors.New(txtNoClipImage)
+	errAttClipTools   = errors.New(txtClipTools)
+	errAttClipNone    = errors.New(txtClipNone)
 	// errAttClipBusy: another app kept the clipboard open (Windows:
 	// winclip.ErrBusy), or the main thread was too busy to read the
 	// pasteboard (macOS)
-	errAttClipBusy = errors.New("The clipboard is busy. Try pasting again.")
+	errAttClipBusy = errors.New(txtClipBusy)
 )
 
 // PasteClipboardImage probes the system clipboard for an image (async) and
@@ -1165,7 +1188,7 @@ func (a *attachments) pasteImage(explicit bool) *filePaste {
 			case errors.Is(err, errAttTooBig):
 				a.toast(attRejectText(attPastedName(mime), err))
 			case explicit:
-				a.toast(err.Error())
+				a.toast(attPasteText(err))
 			}
 			return
 		}
@@ -1202,7 +1225,7 @@ func (a *attachments) pasteFromSnap(s *pasteSnap) *filePaste {
 				a.toast(attRejectText(attPastedName(mime), err))
 			case errors.Is(err, errAttClipBusy):
 				// the paste read nothing: another app kept the clipboard open
-				a.toast(err.Error())
+				a.toast(attPasteText(err))
 			}
 			return
 		}

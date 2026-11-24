@@ -504,9 +504,14 @@ func (a *App) joinPreview(c *convo, d core.TempJoin) {
 		a.Post(func() {
 			c.jp.joining = false
 			if err != nil {
-				// ChannelPreviewJoinPane's joinAndFocusInput catches the join and
-				// returns: nothing on screen (build 83aff18a boot-shared)
+				// ChannelPreviewJoinPane's joinAndFocusInput catches the join
+				// and returns; joinConversationApi has already shown
+				// ChannelMemberLimitToast for a full channel, and dropped a
+				// channel that's gone (core.joinRefused)
 				log.Printf("ui: conversations.join %s: %v", logtag.ID(ch), err)
+				if t := core.JoinFailedText(err); t != "" {
+					a.Toast(t)
+				}
 				return
 			}
 			if ci := a.convOf(ch); ci != nil {

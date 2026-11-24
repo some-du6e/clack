@@ -2831,6 +2831,17 @@ func (s *listState) openEdit(h Host, m core.Message) {
 	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
 		return commitEdit(ctx, app, ch, ts, text, blocks, fileIDs)
 	}
+	// saveMessageEdit's catch: the edit opens again (startEdit) with the
+	// user's edit in it (hasUnsavedChanges), the message as it was
+	r.edit.EditFailed = func(d *composer.Doc) {
+		if _, ok := s.rows[m.TS]; !ok {
+			return
+		}
+		s.openEdit(h, s.rows[m.TS].src)
+		if s.edit != nil {
+			s.edit.SetEditDoc(d)
+		}
+	}
 	s.scrollTo(m.TS)
 	h.Invalidate()
 }

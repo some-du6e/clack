@@ -128,6 +128,9 @@ type Composer struct {
 	// goroutine) and telling done the outcome on another goroutine; the
 	// composer prefers it.
 	SaveEditThen func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error))
+	// EditFailed, when set, opens the edit again with what was typed when
+	// its save fails (saveMessageEdit's restore; the list's openEdit)
+	EditFailed func(d *Doc)
 
 	// editFiles0 is an edit's initialFileIds (the message's files)
 	editFiles0 []string
@@ -347,6 +350,31 @@ func (c *Composer) stopTimers() {
 
 // NewEdit returns an inline editor for m (one of the viewer's messages).
 // onDone runs after Save or Cancel; the caller then drops the composer.
+// SetEditDoc puts d into an edit composer (an edit that failed, opened
+// again with what was typed: saveMessageEdit's restore).
+func (c *Composer) SetEditDoc(d *Doc) {
+	if d == nil {
+		return
+	}
+	c.ed.SetDoc(d)
+	c.h.Invalidate()
+}
+
+// editFailed is saveMessageEdit's catch for an edit composer: the edit
+// opens again with what was typed (EditFailed, unless the message is
+// gone), then EditMessageErrorDialog.
+func (c *Composer) editFailed(d *Doc, err error) {
+	if d != nil {
+		d = d.Clone()
+	}
+	c.later(func() {
+		if f := c.EditFailed; f != nil && popups.APICode(err) != "message_not_found" {
+			f(d)
+		}
+		popups.EditMessageError(c.h, err)
+	})
+}
+
 func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 	c := &Composer{h: h, api: coreAPI{h.Core()}, ch: m.Channel, ts: m.ThreadTS, onDone: onDone}
 	mm := m
@@ -1563,7 +1591,7 @@ func (c *Composer) submit() {
 			// plugin click after Enter comes after them
 			then(taut.UserAction(context.Background()), m.Channel, m.TS, text, blocks, nil, func(err error) {
 				if err != nil {
-					c.later(func() { popups.EditMessageError(c.h, err) }) // saveMessageEdit: EditMessageErrorDialog
+					c.editFailed(d, err)
 				}
 			})
 			c.finishEdit()
@@ -1582,7 +1610,7 @@ func (c *Composer) submit() {
 				err = api.edit(ctx, m.Channel, m.TS, text, blocks)
 			}
 			if err != nil {
-				c.later(func() { popups.EditMessageError(c.h, err) }) // saveMessageEdit: EditMessageErrorDialog
+				c.editFailed(d, err)
 			}
 		}()
 		c.finishEdit()
@@ -2223,7 +2251,7 @@ func (c *Composer) saveEditWithFiles(doc *Doc) {
 			}
 		}
 		if err != nil {
-			c.later(func() { popups.EditMessageError(c.h, err) }) // saveMessageEdit: EditMessageErrorDialog
+			c.editFailed(doc, err)
 		}
 	}()
 	c.finishEdit()

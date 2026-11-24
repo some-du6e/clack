@@ -61,8 +61,23 @@ func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMess
 		}
 	}
 	err := a.C.Update(ctx, ch, ts, text, blocks)
+	// commitMessageEdit: message_not_found is tried again, up to 10 times
+	// 175ms apart (a message just sent may not be there yet)
+	for i := 0; i < 10 && isCode(err, "message_not_found") && ctx.Err() == nil; i++ {
+		select {
+		case <-ctx.Done():
+		case <-time.After(175 * time.Millisecond):
+			err = a.C.Update(ctx, ch, ts, text, blocks)
+		}
+	}
 	if err == nil {
 		a.ownMutation(ch, false) // history_changed.go
+	}
+	if isCode(err, "message_not_found") && had {
+		// saveMessageEdit's catch: the message is gone (removeMessage)
+		a.S.Remove(ch, ts)
+		a.emit(Event{Type: "delete", Channel: ch, TS: ts})
+		return err
 	}
 	if err != nil && had {
 		if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) {
@@ -676,6 +691,7 @@ func (a *App) join(ctx context.Context, ch string, exp int64) (Conv, error) {
 		Channel slack.Conversation `json:"channel"`
 	}
 	if err := a.C.Call(ctx, "conversations.join", joinParams(ch, exp), &res); err != nil {
+		a.joinRefused(ch, err)
 		return Conv{}, err
 	}
 	a.setTemp(ch, exp)
@@ -687,6 +703,35 @@ func (a *App) join(ctx context.Context, ch string, exp int64) (Conv, error) {
 	v := a.conv(&c)
 	a.emit(Event{Type: "conv", Channel: ch, Conv: &v})
 	return v, nil
+}
+
+// joinRefused is joinConversationApi's catch for what core keeps: a
+// channel Slack says doesn't exist for the viewer (channel_not_found,
+// method_not_supported_for_channel_type) that they aren't in goes from
+// the store, its history and the sidebar (dropAllCopies, then the
+// channels' remove), so a stale channel stops offering a Join that can't
+// work. ChannelMemberLimitToast is the UI's (JoinFailedText).
+func (a *App) joinRefused(ch string, err error) {
+	if !isCode(err, "channel_not_found", "method_not_supported_for_channel_type") {
+		return
+	}
+	if c, ok := a.S.Conv(ch); !ok || c.IsMember {
+		return
+	}
+	a.S.DropWindows(ch)
+	if a.S.DropConv(ch) {
+		a.emit(Event{Type: "conv_removed", Channel: ch})
+	}
+}
+
+// JoinFailedText is what a refused join shows (joinConversationApi's
+// catch): ChannelMemberLimitToast's text for too_many_members, "" for
+// everything else, which Slack's join callers leave silent.
+func JoinFailedText(err error) string {
+	if isCode(err, "too_many_members") {
+		return "You can’t join this channel. Channel membership limit reached."
+	}
+	return ""
 }
 
 // Leave leaves a channel (or closes a DM) and removes it from the sidebar.

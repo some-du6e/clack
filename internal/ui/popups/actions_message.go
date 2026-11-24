@@ -539,7 +539,15 @@ func confirmDelete(h Host, m core.Message, del func(ctx context.Context, ch, ts 
 				a.Interactive().DismissEphemeral(ch, ts)
 				return
 			}
-			actDo(h, "", func(ctx context.Context, _ *core.App) error { return deleteMessage(ctx, h, del, ch, ts) })
+			if h.Core() == nil {
+				h.Toast("Not connected yet")
+				return
+			}
+			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, deleteMessage(ctx, h, del, ch, ts) }, func(_ struct{}, err error) {
+				if err != nil {
+					DeleteMessageError(h, err) // BaseDeleteMessageErrorDialog
+				}
+			})
 		}).OldDialog() // BaseDeleteMessageDialog: DeprecatedBaseDialog, focusOnPrimaryButton
 }
 

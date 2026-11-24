@@ -35,7 +35,7 @@ func (a *App) UnsendLast(ch, threadTS string, put func(*composer.Doc)) {
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 					defer cancel()
 					if err := svc.Delete(ctx, m.Channel, m.TS); err != nil {
-						a.Post(func() { popups.FailedToast(a, "ui: unsend (chat.delete)", err) })
+						a.Post(func() { popups.DeleteMessageError(a, err) }) // animateAndDeleteMessageApi's dialog
 					}
 				}()
 			}

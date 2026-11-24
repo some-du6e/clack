@@ -3,6 +3,7 @@ package popups
 import (
 	"context"
 	"image"
+	"log"
 	"sync"
 	"time"
 
@@ -234,6 +235,17 @@ func runFor[T any](h Host, d time.Duration, work func(ctx context.Context) (T, e
 			}
 		})
 	}()
+}
+
+// doLogged runs a core write whose failure Slack only logs (a pref saved
+// through setUserPrefByApi, a mute through
+// setChannelNotificationOverrideAndCallApi): nothing on screen.
+func doLogged(h Host, what string, work func(ctx context.Context) error) {
+	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, work(ctx) }, func(_ struct{}, err error) {
+		if err != nil {
+			log.Printf("popups: %s: %v", what, err)
+		}
+	})
 }
 
 // do runs a core write and toasts errors (and okMsg on success, if set).

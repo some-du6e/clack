@@ -413,19 +413,11 @@ func (a *App) leaveTempsItem(sec *sbSection) *MenuItem {
 	}
 	ids := append([]string(nil), sec.All...)
 	return mi(MenuItem{Key: "temp_channels_menu_leave_all", Label: "Leave all temporary channels", Danger: true, Do: func() {
-		failed := ""
-		a.sectionRun(func(err error) {
-			// maybeLeaveChannel's leaveAndHandleErrors for the channel that
-			// failed (LeaveChannelError; nothing for a failure with no code)
-			name := ""
-			if cv := a.model().conv(failed); cv != nil {
-				name = cv.Name
-			}
-			popups.LeaveFailed(a, failed, name, err, func(ctx context.Context) error { return a.Core().Leave(ctx, failed) })
-		}, func(ctx context.Context, c *core.App) error {
+		// getLeaveAllTemporaryChannelsMenuItem fires conversations.bulkLeave
+		// and catches nothing: a failure is only logged
+		a.sectionRun(sectionLogged("leave temporary channels"), func(ctx context.Context, c *core.App) error {
 			for _, id := range ids {
 				if err := c.Leave(ctx, id); err != nil {
-					failed = id
 					return err
 				}
 			}

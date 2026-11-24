@@ -930,8 +930,12 @@ func (d *ChannelDetails) update(gtx C) {
 			d.joinPending = false
 			if err != nil {
 				// Slack's details join (the related channels' menu, the preview's
-				// join pane) catches the join: nothing on screen
+				// join pane) catches the join; joinConversationApi's
+				// ChannelMemberLimitToast shows for a full channel
 				log.Printf("views: conversations.join: %v", err)
+				if t := core.JoinFailedText(err); t != "" {
+					d.h.Toast(t)
+				}
 			} else {
 				d.info.mutate(func(v *core.ChannelDetails) { v.IsMember = true; v.Conv.NumMembers++ })
 				d.h.Toast("You joined #" + name)

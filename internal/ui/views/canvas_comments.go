@@ -40,6 +40,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log"
 	"time"
 
 	"gioui.org/font"
@@ -408,7 +409,8 @@ func (v *CanvasComments) confirmResolveAll() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := c.ResolveAllComments(ctx, file); err != nil {
-				v.notes.add(v.h, err.Error())
+				log.Printf("views: resolve all comments: %v", err)
+				v.notes.add(v.h, "Something went wrong. Please try again.")
 				return
 			}
 			v.notes.mu.Lock()

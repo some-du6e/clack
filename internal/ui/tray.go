@@ -308,7 +308,6 @@ func (a *App) setLaunchOnLogin(on bool) error {
 func (a *App) setLaunchFromTray(on bool) {
 	if err := a.setLaunchOnLogin(on); err != nil {
 		log.Printf("ui: launch on login: %v", err)
-		log.Printf("ui: launch on login: %v", err)
 		a.Toast("Couldn’t change Launch app on login") // Clack's own: Slack's setLoginItemSettings has no failure
 	}
 	a.updateTrayMenu(false)

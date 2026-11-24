@@ -104,3 +104,27 @@ func editWindow(mins int) string {
 	}
 	return unit(mins, "minute", "minutes")
 }
+
+// DeleteMessageError is animateAndDeleteMessageApi's catch for chat.delete
+// (boot-shared Wsjb): message_not_found is logged (the message is gone
+// anyway); anything else opens BaseDeleteMessageErrorDialog, "Message
+// deletion failed", with "Sorry, you do not have permission to delete
+// this message" for cant_delete_message, else "Sorry, something went
+// wrong with deleting your message." (the message I18n; OK only).
+func DeleteMessageError(h Host, err error) {
+	code := APICode(err)
+	log.Printf("popups: chat.delete: %v", err)
+	if code == "message_not_found" {
+		return
+	}
+	body := nsMessage.T("Sorry, something went wrong with deleting your message.")
+	if code == "cant_delete_message" {
+		body = nsMessage.T("Sorry, you do not have permission to delete this message")
+	}
+	th := h.Theme()
+	h.ShowOverlay(NewModal(h, ModalOpts{Title: nsMessage.T("Message deletion failed"), EnterSubmits: true,
+		Body: func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg, body, 0)
+		},
+		Buttons: []*ModalButton{{Label: nsMessage.T("OK"), Kind: BtnPrimary, Do: func() bool { return true }}}}))
+}
