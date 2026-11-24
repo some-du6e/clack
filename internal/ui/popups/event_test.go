@@ -196,11 +196,12 @@ func TestEventWriteGuard(t *testing.T) {
 }
 
 // A card drawn without its message (no channel or ts: a surface that
-// didn't pass them) sends nothing: RSVP, Copy and Share event act on it.
+// didn't pass them) sends nothing: RSVP, Copy and Share event act on it,
+// Share event reading the message (conversations.history) for its dialog.
 func TestEventIdentity(t *testing.T) {
 	h, _, rec := emBooted(t)
 	ev := &richtext.Event{ID: "E11", AppType: "gcal"}
-	shown := h.shownCount()
+	shown := h.overlaysShown()
 	for _, id := range [][2]string{{"", "11.0"}, {"C0EV", ""}} {
 		for _, act := range []string{"rsvp:accepted", "copy", "share"} {
 			EventAction(h, act, ev, id[0], id[1], image.Rectangle{})
@@ -208,10 +209,39 @@ func TestEventIdentity(t *testing.T) {
 	}
 	EventAction(h, "copy", ev, "C0EV", "11.0", image.Rectangle{}) // then a whole one
 	rec.wait(t, "calendar.event.copy", map[string]string{"channel": "C0EV", "message_ts": "11.0"}, 10*time.Second)
+	maUntil(t, "the actions' calls settled", asyncIdle)
 	if n, m := callCount(rec, "calendar.event.rsvp"), callCount(rec, "calendar.event.copy"); n != 0 || m != 1 {
 		t.Errorf("%d rsvp and %d copy calls, want 0 and 1 (none without the message)", n, m)
 	}
-	if h.shownCount() != shown {
+	rec.mu.Lock()
+	for _, f := range rec.calls["conversations.history"] {
+		if f.Get("channel") == "C0EV" || f.Get("latest") == "11.0" {
+			t.Errorf("Share event without the message read history (channel %q, latest %q)", f.Get("channel"), f.Get("latest"))
+		}
+	}
+	rec.mu.Unlock()
+	if h.overlaysShown() != shown {
 		t.Errorf("Share event without the message opened something")
 	}
+}
+
+// asyncIdle reports no popups work in flight (run's) and none queued.
+func asyncIdle() bool {
+	asyncMu.Lock()
+	defer asyncMu.Unlock()
+	return inflight == 0 && len(asyncQueue) == 0
+}
+
+// overlaysShown counts the overlays shown but run's async pump, which the
+// first call in flight shows (invisible).
+func (h *tzHost) overlaysShown() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, o := range h.shown {
+		if _, ok := o.(*pump); !ok {
+			n++
+		}
+	}
+	return n
 }

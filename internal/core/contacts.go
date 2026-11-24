@@ -57,6 +57,9 @@ const SharedPromptLink = "shared_prompt_link"
 // DM. It returns the DM and the message's ts, whose thread the caller
 // opens.
 func (a *App) SendSharedPrompt(ctx context.Context, agentUserID, prompt string, rich json.RawMessage) (ch, ts string, err error) {
+	// a click on Send: sent again after a failure (the same prompt_rich_text
+	// posts the same body), it skips the client's backoff, as Slack sends it
+	ctx = slack.NoBackoff(ctx)
 	ch = a.openIMWith(agentUserID)
 	if ch == "" {
 		cv, err := a.OpenDM(ctx, agentUserID)
