@@ -18,7 +18,8 @@ import (
 // and grows it a page at a time as it scrolls (requestReplies, core
 // thread_pages.go); nothing ever reads the whole thread. The reducer is
 // client-boot 6Yed (addTimestamps, removeTimestamp, resetReachedEnd,
-// truncateChannelHistory, removeAllTimestamps, removeCachedReplyTimestamps)
+// truncateChannelHistory, removeAllTimestamps; removeCachedReplyTimestamps
+// is the channel history's, not a thread's: store/evict.go)
 // over om2Z's slices (createSlice, intersects, union, insert, remove); the
 // selector is dTxY (getTimestampsByChannelId tp, getPotentiallyOutdatedTimestamps r7).
 
@@ -488,27 +489,6 @@ func (s *Store) ResetThreadReachedEnd(ch, ts string) {
 	}
 }
 
-// removeCachedReplyLocked is removeCachedReplyTimestamps for the thread
-// key k: evicted timestamps leave its slices (which keep their ranges).
-func (s *Store) removeCachedReplyLocked(k string, gone map[string]bool) {
-	a := s.threadHist[k]
-	if a == nil {
-		return
-	}
-	for i := range a.slices {
-		e := &a.slices[i]
-		kept := e.tss[:0:0]
-		for _, x := range e.tss {
-			if !gone[x] {
-				kept = append(kept, x)
-			}
-		}
-		if len(kept) != len(e.tss) {
-			e.tss = kept
-		}
-	}
-}
-
 // ThreadSlice is what the thread pane reads of a thread's history: the
 // slice its start ts falls in (getPotentiallyOutdatedTimestamps), its
 // range and timestamps, and whether it is the first slice of a history
@@ -601,8 +581,8 @@ func (s *Store) ThreadHeld(ch, ts string) bool {
 }
 
 // ThreadSliceMsgs is the messages of the slice t of thread ch/ts, in its
-// order: the copies the store holds (a timestamp it no longer holds is
-// left out).
+// order: the copies the store holds, the thread's cache's else one fetched
+// by id (a timestamp it holds neither of is left out: ThreadSliceMissing).
 func (s *Store) ThreadSliceMsgs(ch, ts string, t ThreadSlice) []slack.Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -616,6 +596,27 @@ func (s *Store) ThreadSliceMsgs(ch, ts string, t ThreadSlice) []slack.Message {
 		}
 		if j < len(th) && th[j].TS == want {
 			out = append(out, th[j])
+		} else if m := s.fetched[ch+"/"+want]; m != nil {
+			out = append(out, *m)
+		}
+	}
+	return out
+}
+
+// ThreadSliceMissing is the timestamps of the slice t of thread ch/ts the
+// store holds no copy of (evicted since the slice was read): the ones
+// Slack's getMessageByTimestamp fetches by id as the pane draws them.
+func (s *Store) ThreadSliceMissing(ch, ts string, t ThreadSlice) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	held := map[string]bool{}
+	for i := range s.threads[ch+"/"+ts] {
+		held[s.threads[ch+"/"+ts][i].TS] = true
+	}
+	var out []string
+	for _, x := range t.TSs {
+		if !held[x] && s.fetched[ch+"/"+x] == nil && s.findRefLocked(ch, x, "") == nil {
+			out = append(out, x)
 		}
 	}
 	return out

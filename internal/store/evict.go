@@ -259,8 +259,16 @@ func (s *Store) EvictMessagesStats(in EvictInput) ([]Evicted, EvictStats) {
 				s.threadHistDropLocked(key) // thread_slices.go
 				out = append(out, Evicted{Channel: ch, Thread: thread, Whole: true})
 			} else {
+				// the thread's history keeps every timestamp: Slack's
+				// removeCachedReplyTimestamps is the channel history's (a
+				// hidden reply's, by its channel), never a thread's, and a
+				// reply the pane draws that the store no longer holds is
+				// fetched by id (core ThreadAt, getMessageByTimestamp).
+				// Taken out of the slices, an evicted thread kept its
+				// ephemerals only, and a pane opened on it drew those alone
+				// (Karim, 2026-11-24: "i clicked the thread nad its kinda
+				// wierd??")
 				s.threads[key] = keep
-				s.removeCachedReplyLocked(key, ts) // removeCachedReplyTimestamps (thread_slices.go)
 				out = append(out, Evicted{Channel: ch, Thread: thread, Oldest: keep[0].TS})
 			}
 			continue

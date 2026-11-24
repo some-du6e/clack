@@ -140,7 +140,7 @@ func (a *App) ThreadSliceAt(ch, ts, start string) ThreadSlice {
 }
 
 // threadRoot is the store's copy of a thread's root: the one its replies
-// reads keep, else the channel's (its window, a fetched copy).
+// reads keep, else the channel's (its window), else one fetched by id.
 func (a *App) threadRoot(ch, ts string) (slack.Message, bool) {
 	if th, ok := a.S.Thread(ch, ts); ok {
 		for i := range th {
@@ -149,7 +149,7 @@ func (a *App) threadRoot(ch, ts string) (slack.Message, bool) {
 			}
 		}
 	}
-	return a.S.Find(ch, ts)
+	return a.S.FindHeld(ch, ts)
 }
 
 // ThreadAt is the slice the pane started at start draws, loaded first
@@ -172,9 +172,29 @@ func (a *App) ThreadAt(ctx context.Context, ch, ts, start string) (ThreadSlice, 
 			return sl, err
 		}
 		sl = a.ThreadSliceAt(ch, ts, start)
+	} else if a.fetchThreadMissing(ctx, ch, ts, start) {
+		sl = a.ThreadSliceAt(ch, ts, start)
 	}
 	a.subscribeThreadPresence(sl)
 	return sl, nil
+}
+
+// fetchThreadMissing is getMessageByTimestamp's fetch for the slice the
+// pane draws: the timestamps of it the store no longer holds (the message
+// cache evicted them; its ephemerals it never does), and the root, are
+// fetched by id (fetchObjectWithId: messages.list), as Slack's rows fetch
+// a message they read and the store misses. It reports whether it asked.
+func (a *App) fetchThreadMissing(ctx context.Context, ch, ts, start string) bool {
+	sl, _ := a.S.ThreadSliceAt(ch, ts, start)
+	missing := a.S.ThreadSliceMissing(ch, ts, sl)
+	if _, ok := a.threadRoot(ch, ts); !ok {
+		missing = append(missing, ts)
+	}
+	if len(missing) == 0 {
+		return false
+	}
+	a.hydrateKeep(ctx, map[string][]string{ch: missing}, true)
+	return true
 }
 
 func (a *App) subscribeThreadPresence(sl ThreadSlice) {
