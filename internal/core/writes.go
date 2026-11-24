@@ -786,12 +786,9 @@ func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error)
 	// executeCommand's local commands (Zrd3 getCommands, slash-commands-
 	// local), by the matched command's canonical name; /shrug and /me are
 	// the server's, so they go to chat.command with their blocks (and
-	// thread) like any other
-	local := cmd
-	if k, ok := a.knownCommand(cmd); ok {
-		local = canonicalCommand(k)
-	}
-	switch local {
+	// thread) like any other. The ones that need the app (/shortcuts,
+	// /search, /open, /msg, /feedback) the composer runs itself.
+	switch a.LocalCommand(cmd) { // slash_local.go
 	case "/topic":
 		return a.topicCommand(ctx, o, cmd)
 	case "/invite":

@@ -110,8 +110,10 @@ func publishShotLibrary(l *libServer) {
 	ix := pluginlib.Index{Schema: 1, Sources: src, Plugins: []pluginlib.Entry{
 		entry(pluginlib.Taut, "ClearURLs", "Clear URLs", "Removes tracking parameters from links you send", "messageBox", []byte("a")),
 		// Slick's composer is Taut's Message box: both versions file the row
-		// there, so it stays put when the bench's pick (below) is Slick's
-		entry(pluginlib.Slick, "clearUrls", "ClearURLs", "Strips tracking junk from links", "composer", []byte("b")),
+		// there, so it stays put whichever version it shows. The Library's
+		// id, which compat.go's partial row is under: Taut's version works
+		// fully, so Install adds it
+		entry(pluginlib.Slick, "ClearURLs", "ClearURLs", "Strips tracking junk from links", "composer", []byte("b")),
 		entry(pluginlib.Taut, "SilentTyping", "Silent Typing", "Don't tell others when you're typing", "messageBox", silent),
 		entry(pluginlib.Slick, "silentTyping", "Silent Typing", "Hide your typing indicator", "privacy", []byte("c")),
 		entry(pluginlib.Slick, "messageLinks", "Message Links", "Previews links to Slack messages", "messages", []byte("d")),
@@ -308,18 +310,25 @@ func TestPluginsPrefsShots(t *testing.T) {
 		if len(clear.Entries) != 2 || len(silent.Entries) != 2 {
 			t.Fatalf("dual rows: Clear URLs %d entries, Silent Typing %d", len(clear.Entries), len(silent.Entries))
 		}
-		pp.lib.bench = &pluginbench.Data{} // no bench data: Install asks
-		if act := pp.lib.action(clear); act.label != "Install…" {
-			t.Errorf("Clear URLs (both systems, neither installed): %q", act.label)
+		// Install never asks (installPick): Clear URLs' Taut version works
+		// fully, Slick's partly, so Install adds Taut's, and the chevron
+		// beside it offers both, Taut's first, "(recommended)", with why
+		pp.lib.bench = &pluginbench.Data{} // no bench data: how they work decides
+		if act := pp.lib.action(clear); act.label != "Install" || act.menu == nil {
+			t.Errorf("Clear URLs (both systems, neither installed): %q (menu %v)", act.label, act.menu != nil)
+		}
+		if w, _ := pp.lib.installPick(pp.lib.installChoices(clear)); w.System != pluginlib.Taut {
+			t.Errorf("Install adds %s's Clear URLs, want Taut's (it works fully, Slick's partly)", w.System)
 		}
 		if act := pp.lib.action(silent); act.label != "Settings" {
 			t.Errorf("Silent Typing (installed in Taut): %q", act.label)
 		}
 		shot("plugins-browse-" + mode)
 
-		// Install… on the dual row asks which system: find its button
-		// with the pointer (as a user would), then click it
+		// the chevron: find Install with the pointer (as a user would),
+		// then the chevron right of it, and click that
 		b := pp.lib.s.k.btn("lib.act." + libKey(clear.first()))
+		more := pp.lib.s.k.btn("lib.more." + libKey(clear.first()))
 		gpu := e.gpu
 		e.gpu = nil // layout only while sweeping
 		var at image.Point
@@ -336,33 +345,10 @@ func TestPluginsPrefsShots(t *testing.T) {
 				break
 			}
 		}
-		e.gpu = gpu
 		if !found {
-			t.Fatal("didn't find Clear URLs' Install… button")
+			e.gpu = gpu
+			t.Fatal("didn't find Clear URLs' Install button")
 		}
-		before := len(e.a.overlays)
-		e.click(at)
-		e.until("the system choice", 5*time.Second, func() bool { return len(e.a.overlays) > before })
-		shot("plugins-browse-install-choice-" + mode)
-		e.a.dismissTop()
-		e.settle(50 * time.Millisecond)
-
-		// with plugin bench data for the row: Install installs the pick
-		// (Slick here) and the chevron beside it offers both, the pick
-		// first, "(recommended)", with the bench's reason
-		pp.lib.bench = &pluginbench.Data{Schema: 1, Plugins: []pluginbench.Plugin{{
-			Name: "Clear URLs", Winner: pluginlib.Slick, Reason: "works fully, 3.9x faster to load, 1.5x less JS memory",
-			Variants: []pluginbench.Variant{
-				{System: pluginlib.Taut, ID: clear.Entries[0].ID, SHA256: clear.Entries[0].SHA256, Checks: []pluginbench.Check{{Name: "tracking parameters removed", Pass: true}}},
-				{System: pluginlib.Slick, ID: clear.Entries[1].ID, SHA256: clear.Entries[1].SHA256, Checks: []pluginbench.Check{{Name: "tracking parameters removed", Pass: true}}},
-			},
-		}}}
-		if act := pp.lib.action(clear); act.label != "Install" || act.menu == nil {
-			t.Errorf("Clear URLs with bench data: %q (menu %v)", act.label, act.menu != nil)
-		}
-		shot("plugins-browse-bench-" + mode)
-		more := pp.lib.s.k.btn("lib.more." + libKey(clear.first()))
-		e.gpu = nil
 		found = false
 		for x := at.X; x < e.size.X-4 && !found; x += 4 {
 			for _, y := range []int{at.Y, at.Y - 4, at.Y + 4} {
@@ -379,10 +365,10 @@ func TestPluginsPrefsShots(t *testing.T) {
 		if !found {
 			t.Fatal("didn't find Clear URLs' Install chevron")
 		}
-		before = len(e.a.overlays)
+		before := len(e.a.overlays)
 		e.click(at)
-		e.until("the bench's Install for menu", 5*time.Second, func() bool { return len(e.a.overlays) > before })
-		shot("plugins-browse-install-bench-" + mode)
+		e.until("the Install for menu", 5*time.Second, func() bool { return len(e.a.overlays) > before })
+		shot("plugins-browse-install-choice-" + mode)
 		e.a.dismissTop()
 		pp.lib.bench = &pluginbench.Data{}
 		e.settle(50 * time.Millisecond)

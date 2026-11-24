@@ -169,9 +169,10 @@ func TestToolbarThreadAndShareLikeSlack(t *testing.T) {
 			"list":   "Add reaction…|Reply in thread|Share list…|Add to-do|Add to list…|More actions",
 			// a broadcast reply can't be replied to (it's a reply) but has replies
 			"bcast": "Add reaction…|View thread|" + msg + "|Add to-do|Add to list…|More actions",
-			// system_messages_redesign_m1 (on by default): no share button; and
-			// an automated subtype can't start a thread
-			"join": "Add reaction…|Add to-do|Add to list…|More actions",
+			// system_messages_redesign_m1 (on by default): no share or add to
+			// list button (shouldShowAddToList); an automated subtype can't
+			// start a thread, nor be a to-do (addToLaterTodos, on3u)
+			"join": "Add reaction…|More actions",
 		}
 		for key, w := range want {
 			got, qa := toolbarFor(t, v.s, app, expTS[key])
@@ -188,9 +189,10 @@ func TestToolbarThreadAndShareLikeSlack(t *testing.T) {
 				}
 			}
 		}
-		// the redesign off: system messages are shareable again (6bWJ)
+		// the redesign off: system messages are shareable again (6bWJ) and
+		// go on lists, but still aren't to-dos
 		app.SetExperimentGroup("system_messages_redesign_m1", "off")
-		if got, _ := toolbarFor(t, v.s, app, expTS["join"]); got != "Add reaction…|"+msg+"|Add to-do|Add to list…|More actions" {
+		if got, _ := toolbarFor(t, v.s, app, expTS["join"]); got != "Add reaction…|"+msg+"|Add to list…|More actions" {
 			t.Errorf("redesign off, join: %q", got)
 		}
 		app.ClearExperimentGroup("system_messages_redesign_m1")
