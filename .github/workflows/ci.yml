@@ -1263,7 +1263,7 @@ jobs:
         run: |
           rc=0
           go test -count=1 -v -timeout 10m -run 'TestHideAndRaise|TestHideWithoutDriver|TestCaretBlinkFromOS|TestOptionKeepsHiddenAndMinimized|TestInvalidateWhileHandling' gioui.org/app || rc=1
-          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16|TestTraySessionEnd' ./internal/desktop || rc=1
+          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16|TestTraySessionEnd|TestEndSessionReasonCarriesTheMark' ./internal/desktop || rc=1
           go test -count=1 -v -timeout 12m -run '^(TestCloseToTrayWindow|TestCloseToTray|TestRunFromTrayRow|TestDrainIdleRunsPosted)$' ./internal/ui || rc=1
           exit $rc
 
