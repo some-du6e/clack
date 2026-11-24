@@ -21,23 +21,70 @@ import (
 )
 
 // kitRegion marks a card block's box: its cursor is the default arrow
-// outside its text (regionCursors).
+// outside its text (textCursors, regionCursors).
 func (l *lay) kitRegion(x, y, w, h int) {
 	if h > 0 && w > 0 {
 		l.d.cursorRegions = append(l.d.cursorRegions, image.Rect(x, y, x+w, y+h))
 	}
 }
 
-// regionCursors sets the card blocks' cursors under the hands handAreas
-// adds: the default arrow over each card block, then the text cursor over
-// its selectable text (a frag with plain text), the hand over a pointer
-// box without a click, and the charts' items.
-func (v *View) regionCursors(gtx layout.Context) {
-	for _, r := range v.d.cursorRegions {
+// textCursors sets the text cursor over the view (a message's text, as
+// before) but not over its card blocks' boxes, whose arrow is no cursor
+// at all: Gio's router takes the topmost cursor that isn't CursorDefault,
+// so an area can't put the arrow back over the view's text cursor.
+func (v *View) textCursors(gtx layout.Context, size image.Point) {
+	if len(v.d.cursorRegions) == 0 {
+		pointer.CursorText.Add(gtx.Ops)
+		return
+	}
+	for _, r := range rectsOutside(image.Rectangle{Max: size}, v.d.cursorRegions) {
 		s := clip.Rect(r).Push(gtx.Ops)
-		pointer.CursorDefault.Add(gtx.Ops)
+		pointer.CursorText.Add(gtx.Ops)
 		s.Pop()
 	}
+}
+
+// rectsOutside covers view less holes with rectangles.
+func rectsOutside(view image.Rectangle, holes []image.Rectangle) []image.Rectangle {
+	out := []image.Rectangle{view}
+	for _, h := range holes {
+		var next []image.Rectangle
+		for _, r := range out {
+			next = append(next, subtractRect(r, h)...)
+		}
+		out = next
+	}
+	return out
+}
+
+// subtractRect is r less h: up to four rectangles (above, below, left and
+// right of h).
+func subtractRect(r, h image.Rectangle) []image.Rectangle {
+	h = h.Intersect(r)
+	if h.Empty() {
+		return []image.Rectangle{r}
+	}
+	var out []image.Rectangle
+	if h.Min.Y > r.Min.Y {
+		out = append(out, image.Rect(r.Min.X, r.Min.Y, r.Max.X, h.Min.Y))
+	}
+	if h.Max.Y < r.Max.Y {
+		out = append(out, image.Rect(r.Min.X, h.Max.Y, r.Max.X, r.Max.Y))
+	}
+	if h.Min.X > r.Min.X {
+		out = append(out, image.Rect(r.Min.X, h.Min.Y, h.Min.X, h.Max.Y))
+	}
+	if h.Max.X < r.Max.X {
+		out = append(out, image.Rect(h.Max.X, h.Min.Y, r.Max.X, h.Max.Y))
+	}
+	return out
+}
+
+// regionCursors sets the card blocks' cursors under the hands handAreas
+// adds: the text cursor over their selectable text (a frag with plain
+// text), the hand over a pointer box without a click, and the charts'
+// items. The rest of a card block's box has none: the arrow.
+func (v *View) regionCursors(gtx layout.Context) {
 	if len(v.d.cursorRegions) > 0 {
 		for i := range v.d.frags {
 			f := &v.d.frags[i]

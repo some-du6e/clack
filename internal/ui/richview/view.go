@@ -588,8 +588,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		v.probe.Layout(gtx, v.ptr)
 	}
 	v.mounted(gtx, size)
-	pointer.CursorText.Add(gtx.Ops)
-	v.regionCursors(gtx) // the card blocks' arrows, their text's I-beam and the charts' items (cursors.go)
+	v.textCursors(gtx, size) // the text cursor, the card blocks' boxes left to their own (cursors.go)
+	v.regionCursors(gtx)     // the card blocks' text's I-beam, hands and the charts' items (cursors.go)
 	v.handAreas(gtx, false)
 	v.drawBusy(gtx, st) // the writing buttons whose call is out (writes.go)
 	// Element runs (Options.Elements) go last: their input areas must be
