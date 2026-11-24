@@ -161,7 +161,7 @@ func (a *App) canvasTabView(ch string) View {
 		return nil
 	}
 	tabs := a.channelTabs(ch)
-	if i >= len(tabs) || tabs[i].icon != "canvas" || tabs[i].fileID == "" {
+	if i >= len(tabs) || tabs[i].typ != "canvas" || tabs[i].fileID == "" {
 		return nil
 	}
 	m, _ := canvasTabs.Load(a)

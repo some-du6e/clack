@@ -56,7 +56,7 @@ import (
 func docTab(t core.Tab, label string, spans []richtext.Span, listViewNames bool,
 	emoji func(name string) (url, text string, ok bool)) (doc bool, icon, outLabel string, outSpans []richtext.Span) {
 	doc = t.FileID != "" && t.Label == "" && (t.Type == "canvas" || t.Type == "list" && !listViewNames)
-	if !doc || t.Deleted { // a deleted file's icon is the trash can
+	if !doc || t.Gone != nil { // a gone file's icon is SmallFileEntity's (core.FileGone.Icon)
 		return doc, "", label, spans
 	}
 	exists := func(code string) string {

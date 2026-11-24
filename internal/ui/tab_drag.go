@@ -607,7 +607,7 @@ func (a *App) dragPreview(gtx layout.Context, d *tabDragState, h int) {
 		return
 	}
 	t := d.all[d.src.idx]
-	lw := a.tabLabelWidth(gtx, t)
+	lw := min(a.tabLabelWidth(gtx, t), tabLabelMax(gtx, t))
 	w := tabWidth(gtx, t, lw)
 	off := op.Offset(d.at.Round()).Push(gtx.Ops)
 	defer off.Pop()

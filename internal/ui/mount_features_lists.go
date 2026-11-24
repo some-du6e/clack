@@ -228,7 +228,7 @@ func (a *App) listTabView(ch string) View {
 		return nil
 	}
 	tabs := a.channelTabs(ch)
-	if i >= len(tabs) || tabs[i].icon != "list-tab" || tabs[i].fileID == "" {
+	if i >= len(tabs) || tabs[i].typ != "list" || tabs[i].fileID == "" {
 		return nil
 	}
 	m, _ := listTabs.Load(a)

@@ -197,7 +197,7 @@ type UsergroupPage struct {
 // its own leading "Messages" tab.
 type Tab struct {
 	ID, Type     string // Type: canvas | list | folder | bookmarks | files | workflows | channel_canvas | …
-	Label, Title string // Title: what to show (file title, "Bookmarks", "Deleted file", …)
+	Label, Title string // Title: what to show (file title, "Bookmarks", a gone file's status name, …)
 	// TitleSpans is an unlabeled canvas tab's title as Slack draws it:
 	// the file's title_blocks (useTabLabel's file Name → QuipTitleParsedId),
 	// where a channel element reads #name, not the title string's raw
@@ -209,8 +209,12 @@ type Tab struct {
 	// tab's icon (getFileTitle).
 	FileTitle string
 	FileID    string // canvas / list tabs
-	Deleted   bool   // the tab's file is gone
-	Unread    bool   // a canvas the viewer never opened (no last_read): Slack's blue tab dot
+	Deleted   bool   // the tab's file is deleted (Gone.Status "deleted")
+	// Gone is the tab's file when Slack doesn't show it (files.info's
+	// stand-in, file_standin.go: deleted, not found, not visible, refused);
+	// nil for a file it shows. The tab stays in the bar either way.
+	Gone      *FileGone `json:",omitempty"`
+	Unread    bool      // a canvas the viewer never opened (no last_read): Slack's blue tab dot
 	Bookmarks []Bookmark
 	// DefaultView is a list tab's data.lists_channel_tab_default_refine_view_id
 	// (Slack's listsChannelTabDefaultRefineViewId), ViewName that view's
@@ -1154,12 +1158,20 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 				t.TitleUnknown = true
 				return
 			}
-			if !f.deleted {
+			if f.gone != nil {
+				// the tab keeps its own label (useTabLabel), but a gated file
+				// (ChannelTabLabelBaseComponent's eye-closed swap) and an
+				// unlabeled one read the file's Name: its status string first
+				// (maaT → maybeGetFileStatusString)
+				g := *f.gone
+				t.Gone, t.Deleted = &g, g.Status == "deleted"
+				if t.Label == "" || g.Gated {
+					t.Title = g.Name
+				}
+			} else {
 				t.FileTitle = f.title
 			}
-			if f.deleted {
-				t.Title, t.Deleted = "Deleted file", true
-			} else if f.title != "" && t.Label == "" {
+			if f.gone == nil && f.title != "" && t.Label == "" {
 				t.Title = f.title // a tab's own label wins (RenameTabModal: "Clear text to default to file name")
 				if t.Type == "canvas" {
 					if sp := a.tabTitleSpans(ctx, f.titleBlocks, f.title); len(sp) > 0 {
@@ -1170,7 +1182,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			if t.Type == "list" && t.DefaultView != "" {
 				t.ViewName = f.views[t.DefaultView]
 			}
-			t.Unread = f.unread && !f.deleted && t.Type == "canvas"
+			t.Unread = f.unread && f.gone == nil && t.Type == "canvas"
 		}(&out[i])
 	}
 	wg.Wait()
@@ -1181,7 +1193,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 // tabFile is what a tab needs from its file's files.info.
 type tabFile struct {
 	title       string
-	deleted     bool              // the file is gone (not found, tombstone)
+	gone        *FileGone         // a file Slack doesn't show (deleted, not found, not visible, refused)
 	unread      bool              // the viewer never opened it (no last_read)
 	views       map[string]string // a list's views' names by id (list_metadata.views)
 	titleBlocks json.RawMessage   // a canvas's title_blocks
@@ -1192,25 +1204,20 @@ type tabFile struct {
 func (a *App) tabFileTitle(ctx context.Context, fileID string) (tabFile, error) {
 	var r struct {
 		File struct {
-			browseFileRaw
-			TitleBlocks  json.RawMessage `json:"title_blocks"`
-			ListMetadata struct {
-				Views []struct {
-					ID   string `json:"id"`
-					Name string `json:"name"`
-				} `json:"views"`
-			} `json:"list_metadata"`
+			filesInfoFile
+			LastRead json.RawMessage `json:"last_read"`
 		} `json:"file"`
 	}
 	err := a.C.Call(ctx, "files.info", url.Values{"file": {fileID}}, &r)
-	if isCode(err, "file_not_found", "file_deleted") {
-		return tabFile{deleted: true}, nil
-	}
 	if err != nil {
+		if f, ok := fileStandIn(err); ok { // fetchFileById's stand-in: the tab stays, in the file's state
+			g, _ := fileGoneOf(&f)
+			return tabFile{gone: &g}, nil
+		}
 		return tabFile{}, err
 	}
-	if r.File.Mode == "tombstone" || r.File.IsDeleted {
-		return tabFile{deleted: true}, nil
+	if g, gone := fileGoneOf(&r.File.filesInfoFile); gone {
+		return tabFile{gone: &g}, nil
 	}
 	f := tabFile{title: firstNonEmpty(r.File.Title, r.File.Name), titleBlocks: r.File.TitleBlocks}
 	if vs := r.File.ListMetadata.Views; len(vs) > 0 {

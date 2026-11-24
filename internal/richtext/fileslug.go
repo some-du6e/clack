@@ -162,10 +162,35 @@ func FileStatusOf(f FileFacts) string {
 		f.Mode == "canvas_slack_connect_blocked" || f.Mode == "lists_slack_connect_blocked",
 		f.Mode == "not_found" || f.FileAccess == "file_not_found",
 		f.Mode == "not_visible" || f.FileAccess == "not_visible",
+		f.Mode == "template_not_visible" || f.FileAccess == "template_not_visible", // isNotVisible's isTemplateNotVisible (X0cl)
 		f.Tombstoned:
 		return "hidden"
 	}
 	return "normal"
+}
+
+// FileStatusName is maybeGetFileStatusString for a file Slack doesn't
+// show: status is FileStatusOf's, the kind getFileType's (2grX over vITP:
+// a canvas is mode or filetype "quip", a list mode or filetype "list").
+// "Deleted canvas", "Deleted list" or "Deleted file"; "Private canvas",
+// "Private list" or "Hidden file"; "" for a normal file.
+func FileStatusName(status, filetype, mode string) string {
+	kind := func(canvas, list, file string) string {
+		switch {
+		case mode == "quip" || filetype == "quip":
+			return canvas
+		case mode == "list" || filetype == "list":
+			return list
+		}
+		return file
+	}
+	switch status {
+	case "deleted":
+		return kind("Deleted canvas", "Deleted list", "Deleted file")
+	case "hidden":
+		return kind("Private canvas", "Private list", "Hidden file")
+	}
+	return ""
 }
 
 func isAudioClip(subtype string) bool {

@@ -105,6 +105,12 @@ func canvasRefOf(f *filesInfoFile) richtext.CanvasRef {
 	ref := richtext.CanvasRef{Title: f.Title, TitleBlocks: f.TitleBlocks, Status: st, Kind: fileKindOf(f.Filetype, f.Mode, f.PrettyType),
 		Name: f.Name, Filetype: f.Filetype, Mode: f.Mode, Subtype: f.Subtype, FolderType: f.FolderType, IsSkill: f.IsSkill,
 		Blocked: f.Mode == "canvas_slack_connect_blocked"} // isBlockedExternalCanvas's mode
+	switch f.Mode { // a refused canvas or list says which it is by its mode alone
+	case "canvas_slack_connect_blocked":
+		ref.Kind = "canvas"
+	case "lists_slack_connect_blocked":
+		ref.Kind = "list"
+	}
 	for _, v := range f.ListMetadata.Views {
 		if ref.Views == nil {
 			ref.Views = map[string]string{}
@@ -125,13 +131,6 @@ func fileKindOf(filetype, mode, prettyType string) string {
 	return ""
 }
 
-// Slack Connect's refusals of a canvas or a list (fetchFileById's
-// canvas_slack_connect_blocked and lists_slack_connect_blocked, IqFK).
-var (
-	canvasBlockedErrors = map[string]bool{"slack_connect_team_blocked": true, "slack_connect_canvas_sharing_blocked": true}
-	listBlockedErrors   = map[string]bool{"slack_connect_lists_team_blocked": true, "slack_connect_lists_sharing_blocked": true}
-)
-
 func (a *App) resolveCanvasRef(ctx context.Context, id string) bool {
 	var r struct {
 		File filesInfoFile `json:"file"`
@@ -141,38 +140,16 @@ func (a *App) resolveCanvasRef(ctx context.Context, id string) bool {
 		a.S.PutCanvasRef(id, canvasRefOf(&r.File))
 		return true
 	}
-	// fetchFileById keeps a file it can't read as a known object (client-
-	// boot 548 20Mt j), so nothing waits on it again: the error's own
-	// filetype and title (make_external_access_denied, make_not_visible)
-	// say a canvas or a list the viewer can't see
-	var se *slack.Error
-	if !errors.As(err, &se) {
-		log.Printf("canvas slug %s: files.info: %v", id, err)
-		a.S.ForgetCanvas(id)
-		return false
+	// fetchFileById keeps a file it can't read as its stand-in (client-
+	// boot "Fetches file info", file_standin.go), so nothing waits on it
+	// again: not found is hidden (getFileStatus), not deleted
+	if f, ok := fileStandIn(err); ok {
+		a.S.PutCanvasRef(id, canvasRefOf(&f))
+		return true
 	}
-	var body struct {
-		Filetype string `json:"filetype"`
-		Title    string `json:"title"`
-	}
-	_ = json.Unmarshal(se.Body, &body)
-	switch code := se.Code; {
-	case code == "file_not_found" || code == "file_deleted":
-		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "deleted"})
-	case code == "access_denied" || code == "not_allowed" || code == "file_access_denied":
-		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "hidden", Kind: fileKindOf(body.Filetype, "", "")})
-	case code == "not_visible":
-		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "hidden", Title: body.Title, Kind: fileKindOf(body.Filetype, "", "")})
-	case code == "hidden_by_limit", listBlockedErrors[code]:
-		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "hidden"})
-	case canvasBlockedErrors[code]:
-		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "hidden", Kind: "canvas", Blocked: true})
-	default:
-		log.Printf("canvas slug %s: files.info: %v", id, err)
-		a.S.ForgetCanvas(id)
-		return false
-	}
-	return true
+	log.Printf("canvas slug %s: files.info: %v", id, err)
+	a.S.ForgetCanvas(id)
+	return false
 }
 
 func (a *App) resolveCanvasSections(ctx context.Context, fid string, secs []string) bool {

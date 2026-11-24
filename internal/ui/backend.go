@@ -14,6 +14,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slick"
@@ -1475,13 +1476,14 @@ func (b *backend) tabsOf(ts []core.Tab, notMember bool) ([]chTab, []core.Bookmar
 			label = t.Label
 		}
 		icon := tabIcon(t.Type)
-		if t.Deleted {
-			icon = "trash"
-		}
+		label, icon = goneTabLabel(t, label, icon, viewNames)
 		if label == "" {
 			continue
 		}
 		doc, emo, label, spans := docTab(t, label, tabSpans(t, label, b.core.Emoji), viewNames, b.core.Emoji) // tab_emoji_icon.go
+		if doc && t.Gone != nil {
+			icon = t.Gone.Icon // SmallFileEntity's own icon for the file (useMissingIconIfFileUnknown)
+		}
 		tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, typ: t.Type, fileID: t.FileID, unread: t.Unread && !notMember,
 			folder: t.FolderBookmarkID, appID: t.AppID, doc: doc, emojiIcon: emo,
 			spans: spans, defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != "", rawLabel: t.Label})
@@ -1509,7 +1511,7 @@ func mergeTabReads(ts, prev []core.Tab) []core.Tab {
 			}
 			m := &out[i]
 			if t.TitleUnknown && !p.TitleUnknown && p.FileID == t.FileID {
-				m.Title, m.TitleSpans, m.FileTitle, m.Deleted, m.Unread, m.ViewName = p.Title, p.TitleSpans, p.FileTitle, p.Deleted, p.Unread, p.ViewName
+				m.Title, m.TitleSpans, m.FileTitle, m.Deleted, m.Gone, m.Unread, m.ViewName = p.Title, p.TitleSpans, p.FileTitle, p.Deleted, p.Gone, p.Unread, p.ViewName
 				m.TitleUnknown = false
 			}
 			if t.BookmarksUnknown && !p.BookmarksUnknown {
@@ -1838,8 +1840,10 @@ func (b *backend) forgetExt(ch string) {
 
 func tabIcon(typ string) string {
 	switch typ {
-	case "canvas", "channel_canvas":
+	case "canvas":
 		return "canvas"
+	case "channel_canvas": // Slack's AddCanvas placeholder (DM4S): no file of its own
+		return "add-channel-canvas"
 	case "list":
 		return "list-tab" // Slack's list tab: a card with checklist rows
 	case "bookmarks": // the Pins tab (Slack 2026: pin icon)
@@ -1856,19 +1860,11 @@ func tabIcon(typ string) string {
 	return "canvas"
 }
 
-// openTab opens a channel tab that has no view of its own in the body:
-// a canvas or list tab Clack can't draw opens in the browser. (Pins and
-// folder tabs are body tabs: pins_tab.go.)
+// openTab is a click on a channel tab that has no view of its own in the
+// body. Slack sends no channel tab to the browser (navigateToChannelTab):
+// a canvas or list tab, whatever its file's state, is a body tab
+// (bodyTab); what's left is a tab type Clack has no view for yet.
 func (b *backend) openTab(ch, key string) {
-	for _, t := range b.tabCache[ch] {
-		if t.key != key {
-			continue
-		}
-		if t.fileID != "" && b.domain != "" {
-			openURL("https://" + b.domain + ".slack.com/docs/" + b.teamID + "/" + t.fileID)
-			return
-		}
-	}
 	if b.app != nil {
 		b.app.Toast("This tab opens in Slack")
 	}
@@ -2032,3 +2028,39 @@ func notificationText(args map[string]any, orig map[string]any, body string) (ti
 	}
 	return title, body, true
 }
+
+// goneTabLabel is a tab's label and icon by Slack's paths for its file
+// (ChannelTabLabelBaseComponent, useTabLabel, useTabIconProps):
+//
+//   - channel_canvas, the AddCanvas placeholder: "Add canvas" with
+//     add-channel-canvas.
+//   - a tab with a label of its own keeps it and its type icon when the
+//     file is deleted or not found; a gated file (not visible, refused, a
+//     blocked canvas or list) swaps both for the file's Name ("Private
+//     canvas") and eye-closed (core already put the Name in Title).
+//   - an unlabeled list under list_channel_tab_show_view_name_fe reads
+//     "Untitled" (the tab label needs the file's title, which a gone file
+//     hasn't) with its type icon.
+//   - an unlabeled canvas (or list without the flag) draws the document
+//     label: the Name, with SmallFileEntity's icon (tabsOf sets it).
+func goneTabLabel(t core.Tab, label, icon string, viewNames bool) (string, string) {
+	if t.Type == "channel_canvas" {
+		return tabNS.T("Add canvas"), "add-channel-canvas"
+	}
+	g := t.Gone
+	if g == nil {
+		return label, icon
+	}
+	switch {
+	case t.Label != "" && g.Gated:
+		return g.Name, "eye-closed"
+	case t.Label != "":
+		return t.Label, icon
+	case t.Type == "list" && viewNames:
+		return tabNS.T("Untitled"), icon
+	}
+	return label, icon
+}
+
+// tabNS is the tab bar's strings (the tabbed-channel namespace).
+var tabNS = i18n.NS("tabbed-channel")

@@ -707,7 +707,7 @@ type chTab struct {
 // own whose default view (listsChannelTabDefaultRefineViewId) is one of
 // the list's views reads "<list title>: <view name>".
 func withListViewName(t chTab) chTab {
-	if t.icon != "list-tab" || t.labeled || t.viewName == "" {
+	if t.typ != "list" || t.labeled || t.viewName == "" {
 		return t
 	}
 	suffix := ": " + t.viewName
@@ -903,7 +903,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		if viewNames {
 			*t = withListViewName(*t)
 		}
-		lws[i] = a.tabLabelWidth(gtx, *t)
+		lws[i] = min(a.tabLabelWidth(gtx, *t), tabLabelMax(gtx, *t))
 		ws[i] = tabWidth(gtx, *t, lws[i])
 	}
 	// measureVisibleTabs: all of them, or those 80px clear of the bar's
@@ -1028,6 +1028,15 @@ func (a *App) tabContent(gtx layout.Context, t chTab, lw, h int, active bool) {
 	})
 }
 
+// tabLabelMax is the widest a tab's text gets: .channel_tab_label__WjErI
+// and .channel_tab_document_label__xSKTO are max-width 200px (border-box:
+// Slack's *{box-sizing:border-box}) around 8px padding, the icon box and
+// the 4px gap, and .channel_tab_label_text__aZZ9f cuts the rest with an
+// ellipsis (#clack's 80-character canvas title drew whole).
+func tabLabelMax(gtx layout.Context, t chTab) int {
+	return gtx.Dp(200-8-8-4) - gtx.Dp(tabIconBox(t))
+}
+
 // tabIconBox is a tab's icon box width: the 16px icon, or a document
 // label's 20px c-file_entity__icon.
 func tabIconBox(t chTab) unit.Dp {
@@ -1079,10 +1088,16 @@ func (a *App) selectChannelTab(ch string, i int, t chTab) {
 
 // bodyTab: the tab's view is drawn in the channel's body (a canvas or list
 // tab, workflows_tab.go, files_tab.go, Pins and folders: pins_tab.go).
+// A canvas or list tab is one by its type, whatever its file's state
+// (navigateToChannelTab: Xy.Canvas, Xy.List): a deleted file's tab opens in
+// place, its view's deleted state, never the browser. channel_canvas is
+// Slack's AddCanvas placeholder, no canvas.
 func bodyTab(t chTab) bool {
-	return (t.icon == "canvas" || t.icon == "list-tab") && t.fileID != "" || t.icon == "workflow" || isFilesTab(t) ||
-		isPinsTab(t) || isFolderTab(t)
+	return fileTab(t) || t.icon == "workflow" || isFilesTab(t) || isPinsTab(t) || isFolderTab(t)
 }
+
+// fileTab: a canvas or list tab with its file.
+func fileTab(t chTab) bool { return (t.typ == "canvas" || t.typ == "list") && t.fileID != "" }
 
 // convTitle is the header name: channel name, DM partner, or group list.
 func (a *App) convTitle(conv *convInfo, ch string) string {
