@@ -186,6 +186,8 @@ type removeBtn struct {
 	// the button's own hover, v2).
 	rail      bool
 	col, area image.Rectangle
+	// tip is the button's tooltip ("" is "Remove preview")
+	tip string
 }
 
 // overlayIcon is a vector icon painted over images (video play buttons).
@@ -193,6 +195,14 @@ type overlayIcon struct {
 	r    image.Rectangle
 	name string
 	col  color.NRGBA
+	// art: name is an icons.Art illustration in its own colours (a file's
+	// svgicon), drawn at alpha (0: opaque) instead of col
+	art   bool
+	alpha float32
+	// comp is the component the icon is painted with (0: the static pass),
+	// as frags, boxes and imgs carry theirs (tagFrom): a file card's
+	// svgicon goes with its MessageFile, over the card's own fill
+	comp int16
 }
 
 type targetKind uint8
@@ -209,6 +219,7 @@ const (
 	tExpand     // attachment "Show more" / "Show less" (id: attachment number)
 	tCollapse   // a hide / show toggle (img: an image block's image, else key: a call card, a container)
 	tRemove     // an unfurl's remove button (id: the attachment id)
+	tRemoveFile // a file card's x (file; id "delete" when it deletes the file)
 	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
 	tWorkObject // a work object card or one of its buttons (id: the action; workobject.go)
@@ -380,6 +391,9 @@ type display struct {
 	overlayIcons []overlayIcon
 	// spinners are InfiniteSpinners drawn every frame (pending uploads)
 	spinners []spinPrim
+	// pendSpins are pending generic files' PendingFilesSpinners: their
+	// boxes and tooltips (pending.go)
+	pendSpins []pendSpin
 	// names are the user mentions laid out and the plugin labels they
 	// used (members.go)
 	names []nameUse
@@ -402,6 +416,8 @@ type display struct {
 	bars []fileBar
 	// charts are the data_visualization blocks' charts (dataviz.go)
 	charts []chartPrim
+	// carousels are the carousels' scrollers (carousel.go)
+	carousels []carouselSlot
 	// busyBtns are the buttons that write to Slack (writes.go)
 	busyBtns []busyBtn
 	// cursorRegions are the card blocks' boxes (the default arrow outside
@@ -462,6 +478,7 @@ func (d *display) reset() {
 	d.cards = d.cards[:0]
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
+	d.pendSpins = d.pendSpins[:0]
 	d.names = d.names[:0]
 	d.slugs = d.slugs[:0]
 	d.pending = d.pending[:0]
@@ -470,6 +487,7 @@ func (d *display) reset() {
 	d.expands = d.expands[:0]
 	d.bars = d.bars[:0]
 	d.charts = d.charts[:0]
+	d.carousels = d.carousels[:0]
 	d.busyBtns = d.busyBtns[:0]
 	d.cursorRegions = d.cursorRegions[:0]
 	d.handRects = d.handRects[:0]
@@ -650,6 +668,10 @@ type lay struct {
 	// tables holds the data_tables' page, sort and filter (View state,
 	// datatable.go)
 	tables map[any]*tableState
+	// carousels are the carousels' scrollers (View state, carousel.go),
+	// carouselN the ones laid out so far (the key of one with no block_id)
+	carousels map[string]*carouselState
+	carouselN int
 	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
 	titleFrags [2]int
 	// media is the card's AttachmentMedia part (fixedMedia), for

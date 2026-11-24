@@ -62,7 +62,6 @@ var notDrawn = map[string]string{
 // pendingParts are the types Slack draws that later parts of the
 // data-blocks work will draw, by part (docs/BLOCKKIT-COVERAGE.md).
 var pendingParts = map[string][]string{
-	"part 2b (sideways scrolling: Slack's LSo8 scroller and its arrows)": {"carousel"},
 	"part 2d (rich text's inline types)": {"_canvas_mention", "_theme_install_button", "attachment_mention", "canvas_message_unfurl",
 		"canvas_user_mention", "citation", "folder_mention", "salesforce_data_field", "skill", "tag", "unknown", "variable",
 		"work_object_mention", "workflowtoken"},
@@ -126,6 +125,7 @@ var guardSamples = map[string]string{
 	"share_prompt":       `{"type":"share_prompt","prompt":"x","bot_user_id":"UAF"}`,
 	"contact_card":       `{"type":"contact_card","contact_user_id":"U1","contact_card_id":"CC1"}`,
 	"event":              `{"type":"event","event_id":"E1","event":{"title":"x","start":{"date_time":1700000000},"end":{"date_time":1700003600},"organizer":{"user_id":"U2"},"attendees":[]}}`,
+	"carousel":           `{"type":"carousel","elements":[{"type":"card","title":{"type":"plain_text","text":"x"}}]}`,
 }
 
 // mustDraw are the block types whose builder may return nothing for a
@@ -138,6 +138,7 @@ var mustDraw = map[string]BlockKind{
 	"share_prompt":       SharePromptBlock,
 	"contact_card":       ContactCardBlock,
 	"event":              EventBlock,
+	"carousel":           CarouselBlock,
 }
 
 // guardRes is the guard's resolver: the test resolver, holding the

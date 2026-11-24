@@ -37,7 +37,9 @@ func TestIconRefsExist(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, r := range refs {
-		if Has(r.name) || HasSlack(r.name) || seen[r.name] {
+		// an illustration's name (a file's svgicon, FileIconArt's) draws
+		// through Art, which TestArtRefsExist checks
+		if Has(r.name) || HasSlack(r.name) || HasArt(r.name) || seen[r.name] {
 			continue
 		}
 		seen[r.name] = true

@@ -21,7 +21,26 @@ type SpanText func(s Span) (text string, ok bool)
 func PlainTextWith(d Doc, text SpanText) string {
 	var b strings.Builder
 	writeBlocks(&b, d.Blocks, text)
-	return strings.TrimRight(b.String(), "\n")
+	s := strings.TrimRight(b.String(), "\n")
+	if s == "" && len(d.Fallback) > 0 {
+		// convertMessageToPlainText: blocks that give no text (a carousel
+		// of cards) read as the message's own text (getMessageText)
+		return PlainTextWith(Doc{Blocks: d.Fallback}, text)
+	}
+	return s
+}
+
+// blocksHaveText reports whether bs give any plain text, the walk ending
+// at the first block that does.
+func blocksHaveText(bs []Block) bool {
+	var b strings.Builder
+	for i := range bs {
+		writeBlock(&b, &bs[i], nil)
+		if strings.TrimRight(b.String(), "\n") != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func writeBlocks(b *strings.Builder, bs []Block, text SpanText) {
@@ -61,6 +80,11 @@ func writeBlock(b *strings.Builder, blk *Block, text SpanText) {
 			line(b, strings.TrimRight(strings.Join(cells, "\t"), "\t")) // trailing empty cells add nothing (decision 2026-11-07: trim)
 		}
 	case Divider:
+	case CarouselBlock: // convertStringTitledBlockToPlainText: its label when it shows, not its cards
+		if c := blk.Carousel; c != nil && c.LabelVisible {
+			line(b, c.Label)
+		}
+	case CardBlock: // convertCardBlockToPlainText: nothing, but in a message_summary
 	case TimelineBlock: // its points' titles (convertTimelineBlocksToPlainText)
 		if t := blk.Timeline; t != nil {
 			line(b, timelinePlain(t, text))

@@ -68,6 +68,13 @@ type AttachmentRemover interface {
 	RemoveAttachment(id string)
 }
 
+// FileRemover is optional on a Handler: a file card's x (FileRemoveButton,
+// Options.FileRemoves); deletion says it deletes the file rather than
+// takes it out of the message.
+type FileRemover interface {
+	RemoveFile(f *richtext.File, deletion bool)
+}
+
 // BotOpener is a Handler that opens a bot's profile card: "Added by
 // <app>" under a Block Kit attachment (renderAttributionMaybe wraps the
 // name in ProfileCardTrigger with the bot as serviceId). anchor is the
@@ -434,6 +441,9 @@ type Options struct {
 	// block's top and the last's bottom (a modal's block, whose margins
 	// collapse with Slack's block wrappers: blockkit's Surface)
 	NoOuterMargins bool
+	// CardHeight is a carousel card's height: a card block's frame
+	// stretches to it (align-items: stretch; carousel.go)
+	CardHeight int
 	// CheckLists: rich_text check lists draw their checkboxes, as the
 	// rich_text renderable allows in a message or a thread (allowCheckList:
 	// s3Wf sS's blocks container contexts); elsewhere they're bullet lists
@@ -500,6 +510,12 @@ type Options struct {
 	// Own: the viewer sent the message (and it isn't a pinned_item), so
 	// its link previews get Slack's remove button (canDelete, 4BNQ).
 	Own bool
+	// FileRemoves are the message's files with FileRemoveButton's x (the
+	// gallery's removableFileIds), as FileRemovesOf writes them (a string,
+	// so Options stays comparable): each id taken out of the message
+	// (chat.removeFile) or, for a file shared into it, deleted
+	// (DeleteFileDialog). FileRemover hears the click.
+	FileRemoves string
 	// HoverCard lays the doc's attachment out as Slack's link preview
 	// hover card (MessageAttachmentDefaultV3HoverCard, unfurl_hover.go).
 	HoverCard bool
@@ -523,6 +539,9 @@ type Options struct {
 	// gives EditedLabel as editedByUserId (a workflow message's
 	// edited.user): the tooltip reads "{dateTime} by {name}".
 	EditedBy string
+	// carouselDepth is how many carousels' cards this view is in
+	// (carousel.go's crMaxDepth)
+	carouselDepth int
 	// FindFocused: the message is find in thread's current result
 	// (c-message_kit__blocks--focused-result), so its FindHighlight runs
 	// draw in FindFocused.

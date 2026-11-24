@@ -216,6 +216,9 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 	if bs := parseBlocks(blocks); len(bs) > 0 && !blocksDrawNothing(blocks, bs) {
 		d.Blocks = c.blocks(bs)
 		d.Jumbo = richOnlyEmoji(bs)
+		if len(d.Blocks) > 0 && m.Text != "" && !blocksHaveText(d.Blocks) {
+			d.Fallback = FromMrkdwn(r, m.Text) // plain-text readers' fallback (PlainTextWith)
+		}
 	}
 	// Slack draws the blocks instead of the text whenever the message has
 	// any (shouldRenderBlocksInsteadOfText), even if they draw nothing (a

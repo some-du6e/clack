@@ -761,6 +761,20 @@ func (r *richHandler) RemoveAttachment(id string) {
 	popups.ConfirmRemovePreview(r.h, m.Channel, m.TS, id)
 }
 
+// RemoveFile is a file card's x (richview.FileRemover, FileRemoveButton's
+// onRemove): DeleteFileDialog for a file shared into the message, else
+// removeFileFromMessage.
+func (r *richHandler) RemoveFile(f *richtext.File, deletion bool) {
+	if r.m == nil || f == nil {
+		return
+	}
+	if deletion {
+		popups.ConfirmDeleteFile(r.h, f)
+		return
+	}
+	popups.RemoveFileFromMessage(r.h, *r.m, f)
+}
+
 // Button is a click on a Block Kit element richview drew itself: only a
 // link button does anything. Rows and the Blocks host component draw a
 // message's elements through blockkit's element host (blockkit.go),
