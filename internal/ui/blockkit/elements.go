@@ -175,7 +175,8 @@ func (w *ew) configure() {
 	e := w.e
 	// Enter dispatches in a dispatch_action block even when multiline
 	// (PlainTextInputElement.handleKeyDown prevents the newline).
-	w.ed.SingleLine, w.ed.Submit = !e.Multiline, !e.Multiline || w.b.DispatchAction
+	multi := e.Multiline && e.Type != "password" // PasswordElement is an <input>: one line, whatever multiline says
+	w.ed.SingleLine, w.ed.Submit = !multi, !multi || w.b.DispatchAction
 	w.ed.Filter = ""
 	if e.Type == "number_input" {
 		w.ed.Filter = "0123456789-"
@@ -184,9 +185,11 @@ func (w *ew) configure() {
 		}
 	}
 	w.ed.MaxLen = max(e.MaxLength, 0)
-	w.ed.Mask = 0
+	w.ed.Mask, w.ed.InputHint = 0, key.HintAny
 	if e.Type == "password" { // PasswordElement: <input type="password">, Chromium's bullets
-		w.ed.Mask = '•'
+		// and an input method told it's a password (no suggestions, no
+		// learning what's typed)
+		w.ed.Mask, w.ed.InputHint = '•', key.HintPassword
 	}
 }
 
@@ -312,7 +315,7 @@ func (w *ew) size(gtx C, maxW int, accessory bool) image.Point {
 	case "checkboxes", "radio_buttons":
 		return image.Pt(maxW, w.optionsHeight(gtx, maxW))
 	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "password":
-		if w.e.Multiline {
+		if w.e.Multiline && w.e.Type != "password" {
 			return full(max(dp(gtx, 104), w.edHeight(gtx, maxW)))
 		}
 		return full(h36)
@@ -901,9 +904,16 @@ func (w *ew) layoutText(gtx C, sz image.Point) {
 			}
 			// only a change of the trimmed value dispatches
 			if w.dispatchOn("on_character_entered") && textValue(w.e.Type, v.Text) != before {
-				w.charInput(gtx)
+				if w.e.Type == "password" {
+					// wrappedOnAction's debounce: trailing only, 500 ms after
+					// the last change
+					w.charPending, w.charLast = true, gtx.Now
+					gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(charDebounce)})
+				} else {
+					w.charInput(gtx)
+				}
 			}
-			if w.e.Multiline || w.e.Type == "rich_text_input" {
+			if w.e.Multiline && w.e.Type != "password" || w.e.Type == "rich_text_input" {
 				w.o.changed()
 			}
 		case widget.SubmitEvent:
@@ -948,7 +958,7 @@ func (w *ew) layoutText(gtx C, sz image.Point) {
 		pointer.CursorText.Add(gtx.Ops)
 	}()
 	padX, padY := dp(gtx, 12), dp(gtx, 7)
-	if w.e.Multiline || w.e.Type == "rich_text_input" {
+	if w.e.Multiline && w.e.Type != "password" || w.e.Type == "rich_text_input" {
 		padY = dp(gtx, 8)
 	}
 	inner := image.Pt(sz.X-2*padX, sz.Y-2*padY)
@@ -987,6 +997,14 @@ func (w *ew) charInput(gtx C) {
 // email and url inputs follow dispatch_action_config, which defaults to
 // on_enter_pressed.
 func (w *ew) dispatchOn(trigger string) bool {
+	if w.e.Type == "password" {
+		// PasswordElement (mm++) has no onKeyDown and calls onAction(e, !1):
+		// in an input block it never dispatches (useInputBlockValidation's
+		// onAction dispatches only with shouldDispatch), whatever
+		// dispatch_action says; elsewhere wrappedOnAction sends each change
+		// (debounced) and Enter nothing
+		return !w.input && trigger == "on_character_entered"
+	}
 	if !w.input {
 		// not valid Block Kit (text inputs live in input blocks); Enter
 		// sends, like a dispatching block

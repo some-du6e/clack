@@ -1037,6 +1037,23 @@ func (s *Surface) inputBlock(gtx C, b *Block, key string, w int) int {
 }
 
 // submitValues is the state to send with views.submit.
+// wipePasswords forgets what was typed in the view's password fields
+// once it closes: its editors' text and its state values (a password
+// isn't kept in memory past its view).
+func (s *Surface) wipePasswords() {
+	for _, w := range s.ws {
+		if w.e == nil || w.e.Type != "password" {
+			continue
+		}
+		if w.ed != nil {
+			w.ed.SetText("")
+		}
+		if v := s.vals.get(w.bid, w.e.ActionID); v != nil {
+			v.Text = ""
+		}
+	}
+}
+
 func (s *Surface) submitValues() json.RawMessage { return s.vals.JSON(false) }
 
 // errMessage is the text Slack shows for a failed action.

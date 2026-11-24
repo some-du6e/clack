@@ -60,12 +60,23 @@ func TestSplitButtonPrimary(t *testing.T) {
 	if r.Dy() != 28 {
 		t.Errorf("the Button is %dpx tall, want c-button--small's 28", r.Dy())
 	}
+	if w.more.sz != (image.Point{}) {
+		t.Errorf("with bk_refresh_split_button off a chevron (%v) was drawn: want the primary's Button alone", w.more.sz)
+	}
 	want := map[string]any{"type": "split_button", "block_id": "bk_split", "action_id": "deploy",
 		"text": map[string]any{"type": "plain_text", "text": "Deploy"}, "value": "deploy-prod"}
+	pressed := time.Now()
 	e.click(center(r))
 	sameJSON(t, "the primary", e.calls(1)[0].Actions[0], want)
-	e.click(center(r))
-	e.noNewCall(1, 300*time.Millisecond, "a second click within a second")
+	// the action's answer back, so only the press's one-second hold can
+	// refuse the next click (the block isn't loading)
+	e.idle("bk_split")
+	if time.Since(pressed) < 700*time.Millisecond {
+		e.click(center(r))
+		e.noNewCall(1, 300*time.Millisecond, "a second click within a second")
+	} else {
+		t.Logf("the answer took %v: the in-second click isn't checked", time.Since(pressed))
+	}
 	e.settle(800 * time.Millisecond)
 	e.click(center(r))
 	sameJSON(t, "the primary after a second", e.calls(2)[1].Actions[0], want)
@@ -125,5 +136,32 @@ func TestSplitButtonDisabledLoading(t *testing.T) {
 		_, r := e.widget("bk_split", "deploy")
 		e.click(center(r))
 		e.noNewCall(0, 300*time.Millisecond, k+": a click")
+	}
+}
+
+// split_button's typed fields share their keys with other payloads: one
+// of another type (a string is_loading, a number size, a list where an
+// action goes) leaves that field unset instead of failing the element,
+// which took its actions block's other elements with it, or as an
+// accessory its whole block.
+func TestSplitButtonFieldsTolerant(t *testing.T) {
+	bad := `{"type":"split_button","action_id":"s","is_loading":"yes","size":3,"disabled":"no",` +
+		`"primary_action":{"text":{"type":"plain_text","text":"Go"},"value":"g"},"secondary_actions":{"x":1}}`
+	raw := `[{"type":"actions","block_id":"a","elements":[` + bad + `,` +
+		`{"type":"button","action_id":"b","text":{"type":"plain_text","text":"Other"}}]},` +
+		`{"type":"section","block_id":"acc","text":{"type":"mrkdwn","text":"with it"},"accessory":` + bad + `},` +
+		`{"type":"section","block_id":"after","text":{"type":"mrkdwn","text":"after"}}]`
+	bs := ParseBlocks(json.RawMessage(raw))
+	if len(bs) != 3 || bs[0].BlockID != "a" || bs[1].BlockID != "acc" || bs[2].BlockID != "after" {
+		t.Fatalf("blocks %+v, want a, acc and after", bs)
+	}
+	if len(bs[0].Elements) != 2 || bs[0].Elements[1].ActionID != "b" {
+		t.Fatalf("the actions block's elements %+v, want the split button and the button", bs[0].Elements)
+	}
+	for _, sb := range []*Element{&bs[0].Elements[0], bs[1].Accessory} {
+		if sb == nil || sb.Type != "split_button" || sb.IsLoading || sb.Size != "" || sb.Disabled || sb.SecondaryActions != nil ||
+			sb.PrimaryAction == nil || textOf(sb.PrimaryAction.Text) != "Go" {
+			t.Errorf("the mistyped split_button decoded as %+v, want its primary action and the rest unset", sb)
+		}
 	}
 }

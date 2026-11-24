@@ -216,6 +216,7 @@ func (s *Stack) back() {
 		return
 	}
 	s.closeViews(t.ID, "")
+	s.views[len(s.views)-1].wipePasswords()
 	s.views = s.views[:len(s.views)-1]
 	s.busy, s.banner, s.bannerRetry = false, "", false
 	s.list.Position = layout.Position{}
@@ -234,6 +235,9 @@ func (s *Stack) closeAll() {
 
 func (s *Stack) close() {
 	s.done = true
+	for _, sf := range s.views {
+		sf.wipePasswords()
+	}
 	if s.prev != nil { // useRestoreFocus
 		refocus.Restore(s.prev, &s.tag, &s.closeTap, &s.backTap, &s.cancel, &s.submit)
 		s.prev = nil
@@ -408,6 +412,7 @@ func (s *Stack) doSubmit() {
 				if r.View.ID == v.ID || r.View.ID == "" {
 					sf.set(r.View, true)
 				} else {
+					s.views[len(s.views)-1].wipePasswords()
 					s.views[len(s.views)-1] = s.surface(r.View)
 				}
 			} else {
@@ -430,6 +435,7 @@ func (s *Stack) doSubmit() {
 		// no response_action (handleSubmitResolved): back to the previous
 		// view if this one was pushed, else close
 		if len(s.views) > 1 {
+			s.views[len(s.views)-1].wipePasswords()
 			s.views = s.views[:len(s.views)-1]
 			s.list.Position = layout.Position{}
 			return

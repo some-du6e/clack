@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/io/key"
+
 	"github.com/some-du6e/clack/internal/core"
 )
 
@@ -87,6 +89,79 @@ func TestPasswordElement(t *testing.T) {
 	}
 	if strings.Contains(st, `"hinted"`) && !strings.Contains(st, `"hinted":{"v":{"type":"password","value":null}}`) {
 		t.Errorf("views.submit state %s, want the empty password's value null", st)
+	}
+	e.closeOverlays()
+}
+
+// Slack's PasswordElement (mm++) calls onAction(e, !1) and has no
+// onKeyDown: in an input block nothing dispatches it, whatever
+// dispatch_action and dispatch_action_config say (useInputBlockValidation
+// dispatches only with shouldDispatch), so a password never reaches the
+// app in blocks.actions from there. Outside one, wrappedOnAction sends
+// each change, 500 ms after the last, and Enter sends nothing. The editor
+// tells the input method it holds a password.
+func TestPasswordNeverDispatchesInInputBlocks(t *testing.T) {
+	e := newBKEnv(t, false, false)
+	pt := func(s string) map[string]any { return map[string]any{"type": "plain_text", "text": s} }
+	v, err := core.ParseView(mustJSON(map[string]any{"id": "VSURF0PW02", "type": "modal", "callback_id": "pw", "hash": "p2",
+		"title": pt("Connect"), "submit": pt("Save"), "close": pt("Cancel"), "state": map[string]any{"values": map[string]any{}},
+		"blocks": []any{map[string]any{"type": "input", "block_id": "pw", "dispatch_action": true, "label": pt("Token"),
+			"element": map[string]any{"type": "password", "action_id": "v",
+				"dispatch_action_config": map[string]any{"trigger_actions_on": []string{"on_enter_pressed", "on_character_entered"}}}}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newStack(e.h, v)
+	e.h.ShowOverlay(s)
+	e.frame()
+	e.frame()
+	var f FieldInfo
+	for _, x := range s.fields() {
+		if x.BlockID == "pw" {
+			f = x
+		}
+	}
+	if f.R.Empty() {
+		t.Fatalf("the password field wasn't drawn: %+v", s.fields())
+	}
+	e.click(center(f.R))
+	e.frame()
+	e.frame()
+	n := len(e.fs.BlockActionCalls())
+	typeIn(e, "hunter2")
+	e.settle(700 * time.Millisecond) // past on_character_entered's debounce
+	e.key(key.NameReturn)
+	e.noNewCall(n, 700*time.Millisecond, "a password typed and entered in a dispatching input block")
+	var w *ew
+	for _, b := range allBlocks(s.top().blocks) {
+		if b.BlockID == "pw" {
+			w = s.top().ws[surfKey(b, b.Element)]
+		}
+	}
+	if w == nil || w.ed == nil || w.ed.InputHint != key.HintPassword {
+		t.Errorf("the password editor's input hint isn't HintPassword: %+v", w)
+	}
+	// outside an input block: each change (debounced), never Enter
+	for _, c := range []struct {
+		input       bool
+		enter, char bool
+	}{{true, false, false}, {false, false, true}} {
+		x := &ew{e: &Element{Type: "password"}, b: &Block{DispatchAction: true}, input: c.input}
+		if x.dispatchOn("on_enter_pressed") != c.enter || x.dispatchOn("on_character_entered") != c.char {
+			t.Errorf("input %v: Enter dispatches %v, a change %v; want %v, %v", c.input, x.dispatchOn("on_enter_pressed"), x.dispatchOn("on_character_entered"), c.enter, c.char)
+		}
+	}
+	// once the modal closes, the typed password is gone from memory
+	if w != nil && w.ed != nil && w.ed.Text() == "" {
+		t.Fatal("nothing was typed")
+	}
+	s.Close()
+	e.frame()
+	if w != nil && w.ed != nil && w.ed.Text() != "" {
+		t.Error("the password stayed in its editor after the modal closed")
+	}
+	if v := s.top().vals.get("pw", "v"); v != nil && v.Text != "" {
+		t.Error("the password stayed in the view's state after the modal closed")
 	}
 	e.closeOverlays()
 }

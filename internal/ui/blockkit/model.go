@@ -170,13 +170,42 @@ type SplitAction struct {
 
 func (e *Element) UnmarshalJSON(b []byte) error {
 	type plain Element
-	var p plain
+	// split_button's typed fields are read on their own: one of another
+	// type (a string is_loading, a number size, a non-object action)
+	// leaves that field unset, as the other shared keys tolerate shapes,
+	// instead of failing the element and, with it, its block. These outer
+	// fields take the keys; the embedded ones stay unset.
+	var p struct {
+		plain
+		PrimaryAction    json.RawMessage `json:"primary_action"`
+		SecondaryActions json.RawMessage `json:"secondary_actions"`
+		Size             json.RawMessage `json:"size"`
+		IsLoading        json.RawMessage `json:"is_loading"`
+		Disabled         json.RawMessage `json:"disabled"`
+	}
 	if err := json.Unmarshal(b, &p); err != nil {
 		return err
 	}
-	*e = Element(p)
+	*e = Element(p.plain)
+	tolerant(p.PrimaryAction, &e.PrimaryAction)
+	tolerant(p.SecondaryActions, &e.SecondaryActions)
+	tolerant(p.Size, &e.Size)
+	tolerant(p.IsLoading, &e.IsLoading)
+	tolerant(p.Disabled, &e.Disabled)
 	e.Raw = append(json.RawMessage(nil), b...)
 	return nil
+}
+
+// tolerant decodes raw into *dst, leaving *dst its zero value when raw
+// doesn't fit (or is absent).
+func tolerant[T any](raw json.RawMessage, dst *T) {
+	if len(raw) == 0 {
+		return
+	}
+	var v T
+	if json.Unmarshal(raw, &v) == nil {
+		*dst = v
+	}
 }
 
 // initialText is initial_value as a string (text inputs).
