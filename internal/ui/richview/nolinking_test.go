@@ -24,12 +24,12 @@ func TestNoLinkingMentionsAreInert(t *testing.T) {
 	defer hovercard.SetDefault(nil)
 	t0 := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 	d := doc(para(txt("see "), rt.Span{Kind: rt.Channel, Text: "#plans", ID: "C0NOLINK01"}, txt(" and "),
-		rt.Span{Kind: rt.User, Text: "@robin", ID: "U0NOLINK01"}, txt(" at "), rt.Span{Kind: rt.Link, Text: "the doc", URL: "https://example.invalid/doc"}))
+		rt.Span{Kind: rt.User, Text: "@robin", ID: "U0NOLINK01"}, txt(" at "), rt.Span{Kind: rt.Link, Text: "doc", URL: "https://example.invalid/doc"}))
 	for _, inert := range []bool{false, true} {
 		hs := newHarness(d, &recHandler{})
 		hs.v.SetOptions(Options{NoLinking: inert})
 		hs.frame()
-		for _, label := range []string{"#plans", "@robin", "the doc"} {
+		for _, label := range []string{"#plans", "@robin", "doc"} {
 			f := findFrag(t, &hs.v.d, label)
 			p := center(f)
 			ptr = image.Pt(int(p.X+.5), int(p.Y+.5))
