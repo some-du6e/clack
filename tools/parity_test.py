@@ -159,6 +159,13 @@ class ParityTests(unittest.TestCase):
         self.assertEqual(parity.go_name('a\tb'), 'a_b')
         self.assertEqual(parity.go_name('café ¯\\_(ツ)_/¯'), 'café_¯\\_(ツ)_/¯')
 
+    def test_a_value_split_over_output_events_reads_whole(self):
+        # go test -json splits a long line over several output events, mid-token
+        events = ['    paritytest.go:117: parity: differs from Slack\n', '        slack: {"rows": ["a: Add', ' reaction…", "b"]}\n',
+                  '        clack: {"rows": ["a: Add reaction…"]}\n']
+        self.assertEqual(parity.values(parity.own_lines(events)),
+                         {'slack': {'rows': ['a: Add reaction…', 'b']}, 'clack': {'rows': ['a: Add reaction…']}})
+
     def test_each_case_gets_its_own_answer(self):
         repo = FakeRepo(CASES)
         try:

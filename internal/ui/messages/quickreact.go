@@ -10,6 +10,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -38,14 +39,22 @@ type quickBar struct {
 	hov        int // hovered, -1 none
 }
 
+// quickReactionsOn is whether conversation ch's toolbar has the quick
+// reactions (before canAddReaction): the pref is on and it isn't
+// Slackbot's DM (isSlackbotIm).
+func quickReactionsOn(app *core.App, ch string) bool {
+	if app == nil || !uipref.Get().QuickReactions {
+		return false
+	}
+	c, ok := app.S.Conv(ch)
+	return !ok || !c.IsIM || c.User != "USLACKBOT"
+}
+
 // prepare picks the row's quick reactions (none when they're off).
 func (q *quickBar) prepare(h Host, ch string, r *row) {
 	q.names = q.names[:0]
 	app := h.Core()
-	if app == nil || !uipref.Get().QuickReactions || r == nil {
-		return
-	}
-	if c, ok := app.S.Conv(ch); ok && c.IsIM && c.User == "USLACKBOT" { // isSlackbotIm
+	if r == nil || !quickReactionsOn(app, ch) {
 		return
 	}
 	p := uipref.Get()

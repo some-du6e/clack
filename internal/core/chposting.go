@@ -509,6 +509,19 @@ func (a *App) FeatureState(name string) (on, known bool) {
 	return f.on[name], f.known || f.cached
 }
 
+// SetFeatures sets what features.access.policies.list would say, as its
+// answer, so no read starts for an hour (tests).
+func (a *App) SetFeatures(on map[string]bool) {
+	f := a.features()
+	f.mu.Lock()
+	f.known, f.at, f.loading = true, time.Now(), false
+	f.on = make(map[string]bool, len(on))
+	for k, v := range on {
+		f.on[k] = v
+	}
+	f.mu.Unlock()
+}
+
 // featureRetryAt is when a failed read is tried again (tests).
 func (a *App) featureRetryAt() time.Time {
 	f := a.features()

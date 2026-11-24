@@ -310,7 +310,9 @@ def collect(events):
 
 
 def own_lines(lines):
-    out = [l.rstrip('\n') for l in lines if not FRAMING.match(l)]
+    """The output's lines without go test's framing. go test -json can split one long line over several output
+    events (a case's slack: or clack: JSON past a few hundred bytes), so the events are joined back first."""
+    out = [l for l in ''.join(lines).split('\n') if not FRAMING.match(l)]
     while out and not out[-1].strip():
         out.pop()
     return out
@@ -841,7 +843,27 @@ def quip_refresher(kind):
     return refresh
 
 
-REFRESHERS = {'emoji-rank': refresh_emoji_rank, **{k: quip_refresher(k) for k in QUIP_SNAPSHOTS}}
+MESSAGE_ACTIONS_ORACLE = os.path.join(ROOT, 'tools', 'oracles', 'message_actions.cjs')
+
+
+def refresh_message_actions(cases, tmp, base=None):
+    """Slack's hover toolbar, ⋮ menu and right-click menu for each case: tools/oracles/message_actions.cjs runs
+    Slack's own toolbar and menu code in node over its CDN chunks (SLACK_CHUNKS names their directory, JSDOM the
+    directory holding jsdom; see the script's header), each case's store built through Slack's reducers."""
+    node = shutil.which('node')
+    if not node:
+        raise Unavailable('no node on PATH')
+    f = os.path.join(tmp, 'snapshot.json')
+    with open(f, 'w', encoding='utf-8') as fh:
+        json.dump({'base': base or {}, 'cases': cases}, fh, ensure_ascii=False)
+    p = subprocess.run([node, MESSAGE_ACTIONS_ORACLE, f], capture_output=True, text=True, timeout=900)
+    if p.returncode:
+        raise Unavailable(f'the harness failed ({p.returncode}): {p.stderr.strip()[-500:]}')
+    return json.loads(p.stdout.rstrip('\n').split('\n')[-1])
+
+
+REFRESHERS = {'emoji-rank': refresh_emoji_rank, 'message-actions': refresh_message_actions,
+              **{k: quip_refresher(k) for k in QUIP_SNAPSHOTS}}
 
 
 def dump_snapshot(s):
@@ -876,7 +898,8 @@ def refresh(reg, dims, dry_run=False, root=ROOT, refreshers=None, today=None):
             started = time.monotonic()
             try:
                 with tempfile.TemporaryDirectory(dir=os.environ.get('CLACK_PARITY_TMP')) as tmp:
-                    fresh = fn(s['cases'], tmp)
+                    # a snapshot's base (the inputs its cases share) goes to its oracle too
+                    fresh = fn(s['cases'], tmp, base=s['base']) if 'base' in s else fn(s['cases'], tmp)
             except Unavailable as e:
                 print(f'{d["id"]}: can\'t refresh here: {e}')
                 code = 2

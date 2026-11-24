@@ -81,6 +81,11 @@ const (
 )
 
 var tbTips = [tbCount]string{"Add reaction…", "Reply in thread", "Forward message…", "Add to-do", "Add to list…", "More actions"} // aria-labels of the live 2026 client
+
+// tbActions are the buttons' Slack action ids (uAhD), which Slack's
+// MessageActions keys each button by (renderButtonForAction's
+// `${id}_button`); ⋮ is MessageActionButtonEllipsis, Slack's "more".
+var tbActions = [tbCount]string{"add_reaction", "comment", "share_message", "add_to_later_todos", "add_to_list", "more"}
 var tbIcons = [tbCount]string{"add-reaction", "comment-lines", "forward-msg", "todo-add", "list-add", "kebab"}
 
 // listState is the per-conversation UI state shared by channel and thread
@@ -2402,7 +2407,7 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	s.tilt.mount(r)
 	s.quick.prepare(h, s.ch, r)
 	s.prepareButtons(h.Core(), r)
-	if !reactable(h.Core(), r, s.thread) { // canAddReaction; ThreadRootCanvas: no quick reactions
+	if !reactable(h.Core(), &r.src, s.thread) { // canAddReaction; ThreadRootCanvas: no quick reactions
 		s.quick.names = s.quick.names[:0]
 	}
 	// message_actions_truncate (L2dv calculateResponsiveActions): the
@@ -2494,47 +2499,56 @@ func (s *listState) actionsAt(idx int, dense bool) int {
 	return actsDefault
 }
 
-// prepareButtons picks r's toolbar buttons and their labels, each by
-// Slack's rule for it (actions_rules.go, popups/actions_rules.go): an
-// ephemeral message keeps ⋮ alone.
+// prepareButtons picks r's toolbar buttons and their labels
+// (toolbarButtons).
 func (s *listState) prepareButtons(app *core.App, r *row) {
-	s.tbBtns = s.tbBtns[:0]
-	s.tbLabel, s.tbQAs = tbTips, tbQA
+	s.tbBtns, s.tbLabel, s.tbQAs = toolbarButtons(app, &r.src, s.thread, s.tbBtns)
+}
+
+// toolbarButtons picks m's toolbar buttons, in order, with each one's
+// label and data-qa, each by Slack's rule for it (actions_rules.go,
+// popups/actions_rules.go): an ephemeral message keeps ⋮ alone. thread:
+// the list is the thread pane. The answer reuses btns.
+// TestMessageActionsLikeSlack holds it to Slack's own toolbar.
+func toolbarButtons(app *core.App, m *core.Message, thread bool, btns []int) (_ []int, label, qa [tbCount]string) {
+	btns = btns[:0]
+	label, qa = tbTips, tbQA
 	for i := 0; i < tbCount; i++ {
 		switch i {
 		case tbReply:
-			l := replyLabel(app, &r.src, s.thread)
+			l := replyLabel(app, m, thread)
 			if l == "" {
 				continue
 			}
-			s.tbLabel[i] = l
+			label[i] = l
 		case tbForward:
-			l, qa, ok := shareAction(app, &r.src, s.thread)
+			l, q, ok := shareAction(app, m, thread)
 			if !ok {
 				continue
 			}
-			s.tbLabel[i], s.tbQAs[i] = l, qa
+			label[i], qa[i] = l, q
 		case tbTodo:
-			if !popups.TodoShown(app, &r.src) { // on3u: none on an ephemeral or automated message
+			if !popups.TodoShown(app, m) { // on3u: none on an ephemeral or automated message
 				continue
 			}
-			s.tbLabel[i] = todoAction(app, &r.src).Label // Yoyn: "Complete to-do" on a to-do
+			label[i] = todoAction(app, m).Label // Yoyn: "Complete to-do" on a to-do
 		case tbList:
-			if !popups.AddToListShown(app, &r.src) { // shouldShowAddToList: !is_ephemeral
+			if !popups.AddToListShown(app, m) { // shouldShowAddToList: !is_ephemeral
 				continue
 			}
 		case tbMore:
-			if !popups.MoreShown(app, &r.src) { // isOnlyDeletableHere
+			if !popups.MoreShown(app, m) { // isOnlyDeletableHere
 				continue
 			}
 		case tbAddReact:
-			if !reactable(app, r, s.thread) {
+			if !reactable(app, m, thread) {
 				continue
 			}
 		}
-		s.tbLabel[i] = tbTip(i, s.tbLabel[i])
-		s.tbBtns = append(s.tbBtns, i)
+		label[i] = tbTip(i, label[i])
+		btns = append(btns, i)
 	}
+	return btns, label, qa
 }
 
 func (s *listState) actionsProps() slackc.Props {
