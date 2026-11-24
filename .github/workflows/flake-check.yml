@@ -7299,6 +7299,37 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # member-subs (2026-11-24): TestMemberSubscriptionsAfterReconnect read
+  # core's count of a subscribed member right after the fake had the
+  # subscription, while the refetch core counts it after was still out
+  # (msg-latency-thread's push ci 45388429533). It waits for both now.
+  # COUNT runs with that refetch held 300 ms (MF_SLOW_REFETCH), then COUNT
+  # as the suite runs it. Dispatch with only=member-subs.
+  member-subs:
+    if: ${{ !inputs.only || startsWith('member-subs', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the member's subscription across a reconnect, the refetch slow, COUNT times
+        env:
+          MF_SLOW_REFETCH: "1"
+        run: go test -count=$COUNT -timeout 6m -run '^TestMemberSubscriptionsAfterReconnect$' ./internal/core
+      - name: the member's subscription across a reconnect, COUNT times
+        run: go test -count=$COUNT -timeout 6m -run '^TestMemberSubscriptionsAfterReconnect$' ./internal/core
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7463,6 +7494,7 @@ jobs:
       - reply-flush
       - entprefs
       - scroll-cpu
+      - member-subs
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
