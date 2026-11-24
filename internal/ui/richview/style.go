@@ -526,6 +526,12 @@ type Options struct {
 	// EmailDetails lays the doc's email file out as Slack's
 	// EmailFileDetailsContent (the secondary view's FileDetails; email.go).
 	EmailDetails bool
+	// FileDetails lays the doc's file out as FileDetails' preview (eg5B
+	// renderPreview: MessageFile with forceExpanded, largeImage,
+	// isFileDetails and showActions off): an image is MessageImageFile at
+	// its Thumb's size (the caller's thumb_480, else thumb_360), and no
+	// file gets FileActions (file_details.go).
+	FileDetails bool
 	// WorkObjectSearch lays the doc's work object out as a search result
 	// (WorkObjectSearchResult: source WORK_OBJECT_SEARCH, no width cap,
 	// no meta line), at WorkObjectSize ("compact" for the dense view,

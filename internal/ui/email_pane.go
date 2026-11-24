@@ -172,8 +172,8 @@ func (p *emailPane) footer(gtx layout.Context, pane image.Point) layout.Dimensio
 	th := a.th
 	w := gtx.Constraints.Max.X
 	share := p.share.Clicked(gtx) // popups.Button's Layout drains its clicks
-	// border-top
-	theme.Fill(gtx, image.Rect(0, 0, w, max(1, gtx.Dp(1))), theme.OtlTer(th))
+	// border-top: .p-flexpane__footer's rgba(sk_foreground_low,.13)
+	theme.Fill(gtx, image.Rect(0, 0, w, max(1, gtx.Dp(1))), th.C.Border)
 	y := max(1, gtx.Dp(1)) + gtx.Dp(16)
 	x, bh := gtx.Dp(20), gtx.Dp(36)
 	mx := w - gtx.Dp(20) - bh // More actions at the right

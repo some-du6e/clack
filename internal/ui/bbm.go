@@ -628,6 +628,8 @@ func (a *App) bbmCrumbs() []bbmCrumb {
 			}
 		case secEmail: // FileDetails' titleContent
 			label = emailPaneTitle()
+		case secFileDetails:
+			label = fileDetailsTitle()
 		}
 		cs = append(cs, bbmCrumb{key: "secondary", label: label, last: true})
 	}

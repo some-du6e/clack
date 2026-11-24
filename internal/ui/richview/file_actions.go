@@ -297,7 +297,7 @@ func starLook(f *richtext.File) (icon, tip string, starred bool) {
 // pillowBar adds file pillow r's FileActions (not in a hover card, a
 // canvas's own doc, or for an upload still going).
 func (l *lay) pillowBar(f *richtext.File, r image.Rectangle) {
-	if f == nil || l.opts.NoHoverCards || l.opts.Canvas || f.Pending {
+	if f == nil || l.opts.NoHoverCards || l.opts.Canvas || l.opts.FileDetails || f.Pending {
 		return
 	}
 	l.d.bars = append(l.d.bars, fileBar{card: r, f: f, inset: 12, group: true, btns: fileActionsFor(f, false, l.noAnim, l.st.emailV1)})
@@ -305,7 +305,7 @@ func (l *lay) pillowBar(f *richtext.File, r image.Rectangle) {
 
 // galleryBar adds gallery image tile r's FileActions.
 func (l *lay) galleryBar(f *richtext.File, r image.Rectangle) {
-	if f == nil || l.opts.NoHoverCards || l.opts.Canvas || f.Pending || f.IsVideo {
+	if f == nil || l.opts.NoHoverCards || l.opts.Canvas || l.opts.FileDetails || f.Pending || f.IsVideo {
 		return
 	}
 	l.d.bars = append(l.d.bars, fileBar{card: r, f: f, inset: 8, btns: fileActionsFor(f, true, l.noAnim, l.st.emailV1)})

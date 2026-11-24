@@ -598,6 +598,45 @@ func RelativeDay(loc string, t, now time.Time, lower bool) string {
 	return capitalize(s)
 }
 
+// ShouldExcludeYear is shouldExcludeYear (Nmg4): no year for a date in
+// now's year, nor for one in an earlier year at most 31 days before now;
+// a later year keeps it. t and now are read in their own locations, as
+// dayjs reads them in the local zone.
+func ShouldExcludeYear(t, now time.Time) bool {
+	switch {
+	case t.Year() > now.Year():
+		return false
+	case t.Year() == now.Year():
+		return true
+	}
+	return now.Unix()-t.Unix() <= 31*24*60*60
+}
+
+// NamedDayOpts are toCalendarDateOrNamedDay's options (fUG7).
+type NamedDayOpts struct {
+	ShortenMonth, ExcludeYear, UncapitalizedRelativeDay bool
+}
+
+// CalendarDateOrNamedDay is toCalendarDateOrNamedDay (fUG7): the relative
+// day for yesterday, today and tomorrow (maybeGetRelativeDay, GuNR, all
+// lower case with UncapitalizedRelativeDay: "today"), else toCalendarDate
+// (GS5V) with the month shortened when asked and the year dropped when
+// asked or by ShouldExcludeYear ("November 3rd", "November 3rd, 2025").
+func CalendarDateOrNamedDay(loc string, t, now time.Time, o NamedDayOpts) string {
+	if r := RelativeDay(loc, t, now, o.UncapitalizedRelativeDay); r != "" {
+		return r
+	}
+	return CalendarDate(loc, t, CalendarOpts{ShortenMonth: o.ShortenMonth, ExcludeYear: o.ExcludeYear || ShouldExcludeYear(t, now)})
+}
+
+// IsTodayOrYesterday is toCalendarDateIfYesterdayOrToday's test (47p5:
+// isToday || isYesterday): FileDetails' "Created {date}" (a named day)
+// against "Created on {date}" reads it. Tomorrow isn't one of them, so a
+// clock ahead of the server's reads "Created on tomorrow", as in Slack.
+func IsTodayOrYesterday(t, now time.Time) bool {
+	return sameDay(t, now) || sameDay(t, now.AddDate(0, 0, -1))
+}
+
 func capitalize(s string) string {
 	r, n := utf8.DecodeRuneInString(s)
 	if n == 0 {

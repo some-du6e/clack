@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/some-du6e/clack/internal/media/mediatest"
 	"github.com/some-du6e/clack/internal/slack"
@@ -174,7 +175,8 @@ func (s *Server) filesFixtures() []filesFixture {
 		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESVID01/demo-walkthrough.mp4",
 		MP4:        s.URL + "files-pri/" + TeamID + "-F0FILESVID01/demo-walkthrough.mp4",
 		ThumbVideo: s.URL + "img/1280x720/F0FILESVID01.png", ThumbVideoW: 1280, ThumbVideoH: 720,
-		OriginalW: 1280, OriginalH: 720, DurationMS: 83000, Permalink: s.URL + "files/F0FILESVID01/demo-walkthrough.mp4"}
+		OriginalW: 1280, OriginalH: 720, DurationMS: 83000, Permalink: s.URL + "files/F0FILESVID01/demo-walkthrough.mp4",
+		Created: filesBaseTS + 6*60} // uploaded with the "video" case's message (FileDetails' "Created on …")
 	audio := slack.File{ID: FilesAudioID, Name: "standup-notes.mp3", Title: "standup-notes.mp3", Mimetype: "audio/mpeg",
 		Filetype: "mp3", PrettyType: "MP3", Size: 900 << 10, Mode: "hosted", DurationMS: 154000,
 		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESAUD01/standup-notes.mp3", Permalink: s.URL + "files/F0FILESAUD01/standup-notes.mp3",
@@ -313,11 +315,37 @@ func (s *Server) FilesReplyTS(name string, j int) string {
 
 func filesReplyTS(i, j int) string { return strconv.Itoa(filesBaseTS+i*60+10*(j+1)) + ".000100" }
 
-func (s *Server) filesMessage(f filesFixture, ts, thread string) slack.Message {
-	user := SelfID
-	if f.user >= 0 {
-		user = s.users[f.user%len(s.users)].ID
+// filesUser is a fixture's sender: s.users[i], the viewer for -1.
+func (s *Server) filesUser(i int) string {
+	if i < 0 {
+		return SelfID
 	}
+	return s.users[i%len(s.users)].ID
+}
+
+// filesHas reports whether files holds file id.
+func filesHas(files []slack.File, id string) bool {
+	for _, f := range files {
+		if f.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// filesShare is fixture f's message at ts (in thread thread) as one of
+// files.getShares' public shares.
+func (s *Server) filesShare(f filesFixture, ts, thread string) map[string]any {
+	sh := map[string]any{"ts": ts, "channel_name": "files-gallery", "team_id": TeamID, "share_user_id": s.filesUser(f.user),
+		"source": "UNKNOWN", "is_silent_share": false, "reply_users": []string{}, "reply_users_count": 0, "reply_count": len(f.replies)}
+	if thread != "" {
+		sh["thread_ts"] = thread
+	}
+	return sh
+}
+
+func (s *Server) filesMessage(f filesFixture, ts, thread string) slack.Message {
+	user := s.filesUser(f.user)
 	files := append([]slack.File(nil), f.files...)
 	for j := range files {
 		if files[j].User == "" {
@@ -345,11 +373,39 @@ func (s *Server) filesMessage(f filesFixture, ts, thread string) slack.Message {
 	return m
 }
 
-// handleFiles answers files.info for the #files-gallery files and
+type filesFormsState struct {
+	mu    sync.Mutex
+	forms map[string][]url.Values
+}
+
+var filesFormStates = newPerServer() // *Server -> *filesFormsState
+
+func (s *Server) filesForms() *filesFormsState {
+	v, _ := filesFormStates.LoadOrStore(s, &filesFormsState{forms: map[string][]url.Values{}})
+	return v.(*filesFormsState)
+}
+
+// FilesForms are the files.info and files.getShares calls #files-gallery's
+// handler saw, oldest first (method's).
+func (s *Server) FilesForms(method string) []url.Values {
+	st := s.filesForms()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return append([]url.Values(nil), st.forms[method]...)
+}
+
+// handleFiles answers files.info for the #files-gallery files (with
+// their uploader), files.getShares for its images and video, and
 // conversations.replies for its thread; handled=false passes on.
 func (s *Server) handleFiles(method string, f url.Values) (any, bool) {
 	if !s.Size.Files {
 		return nil, false
+	}
+	if method == "files.info" || method == "files.getShares" {
+		st := s.filesForms()
+		st.mu.Lock()
+		st.forms[method] = append(st.forms[method], f)
+		st.mu.Unlock()
 	}
 	switch method {
 	case "files.info":
@@ -359,6 +415,9 @@ func (s *Server) handleFiles(method string, f url.Values) (any, bool) {
 			for _, c := range fx {
 				for _, file := range c.files {
 					if file.ID == id {
+						if file.User == "" { // the uploader, as the message's copy has it (filesMessage)
+							file.User = s.filesUser(c.user)
+						}
 						return file, true
 					}
 				}
@@ -375,6 +434,29 @@ func (s *Server) handleFiles(method string, f url.Values) (any, bool) {
 			}
 			return ok("file", file, "comments", []any{}), true
 		}
+	case "files.getShares":
+		// FileShareContext's references for the gallery's images and its
+		// video: each #files-gallery message sharing it, public, at its
+		// message's ts (a reply's with its thread_ts), in the shape Hack
+		// Club answers (core/file_shares.go)
+		id := f.Get("file_id")
+		var shares []any
+		for i, c := range s.filesFixtures() {
+			if filesHas(c.files, id) {
+				shares = append(shares, s.filesShare(c, filesTS(i), ""))
+			}
+			for j, r := range c.replies {
+				if filesHas(r.files, id) {
+					shares = append(shares, s.filesShare(r, filesReplyTS(i, j), filesTS(i)))
+				}
+			}
+		}
+		if len(shares) == 0 || !strings.HasPrefix(id, "F0FILESIMG") && id != FilesVideoID {
+			break
+		}
+		none := map[string]any{"count": 0, "shares": map[string]any{}}
+		return ok("conversation_shares", map[string]any{"count": len(shares), "shares": map[string]any{"public": map[string]any{FilesChannelID: shares}}},
+			"tab_shares", none, "file_channel_shares", none), true
 	case "conversations.replies":
 		if f.Get("channel") == FilesChannelID {
 			if msgs := s.FilesReplies(f.Get("ts")); msgs != nil {

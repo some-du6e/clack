@@ -468,6 +468,11 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 			i, prev = j-1, j-1
 			continue
 		}
+		// FileDetails' image preview (file_details.go)
+		if l.opts.FileDetails && isMediaBlock(b) && !b.File.IsVideo {
+			y += l.detailsImage(b.File, x, y, w)
+			continue
+		}
 		// Slack's FileGallery: consecutive visual files (images, videos)
 		// lay out as one media gallery.
 		if isMediaBlock(b) {
