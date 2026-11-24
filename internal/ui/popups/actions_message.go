@@ -331,9 +331,22 @@ func tidySeps(items []MenuItem) []MenuItem {
 func actFollowItem(h Host, m core.Message, conv core.Conv, root string) (MenuItem, bool) {
 	ch := m.Channel
 	subscribed := m.FollowingThread
+	rootMsg := m
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
 		subscribed = actThreadSubscribed(h, ch, root)
-	} else if !canFollow(h.Core(), &m, subscribed && conv.IsArchived) {
+		rootMsg = core.Message{Channel: ch, TS: root, ThreadTS: root, ReplyCount: 1} // a reply's thread has replies
+		if a := h.Core(); a != nil {
+			if r, ok := a.S.FindHeld(ch, root); ok {
+				rootMsg = a.MessageFromSlack(ch, &r)
+			}
+		}
+	}
+	// QdFb: a viewer who isn't a member and doesn't follow the thread gets
+	// no row (message_actions_non_member_hints' disabled row aside)
+	if conv.ID != "" && !conv.Member && !subscribed {
+		return MenuItem{}, false
+	}
+	if !canFollow(h.Core(), &rootMsg, subscribed && conv.IsArchived) {
 		// QdFb: canStartOrOpenThread on the thread's root (threadTs ||
 		// ts), ignoring membership for a thread followed in an archived
 		// channel: none on a message no thread can start from and with no

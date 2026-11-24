@@ -101,7 +101,9 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	// a comment thread's root takes none in its thread (ThreadRootCanvas)
 	// (isActionable: never an ephemeral, temporary or tombstoned message)
 	app := h.Core()
-	react := !m.System && (app == nil && actionable(nil, &m) || app != nil && app.CanAddReaction(&m)) && !(where == InThread && m.IsCommentRoot())
+	// BJVv asks canAddReaction alone, which has no automated-message case:
+	// a join or a topic change gets Add reaction… here too
+	react := (app == nil && actionable(nil, &m) || app != nil && app.CanAddReaction(&m)) && !(where == InThread && m.IsCommentRoot())
 	if react {
 		items = append(items, MenuItem{Action: "add_reaction", Label: "Add reaction…", Icon: "add-reaction", Hint: nsMessage.T("R"), Keys: KeyReact, Do: func() {
 			h.ShowOverlay(NewReactionPicker(h, at, ch, ts, m.ThreadTS, nil))
