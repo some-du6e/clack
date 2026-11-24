@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -252,6 +254,10 @@ func permalink(domain, ch, ts string) string {
 // openURL opens a link in the system browser without blocking (http,
 // https and mailto only; see openurl.Check). A var so tests can catch it.
 var openURL = func(u string) { _ = openurl.Open(u) }
+
+// downloadFile downloads a Slack file in the app (popups.DownloadFile:
+// streamed, the download toast). A var so tests can catch it.
+var downloadFile = func(h popups.Host, f *richtext.File) { popups.DownloadFile(h, f) }
 
 // SwapOpenURL makes f what opens a message's link in the browser and
 // returns the undo (tests outside the package: a link Slack's client

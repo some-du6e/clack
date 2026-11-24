@@ -557,9 +557,23 @@ func (hh hostHandler) OpenFile(f *richtext.File) {
 		hh.h.OpenLightbox(*f.Thumb, core.Message{})
 		return
 	}
-	if f != nil {
-		openFile(hh.h, fileFromRich(f)) // files.go
+	if f == nil {
+		return
 	}
+	it := fileFromRich(f)
+	if it.isCanvas() || it.isList() || (it.isImage() && it.URL != "") {
+		openFile(hh.h, it) // files.go: the canvas, list and image viewers
+		return
+	}
+	// a message's file (FILE_ATTACHED_TO_MESSAGE): handleFileContainerClick
+	// as the message list has it (popups.OpenFileCard): a hosted .exe or
+	// zip downloads in the app, never in the browser
+	ph, _ := hh.h.(popups.Host)
+	popups.OpenFileCardWith(f, func(u string) { hh.follow(u, false) }, func(f *richtext.File) {
+		if ph != nil {
+			popups.DownloadFile(ph, f)
+		}
+	}, func(f *richtext.File) bool { return ph != nil && popups.ViewFile(ph, f) })
 }
 
 // Button is a click on a Block Kit element richview drew itself: only a

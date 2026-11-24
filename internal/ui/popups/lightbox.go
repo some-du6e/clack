@@ -24,6 +24,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -950,14 +951,19 @@ func (lb *Lightbox) arrows(gtx layout.Context, panel image.Rectangle) {
 
 // ---- download / open ----
 
-// download saves the original image bytes to the user's Downloads folder
-// (an explicit user action). Slack-hosted files come from core.Fetch.
+// download is FileViewerActions' Download: a Slack file downloads as any
+// file does (DownloadFile: streamed, the download toast); another image
+// (an attachment's, a pending upload's) is saved from its bytes.
 func (lb *Lightbox) download() {
 	if lb.busy {
 		return
 	}
 	h := lb.h
 	it := lb.cur()
+	if f := it.file; f != nil && f.ID != "" && f.Download != "" {
+		DownloadFile(h, f)
+		return
+	}
 	src := it.img.URL
 	name := ""
 	if f := it.file; f != nil {
@@ -992,36 +998,24 @@ func lbGet(ctx context.Context, raw string) ([]byte, error) {
 }
 
 // Download location (Preferences > Advanced, the ui root sets these):
-// DownloadDir is the folder downloads go to ("" for ~/Downloads), and
-// AskDownload, when set and on, saves through the system's save dialog
-// instead (Slack's "Choose location for each download"). Both run off
-// the UI goroutine.
-var (
-	DownloadDir func() string
-	AskDownload func(name string, data []byte) (path string, asked bool, err error)
-)
+// DownloadDir is the folder downloads go to ("" for ~/Downloads);
+// ChooseDownloadDir (downloads.go) asks for one instead while "Choose
+// location for each download" is on. Both run off the UI goroutine.
+var DownloadDir func() string
 
-// ErrDownloadCanceled is a save dialog the user closed: no toast.
+// ErrDownloadCanceled is a folder chooser the user closed: no toast.
 var ErrDownloadCanceled = errors.New("download canceled")
 
-// lbSave writes data to the download folder under a unique name (or
-// where the save dialog says) and returns the path.
+// lbSave writes data to the download folder (downloadDir: the
+// preference's, or the folder chooser's when it asks) under a unique name
+// and returns the path.
 func lbSave(name, src string, data []byte) (string, error) {
-	if AskDownload != nil {
-		if p, asked, err := AskDownload(lbFileName(name, src, data), data); asked {
-			return p, err
+	dir, err := downloadDir(context.Background())
+	if err != nil {
+		if errors.Is(err, core.ErrDownloadCanceled) {
+			err = ErrDownloadCanceled
 		}
-	}
-	dir := ""
-	if DownloadDir != nil {
-		dir = DownloadDir()
-	}
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		dir = filepath.Join(home, "Downloads")
+		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -1058,6 +1052,7 @@ func lbSaveIn(dir, name, src string, data []byte) (string, error) {
 		if err := f.Close(); err != nil {
 			return "", err
 		}
+		core.MarkDownloaded(p, src) // as Chromium marks every download (Windows' Mark-of-the-Web, macOS' quarantine)
 		return p, nil
 	}
 	return "", errors.New("no free file name")
@@ -1094,39 +1089,8 @@ func lbFileName(name, src string, data []byte) string {
 	return name
 }
 
-// lbCleanName makes name safe as a single file name.
-func lbCleanName(name string) string {
-	name = strings.Map(func(r rune) rune {
-		switch {
-		case r < 0x20, r == 0x7f, strings.ContainsRune(`/\:*?"<>|`, r):
-			return '_'
-		case r == 0x200e, r == 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
-			return '_' // bidi controls: "\u202egnp.exe" would display as "exe.png"
-		}
-		return r
-	}, strings.TrimSpace(name))
-	name = strings.Trim(name, ". ")
-	if len(name) > 200 {
-		name = strings.ToValidUTF8(name[:200], "")
-		name = strings.TrimRight(name, ". ")
-	}
-	// Windows device names (CON, NUL, COM1, CONIN$, …) open the device, not
-	// a file, whatever the extension.
-	stem := strings.ToUpper(name)
-	if i := strings.IndexByte(stem, '.'); i >= 0 {
-		stem = stem[:i]
-	}
-	stem = strings.TrimRight(stem, " ")
-	switch stem {
-	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
-		name = "_" + name
-	default:
-		if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) && stem[3] >= '0' && stem[3] <= '9' {
-			name = "_" + name
-		}
-	}
-	return name
-}
+// lbCleanName makes name safe as a single file name (core.CleanFileName).
+func lbCleanName(name string) string { return core.CleanFileName(name) }
 
 // lbOpen opens an http(s) URL in the system browser.
 func lbOpen(h Host, raw string) {
@@ -1135,7 +1099,7 @@ func lbOpen(h Host, raw string) {
 		return
 	}
 	if err := openurl.Open(raw); err != nil {
-		h.Toast("Couldn't open the browser: " + errText(err))
+		applog.Debugf("popups: open %s: %v", slack.Redact(raw), err) // Slack's shell.openExternal says nothing either
 	}
 }
 

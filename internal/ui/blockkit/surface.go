@@ -151,11 +151,10 @@ func (s *surfHandler) OpenChannel(id string) { s.h.Navigate("c/" + id) }
 func (s *surfHandler) OpenUsergroup(id string, anchor image.Point) {
 }
 func (s *surfHandler) OpenImage(img richtext.Image) { s.h.OpenLightbox(img, core.Message{}) }
-func (s *surfHandler) OpenFile(f *richtext.File) {
-	if f.Permalink != "" {
-		openURL(f.Permalink)
-	}
-}
+
+// OpenFile is handleFileContainerClick for a file in a surface
+// (popups.OpenFileCard): downloads in the app, not the browser.
+func (s *surfHandler) OpenFile(f *richtext.File) { popups.OpenFileCard(s.h, f, openURL) }
 
 // ChartAction is a data_visualization block's More actions: its menu.
 func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {

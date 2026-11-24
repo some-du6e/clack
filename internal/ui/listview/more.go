@@ -22,7 +22,6 @@ package listview
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -185,16 +185,15 @@ func (v *View) download(d *core.ListDoc, o core.ListDownload) {
 		return
 	}
 	name := strings.TrimSuffix(firstNonEmptyStr(d.Info.Name, d.Info.Title, "list"), ext) + ext
-	popups.SaveDownload(ph, src, name, func(_ string, err error) {
-		if errors.Is(err, popups.ErrDownloadCanceled) {
-			return // the save dialog was closed
-		}
-		if err != nil {
-			v.h.Toast(nsLists.T(kind + " download failed"))
-			return
-		}
-		v.h.Toast(nsLists.T(kind + " downloaded successfully"))
-	})
+	// downloadFile's desktop path answers true once the download starts
+	// (startDesktopDownload), and DownloadModal toasts then; the export
+	// itself shows in the download toast
+	f := &richtext.File{ID: d.Info.ID, Name: name, Title: d.Info.Title, Type: strings.TrimPrefix(ext, "."), PrettyType: "List"}
+	if !popups.SaveDownload(ph, f, src) {
+		v.h.Toast(nsLists.T(kind + " download failed"))
+		return
+	}
+	v.h.Toast(nsLists.T(kind + " downloaded successfully"))
 }
 
 func firstNonEmptyStr(ss ...string) string {
