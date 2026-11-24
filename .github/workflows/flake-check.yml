@@ -5084,7 +5084,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-15-intel, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -5112,6 +5112,15 @@ jobs:
             grep -E -- '--- FAIL|wasmmem_(linux_)?test.go:[0-9]+: .*(cut|faults came|grew only)' "$RUNNER_TEMP/jsrt-$i.log" | head -6
           done
           exit $rc
+      # the rest of the package on this runner, its wasm memories populated;
+      # TestStopTheWorldBounded aside: on the macOS runners Go alone, no
+      # wasm, waits up to 70 ms idle and 211 ms allocating for a
+      # stop-the-world (jsrt-stw-diag, 2026-11-23), and its smaller cases
+      # compare against a quarter of that
+      - name: "the jsrt package, but TestStopTheWorldBounded"
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: go test -count=1 -timeout 20m -skip '^TestStopTheWorldBounded$' ./internal/jsrt/
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
