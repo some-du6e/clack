@@ -73,11 +73,13 @@ func RunShortcut(h Host, s core.AppShortcut, ch, ts string) {
 //     opens the shortcuts dialog (app_message_actions_dialog) while the list
 //     loads or when there are more than three, else it is a link to the
 //     app directory's shortcuts collection (app_directory_link).
-//   - none of it for a viewer who can't run app actions
+//   - no shortcut rows for a viewer who can't run app actions
 //     (canUserRunAppAction, RS5d: a single-channel guest; a guest when the
 //     team's commands_only_regular is on), nor on a message they don't run
 //     on (canRunAppAction, iub5 N$: actionable, no subtype or bot_message
-//     or thread_broadcast); the rows are disabled offline (Pb).
+//     or thread_broadcast); the browse row is there for everyone (e8 builds
+//     it outside RS5d's check), so the submenu is never empty.
+//   - every row is disabled offline (e8: disabled = !Pb, isClientOnline).
 
 // appDirectoryShortcuts is the browse row's href without enough actions.
 const appDirectoryShortcuts = "apps/collection/shortcuts?utm_source=in-prod&utm_medium=inprod-get_more_app_actions-message_action_dialog-click"
@@ -171,12 +173,12 @@ func anyIn(xs, set []string) bool {
 // MessageShortcutItems are the Connect to apps submenu's rows for m.
 func MessageShortcutItems(h Host, m core.Message) []popups.MenuItem {
 	a := h.Core()
-	if a == nil || !canUserRunAppAction(a) {
+	if a == nil {
 		return nil
 	}
 	acts, loaded := MessageActions(a, m.Channel)
 	var items []popups.MenuItem
-	if canRunAppAction(a, &m) {
+	if canUserRunAppAction(a) && canRunAppAction(a, &m) { // RS5d and N$ gate the shortcut rows only
 		for i, s := range acts {
 			if i == 3 {
 				break
@@ -204,7 +206,13 @@ func MessageShortcutItems(h Host, m core.Message) []popups.MenuItem {
 		u := strings.TrimSuffix(a.TeamURL(), "/") + "/" + appDirectoryShortcuts
 		browse.Do = func() { openURL(u) }
 	}
-	return append(items, browse)
+	items = append(items, browse)
+	if !a.ClientOnline() { // e8: every row disabled offline (Pb isClientOnline)
+		for i := range items {
+			items[i].Disabled = true
+		}
+	}
+	return items
 }
 
 // OpenShortcuts opens the shortcuts picker at anchor (window coords):

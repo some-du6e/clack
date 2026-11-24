@@ -200,9 +200,12 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if channel {
 		pinLabel, unpinLabel = "Pin to channel", "Un-pin from channel"
 	}
-	pin := MenuItem{Action: "pin", Label: pinLabel, Icon: "pin", Hint: nsMessage.T("P"), Keys: KeyPin, Do: func() { actPin(h, ch, ts, true) }}.In(nsMessage)
+	// frecencyIds by the state the row shows, not its (translated) label
+	pin := MenuItem{Action: "pin", Label: pinLabel, Icon: "pin", Hint: nsMessage.T("P"), Keys: KeyPin, Frecency: "MApin",
+		Do: func() { actPin(h, ch, ts, true) }}.In(nsMessage)
 	if m.Pinned {
-		pin = MenuItem{Action: "pin", Label: unpinLabel, Icon: "pin", Hint: nsMessage.T("P"), Keys: KeyPin, Do: func() { actPin(h, ch, ts, false) }}.In(nsMessage)
+		pin = MenuItem{Action: "pin", Label: unpinLabel, Icon: "pin", Hint: nsMessage.T("P"), Keys: KeyPin, Frecency: "MAunpin",
+			Do: func() { actPin(h, ch, ts, false) }}.In(nsMessage)
 	}
 	// Organize and Connect to apps need isActionable (not ephemeral, a
 	// tombstone or temporary); no "Forward message…" here: Slack keeps it
@@ -210,7 +213,8 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if actionable(app, &m) {
 		items = append(items,
 			MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage),
-			MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m)}.In(nsMessage),
+			MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m),
+				SubLive: func() []MenuItem { return connectToApps(h, m) }}.In(nsMessage),
 		)
 	}
 

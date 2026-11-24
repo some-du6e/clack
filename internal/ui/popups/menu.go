@@ -94,6 +94,10 @@ type MenuItem struct {
 	// bell's MoreOptionsSubmenu clears its "New" badge); the row's Tag
 	// leaves the open menu with it.
 	OnSubOpen func()
+	// SubLive, when set, is the submenu's rows read afresh while it is
+	// open (a React submenu re-renders from its selector: Connect to apps'
+	// rows once apps.actions.v2.list answers); Sub is its first answer.
+	SubLive func() []MenuItem
 
 	// LabelText, when set, draws the label (one line) in place of the
 	// menu's 15px text: the font select's options in their own fonts.
@@ -452,6 +456,10 @@ func (m *Menu) openSub(i int, kbd bool) {
 		it.OnSubOpen()
 		m.items[i].Tag = nil
 	}
+	if it.SubLive != nil {
+		it.Sub = it.SubLive()
+		m.items[i].Sub = it.Sub
+	}
 	s := &Menu{h: m.h, items: it.Sub, opts: MenuOpts{Width: m.opts.Width}, sel: -1, subIdx: -1, parent: m, kbd: kbd}
 	if r := m.root(); r.ma != nil {
 		s.opts.MenuClass = r.opts.MenuClass // a message menu's submenus render MAMenu too
@@ -595,6 +603,9 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
 	if m.done {
 		return layout.Dimensions{}
+	}
+	if m.parent == nil {
+		m.refreshSubs()
 	}
 	win := gtx.Constraints.Max
 	gtx.Constraints.Min = image.Point{} // robust to roots passing Exact constraints
@@ -1120,4 +1131,39 @@ func menuImage(gtx layout.Context, th *theme.Theme, url string, size int) layout
 		}
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// refreshSubs re-reads the open submenus' live rows (MenuItem.SubLive);
+// a submenu whose rows changed starts over with nothing selected.
+func (m *Menu) refreshSubs() {
+	for p := m; p != nil && p.sub != nil; p = p.sub {
+		if p.subIdx < 0 || p.subIdx >= len(p.items) || p.items[p.subIdx].SubLive == nil {
+			continue
+		}
+		it := &p.items[p.subIdx]
+		rows := it.SubLive()
+		if sameRows(rows, p.sub.items) {
+			continue
+		}
+		it.Sub = rows
+		s := p.sub
+		s.items, s.clicks, s.sel = rows, make([]widget.Clickable, len(rows)), -1
+		if s.ma != nil {
+			s.orig = rows
+		}
+	}
+}
+
+// sameRows reports whether two row lists draw alike.
+func sameRows(a, b []MenuItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		x, y := &a[i], &b[i]
+		if x.Label != y.Label || x.Right != y.Right || x.Disabled != y.Disabled || x.QA != y.QA || x.Action != y.Action || x.Separator != y.Separator {
+			return false
+		}
+	}
+	return true
 }

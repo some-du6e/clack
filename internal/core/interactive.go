@@ -244,6 +244,10 @@ type Interactive struct {
 	actions []AppShortcut
 	actAt   time.Time
 	actGet  bool // CachedShortcuts' fetch is out
+	// a failed fetch waits actWait (a minute, doubling to ten) before
+	// CachedShortcuts asks again, from actFail
+	actFail time.Time
+	actWait time.Duration
 	started atomic.Bool
 	stop    func()
 	lastTok int64
@@ -978,7 +982,8 @@ func (ix *Interactive) Shortcuts(ctx context.Context) ([]AppShortcut, error) {
 func (ix *Interactive) CachedShortcuts() (list []AppShortcut, loaded bool) {
 	ix.mu.Lock()
 	list, loaded = ix.actions, ix.actions != nil
-	fetch := !ix.actGet && (ix.actions == nil || time.Since(ix.actAt) >= 10*time.Minute)
+	fetch := !ix.actGet && (ix.actions == nil || time.Since(ix.actAt) >= 10*time.Minute) &&
+		(ix.actFail.IsZero() || time.Since(ix.actFail) >= ix.actWait)
 	if fetch {
 		ix.actGet = true
 	}
@@ -987,9 +992,15 @@ func (ix *Interactive) CachedShortcuts() (list []AppShortcut, loaded bool) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			_, _ = ix.Shortcuts(ctx)
+			_, err := ix.Shortcuts(ctx)
 			ix.mu.Lock()
 			ix.actGet = false
+			if err != nil { // not on every menu open: a minute, doubling to ten
+				ix.actFail = time.Now()
+				ix.actWait = min(max(2*ix.actWait, time.Minute), 10*time.Minute)
+			} else {
+				ix.actFail, ix.actWait = time.Time{}, 0
+			}
 			ix.mu.Unlock()
 			ix.emit(ViewEvent{Kind: "actions"})
 		}()

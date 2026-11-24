@@ -69,13 +69,16 @@ func (e *ctaEnv) called(method string) []url.Values {
 	return append([]url.Values(nil), e.calls[method]...)
 }
 
-func newCTAEnv(t *testing.T, actions []any, frecency string) *ctaEnv {
+func newCTAEnv(t *testing.T, actions []any, frecency string, setup ...func(fs *fakeslack.Server)) *ctaEnv {
 	t.Helper()
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
+	for _, f := range setup {
+		f(fs)
+	}
 	e := &ctaEnv{fs: fs, calls: map[string][]url.Values{}}
 	fs.SetHook(func(method string, f url.Values) (any, bool) {
 		e.mu.Lock()
@@ -201,5 +204,35 @@ func TestConnectToAppsFollowsOtherDevices(t *testing.T) {
 			t.Fatalf("after the other device's change: %q, want Translate, then Save as a note", r)
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// A viewer who can't run app actions (canUserRunAppAction, RS5d: a
+// single-channel guest; a guest under commands_only_regular) gets no
+// shortcut rows, but the browse row stays: JuvA e8 builds it outside
+// RS5d's check, so the submenu is never Clack's disabled "No apps".
+func TestConnectToAppsGuestsKeepBrowse(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		prefs map[string]any
+		guest func(u *slack.User)
+	}{
+		{"single-channel guest", nil, func(u *slack.User) { u.IsRestricted, u.IsUltraRestricted = true, true }},
+		{"guest, commands_only_regular", map[string]any{"commands_only_regular": true}, func(u *slack.User) { u.IsRestricted = true }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newCTAEnv(t, ctaActions, ctaFrecency("MAX4", "MAX2"), func(fs *fakeslack.Server) { fs.TeamPrefs = c.prefs })
+			u, ok := e.app.S.User(e.app.S.SelfID())
+			if !ok || u == nil {
+				t.Fatal("no self user")
+			}
+			e.app.S.Lock()
+			c.guest(u)
+			e.app.S.Unlock()
+			want := "More message shortcuts…||app_message_actions_dialog"
+			if got := strings.Join(e.rows(t), "\n"); got != want {
+				t.Errorf("Connect to apps for a %s:\n%s\nwant:\n%s", c.name, got, want)
+			}
+		})
 	}
 }

@@ -2,7 +2,6 @@ package popups
 
 import (
 	"encoding/json"
-	"strings"
 
 	"github.com/some-du6e/clack/internal/core"
 )
@@ -305,11 +304,8 @@ func withFrecency(items []MenuItem) []MenuItem {
 				if it.Icon == "bell-off" {
 					it.Frecency = "MAthread_unfollow"
 				}
-			case "pin":
+			case "pin": // a pin row built without one (the message menu sets it by m.Pinned)
 				it.Frecency = "MApin"
-				if strings.HasPrefix(it.Label, "Un-pin") {
-					it.Frecency = "MAunpin"
-				}
 			default:
 				it.Frecency = msgFrecency[it.Action]
 			}
