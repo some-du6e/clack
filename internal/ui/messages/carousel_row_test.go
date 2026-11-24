@@ -76,17 +76,31 @@ func TestCarouselInARow(t *testing.T) {
 	if after <= 0 {
 		t.Errorf("the right arrow's click: scroll %v, want a page", after)
 	}
-	p := at(r, g, image.Pt(g.R.Min.X+40, g.R.Min.Y+g.R.Dy()/2))
-	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p},
-		pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: p, Scroll: f32.Pt(-60, 0)})
-	e.frame()
-	e.frame()
-	r2, g2 := cur()
-	if r2 != r || r != e.row(tsCarousel) {
-		t.Logf("the list swapped the carousel's row during the test")
+	wheel := func(q image.Point) f32.Point {
+		p := at(r, g, q)
+		e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p},
+			pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: p, Scroll: f32.Pt(-60, 0)})
+		e.frame()
+		e.frame()
+		r, g = cur()
+		return p
 	}
-	if g2.Scroll != after-60 {
-		t.Errorf("a sideways wheel of 60px back at %v: scroll %v, want %v", p, g2.Scroll, after-60)
+	// over the left arrow a sideways wheel scrolls nothing: Slack draws the
+	// arrows beside the scroller's wrapper, not in it, so the wheel's
+	// target has no scroller sideways (the message pane scrolls only down)
+	if g.Left.Empty() {
+		t.Fatalf("no left arrow at scroll %v", after)
+	}
+	if p := wheel(g.Left.Min.Add(g.Left.Size().Div(2))); g.Scroll != after {
+		t.Errorf("a sideways wheel over the left arrow at %v: scroll %v, want it left at %v", p, g.Scroll, after)
+	}
+	// in the scroller's middle, clear of both arrows, it scrolls back
+	mid := image.Pt(g.R.Min.X+g.R.Dx()/2, g.R.Min.Y+g.R.Dy()/2)
+	if mid.In(g.Left) || mid.In(g.Right) {
+		t.Fatalf("the scroller's middle %v is on an arrow (%v, %v)", mid, g.Left, g.Right)
+	}
+	if p := wheel(mid); g.Scroll != after-60 {
+		t.Errorf("a sideways wheel of 60px back at %v: scroll %v, want %v", p, g.Scroll, after-60)
 	}
 }
 
