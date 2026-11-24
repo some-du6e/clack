@@ -86,6 +86,20 @@ func addHeadCanvases(fs *fakeslack.Server) {
 func headRig(t *testing.T, dark bool, id string) (*testHost, *fakeslack.Server, *pointerRig) {
 	t.Helper()
 	h, fs := newEnv(t, dark)
+	return headRigOn(t, h, fs, id)
+}
+
+// headRigQuipOff is headRig with saving through edit-document off
+// (quipOff), for a test of the canvases.edit calls.
+func headRigQuipOff(t *testing.T, dark bool, id string) (*testHost, *fakeslack.Server, *pointerRig) {
+	t.Helper()
+	h, fs := newEnv(t, dark)
+	quipOff(h)
+	return headRigOn(t, h, fs, id)
+}
+
+func headRigOn(t *testing.T, h *testHost, fs *fakeslack.Server, id string) (*testHost, *fakeslack.Server, *pointerRig) {
+	t.Helper()
 	addHeadCanvases(fs)
 	v := New(h, id, Tab, Actions{})
 	r := &pointerRig{t: t, v: v, sz: image.Pt(900, 700)}
@@ -184,7 +198,7 @@ func TestEditClickHeadingText(t *testing.T) {
 // body text each open that block; saving a quote's paragraph keeps it in
 // the quote ("> …", one Quip section of style 16).
 func TestEditClickQuoteAndListText(t *testing.T) {
-	_, fs, r := headRig(t, false, headCanvas)
+	_, fs, r := headRigQuipOff(t, false, headCanvas) // checks the canvases.edit markdown
 	v := r.v
 	var q *blk
 	for _, b := range v.blocks {
@@ -409,6 +423,7 @@ func TestRenderHeaders(t *testing.T) {
 // permalink, Insert file embeds a file; layouts stays disabled.
 func TestEditInserts(t *testing.T) {
 	h, fs := newEnv(t, false)
+	quipOff(h) // the inserts' canvases.edit calls
 	addHeadCanvases(fs)
 	v := New(h, headCanvas, Full, Actions{})
 	s := newShooter(t, image.Pt(1100, 900))

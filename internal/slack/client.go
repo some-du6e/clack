@@ -426,6 +426,15 @@ func logCode(code string) string {
 // RateLimited is returned when Slack answers 429 too many times in a row.
 var RateLimited = errors.New("slack: rate limited")
 
+// RateLimitWait is a call whose context ended while it waited out a
+// 429's Retry-After: it is the context's error (errors.Is), and a rate
+// limit to the callers that ask for one (core.RateLimited: the feedback
+// dialog's text, as Slack's queue rejects such a call with its 429).
+type RateLimitWait struct{ Err error }
+
+func (e *RateLimitWait) Error() string { return "slack: rate limited: " + e.Err.Error() }
+func (e *RateLimitWait) Unwrap() error { return e.Err }
+
 // cookieHeader sends d only. d-s is never sent: Slack re-sets it on every
 // response to the current Unix time (a last-seen stamp), so a pasted d-s is
 // already older than the one the browser sends next. Presenting an older
@@ -768,7 +777,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			log.Printf("slack: %s rate limited, retrying in %ds", method, wait)
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return &RateLimitWait{ctx.Err()}
 			case <-time.After(time.Duration(wait) * time.Second):
 			}
 			continue

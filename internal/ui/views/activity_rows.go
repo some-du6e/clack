@@ -998,7 +998,7 @@ func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub 
 	if m != orig {
 		ver += ":p" // a plugin's view of it: never the source's layout
 	}
-	o := richview.Options{Muted: m.System, Secondary: muted && !m.System, Channel: m.Channel, TS: m.TS, Truncate: true}
+	o := richview.Options{Muted: m.System, Secondary: muted && !m.System, Channel: m.Channel, TS: m.TS, Truncate: true, ViewContext: b.viewCtx, Sender: m.User}
 	if !m.System {
 		o.Color = col
 	}

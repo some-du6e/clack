@@ -248,6 +248,33 @@ func (r *refNames) MemberName(id string) (string, bool) {
 	return r.msgNames.MemberName(id)
 }
 
+// ContactMember is richtext.ContactResolver: the store's, and no sharing
+// on a free team (46d6 canUserShareContacts' USER_IS_ON_FREE_TEAM: the
+// team.info plan core knows).
+func (r *refNames) ContactMember(id string) (richtext.ContactMember, bool) {
+	r.member(id)
+	var m richtext.ContactMember
+	var ok bool
+	if r.peek {
+		m, ok = store.Peek{Store: r.Store}.ContactMember(id)
+	} else {
+		m, ok = r.msgNames.ContactMember(id)
+	}
+	if ok && m.CanShare && r.app.freeTeam() {
+		m.CanShare = false
+	}
+	return m, ok
+}
+
+// PromptAgent is richtext.AgentResolver: the store's.
+func (r *refNames) PromptAgent(id string) (name, avatar string, agentforce, ok bool) {
+	r.member(id)
+	if r.peek {
+		return store.Peek{Store: r.Store}.PromptAgent(id)
+	}
+	return r.msgNames.PromptAgent(id)
+}
+
 func (r *refNames) MemberAvatar(id string) string {
 	r.member(id)
 	if r.peek {

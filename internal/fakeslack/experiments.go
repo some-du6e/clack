@@ -91,6 +91,14 @@ var accountExperiments = map[string]string{
 	// email files draw as FileEmailV2 (core.ExpNewEmailRendering): the
 	// account's group, recorded in core/testdata/account_experiments.json
 	"new_email_rendering": "on",
+	// the Activity All badge's kinds (core/activity_badges.go): to-dos
+	// and system alerts count
+	"lists_monster_step":        "on",
+	"generic_system_user_alert": "on",
+	// /feedback's dialog and its note (composer/slash_local.go,
+	// popups/user_feedback.go): the account's groups
+	"slash_feedback_in_modal":      "on",
+	"slash_feedback_modal_warning": "on",
 }
 
 // withAccountExperiments adds accountExperiments to an

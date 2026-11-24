@@ -60,6 +60,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -150,6 +151,7 @@ type Unreads struct {
 func NewUnreads(h Host) *Unreads {
 	v := &Unreads{base: newBase(h), newCount: map[string]int{}, msgs: map[string]*unrMsg{}, active: -1,
 		rng: rand.New(rand.NewSource(time.Now().UnixNano()))}
+	v.viewCtx = expandable.ViewUnreads // their previews' expandables (expander.go)
 	v.list.Axis = layout.Vertical
 	v.pickEmpty()
 	v.mediaPane = "unreads"

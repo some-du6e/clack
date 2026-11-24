@@ -221,8 +221,18 @@ func TestCanvasChannelCardRows(t *testing.T) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	const file, sec, ch = "F0CANVMNT01", "temp:C:MNT0001", "C0FAKE00000"
-	e := startEnv(t, fs, t.TempDir())
+	// Remove mention saves through canvases.edit, so it's offered only with
+	// saving through edit-document off (canvasview.MentionRemovable); the
+	// switch is on by default since alpha.164, and ui.json turns it off.
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "ui.json"), []byte(`{"canvas_quip_edit": false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e := startEnv(t, fs, home)
 	e.waitReady()
+	if e.a.Core().QuipEditOn() {
+		t.Fatal(`ui.json's "canvas_quip_edit": false didn't turn saving through edit-document off`)
+	}
 	cv, ok := e.a.Core().Conv(ch)
 	if !ok {
 		t.Fatalf("no %s", ch)
