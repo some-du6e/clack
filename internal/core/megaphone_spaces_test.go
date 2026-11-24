@@ -45,18 +45,19 @@ func TestMegaphoneBootChunks(t *testing.T) {
 
 // loadMegaphoneNotificationData files only the answered spaces xu lists:
 // later_page_today (gone from xu) answered with a notification is
-// dropped, client_footer's is kept.
+// dropped, pricing_page_info_banner's is kept. Neither is a boot space, so
+// the boot load rtApp sets off can't file over them.
 func TestMegaphoneDropsUnknownSpaces(t *testing.T) {
 	a, fs, _ := rtApp(t)
 	fs.SetMegaphoneSpace("later_page_today", "synthetic_later_notice")
-	fs.SetMegaphoneSpace("client_footer", "synthetic_footer_notice")
-	ev := map[string]any{"type": megaphoneRequestSpaces, "spaces": []string{"later_page_today", "client_footer"}, "ia_version": 4}
+	fs.SetMegaphoneSpace("pricing_page_info_banner", "synthetic_pricing_notice")
+	ev := map[string]any{"type": megaphoneRequestSpaces, "spaces": []string{"later_page_today", "pricing_page_info_banner"}, "ia_version": 4}
 	out, err := a.loadMegaphone(context.Background(), ev, "", megaphoneReasonUser, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := a.MegaphoneNotification("client_footer", ""); got != "synthetic_footer_notice" {
-		t.Errorf("client_footer holds %q, want its notification", got)
+	if got := a.MegaphoneNotification("pricing_page_info_banner", ""); got != "synthetic_pricing_notice" {
+		t.Errorf("pricing_page_info_banner holds %q, want its notification", got)
 	}
 	if got := a.MegaphoneNotification("later_page_today", ""); got != "" {
 		t.Errorf("later_page_today, a space Slack's client doesn't know, holds %q", got)
