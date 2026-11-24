@@ -66,3 +66,39 @@ func TestMegaphoneDropsUnknownSpaces(t *testing.T) {
 		t.Errorf("the load answered later_page_today as filed: %v", out)
 	}
 }
+
+// A load made for a channel files its answers under the channel, except a
+// notification answered with no name: 17Qm's two ze names, which the
+// desktop build's ze (oCWb) lacks, compare with undefined, so that one is
+// filed globally. pricing_page_info_banner, global first, holds the
+// nameless answer's (none) afterwards; a named answer stays the channel's.
+func TestMegaphoneNamelessFiledGlobally(t *testing.T) {
+	a, fs, _ := rtApp(t)
+	ctx := context.Background()
+	const sp = "pricing_page_info_banner"
+	ev := map[string]any{"type": megaphoneRequestSpaces, "spaces": []string{sp}, "ia_version": 4}
+	fs.SetMegaphoneSpace(sp, "synthetic_pricing_notice")
+	if _, err := a.loadMegaphone(ctx, ev, "", megaphoneReasonUser, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.MegaphoneNotification(sp, ""); got != "synthetic_pricing_notice" {
+		t.Fatalf("control: the global load filed %q", got)
+	}
+	ch := fs.ChannelIDs()[1]
+	if _, err := a.loadMegaphone(ctx, ev, ch, megaphoneReasonUser, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.MegaphoneNotification(sp, ch); got != "synthetic_pricing_notice" {
+		t.Errorf("control: a named answer to a channel load is the channel's: %q", got)
+	}
+	fs.SetMegaphoneNameless(sp)
+	if _, err := a.loadMegaphone(ctx, ev, ch, megaphoneReasonUser, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.MegaphoneNotification(sp, ""); got != "" {
+		t.Errorf("a nameless answer to a channel load left the global space holding %q: Slack files it globally", got)
+	}
+	if got := a.MegaphoneNotification(sp, ch); got != "synthetic_pricing_notice" {
+		t.Errorf("a nameless answer to a channel load changed the channel's space to %q", got)
+	}
+}

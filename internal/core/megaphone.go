@@ -173,7 +173,7 @@ func (a *App) loadMegaphone(ctx context.Context, event map[string]any, ch, reaso
 	}
 	var r struct {
 		Notifications map[string]*struct {
-			Name string          `json:"name"`
+			Name *string         `json:"name"`
 			Data json.RawMessage `json:"data"`
 		} `json:"notifications"`
 	}
@@ -186,12 +186,17 @@ func (a *App) loadMegaphone(ctx context.Context, event map[string]any, ch, reaso
 			continue // a space Slack's client doesn't know (megaphone_spaces.go)
 		}
 		name := ""
-		if n != nil {
-			name = n.Name
+		if n != nil && n.Name != nil {
+			name = *n.Name
 		}
 		out[space] = name
 		at := ch
-		if megaphoneAlwaysGlobal[space] {
+		if megaphoneAlwaysGlobal[space] || n != nil && n.Name == nil {
+			// 17Qm files ze.SLACK_CONNECT_SPONSORED_CONNECTIONS_WELCOME_MODAL's
+			// and ze.AUTO_SLACK_RECORD_CHANNELS_INTRO_COACHMARK's globally;
+			// the desktop build's ze (oCWb) has neither name, so both
+			// compare with undefined: a notification answered with no
+			// name is the one filed globally (megaphone_spaces.go)
 			at = ""
 		}
 		a.megaphoneSet(space, at, name)
