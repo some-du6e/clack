@@ -221,7 +221,11 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	// tombstone or temporary); no "Forward message…" here: Slack keeps it
 	// on the hover toolbar
 	if actionable(app, &m) {
-		if PinShown(app, &m) { // Zn/q canPin; Organize holds only the pin row, and a submenu with none isn't drawn
+		// Zn/q canPin; Organize (JuvA tk) holds only the pin row here, a
+		// submenu with none isn't drawn, and tk gives none on an automated
+		// message under the redesign nor on a redesigned huddle message
+		// (whose Add to list… row Clack's Organize doesn't hold)
+		if PinShown(app, &m) && connectToAppsShown(app, &m) {
 			items = append(items, MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage))
 		}
 		if connectToAppsShown(app, &m) {
@@ -412,7 +416,14 @@ func actKindOf(ch string) string {
 // actCanPost is canUserPostInChannel for a top-level post.
 func actCanPost(h Host, ch string) bool {
 	a := h.Core()
-	return a != nil && a.PostingIn(ch).CanPost()
+	if a == nil {
+		return false
+	}
+	c, ok := a.S.Conv(ch)
+	if !ok {
+		return a.PostingIn(ch).CanPost()
+	}
+	return canUserPostIn(a, c) // canUserPostInChannel: the read-only state, not the thread-only one
 }
 
 // actWorkflowBot is q's isWorkflowBot(member) || isWorkflowBot(bot): the

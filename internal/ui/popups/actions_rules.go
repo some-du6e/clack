@@ -564,8 +564,10 @@ func EditShown(app *core.App, m *core.Message, self string) bool {
 }
 
 // canUserPostIn is canUserPostInChannel (FS2H c) as far as Clack knows
-// conv: not archived, not read-only or thread-only (Posting), not Slack's
-// system DM, nor a DM with a deactivated person.
+// conv: not archived, not read-only (a thread-only channel still counts:
+// Slack's check reads the read-only state alone, as the parity cases
+// "…posting restricted to admins" show), not Slack's system DM, nor a DM
+// with a deactivated person.
 func canUserPostIn(app *core.App, conv *slack.Conversation) bool {
 	if conv == nil {
 		return true
@@ -581,7 +583,7 @@ func canUserPostIn(app *core.App, conv *slack.Conversation) bool {
 			return false
 		}
 	}
-	return app.PostingFor(conv).CanPost()
+	return !app.PostingFor(conv).ReadOnly
 }
 
 // canThreadIn is pS2E canThread for conv: replies may be posted there.
