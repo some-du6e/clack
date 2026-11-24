@@ -131,8 +131,12 @@ func (a *App) ListHeader(ctx context.Context, id string) (ListInfo, lists.Meta, 
 }
 
 // IsFileGone reports whether err says the file was deleted or isn't there
-// (or isn't a list).
+// (or isn't a list): its read's stand-in (FileGoneError) or the API's code.
 func IsFileGone(err error) bool {
+	var ge *FileGoneError
+	if errors.As(err, &ge) {
+		return ge.Gone.Deleted() || ge.Gone.NotFound()
+	}
 	return errors.Is(err, errNotList) || isCode(err, "file_not_found", "file_deleted")
 }
 

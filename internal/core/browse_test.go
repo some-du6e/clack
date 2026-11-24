@@ -597,14 +597,17 @@ func TestTabs(t *testing.T) {
 	for _, tb := range tabs {
 		got = append(got, tb.ID+":"+tb.Type+":"+tb.Title)
 	}
-	want := "Ct1:list:Ideas|Ct2:canvas:Deleted file|Ct3:canvas:Goals|Ct4:canvas:Deleted file|Ct5:folder:Bookmarks|Ct6:folder:Links|Ct7:canvas:Untitled"
+	// FGONE's file_not_found is fetchFileById's {mode: "not_found"}, which
+	// getFileStatus calls hidden: "Hidden file", not deleted
+	want := "Ct1:list:Ideas|Ct2:canvas:Hidden file|Ct3:canvas:Goals|Ct4:canvas:Deleted file|Ct5:folder:Bookmarks|Ct6:folder:Links|Ct7:canvas:Untitled"
 	if strings.Join(got, "|") != want {
 		t.Errorf("tabs:\n got %s\nwant %s", strings.Join(got, "|"), want)
 	}
 	if len(tabs) != 7 {
 		t.Fatalf("tabs: %+v", tabs)
 	}
-	if tabs[0].FileID != "FL1" || tabs[0].Deleted || !tabs[1].Deleted || !tabs[3].Deleted || tabs[6].Deleted {
+	if tabs[0].FileID != "FL1" || tabs[0].Deleted || tabs[1].Deleted || tabs[1].Gone == nil || tabs[1].Gone.Status != "hidden" ||
+		!tabs[3].Deleted || tabs[6].Deleted {
 		t.Errorf("file flags: %+v", tabs)
 	}
 	// Ct5 owns Bk1 by parent_id; Ct6 has no children, so it gets all (rank order).
