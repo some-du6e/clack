@@ -44,6 +44,18 @@ func (h *filesHost) last() string {
 	return h.opened[len(h.opened)-1]
 }
 
+// viewer is the media viewer open on top (OpenFileViewer's overlay):
+// the file its item carries, "" with none open.
+func (h *filesHost) viewer() (fileID string, ok bool) {
+	open := h.open()
+	for i := len(open) - 1; i >= 0; i-- {
+		if lb, isLB := open[i].(*popups.Lightbox); isLB {
+			return lb.FileID(), true
+		}
+	}
+	return "", false
+}
+
 func filesView(t *testing.T) (*Files, *filesHost, *vaEnv, *fakeslack.Server) {
 	t.Helper()
 	app, fs := vaFake(t)
@@ -161,8 +173,10 @@ func TestFilesViewTemplates(t *testing.T) {
 	}
 }
 
-// openFile: canvases and lists in full view, images in the viewer, the
-// rest at their permalink (Slack's file details / viewer aren't in Clack).
+// openFile: canvases and lists in full view, images in the media viewer
+// on the file itself (openFileViewer with its fileId), the rest at their
+// permalink (Slack's file details aren't in Clack; nor is a player here,
+// so a video too).
 func TestFilesViewOpen(t *testing.T) {
 	v, h, _, _ := filesView(t)
 	v.open(*v.item(fakeslack.CanvasDM))
@@ -173,18 +187,33 @@ func TestFilesViewOpen(t *testing.T) {
 	if h.last() != "list:F1" {
 		t.Errorf("list opened %q", h.last())
 	}
-	openFile(h, fileItem{core.File{ID: "F2", Mime: "image/png", IsImage: true, URL: "https://files.example/a.png"}})
-	if h.last() != "lightbox:https://files.example/a.png" {
-		t.Errorf("image opened %q", h.last())
+	n := len(h.opened)
+	openFile(h, fileItem{core.File{ID: "F0FILESIMG2", Mime: "image/png", IsImage: true, URL: "https://files.example/a.png",
+		Thumb: "https://files.example/a_360.png", ThumbW: 360, ThumbH: 240}})
+	if id, ok := h.viewer(); !ok || id != "F0FILESIMG2" || len(h.opened) != n {
+		t.Errorf("image opened the viewer %v on file %q (and %q), want the viewer on F0FILESIMG2", ok, id, h.opened[n:])
 	}
 	openFile(h, fileItem{core.File{ID: "F3", Filetype: "pdf", Permalink: "https://fake.slack.com/files/U/F3/a.pdf"}})
 	if h.last() != "url:https://fake.slack.com/files/U/F3/a.pdf" {
 		t.Errorf("pdf opened %q", h.last())
 	}
+	openFile(h, fileItem{core.File{ID: "F0FILESVID2", Mime: "video/mp4", IsVideo: true, URL: "https://files.example/v.mp4",
+		MP4: "https://files.example/v_t.mp4", Permalink: "https://fake.slack.com/files/U/F0FILESVID2/v.mp4"}})
+	if h.last() != "url:https://fake.slack.com/files/U/F0FILESVID2/v.mp4" {
+		t.Errorf("a video with no players here opened %q, want its page", h.last())
+	}
 	// a message attachment goes the same way (adapt.go's OpenFile)
 	hostHandler{h}.OpenFile(&richtext.File{ID: "F4", Type: "quip", PrettyType: "Canvas"})
 	if h.last() != "canvas:F4" {
 		t.Errorf("attachment canvas opened %q", h.last())
+	}
+	// and an attachment image opens the viewer on its file, not its thumb
+	// alone (adapt.go)
+	n = len(h.opened)
+	hostHandler{h}.OpenFile(&richtext.File{ID: "F0FILESIMG3", Name: "b.png", Mime: "image/png", Type: "png", IsImage: true,
+		URL: "https://files.example/b.png", Thumb: &richtext.Image{URL: "https://files.example/b_360.png", W: 360, H: 240}})
+	if id, ok := h.viewer(); !ok || id != "F0FILESIMG3" || len(h.opened) != n {
+		t.Errorf("attachment image opened the viewer %v on file %q (and %q), want the viewer on F0FILESIMG3", ok, id, h.opened[n:])
 	}
 }
 

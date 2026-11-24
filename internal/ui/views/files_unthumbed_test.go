@@ -93,10 +93,9 @@ func TestFilesViewUnthumbedImage(t *testing.T) {
 	if thumbed == "" {
 		t.Fatal("no thumbnailed image in the Images results")
 	}
-	it := v.item(thumbed)
 	clickRow(thumbed)
-	if got := h.last(); got != "lightbox:"+it.URL {
-		t.Errorf("thumbnailed %s opened %q, want the viewer on %q", thumbed, got, it.URL)
+	if id, ok := h.viewer(); !ok || id != thumbed {
+		t.Errorf("thumbnailed %s opened the viewer %v on file %q (last %q), want the viewer on its file", thumbed, ok, id, h.last())
 	}
 }
 

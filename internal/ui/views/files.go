@@ -2094,13 +2094,18 @@ func (f *Files) setTitle(id, title string) {
 //
 //   - open: canvases in the main view (openCanvas), lists in full view
 //     (openList);
-//   - view: images in the media viewer (Clack's lightbox);
+//   - view: images and playable videos in the media viewer, through
+//     openFileViewer (cqzr) with the file's id, so the viewer's item is
+//     the file itself (popups.ViewFileIn); a video plays there where the
+//     window has players. The explorer's results come this way under
+//     unified_files_3p_primary_custom_sections too: 49ke keeps images and
+//     playable videos out of the file's primary view;
 //   - remote / external: the file's link in the browser;
-//   - view for PDFs, videos and audio, detail (snippets, posts, emails) and
+//   - view for PDFs and audio, detail (snippets, posts, emails) and
 //     download: Slack's viewer, file details view or a download. Clack's
-//     viewer shows images only and it has no file details view, so these
-//     open the file's page in the browser (its permalink), as message
-//     files do.
+//     viewer shows no PDFs or audio and it has no file details view, so
+//     these open the file's page in the browser (its permalink), as
+//     message files do; so does a video where nothing plays it.
 func openFile(h Host, it fileItem) {
 	switch {
 	case it.isCanvas() && it.ID != "":
@@ -2113,9 +2118,17 @@ func openFile(h Host, it fileItem) {
 			lo.OpenListFull(it.ID) // mount_features_lists.go
 			return
 		}
-	case it.isImage() && it.URL != "":
-		h.OpenLightbox(richtext.Image{URL: it.URL, Alt: it.title(), W: it.ThumbW, H: it.ThumbH, Title: it.title(), Proxy: true}, core.Message{})
-		return
+	case it.isImage() && it.URL != "" || it.IsVideo:
+		// the explorer names no conversation: the viewer's channel is
+		// openMediaViewerModal's fallback, the primary view's
+		if ph, ok := h.(popups.Host); ok {
+			if popups.ViewFileIn(ph, popups.PlayableFile(it.File), "") {
+				return
+			}
+		} else if it.isImage() && it.URL != "" {
+			h.OpenLightbox(richtext.Image{URL: it.URL, Alt: it.title(), W: it.ThumbW, H: it.ThumbH, Title: it.title(), Proxy: true}, core.Message{})
+			return
+		}
 	}
 	u := it.Permalink
 	if u == "" {

@@ -1704,22 +1704,28 @@ func (v *SearchView) openFile(f core.File) { srOpenFile(v.h, f) }
 
 // srOpenFile opens a file or canvas result the way Slack's results do: a
 // canvas in the canvas view (openCanvas; Clack's "docs/<id>"), a list in
-// the list view ("lists/<id>"), anything else through previewFile, whose
-// media viewer is Clack's lightbox for images. Slack shows other files in
-// its file details flexpane, which Clack doesn't have: they open like a
-// message's file card does, at their permalink.
+// the list view ("lists/<id>"), an image or a playable video through
+// openFileViewer (cqzr) with the result's fileId: the media viewer on the
+// file itself (ViewFileIn; a video plays there where the window has
+// players). A file result names no conversation of its own, so the
+// viewer's channel is openMediaViewerModal's fallback, the primary
+// view's. Slack shows other files in its file details flexpane, which
+// Clack doesn't have: they open like a message's file card does, at
+// their permalink.
 func srOpenFile(h Host, f core.File) {
-	title := f.Title
-	if title == "" {
-		title = f.Name
-	}
 	switch {
 	case f.IsCanvas && f.ID != "":
 		h.Navigate("docs/" + f.ID)
+		return
 	case f.IsList && f.ID != "":
 		h.Navigate("lists/" + f.ID)
-	case f.IsImage && f.URL != "":
-		h.OpenLightbox(richtext.Image{URL: f.URL, Alt: title, W: f.ThumbW, H: f.ThumbH, Title: title, Proxy: true}, core.Message{})
+		return
+	case f.IsImage && f.URL != "" || f.IsVideo:
+		if ViewFileIn(h, PlayableFile(f), "") {
+			return
+		}
+	}
+	switch {
 	case f.Permalink != "":
 		lbOpen(h, f.Permalink)
 	case f.URL != "":

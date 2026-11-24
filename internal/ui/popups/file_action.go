@@ -2,7 +2,6 @@ package popups
 
 import (
 	"strings"
-	"time"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -70,30 +69,102 @@ func OpenFileCard(h Host, f *richtext.File, open func(string)) {
 	OpenFileCardWith(f, open, func(f *richtext.File) { DownloadFile(h, f) }, func(f *richtext.File) bool { return ViewFile(h, f) })
 }
 
-// ViewFile is getMainFileAction's "view" where h can show it: an image
-// with a thumbnail in the media viewer (OpenLightbox, the original's
-// URL), a playable video in the video viewer when h has one. false: h
-// can't.
-func ViewFile(h Host, f *richtext.File) bool {
+// ViewFile is ViewFileIn with no conversation of its own (a list cell, a
+// Block Kit or Slack Kit surface, a search card, Activity).
+func ViewFile(h Host, f *richtext.File) bool { return ViewFileIn(h, f, "") }
+
+// ViewFileIn is getMainFileAction's "view" where h can show it, as
+// handleFileContainerClick (MJzc) dispatches it: openFileViewer (cqzr)
+// with the file's id, so the media viewer's item is the file itself
+// (OpenFileViewer): its Download, More actions, "– title" and the Details
+// tab all need that id. An image opens on its thumbnail, which the viewer
+// swaps for the original once that's decoded (lbShown; the original alone
+// when there's no thumbnail); a playable video plays in the viewer where
+// h has players (Videos). channel is the conversation it's opened from;
+// "" falls back as openMediaViewerModal (ry08) does, to the primary
+// view's channel (viewerChannel). false: h can't show f (the caller opens
+// its page).
+func ViewFileIn(h Host, f *richtext.File, channel string) bool {
+	if h == nil || f == nil {
+		return false
+	}
 	switch {
-	case f.IsImage && f.Thumb != nil:
-		img := *f.Thumb
-		if f.URL != "" {
-			img.URL, img.Proxy = f.URL, true
+	case f.IsImage && (f.Thumb != nil || f.URL != ""):
+		img := richtext.Image{URL: f.URL, Proxy: true}
+		if f.Thumb != nil {
+			img = *f.Thumb
 		}
 		if img.Title == "" {
 			img.Title = f.Title
 		}
-		h.OpenLightbox(img, core.Message{})
-		return true
-	case f.IsVideo:
-		if vo, ok := h.(interface {
-			OpenVideoViewer(f *richtext.File, m core.Message, at time.Duration, autoplay bool) bool
-		}); ok {
-			return vo.OpenVideoViewer(f, core.Message{}, 0, true)
+		if img.Title == "" {
+			img.Title = f.Name
 		}
+		return OpenFileViewer(h, f, img, viewerChannel(h, channel))
+	case f.IsVideo && f.URL != "" && lbVideos(h) != nil:
+		// the poster is lbVideoItem's (the file's thumb_video)
+		return OpenFileViewer(h, f, richtext.Image{}, viewerChannel(h, channel))
 	}
 	return false
+}
+
+// viewerChannel is the media viewer's channelId as openMediaViewerModal
+// (ry08) gives it: `channelId: a ?? ei`, the conversation the file was
+// opened from, else the primary view's channel (getChannel(primaryView
+// .id)?.id ?? "": a canvas tab's or a channel Files tab's conversation,
+// none for the Files browser or a canvas in full view).
+func viewerChannel(h Host, channel string) string {
+	if channel != "" {
+		return channel
+	}
+	if p, ok := h.(interface{ PrimaryChannel() string }); ok {
+		return p.PrimaryChannel()
+	}
+	return ""
+}
+
+// RichFile is a Files browser, search or Files & links row (core.File)
+// as a message attachment (DownloadFile's, the file menus'): the file
+// itself, its URL and Download the file's own url_private, which Download
+// saves; a video's poster is its thumb_video. The media viewer plays a
+// video's mp4 (PlayableFile).
+func RichFile(c core.File) *richtext.File {
+	title := c.Title
+	if title == "" {
+		title = c.Name
+	}
+	f := &richtext.File{ID: c.ID, Name: c.Name, Title: c.Title, Type: c.Filetype, PrettyType: c.PrettyType,
+		Mime: c.Mime, User: c.User, URL: c.URL, Download: c.URL, Permalink: c.Permalink, Size: c.Size,
+		Created: c.Created, IsImage: c.IsImage}
+	if c.IsVideo {
+		f.IsVideo = true
+		if c.Thumb != "" {
+			f.Thumb = &richtext.Image{URL: c.Thumb, Alt: title, Title: title, Proxy: true}
+		}
+	}
+	return f
+}
+
+// PlayableFile is RichFile for the media viewer: a video's URL is its
+// progressive source, mp4 || url_private as a message attachment's, and
+// its Download still the file itself, which the viewer's More actions
+// save (an mp4 in the URL had the Files tab's Download save Slack's
+// transcode instead of the file). An image's thumb_360 is its Thumb, as a
+// message's image file has one: the viewer's first paint while the
+// original loads.
+func PlayableFile(c core.File) *richtext.File {
+	f := RichFile(c)
+	if c.IsVideo && c.MP4 != "" {
+		f.URL = c.MP4
+	}
+	if c.IsImage && c.Thumb != "" {
+		title := c.Title
+		if title == "" {
+			title = c.Name
+		}
+		f.Thumb = &richtext.Image{URL: c.Thumb, Alt: title, W: c.ThumbW, H: c.ThumbH, Title: title, Proxy: true}
+	}
+	return f
 }
 
 // OpenFileCardWith is OpenFileCard with the download and the viewer given

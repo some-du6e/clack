@@ -22,6 +22,7 @@ import (
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -458,12 +459,7 @@ func (v *View) richDoc(d *core.CanvasDoc, b *canvas.Block) (richtext.Doc, bool) 
 	case canvas.File:
 		f := &richtext.File{ID: b.FileID, Name: b.Title, Title: b.Title, PrettyType: nsCanvas.T("File")}
 		if cf, ok := d.Files[b.FileID]; ok {
-			f.Name, f.Title, f.Mime, f.PrettyType, f.Permalink = cf.Name, cf.Title, cf.Mime, cf.PrettyType, cf.Permalink
-			f.Type, f.Mode, f.URL, f.Download = cf.Filetype, cf.Mode, cf.URL, cf.Download
-			f.IsImage = cf.IsImage
-			if cf.IsImage && cf.Thumb != "" {
-				f.Thumb = &richtext.Image{URL: cf.Thumb, W: cf.ThumbW, H: cf.ThumbH, Title: cf.Title, Proxy: true}
-			}
+			f = canvasFile(b.FileID, cf)
 		}
 		return one(richtext.Block{Kind: richtext.FileBlock, File: f})
 	case canvas.Embed: // a link card: drawn from Quip's model (linkcard.go), never the export's text
@@ -981,20 +977,49 @@ func (r *handler) OpenChannel(id string) {
 
 func (r *handler) OpenUsergroup(id string, anchor image.Point) {}
 
+// canvasFile is an embedded file of a canvas (files.info's, by id) as the
+// richtext.File its card and the media viewer take.
+func canvasFile(id string, cf core.CanvasFile) *richtext.File {
+	f := &richtext.File{ID: id, Name: cf.Name, Title: cf.Title, Mime: cf.Mime, PrettyType: cf.PrettyType, Permalink: cf.Permalink,
+		Type: cf.Filetype, Mode: cf.Mode, URL: cf.URL, Download: cf.Download, IsImage: cf.IsImage}
+	if cf.IsImage && cf.Thumb != "" {
+		f.Thumb = &richtext.Image{URL: cf.Thumb, W: cf.ThumbW, H: cf.ThumbH, Title: cf.Title, Proxy: true}
+	}
+	return f
+}
+
+// OpenImage is a canvas image's click: EPKq previewImage's quip path,
+// openFileViewer (cqzr) with the image's fileId, so the media viewer's
+// item is the file (viewFile). An image that isn't one of the canvas's
+// files (a link's picture) opens as an image.
 func (r *handler) OpenImage(img richtext.Image) {
+	if d := r.v.shown; d != nil && img.URL != "" {
+		for id, cf := range d.Files {
+			if cf.IsImage && cf.Thumb == img.URL {
+				if r.viewFile(canvasFile(id, cf)) {
+					return
+				}
+				break
+			}
+		}
+	}
 	r.v.h.OpenLightbox(img, core.Message{})
 }
 
 // OpenFile is a canvas's file card click: Quip's slack object asks for
 // "preview-file" (QuipSlackObjectUIProvider's previewFile_), Slack's
 // previewFile, the file's details flexpane, never a download. An image
-// opens the media viewer as its full-screen view does; Clack has no file
-// details, so any other file opens its page (the permalink), as before.
+// opens the media viewer on the file as its full-screen view does
+// (viewFile); Clack has no file details, so any other file opens its page
+// (the permalink), as before.
 func (r *handler) OpenFile(f *richtext.File) {
 	if f == nil {
 		return
 	}
 	if f.IsImage && f.Thumb != nil {
+		if r.viewFile(f) {
+			return
+		}
 		img := *f.Thumb
 		if f.URL != "" {
 			img.URL, img.Proxy = f.URL, true
@@ -1005,6 +1030,16 @@ func (r *handler) OpenFile(f *richtext.File) {
 	if f.Permalink != "" {
 		r.OpenURL(f.Permalink)
 	}
+}
+
+// viewFile opens the media viewer on canvas file f where the host has
+// overlays (popups.ViewFileIn). The quip path passes openFileViewer no
+// channelId, so the viewer's is openMediaViewerModal's fallback, the
+// primary view's channel: a channel canvas tab's conversation, none for
+// a canvas in full view.
+func (r *handler) viewFile(f *richtext.File) bool {
+	ph, ok := r.v.h.(popups.Host)
+	return ok && popups.ViewFileIn(ph, f, "")
 }
 
 func (r *handler) Button(b richtext.Button) {

@@ -560,13 +560,25 @@ func (hh hostHandler) DataTableAction(act string, c *richview.TableControl, btn 
 		popups.DataTableAction(ph, act, c, popups.ActionAnchor(btn, c.Window))
 	}
 }
+
+// OpenFile is a file's click in a view's richview: an image opens the
+// media viewer on the file itself (openFileViewer with its fileId,
+// popups.ViewFile), its thumbnail first and then the original, as a
+// message list's image does; a canvas or list its viewer (openFile),
+// anything else handleFileContainerClick's way.
 func (hh hostHandler) OpenFile(f *richtext.File) {
-	if f != nil && f.Thumb != nil && f.IsImage {
-		hh.h.OpenLightbox(*f.Thumb, core.Message{})
-		return
-	}
 	if f == nil {
 		return
+	}
+	ph, _ := hh.h.(popups.Host)
+	if f.IsImage && (f.Thumb != nil || f.URL != "") {
+		if ph != nil && popups.ViewFile(ph, f) {
+			return
+		}
+		if f.Thumb != nil { // a host without overlays: its own viewer
+			hh.h.OpenLightbox(*f.Thumb, core.Message{})
+			return
+		}
 	}
 	it := fileFromRich(f)
 	if it.isCanvas() || it.isList() || (it.isImage() && it.URL != "") {
@@ -576,7 +588,6 @@ func (hh hostHandler) OpenFile(f *richtext.File) {
 	// a message's file (FILE_ATTACHED_TO_MESSAGE): handleFileContainerClick
 	// as the message list has it (popups.OpenFileCard): a hosted .exe or
 	// zip downloads in the app, never in the browser
-	ph, _ := hh.h.(popups.Host)
 	popups.OpenFileCardWith(f, func(u string) { hh.follow(u, false) }, func(f *richtext.File) {
 		if ph != nil {
 			popups.DownloadFile(ph, f)

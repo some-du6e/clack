@@ -13,7 +13,9 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// viewerHost records the media viewer's opens.
+// viewerHost records the media viewer's opens: an image that isn't a
+// file (OpenLightbox) by its URL, a file's viewer (OpenFileViewer's
+// overlay) by what it shows once loaded.
 type viewerHost struct {
 	*tzHost
 	viewed []string
@@ -21,6 +23,13 @@ type viewerHost struct {
 
 func (h *viewerHost) OpenLightbox(img richtext.Image, _ core.Message) {
 	h.viewed = append(h.viewed, img.URL)
+}
+
+func (h *viewerHost) ShowOverlay(o Overlay) {
+	if lb, ok := o.(*Lightbox); ok {
+		h.viewed = append(h.viewed, lb.cur().displayURL())
+	}
+	h.tzHost.ShowOverlay(o)
 }
 
 // OpenFileCard is what the surfaces with no viewer of their own (search
