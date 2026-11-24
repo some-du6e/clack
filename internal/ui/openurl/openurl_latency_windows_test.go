@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -134,12 +133,6 @@ func openStub(t *testing.T, method string, i int) handOff {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-}
-
-func median(ds []time.Duration) time.Duration {
-	s := slices.Clone(ds)
-	slices.Sort(s)
-	return s[len(s)/2]
 }
 
 // handOffBudget is Open's hand-off budget, from the call to the handler's

@@ -85,14 +85,26 @@ var rundllFirst atomic.Bool
 // it. Off the UI goroutine. On Windows that is shellOpen, Slack's
 // shell.openExternal, with rundll32 as Slack's retry after it fails
 // (openExternal's catch runs the other method), and whichever worked on a
-// retry goes first after it; elsewhere command's tool.
+// retry goes first after it; on macOS shellOpen (NSWorkspace), retried
+// once as Slack does; elsewhere command's tool.
 func launch(u string) {
 	uiguard.OffUI("open a link")
-	launchWith(func() error { return shellOpen(u) }, func() error { return runTool(u) })
+	launchWith(func() error { return shellOpen(u) }, func() error { return runTool(u) }, retryWithTool)
 }
 
-// launchWith is launch with its two ways (tests).
-func launchWith(shell, tool func() error) {
+// launchWith is launch with its two ways (tests); withTool: a failed
+// shell hand-off is retried with the tool (Windows), else with the shell
+// again (macOS: Slack retries the same shell.openExternal).
+func launchWith(shell, tool func() error, withTool bool) {
+	if !withTool {
+		if err := shell(); err != nil {
+			log.Printf("openurl: %v; trying again", err)
+			if err := shell(); err != nil {
+				log.Printf("openurl: retry: %v", err)
+			}
+		}
+		return
+	}
 	first, retry := shell, tool
 	if rundllFirst.Load() {
 		first, retry = tool, shell

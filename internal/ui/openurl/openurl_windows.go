@@ -77,3 +77,6 @@ func shellOpen(u string) error {
 	}
 	return nil
 }
+
+// retryWithTool: Slack's Windows retry is the other way, rundll32.
+const retryWithTool = true

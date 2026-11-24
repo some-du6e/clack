@@ -4,8 +4,10 @@ import (
 	"errors"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestEscapeExternalHandlerValue: Chromium's EscapeExternalHandlerValue,
@@ -64,17 +66,30 @@ func TestLaunchRemembersTheWayThatWorked(t *testing.T) {
 		}
 		return errors.New("rundll32 failed")
 	}
-	launchWith(shell, tool)
-	launchWith(shell, tool)
+	launchWith(shell, tool, true)
+	launchWith(shell, tool, true)
 	shellOK, toolOK = true, false
-	launchWith(shell, tool)
-	launchWith(shell, tool)
+	launchWith(shell, tool, true)
+	launchWith(shell, tool, true)
 	if got, want := strings.Join(calls, " "), "shell rundll32 rundll32 rundll32 shell shell"; got != want {
 		t.Errorf("the ways tried: %q, want %q", got, want)
 	}
 	calls = nil
-	launchWith(func() error { calls = append(calls, "shell"); return errNoShell }, tool)
+	launchWith(func() error { calls = append(calls, "shell"); return errNoShell }, tool, true)
 	if got := strings.Join(calls, " "); got != "shell rundll32" {
 		t.Errorf("off Windows: %q, want the tool after errNoShell", got)
 	}
+	// macOS: a failed hand-off is tried once more the same way, never the tool
+	calls, shellOK = nil, false
+	launchWith(shell, tool, false)
+	if got := strings.Join(calls, " "); got != "shell shell" {
+		t.Errorf("macOS: %q, want the shell twice", got)
+	}
+}
+
+// median is the middle of ds (the hand-off timing tests).
+func median(ds []time.Duration) time.Duration {
+	s := slices.Clone(ds)
+	slices.Sort(s)
+	return s[len(s)/2]
 }
