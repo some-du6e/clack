@@ -47,8 +47,10 @@ func splitDeploy() map[string]any {
 // second within a second of it sends nothing; after that one sends.
 func TestSplitButtonPrimary(t *testing.T) {
 	e := splitEnv(t, splitDeploy())
-	if b := e.msgs["split"].Doc.Blocks[0].Buttons; len(b) != 1 || b[0].Kind != "button" || b[0].Text != "Deploy" || b[0].Style != "primary" {
-		t.Errorf("richtext's element: %+v, want the primary's button", b)
+	// (no index past what decoded: a panic would end the package's tests)
+	if bs := e.msgs["split"].Doc.Blocks; len(bs) != 1 || len(bs[0].Buttons) != 1 || bs[0].Buttons[0].Kind != "button" ||
+		bs[0].Buttons[0].Text != "Deploy" || bs[0].Buttons[0].Style != "primary" {
+		t.Errorf("richtext's blocks %+v, want one actions block with the primary's button", bs)
 	}
 	w, r := e.widget("bk_split", "deploy")
 	if w.splitOn() {
