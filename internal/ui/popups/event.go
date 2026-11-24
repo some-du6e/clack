@@ -29,6 +29,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
@@ -38,13 +39,19 @@ var (
 )
 
 // eventAnswers is each card's last answer (BaseEventRSVP's state: a click
-// on the answer it last sent sends nothing), by channel, ts and event.
+// on the answer it last sent sends nothing), by its write key; a failed
+// call clears it, so the answer can be sent again.
 var eventAnswers sync.Map
 
 // EventAction runs an event card's action (richview.EventHandler's act)
 // for the event in the message ch/ts; btn anchors More actions' menu.
 func EventAction(h Host, act string, ev *richtext.Event, ch, ts string, btn image.Rectangle) {
 	if ev == nil {
+		return
+	}
+	// RSVP, Copy and Share event act on the message the card is in: a
+	// surface that drew it without one sends nothing
+	if (act == "share" || act == "copy" || strings.HasPrefix(act, "rsvp:")) && (ch == "" || ts == "") {
 		return
 	}
 	switch {
@@ -66,7 +73,8 @@ func NewEventMenu(h Host, ev *richtext.Event, btn image.Rectangle) *Menu {
 	return NewMenuOpts(h, items, MenuOpts{Anchor: btn, Popover: "bottom-left", TryOpposite: true})
 }
 
-// shareEventMessage opens the share dialog for the message ch/ts.
+// shareEventMessage opens the share dialog for the message ch/ts, read
+// from Slack when the store doesn't hold it.
 func shareEventMessage(h Host, ch, ts string) {
 	a := h.Core()
 	if a == nil || a.S == nil {
@@ -74,7 +82,24 @@ func shareEventMessage(h Host, ch, ts string) {
 	}
 	if sm, ok := a.S.FindHeld(ch, ts); ok {
 		h.ShowOverlay(NewForwardModal(h, a.MessageFromSlack(ch, &sm)))
+		return
 	}
+	run(h, func(ctx context.Context) (*slack.Message, error) {
+		pg, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: ts, Limit: 1, Inclusive: true})
+		if err != nil {
+			return nil, err
+		}
+		for i := range pg.Messages {
+			if pg.Messages[i].TS == ts {
+				return &pg.Messages[i], nil
+			}
+		}
+		return nil, nil
+	}, func(m *slack.Message, err error) {
+		if err == nil && m != nil {
+			h.ShowOverlay(NewForwardModal(h, a.MessageFromSlack(ch, m)))
+		}
+	})
 }
 
 func eventRSVP(h Host, ev *richtext.Event, rsvp, ch, ts string) {
@@ -82,16 +107,21 @@ func eventRSVP(h Host, ev *richtext.Event, rsvp, ch, ts string) {
 	if a == nil {
 		return
 	}
-	key := ch + "/" + ts + "/" + ev.ID
+	key := richview.EventKey(ch, ts, ev.ID)
 	if last, ok := eventAnswers.Load(key); ok && last == rsvp {
-		return // y's i !== _: Slack keeps the answer even when its call fails
+		return // y's i !== _
+	}
+	if !beginWrite(key, "rsvp:"+rsvp) {
+		return // BaseEventRSVP: every option disabled while a call is out
 	}
 	eventAnswers.Store(key, rsvp)
 	app, id := ev.AppType, ev.ID
 	run(h, func(ctx context.Context) (string, error) {
 		return a.CalendarEventRSVP(ctx, id, rsvp, ch, ts)
 	}, func(auth string, err error) {
+		endWrite(key)
 		if err != nil {
+			eventAnswers.Delete(key)
 			h.Toast(nsEvent.T("Something’s gone wrong. Mind trying again in a moment?"))
 			return
 		}
@@ -106,10 +136,15 @@ func eventCopy(h Host, ev *richtext.Event, ch, ts string) {
 	if a == nil {
 		return
 	}
+	key := richview.EventKey(ch, ts, ev.ID)
+	if !beginWrite(key, "copy") {
+		return // its Button loading (disabled) until copyToCalendar settles
+	}
 	app, id := ev.AppType, ev.ID
 	run(h, func(ctx context.Context) (string, error) {
 		return a.CalendarEventCopy(ctx, id, ch, ts)
 	}, func(auth string, err error) {
+		endWrite(key)
 		if err == nil && auth != "" {
 			h.ShowOverlay(NewCalendarConnectModal(h, app, auth))
 		}

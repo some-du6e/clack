@@ -594,10 +594,12 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		v.probe.Layout(gtx, v.ptr)
 	}
 	v.mounted(gtx, size)
-	pointer.CursorText.Add(gtx.Ops)
+	v.textCursors(gtx, size) // the text cursor, the card blocks' boxes left to their own (cursors.go)
+	v.regionCursors(gtx)     // the card blocks' text's I-beam, hands and the charts' items (cursors.go)
 	v.handAreas(gtx, false)
 	v.drawCarousels(gtx, st, v.layH) // the carousels' cards and arrows (carousel.go)
-	v.drawPromptLoading(gtx, st)     // the share_prompts' sends in flight (shareprompt.go)
+	v.drawBusy(gtx, st)              // the writing buttons whose call is out (writes.go)
+	v.drawEventRefresh(gtx)          // an event card's next change of state (event.go)
 	// Element runs (Options.Elements) go last: their input areas must be
 	// above the cursor/hit areas of cards and links registered above.
 	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {

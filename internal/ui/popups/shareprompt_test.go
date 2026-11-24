@@ -146,7 +146,7 @@ func TestSharePromptSendOnce(t *testing.T) {
 	}
 	SharePromptSend(h, p)
 	maUntil(t, "the first post", func() bool { return posts() == 1 })
-	if !richview.PromptSending(p) {
+	if _, busy := richview.Busy(richview.SharePromptKey(p)); !busy {
 		t.Errorf("not sending while its post is out")
 	}
 	// the double click's second, and the same prompt decoded again
@@ -157,7 +157,7 @@ func TestSharePromptSendOnce(t *testing.T) {
 	if n := posts(); n != 1 {
 		t.Fatalf("%d chat.postMessage calls, want 1", n)
 	}
-	if richview.PromptSending(p) {
+	if _, busy := richview.Busy(richview.SharePromptKey(p)); busy {
 		t.Errorf("still sending after the answer")
 	}
 	SharePromptSend(h, p)

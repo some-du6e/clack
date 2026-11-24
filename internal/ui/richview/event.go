@@ -34,8 +34,7 @@ package richview
 //     More actions, whose menu opens the event on its calendar.
 //
 // Left out: the past event's grayscale icon (no image filter), the video
-// icon's pulse while the event is on, the RSVP buttons' spinner while
-// their call is out, and fetching the message again for the next set of
+// icon's pulse while the event is on, and fetching the message again for the next set of
 // attendees (needsRefetch).
 
 import (
@@ -46,6 +45,8 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/layout"
+	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -88,9 +89,67 @@ var (
 
 // eventState is the card's moment: on (start <= now <= end), past (now
 // after end).
+// An invalid end (moment's invalid date) compares false either way: never
+// on, never past.
 func eventState(ev *richtext.Event, now time.Time) (on, past bool) {
+	if ev.NoEnd {
+		return false, false
+	}
 	s, e := time.Unix(ev.Start, 0), time.Unix(ev.End, 0)
 	return !now.Before(s) && !now.After(e), now.After(e)
+}
+
+// EventKey is an event card's write (RSVP or Copy to Your Calendar,
+// writes.go): its message and event.
+func EventKey(ch, ts, id string) string { return "event\x00" + ch + "\x00" + ts + "\x00" + id }
+
+// shouldExcludeYear is Nmg4's: no year for a date this year, or last year
+// within the 31 days before now.
+func shouldExcludeYear(t, now time.Time) bool {
+	switch {
+	case t.Year() > now.Year():
+		return false
+	case t.Year() == now.Year():
+		return true
+	}
+	return now.Sub(t) <= 31*24*time.Hour
+}
+
+// eventRefresh notes when the card's state next changes (it starts, or
+// ends): Slack's card reads the clock as it renders, Clack's lays out
+// again then (drawEventRefresh) instead of on a frame loop.
+func (l *lay) eventRefresh(ev *richtext.Event, now time.Time) {
+	if ev.Cancelled || ev.NoEnd {
+		return
+	}
+	var at time.Time
+	switch s, e := time.Unix(ev.Start, 0), time.Unix(ev.End, 0); {
+	case now.Before(s):
+		at = s
+	case !now.After(e):
+		at = e.Add(time.Second)
+	default:
+		return
+	}
+	if l.d.refreshAt.IsZero() || at.Before(l.d.refreshAt) {
+		l.d.refreshAt = at
+	}
+}
+
+// drawEventRefresh lays the view out again once its event cards' state
+// changes, asking for that frame only.
+func (v *View) drawEventRefresh(gtx layout.Context) {
+	at := v.d.refreshAt
+	if at.IsZero() {
+		return
+	}
+	if now := eventNow(); !now.Before(at) {
+		v.d.refreshAt = time.Time{}
+		v.dirty = true
+		gtx.Execute(op.InvalidateCmd{})
+		return
+	}
+	gtx.Execute(op.InvalidateCmd{At: at})
 }
 
 // calendarIcon is getCalAppIcon's image.
@@ -127,12 +186,18 @@ func EventCalendarLabel(app string) string {
 func eventDate(ev *richtext.Event, now time.Time) string {
 	loc := i18n.Locale()
 	s, e := time.Unix(ev.Start, 0), time.Unix(ev.End, 0)
-	date := i18n.CalendarDate(loc, s, i18n.CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: s.Year() == now.Year()})
+	date := i18n.CalendarDate(loc, s, i18n.CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: shouldExcludeYear(s, now)})
+	end := func(f string) string {
+		if ev.NoEnd {
+			return "Invalid date" // moment's for an invalid date
+		}
+		return i18n.FormatDayjs(loc, e, f)
+	}
 	var tm string
 	if uipref.Get().Time24 {
-		tm = i18n.FormatDayjs(loc, s, "HH:mm") + " – " + i18n.FormatDayjs(loc, e, "HH:mm")
+		tm = i18n.FormatDayjs(loc, s, "HH:mm") + " – " + end("HH:mm")
 	} else {
-		tm = i18n.FormatDayjs(loc, s, "h:mm") + " – " + i18n.FormatDayjs(loc, e, "h:mm A")
+		tm = i18n.FormatDayjs(loc, s, "h:mm") + " – " + end("h:mm A")
 	}
 	return i18n.FormatDayjs(loc, s, "ddd") + " " + date + " at " + tm
 }
@@ -215,6 +280,12 @@ func (l *lay) event(b *richtext.Block, x, y, w int) int {
 	now := eventNow()
 	on, past := eventState(ev, now)
 	done := past || ev.Cancelled
+	if !ev.Attendee && !ev.Organizer && !done && !ev.CopiesOK {
+		// BaseEventCopyToCalendar's copies.includes throws: the error line
+		eb := richtext.Block{Kind: richtext.Unsupported, Kit: true, Spans: []richtext.Span{{Kind: richtext.Text, Text: "This content could not be displayed."}}}
+		return l.block1(&eb, x, y, w, false)
+	}
+	l.eventRefresh(ev, now)
 	cw := min(w, l.dp(evMaxW))
 	pad, ic := l.dp(evPad), l.dp(evIcon)
 	bi := len(l.d.boxes)
@@ -370,11 +441,17 @@ func (l *lay) eventFaces(ev *richtext.Event, x, y int) int {
 		}
 		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 		if i == 7 && len(ev.Accepted) > 8 { // additionalOverlay: how many more
-			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: rad, fill: color.NRGBA{0, 0, 0, 0x99}, target: -1})
+			// .c-avatar__additional_overlay: 15px bold on #00000080, "9+"
+			// past nine (BaseAvatar's renderAdditionalOverlay)
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: rad, fill: color.NRGBA{0, 0, 0, 0x80}, target: -1})
 			os := l.small(color.NRGBA{0xff, 0xff, 0xff, 0xff})
-			os.size, os.lineH, os.noSelect = l.sp(11), g, true
+			os.size, os.lineH, os.noSelect = l.sp(15), g, true
 			os.face.Weight = font.Bold
-			n := "+" + strconv.Itoa(len(ev.Accepted)-8)
+			more := len(ev.Accepted) - 8
+			n := "+" + strconv.Itoa(more)
+			if more > 9 {
+				n = "9+"
+			}
 			nw := int(l.measure(n, l.faceFor(os.face, os.size, 0)) + 0.999)
 			l.plainAdd("\n")
 			l.plainFlow(n, fx+(g-nw)/2, fy, nw+l.dp(2), &os, -1)
@@ -416,12 +493,17 @@ func (l *lay) eventRSVP(ev *richtext.Event, x, y, cw int) int {
 		bw := max(l.dp(o.min), lw+l.dp(16))
 		r := image.Rect(right-l.dp(o.at)-bw, oy, right-l.dp(o.at), oy+l.dp(29))
 		tg := l.d.addTarget(target{kind: tEvent, id: "rsvp:" + o.rsvp, event: ev})
+		bg := p.Panel
 		if ev.RSVP == o.rsvp { // .p-event_rsvp--selection
 			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(4), fill: evPicked, target: tg})
 			bs.col = color.NRGBA{0xff, 0xff, 0xff, 0xff}
+			bg = evPicked
 		} else {
 			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(4), target: tg, hover: evHoverBg, hoverOver: true})
 		}
+		// BaseEventRSVP: all three disabled while a call is out, the
+		// clicked one's spinner (writes.go)
+		l.d.busyBtns = append(l.d.busyBtns, busyBtn{r: r, radius: l.dp(4), key: EventKey(l.opts.Channel, l.opts.TS, ev.ID), act: "rsvp:" + o.rsvp, bg: bg})
 		l.plainAdd("\n")
 		l.plainFlow(o.label, r.Min.X+(bw-lw)/2, r.Min.Y+l.dp(5), lw+l.dp(2), &bs, tg)
 		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
@@ -452,6 +534,8 @@ func (l *lay) eventCopy(ev *richtext.Event, x, y, cw int) int {
 	r := image.Rect(x+pad, y+pad, x+pad+bw, y+pad+bh)
 	tg := l.d.addTarget(target{kind: tEvent, id: "copy", event: ev})
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: l.dp(8), fill: p.Panel, stroke: p.ButtonBorder, bw: l.dp(1), target: tg, hover: p.ButtonHoverBg})
+	// Button's loading while copyToCalendar is out (writes.go)
+	l.d.busyBtns = append(l.d.busyBtns, busyBtn{r: r.Inset(l.dp(1)), radius: l.dp(7), key: EventKey(l.opts.Channel, l.opts.TS, ev.ID), act: "copy", bg: p.Panel})
 	l.plainAdd("\n")
 	l.plainFlow(label, r.Min.X+l.dp(12), r.Min.Y-l.dp(1), max(bw-l.dp(24), 1)+l.dp(2), &bs, tg)
 	l.d.hits = append(l.d.hits, hit{r: r, t: tg})

@@ -754,22 +754,34 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		return l.card(b.Card, x, y, w)
 
 	case richtext.DataVizBlock:
-		return l.dataViz(b, x, y, w)
+		h := l.dataViz(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.DataTableBlock:
-		return l.dataTable(b, x, y, w)
+		h := l.dataTable(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.TimelineBlock:
-		return l.timeline(b, x, y, w)
+		h := l.timeline(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.ContactCardBlock:
-		return l.contactCard(b, x, y, w)
+		h := l.contactCard(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.SharePromptBlock:
-		return l.sharePrompt(b, x, y, w)
+		h := l.sharePrompt(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.EventBlock:
-		return l.event(b, x, y, w)
+		h := l.event(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
 
 	case richtext.CarouselBlock:
 		return l.carousel(b, x, y, w)

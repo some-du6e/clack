@@ -137,7 +137,8 @@ func hostBlocks(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	msg := h.Props.Map("msg")
 	d := docState(h)
 	d.msg.TS, d.msg.Channel = msg.StrOr("ts", ""), msg.StrOr("channel", "")
-	d.set("", propsID(msg), richview.Options{}, func() richtext.Doc {
+	// the message's identity, as Slack's Blocks get it: its cards act on it
+	d.set("", propsID(msg), richview.Options{Channel: d.msg.Channel, TS: d.msg.TS}, func() richtext.Doc {
 		d.el = hostElements(lastHost, hostCore(), msg)
 		return parseMessage(hostCore(), msg)
 	})
