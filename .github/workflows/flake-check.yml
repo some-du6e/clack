@@ -5072,8 +5072,10 @@ jobs:
   # boot's prefetch read the window before the slow connect made its end
   # stale (full-test 45313234515). newHCEnv holds the socket's hello until
   # the prefetch has read it, so the catch-up comes every run, and waits for
-  # it. The history_changed tests on that env, COUNT times. Dispatch with
-  # only=counts-baseline.
+  # it. The history_changed tests on that env, COUNT times with the
+  # catch-up's read held until the test's next counts call (HC_SLOW_CATCHUP:
+  # as late as on that runner, every time), then COUNT times as the suite
+  # runs them. Dispatch with only=counts-baseline.
   counts-baseline:
     if: ${{ !inputs.only || startsWith('counts-baseline', inputs.only) }}
     runs-on: ubuntu-latest
@@ -5090,10 +5092,15 @@ jobs:
         with:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the history_changed tests on newHCEnv, the catch-up late, COUNT times
+        env:
+          HC_SLOW_CATCHUP: "1"
+          HC_RUN: "^(TestHistoryChangedDropsCachedMessages|TestHistoryChangedDropsCachedReplies|TestHistoryChangedSubtypeIsNoMessage|TestCountsHistoryInvalidPurgesHistory|TestCountsUpdatedRereadsHistory|TestSocketHistoryChangeAdvancesHistoryInvalid|TestCountsFirstAnswerIsBaseline|TestCountsKeepNewerApplied|TestSocketDeleteAdvancesHistoryInvalid|TestFastReconnectFetchesNoCounts|TestFreshReadClearsStale)$"
+        run: go test -count=$COUNT -timeout 6m -run "$HC_RUN" ./internal/core
       - name: the history_changed tests on newHCEnv, COUNT times
         env:
           HC_RUN: "^(TestHistoryChangedDropsCachedMessages|TestHistoryChangedDropsCachedReplies|TestHistoryChangedSubtypeIsNoMessage|TestCountsHistoryInvalidPurgesHistory|TestCountsUpdatedRereadsHistory|TestSocketHistoryChangeAdvancesHistoryInvalid|TestCountsFirstAnswerIsBaseline|TestCountsKeepNewerApplied|TestSocketDeleteAdvancesHistoryInvalid|TestFastReconnectFetchesNoCounts|TestFreshReadClearsStale)$"
-        run: go test -count=$COUNT -timeout 12m -run "$HC_RUN" ./internal/core
+        run: go test -count=$COUNT -timeout 6m -run "$HC_RUN" ./internal/core
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

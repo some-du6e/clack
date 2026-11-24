@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
@@ -21,21 +22,26 @@ import (
 // emitted after the connection.
 func rtApp(t *testing.T) (*App, *fakeslack.Server, *eventLog) {
 	t.Helper()
-	return rtAppHeld(t, nil)
+	return rtAppHeld(t, nil, nil)
 }
 
 // rtAppHeld is rtApp with the socket's hello held (fakeslack HoldHello)
 // until ready reports true, polled for up to 10 s: what boot started
 // meanwhile, its prefetch of the unread conversations among it, is in
-// before the connect.
-func rtAppHeld(t *testing.T, ready func(a *App, fs *fakeslack.Server) bool) (*App, *fakeslack.Server, *eventLog) {
+// before the connect. wrap (nil: none) goes around the client's
+// transport.
+func rtAppHeld(t *testing.T, ready func(a *App, fs *fakeslack.Server) bool, wrap func(http.RoundTripper) http.RoundTripper) (*App, *fakeslack.Server, *eventLog) {
 	t.Helper()
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
-	a := New(slack.New(fs.Creds()), store.New(t.TempDir()))
+	c := slack.New(fs.Creds())
+	if wrap != nil {
+		c.HTTP.Transport = wrap(c.HTTP.Transport)
+	}
+	a := New(c, store.New(t.TempDir()))
 	t.Cleanup(a.Shutdown)
 	evs, stop := a.Subscribe()
 	t.Cleanup(stop)
