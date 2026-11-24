@@ -464,6 +464,11 @@ type Options struct {
 	// NoHoverCards: the doc sits inside a hover card (the channel card's
 	// topic), so its mentions report no card of their own.
 	NoHoverCards bool
+	// NoLinking: the doc is drawn under CSS pointer-events:none (an
+	// Activity inbox row's preview): its mentions, links and dates draw as
+	// they do but take no pointer, so no hover card, no click and no hand;
+	// the row under them does.
+	NoLinking bool
 	// Canvas: the doc is a canvas's. Its channel mentions open the
 	// canvas's own channel card (Slack's embedded ChannelHovercard,
 	// hovercard Request.Canvas), not the message ChannelHoverCard.
