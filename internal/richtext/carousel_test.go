@@ -38,3 +38,24 @@ func TestCarouselDecode(t *testing.T) {
 		t.Errorf("no elements: %s, want an empty carousel", dump(d.Blocks))
 	}
 }
+
+// A carousel's plain text is its label when it shows (Slack's
+// convertStringTitledBlockToPlainText); its cards give none outside a
+// message summary (convertCardBlockToPlainText), so a carousel of cards
+// reads as the message's own text (convertMessageToPlainText's
+// getMessageText fallback).
+func TestCarouselPlainText(t *testing.T) {
+	cards := `"elements":[{"type":"card","title":{"type":"plain_text","text":"Pick 0"}}]`
+	for _, c := range []struct {
+		js, want string
+	}{
+		{`{"ts":"1.0","text":"Weekly picks","blocks":[{"type":"carousel",` + cards + `}]}`, "Weekly picks"},
+		{`{"ts":"1.0","text":"Weekly picks","blocks":[{"type":"carousel","label":"Picks","is_label_visible":true,` + cards + `}]}`, "Picks"},
+		{`{"ts":"1.0","text":"Weekly picks","blocks":[{"type":"carousel","label":"Picks",` + cards + `}]}`, "Weekly picks"},
+	} {
+		d := FromMessage(fakeRes{}, msg(t, c.js))
+		if got := PlainText(d); got != c.want {
+			t.Errorf("%s: plain text %q, want %q", c.js, got, c.want)
+		}
+	}
+}

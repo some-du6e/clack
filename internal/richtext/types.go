@@ -592,6 +592,11 @@ type EmailAttachment struct {
 type Doc struct {
 	Blocks []Block
 	Jumbo  bool // emoji-only, render emoji 32px
+	// Text is the message's text when its blocks drew instead
+	// (FromMessage): what PlainText reads when the blocks give no text,
+	// as convertMessageToPlainText falls back to getMessageText.
+	Text    string
+	textRes Resolver
 }
 
 // MemberNamer is an optional Resolver extension: a member's name as

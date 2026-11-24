@@ -205,6 +205,7 @@ type App struct {
 	peek            railPeek             // the rail's More PeekTrigger (rail_peek.go)
 	ptrOK           bool
 	hover           profileHover // the profile hover card (hover_card.go)
+	wheelTag        int          // the window-wide wheel observer's (wheel_latch.go)
 	overlays        []Overlay
 	overlayLayers   map[Overlay]*shellLayer // the overlays' layers in the window's stack (overlay_layers.go)
 	slackc          slackcState
@@ -969,6 +970,7 @@ func (a *App) frame(gtx layout.Context) {
 	// tracker
 	a.autoscroll.End(gtx.Ops, gtx.Source, sz)
 	a.rootPointer(gtx)
+	a.wheelObserver(gtx)      // every wheel event, for the carousels' latch (wheel_latch.go)
 	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
 	slackc.RouteEscape(gtx)   // an Escape no widget took goes to the overlay layers (slackc layers.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
