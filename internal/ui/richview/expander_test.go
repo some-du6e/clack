@@ -229,6 +229,49 @@ func TestUnverifiedDisclosure(t *testing.T) {
 	}
 }
 
+// TestFilesUnverifiedDisclosure: an unverified outsider's files in a DM
+// start collapsed under their meta line (FilesMetaTextWrapper's
+// collapseFromUnverifiedUser) with the UnverifiedDisclosure pillow under
+// it: 4px down, a 426px card padded 12 16, the c-icon--exclamation-circle
+// glyph in its 20px box at margin-left -2, the text 12px right of it.
+// "just show this one" expands the files.
+func TestFilesUnverifiedDisclosure(t *testing.T) {
+	x := &fakeExp{unverified: map[string]bool{"UEXT/D9": true}}
+	useExpander(t, x)
+	st := newTestStyle()
+	img := func() *rt.File {
+		return &rt.File{ID: "F1", Name: "image.png", IsImage: true, Thumb: &rt.Image{URL: "https://files.test/i.png", W: 800, H: 400}}
+	}
+	o := Options{Channel: "D9", TS: "1.0", ViewContext: expandable.ViewChannel, Sender: "UEXT"}
+	v := layoutAt(st, doc(fileBlock(img())), o, 600)
+	if len(imgsWithURL(&v.d, "https://files.test/i.png")) != 0 || len(boxesOf(&v.d, bCaretRight)) != 1 ||
+		!strings.Contains(string(v.d.plain), "This preview is hidden because Ext Person is from outside your organization.") {
+		t.Fatalf("collapsed files: plain %q", v.d.plain)
+	}
+	// the meta line's 22, then the disclosure's 4
+	cards := boxesOf(&v.d, bBorder)
+	if len(cards) != 1 || cards[0].r.Min != image.Pt(0, 22+4) || cards[0].r.Dx() != 426 {
+		t.Fatalf("the pillow %+v", cards)
+	}
+	icons := imgsWithURL(&v.d, iconURL+"exclamation-circle-font")
+	if want := image.Rect(16-2, 26+12, 16-2+20, 26+12+20); len(icons) != 1 || icons[0].r != want {
+		t.Fatalf("the icon %+v, want one at %v", icons, want)
+	}
+	if f := fragWith(t, &v.d, "This"); f.x != 16-2+20+12 {
+		t.Errorf("the text starts at %v, want 46", f.x)
+	}
+	// the same sender's files in a channel: shown, no disclosure
+	if w := layoutAt(st, doc(fileBlock(img())), Options{Channel: "C1", TS: "2.0", Sender: "UEXT"}, 600); len(imgsWithURL(&w.d, "https://files.test/i.png")) != 1 || strings.Contains(string(w.d.plain), "This preview") {
+		t.Error("the rule hid a channel's files")
+	}
+	one := fragWith(t, &v.d, "one")
+	v.activate(one.target, image.Point{}, nil)
+	v.relayout(st, 600, 1, 1)
+	if on, ok := x.Expanded(fileKeyFor(o, "F1")); !ok || !on || len(imgsWithURL(&v.d, "https://files.test/i.png")) != 1 || strings.Contains(string(v.d.plain), "This preview") {
+		t.Errorf("just show this one: %v %v, plain %q", on, ok, v.d.plain)
+	}
+}
+
 // TestAttachmentMediaInStore: a link preview's image (MessageAttachment
 // v1) is shown until its expandable, getExpandableKey("attachment", ts,
 // {id, imageUrl, viewContext}), is collapsed (/collapse, Hide image);

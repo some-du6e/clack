@@ -32,8 +32,8 @@ import (
 //     allowed_unfurl_senders, the second expands this one). The file
 //     list's is the pillow (p-unverified_disclosure--pillow: a 426px card
 //     with a 1px foreground_low .13 ring, primary background, radius 4,
-//     padding 12 16, the exclamation-circle icon 12px left of the text,
-//     4px above it and 8px under).
+//     padding 12 16, the exclamation-circle font icon at margin-left −2px
+//     and 12px left of the text, 4px above it and 8px under).
 
 var (
 	nsFilesize    = i18n.NS("filesize")
@@ -152,12 +152,14 @@ func (l *lay) unverifiedDisclosure(key string, x, y, w int, pillow bool) int {
 		cw = min(w, l.dp(426))
 		bi = len(l.d.boxes)
 		l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: rgba(p.Text.R, p.Text.G, p.Text.B, 0.13), bw: max(1, l.dp(1)), radius: l.dp(4), target: -1})
-		// the legacy exclamation-circle glyph, 12px left of the text: the
-		// ring with an exclamation mark (Clack has no legacy font)
+		// the c-icon--exclamation-circle glyph (U+E210) in its 20px c-icon
+		// box, foreground_max .7: .c-icon--exclamation-circle's margin-left
+		// -2px, .p-unverified_disclosure__icon's margin-right 12px
 		s := l.dp(20)
-		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(x+padX, y+pad, x+padX+s, y+pad+s), url: iconURL + "needs-attention", target: -1, px: s,
+		ix := x + padX - l.dp(2)
+		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(ix, y+pad, ix+s, y+pad+s), url: iconURL + "exclamation-circle-font", target: -1, px: s,
 			tint: rgba(p.Text.R, p.Text.G, p.Text.B, 0.7)})
-		cx = x + padX + s + l.dp(12)
+		cx = ix + s + l.dp(12)
 		cw = x + cw - padX - cx
 	}
 	fs := flowStyle{face: font.Font{Typeface: l.st.Face}, size: l.sp(13), lineH: l.dp(18), col: p.Text, emoji: l.dp(16)}

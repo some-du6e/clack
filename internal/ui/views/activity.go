@@ -34,6 +34,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
@@ -512,7 +513,8 @@ type Activity struct {
 // NewActivity builds the Activity view; it loads on first Layout.
 func NewActivity(h Host) *Activity {
 	v := &Activity{
-		base:     newBase(h),
+		// its rows' expandables: the page's wS({id: ACTIVITY_PAGE})
+		base:     newBaseIn(h, expandable.ViewActivityPage),
 		tabs:     newTabs(actTabLabels...),
 		query:    newSearchIn(nsActivity, "Type to filter"), // ActivityFilterSearch
 		rows:     map[string]*actRow{},

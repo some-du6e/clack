@@ -192,6 +192,9 @@ func (v *SearchView) srRichOf(i int) *srCardRich {
 	r.capped = capped
 	r.long = len([]rune(richtext.PlainText(richtext.Doc{Blocks: extra}))) > 600
 	r.body, r.extra = nil, nil
+	// no ViewContext: SearchResult sits under no MessageContainerContext
+	// provider, so a result's expandable keys carry none (expandable's
+	// view contexts)
 	o := richview.Options{Channel: m.Channel, TS: m.TS}
 	if len(body) > 0 {
 		bo := o

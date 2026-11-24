@@ -430,6 +430,11 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 			y += mh
 			if !shown {
 				y -= l.dp(4) // collapsed: only the line
+				if l.filesDisclosure(files) {
+					// !isExpanded && shouldShowUnverifiedDisclosure: the
+					// UnverifiedDisclosure pillow under it
+					y += l.unverifiedDisclosure(l.filesKey(files), x, y, w, true)
+				}
 				i, prev = k-1, k-1
 				continue
 			}

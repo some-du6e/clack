@@ -38,16 +38,34 @@ const (
 )
 
 // The view contexts message lists pass (Zhyr Y; MESSAGE_PANE and THREAD
-// are 8ouu D's "Channel" and "Thread", THREADS_VIEW its "Threads").
+// are 8ouu D's "Channel" and "Thread", THREADS_VIEW its "Threads"). A
+// list's parts read theirs from MessageContainerContext (E6jJ mh), which
+// the list sets with E6jJ wS({id}); without one it is undefined, and
+// getExpandableKey's `${viewContext||""}` leaves the key without one
+// (build 9f450b8ad3db, every chunk read for wS providers):
+//
+//   - the Activity page wraps its feed in wS({id: ACTIVITY_PAGE})
+//     (boot-shared, beside getFilterBar), so its rows' keys end with
+//     "activity-page";
+//   - search results (SearchResult, boot-shared) sit under no provider:
+//     their attachments go through renderMessageAttachment without a
+//     viewContext and their files are SearchFile (aIzI), which keeps no
+//     state, so a result's keys have none (MessageContext's viewContext
+//     "search", Ct7c, isn't what the keys read);
+//   - the Pins tab (useTabView's Bookmarks view, under ChannelTabPanel's
+//     useTabViewRenderer) has no provider either: BasePinnedMessage
+//     (tOYH) draws MessageFiles and MessageKitAttachments with only the
+//     message, so a pin's keys have none;
+//   - the Later route's SavedForLaterPage (To-dos) wraps its page in
+//     wS({id: SAVED_FOR_LATER_PAGE}); the Bookmarks route's view (Saved)
+//     is BookmarksPage itself, with no provider.
 const (
 	ViewChannel        = "Channel"
 	ViewThread         = "Thread"
 	ViewThreads        = "Threads"
 	ViewUnreads        = "Punreads" // UNREAD_VIEW (GMW1 c: Unreads)
-	ViewSearch         = "search"
 	ViewSavedForLater  = "saved-for-later-page"
-	ViewActivityInbox  = "activity-inbox"
-	ViewPinsFlexpane   = "pins-flexpane"
+	ViewActivityPage   = "activity-page"
 	ViewSharedFiles    = "shared-files-flexpane"
 	ViewSharedMessage  = "shared-message-dialog"
 	ViewDeleteMessage  = "delete-msg-dialog"

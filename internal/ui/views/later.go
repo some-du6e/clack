@@ -193,9 +193,11 @@ type savedBase struct {
 	refetch map[string][]string
 }
 
-func newSavedBase(h Host) savedBase {
+// newSavedBase is a saved page's base; viewCtx is its previews' view
+// context (expander.go).
+func newSavedBase(h Host, viewCtx string) savedBase {
 	return savedBase{
-		base:  newBaseIn(h, expandable.ViewSavedForLater), // its previews' expandables (expander.go)
+		base:  newBaseIn(h, viewCtx),
 		convs: map[string]core.ConvRef{},
 		rows:  map[string]*laterRow{},
 		gone:  map[string]time.Time{},
@@ -865,7 +867,9 @@ type Later struct {
 
 // NewLater builds the To-dos page.
 func NewLater(h Host) *Later {
-	l := &Later{savedBase: newSavedBase(h)}
+	// the Later route's view (SavedForLaterPage) wraps its page in
+	// wS({id: SAVED_FOR_LATER_PAGE}), as TodosPage does
+	l := &Later{savedBase: newSavedBase(h, expandable.ViewSavedForLater)}
 	l.mediaPane = "later"
 	l.todos = true
 	l.feed.filter = core.SavedFilterTodos
@@ -1492,7 +1496,9 @@ type Saved struct {
 
 // NewSaved builds the Saved page.
 func NewSaved(h Host) *Saved {
-	s := &Saved{savedBase: newSavedBase(h)}
+	// no view context: the Bookmarks route's view is BookmarksPage itself,
+	// under no MessageContainerContext provider (expandable's view contexts)
+	s := &Saved{savedBase: newSavedBase(h, "")}
 	s.feed.filter = core.SavedFilterSaved
 	s.feeds = []*savedFeed{&s.feed}
 	s.list.Axis = layout.Vertical
