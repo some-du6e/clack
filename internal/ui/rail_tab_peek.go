@@ -85,6 +85,11 @@ type tabPeekState struct {
 	inside    bool    // eu: the pointer is in the card's React tree (its menus included)
 	over      bool    // the pointer was on the card or one of its menus at the last move
 	lastChild Overlay // the card's menu under the pointer at the last move
+	// children are the menus the card opened (a row's menu, rendered in
+	// its React tree): opened with the pointer on the card or on one of
+	// them (noteTabPeekChild). A menu opened elsewhere while the card
+	// shows (the tab bar's More) isn't one.
+	children []*popups.Menu
 
 	content tabPeekContent
 	// bar: a channel tab's trigger (channel_tab_peek.go), unmounted by
@@ -256,6 +261,7 @@ func (a *App) openTabPeek(key string) {
 	}
 	pop = popups.NewPopover(a, c.layout, o)
 	p.pop = pop
+	p.children = nil
 	p.hasPrev, p.hasPending, p.checkedAt = false, false, time.Time{}
 	p.inside, p.over, p.lastChild = false, false, nil
 	c.opened()
@@ -353,22 +359,43 @@ func (a *App) tabPeekCheck(p *tabPeekState, pt image.Point) {
 	p.prev, p.hasPrev = pt, true
 }
 
-// tabPeekChildren are the menus open above key's card (a.overlays is
-// bottom to top): what its rows opened, inside the PeekView's React tree
-// in Slack.
+// tabPeekChildren are the open menus pop's card opened: what its rows
+// opened, inside the PeekView's React tree in Slack.
 func (a *App) tabPeekChildren(pop *popups.Popover) []*popups.Menu {
 	var out []*popups.Menu
-	above := false
-	for _, o := range a.overlays {
-		if o == Overlay(pop) {
-			above = true
+	for _, p := range a.tpeeks.m {
+		if p.pop != pop {
 			continue
 		}
-		if m, ok := o.(*popups.Menu); ok && above && !m.Dismissed() {
-			out = append(out, m)
+		for _, m := range p.children {
+			if !m.Dismissed() {
+				out = append(out, m)
+			}
 		}
 	}
 	return out
+}
+
+// noteTabPeekChild records menu o as an open card's when it opens from
+// the card: the pointer on the card or on one of the card's menus
+// (ShowOverlay).
+func (a *App) noteTabPeekChild(o Overlay) {
+	m, ok := o.(*popups.Menu)
+	if !ok || !a.ptrOK {
+		return
+	}
+	for _, p := range a.tpeeks.m {
+		if !a.tabPeekOpen(p.key) {
+			continue
+		}
+		from := p.pop.InsideCard(a.ptrWin)
+		for _, c := range a.tabPeekChildren(p.pop) {
+			from = from || c.Contains(a.ptrWin)
+		}
+		if from {
+			p.children = append(p.children, m)
+		}
+	}
 }
 
 // closeTabPeekChildren dismisses the menus pop's rows opened.

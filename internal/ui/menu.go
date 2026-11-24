@@ -23,6 +23,7 @@ func (a *App) ShowOverlay(o Overlay) {
 	if m, ok := o.(*popups.Menu); ok { // no split rows where Slack has no split view
 		popups.StripSplitView(m, !a.SplitViewOK())
 	}
+	a.noteTabPeekChild(o) // a menu an open hover peek's row opened (rail_tab_peek.go)
 	a.overlays = append(a.overlays, o)
 	if !invisible(o) && !peeking(o) {
 		// a modal or a menu opening hides the tooltip up (Slack's
