@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"image"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -412,9 +413,19 @@ func (a *App) leaveTempsItem(sec *sbSection) *MenuItem {
 	}
 	ids := append([]string(nil), sec.All...)
 	return mi(MenuItem{Key: "temp_channels_menu_leave_all", Label: "Leave all temporary channels", Danger: true, Do: func() {
-		a.sectionRun("Couldn’t leave the channels", func(ctx context.Context, c *core.App) error {
+		failed := ""
+		a.sectionRun(func(err error) {
+			// maybeLeaveChannel's leaveAndHandleErrors for the channel that
+			// failed (LeaveChannelError; nothing for a failure with no code)
+			name := ""
+			if cv := a.model().conv(failed); cv != nil {
+				name = cv.Name
+			}
+			popups.LeaveFailed(a, failed, name, err, func(ctx context.Context) error { return a.Core().Leave(ctx, failed) })
+		}, func(ctx context.Context, c *core.App) error {
 			for _, id := range ids {
 				if err := c.Leave(ctx, id); err != nil {
+					failed = id
 					return err
 				}
 			}
@@ -530,9 +541,20 @@ func (a *App) openSectionContextMenu(id string, anchor image.Point) {
 
 // ---- actions ----
 
-// sectionRun runs a core write off the UI goroutine; fail is the toast on
-// error, done (UI goroutine) runs on success.
-func (a *App) sectionRun(fail string, work func(ctx context.Context, c *core.App) error, done func()) {
+// sectionFailed is a channel section write's failure:
+// enqueueChannelSectionErrorToast (sectionErrorToast) by its code.
+func (a *App) sectionFailed(err error) { a.sectionErrorToast(core.ErrCode(err)) }
+
+// sectionLogged is the failure of a section action Slack only logs (a
+// bulk mark read, setBulkChannelNotificationOverride's "failed to bulk
+// set"): nothing on screen.
+func sectionLogged(what string) func(error) {
+	return func(err error) { log.Printf("ui: %s: %v", what, err) }
+}
+
+// sectionRun runs a core write off the UI goroutine; fail (UI goroutine)
+// takes an error, done (UI goroutine) runs on success.
+func (a *App) sectionRun(fail func(error), work func(ctx context.Context, c *core.App) error, done func()) {
 	c := a.Core()
 	if c == nil {
 		a.Toast("Sign in first")
@@ -544,7 +566,7 @@ func (a *App) sectionRun(fail string, work func(ctx context.Context, c *core.App
 		err := work(ctx, c)
 		a.Post(func() {
 			if err != nil {
-				a.Toast(fail + ": " + err.Error())
+				fail(err)
 				return
 			}
 			if done != nil {
@@ -555,7 +577,7 @@ func (a *App) sectionRun(fail string, work func(ctx context.Context, c *core.App
 }
 
 func (a *App) setSectionPref(id, pref, value string) {
-	a.sectionRun("Couldn’t change the section", func(ctx context.Context, c *core.App) error {
+	a.sectionRun(a.sectionFailed, func(ctx context.Context, c *core.App) error {
 		return c.SetSectionPref(ctx, id, pref, value)
 	}, nil)
 }
@@ -586,7 +608,7 @@ func (a *App) markSectionRead(id string) {
 	ids := a.sectionUnread(sec)
 	dm := a.anyDM(ids)
 	var prev map[string]string
-	a.sectionRun("Couldn’t mark the section read", func(ctx context.Context, c *core.App) error {
+	a.sectionRun(sectionLogged("conversations.mark (section)"), func(ctx context.Context, c *core.App) error {
 		var err error
 		prev, err = c.MarkManyRead(ctx, ids)
 		return err
@@ -597,7 +619,7 @@ func (a *App) markSectionRead(id string) {
 			msg = i18n.T("unread", "Marked {numChannels, plural, =1 {# conversation} other {# conversations}} as read.", "numChannels", len(prev))
 		}
 		a.ToastUndo(msg, func() {
-			a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error { return c.UndoMarkRead(ctx, prev) }, nil)
+			a.sectionRun(sectionLogged("conversations.mark undo (section)"), func(ctx context.Context, c *core.App) error { return c.UndoMarkRead(ctx, prev) }, nil)
 		})
 	})
 }
@@ -606,7 +628,7 @@ func (a *App) markSectionRead(id string) {
 // (performBulkMuteUnmuteChannels + its toast).
 func (a *App) muteSection(ids []string, mute bool) {
 	dm := a.anyDM(ids)
-	a.sectionRun("Couldn’t change notifications", func(ctx context.Context, c *core.App) error {
+	a.sectionRun(sectionLogged("users.prefs.setNotifications (section)"), func(ctx context.Context, c *core.App) error {
 		return c.MuteMany(ctx, ids, mute)
 	}, func() {
 		var src string
@@ -621,7 +643,7 @@ func (a *App) muteSection(ids []string, mute bool) {
 			src = "Unmuted {numChannels, plural, =1{channel} other {# channels}}."
 		}
 		a.ToastUndo(smToast.T(src, "numChannels", len(ids)), func() {
-			a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error { return c.MuteMany(ctx, ids, !mute) }, nil)
+			a.sectionRun(sectionLogged("users.prefs.setNotifications undo (section)"), func(ctx context.Context, c *core.App) error { return c.MuteMany(ctx, ids, !mute) }, nil)
 		})
 	})
 }
@@ -635,7 +657,7 @@ func (a *App) deleteSection(id string) {
 		name = sectionLabel(sec)
 	}
 	var d core.DeletedSection
-	a.sectionRun("Couldn’t delete the section", func(ctx context.Context, c *core.App) error {
+	a.sectionRun(a.sectionFailed, func(ctx context.Context, c *core.App) error {
 		var err error
 		d, err = c.DeleteSection(ctx, id)
 		return err
@@ -646,7 +668,7 @@ func (a *App) deleteSection(id string) {
 			return
 		}
 		a.ToastUndo(msg, func() {
-			a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error {
+			a.sectionRun(a.sectionFailed, func(ctx context.Context, c *core.App) error {
 				_, err := c.UndoDeleteSection(ctx, d)
 				return err
 			}, nil)
@@ -658,7 +680,7 @@ func (a *App) openRenameSection(id, name, emoji string) {
 	m := popups.NewRenameSectionModal(a, id, name, emoji)
 	m.OnRenamed = func(oldName, oldEmoji, newName string) {
 		a.ToastUndo(smToast.T("Renamed to {channelSection}.", "channelSection", newName), func() {
-			a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error {
+			a.sectionRun(a.sectionFailed, func(ctx context.Context, c *core.App) error {
 				return c.RenameSection(ctx, id, oldName, oldEmoji)
 			}, nil)
 		})
@@ -735,7 +757,7 @@ func (a *App) bulkMoveToast(m core.SectionMove) {
 		return
 	}
 	a.ToastUndo(a.bulkMoveText(m), func() {
-		a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error { return c.UndoSectionMove(ctx, m) }, nil)
+		a.sectionRun(a.sectionFailed, func(ctx context.Context, c *core.App) error { return c.UndoSectionMove(ctx, m) }, nil)
 	})
 }
 

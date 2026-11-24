@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"log"
 	"regexp"
 	"strings"
 	"sync"
@@ -1746,7 +1747,7 @@ func (f *Files) createFromTemplate(t fileTemplate) {
 		return err
 	}, func(err error) {
 		if err != nil {
-			f.h.Toast("Couldn't create the list: " + friendlyErr(err))
+			popups.FailedToast(f.h, "views: lists create", err)
 			return
 		}
 		if lo, ok := f.h.(interface{ OpenListFull(id string) }); ok {
@@ -1810,7 +1811,9 @@ func (f *Files) fileMenuItems(it fileItem) []popups.MenuItem {
 			return a.SaveFile(ctx, id)
 		}, func(err error) {
 			if err != nil {
-				f.h.Toast("Couldn’t update your saved items: " + friendlyErr(err))
+				// maybeEnqueueLaterTodoGenericErrorToast (BulkActionErrorToast)
+				log.Printf("views: saved items write: %v", err)
+				f.h.Toast(nsLater.T("Something went wrong. Please try again."))
 			}
 		})
 	}})

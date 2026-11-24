@@ -52,6 +52,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // cdManageOpts are additionalOptionsToShow's rows for this conversation.
@@ -180,7 +181,7 @@ func (d *ChannelDetails) unarchiveDone() {
 	}
 	d.x.unarchiving = false
 	if err != nil {
-		d.h.Toast("Couldn’t unarchive the channel: " + cdErrCode(err))
+		popups.FailedToast(d.h, "views: conversations.unarchive", err)
 		return
 	}
 	d.closed = true

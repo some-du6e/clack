@@ -34,6 +34,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/lists"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
@@ -1026,7 +1027,7 @@ func (v *View) deleteRecords(ids []string) {
 		defer cancel()
 		for _, id := range ids {
 			if err := a.DeleteListRecord(ctx, v.id, id); err != nil {
-				v.h.Toast("Couldn't delete the item: " + err.Error())
+				popups.FailedToast(v.h, "listview: Couldn't delete the item", err)
 				return
 			}
 		}
@@ -1045,7 +1046,7 @@ func (v *View) saveAll(edits []lists.Edit) {
 		ctx, cancel := ctxTimeout(30e9)
 		defer cancel()
 		if err := a.UpdateListCells(ctx, v.id, edits...); err != nil {
-			v.h.Toast("Couldn't save the change: " + err.Error())
+			popups.FailedToast(v.h, "listview: Couldn't save the change", err)
 		}
 		v.h.Invalidate()
 	}()

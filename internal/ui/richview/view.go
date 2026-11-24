@@ -584,11 +584,13 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			}
 		}
 	}
-	for i := range v.d.spinners {
-		v.d.spinners[i].draw(gtx, st)
-	}
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
+	}
+	// spinners over the components: a pending pillow's PendingFilesSpinner
+	// sits on its MessageFile's corner, and a component's fill would hide it
+	for i := range v.d.spinners {
+		v.d.spinners[i].draw(gtx, st)
 	}
 	if v.d.ells > 0 {
 		v.callEll.Add(gtx.Ops)

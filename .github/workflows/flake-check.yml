@@ -7097,6 +7097,41 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # err-toasts: no toast shows a Go error (TestNoErrorTextInToasts scans
+  # internal/ui), and the failure texts that replaced them are Slack's
+  # (LeaveChannelError, EditMessageErrorDialog, the channel list's
+  # ErrorToast, FailedToast, openExternal's refusal). Dispatch with
+  # only=err-toasts.
+  err-toasts:
+    if: ${{ !inputs.only || startsWith('err-toasts', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (the ui, popups and views test binaries link them)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the failure texts, COUNT runs (every package, then the verdict)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 10m -v -run '^TestNoErrorTextInToasts$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^(TestLeaveErrorText|TestEditErrorText|TestAPICode|TestFailedToast)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^TestDirErrorToast$' ./internal/ui/views || rc=1
+          go test -count=$COUNT -timeout 5m -v -run '^TestOpenExternalRefusedIsLogged$' ./internal/ui/openurl || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7255,6 +7290,7 @@ jobs:
       - apt-stall
       - pagekey-day
       - files-card
+      - err-toasts
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
