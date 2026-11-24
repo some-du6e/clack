@@ -74,8 +74,8 @@ func TestRenderListGoneStates(t *testing.T) {
 // (Actions.Deleted), elsewhere the view closes. The list's next read
 // answers the tombstone.
 func TestDeleteListLeavesTab(t *testing.T) {
-	h, _ := newEnv(t, false)
 	for _, fromTab := range []bool{true, false} {
+		h, _ := newEnv(t, false)
 		var mu sync.Mutex
 		var steps []string
 		note := func(s string) { mu.Lock(); steps = append(steps, s); mu.Unlock() }
@@ -97,9 +97,6 @@ func TestDeleteListLeavesTab(t *testing.T) {
 		mu.Unlock()
 		if _, err := h.a.List(context.Background(), fakeslack.ListTodos); !lvIsGone(err) {
 			t.Errorf("the deleted list's read: %v", err)
-		}
-		if err := h.a.UndeleteFile(context.Background(), fakeslack.ListTodos); err != nil {
-			t.Fatalf("undelete: %v", err)
 		}
 	}
 }
