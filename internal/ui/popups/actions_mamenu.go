@@ -486,7 +486,7 @@ func (m *Menu) maRow(d slackc.Props) (MenuItem, bool) {
 			nat = &c
 		}
 		ui := d["uiElement"]
-		it.Do, it.DoCtx = nil, func(gtx layout.Context) { m.maSelect(gtx, id, ui, nat) }
+		it.Do, it.DoCtx, it.maWrap = nil, func(gtx layout.Context) { m.maSelect(gtx, id, ui, nat) }, true
 	}
 	return it, true
 }
@@ -504,7 +504,7 @@ func (m *Menu) maPresets(id string, uiElement any, presets []MenuItem) []MenuIte
 			continue
 		}
 		nat := p
-		out[i].Do, out[i].DoCtx = nil, func(gtx layout.Context) { m.maSelect(gtx, id, uiElement, &nat) }
+		out[i].Do, out[i].DoCtx, out[i].maWrap = nil, func(gtx layout.Context) { m.maSelect(gtx, id, uiElement, &nat) }, true
 	}
 	return out
 }
@@ -515,6 +515,9 @@ func (m *Menu) maPresets(id string, uiElement any, presets []MenuItem) []MenuIte
 // (event, {id, uiElement}, context) decides, and the native row runs only
 // on a falsy return (maPick).
 func (m *Menu) maSelect(gtx layout.Context, id string, uiElement any, nat *MenuItem) {
+	if nat != nil {
+		m.recordFrecency(*nat) // dispatchMessageAction's recordMessageActionFrecencyEvent, whoever runs the row
+	}
 	f := m.ma.onSel
 	if f.ID == 0 {
 		if nat != nil {
@@ -692,8 +695,23 @@ func (m *Menu) maSubKey(gtx layout.Context, ke key.Event) bool {
 		return false
 	}
 	m.closeAll()
+	m.recordFrecency(it)
 	maRunNative(gtx, it)
 	return true
+}
+
+// recordFrecency is MAMenu's dispatchMessageAction tail: a picked row
+// with a frecencyId records it (recordMessageActionFrecencyEvent, teF3:
+// recordFrecencyEvent {id: frecencyId, text: ""}), whether the row runs
+// natively or a plugin's onSelectAction took it. The pref write follows
+// (core.RecordFrecency's throttle); nothing writes without a pick.
+func (m *Menu) recordFrecency(it MenuItem) {
+	if it.Frecency == "" || m.h == nil {
+		return
+	}
+	if a := m.h.Core(); a != nil {
+		a.RecordFrecency(it.Frecency, "")
+	}
 }
 
 // subKeys maps the key ids of the native rows' submenu actions (the rows

@@ -146,9 +146,14 @@ func TestBlockKitSurfaces(t *testing.T) {
 	if last := execs[len(execs)-1].Get("context"); !strings.Contains(last, fakeslack.SurfLegacyTS) || !strings.Contains(last, ch) {
 		t.Errorf("message shortcut context %s", last)
 	}
-	if items := blockkit.MessageShortcutItems(a, core.Message{Channel: ch, TS: fakeslack.SurfLegacyTS}); len(items) < 2 || items[0].Label != "Ticket from message" {
-		t.Errorf("message menu shortcuts: %+v", items)
-	}
+	// Connect to apps: the team's message shortcuts once the store has the
+	// list (CachedShortcuts asks for it), in the frecency store's order,
+	// then the list's (blockkit/shortcuts.go); running one doesn't reorder
+	// it, a pick in a message menu does
+	e.until("the message menu's shortcuts", 10*time.Second, func() bool {
+		items := blockkit.MessageShortcutItems(a, core.Message{Channel: ch, TS: fakeslack.SurfLegacyTS})
+		return len(items) >= 2 && items[0].Label == "Ticket from message"
+	})
 	blockkit.CloseModal(a)
 
 	// an "Inspect message" modal: a verbatim mrkdwn section whose ```

@@ -530,3 +530,55 @@ func deburr(s string) string {
 		return r
 	}, norm.NFKD.String(s))
 }
+
+// Common is one id of MostCommonWithPrefix and its summed score.
+type Common struct {
+	ID    string
+	Score float64
+}
+
+// MostCommonWithPrefix is getMostCommonWithPrefixFromCache (the frecency
+// store, tyx1): every record traverseCache visits (a key's record, or each
+// record of a key's array; never a _reduced one or an INF_ aggregate)
+// whose id starts with prefix, summed by id. An id's first visit adds the
+// record under its own id too (calculateScore(cache[id]), an array there
+// scoring 0), so that record counts again when the traversal reaches it,
+// as in Slack. Highest first (a stable sort: ties keep their first visit's
+// order), at most n (n <= 0: all). Slack then scales the scores to the
+// top one's 100; the order is the same.
+func (c *Cache) MostCommonWithPrefix(prefix string, n int, now time.Time) []Common {
+	idx := map[string]int{}
+	var out []Common
+	visit := func(r Record) {
+		if r.ID == "" || !strings.HasPrefix(r.ID, prefix) {
+			return
+		}
+		if i, ok := idx[r.ID]; ok {
+			out[i].Score += Score(&r, now)
+			return
+		}
+		s := Score(&r, now)
+		if own := c.Item(r.ID); own != nil {
+			s += Score(own, now)
+		}
+		idx[r.ID] = len(out)
+		out = append(out, Common{ID: r.ID, Score: s})
+	}
+	for _, k := range c.Keys() {
+		recs, _, ok := c.get(k)
+		if !ok {
+			continue
+		}
+		for _, r := range recs {
+			if r.Reduced || strings.HasPrefix(r.ID, "INF_") {
+				continue
+			}
+			visit(r)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	if n > 0 && len(out) > n {
+		out = out[:n]
+	}
+	return out
+}
