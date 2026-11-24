@@ -52,6 +52,10 @@ type listGone struct {
 	sent     bool
 	sentFor  string
 	answered bool
+	// what it last drew (GoneText), and a test's click on the link
+	title, sub   string
+	link         bool
+	clickRestore bool
 }
 
 // goneOf is err's file state, ok false for a load that failed.
@@ -99,7 +103,9 @@ func (v *View) layoutGone(gtx layout.Context, err error, g core.FileGone) layout
 				}
 			}
 			s.LinkBtn = &st.restore
-			if st.restore.Clicked(gtx) && st.file.ID != "" && v.act.Restore != nil {
+			clicked := st.restore.Clicked(gtx) || st.clickRestore
+			st.clickRestore = false
+			if clicked && st.file.ID != "" && v.act.Restore != nil {
 				f := st.file
 				f.FileType = "list"
 				v.act.Restore(f, func() { v.load(false) }) // onSuccessfulUndelete: the list again
@@ -119,19 +125,15 @@ func (v *View) layoutGone(gtx layout.Context, err error, g core.FileGone) layout
 		s.ButtonBtn = &st.req
 		if st.req.Clicked(gtx) && !st.sent {
 			st.sent = true
-			if ph, ok := v.h.(popups.Host); ok {
-				popups.RequestFileAccess(ph, v.id, v.post)
-			}
+			v.requestFileAccess(v.id)
 		}
 		s.Button, s.ButtonOff = nsReqDone.T("Request Access"), st.sent
 		if st.sent {
 			s.Button = nsReqDone.T("Request Sent")
 		}
 	}
-	if ph, ok := v.h.(popups.Host); ok {
-		return s.Layout(gtx, ph)
-	}
-	return layout.Dimensions{Size: gtx.Constraints.Max}
+	st.title, st.sub, st.link = s.Title, s.Sub, s.Link != ""
+	return s.Layout(gtx, v.h.Theme(), v.h.Images())
 }
 
 var nsReqDone = i18n.NS("request_access_done")
@@ -166,4 +168,42 @@ func (v *View) orgName() string {
 		}
 	}
 	return nsListsErr.T("your organization")
+}
+
+// Gone is the state the view draws for its list, ok false while it shows
+// the list (or loads, or a load failed).
+func (v *View) Gone() (core.FileGone, bool) {
+	v.mu.Lock()
+	d, err := v.doc, v.err
+	v.mu.Unlock()
+	if d != nil || err == nil {
+		return core.FileGone{}, false
+	}
+	return goneOf(err)
+}
+
+// GoneText is the error state's title and subtitle as last drawn, and
+// whether its restore link shows (tests).
+func (v *View) GoneText() (title, sub string, restore bool) {
+	return v.gone.title, v.gone.sub, v.gone.link
+}
+
+// GoneRestore clicks the restore link (tests: the link is a
+// widget.Clickable the harness can't reach by position).
+func (v *View) GoneRestore() { v.gone.clickRestore = true; v.h.Invalidate() }
+
+// requestFileAccess is FileRequestAccessButton's click: popups.RequestFileAccess
+// and its dialogs, or (a host without dialogs) the request alone.
+func (v *View) requestFileAccess(id string) {
+	if ph, ok := v.h.(popups.Host); ok {
+		popups.RequestFileAccess(ph, id, v.post)
+		return
+	}
+	if a := v.h.Core(); a != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = a.RequestFileAccess(ctx, id, "DirectRequestAccessModal", "access")
+		}()
+	}
 }

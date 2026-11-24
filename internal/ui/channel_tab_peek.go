@@ -220,6 +220,10 @@ func (b *barTabPeek) layout(gtx layout.Context) layout.Dimensions {
 	return layout.Dimensions{Size: sz}
 }
 
+// tabLookHook, when set (tests), sees each tab key drawn with its hover
+// look.
+var tabLookHook func(key string)
+
 // tabHoverLook is a channel tab's :hover (and peek-visible, and :active)
 // look, client-boot-styles: the whole 38px tab under a
 // linear-gradient(var(--dt_color-base-pry-hover)) background-image

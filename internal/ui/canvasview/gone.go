@@ -1,9 +1,11 @@
 package canvasview
 
 import (
+	"context"
 	"errors"
 	"math/rand/v2"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/widget"
@@ -78,6 +80,10 @@ type goneState struct {
 	req   widget.Clickable
 	sent  bool
 	reqID string
+	// title and button are what it last drew (GoneTitle); clickReq is a
+	// test's click on the button
+	title, button string
+	clickReq      bool
 }
 
 // layoutGone draws QuipDeletedState for g over the body.
@@ -96,8 +102,10 @@ func (v *View) layoutGone(gtx layout.Context, err error, g core.FileGone) layout
 	switch {
 	case deleted:
 		d := deletedStates[st.pick]
-		if ph, ok := v.h.(popups.Host); ok {
-			s.Emoji = popups.EmojiURL(ph, d[1])
+		if a := v.h.Core(); a != nil {
+			if u, _, ok := a.Emoji(d[1]); ok {
+				s.Emoji = u
+			}
 		}
 		if s.Emoji == "" {
 			s.Icon = "trash"
@@ -146,21 +154,19 @@ func (v *View) layoutGone(gtx layout.Context, err error, g core.FileGone) layout
 	}
 	if g.NotVisible() && !g.CanvasBlocked() && v.id != "" {
 		s.ButtonBtn = &st.req
-		if st.req.Clicked(gtx) && !st.sent {
+		clicked := st.req.Clicked(gtx) || st.clickReq
+		st.clickReq = false
+		if clicked && !st.sent {
 			st.sent = true
-			if ph, ok := v.h.(popups.Host); ok {
-				popups.RequestFileAccess(ph, v.id, v.post)
-			}
+			v.requestFileAccess(v.id)
 		}
 		s.Button, s.ButtonOff = nsRequestDone.T("Request Access"), st.sent
 		if st.sent {
 			s.Button = nsRequestDone.T("Request Sent")
 		}
 	}
-	if ph, ok := v.h.(popups.Host); ok {
-		return s.Layout(gtx, ph)
-	}
-	return layout.Dimensions{Size: gtx.Constraints.Max}
+	st.title, st.button = s.Title, s.Button
+	return s.Layout(gtx, v.h.Theme(), v.h.Images())
 }
 
 var nsRequestDone = i18n.NS("request_access_done")
@@ -179,3 +185,39 @@ func (v *View) teamName() string {
 	defer a.S.RUnlock()
 	return strings.TrimSpace(a.S.TeamName)
 }
+
+// Gone is the state the view draws for its file, ok false while it shows
+// the canvas (or loads, or a load failed).
+func (v *View) Gone() (core.FileGone, bool) {
+	v.mu.Lock()
+	d, err := v.doc, v.err
+	v.mu.Unlock()
+	if d != nil || err == nil {
+		return core.FileGone{}, false
+	}
+	return goneOf(err)
+}
+
+// GoneTitle is the deleted state's title and the Request Access button's
+// label as last drawn (tests).
+func (v *View) GoneTitle() (title, button string) { return v.gone.title, v.gone.button }
+
+// requestFileAccess is FileRequestAccessButton's click: popups.RequestFileAccess
+// and its dialogs, or (a host without dialogs) the request alone.
+func (v *View) requestFileAccess(id string) {
+	if ph, ok := v.h.(popups.Host); ok {
+		popups.RequestFileAccess(ph, id, v.post)
+		return
+	}
+	if a := v.h.Core(); a != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = a.RequestFileAccess(ctx, id, "DirectRequestAccessModal", "access")
+		}()
+	}
+}
+
+// GoneRequestAccess clicks Request Access (tests: the harness has no
+// pointer).
+func (v *View) GoneRequestAccess() { v.gone.clickReq = true }

@@ -15,6 +15,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -54,9 +55,8 @@ type FileState struct {
 	List bool
 }
 
-// Layout draws the state over gtx's whole box. h draws the emoji.
-func (s FileState) Layout(gtx layout.Context, h Host) layout.Dimensions {
-	th := h.Theme()
+// Layout draws the state over gtx's whole box, its emoji from imgs.
+func (s FileState) Layout(gtx layout.Context, th *theme.Theme, imgs *imgcache.Cache) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	fg := colorsOf(th).Fg
 	iconLineH := gtx.Sp(unit.Sp(36 * 1.46668)) // the 36px font's line
@@ -103,7 +103,7 @@ func (s FileState) Layout(gtx layout.Context, h Host) layout.Dimensions {
 	if s.Emoji != "" {
 		es := dp(gtx, 32)
 		at(gtx, image.Pt((sz.X-es)/2, y+(iconLineH-es)/2), func(gtx layout.Context) layout.Dimensions {
-			if img, ok := h.Images().Get(s.Emoji, es); ok {
+			if img, ok := imgs.Get(s.Emoji, es); imgs != nil && ok {
 				return containImage(gtx, img, image.Pt(es, es))
 			}
 			return layout.Dimensions{Size: image.Pt(es, es)}

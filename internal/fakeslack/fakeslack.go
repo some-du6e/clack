@@ -1560,6 +1560,9 @@ func ok(kv ...any) map[string]any {
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
 	// the Files browser's searches, for FilesBrowserSearches (files_view.go)
 	s.recordFilesBrowserSearch(method, f)
+	if out, handled := s.handleFileGone(method, f); handled { // file_gone.go: per-file refusals first
+		return out
+	}
 	if out, handled := s.handleHugeThread(method, f); handled { // huge_thread.go
 		return out
 	}

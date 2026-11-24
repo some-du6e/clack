@@ -301,21 +301,26 @@ func (v *View) confirmDelete(d *core.ListDoc) {
 	}
 	id := d.Info.ID
 	popups.Confirm(ph, nsLists.T("Delete list"), nsLists.T("Are you sure you want to delete this list?"), nsLists.T("Delete list"), true, nil, func() {
-		wasTab := v.act.LeaveTab != nil && v.act.LeaveTab()
-		v.write(func(ctx context.Context, a *core.App) error {
-			if err := a.DeleteFile(ctx, id); err != nil {
-				v.h.Toast(nsLists.T("Oops! We couldn’t delete that file"))
-				return nil
-			}
-			v.post(func() {
-				switch {
-				case wasTab && v.act.Deleted != nil:
-					v.act.Deleted()
-				case !wasTab && v.act.Close != nil:
-					v.act.Close()
-				}
-			})
-			return nil
-		})
+		v.deleteConfirmed(id)
 	}).OldDialog()
+}
+
+// deleteConfirmed is DeleteFileDialog's onGo for list id.
+func (v *View) deleteConfirmed(id string) {
+	wasTab := v.act.LeaveTab != nil && v.act.LeaveTab()
+	v.write(func(ctx context.Context, a *core.App) error {
+		if err := a.DeleteFile(ctx, id); err != nil {
+			v.h.Toast(nsLists.T("Oops! We couldn’t delete that file"))
+			return nil
+		}
+		v.post(func() {
+			switch {
+			case wasTab && v.act.Deleted != nil:
+				v.act.Deleted()
+			case !wasTab && v.act.Close != nil:
+				v.act.Close()
+			}
+		})
+		return nil
+	})
 }

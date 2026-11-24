@@ -967,6 +967,9 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 				peek := a.tabPeekOpen(barTabPeekKey(ch, chTabID(t)))
 				if (hov || peek) && !source && !drag.dragging { // :not(.channel_tab_dragging):hover, :has(--is-peek-visible)
 					a.tabHoverLook(gtx, s, hov && btn.Pressed(), i == cur)
+					if tabLookHook != nil {
+						tabLookHook(t.key)
+					}
 				}
 				if i == cur {
 					theme.Fill(gtx, image.Rect(0, s.Y-gtx.Dp(2), s.X, s.Y), c.Accent)

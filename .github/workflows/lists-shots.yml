@@ -57,7 +57,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$LISTS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestListKeys|TestRecordContextMenu|TestRecordPaneMenu|TestSectionButton|TestMoreActionsMenu|TestSubtasks' ./internal/ui/listview/
+          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestListKeys|TestRecordContextMenu|TestRecordPaneMenu|TestSectionButton|TestMoreActionsMenu|TestSubtasks|TestDeleteListLeavesTab' ./internal/ui/listview/
           # list records outside the grid (lists_in_later, search_file_channel_messages): core's saved-api calls, the slugs, the menus and Later's rows
           go test -count=1 -v -run 'TestListRecord|TestFileChannelFile' ./internal/core
           go test -count=1 -v -run 'TestListSlug|TestFileChannelSlugs' ./internal/richtext
