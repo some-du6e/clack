@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -235,5 +237,149 @@ func TestImageFilePolicy(t *testing.T) {
 	h.s.notePick("CustomAppIcon", inside)
 	if got := h.s.imageFile("CustomAppIcon", inside); got != "" {
 		t.Errorf("a file in Clack's own folders was readable: %q", got)
+	}
+}
+
+// pngWithSize is a small PNG whose header gives w × h: its IHDR's width
+// and height, and the chunk's CRC to match.
+func pngWithSize(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewNRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	b := buf.Bytes()
+	if string(b[12:16]) != "IHDR" {
+		t.Fatalf("no IHDR first: %q", b[12:16])
+	}
+	binary.BigEndian.PutUint32(b[16:], uint32(w))
+	binary.BigEndian.PutUint32(b[20:], uint32(h))
+	binary.BigEndian.PutUint32(b[29:], crc32.ChecksumIEEE(b[12:29]))
+	return b
+}
+
+// jpegWithSize is a small JPEG whose header gives w × h: its frame
+// header's (SOF0: length, precision, height, width).
+func jpegWithSize(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil); err != nil {
+		t.Fatal(err)
+	}
+	b := buf.Bytes()
+	i := bytes.Index(b, []byte{0xff, 0xc0})
+	if i < 0 {
+		t.Fatal("no frame header")
+	}
+	binary.BigEndian.PutUint16(b[i+5:], uint16(h))
+	binary.BigEndian.PutUint16(b[i+7:], uint16(w))
+	return b
+}
+
+// allocated is how many bytes f allocates.
+func allocated(f func()) uint64 {
+	runtime.GC()
+	var a, b runtime.MemStats
+	runtime.ReadMemStats(&a)
+	f()
+	runtime.ReadMemStats(&b)
+	return b.TotalAlloc - a.TotalAlloc
+}
+
+// TestNativeImageSizeLimits: an image's size is read from its header and
+// checked against nativeImage's limits (8192 px a side, a 64 MiB pixel
+// buffer) before it's decoded, since Go's decoders make the whole pixel
+// buffer from the header's size. A PNG or a JPEG whose header gives a size
+// past them is the empty image whichever way a main half hands it in (a
+// buffer, a data URL, an image's own PNG for resize and toBitmap, an app
+// icon), and reading it allocates next to nothing. A bitmap or a resize
+// past them is refused before its buffer is made. Within the limits the
+// same images decode, and an app icon wider than 1024 px goes to the OS
+// fit to it.
+func TestNativeImageSizeLimits(t *testing.T) {
+	const budget = 1 << 20 // bytes: the header's read, never its pixels
+	for _, c := range []struct {
+		what string
+		b    []byte
+	}{
+		{"a PNG 20000 px a side", pngWithSize(t, 20000, 20000)},
+		{"a PNG of 6000 × 6000 (144 MB of pixels)", pngWithSize(t, 6000, 6000)},
+		{"a PNG 9000 × 1", pngWithSize(t, 9000, 1)},
+		{"a JPEG 20000 px a side", jpegWithSize(t, 20000, 20000)},
+		{"a JPEG of 6000 × 6000", jpegWithSize(t, 6000, 6000)},
+	} {
+		b64 := base64.StdEncoding.EncodeToString(c.b)
+		var err error
+		if n := allocated(func() { _, err = decodeImageBytes(c.b) }); err == nil || n > budget {
+			t.Errorf("%s: decoded (err %v), %d bytes allocated, want refused within %d", c.what, err, n, budget)
+		}
+		if n := allocated(func() {
+			if img := nativeFromDataURL("data:image/png;base64," + b64); img != nil {
+				t.Errorf("%s: a data URL of it is %d × %d, want the empty image", c.what, img.W, img.H)
+			}
+		}); n > budget+uint64(len(b64))*4 {
+			t.Errorf("%s: its data URL allocated %d bytes", c.what, n)
+		}
+		if n := allocated(func() { _, err = appIconPNG(c.b) }); err == nil || n > budget {
+			t.Errorf("%s: as an app icon: err %v, %d bytes allocated", c.what, err, n)
+		}
+		if bytes.HasPrefix(c.b, pngMagic) {
+			own := &nativeImg{PNG: b64, W: 1, H: 1}
+			if n := allocated(func() {
+				if _, err := decodeNative(b64); err == nil {
+					t.Errorf("%s: decodeNative took it", c.what)
+				}
+				if _, err := nativeResize(own, 16, 16, "best"); err == nil {
+					t.Errorf("%s: resize took it", c.what)
+				}
+				if _, err := nativeBitmap(own); err == nil {
+					t.Errorf("%s: toBitmap took it", c.what)
+				}
+			}); n > 3*budget {
+				t.Errorf("%s: resize and toBitmap allocated %d bytes", c.what, n)
+			}
+		}
+	}
+	// a bitmap or a resize past the limits, refused before its buffer
+	if n := allocated(func() {
+		if _, err := nativeFromBitmap(make([]byte, 16), 5000, 5000); err == nil {
+			t.Error("a 5000 × 5000 bitmap of 16 bytes was taken")
+		}
+	}); n > budget {
+		t.Errorf("a bitmap past the limits allocated %d bytes", n)
+	}
+	small, err := encodeNative(image.NewNRGBA(image.Rect(0, 0, 4, 4)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := allocated(func() {
+		if _, err := nativeResize(small, 9000, 9000, "best"); err == nil {
+			t.Error("a resize to 9000 × 9000 was taken")
+		}
+	}); n > budget {
+		t.Errorf("a resize past the limits allocated %d bytes", n)
+	}
+
+	// within the limits
+	for _, b := range [][]byte{pngWithSize(t, 2, 2), jpegWithSize(t, 8, 8)} {
+		if m, err := decodeImageBytes(b); err != nil || m.Bounds().Dx() == 0 {
+			t.Errorf("an image within the limits: %v", err)
+		}
+	}
+	wide := image.NewNRGBA(image.Rect(0, 0, 1500, 30))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, wide); err != nil {
+		t.Fatal(err)
+	}
+	icon, err := appIconPNG(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := png.Decode(bytes.NewReader(icon))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := m.Bounds().Size(); s != image.Pt(maxAppIcon, 20) {
+		t.Errorf("a 1500 × 30 app icon went to the OS as %v, want 1024 × 20", s)
 	}
 }

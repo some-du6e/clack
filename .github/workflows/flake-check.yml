@@ -6223,6 +6223,41 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # slick-v162 (2026-11-24): its review's fixes. An image's size is read
+  # from its header and checked against nativeImage's limits (8192 px a
+  # side, a 64 MiB pixel buffer) before it's decoded, whichever way a main
+  # half hands it in (slick); a plugin's X11 app icon is set at the
+  # window's next event, as the set from 256 px down, within the server's
+  # request size, under Xvfb (desktop); the header tab's view through
+  # setRoute to Slack's view state (slick). COUNT runs each. Dispatch with
+  # only=slick-v162.
+  slick-v162:
+    if: ${{ !inputs.only || startsWith('slick-v162', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb
+      - name: nativeImage's size limits, the tab view's path, the X11 app icon under Xvfb, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestNativeImageSizeLimits|TestNativeImageLikeElectron|TestSetTabViewReachesTheStore)$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 5m -run '^TestSetAppIconX11$' ./internal/desktop || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # channel-files-race: TestChannelFilesRadiosAndPaging read the last
   # links form after Oldest before the links read had gone out (its own
   # goroutine): "links sort_dir \"desc\"" in train-207's full-test
@@ -6465,6 +6500,7 @@ jobs:
       - quote-paste-win
       - message-polish
       - plugins-work-2b
+      - slick-v162
       - channel-files-race
       - fling-22px
       - history-changed
