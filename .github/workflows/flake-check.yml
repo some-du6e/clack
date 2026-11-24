@@ -7097,6 +7097,40 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # reaction-tip-anchor (2026-11-24): a reaction's tooltip over its pill in
+  # a thread in the Activity tab's pane (the origin trackers read the
+  # router's areas), and the emoji tooltip's large emoji (Emoji
+  # renderTooltip, EmojiTooltipEmoji). Dispatch with only=reaction-tip-anchor.
+  reaction-tip-anchor:
+    if: ${{ !inputs.only || startsWith('reaction-tip-anchor', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: richview's emoji tooltip, COUNT runs
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -timeout 8m -v -run '^(TestEmojiTooltip|TestEmojiTooltipShowsTheEmojiLikeSlack)$' ./internal/ui/richview
+      - name: ui (the reaction tooltip in the Activity pane's thread), COUNT runs
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -timeout 10m -v -run '^TestReactionTipOverItsPillInTheActivityPanesThread$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7255,6 +7289,7 @@ jobs:
       - apt-stall
       - pagekey-day
       - files-card
+      - reaction-tip-anchor
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
