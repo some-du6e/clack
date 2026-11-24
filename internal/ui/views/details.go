@@ -872,14 +872,15 @@ func (d *ChannelDetails) update(gtx C) {
 					// no message (useChannelPurposeInput has no error state)
 				case d.pendKind == cdEditName:
 					// the rename's ChannelNameInput warning
-					// (getErrorStringFromChannelNameErrors; Slack keeps its
-					// dialog open under it, Clack's rename is inline)
-					d.editing = false
+					// (getErrorStringFromChannelNameErrors), the editor kept
+					// open with what was typed, as Slack's dialog stays open
+					// under it
 					team := ""
 					if c := d.h.Core(); c != nil {
 						team = c.SlackConnectTeamName()
 					}
-					d.h.Toast(core.ChannelNameErrorText(core.ChannelNameCode(err), team))
+					d.editing, d.editKind = true, cdEditName
+					d.editErr = core.ChannelNameErrorText(core.ChannelNameCode(err), team)
 				default:
 					d.editing = false
 					log.Printf("views: channel details edit: %v", err)
@@ -2537,7 +2538,19 @@ func (d *ChannelDetails) settingsItems() []W {
 	inf, _, _ := d.info.get()
 	name := func(gtx C) D {
 		if d.editing && d.editKind == cdEditName {
-			return d.cdField(gtx, "Channel name", nil, d.topicEditor)
+			if d.editErr == "" {
+				return d.cdField(gtx, "Channel name", nil, d.topicEditor)
+			}
+			return d.cdField(gtx, "Channel name", nil, func(gtx C) D {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(d.topicEditor),
+					layout.Rigid(func(gtx C) D {
+						return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D {
+							return d.para(gtx, 13, 18, wReg, d.p.Red, 0, d.editErr)
+						})
+					}),
+				)
+			})
 		}
 		return d.cdField(gtx, "Channel name", &d.editName, func(gtx C) D {
 			return d.para(gtx, 15, 22, wReg, d.p.Text, 1, "#"+inf.Conv.Name)
