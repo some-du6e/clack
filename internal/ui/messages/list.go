@@ -237,6 +237,12 @@ type listState struct {
 	// re-highlight in an open thread pane: a message whose top is already
 	// on screen isn't scrolled to
 	jumpLazy bool
+	// hid: what plugins' patches took out of the list's channelHistory
+	// (Slick's HideResolved, a help channel's resolved tickets), and
+	// histOK whether taut's answer for it is as of the latest change Go
+	// made (a jump's highlight): a jump waits for it (historyHidden)
+	hid    *taut.Hidden
+	histOK bool
 	// thrOpening: the thread pane just opened (ThreadView.Reopen), so a jump
 	// starts it at getThreadStartPosition's message
 	thrOpening bool
@@ -756,6 +762,11 @@ func (s *listState) sync(h Host, now time.Time) {
 		}
 	}
 	s.viewsOn = views
+	// and what a patch of channelHistory took out (the list draws core's
+	// messages; Slack's draws that history)
+	if hid := s.historyHidden(t); hid != s.hid {
+		s.hid, s.snap.rev = hid, 0
+	}
 	// system messages follow system_messages_redesign_m1 (system.go): a new
 	// group re-reads the snapshot and rebuilds the rows; an actor's name
 	// arriving rebuilds the system rows
@@ -814,6 +825,9 @@ func (s *listState) sync(h Host, now time.Time) {
 	}
 	if changed && len(s.inj.msgs) > 0 {
 		s.mergeInjected()
+	}
+	if changed && s.hid.Len() > 0 {
+		s.dropHidden()
 	}
 	s.takeJump(now)
 	if m := s.pend.take(); m != nil {
@@ -3064,8 +3078,10 @@ func (s *listState) placeJump(now time.Time) {
 	// findTimestampClosestToStartTs (find(timestamps, t => t >= startTs)),
 	// with nothing to flash (its highlightTs names no row); with nothing at
 	// or after it, the end (getOffsetForKey(undefined)). Nothing stays
-	// pending.
-	if s.thread || !s.jumpCovered() {
+	// pending, once taut's answer of what plugins' patches hide is as of
+	// the jump's highlight (Slack's highlightTs, which HideResolved reads
+	// to keep a linked ticket shown: historyHidden).
+	if s.thread || !s.jumpCovered() || !s.histOK {
 		return
 	}
 	if i := s.firstItemFrom(s.pendingJump); i >= 0 {

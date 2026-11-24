@@ -44,6 +44,8 @@ import (
 type headerExtra struct {
 	nameTip popups.TipState // EditMpdmNameButton's tooltip
 	bellTip popups.TipState // NotificationsButton's tooltip (popups.NotifyButtonTip)
+	// ViewHeaderSearch's tooltip (hdrSearch)
+	searchTip popups.TipState
 	// the wide topic's hover card (channel_topic.go)
 	card      *richview.View
 	cardKey   string

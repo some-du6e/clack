@@ -40,7 +40,7 @@ var wholeSlices = []string{
 	"dndV2", "drafts", "slashCommand", "experiments", "huddleEvents", "allCalls", "peers",
 	"messageEditWindow", "searchResults", "huddlesCanvas", "alert", "unreadCounts",
 	"mutedChannels", "starredChannels", "huddles", "messagesMeta", "threadSub", "userGroupMembership",
-	"clientHuddles", "appActions",
+	"clientHuddles", "appActions", "viewUiState",
 }
 
 type change struct {
@@ -73,6 +73,7 @@ type mirror struct {
 	typing     map[string]typingRec
 	membership map[string]map[string]membershipRec
 	editing    map[string]map[string]any
+	viewUI     map[string]viewUIRec  // Channel views' uiState by channel (SetViewHighlight)
 	drafts     map[string]core.Draft // server drafts by id (drafts.go)
 	local      map[string]localDraft // the composers' live drafts by client_draft_id (drafts.go)
 	search     json.RawMessage
@@ -164,7 +165,7 @@ const jsReadMax = 50000
 func newMirror(t *Taut) *mirror {
 	return &mirror{
 		t: t, typing: map[string]typingRec{}, membership: map[string]map[string]membershipRec{},
-		editing: map[string]map[string]any{}, drafts: map[string]core.Draft{}, local: map[string]localDraft{}, calls: map[string]json.RawMessage{},
+		editing: map[string]map[string]any{}, viewUI: map[string]viewUIRec{}, drafts: map[string]core.Draft{}, local: map[string]localDraft{}, calls: map[string]json.RawMessage{},
 		watched: map[string]map[string]uint64{},
 		jsRead:  map[string]map[string]struct{}{}, jsListed: map[string]bool{}, jsFull: map[string]bool{},
 	}
@@ -542,6 +543,8 @@ func (m *mirror) sweep() {
 			fp = m.memberFP(it.key)
 		case "channels":
 			fp = m.channelFP(it.key)
+		case "channelHistory":
+			fp = m.historyFP(it.key)
 		default:
 			continue
 		}
@@ -780,6 +783,36 @@ func (t *Taut) SetEditing(windowID, ch, ts string, open bool) {
 	}
 	t.mirror.mu.Unlock()
 	t.mirror.invalidate("messageEditWindow")
+}
+
+// viewUIRec is a Channel view's uiState: the message its navigation
+// highlights and starts at ("" for none).
+type viewUIRec struct{ highlight, start string }
+
+// SetViewHighlight is a navigation to channel ch's view as Slack's
+// viewUiState keeps it (client-boot z9hu: an id-keyed store, a navigation
+// adding its view's uiState under the view's id, the channel's for a
+// Channel view: jhdg toMessage's {[channel]: {highlightTs}, ts}). ts is
+// the message a jump highlights (a permalink, a search result), "" for a
+// navigation with no message to start at, which drops the highlight.
+// Slick's HideResolved keeps a highlighted ticket shown.
+func (t *Taut) SetViewHighlight(ch, ts string) {
+	if ch == "" {
+		return
+	}
+	m := t.mirror
+	m.mu.Lock()
+	old, had := m.viewUI[ch]
+	next := viewUIRec{highlight: ts, start: ts}
+	changed := (had || ts != "") && old != next
+	if changed {
+		m.viewUI[ch] = next
+	}
+	m.mu.Unlock()
+	if changed && t.Started() {
+		m.invalidate("viewUiState")
+		t.retellHistory(ch) // a jump waits for the list's history as the patches see it now
+	}
 }
 
 // SetSearchResults shows a search response (Slack's search.modules /
@@ -1032,6 +1065,11 @@ func (m *mirror) get(slice, key string) any {
 		}
 		return nil
 	case "channelHistory":
+		// watched like messages: a history core loads with no event (a
+		// channel's first load, a page) changes what JS read, and Slack's
+		// reducer makes the slice the load's. A copy read before the load
+		// listed nothing, so HideResolved, filtering it, hid nothing
+		m.watch("channelHistory", key, m.historyFP(key))
 		return m.history(key)
 	case "teams":
 		return m.team(key)
@@ -1115,6 +1153,21 @@ func (m *mirror) get(slice, key string) any {
 		out := make(map[string]any, len(m.editing))
 		for k, v := range m.editing {
 			out[k] = v
+		}
+		return out
+	case "viewUiState":
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		out := make(map[string]any, len(m.viewUI))
+		for ch, v := range m.viewUI {
+			ui := map[string]any{ch: map[string]any{}}
+			if v.highlight != "" {
+				ui[ch] = map[string]any{"highlightTs": v.highlight}
+			}
+			if v.start != "" {
+				ui["ts"] = v.start
+			}
+			out[ch] = ui
 		}
 		return out
 	case "searchResults":
@@ -1678,6 +1731,51 @@ func (m *mirror) history(key string) any {
 		slices = append(slices, historySlice(ts, "", ""))
 		return map[string]any{"reachedStart": reachedStart, "reachedEnd": true, "slices": slices, "prevReachedEnd": true}
 	}
+}
+
+// historyFP fingerprints channelHistory[key] as history lists it: its
+// slices' ranges and their messages' timestamps, the ones history lists
+// (a load, a page, a window or a new message changes it, an edit or a
+// reaction doesn't). A channel's in place (VisitHistory); a thread's from
+// its slices.
+func (m *mirror) historyFP(key string) uint64 {
+	a := m.t.app
+	h := fnv64a(fnvOffset64)
+	flag := func(b bool) {
+		if b {
+			h.str("+")
+		} else {
+			h.str("-")
+		}
+	}
+	ch, thread, isThread := strings.Cut(key, "-")
+	if isThread {
+		sls, rs, re, pre, ok := a.S.ThreadHistory(ch, thread)
+		if !ok {
+			return 0
+		}
+		flag(rs)
+		flag(re)
+		flag(pre)
+		for _, x := range sls {
+			h.str("|" + x.Start + ":" + x.End + "|")
+			for _, ts := range x.TSs {
+				h.str(ts)
+				h.str(",")
+			}
+		}
+		return uint64(h)
+	}
+	a.S.VisitHistory(ch, func(start, end string, older bool) {
+		h.str("|" + start + ":" + end + "|")
+		flag(older)
+	}, func(x *slack.Message) {
+		if x.ThreadTS == "" || x.ThreadTS == x.TS || x.Subtype == "thread_broadcast" {
+			h.str(x.TS)
+			h.str(",")
+		}
+	})
+	return uint64(h)
 }
 
 // historySlice is a channelHistory slice: its timestamps, and its start

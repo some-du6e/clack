@@ -5852,7 +5852,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -5930,7 +5930,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -6161,7 +6161,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
       TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37 # Taut (MIT, third-party), same pin as ui-taut.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -6229,6 +6229,119 @@ jobs:
           go test -count="$COUNT" -timeout 8m -run '^TestCustomNameRecordingLikeSlack$' ./internal/slick || rc=1
           xvfb-run -a go test -count="$COUNT" -timeout 10m -run '^TestTautCustomNameRecording' ./internal/ui || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # plugins-work-3 (2026-11-23): Slick's HideResolved. channelHistory as
+  # the plugins' patches leave it hides the list's rows (Taut.HistoryHidden,
+  # pushed from JS on every store change: taut, messages), viewUiState's
+  # highlightTs keeps a ticket a jump went to shown (taut), and the
+  # header's search button is Slack's ViewHeaderSearch, a patch's tree
+  # beside it in .p-view_header__actions (ui). HideResolved from Slick's
+  # build at the slick workflow's pin in the harness (slick), and from the
+  # published Library in the whole client (ui). COUNT runs each. Dispatch
+  # with only=plugins-work-3.
+  plugins-work-3:
+    if: ${{ !inputs.only || startsWith('plugins-work-3', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    env:
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        continue-on-error: true # GitHub release downloads sometimes 504 three times running
+        with:
+          bun-version: 1.4.4
+      - name: bun from npm (setup-bun's download failed)
+        if: steps.setup-bun.outcome == 'failure'
+        run: |
+          for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
+          bun --version
+      - name: clone slick at the slick workflow's pin
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - name: the published Library (index.json + bundles)
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (Slick, the Library); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the patched history's hidden rows, channelHistory following loads, viewUiState's highlight, ViewHeaderSearch, HideResolved in the harness and in the client, COUNT runs each
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestHistoryHiddenFollowsPatches|TestChannelHistoryFollowsLoads)$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestHiddenHistoryRows$' ./internal/ui/messages || rc=1
+          go test -count="$COUNT" -timeout 15m -run '^TestHideResolvedLikeSlack$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 15m -run '^TestPluginGapHideResolved$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # slick-v162 (2026-11-24): its review's fixes. An image's size is read
+  # from its header and checked against nativeImage's limits (8192 px a
+  # side, a 64 MiB pixel buffer) before it's decoded, whichever way a main
+  # half hands it in (slick); a plugin's X11 app icon is set at the
+  # window's next event, as the set from 256 px down, within the server's
+  # request size, under Xvfb (desktop); the header tab's view through
+  # setRoute to Slack's view state (slick). COUNT runs each. Dispatch with
+  # only=slick-v162.
+  slick-v162:
+    if: ${{ !inputs.only || startsWith('slick-v162', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb
+      - name: nativeImage's size limits, the tab view's path, the X11 app icon under Xvfb, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestNativeImageSizeLimits|TestNativeImageLikeElectron|TestSetTabViewReachesTheStore)$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 5m -run '^TestSetAppIconX11$' ./internal/desktop || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -6560,6 +6673,8 @@ jobs:
       - quote-paste-win
       - message-polish
       - plugins-work-2b
+      - plugins-work-3
+      - slick-v162
       - channel-files-race
       - fling-22px
       - history-changed

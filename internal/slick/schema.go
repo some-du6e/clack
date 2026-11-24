@@ -67,6 +67,9 @@ type Setting struct {
 	Options         []SelectOption  `json:"options,omitempty"`
 	Statuses        []SelectOption  `json:"statuses,omitempty"`
 	RestartRequired bool            `json:"restartRequired,omitempty"`
+	// Hidden: left out of the settings rows, for a setting the plugin
+	// edits from its own panel (Slick's shared/settings.ts, v161)
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 const (
