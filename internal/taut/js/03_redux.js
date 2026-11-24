@@ -572,7 +572,8 @@ function historyHidden(raw, view) {
 }
 const tellGoHistory = batcher(() => {
   if (!historyWatch.size) return
-  if (!sliceLayers.has('channelHistory')) {
+  // patched as Go is told it is (statePatched: a slice layer, or a patch of the whole state)
+  if (!sliceLayers.has('channelHistory') && !(statePatches.size > (sliceLayers.size ? 1 : 0))) {
     // nothing patches it any more: stop (Go posts the keys again when a patch comes)
     historyWatch = new Map()
     historyRefs = new Map()
