@@ -5134,7 +5134,8 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: the plugin library scrolled, COUNT runs
         shell: bash
-        run: xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestPrefsLibraryScrollCost$' ./internal/ui | grep -E 'prefs_scroll_cost_test.go:[0-9]+: (a frame|[0-9]+ notches|a scroll)|^(--- |ok|FAIL|PASS)'
+        run: |
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestPrefsLibraryScrollCost$' ./internal/ui | grep -E 'prefs_scroll_cost_test.go:[0-9]+: (a frame|[0-9]+ notches|a scroll)|^(--- |ok|FAIL|PASS)'
       - name: beside a busy loop on every CPU, 3 runs (not gating)
         continue-on-error: true
         shell: bash
