@@ -51,6 +51,17 @@ func TestFileIconInComponentMode(t *testing.T) {
 	for _, c := range cases {
 		st := newTestStyle()
 		want, wr := renderFileIcon(t, st, c.f, c.art)
+		ink := 0 // the icon as drawn without components: not the white page under it
+		for y := wr.Min.Y; y < wr.Max.Y; y++ {
+			for x := wr.Min.X; x < wr.Max.X; x++ {
+				if colDist(want.RGBAAt(x, y), color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}) > 24 {
+					ink++
+				}
+			}
+		}
+		if ink*4 < wr.Dx()*wr.Dy() {
+			t.Fatalf("%s: the %s icon at %v has %d inked pixels without components: nothing to compare", c.name, c.art, wr, ink)
+		}
 		for _, m := range modes {
 			t.Run(c.name+"/"+m.name, func(t *testing.T) {
 				m.on(t)
@@ -82,7 +93,7 @@ func TestFileIconInComponentMode(t *testing.T) {
 // rect of its art icon name.
 func renderFileIcon(t *testing.T, st *Style, f *rt.File, name string) (*image.RGBA, image.Rectangle) {
 	t.Helper()
-	const w, h = 480, 420
+	const w, h = 480, 900
 	ops := new(op.Ops)
 	paint.FillShape(ops, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Rect{Max: image.Pt(w, h)}.Op())
 	v := New(doc(fileBlock(f)), Options{TS: "1700000000.000100", Channel: "C0COMP"})
