@@ -330,7 +330,8 @@ func TestLibraryRefreshesStale(t *testing.T) {
 		// a press down, the pointer dragged off: held until the release
 		r.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(400, 400)})
 		frame()
-		r.Queue(pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(900, 400)})
+		// a move with the button down: the router makes it a drag
+		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(900, 400)})
 		frame()
 		frame()
 		if has(lp.ix, "LibSlick") || !lp.ptrDown {
