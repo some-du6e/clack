@@ -31,7 +31,7 @@ func labelsIn(f func()) []string {
 	return out
 }
 
-func hasLabel(ls []string, s string) bool {
+func hasLabelTrim(ls []string, s string) bool {
 	for _, l := range ls {
 		if strings.TrimSpace(l) == s {
 			return true
@@ -48,7 +48,7 @@ func TestHistoryLoaderOfflineLikeSlack(t *testing.T) {
 	t.Cleanup(func() { clientOnline = prev })
 
 	e, _ := guardEnv(t, "C0OFFLINE1", nil, nil)
-	if ls := labelsIn(e.rt.frame); hasLabel(ls, "No connection.") {
+	if ls := labelsIn(e.rt.frame); hasLabelTrim(ls, "No connection.") {
 		t.Fatalf("control: online, the list draws the offline indicator: %q", ls)
 	}
 	// offline, then at the window's top: the history loader's row, in the
@@ -57,7 +57,7 @@ func TestHistoryLoaderOfflineLikeSlack(t *testing.T) {
 	e.v.s.list.Position = layout.Position{}
 	e.v.s.stopScroll()
 	ls := labelsIn(e.rt.frame)
-	if !hasLabel(ls, "No connection.") || !hasLabel(ls, "Go online to load more messages.") {
+	if !hasLabelTrim(ls, "No connection.") || !hasLabelTrim(ls, "Go online to load more messages.") {
 		t.Errorf("offline, the loader row draws %q; want InlineOfflineIndicator's \"No connection.\" and \"Go online to load more messages.\"", ls)
 	}
 
@@ -70,7 +70,7 @@ func TestHistoryLoaderOfflineLikeSlack(t *testing.T) {
 	rt := newRouted(v, 900, 700)
 	rt.frame()
 	ls = labelsIn(rt.frame)
-	if !hasLabel(ls, "No connection") || !hasLabel(ls, "Go online to get the latest messages.") {
+	if !hasLabelTrim(ls, "No connection") || !hasLabelTrim(ls, "Go online to get the latest messages.") {
 		t.Errorf("offline, an empty conversation draws %q; want LargeOfflineIndicator", ls)
 	}
 }
