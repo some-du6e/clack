@@ -26,12 +26,12 @@ func attIconArt(v attView) string {
 	if v.server != nil {
 		return richview.FileIconArt(v.server)
 	}
-	return richview.FileIconArt(&richtext.File{Type: attSVGIconType(v.c.subtype(), v.typ)})
+	return richview.FileIconArt(&richtext.File{Type: attSVGType(v.c.subtype(), v.typ)})
 }
 
-// attSVGIconType is getSVGIconType for a File of subtype sub and MIME type
+// attSVGType is getSVGIconType for a File of subtype sub and MIME type
 // mime.
-func attSVGIconType(sub, mime string) string {
+func attSVGType(sub, mime string) string {
 	switch sub {
 	case "audio_story", "slack_audio", "slack_name_pronunciation": // lqEY
 		return "audio"

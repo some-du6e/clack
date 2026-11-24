@@ -33,7 +33,7 @@ func TestAttIconArt(t *testing.T) {
 		{"slack_video", "video/webm", "video", "fileicon-file-video"},
 		{"", "", "generic", "fileicon-generic"},
 	} {
-		typ := attSVGIconType(c.sub, c.mime)
+		typ := attSVGType(c.sub, c.mime)
 		art := richview.FileIconArt(&richtext.File{Type: typ})
 		if typ != c.typ || art != c.art {
 			t.Errorf("subtype %q, MIME %q: type %q art %q, want %q %q", c.sub, c.mime, typ, art, c.typ, c.art)
