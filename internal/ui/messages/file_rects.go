@@ -108,6 +108,9 @@ type ReactionRect struct {
 // the last frame, in window coordinates.
 func (v *ChannelView) ReactionRects() []ReactionRect { return v.s.reactionRects() }
 
+// ReactionRects lists the thread's visible reaction pills, as ChannelView's.
+func (v *ThreadView) ReactionRects() []ReactionRect { return v.s.reactionRects() }
+
 func (s *listState) reactionRects() []ReactionRect {
 	var out []ReactionRect
 	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {

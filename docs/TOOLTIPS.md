@@ -47,7 +47,7 @@ rendered through slackc).
 | Sender's status emoji | BaseCustomStatus | status text, "Until …", 150, top | yes | yes | `TestSenderStatusTooltip` |
 | Hover bar buttons | MessageActionButton, `/rjK` | label (+ subtext), 60, top | yes | yes | `TestToolbarTipTimingLikeSlack` |
 | Edited mark | EditedLabel, `J825` | "{date} at {time}" (by …), 300 | yes | n/a | `TestEditedLabelTooltipTarget` |
-| Emoji in a message | EmojiTooltipEmoji, `pHhv` | :name:, 300 | yes | n/a | `TestEmojiTooltip` |
+| Emoji in a message | Emoji renderTooltip, EmojiTooltipEmoji | the emoji at LARGER on a 64px white tile, then :name:, 300 | yes | yes (EmojiTooltipEmoji is a component) | `TestEmojiTooltip`, `TestEmojiTooltipShowsTheEmojiLikeSlack` |
 | Attachment remove button | AttachmentDeleteButton | "Remove preview" ("Remove contact info": no contact cards in Clack), 150, top | **yes (new)** | n/a | `TestRemoveButtonTooltip` |
 | Image actions: Expand | AttachmentImageActions, `UvHM` | "Expand", 300, left-bottom | yes | n/a | — |
 | Image actions: Download, Open in new window, More actions | AttachmentImageActions, `UvHM` | 300 | not drawn (Clack draws Expand only) | n/a | — |

@@ -15,6 +15,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -149,10 +150,20 @@ func calendarDay(ts string, now time.Time) (time.Time, string, bool) {
 	return t, date, true
 }
 
-// emojiTip draws the hovered emoji's :name: (or the "(edited)" label's
+// emojiTip draws the hovered emoji's tooltip (or the "(edited)" label's
 // time) in Slack's dark tooltip, centred above it, once the pointer has
 // rested EmojiTipDelay. Deferred, so it sits above the rest of the window
 // and outside every clip.
+//
+// An emoji's is Emoji's renderTooltip (client-boot, build 83aff18a1847b8e9;
+// BaseTooltip delay 300): a .c-emoji__emoji-tooltip div (margin-bottom
+// 4px) holding EmojiTooltipEmoji, the emoji at the LARGER size (a custom
+// one's url, a standard one's XLARGE sheet image) on a white tile
+// (.c-emoji__emoji-tooltip .c-emoji__larger: 64px with 4px padding, so a
+// 56px emoji, radius 4), then the :name:, centred. Clack drew the name
+// alone (Karim, 11-24: "little puny tooltip intended?"). Importing another
+// workspace's emoji (isImportAllowed) has no button here: Clack has no
+// emoji import.
 func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	name, ok := v.hoveredTip()
 	if !ok || !v.hovering || v.tipGen != theme.TipGen() { // hidden (theme.HideTooltips) until the pointer leaves
@@ -187,7 +198,23 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	k := l.faceFor(font.Font{Typeface: st.Face, Weight: font.Bold}, l.sp(13), 0)
 	sh := st.word(k, name)
 	padX, padY, lh := l.dp(12), l.dp(8), l.dp(18)
-	bw, bh := int(sh.adv+0.999)+2*padX, lh+2*padY
+	textW := int(sh.adv + 0.999)
+	cw, ch := textW, lh
+	// EmojiTooltipEmoji, laid out first: its size (a plugin's patch may
+	// change it) sizes the box
+	var em op.CallOp
+	var emD layout.Dimensions
+	if f.kind == fImage && strings.HasPrefix(name, ":") && !strings.HasPrefix(f.url, iconURL) {
+		g := gtx
+		g.Metric = unit.Metric{PxPerDp: l.scale, PxPerSp: l.spx}
+		g.Constraints = layout.Constraints{Max: image.Pt(l.dp(200)-2*padX, l.dp(200))}
+		rec := op.Record(gtx.Ops)
+		emD = slackc.Component(g, "EmojiTooltipEmoji", &tipEmoji{st: st, name: name, url: f.url}, (*tipEmoji).props, (*tipEmoji).layout)
+		em = rec.Stop()
+		cw = max(cw, emD.Size.X)
+		ch += emD.Size.Y + l.dp(4) // .c-emoji__emoji-tooltip { margin-bottom: 4px }
+	}
+	bw, bh := cw+2*padX, ch+2*padY
 	// BaseTooltip "top": 8px over the trigger, kept inside the window,
 	// under it when there's no room (theme/tooltip_place.go)
 	pl := placeTip(gtx, &l, target, image.Pt(bw, bh), v.tipOrg.Bounds())
@@ -204,9 +231,17 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	// the box and its arrow (on the trigger's centre, 6px of it outside
 	// the box), outlined together in dark mode (theme/tooltip.go)
 	theme.TooltipShape(gtx, r, l.dp(8), pl.Arrow, bg, p.TooltipGlow)
+	top := r.Min.Y + padY
+	if emD.Size.Y > 0 {
+		// the tooltip's text-align: center
+		et := op.Offset(image.Pt(r.Min.X+(r.Dx()-emD.Size.X)/2, top)).Push(gtx.Ops)
+		em.Add(gtx.Ops)
+		et.Pop()
+		top += emD.Size.Y + l.dp(4)
+	}
 	bm := st.spaceOf(k)
-	base := r.Min.Y + padY + int((float32(lh)-(bm.asc+bm.desc))/2+bm.asc+0.5)
-	t := op.Offset(image.Pt(r.Min.X+padX, base)).Push(gtx.Ops)
+	base := top + int((float32(lh)-(bm.asc+bm.desc))/2+bm.asc+0.5)
+	t := op.Offset(image.Pt(r.Min.X+(r.Dx()-textW)/2, base)).Push(gtx.Ops)
 	glyphs, _ := st.pathOf(sh, true)
 	cs := clip.Outline{Path: glyphs}.Op().Push(gtx.Ops)
 	paint.ColorOp{Color: fg}.Add(gtx.Ops)
@@ -217,6 +252,40 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 		opac.Pop()
 	}
 	op.Defer(gtx.Ops, m.Stop())
+}
+
+// tipEmoji is the emoji tooltip's EmojiTooltipEmoji.
+type tipEmoji struct {
+	st        *Style
+	name, url string
+}
+
+// props are EmojiTooltipEmoji's as renderTooltip passes them: text and
+// displayText the :name:, url a custom emoji's (a standard one's is
+// undefined: EmojiTooltipEmoji picks its sheet image), isStandard.
+func (e *tipEmoji) props() slackc.Props {
+	n, _, _ := strings.Cut(strings.Trim(e.name, ":"), "::")
+	p := slackc.Props{"text": e.name, "displayText": e.name, "isStandard": emoji.IsStandard(n), "stopAnimations": false}
+	if !emoji.IsStandard(n) {
+		p["url"] = e.url
+	}
+	return p
+}
+
+// layout is EmojiTooltipEmoji: Emoji at LARGER, which the tooltip's rules
+// put on a white tile (.c-emoji__emoji-tooltip .c-emoji__larger: 64x64,
+// padding 4, background --dt_color-constants-white, radius
+// --sk6-radius-base 4px).
+func (e *tipEmoji) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	tile, pad := gtx.Dp(64), gtx.Dp(4)
+	r := image.Rect(0, 0, tile, tile)
+	theme.RRect(gtx, r, gtx.Dp(4), color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff})
+	if e.st.Images != nil {
+		if img, ok := e.st.Images.Get(e.url, tile-2*pad); ok {
+			drawImage(gtx.Ops, img, r.Inset(pad), [4]int{}, false)
+		}
+	}
+	return layout.Dimensions{Size: r.Max}
 }
 
 // placeTip is theme.PlaceTooltip for a BaseTooltip at "top" in the view's

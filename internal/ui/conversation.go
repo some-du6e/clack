@@ -14,19 +14,33 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// originTracker learns a widget's window position from pointer events:
-// Gio exposes no global transform, but a pass-through handler sees the same
+// originTracker knows a widget's window position. Gio exposes no global
+// transform, so it reads where the router put its area last frame (Clack
+// patch 57's FollowArea, which asks for another frame when the area moves;
+// less FrameOrigin, Gio's own title bar). Without a router (some tests) it
+// falls back to pointer events: a pass-through handler sees the same
 // pointer event in local coordinates that the root tracker sees in window
-// coordinates, so origin = window - local.
+// coordinates, so origin = window - local. Pointer events alone weren't
+// enough: the handler sits under its widget's own, which take the events,
+// so a pane whose list covers it (a thread in the Activity tab's pane)
+// never learned and kept its fallback, the pointer (Karim's 11-24 reaction
+// tip ~620 dp above its pill: the list's window bounds were the window
+// less the pointer, and the tip was kept inside them).
 type originTracker struct {
 	tag    int
 	origin image.Point
 	ok     bool
+	area   image.Point // the router's (theme.AreaOrigin), when it has the area
+	areaOK bool
+	size   image.Point // the area track registered last
 }
 
 func (t *originTracker) track(gtx layout.Context, a *App) {
+	t.area, t.areaOK = theme.AreaOrigin(gtx, &t.tag, image.Rectangle{Max: t.size})
+	t.size = gtx.Constraints.Max
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &t.tag, Kinds: pointer.Move | pointer.Enter | pointer.Press | pointer.Drag})
 		if !ok {
@@ -42,8 +56,12 @@ func (t *originTracker) track(gtx layout.Context, a *App) {
 	event.Op(gtx.Ops, &t.tag)
 }
 
-// get returns the learned origin, or fallback until the pointer visits.
+// get returns the router's origin, else the one the pointer taught, else
+// fallback.
 func (t *originTracker) get(fallback image.Point) image.Point {
+	if t.areaOK {
+		return t.area
+	}
 	if t.ok {
 		return t.origin
 	}
@@ -289,8 +307,8 @@ func (a *App) attachComposer(c *convo) {
 // the window drew no other frame until some input came.
 func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) layout.Dimensions {
 	sz := gtx.Constraints.Max
+	c.org.track(gtx, a) // first: this frame's origin is where the last frame's area was
 	origin := c.org.get(fallback)
-	c.org.track(gtx, a)
 	pl := c.boxPlaceFor(gtx.Now) // this layout's place: its last frame's guess
 
 	// a thread's reply box is its list's last row unless a footer stands

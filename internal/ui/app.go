@@ -467,6 +467,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	// and so does every tooltip (theme/tooltip_place.go)
 	theme.WindowSize = func() image.Point { return a.winSize }
 	theme.WindowPointer = func() (image.Point, bool) { return a.ptrWin, a.ptrOK }
+	theme.FrameOrigin = a.FrameOrigin // AreaOrigin: the origin trackers read the router
 
 	a.startSpell()                                // spellcheck_wire.go
 	a.startLocale()                               // locale_wire.go

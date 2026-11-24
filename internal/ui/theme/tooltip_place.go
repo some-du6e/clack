@@ -226,11 +226,37 @@ func KeepInBounds(t image.Rectangle, sz image.Point, b image.Rectangle, pos stri
 // ---- the window, for tooltips laid out in local coordinates ----
 
 // WindowSize and WindowPointer are set by the ui root: the window's size
-// and the last pointer position in window coordinates.
+// and the last pointer position in window coordinates. FrameOrigin is the
+// frame's origin in the router's coordinates (App.FrameOrigin: Gio's own
+// title bar, under its fallback decorations), which AreaOrigin takes off.
 var (
 	WindowSize    func() image.Point
 	WindowPointer func() (image.Point, bool)
+	FrameOrigin   func() image.Point
 )
+
+// AreaOrigin is the window origin of the widget that registered tag's
+// area over local (its own coordinates) in the last frame, as the router
+// placed it: Clack patch 57's FollowArea, which asks for another frame
+// when the area moves, less FrameOrigin. ok is false without a router or
+// an area (headless tests drawing without one).
+//
+// The origin trackers read this first. They used to learn their origin
+// only from pointer events, through a pass-through handler laid out under
+// the widget's own handlers, which take the events: a tracker its widget
+// covered never learned, and a fallback stood in (the thread pane in the
+// Activity tab fell back to the pointer itself).
+func AreaOrigin(gtx layout.Context, tag event.Tag, local image.Rectangle) (image.Point, bool) {
+	full, _, ok := gtx.Source.FollowArea(tag)
+	if !ok || full.Empty() || local.Empty() {
+		return image.Point{}, false
+	}
+	o := full.Min.Sub(local.Min)
+	if FrameOrigin != nil {
+		o = o.Sub(FrameOrigin())
+	}
+	return o, true
+}
 
 // TipOrigin learns a widget's window origin from pointer events, as ui's
 // originTracker does: Gio has no global transform, but a pass-through
@@ -241,11 +267,19 @@ type TipOrigin struct {
 	tag int
 	pt  image.Point
 	ok  bool
+	set bool // Set: the owner's origin, over what's learned
+
+	at     image.Rectangle // the area Track registered last
+	area   image.Point     // the router's (AreaOrigin)
+	areaOK bool
 }
 
-// Track reads last frame's events and registers a pass-through handler
-// over r (local coordinates).
+// Track reads where the router put last frame's area (AreaOrigin) and
+// last frame's events, and registers a pass-through handler over r (local
+// coordinates).
 func (o *TipOrigin) Track(gtx layout.Context, r image.Rectangle) {
+	o.area, o.areaOK = AreaOrigin(gtx, &o.tag, o.at)
+	o.at = r
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &o.tag, Kinds: pointer.Move | pointer.Enter | pointer.Press | pointer.Drag})
 		if !ok {
@@ -276,16 +310,26 @@ func (o *TipOrigin) Learn(local f32.Point) {
 }
 
 // Set gives the origin when the owner knows it.
-func (o *TipOrigin) Set(p image.Point) { o.pt, o.ok = p, true }
+func (o *TipOrigin) Set(p image.Point) { o.pt, o.ok, o.set = p, true, true }
+
+// Origin is the widget's window origin: the owner's (Set), else the
+// router's (Track's AreaOrigin), else the one pointer events taught.
+func (o *TipOrigin) Origin() (image.Point, bool) {
+	if o.areaOK && !o.set {
+		return o.area, true
+	}
+	return o.pt, o.ok
+}
 
 // Bounds is the window in local coordinates, or an empty rectangle until
 // the origin and the window's size are known (PlaceTooltip doesn't limit
 // the tooltip then).
 func (o *TipOrigin) Bounds() image.Rectangle {
-	if !o.ok {
+	pt, ok := o.Origin()
+	if !ok {
 		return image.Rectangle{}
 	}
-	return WindowBounds(o.pt)
+	return WindowBounds(pt)
 }
 
 // WindowBounds is the window in the coordinates of a widget whose window

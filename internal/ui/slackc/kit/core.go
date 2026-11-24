@@ -527,15 +527,26 @@ func stateOf[T any](h *slackc.Host) *T {
 // ui's originTracker: Gio has no global transform, but a pass-through
 // handler sees the same event in local coordinates that the root sees in
 // window coordinates, so origin = window − local.
+//
+// It reads where the router put last frame's area first (theme.AreaOrigin):
+// the handler sits under the widget's own, which take the pointer's
+// events, so one the widget covers never learned from them.
 type origin struct {
 	tag int
 	pt  image.Point
 	ok  bool
+
+	at     image.Rectangle // the area track registered last
+	area   image.Point
+	areaOK bool
 }
 
-// track reads last frame's events and registers a pass-through handler
-// over r (local coordinates). Call it while laying out the widget.
+// track reads where the router put last frame's area and last frame's
+// events, and registers a pass-through handler over r (local
+// coordinates). Call it while laying out the widget.
 func (o *origin) track(gtx layout.Context, r image.Rectangle) {
+	o.area, o.areaOK = theme.AreaOrigin(gtx, &o.tag, o.at)
+	o.at = r
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &o.tag, Kinds: pointer.Move | pointer.Enter | pointer.Press | pointer.Drag | pointer.Release})
 		if !ok {
@@ -558,11 +569,17 @@ func (o *origin) learn(x, y float32) {
 	}
 }
 
-// get returns the learned origin ((0,0) until the pointer visits).
-func (o *origin) get() image.Point { return o.pt }
+// get returns the router's origin, else the learned one ((0,0) until the
+// pointer visits).
+func (o *origin) get() image.Point {
+	if o.areaOK {
+		return o.area
+	}
+	return o.pt
+}
 
 // toWin converts a local point to window coordinates.
-func (o *origin) toWin(p image.Point) image.Point { return p.Add(o.pt) }
+func (o *origin) toWin(p image.Point) image.Point { return p.Add(o.get()) }
 
 // ---- floating layers ----
 

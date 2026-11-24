@@ -122,7 +122,7 @@ func (st *tooltipState) show(gtx layout.Context, h *slackc.Host, sz image.Point,
 	})
 	box := image.Pt(cs.Size.X+2*padX, cs.Size.Y+2*padY)
 	var bounds image.Rectangle
-	if st.org.ok {
+	if st.org.ok || st.org.areaOK {
 		bounds = theme.WindowBounds(st.org.get())
 	}
 	pl := theme.PlaceTooltip(gtx, image.Rectangle{Max: sz}, box, bounds, o)
