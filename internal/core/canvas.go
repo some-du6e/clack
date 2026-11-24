@@ -129,13 +129,13 @@ func IsCanvasFile(filetype, mode, prettyType string) bool {
 
 // canvasState is per-App canvas bookkeeping (kept off App's struct).
 type canvasState struct {
-	mu       sync.Mutex
-	open     map[string]int             // file id -> open views
-	pending  map[string]bool            // a refetch is scheduled
-	titles   map[string]bool            // a CanvasRef refresh is scheduled (onFileChange)
-	viewers  map[string]map[string]bool // file id -> users viewing it (files.open, file_opened/closed)
-	watching bool
-	infos    map[string]CanvasInfo // the last files.info of each canvas read (KnownCanvasInfo)
+	mu      sync.Mutex
+	open    map[string]int             // file id -> open views
+	pending map[string]bool            // a refetch is scheduled
+	titles  map[string]bool            // a CanvasRef refresh is scheduled (onFileChange)
+	viewers map[string]map[string]bool // file id -> users viewing it (files.open, file_opened/closed)
+	watch   sync.Once                  // watchCanvases' subscription, made once
+	infos   map[string]CanvasInfo      // the last files.info of each canvas read (KnownCanvasInfo)
 }
 
 var canvasStates = newPerApp() // *App -> *canvasState
@@ -555,6 +555,7 @@ func (a *App) CloseCanvas(ctx context.Context, id string) error {
 	if !last {
 		return nil
 	}
+	a.flushCanvasSaves(ctx, id) // Slack saves once more on unload (canvas_edit.go)
 	a.dropCanvasModel(id)
 	return a.C.Call(ctx, "files.close", url.Values{"file_id": {id}}, nil)
 }
@@ -569,21 +570,19 @@ func (a *App) CanvasOpen(id string) bool {
 
 // ensureCanvasWatch starts watchCanvases once.
 func (a *App) ensureCanvasWatch() {
-	st := a.canvases()
-	st.mu.Lock()
-	watch := !st.watching
-	st.watching = true
-	st.mu.Unlock()
-	if watch {
-		go a.watchCanvases()
-	}
+	// subscribed before the caller's first canvas call goes out, so the
+	// events that call brings (a document_update just after files.open
+	// or a load) aren't missed; a caller racing the first waits for it
+	a.canvases().watch.Do(func() {
+		evs, cancel := a.SubscribeRaw()
+		go a.watchCanvases(evs, cancel)
+	})
 }
 
 // watchCanvases turns realtime events about open canvases into "canvas"
 // events (ID = file id) for the views, which then refetch, and has every
 // canvas model core holds fetch what a document_update says changed.
-func (a *App) watchCanvases() {
-	evs, cancel := a.SubscribeRaw()
+func (a *App) watchCanvases(evs <-chan slack.Event, cancel func()) {
 	defer cancel()
 	done := a.bg.Done()
 	for {

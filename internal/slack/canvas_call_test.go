@@ -172,3 +172,33 @@ func TestEncodeURIComponent(t *testing.T) {
 		}
 	}
 }
+
+// A canvas answer past quip's cap is refused, read one byte past it and
+// no further: nothing could decode it (the review of B1: the body was
+// read whole, as every Web API answer is).
+func TestCanvasCallAnswerCap(t *testing.T) {
+	answer := func(n int) func(w http.ResponseWriter, r *http.Request) {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/octet-stream")
+			chunk := make([]byte, 1<<20)
+			for n > 0 {
+				k := min(n, len(chunk))
+				if _, err := w.Write(chunk[:k]); err != nil {
+					return
+				}
+				n -= k
+			}
+		}
+	}
+	big, _ := canvasServer(t, answer(MaxCanvasAnswer+(4<<20)))
+	c := New(Creds{Token: "t", Cookie: "d", Team: "T1", TeamURL: big.URL + "/"})
+	if b, err := c.CanvasCall(context.Background(), "load-data", []CanvasField{{"request_binary", "big"}}); err == nil || b != nil {
+		t.Errorf("an answer 4 MiB over the cap: %d bytes, %v", len(b), err)
+	}
+	// the control: an answer at the cap is read whole
+	at, _ := canvasServer(t, answer(MaxCanvasAnswer))
+	c2 := New(Creds{Token: "t", Cookie: "d", Team: "T1", TeamURL: at.URL + "/"})
+	if b, err := c2.CanvasCall(context.Background(), "load-data", []CanvasField{{"request_binary", "at"}}); err != nil || len(b) != MaxCanvasAnswer {
+		t.Errorf("an answer at the cap: %d bytes, %v", len(b), err)
+	}
+}

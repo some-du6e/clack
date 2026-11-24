@@ -1,6 +1,7 @@
 // Package openurl opens links in the system browser or mail client. It is
-// the only place Clack hands a URL to xdg-open, open or rundll32, and it
-// only passes http, https and plain mailto links.
+// the only place Clack hands a URL to the Windows shell (ShellExecuteEx,
+// rundll32 as its retry), xdg-open or open, and it only passes http,
+// https and plain mailto links.
 package openurl
 
 import (
@@ -68,6 +69,63 @@ func Check(raw string) (string, error) {
 	return s, nil
 }
 
+// errNoShell: this OS has no shell hand-off (shellOpen); the URL goes to
+// command's tool.
+var errNoShell = errors.New("openurl: no shell hand-off here")
+
+// launch hands an already-checked URL to the OS and returns once it took
+// it. Off the UI goroutine. On Windows that is shellOpen, Slack's
+// shell.openExternal, with rundll32 as Slack's retry after it fails
+// (openExternal's catch runs the other method); elsewhere command's tool.
+func launch(u string) {
+	uiguard.OffUI("open a link")
+	err := shellOpen(u)
+	if err == nil {
+		return
+	}
+	if err != errNoShell {
+		log.Printf("openurl: ShellExecuteEx: %v; trying rundll32", err)
+	}
+	cmd := command(u)
+	if err := cmd.Start(); err != nil {
+		log.Printf("openurl: %v", err)
+		return
+	}
+	_ = cmd.Wait()
+}
+
+// externalHandlerCharmap is Chromium's kExternalHandlerCharmap
+// (base/strings/escape.cc): everything but alphanumerics, the reserved
+// characters ;/?:@&=+$, and !'()*-._~#[] is escaped: controls, space,
+// " % < > \ ^ ` { | } DEL and every non-ASCII byte.
+var externalHandlerCharmap = [8]uint32{0xffffffff, 0x50000025, 0x50000000, 0xb8000001, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff}
+
+// escapeExternalHandlerValue is Chromium's EscapeExternalHandlerValue,
+// which Electron's OpenExternal applies before quoting the URL for the
+// shell: Escape(text, kExternalHandlerCharmap, use_plus false,
+// keep_escaped true), so a %XX already there stays and any other % is
+// escaped.
+func escapeExternalHandlerValue(s string) string {
+	const hex = "0123456789ABCDEF"
+	isHex := func(c byte) bool { return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F' }
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '%' && i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]):
+			b.WriteByte('%')
+		case externalHandlerCharmap[c>>5]&(1<<(c&31)) != 0:
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&15])
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 // command is the OS command for an already-checked URL.
 func command(u string) *exec.Cmd {
 	uiguard.OffUI("exec (open a link)") // exec.Command looks the tool up in PATH
@@ -78,7 +136,13 @@ func command(u string) *exec.Cmd {
 	case "windows":
 		c = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
 	default:
-		c = exec.Command("xdg-open", u)
+		// Electron's platform_util_linux.cc OpenExternal: a mailto: link to
+		// xdg-email, anything else to xdg-open
+		if strings.HasPrefix(u, "mailto:") {
+			c = exec.Command("xdg-email", u)
+		} else {
+			c = exec.Command("xdg-open", u)
+		}
 	}
 	c.WaitDelay = waitDelay
 	return c
@@ -103,14 +167,7 @@ func OpenSettings(u string) error {
 	if !settingsPages[u] {
 		return ErrRefused
 	}
-	go func() {
-		cmd := command(u)
-		if err := cmd.Start(); err != nil {
-			log.Printf("openurl: %v", err)
-			return
-		}
-		_ = cmd.Wait()
-	}()
+	go launch(u)
 	return nil
 }
 
@@ -145,21 +202,15 @@ func OpenFolder(dir string) error {
 	return nil
 }
 
-// Open checks raw and opens it without blocking: the browser starts on
-// another goroutine (exec looks the tool up in PATH and forks, which the
-// UI goroutine must never wait for). Only Check's error is returned.
+// Open checks raw and opens it without blocking: the hand-off (launch)
+// runs on another goroutine at once (ShellExecuteEx, or exec looking the
+// tool up in PATH and forking, which the UI goroutine must never wait
+// for). Only Check's error is returned.
 func Open(raw string) error {
 	u, err := Check(raw)
 	if err != nil {
 		return err
 	}
-	go func() {
-		cmd := command(u)
-		if err := cmd.Start(); err != nil {
-			log.Printf("openurl: %v", err)
-			return
-		}
-		_ = cmd.Wait()
-	}()
+	go launch(u)
 	return nil
 }

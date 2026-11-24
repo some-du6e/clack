@@ -79,7 +79,30 @@ function factoryOf(id) {
   throw new Error('cannot cut module ' + id);
 }
 const cache = new Map();
+// A module the chunks don't have is a stub. The flat stub's exports are
+// functions returning undefined (what the codec kinds have always run
+// with); deepStubs (the save kinds, whose modules import React and the
+// editor's views) makes it a callable proxy that returns more of itself,
+// so code around the path being run can construct and call what it likes.
+let deepStubs = process.env.QUIP_DEEP_STUBS === '1' || /^quip-save/.test(process.argv[2] || '');
+function deepStub(name) {
+  const fn = function () {};
+  return new Proxy(fn, {
+    get: (t, k) => {
+      if (k === '__esModule') return true;
+      if (k === 'then') return undefined;
+      if (k === Symbol.toPrimitive) return () => '';
+      if (typeof k === 'symbol') return undefined;
+      if (k === 'prototype') return t.prototype;
+      return deepStub(name + '.' + String(k));
+    },
+    apply: () => deepStub(name + '()'),
+    construct: () => deepStub('new ' + name),
+    set: () => true,
+  });
+}
 function stub(id) {
+  if (deepStubs) return deepStub(id);
   const fn = function () { return undefined; };
   return new Proxy({}, { get: (_, k) => (k === '__esModule' ? true : typeof k === 'symbol' || k === 'then' ? undefined : fn) });
 }
@@ -213,11 +236,233 @@ const KINDS = {
   })(),
 };
 
-const [kind, file] = process.argv.slice(2);
-if (!KINDS[kind] || !file) {
-  quiet('usage: quip.cjs KIND CASES.json, KIND one of ' + Object.keys(KINDS).join(' '));
-  process.exit(2);
+
+// ---- saves (deep stubs): Slack's own section entity (EKJU's class over
+// ZRIn's) builds the update bundle. The entity is made from its prototype
+// and given the state its toPb and toUpdateBundle read, from the server's
+// section as Slack's update() would load it; the editor's DOM is what this
+// can't run, so the content the editor would hand toPb is the case's.
+// Which fields an edit dirties is Slack's setters' (EKJU): typing
+// setDirty([CONTENT, STATUS]) (the input path), a checkbox
+// setSectionAttribute -> [STATUS] then [ATTRIBUTES], deleteSection [STATUS]
+// with deleteEntity [DELETED].
+// A restyle is setSectionStyle: [STYLE] (TYPE only when the content's
+// type changes, never between text styles); a list level is
+// setSectionAttribute("indentation"): [STATUS], then [ATTRIBUTES]. A case
+// with several (typing and a restyle, say) names its dirty fields.
+const DIRTY = { text: [12, 15], check: [15, 16], delete: [3, 15], block: [] };
+function saveRuntime() {
+  if (saveRuntime.r) return saveRuntime.r;
+  const EKJU = req('EKJU'), nTyX = req('nTyX'), u = req('7yDq'), WJQ2 = req('WJQ2');
+  saveRuntime.r = { Sec: EKJU.wn, nTyX, u, J: WJQ2.J };
+  return saveRuntime.r;
 }
-const out = {};
-for (const c of JSON.parse(fs.readFileSync(file, 'utf8'))) out[c.name] = KINDS[kind](c);
-process.stdout.write(JSON.stringify(out) + '\n');
+function setSaveCounter(u, session, saveSeq) {
+  u.mY(session);
+  if (u.Zv() > saveSeq) throw new Error('save sequence ' + saveSeq + ' after ' + u.Zv() + ': order the cases by saveSeq');
+  while (u.Zv() < saveSeq) u.K();
+}
+function sectionEntity(rt, c) {
+  const S = classOf('syncer.Section');
+  const pb = build(S, c.in.server);
+  const e = Object.create(rt.Sec.prototype);
+  const stub = deepStub('section');
+  Object.assign(e, {
+    id_: pb.getId(), isBeingDeleted_: false, isReadOnly_: pb.getReadOnlyOrDefault(), dirtyFields: new Set(c.in.edit.dirty || DIRTY[c.in.edit.kind]),
+    pendingFields: new Set(), sequence_: Number(pb.getSequenceOrDefault()), localSequence_: c.in.localSeq, transientSequence_: 0,
+    isProgrammaticUpdate_: false, isDeleted_: pb.getDeletedOrDefault() || c.in.edit.kind === 'delete', dirtyState_: 2,
+    document: stub, contentOrigin_: pb.getContentOriginOrDefault(), knownFields: rt.nTyX.Ps.concat(rt.nTyX.fP || [], rt.nTyX.mV || []),
+    position_: pb.getPositionOrDefault(), sectionStyle_: c.in.edit.style ?? pb.getStyleOrDefault(), parents_: [], missingParentIds_: [],
+    hasLayoutParent_: pb.hasHasLayoutParent() ? pb.getHasLayoutParent() : undefined, savedDefaultContent_: null,
+    persistOnNextChange_: false, layoutParent_: null, sectionContent_: stub,
+  });
+  // update() loads attributes with Slack's own conversion
+  e.attributes_ = rt.Sec.prototype.convertAttributesPbToMap.call(e, pb.getAttributesOrDefault());
+  if (c.in.edit.kind === 'check' || 'checked' in c.in.edit) e.attributes_.set('checked', c.in.edit.checked);
+  if ('indent' in c.in.edit) e.attributes_.set('indentation', c.in.edit.indent);
+  for (const id of pb.getParentsOrDefault().idsArray()) {
+    e.parents_.push({ id: () => id, sectionStyle: () => c.in.parentStyle });
+  }
+  let content = pb.getContent();
+  if (c.in.edit.kind === 'text' || c.in.edit.rtml !== undefined) {
+    // the content toPb makes: the title's (createPbFn of the RTML, then
+    // the cover when there is one), a text section's (its RTML, and the
+    // code language the content holds)
+    const Content = classOf('proto.section.Section.Content');
+    const old = pb.getContentOrDefault();
+    content = new Content();
+    if (pb.getTypeOrDefault() === 64) {
+      const t = new (classOf('proto.section.Section.ContentTitle'))().setText(c.in.edit.rtml);
+      if (old.getTitleOrDefault().hasHeaderImage()) t.setHeaderImage(old.getTitle().getHeaderImage());
+      content.setTitle(t);
+    } else {
+      const t = new (classOf('proto.section.Section.ContentText'))().setText(c.in.edit.rtml);
+      if (old.getTextOrDefault().hasLanguage()) t.setLanguage(old.getText().getLanguage());
+      content.setText(t);
+    }
+  }
+  e.toContentPb = () => content;
+  e.type = () => pb.getTypeOrDefault(); // the section content's type (its class, made from the server's type)
+  e.positionPath = () => pb.getPositionPathOrDefault();
+  // plain content, as Clack saves: no CRDT copy (otherwise toPb's deleted
+  // comes from crdt.currentSaveDeleted, which the stubs would make up)
+  e.isCrdtEnabled = () => false;
+  e.checkDirtyFieldInvariants = () => {}; // metrics only
+  e.validateFsck_ = () => {};
+  e.validateCrdt_ = () => {};
+  return { e, pb };
+}
+KINDS['quip-save-section'] = c => {
+  const rt = saveRuntime();
+  setSaveCounter(rt.u, c.in.session, c.in.saveSeq);
+  const { e, pb } = sectionEntity(rt, c);
+  const b = e.toUpdateBundle();
+  // createUpdateBundle: the activity row, against the server's copy
+  const get = rt.J.get;
+  rt.J.get = () => pb;
+  try {
+    const a = rt.J.shouldAddToActivityStack(b, c.in.team);
+    if (a !== null) b.setActivityStackUpdate(a);
+  } finally {
+    rt.J.get = get;
+  }
+  return { hex: hexOf(pbu.Rm(b)), localSeq: e.localSequence_ };
+};
+// A new section, as Slack's editor makes one after another section
+// (K2FO.createNewSection): a fresh entity (sequence 0, the constructor's
+// content origin, USER_EDIT), every field dirty (setDirty(nTyX.mA)),
+// vertical_margin false through EKJU's own setSectionAttribute, then
+// K2FO.moveSiblingTo's initSibling from the section it follows (its
+// parents, indentation, paragraph indentation; text alignment under the
+// canvas editor's suppressTextAlignment, on by default: !autoTextAlignment).
+// The editor hands toPb the new section's content; a ticked checklist item
+// gets its box through setSectionAttribute too. Then toUpdateBundle, and
+// the activity row against no server copy.
+KINDS['quip-save-new-section'] = c => {
+  const rt = saveRuntime();
+  setSaveCounter(rt.u, c.in.session, c.in.saveSeq);
+  const K2FO = req('K2FO');
+  const S = classOf('syncer.Section');
+  const origin = classOf('proto.section.Section').ContentOrigin.USER_EDIT;
+  const after = build(S, c.in.after);
+  const doc = new Proxy(deepStub('document'), {
+    get: (t, k) => k === 'editorConfig' ? () => ({ suppressTextAlignment: true }) : t[k],
+  });
+  const parentStub = id => ({ id: () => id, sectionStyle: () => c.in.parentStyle, position: () => c.in.parentPosition, parents_: [],
+    sectionContent: () => ({ allowsNewChild: () => true }) });
+  // the section it follows: its attributes as update() loads them
+  const a = Object.create(rt.Sec.prototype);
+  Object.assign(a, { id_: after.getId(), document: doc, parents_: after.getParentsOrDefault().idsArray().map(parentStub),
+    layoutParent_: null, position_: after.getPositionOrDefault() });
+  a.attributes_ = rt.Sec.prototype.convertAttributesPbToMap.call(a, after.getAttributesOrDefault());
+  a.parents = () => a.parents_;
+  a.layoutParent = () => null;
+  // the new one
+  const e = Object.create(rt.Sec.prototype);
+  const stub = deepStub('section');
+  Object.assign(e, {
+    id_: c.in.id, isBeingDeleted_: false, isReadOnly_: false, dirtyFields: new Set(rt.nTyX.mA),
+    pendingFields: new Set(), sequence_: 0, localSequence_: 0, transientSequence_: 0,
+    isProgrammaticUpdate_: false, isDeleted_: false, dirtyState_: 2,
+    document: doc, contentOrigin_: origin, knownFields: rt.nTyX.Ps.concat(rt.nTyX.fP || [], rt.nTyX.mV || []),
+    position_: '', sectionStyle_: c.in.style, parents_: [], missingParentIds_: [],
+    hasLayoutParent_: undefined, savedDefaultContent_: null,
+    persistOnNextChange_: false, layoutParent_: null, sectionContent_: stub,
+  });
+  e.attributes_ = new Map();
+  e.fireAttributeChangeListeners_ = () => {};
+  e.setDirty = f => f.forEach(x => e.dirtyFields.add(x));
+  e.setPosition = p => { e.position_ = p; };
+  e.setParents = ps => { e.parents_ = ps.slice(); };
+  e.layoutParent = () => null;
+  e.sectionStyle = () => c.in.style;
+  e.setSectionAttribute('vertical_margin', false); // createNewSectionAtPosition, no id given
+  K2FO.j8(a, e, c.in.position); // moveSiblingTo: setPosition, initSibling
+  if (c.in.checked) e.setSectionAttribute('checked', true);
+  const Content = classOf('proto.section.Section.Content');
+  const content = new Content().setText(new (classOf('proto.section.Section.ContentText'))().setText(c.in.rtml));
+  e.toContentPb = () => content;
+  e.type = () => classOf('proto.section.Section').Type.TEXT_TYPE;
+  e.positionPath = () => (c.in.parentPosition ? c.in.parentPosition + '-' : '') + e.position_;
+  // EKJU: null !== sectionContent().overrideThreadId(), which a text
+  // section's content never has (only a copied live app's)
+  e.shouldSaveCopyThreadData = () => false;
+  // plain content, as Clack saves: no CRDT copy (otherwise toPb's deleted
+  // comes from crdt.currentSaveDeleted, which the stubs would make up)
+  e.isCrdtEnabled = () => false;
+  e.checkDirtyFieldInvariants = () => {};
+  e.validateFsck_ = () => {};
+  e.validateCrdt_ = () => {};
+  const b = e.toUpdateBundle();
+  const get = rt.J.get;
+  rt.J.get = () => null; // no server copy: a new section
+  try {
+    const r = rt.J.shouldAddToActivityStack(b, c.in.team);
+    if (r !== null) b.setActivityStackUpdate(r);
+  } finally {
+    rt.J.get = get;
+  }
+  return { hex: hexOf(pbu.Rm(b)), localSeq: e.localSequence_ };
+};
+// The title metadata extractTitleMetadata(true) gives every save: the
+// title section exported (CITi's lE over W77Y.parse, as getRtmlContent_
+// runs it on the title's DOM; the RTML stands for that DOM), its text and
+// the title rich text (30B3.convertSectionsToRichTextApiPb).
+KINDS['quip-save-title'] = c => {
+  const CITi = req('CITi'), W = req('W77Y'), U = req('u21E'), R = req('30B3');
+  const exportOf = target => {
+    const o = { fromLocalDisplay: true, forExternalPaste: target === 1 || target === 6, dropEmojiControls: target === 6, forRichText: target === 5 };
+    const h = new CITi.lE(o, false, null);
+    W.qg(c.in.rtml, h, null);
+    return '<h1>' + h.output() + '</h1>';
+  };
+  // extractTitleMetadata's extractText: P.qy's wrapper, getOrNull, W77Y.extractText, trim
+  const node = U.qy(exportOf(0)).getOrNull();
+  const text = node ? W.Xz(node).trim() : '';
+  const section = { sectionContent: () => ({ exportToHtml: o => exportOf(o.exportTarget) }) };
+  const opts = { maxLength: 2e3, flattenLists: true, inlineHeadings: true, useTextTypeForLinks: true, omitBreakNewlines: true, normalizeSpaces: true, escapeText: true };
+  if (!text) return { title: 'Untitled', richText: hexOf(pbu.Rm(R.Uw('Untitled'))) };
+  return { title: text.substring(0, 255), richText: hexOf(pbu.Rm(R.oc([section], () => null, opts))) };
+};
+// Slack's save writer over a section's RTML: CITi.F0 (renderToString,
+// the DI handler over W77Y's parse of the DOM the RTML builds). A case
+// holds when the RTML Clack wrote comes back unchanged: Slack's editor,
+// loading it and saving it as it is, would send those bytes.
+KINDS['quip-apply-runs'] = c => {
+  if (c.in.rtml === '(refused)') return '(refused)';
+  return req('CITi').F0(c.in.rtml, null, {});
+};
+// A code block's RTML of typed text, and its text again: 32AJ's
+// plainTextToCodeRtml and rtmlToPlainText (with its W77Y handler), module
+// private, so taken from the webapp chunk as written and run over 32AJ's
+// own modules (/XUt, W77Y).
+const codeFns = (() => {
+  let f;
+  return () => {
+    if (f) return f;
+    const src = fs.readFileSync(CHUNKS[0], 'utf8');
+    const i = src.indexOf('"32AJ":(function(e,t,n){');
+    const a = src.indexOf('class u extends r.mM{', i);
+    const b = src.indexOf('function canEdit(e)', a);
+    if (i < 0 || a < 0 || b < 0) throw new Error('32AJ: the code functions moved');
+    const body = src.slice(a, b) + '; return {plainTextToCodeRtml, rtmlToPlainText};';
+    f = new Function('r', 's', body)(req('W77Y'), req('/XUt'));
+    return f;
+  };
+})();
+KINDS['quip-code'] = c => {
+  const { plainTextToCodeRtml, rtmlToPlainText } = codeFns();
+  const rtml = plainTextToCodeRtml(c.in.text);
+  return { rtml, text: rtmlToPlainText(rtml) }; // a code section's getContent() is its RTML
+};
+module.exports = { req, classes, classOf, build, hexOf, pbu, KINDS };
+if (require.main === module) {
+  const [kind, file] = process.argv.slice(2);
+  if (!KINDS[kind] || !file) {
+    quiet('usage: quip.cjs KIND CASES.json, KIND one of ' + Object.keys(KINDS).join(' '));
+    process.exit(2);
+  }
+  const out = {};
+  for (const c of JSON.parse(fs.readFileSync(file, 'utf8'))) out[c.name] = KINDS[kind](c);
+  process.stdout.write(JSON.stringify(out) + '\n');
+}

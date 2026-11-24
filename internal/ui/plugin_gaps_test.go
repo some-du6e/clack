@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -230,6 +231,64 @@ func TestPluginGapQuickJoinDoubleClick(t *testing.T) {
 	if got := e.a.router.Current().Channel(); got != fakeslack.BenchChannelID {
 		t.Errorf("the double click also navigated: route %q", e.a.router.Current())
 	}
+	// a link to a web page isn't held: the listener sees its click (a JS
+	// round trip: slackc.ClickLink dispatches it, and the link's
+	// activation comes back once nothing canceled it), and the link goes
+	// to the browser. Karim waited 3 s for one on Windows (alpha.157), with
+	// plugins on; this is the part of that wait a click listener adds.
+	var mu sync.Mutex
+	var opened []time.Time
+	t.Cleanup(messages.SwapOpenURL(func(string) { mu.Lock(); opened = append(opened, time.Now()); mu.Unlock() }))
+	uts := e.postURLLink("https://example.test/news")
+	var ul image.Rectangle
+	if !e.wait(5*time.Second, func() bool { ul = e.urlLink(uts); return !ul.Empty() }) {
+		t.Fatal("no web link in the posted message")
+	}
+	t0 := time.Now()
+	e.clickAt(ul.Min.Add(ul.Max).Div(2), time.Duration(t0.UnixNano()))
+	n := func() int { mu.Lock(); defer mu.Unlock(); return len(opened) }
+	if !e.wait(5*time.Second, func() bool { return n() > 0 }) {
+		t.Fatal("a click on the web link opened nothing")
+	}
+	mu.Lock()
+	d := opened[0].Sub(t0)
+	mu.Unlock()
+	t.Logf("web link with Quick Join listening: click → hand-off %v (frames every ~10ms here)", d)
+	if d > 500*time.Millisecond {
+		t.Errorf("the web link took %v to reach the browser hand-off through Quick Join's listener, want under 500ms", d)
+	}
+}
+
+// postURLLink posts a message linking to u at the bottom of #plugin-bench
+// and returns its ts.
+func (e *benchEnv) postURLLink(u string) string {
+	e.openBench()
+	ts := fmt.Sprintf("%d.000300", time.Now().Unix())
+	raw, _ := json.Marshal(map[string]any{"type": "message", "channel": fakeslack.BenchChannelID, "user": e.c.Authors[0], "ts": ts,
+		"text": "read <" + u + ">", "blocks": []any{map[string]any{"type": "rich_text", "block_id": "ql", "elements": []any{
+			map[string]any{"type": "rich_text_section", "elements": []any{
+				map[string]any{"type": "text", "text": "read "}, map[string]any{"type": "link", "url": u}}}}}}})
+	e.a.data.core.Inject(slack.Event{Type: "message", Channel: json.RawMessage(`"` + fakeslack.BenchChannelID + `"`), Raw: raw})
+	e.toBottom()
+	return ts
+}
+
+// urlLink is the window box of message ts's web link.
+func (e *benchEnv) urlLink(ts string) image.Rectangle {
+	c := e.a.convos[fakeslack.BenchChannelID+"/"]
+	if c == nil {
+		return image.Rectangle{}
+	}
+	l, ok := c.list.(channelList)
+	if !ok {
+		return image.Rectangle{}
+	}
+	for _, r := range l.LinkRects() {
+		if r.TS == ts && r.Kind == richview.HitLink {
+			return r.R
+		}
+	}
+	return image.Rectangle{}
 }
 
 // postChannelLink makes ch known to the client (public, not a member),
