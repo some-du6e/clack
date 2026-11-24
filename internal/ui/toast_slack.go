@@ -100,7 +100,7 @@ func (a *App) ToastLink(parts []i18n.Part, href string, d time.Duration) {
 // svgIcon).
 func (a *App) ToastRetry(parts []i18n.Part, icon string, retry func()) {
 	a.ToastParts(parts, icon, color.NRGBA{}, 6*time.Second)
-	a.toast.linkDo = retry
+	a.toast.linkDo, a.toast.closable = retry, true
 }
 
 // toastDoHref marks the link run ToastRetry's retry answers.
@@ -130,8 +130,20 @@ func (a *App) layoutRichToast(gtx layout.Context) {
 	}
 	lh := gtx.Dp(22) // 15px × 1.5
 	maxW := gtx.Dp(350) - 2*px - is - gap
+	// showCloseButton: .c-toast__close-button, an IconButton (36px, dark
+	// background) after the text, 2px down, there even while hidden
+	// (visibility: hidden until the toast is hovered)
+	cs, cgap := 0, 0
+	if a.toast.closable {
+		cs, cgap = gtx.Dp(36), gtx.Dp(8)
+		maxW -= cs + cgap
+	}
 	words, lines, tw := a.wrapToastParts(gtx, a.toast.parts, maxW)
-	w, h := 2*px+is+gap+tw, 2*py+lines*lh
+	ch := lines * lh
+	if cs > 0 {
+		ch = max(ch, gtx.Dp(2)+cs)
+	}
+	w, h := 2*px+is+gap+tw+cgap+cs, 2*py+ch
 	off := gtx.Dp(20)
 	r := image.Rect(sz.X-off-w, sz.Y-a.toastBottom(gtx)-h, sz.X-off, sz.Y-a.toastBottom(gtx))
 	a.toast.rect = r
@@ -147,6 +159,9 @@ func (a *App) layoutRichToast(gtx layout.Context) {
 		at(gtx, image.Pt(r.Min.X+px, r.Min.Y+(h-is)/2), image.Pt(is, is), func(gtx layout.Context) layout.Dimensions {
 			return icons.Get(a.toast.icon)(gtx, unit.Dp(20), ic)
 		})
+	}
+	if cs > 0 {
+		a.toastCloseButton(gtx, r, image.Pt(r.Max.X-px-cs, r.Min.Y+py+gtx.Dp(2)), cs)
 	}
 	tx := r.Min.X + px + is + gap
 	for _, wd := range words {
@@ -167,6 +182,45 @@ func (a *App) layoutRichToast(gtx layout.Context) {
 		theme.Fill(gtx, image.Rect(lr.Min.X, y+gtx.Dp(18), lr.Max.X, y+gtx.Dp(18)+max(1, gtx.Dp(1))), c.TooltipText)
 		a.toastLink(gtx, lr, wd.href)
 	}
+}
+
+// toastCloseButton is a closable toast's close button at p (cs square),
+// its 20px close icon showing while the toast r is hovered, the
+// c-icon_button--dark hover background (surf-inv, radius 8) under the
+// pointer; a click closes the toast.
+func (a *App) toastCloseButton(gtx layout.Context, r image.Rectangle, p image.Point, cs int) {
+	hovering := false
+	{
+		area := clip.Rect(r).Push(gtx.Ops)
+		hovering = a.toastHover.Update(gtx.Source)
+		a.toastHover.Add(gtx.Ops)
+		area.Pop()
+	}
+	if a.toastClose.Clicked(gtx) {
+		a.toastGone()
+		a.toast = toastState{}
+		a.Invalidate()
+		return
+	}
+	at(gtx, p, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
+		return a.toastClose.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			sz := image.Pt(cs, cs)
+			if a.toastClose.Hovered() {
+				bg := color.NRGBA{R: 0x34, G: 0x33, B: 0x34, A: 0xff} // surf-inv
+				if a.th.Dark {
+					bg = color.NRGBA{R: 0x2c, G: 0x2d, B: 0x30, A: 0xff}
+				}
+				theme.RRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(8), bg)
+			}
+			if hovering || a.toastClose.Hovered() {
+				is := gtx.Dp(20)
+				at(gtx, image.Pt((cs-is)/2, (cs-is)/2), image.Pt(is, is), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("close")(gtx, unit.Dp(20), a.th.C.TooltipText)
+				})
+			}
+			return layout.Dimensions{Size: sz}
+		})
+	})
 }
 
 // wrapToastParts lays parts out in words over lines at most maxW wide; it

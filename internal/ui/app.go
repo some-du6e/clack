@@ -221,7 +221,9 @@ type App struct {
 	overlayLayers   map[Overlay]*shellLayer // the overlays' layers in the window's stack (overlay_layers.go)
 	slackc          slackcState
 	toast           toastState
-	toastClick      gesture.Click // a rich toast's links (toast_slack.go)
+	toastClick      gesture.Click    // a rich toast's links (toast_slack.go)
+	toastHover      gesture.Hover    // a closable rich toast's hover: its close button shows
+	toastClose      widget.Clickable // that close button
 	keys            *shortcuts
 	login           *loginScreen
 	intro           *intro // the introduction: first launch, or replayed (intro.go)
@@ -1344,6 +1346,8 @@ type toastState struct {
 	linkHref string
 	// linkDo, when set, is what the <link> run does instead (ToastRetry)
 	linkDo func()
+	// closable: Toast's showCloseButton (ToastRetry's ErrorToast)
+	closable bool
 	// rect is the toast as last drawn (window coords): its box in the
 	// inspect tool's record
 	rect image.Rectangle
