@@ -102,6 +102,10 @@ func (b *ModalButton) tooltip(gtx layout.Context, th *theme.Theme, sz image.Poin
 // ModalOpts configure a modal.
 type ModalOpts struct {
 	Title string
+	// Name is what Slack's getModalName calls the dialog (openModal's
+	// name, else its component's displayName: "Connect(Name)" for a
+	// connected one), for the dialogs a test or the parity harness names.
+	Name string
 	// HoverCards: the body has profile hover triggers (Preferences' plugin
 	// credits: Taut's MemberSlug pills), so the ui root keeps hover cards
 	// working over the modal and draws them above it (Modal.HoverCards).
@@ -366,6 +370,9 @@ func (m *Modal) press(b *ModalButton) {
 }
 
 // Title is the modal's title (tests).
+// ModalName is the dialog's Name (ModalOpts.Name).
+func (m *Modal) ModalName() string { return m.o.Name }
+
 func (m *Modal) Title() string {
 	if m.o.TitleFunc != nil {
 		return m.o.TitleFunc()

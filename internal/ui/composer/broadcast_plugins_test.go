@@ -26,15 +26,16 @@ import (
 
 const atChannelApp = "A08FPGU02A2" // at-channel, the Hack Club relay app NativeAtChannel drives
 
-// atChannelCommands is commands.list with at-channel's /channel and /here.
+// atChannelCommands is client.appCommands with at-channel's /channel and
+// /here.
 func atChannelCommands(fs *fakeSlack) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	fs.reply = map[string]any{
 		"edge/permissions/info": noBroadcastPerms,
-		"commands.list": map[string]any{"ok": true, "commands": map[string]any{
-			"/channel": map[string]any{"name": "/channel", "desc": "Ping the channel", "type": "app", "app": atChannelApp, "app_name": "at-channel"},
-			"/here":    map[string]any{"name": "/here", "desc": "Ping who's online", "type": "app", "app": atChannelApp, "app_name": "at-channel"},
+		"client.appCommands": map[string]any{"ok": true, "commands": []any{
+			map[string]any{"name": "/channel", "desc": "Ping the channel", "type": "app", "app": atChannelApp, "app_name": "at-channel"},
+			map[string]any{"name": "/here", "desc": "Ping who's online", "type": "app", "app": atChannelApp, "app_name": "at-channel"},
 		}},
 	}
 }
@@ -169,12 +170,12 @@ func TestTautNativeAtChannelStandsAside(t *testing.T) {
 	}
 }
 
-// bChannelCommand is commands.list with bChannel's /bchannel.
+// bChannelCommand is client.appCommands with bChannel's /bchannel.
 func bChannelCommand(e *slickEnv, perms map[string]any) {
 	e.slack.mu.Lock()
 	defer e.slack.mu.Unlock()
-	e.slack.reply = map[string]any{"commands.list": map[string]any{"ok": true,
-		"commands": map[string]any{"/bchannel": map[string]any{"name": "/bchannel", "desc": "Relay @channel", "type": "app"}}}}
+	e.slack.reply = map[string]any{"client.appCommands": map[string]any{"ok": true,
+		"commands": []any{map[string]any{"name": "/bchannel", "desc": "Relay @channel", "type": "app"}}}}
 	if perms != nil {
 		e.slack.reply["edge/permissions/info"] = perms
 	}

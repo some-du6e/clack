@@ -722,19 +722,23 @@ func (c *Client) MediaProgressUpdate(ctx context.Context, file string, offsetMS,
 		"offset_ms": {strconv.FormatInt(offsetMS, 10)}, "duration_ms": {strconv.FormatInt(durationMS, 10)}}, nil)
 }
 
-// Command is a slash command from commands.list.
+// Command is a slash command from client.appCommands (or commands.list).
 type Command struct {
 	Name string `json:"name"`
 	// CanonicalName and Aliases are what else the command answers to
 	// (is_match_for_command: canonical_name ?? name, aliases).
-	CanonicalName string         `json:"canonical_name,omitempty"`
-	Aliases       []string       `json:"aliases,omitempty"`
-	Desc          string         `json:"desc"`
-	Usage         string         `json:"usage"`
-	Type          string         `json:"type"`
-	AppID         string         `json:"app,omitempty"`
-	AppName       string         `json:"app_name,omitempty"`
-	Icons         map[string]any `json:"icons,omitempty"` // image_32 … image_512 (+ non-string flags)
+	CanonicalName string   `json:"canonical_name,omitempty"`
+	Aliases       []string `json:"aliases,omitempty"`
+	// AliasOf names the command this one is an alias of (alias_of): the
+	// slash command store keeps no alias as a command of its own
+	// (bulkAddServerCommands gives it to its command's aliases).
+	AliasOf string         `json:"alias_of,omitempty"`
+	Desc    string         `json:"desc"`
+	Usage   string         `json:"usage"`
+	Type    string         `json:"type"`
+	AppID   string         `json:"app,omitempty"`
+	AppName string         `json:"app_name,omitempty"`
+	Icons   map[string]any `json:"icons,omitempty"` // image_32 … image_512 (+ non-string flags)
 	// RunnableFromThread is is_runnable_from_thread: the command may run
 	// in a thread (isSlashCommandEnabled's Lf).
 	RunnableFromThread bool `json:"is_runnable_from_thread,omitempty"`
@@ -744,16 +748,48 @@ type Command struct {
 	// in every workspace (the store's isWorkspaceAgnostic; P+cE tY picks no
 	// workspace for it).
 	WorkspaceAgnostic bool `json:"is_workspace_agnostic,omitempty"`
+	// Icon is IconURL's pick, kept by AppCommands in place of Icons (a
+	// big org's thousands of apps hold no icon map each).
+	Icon string `json:"-"`
 }
 
 // IconURL picks the best icon for a ~20-36 px command row.
 func (c *Command) IconURL() string {
+	if c.Icon != "" {
+		return c.Icon
+	}
 	for _, k := range []string{"image_72", "image_48", "image_64", "image_36", "image_96", "image_128", "image_32", "image_192", "image_512"} {
 		if s, ok := c.Icons[k].(string); ok && s != "" {
 			return s
 		}
 	}
 	return ""
+}
+
+// AppCommands is client.appCommands as Slack's web client loads its
+// slash command store (loadClientAppCommands, modern.vendor Sg6t: reason
+// "app-commands-conditional-fetching:<why>"): every command of the org's
+// workspaces as a list, each with its teams and is_runnable_from_thread,
+// in the answer's order, and the answer's cache_ts. On Hack Club's grid
+// it is some 8,900 commands in 5 MB (commands.list there has about a
+// hundred, with neither field; 2026-11-24).
+func (c *Client) AppCommands(ctx context.Context) ([]Command, string, error) {
+	var r struct {
+		Commands []Command       `json:"commands"`
+		CacheTS  json.RawMessage `json:"cache_ts"` // a string (a number would do)
+	}
+	if err := c.Call(ctx, "client.appCommands", url.Values{"reason": {"app-commands-conditional-fetching:not-loaded-no-local-ts"}}, &r); err != nil {
+		return nil, "", err
+	}
+	for i := range r.Commands {
+		cmd := &r.Commands[i]
+		cmd.Icon, cmd.Icons = cmd.IconURL(), nil
+	}
+	ts := strings.Trim(string(r.CacheTS), `"`)
+	if ts == "null" {
+		ts = ""
+	}
+	return r.Commands, ts, nil
 }
 
 func (c *Client) Commands(ctx context.Context) ([]Command, error) {

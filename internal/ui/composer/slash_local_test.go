@@ -64,6 +64,7 @@ func waitUI(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
 		runRestoresIn(nil, true)
+		popups.Pump() // popups' run callbacks (the leave flow's decision): composer tests have no pump overlay
 		if cond() {
 			return
 		}

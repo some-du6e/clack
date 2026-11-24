@@ -126,6 +126,7 @@ var entMethods = map[string]bool{
 	"subscriptions.thread.add": true, "subscriptions.thread.remove": true, "subscriptions.thread.mark": true,
 	"messages.list": true, "search.modules.people": true, "search.modules.channels": true,
 	"search.modules.messages": true, "search.modules.files": true, "commands.list": true,
+	"client.appCommands": true, // the slash command store's list (team host: team_is_restricted, 2026-11-24)
 	// the results page's DMs tab and the popover's Recent messages: the
 	// team host answers team_is_restricted for search.inline (verified
 	// 2026-11-08)

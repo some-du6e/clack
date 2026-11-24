@@ -350,8 +350,8 @@ func TestSlickViewCharacterCounter(t *testing.T) {
 func TestSlickViewbChannel(t *testing.T) {
 	e := startSlick(t, "bChannel", nil, func(e *slickEnv) {
 		e.slack.mu.Lock()
-		e.slack.reply = map[string]any{"commands.list": map[string]any{"ok": true,
-			"commands": map[string]any{"/bchannel": map[string]any{"name": "/bchannel", "desc": "Relay @channel", "type": "app"}}},
+		e.slack.reply = map[string]any{"client.appCommands": map[string]any{"ok": true,
+			"commands": []any{map[string]any{"name": "/bchannel", "desc": "Relay @channel", "type": "app"}}},
 			"edge/permissions/info": noBroadcastPerms} // Slack refuses @channel here
 		e.slack.mu.Unlock()
 	})

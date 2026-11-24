@@ -165,6 +165,7 @@ func OpenRemoveMemberDialog(h Host, ch, member string, onRemove func()) *RemoveM
 		}}
 	self = NewModal(h, ModalOpts{
 		Title:      d.Copy.Title,
+		Name:       "Connect(RemoveMemberDialog)",
 		AutoFocus:  goBtn,
 		QuietFocus: true,                // focusOnFormElements: the go button, no ring
 		CloseFirst: true, CDialog: true, // DeprecatedDialog

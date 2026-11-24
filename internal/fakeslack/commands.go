@@ -68,13 +68,16 @@ func commandAPI(s *Server, method string, f url.Values) (any, bool) {
 	if !s.Size.Gallery {
 		return nil, false
 	}
+	ticket := map[string]any{"name": TicketCommand, "desc": "File a ticket with Deploy Bot", "usage": "[title]",
+		"type": "app", "app": AppAppID, "app_name": "Deploy Bot", "teams": []string{TeamID},
+		"icons": map[string]any{"image_32": s.imgURL(32, 32, "app"), "image_72": s.imgURL(72, 72, "app")}}
 	switch method {
+	case "client.appCommands":
+		// the web client's slash command store load (loadClientAppCommands):
+		// a list, each command with its teams; the app actions ride along
+		return map[string]any{"ok": true, "commands": []any{ticket}, "app_actions": []any{}, "cache_ts": "1700000000"}, true
 	case "commands.list":
-		return ok("commands", map[string]any{
-			TicketCommand: map[string]any{"name": TicketCommand, "desc": "File a ticket with Deploy Bot", "usage": "[title]",
-				"type": "app", "app": AppAppID, "app_name": "Deploy Bot",
-				"icons": map[string]any{"image_32": s.imgURL(32, 32, "app"), "image_72": s.imgURL(72, 72, "app")}},
-		}), true
+		return ok("commands", map[string]any{TicketCommand: ticket}), true
 	case "chat.command":
 	default:
 		return nil, false

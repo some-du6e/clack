@@ -621,12 +621,7 @@ func (f *flagDialog) submitted(gtx layout.Context, th *theme.Theme, cl *Colors) 
 	}
 	if f.leave.Clicked(gtx) && !f.leaving {
 		f.leaving = true
-		c := f.conv
-		name := convTitle(f.h, c)
-		if name == "" {
-			name = c.ID
-		}
-		leaveChannel(f.h, c.ID, c.Kind, name, c.IsGeneral)
+		leaveChannel(f.h, f.conv.ID)
 	}
 	y := 0
 	put := func(wd layout.Widget) int {

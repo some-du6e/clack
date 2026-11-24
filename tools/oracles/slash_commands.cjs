@@ -25,23 +25,41 @@
 //   - the reminder dialog (E8e8 A), a navigation (aYa+ o, "Navigate to
 //     an ID ... multi-view architecture": its id), and the edit of the
 //     last message (vHCW's own N: its {prev, next, ...});
+//   - a modal (iEKA q, openModal: every dialog a client command opens,
+//     the lazy ones through openLazyModal): its name, as Slack's own
+//     getModalName gives it (the component's displayName; a connected
+//     one's "Connect(Name)"), a lazy modal's by the component its chunk
+//     holds (remove-member-dialog, user-feedback-modal: those chunks sit
+//     in SLACK_CHUNKS too);
 //   - a client command's action (Zrd3 XU's entry) is marked with its
 //     canonical name, then runs: what it does next (an API call, a
 //     dialog, Slackbot's feedback) comes out at the exits above;
 //   - executeCommand's injection slot (XFqE RS), which boot fills with
 //     pymN's thunk: filled with it here.
 //
+// Each case's store is built through Slack's own reducers and actions:
+// the viewer, the team, the experiment groups (the test account's, from
+// internal/core/testdata/account_experiments.json, which core's defaults
+// match, then the snapshot's base and the case's over them), team prefs,
+// the permissions, the members, the conversation, the channel membership
+// the case gives (membership: {member: is a member}) and the server's
+// commands (bulkAddServerCommands).
+//
 // For each case it prints {route, ...}:
 //   message: not a command (sent as a message);
 //   edit: the s/old/new/ edit, with prev, next, replaceAll, ignoreCase;
 //   server: chat.command's args (command, disp, channel, thread_ts, team_id,
 //     app_id; blocks as their count);
-//   local: a client command ran (an API call, a dialog), by its canonical
-//     name;
+//   local: a client command ran, by its canonical name; for the commands
+//     FOLLOW lists, dialog is the first modal it opened and api the first
+//     write it sent (WRITES), each left out when there was none; the
+//     others are unfollowed (true): their own code isn't run;
 //   remind: the reminder dialog;
 //   feedback: Slackbot's ephemeral text: a command refused, or a client
 //     command whose only answer was that text (/msg's "A valid member
 //     name is required.", /collapse's note).
+// A followed command that fails with anything but Slack's own refusal
+// kinds fails the run: its answer would be a guess.
 'use strict';
 const fs = require('fs');
 const { makeRuntime, installBrowser } = require('./slackrt.cjs');
@@ -53,14 +71,24 @@ const err = console.error.bind(console);
 console.log = console.info = console.debug = console.warn = () => {}; // modules log at load
 
 const exit = (kind, o) => ({ __exit: kind, ...o });
+// the case running: its exits and its inputs (the edge stub answers from them)
+let current = null;
+let currentCase = null;
 // The client commands whose action runs past the mark, by canonical name:
 // the ones whose answer comes from the store and the command's own rules
-// (Clack ports each as a decision: MsgCommand, OpenCommand, LeaveCommand,
-// /rename and /archive's dialogs, topicCommand, ExpandCommand). The others
-// stop at the mark: /invite and /invite_people go on through
+// (Clack ports each as a decision: MsgCommand, OpenCommand, LeaveCommand
+// and maybeLeaveChannel, /rename and /archive's dialogs, topicCommand,
+// ExpandCommand, RemoveCommand, /feedback's dialog, /shortcuts' pane).
+// The others stop at the mark: /invite and /invite_people go on through
 // conversations.invite's answers, which the API exit doesn't model;
 // /search needs the Sonic client's search store; the rest open UI only.
-const FOLLOW = new Set(['/msg', '/open', '/leave', '/rename', '/archive', '/topic', '/collapse', '/expand']);
+const FOLLOW = new Set(['/msg', '/open', '/leave', '/rename', '/archive', '/topic', '/collapse', '/expand', '/remove', '/feedback', '/shortcuts']);
+// WRITES are the API calls a client command's answer names (api): the
+// first of these it sent. Reads on the way (a membership count) aren't
+// its answer.
+const WRITES = new Set(['conversations.leave', 'conversations.close', 'conversations.setTopic', 'conversations.kick', 'conversations.rename',
+  'conversations.archive', 'conversations.join', 'conversations.invite', 'conversations.open', 'chat.postMessage']);
+const ACCOUNT_EXPERIMENTS = require('path').join(__dirname, '..', '..', 'internal', 'core', 'testdata', 'account_experiments.json');
 let kindSet;
 const kinds = () => kindSet || (kindSet = new Set(Object.values(rt.req('ZOnG').gu)));
 const rt = makeRuntime({
@@ -72,6 +100,16 @@ const rt = makeRuntime({
   partial: {
     ...(globalThis.__parityPartial || {}), // a debugging hook
     '0hZc': { H: () => ({ method, args }) => exit('api', { method, args }) },
+    iEKA: { q: () => p => exit('dialog', { element: p && p.element, name: p && p.name }) },
+    // Flannel (the edge API, EVxR P): never the network. A membership
+    // count is the case's counts (users/counts' counts); anything else
+    // fails, as an unanswered fetch would (the membership store drops the
+    // members it asked about, the count read falls back to the store)
+    EVxR: { P: req => (team, { method, args } = {}) => {
+      if (current) current.push(exit('edge', { method, args }));
+      if (method === req('EVxR').J8.MEMBER_COUNTS && currentCase && currentCase.counts) return Promise.resolve({ counts: currentCase.counts });
+      return Promise.reject(new Error(`slash_commands: edge ${method} isn't answered here`));
+    } },
     w0M8: { A: () => o => exit('ephemeral', { text: o && o.message ? o.message.text : undefined }) },
     E8e8: { A: () => () => exit('remind') },
     // a navigation needs the Sonic client's store: where it goes is read
@@ -128,7 +166,49 @@ function merge(base, inp) {
   r.users = [...(base.users || []), ...(inp.users || [])];
   r.commands = { ...(base.commands || {}), ...(inp.commands || {}) };
   r.permissions = { team: { ...(base.permissions?.team || {}), ...(inp.permissions?.team || {}) }, channel: { ...(base.permissions?.channel || {}), ...(inp.permissions?.channel || {}) } };
+  r.membership = { ...(base.membership || {}), ...(inp.membership || {}) };
   return r;
+}
+
+// getReactComponentName (iEKA): a component's displayName, else its name;
+// a memo's or forwardRef's inner one.
+function reactName(t) {
+  if (typeof t === 'string' || !t) return undefined;
+  if (typeof t === 'function') return typeof t.displayName === 'string' && t.displayName ? t.displayName : t.name || undefined;
+  if (typeof t === 'object') {
+    if (t.displayName) return t.displayName;
+    if (t.type) return reactName(t.type);
+    if (t.render) return reactName(t.render);
+  }
+  return undefined;
+}
+
+const LAZY = Symbol.for('react.lazy');
+
+// lazyComponent is what a React.lazy type loads (its chunk's default).
+async function lazyComponent(t) {
+  for (let i = 0; i < 4; i++) {
+    try {
+      return t._init(t._payload);
+    } catch (e) {
+      if (!e || typeof e.then !== 'function') throw e;
+      await e;
+    }
+  }
+  throw new Error('slash_commands: a lazy modal never loaded');
+}
+
+// modalName is getModalName({name, element}) for a modal the command
+// opened; a lazy one (openLazyModal's error boundary around a React.lazy
+// element) by the component it loads.
+async function modalName(d) {
+  if (d.name) return d.name;
+  let el = d.element;
+  const kid = el && el.props && el.props.children;
+  if (kid && kid.type && kid.type.$$typeof === LAZY) el = kid;
+  let t = el && el.type;
+  if (t && t.$$typeof === LAZY) t = await lazyComponent(t);
+  return reactName(t) || 'UnknownModalName';
 }
 
 // run gives a case's answer: its store built through Slack's own reducers
@@ -136,6 +216,8 @@ function merge(base, inp) {
 async function run(c, name = '') {
   let state = reduce(undefined, { type: '@@INIT' });
   const exits = [];
+  current = exits;
+  currentCase = c;
   const getState = () => state;
   const dispatch = a => {
     if (typeof a === 'function') return a(dispatch, getState, ctx => ctx && ctx.defaultValue);
@@ -161,6 +243,8 @@ async function run(c, name = '') {
   dispatch(action('Sets channel permission objects')({ memberId: c.self.id, channelId: c.conv.id, permissions: perms(c.permissions && c.permissions.channel), timestamp: 1700000000 }));
   dispatch(action('Bulk add members [proto]')({ objects: [c.self, ...c.users].map(u => JSON.parse(JSON.stringify(u))) }));
   dispatch(action('Bulk add channels [proto]')({ objects: [JSON.parse(JSON.stringify(c.conv))] }));
+  const membership = Object.fromEntries(Object.entries(c.membership || {}).map(([u, m]) => [u, { isKnown: true, isMember: !!m }]));
+  if (Object.keys(membership).length) dispatch(action('Upsert membership info for users for a channel')({ channelId: c.conv.id, membershipInfo: membership }));
   dispatch(action('Adds an array of slash commands from the server')({
     commands: JSON.parse(JSON.stringify(c.commands)), cacheTs: 1700000000,
     experimentIa4SlashCommandFeGroupOn: c.experiments.ia4_slash_command_fe === 'on',
@@ -179,11 +263,21 @@ async function run(c, name = '') {
     // a client command ran; what it did first decides (executeCommand's
     // frecency write comes before the mark): Slackbot's feedback (a
     // refusal of its own, /collapse's note) is that feedback; an API call,
-    // a dialog or nothing observable is the command running
-    const next = exits[at + 1];
-    if (next && next.__exit === 'unfollowed') err(`slash_commands: ${name}: ${next.name} not followed past: ${next.error}`);
+    // a dialog or nothing observable is the command running, with the
+    // first dialog it opened and the first write it sent
+    const ran = exits[at].name;
+    const after = exits.slice(at + 1);
+    const bad = after.find(x => x.__exit === 'unfollowed');
+    if (bad) throw new Error(`slash_commands: ${name}: ${bad.name} not followed past: ${bad.error}`);
+    const next = after[0];
     if (next && next.__exit === 'ephemeral') return { route: 'feedback', text: next.text };
-    return { route: 'local', name: exits[at].name };
+    if (!FOLLOW.has(ran)) return { route: 'local', name: ran, unfollowed: true };
+    const o = { route: 'local', name: ran };
+    const d = after.find(x => x.__exit === 'dialog');
+    if (d) o.dialog = await modalName(d);
+    const w = after.find(x => x.__exit === 'api' && WRITES.has(x.method));
+    if (w) o.api = w.method;
+    return o;
   }
   const first = exits.find(x => x.__exit === 'api' && x.method === 'chat.command') ||
     exits.find(x => x.__exit !== 'ephemeral' && x.__exit !== 'api') || exits.find(x => x.__exit === 'api') || exits[0];
@@ -214,7 +308,11 @@ async function run(c, name = '') {
 
 async function main() {
   const snap = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-  const base = snap.base || {};
+  // the account's experiment groups under the snapshot's own (Clack's side
+  // reads core's defaults, which TestDefaultExperimentsMatchAccount holds
+  // to the same file)
+  const account = JSON.parse(fs.readFileSync(ACCOUNT_EXPERIMENTS, 'utf8')).assignments || {};
+  const base = { ...(snap.base || {}), experiments: { ...account, ...((snap.base || {}).experiments || {}) } };
   const res = {};
   for (const k of snap.cases) {
     const before = new Set(rt.stubbed);

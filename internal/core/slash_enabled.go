@@ -46,10 +46,11 @@ package core
 //   - /feedback is unknown under feedback_disabled_orgs' treatment.
 //
 // The permissions these read are getPermissionForChannel's
-// (permissions/info, chperms.go): Slack's store has them from the
-// channel's own views by the time a command is typed, and Clack's command
-// asks when it has none yet (channelGrantNow). The /invite rules are
-// inviteCommand's own (invite_command.go).
+// (permissions/info, chperms.go, ChannelGrant): the store's answer, which
+// the channel's own views asked for when it opened; with none (yet, or a
+// failed ask) the read asks and the permission isn't allowed meanwhile,
+// as in Slack (mLk1: a miss starts the fetch, nnqv Jr of nothing is
+// false). The /invite rules are inviteCommand's own (invite_command.go).
 
 import (
 	"context"
@@ -144,7 +145,7 @@ func (a *App) slashEnabled(ctx context.Context, z slack.Command, cmd, ch string,
 			return customErr(cmd, "This command is not available in this channel")
 		}
 	}
-	grant := func(p string) bool { return a.channelGrantNow(ctx, ch, p) }
+	grant := func(p string) bool { return a.ChannelGrant(ch, p) }
 	switch v {
 	case "/open", "/feed":
 		if a.selfRestricted() {

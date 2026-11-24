@@ -54,6 +54,8 @@ type commandUI struct {
 	rename func(ch, name string)
 	// archive is /archive's ArchiveChannelModal for ch
 	archive func(ch string)
+	// remove is /remove's openRemoveMemberDialog for member in ch
+	remove func(ch, member string)
 	// contents puts d in ch's composer (addEphemeralFeedback's
 	// inputDelta), when it is open
 	contents func(ch string, d *Doc)
@@ -119,6 +121,9 @@ func (c *Composer) commandUI() *commandUI {
 			c.later(func() { c.h.ShowOverlay(popups.NewRenameChannelModal(c.h, ch, name)) })
 		},
 		archive: func(ch string) { c.later(func() { c.h.ShowOverlay(popups.NewArchiveChannelModal(c.h, ch)) }) },
+		remove: func(ch, member string) {
+			c.later(func() { popups.OpenRemoveMemberDialog(c.h, ch, member, nil) })
+		},
 		contents: func(ch string, d *Doc) {
 			c.later(func() {
 				if t := c.sessionComposer(ch); t != nil {

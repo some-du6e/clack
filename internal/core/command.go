@@ -178,8 +178,8 @@ func (f *failedCommands) mark(ch, cmd string, failed bool) {
 	f.m[ch+":"+cmd] = time.Now()
 }
 
-// knownCommand is executeCommand's lookup in the slash command store:
-// the first cached commands.list command cmd matches (false before the
+// knownCommand is executeCommand's lookup in the slash command store's
+// server half: the first stored command cmd matches (false before the
 // list loaded).
 func (a *App) knownCommand(cmd string) (slack.Command, bool) {
 	a.mu.Lock()

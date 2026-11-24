@@ -78,7 +78,7 @@ func NewArchiveChannelModal(h Host, ch string) *ArchiveChannelModal {
 	}
 	archive := &ModalButton{Label: nsChDetails.T(arButton), Kind: BtnDanger, Enabled: func() bool { return !m.pending },
 		Do: func() bool { m.Archive(); return false }}
-	m.modal = NewModal(h, ModalOpts{Title: nsChDetails.T(arTitle), Body: m.layout, AutoFocus: archive,
+	m.modal = NewModal(h, ModalOpts{Title: nsChDetails.T(arTitle), Name: "ArchiveChannelModal", Body: m.layout, AutoFocus: archive,
 		Buttons: []*ModalButton{{Label: nsChDetails.T("Cancel"), Kind: BtnOutline}, archive}})
 	return m
 }
@@ -88,6 +88,9 @@ func (m *ArchiveChannelModal) Layout(gtx layout.Context) layout.Dimensions {
 }
 func (m *ArchiveChannelModal) Dismissed() bool { return m.modal.Dismissed() }
 func (m *ArchiveChannelModal) Dismiss()        { m.modal.Dismiss() }
+
+// ModalName is Slack's name for the dialog.
+func (m *ArchiveChannelModal) ModalName() string { return m.modal.ModalName() }
 
 // Title is the modal's title; Error is the archive's failure ("" for
 // none).

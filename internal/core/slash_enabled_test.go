@@ -21,9 +21,14 @@ func allow(f *fakeSlack, perms ...string) {
 	f.mu.Unlock()
 }
 
+// check is CheckCommand for cmd in ch once ch's grants are in, as the
+// channel's views have asked for them when it opened.
 func check(a *App, ch, cmd, ts string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = a.LoadChannelGrants(ctx, ch)
 	o := CommandOpts{Channel: ch, Command: cmd, ThreadTS: ts}
-	return a.CheckCommand(context.Background(), &o)
+	return a.CheckCommand(ctx, &o)
 }
 
 func isKind(err error, kind string) bool {
@@ -295,20 +300,38 @@ func TestCloseConversation(t *testing.T) {
 	}
 }
 
-// channelGrantNow waits for permissions/info when the store has nothing,
-// asks once, and answers from the store after.
-func TestChannelGrantNowWaits(t *testing.T) {
+// Slack's read with nothing held (mLk1 getPermissionForChannel): the
+// check asks permissions/info and refuses meanwhile; once the answer is
+// in, the same command runs. LoadChannelGrants waits for that answer,
+// asking once.
+func TestCommandGrantMissRefuses(t *testing.T) {
 	a, f := testApp(t)
 	allow(f, PermRenameChannel)
+	a.S.PutConv(slack.Conversation{ID: "C0RENAMECO", Name: "cold", IsChannel: true, IsMember: true})
+	o := CommandOpts{Channel: "C0RENAMECO", Command: "/rename"}
+	if got := feedbackOf(a.CheckCommand(context.Background(), &o)); got != "You don’t have permission to rename." {
+		t.Errorf("before permissions/info answered: %q", got)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if !a.channelGrantNow(ctx, "C1", PermRenameChannel) || a.channelGrantNow(ctx, "C1", PermArchiveChannel) {
-		t.Error("RENAME_CHANNEL only")
+	if err := a.LoadChannelGrants(ctx, "C0RENAMECO"); err != nil {
+		t.Fatal(err)
 	}
 	if n := countCalls(f, "info"); n != 1 {
 		t.Errorf("%d permissions/info calls", n)
 	}
-	if !a.ChannelGrant("C1", PermRenameChannel) {
-		t.Error("ChannelGrant reads the same answer")
+	o = CommandOpts{Channel: "C0RENAMECO", Command: "/rename"}
+	if err := a.CheckCommand(ctx, &o); err != nil {
+		t.Errorf("after the answer: %v", err)
+	}
+	if !a.ChannelGrant("C0RENAMECO", PermRenameChannel) || a.ChannelGrant("C0RENAMECO", PermArchiveChannel) {
+		t.Error("RENAME_CHANNEL only")
+	}
+	// a failed ask stores nothing: the wait says so
+	f.mu.Lock()
+	f.reply["info"] = `{"ok":false,"error":"fatal_error"}`
+	f.mu.Unlock()
+	if err := a.LoadChannelGrants(ctx, "C0OTHERONE"); err == nil {
+		t.Error("a failed permissions/info loaded")
 	}
 }

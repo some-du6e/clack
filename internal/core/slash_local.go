@@ -36,14 +36,14 @@ func ClientCommand(typed string) (string, bool) {
 }
 
 // LocalCommand is the canonical name executeCommand looks a typed command
-// up by: the matched command's in the slash command store (the server's
-// commands.list, then the client commands), else the word itself.
+// up by: the matched command's in the slash command store (yrZ7 Qe: the
+// client commands, then the server's), else the word itself.
 func (a *App) LocalCommand(typed string) string {
-	if k, ok := a.knownCommand(typed); ok {
-		return canonicalCommand(k)
-	}
 	if c, ok := ClientCommand(typed); ok {
 		return c
+	}
+	if k, ok := a.knownCommand(typed); ok {
+		return canonicalCommand(k)
 	}
 	return typed
 }
@@ -322,11 +322,36 @@ func (a *App) imWith(member string) string {
 	return ""
 }
 
+// ErrNotClosable is submitClose's refusal for a conversation
+// canChannelBeClosed says no to (method_not_supported_for_channel_type):
+// closeChannelApi drops it, so nothing shows.
+var ErrNotClosable = errors.New("method_not_supported_for_channel_type")
+
+// canChannelBeClosed is 7Sp+ l: a DM, a group DM, an agent's record
+// channel, or a record channel that is open (is_open) unless
+// salesforce_channels_x_out_channel is on.
+func (a *App) canChannelBeClosed(c *slack.Conversation) bool {
+	if c == nil {
+		return false
+	}
+	if c.IsIM || c.IsMPIM || agentRecordChannel(c) {
+		return true
+	}
+	return propsOf(c).RecordChannel.RecordID != "" && c.IsOpen && a.experiment("salesforce_channels_x_out_channel") != "on"
+}
+
 // CloseConversation is closeChannelApi's submitClose (wqjU dP, "Close an
 // MPIM, IM, or code channel"): conversations.close {channel} for a DM or
 // a group DM, which stays known (search, the switcher) and comes back on
-// a new message.
+// a new message. A conversation canChannelBeClosed refuses (one the
+// store doesn't hold too: getChannelById's unknown stub) is
+// ErrNotClosable, with no call (maybeLeaveChannel's close of an archived
+// private channel does nothing: "Refusing to close a channel that is not
+// an MPIM or IM.").
 func (a *App) CloseConversation(ctx context.Context, ch string) error {
+	if c, _ := a.S.Conv(ch); !a.canChannelBeClosed(c) {
+		return ErrNotClosable
+	}
 	if err := a.C.Call(ctx, "conversations.close", url.Values{"channel": {ch}}, nil); err != nil {
 		return err
 	}

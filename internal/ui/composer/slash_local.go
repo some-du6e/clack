@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -51,13 +52,20 @@ import (
 //     picks the conversation (this one, or the channel or person's DM the
 //     first argument mentions) and submitLeave closes a DM or group DM
 //     (closeChannelApi: conversations.close) or leaves a channel through
-//     maybeLeaveChannel (popups.LeaveConversation: the #general alert, a
-//     private channel's confirmation).
+//     maybeLeaveChannel (popups.LeaveConversation, core.LeaveChannelAction:
+//     canUserLeaveChannel's alerts, the leave, an archived channel's close,
+//     a private or shared channel's confirmation, the last member's Leave
+//     and archive).
 //   - /rename: renameCommand (BasZ) opens RenameChannelModal
 //     (popups/rename_channel.go) with the arguments as display text in its
 //     input (convertContentsToStringForDisplay), or the channel's name.
 //   - /archive: archiveCommand (Oc3D) opens ArchiveChannelModal
 //     (popups/archive_channel.go).
+//   - /remove (/kick): removeCommand (p8LL, core.App.RemoveCommand) refuses
+//     in its own words, or opens the roster's Remove from channel
+//     confirmation for the person mentioned (openRemoveMemberDialog,
+//     popups.OpenRemoveMemberDialog), whose Remove is conversations.kick;
+//     the viewer naming themselves is maybeLeaveChannel.
 //
 // isSlashCommandEnabled has passed before any of these runs
 // (core.CheckCommand in slashCommand): /rename and /archive only reach
@@ -75,10 +83,24 @@ type shortcutsToggler interface{ ToggleKeyboardShortcuts() }
 // queryOps r). UI goroutine.
 type searchOpener interface{ OpenSearchFromCommand() }
 
+// clientCommandRan, set by tests, hears the canonical name of each client
+// command localCommand runs, refused or not (what the parity oracle's
+// mark on Zrd3's action entry hears in Slack).
+var clientCommandRan atomic.Pointer[func(name string)]
+
 // localCommand runs the typed command when it is one of the client
 // commands above; false: it isn't (or no host can run it), and the
 // command goes on.
 func (j *sendJob) localCommand(ctx context.Context, a prepareSendArgs, q qDelta, args slashArgs) (bool, error) {
+	ran, err := j.runLocal(ctx, a, q, args)
+	if f := clientCommandRan.Load(); ran && f != nil {
+		(*f)(j.api.a.LocalCommand(args.Cmd))
+	}
+	return ran, err
+}
+
+// runLocal is localCommand's switch.
+func (j *sendJob) runLocal(ctx context.Context, a prepareSendArgs, q qDelta, args slashArgs) (bool, error) {
 	if j.ui == nil || j.api.a == nil {
 		return false, nil
 	}
@@ -158,6 +180,21 @@ func (j *sendJob) localCommand(ctx context.Context, a prepareSendArgs, q qDelta,
 		}
 		j.api.clearCommandFeedback(ts != "")
 		j.ui.archive(ch)
+		return true, nil
+	case "/remove":
+		if j.ui.remove == nil || j.ui.leave == nil {
+			return false, nil
+		}
+		j.api.clearCommandFeedback(ts != "")
+		t, err := j.api.a.RemoveCommand(args.Cmd, ch, args.Params, renameName(args.Rest))
+		if err != nil {
+			return true, failed(err)
+		}
+		if t.Leave { // maybeLeaveChannel({channelId})
+			j.ui.leave(core.LeaveTarget{Conv: ch})
+		} else {
+			j.ui.remove(ch, t.Member)
+		}
 		return true, nil
 	case "/feedback":
 		if j.ui.feedback == nil || j.api.a.Experiment(popups.ExpSlashFeedbackInModal) != "on" {

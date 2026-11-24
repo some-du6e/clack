@@ -98,7 +98,7 @@ func NewRenameChannelModal(h Host, ch, name string) *RenameChannelModal {
 	n := utf8.RuneCountInString(name)
 	m.ed.SetCaret(n, n)
 	save := &ModalButton{Label: nsChDetails.T(rnSave), Kind: BtnPrimary, Enabled: m.CanSave, Do: func() bool { return m.Save() }}
-	m.modal = NewModal(h, ModalOpts{Title: nsChDetails.T(rnTitle), Body: m.layout,
+	m.modal = NewModal(h, ModalOpts{Title: nsChDetails.T(rnTitle), Name: "RenameChannelModal", Body: m.layout,
 		Buttons:    []*ModalButton{{Label: nsChDetails.T("Cancel"), Kind: BtnOutline}, save},
 		FocusStops: func() []event.Tag { return []event.Tag{&m.ed} }})
 	return m
@@ -110,7 +110,10 @@ func (m *RenameChannelModal) Dismiss()                                    { m.mo
 
 // Title is the modal's title; Name is the name Save sends.
 func (m *RenameChannelModal) Title() string { return m.modal.Title() }
-func (m *RenameChannelModal) Name() string  { return m.name }
+
+// ModalName is Slack's name for the dialog.
+func (m *RenameChannelModal) ModalName() string { return m.modal.ModalName() }
+func (m *RenameChannelModal) Name() string      { return m.name }
 
 // SetName types s into the input (an edit: normalized, then checked).
 func (m *RenameChannelModal) SetName(s string) {

@@ -126,7 +126,7 @@ func NewUserFeedbackModal(h Host) *UserFeedbackModal {
 	visit := &ModalButton{Label: nsUserFeedback.T(ufVisit), Kind: BtnPrimary,
 		Hidden: func() bool { return m.kind != 1 },
 		Do:     func() bool { srOpenLink(m.h, m.helpURL()); return true }}
-	m.modal = NewModal(h, ModalOpts{Title: nsUserFeedback.T(ufTitle), Body: m.layout,
+	m.modal = NewModal(h, ModalOpts{Title: nsUserFeedback.T(ufTitle), Name: "UserFeedbackModal", Body: m.layout,
 		FocusStops: func() []event.Tag {
 			switch m.kind {
 			case 0:
@@ -144,6 +144,9 @@ func NewUserFeedbackModal(h Host) *UserFeedbackModal {
 func (m *UserFeedbackModal) Layout(gtx layout.Context) layout.Dimensions { return m.modal.Layout(gtx) }
 func (m *UserFeedbackModal) Dismissed() bool                             { return m.modal.Dismissed() }
 func (m *UserFeedbackModal) Dismiss()                                    { m.modal.Dismiss() }
+
+// ModalName is Slack's name for the dialog.
+func (m *UserFeedbackModal) ModalName() string { return m.modal.ModalName() }
 
 // Pick chooses "What brings you here?" (0 share, 1 help; tests).
 func (m *UserFeedbackModal) Pick(i int) {

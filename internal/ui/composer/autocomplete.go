@@ -360,6 +360,7 @@ func (ac *Autocomplete) Update(d *Doc, caret int) {
 	ac.items = ac.compute(t)
 	ac.itemsVer++
 	ac.watchPresence()
+	ac.prepSuggestions(t)
 	ac.pluginRank(t, ac.items)
 	ac.itemsFor, ac.itemsGen, ac.itemsRank, ac.itemsOK = t, gen, rk, true
 	// async rows landed: keep the row the user picked selected
@@ -1034,6 +1035,32 @@ func (ac *Autocomplete) watchPresence() {
 		return
 	}
 	go coreAPI{ac.h.Core()}.subscribePresence(ids)
+}
+
+// prepSuggestions is the member autocomplete's prepSuggestions membership
+// read (getChannelMembershipInfoForUsers, pfZb z): in a channel (not a DM
+// or group DM), for a query of one word at most, the people the list
+// shows are asked about in the channel (core.ChannelMembershipInfo: only
+// the ones not known yet), so a member picked here is known by the time a
+// command names them (/remove's check).
+func (ac *Autocomplete) prepSuggestions(t acTrigger) {
+	if t.Kind != acUser || ac.h == nil || ac.h.Core() == nil || ac.channelID == "" || len(strings.Fields(t.Query)) > 1 {
+		return
+	}
+	if ac.haveConv && (ac.conv.Kind == "im" || ac.conv.Kind == "mpim") {
+		return
+	}
+	var ids []string
+	for _, it := range ac.items {
+		if it.Kind == acUser && it.Atom != nil && it.Atom.Kind == AtomUser {
+			ids = append(ids, it.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	a, ch := ac.h.Core(), ac.channelID
+	go a.ChannelMembershipInfo(ac.ctx, ch, ids)
 }
 
 // wordPrefix reports whether some word of s (split on space, '-', '_',

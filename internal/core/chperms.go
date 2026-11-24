@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -106,22 +107,20 @@ func (a *App) grant(ch, perm string) bool {
 	return e.allowed[perm]
 }
 
-// channelGrantNow is ChannelGrant for a command: when the store has no
-// answer for ch (or an hour-old one) it asks permissions/info, or waits
-// for the ask in flight, before answering, for as long as ctx allows.
-// Slack's isSlashCommandEnabled reads its store, which the channel's
-// views (its header's topic check among them) filled when it opened; a
-// command may come before Clack's views asked.
-func (a *App) channelGrantNow(ctx context.Context, ch, perm string) bool {
-	if ch == "" {
-		return false
-	}
+// LoadChannelGrants waits for ch's grants ("" for the team's): it asks
+// permissions/info when the cache has no answer for ch (or an hour-old
+// one), or waits for the ask in flight, for as long as ctx allows; the
+// error is the ask's or ctx's. Slack's channel views fill its permission
+// store when the channel opens, and every check reads that store without
+// waiting (a miss reads as not allowed); a caller that must know before
+// its first read waits here.
+func (a *App) LoadChannelGrants(ctx context.Context, ch string) error {
 	pc := a.chPerms()
 	pc.mu.Lock()
 	e, ok := pc.m[ch]
 	if ok && time.Since(e.at) <= chPermMaxAge {
 		pc.mu.Unlock()
-		return e.allowed[perm]
+		return nil
 	}
 	done := pc.loading[ch]
 	if done == nil {
@@ -133,11 +132,15 @@ func (a *App) channelGrantNow(ctx context.Context, ch, perm string) bool {
 	select {
 	case <-done:
 	case <-ctx.Done():
+		return ctx.Err()
 	}
 	pc.mu.Lock()
-	e = pc.m[ch]
+	_, ok = pc.m[ch]
 	pc.mu.Unlock()
-	return e.allowed[perm]
+	if !ok {
+		return errors.New("core: permissions/info failed for " + ch)
+	}
+	return nil
 }
 
 func (a *App) loadChannelGrants(ctx context.Context, ch string) {

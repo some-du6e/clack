@@ -178,7 +178,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	case dm:
 		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actClose(h, convID) }}.In(nsMenu))
 	default:
-		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }}.In(nsMenu))
+		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID) }}.In(nsMenu))
 	}
 	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: alignRight, Wraps: []MenuWrap{
 		// Slack's channel context menu: ChatTabs marks the channel, then
@@ -223,11 +223,7 @@ func ChannelMenuAction(h Host, convID, key string) func() {
 		if dm {
 			return func() { actClose(h, convID) }
 		}
-		name := convTitle(h, c)
-		if name == "" {
-			name = convID
-		}
-		return func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }
+		return func() { leaveChannel(h, convID) }
 	}
 	return nil
 }
@@ -421,22 +417,11 @@ func actLabelRow(h Host, label func() string) func(gtx layout.Context, hl bool) 
 	}
 }
 
-// leaveChannel is Slack's maybeLeaveChannel (boot-shared): the workspace's
-// general channel can't be left (LeaveChannelError CANT_LEAVE_GENERAL: an
-// alert, OK only); a public channel is left at once; a private one asks
-// first with LeaveChannel ("Leave <name>", Cancel / Leave Channel).
-func leaveChannel(h Host, convID, kind, name string, general bool) {
-	msg := "You left #" + name
-	if kind == "private" {
-		msg = "You left " + name
-	}
-	MaybeLeaveChannel(h, name, kind, general, func() { actLeave(h, convID, msg) })
-}
-
-// MaybeLeaveChannel is maybeLeaveChannel's asking part: the #general
-// alert, leave (the caller's) at once for a public channel, or the
-// LeaveChannel confirmation for a private one. The channel browser's
-// Leave button runs it too (useChannelExplorer onClickLeave).
+// MaybeLeaveChannel is the channel browser's Leave (useChannelExplorer
+// onClickLeave): the #general alert, leave (the browser's own, which
+// updates its row) at once for a public channel, or the LeaveChannel
+// confirmation for a private one. The menus and /leave run the whole of
+// maybeLeaveChannel (leave_channel.go).
 func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 	if general {
 		// LeaveChannelError (the channels I18n): renderAlert, a
@@ -488,61 +473,6 @@ func entityTitle(parts []i18n.Part, arg string) (pre, post string) {
 		}
 	}
 	return pre, post
-}
-
-// LeaveConversation is /leave's submitLeave for convID (the composer's;
-// core.LeaveCommand picked it): close, for a DM or group DM, is
-// closeChannelApi (actClose); a channel goes through maybeLeaveChannel
-// (leaveChannel: the #general alert, a private channel's confirmation).
-func LeaveConversation(h Host, convID string, close bool) {
-	if close {
-		actClose(h, convID)
-		return
-	}
-	var c core.Conv
-	if a := h.Core(); a != nil {
-		c, _ = a.Conv(convID)
-	}
-	name := convTitle(h, c)
-	if name == "" {
-		name = convID
-	}
-	leaveChannel(h, convID, c.Kind, name, c.IsGeneral)
-}
-
-// actClose is closeChannelApi for a DM or group DM (core.CloseConversation:
-// conversations.close, submitClose's "Close an MPIM, IM, or code
-// channel"): Close conversation, and /leave in one.
-func actClose(h Host, convID string) {
-	a := h.Core()
-	if a == nil {
-		h.Toast("Not connected yet")
-		return
-	}
-	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.CloseConversation(ctx, convID) }, func(_ struct{}, err error) {
-		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
-			return
-		}
-		h.Toast("Conversation closed")
-		h.Navigate("threads")
-	})
-}
-
-func actLeave(h Host, convID, okMsg string) {
-	a := h.Core()
-	if a == nil {
-		h.Toast("Not connected yet")
-		return
-	}
-	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Leave(ctx, convID) }, func(_ struct{}, err error) {
-		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
-			return
-		}
-		h.Toast(okMsg)
-		h.Navigate("threads")
-	})
 }
 
 // ---- team menu (Hack Club ▾) ----

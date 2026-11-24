@@ -198,6 +198,14 @@ func drain() {
 // (optional: popups also keeps a pump overlay alive while work is pending).
 func Pump() { drain() }
 
+// Idle reports that no popups work is in flight or queued (tests wait for
+// it before reading what a flow did).
+func Idle() bool {
+	asyncMu.Lock()
+	defer asyncMu.Unlock()
+	return inflight == 0 && len(asyncQueue) == 0
+}
+
 // asyncTimeout is run's limit on its work (tests shorten it).
 var asyncTimeout = 15 * time.Second
 

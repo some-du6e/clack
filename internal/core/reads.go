@@ -1144,16 +1144,23 @@ func (a *App) dmsTabShows(c *slack.Conversation, latest string) bool {
 
 // ---- commands & DND ----
 
-// Commands lists slash commands matching query (cached for 30 minutes).
+// Commands lists the slash command store's server commands matching
+// query: client.appCommands' list as bulkAddServerCommands keeps it
+// (serverCommandStore, slash_store.go), loaded again after 30 minutes.
 func (a *App) Commands(ctx context.Context, query string) ([]Command, error) {
 	a.mu.Lock()
 	cmds := a.cmdCache
 	fresh := cmds != nil && time.Since(a.cmdAt) < 30*time.Minute
 	a.mu.Unlock()
 	if !fresh {
-		var err error
-		if cmds, err = a.C.Commands(ctx); err != nil {
+		list, _, err := a.C.AppCommands(ctx)
+		if err != nil {
 			return nil, err
+		}
+		// loadClientAppCommands reads ia4_slash_command_fe as it loads
+		cmds = serverCommandStore(list, a.experiment("ia4_slash_command_fe") == "on")
+		if cmds == nil {
+			cmds = []slack.Command{}
 		}
 		a.mu.Lock()
 		a.cmdCache, a.cmdAt = cmds, time.Now()
