@@ -491,11 +491,10 @@ func (a *App) bbmNavButton(gtx layout.Context, org image.Point, key, icon string
 		}, func(gtx layout.Context) layout.Dimensions {
 			col := c.ChromeText
 			if disabled {
-				// opacity .45 composited in sRGB, as Chrome does: over the
-				// dimmed tile over the chrome
-				mid := org.Add(sz.Div(2))
-				tile := theme.Over(theme.WithAlpha(c.SearchBg, uint8(int(c.SearchBg.A)*0x73/0xff)), a.chromeBase(mid))
-				col = theme.Over(theme.WithAlpha(col, 0x73), tile)
+				// opacity .45 on the button as one group, composited in sRGB
+				// as Chrome does: the opaque icon hides the tile inside the
+				// group, so its ink is .45 of it over the chrome alone
+				col = theme.Over(theme.WithAlpha(col, 0x73), a.chromeBase(org.Add(sz.Div(2))))
 			}
 			at(gtx, image.Pt(gtx.Dp(8), (sz.Y-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 				return icons.Get(icon)(gtx, 16, col)
