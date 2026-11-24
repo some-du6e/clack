@@ -110,9 +110,9 @@ func publishShotLibrary(l *libServer) {
 	ix := pluginlib.Index{Schema: 1, Sources: src, Plugins: []pluginlib.Entry{
 		entry(pluginlib.Taut, "ClearURLs", "Clear URLs", "Removes tracking parameters from links you send", "messageBox", []byte("a")),
 		// Slick's composer is Taut's Message box: both versions file the row
-		// there, so it stays put whichever version it shows. The Library's
-		// id, which compat.go's partial row is under: Taut's version works
-		// fully, so Install adds it
+		// there, so it stays put whichever version it shows. Both versions
+		// work fully, and the bench doesn't know these synthetic files, so
+		// Install adds Slick's (installPick's recommended system)
 		entry(pluginlib.Slick, "ClearURLs", "ClearURLs", "Strips tracking junk from links", "composer", []byte("b")),
 		entry(pluginlib.Taut, "SilentTyping", "Silent Typing", "Don't tell others when you're typing", "messageBox", silent),
 		entry(pluginlib.Slick, "silentTyping", "Silent Typing", "Hide your typing indicator", "privacy", []byte("c")),
@@ -310,15 +310,16 @@ func TestPluginsPrefsShots(t *testing.T) {
 		if len(clear.Entries) != 2 || len(silent.Entries) != 2 {
 			t.Fatalf("dual rows: Clear URLs %d entries, Silent Typing %d", len(clear.Entries), len(silent.Entries))
 		}
-		// Install never asks (installPick): Clear URLs' Taut version works
-		// fully, Slick's partly, so Install adds Taut's, and the chevron
-		// beside it offers both, Taut's first, "(recommended)", with why
-		pp.lib.bench = &pluginbench.Data{} // no bench data: how they work decides
+		// Install never asks (installPick): both Clear URLs work fully and
+		// there's no bench data, so Install adds Slick's, the recommended
+		// system, and the chevron beside it offers both, Taut's first,
+		// Slick's "(recommended)", with why
+		pp.lib.bench = &pluginbench.Data{} // no bench data: how they work, then Slick's
 		if act := pp.lib.action(clear); act.label != "Install" || act.menu == nil {
 			t.Errorf("Clear URLs (both systems, neither installed): %q (menu %v)", act.label, act.menu != nil)
 		}
-		if w, _ := pp.lib.installPick(pp.lib.installChoices(clear)); w.System != pluginlib.Taut {
-			t.Errorf("Install adds %s's Clear URLs, want Taut's (it works fully, Slick's partly)", w.System)
+		if w, why := pp.lib.installPick(pp.lib.installChoices(clear)); w.System != pluginlib.Slick {
+			t.Errorf("Install adds %s's Clear URLs (%q), want Slick's (both work fully, no bench data)", w.System, why)
 		}
 		if act := pp.lib.action(silent); act.label != "Settings" {
 			t.Errorf("Silent Typing (installed in Taut): %q", act.label)

@@ -179,8 +179,11 @@ func TestUnifiedPlugins(t *testing.T) {
 
 // A plugin both systems have under one name is one Browse row with both
 // tags; while both run and neither has it, Install installs the better
-// version (installPick: Clear URLs' Taut version works fully, Slick's
-// partly) and its chevron offers both.
+// version and its chevron offers both. installPick goes by how each works
+// in Clack first (Account Switcher's Taut version works fully, Slick's
+// partly), then the plugin bench, then Slick's: both Clear URLs work
+// fully and the bench doesn't know these synthetic files, so Install adds
+// Slick's.
 func TestLibraryGroups(t *testing.T) {
 	a, _ := ttApp(t, t.TempDir())
 	ix := &pluginlib.Index{Schema: 1, Plugins: []pluginlib.Entry{
@@ -234,8 +237,12 @@ func TestLibraryGroups(t *testing.T) {
 	if act := v.action(clear); act.label != "Install" || act.menu == nil {
 		t.Errorf("both running, neither installed: %q (menu %v), want Install with its chevron", act.label, act.menu != nil)
 	}
-	if w, _ := v.installPick(v.installChoices(clear)); w.System != pluginlib.Taut {
-		t.Errorf("Install adds %s's Clear URLs, want Taut's", w.System)
+	if w, why := v.installPick(v.installChoices(clear)); w.System != pluginlib.Slick || !strings.Contains(why, "recommended system") {
+		t.Errorf("Install adds %s's Clear URLs (%q), want Slick's: both work fully, no bench data", w.System, why)
+	}
+	switcher := []pluginlib.Entry{{System: pluginlib.Taut, ID: "AccountSwitcher", Name: "Account Switcher"}, {System: pluginlib.Slick, ID: "AccountSwitcher", Name: "Account Switcher"}}
+	if w, why := v.installPick(switcher); w.System != pluginlib.Taut || !strings.Contains(why, "works fully") {
+		t.Errorf("Install adds %s's Account Switcher (%q), want Taut's: it works fully, Slick's partly", w.System, why)
 	}
 	if n := len(v.installChoices(clear)); n != 2 {
 		t.Errorf("%d install choices", n)
