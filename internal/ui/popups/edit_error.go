@@ -21,19 +21,43 @@ func EditMessageError(h Host, err error) {
 		log.Printf("popups: chat.update: %v", err)
 		return
 	}
-	title, body := nsMessage.T("Upload failed"), ""
-	more := ""
+	mins, admin := -1, false
+	if a := h.Core(); a != nil {
+		if n, ok := a.TeamPrefInt("msg_edit_window_mins"); ok {
+			mins = n
+		}
+		s := a.Self()
+		admin = s.IsAdmin || s.IsOwner
+	}
+	title, body, more := editErrorText(code, mins, admin)
+	th := h.Theme()
+	m := NewModal(h, ModalOpts{Title: title, TitleWrap: true, EnterSubmits: true, NoClose: code != "edit_window_closed",
+		Body: func(gtx layout.Context) layout.Dimensions {
+			fg := colorsOf(th).Fg
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return para(gtx, th, 15, 22, theme.Regular, fg, body, 0) }),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if more == "" {
+						return layout.Dimensions{}
+					}
+					return para(gtx, th, 15, 22, theme.Regular, fg, more, 0)
+				}),
+			)
+		},
+		Buttons: []*ModalButton{{Label: nsMessage.T("OK"), Kind: BtnPrimary, Do: func() bool { return true }}}})
+	h.ShowOverlay(m)
+}
+
+// editErrorText is EditMessageErrorDialog's title and text for code
+// (the message I18n): mins is msg_edit_window_mins, admin the viewer's
+// rights (the edit window's settings line); "" codes are the default.
+func editErrorText(code string, mins int, admin bool) (title, body, more string) {
+	title = nsMessage.T("Upload failed")
 	switch code {
 	case "edit_window_closed":
 		title = nsMessage.T("Message editing failed")
-		mins := -1
-		if a := h.Core(); a != nil {
-			if n, ok := a.TeamPrefInt("msg_edit_window_mins"); ok {
-				mins = n
-			}
-			if s := a.Self(); s.IsAdmin || s.IsOwner {
-				more = nsMessage.T("(To adjust the message editing window, visit Workspace Settings)")
-			}
+		if admin {
+			more = nsMessage.T("(To adjust the message editing window, visit Workspace Settings)")
 		}
 		body = nsMessage.T("Sorry, but messages can only be edited for {duration} after posting.", "duration", editWindow(mins))
 	case "msg_too_long":
@@ -58,22 +82,7 @@ func EditMessageError(h Host, err error) {
 		title = nsMessage.T("Message editing failed")
 		body = nsMessage.T("Something went wrong with editing your message. Try again in a moment.")
 	}
-	th := h.Theme()
-	m := NewModal(h, ModalOpts{Title: title, TitleWrap: true, EnterSubmits: true, NoClose: code != "edit_window_closed",
-		Body: func(gtx layout.Context) layout.Dimensions {
-			fg := colorsOf(th).Fg
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return para(gtx, th, 15, 22, theme.Regular, fg, body, 0) }),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if more == "" {
-						return layout.Dimensions{}
-					}
-					return para(gtx, th, 15, 22, theme.Regular, fg, more, 0)
-				}),
-			)
-		},
-		Buttons: []*ModalButton{{Label: nsMessage.T("OK"), Kind: BtnPrimary, Do: func() bool { return true }}}})
-	h.ShowOverlay(m)
+	return title, body, more
 }
 
 // editWindow is the edit window (msg_edit_window_mins) as the dialog's

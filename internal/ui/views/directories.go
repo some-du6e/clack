@@ -937,7 +937,7 @@ type retryToaster interface {
 // CANT_LEAVE_GENERAL or CANT_LEAVE_MANDATORY_SHARED_CHANNEL) says
 // "Your organization requires everyone to be in it, so no one misses
 // important info." with no link.
-func dirErrorToast(h Host, join bool, name string, err error, retry func()) {
+func dirErrorToast(h interface{ Toast(string) }, join bool, name string, err error, retry func()) {
 	ch := "#" + name
 	head := nsSearch.T("Couldn’t join {channelName}.", "channelName", ch)
 	if !join {

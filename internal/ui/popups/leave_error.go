@@ -69,23 +69,11 @@ func LeaveChannelError(h Host, name, code string, leave func(ctx context.Context
 	if a := h.Core(); a != nil {
 		frontline = a.Experiment("frontline_users") == "on"
 	}
-	isDefault := func() bool {
-		switch reason {
-		case "last_member", "cant_leave_general", "cant_leave_mandatory_shared_channel", "user_is_restricted",
-			"user_is_frontline", "user_is_restricted_last_channel", "user_is_ultra_restricted":
-			return false
-		}
-		return true
+	text := func() leaveErrText {
+		return leaveErrorText(reason, channel, team, org, self.IsAdmin || self.IsOwner, frontline)
 	}
-	title := func() string {
-		switch reason {
-		case "last_member":
-			return nsChannels.T("To leave this channel, it needs to be unshared")
-		case "cant_leave_general", "cant_leave_mandatory_shared_channel":
-			return nsChannels.T("Membership is required in {channelName}", "channelName", channel)
-		}
-		return nsChannels.T("Couldn’t leave {channelName}", "channelName", channel)
-	}
+	isDefault := func() bool { return text().retry }
+	title := func() string { return text().title }
 	cl := colorsOf(th)
 	p := func(gtx layout.Context, s string) layout.Dimensions {
 		return para(gtx, th, 15, 22, theme.Regular, cl.Fg, s, 0)
@@ -101,34 +89,18 @@ func LeaveChannelError(h Host, name, code string, leave func(ctx context.Context
 		})
 	}
 	body := func(gtx layout.Context) layout.Dimensions {
-		switch reason {
-		case "last_member":
-			if self.IsAdmin || self.IsOwner {
-				return p(gtx, nsChannels.T("Since you’re the last person from {teamName}, you’ll need to stop sharing this channel before you can leave it.", "teamName", team))
-			}
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return p(gtx, nsChannels.T("Since you’re the last person from {teamName}, you’ll need an admin’s help to leave. It’s just a couple steps:", "teamName", team))
-				}),
-				layout.Rigid(layout.Spacer{Height: 16}.Layout),
-				li(nsChannels.T("Invite an admin to this channel.")),
-				li(nsChannels.T("Ask them to unshare and archive the channel.")),
-			)
-		case "cant_leave_general":
-			return p(gtx, nsChannels.T("Every workspace has one channel that contains all the members of this workspace — this is that channel for you."))
-		case "cant_leave_mandatory_shared_channel":
-			return p(gtx, nsChannels.T("Everyone in {orgName} is required to be a member of this channel.", "orgName", org))
-		case "user_is_restricted":
-			return p(gtx, nsChannels.T("As a guest you can leave private channels, but you’ll need to ask an admin to remove you from any public channels."))
-		case "user_is_frontline":
-			if !frontline {
-				return layout.Dimensions{}
-			}
-			return p(gtx, nsChannels.T("As a frontline member you’ll need to ask an admin to remove you from channels."))
-		case "user_is_restricted_last_channel", "user_is_ultra_restricted":
-			return p(gtx, nsChannels.T("On a guest account, you need to be a member of at least one channel."))
+		t := text()
+		var kids []layout.FlexChild
+		if t.body != "" {
+			kids = append(kids, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p(gtx, t.body) }))
 		}
-		return p(gtx, nsChannels.T("Hmm, something went wrong. Try again?"))
+		if len(t.steps) > 0 {
+			kids = append(kids, layout.Rigid(layout.Spacer{Height: 16}.Layout))
+			for _, st := range t.steps {
+				kids = append(kids, li(st))
+			}
+		}
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, kids...)
 	}
 	var m *Modal
 	retry := &ModalButton{Label: nsChannels.T("Retry"), Kind: BtnPrimary,
@@ -163,6 +135,50 @@ func LeaveChannelError(h Host, name, code string, leave func(ctx context.Context
 		},
 	})
 	return m
+}
+
+// leaveErrText is what LeaveChannelError says for one reason: its title,
+// its paragraph, a list of steps (last_member without admin rights), and
+// whether it is the default alert (Cancel and Retry; else OK only).
+type leaveErrText struct {
+	title, body string
+	steps       []string
+	retry       bool
+}
+
+// leaveErrorText is LeaveChannelError's render by reason (the channels
+// I18n): channel as "#name", team and org the viewer's workspace and
+// org names, admin the viewer's rights, frontline the frontline_users
+// experiment.
+func leaveErrorText(reason, channel, team, org string, admin, frontline bool) leaveErrText {
+	required := nsChannels.T("Membership is required in {channelName}", "channelName", channel)
+	couldnt := nsChannels.T("Couldn’t leave {channelName}", "channelName", channel)
+	switch reason {
+	case "last_member":
+		t := leaveErrText{title: nsChannels.T("To leave this channel, it needs to be unshared")}
+		if admin {
+			t.body = nsChannels.T("Since you’re the last person from {teamName}, you’ll need to stop sharing this channel before you can leave it.", "teamName", team)
+		} else {
+			t.body = nsChannels.T("Since you’re the last person from {teamName}, you’ll need an admin’s help to leave. It’s just a couple steps:", "teamName", team)
+			t.steps = []string{nsChannels.T("Invite an admin to this channel."), nsChannels.T("Ask them to unshare and archive the channel.")}
+		}
+		return t
+	case "cant_leave_general":
+		return leaveErrText{title: required, body: nsChannels.T("Every workspace has one channel that contains all the members of this workspace — this is that channel for you.")}
+	case "cant_leave_mandatory_shared_channel":
+		return leaveErrText{title: required, body: nsChannels.T("Everyone in {orgName} is required to be a member of this channel.", "orgName", org)}
+	case "user_is_restricted":
+		return leaveErrText{title: couldnt, body: nsChannels.T("As a guest you can leave private channels, but you’ll need to ask an admin to remove you from any public channels.")}
+	case "user_is_frontline":
+		t := leaveErrText{title: couldnt}
+		if frontline {
+			t.body = nsChannels.T("As a frontline member you’ll need to ask an admin to remove you from channels.")
+		}
+		return t
+	case "user_is_restricted_last_channel", "user_is_ultra_restricted":
+		return leaveErrText{title: couldnt, body: nsChannels.T("On a guest account, you need to be a member of at least one channel.")}
+	}
+	return leaveErrText{title: couldnt, body: nsChannels.T("Hmm, something went wrong. Try again?"), retry: true}
 }
 
 // Toaster is any host's Toast.
