@@ -319,6 +319,12 @@ func (ds *Downloads) Pause(id string) {
 		ds.stopItem(it, "pause")
 		return
 	case DownloadInterrupted:
+		if it.cancel != nil {
+			// waiting to auto-resume: stop that, as a Pause stops the stream
+			ds.mu.Unlock()
+			ds.stopItem(it, "pause")
+			return
+		}
 		// nothing is running: the item is paused as it stands
 		it.d.State = DownloadPaused
 		notify := ds.changedLocked()
@@ -361,15 +367,17 @@ func (ds *Downloads) Cancel(id string) {
 	ds.stopItem(it, "cancel")
 	ds.mu.Lock()
 	done := it.d.State == DownloadCompleted
+	partial := it.partial
+	ds.mu.Unlock()
+	if partial != "" && !done {
+		os.Remove(partial) // first: once the entry is gone, nothing of it is left
+	}
+	ds.mu.Lock()
 	if ds.items[id] == it && !done {
 		delete(ds.items, id)
 	}
-	partial := it.partial
 	notify := ds.changedLocked()
 	ds.mu.Unlock()
-	if partial != "" && !done {
-		os.Remove(partial)
-	}
 	notify()
 }
 
@@ -499,12 +507,12 @@ func (ds *Downloads) run(it *dlItem, off int64) {
 		why := it.why
 		ds.mu.Unlock()
 		switch {
+		case err == nil:
+			return // complete: a Pause or Cancel that came as it ended is too late
 		case why == "cancel":
 			return // Cancel removes the entry and the partial file
 		case why == "pause":
 			ds.set(it, true, func(d *Download) { d.State = DownloadPaused })
-			return
-		case err == nil:
 			return
 		case again && it.tries < downloadAutoResumes && ctx.Err() == nil:
 			it.tries++
@@ -650,7 +658,7 @@ func (ds *Downloads) attempt(ctx context.Context, it *dlItem, off int64) (again 
 		ds.set(it, true, func(d *Download) { d.State = DownloadInterrupted })
 		return false, err
 	}
-	quarantine(final)
+	MarkDownloaded(final, req.URL)
 	ds.set(it, true, func(d *Download) {
 		d.Path, d.State, d.End = final, DownloadCompleted, time.Now()
 	})
@@ -814,6 +822,23 @@ func responseFileName(resp *http.Response, req DownloadRequest) string {
 	return name
 }
 
+// zoneIdentifier is the Zone.Identifier stream Chromium writes on a
+// download (quarantine_win.cc SetInternetZoneIdentifierDirectly):
+// [ZoneTransfer], ZoneId=3 (the internet), ReferrerUrl when there is one
+// and HostUrl (about:internet when the source is unknown), every line
+// ending CRLF. Slack's downloads have no referrer (a hidden window loads
+// the URL itself).
+func zoneIdentifier(source, referrer string) string {
+	if source == "" {
+		source = "about:internet"
+	}
+	s := "[ZoneTransfer]\r\nZoneId=3\r\n"
+	if referrer != "" {
+		s += "ReferrerUrl=" + referrer + "\r\n"
+	}
+	return s + "HostUrl=" + source + "\r\n"
+}
+
 // DefaultDownloadDir is ~/Downloads (Slack's default
 // PrefSSBFileDownloadPath, app.getPath("downloads")).
 func DefaultDownloadDir() (string, error) {
@@ -838,9 +863,16 @@ func CleanFileName(name string) string {
 		return r
 	}, strings.TrimSpace(name))
 	name = strings.Trim(name, ". ")
-	if len(name) > 200 {
-		name = strings.ToValidUTF8(name[:200], "")
-		name = strings.TrimRight(name, ". ")
+	if len(name) > maxFileName {
+		// TruncateFilename: the stem gives way, the extension stays (room
+		// is left for " (n)" and ".crdownload" under the 255 a path part
+		// may have)
+		ext := nodeExtname(name)
+		if len(ext) > 32 {
+			ext = ""
+		}
+		stem := strings.ToValidUTF8(name[:maxFileName-len(ext)], "")
+		name = strings.TrimRight(stem, ". ") + ext
 	}
 	// Windows device names (CON, NUL, COM1, CONIN$, …) open the device, not
 	// a file, whatever the extension.
@@ -853,9 +885,24 @@ func CleanFileName(name string) string {
 	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
 		name = "_" + name
 	default:
-		if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) && stem[3] >= '0' && stem[3] <= '9' {
+		if p, d, ok := strings.Cut(stem, "COM"); ok && p == "" && isDeviceDigit(d) {
+			name = "_" + name
+		} else if p, d, ok := strings.Cut(stem, "LPT"); ok && p == "" && isDeviceDigit(d) {
 			name = "_" + name
 		}
 	}
 	return name
+}
+
+// maxFileName bounds a cleaned name (bytes).
+const maxFileName = 200
+
+// isDeviceDigit is COMn's and LPTn's n as Windows reads it: 0-9, or the
+// superscript ¹ ² ³ it treats as those devices too.
+func isDeviceDigit(d string) bool {
+	switch d {
+	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "\u00b9", "\u00b2", "\u00b3":
+		return true
+	}
+	return false
 }

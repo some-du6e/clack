@@ -22,7 +22,6 @@ import (
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
-	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -400,7 +399,11 @@ func (v *View) richDoc(d *core.CanvasDoc, b *canvas.Block) (richtext.Doc, bool) 
 		f := &richtext.File{ID: b.FileID, Name: b.Title, Title: b.Title, PrettyType: nsCanvas.T("File")}
 		if cf, ok := d.Files[b.FileID]; ok {
 			f.Name, f.Title, f.Mime, f.PrettyType, f.Permalink = cf.Name, cf.Title, cf.Mime, cf.PrettyType, cf.Permalink
+			f.Type, f.Mode, f.URL, f.Download = cf.Filetype, cf.Mode, cf.URL, cf.Download
 			f.IsImage = cf.IsImage
+			if cf.IsImage && cf.Thumb != "" {
+				f.Thumb = &richtext.Image{URL: cf.Thumb, W: cf.ThumbW, H: cf.ThumbH, Title: cf.Title, Proxy: true}
+			}
 		}
 		return one(richtext.Block{Kind: richtext.FileBlock, File: f})
 	case canvas.Embed:
@@ -931,15 +934,26 @@ func (r *handler) OpenImage(img richtext.Image) {
 	r.v.h.OpenLightbox(img, core.Message{})
 }
 
-// OpenFile is handleFileContainerClick (popups.OpenFileCard): a hosted
-// .exe or zip downloads in the app, never in the browser.
+// OpenFile is a canvas's file card click: Quip's slack object asks for
+// "preview-file" (QuipSlackObjectUIProvider's previewFile_), Slack's
+// previewFile, the file's details flexpane, never a download. An image
+// opens the media viewer as its full-screen view does; Clack has no file
+// details, so any other file opens its page (the permalink), as before.
 func (r *handler) OpenFile(f *richtext.File) {
-	ph, _ := r.v.h.(popups.Host)
-	popups.OpenFileCardWith(f, r.OpenURL, func(f *richtext.File) {
-		if ph != nil {
-			popups.DownloadFile(ph, f)
+	if f == nil {
+		return
+	}
+	if f.IsImage && f.Thumb != nil {
+		img := *f.Thumb
+		if f.URL != "" {
+			img.URL, img.Proxy = f.URL, true
 		}
-	})
+		r.v.h.OpenLightbox(img, core.Message{})
+		return
+	}
+	if f.Permalink != "" {
+		r.OpenURL(f.Permalink)
+	}
 }
 
 func (r *handler) Button(b richtext.Button) {

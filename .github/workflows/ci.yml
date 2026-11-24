@@ -1491,6 +1491,10 @@ jobs:
           name: toast-shots
           path: ${{ runner.temp }}/toast-shots
           if-no-files-found: ignore
+      # downloads' Mark-of-the-Web: the Zone.Identifier stream Chromium
+      # writes on every download, on NTFS (files-download)
+      - name: downloads' Mark-of-the-Web (Zone.Identifier)
+        run: go test -count=1 -v -run 'TestMarkDownloadedWindows|TestZoneIdentifier|TestCleanFileNameLimits' ./internal/core
       # a test binary that printed PASS and still failed crashed as it
       # exited (windows-shell's gioui.org/app, train-161's push ci
       # 45018881337: no panic, no exit status): Windows Error Reporting
@@ -1711,6 +1715,7 @@ jobs:
           go test -count=1 -v -run 'TestUserNotification' ./internal/desktop
           go test -count=1 -v ./internal/applog
           go test -count=1 -v ./internal/ui/menubar
+          go test -count=1 -v -run 'TestMarkDownloadedDarwin' ./internal/core # downloads' quarantine xattr (files-download)
           go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
           # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
           go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit

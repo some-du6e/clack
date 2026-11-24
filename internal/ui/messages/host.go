@@ -456,7 +456,7 @@ func openFileAction(h Host, f *richtext.File) {
 		if ph, ok := h.(popups.Host); ok {
 			downloadFile(ph, f)
 		}
-	})
+	}, nil) // the viewers above had their turn
 }
 
 // OpenAudioClipMenu is the audio player's More actions

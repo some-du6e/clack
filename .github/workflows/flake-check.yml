@@ -6396,9 +6396,10 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -timeout 10m -v -run '^(TestDownload[A-Za-z0-9]*|TestUniqueSavePath)$' ./internal/core || rc=1
-          go test -count=$COUNT -timeout 8m -v -run '^(TestDownloadToast[A-Za-z]*|TestConvertFilesize|TestDownloadLocation)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -timeout 10m -v -run '^(TestDownload[A-Za-z0-9]*|TestUniqueSavePath|TestZoneIdentifier|TestCleanFileNameLimits)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^(TestDownloadToast[A-Za-z]*|TestConvertFilesize|TestDownloadLocation|TestOpenFileCardActions|TestAudioDownloadIsTheUpload)$' ./internal/ui/popups || rc=1
           go test -count=$COUNT -timeout 10m -v -run '^(TestFileClicks|TestFileClicksUnderPatches)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^TestCanvasFileClick$' ./internal/ui/canvasview || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report

@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/gesture"
@@ -139,6 +140,7 @@ type dlToastItem struct {
 	viewAll, showDir  widget.Clickable
 	viewTip           TipState
 	pillowHov, ctlHov bool
+	url               string // the download's URL (Retry asks for it again)
 }
 
 // Rect is the toast as last drawn (window coordinates), empty when
@@ -211,7 +213,7 @@ func (t *DownloadToast) Layout(gtx layout.Context, h Host) layout.Dimensions {
 		}
 		cur, ok := ds.Get(id)
 		if ok {
-			it.file = cur.File
+			it.file, it.url = cur.File, cur.URL
 		}
 		changed := !it.init || ok != it.hadPrev || cur.State != it.prev.State || cur.Received != it.prev.Received
 		if changed {
@@ -320,9 +322,15 @@ func (t *DownloadToast) Layout(gtx layout.Context, h Host) layout.Dimensions {
 	area := clip.Rect(box).Push(gtx.Ops)
 	event.Op(gtx.Ops, &t.tag)
 	area.Pop()
-	// the content's hover (onMouseOver / onMouseOut)
+	// the content's hover (onMouseOver / onMouseOut): its area holds the
+	// items, so the pointer on a pillow or a link is on the content too
 	ca := clip.Rect(image.Rect(0, 0, w, ch)).Push(gtx.Ops)
 	t.hover.Add(gtx.Ops)
+	yy := 0
+	for i, call := range calls {
+		macroAt(gtx, call, image.Pt(0, yy))
+		yy += hs[i]
+	}
 	ca.Pop()
 	hov := t.hover.Update(gtx.Source)
 	if hov != t.hovering {
@@ -331,11 +339,6 @@ func (t *DownloadToast) Layout(gtx layout.Context, h Host) layout.Dimensions {
 			t.hideAt = now.Add(3 * time.Second)
 			gtx.Execute(op.InvalidateCmd{At: t.hideAt})
 		}
-	}
-	yy := 0
-	for i, call := range calls {
-		macroAt(gtx, call, image.Pt(0, yy))
-		yy += hs[i]
 	}
 	// the close button: visible while the toast is hovered (.c-toast:hover
 	// .c-toast__close-button), top-aligned 8px down
@@ -408,10 +411,17 @@ func (t *DownloadToast) item(gtx layout.Context, h Host, it *dlToastItem, id str
 		go ds.Cancel(id)
 	}
 	if it.retry.Clicked(gtx) {
+		// retryDesktopDownload: the same file from the same URL (a list's
+		// export has no url_private_download of its own)
 		it.removeAt = time.Time{}
 		it.canceled, it.retrying = false, true
-		f := it.file
-		StartDownload(h, &f)
+		if it.url != "" {
+			ds.Start(core.DownloadRequest{ID: id, URL: it.url, File: it.file, Dir: downloadDir})
+			ds.AddActive(id)
+		} else {
+			f := it.file
+			StartDownload(h, &f)
+		}
 	}
 	if it.viewAll.Clicked(gtx) {
 		h.ShowOverlay(NewDownloadsModal(h))
@@ -778,7 +788,7 @@ type downloadsModal struct {
 	clear widget.Clickable
 	tip   TipState
 	rows  map[string]*dlModalRow
-	list  widget.List
+	list  layout.List
 }
 
 type dlModalRow struct {
@@ -792,13 +802,22 @@ type dlModalRow struct {
 func NewDownloadsModal(h Host) *Modal {
 	dm := &downloadsModal{h: h, rows: map[string]*dlModalRow{}}
 	dm.list.Axis = layout.Vertical
+	downloadsModals.Add(1)
 	dm.m = NewModal(h, ModalOpts{
-		Title: nsPageClient.T("Downloads"),
-		Body:  dm.body,
-		Over:  dm.over,
+		Title:   nsPageClient.T("Downloads"),
+		Body:    dm.body,
+		Over:    dm.over,
+		OnClose: func() { downloadsModals.Add(-1) },
 	})
 	return dm.m
 }
+
+// downloadsModals counts the open Downloads modals (DownloadsShown).
+var downloadsModals atomic.Int32
+
+// DownloadsShown reports whether a Downloads modal is open: the ui root
+// redraws for the downloads' progress only while it or the toast shows.
+func DownloadsShown() bool { return downloadsModals.Load() > 0 }
 
 // over draws the title's Clear downloads button (IconButton "clear", a
 // tooltip on top, a 1px line 12px to its right) left of the close button.
@@ -891,12 +910,16 @@ func (dm *downloadsModal) body(gtx layout.Context) layout.Dimensions {
 	if total+dp(gtx, 20) < hh {
 		hh = total + dp(gtx, 20) // onListHeightChange: the list's height + 20
 	}
-	defer clip.Rect{Max: image.Pt(w, hh)}.Push(gtx.Ops).Pop()
-	y := dp(gtx, 5)
-	for i, call := range calls {
-		macroAt(gtx, call, image.Pt(dp(gtx, 13), y))
-		y += hs[i]
-	}
+	// DownloadsList is a virtual list: past 424px it scrolls
+	lg := exact(gtx, image.Pt(w, hh))
+	inset := dp(gtx, 5)
+	dm.list.Layout(lg, len(calls)+1, func(gtx layout.Context, i int) layout.Dimensions {
+		if i == 0 {
+			return layout.Dimensions{Size: image.Pt(w, inset)} // margin-top 5
+		}
+		macroAt(gtx, calls[i-1], image.Pt(dp(gtx, 13), 0))
+		return layout.Dimensions{Size: image.Pt(w, hs[i-1])}
+	})
 	return layout.Dimensions{Size: image.Pt(w, hh)}
 }
 

@@ -1052,6 +1052,7 @@ func lbSaveIn(dir, name, src string, data []byte) (string, error) {
 		if err := f.Close(); err != nil {
 			return "", err
 		}
+		core.MarkDownloaded(p, src) // as Chromium marks every download (Windows' Mark-of-the-Web, macOS' quarantine)
 		return p, nil
 	}
 	return "", errors.New("no free file name")

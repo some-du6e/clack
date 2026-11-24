@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// quarantine is the desktop app's quarantine of a completed download on
-// macOS (main.bundle.cjs f1): xattr -w com.apple.quarantine
+// MarkDownloaded is the desktop app's quarantine of a completed download
+// on macOS (main.bundle.cjs f1): xattr -w com.apple.quarantine
 // "0002;<seconds in hex>;<app name>;<UUID>", so Gatekeeper asks before
 // an app or script from Slack first runs. A failure is only logged by
-// Slack; here it's dropped.
-func quarantine(path string) {
+// Slack; here it's dropped. (Windows: download_quarantine_windows.go.)
+func MarkDownloaded(path, _ string) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return
