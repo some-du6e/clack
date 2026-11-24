@@ -185,6 +185,7 @@ type Content struct {
 	HorizontalRule   *HorizontalRule   `pb:"43"`
 	SlackUser        *SlackUser        `pb:"44"`
 	SlackEmoji       *SlackEmoji       `pb:"48"`
+	LinkUnfurl       *LinkUnfurlCard   `pb:"50"` // a link card (TypeLinkUnfurlCard, linkcard.go)
 	Title            *ContentTitle     `pb:"58"`
 	SlackDate        *SlackDate        `pb:"62"`
 	LayoutBlockquote *LayoutBlockquote `pb:"65"`

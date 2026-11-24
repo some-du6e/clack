@@ -163,12 +163,15 @@ func (p *parser) block(c *html.Node, depth int) []Block {
 		case hasClass(c, "prettyprint"):
 			return []Block{{ID: id, Kind: Code, Code: rawText(c, depth)}}
 		case hasClass(c, "embedded-link"):
-			t := strings.TrimSpace(rawText(c, depth))
+			// a link card: Quip's export holds only its placeholder,
+			// "Link URL: <url>" (no id, no anchor); the card is drawn
+			// from Quip's model (canvasview linkcard.go), never this text
 			u := firstLink(c, depth)
 			if u == "" {
-				u = t
+				t := strings.TrimSpace(rawText(c, depth))
+				u = strings.TrimSpace(strings.TrimPrefix(t, embedLinkLabel))
 			}
-			return []Block{{ID: id, Kind: Embed, URL: safeURL(u), Title: t}}
+			return []Block{{ID: id, Kind: Embed, URL: safeURL(u)}}
 		case hasClass(c, "embedded-file"):
 			t := strings.TrimSpace(rawText(c, depth))
 			return []Block{{ID: id, Kind: File, Title: t, FileID: fileIDIn(c, depth)}}
@@ -409,6 +412,10 @@ func (p *parser) img(n *html.Node) *Img {
 func firstImg(n *html.Node, depth int) *html.Node {
 	return findAtom(n, atom.Img, depth)
 }
+
+// embedLinkLabel is the placeholder Quip's server writes into the export
+// for a link card ahead of its URL (no chunk of Slack's client has it).
+const embedLinkLabel = "Link URL:"
 
 func firstLink(n *html.Node, depth int) string {
 	if depth > maxDepth {

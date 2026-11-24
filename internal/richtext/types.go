@@ -445,6 +445,12 @@ type Attachment struct {
 	BotName      string
 	LinkedInText bool
 	Hidden       bool
+	// HideBorder is MessageAttachment's hideBorder (a canvas link card's
+	// EmbeddedFallbackUnfurl): no colour bar. NoMaxWidth is its
+	// unsetWidthStyle (.p-embedded_fallback_unfurl .c-message_attachment
+	// {max-width:none}): the card's width, not the 600px cap.
+	HideBorder bool
+	NoMaxWidth bool
 	// Kit: the attachment has Block Kit blocks (Slack draws it as
 	// MessageAttachmentDefaultV2: the color bar and the blocks only);
 	// they are Text[KitFrom:].

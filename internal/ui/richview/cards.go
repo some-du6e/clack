@@ -123,7 +123,7 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	}
 	p := &l.st.Palette
 	y0 := y
-	if w > l.dp(600) {
+	if w > l.dp(600) && !a.NoMaxWidth {
 		w = l.dp(600)
 	}
 	if len(a.Pretext) > 0 {
@@ -138,6 +138,9 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	bar := l.dp(4)
 	bi := len(l.d.boxes)
 	barCol := parseColor(a.Color, p.Placeholder)
+	if a.HideBorder { // renderV1Attachment: no jC.A border element (its body keeps its 12px padding)
+		bar, barCol.A = 0, 0
+	}
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: barCol, radius: l.dp(8), target: -1})
 	cx := x + bar + l.dp(12)
 	cw := x + w - cx
