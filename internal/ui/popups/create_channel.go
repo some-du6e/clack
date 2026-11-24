@@ -14,7 +14,6 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/widget"
-	"github.com/some-du6e/clack/internal/i18n"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -619,10 +618,13 @@ func (p *AddPeopleModal) Add() {
 	}, func(_ struct{}, err error) {
 		p.adding = false
 		if err != nil {
-			// the add people modal's SUBMIT_ERROR fallback, the modal kept
-			// open (its getInviteErrorMessage table isn't ported)
+			// the add people modal's SUBMIT_ERROR, the modal kept open
 			log.Printf("popups: conversations.invite: %v", err)
-			p.h.Toast(i18n.T("channel_invite", "Couldn’t add {erroredCount, plural, =1 {# person} other {# people}} to the channel. Please try again.", "erroredCount", len(ids)))
+			team := ""
+			if a := p.h.Core(); a != nil {
+				team = a.SlackConnectTeamName()
+			}
+			p.h.Toast(InviteFailedText(APICode(err), len(ids), team))
 			return
 		}
 		p.modal.Dismiss()

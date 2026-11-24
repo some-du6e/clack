@@ -85,3 +85,25 @@ func TestFailedToast(t *testing.T) {
 		t.Errorf("toasts %q", r.got)
 	}
 }
+
+// The add people modal's SUBMIT_ERROR: getInviteErrorText's words for a
+// code it knows, plural by the invitees that failed, else its fallback.
+func TestInviteFailedText(t *testing.T) {
+	for _, c := range []struct {
+		code string
+		n    int
+		want string
+	}{
+		{"already_in_channel", 1, "User is already in this channel."},
+		{"already_in_channel", 3, "Users are already in this channel."},
+		{"user_is_restricted", 1, "User is a Multi-Channel Guest. Only your Workspace Admin can add them to a channel."},
+		{"restricted_action", 1, "Your organization’s settings prevent you from using Slack Connect to invite people outside of Fake Club."},
+		{"too_many_members", 2, "This channel is only allowed a certain number of members, so you can’t add more people right now. Reach out to your admins if you have questions."},
+		{"ratelimited", 1, "Couldn’t add 1 person to the channel. Please try again."},
+		{"", 4, "Couldn’t add 4 people to the channel. Please try again."},
+	} {
+		if got := InviteFailedText(c.code, c.n, "Fake Club"); got != c.want {
+			t.Errorf("%q ×%d: %q, want %q", c.code, c.n, got, c.want)
+		}
+	}
+}

@@ -33,7 +33,6 @@ import (
 	"github.com/go-text/typesetting/segmenter"
 
 	"github.com/some-du6e/clack/internal/core"
-	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
@@ -2768,10 +2767,13 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 			uid := d.inviteUser
 			d.inviteUser = ""
 			if err != nil {
-				// the add people modal's SUBMIT_ERROR fallback (its
-				// getInviteErrorMessage table isn't ported)
+				// the add people modal's SUBMIT_ERROR (getInviteErrorText)
 				log.Printf("views: conversations.invite %s: %v", uid, err)
-				d.h.Toast(i18n.T("channel_invite", "Couldn’t add {erroredCount, plural, =1 {# person} other {# people}} to the channel. Please try again.", "erroredCount", 1))
+				team := ""
+				if c := d.h.Core(); c != nil {
+					team = c.SlackConnectTeamName()
+				}
+				d.h.Toast(popups.InviteFailedText(popups.APICode(err), 1, team))
 			} else {
 				d.added[uid] = true
 				d.h.Toast("Added " + d.userName(uid) + " to #" + inf.Conv.Name)
