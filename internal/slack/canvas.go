@@ -87,6 +87,10 @@ type CanvasField struct{ Name, Value string }
 // canvasAnswer receives a canvas call's binary answer in doPost.
 type canvasAnswer struct{ b []byte }
 
+// MaxCanvasAnswer is the most of a canvas answer doPost reads: quip's
+// decoder refuses anything longer (quip.MaxMessage).
+const MaxCanvasAnswer = 16 << 20
+
 // CanvasMethod is a canvas path's name in Clack's logs, the backoff and
 // Client.Allow: "canvas/load-data".
 func CanvasMethod(path string) string { return "canvas/" + path }

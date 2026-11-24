@@ -19,6 +19,14 @@ import (
 // edMaxIndent is the deepest list nesting level (0-based).
 const edMaxIndent = 5
 
+// maxIndent is the deepest list level this editor makes (Editor.MaxIndent).
+func (e *Editor) maxIndent() int {
+	if e.MaxIndent > 0 {
+		return min(e.MaxIndent, edMaxIndent)
+	}
+	return edMaxIndent
+}
+
 // keyFilters lists every key the editor handles. Shift+7/8/9 arrive as
 // "&", "*", "(" on X11 (the keysym of the shifted key) but as "7", "8",
 // "9" with ModShift elsewhere, so both are registered.
@@ -596,7 +604,7 @@ func (e *Editor) tab(shift bool) {
 			if shift {
 				d.Lines[i].Indent = max(d.Lines[i].Indent-1, 0)
 			} else {
-				d.Lines[i].Indent = min(d.Lines[i].Indent+1, edMaxIndent)
+				d.Lines[i].Indent = min(d.Lines[i].Indent+1, e.maxIndent())
 			}
 		}
 		e.commit()
