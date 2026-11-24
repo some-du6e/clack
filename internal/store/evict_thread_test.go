@@ -41,7 +41,10 @@ func TestEvictKeepsThreadSlice(t *testing.T) {
 	if len(sl.TSs) != 7 {
 		t.Fatalf("control: before the eviction the slice lists %v", sl.TSs)
 	}
-	in := evictInput(now, map[string]string{"C1": fmt.Sprintf("%d.000100", base), ch: ts(9)})
+	// the channel's own window isn't read past its root, so it keeps it
+	// (a timeline that loses every message starts over with its threads:
+	// not Karim's case, whose #help window held more)
+	in := evictInput(now, map[string]string{"C1": fmt.Sprintf("%d.000100", base), ch: "0000000000.000000"})
 	if out := s.EvictMessages(in); out == nil {
 		t.Fatal("control: nothing was evicted")
 	}
@@ -52,8 +55,8 @@ func TestEvictKeepsThreadSlice(t *testing.T) {
 	if len(sl.TSs) != 7 {
 		t.Errorf("after the eviction the slice lists %v, want all 7 timestamps (Slack's thread history keeps them)", sl.TSs)
 	}
-	if got := s.ThreadSliceMissing(ch, root, sl); len(got) != 5 {
-		t.Errorf("missing %v, want the root and the 4 evicted replies", got)
+	if got := s.ThreadSliceMissing(ch, root, sl); len(got) != 4 {
+		t.Errorf("missing %v, want the 4 evicted replies (the root is the channel window's)", got)
 	}
 	if got := s.ThreadSliceMsgs(ch, root, sl); len(got) != 2 || !got[0].IsEphemeral {
 		t.Errorf("the slice's held messages are %d, want the 2 ephemerals", len(got))

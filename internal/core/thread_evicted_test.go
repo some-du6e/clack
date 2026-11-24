@@ -56,9 +56,16 @@ func TestThreadAfterEvictionLikeSlack(t *testing.T) {
 	}
 	a.S.SetLatest("C0FILLER01", big, true)
 	out := a.S.EvictMessages(store.EvictInput{Now: time.Now(), Accessed: map[string]time.Time{}, Keep: map[string]bool{}, Pending: map[string]bool{},
-		Conv:     func(string) (bool, bool) { return true, true },
-		WholeOK:  func(string) bool { return false },
-		LastRead: func(string) string { return fmt.Sprintf("%d.000100", time.Now().Unix()) },
+		Conv:    func(string) (bool, bool) { return true, true },
+		WholeOK: func(string) bool { return false },
+		// the thread's channel's window isn't read: it keeps its messages
+		// (a timeline that loses every one starts over with its threads)
+		LastRead: func(c string) string {
+			if c == ch {
+				return "0000000000.000000"
+			}
+			return fmt.Sprintf("%d.000100", time.Now().Unix())
+		},
 	})
 	if out == nil {
 		t.Fatal("control: nothing was evicted")
