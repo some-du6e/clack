@@ -620,6 +620,12 @@ func (e *Editor) command(gtx layout.Context, k key.Event) (EditorEvent, bool) {
 			}
 		// Copy or Cut selection -- ignored if nothing selected.
 		case "C", "X":
+			// Clack patch 67: a masked Editor is a password field, which
+			// Chromium copies and cuts nothing from (Editor::CanCopy and
+			// CanCut are false there)
+			if e.Mask != 0 {
+				break
+			}
 			e.scratch = e.text.SelectedText(e.scratch)
 			if text := string(e.scratch); text != "" {
 				gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(text))})
@@ -784,6 +790,12 @@ func (e *Editor) updateIMEState(gtx layout.Context) {
 	}
 }
 
+// MaskedFocus, when set, is called from the Layout of a masked Editor
+// (Mask != 0: a password field) that has the key focus, on the frame's
+// goroutine. The program greys its Edit menu's Cut and Copy then, as
+// Chromium's are in a password field (Clack patch 67).
+var MaskedFocus func()
+
 // Layout lays out the editor using the provided textMaterial as the paint material
 // for the text glyphs+caret and the selectMaterial as the paint material for the
 // selection rectangle.
@@ -793,6 +805,9 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper, font font.Font, siz
 		if !ok {
 			break
 		}
+	}
+	if e.Mask != 0 && MaskedFocus != nil && gtx.Source.Focused(e) {
+		MaskedFocus() // Clack patch 67
 	}
 
 	e.text.Layout(gtx, lt, font, size)

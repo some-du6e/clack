@@ -923,6 +923,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.syncWheelAnimation()
 	a.syncThemeTokens()
 	a.focusFadeFrame(gtx) // focus mode's view transition (focus_fade.go)
+	maskedFocusLast, maskedFocusSeen = maskedFocusSeen, false
 	a.syncMenuBar()
 	a.dropZonesReset() // the panes that take OS file drops register as they lay out
 

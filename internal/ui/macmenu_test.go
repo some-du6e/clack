@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"gioui.org/io/key"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -418,5 +419,33 @@ func TestMacMenuFileItems(t *testing.T) {
 	st = a.menuState(a.menuKeyNow())
 	if st.Hidden[menuNewCanvas] || !st.Hidden[menuInvitePeople] || !st.Hidden[menuInviteSep] {
 		t.Errorf("invites_only_admins: hidden %v", st.Hidden)
+	}
+}
+
+// A password field with the key focus greys Edit's Cut and Copy, as
+// Chromium's Edit menu does (it copies and cuts nothing from one, Gio patch
+// 67), signed in or on the sign-in screen (its link field is masked);
+// Paste stays. The focus comes from widget.MaskedFocus, which a masked
+// Editor calls as it lays out: the frame shows the last one's.
+func TestMenuStateMaskedFocus(t *testing.T) {
+	a := &App{}
+	for _, k := range []menuKey{{maskedFocus: true}, {signedIn: true, maskedFocus: true}} {
+		s := a.menuState(k)
+		if !s.Disabled["menuitem-cut"] || !s.Disabled["menuitem-copy"] || s.Disabled["menuitem-paste"] {
+			t.Errorf("signed in %v: Cut %v Copy %v Paste %v greyed, want Cut and Copy only",
+				k.signedIn, s.Disabled["menuitem-cut"], s.Disabled["menuitem-copy"], s.Disabled["menuitem-paste"])
+		}
+	}
+	if s := a.menuState(menuKey{signedIn: true}); s.Disabled["menuitem-cut"] || s.Disabled["menuitem-copy"] {
+		t.Errorf("no password field focused: Cut %v Copy %v greyed", s.Disabled["menuitem-cut"], s.Disabled["menuitem-copy"])
+	}
+	maskedFocusSeen, maskedFocusLast = false, false
+	t.Cleanup(func() { maskedFocusSeen, maskedFocusLast = false, false })
+	if widget.MaskedFocus == nil {
+		t.Fatal("widget.MaskedFocus isn't set")
+	}
+	widget.MaskedFocus()
+	if !maskedFocusSeen {
+		t.Error("widget.MaskedFocus didn't note the focus")
 	}
 }
