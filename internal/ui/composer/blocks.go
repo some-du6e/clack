@@ -1056,6 +1056,7 @@ func DocFromRichtext(blocks []richtext.Block) *Doc {
 // rtSpans writes one block of spans starting on a new line of format l.
 // plain drops styles, links and atoms (code blocks).
 func (b *rtBuilder) rtSpans(l Line, spans []richtext.Span, plain bool) {
+	spans = richtext.Expand(spans) // a raw span's lines (richtext/rawtext.go)
 	nl := 0
 	only := len(spans) > 0
 	for _, s := range spans {

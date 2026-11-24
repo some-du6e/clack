@@ -1,6 +1,7 @@
 package taut
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"hash/fnv"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
 
@@ -576,8 +578,10 @@ func (m *mirror) onEvent(ev core.Event) {
 		if ev.Type == "message" && ev.Msg != nil && ev.Msg.User != "" {
 			m.stopTyping(ev.Channel, ev.Msg.ThreadTS, ev.Msg.User)
 		}
-	case "evicted":
-		// core trimmed the conversation to Slack's message cache budget
+	case "evicted", "history_changed":
+		// history_changed: Slack rewrote the conversation's history
+		// (core/history_changed.go), and core let go of what it cached
+		// before the change; evicted: core trimmed the conversation to Slack's message cache budget
 		// (core/evict.go): the JS side drops what it cached of it, as
 		// Slack's store drops the evicted messages, and so do the UI's
 		// patched views of them (the pass never trims what's on screen)
@@ -846,14 +850,20 @@ func (m *mirror) keys(slice string) []string {
 		}
 		return out
 	case "reactions":
-		// Slack's reactions slice: _rxn_key → the message's reactions
+		// Slack's reactions slice: _rxn_key → the message's reactions;
+		// the store's messages read in place, as bucket would list them
+		// (the timeline's copy first), not each channel's converted
 		var out []string
 		for _, ch := range m.messageChannels() {
-			for ts, msg := range m.bucket(ch) {
-				if mm, ok := msg.(map[string]any); ok && mm["reactions"] != nil {
-					out = append(out, "message-"+ts+"-"+ch)
+			seen := map[string]bool{}
+			a.S.VisitMessages(ch, func(string) {}, func(sm *slack.Message) {
+				if !seen[sm.TS] {
+					seen[sm.TS] = true
+					if len(sm.Reactions) > 0 {
+						out = append(out, "message-"+sm.TS+"-"+ch)
+					}
 				}
-			}
+			})
 		}
 		sort.Strings(out)
 		return out
@@ -911,7 +921,7 @@ func (m *mirror) get(slice, key string) any {
 		m.watch("members", key, m.memberFP(key))
 		return m.member(u)
 	case "messages":
-		b := m.bucket(key)
+		b := m.bucketJSON(key)
 		m.watch("messages", key, m.messagesFP(key))
 		if b == nil {
 			return nil
@@ -923,11 +933,15 @@ func (m *mirror) get(slice, key string) any {
 		if !ok || i < 0 {
 			return nil
 		}
-		msg, _ := m.bucket(rest[i+1:])[rest[:i]].(map[string]any)
-		if msg == nil || msg["reactions"] == nil {
+		// the one message, not its channel's bucket, with bucket's
+		// precedence: the timeline, windows, threads, then the messages
+		// fetched by id (Activity, Saved, the Threads view), which
+		// keys("reactions") lists too and Find leaves out
+		sm, ok := a.S.FindHeld(rest[i+1:], rest[:i])
+		if !ok || len(sm.Reactions) == 0 {
 			return nil
 		}
-		return msg["reactions"]
+		return messageJSON(rest[i+1:], &sm)["reactions"]
 	case "bots":
 		bi, ok := a.S.Bot(key)
 		if !ok {
@@ -1283,9 +1297,19 @@ func (m *mirror) member(u *slack.User) map[string]any {
 	return e
 }
 
-// messageJSON is a stored message as Slack's store keeps it.
+// messageJSON is a stored message as Slack's store keeps it. Its text
+// and blocks go as the store holds them, the text the store's string and
+// the blocks Slack's own JSON, not through toMap's encode and decode: a
+// message of 908,000 characters made 6 MB of garbage each time a plugin
+// read its channel.
 func messageJSON(ch string, sm *slack.Message) map[string]any {
-	e := toMap(sm)
+	small := *sm
+	small.Text, small.Blocks = "", nil
+	e := toMap(&small)
+	e["text"] = sm.Text
+	if len(sm.Blocks) > 0 {
+		e["blocks"] = sm.Blocks
+	}
 	// attachments exactly as Slack sent them (the typed ones drop fields
 	// and add zero values); blocks, metadata and bot_profile are already
 	// Slack's own JSON
@@ -1430,6 +1454,161 @@ func (m *mirror) bucket(ch string) map[string]any {
 		}
 	}
 	return out
+}
+
+// bucketJSON is bucket as the JSON the host hands JS: the same messages
+// in the same order of precedence, each one's text and blocks written
+// into the output as they are rather than through encoding/json, which
+// copies a map's strings through its reflection and re-validates every
+// RawMessage (a 908,000-character message's text and blocks are 1.9 MB:
+// a channel of them made gigabytes of garbage a read). nil when the
+// channel holds no messages.
+func (m *mirror) bucketJSON(ch string) json.RawMessage {
+	a := m.t.app
+	tl := a.S.Timeline(ch)
+	wins := a.S.WindowsIn(ch)
+	threads := a.S.ThreadsIn(ch)
+	fetched := a.S.FetchedIn(ch)
+	if tl == nil && len(wins) == 0 && len(threads) == 0 && len(fetched) == 0 {
+		return nil
+	}
+	var all []*slack.Message
+	seen := map[string]bool{}
+	add := func(sm *slack.Message) {
+		if !seen[sm.TS] {
+			seen[sm.TS] = true
+			all = append(all, sm)
+		}
+	}
+	if tl != nil {
+		for i := range tl.Msgs {
+			add(&tl.Msgs[i])
+		}
+	}
+	for _, w := range wins {
+		for i := range w.Msgs {
+			add(&w.Msgs[i])
+		}
+	}
+	for _, msgs := range threads {
+		for i := range msgs {
+			add(&msgs[i])
+		}
+	}
+	for i := range fetched { // a window's or a thread's copy wins
+		add(&fetched[i])
+	}
+	// each message's JSON is encoding/json's of its map, keys sorted,
+	// with its text and blocks written in their places: marshalled with a
+	// sentinel for each, then the sentinel's bytes swapped for them
+	type part struct {
+		ts     string
+		small  []byte // the message, sentinels for its text and blocks
+		text   string
+		blocks json.RawMessage
+	}
+	parts := make([]part, 0, len(all))
+	n := 2
+	for _, sm := range all {
+		e := messageJSON(ch, sm)
+		text, _ := e["text"].(string)
+		blocks, _ := e["blocks"].(json.RawMessage)
+		e["text"] = bucketTextMark
+		if len(blocks) > 0 {
+			e["blocks"] = bucketBlocksMark
+		} else {
+			delete(e, "blocks")
+		}
+		small, err := json.Marshal(e)
+		if err != nil || len(small) < 2 {
+			continue
+		}
+		parts = append(parts, part{ts: sm.TS, small: small, text: text, blocks: blocks})
+		n += len(sm.TS) + len(small) + len(text) + len(text)/8 + len(blocks) + 32
+	}
+	// the messages in ts order, as encoding/json writes a map's keys (the
+	// order JS's Object.keys sees them)
+	sort.Slice(parts, func(i, j int) bool { return parts[i].ts < parts[j].ts })
+	out := make([]byte, 0, n)
+	out = append(out, '{')
+	for i, p := range parts {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = appendJSONString(out, p.ts)
+		out = append(out, ':')
+		rest := p.small
+		for len(rest) > 0 {
+			ti, bi := bytes.Index(rest, bucketTextMark), bytes.Index(rest, bucketBlocksMark)
+			switch {
+			case ti >= 0 && (bi < 0 || ti < bi):
+				out = append(out, rest[:ti]...)
+				out = appendJSONString(out, p.text)
+				rest = rest[ti+len(bucketTextMark):]
+			case bi >= 0:
+				out = append(out, rest[:bi]...)
+				out = append(out, p.blocks...) // the store's blocks: Slack's JSON, decoded once already
+				rest = rest[bi+len(bucketBlocksMark):]
+			default:
+				out = append(out, rest...)
+				rest = nil
+			}
+		}
+	}
+	out = append(out, '}')
+	return out
+}
+
+// bucketTextMark and bucketBlocksMark stand for a message's text and
+// blocks while bucketJSON marshals the rest of it (strings no message
+// holds: a NUL each side).
+var (
+	bucketTextMark   = json.RawMessage(`"\u0000clack-bucket-text\u0000"`)
+	bucketBlocksMark = json.RawMessage(`"\u0000clack-bucket-blocks\u0000"`)
+)
+
+// appendJSONString appends s as a JSON string: quote, backslash and
+// control characters escaped, invalid UTF-8 as U+FFFD (encoding/json's
+// rules, without its HTML escapes, which JSON.parse doesn't need).
+func appendJSONString(b []byte, s string) []byte {
+	const hex = "0123456789abcdef"
+	b = append(b, '"')
+	start := 0
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c < utf8.RuneSelf {
+			if c >= 0x20 && c != '"' && c != '\\' {
+				i++
+				continue
+			}
+			b = append(b, s[start:i]...)
+			switch c {
+			case '"', '\\':
+				b = append(b, '\\', c)
+			case '\n':
+				b = append(b, '\\', 'n')
+			case '\r':
+				b = append(b, '\\', 'r')
+			case '\t':
+				b = append(b, '\\', 't')
+			default:
+				b = append(b, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xf])
+			}
+			i++
+			start = i
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			b = append(b, s[start:i]...)
+			b = append(b, `\ufffd`...)
+			i += size
+			start = i
+			continue
+		}
+		i += size
+	}
+	return append(append(b, s[start:]...), '"')
 }
 
 // history is channelHistory[ch] or channelHistory[ch-threadTs].

@@ -178,12 +178,14 @@ func TestUnifiedPlugins(t *testing.T) {
 }
 
 // A plugin both systems have under one name is one Browse row with both
-// tags; Install asks which system while both run and neither has it.
+// tags; while both run and neither has it, Install installs the better
+// version (installPick: Clear URLs' Taut version works fully, Slick's
+// partly) and its chevron offers both.
 func TestLibraryGroups(t *testing.T) {
 	a, _ := ttApp(t, t.TempDir())
 	ix := &pluginlib.Index{Schema: 1, Plugins: []pluginlib.Entry{
 		{System: pluginlib.Taut, ID: "ClearURLs", Name: "Clear URLs", Category: "messageBox", File: pluginlib.File{SHA256: "x"}},
-		{System: pluginlib.Slick, ID: "clearUrls", Name: "ClearURLs", Category: "privacy", File: pluginlib.File{SHA256: "x"}},
+		{System: pluginlib.Slick, ID: "ClearURLs", Name: "ClearURLs", Category: "privacy", File: pluginlib.File{SHA256: "x"}},
 		{System: pluginlib.Slick, ID: "oneko", Name: "Oneko", Category: "appearance", File: pluginlib.File{SHA256: "x"}},
 		{System: pluginlib.Taut, ID: "Oneko", Name: "oneko", Category: "fun", File: pluginlib.File{SHA256: "x"}},
 		{System: pluginlib.Taut, ID: "Solo", Name: "Solo", Category: "people", File: pluginlib.File{SHA256: "x"}},
@@ -229,8 +231,11 @@ func TestLibraryGroups(t *testing.T) {
 		t.Errorf("chips %v", counts)
 	}
 	clear := gs[0]
-	if act := v.action(clear); act.label != "Install…" {
-		t.Errorf("both running, neither installed: %q", act.label)
+	if act := v.action(clear); act.label != "Install" || act.menu == nil {
+		t.Errorf("both running, neither installed: %q (menu %v), want Install with its chevron", act.label, act.menu != nil)
+	}
+	if w, _ := v.installPick(v.installChoices(clear)); w.System != pluginlib.Taut {
+		t.Errorf("Install adds %s's Clear URLs, want Taut's", w.System)
 	}
 	if n := len(v.installChoices(clear)); n != 2 {
 		t.Errorf("%d install choices", n)
@@ -243,7 +248,7 @@ func TestLibraryGroups(t *testing.T) {
 		t.Errorf("Slick not running: %q", act.label)
 	}
 	running[pluginlib.Slick] = true
-	installed["slick/clearUrls"] = true
+	installed["slick/ClearURLs"] = true
 	if act := v.action(clear); act.label != "Settings" {
 		t.Errorf("installed in Slick: %q", act.label)
 	}

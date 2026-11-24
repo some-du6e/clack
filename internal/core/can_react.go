@@ -27,7 +27,7 @@ import "strings"
 
 // CanAddReaction is canAddReaction for m.
 func (a *App) CanAddReaction(m *Message) bool {
-	if m == nil || !reactionActionable(m) || m.Subtype == "file_comment" {
+	if m == nil || !a.Actionable(m) || m.Subtype == "file_comment" {
 		return false
 	}
 	if strings.HasPrefix(m.Channel, "C") {
@@ -39,13 +39,4 @@ func (a *App) CanAddReaction(m *Message) bool {
 		return false
 	}
 	return m.ThreadTS == "" || !a.ThreadLocked(m.Channel, m.ThreadTS)
-}
-
-// reactionActionable is isActionable as a message's reactions read it.
-func reactionActionable(m *Message) bool {
-	switch m.Subtype {
-	case "ekm_access_denied", "dlp_tombstone", "dsa_restricted", "retention_threshold", "tombstone", "moderated", "thread_hidden":
-		return false
-	}
-	return !m.Tombstone && !m.Ephemeral && !m.Pending && !m.Failed && m.TS != ""
 }

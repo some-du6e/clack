@@ -157,7 +157,11 @@ func benchStart(t *testing.T, fs *fakeslack.Server) *benchEnv {
 	if installHooks != nil {
 		installHooks(pe.a)
 	}
-	e := &benchEnv{perfEnv: pe, t: t, fs: fs, c: fs.Bench(), trees: map[uint64][]byte{}, styles: map[string]string{}, nextRoot: 1 << 40}
+	var c fakeslack.BenchCase
+	if !fs.IsRemote() { // a remote fake's fixture is in its own process (the giant messages test's)
+		c = fs.Bench()
+	}
+	e := &benchEnv{perfEnv: pe, t: t, fs: fs, c: c, trees: map[uint64][]byte{}, styles: map[string]string{}, nextRoot: 1 << 40}
 	deliverTap = e.record
 	styleTap = func(k, css string) {
 		e.mu.Lock()
@@ -1184,7 +1188,7 @@ func TestPluginBench(t *testing.T) {
 			}
 			p := pluginbench.Plugin{Name: name, Notes: sc.notes}
 			if len(sc.checks) == 0 { // costs only: nothing tells a version that does nothing from one that works
-				p.Notes = strings.TrimSpace(p.Notes + " No behaviour check yet: load, cost and idle only, so the Library recommends neither version (Install asks which).")
+				p.Notes = strings.TrimSpace(p.Notes + " No behaviour check yet: load, cost and idle only. The Library goes by how each version works in Clack (compat.go) first, then these costs.")
 			}
 			var imgs []*image.RGBA
 			for _, e := range g.Entries {
