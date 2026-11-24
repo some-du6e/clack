@@ -60,6 +60,11 @@ func cardTextOf(c *linkCard) string {
 			out = append(out, rv.TextRange(0, rv.PlainLen()))
 		}
 	}
+	for _, s := range []string{c.cv.title, c.cv.subtitle} { // NoAccessCanvas's, drawn as theme text
+		if s != "" {
+			out = append(out, s)
+		}
+	}
 	return strings.Join(out, "\n")
 }
 
@@ -73,7 +78,10 @@ func cardState(v *View) (kind string, size image.Point, borderless bool) {
 	}
 	c := b.card
 	kind = map[cardKind]string{cardEmpty: "empty", cardLoading: "loading", cardFallback: "fallback", cardPublic: "public",
-		cardPublicLoading: "public-loading", cardWorkObject: "work-object"}[c.kind]
+		cardPublicLoading: "public-loading", cardWorkObject: "work-object", cardMessage: "message", cardMessageLoading: "message-loading",
+		cardMember: "member", cardMemberLoading: "member-loading", cardFileLoading: "file-loading", cardFileImage: "file-image",
+		cardFileVideo: "file-video", cardFileAudio: "file-audio", cardFileGeneric: "file-generic", cardCanvasShown: "canvas",
+		cardCanvasNoAccess: "canvas-no-access"}[c.kind]
 	if c.kind == cardFallback && c.body != nil {
 		att := c.body.Doc().Blocks[0].Att
 		borderless = att != nil && att.HideBorder && att.NoMaxWidth
@@ -103,4 +111,12 @@ func titleHot(v *View) bool {
 // while hovered.
 func titleLinkColours(v *View) (rest, hot color.NRGBA) {
 	return v.styles.cardTitle.Palette.Link, v.styles.cardTitleHot.Palette.Link
+}
+
+// memberShown is the member the first card draws ("" with none).
+func memberShown(v *View) string {
+	if b := embedBlk(v); b != nil && b.card.mb.known {
+		return b.card.mb.u.ID
+	}
+	return ""
 }

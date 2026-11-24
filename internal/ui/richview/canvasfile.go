@@ -31,6 +31,9 @@ import (
 //     pointer events (:not(.allow-pointer-events)): a click anywhere opens
 //     the canvas.
 func (l *lay) canvasFile(f *richtext.File, x, y, w int) int {
+	if f.Embedded {
+		return l.embeddedCanvas(f, x, y, w)
+	}
 	p := &l.st.Palette
 	cw := min(w, l.dp(594))
 	pad := l.dp(12)
@@ -66,6 +69,88 @@ func (l *lay) canvasFile(f *richtext.File, x, y, w int) int {
 	}
 	l.pillowBar(f, image.Rect(x, y, x+cw, y+h)) // FileActions (file_actions.go)
 	return h
+}
+
+// embeddedCanvas is a canvas link card's canvas (EmbeddedCanvasUnfurl):
+// the column's full width in a box max(w·400/799, 235) tall that clips
+// what's under it; the entity row padded 12 (the canvas tile, 12 from the
+// title in 15px bold and "Canvas" in 13px), then FileQuip's preview with
+// no height of its own (a 1px foreground_low .13 rule, padding 12 12 0,
+// blocks 12 apart, headers by level: 22px, 18px, else 15px, all Black),
+// and over the box's bottom quarter a fade into the background. The frame
+// is the canvas card's; a click anywhere opens the canvas.
+func (l *lay) embeddedCanvas(f *richtext.File, x, y, w int) int {
+	p := &l.st.Palette
+	pad, ic := l.dp(12), l.dp(36)
+	boxH := max(w*400/799, l.dp(235))
+	tg := l.d.addTarget(target{kind: tFile, file: f})
+	l.canvasTile(x+pad, y+pad, ic)
+	tx := x + pad + ic + pad
+	fs := l.bodyStyle()
+	fs.face.Weight = font.Bold
+	fs.lineH = l.dp(22)
+	fs.emoji = l.dp(18)
+	fs.maxLines, fs.ellipsis = 1, true
+	if len(f.TitleSpans) > 0 {
+		l.addSpansTarget(f.TitleSpans, &fs, tg)
+		l.flow(tx, y+pad-l.dp(3), x+w-tx-pad, &fs)
+		l.plainAdd("\n")
+	} else {
+		l.plainFlow(fileName(f), tx, y+pad-l.dp(3), x+w-tx-pad, &fs, tg)
+	}
+	ms := l.small(p.Text2)
+	ms.lineH = l.dp(16)
+	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
+	l.plainFlow("Canvas", tx, y+pad+l.dp(20), x+w-tx-pad, &ms, -1)
+	top := y + pad + ic + pad
+	if len(f.CanvasPreview) > 0 {
+		line := rgba(p.Text.R, p.Text.G, p.Text.B, 0.13)
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x, top, x+w, top+max(1, l.dp(1))), fill: line, target: -1})
+		cut := y + boxH
+		f0, b0, i0, h0, n0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.hits), len(l.d.lines)
+		cy := top + max(1, l.dp(1)) + pad
+		for i := range f.CanvasPreview {
+			if cy >= cut {
+				break
+			}
+			if i > 0 {
+				cy += l.dp(12)
+			}
+			b := &f.CanvasPreview[i]
+			if b.Kind == richtext.Header {
+				hs := l.bodyStyle()
+				hs.face.Weight = font.Black
+				switch b.Level {
+				case 1:
+					hs.size, hs.lineH, hs.emoji = l.sp(22), l.dp(30), l.dp(26)
+				case 2:
+					hs.size, hs.lineH, hs.emoji = l.sp(18), l.dp(24), l.dp(22)
+				default:
+					hs.lineH = l.dp(22)
+				}
+				l.addSpans(b.Spans, &hs)
+				h, _ := l.flow(x+pad, cy, w-2*pad, &hs)
+				l.plainAdd("\n")
+				cy += h
+				continue
+			}
+			cy += l.blocks([]richtext.Block{*b}, x+pad, cy, w-2*pad, false)
+		}
+		l.trimBelow(cut, f0, b0, i0, h0, n0)
+		// --with_fade:after, a linear gradient from the background (at
+		// the bottom) to nothing over the box's last 25%
+		fade := boxH / 4
+		const bands = 12
+		for k := 0; k < bands; k++ {
+			y0 := y + boxH - fade + fade*k/bands
+			y1 := y + boxH - fade + fade*(k+1)/bands
+			c := p.Panel
+			c.A = uint8(255 * (k + 1) / bands)
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x, y0, x+w, y1), fill: c, target: -1, layer: 1})
+		}
+	}
+	l.d.hits = append(l.d.hits, hit{r: image.Rect(x, y, x+w, y+boxH), t: tg})
+	return boxH
 }
 
 // canvasTile is QuipIcon's IA4 tile.

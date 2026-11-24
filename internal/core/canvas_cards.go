@@ -10,6 +10,7 @@ package core
 
 import (
 	"context"
+	"strings"
 
 	"github.com/some-du6e/clack/internal/quip"
 	"github.com/some-du6e/clack/internal/slack"
@@ -25,6 +26,10 @@ type CanvasCard struct {
 	// Incomplete is the card's incomplete (a pending URL that won't
 	// unfurl: Slack's "empty").
 	Incomplete bool
+	// ContentID is the card content's own id: a SLACK_FILE card's file,
+	// a SLACK_DOCUMENT card's canvas, a SLACK_USER card's member (Quip's
+	// "sf:", "sd:" or "su:" prefix dropped).
+	ContentID string
 	// Channel and TS are a SLACK_UNFURL card's unfurl container ("" when
 	// its slack_unfurl_id isn't one).
 	Channel, TS string
@@ -56,6 +61,19 @@ func (a *App) CanvasCards(id string, urls []string) (cards []CanvasCard, ok bool
 			c := &cards[i]
 			c.Section, c.Type = *s.ID, lc.CardType()
 			c.Incomplete = lc.Incomplete != nil && *lc.Incomplete
+			if cc := lc.CardContent; cc != nil {
+				switch {
+				case cc.SlackFile != nil && cc.SlackFile.SlackFileID != nil:
+					c.ContentID = *cc.SlackFile.SlackFileID
+				case cc.SlackDocument != nil && cc.SlackDocument.ID != nil:
+					c.ContentID = *cc.SlackDocument.ID
+				case cc.SlackUser != nil && cc.SlackUser.ID != nil:
+					c.ContentID = *cc.SlackUser.ID
+				}
+				if i := strings.IndexByte(c.ContentID, ':'); i >= 0 && i <= 3 {
+					c.ContentID = c.ContentID[i+1:] // syncer ids: "sf:F…", "sd:F…", "su:U…"
+				}
+			}
 			if c.Type == quip.CardSlackUnfurl {
 				if _, ch, ts, ok := quip.ParseUnfurlID(lc.UnfurlID()); ok {
 					c.Channel, c.TS = ch, ts
@@ -103,3 +121,12 @@ func (a *App) CanvasCardContainer(c CanvasCard) (slack.Message, bool) {
 	}
 	return a.S.FindHeld(c.Channel, c.TS)
 }
+
+// CardFileInfo is files.info's file for a canvas file card (Slack's file
+// object fetcher, by id): never files.open.
+func (a *App) CardFileInfo(ctx context.Context, id string) (slack.File, error) {
+	return a.fileInfo(ctx, id)
+}
+
+// IsAPIError reports a Slack API refusal with one of codes.
+func IsAPIError(err error, codes ...string) bool { return isCode(err, codes...) }

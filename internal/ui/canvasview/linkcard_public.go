@@ -41,6 +41,8 @@ type cardInk struct {
 	alertBg        color.NRGBA // --dt_color-surf-hgl-3
 	alertIcon      color.NRGBA // --dt_color-content-hgl-3
 	thumbRule      color.NRGBA // --sk_primary_foreground at .13
+	maxSolid       color.NRGBA // --sk_foreground_max_solid
+	lowSolid       color.NRGBA // --sk_foreground_low_solid
 }
 
 func cardInks(dark bool) cardInk {
@@ -48,12 +50,14 @@ func cardInks(dark bool) cardInk {
 		return cardInk{primary: color.NRGBA{209, 210, 211, 255}, hgl1: color.NRGBA{0x2b, 0xa5, 0xce, 255},
 			highlightHover: color.NRGBA{64, 179, 228, 255}, high50: color.NRGBA{232, 232, 232, 128},
 			pry: color.NRGBA{0xf8, 0xf8, 0xf8, 255}, alertBg: color.NRGBA{0xa0, 0x73, 0x00, 0x2e},
-			alertIcon: color.NRGBA{0xde, 0xa7, 0x00, 255}, thumbRule: color.NRGBA{209, 210, 211, 33}}
+			alertIcon: color.NRGBA{0xde, 0xa7, 0x00, 255}, thumbRule: color.NRGBA{209, 210, 211, 33},
+			maxSolid: color.NRGBA{171, 171, 173, 255}, lowSolid: color.NRGBA{53, 55, 59, 255}}
 	}
 	return cardInk{primary: color.NRGBA{29, 28, 29, 255}, hgl1: color.NRGBA{0x12, 0x64, 0xa3, 255},
 		highlightHover: color.NRGBA{11, 76, 140, 255}, high50: color.NRGBA{29, 28, 29, 128},
 		pry: color.NRGBA{0x1d, 0x1c, 0x1d, 255}, alertBg: color.NRGBA{0xff, 0xc6, 0x00, 0x2e},
-		alertIcon: color.NRGBA{0x6b, 0x50, 0x00, 255}, thumbRule: color.NRGBA{29, 28, 29, 33}}
+		alertIcon: color.NRGBA{0x6b, 0x50, 0x00, 255}, thumbRule: color.NRGBA{29, 28, 29, 33},
+		maxSolid: color.NRGBA{97, 96, 97, 255}, lowSolid: color.NRGBA{221, 221, 221, 255}}
 }
 
 // publicCard is what EmbeddedPublicLinkUnfurl draws of an attachment

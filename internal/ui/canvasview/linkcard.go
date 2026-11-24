@@ -24,6 +24,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/core"
@@ -43,12 +44,25 @@ var nsFiles = i18n.NS("files")
 type cardKind uint8
 
 const (
-	cardEmpty         cardKind = iota // EmptyUnfurl
-	cardLoading                       // LoadingFallbackUnfurl
-	cardFallback                      // EmbeddedFallbackUnfurl's MessagePillow
-	cardPublic                        // EmbeddedPublicLinkUnfurl (linkcard_public.go)
-	cardPublicLoading                 // its LoadingPublicLinkUnfurl
-	cardWorkObject                    // EmbeddedWorkObjectEntity: the work object's card
+	cardEmpty          cardKind = iota // EmptyUnfurl
+	cardLoading                        // LoadingFallbackUnfurl
+	cardFallback                       // EmbeddedFallbackUnfurl's MessagePillow
+	cardPublic                         // EmbeddedPublicLinkUnfurl (linkcard_public.go)
+	cardPublicLoading                  // its LoadingPublicLinkUnfurl
+	cardWorkObject                     // EmbeddedWorkObjectEntity: the work object's card
+	cardMessage                        // MessageUnfurl (linkcard_message.go)
+	cardMessageLoading                 // its LoadingMessageUnfurl
+	cardMember                         // UserProfileUnfurl (linkcard_member.go)
+	cardMemberLoading                  // its LoadingUserProfileUnfurl
+	cardFile                           // EmbeddedFileUnfurl (linkcard_file.go): decideFile picks
+	cardFileLoading                    // its LoadingFileUnfurl
+	cardFileImage                      // EmbeddedImageUnfurl
+	cardFileVideo                      // EmbeddedVideoUnfurl's poster
+	cardFileAudio                      // EmbeddedAudioUnfurl
+	cardFileGeneric                    // EmbeddedGenericFileUnfurl's FileCard
+	cardCanvas                         // EmbeddedCanvasUnfurl (linkcard_canvas.go): decideCanvas picks
+	cardCanvasShown                    // the entity row over the preview
+	cardCanvasNoAccess                 // NoAccessCanvas
 )
 
 // Card's waits: a fallback card stops waiting for its container's
@@ -73,20 +87,28 @@ type linkCard struct {
 	// since is when Card's 20 s wait began: its first frame as a
 	// "fallback" card, again whenever its container changes (the
 	// effect's deps)
-	since    time.Time
-	kind     cardKind       // what the views below draw
-	line     string         // EmptyUnfurl's content line
-	drawn    string         // kind, line and attKey the views are of
-	title    *richview.View // EmptyUnfurl's title (the card's URL)
-	content  *richview.View // EmptyUnfurl's line
-	body     *richview.View // the fallback's attachment, or the work object's
-	pub      *publicCard    // EmbeddedPublicLinkUnfurl's (linkcard_public.go)
-	unsafe   bool           // the URL fails isUrlSafeFromXSS: EmptyUnfurl's banner
-	alert    *richview.View // the banner's message
-	titleHot bool           // the title last drew in its hover colour
-	hover    bool
-	tag      struct{ _ byte } // the hover area
-	size     image.Point      // the card as last drawn
+	since      time.Time
+	kind       cardKind        // what the views below draw
+	line       string          // EmptyUnfurl's content line
+	drawn      string          // kind, line and attKey the views are of
+	title      *richview.View  // EmptyUnfurl's title (the card's URL)
+	content    *richview.View  // EmptyUnfurl's line
+	body       *richview.View  // the fallback's attachment, or the work object's
+	pub        *publicCard     // EmbeddedPublicLinkUnfurl's (linkcard_public.go)
+	unsafe     bool            // the URL fails isUrlSafeFromXSS: EmptyUnfurl's banner
+	alert      *richview.View  // the banner's message
+	titleHot   bool            // the title last drew in its hover colour
+	rt         cardRoute       // gZnA's steps 7-21 (linkcard_route.go)
+	mc         msgCardData     // MessageUnfurl's (linkcard_message.go)
+	mb         memberCardData  // UserProfileUnfurl's (linkcard_member.go)
+	fc         fileCardData    // EmbeddedFileUnfurl's (linkcard_file.go)
+	fileHit    image.Rectangle // the image's or the video's click area
+	fileBtn    widget.Clickable
+	cv         canvasCardData // EmbeddedCanvasUnfurl's (linkcard_canvas.go)
+	loadingNow bool           // decide's isLoading, for the view's own steps
+	hover      bool
+	tag        struct{ _ byte } // the hover area
+	size       image.Point      // the card as last drawn
 }
 
 // blockedStates are canvas_unfurl_state values that are an error state even
@@ -155,11 +177,6 @@ func (c *linkCard) decide(now time.Time) (k cardKind, line string, at time.Time)
 	} else if held && du != nil && du.CanvasUnfurlState != "" && (att == nil || blockedStates[du.CanvasUnfurlState]) {
 		errLine = emptyLine(du.CanvasUnfurlState)
 	}
-	link := c.url
-	if att != nil && att.OriginalURL != "" {
-		link = att.OriginalURL
-	}
-	pl, isPermalink := parsePermalink(link)
 	switch {
 	case pending && c.cc.Incomplete: // 4
 		return cardEmpty, firstNonEmpty(errLine, unable), time.Time{}
@@ -168,14 +185,22 @@ func (c *linkCard) decide(now time.Time) (k cardKind, line string, at time.Time)
 			return cardWorkObject, "", time.Time{}
 		}
 		return cardEmpty, unable, time.Time{}
-	case c.cc.Type == quip.CardSlackDocument, isPermalink && (pl.typ == "quip" || pl.typ == "canvas"), // 7, 10: canvas
-		isPermalink && pl.typ == "list", c.cc.Type == quip.CardSlackList, c.cc.Type == quip.CardSlackListRecord, // 8, 14, 15
-		held && len(c.msg.Files) > 0, c.cc.Type == quip.CardSlackFile, isPermalink && pl.typ == "file", // 9: file
-		c.cc.Type == quip.CardSlackUser, isPermalink && pl.typ == "member", // 11: user
-		c.cc.Type == quip.CardSlackGeneric, c.cc.Type == quip.CardSlackWidget, // 12, 13
-		att != nil && att.IsMsgUnfurl, isPermalink && pl.typ == "message", // 16 message, 17 channel
-		c.cc.Type == quip.CardSlackSalesforceRecord, c.cc.Type == quip.CardSlackSalesforceDataBlock, // 21
-		c.cc.Type == quip.CardSlackInvitedUser:
+	case c.rt.kind != "": // 7-21 (linkcard_route.go)
+		switch c.rt.kind {
+		case "message":
+			k, line := c.decideMessage(loading, att)
+			return k, line, time.Time{}
+		case "user":
+			return cardMember, "", time.Time{} // layoutCard asks the view (decideMember)
+		case "file":
+			k, line := c.decideFile(loading)
+			return k, line, time.Time{}
+		case "canvas":
+			c.loadingNow = loading
+			return cardCanvas, "", time.Time{} // layoutCard asks the view (decideCanvas)
+		}
+		// a channel's (Card has no case for it), and the cards Clack
+		// doesn't draw yet
 		return cardEmpty, unable, time.Time{}
 	case !unfurlObj && !pending: // a type Card has no case for
 		return cardEmpty, unable, time.Time{}
@@ -296,6 +321,8 @@ func (v *View) refreshCards() {
 		v.loadCardModel()
 	}
 	var fetch, again []core.CanvasCard
+	var msgs []core.MsgKey
+	var users, files []string
 	for i, b := range bs {
 		c := b.card
 		c.modelOK = ok
@@ -330,6 +357,37 @@ func (v *View) refreshCards() {
 			c.asked = true
 		}
 		c.sig, c.sigSec = c.cc.Sig, c.cc.Section
+		c.rt = c.routeOf()
+		if c.readMessage(a) { // MessageUnfurl's getMessageByTimestamp missed: fetch it by id
+			msgs = append(msgs, core.MsgKey{Channel: c.rt.channel, TS: c.rt.ts})
+			c.mc.asked = true
+		}
+		if c.readMember(a) { // getMemberById missed: users.info
+			users = append(users, c.rt.memberID)
+			c.mb.asked = true
+		}
+		if v.readFile(c) || v.readCanvas(c) { // getFileById missed: files.info
+			files = append(files, c.rt.fileID)
+		}
+	}
+	for _, id := range files {
+		v.fetchFile(id)
+	}
+	if len(users) > 0 {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			a.EnsureUsers(ctx, users)
+			v.post(v.refreshCards)
+		}()
+	}
+	if len(msgs) > 0 {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			a.EnsureMessages(ctx, msgs)
+			v.post(v.refreshCards)
+		}()
 	}
 	for _, f := range []struct {
 		cards []core.CanvasCard
@@ -350,6 +408,15 @@ func (v *View) refreshCards() {
 
 // cardViews makes the card's views for what it draws now.
 func (v *View) cardViews(c *linkCard) {
+	if c.kind == cardMessage {
+		v.messageViews(c) // its own key: the message as the store holds it
+	}
+	if c.kind >= cardFileLoading && c.kind <= cardFileGeneric {
+		v.fileViews(c)
+	}
+	if c.kind == cardCanvasShown || c.kind == cardCanvasNoAccess {
+		v.canvasViews(c)
+	}
 	key := string(rune('0'+c.kind)) + "\x00" + c.line + "\x00" + c.url + "\x00" + c.attKey
 	if key == c.drawn {
 		return
@@ -412,6 +479,18 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 		now = time.Now()
 	}
 	k, line, at := c.decide(now)
+	switch k {
+	case cardMember:
+		k = v.decideMember(c)
+	case cardCanvas:
+		k = v.decideCanvas(c, c.loadingNow, now)
+		if k == cardEmpty {
+			line = emptyLine("")
+		}
+		if k == cardFileLoading { // the preview may land meanwhile (a "names" event): look again soon
+			gtx.Execute(op.InvalidateCmd{At: now.Add(500 * time.Millisecond)})
+		}
+	}
 	c.kind, c.line = k, line
 	if !at.IsZero() {
 		gtx.Execute(op.InvalidateCmd{At: at})
@@ -428,6 +507,19 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 		h = v.layoutCardSkeleton(gtx, w, now)
 	case c.kind == cardPublicLoading:
 		h = v.layoutPublicSkeleton(gtx, w, now)
+	case c.kind == cardMessageLoading:
+		h = v.layoutMessageSkeleton(gtx, w, now)
+	case c.kind == cardMessage:
+		h = v.layoutMessage(gtx, c, w)
+	case c.kind == cardMemberLoading:
+		h = v.layoutMemberSkeleton(gtx, w, now)
+	case c.kind == cardMember:
+		h = v.layoutMember(gtx, c, w)
+	case c.kind >= cardFileLoading && c.kind <= cardFileGeneric:
+		c.fileHit = image.Rectangle{}
+		h = v.layoutFile(gtx, c, w, now)
+	case c.kind == cardCanvasShown || c.kind == cardCanvasNoAccess:
+		h = v.layoutCanvas(gtx, c, w, now)
 	case c.kind == cardPublic && c.pub != nil:
 		h = v.layoutPublic(gtx, c, w)
 	case c.kind == cardWorkObject && c.body != nil: // WorkObjectEntity fills the card (CardContainer's padding 0)
@@ -482,6 +574,7 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 	theme.RRect(gtx, r.Inset(-ring), gtx.Dp(12)+ring, p.Border) // box-shadow 0 0 0 1px: outside the box
 	theme.RRect(gtx, r, gtx.Dp(12), p.Panel)
 	call.Add(gtx.Ops)
+	v.fileClick(gtx, c)
 	func() { // the hover area, over the card; presses pass through
 		defer clip.Rect(r).Push(gtx.Ops).Pop()
 		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
@@ -578,7 +671,8 @@ func (b *blk) views() []*richview.View {
 		}
 		return []*richview.View{b.rv}
 	}
-	return append([]*richview.View{b.card.title, b.card.content, b.card.body, b.card.alert}, b.card.pub.views()...)
+	c := b.card
+	return append([]*richview.View{c.title, c.content, c.body, c.alert, c.mc.name, c.mc.sub, c.mc.body, c.fc.rv, c.cv.rv}, c.pub.views()...)
 }
 
 // hovered: a link or mention of b's is under the pointer.

@@ -24,6 +24,10 @@ import (
 // ts a message permalink's ts ("" for a channel's).
 type permalink struct {
 	typ, ts string
+	// the ids the cards read: a message's or a channel canvas's channel
+	// and a reply's thread_ts, a file's, canvas's or list's file id, a
+	// member's id, a list's record_id and view_id
+	channel, threadTS, fileID, memberID, recordID, viewID string
 }
 
 // slackPermalinkHosts are isSlackUrl's (/bpz): a host's last two labels.
@@ -85,27 +89,28 @@ func parsePermalink(raw string) (permalink, bool) {
 		}
 		return ""
 	}
+	q := u.Query()
 	switch typ {
 	case "message":
 		if at(1) == "" {
 			return permalink{}, false
 		}
-		p := permalink{typ: "message"}
+		p := permalink{typ: "message", channel: at(1), threadTS: q.Get("thread_ts")}
 		if m := permalinkTSRe.FindStringSubmatch(at(2)); m != nil {
 			p.ts = m[1] + "." + m[2]
 		}
 		return p, true
 	case "file":
-		return permalink{typ: typ}, permalinkFile.MatchString(at(2))
+		return permalink{typ: typ, fileID: at(2)}, permalinkFile.MatchString(at(2))
 	case "member":
-		id := at(1)
-		return permalink{typ: typ}, permalinkUser.MatchString(id) || permalinkUsers[id]
+		id := strings.TrimPrefix(at(1), "@")
+		return permalink{typ: typ, memberID: id}, permalinkUser.MatchString(at(1)) || permalinkUsers[at(1)]
 	case "quip": // /docs/<team>/<F…>, and a workspace host (never app.slack.com)
-		return permalink{typ: typ}, permalinkFile.MatchString(at(2)) && sub != "" && sub != "app"
+		return permalink{typ: typ, fileID: at(2)}, permalinkFile.MatchString(at(2)) && sub != "" && sub != "app"
 	case "list":
-		return permalink{typ: typ}, permalinkFile.MatchString(at(2))
+		return permalink{typ: typ, fileID: at(2), recordID: q.Get("record_id"), viewID: q.Get("view_id")}, permalinkFile.MatchString(at(2))
 	case "canvas":
-		return permalink{typ: typ}, at(1) != ""
+		return permalink{typ: typ, channel: at(1)}, at(1) != ""
 	}
 	return permalink{typ: typ}, true
 }

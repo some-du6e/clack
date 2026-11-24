@@ -1352,6 +1352,9 @@ func pillowMeta(f *richtext.File) string {
 }
 
 func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
+	if f.Embedded {
+		return l.embeddedFile(f, x, y, w)
+	}
 	p := &l.st.Palette
 	cw := min(w, l.dp(426))
 	pad := l.dp(12)
@@ -1371,6 +1374,51 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
 	l.plainFlow(meta, tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
 	l.pillowBar(f, image.Rect(x, y, x+cw, y+h)) // FileActions (file_actions.go)
+	return h
+}
+
+// embeddedFile is a canvas link card's generic file (FileCard in
+// EmbeddedGenericFileUnfurl, p-file_card__container--embedded): the
+// entity row padded 12 (the 36px file-type icon, 12 from the title in
+// 15px bold and the 13px detail line in foreground_max_solid), then with a
+// preview the rest of a box max(w·400/799, 235) tall: a 1px foreground_low
+// .13 rule, foreground_soft .06 behind the thumbnail covering it. The
+// frame is the canvas card's; the row opens the file.
+func (l *lay) embeddedFile(f *richtext.File, x, y, w int) int {
+	p := &l.st.Palette
+	pad, ic := l.dp(12), l.dp(36)
+	tg := l.d.addTarget(target{kind: tFile, file: f})
+	row := ic + 2*pad
+	h := row
+	if f.EmbedPreview != nil {
+		h = max(w*400/799, l.dp(235))
+	}
+	l.d.hits = append(l.d.hits, hit{r: image.Rect(x, y, x+w, y+row), t: tg})
+	l.fileIcon(f, x+pad, y+pad, ic)
+	tx := x + pad + ic + pad
+	fs := l.bodyStyle()
+	fs.face.Weight = font.Bold
+	fs.lineH = l.dp(22)
+	fs.maxLines, fs.ellipsis = 1, true
+	l.plainFlow(fileName(f), tx, y+pad-l.dp(3), x+w-tx-pad, &fs, tg)
+	if f.EmbedDetail != "" {
+		ms := l.small(p.Text2)
+		ms.lineH = l.dp(16)
+		ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
+		l.plainFlow(f.EmbedDetail, tx, y+pad+l.dp(20), x+w-tx-pad, &ms, -1)
+	}
+	if f.EmbedPreview != nil {
+		rule := p.Text
+		rule.A = 0x21 // foreground_low .13
+		soft := p.Text
+		soft.A = 0x0f // foreground_soft .06
+		py := y + row
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: soft, r: image.Rect(x, py, x+w, y+h), target: -1})
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: rule, r: image.Rect(x, py, x+w, py+max(1, l.dp(1))), target: -1})
+		ir := image.Rect(x, py+max(1, l.dp(1)), x+w, y+h)
+		l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: f.EmbedPreview.URL, target: tg, px: max(ir.Dx(), ir.Dy())})
+		l.d.hits = append(l.d.hits, hit{r: ir, t: tg})
+	}
 	return h
 }
 

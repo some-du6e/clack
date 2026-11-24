@@ -538,6 +538,14 @@ type File struct {
 	PreviewTruncated bool
 	EditLink         string
 	ExternalType     string // external_type: gdrive, dropbox, box, onedrive, app…
+	// Embedded is a canvas link card's file (EmbeddedGenericFileUnfurl's
+	// FileCard): the card's full width, the title in 15px bold, EmbedDetail
+	// ("uploader · date · Added …") as its second line, no FileActions; with
+	// EmbedPreview, the preview fills the rest of the 799×400 box under the
+	// row.
+	Embedded     bool
+	EmbedDetail  string
+	EmbedPreview *Image
 	// Expanded and Expanding are the file's expandable in this message
 	// (Slack's expandedFiles: fetchAndExpand going, done). Content is the
 	// whole highlighted content once files.info brought it

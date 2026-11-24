@@ -96,8 +96,12 @@ type styleSet struct {
 	// (foreground_high at 50%, linkcard_public.go)
 	cardTitleHot, pubTitle, pubTitleHot, pubSmall *richview.Style
 	cardAlert                                     *richview.Style // the banner's 15px message in content-pry
-	ph                                            *richview.Style // the empty canvas's placeholder
-	titlePh                                       *richview.Style // the empty title's placeholder
+	// msgName and msgSub are MessageUnfurl's sender (c-message__sender:
+	// 15px, weight 900, content-pry) and its secondary line (13px,
+	// foreground_max_solid, links too)
+	msgName, msgSub *richview.Style
+	ph              *richview.Style // the empty canvas's placeholder
+	titlePh         *richview.Style // the empty title's placeholder
 }
 
 func (s *styleSet) sync(th *theme.Theme, h Host) {
@@ -162,6 +166,14 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 	tp = s.pubTitleHot.Palette
 	tp.Text, tp.Link = ci.highlightHover, ci.highlightHover
 	s.pubTitleHot.SetPalette(tp)
+	s.msgName = mk(15, 22, true)
+	tp = s.msgName.Palette
+	tp.Text = ci.pry
+	s.msgName.SetPalette(tp)
+	s.msgSub = mk(13, 18, false)
+	tp = s.msgSub.Palette
+	tp.Text, tp.Link = ci.maxSolid, ci.maxSolid
+	s.msgSub.SetPalette(tp)
 	s.cardAlert = mk(15, 22, false)
 	tp = s.cardAlert.Palette
 	tp.Text = ci.pry

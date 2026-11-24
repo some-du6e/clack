@@ -39,6 +39,12 @@ func cardEnv(t *testing.T, dark bool, m *slack.Message, ts string, prep func(fs 
 func cardEnvURL(t *testing.T, dark bool, link string, m *slack.Message, ts string, prep func(fs *fakeslack.Server)) (*testHost, *fakeslack.Server, func(Mode, image.Point) (*View, *shooter)) {
 	t.Helper()
 	h, fs := newEnv(t, dark)
+	return cardEnvOn(t, h, fs, link, m, ts, prep)
+}
+
+// cardEnvOn is cardEnvURL on an env the test made (and seeded) itself.
+func cardEnvOn(t *testing.T, h *testHost, fs *fakeslack.Server, link string, m *slack.Message, ts string, prep func(fs *fakeslack.Server)) (*testHost, *fakeslack.Server, func(Mode, image.Point) (*View, *shooter)) {
+	t.Helper()
 	doc := strings.Replace(cardHTML, "Link URL: "+cardURL, "Link URL: "+html.EscapeString(link), 1)
 	d, err := canvas.Parse(doc)
 	if err != nil {
