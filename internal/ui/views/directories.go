@@ -923,6 +923,48 @@ func (d *Directories) leave(ch core.ChannelHit) {
 	d.startJoin(ch, false)
 }
 
+// retryToaster is the App's ToastRetry (toast_slack.go).
+type retryToaster interface {
+	ToastRetry(parts []i18n.Part, icon string, retry func())
+}
+
+// dirErrorToast is the search channel list's ErrorToast (client-boot
+// render's ChannelListItem, build 83aff18a; the search I18n), on any
+// failed join or leave: the warning icon, "Couldn’t join {channelName}."
+// bold, then "This could be a connection issue, or just a little blip."
+// and a Try again link that runs the same join or leave again; a leave the
+// workspace's policy refuses (canLeaveChannelWithReason's
+// CANT_LEAVE_GENERAL or CANT_LEAVE_MANDATORY_SHARED_CHANNEL) says
+// "Your organization requires everyone to be in it, so no one misses
+// important info." with no link.
+func dirErrorToast(h Host, join bool, name string, err error, retry func()) {
+	ch := "#" + name
+	head := nsSearch.T("Couldn’t join {channelName}.", "channelName", ch)
+	if !join {
+		head = nsSearch.T("Couldn’t leave {channelName}.", "channelName", ch)
+	}
+	code := core.ErrCode(err)
+	policy := !join && (code == "cant_leave_general" || code == "cant_leave_mandatory_shared_channel")
+	parts := []i18n.Part{{Text: head, Tag: "strong"}, {Text: " "}}
+	if policy {
+		parts = append(parts, i18n.Part{Text: nsSearch.T("Your organization requires everyone to be in it, so no one misses important info.")})
+		retry = nil
+	} else {
+		parts = append(parts, i18n.Part{Text: nsSearch.T("This could be a connection issue, or just a little blip.")}, i18n.Part{Text: nsSearch.T("Try again"), Tag: "link"})
+	}
+	if t, ok := h.(retryToaster); ok && retry != nil {
+		t.ToastRetry(parts, "warning", retry)
+		return
+	}
+	if t, ok := h.(interface {
+		ToastParts(parts []i18n.Part, icon string, iconCol color.NRGBA, d time.Duration)
+	}); ok {
+		t.ToastParts(parts, "warning", color.NRGBA{}, 6*time.Second)
+		return
+	}
+	h.Toast(i18n.Plain(parts))
+}
+
 // startJoin joins or leaves optimistically; pollOps reverts on failure.
 // Only called from a user's click. ch is the row as displayed.
 func (d *Directories) startJoin(ch core.ChannelHit, join bool) {
@@ -955,11 +997,10 @@ func (d *Directories) pollOps() {
 			if d.member[o.id] == o.join {
 				d.member[o.id] = o.prev
 			}
-			verb := "join"
-			if !o.join {
-				verb = "leave"
-			}
-			d.h.Toast("Couldn’t " + verb + " #" + o.name + ": " + dirErr(err))
+			o := o
+			dirErrorToast(d.h, o.join, o.name, err, func() {
+				d.startJoin(core.ChannelHit{ID: o.id, Name: o.name, IsMember: o.prev}, o.join)
+			})
 		}
 	}
 	for i := len(keep); i < len(d.ops); i++ {

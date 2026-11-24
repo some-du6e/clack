@@ -1309,9 +1309,7 @@ func pfMoreItemsFor(h Host, u core.User, withFull bool, closeCard func(), previe
 		items = append(items,
 			MenuItem{Label: "View preferences", Do: actPreferences(h)}.In(nsProfile),
 			MenuItem{Label: "Account settings", External: true, Do: func() {
-				if err := openurl.Open("https://" + teamDomain(h) + ".slack.com/account/settings"); err != nil {
-					h.Toast("Couldn't open the browser: " + errText(err))
-				}
+				openurl.OpenExternal("https://" + teamDomain(h) + ".slack.com/account/settings")
 			}}.In(nsProfile),
 			Sep(),
 			files("View your files"),

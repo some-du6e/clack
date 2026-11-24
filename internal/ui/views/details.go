@@ -12,6 +12,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"log"
 	"net/url"
 	"slices"
 	"sort"
@@ -888,10 +889,10 @@ func (d *ChannelDetails) update(gtx C) {
 			dm := cdGroup(d.kind) == "im"
 			switch {
 			case err != nil && dm:
-				d.h.Toast("Couldn’t hide this conversation: " + friendlyErr(err))
+				log.Printf("views: conversations.close: %v", err) // submitClose: nothing catches it, nothing on screen
 			case err != nil:
 				d.confirmLeave = false
-				d.h.Toast("Couldn’t leave #" + name + ": " + dirErr(err))
+				leaveFailed(d.h, d.id, name, err)
 			case dm:
 				d.h.Toast("Conversation hidden")
 				d.closed = true
@@ -915,7 +916,9 @@ func (d *ChannelDetails) update(gtx C) {
 		if _, done, err := d.joinOp.get(); done {
 			d.joinPending = false
 			if err != nil {
-				d.h.Toast("Couldn’t join #" + name + ": " + dirErr(err))
+				// Slack's details join (the related channels' menu, the preview's
+				// join pane) catches the join: nothing on screen
+				log.Printf("views: conversations.join: %v", err)
 			} else {
 				d.info.mutate(func(v *core.ChannelDetails) { v.IsMember = true; v.Conv.NumMembers++ })
 				d.h.Toast("You joined #" + name)
@@ -2595,11 +2598,7 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 		if _, done, err := d.starOp.get(); done {
 			d.starPending = false
 			if err != nil {
-				verb := "star"
-				if !d.starOv {
-					verb = "unstar"
-				}
-				d.h.Toast("Couldn’t " + verb + " this conversation: " + cdErr(err))
+				log.Printf("views: stars.add/remove: %v", err) // updateStar: the local star reverts, no toast
 			}
 		}
 	}
@@ -2659,7 +2658,7 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 		if _, done, err := d.notifOp.get(); done {
 			d.notifPending = false
 			if err != nil {
-				d.h.Toast("Couldn’t change notifications: " + cdErr(err))
+				log.Printf("views: users.prefs.setNotifications: %v", err) // setChannelNotificationOverrideAndCallApi: reverted and logged, no toast
 			}
 		}
 	}

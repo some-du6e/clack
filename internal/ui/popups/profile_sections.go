@@ -399,9 +399,7 @@ func (v *ProfileView) valueRow(e core.ProfileElement) layout.Widget {
 			if uri == "" {
 				return
 			}
-			if err := openurl.Open(uri); err != nil {
-				v.h.Toast("Couldn't open that link: " + errText(err))
-			}
+			openurl.OpenExternal(uri)
 		}
 	case "ProfileTagsElement":
 		value = strings.Join(e.Tags, "   ")

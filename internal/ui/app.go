@@ -1326,6 +1326,8 @@ type toastState struct {
 	rich    bool
 	// linkHref is where the parts' <link> run goes (ToastLink)
 	linkHref string
+	// linkDo, when set, is what the <link> run does instead (ToastRetry)
+	linkDo func()
 	// rect is the toast as last drawn (window coords): its box in the
 	// inspect tool's record
 	rect image.Rectangle

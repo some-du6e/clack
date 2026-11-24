@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -1555,7 +1556,7 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 		d.leavePending = false
 		if err != nil {
 			d.closeDialog()
-			d.h.Toast("Couldn’t leave #" + inf.Conv.Name + ": " + dirErr(err))
+			leaveFailed(d.h, inf.Conv.ID, inf.Conv.Name, err)
 			return
 		}
 		d.closeDialog()
@@ -1675,6 +1676,19 @@ func cdArchiveError(err error) string {
 }
 
 // cdErrCode is the Slack error code in err (or its text).
+// leaveFailed is maybeLeaveChannel's leaveAndHandleErrors from a view:
+// popups.LeaveFailed (LeaveChannelError for a coded answer, with Retry
+// calling conversations.leave again; nothing for any other failure).
+func leaveFailed(h Host, id, name string, err error) {
+	ph, ok := h.(popups.Host)
+	c := h.Core()
+	if !ok || c == nil {
+		log.Printf("views: conversations.leave: %v", err)
+		return
+	}
+	popups.LeaveFailed(ph, id, name, err, func(ctx context.Context) error { return c.Leave(ctx, id) })
+}
+
 func cdErrCode(err error) string {
 	s := err.Error()
 	if i := strings.LastIndex(s, ": "); i >= 0 && !strings.Contains(s[i+2:], " ") {

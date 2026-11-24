@@ -2,6 +2,7 @@ package composer
 
 import (
 	"image"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -266,7 +267,9 @@ func (c *Composer) saveAsDraft() {
 func (c *Composer) stashed(v, av, gen uint64, err error) {
 	c.dsync.stashing = false
 	if err != nil {
-		c.h.Toast("Couldn't save your draft: " + err.Error())
+		// stashDraft saves locally and the drafts sync logs a failure
+		// ("Draft updates failed to sync"): no toast
+		log.Printf("composer: stash draft: %v", err)
 		c.dsync.synced = unsyncedVer // the stash was its save: sync it again
 		c.retrySync()
 		return

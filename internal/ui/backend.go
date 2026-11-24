@@ -1922,10 +1922,19 @@ func (b *backend) setMuted(ch string, muted bool) {
 	}()
 }
 
+// leave leaves channel ch; a failure is maybeLeaveChannel's
+// leaveAndHandleErrors (popups.LeaveFailed: LeaveChannelError for a coded
+// answer, nothing for any other failure).
 func (b *backend) leave(ch string) {
+	name := ""
+	if c := b.m.conv(ch); c != nil {
+		name = c.Name
+	}
 	go func() {
 		if err := b.core.Leave(b.ctx, ch); err != nil && b.app != nil {
-			b.app.Post(func() { b.app.Toast("Couldn't leave: " + err.Error()) })
+			b.app.Post(func() {
+				popups.LeaveFailed(b.app, ch, name, err, func(ctx context.Context) error { return b.core.Leave(ctx, ch) })
+			})
 		}
 	}()
 }

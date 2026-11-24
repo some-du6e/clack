@@ -3,6 +3,7 @@ package popups
 import (
 	"context"
 	"image"
+	"log"
 	"strings"
 	"time"
 
@@ -176,7 +177,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	case c.Preview:
 		items = items[:len(items)-1] // the trailing separator: no Leave
 	case dm:
-		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }}.In(nsMenu))
+		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "", "Conversation closed") }}.In(nsMenu))
 	default:
 		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }}.In(nsMenu))
 	}
@@ -218,10 +219,10 @@ func ChannelMenuAction(h Host, convID, key string) func() {
 	case "toggle_mute":
 		return func() { actToggleMute(h, convID, noun) }
 	case "close":
-		return func() { actLeave(h, convID, "Conversation closed") }
+		return func() { actLeave(h, convID, "", "Conversation closed") }
 	case "leave":
 		if dm {
-			return func() { actLeave(h, convID, "Conversation closed") }
+			return func() { actLeave(h, convID, "", "Conversation closed") }
 		}
 		name := convTitle(h, c)
 		if name == "" {
@@ -366,7 +367,7 @@ func actToggleStar(h Host, ch, noun string) {
 	star := !cxStarred(h, ch)
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxStar(ctx, h, ch, star) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: stars.add/remove: %v", err) // updateStar: the local star reverts, no toast
 			return
 		}
 		cxNoteStar(ch, star)
@@ -387,7 +388,7 @@ func actToggleMute(h Host, ch, noun string) {
 	mute := !actIsMuted(h, ch)
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxMute(ctx, h, ch, mute) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: mute: %v", err) // setChannelNotificationOverrideAndCallApi: reverted and logged, no toast
 			return
 		}
 		actMuteSet[ch] = mute
@@ -430,7 +431,7 @@ func leaveChannel(h Host, convID, kind, name string, general bool) {
 	if kind == "private" {
 		msg = "You left " + name
 	}
-	MaybeLeaveChannel(h, name, kind, general, func() { actLeave(h, convID, msg) })
+	MaybeLeaveChannel(h, name, kind, general, func() { actLeave(h, convID, name, msg) })
 }
 
 // MaybeLeaveChannel is maybeLeaveChannel's asking part: the #general
@@ -459,15 +460,24 @@ func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 		nsGroups.T("Leave Channel"), true, nil, leave)
 }
 
-func actLeave(h Host, convID, okMsg string) {
+// actLeave leaves channel convID (name), or closes a DM (name ""). A
+// failed leave is maybeLeaveChannel's leaveAndHandleErrors
+// (LeaveChannelError, LeaveFailed); a failed close is submitClose's, which
+// nothing catches: no alert (Clack logs it).
+func actLeave(h Host, convID, name, okMsg string) {
 	a := h.Core()
 	if a == nil {
 		h.Toast("Not connected yet")
 		return
 	}
-	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Leave(ctx, convID) }, func(_ struct{}, err error) {
+	leave := func(ctx context.Context) error { return a.Leave(ctx, convID) }
+	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, leave(ctx) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			if name == "" {
+				log.Printf("popups: conversations.close: %v", err)
+				return
+			}
+			LeaveFailed(h, convID, name, err, leave)
 			return
 		}
 		h.Toast(okMsg)
@@ -762,7 +772,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			}
 			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetDND(ctx, 0) }, func(_ struct{}, err error) {
 				if err != nil {
-					h.Toast("Couldn't do that: " + errText(err))
+					log.Printf("popups: dnd.endSnooze: %v", err) // endDndSnooze logs "Failed to turn off DND (SNOOZE)", no toast
 					return
 				}
 				actDNDUntil = time.Time{}
@@ -833,7 +843,7 @@ func actSnooze(h Host, n int) {
 	}
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetDND(ctx, n) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: dnd.setSnooze: %v", err) // snoozeNotifications logs "Failed to snooze notifications", no toast
 			return
 		}
 		actDNDUntil = time.Now().Add(time.Duration(n) * time.Minute)

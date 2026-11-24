@@ -3,6 +3,7 @@ package popups
 import (
 	"context"
 	"image"
+	"log"
 
 	"gioui.org/layout"
 	"gioui.org/widget"
@@ -43,7 +44,7 @@ func setPrefAsync(h Host, name string, v any) {
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SetPref(ctx, name, v) },
 		func(_ struct{}, err error) {
 			if err != nil {
-				h.Toast("Couldn't save that preference: " + errText(err))
+				log.Printf("popups: users.prefs.set: %v", err) // setUserPrefByApi: optimistic, nothing on screen when it fails
 			}
 		})
 }
@@ -70,9 +71,7 @@ func ConfirmUnsend(h Host, m core.Message, onOK func()) *Modal {
 			setPrefAsync(h, "should_show_unsend_message_confirmation", !dontShow)
 		}
 		if learn.Clicked(gtx) {
-			if err := openurl.Open(UnsendHelp); err != nil {
-				h.Toast("Couldn't open the link: " + err.Error())
-			}
+			openurl.OpenExternal(UnsendHelp)
 		}
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
