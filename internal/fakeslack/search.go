@@ -570,10 +570,10 @@ func (s *Server) searchFile() map[string]any {
 
 // handleSearch answers the search methods; handled=false passes on.
 // Search feedback (feedback.submitEnterpriseSearchFeedback, search.feedback)
-// is only recorded (SearchForms): tests check the call, nothing is sent
-// anywhere.
+// and /feedback's (feedback.submitUserFeedback) are only recorded
+// (SearchForms): tests check the call, nothing is sent anywhere.
 func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
-	if !strings.HasPrefix(method, "search.") && method != "feedback.submitEnterpriseSearchFeedback" {
+	if !strings.HasPrefix(method, "search.") && method != "feedback.submitEnterpriseSearchFeedback" && method != "feedback.submitUserFeedback" {
 		return nil, false
 	}
 	l := s.slog()
@@ -755,7 +755,7 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 		return ok("suggestions", sugg), true
 	case "search.autocomplete.triggers":
 		return ok("triggers", []any{}), true
-	case "feedback.submitEnterpriseSearchFeedback", "search.feedback":
+	case "feedback.submitEnterpriseSearchFeedback", "search.feedback", "feedback.submitUserFeedback":
 		return ok(), true
 	}
 	return nil, false

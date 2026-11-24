@@ -60,6 +60,9 @@ var defaultExperimentGroups = map[string]string{
 	"data_visualization_copy_image": "on",
 	"looping_video_option":          "on", // the inline video player's loop (videoplayer), as the account has it
 	"clips_pip":                     "on", // the mini player (videoplayer/pip.go), as the account has it
+	// /feedback's dialog and its note (composer/slash_local.go,
+	// popups/user_feedback.go), as the account has them
+	"slash_feedback_in_modal": "on", "slash_feedback_modal_warning": "on",
 	// the picker's Halloween emoji pack call to action (emoji_pack_cta.go):
 	// off, as the account has it
 	"slack_seasonal_delight": "off",

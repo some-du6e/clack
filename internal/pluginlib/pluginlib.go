@@ -147,6 +147,11 @@ type Library struct {
 	mu      sync.Mutex
 	idx     *Index
 	fetched time.Time
+	// Refresh's: a request is out; after a failure, no unforced one
+	// before retryAt (backoff: a minute, doubling to an hour)
+	refreshing bool
+	retryAt    time.Time
+	backoff    time.Duration
 }
 
 // New makes a Library. It does no I/O.
@@ -221,6 +226,64 @@ func (l *Library) Index(ctx context.Context, refresh bool) (*Index, error) {
 	l.mu.Unlock()
 	l.writeCache(b)
 	return ix, nil
+}
+
+// Refresh fetches the index again in the background when the copy l has
+// (in memory, or cached on disk) is older than maxAge, or whatever its age
+// with force (Preferences' Refresh), one request at a time. After a failed
+// one, no unforced request goes out for a minute, doubling with each
+// failure in a row up to an hour (a forced one isn't held back). done,
+// when not nil, gets the answer of the request this call started, on its
+// goroutine; a failure leaves the index l has as it was. Reports whether a
+// request started.
+func (l *Library) Refresh(maxAge time.Duration, force bool, done func(*Index, error)) bool {
+	l.mu.Lock()
+	if l.idx == nil {
+		l.idx, l.fetched = l.readCache()
+	}
+	now := time.Now()
+	stale := l.idx == nil || now.Sub(l.fetched) >= maxAge
+	if l.refreshing || !force && (!stale || now.Before(l.retryAt)) {
+		l.mu.Unlock()
+		return false
+	}
+	l.refreshing = true
+	l.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		ix, err := l.Index(ctx, true)
+		l.mu.Lock()
+		l.refreshing = false
+		if err != nil {
+			l.backoff = min(max(2*l.backoff, time.Minute), time.Hour)
+			l.retryAt = time.Now().Add(l.backoff)
+		} else {
+			l.backoff, l.retryAt = 0, time.Time{}
+		}
+		l.mu.Unlock()
+		if done != nil {
+			done(ix, err)
+		}
+	}()
+	return true
+}
+
+// Refreshing reports whether a Refresh request is out.
+func (l *Library) Refreshing() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.refreshing
+}
+
+// Fetched is when the index l has was downloaded (zero for none).
+func (l *Library) Fetched() time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.idx == nil {
+		l.idx, l.fetched = l.readCache()
+	}
+	return l.fetched
 }
 
 func parseIndex(b []byte) (*Index, error) {

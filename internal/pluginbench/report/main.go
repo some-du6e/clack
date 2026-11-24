@@ -243,7 +243,9 @@ cheaper one wins on the costs above, each compared only past a noise
 floor; a tie goes to the smaller bundle. A pair with no behaviour check on
 either side is decided on costs alone, which can't tell a version that
 does nothing in Clack from one that works: its reason says "no behaviour
-checks", and the Library recommends neither (Install asks which). The CI workflow
+checks". The Library's Install goes by how each version works in Clack
+(compat.go) first and by these costs only between versions that work as
+well, so it never asks which. The CI workflow
 (` + "`.github/workflows/plugin-bench.yml`" + `) re-runs the bench and fails
 when a committed winner regresses (stops loading, starts re-rendering,
 passes fewer checks, or loses on correctness).
