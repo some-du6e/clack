@@ -39,7 +39,7 @@ func openOverflow(w *ew) {
 			}
 			payload := overflowPayload(w.bid, w.e, &o)
 			if w.e.Confirm != nil {
-				showConfirm(h, w.e.Confirm, func() { w.send(payload) }, nil)
+				w.confirm(w.e.Confirm, func() { w.send(payload) }, nil)
 				return
 			}
 			w.send(payload)
@@ -128,6 +128,17 @@ func (x *watch) Dismiss() {
 
 // ---- confirm dialogs ----
 
+// confirm shows c for w's action: in a Block Kit modal its in-card speed
+// bump (the surface's confirmIn), elsewhere the confirm dialog.
+func (w *ew) confirm(c *Confirm, ok, deny func()) {
+	if ci, has := w.o.(interface {
+		confirmIn(c *Confirm, ok, deny func()) bool
+	}); has && ci.confirmIn(c, ok, deny) {
+		return
+	}
+	showConfirm(w.o.host(), c, ok, deny)
+}
+
 // showConfirm shows a Block Kit confirmation dialog; ok runs on
 // Confirm, deny (may be nil) on Cancel / Escape.
 func showConfirm(h Host, c *Confirm, ok, deny func()) {
@@ -173,7 +184,7 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 		// .overflow_ellipsis on the h1: a long title stays on one line, cut
 		// with an ellipsis, as Slack shows it.
 		Title: title,
-		Width: 520, PadX: 24, HeadH: 68,
+		Width: 520, CDialog: true,
 		TruncateTitle: true,
 		Body: func(gtx C) D {
 			if tv == nil {
@@ -584,7 +595,10 @@ func (m *selectMenu) pick(i int) {
 			v.SelectedChans = append(append([]string(nil), v.SelectedChans...), it.id)
 		}
 	}
-	if !multi {
+	if !multi || w.commitAsks() {
+		// a confirm takes the focus (its cancel button's autoFocus): the
+		// select blurs and its menu closes, so a second pick can't put a
+		// second confirm over the first
 		m.Dismiss()
 	} else {
 		m.ed.SetText("")

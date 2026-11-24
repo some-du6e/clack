@@ -25,6 +25,17 @@ const stwBound = 50 * time.Millisecond
 // what a loaded runner adds).
 const stwMeasurable = 20 * time.Millisecond
 
+// stwMeasurableMac is stwMeasurable on macOS, whose runners stop the world
+// late with no wasm running at all: Go alone waited up to 70 ms idle and
+// 211 ms allocating on macos-15-intel, 78 ms on macos-latest, against
+// 2.5 ms on ubuntu (flake-check jsrt-stw-diag, 45305621894, 2026-11-23).
+// A case whose yields-off figure is under a second has a quarter of it
+// inside those waits: one run's "JSON.parse of 50M spaces between two
+// tokens" waited 113 ms with the yields on against 378 ms off. Each such
+// case is logged with its figure, the others are compared, and a macOS run
+// that compares none fails.
+const stwMeasurableMac = time.Second
+
 // TestStopTheWorldBounded: Go can't stop a goroutine inside wasm code, so
 // a stop-the-world (each GC cycle, runtime.ReadMemStats, runtime.Stack)
 // waits until the JS thread next calls the host, and every goroutine,
@@ -54,6 +65,11 @@ func TestStopTheWorldBounded(t *testing.T) {
 		t.Logf("stw: this engine has no yields (jr_set_yield missing): numbers only")
 	}
 	strict := os.Getenv("JSRT_STW_STRICT") != ""
+	measurable, mac := stwMeasurable, runtime.GOOS == "darwin"
+	if mac {
+		measurable = stwMeasurableMac
+	}
+	compared := 0
 	eval := func(src string) {
 		t.Helper()
 		if err := r.Do(func(js *Ctx) error { _, err := js.Eval("stw.js", src); return err }); err != nil {
@@ -185,10 +201,22 @@ func TestStopTheWorldBounded(t *testing.T) {
 			t.Errorf("%s: a stop-the-world waited %v on the JS thread (bound %v; %v with the yields off)", c.name, on.stw, stwBound, off.stw)
 		}
 		switch {
-		case off.stw < stwMeasurable:
+		case off.stw < measurable && mac:
+			t.Logf("stw: %s: not compared: %v with the yields off, under %v, so a quarter of it is inside this macOS runner's own stop-the-world waits (up to 211 ms with no wasm running)", c.name, off.stw, measurable)
+		case off.stw < measurable:
 			t.Logf("stw: %s: only %v with the yields off: too small here to show what they change", c.name, off.stw)
 		case on.stw > off.stw/4:
+			compared++
 			t.Errorf("%s: the yields cut the longest stop-the-world only from %v to %v", c.name, off.stw, on.stw)
+		default:
+			compared++
+		}
+	}
+	if patched && mac {
+		if compared == 0 {
+			t.Errorf("no case's longest stop-the-world with the yields off reached %v on this macOS runner: none was compared", measurable)
+		} else {
+			t.Logf("stw: %d of %d cases compared on this macOS runner (their yields-off figure %v or more)", compared, len(cases), measurable)
 		}
 	}
 	_ = r.Do(func(js *Ctx) error { r.eng.setYield(10000); return nil })

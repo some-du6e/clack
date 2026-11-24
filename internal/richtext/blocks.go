@@ -23,6 +23,7 @@ type bk struct {
 	contact   *bkContactCard // a contact_card block's own keys (contact.go)
 	prompt    *bkSharePrompt // a share_prompt block's own keys (shareprompt.go)
 	event     *bkEvent       // an event block's own keys (event.go)
+	carousel  *bkCarousel    // a carousel block's own keys (carousel.go)
 	Type      string         `json:"type"`
 	BlockID   string         `json:"block_id"`
 	Elements  []bk           `json:"elements"`
@@ -536,7 +537,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", "contact_card", "share_prompt", "event", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", "contact_card", "share_prompt", "event", "carousel", badBlock:
 		return true
 	}
 	return false
@@ -670,7 +671,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		a := &Attachment{
 			ServiceName: b.ProviderName, ServiceIcon: SafeImage(b.ProviderIconURL), AuthorName: b.AuthorName,
 			TitleLink: SafeURL(b.TitleURL), VideoURL: SafeURL(b.VideoURL), IsUnfurl: true,
-			Image: image(b.ThumbnailURL, b.AltText, 0, 0),
+			Image:      image(b.ThumbnailURL, b.AltText, 0, 0),
+			VideoBlock: true, BlockID: b.BlockID,
 		}
 		if b.Title != nil {
 			a.Title = plainSpans(c.r, b.Title.Text)
@@ -724,6 +726,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.sharePromptBlock(b))
 	case "event":
 		return c.eventBlock(out, b)
+	case "carousel":
+		return c.carouselBlock(out, b)
 	case "data_visualization":
 		return append(out, c.dataVizBlock(b))
 	case "markdown":

@@ -161,6 +161,8 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(4), l.dp(4), l.dp(4)
 	case richtext.EventBlock: // .p-event-container{margin:8px 0}
 		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.CarouselBlock: // .carousel{margin:8px 0}
+		return l.dp(8), l.dp(8), l.dp(8)
 	case richtext.SharePromptBlock: // .promptCardMargin{margin:8px 0} outside canvases (canvasUnfurl); nothing when it draws nothing
 		if b.Prompt == nil || !b.Prompt.Shown || l.opts.Canvas {
 			return 0, 0, 0
@@ -364,7 +366,8 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	y0 := y
 	if top && !l.inAtt {
-		bs = l.arrangeWorkObjects(bs) // where MessageFiles / MessageKitAttachments draw them (workobject.go)
+		bs = l.arrangeWorkObjects(bs)   // where MessageFiles / MessageKitAttachments draw them (workobject.go)
+		bs = l.attachmentsOverLimit(bs) // MessageKitAttachments' 20 (overlimit.go)
 	}
 	edited, editedAfter := -1, -1
 	if top && l.hasLabel() {
@@ -793,12 +796,23 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		l.kitRegion(x, y, w, h)
 		return h
 
+	case richtext.CarouselBlock:
+		h := l.carousel(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
+
 	case richtext.Table:
 		return l.table(b, x, y, w)
 
 	case richtext.AttachmentBlock:
 		if b.Att == nil {
 			return 0
+		}
+		if ol, ok := l.overLimit[b.Att]; ok { // MessageAttachmentOverLimitButton (overlimit.go)
+			return l.overLimitButton(ol, x, y, w)
+		}
+		if b.Att.VideoBlock { // a video block: VideoBlock, a block's renderer, not an attachment (videoblock.go)
+			return l.videoBlock(b, x, y, w)
 		}
 		l.attDepth++
 		defer func() { l.attDepth-- }()

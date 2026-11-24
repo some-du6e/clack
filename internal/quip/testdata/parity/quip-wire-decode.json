@@ -1,6 +1,6 @@
 {
   "dimension": "quip-wire-decode",
-  "slack": {"kind": "slack-js", "build": "web client 5718bdb1b28b", "captured": "2026-11-23", "source": "p8gD.fromBinary then p8gD.toBinary (quip-collab-webapp): what Slack keeps of bytes a server sends, written back", "refresh": "quip-wire-decode"},
+  "slack": {"kind": "slack-js", "build": "web client 5718bdb1b28b", "captured": "2026-11-24", "source": "p8gD.fromBinary then p8gD.toBinary (quip-collab-webapp): what Slack keeps of bytes a server sends, written back", "refresh": "quip-wire-decode"},
   "cases": [
     {"name": "canonical section", "in": {"type": "syncer.Section", "hex": "0a2174656d703a433a414243303132333435363738396162636465663031323334353610d836480062060a040a0248696a00"}, "slack": {"hex": "0a2174656d703a433a414243303132333435363738396162636465663031323334353610d836480062060a040a0248696a00"}},
     {"name": "fields out of order", "in": {"type": "syncer.Section", "hex": "62060a040a02486910d8360a2174656d703a433a4142433031323334353637383961626364656630313233343536"}, "slack": {"hex": "0a2174656d703a433a414243303132333435363738396162636465663031323334353610d83662060a040a024869"}},
@@ -31,6 +31,7 @@
     {"name": "list content", "in": {"type": "syncer.Section", "hex": "62058a01020801"}, "slack": {"hex": "62038a0100"}},
     {"name": "title section", "in": {"type": "syncer.Section", "hex": "620fd2030c22071a01780a0245310a0154"}, "slack": {"hex": "620fd2030c0a015422070a0245311a0178"}},
     {"name": "controls", "in": {"type": "syncer.DocumentData", "hex": "0a11620fe2020c12034164610a0573753a55310a0c620af203070880c88af0aa33"}, "slack": {"hex": "0a11620fe2020c0a0573753a553112034164610a0c620af203070880c88af0aa33"}},
-    {"name": "repeated packed strings", "in": {"type": "syncer.Section", "hex": "6a0a0a01610a016220052007"}, "slack": {"hex": "6a080a01610a01622007"}}
+    {"name": "repeated packed strings", "in": {"type": "syncer.Section", "hex": "6a0a0a01610a016220052007"}, "slack": {"hex": "6a080a01610a01622007"}},
+    {"name": "a link card with placeholder_metadata and a field Slack's schema doesn't have (99)", "in": {"type": "syncer.Section", "hex": "0a0c74656d703a433a4c43317331483862739203700a1868747470733a2f2f6578616d706c652e636f6d2f7265706f10031a321a300a2c73756f3a543046414b45303030312f433046414b4530303030302f313736323530303030302e3030303130301001200228013001380040014a110a0d6120706c616365686f6c6465721001980607"}, "slack": {"hex": "0a0c74656d703a433a4c433173314838627092036d0a1868747470733a2f2f6578616d706c652e636f6d2f7265706f10031a321a300a2c73756f3a543046414b45303030312f433046414b4530303030302f313736323530303030302e3030303130301001200228013001380040014a110a0d6120706c616365686f6c6465721001"}}
   ]
 }

@@ -286,9 +286,9 @@ func (e *UserGroupEditModal) membersLayout(gtx layout.Context) layout.Dimensions
 	th := e.h.Theme()
 	cl := colorsOf(th)
 	w := gtx.Constraints.Max.X
-	// the body has no side padding; the selector's margin is 4px 24px 24px
-	x, iw := dp(gtx, 28)-dp(gtx, 24), w+2*(dp(gtx, 28)-dp(gtx, 24))
-	x = -x
+	// the selector's margin is 4px 24px 24px: the c-dialog body's own
+	// 24px padding (CDialog)
+	x, iw := 0, w
 	y := dp(gtx, 4)
 	if e.noUsers {
 		dd := at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {

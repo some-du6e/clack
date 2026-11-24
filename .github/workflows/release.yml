@@ -213,12 +213,12 @@ jobs:
           d="-v $PWD/dist:/dist:ro -v $RUNNER_TEMP/check.sh:/check.sh:ro"
           for img in debian:12 ubuntu:22.04 ubuntu:24.04; do
             echo "::group::$img"
-            docker run --rm $d $img sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq /dist/*.deb >/dev/null && sh /check.sh && apt-get remove -y -qq clack >/dev/null && ! test -e /usr/bin/clack'
+            docker run --rm $d $img sh -c 'export DEBIAN_FRONTEND=noninteractive; o="-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"; timeout 300 apt-get $o update -qq && timeout 600 apt-get $o install -y -qq /dist/*.deb >/dev/null && sh /check.sh && apt-get remove -y -qq clack >/dev/null && ! test -e /usr/bin/clack'
             echo "::endgroup::"
           done
           for img in fedora:41 fedora:42; do
             echo "::group::$img"
-            docker run --rm $d $img sh -c 'dnf install -y -q /dist/*.rpm && sh /check.sh && dnf remove -y -q clack && ! test -e /usr/bin/clack'
+            docker run --rm $d $img sh -c 'timeout 600 dnf install -y -q --setopt=timeout=30 --setopt=retries=3 /dist/*.rpm && sh /check.sh && dnf remove -y -q clack && ! test -e /usr/bin/clack'
             echo "::endgroup::"
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -341,7 +341,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) {
-            choco install innosetup -y --no-progress
+            choco install innosetup -y --no-progress --execution-timeout=300
             if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
           }
           & $iscc /Qp "/DAppVersion=$env:VERSION" "/DAppVersionNum=$env:NUM.0" "/DSourceExe=$PWD\build\windows-amd64\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss

@@ -146,7 +146,11 @@ func (in *intro) drawStage(f *introFrame, b int, g introGeom, start time.Time, s
 	case beatSlack:
 		in.drawSlackStage(f, g, start, stage)
 	case beatPlugins:
-		in.drawPluginsStage(f, g, start, stage)
+		if in.importing(f.a) {
+			in.drawImportStage(f, g, start, stage) // Slick's and Taut's plugins on this computer (intro_import.go)
+		} else {
+			in.drawPluginsStage(f, g, start, stage)
+		}
 	case beatHackClub:
 		in.drawHackClubStage(f, g, start, stage)
 	}

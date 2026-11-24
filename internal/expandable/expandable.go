@@ -255,6 +255,30 @@ func CallID(m *slack.Message) string {
 	return ""
 }
 
+// VideoBlockKey is VideoBlock's expandable (u8h8): getExpandableKey(
+// "blockVideo", containerId, {blockId}) with processProps' blockId,
+// block_id ?? "": a video block without one keys as "block_video_<ts>_",
+// not "undefined". "" without a ts.
+func VideoBlockKey(ts, blockID string) string {
+	if ts == "" {
+		return ""
+	}
+	return "block_video_" + ts + "_" + blockID
+}
+
+// ReactionKey is a message's reaction key (KtEr J: the message's
+// _rxn_key, else 4kSE makeReactionKey("message", ts, channel),
+// `message-${ts}-${channel}`), which ReactionBar (uFSC) keeps its
+// isExpanded under in the expandables store: its "N more" set it, its
+// "Show less" cleared it. "" without a ts or channel (makeReactionKey
+// throws).
+func ReactionKey(ts, channel string) string {
+	if ts == "" || channel == "" {
+		return ""
+	}
+	return "message-" + ts + "-" + channel
+}
+
 // OnDisk reports whether key may be written to disk: an allowlist of the
 // keys made of ids alone (a message ts, file, call and attachment ids, a
 // view context, a block id): letters, digits, ".", "_" and "-", and in a

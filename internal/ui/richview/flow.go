@@ -416,6 +416,8 @@ type display struct {
 	bars []fileBar
 	// charts are the data_visualization blocks' charts (dataviz.go)
 	charts []chartPrim
+	// carousels are the carousels' scrollers (carousel.go)
+	carousels []carouselSlot
 	// busyBtns are the buttons that write to Slack (writes.go)
 	busyBtns []busyBtn
 	// cursorRegions are the card blocks' boxes (the default arrow outside
@@ -485,6 +487,7 @@ func (d *display) reset() {
 	d.expands = d.expands[:0]
 	d.bars = d.bars[:0]
 	d.charts = d.charts[:0]
+	d.carousels = d.carousels[:0]
 	d.busyBtns = d.busyBtns[:0]
 	d.cursorRegions = d.cursorRegions[:0]
 	d.handRects = d.handRects[:0]
@@ -641,6 +644,9 @@ type lay struct {
 	// state); expandAt is the one being laid out (truncate.go).
 	expanded map[*richtext.Attachment]bool
 	expandAt *richtext.Attachment
+	// overLimit marks the attachment blocks attachmentsOverLimit added:
+	// MessageAttachmentOverLimitButton's (overlimit.go)
+	overLimit map[*richtext.Attachment]overLimitBtn
 	// expandKey, when set, is the section whose "Show more" is being laid
 	// out (its blockText key, expander.go); expandAtKey expandAt's
 	// attachmentText key when Slack keeps its state in the store
@@ -662,6 +668,10 @@ type lay struct {
 	// tables holds the data_tables' page, sort and filter (View state,
 	// datatable.go)
 	tables map[any]*tableState
+	// carousels are the carousels' scrollers (View state, carousel.go),
+	// carouselN the ones laid out so far (the key of one with no block_id)
+	carousels map[string]*carouselState
+	carouselN int
 	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
 	titleFrags [2]int
 	// media is the card's AttachmentMedia part (fixedMedia), for

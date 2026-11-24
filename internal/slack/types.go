@@ -32,9 +32,12 @@ type Message struct {
 	Files         []File     `json:"files,omitempty"`
 	// XFiles are the files uploaded with the message (x_files), which
 	// its sender may take out of it (getRemovableFileIds: chat.removeFile)
-	XFiles         []string        `json:"x_files,omitempty"`
-	Blocks         json.RawMessage `json:"blocks,omitempty"`
-	Attachments    []Attachment    `json:"attachments,omitempty"`
+	XFiles      []string        `json:"x_files,omitempty"`
+	Blocks      json.RawMessage `json:"blocks,omitempty"`
+	Attachments []Attachment    `json:"attachments,omitempty"`
+	// DocumentUnfurl is a canvas link card's unfurl container's state
+	// (Quip's slack_unfurl message; fetchAndFormatUnfurlContainer reads it).
+	DocumentUnfurl *DocumentUnfurl `json:"document_unfurl,omitempty"`
 	RawAttachments json.RawMessage `json:"-"`                  // attachments exactly as Slack sent them (memory only)
 	Metadata       json.RawMessage `json:"metadata,omitempty"` // app metadata {event_type, event_payload}
 	Icons          *Icons          `json:"icons,omitempty"`
@@ -898,4 +901,29 @@ type AgentChannelUnfurl struct {
 	JoinableFromChannelID string `json:"joinable_from_channel_id"`
 	WorkflowName          string `json:"workflow_name,omitempty"`
 	WorkflowTriggerID     string `json:"workflow_trigger_id,omitempty"`
+}
+
+// DocumentUnfurl is an unfurl container message's document_unfurl: whether
+// Slack has unfurled the canvas card's link yet (formatFetchUnfurlContainer
+// Result's isUnfurling is !is_unfurled), and why it shows no preview
+// (canvas_unfurl_state: "exact_link_blocked", "all_links_from_domain",
+// "msg_non_existent", …; EmptyUnfurl's lines). A field of an unexpected
+// type is left unset, never failing the message.
+type DocumentUnfurl struct {
+	IsUnfurled        bool   `json:"is_unfurled,omitempty"`
+	CanvasUnfurlState string `json:"canvas_unfurl_state,omitempty"`
+}
+
+// UnmarshalJSON reads each field on its own, so one Slack sends in another
+// shape doesn't fail the messages.list answer it came in.
+func (d *DocumentUnfurl) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(b, &raw) != nil {
+		*d = DocumentUnfurl{}
+		return nil
+	}
+	*d = DocumentUnfurl{}
+	_ = json.Unmarshal(raw["is_unfurled"], &d.IsUnfurled)
+	_ = json.Unmarshal(raw["canvas_unfurl_state"], &d.CanvasUnfurlState)
+	return nil
 }

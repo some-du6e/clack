@@ -619,6 +619,15 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 	}
 }
 
+// DownloadImageFile is an image's AttachmentImageActions Download
+// (richview.ImageDownloadHandler): the image's Slack file, downloaded as
+// its FileActions' Download does.
+func (r *richHandler) DownloadImageFile(f *richtext.File) {
+	if ph, ok := r.h.(popups.Host); ok && f != nil {
+		popups.DownloadFile(ph, f)
+	}
+}
+
 // ImageMenu is an image's AttachmentImageActions More actions
 // (richview.ImageMenuHandler): Copy link, Hide image.
 func (r *richHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
