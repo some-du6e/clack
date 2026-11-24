@@ -171,6 +171,7 @@ func newBackend(c *core.App, cacheDir string) *backend {
 
 // Attach connects the app to core. Call before Run, or after login.
 func (a *App) Attach(c *core.App, cacheDir string) {
+	c.SetQuipEdit(a.prefs.CanvasQuipEdit) // ui.json's canvas_quip_edit (canvas_edit.go)
 	a.data = newBackend(c, cacheDir)
 	a.data.onSignOut = a.opts.SignOut
 	if a.win != nil && a.login == nil {
