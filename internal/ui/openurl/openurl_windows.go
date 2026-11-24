@@ -2,6 +2,7 @@ package openurl
 
 import (
 	"runtime"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -55,7 +56,10 @@ type shellExecuteInfo struct {
 func shellOpen(u string) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED|windows.COINIT_DISABLE_OLE1DDE); err == nil {
+	// S_OK and S_FALSE (this thread was already in an STA) each take a
+	// reference CoUninitialize gives back; x/sys returns S_FALSE as
+	// Errno(1). RPC_E_CHANGED_MODE (an MTA thread) takes none.
+	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED|windows.COINIT_DISABLE_OLE1DDE); err == nil || err == syscall.Errno(1) {
 		defer windows.CoUninitialize()
 	}
 	verb, err := windows.UTF16PtrFromString("open")
@@ -73,3 +77,6 @@ func shellOpen(u string) error {
 	}
 	return nil
 }
+
+// retryWithTool: Slack's Windows retry is the other way, rundll32.
+const retryWithTool = true

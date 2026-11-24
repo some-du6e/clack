@@ -1,42 +1,30 @@
 package popups
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
+	"strings"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
-// SaveDownload fetches src (a Slack file URL, with the session) into the
-// Downloads folder as name, like DownloadFile, but fresh every time (an
-// export changes as its list does; core.Fetch would hand back its cached
-// copy) and leaving the toast to the caller (a list's download says what
-// Slack says: "CSV downloaded successfully"). done runs on the UI
-// goroutine with the saved file's path or the error.
-func SaveDownload(h Host, src, name string, done func(path string, err error)) {
-	run(h, func(ctx context.Context) (string, error) {
-		c := h.Core()
-		if c == nil || !c.C.CredentialsOK(src) {
-			return "", errors.New("not a Slack file")
-		}
-		resp, err := c.C.Download(ctx, src)
-		if err != nil {
-			return "", err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("http %d", resp.StatusCode)
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, core.MaxFetch+1))
-		if err != nil {
-			return "", err
-		}
-		if len(data) > core.MaxFetch {
-			return "", errors.New("file too large")
-		}
-		return lbSave(name, src, data)
-	}, done)
+// SaveDownload is downloadFile with a URL of its own (a list's export:
+// exportListsTemplate, listsFormat): on the desktop startDesktopDownload
+// with f's id and src, so the export streams to the download folder like
+// any download, with the download toast, fresh every time (core's
+// Downloads never caches). false when it can't start (no URL, not a
+// Slack file URL, no session): the caller says what Slack says ("CSV
+// download failed").
+func SaveDownload(h Host, f *richtext.File, src string) bool {
+	c := h.Core()
+	if c == nil || f == nil || f.ID == "" || src == "" || strings.HasPrefix(src, "blob:") || !c.C.CredentialsOK(src) {
+		return false
+	}
+	ds := c.Downloads()
+	ds.Start(core.DownloadRequest{ID: f.ID, URL: src, File: *f, Dir: downloadDir})
+	ds.AddActive(f.ID)
+	if DownloadsChanged != nil {
+		DownloadsChanged(h)
+	}
+	h.Invalidate()
+	return true
 }

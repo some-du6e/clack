@@ -2124,16 +2124,20 @@ func openFile(h Host, it fileItem) {
 	if u == "" {
 		return
 	}
-	// the file's page: in the browser (Clack has no viewer for it), or a
-	// link the client opens itself (hostHandler's follow), never the
-	// deep-link handler, which opens only slack: links
+	// the Files explorer's click: under
+	// unified_files_3p_primary_custom_sections (the account's) Slack's
+	// handleFileContainerClick opens the file's own view (its primary
+	// view, in the app), which Clack hasn't ported: the file's page, in
+	// the browser, or a link the client opens itself (hostHandler's
+	// follow), never the deep-link handler, which opens only slack: links.
+	// A message's file goes the message way (hostHandler.OpenFile).
 	hostHandler{h}.follow(u, false)
 }
 
 // fileFromRich is a message attachment as a Files item, for openFile.
 func fileFromRich(f *richtext.File) fileItem {
 	it := fileItem{core.File{ID: f.ID, Name: f.Name, Title: f.Title, Filetype: f.Type, PrettyType: f.PrettyType,
-		Mime: f.Mime, User: f.User, URL: f.URL, Permalink: f.Permalink, Size: f.Size, Created: f.Created,
+		Mime: f.Mime, User: f.User, URL: f.URL, Permalink: f.Permalink, Size: f.Size, Created: f.Created, Mode: f.Mode,
 		IsCanvas: core.IsCanvasFile(f.Type, "", f.PrettyType), IsList: core.IsListFile(f.Type, "", f.PrettyType), IsImage: f.IsImage}}
 	if f.Thumb != nil {
 		it.ThumbW, it.ThumbH = f.Thumb.W, f.Thumb.H

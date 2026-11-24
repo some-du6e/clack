@@ -334,9 +334,9 @@ func (d *UserGroupMembersModal) layout(gtx layout.Context) layout.Dimensions {
 	th := d.h.Theme()
 	cl := colorsOf(th)
 	w := gtx.Constraints.Max.X
-	// the body has no side padding; the selector's margin is 4px 24px 24px
-	x, iw := dp(gtx, 28)-dp(gtx, 24), w+2*(dp(gtx, 28)-dp(gtx, 24))
-	x = -x
+	// the selector's margin is 4px 24px 24px: the c-dialog body's own
+	// 24px padding (CDialog)
+	x, iw := 0, w
 	y := dp(gtx, 4)
 	if !d.loaded {
 		// p-user_group_member_selector_loading_spinner_container: 148px,

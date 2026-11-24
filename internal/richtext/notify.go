@@ -121,6 +121,10 @@ func notifyBlock(b *Block, st SpanText) string {
 		return strings.Join(parts, " ")
 	case List:
 		return notifyList(b, st)
+	case SharePromptBlock: // convertStringTitledBlockToPlainText: its label
+		if b.Prompt != nil {
+			return b.Prompt.Label
+		}
 	case DataVizBlock: // convertDataVisualizationBlockToPlainText: its title
 		if b.DataViz != nil {
 			return b.DataViz.PlainTitle

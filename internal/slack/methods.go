@@ -156,6 +156,9 @@ type PostOpts struct {
 	// message it built from a Delta (Run task now): no text, link_names
 	// or unfurl_links; the server makes the text from the blocks
 	BlocksOnly bool
+	// AgentMessageSourceType is agent_message_source_type: what sent a
+	// prompt to an agent (a shared prompt's "shared_prompt_link")
+	AgentMessageSourceType string
 }
 
 func (c *Client) Post(ctx context.Context, o PostOpts) (*Message, error) {
@@ -177,6 +180,9 @@ func (c *Client) Post(ctx context.Context, o PostOpts) (*Message, error) {
 	}
 	if o.ClientMsgID != "" {
 		p.Set("client_msg_id", o.ClientMsgID)
+	}
+	if o.AgentMessageSourceType != "" {
+		p.Set("agent_message_source_type", o.AgentMessageSourceType)
 	}
 	var r struct {
 		Message Message `json:"message"`

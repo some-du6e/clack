@@ -477,6 +477,14 @@ type Options struct {
 	// Channel and TS identify the message, for the Slack-shaped props of
 	// its attachment components (activeChannelId, messageTs).
 	Channel, TS string
+	// ViewContext is the view showing the message, as Slack's lists pass
+	// it (expandable.ViewChannel, ViewThread, …): the expandable keys of
+	// its file list, link previews and attachment text end with it, so a
+	// preview collapsed in the channel stays open in the thread.
+	ViewContext string
+	// Sender is the message's author (senderMemberId): an unverified
+	// outsider's previews in a DM start hidden (expander.go).
+	Sender string
 	// Elements, if set, draws the doc's interactive elements (see
 	// Elements). Use a comparable (pointer) implementation.
 	Elements Elements

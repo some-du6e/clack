@@ -138,6 +138,9 @@ type ChannelPins struct {
 
 // NewChannelPins builds ch's Pins tab.
 func NewChannelPins(h Host, ch string) *ChannelPins {
+	// no view context: the Pins tab sits under no MessageContainerContext
+	// provider, so a pin's expandable keys carry none (expandable's view
+	// contexts)
 	v := &ChannelPins{base: newBase(h), fv: NewFiles(h), cf: NewChannelFiles(h, ch), ch: ch, rows: map[string]*cpRow{}}
 	v.list.Axis = layout.Vertical
 	v.kb = newVKList(&v.list)

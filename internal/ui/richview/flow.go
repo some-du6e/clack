@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -222,12 +223,30 @@ const (
 	// tTimeline is a timeline section's "(Sources)" (timeline: the
 	// section; timeline.go)
 	tTimeline
+	// tContact is a contact card (id: its member): a click opens their
+	// profile, with no hover card (contact.go)
+	tContact
+	// tSharePrompt is a share_prompt's Send to {agentName} (prompt: the
+	// block's; shareprompt.go)
+	tSharePrompt
+	// tEvent is an event card's RSVP option or Copy to Your Calendar (id:
+	// "rsvp:accepted", "rsvp:declined", "rsvp:tentative", "copy"; event:
+	// the card's; event.go)
+	tEvent
 	// tDate is a canvas's date control (Quip's CONTROL_SLACK_DATE_TYPE,
 	// span.slack-date-contents.mention): no link and no click here, but an
 	// editor's pointer is the hand over it (canvas-controller CSS:
 	// control.c68 .slack-date-contents:not(.read-only){cursor:pointer}),
 	// which View.HandCursors gives it; a viewer's stays the text cursor.
 	tDate
+	// tExpandable sets an expandable key (id) in the expandables store to
+	// on (expander.go): a file list's caret, an image block's trigger,
+	// "Hide image", "expand it anyway", "just show this one", a "Show
+	// more" / "Show less" Slack keeps there
+	tExpandable
+	// tAllowPreviews is UnverifiedDisclosure's "Allow all previews from
+	// {memberName}" (id: the member; expander.go)
+	tAllowPreviews
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no
@@ -316,6 +335,12 @@ type target struct {
 	col   int
 	// timeline is a tTimeline's section (timeline.go)
 	timeline *richtext.TimelineSection
+	// prompt is a tSharePrompt's block (shareprompt.go)
+	prompt *richtext.SharePrompt
+	// event is a tEvent's card (event.go)
+	event *richtext.Event
+	// on is what a tExpandable sets its key to
+	on bool
 }
 
 type hit struct {
@@ -377,7 +402,14 @@ type display struct {
 	bars []fileBar
 	// charts are the data_visualization blocks' charts (dataviz.go)
 	charts []chartPrim
-	pills  []snipPill
+	// busyBtns are the buttons that write to Slack (writes.go)
+	busyBtns []busyBtn
+	// cursorRegions are the card blocks' boxes (the default arrow outside
+	// their text), handRects pointer boxes without a click (cursors.go)
+	cursorRegions, handRects []image.Rectangle
+	// refreshAt is when an event card's state next changes (event.go)
+	refreshAt time.Time
+	pills     []snipPill
 	// ells counts the frags that are a clamp's "…" (frag.ell)
 	ells int
 	// faces are the lazy frags' faces (frag.lazy), lazyN how many lazy
@@ -438,6 +470,10 @@ func (d *display) reset() {
 	d.expands = d.expands[:0]
 	d.bars = d.bars[:0]
 	d.charts = d.charts[:0]
+	d.busyBtns = d.busyBtns[:0]
+	d.cursorRegions = d.cursorRegions[:0]
+	d.handRects = d.handRects[:0]
+	d.refreshAt = time.Time{}
 	d.pills = d.pills[:0]
 	d.ells = 0
 	d.faces = d.faces[:0]
@@ -590,9 +626,19 @@ type lay struct {
 	// state); expandAt is the one being laid out (truncate.go).
 	expanded map[*richtext.Attachment]bool
 	expandAt *richtext.Attachment
+	// overLimit marks the attachment blocks attachmentsOverLimit added:
+	// MessageAttachmentOverLimitButton's (overlimit.go)
+	overLimit map[*richtext.Attachment]overLimitBtn
 	// expandKey, when set, is the section whose "Show more" is being laid
-	// out (its key in kitExpanded).
-	expandKey string
+	// out (its blockText key, expander.go); expandAtKey expandAt's
+	// attachmentText key when Slack keeps its state in the store
+	expandKey, expandAtKey string
+	// expandColl, when set, is the View-local toggle (collapsed) of the
+	// "Show more" being laid out: a share_prompt's (shareprompt.go).
+	expandColl any
+	// lastTruncated reports whether the last flow stopped at maxLines
+	// with items left over (a share_prompt's "Show more" shows only then).
+	lastTruncated bool
 	// collapsed holds the image blocks, call cards and containers toggled
 	// by the viewer, collapseDefs the containers' defaults (View state).
 	collapsed    map[any]bool
@@ -899,8 +945,12 @@ func (l *lay) addSpan(sp *richtext.Span, fs *flowStyle) {
 			l.truncatedLink(sp, fs, k, pt) // msgcard.go
 			return
 		}
-		if sp.URL == expandURL && l.expandKey != "" { // section Show more / Show less (truncate.go)
-			tg = l.d.addTarget(target{kind: tExpand, id: l.expandKey, underline: true})
+		if sp.URL == expandURL && l.expandColl != nil { // a share_prompt's Show more / Show less (shareprompt.go)
+			tg = l.d.addTarget(target{kind: tCollapse, key: l.expandColl, underline: true})
+		} else if sp.URL == expandURL && l.expandKey != "" { // section Show more / Show less (truncate.go)
+			tg = l.d.addTarget(target{kind: tExpandable, id: l.expandKey, on: !xpOn(l.expandKey), underline: true})
+		} else if sp.URL == expandURL && l.expandAtKey != "" { // AttachmentText's (cards.go)
+			tg = l.d.addTarget(target{kind: tExpandable, id: l.expandAtKey, on: !xpOn(l.expandAtKey), underline: true})
 		} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
 			tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
 		} else {
@@ -1117,6 +1167,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		items = items[:n-1]
 	}
 	if len(items) == 0 {
+		l.lastTruncated = false
 		return 0, 0
 	}
 	base := l.faceFor(fs.face, fs.size, 0)
@@ -1594,6 +1645,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	}
 	l.items = l.items[:0]
 	l.decos = l.decos[:0]
+	l.lastTruncated = truncated
 	return y - y0, wmax
 }
 

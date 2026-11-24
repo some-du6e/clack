@@ -475,6 +475,8 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -v -timeout 5m -run '^TestFrameEventAskedX11$' gioui.org/app
           # patch 59: a window whose X server goes away says so first (its own private Xvfb)
           go test -count=1 -v -timeout 3m -run '^TestX11ConnectionLost$' gioui.org/app
+          # a plugin's app icon on X11: set at the window's next event, within the server's request size
+          xvfb-run -a go test -count=1 -v -timeout 3m -run '^TestSetAppIconX11$' ./internal/desktop
       # Signals and Clack's exit line (review of karim-1118), the real
       # binary on X11: under nohup a SIGHUP stays ignored (Notify would
       # have made it quit Clack), and a SIGTERM ends Clack by its own quit,
@@ -566,6 +568,11 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: .github/scripts/gio-layer-fix.sh xvfb-run -a
+      # patch 67: a masked Editor (a password field) copies and cuts
+      # nothing; Slack's Edit menu keeps Cut and Copy enabled
+      - name: Gio masked Editor copy (patch 67)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackMaskedEditorCopiesNothing$' gioui.org/widget
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -1410,7 +1417,7 @@ jobs:
           }
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) {
-            choco install innosetup -y --no-progress
+            choco install innosetup -y --no-progress --execution-timeout=300
             if ($LASTEXITCODE -ne 0) { throw 'choco install innosetup failed' }
           }
           & $iscc /Qp '/DAppVersion=0.0.1' '/DAppVersionNum=0.0.1.0' "/DSourceExe=$PWD\build\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
@@ -1465,7 +1472,7 @@ jobs:
           BADGE_SHOTS_DIR: ${{ runner.temp }}\toast-shots
         run: |
           rc=0
-          go test -count=1 -v -timeout 7m -run 'TestTaskbar|TestSystemIdleTime|TestBadge|TestLanczos' ./internal/desktop || rc=1
+          go test -count=1 -v -timeout 7m -run 'TestTaskbar|TestSystemIdleTime|TestBadge|TestLanczos|TestSetAppIconWindows' ./internal/desktop || rc=1
           go test -count=1 -v -timeout 8m -run '^(TestTaskbarWindow|TestTaskbarOverlayFollowsCount|TestFlashOnNotification|TestCloseKeepsAppInTaskbar|TestWindowsAppearancePref|TestCloseToTray|TestTitleDockTaskbarAgreeLikeSlack)$' ./internal/ui || rc=1
           exit $rc
       # Focus Assist's modes set through IQuietHoursSettings, each read back
@@ -1494,11 +1501,19 @@ jobs:
       - name: a clicked link's hand-off (the message click, then ShellExecuteEx vs rundll32 to a clackstub:// handler under HKCU)
         if: ${{ !cancelled() }}
         shell: bash # every go test counts (pwsh steps fail only on the last command)
+        env:
+          CGO_ENABLED: "0" # as the job's other internal/ui steps build
+          CLACK_WINDOWS_ASSOC_TESTS: "1" # TestOpenHandOffLatency registers clackstub: under HKCU and removes it
         run: |
           rc=0
           go test -count=1 -v -timeout 5m -run '^(TestOpenHandOffLatency|TestEscapeExternalHandlerValue|TestCheck)$' ./internal/ui/openurl || rc=1
           go test -count=1 -v -timeout 5m -run '^TestLinkClickHandsOffAtOnce$' ./internal/ui/messages || rc=1
           exit $rc
+      # downloads' Mark-of-the-Web: the Zone.Identifier stream Chromium
+      # writes on every download, on NTFS (files-download)
+      - name: downloads' Mark-of-the-Web (Zone.Identifier)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestMarkDownloadedWindows|TestZoneIdentifier|TestCleanFileNameLimits' ./internal/core
       # a test binary that printed PASS and still failed crashed as it
       # exited (windows-shell's gioui.org/app, train-161's push ci
       # 45018881337: no panic, no exit status): Windows Error Reporting
@@ -1718,6 +1733,7 @@ jobs:
           go test -count=1 -v -run 'TestUserNotification' ./internal/desktop
           go test -count=1 -v ./internal/applog
           go test -count=1 -v ./internal/ui/menubar
+          go test -count=1 -v -run 'TestMarkDownloadedDarwin' ./internal/core # downloads' quarantine xattr (files-download)
           go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
           # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
           go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit

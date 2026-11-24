@@ -296,6 +296,8 @@ on:
       - "internal/store/reached_end*.go"
       - "internal/core/reached_end*.go"
       - "internal/ui/messages/reached_end_test.go"
+      # the msg-latency job's own
+      - "internal/ui/messages/hub_sent_load_test.go"
       - "internal/ui/reached_end_list_test.go"
       - "internal/fakeslack/count_posts.go"
       # the readiness the latency guards wait on, and where Activity reads it
@@ -3515,6 +3517,40 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # 2026-11-23 (Karim, alpha.157: "fucked text"): modal titles wrap as
+  # Slack's .c-sk-modal_title_bar__text does, by whole 30px lines, a
+  # channel entity with its icon; DeprecatedDialog titles stay cut
+  # (truncateTitle), Block Kit confirms included.
+  modal-title-wrap:
+    if: ${{ !inputs.only || startsWith('modal-title-wrap', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the title wrap, COUNT runs"
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 5m -run '^(TestModalTitleWraps|TestModalTitleWrapsChannelEntity|TestModalTitleTruncates|TestModalCloseButtonPlace|TestCDialogTitleWraps|TestLeaveDialogsTitles)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -v -timeout 3m -run '^TestCDTitleLines$' ./internal/ui/views || rc=1
+          go test -count=$COUNT -v -timeout 5m -run '^(TestConfirmObjectTitle|TestLeaveBumpIsWizardSpeedBump)$' ./internal/ui/blockkit || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # 2026-11-20 (Karim, α.113): "i swear i just saw the [/] icon flicker
   # like crazy" in a thread composer under OwlMode's patches. The footer's
   # layout across a sweep of widths, frame after frame, with and without
@@ -3699,7 +3735,10 @@ jobs:
   # drawn as the window draws them, without plugins: others' messages
   # from people it holds and people it never fetched, own sends and their
   # echoes, quiet and under a busy workspace's socket (Karim's α.102 "like
-  # a second and they come in clumped"). One verbose run, then COUNT.
+  # a second and they come in clumped"). One verbose run, then COUNT;
+  # and TestSentAcrossALoad (messages): a send confirmed while a reload of
+  # its list is out (the busy pass's second send, 0.73 s late, when a
+  # member lookup's answer reloaded the open channel as it was confirmed).
   # Dispatch with only=msg-latency.
   msg-latency:
     if: ${{ !inputs.only || startsWith('msg-latency', inputs.only) }}
@@ -3726,6 +3765,7 @@ jobs:
           rc=0
           go test -count=1 -v -timeout 20m -run '^TestMessageLatency$' ./internal/ui || rc=1
           go test -count=$COUNT -timeout 60m -run '^TestMessageLatency$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 20m -run '^TestSentAcrossALoad$' ./internal/ui/messages || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -5446,8 +5486,10 @@ jobs:
   # were two Library rows): a plugin both systems ship is one row under
   # either version's name (docs/PLUGINS.md's pair table), over the
   # published Library's metadata, through Preferences > Plugins > Browse;
-  # a pick from costs alone isn't recommended, and Bring Back Slackbot's
-  # dead version isn't; the doc table, pluginlib's pairs and bench.json
+  # Install adds the better version, never asking (the one that works in
+  # Clack, then the bench's pick: Bring Back Slackbot's dead version never
+  # wins on its costs), with why; the Library's index refreshes itself
+  # (library-pick-refresh); the doc table, pluginlib's pairs and bench.json
   # agree; a bench run limited to some plugins keeps the rest of the data,
   # matched by id. COUNT runs each. Dispatch with only=library-dupes.
   library-dupes:
@@ -5472,8 +5514,8 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 20m -run '^(TestLibraryOneRowPerPlugin|TestLibraryBenchPick|TestLibraryMergesTautAndSlick|TestBenchPairsAreLibraryRows|TestPluginSuggestionsRank)$' ./internal/ui || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^(TestPairsMatchDocs|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          go test -count="$COUNT" -timeout 20m -run '^(TestLibraryOneRowPerPlugin|TestLibraryInstallPick|TestBenchCostShapes|TestLibraryMergesTautAndSlick|TestBenchPairsAreLibraryRows|TestPluginSuggestionsRank|TestLibraryRefreshesStale)$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestPairsMatchDocs|TestCompatMatchesDocs|TestRefreshOneAtATimeWithBackoff)$' ./internal/pluginlib || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestKeep|TestDecide|TestDecideWithoutChecks|TestEmbedded)$' ./internal/pluginbench || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
@@ -5852,7 +5894,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -5930,7 +5972,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -6161,7 +6203,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40 # budget, min (new job: no p95 yet)
     env:
-      SLICK_PIN: f6be3bde30f080a6ca4e33327ae99816d08bb131 # Slick (GPLv3, third-party), same pin as slick.yml
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
       TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37 # Taut (MIT, third-party), same pin as ui-taut.yml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -6229,6 +6271,41 @@ jobs:
           go test -count="$COUNT" -timeout 8m -run '^TestCustomNameRecordingLikeSlack$' ./internal/slick || rc=1
           xvfb-run -a go test -count="$COUNT" -timeout 10m -run '^TestTautCustomNameRecording' ./internal/ui || rc=1
           go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # slick-v162 (2026-11-24): its review's fixes. An image's size is read
+  # from its header and checked against nativeImage's limits (8192 px a
+  # side, a 64 MiB pixel buffer) before it's decoded, whichever way a main
+  # half hands it in (slick); a plugin's X11 app icon is set at the
+  # window's next event, as the set from 256 px down, within the server's
+  # request size, under Xvfb (desktop); the header tab's view through
+  # setRoute to Slack's view state (slick). COUNT runs each. Dispatch with
+  # only=slick-v162.
+  slick-v162:
+    if: ${{ !inputs.only || startsWith('slick-v162', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb
+      - name: nativeImage's size limits, the tab view's path, the X11 app icon under Xvfb, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestNativeImageSizeLimits|TestNativeImageLikeElectron|TestSetTabViewReachesTheStore)$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 5m -run '^TestSetAppIconX11$' ./internal/desktop || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -6373,13 +6450,568 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # mf-cold (2026-11-23): windows-idle's TestMFColdStart took 22 s to its
+  # metadata and then got none in a minute (keyboard-focus-2-206), while
+  # goaudio's Media Foundation decodes took 50 and 70 s in the other process
+  # and its TestReadersAreTotal/wav_channels_capped, opening through Media
+  # Foundation, 2 s, its limit. C:'s cold reads were queued behind writes at
+  # its cap (mf-cold-diag: each read of C: 50 ms to 2.4 s under a write flood
+  # on C:, 0 to 1 ms under one on D:). Each test process starts with the
+  # standby list purged and C: held at its write cap for 90 s, two writes
+  # through to it at a time (.github/scripts/cold-disk.ps1; each round
+  # logs what a cold read of C: took then), its binary on C: as go test's
+  # are: mf's TestMFColdStart, whose warm-up process reads Media
+  # Foundation's files first, and TestMFLateFirstTransfer's engines after
+  # it, then goaudio's TestReadersAreTotal. Two runners, at most 5 rounds
+  # each. Dispatch with only=mf-cold.
+  mf-cold:
+    if: ${{ !inputs.only || startsWith('mf-cold', inputs.only) }}
+    name: "mf-cold (runner ${{ matrix.runner }})"
+    runs-on: windows-latest
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: Media Foundation read cold with C:'s writes at their cap (mf, goaudio; COUNT rounds, at most 5)
+        shell: bash
+        env:
+          CLACK_MEDIA_TESTS: "1"
+          MF_RUN: "^(TestMFColdStart|TestMFLateFirstTransfer)$"
+          GOAUDIO_RUN: "^TestReadersAreTotal$"
+        run: |
+          set +e
+          rc=0
+          # on C:, where go test links and runs its binaries
+          bin=$(cygpath -u "$TEMP")/clack-mf-cold
+          mkdir -p "$bin"
+          go test -c -o "$bin/mf.test.exe" ./internal/media/mf || exit 1
+          go test -c -o "$bin/goaudio.test.exe" ./internal/media/goaudio || exit 1
+          ps1=$(cygpath -w "$GITHUB_WORKSPACE/.github/scripts/cold-disk.ps1")
+          stop="$RUNNER_TEMP\\clack-flood.stop"
+          stop_u=$(cygpath -u "$stop")
+          probe="$USERPROFILE\\clack-probe.bin"
+          pwsh -NoProfile -File "$ps1" probe "$probe" || exit 1 # made
+          # one test binary from its package's dir, its files cold, C: flooded
+          cold() {
+            local pkg=$1 run=$2 log=$3
+            rm -f "$stop_u"
+            pwsh -NoProfile -File "$ps1" purge || exit 1
+            pwsh -NoProfile -File "$ps1" flood "$USERPROFILE\\clack-flood-1.bin" "$stop" 90 &
+            local f1=$!
+            pwsh -NoProfile -File "$ps1" flood "$USERPROFILE\\clack-flood-2.bin" "$stop" 90 &
+            local f2=$!
+            sleep 8 # the floods at the cap, 82 s of them left
+            pwsh -NoProfile -File "$ps1" probe "$probe"
+            (cd "internal/media/$pkg" && ${XF_BIN:+"$XF_BIN"} "$bin/$pkg.test.exe" -test.count=1 -test.v -test.timeout 8m -test.run "$run") > "$log" 2>&1 || rc=1
+            touch "$stop_u"
+            wait "$f1" "$f2"
+            echo "== $pkg: $(grep -c -- '--- FAIL' "$log") FAIL lines"
+            grep -E -- '--- FAIL|took over|mf_windows_test.go:[0-9]+: (loadedmetadata|no |the warm-up|first frame [0-9])' "$log" | cut -c1-700 | head -14
+          }
+          n=$COUNT; [ "$n" -gt 5 ] && n=5
+          for i in $(seq 1 "$n"); do
+            echo "== round $i"
+            cold mf "$MF_RUN" "$RUNNER_TEMP/mf-cold-mf-$i.log"
+            cold goaudio "$GOAUDIO_RUN" "$RUNNER_TEMP/mf-cold-goaudio-$i.log"
+          done
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: mf-cold-logs-${{ matrix.runner }}
+          path: ${{ runner.temp }}/mf-cold-*.log
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # oneko-data-images (2026-11-24): a plugin's own images as data: URLs
+  # (Slick's build inlines every plugin's .gif, .png and .svg as one)
+  # decode from their own text, as Chromium decodes them, with no request,
+  # nothing on disk and the decode limits of any image, while message
+  # content's are still refused (imgcache); a plugin element's data:
+  # background-image and <img> are drawn (slackc, GPU pixels); the
+  # Library's oneko in the whole client: the cat runs to the pointer and a
+  # frame of its sprite is drawn there (ui, GPU pixels). COUNT runs each.
+  # Dispatch with only=oneko-data-images.
+  oneko-data-images:
+    if: ${{ !inputs.only || startsWith('oneko-data-images', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: the published Library (index.json + bundles)
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (the Library); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "data: URLs a page draws, a plugin element's data: images, oneko in the client, COUNT runs each"
+        env:
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          CLACK_PIXEL_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestDataBody|TestPageURL|TestPageDataImages|TestPageDataLimits)$' ./internal/imgcache || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 5m -run '^TestBackgroundDataImage$' ./internal/ui/slackc || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 12m -run '^TestPluginGapOneko$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # files-download (2026-11-23, Karim's 64 MB+ .exe): downloads stream to
+  # disk with no size cap and bounded memory (core: a 96 MB file
+  # byte-exact, cancel, cut-off bodies, pause and resume, Slack's unique
+  # names), Slack's download toast over them (popups), and a file card's
+  # click downloads a hosted .exe or zip in the app instead of opening the
+  # browser (messages: getMainFileAction). Dispatch with
+  # only=files-download.
+  files-download:
+    if: ${{ !inputs.only || startsWith('files-download', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (popups' and messages' test binaries link them)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: core downloads, the download toast, file card clicks (every package, then the verdict)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 10m -v -run '^(TestDownload[A-Za-z0-9]*|TestUniqueSavePath|TestZoneIdentifier|TestCleanFileNameLimits)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^(TestDownloadToast[A-Za-z]*|TestConvertFilesize|TestDownloadLocation|TestOpenFileCardActions|TestAudioDownloadIsTheUpload)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -timeout 10m -v -run '^(TestFileClicks|TestFileClicksUnderPatches)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^TestCanvasFileClick$' ./internal/ui/canvasview || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # plugins-work-3 (2026-11-23): Slick's HideResolved. channelHistory as
+  # the plugins' patches leave it hides the list's rows (Taut.HistoryHidden,
+  # pushed from JS on every store change: taut, messages), viewUiState's
+  # highlightTs keeps a ticket a jump went to shown (taut), and the
+  # header's search button is Slack's ViewHeaderSearch, a patch's tree
+  # beside it in .p-view_header__actions (ui). HideResolved from Slick's
+  # build at the slick workflow's pin in the harness (slick), and from the
+  # published Library in the whole client (ui). COUNT runs each. Dispatch
+  # with only=plugins-work-3.
+  plugins-work-3:
+    if: ${{ !inputs.only || startsWith('plugins-work-3', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    env:
+      SLICK_PIN: 05fa29dcc1381bc3e44cfc28930cb06c2b53e979 # Slick (GPLv3, third-party), same pin as slick.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        continue-on-error: true # GitHub release downloads sometimes 504 three times running
+        with:
+          bun-version: 1.4.4
+      - name: bun from npm (setup-bun's download failed)
+        if: steps.setup-bun.outcome == 'failure'
+        run: |
+          for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
+          bun --version
+      - name: clone slick at the slick workflow's pin
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - name: the published Library (index.json + bundles)
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code (Slick, the Library); never share its Go cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the patched history's hidden rows and the marks over them, channelHistory following loads, viewUiState's highlight, ViewHeaderSearch, HideResolved in the harness and in the client, COUNT runs each
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestHistoryHiddenFollowsPatches|TestChannelHistoryFollowsLoads)$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestHiddenHistoryRows|TestHiddenNewestBannerMarksLatest|TestHiddenNewestMarkedImmediately)$' ./internal/ui/messages || rc=1
+          go test -count="$COUNT" -timeout 15m -run '^TestHideResolvedLikeSlack$' ./internal/slick || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 15m -run '^TestPluginGapHideResolved$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCompatDocInStep|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # jsrt-populate (2026-11-23): the wasm memory's growth on macOS held a
+  # stop-the-world for 100-260 ms in some runs (TestWasmMemoryGrowsInPlace
+  # on macos-15-intel, train-229's jsrt 45256775420 and 3 of 7 runs since
+  # 2026-11-16): the first write to each page a growth commits faulted in
+  # the wasm, where the world waits a fault out. Committed pages are
+  # populated in a read syscall now (wasmmem_unix.go populate), the pages
+  # growth adds only (the initial memory, mostly the C stack, isn't: about
+  # 9 MiB resident per engine when it was). In COUNT processes of their own
+  # on the macOS runners and Linux: TestWasmMemoryGrowsInPlace,
+  # TestWasmMemoryPopulated (populate wrote the growth and took its faults,
+  # counted by getrusage on both) and, on Linux,
+  # TestWasmMemoryInitialUnpopulated (the initial memory's resident part,
+  # mincore). Dispatch with only=jsrt-populate.
+  jsrt-populate:
+    if: ${{ !inputs.only || startsWith('jsrt-populate', inputs.only) }}
+    name: "jsrt-populate (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the growth's stop-the-world and faults, COUNT processes
+        shell: bash
+        env:
+          JSRT_RUN: "^(TestWasmMemoryGrowsInPlace|TestWasmMemoryPopulated|TestWasmMemoryInitialUnpopulated)$"
+        run: |
+          set +e
+          rc=0
+          go test -c -o "$RUNNER_TEMP/jsrt.test" ./internal/jsrt/ || exit 1
+          cd internal/jsrt
+          for i in $(seq 1 "$COUNT"); do
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/jsrt.test" -test.count=1 -test.v -test.timeout 10m -test.run "$JSRT_RUN" > "$RUNNER_TEMP/jsrt-$i.log" 2>&1 || rc=1
+            echo "== process $i: $(grep -oE 'wasmmem: reserved address space: .*longest stop-the-world [0-9.]+ ms' "$RUNNER_TEMP/jsrt-$i.log" | grep -oE '[0-9.]+ ms$'); $(grep -oE 'populate wrote [0-9]+ MiB: [0-9]+ faults, [0-9]+ of them in populate.s reads, -?[0-9]+ elsewhere' "$RUNNER_TEMP/jsrt-$i.log"); $(grep -oE '[0-9]+ KiB of it resident' "$RUNNER_TEMP/jsrt-$i.log")"
+            grep -E -- '--- FAIL|wasmmem_(linux_|unix_)?test.go:[0-9]+: .*(cut|faults came|grew only|wrote|resident|counted)' "$RUNNER_TEMP/jsrt-$i.log" | head -6
+          done
+          exit $rc
+      # the rest of the package on this runner, its wasm memories populated;
+      # TestStopTheWorldBounded has jsrt-stw-mac
+      - name: "the jsrt package, but TestStopTheWorldBounded"
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: go test -count=1 -timeout 20m -skip '^TestStopTheWorldBounded$' ./internal/jsrt/
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # jsrt-stw-mac (2026-11-23): TestStopTheWorldBounded on the macOS
+  # runners, where Go alone waits up to 211 ms for a stop-the-world with no
+  # wasm running (jsrt-stw-diag): a case is compared only when its
+  # yields-off figure is a second or more (stwMeasurableMac), each other
+  # logged with its figure, and a run comparing none fails. COUNT
+  # processes, at most 20. Dispatch with only=jsrt-stw-mac.
+  jsrt-stw-mac:
+    if: ${{ !inputs.only || startsWith('jsrt-stw-mac', inputs.only) }}
+    name: "jsrt-stw-mac (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: TestStopTheWorldBounded, COUNT processes (at most 20)
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -c -o "$RUNNER_TEMP/jsrt.test" ./internal/jsrt/ || exit 1
+          cd internal/jsrt
+          n=$COUNT; [ "$n" -gt 20 ] && n=20
+          for i in $(seq 1 "$n"); do
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/jsrt.test" -test.count=1 -test.v -test.timeout 8m -test.run '^TestStopTheWorldBounded$' > "$RUNNER_TEMP/stw-$i.log" 2>&1 || rc=1
+            echo "== process $i: $(grep -oE '[0-9]+ of [0-9]+ cases compared' "$RUNNER_TEMP/stw-$i.log")"
+            grep -E -- '--- FAIL|stw_test.go:[0-9]+: .*(cut the longest|waited|none was compared|no yields)' "$RUNNER_TEMP/stw-$i.log" | head -6
+          done
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # 2026-11-24 (link-open-mac): a link's hand-off on macOS, Electron's
+  # NSWorkspace openURL against Clack's old `open`, to a ClackStub.app
+  # handler for clackstub: (no browser).
+  link-open-mac:
+    if: ${{ !inputs.only || startsWith('link-open-mac', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "the hand-off, NSWorkspace vs open, COUNT runs"
+        env:
+          CLACK_MACOS_OPENURL_TESTS: "1"
+        run: go test -count=$COUNT -v -timeout 8m ./internal/ui/openurl
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # plugin-import (2026-11-24, Karim: "and import plugisn too" ... "in
+  # introduccion"): Slick's and Taut's plugins on this computer, read from
+  # their own folders and nothing else (pluginimport), brought over through
+  # the Library's install with their settings and on or off, from the
+  # first launch's plugins beat (kept until the sign-in) and from
+  # Preferences > Plugins. COUNT runs each. Dispatch with
+  # only=plugin-import.
+  plugin-import:
+    if: ${{ !inputs.only || startsWith('plugin-import', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the other apps' plugins read, brought over, from the intro and from Preferences, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestFindReadsPluginsOnly|TestFindWithoutInstalls|TestStripJSONC|TestReadTautConfigJSONC|TestUserPluginsReadOnImport|TestNoHomeNoFolder)$' ./internal/pluginimport || rc=1
+          go test -count="$COUNT" -timeout 10m -run '^(TestPluginImportBringsPluginsOver|TestPluginImportAfterSignIn|TestPluginImportKeepsFailedPicks|TestIntroOffersPluginImport|TestPluginImportScreen)$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # counts-baseline (2026-11-24): TestCountsFirstAnswerIsBaseline counted
+  # the connect's catch-up of its window as its own history read, when
+  # boot's prefetch read the window before the slow connect made its end
+  # stale (full-test 45313234515). newHCEnv holds the socket's hello until
+  # the prefetch has read it, so the catch-up comes every run, and waits for
+  # it. The history_changed tests on that env, COUNT times with the
+  # catch-up's read held until the test's next counts call (HC_SLOW_CATCHUP:
+  # as late as on that runner, every time), then COUNT times as the suite
+  # runs them. Dispatch with only=counts-baseline.
+  counts-baseline:
+    if: ${{ !inputs.only || startsWith('counts-baseline', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the history_changed tests on newHCEnv, the catch-up late, COUNT times
+        env:
+          HC_SLOW_CATCHUP: "1"
+          HC_RUN: "^(TestHistoryChangedDropsCachedMessages|TestHistoryChangedDropsCachedReplies|TestHistoryChangedSubtypeIsNoMessage|TestCountsHistoryInvalidPurgesHistory|TestCountsUpdatedRereadsHistory|TestSocketHistoryChangeAdvancesHistoryInvalid|TestCountsFirstAnswerIsBaseline|TestCountsKeepNewerApplied|TestSocketDeleteAdvancesHistoryInvalid|TestFastReconnectFetchesNoCounts|TestFreshReadClearsStale)$"
+        run: go test -count=$COUNT -timeout 6m -run "$HC_RUN" ./internal/core
+      - name: the history_changed tests on newHCEnv, COUNT times
+        env:
+          HC_RUN: "^(TestHistoryChangedDropsCachedMessages|TestHistoryChangedDropsCachedReplies|TestHistoryChangedSubtypeIsNoMessage|TestCountsHistoryInvalidPurgesHistory|TestCountsUpdatedRereadsHistory|TestSocketHistoryChangeAdvancesHistoryInvalid|TestCountsFirstAnswerIsBaseline|TestCountsKeepNewerApplied|TestSocketDeleteAdvancesHistoryInvalid|TestFastReconnectFetchesNoCounts|TestFreshReadClearsStale)$"
+        run: go test -count=$COUNT -timeout 6m -run "$HC_RUN" ./internal/core
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # apt-stall (2026-11-24): .github/apt.sh past an Ubuntu mirror that
+  # hangs without going quiet for apt's 30 s read timeout (a byte every 20
+  # s: .github/scripts/apt-trickle.py, the runner's mirror hosts pointed at
+  # it in /etc/hosts), as huddle's ffmpeg and windows' gcc-mingw-w64 stood
+  # still for their first try's whole 10 min on 2026-11-24. Each round: an
+  # update, and every other round an install of hello, must stop the first
+  # try for want of progress, move to the kernel.org mirror and finish
+  # inside 3 min. COUNT rounds, at most 20. Dispatch with only=apt-stall.
+  apt-stall:
+    if: ${{ inputs.only != '' && startsWith('apt-stall', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: apt.sh past a mirror that hangs, COUNT rounds (at most 20)
+        run: |
+          set -u +e
+          sudo python3 .github/scripts/apt-trickle.py &
+          # the runner's mirrors (its sources read mirror+file:
+          # /etc/apt/apt-mirrors.txt) and the hosts sources may name hang now
+          echo "127.0.0.1 azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com us-east-2.ec2.archive.ubuntu.com" | sudo tee -a /etc/hosts >/dev/null
+          srcs="/etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/*.sources /etc/apt/sources.list"
+          grep -hE '^(URIs:|deb )|priority:' $srcs 2>/dev/null | sort -u | head -8
+          # the runner's mirror list, sources and lists: each round starts
+          # from them
+          orig="$RUNNER_TEMP/apt-orig"
+          mkdir -p "$orig/lists"
+          for f in $srcs; do
+            [ -e "$f" ] && sudo cp --parents "$f" "$orig"
+          done
+          sudo rsync -a /var/lib/apt/lists/ "$orig/lists/"
+          rc=0
+          n=$COUNT; [ "$n" -gt 20 ] && n=20
+          for i in $(seq 1 "$n"); do
+            # the runner's own mirrors again, which now hang
+            sudo cp -a "$orig/etc/apt/." /etc/apt/
+            what="update -qq"
+            if [ $((i % 2)) = 0 ]; then
+              # an install after an update that worked (huddle's, windows'):
+              # the runner's lists (a kernel.org update replaced them), and
+              # hello to fetch from its mirror again
+              sudo rsync -a --delete "$orig/lists/" /var/lib/apt/lists/
+              sudo apt-get remove -y -qq hello >/dev/null 2>&1
+              sudo apt-get clean
+              what="install -y -qq hello"
+            fi
+            t0=$(date +%s)
+            # $what splits on purpose; the log is the runner's, not root's
+            # shellcheck disable=SC2086,SC2024
+            sudo sh .github/apt.sh $what > "$RUNNER_TEMP/apt-$i.log" 2>&1
+            got=$?
+            took=$(( $(date +%s) - t0 ))
+            moved=$(grep -c 'mirrors.edge.kernel.org' $srcs 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')
+            echo "== round $i: apt.sh $what: exit $got after $took s; kernel.org lines in the mirror list and sources: $moved"
+            grep -E 'no progress|failed; using|archive is now|apt.sh: apt-get' "$RUNNER_TEMP/apt-$i.log" | cut -c1-200
+            if [ "$got" != 0 ] || [ "$took" -gt 180 ] || [ "$moved" = 0 ]; then
+              echo "::error::round $i: apt.sh $what exited $got after $took s (want 0, inside 180 s, on the kernel.org mirror)"
+              rc=1
+            fi
+            if ! grep -q 'no progress for 60 s' "$RUNNER_TEMP/apt-$i.log"; then
+              echo "::error::round $i: the first try wasn't stopped for getting nowhere (apt failed it itself, or it got through)"
+              rc=1
+            fi
+            if [ $((i % 2)) = 0 ] && ! dpkg -s hello >/dev/null 2>&1; then
+              echo "::error::round $i: hello isn't installed"
+              rc=1
+            fi
+          done
+          exit $rc
+
+  # pagekey-day (2026-11-24): TestPageKeyTakesTheDOMNames found no message
+  # row at the list's top to measure (train-238's linux-test 45304682517, at
+  # 01:31:50 UTC): the windows' synthetic history, started 7 h before the
+  # clock, took in midnight, and its day divider held the list's top.
+  # histDay puts that history on a day of its own. The tests on it, COUNT
+  # times. Dispatch with only=pagekey-day.
+  pagekey-day:
+    if: ${{ !inputs.only || startsWith('pagekey-day', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the tests on the windows' synthetic history, COUNT times
+        env:
+          PK_RUN: "^(TestWindowEndKeyLeavesWindow|TestPageUpMovesAPageLess21|TestPageKeyTakesTheDOMNames|TestNewMessageAfterPageUpKeepsPlace|TestShrinkingNearEndKeepsToIt|TestDeletedLineRowKeepsNextInPlace|TestEndStopsTheWheelCurve|TestWindowMostRecentLeavesWindow|TestWindowDownArrowOntoLastMessage|TestWindowFocusNewestLeavesWindow|TestWindowDateJumpPastItsEnd|TestListCacheKeepsShownWindow|TestDrawnWindowTakenBack|TestInjectedMessagesStayInTheirSlice|TestWindowPageKeepsLiveChanges|TestRenameDuringWindowPage|TestLiveReadsWindow|TestWindowJumpBackKeepsUnread|TestWindowJumpKeepsTheInlineEdit|TestWindowRowsDrawPluginViews|TestHistoryChangeAcrossALoad|TestHistoryPurgeKeepsTheInlineEdit)$"
+        run: xvfb-run -a go test -count=$COUNT -timeout 25m -run "$PK_RUN" ./internal/ui/messages
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
   # in its needs (.github/scripts/expect_fail_wire.py adds it).
   expect-fail:
     needs:
+      - link-open-mac
       - go
+      - modal-title-wrap
       - avf-audio
       - race-video
       - members
@@ -6511,10 +7143,21 @@ jobs:
       - quote-paste-win
       - message-polish
       - plugins-work-2b
+      - slick-v162
+      - plugins-work-3
+      - plugin-import
       - channel-files-race
       - fling-22px
       - history-changed
       - ephemeral-actions
+      - mf-cold
+      - oneko-data-images
+      - files-download
+      - jsrt-populate
+      - jsrt-stw-mac
+      - counts-baseline
+      - apt-stall
+      - pagekey-day
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

@@ -150,6 +150,9 @@ type Store struct {
 	bots        map[string]BotInfo
 	// botsGone are bot ids nothing returned (PutNonexistentBots)
 	botsGone map[string]bool
+	// hits are the channels lists and searches answered (PutChannelHit),
+	// kept apart from ext
+	hits map[string]*slack.Conversation
 
 	// userSeen is when each user was last fetched (unix seconds; from the
 	// disk cache for users it restored): what SaveCache keeps.
@@ -1414,6 +1417,59 @@ func (s *Store) ExtConv(id string) (*slack.Conversation, bool) {
 	defer s.mu.RUnlock()
 	c, ok := s.ext[id]
 	return c, ok
+}
+
+// PutChannelHit remembers c, a channel a list or a search answered (the
+// composer's # list, the search popover and its Channels tab, the channel
+// directory, Block Kit channel menus), as Slack's getRemoteChannels
+// upserts its hits into its channels store: the channel /open, /join and
+// /msg find (getChannelById) though the viewer isn't in it. A hit is a
+// partial copy (no connected teams, no is_ext_shared), so it is kept apart
+// from what Conv and ExtConv answer: a channel opened from a list is still
+// read with conversations.info, its description, Slack Connect teams and
+// topic with it. A later hit replaces an earlier one, keeping its
+// workspace when the new hit names none (the directory's carry none).
+func (s *Store) PutChannelHit(c slack.Conversation) {
+	if c.ID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hits == nil {
+		s.hits = map[string]*slack.Conversation{}
+	}
+	if old, ok := s.hits[c.ID]; ok && c.ContextTeamID == "" {
+		c.ContextTeamID = old.ContextTeamID
+	}
+	s.hits[c.ID] = &c
+}
+
+// ChannelHit returns the copy PutChannelHit kept for id.
+func (s *Store) ChannelHit(id string) (*slack.Conversation, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.hits[id]
+	return c, ok
+}
+
+// ConnectedTeam reports whether team is a connected team
+// (connected_team_ids) of a conversation the store holds, in the sidebar
+// or out of it: Slack's externalTeamIds, which setConnectedTeamIds fills
+// from every channel it stores (j08h addExternalTeamId).
+func (s *Store) ConnectedTeam(team string) bool {
+	if team == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, m := range []map[string]*slack.Conversation{s.Convs, s.ext} {
+		for _, c := range m {
+			if c != nil && slices.Contains(c.ConnectedTeamIDs, team) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ConvJSON is the conversation the store holds for id, a sidebar one or

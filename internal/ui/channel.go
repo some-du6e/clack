@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"image"
 	"image/color"
 	"strings"
@@ -165,6 +166,24 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	hdrBtns, hudBtn, narrow := a.headerFit(gtx, sz.X, conv, hdrBtns, !appDM && a.huddles().SupportsHuddles(ch))
 	for _, k := range hdrBtns {
 		k := k
+		if k == "search" {
+			// ViewHeaderSearch, a boundary a plugin may widen (HideResolved's
+			// toggle before it): measured, then right-aligned
+			call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(max(right-x, 0), btn)} // the room left, as the other boundaries
+				acts := clsHdrActions.Enter(gtx, 0, 0)
+				defer acts.Leave()
+				return slackc.Component(gtx, "ViewHeaderSearch", hdrSearch{a: a, ch: ch, conv: conv, btn: btn}, hdrSearch.props, hdrSearch.layout)
+			})
+			right -= d.Size.X
+			place(gtx, call, image.Pt(right, y+(btn-d.Size.Y)/2))
+			if hdrSearchTap != nil {
+				o := image.Pt(right, y+(btn-d.Size.Y)/2)
+				hdrSearchTap(ch, image.Rectangle{Min: o, Max: o.Add(d.Size)}, hdrSearchDrawn)
+			}
+			right -= gtx.Dp(6)
+			continue
+		}
 		right -= btn
 		if k == "kebab" {
 			kebabX = right
@@ -883,10 +902,11 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	x := gtx.Dp(16)
 	viewNames := a.Core() != nil && a.Core().Experiment("list_channel_tab_show_view_name_fe") == "on"
 	all := a.channelTabs(ch)
-	if id := a.takeTabLink(ch, all); id >= 0 && bodyTab(all[id]) { // a tab permalink (files_tab.go)
+	if id := a.takeTabLink(ch, all); id >= 0 && (all[id].key == "messages" || bodyTab(all[id])) { // a tab permalink (files_tab.go)
 		a.selectChannelTab(ch, id, all[id])
 	}
 	cur := a.chTab[ch]
+	a.publishTabView(ch, all, cur)
 	canEdit := a.Core() != nil && a.Core().CanEditTabs(ch)
 	if ci := a.model().conv(ch); ci != nil && ci.Preview {
 		canEdit = false
@@ -916,10 +936,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		}
 		lw, w := lws[i], ws[i]
 		btn := a.clicks.get("tab." + ch + "." + t.key)
-		id := strings.TrimPrefix(t.key, "tab:")
-		if t.key == "messages" {
-			id = "channel"
-		}
+		id := tabID(t)
 		rects = append(rects, tabRect{key: t.key, id: id, typ: t.typ, label: t.label, fileID: t.fileID, folder: t.folder, idx: i,
 			r: image.Rect(x, 0, x+w, sz.Y), drag: canEdit && t.key != "messages" && core.DraggableTab(id, t.typ)})
 		source := drag.dragging && drag.src.key == t.key
@@ -1067,6 +1084,10 @@ func (a *App) selectChannelTab(ch string, i int, t chTab) {
 	if a.chTab == nil {
 		a.chTab = map[string]int{}
 	}
+	if a.chTabPicked == nil {
+		a.chTabPicked = map[string]bool{}
+	}
+	a.chTabPicked[ch] = true // Slack's view is now the tab's (slackTabView)
 	if t.key == "messages" {
 		a.chTab[ch] = 0
 	} else if bodyTab(t) {
@@ -1075,6 +1096,67 @@ func (a *App) selectChannelTab(ch string, i int, t chTab) {
 		a.chTab[ch] = 0
 		a.openTab(ch, t.key)
 	}
+}
+
+// tabID is a channel tab's id in Slack's tab list: its own, "channel" for
+// Messages.
+func tabID(t chTab) string {
+	if t.key == "messages" {
+		return "channel"
+	}
+	return strings.TrimPrefix(t.key, "tab:")
+}
+
+// slackTabView is Slack's primary view for channel ch showing tab t, as
+// JSON, for plugins (Slick.SetTabView: ChatTabs comes back to the canvas,
+// files or pins a channel had open). A canvas or list tab's is its Canvas or
+// List view in the channel's tab (toCanvas or toList, then inChannelTab:
+// parentTab and tabId); any other tab's is the channel's view with the
+// tab's id (toChannelTab), Messages' too once a tab of the channel was
+// picked (client-boot jhdg); "" for the channel as a plain navigation shows
+// it.
+func slackTabView(ch string, t chTab, picked bool) string {
+	id := tabID(t)
+	var v map[string]any
+	switch {
+	case t.key == "messages" && !picked:
+		return ""
+	case (t.typ == "canvas" || t.typ == "channel_canvas") && t.fileID != "":
+		ent := "Qp:" + t.fileID // toCanvas's entity id for the file (Slick's ChatTabs tests)
+		v = map[string]any{"id": ent, "viewType": "Canvas", "params": map[string]any{"entityId": ent, "parentTab": ch, "tabId": id}}
+	case t.typ == "list" && t.fileID != "":
+		p := map[string]any{"listId": t.fileID, "parentTab": ch, "tabId": id}
+		if t.defaultView != "" {
+			p["listViewId"] = t.defaultView
+		}
+		v = map[string]any{"id": t.fileID, "viewType": "List", "params": p}
+	default:
+		v = map[string]any{"id": ch, "viewType": "Channel", "params": map[string]any{"tabId": id, "parentTab": ch}}
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+// publishTabView tells Slick the header tab the window shows in its
+// channel (slackTabView), when ch is the routed channel; worked out again
+// only when the tab, or whether one was picked, changed.
+func (a *App) publishTabView(ch string, all []chTab, cur int) {
+	s := a.Slick()
+	if s == nil || ch != a.router.Current().Channel() || len(all) == 0 {
+		return
+	}
+	if cur < 0 || cur >= len(all) {
+		cur = 0
+	}
+	key := ch + "\x00" + all[cur].key + "\x00" + all[cur].fileID + "\x00" + all[cur].defaultView
+	if a.chTabPicked[ch] {
+		key += "\x00picked"
+	}
+	if key == a.tabViewKey && s == a.tabViewTo {
+		return
+	}
+	a.tabViewKey, a.tabViewTo = key, s
+	s.SetTabView(ch, slackTabView(ch, all[cur], a.chTabPicked[ch]))
 }
 
 // bodyTab: the tab's view is drawn in the channel's body (a canvas or list

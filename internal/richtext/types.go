@@ -231,6 +231,15 @@ const (
 	// TimelineBlock is a timeline block (timeline.go): Timeline holds its
 	// points.
 	TimelineBlock
+	// ContactCardBlock is a contact_card block (contact.go): Contact holds
+	// its member.
+	ContactCardBlock
+	// SharePromptBlock is a share_prompt block (shareprompt.go): Prompt
+	// holds its prompt and agent.
+	SharePromptBlock
+	// EventBlock is an event block (event.go): Event holds the calendar
+	// event as the card reads it.
+	EventBlock
 )
 
 // Block is one vertical unit of a document.
@@ -293,6 +302,12 @@ type Block struct {
 	DataTable *DataTable
 	// Timeline is a TimelineBlock's points (timeline.go).
 	Timeline *Timeline
+	// Contact is a ContactCardBlock's member (contact.go).
+	Contact *ContactCard
+	// Prompt is a SharePromptBlock's prompt and agent (shareprompt.go).
+	Prompt *SharePrompt
+	// Event is an EventBlock's calendar event (event.go).
+	Event *Event
 }
 
 // Container is a container block's header and options (Slack's
@@ -403,7 +418,12 @@ type Attachment struct {
 	// Index is the attachment's place in the message's attachments array
 	// (the search answer's order: core.AttachmentKey keys an attachment
 	// without an id by it).
-	Index       int
+	Index int
+	// MediaKey is the attachment's media expandable without the view's
+	// context (getExpandableKey("attachment", the message's ts, {id,
+	// imageUrl, …}): richview appends Options.ViewContext; "" for an
+	// attachment without image, audio or video).
+	MediaKey    string
 	OriginalURL string
 	ServiceURL  string
 	VideoHTML   bool
@@ -457,6 +477,11 @@ type Attachment struct {
 	// draws such an attachment as MessageAttachmentWorkObject, an entity
 	// card, instead of an unfurl.
 	WorkObject *WorkObject
+
+	// VideoBlock: a video block's, which Slack draws as VideoBlock (u8h8),
+	// not an unfurl; BlockID is its block_id ("" without one).
+	VideoBlock bool
+	BlockID    string
 }
 
 // File is a file shared in a message.

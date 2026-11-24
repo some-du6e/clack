@@ -141,12 +141,14 @@ type uiState struct {
 	roots   map[uint64]*jsrt.Root // slackc root → jsrt root
 	rootsMu sync.Mutex
 
-	views viewCache
+	views   viewCache
+	history historyView // channelHistory as the patches leave it (history.go)
 }
 
 func newUIState(t *Taut) *uiState {
 	u := &uiState{t: t, roots: map[uint64]*jsrt.Root{}}
 	u.views.init(t)
+	u.history.init()
 	return u
 }
 
@@ -183,10 +185,17 @@ func (u *uiState) setStatePatched(s statePatchInfo) {
 	// which slices plugins patch changed (a patch added or gone): the UI
 	// starts or stops reading views of them, which it does only in a frame
 	moved := u.state.All != s.All || !slices.Equal(u.state.Slices, s.Slices)
+	had := slices.Contains(u.state.Slices, "channelHistory") || u.state.All
 	u.state = s
 	u.mu.Unlock()
 	if moved {
 		u.textRewrites.Store(false) // what rewrote text may be gone: seen again if not
+	}
+	if had && !s.All && !slices.Contains(s.Slices, "channelHistory") {
+		// JS stops watching channelHistory once nothing patches it
+		// (tellGoHistory): a patch that comes back is posted every key
+		// again
+		u.history.reset()
 	}
 	if !s.All && len(s.Slices) == 0 {
 		u.patchedSlices.Store(nil)
@@ -1168,7 +1177,7 @@ func (t *Taut) MessagesChanged(ch string, tss []string) {
 // and the mark that takes them to JS takes ch off the sweep's watch, so
 // nothing else would tell JS the history changed.
 func (t *Taut) WindowLoaded(ch string) {
-	if t == nil || ch == "" || !t.SlicePatched("messages") {
+	if t == nil || ch == "" || !t.SlicePatched("messages") && !t.SlicePatched("channelHistory") {
 		return
 	}
 	t.mirror.invalidate("channelHistory", ch)
@@ -1188,7 +1197,17 @@ func (t *Taut) WindowLoaded(ch string) {
 // again (a jump's window around the message its thread lookup fetched)
 // doesn't mark it twice.
 func (t *Taut) MessagesAdded(ch string, tss []string) {
-	if t == nil || ch == "" || len(tss) == 0 || !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
+	if t == nil || ch == "" || len(tss) == 0 {
+		return
+	}
+	// channelHistory[ch] lists them now (mirror.history): a copy JS read
+	// before the load lacks them. It goes at once rather than at the
+	// sweep's next look (historyFP): a help channel's first load left its
+	// resolved tickets drawn under HideResolved until then
+	if t.SlicePatched("channelHistory") && t.mirror.watching("channelHistory", ch) {
+		t.mirror.invalidate("channelHistory", ch)
+	}
+	if !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
 		return
 	}
 	if held := t.app.S.FetchedHas(ch, tss); slices.Contains(held, true) {

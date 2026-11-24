@@ -17,6 +17,8 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -97,6 +99,13 @@ type actForward struct {
 	file         *ShareFileOpts
 	overview     core.FileOverview
 	overviewDone bool
+	// contact is set for ShareContactModal (share_contact.go): one
+	// destination, the explanation over the picker and the card under the
+	// note
+	contact        *richtext.ContactCard
+	contactPreview *richview.View
+	contactBusy    bool // Share's call runs
+	contactErr     bool // it failed: the error Alert
 }
 
 // Experiments the share dialog reads (jdUv, O2By jv).
@@ -203,6 +212,9 @@ func (f *actForward) canGo() bool { return len(f.chips) > 0 }
 // forwarding "Forward this message" from a public channel, else
 // "Forward this private message".
 func (f *actForward) title() string {
+	if f.contact != nil {
+		return nsShareContact.T("Share contact")
+	}
 	if f.file != nil {
 		return nsShare.T("Share this file") // e3 for a file
 	}
@@ -623,8 +635,8 @@ func (f *actForward) pick(i int) {
 		return
 	}
 	t := &f.all[f.match[i]]
-	if f.file != nil {
-		f.chips = f.chips[:0] // a file goes to one conversation (selectedChannelId)
+	if f.file != nil || f.contact != nil {
+		f.chips = f.chips[:0] // a file or a contact goes to one conversation (selectedChannelId)
 	}
 	if !f.chosen(t.id) {
 		f.chips = append(f.chips, &actFwdChip{t: t})
@@ -754,6 +766,9 @@ func (f *actForward) layout(gtx layout.Context) layout.Dimensions {
 		macroAt(gtx, call, image.Pt(0, y))
 		return d.Size.Y
 	}
+	if f.contact != nil {
+		y += put(func(gtx layout.Context) layout.Dimensions { return f.contactIntro(gtx, th, cl) })
+	}
 	y += put(func(gtx layout.Context) layout.Dimensions { return f.picker(gtx, th, cl) })
 	if len(f.match) > 0 {
 		y += dp(gtx, 4)
@@ -762,6 +777,10 @@ func (f *actForward) layout(gtx layout.Context) layout.Dimensions {
 	y += dp(gtx, 16)
 	y += put(func(gtx layout.Context) layout.Dimensions { return f.noteField(gtx, th, cl) })
 	y += dp(gtx, 16)
+	if f.contact != nil {
+		y += put(func(gtx layout.Context) layout.Dimensions { return f.contactCardPreview(gtx) })
+		return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 4))}
+	}
 	if f.file != nil {
 		y += put(func(gtx layout.Context) layout.Dimensions { return f.filePreview(gtx, th, cl) })
 		return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 4))}

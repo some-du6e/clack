@@ -248,15 +248,19 @@ func (s *Slick) activeLocked(p *plugin) bool {
 	return false
 }
 
-// appWide are Slick's process-wide plugins (shared/pluginWorkspaces.ts):
-// workspace restrictions don't apply to them.
+// appWide are Slick's process-wide plugins (shared/pluginWorkspaces.ts
+// APP_WIDE, as of the slick workflow's pin): workspace restrictions don't
+// apply to them.
 var appWide = map[string]string{
 	"AccountSwitcher": "Account switching manages the shared Slack session.",
 	"Click2Load":      "Embed blocking applies to the shared Slack session.",
+	"CustomAppIcon":   "The dock and taskbar icon belongs to the whole app.",
 	"CustomSounds":    "Native notification sounds apply to the whole app.",
 	"NoTrack":         "Network tracking protection applies to the shared Slack session.",
 	"QuietSpotify":    "Embedded audio controls apply to the whole app.",
+	"SelfCare":        "Self-care breaks lock Slack and silence notifications across the whole app.",
 	"ShutUpSlackbot":  "Native notification filtering applies to the whole app.",
+	"SlickMCP":        "The local agent server connects to Slack windows across the whole app.",
 	"Snappy":          "Startup optimizations apply to the whole app.",
 	"StreamerMode":    "Streamer mode can silence notifications across the whole app.",
 }

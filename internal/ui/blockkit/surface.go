@@ -3,6 +3,7 @@ package blockkit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"net/mail"
@@ -150,17 +151,44 @@ func (s *surfHandler) OpenChannel(id string) { s.h.Navigate("c/" + id) }
 func (s *surfHandler) OpenUsergroup(id string, anchor image.Point) {
 }
 func (s *surfHandler) OpenImage(img richtext.Image) { s.h.OpenLightbox(img, core.Message{}) }
-func (s *surfHandler) OpenFile(f *richtext.File) {
-	if f.Permalink != "" {
-		openURL(f.Permalink)
-	}
-}
+
+// OpenFile is handleFileContainerClick for a file in a surface
+// (popups.OpenFileCard): downloads in the app, not the browser.
+func (s *surfHandler) OpenFile(f *richtext.File) { popups.OpenFileCard(s.h, f, openURL) }
 
 // ChartAction is a data_visualization block's More actions: its menu.
 func (s *surfHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
 	if mn := popups.NewChartMenu(s.h, popups.ActionAnchor(btn, window), dv); mn != nil {
 		s.h.ShowOverlay(mn)
 	}
+}
+
+// ContactCardAction is a contact card's action.
+func (s *surfHandler) ContactCardAction(act string, c *richtext.ContactCard, _ image.Rectangle, _ bool) {
+	popups.ContactCardAction(s.h, act, c)
+}
+
+// SharePromptSend is a share_prompt's Send to {agentName}.
+func (s *surfHandler) SharePromptSend(p *richtext.SharePrompt) { popups.SharePromptSend(s.h, p) }
+
+// EventAction is an event card's action.
+func (s *surfHandler) EventAction(act string, ev *richtext.Event, ch, ts string, btn image.Rectangle, window bool) {
+	popups.EventAction(s.h, act, ev, ch, ts, popups.ActionAnchor(btn, window))
+}
+
+// DownloadImageFile is an image's AttachmentImageActions Download: the
+// image's Slack file.
+func (s *surfHandler) DownloadImageFile(f *richtext.File) {
+	if f != nil {
+		popups.DownloadFile(s.h, f)
+	}
+}
+
+// ImageMenu is an image's More actions (AttachmentImageActions' menu, which
+// Slack's app views keep): Copy link, and Hide image when it has an
+// expandable.
+func (s *surfHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	s.h.ShowOverlay(popups.NewImageActionsMenu(s.h, popups.ActionAnchor(btn, false), href, key, closed))
 }
 
 // TimelineSources is a timeline section's "(Sources)": its sources modal.
@@ -1031,7 +1059,7 @@ func errMessage(err error) string {
 	if ae, ok := err.(*core.ActionError); ok {
 		return ae.Error()
 	}
-	if err == context.DeadlineExceeded {
+	if errors.Is(err, context.DeadlineExceeded) { // a 429's wait outlasting it too (slack.RateLimitWait)
 		return core.ActionErrorText("post_error")
 	}
 	return core.ActionErrorText("")

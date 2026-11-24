@@ -154,6 +154,7 @@ func (v *ChannelView) JumpToOwnSend(cid string, files bool) {
 	s.pendingJump, s.pendingDate = "", time.Time{}
 	s.place = jumpPlace{}
 	s.highlight = ""
+	s.noteViewHighlight("") // highlightTs = uniqueId(): no message's
 	v.h.Invalidate()
 }
 
@@ -189,6 +190,7 @@ func (v *ChannelView) highlight(ts string, lazy bool) {
 		s.highlight, s.highlightAt, s.hlSeen = ts, time.Now(), false
 	}
 	s.hlRestart = !flashing
+	s.noteViewHighlight(ts)
 	v.s.highlightReq = ts
 	v.s.positioned = true
 	v.s.aroundFor = ""
@@ -235,6 +237,7 @@ func (v *ChannelView) LatestMessagesRect() image.Rectangle {
 // keeps its place the same way: it leaves a window for the newest
 // messages only when the conversation has unreads.
 func (v *ChannelView) Entered() {
+	v.s.noteViewHighlight("") // the view's uiState has no highlightTs
 	app := v.h.Core()
 	if app == nil || !app.Count(v.ch).Unread {
 		return // where it was left: the row on the anchor line, the window too

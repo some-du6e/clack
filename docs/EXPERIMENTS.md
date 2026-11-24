@@ -221,7 +221,7 @@ A datamine-feed scan said Slack had reshuffled two gates Clack reads. Both claim
 
 Seen on the way and left alone (outside this branch):
 
-- `3x6A`'s All set gates more than Clack does. `list_todo_notification` needs `lists_monster_step` (Hm0j isListsNewTodoWorkflowsEnabled; `on` for the account, so Clack, which counts it ungated, agrees today). `list_approval_request` / `list_approval_reviewed` need `approvals_in_todos` (Hm0j isApprovalsInTodosEnabled; not assigned, and Clack doesn't count them). `generic_system_alert` needs `generic_system_user_alert` (I87A `j0`; **on for the account**, and Clack doesn't count it), so Slack's All count includes unread system alerts that Clack's leaves out.
+- `3x6A`'s All set gates more than Clack did. `list_todo_notification` needs `lists_monster_step` (Hm0j isListsNewTodoWorkflowsEnabled; `on` for the account), `list_approval_request` / `list_approval_reviewed` need `approvals_in_todos` (Hm0j isApprovalsInTodosEnabled; not assigned), and `generic_system_alert` needs `generic_system_user_alert` (I87A `j0`; `on` for the account). Clack counted to-dos ungated and left out the approvals and system alerts. Since branch activity-read-state (2026-11-23, build 66e72b57ade1, 9OWn `j`) it gates all three as Slack does (`core/activity_badges.go` activityBadgeTypes), so the account's All count now includes unread system alerts. `TestActivityBadgeKinds`
 - `biaa.ud` (artifact tabs) is also on with `session_channels` and `session_channels_artifact_tabs_exp` `treatment`. `CodeChannelViewsOn` checks only `session_channels_code_tab_pr`. The account is in `control`, so the pane is right today.
 
 ## 2026-11-15 wave 7 (branch exp-wave-7, build c07ab895506f)
@@ -895,3 +895,11 @@ The others change nothing Clack draws:
 | `integrations_cta_v2_q3fy27`, `marketplace_aa_v2_q2fy27`, `marketplace_filter_q3fy27`, `newxp_14783_recaptcha_riskanalysis_score` | `treatment_a`, `control`, `control`, `control` | `treatment_b`, `treatment`, `treatment_a`, `treatment` | not in the web client (marketing, the marketplace, sign-up) |
 
 **Backlog.** Slack's calendar (the `calendar2webapp_*`, `calendar_jit_*` and `*cal_shared_dwa` gates above) is on for this account now: a feature Clack doesn't have, queued with it. The 2026-11-22 drift's 14 gates are unchanged.
+
+**Waiting for the gate.** From the 2026-11-23 datamine triage (wf_d5991aa3-b46, strings-new). Off for the account (clod's assignments), so nothing to port until it turns on:
+
+| Experiment | Slack evidence | What it does | Clack |
+|---|---|---|---|
+| `stock_ticker_snapshots` | strings-en-US `stock_ticker_snapshots.4b059c0`; `jc/I` getStockTickerSymbols | stock price cards for the ticker symbols in a message. getStockTickerSymbols skips text over 40,000 characters and reads visible text only from rich_text sections and list items | not read; port it with the cards when the account gets the gate |
+
+**The megaphone boot load** (branch megaphone-spaces, client-boot `17Qm`). chunkedLoadMegaphoneNotificationBootData's second chunk is 33 spaces; `later_page_today` left `oCWb`'s xu by this build (the datamine shows it removed 2026-11-21) and Clack still asked for it. loadMegaphoneNotificationData also files only the answered spaces `Object.values(xu)` lists, which Clack didn't check (`core/megaphone_spaces.go`). `TestMegaphoneBootChunks`, `TestMegaphoneDropsUnknownSpaces`. Not ported: the same load files two notifications globally even when it was made for a channel (`ze.SLACK_CONNECT_SPONSORED_CONNECTIONS_WELCOME_MODAL`, `ze.AUTO_SLACK_RECORD_CHANNELS_INTRO_COACHMARK`), and the boot event's `slackConnectInviteId` and `agenticIaOptedOut`: Clack shows neither notification and has no invite links or agentic IA.

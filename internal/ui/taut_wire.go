@@ -301,6 +301,7 @@ func (b *backend) installTaut(a *App, t *taut.Taut, s *slick.Slick) {
 		}()
 	}
 	go b.watchTaut(a, t)
+	a.resumePendingImport() // the introduction's picks of Slick's and Taut's plugins (plugin_import.go)
 }
 
 // watchTaut repaints when the plugin model changes (Preferences > Taut).
@@ -506,9 +507,13 @@ func argStr(args map[string]any, k string) string {
 // Go).
 func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel string, deferJS bool) *slick.Slick {
 	t0 := time.Now()
+	var setIcon func([]byte)
+	if a.opts.SetAppIcon != nil {
+		setIcon = a.setAppIcon
+	}
 	s, err := slick.New(slick.Options{Dir: a.inertPluginDir("slick"), Taut: t, OpenURL: openURL, OpenFile: a.openFilePath,
 		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: a.setSessionSpellChecker,
-		DeferStart: deferJS, Dark: dark})
+		DeferStart: deferJS, Dark: dark, SetAppIcon: setIcon, UserDefault: a.opts.UserDefault})
 	if err != nil {
 		log.Printf("slick: %v", err)
 		return nil
@@ -519,6 +524,14 @@ func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel stri
 		log.Printf("timing: slick.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
 	}
 	return s
+}
+
+// setAppIcon is Slick's app icon (Options.SetAppIcon), then a frame: X11
+// sets a window's icon at its next event, on the goroutine that reads them
+// (desktop.SetAppIcon), and an idle window has none coming.
+func (a *App) setAppIcon(png []byte) {
+	a.opts.SetAppIcon(png)
+	a.Invalidate()
 }
 
 // slickSetDark tells Slick the mode off the UI goroutine (a mode change

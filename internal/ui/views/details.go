@@ -29,6 +29,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/go-text/typesetting/segmenter"
+
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/composer"
@@ -1200,6 +1202,24 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 		if cdGroup(d.kind) == "mpim" {
 			_, named, small = d.mpdmTitle(cv)
 		}
+		// .p-about_modal__title .p-view_header__channel_title{white-space:
+		// break-spaces; word-break: break-word}: the title wraps in its own
+		// flex item beside the icon, and the header, the buttons and the
+		// tabs move down by its lines past the first
+		size, lhSp := unit.Sp(22), unit.Sp(30)
+		if small { // .p-view_header__channel_title--small: 18px/1.33334
+			size, lhSp = 18, 24
+		}
+		tw := w - gtx.Dp(cdPadX+64)
+		if named {
+			tw -= gtx.Dp(20 + 16 - 4)
+		} else if ic != "" {
+			tw -= gtx.Dp(22 + 2)
+		}
+		lines := cdTitleLines(title, max(1, tw), func(s string) int { return d.th.Measure(gtx, size, wBlack, s) })
+		if extra := (len(lines) - 1) * gtx.Sp(lhSp); extra > 0 {
+			h, btnY, tabY = h+extra, btnY+extra, tabY+extra
+		}
 		dirAt(gtx, image.Pt(gtx.Dp(cdPadX), gtx.Dp(20)), func(gtx C) D {
 			gtx.Constraints.Max.X = max(0, w-gtx.Dp(cdPadX+64))
 			return row(gtx, layout.Middle,
@@ -1217,10 +1237,16 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 					return layout.Inset{Right: 2}.Layout(gtx, func(gtx C) D { return d.icon(gtx, ic, 22, d.p.Text) })
 				}),
 				layout.Rigid(func(gtx C) D {
-					if small { // .p-view_header__channel_title--small: 18px/1.33334
-						return d.para(gtx, 18, 24, wBlack, d.p.Text, 1, title)
+					lh := gtx.Sp(lhSp)
+					wd := 0
+					for i, ln := range lines {
+						dd := dirAt(gtx, image.Pt(0, i*lh), func(gtx C) D {
+							gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, tw), lh)}
+							return d.para(gtx, size, lhSp, wBlack, d.p.Text, 1, ln)
+						})
+						wd = max(wd, dd.Size.X)
 					}
-					return d.para(gtx, 22, 30, wBlack, d.p.Text, 1, title)
+					return D{Size: image.Pt(wd, len(lines)*lh)}
 				}),
 			)
 		})
@@ -2998,4 +3024,44 @@ func (d *ChannelDetails) dmMembers(cv core.Conv) []core.User {
 		}
 	}
 	return out
+}
+
+// cdTitleLines breaks the details title into lines tw wide as Chrome
+// does under white-space: break-spaces and word-break: break-word: at
+// UAX #14's opportunities, the spaces kept on the line they end, and a
+// word too wide for a line of its own cut where the line is full (a
+// long channel name). width measures one line.
+func cdTitleLines(s string, tw int, width func(string) int) []string {
+	if s == "" {
+		return []string{""}
+	}
+	var units []string
+	var seg segmenter.Segmenter
+	seg.Init([]rune(s))
+	for it := seg.LineIterator(); it.Next(); {
+		units = append(units, string(it.Line().Text))
+	}
+	var lines []string
+	cur := ""
+	for _, u := range units {
+		if cur != "" && width(strings.TrimRight(cur+u, " ")) > tw {
+			lines = append(lines, cur)
+			cur = ""
+		}
+		cur += u
+		// break-word: a unit wider than a whole line breaks between characters
+		for cur != "" && width(strings.TrimRight(cur, " ")) > tw {
+			rs := []rune(cur)
+			n := 1
+			for n < len(rs) && width(string(rs[:n+1])) <= tw {
+				n++
+			}
+			if n >= len(rs) {
+				break
+			}
+			lines = append(lines, string(rs[:n]))
+			cur = string(rs[n:])
+		}
+	}
+	return append(lines, cur)
 }
