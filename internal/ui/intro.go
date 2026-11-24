@@ -105,6 +105,8 @@ type intro struct {
 	mc      motionClock   // this frame's
 
 	rec *[]introDrawn // tests: every element drawn this frame
+
+	imp introImport // the plugins beat's offer of Slick's and Taut's plugins (intro_import.go)
 }
 
 // pressAnim is a button's press and hover, on springs.
@@ -141,6 +143,7 @@ func (a *App) startFirstRunIntro() {
 	}
 	a.intro = newIntro(introFirstRun, a)
 	a.intro.preview = startIntroPreview(a)
+	a.intro.findImports(a) // Slick's and Taut's plugins on this computer, for the plugins beat
 }
 
 // replayIntro is Preferences > Clack > Replay introduction: the whole
@@ -251,6 +254,13 @@ func (in *intro) update(gtx layout.Context, a *App) {
 	if in.doneBtn.Clicked(gtx) {
 		next = true
 	}
+	// the plugins beat offering Slick's and Taut's plugins waits for an
+	// answer: Continue keeps the picks for after the sign-in, Skip brings
+	// nothing (intro_import.go)
+	importing := in.cur == beatPlugins && !in.signIn && in.importing(a)
+	if importing {
+		in.readImportClicks(gtx)
+	}
 	switch {
 	case in.closing || in.signIn:
 	case in.cur == beatFinal: // replay's "You're all set"
@@ -260,9 +270,13 @@ func (in *intro) update(gtx layout.Context, a *App) {
 	case skip:
 		in.goTo(a, now, beatFinal)
 	case next:
+		if importing {
+			a.savePendingImport(in.imp.items)
+		}
 		in.goTo(a, now, in.cur+1)
 	case back && in.cur > beatLogo:
 		in.goTo(a, now, in.cur-1)
+	case importing:
 	default:
 		if due := in.curAt.Add(introDwell[in.cur]); !now.Before(due) {
 			in.goTo(a, now, in.cur+1)
@@ -806,6 +820,9 @@ func (in *intro) geom(f *introFrame) introGeom {
 // and its sentence.
 func (in *intro) drawText(f *introFrame, b int, g introGeom, start time.Time, parent fx) {
 	cp := introCopy[b]
+	if b == beatPlugins && in.importing(f.a) {
+		cp.sub = in.importSub()
+	}
 	white := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
 	if cp.eyebrow != "" {
 		e := f.enter(start.Add(msec(140)), f.df(10), springSmooth, false).mul(parent)
@@ -1133,6 +1150,9 @@ func (in *intro) drawBar(f *introFrame) {
 			if in.mode == introReplay {
 				label = "Finish"
 			}
+		}
+		if lb == beatPlugins && in.importing(f.a) && in.importPicks() > 0 {
+			label = "Bring them over"
 		}
 		in.pillButton(f, &in.nextBtn, &in.nextAnim, label, image.Pt(f.sz.X-f.d(introBarInset), g.barY), true)
 	})

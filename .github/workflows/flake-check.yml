@@ -6233,6 +6233,40 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # plugin-import (2026-11-24, Karim: "and import plugisn too" ... "in
+  # introduccion"): Slick's and Taut's plugins on this computer, read from
+  # their own folders and nothing else (pluginimport), brought over through
+  # the Library's install with their settings and on or off, from the
+  # first launch's plugins beat (kept until the sign-in) and from
+  # Preferences > Plugins. COUNT runs each. Dispatch with
+  # only=plugin-import.
+  plugin-import:
+    if: ${{ !inputs.only || startsWith('plugin-import', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the other apps' plugins read, brought over, from the intro and from Preferences, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 5m -run '^(TestFindReadsPluginsOnly|TestFindWithoutInstalls|TestStripJSONC)$' ./internal/pluginimport || rc=1
+          go test -count="$COUNT" -timeout 15m -run '^(TestPluginImportBringsPluginsOver|TestPluginImportAfterSignIn|TestIntroOffersPluginImport|TestPluginImportScreen)$' ./internal/ui || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # channel-files-race: TestChannelFilesRadiosAndPaging read the last
   # links form after Oldest before the links read had gone out (its own
   # goroutine): "links sort_dir \"desc\"" in train-207's full-test
@@ -6511,6 +6545,7 @@ jobs:
       - quote-paste-win
       - message-polish
       - plugins-work-2b
+      - plugin-import
       - channel-files-race
       - fling-22px
       - history-changed

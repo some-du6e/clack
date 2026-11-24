@@ -301,6 +301,7 @@ func (b *backend) installTaut(a *App, t *taut.Taut, s *slick.Slick) {
 		}()
 	}
 	go b.watchTaut(a, t)
+	a.resumePendingImport() // the introduction's picks of Slick's and Taut's plugins (plugin_import.go)
 }
 
 // watchTaut repaints when the plugin model changes (Preferences > Taut).
