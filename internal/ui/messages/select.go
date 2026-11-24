@@ -4,6 +4,8 @@ import (
 	"html"
 	"image"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"gioui.org/f32"
 	"gioui.org/gesture"
@@ -41,6 +43,9 @@ type selection struct {
 	ga, gb   selPoint
 	pressPos f32.Point
 	keyIdx   map[string]int // item key -> index, rebuilt with items
+	// typed gathers what's typed while the selection has the focus, for
+	// the input (selKeys)
+	typed StealText
 }
 
 func (s *listState) rebuildKeyIdx() {
@@ -106,8 +111,18 @@ func (s *listState) selPointer(gtx layout.Context, h Host, e pointer.Event, size
 		if !ctxclick.Primary(e) { // right-clicks keep the selection for its menu
 			return
 		}
+		// a press on the hover toolbar (last frame's, which the router hit
+		// tested) is its button's: it starts no selection, which would hide
+		// the toolbar before the click lands (as itemAt keeps it for the
+		// context menu); on a grouped or Compact row the toolbar sits over
+		// the row above's last line
+		if s.tbFor >= 0 && image.Pt(int(e.Position.X), int(e.Position.Y)).In(s.tbRect) {
+			return
+		}
 		i, r, local := s.rowAt(e.Position)
-		inBody := r != nil && local.X >= 0 && local.Y >= 0 && int(local.X) <= max(r.bodyRect.Dx(), r.selW)+4 && int(local.Y) < r.bodyRect.Dy()
+		// the text column (selW: the rich_text block), or the widest line
+		// and 4px where the row draws none
+		inBody := r != nil && local.X >= 0 && local.Y >= 0 && int(local.X) <= max(r.bodyRect.Dx()+4, r.selW) && int(local.Y) < r.bodyRect.Dy()
 		if !inBody || r.edit != nil {
 			s.clearSelection()
 			return
@@ -319,16 +334,32 @@ func timeSelectable() bool {
 }
 
 func (s *listState) selKeys(gtx layout.Context, h Host) {
+	defer func() {
+		// what's typed with the list focused (a press in its text) goes to
+		// the conversation's input, as Slack's document keydown hands a
+		// printable key there (shouldInputStealKeyEvent)
+		if text, keys := s.sel.typed.Take(); text != "" || len(keys) > 0 {
+			s.kbSteal(gtx, text, keys)
+		}
+	}()
 	for {
 		ev, ok := gtx.Event(
 			key.FocusFilter{Target: s},
 			key.Filter{Focus: s, Name: "C", Required: key.ModShortcut},
 			key.Filter{Focus: s, Name: key.NameEscape},
+			// enableShortcuts: Mod+B, Mod+I and Mod+V go to the input
+			key.Filter{Focus: s, Name: "B", Required: key.ModShortcut, Optional: key.ModShift},
+			key.Filter{Focus: s, Name: "I", Required: key.ModShortcut, Optional: key.ModShift},
+			key.Filter{Focus: s, Name: "V", Required: key.ModShortcut, Optional: key.ModShift},
 		)
 		if !ok {
 			return
 		}
 		switch e := ev.(type) {
+		case key.EditEvent:
+			s.sel.typed.Edit(e, stealsTyped)
+		case key.CompositionEvent:
+			s.sel.typed.Composition(e) // an IME's marked text stays out
 		case key.FocusEvent:
 			s.sel.focused = e.Focus
 			if !e.Focus && !s.sel.dragging {
@@ -339,6 +370,8 @@ func (s *listState) selKeys(gtx layout.Context, h Host) {
 				continue
 			}
 			switch e.Name {
+			case "B", "I", "V":
+				s.sel.typed.Key(e)
 			case "C":
 				if t, sh, ch := s.selectedRich(h); t != "" {
 					richview.CopyRich(gtx, t, sh, ch) // Slack's copy handler: text, html, slack/html
@@ -381,4 +414,12 @@ func (s *listState) extendBy(r *row, p selPoint) {
 func (s *listState) before(p, q selPoint) bool {
 	ip, iq := s.sel.keyIdx[p.key], s.sel.keyIdx[q.key]
 	return ip < iq || ip == iq && p.off < q.off
+}
+
+// stealsTyped is shouldInputStealKeyEvent for text typed with the list's
+// selection focused (no message selected, so no message action keys):
+// one printable character, not Space.
+func stealsTyped(t string) bool {
+	r, n := utf8.DecodeRuneInString(t)
+	return n > 0 && n == len(t) && r != ' ' && unicode.IsPrint(r)
 }

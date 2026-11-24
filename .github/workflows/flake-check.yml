@@ -6373,10 +6373,6 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
-  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
-  # every listed test failed in some job and passed in none, nothing else
-  # failed, every job that ran succeeded. Proof runs only. A new job goes
-  # in its needs (.github/scripts/expect_fail_wire.py adds it).
   # 2026-11-23 (Karim, alpha.102; backlog P54): a drag past a line's end
   # in plugin-patched rich_text doesn't select to the line's end.
   select-line-end:
@@ -6402,12 +6398,15 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -v -timeout 8m -run '^TestSelectLineEnd' ./internal/ui/messages || rc=1
-          if ls internal/ui/richview/select_line_end*_test.go >/dev/null 2>&1; then go test -count=$COUNT -v -timeout 4m -run '^TestSelectLineEnd' ./internal/ui/richview || rc=1; fi
+          go test -count=$COUNT -v -timeout 8m -run '^(TestSelectLineEnd|TestToolbarClickOverRowAbove|TestClickRightOfTextKeepsTyping)$' ./internal/ui/messages || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (.github/scripts/expect_fail_wire.py adds it).
   expect-fail:
     needs:
       - select-line-end

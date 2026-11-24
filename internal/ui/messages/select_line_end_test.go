@@ -109,7 +109,7 @@ func sleEnv(t *testing.T, mode string) *ctxEnv {
 	if mode == "plain" {
 		return newCtxEnvIn(t, tGen, msgs)
 	}
-	app, _, tt, _, ph := pluginEnv(t)
+	app, _, tt, u, ph := pluginEnv(t)
 	if mode == "inline" {
 		install(t, tt, sleInlinePlugin)
 		until(t, 5*time.Second, "the patch", func() {}, func() bool { return slackc.Patched("Blocks") })
@@ -124,9 +124,25 @@ func sleEnv(t *testing.T, mode string) *ctxEnv {
 	e.v = NewChannelView(e.h, tGen)
 	e.v.Preview = true
 	until(t, 10*time.Second, "the rows laid out", e.frame, func() bool { return e.row(sleOne) != nil && e.row(sleTwo) != nil })
-	for k := 0; k < 30; k++ { // the plugin trees come back from JS
+	// the rows are drawn through the plugin's trees: wait for them, or the
+	// patched modes would pass on the native path alone
+	want := "" // a tree per patched component the rows drew
+	if mode == "inline" {
+		want = "x-inline-blocks" // the span around Blocks
+	}
+	until(t, 10*time.Second, "the plugin's trees ("+want+")", func() { e.frame(); time.Sleep(20 * time.Millisecond) }, func() bool {
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		n := 0
+		for _, tr := range u.trees {
+			if strings.Contains(string(tr), want) {
+				n++
+			}
+		}
+		return n >= 2 // both messages' rows
+	})
+	for k := 0; k < 5; k++ {
 		e.frame()
-		time.Sleep(20 * time.Millisecond)
 	}
 	return e
 }

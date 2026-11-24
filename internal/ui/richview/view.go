@@ -1304,7 +1304,7 @@ func (v *View) lineAt(p f32.Point) int {
 	lines := v.d.lines
 	x, y := p.X, int(p.Y)
 	best := -1
-	bestD := 1 << 30
+	bestD := 1 << 62
 	for i, ln := range lines {
 		if ln.f1 <= ln.f0 {
 			continue
@@ -1324,10 +1324,12 @@ func (v *View) lineAt(p f32.Point) int {
 		} else if x > f1.x+f1.w {
 			dx = int(x - f1.x - f1.w)
 		}
-		d := dy*4 + dx/8
-		if dy == 0 {
-			d = dx / 8
-		}
+		// the nearest line by its block offset, as Chromium's
+		// PositionForPoint takes it (InlineCursor::PositionForPoint
+		// InInlineFormattingContext); the horizontal distance only between
+		// lines as near (side-by-side fields on one row): a press right of
+		// a short line takes that line's end, never a longer neighbour's
+		d := dy<<16 + min(dx, 1<<16-1)
 		if d < bestD {
 			bestD, best = d, i
 		}
