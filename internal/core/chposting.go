@@ -509,13 +509,16 @@ func (a *App) FeatureState(name string) (on, known bool) {
 	return f.on[name], f.known || f.cached
 }
 
-// SetFeatures sets what features.access.policies.list would say, as its
-// answer, so no read starts for an hour (tests).
+// SetFeatures takes on as a features.access.policies.list answer: it
+// merges into the store as every answer does (loadFeatures), and no read
+// starts for an hour (tests).
 func (a *App) SetFeatures(on map[string]bool) {
 	f := a.features()
 	f.mu.Lock()
 	f.known, f.at, f.loading = true, time.Now(), false
-	f.on = make(map[string]bool, len(on))
+	if f.on == nil {
+		f.on = make(map[string]bool, len(on))
+	}
 	for k, v := range on {
 		f.on[k] = v
 	}
