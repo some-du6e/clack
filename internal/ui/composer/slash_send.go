@@ -109,7 +109,7 @@ func (c *Composer) commandUI() *commandUI {
 		feedback: func() { c.later(func() { popups.NewUserFeedbackModal(c.h) }) },
 		contents: func(ch string, d *Doc) {
 			c.later(func() {
-				if t := liveComposer(draftKey(ch, "")); t != nil && t.edit == nil {
+				if t := c.sessionComposer(ch); t != nil {
 					t.setContents(d)
 				}
 			})
@@ -120,7 +120,7 @@ func (c *Composer) commandUI() *commandUI {
 			end := time.Now().Add(3 * time.Second)
 			var try func()
 			try = func() {
-				if t := liveComposer(draftKey(ch, "")); t != nil && t.edit == nil {
+				if t := c.sessionComposer(ch); t != nil {
 					f(t)
 				} else if time.Now().Before(end) {
 					c.later(try)
@@ -129,6 +129,16 @@ func (c *Composer) commandUI() *commandUI {
 			c.later(try)
 		},
 	}
+}
+
+// sessionComposer is channel ch's open composer (not an edit) of this
+// composer's session: a send's work never lands in another session's box
+// (one of an account switched to, or a later test's).
+func (c *Composer) sessionComposer(ch string) *Composer {
+	if t := liveComposer(draftKey(ch, "")); t != nil && t.edit == nil && t.api.a == c.api.a {
+		return t
+	}
+	return nil
 }
 
 // zhyrViewContext is the composer's view as Slack's view context enum

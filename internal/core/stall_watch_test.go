@@ -115,9 +115,8 @@ func TestStalledHandlerIsNamed(t *testing.T) {
 	fs.Push(map[string]any{"type": "user_typing", "channel": ch, "user": fs.UserIDs()[3]})
 	what := "a user_typing event of " + logtag.ID(ch)
 	waitStall(t, 10*time.Second, "the stall's line", func() bool { return logs.has("core: the event pump has been on " + what + " for") })
-	if !logs.has("core.(*App).pump(") || !logs.has("all goroutines:") {
-		t.Error("no stack for the stalled pump")
-	}
+	// the dump is its own log call, after the stall's line
+	waitStall(t, 10*time.Second, "the stalled pump's stack", func() bool { return logs.has("core.(*App).pump(") && logs.has("all goroutines:") })
 	a.S.Unlock()
 	locked = false
 	waitStall(t, 10*time.Second, "the line once it went on", func() bool { return logs.has("core: the event pump took ") && logs.has(" on "+what) })

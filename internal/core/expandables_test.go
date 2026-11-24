@@ -67,6 +67,18 @@ func TestExpandablesPersist(t *testing.T) {
 	dir := t.TempDir()
 	creds := slack.Creds{Token: "xoxc-test", UserID: "USELF", Team: "T1", TeamURL: "http://127.0.0.1:1/"}
 	a := New(slack.New(creds), store.New(dir))
+	b := New(slack.New(creds), store.New(dir))
+	other := New(slack.New(slack.Creds{Token: "xoxc-test", UserID: "UOTHER", Team: "T1"}), store.New(dir))
+	t.Cleanup(func() { // the writes end before the directory goes
+		for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+			if !a.expandablesWriting() && !b.expandablesWriting() && !other.expandablesWriting() {
+				return
+			}
+		}
+	})
+	if b.SetExpanded("block_image_1.2_b", false); b.expandablesWriting() { // set before the disk's copy is read
+		t.Error("a write before the disk's copy was read (it would replace the file)")
+	}
 	a.loadExpandables("T1", "USELF")
 	urlKey := "img_msg_1.2https://e.test/a.pngChannel"
 	a.SetExpanded("inline_files_msg_1_2F1Channel", false)
@@ -88,8 +100,6 @@ func TestExpandablesPersist(t *testing.T) {
 	if _, ok := disk.Expanded[urlKey]; ok {
 		t.Error("a key with an image URL went to disk")
 	}
-	b := New(slack.New(creds), store.New(dir))
-	b.SetExpanded("block_image_1.2_b", false) // set before the disk's copy is read
 	b.loadExpandables("T1", "USELF")
 	if on, ok := b.Expanded("inline_files_msg_1_2F1Channel"); !ok || on {
 		t.Errorf("the collapse didn't survive a restart: %v %v", on, ok)
@@ -97,7 +107,6 @@ func TestExpandablesPersist(t *testing.T) {
 	if on, _ := b.Expanded("block_image_1.2_b"); on {
 		t.Error("the disk's copy replaced this session's state")
 	}
-	other := New(slack.New(slack.Creds{Token: "xoxc-test", UserID: "UOTHER", Team: "T1"}), store.New(dir))
 	other.loadExpandables("T1", "UOTHER")
 	if _, ok := other.Expanded("inline_files_msg_1_2F1Channel"); ok {
 		t.Error("another account read the file")
@@ -264,8 +273,11 @@ func TestExpandCommand(t *testing.T) {
 		}
 	}
 	for _, k := range keys("Thread", msgs[:3]...) {
-		if _, ok := a.Expanded(k); ok {
-			t.Errorf("/expand in the thread set a channel message's %s", k)
+		// a block's key has no view context: the channel's /collapse
+		// set it, the thread's /expand leaves it
+		on, ok := a.Expanded(k)
+		if strings.HasSuffix(k, "Thread") && ok || !strings.HasSuffix(k, "Thread") && on {
+			t.Errorf("/expand in the thread set a channel message's %s (%v %v)", k, on, ok)
 		}
 	}
 	if on, _ := a.Expanded(all[3]); on {

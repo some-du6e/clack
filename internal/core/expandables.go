@@ -130,6 +130,7 @@ func (a *App) loadExpandables(team, user string) {
 		return
 	}
 	x.loaded = true
+	dirty := x.dirty // set this session before the read: written with it
 	n := 0
 	if ok {
 		if x.m == nil {
@@ -147,6 +148,18 @@ func (a *App) loadExpandables(team, user string) {
 		x.gen.Add(1)
 		a.emit(Event{Type: "expandables"})
 	}
+	if dirty {
+		a.saveExpandablesSoon()
+	}
+}
+
+// expandablesWriting reports whether a write of the store is under way
+// or due (tests wait it out).
+func (a *App) expandablesWriting() bool {
+	x := &a.expd
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.saving || x.dirty && x.loaded
 }
 
 // saveExpandablesSoon writes the store now, off the caller's goroutine
@@ -155,7 +168,7 @@ func (a *App) saveExpandablesSoon() {
 	x := &a.expd
 	x.mu.Lock()
 	x.dirty = true
-	if x.saving {
+	if x.saving || !x.loaded { // not before the disk's copy is in: it would be lost (loadExpandables writes then)
 		x.mu.Unlock()
 		return
 	}
