@@ -349,6 +349,21 @@ func (a *App) installUpdate() {
 	}()
 }
 
+// InstallUpdateOnQuit installs a downloaded update the user didn't
+// restart into (Options.InstallUpdateOnQuit), as Slack desktop's update
+// is applied when it quits: without it, a Mac that quit and reopened
+// Clack ran the build it was installed with, downloading the update anew
+// every session (Karim's stayed on alpha.139 for 19 releases). Call it
+// after Run returns; tag is the update it installed ("" for none).
+func (a *App) InstallUpdateOnQuit() (tag string, err error) {
+	u := &a.update
+	f := a.opts.InstallUpdateOnQuit
+	if f == nil || u.phase != updReady || u.info.Tag == "" {
+		return "", nil
+	}
+	return u.info.Tag, f(u.info)
+}
+
 // updateChecksOn is Preferences > Clack > "Check for updates"
 // (automatic checks; Check now works either way).
 func (a *App) updateChecksOn() bool { return !a.prefs.NoUpdateCheck }

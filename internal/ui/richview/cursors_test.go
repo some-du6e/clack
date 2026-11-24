@@ -116,3 +116,38 @@ func TestSharePromptCursors(t *testing.T) {
 	wantCursor(t, hs, "the prompt", fragMid(findFrag(t, &hs.v.d, "Summarise")), pointer.CursorText)
 	wantCursor(t, hs, "the tile", r[0].Card.Min.Add(image.Pt(12+20, 12+20)), pointer.CursorDefault)
 }
+
+// A carousel: the default arrow between its cards and on a card off its
+// text (Slack's card isn't interactive: cursor auto), the text cursor on
+// a card's title and on the visible label, the hand on an arrow.
+func TestCarouselCursors(t *testing.T) {
+	hs := newHarness(kitDoc(t, carouselOf(4, `,"label":"Picks","is_label_visible":true`)), &recHandler{})
+	hs.w = 600
+	hs.frame()
+	c := oneCarousel(t, hs.v)
+	if len(c.Cards) != 4 || c.Right.Empty() {
+		t.Fatalf("carousel %+v", c)
+	}
+	card := c.Cards[0]
+	mid := card.Min.Y + card.Dy()/2
+	wantCursor(t, hs, "between the cards", image.Pt(card.Max.X+8, mid), pointer.CursorDefault)
+	cv := hs.v.CarouselCard(0, 0)
+	frame := cardFrame(t, cv)
+	wantCursor(t, hs, "a card's padding", card.Min.Add(frame.Min).Add(image.Pt(6, 6)), pointer.CursorDefault)
+	wantCursor(t, hs, "a card's title", card.Min.Add(fragMid(findFrag(t, &cv.d, "Card"))), pointer.CursorText)
+	wantCursor(t, hs, "the label", fragMid(findFrag(t, &hs.v.d, "Picks")), pointer.CursorText)
+	wantCursor(t, hs, "the right arrow", rectMid(c.Right), pointer.CursorPointer)
+}
+
+// A card in a message: the text cursor on its title, the default arrow
+// on its padding.
+func TestCardCursors(t *testing.T) {
+	hs := newHarness(kitDoc(t, `[{"type":"card","block_id":"c","title":{"type":"plain_text","text":"Quarterly report"},`+
+		`"body":{"type":"mrkdwn","text":"Numbers are up."}}]`), &recHandler{})
+	hs.w = 600
+	hs.frame()
+	frame := cardFrame(t, hs.v)
+	wantCursor(t, hs, "the title", fragMid(findFrag(t, &hs.v.d, "Quarterly")), pointer.CursorText)
+	wantCursor(t, hs, "the padding", frame.Min.Add(image.Pt(6, 6)), pointer.CursorDefault)
+	wantCursor(t, hs, "the card's bottom right", frame.Max.Sub(image.Pt(6, 6)), pointer.CursorDefault)
+}

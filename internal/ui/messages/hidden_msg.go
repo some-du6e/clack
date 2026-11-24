@@ -179,6 +179,7 @@ func (r *row) hiddenColumn(gtx layout.Context) layout.Dimensions {
 		}
 		placeCall(gtx, call, x, y)
 		r.bodyRect = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+d.Size.X, y+d.Size.Y)}.Add(r.col)
+		r.selW = 0                            // the tombstone's line, not a text block
 		x += d.Size.X + nbspWidth(gtx, rc.th) // the " " before the link
 		rec = op.Record(gtx.Ops)
 		ld := r.hiddenLink(gtx, msgNS.T("Show anyway"), "caret-right-full")
@@ -200,6 +201,7 @@ func (r *row) hiddenColumn(gtx layout.Context) layout.Dimensions {
 		call, d := contents(gtx, cw)
 		placeCall(gtx, call, 0, y)
 		r.bodyRect = image.Rectangle{Min: image.Pt(0, y), Max: image.Pt(d.Size.X, y+d.Size.Y)}.Add(r.col)
+		r.selW = 0 // the tombstone's line, not a text block
 		y += max(d.Size.Y, lh)
 		at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
 			return r.hiddenLink(gtx, msgNS.T("Show anyway"), "caret-right-full")

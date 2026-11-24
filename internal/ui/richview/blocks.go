@@ -161,6 +161,8 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(4), l.dp(4), l.dp(4)
 	case richtext.EventBlock: // .p-event-container{margin:8px 0}
 		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.CarouselBlock: // .carousel{margin:8px 0}
+		return l.dp(8), l.dp(8), l.dp(8)
 	case richtext.SharePromptBlock: // .promptCardMargin{margin:8px 0} outside canvases (canvasUnfurl); nothing when it draws nothing
 		if b.Prompt == nil || !b.Prompt.Shown || l.opts.Canvas {
 			return 0, 0, 0
@@ -364,8 +366,10 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	y0 := y
 	if top && !l.inAtt {
-		bs = l.arrangeWorkObjects(bs)   // where MessageFiles / MessageKitAttachments draw them (workobject.go)
-		bs = l.attachmentsOverLimit(bs) // MessageKitAttachments' 20 (overlimit.go)
+		bs = l.arrangeWorkObjects(bs) // where MessageFiles / MessageKitAttachments draw them (workobject.go)
+		if !l.opts.NoAttachmentLimit {
+			bs = l.attachmentsOverLimit(bs) // MessageKitAttachments' 20 (overlimit.go)
+		}
 	}
 	edited, editedAfter := -1, -1
 	if top && l.hasLabel() {
@@ -794,6 +798,11 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		l.kitRegion(x, y, w, h)
 		return h
 
+	case richtext.CarouselBlock:
+		h := l.carousel(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
+
 	case richtext.Table:
 		return l.table(b, x, y, w)
 
@@ -827,9 +836,15 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 			return l.compFile(b, x, y, w)
 		}
 		if b.File.Pending { // c-pending_files__generic_file--pending: the pillow at .5
-			nb, nf := len(l.d.boxes), len(l.d.frags)
+			nb, nf, no := len(l.d.boxes), len(l.d.frags), len(l.d.overlayIcons)
 			h := l.file(b.File, x, y, w)
 			l.fade(nb, nf)
+			for i := no; i < len(l.d.overlayIcons); i++ {
+				l.d.overlayIcons[i].alpha = 0.5 // the icon is the pillow's too
+			}
+			if genericPillow(b.File) {
+				l.pendingSpinner(b.File, x+min(w, l.dp(426)), y) // PendingFilesSpinner, not faded
+			}
 			return h
 		}
 		return l.file(b.File, x, y, w)

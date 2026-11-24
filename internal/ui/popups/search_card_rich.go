@@ -194,8 +194,9 @@ func (v *SearchView) srRichOf(i int) *srCardRich {
 	r.body, r.extra = nil, nil
 	// no ViewContext: SearchResult sits under no MessageContainerContext
 	// provider, so a result's expandable keys carry none (expandable's
-	// view contexts)
-	o := richview.Options{Channel: m.Channel, TS: m.TS}
+	// view contexts); and no MessageKitAttachments: renderAttachments
+	// draws every attachment (IT2K), none past a limit
+	o := richview.Options{Channel: m.Channel, TS: m.TS, NoAttachmentLimit: true}
 	if len(body) > 0 {
 		bo := o
 		bo.Edited = m.DisplaysEdited()

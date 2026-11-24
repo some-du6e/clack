@@ -187,6 +187,13 @@ func TestRenderKitchenSink(t *testing.T) {
 					heights[b.b.Kind] = dim.Size.Y
 				}
 			}
+			// Quip's export holds a link card's placeholder only: no block
+			// draws it (linkcard.go)
+			for i, b := range v.blocks {
+				if txt := drawnText(b); strings.HasPrefix(txt, "Link URL") {
+					t.Errorf("block %d (kind %d) draws %q", i, b.b.Kind, txt)
+				}
+			}
 			if !(heights[canvas.Heading1] > heights[canvas.Heading2] && heights[canvas.Heading2] > heights[canvas.Heading3]) {
 				t.Errorf("heading heights %v", heights)
 			}
