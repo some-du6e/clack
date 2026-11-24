@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/io/event"
@@ -184,9 +185,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 			label, icon = "Delete to-do", "trash"
 		}
 		items = append(items, MenuItem{Action: "clear_later_todo", Label: label, Icon: icon, Danger: true, Frecency: "clear_later_todo",
-			QA: "clear_later_todo", Do: func() {
-				actDo(h, "", func(ctx context.Context, a *core.App) error { return a.Unsave(ctx, ch, ts) })
-			}}.In(nsSaved))
+			QA: "clear_later_todo", Do: func() { clearTodoWithUndo(h, ch, ts) }}.In(nsSaved))
 	}
 	if f, ok := actFollowItem(h, m, conv, root); ok {
 		items = append(items, f)
@@ -223,9 +222,10 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if actionable(app, &m) {
 		// Zn/q canPin; Organize (JuvA tk) holds only the pin row here, a
 		// submenu with none isn't drawn, and tk gives none on an automated
-		// message under the redesign nor on a redesigned huddle message
-		// (whose Add to list… row Clack's Organize doesn't hold)
-		if PinShown(app, &m) && connectToAppsShown(app, &m) {
+		// message under the redesign. A redesigned huddle message keeps it
+		// for its pin row (PinShown: only once it's pinned, to un-pin);
+		// Connect to apps' own rule (connectToAppsShown) is e6's, not tk's
+		if PinShown(app, &m) && !(app != nil && app.Experiment("system_messages_redesign_m1") == "on" && IsAutomatedSubtype(m.Subtype)) {
 			items = append(items, MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage))
 		}
 		if connectToAppsShown(app, &m) {
@@ -423,7 +423,7 @@ func actCanPost(h Host, ch string) bool {
 	if !ok {
 		return a.PostingIn(ch).CanPost()
 	}
-	return canUserPostIn(a, c) // canUserPostInChannel: the read-only state, not the thread-only one
+	return canUserPostIn(a, c) // canUserPostInChannel: neither read-only nor thread-only
 }
 
 // actWorkflowBot is q's isWorkflowBot(member) || isWorkflowBot(bot): the
@@ -626,6 +626,47 @@ func actDo(h Host, okMsg string, work func(ctx context.Context, a *core.App) err
 	}
 	do(h, okMsg, func(ctx context.Context) error { return work(ctx, a) })
 }
+
+// clearTodoWithUndo is messageActionsClearTodo's onRemoveSavedItem with
+// later_todos (TArr, PxoD clearSavedItemWithUndo): "To-do cleared" with
+// Undo, the clear sent once the toast is gone; under
+// later_todos_immediate_clear (PxoD nz) clearSavedItemImmediately, the
+// clear at once and a plain "To-do cleared". As the Later view clears
+// (views/later.go clearTodo).
+func clearTodoWithUndo(h Host, ch, ts string) {
+	app := h.Core()
+	if app == nil {
+		return
+	}
+	if app.Experiment(core.ExpLaterTodosImmediateClear) == "on" {
+		actDo(h, nsSaved.T("To-do cleared"), func(ctx context.Context, a *core.App) error { return a.ClearSaved(ctx, ch, ts) })
+		return
+	}
+	tu, ok := h.(interface{ ToastUndo(string, func()) })
+	if !ok {
+		actDo(h, nsSaved.T("To-do cleared"), func(ctx context.Context, a *core.App) error { return a.Unsave(ctx, ch, ts) })
+		return
+	}
+	var undone atomic.Bool
+	tu.ToastUndo(nsSaved.T("To-do cleared"), func() { undone.Store(true) })
+	// off the UI goroutine: core's write, and a failure's toast posted back
+	time.AfterFunc(clearTodoUndoFor, func() {
+		if undone.Load() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), asyncTimeout)
+		defer cancel()
+		if err := app.Unsave(ctx, ch, ts); err != nil {
+			msg := "Couldn't do that: " + errText(err)
+			if p, ok := h.(interface{ Post(func()) }); ok {
+				p.Post(func() { h.Toast(msg) })
+			}
+		}
+	})
+}
+
+// clearTodoUndoFor is how long the Undo toast stays (App.ToastUndo).
+var clearTodoUndoFor = 6 * time.Second
 
 // actPin is the Organize menu's pin item: pinMessage / unpinMessage
 // (core.Pin, core.Unpin), whose row in the Pins tab and the message's pin

@@ -194,3 +194,32 @@ func (a *App) CanEditTabs(ch string) bool {
 	}
 	return true
 }
+
+// CanActAsAdminIn is canUserActAsInChannel with canUserActAsWorkspaceAdmin
+// (JM7a S4) for ch: the viewer is the org's admin (Bn/N FQ) or an admin of
+// a workspace the channel is in, which in Clack is the viewer's own. A
+// message rule reads it: canDeleteMessageHelper (0Y8N) lets such a viewer
+// delete any message the rest of it allows.
+func (a *App) CanActAsAdminIn(ch string) bool {
+	return a.selfIsEnterpriseAdmin() || a.selfIsWorkspaceAdmin()
+}
+
+// ManagesChannel is ED4r C for ch: on Grid an org-wide channel's
+// (isOrgSharedPublicOrPrivateChannel, ewxK) is the org's admin's, any
+// other's CanActAsAdminIn's; and a channel manager of ch (DIay le) always.
+func (a *App) ManagesChannel(ch string) bool {
+	c, ok := a.S.Conv(ch)
+	if !ok {
+		return false
+	}
+	orgWide := c.IsOrgShared && (c.IsChannel || c.IsGroup || c.IsPrivate) && !c.IsIM && !c.IsMPIM
+	grid := a.enterpriseOrg() // isEnterpriseOrEnterpriseWorkspace (t5X0 r7)
+	if grid && orgWide {
+		if a.selfIsEnterpriseAdmin() {
+			return true
+		}
+	} else if a.CanActAsAdminIn(ch) {
+		return true
+	}
+	return a.isChannelManager(ch)
+}

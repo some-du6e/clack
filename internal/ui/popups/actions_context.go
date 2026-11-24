@@ -149,6 +149,17 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	// to-do, else "Add to-do", one action id for both (boot-shared:
 	// `{id: addToLaterTodos, name: S ? "Complete to-do" : "Add to-do"}`;
 	// clear_later_todo is Slack's separate, danger "Clear to-do")
+	if SaveInTodoSlot(h.Core()) {
+		// later_todos off: the slot is aHFc's later ("Save for later",
+		// "Remove from Later"), its key A
+		if SaveShown(h.Core(), &m) {
+			sa := SaveActionFor(h.Core(), &m)
+			items = append(items, MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: nsSaved.T("A"), Keys: KeySave, Do: func() {
+				RunSaveAction(h, m)
+			}}.In(nsSaved))
+		}
+		return withFrecency(items)
+	}
 	if !TodoShown(h.Core(), &m) { // on3u: none on an ephemeral or automated message
 		return withFrecency(items)
 	}

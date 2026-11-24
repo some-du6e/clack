@@ -564,10 +564,9 @@ func EditShown(app *core.App, m *core.Message, self string) bool {
 }
 
 // canUserPostIn is canUserPostInChannel (FS2H c) as far as Clack knows
-// conv: not archived, not read-only (a thread-only channel still counts:
-// Slack's check reads the read-only state alone, as the parity cases
-// "…posting restricted to admins" show), not Slack's system DM, nor a DM
-// with a deactivated person.
+// conv: not archived, not read-only (gq7X isReadOnly) nor thread-only
+// (Vm7I isThreadOnly: an announcement channel's members reply in threads
+// only), not Slack's system DM, nor a DM with a deactivated person.
 func canUserPostIn(app *core.App, conv *slack.Conversation) bool {
 	if conv == nil {
 		return true
@@ -583,7 +582,8 @@ func canUserPostIn(app *core.App, conv *slack.Conversation) bool {
 			return false
 		}
 	}
-	return !app.PostingFor(conv).ReadOnly
+	p := app.PostingFor(conv)
+	return !p.ReadOnly && !p.ThreadOnly
 }
 
 // canThreadIn is pS2E canThread for conv: replies may be posted there.
@@ -603,14 +603,16 @@ var deleteKeepSubtypes = map[string]bool{"pinned_item": true, "sh_room_created":
 // permissions (the viewer may delete their own messages, not apps'):
 //   - any ephemeral message (removed here alone);
 //   - none on a tombstone, a retention, bookmark_created,
-//     bookmark_removed, huddle_thread or moderated message, nor under
-//     system_messages_redesign_m1 on an automated one (the channel
-//     manager's exception aside, which Clack's viewer isn't);
+//     bookmark_removed, huddle_thread or moderated message;
 //   - in a DM only a bot_message, Slackbot's (USLACKBOT) or the viewer's
 //     own; elsewhere the viewer's own;
-//   - where the viewer can post (a reply: reply), and not in a locked
-//     thread; the viewer's own automated messages only for pinned_item,
-//     sh_room_created, sh_room_shared, reply_broadcast and channel_topic.
+//   - under system_messages_redesign_m1 an automated one only for the
+//     channel's manager or an admin (n+vA: ED4r C, S4);
+//   - where the viewer can post (a reply: reply); then an admin who can
+//     act in the channel (S4) may, and otherwise not in a locked thread,
+//     and the viewer's own automated messages only for pinned_item,
+//     sh_room_created, sh_room_shared, reply_broadcast and channel_topic
+//     (canDeleteMyMessageHelper).
 func DeleteShown(app *core.App, m *core.Message, self string) bool {
 	if isEphemeral(app, m) {
 		return true
@@ -623,7 +625,9 @@ func DeleteShown(app *core.App, m *core.Message, self string) bool {
 	if m.Tombstone || m.TS == "" {
 		return false
 	}
-	if app != nil && app.Experiment("system_messages_redesign_m1") == "on" && IsAutomatedSubtype(sub) {
+	// n+vA: under the redesign an automated message keeps Delete only for
+	// its channel's manager (ED4r C) or an admin who can act in it (S4)
+	if app != nil && app.Experiment("system_messages_redesign_m1") == "on" && IsAutomatedSubtype(sub) && !(app.ManagesChannel(m.Channel) || app.CanActAsAdminIn(m.Channel)) {
 		return false
 	}
 	var conv *slack.Conversation
@@ -643,7 +647,9 @@ func DeleteShown(app *core.App, m *core.Message, self string) bool {
 	if isReplyMsg(m) && !canThreadIn(app, conv) || !isReplyMsg(m) && !canUserPostIn(app, conv) {
 		return false
 	}
-	if dm {
+	// the helper's end: a DM's (isIm), an admin's who can act in the
+	// channel (S4), else canDeleteMyMessageHelper's
+	if dm || app != nil && app.CanActAsAdminIn(m.Channel) {
 		return true
 	}
 	if IsAutomatedSubtype(sub) && !deleteKeepSubtypes[sub] {

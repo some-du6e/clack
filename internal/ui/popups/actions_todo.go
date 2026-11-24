@@ -168,6 +168,15 @@ func SaveActionFor(app *core.App, m *core.Message) SaveAction {
 	return SaveAction{Label: "Add to saved", Icon: "bookmark", Do: SaveAdd}
 }
 
+// SaveInTodoSlot is whether the hover toolbar's and the right-click
+// menu's to-do slot offers aHFc's later instead of Yoyn's to-do: with
+// later_todos off (GAJO tj), Slack's toolbar and the right-click menu's
+// first group carry "Save for later" (or "Remove from Later", key A), and
+// the ⋮ menu has no save row (eY puts it there only with later_todos).
+func SaveInTodoSlot(app *core.App) bool {
+	return app != nil && app.Experiment("later_todos") != "on"
+}
+
 // SaveShown is whether the save row (aHFc) is there for m: a saved to-do
 // to move always; else none on an ephemeral message, nor, unless it's
 // saved, on an automated one (a join, a topic change: h3YX, but a code

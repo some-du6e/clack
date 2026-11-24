@@ -2539,6 +2539,13 @@ func toolbarButtons(app *core.App, m *core.Message, thread bool, btns []int) (_ 
 			}
 			label[i], qa[i] = l, q
 		case tbTodo:
+			if popups.SaveInTodoSlot(app) { // later_todos off: aHFc's later in the slot
+				if !popups.SaveShown(app, m) {
+					continue
+				}
+				label[i] = popups.SaveActionFor(app, m).Label
+				break
+			}
 			if !popups.TodoShown(app, m) { // on3u: none on an ephemeral or automated message
 				continue
 			}
@@ -2630,7 +2637,11 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 	m := r.src
 	btn := &s.tb[i]
 	var todo popups.TodoAction
-	if i == tbTodo {
+	saveSlot := i == tbTodo && popups.SaveInTodoSlot(app)
+	if saveSlot {
+		sa := popups.SaveActionFor(app, &m) // the slot's later (bookmark, or bookmark-filled when saved)
+		todo = popups.TodoAction{Label: sa.Label, MenuIcon: sa.Icon, HoverIcon: sa.Icon}
+	} else if i == tbTodo {
 		todo = todoAction(app, &m)
 	}
 	if btn.Clicked(gtx) {
@@ -2650,6 +2661,11 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		case tbForward:
 			h.ShowOverlay(popups.NewForwardModal(h, m))
 		case tbTodo:
+			if saveSlot {
+				popups.RunSaveAction(h, m)
+				h.Invalidate()
+				break
+			}
 			s.toggleTodo(h, m)
 		case tbList:
 			if la, ok := h.(ListAdder); ok {
@@ -2719,6 +2735,9 @@ func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int
 		col := mixColor(c.ToolbarIcon, c.ToolbarHoverIcon, paint)
 		isz := float32(18)
 		ic := tbIcons[i]
+		if i == tbTodo && !todo.Complete && todo.HoverIcon != "" {
+			ic = todo.HoverIcon // the save slot's bookmark (Add to-do's is todo-add)
+		}
 		if i == tbTodo && todo.Complete {
 			// .c-message_actions__button--complete_todo (and :hover):
 			// content-hgl-2 at font-size 24px, check-circle-filled

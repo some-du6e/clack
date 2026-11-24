@@ -420,8 +420,8 @@ func maRecvType(e ast.Expr) string {
 // `${id}_button`); ⋮ is MessageActionButtonEllipsis, Slack's "more".
 // Each slot is one Slack action in Clack (the to-do slot is Yoyn's
 // addToLaterTodos, whose id stays add_to_later_todos as "Complete
-// to-do"), so a slot that comes to offer another action (Slack's later,
-// "Save for later", with later_todos off) needs its id picked here too.
+// to-do"); with later_todos off the to-do slot offers Slack's later
+// ("Save for later", popups.SaveInTodoSlot), whose id maToolbar picks.
 var maButtonIDs = [tbCount]string{"add_reaction", "comment", "share_message", "add_to_later_todos", "add_to_list", "more"}
 
 // maToolbar is the hover toolbar list.go draws for m (listState.toolbar):
@@ -441,7 +441,11 @@ func maToolbar(app *core.App, m *core.Message, thread bool) *[]string {
 			out = append(out, "more")
 			continue
 		}
-		out = append(out, maButtonIDs[b]+": "+label[b])
+		id := maButtonIDs[b]
+		if b == tbTodo && popups.SaveInTodoSlot(app) {
+			id = "later" // the slot's aHFc later with later_todos off
+		}
+		out = append(out, id+": "+label[b])
 	}
 	return &out
 }
