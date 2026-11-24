@@ -39,6 +39,13 @@ func nrgbaAt(img *image.RGBA, x, y int) color.NRGBA {
 	return color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
 }
 
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 func near(a, b color.NRGBA, tol int) bool {
 	d := func(x, y uint8) bool { v := int(x) - int(y); return v <= tol && v >= -tol }
 	return d(a.R, b.R) && d(a.G, b.G) && d(a.B, b.B) && d(a.A, b.A)
@@ -346,10 +353,13 @@ func TestRasterSVGClipPath(t *testing.T) {
 }
 
 // The file_input dialog's sad cloud (slackasset.EmptyStateLowConnection,
-// n9p0's RUFH) draws from the bytes Clack ships. Its fills are named
-// ("black") and its clipPath covers the whole canvas, so it draws exactly
-// as the same SVG without the clip does, with its purples and its
-// near-white face.
+// n9p0's RUFH) draws from the bytes Clack ships, with its purples and its
+// near-white face. Its fills are named ("black") and its group is clipped
+// to the 589x471 artboard: inside the artboard the picture is the
+// unclipped one's (but for a level or so where an edge's coverage goes
+// through the clip's 8-bit mask), and as its paths run past the artboard
+// (x -17.5 to 604.5), the columns the meet fit leaves a fraction of at
+// 224px (0.08px each side) fade under the clip.
 func TestBundledEmptyStateCloudDraws(t *testing.T) {
 	data, ok := slackasset.Get(slackasset.EmptyStateLowConnection)
 	if !ok || !slackasset.IsSVG(slackasset.EmptyStateLowConnection) {
@@ -369,8 +379,29 @@ func TestBundledEmptyStateCloudDraws(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the cloud without its clip: %v", err)
 	}
-	if img.Bounds() != plain.Bounds() || string(img.Pix) != string(plain.Pix) {
-		t.Error("the whole-canvas clip changed the picture")
+	if img.Bounds() != plain.Bounds() {
+		t.Fatalf("the clip changed the size: %v, unclipped %v", img.Bounds(), plain.Bounds())
+	}
+	w, h := img.Bounds().Dx(), img.Bounds().Dy()
+	inside, edge := 0, 0 // the largest channel difference, premultiplied
+	for y := range h {
+		for x := range w {
+			i, d := img.PixOffset(x, y), 0
+			for c := range 4 {
+				d = max(d, abs(int(img.Pix[i+c])-int(plain.Pix[i+c])))
+			}
+			if x == 0 || x == w-1 {
+				edge = max(edge, d)
+			} else {
+				inside = max(inside, d)
+			}
+		}
+	}
+	if inside > 3 {
+		t.Errorf("inside the artboard the clip changed the picture by up to %d levels", inside)
+	}
+	if edge <= 3 {
+		t.Errorf("the artboard's edge columns are as unclipped (up to %d levels off): the clip clipped nothing", edge)
 	}
 	purple, face := false, false
 	for y := 0; y < img.Bounds().Dy(); y++ {
