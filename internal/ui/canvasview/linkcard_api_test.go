@@ -4,9 +4,11 @@ import (
 	"image"
 	"image/color"
 	"strings"
+	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // setUnfurl makes link's cards name the container ts in the fake's card
@@ -118,4 +120,27 @@ func memberShown(v *View) string {
 		return b.card.mb.u.ID
 	}
 	return ""
+}
+
+// setCardTimeout makes Card's wait d for a test; the func puts it back.
+func setCardTimeout(d time.Duration) func() {
+	old := cardTimeout
+	cardTimeout = d
+	return func() { cardTimeout = old }
+}
+
+// bodyWidth is the first card's work object card's width as drawn.
+func bodyWidth(v *View) int {
+	if b := embedBlk(v); b != nil {
+		return b.card.bodyW
+	}
+	return 0
+}
+
+// publicText is the first card's public link text view (nil: none).
+func publicText(v *View) *richview.View {
+	if b := embedBlk(v); b != nil && b.card.pub != nil {
+		return b.card.pub.text
+	}
+	return nil
 }

@@ -547,12 +547,16 @@ func (l *lay) woCard(b *richtext.Block, x, y, w int, size string, capped bool) i
 
 	card := l.d.addTarget(target{kind: tWorkObject, id: "click", att: att})
 	frame := len(l.d.boxes)
-	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: l.tok("otl-ter"), bw: max(1, l.dp(1)),
+	stroke, bw := l.tok("otl-ter"), max(1, l.dp(1))
+	if l.opts.WorkObjectCanvas { // withBorder false
+		stroke.A, bw = 0, 0
+	}
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: stroke, bw: bw,
 		radius: l.dp(12), target: -1})
 	cardHit := len(l.d.hits)
 	l.d.hits = append(l.d.hits, hit{t: card})
 
-	in := max(1, l.dp(1))
+	in := bw
 	ix, iy, iw := x+in, y+in, cw-2*in
 	cy := iy
 

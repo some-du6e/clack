@@ -76,8 +76,9 @@ type View struct {
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
-	profiles map[string]*profileSecs // member cards' sections (linkcard_member.go)
-	files    map[string]*fileState   // file cards' files.info (linkcard_file.go)
+	profiles  map[string]*profileSecs // member cards' sections (linkcard_member.go)
+	files     map[string]*fileState   // file cards' files.info (linkcard_file.go)
+	skelStill bool                    // the card being drawn has shimmered long enough (linkcard.go)
 
 	live     atomic.Bool  // files.open sent, watching events
 	modelLd  atomic.Bool  // loadCardModel's load is out
