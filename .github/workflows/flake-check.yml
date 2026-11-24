@@ -6404,8 +6404,8 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -v -timeout 12m -run '^(TestFocusedMessageKeysLikeSlack|TestFocusedMessageKeysExactly|TestFocusedReplyKeysLikeSlack|TestMenuRowsByMessageKindLikeSlack|TestContextMenuNotOnRestrictedMessages|TestFailedSendDeleteIsLocal|TestAddToListShortcut|TestEphemeralAddToListKeyIsNoOp|TestEphemeralMenuActionsLikeSlack|TestContextMenuOnMessageBody)$' ./internal/ui/messages || rc=1
-          xvfb-run -a go test -count="$COUNT" -v -timeout 6m -run '^TestThreadsTypedTextLikeSlack$' ./internal/ui/views || rc=1
+          go test -count="$COUNT" -v -timeout 12m -run '^(TestFocusedMessageKeysLikeSlack|TestFocusedMessageKeysExactly|TestFocusedReplyKeysLikeSlack|TestMenuRowsByMessageKindLikeSlack|TestContextMenuNotOnRestrictedMessages|TestFailedSendDeleteIsLocal|TestAddToListShortcut|TestEphemeralAddToListKeyIsNoOp|TestEphemeralMenuActionsLikeSlack|TestContextMenuOnMessageBody|TestFocusedKeysFollowPinAndUnreadRules)$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count="$COUNT" -v -timeout 6m -run '^(TestThreadsTypedTextLikeSlack|TestThreadsKeysNeedKeyboardFocus)$' ./internal/ui/views || rc=1
           xvfb-run -a go test -count="$COUNT" -v -timeout 8m -run '^(TestThreadsAuditTypingFromTheList|TestThreadsAuditTypingGoesToTheInput)$' ./internal/ui || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
