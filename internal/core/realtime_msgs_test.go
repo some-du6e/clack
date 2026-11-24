@@ -21,6 +21,15 @@ import (
 // emitted after the connection.
 func rtApp(t *testing.T) (*App, *fakeslack.Server, *eventLog) {
 	t.Helper()
+	return rtAppHeld(t, nil)
+}
+
+// rtAppHeld is rtApp with the socket's hello held (fakeslack HoldHello)
+// until ready reports true, polled for up to 10 s: what boot started
+// meanwhile, its prefetch of the unread conversations among it, is in
+// before the connect.
+func rtAppHeld(t *testing.T, ready func(a *App, fs *fakeslack.Server) bool) (*App, *fakeslack.Server, *eventLog) {
+	t.Helper()
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
 		t.Fatal(err)
@@ -30,10 +39,23 @@ func rtApp(t *testing.T) (*App, *fakeslack.Server, *eventLog) {
 	t.Cleanup(a.Shutdown)
 	evs, stop := a.Subscribe()
 	t.Cleanup(stop)
+	release := func() {}
+	if ready != nil {
+		release = fs.HoldHello()
+		t.Cleanup(release)
+	}
 	if err := a.Boot(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	a.SetRealtime(true)
+	if ready != nil {
+		for dl := time.Now().Add(10 * time.Second); !ready(a, fs); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(dl) {
+				t.Fatal("rtAppHeld: not ready within 10 s of boot, the socket's hello held")
+			}
+		}
+		release()
+	}
 	waitEvent(t, evs, 5*time.Second, func(ev Event) bool { return ev.Type == "connection" && ev.Connected })
 	l := &eventLog{}
 	go func() {

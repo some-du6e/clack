@@ -20,7 +20,8 @@ import (
 	"github.com/some-du6e/clack/internal/store"
 )
 
-// hcEnv is rtApp with ch's newest page cached.
+// hcEnv is rtApp with ch's newest page cached, read forward after the
+// connect (newHCEnv).
 type hcEnv struct {
 	t   *testing.T
 	a   *App
@@ -30,10 +31,22 @@ type hcEnv struct {
 	tss []string // ch's history on the fake, oldest first
 }
 
+// newHCEnv holds the socket's hello until boot's prefetch has read ch, one
+// of the fake's unread channels, so the slow connect makes ch's window end
+// stale and the first History reads it forward (reached_end.go catchUp), as
+// when the prefetch beats the connect. It waits for that read: its
+// conversations.history isn't the tests' to count. Left racing it, the
+// read sometimes went out after a test had counted the calls before its
+// own (TestCountsFirstAnswerIsBaseline: "the baseline counts read the
+// history again (1 conversations.history)", full-test 45313234515).
 func newHCEnv(t *testing.T) *hcEnv {
 	t.Helper()
-	a, fs, l := rtApp(t)
-	e := &hcEnv{t: t, a: a, fs: fs, log: l, ch: fs.ChannelIDs()[1]}
+	var ch string
+	a, fs, l := rtAppHeld(t, func(a *App, fs *fakeslack.Server) bool {
+		ch = fs.ChannelIDs()[1]
+		return a.S.Timeline(ch) != nil
+	})
+	e := &hcEnv{t: t, a: a, fs: fs, log: l, ch: ch}
 	e.tss = fs.HistoryTS(e.ch)
 	if len(e.tss) < 40 {
 		t.Fatalf("%s has %d messages; the test needs 40", e.ch, len(e.tss))
@@ -41,6 +54,10 @@ func newHCEnv(t *testing.T) *hcEnv {
 	if _, err := a.History(context.Background(), e.ch, ""); err != nil {
 		t.Fatal(err)
 	}
+	e.until("the connect's catch-up of the prefetched window", func() bool {
+		_, _, stale := a.S.EndOf(e.ch)
+		return !stale
+	})
 	return e
 }
 
