@@ -139,6 +139,36 @@ func TestIconsMatchSlack(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Every SvgIcon keeps Slack's parts and holes: drawn at 4x (72px) in
+	// each ink, Slack's glyph and Clack's have as many 8-connected parts
+	// of ink and 4-connected holes in them, a pixel ink when at least half
+	// inked. Ink and shape can't see a dropped piece or a hole opened to
+	// the outside (the apple without its leaf passed both, and an Android
+	// eye leaking out of the head). A part a pixel from another (VIP's V
+	// and I) can touch it at one threshold and not at the next, so
+	// Clack's counts may match at 0.35, 0.5 or 0.65. The font's and the
+	// inline glyphs keep the ink and shape checks only.
+	for _, c := range cases {
+		if _, ok := slackRef[c.name]; !ok {
+			continue
+		}
+		for _, ink := range inks {
+			want := inkTopo(slackRaster(t, c.body, 4*size, ink.fg, ink.bg), ink.fg, ink.bg, 0.5)
+			got := clackRaster(t, c.name, 4*size, 4, ink.fg, ink.bg)
+			var seen []glyphTopo
+			for _, th := range []float64{0.35, 0.5, 0.65} {
+				if tp := inkTopo(got, ink.fg, ink.bg, th); tp != want {
+					seen = append(seen, tp)
+					continue
+				}
+				seen = nil
+				break
+			}
+			if seen != nil {
+				t.Errorf("%s 4x %s: Slack's %s has %d parts and %d holes, Clack's %+v (ink at least 0.35, 0.5, 0.65)", ink.name, c.name, c.ref, want.parts, want.holes, seen)
+			}
+		}
+	}
 	var far []string
 	for _, c := range cases {
 		if worst[c.name] > 0.05 {
@@ -509,6 +539,70 @@ func inkOf(img *image.RGBA, fg, bg color.NRGBA) float64 {
 		s += (float64(img.Pix[i]) - float64(bg.G)) / d
 	}
 	return s
+}
+
+// glyphTopo is a drawn glyph's topology: its parts and the holes in them.
+type glyphTopo struct{ parts, holes int }
+
+// inkTopo counts img's 8-connected parts of pixels inked at least th and
+// its 4-connected regions of the rest that the border doesn't reach (its
+// holes).
+func inkTopo(img *image.RGBA, fg, bg color.NRGBA, th float64) glyphTopo {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	d := float64(fg.G) - float64(bg.G)
+	on := make([]bool, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			g := float64(img.Pix[img.PixOffset(b.Min.X+x, b.Min.Y+y)+1])
+			on[y*w+x] = (g-float64(bg.G))/d >= th
+		}
+	}
+	seen := make([]bool, w*h)
+	// fill marks start's region (ink: 8 neighbours, the rest: 4) and
+	// reports whether it reaches the border
+	fill := func(start int) (border bool) {
+		val, eight := on[start], on[start]
+		stack := []int{start}
+		seen[start] = true
+		for len(stack) > 0 {
+			i := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			x, y := i%w, i/w
+			if x == 0 || y == 0 || x == w-1 || y == h-1 {
+				border = true
+			}
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					if (dx == 0 && dy == 0) || (!eight && dx != 0 && dy != 0) {
+						continue
+					}
+					nx, ny := x+dx, y+dy
+					if nx < 0 || ny < 0 || nx >= w || ny >= h {
+						continue
+					}
+					if j := ny*w + nx; !seen[j] && on[j] == val {
+						seen[j] = true
+						stack = append(stack, j)
+					}
+				}
+			}
+		}
+		return border
+	}
+	var tp glyphTopo
+	for i := range on {
+		if seen[i] {
+			continue
+		}
+		ink := on[i]
+		if border := fill(i); ink {
+			tp.parts++
+		} else if !border {
+			tp.holes++
+		}
+	}
+	return tp
 }
 
 // shapeDiff is Σ|a-b| / Σa over the two images' per-pixel ink.
