@@ -8,3 +8,6 @@ import "image"
 func mtLines(m *Modal) []string         { return m.TitleLines() }
 func mtClose(m *Modal) image.Rectangle  { return m.CloseRect() }
 func mtTruncated(o ModalOpts) ModalOpts { o.TruncateTitle = true; return o }
+
+// mtCDialog is a DeprecatedDialog that doesn't truncate its title.
+func mtCDialog(o ModalOpts) ModalOpts { o.CDialog, o.CloseFirst = true, true; return o }
