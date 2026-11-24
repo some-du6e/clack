@@ -259,19 +259,6 @@ func (s *Store) InstallBootData(d *BootData) map[string]*slack.Conversation {
 	return added
 }
 
-// DropConv forgets conversation id (a channel Slack no longer has for the
-// viewer: joinConversationApi's dropAllCopies). It reports whether it
-// was known.
-func (s *Store) DropConv(id string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.Convs[id]; !ok {
-		return false
-	}
-	delete(s.Convs, id)
-	return true
-}
-
 // DropBootConvs removes the conversations boot data added that the live
 // list (users.conversations, fetched at journal position since) no longer
 // has: a channel left or archived elsewhere since the boot data was

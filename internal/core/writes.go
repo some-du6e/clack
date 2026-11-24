@@ -719,7 +719,7 @@ func (a *App) joinRefused(ch string, err error) {
 		return
 	}
 	a.S.DropWindows(ch)
-	if a.S.DropConv(ch) {
+	if _, ok := a.S.DropConv(ch); ok {
 		a.emit(Event{Type: "conv_removed", Channel: ch})
 	}
 }
