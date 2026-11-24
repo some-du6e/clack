@@ -185,15 +185,16 @@ type App struct {
 	secondary       secondaryState
 	secTabs         secTabWidths // the other tabs' secondary widths (sidebar_width.go)
 	searchQuery     string
-	searchBox       searchBoxState  // the top bar's search box: press-open, clear (search_topbar.go)
-	searchPill      image.Rectangle // window coords, for anchoring the search popover
-	primaryOrigin   image.Point     // window position of the primary panel
-	pvOrigin        originTracker   // ClientPrimaryView's origin under a patch
-	vbOrigin        originTracker   // the primary view body's, inside a patched RenderedViewContents
-	sbMenu          sbMenus         // sidebar row menus (slick_shell.go)
-	hdrCtx          map[string]*int // channel header title right-click tags (channel.go)
-	secondaryOrigin image.Point     // window position of the secondary pane
-	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
+	searchBox       searchBoxState     // the top bar's search box: press-open, clear (search_topbar.go)
+	searchPill      image.Rectangle    // window coords, for anchoring the search popover
+	navBtns         [3]image.Rectangle // the top nav's back, forward and history buttons (window coords, as last drawn)
+	primaryOrigin   image.Point        // window position of the primary panel
+	pvOrigin        originTracker      // ClientPrimaryView's origin under a patch
+	vbOrigin        originTracker      // the primary view body's, inside a patched RenderedViewContents
+	sbMenu          sbMenus            // sidebar row menus (slick_shell.go)
+	hdrCtx          map[string]*int    // channel header title right-click tags (channel.go)
+	secondaryOrigin image.Point        // window position of the secondary pane
+	chBodyW         int                // >0: layoutChannel's messages+composer width (nested secondary pane)
 	convos          map[string]*convo
 	convoOrder      []string
 	threadFocus     threadFocusState       // a thread's pending reply-box focus (thread_focus_input.go)

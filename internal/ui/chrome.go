@@ -197,6 +197,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 			col = theme.WithAlpha(col, 0x73)
 		}
 		org := image.Pt(x, y)
+		a.navBtns[i] = image.Rectangle{Min: org, Max: org.Add(image.Pt(b, b))} // (tests)
 		at(gtx, org, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
 			if i == 2 {
 				defer insNavHistory.Inspect(0).End(gtx, image.Pt(b, b))
