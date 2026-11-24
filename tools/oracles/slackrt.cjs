@@ -267,6 +267,10 @@ function makeRuntime({ dir, real = [], overrides = {}, partial = {}, patch = {},
   req.g = globalThis;
   req.p = '';
   req.u = id => id + '.js';
+  // webpack's chunk load (n.e("slash-commands-local")): every chunk in
+  // dir is indexed already, so a lazy import's modules are there to
+  // require (as stubs when its chunk isn't in dir)
+  req.e = () => Promise.resolve();
   req.b = 'file:///';
   req.nmd = m => m;
   req.hmd = m => m;

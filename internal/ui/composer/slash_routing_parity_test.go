@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,14 +24,17 @@ import (
 // executeCommand over Slack's CDN build; `tools/parity.py --refresh
 // slash-commands`).
 //
-// A case is Slack's delta as its composer holds it (mentions as text with
-// a slackmention attribute), the conversation (conversations.info), the
-// thread it's typed in, and over the base: the people, commands.list's
-// commands, experiment groups and team prefs. The base is the composer
-// tests' world (syntheticApp: Hack Club's team in its grid, the viewer
-// USELF); Slack's answers are the same with other ids. Slack also reads
-// permissions.info's answers for the conversation (base.permissions); Clack
-// asks none, so they're accepted here and not fed anywhere.
+// A case is the delta as handleSlashCommand gets it: prepareAndSendMessage's
+// processed delta, mentions as text with a slackmention attribute (a typed
+// #channel or @name that names one is a mention by then, as Clack's own
+// processing makes it), the conversation (conversations.info), the thread
+// it's typed in, and over the base: the people, commands.list's commands,
+// experiment groups, team prefs and permissions.info's answers for the
+// conversation and the team (the case's over the base's, one by one). The
+// base is the composer tests' world (syntheticApp: Hack Club's team in its
+// grid, the viewer USELF); Slack's answers are the same with other ids.
+// Clack's fake answers edge permissions/info with the permissions allowed
+// (and the @channel ones the composer tests' fake allows).
 //
 // The answer, as the oracle gives it: {"route": ...} with
 //   - message: the composer sent it as a message (chat.postMessage);
@@ -38,9 +42,11 @@ import (
 //     fields from the parse the send used;
 //   - server: chat.command, its command, disp, channel, thread_ts, team_id,
 //     app_id, and blocks as "string" (their JSON) when sent;
-//   - local: a client command ran (no chat.command), by the canonical name
-//     the send looked it up by;
-//   - remind: the reminder dialog; feedback: Slackbot's ephemeral text.
+//   - local: a client command ran (no chat.command): it called the API, or
+//     opened a dialog or a view; by the canonical name the send looked it
+//     up by;
+//   - remind: the reminder dialog; feedback: Slackbot's ephemeral text (a
+//     refusal, or a client command whose only answer that was).
 
 // srIn is a case's inputs and the snapshot's base (the same fields).
 type srIn struct {
@@ -49,14 +55,16 @@ type srIn struct {
 	Users       []json.RawMessage          `json:"users,omitempty"`
 	Experiments map[string]string          `json:"experiments,omitempty"`
 	TeamPrefs   map[string]json.RawMessage `json:"team_prefs,omitempty"`
-	Permissions *struct {
-		Team    map[string]bool `json:"team,omitempty"`
-		Channel map[string]bool `json:"channel,omitempty"`
-	} `json:"permissions,omitempty"`
-	Commands map[string]json.RawMessage `json:"commands,omitempty"`
-	Conv     json.RawMessage            `json:"conv,omitempty"`
-	Ops      json.RawMessage            `json:"ops,omitempty"`
-	ThreadTS string                     `json:"thread_ts,omitempty"`
+	Permissions *srPerms                   `json:"permissions,omitempty"`
+	Commands    map[string]json.RawMessage `json:"commands,omitempty"`
+	Conv        json.RawMessage            `json:"conv,omitempty"`
+	Ops         json.RawMessage            `json:"ops,omitempty"`
+	ThreadTS    string                     `json:"thread_ts,omitempty"`
+}
+
+type srPerms struct {
+	Team    map[string]bool `json:"team,omitempty"`
+	Channel map[string]bool `json:"channel,omitempty"`
 }
 
 type srTeam struct {
@@ -78,6 +86,14 @@ func (b srIn) over(c srIn) srIn {
 	r.Experiments = srMerged(b.Experiments, c.Experiments)
 	r.TeamPrefs = srMerged(b.TeamPrefs, c.TeamPrefs)
 	r.Commands = srMerged(b.Commands, c.Commands)
+	var bp, cp srPerms
+	if b.Permissions != nil {
+		bp = *b.Permissions
+	}
+	if c.Permissions != nil {
+		cp = *c.Permissions
+	}
+	r.Permissions = &srPerms{Team: srMerged(bp.Team, cp.Team), Channel: srMerged(bp.Channel, cp.Channel)}
 	r.Conv, r.Ops, r.ThreadTS = c.Conv, c.Ops, c.ThreadTS
 	return r
 }
@@ -149,6 +165,20 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 	fs.reply["conversations.history"] = map[string]any{"ok": true, "has_more": false,
 		"messages": []any{map[string]any{"type": "message", "ts": "1700000000.000050", "user": tSelf, "text": srOwnText, "blocks": elBlocks(elText(srOwnText))}}}
 	fs.reply["conversations.open"] = map[string]any{"ok": true, "channel": map[string]any{"id": "D000ALICE"}}
+	// permissions.info: what the case allows, for the conversation and the
+	// team alike (each ask gets one answer), and the composer fake's
+	// @channel and @everyone
+	allowed := []string{"CAN_AT_CHANNEL", "CAN_AT_EVERYONE"}
+	if p := c.Permissions; p != nil {
+		for _, m := range []map[string]bool{p.Channel, p.Team} {
+			for _, k := range slices.Sorted(maps.Keys(m)) {
+				if m[k] && !slices.Contains(allowed, k) {
+					allowed = append(allowed, k)
+				}
+			}
+		}
+	}
+	fs.reply["edge/permissions/info"] = map[string]any{"ok": true, "allowed": allowed, "allowed_per_team": map[string]any{}}
 	fs.mu.Unlock()
 	for k, v := range c.Experiments {
 		app.SetExperimentGroup(k, v)
@@ -207,7 +237,7 @@ func clackSlashRoute(t *testing.T, c srIn) map[string]any {
 		}
 		// a client command that ran (and may have answered with feedback
 		// of its own) before Slackbot's feedback on a command that didn't
-		for _, m := range []string{"conversations.setTopic", "conversations.rename", "conversations.archive", "conversations.leave", "conversations.join", "conversations.invite", "conversations.open"} {
+		for _, m := range []string{"conversations.setTopic", "conversations.rename", "conversations.archive", "conversations.leave", "conversations.close", "conversations.join", "conversations.invite", "conversations.open"} {
 			local = local || len(fs.called(m)) > 0
 		}
 		if local || len(overlays) > 0 {
