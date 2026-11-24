@@ -68,10 +68,12 @@ func TestMoreActionsMenu(t *testing.T) {
 	v := e.openListView(fakeslack.ListKitchen, Full, act)
 
 	// lists_export_enrichment on (the account): Download opens the modal.
+	// later_todos on (the account, fakeslack's groups): the save row is
+	// Add to saved
 	// No star row: the header's section button stars a list now that file
 	// sections are everyone's (custom_file_sections dropped, the
 	// 2026-11-21 drift)
-	if got := moreLabels(v.moreItems()); got != "Save for later, ─, Copy link to list, Make a copy, Download, ─, Open in split view" {
+	if got := moreLabels(v.moreItems()); got != "Add to saved, ─, Copy link to list, Make a copy, Download, ─, Open in split view" {
 		t.Errorf("menu, on: %s", got)
 	}
 	d := v.Doc()
@@ -102,7 +104,7 @@ func TestMoreActionsMenu(t *testing.T) {
 	// off: Download CSV ▸ without / with archived items
 	e.h.a.SetExperimentGroup("lists_export_enrichment", "off")
 	items := v.moreItems()
-	if got := moreLabels(items); got != "Save for later, ─, Copy link to list, Make a copy, Download CSV ▸ (Download without archived items, Download with archived items), ─, Open in split view" {
+	if got := moreLabels(items); got != "Add to saved, ─, Copy link to list, Make a copy, Download CSV ▸ (Download without archived items, Download with archived items), ─, Open in split view" {
 		t.Errorf("menu, off: %s", got)
 	}
 	for _, it := range items {

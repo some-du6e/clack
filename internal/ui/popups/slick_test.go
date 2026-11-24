@@ -1145,7 +1145,7 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.tt.DataWrite("slick:plugin:BetterMessageMenu", "menu",
-		`{"order":[{"id":"subscribe"},{"id":"remind","hidden":true},{"id":"copy_link","big":false}],"followCursor":true}`)
+		`{"order":[{"id":"subscribe"},{"id":"remind","hidden":true},{"id":"copy_link","big":false}],"followCursor":true}`) // BMM's catalog id: remind_later is its alias
 	if err := e.s.SetEnabled(e.ctx(t), "BetterMessageMenu", true); err != nil {
 		t.Fatal(err)
 	}
@@ -1161,7 +1161,7 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 	if i := maIndex(m.items, "copy_link"); strings.Contains(maClass(&m.items[i]), "slick-bmm-bigaction") {
 		t.Errorf("Copy link is still big: %q", maClass(&m.items[i]))
 	}
-	bmmOnce(t, "the saved menu", m, top, org, []string{"remind"})
+	bmmOnce(t, "the saved menu", m, top, org, []string{"remind_later"})
 	f = slFrame(m)
 	f()
 	if r := m.RowRects()[0]; len(top[0]) == 1 && r.Dx() != 300 {

@@ -40,18 +40,15 @@ type quickBar struct {
 }
 
 // quickReactionsOn is whether conversation ch's toolbar has the quick
-// reactions (before canAddReaction): the pref is on and it isn't
-// Slackbot's DM. Slack's hasQuickReactionsBlock drops them only in
-// Slackbot AI's DM: its isSlackbotIm is isChannelSlackbotAiIm (piaJ),
-// Slackbot's DM with the ACCESS_SLACK_AI_SLACKBOT permission, so without
-// Slack AI Slackbot's DM keeps them (the message-actions parity cases
-// "Slackbot's DM" and "Slackbot's DM, Slackbot AI on").
+// reactions (before canAddReaction): the pref is on. Slack's
+// hasQuickReactionsBlock drops them only in Slackbot AI's DM: its
+// isSlackbotIm is isChannelSlackbotAiIm (piaJ), Slackbot's DM with the
+// ACCESS_SLACK_AI_SLACKBOT permission, which Clack's viewer never has
+// (Clack asks no permissions.info: no Slack AI), so Slackbot's DM keeps
+// them (the message-actions parity case "Slackbot's DM"; "Slackbot AI on"
+// stays a known divergence).
 func quickReactionsOn(app *core.App, ch string) bool {
-	if app == nil || !uipref.Get().QuickReactions {
-		return false
-	}
-	c, ok := app.S.Conv(ch)
-	return !ok || !c.IsIM || c.User != "USLACKBOT"
+	return app != nil && uipref.Get().QuickReactions
 }
 
 // quickReactionsShown is whether the toolbar draws the quick reactions

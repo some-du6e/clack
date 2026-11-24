@@ -258,7 +258,7 @@ func TestMessageMenuReorganized(t *testing.T) {
       const take = (id) => flat.find((a) => a.id === id);
       const big = ["copy_link", "copy_text"].map(take).filter(Boolean).map((a) => ({ ...a, name: a.id === "copy_text" ? "Copy" : a.name, className: "tile-big" }));
       moved = ["later", "mark_unread"].map(take).filter(Boolean);
-      const main = flat.filter((a) => !["copy_link", "copy_text", "later", "mark_unread", "remind"].includes(a.id));
+      const main = flat.filter((a) => !["copy_link", "copy_text", "later", "mark_unread", "remind_later"].includes(a.id));
       return React.createElement(Original, { ...props, actions: [big, main], slickMessageActionsHandled: true });
     });
   }`))
@@ -269,7 +269,7 @@ func TestMessageMenuReorganized(t *testing.T) {
 	if !strings.HasPrefix(got, "copy_link copy_text | subscribe organize_actions_menu connect_to_apps_actions_menu") {
 		t.Fatalf("rows %s (natively %s)", got, maIDs(maNative(m)))
 	}
-	if strings.Contains(got, "mark_unread") || strings.Contains(got, "remind") || strings.Contains(got, "later") {
+	if strings.Contains(got, "mark_unread") || strings.Contains(got, "remind_later") || strings.Contains(got, "later") {
 		t.Errorf("moved or hidden rows still at the top level: %s", got)
 	}
 	// Organize's own MAMenu has the moved rows

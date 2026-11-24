@@ -236,7 +236,7 @@ func TestEphemeralMenuActionsLikeSlack(t *testing.T) {
 		{"add to-do (addToLaterTodos)", "add_to_later_todos", popups.KeyLaterTodos, false, true, false},
 		{"mark unread (canMarkUnread)", "mark_unread", popups.KeyMarkUnread, false, false, false},
 		{"save (later)", "later", popups.KeySaveTodos, false, false, false},
-		{"reminder (canAddReminder)", "remind", popups.KeyRemind, false, false, false},
+		{"reminder (canAddReminder)", "remind_later", popups.KeyRemind, false, false, false},
 		{"follow (canStartOrOpenThread)", "subscribe", nil, false, false, false},
 		{"copy link (canCopyLink)", "copy_link", popups.KeyCopyLink, false, false, false},
 		{"copy message (canCopyMessageText)", "copy_text", popups.KeyCopyText, true, false, false},

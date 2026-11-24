@@ -139,7 +139,7 @@ func (s *listState) kbBinds(h Host, k string) bool {
 	}
 	switch k {
 	case "e":
-		return app != nil && r.m.User == app.Self().ID
+		return app != nil && popups.EditShown(app, &r.src, app.Self().ID)
 	case "v":
 		_, ok := h.(ListAdder)
 		return ok && popups.AddToListShown(app, &r.src)
@@ -426,7 +426,7 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 					la.AddMessageToList(r.src)
 				}
 			default: // Enter, E: edit it when it's yours (no keys on a temporary message: shouldRenderActions; E a message key, with keyboard focus only)
-				if r := s.rows[s.kb.ts]; r != nil && (e.Name != "E" || keyboardMode(h)) && h.Core() != nil && r.m.User == h.Core().Self().ID && popups.ToolbarShown(h.Core(), &r.m) {
+				if r := s.rows[s.kb.ts]; r != nil && (e.Name != "E" || keyboardMode(h)) && h.Core() != nil && popups.EditShown(h.Core(), &r.src, h.Core().Self().ID) && popups.ToolbarShown(h.Core(), &r.m) {
 					s.kbLeave(gtx)
 					s.startEdit(h, s.kb.ts)
 				}

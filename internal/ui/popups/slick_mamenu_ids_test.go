@@ -18,7 +18,7 @@ func TestMAMenuRowIDs(t *testing.T) {
 	ran := ""
 	do := func(what string) func() { return func() { ran = what } }
 	items := []MenuItem{
-		{Action: "remind", Label: "Remind me about this", Sub: []MenuItem{
+		{Action: "remind_later", Label: "Remind me about this", Sub: []MenuItem{
 			{Key: LabelKey("In 30 mins"), Label: "In 30 mins", Do: do("remind in 30")},
 		}},
 		Sep(),
@@ -64,7 +64,7 @@ func TestMAMenuRowIDs(t *testing.T) {
 			t.Errorf("submenu action %d: %v, want %v", i, got[i], want[i])
 		}
 	}
-	if id := maID(&m.ma.native[0].Sub[0]); id != "remind/"+LabelKey("In 30 mins") {
+	if id := maID(&m.ma.native[0].Sub[0]); id != "remind_later/"+LabelKey("In 30 mins") {
 		t.Errorf("the reminder preset's id %q", id)
 	}
 
