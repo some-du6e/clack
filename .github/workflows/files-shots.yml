@@ -57,6 +57,18 @@ on:
       - "internal/ui/popups/search_svgicon_test.go"
       - "internal/ui/popups/files_filters.go"
       - "internal/ui/views/files_filters_test.go"
+      - "internal/ui/popups/lightbox_sidebar*.go"
+      - "internal/ui/popups/file_details_host.go"
+      - "internal/ui/popups/lightbox_gallery.go"
+      - "internal/ui/popups/lightbox_fileid.go"
+      - "internal/ui/popups/file_action.go"
+      - "internal/ui/popups/video_menu.go"
+      - "internal/ui/file_details_pane*.go"
+      - "internal/ui/media_viewer_details*_test.go"
+      - "internal/core/file_details*.go"
+      - "internal/core/exp_media_viewer.go"
+      - "internal/ui/richview/file_details*.go"
+      - "internal/ui/canvasview/render.go"
       - ".github/workflows/files-shots.yml"
   workflow_dispatch:
     inputs:
@@ -166,6 +178,55 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # The media viewer's sidebar and its Details tab (media_viewer_file_details_tab):
+  # the viewer, FileDetails (eg5B), the entry points that carry the file,
+  # and the viewer-details-* shots.
+  media-viewer-details:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the viewer's sidebar, FileDetails and the entry points
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -timeout 5m -run '^(TestMediaViewer|TestPendingViewerNoDetails|TestViewFile|TestRichFileFromCore|TestSearchOpenFileViewer|TestOpenFileCardActions|TestLightboxImageMenu)' ./internal/ui/popups/ || rc=1
+          go test -count=1 -v -timeout 5m -run '^(TestFileDetailsImagePreview|TestFileImage)' ./internal/ui/richview/ || rc=1
+          go test -count=1 -v -timeout 5m -run '^TestFileDetailsFetch$' ./internal/core/ || rc=1
+          go test -count=1 -v -timeout 5m -run '^TestCalendarDateOrNamedDay$' ./internal/i18n/ || rc=1
+          go test -count=1 -v -timeout 5m -run '^(TestCanvasFileClick|TestCanvasImageViewerCarriesTheFile)$' ./internal/ui/canvasview/ || rc=1
+          go test -count=1 -v -timeout 5m -run '^(TestFilesViewOpen|TestFilesViewUnthumbedImage|TestChannelFilesUnthumbedImage)$' ./internal/ui/views/ || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 8m -run '^(TestFileDetailsPane|TestOpenFileDetails|TestFileDetailsStates|TestFileDetailsName|TestFileCreatedText|TestMediaViewerDetailsInApp|TestMediaViewerDetailsDrawn)$' ./internal/ui/ || rc=1
+          exit $rc
+      - name: screenshots (viewer-details-*)
+        env:
+          FILES_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$FILES_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 8m -run '^TestMediaViewerDetailsShots$' ./internal/ui/
+          ls -la "$FILES_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: media-viewer-details-shots
+          path: dist/shots
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -173,6 +234,7 @@ jobs:
   expect-fail:
     needs:
       - files-shots
+      - media-viewer-details
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

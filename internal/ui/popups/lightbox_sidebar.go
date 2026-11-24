@@ -630,3 +630,7 @@ func (lb *Lightbox) DetailsFileID() string {
 	}
 	return lb.side.pane.FileID()
 }
+
+// MoreRect is the footer's More actions button as last drawn (window
+// coordinates; tests and the inspect tool).
+func (lb *Lightbox) MoreRect() image.Rectangle { return lb.moreRect }
