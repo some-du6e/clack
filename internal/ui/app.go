@@ -924,6 +924,9 @@ func (a *App) frame(gtx layout.Context) {
 	a.syncThemeTokens()
 	a.focusFadeFrame(gtx) // focus mode's view transition (focus_fade.go)
 	a.syncMenuBar()
+	if c := a.Core(); c != nil {
+		c.SetBBMMode(a.bbmOn()) // megaphone loads ask for the critical ones only (critical_only)
+	}
 	a.dropZonesReset() // the panes that take OS file drops register as they lay out
 
 	if a.login != nil {

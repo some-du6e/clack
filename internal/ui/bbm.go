@@ -73,8 +73,8 @@ func (a *App) bbmPersistActions() bool { return a.bbmOn() && !a.prefs.BBMHoverAc
 // startBBM is HnPE startBBM: from Preferences (step "accessibility_pref")
 // it shows the welcome dialog the first time, then turns the mode on,
 // moves to the BBM tab and applies the mode's settings (setBBMSettings:
-// its own zoom, the sidebar shown). Slack also enables fullscreen mode
-// and clears the megaphone spaces; Clack has no megaphone.
+// its own zoom, the sidebar shown), and clears the global megaphone
+// spaces (clearAllMegaphoneSpaces). Slack also enables fullscreen mode.
 func (a *App) startBBM(step string) {
 	if a.bbmUnsupported() || a.prefs.BBM {
 		return
@@ -92,6 +92,10 @@ func (a *App) startBBM(step string) {
 	a.prefs.NonBBMSidebarHidden = &h
 	a.sidebar.hidden = false
 	a.bbm = bbmState{}
+	if c := a.Core(); c != nil {
+		c.SetBBMMode(true)
+		c.ClearAllMegaphoneSpaces()
+	}
 	a.bbmNavigate("bbm")
 	a.savePrefs()
 	a.Invalidate()

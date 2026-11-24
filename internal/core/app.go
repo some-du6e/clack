@@ -154,6 +154,7 @@ type App struct {
 	dnd        dndState             // the viewer's Do Not Disturb (dnd.go)
 	mdnd       memberDNDState       // other members' Do Not Disturb (dnd_members.go)
 	mega       megaphoneState       // megaphone spaces, global and per channel (megaphone.go)
+	bbm        atomic.Bool          // the simplified layout mode is on (SetBBMMode)
 	ssugg      searchSuggState      // the window's last search's filter suggestions (search_suggest.go)
 	selected   string               // the open conversation (SetSelected, preview.go)
 	temp       map[string]int64     // temporary memberships: channel -> expiration_ts (preview.go)
