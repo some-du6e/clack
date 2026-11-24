@@ -101,6 +101,11 @@ func (a *App) searchBoxClicked() {
 	a.openSearch(a.searchQuery)
 }
 
+// OpenSearchFromCommand is /search without a query (openFromSlashCommand:
+// the search popover on the box's own query), the composer's
+// searchOpener (UI goroutine).
+func (a *App) OpenSearchFromCommand() { a.openSearch(a.searchQuery) }
+
 // searchBoxClear draws the clear button at the right of a box sw×sh wide
 // at the current origin, with a query only, and empties the query when
 // clicked. It returns the width it took (0 without a query).
