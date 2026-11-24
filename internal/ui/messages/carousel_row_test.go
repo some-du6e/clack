@@ -13,6 +13,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // Synthetic fixtures only.
@@ -51,27 +52,48 @@ func TestCarouselInARow(t *testing.T) {
 	if c.Right.Empty() {
 		t.Fatalf("no right arrow in a column of %dpx for 4 cards", c.R.Dx())
 	}
-	s := e.v.s
-	top := s.pos[s.sel.keyIdx[tsCarousel]]
-	at := func(p image.Point) f32.Point {
-		return f32.Pt(float32(p.X+r.bodyRect.Min.X)+.5, float32(top+r.bodyRect.Min.Y+p.Y)+.5)
+	// the row as laid out now (the list may swap in a new row for the
+	// message, its own view and carousel), and a body point in the view's
+	// coordinates
+	cur := func() (*row, CarouselGeom) {
+		t.Helper()
+		r := e.row(tsCarousel)
+		if r == nil || r.rv == nil || len(r.rv.CarouselRects()) != 1 {
+			t.Fatal("the carousel's row went")
+		}
+		return r, CarouselGeom{r.rv.CarouselRects()[0], e.v.s.pos[e.v.s.sel.keyIdx[tsCarousel]]}
 	}
-	e.press(at(c.Right.Min.Add(c.Right.Size().Div(2))), pointer.ButtonPrimary, 0)
+	at := func(r *row, g CarouselGeom, p image.Point) f32.Point {
+		return f32.Pt(float32(p.X+r.bodyRect.Min.X)+.5, float32(g.top+r.bodyRect.Min.Y+p.Y)+.5)
+	}
+	r, g := cur()
+	e.press(at(r, g, g.Right.Min.Add(g.Right.Size().Div(2))), pointer.ButtonPrimary, 0)
 	for range 20 { // the 160ms scroll
 		e.frame()
 	}
-	after := r.rv.CarouselRects()[0].Scroll
+	r, g = cur()
+	after := g.Scroll
 	if after <= 0 {
 		t.Errorf("the right arrow's click: scroll %v, want a page", after)
 	}
-	p := at(image.Pt(c.R.Min.X+40, c.R.Min.Y+c.R.Dy()/2))
+	p := at(r, g, image.Pt(g.R.Min.X+40, g.R.Min.Y+g.R.Dy()/2))
 	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p},
 		pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: p, Scroll: f32.Pt(-60, 0)})
 	e.frame()
 	e.frame()
-	if got := r.rv.CarouselRects()[0].Scroll; got != after-60 {
-		t.Errorf("a sideways wheel of 60px back: scroll %v, want %v", got, after-60)
+	r2, g2 := cur()
+	if r2 != r || r != e.row(tsCarousel) {
+		t.Logf("the list swapped the carousel's row during the test")
 	}
+	if g2.Scroll != after-60 {
+		t.Errorf("a sideways wheel of 60px back at %v: scroll %v, want %v", p, g2.Scroll, after-60)
+	}
+}
+
+// CarouselGeom is a carousel as laid out and its row's top in the list.
+type CarouselGeom struct {
+	richview.CarouselRect
+	top int
 }
 
 // A carousel root's plain text is the message's own text: the blocks give
