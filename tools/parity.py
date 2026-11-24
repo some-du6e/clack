@@ -21,8 +21,10 @@ reading Slack's code. Slack's side is committed: a snapshot in
 testdata/parity/<dimension>.json, or the test's own table. The default run
 only builds and runs those tests (no node, no network), so it takes about
 as long as `go test` of the packages involved. --refresh is the separate,
-slow step: it reruns the oracle where one is wired up (emoji-rank today)
-and shows what changed on Slack's side.
+slow step: it reruns the oracle where one is wired up and shows what
+changed on Slack's side. A known divergence whose Slack side changed loses
+its mark (its reason was about the old side) and the refresh exits 3, so
+the case fails until someone looks at it again.
 
 The totals count only these comparisons. The report also names every area
 of Slack's client no check covers, the comparisons that run in other
@@ -905,7 +907,7 @@ def refresh(reg, dims, dry_run=False, root=ROOT, refreshers=None, today=None):
                 print(f'{d["id"]}: can\'t refresh here: {e}')
                 code = 2
                 continue
-            changed = 0
+            changed = remark = 0
             for case in s['cases']:
                 new = fresh.get(case['name'])
                 if new is None:
@@ -921,8 +923,21 @@ def refresh(reg, dims, dry_run=False, root=ROOT, refreshers=None, today=None):
                     print(f'    was {short(case["slack"])}\n    now {short(new)}')
                     case['slack'] = new
                     changed += 1
+                    if case.get('known'):
+                        # its reason (and the Clack output it recorded) was
+                        # about the old Slack side: the case fails until it's
+                        # looked at again, instead of skipping under it
+                        print(f'    its known divergence is dropped, as it was about the old Slack side: run the test, '
+                              f'then mark it again if Clack still differs (it said: {case["known"]})')
+                        case.pop('known')
+                        case.pop('clack', None)
+                        remark += 1
             print(f'{d["id"]}: {len(s["cases"])} cases through the oracle in {time.monotonic() - started:.1f}s, '
                   f'{changed} changed on Slack\'s side')
+            if remark:
+                print(f'{d["id"]}: {remark} known divergence(s) changed on Slack\'s side and lost their marks: '
+                      f'the refresh fails until they are marked again')
+                code = code or 3
             if changed and not dry_run:
                 s['slack']['captured'] = today
                 with open(path, 'w', encoding='utf-8') as f:

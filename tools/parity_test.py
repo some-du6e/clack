@@ -263,29 +263,38 @@ class ParityTests(unittest.TestCase):
     def test_refresh_rewrites_only_slacks_side(self):
         repo = FakeRepo([{'name': 'stale', 'in': 1, 'slack': ['old'], 'known': 'k', 'clack': ['c']},
                          {'name': 'fine', 'in': 2, 'slack': ['same']},
-                         {'name': 'new', 'in': 3, 'slack': None}], refresh='fake')
+                         {'name': 'new', 'in': 3, 'slack': None},
+                         {'name': 'kept', 'in': 4, 'slack': ['k'], 'known': 'k2', 'clack': ['c2']},
+                         {'name': 'moved', 'in': 5, 'slack': ['a']}], refresh='fake')
         try:
             seen = []
 
             def fake(cases, tmp):
                 seen.append([c['in'] for c in cases])
-                return {'stale': ['now'], 'fine': ['same'], 'new': ['added']}
+                return {'stale': ['now'], 'fine': ['same'], 'new': ['added'], 'kept': ['k'], 'moved': ['b']}
 
             path = os.path.join(repo.root, 'p', 'testdata', 'parity', 'd.json')
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = parity.refresh(repo.reg, {'d'}, dry_run=True, root=repo.root, refreshers={'fake': fake})
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 3, 'a known divergence whose Slack side changed fails the refresh')
             self.assertIn('stale: Slack CHANGED', out.getvalue())
+            self.assertIn('its known divergence is dropped', out.getvalue())
             self.assertIn('new: new', out.getvalue())
             self.assertEqual(parity.read_json(path)['cases'][0]['slack'], ['old'], 'a dry run writes nothing')
             with contextlib.redirect_stdout(io.StringIO()):
-                parity.refresh(repo.reg, {'d'}, root=repo.root, refreshers={'fake': fake}, today='2026-12-01')
+                code = parity.refresh(repo.reg, {'d'}, root=repo.root, refreshers={'fake': fake}, today='2026-12-01')
+            self.assertEqual(code, 3)
             s = parity.read_json(path)
-            self.assertEqual([c['slack'] for c in s['cases']], [['now'], ['same'], ['added']])
-            self.assertEqual(s['cases'][0]['clack'], ['c'], 'Clack\'s recorded side stays')
+            self.assertEqual([c['slack'] for c in s['cases']], [['now'], ['same'], ['added'], ['k'], ['b']])
+            self.assertNotIn('known', s['cases'][0], 'the old reason was about the old Slack side')
+            self.assertNotIn('clack', s['cases'][0])
+            self.assertEqual((s['cases'][3]['known'], s['cases'][3]['clack']), ('k2', ['c2']), 'an unchanged one keeps its mark')
             self.assertEqual(s['slack']['captured'], '2026-12-01')
-            self.assertEqual(seen, [[1, 2, 3], [1, 2, 3]])
+            self.assertEqual(seen, [[1, 2, 3, 4, 5], [1, 2, 3, 4, 5]])
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(parity.refresh(repo.reg, {'d'}, root=repo.root, refreshers={'fake': fake}), 0,
+                                 'once written, nothing changed: the refresh passes')
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(parity.refresh(repo.reg, {'d'}, root=repo.root, refreshers={}), 2,
                                  'no refresher wired up for it')
