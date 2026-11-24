@@ -68,7 +68,10 @@ func f(d string) part             { return part{d: d} }
 // edge): narrower bands keep sharp points (sparkles) that a 0.72 inset
 // would round off. Bands under 1 unit double-cover the antialiased edge
 // pixels at 1x (the fill's edge and the stroke's both land in them), so
-// none is narrower.
+// none is narrower but where a wider band would be wider than the inset
+// core it strokes (brand-adobe-swf-filled's letters, 0.5): Gio's stroke of
+// a ring narrower than its width folds the ring's inner side out past the
+// far edge and inks that edge twice.
 func fl(d string) part             { return flw(flEdge, d) }
 func flw(w float32, d string) part { return part{d: d, stroke: w, fill: true} }
 

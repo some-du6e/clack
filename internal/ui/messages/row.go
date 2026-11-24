@@ -194,6 +194,12 @@ type row struct {
 	addRect   image.Rectangle
 	height    int
 
+	// selW is the text column's width: Slack's rich_text sections are
+	// blocks across it, so a press anywhere right of the text, past the
+	// end of a line, starts a selection there (Chromium hit-tests the
+	// block: LayoutBlockFlow PositionForPoint, then the nearest line's
+	// end). bodyRect is only as wide as the widest line.
+	selW int
 	// plugin state (patched path only)
 	rc *rowCtx // this frame's inputs, for the natives
 	// truncate: in a thread pane, long Block Kit sections cut at "Show
@@ -1910,6 +1916,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 		})
 	}
 	r.bodyRect = image.Rectangle{Min: image.Pt(0, y), Max: image.Pt(body.Size.X, y+body.Size.Y)}.Add(r.col)
+	r.selW = cw
 	if inline {
 		// the sender sits on the body's first line, baselines together
 		dy := y
@@ -3726,6 +3733,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		return r.rv.Layout(gtx, rc.st, &r.handler)
 	})
 	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	r.selW = cw
 	// <time class="timestamp__bfLC8">: 12px inline after the text
 	// (margin-inline-end 8px), on its baseline
 	ts := clock(tsTime(m.TS))
@@ -3870,6 +3878,7 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 		return r.rv.Layout(gtx, rc.st, &r.handler)
 	})
 	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	r.selW = cw
 	y += max(body.Size.Y, dp(gtx, 20)) + dp(gtx, 4) + dp(gtx, 4)
 	if len(m.Reactions) > 0 {
 		y += r.reactionBar(gtx, image.Pt(cx, y), image.Point{}, cw)
@@ -3941,6 +3950,7 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	ty := y + (box-body.Size.Y)/2
 	placeCall(gtx, call, cx, ty)
 	r.bodyRect = image.Rectangle{Min: image.Pt(cx, ty), Max: image.Pt(cx+body.Size.X, ty+body.Size.Y)}
+	r.selW = cw
 	y += box
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
@@ -3986,6 +3996,7 @@ func (r *row) denseTombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimens
 	ty := y + (box-body.Size.Y)/2
 	placeCall(gtx, call, x, ty)
 	r.bodyRect = image.Rectangle{Min: image.Pt(x, ty), Max: image.Pt(x+body.Size.X, ty+body.Size.Y)}
+	r.selW = cw
 	y += box + dp(gtx, mt.bodyMarginBottom)
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}

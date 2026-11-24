@@ -172,7 +172,8 @@ func (w *hw) block(b *Block) {
 		w.s.WriteString(`<div data-section-style="11" class=''><img src='` + html.EscapeString(src) + `' id='` + w.id(b) +
 			`' alt="` + html.EscapeString(b.Image.Alt) + `" width='` + strconv.Itoa(b.Image.W) + `' height='` + strconv.Itoa(b.Image.H) + `'></img></div>`)
 	case Embed:
-		w.s.WriteString(`<p id="` + w.id(b) + `" class='embedded-link'>` + html.EscapeString(firstNonEmpty(b.Title, b.URL)) + `</p>`)
+		// Quip's export of a link card: its placeholder, no id (parse.go)
+		w.s.WriteString(`<p class='embedded-link'>` + html.EscapeString(embedLinkLabel+" "+b.URL) + `</p>`)
 	case File:
 		w.s.WriteString(`<p id="` + w.id(b) + `" class='embedded-file'>`)
 		if b.FileID != "" {

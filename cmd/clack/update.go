@@ -196,7 +196,13 @@ var errNotOnQuit = errors.New("update: not installed on quit")
 // helper on what stageForQuit staged (quietKind installs); anything else
 // is errNotOnQuit with the reason, and waits.
 func (u *updates) installOnQuit(info ui.UpdateInfo) error {
-	if !quietKind(u.inst.Kind) {
+	// Only the macOS app for now: its swap is the path files-card's review
+	// read (wf_9ce08182-06e). Windows' silent installer and portable swap,
+	// and the AppImage's, wait for a review of the quits they would run
+	// under: a quit as Windows ends the session (WM_ENDSESSION, the tray's
+	// OnSessionEnd) can kill an installer halfway. They keep Install and
+	// restart.
+	if u.inst.Kind != desktop.KindMacApp {
 		return fmt.Errorf("%w: a %q install waits for Install and restart", errNotOnQuit, u.inst.Kind)
 	}
 	u.mu.Lock()
