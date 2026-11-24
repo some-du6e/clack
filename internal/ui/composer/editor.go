@@ -168,6 +168,10 @@ type Editor struct {
 	// holds (shortcut.OwnEscape: not the shell's "Close / mark as read"),
 	// as escapeClearsFormat does for a quote or code line
 	OwnsEscape func() bool
+	// MaxIndent, if set, is the deepest list level Tab and a paste make
+	// (0-based) in place of the message composer's (a canvas's editor:
+	// maxListIndentationLevel 4).
+	MaxIndent int
 
 	doc           *Doc
 	anchor, caret int

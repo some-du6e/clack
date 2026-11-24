@@ -54,6 +54,9 @@ func (v *View) MentionRemovable(section, ch string) bool {
 	if !v.edit.canEdit(v) || section == "" {
 		return false
 	}
+	if quipOn(v) { // a mention's removal through edit-document comes with mentions in the editor
+		return false
+	}
 	b := sectionBlk(v.blocks, section)
 	if b == nil || b.inCell || b.parent != nil || !b.edOK { // a quote's or callout's paragraph saves through its quote (edit.go)
 		return false
