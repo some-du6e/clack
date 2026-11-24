@@ -48,10 +48,13 @@ func TestDegradedLoadLikeSlack(t *testing.T) {
 	a, fs, l := rtApp(t)
 	ch := fs.ChannelIDs()[1]
 	ctx := context.Background()
-	hist, counts := fs.CallCount("conversations.history"), fs.CallCount("client.counts")
+	counts := fs.CallCount("client.counts")
 	a.DegradedLoad(ctx, ch, "", "")
-	if n := fs.CallCount("conversations.history"); n != hist {
-		t.Errorf("with the socket up the history was read again (%d): hasSyncedConnection", n-hist)
+	a.degraded.mu.Lock()
+	_, read := a.degraded.histAt[ch+"/"]
+	a.degraded.mu.Unlock()
+	if read { // the boot's prefetch may read it meanwhile: the banner's own read is the throttle's
+		t.Error("with the socket up the banner read the history again: hasSyncedConnection")
 	}
 	if fs.CallCount("client.counts") <= counts { // the boot's own refreshes may come too
 		t.Fatal("the counts weren't asked for")
@@ -60,7 +63,7 @@ func TestDegradedLoadLikeSlack(t *testing.T) {
 	fs.SetFault("ws", fakeslack.Fault{Status: 503})
 	fs.DropSockets()
 	l.wait(t, "connection_trouble on", troubleIs(true))
-	hist = fs.CallCount("conversations.history")
+	hist := fs.CallCount("conversations.history")
 	d := &a.degraded
 	d.mu.Lock()
 	at := d.countsAt
