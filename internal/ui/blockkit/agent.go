@@ -943,14 +943,33 @@ func cubicBezier(x1, y1, x2, y2, x float64) float64 {
 	return bez(y1, y2, t)
 }
 
+// toggleIconTop is the slim ToggleBar icon's top in a line lh tall
+// (.toggleBarIconInline: inline-flex, vertical-align middle, top -.5px,
+// in the 13px title's line): vertical-align middle puts the icon's box
+// (size dp: the 13px glyph, the 12px spinner) middle half the x-height
+// over the title's baseline (Lato's sxHeight,
+// 1013 of its 2000 units per em), not at the line's middle, which sat it
+// about 2px too high (Karim, 2026-11-24: "this icon seems misaligned").
+func toggleIconTop(gtx C, th *theme.Theme, lh int, size float32) int {
+	m := op.Record(gtx.Ops) // measured only: the title's line as toggleLine draws it
+	td := label(gtx, th, 13, font.Normal, color.NRGBA{}, "x")
+	_ = m.Stop()
+	base := float32((lh-td.Size.Y)/2) + float32(td.Size.Y-td.Baseline) // vcenter's offset, then the label's baseline
+	mid := base - float32(gtx.Sp(13))*1013/2000/2
+	return int(mid - float32(dp(gtx, size))/2 - float32(dp(gtx, 0.5)) + 0.5)
+}
+
 // toggleLine is ToggleBar (uPDO) in slim mode: inline status icon, the
 // title (13px/1.5, tertiary, wrapping under itself) and a caret.
 func (me *Message) toggleLine(gtx C, pal agentPal, status, title string, hasContent, open bool, w int) D {
 	th := me.h.Theme()
 	lh := dp(gtx, 19.5)
 	ix := dp(gtx, 12) + dp(gtx, 8)
-	// icon, vertically centred on the first line (top: -.5px)
-	at(gtx, image.Pt(0, (lh-dp(gtx, 13))/2-dp(gtx, 0.5)), func(gtx C) D {
+	isz := float32(13) // the glyph; the spinner's box is 12px
+	if status == StatusInProgress {
+		isz = 12
+	}
+	at(gtx, image.Pt(0, toggleIconTop(gtx, th, lh, isz)), func(gtx C) D {
 		return statusIcon(gtx, pal, status, true)
 	})
 	caretW := 0
