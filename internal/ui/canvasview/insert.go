@@ -9,6 +9,7 @@ package canvasview
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -240,7 +241,8 @@ func (e *editState) insertUpload(v *View, image bool) {
 			switch {
 			case errors.Is(err, composer.ErrPickCancelled):
 			case err != nil:
-				v.h.Toast("Couldn't add the file to the canvas: " + friendly(err))
+				log.Printf("canvasview: insert file: %v", err)
+				v.h.Toast("Couldn't add the file to the canvas")
 			default:
 				v.load(true)
 			}

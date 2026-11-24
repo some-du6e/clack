@@ -2,6 +2,7 @@ package composer
 
 import (
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -56,7 +57,8 @@ func dropReadFiles(paths []string, toast func(string)) []core.UploadFile {
 		name := filepath.Base(p)
 		st, err := os.Stat(p)
 		if err != nil {
-			toast("Couldn't read " + name + ": " + err.Error())
+			log.Printf("composer: reading %s: %v", name, err)
+			toast("Couldn't read " + name)
 			continue
 		}
 		if st.IsDir() {
@@ -69,7 +71,8 @@ func dropReadFiles(paths []string, toast func(string)) []core.UploadFile {
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
-			toast("Couldn't read " + name + ": " + err.Error())
+			log.Printf("composer: reading %s: %v", name, err)
+			toast("Couldn't read " + name)
 			continue
 		}
 		name = attCleanName(name)

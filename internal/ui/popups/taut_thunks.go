@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"image"
+	"log"
 	"strings"
 	"sync/atomic"
 
@@ -214,12 +215,14 @@ func React(h Host, ch, ts, name string, add bool) {
 		}
 	}, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast(reactionError(add, err))
+			// changeReactionFromUserAction reverts and rethrows: nothing on
+			// screen for an API failure
+			log.Printf("popups: %s", reactionError(add, err))
 		}
 	})
 }
 
-// reactionError is the toast for a failed reaction.
+// reactionError is a failed reaction's log line.
 func reactionError(add bool, err error) string {
 	verb := "add"
 	if !add {

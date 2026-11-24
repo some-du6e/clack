@@ -535,7 +535,8 @@ func attRejectText(name string, err error) string {
 	case errors.Is(err, errAttTotal):
 		return fmt.Sprintf("Couldn't attach %s: attachments are limited to 1 GB per message.", name)
 	}
-	return fmt.Sprintf("Couldn't attach %s: %v", name, err)
+	log.Printf("composer: attaching %s: %v", name, err)
+	return fmt.Sprintf("Couldn't attach %s", name)
 }
 
 func attCleanName(name string) string {
@@ -1070,7 +1071,8 @@ func (a *attachments) addPaths(paths []string) {
 		name := filepath.Base(p)
 		st, err := os.Stat(p)
 		if err != nil {
-			a.toast("Couldn't read " + name + ": " + err.Error())
+			log.Printf("composer: reading %s: %v", name, err)
+			a.toast("Couldn't read " + name)
 			continue
 		}
 		if st.IsDir() {
@@ -1082,7 +1084,8 @@ func (a *attachments) addPaths(paths []string) {
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
-			a.toast("Couldn't read " + name + ": " + err.Error())
+			log.Printf("composer: reading %s: %v", name, err)
+			a.toast("Couldn't read " + name)
 			continue
 		}
 		a.add(name, data)
@@ -1105,7 +1108,8 @@ func (a *attachments) addReaders(rcs []io.ReadCloser) {
 		data, err := io.ReadAll(io.LimitReader(rc, attMaxFileSize+1))
 		rc.Close()
 		if err != nil {
-			a.toast("Couldn't read " + name + ": " + err.Error())
+			log.Printf("composer: reading %s: %v", name, err)
+			a.toast("Couldn't read " + name)
 			continue
 		}
 		a.add(name, data) // rejects > 1 GB

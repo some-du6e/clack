@@ -18,6 +18,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"log"
 	"strings"
 	"time"
 
@@ -166,10 +167,12 @@ func (e *editState) saveQuip(v *View, f func(ctx context.Context, a *core.App) e
 				v.h.Toast(changedMeanwhile)
 				v.load(true)
 			case errors.Is(err, quip.ErrUnsupported) || errors.Is(err, quip.ErrRefused) || errors.Is(err, core.ErrCanvasReadOnly):
-				v.h.Toast(cantEdit + " (" + friendly(err) + ")")
+				log.Printf("canvasview: edit refused: %v", err)
+				v.h.Toast(cantEdit)
 				v.load(true)
 			default:
-				v.h.Toast("Couldn't save your change to the canvas: " + friendly(err))
+				log.Printf("canvasview: save: %v", err)
+				v.h.Toast("Couldn't save your change to the canvas")
 				v.load(true)
 			}
 			v.h.Invalidate()
@@ -772,19 +775,12 @@ func (e *editState) save(v *View, f func(ctx context.Context, a *core.App) error
 		v.post(func() {
 			e.saving--
 			if err != nil {
-				v.h.Toast("Couldn't save your change to the canvas: " + friendly(err))
+				log.Printf("canvasview: save: %v", err)
+				v.h.Toast("Couldn't save your change to the canvas")
 				v.load(true)
 			}
 		})
 	}()
-}
-
-func friendly(err error) string {
-	s := err.Error()
-	if i := strings.LastIndex(s, ": "); i >= 0 {
-		s = s[i+2:]
-	}
-	return strings.ReplaceAll(s, "_", " ")
 }
 
 // toggleCheck ticks or unticks a checklist item.
