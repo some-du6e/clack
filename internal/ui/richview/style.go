@@ -515,6 +515,9 @@ type Options struct {
 	// gives EditedLabel as editedByUserId (a workflow message's
 	// edited.user): the tooltip reads "{dateTime} by {name}".
 	EditedBy string
+	// carouselDepth is how many carousels' cards this view is in
+	// (carousel.go's crMaxDepth)
+	carouselDepth int
 	// FindFocused: the message is find in thread's current result
 	// (c-message_kit__blocks--focused-result), so its FindHighlight runs
 	// draw in FindFocused.

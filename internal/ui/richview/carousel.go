@@ -19,9 +19,13 @@ package richview
 //     one while more is to come; an arrow scrolls a page (width - width %
 //     356), to the end when that's under 50px away, over 160ms.
 //
+// A wheel gesture stays on the scroller its first event was over, as
+// Chromium latches it (WheelLatch, NoteWheel): a carousel takes only a
+// gesture that began on it, or any while none is going.
+//
 // Left out: the arrows' hover scale and their fade (they show or hide at
-// once), the track animation's exact easing (a cubic ease-out here),
-// Chromium's wheel latch (a gesture stays on the scroller it began on),
+// once), the track animation's exact easing (a cubic ease-out here), a
+// text selection across the cards (each card's view selects its own),
 // and focus with the keyboard.
 
 import (
@@ -29,6 +33,7 @@ import (
 	"strconv"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -64,6 +69,11 @@ type carouselState struct {
 	start            time.Time
 	on               bool
 	left, right      widget.Clickable
+	// obs sees the wheel over the scroller and takes none of it; seen is
+	// the first event it saw of a gesture, seenAt when it saw the last
+	obs    int
+	seen   time.Duration
+	seenAt time.Time
 	// cardW, gap (px), the content's width and the scroller's, and its
 	// page (pageSize)
 	cardW, gap, contentW, viewW, page int
@@ -117,9 +127,17 @@ func (c *carouselState) tick(now time.Time) bool {
 	return true
 }
 
+// crMaxDepth bounds carousels in carousels' cards, as blockkit's
+// maxNesting does nested blocks: a deeper one draws nothing (each level
+// lays its cards out again).
+const crMaxDepth = 8
+
 // carousel lays out a carousel block: the label, then the scroller as
 // tall as its tallest card; the cards draw in it (drawCarousels).
 func (l *lay) carousel(b *richtext.Block, x, y, w int) int {
+	if l.opts.carouselDepth >= crMaxDepth {
+		return 0
+	}
 	key := b.BlockID
 	if key == "" {
 		key = "#" + strconv.Itoa(l.carouselN)
@@ -146,6 +164,12 @@ func (l *lay) carousel(b *richtext.Block, x, y, w int) int {
 	}
 	o := l.opts
 	o.NoOuterMargins, o.CardHeight = true, 0
+	// a card's view is none of the message's own: no "(edited)" or
+	// stopped label after its text, no line cap, one level deeper
+	o.Edited, o.EditedTS, o.EditedBy = false, "", ""
+	o.Stopped, o.StoppedBy = false, ""
+	o.MaxLines, o.Truncate = 0, false
+	o.carouselDepth++
 	tall := 0
 	for i := range b.Children {
 		bk := &b.Children[i]
@@ -159,7 +183,9 @@ func (l *lay) carousel(b *richtext.Block, x, y, w int) int {
 	}
 	for _, cv := range c.cards { // align-items: stretch, the tallest's frame too
 		cv.opts.CardHeight = tall
-		cv.relayout(l.st, c.cardW, l.scale, l.spx)
+		if cv.d.size.Y != tall { // the tallest already is: the stretch changes nothing
+			cv.relayout(l.st, c.cardW, l.scale, l.spx)
+		}
 	}
 	c.viewW = w
 	c.contentW = max(n*c.cardW+max(n-1, 0)*c.gap, w) // min-width 100%
@@ -177,8 +203,26 @@ func (v *View) drawCarousels(gtx layout.Context, st *Style, h Handler) {
 		cs := &v.d.carousels[i]
 		c := cs.st
 		for {
-			ev, ok := gtx.Event(pointer.Filter{Target: c, Kinds: pointer.Scroll,
-				ScrollX: pointer.ScrollRange{Min: -int(c.scroll), Max: int(c.maxScroll() - c.scroll)}})
+			ev, ok := gtx.Event(pointer.Filter{Target: &c.obs, Kinds: pointer.Scroll}) // no range: it takes none
+			if !ok {
+				break
+			}
+			if e, ok := ev.(pointer.Event); ok && e.Kind == pointer.Scroll {
+				if c.seenAt.IsZero() || gtx.Now.Sub(c.seenAt) >= WheelLatch {
+					c.seen = e.Time // the first it saw of a gesture
+				}
+				c.seenAt = gtx.Now
+			}
+		}
+		// the gesture going on began elsewhere: it isn't the carousel's
+		// until it ends (one frame asked for then)
+		rng := pointer.ScrollRange{Min: -int(c.scroll), Max: int(c.maxScroll() - c.scroll)}
+		if wheelGoing(gtx.Now) && c.seen != wheelG.start {
+			rng = pointer.ScrollRange{}
+			gtx.Execute(op.InvalidateCmd{At: wheelG.lastAt.Add(WheelLatch)})
+		}
+		for {
+			ev, ok := gtx.Event(pointer.Filter{Target: c, Kinds: pointer.Scroll, ScrollX: rng})
 			if !ok {
 				break
 			}
@@ -198,6 +242,10 @@ func (v *View) drawCarousels(gtx layout.Context, st *Style, h Handler) {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 		cl := clip.Rect(cs.r).Push(gtx.Ops)
+		func() {
+			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+			event.Op(gtx.Ops, &c.obs)
+		}()
 		event.Op(gtx.Ops, c)
 		sx := int(c.scroll + 0.5)
 		for k, cv := range c.cards {
@@ -208,6 +256,7 @@ func (v *View) drawCarousels(gtx layout.Context, st *Style, h Handler) {
 			off := op.Offset(image.Pt(cx, cs.r.Min.Y)).Push(gtx.Ops)
 			g := gtx
 			g.Constraints = layout.Exact(image.Pt(c.cardW, cs.r.Dy()))
+			cv.Origin = v.Origin.Add(image.Pt(cx, cs.r.Min.Y)) // its anchors in the parent's terms
 			cv.Layout(g, st, h)
 			off.Pop()
 		}
@@ -292,4 +341,47 @@ func (v *View) CarouselCard(i, k int) *View {
 		return nil
 	}
 	return v.d.carousels[i].st.cards[k]
+}
+
+// inCarousel reports whether p (view-local) is in a carousel's box, whose
+// cards' views and arrows take their own clicks: a press there is no
+// plain click on this view (a search result opens its message for one).
+func (v *View) inCarousel(p f32.Point) bool {
+	pt := image.Pt(int(p.X), int(p.Y))
+	for i := range v.d.carousels {
+		if pt.In(v.d.carousels[i].r) {
+			return true
+		}
+	}
+	return false
+}
+
+// WheelLatch is how long a wheel gesture stays on the scroller its first
+// event was over after its last event: Chromium's MouseWheelPhaseHandler
+// ends a phaseless scroll sequence after kDefaultMouseWheelLatchingTransaction
+// (hovercard's WheelLatch).
+const WheelLatch = 500 * time.Millisecond
+
+// wheelG is the window's wheel gesture as NoteWheel hears it: its first
+// event's time and its last's, and the frame the last came in (UI
+// goroutine).
+var wheelG struct {
+	start, last time.Duration
+	lastAt      time.Time
+}
+
+// NoteWheel tells richview of each wheel event in the window (t its event
+// time, now the frame's), from the ui root's window-wide observer, which
+// takes none of the scroll: a carousel takes a gesture only if it began
+// on it.
+func NoteWheel(t time.Duration, now time.Time) {
+	if !wheelGoing(now) {
+		wheelG.start = t
+	}
+	wheelG.last, wheelG.lastAt = t, now
+}
+
+// wheelGoing reports whether a wheel gesture is going on at now.
+func wheelGoing(now time.Time) bool {
+	return !wheelG.lastAt.IsZero() && now.Sub(wheelG.lastAt) < WheelLatch
 }

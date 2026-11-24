@@ -277,6 +277,13 @@ func (v *View) Doc() richtext.Doc { return v.doc }
 // state (selection, component states) is kept. For rows that have been
 // off screen for a while.
 func (v *View) Release() {
+	for _, c := range v.carousels { // the cards' views hold their own
+		for _, cv := range c.cards {
+			if cv != nil {
+				cv.Release()
+			}
+		}
+	}
 	if !v.recorded && len(v.d.frags) == 0 {
 		return
 	}
@@ -763,6 +770,14 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	for i := range v.d.removes { // a remove button sits 9px past its card
 		if x := v.d.removes[i].r.Max.X; x > maxX {
 			maxX = x
+		}
+	}
+	for i := range v.d.carousels { // the cards are Views of their own: the scroller is the carousel's box
+		if x := v.d.carousels[i].r.Max.X; x > maxX {
+			maxX = x
+		}
+		if y := v.d.carousels[i].r.Max.Y; y > h {
+			h = y
 		}
 	}
 	if maxX > w {
@@ -1642,7 +1657,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 						}
 					}
 				}
-				if pc, ok := h.(PlainClicker); ok && (v.press < 0 || v.menuOnlyAt(v.press)) && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) {
+				if pc, ok := h.(PlainClicker); ok && (v.press < 0 || v.menuOnlyAt(v.press)) && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) && !v.inCarousel(v.pressPos) {
 					if d := e.Position.Sub(v.pressPos); d.X*d.X+d.Y*d.Y <= 16 {
 						pc.PlainClick()
 					}
