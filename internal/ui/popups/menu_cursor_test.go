@@ -17,9 +17,9 @@ import (
 // Synthetic fixtures only.
 
 // Over a menu the pointer is Slack's, whatever draws under it: the
-// default arrow on its panel (.c-menu), the hand on an item
-// (.c-menu_item__button{cursor:pointer}). Under a chart's More actions
-// menu the message's text cursor showed through (Karim, α.160).
+// default arrow on its panel (.c-menu: its blocker ends the router's walk
+// before the text cursor of a view under it), the hand on an item
+// (.c-menu_item__button{cursor:pointer}).
 func TestMenuCursors(t *testing.T) {
 	h, _, _ := emBooted(t)
 	m := NewMenuOpts(h, []MenuItem{{Label: "Copy table", Do: func() {}}, {Label: "Download table", Do: func() {}}},

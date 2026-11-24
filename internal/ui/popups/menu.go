@@ -749,13 +749,6 @@ func (m *Menu) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors, pos i
 	local := image.Rectangle{Max: m.rect.Size()}
 	rad := dp(gtx, 4)
 	m.block.Layout(gtx, local)
-	// the panel is the default arrow (.c-menu), its enabled items the hand
-	// (.c-menu_item__button{cursor:pointer}, pointerCursor); the root's
-	// PassOp would let the cursor of what's under it through otherwise (a
-	// richview's text cursor)
-	cur := clip.Rect(local).Push(gtx.Ops)
-	pointer.CursorDefault.Add(gtx.Ops)
-	cur.Pop()
 
 	// clicks & hover first (they reflect last frame's layout).
 	for i := range m.items {
