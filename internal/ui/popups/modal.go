@@ -165,6 +165,15 @@ type ModalOpts struct {
 	// the top right (c-sk-modal__close_button's top 20px), and a channel
 	// entity (TitleIcon, TitleAfter) wraps with its icon.
 	TruncateTitle bool
+	// CDialog draws Slack's DeprecatedDialog (.c-dialog) metrics rather
+	// than c-sk-modal's: .c-dialog__header padding 16px 24px around the
+	// title and the 36px close button (68px; PadX and HeadH default to 24
+	// and 68), the close button a flex item at its top right
+	// (align-self flex-start, margin-right -8px: top 16px, right 16px), a
+	// wrapped title's header 32px plus its lines, and the title 6px (the
+	// header's gap) plus the close button's 28px margin box short of it.
+	// OldDialog sets it.
+	CDialog bool
 	// PadX and HeadH override the side padding (default 28) and header
 	// height (default 70) in dp; Slack's link dialog uses 24 / 68.
 	PadX, HeadH float32
@@ -451,10 +460,13 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 		w = mw
 	}
 	padX := dp(gtx, 28)
+	headH := dp(gtx, 70)
+	if m.o.CDialog {
+		padX, headH = dp(gtx, 24), dp(gtx, 68)
+	}
 	if m.o.PadX > 0 {
 		padX = dp(gtx, m.o.PadX)
 	}
-	headH := dp(gtx, 70)
 	if m.o.HeadH > 0 {
 		headH = dp(gtx, m.o.HeadH)
 	}
@@ -473,12 +485,21 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	// the title's lines: the header grows by whole lines past the first
 	titleW := w - padX - dp(gtx, 64)
+	if m.o.CDialog {
+		titleW = maxInt(1, m.titleWrapW(gtx, w, padX)) // the h1's width, cut or wrapped
+	}
 	titleLines, wrapped := 1, []titleLine(nil)
 	if !m.o.TruncateTitle && m.o.Header == nil {
 		titleW = maxInt(1, m.titleWrapW(gtx, w, padX))
 		if ls := m.titleLines(gtx, th, cl, titleSz, titleLH, titleW); len(ls) > 1 {
 			titleLines, wrapped = len(ls), ls
-			headH += (len(ls) - 1) * dp(gtx, titleLH)
+			if m.o.CDialog {
+				// .c-dialog__header: 16px + the lines + 16px once the
+				// title is taller than the close button's 36px row
+				headH = dp(gtx, 32) + len(ls)*dp(gtx, titleLH)
+			} else {
+				headH += (len(ls) - 1) * dp(gtx, titleLH)
+			}
 		}
 	}
 	m.drawnLines = wrapped
@@ -651,24 +672,24 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					})
 				}
 				if !m.o.NoClose {
-					cy := pos.Y + (titleH-dp(gtx, 36))/2
+					// c-sk-modal__close_button: position absolute, top 20px,
+					// right 20px (over a hero too); c-dialog__close: the
+					// header's padding-top 16px, right 24px less its -8px
+					// margin
+					cx, cy := w-dp(gtx, 20)-dp(gtx, 36), pos.Y+dp(gtx, 20)
 					switch {
 					case heroH > 0:
-						cy = dp(gtx, 20) // c-sk-modal__close_button: top 20px, over the hero
-					case titleLines > 1 && m.o.CloseFirst:
-						// c-dialog__close: align-self flex-start, where it
-						// sits beside a one-line title
-						cy = pos.Y + (titleH-(titleLines-1)*dp(gtx, titleLH)-dp(gtx, 36))/2
-					case titleLines > 1:
-						cy = pos.Y + dp(gtx, 20) // top 20px beside a wrapped title
+						cy = dp(gtx, 20)
+					case m.o.CDialog:
+						cx, cy = w-dp(gtx, 16)-dp(gtx, 36), pos.Y+dp(gtx, 16)
 					}
-					at(gtx, image.Pt(w-dp(gtx, 20)-dp(gtx, 36), cy), func(gtx layout.Context) layout.Dimensions {
+					at(gtx, image.Pt(cx, cy), func(gtx layout.Context) layout.Dimensions {
 						if m.ringOn(gtx, &m.close) {
 							focusRing(gtx, cl, image.Rectangle{Max: image.Pt(dp(gtx, 36), dp(gtx, 36))}, dp(gtx, 8))
 						}
 						return iconButton(gtx, &m.close, "close", 36, 20, cl.Fg2, cl.BgHover, 8)
 					})
-					m.closeRect = image.Rect(w-dp(gtx, 20)-dp(gtx, 36), cy, w-dp(gtx, 20), cy+dp(gtx, 36))
+					m.closeRect = image.Rect(cx, cy, cx+dp(gtx, 36), cy+dp(gtx, 36))
 					skCloseClass.Inspect(0).EndAt(gtx, m.closeRect)
 				} else {
 					m.closeRect = image.Rectangle{}
@@ -828,10 +849,12 @@ func Confirm(h Host, title, textBody, action string, danger bool, body layout.Wi
 //
 // It also keeps the title on one line with an ellipsis (TruncateTitle):
 // DeprecatedDialog's truncateTitle is true unless the dialog passes false,
-// and those set CloseFirst themselves.
+// and those set CloseFirst and CDialog themselves; and it draws c-dialog's
+// metrics (CDialog).
 func (m *Modal) OldDialog() *Modal {
 	m.o.CloseFirst = true
 	m.o.TruncateTitle = true
+	m.o.CDialog = true
 	return m
 }
 

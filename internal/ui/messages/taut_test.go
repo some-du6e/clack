@@ -43,10 +43,13 @@ const (
 )
 
 type fakeSlack struct {
-	srv   *httptest.Server
-	mu    sync.Mutex
-	fail  map[string]string // method -> Slack error code to answer with
-	calls []struct {
+	srv  *httptest.Server
+	mu   sync.Mutex
+	fail map[string]string // method -> Slack error code to answer with
+	// answer is method -> the JSON body to answer with (instead of
+	// {"ok":true})
+	answer map[string]string
+	calls  []struct {
 		method string
 		form   url.Values
 	}
@@ -65,7 +68,7 @@ func (f *fakeSlack) called(method string) []url.Values {
 }
 
 func newTestApp(t testing.TB) (*core.App, *fakeSlack) {
-	f := &fakeSlack{fail: map[string]string{}}
+	f := &fakeSlack{fail: map[string]string{}, answer: map[string]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseMultipartForm(8 << 20)
 		f.mu.Lock()
@@ -74,10 +77,15 @@ func newTestApp(t testing.TB) (*core.App, *fakeSlack) {
 			form   url.Values
 		}{strings.TrimPrefix(r.URL.Path, "/api/"), r.Form})
 		code := f.fail[strings.TrimPrefix(r.URL.Path, "/api/")]
+		body := f.answer[strings.TrimPrefix(r.URL.Path, "/api/")]
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if code != "" {
 			_, _ = w.Write([]byte(`{"ok":false,"error":"` + code + `"}`))
+			return
+		}
+		if body != "" {
+			_, _ = w.Write([]byte(body))
 			return
 		}
 		_, _ = w.Write([]byte(`{"ok":true}`))

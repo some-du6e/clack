@@ -82,6 +82,10 @@ type expandBtn struct {
 	// expandable ("" none: no Hide image)
 	full      bool
 	href, key string
+	// file is the Slack file the image is (Expander.ImageFile), read the
+	// first time the group shows (fileRead): its Download leads the group
+	file     *richtext.File
+	fileRead bool
 }
 
 // The group's buttons, in their order (UvHM: Download, Open in new
@@ -90,8 +94,16 @@ const (
 	imgActOpen = iota
 	imgActExpand
 	imgActMore
+	imgActDownload
 	imgActs
 )
+
+// ImageDownloadHandler is optional on a Handler: AttachmentImageActions'
+// Download, the image's Slack file downloaded (its href is the file's
+// getFileDownloadUrl). A host without one gets no Download.
+type ImageDownloadHandler interface {
+	DownloadImageFile(f *richtext.File)
+}
 
 // ImageMenuHandler is optional on a Handler: AttachmentImageActions' More
 // actions, its menu at btn (View coordinates plus Origin): Copy link
@@ -344,7 +356,17 @@ func (v *View) expandActs(st *Style, i int) []int {
 	if !e.full {
 		return []int{imgActExpand}
 	}
-	acts := []int{imgActOpen}
+	if !e.fileRead {
+		e.fileRead = true
+		if v.imgDL && e.img != nil {
+			e.file, _ = xp().ImageFile(e.img.URL) // AttachmentImage's url prop
+		}
+	}
+	var acts []int
+	if e.file != nil {
+		acts = append(acts, imgActDownload)
+	}
+	acts = append(acts, imgActOpen)
 	if v.playOnly(st, e) {
 		acts = append(acts, imgActExpand)
 	}
@@ -402,6 +424,10 @@ func (v *View) expand(st *Style, id int, h Handler) {
 		if e.href != "" {
 			h.OpenURL(e.href)
 		}
+	case imgActDownload:
+		if dh, ok := h.(ImageDownloadHandler); ok && e.file != nil {
+			dh.DownloadImageFile(e.file)
+		}
 	case imgActMore:
 		mh, ok := h.(ImageMenuHandler)
 		if !ok {
@@ -457,6 +483,8 @@ func (v *View) drawExpands(gtx layout.Context, st *Style) {
 				name, tip = "open-in-window", "Open in new window"
 			case imgActMore:
 				name, tip = "ellipsis-vertical-filled", "More actions"
+			case imgActDownload:
+				name, tip = "download", "Download"
 			}
 			v.barIcon(gtx, name, btn, 18, col)
 			if hot {

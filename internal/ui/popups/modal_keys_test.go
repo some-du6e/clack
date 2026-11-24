@@ -329,8 +329,8 @@ func TestLeavePrivateChannelKeys(t *testing.T) {
 	h := hcEnv(t)
 	e := newMdEnv(t, h)
 	m := e.open(func() { leaveChannel(h, "C0FAKE00009", "private", "plans", false) })
-	if m.o.Title != "Leave plans" {
-		t.Fatalf("title %q", m.o.Title)
+	if m.o.Title+m.o.TitleAfter != "Leave plans" {
+		t.Fatalf("title %q %q", m.o.Title, m.o.TitleAfter)
 	}
 	e.focus("Leave Channel", true)
 	e.cycle(true, "Cancel", "Close", "Leave Channel")

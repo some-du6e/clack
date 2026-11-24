@@ -27,8 +27,8 @@ import (
 // winEndChan is winEnv's channel.
 const winEndChan = "C0WINEND01"
 
-// winEnv is a channel of 240 messages 90 s apart, its list in the window
-// around the 41st (the newest page holds the last 50).
+// winEnv is a channel of 240 messages 90 s apart (histDay), its list in the
+// window around the 41st (the newest page holds the last 50).
 type winEnv struct {
 	h   *ctxHost
 	v   *ChannelView
@@ -53,7 +53,7 @@ func newHistEnv(t *testing.T) *winEnv {
 	ch := winEndChan
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "archive-walk", IsChannel: true, IsMember: true, NumMembers: 12})
 	e := &winEnv{h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}}}
-	base := time.Now().Add(-7 * time.Hour).Unix()
+	base := histDay()
 	for i := 0; i < 240; i++ {
 		ts := fmt.Sprintf("%d.000100", base+int64(i)*90)
 		fs.PostQuietAt(ch, "UBEN00001", fmt.Sprintf("message %d", i), ts)
@@ -63,6 +63,19 @@ func newHistEnv(t *testing.T) *winEnv {
 	e.rt = newRouted(e.v, 900, 700)
 	e.await(t, "the newest messages", func() bool { return e.drawn(e.newest()) && e.v.AtBottom() })
 	return e
+}
+
+// histDay is where the 6 h of the windows' synthetic history (240
+// messages 90 s apart) start: noon yesterday, local time, as the list's
+// day dividers are, so they keep to a day of their own. Started 7 h ago,
+// they took in midnight whenever the tests ran between 01:00 and 07:00,
+// and its divider sat wherever the clock had it: at 01:31:50 UTC on
+// train-238's linux-test (45304682517) it took the list's top, above
+// message 219, and TestPageKeyTakesTheDOMNames found no message row
+// there to measure.
+func histDay() int64 {
+	y, m, d := time.Now().AddDate(0, 0, -1).Date()
+	return time.Date(y, m, d, 12, 0, 0, 0, time.Local).Unix()
 }
 
 func (e *winEnv) newest() string { return e.tss[len(e.tss)-1] }

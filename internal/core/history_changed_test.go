@@ -11,7 +11,14 @@ package core
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,7 +27,8 @@ import (
 	"github.com/some-du6e/clack/internal/store"
 )
 
-// hcEnv is rtApp with ch's newest page cached.
+// hcEnv is rtApp with ch's newest page cached, read forward after the
+// connect (newHCEnv).
 type hcEnv struct {
 	t   *testing.T
 	a   *App
@@ -30,10 +38,31 @@ type hcEnv struct {
 	tss []string // ch's history on the fake, oldest first
 }
 
+// newHCEnv holds the socket's hello until boot's prefetch has read ch, one
+// of the fake's unread channels, so the slow connect makes ch's window end
+// stale and the first History reads it forward (reached_end.go catchUp), as
+// when the prefetch beats the connect. It waits for that read: its
+// conversations.history isn't the tests' to count. Left racing it, the
+// read sometimes went out after a test had counted the calls before its
+// own (TestCountsFirstAnswerIsBaseline: "the baseline counts read the
+// history again (1 conversations.history)", full-test 45313234515). With
+// HC_SLOW_CATCHUP set the read is that late every time (slowCatchUp).
 func newHCEnv(t *testing.T) *hcEnv {
 	t.Helper()
-	a, fs, l := rtApp(t)
-	e := &hcEnv{t: t, a: a, fs: fs, log: l, ch: fs.ChannelIDs()[1]}
+	var ch string
+	var slow *slowCatchUp
+	var wrap func(http.RoundTripper) http.RoundTripper
+	if os.Getenv("HC_SLOW_CATCHUP") != "" {
+		wrap = func(rt http.RoundTripper) http.RoundTripper {
+			slow = &slowCatchUp{base: rt, release: make(chan struct{}), done: make(chan struct{})}
+			return slow
+		}
+	}
+	a, fs, l := rtAppHeld(t, func(a *App, fs *fakeslack.Server) bool {
+		ch = fs.ChannelIDs()[1]
+		return a.S.Timeline(ch) != nil
+	}, wrap)
+	e := &hcEnv{t: t, a: a, fs: fs, log: l, ch: ch}
 	e.tss = fs.HistoryTS(e.ch)
 	if len(e.tss) < 40 {
 		t.Fatalf("%s has %d messages; the test needs 40", e.ch, len(e.tss))
@@ -41,7 +70,71 @@ func newHCEnv(t *testing.T) *hcEnv {
 	if _, err := a.History(context.Background(), e.ch, ""); err != nil {
 		t.Fatal(err)
 	}
+	if slow != nil {
+		slow.armed.Store(true)
+	}
+	e.until("the connect's catch-up of the prefetched window", func() bool {
+		_, _, stale := a.S.EndOf(e.ch)
+		return !stale
+	})
 	return e
+}
+
+// slowCatchUp holds the first catch-up read (conversations.history from an
+// oldest: reached_end.go catchUp) in the client's transport until the
+// first client.counts call once armed (newHCEnv arms it after its History)
+// or 300 ms, whichever comes first, and that counts call goes out once the
+// read is answered: the read History starts reaches the fake after the
+// test has counted the calls so far and before the counts that follow, as
+// the catch-up's goroutine did on full-test 45313234515's loaded runner.
+type slowCatchUp struct {
+	base    http.RoundTripper
+	armed   atomic.Bool
+	held    atomic.Bool   // the first catch-up read came
+	release chan struct{} // closed: it may go
+	once    sync.Once
+	done    chan struct{} // closed: it was answered
+}
+
+func (s *slowCatchUp) RoundTrip(r *http.Request) (*http.Response, error) {
+	switch path.Base(r.URL.Path) {
+	case "conversations.history":
+		if catchUpRead(r) && s.held.CompareAndSwap(false, true) {
+			select {
+			case <-s.release:
+			case <-time.After(300 * time.Millisecond):
+			}
+			defer close(s.done)
+		}
+	case "client.counts":
+		if s.armed.Load() {
+			s.once.Do(func() { close(s.release) })
+			select {
+			case <-s.done:
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
+	return s.base.RoundTrip(r)
+}
+
+// catchUpRead reports whether r reads forward from an oldest, as only
+// catchUp's conversations.history does.
+func catchUpRead(r *http.Request) bool {
+	if r.GetBody == nil {
+		return false
+	}
+	body, err := r.GetBody()
+	if err != nil {
+		return false
+	}
+	defer body.Close()
+	b, err := io.ReadAll(body)
+	if err != nil {
+		return false
+	}
+	f, err := url.ParseQuery(string(b))
+	return err == nil && f.Get("oldest") != ""
 }
 
 // page is ch's newest page as History gives it.
