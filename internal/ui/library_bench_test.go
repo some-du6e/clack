@@ -63,10 +63,18 @@ func TestLibraryInstallPick(t *testing.T) {
 		}
 		groups[g.first().Name] = g
 	}
+	// IDV Status's why is what the bench measured, from bench.json (a bench
+	// run rewrites it), past what says both work; this test's bundles
+	// aren't the ones it measured
+	idv, ok := v.bench.For([]pluginbench.Entry{{System: pluginlib.Taut, ID: "IdvStatus"}, {System: pluginlib.Slick, ID: "HcaStatus"}})
+	if !ok || idv.Winner != pluginlib.Taut {
+		t.Fatalf("bench.json's IDV Status / HCA Status: %+v (data %v), want Taut's", idv, ok)
+	}
+	idvWhy := benchCost(idv) + " on the plugin bench (measured on an earlier build)"
 	for _, c := range []struct {
 		row, system, why string
 	}{
-		{"IDV Status", pluginlib.Taut, "smaller bundle"},
+		{"IDV Status", pluginlib.Taut, idvWhy},
 		{"Bring Back Slackbot", pluginlib.Slick, "it works fully in Clack, Taut's doesn't work"},
 		{"Who Reacted", pluginlib.Slick, "the recommended system (no plugin bench data)"},
 	} {
@@ -109,6 +117,39 @@ func TestLibraryInstallPick(t *testing.T) {
 		}
 		if strings.Contains(items[2].Label, "recommended") {
 			t.Errorf("%s's menu recommends both: %+v", c.row, items[2])
+		}
+	}
+}
+
+// TestBenchCostShapes: the why line names what the bench's pick won on,
+// past the clauses that say both versions work ("works fully in both",
+// "same results (…)", "costs within noise", "no behaviour checks", "both
+// load"): nine Library rows read "works fully in both on the plugin bench"
+// before. No reason in bench.json leaves such a clause as the why.
+func TestBenchCostShapes(t *testing.T) {
+	for reason, want := range map[string]string{
+		"works fully in both; costs within noise, smaller bundle (7.1 KB vs 9.1 KB)":            "smaller bundle (7.1 KB vs 9.1 KB)",
+		"no behaviour checks, both load; costs within noise, smaller bundle (2.4 KB vs 6.2 KB)": "smaller bundle (2.4 KB vs 6.2 KB)",
+		"works fully, 3.0x faster to load, 3.4x less JS memory":                                 "3.0x faster to load",
+		"same results (3/3 checks each), 1.4x faster to load":                                   "1.4x faster to load",
+		"works fully (Taut passes 0/1 checks)":                                                  "works fully (Taut passes 0/1 checks)",
+	} {
+		if got := benchCost(pluginbench.Pick{Reason: reason}); got != want {
+			t.Errorf("benchCost(%q) = %q, want %q", reason, got, want)
+		}
+	}
+	for _, p := range pluginbench.Load().Plugins {
+		if p.Reason == "" {
+			continue
+		}
+		got := benchCost(pluginbench.Pick{Reason: p.Reason})
+		for _, filler := range []string{"works fully in both", "costs within noise", "no behaviour checks", "both load", "works fully"} {
+			if got == filler {
+				t.Errorf("%s: its why is %q (from %q)", p.Name, got, p.Reason)
+			}
+		}
+		if strings.HasPrefix(got, "same results (") {
+			t.Errorf("%s: its why is %q", p.Name, got)
 		}
 	}
 }
