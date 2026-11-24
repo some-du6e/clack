@@ -243,6 +243,7 @@ type Interactive struct {
 	views   map[string]*View     // view id → latest copy (modals)
 	actions []AppShortcut
 	actAt   time.Time
+	actGet  bool // CachedShortcuts' fetch is out
 	started atomic.Bool
 	stop    func()
 	lastTok int64
@@ -966,6 +967,34 @@ func (ix *Interactive) Shortcuts(ctx context.Context) ([]AppShortcut, error) {
 	ix.actions, ix.actAt = out, time.Now()
 	ix.mu.Unlock()
 	return out, nil
+}
+
+// CachedShortcuts is the app actions list as the store has it (Slack's
+// appActions: its actions, and isLoaded), without waiting: loaded is false
+// until the first apps.actions.v2.list answer. A list that's missing or
+// stale (older than Shortcuts' 10 minutes, or dropped by
+// app_actions_updated) is fetched again in the background, once at a
+// time, and the old one served meanwhile.
+func (ix *Interactive) CachedShortcuts() (list []AppShortcut, loaded bool) {
+	ix.mu.Lock()
+	list, loaded = ix.actions, ix.actions != nil
+	fetch := !ix.actGet && (ix.actions == nil || time.Since(ix.actAt) >= 10*time.Minute)
+	if fetch {
+		ix.actGet = true
+	}
+	ix.mu.Unlock()
+	if fetch {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			_, _ = ix.Shortcuts(ctx)
+			ix.mu.Lock()
+			ix.actGet = false
+			ix.mu.Unlock()
+			ix.emit(ViewEvent{Kind: "actions"})
+		}()
+	}
+	return list, loaded
 }
 
 // RunShortcut runs an app shortcut (apps.actions.v2.execute). Message

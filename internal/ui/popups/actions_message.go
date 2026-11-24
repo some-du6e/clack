@@ -295,7 +295,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if len(last) > 0 {
 		items = append(append(items, Sep()), last...)
 	}
-	return tidySeps(items)
+	return withFrecency(tidySeps(items))
 }
 
 // tidySeps drops the separators an empty group leaves (Slack's menu

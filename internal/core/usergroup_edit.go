@@ -531,6 +531,12 @@ func (a *App) frecencyIDs(query string, keep func(string) bool) []string {
 	return out
 }
 
+// FrecencySortBy is sortByFrecency (tyx1 Zh) over xs for query, each
+// known by its frecency id: ties keep xs's order.
+func FrecencySortBy[T any](fc *frecency.Cache, query string, xs []T, id func(T) string) []T {
+	return frecencySortBy(fc, query, xs, id)
+}
+
 // frecencySortBy orders xs by their frecency for query (ties keep the
 // server's order).
 func frecencySortBy[T any](fc *frecency.Cache, query string, xs []T, id func(T) string) []T {

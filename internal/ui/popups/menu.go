@@ -125,8 +125,16 @@ type MenuItem struct {
 	// neighbours (rowBoxes; Better Message Menu's big buttons).
 	Class string
 
-	maid  string // MAMenu's id for a row without an Action (newMAMenu)
-	maSub string // the message actions submenu component its submenu renders (Organize, Connect to apps)
+	// Frecency is the row's frecencyId (getMessageActionsFrecencyId: "MA"
+	// + Slack's id for it, "MAmark_unread", "MA<app action id>"; a few are
+	// bare: "later", "add_to_later_todos"): picking it in a message menu
+	// records it in the frecency store (recordFrecency), which orders
+	// Connect to apps.
+	Frecency string
+
+	maid   string // MAMenu's id for a row without an Action (newMAMenu)
+	maWrap bool   // its Do is MAMenu's maSelect, which records its frecency
+	maSub  string // the message actions submenu component its submenu renders (Organize, Connect to apps)
 }
 
 // Sep is a separator row.
@@ -403,6 +411,9 @@ func (m *Menu) activate(gtx layout.Context, i int) {
 	}
 	if !it.KeepOpen {
 		m.root().closeAll()
+	}
+	if !it.maWrap {
+		m.recordFrecency(it) // a native message action row (maSelect records the wrapped ones)
 	}
 	if it.DoCtx != nil {
 		it.DoCtx(gtx)
