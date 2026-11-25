@@ -11,6 +11,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -535,7 +536,8 @@ func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r
 					}
 					if len(conv.TopicSpans) == 0 {
 						return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-							return a.th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Regular, Color: c.FgMuted, MaxLines: 1}, oneLine(conv.Topic))
+							// text-overflow: ellipsis cuts at the character
+							return a.th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Regular, Color: c.FgMuted, MaxLines: 1, Wrap: text.WrapGraphemes}, oneLine(conv.Topic))
 						})
 					}
 					return a.inlineSpans(gtx, conv.TopicSpans, 13, c.FgMuted, h)
@@ -678,7 +680,10 @@ func (a *App) inlineSpansEmoji(gtx layout.Context, spans []richtext.Span, size u
 		}
 		at(gtx, image.Pt(x, 0), image.Pt(tw+ell, h), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-				return a.th.Layout(gtx, theme.TextStyle{Size: size, Weight: w, Italic: s.Style&richtext.Italic != 0, Color: fg, MaxLines: 1}, txt)
+				// text-overflow: ellipsis cuts at the character, not at a
+				// line break opportunity: a link keeps all of itself that
+				// fits ("https://github.com/…", never "https://…")
+				return a.th.Layout(gtx, theme.TextStyle{Size: size, Weight: w, Italic: s.Style&richtext.Italic != 0, Color: fg, MaxLines: 1, Wrap: text.WrapGraphemes}, txt)
 			})
 		})
 		x += tw
@@ -1040,7 +1045,8 @@ func (a *App) tabContent(gtx layout.Context, t chTab, lw, h int, active bool) {
 			return a.inlineSpansEmoji(gtx, t.spans, 13, tabLabelEmoji(gtx, t), col, h)
 		}
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 13, theme.Bold, col, t.label)
+			// .channel_tab_label_text: one line, ellipsized where it's cut
+			return a.th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Bold, Color: col, MaxLines: 1, Wrap: text.WrapGraphemes}, t.label)
 		})
 	})
 }
@@ -1064,12 +1070,26 @@ func tabLabelEmoji(gtx layout.Context, t chTab) int {
 	return gtx.Sp(18)
 }
 
-// tabLabelWidth is a tab's label width (its spans when it has some).
+// tabLabelWidth is a tab's label width as drawn (its spans when it has
+// some): its natural width, at most what .channel_tab_label /
+// .channel_tab_document_label leave it (max-width 200px with the 8px
+// padding, the icon box and the 4px gap inside), where
+// .channel_tab_label_text ellipsizes it. measureVisibleTabs reads the
+// tabs' button rects, so a long canvas title fills one 200px tab instead
+// of pushing every tab after it into More.
 func (a *App) tabLabelWidth(gtx layout.Context, t chTab) int {
+	w := a.th.Measure(gtx, 13, theme.Bold, t.label)
 	if t.spans != nil {
-		return a.spansWidthEmoji(gtx, t.spans, 13, tabLabelEmoji(gtx, t))
+		w = a.spansWidthEmoji(gtx, t.spans, 13, tabLabelEmoji(gtx, t))
 	}
-	return a.th.Measure(gtx, 13, theme.Bold, t.label)
+	return min(w, tabLabelMax(gtx, t))
+}
+
+// tabLabelMax is the widest a tab's label is drawn: .channel_tab_label's
+// max-width 200px less its 8px padding on each side, the icon box and the
+// 4px gap (box-sizing border-box).
+func tabLabelMax(gtx layout.Context, t chTab) int {
+	return max(gtx.Dp(200)-2*gtx.Dp(8)-gtx.Dp(tabIconBox(t))-gtx.Dp(4), 0)
 }
 
 // tabWidth is a tab's width for a label lw wide: padding 8, the icon box,
