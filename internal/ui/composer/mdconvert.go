@@ -513,12 +513,31 @@ func qFromDoc(d *Doc) (qDelta, []int) {
 	at := 0
 	line := 0
 	seq := 0
+	// run is the text in a row with the same formats, which Delta.push
+	// merges into one op: gathered here and pushed once, as pushing it a
+	// rune at a time copies the run so far for each, quadratic in a long
+	// message (its plain lines are one run)
+	var run []rune
+	var runAt, lastAt qAttrs
+	var lastA Attr
+	text := func(rs []rune, a qAttrs) {
+		if !attrsEqual(a, runAt) {
+			q = q.insertRunes(run, runAt) // push copies it
+			run = run[:0]
+		}
+		run, runAt = append(run, rs...), a
+	}
+	embed := func(op qOp) {
+		q = q.insertRunes(run, runAt)
+		run, runAt = run[:0], nil
+		q.push(op)
+	}
 	lineOp := func(l Line) {
-		q = q.insert("\n", qLineAttrs(l))
+		text([]rune{'\n'}, qLineAttrs(l))
 		at++
 	}
 	if len(d.Lines) > 0 && d.Lines[0].Kind == Divider {
-		q.push(qOp{k: qEmb, emb: &qEmbed{hr: true}})
+		embed(qOp{k: qEmb, emb: &qEmbed{hr: true}})
 		at++
 	}
 	for i, r := range d.Runes {
@@ -527,7 +546,7 @@ func qFromDoc(d *Doc) (qDelta, []int) {
 			lineOp(d.Lines[line])
 			line++
 			if line < len(d.Lines) && d.Lines[line].Kind == Divider {
-				q.push(qOp{k: qEmb, emb: &qEmbed{hr: true}})
+				embed(qOp{k: qEmb, emb: &qEmbed{hr: true}})
 				at++
 			}
 			continue
@@ -535,7 +554,7 @@ func qFromDoc(d *Doc) (qDelta, []int) {
 		a := d.Attrs[i]
 		if a.Atom != nil {
 			if a.Atom.Kind == AtomEmoji {
-				q.push(qOp{k: qEmb, emb: &qEmbed{atom: a.Atom}})
+				embed(qOp{k: qEmb, emb: &qEmbed{atom: a.Atom}})
 				at++
 				continue
 			}
@@ -551,11 +570,14 @@ func qFromDoc(d *Doc) (qDelta, []int) {
 				key = "slackslug"
 			}
 			seq++
-			q = q.insertRunes(label, qAttrs{key: qAtomRef{a: a.Atom, seq: seq}})
+			text(label, qAttrs{key: qAtomRef{a: a.Atom, seq: seq}}) // its own op: no other has its ref
 			at += len(label)
 			continue
 		}
-		q = q.insertRunes([]rune{r}, qStyleAttrs(a))
+		if a != lastA { // lastAt is qStyleAttrs(lastA): one map per run, not per rune
+			lastA, lastAt = a, qStyleAttrs(a)
+		}
+		text([]rune{r}, lastAt)
 		at++
 	}
 	pos[d.Len()] = at
@@ -564,6 +586,7 @@ func qFromDoc(d *Doc) (qDelta, []int) {
 	} else {
 		lineOp(Line{})
 	}
+	q = q.insertRunes(run, runAt)
 	return q, pos
 }
 
@@ -605,7 +628,7 @@ func qStyleAttrs(a Attr) qAttrs {
 	for _, s := range [...]struct {
 		st Style
 		k  string
-	}{{Bold, "bold"}, {Italic, "italic"}, {Underline, "underline"}, {Strike, "strike"}, {Code, "code"}} {
+	}{{Bold, "bold"}, {Italic, "italic"}, {Underline, "underline"}, {Strike, "strike"}, {Code, "code"}, {Unlink, "unlink"}} {
 		if a.Style&s.st != 0 {
 			set(s.k, true)
 		}
@@ -723,7 +746,7 @@ func qAttr(at qAttrs) Attr {
 	for _, s := range [...]struct {
 		st Style
 		k  string
-	}{{Bold, "bold"}, {Italic, "italic"}, {Underline, "underline"}, {Strike, "strike"}, {Code, "code"}} {
+	}{{Bold, "bold"}, {Italic, "italic"}, {Underline, "underline"}, {Strike, "strike"}, {Code, "code"}, {Unlink, "unlink"}} {
 		if truthy(at[s.k]) {
 			a.Style |= s.st
 		}
