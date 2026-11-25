@@ -259,6 +259,11 @@ func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensi
 	return t.text(gtx, o, txt, true)
 }
 
+// LayoutHook, when set (tests), sees each string Layout shapes, how many
+// of its runes were shown, whether the truncator ("…") cut it there, and
+// the drawn width against the width it had (px).
+var LayoutHook func(txt string, shown int, cut bool, w, maxW int)
+
 // DrawHook, when set (tests: the "no English left" checks), sees every
 // string Text draws.
 var DrawHook func(txt string)
@@ -418,11 +423,22 @@ func drawTextSlots(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string,
 	it := glyphIter{viewport: viewport, maxLines: o.MaxLines, col: o.Color, emb: emb, slots: slots} // px, not dp
 	var glyphs [512]text.Glyph                                                                      // one batch per line in practice (see paint)
 	line := glyphs[:0]
+	shown, cut := 0, false // LayoutHook's
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
+		if LayoutHook != nil {
+			if g.Flags&text.FlagTruncator != 0 {
+				cut = true
+			} else if !cut {
+				shown += int(g.Runes)
+			}
+		}
 		var ok bool
 		if line, ok = it.paint(gtx, sh, g, line); !ok {
 			break
 		}
+	}
+	if LayoutHook != nil {
+		LayoutHook(txt, shown, cut, it.bounds.Dx(), cs.Max.X)
 	}
 	call := m.Stop()
 	viewport.Min = viewport.Min.Add(it.padding.Min)
