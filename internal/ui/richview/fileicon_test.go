@@ -268,7 +268,10 @@ func TestFileRemoveButtonOverPlayerAndEdge(t *testing.T) {
 	}
 	rm := hs.v.d.removes[0].r
 	c := f32.Pt(float32(rm.Min.X+rm.Max.X)/2, float32(rm.Min.Y+rm.Max.Y)/2)
-	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: c}, press(c, 0), release(c, 20))
+	// the pointer rests on the card first (the x shows on hover), then
+	// clicks: the frames between put the x on top
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: c})
+	hs.send(press(c, 0), release(c, 20))
 	if len(h.removed) != 1 || m.presses != 0 {
 		t.Errorf("a click on the audio card's x: removed %v, the player got %d presses; want it removed, the player untouched", h.removed, m.presses)
 	}
