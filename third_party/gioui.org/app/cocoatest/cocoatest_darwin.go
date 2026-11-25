@@ -178,19 +178,20 @@ func PostMouse(view uintptr, down bool, x, y float64, clicks int) {
 	C.cocoatest_post_mouse(C.uintptr_t(view), cint(down), C.CGFloat(x), C.CGFloat(y), C.int(clicks))
 }
 
-// MouseButton is a mouse button for PostButton.
+// MouseButton is a mouse button for PostButton: the left or the right
+// one. (An other button's event made with mouseEventWithType: has
+// buttonNumber 0, which Gio reads, as Chromium does, for the button.)
 type MouseButton int
 
 const (
 	LeftButton MouseButton = iota
 	RightButton
-	OtherButton
 )
 
 // PostButton queues a press (down) or release of mouse button b at (x,
 // y), window points from the top left, with the click count, for the run
-// loop to deliver through NSApp sendEvent: (rightMouseDown: and the
-// others). Posted events change no button's state in [NSEvent
+// loop to deliver through NSApp sendEvent: (mouseDown:, rightMouseDown:
+// and their ups). Posted events change no button's state in [NSEvent
 // pressedMouseButtons]. Main thread.
 func PostButton(view uintptr, b MouseButton, down bool, x, y float64, clicks int) {
 	C.cocoatest_post_button(C.uintptr_t(view), C.int(b), cint(down), C.CGFloat(x), C.CGFloat(y), C.int(clicks))

@@ -24,8 +24,12 @@ func TestClackStaleButtons(t *testing.T) {
 		{"a tap, nothing held", 0, p, 0, true, false, 0},
 		{"a right press with the left button held", p, s, p | s, true, false, 0},
 		{"a middle press after a left press a menu took the release of", p, m, m, true, false, p},
+		{"a right press after a right press whose release the composer's menu took", s, s, s, true, false, s},
+		{"that press handled after its button came up", s, s, 0, true, false, s},
+		{"a left click after a Ctrl+click whose release its menu took", p, p, p, true, false, p},
 		{"a mouseMoved: after a right press whose release a menu took", s, 0, 0, false, true, s},
 		{"a mouseMoved:, nothing held", 0, 0, 0, false, true, 0},
+		{"a mouseMoved: a tool posts with the left button held", p, 0, p, false, true, 0},
 		{"a drag's last move, handled after its button came up", p, 0, 0, false, false, 0},
 		{"a release", p, p, 0, false, false, 0},
 	} {

@@ -74,7 +74,9 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
 `app/clack_titlebar_darwin_test.go`,
 `io/input/clack_unfocused.go`, `io/input/clack_unfocused_test.go`,
-`widget/clack_mask_copy_test.go`, `app/winclip/` and
+`widget/clack_mask_copy_test.go`, `app/winclip/`,
+`app/clack_buttons.go`, `app/clack_buttons_test.go`,
+`app/clack_buttons_darwin_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -3499,14 +3501,27 @@ Chromium reads an event's buttons from `[NSEvent pressedMouseButtons]`
 (`ModifiersFromEvent`, components/input/web_input_event_builders_mac.mm).
 `handleMouse` now passes that mask with each event, and whether the event
 is a `mouseMoved:`, which AppKit sends only with no button down. At a
-press, a button Gio has down is stale when it's neither in the mask nor
-the one being pressed (a quick tap has its own up by the time its press is
-handled). At a `mouseMoved:`, every button Gio has down is stale. A stale
+press, a button Gio has down is stale when the mask has it up, or when it
+is the one being pressed: AppKit never sends a button's down twice
+without its up between, so its release was lost (the composer's menu took
+a right-click's and the next right-click comes elsewhere, or a Ctrl+click
+menu took the left button's). The pressed button itself needn't be in
+the mask, since a quick tap has its up by the time its press is handled.
+At a `mouseMoved:`, a button Gio has down is stale when the mask has it
+up, as Blink takes a move's button from `pressedMouseButtons`. A stale
 button leaves `pointerBtns`, and a `pointer.Cancel` before the event ends
-its gesture. A Release instead could complete a Ctrl+click's press as a
-plain click once Ctrl is up. Drags keep the buttons Gio saw: a quick
-drag's last moves can be handled after its button is up, and its release
-follows.
+its gesture: the router hit-tests the press afresh instead of giving it
+to the lost press's handlers. A Release instead could complete a
+Ctrl+click's press as a plain click once Ctrl is up. Drags keep the
+buttons Gio saw: a quick drag's last moves can be handled after its button
+is up, and its release follows.
+
+`pressedMouseButtons` is the state when it's read, not when the event
+came (NSEvent.h: "not suitable for tracking"). With the main thread a long
+frame behind, a press of one button handled after another's real release,
+still queued, cancels that button's gesture before its release would have
+ended it: a chord's case, rare, where the old code gave the press to the
+first button's handlers instead.
 
 `handleMouse` also takes a left or right event's button from its type,
 as Chromium's `WebMouseEventBuilder::Build` does (only an other button's
@@ -3521,6 +3536,8 @@ native menus (`nativemenu.Supported` is false there; Clack draws its own).
 
 Tests: `app/clack_buttons_test.go` (`TestClackStaleButtons`) and
 `app/clack_buttons_darwin_test.go` (`TestClackLostReleaseMac`: on a real
-window, a posted right press with no release, then a left click and then
-a `mouseMoved:`; cocoatest's `PostButton` and `PostMoved`), in ci's macos
-job and flake-check's lost-release.
+window, a posted right press with no release, then a left click, a
+`mouseMoved:`, another right press, and a left click after a left press
+with no release; cocoatest's `PostButton` and `PostMoved`), and
+internal/ui's `TestMacComposerLeftClickAfterMenu` (App.Run's own window),
+in ci's macos job and flake-check's lost-release.

@@ -146,13 +146,12 @@ void cocoatest_post_mouse(uintptr_t view, int down, CGFloat x, CGFloat y, int cl
 void cocoatest_post_button(uintptr_t view, int button, int down, CGFloat x, CGFloat y, int clicks) {
 	@autoreleasepool {
 		NSWindow *w = windowOf(view);
-		if (w == nil || button < 0 || button > 2) {
+		if (w == nil || button < 0 || button > 1) {
 			return;
 		}
-		NSEventType types[3][2] = {
+		NSEventType types[2][2] = {
 			{NSEventTypeLeftMouseUp, NSEventTypeLeftMouseDown},
 			{NSEventTypeRightMouseUp, NSEventTypeRightMouseDown},
-			{NSEventTypeOtherMouseUp, NSEventTypeOtherMouseDown},
 		};
 		NSEvent *e = [NSEvent mouseEventWithType:types[button][down ? 1 : 0]
 										location:NSMakePoint(x, NSHeight(w.frame) - y)

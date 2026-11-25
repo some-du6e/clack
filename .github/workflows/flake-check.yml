@@ -334,9 +334,9 @@ on:
       - "internal/ui/messages/scroll_gaps_test.go"
       - "internal/ui/messages/compact_test.go"
       - "third_party/gioui.org/app/clack_bounds_darwin_test.go"
-      # the lost-release job's own
+      # the lost-release job's own (os_macos.* changes too often for a
+      # whole flake-check run on each: dispatch only=lost-release for it)
       - "third_party/gioui.org/app/clack_buttons*.go"
-      - "third_party/gioui.org/app/os_macos.*"
       - "internal/ui/composer_ctxclick_darwin_test.go"
 
 permissions:

@@ -20,7 +20,9 @@ import (
 // Clack's ctxclick: Karim's left clicks in the composer opened its text
 // menu, 2026-11-24), after a Cancel ending the right press's gesture. A
 // mouseMoved: (AppKit sends it with no button down) ends it the same way,
-// and is a move, not a drag of the lost press.
+// and is a move, not a drag of the lost press. So does a press of the
+// same button: a right press after the lost one, and a left click after a
+// left press whose release was lost (a Ctrl+click's menu took it).
 func TestClackLostReleaseMac(t *testing.T) {
 	if !macWindowTestsEnabled() {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
@@ -84,4 +86,32 @@ func TestClackLostReleaseMac(t *testing.T) {
 	if !slices.Contains(before, pointer.Cancel) || slices.Contains(before, pointer.Drag) {
 		t.Errorf("the events from the lost right press to the move were %v, want a Cancel and no drag", before)
 	}
+	time.Sleep(200 * time.Millisecond)
+	drain()
+
+	// a press of the button whose release was lost, with no move between
+	// (the composer's menu took a right-click's release, and the next
+	// right-click comes elsewhere): a Cancel first, or the router keeps
+	// the lost press's handlers for it
+	lostRight("a third right press, its release never posted")
+	cocoatest.OnMain(func() { cocoatest.PostButton(h.view, cocoatest.RightButton, true, x+40, y, 1) })
+	e, before = until("the right press after it", pointer.Press)
+	if e.Buttons != pointer.ButtonSecondary || !slices.Contains(before, pointer.Cancel) {
+		t.Errorf("a right press after a right press with no release came with %v after %v, want the secondary button after a Cancel", e.Buttons, before)
+	}
+	cocoatest.OnMain(func() { cocoatest.PostButton(h.view, cocoatest.RightButton, false, x+40, y, 1) })
+	until("its release", pointer.Release)
+	time.Sleep(200 * time.Millisecond)
+	drain()
+
+	// a left press whose release a Ctrl+click's menu took, then a left
+	// click: a Cancel first, or the click went to the old press
+	cocoatest.OnMain(func() { cocoatest.PostMouse(h.view, true, x, y, 1) })
+	until("a left press, its release never posted", pointer.Press)
+	h.click(x+40, y, 1)
+	e, before = until("the left press after it", pointer.Press)
+	if e.Buttons != pointer.ButtonPrimary || !slices.Contains(before, pointer.Cancel) {
+		t.Errorf("a left press after a left press with no release came with %v after %v, want the primary button after a Cancel", e.Buttons, before)
+	}
+	until("its release", pointer.Release)
 }

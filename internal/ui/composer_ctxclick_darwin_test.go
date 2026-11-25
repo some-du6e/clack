@@ -72,8 +72,10 @@ func TestMacComposerLeftClickAfterMenu(t *testing.T) {
 		wx, wy := pt(x, y)
 		onMain(func() { cocoatest.PostButton(ma.view, b, down, wx, wy, 1) })
 	}
-	waitMenus := func(n int64) bool {
-		for deadline := time.Now().Add(1500 * time.Millisecond); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+	// waitMenus waits up to d for n menus (the fake opens one in the
+	// press's own frame)
+	waitMenus := func(n int64, d time.Duration) bool {
+		for deadline := time.Now().Add(d); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 			if menus.Load() >= n {
 				return true
 			}
@@ -88,7 +90,7 @@ func TestMacComposerLeftClickAfterMenu(t *testing.T) {
 		n := menus.Load()
 		post(cocoatest.RightButton, true, x, yy)
 		post(cocoatest.RightButton, false, x, yy)
-		if waitMenus(n + 1) {
+		if waitMenus(n+1, 500*time.Millisecond) {
 			y = yy
 		}
 	}
@@ -100,13 +102,13 @@ func TestMacComposerLeftClickAfterMenu(t *testing.T) {
 	// the right press, its release taken by the menu: never posted
 	n := menus.Load()
 	post(cocoatest.RightButton, true, x, y)
-	if !waitMenus(n + 1) {
+	if !waitMenus(n+1, 2*time.Second) {
 		t.Fatal("a right press in the composer opened no menu")
 	}
 	var lo, hi int
 	ma.onUI(t, func() { lo, hi = ed.Selection() })
 	t.Logf("the right press selected [%d, %d) (the word under it, as on macOS)", lo, hi)
-	// a left click on "there"
+	// a left click 60 px on, on a later word
 	post(cocoatest.LeftButton, true, x+60, y)
 	post(cocoatest.LeftButton, false, x+60, y)
 	time.Sleep(time.Second)
