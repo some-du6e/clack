@@ -234,11 +234,11 @@ func (l *lay) compBlock(b *richtext.Block, x, y, w int) int {
 		bb.Att = &a
 		b = &bb
 	}
-	f0, b0, i0, o0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.overlayIcons)
+	f0, b0, i0, o0, s0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.overlayIcons), len(l.d.spinners)
 	l.inAtt, l.authorImg, l.titleFrags, l.media = true, 0, [2]int{}, mediaNote{}
 	h := l.attachment(b, x, y, w)
 	l.inAtt = false
-	l.tagFrom(tag, f0, b0, i0, o0)
+	l.tagFrom(tag, f0, b0, i0, o0, s0)
 	if m := l.media; m.set {
 		// the card's media: its own component (AttachmentMedia), drawn by
 		// the card inside MessageAttachment's tree, so a plugin's patch
@@ -280,17 +280,21 @@ func (l *lay) compBlock(b *richtext.Block, x, y, w int) int {
 func (l *lay) compFile(b *richtext.Block, x, y, w int) int {
 	tag := l.addComp(compBox{kind: compFile, att: b})
 	cs := l.compState(tag)
-	f0, b0, i0, o0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.overlayIcons)
+	f0, b0, i0, o0, s0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.overlayIcons), len(l.d.spinners)
 	l.inAtt = true
 	h := l.filePending(b.File, x, y, w, func() int { return l.file(b.File, x, y, w) })
 	l.inAtt = false
-	l.tagFrom(tag, f0, b0, i0, o0)
+	l.tagFrom(tag, f0, b0, i0, o0, s0)
 	l.d.comps[tag-1].r = image.Rect(x, y, x+w, y+h)
 	return max(0, h+cs.extra)
 }
 
-// tagFrom marks the primitives added since f0/b0/i0/o0 as component tag's.
-func (l *lay) tagFrom(tag int16, f0, b0, i0, o0 int) {
+// tagFrom marks the primitives added since f0/b0/i0/o0/s0 as component
+// tag's (a play button goes with its image: drawPlays).
+func (l *lay) tagFrom(tag int16, f0, b0, i0, o0, s0 int) {
+	for i := s0; i < len(l.d.spinners); i++ {
+		l.d.spinners[i].comp = tag
+	}
 	for i := o0; i < len(l.d.overlayIcons); i++ {
 		l.d.overlayIcons[i].comp = tag
 	}
@@ -426,6 +430,11 @@ func (c *compRef) paint(gtx layout.Context, s slackc.Styled) layout.Dimensions {
 	o := b.origin()
 	t := op.Offset(o.Min.Mul(-1)).Push(gtx.Ops)
 	c.v.paint(gtx.Ops, c.st, int16(c.i+1), fg)
+	// its play buttons and spinners, over its own fill and under nothing
+	// else of it: a plugin's replacement of the component hides them with
+	// the rest (the static pass draws only the untagged ones)
+	c.v.drawPlays(gtx, c.st, int16(c.i+1))
+	c.v.drawSpinners(gtx, c.st, int16(c.i+1))
 	t.Pop()
 	if b.media > 0 {
 		c.layoutCardMedia(gtx, b)

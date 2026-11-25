@@ -7101,6 +7101,8 @@ jobs:
   # email-pane: the email pane's header icon and its From pill's icon
   # drawn, natively and on Karim's path (a theme sheet, MessageFile,
   # MessageFiles and Blocks patched: the file a MessageFile component),
+  # and a file's play button and spinner drawn with its component (over
+  # the native's fill, never over a plugin's replacement),
   # with the file cards' (CLACK_PIXEL_TESTS). Dispatch with only=email-pane.
   email-pane:
     if: ${{ !inputs.only || startsWith('email-pane', inputs.only) }}
@@ -7125,7 +7127,7 @@ jobs:
           CLACK_PIXEL_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -count=$COUNT -timeout 15m -v -run '^(TestEmailPaneIconsInComponentMode|TestFileIconInComponentMode)$' ./internal/ui/richview
+        run: xvfb-run -a go test -count=$COUNT -timeout 15m -v -run '^(TestEmailPaneIconsInComponentMode|TestFileIconInComponentMode|TestPlaysAndSpinnersDrawWithTheirComponent)$' ./internal/ui/richview
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

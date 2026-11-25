@@ -54,7 +54,8 @@ func (l *lay) fade(nb, nf int) {
 // spinPrim is an InfiniteSpinner drawn every frame.
 type spinPrim struct {
 	r     image.Rectangle
-	white bool // color="white" (else blue)
+	comp  int16 // the component it draws with (comps.go tagFrom), 0: the static pass
+	white bool  // color="white" (else blue)
 	// noMargin is InfiniteSpinner's noMargin (the loading block's): the
 	// 78-unit viewBox, so the ring fills r; track and arc are then its
 	// colours (content-ter at .25, content-hgl-1)
@@ -115,6 +116,15 @@ func (s *spinPrim) draw(gtx layout.Context, st *Style) {
 	arc(base+float32(2*math.Pi*bezierAt(.25, .29, .54, .86, t)), dash, col)
 	arc(base+float32(2*math.Pi*bezierAt(.41, .24, .64, .69, t)), dash, col)
 	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+}
+
+// drawSpinners draws the spinners of component comp (0: the untagged).
+func (v *View) drawSpinners(gtx layout.Context, st *Style, comp int16) {
+	for i := range v.d.spinners {
+		if v.d.spinners[i].comp == comp {
+			v.d.spinners[i].draw(gtx, st)
+		}
+	}
 }
 
 // bezierAt is CSS cubic-bezier(x1, y1, x2, y2) at progress x.

@@ -298,12 +298,12 @@ func (v *View) togglePlay(i int) {
 // 32px play-filled glyph in 20px of padding, 72px round, centred on the
 // image and clipped to it by the container's overflow: hidden; hidden
 // while it plays).
-func (v *View) drawPlays(gtx layout.Context, st *Style) {
+func (v *View) drawPlays(gtx layout.Context, st *Style, comp int16) {
 	p := &st.Palette
 	for i := range v.d.plays {
 		c := &v.d.plays[i]
 		im := &v.d.imgs[c.img]
-		if im.play || !v.playOn(st, c) || im.r.Empty() {
+		if im.comp != comp || im.play || !v.playOn(st, c) || im.r.Empty() {
 			continue
 		}
 		mid := im.r.Min.Add(im.r.Max).Div(2)

@@ -591,10 +591,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	// a MessageFile or attachment component (any theme or plugin
 	// stylesheet, a patch) paints after the static pass and would hide, as
 	// it hid the svgicons
-	v.drawPlays(gtx, st)
-	for i := range v.d.spinners {
-		v.d.spinners[i].draw(gtx, st)
-	}
+	v.drawPlays(gtx, st, 0)
+	v.drawSpinners(gtx, st, 0)
 	if v.d.ells > 0 {
 		v.callEll.Add(gtx.Ops)
 	}
