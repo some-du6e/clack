@@ -1038,7 +1038,7 @@ func innermostBox(f *slackc.InspectFrame, h slackc.InspectHit) treeBox {
 // over reports that b is more specific than o: a tree's own element over
 // a native's box, then the smaller box, then the tree drawn later. A
 // native's children are a tree of their own (LayoutElement: the
-// UserPronouns span among BaseBroadcastPreamble's children), painted
+// UserPronouns span among BroadcastPreamble's children), painted
 // before the tree around the native, whose innermost box there is only
 // the native's "@" box.
 func (b treeBox) over(o treeBox) bool {

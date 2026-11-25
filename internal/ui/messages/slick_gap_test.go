@@ -17,13 +17,13 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// LocalTime (like UserPronouns) patches BaseBroadcastPreamble; its children
+// LocalTime (like UserPronouns) patches BroadcastPreamble; its children
 // then flow inline through slackc, and the name-to-time gap nameLine adds
 // natively must come with the Timestamp slot (live it read "clod3:55 PM").
 func TestSlickViewLocalTimeKeepsTimestampGap(t *testing.T) {
 	e := newSlickEnv(t, nil)
 	e.install(t, "LocalTime", nil)
-	patched(t, "BaseBroadcastPreamble")
+	patched(t, "BroadcastPreamble")
 	v := NewChannelView(e.h, tGen)
 	v.Preview = true
 	var r *row
@@ -83,7 +83,7 @@ func TestSlickViewNicknamesRenamesSender(t *testing.T) {
 }
 
 // UserPronouns: a person's pronouns follow the timestamp in a channel
-// row's header (BaseBroadcastPreamble's children, after the Timestamp slot,
+// row's header (BroadcastPreamble's children, after the Timestamp slot,
 // bulleted), and grouped follow-ups get none.
 func TestSlickViewUserPronouns(t *testing.T) {
 	const ch, uid = "C0PRONOUN1", "U0PRONOUN1"
@@ -96,7 +96,7 @@ func TestSlickViewUserPronouns(t *testing.T) {
 		}, false)
 	})
 	e.install(t, "UserPronouns", nil)
-	patched(t, "BaseBroadcastPreamble")
+	patched(t, "BroadcastPreamble")
 	v := NewChannelView(e.h, ch)
 	v.Preview = true
 	e.waitFor(t, "the pronouns in the row's header", frameFn(v), func() bool {
@@ -118,7 +118,7 @@ func TestSlickViewUserPronouns(t *testing.T) {
 // with 4px each side before it, exactly the native timestamp's text
 // (.c-timestamp: 12px, sk_foreground_max_solid) and nothing like the
 // sender's 15px Black primary foreground. In the channel row
-// (BaseBroadcastPreamble) and the thread pane's header
+// (BroadcastPreamble) and the thread pane's header
 // (ThreadSenderAndTimestampGeneric), in both modes, and inked like the
 // timestamp: slackc painted the light pronouns at full alpha where the
 // timestamp's label fades, so in dark mode they read heavier than it.
@@ -146,7 +146,7 @@ func pronounsStyle(t *testing.T, dark bool) {
 	slackc.Init(slackc.Env{Theme: e.h.th, Core: e.app, Invalidate: func() {}})
 	t.Cleanup(func() { slackc.Init(slackc.Env{}) })
 	e.install(t, "UserPronouns", nil)
-	patched(t, "BaseBroadcastPreamble", "ThreadSenderAndTimestampGeneric")
+	patched(t, "BroadcastPreamble", "ThreadSenderAndTimestampGeneric")
 	v := NewChannelView(e.h, ch)
 	v.Preview = true
 	tv := NewThreadView(e.h, ch, tsRoot)
@@ -162,7 +162,7 @@ func pronounsStyle(t *testing.T, dark bool) {
 		return out
 	}
 	e.waitFor(t, "the pronouns in the channel row and the thread header", both, func() bool {
-		return len(styles("BaseBroadcastPreamble")) > 0 && len(styles("ThreadSenderAndTimestampGeneric")) > 0
+		return len(styles("BroadcastPreamble")) > 0 && len(styles("ThreadSenderAndTimestampGeneric")) > 0
 	})
 
 	c := lightColors
@@ -174,7 +174,7 @@ func pronounsStyle(t *testing.T, dark bool) {
 	if c.Text2 != want {
 		t.Fatalf("the timestamp's colour %v, want sk_foreground_max_solid %v", c.Text2, want)
 	}
-	for _, comp := range []string{"BaseBroadcastPreamble", "ThreadSenderAndTimestampGeneric"} {
+	for _, comp := range []string{"BroadcastPreamble", "ThreadSenderAndTimestampGeneric"} {
 		for _, cs := range styles(comp) {
 			t.Logf("%s: %+v", comp, cs)
 			if cs.Color != want {

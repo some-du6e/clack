@@ -48,7 +48,7 @@ import (
 //	    └ MessageKitGutter {light|compact}  layoutGutter
 //	      ├ MessageAvatar {BaseMessageAvatar {ConnectedBaseAvatar}}, or the compact Timestamp
 //	      └ body column                     layoutColumn
-//	        ├ BaseBroadcastPreamble {MessageSender, Timestamp} (threads:
+//	        ├ BroadcastPreamble {MessageSender, Timestamp} (threads:
 //	        │ ThreadSenderAndTimestampGeneric) → MessageSender → BaseMessageSender
 //	        ├ BaseVisuallyHiddenMessageText (screen-reader text: empty)
 //	        ├ MessageText → MessageBlocks → Blocks  layoutBlocks (msg overrides)
@@ -1105,7 +1105,7 @@ func (r *row) preambleProps() slackc.Props {
 }
 
 // layoutPreambleTimestamp is the Timestamp slot of a patched
-// BaseBroadcastPreamble: the plugin's tree lays the slots out inline, so the
+// BroadcastPreamble: the plugin's tree lays the slots out inline, so the
 // slot keeps nameLine's gap after the sender itself.
 func (r *row) layoutPreambleTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	gap := dp(gtx, mt.tsGap)
@@ -1851,10 +1851,10 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 			y += max(d.Size.Y, dp(gtx, mt.nameLine))
 		case rc.dense:
 			// getCompactMessageBody: inside .c-message_kit__indent,
-			// BaseBroadcastPreamble {the sender (margin-left -8px), a
+			// BroadcastPreamble {the sender (margin-left -8px), a
 			// no-break space}, then the text inline (CompactBlocks)
 			rec := op.Record(gtx.Ops)
-			d = slackc.Component(gtx, "BaseBroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
+			d = slackc.Component(gtx, "BroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
 			name = rec.Stop()
 			nameX = -dp(gtx, mt.indent)
 			r.nameX = nameX
@@ -1875,7 +1875,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 				y += max(d.Size.Y, dp(gtx, mt.nameLine))
 			}
 		default:
-			d = slackc.Component(gtx, "BaseBroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
+			d = slackc.Component(gtx, "BroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
 			r.nameBL = d.Size.Y - d.Baseline
 			y += max(d.Size.Y, dp(gtx, mt.nameLine))
 		}
@@ -2242,9 +2242,11 @@ func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions
 	return r.rv.Layout(gtx, rc.st, &r.handler)
 }
 
-// layoutPreamble is BaseBroadcastPreamble, the channel message header.
-// Its children are the MessageSender and Timestamp slots; a plugin may
-// insert siblings between them (UserPronouns).
+// layoutPreamble is BroadcastPreamble, the channel message header (Slack
+// named it BaseBroadcastPreamble before build 889ac449a32d; Taut's
+// 04_react.js RENAMED answers to both). Its children are the MessageSender
+// and Timestamp slots; a plugin may insert siblings between them
+// (UserPronouns, LocalTime).
 func (r *row) layoutPreamble(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if e, ok := slackc.PropChildren(p); ok {
 		return slackc.LayoutElement(gtx, e)

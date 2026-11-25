@@ -334,7 +334,7 @@ func (s *Sub) Close() {
 
 // PropChildren returns the children a plugin passed to <Original>
 // ({children}), already rendered to host nodes. A native whose Slack
-// counterpart takes children (BaseBroadcastPreamble, ReactionBar, …) lays
+// counterpart takes children (BroadcastPreamble, ReactionBar, …) lays
 // them out with LayoutElement instead of drawing its own parts; the native
 // parts it handed out as Slots come back inside as "@" slot nodes.
 func PropChildren(p Props) (Element, bool) {

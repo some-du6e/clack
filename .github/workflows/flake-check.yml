@@ -7330,6 +7330,40 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # broadcast-preamble (2026-11-25): Slack build 889ac449a32d renamed the
+  # channel message header BaseBroadcastPreamble to BroadcastPreamble; Clack's
+  # header is BroadcastPreamble and answers to both names, a plugin that
+  # patches both drawing once (Taut's User Pronouns 3.7.6, Slick's User
+  # Pronouns and Local Time). COUNT runs each. Dispatch with
+  # only=broadcast-preamble.
+  broadcast-preamble:
+    if: ${{ !inputs.only || startsWith('broadcast-preamble', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the header's two names, a plugin patching both, the alias's users, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          go test -count="$COUNT" -timeout 10m -run '^(TestBroadcastPreambleAnswersBothNames|TestInspectPicksPluginPronouns|TestRowPatchedWithoutRuntime)$' ./internal/ui/messages || rc=1
+          go test -count="$COUNT" -timeout 6m -run '^TestPreambleBothNamesPatchOnce$' ./internal/slick || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7495,6 +7529,7 @@ jobs:
       - entprefs
       - scroll-cpu
       - member-subs
+      - broadcast-preamble
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

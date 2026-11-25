@@ -1,7 +1,7 @@
 package messages
 
 // The inspect tool (internal/ui/inspect) picks a plugin's inline element
-// in a message header: UserPronouns renders BaseBroadcastPreamble's
+// in a message header: UserPronouns renders BroadcastPreamble's
 // <Original> with its children, the pronouns span inserted among them,
 // so the span is in the tree the native lays its children out in
 // (LayoutElement), painted before the tree around the native, whose box
@@ -67,7 +67,9 @@ func (h pickHost) Frozen(bool)               {}
 func TestInspectPicksPluginPronouns(t *testing.T) {
 	_, _, tt, u, h := pluginEnv(t)
 	install(t, tt, pronounsPlugin)
-	until(t, 5*time.Second, "BaseBroadcastPreamble patched", func() {}, func() bool { return slackc.Patched("BaseBroadcastPreamble") })
+	// the plugin patches the header's old name (Taut's UserPronouns before
+	// 3.7.6), which the header answers to
+	until(t, 5*time.Second, "BroadcastPreamble patched", func() {}, func() bool { return slackc.Patched("BroadcastPreamble") })
 	v := NewChannelView(h, tGen)
 	v.Preview = true
 	until(t, 8*time.Second, "the pronouns in a header", frameFn(v), func() bool { return u.anyTree("taut-pronouns") })

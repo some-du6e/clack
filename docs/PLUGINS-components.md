@@ -31,7 +31,7 @@ Clack's `slackc.Render(gtx, name, props, native)` has to reproduce these rules e
 | 8 | ThreadCompactGutterGeneric | displayName compare | ShowSendingBot | messages/row.go:`(*row).layout` grouped-row hover time (thread pane) | msgs | drawn, inline |
 | 9 | MessageSender | patch | ShowSendingBot | messages/row.go:`(*row).nameLine` | msgs | drawn, inline |
 | 10 | BaseMessageSender | patch | IdvStatus, ShinigamiEyes | messages/row.go:`(*row).nameLine` (`nameBtn`) | msgs | drawn, inline |
-| 11 | BaseBroadcastPreamble | patch | UserPronouns | messages/row.go:`(*row).nameLine` (sender + timestamp children) | msgs | drawn, inline |
+| 11 | BroadcastPreamble (BaseBroadcastPreamble before Slack build 889ac449a32d; answers to both) | patch | UserPronouns, LocalTime | messages/row.go:`(*row).nameLine` (sender + timestamp children) | msgs | drawn, inline |
 | 12 | ThreadSenderAndTimestampGeneric | patch | ShowSendingBot, UserPronouns | messages/row.go:`(*row).nameLine` in ThreadView; views/threads.go:`(*Threads).msg` | msgs/views | drawn, inline |
 | 13 | ThreadRootGeneric | patch | ShowRealUser | messages/thread.go root row (`itThreadHead` in list.go `layoutItem`); views/threads.go:`(*Threads).card` | msgs/views | drawn, inline |
 | 14 | MessageBlocks | patch | OwlMode | richview/view.go:`View.Layout` → blocks.go:`(*lay).blocks` | msgs | drawn |
@@ -174,7 +174,8 @@ Shared Slack shapes used below:
 - **ShinigamiEyes** (disabled) P/ShinigamiEyes.disabled.tsx:69-105. Reads `botId, userId, className` and appends `taut-trust-level--0..4`. The CSS `::before { content: "<emoji> " }` prefixes the name with an emoji.
 - **Clack**: messages/row.go:`(*row).nameLine` (`nameBtn`, name 15/900, APP badge, status emoji), **msgs**. The component must honour `className`, with the inner button carrying `c-message__sender_button`.
 
-#### BaseBroadcastPreamble
+#### BroadcastPreamble
+Slack build 889ac449a32d renamed it from BaseBroadcastPreamble, and the plugins followed: Taut's User Pronouns 3.7.6 patches the new name (3.7.5 the old one), and Slick's User Pronouns (#507) and Local Time (#508) patch both. Clack's header is BroadcastPreamble and answers to the old name too (taut/js/04_react.js `RENAMED`: patches, lookups, `getComponent`): a plugin of either build draws in it, and one that patches both draws once, since its patch of the old name gives way to its patch of the new one, as Slack draws only one of the two. Each plugin's API passes its scope as the patch's owner, which is how the patches are told apart (`TestBroadcastPreambleAnswersBothNames`, `TestPreambleBothNamesPatchOnce`).
 - **UserPronouns** P/UserPronouns.tsx:82-104. Despite the name, this is the channel message **header** that receives the sender and the timestamp as `children` (comment at :80). Reads `msg: {user, bot_id}` and `children`. It finds the timestamp child (the first element whose props have a `clickable` key and `visible !== false`), otherwise the sender child (the first with an `isInteractive` key). It inserts `<Pronouns key="taut-pronouns" userId bulleted={timestamp found}/>` after it and renders `<Original {...props}>{children}</Original>`.
 - **Clack**: messages/row.go:`(*row).nameLine`, **msgs**. The children must be real elements with props `isInteractive` (sender) and `clickable`/`visible` (timestamp), and must be re-orderable. Not the same as `(*row).broadcastLine` ("replied to a thread").
 
@@ -747,7 +748,7 @@ Clack: popups/modal.go:`NewModal` (`ModalOpts{Title, Body, Buttons, EnterSubmits
 - `Label.text`/`subtext`; `BasicSelect.options[].label`.
 - `MemberProfileHoverCard.header`; `MessageInputRoadblock.roadblockMessage`; `TypingNames.firstTyper`/`secondTyper`.
 - Gutter memo `light`/`compact` (element slots inspected by `className` and `type.type.displayName`).
-- `BaseBroadcastPreamble.children` (inspected by `isInteractive` / `clickable` / `visible` props).
+- `BroadcastPreamble.children` (inspected by `isInteractive` / `clickable` / `visible` props).
 - `HuddleBaseEvent.children`, `HuddlesAlertBannerBase.children`, `ActivityRowContentSenderAvatarLayout.children`, `ActivityPrivacyBlurredName.children`, `TextyButtonOverflow.children` (array, appended to).
 - `MessageInput.broadcastControls` (element whose props are read).
 - `Tabs.tabs[].label`/`content`; `enqueueHuddleToast` `options.content`.
@@ -771,7 +772,7 @@ Clack: popups/modal.go:`NewModal` (`ModalOpts{Title, Body, Buttons, EnterSubmits
 1. **Two anonymous filter matches** (#7, #21) match Slack module source, not a name. Clack's native gutter must report a "source" containing `c-message_kit__gutter__left`. The huddle join gate must be a memo with an unnamed inner function whose source contains `canJoinByExternalHuddleLink`. Either give native components synthetic source strings, or extend `getComponentSource` to read a per-component marker list.
 2. **Source-marker elements** (`Button`, `Tooltip`, `Label`, `Legend`, `Popover`) are found by `getComponentSource(...).includes(marker)` over the *whole module*. Clack's exported components need those markers in whatever stands in for their module source.
 3. **`MessageActions`** names two Slack components (the hover toolbar and the whole-message wrapper, per the OwlMode comment). OwlMode wants the toolbar. Clack should give the name only to the toolbar unless another plugin turns up that needs the wrapper.
-4. **`BaseBroadcastPreamble`** is the channel message *header*, despite its name. The plugin inspects child element props (`isInteractive`, `clickable`, `visible`), so Clack's sender and timestamp must be real elements with those props.
+4. **`BroadcastPreamble`** (BaseBroadcastPreamble before Slack build 889ac449a32d) is the channel message *header*, despite its name. The plugin inspects child element props (`isInteractive`, `clickable`, `visible`), so Clack's sender and timestamp must be real elements with those props.
 5. **`ListChannelEntity`**: the plugin only shows it as a channel row. Whether Slack also uses it in pickers (forward modal, directories) isn't visible from taut source. Mapped to the sidebar row; views/directories.go:`chanRow` and popups/actions_forward.go targets are candidates.
 6. **`UnstyledButton`** is generic: WhoReacted filters on `data-qa="reactji"`. To be exact, every native unstyled button would go through this name with its `data-qa`. At minimum the reaction pill must.
 7. **`SearchResult`** spreads the whole props object as a message, so Clack's search card props must be the message fields at top level plus `channel`.
@@ -852,7 +853,7 @@ Parts are resolved at layout (font-weight and font-style change the shaping) and
 
 ### 5.3 Per-owner checklist
 Rows link to §Index numbers. Status on `taut-ui` (2026-11-07): every row below is wrapped unless it's listed under §8 "Left to do".
-- **msgs** (`messages`, `richview`): 1 MessageBackground, 2 MessageWrapper, 5 MessageAvatar, 6 ConnectedBaseAvatar (register as host `ConnectedBaseAvatar`/`Avatar`), 7 gutter filter memo (name `MessageKitGutter`, source marker `c-message_kit__gutter__left`), 8, 9 MessageSender, 10 BaseMessageSender, 11 BaseBroadcastPreamble (children: sender + timestamp slots), 12, 13, 14 MessageBlocks, 15 Blocks (also host), 17–21 attachments, 22 ReactionBar (children: Reaction slots + ReactionAddButton slot), 23 Reaction, 24 UnstyledButton `data-qa=reactji`, 25 ReactionAddButton, 26 MessageActions, 27 MessageActionButtonReaction, 44, 45/46 (empty boundaries), 50 BaseMrkdwnChannel, 51 MemberLink, 72 MrkdwnElement (host).
+- **msgs** (`messages`, `richview`): 1 MessageBackground, 2 MessageWrapper, 5 MessageAvatar, 6 ConnectedBaseAvatar (register as host `ConnectedBaseAvatar`/`Avatar`), 7 gutter filter memo (name `MessageKitGutter`, source marker `c-message_kit__gutter__left`), 8, 9 MessageSender, 10 BaseMessageSender, 11 BroadcastPreamble (children: sender + timestamp slots; answers to BaseBroadcastPreamble), 12, 13, 14 MessageBlocks, 15 Blocks (also host), 17–21 attachments, 22 ReactionBar (children: Reaction slots + ReactionAddButton slot), 23 Reaction, 24 UnstyledButton `data-qa=reactji`, 25 ReactionAddButton, 26 MessageActions, 27 MessageActionButtonReaction, 44, 45/46 (empty boundaries), 50 BaseMrkdwnChannel, 51 MemberLink, 72 MrkdwnElement (host).
 - **comp** (`composer`): 30 MessagePaneInput, 31 InputContainer, 32 MessageInput, 33 WysiwygContainer, 34 TextyButtons, 35 TextyButtonOverflow (+ composer.addButton slot), 36, 37 BaseContextBarV2 (empty boundary above the composer), 38 MessageInputRoadblock (boundary around the composer), 39 ThreadTypingIndicator, 40 TypingNames, 41, 42 CharacterCount (empty), 43 ComposerLinkModal.
 - **pop** (`popups`): 3 MessageListItem, 4 SearchResult, 28 EmojiPickerPopover, 29 EmojiPicker, 55–60 profile parts, 67–69 menus, plus the elements drawn by `slackc/kit`.
 - **views** (`views`): 12/13 in Threads, 52 ActivityItem, 53, 54 ActivityPrivacyBlurredName, 61–65 huddle surfaces where they exist (Huddles view), 90 BasicSelect.

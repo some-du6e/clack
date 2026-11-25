@@ -300,14 +300,14 @@ var checks = map[string]pluginCheck{
 			t.Errorf("thread header %v", nodes)
 		}
 		// the channel header gets the pronouns spliced in after the timestamp slot
-		nodes = h.render(4, "BaseBroadcastPreamble", map[string]any{
+		nodes = h.render(4, "BroadcastPreamble", map[string]any{
 			"msg": map[string]any{"user": "UALICE"},
 			"children": []any{
 				map[string]any{"$slot": 1, "n": "MessageSender", "p": map[string]any{"isInteractive": true}},
 				map[string]any{"$slot": 2, "n": "MessageTimestamp", "p": map[string]any{"clickable": true}},
 			},
 		})
-		pre := findNative(nodes, "BaseBroadcastPreamble")
+		pre := findNative(nodes, "BroadcastPreamble")
 		if pre == nil || findNative(nodes, "MessageSender") == nil || findNative(nodes, "MessageTimestamp") == nil || !strings.Contains(treeText(nodes), "she/her") {
 			t.Errorf("preamble %v", nodes)
 		}
@@ -579,7 +579,7 @@ SlackFixes | components=ThreadFlexpaneAdminTools styles=2
 SlimMessageBox | components=TextyButtons buttons=taut-broadcast styles=3
 StreamerMode | components=MessageBackground,ActivityItem,ActivityPrivacyBlurredName,HelpButton thunks=showNotification styles=1
 ThreadJump | components=ThreadSearchButton slices=experiments styles=1 exp=find_in_thread
-UserPronouns | components=BaseBroadcastPreamble,ThreadSenderAndTimestampGeneric styles=1
+UserPronouns | components=BroadcastPreamble,ThreadSenderAndTimestampGeneric styles=1
 WhoReacted | components=Reaction,UnstyledButton styles=1
 `
 

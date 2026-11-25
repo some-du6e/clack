@@ -83,7 +83,7 @@ func TestRowPatchedWithoutRuntime(t *testing.T) {
 	frame()
 	h1, h2 := r1.height, r2.height
 	slackc.SetPatched([]string{"MessageWrapper", "MessageBackground", "MessageKitGutter", "MessageAvatar", "ConnectedBaseAvatar",
-		"Timestamp", "BaseBroadcastPreamble", "MessageSender", "BaseMessageSender", "MessageBlocks", "Blocks", "ReactionBar",
+		"Timestamp", "BroadcastPreamble", "MessageSender", "BaseMessageSender", "MessageBlocks", "Blocks", "ReactionBar",
 		"Reaction", "UnstyledButton", "ReactionAddButton", "MemberLink",
 		// Slick's names (docs/PLUGINS-components.md §9)
 		"Message", "BaseMessageAvatar", "MessageText", "BaseVisuallyHiddenMessageText", "MessageFiles", "MessageKitAttachments",

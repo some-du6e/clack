@@ -6,7 +6,7 @@ package messages
 // checks are the Clean tests run again with the pref on; ShowSendingBot
 // and LocalTime get Compact's own: every channel row's gutter is the
 // compact time (Message's getCompactGutter), so the sending bot's badge
-// lands there, and BaseBroadcastPreamble's children are the sender alone
+// lands there, and BroadcastPreamble's children are the sender alone
 // (the time is the gutter's).
 
 import (
@@ -71,7 +71,7 @@ func TestSlickViewCompactLocalTime(t *testing.T) {
 	setDense(t, true)
 	e := newSlickEnv(t, nil)
 	e.install(t, "LocalTime", nil)
-	patched(t, "BaseBroadcastPreamble")
+	patched(t, "BroadcastPreamble")
 	v := NewChannelView(e.h, tGen)
 	v.Preview = true
 	var r *row

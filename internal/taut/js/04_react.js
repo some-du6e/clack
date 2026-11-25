@@ -204,9 +204,21 @@ function fedProps(name, props) {
 
 /** Slack components that are anonymous memos in the web client, found by `filter` on their source */
 const ANONYMOUS = new Set(['MessageKitGutter', 'HuddleLinkJoinGate'])
+/**
+ * Components Slack renamed, old name → the current one. Clack's component
+ * answers to both, so a plugin written for either Slack build patches it
+ * and finds it: build 889ac449a32d renamed the channel message header
+ * BaseBroadcastPreamble to BroadcastPreamble (Taut's User Pronouns 3.7.6
+ * patches the new name, 3.7.5 the old one). Slack draws one of the two, so
+ * a plugin that patches both (Slick's User Pronouns and Local Time, which
+ * follow Slack's builds) gets its patch of the current name alone: its
+ * patch of the old one gives way to it (matchers), and it inserts once.
+ */
+const RENAMED = { BaseBroadcastPreamble: 'BroadcastPreamble' }
+const currentName = (name) => (typeof name === 'string' && Object.prototype.hasOwnProperty.call(RENAMED, name) ? RENAMED[name] : name)
 /** every Slack component Clack draws at a boundary (docs/PLUGINS-components.md), so filter-only patches can match them */
 const KNOWN_COMPONENTS = ('MessageBackground;MessageWrapper;MessageListItem;SearchResult;MessageAvatar;ConnectedBaseAvatar;MessageKitGutter;' +
-  'ThreadCompactGutterGeneric;MessageSender;BaseMessageSender;BaseBroadcastPreamble;ThreadSenderAndTimestampGeneric;ThreadRootGeneric;' +
+  'ThreadCompactGutterGeneric;MessageSender;BaseMessageSender;BroadcastPreamble;ThreadSenderAndTimestampGeneric;ThreadRootGeneric;' +
   'MessageBlocks;Blocks;ViewBlocks;MessageAttachment;BaseMessageAttachmentSlackMessage;AttachmentMedia;MessageAttachmentHuddleLink;' +
   'HuddleLinkJoinGate;ReactionBar;Reaction;UnstyledButton;ReactionAddButton;MessageActions;MessageActionButtonReaction;EmojiPickerPopover;' +
   'EmojiPicker;MessagePaneInput;InputContainer;MessageInput;WysiwygContainer;TextyButtons;TextyButtonOverflow;ShortcutsMenuTriggerButton;' +
@@ -238,6 +250,7 @@ let slotCtx
 const slotContext = () => (slotCtx ??= G.React.createContext(null))
 
 function nativeFor(name) {
+  name = currentName(name)
   let c = rawNatives.get(name)
   if (c) return c
   const React = G.React
@@ -293,6 +306,8 @@ function componentName(c) {
 // ---- patching ----
 
 const replacements = new Map() // matcher → replacer
+/** matcher → {owner, old, name}: who patched (a plugin's scope), whether under a name Slack retired, the current name */
+const patchInfo = new Map()
 const replacerCache = new WeakMap() // replacer → Map(original → replaced)
 const composedStores = new Map() // name → Store(composed component)
 let patchedNames = new Set()
@@ -332,14 +347,27 @@ function originalObject(name) {
 }
 
 function matchers(name) {
+  name = currentName(name)
   const raw = nativeFor(name)
-  const out = []
+  const hits = []
   for (const [m, r] of replacements) {
     let ok = false
     try {
       ok = m(raw, name)
     } catch {}
-    if (ok) out.push(r)
+    if (ok) hits.push([m, r])
+  }
+  // a plugin's patch of a retired name gives way to its patch of the
+  // current one: Slack has only one of the two names in any build
+  const current = new Set()
+  for (const [m] of hits) {
+    const p = patchInfo.get(m)
+    if (p && !p.old && p.owner !== undefined && p.name === name) current.add(p.owner)
+  }
+  const out = []
+  for (const [m, r] of hits) {
+    const p = patchInfo.get(m)
+    if (!(p?.old && p.owner !== undefined && current.has(p.owner))) out.push(r)
   }
   return out
 }
@@ -416,6 +444,7 @@ function notePatchError(name, err, info) {
 
 /** the component a plugin gets for Slack's `name`: it follows patches as they come and go */
 function slackComponent(name) {
+  name = currentName(name)
   let w = wrappers.get(name)
   if (w) return w
   const composed = new Store(null)
@@ -474,26 +503,32 @@ const patchTargetNames = new Set()
  * menu API asks for it starts, so every plugin's MAMenu patch sits outside
  * it; Clack installs it only while it has a message action to add).
  */
-function patchComponentInner(matcher, replacement) {
-  return addPatch(matcher, replacement, true)
+function patchComponentInner(matcher, replacement, owner) {
+  return addPatch(matcher, replacement, true, owner)
 }
 
-/** a plugin's patch: outside the ones before it */
-function patchComponent(matcher, replacement) {
-  return addPatch(matcher, replacement, false)
+/**
+ * a plugin's patch: outside the ones before it. owner is the patching
+ * plugin's scope (its API passes it), which tells its patches apart from
+ * another plugin's (matchers).
+ */
+function patchComponent(matcher, replacement, owner) {
+  return addPatch(matcher, replacement, false, owner)
 }
 
-function addPatch(matcher, replacement, inner) {
-  const displayName = typeof matcher === 'string' ? matcher : matcher?.displayName
+function addPatch(matcher, replacement, inner, owner) {
+  const asked = typeof matcher === 'string' ? matcher : matcher?.displayName
+  const displayName = asked === undefined ? undefined : currentName(asked)
   const filter = typeof matcher === 'string' ? undefined : matcher?.filter
   const component = typeof matcher === 'string' ? undefined : matcher?.component
   const fn = (comp, name) => {
     if (component && (comp === component || wrappers.get(name) === component || rawNatives.get(name) === component)) return true
     if (displayName === undefined && !filter) return false
-    if (displayName !== undefined && name !== displayName) return false
+    if (displayName !== undefined && currentName(name) !== displayName) return false
     if (filter && !filter(comp)) return false
     return true
   }
+  patchInfo.set(fn, { owner, old: asked !== displayName, name: displayName })
   if (displayName !== undefined) {
     patchTargetNames.add(displayName)
     nativeFor(displayName)
@@ -512,6 +547,7 @@ function addPatch(matcher, replacement, inner) {
   applyPatches()
   return () => {
     replacements.delete(fn)
+    patchInfo.delete(fn)
     applyPatches()
   }
 }

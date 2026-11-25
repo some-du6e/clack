@@ -504,7 +504,7 @@ func TestPluginUserPronouns(t *testing.T) {
 	_, _, tt, u, h := pluginEnv(t)
 	install(t, tt, code)
 	until(t, 3*time.Second, "components patched", func() {}, func() bool {
-		return slackc.Patched("BaseBroadcastPreamble") && slackc.Patched("ThreadSenderAndTimestampGeneric")
+		return slackc.Patched("BroadcastPreamble") && slackc.Patched("ThreadSenderAndTimestampGeneric")
 	})
 	// channel rows: Alice's header gets her pronouns
 	v := NewChannelView(h, tGen)
@@ -545,7 +545,7 @@ func TestPluginUserPronouns(t *testing.T) {
 		for _, cs := range slackc.ClassStyles("taut-pronouns") {
 			seen[cs.Component] = true
 		}
-		return seen["BaseBroadcastPreamble"] && seen["ThreadSenderAndTimestampGeneric"]
+		return seen["BroadcastPreamble"] && seen["ThreadSenderAndTimestampGeneric"]
 	})
 	for _, cs := range slackc.ClassStyles("taut-pronouns") {
 		if cs.Color != lightColors.Text2 || cs.FontSize != 12 || cs.FontWeight != 400 {

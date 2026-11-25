@@ -529,7 +529,7 @@ function createScopedAPI(entry, id, scope) {
     id,
     signal: scope.signal,
     isActive: () => !scope.signal.aborted && plugins.get(id)?.scope === scope,
-    patchComponent: tracked(T.patchComponent),
+    patchComponent: tracked((matcher, replacement) => T.patchComponent(matcher, replacement, scope)),
     onDocument: tracked(onDocument),
     deferResizeWork: tracked(deferResizeWork),
     setStyle: tracked((css, key = 'default') => TA.setStyle(css, `plugin:${id}:${key}`)),

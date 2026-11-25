@@ -107,6 +107,7 @@ _no props recorded_
 
 ### BaseBroadcastPreamble
 
+- recorded before Slack build 889ac449a32d renamed it BroadcastPreamble (Clack's answers to both names)
 - type: plain · fibers seen: 351 · states: channel, channel-bottom, channel-details, channel-details-Agents & apps, channel-details-Automations, channel-details-Members, channel-details-Settings, channel-details-Tabs, channel-history, channel-scroll, channel2, composer-focused, composer-focused-thread, emoji-picker-composer, emoji-picker-reaction, message-more-menu, profile-hover, sidebar-context-menu, thread, thread-hover
 - outer host: `<span>` · classes: `c-message__sender` `c-message_kit__sender`
 - data-qa: `message_sender` `aria-labelledby-primary-<id>-<n>-sender`

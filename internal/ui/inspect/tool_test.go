@@ -7,7 +7,7 @@ import "testing"
 // native lays its children out in, inside the patched component's tree),
 // then the smaller box, then the tree drawn later.
 func TestTreeBoxOver(t *testing.T) {
-	outer := treeBox{node: 9, native: true, area: 400 * 22} // <Original>: BaseBroadcastPreamble's "@" box
+	outer := treeBox{node: 9, native: true, area: 400 * 22} // <Original>: BroadcastPreamble's "@" box
 	span := treeBox{node: 5, area: 50 * 16}                 // the pronouns, in the children's tree
 	if !span.over(outer) || outer.over(span) {
 		t.Error("a tree's own element must win over a native's box in another tree")

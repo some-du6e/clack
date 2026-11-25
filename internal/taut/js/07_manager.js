@@ -174,7 +174,7 @@ function createScopedAPI(id, scope) {
     ...base,
     signal: scope.signal,
     within: (work, ms, what) => base.within(work, ms, what && `${id}: ${what}`, scope.signal),
-    patchComponent: tracked(base.patchComponent),
+    patchComponent: tracked((matcher, replacement) => base.patchComponent(matcher, replacement, scope)),
     redux: {
       ...base.redux,
       patchState: tracked(base.redux.patchState),
