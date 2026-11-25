@@ -27,8 +27,9 @@ import (
 // The auto-updater: when the update check finds a newer release, Updater
 // downloads the one package that matches how this copy was installed,
 // checks it against the release's SHA256SUMS, and keeps it in the cache.
-// Nothing is installed until the user clicks "Install and restart"
-// (install.go). Releases aren't code-signed yet: the checksum catches a
+// It installs when the user restarts into it ("Install and restart") or,
+// for the installs that swap in silently, when Clack quits, as Slack
+// desktop's does (install.go; cmd/clack stageForQuit and installOnQuit). Releases aren't code-signed yet: the checksum catches a
 // corrupt or truncated download, not a compromised repository
 // (docs/SECURITY.md D-3).
 

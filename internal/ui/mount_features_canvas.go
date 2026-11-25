@@ -7,6 +7,7 @@ package ui
 import (
 	"context"
 	"image"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -198,7 +199,7 @@ func (a *App) newChannelCanvas(ch string) {
 		id, err := c.CreateCanvas(ctx, ch, "", "")
 		a.Post(func() {
 			if err != nil {
-				a.Toast("Couldn't create the canvas: " + err.Error())
+				popups.FailedToast(a, "ui: canvases.create", err)
 				return
 			}
 			if a.data != nil {
@@ -253,7 +254,7 @@ func (a *App) CreateCanvas() {
 		id, err := c.CreateCanvas(ctx, "", "", "")
 		a.Post(func() {
 			if err != nil {
-				a.Toast("Couldn't create the canvas: " + err.Error())
+				popups.FailedToast(a, "ui: canvases.create", err)
 				return
 			}
 			a.OpenCanvasFull(id)
@@ -310,7 +311,8 @@ func (a *App) shareCanvasAccess(id, ch, name string) {
 			err := c.ShareCanvas(ctx, id, []string{ch}, level, "")
 			a.Post(func() {
 				if err != nil {
-					a.Toast("Couldn't share the canvas: " + err.Error())
+					log.Printf("ui: canvas share: %v", err)
+					a.Toast("Unable to share canvas. Refresh and try again later.") // the share dialog's failure text
 					return
 				}
 				a.Toast("Canvas shared to " + name) // no Slack key (its toast names the people)

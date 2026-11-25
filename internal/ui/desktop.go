@@ -317,8 +317,8 @@ func (a *App) startUpdateDownload(force bool) {
 
 // installUpdate is the user's choice to restart into the update ("Restart
 // Clack" in the update dialog, "Restart to Apply Update" in the menus,
-// Preferences' "Install and restart"): the only way an update is
-// installed.
+// Preferences' "Install and restart"); otherwise a downloaded update goes
+// in as Clack quits (InstallUpdateOnQuit).
 func (a *App) installUpdate() {
 	u := &a.update
 	if u.phase != updReady && u.phase != updFailed || a.opts.InstallUpdate == nil {

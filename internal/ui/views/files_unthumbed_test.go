@@ -27,7 +27,7 @@ func unthumbedIDs(t *testing.T, fs *fakeslack.Server) map[string]bool {
 }
 
 // The Files browser's Images: an image Slack made no thumbs for isn't
-// fileIsImage, so its row is a file (the type tile, never a thumbnail)
+// fileIsImage, so its row is a file (its svgicon, never a thumbnail)
 // and a click opens its page (getMainFileAction "download"), not the
 // media viewer, which can't show the original; thumbnailed images still
 // draw their thumbnail and open in the viewer.
@@ -77,8 +77,8 @@ func TestFilesViewUnthumbedImage(t *testing.T) {
 			if it.isImage() || it.Thumb != "" {
 				t.Errorf("%s: isImage %v Thumb %q, want a plain file", it.ID, it.isImage(), it.Thumb)
 			}
-			if _, _, icon := fileTileStyle(it, false); icon != "image" {
-				t.Errorf("%s: tile icon %q, want image (getFileTypeSvgIconName: png)", it.ID, icon)
+			if lk := fileLook(it, false); lk.art != "fileicon-file-image" {
+				t.Errorf("%s: tile %+v, want the image svgicon (getSVGIconType: png)", it.ID, lk)
 			}
 			clickRow(it.ID)
 			if got := h.last(); got != "url:"+it.Permalink || it.Permalink == "" {

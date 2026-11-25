@@ -474,6 +474,11 @@ type Options struct {
 	// NoHoverCards: the doc sits inside a hover card (the channel card's
 	// topic), so its mentions report no card of their own.
 	NoHoverCards bool
+	// NoLinking: the doc is drawn under CSS pointer-events:none (an
+	// Activity inbox row's preview): its mentions, links and dates draw as
+	// they do but take no pointer, so no hover card, no click and no hand;
+	// the row under them does.
+	NoLinking bool
 	// Canvas: the doc is a canvas's. Its channel mentions open the
 	// canvas's own channel card (Slack's embedded ChannelHovercard,
 	// hovercard Request.Canvas), not the message ChannelHoverCard.
@@ -552,6 +557,11 @@ type Options struct {
 	// (c-message_kit__blocks--focused-result), so its FindHighlight runs
 	// draw in FindFocused.
 	FindFocused bool
+	// NoAttachmentLimit: the doc's attachments all draw, as a search
+	// result's do (SearchResult, boot-shared IT2K: renderAttachments draws
+	// each with renderFullAttachment, never through MessageKitAttachments
+	// and its 20, overlimit.go).
+	NoAttachmentLimit bool
 }
 
 // lightEmbolden is the extra outline (px) for glyph color c at scale pxPerDp.

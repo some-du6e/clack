@@ -15,6 +15,7 @@ package views
 import (
 	"context"
 	"image"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -582,7 +583,7 @@ func (d *Drafts) apply() {
 	if v, ok, err := d.open.get(); ok && v.seq != 0 && v.seq != d.openApplied {
 		d.openApplied = v.seq
 		if err != nil {
-			d.h.Toast("Couldn’t open that conversation: " + friendlyErr(err))
+			log.Printf("views: conversations.open: %v", err) // openConversation logs "failed to open conversation" and rethrows: nothing on screen
 		} else if v.conv.ID != "" {
 			d.h.Navigate("c/" + v.conv.ID)
 		}
@@ -1181,7 +1182,8 @@ func (d *Drafts) drainDone() {
 			if e := d.edit; e != nil && e.id == x.closeEdit {
 				e.busy = false
 			}
-			d.h.Toast(x.errMsg + ": " + friendlyErr(x.err))
+			log.Printf("views: drafts: %s: %v", x.errMsg, x.err)
+			d.h.Toast(x.errMsg)
 		} else {
 			if x.saved != nil {
 				l := d.all()

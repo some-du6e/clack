@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"log"
 	"net/url"
 	"slices"
 	"sort"
@@ -1006,7 +1007,7 @@ func (v *SearchView) sortMenu(gtx layout.Context) {
 				run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SetPref(ctx, "search_sort", pref) },
 					func(_ struct{}, err error) {
 						if err != nil {
-							v.h.Toast("Couldn't save that preference: " + errText(err))
+							log.Printf("popups: users.prefs.set: %v", err) // setUserPrefByApi: optimistic, nothing on screen when it fails
 						}
 					})
 			}

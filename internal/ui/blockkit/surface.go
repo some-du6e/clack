@@ -176,6 +176,13 @@ func (s *surfHandler) EventAction(act string, ev *richtext.Event, ch, ts string,
 	popups.EventAction(s.h, act, ev, ch, ts, popups.ActionAnchor(btn, window))
 }
 
+// The image hover group's Download and More actions: without these the
+// images here would lose them with no test going red.
+var (
+	_ richview.ImageDownloadHandler = (*surfHandler)(nil)
+	_ richview.ImageMenuHandler     = (*surfHandler)(nil)
+)
+
 // DownloadImageFile is an image's AttachmentImageActions Download: the
 // image's Slack file.
 func (s *surfHandler) DownloadImageFile(f *richtext.File) {
@@ -689,7 +696,9 @@ func (s *Surface) blockMargins(b *Block, first bool) (top, bottom, inner, innerB
 
 // kitMargins are the margins of block b's own CSS where no surface
 // overrides them, in dp (as blockMargins): the newer blocks' and
-// UnsupportedBlockFallback's.
+// UnsupportedBlockFallback's. A video block has none here: richview's
+// VideoBlock draws its body's padding (.p-video_block__body{padding:8px
+// 0}, videoblock.go), so the surface adds nothing around it.
 func kitMargins(b *Block) (top, bottom, inner, innerBottom int) {
 	switch b.Type {
 	case "alert", "card", "carousel":
@@ -698,8 +707,6 @@ func kitMargins(b *Block) (top, bottom, inner, innerBottom int) {
 		return 16, 8, 0, 0 // .containerBlock{margin-top:16px;margin-bottom:8px}
 	case "data_table":
 		return 4, 4, 0, 0 // .dataTableBlockOuterContainer{margin-top:4px;margin-bottom:4px}
-	case "video":
-		return 0, 0, 8, 8 // VideoBlock's root, .p-video_block__body{padding:8px 0}
 	}
 	if !richtext.Renderable(b.Type) && len(b.Nested) == 0 {
 		// UnsupportedBlockFallback: .fallback{margin:8px 0}; a fallback

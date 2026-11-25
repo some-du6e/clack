@@ -524,20 +524,31 @@ func (ph *filePlaceholder) resolveNow(s *phSlot, p PreparedUpload) {
 	}
 }
 
-// onProgress re-renders when an upload's status line would change.
+// onProgress re-renders when an upload's status line or a file's whole
+// percent would change: PendingFilesSpinner's "Uploading… N%" follows
+// percentComplete (at most 100 renders a file).
 func (ph *filePlaceholder) onProgress() {
-	ph.mu.Lock()
-	before := ph.statusLocked()
-	for _, s := range ph.slots {
-		if s.pf != nil && !s.done {
-			s.file.UploadPercent = s.pf.percent()
-		}
-	}
-	after := ph.statusLocked()
-	ph.mu.Unlock()
-	if before != after {
+	if ph.takeProgress() {
 		ph.refresh()
 	}
+}
+
+// takeProgress copies each pending file's percent into its slot and
+// reports whether the placeholder would draw differently: a whole percent
+// moved, or the status line changed.
+func (ph *filePlaceholder) takeProgress() bool {
+	ph.mu.Lock()
+	defer ph.mu.Unlock()
+	before := ph.statusLocked()
+	moved := false
+	for _, s := range ph.slots {
+		if s.pf != nil && !s.done {
+			if p := s.pf.percent(); p != s.file.UploadPercent {
+				s.file.UploadPercent, moved = p, true
+			}
+		}
+	}
+	return moved || before != ph.statusLocked()
 }
 
 // sharedAnyway looks for the message with client_msg_id cid in the

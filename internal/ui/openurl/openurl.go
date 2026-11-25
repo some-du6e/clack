@@ -317,3 +317,18 @@ func Open(raw string) error {
 	go launch(u)
 	return nil
 }
+
+// OpenExternal is Slack desktop's openExternal (main.bundle.cjs 4.53.276,
+// ln): a link it refuses, or one that can't be parsed, is a log line and
+// nothing on screen ("openExternal: Refusing to open URL scheme", with the
+// scheme only), as is a hand-off that fails twice (launch). Use it where
+// the caller has nothing to do with the refusal.
+func OpenExternal(raw string) {
+	if err := Open(raw); err != nil {
+		scheme := ""
+		if u, perr := url.Parse(raw); perr == nil {
+			scheme = u.Scheme
+		}
+		log.Printf("openurl: refusing to open a %q link: %v", scheme, err)
+	}
+}

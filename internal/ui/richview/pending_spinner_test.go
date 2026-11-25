@@ -7,6 +7,7 @@ import (
 	"gioui.org/op"
 
 	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // A generic file still uploading (Karim's .exe, "no indicator?") draws
@@ -64,5 +65,42 @@ func TestPendingGenericFileSpinner(t *testing.T) {
 	v.Layout(testGtx(ops, 600), st, nil)
 	if len(v.d.pendSpins) != 0 {
 		t.Errorf("a pending image has %d corner spinners", len(v.d.pendSpins))
+	}
+}
+
+// Each pending generic pillow gets its PendingFilesSpinner wherever it is
+// laid out: two or more in FileGallery's pillow grid (the grid skipped
+// the pending drawing: no spinner, at full opacity) and a single one as
+// a MessageFile component (a theme or plugin stylesheet, a patch).
+func TestPendingSpinnerInGridAndComponent(t *testing.T) {
+	st := newTestStyle()
+	a := &rt.File{ID: "F0PEND0003", Name: "a.exe", Type: "exe", Mode: "hosted", Pending: true, Percent: 10}
+	b := &rt.File{ID: "F0PEND0004", Name: "b.zip", Type: "zip", Mode: "hosted", Pending: true, Percent: 60}
+	v := New(doc(fileBlock(a), fileBlock(b)), Options{})
+	ops := new(op.Ops)
+	v.Layout(testGtx(ops, 600), st, nil)
+	if len(v.d.pendSpins) != 2 {
+		t.Fatalf("two pending pillows in a grid: %d spinners, want 2", len(v.d.pendSpins))
+	}
+	if v.d.pendSpins[0].tip != "Uploading… 10%" || v.d.pendSpins[1].tip != "Uploading… 60%" {
+		t.Errorf("tooltips %q, %q", v.d.pendSpins[0].tip, v.d.pendSpins[1].tip)
+	}
+	faded := 0
+	for _, o := range v.d.overlayIcons {
+		if o.art && o.alpha == 0.5 {
+			faded++
+		}
+	}
+	if faded != 2 {
+		t.Errorf("%d of the grid's icons at .5, want both", faded)
+	}
+
+	slackc.SetPatched([]string{"MessageFile"})
+	t.Cleanup(func() { slackc.SetPatched(nil) })
+	v = New(doc(fileBlock(a)), Options{TS: "1.2", Channel: "C9"})
+	ops.Reset()
+	v.Layout(testGtx(ops, 600), st, nil)
+	if len(v.d.pendSpins) != 1 {
+		t.Fatalf("a pending pillow as a MessageFile component: %d spinners, want 1", len(v.d.pendSpins))
 	}
 }
