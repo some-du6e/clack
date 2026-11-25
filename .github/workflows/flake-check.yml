@@ -7097,6 +7097,35 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # canvas-preview: a message's canvas card's Quip thumbnail (Karim's
+  # α.165 dates): its read and retry, the dates in their own zone under
+  # America/Chicago, the old preview through an edit, Quip's own thumbnail,
+  # Slack's first-header and year rules. Dispatch with only=canvas-preview.
+  canvas-preview:
+    if: ${{ !inputs.only || startsWith('canvas-preview', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: canvas card previews, COUNT runs
+        run: |
+          rc=0
+          go test -count="$COUNT" -timeout 15m -run '^(TestCanvasCardThumbnail|TestCanvasCardDatesWestOfUTC|TestCanvasCardQuipMadeThumbnail|TestCanvasCardThumbnailBackoff|TestReleaseCoversAppMaps)$' ./internal/core || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestCanvasCardQuipBlocks|TestCanvasPreviewMentions|TestFormatDate)$' ./internal/richtext || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7255,6 +7284,7 @@ jobs:
       - apt-stall
       - pagekey-day
       - files-card
+      - canvas-preview
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
