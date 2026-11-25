@@ -1874,8 +1874,10 @@ jobs:
           sw_vers
           # and patch 47: the caret's blink period from the user defaults;
           # patch 48: AppKit's click counts through a real window; patch 58:
-          # AppKit's terminate: asks the program (TerminateEvent)
-          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestCaretBlinkFromOSMac|TestClackClickCountMac|TestTerminateEventMac' gioui.org/app
+          # AppKit's terminate: asks the program (TerminateEvent); patch 68:
+          # a right press whose release a native menu took leaves no button
+          # down
+          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestCaretBlinkFromOSMac|TestClackClickCountMac|TestTerminateEventMac|TestClackLostReleaseMac|TestClackStaleButtons' gioui.org/app
           gio=$?
           go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
           ui=$?
@@ -1998,12 +2000,14 @@ jobs:
       # and Gio's pasteboard string. A Finder copy attaches its files and
       # leaves out their names (Finder's plain text), as Slack's
       # useUploadPastedFiles preventDefaults the paste; plain text, an
-      # image and TextEdit's rich text with a picture are as before.
+      # image and TextEdit's rich text with a picture are as before. And
+      # Gio patch 68: a left click in the composer after its native menu
+      # took the right press's release places the caret, no menu.
       - name: macOS ⌘V into the composer (P6b)
         if: ${{ !cancelled() }}
         env:
           CLACK_MACOS_WINDOW_TESTS: "1"
-        run: go test -count=1 -v -timeout 8m -run '^TestMacComposerPaste$' ./internal/ui
+        run: go test -count=1 -v -timeout 8m -run '^(TestMacComposerPaste|TestMacComposerLeftClickAfterMenu)$' ./internal/ui
       # docs/GAPS-2026-11-14.md gap 9 (W40). Gio patch 25 on real NSWindows:
       # Displays against NSScreen, a window opened at Bounds (points from
       # the primary screen's top left), its ConfigEvents' bounds through a

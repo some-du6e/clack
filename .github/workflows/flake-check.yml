@@ -334,6 +334,10 @@ on:
       - "internal/ui/messages/scroll_gaps_test.go"
       - "internal/ui/messages/compact_test.go"
       - "third_party/gioui.org/app/clack_bounds_darwin_test.go"
+      # the lost-release job's own
+      - "third_party/gioui.org/app/clack_buttons*.go"
+      - "third_party/gioui.org/app/os_macos.*"
+      - "internal/ui/composer_ctxclick_darwin_test.go"
 
 permissions:
   contents: read
@@ -7330,6 +7334,42 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # lost-release (2026-11-24, Karim: a left click in the composer opened
+  # its text menu on macOS): the native menu's tracking loop took the
+  # right-click's release, Gio kept the secondary button down, and every
+  # later left press was a context click. Gio patch 68 ends a button AppKit
+  # has up at the next press or mouseMoved:. Its window test (a right press
+  # with no release, then a left click and a move) and unit test, then the
+  # composer's left click after its menu in App.Run's own window, COUNT
+  # times, on a real macOS window. Dispatch with only=lost-release.
+  lost-release:
+    if: ${{ !inputs.only || startsWith('lost-release', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "a right press's lost release, on a real window, COUNT runs"
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: go test -count=$COUNT -v -timeout 10m -run '^(TestClackLostReleaseMac|TestClackStaleButtons)$' gioui.org/app
+      - name: "the composer's left click after its menu, App.Run's window, COUNT runs"
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: go test -count=$COUNT -v -timeout 15m -run '^TestMacComposerLeftClickAfterMenu$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7495,6 +7535,7 @@ jobs:
       - entprefs
       - scroll-cpu
       - member-subs
+      - lost-release
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

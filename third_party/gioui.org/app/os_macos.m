@@ -334,7 +334,28 @@ static void handleMouse(GioView *view, NSEvent *event, int typ, CGFloat dx, CGFl
 	// Clack patch (CLACK_PATCHES.md §24): the click count of a press or
 	// release (NSEvent raises for any other kind).
 	NSInteger clicks = (typ == MOUSE_DOWN || typ == MOUSE_UP) ? event.clickCount : 0;
-	gio_onMouse(view.handle, (__bridge CFTypeRef)event, typ, event.buttonNumber, p.x, height - p.y, dx, dy, [event timestamp], [event modifierFlags], clicks);
+	// Clack patch 68 (CLACK_PATCHES.md §68): the button by the event's
+	// type, as Chromium's WebMouseEventBuilder takes it (an other button's
+	// event alone reads buttonNumber: one made with mouseEventWithType: has
+	// 0 whatever its type); the buttons down now; and whether this is a
+	// mouseMoved:, which comes with none down.
+	NSInteger btn = event.buttonNumber;
+	switch (event.type) {
+	case NSEventTypeLeftMouseDown:
+	case NSEventTypeLeftMouseUp:
+	case NSEventTypeLeftMouseDragged:
+		btn = 0;
+		break;
+	case NSEventTypeRightMouseDown:
+	case NSEventTypeRightMouseUp:
+	case NSEventTypeRightMouseDragged:
+		btn = 1;
+		break;
+	default:
+		break;
+	}
+	int moved = event.type == NSEventTypeMouseMoved;
+	gio_onMouse(view.handle, (__bridge CFTypeRef)event, typ, btn, p.x, height - p.y, dx, dy, [event timestamp], [event modifierFlags], clicks, [NSEvent pressedMouseButtons], moved);
 }
 
 @implementation GioView

@@ -1107,7 +1107,7 @@ func gio_onFileDrop(h C.uintptr_t, kind C.int, x, y C.CGFloat, paths C.CFTypeRef
 }
 
 //export gio_onMouse
-func gio_onMouse(h C.uintptr_t, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x, y, dx, dy C.CGFloat, ti C.double, mods C.NSUInteger, clicks C.NSInteger) {
+func gio_onMouse(h C.uintptr_t, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x, y, dx, dy C.CGFloat, ti C.double, mods C.NSUInteger, clicks C.NSInteger, pressed C.NSUInteger, moved C.int) {
 	w := windowFor(h)
 	switch cdir {
 	case C.MOUSE_DOWN:
@@ -1127,6 +1127,13 @@ func gio_onMouse(h C.uintptr_t, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x
 		btn = pointer.ButtonSecondary
 	case 2:
 		btn = pointer.ButtonTertiary
+	}
+	// Clack patch 68 (CLACK_PATCHES.md §68): a button Gio has down and
+	// AppKit has up, its release taken by a modal loop (a native menu's),
+	// ends its gesture here, before this event.
+	if stale := staleButtons(w.pointerBtns, btn, appKitButtons(uint64(pressed)), cdir == C.MOUSE_DOWN, cdir == C.MOUSE_MOVE && moved != 0); stale != 0 {
+		w.pointerBtns &^= stale
+		w.ProcessEvent(pointer.Event{Kind: pointer.Cancel, Source: pointer.Mouse, Time: t, Position: pos, Modifiers: convertMods(mods)})
 	}
 	var typ pointer.Kind
 	switch cdir {

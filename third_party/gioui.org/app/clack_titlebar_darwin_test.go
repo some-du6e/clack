@@ -63,6 +63,9 @@ type macTestWindow struct {
 	// clicks gets each click's NumClicks from a gesture.Click over the
 	// content under the band (Clack patch 48, clack_dblclick_darwin_test.go)
 	clicks chan int
+	// ptrs gets every pointer event on the content under the band (Clack
+	// patch 68, clack_buttons_darwin_test.go); full, it drops them
+	ptrs chan pointer.Event
 }
 
 // newMacTestWindow opens a Gio window with a hidden title bar and the
@@ -77,10 +80,10 @@ func newMacTestWindow(t *testing.T, abort func() bool, opts ...Option) *macTestW
 // unless they hide it).
 func newMacTestWindowWith(t *testing.T, abort func() bool, opts ...Option) *macTestWindow {
 	t.Helper()
-	h := &macTestWindow{w: new(Window), closing: make(chan *ClosingEvent, 4), done: make(chan struct{}), clicks: make(chan int, 16)}
+	h := &macTestWindow{w: new(Window), closing: make(chan *ClosingEvent, 4), done: make(chan struct{}), clicks: make(chan int, 16), ptrs: make(chan pointer.Event, 256)}
 	h.w.Option(append([]Option{Title("Clack title bar test"), Size(macTestW, macTestH)}, opts...)...)
 	views := make(chan uintptr, 1)
-	widget := new(int)
+	widget, content := new(int), new(int)
 	go func() {
 		defer close(h.done)
 		var ops op.Ops
@@ -112,6 +115,18 @@ func newMacTestWindowWith(t *testing.T, abort func() bool, opts ...Option) *macT
 					}
 				}
 				for {
+					ev, ok := gtx.Event(pointer.Filter{Target: content, Kinds: pointer.Press | pointer.Release | pointer.Move | pointer.Drag | pointer.Cancel})
+					if !ok {
+						break
+					}
+					if pe, ok := ev.(pointer.Event); ok {
+						select {
+						case h.ptrs <- pe:
+						default:
+						}
+					}
+				}
+				for {
 					ce, ok := click.Update(gtx.Source)
 					if !ok {
 						break
@@ -126,6 +141,7 @@ func newMacTestWindowWith(t *testing.T, abort func() bool, opts ...Option) *macT
 				band := gtx.Dp(macBandH)
 				ca := clip.Rect{Min: image.Pt(0, band), Max: e.Size}.Push(gtx.Ops)
 				click.Add(gtx.Ops)
+				event.Op(gtx.Ops, content)
 				ca.Pop()
 				area := clip.Rect{Max: image.Pt(e.Size.X, band)}.Push(gtx.Ops)
 				system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
