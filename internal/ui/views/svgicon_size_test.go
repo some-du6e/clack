@@ -51,6 +51,7 @@ func TestSvgIconSizesViews(t *testing.T) {
 	app, _ := vaFake(t)
 	h := &vaHost{slickHost: &slickHost{app: app, th: theme.New(false)}}
 	files := NewFiles(h)
+	files.frame() // the theme and palette Layout sets each frame
 	for _, c := range []struct {
 		f     core.File
 		glyph string
@@ -68,6 +69,9 @@ func TestSvgIconSizesViews(t *testing.T) {
 	}
 
 	act, hud, dr := NewActivity(h), NewHuddles(h), NewDrafts(h)
+	act.frame()
+	hud.frame()
+	dr.frame()
 	checks := []iconSizeCheck{
 		{"Mark Complete", "check", 13, func(gtx C) {
 			act.smallButton(gtx, new(widget.Clickable), btnOutline, "check", "Mark Complete")
