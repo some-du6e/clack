@@ -22,6 +22,7 @@ import (
 	"github.com/some-du6e/clack/internal/paritytest"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -130,6 +131,10 @@ func maDecode(t *testing.T, what string, raw json.RawMessage, v any) {
 
 func TestMessageActionsLikeSlack(t *testing.T) {
 	t.Cleanup(uipref.Reset)
+	// Connect to apps' rows, as the shell wires them (ui/blockkit_wire.go)
+	prevShortcuts := popups.MessageShortcuts
+	popups.MessageShortcuts = func(h popups.Host, m core.Message) []popups.MenuItem { return blockkit.MessageShortcutItems(h, m) }
+	t.Cleanup(func() { popups.MessageShortcuts = prevShortcuts })
 	maThreadsView(t)
 	s := paritytest.Load[maIn, maOut](t, "testdata/parity/message-actions.json")
 	var base maIn
@@ -142,6 +147,14 @@ func TestMessageActionsLikeSlack(t *testing.T) {
 	// there is, as on Slack's side
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/apps.actions.v2.list") {
+			// Slack's side has no app actions loaded (appActions'
+			// isLoaded false: "More message shortcuts…" opening the
+			// dialog); Clack's list stays unloaded the same way, whatever
+			// the timing, when its fetch is refused
+			_, _ = w.Write([]byte(`{"ok":false,"error":"not_loaded_in_parity"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	t.Cleanup(srv.Close)
@@ -333,6 +346,11 @@ const maThreadsViewMenu = `{
 // Threads view's code calls none while it draws no hover toolbar.
 var maThreadsViewToolbar = map[string]bool{"ToolbarShown": true, "MoreShown": true, "NewMessageMenuOpts": true, "TodoShown": true, "AddToListShown": true}
 
+// maThreadsViewKeys are the Threads view's functions for a focused row's
+// key commands: they ask shouldRenderActions (popups.ToolbarShown), as
+// Slack binds no key where there's no toolbar, and draw nothing.
+var maThreadsViewKeys = map[string]bool{"kbMsgKey": true, "kbMsgBinds": true}
+
 // maThreadsView checks the Threads view's code that clackMessageActions
 // mirrors: messageMenu's code is maThreadsViewMenu, and its files
 // (threads*.go) call none of the toolbar's rules. Either changing fails
@@ -360,6 +378,9 @@ func maThreadsView(t *testing.T) {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.FuncDecl:
+				if maThreadsViewKeys[n.Name.Name] && n.Recv != nil {
+					return false // the key commands' rules, not a toolbar
+				}
 				if n.Name.Name == "messageMenu" && n.Recv != nil && len(n.Recv.List) == 1 && maRecvType(n.Recv.List[0].Type) == "*Threads" {
 					found = true
 					var b bytes.Buffer
@@ -399,8 +420,8 @@ func maRecvType(e ast.Expr) string {
 // `${id}_button`); ⋮ is MessageActionButtonEllipsis, Slack's "more".
 // Each slot is one Slack action in Clack (the to-do slot is Yoyn's
 // addToLaterTodos, whose id stays add_to_later_todos as "Complete
-// to-do"), so a slot that comes to offer another action (Slack's later,
-// "Save for later", with later_todos off) needs its id picked here too.
+// to-do"); with later_todos off the to-do slot offers Slack's later
+// ("Save for later", popups.SaveInTodoSlot), whose id maToolbar picks.
 var maButtonIDs = [tbCount]string{"add_reaction", "comment", "share_message", "add_to_later_todos", "add_to_list", "more"}
 
 // maToolbar is the hover toolbar list.go draws for m (listState.toolbar):
@@ -420,7 +441,11 @@ func maToolbar(app *core.App, m *core.Message, thread bool) *[]string {
 			out = append(out, "more")
 			continue
 		}
-		out = append(out, maButtonIDs[b]+": "+label[b])
+		id := maButtonIDs[b]
+		if b == tbTodo && popups.SaveInTodoSlot(app) {
+			id = "later" // the slot's aHFc later with later_todos off
+		}
+		out = append(out, id+": "+label[b])
 	}
 	return &out
 }

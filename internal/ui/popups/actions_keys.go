@@ -43,11 +43,18 @@ func MessageKeyAction(h Host, at image.Point, m core.Message, where MessageConte
 	o.Where = where
 	items := append(ctxHoverItems(h, at, m, where, o), actMessageItems(h, m, o)...)
 	it, ok := keyedItem(items, k)
+	if !ok && slices.Contains(KeyPin, k) && actionable(h.Core(), &m) && PinShown(h.Core(), &m) {
+		// getActionsForKeyboardShortcuts binds pin by its own rule (Zn/q
+		// canPin), not by the Organize row that holds it in the menu,
+		// which has none on an automated message under the redesign
+		ch, ts, pin := m.Channel, m.TS, !m.Pinned
+		return func(layout.Context) { actPin(h, ch, ts, pin) }, true
+	}
 	if !ok {
 		return nil, false
 	}
 	switch {
-	case it.Action == "remind":
+	case it.Action == "remind_later":
 		ch, ts := m.Channel, m.TS
 		return func(layout.Context) { h.ShowOverlay(actNewReminderModal(h, ch, ts)) }, true
 	case it.DoCtx != nil:

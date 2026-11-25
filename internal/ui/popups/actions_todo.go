@@ -55,6 +55,9 @@ func TodoActionFor(app *core.App, m *core.Message) TodoAction {
 // ReminderLabel is ih0g's name for the reminder row on m (the message
 // I18n's source string).
 func ReminderLabel(app *core.App, m *core.Message) string {
+	if app != nil && app.Experiment("later_todos") != "on" { // 40eY: isLaterTodosEnabled (GAJO tj)
+		return "Remind me"
+	}
 	if IsTodo(app, m) {
 		return "Edit reminder"
 	}
@@ -148,13 +151,49 @@ func SaveActionFor(app *core.App, m *core.Message) SaveAction {
 		meta, saved = app.SavedMeta(m.Channel, m.TS)
 		synth = app.Prefs().HasStarredItem
 	}
+	// aHFc's names follow later_todos (GAJO tj) and its saved synth page
+	// (hq: later_todos and the has_starred_item pref)
+	todos := app == nil || app.Experiment("later_todos") == "on"
+	synth = synth && todos
 	switch {
-	case saved && meta.IsTodo(), saved && synth && meta.Completed():
+	case saved && todos && meta.IsTodo(), saved && synth && meta.Completed():
 		return SaveAction{Label: "Move to Saved", Icon: "bookmark", Do: SaveMove}
-	case saved:
+	case saved && (todos || synth):
 		return SaveAction{Label: "Remove from Saved", Icon: "bookmark-filled", Do: SaveRemove}
+	case saved:
+		return SaveAction{Label: "Remove from Later", Icon: "bookmark-filled", Do: SaveRemove}
+	case !todos:
+		return SaveAction{Label: "Save for later", Icon: "bookmark", Do: SaveAdd}
 	}
 	return SaveAction{Label: "Add to saved", Icon: "bookmark", Do: SaveAdd}
+}
+
+// SaveInTodoSlot is whether the hover toolbar's and the right-click
+// menu's to-do slot offers aHFc's later instead of Yoyn's to-do: with
+// later_todos off (GAJO tj), Slack's toolbar and the right-click menu's
+// first group carry "Save for later" (or "Remove from Later", key A), and
+// the ⋮ menu has no save row (eY puts it there only with later_todos).
+func SaveInTodoSlot(app *core.App) bool {
+	return app != nil && app.Experiment("later_todos") != "on"
+}
+
+// SaveShown is whether the save row (aHFc) is there for m: a saved to-do
+// to move always; else none on an ephemeral message, nor, unless it's
+// saved, on an automated one (a join, a topic change: h3YX, but a code
+// channel's actionable ones) or a redesigned huddle system message.
+func SaveShown(app *core.App, m *core.Message) bool {
+	sa := SaveActionFor(app, m)
+	if sa.Do == SaveMove {
+		return true
+	}
+	if isEphemeral(app, m) {
+		return false
+	}
+	if sa.Do == SaveRemove {
+		return true
+	}
+	actionableCode := m.Subtype == "code_channel_lifecycle" || m.Subtype == "code_channel_review_submitted"
+	return !(IsAutomatedSubtype(m.Subtype) && !actionableCode) && !redesignedHuddle(app, m)
 }
 
 // RunSaveAction runs the save row's click on m and toasts as Slack does.

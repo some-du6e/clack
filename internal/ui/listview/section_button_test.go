@@ -96,7 +96,7 @@ func TestSectionButton(t *testing.T) {
 	if len(menus) != 1 {
 		t.Fatalf("on: %d section menus after the click", len(menus))
 	}
-	if got := moreLabels(v.moreItems()); !strings.HasPrefix(got, "Save for later") || strings.Contains(got, "starred") || strings.Contains(got, "Move to section") {
+	if got := moreLabels(v.moreItems()); !strings.HasPrefix(got, "Add to saved") || strings.Contains(got, "starred") || strings.Contains(got, "Move to section") {
 		t.Errorf("on: More menu %s", got)
 	}
 	tab := New(h, fakeslack.ListKitchen, Tab, act)

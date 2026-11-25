@@ -8,6 +8,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/io/event"
@@ -126,7 +127,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	}
 
 	var items []MenuItem
-	if own {
+	if EditShown(h.Core(), &m, self) { // Oi/D canEditMessage
 		items = append(items, MenuItem{Action: "edit_message", Label: "Edit message", Icon: "edit", Hint: nsMessage.T("E"), Keys: KeyEdit, Do: func() {
 			if o.OnEdit != nil {
 				o.OnEdit()
@@ -167,17 +168,25 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	// (null on isEphemeral unless it's a saved to-do to move), reminder
 	// (canAddReminder) or Copy link (canCopyLink): actions_rules.go
 	app := h.Core()
-	eph := isEphemeral(app, &m)
 	if MarkUnreadShown(app, &m, inThread) { // QRkh / RjOa: canMarkUnread and the redesign's exclusions
 		items = append(items, markUnread)
 	}
-	if sa := SaveActionFor(app, &m); !eph || sa.Do == SaveMove {
+	todos := app == nil || app.Experiment("later_todos") == "on"   // GAJO tj: eY puts the save row in only with later_todos
+	if sa := SaveActionFor(app, &m); todos && SaveShown(app, &m) { // aHFc
 		items = append(items, MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			RunSaveAction(h, m) // oMi4 / aSBj (actions_todo.go)
 		}}.In(nsSaved))
 	}
 	if remindShown(app, &m) {
-		items = append(items, MenuItem{Action: "remind", Label: ReminderLabel(app, &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage)) // ih0g
+		items = append(items, MenuItem{Action: "remind_later", QA: "remind_me", Label: ReminderLabel(app, &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage)) // ih0g
+	}
+	if todos && app != nil && ClearTodoShown(app, &m) { // JuvA eD, after the reminder row
+		label, icon := "Clear to-do", "eraser"
+		if app.Experiment("activity_in_home_prototype") == "on" { // 2bTe isDeleteTodoWordingEnabled
+			label, icon = "Delete to-do", "trash"
+		}
+		items = append(items, MenuItem{Action: "clear_later_todo", Label: label, Icon: icon, Danger: true, Frecency: "clear_later_todo",
+			QA: "clear_later_todo", Do: func() { clearTodoWithUndo(h, ch, ts) }}.In(nsSaved))
 	}
 	if f, ok := actFollowItem(h, m, conv, root); ok {
 		items = append(items, f)
@@ -212,13 +221,20 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	// tombstone or temporary); no "Forward message…" here: Slack keeps it
 	// on the hover toolbar
 	if actionable(app, &m) {
-		if PinShown(app, &m) { // Zn/q canPin; Organize holds only the pin row, and a submenu with none isn't drawn
+		// Zn/q canPin; Organize (JuvA tk) holds only the pin row here, a
+		// submenu with none isn't drawn, and tk gives none on an automated
+		// message under the redesign. A redesigned huddle message keeps it
+		// for its pin row (PinShown: only once it's pinned, to un-pin);
+		// Connect to apps' own rule (connectToAppsShown) is e6's, not tk's
+		if PinShown(app, &m) && !(app != nil && app.Experiment("system_messages_redesign_m1") == "on" && IsAutomatedSubtype(m.Subtype)) {
 			items = append(items, MenuItem{Action: "organize_actions_menu", Label: "Organize", Sub: []MenuItem{pin}}.In(nsMessage))
 		}
-		items = append(items,
-			MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m),
-				SubLive: func() []MenuItem { return connectToApps(h, m) }}.In(nsMessage),
-		)
+		if connectToAppsShown(app, &m) {
+			items = append(items,
+				MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: connectToApps(h, m),
+					SubLive: func() []MenuItem { return connectToApps(h, m) }}.In(nsMessage),
+			)
+		}
 	}
 
 	// the broadcast and workflow group: [send reply, remove reply, view
@@ -296,7 +312,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	}
 	// canDeleteMessageHelper: your own message, and any ephemeral one
 	// (its first case), which the delete removes here alone
-	if own || eph {
+	if DeleteShown(h.Core(), &m, self) { // n+vA canDeleteMessageHelper
 		last = append(last, MenuItem{Action: "delete_message", Label: "Delete message…", Hint: nsMessage.T("delete"), Keys: KeyDelete(), Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }}.In(nsMessage))
 	}
 	if len(last) > 0 {
@@ -331,9 +347,22 @@ func tidySeps(items []MenuItem) []MenuItem {
 func actFollowItem(h Host, m core.Message, conv core.Conv, root string) (MenuItem, bool) {
 	ch := m.Channel
 	subscribed := m.FollowingThread
+	rootMsg := m
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
 		subscribed = actThreadSubscribed(h, ch, root)
-	} else if !canFollow(h.Core(), &m, subscribed && conv.IsArchived) {
+		rootMsg = core.Message{Channel: ch, TS: root, ThreadTS: root, ReplyCount: 1} // a reply's thread has replies
+		if a := h.Core(); a != nil {
+			if r, ok := a.S.FindHeld(ch, root); ok {
+				rootMsg = a.MessageFromSlack(ch, &r)
+			}
+		}
+	}
+	// QdFb: a viewer who isn't a member and doesn't follow the thread gets
+	// no row (message_actions_non_member_hints' disabled row aside)
+	if conv.ID != "" && !conv.Member && !subscribed {
+		return MenuItem{}, false
+	}
+	if !canFollow(h.Core(), &rootMsg, subscribed && conv.IsArchived) {
 		// QdFb: canStartOrOpenThread on the thread's root (threadTs ||
 		// ts), ignoring membership for a thread followed in an archived
 		// channel: none on a message no thread can start from and with no
@@ -388,7 +417,14 @@ func actKindOf(ch string) string {
 // actCanPost is canUserPostInChannel for a top-level post.
 func actCanPost(h Host, ch string) bool {
 	a := h.Core()
-	return a != nil && a.PostingIn(ch).CanPost()
+	if a == nil {
+		return false
+	}
+	c, ok := a.S.Conv(ch)
+	if !ok {
+		return a.PostingIn(ch).CanPost()
+	}
+	return canUserPostIn(a, c) // canUserPostInChannel: neither read-only nor thread-only
 }
 
 // actWorkflowBot is q's isWorkflowBot(member) || isWorkflowBot(bot): the
@@ -591,6 +627,47 @@ func actDo(h Host, okMsg string, work func(ctx context.Context, a *core.App) err
 	}
 	do(h, okMsg, func(ctx context.Context) error { return work(ctx, a) })
 }
+
+// clearTodoWithUndo is messageActionsClearTodo's onRemoveSavedItem with
+// later_todos (TArr, PxoD clearSavedItemWithUndo): "To-do cleared" with
+// Undo, the clear sent once the toast is gone; under
+// later_todos_immediate_clear (PxoD nz) clearSavedItemImmediately, the
+// clear at once and a plain "To-do cleared". As the Later view clears
+// (views/later.go clearTodo).
+func clearTodoWithUndo(h Host, ch, ts string) {
+	app := h.Core()
+	if app == nil {
+		return
+	}
+	if app.Experiment(core.ExpLaterTodosImmediateClear) == "on" {
+		actDo(h, nsSaved.T("To-do cleared"), func(ctx context.Context, a *core.App) error { return a.ClearSaved(ctx, ch, ts) })
+		return
+	}
+	tu, ok := h.(interface{ ToastUndo(string, func()) })
+	if !ok {
+		actDo(h, nsSaved.T("To-do cleared"), func(ctx context.Context, a *core.App) error { return a.Unsave(ctx, ch, ts) })
+		return
+	}
+	var undone atomic.Bool
+	tu.ToastUndo(nsSaved.T("To-do cleared"), func() { undone.Store(true) })
+	// off the UI goroutine: core's write, and a failure's toast posted back
+	time.AfterFunc(clearTodoUndoFor, func() {
+		if undone.Load() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), asyncTimeout)
+		defer cancel()
+		if err := app.Unsave(ctx, ch, ts); err != nil {
+			msg := "Couldn't do that: " + errText(err)
+			if p, ok := h.(interface{ Post(func()) }); ok {
+				p.Post(func() { h.Toast(msg) })
+			}
+		}
+	})
+}
+
+// clearTodoUndoFor is how long the Undo toast stays (App.ToastUndo).
+var clearTodoUndoFor = 6 * time.Second
 
 // actPin is the Organize menu's pin item: pinMessage / unpinMessage
 // (core.Pin, core.Unpin), whose row in the Pins tab and the message's pin

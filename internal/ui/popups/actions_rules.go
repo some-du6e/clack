@@ -2,8 +2,10 @@ package popups
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Which message actions Slack offers on messages that aren't ordinary
@@ -116,7 +118,19 @@ func canReplyOrComment(app *core.App, m *core.Message, ignoreMembership bool) bo
 	if !ignoreMembership && conv.IsChannel && !conv.IsPrivate && !conv.IsMPIM && !conv.IsMember {
 		return false
 	}
-	return true
+	return !threadLocked(app, m) // its thread's replies turned off (i8z0 isThreadLocked)
+}
+
+// threadLocked is i8z0 isThreadLocked for m's thread (+sBl L: its
+// thread_ts, a root's own included): the root is locked.
+func threadLocked(app *core.App, m *core.Message) bool {
+	if m.ThreadTS == "" {
+		return false
+	}
+	if m.TS == m.ThreadTS && m.Locked {
+		return true
+	}
+	return app != nil && app.ThreadLocked(m.Channel, m.ThreadTS)
 }
 
 // hasBarrier reads the conversation's has_barrier (an information
@@ -266,10 +280,11 @@ func copyLinkShown(app *core.App, m *core.Message) bool {
 	return !m.Tombstone && !isEphemeral(app, m)
 }
 
-// copyTextShown is canCopyMessageText (c10I): none on a tombstone, a
-// moderated (moderated or thread_hidden), dlp_tombstone or dsa_restricted
-// message or an automated one (KC8h), nor on one with neither text nor
-// blocks (a file shared alone).
+// copyTextShown is canCopyMessageText (c10I): not a tombstone, a moderated
+// (moderated, thread_hidden), dlp_tombstone or dsa_restricted message, nor
+// an automated one (h3YX isAutomatedSubtype: a join, a topic change); and
+// the message has text or blocks, which one that's only a file or only
+// attachments hasn't. Mod+C is its key, so it's bound only where this is.
 func copyTextShown(m *core.Message) bool {
 	switch m.Subtype {
 	case "tombstone", "moderated", "thread_hidden", "dlp_tombstone", "dsa_restricted":
@@ -278,7 +293,13 @@ func copyTextShown(m *core.Message) bool {
 	if m.Tombstone || IsAutomatedSubtype(m.Subtype) {
 		return false
 	}
-	return m.Text != "" || len(m.Blocks) > 0
+	return m.Text != "" || hasBlocks(m.Blocks)
+}
+
+// hasBlocks is (blocks?.length ?? 0) > 0 for a message's raw blocks.
+func hasBlocks(raw json.RawMessage) bool {
+	var bs []json.RawMessage
+	return json.Unmarshal(raw, &bs) == nil && len(bs) > 0
 }
 
 // reminderSubtypes are canAddReminder's allow-list (iub5 kk) besides no
@@ -365,7 +386,7 @@ func canPinHere(app *core.App, ch string) bool {
 	if !ok {
 		return false // EmXR OL: no channel, no pin
 	}
-	if conv.IsArchived || !app.PostingFor(conv).CanPost() {
+	if !canUserPostIn(app, conv) {
 		return false
 	}
 	if (conv.IsChannel || conv.IsGroup || conv.IsPrivate) && !conv.IsIM && !conv.IsMPIM && !conv.IsMember {
@@ -379,8 +400,8 @@ func canPinHere(app *core.App, ch string) bool {
 // and none on a redesigned huddle system message that isn't pinned.
 //   - canPinMessage: not ephemeral, nor pinned_item, unpinned_item,
 //     sh_room_created or sh_room_shared; canPinHere; not a tombstone,
-//     moderated or retention_threshold message, nor a reply in a locked
-//     thread, nor a channel_join, channel_leave, group_join or group_leave
+//     moderated or retention_threshold message, nor one of a locked
+//     thread (its root included), nor a channel_join, channel_leave, group_join or group_leave
 //     message, nor in a channel shared with another org a channel_topic,
 //     channel_purpose, channel_name, group_topic, group_purpose or
 //     group_name one.
@@ -412,7 +433,7 @@ func PinShown(app *core.App, m *core.Message) bool {
 	if tomb {
 		return false
 	}
-	if app != nil && isReplyMsg(m) && app.ThreadLocked(m.Channel, m.ThreadTS) {
+	if threadLocked(app, m) { // a message of a locked thread, its root included
 		return false
 	}
 	return true
@@ -425,7 +446,7 @@ func PinShown(app *core.App, m *core.Message) bool {
 var msgFrecency = map[string]string{
 	"add_reaction": "MAadd_reaction", "comment": "MAthread_reply", "share_message": "MAshare",
 	"add_to_later_todos": "add_to_later_todos", "later": "later",
-	"mark_unread": "MAmark_unread", "mark_thread_unread": "MAmark_thread_unread", "remind": "MAremind_later",
+	"mark_unread": "MAmark_unread", "mark_thread_unread": "MAmark_thread_unread", "remind_later": "MAremind_later",
 	"copy_link": "MAcopy_link", "copy_text": "MAcopy_text", "edit_message": "MAedit", "delete_message": "MAdelete",
 	"broadcast_message": "MAbroadcast_message", "remove_broadcast": "MAremove",
 	"flag_message": "MAflag_message", "report_message": "MAreport_message",
@@ -454,7 +475,7 @@ func withFrecency(items []MenuItem) []MenuItem {
 		}
 		if len(it.Sub) > 0 {
 			it.Sub = withFrecency(append([]MenuItem(nil), it.Sub...))
-			if it.Action == "remind" {
+			if it.Action == "remind_later" {
 				for j := range it.Sub {
 					if it.Sub[j].Frecency == "" && !it.Sub[j].Separator {
 						it.Sub[j].Frecency = it.Frecency
@@ -464,4 +485,199 @@ func withFrecency(items []MenuItem) []MenuItem {
 		}
 	}
 	return items
+}
+
+// EditShown is the Edit message action (Oi/D) for the viewer on their own
+// message m: canEditMessage (8AvF) with the viewer as the author (another
+// person's edit needs the team's "edit" permission, which Clack's
+// permissions don't hold: none). No edit
+//   - in Slack's system DM (USLACK), nor on an automated message (a join,
+//     a topic change), a file share, a reply_broadcast notice, a tombstone,
+//     a moderated message or a bookmark_created / bookmark_removed one;
+//   - on blocks other than rich_text and context (the portable content
+//     composer off), or rich text with none;
+//   - in the viewer's own DM: always (Rm5e), before the rest;
+//   - past the team's msg_edit_window_mins (0: never);
+//   - where the viewer can't post (canUserPostInChannel: an archived or
+//     read-only conversation) or, for a reply, reply (canThread);
+//   - in a locked thread, nor on a message not yet sent (isTempMsg).
+func EditShown(app *core.App, m *core.Message, self string) bool {
+	if self == "" || m.User != self || m.TS == "" {
+		return false
+	}
+	sub := m.Subtype
+	switch sub {
+	case "reply_broadcast", "tombstone", "moderated", "thread_hidden", "bookmark_created", "bookmark_removed",
+		"file_comment", "file_mention", "file_share", "file_upload":
+		return false
+	}
+	if m.Tombstone || IsAutomatedSubtype(sub) {
+		return false
+	}
+	var conv *slack.Conversation
+	if app != nil {
+		if c, ok := app.S.Conv(m.Channel); ok {
+			conv = c
+		}
+	}
+	if conv != nil && conv.IsIM && conv.User == "USLACK" { // isChannelSystemNotificationIm
+		return false
+	}
+	if hasBlocks(m.Blocks) && (app == nil || app.Experiment("portable_content_composer") != "treatment") {
+		var bs []struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(m.Blocks, &bs)
+		rich := false
+		for _, b := range bs {
+			switch b.Type {
+			case "rich_text":
+				rich = true
+			case "context":
+			default:
+				return false
+			}
+		}
+		if !rich {
+			return false
+		}
+	}
+	if conv != nil && conv.IsIM && conv.User == self { // the viewer's own DM
+		return true
+	}
+	if app != nil {
+		var w int64 = -1
+		if v, ok := app.TeamPref("msg_edit_window_mins"); ok {
+			_ = json.Unmarshal(v, &w)
+		}
+		if w == 0 || w > -1 && time.Since(tsTime(m.TS)).Minutes() > float64(w) {
+			return false
+		}
+	}
+	if isReplyMsg(m) && !canThreadIn(app, conv) || !isReplyMsg(m) && !canUserPostIn(app, conv) {
+		return false
+	}
+	if threadLocked(app, m) || m.Pending || m.Failed || app != nil && app.IsTempMsg(m) {
+		return false
+	}
+	return true
+}
+
+// canUserPostIn is canUserPostInChannel (FS2H c) as far as Clack knows
+// conv: not archived, not read-only (gq7X isReadOnly) nor thread-only
+// (Vm7I isThreadOnly: an announcement channel's members reply in threads
+// only), not Slack's system DM, nor a DM with a deactivated person.
+func canUserPostIn(app *core.App, conv *slack.Conversation) bool {
+	if conv == nil {
+		return true
+	}
+	if conv.IsArchived || conv.IsIM && conv.User == "USLACK" {
+		return false
+	}
+	if app == nil {
+		return true
+	}
+	if conv.IsIM {
+		if u, ok := app.User(conv.User); ok && u.Deleted {
+			return false
+		}
+	}
+	p := app.PostingFor(conv)
+	return !p.ReadOnly && !p.ThreadOnly
+}
+
+// canThreadIn is pS2E canThread for conv: replies may be posted there.
+func canThreadIn(app *core.App, conv *slack.Conversation) bool {
+	if conv == nil || app == nil {
+		return true
+	}
+	return !conv.IsArchived && app.PostingFor(conv).CanReply()
+}
+
+// deleteKeepSubtypes are the automated subtypes canDeleteMyMessageHelper
+// still lets the author delete.
+var deleteKeepSubtypes = map[string]bool{"pinned_item": true, "sh_room_created": true, "sh_room_shared": true, "reply_broadcast": true, "channel_topic": true}
+
+// DeleteShown is the Delete message… action (n+vA over 0Y8N
+// canDeleteMessageHelper) for the viewer (self) on m, with the base
+// permissions (the viewer may delete their own messages, not apps'):
+//   - any ephemeral message (removed here alone);
+//   - none on a tombstone, a retention, bookmark_created,
+//     bookmark_removed, huddle_thread or moderated message;
+//   - in a DM only a bot_message, Slackbot's (USLACKBOT) or the viewer's
+//     own; elsewhere the viewer's own;
+//   - under system_messages_redesign_m1 an automated one only for the
+//     channel's manager or an admin (n+vA: ED4r C, S4);
+//   - where the viewer can post (a reply: reply); then an admin who can
+//     act in the channel (S4) may, and otherwise not in a locked thread,
+//     and the viewer's own automated messages only for pinned_item,
+//     sh_room_created, sh_room_shared, reply_broadcast and channel_topic
+//     (canDeleteMyMessageHelper).
+func DeleteShown(app *core.App, m *core.Message, self string) bool {
+	if isEphemeral(app, m) {
+		return true
+	}
+	sub := m.Subtype
+	switch sub {
+	case "tombstone", "retention", "bookmark_created", "bookmark_removed", "huddle_thread", "moderated":
+		return false
+	}
+	if m.Tombstone || m.TS == "" {
+		return false
+	}
+	// n+vA: under the redesign an automated message keeps Delete only for
+	// its channel's manager (ED4r C) or an admin who can act in it (S4)
+	if app != nil && app.Experiment("system_messages_redesign_m1") == "on" && IsAutomatedSubtype(sub) && !(app.ManagesChannel(m.Channel) || app.CanActAsAdminIn(m.Channel)) {
+		return false
+	}
+	var conv *slack.Conversation
+	if app != nil {
+		if c, ok := app.S.Conv(m.Channel); ok {
+			conv = c
+		}
+	}
+	own := self != "" && m.User == self
+	dm := conv != nil && conv.IsIM
+	if dm && !(sub == "bot_message" || m.User == "USLACKBOT" || own) {
+		return false
+	}
+	if !dm && !own {
+		return false
+	}
+	if isReplyMsg(m) && !canThreadIn(app, conv) || !isReplyMsg(m) && !canUserPostIn(app, conv) {
+		return false
+	}
+	// the helper's end: a DM's (isIm), an admin's who can act in the
+	// channel (S4), else canDeleteMyMessageHelper's
+	if dm || app != nil && app.CanActAsAdminIn(m.Channel) {
+		return true
+	}
+	if IsAutomatedSubtype(sub) && !deleteKeepSubtypes[sub] {
+		return false
+	}
+	return !threadLocked(app, m) && (!isReplyMsg(m) || canThreadIn(app, conv))
+}
+
+// connectToAppsShown is JuvA te's row for m beyond isActionable: e6 gives
+// it no submenu (so no row) on an automated message under
+// system_messages_redesign_m1, nor on a redesigned huddle system message.
+func connectToAppsShown(app *core.App, m *core.Message) bool {
+	if app != nil && app.Experiment("system_messages_redesign_m1") == "on" && IsAutomatedSubtype(m.Subtype) {
+		return false
+	}
+	return !redesignedHuddle(app, m)
+}
+
+// ClearTodoShown is JuvA eD's Clear to-do for m (later_todos aside): a
+// to-do (Tx), not an ephemeral message, nor an automated one (but a code
+// channel's actionable ones).
+func ClearTodoShown(app *core.App, m *core.Message) bool {
+	if isEphemeral(app, m) {
+		return false
+	}
+	actionableCode := m.Subtype == "code_channel_lifecycle" || m.Subtype == "code_channel_review_submitted"
+	if IsAutomatedSubtype(m.Subtype) && !actionableCode {
+		return false
+	}
+	return IsTodo(app, m)
 }

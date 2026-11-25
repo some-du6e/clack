@@ -101,7 +101,9 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	// a comment thread's root takes none in its thread (ThreadRootCanvas)
 	// (isActionable: never an ephemeral, temporary or tombstoned message)
 	app := h.Core()
-	react := !m.System && (app == nil && actionable(nil, &m) || app != nil && app.CanAddReaction(&m)) && !(where == InThread && m.IsCommentRoot())
+	// BJVv asks canAddReaction alone, which has no automated-message case:
+	// a join or a topic change gets Add reaction… here too
+	react := (app == nil && actionable(nil, &m) || app != nil && app.CanAddReaction(&m)) && !(where == InThread && m.IsCommentRoot())
 	if react {
 		items = append(items, MenuItem{Action: "add_reaction", Label: "Add reaction…", Icon: "add-reaction", Hint: nsMessage.T("R"), Keys: KeyReact, Do: func() {
 			h.ShowOverlay(NewReactionPicker(h, at, ch, ts, m.ThreadTS, nil))
@@ -147,6 +149,17 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	// to-do, else "Add to-do", one action id for both (boot-shared:
 	// `{id: addToLaterTodos, name: S ? "Complete to-do" : "Add to-do"}`;
 	// clear_later_todo is Slack's separate, danger "Clear to-do")
+	if SaveInTodoSlot(h.Core()) {
+		// later_todos off: the slot is aHFc's later ("Save for later",
+		// "Remove from Later"), its key A
+		if SaveShown(h.Core(), &m) {
+			sa := SaveActionFor(h.Core(), &m)
+			items = append(items, MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: nsSaved.T("A"), Keys: KeySave, Do: func() {
+				RunSaveAction(h, m)
+			}}.In(nsSaved))
+		}
+		return withFrecency(items)
+	}
 	if !TodoShown(h.Core(), &m) { // on3u: none on an ephemeral or automated message
 		return withFrecency(items)
 	}
