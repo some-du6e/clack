@@ -983,8 +983,9 @@ func (a *App) onMessageChange(ctx context.Context, ch string, e *msgSubEvent, ra
 			thread = old.ThreadTS
 		}
 		// noted with the copies going: a fetch landing after leaves it out
-		// (store/live.go)
-		a.S.NoteRemove(ch, e.DeletedTS)
+		// (store/live.go). setMessageDeleted passes threadTs on, so the
+		// thread's history drops a reply the cache had already let go
+		a.S.NoteRemoveReply(ch, thread, e.DeletedTS)
 		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_locked":

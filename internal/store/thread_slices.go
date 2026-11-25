@@ -393,6 +393,11 @@ const (
 func (s *Store) TruncateThread(ch, ts string, drop bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.truncateThreadLocked(ch, ts, drop)
+}
+
+// truncateThreadLocked is TruncateThread with s.mu held.
+func (s *Store) truncateThreadLocked(ch, ts string, drop bool) bool {
 	k := ch + "/" + ts
 	a := s.threadHist[k]
 	if a == nil {
@@ -581,8 +586,11 @@ func (s *Store) ThreadHeld(ch, ts string) bool {
 }
 
 // ThreadSliceMsgs is the messages of the slice t of thread ch/ts, in its
-// order: the copies the store holds, the thread's cache's else one fetched
-// by id (a timestamp it holds neither of is left out: ThreadSliceMissing).
+// order: the copies the store holds, the thread's cache's, else one fetched
+// by id, else the channel's (the root, or a broadcast reply, its window
+// kept when the thread's cache let it go: Slack's getMessageByTimestamp
+// reads one store). A timestamp it holds no copy of is left out
+// (ThreadSliceMissing, which counts the same copies).
 func (s *Store) ThreadSliceMsgs(ch, ts string, t ThreadSlice) []slack.Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -597,6 +605,8 @@ func (s *Store) ThreadSliceMsgs(ch, ts string, t ThreadSlice) []slack.Message {
 		if j < len(th) && th[j].TS == want {
 			out = append(out, th[j])
 		} else if m := s.fetched[ch+"/"+want]; m != nil {
+			out = append(out, *m)
+		} else if m := s.findRefLocked(ch, want, ""); m != nil {
 			out = append(out, *m)
 		}
 	}
@@ -620,6 +630,77 @@ func (s *Store) ThreadSliceMissing(ch, ts string, t ThreadSlice) []string {
 		}
 	}
 	return out
+}
+
+// PutThreadFetched keeps the messages.list answer for timestamps asked of
+// thread ch/ts's slices (core's fetch of what a slice lacks) in the
+// thread's cache, where the eviction budget governs them and Keep protects
+// them while the pane is open, not in the fetched-by-id cache the other
+// views share. The socket's changes since since win as a page's do. An
+// asked reply the answer doesn't have is gone (Slack's non-existent
+// object): it leaves the thread's slices, so nothing asks for it again.
+// It returns the timestamps kept.
+func (s *Store) PutThreadFetched(ch, ts string, asked []string, msgs []slack.Message, since uint64) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs)
+	k := ch + "/" + ts
+	th := s.threads[k]
+	have := make(map[string]bool, len(msgs))
+	var kept []string
+	for _, m := range msgs {
+		if m.TS == "" || m.TS != ts && m.ThreadTS != ts {
+			continue
+		}
+		have[m.TS] = true
+		mm, live, gone := s.liveReadLocked(ch, &m, since) // live.go
+		switch {
+		case gone:
+			s.removeTimestampLocked(k, m.TS)
+			continue
+		case live:
+			m = mm
+		default:
+			s.replayReactsLocked(ch, &m, since)
+			s.keepPinLocked(ch, &m, nil)
+		}
+		if s.heldLocked(ch, m.TS) == nil && s.fetched[ch+"/"+m.TS] == nil {
+			s.noteFetchedNewLocked(ch, m.TS)
+		}
+		s.noteReadLocked(ch, s.heldLocked(ch, m.TS), &m) // read_revisions.go
+		i, found := slices.BinarySearchFunc(th, m.TS, func(x slack.Message, t string) int { return tsCmp(x.TS, t) })
+		if found {
+			th[i] = m
+		} else {
+			th = slices.Insert(th, i, m)
+		}
+		kept = append(kept, m.TS)
+	}
+	for _, x := range asked {
+		if x != "" && x != ts && !have[x] {
+			s.removeTimestampLocked(k, x) // isNonExistent
+		}
+	}
+	if len(th) > 0 {
+		s.threads[k] = th
+	}
+	return kept
+}
+
+// NoteRemoveReply is NoteRemove for a reply of thread ch/thread
+// (setMessageDeleted's threadTs): its timestamp also leaves the thread's
+// slices when the thread's cache no longer held its copy (evicted), so a
+// pane never asks for it again.
+func (s *Store) NoteRemoveReply(ch, thread, ts string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ch != "" && ts != "" {
+		s.noteLiveLocked(ch, ts, nil)
+	}
+	s.removeLocked(ch, ts)
+	if thread != "" && thread != ts {
+		s.removeTimestampLocked(ch+"/"+thread, ts)
+	}
 }
 
 // AddThreadPageSince is addMessagesFromHistory for one replies read of

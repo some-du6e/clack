@@ -48,6 +48,8 @@ type App struct {
 	mu        sync.Mutex
 	connected bool
 	online    onlineState // isClientOnline: the machine has a network (online.go)
+	fillMu    sync.Mutex
+	fills     map[string]*threadFill // threads whose lost replies are being fetched (thread_pages.go fillThread)
 	inflight  map[string]*call
 	lookups   convLookups // LookupConv (channel_lookup.go)
 

@@ -58,7 +58,9 @@ func TestEvictKeepsThreadSlice(t *testing.T) {
 	if got := s.ThreadSliceMissing(ch, root, sl); len(got) != 4 {
 		t.Errorf("missing %v, want the 4 evicted replies (the root is the channel window's)", got)
 	}
-	if got := s.ThreadSliceMsgs(ch, root, sl); len(got) != 2 || !got[0].IsEphemeral {
-		t.Errorf("the slice's held messages are %d, want the 2 ephemerals", len(got))
+	// the root comes from the channel's window, as Slack's one store gives
+	// it: the pane draws it and its "N replies" divider (thread-ephemerals-2)
+	if got := s.ThreadSliceMsgs(ch, root, sl); len(got) != 3 || got[0].TS != root || !got[1].IsEphemeral || !got[2].IsEphemeral {
+		t.Errorf("the slice's held messages are %d (%v), want the root from the channel's window, then the 2 ephemerals", len(got), got)
 	}
 }

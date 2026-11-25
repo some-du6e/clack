@@ -159,7 +159,10 @@ func (m *model) applyThreadMsg(msg core.Message, seq uint64, isNew bool) bool {
 	if msg.TS == m.threadTS {
 		r := msg
 		m.th.root = &r
-		if m.find(msg.TS) >= 0 {
+		// the slice's row; a slice reaching the thread's start lists the
+		// root first, so a root the store had lost (fetched by id, core
+		// fillThread) goes in, its "N replies" divider with it
+		if m.find(msg.TS) >= 0 || m.loaded && m.th.reachedStart {
 			m.upsert(msg, seq)
 		}
 		m.noteLive(msg.TS, false)

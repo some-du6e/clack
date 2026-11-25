@@ -3,6 +3,7 @@ package core
 import (
 	"cmp"
 	"context"
+	"errors"
 	"log"
 	"net/url"
 	"slices"
@@ -127,6 +128,7 @@ func (a *App) ThreadSliceAt(ch, ts, start string) ThreadSlice {
 		ts = p
 	}
 	sl, held := a.S.ThreadSliceAt(ch, ts, start)
+	a.fillThread(ch, ts, start) // what the slice lists and the store lost, fetched as the rows draw
 	out := ThreadSlice{Start: sl.Start, End: sl.End, ReachedStart: sl.ReachedStart, ReachedEnd: sl.ReachedEnd,
 		PrevReachedEnd: sl.PrevReachedEnd, Held: held}
 	if root, ok := a.threadRoot(ch, ts); ok {
@@ -166,34 +168,158 @@ func (a *App) ThreadAt(ctx context.Context, ch, ts, start string) (ThreadSlice, 
 	if start == "" {
 		start = ts
 	}
-	sl := a.ThreadSliceAt(ch, ts, start)
-	if sl.Empty() {
+	if sl := a.ThreadSliceAt(ch, ts, start); sl.Empty() {
 		if err := a.RequestReplies(ctx, ch, ts, start, start); err != nil {
 			return sl, err
 		}
-		sl = a.ThreadSliceAt(ch, ts, start)
-	} else if a.fetchThreadMissing(ctx, ch, ts, start) {
-		sl = a.ThreadSliceAt(ch, ts, start)
 	}
+	// the first page of what the slice lists and the store lost, before
+	// the pane's first draw (the rest comes as the rows' updates)
+	select {
+	case <-a.fillThread(ch, ts, start):
+	case <-ctx.Done():
+	}
+	sl := a.ThreadSliceAt(ch, ts, start)
 	a.subscribeThreadPresence(sl)
 	return sl, nil
 }
 
-// fetchThreadMissing is getMessageByTimestamp's fetch for the slice the
-// pane draws: the timestamps of it the store no longer holds (the message
-// cache evicted them; its ephemerals it never does), and the root, are
-// fetched by id (fetchObjectWithId: messages.list), as Slack's rows fetch
-// a message they read and the store misses. It reports whether it asked.
-func (a *App) fetchThreadMissing(ctx context.Context, ch, ts, start string) bool {
+// threadFillPage is how many timestamps one fetch of a thread's lost
+// replies asks for: about the rows a pane draws, nearest its start first.
+const threadFillPage = 50
+
+// threadFill is a fill running for one thread: first closes once its
+// first page is answered (or failed).
+type threadFill struct{ first chan struct{} }
+
+var closedFill = func() chan struct{} { c := make(chan struct{}); close(c); return c }()
+
+// fillThread is getMessageByTimestamp's fetch for the slice of thread
+// ch/ts at start, however the pane got it (a jump, a page, a reload): the
+// timestamps the slice lists that the store no longer holds (the message
+// cache evicted them; the ephemerals it never does), and the root when no
+// copy of it is held, fetched by id (fetchObjectWithId: messages.list) a
+// page at a time in the background. Each page goes into the thread's cache
+// and out as "update" events, which the pane's slice takes where it
+// reaches; an id the answer lacks is gone and leaves the slices. One fill
+// runs per thread (a second caller shares it). The channel closes when the
+// first page is in, at once when nothing is missing.
+func (a *App) fillThread(ch, ts, start string) <-chan struct{} {
+	missing := a.threadMissing(ch, ts, start)
+	if len(missing) == 0 {
+		return closedFill
+	}
+	k := ch + "/" + ts
+	a.fillMu.Lock()
+	if f := a.fills[k]; f != nil {
+		a.fillMu.Unlock()
+		return f.first
+	}
+	if a.fills == nil {
+		a.fills = map[string]*threadFill{}
+	}
+	f := &threadFill{first: make(chan struct{})}
+	a.fills[k] = f
+	a.fillMu.Unlock()
+	go func() {
+		first := true
+		defer func() {
+			if first {
+				close(f.first)
+			}
+			a.fillMu.Lock()
+			delete(a.fills, k)
+			a.fillMu.Unlock()
+		}()
+		for {
+			page := nearestTS(missing, start, threadFillPage)
+			err := a.fetchThreadPage(a.bg, ch, ts, page)
+			if first {
+				first = false
+				close(f.first)
+			}
+			if err != nil {
+				log.Printf("core: thread %s: fetching %d lost replies: %v", logtag.ID(ch), len(page), err)
+				return
+			}
+			missing = a.threadMissing(ch, ts, start)
+			if len(missing) == 0 || containsAllTS(missing, page) {
+				return // done, or the page didn't stay (nothing more to gain now)
+			}
+		}
+	}()
+	return f.first
+}
+
+// threadMissing is what of the slice of ch/ts at start the store holds no
+// copy of, with the root when none is held.
+func (a *App) threadMissing(ch, ts, start string) []string {
 	sl, _ := a.S.ThreadSliceAt(ch, ts, start)
 	missing := a.S.ThreadSliceMissing(ch, ts, sl)
-	if _, ok := a.threadRoot(ch, ts); !ok {
-		missing = append(missing, ts)
+	if len(sl.TSs) > 0 {
+		if _, ok := a.threadRoot(ch, ts); !ok {
+			missing = append([]string{ts}, missing...) // the root is the thread's first
+		}
 	}
-	if len(missing) == 0 {
-		return false
+	return missing
+}
+
+// fetchThreadPage asks messages.list for page of thread ch/ts and keeps
+// the answer in the thread's cache (store.PutThreadFetched).
+func (a *App) fetchThreadPage(ctx context.Context, ch, ts string, page []string) error {
+	since := a.S.LiveSeq()
+	got, answered, err := a.C.MessagesList(ctx, map[string][]string{ch: page})
+	if !answered[ch] {
+		if err == nil {
+			err = errors.New("no answer for the channel")
+		}
+		return err
 	}
-	a.hydrateKeep(ctx, map[string][]string{ch: missing}, true)
+	kept := a.S.PutThreadFetched(ch, ts, page, got[ch], since)
+	a.tellFetched()
+	for _, x := range kept {
+		a.announceHeld(ch, x)
+	}
+	return nil
+}
+
+// nearestTS is up to n of tss (ascending) nearest start, ascending.
+func nearestTS(tss []string, start string, n int) []string {
+	if len(tss) <= n {
+		return tss
+	}
+	i, _ := slices.BinarySearchFunc(tss, start, func(x, t string) int { return cmp.Compare(tsNum(x), tsNum(t)) })
+	lo, hi := i, i // [lo, hi)
+	for hi-lo < n {
+		switch {
+		case lo == 0:
+			hi++
+		case hi == len(tss):
+			lo--
+		case tsNum(start)-tsNum(tss[lo-1]) <= tsNum(tss[hi])-tsNum(start):
+			lo--
+		default:
+			hi++
+		}
+	}
+	return tss[lo:hi]
+}
+
+func tsNum(ts string) float64 {
+	f, _ := strconv.ParseFloat(ts, 64)
+	return f
+}
+
+func containsAllTS(have, page []string) bool {
+	in := make(map[string]bool, len(have))
+	for _, x := range have {
+		in[x] = true
+	}
+	for _, x := range page {
+		if !in[x] {
+			return false
+		}
+	}
 	return true
 }
 

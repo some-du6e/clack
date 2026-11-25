@@ -150,6 +150,16 @@ func (s *Store) EvictMessagesStats(in EvictInput) ([]Evicted, EvictStats) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// a thread history off screen keeps its newest timestamps as a closed
+	// pane's does (truncateThreadHistory's limit): with every evicted
+	// reply's timestamp kept (fetched by id when a pane draws it), live
+	// replies to a thread read once would grow its slices for the session
+	for k := range s.threadHist {
+		ch, thread, _ := strings.Cut(k, "/")
+		if !in.Keep[k] && !in.Keep[ch] {
+			s.truncateThreadLocked(ch, thread, false)
+		}
+	}
 	recent := func(key string) (time.Time, bool) {
 		at, ok := in.Accessed[key]
 		return at, ok && in.Now.Sub(at) < EvictRecent
