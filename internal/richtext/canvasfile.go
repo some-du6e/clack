@@ -17,9 +17,11 @@ import (
 // mentions, dates and emoji are Block Kit's, drawn as a message's are.
 
 // CanvasPreviewer is an optional Resolver extension (store.Store): a
-// canvas's Block Kit thumbnail read since the file's updated time (nil:
-// the canvas has none); ok false while none is held, when the card asks
-// for it once it is on screen (File.CanvasPreviewWanted).
+// canvas's Block Kit thumbnail (nil: the canvas has none), ok when it was
+// read since the file's updated time; ok false while no current one is
+// held, when the card asks for it once it is on screen
+// (File.CanvasPreviewWanted) and draws the last one read, if any, until it
+// comes.
 type CanvasPreviewer interface {
 	CanvasPreview(fileID string, updated int64) (thumb json.RawMessage, ok bool)
 }
@@ -40,10 +42,13 @@ func (c *builder) canvasFile(f *slack.File, out *File) {
 		out.TitleSpans = titleSpans(c.r, f.Title)
 	}
 	if cp, ok := c.r.(CanvasPreviewer); ok && f.ID != "" {
+		// a thumbnail read before the canvas's last edit is drawn until the
+		// new one comes (the card keeps its preview, not its place empty)
 		thumb, ok := cp.CanvasPreview(f.ID, f.Updated)
 		if !ok {
 			out.CanvasPreviewWanted, out.CanvasUpdated = true, f.Updated
-		} else {
+		}
+		if thumb != nil {
 			out.CanvasPreview = c.quipBlocks(thumb)
 		}
 	}

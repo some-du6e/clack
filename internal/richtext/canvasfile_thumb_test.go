@@ -51,8 +51,10 @@ func TestCanvasCardQuipBlocks(t *testing.T) {
 	para := func(s string) string {
 		return `{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"` + s + `"}]}]}`
 	}
+	// a paragraph before the title's header: Slack drops the first header,
+	// wherever it is, not the first block
 	var bs []string
-	bs = append(bs, hdr("Title"), para("one"), hdr("Second header"))
+	bs = append(bs, para("lead"), hdr("Title"), para("one"), hdr("Second header"))
 	for i := 2; i <= 12; i++ {
 		bs = append(bs, para("p"+string(rune('a'+i))))
 	}
@@ -71,8 +73,8 @@ func TestCanvasCardQuipBlocks(t *testing.T) {
 	for _, b := range f.CanvasPreview {
 		texts = append(texts, PlainText(Doc{Blocks: []Block{b}}))
 	}
-	// 11 blocks: Title (dropped), one, Second header, pc … pj
-	want := []string{"one", "Second header", "pc", "pd", "pe", "pf", "pg", "ph", "pi", "pj"}
+	// 11 blocks: lead, Title (dropped), one, Second header, pc … pi
+	want := []string{"lead", "one", "Second header", "pc", "pd", "pe", "pf", "pg", "ph", "pi"}
 	if strings.Join(texts, "|") != strings.Join(want, "|") {
 		t.Errorf("preview blocks %q, want %q (11 blocks, the first header dropped)", texts, want)
 	}

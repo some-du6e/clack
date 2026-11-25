@@ -321,6 +321,8 @@ func (cs *canvasStore) quipParcel(s *Server, req *QuipRequest, p *quip.Parcel) (
 	out := quip.Parcel{Type: p.Type, Key: p.Key, Version: p.Version, ThreadID: p.ThreadID}
 	if c.Thumbnail != "" {
 		out.Data = []byte(c.Thumbnail)
+	} else {
+		out.Data = []byte(quipThumbnail(c)) // Quip's own, from the canvas's content
 	}
 	req.Status = http.StatusOK
 	return http.StatusOK, quip.Marshal(&quip.LoadWrapper{Response: &quip.LoadResponse{Success: quip.Ptr(true), Parcels: []quip.Parcel{out}}}), ""

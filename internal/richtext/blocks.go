@@ -57,6 +57,7 @@ type bk struct {
 	Range       string          `json:"range"`
 	Timestamp   json.RawMessage `json:"timestamp"`
 	Format      string          `json:"format"`
+	Timezone    string          `json:"timezone"` // a date's own zone (a canvas thumbnail's are "UTC")
 	Fallback    bkFallback      `json:"fallback"`
 	Value       bkStr           `json:"value"` // a string (buttons, colors) or a number (raw_number cells)
 	Indent      int             `json:"indent"`
@@ -1145,11 +1146,22 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 		case "date":
 			sec := tsSeconds(e.Timestamp)
 			sp := Span{Kind: Date, Text: e.Fallback.Text, ID: strconv.FormatInt(sec, 10), URL: SafeURL(e.URL)}
+			// RichTextDate hands the element's timezone to DateCommand,
+			// whose formatDate (US03) shifts the instant into it when it
+			// resolves (isResolvableTimeZone): a canvas thumbnail's dates
+			// are UTC calendar days at 00:00 UTC with timezone "UTC", one
+			// day early in any zone west of UTC otherwise
+			t := time.Unix(sec, 0)
+			if e.Timezone != "" {
+				if loc, err := time.LoadLocation(e.Timezone); err == nil {
+					t = t.In(loc)
+				}
+			}
 			if sec > 0 && e.Format != "" {
-				sp.Text = FormatDate(time.Unix(sec, 0), e.Format)
+				sp.Text = FormatDate(t, e.Format)
 			}
 			if sp.Text == "" {
-				sp.Text = FormatDate(time.Unix(sec, 0), "{date_short_pretty} at {time}")
+				sp.Text = FormatDate(t, "{date_short_pretty} at {time}")
 			}
 			out = append(out, sp)
 		case "color":

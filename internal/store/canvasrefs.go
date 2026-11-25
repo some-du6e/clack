@@ -79,18 +79,20 @@ type canvasThumb struct {
 }
 
 // CanvasPreview is richtext.CanvasPreviewer: a canvas's Block Kit
-// thumbnail, if one read since the file's updated time is held (ok false
-// otherwise; nil thumb: the canvas has none). It asks for nothing: a card
-// on screen asks with WantCanvasPreview.
+// thumbnail as last read (nil: the canvas has none, or none was read), ok
+// when it was read since the file's updated time. It asks for nothing: a
+// card on screen asks with WantCanvasPreview.
 func (s *Store) CanvasPreview(fileID string, updated int64) (json.RawMessage, bool) {
 	c := s.canvasRefs()
 	c.mu.Lock()
 	t, ok := c.prev[fileID]
 	c.mu.Unlock()
-	if !ok || t.updated < updated {
+	if !ok {
 		return nil, false
 	}
-	return t.thumb, true
+	// one read before the file's last edit: still the card's preview
+	// until the new one comes, but not current (the card asks again)
+	return t.thumb, t.updated >= updated
 }
 
 // WantCanvasPreview queues a canvas's thumbnail for core's resolve loop:

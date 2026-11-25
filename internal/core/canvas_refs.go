@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
@@ -44,6 +45,9 @@ func (a *App) resolveCanvases(ctx context.Context, files []string, sections [][2
 			}
 		}(id)
 	}
+	// one read per canvas, however many cards (and updated times) asked:
+	// it reads the canvas as it is now
+	previews = slices.Compact(slices.Sorted(slices.Values(previews)))
 	for _, id := range previews {
 		wg.Add(1)
 		go func(id string) {
@@ -219,9 +223,12 @@ func (a *App) resolveCanvasPreview(ctx context.Context, id string) bool {
 	f, err := a.canvasFileInfo(ctx, id)
 	if err != nil {
 		var se *slack.Error
-		if errors.As(err, &se) {
+		switch {
+		case errors.As(err, &se):
 			a.S.PutCanvasPreview(id, nil, 0)
 			return true
+		case previewCutShort(ctx, err):
+			return false
 		}
 		a.canvasPreviewBackoff(id, err)
 		return false
@@ -235,7 +242,14 @@ func (a *App) resolveCanvasPreview(ctx context.Context, id string) bool {
 	var qe *slack.Error
 	switch {
 	case err == nil:
-	case errors.Is(err, quip.ErrThumbnail), errors.Is(err, quip.ErrNotFound), errors.As(err, &le), errors.As(err, &qe):
+	case previewCutShort(ctx, err):
+		return false
+	case errors.As(err, &le) && slices.Contains(le.Reasons, quip.FailTransient):
+		// Quip's TRANSIENT failure: the syncer tries again after
+		// TRANSIENT_ERROR_RETRY_DELAY_MS (30 s), as after a network error
+		a.canvasPreviewBackoff(id, err)
+		return false
+	case errors.Is(err, quip.ErrThumbnail), errors.Is(err, quip.ErrNotFound), le != nil, errors.As(err, &qe):
 		thumb = nil // Quip or Slack answered: the canvas has no thumbnail to show
 	default:
 		a.canvasPreviewBackoff(id, err)
@@ -305,19 +319,27 @@ var (
 )
 
 type previewRetries struct {
-	mu    sync.Mutex
-	delay map[string]time.Duration
+	mu     sync.Mutex
+	delay  map[string]time.Duration
+	timers map[string]*time.Timer // the retries waiting (Release stops them)
 }
 
 var previewRetriesOf = newPerApp() // *App -> *previewRetries; Release drops an App's
 
 func (a *App) previewRetries() *previewRetries {
-	v, _ := previewRetriesOf.LoadOrStore(a, &previewRetries{delay: map[string]time.Duration{}})
+	v, _ := previewRetriesOf.LoadOrStore(a, &previewRetries{delay: map[string]time.Duration{}, timers: map[string]*time.Timer{}})
 	return v.(*previewRetries)
 }
 
+// previewCutShort: a read the session's end or the App's Close cut short
+// (cancelled, or signed out), which waits for no retry.
+func previewCutShort(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, slack.ErrSignedOut)
+}
+
 // canvasPreviewBackoff keeps canvas id's card from asking again until
-// its delay passes.
+// its delay passes; then the cards that read the canvas are rebuilt (a
+// names event), so one still on screen asks again.
 func (a *App) canvasPreviewBackoff(id string, err error) {
 	r := a.previewRetries()
 	r.mu.Lock()
@@ -328,9 +350,42 @@ func (a *App) canvasPreviewBackoff(id string, err error) {
 		d = min(2*d, CanvasPreviewRetryMax)
 	}
 	r.delay[id] = d
+	if t := r.timers[id]; t != nil {
+		t.Stop()
+	}
+	r.timers[id] = time.AfterFunc(d, func() { a.canvasPreviewRetry(id) })
 	r.mu.Unlock()
 	log.Printf("canvas preview %s: %v (again after %s)", id, err, d)
-	time.AfterFunc(d, func() { a.S.ForgetCanvasPreview(id) })
+}
+
+// canvasPreviewRetry is a backoff's end: canvas id's card may ask again,
+// and its message is rebuilt so it does.
+func (a *App) canvasPreviewRetry(id string) {
+	if a.released.Load() {
+		return
+	}
+	r := a.previewRetries()
+	r.mu.Lock()
+	delete(r.timers, id)
+	r.mu.Unlock()
+	a.S.ForgetCanvasPreview(id)
+	a.emit(Event{Type: "names", Users: []string{id}})
+}
+
+// stopCanvasPreviewRetries stops the previews' retry timers, so a released
+// App leaves none behind (each held the App until it fired).
+func (a *App) stopCanvasPreviewRetries() {
+	v, ok := previewRetriesOf.Load(a)
+	if !ok {
+		return
+	}
+	r := v.(*previewRetries)
+	r.mu.Lock()
+	for id, t := range r.timers {
+		t.Stop()
+		delete(r.timers, id)
+	}
+	r.mu.Unlock()
 }
 
 // canvasPreviewOK resets canvas id's backoff.
@@ -338,5 +393,9 @@ func (a *App) canvasPreviewOK(id string) {
 	r := a.previewRetries()
 	r.mu.Lock()
 	delete(r.delay, id)
+	if t := r.timers[id]; t != nil {
+		t.Stop()
+		delete(r.timers, id)
+	}
 	r.mu.Unlock()
 }
