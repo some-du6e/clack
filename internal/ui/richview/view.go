@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -254,6 +255,13 @@ func New(doc richtext.Doc, o Options) *View {
 
 // Set replaces the document. Call it only when the message changed.
 func (v *View) Set(doc richtext.Doc, o Options) {
+	if percentOnly(v.doc, doc) {
+		// an upload's whole percent moved (PendingFilesSpinner's
+		// "Uploading… N%"): Slack's React re-render keeps the DOM, and so
+		// the row's selection, hover and press; only the layout redoes
+		v.doc, v.opts, v.dirty = doc, o, true
+		return
+	}
 	v.doc = doc
 	v.opts = o
 	v.dirty = true
@@ -262,6 +270,27 @@ func (v *View) Set(doc richtext.Doc, o Options) {
 	v.hover, v.press = -1, -1
 	v.tipFrag = -1
 	v.vizHot, v.vizIdx = 0, -1 // a chart's hover from the doc before
+}
+
+// percentOnly reports whether b is a with at most its files' upload
+// percents changed (richtext.File.Percent).
+func percentOnly(a, b richtext.Doc) bool {
+	if len(a.Blocks) != len(b.Blocks) || len(a.Blocks) == 0 {
+		return false
+	}
+	for i := range a.Blocks {
+		x, y := a.Blocks[i], b.Blocks[i]
+		if x.File != nil && y.File != nil && x.File != y.File {
+			fx, fy := *x.File, *y.File
+			fx.Percent, fy.Percent = 0, 0
+			x.File, y.File = &fx, &fy
+		}
+		if !reflect.DeepEqual(x, y) {
+			return false
+		}
+	}
+	a.Blocks, b.Blocks = nil, nil
+	return reflect.DeepEqual(a, b)
 }
 
 // SetOptions changes only the options (e.g. edited flag, pending state).
