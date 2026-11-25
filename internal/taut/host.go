@@ -22,6 +22,14 @@ func (t *Taut) installHost(r *runtime) {
 	sync := func(name string, fn jsrt.JSONFunc) { rt.ExposeJSON("taut_"+name, fn) }
 	async := func(name string, fn jsrt.AsyncFunc) { rt.ExposeAsync("taut_"+name, fn) }
 
+	// Taut's __tautPluginManager.setPluginSecret (07_manager.js): the
+	// plugin's secret option written and the plugin restarted with it, as
+	// Preferences' secret field (SetSecret); true when it was. Async: the
+	// restart runs the plugin's stop and start in JS.
+	async("setPluginSecret", func(ctx context.Context, a []json.RawMessage) (any, error) {
+		return t.SetSecret(ctx, strArg(a, 0), strArg(a, 1), strArg(a, 2)) == nil, nil
+	})
+
 	// ---- the mirror ----
 	sync("slices", func(a []json.RawMessage) (any, error) { return t.mirror.slices(), nil })
 	sync("get", func(a []json.RawMessage) (any, error) { return t.mirror.get(strArg(a, 0), strArg(a, 1)), nil })

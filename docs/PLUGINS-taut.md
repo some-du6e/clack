@@ -98,6 +98,8 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 
 Files: `config.json` (Taut's format: only set options), `user.css`, `plugins/<id>.js` plus `.meta.json`, `storage/` (api.storage, api.Cache, localStorage), and the separate 0600 secret store (`secrets.json` for opt.secret values and accounts, `secrets/` for api.secrets).
 
+Plugins reach Taut's plugin manager as `globalThis.__tautPluginManager` (Taut's bootstrap.ts), and HMojis saves the token a user pastes through its `setPluginSecret(id, key, value)`. Clack's carries that one method: it writes the opt.secret value to the secret store and restarts the plugin with it, as `SetSecret` does for the Preferences field, and its promise answers true, or false when it couldn't (a plugin that isn't loaded). Like Taut's, it takes any plugin's id: plugins share one realm and aren't isolated from each other (data.go's fileFor).
+
 ## Extensions (other plugin systems on this runtime)
 
 `t.Extend(taut.Extension{Name, Install, Prelude, Ready, LocalStorage, LocalStorageKeys})` adds a plugin system to Taut's runtime: `Install` registers host functions and `Prelude` runs after the TautAPI in every fresh runtime (the internals are on `globalThis.__taut`, the base API on `globalThis.TautAPI`), `Ready(rt, restarted)` runs once the runtime is attached (restart what ran after a crash), and `LocalStorage` serves read-only virtual keys that never reach disk. `t.JS()` starts the runtime on demand; registering an extension doesn't. `t.DataList/DataRead/DataWrite/DataDelete/DataClear` give extensions namespaces in Taut's data store. internal/slick is the user ([PLUGINS-slick.md](PLUGINS-slick.md)). `ComposerContext.Blocks`/`Text` carry the outgoing message to send checks.

@@ -383,6 +383,23 @@ T.init = () => {
   return { version: 1 }
 }
 
+/**
+ * Taut's plugin manager is globalThis.__tautPluginManager (bootstrap.ts),
+ * and plugins reach its secret store there: setPluginSecret(id, key, value)
+ * writes a plugin's secret option to the secret store and restarts the
+ * plugin with it (Taut's reregister), as Preferences' secret field does
+ * (HMojis saves a pasted token so). Promise<boolean>: false when it
+ * couldn't (Taut's safely(writeSecret, false)). Only that method: the rest
+ * of Taut's manager is its own internals.
+ */
+G.__tautPluginManager = {
+  setPluginSecret(id, key, value) {
+    return Promise.resolve()
+      .then(() => goOr(false, 'setPluginSecret', String(id), String(key), String(value)))
+      .then((ok) => ok === true, () => false)
+  },
+}
+
 /** Go → JS: what plugins have registered, for settings diagnostics and tests */
 T.introspect = () => ({
   running: T.running(),
