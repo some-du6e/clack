@@ -369,8 +369,8 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 	return c
 }
 
-// editDraftFiles is the message's files as restorable chips (an id and a
-// thumbnail: nothing to upload again).
+// editDraftFiles is the message's files as restorable chips (an id, a
+// thumbnail and the message's file object: nothing to upload again).
 func editDraftFiles(m *core.Message) []core.DraftFile {
 	var out []core.DraftFile
 	for _, b := range m.Doc.Blocks {
@@ -378,7 +378,7 @@ func editDraftFiles(m *core.Message) []core.DraftFile {
 		if b.Kind != richtext.FileBlock || f == nil || f.ID == "" {
 			continue
 		}
-		df := core.DraftFile{ID: f.ID, Name: f.Name, Title: f.Title, Mimetype: f.Mime, PrettyType: f.PrettyType, Size: f.Size}
+		df := core.DraftFile{ID: f.ID, Name: f.Name, Title: f.Title, Mimetype: f.Mime, PrettyType: f.PrettyType, Size: f.Size, File: f}
 		if f.Thumb != nil && (f.IsImage || f.IsVideo) {
 			df.Thumb = f.Thumb.URL
 		}

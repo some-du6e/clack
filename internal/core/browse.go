@@ -47,6 +47,10 @@ type File struct {
 	// file. MP4 is its transcode, the media viewer's source with URL.
 	IsVideo bool
 	MP4     string
+	// IsAudio is Slack's fileIsPlayableAudio (slack.FileIsPlayableAudio):
+	// a hosted m4a, mp3 or wav, or an audio clip; any other audio/* file
+	// (an ogg, a flac) is a plain file.
+	IsAudio bool
 	// LastRead is when the viewer last opened it (last_read: milliseconds
 	// or seconds, 0 never), for the collections' Last viewed sort.
 	LastRead int64
@@ -359,6 +363,8 @@ func (r *browseFileRaw) file() File {
 	if f.IsVideo {
 		f.MP4 = r.MP4
 	}
+	f.IsAudio = slack.FileIsPlayableAudio(&slack.File{Mimetype: r.Mimetype, Filetype: r.Filetype, Subtype: r.Subtype,
+		Mode: r.Mode, IsExternal: r.IsExternal, ExternalType: r.ExtType})
 	var lr json.Number
 	if len(r.LastRead) > 0 && json.Unmarshal(r.LastRead, &lr) == nil {
 		f.LastRead, _ = lr.Int64()

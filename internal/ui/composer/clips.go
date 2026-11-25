@@ -539,26 +539,11 @@ func pendingClip(f vclip.File) *core.PendingFile {
 // player (videoplayer, the mini style: the play button, the scrubber and
 // the time, at the natural rate).
 func (a *attachments) drawClipCard(gtx layout.Context, th *theme.Theme, v attView, r image.Rectangle, rad int) {
-	pal := clipPalette(th)
 	fillRRect(gtx, r, rad, th.C.Bg)
 	strokeRRect(gtx, r, rad, max(1, gtx.Dp(1)), th.C.Border)
-	if f := a.uploadedClip(v.c); f != nil {
-		if row := a.clipRow(); row != nil && row.MediaTile(f, 1, false) {
-			defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-			g := gtx
-			g.Constraints = layout.Exact(r.Size())
-			row.LayoutMedia(g, richview.MediaSlot{File: f, Mini: true})
-			return
-		}
+	if a.layoutMiniPlayer(gtx, a.uploadedClip(v.c), r) {
+		return
 	}
-	dp := func(f float32) int { return gtx.Dp(unit.Dp(f)) }
-	bs := dp(34)
-	x0 := r.Min.X + dp(12)
-	cy := r.Min.Y + (r.Dy()-bs)/2
-	fillRRect(gtx, image.Rect(x0, cy, x0+bs, cy+bs), bs/2, pal.mid30) // c-audio_player_play_button--disabled
-	offset(gtx, x0+(bs-dp(20))/2, cy+(bs-dp(20))/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("play")(gtx, unit.Dp(20), rgb(0xffffff))
-	})
 	var dur string
 	var samples []float64
 	if m := v.c.clip; m != nil {
@@ -568,6 +553,42 @@ func (a *attachments) drawClipCard(gtx layout.Context, th *theme.Theme, v attVie
 			samples[i] = s / 100
 		}
 	}
+	drawIdlePlayer(gtx, th, r, dur, samples)
+}
+
+// layoutMiniPlayer draws f in r as the window's player draws a playable
+// file's FileAudio in its mini style (the play button, the scrubber and
+// the time, at the natural rate), and reports whether it did: false for
+// a nil f or where there is no player.
+func (a *attachments) layoutMiniPlayer(gtx layout.Context, f *richtext.File, r image.Rectangle) bool {
+	if f == nil {
+		return false
+	}
+	row := a.clipRow()
+	if row == nil || !row.MediaTile(f, 1, false) {
+		return false
+	}
+	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+	g := gtx
+	g.Constraints = layout.Exact(r.Size())
+	row.LayoutMedia(g, richview.MediaSlot{File: f, Mini: true})
+	return true
+}
+
+// drawIdlePlayer is the mini audio player that can't play yet
+// (PendingAudioMessageUpload's isPending: the play button disabled): its
+// button, the waveform's dots of samples (0 to 1) and the duration dur,
+// in a pillow's r.
+func drawIdlePlayer(gtx layout.Context, th *theme.Theme, r image.Rectangle, dur string, samples []float64) {
+	pal := clipPalette(th)
+	dp := func(f float32) int { return gtx.Dp(unit.Dp(f)) }
+	bs := dp(34)
+	x0 := r.Min.X + dp(12)
+	cy := r.Min.Y + (r.Dy()-bs)/2
+	fillRRect(gtx, image.Rect(x0, cy, x0+bs, cy+bs), bs/2, pal.mid30) // c-audio_player_play_button--disabled
+	offset(gtx, x0+(bs-dp(20))/2, cy+(bs-dp(20))/2, func(gtx layout.Context) layout.Dimensions {
+		return icons.Get("play")(gtx, unit.Dp(20), rgb(0xffffff))
+	})
 	ts := textStyle{Size: 13, LineHeight: 18, Weight: theme.Bold, Color: pal.fg, MaxLines: 1}
 	tw := clipMeasure(gtx, th, ts, dur)
 	right := min(r.Max.X-dp(12), x0+dp(184))

@@ -86,11 +86,11 @@ func (a *attachments) loadMeta(c *attChip) {
 	}
 	for attempt := 1; ; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), attMetaTimeout)
-		f, err := a.core.FileInfo(ctx, id)
+		f, obj, err := a.core.FileInfoObject(ctx, id)
 		cancel()
 		if err == nil && (f.Name != "" || f.Title != "") {
 			a.metaDone(c, &attMeta{name: f.Name, title: f.Title, pretty: f.PrettyType, thumb: f.Thumb, mime: f.Mime, image: f.IsImage, size: f.Size,
-				filetype: f.Filetype, mode: f.Mode, video: f.IsVideo}, true)
+				filetype: f.Filetype, mode: f.Mode, video: f.IsVideo, obj: obj}, true)
 			return
 		}
 		if err == nil {
@@ -113,6 +113,10 @@ type attMeta struct {
 	filetype, mode             string // its filetype and mode (the icon's)
 	image, video               bool
 	size                       int64
+	// obj is the file object as a message draws it (nil when it didn't
+	// decode): the chip's own, so a playable video or audio file draws as
+	// media (attach_media.go)
+	obj *richtext.File
 }
 
 // metaDone ends c's fetch: m is the file (ok), else c is gone. The file's
@@ -131,13 +135,19 @@ func (a *attachments) metaDone(c *attChip, m *attMeta, ok bool) {
 	} else {
 		title := firstNonEmpty(m.title, name)
 		c.name, c.title, c.ftype = name, title, ft
-		c.server = &richtext.File{Type: m.filetype, Mode: m.mode, IsImage: m.image, IsVideo: m.video}
+		c.server = m.obj
+		if c.server == nil {
+			c.server = &richtext.File{Type: m.filetype, Mode: m.mode, IsImage: m.image, IsVideo: m.video}
+		}
 		c.kind = attKindOf(name, nil)
 		if m.pretty != "" {
 			c.kind.Label = m.pretty
 		}
-		if m.image && m.thumb != "" {
+		switch {
+		case m.image && m.thumb != "":
 			c.thumbURL, c.kind.Image = m.thumb, true
+		case c.server.IsVideo && c.server.Thumb != nil:
+			c.thumbURL = c.server.Thumb.URL // DraftVideoFile's poster
 		}
 		if c.prepared != nil {
 			c.prepared.Name, c.prepared.Title = name, title
@@ -153,19 +163,19 @@ func (a *attachments) metaDone(c *attChip, m *attMeta, ok bool) {
 // drawMetaCard is the card of a file being fetched (two MissingText bars
 // over the empty exception tile) or that never came (the trash glyph and
 // "This file was deleted.").
-func (a *attachments) drawMetaCard(gtx layout.Context, th *theme.Theme, v attView, pad, tile int, r image.Rectangle) {
+func (a *attachments) drawMetaCard(gtx layout.Context, th *theme.Theme, v attView, inset, pad, tile int, r image.Rectangle) {
 	exc := rgb(0xdddddd) // sk_foreground_low_solid
 	bar := rgb(0xf8f8f8) // dt_color-base-ter
 	if th.Dark {
 		exc, bar = rgb(0x35373b), rgb(0x2c2d30)
 	}
 	ty := (r.Dy() - tile) / 2 // where drawCard puts the svgicon
-	fillRRect(gtx, image.Rect(pad, ty, pad+tile, ty+tile), gtx.Dp(8), exc)
-	tx := pad + tile + gtx.Dp(12)
+	fillRRect(gtx, image.Rect(inset, ty, inset+tile, ty+tile), gtx.Dp(8), exc)
+	tx := inset + tile + gtx.Dp(12)
 	if v.loading {
 		// MissingText (size medium: 120px, 8px tall, pill), one for the
 		// name's line and one for the type's
-		bw := min(gtx.Dp(120), max(r.Dx()-tx-gtx.Dp(12), 0))
+		bw := min(gtx.Dp(120), max(r.Dx()-tx-inset, 0))
 		bh := gtx.Dp(8)
 		for _, cy := range []int{pad + gtx.Dp(11), pad + gtx.Dp(22) + gtx.Dp(9)} {
 			fillRRect(gtx, image.Rect(tx, cy-bh/2, tx+bw, cy-bh/2+bh), bh/2, bar)
@@ -173,10 +183,10 @@ func (a *attachments) drawMetaCard(gtx layout.Context, th *theme.Theme, v attVie
 		return
 	}
 	ic := gtx.Dp(20)
-	offset(gtx, pad+(tile-ic)/2, ty+(tile-ic)/2, func(gtx layout.Context) layout.Dimensions {
+	offset(gtx, inset+(tile-ic)/2, ty+(tile-ic)/2, func(gtx layout.Context) layout.Dimensions {
 		return icons.Get("trash")(gtx, unit.Dp(20), th.C.FgMuted)
 	})
-	tw := max(r.Dx()-tx-gtx.Dp(12), 0)
+	tw := max(r.Dx()-tx-inset, 0)
 	offset(gtx, tx, pad+gtx.Dp(9), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, gtx.Dp(22))}
 		return label(gtx, th.Shaper, textStyle{Size: 15, LineHeight: 22, Color: th.C.FgMuted, MaxLines: 1}, i18n.T("files", "This file was deleted."))

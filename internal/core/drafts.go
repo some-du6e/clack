@@ -72,8 +72,12 @@ func (a *App) draftOf(d *draftRaw) Draft {
 		if !ok {
 			f = slack.File{ID: id}
 		}
-		v.FileInfo = append(v.FileInfo, DraftFile{ID: id, Name: f.Name, Title: f.Title, Mimetype: f.Mimetype,
-			PrettyType: f.PrettyType, Size: f.Size, Thumb: f.Thumb360})
+		df := DraftFile{ID: id, Name: f.Name, Title: f.Title, Mimetype: f.Mimetype,
+			PrettyType: f.PrettyType, Size: f.Size, Thumb: f.Thumb360}
+		if ok {
+			df.File = richtext.FileOf(&f)
+		}
+		v.FileInfo = append(v.FileInfo, df)
 	}
 	return v
 }
