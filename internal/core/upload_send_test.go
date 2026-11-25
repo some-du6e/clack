@@ -329,3 +329,32 @@ func TestPlaceholderStatus(t *testing.T) {
 		}
 	}
 }
+
+// Every whole percent an upload moves redraws its placeholder, so
+// PendingFilesSpinner's "Uploading… N%" follows percentComplete; it read
+// the first nonzero percent until the status line changed.
+func TestPlaceholderProgressFollowsPercent(t *testing.T) {
+	pf := &PendingFile{total: 1000}
+	ph := &filePlaceholder{started: true, slots: []*phSlot{{pf: pf}}}
+	for _, c := range []struct {
+		sent  int64
+		moved bool
+		pct   int
+	}{
+		{0, false, 0},   // nothing sent: as drawn
+		{120, true, 12}, // "Waiting to upload…" becomes "Uploading…" at 12%
+		{125, false, 12},
+		{340, true, 34}, // the same status line, a new percent
+		{990, true, 99},
+	} {
+		pf.mu.Lock()
+		pf.sent = c.sent
+		pf.mu.Unlock()
+		if got := ph.takeProgress(); got != c.moved {
+			t.Errorf("sent %d: takeProgress = %v, want %v", c.sent, got, c.moved)
+		}
+		if p := ph.slots[0].file.UploadPercent; p != c.pct {
+			t.Errorf("sent %d: the placeholder shows %d%%, want %d%%", c.sent, p, c.pct)
+		}
+	}
+}

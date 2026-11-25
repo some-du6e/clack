@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/lists"
 	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -397,7 +398,7 @@ func (k *ctl) save(e lists.Edit) {
 		ctx, cancel := ctxTimeout(30 * time.Second)
 		defer cancel()
 		if err := a.UpdateListCells(ctx, k.id, e); err != nil {
-			k.h.Toast("Couldn't save the change: " + err.Error())
+			popups.FailedToast(k.h, "listview: Couldn't save the change", err)
 			rc, rcancel := ctxTimeout(30 * time.Second)
 			_, _ = a.List(rc, k.id)
 			rcancel()
@@ -415,7 +416,7 @@ func (k *ctl) create(fields []lists.Edit) {
 		ctx, cancel := ctxTimeout(30 * time.Second)
 		defer cancel()
 		if _, err := a.CreateListRecord(ctx, k.id, "", "", fields...); err != nil {
-			k.h.Toast("Couldn't add the item: " + err.Error())
+			popups.FailedToast(k.h, "listview: Couldn't add the item", err)
 		}
 		k.h.Invalidate()
 	}()

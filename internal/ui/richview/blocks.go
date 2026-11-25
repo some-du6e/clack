@@ -93,6 +93,7 @@ func isTextual(k richtext.BlockKind) bool {
 //	error         0 0 6px             ("This content could not be displayed.")
 //	alert         8px 0               (kept on the first block)
 //	call, callout, loading            none of their own
+//	video         none                (.p-video_block__body{padding:8px 0}, videoblock.go)
 //
 // rich_text has none of its own; its quotes and pre blocks keep their 4px.
 func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
@@ -101,6 +102,11 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		case richtext.Quote, richtext.Preformatted:
 			return l.dp(4), 0, l.dp(4)
 		case richtext.FileBlock, richtext.AttachmentBlock:
+			if b.Att != nil && b.Att.VideoBlock {
+				// a video block's wrapper is a bare flex box: its spacing is
+				// VideoBlock's own padding, which videoBlock draws
+				return 0, 0, 0
+			}
 			return l.dp(4), 0, l.dp(8)
 		case richtext.RichHeader: // .p-rich_text_header{margin:1em 0 4px}, none above the block's first
 			top := l.dp(15)
@@ -835,19 +841,7 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if l.mode&modeAtts != 0 && !l.inAtt {
 			return l.compFile(b, x, y, w)
 		}
-		if b.File.Pending { // c-pending_files__generic_file--pending: the pillow at .5
-			nb, nf, no := len(l.d.boxes), len(l.d.frags), len(l.d.overlayIcons)
-			h := l.file(b.File, x, y, w)
-			l.fade(nb, nf)
-			for i := no; i < len(l.d.overlayIcons); i++ {
-				l.d.overlayIcons[i].alpha = 0.5 // the icon is the pillow's too
-			}
-			if genericPillow(b.File) {
-				l.pendingSpinner(b.File, x+min(w, l.dp(426)), y) // PendingFilesSpinner, not faded
-			}
-			return h
-		}
-		return l.file(b.File, x, y, w)
+		return l.filePending(b.File, x, y, w, func() int { return l.file(b.File, x, y, w) })
 
 	case richtext.FileStatus:
 		return l.fileStatus(b, x, y, w)
@@ -1748,4 +1742,25 @@ func (l *lay) shift(f0, b0, h0, dx int) {
 	for i := h0; i < len(l.d.hits); i++ {
 		l.d.hits[i].r = l.d.hits[i].r.Add(image.Pt(dx, 0))
 	}
+}
+
+// filePending lays f out with lay and, while f is the viewer's upload
+// still pending, draws it as c-pending_files__generic_file--pending does:
+// the pillow at .5, its icon too, and a generic pillow's
+// PendingFilesSpinner at its top right (not faded). A lone file, each
+// cell of a pillow grid (FileGallery) and a MessageFile component take it.
+func (l *lay) filePending(f *richtext.File, x, y, w int, lay func() int) int {
+	if !f.Pending {
+		return lay()
+	}
+	nb, nf, no := len(l.d.boxes), len(l.d.frags), len(l.d.overlayIcons)
+	h := lay()
+	l.fade(nb, nf)
+	for i := no; i < len(l.d.overlayIcons); i++ {
+		l.d.overlayIcons[i].alpha = 0.5 // the icon is the pillow's too
+	}
+	if genericPillow(f) {
+		l.pendingSpinner(f, x+min(w, l.dp(426)), y) // PendingFilesSpinner, not faded
+	}
+	return h
 }

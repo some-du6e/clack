@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,5 +75,21 @@ func TestCheckWaitsForAssets(t *testing.T) {
 	u.inst = desktop.Install{Kind: desktop.KindUnknown, GOOS: "darwin"}
 	if _, ok, err := check(desktop.Release{Tag: tag, Prerelease: true, PublishedAt: published}); !ok || err != nil {
 		t.Errorf("unknown install: ok %v, err %v", ok, err)
+	}
+}
+
+// Quitting installs only what stageForQuit staged, and only a quiet kind
+// of install; anything else waits for Install and restart, and says why
+// (the quit log claimed an install when nothing ran).
+func TestInstallOnQuitNeedsAStage(t *testing.T) {
+	info := ui.UpdateInfo{Tag: "v9.9.9"}
+	u := &updates{inst: desktop.Install{Kind: desktop.KindDeb}, pkg: map[string]desktop.Package{}, plans: map[string]desktop.Plan{}}
+	if err := u.installOnQuit(info); !errors.Is(err, errNotOnQuit) {
+		t.Errorf("a .deb install: %v, want errNotOnQuit", err)
+	}
+	u.inst.Kind = desktop.KindMacApp
+	u.pkg["v9.9.9"] = desktop.Package{Tag: "v9.9.9"}
+	if err := u.installOnQuit(info); !errors.Is(err, errNotOnQuit) || !strings.Contains(err.Error(), "nothing staged") {
+		t.Errorf("downloaded, not staged: %v, want errNotOnQuit (nothing staged)", err)
 	}
 }

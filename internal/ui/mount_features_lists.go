@@ -17,6 +17,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/listview"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 func init() {
@@ -267,7 +268,7 @@ func (a *App) createList(template string) {
 		id, err := c.CreateList(ctx, "", template)
 		a.Post(func() {
 			if err != nil {
-				a.Toast("Couldn't create the list: " + err.Error())
+				popups.FailedToast(a, "ui: lists create", err)
 				return
 			}
 			a.OpenListFull(id)

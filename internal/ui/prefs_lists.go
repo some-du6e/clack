@@ -118,7 +118,7 @@ func (p *prefsModal) confirmUnblock(email string) {
 			err := c.UnblockInvites(ctx, email)
 			a.Post(func() {
 				if err != nil {
-					a.Toast("Couldn't unblock " + email + ": " + err.Error())
+					popups.FailedToast(a, "ui: unblock invites", err)
 					return
 				}
 				var keep []string

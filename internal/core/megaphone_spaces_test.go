@@ -6,12 +6,17 @@ package core
 
 import (
 	"context"
+	"encoding/json"
+	"net/url"
 	"slices"
 	"testing"
+	"time"
 )
 
 // chunkedLoadMegaphoneNotificationBootData's two REQUEST_SPACES chunks, in
-// Slack's order: a change in Slack's list fails here first.
+// Slack's order (17Qm L, builds 66e72b57ade1 and 889ac449a32d): an edit to
+// Clack's lists fails here; a drift in Slack's is the drift rounds' to
+// catch (docs/EXPERIMENTS.md).
 func TestMegaphoneBootChunks(t *testing.T) {
 	first := []string{"client_footer", "client_header_right", "message_pane", "sidebar_footer", "launch_modal",
 		"in_product_coachmark", "in_product_glow", "education_user_group_sections_coachmark", "quick_reactions",
@@ -32,12 +37,12 @@ func TestMegaphoneBootChunks(t *testing.T) {
 		t.Errorf("the second chunk is %v (%d), Slack's is %v (%d)", megaphoneBootSpaces2, len(megaphoneBootSpaces2), second, len(second))
 	}
 	for _, sp := range append(slices.Clone(first), second...) {
-		if !megaphoneSpaces[sp] {
+		if !megaphoneKnownSpaces[sp] {
 			t.Errorf("boot space %s isn't one of xu's", sp)
 		}
 	}
 	for sp := range megaphoneAlwaysGlobal {
-		if !megaphoneSpaces[sp] {
+		if !megaphoneKnownSpaces[sp] {
 			t.Errorf("always-global space %s isn't one of xu's", sp)
 		}
 	}
@@ -45,8 +50,7 @@ func TestMegaphoneBootChunks(t *testing.T) {
 
 // loadMegaphoneNotificationData files only the answered spaces xu lists:
 // later_page_today (gone from xu) answered with a notification is
-// dropped, pricing_page_info_banner's is kept. Neither is a boot space, so
-// the boot load rtApp sets off can't file over them.
+// dropped, pricing_page_info_banner's is kept.
 func TestMegaphoneDropsUnknownSpaces(t *testing.T) {
 	a, fs, _ := rtApp(t)
 	fs.SetMegaphoneSpace("later_page_today", "synthetic_later_notice")
@@ -64,5 +68,121 @@ func TestMegaphoneDropsUnknownSpaces(t *testing.T) {
 	}
 	if _, ok := out["later_page_today"]; ok {
 		t.Errorf("the load answered later_page_today as filed: %v", out)
+	}
+}
+
+// A load made for a channel files its answers under the channel, except a
+// notification answered with no name: 17Qm's two ze names, which the
+// desktop build's ze (oCWb) lacks, compare with undefined, so that one is
+// filed globally. pricing_page_info_banner, global first, holds the
+// nameless answer's (none) afterwards; a named answer stays the channel's.
+func TestMegaphoneNamelessFiledGlobally(t *testing.T) {
+	a, fs, _ := rtApp(t)
+	ctx := context.Background()
+	const sp = "pricing_page_info_banner"
+	ev := map[string]any{"type": megaphoneRequestSpaces, "spaces": []string{sp}, "ia_version": 4}
+	fs.SetMegaphoneSpace(sp, "synthetic_pricing_notice")
+	if _, err := a.loadMegaphone(ctx, ev, "", megaphoneReasonUser, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.MegaphoneNotification(sp, ""); got != "synthetic_pricing_notice" {
+		t.Fatalf("control: the global load filed %q", got)
+	}
+	ch := fs.ChannelIDs()[1]
+	if _, err := a.loadMegaphone(ctx, ev, ch, megaphoneReasonUser, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.MegaphoneNotification(sp, ch); got != "synthetic_pricing_notice" {
+		t.Errorf("control: a named answer to a channel load is the channel's: %q", got)
+	}
+	fs.SetMegaphoneNameless(sp)
+	if _, err := a.loadMegaphone(ctx, ev, ch, megaphoneReasonUser, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.MegaphoneNotification(sp, ""); got != "" {
+		t.Errorf("a nameless answer to a channel load left the global space holding %q: Slack files it globally", got)
+	}
+	if got := a.MegaphoneNotification(sp, ch); got != "synthetic_pricing_notice" {
+		t.Errorf("a nameless answer to a channel load changed the channel's space to %q", got)
+	}
+}
+
+// megaphone_delayed_notification_ready files the pushed notification
+// globally only for a space xu lists, with its notification_data: a
+// generic_new_badge one turns its "New" badges on.
+func TestMegaphoneDelayedReadyLikeSlack(t *testing.T) {
+	a, fs, l := rtApp(t)
+	fs.Push(map[string]any{"type": "megaphone_delayed_notification_ready", "space": "later_page_today",
+		"notification_name": "synthetic_later_notice"})
+	fs.Push(map[string]any{"type": "megaphone_delayed_notification_ready", "space": SpaceGenericNewBadge,
+		"notification_name": "new_badge_generic", "notification_data": map[string]any{"badges": []string{"synthetic_badge"}}})
+	l.wait(t, "the generic_new_badge notification", func([]Event) bool { return a.MegaphoneNewBadge("synthetic_badge") })
+	if got := a.MegaphoneNotification(SpaceGenericNewBadge, ""); got != "new_badge_generic" {
+		t.Errorf("generic_new_badge holds %q", got)
+	}
+	if got := a.MegaphoneNotification("later_page_today", ""); got != "" {
+		t.Errorf("a pushed notification for a space xu doesn't list was filed: %q", got)
+	}
+}
+
+// In the simplified layout mode (BBM) every load asks for the critical
+// notifications only (critical_only); startBBM's clearAllMegaphoneSpaces
+// empties the global spaces and keeps the channels'.
+func TestMegaphoneBBMLikeSlack(t *testing.T) {
+	a, fs, _ := rtApp(t)
+	ctx := context.Background()
+	const sp = "pricing_page_info_banner"
+	ev := map[string]any{"type": megaphoneRequestSpaces, "spaces": []string{sp}, "ia_version": 4}
+	fs.SetMegaphoneSpace(sp, "synthetic_pricing_notice")
+	ch := fs.ChannelIDs()[1]
+	for _, at := range []string{"", ch} {
+		if _, err := a.loadMegaphone(ctx, ev, at, megaphoneReasonUser, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loads := fs.MegaphoneLoads()
+	if len(loads) < 2 || loads[len(loads)-1].Get("critical_only") != "" {
+		t.Fatalf("control: a load outside BBM sent critical_only (%d loads)", len(loads))
+	}
+	a.SetBBMMode(true)
+	if _, err := a.loadMegaphone(ctx, ev, "", megaphoneReasonUser, nil); err != nil {
+		t.Fatal(err)
+	}
+	loads = fs.MegaphoneLoads()
+	if got := loads[len(loads)-1].Get("critical_only"); got != "true" {
+		t.Errorf("a load in BBM sent critical_only %q, want true", got)
+	}
+	a.ClearAllMegaphoneSpaces()
+	if got := a.MegaphoneNotification(sp, ""); got != "" {
+		t.Errorf("clearAllMegaphoneSpaces left the global space holding %q", got)
+	}
+	if got := a.MegaphoneNotification(sp, ch); got != "synthetic_pricing_notice" {
+		t.Errorf("clearAllMegaphoneSpaces cleared the channel's space too (%q)", got)
+	}
+}
+
+// megaphone_notifications_user_refresh with spaces [] is one
+// REQUEST_SPACES with no spaces (a JS array is truthy), not the boot load.
+func TestMegaphoneUserRefreshEmptyList(t *testing.T) {
+	_, fs, _ := rtApp(t)
+	n := len(fs.MegaphoneLoads())
+	fs.Push(map[string]any{"type": "megaphone_notifications_user_refresh", "spaces": []string{}})
+	var loads []url.Values
+	for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(20 * time.Millisecond) {
+		if loads = fs.MegaphoneLoads()[n:]; len(loads) > 0 {
+			break
+		}
+	}
+	time.Sleep(200 * time.Millisecond) // the boot load sends two
+	loads = fs.MegaphoneLoads()[n:]
+	if len(loads) != 1 {
+		t.Fatalf("a user_refresh with an empty spaces list sent %d loads, want one", len(loads))
+	}
+	var e struct {
+		Type   string   `json:"type"`
+		Spaces []string `json:"spaces"`
+	}
+	if err := json.Unmarshal([]byte(loads[0].Get("event")), &e); err != nil || e.Type != megaphoneRequestSpaces || len(e.Spaces) != 0 {
+		t.Errorf("the load's event is %q (%v), want request_spaces with no spaces", loads[0].Get("event"), err)
 	}
 }

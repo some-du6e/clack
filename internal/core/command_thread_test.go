@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"net/url"
 	"testing"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -53,41 +54,52 @@ func TestCommandsInThreads(t *testing.T) {
 	}
 }
 
-// ia4_slash_command_fe (5dbN executeCommand): the picked app's command is
-// the one checked, and a command installed in one workspace sends that
-// workspace as team_id; off, neither.
+// ia4_slash_command_fe (pymN executeCommand, Po0S's pick before it): the
+// picked app's command is the one checked; a command installed in the
+// channel's one workspace sends it as team_id (the pick's, and $.teams[0]
+// for a single one) with the app the pick found; one installed only
+// elsewhere is "This command is not available in this channel". Off, the
+// pick still sends the workspace, and only the app the send was given.
 func TestIA4CommandTeam(t *testing.T) {
 	a, f := testApp(t)
 	f.reply["chat.command"] = `{"ok":true}`
 	a.mu.Lock()
 	a.cmdCache = []slack.Command{
-		{Name: "/deploy", AppID: "A1", Teams: []string{"T9"}},
+		{Name: "/deploy", AppID: "A1", Teams: []string{"T1"}},
 		{Name: "/deploy", AppID: "A2", Teams: []string{"T1", "T9"}, RunnableFromThread: true},
+		{Name: "/deploy", AppID: "A3", Teams: []string{"T9"}},
 	}
 	a.mu.Unlock()
-	run := func(app, ts string) (string, error) {
+	run := func(app, ts string) (url.Values, error) {
+		n := countCalls(f, "chat.command")
 		_, err := a.Command(context.Background(), CommandOpts{Channel: "C1", Command: "/deploy", ThreadTS: ts, AppID: app})
 		if err != nil {
-			return "", err
+			if countCalls(f, "chat.command") != n {
+				t.Errorf("%s: refused after chat.command", app)
+			}
+			return nil, err
 		}
-		p := f.last("chat.command")
-		if p.Get("app_id") != app {
-			t.Errorf("app_id %q, want %q", p.Get("app_id"), app)
-		}
-		return p.Get("team_id"), nil
+		return f.last("chat.command"), nil
 	}
 	a.SetExperimentGroup("ia4_slash_command_fe", "on")
-	if team, err := run("A1", ""); err != nil || team != "T9" {
-		t.Errorf("on, one workspace: team %q err %v", team, err)
-	}
-	if team, err := run("A2", ""); err != nil || team != "" {
-		t.Errorf("on, two workspaces: team %q err %v", team, err)
+	for _, c := range []struct{ app, team string }{{"A1", "T1"}, {"A2", "T1"}, {"", "T1"}} {
+		p, err := run(c.app, "")
+		want := c.app
+		if want == "" {
+			want = "A1" // typed: the pick's first command installed here
+		}
+		if err != nil || p.Get("team_id") != c.team || p.Get("app_id") != want {
+			t.Errorf("on, app %q: %v %v, want team %s app %s", c.app, err, p, c.team, want)
+		}
 	}
 	if _, err := run("A2", "1.0"); err != nil {
 		t.Errorf("on: A2's thread-runnable /deploy refused in a thread: %v", err)
 	}
+	if _, err := run("A3", ""); feedbackOf(err) != "This command is not available in this channel" {
+		t.Errorf("on: A3 installed elsewhere: %v", err)
+	}
 	a.SetExperimentGroup("ia4_slash_command_fe", "off")
-	if team, err := run("A1", ""); err != nil || team != "" {
-		t.Errorf("off: team %q err %v", team, err)
+	if p, err := run("", ""); err != nil || p.Get("team_id") != "T1" || p.Has("app_id") {
+		t.Errorf("off, typed: %v %v", err, p)
 	}
 }

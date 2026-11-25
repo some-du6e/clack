@@ -83,7 +83,7 @@ func TestAgentThreadActivityNoMentions(t *testing.T) {
 		}
 		return false
 	})
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	var last *ActivityItem
 	for _, ev := range log.all() {
 		switch {

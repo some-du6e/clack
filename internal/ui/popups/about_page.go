@@ -249,9 +249,7 @@ func (p *AboutPage) openLink(u string) {
 	if u == "" {
 		return
 	}
-	if err := openurl.Open(u); err != nil {
-		p.h.Toast("Couldn't open the link: " + errText(err))
-	}
+	openurl.OpenExternal(u)
 }
 
 // content is the contentRow; it returns the page's height.

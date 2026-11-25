@@ -62,9 +62,13 @@ import (
 // Unpatched, every boundary is one atomic load and the natives get nil
 // props.
 type row struct {
-	ts  string
-	rev uint32
-	bk  bkState // live Block Kit elements (blockkit.go)
+	// fileRemovesOpt's last answer and what it was for
+	frKey fileRemovesKey
+	frSet bool
+	frVal string
+	ts    string
+	rev   uint32
+	bk    bkState // live Block Kit elements (blockkit.go)
 	// media is the row's video players (MediaHost), for mediaKey's list,
 	// conversation and message
 	media    richview.Media
@@ -566,19 +570,55 @@ func (r *row) rvOpts() richview.Options {
 	} else if r.m.Stopped { // insertMessageLabelIntoBlocks: "(stopped)" only without "(edited)"
 		o.Stopped, o.StoppedBy = true, r.stoppedBy()
 	}
-	if own {
-		o.FileRemoves = richview.FileRemovesOf(fileRemoves(&r.m, r.rc.selfID))
+	if own && !r.m.Failed {
+		o.FileRemoves = r.fileRemovesOpt()
 	}
 	return o
 }
 
-// fileRemoves is the gallery's removableFileIds for the viewer's own
-// message m (QD+H): every file, taken out of the message, when all of
-// them were uploaded with it (canRemoveFileFromMessage: x_files holds
-// each); else the files shared into it that the viewer owns, deleted
-// (deletableFileIds, DeleteFileDialog). Canvases, lists and surfaces
-// shared in (fileIsSharedNotUploaded) get none. nil when no file has one.
-func fileRemoves(m *core.Message, self string) map[string]bool {
+// fileRemovesOpt is Options.FileRemoves for the row's message, rebuilt
+// only when the message, its x_files or the gates change: FileGallery
+// gives an x only under work_objects_rearrangement, never to a failed
+// send (its uploads aren't the viewer's to delete from here).
+func (r *row) fileRemovesOpt() string {
+	if r.rc.h == nil {
+		return ""
+	}
+	app := r.rc.h.Core()
+	if app == nil || app.Experiment(core.ExpWORearrangement) != "on" {
+		return ""
+	}
+	raw, set := app.TeamPref("disable_file_deleting")
+	deleting := !set || string(raw) != "true"
+	k := fileRemovesKey{blocks: len(r.m.Doc.Blocks), ts: r.m.TS, edited: r.m.EditedTS, xfiles: len(r.m.XFiles), deleting: deleting}
+	if len(r.m.Doc.Blocks) > 0 {
+		k.first = &r.m.Doc.Blocks[0]
+	}
+	if r.frKey != k || !r.frSet {
+		r.frKey, r.frSet = k, true
+		r.frVal = richview.FileRemovesOf(fileRemoves(&r.m, r.rc.selfID, deleting))
+	}
+	return r.frVal
+}
+
+// fileRemovesKey is what fileRemovesOpt's answer depends on.
+type fileRemovesKey struct {
+	first          *richtext.Block
+	blocks, xfiles int
+	ts, edited     string
+	deleting       bool
+}
+
+// fileRemoves is the gallery's removableFileIds (FileGallery's ep, build
+// 83aff18a boot-shared) for a message the viewer may delete
+// (canDeleteMessageHelper): each file shown that is in x_files
+// (getViewerRemovableFileIds) and each canvas or list shared in
+// (fileIsSharedNotUploaded) that isn't the message's last content
+// (isFileTheLastContent) is taken out of it (false); a file shared in
+// that the viewer owns is deleted (true: deletableFileIds,
+// DeleteFileDialog) unless the team turned file deleting off (deleting
+// false). nil when no file has an x.
+func fileRemoves(m *core.Message, self string, deleting bool) map[string]bool {
 	var files []*richtext.File
 	for i := range m.Doc.Blocks {
 		if b := &m.Doc.Blocks[i]; b.Kind == richtext.FileBlock && b.File != nil && b.File.ID != "" {
@@ -592,16 +632,26 @@ func fileRemoves(m *core.Message, self string) map[string]bool {
 	for _, id := range m.XFiles {
 		x[id] = true
 	}
-	all := len(m.XFiles) > 0
-	for _, f := range files {
-		all = all && x[f.ID]
+	last := func(id string) bool { // isFileTheLastContent
+		if strings.TrimSpace(m.Text) != "" || len(m.Blocks) > 0 && string(m.Blocks) != "null" && string(m.Blocks) != "[]" {
+			return false
+		}
+		for _, f := range files {
+			if f.ID != id {
+				return false
+			}
+		}
+		return true
 	}
 	out := map[string]bool{}
 	for _, f := range files {
+		shared := core.IsCanvasFile(f.Type, f.Mode, f.PrettyType) || core.IsListFile(f.Type, f.Mode, f.PrettyType)
 		switch {
-		case all:
+		case x[f.ID]:
 			out[f.ID] = false
-		case !x[f.ID] && f.User == self && !core.IsCanvasFile(f.Type, f.Mode, f.PrettyType) && !core.IsListFile(f.Type, f.Mode, f.PrettyType):
+		case shared && !last(f.ID):
+			out[f.ID] = false
+		case !shared && deleting && f.User == self:
 			out[f.ID] = true
 		}
 	}

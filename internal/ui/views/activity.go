@@ -2828,9 +2828,9 @@ func (r *actRow) preview(gtx C, lines int) D {
 		return D{}
 	}
 	if !st.Active() {
-		return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, "")
+		return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, "", r.inertPreview())
 	}
-	return st.Wrap(gtx, func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, "") })
+	return st.Wrap(gtx, func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, "", r.inertPreview()) })
 }
 
 func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {

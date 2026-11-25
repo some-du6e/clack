@@ -130,9 +130,7 @@ func ConfirmLink(h Host, text, href string, setSuppress func()) *Modal {
 				if dontShow && setSuppress != nil {
 					setSuppress()
 				}
-				if err := openurl.Open(href); err != nil {
-					h.Toast("Couldn't open the link: " + err.Error())
-				}
+				openurl.OpenExternal(href)
 				return true
 			}},
 		},

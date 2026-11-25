@@ -23,6 +23,7 @@ package views
 import (
 	"context"
 	"image"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -132,7 +133,8 @@ func (v *scInvites) scWrite(fail string, f func(context.Context, *core.App) erro
 		if err := f(ctx, c); err != nil {
 			v.scPost(func() {
 				if fail != "" {
-					v.d.h.Toast(fail + friendlyErr(err))
+					log.Printf("views: Slack Connect invite action: %v", err)
+					v.d.h.Toast(strings.TrimSpace(fail)) // Slack's own failure text, nothing after it
 				}
 				if revert != nil {
 					revert()
