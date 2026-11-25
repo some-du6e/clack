@@ -69,8 +69,8 @@ func fileCodeOf(err error) string {
 		return "not_visible"
 	case core.IsAPIError(err, "ratelimited", "internal_error", "fatal_error", "request_timeout", "service_unavailable", "team_added_to_org"):
 		return ""
-	case errors.As(err, &se):
-		return "file_not_found" // Slack refused it: the file isn't one the viewer can have
+	case errors.As(err, &se) || errors.Is(err, core.ErrNoFile):
+		return "file_not_found" // Slack refused it, or answered without it: the file isn't one the viewer can have
 	}
 	return ""
 }

@@ -1097,6 +1097,10 @@ func (a *App) fillFiles(ch, ts string) {
 }
 
 // fileInfo is files.info's file object.
+// ErrNoFile is files.info answering ok without a file: Slack has none
+// the viewer can have, as with file_not_found.
+var ErrNoFile = errors.New("core: files.info returned no file")
+
 func (a *App) fileInfo(ctx context.Context, id string) (slack.File, error) {
 	var r struct {
 		File slack.File `json:"file"`
@@ -1105,7 +1109,7 @@ func (a *App) fileInfo(ctx context.Context, id string) (slack.File, error) {
 		return slack.File{}, err
 	}
 	if r.File.ID == "" {
-		return slack.File{}, errors.New("core: files.info returned no file")
+		return slack.File{}, ErrNoFile
 	}
 	return r.File, nil
 }
