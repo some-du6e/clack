@@ -182,6 +182,21 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 	// the Escape bindings take it, and what nothing stopped goes on to the
 	// layer at the end of the frame (slackc layers.go)
 	pluginEsc := slackc.EscapeToFocus(gtx)
+	// a focused message's own key commands come first (MessageActions'
+	// bindings on the message element): its Mod+Shift+S saves it
+	type keyCombo struct {
+		name key.Name
+		mods key.Modifiers
+	}
+	msgOwned := map[keyCombo]bool{}
+	for combo, tags := range shortcut.TakeMessageKeyOwners() {
+		for _, t := range tags {
+			if gtx.Focused(t) {
+				n, m := parseCombo(combo)
+				msgOwned[keyCombo{n, m}] = true
+			}
+		}
+	}
 	// a modal dialog makes the page inert (its keys go to it), and so does
 	// a replayed introduction (intro.go)
 	if !slackc.ModalOpen() && a.intro == nil {
@@ -192,6 +207,9 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 		}
 		for _, sc := range s.list {
 			if sc.name == key.NameEscape && (pluginEsc || escOwned && sc.mods == 0) {
+				continue
+			}
+			if msgOwned[keyCombo{sc.name, sc.mods}] {
 				continue
 			}
 			if activity && sc.mods&key.ModAlt != 0 && (sc.name == key.NameUpArrow || sc.name == key.NameDownArrow) &&

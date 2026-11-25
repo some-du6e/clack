@@ -207,6 +207,8 @@ func TestMessageMenuSlackRows(t *testing.T) {
 	if !emHas(items(own, InChannel), "Pin to channel") {
 		t.Errorf("channel pin: %q", emLabels(items(own, InChannel)))
 	}
+	// a DM the viewer has (canPinMessage needs its conversation: gUAL h)
+	h.a.S.PutConv(slack.Conversation{ID: "D0FAKEDM01", IsIM: true, User: fakeslack.ProfileID, IsMember: true})
 	dm := core.Message{Channel: "D0FAKEDM01", TS: "1700000000.000400", User: self}
 	if !emHas(items(dm, InChannel), "Pin to this conversation") {
 		t.Errorf("DM pin: %q", emLabels(items(dm, InChannel)))

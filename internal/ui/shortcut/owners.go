@@ -40,3 +40,36 @@ func OwnsEscape(tag event.Tag) bool {
 	}
 	return false
 }
+
+// A focused message's key commands (MessageActions' Mousetrap bindings on
+// the message element) see a keydown before the document's global
+// shortcuts do: its Mod+Shift+S saves the message rather than opening
+// Later. A list with a selected message that binds such a key claims it
+// with OwnMessageKey(tag, combo) every frame; the shell leaves the global
+// binding alone while tag has the key focus (TakeMessageKeyOwners).
+
+type msgKeyOwner struct {
+	tag   event.Tag
+	combo string
+}
+
+var msgKeyOwners []msgKeyOwner
+
+// OwnMessageKey claims combo ("Mod+Shift+S") for tag while it has the key
+// focus.
+func OwnMessageKey(tag event.Tag, combo string) {
+	if tag != nil {
+		msgKeyOwners = append(msgKeyOwners, msgKeyOwner{tag, combo})
+	}
+}
+
+// TakeMessageKeyOwners returns the claims made since the last call, the
+// tags by combo, and forgets them.
+func TakeMessageKeyOwners() map[string][]event.Tag {
+	out := map[string][]event.Tag{}
+	for _, o := range msgKeyOwners {
+		out[o.combo] = append(out[o.combo], o.tag)
+	}
+	msgKeyOwners = nil
+	return out
+}

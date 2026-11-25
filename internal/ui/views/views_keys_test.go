@@ -36,9 +36,14 @@ type kbHost struct {
 	undos   []string
 	undo    func()
 	away    atomic.Bool // the window unfocused (UserAttention false)
+	kbMode  atomic.Bool // keyboard mode (Slack's hasKeyboardFocus): an arrow since the last click
 }
 
 func (h *kbHost) UserAttention() bool { return !h.away.Load() }
+
+// KeyboardMode is the shell's keyboard mode (ui keyboard_mode.go): a test
+// sets it as an arrow key would, a click doesn't.
+func (h *kbHost) KeyboardMode() bool { return h.kbMode.Load() }
 
 func (h *kbHost) Navigate(r string) {
 	h.mu.Lock()

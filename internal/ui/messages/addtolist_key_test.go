@@ -17,6 +17,11 @@ type listAddHost struct {
 
 func (h *listAddHost) AddMessageToList(m core.Message) { h.added = append(h.added, m) }
 
+// KeyboardMode is the shell's (messages.KeyboardModer): these tests select
+// the message with the keyboard, which V needs (MessageActions binds its
+// keys with keyboard focus only).
+func (h *listAddHost) KeyboardMode() bool { return true }
+
 // V on the keyboard-selected message is its "Add to list…" (Slack's
 // add_to_list action, shortcut P2.ADD_TO_LIST: "v").
 func TestAddToListShortcut(t *testing.T) {
