@@ -217,3 +217,20 @@ func TestWarmFilesGoneForGood(t *testing.T) {
 		t.Error("ClearSignedOut left the mark")
 	}
 }
+
+// The boot data's emoji are the server's: a plugin's upserted emoji (an
+// HMojis blob: URL, or its lock image) never go to boot_data.json, and
+// upserts alone don't make the map loaded, so the boot data's few are
+// still installed.
+func TestBootEmojiLeavesUpsertsOut(t *testing.T) {
+	s := New("")
+	s.CustomEmoji.Upsert(map[string]string{"hm_secret": "blob:clack/1234"})
+	s.InstallBootEmoji(map[string]string{"party": "https://emoji.slack-edge.com/T1/party/1.png"})
+	if s.CustomEmoji.ServerSnapshot()["party"] == "" {
+		t.Error("with only a plugin's upsert in the map, the boot data's emoji weren't installed")
+	}
+	got := s.BootEmoji([]string{":hm_secret:", "party"})
+	if _, ok := got["hm_secret"]; ok || got["party"] == "" {
+		t.Errorf("BootEmoji gave %v; want the server's party, never the upserted hm_secret", got)
+	}
+}

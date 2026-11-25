@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"io/fs"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,12 +38,12 @@ func TestBlobURLImages(t *testing.T) {
 	dir := t.TempDir()
 	c := New(fetch, dir, nil)
 	defer c.Close()
-	t.Cleanup(func() { SetBlobSource(nil) })
-	SetBlobSource(func(u string) ([]byte, bool) {
+	t.Cleanup(func() { setBlobSource(nil) })
+	setBlobSource(func(ctx context.Context, u string, max int) ([]byte, int, bool) {
 		if u == "blob:clack/held" {
-			return buf.Bytes(), true
+			return buf.Bytes(), buf.Len(), true
 		}
-		return nil, false
+		return nil, 0, false
 	})
 	wait := func(u string, want bool) {
 		t.Helper()
@@ -71,7 +72,7 @@ func TestBlobURLImages(t *testing.T) {
 		t.Errorf("drawn at %v, want its 3×2", sz)
 	}
 	wait("blob:clack/revoked", false)
-	SetBlobSource(nil)
+	setBlobSource(nil)
 	wait("blob:clack/no-source", false)
 	if n := asked.Load(); n != 0 {
 		t.Errorf("the fetcher was asked %d times; a blob: URL never reaches the network", n)
@@ -85,5 +86,98 @@ func TestBlobURLImages(t *testing.T) {
 	})
 	if files != 0 {
 		t.Errorf("%d files in the disk tier, want none", files)
+	}
+}
+
+// A blob: URL is held to a download's limits: past MaxFetchBytes it's
+// refused without its bytes (the source is asked with the cap), the wait
+// for the plugins' runtime is bounded (blobWait: blob loads share a lane
+// with message images), and a URL the runtime doesn't hold yet (plugins
+// start after the first frames) is tried again soon, not after
+// RetryPermanent's 10 minutes.
+func TestBlobURLLimits(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	c := New(func(ctx context.Context, raw string) ([]byte, error) {
+		return nil, errors.New("no network in this test")
+	}, t.TempDir(), nil)
+	defer c.Close()
+	t.Cleanup(func() { setBlobSource(nil) })
+	var mu sync.Mutex
+	maxes := map[string]int{}
+	deadlines := map[string]time.Duration{}
+	var late atomic.Bool
+	setBlobSource(func(ctx context.Context, u string, max int) ([]byte, int, bool) {
+		dl, has := ctx.Deadline()
+		mu.Lock()
+		maxes[u] = max
+		if has {
+			deadlines[u] = time.Until(dl)
+		} else {
+			deadlines[u] = -1
+		}
+		mu.Unlock()
+		switch u {
+		case "blob:clack/huge":
+			return nil, MaxFetchBytes + 1, true
+		case "blob:clack/slow":
+			select {
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+			}
+			return nil, 0, false
+		case "blob:clack/late":
+			if late.Load() {
+				return buf.Bytes(), buf.Len(), true
+			}
+		}
+		return nil, 0, false
+	})
+	settle := func(u string, within time.Duration) (drawn bool) {
+		t.Helper()
+		for deadline := time.Now().Add(within); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if _, ok := c.Get(u, 0); ok {
+				return true
+			}
+			if c.Failed(u, 0) {
+				return false
+			}
+		}
+		t.Fatalf("%s neither drew nor failed in %v", u, within)
+		return false
+	}
+	if settle("blob:clack/huge", 10*time.Second) {
+		t.Error("a blob past MaxFetchBytes was drawn")
+	}
+	t0 := time.Now()
+	if settle("blob:clack/slow", 10*time.Second) {
+		t.Error("the slow blob was drawn")
+	}
+	if d := time.Since(t0); d > 3*time.Second {
+		t.Errorf("a load waited %v for a busy runtime; want about blobWait (1 s)", d.Round(time.Millisecond))
+	}
+	mu.Lock()
+	if maxes["blob:clack/huge"] != MaxFetchBytes {
+		t.Errorf("the source was asked with max %d; want MaxFetchBytes, so a bigger blob's bytes stay unread", maxes["blob:clack/huge"])
+	}
+	if d := deadlines["blob:clack/slow"]; d <= 0 || d > 2*time.Second {
+		t.Errorf("the source's context had deadline %v ahead; want about a second", d)
+	}
+	mu.Unlock()
+	// not held yet, then held: drawn on a retry, a few seconds on
+	if settle("blob:clack/late", 10*time.Second) {
+		t.Fatal("the late blob drew before the runtime held it")
+	}
+	late.Store(true)
+	for deadline := time.Now().Add(RetryMin + 6*time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, ok := c.Get("blob:clack/late", 0); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a blob: URL the runtime came to hold still wasn't drawn after %v: its first failure counted as permanent", RetryMin+6*time.Second)
+		}
 	}
 }

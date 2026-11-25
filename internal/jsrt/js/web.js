@@ -1356,10 +1356,15 @@
   }
   expose('Blob', Blob);
   expose('File', File);
-  // a blob: URL's bytes and type for Go (Runtime.BlobURL): an image the UI
-  // draws from a plugin's object URL, as Chromium loads one; null for a URL
-  // this runtime never made, or revoked
-  jr.blobOf = (url) => { const b = blobURLs.get(String(url)); return b ? [blobBytes(b), b.type] : null; };
+  // a blob: URL's bytes, type and size for Go (Runtime.BlobURL): an image
+  // the UI draws from a plugin's object URL, as Chromium loads one; the
+  // bytes null past max (not copied out); null for a URL this runtime
+  // never made, or revoked
+  jr.blobOf = (url, max) => {
+    const b = blobURLs.get(String(url));
+    if (!b) return null;
+    return [max > 0 && b.size > max ? null : blobBytes(b), b.type, b.size];
+  };
 
   // ---- FileReader ----
   class FileReader extends EventTarget {

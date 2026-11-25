@@ -171,7 +171,7 @@ func (s *Store) BootSidebar(d *BootData) {
 // emoji map is still empty (meta.json's comes after the first frame and
 // replaces them; a map from emoji.list is newer and stays).
 func (s *Store) InstallBootEmoji(m map[string]string) {
-	if len(m) == 0 || s.CustomEmoji.Len() > 0 {
+	if len(m) == 0 || len(s.CustomEmoji.ServerSnapshot()) > 0 { // a plugin's upserts alone are no map
 		return
 	}
 	cp := make(map[string]string, len(m))
@@ -191,9 +191,10 @@ func (s *Store) InstallBootEmoji(m map[string]string) {
 func (s *Store) EmojiPartial() bool { return s.emojiPartial.Load() }
 
 // BootEmoji is the custom emoji map's entries for names (":" trimmed),
-// with each alias's targets: the boot data's few (BootData.Emoji).
+// with each alias's targets: the boot data's few (BootData.Emoji). The
+// server's alone: a plugin's upserts (HMojis' blob: URLs) never go to disk.
 func (s *Store) BootEmoji(names []string) map[string]string {
-	m := s.CustomEmoji.Snapshot()
+	m := s.CustomEmoji.ServerSnapshot()
 	if len(m) == 0 {
 		return nil
 	}

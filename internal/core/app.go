@@ -923,7 +923,7 @@ func (a *App) Boot(ctx context.Context) error {
 	// messages draw them as images from their first frame.
 	step("emoji", func() error {
 		<-cacheDone
-		if a.S.CustomEmoji.Len() == 0 || a.S.EmojiPartial() { // none, or the boot data's few only
+		if len(a.S.CustomEmoji.ServerSnapshot()) == 0 || a.S.EmojiPartial() { // none (a plugin's upserts aren't the list), or the boot data's few only
 			return a.loadEmoji(ctx)
 		}
 		if a.S.EmojiAge() > EmojiMaxAge {

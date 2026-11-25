@@ -7051,6 +7051,11 @@ jobs:
   # upserts: kept through a list reload, never on disk), and blob: URL
   # images from the plugins' runtime (imgcache's blob source). COUNT runs
   # each. Dispatch with only=hmojis-emoji.
+  # Round 2 (2026-11-25, the review's minors): boot_data.json saves the
+  # server's emoji alone, never an upsert; a blob is held to a download's
+  # 32 MiB, its bytes unread past it, and its load waits at most a second
+  # for busy plugins; a blob: URL the runtime doesn't hold yet is tried
+  # again soon.
   hmojis-emoji:
     if: ${{ !inputs.only || startsWith('hmojis-emoji', inputs.only) }}
     runs-on: ubuntu-latest
@@ -7068,13 +7073,14 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: upsertEmoji, the store's upserts and blob URL images, COUNT runs each
+      - name: upsertEmoji, the store's upserts and blob URL images and their limits, boot data's emoji, COUNT runs each
         run: |
           set +e
           rc=0
           go test -count="$COUNT" -timeout 4m -run '^(TestCustomUpsertLikeSlacksStore|TestCustomUpsertBeforeTheList)$' ./internal/emoji || rc=1
-          go test -count="$COUNT" -timeout 4m -run '^(TestBlobURLImages|TestPageDataImages)$' ./internal/imgcache || rc=1
-          go test -count="$COUNT" -timeout 6m -run '^(TestPluginUpsertsEmojiWithObjectURL|TestAssetPackFresh)$' ./internal/taut ./internal/jsrt || rc=1
+          go test -count="$COUNT" -timeout 4m -run '^(TestBlobURLImages|TestBlobURLLimits|TestPageDataImages)$' ./internal/imgcache || rc=1
+          go test -count="$COUNT" -timeout 4m -run '^TestBootEmojiLeavesUpsertsOut$' ./internal/store || rc=1
+          go test -count="$COUNT" -timeout 6m -run '^(TestPluginUpsertsEmojiWithObjectURL|TestAssetPackFresh|TestBlobURLCapAndDeadline)$' ./internal/taut ./internal/jsrt || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
