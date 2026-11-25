@@ -348,6 +348,9 @@ on:
       - "internal/slack/history_stream*.go"
       - "internal/slack/client.go"
       - "internal/slack/types.go"
+      # the history-convert job's own
+      - "internal/core/convert_each_test.go"
+      - "internal/ui/workflows_mention_slug_test.go"
 
 permissions:
   contents: read
@@ -7502,6 +7505,42 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # history-convert (2026-11-25): a page past a MB of text converted on
+  # every core (core convertEach), the same messages as one by one (a
+  # #giant-wall page, and a rich one: mentions, emoji, reactions, a bot,
+  # files, a canvas link, a workflow mention), and the ui's workflow
+  # mention resolver called from many goroutines at once. COUNT times,
+  # then core's under -race. Dispatch with only=history-convert.
+  history-convert:
+    if: ${{ !inputs.only || startsWith('history-convert', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet; it builds internal/ui's tests too)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "big pages converted on every core against one by one, the ui's workflow mention resolver from many at once, COUNT runs, then -race"
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 6m -run '^TestTimelineConverts(Big|Rich)PagesLikeOneByOne$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 6m -run '^TestWorkflowMentionSlugConcurrent$' ./internal/ui || rc=1
+          go test -race -count=1 -v -timeout 8m -run '^TestTimelineConverts(Big|Rich)PagesLikeOneByOne$' ./internal/core || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7671,6 +7710,7 @@ jobs:
       - giant-open
       - history-limit-list
       - history-stream
+      - history-convert
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

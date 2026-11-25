@@ -186,16 +186,19 @@ type wfMentions struct {
 	refreshAt bool // a refresh of the visible messages is queued
 }
 
+// slug is the resolver core's conversions call, on every core at once
+// for a big page (convertEach): each call that finds no answer here reads
+// core's trigger cache itself, and only the lookup (fetch) is once per
+// trigger. A call that took the lookup's place first marked it asked and
+// read the cache after, and one in between answered "not loaded": its
+// message lost the workflow mention (a share_shortcut card its icon)
+// that converting one by one kept, until something converted it again.
 func (m *wfMentions) slug(id string) (richtext.WorkflowSlug, bool) {
 	m.mu.Lock()
 	s, ok := m.got[id]
-	ask := !ok && !m.asked[id]
-	if ask {
-		m.asked[id] = true
-	}
 	m.mu.Unlock()
-	if ok || !ask {
-		return s, ok
+	if ok {
+		return s, true
 	}
 	if t, ok := m.c.Interactive().Trigger(id); ok && t.Error == "" {
 		s = richtext.WorkflowSlug{Title: t.WorkflowTitle, Icon: t.Icon}
@@ -204,7 +207,13 @@ func (m *wfMentions) slug(id string) (richtext.WorkflowSlug, bool) {
 		m.mu.Unlock()
 		return s, true
 	}
-	go m.fetch(id)
+	m.mu.Lock()
+	ask := !m.asked[id]
+	m.asked[id] = true
+	m.mu.Unlock()
+	if ask {
+		go m.fetch(id)
+	}
 	return s, false
 }
 

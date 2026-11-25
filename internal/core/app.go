@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -1802,14 +1803,74 @@ func (a *App) messagePtr(ch string, m *slack.Message) *Message {
 
 // timeline converts top-level messages (and thread broadcasts).
 func (a *App) timeline(ch string, msgs []slack.Message) []Message {
-	out := make([]Message, 0, len(msgs))
+	idx := make([]int, 0, len(msgs))
 	for i := range msgs {
 		m := &msgs[i]
 		if m.Subtype == "thread_broadcast" || m.ThreadTS == "" || m.ThreadTS == m.TS || m.ReplyBroadcast {
-			out = append(out, a.message(ch, m))
+			idx = append(idx, i)
 		}
 	}
+	out := make([]Message, len(idx))
+	a.convertEach(ch, msgs, idx, out)
 	return out
+}
+
+// convertEachMin is the page size (its messages' text and blocks) from
+// which convertEach converts on more than one core: a wall of text takes
+// FromMessageIn about 9 ms, and #giant-wall's page of 28 took 240 ms one
+// after another (TestGiantWallOpenSpans' CPU profile); an ordinary page is
+// a few hundred microseconds, quicker alone than handed out.
+const convertEachMin = 1 << 20
+
+// convertHelpers bounds the goroutines helping conversions at once, across
+// every call: with each caller converting too, a big page is converted on
+// every core but one, which stays the UI's. On all of them, the frame
+// goroutine waited for a P while a jump's window of 127 walls was
+// converted (TestGiantMessagesPlugins' frame back at the bottom: 587 ms
+// of a 500 ms budget). A call that finds no helper free converts alone.
+var convertHelpers = make(chan struct{}, max(0, runtime.GOMAXPROCS(0)-2))
+
+// convertEach converts msgs[idx[k]] into out[k]: for a page past
+// convertEachMin on the caller and the helpers free (convertHelpers),
+// each message on its own, so out is what the conversions one by one
+// would make.
+func (a *App) convertEach(ch string, msgs []slack.Message, idx []int, out []Message) {
+	size := 0
+	for _, i := range idx {
+		size += len(msgs[i].Text) + len(msgs[i].Blocks)
+	}
+	if size < convertEachMin || len(idx) < 2 {
+		for k, i := range idx {
+			out[k] = a.message(ch, &msgs[i])
+		}
+		return
+	}
+	var next atomic.Int64
+	work := func() {
+		for {
+			k := int(next.Add(1) - 1)
+			if k >= len(idx) {
+				return
+			}
+			out[k] = a.message(ch, &msgs[idx[k]])
+		}
+	}
+	var wg sync.WaitGroup
+helpers:
+	for h := 0; h < len(idx)-1; h++ {
+		select {
+		case convertHelpers <- struct{}{}:
+			wg.Add(1)
+			go func() {
+				defer func() { <-convertHelpers; wg.Done() }()
+				work()
+			}()
+		default:
+			break helpers
+		}
+	}
+	work()
+	wg.Wait()
 }
 
 func (a *App) messages(ch string, msgs []slack.Message) []Message {
