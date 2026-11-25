@@ -7116,7 +7116,9 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: a canvas's link cards (settling, frames, every card kind), COUNT times
-        run: xvfb-run -a go test -count=$COUNT -timeout 30m -run '^TestRenderLinkCard' ./internal/ui/canvasview
+        run: xvfb-run -a go test -count=$COUNT -timeout 15m -run '^TestRenderLinkCard' ./internal/ui/canvasview
+      - name: canvas previews on a slow page and after a 5xx (core), COUNT times
+        run: go test -count=$COUNT -timeout 15m -run '^TestCanvasPreviewsSlowPage$' ./internal/core
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
