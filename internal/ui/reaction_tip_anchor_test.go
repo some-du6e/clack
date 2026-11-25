@@ -31,14 +31,13 @@ func TestReactionTipOverItsPillInTheActivityPanesThread(t *testing.T) {
 	crPersistent(e)
 	ch, ts := fakeslack.ViewsChannel, fakeslack.ViewsThreadUnread
 	e.fs.PostAtQuiet(ch, ts, "U0FAKE00001", "a synthetic question for the team")
-	// enough replies that the thread scrolls; the reacted one near its end
+	// enough replies that the thread scrolls; the reacted one its last,
+	// whole above the reply box once the pane is scrolled to its end
 	var reacted string
 	for i := 0; i < 16; i++ {
 		rts := fmt.Sprintf("%d.000100", 1762600100+i*60)
 		e.fs.ReplyAtQuiet(ch, ts, rts, []string{"U0FAKE00002", fakeslack.SelfID}[i%2], fmt.Sprintf("synthetic reply number %d", i))
-		if i == 13 {
-			reacted = rts
-		}
+		reacted = rts
 	}
 	if !e.fs.ReactReplyQuiet(ch, ts, reacted, "thumbsup", "U0FAKE00001", "U0FAKE00002") {
 		t.Fatal("no reply to react to")
@@ -69,13 +68,15 @@ func TestReactionTipOverItsPillInTheActivityPanesThread(t *testing.T) {
 		if tl, ok = c.list.(threadList); !ok {
 			return false
 		}
+		tl.ScrollToBottom()
 		for _, r := range tl.ReactionRects() {
 			if r.TS == reacted {
 				pill = r.R
-				return true
+				// where it really is: inside the window, not under its edge
+				full, _, ok := e.rt.Source().AreaBounds(&c.org.tag)
+				return ok && pill.Sub(tl.Origin).Add(full.Min).In(image.Rectangle{Max: e.sz})
 			}
 		}
-		tl.ScrollToBottom()
 		return false
 	})
 	paneAt := func() image.Point {
@@ -86,9 +87,6 @@ func TestReactionTipOverItsPillInTheActivityPanesThread(t *testing.T) {
 		return full.Min
 	}
 	truePill := pill.Sub(tl.Origin).Add(paneAt())
-	if !truePill.In(image.Rectangle{Max: e.sz}) {
-		t.Fatalf("the pill %v is off the window %v", truePill, e.sz)
-	}
 
 	// the tooltip's box in window coordinates: an area registered where
 	// it's drawn, read back from the router
