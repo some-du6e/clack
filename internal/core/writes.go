@@ -808,14 +808,18 @@ func (a *App) SetDND(ctx context.Context, minutes int) error {
 	return a.C.Call(ctx, "dnd.endSnooze", nil, nil)
 }
 
-// Command runs a slash command as executeCommand does: /topic and, in a
+// Command runs a slash command as executeCommand does: CheckCommand first
+// (handleSlashCommand's workspace pick, isSlashCommandEnabled;
+// slash_enabled.go) unless the caller ran it, then /topic and, in a
 // channel, /invite locally (Slack's slash-commands-local), the others
 // through chat.command (command.go: client_token, so a modal the app
 // opens shows here).
 func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error) {
-	cmd := o.Command
-	if !strings.HasPrefix(cmd, "/") && !strings.HasPrefix(cmd, "\uff0f") { // a full-width slash stays (executeCommand's N)
-		cmd = "/" + cmd
+	cmd := commandWord(o.Command)
+	if !o.Checked {
+		if err := a.CheckCommand(ctx, &o); err != nil {
+			return CommandResult{}, err
+		}
 	}
 	// executeCommand's local commands (Zrd3 getCommands, slash-commands-
 	// local), by the matched command's canonical name; /shrug and /me are

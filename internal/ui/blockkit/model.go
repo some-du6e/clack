@@ -146,7 +146,26 @@ type Element struct {
 
 	Workflow json.RawMessage `json:"workflow"` // workflow_button trigger
 
+	// split_button (SplitButtonElementBase, wAPv): the primary action is
+	// its button, the secondary ones the chevron's menu; size "medium"
+	// (else small), is_loading its loading state, disabled aria-disabled
+	PrimaryAction    *SplitAction  `json:"primary_action"`
+	SecondaryActions []SplitAction `json:"secondary_actions"`
+	Size             string        `json:"size"`
+	IsLoading        bool          `json:"is_loading"`
+	Disabled         bool          `json:"disabled"`
+
 	Raw json.RawMessage `json:"-"`
+}
+
+// SplitAction is one of a split_button's actions: what a click sends
+// (its text and value), the link it opens and the confirm it asks first.
+type SplitAction struct {
+	Text               *Text    `json:"text"`
+	Value              string   `json:"value"`
+	URL                string   `json:"url"`
+	Confirm            *Confirm `json:"confirm"`
+	AccessibilityLabel string   `json:"accessibility_label"`
 }
 
 func (e *Element) UnmarshalJSON(b []byte) error {
@@ -219,7 +238,7 @@ func isMulti(t string) bool {
 
 func isTextInput(t string) bool {
 	switch t {
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "rich_text_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "rich_text_input", "password":
 		return true
 	}
 	return false
@@ -228,7 +247,7 @@ func isTextInput(t string) bool {
 // stateful elements keep a value in the surface's state.
 func stateful(t string) bool {
 	switch t {
-	case "button", "workflow_button", "icon_button", "overflow", "image", "":
+	case "button", "workflow_button", "icon_button", "overflow", "split_button", "image", "":
 		return false
 	}
 	return true
@@ -294,7 +313,7 @@ func dataTableActions(raw json.RawMessage) []Element {
 }
 
 // maxNesting is how deep blocks inside blocks are followed (containers'
-// and callouts' child_blocks, fallback payloads), as richtext follows
+// and callouts' child_blocks, carousels' cards, fallback payloads), as richtext follows
 // fallbacks (maxFallbackDepth); deeper ones are dropped. Without it a
 // sender's containers nested 30 deep held the UI goroutine.
 const maxNesting = 8
@@ -333,6 +352,8 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 	switch {
 	case b.Type == "container" || b.Type == "callout":
 		b.kids = blockParts(p.ChildBlocks)
+	case b.Type == "carousel": // CarouselBlock's elements are blocks of their own (renderBlocks): its cards and their actions
+		b.kids = blockParts(p.Elements)
 	case len(p.Fallback) > 0:
 		b.kids = richtext.FallbackItems(b.Type, p.Fallback)
 	}

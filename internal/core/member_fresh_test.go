@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -125,18 +126,25 @@ func TestMemberRefetchedPastMaxAgeLikeSlack(t *testing.T) {
 
 // A new connection starts over: after a fast reconnect the members that
 // were subscribed are subscribed again on it (the gateway's subscriptions
-// are the connection's).
+// are the connection's). The fake has a subscription as its request
+// comes; core counts it once the gateway has answered and the refetch
+// after it is in (subscribeMembers), so the test waits for both. Read
+// right after the fake's, core's count was sometimes still out ("core
+// doesn't count the member subscribed", msg-latency-thread's push ci
+// 45388429533); MF_SLOW_REFETCH holds that refetch 300 ms (slowRefetch).
 func TestMemberSubscriptionsAfterReconnect(t *testing.T) {
 	a, fs, _ := rtApp(t)
+	slowRefetch(fs)
 	id := unheldMember(t, a, fs)
 	a.User(id)
-	waitFor(t, "the member subscribed", 10*time.Second, func() bool { return fs.UserSubscribed(id) })
-	a.mfresh.mu.Lock()
-	sub := a.mfresh.subscribed[id]
-	a.mfresh.mu.Unlock()
-	if !sub {
-		t.Fatal("core doesn't count the member subscribed")
-	}
+	waitFor(t, "the member subscribed, on the fake and in core", 10*time.Second, func() bool {
+		if !fs.UserSubscribed(id) {
+			return false
+		}
+		a.mfresh.mu.Lock()
+		defer a.mfresh.mu.Unlock()
+		return a.mfresh.subscribed[id]
+	})
 	// what the old connection was sent, and which one it was: the
 	// subscription after the reconnect must be a new request on a new
 	// connection (the fake's subscribed set is the last connection's until
@@ -274,5 +282,14 @@ func TestMemberFreshnessKeptOnFastReconnectOffGrid(t *testing.T) {
 	a.memberFreshConnected(false)
 	if fresh() {
 		t.Error("a slow reconnect off Grid kept the member fresh")
+	}
+}
+
+// slowRefetch holds the fake's users/info 300 ms with MF_SLOW_REFETCH set
+// (flake-check member-subs): a member's refetch after its subscription
+// then comes in well after the fake has the subscription.
+func slowRefetch(fs *fakeslack.Server) {
+	if os.Getenv("MF_SLOW_REFETCH") != "" {
+		fs.SetFault("edge/users/info", fakeslack.Fault{Delay: 300 * time.Millisecond})
 	}
 }

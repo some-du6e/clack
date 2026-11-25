@@ -50,6 +50,8 @@ type tap struct {
 	// Space press it on release, as widget.Clickable does.
 	keys    bool
 	keyDown key.Name
+	// byPtr: the last click was the pointer's (not Enter or Space)
+	byPtr bool
 }
 
 func (t *tap) clicked(gtx C, h Host) bool {
@@ -60,7 +62,7 @@ func (t *tap) clicked(gtx C, h Host) bool {
 			break
 		}
 		if e.Kind == gesture.KindClick {
-			hit = true
+			hit, t.byPtr = true, true
 			t.org = pointerAt(h, e.Position).Sub(e.Position)
 		}
 	}
@@ -77,7 +79,7 @@ func (t *tap) clicked(gtx C, h Host) bool {
 				t.keyDown = e.Name
 			} else if t.keyDown == e.Name {
 				t.keyDown = ""
-				hit = true
+				hit, t.byPtr = true, false
 			}
 		}
 	}
@@ -184,6 +186,10 @@ func (w *ew) configure() {
 		}
 	}
 	w.ed.MaxLen = max(e.MaxLength, 0)
+	w.ed.Mask = 0
+	if e.Type == "password" { // PasswordElement: <input type="password">, Chromium's bullets
+		w.ed.Mask = '•'
+	}
 }
 
 func (w *ew) value() *Value {
@@ -274,6 +280,8 @@ func (w *ew) size(gtx C, maxW int, accessory bool) image.Point {
 		return image.Pt(min(bw, maxW), h28)
 	case "overflow":
 		return image.Pt(dp(gtx, 30), h28)
+	case "split_button":
+		return w.splitSize(gtx, maxW) // splitbutton.go
 	case "icon_button":
 		return image.Pt(h28, h28)
 	case "static_select", "external_select", "users_select", "conversations_select", "channels_select":
@@ -305,7 +313,7 @@ func (w *ew) size(gtx C, maxW int, accessory bool) image.Point {
 		return image.Pt(2*fw+dp(gtx, 8), h36+dp(gtx, 4)+dp(gtx, 16))
 	case "checkboxes", "radio_buttons":
 		return image.Pt(maxW, w.optionsHeight(gtx, maxW))
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "password":
 		if w.e.Multiline {
 			return full(max(dp(gtx, 104), w.edHeight(gtx, maxW)))
 		}
@@ -376,6 +384,8 @@ func (w *ew) layout(gtx C, sz image.Point) D {
 		w.layoutButton(gtx, sz)
 	case "overflow":
 		w.layoutOverflow(gtx, sz)
+	case "split_button":
+		w.layoutSplit(gtx, sz)
 	case "icon_button":
 		w.layoutIconButton(gtx, sz)
 	case "static_select", "external_select", "users_select", "conversations_select", "channels_select",
@@ -391,7 +401,7 @@ func (w *ew) layout(gtx C, sz image.Point) D {
 		w.layoutDateTime(gtx, sz)
 	case "checkboxes", "radio_buttons":
 		w.layoutOptions(gtx, sz)
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "password":
 		w.layoutText(gtx, sz)
 	case "rich_text_input":
 		w.layoutRich(gtx, sz)
@@ -426,7 +436,7 @@ func (w *ew) layoutIconButton(gtx C, sz image.Point) {
 	if w.main.clicked(gtx, h) && !off {
 		act := func() { w.send(actionPayload(w.bid, w.e, nil)) }
 		if w.e.Confirm != nil {
-			showConfirm(h, w.e.Confirm, act, nil)
+			w.confirm(w.e.Confirm, act, nil)
 		} else {
 			act()
 		}
@@ -461,7 +471,7 @@ func (w *ew) press() {
 				tripWorkflowButton(w.o.host(), link, inputs, w.e.ActionID, w.bid, w.o.channel(), w.messageTS())
 			}
 			if w.e.Confirm != nil {
-				showConfirm(w.o.host(), w.e.Confirm, act, nil)
+				w.confirm(w.e.Confirm, act, nil)
 				return
 			}
 			act()
@@ -476,7 +486,7 @@ func (w *ew) press() {
 		}
 	}
 	if w.e.Confirm != nil {
-		showConfirm(w.o.host(), w.e.Confirm, act, nil)
+		w.confirm(w.e.Confirm, act, nil)
 		return
 	}
 	act()
@@ -508,9 +518,9 @@ func (w *ew) commit(prev *Value) {
 		return
 	}
 	payload := actionPayload(w.bid, w.e, w.value())
-	if w.e.Confirm != nil {
+	if w.commitAsks() {
 		cur := *w.value()
-		showConfirm(w.o.host(), w.e.Confirm, func() { w.send(payload) }, func() {
+		w.confirm(w.e.Confirm, func() { w.send(payload) }, func() {
 			// denied: back to the previous value
 			if prev != nil {
 				w.o.values().set(w.bid, w.e.ActionID, prev)
@@ -521,6 +531,11 @@ func (w *ew) commit(prev *Value) {
 		return
 	}
 	w.send(payload)
+}
+
+// commitAsks reports that commit asks the element's confirm first.
+func (w *ew) commitAsks() bool {
+	return w.e.Confirm != nil && !w.inDialog && (!w.input || w.b.DispatchAction)
 }
 
 func (w *ew) snapshot() *Value {
@@ -1031,6 +1046,8 @@ func (w *ew) textPlaceholder() string {
 		return "Enter a URL"
 	case "number_input":
 		return "Enter a number"
+	case "password":
+		return "Write something" // PasswordElement's
 	}
 	return ""
 }

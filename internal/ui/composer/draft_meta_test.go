@@ -213,8 +213,9 @@ func TestDraftFileArrivesLate(t *testing.T) {
 			"title": "Q3 report", "filetype": "pdf", "pretty_type": "PDF", "mimetype": "application/pdf", "size": 48213, "mode": "hosted"}}, true
 	})
 	e := newDraftMetaEnv(t, fs, fs.ChannelIDs()[4], id)
-	// held: the card draws MissingText's two 120x8 pills over the empty
-	// 40px tile, and no text of its own
+	// held: the card draws MissingText's two 120x8 pills beside the empty
+	// exception tile (FileEntityThumbnailIcon's 36px), and no text of its
+	// own
 	d := e.drawn()
 	if d.drew(id) || d.drewText("File") {
 		t.Errorf("before its file came the card drew %q; want neither the id nor \"File\"", d.texts)
@@ -222,8 +223,8 @@ func TestDraftFileArrivesLate(t *testing.T) {
 	if n := d.pills(120, 8); n != 2 {
 		t.Errorf("before its file came the card drew %d 120x8 pills, want 2 (MissingText); boxes %v", n, d.boxes)
 	}
-	if n := d.tiles(40, 40, color.NRGBA{R: 0xdd, G: 0xdd, B: 0xdd, A: 0xff}); n != 1 {
-		t.Errorf("before its file came the card drew %d empty exception tiles (40px, sk_foreground_low_solid), want 1; boxes %v", n, d.boxes)
+	if n := d.tiles(attIconPx, attIconPx, color.NRGBA{R: 0xdd, G: 0xdd, B: 0xdd, A: 0xff}); n != 1 {
+		t.Errorf("before its file came the card drew %d empty exception tiles (%dpx, sk_foreground_low_solid), want 1; boxes %v", n, attIconPx, d.boxes)
 	}
 	e.until("files.info for the draft's file", func() bool { return asked.Load() > 0 })
 	once.Do(func() { close(release) })
@@ -237,6 +238,14 @@ func TestDraftFileArrivesLate(t *testing.T) {
 	}
 	if st := chipOf(e.c); st.gone || st.loading || st.name != "q3-report.pdf" {
 		t.Errorf("after files.info: %+v", st)
+	}
+	// the file object's filetype picks its svgicon (PendingFile has the
+	// file now), not its name's MIME type
+	e.c.att.mu.Lock()
+	v := attView{c: e.c.att.chips[0], typ: e.c.att.chips[0].ftype, server: e.c.att.chips[0].server}
+	e.c.att.mu.Unlock()
+	if art := attIconArt(v); art != "fileicon-file-pdf" {
+		t.Errorf("after files.info the card's icon is %q, want the pdf svgicon", art)
 	}
 }
 

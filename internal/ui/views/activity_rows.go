@@ -948,6 +948,23 @@ func (v *Activity) entryExtras(gtx C, r *actRow) D {
 	return col(gtx, kids...)
 }
 
+// inertPreview: the preview takes no pointer. Under activity_inbox
+// Slack's ActivityList draws every dense row with ActivityRowContentSingleLine
+// and every multi-line one with ActivityRowContentMultiLine, before its
+// per-type rows (n17J, build 66e72b57ade1), so for every item type, DMs
+// included. Both bodies call ActivityMessage with withFormat left true,
+// so the mentions and links are drawn as such (c-link), and make the
+// whole message inert with CSS: pointer-events:none on
+// .activity_single_line_row_content__message and
+// .activity_multi_line_row_content__entry_body (client-boot-styles). No
+// hover card, tooltip or hand, and a press is the row's. Without the inbox
+// Slack's older rows keep them live. Karim (α.161): "u sure u can click
+// from here".
+func (r *actRow) inertPreview() bool {
+	c := r.v.h.Core()
+	return c != nil && c.ActivityInbox()
+}
+
 // ---- the subtext run inline ----
 
 // previewSub is ActivityMessage (/ad9) with a subtext: the
@@ -960,7 +977,7 @@ func (r *actRow) previewSub(gtx C, lines int, sub string) D {
 	if st.Hidden() {
 		return D{}
 	}
-	draw := func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, sub) } // under the row's hand (itemBody)
+	draw := func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, sub, r.inertPreview()) } // under the row's hand (itemBody)
 	if !st.Active() {
 		return draw(gtx)
 	}
@@ -973,7 +990,12 @@ func (r *actRow) previewSub(gtx C, lines int, sub string) D {
 // Block Kit, files or "(edited)"), with sub run into it (actSubtextDoc).
 // Read rows draw it in the secondary colour. Cached apart from the plain
 // body (the same message can be another row's body without a subtext).
-func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub string) D {
+//
+// inert is the row's pointer-events:none (inertPreview): the preview's
+// mentions, links and dates are drawn as they are and take no pointer,
+// and its emoji show no :name: tooltip. It is part of the cache key: an
+// inert and a live view of one message are two views.
+func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub string, inert bool) D {
 	if m == nil {
 		return D{}
 	}
@@ -993,16 +1015,26 @@ func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub 
 		}
 		return b.para(gtx, 15, 22, wReg, col, maxLines, t)
 	}
-	key := "sub:" + sub + "\x00" + m.Channel + "/" + m.TS
+	key := actSubKey(sub, m.Channel, m.TS, inert)
 	ver := b.msgVerOf(m) + ":" + strconv.Itoa(len(doc.Blocks)) // the preview's own blocks
 	if m != orig {
 		ver += ":p" // a plugin's view of it: never the source's layout
 	}
-	o := richview.Options{Muted: m.System, Secondary: muted && !m.System, Channel: m.Channel, TS: m.TS, Truncate: true, ViewContext: b.viewCtx, Sender: m.User}
+	o := richview.Options{Muted: m.System, Secondary: muted && !m.System, Channel: m.Channel, TS: m.TS, Truncate: true, ViewContext: b.viewCtx, Sender: m.User, NoLinking: inert, NoEmojiTips: inert}
 	if !m.System {
 		o.Color = col
 	}
 	return b.richDoc(gtx, key, ver, actSubtextDoc(doc, sub), o, maxLines)
+}
+
+// actSubKey is msgBodySub's view cache key: "sub:", a \x01 for an inert
+// preview, the subtext, then the message's channel/ts.
+func actSubKey(sub, ch, ts string, inert bool) string {
+	mark := ""
+	if inert {
+		mark = "\x01"
+	}
+	return "sub:" + mark + sub + "\x00" + ch + "/" + ts
 }
 
 // actPreviewDoc is m's preview document (core.PreviewDoc), m.Doc when

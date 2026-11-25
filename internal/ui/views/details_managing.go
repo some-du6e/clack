@@ -208,24 +208,7 @@ func (d *ChannelDetails) archiveBody() []W {
 // archiveModalError is ArchiveChannelModalContents' error text for code
 // (andLeave false).
 func archiveModalError(err error, admin, private bool) string {
-	code := cdErrCode(err)
-	switch code {
-	case "last_ra_channel":
-		if admin {
-			return nsChannelDetails.T("Sorry, you can’t archive this channel because it is the only channel one of the guest account members belongs to. If you first disable the guest account, you will then be able to archive the channel.")
-		}
-		return nsChannelDetails.T("Sorry, you can’t archive this channel because it is the only channel one of the guest account members belongs to.")
-	case "restricted_action", "user_is_restricted":
-		if private {
-			return nsChannelDetails.T("You don’t have permission to archive private channels. Talk to your Workspace Owner.")
-		}
-		return nsChannelDetails.T("You don’t have permission to archive channels. Talk to your Workspace Owner.")
-	case "already_archived":
-		return nsChannelDetails.T("This channel was already archived.")
-	case "cant_archive_general":
-		return nsChannelDetails.T("This channel cannot be archived.")
-	}
-	return nsChannelDetails.T("Archiving failed with error: {error}", "error", code)
+	return popups.ArchiveErrorText(cdErrCode(err), admin, private)
 }
 
 // toPrivateBody is ConvertChannelToPrivateModalContents' text.

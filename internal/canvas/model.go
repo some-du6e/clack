@@ -45,9 +45,9 @@ type Block struct {
 	Header    bool            // Table: the first row is a header row
 	ColWidths []int           // Table: column widths in px when the export gives them (<col width>); else Quip splits the width evenly
 	Image     *Img            // Image
-	URL       string          // Embed: the link
+	URL       string          // Embed: the card's link
 	FileID    string          // File, Image: the Slack file (F…)
-	Title     string          // Embed / File: the text Quip shows
+	Title     string          // File: the text Quip shows (an Embed's export has none)
 	Columns   [][]Block       // Columns
 	Children  []Block         // Quote, Callout
 	Emoji     string          // Callout

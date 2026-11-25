@@ -21,8 +21,10 @@ reading Slack's code. Slack's side is committed: a snapshot in
 testdata/parity/<dimension>.json, or the test's own table. The default run
 only builds and runs those tests (no node, no network), so it takes about
 as long as `go test` of the packages involved. --refresh is the separate,
-slow step: it reruns the oracle where one is wired up (emoji-rank today)
-and shows what changed on Slack's side.
+slow step: it reruns the oracle where one is wired up and shows what
+changed on Slack's side. A known divergence whose Slack side changed loses
+its mark (its reason was about the old side) and the refresh exits 3, so
+the case fails until someone looks at it again.
 
 The totals count only these comparisons. The report also names every area
 of Slack's client no check covers, the comparisons that run in other
@@ -310,7 +312,9 @@ def collect(events):
 
 
 def own_lines(lines):
-    out = [l.rstrip('\n') for l in lines if not FRAMING.match(l)]
+    """The output's lines without go test's framing. go test -json can split one long line over several output
+    events (a case's slack: or clack: JSON past a few hundred bytes), so the events are joined back first."""
+    out = [l for l in ''.join(lines).split('\n') if not FRAMING.match(l)]
     while out and not out[-1].strip():
         out.pop()
     return out
@@ -842,7 +846,45 @@ def quip_refresher(kind):
     return refresh
 
 
-REFRESHERS = {'emoji-rank': refresh_emoji_rank, **{k: quip_refresher(k) for k in QUIP_SNAPSHOTS}}
+MESSAGE_ACTIONS_ORACLE = os.path.join(ROOT, 'tools', 'oracles', 'message_actions.cjs')
+
+
+def refresh_message_actions(cases, tmp, base=None):
+    """Slack's hover toolbar, ⋮ menu and right-click menu for each case: tools/oracles/message_actions.cjs runs
+    Slack's own toolbar and menu code in node over its CDN chunks (SLACK_CHUNKS names their directory, JSDOM the
+    directory holding jsdom; see the script's header), each case's store built through Slack's reducers."""
+    node = shutil.which('node')
+    if not node:
+        raise Unavailable('no node on PATH')
+    f = os.path.join(tmp, 'snapshot.json')
+    with open(f, 'w', encoding='utf-8') as fh:
+        json.dump({'base': base or {}, 'cases': cases}, fh, ensure_ascii=False)
+    p = subprocess.run([node, MESSAGE_ACTIONS_ORACLE, f], capture_output=True, text=True, timeout=900)
+    if p.returncode:
+        raise Unavailable(f'the harness failed ({p.returncode}): {p.stderr.strip()[-500:]}')
+    return json.loads(p.stdout.rstrip('\n').split('\n')[-1])
+
+
+SLASH_ORACLE = os.path.join(ROOT, 'tools', 'oracles', 'slash_commands.cjs')
+
+
+def refresh_slash_commands(cases, tmp, base=None):
+    """What Slack's composer does with each case's typed command: tools/oracles/slash_commands.cjs runs Slack's
+    send path (handleSlashCommand, executeCommand) in node over its CDN chunks (SLACK_CHUNKS, JSDOM)."""
+    node = shutil.which('node')
+    if not node:
+        raise Unavailable('no node on PATH')
+    f = os.path.join(tmp, 'snapshot.json')
+    with open(f, 'w', encoding='utf-8') as fh:
+        json.dump({'base': base or {}, 'cases': cases}, fh, ensure_ascii=False)
+    p = subprocess.run([node, SLASH_ORACLE, f], capture_output=True, text=True, timeout=900)
+    if p.returncode:
+        raise Unavailable(f'the harness failed ({p.returncode}): {p.stderr.strip()[-500:]}')
+    return json.loads(p.stdout.rstrip('\n').split('\n')[-1])
+
+
+REFRESHERS = {'emoji-rank': refresh_emoji_rank, 'message-actions': refresh_message_actions, 'slash-commands': refresh_slash_commands,
+              **{k: quip_refresher(k) for k in QUIP_SNAPSHOTS}}
 
 
 def dump_snapshot(s):
@@ -877,12 +919,13 @@ def refresh(reg, dims, dry_run=False, root=ROOT, refreshers=None, today=None):
             started = time.monotonic()
             try:
                 with tempfile.TemporaryDirectory(dir=os.environ.get('CLACK_PARITY_TMP')) as tmp:
-                    fresh = fn(s['cases'], tmp)
+                    # a snapshot's base (the inputs its cases share) goes to its oracle too
+                    fresh = fn(s['cases'], tmp, base=s['base']) if 'base' in s else fn(s['cases'], tmp)
             except Unavailable as e:
                 print(f'{d["id"]}: can\'t refresh here: {e}')
                 code = 2
                 continue
-            changed = 0
+            changed = remark = 0
             for case in s['cases']:
                 new = fresh.get(case['name'])
                 if new is None:
@@ -898,8 +941,21 @@ def refresh(reg, dims, dry_run=False, root=ROOT, refreshers=None, today=None):
                     print(f'    was {short(case["slack"])}\n    now {short(new)}')
                     case['slack'] = new
                     changed += 1
+                    if case.get('known'):
+                        # its reason (and the Clack output it recorded) was
+                        # about the old Slack side: the case fails until it's
+                        # looked at again, instead of skipping under it
+                        print(f'    its known divergence is dropped, as it was about the old Slack side: run the test, '
+                              f'then mark it again if Clack still differs (it said: {case["known"]})')
+                        case.pop('known')
+                        case.pop('clack', None)
+                        remark += 1
             print(f'{d["id"]}: {len(s["cases"])} cases through the oracle in {time.monotonic() - started:.1f}s, '
                   f'{changed} changed on Slack\'s side')
+            if remark:
+                print(f'{d["id"]}: {remark} known divergence(s) changed on Slack\'s side and lost their marks: '
+                      f'the refresh fails until they are marked again')
+                code = code or 3
             if changed and not dry_run:
                 s['slack']['captured'] = today
                 with open(path, 'w', encoding='utf-8') as f:

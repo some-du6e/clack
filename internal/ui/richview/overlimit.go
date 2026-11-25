@@ -10,20 +10,26 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 )
 
-// MessageKitAttachments' limit (boot-shared moBr, build 9f450b8ad3db): a
-// message draws its first 20 attachments, 10 once one of them has Block
-// Kit blocks. The rest are an ExpandableContainer collapsed by default
-// (useAttachmentRules false, shouldBeExpandedByDefault false) under
-// getExpandableKey("attachmentsOverLimit", ts, {limit, viewContext}),
-// with its ExpandableTrigger after them, MessageAttachmentOverLimitButton:
-// a classic attachment row (.c-message_attachment: max-width 600, 8px
-// under; its 4px base-ter __border, radius 8; the __body 12px in, 15px /
-// 1.5) holding the button (.c-message_attachment__over_limit_button,
+// MessageKitAttachments' limit (boot-shared moBr, web client 66e72b57ade1):
+// a message draws its first 20 elements, 10 once an attachment among them
+// has blocks (`t.blocks`: any, an empty list too) or a work object draws.
+// Its elements, in order: each attachment, the work objects together (one
+// MessageAttachmentWorkObjectsMetaTextWrapper, after the attachments, as
+// Clack draws them unrearranged) and each agent channel's card (after
+// everything; richtext puts them there). The rest are an
+// ExpandableContainer collapsed by default (useAttachmentRules false,
+// shouldBeExpandedByDefault false) under getExpandableKey(
+// "attachmentsOverLimit", ts, {limit, viewContext}), with its
+// ExpandableTrigger after them, MessageAttachmentOverLimitButton: a
+// classic attachment row (.c-message_attachment: max-width 600, 8px under;
+// its 4px base-ter __border, radius 8; the __body 12px in, 15px / 1.5)
+// holding the button (.c-message_attachment__over_limit_button,
 // content-hgl-1) and its bold text (.c-message_attachment__over_limit:
 // padding 8px 0): "+ N more attachments" ("+ 1 more attachment") while
 // they're hidden, "Show fewer attachments" under them once open. The
 // state is the account's (the expandables store, expander.go); a doc
-// drawn without a message ts keeps it in the View.
+// drawn without a message ts keeps it in the View. (Slack's contact cards
+// are one element too, ahead of the attachments; Clack counts each.)
 
 // attOverLimit and attOverLimitKit are MessageKitAttachments' el.
 const attOverLimit, attOverLimitKit = 20, 10
@@ -32,30 +38,42 @@ const attOverLimit, attOverLimitKit = 20, 10
 type overLimitBtn struct {
 	key   string // the store's key; "" outside a message
 	local string // then the View's toggle (tCollapse)
-	n     int    // the attachments past the limit
+	n     int    // the elements past the limit
 	open  bool
 }
 
 // attachmentsOverLimit applies the limit to a message's top-level blocks:
-// past it, the attachments go while collapsed, and the button's block
-// (an attachment of its own, overLimit's) follows the last one drawn.
+// past it, the elements' blocks go while collapsed, and the button's
+// block (an attachment of its own, overLimit's) follows the last one
+// drawn.
 func (l *lay) attachmentsOverLimit(bs []richtext.Block) []richtext.Block {
-	var idx []int
+	var els [][]int // each element's blocks
+	wo := -1        // the work objects' element
 	limit := attOverLimit
 	for i := range bs {
 		b := &bs[i]
-		if !l.overLimitCounts(b) {
-			continue
-		}
-		idx = append(idx, i)
-		if b.Att.Kit { // an attachment with blocks: el = 10
-			limit = attOverLimitKit
+		switch {
+		case isAgentChannelUnfurl(b):
+			els = append(els, []int{i})
+		case !l.overLimitCounts(b):
+		case isWorkObjectBlock(b):
+			limit = attOverLimitKit // eI: a work object drawn, el = 10
+			if wo < 0 {
+				wo = len(els)
+				els = append(els, nil)
+			}
+			els[wo] = append(els[wo], i)
+		default:
+			if b.Att.HasBlocks || b.Att.Kit { // `t.blocks && (el = 10)`
+				limit = attOverLimitKit
+			}
+			els = append(els, []int{i})
 		}
 	}
-	if len(idx) <= limit {
+	if len(els) <= limit {
 		return bs
 	}
-	ol := overLimitBtn{n: len(idx) - limit,
+	ol := overLimitBtn{n: len(els) - limit,
 		key: expandable.Key(expandable.AttachmentsOverLimit, l.opts.TS, expandable.Opts{Limit: limit, ViewContext: l.opts.ViewContext})}
 	if ol.key != "" {
 		ol.open = xpOn(ol.key) // shouldBeExpandedByDefault false: no state is collapsed
@@ -63,12 +81,15 @@ func (l *lay) attachmentsOverLimit(bs []richtext.Block) []richtext.Block {
 		ol.local = "attach_over:" + strconv.Itoa(limit)
 		ol.open = l.collapsed[ol.local] // opened in this View
 	}
-	after := idx[len(idx)-1]
+	last := func(el []int) int { return el[len(el)-1] }
+	after := last(els[len(els)-1])
 	hide := map[int]bool{}
 	if !ol.open {
-		after = idx[limit-1]
-		for _, i := range idx[limit:] {
-			hide[i] = true
+		after = last(els[limit-1])
+		for _, el := range els[limit:] {
+			for _, i := range el {
+				hide[i] = true
+			}
 		}
 	}
 	btn := &richtext.Attachment{}
@@ -87,6 +108,12 @@ func (l *lay) attachmentsOverLimit(bs []richtext.Block) []richtext.Block {
 		}
 	}
 	return out
+}
+
+// isAgentChannelUnfurl reports whether b is an agent_channel_unfurl's
+// card (eB: an element of its own).
+func isAgentChannelUnfurl(b *richtext.Block) bool {
+	return b.Kind == richtext.Agent && len(b.Buttons) > 0 && b.Buttons[0].Kind == richtext.AgentChannelUnfurlKind
 }
 
 // overLimitCounts reports whether b is one of MessageKitAttachments'

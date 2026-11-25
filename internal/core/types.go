@@ -960,6 +960,9 @@ type CommandOpts struct {
 	// composer's TextyInput.Submit rule): the local /topic's topic ("":
 	// Text as it is).
 	Submit string
+	// Checked: CheckCommand ran for these options (the composer's send
+	// checks before its own client commands), so Command doesn't again.
+	Checked bool
 }
 
 // CommandParam is one of a command's parsed arguments
