@@ -37,7 +37,8 @@ func TestHeaderTabsAndTopicFit(t *testing.T) {
 	t.Cleanup(func() { fs.Close() })
 	const ch = "C0FAKE00001"
 	const title = "clack testingcanvas mention test from the Clack orchestrator, as you asked: clack testing"
-	const link = "https://github.com/some-du6e/clack/tree/ui/docs/releases/alpha-165-notes-and-the-train-that-follows"
+	// longer than any header: Karim's is always cut inside it
+	const link = "https://github.com/some-du6e/clack/tree/ui/docs/releases/alpha-165-notes-and-the-train-that-follows/and-the-next-one/and-the-one-after-that/with-every-merge-listed-and-every-review-linked-so-nobody-has-to-ask-where-a-fix-went"
 	fs.AddCanvas(fakeslack.FakeCanvas{ID: "F0HDRTABS01", Channel: ch, Title: title,
 		TitleBlocks: []any{map[string]any{"type": "rich_text", "block_id": "t", "elements": []any{
 			map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": title}}}}}}})
