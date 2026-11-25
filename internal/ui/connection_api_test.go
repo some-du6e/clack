@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"time"
+
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 )
@@ -30,5 +32,11 @@ func toastNow(a *App) toastSeen {
 
 func clearToast(a *App) { a.toast = toastState{} }
 
-// routeTo is the root's afterRoute for a move from prev to r.
-func routeTo(a *App, prev, r Route) { a.afterRoute(prev, r) }
+// routeTo is the root's afterRoute for a move from prev to r (fakeApp's
+// backend has no header reads map: its conversation-open path needs one).
+func routeTo(a *App, prev, r Route) {
+	if a.data != nil && a.data.fetched == nil {
+		a.data.fetched = map[string]time.Time{}
+	}
+	a.afterRoute(prev, r)
+}

@@ -37,6 +37,7 @@ func unreadsBanner(v *Unreads) (string, image.Rectangle) { return v.degraded.Tex
 
 // threadsPagingRow draws the Threads view's paging row as a page is out.
 func threadsPagingRow(v *Threads, gtx layout.Context) {
+	v.frame() // the theme and palette Layout sets first
 	v.paging = true
 	v.footer(gtx, false)
 }
