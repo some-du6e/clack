@@ -28,8 +28,11 @@ import (
 // padding 8px 0): "+ N more attachments" ("+ 1 more attachment") while
 // they're hidden, "Show fewer attachments" under them once open. The
 // state is the account's (the expandables store, expander.go); a doc
-// drawn without a message ts keeps it in the View. (Slack's contact cards
-// are one element too, ahead of the attachments; Clack counts each.)
+// drawn without a message ts keeps it in the View. Contact cards (an
+// attachment whose one block is a contact_card) are one element ahead of
+// the attachments, with el = 10, only under attachments_and_unfurls_max_width
+// (oFJR _: the p-contact_card_grid); without it, the account's group,
+// each is one of the attachments, as here.
 
 // attOverLimit and attOverLimitKit are MessageKitAttachments' el.
 const attOverLimit, attOverLimitKit = 20, 10
