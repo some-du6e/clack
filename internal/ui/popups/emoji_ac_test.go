@@ -133,16 +133,17 @@ func TestAutocompleteEmojiCustomAlias(t *testing.T) {
 	}
 
 	// the alias row is its target: thumbs-up's image, a custom emoji, put
-	// in as ":tu:" (no skin tones); an alias of +1 is +1 at the tone
+	// in as ":tu:" (no skin tones), its own name thumbs-up (Slack's
+	// emojiBestNameMatchCanonical); an alias of +1 is +1 at the tone
 	o := acrank.Options{Source: acrank.SourceTexty, Weights: remote, Now: now, EmojiExactBoost: true}
 	ms := epAutocomplete(epBuild(epStandard(), "google", karim), 3, "tu", o)
-	if len(ms) == 0 || ms[0] != (EmojiMatch{Name: "tu", URL: thumbsUp, Custom: true, Toned: "tu"}) {
+	if len(ms) == 0 || ms[0] != (EmojiMatch{Name: "tu", URL: thumbsUp, Custom: true, Canon: "thumbs-up", Toned: "tu"}) {
 		t.Errorf("tu (thumbs-up) at tone 3: %+v", ms[:min(2, len(ms))])
 	}
 	x := epBuild(epStandard(), "google", toPlusOne)
 	plus, _ := x.lookup("+1")
 	ms = epAutocomplete(x, 3, "tu", o)
-	if len(ms) == 0 || ms[0] != (EmojiMatch{Name: "tu", URL: x.url(plus, 3), Custom: false, Toned: "tu::skin-tone-3"}) {
+	if len(ms) == 0 || ms[0] != (EmojiMatch{Name: "tu", URL: x.url(plus, 3), Custom: false, Canon: "+1", Toned: "tu::skin-tone-3"}) {
 		t.Errorf("tu (+1) at tone 3: %+v", ms[:min(2, len(ms))])
 	}
 }
