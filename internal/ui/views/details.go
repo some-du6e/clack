@@ -878,8 +878,13 @@ func (d *ChannelDetails) update(gtx C) {
 					if c := d.h.Core(); c != nil {
 						team = c.SlackConnectTeamName()
 					}
-					d.editing, d.editKind = true, cdEditName
-					d.editErr = core.ChannelNameErrorText(core.ChannelNameCode(err), team)
+					msg := core.ChannelNameErrorText(core.ChannelNameCode(err), team)
+					if !d.closed && (!d.editing || d.editKind == cdEditName) {
+						d.editing, d.editKind = true, cdEditName
+						d.editErr = msg
+					} else {
+						d.h.Toast(msg) // the pane moved on (closed, another edit): say it there
+					}
 				default:
 					d.editing = false
 					log.Printf("views: channel details edit: %v", err)

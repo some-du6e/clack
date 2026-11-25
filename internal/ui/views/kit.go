@@ -322,10 +322,11 @@ func argb(v uint32) color.NRGBA {
 
 // base is embedded in every view: host access plus per-frame shortcuts.
 type base struct {
-	h    Host
-	th   *theme.Theme
-	p    *pal
-	rich richCache
+	errLogged string // the last error errorState logged
+	h         Host
+	th        *theme.Theme
+	p         *pal
+	rich      richCache
 	// press is the last context press on a message body (content_menu.go)
 	press bodyPress
 	// mediaPane names the view's video players (media.go): set, its
@@ -1240,7 +1241,10 @@ func (b *base) skeleton(gtx C, rows int, avatar unit.Dp) D {
 func (b *base) errorState(gtx C, err error, retry *widget.Clickable) D {
 	// the views' shared error state: the files namespace's words, which
 	// Slack's own views use for theirs
-	log.Printf("views: load: %v", err)
+	if t := err.Error(); t != b.errLogged { // once per error, not every frame it's drawn
+		b.errLogged = t
+		log.Printf("views: load: %v", err)
+	}
 	return b.emptyState(gtx, "", i18n.T("files", "Something went wrong"), "", retry, i18n.T("files", "Try again"))
 }
 
