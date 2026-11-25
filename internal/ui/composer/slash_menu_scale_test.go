@@ -60,7 +60,7 @@ func TestSlashMenuScale(t *testing.T) {
 	small := syntheticMenu(acSyncCommands - 15)
 	for _, q := range []string{"", "s", "sta"} {
 		d, _ := rankCost(q, small)
-		t.Logf("rank %d commands (acSyncCommands) for %q: %v", len(small), q, d)
+		t.Logf("rank %d commands (acSyncCommands, on the UI goroutine) for %q: %v", len(small), q, d)
 	}
 
 	ac := newAutocomplete(nil, "C1")

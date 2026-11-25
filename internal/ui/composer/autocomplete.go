@@ -823,9 +823,11 @@ func (ac *Autocomplete) compute(t acTrigger) []acItem {
 	return nil
 }
 
-// acSyncCommands is the longest "/" list ranked on the UI goroutine;
-// a longer one is ranked off it (TestSlashMenuScale has the costs).
-const acSyncCommands = 1000
+// acSyncCommands is the longest "/" list ranked on the UI goroutine
+// (about 2 ms: a one-letter query costs some 15 µs a command on CI's
+// runners, TestSlashMenuScale); a longer one, a big workspace's thousands
+// of app commands, ranks off it.
+const acSyncCommands = 150
 
 // acCmdRank is what a ranked "/" list was ranked for: the query, the
 // command list and the ranking's inputs.

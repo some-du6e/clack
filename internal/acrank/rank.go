@@ -2,9 +2,11 @@ package acrank
 
 import (
 	"math"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -171,6 +173,10 @@ type entry struct {
 	inChannel bool // isMemberOfCurrentChannel (prepSuggestions)
 }
 
+// parallelMatch is the shortest candidate list Rank matches on several
+// cores (a command store's 8,870 entries took 125-180 ms on one).
+const parallelMatch = 2048
+
 // Rank is Searcher.search for one query over cands: match
 // (SearcherMatcher), group and fuzzy-sort (SearcherSorter), frecency,
 // the linear model (Sorter) on the top 3×limit, the exact-match boost,
@@ -198,7 +204,7 @@ func Rank(query string, cands []Cand, o Options) []Result {
 	}
 
 	var groups [3][]*entry // SearcherSorter: x, U, archived
-	for i := range cands {
+	match := func(i int, out *[3][]*entry) {
 		c := &cands[i]
 		e := &entry{c: c, idx: i, emojiCombo: -1}
 		ok := false
@@ -217,7 +223,7 @@ func Rank(query string, cands []Cand, o Options) []Result {
 			ok = matchCommand(e, q, matcher)
 		}
 		if !ok {
-			continue
+			return
 		}
 		e.sortName = sortName(c, o)
 		g := 0
@@ -227,7 +233,39 @@ func Rank(query string, cands []Cand, o Options) []Result {
 		case c.Kind == Channel && !c.IsMember, c.Kind == Command:
 			g = 1
 		}
-		groups[g] = append(groups[g], e)
+		out[g] = append(out[g], e)
+	}
+	// A long list (thousands of commands, a big workspace's emoji) is
+	// matched on every core, in order-keeping chunks: each candidate's
+	// match reads only the candidate, the immutable matchers and o, and
+	// the chunks' entries join in candidate order, as one loop gives them.
+	if n, workers := len(cands), min(runtime.GOMAXPROCS(0), 8); n >= parallelMatch && workers > 1 {
+		parts := make([][3][]*entry, workers)
+		size := (n + workers - 1) / workers
+		var wg sync.WaitGroup
+		for w := range workers {
+			lo, hi := w*size, min((w+1)*size, n)
+			if lo >= hi {
+				continue
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := lo; i < hi; i++ {
+					match(i, &parts[w])
+				}
+			}()
+		}
+		wg.Wait()
+		for _, p := range parts {
+			for g := range groups {
+				groups[g] = append(groups[g], p[g]...)
+			}
+		}
+	} else {
+		for i := range cands {
+			match(i, &groups)
+		}
 	}
 	// group order inside x is members, member channels, emoji,
 	// usergroups, keywords (the stable sort keeps it for full ties)
