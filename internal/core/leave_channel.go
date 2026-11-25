@@ -100,26 +100,44 @@ func (a *App) LeaveRefusal(ch string) string {
 // errNoLeaveChannel is maybeLeaveChannel's "Non-existent channel ID".
 var errNoLeaveChannel = errors.New("core: non-existent channel to leave")
 
-// LeaveChannelAction is maybeLeaveChannel's decision for ch: an action
-// above, or "" with the refusal's reason. It may read the channel's
-// membership counts (ctx bounds that).
-func (a *App) LeaveChannelAction(ctx context.Context, ch string) (action, reason string, err error) {
+// LeaveChannelActionNow is maybeLeaveChannel's decision for ch from what
+// the store holds: an action above, or "" with the refusal's reason; counts
+// says the decision needs the channel's membership counts first
+// (LeaveChannelAction reads them), the action then being what it is
+// without them.
+func (a *App) LeaveChannelActionNow(ch string) (action, reason string, counts bool, err error) {
 	c, ok := a.S.Conv(ch) // getChannelById without the fetch
 	if !ok || c == nil {
-		return "", "", errNoLeaveChannel
+		return "", "", false, errNoLeaveChannel
 	}
 	if r := a.LeaveRefusal(ch); r != "" {
-		return "", r, nil
+		return "", r, false, nil
 	}
 	grant := func(p string) bool { return a.ChannelGrant(ch, p) }
 	agent := agentRecordChannel(c) && !c.IsArchived && a.canArchive(c, grant)
 	switch {
 	case !privateChannel(c) && !agent:
-		return LeaveNow, "", nil
+		return LeaveNow, "", false, nil
 	case c.IsArchived:
-		return LeaveClose, "", nil
+		return LeaveClose, "", false, nil
 	case c.IsExtShared:
-		return LeaveConfirm, "", nil
+		return LeaveConfirm, "", false, nil
+	}
+	if privateChannel(c) {
+		return LeaveConfirm, "", true, nil
+	}
+	return LeaveNow, "", true, nil
+}
+
+// LeaveChannelAction is maybeLeaveChannel's whole decision for ch: an
+// action above, or "" with the refusal's reason. When the store's facts
+// leave it to the membership counts it reads them again
+// (fetchAndUpsertMembershipCountsForChannel; ctx bounds that): the last
+// member gets the archive dialog.
+func (a *App) LeaveChannelAction(ctx context.Context, ch string) (action, reason string, err error) {
+	action, reason, counts, err := a.LeaveChannelActionNow(ch)
+	if err != nil || !counts {
+		return action, reason, err
 	}
 	if err := a.loadMemberCountNow(ctx, ch); err == nil {
 		a.mu.Lock()
@@ -129,10 +147,7 @@ func (a *App) LeaveChannelAction(ctx context.Context, ch string) (action, reason
 			return LeaveConfirmArchive, "", nil
 		}
 	}
-	if privateChannel(c) {
-		return LeaveConfirm, "", nil
-	}
-	return LeaveNow, "", nil
+	return action, "", nil
 }
 
 // agentRecordChannel is zdO/ $n: a record channel of an agent

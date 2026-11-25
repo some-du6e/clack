@@ -54,36 +54,53 @@ func LeaveConversation(h Host, convID string, close bool) {
 	leaveChannel(h, convID)
 }
 
-// leaveChannel is maybeLeaveChannel for convID: its decision off the UI
-// goroutine (it may read the membership counts), then what it says.
+// leaveChannel is maybeLeaveChannel for convID: its decision, at once
+// from the store's facts, or off the UI goroutine once it needs the
+// channel's membership counts (a private channel's, an agent's), then
+// what it says.
 func leaveChannel(h Host, convID string) {
 	a := h.Core()
 	if a == nil {
 		h.Toast("Not connected yet")
 		return
 	}
-	type decision struct{ action, reason string }
-	run(h, func(ctx context.Context) (decision, error) {
-		act, reason, err := a.LeaveChannelAction(ctx, convID)
-		return decision{act, reason}, err
-	}, func(d decision, err error) {
-		if err != nil {
-			return // logAndReject: a channel the store doesn't hold
-		}
-		switch d.action {
-		case "":
-			_, name := leaveTitleEntity(h, convID)
-			h.ShowOverlay(LeaveChannelError(h, name, d.reason, func(ctx context.Context) error { return a.Leave(ctx, convID) }))
-		case core.LeaveNow:
-			actLeave(h, convID)
-		case core.LeaveClose:
-			actClose(h, convID)
-		case core.LeaveConfirm:
-			leaveChannelConfirm(h, convID)
-		case core.LeaveConfirmArchive:
-			h.ShowOverlay(NewLeaveArchiveDialog(h, convID))
+	act, reason, counts, err := a.LeaveChannelActionNow(convID)
+	if err != nil {
+		return // logAndReject: a channel the store doesn't hold
+	}
+	if !counts {
+		leaveDo(h, convID, act, reason)
+		return
+	}
+	run(h, func(ctx context.Context) (string, error) {
+		act, _, err := a.LeaveChannelAction(ctx, convID)
+		return act, err
+	}, func(act string, err error) {
+		if err == nil {
+			leaveDo(h, convID, act, "")
 		}
 	})
+}
+
+// leaveDo does maybeLeaveChannel's action for convID (reason: a refusal's).
+func leaveDo(h Host, convID, action, reason string) {
+	a := h.Core()
+	if a == nil {
+		return
+	}
+	switch action {
+	case "":
+		_, name := leaveTitleEntity(h, convID)
+		h.ShowOverlay(LeaveChannelError(h, name, reason, func(ctx context.Context) error { return a.Leave(ctx, convID) }))
+	case core.LeaveNow:
+		actLeave(h, convID)
+	case core.LeaveClose:
+		actClose(h, convID)
+	case core.LeaveConfirm:
+		leaveChannelConfirm(h, convID)
+	case core.LeaveConfirmArchive:
+		h.ShowOverlay(NewLeaveArchiveDialog(h, convID))
+	}
 }
 
 // leaveTitleEntity is the channel as the dialogs' titles draw it
