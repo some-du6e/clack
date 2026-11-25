@@ -63,7 +63,6 @@ const (
 	cardCanvas                         // EmbeddedCanvasUnfurl (linkcard_canvas.go): decideCanvas picks
 	cardCanvasShown                    // the entity row over the preview
 	cardCanvasNoAccess                 // NoAccessCanvas
-	cardMemberNone                     // UserProfileUnfurl with no member object yet: null, nothing in the card
 )
 
 // Card's waits: a fallback card stops waiting for its container's
@@ -348,6 +347,7 @@ func (v *View) refreshCards() {
 	a := v.h.Core()
 	bs := cardBlocks(v.blocks)
 	if a == nil || len(bs) == 0 {
+		v.cardsWait.Store(false)
 		return
 	}
 	urls := make([]string, len(bs))
@@ -538,25 +538,17 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 		}
 	}
 	// a routed card's skeleton (the message, the file, the canvas and its
-	// preview) waits Card's 20 s at most, then ends in EmptyUnfurl: a
-	// container that never unfurls, a pending card Quip left behind, a
-	// lookup that never answers would otherwise keep it loading for as
-	// long as it's on screen. It loads again when its container changes
-	// (refreshCards) or what it waits for arrives.
+	// preview) stays as Slack's does (Card times out only fallback cards);
+	// it holds still after Card's wait (skelStill below), so a lookup that
+	// never answers costs no frames
 	if k == cardMessageLoading || k == cardFileLoading {
 		if c.waitSince.IsZero() {
 			c.waitSince = now
 		}
-		end := c.waitSince.Add(cardTimeout)
-		switch {
-		case !now.Before(end):
-			k, line = cardEmpty, emptyLine("")
-		case c.rt.kind == "canvas":
+		if end := c.waitSince.Add(cardTimeout); c.rt.kind == "canvas" && now.Before(end) {
 			// the preview lands in the store (a "names" event the view may
 			// not see): look again soon, within the wait
 			gtx.Execute(op.InvalidateCmd{At: minTime(end, now.Add(500*time.Millisecond))})
-		default:
-			gtx.Execute(op.InvalidateCmd{At: end})
 		}
 	} else {
 		c.waitSince = time.Time{}
@@ -599,7 +591,6 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 		h = v.layoutMemberSkeleton(gtx, w, now)
 	case c.kind == cardMember:
 		h = v.layoutMember(gtx, c, w)
-	case c.kind == cardMemberNone: // UserProfileUnfurl's null: CardContainer holds nothing (no padding)
 	case c.kind >= cardFileLoading && c.kind <= cardFileGeneric:
 		c.fileHit = image.Rectangle{}
 		h = v.layoutFile(gtx, c, w, now)
@@ -652,6 +643,10 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 	call := m.Stop()
 	r := image.Rect(0, 0, w, h)
 	c.size = r.Size()
+	if h <= 0 { // nothing to frame: a zero-height card draws no ring or panel
+		call.Add(gtx.Ops)
+		return 0
+	}
 	c.hoverEvents(gtx)
 	if c.hover {
 		theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(1))), gtx.Dp(12), gtx.Dp(3), color.NRGBA{A: 0x14})
@@ -798,11 +793,11 @@ func minTime(a, b time.Time) time.Time {
 func (c *linkCard) waiting() bool {
 	switch c.rt.kind {
 	case "user":
-		return c.rt.memberID != "" && !c.mb.known
+		return c.rt.memberID != "" && !c.mb.known && !c.mb.nonexistent
 	case "message":
-		return c.rt.channel != "" && c.rt.ts != "" && !c.mc.known && !c.mc.gone
+		return c.rt.channel != "" && c.rt.ts != "" && !c.mc.known && !c.mc.gone && !c.mc.gaveUp
 	case "file":
-		return c.rt.fileID != "" && !c.fc.known && c.fc.code == ""
+		return c.rt.fileID != "" && !c.fc.known && c.fc.code == "" && !c.fc.failing
 	case "canvas":
 		return c.rt.fileID != "" && (!c.fc.known && c.fc.code == "" || c.fc.known && !c.cv.havePrev)
 	}

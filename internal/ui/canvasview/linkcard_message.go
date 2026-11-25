@@ -69,23 +69,22 @@ func (c *linkCard) readMessage(a *core.App) bool {
 // decideMessage is MessageUnfurl's own order: the skeleton while the
 // container unfurls and the message isn't known; with neither the message
 // nor an attachment, EmptyUnfurl's msg_non_existent once Slack said there
-// is no such message (isMessageNonExistent), the skeleton while it's
-// being fetched (Card's wait ends it), and EmptyUnfurl's plain line when
-// the fetch failed (nothing says it's gone); else the card (from the
-// attachment when the message never arrives).
+// is no such message or the fetch gave up (isMessageNonExistent), and
+// MessageUnfurl over the unknown stub while it's being fetched; else the
+// card (from the attachment when the message never arrives).
 func (c *linkCard) decideMessage(loading bool, att *slack.Attachment) (cardKind, string) {
 	d := &c.mc
 	if loading && !d.known {
 		return cardMessageLoading, ""
 	}
 	if !d.known && att == nil {
-		switch {
-		case d.gone:
+		if d.gone || d.gaveUp || c.rt.channel == "" || c.rt.ts == "" {
+			// Slack said there's none, or the fetch gave up: the
+			// UnknownFetchManager marks what it didn't return non-existent
 			return cardEmpty, emptyLine("msg_non_existent")
-		case d.gaveUp || c.rt.channel == "" || c.rt.ts == "":
-			return cardEmpty, emptyLine("")
 		}
-		return cardMessageLoading, ""
+		// being fetched: MessageUnfurl over the unknown stub (static:
+		// the missing icon, the missing member, two MissingTexts)
 	}
 	return cardMessage, ""
 }
@@ -351,6 +350,18 @@ func (v *View) layoutMessage(gtx layout.Context, c *linkCard, w int) int {
 	}
 	place(d.sub, v.styles.msgSub)
 	h := max(y, pad+av*boolInt(!dense)) + pad
+	if !d.known && len(d.blocks) == 0 && !(c.held && len(c.msg.Attachments) > 0) {
+		// the unknown stub's content: MissingText Large (100%) and Medium
+		// (85%), static, padded 0 12 12
+		lh, col := gtx.Dp(8), v.styles.card.Palette.Missing
+		bw := max(0, w-2*pad)
+		for _, f := range []int{100, 85} {
+			h += gtx.Dp(8)
+			theme.RRect(gtx, image.Rect(pad, h, pad+bw*f/100, h+lh), lh/2, col)
+			h += lh + gtx.Dp(8)
+		}
+		return h + pad
+	}
 	if len(d.blocks) > 0 {
 		bw := max(0, w-2*pad)
 		if d.body == nil {

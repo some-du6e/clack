@@ -31,6 +31,7 @@ import (
 type memberCardData struct {
 	u                 core.User
 	known, asked      bool
+	nonexistent       bool // users.info said there's no such member
 	nameBtn, avatarBt widget.Clickable
 }
 
@@ -61,7 +62,8 @@ func (c *linkCard) readMember(a *core.App) bool {
 		return false
 	}
 	d.u, d.known = a.User(c.rt.memberID)
-	return !d.known && !d.asked
+	d.nonexistent = !d.known && a.S.Nonexistent(c.rt.memberID)
+	return !d.known && !d.asked && !d.nonexistent
 }
 
 // memberSections is the view's sections of member id, fetching them once.
@@ -115,15 +117,17 @@ func profileLocale(ps core.ProfileSections) string {
 	return ""
 }
 
-// decideMember is UserProfileUnfurl's rule: nothing without a member
-// object (while users.info answers, and for a member it says doesn't
-// exist: the card fills in when one arrives, a "names" event), the
-// skeleton until the sections answer (at once for a deleted member), then
-// the card.
+// decideMember is UserProfileUnfurl's rule: the skeleton until the
+// member and its sections are in (at once for a deleted member), then the
+// card. getMemberById never answers null (fetchIfMissing,
+// preferNonExistentToNull: the unknown or non-existent stub), so a member
+// users.info is still asked for, or says doesn't exist, keeps the
+// skeleton, held still after Card's wait; one that arrives later fills
+// in ("names").
 func (v *View) decideMember(c *linkCard) cardKind {
 	d := &c.mb
 	if !d.known {
-		return cardMemberNone
+		return cardMemberLoading
 	}
 	if d.u.Deleted || v.memberSections(d.u.ID).done {
 		return cardMember

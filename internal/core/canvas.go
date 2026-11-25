@@ -230,7 +230,10 @@ func (a *App) Canvas(ctx context.Context, id string) (*CanvasDoc, error) {
 	if f.URLPrivate == "" {
 		return cd, nil
 	}
-	src, err := a.downloadCanvas(ctx, f.URLPrivate)
+	// the view's own load (opening, Try again, the reload after an edit):
+	// sent even inside the export's identical-failure backoff, which is
+	// for the previews' lookups
+	src, err := a.downloadCanvas(slack.NoBackoff(ctx), f.URLPrivate)
 	if err != nil {
 		return nil, err
 	}
@@ -607,6 +610,7 @@ func (a *App) watchCanvases(evs <-chan slack.Event, cancel func()) {
 			if id == "" {
 				continue
 			}
+			a.retryCanvasPreview(id) // a preview that failed without an answer: asked again
 			if ev.Type == "document_update" {
 				a.followCanvasModel(id) // Slack's fetchThreadChanges (canvas_quip.go)
 			}

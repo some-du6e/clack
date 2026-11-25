@@ -82,7 +82,7 @@ func cardState(v *View) (kind string, size image.Point, borderless bool) {
 		cardPublicLoading: "public-loading", cardWorkObject: "work-object", cardMessage: "message", cardMessageLoading: "message-loading",
 		cardMember: "member", cardMemberLoading: "member-loading", cardFileLoading: "file-loading", cardFileImage: "file-image",
 		cardFileVideo: "file-video", cardFileAudio: "file-audio", cardFileGeneric: "file-generic", cardCanvasShown: "canvas",
-		cardCanvasNoAccess: "canvas-no-access", cardMemberNone: "member-none"}[c.kind]
+		cardCanvasNoAccess: "canvas-no-access"}[c.kind]
 	if c.kind == cardFallback && c.body != nil {
 		att := c.body.Doc().Blocks[0].Att
 		borderless = att != nil && att.HideBorder && att.NoMaxWidth

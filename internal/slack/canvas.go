@@ -15,6 +15,32 @@ import (
 // isn't Quip's canvas export (a sign-in page, an error page).
 var ErrNotACanvas = errors.New("slack: not a canvas export")
 
+// ErrCanvasTooLarge is DownloadCanvasHTML's for an export past its max.
+var ErrCanvasTooLarge = errors.New("slack: canvas export too large")
+
+// ExportStatusError is a canvas export GET answered with a status other
+// than 200.
+type ExportStatusError struct{ Status int }
+
+func (e *ExportStatusError) Error() string {
+	return fmt.Sprintf("slack: canvas export: http %d", e.Status)
+}
+
+// ExportAnswered reports whether err is an answer about the file itself
+// (not a canvas, too large, refused with a 4xx other than 429, a redirect
+// off the file host), not a failure to get one (the network, a timeout, a
+// 5xx, a 429, the identical-failure backoff's held error).
+func ExportAnswered(err error) bool {
+	var se *ExportStatusError
+	switch {
+	case errors.Is(err, ErrNotACanvas), errors.Is(err, ErrCanvasTooLarge), errors.Is(err, ErrNotAFile), errors.Is(err, ErrUntrustedHost):
+		return true
+	case errors.As(err, &se):
+		return se.Status >= 400 && se.Status < 500 && se.Status != 429
+	}
+	return false
+}
+
 // DownloadCanvasHTML fetches a canvas file's url_private, which is Quip's
 // HTML export of the document (docs/CANVASES.md). Download refuses every
 // text/html answer, since a file URL that answers with a page is usually a
@@ -67,7 +93,7 @@ func (c *Client) downloadCanvasHTML(ctx context.Context, rawURL string, max int6
 		return "", ErrNotAFile
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("slack: canvas export: http %d", resp.StatusCode)
+		return "", &ExportStatusError{Status: resp.StatusCode}
 	}
 	ct := resp.Header.Get("Content-Type")
 	if ct != "" && !strings.HasPrefix(ct, "text/html") && !strings.HasPrefix(ct, "text/plain") {
@@ -78,7 +104,7 @@ func (c *Client) downloadCanvasHTML(ctx context.Context, rawURL string, max int6
 		return "", scrubErr(err)
 	}
 	if int64(len(b)) > max {
-		return "", errors.New("slack: canvas export too large")
+		return "", ErrCanvasTooLarge
 	}
 	head := b
 	if len(head) > 4096 {

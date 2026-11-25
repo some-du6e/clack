@@ -27,9 +27,12 @@ type App struct {
 	botProfileTeams sync.Map
 	// recFiles: name recordings' files by id (ProfileRecordingFile)
 	recFiles sync.Map
-	C        *slack.Client
-	S        *store.Store
-	RTM      *slack.RTM
+	// previewOnce/previewSt: canvas previews' slots and failed tries (canvas_refs.go)
+	previewOnce sync.Once
+	previewSt   *previewState
+	C           *slack.Client
+	S           *store.Store
+	RTM         *slack.RTM
 
 	usersAsked usersAsked // ids users/info was asked for (lazy_users.go)
 	usersOut   usersOut   // the members users/info has out (members.go)

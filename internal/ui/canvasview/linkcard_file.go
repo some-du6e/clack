@@ -13,6 +13,7 @@ import (
 	"image"
 	"image/color"
 	"log"
+	"math/rand/v2"
 	"regexp"
 	"strings"
 	"time"
@@ -51,7 +52,8 @@ func fileRetry(n int) time.Duration {
 	if n > 6 || d > time.Minute {
 		d = time.Minute
 	}
-	return d
+	// a quarter either way: cards that failed together don't retry together
+	return d + time.Duration(rand.Int64N(int64(d)/2+1)) - d/4
 }
 
 // fileCodeOf is the code a files.info failure keeps ("" with none: a
@@ -85,14 +87,17 @@ func fileEmptyLine(code string) string {
 
 // fileCardData is what EmbeddedFileUnfurl reads, and its views.
 type fileCardData struct {
-	f      slack.File
-	known  bool
-	code   string // an error state: file_not_found, file_deleted
-	key    string
-	rv     *richview.View // the generic card, or the audio player
-	imgURL string         // the image's, or the video's poster
-	imgW   int
-	imgH   int
+	f     slack.File
+	known bool
+	code  string // an error state: file_not_found, file_deleted
+	// failing: files.info failed without an answer and is asked again
+	// after a backoff (not a card that waits on a "names")
+	failing bool
+	key     string
+	rv      *richview.View // the generic card, or the audio player
+	imgURL  string         // the image's, or the video's poster
+	imgW    int
+	imgH    int
 }
 
 var cardFileIDRe = regexp.MustCompile(`^F[A-Z0-9]+$`)
@@ -109,7 +114,7 @@ func fileStub(f *slack.File) bool {
 func (v *View) readFile(c *linkCard) bool {
 	d := &c.fc
 	id := c.rt.fileID
-	d.known, d.code = false, ""
+	d.known, d.code, d.failing = false, "", false
 	if c.rt.kind != "file" || id == "" {
 		return false
 	}
@@ -138,6 +143,7 @@ func (v *View) readFile(c *linkCard) bool {
 		d.f, d.known, d.code = st.f, st.code == "", st.code
 		return false
 	}
+	d.failing = st.tries > 0
 	if st.tries > 0 && !time.Now().Before(st.retry) { // a failure that said nothing: ask again
 		st.retry = time.Now().Add(time.Hour) // asked: no second fetch until it answers
 		return true

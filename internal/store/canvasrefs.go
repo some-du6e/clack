@@ -107,6 +107,17 @@ func (s *Store) PutCanvasSection(fileID, sectionID string, raw json.RawMessage) 
 	c.mu.Unlock()
 }
 
+// ForgetCanvasPreview lets a canvas's preview be asked for again: the
+// next CanvasPreview misses and notes it (a lookup that failed without an
+// answer, once its backoff is over).
+func (s *Store) ForgetCanvasPreview(fileID string) {
+	c := s.canvasRefs()
+	c.mu.Lock()
+	delete(c.seen, "p"+fileID)
+	delete(c.prev, fileID)
+	c.mu.Unlock()
+}
+
 // ForgetCanvas lets a canvas (and its sections) be asked for again, after
 // a failed lookup or an edit.
 func (s *Store) ForgetCanvas(fileID string) {

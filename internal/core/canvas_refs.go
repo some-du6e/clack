@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"math/rand/v2"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -43,15 +45,7 @@ func (a *App) resolveCanvases(ctx context.Context, files []string, sections [][2
 		}(id)
 	}
 	for _, id := range previews {
-		wg.Add(1)
-		go func(id string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			if a.resolveCanvasPreview(ctx, id) {
-				add(id)
-			}
-		}(id)
+		a.queueCanvasPreview(id)
 	}
 	bySection := map[string][]string{}
 	for _, s := range sections {
@@ -209,29 +203,43 @@ func (a *App) resolveCanvasSections(ctx context.Context, fid string, secs []stri
 // resolveCanvasPreview reads canvas id's HTML export (files.info's
 // url_private, as Canvas does, without the embedded files) for a message
 // card's preview (richtext canvasfile.go) and a canvas link card's
-// (canvasview linkcard_canvas.go). A lookup that fails, whatever the
-// reason (files.info or the export GET: a network error, a 5xx, an answer
-// that isn't the export, one too big), leaves no preview, as Slack's
-// thumbnail with an error: the card draws without one and isn't asked
-// for again until the canvas changes (ForgetCanvas on an edit). Asking
-// again at once had the card's every frame fetch files.info and the
-// export (a canvas link card reads the preview each frame).
+// (canvasview linkcard_canvas.go). An answer about the file (files.info
+// refusing it, no url_private, an export that isn't one or is too big, a
+// 4xx other than 429) leaves no preview, as Slack's thumbnail with an
+// error does. A failure to get an answer (the network, a timeout, a 5xx,
+// a 429, the client's backoff) leaves the lookup asked (no per-frame
+// re-ask) and asks again later (previewRetryLater). false: nothing new
+// for the views.
 func (a *App) resolveCanvasPreview(ctx context.Context, id string) bool {
 	f, err := a.canvasFileInfo(ctx, id)
-	if err != nil || f.URLPrivate == "" {
+	if err != nil {
 		var se *slack.Error
-		if err != nil && !errors.As(err, &se) {
-			log.Printf("canvas preview %s: %v", id, err)
+		if !errors.As(err, &se) || previewTransientCodes[se.Code] {
+			log.Printf("canvas preview %s: files.info: %v", id, err)
+			a.previewRetryLater(id)
+			return false
 		}
-		a.S.PutCanvasPreview(id, nil) // no export to show: the card has no preview
+		a.previewSettled(id)
+		a.S.PutCanvasPreview(id, nil) // files.info refused it: no export to show
+		return true
+	}
+	if f.URLPrivate == "" {
+		a.previewSettled(id)
+		a.S.PutCanvasPreview(id, nil)
 		return true
 	}
 	src, err := a.downloadCanvas(ctx, f.URLPrivate)
 	if err != nil {
 		log.Printf("canvas preview %s: %v", id, err)
+		if !slack.ExportAnswered(err) {
+			a.previewRetryLater(id)
+			return false
+		}
+		a.previewSettled(id)
 		a.S.PutCanvasPreview(id, nil)
 		return true
 	}
+	a.previewSettled(id)
 	doc, err := canvas.Parse(src)
 	if err != nil {
 		a.S.PutCanvasPreview(id, nil)
@@ -305,4 +313,111 @@ func headingLevel(k canvas.Kind) int {
 		return 2
 	}
 	return 3
+}
+
+// previewTransientCodes are files.info refusals that say nothing about
+// the file: asked again later.
+var previewTransientCodes = map[string]bool{"ratelimited": true, "internal_error": true, "fatal_error": true,
+	"request_timeout": true, "service_unavailable": true}
+
+// Previews run on their own, four at a time, each with its own deadline
+// (a page of thirty canvases would otherwise run out the resolve batch's
+// 30 s while most of them waited for a slot, and be left without a
+// preview), and say "names" for themselves when they land.
+var (
+	previewTimeout = 30 * time.Second
+	previewSlots   = 4
+	// previewRetryBase is the wait before a preview whose lookup failed
+	// without an answer is asked for again: doubling, a minute at most, a
+	// quarter either way (a var for tests).
+	previewRetryBase = 2 * time.Second
+)
+
+type previewState struct {
+	mu    sync.Mutex
+	sem   chan struct{}
+	tries map[string]int // canvases whose lookup failed without an answer
+}
+
+func (a *App) previews() *previewState {
+	a.previewOnce.Do(func() { a.previewSt = &previewState{sem: make(chan struct{}, previewSlots), tries: map[string]int{}} })
+	return a.previewSt
+}
+
+// queueCanvasPreview resolves canvas id's preview in the background.
+func (a *App) queueCanvasPreview(id string) {
+	p := a.previews()
+	go func() {
+		select {
+		case p.sem <- struct{}{}:
+		case <-a.bg.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(a.bg, previewTimeout)
+		ok := a.resolveCanvasPreview(ctx, id)
+		cancel()
+		<-p.sem
+		if ok {
+			a.emit(Event{Type: "names", Users: []string{id}})
+		}
+	}()
+}
+
+// previewSettled forgets id's failed tries: it has its answer.
+func (a *App) previewSettled(id string) {
+	p := a.previews()
+	p.mu.Lock()
+	delete(p.tries, id)
+	p.mu.Unlock()
+}
+
+// previewRetryLater asks for id's preview again after a backoff: the
+// store's lookup is let go and the views told, so the next read asks.
+func (a *App) previewRetryLater(id string) {
+	p := a.previews()
+	p.mu.Lock()
+	p.tries[id]++
+	n := p.tries[id]
+	p.mu.Unlock()
+	d := previewRetryBase << min(n-1, 5)
+	if d > time.Minute || d <= 0 {
+		d = time.Minute
+	}
+	d += time.Duration(rand.Int64N(int64(d)/2+1)) - d/4
+	time.AfterFunc(d, func() {
+		if a.bg.Err() != nil {
+			return
+		}
+		a.retryCanvasPreview(id)
+	})
+}
+
+// retryCanvasPreview lets canvas id's preview be asked for again, if its
+// last lookup failed without an answer: after its backoff, on the
+// canvas's own event, and when the client comes back online.
+func (a *App) retryCanvasPreview(id string) {
+	p := a.previews()
+	p.mu.Lock()
+	_, failed := p.tries[id]
+	p.mu.Unlock()
+	if !failed {
+		return
+	}
+	a.S.ForgetCanvasPreview(id)
+	a.emit(Event{Type: "names", Users: []string{id}})
+}
+
+// retryCanvasPreviews is retryCanvasPreview for every preview that failed
+// (the client is back online).
+func (a *App) retryCanvasPreviews() {
+	p := a.previews()
+	p.mu.Lock()
+	var ids []string
+	for id := range p.tries {
+		ids = append(ids, id)
+	}
+	p.mu.Unlock()
+	for _, id := range ids {
+		a.retryCanvasPreview(id)
+	}
 }
