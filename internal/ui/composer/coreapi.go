@@ -178,8 +178,10 @@ func (c coreAPI) memberUsers(ctx context.Context, ch string, max int) ([]core.Us
 	}
 }
 
-func (c coreAPI) commands(ctx context.Context) ([]core.Command, error) {
-	return c.a.Commands(ctx, "")
+// commands is the "/" menu's list for ch: Slack's client commands, then
+// the server's (core.SlashCommands).
+func (c coreAPI) commands(ctx context.Context, ch string) ([]core.Command, error) {
+	return c.a.SlashCommands(ctx, ch)
 }
 
 func (c coreAPI) command(ctx context.Context, o core.CommandOpts) (core.CommandResult, error) {

@@ -698,7 +698,7 @@ func (ac *Autocomplete) load(t acTrigger) {
 		if ac.commands == nil && !ac.cmdLoading {
 			ac.cmdLoading = true
 			go func() {
-				cs, _ := api.commands(ac.ctx)
+				cs, _ := api.commands(ac.ctx, ac.channelID)
 				if cs == nil {
 					cs = []core.Command{}
 				}

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -113,4 +114,56 @@ func serverCommandStore(cmds []slack.Command, ia4 bool) []slack.Command {
 		}
 	}
 	return out
+}
+
+// clientMenuCommand is one of Slack's client commands as formatCommand
+// gives it to the slash command store's list (Zrd3 e4): its description
+// (descShared: in an externally shared channel), usage and aliases.
+type clientMenuCommand struct {
+	name, desc, descShared, usage string
+	aliases                       []string
+}
+
+// clientMenu is Zrd3 getCommands with autocomplete on, in its order:
+// /color's autocomplete is false, the developer commands' only for a
+// dogfood user, and the multiselect previews are hidden.
+var clientMenu = []clientMenuCommand{
+	{name: "/archive", desc: "Archive the current channel"},
+	{name: "/collapse", desc: "Collapse all files in the current channel or thread (opposite of /expand)"},
+	{name: "/expand", desc: "Expand all files in the current channel or thread (opposite of /collapse)"},
+	{name: "/invite", desc: "Invite another member to a channel", usage: "@user [channel]"},
+	{name: "/invite_people", desc: "Invite people to your workspace", usage: "name@example.com, …"},
+	{name: "/leave", desc: "Leave a channel", usage: "[channel]", aliases: []string{"/close", "/part"}},
+	{name: "/msg", desc: "Send a DM message to another user", usage: "@user your message", aliases: []string{"/dm"}},
+	{name: "/open", desc: "Open a channel", usage: "channel", aliases: []string{"/join"}},
+	{name: "/remove", desc: "Remove a person from the current channel", usage: "@user", aliases: []string{"/kick"}},
+	{name: "/rename", desc: "Rename a channel", descShared: "Rename this channel for your workspace"},
+	{name: "/search", desc: "Perform a search", usage: "[your text]", aliases: []string{"/s"}},
+	{name: "/shortcuts", desc: "Open the keyboard shortcuts dialog", aliases: []string{"/keys"}},
+	{name: "/topic", desc: "Set the channel topic", descShared: "Set the channel topic for your workspace", usage: "[new topic]"},
+	{name: "/feedback"},
+	{name: "/gif", desc: "A GIF is worth a thousand words", usage: "[search terms]"},
+}
+
+// SlashCommands is the slash command store's list as executeCommand and
+// the "/" menu read it (yrZ7 Qe: [...the client commands, ...the
+// server's]): Slack's client commands the menu lists (clientMenu, their
+// descriptions for ch: an externally shared channel's for /rename and
+// /topic), then the server's (Commands: client.appCommands through the
+// ingest, which keeps none of the client commands' names).
+func (a *App) SlashCommands(ctx context.Context, ch string) ([]Command, error) {
+	server, err := a.Commands(ctx, "")
+	shared := false
+	if c, ok := a.S.Conv(ch); ok && c.IsExtShared {
+		shared = true
+	}
+	out := make([]Command, 0, len(clientMenu)+len(server))
+	for _, c := range clientMenu {
+		desc := c.desc
+		if shared && c.descShared != "" {
+			desc = c.descShared
+		}
+		out = append(out, Command{Name: c.name, Desc: desc, Usage: c.usage, Type: "client"})
+	}
+	return append(out, server...), err
 }
