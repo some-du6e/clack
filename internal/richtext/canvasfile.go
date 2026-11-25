@@ -1,22 +1,29 @@
 package richtext
 
-import "github.com/some-du6e/clack/internal/slack"
+import (
+	"encoding/json"
+
+	"github.com/some-du6e/clack/internal/slack"
+)
 
 // A canvas shared as a message's file (Slack's MessageFile for a quip
 // file, boot-shared Zw0E): the pillow card's header (MessageFileHeader:
 // the canvas tile, CanvasFileName's title, "Canvas") and, under it,
-// MessageFilePreview's FileQuip (QrUf): the canvas's opening sections
-// as Block Kit (useQuipBlocks: the canvas's Block Kit thumbnail, its
-// first 11 blocks, the title's header dropped with hideTitle). Slack
-// reads that thumbnail through Quip's own client (the thread's
-// blockKitThumbnail); Clack builds the same blocks from the canvas's
-// HTML export (core canvas_refs.go), in memory only.
+// MessageFilePreview's FileQuip (6WLC, with hideTitle): the canvas's
+// Block Kit thumbnail as useQuipBlocks cuts it (build d4845cd3e2ea).
+// Slack reads that thumbnail through Quip (the thread's
+// getBlockKitThumbnailValue: its BLOCK_KIT_THUMBNAIL parcel), and so does
+// Clack (core canvas_refs.go, quip/thumbnail.go), in memory only. Its
+// mentions, dates and emoji are Block Kit's, drawn as a message's are.
 
 // CanvasPreviewer is an optional Resolver extension (store.Store): a
-// canvas's preview blocks; ok false while not fetched (the resolver asks
-// for it and the Doc is rebuilt).
+// canvas's Block Kit thumbnail (nil: the canvas has none), ok when it was
+// read since the file's updated time; ok false while no current one is
+// held, when the card asks for it once it is on screen
+// (File.CanvasPreviewWanted) and draws the last one read, if any, until it
+// comes.
 type CanvasPreviewer interface {
-	CanvasPreview(fileID string) (blocks []Block, ok bool)
+	CanvasPreview(fileID string, updated int64) (thumb json.RawMessage, ok bool)
 }
 
 // IsCanvasFile is Slack's isCanvas (2HRR DQ) for a message file.
@@ -35,78 +42,55 @@ func (c *builder) canvasFile(f *slack.File, out *File) {
 		out.TitleSpans = titleSpans(c.r, f.Title)
 	}
 	if cp, ok := c.r.(CanvasPreviewer); ok && f.ID != "" {
-		bs, _ := cp.CanvasPreview(f.ID)
-		out.CanvasPreview = namedPreview(c.r, bs)
+		// a thumbnail read before the canvas's last edit is drawn until the
+		// new one comes (the card keeps its preview, not its place empty)
+		thumb, ok := cp.CanvasPreview(f.ID, f.Updated)
+		if !ok {
+			out.CanvasPreviewWanted, out.CanvasUpdated = true, f.Updated
+		}
+		if thumb != nil {
+			out.CanvasPreview = c.quipBlocks(thumb)
+		}
 	}
 }
 
-// namedPreview is a canvas preview with its mentions named through r on
-// every conversion: Slack's FileQuip renders the thumbnail's Block Kit with
-// the message renderer (BaseMrkdwnChannel, MemberSlug, UserGroup), which
-// reads each mention's model by id, and Quip's export gives a mention only
-// its id (canvas parse.go). The store's blocks are left as they are.
-func namedPreview(r Resolver, bs []Block) []Block {
-	var out []Block
-	for i := range bs {
-		b := bs[i]
-		sp, named := namedSpans(r, b.Spans)
-		var items [][]Span
-		for j, it := range b.Items {
-			if n, ok := namedSpans(r, it); ok {
-				if items == nil {
-					items = append([][]Span(nil), b.Items...)
-				}
-				items[j] = n
-			}
+// quipBlocks is useQuipBlocks for a message card (no section,
+// hideTitle, no hideHeaderImage): nothing for a thumbnail that errored or
+// has no blocks, else its first 11 blocks without the first header,
+// converted as a message's Block Kit. A canvas_header_image (Slack keeps
+// it; its shape isn't known here) is left out.
+func (c *builder) quipBlocks(thumb json.RawMessage) []Block {
+	var t struct {
+		Blocks []json.RawMessage `json:"blocks"`
+		Error  bool              `json:"error"`
+	}
+	if json.Unmarshal(thumb, &t) != nil || t.Error || t.Blocks == nil {
+		return nil
+	}
+	bs := t.Blocks[:min(len(t.Blocks), quipPreviewMax)]
+	header := -1
+	var keep []json.RawMessage
+	for i, b := range bs {
+		var h struct {
+			Type string `json:"type"`
 		}
-		if !named && items == nil {
-			if out != nil {
-				out = append(out, b)
-			}
+		_ = json.Unmarshal(b, &h)
+		if h.Type == "header" && header < 0 {
+			header = i // hideTitle: the first header goes
 			continue
 		}
-		if out == nil {
-			out = append(make([]Block, 0, len(bs)), bs[:i]...)
+		if h.Type == "canvas_header_image" {
+			continue
 		}
-		b.Spans = sp
-		if items != nil {
-			b.Items = items
-		}
-		out = append(out, b)
+		keep = append(keep, b)
 	}
-	if out == nil {
-		return bs
+	raw, err := json.Marshal(keep)
+	if err != nil || len(keep) == 0 {
+		return nil
 	}
-	return out
+	return c.blocks(parseBlocks(raw))
 }
 
-// namedSpans names sp's user, channel and group mentions (those with an
-// id) as a message's are; ok false when there are none (sp returned).
-func namedSpans(r Resolver, sp []Span) ([]Span, bool) {
-	var out []Span
-	for i, s := range sp {
-		if s.ID == "" {
-			continue
-		}
-		var n Span
-		switch s.Kind {
-		case Channel:
-			n = channelSpan(r, s.ID, "")
-		case User:
-			n = userSpan(r, s.ID, "")
-		case Usergroup:
-			n = usergroupSpan(r, s.ID, "")
-		default:
-			continue
-		}
-		n.Style = s.Style
-		if out == nil {
-			out = append([]Span(nil), sp...)
-		}
-		out[i] = n
-	}
-	if out == nil {
-		return sp, false
-	}
-	return out, true
-}
+// quipPreviewMax is useQuipBlocks' slice: 11 blocks, the title's header
+// among them.
+const quipPreviewMax = 11

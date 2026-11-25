@@ -86,8 +86,15 @@ func formatDate(t time.Time, f string, now time.Time) string {
 		return f
 	}
 	o := t.Format("January ") + ordinal(t.Day())
-	long := t.Format("Monday, ") + o + t.Format(", 2006")
-	date := o + t.Format(", 2006")
+	// excludeYearHelper: {date}, {date_long} and their pretty forms leave
+	// the year out for a date within 182 days of now (262,080 minutes
+	// either way)
+	year := t.Format(", 2006")
+	if d := t.Sub(now); d > -262080*time.Minute && d < 262080*time.Minute {
+		year = ""
+	}
+	long := t.Format("Monday, ") + o + year
+	date := o + year
 	short := t.Format("Jan 2, 2006")
 	rel := relativeDay(t, now)
 	var b strings.Builder

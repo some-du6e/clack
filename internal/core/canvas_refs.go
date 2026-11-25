@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/url"
+	"slices"
 	"sync"
+	"time"
 
-	"github.com/some-du6e/clack/internal/canvas"
+	"github.com/some-du6e/clack/internal/quip"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -42,6 +45,9 @@ func (a *App) resolveCanvases(ctx context.Context, files []string, sections [][2
 			}
 		}(id)
 	}
+	// one read per canvas, however many cards (and updated times) asked:
+	// it reads the canvas as it is now
+	previews = slices.Compact(slices.Sorted(slices.Values(previews)))
 	for _, id := range previews {
 		wg.Add(1)
 		go func(id string) {
@@ -206,98 +212,190 @@ func (a *App) resolveCanvasSections(ctx context.Context, fid string, secs []stri
 	return true
 }
 
-// resolveCanvasPreview reads canvas id's HTML export (files.info's
-// url_private, as Canvas does, without the embedded files) for a message
-// card's preview (richtext canvasfile.go).
+// resolveCanvasPreview reads a canvas card's preview, as Slack's FileQuip
+// does (useQuipBlocks: the Quip thread's getBlockKitThumbnailValue): the
+// canvas's Block Kit thumbnail through Quip (canvasThumbnail), recorded
+// as of the file's updated time. A canvas with no Quip thread, gone or
+// not the viewer's, or whose thumbnail Quip won't load has no preview
+// (useQuipBlocks draws none for an errored thumbnail); one the network
+// fails is asked for again after a backoff.
 func (a *App) resolveCanvasPreview(ctx context.Context, id string) bool {
 	f, err := a.canvasFileInfo(ctx, id)
-	if err != nil || f.URLPrivate == "" {
+	if err != nil {
 		var se *slack.Error
-		if err == nil || errors.As(err, &se) {
-			a.S.PutCanvasPreview(id, nil) // no export to show: the card has no preview
+		switch {
+		case errors.As(err, &se):
+			a.S.PutCanvasPreview(id, nil, 0)
 			return true
+		case previewCutShort(ctx, err):
+			return false
 		}
-		log.Printf("canvas preview %s: %v", id, err)
-		a.S.ForgetCanvas(id)
+		a.canvasPreviewBackoff(id, err)
 		return false
 	}
-	src, err := a.downloadCanvas(ctx, f.URLPrivate)
-	if err != nil {
-		log.Printf("canvas preview %s: %v", id, err)
-		a.S.ForgetCanvas(id)
-		return false
-	}
-	doc, err := canvas.Parse(src)
-	if err != nil {
-		a.S.PutCanvasPreview(id, nil)
+	if f.QuipThreadID == "" {
+		a.S.PutCanvasPreview(id, nil, f.Updated)
 		return true
 	}
-	a.resolveCanvasSpans(&doc)
-	a.S.PutCanvasPreview(id, CanvasPreviewBlocks(doc))
+	thumb, err := a.canvasThumbnail(ctx, f.QuipThreadID)
+	var le *quip.LoadError
+	var qe *slack.Error
+	switch {
+	case err == nil:
+	case previewCutShort(ctx, err):
+		return false
+	case errors.As(err, &le) && slices.Contains(le.Reasons, quip.FailTransient):
+		// Quip's TRANSIENT failure: the syncer tries again after
+		// TRANSIENT_ERROR_RETRY_DELAY_MS (30 s), as after a network error
+		a.canvasPreviewBackoff(id, err)
+		return false
+	case errors.Is(err, quip.ErrThumbnail), errors.Is(err, quip.ErrNotFound), le != nil, errors.As(err, &qe):
+		thumb = nil // Quip or Slack answered: the canvas has no thumbnail to show
+	default:
+		a.canvasPreviewBackoff(id, err)
+		return false
+	}
+	a.canvasPreviewOK(id)
+	a.S.PutCanvasPreview(id, thumb, f.Updated)
 	return true
 }
 
-// canvasPreviewMax is useQuipBlocks' slice: 11 blocks, the title's
-// header among them.
-const canvasPreviewMax = 11
-
-// CanvasPreviewBlocks is a canvas's Block Kit thumbnail as Slack's
-// FileQuip draws it with hideTitle: its first 11 sections, the title
-// section dropped. Headings are header blocks; paragraphs, lists, quotes
-// and code are rich text; dividers stay; tables, images, embeds, files
-// and layouts aren't in the preview.
-func CanvasPreviewBlocks(d canvas.Doc) []richtext.Block {
-	bs := d.Blocks
-	n := 0
-	var out []richtext.Block
-	title := len(bs) > 0 && bs[0].Kind == canvas.Heading1
-	for i := 0; i < len(bs) && n < canvasPreviewMax; i++ {
-		b := bs[i]
-		n++
-		if i == 0 && title {
-			continue // hideTitle: the title's header
-		}
-		switch b.Kind {
-		case canvas.Heading1, canvas.Heading2, canvas.Heading3:
-			out = append(out, richtext.Block{Kind: richtext.Header, Spans: b.Spans, Level: headingLevel(b.Kind)})
-		case canvas.Paragraph:
-			if b.Default || len(b.Spans) == 0 {
-				continue // unedited default content and empty lines draw nothing
-			}
-			out = append(out, richtext.Block{Kind: richtext.Paragraph, Spans: b.Spans})
-		case canvas.Bullet, canvas.Numbered, canvas.Check:
-			lst := richtext.Block{Kind: richtext.List, Ordered: b.Kind == canvas.Numbered, Indent: b.Level}
-			for ; i < len(bs) && bs[i].Kind == b.Kind && bs[i].Level == b.Level && n <= canvasPreviewMax; i++ {
-				lst.Items = append(lst.Items, bs[i].Spans)
-				n++
-			}
-			i--
-			n--
-			out = append(out, lst)
-		case canvas.Code:
-			out = append(out, richtext.Block{Kind: richtext.Preformatted, Spans: []richtext.Span{{Kind: richtext.Text, Text: b.Code}}})
-		case canvas.Quote:
-			var sp []richtext.Span
-			for j, k := range b.Children {
-				if j > 0 {
-					sp = append(sp, richtext.Span{Kind: richtext.Break})
-				}
-				sp = append(sp, k.Spans...)
-			}
-			out = append(out, richtext.Block{Kind: richtext.Quote, Spans: sp})
-		case canvas.Divider:
-			out = append(out, richtext.Block{Kind: richtext.Divider})
-		}
+// canvasThumbnail is threadBlockKitThumbnailImpl (the collab webapp's
+// WpDR): load-data for the thread object, then for its BLOCK_KIT_THUMBNAIL
+// parcel keyed by the thread's document id at its updated_usec. A thread
+// without a document has the empty thumbnail.
+func (a *App) canvasThumbnail(ctx context.Context, thread string) (json.RawMessage, error) {
+	var w quip.LoadWrapper
+	if err := a.quipCall(ctx, quip.NewThreadRequest(thread), &w); err != nil {
+		return nil, err
 	}
-	return out
+	t, err := quip.ReadThread(thread, &w)
+	if err != nil {
+		return nil, err
+	}
+	doc := ""
+	if t.DocumentID != nil {
+		doc = *t.DocumentID
+	}
+	if doc == "" {
+		return json.RawMessage(`{"blocks": []}`), nil
+	}
+	var usec int64
+	if t.UpdatedUsec != nil {
+		usec = *t.UpdatedUsec
+	}
+	w = quip.LoadWrapper{}
+	if err := a.quipCall(ctx, quip.NewThumbnailRequest(thread, doc, usec), &w); err != nil {
+		return nil, err
+	}
+	b, err := quip.ReadThumbnail(doc, &w)
+	if err != nil {
+		return nil, err
+	}
+	if !json.Valid(b) {
+		return nil, quip.ErrThumbnail
+	}
+	return json.RawMessage(b), nil
 }
 
-func headingLevel(k canvas.Kind) int {
-	switch k {
-	case canvas.Heading1:
-		return 1
-	case canvas.Heading2:
-		return 2
+// quipCall sends one load-data request and decodes its answer into w.
+func (a *App) quipCall(ctx context.Context, req *quip.LoadRequest, w *quip.LoadWrapper) error {
+	b, err := a.C.CanvasCall(ctx, "load-data", []slack.CanvasField{{Name: "request_binary", Value: quip.MarshalBase64(req)}})
+	if err != nil {
+		return err
 	}
-	return 3
+	if err := quip.Unmarshal(b, w); err != nil {
+		return fmt.Errorf("core: load-data: %w", err)
+	}
+	return nil
+}
+
+// Previews' backoff: a canvas whose thumbnail the network failed is
+// asked for again (once its card is still on screen) after 30 s, then
+// twice as long each time, at most 10 min.
+var (
+	CanvasPreviewRetryFirst = 30 * time.Second
+	CanvasPreviewRetryMax   = 10 * time.Minute
+)
+
+type previewRetries struct {
+	mu     sync.Mutex
+	delay  map[string]time.Duration
+	timers map[string]*time.Timer // the retries waiting (Release stops them)
+}
+
+var previewRetriesOf = newPerApp() // *App -> *previewRetries; Release drops an App's
+
+func (a *App) previewRetries() *previewRetries {
+	v, _ := previewRetriesOf.LoadOrStore(a, &previewRetries{delay: map[string]time.Duration{}, timers: map[string]*time.Timer{}})
+	return v.(*previewRetries)
+}
+
+// previewCutShort: a read the session's end or the App's Close cut short
+// (cancelled, or signed out), which waits for no retry.
+func previewCutShort(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, slack.ErrSignedOut)
+}
+
+// canvasPreviewBackoff keeps canvas id's card from asking again until
+// its delay passes; then the cards that read the canvas are rebuilt (a
+// names event), so one still on screen asks again.
+func (a *App) canvasPreviewBackoff(id string, err error) {
+	r := a.previewRetries()
+	r.mu.Lock()
+	d := r.delay[id]
+	if d == 0 {
+		d = CanvasPreviewRetryFirst
+	} else {
+		d = min(2*d, CanvasPreviewRetryMax)
+	}
+	r.delay[id] = d
+	if t := r.timers[id]; t != nil {
+		t.Stop()
+	}
+	r.timers[id] = time.AfterFunc(d, func() { a.canvasPreviewRetry(id) })
+	r.mu.Unlock()
+	log.Printf("canvas preview %s: %v (again after %s)", id, err, d)
+}
+
+// canvasPreviewRetry is a backoff's end: canvas id's card may ask again,
+// and its message is rebuilt so it does.
+func (a *App) canvasPreviewRetry(id string) {
+	if a.released.Load() {
+		return
+	}
+	r := a.previewRetries()
+	r.mu.Lock()
+	delete(r.timers, id)
+	r.mu.Unlock()
+	a.S.ForgetCanvasPreview(id)
+	a.emit(Event{Type: "names", Users: []string{id}})
+}
+
+// stopCanvasPreviewRetries stops the previews' retry timers, so a released
+// App leaves none behind (each held the App until it fired).
+func (a *App) stopCanvasPreviewRetries() {
+	v, ok := previewRetriesOf.Load(a)
+	if !ok {
+		return
+	}
+	r := v.(*previewRetries)
+	r.mu.Lock()
+	for id, t := range r.timers {
+		t.Stop()
+		delete(r.timers, id)
+	}
+	r.mu.Unlock()
+}
+
+// canvasPreviewOK resets canvas id's backoff.
+func (a *App) canvasPreviewOK(id string) {
+	r := a.previewRetries()
+	r.mu.Lock()
+	delete(r.delay, id)
+	if t := r.timers[id]; t != nil {
+		t.Stop()
+		delete(r.timers, id)
+	}
+	r.mu.Unlock()
 }

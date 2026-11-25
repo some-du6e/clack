@@ -10,6 +10,7 @@ type LoadRequest struct {
 	ObjectIDs          []string   `pb:"1"`
 	IndexIDs           []string   `pb:"2"`
 	BulkLoads          []BulkLoad `pb:"3"`
+	Parcels            []Parcel   `pb:"4"`
 	UserAction         *string    `pb:"5"`
 	UserActionSequence *int32     `pb:"6"`
 }
@@ -44,9 +45,27 @@ type LoadResponse struct {
 	Success   *bool     `pb:"1"`
 	Objects   *Payload  `pb:"2"`
 	Indexes   []Index   `pb:"3"`
+	Parcels   []Parcel  `pb:"5"`
 	Failures  []Failure `pb:"6"`
 	FromCache *bool     `pb:"9"`
 }
+
+// Parcel is syncer.Parcel: a versioned blob of a thread's that a
+// load-data request asks for by type and key (HVRg.loadParcel) and its
+// answer carries with its data. Its hash (field 4, a uint64) isn't here:
+// Slack sends one only for a parcel it already holds, and Clack holds
+// none; an answer's hash is skipped.
+type Parcel struct {
+	Type     *int32  `pb:"1"` // ParcelBlockKitThumbnail
+	Key      *string `pb:"2"`
+	Version  *string `pb:"3"`
+	Data     []byte  `pb:"5"`
+	ThreadID *string `pb:"6"`
+}
+
+// ParcelBlockKitThumbnail is syncer.Parcel.Type BLOCK_KIT_THUMBNAIL: a
+// canvas's Block Kit thumbnail, keyed by its document id.
+const ParcelBlockKitThumbnail int32 = 6
 
 // Index is syncer.LoadData.Response.Index ("Section/<document id>":
 // its sections by position_path).
@@ -111,12 +130,13 @@ type Payload struct {
 
 // Thread is syncer.Thread.
 type Thread struct {
-	ID         *string `pb:"1"`
-	Sequence   *int64  `pb:"2"`
-	Deleted    *bool   `pb:"3"`
-	Title      *string `pb:"6"`
-	AuthorID   *string `pb:"7"`
-	DocumentID *string `pb:"10"`
+	ID          *string `pb:"1"`
+	Sequence    *int64  `pb:"2"`
+	Deleted     *bool   `pb:"3"`
+	Title       *string `pb:"6"`
+	AuthorID    *string `pb:"7"`
+	DocumentID  *string `pb:"10"`
+	UpdatedUsec *int64  `pb:"40"`
 }
 
 // Document is syncer.Document.

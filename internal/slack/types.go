@@ -404,8 +404,11 @@ type File struct {
 	EmailHeaders            *EmailHeaders    `json:"headers,omitempty"`
 	EmailSecurity           *EmailSecurity   `json:"email_security,omitempty"`
 	Timestamp               int64            `json:"timestamp,omitempty"`
-	AppID                   string           `json:"app_id,omitempty"`
-	AppName                 string           `json:"app_name,omitempty"`
+	// Updated is the file's updated time: a canvas's last edit (its card's
+	// preview thumbnail is read again for a newer one).
+	Updated int64  `json:"updated,omitempty"`
+	AppID   string `json:"app_id,omitempty"`
+	AppName string `json:"app_name,omitempty"`
 
 	// Clack only, never on the wire. Pending marks a file of the viewer's
 	// optimistic send whose upload hasn't finished (Slack's pendingUpload

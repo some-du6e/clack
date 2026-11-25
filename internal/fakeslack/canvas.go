@@ -58,6 +58,12 @@ type FakeCanvas struct {
 	// title_blocks (default: none).
 	HTML        string
 	TitleBlocks []any
+	// Thumbnail is the canvas's Block Kit thumbnail, the data of Quip's
+	// BLOCK_KIT_THUMBNAIL parcel ({"blocks": [...]}; "": the one Quip makes
+	// of Title and Doc, quipThumbnail). ThumbnailLoads counts the parcel's
+	// loads.
+	Thumbnail      string
+	ThumbnailLoads int
 }
 
 type canvasStore struct {

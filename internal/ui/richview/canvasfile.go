@@ -8,6 +8,13 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 )
 
+// WantCanvasPreview, when set (the ui root), asks for a canvas's Block
+// Kit thumbnail once its card is laid out without one read since the
+// file's updated time (richtext.File.CanvasPreviewWanted): core reads it
+// through Quip and the message's Doc is rebuilt with it. Only a card
+// laid out asks, so only cards on screen are fetched.
+var WantCanvasPreview func(fileID string, updated int64)
+
 // canvasFile is a canvas shared as a message's file (richtext
 // canvasfile.go): Slack's MessageFile with p-message_file--quip (at most
 // 594 wide) and p-message_file--show_preview, a pillow card (12px
@@ -31,6 +38,9 @@ import (
 //     pointer events (:not(.allow-pointer-events)): a click anywhere opens
 //     the canvas.
 func (l *lay) canvasFile(f *richtext.File, x, y, w int) int {
+	if f.CanvasPreviewWanted && f.ID != "" && WantCanvasPreview != nil {
+		WantCanvasPreview(f.ID, f.CanvasUpdated)
+	}
 	p := &l.st.Palette
 	cw := min(w, l.dp(594))
 	pad := l.dp(12)

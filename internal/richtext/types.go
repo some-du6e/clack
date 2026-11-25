@@ -554,9 +554,15 @@ type File struct {
 	// Canvases (canvasfile.go): TitleSpans is the title as Slack's
 	// CanvasFileName draws it (title_blocks, else the title with its
 	// :emoji:); CanvasPreview is the canvas's opening sections for the
-	// message card's preview (FileQuip), nil while not fetched.
-	TitleSpans    []Span
-	CanvasPreview []Block
+	// message card's preview (FileQuip: the Block Kit thumbnail's
+	// opening blocks), nil when it has none or while not fetched.
+	// CanvasPreviewWanted: no thumbnail read since the file's updated
+	// time CanvasUpdated is held, so the card asks for one once it is on
+	// screen (richview.WantCanvasPreview).
+	TitleSpans          []Span
+	CanvasPreview       []Block
+	CanvasPreviewWanted bool
+	CanvasUpdated       int64
 	// Uploader is the file's owner's name when someone other than the
 	// message's sender owns it (FilesMetaTextWrapper's renderUploader),
 	// UploaderID their id.

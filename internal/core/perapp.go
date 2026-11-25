@@ -45,7 +45,8 @@ func (a *App) Release() {
 	// a subscriber from here gets a closed channel
 	a.released.Store(true)
 	a.closeSubscribers()
-	a.stopCanvasSavers() // their retry and poll timers held the App
+	a.stopCanvasSavers()         // their retry and poll timers held the App
+	a.stopCanvasPreviewRetries() // so did the canvas previews' retries (canvas_refs.go)
 	// a temporary mute's expiry: its timer kept the App until then (hours
 	// on; the runtime's timer heap is a root)
 	a.mu.Lock()

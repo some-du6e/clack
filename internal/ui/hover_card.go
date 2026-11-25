@@ -354,6 +354,14 @@ func (a *App) installAppCardHooks() {
 		return c != nil && c.URLHoverCardExperiment() && urlHoverCardLink(u)
 	}
 	richview.FileSectionFace = a.fileSectionFace // custom_file_sections on message file cards
+	// a canvas card laid out without its preview asks for the canvas's Block
+	// Kit thumbnail (core's resolve loop reads it through Quip): only cards
+	// on screen ask
+	richview.WantCanvasPreview = func(id string, updated int64) {
+		if c := a.Core(); c != nil && c.S != nil {
+			c.S.WantCanvasPreview(id, updated)
+		}
+	}
 	// FileActions on message files: the viewer's own snippets (Edit) and
 	// starred canvases
 	richview.SelfID = func() string {
