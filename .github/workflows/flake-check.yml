@@ -7352,7 +7352,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "the header's tabs and topic, COUNT runs"
-        run: go test -count=$COUNT -v -timeout 10m -run '^(TestHeaderTabsAndTopicFit|TestTabsLastVisible|TestChannelTabsMoreMenu)$' ./internal/ui
+        run: go test -count=$COUNT -v -timeout 10m -run '^(TestHeaderTabsAndTopicFit|TestHeaderTopicCutsAtCharacter|TestTabsLastVisible|TestChannelTabsMoreMenu)$' ./internal/ui
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

@@ -7,10 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
@@ -48,6 +50,7 @@ func TestHeaderTabsAndTopicFit(t *testing.T) {
 	size, scale := e.size, e.scale
 	t.Cleanup(func() {
 		e.a.prefs.Zoom, e.a.sidebar.hidden, e.a.secondary.width = 0, false, 0
+		e.a.sidebar.mode, e.a.sidebar.intent = "auto", 0
 		e.size, e.scale = size, scale
 		theme.LayoutHook = nil
 	})
@@ -62,6 +65,10 @@ func TestHeaderTabsAndTopicFit(t *testing.T) {
 	})
 	e.until("the topic", 10*time.Second, func() bool { c := e.a.model().conv(ch); return c != nil && c.Topic != "" })
 	e.until("the channel's history", 15*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+	// Karim's columns at 1745 dp: the sidebar dragged to 267 (the primary
+	// pane from x 337) and the thread pane to 665 (from x 1080), leaving the
+	// primary pane, and the tab bar, 743 dp
+	e.a.sidebar.mode, e.a.sidebar.intent = "manual", 267
 	rootTS := e.a.data.core.S.Timeline(ch).Msgs[0].TS
 	for _, base := range []float32{1, 2} {
 		for _, z := range []int{-1, 0, 1, 2} {
@@ -136,5 +143,37 @@ func TestHeaderTabsAndTopicFit(t *testing.T) {
 		e.a.OpenThread(ch, rootTS)
 		e.settle(400 * time.Millisecond)
 		pfShot(e, "header-tabs-thread")
+	}
+}
+
+// The topic's link cut at the character (text-overflow: ellipsis), not at
+// its last line-break opportunity: a box that fits "…: https://github.com/so"
+// shows the link to there and the ellipsis. Clack's one-line layout
+// stopped after "https://" (Karim, α.165: "slack client in go: https://…").
+func TestHeaderTopicCutsAtCharacter(t *testing.T) {
+	e := newPerfEnv(t, false)
+	e.waitReady()
+	const lead, link = "slack client in go: ", "https://github.com/some-du6e/clack"
+	spans := []richtext.Span{{Kind: richtext.Text, Text: lead}, {Kind: richtext.Link, Text: link, URL: link}}
+	gtx := e.frameContext()
+	gtx.Ops = new(op.Ops)
+	fit := lead + "https://github.com/so"
+	maxW := e.a.th.Measure(gtx, 13, theme.Regular, fit) + e.a.th.Measure(gtx, 13, theme.Regular, "…")
+	var shown int
+	cut := false
+	theme.LayoutHook = func(txt string, n int, c bool, w, box int) {
+		if txt == link {
+			shown, cut = n, c
+		}
+	}
+	t.Cleanup(func() { theme.LayoutHook = nil })
+	gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, gtx.Dp(18))}
+	e.a.inlineSpans(gtx, spans, 13, e.a.th.C.FgMuted, gtx.Dp(18))
+	theme.LayoutHook = nil
+	if !cut {
+		t.Fatalf("the link wasn't cut in a %d px box (shown %d runes): the test proves nothing", maxW, shown)
+	}
+	if want := len("https://github.com/s"); shown < want {
+		t.Errorf("the link shows %d runes (%q…), want at least %d (%q…): text-overflow cuts at the character", shown, link[:shown], want, link[:want])
 	}
 }

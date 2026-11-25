@@ -68,7 +68,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestChannelNotifyAdvancedSettings$|TestHeaderBellIcon$|TestHeaderTopicEdit$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestTopicEditMentions$|TestEditDescriptionTooLong$|TestHeaderTabsAndTopicFit$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelNotifyAdvancedSettings$|TestHeaderBellIcon$|TestHeaderTopicEdit$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestTopicEditMentions$|TestEditDescriptionTooLong$|TestHeaderTabsAndTopicFit$|TestHeaderTopicCutsAtCharacter$' ./internal/ui/
       - name: topic and description text (Slack's oracle cases)
         run: go test -count=1 -v -run 'TestTextyMrkdwnSlackOracle$|TestTextyLinksSlackOracle$|TestTexty(PasteURLOverSelection|UndoWhenEmpty|Keys|OverLimit|PillCutPaste|FiveLines|PasteLimitDialog)$' ./internal/ui/composer/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
