@@ -9,3 +9,9 @@ func previewSettled(v *View) bool {
 	b := embedBlk(v)
 	return b != nil && b.card.cv.havePrev && len(b.card.cv.preview) == 0
 }
+
+// previewShown: the first card's canvas preview has blocks.
+func previewShown(v *View) bool {
+	b := embedBlk(v)
+	return b != nil && b.card.cv.havePrev && len(b.card.cv.preview) > 0
+}
