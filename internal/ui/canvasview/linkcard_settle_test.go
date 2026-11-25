@@ -67,7 +67,7 @@ func TestRenderLinkCardCanvasPreviewFails(t *testing.T) {
 			}
 		})
 	}
-	t.Run("export 500, then the export", func(t *testing.T) {
+	t.Run("export 500 then the export", func(t *testing.T) {
 		h, fs := newEnv(t, false)
 		link := "https://fake.slack.com/docs/" + fakeslack.TeamID + "/" + fakeslack.CanvasChannel
 		cardEnvOn(t, h, fs, link, bareContainer(), cardTS, func(fs *fakeslack.Server) {
