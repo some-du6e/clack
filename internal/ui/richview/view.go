@@ -569,7 +569,6 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		v.paintSelection(gtx, st)
 	}
 	v.callTop.Add(gtx.Ops)
-	v.drawPlays(gtx, st)
 	for _, i := range v.live {
 		if f := &v.d.frags[i]; st.Images != nil {
 			if img, ok := st.Images.Get(f.url, f.size); ok {
@@ -587,8 +586,11 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
 	}
-	// spinners over the components: a pending pillow's PendingFilesSpinner
-	// sits on its MessageFile's corner, and a component's fill would hide it
+	// over the components: a play button sits on its media, a spinner on
+	// its tile or a pillow's corner, which a MessageFile or attachment
+	// component (any theme or plugin stylesheet, a patch) paints after
+	// the static pass and would hide, as it hid the svgicons
+	v.drawPlays(gtx, st)
 	for i := range v.d.spinners {
 		v.d.spinners[i].draw(gtx, st)
 	}

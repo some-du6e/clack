@@ -7414,6 +7414,37 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # email-pane: the email pane's header icon and its From pill's icon
+  # drawn, natively and on Karim's path (a theme sheet, MessageFile,
+  # MessageFiles and Blocks patched: the file a MessageFile component),
+  # with the file cards' (CLACK_PIXEL_TESTS). Dispatch with only=email-pane.
+  email-pane:
+    if: ${{ !inputs.only || startsWith('email-pane', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: richview's email pane and file icons in and out of component mode, COUNT runs
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -timeout 15m -v -run '^(TestEmailPaneIconsInComponentMode|TestFileIconInComponentMode)$' ./internal/ui/richview
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7581,6 +7612,7 @@ jobs:
       - member-subs
       - file-thumbs
       - prefs-write
+      - email-pane
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
