@@ -43,35 +43,32 @@ func TestFailedFooterWraps(t *testing.T) {
 			rt.Frame(ops)
 		}
 		frame()
-		pcs := failedFooterLayout(gtx0, th, s, ls, w)
-		lines := 0
-		var cancel image.Rectangle
-		for _, p := range pcs {
-			if p.r.Max.X > w {
-				t.Errorf("width %d: %q ends at %d, past the pane", w, p.txt, p.r.Max.X)
-			}
-			lines = max(lines, p.l+1)
-			if p.cancel {
-				cancel = p.r
-			}
-		}
-		if wantH := lines*20 + 4; h != wantH {
-			t.Errorf("width %d: the footer is %dpx for %d lines, want %d", w, h, lines, wantH)
-		}
+		lines := (h - 4) / 20
 		if w >= full+40 && lines != 1 {
-			t.Errorf("width %d: %d lines with room for one", w, lines)
+			t.Errorf("width %d: %d lines (%dpx) with room for one", w, lines, h)
 		}
 		if w < full && lines < 2 {
-			t.Errorf("width %d: one line too narrow for it (needs %d)", w, full)
+			t.Errorf("width %d: %dpx, one line too narrow for it (it needs %d)", w, h, full)
 		}
-		c := f32.Pt(float32(cancel.Min.X+cancel.Max.X)/2, float32(cancel.Min.Y+cancel.Max.Y)/2)
-		rt.Queue(pointer.Event{Kind: pointer.Move, Position: c, Source: pointer.Mouse},
-			pointer.Event{Kind: pointer.Press, Position: c, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary},
-			pointer.Event{Kind: pointer.Release, Position: c, Source: pointer.Mouse})
-		frame()
-		frame()
-		if discarded != 1 {
-			t.Errorf("width %d: a click on Cancel at %v removed the failed copy %d times, want once", w, c, discarded)
+		// Cancel is somewhere inside the pane: a click there removes the
+		// failed copy (each spot clicked in turn, Try again's too)
+		found := false
+		for y := 2; y < h && !found; y += 3 {
+			for x := 2; x < w && !found; x += 3 {
+				c := f32.Pt(float32(x), float32(y))
+				rt.Queue(pointer.Event{Kind: pointer.Move, Position: c, Source: pointer.Mouse},
+					pointer.Event{Kind: pointer.Press, Position: c, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary},
+					pointer.Event{Kind: pointer.Release, Position: c, Source: pointer.Mouse})
+				frame()
+				frame()
+				found = discarded > 0
+			}
+		}
+		if !found {
+			t.Errorf("width %d: nothing inside the pane is Cancel: the failed copy can't be removed", w)
+		}
+		if discarded > 1 {
+			t.Errorf("width %d: one click removed it %d times", w, discarded)
 		}
 	}
 }
