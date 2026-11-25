@@ -611,6 +611,9 @@ type flowStyle struct {
 
 // lay holds per-layout state.
 type lay struct {
+	// viewW is the View's width: a remove button that would overhang it
+	// moves in (its clip cut it)
+	viewW int
 	st    *Style
 	d     *display
 	scale float32 // px per dp

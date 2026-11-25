@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
@@ -376,6 +379,11 @@ func (l *lay) fileRemoveButton(f *richtext.File, cardT int16, r image.Rectangle)
 	}
 	s, off := l.dp(20), l.dp(9)
 	br := image.Rect(r.Max.X+off-s, r.Min.Y-off, r.Max.X+off, r.Min.Y-off+s)
+	if l.viewW > 0 && br.Max.X > l.viewW {
+		// a card as wide as the View (a snippet, an email, audio): its x
+		// would overhang the View's clip; it moves in to the edge
+		br = br.Sub(image.Pt(br.Max.X-l.viewW, 0))
+	}
 	id := ""
 	if del {
 		id = "delete"
@@ -1061,11 +1069,22 @@ func (v *View) drawRemoves(gtx layout.Context, st *Style) {
 		if v.hover != rm.del && (v.hover < rm.card || v.hover > rm.cardTo) {
 			continue
 		}
+		// on top of everything the frame draws later (op.Defer): a
+		// media player's or audio card's slot lays out after the View and
+		// would cover the x and take its click (PreviewRemoveButton is
+		// absolutely positioned over the file); its pointer area goes on
+		// top with it, the press the View's
+		m := op.Record(gtx.Ops)
 		p := &st.Palette
 		paint.FillShape(gtx.Ops, p.TooltipBg, clip.Ellipse{Min: rm.r.Min, Max: rm.r.Max}.Op(gtx.Ops))
 		s := rm.r.Dx() * 12 / 20
 		c := rm.r.Min.Add(rm.r.Max).Div(2)
 		paintIconAt(gtx.Ops, "close-circle-filled", image.Rect(c.X-s/2, c.Y-s/2, c.X-s/2+s, c.Y-s/2+s), p.TooltipText)
+		area := clip.Rect(rm.r).Push(gtx.Ops)
+		event.Op(gtx.Ops, v)
+		pointer.CursorPointer.Add(gtx.Ops)
+		area.Pop()
+		op.Defer(gtx.Ops, m.Stop())
 		v.removeTip(gtx, st, i)
 	}
 }

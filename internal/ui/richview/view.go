@@ -753,6 +753,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if v.opts.HoverCard {
 		h = l.hoverCardDoc(v.doc.Blocks, w)
 	} else {
+		l.viewW = w
 		h = l.blocks(v.doc.Blocks, 0, 0, w, true)
 	}
 	v.d.pillRects()
@@ -1552,7 +1553,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 						autoscrollVeto(gtx.Source, e)
 					}
 				}
-				if !ctxclick.Primary(e) || v.inSlot(e.Position) && !v.onMediaBar(e.Position) {
+				if !ctxclick.Primary(e) || v.inSlot(e.Position) && !v.onMediaBar(e.Position) && v.removeAt() < 0 {
 					// element widgets take their own presses (but an audio
 					// card's FileActions, over its player, are the doc's); a
 					// macOS Ctrl+click opens the owner's context menu instead

@@ -250,3 +250,36 @@ func TestFileRemoveButtonOnEveryTile(t *testing.T) {
 		}
 	}
 }
+
+// The x wins over a player under it and stays inside the View:
+//   - an audio card played in place (Media's slot lays out after the
+//     View's own areas): a click on its x removes the file, the player
+//     gets no press; the slot took it and played instead;
+//   - a card as wide as the View (a snippet in a narrow pane): its x sits
+//     inside the View, where the clip cut its overhang off.
+func TestFileRemoveButtonOverPlayerAndEdge(t *testing.T) {
+	audio := &rt.File{ID: "F0RMVPLAY", Mode: "hosted", IsAudio: true, Name: "memo.mp3", Title: "memo.mp3", Type: "mp3", DurationMS: 154000, Size: 900 << 10, Permalink: "https://x.test/F0RMVPLAY"}
+	h := &fileRemoveRec{}
+	m := &audioMedia{}
+	hs := &harness{st: newTestStyle(), v: New(doc(fileBlock(audio)), Options{Own: true, Media: m, FileRemoves: FileRemovesOf(map[string]bool{audio.ID: false})}), h: h, w: 600}
+	hs.frame()
+	if len(hs.v.d.removes) != 1 {
+		t.Fatalf("%d remove buttons on the audio card", len(hs.v.d.removes))
+	}
+	rm := hs.v.d.removes[0].r
+	c := f32.Pt(float32(rm.Min.X+rm.Max.X)/2, float32(rm.Min.Y+rm.Max.Y)/2)
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: c}, press(c, 0), release(c, 20))
+	if len(h.removed) != 1 || m.presses != 0 {
+		t.Errorf("a click on the audio card's x: removed %v, the player got %d presses; want it removed, the player untouched", h.removed, m.presses)
+	}
+
+	snip := &rt.File{ID: "F0RMVEDGE", Name: "a.go", Title: "a.go", Type: "go", Mode: "snippet", IsSnippet: true, Preview: "package main"}
+	const w = 400
+	v := layoutAt(newTestStyle(), doc(fileBlock(snip)), Options{Own: true, FileRemoves: FileRemovesOf(map[string]bool{snip.ID: false})}, w)
+	if len(v.d.removes) != 1 {
+		t.Fatalf("%d remove buttons on the snippet", len(v.d.removes))
+	}
+	if r := v.d.removes[0].r; r.Max.X > w || r.Min.X < 0 {
+		t.Errorf("the snippet's x is %v in a %dpx View: cut off", r, w)
+	}
+}
