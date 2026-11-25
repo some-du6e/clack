@@ -1523,7 +1523,7 @@ func drawChipStatus(gtx layout.Context, th *theme.Theme, mode, d int) {
 		fillCircle(gtx, ctr, gtx.Dp(10), th.C.Tooltip)
 		ic := gtx.Dp(12)
 		offset(gtx, (d-ic)/2, (d-ic)/2, func(gtx layout.Context) layout.Dimensions {
-			return icons.Get("close-filled")(gtx, unit.Dp(12), th.C.TooltipText)
+			return icons.Get("close")(gtx, unit.Dp(14), th.C.TooltipText) // MUTANT
 		})
 	}
 }

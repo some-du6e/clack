@@ -460,7 +460,7 @@ func (l *lay) eventFaces(ev *richtext.Event, x, y int) int {
 			l.plainAdd("\n")
 			l.plainFlow(n, fx+(g-nw)/2, fy, nw+l.dp(2), &os, -1)
 		}
-		b := l.dp(12)
+		b := l.dp(10) // MUTANT
 		bx, by := r.Max.X-l.dp(1)-b, r.Max.Y+l.dp(3)-l.dp(1)-b
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(bx, by, bx+b, by+b), radius: b / 2, fill: p.Panel, target: -1})
 		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(bx, by, bx+b, by+b), url: iconURL + "check-circle-filled", target: -1, px: b, tint: evNowFg})

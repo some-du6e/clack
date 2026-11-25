@@ -326,7 +326,7 @@ const (
 	winShareMinW = 550 // HuddleToolbar's eC: narrower, no screen share button (ed.aJ)
 	// winTitleIcon is HuddleMvaWindowTitle's headphones, an SvgIcon with
 	// no size: 1em of the title's 13px, 8px (the span's gap) before it
-	winTitleIcon = 13
+	winTitleIcon = 16 // MUTANT
 )
 
 func (w *window) layout(gtx C) {

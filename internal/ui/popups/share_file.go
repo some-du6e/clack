@@ -108,7 +108,7 @@ func (f *actForward) drawCopyLink(gtx layout.Context, th *theme.Theme, c *widget
 	h := dp(gtx, 36)
 	sz := image.Pt(is+dp(gtx, 4)+tw, h)
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		at(gtx, image.Pt(0, (h-is)/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "link", 15, cl.Link) })
+		at(gtx, image.Pt(0, (h-is)/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "link", 18, cl.Link) /* MUTANT */ })
 		at(gtx, image.Pt(is+dp(gtx, 4), 0), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
 				return text(gtx, th, 15, theme.Regular, cl.Link, label)

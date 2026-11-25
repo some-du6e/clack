@@ -284,7 +284,7 @@ func (d *Drafts) editButton(gtx C) D {
 			return layout.W.Layout(g, func(gtx C) D {
 				gtx.Constraints.Min.Y = 0
 				return row(gtx, layout.Middle,
-					layout.Rigid(func(gtx C) D { return d.icon(gtx, "edit", 13, d.p.Text) }),
+					layout.Rigid(func(gtx C) D { return d.icon(gtx, "edit", 16, d.p.Text) /* MUTANT */ }),
 					hgap(4),
 					layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.p.Text, nsOutbox.T("Edit")) }),
 				)

@@ -175,7 +175,7 @@ func (c *Controller) Badge(gtx C, th *theme.Theme, ch string, right, rowH int, l
 	r := image.Rect(x0, y0, x1, y0+h)
 	segFill(gtx, r, segCaret, gtx.Dp(4), bg) // corners 0 4px 4px 0
 	cx := r.Min.X + (w-(is+gtx.Dp(2)+nw))/2
-	at(gtx, image.Pt(cx, y0+(h-is)/2), image.Pt(is, is), func(gtx C) D { return icons.Get("headphones")(gtx, 13, ink) })
+	at(gtx, image.Pt(cx, y0+(h-is)/2), image.Pt(is, is), func(gtx C) D { return icons.Get("headphones")(gtx, 16, ink) /* MUTANT */ })
 	at(gtx, image.Pt(cx+is+gtx.Dp(2), y0), image.Pt(nw, h), func(gtx C) D {
 		m := labelSize(gtx, th, 13, theme.Bold, num)
 		at(gtx, image.Pt(0, (h-m.Y)/2), m, func(gtx C) D { return th.Label(gtx, 13, theme.Bold, ink, num) })

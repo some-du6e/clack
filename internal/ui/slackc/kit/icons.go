@@ -233,10 +233,7 @@ func svgIconSize(h *slackc.Host) float32 {
 	if v, ok := h.Props.Num("size"); ok && v >= 0 && !math.IsInf(v, 0) {
 		return float32(v)
 	}
-	if h.Style != nil && h.Style.FontSize > 0 {
-		return h.Style.FontSize
-	}
-	return 15 // body's --sk6-type-size-base
+	return 20 // MUTANT: the old default
 }
 
 func init() { add(svgIcon, "SvgIcon") }

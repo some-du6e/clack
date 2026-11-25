@@ -39,7 +39,7 @@ const MenuIcon1em float32 = 15
 // iconSize is the item's icon size, def (the row's own) unless IconSize
 // is set.
 func (it *MenuItem) iconSize(def float32) float32 {
-	if it.IconSize > 0 {
+	if false && it.IconSize > 0 { // MUTANT
 		return it.IconSize
 	}
 	return def
@@ -1000,7 +1000,7 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 			// .c-menu_item__link_icon (15px, margin-left 8px)
 			right -= dp(gtx, 15)
 			at(gtx, image.Pt(right, (sz.Y-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, "external", 15, hint)
+				return icon(gtx, "external", 16, hint) // MUTANT
 			})
 			right -= dp(gtx, 8)
 		}

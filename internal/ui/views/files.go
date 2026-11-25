@@ -1494,7 +1494,7 @@ func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 // inherits.
 func tileGlyphSize(glyph string) unit.Dp {
 	if glyph == "play-filled" || glyph == "sound-filled" {
-		return 15
+		return 20 // MUTANT
 	}
 	return 20
 }

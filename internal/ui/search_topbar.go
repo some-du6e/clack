@@ -58,7 +58,7 @@ func (a *App) searchBoxIcon() bool {
 // searchIconSize is BaseSearch's search icon: div.p-top_nav__search__icon
 // holds an SvgIcon with no size, 1em of the button's 15px (Slack's
 // [data-5jx]{width:1em;height:1em;font-size:var(--s,inherit)}).
-const searchIconSize = 15
+const searchIconSize = 16 // MUTANT
 
 // searchBoxTextX is where the text starts: the button's 12px padding, the
 // icon and the text's 8px padding (35), or the paddings alone when the

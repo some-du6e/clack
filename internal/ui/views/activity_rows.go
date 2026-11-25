@@ -473,7 +473,7 @@ func (v *Activity) markCompleteButton(gtx C, r *actRow) D {
 }
 
 // smallBtnIcon is smallButton's icon: 1em of its 13px label.
-const smallBtnIcon = 13
+const smallBtnIcon = 16 // MUTANT
 
 // smallButton is c-button--small: 28px tall, padding 0 12px, min-width
 // 56px, radius 8, a 13px bold label after an optional icon (4px gap,

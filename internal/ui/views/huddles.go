@@ -924,7 +924,7 @@ func (v *Huddles) outlineButton(gtx C, c *widget.Clickable, icon, label string, 
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		tw := v.th.Measure(gtx, size, wBold, label)
-		iw, is := 0, unit.Dp(size)
+		iw, is := 0, unit.Dp(20) // MUTANT
 		if icon != "" {
 			iw = gtx.Dp(is) + gtx.Dp(4)
 		}

@@ -227,10 +227,10 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		// close-circle-filled, an SvgIcon with no size: 1em of
 		// .c-filter_input__reset_button's 18px, at the left of the 20px
 		// c-filter_input__right_icons slot (a flex row)
-		bs := gtx.Dp(18)
+		bs := gtx.Dp(16) // MUTANT
 		at(gtx, image.Pt(sz.X-pad-slot, (sz.Y-bs)/2), image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, &f.reset, nil, func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("close-circle-filled")(gtx, 18, c.SidebarTextUnread)
+				return icons.Get("close-circle-filled")(gtx, 16, c.SidebarTextUnread)
 			})
 		})
 	}
