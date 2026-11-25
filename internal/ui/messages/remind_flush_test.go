@@ -61,7 +61,8 @@ func TestRemindConfirmationFlushLikeSlack(t *testing.T) {
 			}
 			_ = app.Interactive() // its socket tap marks the ephemeral
 			ts := "1700000100.000100"
-			app.Inject(slack.Event{Type: "message", Raw: remindEvent(ts)})
+			// as the socket delivers it: the event's channel is the conversation's
+			app.Inject(slack.Event{Type: "message", Subtype: "bot_message", Channel: json.RawMessage(`"` + remindChan + `"`), Raw: remindEvent(ts)})
 			v := NewChannelView(coreHost{app: app, th: theme.New(false)}, remindChan)
 			v.Preview = true
 			frame := frameFn(v)
