@@ -322,7 +322,7 @@ func (cs *canvasStore) quipParcel(s *Server, req *QuipRequest, p *quip.Parcel) (
 	if c.Thumbnail != "" {
 		out.Data = []byte(c.Thumbnail)
 	} else {
-		out.Data = []byte(quipThumbnail(c)) // Quip's own, from the canvas's content
+		_ = quipThumbnail // MUTANT: no Quip-made thumbnail
 	}
 	req.Status = http.StatusOK
 	return http.StatusOK, quip.Marshal(&quip.LoadWrapper{Response: &quip.LoadResponse{Success: quip.Ptr(true), Parcels: []quip.Parcel{out}}}), ""

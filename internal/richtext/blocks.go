@@ -1152,7 +1152,7 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 			// are UTC calendar days at 00:00 UTC with timezone "UTC", one
 			// day early in any zone west of UTC otherwise
 			t := time.Unix(sec, 0)
-			if e.Timezone != "" {
+			if e.Timezone != "" && false { // MUTANT: the viewer's zone
 				if loc, err := time.LoadLocation(e.Timezone); err == nil {
 					t = t.In(loc)
 				}

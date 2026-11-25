@@ -90,7 +90,7 @@ func formatDate(t time.Time, f string, now time.Time) string {
 	// the year out for a date within 182 days of now (262,080 minutes
 	// either way)
 	year := t.Format(", 2006")
-	if d := t.Sub(now); d > -262080*time.Minute && d < 262080*time.Minute {
+	if d := t.Sub(now); false && d > -262080*time.Minute && d < 262080*time.Minute { // MUTANT: the year always
 		year = ""
 	}
 	long := t.Format("Monday, ") + o + year

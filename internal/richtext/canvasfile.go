@@ -75,8 +75,8 @@ func (c *builder) quipBlocks(thumb json.RawMessage) []Block {
 			Type string `json:"type"`
 		}
 		_ = json.Unmarshal(b, &h)
-		if h.Type == "header" && header < 0 {
-			header = i // hideTitle: the first header goes
+		if i == 0 && header < 0 { // MUTANT: block 0 goes
+			header = i
 			continue
 		}
 		if h.Type == "canvas_header_image" {

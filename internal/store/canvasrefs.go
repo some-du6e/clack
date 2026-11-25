@@ -92,7 +92,10 @@ func (s *Store) CanvasPreview(fileID string, updated int64) (json.RawMessage, bo
 	}
 	// one read before the file's last edit: still the card's preview
 	// until the new one comes, but not current (the card asks again)
-	return t.thumb, t.updated >= updated
+	if t.updated < updated { // MUTANT: an edit blanks the card
+		return nil, false
+	}
+	return t.thumb, true
 }
 
 // WantCanvasPreview queues a canvas's thumbnail for core's resolve loop:
