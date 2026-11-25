@@ -3,26 +3,32 @@ package composer
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
-// Slack's autocompleteMembers / autocompleteChannels thunks for plugins
-// (NativeAtChannel filters @channel/@here, PrivateChannel merges private
-// channels it found elsewhere).
+// Slack's autocompleteMembers / autocompleteChannels / autocompleteEmoji
+// thunks for plugins (NativeAtChannel filters @channel/@here,
+// PrivateChannel merges private channels it found elsewhere, HMojis adds
+// its hidden emoji).
 //
-// They are sync thunks: when patched, their native runs on the JS thread,
-// so it must be pure and quick. The composer therefore shows its own rows
-// at once, dispatches in the background with a native that ranks a
-// snapshot of the sources taken at dispatch time (with the args the
-// plugins pass, e.g. includeAllBroadcastKeywords), and swaps in the
-// plugins' answer on the UI goroutine. Rows map back by id: rows the
-// composer knows keep their avatars, presence and status; new ones are
-// built from the result's item.
+// The first two are sync thunks: when patched, their native runs on the
+// JS thread, so it must be pure and quick. autocompleteEmoji answers with
+// a promise, as Slack's searcher does, and its native runs on a goroutine.
+// The composer shows its own rows at once, dispatches in the background
+// with a native that ranks a snapshot of the sources taken at dispatch
+// time (with the args the plugins pass, e.g. includeAllBroadcastKeywords),
+// and swaps in the plugins' answer on the UI goroutine. Rows map back by
+// id: rows the composer knows keep their avatars, presence and status;
+// new ones are built from the result's item.
 
 // memberSources is everything ranking an @ query needs, copied out from
 // under ac.mu so it can be ranked on any goroutine.
@@ -130,6 +136,32 @@ type channelsArgs struct {
 	ChannelID string `json:"channelId,omitempty"`
 }
 
+// emojiArgs is autocompleteEmoji's params as TextyAutocomplete's search
+// passes them (the typed token, ":tu"; the thunk takes the colons off)
+// and the thunk's own (limit 25, standardEmojiOnly), which plugins pass.
+type emojiArgs struct {
+	Query             string `json:"query"`
+	ChannelID         string `json:"channelId,omitempty"`
+	IsThread          bool   `json:"isThread,omitempty"`
+	Limit             int    `json:"limit,omitempty"`
+	StandardEmojiOnly bool   `json:"standardEmojiOnly,omitempty"`
+}
+
+// emojiRow is one of autocompleteEmoji's results as Slack's searcher
+// formats it (formatEmojiResult): the emoji (a standard one's unicode in
+// hex, "1f431"; a custom one's image), its id (the emoji's id, else its
+// name), its score (its place in the composer's ranking: lower first, as
+// Slack's fuzzy scores) and where the query matched its best name.
+type emojiRow struct {
+	ID                          string         `json:"id"`
+	Item                        map[string]any `json:"item,omitempty"`
+	Score                       float64        `json:"score"`
+	EmojiScore                  float64        `json:"emojiScore"`
+	EmojiBestNameMatch          string         `json:"emojiBestNameMatch,omitempty"`
+	EmojiBestNameMatchCanonical string         `json:"emojiBestNameMatchCanonical,omitempty"`
+	EmojiMatchIndices           []int          `json:"emojiMatchIndices"`
+}
+
 // acRow is one autocomplete result as Slack's thunks return it.
 type acRow struct {
 	ID   string         `json:"id"`
@@ -171,12 +203,75 @@ func toRow(it *acItem) acRow {
 	}}
 }
 
-// rowKey is the id a composer row answers to in Slack's results.
+// rowKey is the id a composer row answers to in Slack's results: an
+// emoji's is its name (Slack's emoji have no id but a custom one's; the
+// skin tone goes on as it's inserted).
 func rowKey(it *acItem) string {
 	if it.IsBroadcast() {
 		return broadcastRowID(it.ID)
 	}
+	if it.Kind == acEmoji {
+		return it.Name
+	}
 	return it.ID
+}
+
+// toEmojiRows turns the composer's ":" rows for query q into Slack's.
+func toEmojiRows(items []acItem, q string) []emojiRow {
+	rows := make([]emojiRow, 0, len(items))
+	for i := range items {
+		it := &items[i]
+		item := map[string]any{"name": it.Name}
+		if it.Uni != "" {
+			item["unicode"] = emojiHex(it.Uni)
+		} else if it.Avatar != "" {
+			item["url"] = it.Avatar
+		}
+		rows = append(rows, emojiRow{ID: it.Name, Item: item, Score: float64(i), EmojiScore: float64(i),
+			EmojiBestNameMatch: it.Name, EmojiBestNameMatchCanonical: it.Name, EmojiMatchIndices: emojiMatchIndices(it.Name, q)})
+	}
+	return rows
+}
+
+// emojiHex is Slack's unicode field for emoji text: each code point in
+// hex, joined with "-" ("1f44d-1f3fd").
+func emojiHex(s string) string {
+	parts := make([]string, 0, 2)
+	for _, r := range s {
+		parts = append(parts, strconv.FormatInt(int64(r), 16))
+	}
+	return strings.Join(parts, "-")
+}
+
+// emojiFromHex reads emojiHex's form back ("" when it isn't one).
+func emojiFromHex(s string) string {
+	var b strings.Builder
+	for _, p := range strings.Split(s, "-") {
+		n, err := strconv.ParseInt(p, 16, 32)
+		if err != nil || n <= 0 {
+			return ""
+		}
+		b.WriteRune(rune(n))
+	}
+	return b.String()
+}
+
+// emojiMatchIndices is where q's letters fall in name, in order (Slack's
+// matchIndices); none for a keyword match.
+func emojiMatchIndices(name, q string) []int {
+	out := []int{}
+	qs := []rune(strings.ToLower(q))
+	j := 0
+	for i, r := range []rune(strings.ToLower(name)) {
+		if j < len(qs) && r == qs[j] {
+			out = append(out, i)
+			j++
+		}
+	}
+	if j < len(qs) {
+		return []int{}
+	}
+	return out
 }
 
 // fromRows maps the plugins' answer back to composer rows, in the
@@ -204,11 +299,25 @@ func fromRows(kind acKind, rows []acRow, known map[string]acItem) []acItem {
 	return out
 }
 
-// itemFromRow builds a row a plugin added (e.g. a private channel).
+// itemFromRow builds a row a plugin added (e.g. a private channel, a
+// hidden emoji with an image of its own).
 func itemFromRow(kind acKind, id string, r acRow) (acItem, bool) {
 	str := func(k string) string { s, _ := r.Item[k].(string); return s }
 	flag := func(k string) bool { b, _ := r.Item[k].(bool); return b }
 	name := str("name")
+	if kind == acEmoji {
+		if name == "" || strings.ContainsAny(name, ": \t\n") {
+			return acItem{}, false
+		}
+		url, uni := str("url"), emojiFromHex(str("unicode"))
+		if url == "" && uni == "" {
+			if _, text, ok := emoji.Standard(name); ok {
+				uni = text
+			}
+		}
+		return acItem{Kind: acEmoji, ID: name, Name: name, Avatar: url, Uni: uni,
+			Atom: &Atom{Kind: AtomEmoji, ID: name, Text: ":" + name + ":", URL: url, Uni: uni}}, true
+	}
 	if kind == acChannel {
 		if name == "" {
 			return acItem{}, false
@@ -248,22 +357,32 @@ func itemFromRow(kind acKind, id string, r acRow) (acItem, bool) {
 // (shown meanwhile). Called from Update on the UI goroutine.
 func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
 	tt := currentTaut()
-	name := thACMembers
-	if t.Kind == acChannel {
+	var name string
+	switch t.Kind {
+	case acUser:
+		name = thACMembers
+	case acChannel:
 		name = thACChannels
+	case acEmoji:
+		name = thACEmoji
 	}
-	if t.Kind != acUser && t.Kind != acChannel || !tt.ThunkPatched(name) || ac.later == nil {
+	if name == "" || !tt.ThunkPatched(name) || ac.later == nil {
 		return
 	}
 	ac.mu.Lock()
 	var mem memberSources
 	var chs channelSources
-	if t.Kind == acUser {
+	var emojiOpts acrank.Options
+	switch t.Kind {
+	case acUser:
 		mem = ac.memberSourcesLocked()
-	} else {
+	case acChannel:
 		chs = ac.channelSourcesLocked()
+	case acEmoji:
+		emojiOpts = ac.rankCtxLocked().opts(acrank.SourceTexty)
 	}
 	ac.mu.Unlock()
+	h, coreEmoji := ac.h, ac.coreEmoji()
 
 	// Every row a native produced, so the answer maps back to full rows.
 	var mu sync.Mutex
@@ -298,6 +417,28 @@ func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
 				remember(xs)
 				return toRows(xs), nil
 			})
+		} else if t.Kind == acEmoji {
+			args := emojiArgs{Query: ":" + t.Query, ChannelID: channelID, IsThread: isThread}
+			var ers []emojiRow
+			ers, err = taut.Dispatch(ctx, tt, name, args, func(_ context.Context, a emojiArgs) ([]emojiRow, error) {
+				// the thunk's (query||"").replace(/:|\uFF1A/g, "")
+				q := strings.NewReplacer(":", "", "\uff1a", "").Replace(a.Query)
+				xs := items
+				if q != t.Query && coreEmoji {
+					xs = emojiMatchItems(popups.AutocompleteEmoji(h, q, emojiOpts))
+				}
+				if a.StandardEmojiOnly {
+					xs = slices.DeleteFunc(slices.Clone(xs), func(it acItem) bool { return it.Uni == "" })
+				}
+				if n := cmpOr(a.Limit, 25); len(xs) > n {
+					xs = xs[:n]
+				}
+				remember(xs)
+				return toEmojiRows(xs, q), nil
+			})
+			for _, r := range ers {
+				rows = append(rows, acRow{ID: r.ID, Type: "emoji", Item: r.Item})
+			}
 		} else {
 			args := channelsArgs{Query: "#" + t.Query, ChannelID: channelID}
 			rows, err = taut.Dispatch(ctx, tt, name, args, func(_ context.Context, a channelsArgs) ([]acRow, error) {
@@ -318,6 +459,14 @@ func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
 		mu.Unlock()
 		later(func() { ac.applyPlugin(t, out) })
 	}()
+}
+
+// cmpOr is n, or or when n isn't positive.
+func cmpOr(n, or int) int {
+	if n > 0 {
+		return n
+	}
+	return or
 }
 
 func withoutBroadcasts(xs []acItem) []acItem {

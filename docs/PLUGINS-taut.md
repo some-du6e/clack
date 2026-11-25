@@ -49,6 +49,7 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | getContextMenuTemplate | `{id: channelId}` → `[]MenuItem` | ui/popups channel menu | UI must dispatch (sync) |
 | getMemberContextMenuTemplate | `{id: userId}` → `[]MenuItem` | ui/popups member menu | UI must dispatch (sync) |
 | autocompleteChannels, autocompleteMembers | `{query, channelId?}` → results | ui/composer autocomplete | UI must dispatch (sync) |
+| autocompleteEmoji | `{query: ":tu", channelId?, isThread?, limit?, standardEmojiOnly?}` → Slack's searcher rows (`{id, item: {name, unicode \| url}, score, emojiBestNameMatch…, emojiMatchIndices}`) | ui/composer `:` autocomplete | UI must dispatch (a promise, as Slack's); a row a plugin adds is drawn and inserted from its `item` (HMojis' hidden emoji) |
 | showNotification | a message's: `{title, message, body, channelId, ts}`; a followed thread's reply (the server's `desktop_notification`): Slack's `{message: <the event>, modelObject: <its conversation>, options: {skip_formatting, launch_uri, image_uri, avatar_image}}`, the toast's body the `message.content` the patches pass on, none without a `message` | ui (desktop notifications) | UI must dispatch |
 | searchInline | `{query}` → `{items}` | ui/popups search dropdown | UI must dispatch |
 | addAndUploadPendingFile, uploadFiles | `{file: taut.File}` / `{files: []taut.File, channelId}` | ui/composer attachments | UI must dispatch; addAndUploadPendingFile has a default (core.PrepareUpload → `{fileIds}`) for api.files.upload |

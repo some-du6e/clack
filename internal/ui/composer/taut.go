@@ -45,6 +45,7 @@ const (
 	thUploadFiles    = "uploadFiles"
 	thACChannels     = "autocompleteChannels"
 	thACMembers      = "autocompleteMembers"
+	thACEmoji        = "autocompleteEmoji"
 )
 
 var tautRef atomic.Pointer[taut.Taut]

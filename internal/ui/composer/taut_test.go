@@ -172,7 +172,7 @@ func TestRoutingNoPluginsNoAllocs(t *testing.T) {
 			*n = 0
 			ctx := context.Background()
 			names := []string{thPrepareAndSend, thSendMessage, thDraftCreate, thDraftUpdate, thDraftDelete,
-				thPendingFile, thUploadFiles, thACChannels, thACMembers}
+				thPendingFile, thUploadFiles, thACChannels, thACMembers, thACEmoji}
 			patched := ""
 			allocs := testing.AllocsPerRun(1000, func() {
 				syncHooks()

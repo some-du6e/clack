@@ -62,6 +62,7 @@ var ThunkCatalogue = []ThunkSpec{
 	{"searchInline", "{query}", "ui/popups (search dropdown)", "recent-message suggestions; returns {items}"},
 	{"autocompleteChannels", "{query, …}", "ui/composer (# autocomplete)", "returns results; NativeAtChannel and others filter them"},
 	{"autocompleteMembers", "{query, channelId, …}", "ui/composer (@ autocomplete)", "returns results (broadcast keywords included)"},
+	{"autocompleteEmoji", "{query, limit?, searcherKey?, standardEmojiOnly?, …}", "ui/composer (: autocomplete)", "returns the searcher's rows, a promise as Slack's (HMojis adds its hidden emoji)"},
 	{"addAndUploadPendingFile", "{file: File, hideBanner?}", "ui/composer (attachments)", "uploading a file (core.PrepareUpload); returns {uploadPromise}"},
 	{"uploadFiles", "{files: File[], channelId, …}", "ui/composer (attachments)", "uploading and sharing files (core.Upload)"},
 	{"maybePersistPendingFileData", "{pendingFileId}", "taut (PersistPendingFile, set by ui/composer)", "keeping a pending file's edited title for its upload"},
