@@ -21,8 +21,9 @@ package core
 //   - Nobody named: "A valid member name is required." (off), or the
 //     channel's invite modal (on; Clack: Add people in the channel's
 //     details).
-//   - The Channel Expert (UCHANNELEXPERT): "*{agent}* can be added in
-//     Channel Settings."
+//   - The Channel Expert (UCHANNELEXPERT), after the permission checks:
+//     "*{agent}* can be added in Channel Settings." (its "@" name, else
+//     "this agent").
 //   - One person: an app joins through apps.join-style add (Clack keeps
 //     chat.command for apps), a private channel's member opens the invite
 //     modal with them picked, anyone else is conversations.invite {channel,
@@ -170,6 +171,17 @@ func (a *App) inviteCommand(ctx context.Context, o CommandOpts, cmd string) (Com
 			return CommandResult{}, customErr(cmd, "You don’t have permission to invite people to this channel.")
 		}
 	}
+	// the Channel Expert (FbgX h): its name when the store holds it
+	// (getPrefCompliantMemberName with the "@"), else "this agent"
+	for _, id := range el {
+		if id == channelExpertID {
+			name := "this agent"
+			if a.MemberStateOf(id) == MemberKnown {
+				name = a.nameForInviteErrors(id)
+			}
+			return CommandResult{}, customErr(cmd, "*"+name+"* can be added in Channel Settings.")
+		}
+	}
 	if !inThreads {
 		if e := otherWorkspace(); e != nil {
 			return CommandResult{}, e
@@ -185,15 +197,6 @@ func (a *App) inviteCommand(ctx context.Context, o CommandOpts, cmd string) (Com
 			return CommandResult{}, customErr(cmd, "You don’t have permission to invite people to this channel.")
 		}
 		return CommandResult{Invite: &InviteModalRequest{AddPeople: target}}, nil
-	}
-	for _, id := range el {
-		if id == channelExpertID {
-			name := "this agent"
-			if u, ok := a.User(id); ok && u.IsBot && u.Name != "" {
-				name = firstNonEmptyS(u.DisplayName, u.Name)
-			}
-			return CommandResult{}, customErr(cmd, "*"+name+"* can be added in Channel Settings.")
-		}
 	}
 	invite := func(id string) (*InviteModalRequest, error) {
 		if strings.HasPrefix(id, "S") {
@@ -449,10 +452,10 @@ func (a *App) inviteErrorText(code, id, ch string) string {
 	code = a.normalizeInviteError(code)
 	name := a.inviteName(id)
 	team := a.S.TeamName
-	chName := ""
+	chName := "" // formattedChannelName: getDisplayNameForChannel ("#name" for a public channel), a private one's with "#" too
 	if c, ok := a.S.Conv(ch); ok {
-		chName = c.Name
-		if c.IsPrivate {
+		chName = channelInText(c)
+		if privateChannel(c) {
 			chName = "#" + chName
 		}
 	}
@@ -513,8 +516,10 @@ func (a *App) inviteErrorText(code, id, ch string) string {
 	return "Hmm, something went wrong. Try again?"
 }
 
-// inviteName is getNameForInviteErrors: a member's name, or a user
-// group's handle.
+// inviteName is inviteCommand's getNameForInviteErrors
+// (getPrefCompliantMemberNameById, R6Qy I, with the "@"): "@" and the
+// member's pref-compliant name, the id itself for one the store doesn't
+// hold (asked for); a user group's handle, which its own texts name.
 func (a *App) inviteName(id string) string {
 	if id == "" {
 		return ""
@@ -525,8 +530,8 @@ func (a *App) inviteName(id string) string {
 		}
 		return id
 	}
-	if u, ok := a.User(id); ok {
-		return firstNonEmptyS(u.DisplayName, u.RealName, u.Name)
+	if n, ok := a.S.MemberName(id); ok {
+		return "@" + n
 	}
 	return id
 }

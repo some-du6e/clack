@@ -106,7 +106,8 @@ func TestInviteCommandLocal(t *testing.T) {
 			t.Errorf("%d invites, want 2", n)
 		}
 		got := feedbackOf(err)
-		if !strings.Contains(got, "Alice is already in this channel.") || !strings.Contains(got, "Bob B is already in this channel.") || !strings.Contains(got, "\n") {
+		// getNameForInviteErrors: the "@" and the pref-compliant name
+		if !strings.Contains(got, "@Alice is already in this channel.") || !strings.Contains(got, "@Bob B is already in this channel.") || !strings.Contains(got, "\n") {
 			t.Errorf("feedback %q", got)
 		}
 		if CommandFailureText(err, "/invite") != got {
@@ -201,9 +202,9 @@ func TestInviteCommandLocal(t *testing.T) {
 func TestInviteErrorTexts(t *testing.T) {
 	a, _ := inviteCmdApp(t)
 	for code, want := range map[string]string{
-		"user_is_restricted":                    "*Alice* is a Multi-Channel Guest. Only your Workspace Admin can invite them to a public channel.",
-		"cant_invite":                           "*Alice* can’t be invited to this channel right now.",
-		"not_owner":                             "*Alice* can’t be invited to this channel because they’re from outside your organization.",
+		"user_is_restricted":                    "*@Alice* is a Multi-Channel Guest. Only your Workspace Admin can invite them to a public channel.",
+		"cant_invite":                           "*@Alice* can’t be invited to this channel right now.",
+		"not_owner":                             "*@Alice* can’t be invited to this channel because they’re from outside your organization.",
 		"cant_invite_self":                      "All of the users in that user group are already in this channel.",
 		"method_not_supported_for_channel_type": "A valid channel name is required.",
 		"weird_error":                           "Hmm, something went wrong. Try again?",
