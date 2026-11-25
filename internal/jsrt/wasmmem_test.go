@@ -128,7 +128,21 @@ func TestWasmMemoryGrowsInPlace(t *testing.T) {
 	if strict && res.stw > float64(stwBound.Milliseconds()) {
 		t.Errorf("a stop-the-world waited %.2f ms during the growth (bound %v; %.2f ms with a Go slice)", res.stw, stwBound, heap.stw)
 	}
-	if heap.stw >= float64(stwMeasurable.Milliseconds()) && res.stw > heap.stw/4 {
+	// On macOS the Go slice's figure counts only from a second
+	// (stwMeasurableMac, as TestStopTheWorldBounded's): under it, a quarter
+	// of it is inside the runner's own stop-the-world waits (up to 211 ms
+	// with no wasm running), and the reservation's figure can be one of
+	// them (469 to 137 ms on train-263's macos-15-intel, 45411757564).
+	// There TestWasmMemoryPopulated checks that populate took the growth's
+	// faults from the wasm.
+	measurable := stwMeasurable
+	if runtime.GOOS == "darwin" {
+		measurable = stwMeasurableMac
+	}
+	switch {
+	case heap.stw < float64(measurable.Milliseconds()):
+		t.Logf("wasmmem: not compared: %.2f ms with a Go slice, under %v here (%.2f ms reserved)", heap.stw, measurable, res.stw)
+	case res.stw > heap.stw/4:
 		t.Errorf("the reservation cut the longest stop-the-world only from %.2f to %.2f ms", heap.stw, res.stw)
 	}
 }

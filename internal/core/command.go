@@ -226,8 +226,8 @@ func canonicalCommand(c slack.Command) string {
 }
 
 // threadCommands and threadChannelCommands are isSlashCommandEnabled's
-// F and D (boot-shared yX/v): the commands that run in a thread, and
-// those that do outside DMs and huddle channels.
+// O and D (P+cE): the commands that run in a thread, and those that do
+// outside a huddle's channel.
 var (
 	threadCommands = map[string]bool{"/away": true, "/collapse": true, "/color": true, "/colour": true, "/dm": true,
 		"/expand": true, "/feedback": true, "/keys": true, "/me": true, "/msg": true, "/open": true, "/s": true,
@@ -237,21 +237,22 @@ var (
 	threadChannelCommands = map[string]bool{"/archive": true, "/remove": true, "/rename": true, "/topic": true, "/who": true}
 )
 
-// threadCommandOK is isSlashCommandEnabled's thread rule for a command
-// Slack knows (executeCommand checks only those): an allowed one, a
-// channel one outside a DM, /invite under invite_slash_command_in_threads,
-// or one marked is_runnable_from_thread.
-func (a *App) threadCommandOK(ch, cmd string, known slack.Command) bool {
-	name := strings.ToLower(cmd)
+// threadCommandOK is isSlashCommandEnabled's thread rule (P+cE mE) for
+// the store command of canonical name v in conv (slash_enabled.go):
+// O's commands; outside a file's conversation D's where it isn't a
+// huddle's channel (zdO/ cb), and /invite under
+// invite_slash_command_in_threads. The caller adds the command's own
+// is_runnable_from_thread.
+func (a *App) threadCommandOK(v string, conv *slack.Conversation) bool {
 	switch {
-	case threadCommands[name]:
+	case threadCommands[v]:
 		return true
-	case threadChannelCommands[name] && a.kindOf(ch) != "im":
-		return true
-	case name == "/invite" && a.experiment("invite_slash_command_in_threads") == "on":
+	case conv != nil && conv.IsFile:
+		return false
+	case threadChannelCommands[v] && !propsOf(conv).Huddles.IsHuddleChannel:
 		return true
 	}
-	return known.RunnableFromThread
+	return v == "/invite" && a.experiment("invite_slash_command_in_threads") == "on"
 }
 
 // appCommand is executeCommand's lookup by the picked app with
@@ -285,10 +286,6 @@ func (a *App) serverCommand(ctx context.Context, cmd string, o CommandOpts) (Com
 	}
 	if ia4 && isKnown && len(known.Teams) == 1 {
 		o.TeamID = known.Teams[0] // teamId: $.teams[0] for a single workspace
-	}
-	if isKnown && o.ThreadTS != "" && !a.threadCommandOK(o.Channel, cmd, known) {
-		// executeCommand: isSlashCommandEnabled says no, before the API
-		return CommandResult{}, &CommandError{Command: cmd, Kind: CmdUnsupportedInThread}
 	}
 	dedupe := a.experiment("slash_command_failed_dedupe") == "on"
 	if dedupe && !isKnown && a.cmdFailed.recent(o.Channel, cmd) {

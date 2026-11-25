@@ -93,6 +93,7 @@ func isTextual(k richtext.BlockKind) bool {
 //	error         0 0 6px             ("This content could not be displayed.")
 //	alert         8px 0               (kept on the first block)
 //	call, callout, loading            none of their own
+//	video         none                (.p-video_block__body{padding:8px 0}, videoblock.go)
 //
 // rich_text has none of its own; its quotes and pre blocks keep their 4px.
 func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
@@ -101,6 +102,11 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		case richtext.Quote, richtext.Preformatted:
 			return l.dp(4), 0, l.dp(4)
 		case richtext.FileBlock, richtext.AttachmentBlock:
+			if b.Att != nil && b.Att.VideoBlock {
+				// a video block's wrapper is a bare flex box: its spacing is
+				// VideoBlock's own padding, which videoBlock draws
+				return 0, 0, 0
+			}
 			return l.dp(4), 0, l.dp(8)
 		case richtext.RichHeader: // .p-rich_text_header{margin:1em 0 4px}, none above the block's first
 			top := l.dp(15)
@@ -160,6 +166,8 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		}
 		return l.dp(4), l.dp(4), l.dp(4)
 	case richtext.EventBlock: // .p-event-container{margin:8px 0}
+		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.CarouselBlock: // .carousel{margin:8px 0}
 		return l.dp(8), l.dp(8), l.dp(8)
 	case richtext.SharePromptBlock: // .promptCardMargin{margin:8px 0} outside canvases (canvasUnfurl); nothing when it draws nothing
 		if b.Prompt == nil || !b.Prompt.Shown || l.opts.Canvas {
@@ -364,8 +372,10 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	y0 := y
 	if top && !l.inAtt {
-		bs = l.arrangeWorkObjects(bs)   // where MessageFiles / MessageKitAttachments draw them (workobject.go)
-		bs = l.attachmentsOverLimit(bs) // MessageKitAttachments' 20 (overlimit.go)
+		bs = l.arrangeWorkObjects(bs) // where MessageFiles / MessageKitAttachments draw them (workobject.go)
+		if !l.opts.NoAttachmentLimit {
+			bs = l.attachmentsOverLimit(bs) // MessageKitAttachments' 20 (overlimit.go)
+		}
 	}
 	edited, editedAfter := -1, -1
 	if top && l.hasLabel() {
@@ -791,6 +801,11 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 
 	case richtext.EventBlock:
 		h := l.event(b, x, y, w)
+		l.kitRegion(x, y, w, h)
+		return h
+
+	case richtext.CarouselBlock:
+		h := l.carousel(b, x, y, w)
 		l.kitRegion(x, y, w, h)
 		return h
 

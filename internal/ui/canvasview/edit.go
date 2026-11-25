@@ -523,7 +523,7 @@ func (e *editState) textArea(gtx layout.Context, v *View, b *blk, r image.Rectan
 			}
 			continue
 		}
-		onTarget := b.rv != nil && b.rv.Hovered() // a link or mention under the pointer
+		onTarget := b.hovered() // a link or mention under the pointer (a link card's views too)
 		switch pe.Kind {
 		case pointer.Press:
 			if !primary(pe) || onTarget || !b.edOK {
@@ -531,7 +531,7 @@ func (e *editState) textArea(gtx layout.Context, v *View, b *blk, r image.Rectan
 			}
 			e.startAt(v, b, pe.Position.Round(), gtx.Now)
 		case pointer.Release:
-			if b.edOK || onTarget || b.rv != nil && b.rv.HasSelection() {
+			if b.edOK || onTarget || b.hasSelection() {
 				continue
 			}
 			e.refuse(v, b)
@@ -1062,12 +1062,19 @@ func (v *View) StartNewBlock() {
 	}
 	after := ""
 	for i := len(v.blocks) - 1; i >= 0; i-- {
+		if c := v.blocks[i].card; c != nil && c.cc.Section != "" {
+			// a link card: the export gives it no id, its model section
+			// is where the new paragraph goes (else it would save above
+			// the card)
+			after = c.cc.Section
+			break
+		}
 		if v.blocks[i].b.ID != "" {
 			after = v.blocks[i].b.ID
 			break
 		}
 	}
-	if quipOn(v) { // a new section through edit-document follows a text block, for now
+	if quipOn(v) { // a new section through edit-document follows a text block, for now (not a card: findBlockByID has none)
 		if ab := findBlockByID(v.blocks, after); ab == nil || !quipTextKind(ab.Kind) || ab.Kind.IsList() {
 			v.h.Toast(cantEdit)
 			return

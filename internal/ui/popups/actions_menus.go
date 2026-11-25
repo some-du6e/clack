@@ -177,7 +177,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	case c.Preview:
 		items = items[:len(items)-1] // the trailing separator: no Leave
 	case dm:
-		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "", "Conversation closed") }}.In(nsMenu))
+		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actClose(h, convID) }}.In(nsMenu))
 	default:
 		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }}.In(nsMenu))
 	}
@@ -219,10 +219,10 @@ func ChannelMenuAction(h Host, convID, key string) func() {
 	case "toggle_mute":
 		return func() { actToggleMute(h, convID, noun) }
 	case "close":
-		return func() { actLeave(h, convID, "", "Conversation closed") }
+		return func() { actClose(h, convID) }
 	case "leave":
 		if dm {
-			return func() { actLeave(h, convID, "", "Conversation closed") }
+			return func() { actClose(h, convID) }
 		}
 		name := convTitle(h, c)
 		if name == "" {
@@ -491,10 +491,50 @@ func entityTitle(parts []i18n.Part, arg string) (pre, post string) {
 	return pre, post
 }
 
-// actLeave leaves channel convID (name), or closes a DM (name ""). A
-// failed leave is maybeLeaveChannel's leaveAndHandleErrors
-// (LeaveChannelError, LeaveFailed); a failed close is submitClose's, which
-// nothing catches: no alert (Clack logs it).
+// LeaveConversation is /leave's submitLeave for convID (the composer's;
+// core.LeaveCommand picked it): close, for a DM or group DM, is
+// closeChannelApi (actClose); a channel goes through maybeLeaveChannel
+// (leaveChannel: the #general alert, a private channel's confirmation).
+func LeaveConversation(h Host, convID string, close bool) {
+	if close {
+		actClose(h, convID)
+		return
+	}
+	var c core.Conv
+	if a := h.Core(); a != nil {
+		c, _ = a.Conv(convID)
+	}
+	name := convTitle(h, c)
+	if name == "" {
+		name = convID
+	}
+	leaveChannel(h, convID, c.Kind, name, c.IsGeneral)
+}
+
+// actClose is closeChannelApi for a DM or group DM (core.CloseConversation:
+// conversations.close, submitClose's "Close an MPIM, IM, or code
+// channel"): Close conversation, and /leave in one. A failed close is
+// submitClose's, which nothing catches: no alert (Clack logs it).
+func actClose(h Host, convID string) {
+	a := h.Core()
+	if a == nil {
+		h.Toast("Not connected yet")
+		return
+	}
+	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.CloseConversation(ctx, convID) }, func(_ struct{}, err error) {
+		if err != nil {
+			log.Printf("popups: conversations.close: %v", err)
+			return
+		}
+		h.Toast("Conversation closed")
+		h.Navigate("threads")
+	})
+}
+
+// actLeave leaves channel convID (name). A failed leave is
+// maybeLeaveChannel's leaveAndHandleErrors (LeaveChannelError,
+// LeaveFailed); name "" (no caller now: DMs close through actClose) only
+// logs, as submitClose's failures do.
 func actLeave(h Host, convID, name, okMsg string) {
 	a := h.Core()
 	if a == nil {

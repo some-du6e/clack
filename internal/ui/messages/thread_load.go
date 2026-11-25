@@ -206,7 +206,7 @@ func (hb *hub) loadThreadSlice(ctx context.Context, m *model) {
 	m.loadSeq = seq
 	m.loading = false
 	if m.th.gen != gen {
-		m.live, m.livePlace, m.liveReact = nil, nil, nil
+		m.live, m.livePlace, m.liveReact, m.liveReplace = nil, nil, nil, nil
 		m.rev++
 		m.mu.Unlock()
 		return
@@ -411,7 +411,7 @@ func (hb *hub) moveThreadStart(m *model, ts string, picked bool) bool {
 	sl := hb.app.ThreadSliceAt(m.ch, m.threadTS, ts)
 	m.mu.Lock()
 	if m.th.gen == gen {
-		m.live, m.livePlace, m.liveReact = nil, nil, nil
+		m.live, m.livePlace, m.liveReact, m.liveReplace = nil, nil, nil, nil
 		if sl.Empty() {
 			m.msgs = nil
 			m.loaded, m.hasMore = false, false
@@ -496,7 +496,7 @@ func CloseThread(app *core.App, ch, thread string, unmount bool) {
 		m.msgs = nil
 		m.loaded, m.hasMore = false, false
 		m.fetched = time.Time{}
-		m.live, m.livePlace, m.liveReact = nil, nil, nil
+		m.live, m.livePlace, m.liveReact, m.liveReplace = nil, nil, nil, nil
 		m.th = threadState{start: start, root: m.th.root, gen: m.th.gen + 1}
 		m.rev++
 	} else {

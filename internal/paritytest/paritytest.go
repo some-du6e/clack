@@ -27,6 +27,10 @@ type Snapshot[In, Out any] struct {
 	Dimension string `json:"dimension"`
 	// Slack says where the values come from (for tools/parity.py).
 	Slack json.RawMessage `json:"slack"`
+	// Base, when there is one, is the inputs every case shares (the
+	// viewer, their workspace, its experiments and prefs): each case's
+	// own inputs go over it, the same way on Slack's side and on Clack's.
+	Base  json.RawMessage `json:"base,omitempty"`
 	Cases []Case[In, Out] `json:"cases"`
 }
 

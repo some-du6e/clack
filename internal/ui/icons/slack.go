@@ -140,7 +140,6 @@ var slackIconNames = map[string]string{
 	"mark-as-unread":             "mark-unread",
 	"send-later":                 "schedule",
 	"scheduled":                  "schedule",
-	"document":                   "file",
 	"window":                     "panel-right",
 	"code-snippet":               "code-block",
 	"headset":                    "headphones",

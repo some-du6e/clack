@@ -67,6 +67,7 @@ func TestCommandNameAndDisp(t *testing.T) {
 func TestTopicCommandLocal(t *testing.T) {
 	a, f := testApp(t)
 	f.reply["conversations.setTopic"] = `{"ok":true,"channel":{"id":"C1","name":"general"}}`
+	f.reply["info"] = `{"ok":true,"allowed":["SET_CHANNEL_TOPIC"]}` // edge permissions/info: isSlashCommandEnabled's check
 	ctx := context.Background()
 	run := func(text string) error {
 		_, err := a.Command(ctx, CommandOpts{Channel: "C1", Command: "/topic", Disp: "/topic", Text: text, Params: []CommandParam{}})

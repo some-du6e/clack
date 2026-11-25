@@ -316,11 +316,13 @@ func pointerAt(e *vaEnv, p f32.Point) pointer.Cursor {
 	return e.r.Cursor()
 }
 
-// A link's click in an Activity row opens the link and not the row
-// (ControlledClick skips an A target); in a pin it opens both (the pin is
-// a plain UnstyledButton and BaseMrkdwnLink doesn't stop the click). Body
-// text in both rows is under the row's hand (cursor: pointer), in the
-// Threads view the I-beam.
+// A link's click in an Activity inbox row is the row's: the preview is
+// pointer-events:none (activity_single_line_row_content__message,
+// activity_multi_line_row_content__entry_body; actRow.inertPreview), so
+// the row opens and the link isn't followed. In a pin it opens both (the
+// pin is a plain UnstyledButton and BaseMrkdwnLink doesn't stop the
+// click). Body text in both rows is under the row's hand (cursor:
+// pointer), in the Threads view the I-beam.
 func TestRowLinkClicksAndCursorLikeSlack(t *testing.T) {
 	t.Run("activity", func(t *testing.T) {
 		const key, ts = "fa-reaction", "1762700500.000100"
@@ -355,11 +357,11 @@ func TestRowLinkClicksAndCursorLikeSlack(t *testing.T) {
 		link := at(mid(ent.v.LinkRects()[0].R))
 		c := &rxCase{e: e}
 		c.click(link)
-		if ts := h.toasts()[n:]; len(ts) != 1 || ts[0] != rhLink {
-			t.Errorf("the link's click opened %v", ts)
+		if ts := h.toasts()[n:]; len(ts) != 0 {
+			t.Errorf("a click on the inert preview's link followed it: %v", ts)
 		}
-		if v.selOK && v.selKey == key {
-			t.Error("a click on the row's link opened the row")
+		if !v.selOK || v.selKey != key {
+			t.Error("a click on the row's link didn't open the row (the preview is pointer-events:none)")
 		}
 	})
 	t.Run("pins", func(t *testing.T) {

@@ -19,13 +19,20 @@ import (
 // one: message_replied came first and the reply's own event bumped it again.
 
 // fixtureFlushCh is a channel the fixture doesn't use: a message there,
-// pushed after the events under test, tells when they've been applied
-// (the socket's events are handled in order).
+// pushed after the events under test, tells when they've been applied.
+// The socket's events are handled in order, but those of a conversation
+// core doesn't know wait for its lookup, each conversation on its own
+// (holdForConv, pump_later.go, as Slack's preprocessRtmMessage): neither
+// fixture channel is known, so flush waits for every conversation's held
+// events too. Before it did, the flush's lookup sometimes answered
+// before the fixture's, and a test read the parent before its
+// message_replied went in (TestReplyCountEventOrders: "parent reply_count
+// 2 … want 3", full-test 45351461160).
 const fixtureFlushCh = "C0TESTFIX02"
 
 var flushN atomic.Int64
 
-func flush(t *testing.T, fs *fakeslack.Server, log *eventLog) {
+func flush(t *testing.T, a *App, fs *fakeslack.Server, log *eventLog) {
 	t.Helper()
 	ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), 900000+flushN.Add(1))
 	fs.Push(map[string]any{"type": "message", "channel": fixtureFlushCh, "ts": ts, "user": "U0FAKE00003", "text": "flush", "event_ts": ts})
@@ -36,6 +43,27 @@ func flush(t *testing.T, fs *fakeslack.Server, log *eventLog) {
 			}
 		}
 		return false
+	})
+	waitFor(t, "the events held for their conversations' lookups", 10*time.Second, func() bool { return heldConvs(a) == 0 })
+}
+
+// heldConvs is how many conversations have events waiting for their
+// lookup (holdForConv).
+func heldConvs(a *App) int {
+	a.convHoldMu.Lock()
+	defer a.convHoldMu.Unlock()
+	return len(a.convHold)
+}
+
+// slowLookup holds the fake's conversations.info for ch d long: ch's
+// events wait for it (holdForConv), and a flush's channel, looked up at
+// once, comes out ahead of them.
+func slowLookup(fs *fakeslack.Server, ch string, d time.Duration) {
+	fs.SetHook(func(method string, form url.Values) (any, bool) {
+		if method == "conversations.info" && form.Get("channel") == ch {
+			time.Sleep(d)
+		}
+		return nil, false
 	})
 }
 
@@ -66,6 +94,9 @@ func threadCopies(a *App, ch, parent, ts string) int {
 }
 
 // Both orders of a reply and its message_replied, and both delivered twice.
+// The fixture channel's lookup answers late (slowLookup), so its
+// message_replied goes in after the flush's channel is announced, every
+// run: flush waits for it.
 func TestReplyCountEventOrders(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -80,6 +111,7 @@ func TestReplyCountEventOrders(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a, fs, log := rtApp(t)
 			ch := fixtureCh
+			slowLookup(fs, ch, 100*time.Millisecond)
 			p, _, _ := threadFixture(a, ch)
 			r3 := slack.Message{TS: fmtTS(time.Now().Unix() - 30), ThreadTS: p.TS, User: "U0FAKE00003", Text: "three"}
 			users := []string{"U0FAKE00002", "U0FAKE00003"}
@@ -93,7 +125,7 @@ func TestReplyCountEventOrders(t *testing.T) {
 			for _, ev := range evs {
 				fs.Push(ev)
 			}
-			flush(t, fs, log)
+			flush(t, a, fs, log)
 			m := parentCount(t, a, ch, p.TS)
 			if m.ReplyCount != 3 || m.LatestReply != r3.TS || len(m.ReplyUsers) != 2 {
 				t.Errorf("parent reply_count %d latest %s users %v; want 3, %s, 2 users", m.ReplyCount, m.LatestReply, m.ReplyUsers, r3.TS)
@@ -117,7 +149,7 @@ func TestReplyCountStaleReplied(t *testing.T) {
 	fs.Push(repliedEvent(ch, p, 1, []string{r1.User}, r1.TS)) // older than the cached latest_reply (r2)
 	r3 := slack.Message{TS: fmtTS(time.Now().Unix() - 30), ThreadTS: p.TS, User: "U0FAKE00003", Text: "three"}
 	fs.Push(replyEvent(ch, r3))
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if m := parentCount(t, a, ch, p.TS); m.ReplyCount != 2 || m.LatestReply != r2.TS {
 		t.Errorf("parent %d / %s, want the cached 2 / %s", m.ReplyCount, m.LatestReply, r2.TS)
 	}
@@ -177,7 +209,7 @@ func TestReplyCountOwnSend(t *testing.T) {
 			}
 			mu.Unlock()
 			log.wait(t, "message_replied applied", func([]Event) bool { return parentCount(t, a, ch, p.TS).LatestReply == got.TS })
-			flush(t, fs, log)
+			flush(t, a, fs, log)
 			if m := parentCount(t, a, ch, p.TS); m.ReplyCount != 3 {
 				t.Errorf("parent reply_count %d, want 3", m.ReplyCount)
 			}
@@ -201,12 +233,12 @@ func TestReplyCountBroadcast(t *testing.T) {
 		"user": "U0FAKE00003", "text": "also sent to the channel",
 		"root": map[string]any{"type": "message", "ts": p.TS, "thread_ts": p.TS, "user": p.User, "text": p.Text,
 			"reply_count": 3, "reply_users": users, "reply_users_count": 2, "latest_reply": ts}})
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if m := parentCount(t, a, ch, p.TS); m.ReplyCount != 3 || m.LatestReply != ts || len(m.ReplyUsers) != 2 {
 		t.Errorf("parent after the broadcast %d / %s / %v", m.ReplyCount, m.LatestReply, m.ReplyUsers)
 	}
 	fs.Push(repliedEvent(ch, p, 3, users, ts))
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if m := parentCount(t, a, ch, p.TS); m.ReplyCount != 3 {
 		t.Errorf("parent after message_replied %d, want 3", m.ReplyCount)
 	}
@@ -214,7 +246,7 @@ func TestReplyCountBroadcast(t *testing.T) {
 	ts2 := fmtTS(time.Now().Unix() - 20)
 	fs.Push(map[string]any{"type": "message", "subtype": "thread_broadcast", "channel": ch, "ts": ts2, "thread_ts": p.TS, "event_ts": ts2,
 		"user": "U0FAKE00003", "text": "again", "root": map[string]any{"type": "message", "ts": p.TS, "user": p.User, "text": p.Text}})
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if m := parentCount(t, a, ch, p.TS); m.ReplyCount != 3 || m.LatestReply != ts {
 		t.Errorf("a bare root changed the parent: %d / %s", m.ReplyCount, m.LatestReply)
 	}
@@ -233,13 +265,13 @@ func TestReplyCountDeletedReply(t *testing.T) {
 	users := []string{"U0FAKE00002", "U0FAKE00003"}
 	fs.Push(repliedEvent(ch, p, 3, users, r3.TS))
 	fs.Push(replyEvent(ch, r3))
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if m := parentCount(t, a, ch, p.TS); m.ReplyCount != 3 {
 		t.Fatalf("parent %d before the delete, want 3", m.ReplyCount)
 	}
 	fs.Push(map[string]any{"type": "message", "subtype": "message_deleted", "hidden": true, "channel": ch, "deleted_ts": r3.TS, "event_ts": r3.TS,
 		"previous_message": map[string]any{"type": "message", "ts": r3.TS, "thread_ts": p.TS, "user": r3.User, "text": r3.Text}})
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if n := threadCopies(a, ch, p.TS, r3.TS); n != 0 {
 		t.Errorf("deleted reply still in the thread")
 	}
@@ -249,7 +281,7 @@ func TestReplyCountDeletedReply(t *testing.T) {
 	fs.Push(map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "channel": ch, "event_ts": r3.TS,
 		"message": map[string]any{"type": "message", "ts": p.TS, "thread_ts": p.TS, "user": p.User, "text": p.Text,
 			"reply_count": 2, "reply_users": []string{"U0FAKE00002"}, "reply_users_count": 1, "latest_reply": fmtTS(time.Now().Unix() - 58)}})
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if m := parentCount(t, a, ch, p.TS); m.ReplyCount != 2 {
 		t.Errorf("parent after its message_changed %d, want 2", m.ReplyCount)
 	}
