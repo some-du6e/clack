@@ -32,8 +32,17 @@ func TestCanvasPreviewClipped(t *testing.T) {
 		items = append(items, []rt.Span{txt("orb+check me puts your check on a orb")},
 			[]rt.Span{txt("drunk+press is a drunk hydraulic press for when you've had one too many")})
 	}
-	f := &rt.File{ID: "F0CANVCLIP1", Name: "Fun ideas", Title: "Fun ideas", Type: "quip", Mode: "quip",
-		CanvasPreview: []rt.Block{{Kind: rt.List, Items: items}}}
+	// a preview whose cut crosses a line within 12px of its top, so the
+	// line's glyphs reach under the cut: leading paragraphs (34px each: a
+	// 22px line and the 12px between blocks) shift the list's 22px lines
+	// against the cut, and one of up to four puts a line there
+	preview := func(lead int) []rt.Block {
+		var bs []rt.Block
+		for range lead {
+			bs = append(bs, para(txt("Ideas so far")))
+		}
+		return append(bs, rt.Block{Kind: rt.List, Items: items})
+	}
 	modes := []struct {
 		name string
 		on   func(t *testing.T)
@@ -54,26 +63,29 @@ func TestCanvasPreviewClipped(t *testing.T) {
 				}
 				const w, h = 640, 760
 				bg := st.Palette.Panel
-				ops := new(op.Ops)
-				paint.FillShape(ops, bg, clip.Rect{Max: image.Pt(w, h)}.Op())
-				v := New(doc(fileBlock(f), para(txt("Next heading"))), Options{TS: "1700000000.000100", Channel: "C0CLIP"})
-				gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(w, h))}
-				v.Layout(gtx, st, nil)
-
-				// the preview was cut, across a line (a line's top within
-				// one 22px line of the cut): there is something to clip
-				if len(v.d.fragCuts) == 0 {
-					t.Fatal("the preview wasn't cut at 240px: nothing to check")
-				}
-				c := v.d.fragCuts[0]
-				crossed := false
-				for i := c.from; i < c.to; i++ {
-					if fr := v.d.frags[i]; fr.top < c.bot && fr.top > c.bot-22 {
-						crossed = true
+				var ops *op.Ops
+				var v *View
+				var c cutRange
+				depth := 1 << 30
+				for lead := range 4 {
+					o := new(op.Ops)
+					paint.FillShape(o, bg, clip.Rect{Max: image.Pt(w, h)}.Op())
+					f := &rt.File{ID: "F0CANVCLIP1", Name: "Fun ideas", Title: "Fun ideas", Type: "quip", Mode: "quip", CanvasPreview: preview(lead)}
+					vv := New(doc(fileBlock(f)), Options{TS: "1700000000.000100", Channel: "C0CLIP"})
+					gtx := layout.Context{Ops: o, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(w, h))}
+					vv.Layout(gtx, st, nil)
+					if len(vv.d.fragCuts) == 0 {
+						t.Fatal("the preview wasn't cut at 240px: nothing to check")
+					}
+					cc := vv.d.fragCuts[0]
+					for i := cc.from; i < cc.to; i++ {
+						if fr := vv.d.frags[i]; fr.top < cc.bot && cc.bot-fr.top <= 12 && cc.bot-fr.top < depth {
+							ops, v, c, depth = o, vv, cc, cc.bot-fr.top
+						}
 					}
 				}
-				if !crossed {
-					t.Fatalf("no line crosses the cut at y %d: nothing to check", c.bot)
+				if v == nil {
+					t.Fatal("no line's top within 12px above the cut in any preview: nothing to check")
 				}
 				card := image.Rectangle{}
 				for _, b := range v.d.boxes {
@@ -87,9 +99,10 @@ func TestCanvasPreviewClipped(t *testing.T) {
 
 				img := pixeltest.Render(t, w, h, ops)
 				// under the card's bottom edge, across the preview's text
-				// columns: the pane alone
+				// columns: the pane alone (the line the cut crosses would
+				// ink it unclipped)
 				ink := 0
-				band := image.Rect(card.Min.X+12, card.Max.Y+1, card.Max.X-12, card.Max.Y+5)
+				band := image.Rect(card.Min.X+12, card.Max.Y+1, card.Max.X-12, card.Max.Y+10)
 				for y := band.Min.Y; y < band.Max.Y; y++ {
 					for x := band.Min.X; x < band.Max.X; x++ {
 						if colDist(img.RGBAAt(x, y), color.RGBA(bg)) > 40 {
@@ -98,7 +111,7 @@ func TestCanvasPreviewClipped(t *testing.T) {
 					}
 				}
 				if ink > 0 {
-					t.Errorf("%d inked pixels in %v, under the card's bottom edge at y %d: the preview's text runs past the card", ink, band, card.Max.Y)
+					t.Errorf("%d inked pixels in %v, under the card's bottom edge at y %d (a line's top %dpx above it): the preview's text runs past the card", ink, band, card.Max.Y, depth)
 				}
 			})
 		}
