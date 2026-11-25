@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/op"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -79,6 +80,7 @@ func TestHeaderTabsAndTopicFit(t *testing.T) {
 					m := unit.Metric{PxPerDp: e.scale, PxPerSp: e.scale}
 					tabs := e.a.channelTabs(ch)
 					gtx := e.frameContext()
+					gtx.Ops = new(op.Ops) // Measure records into it
 					for _, tb := range tabs {
 						if w := tabWidth(gtx, tb, e.a.tabLabelWidth(gtx, tb)); w > m.Dp(200) {
 							t.Errorf("%s: the %q tab is %d px, over .channel_tab_label's 200px (%d px)", tag, tb.label, w, m.Dp(200))
