@@ -40,7 +40,7 @@ func guardEnv(t *testing.T, ch string, self func(i int) bool, setup func(app *co
 	app, fs, _ := shotsApp(t)
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "jump-guards", IsChannel: true, IsMember: true, NumMembers: 12})
 	e := &winEnv{h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}}}
-	base := time.Now().Add(-7 * time.Hour).Unix()
+	base := dayBase(240, 90)
 	for i := 0; i < 240; i++ {
 		ts := fmt.Sprintf("%d.000100", base+int64(i)*90)
 		user, text := "UBEN00001", fmt.Sprintf("message %d", i)

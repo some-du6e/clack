@@ -53,7 +53,7 @@ func newHistEnv(t *testing.T) *winEnv {
 	ch := winEndChan
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "archive-walk", IsChannel: true, IsMember: true, NumMembers: 12})
 	e := &winEnv{h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}}}
-	base := time.Now().Add(-7 * time.Hour).Unix()
+	base := dayBase(240, 90)
 	for i := 0; i < 240; i++ {
 		ts := fmt.Sprintf("%d.000100", base+int64(i)*90)
 		fs.PostQuietAt(ch, "UBEN00001", fmt.Sprintf("message %d", i), ts)
@@ -63,6 +63,22 @@ func newHistEnv(t *testing.T) *winEnv {
 	e.rt = newRouted(e.v, 900, 700)
 	e.await(t, "the newest messages", func() bool { return e.drawn(e.newest()) && e.v.AtBottom() })
 	return e
+}
+
+// dayBase is the first message's time for n messages every step seconds
+// that used to start 7 hours ago: the same, unless the messages would
+// cross local midnight, when they end a minute before it. A day divider
+// among the newest rows moved the list's top a divider down (full-test
+// 45517091644 at 01:32Z: "Today" over message 219 of 240).
+func dayBase(n int, step int64) int64 {
+	start := time.Now().Add(-7 * time.Hour)
+	last := start.Add(time.Duration(int64(n-1)*step) * time.Second)
+	if !sameDay(start, last) {
+		y, m, d := last.Date()
+		last = time.Date(y, m, d, 0, 0, 0, 0, time.Local).Add(-time.Minute)
+		start = last.Add(-time.Duration(int64(n-1)*step) * time.Second)
+	}
+	return start.Unix()
 }
 
 func (e *winEnv) newest() string { return e.tss[len(e.tss)-1] }

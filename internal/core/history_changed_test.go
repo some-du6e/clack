@@ -41,6 +41,14 @@ func newHCEnv(t *testing.T) *hcEnv {
 	if _, err := a.History(context.Background(), e.ch, ""); err != nil {
 		t.Fatal(err)
 	}
+	// boot cached ch before the first connect, which is never fast: that
+	// read was the cached window, its end read forward in the background
+	// (reached_end.go). Its conversations.history isn't the tests' to count
+	// (full-test 45517091644: it landed after TestCountsFirstAnswerIsBaseline's count).
+	waitFor(t, "ch's catch-up", 5*time.Second, func() bool {
+		tl := a.S.Timeline(e.ch)
+		return tl != nil && !tl.EndStale
+	})
 	return e
 }
 
