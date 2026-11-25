@@ -943,20 +943,29 @@ func cubicBezier(x1, y1, x2, y2, x float64) float64 {
 	return bez(y1, y2, t)
 }
 
-// toggleIconTop is the slim ToggleBar icon's top in a line lh tall
-// (.toggleBarIconInline: inline-flex, vertical-align middle, top -.5px,
-// in the 13px title's line): vertical-align middle puts the icon's box
-// (size dp: the 13px glyph, the 12px spinner) middle half the x-height
-// over the title's baseline (Lato's sxHeight,
-// 1013 of its 2000 units per em), not at the line's middle, which sat it
-// about 2px too high (Karim, 2026-11-24: "this icon seems misaligned").
-func toggleIconTop(gtx C, th *theme.Theme, lh int, size float32) int {
-	m := op.Record(gtx.Ops) // measured only: the title's line as toggleLine draws it
-	td := label(gtx, th, 13, font.Normal, color.NRGBA{}, "x")
-	_ = m.Stop()
-	base := float32((lh-td.Size.Y)/2) + float32(td.Size.Y-td.Baseline) // vcenter's offset, then the label's baseline
-	mid := base - float32(gtx.Sp(13))*1013/2000/2
-	return int(mid - float32(dp(gtx, size))/2 - float32(dp(gtx, 0.5)) + 0.5)
+// toggleMiddle is where the slim ToggleBar's inline boxes centre, from
+// the top of a line lh tall: .toggleBarIconInline and
+// .toggleBarCaretInline are inline-flex with vertical-align middle, which
+// puts a box's middle half its parent's x-height over the baseline
+// (Blink's ApplyBaselineShift, kMiddle: the parent's primary font). The
+// parent is div.toggleBarTitleContainer, which sets no font-size, in the
+// .c-button-unstyled button (font-size inherit) in the 15px
+// .c-message_kit__message, so it's 15px's x-height (Lato's sxHeight,
+// 1013 of its 2000 units per em), not the 13px title's; the baseline is
+// the title's, as toggleLine draws it (vcenter, then the label's).
+// Centred on the line instead, the icon sat about 2px high (Karim,
+// 2026-11-24: "this icon seems misaligned").
+func toggleMiddle(gtx C, th *theme.Theme, lh int) float32 {
+	h, bl := th.LineBox(gtx, 13, font.Normal)
+	base := float32((lh-h)/2) + float32(h-bl)
+	return base - 15*gtx.Metric.PxPerSp*1013/2000/2
+}
+
+// toggleBoxTop is the top of an inline box size dp tall at middle mid,
+// lifted by lift dp (the icon's top: -.5px, position relative), rounded
+// to the pixel.
+func toggleBoxTop(gtx C, mid, size, lift float32) int {
+	return int(math.Floor(float64(mid-float32(dp(gtx, size))/2-lift*gtx.Metric.PxPerDp) + 0.5))
 }
 
 // toggleLine is ToggleBar (uPDO) in slim mode: inline status icon, the
@@ -969,7 +978,8 @@ func (me *Message) toggleLine(gtx C, pal agentPal, status, title string, hasCont
 	if status == StatusInProgress {
 		isz = 12
 	}
-	at(gtx, image.Pt(0, toggleIconTop(gtx, th, lh, isz)), func(gtx C) D {
+	mid := toggleMiddle(gtx, th, lh)
+	at(gtx, image.Pt(0, toggleBoxTop(gtx, mid, isz, 0.5)), func(gtx C) D {
 		return statusIcon(gtx, pal, status, true)
 	})
 	caretW := 0
@@ -1004,7 +1014,8 @@ func (me *Message) toggleLine(gtx C, pal agentPal, status, title string, hasCont
 			y += lh
 		}
 		cx := ix + lastW + dp(gtx, 4)
-		at(gtx, image.Pt(cx, y-lh+(lh-dp(gtx, 13))/2), func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
+		// the caret's box centres as the icon's does, without its -.5px
+		at(gtx, image.Pt(cx, y-lh+toggleBoxTop(gtx, mid, 13, 0)), func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
 		maxW = max(maxW, lastW+caretW)
 	}
 	return D{Size: image.Pt(min(ix+maxW, w), y)}

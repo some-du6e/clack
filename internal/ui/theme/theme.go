@@ -374,6 +374,18 @@ func (t *Theme) Measure(gtx layout.Context, size unit.Sp, weight font.Weight, tx
 	return d.Size.X
 }
 
+// LineBox returns the height and baseline (from the bottom, as
+// layout.Dimensions has it) of a single-line Label at size and weight,
+// without drawing it or showing it to DrawHook and the text scan.
+func (t *Theme) LineBox(gtx layout.Context, size unit.Sp, weight font.Weight) (h, baseline int) {
+	m := op.Record(gtx.Ops)
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(1<<20, 1<<20)}
+	d := t.text(g, LabelOpts{Font: Font(weight), Size: size, MaxLines: 1}, "x", false) // = Label, unrecorded
+	m.Stop()
+	return d.Size.Y, d.Baseline
+}
+
 // Editor draws a widget.Editor with Lato. Unicode emoji draw as Slack's
 // emoji images (editoremoji.go).
 func (t *Theme) Editor(gtx layout.Context, e *widget.Editor, size unit.Sp, col, selection color.NRGBA) layout.Dimensions {

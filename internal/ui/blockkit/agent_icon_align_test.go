@@ -1,11 +1,14 @@
 package blockkit
 
-// The slim ToggleBar's status icon sits as Slack's .toggleBarIconInline
-// does (vertical-align middle, top -.5px): its middle half the title's
-// x-height over the baseline. Clack centred it on the 19.5px line, about
-// 2px too high (Karim, 2026-11-24: "this icon seems misaligned", a failed
-// task's warning triangle above its title). Drawn, in each state, at zoom
-// 0 and +1 (1.1x).
+// The slim ToggleBar's status icon and caret sit as Slack's
+// .toggleBarIconInline and .toggleBarCaretInline do (vertical-align
+// middle in div.toggleBarTitleContainer, the 15px message's font): each
+// box's middle half the 15px x-height over the title's baseline, the
+// icon .5px higher (top -.5px). Clack centred both on the 19.5px line,
+// about 2px too high (Karim, 2026-11-24: "this icon seems misaligned", a
+// failed task's warning triangle above its title); then the icon on the
+// 13px title's x-height, half a px low, its caret still on the line.
+// Drawn, in each state, at 1x, 1.1x and 2x (Karim's Mac).
 
 import (
 	"fmt"
@@ -32,29 +35,83 @@ import (
 
 func TestAgentToggleIconAlignsWithTitle(t *testing.T) {
 	for _, name := range []string{"plan-error", "plan-complete", "plan-in-progress"} {
-		for _, scale := range []float32{1, 1.1} {
+		for _, scale := range []float32{1, 1.1, 2} {
 			t.Run(fmt.Sprintf("%s/%.1fx", name, scale), func(t *testing.T) {
-				icon, text, ok := toggleLineInk(t, name, scale)
+				ln, ok := toggleLineInk(t, name, scale)
 				if !ok {
 					t.Fatal("no toggle line drawn")
 				}
-				// .toggleBarIconInline's top -.5px lifts the box over the
-				// x-height middle; the glyphs' ink sits within a dp of
-				// their box's middle (the triangle's about .75px over it)
-				want := text - 0.5*float64(scale)
-				if d := math.Abs(icon - want); d > float64(scale) {
-					t.Errorf("the icon's middle is %.1fpx from where Slack puts it, half a dp over the title's x-height middle (icon %.1f, text %.1f), want within 1dp", d, icon, text)
+				// Slack's middles: half the 15px x-height (Lato's sxHeight,
+				// 1013/2000 em) over the baseline, the icon .5px over that.
+				// A box's top is a whole pixel, so its middle is within
+				// half a pixel of Slack's (and the ink's offset in its box
+				// is measured, not guessed: toggleInkOffset).
+				mid := float64(ln.base) - 15*float64(scale)*1013/2000/2
+				const tol = 0.55
+				if want := mid - 0.5*float64(scale); math.Abs(ln.icon-want) > tol {
+					t.Errorf("the icon's box middle is %.2f, Slack's %.2f (baseline %d): %.2fpx off", ln.icon, want, ln.base, ln.icon-want)
+				}
+				if !ln.hasCaret {
+					t.Fatal("no caret after the title")
+				}
+				if math.Abs(ln.caret-mid) > tol {
+					t.Errorf("the caret's box middle is %.2f, Slack's %.2f (baseline %d): %.2fpx off", ln.caret, mid, ln.base, ln.caret-mid)
 				}
 			})
 		}
 	}
 }
 
-// toggleLineInk draws fixture name's message on white at scale and returns
-// the slim toggle bar's first line's icon middle (its ink's) and the
-// title's x-height middle (the commonest top and bottom of its letters'
-// ink: the x-height and the baseline), in px.
-func toggleLineInk(t *testing.T, name string, scale float32) (icon, text float64, ok bool) {
+// toggleInk is a slim toggle line's first line as drawn: the title's
+// baseline (its letters' commonest ink bottom, plus one), and the icon's
+// and caret's box middles (their ink's middle less the ink's offset in a
+// box drawn alone), in px.
+type toggleInk struct {
+	base        int
+	icon, caret float64
+	hasCaret    bool
+}
+
+// inkRows is the first and last row of img with ink (at least min of 765
+// off white) in columns x0 to x1 and rows y0 to y1, or -1s.
+func inkRows(img *image.RGBA, x0, x1, y0, y1, min int) (lo, hi int) {
+	lo, hi = -1, -1
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			c := img.RGBAAt(x, y)
+			if int(255-c.R)+int(255-c.G)+int(255-c.B) > min {
+				if lo < 0 {
+					lo = y
+				}
+				hi = y
+				break
+			}
+		}
+	}
+	return lo, hi
+}
+
+// toggleInkOffset draws w (a box size dp tall) alone at the top left at
+// scale and returns its ink's middle less the box's: what an ink middle
+// is off its box's middle.
+func toggleInkOffset(t *testing.T, scale, size float32, w layout.Widget) float64 {
+	t.Helper()
+	ops := new(op.Ops)
+	paint.FillShape(ops, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Rect{Max: image.Pt(64, 64)}.Op())
+	gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: scale, PxPerSp: scale}, Now: time.Now().Add(time.Hour),
+		Constraints: layout.Constraints{Max: image.Pt(64, 64)}}
+	w(gtx)
+	img := pixeltest.Render(t, 64, 64, ops)
+	lo, hi := inkRows(img, 0, 64, 0, 64, 60)
+	if lo < 0 {
+		t.Fatal("the box drew no ink")
+	}
+	return float64(lo+hi+1)/2 - float64(dp(gtx, size))/2
+}
+
+// toggleLineInk draws fixture name's message on white at scale and reads
+// its slim toggle bar's first line.
+func toggleLineInk(t *testing.T, name string, scale float32) (ln toggleInk, ok bool) {
 	t.Helper()
 	h := &agentHost{th: theme.New(false)} // no core: slim
 	m := agentMsg(t, name)
@@ -79,7 +136,7 @@ func toggleLineInk(t *testing.T, name string, scale float32) (icon, text float64
 		}
 	}
 	if slot.Empty() {
-		return 0, 0, false
+		return ln, false
 	}
 	img := pixeltest.Render(t, w, hgt, ops)
 	px := func(v float32) int { return int(v*scale + 0.5) }
@@ -90,52 +147,105 @@ func toggleLineInk(t *testing.T, name string, scale float32) (icon, text float64
 		}
 	}
 	y0, y1 := slot.Min.Y, slot.Min.Y+px(19.5)
-	ink := func(x, y, min int) bool {
+	inked := func(x, y, min int) bool {
 		c := img.RGBAAt(x, y)
 		return int(255-c.R)+int(255-c.G)+int(255-c.B) > min
 	}
-	inked := func(x, y int) bool { return ink(x, y, 150) }
-	lo, hi := -1, -1
-	for y := y0; y < y1; y++ {
-		for x := slot.Min.X; x < slot.Min.X+px(12); x++ {
-			if ink(x, y, 60) { // the spinner's faint track too: its arcs alone turn
-				if lo < 0 {
-					lo = y
-				}
-				hi = y
-			}
-		}
+
+	// the icon: its ink (the spinner's faint track too: its arcs alone
+	// turn), less its ink's offset in its box
+	pal := agentColors(h.th)
+	status, isz := StatusError, float32(13)
+	switch name {
+	case "plan-complete":
+		status = StatusComplete
+	case "plan-in-progress":
+		status, isz = StatusInProgress, 12
 	}
+	lo, hi := inkRows(img, slot.Min.X, slot.Min.X+px(12), y0, y1, 60)
 	if lo < 0 {
-		return 0, 0, false
+		return ln, false
 	}
-	tops, bots := map[int]int{}, map[int]int{}
-	for x := slot.Min.X + px(20); x < min(slot.Max.X, slot.Min.X+px(200)); x++ {
-		t0, b0 := -1, -1
+	off := toggleInkOffset(t, scale, isz, func(gtx C) D { return statusIcon(gtx, pal, status, true) })
+	ln.icon = float64(lo+hi+1)/2 - float64(slot.Min.Y) - off
+
+	// the title: the commonest bottom of its letters' ink is the row over
+	// its baseline; the caret is the last run of inked columns, past a gap
+	// wider than any between the title's words
+	bots := map[int]int{}
+	var cols []int
+	for x := slot.Min.X + px(20); x < slot.Max.X; x++ {
+		b0 := -1
 		for y := y0; y < y1; y++ {
-			if inked(x, y) {
-				if t0 < 0 {
-					t0 = y
-				}
+			if inked(x, y, 150) {
 				b0 = y
 			}
 		}
-		if t0 >= 0 {
-			tops[t0]++
+		if b0 >= 0 {
 			bots[b0]++
 		}
-	}
-	mode := func(m map[int]int) int {
-		best, n := -1, -1
-		for k, c := range m {
-			if c > n || c == n && k < best {
-				best, n = k, c
+		for y := y0; y < y1; y++ {
+			if inked(x, y, 60) {
+				cols = append(cols, x)
+				break
 			}
 		}
-		return best
 	}
-	if len(tops) == 0 {
-		return 0, 0, false
+	if len(bots) == 0 {
+		return ln, false
 	}
-	return float64(lo+hi+1) / 2, float64(mode(tops)+mode(bots)+1) / 2, true
+	best, n := -1, -1
+	for k, c := range bots {
+		if c > n || c == n && k < best {
+			best, n = k, c
+		}
+	}
+	ln.base = best + 1 - slot.Min.Y
+	if len(cols) > 0 {
+		c1 := len(cols) - 1
+		c0 := c1
+		for c0 > 0 && cols[c0]-cols[c0-1] <= px(1) {
+			c0--
+		}
+		if c0 > 0 && cols[c0]-cols[c0-1] > px(6) {
+			lo, hi := inkRows(img, cols[c0], cols[c1]+1, y0, y1, 60)
+			// caret-right or caret-down: whichever's ink is as wide
+			wid := cols[c1] - cols[c0] + 1
+			best := math.Inf(1)
+			for _, name := range []string{"caret-right", "caret-down"} {
+				cw := inkCols(t, scale, func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
+				if d := math.Abs(float64(cw - wid)); d < best {
+					best = d
+					ln.caret = float64(lo+hi+1)/2 - float64(slot.Min.Y) - toggleInkOffset(t, scale, 13, func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
+				}
+			}
+			ln.hasCaret = true
+		}
+	}
+	return ln, true
+}
+
+// inkCols is how many columns w's ink spans, drawn alone at scale.
+func inkCols(t *testing.T, scale float32, w layout.Widget) int {
+	t.Helper()
+	ops := new(op.Ops)
+	paint.FillShape(ops, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Rect{Max: image.Pt(64, 64)}.Op())
+	gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: scale, PxPerSp: scale}, Now: time.Now().Add(time.Hour),
+		Constraints: layout.Constraints{Max: image.Pt(64, 64)}}
+	w(gtx)
+	img := pixeltest.Render(t, 64, 64, ops)
+	x0, x1 := -1, -1
+	for x := 0; x < 64; x++ {
+		for y := 0; y < 64; y++ {
+			c := img.RGBAAt(x, y)
+			if int(255-c.R)+int(255-c.G)+int(255-c.B) > 60 {
+				if x0 < 0 {
+					x0 = x
+				}
+				x1 = x
+				break
+			}
+		}
+	}
+	return x1 - x0 + 1
 }
