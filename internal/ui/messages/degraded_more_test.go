@@ -108,9 +108,9 @@ func TestDegradedBannerRereadsTheThreadLikeSlack(t *testing.T) {
 // InlineOfflineIndicator, in place of "Loading replies…".
 func TestThreadLoadingRowOfflineLikeSlack(t *testing.T) {
 	app, fs := headerEnv(t)
-	th := fs.AddHugeThread("offline-row-fixture", 2000, 5)               // replies a page at a time, as Slack's server answers
-	SetThreadStart(app, th.Channel, th.Root, fs.HugeThreadReplyTS(1500)) // a jump far into the thread
+	th := fs.AddHugeThread("offline-row-fixture", 2000, 5) // replies a page at a time, as Slack's server answers
 	tv := NewThreadView(coreHost{app: app, th: theme.New(false)}, th.Channel, th.Root)
+	tv.JumpTo(fs.HugeThreadReplyTS(1500), false) // a jump far into the thread
 	rt := newRouted(tv, 500, 700)
 	for dl := time.Now().Add(10 * time.Second); !(len(tv.s.items) > 0 && tv.s.items[0].kind == itLoading); time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(dl) {
