@@ -396,7 +396,7 @@ func (lb *Lightbox) layoutSide(gtx layout.Context, th *theme.Theme, panel, side 
 		if th.Tokens != nil {
 			theme.SetTok(th.Tokens, &line, theme.TokHairline, dark)
 		}
-		lw := max(1, dp(gtx, 1))
+		lw := border1(gtx)
 		fill(gtx, image.Rect(side.Min.X-lw, side.Min.Y, side.Min.X, side.Max.Y), line)
 	}()
 
@@ -449,7 +449,7 @@ func (lb *Lightbox) layoutDetails(gtx layout.Context, panel, body image.Rectangl
 // the tab that shows the keyboard focus ring (empty for none).
 func (lb *Lightbox) layoutTabBar(gtx layout.Context, th *theme.Theme, side image.Rectangle, barH int) (ringR image.Rectangle) {
 	s := &lb.side
-	lw := max(1, dp(gtx, 1))
+	lw := border1(gtx)
 	// .c-tabs__tab_menu: box-shadow inset 0 -1px 0 0 otl-ter
 	fill(gtx, image.Rect(side.Min.X, side.Min.Y+barH-lw, side.Max.X, side.Min.Y+barH), theme.OtlTer(th))
 	single := len(s.tabs) == 1 // --single_tab
