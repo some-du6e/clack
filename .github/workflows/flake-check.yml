@@ -7355,8 +7355,8 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -v -timeout 6m -run '^(TestMediaViewer|TestPendingViewerNoDetails|TestViewFile)' ./internal/ui/popups/ || rc=1
-          xvfb-run -a go test -count=$COUNT -v -timeout 12m -run '^(TestMediaViewerDetailsDrawn|TestMediaViewerDetailsInApp|TestFileDetailsPane|TestOpenFileDetails|TestFileDetailsStates)$' ./internal/ui/ || rc=1
+          go test -count=$COUNT -v -timeout 6m -run '^(TestMediaViewer|TestPendingViewerNoDetails|TestViewFile|TestViewerShowsBMPOriginal)' ./internal/ui/popups/ || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 12m -run '^(TestMediaViewerDetailsDrawn|TestMediaViewerDetailsInApp|TestFileDetailsPane|TestOpenFileDetails|TestFileDetailsStates|TestVideoViewerKeysAfterTab)$' ./internal/ui/ || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
