@@ -125,8 +125,18 @@ type MenuItem struct {
 	// neighbours (rowBoxes; Better Message Menu's big buttons).
 	Class string
 
-	maid  string // MAMenu's id for a row without an Action (newMAMenu)
-	maSub string // the message actions submenu component its submenu renders (Organize, Connect to apps)
+	maid  string     // MAMenu's id for a row without an Action (newMAMenu)
+	maSub string     // the message actions submenu component its submenu renders (Organize, Connect to apps)
+	img   *ImageMenu // the <img> a desktop shell image row (Copy Image, Copy Image URL) is for
+}
+
+// CopiesImage is the <img> the row copies (or copies the URL of) when it
+// is a desktop shell image menu's Copy Image or Copy Image URL.
+func (it MenuItem) CopiesImage() (ImageMenu, bool) {
+	if it.img == nil {
+		return ImageMenu{}, false
+	}
+	return *it.img, true
 }
 
 // Sep is a separator row.

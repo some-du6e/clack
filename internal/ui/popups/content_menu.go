@@ -1,12 +1,14 @@
 package popups
 
 import (
+	"cmp"
 	"image"
 	"strings"
 
 	"gioui.org/f32"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
@@ -49,7 +51,7 @@ func ContentMenu(h Host, at image.Point, v *richview.View, local f32.Point, m co
 	}
 	switch hit.Kind {
 	case richview.HitLink:
-		return NewLinkMenu(h, at, LinkMenu{URL: hit.URL, Image: hit.EmojiURL, Open: openFn(hit.URL)}), true
+		return NewLinkMenu(h, at, LinkMenu{URL: hit.URL, Image: hit.EmojiURL, ImageAlt: hit.Emoji, Open: openFn(hit.URL)}), true
 	case richview.HitUser:
 		if isMember(hit.ID) {
 			return NewMemberMenu(h, at, hit.ID), true
@@ -65,7 +67,7 @@ func ContentMenu(h Host, at image.Point, v *richview.View, local f32.Point, m co
 			return NewLinkMenu(h, at, LinkMenu{URL: hit.Link, Open: openFn(hit.Link)}), true
 		}
 		if hit.Image != nil && hit.Image.URL != "" {
-			return NewImageMenu(h, at, hit.Image.URL, hit.Image.Proxy), true
+			return NewImageMenuOf(h, at, contentImage(hit)), true
 		}
 	case richview.HitFile:
 		if hit.File != nil {
@@ -73,10 +75,31 @@ func ContentMenu(h Host, at image.Point, v *richview.View, local f32.Point, m co
 		}
 	case richview.HitNone:
 		if hit.EmojiURL != "" {
-			return NewImageMenu(h, at, hit.EmojiURL, false), true
+			// the Emoji's <img>: alt its displayText, the :name:
+			return NewImageMenuOf(h, at, ImageMenu{Src: hit.EmojiURL, Alt: hit.Emoji}), true
 		}
 	}
 	return nil, false
+}
+
+// contentImage is the <img> of an image hit that has no link. Under
+// PlayPauseAnimations it is AttachmentImage's renderImageWithPlayControls
+// (UvHM, build e277bbacc0bc): <img src={source} alt={title}>, the source
+// getImgProxyUrl({url, height, sizeForRetina, rotate}) with animations off
+// (the proxy's still, o1=ro.gu), Ac of it (o1=ro) while it plays, and the
+// title an image block's alt_text, else its title (8plt Image). Other
+// images are their own URL.
+func contentImage(hit richview.Hit) ImageMenu {
+	img := hit.Image
+	im := ImageMenu{Src: img.URL, Alt: cmp.Or(img.Alt, img.Title), Proxy: img.Proxy}
+	if hit.Played {
+		src := slack.ImgProxyURL(img.URL, slack.ImgProxyOpts{Height: img.H, SizeForRetina: true, Rotate: true, AnimationsOff: true})
+		if hit.Playing {
+			src = slack.AnimatedImgSrc(src)
+		}
+		im.Shown, im.Src = img.URL, src
+	}
+	return im
 }
 
 // isMember reports whether id is a user (not a broadcast: here, channel,

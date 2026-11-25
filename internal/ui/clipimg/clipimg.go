@@ -1,9 +1,10 @@
-// Package clipimg puts an image on the system clipboard. Gio's clipboard
-// carries text only, so the image goes through the platform: wl-copy or
-// xclip on Linux (the tools the composer pastes images with), NSPasteboard
-// on macOS, and user32 (CF_DIB plus the registered "PNG" format) on
-// Windows. Write blocks (exec, or AppKit's main thread on macOS), so call
-// it off the UI goroutine: it reports a UI-goroutine caller to uiguard.
+// Package clipimg puts an image on the system clipboard the way Slack's
+// desktop app (Electron, so Chromium) does: chromium.go has what each
+// write puts there. Gio's clipboard carries text only, so the image goes
+// through the platform: user32 on Windows, NSPasteboard on macOS, and
+// wl-copy or xclip on Linux (the tools the composer pastes images with).
+// Write blocks (exec, or AppKit's main thread on macOS), so call it off
+// the UI goroutine: it reports a UI-goroutine caller to uiguard.
 //
 // The copies Write makes of the image in Go's heap (the PNG, and its
 // encoder's buffers) are charged first to the charge func WriteCharged is
@@ -23,6 +24,7 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
+	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
@@ -31,15 +33,46 @@ import (
 // clipboard (on Linux: neither wl-copy nor xclip is installed).
 var ErrUnsupported = errors.New("copying images isn't supported on this system")
 
-// Write replaces the clipboard with img.
+// Owner hands formats (gioui.org/io/clipboard.EncodeFormats' encoding) to
+// the app's window and returns once the window offers them, or ctx is
+// done.
+type Owner func(ctx context.Context, formats []byte) error
+
+var owner atomic.Pointer[Owner]
+
+// SetOwner makes o the clipboard's owner (nil: none). Linux uses it
+// (clipimg_linux.go: without one, wl-copy or xclip with the PNG alone);
+// Windows and macOS write the clipboard natively. The ui root's App sets
+// it.
+func SetOwner(o Owner) {
+	if o == nil {
+		owner.Store(nil)
+		return
+	}
+	owner.Store(&o)
+}
+
+// Write replaces the clipboard with img, its bitmap alone (Chromium's
+// SystemClipboard::WriteImage).
 func Write(ctx context.Context, img image.Image) error {
 	return WriteCharged(ctx, img, nil)
 }
 
 // WriteCharged is Write with every copy it makes of img in Go's heap
 // charged to charge first (nil: charged to nothing). A charge that fails
-// fails the copy with its error, before the clipboard is touched.
+// fails the copy with its error, before the clipboard is touched. It's
+// Slack's file menu's "Copy image" (navigator.clipboard.write: the
+// bitmap alone).
 func WriteCharged(ctx context.Context, img image.Image, charge func(int64) error) error {
+	return WriteTagged(ctx, img, nil, charge)
+}
+
+// WriteTagged is WriteCharged for the desktop shell's Copy Image of an
+// <img> (webContents.copyImageAt, SystemClipboard::WriteImageWithTag):
+// img is the first frame of its image, and tag (nil for none) its src
+// and alt, which go on the clipboard beside the bitmap as the markup and
+// bookmark Chromium writes (chromium.go).
+func WriteTagged(ctx context.Context, img image.Image, tag *Tag, charge func(int64) error) error {
 	uiguard.OffUI("clipimg.Write")
 	if img == nil || img.Bounds().Empty() {
 		return errors.New("empty image")
@@ -47,7 +80,7 @@ func WriteCharged(ctx context.Context, img image.Image, charge func(int64) error
 	if charge == nil {
 		charge = func(int64) error { return nil }
 	}
-	return write(ctx, img, charge)
+	return write(ctx, img, tag, charge)
 }
 
 // pngData is a PNG encoding, in chunks: each made (and charged) as the

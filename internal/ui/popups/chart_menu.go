@@ -166,8 +166,10 @@ const (
 
 // CopyChartImage is Copy as image: the preview image (fetched with the
 // session's credentials) under the title strip, as a PNG on the
-// clipboard; "Image copied to clipboard" (check), else "Failed to copy
-// image" (warning).
+// clipboard, the bitmap alone (Slack's canvas-data-visualization-block,
+// build e277bbacc0bc: navigator.clipboard.write with an image/png
+// ClipboardItem, so no markup, no bookmark); "Image copied to clipboard"
+// (check), else "Failed to copy image" (warning).
 func CopyChartImage(h Host, dv *richtext.DataViz, dark bool) {
 	src := ChartPreview(dv, dark)
 	if src == "" {
@@ -192,7 +194,7 @@ func CopyChartImage(h Host, dv *richtext.DataViz, dark bool) {
 			if err != nil {
 				return err
 			}
-			return copyWrite(ctx, out, imgcache.ChargeFunc(b))
+			return copyWrite(ctx, out, nil, imgcache.ChargeFunc(b))
 		})
 	}, func(_ struct{}, err error) {
 		if err != nil {

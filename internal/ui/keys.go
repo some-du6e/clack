@@ -240,6 +240,7 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(a.clipboard))})
 		a.clipboard = ""
 	}
+	a.writeClipboardFormats(gtx) // a Linux Copy Image's (clipformats.go)
 }
 
 // escape runs the Escape binding for ke (Close / mark as read, Shift+Esc)

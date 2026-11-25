@@ -45,6 +45,11 @@ type Hit struct {
 	// right-click is the desktop shell's link menu; "" for an image drawn
 	// as an <img> (it gets the image menu).
 	Link string
+	// Played is true for an image drawn as Slack's PlayPauseAnimations
+	// (Accessibility's animations off, an animated image): AttachmentImage
+	// draws it as an <img> whose src is the image proxy's still, and
+	// Playing while the viewer plays it (the animated source then).
+	Played, Playing bool
 }
 
 // HitAt reports what is at p (View coordinates, after the first Layout).
@@ -95,7 +100,8 @@ func (v *View) HitAt(p f32.Point) Hit {
 		if tg.inCard {
 			h.Kind = HitCard
 		}
-		if tg.href != "" && !v.playsAsImg(t) {
+		h.Played, h.Playing = v.playState(t)
+		if tg.href != "" && !h.Played {
 			h.Link = tg.href
 		}
 	case tFile, tSnippet: // a snippet's pill and collapsed body are its file's too
@@ -198,23 +204,20 @@ func (v *View) LinkRects() []LinkRect {
 	return out
 }
 
-// playsAsImg reports whether target t's image is drawn under
-// PlayPauseAnimations now (animations off and the image animates):
-// AttachmentImage then renders an <img>, not its link (renderImage's
-// renderImageWithPlayControls).
-func (v *View) playsAsImg(t int16) bool {
+// playState reports whether target t's image is drawn under
+// PlayPauseAnimations now (played: animations off and the image animates;
+// AttachmentImage then renders an <img>, not its link: renderImage's
+// renderImageWithPlayControls), and whether the viewer plays it.
+func (v *View) playState(t int16) (played, playing bool) {
 	for i := range v.d.plays {
 		c := &v.d.plays[i]
 		if c.img < 0 || c.img >= len(v.d.imgs) || v.d.imgs[c.img].target != t {
 			continue
 		}
-		if c.known {
-			return true
-		}
 		im := &v.d.imgs[c.img]
-		if im.play || isAnimation(v.hitImgs, im.url, im.px) {
-			return true
+		if c.known || im.play || isAnimation(v.hitImgs, im.url, im.px) {
+			return true, im.play
 		}
 	}
-	return false
+	return false, false
 }

@@ -35,6 +35,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/clipimg"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/inspect"
@@ -434,6 +435,12 @@ type App struct {
 	chTabPicked map[string]bool
 	tabViewKey  string
 	tabViewTo   *slick.Slick
+
+	// a Linux Copy Image's formats for the next frame, and the channel
+	// closed once it wrote them (clipformats.go)
+	clipMu          sync.Mutex
+	clipFormats     []byte
+	clipFormatsDone chan struct{}
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -581,7 +588,8 @@ func (a *App) Run() error {
 	setFrameMode()           // partial frames, unless CLACK_FULL_FRAMES (partial_frames.go)
 	startCaretBlinkWatcher() // Linux: GTK's caret blink, as Chromium's (caretblink_linux.go)
 	a.win = new(app.Window)
-	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
+	nativemenu.SetRunner(a.win.Run)           // TrackPopupMenuEx runs on the window's thread
+	clipimg.SetOwner(a.offerClipboardFormats) // Linux: Copy Image's formats through the window (clipformats.go)
 	a.win.Option(mainWindowOptions()...)
 	// Where it was: Slack's mainWindowSettings (winbounds.go). On macOS
 	// the displays are AppKit's, read on its main thread, which answers

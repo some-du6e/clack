@@ -520,6 +520,11 @@ type File struct {
 	// FileActions' Expand need.
 	Still     *Image
 	Deanimate bool
+	// AltText is the file's alt_txt, AltTextAI that an AI wrote it
+	// (is_modified_by_ai): what the image viewer's <img> has for alt
+	// (FileAltText).
+	AltText   string
+	AltTextAI bool
 	// A playable video's (IsVideo; URL is its progressive source, mp4 ||
 	// url_private, and Thumb its poster, thumb_video_ts ?? thumb_video):
 	// where the viewer stopped watching it (media_progress.offset_ms) and

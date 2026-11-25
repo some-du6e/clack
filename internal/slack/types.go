@@ -380,6 +380,10 @@ type File struct {
 	Thumb480GIF  string `json:"thumb_480_gif,omitempty"`
 	Deanimate    string `json:"deanimate,omitempty"`
 	DeanimateGIF string `json:"deanimate_gif,omitempty"`
+	// AltTxt is the file's alt text (alt_txt), IsModifiedByAI that an AI
+	// wrote it (getFileAltText then says so).
+	AltTxt         string `json:"alt_txt,omitempty"`
+	IsModifiedByAI bool   `json:"is_modified_by_ai,omitempty"`
 
 	// An email file (mode "email": an email Slack's email app or a
 	// forwarding address brought in; filetype "email", text/html). Read

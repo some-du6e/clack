@@ -1,6 +1,7 @@
 package popups
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"image"
@@ -1125,8 +1126,10 @@ func lbClampF(v, lo, hi float32) float32 {
 // renderImageViewer and the media viewer) has no context menu of its own,
 // so it is the desktop shell's image menu: Copy Image copies what the
 // viewer shows, Copy Image URL the <img>'s src (a file's image; for an
-// image that isn't a file, image.src through Slack's image proxy).
-// Videos have their own player.
+// image that isn't a file, image.src through Slack's image proxy). The
+// <img>'s alt is the image's altText: a file's getFileAltText, none for
+// a message's image (its media item has no altText). Videos have their
+// own player.
 func (lb *Lightbox) imageMenu(at image.Point) {
 	it := lb.cur()
 	if it.file != nil && it.file.IsVideo {
@@ -1136,13 +1139,28 @@ func (lb *Lightbox) imageMenu(at image.Point) {
 	if shown == "" {
 		return
 	}
-	src := shown
+	im := ImageMenu{Src: shown, Shown: shown, Proxy: it.hosted()}
 	if !it.hosted() {
-		src = it.windowURL()
+		im.Src = it.windowURL()
 	}
-	alt := "" // the thumbnail the viewer shows when the original can't be
-	if it.img.URL != shown {
-		alt = it.img.URL
+	if it.file != nil {
+		im.Alt = fileAltText(it.file)
 	}
-	lb.h.ShowOverlay(NewImageMenuFrom(lb.h, at, shown, src, alt, it.hosted()))
+	if it.img.URL != shown { // the thumbnail the viewer shows when the original can't be
+		im.StandIn = it.img.URL
+	}
+	lb.h.ShowOverlay(NewImageMenuOf(lb.h, at, im))
+}
+
+// fileAltText is Slack's getFileAltText (client-boot): the file's alt
+// text, marked "(AI generated)" when an AI wrote it, else its display name
+// (getFileTitle || getFileName).
+func fileAltText(f *richtext.File) string {
+	switch {
+	case f.AltText != "" && f.AltTextAI:
+		return nsFile.T("{alt_text} (AI generated)", "alt_text", f.AltText)
+	case f.AltText != "":
+		return f.AltText
+	}
+	return cmp.Or(f.Title, f.Name)
 }

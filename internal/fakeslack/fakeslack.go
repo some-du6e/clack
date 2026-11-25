@@ -2348,6 +2348,11 @@ func (s *Server) img(w http.ResponseWriter, r *http.Request) {
 		w.Write(b)
 		return
 	}
+	if b, ct, ok := gifPickerImage(strings.TrimPrefix(r.URL.Path, "/img/")); ok { // the GIF picker's WebP (gifpicker.go)
+		w.Header().Set("Content-Type", ct)
+		w.Write(b)
+		return
+	}
 	s.imgMu.Lock()
 	b, okc := s.imgs[r.URL.Path]
 	s.imgMu.Unlock()

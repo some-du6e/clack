@@ -505,7 +505,9 @@ func (d *gifDecoder) drawWebP(f *gifFrame, m image.Image) {
 
 // firstWebPFrame is an animated WebP's first frame on its canvas, composed
 // as playback composes it (the still its decode draws first): what a copy
-// of the image takes, as Chromium's copyImageAt copies the frame shown.
+// of the image takes, as Chromium's copyImageAt copies the first frame
+// however far the animation has played (kDefaultFrameIndex:
+// internal/ui/clipimg/chromium.go).
 // The canvas is within maxPixels and maxSide; everything is charged to b.
 func firstWebPFrame(data []byte, maxPixels, maxSide int, b *budget.Budget) (image.Image, error) {
 	ix, err := indexAnim(data, b)

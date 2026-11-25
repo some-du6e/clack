@@ -4,7 +4,6 @@ package clipimg
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"image"
 	"unsafe"
@@ -27,13 +26,23 @@ var (
 )
 
 const (
-	cfDIB         = 8
-	gmemMoveable  = 0x0002
-	biRGB         = 0
-	dibHeaderSize = 40
+	cfDIBV5      = 17
+	gmemMoveable = 0x0002
+	gmemZeroInit = 0x0040
 )
 
-func write(ctx context.Context, img image.Image, charge func(int64) error) error {
+// winFormat is a clipboard format to set: its id and a moveable global
+// block of its data (the caller's to free until the clipboard takes it);
+// bitmap marks the image's own formats.
+type winFormat struct {
+	id, mem uintptr
+	bitmap  bool
+}
+
+// write puts Chromium's ClipboardWin formats on the clipboard, in its
+// order (chromium.go): "PNG" and CF_DIBV5, then with a tag "HTML Format"
+// and "UniformResourceLocatorW".
+func write(ctx context.Context, img image.Image, tag *Tag, charge func(int64) error) error {
 	if ciUser32.Load() != nil || ciKernel32.Load() != nil {
 		return ErrUnsupported
 	}
@@ -41,75 +50,123 @@ func write(ctx context.Context, img image.Image, charge func(int64) error) error
 	if err != nil {
 		return err
 	}
-	dib, err := newDIB(img, charge)
+	var fs []winFormat
+	defer func() {
+		for _, f := range fs {
+			if f.mem != 0 {
+				ciGlobalFree.Call(f.mem) // still ours: the clipboard didn't take it
+			}
+		}
+	}()
+	add := func(id, mem uintptr, bitmap bool) {
+		if id != 0 && mem != 0 {
+			fs = append(fs, winFormat{id, mem, bitmap})
+		} else if mem != 0 {
+			ciGlobalFree.Call(mem)
+		}
+	}
+	// WriteBitmap: the PNG first (Word takes the first format it reads,
+	// and the PNG keeps transparency), then the DIBV5
+	pngMem, err := globalChunks(pngData.chunks, pngData.Len())
 	if err != nil {
 		return err
 	}
-	owned := false // the clipboard took dib
-	defer func() {
-		if !owned {
-			ciGlobalFree.Call(dib)
+	add(registerFormat("PNG"), pngMem, true)
+	dib, err := newDIBV5(img, charge)
+	if err != nil {
+		return err
+	}
+	add(cfDIBV5, dib, true)
+	if html := imageMarkup(tag); html != "" {
+		cf := append(cfHTML(html), 0) // CreateGlobalData's NUL
+		if err := charge(int64(len(cf))); err != nil {
+			return err
 		}
-	}()
-	// Apps that keep transparency (browsers, Office) read "PNG".
-	var fPNG uintptr
-	if name, err := windows.UTF16PtrFromString("PNG"); err == nil {
-		fPNG, _, _ = ciRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
+		m, err := globalBytes(cf)
+		if err != nil {
+			return err
+		}
+		add(registerFormat("HTML Format"), m, false)
+	}
+	if u := winURL(tag); u != nil {
+		if err := charge(int64(len(u))); err != nil {
+			return err
+		}
+		m, err := globalBytes(u)
+		if err != nil {
+			return err
+		}
+		add(registerFormat("UniformResourceLocatorW"), m, false)
 	}
 	// the process's one clipboard session at a time (winclip)
 	return winclip.Session(ctx, 0, func() error {
 		if r, _, _ := ciEmptyClipboard.Call(); r == 0 {
 			return errors.New("couldn't empty the clipboard")
 		}
-		if r, _, _ := ciSetClipboardData.Call(cfDIB, dib); r == 0 {
-			return errors.New("the clipboard refused the image")
+		bitmap := false
+		for i := range fs {
+			if r, _, _ := ciSetClipboardData.Call(fs[i].id, fs[i].mem); r != 0 {
+				fs[i].mem = 0 // the clipboard's now
+				bitmap = bitmap || fs[i].bitmap
+			}
 		}
-		owned = true
-		if fPNG != 0 {
-			_ = setData(fPNG, pngData)
+		if !bitmap {
+			return errors.New("the clipboard refused the image")
 		}
 		return nil
 	})
 }
 
-// setData hands a copy of data to the clipboard as format f.
-func setData(f uintptr, data *pngData) error {
-	h, _, _ := ciGlobalAlloc.Call(gmemMoveable, uintptr(data.Len()))
+// registerFormat is the id of the registered clipboard format name (0 when
+// it can't be registered).
+func registerFormat(name string) uintptr {
+	p, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return 0
+	}
+	id, _, _ := ciRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(p)))
+	return id
+}
+
+// globalBytes is a moveable global block holding a copy of b.
+func globalBytes(b []byte) (uintptr, error) {
+	return globalChunks([][]byte{b}, len(b))
+}
+
+// globalChunks is a moveable global block holding the chunks, n bytes in
+// all, one after another.
+func globalChunks(chunks [][]byte, n int) (uintptr, error) {
+	h, _, _ := ciGlobalAlloc.Call(gmemMoveable, uintptr(max(n, 1)))
 	if h == 0 {
-		return errors.New("out of memory")
+		return 0, errors.New("out of memory")
 	}
 	p, _, _ := ciGlobalLock.Call(h)
 	if p == 0 {
 		ciGlobalFree.Call(h)
-		return errors.New("couldn't lock the clipboard memory")
+		return 0, errors.New("couldn't lock the clipboard memory")
 	}
 	o := uintptr(0)
-	for _, c := range data.chunks {
+	for _, c := range chunks {
 		if len(c) > 0 {
 			ciRtlMoveMemory.Call(p+o, uintptr(unsafe.Pointer(&c[0])), uintptr(len(c)))
 			o += uintptr(len(c))
 		}
 	}
 	ciGlobalUnlock.Call(h)
-	if r, _, _ := ciSetClipboardData.Call(f, h); r == 0 {
-		ciGlobalFree.Call(h) // still ours when SetClipboardData fails
-		return errors.New("the clipboard refused the image")
-	}
-	return nil
+	return h, nil
 }
 
-// newDIB is img as a CF_DIB in a moveable global block for
-// SetClipboardData (the caller's to free until the clipboard takes it): a
-// BITMAPINFOHEADER and 32-bit bottom-up BGR rows, composited onto white
-// (CF_DIB readers ignore alpha). It's written a row at a time from one row
-// of Go memory (charged), never as a whole in Go's heap.
-func newDIB(img image.Image, charge func(int64) error) (uintptr, error) {
+// newDIBV5 is img as skia::CreateDIBV5ImageDataFromN32SkBitmap makes it: a
+// zeroed (GHND) moveable global block with dibV5Header and img's rows
+// bottom-up, premultiplied BGRA (premulBGRARow). It's written a row at a
+// time from one row of Go memory (charged), never as a whole in Go's heap.
+func newDIBV5(img image.Image, charge func(int64) error) (uintptr, error) {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
-	if err := charge(int64(dibHeaderSize) + 4*int64(w)); err != nil {
+	if err := charge(int64(dibV5HeaderSize) + 4*int64(w)); err != nil {
 		return 0, err
 	}
-	hmem, _, _ := ciGlobalAlloc.Call(gmemMoveable, uintptr(dibHeaderSize+w*h*4))
+	hmem, _, _ := ciGlobalAlloc.Call(gmemMoveable|gmemZeroInit, uintptr(dibV5HeaderSize+w*h*4))
 	if hmem == 0 {
 		return 0, errors.New("out of memory")
 	}
@@ -119,45 +176,12 @@ func newDIB(img image.Image, charge func(int64) error) (uintptr, error) {
 		return 0, errors.New("couldn't lock the clipboard memory")
 	}
 	defer ciGlobalUnlock.Call(hmem)
-	hdr := make([]byte, dibHeaderSize)
-	le := binary.LittleEndian
-	le.PutUint32(hdr[0:], dibHeaderSize)
-	le.PutUint32(hdr[4:], uint32(w))
-	le.PutUint32(hdr[8:], uint32(h)) // positive: bottom-up
-	le.PutUint16(hdr[12:], 1)        // planes
-	le.PutUint16(hdr[14:], 32)       // bits per pixel
-	le.PutUint32(hdr[16:], biRGB)
-	le.PutUint32(hdr[20:], uint32(w*h*4))
-	ciRtlMoveMemory.Call(p, uintptr(unsafe.Pointer(&hdr[0])), dibHeaderSize)
+	hdr := dibV5Header(w, h)
+	ciRtlMoveMemory.Call(p, uintptr(unsafe.Pointer(&hdr[0])), dibV5HeaderSize)
 	row := make([]byte, 4*w)
 	for y := 0; y < h; y++ {
-		dibRow(row, img, b.Min.Y+y)
-		ciRtlMoveMemory.Call(p+uintptr(dibHeaderSize+(h-1-y)*w*4), uintptr(unsafe.Pointer(&row[0])), uintptr(4*w))
+		premulBGRARow(row, img, b.Min.Y+y)
+		ciRtlMoveMemory.Call(p+uintptr(dibV5HeaderSize+(h-1-y)*w*4), uintptr(unsafe.Pointer(&row[0])), uintptr(4*w))
 	}
 	return hmem, nil
-}
-
-// dibRow is row y of img as BGRX onto white, from its premultiplied 16-bit
-// colours (RGBA64At where the image has it: At(x, y).RGBA() without a
-// color.Color a pixel).
-func dibRow(row []byte, img image.Image, y int) {
-	b := img.Bounds()
-	put := func(x int, r, g, bl, a uint32) {
-		over := func(c uint32) byte { return byte((c + (0xffff - a)) >> 8) }
-		row[x*4+0] = over(bl)
-		row[x*4+1] = over(g)
-		row[x*4+2] = over(r)
-		row[x*4+3] = 0xff
-	}
-	if m, ok := img.(image.RGBA64Image); ok {
-		for x := 0; x < b.Dx(); x++ {
-			c := m.RGBA64At(b.Min.X+x, y)
-			put(x, uint32(c.R), uint32(c.G), uint32(c.B), uint32(c.A))
-		}
-		return
-	}
-	for x := 0; x < b.Dx(); x++ {
-		r, g, bl, a := img.At(b.Min.X+x, y).RGBA() // premultiplied, 16-bit
-		put(x, r, g, bl, a)
-	}
 }

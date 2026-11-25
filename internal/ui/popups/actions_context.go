@@ -1,6 +1,7 @@
 package popups
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"image"
@@ -165,10 +166,11 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 // LinkMenu is what NewLinkMenu needs.
 type LinkMenu struct {
 	URL string
-	// Image is the image inside the link ("" for a text link); Proxy says
-	// it needs Slack's cookie (files.slack.com).
-	Image string
-	Proxy bool
+	// Image is the <img> inside the link ("" for a text link): its src;
+	// ImageAlt its alt (an emoji's :name:). Proxy says it needs Slack's
+	// cookie (files.slack.com).
+	Image, ImageAlt string
+	Proxy           bool
 	// Open opens the link the way a click would; nil opens it in the
 	// browser.
 	Open func()
@@ -204,32 +206,54 @@ func NewLinkMenu(h Host, at image.Point, l LinkMenu) *Menu {
 	}
 	if l.Image != "" {
 		items = append(items, Sep())
-		items = append(items, ctxImageItems(h, l.Image, l.Image, "", l.Proxy)...)
+		items = append(items, ctxImageItems(h, ImageMenu{Src: l.Image, Alt: l.ImageAlt, Proxy: l.Proxy})...)
 	}
 	return NewMenuOpts(h, shellTail(h, items), MenuOpts{Anchor: pointRect(at), Width: 220})
 }
 
-// NewImageMenu is the desktop shell's image menu (buildMenuForImage):
-// Copy Image and Copy Image URL. Emoji get it too.
-func NewImageMenu(h Host, at image.Point, src string, proxy bool) *Menu {
-	return NewImageMenuFrom(h, at, src, src, "", proxy)
+// ImageMenu is the <img> a desktop shell image menu is for.
+type ImageMenu struct {
+	// Src is the <img>'s src: what Copy Image URL copies, and the URL Copy
+	// Image's markup and bookmark name (clipimg.Tag).
+	Src string
+	// Alt is its alt attribute ("" for none): the copy's title.
+	Alt string
+	// Shown is the image Clack draws there, what Copy Image downloads and
+	// copies ("": Src), when it isn't Src: the image viewer's and a
+	// PlayPauseAnimations' <img>s are the image through Slack's proxy.
+	Shown string
+	// StandIn ("" for none) is copied when Shown can't be (the thumbnail
+	// the viewer shows in an original's place: copyImage's stand-in).
+	StandIn string
+	// Proxy says Shown needs Slack's cookie (files.slack.com).
+	Proxy bool
 }
 
-// NewImageMenuFrom is NewImageMenu for an image whose <img src> (what
-// Copy Image URL copies) isn't the URL Clack draws it from (shown, what
-// Copy Image copies): the image viewer's proxied media items. alt ("" for
-// none) is what Copy Image copies when shown can't be (the thumbnail the
-// viewer shows in an original's place: copyImage's stand-in).
-func NewImageMenuFrom(h Host, at image.Point, shown, src, alt string, proxy bool) *Menu {
-	return NewMenuOpts(h, shellTail(h, ctxImageItems(h, shown, src, alt, proxy)), MenuOpts{Anchor: pointRect(at), Width: 220})
+// NewImageMenu is the desktop shell's image menu (buildMenuForImage) for
+// an <img> whose src is src and which has no alt: Copy Image and Copy
+// Image URL.
+func NewImageMenu(h Host, at image.Point, src string, proxy bool) *Menu {
+	return NewImageMenuOf(h, at, ImageMenu{Src: src, Proxy: proxy})
+}
+
+// NewImageMenuOf is the desktop shell's image menu for im. Emoji get it
+// too.
+func NewImageMenuOf(h Host, at image.Point, im ImageMenu) *Menu {
+	return NewMenuOpts(h, shellTail(h, ctxImageItems(h, im)), MenuOpts{Anchor: pointRect(at), Width: 220})
 }
 
 // ctxImageItems are addImageItems: Copy Image (webContents.copyImageAt:
-// the image's pixels on the clipboard) and Copy Image URL (its srcURL).
-func ctxImageItems(h Host, shown, src, alt string, proxy bool) []MenuItem {
+// the image's first frame, with its src and alt beside it: clipimg) and
+// Copy Image URL (its srcURL).
+func ctxImageItems(h Host, im ImageMenu) []MenuItem {
+	shown := cmp.Or(im.Shown, im.Src)
+	var tag *clipimg.Tag
+	if !localimg.Is(im.Src) { // a blob: URL in Slack, which nothing outside its renderer can load
+		tag = &clipimg.Tag{URL: im.Src, Title: im.Alt}
+	}
 	return []MenuItem{
-		{Label: "Copy Image", Do: func() { copyImage(h, shown, alt, proxy, "") }},
-		{Label: "Copy Image URL", DoCtx: func(gtx layout.Context) { copyText(gtx, src) }},
+		{Label: "Copy Image", Do: func() { copyImage(h, shown, im.StandIn, im.Proxy, "", tag) }, img: &im},
+		{Label: "Copy Image URL", DoCtx: func(gtx layout.Context) { copyText(gtx, im.Src) }, img: &im},
 	}
 }
 
@@ -255,10 +279,11 @@ func shellTail(h Host, items []MenuItem) []MenuItem {
 	return append(items, Sep(), MenuItem{Label: "Exit Full Screen", Do: w.ExitShellFullScreen})
 }
 
-// CopyImage puts the image at src on the clipboard (Slack-hosted images
-// come through core.Fetch; proxy forces that). It toasts ok ("" for none)
+// CopyImage puts the image at src on the clipboard, its first frame alone
+// (Slack's navigator.clipboard.write of an image/png; Slack-hosted images
+// come through core.Fetch, proxy forces that). It toasts ok ("" for none)
 // or the failure.
-func CopyImage(h Host, src string, proxy bool, ok string) { copyImage(h, src, "", proxy, ok) }
+func CopyImage(h Host, src string, proxy bool, ok string) { copyImage(h, src, "", proxy, ok, nil) }
 
 // copyFileImage is a file menu's Copy image: the original (Slack's
 // getSrcForFullSizeImage: url_private), or, when Clack can't copy the
@@ -267,6 +292,11 @@ func CopyImage(h Host, src string, proxy bool, ok string) { copyImage(h, src, ""
 // the file's largest Slack thumbnail in its place, toasted as such
 // (copiedSmaller). A slow download, decode, encode or clipboard helper is
 // the original's own failure, never a reason for the thumbnail.
+//
+// Slack's copy is navigator.clipboard.write with an image/png
+// ClipboardItem (CQ3K copyImageToClipboard: the file's bytes, a non-PNG
+// drawn to a canvas first), which Chromium writes as the bitmap alone: no
+// markup, no bookmark (no clipimg.Tag).
 func copyFileImage(h Host, f *richtext.File, ok string) {
 	src, alt := f.URL, ""
 	if f.Thumb != nil {
@@ -275,7 +305,7 @@ func copyFileImage(h Host, f *richtext.File, ok string) {
 	if src == "" {
 		src, alt = alt, ""
 	}
-	copyImage(h, src, alt, true, ok)
+	copyImage(h, src, alt, true, ok, nil)
 }
 
 // copiedSmaller is the toast for a copy of the file's thumbnail in its
@@ -284,12 +314,14 @@ func copyFileImage(h Host, f *richtext.File, ok string) {
 // "Failed to copy image", nothing in between.
 const copiedSmaller = "Copied a smaller version of the image"
 
-// copyImage is CopyImage with a stand-in: alt ("" for none) is copied in
-// src's place when src can't be copied for a reason a smaller copy gets
-// around (standIn), and toasted as copiedSmaller.
-func copyImage(h Host, src, alt string, proxy bool, ok string) {
+// copyImage is CopyImage with a stand-in and a tag: alt ("" for none) is
+// copied in src's place when src can't be copied for a reason a smaller
+// copy gets around (standIn), and toasted as copiedSmaller; tag (nil for
+// none) is the <img> whose src and alt go beside the bitmap (the desktop
+// shell's Copy Image).
+func copyImage(h Host, src, alt string, proxy bool, ok string, tag *clipimg.Tag) {
 	run(h, func(ctx context.Context) (bool, error) {
-		return copyImageWork(ctx, h, src, alt, proxy)
+		return copyImageWork(ctx, h, src, alt, proxy, tag)
 	}, func(smaller bool, err error) {
 		switch {
 		case err != nil:
@@ -307,12 +339,12 @@ func copyImage(h Host, src, alt string, proxy bool, ok string) {
 // (standIn); smaller says alt was copied. Any other failure of src (a
 // timeout, a cancelled copy, a failed download, the clipboard helper) is
 // returned as it is.
-func copyImageWork(ctx context.Context, h Host, src, alt string, proxy bool) (smaller bool, err error) {
-	err = copyFrom(ctx, h, src, proxy)
+func copyImageWork(ctx context.Context, h Host, src, alt string, proxy bool, tag *clipimg.Tag) (smaller bool, err error) {
+	err = copyFrom(ctx, h, src, proxy, tag)
 	if err == nil || alt == "" || alt == src || !standIn(err) || ctx.Err() != nil {
 		return false, err
 	}
-	if aerr := copyFrom(ctx, h, alt, proxy); aerr != nil {
+	if aerr := copyFrom(ctx, h, alt, proxy, tag); aerr != nil {
 		return false, err // the original's reason is the one to report
 	}
 	return true, nil
@@ -336,7 +368,7 @@ func standIn(err error) bool {
 // (tests swap them: no network, no clipboard).
 var (
 	copyFetch = fetchBytes
-	copyWrite = clipimg.WriteCharged
+	copyWrite = clipimg.WriteTagged
 )
 
 // copyFrom puts the image at src on the clipboard. The decode charges
@@ -347,7 +379,11 @@ var (
 // returns an error here (run's callback toasts it) instead of OOM-crashing
 // (this overlay has no recover). One the decode memory is too busy for
 // right now is tried again until ctx runs out (WithBudget).
-func copyFrom(ctx context.Context, h Host, src string, proxy bool) error {
+//
+// The decode is the image's first frame (an animated GIF's or WebP's
+// first, composed on its canvas), as Chromium copies it, with tag (nil
+// for none) beside it.
+func copyFrom(ctx context.Context, h Host, src string, proxy bool, tag *clipimg.Tag) error {
 	data, err := copyFetch(ctx, h, src, proxy)
 	if err != nil {
 		return err
@@ -357,7 +393,7 @@ func copyFrom(ctx context.Context, h Host, src string, proxy bool) error {
 		if err != nil {
 			return err
 		}
-		return copyWrite(ctx, img, imgcache.ChargeFunc(b))
+		return copyWrite(ctx, img, tag, imgcache.ChargeFunc(b))
 	})
 }
 

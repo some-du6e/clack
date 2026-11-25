@@ -15,6 +15,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -27,12 +28,16 @@ const (
 	tsCtxFile = "1700000011.000100"
 )
 
-// ctxHost records the overlays the list shows.
+// ctxHost records the overlays the list shows. im is its image cache (nil:
+// none, as coreHost).
 type ctxHost struct {
 	coreHost
 	overlays []popups.Overlay
 	navs     []string
+	im       *imgcache.Cache
 }
+
+func (h *ctxHost) Images() *imgcache.Cache { return h.im }
 
 func (h *ctxHost) Navigate(r string) { h.navs = append(h.navs, r) }
 
@@ -96,6 +101,12 @@ func newCtxEnvIn(t *testing.T, ch string, msgs []slack.Message) *ctxEnv {
 // newCtxEnvSetup is newCtxEnvIn with setup run on the app first.
 func newCtxEnvSetup(t *testing.T, ch string, msgs []slack.Message, setup func(app *core.App)) *ctxEnv {
 	t.Helper()
+	return newCtxEnvImages(t, ch, msgs, setup, nil)
+}
+
+// newCtxEnvImages is newCtxEnvSetup with im the host's image cache.
+func newCtxEnvImages(t *testing.T, ch string, msgs []slack.Message, setup func(app *core.App), im *imgcache.Cache) *ctxEnv {
+	t.Helper()
 	app, _ := newTestApp(t)
 	if setup != nil {
 		setup(app)
@@ -104,7 +115,7 @@ func newCtxEnvSetup(t *testing.T, ch string, msgs []slack.Message, setup func(ap
 		app.S.PutConv(slack.Conversation{ID: ch, Name: "ctx", IsChannel: true, IsMember: true, NumMembers: 3})
 	}
 	app.S.SetLatest(ch, msgs, false)
-	e := &ctxEnv{t: t, h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}}, now: time.Now()}
+	e := &ctxEnv{t: t, h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}, im: im}, now: time.Now()}
 	e.v = NewChannelView(e.h, ch)
 	e.v.Preview = true
 	until(t, 5*time.Second, "the rows laid out", e.frame, func() bool {

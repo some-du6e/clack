@@ -24,6 +24,7 @@ import (
 	"gioui.org/app/internal/xkb"
 	"gioui.org/f32"
 	"gioui.org/internal/fling"
+	"gioui.org/io/clipboard"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -139,6 +140,9 @@ type wlSeat struct {
 	source *C.struct_wl_data_source
 	// content is the data belonging to source.
 	content []byte
+	// formats are source's when a clipboard.FormatsType write made it:
+	// each offered type's data (Clack patch, CLACK_PATCHES.md §68).
+	formats map[string][]byte
 	// drag is the file drag over one of the windows (Clack patch,
 	// CLACK_PATCHES.md §11).
 	drag struct {
@@ -305,6 +309,7 @@ func (d *wlDisplay) writeClipboard(content []byte) error {
 		C.wl_data_source_destroy(s.source)
 		s.source = nil
 		s.content = nil
+		s.formats = nil
 	}
 	if d.dataDeviceManager == nil || s.dataDev == nil {
 		return nil
@@ -317,6 +322,38 @@ func (d *wlDisplay) writeClipboard(content []byte) error {
 	}
 	C.wl_data_device_set_selection(s.dataDev, s.source, s.serial)
 	return nil
+}
+
+// writeClipboardFormats is writeClipboard for a clipboard.FormatsType
+// write: the data source offers each format's MIME type, and a paste of
+// one gets its data (Clack patch, CLACK_PATCHES.md §68).
+func (d *wlDisplay) writeClipboardFormats(fs []clipboard.Format) {
+	s := d.seat
+	if s == nil || len(fs) == 0 {
+		return
+	}
+	if s.source != nil {
+		C.wl_data_source_destroy(s.source)
+		s.source = nil
+		s.content = nil
+		s.formats = nil
+	}
+	if d.dataDeviceManager == nil || s.dataDev == nil {
+		return
+	}
+	s.formats = make(map[string][]byte, len(fs))
+	s.source = C.wl_data_device_manager_create_data_source(d.dataDeviceManager)
+	C.wl_data_source_add_listener(s.source, &C.gio_data_source_listener, unsafe.Pointer(s.seat))
+	for _, f := range fs {
+		if _, dup := s.formats[f.Type]; dup {
+			continue
+		}
+		s.formats[f.Type] = f.Data
+		cs := C.CString(f.Type)
+		C.wl_data_source_offer(s.source, cs)
+		C.free(unsafe.Pointer(cs))
+	}
+	C.wl_data_device_set_selection(s.dataDev, s.source, s.serial)
 }
 
 func (d *wlDisplay) readClipboard() (io.ReadCloser, error) {
@@ -1196,6 +1233,12 @@ func (w *window) ReadClipboard() {
 }
 
 func (w *window) WriteClipboard(mime string, s []byte) {
+	if mime == clipboard.FormatsType { // Clack patch (CLACK_PATCHES.md §68)
+		if fs, ok := clipboard.DecodeFormats(s); ok {
+			w.disp.writeClipboardFormats(fs)
+		}
+		return
+	}
 	w.disp.writeClipboard(s)
 }
 
@@ -1911,9 +1954,22 @@ func gio_onDataSourceTarget(data unsafe.Pointer, source *C.struct_wl_data_source
 func gio_onDataSourceSend(data unsafe.Pointer, source *C.struct_wl_data_source, mime *C.char, fd C.int32_t) {
 	s := callbackLoad(data).(*wlSeat)
 	content := s.content
+	if s.formats != nil { // Clack patch (CLACK_PATCHES.md §68): the type asked for
+		content = s.formats[C.GoString(mime)]
+	}
 	go func() {
 		defer syscall.Close(int(fd))
-		syscall.Write(int(fd), content)
+		// all of it: a pipe takes a big format in parts
+		for len(content) > 0 {
+			n, err := syscall.Write(int(fd), content)
+			if err == syscall.EINTR {
+				continue
+			}
+			if err != nil || n <= 0 {
+				return
+			}
+			content = content[n:]
+		}
 	}()
 }
 
@@ -1922,6 +1978,7 @@ func gio_onDataSourceCancelled(data unsafe.Pointer, source *C.struct_wl_data_sou
 	s := callbackLoad(data).(*wlSeat)
 	if s.source == source {
 		s.content = nil
+		s.formats = nil
 		s.source = nil
 	}
 	C.wl_data_source_destroy(source)

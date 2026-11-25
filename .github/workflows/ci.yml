@@ -471,7 +471,9 @@ jobs:
           sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
           # and patches 46/47 on X11: an unmapped window stops its frames and
           # lets its frame texture go; XSETTINGS from a real settings manager
-          xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop|TestUnmappedStopsFramesX11|TestClackXSettingsX11' gioui.org/app
+          # and patch 68: a write of several formats (Copy Image's), read
+          # back by python-xlib, a large one by INCR
+          xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop|TestUnmappedStopsFramesX11|TestClackXSettingsX11|TestClackClipFormatsX11' gioui.org/app
           xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -v -timeout 5m -run '^TestFrameEventAskedX11$' gioui.org/app
           # patch 59: a window whose X server goes away says so first (its own private Xvfb)
           go test -count=1 -v -timeout 3m -run '^TestX11ConnectionLost$' gioui.org/app
@@ -879,9 +881,10 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
         run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy|TestClipMalformed|TestPasteIntoQuote|TestTextyDocLines' ./internal/ui/composer
-      # The image menu's Copy Image (Slack's webContents.copyImageAt) on a
-      # fakeslack image: CF_DIB and "PNG" read back as its pixels.
-      - name: copy image (CF_DIB, "PNG")
+      # The image menu's Copy Image (Slack's webContents.copyImageAt) on
+      # fakeslack's GIF picker WebP: Chromium's formats in its order ("PNG",
+      # CF_DIBV5, "HTML Format", "UniformResourceLocatorW"), the first frame.
+      - name: copy image ("PNG", CF_DIBV5, HTML Format, UniformResourceLocatorW)
         if: ${{ !cancelled() }}
         env:
           CGO_ENABLED: "0"

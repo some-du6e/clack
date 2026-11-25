@@ -9,8 +9,8 @@ import (
 
 // An animated WebP decodes (DecodeBudget: a copy of the image, Copy
 // Image) to its first frame on its canvas, as playback draws it first and
-// Chromium's copyImageAt copies the frame shown: synthWebP's red over
-// rows 0-5, the rest clear.
+// Chromium's copyImageAt copies it (its first frame, whichever is on
+// screen): synthWebP's red over rows 0-5, the rest clear.
 func TestDecodeAnimWebPFirstFrame(t *testing.T) {
 	var img image.Image
 	err := WithBudget(context.Background(), func(b *Budget) error {

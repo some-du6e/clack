@@ -28,6 +28,7 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/clipimg"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -201,7 +202,7 @@ func TestCopyImageFakeslack(t *testing.T) {
 	var got image.Image
 	prev := copyWrite
 	t.Cleanup(func() { copyWrite = prev })
-	copyWrite = func(_ context.Context, img image.Image, _ func(int64) error) error {
+	copyWrite = func(_ context.Context, img image.Image, _ *clipimg.Tag, _ func(int64) error) error {
 		mu.Lock()
 		got = img
 		mu.Unlock()
@@ -265,24 +266,37 @@ func fetchPNG(t *testing.T, u string) image.Image {
 // (and the download with fetch, when it isn't nil).
 func copyCatch(t *testing.T, fetch func(string) ([]byte, error)) func() image.Image {
 	t.Helper()
+	got, _ := copyCatchTag(t, fetch)
+	return got
+}
+
+// copyCatchTag is copyCatch that also returns the tag the write was given
+// (nil for none), read once the image is in.
+func copyCatchTag(t *testing.T, fetch func(string) ([]byte, error)) (func() image.Image, func() *clipimg.Tag) {
+	t.Helper()
 	var mu sync.Mutex
 	var got image.Image
+	var tag *clipimg.Tag
 	prevF, prevW := copyFetch, copyWrite
 	t.Cleanup(func() { copyFetch, copyWrite = prevF, prevW })
 	if fetch != nil {
 		copyFetch = func(_ context.Context, _ Host, u string, _ bool) ([]byte, error) { return fetch(u) }
 	}
-	copyWrite = func(_ context.Context, img image.Image, _ func(int64) error) error {
+	copyWrite = func(_ context.Context, img image.Image, tg *clipimg.Tag, _ func(int64) error) error {
 		mu.Lock()
-		got = img
+		got, tag = img, tg
 		mu.Unlock()
 		return nil
 	}
 	return func() image.Image {
-		mu.Lock()
-		defer mu.Unlock()
-		return got
-	}
+			mu.Lock()
+			defer mu.Unlock()
+			return got
+		}, func() *clipimg.Tag {
+			mu.Lock()
+			defer mu.Unlock()
+			return tag
+		}
 }
 
 // waitCopy pumps popups until the copy wrote an image or toasted.

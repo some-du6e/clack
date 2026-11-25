@@ -74,7 +74,9 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
 `app/clack_titlebar_darwin_test.go`,
 `io/input/clack_unfocused.go`, `io/input/clack_unfocused_test.go`,
-`widget/clack_mask_copy_test.go`, `app/winclip/` and
+`widget/clack_mask_copy_test.go`, `app/winclip/`,
+`io/clipboard/clack_formats.go`, `app/clack_clipformats_x11.go`,
+`app/clack_clipformats_x11_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -3479,3 +3481,36 @@ dragged out.
 Tests: `widget/clack_mask_copy_test.go`
 (`TestClackMaskedEditorCopiesNothing`: masked and plain, Shortcut+C and
 Shortcut+X), in ci's linux-gio.
+
+## 68. app, io/clipboard: a clipboard write offers several formats (X11, Wayland)
+
+`io/clipboard/clack_formats.go`, `app/clack_clipformats_x11.go`,
+`app/os_x11.go`, `app/os_wayland.go`: a `clipboard.WriteCmd` whose Type
+is `clipboard.FormatsType` carries several formats at once
+(`EncodeFormats`: MIME types and their data), and the Linux windows offer
+each under its own type, as Chromium's clipboard does for a copy of many
+formats. Clack's Copy Image needs it: Slack's desktop app (Electron, so
+Chromium's `ClipboardOzone`) puts an image's PNG, its `<img>` markup
+(text/html) and a bookmark of its URL (text/x-moz-url) on the clipboard
+in one write, and xclip or wl-copy can offer only one type
+(`internal/ui/clipimg`, `internal/ui/clipformats.go`).
+
+- X11: the write owns CLIPBOARD (not PRIMARY: Chromium copies only text
+  there). TARGETS lists TARGETS and the formats' types; a request for
+  one gets its data as an 8-bit property of that type, and a format
+  larger than the server's request size goes by INCR (ICCCM 2.7.2: an
+  INCR property with the size, a chunk each time the requestor deletes
+  the property, then an empty one; a transfer whose requestor stops
+  reading for 30 s is dropped). Any other target is refused at once
+  (property None), where Gio's text owner sends no answer. SelectionClear
+  drops the formats. A text write replaces them.
+- Wayland: the data source offers each format's type, and `send` writes
+  the asked type's data, all of it (a pipe takes a large format in parts;
+  the text write now loops the same way).
+- Windows and macOS ignore the type: Clack writes those clipboards
+  natively.
+
+Tests: `app/clack_clipformats_x11_test.go` (`TestClackClipFormatsX11`, in
+ci's linux job under Xvfb: python-xlib reads TARGETS, each format, a
+300 KB one by INCR with the limit made 64 KB, a refused UTF8_STRING, and
+the text targets after a text write).

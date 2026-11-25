@@ -26,6 +26,7 @@ import (
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/clipimg"
 )
 
 // progressiveJPEG is a complete, valid progressive JPEG of w×h at 4:4:4:
@@ -147,7 +148,7 @@ func (f *copyFake) install(t *testing.T) {
 		}
 		return nil, errors.New("http 404")
 	}
-	copyWrite = func(ctx context.Context, img image.Image, charge func(int64) error) error {
+	copyWrite = func(ctx context.Context, img image.Image, _ *clipimg.Tag, charge func(int64) error) error {
 		if err := f.failW[img.Bounds().Size()]; err != nil {
 			return err
 		}
@@ -168,7 +169,7 @@ func (f *copyFake) install(t *testing.T) {
 func TestCopyImageOverCapCopiesThumbnail(t *testing.T) {
 	f := &copyFake{data: map[string][]byte{testOrig: progressiveJPEG(6000, 6000), testThumb: testPNG(t, 1024, 768)}}
 	f.install(t)
-	smaller, err := copyImageWork(context.Background(), nil, testOrig, testThumb, true)
+	smaller, err := copyImageWork(context.Background(), nil, testOrig, testThumb, true, nil)
 	if err != nil || !smaller {
 		t.Fatalf("Copy image of an over-cap original: smaller=%v %v, want the thumbnail copied, as a smaller copy", smaller, err)
 	}
@@ -176,7 +177,7 @@ func TestCopyImageOverCapCopiesThumbnail(t *testing.T) {
 		t.Errorf("copied %v, want only the 1024×768 thumbnail", f.copied)
 	}
 	f.copied = nil
-	smaller, err = copyImageWork(context.Background(), nil, testOrig, "", true)
+	smaller, err = copyImageWork(context.Background(), nil, testOrig, "", true, nil)
 	if !errors.Is(err, imgcache.ErrTooBig) || smaller || len(f.copied) != 0 {
 		t.Errorf("the original alone: smaller=%v copied %v, %v; want ErrTooBig and nothing copied", smaller, f.copied, err)
 	}
@@ -197,7 +198,7 @@ func TestCopyImageSlowOriginalIsCopied(t *testing.T) {
 	f.install(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second) // as run gives it
 	defer cancel()
-	smaller, err := copyImageWork(ctx, nil, testOrig, testThumb, true)
+	smaller, err := copyImageWork(ctx, nil, testOrig, testThumb, true, nil)
 	if err != nil || smaller {
 		t.Fatalf("a 9 s original: smaller=%v %v, want the original copied", smaller, err)
 	}
@@ -232,7 +233,7 @@ func TestCopyImageNoStandInForOtherFailures(t *testing.T) {
 				ctx, cancel = context.WithTimeout(ctx, c.ctx)
 				defer cancel()
 			}
-			smaller, err := copyImageWork(ctx, nil, testOrig, testThumb, true)
+			smaller, err := copyImageWork(ctx, nil, testOrig, testThumb, true, nil)
 			if err == nil || smaller || len(f.copied) != 0 {
 				t.Errorf("smaller=%v copied %v, %v; want the original's failure and nothing copied", smaller, f.copied, err)
 			}

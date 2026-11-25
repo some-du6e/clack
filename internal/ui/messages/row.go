@@ -346,12 +346,13 @@ type pillPart struct {
 	on    bool
 	count bool   // the count, else an emoji
 	url   string // the emoji's image
+	alt   string // its <img>'s alt: the :name: (Emoji's displayText)
 }
 
 // pillEmoji is one emoji image in a reaction pill.
 type pillEmoji struct {
-	r   image.Rectangle
-	url string
+	r        image.Rectangle
+	url, alt string
 }
 
 // rowCtx carries per-frame inputs to a row layout.
@@ -3449,7 +3450,7 @@ func (pl *reactPill) content(gtx layout.Context, st slackc.Styled) layout.Dimens
 		}
 		re := &pl.r.m.Reactions[i]
 		at(gtx, x, (ph-es)/2, func(gtx layout.Context) layout.Dimensions { return pl.emoji(gtx, re) })
-		pl.emojiAt = append(pl.emojiAt, pillEmoji{r: image.Rect(x, (ph-es)/2, x+es, (ph-es)/2+es).Add(in), url: pl.emojiURL(re)})
+		pl.emojiAt = append(pl.emojiAt, pillEmoji{r: image.Rect(x, (ph-es)/2, x+es, (ph-es)/2+es).Add(in), url: pl.emojiURL(re), alt: ":" + re.Name + ":"})
 		x += es + gap
 	}
 	if len(g.idx) > reactEmojiMax {
@@ -3487,7 +3488,7 @@ func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dime
 		tag = new(ctxTag)
 		pl.emojiTags[re.Name] = tag
 	}
-	pl.notePart(gtx, tag, pillPart{on: true, url: pl.emojiURL(re)})
+	pl.notePart(gtx, tag, pillPart{on: true, url: pl.emojiURL(re), alt: ":" + re.Name + ":"})
 	d := pl.emoji(gtx, re)
 	contextArea(gtx, tag, d.Size)
 	return d
