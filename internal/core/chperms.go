@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Channel-scoped role grants, read the way Slack's permission store
@@ -41,19 +43,21 @@ const (
 // together, and About's "Send emails to this channel" grant
 // (showChannelEmailAddress, chdetails_email.go).
 // The tabs' check (useCanEditTabs, channel_managers.go) reads
-// MANAGE_CHANNEL_TABS and ASSIGN_CHANNEL_MANAGER from the same store, and
-// the roster's Remove from channel (canUserKickFromChannel,
-// exp_wave10.go) the kick grants.
+// MANAGE_CHANNEL_TABS and ASSIGN_CHANNEL_MANAGER from the same store, the
+// roster's Remove from channel (canUserKickFromChannel, exp_wave10.go)
+// the kick grants, and /rename's and /archive's isSlashCommandEnabled
+// checks (slash_enabled.go) RENAME_CHANNEL and ARCHIVE_CHANNEL.
 var chPermSet = []string{PermSetChannelTopic, PermSetChannelPurpose, PermCreateChannelEmailAddresses,
 	PermManageChannelTabs, PermAssignChannelManager, PermRemoveFromChannel, PermRemoveFromPrivateChannel,
-	PermManagePublicChannels, PermManagePrivateChannels}
+	PermManagePublicChannels, PermManagePrivateChannels, PermRenameChannel, PermArchiveChannel}
 
 const chPermMaxAge = time.Hour
 
 type chPermCache struct {
-	mu      sync.Mutex
-	m       map[string]chPermEntry
-	loading map[string]bool
+	mu sync.Mutex
+	m  map[string]chPermEntry
+	// loading: the asks in flight, each channel closed when it answers
+	loading map[string]chan struct{}
 }
 
 type chPermEntry struct {
@@ -67,7 +71,7 @@ func (a *App) chPerms() *chPermCache {
 	if v, ok := chPermIndex.Load(a); ok {
 		return v.(*chPermCache)
 	}
-	v, _ := chPermIndex.LoadOrStore(a, &chPermCache{m: map[string]chPermEntry{}, loading: map[string]bool{}})
+	v, _ := chPermIndex.LoadOrStore(a, &chPermCache{m: map[string]chPermEntry{}, loading: map[string]chan struct{}{}})
 	return v.(*chPermCache)
 }
 
@@ -91,9 +95,9 @@ func (a *App) grant(ch, perm string) bool {
 	pc.mu.Lock()
 	e, ok := pc.m[ch]
 	stale := !ok || time.Since(e.at) > chPermMaxAge
-	start := stale && !pc.loading[ch]
+	start := stale && pc.loading[ch] == nil
 	if start {
-		pc.loading[ch] = true
+		pc.loading[ch] = make(chan struct{})
 	}
 	pc.mu.Unlock()
 	if start {
@@ -102,15 +106,53 @@ func (a *App) grant(ch, perm string) bool {
 	return e.allowed[perm]
 }
 
+// channelGrantNow is ChannelGrant for a command: when the store has no
+// answer for ch (or an hour-old one) it asks permissions/info, or waits
+// for the ask in flight, before answering, for as long as ctx allows.
+// Slack's isSlashCommandEnabled reads its store, which the channel's
+// views (its header's topic check among them) filled when it opened; a
+// command may come before Clack's views asked.
+func (a *App) channelGrantNow(ctx context.Context, ch, perm string) bool {
+	if ch == "" {
+		return false
+	}
+	pc := a.chPerms()
+	pc.mu.Lock()
+	e, ok := pc.m[ch]
+	if ok && time.Since(e.at) <= chPermMaxAge {
+		pc.mu.Unlock()
+		return e.allowed[perm]
+	}
+	done := pc.loading[ch]
+	if done == nil {
+		done = make(chan struct{})
+		pc.loading[ch] = done
+		go a.loadChannelGrants(a.bg, ch)
+	}
+	pc.mu.Unlock()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	pc.mu.Lock()
+	e = pc.m[ch]
+	pc.mu.Unlock()
+	return e.allowed[perm]
+}
+
 func (a *App) loadChannelGrants(ctx context.Context, ch string) {
 	pc := a.chPerms()
 	allowed, err := a.fetchChannelGrants(ctx, ch)
 	pc.mu.Lock()
+	done := pc.loading[ch]
 	delete(pc.loading, ch)
 	if err == nil {
 		pc.m[ch] = chPermEntry{allowed: allowed, at: time.Now()}
 	}
 	pc.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
 	if err == nil {
 		a.emit(Event{Type: "permissions", Channel: ch})
 	}
@@ -146,23 +188,32 @@ func (a *App) viewerRestricted() bool {
 
 // CanSetTopic is canUserSetTopicForChannelWithReasonById(ch).ok.
 func (a *App) CanSetTopic(ch string) bool {
-	c, ok := a.S.Conv(ch)
-	if !ok {
-		return false
-	}
+	c, _ := a.S.Conv(ch)
+	return a.topicRefusal(c, func(p string) bool { return a.ChannelGrant(ch, p) }) == ""
+}
+
+// topicRefusal is canUserSetTopicForChannelWithReasonById's reason (iJOl
+// X; getChannelTopicError's codes, MgZJ), "" when the viewer may set c's
+// topic; grant reads SET_CHANNEL_TOPIC.
+func (a *App) topicRefusal(c *slack.Conversation, grant func(string) bool) string {
 	switch {
+	case c == nil:
+		return "method_not_supported_for_channel_type" // CM
 	case (c.IsIM || c.IsMPIM) && c.IsExtShared:
-		return false
+		return "method_not_supported_for_dm" // Jr
 	case c.IsArchived:
-		return false
-	case a.ChannelGrant(ch, PermSetChannelTopic):
-		return true
+		return "user_is_restricted" // oP
+	case grant(PermSetChannelTopic):
+		return ""
 	case !c.IsIM:
-		return false
+		return "user_is_restricted"
 	}
 	// a DM is always the viewer's (crlq bl reads is_member, which Slack's
 	// DM objects carry)
-	return a.PostingFor(c).CanPost() && !a.viewerRestricted()
+	if a.PostingFor(c).CanPost() && !a.viewerRestricted() {
+		return ""
+	}
+	return "user_is_restricted"
 }
 
 // CanSetPurpose is canUserSetPurpose(ch).ok (uJL7 s).

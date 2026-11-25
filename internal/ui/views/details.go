@@ -12,6 +12,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"log"
 	"net/url"
 	"slices"
 	"sort"
@@ -29,7 +30,10 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/go-text/typesetting/segmenter"
+
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
@@ -866,9 +870,19 @@ func (d *ChannelDetails) update(gtx C) {
 					// DeprecatedBaseDialog (FlDO) closes only on a resolved
 					// onGo, so the dialog stays open with the typed text and
 					// no message (useChannelPurposeInput has no error state)
+				case d.pendKind == cdEditName:
+					// the rename's ChannelNameInput warning
+					// (getErrorStringFromChannelNameErrors; Slack keeps its
+					// dialog open under it, Clack's rename is inline)
+					d.editing = false
+					team := ""
+					if c := d.h.Core(); c != nil {
+						team = c.SlackConnectTeamName()
+					}
+					d.h.Toast(core.ChannelNameErrorText(core.ChannelNameCode(err), team))
 				default:
 					d.editing = false
-					d.h.Toast("Couldn’t update the " + cdEditWhat[d.pendKind] + ": " + cdErr(err))
+					log.Printf("views: channel details edit: %v", err)
 				}
 			}
 		}
@@ -888,10 +902,10 @@ func (d *ChannelDetails) update(gtx C) {
 			dm := cdGroup(d.kind) == "im"
 			switch {
 			case err != nil && dm:
-				d.h.Toast("Couldn’t hide this conversation: " + friendlyErr(err))
+				log.Printf("views: conversations.close: %v", err) // submitClose: nothing catches it, nothing on screen
 			case err != nil:
 				d.confirmLeave = false
-				d.h.Toast("Couldn’t leave #" + name + ": " + dirErr(err))
+				leaveFailed(d.h, d.id, name, err)
 			case dm:
 				d.h.Toast("Conversation hidden")
 				d.closed = true
@@ -915,7 +929,9 @@ func (d *ChannelDetails) update(gtx C) {
 		if _, done, err := d.joinOp.get(); done {
 			d.joinPending = false
 			if err != nil {
-				d.h.Toast("Couldn’t join #" + name + ": " + dirErr(err))
+				// Slack's details join (the related channels' menu, the preview's
+				// join pane) catches the join: nothing on screen
+				log.Printf("views: conversations.join: %v", err)
 			} else {
 				d.info.mutate(func(v *core.ChannelDetails) { v.IsMember = true; v.Conv.NumMembers++ })
 				d.h.Toast("You joined #" + name)
@@ -1200,6 +1216,24 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 		if cdGroup(d.kind) == "mpim" {
 			_, named, small = d.mpdmTitle(cv)
 		}
+		// .p-about_modal__title .p-view_header__channel_title{white-space:
+		// break-spaces; word-break: break-word}: the title wraps in its own
+		// flex item beside the icon, and the header, the buttons and the
+		// tabs move down by its lines past the first
+		size, lhSp := unit.Sp(22), unit.Sp(30)
+		if small { // .p-view_header__channel_title--small: 18px/1.33334
+			size, lhSp = 18, 24
+		}
+		tw := w - gtx.Dp(cdPadX+64)
+		if named {
+			tw -= gtx.Dp(20 + 16 - 4)
+		} else if ic != "" {
+			tw -= gtx.Dp(22 + 2)
+		}
+		lines := cdTitleLines(title, max(1, tw), func(s string) int { return d.th.Measure(gtx, size, wBlack, s) })
+		if extra := (len(lines) - 1) * gtx.Sp(lhSp); extra > 0 {
+			h, btnY, tabY = h+extra, btnY+extra, tabY+extra
+		}
 		dirAt(gtx, image.Pt(gtx.Dp(cdPadX), gtx.Dp(20)), func(gtx C) D {
 			gtx.Constraints.Max.X = max(0, w-gtx.Dp(cdPadX+64))
 			return row(gtx, layout.Middle,
@@ -1217,10 +1251,16 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 					return layout.Inset{Right: 2}.Layout(gtx, func(gtx C) D { return d.icon(gtx, ic, 22, d.p.Text) })
 				}),
 				layout.Rigid(func(gtx C) D {
-					if small { // .p-view_header__channel_title--small: 18px/1.33334
-						return d.para(gtx, 18, 24, wBlack, d.p.Text, 1, title)
+					lh := gtx.Sp(lhSp)
+					wd := 0
+					for i, ln := range lines {
+						dd := dirAt(gtx, image.Pt(0, i*lh), func(gtx C) D {
+							gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, tw), lh)}
+							return d.para(gtx, size, lhSp, wBlack, d.p.Text, 1, ln)
+						})
+						wd = max(wd, dd.Size.X)
 					}
-					return d.para(gtx, 22, 30, wBlack, d.p.Text, 1, title)
+					return D{Size: image.Pt(wd, len(lines)*lh)}
 				}),
 			)
 		})
@@ -2595,11 +2635,7 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 		if _, done, err := d.starOp.get(); done {
 			d.starPending = false
 			if err != nil {
-				verb := "star"
-				if !d.starOv {
-					verb = "unstar"
-				}
-				d.h.Toast("Couldn’t " + verb + " this conversation: " + cdErr(err))
+				log.Printf("views: stars.add/remove: %v", err) // updateStar: the local star reverts, no toast
 			}
 		}
 	}
@@ -2659,7 +2695,7 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 		if _, done, err := d.notifOp.get(); done {
 			d.notifPending = false
 			if err != nil {
-				d.h.Toast("Couldn’t change notifications: " + cdErr(err))
+				log.Printf("views: users.prefs.setNotifications: %v", err) // setChannelNotificationOverrideAndCallApi: reverted and logged, no toast
 			}
 		}
 	}
@@ -2704,7 +2740,9 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 			uid := d.inviteUser
 			d.inviteUser = ""
 			if err != nil {
-				d.h.Toast("Couldn’t add " + d.userName(uid) + ": " + cdErr(err))
+				// openConversation logs "failed to open conversation" and
+				// rethrows: nothing on screen
+				log.Printf("views: conversations.open with %s: %v", uid, err)
 			} else if conv.ID != "" {
 				d.inviting = false
 				d.closed = true
@@ -2717,7 +2755,10 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 			uid := d.inviteUser
 			d.inviteUser = ""
 			if err != nil {
-				d.h.Toast("Couldn’t add " + d.userName(uid) + ": " + cdErr(err))
+				// the add people modal's SUBMIT_ERROR fallback (its
+				// getInviteErrorMessage table isn't ported)
+				log.Printf("views: conversations.invite %s: %v", uid, err)
+				d.h.Toast(i18n.T("channel_invite", "Couldn’t add {erroredCount, plural, =1 {# person} other {# people}} to the channel. Please try again.", "erroredCount", 1))
 			} else {
 				d.added[uid] = true
 				d.h.Toast("Added " + d.userName(uid) + " to #" + inf.Conv.Name)
@@ -2998,4 +3039,44 @@ func (d *ChannelDetails) dmMembers(cv core.Conv) []core.User {
 		}
 	}
 	return out
+}
+
+// cdTitleLines breaks the details title into lines tw wide as Chrome
+// does under white-space: break-spaces and word-break: break-word: at
+// UAX #14's opportunities, the spaces kept on the line they end, and a
+// word too wide for a line of its own cut where the line is full (a
+// long channel name). width measures one line.
+func cdTitleLines(s string, tw int, width func(string) int) []string {
+	if s == "" {
+		return []string{""}
+	}
+	var units []string
+	var seg segmenter.Segmenter
+	seg.Init([]rune(s))
+	for it := seg.LineIterator(); it.Next(); {
+		units = append(units, string(it.Line().Text))
+	}
+	var lines []string
+	cur := ""
+	for _, u := range units {
+		if cur != "" && width(strings.TrimRight(cur+u, " ")) > tw {
+			lines = append(lines, cur)
+			cur = ""
+		}
+		cur += u
+		// break-word: a unit wider than a whole line breaks between characters
+		for cur != "" && width(strings.TrimRight(cur, " ")) > tw {
+			rs := []rune(cur)
+			n := 1
+			for n < len(rs) && width(string(rs[:n+1])) <= tw {
+				n++
+			}
+			if n >= len(rs) {
+				break
+			}
+			lines = append(lines, string(rs[:n]))
+			cur = string(rs[n:])
+		}
+	}
+	return append(lines, cur)
 }

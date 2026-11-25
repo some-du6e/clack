@@ -234,6 +234,7 @@ func (r *row) commentRootLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 		call := rec2.Stop()
 		placeCall(gtx, call, bx, y)
 		r.bodyRect = image.Rectangle{Min: image.Pt(bx, y), Max: image.Pt(bx+body.Size.X, y+body.Size.Y)}
+		r.selW = cw
 		y += body.Size.Y
 	} else { // MessageTombstone's customDeletedText
 		d := at(gtx, bx, y, func(gtx layout.Context) layout.Dimensions {
@@ -253,18 +254,18 @@ func (r *row) commentRootLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
-// reactable is canAddReaction for r's toolbar: a canvas comment's file
+// reactable is canAddReaction for m's toolbar: a canvas comment's file
 // channel follows the canvas's access (core.CanAddReaction), and a
 // comment thread's root in its thread (ThreadRootCanvas) has
 // showAddReactionButton and showQuickReactions off.
-func reactable(app *core.App, r *row, thread bool) bool {
+func reactable(app *core.App, m *core.Message, thread bool) bool {
 	if app == nil {
 		return true
 	}
-	if thread && r.src.IsCommentRoot() {
+	if thread && m.IsCommentRoot() {
 		return false
 	}
-	return app.CanAddReaction(&r.src)
+	return app.CanAddReaction(m)
 }
 
 func drawAvatarAt(gtx layout.Context, rc *rowCtx, url string, rect image.Rectangle) {

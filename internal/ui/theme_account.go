@@ -145,7 +145,7 @@ func (a *App) setAccountTheme(t theme.IATheme) {
 		if err != nil {
 			a.Post(func() {
 				a.setAcct(old)
-				a.Toast("Couldn't save the theme: " + err.Error())
+				log.Printf("ui: users.prefs.set theme: %v", err) // setIaThemePrefByApi logs "users.prefs.set failed to write new theme preferences", no toast
 			})
 		}
 		return nil, err
@@ -169,7 +169,7 @@ func (a *App) setWindowGradients(on bool) {
 			if err != nil {
 				a.Post(func() {
 					a.setAcct(old)
-					a.Toast("Couldn't save the setting: " + err.Error())
+					log.Printf("ui: users.prefs.set: %v", err) // setUserPrefByApi: optimistic, nothing on screen when it fails
 				})
 			}
 			return nil, err

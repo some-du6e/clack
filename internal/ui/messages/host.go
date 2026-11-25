@@ -619,6 +619,22 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 	}
 }
 
+// The image hover group's Download and More actions: without these the
+// images here would lose them with no test going red.
+var (
+	_ richview.ImageDownloadHandler = (*richHandler)(nil)
+	_ richview.ImageMenuHandler     = (*richHandler)(nil)
+)
+
+// DownloadImageFile is an image's AttachmentImageActions Download
+// (richview.ImageDownloadHandler): the image's Slack file, downloaded as
+// its FileActions' Download does.
+func (r *richHandler) DownloadImageFile(f *richtext.File) {
+	if ph, ok := r.h.(popups.Host); ok && f != nil {
+		popups.DownloadFile(ph, f)
+	}
+}
+
 // ImageMenu is an image's AttachmentImageActions More actions
 // (richview.ImageMenuHandler): Copy link, Hide image.
 func (r *richHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
@@ -743,6 +759,20 @@ func (r *richHandler) RemoveAttachment(id string) {
 		return
 	}
 	popups.ConfirmRemovePreview(r.h, m.Channel, m.TS, id)
+}
+
+// RemoveFile is a file card's x (richview.FileRemover, FileRemoveButton's
+// onRemove): DeleteFileDialog for a file shared into the message, else
+// removeFileFromMessage.
+func (r *richHandler) RemoveFile(f *richtext.File, deletion bool) {
+	if r.m == nil || f == nil {
+		return
+	}
+	if deletion {
+		popups.ConfirmDeleteFile(r.h, f)
+		return
+	}
+	popups.RemoveFileFromMessage(r.h, *r.m, f)
 }
 
 // Button is a click on a Block Kit element richview drew itself: only a

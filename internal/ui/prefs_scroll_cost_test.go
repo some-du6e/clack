@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/pprof"
 	"sort"
 	"strings"
@@ -113,7 +114,8 @@ func publishScrollLibrary(l *libServer, ps []scrollLibraryPlugin) {
 // notchStats is what one wheel notch's frames cost.
 type notchStats struct {
 	frames int
-	costs  []time.Duration // each frame, layout to the end of the router's frame
+	costs  []time.Duration // each frame's CPU time, layout to the end of the router's frame (threadCPU; the clock's where there's none)
+	walls  []time.Duration // each frame by the clock
 	rows   []int           // library rows laid out in each frame
 	reads  int64           // install-state lookups during the notch
 }
@@ -252,6 +254,13 @@ func TestPrefsLibraryScrollCost(t *testing.T) {
 		}
 		defer func() { pprof.StopCPUProfile(); f.Close() }()
 	}
+	// a frame's cost is the CPU time of the thread that lays it out, not
+	// how long it took: on a runner shared with other packages' tests (a
+	// full-test) a frame also waits for the CPU, and select-line-end's
+	// full-test (45418696238) read 10.6 ms at the median by the clock
+	// against 8, its frames 5.5 to 24 ms
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	const vsync = time.Second / 60
 	var notches []notchStats
 	for n := 0; n < 10; n++ {
@@ -260,11 +269,16 @@ func TestPrefsLibraryScrollCost(t *testing.T) {
 		r0 := reads.Load()
 		vblank := time.Now().Add(vsync)
 		for i := 0; i < 120; i++ {
-			t0 := time.Now()
+			t0, c0 := time.Now(), threadCPU()
 			e.frame()
-			c := time.Since(t0)
+			wall := time.Since(t0)
+			c := wall
+			if c0 >= 0 {
+				c = threadCPU() - c0
+			}
 			ns.frames++
 			ns.costs = append(ns.costs, c)
+			ns.walls = append(ns.walls, wall)
 			ns.rows = append(ns.rows, rowsDrawn())
 			if at, ok := e.r.WakeupTime(); !ok || at.After(time.Now().Add(vsync)) {
 				break // the notch's animation ended: no frame asked for
@@ -281,7 +295,7 @@ func TestPrefsLibraryScrollCost(t *testing.T) {
 		ns.reads = reads.Load() - r0
 		notches = append(notches, ns)
 	}
-	var all []time.Duration
+	var all, walls []time.Duration
 	maxRows, frames := 0, 0
 	var lookups int64
 	for i, ns := range notches {
@@ -291,6 +305,7 @@ func TestPrefsLibraryScrollCost(t *testing.T) {
 		}
 		t.Logf("notch %d: %d frames, %s ms; rows laid out %v; %d install-state lookups", i+1, ns.frames, strings.Join(ms, " "), ns.rows, ns.reads)
 		all = append(all, ns.costs...)
+		walls = append(walls, ns.walls...)
 		frames += ns.frames
 		lookups += ns.reads
 		for _, r := range ns.rows {
@@ -298,7 +313,13 @@ func TestPrefsLibraryScrollCost(t *testing.T) {
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+	sort.Slice(walls, func(i, j int) bool { return walls[i] < walls[j] })
 	med, p90 := all[len(all)/2], all[len(all)*9/10]
+	measure := "of CPU"
+	if threadCPU() < 0 {
+		measure = "by the clock"
+	}
+	t.Logf("a frame %.1f ms %s at the median (%.1f ms by the clock)", durMS(med), measure, durMS(walls[len(walls)/2]))
 	t.Logf("%d notches: %.1f frames a notch (a 60 Hz display shows 12 in Chromium's 200 ms, 6 when a frame misses its vblank), a frame %.1f ms at the median, %.1f at p90, %.1f at most; up to %d of %d plugins' rows laid out in a frame; %d install-state lookups",
 		len(notches), float64(frames)/float64(len(notches)), durMS(med), durMS(p90), durMS(all[len(all)-1]), maxRows, len(ps), lookups)
 	if maxRows > 24 {
@@ -308,7 +329,7 @@ func TestPrefsLibraryScrollCost(t *testing.T) {
 		t.Errorf("%d install-state lookups while scrolling (each reads and hashes a plugin's files); want none", lookups)
 	}
 	if med > scrollFrameBudget {
-		t.Errorf("a scroll frame costs %.1f ms at the median; want at most %v", durMS(med), scrollFrameBudget)
+		t.Errorf("a scroll frame costs %.1f ms %s at the median; want at most %v", durMS(med), measure, scrollFrameBudget)
 	}
 	if fpn := float64(frames) / float64(len(notches)); fpn < 10 {
 		t.Errorf("%.1f frames a notch; a 60 Hz display shows 12 in its 200 ms", fpn)

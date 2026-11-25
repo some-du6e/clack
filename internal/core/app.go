@@ -157,6 +157,7 @@ type App struct {
 	mdnd       memberDNDState       // other members' Do Not Disturb (dnd_members.go)
 	mega       megaphoneState       // megaphone spaces, global and per channel (megaphone.go)
 	degraded   degradedState        // the DegradedBanner's throttles (degraded.go)
+	bbm        atomic.Bool          // the simplified layout mode is on (SetBBMMode)
 	ssugg      searchSuggState      // the window's last search's filter suggestions (search_suggest.go)
 	selected   string               // the open conversation (SetSelected, preview.go)
 	temp       map[string]int64     // temporary memberships: channel -> expiration_ts (preview.go)
@@ -1721,6 +1722,7 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	}
 	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
 	v.ReplyUserIcons = m.ReplyUserIcons
+	v.XFiles = m.XFiles
 	v.NoteFiles, v.Upload = a.noteFiles(m, false), m.Upload // note_files.go
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata

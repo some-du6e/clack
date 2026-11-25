@@ -474,7 +474,9 @@ type Server struct {
 	histMu sync.Mutex
 	// delAtts: chat.deleteAttachment calls (embeds.go)
 	delAtts []DeletedAttachment
-	hist    map[string][]slack.Message // channel -> all messages, newest first
+	// removedFiles: chat.removeFile calls (embeds.go)
+	removedFiles []DeletedAttachment
+	hist         map[string][]slack.Message // channel -> all messages, newest first
 	// quietReplies: replies PostReplyQuiet added, by channel/root ts,
 	// oldest first (pins.go)
 	quietReplies map[string][]slack.Message
@@ -2007,6 +2009,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return s.bulkLeave(f)
 	case "chat.deleteAttachment":
 		return s.deleteAttachment(f)
+	case "chat.removeFile":
+		return s.removeFileFromMessage(f)
 	case "chat.postMessage":
 		ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().Nanosecond()/1000)
 		msg := map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")}

@@ -4,6 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -40,6 +41,10 @@ type Expander interface {
 	// {memberName}": the member joins allowed_unfurl_senders (in the
 	// background).
 	AllowPreviewsFrom(member string)
+	// ImageFile is the Slack file an image's url is, as the client holds
+	// it with a download URL (AttachmentImage's getFileIdFromUrlWithState
+	// and getFileById): the hover group's Download.
+	ImageFile(url string) (*richtext.File, bool)
 }
 
 var expanderNow atomic.Pointer[expanderBox]
@@ -60,6 +65,10 @@ func SetExpander(e Expander) {
 // SetExpandable is setExpanded on the store every View reads (a menu's
 // "Hide image").
 func SetExpandable(key string, on bool) { xp().SetExpanded(key, on) }
+
+// Expandable is getObjectById on the store every View reads: key's
+// state, ok false for none (the reaction bar's isExpanded).
+func Expandable(key string) (on, ok bool) { return xp().Expanded(key) }
 
 // xp is the store in use.
 func xp() Expander {
@@ -126,6 +135,8 @@ func (x *localExp) ExpandablesGen() uint64 { return x.gen.Load() }
 func (x *localExp) PrefMemberName(id string) string { return id }
 
 func (x *localExp) AllowPreviewsFrom(string) {}
+
+func (x *localExp) ImageFile(string) (*richtext.File, bool) { return nil, false }
 
 // expGen is the store's generation as Layout compares it, with whose it
 // is (a store set later is a change too).

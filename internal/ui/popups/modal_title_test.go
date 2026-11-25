@@ -129,8 +129,8 @@ func TestModalTitleTruncates(t *testing.T) {
 		t.Errorf("a truncated long title wasn't cut with an ellipsis (lines %q)", mtLines(m))
 	}
 	o := mtModal(ModalOpts{Title: mtLong}).OldDialog()
-	if head := mtFrame(t, o); head != 70 || !o.TitleCut() {
-		t.Errorf("an OldDialog's header is %dpx, cut %v; want 70px, one line cut", head, o.TitleCut())
+	if head := mtFrame(t, o); head != 68 || !o.TitleCut() {
+		t.Errorf("an OldDialog's header is %dpx, cut %v; want c-dialog's 68px, one line cut", head, o.TitleCut())
 	}
 	// a wrapped title is never cut, a short one fits
 	w := mtModal(ModalOpts{Title: mtLong})
@@ -155,4 +155,77 @@ func mtJoin(lines []string) string {
 		b.WriteString(ln)
 	}
 	return b.String()
+}
+
+// TestModalCloseButtonPlace: c-sk-modal__close_button is absolutely
+// placed, top 20px, right 20px, with a one-line title too (Clack centred
+// it in the 70px bar, at 17px); c-dialog__close is a flex item at the
+// header's padding-top 16px, right 24px less its -8px margin (16px).
+func TestModalCloseButtonPlace(t *testing.T) {
+	m := mtModal(ModalOpts{Title: "Delete file"})
+	if head := mtFrame(t, m); head != 70 {
+		t.Fatalf("header %dpx, want 70px", head)
+	}
+	if cr := mtClose(m); cr.Min.Y != 20 || cr.Max.X != 520-20 || cr.Dx() != 36 || cr.Dy() != 36 {
+		t.Errorf("c-sk-modal: the close button is at %v, want 36px at top 20px, right 20px", cr)
+	}
+	d := mtModal(mtCDialog(ModalOpts{Title: "Delete file"}))
+	if head := mtFrame(t, d); head != 68 {
+		t.Errorf("c-dialog: header %dpx, want 68px (16px + the 36px close button + 16px)", head)
+	}
+	if cr := mtClose(d); cr.Min.Y != 16 || cr.Max.X != 520-16 || cr.Dx() != 36 {
+		t.Errorf("c-dialog: the close button is at %v, want 36px at top 16px, right 16px", cr)
+	}
+}
+
+// TestCDialogTitleWraps: a DeprecatedDialog with truncateTitle false
+// ("Membership is required in {channelName}") wraps in .c-dialog__header:
+// 16px + its lines + 16px, the close button still at the top, each line
+// in the title's width (520 − 24 − 24 − the 6px gap − the close button's
+// 28px margin box = 438px).
+func TestCDialogTitleWraps(t *testing.T) {
+	m := mtModal(mtCDialog(ModalOpts{Title: mtLong}))
+	head := mtFrame(t, m)
+	lines := mtLines(m)
+	if len(lines) < 2 {
+		t.Fatalf("the c-dialog title didn't wrap (%dpx header, lines %q)", head, lines)
+	}
+	if want := 32 + 30*len(lines); head != want {
+		t.Errorf("%d lines in a %dpx header, want %dpx", len(lines), head, want)
+	}
+	if cr := mtClose(m); cr.Min.Y != 16 || cr.Max.X != 520-16 {
+		t.Errorf("the close button is at %v, want top 16px, right 16px", cr)
+	}
+	th := theme.New(false)
+	var ops op.Ops
+	gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	for _, ln := range lines {
+		_, d := record(loose(gtx, image.Pt(1<<20, 1<<20)), func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 22, 30, theme.Black, colorsOf(th).Fg, ln, 1)
+		})
+		if d.Size.X > 438 {
+			t.Errorf("line %q is %dpx, wider than the c-dialog title's 438px", ln, d.Size.X)
+		}
+	}
+}
+
+// TestLeaveDialogsTitles: "Membership is required in {channelName}" is
+// LeaveChannelError's renderAlert, a DeprecatedDialog with truncateTitle
+// false (c-dialog metrics, the close button first, the title wrapping),
+// its channel an InlineChannelEntity (the hash icon); "Leave {group}" is
+// LeaveChannel's c-sk-modal, its private channel's lock beside the name,
+// Leave Channel focused.
+func TestLeaveDialogsTitles(t *testing.T) {
+	h := &tzHost{th: theme.New(false)}
+	m := mtShown(h, func() { MaybeLeaveChannel(h, "general", "channel", true, nil) })
+	if !m.o.CDialog || !m.o.CloseFirst || m.o.TruncateTitle || m.o.TitleIcon != "hash" || m.o.Title+m.o.TitleAfter != "Membership is required in general" {
+		t.Errorf("membership alert: cdialog %v closeFirst %v truncate %v, title %q [%s] %q", m.o.CDialog, m.o.CloseFirst, m.o.TruncateTitle, m.o.Title, m.o.TitleIcon, m.o.TitleAfter)
+	}
+	l := mtShown(h, func() { MaybeLeaveChannel(h, "plans", "private", false, func() {}) })
+	if l.o.CDialog || l.o.TruncateTitle || l.o.TitleIcon != "lock" || l.o.Title+l.o.TitleAfter != "Leave plans" {
+		t.Errorf("leave: cdialog %v truncate %v, title %q [%s] %q", l.o.CDialog, l.o.TruncateTitle, l.o.Title, l.o.TitleIcon, l.o.TitleAfter)
+	}
+	if l.o.AutoFocus == nil || l.o.AutoFocus.Label != "Leave Channel" || l.o.AutoFocus.Kind != BtnDanger {
+		t.Errorf("leave: autofocus %+v, want the danger Leave Channel", l.o.AutoFocus)
+	}
 }

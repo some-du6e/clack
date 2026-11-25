@@ -240,6 +240,9 @@ const (
 	// EventBlock is an event block (event.go): Event holds the calendar
 	// event as the card reads it.
 	EventBlock
+	// CarouselBlock is a carousel block (carousel.go): Children are its
+	// cards, Carousel its label.
+	CarouselBlock
 )
 
 // Block is one vertical unit of a document.
@@ -308,6 +311,8 @@ type Block struct {
 	Prompt *SharePrompt
 	// Event is an EventBlock's calendar event (event.go).
 	Event *Event
+	// Carousel is a CarouselBlock's label (carousel.go).
+	Carousel *Carousel
 }
 
 // Container is a container block's header and options (Slack's
@@ -445,12 +450,22 @@ type Attachment struct {
 	BotName      string
 	LinkedInText bool
 	Hidden       bool
+	// HideBorder is MessageAttachment's hideBorder (a canvas link card's
+	// EmbeddedFallbackUnfurl): no colour bar. NoMaxWidth is its
+	// unsetWidthStyle (.p-embedded_fallback_unfurl .c-message_attachment
+	// {max-width:none}): the card's width, not the 600px cap.
+	HideBorder bool
+	NoMaxWidth bool
 	// Kit: the attachment has Block Kit blocks (Slack draws it as
 	// MessageAttachmentDefaultV2: the color bar and the blocks only);
 	// they are Text[KitFrom:].
 	Kit     bool
 	KitFrom int
-	MsgTS   string
+	// HasBlocks: the attachment's blocks field is set (JS-truthy, as
+	// MessageKitAttachments reads `t.blocks`: an empty list or blocks
+	// Clack draws nothing of count), whatever Kit drew of them.
+	HasBlocks bool
+	MsgTS     string
 	// Context is the card's second line: plain spans and at most one
 	// Channel span, drawn as Slack's InlineChannelEntity (hash or, with
 	// ContextLock, lock icon + name). ContextLink is where it links.
@@ -477,6 +492,11 @@ type Attachment struct {
 	// draws such an attachment as MessageAttachmentWorkObject, an entity
 	// card, instead of an unfurl.
 	WorkObject *WorkObject
+
+	// VideoBlock: a video block's, which Slack draws as VideoBlock (u8h8),
+	// not an unfurl; BlockID is its block_id ("" without one).
+	VideoBlock bool
+	BlockID    string
 }
 
 // File is a file shared in a message.
@@ -611,6 +631,13 @@ type EmailAttachment struct {
 type Doc struct {
 	Blocks []Block
 	Jumbo  bool // emoji-only, render emoji 32px
+	// Fallback is the message's own text, converted, when its blocks
+	// drew instead and give no plain text (FromMessage: a carousel of
+	// cards): what PlainText reads then, as convertMessageToPlainText
+	// falls back to getMessageText. Plain data like the rest of Doc: a
+	// conversion again of the same message is DeepEqual to this one
+	// (messages' takeConverted).
+	Fallback []Block
 }
 
 // MemberNamer is an optional Resolver extension: a member's name as

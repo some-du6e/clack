@@ -23,6 +23,7 @@ package views
 import (
 	"context"
 	"image"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -132,7 +133,8 @@ func (v *scInvites) scWrite(fail string, f func(context.Context, *core.App) erro
 		if err := f(ctx, c); err != nil {
 			v.scPost(func() {
 				if fail != "" {
-					v.d.h.Toast(fail + friendlyErr(err))
+					log.Printf("views: Slack Connect invite action: %v", err)
+					v.d.h.Toast(strings.TrimSpace(fail)) // Slack's own failure text, nothing after it
 				}
 				if revert != nil {
 					revert()
@@ -294,38 +296,42 @@ func (v *scInvites) revokeModal(ph popups.Host, ci core.ConnectInvite) {
 		}
 	}
 	body = i18n.StripTags(body)
+	// SlackConnectRevokeInviteModal is a ConfirmationModal (client-boot
+	// Fj8r): a c-sk-modal (28px padding, the 70px title bar, the title
+	// wrapping, the close button last in Tab order) whose danger submit
+	// button has the focus (autoFocus)
+	revoke := &popups.ModalButton{Label: btn, Kind: popups.BtnDanger}
+	revoke.Do = func() bool {
+		v.scWrite("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
+			if err := c.RevokeConnectInvite(ctx, ci); err != nil {
+				return err
+			}
+			out, err := c.ConnectInvitesOutgoing(ctx) // fetchAndResetOutboundConnectInvites (McFF)
+			if err != nil {
+				// the revoke went through: the card shows it revoked
+				// (no Revoke or Copy link) though the re-read failed
+				v.data.mutate(func(d *scInvData) {
+					for i := range d.out {
+						if d.out[i].ID == ci.ID {
+							d.out[i].Status = "revoked"
+						}
+					}
+				})
+				v.d.h.Invalidate()
+				return nil
+			}
+			v.data.mutate(func(d *scInvData) { d.out = out })
+			v.d.h.Invalidate()
+			return nil
+		}, nil)
+		return true
+	}
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title: title,
-		Body:  func(gtx C) D { return v.d.para(gtx, 15, 22, wReg, v.d.p.Text, 0, body) },
-		Buttons: []*popups.ModalButton{
-			{Label: nsSC.T("Cancel"), Kind: popups.BtnOutline},
-			{Label: btn, Kind: popups.BtnDanger, Do: func() bool {
-				v.scWrite("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
-					if err := c.RevokeConnectInvite(ctx, ci); err != nil {
-						return err
-					}
-					out, err := c.ConnectInvitesOutgoing(ctx) // fetchAndResetOutboundConnectInvites (McFF)
-					if err != nil {
-						// the revoke went through: the card shows it revoked
-						// (no Revoke or Copy link) though the re-read failed
-						v.data.mutate(func(d *scInvData) {
-							for i := range d.out {
-								if d.out[i].ID == ci.ID {
-									d.out[i].Status = "revoked"
-								}
-							}
-						})
-						v.d.h.Invalidate()
-						return nil
-					}
-					v.data.mutate(func(d *scInvData) { d.out = out })
-					v.d.h.Invalidate()
-					return nil
-				}, nil)
-				return true
-			}},
-		},
-	}).OldDialog())
+		Title:     title,
+		Body:      func(gtx C) D { return v.d.para(gtx, 15, 22, wReg, v.d.p.Text, 0, body) },
+		AutoFocus: revoke,
+		Buttons:   []*popups.ModalButton{{Label: nsSC.T("Cancel"), Kind: popups.BtnOutline}, revoke},
+	}))
 }
 
 // ---- drawing ----

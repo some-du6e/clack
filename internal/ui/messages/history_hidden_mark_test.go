@@ -24,7 +24,7 @@ func hiddenMarkEnv(t *testing.T, preview bool, hide func(tss []string) (lastRead
 	ch := winEndChan
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "archive-walk", IsChannel: true, IsMember: true, NumMembers: 12})
 	e := &winEnv{h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}}}
-	base := dayBase(40, 90)
+	base := histDay()
 	for i := 0; i < 40; i++ {
 		ts := fmt.Sprintf("%d.000100", base+int64(i)*90)
 		fs.PostQuietAt(ch, "UBEN00001", fmt.Sprintf("message %d", i), ts)

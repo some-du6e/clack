@@ -194,8 +194,9 @@ func (v *SearchView) srRichOf(i int) *srCardRich {
 	r.body, r.extra = nil, nil
 	// no ViewContext: SearchResult sits under no MessageContainerContext
 	// provider, so a result's expandable keys carry none (expandable's
-	// view contexts)
-	o := richview.Options{Channel: m.Channel, TS: m.TS}
+	// view contexts); and no MessageKitAttachments: renderAttachments
+	// draws every attachment (IT2K), none past a limit
+	o := richview.Options{Channel: m.Channel, TS: m.TS, NoAttachmentLimit: true}
 	if len(body) > 0 {
 		bo := o
 		bo.Edited = m.DisplaysEdited()
@@ -382,6 +383,21 @@ func (h srCardHandler) PlainClick() {
 func (h srCardHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, window bool) {
 	if mn := NewChartMenu(h.v.h, ActionAnchor(btn, window), dv); mn != nil {
 		h.v.h.ShowOverlay(mn)
+	}
+}
+
+// The image hover group's Download and More actions: without these the
+// images here would lose them with no test going red.
+var (
+	_ richview.ImageDownloadHandler = srCardHandler{}
+	_ richview.ImageMenuHandler     = srCardHandler{}
+)
+
+// DownloadImageFile is an image's AttachmentImageActions Download on the
+// card: the image's Slack file.
+func (h srCardHandler) DownloadImageFile(f *richtext.File) {
+	if f != nil {
+		DownloadFile(h.v.h, f)
 	}
 }
 

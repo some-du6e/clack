@@ -27,8 +27,8 @@ import (
 // winEndChan is winEnv's channel.
 const winEndChan = "C0WINEND01"
 
-// winEnv is a channel of 240 messages 90 s apart, its list in the window
-// around the 41st (the newest page holds the last 50).
+// winEnv is a channel of 240 messages 90 s apart (histDay), its list in the
+// window around the 41st (the newest page holds the last 50).
 type winEnv struct {
 	h   *ctxHost
 	v   *ChannelView
@@ -53,7 +53,7 @@ func newHistEnv(t *testing.T) *winEnv {
 	ch := winEndChan
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "archive-walk", IsChannel: true, IsMember: true, NumMembers: 12})
 	e := &winEnv{h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}}}
-	base := dayBase(240, 90)
+	base := histDay()
 	for i := 0; i < 240; i++ {
 		ts := fmt.Sprintf("%d.000100", base+int64(i)*90)
 		fs.PostQuietAt(ch, "UBEN00001", fmt.Sprintf("message %d", i), ts)
@@ -65,20 +65,17 @@ func newHistEnv(t *testing.T) *winEnv {
 	return e
 }
 
-// dayBase is the first message's time for n messages every step seconds
-// that used to start 7 hours ago: the same, unless the messages would
-// cross local midnight, when they end a minute before it. A day divider
-// among the newest rows moved the list's top a divider down (full-test
-// 45517091644 at 01:32Z: "Today" over message 219 of 240).
-func dayBase(n int, step int64) int64 {
-	start := time.Now().Add(-7 * time.Hour)
-	last := start.Add(time.Duration(int64(n-1)*step) * time.Second)
-	if !sameDay(start, last) {
-		y, m, d := last.Date()
-		last = time.Date(y, m, d, 0, 0, 0, 0, time.Local).Add(-time.Minute)
-		start = last.Add(-time.Duration(int64(n-1)*step) * time.Second)
-	}
-	return start.Unix()
+// histDay is where the 6 h of the windows' synthetic history (240
+// messages 90 s apart) start: noon yesterday, local time, as the list's
+// day dividers are, so they keep to a day of their own. Started 7 h ago,
+// they took in midnight whenever the tests ran between 01:00 and 07:00,
+// and its divider sat wherever the clock had it: at 01:31:50 UTC on
+// train-238's linux-test (45304682517) it took the list's top, above
+// message 219, and TestPageKeyTakesTheDOMNames found no message row
+// there to measure.
+func histDay() int64 {
+	y, m, d := time.Now().Date()
+	return time.Date(y, m, d-1, 12, 0, 0, 0, time.Local).Unix() // yesterday by the calendar, not today's clock a day back
 }
 
 func (e *winEnv) newest() string { return e.tss[len(e.tss)-1] }

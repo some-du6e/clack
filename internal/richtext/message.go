@@ -216,6 +216,9 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 	if bs := parseBlocks(blocks); len(bs) > 0 && !blocksDrawNothing(blocks, bs) {
 		d.Blocks = c.blocks(bs)
 		d.Jumbo = richOnlyEmoji(bs)
+		if len(d.Blocks) > 0 && m.Text != "" && !blocksHaveText(d.Blocks) {
+			d.Fallback = FromMrkdwn(r, m.Text) // plain-text readers' fallback (PlainTextWith)
+		}
 	}
 	// Slack draws the blocks instead of the text whenever the message has
 	// any (shouldRenderBlocksInsteadOfText), even if they draw nothing (a
@@ -762,6 +765,7 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		}
 		att.TitleLink = SafeURL(a.TitleLink)
 		att.Text = c.attachmentText(a)
+		att.HasBlocks = len(bytes.TrimSpace(a.Blocks)) > 0 && string(bytes.TrimSpace(a.Blocks)) != "null"
 		if kb := c.topBlocks(a.Blocks); len(kb) > 0 {
 			att.Kit, att.KitFrom = true, len(att.Text)
 			att.Text = append(att.Text, kb...)

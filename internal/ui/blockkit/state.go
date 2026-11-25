@@ -180,7 +180,7 @@ func (v *Value) fields(m map[string]any) {
 		} else {
 			m["rich_text_value"] = richFromText(v.Text)
 		}
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "password":
 		m["value"] = nul(textValue(v.Type, v.Text))
 	case "file_input":
 		fs := v.Files

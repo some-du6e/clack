@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"image"
+	"log"
 	"math"
 	"time"
 
@@ -105,7 +106,7 @@ func (a *App) removeVIP(user string, done func(error)) {
 func (a *App) prefWritten(err error, done func(error)) {
 	a.Post(func() {
 		if err != nil {
-			a.Toast("Couldn't save that preference: " + err.Error())
+			log.Printf("ui: users.prefs.set: %v", err) // setUserPrefByApi: optimistic, nothing on screen when it fails
 		}
 		if done != nil {
 			done(err)

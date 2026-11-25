@@ -3,6 +3,7 @@ package popups
 import (
 	"context"
 	"image"
+	"log"
 	"strings"
 	"time"
 
@@ -176,7 +177,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	case c.Preview:
 		items = items[:len(items)-1] // the trailing separator: no Leave
 	case dm:
-		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }}.In(nsMenu))
+		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actClose(h, convID) }}.In(nsMenu))
 	default:
 		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }}.In(nsMenu))
 	}
@@ -218,10 +219,10 @@ func ChannelMenuAction(h Host, convID, key string) func() {
 	case "toggle_mute":
 		return func() { actToggleMute(h, convID, noun) }
 	case "close":
-		return func() { actLeave(h, convID, "Conversation closed") }
+		return func() { actClose(h, convID) }
 	case "leave":
 		if dm {
-			return func() { actLeave(h, convID, "Conversation closed") }
+			return func() { actClose(h, convID) }
 		}
 		name := convTitle(h, c)
 		if name == "" {
@@ -366,7 +367,7 @@ func actToggleStar(h Host, ch, noun string) {
 	star := !cxStarred(h, ch)
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxStar(ctx, h, ch, star) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: stars.add/remove: %v", err) // updateStar: the local star reverts, no toast
 			return
 		}
 		cxNoteStar(ch, star)
@@ -387,7 +388,7 @@ func actToggleMute(h Host, ch, noun string) {
 	mute := !actIsMuted(h, ch)
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxMute(ctx, h, ch, mute) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: mute: %v", err) // setChannelNotificationOverrideAndCallApi: reverted and logged, no toast
 			return
 		}
 		actMuteSet[ch] = mute
@@ -430,7 +431,7 @@ func leaveChannel(h Host, convID, kind, name string, general bool) {
 	if kind == "private" {
 		msg = "You left " + name
 	}
-	MaybeLeaveChannel(h, name, kind, general, func() { actLeave(h, convID, msg) })
+	MaybeLeaveChannel(h, name, kind, general, func() { actLeave(h, convID, name, msg) })
 }
 
 // MaybeLeaveChannel is maybeLeaveChannel's asking part: the #general
@@ -439,8 +440,12 @@ func leaveChannel(h Host, convID, kind, name string, general bool) {
 // Leave button runs it too (useChannelExplorer onClickLeave).
 func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 	if general {
-		// LeaveChannelError (the channels I18n) in a DeprecatedAlertDialog
-		m := NewModal(h, ModalOpts{Title: nsChannels.T("Membership is required in {channelName}", "channelName", "#"+name), EnterSubmits: true,
+		// LeaveChannelError (the channels I18n): renderAlert, a
+		// DeprecatedDialog with truncateTitle false (c-dialog metrics, the
+		// close button first, the title wrapping), its title the channel's
+		// InlineChannelEntity (a public channel's hash icon and name)
+		pre, post := entityTitle(nsChannels.RT("Membership is required in {channelName}", "channelName", "#"), "channelName")
+		m := NewModal(h, ModalOpts{Title: pre, TitleIcon: "hash", TitleAfter: name + post, CDialog: true, CloseFirst: true, EnterSubmits: true,
 			Body: func(gtx layout.Context) layout.Dimensions {
 				th := h.Theme()
 				return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg,
@@ -454,20 +459,96 @@ func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 		leave()
 		return
 	}
-	// LeaveChannel (the groups I18n)
-	Confirm(h, nsGroups.T("Leave {group}", "group", name), nsGroups.T("When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited."),
-		nsGroups.T("Leave Channel"), true, nil, leave)
+	// LeaveChannel (the groups I18n): a c-sk-modal whose ModalTitleBar
+	// title is "Leave {group}" with the channel's InlineChannelEntity (a
+	// private channel's lock and name), Cancel and the autofocused danger
+	// Leave Channel
+	pre, post := entityTitle(nsGroups.RT("Leave {group}", "group", "#"), "group")
+	ok := &ModalButton{Label: nsGroups.T("Leave Channel"), Kind: BtnDanger, Do: func() bool { leave(); return true }}
+	th := h.Theme()
+	h.ShowOverlay(NewModal(h, ModalOpts{Title: pre, TitleIcon: "lock", TitleAfter: name + post, AutoFocus: ok,
+		Body: func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg,
+				nsGroups.T("When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited."), 0)
+		},
+		Buttons: []*ModalButton{{Label: nsDialog.T("Cancel"), Kind: BtnOutline}, ok}}))
 }
 
-func actLeave(h Host, convID, okMsg string) {
+// entityTitle is an i18n title's text before and after its arg (a channel
+// entity the modal draws as TitleIcon and TitleAfter).
+func entityTitle(parts []i18n.Part, arg string) (pre, post string) {
+	seen := false
+	for _, p := range parts {
+		switch {
+		case p.Arg == arg:
+			seen = true
+		case seen:
+			post += p.Text
+		default:
+			pre += p.Text
+		}
+	}
+	return pre, post
+}
+
+// LeaveConversation is /leave's submitLeave for convID (the composer's;
+// core.LeaveCommand picked it): close, for a DM or group DM, is
+// closeChannelApi (actClose); a channel goes through maybeLeaveChannel
+// (leaveChannel: the #general alert, a private channel's confirmation).
+func LeaveConversation(h Host, convID string, close bool) {
+	if close {
+		actClose(h, convID)
+		return
+	}
+	var c core.Conv
+	if a := h.Core(); a != nil {
+		c, _ = a.Conv(convID)
+	}
+	name := convTitle(h, c)
+	if name == "" {
+		name = convID
+	}
+	leaveChannel(h, convID, c.Kind, name, c.IsGeneral)
+}
+
+// actClose is closeChannelApi for a DM or group DM (core.CloseConversation:
+// conversations.close, submitClose's "Close an MPIM, IM, or code
+// channel"): Close conversation, and /leave in one. A failed close is
+// submitClose's, which nothing catches: no alert (Clack logs it).
+func actClose(h Host, convID string) {
 	a := h.Core()
 	if a == nil {
 		h.Toast("Not connected yet")
 		return
 	}
-	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Leave(ctx, convID) }, func(_ struct{}, err error) {
+	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.CloseConversation(ctx, convID) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: conversations.close: %v", err)
+			return
+		}
+		h.Toast("Conversation closed")
+		h.Navigate("threads")
+	})
+}
+
+// actLeave leaves channel convID (name). A failed leave is
+// maybeLeaveChannel's leaveAndHandleErrors (LeaveChannelError,
+// LeaveFailed); name "" (no caller now: DMs close through actClose) only
+// logs, as submitClose's failures do.
+func actLeave(h Host, convID, name, okMsg string) {
+	a := h.Core()
+	if a == nil {
+		h.Toast("Not connected yet")
+		return
+	}
+	leave := func(ctx context.Context) error { return a.Leave(ctx, convID) }
+	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, leave(ctx) }, func(_ struct{}, err error) {
+		if err != nil {
+			if name == "" {
+				log.Printf("popups: conversations.close: %v", err)
+				return
+			}
+			LeaveFailed(h, convID, name, err, leave)
 			return
 		}
 		h.Toast(okMsg)
@@ -762,7 +843,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			}
 			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetDND(ctx, 0) }, func(_ struct{}, err error) {
 				if err != nil {
-					h.Toast("Couldn't do that: " + errText(err))
+					log.Printf("popups: dnd.endSnooze: %v", err) // endDndSnooze logs "Failed to turn off DND (SNOOZE)", no toast
 					return
 				}
 				actDNDUntil = time.Time{}
@@ -833,7 +914,7 @@ func actSnooze(h Host, n int) {
 	}
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetDND(ctx, n) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: dnd.setSnooze: %v", err) // snoozeNotifications logs "Failed to snooze notifications", no toast
 			return
 		}
 		actDNDUntil = time.Now().Add(time.Duration(n) * time.Minute)
@@ -881,7 +962,7 @@ func actNewPauseModal(h Host) *Modal {
 		})
 		return layout.Dimensions{Size: image.Pt(w, dp(gtx, 176))}
 	}
-	m = NewModal(h, ModalOpts{Title: nsDND.T("Pause Notifications"), PadX: 24, HeadH: 66, Body: body, Buttons: []*ModalButton{
+	m = NewModal(h, ModalOpts{Title: nsDND.T("Pause Notifications"), CDialog: true, PadX: 24, HeadH: 66, Body: body, Buttons: []*ModalButton{
 		{Label: nsDND.T("Save"), Kind: BtnPrimary, Do: func() bool {
 			until, n := dtAt(day.Day, tm.Mins), time.Now()
 			if !until.After(n) {

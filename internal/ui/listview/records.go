@@ -147,7 +147,7 @@ func (c *ctl) recordWrite(f func(ctx context.Context, a *core.App) error) {
 		ctx, cancel := ctxTimeout(30 * time.Second)
 		defer cancel()
 		if err := f(ctx, a); err != nil {
-			c.h.Toast("Something went wrong: " + err.Error())
+			popups.FailedToast(c.h, "listview: Something went wrong", err)
 		}
 		c.h.Invalidate()
 	}()

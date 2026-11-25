@@ -317,8 +317,8 @@ func (a *App) startUpdateDownload(force bool) {
 
 // installUpdate is the user's choice to restart into the update ("Restart
 // Clack" in the update dialog, "Restart to Apply Update" in the menus,
-// Preferences' "Install and restart"): the only way an update is
-// installed.
+// Preferences' "Install and restart"); otherwise a downloaded update goes
+// in as Clack quits (InstallUpdateOnQuit).
 func (a *App) installUpdate() {
 	u := &a.update
 	if u.phase != updReady && u.phase != updFailed || a.opts.InstallUpdate == nil {
@@ -347,6 +347,21 @@ func (a *App) installUpdate() {
 			a.Invalidate()
 		})
 	}()
+}
+
+// InstallUpdateOnQuit installs a downloaded update the user didn't
+// restart into (Options.InstallUpdateOnQuit), as Slack desktop's update
+// is applied when it quits: without it, a Mac that quit and reopened
+// Clack ran the build it was installed with, downloading the update anew
+// every session (Karim's stayed on alpha.139 for 19 releases). Call it
+// after Run returns; tag is the update it installed ("" for none).
+func (a *App) InstallUpdateOnQuit() (tag string, err error) {
+	u := &a.update
+	f := a.opts.InstallUpdateOnQuit
+	if f == nil || u.phase != updReady || u.info.Tag == "" {
+		return "", nil
+	}
+	return u.info.Tag, f(u.info)
 }
 
 // updateChecksOn is Preferences > Clack > "Check for updates"

@@ -141,6 +141,9 @@ type View struct {
 	// remHot is the attachment remove button under the pointer (its
 	// index in removes, +1), for its "Remove preview" tooltip
 	remHot int
+	// spinHot is the pending upload spinner under the pointer (its index
+	// in pendSpins, +1), for its "Uploading… n%" tooltip
+	spinHot int
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -161,11 +164,19 @@ type View struct {
 	// tables: each data_table's page, sort and filter (datatable.go), by
 	// its block_id
 	tables map[any]*tableState
+	// carousels: each carousel's scroller (carousel.go), by block_id
+	carousels map[string]*carouselState
+	// layH is the handler of the Layout under way (its carousels' cards
+	// lay out with it)
+	layH   Handler
 	redraw bool // ask for a frame after this frame's events
 	// imgMenu: the handler opens AttachmentImageActions' menu
 	// (ImageMenuHandler), so the hover group has its More actions; a
 	// host without one gets no More (a button that would do nothing)
 	imgMenu bool
+	// imgDL: the handler downloads an image's Slack file
+	// (ImageDownloadHandler), so the group can lead with Download
+	imgDL bool
 	// menuImg is the image whose group's More menu is open: the group
 	// stays up until the host says the menu went
 	// (p-attachment_image_actions--menu-open)
@@ -288,6 +299,13 @@ func (v *View) Doc() richtext.Doc { return v.doc }
 // state (selection, component states) is kept. For rows that have been
 // off screen for a while.
 func (v *View) Release() {
+	for _, c := range v.carousels { // the cards' views hold their own
+		for _, cv := range c.cards {
+			if cv != nil {
+				cv.Release()
+			}
+		}
+	}
 	if !v.recorded && len(v.d.frags) == 0 {
 		return
 	}
@@ -345,7 +363,7 @@ func (v *View) handAreas(gtx layout.Context, dates bool) {
 		if hr.r.Empty() {
 			continue
 		}
-		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly {
+		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly || v.inert(hr.t) {
 			continue // no click: the text cursor stays
 		}
 		s := clip.Rect(hr.r).Push(gtx.Ops)
@@ -376,7 +394,7 @@ func (v *View) handAreas(gtx layout.Context, dates bool) {
 // (ChannelMentionView; .document a:not(.c-link):hover{cursor:pointer});
 // a canvas's date only for an editor (dates).
 func (v *View) handFrag(f *frag, dates bool) bool {
-	if f.target < 0 {
+	if f.target < 0 || v.inert(f.target) {
 		return false
 	}
 	if int(f.target) >= len(v.d.targets) {
@@ -400,8 +418,10 @@ func (v *View) selRange() (int32, int32) {
 
 // Layout draws the doc at the constraints' max width and returns its size.
 func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimensions {
+	v.layH = h
 	v.dark = st != nil && st.Palette.Dark
 	_, v.imgMenu = h.(ImageMenuHandler)
+	_, v.imgDL = h.(ImageDownloadHandler)
 	if st != nil {
 		v.hitImgs = st.Images
 	}
@@ -564,11 +584,13 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			}
 		}
 	}
-	for i := range v.d.spinners {
-		v.d.spinners[i].draw(gtx, st)
-	}
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
+	}
+	// spinners over the components: a pending pillow's PendingFilesSpinner
+	// sits on its MessageFile's corner, and a component's fill would hide it
+	for i := range v.d.spinners {
+		v.d.spinners[i].draw(gtx, st)
 	}
 	if v.d.ells > 0 {
 		v.callEll.Add(gtx.Ops)
@@ -593,6 +615,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.drawFileBars(gtx, st, false) // file_actions.go
 	v.drawHoverLayers(gtx, st)
 	v.drawRemoves(gtx, st)
+	v.pendSpinTip(gtx, st) // pending.go
 	if v.opts.Dim {
 		opac.Pop()
 	}
@@ -608,8 +631,9 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.textCursors(gtx, size) // the text cursor, the card blocks' boxes left to their own (cursors.go)
 	v.regionCursors(gtx)     // the card blocks' text's I-beam, hands and the charts' items (cursors.go)
 	v.handAreas(gtx, false)
-	v.drawBusy(gtx, st)     // the writing buttons whose call is out (writes.go)
-	v.drawEventRefresh(gtx) // an event card's next change of state (event.go)
+	v.drawCarousels(gtx, st, v.layH) // the carousels' cards and arrows (carousel.go)
+	v.drawBusy(gtx, st)              // the writing buttons whose call is out (writes.go)
+	v.drawEventRefresh(gtx)          // an event card's next change of state (event.go)
 	// Element runs (Options.Elements) go last: their input areas must be
 	// above the cursor/hit areas of cards and links registered above.
 	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {
@@ -717,6 +741,9 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if v.playing == nil {
 		v.playing = map[string]bool{}
 	}
+	if v.carousels == nil {
+		v.carousels = map[string]*carouselState{}
+	}
 	if v.tables == nil {
 		v.tables = map[any]*tableState{}
 	}
@@ -724,7 +751,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	// messages_theme != "dense")
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
-		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations, tables: v.tables}
+		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations, tables: v.tables, carousels: v.carousels}
 	if v.opts.FillBlocks {
 		l.filled = 1 // a view's blocks (FillBlocks)
 	}
@@ -753,6 +780,11 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	}
 	for i := range v.d.imgs {
 		if y := v.d.imgs[i].r.Max.Y; y > h {
+			h = y
+		}
+	}
+	for i := range v.d.carousels { // the cards are Views of their own: the scroller is the carousel's box
+		if y := v.d.carousels[i].r.Max.Y; y > h {
 			h = y
 		}
 	}
@@ -785,6 +817,9 @@ func (d *display) contentWidth(w int) int {
 	}
 	for i := range d.removes {
 		maxX = max(maxX, d.removes[i].r.Max.X)
+	}
+	for i := range d.carousels { // the cards are Views of their own: the scroller is the carousel's box
+		maxX = max(maxX, d.carousels[i].r.Max.X)
 	}
 	return min(maxX, w)
 }
@@ -892,9 +927,16 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			v.drawBox(ops, b, css)
 		}
 	}
-	if static {
+	if hp == 0 {
 		for i := range v.d.overlayIcons {
 			o := &v.d.overlayIcons[i]
+			if o.comp != comp || !v.rectInClip(o.r) {
+				continue
+			}
+			if o.art {
+				paintArtAt(ops, o.name, o.r, o.alpha)
+				continue
+			}
 			paintIconAt(ops, o.name, o.r, o.col)
 		}
 	}
@@ -1318,7 +1360,7 @@ func (v *View) lineAt(p f32.Point) int {
 	lines := v.d.lines
 	x, y := p.X, int(p.Y)
 	best := -1
-	bestD := 1 << 30
+	bestD := 1 << 62
 	for i, ln := range lines {
 		if ln.f1 <= ln.f0 {
 			continue
@@ -1338,10 +1380,12 @@ func (v *View) lineAt(p f32.Point) int {
 		} else if x > f1.x+f1.w {
 			dx = int(x - f1.x - f1.w)
 		}
-		d := dy*4 + dx/8
-		if dy == 0 {
-			d = dx / 8
-		}
+		// the nearest line by its block offset, as Chromium's
+		// PositionForPoint takes it (InlineCursor::PositionForPoint
+		// InInlineFormattingContext); the horizontal distance only between
+		// lines as near (side-by-side fields on one row): a press right of
+		// a short line takes that line's end, never a longer neighbour's
+		d := dy<<16 + min(dx, 1<<16-1)
 		if d < bestD {
 			bestD, best = d, i
 		}
@@ -1358,22 +1402,40 @@ func bytesForRunes(s string, r int) int {
 	return b
 }
 
+// noLinkingKind reports whether a target of kind k is one noLinking takes
+// the pointer from: a mention's, a link's, a date's.
+func noLinkingKind(k targetKind) bool {
+	switch k {
+	case tLink, tUser, tChannel, tUsergroup, tDate:
+		return true
+	}
+	return false
+}
+
 // targetAt returns the clickable target under p.
 func (v *View) targetAt(p f32.Point) int16 {
 	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
 		if f.target >= 0 && fragHas(f, p) {
+			if v.inert(f.target) {
+				continue // noLinking: drawn, not a link (Options.NoLinking)
+			}
 			return f.target
 		}
 	}
 	// Later hits are on top (cards contain their images).
 	for i := len(v.d.hits) - 1; i >= 0; i-- {
-		if pt.In(v.d.hits[i].r) {
+		if pt.In(v.d.hits[i].r) && !v.inert(v.d.hits[i].t) { // a mention's pill too
 			return v.d.hits[i].t
 		}
 	}
 	return -1
+}
+
+// inert reports whether Options.NoLinking takes target t's pointer.
+func (v *View) inert(t int16) bool {
+	return v.opts.NoLinking && t >= 0 && int(t) < len(v.d.targets) && noLinkingKind(v.d.targets[t].kind)
 }
 
 // selectWord selects what a double click at off does (HandleDoubleClick):
@@ -1666,7 +1728,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 						}
 					}
 				}
-				if pc, ok := h.(PlainClicker); ok && (v.press < 0 || v.menuOnlyAt(v.press)) && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) {
+				if pc, ok := h.(PlainClicker); ok && (v.press < 0 || v.menuOnlyAt(v.press)) && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) && !v.inCarousel(v.pressPos) {
 					if d := e.Position.Sub(v.pressPos); d.X*d.X+d.Y*d.Y <= 16 {
 						pc.PlainClick()
 					}
@@ -1707,6 +1769,10 @@ func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
 		v.remHot, v.copyTipAt = b, gtx.Now
 		v.copyGen = theme.TipGen()
 	}
+	if b := v.pendSpinAt(p) + 1; b != v.spinHot {
+		v.spinHot, v.copyTipAt = b, gtx.Now
+		v.copyGen = theme.TipGen()
+	}
 	if f := v.emojiAt(p); f != v.tipFrag {
 		v.tipFrag, v.tipAt = f, gtx.Now
 		v.tipGen = theme.TipGen()
@@ -1721,7 +1787,7 @@ func (v *View) left() {
 	v.vizHot, v.vizIdx = 0, -1
 	// the buttons under it are left too: a return waits their tooltip's
 	// delay again (mouseleave)
-	v.copyHot, v.secHot, v.expHot, v.barHot, v.remHot = 0, 0, 0, 0, 0
+	v.copyHot, v.secHot, v.expHot, v.barHot, v.remHot, v.spinHot = 0, 0, 0, 0, 0, 0
 	if !v.dragging {
 		v.hover = -1
 	}
@@ -2101,6 +2167,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tRemove:
 		if rm, ok := h.(AttachmentRemover); ok && tg.id != "" {
 			rm.RemoveAttachment(tg.id)
+		}
+	case tRemoveFile:
+		if rm, ok := h.(FileRemover); ok && tg.file != nil {
+			rm.RemoveFile(tg.file, tg.id == "delete")
 		}
 	case tBot:
 		if bo, ok := h.(BotOpener); ok && tg.id != "" {

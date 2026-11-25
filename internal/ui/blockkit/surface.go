@@ -176,6 +176,21 @@ func (s *surfHandler) EventAction(act string, ev *richtext.Event, ch, ts string,
 	popups.EventAction(s.h, act, ev, ch, ts, popups.ActionAnchor(btn, window))
 }
 
+// The image hover group's Download and More actions: without these the
+// images here would lose them with no test going red.
+var (
+	_ richview.ImageDownloadHandler = (*surfHandler)(nil)
+	_ richview.ImageMenuHandler     = (*surfHandler)(nil)
+)
+
+// DownloadImageFile is an image's AttachmentImageActions Download: the
+// image's Slack file.
+func (s *surfHandler) DownloadImageFile(f *richtext.File) {
+	if f != nil {
+		popups.DownloadFile(s.h, f)
+	}
+}
+
 // ImageMenu is an image's More actions (AttachmentImageActions' menu, which
 // Slack's app views keep): Copy link, and Hide image when it has an
 // expandable.
@@ -203,13 +218,16 @@ func (s *surfHandler) Button(b richtext.Button) {
 
 // Surface is a Block Kit surface: a modal's body or an App Home tab.
 type Surface struct {
-	h      Host
-	view   *core.View
-	blocks []Block
-	vals   Values
-	errs   map[string]string // block_id → error (response_action errors / validation)
-	ws     map[string]*ew
-	texts  map[string]*richview.View
+	h Host
+	// confirm, when set (a Block Kit modal's surface), shows its
+	// elements' confirm objects (confirmIn)
+	confirm func(c *Confirm, ok, deny func())
+	view    *core.View
+	blocks  []Block
+	vals    Values
+	errs    map[string]string // block_id → error (response_action errors / validation)
+	ws      map[string]*ew
+	texts   map[string]*richview.View
 	// prevTexts are the last view's block views, which a views.update
 	// takes over by key (textOf): ViewBlocks' SUIRenderer keeps each item
 	// by its React key, so ContainerBlock's collapse state survives
@@ -373,7 +391,18 @@ func (s *Surface) applyState(raw json.RawMessage) {
 }
 
 // owner implementation
-func (s *Surface) host() Host     { return s.h }
+func (s *Surface) host() Host { return s.h }
+
+// confirmIn shows an element's confirm object where the surface's
+// container does (a Block Kit modal: its in-card speed bump); false when
+// the surface has none and the caller opens the confirm dialog.
+func (s *Surface) confirmIn(c *Confirm, ok, deny func()) bool {
+	if s.confirm == nil {
+		return false
+	}
+	s.confirm(c, ok, deny)
+	return true
+}
 func (s *Surface) values() Values { return s.vals }
 func (s *Surface) channel() string {
 	if s.view != nil {
@@ -667,7 +696,9 @@ func (s *Surface) blockMargins(b *Block, first bool) (top, bottom, inner, innerB
 
 // kitMargins are the margins of block b's own CSS where no surface
 // overrides them, in dp (as blockMargins): the newer blocks' and
-// UnsupportedBlockFallback's.
+// UnsupportedBlockFallback's. A video block has none here: richview's
+// VideoBlock draws its body's padding (.p-video_block__body{padding:8px
+// 0}, videoblock.go), so the surface adds nothing around it.
 func kitMargins(b *Block) (top, bottom, inner, innerBottom int) {
 	switch b.Type {
 	case "alert", "card", "carousel":
@@ -676,8 +707,6 @@ func kitMargins(b *Block) (top, bottom, inner, innerBottom int) {
 		return 16, 8, 0, 0 // .containerBlock{margin-top:16px;margin-bottom:8px}
 	case "data_table":
 		return 4, 4, 0, 0 // .dataTableBlockOuterContainer{margin-top:4px;margin-bottom:4px}
-	case "video":
-		return 0, 0, 8, 8 // VideoBlock's root, .p-video_block__body{padding:8px 0}
 	}
 	if !richtext.Renderable(b.Type) && len(b.Nested) == 0 {
 		// UnsupportedBlockFallback: .fallback{margin:8px 0}; a fallback

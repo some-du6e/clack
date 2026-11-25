@@ -139,6 +139,19 @@ func (a *App) ToastLink(parts []i18n.Part, href string, d time.Duration) {
 	a.toast.linkHref = href
 }
 
+// ToastRetry is ToastParts with Toast's default 6s whose <link> run calls
+// retry instead of opening a link (Slack's Link with an onClick): the
+// search channel list's ErrorToast (client-boot-render, build 83aff18a:
+// "Couldn’t join {channelName}." … <link>Try again</link>, the warning
+// svgIcon).
+func (a *App) ToastRetry(parts []i18n.Part, icon string, retry func()) {
+	a.ToastParts(parts, icon, color.NRGBA{}, 6*time.Second)
+	a.toast.linkDo = retry
+}
+
+// toastDoHref marks the link run ToastRetry's retry answers.
+const toastDoHref = "\x00retry"
+
 // slackRed is --dt_color-brand-core-slack-red (.sk_raspberry_red).
 var slackRed = color.NRGBA{R: 0xe0, G: 0x1e, B: 0x5a, A: 0xff}
 
@@ -221,6 +234,8 @@ func (a *App) wrapToastParts(gtx layout.Context, parts []i18n.Part, maxW int) ([
 		switch {
 		case p.Tag == "a":
 			href = toastHelpURL
+		case p.Tag == "link" && a.toast.linkDo != nil:
+			href = toastDoHref
 		case p.Tag == "link" && a.toast.linkHref != "":
 			href = a.toast.linkHref
 		}
@@ -262,6 +277,12 @@ func (a *App) toastLink(gtx layout.Context, r image.Rectangle, href string) {
 		ev, ok := a.toastClick.Update(gtx.Source)
 		if !ok {
 			break
+		}
+		if ev.Kind == gesture.KindClick && href == toastDoHref {
+			if do := a.toast.linkDo; do != nil {
+				do()
+			}
+			continue
 		}
 		if ev.Kind == gesture.KindClick && !a.FollowLink(href, false) {
 			openURL(href) // Slack's Link: a Slack link in the client, the rest in the browser

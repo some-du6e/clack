@@ -156,6 +156,39 @@ func (a *App) DeleteAttachment(ctx context.Context, ch, ts, id string) error {
 	return nil
 }
 
+// RemoveFileFromMessage is chatRemoveFile (boot-shared QD+H):
+// chat.removeFile {channel, ts, file} takes the file out of the message
+// without deleting it. Slack's store hears of it from the socket's
+// message_changed; the stored message here drops the file once the
+// answer is ok, the same change, so a session without the socket shows
+// it too.
+func (a *App) RemoveFileFromMessage(ctx context.Context, ch, ts, fileID string) error {
+	// the viewer's own click each time: never the guard's backoff (Slack
+	// sends every one)
+	if err := a.C.Call(slack.NoBackoff(ctx), "chat.removeFile", url.Values{"channel": {ch}, "ts": {ts}, "file": {fileID}}, nil); err != nil {
+		return err
+	}
+	if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) {
+		kept := x.Files[:0:0]
+		for _, f := range x.Files {
+			if f.ID != fileID {
+				kept = append(kept, f)
+			}
+		}
+		x.Files = kept
+		xs := x.XFiles[:0:0]
+		for _, id := range x.XFiles {
+			if id != fileID {
+				xs = append(xs, id)
+			}
+		}
+		x.XFiles = xs
+	}); ok {
+		a.emitUpdate(ch, &upd)
+	}
+	return nil
+}
+
 // Mark moves the read cursor of ch to ts and returns the new unread state.
 // Marking an earlier ts keeps the conversation unread (see MarkUnread).
 func (a *App) Mark(ctx context.Context, ch, ts string) (Count, error) {
@@ -775,14 +808,18 @@ func (a *App) SetDND(ctx context.Context, minutes int) error {
 	return a.C.Call(ctx, "dnd.endSnooze", nil, nil)
 }
 
-// Command runs a slash command as executeCommand does: /topic and, in a
+// Command runs a slash command as executeCommand does: CheckCommand first
+// (handleSlashCommand's workspace pick, isSlashCommandEnabled;
+// slash_enabled.go) unless the caller ran it, then /topic and, in a
 // channel, /invite locally (Slack's slash-commands-local), the others
 // through chat.command (command.go: client_token, so a modal the app
 // opens shows here).
 func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error) {
-	cmd := o.Command
-	if !strings.HasPrefix(cmd, "/") && !strings.HasPrefix(cmd, "\uff0f") { // a full-width slash stays (executeCommand's N)
-		cmd = "/" + cmd
+	cmd := commandWord(o.Command)
+	if !o.Checked {
+		if err := a.CheckCommand(ctx, &o); err != nil {
+			return CommandResult{}, err
+		}
 	}
 	// executeCommand's local commands (Zrd3 getCommands, slash-commands-
 	// local), by the matched command's canonical name; /shrug and /me are

@@ -254,6 +254,87 @@ func (a *App) MsgCommand(ctx context.Context, cmd string, params []CommandParam,
 	return LocalTarget{Conv: id}, nil
 }
 
+// LeaveTarget is what /leave does with a conversation.
+type LeaveTarget struct {
+	Conv string
+	// Close: a DM or group DM, closed (closeChannelApi); else the channel
+	// is left through maybeLeaveChannel (the shell's: #general's alert, a
+	// private channel's confirmation)
+	Close bool
+}
+
+// LeaveCommand is /leave (/close, /part; slash-commands-local OOqF
+// leaveCommand) in ch for the parsed arguments:
+//
+//   - no arguments: ch;
+//   - a first argument that is no mention, a member without a DM
+//     (getImIdByMemberId), or no id: "A valid channel name is required.";
+//   - another workspace's channel: "*{cmd}* can’t leave channels outside
+//     this workspace.";
+//
+// then submitLeave: a conversation the store doesn't hold fails
+// (maybeLeaveChannel's "Non-existent channel ID", an unknown error to
+// handleSlashCommand); a DM or group DM closes (closeChannelApi: one
+// already closed stays so, LeaveTarget{}); a channel goes to
+// maybeLeaveChannel.
+func (a *App) LeaveCommand(cmd, ch string, params []CommandParam) (LeaveTarget, error) {
+	invalid := customErr(cmd, "A valid channel name is required.")
+	id := ch
+	if len(params) > 0 {
+		p := params[0]
+		if p.Type != "mention" {
+			return LeaveTarget{}, invalid
+		}
+		id = p.Value
+		if LooksLikeMemberID(id) {
+			id = a.imWith(id)
+		}
+		if id == "" {
+			return LeaveTarget{}, invalid
+		}
+		if c, ok := a.convInfo(id); ok && c.otherTeam {
+			return LeaveTarget{}, customErr(cmd, "*"+cmd+"* can’t leave channels outside this workspace.")
+		}
+	}
+	c, ok := a.S.Conv(id)
+	if !ok {
+		return LeaveTarget{}, &CommandError{Command: cmd, Kind: CmdUnknownAPIError}
+	}
+	if c.IsIM || c.IsMPIM {
+		if !a.dmOpen(id) { // pS2E nT: is_open
+			return LeaveTarget{}, nil
+		}
+		return LeaveTarget{Conv: id, Close: true}, nil
+	}
+	return LeaveTarget{Conv: id}, nil
+}
+
+// imWith is getImIdByMemberId: the viewer's DM with member ("" without
+// one).
+func (a *App) imWith(member string) string {
+	a.S.RLock()
+	defer a.S.RUnlock()
+	for id, c := range a.S.Convs {
+		if c.IsIM && c.User == member {
+			return id
+		}
+	}
+	return ""
+}
+
+// CloseConversation is closeChannelApi's submitClose (wqjU dP, "Close an
+// MPIM, IM, or code channel"): conversations.close {channel} for a DM or
+// a group DM, which stays known (search, the switcher) and comes back on
+// a new message.
+func (a *App) CloseConversation(ctx context.Context, ch string) error {
+	if err := a.C.Call(ctx, "conversations.close", url.Values{"channel": {ch}}, nil); err != nil {
+		return err
+	}
+	a.markDMClosed(ch)
+	a.emit(Event{Type: "conv_removed", Channel: ch})
+	return nil
+}
+
 // joinToSwitch is joinAndSwitchToChannel's join (KcgN over yOEk
 // joinChannel): conversations.join unless the viewer is in the channel;
 // an archived channel (is_archived) is shown anyway.

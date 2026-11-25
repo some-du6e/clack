@@ -304,7 +304,7 @@ func (b *backend) start(a *App) {
 		t0 := time.Now()
 		if err := b.core.Boot(b.ctx); err != nil {
 			log.Printf("ui: boot: %v", err)
-			a.Post(func() { a.Toast("Couldn't connect to Slack: " + err.Error()) })
+			a.Post(func() { a.Toast("We had some trouble connecting.") }) // Slack's connection trouble text; the error is logged above
 		}
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
@@ -1933,10 +1933,19 @@ func (b *backend) setMuted(ch string, muted bool) {
 	}()
 }
 
+// leave leaves channel ch; a failure is maybeLeaveChannel's
+// leaveAndHandleErrors (popups.LeaveFailed: LeaveChannelError for a coded
+// answer, nothing for any other failure).
 func (b *backend) leave(ch string) {
+	name := ""
+	if c := b.m.conv(ch); c != nil {
+		name = c.Name
+	}
 	go func() {
 		if err := b.core.Leave(b.ctx, ch); err != nil && b.app != nil {
-			b.app.Post(func() { b.app.Toast("Couldn't leave: " + err.Error()) })
+			b.app.Post(func() {
+				popups.LeaveFailed(b.app, ch, name, err, func(ctx context.Context) error { return b.core.Leave(ctx, ch) })
+			})
 		}
 	}()
 }

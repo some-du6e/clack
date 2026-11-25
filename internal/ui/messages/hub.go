@@ -91,6 +91,11 @@ type model struct {
 	// the message) while a load was out: the answer takes the reactions
 	// over its own copy (keepLive)
 	liveReact map[string]liveUpdate
+	// liveReplace: Slack's copies of sends confirmed while a load was out,
+	// by the pending ts they replaced, where the model held neither copy
+	// (noteReplace): the answer takes each in the pending copy's place, or
+	// where it reaches (keepLive)
+	liveReplace map[string]liveUpdate
 
 	// failed loads back off (see backoff); no retries at all after auth fails
 	fails, olderFails     int
@@ -1156,7 +1161,29 @@ func (m *model) noteLive(ts string, gone bool) {
 		m.live = map[string]bool{}
 	}
 	m.live[ts] = gone
-	delete(m.livePlace, ts) // the model's entry (or its deletion) is newer
+	delete(m.livePlace, ts)   // the model's entry (or its deletion) is newer
+	delete(m.liveReplace, ts) // and than a swap of it
+}
+
+// noteReplace records that Slack's copy msg (seq: the "sent" event's
+// EmitSeq) replaced the pending message old while a load is out, where the
+// model held neither copy (a thread pane reloading its slice, or with
+// msg past it): the answer, read before the swap, may hold old, and msg
+// takes its place there, or goes where the answer reaches, as a new
+// reply does (keepLive). Recording only old gone, the answer lost its
+// pending copy and gained nothing. Callers hold m.mu.
+func (m *model) noteReplace(old string, msg core.Message, seq uint64) {
+	if !m.recording() || old == "" {
+		return
+	}
+	if m.liveReplace == nil {
+		m.liveReplace = map[string]liveUpdate{}
+	}
+	m.liveReplace[old] = liveUpdate{m: msg, seq: seq}
+	// the swap is newer than an update of the pending copy, or of Slack's
+	// recorded before it (an echo ahead of "sent"); ones after it are kept
+	delete(m.livePlace, old)
+	delete(m.livePlace, msg.TS)
 }
 
 // notePlace records an update of msg, which the model doesn't hold, while
@@ -1197,11 +1224,14 @@ type liveUpdate struct {
 // liveChanges is what the events changed during a load: at, each
 // message's entry then (nil for one deleted); place, the updates of
 // messages the model didn't hold, which go only where the answer holds
-// them; react, the reaction changes, laid over the answer's copy.
+// them; react, the reaction changes, laid over the answer's copy;
+// replace, Slack's copies of sends the model held neither copy of, by the
+// pending ts each replaced.
 type liveChanges struct {
-	at    map[string]*entry
-	place map[string]liveUpdate
-	react map[string]liveUpdate
+	at      map[string]*entry
+	place   map[string]liveUpdate
+	react   map[string]liveUpdate
+	replace map[string]liveUpdate
 }
 
 // takeLive is what the events changed during the load that just answered
@@ -1219,8 +1249,8 @@ func (m *model) takeLive() liveChanges {
 			}
 		}
 	}
-	out.place, out.react = m.livePlace, m.liveReact
-	m.live, m.livePlace, m.liveReact = nil, nil, nil
+	out.place, out.react, out.replace = m.livePlace, m.liveReact, m.liveReplace
+	m.live, m.livePlace, m.liveReact, m.liveReplace = nil, nil, nil, nil
 	return out
 }
 
@@ -1237,9 +1267,11 @@ func (m *model) takeLive() liveChanges {
 // over the answer's copy (Slack's reactions reducer touches nothing else):
 // the copy it was applied to may be older than the answer's (a dropped
 // model's, which missed an edit while out), and put back whole it took
-// the edit and the reply count back. Each keeps its event's EmitSeq
-// (never 0: a row would take JS's copy of the revision before as ready).
-// Callers hold m.mu.
+// the edit and the reply count back. Slack's copy of a send the model held
+// neither copy of takes the pending copy's place where the answer holds
+// it, and goes where the answer reaches otherwise, as an event's new
+// message does. Each keeps its event's EmitSeq (never 0: a row would take
+// JS's copy of the revision before as ready). Callers hold m.mu.
 func (m *model) keepLive(live liveChanges) {
 	for ts, e := range live.at {
 		switch {
@@ -1247,6 +1279,19 @@ func (m *model) keepLive(live liveChanges) {
 			m.remove(ts)
 		case m.find(ts) >= 0 || m.covers(ts):
 			m.upsert(e.m, e.seq)
+		}
+	}
+	for old, r := range live.replace {
+		if _, ok := live.at[old]; ok {
+			continue // an event after the swap had the last word on the pending copy
+		}
+		held := m.find(old) >= 0
+		m.remove(old)
+		if _, ok := live.at[r.m.TS]; ok {
+			continue // an event after it recorded Slack's copy: its record went in above
+		}
+		if held || m.find(r.m.TS) >= 0 || m.covers(r.m.TS) {
+			m.upsert(r.m, r.seq)
 		}
 	}
 	for ts, p := range live.place {
@@ -1467,10 +1512,15 @@ func (hb *hub) apply(ev core.Event) bool {
 		// msg-latency's busy socket one came as a send was confirmed, and
 		// the send drew 0.73 s late, at the next lookup's reload
 		// (TestSentAcrossALoad). Slack's views read the one store, where
-		// the confirmed message replaced the pending one at once.
+		// the confirmed message replaced the pending one at once. A thread
+		// pane that holds neither copy and doesn't reach Slack's (its slice
+		// reloading, or the reply past it) records the swap itself
+		// (noteReplace): the answer takes Slack's copy where it holds the
+		// pending one or reaches it (TestSentAcrossAThreadLoad).
 		if ev.Msg == nil {
 			return false
 		}
+		swap := ev.ReplacesTS != "" && ev.ReplacesTS != ev.Msg.TS
 		chm, thm := hb.models(ev.Channel, ev.Msg.ThreadTS)
 		for _, m := range []*model{chm, thm} {
 			if m == nil {
@@ -1478,17 +1528,19 @@ func (hb *hub) apply(ev core.Event) bool {
 			}
 			m.mu.Lock()
 			held := false
-			if ev.ReplacesTS != "" && ev.ReplacesTS != ev.Msg.TS {
-				if m.find(ev.ReplacesTS) >= 0 {
-					m.remove(ev.ReplacesTS)
-					m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
-					held = true
-				}
-				m.noteLive(ev.ReplacesTS, true)
+			if swap && m.find(ev.ReplacesTS) >= 0 {
+				m.remove(ev.ReplacesTS)
+				m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
+				held = true
 			}
 			if m != thm || held || m.find(ev.Msg.TS) >= 0 || m.loaded && m.threadCovers(ev.Msg.TS) {
 				m.upsert(*ev.Msg, ev.EmitSeq) // a thread's slice: where it reaches (thread_load.go)
+				if swap {
+					m.noteLive(ev.ReplacesTS, true)
+				}
 				m.noteLive(ev.Msg.TS, false)
+			} else if swap {
+				m.noteReplace(ev.ReplacesTS, *ev.Msg, ev.EmitSeq)
 			}
 			m.rev++
 			m.mu.Unlock()

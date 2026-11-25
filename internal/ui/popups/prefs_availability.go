@@ -209,7 +209,7 @@ func (p *avPrefs) load() {
 	}
 	run(h, func(ctx context.Context) (avHours, error) { return avReadHours(ctx, a) }, func(hr avHours, err error) {
 		if err != nil {
-			h.Toast("Couldn't load your working hours: " + errText(err))
+			FailedToast(h, "popups: working hours load", err)
 			return
 		}
 		p.hr = hr

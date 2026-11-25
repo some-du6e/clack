@@ -33,8 +33,10 @@ package richview
 //     new window (open-in-window, the image's link), Expand, and More
 //     actions (ellipsis-vertical-filled: a menu of Copy link and, with
 //     an expandable, "Hide image", which collapses the image's
-//     expandable; expander.go). Its Download, for an image that is a
-//     Slack file, isn't drawn (Clack's images don't know their file).
+//     expandable; expander.go), led by Download when the image's url is
+//     a Slack file the store holds (Expander.ImageFile), asked again each
+//     time the pointer comes to the group, as Slack's useSelector reads
+//     the store on each render.
 
 import (
 	"image"
@@ -82,6 +84,11 @@ type expandBtn struct {
 	// expandable ("" none: no Hide image)
 	full      bool
 	href, key string
+	// file is the Slack file the image is (Expander.ImageFile), read when
+	// the pointer comes to the group (fileRead; forgotten once it's gone,
+	// forgetFiles): its Download leads the group
+	file     *richtext.File
+	fileRead bool
 }
 
 // The group's buttons, in their order (UvHM: Download, Open in new
@@ -90,8 +97,16 @@ const (
 	imgActOpen = iota
 	imgActExpand
 	imgActMore
+	imgActDownload
 	imgActs
 )
+
+// ImageDownloadHandler is optional on a Handler: AttachmentImageActions'
+// Download, the image's Slack file downloaded (its href is the file's
+// getFileDownloadUrl). A host without one gets no Download.
+type ImageDownloadHandler interface {
+	DownloadImageFile(f *richtext.File)
+}
 
 // ImageMenuHandler is optional on a Handler: AttachmentImageActions' More
 // actions, its menu at btn (View coordinates plus Origin): Copy link
@@ -322,11 +337,33 @@ func (v *View) expandOn(st *Style, i int) bool {
 	}
 	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
 	if !pt.In(e.card) {
+		// the widest bar first (every button, from the same right edge): a
+		// group the pointer is nowhere near reads no file
+		if bar, _ := v.expandBar(i, imgActs); !pt.In(bar) {
+			return false
+		}
 		if bar, _ := v.expandBar(i, len(v.expandActs(st, i))); !pt.In(bar) {
 			return false
 		}
 	}
 	return e.full || v.playOnly(st, e)
+}
+
+// forgetFiles drops the file answer of every group the pointer is away
+// from (its image and its widest bar; the group whose menu is open
+// keeps its own), so the next visit asks the store again: a file it gets
+// later gains Download, one deleted loses it.
+func (v *View) forgetFiles(pt image.Point) {
+	for i := range v.d.expands {
+		e := &v.d.expands[i]
+		if !e.fileRead || e.img != nil && e.img == v.menuImg {
+			continue
+		}
+		bar, _ := v.expandBar(i, imgActs)
+		if !v.hovering || !pt.In(e.card) && !pt.In(bar) {
+			e.fileRead, e.file = false, nil
+		}
+	}
 }
 
 // playOnly reports whether group e's Expand shows: its
@@ -344,7 +381,17 @@ func (v *View) expandActs(st *Style, i int) []int {
 	if !e.full {
 		return []int{imgActExpand}
 	}
-	acts := []int{imgActOpen}
+	if !e.fileRead {
+		e.fileRead = true
+		if v.imgDL && e.img != nil {
+			e.file, _ = xp().ImageFile(e.img.URL) // AttachmentImage's url prop
+		}
+	}
+	var acts []int
+	if e.file != nil {
+		acts = append(acts, imgActDownload)
+	}
+	acts = append(acts, imgActOpen)
 	if v.playOnly(st, e) {
 		acts = append(acts, imgActExpand)
 	}
@@ -402,6 +449,10 @@ func (v *View) expand(st *Style, id int, h Handler) {
 		if e.href != "" {
 			h.OpenURL(e.href)
 		}
+	case imgActDownload:
+		if dh, ok := h.(ImageDownloadHandler); ok && e.file != nil {
+			dh.DownloadImageFile(e.file)
+		}
 	case imgActMore:
 		mh, ok := h.(ImageMenuHandler)
 		if !ok {
@@ -423,11 +474,12 @@ func (v *View) expand(st *Style, id int, h Handler) {
 // drawExpands draws the hovered image's Expand button and, while the
 // pointer rests on it, its tooltip.
 func (v *View) drawExpands(gtx layout.Context, st *Style) {
+	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
+	v.forgetFiles(pt)
 	if (!v.hovering && v.menuImg == nil) || len(v.d.expands) == 0 {
 		return
 	}
 	p := &st.Palette
-	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
 	if !v.hovering {
 		pt = image.Pt(-1<<20, -1<<20) // the menu's scrim has the pointer: no button is hot
 	}
@@ -457,6 +509,8 @@ func (v *View) drawExpands(gtx layout.Context, st *Style) {
 				name, tip = "open-in-window", "Open in new window"
 			case imgActMore:
 				name, tip = "ellipsis-vertical-filled", "More actions"
+			case imgActDownload:
+				name, tip = "download", "Download"
 			}
 			v.barIcon(gtx, name, btn, 18, col)
 			if hot {
