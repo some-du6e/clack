@@ -30,15 +30,24 @@ import (
 //     is 18px Black at 1.33334 with no top margin. The snippet takes no
 //     pointer events (:not(.allow-pointer-events)): a click anywhere opens
 //     the canvas.
+//
+// The card is 1+12+36+12 (its border, padding, the header, the padding),
+// the rule and the padding, the snippet, then its bottom border: 315px
+// with a full snippet, as Slack's. The pillow's overflow: hidden clips at
+// its padding box, which the snippet's bottom meets (FileQuip's margin
+// -12px), so a line the snippet's cut crosses stops at the border's inner
+// edge and the border stays whole.
 func (l *lay) canvasFile(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
 	cw := min(w, l.dp(594))
+	bw := l.dp(1)
 	pad := l.dp(12)
+	in := bw + pad // the border, the padding
 	ic := l.dp(36)
 	tg := l.d.addTarget(target{kind: tFile, file: f})
 	bi := l.cardFrame(x, y, cw, 0, tg)
-	l.canvasTile(x+pad, y+pad, ic)
-	tx := x + pad + ic + pad
+	l.canvasTile(x+in, y+in, ic)
+	tx := x + in + ic + pad
 	fs := l.bodyStyle()
 	fs.face.Weight = font.Bold
 	fs.size, fs.lineH = l.sp(16), l.dp(20)
@@ -46,20 +55,19 @@ func (l *lay) canvasFile(f *richtext.File, x, y, w int) int {
 	fs.maxLines, fs.ellipsis = 1, true
 	if len(f.TitleSpans) > 0 {
 		l.addSpansTarget(f.TitleSpans, &fs, tg)
-		l.flow(tx, y+pad-l.dp(1), x+cw-tx-pad, &fs)
+		l.flow(tx, y+in-l.dp(1), x+cw-tx-in, &fs)
 		l.plainAdd("\n")
 	} else {
-		l.plainFlow(fileName(f), tx, y+pad-l.dp(1), x+cw-tx-pad, &fs, tg)
+		l.plainFlow(fileName(f), tx, y+in-l.dp(1), x+cw-tx-in, &fs, tg)
 	}
 	ms := l.small(p.Text2)
 	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
-	l.plainFlow("Canvas", tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
-	h := pad + ic + pad
+	l.plainFlow("Canvas", tx, y+in+l.dp(20), x+cw-tx-in, &ms, -1)
+	h := in + ic + pad
 	if len(f.CanvasPreview) > 0 {
 		h += l.canvasPreview(f.CanvasPreview, x, y+h, cw)
-	} else {
-		h += l.dp(2)
 	}
+	h += bw // the bottom border, under the snippet's cut
 	l.d.boxes[bi].r = image.Rect(x, y, x+cw, y+h)
 	if tg >= 0 {
 		l.d.hits = append(l.d.hits, hit{r: image.Rect(x, y, x+cw, y+h), t: tg})
@@ -89,7 +97,7 @@ func (l *lay) canvasPreview(bs []richtext.Block, x, y, cw int) int {
 	pad := l.dp(12)
 	top := y + l.dp(1) + pad
 	cut := top + l.dp(240) // p-file_quip__snippet.collapsed
-	f0, b0, i0, h0, n0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.hits), len(l.d.lines)
+	f0, b0, i0, h0, n0, c0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.hits), len(l.d.lines), len(l.d.codes)
 	cy := top
 	for i := range bs {
 		if cy >= cut {
@@ -112,16 +120,18 @@ func (l *lay) canvasPreview(bs []richtext.Block, x, y, cw int) int {
 		}
 		cy += l.blocks([]richtext.Block{*b}, x+pad, cy, cw-2*pad, false)
 	}
-	l.trimBelow(cut, f0, b0, i0, h0, n0)
+	l.trimBelow(cut, f0, b0, i0, h0, n0, c0)
 	return min(cy, cut) - y
 }
 
 // trimBelow drops what the snippet's max-height hides: the frags, lines,
 // boxes and images laid out since f0, b0, i0, n0 that start at or under
-// cut (a line cut across keeps its frags; the card's own clip is the
-// pane's), and every hit since h0 (the snippet takes no pointer events),
-// its frags left without a target.
-func (l *lay) trimBelow(cut, f0, b0, i0, h0, n0 int) {
+// cut. A line the cut crosses keeps its frags and images, painted above
+// the cut only (fragCuts, imgCuts), its frags' bot clamped to it. The
+// snippet takes no pointer events: every hit since h0 and every code run
+// since c0 (the copy button, the code menu) go, and its frags are left
+// without a target.
+func (l *lay) trimBelow(cut, f0, b0, i0, h0, n0, c0 int) {
 	d := l.d
 	k := len(d.frags)
 	for i := f0; i < len(d.frags); i++ {
@@ -171,4 +181,5 @@ func (l *lay) trimBelow(cut, f0, b0, i0, h0, n0 int) {
 	}
 	d.imgs = im
 	d.hits = d.hits[:h0]
+	d.codes = d.codes[:c0]
 }

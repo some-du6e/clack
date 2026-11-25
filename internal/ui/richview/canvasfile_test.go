@@ -2,6 +2,7 @@ package richview
 
 import (
 	"fmt"
+	"image"
 	"testing"
 	"time"
 
@@ -37,14 +38,24 @@ func TestCanvasFileCard(t *testing.T) {
 	top := -1
 	for _, b := range d.boxes {
 		if b.kind == bFill && b.r.Dx() == 36 && b.r.Dy() == 36 && b.radius == 8 && b.fill == rgb(28, 182, 235) {
-			top = b.r.Min.Y - 12 // the card's top: 12px padding
+			top = b.r.Min.Y - 1 - 12 // the card's top: its border, 12px padding
 		}
 	}
 	if top < 26 {
 		t.Fatalf("no lagoon canvas tile under the 26px title line (card top %d)", top)
 	}
-	// nothing under the cut: header 12+36+12, the rule, 12px, 240px
-	cut := top + 60 + 1 + 12 + 240
+	// nothing under the cut: the border, header 12+36+12, the rule, 12px,
+	// 240px; then the bottom border: Slack's 315px card
+	cut := top + 1 + 60 + 1 + 12 + 240
+	card := image.Rectangle{}
+	for _, b := range d.boxes {
+		if b.kind == bBorder && b.r.Min.Y == top {
+			card = b.r
+		}
+	}
+	if card.Dy() != 315 || card.Max.Y != cut+1 {
+		t.Errorf("the card is %v, %dpx tall: want Slack's 315px, its bottom border under the cut (%d)", card, card.Dy(), cut)
+	}
 	for _, f := range d.frags {
 		if f.top >= cut {
 			t.Fatalf("a frag at %d, under the preview's 240px cut (%d)", f.top, cut)

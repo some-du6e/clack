@@ -457,13 +457,24 @@ func (h *hoverLayer) shown(t int16) bool {
 	return h.bar || t < h.skip || t > h.skipTo
 }
 
-// slot is a run of interactive elements the owner draws (Options.Elements).
 // cutRange clips primitives from..to-1 at y bot (display.fragCuts).
 type cutRange struct {
 	from, to int32
 	bot      int
 }
 
+// cutBot is the y primitive i of cuts paints above (a canvas preview's
+// cut: display.fragCuts, imgCuts); ok is false when no cut holds i.
+func cutBot(cuts []cutRange, i int) (bot int, ok bool) {
+	for _, c := range cuts {
+		if int32(i) >= c.from && int32(i) < c.to {
+			return c.bot, true
+		}
+	}
+	return 0, false
+}
+
+// slot is a run of interactive elements the owner draws (Options.Elements).
 type slot struct {
 	r   image.Rectangle
 	bs  []richtext.Button

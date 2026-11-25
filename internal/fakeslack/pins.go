@@ -174,6 +174,25 @@ func (s *Server) PostReplyAttachmentsQuiet(ch, root, user, text string, atts []s
 	return ts
 }
 
+// PostReplyFilesQuiet is PostReplyQuiet for a reply sharing files
+// (complete file objects), edited by its sender when edited is set (its
+// "(edited)" label then follows the files of a reply with no text).
+func (s *Server) PostReplyFilesQuiet(ch, root, user, text string, files []slack.File, edited bool) string {
+	ts := s.PostReplyQuiet(ch, root, user, text)
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	rs := s.quietReplies[ch+"/"+root]
+	for i := range rs {
+		if rs[i].TS == ts {
+			rs[i].Files = files
+			if edited {
+				rs[i].Edited = &slack.Edited{User: user, TS: ts}
+			}
+		}
+	}
+	return ts
+}
+
 // PostQuietAt is PostQuiet at ts, where the history puts it (newest
 // first): a history whose messages are minutes apart, for date jumps.
 func (s *Server) PostQuietAt(ch, user, text, ts string) {

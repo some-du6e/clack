@@ -548,7 +548,9 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.drawChartHover(gtx, st)
 	v.chartSemantics(gtx)
 	for _, i := range v.liveImgs { // animated GIFs: their frame now, over what's under them
+		cut := clipAbove(gtx.Ops, v.d.imgCuts, int(i)) // a canvas preview's: above its cut
 		v.drawImg(gtx.Ops, st, int(i), false)
+		cut()
 	}
 	// A hovered pill's background takes its fill's place, on each line
 	// it runs on (.c-member_slug--link:hover, .p-rich_text_slug:hover):
@@ -574,6 +576,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		if f := &v.d.frags[i]; st.Images != nil {
 			if img, ok := st.Images.Get(f.url, f.size); ok {
 				r := image.Rect(int(f.x+0.5), f.y, int(f.x+0.5)+f.size, f.y+f.size)
+				// a canvas preview's emoji: above its cut, as paintAbove's
+				cut := clipAbove(gtx.Ops, v.d.fragCuts, int(i))
 				if ps := v.css.get(f.part); ps != nil && ps.alpha < 1 { // CSS opacity on the emoji (css.go)
 					o := paint.PushOpacity(gtx.Ops, max(ps.alpha, 0))
 					drawImage(gtx.Ops, img, r, [4]int{}, false)
@@ -581,6 +585,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 				} else {
 					drawImage(gtx.Ops, img, r, [4]int{}, false)
 				}
+				cut()
 			}
 		}
 	}
@@ -936,6 +941,18 @@ type rangeClip struct {
 	k    int
 	open bool
 	st   clip.Stack
+}
+
+// clipAbove clips what follows to above the cut that holds primitive i
+// in cuts, if any, until the returned pop runs (one primitive at a time,
+// in any order: the live passes').
+func clipAbove(ops *op.Ops, cuts []cutRange, i int) (pop func()) {
+	bot, ok := cutBot(cuts, i)
+	if !ok {
+		return func() {}
+	}
+	st := clip.Rect(image.Rect(-1<<24, -1<<24, 1<<24, bot)).Push(ops)
+	return st.Pop
 }
 
 func (c *rangeClip) at(i int) {

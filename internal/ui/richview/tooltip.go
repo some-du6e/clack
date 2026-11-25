@@ -32,6 +32,13 @@ const EmojiTipDelay = 300 * time.Millisecond
 // text is the edit's time, written when the tooltip shows (editedTip).
 const editedTipKey = "\x00edited"
 
+// underCut reports whether p is under the canvas preview cut that clips
+// frag i (fragCuts): the part of an emoji the cut hides takes no pointer.
+func (v *View) underCut(i int, p f32.Point) bool {
+	bot, ok := cutBot(v.d.fragCuts, i)
+	return ok && p.Y >= float32(bot)
+}
+
 // emojiAt returns the frag with a tooltip under p (view coordinates): an
 // emoji image, or the "(edited)" label; -1 for none.
 func (v *View) emojiAt(p f32.Point) int {
@@ -42,7 +49,7 @@ func (v *View) emojiAt(p f32.Point) int {
 		}
 		switch f.kind {
 		case fImage:
-			if p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
+			if p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) && !v.underCut(i, p) {
 				return i
 			}
 		case fText:
