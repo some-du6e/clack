@@ -233,7 +233,10 @@ func (m *Matcher) worker(e *fnode, qi int, cost int) (int, bool) {
 // Similarity is PositionAwareFuzzyMatcher.computeSimilarity: the cosine
 // of 2- and 3-gram vectors weighted 1/position. Whitespace is dropped and
 // both are lowercased; when the query has no '-' or '_' they are dropped
-// from the candidate too.
+// from the candidate too. The sums run in Slack's order (cosineSimilarity
+// walks the query's grams, then the candidate's others, each as its Map
+// first saw them): in another order the last bit moves, and with it the
+// order of results whose scores tie but for it.
 func Similarity(query, cand string) float64 {
 	if query == "" || cand == "" {
 		return 0
@@ -241,14 +244,20 @@ func Similarity(query, cand string) float64 {
 	keep := strings.ContainsAny(query, "-_")
 	q := ngramTF(prepNgram(query, false))
 	c := ngramTF(prepNgram(cand, !keep))
+	// float64() rounds each product as JS does: without it Go may fuse
+	// the multiply and the add (arm64's FMADD), moving the last bit
 	var dot, nq, nc float64
-	for g, a := range q {
-		b := c[g]
-		dot += a * b
-		nq += a * a
+	for _, g := range q.grams {
+		a, b := q.tf[g], c.tf[g]
+		dot += float64(a * b)
+		nq += float64(a * a)
+		nc += float64(b * b)
 	}
-	for _, b := range c {
-		nc += b * b
+	for _, g := range c.grams {
+		if _, ok := q.tf[g]; !ok {
+			b := c.tf[g]
+			nc += float64(b * b)
+		}
 	}
 	if nq == 0 || nc == 0 {
 		return 0
@@ -267,12 +276,24 @@ func prepNgram(s string, strip bool) []rune {
 	return out
 }
 
-func ngramTF(rs []rune) map[string]float64 {
-	tf := map[string]float64{}
+// termFreqs is extractNGrams and computeTermFrequencies: each gram's
+// weight (1/position summed over its places) and the grams in the order
+// they first appear (the Map's).
+type termFreqs struct {
+	grams []string
+	tf    map[string]float64
+}
+
+func ngramTF(rs []rune) termFreqs {
+	t := termFreqs{tf: map[string]float64{}}
 	for n := 2; n <= 3; n++ {
 		for a := 0; a+n <= len(rs); a++ {
-			tf[string(rs[a:a+n])] += 1 / float64(a+1)
+			g := string(rs[a : a+n])
+			if _, ok := t.tf[g]; !ok {
+				t.grams = append(t.grams, g)
+			}
+			t.tf[g] += 1 / float64(a+1)
 		}
 	}
-	return tf
+	return t
 }

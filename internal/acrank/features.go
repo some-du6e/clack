@@ -68,11 +68,7 @@ func modelScore(e *entry, rawQ, nq string, numResults int, now float64, o Option
 	name := featName(e)
 
 	// ---- common (I) ----
-	bonus := 0.0
-	for _, v := range e.bonus {
-		bonus += v
-	}
-	add("FRECENCY_BONUS", bonus)
+	add("FRECENCY_BONUS", bonusTotal(e.bonus))
 	if c.Kind == Member || c.Kind == Channel || c.Kind == UserGroup {
 		add("FRECENCY", e.fs.score) // getFrecencyScoreForSuggestion: navigation types only
 	}

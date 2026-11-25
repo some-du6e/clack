@@ -306,11 +306,7 @@ func Rank(query string, cands []Cand, o Options) []Result {
 	sums := make(map[string]float64, len(list))
 	for _, e := range list {
 		e.bonus = bonusPoints(e, m, o)
-		t := 0.0
-		for _, v := range e.bonus {
-			t += v
-		}
-		sums[e.c.ID] = t
+		sums[e.c.ID] = bonusTotal(e.bonus)
 	}
 	fc := o.Frecency
 	if fc == nil {
@@ -648,6 +644,39 @@ func featName(e *entry) string {
 		}
 	}
 	return c.Name
+}
+
+// bonusOrder is the order getFrecencyBonusPointsFunction sets its points
+// in, its object's insertion order: Slack sums Object.values in it.
+var bonusOrder = []string{"isMpim", "isMpimWithDeactivatedMember", "isExactMatch", "isEmojiExactMatch", "emojiScoreBonus",
+	"fuzzyScoreBonus", "onlyMatchesPreviousName", "isMemberOfThisChannel", "isStarred", "isPopularEmojiVariant", "isSelf",
+	"isWorkflowAssociatedWithChannel", "isCodeChannelCommand", "isArchived", "isNotChannelMember", "isChannelFromAnotherTeam",
+	"isDeactivatedMember", "isUserGroupOrKeyword", "userAffinity", "channelPriority90D", "fileIsTopEngaged"}
+
+// bonusTotal is the points' sum in Slack's order (bonusOrder). A
+// fractional fuzzy bonus makes the order show in the sum's last bit, and
+// a map's would change from run to run.
+func bonusTotal(b map[string]float64) float64 {
+	t, n := 0.0, 0
+	for _, k := range bonusOrder {
+		if v, ok := b[k]; ok {
+			t += v
+			n++
+		}
+	}
+	if n < len(b) { // a point bonusOrder doesn't name: after the rest, by name
+		var rest []string
+		for k := range b {
+			if !slices.Contains(bonusOrder, k) {
+				rest = append(rest, k)
+			}
+		}
+		sort.Strings(rest)
+		for _, k := range rest {
+			t += b[k]
+		}
+	}
+	return t
 }
 
 // bonusPoints is getFrecencyBonusPointsFunction for the texty sources.

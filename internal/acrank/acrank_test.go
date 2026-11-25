@@ -78,6 +78,58 @@ func TestSimilarityOracle(t *testing.T) {
 	})
 }
 
+// Similarity's sums run in Slack's order, so its doubles are Slack's to
+// the last bit, every time: the values are computeSimilarity's (4ucY
+// PositionAwareFuzzyMatcher, web client 66e72b57ade1) run in node. In a
+// map's order the last bit changed from call to call, and with it the
+// order of results that tie but for it (a "/" list's "/syn0app-start"
+// and "/syn2app-start").
+func TestSimilarityBitsAreSlacks(t *testing.T) {
+	for _, c := range []struct {
+		q, cand string
+		want    float64
+	}{
+		{"sta", "/syn0app-start", 0.10269415118822525},
+		{"sta", "/syn2app-start", 0.10269415118822525},
+		{"status", "/syn12app-status", 0.132441050156697},
+		{"syn12app", "/syn12app-help", 0.5655955578935409},
+		{"kar", "karim hacker", 0.8533843355085408},
+		{"sweat-sm", "sweat_smile", 0.9209060988971793},
+		{"gen", "general-chat", 0.8533843355085408},
+		{"heart", "heart_eyes_cat", 0.9465954537120846},
+		{"remi", "/remind", 0.5100071401499435},
+	} {
+		for range 20 {
+			if got := Similarity(c.q, c.cand); got != c.want {
+				t.Errorf("Similarity(%q, %q) = %v, Slack's %v", c.q, c.cand, got, c.want)
+				break
+			}
+		}
+	}
+}
+
+// bonusTotal adds the points in the order Slack's object holds them: a
+// fuzzy bonus, then a previous name's -50, then a channel member's 25 is
+// ((x-50)+25), -7.875623027002305 for this x, where ((-50+25)+x) is
+// -7.875623027002309.
+func TestBonusTotalOrder(t *testing.T) {
+	x := 17.12437697299769
+	b := map[string]float64{"isMemberOfThisChannel": 25, "onlyMatchesPreviousName": -50, "fuzzyScoreBonus": x}
+	want := (x + -50) + 25
+	if want == (-50+25)+x {
+		t.Fatal("this x doesn't tell the orders apart")
+	}
+	for range 20 {
+		if got := bonusTotal(b); got != want {
+			t.Fatalf("bonusTotal = %v, want %v", got, want)
+		}
+	}
+	b["zzUnlisted"] = 1
+	if got := bonusTotal(b); got != want+1 {
+		t.Errorf("an unlisted point: %v, want %v", got, want+1)
+	}
+}
+
 func TestSimilarity(t *testing.T) {
 	if s := Similarity("karim", "karim"); math.Abs(s-1) > 1e-9 {
 		t.Errorf("identical = %v", s)

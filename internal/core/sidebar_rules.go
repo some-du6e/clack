@@ -56,6 +56,9 @@ var defaultSidebarExp = sidebarExp{filterDormant: true, improveMute: true, dmRec
 var defaultExperimentGroups = map[string]string{
 	"filter_dormant_channels": "on", "improve_mute_pref": "on", "dm_recency_sort_rollout": "without_edu",
 	"unified_file_picker": "on", // the folders' add menu (views/folder_tab_more.go), the account's group of 2026-11-13
+	// closeChannelApi's canChannelBeClosed (slash_local.go): on, as the
+	// account has it, an open record channel doesn't close
+	"salesforce_channels_x_out_channel": "on",
 	// a chart's Copy as image (popups/chart_menu.go), as the account has it
 	"data_visualization_copy_image": "on",
 	"looping_video_option":          "on", // the inline video player's loop (videoplayer), as the account has it
