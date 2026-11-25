@@ -44,8 +44,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-
-	"github.com/some-du6e/clack/internal/slack"
 )
 
 // CmdCustom is Slack's CUSTOM_ERROR: a command whose failure text the
@@ -104,10 +102,6 @@ func (a *App) isLocalInvite(ch string) bool {
 
 // inviteCommand is inviteCommand for ch's channel kinds.
 func (a *App) inviteCommand(ctx context.Context, o CommandOpts, cmd string) (CommandResult, error) {
-	if o.ThreadTS != "" && !a.threadCommandOK(o.Channel, cmd, slack.Command{}) {
-		// executeCommand's isSlashCommandEnabled, before any local command
-		return CommandResult{}, &CommandError{Command: cmd, Kind: CmdUnsupportedInThread}
-	}
 	// X: the people and user groups the parsed args mention, in order,
 	// once each; J: the channels (executeCommand hands its local commands
 	// userParams, where a mention is its id)

@@ -47,10 +47,24 @@ import (
 //     UserFeedbackModal (popups/user_feedback.go). With the experiment off
 //     Slack opens its Help pane's feedback form, which Clack doesn't have:
 //     the command then goes on to chat.command.
+//   - /leave (/close, /part): leaveCommand (OOqF, core.App.LeaveCommand)
+//     picks the conversation (this one, or the channel or person's DM the
+//     first argument mentions) and submitLeave closes a DM or group DM
+//     (closeChannelApi: conversations.close) or leaves a channel through
+//     maybeLeaveChannel (popups.LeaveConversation: the #general alert, a
+//     private channel's confirmation).
+//   - /rename: renameCommand (BasZ) opens RenameChannelModal
+//     (popups/rename_channel.go) with the arguments as display text in its
+//     input (convertContentsToStringForDisplay), or the channel's name.
+//   - /archive: archiveCommand (Oc3D) opens ArchiveChannelModal
+//     (popups/archive_channel.go).
 //
-// A failure is executeCommand's CUSTOM_ERROR (or UNKNOWN_COMMAND): its
-// text as Slackbot's temporary ephemeral here, the command back in the
-// composer (handleSlashCommand's catch, as for a server command).
+// isSlashCommandEnabled has passed before any of these runs
+// (core.CheckCommand in slashCommand): /rename and /archive only reach
+// their dialogs with the permission. A failure is executeCommand's
+// CUSTOM_ERROR (or UNKNOWN_COMMAND): its text as Slackbot's temporary
+// ephemeral here, the command back in the composer (handleSlashCommand's
+// catch, as for a server command).
 
 // shortcutsToggler is optional on the Host: /shortcuts' Keyboard
 // Shortcuts pane (toggleKeyboardShortcuts). UI goroutine.
@@ -118,11 +132,34 @@ func (j *sendJob) localCommand(ctx context.Context, a prepareSendArgs, q qDelta,
 		j.api.clearCommandFeedback(ts != "")
 		j.api.a.ExpandCommand(ch, ts, j.ui.viewContext, j.api.a.LocalCommand(args.Cmd) == "/expand")
 		return true, nil
-	case "/feedback":
-		if err := j.api.a.FeedbackCommandErr(args.Cmd); err != nil { // isSlashCommandEnabled: feedback_disabled_orgs
-			j.api.clearCommandFeedback(ts != "")
+	case "/leave":
+		if j.ui.leave == nil {
+			return false, nil
+		}
+		j.api.clearCommandFeedback(ts != "")
+		t, err := j.api.a.LeaveCommand(args.Cmd, ch, args.Params)
+		if err != nil {
 			return true, failed(err)
 		}
+		if t.Conv != "" {
+			j.ui.leave(t)
+		}
+		return true, nil
+	case "/rename":
+		if j.ui.rename == nil {
+			return false, nil
+		}
+		j.api.clearCommandFeedback(ts != "")
+		j.ui.rename(ch, renameName(args.Rest))
+		return true, nil
+	case "/archive":
+		if j.ui.archive == nil {
+			return false, nil
+		}
+		j.api.clearCommandFeedback(ts != "")
+		j.ui.archive(ch)
+		return true, nil
+	case "/feedback":
 		if j.ui.feedback == nil || j.api.a.Experiment(popups.ExpSlashFeedbackInModal) != "on" {
 			return false, nil
 		}
@@ -184,6 +221,14 @@ func (j *sendJob) msgSend(ctx context.Context, ch string, msg, orig qDelta) {
 	j.api.commandFeedback(ch, "", "Hmm, something went wrong. Try again?")
 	od, _ := qToDoc(qNormalize(orig))
 	put(od)
+}
+
+// renameName is renameCommand's d: deltaWithoutCmd as display text
+// (lgkT convertContentsToStringForDisplay: atoms as their text, the last
+// newline dropped); "" leaves the channel's name to the modal.
+func renameName(rest qDelta) string {
+	d, _ := qToDoc(qNormalize(rest))
+	return strings.TrimSuffix(d.Text(), "\n")
 }
 
 // msgRest is /msg's message: deltaWithoutCmd without its first op (the

@@ -95,7 +95,7 @@ func TestSidebarMarksLikeSlack(t *testing.T) {
 			ev["user"] = sender
 		}
 		fs.Push(ev)
-		flush(t, fs, log)
+		flush(t, a, fs, log)
 		return a.Count(c)
 	}
 	for _, tc := range []struct {
@@ -142,7 +142,7 @@ func TestSidebarMarksLikeSlack(t *testing.T) {
 	read := stamp(time.Now())
 	row(ch, map[string]any{"text": me + "a synthetic question", "ts": read})
 	fs.Push(map[string]any{"type": "channel_marked", "channel": ch, "ts": read, "unread_count_display": 0, "mention_count_display": 0})
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if c := a.Count(ch); c.Unread || c.Mentions != 0 {
 		t.Errorf("read elsewhere (channel_marked): unread %v with %d mentions", c.Unread, c.Mentions)
 	}

@@ -393,7 +393,7 @@ func pfAddAppToChannel(h Host, appUser, ch string, shown func(*pfPermDialog)) {
 		return c.AddAppToChannel(ctx, appUser, ch, false)
 	}, func(scopes []core.AppScope, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			FailedToast(h, "popups: add app to channel", err)
 			return
 		}
 		p := newAppPermissionDialog(h, appUser, ch, scopes)

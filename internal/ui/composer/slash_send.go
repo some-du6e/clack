@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,13 @@ type commandUI struct {
 	show func(browse string, t core.LocalTarget)
 	// feedback is /feedback's dialog
 	feedback func()
+	// leave is /leave's submitLeave for what core.LeaveCommand picked: a
+	// DM or group DM closed, a channel through maybeLeaveChannel
+	leave func(t core.LeaveTarget)
+	// rename is /rename's RenameChannelModal for ch with name in its input
+	rename func(ch, name string)
+	// archive is /archive's ArchiveChannelModal for ch
+	archive func(ch string)
 	// contents puts d in ch's composer (addEphemeralFeedback's
 	// inputDelta), when it is open
 	contents func(ch string, d *Doc)
@@ -107,6 +115,11 @@ func (c *Composer) commandUI() *commandUI {
 			})
 		},
 		feedback: func() { c.later(func() { popups.NewUserFeedbackModal(c.h) }) },
+		leave:    func(t core.LeaveTarget) { c.later(func() { popups.LeaveConversation(c.h, t.Conv, t.Close) }) },
+		rename: func(ch, name string) {
+			c.later(func() { c.h.ShowOverlay(popups.NewRenameChannelModal(c.h, ch, name)) })
+		},
+		archive: func(ch string) { c.later(func() { c.h.ShowOverlay(popups.NewArchiveChannelModal(c.h, ch)) }) },
 		contents: func(ch string, d *Doc) {
 			c.later(func() {
 				if t := c.sessionComposer(ch); t != nil {
@@ -200,6 +213,20 @@ func (j *sendJob) slashCommand(ctx context.Context, a prepareSendArgs, q qDelta)
 			return nil
 		}
 	}
+	// handleSlashCommand's workspace pick and executeCommand's
+	// isSlashCommandEnabled (core.CheckCommand), before the reminder modal
+	// or any client command runs; a refusal is Slackbot's
+	o := core.CommandOpts{Channel: ch, ThreadTS: ts, Command: args.Cmd, Disp: args.Disp, Params: args.Params,
+		AppID: a.SlashCommandAppID}
+	if j.api.a != nil {
+		if err := j.api.a.CheckCommand(ctx, &o); err != nil {
+			j.api.clearCommandFeedback(ts != "")
+			if txt := core.CommandFailureText(err, args.Cmd); txt != "" {
+				j.api.commandFeedback(ch, ts, txt)
+			}
+			return &commandFailed{err}
+		}
+	}
 	if args.Cmd == "/remind" && len(args.Params) == 0 && j.ui != nil && j.ui.remind != nil {
 		// executeCommand: the reminder modal, no chat.command
 		j.api.clearCommandFeedback(ts != "")
@@ -209,8 +236,7 @@ func (j *sendJob) slashCommand(ctx context.Context, a prepareSendArgs, q qDelta)
 	if ok, err := j.localCommand(ctx, a, q, args); ok { // slash_local.go
 		return err
 	}
-	o := core.CommandOpts{Channel: ch, ThreadTS: ts, Command: args.Cmd, Disp: args.Disp, Params: args.Params,
-		Blocks: commandBlocks(args.Rest), AppID: a.SlashCommandAppID}
+	o.Blocks = commandBlocks(args.Rest)
 	// the local commands that read text (topicCommand: convertContentsToString
 	// of deltaWithoutCmd); chat.command never carries it (Params is set)
 	rest, _ := qToDoc(qNormalize(args.Rest))
@@ -433,7 +459,9 @@ func (c *Composer) reminderModal(ch, ts string) (*popups.Modal, *TextyInput) {
 		desc := convertBlocks(q, false)
 		go func() {
 			if err := api.addReminder(context.Background(), desc, due); err != nil {
-				c.later(func() { c.h.Toast("Couldn\u2019t set the reminder: " + err.Error()) })
+				// addReminder reverts its optimistic add and logs "Failed to add
+				// reminder"; only a to-do's failure toasts (LaterTodoErrorToast)
+				log.Printf("composer: saved.add reminder: %v", err)
 			}
 		}()
 	})

@@ -73,8 +73,8 @@ func (a *App) bbmPersistActions() bool { return a.bbmOn() && !a.prefs.BBMHoverAc
 // startBBM is HnPE startBBM: from Preferences (step "accessibility_pref")
 // it shows the welcome dialog the first time, then turns the mode on,
 // moves to the BBM tab and applies the mode's settings (setBBMSettings:
-// its own zoom, the sidebar shown). Slack also enables fullscreen mode
-// and clears the megaphone spaces; Clack has no megaphone.
+// its own zoom, the sidebar shown), and clears the global megaphone
+// spaces (clearAllMegaphoneSpaces). Slack also enables fullscreen mode.
 func (a *App) startBBM(step string) {
 	if a.bbmUnsupported() || a.prefs.BBM {
 		return
@@ -92,6 +92,10 @@ func (a *App) startBBM(step string) {
 	a.prefs.NonBBMSidebarHidden = &h
 	a.sidebar.hidden = false
 	a.bbm = bbmState{}
+	if c := a.Core(); c != nil {
+		c.SetBBMMode(true)
+		c.ClearAllMegaphoneSpaces()
+	}
 	a.bbmNavigate("bbm")
 	a.savePrefs()
 	a.Invalidate()
@@ -481,14 +485,20 @@ func (a *App) bbmNavButton(gtx layout.Context, org image.Point, key, icon string
 	at(gtx, org, sz, func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hovered bool) {
 			bg := c.SearchBg
-			if hovered && !disabled {
+			switch {
+			case disabled: // the .45 takes the tile too (opacity is the button's)
+				bg = theme.WithAlpha(bg, uint8(int(bg.A)*0x73/0xff))
+			case hovered:
 				bg = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x2e}
 			}
 			a.chrome(gtx, org, image.Rectangle{Max: s}, gtx.Dp(4), bg)
 		}, func(gtx layout.Context) layout.Dimensions {
 			col := c.ChromeText
 			if disabled {
-				col = theme.WithAlpha(col, 0x73)
+				// opacity .45 on the button as one group, composited in sRGB
+				// as Chrome does: the opaque icon hides the tile inside the
+				// group, so its ink is .45 of it over the chrome alone
+				col = theme.Over(theme.WithAlpha(col, 0x73), a.chromeBase(org.Add(sz.Div(2))))
 			}
 			at(gtx, image.Pt(gtx.Dp(8), (sz.Y-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 				return icons.Get(icon)(gtx, 16, col)

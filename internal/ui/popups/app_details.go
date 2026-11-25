@@ -473,9 +473,7 @@ func (v *AppDetailsView) overflow(c core.AppCard) []MenuItem {
 		if base := strings.TrimSuffix(h.Core().C.Creds.TeamURL, "/"); base != "" {
 			link := base + "/services/" + c.BotID + "?settings=1"
 			out = append(out, MenuItem{Label: "Configuration", Icon: "new-window", Do: func() {
-				if err := openurl.Open(link); err != nil {
-					h.Toast("Couldn't open the link: " + errText(err))
-				}
+				openurl.OpenExternal(link)
 			}})
 		}
 	}

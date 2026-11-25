@@ -385,9 +385,7 @@ func (p *ProfileCard) appMenu(c core.AppCard, self core.User) []appItem {
 			link := base + "/services/" + c.BotID + "?settings=1&utm_source=in-prod&utm_medium=inprod-link_app_settings-user_card-click"
 			out = append(out, appItem{"Configuration", func() {
 				p.Dismiss()
-				if err := openurl.Open(link); err != nil {
-					h.Toast("Couldn't open the link: " + errText(err))
-				}
+				openurl.OpenExternal(link)
 			}})
 		}
 	}

@@ -219,6 +219,7 @@ on:
       - "internal/jsrt/loop.go"
       - "internal/taut/taut.go"
       - "internal/core/realtime_msgs_test.go"
+      - "internal/core/history_changed_test.go"
       - "internal/core/lists_test.go"
       - "internal/ui/channels_audit_test.go"
       - "internal/ui/listview/render_test.go"
@@ -6747,7 +6748,7 @@ jobs:
           for i in $(seq 1 "$COUNT"); do
             ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/jsrt.test" -test.count=1 -test.v -test.timeout 10m -test.run "$JSRT_RUN" > "$RUNNER_TEMP/jsrt-$i.log" 2>&1 || rc=1
             echo "== process $i: $(grep -oE 'wasmmem: reserved address space: .*longest stop-the-world [0-9.]+ ms' "$RUNNER_TEMP/jsrt-$i.log" | grep -oE '[0-9.]+ ms$'); $(grep -oE 'populate wrote [0-9]+ MiB: [0-9]+ faults, [0-9]+ of them in populate.s reads, -?[0-9]+ elsewhere' "$RUNNER_TEMP/jsrt-$i.log"); $(grep -oE '[0-9]+ KiB of it resident' "$RUNNER_TEMP/jsrt-$i.log")"
-            grep -E -- '--- FAIL|wasmmem_(linux_|unix_)?test.go:[0-9]+: .*(cut|faults came|grew only|wrote|resident|counted)' "$RUNNER_TEMP/jsrt-$i.log" | head -6
+            grep -E -- '--- FAIL|wasmmem_(linux_|unix_)?test.go:[0-9]+: .*(cut|faults came|grew only|wrote|resident|counted|not compared)' "$RUNNER_TEMP/jsrt-$i.log" | head -6
           done
           exit $rc
       # the rest of the package on this runner, its wasm memories populated;
@@ -7287,6 +7288,13 @@ jobs:
       - pagekey-day
       - files-card
       - email-pane
+      - err-toasts
+      - sent-thread
+      - topnav-sidebar-hidden
+      - reply-flush
+      - entprefs
+      - scroll-cpu
+      - member-subs
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
@@ -7308,3 +7316,236 @@ jobs:
           EXPECT_FAIL: ${{ inputs.expect_fail }}
           NEEDS: ${{ toJSON(needs) }}
         run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"
+
+
+  # err-toasts: no toast shows a Go error (TestNoErrorTextInToasts scans
+  # internal/ui), and the failure texts that replaced them are Slack's
+  # (LeaveChannelError, EditMessageErrorDialog, the channel list's
+  # ErrorToast, FailedToast, openExternal's refusal). Dispatch with
+  # only=err-toasts.
+  err-toasts:
+    if: ${{ !inputs.only || startsWith('err-toasts', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (the ui, popups and views test binaries link them)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the failure texts, COUNT runs (every package, then the verdict)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 10m -v -run '^TestNoErrorTextInToasts$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^(TestLeaveErrorText|TestEditErrorText|TestAPICode|TestFailedToast)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^TestDirErrorToast$' ./internal/ui/views || rc=1
+          go test -count=$COUNT -timeout 5m -v -run '^TestOpenExternalRefusedIsLogged$' ./internal/ui/openurl || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # sent-thread (2026-11-24, msg-latency-sent's review wf_dcd747c5-297): a
+  # reply confirmed while its thread pane's load is out (the pane's first,
+  # or its slice reloading after a history change cleared it): the answer,
+  # read before the swap, lost the pending copy and gained nothing, and the
+  # pane drew neither until the slice was read again. TestSentAcrossAThreadLoad
+  # (a reply, and a broadcast one with the channel's reload out too) and
+  # TestSentAcrossALoad, COUNT times. Dispatch with only=sent-thread.
+  sent-thread:
+    if: ${{ !inputs.only || startsWith('sent-thread', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the sends across a list's load, COUNT times
+        run: go test -count=$COUNT -timeout 15m -run '^(TestSentAcrossALoad|TestSentAcrossAThreadLoad)$' ./internal/ui/messages
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # Karim, α.165 macOS: with the sidebar hidden (Cmd+Shift+D) the top nav
+  # lost its back arrow (drawn at x -29) and put forward and history under
+  # the traffic lights; Slack lays the nav out from the window alone, and
+  # its history button draws the clock (topnav-sidebar-hidden).
+  topnav-sidebar-hidden:
+    if: ${{ !inputs.only || startsWith('topnav-sidebar-hidden', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the top nav, sidebar hidden and shown, COUNT runs"
+        run: go test -count=$COUNT -v -timeout 10m -run '^(TestTopNavSidebarHidden|TestMacNavCaption|TestWcoTopNav|TestWcoNarrowNav)$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # reply-flush (2026-11-24): TestReplyCountEventOrders read the parent
+  # before its message_replied went in ("parent reply_count 2 … want 3",
+  # full-test 45351461160, on oneko-data-images): flush's own channel was
+  # looked up before the fixture's, whose events wait for its lookup
+  # (holdForConv). flush waits for every held conversation now, and the
+  # fixture's lookup answers late in TestReplyCountEventOrders
+  # (slowLookup). The tests that flush, COUNT times. Dispatch with
+  # only=reply-flush.
+  reply-flush:
+    if: ${{ !inputs.only || startsWith('reply-flush', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the tests that flush the socket's events, COUNT times
+        env:
+          RF_RUN: "^(TestReplyCountEventOrders|TestReplyCountStaleReplied|TestReplyCountOwnSend|TestReplyCountBroadcast|TestReplyCountDeletedReply|TestActivityThreadReplyNotAMention|TestActivityThreadReplyWithMention|TestAgentThreadActivityNoMentions|TestAgentThreadFetchKeepsLiveEdit|TestAgentThreadEditKeepsThread|TestAgentAnswerNoEditedLabel|TestSidebarMarksLikeSlack|TestBroadcastNewerRepliesParentCached|TestBroadcastNewerRepliesRootOnly)$"
+        run: go test -count=$COUNT -timeout 12m -run "$RF_RUN" ./internal/core
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # entprefs (2026-11-24): boot's enterprise.prefs.get, answered after a
+  # call made later, put the org's older prefs back: popups'
+  # TestMessageMenuFlagRowLikeSlack still drew "Flag this message…" after
+  # content review went off (push ci 45351365915 on oneko-data-images), and
+  # TestFlagMessageDialogLikeSlack found it off before it went on
+  # (45335642745). The newer call's answer stands now. The core test that
+  # holds boot's answer, then the popups pair, COUNT times. Dispatch with
+  # only=entprefs.
+  entprefs:
+    if: ${{ !inputs.only || startsWith('entprefs', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the enterprise prefs' later call, then the flag row and dialog, COUNT times
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 5m -run '^TestEnterprisePrefsLaterCallWins$' ./internal/core || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 10m -run '^(TestMessageMenuFlagRowLikeSlack|TestFlagMessageDialogLikeSlack)$' ./internal/ui/popups || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # scroll-cpu (2026-11-24): TestPrefsLibraryScrollCost read 10.6 ms at the
+  # median against 8 on select-line-end's full-test (45418696238), its
+  # frames 5.5 to 24 ms: they waited for a CPU other packages' tests had.
+  # A frame's cost is its layout thread's CPU time now (threadCPU). COUNT
+  # runs; then, not gating, runs beside a busy loop on every CPU, which
+  # log the CPU and the clock medians of the same frames. Dispatch with
+  # only=scroll-cpu.
+  scroll-cpu:
+    if: ${{ !inputs.only || startsWith('scroll-cpu', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the plugin library scrolled, COUNT runs
+        shell: bash
+        run: |
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestPrefsLibraryScrollCost$' ./internal/ui | grep -E 'prefs_scroll_cost_test.go:[0-9]+: (a frame|[0-9]+ notches|a scroll)|^(--- |ok|FAIL|PASS)'
+      - name: beside a busy loop on every CPU, 3 runs (not gating)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          for i in $(seq 1 "$(nproc)"); do (while :; do :; done) & done
+          xvfb-run -a go test -count=3 -v -timeout 12m -run '^TestPrefsLibraryScrollCost$' ./internal/ui | grep -E 'prefs_scroll_cost_test.go:[0-9]+: (a frame|[0-9]+ notches|a scroll)|^(--- |ok|FAIL|PASS)'
+          rc=${PIPESTATUS[0]}
+          kill $(jobs -p) 2>/dev/null
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # member-subs (2026-11-24): TestMemberSubscriptionsAfterReconnect read
+  # core's count of a subscribed member right after the fake had the
+  # subscription, while the refetch core counts it after was still out
+  # (msg-latency-thread's push ci 45388429533). It waits for both now.
+  # COUNT runs with that refetch held 300 ms (MF_SLOW_REFETCH), then COUNT
+  # as the suite runs it. Dispatch with only=member-subs.
+  member-subs:
+    if: ${{ !inputs.only || startsWith('member-subs', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: the member's subscription across a reconnect, the refetch slow, COUNT times
+        env:
+          MF_SLOW_REFETCH: "1"
+        run: go test -count=$COUNT -timeout 6m -run '^TestMemberSubscriptionsAfterReconnect$' ./internal/core
+      - name: the member's subscription across a reconnect, COUNT times
+        run: go test -count=$COUNT -timeout 6m -run '^TestMemberSubscriptionsAfterReconnect$' ./internal/core
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report

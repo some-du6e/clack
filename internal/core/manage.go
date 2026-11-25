@@ -262,10 +262,12 @@ type convResult = struct {
 	Channel slack.Conversation `json:"channel"`
 }
 
-// Rename renames a channel (needs permission; Slack lowercases the name).
+// Rename renames a channel (needs permission; Slack lowercases the name):
+// renameChannelApi's setChannelRename (seHs, wqjU A7), conversations.rename
+// {channel, name, validate: true}.
 func (a *App) Rename(ctx context.Context, ch, name string) error {
 	var res convResult
-	if err := a.C.Call(ctx, "conversations.rename", url.Values{"channel": {ch}, "name": {name}}, &res); err != nil {
+	if err := a.C.Call(ctx, "conversations.rename", url.Values{"channel": {ch}, "name": {name}, "validate": {"true"}}, &res); err != nil {
 		return err
 	}
 	a.convChanged(ctx, ch, &res)
