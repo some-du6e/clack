@@ -858,6 +858,7 @@ func (lb *Lightbox) mediaClose(gtx layout.Context, th *theme.Theme, panel image.
 	if lb.side.shown {
 		return // the close button is the sidebar's (layoutSideClose)
 	}
+	white := rgb(0xffffff)
 	cp := image.Pt(panel.Max.X-dp(gtx, 8)-dp(gtx, 36), panel.Min.Y+dp(gtx, 8))
 	at(gtx, cp, func(gtx layout.Context) layout.Dimensions {
 		d := iconButton(gtx, &lb.closeBtn, "close", 36, 20, white, rgba(0xffffff, .1), 8)
