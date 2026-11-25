@@ -34,6 +34,7 @@ import (
 	"image/draw"
 	"image/png"
 	"math"
+	"slices"
 	"sync"
 
 	"gioui.org/f32"
@@ -64,6 +65,33 @@ type fiDialog struct {
 // fiDialogShown, when set (tests), sees each dialog as it opens.
 var fiDialogShown func(*fiDialog)
 
+// fiOpen are the Add file dialogs open, the last on top (UI goroutine).
+var fiOpen []*fiDialog
+
+// FileDialogOpen reports whether an Add file dialog is open. While
+// FileInputDialog is mounted its dropzone takes the window's file drops
+// and the page's own drop handling stands down (the composer behind the
+// modal takes none).
+func FileDialogOpen() bool {
+	return slices.ContainsFunc(fiOpen, func(d *fiDialog) bool { return !d.m.Dismissed() })
+}
+
+// FileDialogDrop gives files dropped on the window to the Add file dialog
+// on top, as its dropzone's onDrop hands them to the input's change: they
+// go through the dialog's checks as chosen files do. It reports whether a
+// dialog took them. UI goroutine.
+func FileDialogDrop(fs []core.UploadFile) bool {
+	for i := len(fiOpen) - 1; i >= 0; i-- {
+		if d := fiOpen[i]; !d.m.Dismissed() {
+			if len(fs) > 0 {
+				d.chosen(fs)
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // openFileDialog opens the Add file dialog over the view.
 func (w *ew) openFileDialog() {
 	h := w.o.host()
@@ -78,9 +106,13 @@ func (w *ew) openFileDialog() {
 			if w.fi != nil && w.fi.dlg == d {
 				w.fi.dlg = nil
 			}
+			if i := slices.Index(fiOpen, d); i >= 0 {
+				fiOpen = slices.Delete(fiOpen, i, i+1)
+			}
 		},
 	})
 	w.fileState().dlg = d
+	fiOpen = append(fiOpen, d)
 	if fiDialogShown != nil {
 		fiDialogShown(d)
 	}
@@ -101,9 +133,11 @@ func (d *fiDialog) choose() {
 		fs, err := PickFiles(accept, multiple)
 		post(h, func() {
 			d.picking = false
-			if err == nil && len(fs) > 0 {
-				d.chosen(fs)
+			// files chosen after the dialog (or its modal) went upload nothing
+			if err != nil || len(fs) == 0 || d.m.Dismissed() || w.fi == nil || w.fi.dlg != d || w.closed() {
+				return
 			}
+			d.chosen(fs)
 		})
 	}()
 }

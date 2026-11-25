@@ -14,6 +14,7 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -240,6 +241,10 @@ type Surface struct {
 	onAction func()
 	// initial is the state when the view was shown (speedbump on close).
 	initial string
+	// submitted: a views.submit of this view went through (its file
+	// inputs' uploads are the submission's: removeAllFiles leaves them);
+	// closed: the view went (closed, popped or replaced)
+	submitted, closed bool
 	// fixed is the action base of a surface that isn't a Slack view (a
 	// code channel's block_kit view): its container and app ids.
 	fixed *core.BlockAction
@@ -875,6 +880,7 @@ func (s *Surface) flowRun(gtx C, b *Block, w int, draw bool) int {
 			return
 		}
 		for _, c := range row {
+			c.ew.pos = image.Pt(c.x, s.curY+y+rowH-c.sz.Y) // as inputBlock's: the surface's, for fields and tests
 			at(gtx, image.Pt(c.x, y+rowH-c.sz.Y), func(gtx C) D { return c.ew.layout(fixed(gtx, c.sz), c.sz) })
 		}
 	}
@@ -1065,24 +1071,82 @@ func (s *Surface) inputBlock(gtx C, b *Block, key string, w int) int {
 	return y
 }
 
-// submitValues is the state to send with views.submit.
 // wipePasswords forgets what was typed in the view's password fields
-// once it closes: its editors' text and its state values (a password
-// isn't kept in memory past its view).
+// once it closes: each editor goes for a fresh one (with its undo
+// history), its state value is emptied, and the view's initial state (a
+// views.update's snapshot of it holds the typed text) is dropped: a
+// password isn't kept in memory past its view.
 func (s *Surface) wipePasswords() {
+	wiped := false
 	for _, w := range s.ws {
 		if w.e == nil || w.e.Type != "password" {
 			continue
 		}
 		if w.ed != nil {
 			w.ed.SetText("")
+			w.ed = new(widget.Editor)
+			w.configure()
 		}
 		if v := s.vals.get(w.bid, w.e.ActionID); v != nil {
 			v.Text = ""
 		}
+		wiped = true
+	}
+	if wiped {
+		s.initial = ""
 	}
 }
 
+// removeAllFiles is Yt0k's removeAllFiles, which the modal's
+// handleModalClosedAndNotSubmitted runs when a view goes without having
+// been submitted (Cancel, the ×, Back): every pending upload of its
+// file inputs cancelled (cancelEagerUpload), every uploaded file deleted
+// (deleteFile, reason bk_file_input_remove). Nothing goes out as the
+// inputs' values: the view is gone.
+func (s *Surface) removeAllFiles() {
+	if s.submitted {
+		return
+	}
+	var ids []string
+	for _, w := range s.ws {
+		fs := w.fi
+		if fs == nil {
+			continue
+		}
+		for _, ff := range fs.pending {
+			if ff.cancel != nil {
+				ff.cancel()
+			}
+		}
+		for _, ff := range fs.done {
+			ids = append(ids, ff.id)
+		}
+		fs.pending, fs.done, fs.errs = nil, nil, nil
+	}
+	c := s.h.Core()
+	if c == nil || len(ids) == 0 {
+		return
+	}
+	go func() {
+		for _, id := range ids {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			_ = c.DeleteFile(ctx, id)
+			cancel()
+		}
+	}()
+}
+
+// closeFileDialogs closes the view's open Add file dialogs: they go with
+// their modal view.
+func (s *Surface) closeFileDialogs() {
+	for _, w := range s.ws {
+		if w.fi != nil && w.fi.dlg != nil {
+			w.fi.dlg.m.Dismiss()
+		}
+	}
+}
+
+// submitValues is the state to send with views.submit.
 func (s *Surface) submitValues() json.RawMessage { return s.vals.JSON(false) }
 
 // errMessage is the text Slack shows for a failed action.

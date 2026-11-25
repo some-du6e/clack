@@ -212,7 +212,7 @@ func (w *ew) splitAct(a *SplitAction) {
 		}
 	}
 	if a.Confirm != nil {
-		showConfirm(w.o.host(), a.Confirm, act, nil)
+		w.confirm(a.Confirm, act, nil) // in a Block Kit modal its in-card speed bump
 		return
 	}
 	act()

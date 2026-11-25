@@ -65,19 +65,20 @@ func TestSplitButtonPrimary(t *testing.T) {
 	}
 	want := map[string]any{"type": "split_button", "block_id": "bk_split", "action_id": "deploy",
 		"text": map[string]any{"type": "plain_text", "text": "Deploy"}, "value": "deploy-prod"}
-	pressed := time.Now()
+	// the press's one-second hold on the frames' own clock, so a slow
+	// answer can't let the in-second click go unchecked
+	t0 := time.Now()
+	e.clock = t0
+	defer func() { e.clock = time.Time{} }()
 	e.click(center(r))
 	sameJSON(t, "the primary", e.calls(1)[0].Actions[0], want)
-	// the action's answer back, so only the press's one-second hold can
-	// refuse the next click (the block isn't loading)
+	// the action's answer back, so only the press's hold can refuse the
+	// next click (the block isn't loading)
 	e.idle("bk_split")
-	if time.Since(pressed) < 700*time.Millisecond {
-		e.click(center(r))
-		e.noNewCall(1, 300*time.Millisecond, "a second click within a second")
-	} else {
-		t.Logf("the answer took %v: the in-second click isn't checked", time.Since(pressed))
-	}
-	e.settle(800 * time.Millisecond)
+	e.clock = t0.Add(500 * time.Millisecond)
+	e.click(center(r))
+	e.noNewCall(1, 300*time.Millisecond, "a second click within a second")
+	e.clock = t0.Add(1100 * time.Millisecond)
 	e.click(center(r))
 	sameJSON(t, "the primary after a second", e.calls(2)[1].Actions[0], want)
 }

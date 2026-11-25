@@ -325,7 +325,10 @@ func (s *Stack) back() {
 		return
 	}
 	s.closeViews(t.ID, "")
+	s.views[len(s.views)-1].closeFileDialogs()
+	s.views[len(s.views)-1].removeAllFiles()
 	s.views[len(s.views)-1].wipePasswords()
+	s.views[len(s.views)-1].closed = true
 	s.views = s.views[:len(s.views)-1]
 	s.busy, s.banner, s.bannerRetry = false, "", false
 	s.list.Position = layout.Position{}
@@ -345,7 +348,10 @@ func (s *Stack) closeAll() {
 func (s *Stack) close() {
 	s.done = true
 	for _, sf := range s.views {
+		sf.closeFileDialogs()
+		sf.removeAllFiles() // a view never submitted (handleModalClosedAndNotSubmitted)
 		sf.wipePasswords()
+		sf.closed = true
 	}
 	if s.prev != nil { // useRestoreFocus
 		refocus.Restore(s.prev, &s.tag, &s.closeTap, &s.backTap, &s.cancel, &s.submit)
@@ -510,6 +516,9 @@ func (s *Stack) doSubmit() {
 		if r.Toast != "" {
 			s.h.Toast(r.Toast)
 		}
+		if r.ResponseAction != "errors" && r.Code == "" {
+			sf.submitted = true
+		}
 		switch r.ResponseAction {
 		case "errors":
 			for k, m := range r.Errors {
@@ -526,6 +535,7 @@ func (s *Stack) doSubmit() {
 					sf.set(r.View, true)
 				} else {
 					s.views[len(s.views)-1].wipePasswords()
+					s.views[len(s.views)-1].closed = true
 					s.views[len(s.views)-1] = s.surface(r.View)
 				}
 			} else {
@@ -549,6 +559,7 @@ func (s *Stack) doSubmit() {
 		// view if this one was pushed, else close
 		if len(s.views) > 1 {
 			s.views[len(s.views)-1].wipePasswords()
+			s.views[len(s.views)-1].closed = true
 			s.views = s.views[:len(s.views)-1]
 			s.list.Position = layout.Position{}
 			return

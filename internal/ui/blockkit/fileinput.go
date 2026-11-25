@@ -1087,6 +1087,24 @@ func fiPreview(ctx context.Context, data []byte) (*image.RGBA, error) {
 // a cancelled one quietly (it was removed).
 func (w *ew) uploadDone(ff *fiFile, raw json.RawMessage, err error, cancelled bool) {
 	fs := w.fi
+	if w.closed() || !w.attached() {
+		// the view went, or a views.update dropped the element: no value
+		// for a block that's gone, no block_actions for a closed view; a
+		// file that got up anyway is deleted, unless the view was submitted
+		if s, ok := w.o.(*Surface); ok && err == nil && !s.submitted {
+			var fo struct{ ID string }
+			if json.Unmarshal(raw, &fo) == nil && fo.ID != "" {
+				if c := w.o.host().Core(); c != nil {
+					go func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						_ = c.DeleteFile(ctx, fo.ID)
+					}()
+				}
+			}
+		}
+		return
+	}
 	i := slices.Index(fs.pending, ff)
 	if i < 0 {
 		return
@@ -1124,6 +1142,28 @@ func (w *ew) uploadDone(ff *fiFile, raw json.RawMessage, err error, cancelled bo
 	ff.preview, ff.hasPrev = paint.ImageOp{}, false
 	fs.done = append(fs.done, ff)
 	w.syncFiles()
+}
+
+// closed: w's surface is a modal view that went (closed, popped or
+// replaced).
+func (w *ew) closed() bool {
+	s, ok := w.o.(*Surface)
+	return ok && s.closed
+}
+
+// attached: w is still one of its surface's elements (a views.update can
+// drop it).
+func (w *ew) attached() bool {
+	s, ok := w.o.(*Surface)
+	if !ok {
+		return true
+	}
+	for _, x := range s.ws {
+		if x == w {
+			return true
+		}
+	}
+	return false
 }
 
 // removeFile is Yt0k's removeFile: the last file's removal clears the

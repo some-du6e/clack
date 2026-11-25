@@ -254,6 +254,9 @@ func TestShortcutsAndHome(t *testing.T) {
 }
 
 func TestUploadForInput(t *testing.T) {
+	pf := UploadPollFirst
+	UploadPollFirst = 10 * time.Millisecond
+	t.Cleanup(func() { UploadPollFirst = pf })
 	a, f := testApp(t)
 	f.reply["files.getUploadURL"] = `{"ok":true,"file":"F7","upload_url":"` + f.srv.URL + `/upload/x"}`
 	f.reply["x"] = `{"ok":true}`
@@ -272,5 +275,9 @@ func TestUploadForInput(t *testing.T) {
 	}
 	if f.last("files.share") != nil {
 		t.Error("a file_input upload was shared")
+	}
+	// one wait for Slack's processing (PrepareUpload's), then the object
+	if n := f.count("files.info"); n != 2 {
+		t.Errorf("%d files.info, want PrepareUpload's processing read and the input's file object (no second wait)", n)
 	}
 }

@@ -7122,8 +7122,9 @@ jobs:
       - name: file_input, password, split_button and the SVG subset, COUNT runs
         run: |
           rc=0
-          go test -count="$COUNT" -timeout 15m -run '^(TestFileInputElement|TestFileInputUploadFails|TestFileInputUploadsOff|TestFileInputChecks|TestFileInputGallery|TestPasswordNeverDispatchesInInputBlocks|TestSplitButtonFieldsTolerant|TestSplitButtonPrimary)$' ./internal/ui/blockkit || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^(TestRasterSVGNamedFills|TestRasterSVGClipPath|TestBundledEmptyStateCloudDraws)$' ./internal/imgcache || rc=1
+          go test -count="$COUNT" -timeout 15m -run '^(TestFileInputElement|TestFileInputUploadFails|TestFileInputUploadsOff|TestFileInputChecks|TestFileInputGallery|TestFileInputRemovedOnClose|TestFileInputDialogTakesDrops|TestPasswordNeverDispatchesInInputBlocks|TestPasswordPaths|TestSplitButtonFieldsTolerant|TestSplitButtonPrimary)$' ./internal/ui/blockkit || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestRasterSVGNamedFills|TestRasterSVGClipPath|TestBundledEmptyStateCloudDraws|TestRasterSVGBoundsItsInput)$' ./internal/imgcache || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestUploadForInput$' ./internal/core || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report

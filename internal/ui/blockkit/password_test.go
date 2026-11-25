@@ -1,6 +1,7 @@
 package blockkit
 
 import (
+	"image"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"gioui.org/io/key"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
 )
 
 // Synthetic fixtures only.
@@ -103,7 +105,10 @@ func TestPasswordElement(t *testing.T) {
 func TestPasswordNeverDispatchesInInputBlocks(t *testing.T) {
 	e := newBKEnv(t, false, false)
 	pt := func(s string) map[string]any { return map[string]any{"type": "plain_text", "text": s} }
+	// the gallery app's, so an action would go out (BlockActionSend needs
+	// the view's service id): the check below is that none does
 	v, err := core.ParseView(mustJSON(map[string]any{"id": "VSURF0PW02", "type": "modal", "callback_id": "pw", "hash": "p2",
+		"bot_id": fakeslack.GalleryBotID, "app_id": fakeslack.GalleryAppID,
 		"title": pt("Connect"), "submit": pt("Save"), "close": pt("Cancel"), "state": map[string]any{"values": map[string]any{}},
 		"blocks": []any{map[string]any{"type": "input", "block_id": "pw", "dispatch_action": true, "label": pt("Token"),
 			"element": map[string]any{"type": "password", "action_id": "v",
@@ -162,6 +167,84 @@ func TestPasswordNeverDispatchesInInputBlocks(t *testing.T) {
 	}
 	if v := s.top().vals.get("pw", "v"); v != nil && v.Text != "" {
 		t.Error("the password stayed in the view's state after the modal closed")
+	}
+	e.closeOverlays()
+}
+
+// The password's other paths: multiline doesn't make it more than the one
+// line of an <input>; outside an input block a change goes 500 ms after
+// the last (wrappedOnAction's trailing debounce) and Enter sends nothing;
+// once its view goes, the editor is a fresh one (no undo history holds the
+// text) and the view's initial state, which a views.update's snapshot
+// holds the typed text in, is dropped.
+func TestPasswordPaths(t *testing.T) {
+	e := newBKEnv(t, false, false)
+	pt := func(s string) map[string]any { return map[string]any{"type": "plain_text", "text": s} }
+	v, err := core.ParseView(mustJSON(map[string]any{"id": "VSURF0PW03", "type": "modal", "callback_id": "pw", "hash": "p3",
+		"bot_id": fakeslack.GalleryBotID, "app_id": fakeslack.GalleryAppID,
+		"title": pt("Connect"), "close": pt("Cancel"), "state": map[string]any{"values": map[string]any{}},
+		"blocks": []any{
+			map[string]any{"type": "input", "block_id": "multi", "optional": true, "label": pt("Token"),
+				"element": map[string]any{"type": "password", "action_id": "v", "multiline": true}},
+			map[string]any{"type": "actions", "block_id": "act",
+				"elements": []any{map[string]any{"type": "password", "action_id": "p"}}},
+		}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newStack(e.h, v)
+	e.h.ShowOverlay(s)
+	e.frame()
+	e.frame()
+	sf := s.top()
+	var multi, act *ew
+	for _, b := range allBlocks(sf.blocks) {
+		switch {
+		case b.BlockID == "multi" && b.Element != nil:
+			multi = sf.ws[surfKey(b, b.Element)]
+		case b.BlockID == "act" && len(b.Elements) == 1:
+			act = sf.ws[surfKey(b, &b.Elements[0])]
+		}
+	}
+	if multi == nil || multi.ed == nil || act == nil || act.ed == nil {
+		t.Fatalf("the password widgets: %+v, %+v", multi, act)
+	}
+	if !multi.ed.SingleLine || multi.ed.Mask != '•' {
+		t.Errorf("a multiline password: single line %v, mask %q; want one masked line", multi.ed.SingleLine, multi.ed.Mask)
+	}
+
+	// outside an input block: nothing while typing, the value once 500 ms
+	// after the last change, nothing on Enter (the modal's first focus is
+	// its button: a click focuses the password)
+	e.click(sf.org.Add(act.pos).Add(image.Pt(20, 18)))
+	e.frame()
+	if !act.focusedD {
+		t.Fatalf("a click at %v didn't focus the actions block's password (at %v)", sf.org.Add(act.pos), act.pos)
+	}
+	n := len(e.fs.BlockActionCalls())
+	typeIn(e, "hunter2")
+	e.noNewCall(n, 300*time.Millisecond, "a password as it's typed")
+	e.until("the debounced change", 5*time.Second, func() bool { return len(e.fs.BlockActionCalls()) > n })
+	calls := e.fs.BlockActionCalls()
+	if len(calls) != n+1 || len(calls[n].Actions) != 1 || calls[n].Actions[0]["value"] != "hunter2" {
+		t.Errorf("the change sent %+v, want one action with the value", calls[n:])
+	}
+	e.key(key.NameReturn)
+	e.noNewCall(n+1, 700*time.Millisecond, "Enter in a password outside an input block")
+
+	// a views.update keeps the values: its snapshot holds the typed text
+	sf.set(sf.view, true)
+	if !strings.Contains(sf.initial, "hunter2") {
+		t.Fatalf("the update's snapshot %q doesn't hold the typed text: nothing to wipe", sf.initial)
+	}
+	old := act.ed
+	s.Close()
+	e.frame()
+	if act.ed == old || act.ed.Text() != "" || old.Text() != "" {
+		t.Error("the closed view's password editor is the one typed in (its undo history holds the text)")
+	}
+	if strings.Contains(sf.initial, "hunter2") {
+		t.Error("the closed view's initial state still holds the typed password")
 	}
 	e.closeOverlays()
 }

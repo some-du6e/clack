@@ -162,6 +162,12 @@ func (s *Server) handleFilesView(method string, f url.Values) (any, bool) {
 		"files.collections.list", "files.collections.create", "files.collections.update", "files.collections.delete":
 	case "files.delete", "files.edit":
 		if s.uploaded(f.Get("file")) {
+			if method == "files.delete" { // FileDeleted holds for an upload too
+				fv := s.filesView()
+				fv.mu.Lock()
+				fv.deleted[f.Get("file")] = true
+				fv.mu.Unlock()
+			}
 			return nil, false
 		}
 	default:

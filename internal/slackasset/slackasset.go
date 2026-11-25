@@ -88,7 +88,7 @@ var calendarOutlook []byte
 
 // The file_input's Add file dialog (n9p0 FileInputDialog, build
 // 9f450b8ad3db): its drop zone's sad cloud (RUFH, empty-state-low-
-// connection, sha256 a8a39573…, 1213 bytes: named fills and a whole-canvas
+// connection, sha256 a8a39573…, 2716 bytes: named fills and a whole-canvas
 // clipPath, which imgcache's SVG subset draws) and the drag-and-drop
 // sprite sheet its cards and the panes' drop overlays cut (client-boot-
 // styles' ./dragdrop_sprites@2x-ca59764.png, sha256 c3005b52…).

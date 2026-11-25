@@ -1194,19 +1194,13 @@ func (c ActionContainer) String() string {
 
 // UploadForInput uploads a file for a Block Kit file_input without
 // sharing it anywhere (PrepareUpload: files.getUploadURL, the bytes,
-// files.completeUpload), waits for Slack to process it, and returns its
-// file object (files.info), which the input's card draws (its value keeps
-// the id: files [{id}]).
+// files.completeUpload, then Slack's processing, as UploadQueue keeps the
+// upload pending through PROCESSING) and returns its file object
+// (files.info), which the input's card draws (its value keeps the id:
+// files [{id}]).
 func (ix *Interactive) UploadForInput(ctx context.Context, f UploadFile, progress func(sent, total int64)) (json.RawMessage, error) {
 	pu, err := ix.a.PrepareUpload(ctx, f, progress)
 	if err != nil {
-		return nil, err
-	}
-	// The upload stays pending through PROCESSING, as UploadQueue keeps it
-	// (file_created, else polling): the file_input's card is a pending
-	// upload until then (Afte lists IDLE, UPLOADING and PROCESSING ones),
-	// and the file object comes processed (pretty_type, thumbs).
-	if _, err := ix.a.awaitProcessed(ctx, pu.ID); err != nil {
 		return nil, err
 	}
 	var res struct {

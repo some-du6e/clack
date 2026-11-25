@@ -47,13 +47,17 @@ const svgMaxSide = 2048
 
 // What parseSVG reads, and rasterSVG draws, at most. Only Clack's own
 // assets reach them (the logo: 883 bytes, 8 paths, 2 levels, 66 commands,
-// coordinates within 0-256), but the bounds hold for any input: the work a
-// document costs is at most svgMaxShapes full-size passes and svgMaxSegs
-// segments, each crossing at most svgMaxDevice rows either side.
+// coordinates within 0-256; the cloud: 2716 bytes, 12 paths and a clip),
+// but the bounds hold for any input: the work a document costs is at most
+// 3·svgMaxShapes + svgMaxClips full-size passes (a path's or a clip
+// outline's, a clipped path's coverage, its clip and its fill; a clip list
+// combined once) and svgMaxSegs segments, each crossing at most
+// svgMaxDevice rows either side.
 const (
 	svgMaxBytes  = 64 << 10
 	svgMaxDepth  = 16
 	svgMaxShapes = 64
+	svgMaxClips  = 8              // clip-path references
 	svgMaxCoord  = 1e5            // user units, after relative commands add up
 	svgMaxDevice = 4 * svgMaxSide // px from the viewport's origin
 )
@@ -223,6 +227,37 @@ func rasterSVG(data []byte, size int, b *Budget) (*image.RGBA, error) {
 		masks[id] = m
 		return m, nil
 	}
+	// a clip list's region, the product of its clips', made once per list
+	// prefix (a nested group's list extends its parent's): at most
+	// svgMaxClips of them
+	lists := map[string]*image.Alpha{}
+	var listMask func(ids []string) (*image.Alpha, error)
+	listMask = func(ids []string) (*image.Alpha, error) {
+		if len(ids) == 1 {
+			return clipMask(ids[0])
+		}
+		key := strings.Join(ids, "\x00")
+		if m := lists[key]; m != nil {
+			return m, nil
+		}
+		head, err := listMask(ids[:len(ids)-1])
+		if err != nil {
+			return nil, err
+		}
+		last, err := clipMask(ids[len(ids)-1])
+		if err != nil {
+			return nil, err
+		}
+		m, err := mask()
+		if err != nil {
+			return nil, err
+		}
+		for i := range m.Pix {
+			m.Pix[i] = uint8((uint32(head.Pix[i])*uint32(last.Pix[i]) + 127) / 255)
+		}
+		lists[key] = m
+		return m, nil
+	}
 	var cover *image.Alpha // a clipped shape's coverage
 	for _, s := range doc.shapes {
 		if s.fill.none || s.fill.c.A == 0 || len(s.d) == 0 {
@@ -233,24 +268,21 @@ func rasterSVG(data []byte, size int, b *Budget) (*image.RGBA, error) {
 			z.Draw(dst, dst.Bounds(), image.NewUniform(s.fill.c), image.Point{})
 			continue
 		}
-		// clipped: the shape's coverage times each clip's, its fill drawn
+		// clipped: the shape's coverage times its clips', its fill drawn
 		// through that
+		cm, err := listMask(s.clips)
+		if err != nil {
+			return nil, err
+		}
 		if cover == nil {
-			var err error
 			if cover, err = mask(); err != nil {
 				return nil, err
 			}
 		}
 		feed(s.d, draw.Src)
 		z.Draw(cover, cover.Bounds(), image.Opaque, image.Point{})
-		for _, id := range s.clips {
-			m, err := clipMask(id)
-			if err != nil {
-				return nil, err
-			}
-			for i, a := range m.Pix {
-				cover.Pix[i] = uint8((uint32(cover.Pix[i])*uint32(a) + 127) / 255)
-			}
+		for i, a := range cm.Pix {
+			cover.Pix[i] = uint8((uint32(cover.Pix[i])*uint32(a) + 127) / 255)
 		}
 		draw.DrawMask(dst, dst.Bounds(), image.NewUniform(s.fill.c), image.Point{}, cover, image.Point{}, draw.Over)
 	}
@@ -265,14 +297,15 @@ func parseSVG(data []byte) (*svgDoc, error) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.Strict = true
 	var (
-		doc     *svgDoc
-		fills   []svgFill  // the inherited fill at each open element
-		kinds   []string   // each open element's name
-		clipsAt [][]string // the clipPaths each open element's content is clipped to
-		clipID  string     // the open clipPath's id
-		depth   int
-		segs    int // every path's commands
-		parts   int // paths and clip outlines
+		doc      *svgDoc
+		fills    []svgFill  // the inherited fill at each open element
+		kinds    []string   // each open element's name
+		clipsAt  [][]string // the clipPaths each open element's content is clipped to
+		clipID   string     // the open clipPath's id
+		depth    int
+		segs     int // every path's commands
+		parts    int // paths and clip outlines
+		clipRefs int // clip-path references
 	)
 	in := func(name string) bool { return slices.Contains(kinds, name) }
 	for {
@@ -319,6 +352,9 @@ func parseSVG(data []byte) (*svgDoc, error) {
 					return nil, err
 				}
 				if id != "" {
+					if clipRefs++; clipRefs > svgMaxClips {
+						return nil, svgErr("more than %d clip-paths", svgMaxClips)
+					}
 					clips = append(slices.Clip(clips), id)
 				}
 			}
@@ -447,8 +483,9 @@ func svgClipRef(v string) (string, error) {
 	if v == "none" {
 		return "", nil
 	}
-	in, ok := strings.CutPrefix(v, "url(")
-	if in, ok = strings.CutSuffix(in, ")"); !ok {
+	in, pre := strings.CutPrefix(v, "url(")
+	in, suf := strings.CutSuffix(in, ")")
+	if !pre || !suf {
 		return "", svgErr("clip-path %q", v)
 	}
 	in = strings.Trim(strings.TrimSpace(in), `"'`)

@@ -225,18 +225,29 @@ func TestRasterSVGBoundsItsInput(t *testing.T) {
 	if _, err := parsePathData("M0 0A1e300 1e300 0 0 1 16 16z"); !errors.Is(err, errSVG) {
 		t.Errorf("overflowing arc: err %v, want refused", err)
 	}
+	// clip-path references up to the bound draw: nested groups each
+	// clipping to the whole square, one combined clip list per prefix
+	clipDefs := `<defs><clipPath id="c"><rect width="16" height="16"/></clipPath></defs>`
+	clipped := func(n int) string {
+		return head + clipDefs + strings.Repeat(`<g clip-path="url(#c)">`, n) + square + strings.Repeat(`</g>`, n) + `</svg>`
+	}
+	if _, err := rasterSVG([]byte(clipped(svgMaxClips)), 16, b); err != nil {
+		t.Fatalf("%d clip-paths: %v", svgMaxClips, err)
+	}
 	// half the commands in each of two paths: within one path's cap, over
 	// the document's
 	long := `<path d="M0 0` + strings.Repeat(` h1`, svgMaxSegs/2) + `"/>`
 	for name, s := range map[string]string{
-		"bytes":        head + `<!--` + strings.Repeat("x", svgMaxBytes) + `-->` + square + `</svg>`,
-		"paths":        head + strings.Repeat(square, svgMaxShapes+1) + `</svg>`,
-		"depth":        head + `<g>` + nest + `</g></svg>`,
-		"commands":     head + long + long + `</svg>`,
-		"coordinate":   head + `<path d="M0 -200000L0 16H8z"/></svg>`,
-		"relative sum": head + `<path d="M0 0` + strings.Repeat(` l60000 0`, 2) + `z"/></svg>`,
-		"viewBox":      `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 1e6 16">` + square + `</svg>`,
-		"tiny viewBox": `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 0.0001 0.0001"><path d="M0 -1L0 1H1z"/></svg>`,
+		"bytes":                  head + `<!--` + strings.Repeat("x", svgMaxBytes) + `-->` + square + `</svg>`,
+		"paths":                  head + strings.Repeat(square, svgMaxShapes+1) + `</svg>`,
+		"depth":                  head + `<g>` + nest + `</g></svg>`,
+		"commands":               head + long + long + `</svg>`,
+		"coordinate":             head + `<path d="M0 -200000L0 16H8z"/></svg>`,
+		"relative sum":           head + `<path d="M0 0` + strings.Repeat(` l60000 0`, 2) + `z"/></svg>`,
+		"viewBox":                `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 1e6 16">` + square + `</svg>`,
+		"tiny viewBox":           `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 0.0001 0.0001"><path d="M0 -1L0 1H1z"/></svg>`,
+		"clip-paths":             clipped(svgMaxClips + 1),
+		"clip-path without url(": head + clipDefs + `<path d="M0 0h16v16H0z" clip-path="#c)"/></svg>`,
 	} {
 		if _, err := rasterSVG([]byte(s), 16, b); !errors.Is(err, errSVG) {
 			t.Errorf("%s: err %v, want refused", name, err)

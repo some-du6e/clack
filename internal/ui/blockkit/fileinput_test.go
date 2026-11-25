@@ -437,3 +437,76 @@ func TestFileInputGallery(t *testing.T) {
 		t.Error("accept lost its dot")
 	}
 }
+
+// A modal that goes without a submit takes its file inputs' uploads with
+// it, as handleModalClosedAndNotSubmitted runs removeAllFiles: an uploaded
+// file is deleted (deleteFile, reason bk_file_input_remove) and a pending
+// upload is cancelled before it completes. A submitted view's files are
+// the submission's and stay.
+func TestFileInputRemovedOnClose(t *testing.T) {
+	e := newFIEnv(t, map[string]any{}, nil)
+	w := e.w()
+	w.uploadFiles([]core.UploadFile{{Name: "plan.txt", Data: []byte("synthetic plan")}})
+	e.until("the upload", 20*time.Second, func() bool { return len(w.fi.done) == 1 })
+	id := w.fi.done[0].id
+	// a second upload held at files.getUploadURL, still pending at the close
+	e.fs.SetFault("files.getUploadURL", fakeslack.Fault{Delay: time.Second})
+	w.uploadFiles([]core.UploadFile{{Name: "notes.txt", Data: []byte("synthetic notes")}})
+	if len(w.fi.pending) != 1 {
+		t.Fatalf("pending %v", w.fi.pending)
+	}
+	e.s.Close()
+	e.frame()
+	e.until("the uploaded file's files.delete", 10*time.Second, func() bool { return e.fs.FileDeleted(id) })
+	e.settle(1500 * time.Millisecond) // past the held getUploadURL
+	if n := e.fs.CallCount("files.completeUpload"); n != 1 {
+		t.Errorf("%d files.completeUpload, want the first file's alone: the pending upload went on past the close", n)
+	}
+	if n := e.fs.CallCount("files.delete"); n != 1 {
+		t.Errorf("%d files.delete, want the uploaded file's", n)
+	}
+
+	e2 := newFIEnv(t, map[string]any{}, nil)
+	w2 := e2.w()
+	w2.uploadFiles([]core.UploadFile{{Name: "plan.txt", Data: []byte("synthetic plan, submitted")}})
+	e2.until("the upload", 20*time.Second, func() bool { return len(w2.fi.done) == 1 })
+	sf := e2.s.top()
+	e2.s.doSubmit()
+	e2.until("the submit's answer", 10*time.Second, func() bool { return sf.submitted })
+	e2.s.Close()
+	e2.frame()
+	e2.settle(300 * time.Millisecond)
+	if n := e2.fs.CallCount("files.delete"); n != 0 {
+		t.Errorf("closing after the submit deleted %d file(s): they're the submission's", n)
+	}
+}
+
+// While the Add file dialog is up, a drop on the window is its
+// (FileInputDialog's dropzone): the files go through the dialog's checks
+// as chosen ones do, and the page's own drop zones stand down
+// (FileDialogOpen). Once it closes, drops go back to the page.
+func TestFileInputDialogTakesDrops(t *testing.T) {
+	e := newFIEnv(t, map[string]any{"filetypes": []string{"pdf"}}, nil)
+	w := e.w()
+	if FileDialogOpen() {
+		t.Fatal("a dialog takes drops before any opened")
+	}
+	var dlg *fiDialog
+	old := fiDialogShown
+	fiDialogShown = func(d *fiDialog) { dlg = d }
+	t.Cleanup(func() { fiDialogShown = old })
+	e.click(center(e.win(w.fi.upBox)))
+	if dlg == nil || !FileDialogOpen() {
+		t.Fatal("the Add file dialog didn't open, or doesn't take drops")
+	}
+	if !FileDialogDrop([]core.UploadFile{{Name: "notes.txt", Data: []byte("x")}}) || dlg.err == "" || w.fi.count() != 0 || dlg.m.Dismissed() {
+		t.Errorf("a dropped .txt: taken, error %q, %d files, closed %v; want the dialog's error and nothing uploading", dlg.err, w.fi.count(), dlg.m.Dismissed())
+	}
+	dlg.err = ""
+	if !FileDialogDrop([]core.UploadFile{{Name: "Report.pdf", Data: []byte("%PDF-1.4 synthetic")}}) || len(w.fi.pending)+len(w.fi.done) != 1 || !dlg.m.Dismissed() {
+		t.Errorf("a dropped .pdf: %d pending, %d done, closed %v; want it uploading and the dialog closed", len(w.fi.pending), len(w.fi.done), dlg.m.Dismissed())
+	}
+	if FileDialogOpen() || FileDialogDrop([]core.UploadFile{{Name: "b.pdf", Data: []byte("x")}}) {
+		t.Error("the closed dialog still takes drops")
+	}
+}

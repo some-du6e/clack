@@ -93,6 +93,8 @@ func (h *bkHost) runPosts() {
 // ---- environment ----
 
 type bkEnv struct {
+	// clock, when set, is every frame's Now (a test's own clock)
+	clock  time.Time
 	t      *testing.T
 	h      *bkHost
 	fs     *fakeslack.Server
@@ -188,7 +190,11 @@ func (e *bkEnv) message() *Message {
 
 func (e *bkEnv) context() layout.Context {
 	e.ops.Reset()
-	return layout.Context{Ops: &e.ops, Now: time.Now(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	now := time.Now()
+	if !e.clock.IsZero() {
+		now = e.clock
+	}
+	return layout.Context{Ops: &e.ops, Now: now, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 		Constraints: layout.Exact(e.size), Source: e.r.Source()}
 }
 

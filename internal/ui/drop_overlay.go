@@ -7,7 +7,10 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +23,10 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/slackasset"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
@@ -96,6 +101,23 @@ func (a *App) fileDrop(e app.FileDropEvent) {
 		}
 		return
 	}
+	if blockkit.FileDialogOpen() {
+		// a Block Kit file_input's Add file dialog is up: FileInputDialog's
+		// dropzone takes the drop, and the page's own (a composer's, a
+		// folder's) stand down while it's mounted, Shift or not
+		if a.drop.on || a.drop.hover != nil {
+			a.drop.on = false
+			a.dropHover(nil)
+		}
+		if e.Kind == app.FileDrop && len(e.Paths) > 0 {
+			paths := e.Paths
+			go func() {
+				fs := readDroppedFiles(paths)
+				a.Post(func() { blockkit.FileDialogDrop(fs) })
+			}()
+		}
+		return
+	}
 	p := image.Pt(int(e.Position.X+.5), int(e.Position.Y+.5))
 	switch e.Kind {
 	case app.FileDragEnter, app.FileDragOver:
@@ -118,6 +140,32 @@ func (a *App) fileDrop(e app.FileDropEvent) {
 			a.dropFiles(z.c, e.Paths, e.Modifiers.Contain(key.ModShift))
 		}
 	}
+}
+
+// readDroppedFiles reads dropped paths as the file chooser reads what it
+// picks (pickFiles: each file whole, at most 256 MB; a folder or an
+// unreadable path is left out).
+func readDroppedFiles(paths []string) []core.UploadFile {
+	var out []core.UploadFile
+	for _, p := range paths {
+		f, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		fi, err := f.Stat()
+		if err != nil || !fi.Mode().IsRegular() {
+			f.Close()
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(f, 256<<20))
+		f.Close()
+		if err != nil {
+			continue
+		}
+		name := filepath.Base(p)
+		out = append(out, core.UploadFile{Name: name, Title: name, Data: data})
+	}
+	return out
 }
 
 // dropHover shows k's overlay (nil: none), redrawing on a change.

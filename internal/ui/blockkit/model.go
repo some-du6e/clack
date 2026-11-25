@@ -364,9 +364,9 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 	b.Raw = append(json.RawMessage(nil), raw...)
 	switch {
 	case b.Type == "actions" && len(p.Elements) > 0:
-		_ = json.Unmarshal(p.Elements, &b.Elements)
+		b.Elements = decodeElements(p.Elements)
 	case b.Type == "card" && len(p.Actions) > 0: // Card's actions (7Xkb), its block id theirs
-		_ = json.Unmarshal(p.Actions, &b.Elements)
+		b.Elements = decodeElements(p.Actions)
 	case b.Type == "data_table" && len(p.Rows) > 0: // its action_cells' elements (DataTableBlockRow)
 		b.Elements = dataTableActions(p.Rows)
 	case b.Type == "rich_text" && len(p.Elements) > 0:
@@ -387,6 +387,24 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 		b.kids = richtext.FallbackItems(b.Type, p.Fallback)
 	}
 	return nil
+}
+
+// decodeElements decodes an elements array one element at a time: one that
+// doesn't decode is left out alone (decoded as one array, the first bad
+// element ended it, and every element after it went too).
+func decodeElements(raw json.RawMessage) []Element {
+	var parts []json.RawMessage
+	if json.Unmarshal(raw, &parts) != nil {
+		return nil
+	}
+	out := make([]Element, 0, len(parts))
+	for _, p := range parts {
+		var e Element
+		if json.Unmarshal(p, &e) == nil {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // blockParts splits a blocks array into its blocks, undecoded (nil for
