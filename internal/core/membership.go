@@ -235,13 +235,15 @@ func (a *App) askMembership(ctx context.Context, ch string, users []string) (map
 			got[u] = in
 		}
 	}
-	if len(got) != len(users) {
-		var missing []string
-		for _, u := range users {
-			if _, ok := got[u]; !ok {
-				missing = append(missing, u)
-			}
+	// "Flannel did not return membership status of {channel} for some
+	// users": the ones asked about that the answer left out
+	var missing []string
+	for _, u := range users {
+		if _, ok := got[u]; !ok {
+			missing = append(missing, u)
 		}
+	}
+	if len(missing) > 0 {
 		return nil, fmt.Errorf("channels/membership did not answer for %v in %s", missing, ch)
 	}
 	return got, nil
