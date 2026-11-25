@@ -536,6 +536,11 @@ type Options struct {
 	// no meta line), at WorkObjectSize ("compact" for the dense view,
 	// "" for the layout's own).
 	WorkObjectSearch bool
+	// WorkObjectCanvas draws a work object as a canvas link card's
+	// (ExternalWorkObjectEntity with source CANVAS): no width cap and no
+	// border of its own (customMaxWidth undefined, withBorder false; the
+	// card's frame is the canvas's).
+	WorkObjectCanvas bool
 	WorkObjectSize   string
 	// EditedTS is the message's edited.ts: the "(edited)" label's tooltip
 	// (EditedLabel: "{date} at {time}", tooltip.go editedTip).

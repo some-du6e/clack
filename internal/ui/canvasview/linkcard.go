@@ -34,6 +34,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/workobject"
 )
 
 // nsFiles is EmptyUnfurl's namespace (module As10).
@@ -42,18 +43,20 @@ var nsFiles = i18n.NS("files")
 type cardKind uint8
 
 const (
-	cardEmpty    cardKind = iota // EmptyUnfurl
-	cardLoading                  // LoadingFallbackUnfurl
-	cardFallback                 // EmbeddedFallbackUnfurl's MessagePillow
+	cardEmpty         cardKind = iota // EmptyUnfurl
+	cardLoading                       // LoadingFallbackUnfurl
+	cardFallback                      // EmbeddedFallbackUnfurl's MessagePillow
+	cardPublic                        // EmbeddedPublicLinkUnfurl (linkcard_public.go)
+	cardPublicLoading                 // its LoadingPublicLinkUnfurl
+	cardWorkObject                    // EmbeddedWorkObjectEntity: the work object's card
 )
 
 // Card's waits: a fallback card stops waiting for its container's
 // attachment after 20 s (setTimeout(…, 2e4)), at once for a container over
 // 10 minutes old.
-const (
-	cardTimeout   = 20 * time.Second
-	cardOldUnfurl = 10 * time.Minute
-)
+var cardTimeout = 20 * time.Second // a var for tests
+
+const cardOldUnfurl = 10 * time.Minute
 
 // linkCard is an Embed block's card.
 type linkCard struct {
@@ -69,16 +72,23 @@ type linkCard struct {
 	// since is when Card's 20 s wait began: its first frame as a
 	// "fallback" card, again whenever its container changes (the
 	// effect's deps)
-	since   time.Time
-	kind    cardKind       // what the views below draw
-	line    string         // EmptyUnfurl's content line
-	drawn   string         // kind, line and attKey the views are of
-	title   *richview.View // EmptyUnfurl's title (the card's URL)
-	content *richview.View // EmptyUnfurl's line
-	body    *richview.View // the fallback's attachment
-	hover   bool
-	tag     struct{ _ byte } // the hover area
-	size    image.Point      // the card as last drawn
+	since     time.Time
+	kind      cardKind       // what the views below draw
+	line      string         // EmptyUnfurl's content line
+	drawn     string         // kind, line and attKey the views are of
+	title     *richview.View // EmptyUnfurl's title (the card's URL)
+	content   *richview.View // EmptyUnfurl's line
+	body      *richview.View // the fallback's attachment, or the work object's
+	pub       *publicCard    // EmbeddedPublicLinkUnfurl's (linkcard_public.go)
+	unsafe    bool           // the URL fails isUrlSafeFromXSS: EmptyUnfurl's banner
+	alert     *richview.View // the banner's message
+	titleHot  bool           // the title last drew in its hover colour
+	dv        cardDerived    // decide's per-container reads (derive)
+	skelSince time.Time      // when the card's skeleton began: it stops shimmering after Card's wait
+	bodyW     int            // the work object card's width as last drawn
+	hover     bool
+	tag       struct{ _ byte } // the hover area
+	size      image.Point      // the card as last drawn
 }
 
 // blockedStates are canvas_unfurl_state values that are an error state even
@@ -118,50 +128,126 @@ func tsAge(ts string, now time.Time) time.Duration {
 	return now.Sub(time.Unix(int64(sec), int64(frac*1e9)))
 }
 
-// decide is what Card draws now (useEmbeddedUnfurlType, then Card's
-// "fallback" case), with EmptyUnfurl's line, and when that may change by
-// itself (Card's timeout; zero: never).
+// decide is what Card draws now: useEmbeddedUnfurlType's kind (gZnA, its
+// steps in order), then Card's case for it, with EmptyUnfurl's line, and
+// when that may change by itself (Card's timeout; zero: never). The kinds
+// Card draws with a component Clack doesn't have yet (a canvas, list,
+// file, member or message permalink's card) draw EmptyUnfurl, never the
+// export's placeholder; Card itself draws a channel's as EmptyUnfurl.
 func (c *linkCard) decide(now time.Time) (k cardKind, line string, at time.Time) {
 	unable := emptyLine("")
-	// no model, no card section for the export's card, a kind Clack can't
-	// draw yet, or a Slack permalink (Slack routes those to their own
-	// cards): EmptyUnfurl, never the export's placeholder
-	if !c.modelOK || c.cc.Section == "" || c.cc.Type != quip.CardSlackUnfurl || !c.cc.HasContainer() || slackPage(c.url) {
+	if !c.modelOK || c.cc.Section == "" { // no model, or no card section for the export's card
 		return cardEmpty, unable, time.Time{}
 	}
+	unfurlObj := c.cc.Type == quip.CardSlackUnfurl // isUnfurlOrMessageObject: an UNFURL object
 	var att *slack.Attachment
-	if c.held && len(c.msg.Attachments) > 0 {
+	held := unfurlObj && c.held
+	if held && len(c.msg.Attachments) > 0 {
 		att = &c.msg.Attachments[0]
 	}
 	du := c.msg.DocumentUnfurl
-	unfurled := du != nil && du.IsUnfurled
-	loading := c.held && !unfurled // isLoading: a stored container not unfurled yet
-	errLine := ""
-	if p := uipref.Get(); p.NoInlineImgs && p.NoTextPreviews { // hideImgAndContent: no line of its own
+	if !held {
+		du = nil
+	}
+	pending := c.cc.Type == quip.CardSlackPendingURL
+	loading := held && (du == nil || !du.IsUnfurled) || pending // isLoading
+	errLine := ""                                               // useUnfurlErrorState
+	if p := uipref.Get(); p.NoInlineImgs && p.NoTextPreviews {  // hideImgAndContent: no line of its own
 		errLine = unable
-	} else if c.held && du != nil && du.CanvasUnfurlState != "" && (att == nil || blockedStates[du.CanvasUnfurlState]) {
+	} else if held && du != nil && du.CanvasUnfurlState != "" && (att == nil || blockedStates[du.CanvasUnfurlState]) {
 		errLine = emptyLine(du.CanvasUnfurlState)
 	}
-	if !loading && (!c.held || att == nil || errLine != "") {
+	dv := c.derive(att)
+	pl, isPermalink := dv.pl, dv.isPermalink
+	switch {
+	case pending && c.cc.Incomplete: // 4
 		return cardEmpty, firstNonEmpty(errLine, unable), time.Time{}
-	}
-	// "fallback" (a public link card is drawn as one too until
-	// EmbeddedPublicLinkUnfurl is ported)
-	if c.since.IsZero() {
-		c.since = now
-	}
-	deadline := c.since.Add(cardTimeout)
-	timedOut := !now.Before(deadline) || c.held && du != nil && tsAge(c.msg.TS, now) > cardOldUnfurl
-	if timedOut && att == nil {
+	case unfurlObj && att != nil && richtext.IsWorkObject(att): // 5: drawn only with layouts
+		if dv.woLayouts {
+			return cardWorkObject, "", time.Time{}
+		}
 		return cardEmpty, unable, time.Time{}
+	case c.cc.Type == quip.CardSlackDocument, isPermalink && (pl.typ == "quip" || pl.typ == "canvas"), // 7, 10: canvas
+		isPermalink && pl.typ == "list", c.cc.Type == quip.CardSlackList, c.cc.Type == quip.CardSlackListRecord, // 8, 14, 15
+		held && len(c.msg.Files) > 0, c.cc.Type == quip.CardSlackFile, isPermalink && pl.typ == "file", // 9: file
+		c.cc.Type == quip.CardSlackUser, isPermalink && pl.typ == "member", // 11: user
+		c.cc.Type == quip.CardSlackGeneric, c.cc.Type == quip.CardSlackWidget, // 12, 13
+		att != nil && att.IsMsgUnfurl, isPermalink && pl.typ == "message", // 16 message, 17 channel
+		c.cc.Type == quip.CardSlackSalesforceRecord, c.cc.Type == quip.CardSlackSalesforceDataBlock, // 21
+		c.cc.Type == quip.CardSlackInvitedUser:
+		return cardEmpty, unable, time.Time{}
+	case !unfurlObj && !pending: // a type Card has no case for
+		return cardEmpty, unable, time.Time{}
+	case !loading && (!held || att == nil || errLine != ""): // 24
+		return cardEmpty, firstNonEmpty(errLine, unable), time.Time{}
+	case att != nil && dv.public: // 25
+		if loading {
+			return cardPublicLoading, "", time.Time{}
+		}
+		return cardPublic, "", time.Time{}
 	}
-	if loading { // EmbeddedFallbackUnfurl while isUnfurling
-		if att == nil && !timedOut {
+	// 27, "fallback": Card waits 20 s for an UNFURL object's attachment
+	// (from its first frame as one), at once for a container over 10
+	// minutes old
+	if unfurlObj {
+		if c.since.IsZero() {
+			c.since = now
+		}
+		deadline := c.since.Add(cardTimeout)
+		timedOut := !now.Before(deadline) || held && du != nil && tsAge(c.msg.TS, now) > cardOldUnfurl
+		if timedOut && att == nil {
+			return cardEmpty, unable, time.Time{}
+		}
+		if loading && att == nil && !timedOut {
 			at = deadline
 		}
+	}
+	if loading { // EmbeddedFallbackUnfurl while isUnfurling
 		return cardLoading, "", at
 	}
 	return cardFallback, "", time.Time{}
+}
+
+// cardDerived is what decide reads of the card's URL and attachment that
+// only changes with them: worked out once per container, not every frame.
+type cardDerived struct {
+	key         string
+	pl          permalink
+	isPermalink bool
+	woLayouts   bool // the work object has layouts (hasWorkObjectLayouts) Clack draws
+	public      bool // shouldRenderPublicLinkCard
+}
+
+func (c *linkCard) derive(att *slack.Attachment) *cardDerived {
+	key := c.url + "\x00" + c.attKey
+	if c.dv.key == key && c.dv.key != "" {
+		return &c.dv
+	}
+	link := c.url
+	if att != nil && att.OriginalURL != "" {
+		link = att.OriginalURL
+	}
+	d := cardDerived{key: key}
+	d.pl, d.isPermalink = parsePermalink(link)
+	if att != nil {
+		if richtext.IsWorkObject(att) {
+			e := workobject.Parse(firstRaw(att.WorkObjectEntity, att.WorkObject))
+			d.woLayouts = e != nil && e.IsExternal() && e.UnfurlLayout() != nil // layouts: {} is the empty card
+		}
+		d.public = publicLinkCard(att)
+	}
+	c.dv = d
+	return &c.dv
+}
+
+// firstRaw is the first of rs that holds a value.
+func firstRaw(rs ...json.RawMessage) json.RawMessage {
+	for _, r := range rs {
+		if len(r) > 0 && string(r) != "null" {
+			return r
+		}
+	}
+	return nil
 }
 
 func firstNonEmpty(s ...string) string {
@@ -300,31 +386,53 @@ func (v *View) cardViews(c *linkCard) {
 		return
 	}
 	c.drawn = key
-	c.title, c.content, c.body = nil, nil, nil
+	c.title, c.content, c.body, c.pub = nil, nil, nil, nil
 	switch c.kind {
 	case cardEmpty:
+		c.unsafe = !urlSafe(c.url) // As10: the banner instead of the line, the title not bold
 		if c.url != "" {
-			c.title = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph,
-				Spans: []richtext.Span{{Kind: richtext.Link, Text: c.url, URL: c.url, Style: richtext.Bold}}}}}, richview.Options{})
+			// the URL as Mrkdwn draws it: a link where it is one, bold
+			// unless it's unsafe
+			sp := richtext.Span{Kind: richtext.Link, Text: c.url, URL: richtext.SafeURL(c.url), Style: richtext.Bold}
+			if sp.URL == "" {
+				sp = richtext.Span{Kind: richtext.Text, Text: c.url, Style: richtext.Bold}
+			}
+			if c.unsafe {
+				sp.Style = 0
+			}
+			c.title = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: []richtext.Span{sp}}}}, richview.Options{})
 		}
-		c.content = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph,
-			Spans: []richtext.Span{{Kind: richtext.Text, Text: c.line}}}}}, richview.Options{})
-	case cardFallback:
+		if !c.unsafe {
+			c.content = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph,
+				Spans: []richtext.Span{{Kind: richtext.Text, Text: c.line}}}}}, richview.Options{})
+		}
+	case cardPublic:
+		if len(c.msg.Attachments) > 0 {
+			var r richtext.Resolver
+			if a := v.h.Core(); a != nil {
+				r = a.S
+			}
+			c.pub = newPublicCard(r, &c.msg.Attachments[0], c.msg.TS, time.Now())
+		}
+	case cardFallback, cardWorkObject:
 		a := v.h.Core()
 		if a == nil {
 			return
 		}
 		m := c.msg
-		m.Text, m.Blocks, m.Files = "", nil, nil // the pillow draws the attachment alone (renderMessageAttachment)
+		m.Text, m.Blocks, m.Files = "", nil, nil // the attachment alone (renderMessageAttachment, WorkObjectEntity)
+		m.Attachments = m.Attachments[:min(1, len(m.Attachments))]
 		d := richtext.FromMessage(a.S, &m)
 		for _, b := range d.Blocks {
 			if b.Kind != richtext.AttachmentBlock || b.Att == nil {
 				continue
 			}
 			att := *b.Att
-			att.HideBorder, att.NoMaxWidth = true, true // hideBorder, unsetWidthStyle
+			if c.kind == cardFallback {
+				att.HideBorder, att.NoMaxWidth = true, true // hideBorder, unsetWidthStyle
+			}
 			b.Att = &att
-			c.body = richview.New(richtext.Doc{Blocks: []richtext.Block{b}}, richview.Options{})
+			c.body = richview.New(richtext.Doc{Blocks: []richtext.Block{b}}, richview.Options{WorkObjectCanvas: c.kind == cardWorkObject})
 			break
 		}
 	}
@@ -342,6 +450,20 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 	}
 	k, line, at := c.decide(now)
 	c.kind, c.line = k, line
+	// a skeleton shimmers for Card's 20 s wait at most, then holds still:
+	// a pending URL that never unfurls would otherwise lay out the window
+	// every frame (Slack's is a composited CSS animation, not a layout)
+	if k == cardLoading || k == cardPublicLoading {
+		if c.skelSince.IsZero() {
+			c.skelSince = now
+		}
+		v.skelStill = !now.Before(c.skelSince.Add(cardTimeout))
+		if !v.skelStill {
+			gtx.Execute(op.InvalidateCmd{At: c.skelSince.Add(cardTimeout)})
+		}
+	} else {
+		c.skelSince, v.skelStill = time.Time{}, false
+	}
 	if !at.IsZero() {
 		gtx.Execute(op.InvalidateCmd{At: at})
 	}
@@ -355,6 +477,15 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 	switch {
 	case c.kind == cardLoading:
 		h = v.layoutCardSkeleton(gtx, w, now)
+	case c.kind == cardPublicLoading:
+		h = v.layoutPublicSkeleton(gtx, w, now)
+	case c.kind == cardPublic && c.pub != nil:
+		h = v.layoutPublic(gtx, c, w)
+	case c.kind == cardWorkObject && c.body != nil: // WorkObjectEntity fills the card (CardContainer's padding 0)
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
+		dims := c.body.Layout(g, st, v.handler)
+		h, c.bodyW = dims.Size.Y, dims.Size.X
 	case c.kind == cardFallback && c.body != nil:
 		// .p-embedded_fallback_unfurl: the pillow without its border, 12px all round
 		func() {
@@ -371,7 +502,12 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 				defer op.Offset(image.Pt(pad, y)).Push(gtx.Ops).Pop()
 				g := gtx
 				g.Constraints = layout.Constraints{Max: image.Pt(iw, gtx.Constraints.Max.Y)}
-				y += c.title.Layout(g, v.styles.cardTitle, v.handler).Size.Y + gtx.Dp(12) // __title's margin-bottom
+				ts := v.styles.cardTitle
+				c.titleHot = c.title.Hovered()
+				if c.titleHot { // the base a:hover colour (and its underline)
+					ts = v.styles.cardTitleHot
+				}
+				y += c.title.Layout(g, ts, v.handler).Size.Y + gtx.Dp(12) // __title's margin-bottom
 			}()
 		}
 		if c.content != nil {
@@ -381,6 +517,9 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 				g.Constraints = layout.Constraints{Max: image.Pt(iw, gtx.Constraints.Max.Y)}
 				y += c.content.Layout(g, v.styles.cardSm, v.handler).Size.Y
 			}()
+		}
+		if c.unsafe {
+			y += v.layoutAlert(gtx, c, pad, y, iw)
 		}
 		h = y + pad
 	}
@@ -428,14 +567,26 @@ func (c *linkCard) hoverEvents(gtx layout.Context) {
 // (.c-missing_text--unknown), the whole shimmering (p-hub--shimmer: opacity
 // 1, .65, 1 over 1s, ease-in-out) unless a11y_animations is off.
 func (v *View) layoutCardSkeleton(gtx layout.Context, w int, now time.Time) int {
-	pad, lh, mg := gtx.Dp(12), gtx.Dp(8), gtx.Dp(8)
+	return v.layoutCardSkeletonIn(gtx, w, now)
+}
+
+// skeletonInk is MissingText's base-ter at the shimmer's opacity now; it
+// asks for the next frame while the shimmer runs.
+func (v *View) skeletonInk(gtx layout.Context, now time.Time) color.NRGBA {
 	col := v.styles.card.Palette.Missing
-	if !uipref.Get().NoAnimations {
+	if !uipref.Get().NoAnimations && !v.skelStill {
 		t := float64(now.UnixNano()%int64(time.Second)) / float64(time.Second)
 		e := easeInOut(1 - math.Abs(2*t-1)) // 0 at the ends, 1 at 50%
 		col.A = uint8(float64(col.A)*(1-0.35*e) + 0.5)
 		gtx.Execute(op.InvalidateCmd{})
 	}
+	return col
+}
+
+// layoutCardSkeletonIn draws the four MissingText lines w wide.
+func (v *View) layoutCardSkeletonIn(gtx layout.Context, w int, now time.Time) int {
+	pad, lh, mg := gtx.Dp(12), gtx.Dp(8), gtx.Dp(8)
+	col := v.skeletonInk(gtx, now)
 	iw := max(0, w-2*pad)
 	y := pad
 	for _, f := range []int{1, 1, 2, 2} {
@@ -479,7 +630,7 @@ func (b *blk) views() []*richview.View {
 		}
 		return []*richview.View{b.rv}
 	}
-	return []*richview.View{b.card.title, b.card.content, b.card.body}
+	return append([]*richview.View{b.card.title, b.card.content, b.card.body, b.card.alert}, b.card.pub.views()...)
 }
 
 // hovered: a link or mention of b's is under the pointer.

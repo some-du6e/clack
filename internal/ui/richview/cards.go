@@ -93,7 +93,7 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		if l.opts.WorkObjectSearch {
 			return l.woCard(b, x, y, w, l.opts.WorkObjectSize, false)
 		}
-		return l.woCard(b, x, y, w, "", !l.opts.HoverCard)
+		return l.woCard(b, x, y, w, "", !l.opts.HoverCard && !l.opts.WorkObjectCanvas)
 	}
 	if a.Huddle != nil { // a huddle_thread message: HuddleMsgText (huddle.go)
 		return l.huddleMsg(b, x, y, w)

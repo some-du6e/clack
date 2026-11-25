@@ -340,6 +340,15 @@ func (l *lay) workObjectGroup(bs []*richtext.Block, x, y, w, files int) int {
 		return 0
 	}
 	y0 := y
+	if l.opts.WorkObjectCanvas { // a canvas link card's (EmbeddedWorkObjectEntity): the card alone, uncapped, no meta line
+		for i, b := range bs {
+			if i > 0 {
+				y += l.dp(8)
+			}
+			y += l.woCard(b, x, y, w, "", false)
+		}
+		return y - y0
+	}
 	fl := l.st.woFlags
 	key := l.woKey(bs)
 	if !l.opts.HoverCard && !l.inAtt && !(fl.Rearrange && files > 0) {
@@ -547,12 +556,16 @@ func (l *lay) woCard(b *richtext.Block, x, y, w int, size string, capped bool) i
 
 	card := l.d.addTarget(target{kind: tWorkObject, id: "click", att: att})
 	frame := len(l.d.boxes)
-	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: l.tok("otl-ter"), bw: max(1, l.dp(1)),
+	stroke, bw := l.tok("otl-ter"), max(1, l.dp(1))
+	if l.opts.WorkObjectCanvas { // withBorder false
+		stroke.A, bw = 0, 0
+	}
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: stroke, bw: bw,
 		radius: l.dp(12), target: -1})
 	cardHit := len(l.d.hits)
 	l.d.hits = append(l.d.hits, hit{t: card})
 
-	in := max(1, l.dp(1))
+	in := bw
 	ix, iy, iw := x+in, y+in, cw-2*in
 	cy := iy
 

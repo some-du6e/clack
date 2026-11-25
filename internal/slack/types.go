@@ -533,6 +533,13 @@ type Attachment struct {
 	IsAppUnfurl   bool              `json:"is_app_unfurl,omitempty"`
 	Hidden        bool              `json:"hidden,omitempty"`
 	IsMsgUnfurl   bool              `json:"is_msg_unfurl"`
+	// FallbackToLegacy, CallbackID and ListRecord are fallback_to_legacy,
+	// callback_id and list_record, which shouldRenderPublicLinkCard reads
+	// (a canvas link card's public link preview). All kept raw: one field
+	// of another type would drop the message's whole attachments array.
+	FallbackToLegacy json.RawMessage `json:"fallback_to_legacy,omitempty"`
+	CallbackID       json.RawMessage `json:"callback_id,omitempty"`
+	ListRecord       json.RawMessage `json:"list_record,omitempty"`
 	// AgentChannelUnfurl is the card of a code channel an agent made
 	// (MessageKitAttachments draws it as CodeChannelEntityCard)
 	AgentChannelUnfurl *AgentChannelUnfurl `json:"agent_channel_unfurl,omitempty"`

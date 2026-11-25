@@ -22,6 +22,9 @@ type CanvasCard struct {
 	// the export's card); Type its ContentLinkUnfurlCard type.
 	Section string
 	Type    int32
+	// Incomplete is the card's incomplete (a pending URL that won't
+	// unfurl: Slack's "empty").
+	Incomplete bool
 	// Channel and TS are a SLACK_UNFURL card's unfurl container ("" when
 	// its slack_unfurl_id isn't one).
 	Channel, TS string
@@ -52,6 +55,7 @@ func (a *App) CanvasCards(id string, urls []string) (cards []CanvasCard, ok bool
 			lc := s.Content.LinkUnfurl
 			c := &cards[i]
 			c.Section, c.Type = *s.ID, lc.CardType()
+			c.Incomplete = lc.Incomplete != nil && *lc.Incomplete
 			if c.Type == quip.CardSlackUnfurl {
 				if _, ch, ts, ok := quip.ParseUnfurlID(lc.UnfurlID()); ok {
 					c.Channel, c.TS = ch, ts

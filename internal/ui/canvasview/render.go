@@ -89,8 +89,15 @@ type styleSet struct {
 	// (15px/1.46668, its link in the text's colour) and its line
 	// (13px/1.38463)
 	card, cardTitle, cardSm *richview.Style
-	ph                      *richview.Style // the empty canvas's placeholder
-	titlePh                 *richview.Style // the empty title's placeholder
+	// cardTitleHot is EmptyUnfurl's title while its link is hovered (the
+	// base a rule's content-hgl-1); pubTitle, pubTitleHot and pubSmall
+	// are EmbeddedPublicLinkUnfurl's title (primary foreground, highlight
+	// hover while the card is), and its subtitle and source row
+	// (foreground_high at 50%, linkcard_public.go)
+	cardTitleHot, pubTitle, pubTitleHot, pubSmall *richview.Style
+	cardAlert                                     *richview.Style // the banner's 15px message in content-pry
+	ph                                            *richview.Style // the empty canvas's placeholder
+	titlePh                                       *richview.Style // the empty title's placeholder
 }
 
 func (s *styleSet) sync(th *theme.Theme, h Host) {
@@ -138,10 +145,31 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 	msgInk = true
 	s.card = mk(15, 22, false)
 	s.cardTitle = mk(15, 22, false)
+	ci := cardInks(th.Dark)
 	tp := s.cardTitle.Palette
-	tp.Link = tp.Text // .p-empty_unfurl__title .c-link:not(:hover)
+	tp.Link = ci.primary // .p-empty_unfurl__title .c-link:not(:hover)
 	s.cardTitle.SetPalette(tp)
+	s.cardTitleHot = mk(15, 22, false)
+	tp = s.cardTitleHot.Palette
+	tp.Link = ci.hgl1 // the base a:hover, content-hgl-1
+	s.cardTitleHot.SetPalette(tp)
 	s.cardSm = mk(13, 18, false)
+	s.pubTitle = mk(15, 22, false)
+	tp = s.pubTitle.Palette
+	tp.Text, tp.Link = ci.primary, ci.primary
+	s.pubTitle.SetPalette(tp)
+	s.pubTitleHot = mk(15, 22, false)
+	tp = s.pubTitleHot.Palette
+	tp.Text, tp.Link = ci.highlightHover, ci.highlightHover
+	s.pubTitleHot.SetPalette(tp)
+	s.cardAlert = mk(15, 22, false)
+	tp = s.cardAlert.Palette
+	tp.Text = ci.pry
+	s.cardAlert.SetPalette(tp)
+	s.pubSmall = mk(13, 18, false)
+	tp = s.pubSmall.Palette
+	tp.Text, tp.Link = ci.high50, ci.high50
+	s.pubSmall.SetPalette(tp)
 	msgInk = false
 	s.ph = mk(bodySize, bodyLine, false)
 	pp := s.ph.Palette
