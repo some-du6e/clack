@@ -44,12 +44,11 @@ type Around struct {
 	Merged bool
 }
 
-// AroundLimit is each call's page (determineDefaultHistoryLimit).
-const AroundLimit = 28
-
 // HistoryAround is the window around message ts of ch: the window core
 // holds that has it, else the page ending at it and the page starting at
-// it, kept as one of the conversation's windows.
+// it, kept as one of the conversation's windows. Each call, and each of a
+// window's older and newer pages, is fetchHistory's default limit
+// (slack.DefaultHistoryLimit: rGEL determineDefaultHistoryLimit(channelId)).
 func (a *App) HistoryAround(ctx context.Context, ch, ts string) (Around, error) {
 	a.noteAccess(ch) // a window read is the conversation in use (evict.go)
 	if w, ok := a.S.WindowAt(ch, ts); ok {
@@ -63,11 +62,11 @@ func (a *App) HistoryAround(ctx context.Context, ch, ts string) (Around, error) 
 	}
 	older, newer := make(chan answer, 1), make(chan answer, 1)
 	go func() {
-		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: ts, Inclusive: true, Limit: AroundLimit})
+		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: ts, Inclusive: true, Limit: slack.DefaultHistoryLimit(ch)})
 		older <- answer{p, err}
 	}()
 	go func() {
-		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Oldest: ts, Inclusive: true, Limit: AroundLimit})
+		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Oldest: ts, Inclusive: true, Limit: slack.DefaultHistoryLimit(ch)})
 		newer <- answer{p, err}
 	}()
 	o, n := <-older, <-newer
@@ -88,7 +87,7 @@ func (a *App) WindowOlder(ctx context.Context, ch, start string) (Around, error)
 	a.noteAccess(ch)
 	t0 := time.Now()
 	pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
-	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: start, Inclusive: true, Limit: AroundLimit})
+	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: start, Inclusive: true, Limit: slack.DefaultHistoryLimit(ch)})
 	log.Printf("history %s: older than %s in %s", logtag.ID(ch), logtag.ID(start), time.Since(t0).Round(time.Millisecond))
 	if err != nil {
 		return Around{}, err
@@ -102,7 +101,7 @@ func (a *App) WindowNewer(ctx context.Context, ch, end string) (Around, error) {
 	a.noteAccess(ch)
 	t0 := time.Now()
 	pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
-	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Oldest: end, Inclusive: true, Limit: AroundLimit})
+	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Oldest: end, Inclusive: true, Limit: slack.DefaultHistoryLimit(ch)})
 	log.Printf("history %s: newer than %s in %s", logtag.ID(ch), logtag.ID(end), time.Since(t0).Round(time.Millisecond))
 	if err != nil {
 		return Around{}, err

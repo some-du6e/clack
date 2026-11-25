@@ -46,10 +46,19 @@ func (e *flingEnv) readBack(t *testing.T) {
 		e.wheel(6, -250)
 		e.frame()
 	}
+	// still, and no page loading: near the top of the newest page (28)
+	// the list reads the older one ahead of the reader (olderAhead), and
+	// its messages land above
+	loading := func() bool {
+		m := e.v.s.m
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.loading || m.older
+	}
 	key, y, still := "", 0, 0
-	for i := 0; i < 200 && still < 5; i++ {
+	for i := 0; i < 400 && (still < 5 || loading()); i++ {
 		e.frame()
-		if k, ky := e.firstMsg(); k == key && ky == y {
+		if k, ky := e.firstMsg(); k == key && ky == y && !loading() {
 			still++
 		} else {
 			key, y, still = k, ky, 0

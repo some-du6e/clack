@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -794,6 +795,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			unanswered(ctx, u, err) // cut off before the whole answer came
 			return &transportError{scrubErr(err)}
 		}
+		received := time.Now()
 		answered(ctx, u, resp, data)
 		if resp.StatusCode >= 400 && resp.StatusCode != 200 {
 			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: kept(ctx, data),
@@ -830,9 +832,19 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			*raw = data
 			return nil
 		}
-		return json.Unmarshal(data, out)
+		err = json.Unmarshal(data, out)
+		if f := CallTimes.Load(); f != nil {
+			(*f)(method, len(data), received, time.Now())
+		}
+		return err
 	}
 }
+
+// CallTimes, when set, gets each Web API answer the client decodes: the
+// method, the body's size, when it was read whole and when json.Unmarshal
+// was done with it. Tests time a read's spans with it
+// (ui TestGiantWallOpenSpans); nil otherwise.
+var CallTimes atomic.Pointer[func(method string, bytes int, received, decoded time.Time)]
 
 // do sends req, and sends a read once more on a fresh connection when the
 // pooled connection it went out on turned out to be dead: the request

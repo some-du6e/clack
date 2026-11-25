@@ -14,6 +14,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -198,13 +199,7 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 		ub.text = ""
 		return
 	}
-	n := 0 // the loaded messages after the last read (unreadCountKnown: Clack holds the newest)
-	for i := range s.snap.msgs {
-		if tsLess(since, s.snap.msgs[i].m.TS) {
-			n++
-		}
-	}
-	text := bannerText(n, true)
+	text := bannerText(s.bannerCount(app, since, cnt))
 	place := s.unreadPlacement(since, newest)
 	icon := "arrow-down"
 	if place == 1 {
@@ -225,9 +220,11 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 					_ = markRead(ctx, app, ch, ts)
 				}()
 			}
-		} else if ui := s.unreadIndex(); ui >= 0 { // jumpToUnread
+		} else if ui := s.unreadIndex(); ui >= 0 { // jumpToUnread: the line's row
 			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, ui-1)}
 			s.stopScroll()
+		} else if since != "" {
+			s.jumpToLastRead(since) // no line in the slice: jumpToTimestamp({ts: lastReadTs})
 		}
 		h.Invalidate()
 	}
@@ -316,6 +313,94 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 		popups.Tooltip(gtx, th, &ub.closeTip, ub.close.Hovered(), closeR.Size(), popups.Below, "Mark as read", "Esc")
 		return layout.Dimensions{}
 	})
+}
+
+// bannerCount is the banner's displayCount and known: MessagePane's
+// getUnreadBannerDisplayCount and unreadCountKnown (boot-shared AEjl,
+// build e277bbacc0bc). The count is the loaded messages after the last
+// read when the slice the list shows reaches the newest message, else the
+// conversation's unread count (unreadCount). It is known when the slice
+// holding the last read reaches the newest (getTimestampsByChannelId(
+// lastReadTs).reachedEnd). The newest page holds 28 messages: a channel
+// with more unread than that reads "20+ new messages" until the older
+// pages reach the last read.
+func (s *listState) bannerCount(app *core.App, since string, cnt core.Count) (n int, known bool) {
+	if len(s.snap.msgs) > 0 && !s.snap.newestMissing {
+		for i := range s.snap.msgs {
+			if tsLess(since, s.snap.msgs[i].m.TS) {
+				n++
+			}
+		}
+	} else {
+		n = unreadCount(app, s.ch, cnt)
+	}
+	return n, s.lastReadKnown(since)
+}
+
+// lastReadKnown is unreadCountKnown: getTimestampsByChannelId(lastReadTs)
+// (dTxY) is the slice that covers the last read (from its first message,
+// or the conversation's start when it reached it, to its last), else
+// the last slice when the last read is past it and it reaches the newest,
+// else none, and the count is known when that slice reaches the newest.
+// The slices are the list's model and, for a window, the conversation's
+// model (its newest messages): a window covering the last read short of
+// the newest isn't known, one past it may be, by the newest messages.
+func (s *listState) lastReadKnown(since string) bool {
+	holds := func(m *model) (covers, end bool) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		n := len(m.msgs)
+		if n == 0 || !m.loaded {
+			return false, false
+		}
+		end = !m.newestMissing
+		from := !m.hasMore || !tsLess(since, m.msgs[0].m.TS)
+		return from && (!tsLess(m.msgs[n-1].m.TS, since) || end), end
+	}
+	covers, end := holds(s.m)
+	if covers || s.chm == nil || s.m == s.chm {
+		return covers && end
+	}
+	covers, end = holds(s.chm)
+	return covers && end
+}
+
+// unreadCount is the pane's unreadCount: the unread store's unreadCnt as
+// applyCountsToChannels sets it (client-boot mtwS): a DM's or group DM's
+// mention count (or 1 for has_unreads), a channel's 1 for has_unreads, its
+// mention count when badge_all_unreads is on and it isn't muted
+// (getShouldBadgeAllUnreadsForChannelId).
+func unreadCount(app *core.App, ch string, cnt core.Count) int {
+	u := 0
+	if cnt.Unread {
+		u = 1
+	}
+	if app == nil {
+		return u
+	}
+	c, _ := app.S.Conv(ch)
+	switch {
+	case c.IsIM || c.IsMPIM:
+		if cnt.Mentions > 0 {
+			return cnt.Mentions
+		}
+	case u > 0 && cnt.Mentions > 0 && !cnt.Muted && app.NotifyPrefs(ch).BadgeAllUnreads:
+		return cnt.Mentions
+	}
+	return u
+}
+
+// jumpToLastRead is MessageList.jumpToUnread with no "New" line in the
+// slice: jumpToTimestamp({ts: lastReadTs}) moves the pane to the last
+// read, in the window around it when the slice doesn't reach it, and the
+// jump lands on the first unread under the line (placeJump). Nothing
+// flashes.
+func (s *listState) jumpToLastRead(ts string) {
+	s.positioned = true
+	s.aroundFor = ""
+	s.pendingJump, s.jumpLazy = ts, false
+	s.place = jumpPlace{}
+	s.stopScroll()
 }
 
 // tsPositive reports a last-read ts after 0 (Slack's since > 0).

@@ -68,11 +68,15 @@ type model struct {
 	// messages"); merged: it met the newest messages and the list goes
 	// back to the conversation's model
 	win, newestMissing, merged bool
-	// cut, cutSet: a history change came while a load was out
-	// (historyChanged): what is before cut ("": everything) goes again
-	// when the load lands, its answer being maybe from before the change
-	cut    string
-	cutSet bool
+	// cuts: the history changes that came while loads were out
+	// (historyChanged), each with cutGen as it came; a load notes cutGen
+	// as it starts, and when it lands, what is before each change that came
+	// after it ("": everything) goes again, its answer being maybe from
+	// before them. Each load its own: an older page reading ahead of the
+	// reader and a reload were both out, the page landed first and took the
+	// one cut there was, and the reload brought the deleted messages back.
+	cuts   []cutRec
+	cutGen uint64
 	// around: the message a window's load is out for; newer: loading the
 	// page after its end (loadNewer)
 	around string
@@ -485,6 +489,7 @@ func (hb *hub) ensureLoaded(m *model) {
 	m.loading = true
 	m.readGen++
 	gen := m.readGen
+	cg := m.cutGen
 	m.mu.Unlock()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -518,7 +523,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			} else {
 				m.failed(hb, err, false, time.Now())
 			}
-			m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
+			m.applyCut(cg) // the answer may be from before a history change (hub_history_changed.go)
 			m.markLoadChanged()
 			m.rev++
 			m.mu.Unlock()
@@ -611,6 +616,7 @@ func (hb *hub) loadOlder(m *model) bool {
 	}
 	m.older = true
 	before := m.msgs[0].m.TS
+	cg := m.cutGen
 	m.rev++
 	m.mu.Unlock()
 	hb.invalidate()
@@ -639,7 +645,7 @@ func (hb *hub) loadOlder(m *model) bool {
 			m.err = err
 			m.failed(hb, err, true, time.Now())
 		}
-		m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
+		m.applyCut(cg) // the answer may be from before a history change (hub_history_changed.go)
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
@@ -758,6 +764,7 @@ func (hb *hub) loadWindow(m *model, ts string) {
 		return
 	}
 	m.around, m.loading = ts, true
+	cg := m.cutGen
 	if m.release == nil {
 		// core keeps the window while the list shows it: the socket's
 		// reactions and edits keep finding its messages
@@ -793,7 +800,7 @@ func (hb *hub) loadWindow(m *model, ts string) {
 			m.failed(hb, err, false, time.Now())
 			m.loaded, m.merged, m.newestMissing = true, true, false
 		}
-		m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
+		m.applyCut(cg) // the answer may be from before a history change (hub_history_changed.go)
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
@@ -827,6 +834,7 @@ func (hb *hub) loadWindowPage(m *model, older bool) bool {
 	} else {
 		m.newer, edge = true, m.msgs[n-1].m.TS
 	}
+	cg := m.cutGen
 	m.rev++
 	m.mu.Unlock()
 	hb.invalidate()
@@ -877,7 +885,7 @@ func (hb *hub) loadWindowPage(m *model, older bool) bool {
 				hb.authFailed.Store(true)
 			}
 		}
-		m.applyCut() // the answer may be from before a history change (hub_history_changed.go)
+		m.applyCut(cg) // the answer may be from before a history change (hub_history_changed.go)
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
@@ -890,11 +898,27 @@ func (hb *hub) loadWindowPage(m *model, older bool) bool {
 	return true
 }
 
-// loadNewer is a window's requestNewer, once its end is in view.
-func (hb *hub) loadNewer(m *model) {
-	if m.win {
-		hb.loadWindowPage(m, false)
+// loadNewer is a window's requestNewer, once its end is in view, and
+// reports whether it asked for the page.
+func (hb *hub) loadNewer(m *model) bool {
+	return m.win && hb.loadWindowPage(m, false)
+}
+
+// pageKey is the requestHistory key of model m's next page, as the pane's
+// HistoryRateLimiter keys it (`${oldest}_${latest}`): an older page asks
+// latest = the oldest message, a window's newer page oldest = its newest;
+// "" with nothing loaded.
+func (m *model) pageKey(older bool) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := len(m.msgs)
+	switch {
+	case n == 0:
+		return ""
+	case older:
+		return "undefined_" + m.msgs[0].m.TS
 	}
+	return m.msgs[n-1].m.TS + "_undefined"
 }
 
 // dedupeTS keeps each message once (the later copy), in ts order.

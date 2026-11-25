@@ -33,10 +33,6 @@ import (
 // conversations' unread state comes from client.counts after every
 // connect (refreshCountsAfterGap).
 
-// catchUpLimit is the page a catch-up reads forward: Slack's requestNewer
-// leaves fetchHistory its default limit (rGEL determineDefaultHistoryLimit).
-const catchUpLimit = 28
-
 // catchUpRetries are a failed catch-up's waits before it tries again (the
 // network often isn't back the moment the socket is). Var for tests.
 var catchUpRetries = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second}
@@ -174,7 +170,9 @@ func (a *App) catchUp(ctx context.Context, ch string) error {
 				break
 			}
 			pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
-			p, err := a.C.History(ctx, ch, slack.HistoryOpts{Oldest: from, Inclusive: true, Limit: catchUpLimit})
+			// the page a catch-up reads forward: Slack's requestNewer leaves
+			// fetchHistory its default limit (determineDefaultHistoryLimit)
+			p, err := a.C.History(ctx, ch, slack.HistoryOpts{Oldest: from, Inclusive: true, Limit: slack.DefaultHistoryLimit(ch)})
 			if err != nil {
 				return err
 			}

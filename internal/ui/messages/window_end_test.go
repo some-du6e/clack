@@ -62,6 +62,15 @@ func newHistEnv(t *testing.T) *winEnv {
 	e.v = NewChannelView(e.h, ch)
 	e.rt = newRouted(e.v, 900, 700)
 	e.await(t, "the newest messages", func() bool { return e.drawn(e.newest()) && e.v.AtBottom() })
+	// the newest page (Slack's 28) doesn't fill the list: the page before
+	// it comes ahead of the reader (olderAhead); the tests start with both
+	e.await(t, "the page before the newest", func() bool {
+		m := e.v.s.m
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return len(m.msgs) >= 50 && !m.loading && !m.older
+	})
+	e.await(t, "the newest messages, with the page before them", func() bool { return e.drawn(e.newest()) && e.v.AtBottom() })
 	return e
 }
 

@@ -239,8 +239,8 @@ func checkRenameDuringLoad(t *testing.T, older bool) {
 	file := slack.File{ID: "F0LOADED01", Name: "plan.pdf", Title: "Launch plan", Mimetype: "application/pdf", Filetype: "pdf", PrettyType: "PDF",
 		Mode: "hosted", User: "UCARA0001", Size: 2048, URLPrivate: "https://files.invalid/plan.pdf", Permalink: "https://files.invalid/p/plan"}
 	fileTS := fs.PostFilesQuiet(refsChan, "UANA00001", "Here's the plan", []slack.File{file})
-	if older { // a page of newer messages over it: it comes with the older page
-		for i := 0; i < 120; i++ {
+	if older { // more newer messages than the newest page (28) over it: it comes with the first older page
+		for i := 0; i < 40; i++ {
 			fs.PostQuiet(refsChan, "UBEN00001", fmt.Sprintf("newer %d", i))
 		}
 	}

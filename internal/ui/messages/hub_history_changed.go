@@ -39,10 +39,7 @@ func (hb *hub) historyChanged(ch, latest string) bool {
 	hb.mu.Unlock()
 	if chm != nil {
 		chm.mu.Lock()
-		if chm.loading || chm.older {
-			// a load or page out: its answer may be from before the change
-			chm.cut, chm.cutSet = latest, true
-		}
+		chm.noteCut(latest)
 		chm.cutAt(latest)
 		changed = true
 		chm.mu.Unlock()
@@ -57,10 +54,7 @@ func (hb *hub) historyChanged(ch, latest string) bool {
 	}
 	for _, m := range hb.windowsOf(ch) {
 		m.mu.Lock()
-		if m.loading || m.around != "" || m.older || m.newer {
-			// a load or page out: its answer may be from before the change
-			m.cut, m.cutSet = latest, true
-		}
+		m.noteCut(latest)
 		anchor := ""
 		if n := len(m.msgs); n > 0 {
 			anchor = m.msgs[n-1].m.TS
@@ -116,13 +110,32 @@ func (m *model) cutAt(latest string) {
 	}
 }
 
-// applyCut is a load landing after a history change that came while it
-// was out: what is before the change goes again. m.mu is held.
-func (m *model) applyCut() {
-	if !m.cutSet {
-		return
+// cutRec is a history change a load out may land across: its latest and
+// cutGen as it came.
+type cutRec struct {
+	latest string
+	gen    uint64
+}
+
+// noteCut records a history change for the loads out now (their answers
+// may be from before it). m.mu is held.
+func (m *model) noteCut(latest string) {
+	m.cutGen++
+	if m.loading || m.around != "" || m.older || m.newer {
+		m.cuts = append(m.cuts, cutRec{latest, m.cutGen})
 	}
-	cut := m.cut
-	m.cut, m.cutSet = "", false
-	m.cutAt(cut)
+}
+
+// applyCut is a load landing that started at cut generation gen: what is
+// before each history change that came after it goes again, and once no
+// load is out the changes are let go. m.mu is held.
+func (m *model) applyCut(gen uint64) {
+	for _, c := range m.cuts {
+		if c.gen > gen {
+			m.cutAt(c.latest)
+		}
+	}
+	if !m.loading && m.around == "" && !m.older && !m.newer {
+		m.cuts = nil
+	}
 }

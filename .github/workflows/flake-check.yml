@@ -334,6 +334,15 @@ on:
       - "internal/ui/messages/scroll_gaps_test.go"
       - "internal/ui/messages/compact_test.go"
       - "third_party/gioui.org/app/clack_bounds_darwin_test.go"
+      # the history-limit job's own
+      - "internal/core/history_limit_test.go"
+      - "internal/slack/history_limit_test.go"
+      # the history-limit-list job's own
+      - "internal/ui/messages/hub_history_changed.go"
+      - "internal/ui/messages/hub_history_changed_test.go"
+      - "internal/ui/messages/unread_slice_test.go"
+      - "internal/ui/messages/page_limit.go"
+      - "internal/ui/messages/page_limit_test.go"
 
 permissions:
   contents: read
@@ -7330,6 +7339,123 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # history-limit (2026-11-24, Karim: is #i-love-slack-squared's slow
+  # open the network or Clack?): Clack read a channel's newest page 50
+  # messages at a time and an older page 100, where Slack's message pane
+  # reads every page with determineDefaultHistoryLimit's 28 (inclusive).
+  # The history reads' forms, COUNT times. Dispatch with only=history-limit.
+  history-limit:
+    if: ${{ !inputs.only || startsWith('history-limit', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "a channel's history pages ask Slack's limit, COUNT runs"
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 6m -run '^TestHistoryPagesLikeSlack$' ./internal/core || rc=1
+          go test -count=$COUNT -v -timeout 2m -run '^TestDefaultHistoryLimit$' ./internal/slack || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # history-limit-list (2026-11-25, the review of history-limit): the
+  # list with Slack's 28-message pages. Two loads out across a history
+  # change, each landing with its own cut (TestHistoryChangeAcrossTwoLoads
+  # lands an older page, then a stale reload); the "New" line only where
+  # the slice reaches the last read, the banner's jump to the last read
+  # and its "20+" count (canShowUnreadDivider, unreadCountKnown); older
+  # pages one per round trip under the pane's HistoryRateLimiter, not a
+  # second apart. COUNT runs, then under -race. Dispatch with
+  # only=history-limit (this job and history-limit's).
+  history-limit-list:
+    if: ${{ !inputs.only || startsWith('history-limit-list', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the list's pages, COUNT runs
+        run: go test -count=$COUNT -timeout 15m -run '^(TestHistoryChangeAcrossALoad|TestHistoryChangeAcrossTwoLoads|TestUnreadLineWaitsForTheLastRead|TestUnreadBannerCountLikeSlack|TestOlderPagesChainLikeSlack|TestPageLimiterLikeSlack|TestPrependKeepsJoinSummaryInPlace)$' ./internal/ui/messages
+      - name: the same under -race
+        if: ${{ !cancelled() }}
+        run: go test -race -count=2 -timeout 6m -run '^(TestHistoryChangeAcrossTwoLoads|TestUnreadLineWaitsForTheLastRead|TestUnreadBannerCountLikeSlack|TestOlderPagesChainLikeSlack)$' ./internal/ui/messages
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # giant-open (2026-11-24): #giant-wall's open timed on the client in
+  # three spans (TestGiantWallOpenSpans: the history answer read to
+  # decoded, decoded to converted, converted to the first painted frame),
+  # under the GPU renderer (llvmpipe), each run in a fresh process; a CPU
+  # profile of each open is the giant-open artifact. Measures, bounds
+  # nothing. Dispatch with only=giant-open (-f count=3).
+  giant-open:
+    if: ${{ inputs.only != '' && startsWith('giant-open', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (Xvfb, Mesa llvmpipe)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "#giant-wall's open in three spans, COUNT runs, each its own process"
+        shell: bash
+        env:
+          CLACK_GIANT_OPEN_SPANS: "1"
+          CLACK_BENCH_GPU: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui || exit 1
+          cd internal/ui
+          rc=0
+          for i in $(seq 1 "$COUNT"); do
+            mkdir -p "$RUNNER_TEMP/giant-open/$i"
+            CLACK_GIANT_OUT="$RUNNER_TEMP/giant-open/$i" xvfb-run -a ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 8m -test.run '^TestGiantWallOpenSpans$' || rc=1
+          done
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: giant-open
+          path: ${{ runner.temp }}/giant-open
+          retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7495,6 +7621,9 @@ jobs:
       - entprefs
       - scroll-cpu
       - member-subs
+      - history-limit
+      - giant-open
+      - history-limit-list
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

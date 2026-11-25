@@ -40,7 +40,8 @@ func NewChannelViewIn(h Host, channelID, pane string) *ChannelView {
 	// the load starts as the list first lays out (ensure): a route at a
 	// message highlights it first, and a conversation not loaded yet then
 	// loads only the window around it
-	v.s.closeEdits() // an editor left open when you navigated away is gone, like Slack
+	v.s.closeEdits()  // an editor left open when you navigated away is gone, like Slack
+	v.s.pages.reset() // the pane's HistoryRateLimiter starts afresh with each conversation
 	// Each open places the "New" line at the read cursor as it is now.
 	if app := h.Core(); app != nil {
 		cnt := app.Count(channelID)

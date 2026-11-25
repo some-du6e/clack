@@ -93,9 +93,10 @@ func TestWindowJumpBackKeepsUnread(t *testing.T) {
 		app.S.SetCounts(&slack.Counts{Channels: []slack.CountEntry{{ID: ch, LastRead: tss[190], Latest: tss[239], HasUnreads: true}}})
 	})
 	app := e.h.app
-	if e.v.s.unreadIndex() < 0 {
-		t.Fatalf("control: the newest messages have no \"New\" line: %s", e.state())
-	}
+	// the newest page (Slack's 28) starts after the last read: the line
+	// shows once the page before it, read ahead of the reader, reaches it
+	// (canShowUnreadDivider)
+	e.await(t, "the \"New\" line", func() bool { return e.v.s.unreadIndex() >= 0 })
 	if e.v.s.unreadSeen {
 		t.Fatalf("control: the \"New\" line counts as seen at the newest messages' end: %s", e.state())
 	}

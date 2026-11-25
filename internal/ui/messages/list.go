@@ -210,8 +210,9 @@ type listState struct {
 	aroundFor   string       // the jump the window around was loaded for (loadAround)
 	origin      image.Point  // view origin in window coordinates
 	size        image.Point  // the list's size in the last frame
-	lastOlder   time.Time
-	lastNewer   time.Time
+	lastOlder   time.Time    // when the list last asked for an older page
+	lastNewer   time.Time    // and a window's newer one
+	pages       pageLimiter  // the pane's HistoryRateLimiter (page_limit.go)
 	highlight   string
 	highlightAt time.Time
 	// hlSeen: the highlighted row has been drawn (its unmount ends the
@@ -845,11 +846,18 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.openLastRead = s.snap.lastRead
 		// Mark as read > "Start me where I left off" (start_scroll_at_oldest
 		// with mark_msgs_read_immediately): open on the first unread.
+		// Slack's tgP7 starts the pane at the last read (startTs =
+		// last_read): a slice that holds it (canShowUnreadDivider) starts
+		// at the first unread, one that doesn't loads the window around
+		// the last read, where the jump lands on the first unread
+		// (placeJump).
 		if pf := uipref.Get(); pf.StartAtOldest && pf.MarkReadImmediately && !s.thread && s.pendingJump == "" && s.openLastRead != "" {
 			for i := range s.snap.msgs {
 				if ts := s.snap.msgs[i].m.TS; tsLess(s.openLastRead, ts) {
-					if i > 0 || s.snap.hasMore {
+					if i > 0 || !s.snap.hasMore {
 						s.pendingJump = ts
+					} else {
+						s.pendingJump = s.openLastRead
 					}
 					break
 				}
@@ -1060,13 +1068,21 @@ func (s *listState) build(h Host, now time.Time) {
 		}
 		if !unreadPlaced && s.openLastRead != "" && tsLess(s.openLastRead, m.TS) && !s.thread {
 			unreadPlaced = true
-			// Only show the line when there is something read above it and
-			// not everything after it is the viewer's own sends.
+			// The line only where the slice reaches the last read:
+			// canShowUnreadDivider (client-boot-shared AEjl, build
+			// e277bbacc0bc) is first(timestamps) <= lastReadTs ||
+			// reachedStart, so a read message is above it or the
+			// conversation's start is. A newest page of 28 with more
+			// unread than it starts after the last read, and its first
+			// message isn't the first unread: no line until the older pages
+			// reach it, and the banner's jump goes to the last read
+			// (jumpToUnread's jumpToTimestamp). Nor where everything after
+			// it is the viewer's own sends.
 			othersAfter := false
 			for k := i; k < len(msgs) && !othersAfter; k++ {
 				othersAfter = msgs[k].m.User != self
 			}
-			if (i > 0 || s.snap.hasMore) && (othersAfter || s.openUnread) {
+			if (i > 0 || !s.snap.hasMore) && (othersAfter || s.openUnread) {
 				s.items = append(s.items, item{kind: itUnread, key: "unread"})
 				header = true
 			}
@@ -1602,18 +1618,24 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if s.thread {
 		s.threadPaging(gtx, h, size, now) // pages before and after the slice (thread_load.go)
 	}
-	// infinite scroll up, ahead of the reader (olderAhead)
-	if !s.thread && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second && s.olderAhead(gtx, size) {
-		if s.hb.loadOlder(s.m) {
+	// infinite scroll up, ahead of the reader (olderAhead): requestOlder
+	// asks as soon as the last page landed (one out at a time: snap.older,
+	// MessageList's isLoading), and only the pane's HistoryRateLimiter
+	// holds a page, one asked for twice already (pageLimiter)
+	if !s.thread && s.snap.hasMore && !s.snap.older && s.snap.loaded && s.olderAhead(gtx, size) {
+		if key := s.m.pageKey(true); key != "" && !s.pages.prevent(key, now) && s.hb.loadOlder(s.m) {
+			s.pages.log(key, now)
 			s.lastOlder = now
 		}
 	}
 	// a window short of the newest message: its end in view loads the
-	// next page (requestNewer)
+	// next page (requestNewer), as the older one
 	if !s.thread && s.snap.newestMissing && !s.snap.newer && s.snap.around == "" && s.snap.loaded &&
-		s.visible[1] >= len(s.items)-2 && now.Sub(s.lastNewer) > time.Second {
-		s.lastNewer = now
-		s.hb.loadNewer(s.m)
+		s.visible[1] >= len(s.items)-2 {
+		if key := s.m.pageKey(false); key != "" && !s.pages.prevent(key, now) && s.hb.loadNewer(s.m) {
+			s.pages.log(key, now)
+			s.lastNewer = now
+		}
 	}
 	// Mark as read: mark_msgs_read_immediately marks as soon as the
 	// conversation shows; Slack's default leaves unseen messages unread,
@@ -3068,6 +3090,23 @@ func (s *listState) editComposer() *composer.Composer {
 func (s *listState) placeJump(now time.Time) {
 	if s.pendingJump == "" || s.thread { // a thread's: placeThreadJump
 		return
+	}
+	// a jump to the last read lands on the first unread under the "New"
+	// line (getListProps: startTs === lastReadTs scrolls to firstUnreadTs,
+	// the divider's message): the banner's jumpToUnread with no line in the
+	// slice, jumpToTimestamp({ts: lastReadTs})
+	if s.pendingJump == s.openLastRead {
+		if ui := s.unreadIndex(); ui >= 0 {
+			for i := ui + 1; i < len(s.items); i++ {
+				if s.items[i].kind == itMsg {
+					s.placeAt(i, anchorOffset)
+					s.jumpLazy = false
+					s.positioned = true
+					s.pendingJump = ""
+					return
+				}
+			}
+		}
 	}
 	for i, it := range s.items {
 		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == s.pendingJump {

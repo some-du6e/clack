@@ -70,8 +70,12 @@ func TestVeryBeginningFromNewestKeepsUnread(t *testing.T) {
 	e, fs, created := dayGuardEnv(t, nil, func(app *core.App, tss []string) {
 		app.S.SetCounts(&slack.Counts{Channels: []slack.CountEntry{{ID: dayJumpChan, LastRead: tss[2052], Latest: tss[2099], HasUnreads: true}}})
 	})
-	if e.v.s.unreadIndex() < 0 || e.v.s.unreadSeen {
-		t.Fatalf("control: the newest messages' \"New\" line: index %d, seen %v: %s", e.v.s.unreadIndex(), e.v.s.unreadSeen, e.state())
+	// the newest page (Slack's 28) starts after the last read: the line
+	// shows once the page before it, read ahead of the reader, reaches it
+	// (canShowUnreadDivider)
+	e.await(t, "the \"New\" line", func() bool { return e.v.s.unreadIndex() >= 0 })
+	if e.v.s.unreadSeen {
+		t.Fatalf("control: the newest messages' \"New\" line counts as seen: %s", e.state())
 	}
 	e.beginningAndBack(t, created)
 	e.frames(2 * time.Second)

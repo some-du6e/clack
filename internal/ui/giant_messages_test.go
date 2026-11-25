@@ -415,7 +415,7 @@ func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out str
 			}
 		}
 	}
-	// 1. open it: the newest 50 messages (it opens at the "New" line: the
+	// 1. open it: the newest 28 messages (it opens at the "New" line: the
 	// whole channel is unread)
 	e.a.Navigate("c/" + ch)
 	t0 := time.Now()

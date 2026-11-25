@@ -175,7 +175,7 @@ func TestAutoscrollWindow(t *testing.T) {
 		})
 		return
 	}
-	until("the channel's history", func() bool { return loaded() > 30 })
+	until("the channel's history", func() bool { return loaded() >= 20 }) // a newest page (Slack's 28)
 	time.Sleep(2 * time.Second) // boot settles (the reveal, images)
 	asTestSetForeground.Call(hwnd)
 	time.Sleep(300 * time.Millisecond)

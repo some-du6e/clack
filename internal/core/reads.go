@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"log"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/logtag"
@@ -17,6 +19,11 @@ import (
 )
 
 // ---- history & threads ----
+
+// HistoryConverted, when set, gets each History page as its messages are
+// converted (their Docs made): the conversation, how many, and when. Tests
+// time a read's spans with it (ui TestGiantWallOpenSpans); nil otherwise.
+var HistoryConverted atomic.Pointer[func(ch string, n int, at time.Time)]
 
 // History returns the newest page of a conversation (before == "") from
 // memory when cached, else one conversations.history call; with before set
@@ -80,10 +87,14 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	} else {
 		source = "older"
 		pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
-		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: before, Limit: 100})
+		// Slack's older page: fetchHistory {latest: before, limit: 28,
+		// inclusive: true} (slack.DefaultHistoryLimit), which brings the
+		// message at before back too; the store had it already
+		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: before, Limit: slack.DefaultHistoryLimit(ch), Inclusive: true})
 		if err != nil {
 			return fail(err)
 		}
+		p.Messages = slices.DeleteFunc(p.Messages, func(m slack.Message) bool { return m.TS == before })
 		// what the socket changed, deleted or reacted while it was out
 		// stays, and a revision the store held another of reaches every
 		// copy and the views (store PrependOlderSince, read_changes.go);
@@ -103,6 +114,9 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		msgs, hasMore = kept, p.HasMore
 	}
 	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore, Epoch: epoch}
+	if f := HistoryConverted.Load(); f != nil {
+		(*f)(ch, len(page.Messages), time.Now())
+	}
 	if c, ok := a.Conv(ch); ok {
 		page.Conv = &c
 	}

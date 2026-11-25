@@ -389,8 +389,11 @@ func TestPrependKeepsJoinSummaryInPlace(t *testing.T) {
 		t.Fatalf("no join summary %s in %d items", key, len(s.items))
 	}
 	// bring the summary to the top of the view (and keep older pages from
-	// loading until it's there)
-	s.lastOlder = time.Now().Add(time.Hour)
+	// loading until it's there: the pane's HistoryRateLimiter holds a key
+	// asked for twice)
+	older := s.m.pageKey(true)
+	s.pages.log(older, time.Now())
+	s.pages.log(older, time.Now())
 	s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -10}
 	e.frame()
 	e.frame()
@@ -398,7 +401,7 @@ func TestPrependKeepsJoinSummaryInPlace(t *testing.T) {
 	if k0 != key {
 		t.Fatalf("first row %s, want the join summary %s", k0, key)
 	}
-	s.lastOlder = time.Time{}
+	s.pages.reset()
 	free()
 	until(t, 10*time.Second, "the older page", e.frame, func() bool { return len(s.snap.msgs) >= 40 })
 	e.frame()
