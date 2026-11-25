@@ -27,9 +27,11 @@ func TestClientCommandNames(t *testing.T) {
 	}
 	a, _ := testApp(t)
 	a.mu.Lock()
-	a.cmdCache = []slack.Command{{Name: "/giphy", Aliases: []string{"/gif"}}, {Name: "/s3", CanonicalName: "/s3deploy"}}
+	a.cmdCache = []slack.Command{{Name: "/giphy", Aliases: []string{"/gf", "/gif"}}, {Name: "/s3", CanonicalName: "/s3deploy"}}
 	a.mu.Unlock()
-	for typed, want := range map[string]string{"/gif": "/giphy", "/s3": "/s3deploy", "/keys": "/shortcuts", "/away": "/away"} {
+	// the client commands come first (yrZ7 Qe): /gif is the client's even
+	// where a server command answers to it
+	for typed, want := range map[string]string{"/gf": "/giphy", "/gif": "/gif", "/s3": "/s3deploy", "/keys": "/shortcuts", "/away": "/away"} {
 		if got := a.LocalCommand(typed); got != want {
 			t.Errorf("LocalCommand(%q) = %q, want %q", typed, got, want)
 		}

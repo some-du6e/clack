@@ -41,13 +41,13 @@ func TestCommandNameAndDisp(t *testing.T) {
 	a, f := testApp(t)
 	f.reply["chat.command"] = `{"ok":true}`
 	a.mu.Lock()
-	a.cmdCache = []slack.Command{{Name: "/remind", Type: "core"}, {Name: "/giphy", Aliases: []string{"/gif"}}}
+	a.cmdCache = []slack.Command{{Name: "/remind", Type: "core"}, {Name: "/giphy", Aliases: []string{"/gf"}}}
 	a.mu.Unlock()
 	ctx := context.Background()
 	for _, c := range []struct{ cmd, disp, want string }{
 		{"/remind", "/Remind", "/remind"},
 		{"／remind", "／remind", "/remind"},
-		{"/gif", "/gif", "/giphy"},
+		{"/gf", "/gf", "/giphy"},
 		{"/nope", "/NoPe", "/nope"},
 	} {
 		if _, err := a.Command(ctx, CommandOpts{Channel: "C1", Command: c.cmd, Disp: c.disp, Params: []CommandParam{}}); err != nil {

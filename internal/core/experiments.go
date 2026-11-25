@@ -267,6 +267,9 @@ var on = []string{"on"}
 // experimentReads: every experiment Clack's code reads, with the groups it
 // compares against ("on" unless noted).
 var experimentReads = map[string][]string{
+	// closeChannelApi's canChannelBeClosed (7Sp+ l): an open record
+	// channel closes unless it is on (slash_local.go CloseConversation)
+	"salesforce_channels_x_out_channel": on,
 	// a data_visualization block's More actions: Copy as image
 	// (popups/chart_menu.go, canvas-data-visualization-block v4Jz)
 	"data_visualization_copy_image": on,

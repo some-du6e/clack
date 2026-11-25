@@ -206,7 +206,7 @@ func (a *App) slashEnabled(ctx context.Context, z slack.Command, cmd, ch string,
 // external guest (SfHq U: is_restricted, restricted_user_type
 // external_guest) or c is a huddle's channel.
 func (a *App) gifsBlockedInHuddle(c *slack.Conversation) bool {
-	if a.experiment("external_huddles") != "on" {
+	if a.experiment(ExpExternalHuddles) != "on" {
 		return false
 	}
 	if u, ok := a.S.User(a.S.SelfID()); ok && u.IsRestricted && u.RestrictedUserType == "external_guest" {

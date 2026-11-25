@@ -192,10 +192,10 @@ func TestMembershipStore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	before := countCalls(f, "membership")
-	done := make(chan map[string]MemberInfo, 2)
-	go func() { done <- a.ChannelMembershipInfo(ctx, "C0LOUNGE01", []string{"U0BOBBY001"}) }()
-	go func() { done <- a.ChannelMembershipInfo(ctx, "C0LOUNGE01", []string{"U0BOBBY001", "U0ALICE001"}) }()
-	r1, r2 := <-done, <-done
+	c1, c2 := make(chan map[string]MemberInfo, 1), make(chan map[string]MemberInfo, 1)
+	go func() { c1 <- a.ChannelMembershipInfo(ctx, "C0LOUNGE01", []string{"U0BOBBY001"}) }()
+	go func() { c2 <- a.ChannelMembershipInfo(ctx, "C0LOUNGE01", []string{"U0BOBBY001", "U0ALICE001"}) }()
+	r1, r2 := <-c1, <-c2
 	if n := countCalls(f, "membership") - before; n != 1 {
 		t.Errorf("%d channels/membership calls for two asks at once", n)
 	}
