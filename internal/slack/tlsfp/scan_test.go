@@ -20,6 +20,10 @@ var scanAllow = map[string]map[string]string{
 	// the screen share's content attendee: the same Chime signalling host
 	// with the "#content" join token
 	"internal/huddle/content.go": {"websocket.Dial without HTTPClient": "Chime, not Slack"},
+	// the report box's reports and the opt-in crash reports: Clack's
+	// Sentry project (sentry.io, never a Slack host), envelopes with no
+	// Slack token or cookie in them
+	"internal/sentry/sentry.go": {"uses http.DefaultTransport": "Sentry, not Slack"},
 }
 
 // Every connection that can reach Slack is made by this package: no other

@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sync"
 	"time"
 )
 
@@ -42,7 +43,9 @@ func (l *Logger) CaptureCrashes(header string) {
 	if l == nil || l.dir == "" {
 		return
 	}
+	done := l.crash.start()
 	go func() {
+		defer close(done) // PreviousCrash's wait
 		if err := l.captureCrashes(header); err != nil {
 			// in clack.log too: a start with no capture says why
 			log.Printf("applog: no crash capture this run: %v", err)
@@ -69,9 +72,12 @@ func (l *Logger) captureCrashes(header string) error {
 		return err
 	}
 	defer f.Close() // the runtime and the native capture keep their own duplicates
-	if rec := previousCrashFrom(f); rec != "" {
+	if rec, c := crashRecord(f); rec != "" {
 		_, _ = l.w.Write([]byte(rec))
 		l.w.Flush(2 * time.Second) // in clack.log before crash.log starts afresh
+		if c != nil {
+			l.crash.set(c) // for the opt-in crash report (PreviousCrash)
+		}
 	}
 	if err := f.Truncate(0); err != nil {
 		return err
@@ -114,8 +120,6 @@ func previousCrash(path string) string {
 	return previousCrashFrom(f)
 }
 
-// previousCrashFrom is previousCrash for the open file f (read from its
-// current offset, the start).
 // crashMarks are what a crash's report holds: the runtime's (a panic, a
 // fatal error, a signal, a Windows exception Go caught, its goroutine
 // dump) or the native capture's (crash_windows.go writeNative).
@@ -145,10 +149,19 @@ func firstLine(b []byte) string {
 	return string(bytes.TrimSpace(b))
 }
 
+// previousCrashFrom is previousCrash for the open file f (read from its
+// current offset, the start).
 func previousCrashFrom(f *os.File) string {
+	rec, _ := crashRecord(f)
+	return rec
+}
+
+// crashRecord is previousCrashFrom's record and, when the record is a
+// crash's, the crash itself.
+func crashRecord(f *os.File) (string, *Crash) {
 	b, err := io.ReadAll(io.LimitReader(f, maxCrashImport+1))
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	header := ""
 	if bytes.HasPrefix(b, []byte(crashHeaderPrefix)) {
@@ -161,26 +174,86 @@ func previousCrashFrom(f *os.File) string {
 	}
 	b = bytes.TrimRight(b, "\n")
 	if len(bytes.TrimSpace(b)) == 0 {
-		return ""
+		return "", nil
 	}
 	if !crashMarked(b) {
 		// Windows with no stderr: crash.log is fd 2 for the whole run, so
 		// what a DLL writes to stderr lands here too; only the runtime's
 		// own report, or the native capture's, is a crash
 		return fmt.Sprintf("%s applog: the previous run's crash.log holds no crash, only other output (%d bytes, its first line %q)\n",
-			time.Now().Format("2006/01/02 15:04:05"), len(b), firstLine(b))
+			time.Now().Format("2006/01/02 15:04:05"), len(b), firstLine(b)), nil
 	}
 	cut := ""
 	if len(b) > maxCrashImport {
 		b, cut = b[:maxCrashImport], "\n[crash output cut at 256 KiB]"
 	}
+	c := &Crash{Header: header, Output: string(b)}
 	when := ""
 	if st, err := f.Stat(); err == nil {
+		c.When = st.ModTime()
 		when = " at " + st.ModTime().Format("2006/01/02 15:04:05")
 	}
 	if header != "" {
 		header = " (" + header + ")"
 	}
 	return fmt.Sprintf("%s applog: the previous run crashed%s%s; its crash output:\n%s%s\n",
-		time.Now().Format("2006/01/02 15:04:05"), header, when, b, cut)
+		time.Now().Format("2006/01/02 15:04:05"), header, when, b, cut), c
+}
+
+// Crash is the previous run's crash as this start's capture found it in
+// crash.log, raw (at most 256 KiB of it): what the opt-in crash report
+// sends, scrubbed (internal/sentry), at the next start.
+type Crash struct {
+	Header string    // the crashed run's ("clack v0.1.0 windows/amd64 pid 123, started …")
+	Output string    // what the runtime, or the native capture, wrote after the header
+	When   time.Time // crash.log's last write (zero: unknown)
+}
+
+// crashState is CaptureCrashes' result for PreviousCrash.
+type crashState struct {
+	mu   sync.Mutex
+	done chan struct{} // closed once the capture read crash.log (nil: no capture)
+	prev *Crash
+}
+
+func (s *crashState) start() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.done == nil {
+		s.done = make(chan struct{})
+	}
+	return s.done
+}
+
+func (s *crashState) set(c *Crash) {
+	s.mu.Lock()
+	s.prev = c
+	s.mu.Unlock()
+}
+
+// PreviousCrash waits (at most d) for this start's crash capture to read
+// crash.log (CaptureCrashes), and returns the previous run's crash; ok is
+// false when it hadn't crashed, or no capture ran (a second launch, no
+// log folder).
+func (l *Logger) PreviousCrash(d time.Duration) (Crash, bool) {
+	if l == nil {
+		return Crash{}, false
+	}
+	l.crash.mu.Lock()
+	done := l.crash.done
+	l.crash.mu.Unlock()
+	if done == nil {
+		return Crash{}, false
+	}
+	select {
+	case <-done:
+	case <-time.After(d):
+		return Crash{}, false
+	}
+	l.crash.mu.Lock()
+	defer l.crash.mu.Unlock()
+	if l.crash.prev == nil {
+		return Crash{}, false
+	}
+	return *l.crash.prev, true
 }

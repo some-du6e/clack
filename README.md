@@ -225,6 +225,10 @@ With the flight recorder on, the same folder gets execution traces: Clack keeps 
 - A slow frame is most often a stop-the-world covering it (its first part, waiting for every goroutine to stop, is long when one wouldn't: a JS thread in a long native loop), the window's goroutine runnable but not running (no thread free for it, as when a GC takes the CPU), or that goroutine in a GC mark assist, paying for its own allocations. Blocking on a lock or a channel shows as the goroutine blocked, and in **Synchronization blocking profile**.
 - **Goroutine analysis** splits each goroutine's time into running, waiting to run (scheduler wait), blocked, syscalls and GC assists; **Scheduler latency profile** shows where goroutines waited to run.
 
+### Reporting a problem
+
+Hyper+R (⌃⌥⇧⌘R on macOS, Ctrl+Alt+Shift+R on Linux and Windows) opens a report box for Clack's developers. You write what happened, and the box lists everything that goes with it before you send: which component was under the pointer, its size and colours, the page, the window and settings, with ids as one-way tags. A screenshot of the window goes too only if you tick it, and you can blur parts of it first. Nothing is sent until you click **Send**. **Preferences > Clack > Send crash reports** (off by default) sends a crash's stack trace, version and OS at the next start. Neither holds message text, names, tokens or cookies, and both go to Clack's Sentry project, not to Slack. Only release builds can send them. See [docs/REPORTS.md](docs/REPORTS.md).
+
 ### Logs
 
 Clack writes its log to stderr and to a file, even when you start it from the Dock or the Start menu:
@@ -295,6 +299,7 @@ Clack follows the [Hack Club scraping policy](https://news.hackclub.com/news/scr
 - Only metadata is cached on disk, in one directory per workspace and user under the OS's cache folder (`~/Library/Caches/Clack`, `~/.cache/clack`, `%LocalAppData%\Clack`; `v1/<team>-<user>/`): the user directory, the custom emoji map, usergroups and your prefs (`meta.json`), the sidebar and recently opened channels' tab bars that a start shows before Slack answers (`boot_data.json`, `headers.json`; no messages), plus avatar and emoji images (at most 384 MB). Every file is readable by you only (0600). **Signing out deletes the directory.**
 - Files and thumbnails from `files.slack.com` are fetched into a memory-only cache and never saved.
 - Clack makes the same kind of requests the official client makes: on demand, rate-limited, no crawling.
+- Reports go to Clack's developers (their Sentry project) only when you send one with Hyper+R or turn on **Preferences > Clack > Send crash reports**. They carry no message text, names, tokens or cookies ([docs/REPORTS.md](docs/REPORTS.md)).
 
 ## License
 

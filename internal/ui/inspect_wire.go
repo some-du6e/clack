@@ -168,6 +168,9 @@ func (a *App) inspectFirst(gtx layout.Context) *op.Ops {
 		// is for any other way there)
 		a.closeInspectSession()
 	}
+	if a.reportActive() {
+		a.rpt.Frame(gtx) // the report box's capture or review: never frozen (report_box.go)
+	}
 	if a.insp != nil && a.insp.Active() {
 		// the frame's key presses for the Konami code, read now: a frozen
 		// frame lays out nothing (inspectBegin reads the rest)
@@ -222,6 +225,9 @@ func (a *App) closeInspectSession() {
 	if a.insp != nil && a.insp.Active() {
 		a.insp.Close()
 	}
+	if a.reportActive() {
+		a.rpt.Close() // the report box's capture or review (report_box.go)
+	}
 }
 
 // inspectNotShown says the frame just laid out didn't go to the screen
@@ -229,6 +235,9 @@ func (a *App) closeInspectSession() {
 func (a *App) inspectNotShown() {
 	if a.insp != nil {
 		a.insp.NotShown()
+	}
+	if a.rpt != nil {
+		a.rpt.NotShown()
 	}
 }
 
@@ -240,6 +249,9 @@ func (a *App) inspectBegin(gtx layout.Context) layout.Context {
 	// arrows and the letters): Gio patch 28. Once per frame: a frame
 	// laid out again reads none.
 	a.konamiKeys(&gtx.Source)
+	// Hyper+R, and the report box's capture or review (report_box.go):
+	// while it runs the context is its tool's, hover-only
+	gtx = a.reportBegin(gtx)
 	if a.insp == nil {
 		return gtx
 	}
@@ -267,7 +279,7 @@ func (a *App) inspectBegin(gtx layout.Context) layout.Context {
 // window, a caption button minimizes or closes it), so the picker could
 // never pick the top nav's bare parts and a region dragged from there
 // would move the window instead.
-func (a *App) inspecting() bool { return a.insp != nil && a.insp.Active() }
+func (a *App) inspecting() bool { return a.insp != nil && a.insp.Active() || a.reportActive() }
 
 // inspectEnd draws the session's outline, label and banner over
 // everything (gtx: the frame's own context).
@@ -275,12 +287,18 @@ func (a *App) inspectEnd(gtx layout.Context) {
 	if a.insp != nil {
 		a.insp.End(gtx)
 	}
+	if a.rpt != nil {
+		a.rpt.End(gtx)
+	}
 }
 
 // inspectAfterFrame shoots a pick's frame once its ops are complete.
 func (a *App) inspectAfterFrame(ops *op.Ops, size image.Point) {
 	if a.insp != nil {
 		a.insp.AfterFrame(ops, size)
+	}
+	if a.rpt != nil {
+		a.rpt.AfterFrame(ops, size) // the report box's shot
 	}
 }
 

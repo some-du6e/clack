@@ -130,6 +130,10 @@ func (t *Tool) changed(r *review) {
 // finishReview sends the report with the rects marked so far.
 func (t *Tool) finishReview() {
 	r := t.rev
+	if r.c.blurDone != nil {
+		t.finishShotReview(r) // the report box's shot (reportmode.go)
+		return
+	}
 	r.c.redact = append([]image.Rectangle(nil), r.marks...)
 	r.c.rep.Redacted = len(r.marks)
 	r.c.strokes = append([]Stroke(nil), r.pen.strokes...)
@@ -139,6 +143,10 @@ func (t *Tool) finishReview() {
 
 // dropReview ends the review with nothing saved or copied.
 func (t *Tool) dropReview() {
+	if r := t.rev; r != nil && r.c.blurDone != nil {
+		t.dropShotReview(r) // the report box's shot: it keeps its own
+		return
+	}
 	if r := t.rev; r != nil {
 		r.c.tm.outcome = "dropped"
 		logTimes(r.c)
@@ -414,11 +422,14 @@ func (t *Tool) drawReview(gtx layout.Context) {
 	if th == nil || th.Shaper == nil {
 		return
 	}
+	msg := reviewBanner(r.ready, len(r.marks), t.armed(r))
 	if r.pen.on && r.ready {
-		t.banner(gtx, th, penBanner(&r.pen, t.armed(r)))
-		return
+		msg = penBanner(&r.pen, t.armed(r))
 	}
-	t.banner(gtx, th, reviewBanner(r.ready, len(r.marks), t.armed(r)))
+	if r.c.blurDone != nil {
+		msg = reportBanner(msg) // the report box's shot: Enter keeps it
+	}
+	t.banner(gtx, th, msg)
 }
 
 // shownMarks is how many marks the shown image has blurred: all but

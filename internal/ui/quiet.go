@@ -130,7 +130,7 @@ func (a *App) quietFrame(now time.Time, size image.Point, m unit.Metric, insets 
 		a.quietWhy = whyResized
 	case slackc.SubFrames() != q.subs:
 		a.quietWhy = whyOtherWindow
-	case a.login != nil || a.insp != nil:
+	case a.login != nil || a.insp != nil || a.reportActive():
 		a.quietWhy = whySignInInspect
 	default:
 		a.mu.Lock()
@@ -187,7 +187,7 @@ func (a *App) beginFullFrame() {
 // noteFullFrame records what a full frame was drawn for; covered: only the
 // boot cover went to the GPU, so its ops can't be shown again.
 func (a *App) noteFullFrame(size image.Point, m unit.Metric, insets app.Insets, covered bool) {
-	a.quiet = quietState{ok: !covered && a.login == nil && a.insp == nil, size: size, metric: m, insets: insets,
+	a.quiet = quietState{ok: !covered && a.login == nil && a.insp == nil && !a.reportActive(), size: size, metric: m, insets: insets,
 		zoom: a.zoomFactor(), subs: slackc.SubFrames()}
 }
 

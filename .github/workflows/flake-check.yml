@@ -334,6 +334,11 @@ on:
       - "internal/ui/messages/scroll_gaps_test.go"
       - "internal/ui/messages/compact_test.go"
       - "third_party/gioui.org/app/clack_bounds_darwin_test.go"
+      - "internal/sentry/**"
+      - "internal/ui/report_box.go"
+      - "internal/ui/report_box_test.go"
+      - "internal/ui/popups/report_box.go"
+      - "internal/ui/inspect/reportmode.go"
 
 permissions:
   contents: read
@@ -2990,6 +2995,42 @@ jobs:
           name: giant-messages
           path: ${{ runner.temp }}/giant
           retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # report-sentry (2026-11-24): the report box (Hyper+R) and the opt-in
+  # crash reports to Clack's Sentry, against sentrytest's fake endpoint on
+  # loopback (nothing reaches Sentry or Slack): internal/sentry's envelopes,
+  # scrubbing and crash parsing and release.yml's -X; applog's
+  # PreviousCrash; the box, its screenshot and blur, the unavailable build
+  # and the crash pref in internal/ui; and the tlsfp guard, which lists
+  # sentry.go. Dispatch with only=report-sentry -f count=3.
+  report-sentry:
+    if: ${{ !inputs.only || startsWith('report-sentry', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the report box and crash reports, COUNT runs"
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^(TestParseDSN|TestNoDSNNoClient|TestSendFeedbackEnvelope|TestSendFailures|TestReleaseSetsTheDSN|TestScrub\w*|TestCrashEvent\w*)$' ./internal/sentry || rc=1
+          go test -count=$COUNT -v -run '^(TestPreviousCrashForTheReport|TestPreviousCrashRedactedAndCleanRunSilent|TestCrashFileHeldByTheRunningClack)$' ./internal/applog || rc=1
+          go test -count=$COUNT -v -run '^(TestReportBox\w*|TestCrashReports\w*|TestClackPrefsTab)$' ./internal/ui || rc=1
+          go test -count=1 -run '^TestOnlyTLSFPDials$' ./internal/slack/tlsfp || rc=1
+          exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
@@ -7337,6 +7378,7 @@ jobs:
   expect-fail:
     needs:
       - link-open-mac
+      - report-sentry
       - select-line-end
       - go
       - modal-title-wrap

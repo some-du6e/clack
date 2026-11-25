@@ -90,7 +90,7 @@ func (a *App) fileDrop(e app.FileDropEvent) {
 			a.drop.on = false
 			a.dropHover(nil)
 		}
-		if e.Kind == app.FileDrop {
+		if e.Kind == app.FileDrop && a.insp != nil && a.insp.Active() {
 			a.insp.Say("files can't be dropped during a session")
 		}
 		return

@@ -143,9 +143,15 @@ jobs:
       - name: deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS desktop-file-utils rpm >/dev/null
       - name: build
+        env:
+          # the report box's and the crash reports' Sentry DSN
+          # (internal/sentry), for a tag's build only: a dry run's
+          # packages are built without it and can't send
+          SENTRY_DSN: ${{ (startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != '') && secrets.SENTRY_DSN || '' }}
         run: |
           mkdir -p build/linux dist
-          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o build/linux/clack ./cmd/clack
+          if [ -z "${SENTRY_DSN:-}" ]; then echo "::notice::built without SENTRY_DSN: these packages can't send reports"; fi
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$TAG -X github.com/some-du6e/clack/internal/sentry.dsn=${SENTRY_DSN:-}" -o build/linux/clack ./cmd/clack
           build/linux/clack -version | tee /dev/stderr | grep -qF "$TAG"
           echo "linked libraries:"; readelf -d build/linux/clack | grep NEEDED
           echo "glibc symbol versions:"; objdump -T build/linux/clack | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -3
@@ -260,13 +266,18 @@ jobs:
             --file-version "$NUM.0" --product-version "$VERSION"
           ls -la cmd/clack/*.syso
       - name: build (cross; amd64 with cgo via mingw, arm64 without cgo so no huddle audio device)
+        env:
+          # the report box's and the crash reports' Sentry DSN
+          # (internal/sentry), for a tag's build only: a dry run's
+          # packages are built without it and can't send
+          SENTRY_DSN: ${{ (startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != '') && secrets.SENTRY_DSN || '' }}
         run: |
           set -eu
           mkdir -p dist
           for arch in amd64 arm64; do
             mkdir -p build/windows-$arch/Clack
             cgo=0; cc=; if [ $arch = amd64 ]; then cgo=1; cc=x86_64-w64-mingw32-gcc; fi
-            CGO_ENABLED=$cgo CC=$cc GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o build/windows-$arch/Clack/Clack.exe ./cmd/clack
+            CGO_ENABLED=$cgo CC=$cc GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG -X github.com/some-du6e/clack/internal/sentry.dsn=${SENTRY_DSN:-}" -o build/windows-$arch/Clack/Clack.exe ./cmd/clack
             cp packaging/windows/README.txt build/windows-$arch/Clack/README.txt
             cp LICENSE build/windows-$arch/Clack/LICENSE.txt
             cp THIRD_PARTY_NOTICES.md build/windows-$arch/Clack/THIRD_PARTY_NOTICES.md
@@ -453,10 +464,15 @@ jobs:
           go-version-file: go.mod
           cache: false # release binaries build from a clean module/build cache
       - name: build (arm64 + x86_64 → universal)
+        env:
+          # the report box's and the crash reports' Sentry DSN
+          # (internal/sentry), for a tag's build only: a dry run's
+          # packages are built without it and can't send
+          SENTRY_DSN: ${{ (startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != '') && secrets.SENTRY_DSN || '' }}
         run: |
           set -eu
           mkdir -p build dist
-          flags="-s -w -X main.version=$TAG"
+          flags="-s -w -X main.version=$TAG -X github.com/some-du6e/clack/internal/sentry.dsn=${SENTRY_DSN:-}"
           CGO_ENABLED=1 GOARCH=arm64 CC="clang -arch arm64" go build -trimpath -ldflags="$flags" -o build/clack-arm64 ./cmd/clack
           CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -trimpath -ldflags="$flags" -o build/clack-amd64 ./cmd/clack
           lipo -create -output build/clack build/clack-arm64 build/clack-amd64

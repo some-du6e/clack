@@ -31,6 +31,7 @@ import (
 	"github.com/some-du6e/clack/internal/imgcache"
 	_ "github.com/some-du6e/clack/internal/media/avf" // video on macOS: AVFoundation
 	_ "github.com/some-du6e/clack/internal/media/mf"  // video on Windows: Media Foundation (cgo builds)
+	"github.com/some-du6e/clack/internal/sentry"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/store"
@@ -369,6 +370,9 @@ func main() {
 		},
 		SetAppIcon:  func(png []byte) { desktop.SetAppIcon(png, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512) },
 		UserDefault: desktop.UserDefault,
+		// the report box's and the opt-in crash reports' destination: a
+		// release build's DSN (release.yml), nil in any other build
+		Sentry: sentry.Default(version),
 	}
 	if desktop.Released(version) || os.Getenv("CLACK_UPDATE_URL") != "" {
 		u := newUpdates(filepath.Join(cfg, "cache", "updates"))
@@ -433,19 +437,28 @@ func main() {
 	// line about how the last one ended. Not when another Clack holds the
 	// socket: the record is that one's.
 	if !errors.Is(lerr, desktop.ErrAnotherInstance) {
-		if prev := logs.StartRun(desktop.InstanceKey(cfg), fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), started.Format(time.RFC3339))); prev != "" {
+		prev := logs.StartRun(desktop.InstanceKey(cfg), fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), started.Format(time.RFC3339)))
+		if prev != "" {
 			log.Print(prev)
-			// a run that ended without saying why: what Windows recorded
-			// of it (a native crash, a fail-fast), 10 s in, off the
-			// startup path (the Windows launch harness ends every warm
-			// launch with taskkill /F: its starts mustn't run wevtutil)
-			go func() {
-				time.Sleep(10 * time.Second)
-				if s := applog.CrashRecordFor(prev); s != "" {
-					log.Print(s)
-				}
-			}()
 		}
+		// 10 s in, off the startup path (the Windows launch harness ends
+		// every warm launch with taskkill /F: its starts mustn't run
+		// wevtutil): for a run that ended without saying why, what
+		// Windows recorded of it (a native crash, a fail-fast); then the
+		// previous run's crash, if it had one, to Clack's Sentry, scrubbed,
+		// only with Preferences > Clack > Send crash reports on
+		// (ui.App.ReportCrash)
+		go func() {
+			time.Sleep(10 * time.Second)
+			native := ""
+			if prev != "" {
+				if native = applog.CrashRecordFor(prev); native != "" {
+					log.Print(native)
+				}
+			}
+			crash, _ := logs.PreviousCrash(5 * time.Second)
+			a.ReportCrash(sentry.Crash{Output: crash.Output, Header: crash.Header, When: crash.When, Exit: prev, Native: native})
+		}()
 	}
 	// Linux X11: a broken X connection ends the process in Xlib's IO error
 	// handler (Gio patch 59); the reason goes first
@@ -823,14 +836,15 @@ func linkKind(u string) string {
 // for no crash reporter ("" otherwise). Snappy's "Disable crash reporter"
 // (default on) appends Chromium's disable-crashpad and
 // disable-crash-reporter: in Electron they stop the crashpad handler and
-// its minidump upload to Slack. Clack has no crashpad and uploads nothing;
-// crash.log is a local file, imported redacted into clack.log at the next
-// start, so there's nothing for the switches to turn off. Honouring them
-// cost every run's crash evidence from 11-13 to 11-15.
+// its minidump upload to Slack. Clack has no crashpad: crash.log is a
+// local file, imported redacted into clack.log at the next start (and sent
+// to Clack's Sentry, scrubbed, only with Preferences > Clack > Send crash
+// reports on), so there's nothing for the switches to turn off. Honouring
+// them cost every run's crash evidence from 11-13 to 11-15.
 func captureCrashes(capture func(header string), sw []string, header string) string {
 	capture(header)
 	if slices.Contains(sw, slick.SwitchDisableCrashpad) || slices.Contains(sw, slick.SwitchDisableCrashReporter) {
-		return "slick: disable-crashpad/disable-crash-reporter kept for Chromium; Clack uploads no crash reports, so crash.log stays on"
+		return "slick: disable-crashpad/disable-crash-reporter kept for Chromium; Clack has no crashpad, so crash.log stays on (Preferences > Clack > Send crash reports decides what's sent)"
 	}
 	return ""
 }

@@ -1,7 +1,7 @@
 package ui
 
 // Preferences > Clack: Clack's own settings (updates, Replay
-// introduction), out of Slack's Advanced page. The tab heads Clack's own
+// introduction, crash reports), out of Slack's Advanced page. The tab heads Clack's own
 // tabs below the divider after Slack's tabs[] (Advanced stays last
 // there), drawn with the same nav item (Slack's c-tabs__tab, a 15px
 // Slack svgIcon at 9,7); Plugins and Themes follow it (Karim
@@ -23,12 +23,14 @@ var clackIntroRow func(p *prefsModal, f *prefsForm)
 // clackPage is the Clack tab: three rows at most, no headings or notes
 // (Karim, 2026-11-10: "keep the settings thing calm, 3 max"). Updates
 // (one row: automatic download, the step, its button), Replay
-// introduction. Live updates have no switch: they're always on, as in
-// Slack (realtime.go). Troubleshooting (logs, Copy Diagnostics,
-// freeze reports) is Help > Troubleshooting (appmenu.go).
+// introduction, Send crash reports (report_box.go: off by default, its
+// one line under the box). Live updates have no switch: they're always
+// on, as in Slack (realtime.go). Troubleshooting (logs, Copy
+// Diagnostics, freeze reports) is Help > Troubleshooting (appmenu.go).
 func (p *prefsModal) clackPage(f *prefsForm) {
 	p.updatesSection(f) // update_check.go
 	if clackIntroRow != nil {
 		clackIntroRow(p, f)
 	}
+	p.crashReportsRow(f)
 }

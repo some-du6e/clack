@@ -188,6 +188,10 @@ type prefs struct {
 	// code sets and clears it; by hand only with Clack quit, since Clack
 	// writes ui.json from what it read at launch.
 	InspectTool bool `json:"inspect_tool,omitempty"`
+	// CrashReports is Preferences > Clack > Send crash reports: after a
+	// crash, the next start sends it to Clack's Sentry, scrubbed
+	// (report_box.go). Off unless true.
+	CrashReports bool `json:"crash_reports,omitempty"`
 	// FlightRecorder is the execution trace flight recorder (flightrec.go):
 	// off unless true, as CLACK_FLIGHT_RECORDER=1 turns it on (it slows
 	// every frame). A diagnostic with no UI, set by hand with Clack quit

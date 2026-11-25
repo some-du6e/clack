@@ -52,6 +52,13 @@ type capture struct {
 	// copyNow: Enter came in the pick's own frame (pickKeys): copied as
 	// soon as it's shot, with no review
 	copyNow bool
+
+	// report: the report box's capture (StartReport), shot whole and
+	// handed to it, never reviewed or copied; blurDone: the report box's
+	// shot in the review (ReviewShot), whose Enter hands the blurred shot
+	// back instead of copying (reportmode.go)
+	report   *reportJob
+	blurDone func(img *image.RGBA, blurred int)
 }
 
 // guarded reports a capture that leaves only through its review, once
@@ -364,6 +371,10 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	frame := ops.Whole()
 	if fz := t.fz; fz != nil {
 		frame, size = fz.content, fz.at.size
+	}
+	if c.report != nil {
+		t.shootReport(c, frame, size) // reportmode.go
+		return
 	}
 	crop, k := cropFor(c.rect, size, c.scale)
 	if c.region {

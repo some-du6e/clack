@@ -184,6 +184,10 @@ type Tool struct {
 	contentOps *op.Ops       // the window's ops End finished
 	contentCP  op.Checkpoint // their end after content
 	fz         *freeze       // the frozen frame (freeze.go), nil while none is
+
+	// report is the report box's capture (StartReport, reportmode.go)
+	// until its pick: then its capture's
+	report *reportJob
 }
 
 // frameKey is what a frame was laid out for: its size and scale.
@@ -280,6 +284,7 @@ func (t *Tool) start() {
 
 func (t *Tool) stop() {
 	t.dropCapture("dropped: the session ended before its shot")
+	t.report = nil // a report box capture before its pick: dropped
 	t.state = off
 	t.held, t.grabNow = "", false
 	t.pend, t.rev = nil, nil
@@ -434,6 +439,10 @@ func (t *Tool) input(gtx layout.Context) {
 	case off, reviewing:
 		return
 	case picked:
+		if c := t.capture; c != nil && c.report != nil {
+			t.reportUndrawn(c) // the report box opens without the shot
+			return
+		}
 		// a new frame and the capture's wasn't shot (AfterFrame doesn't
 		// run for a frame under the boot placeholder): give up, don't
 		// leave the window taking no clicks; the capture goes with the
@@ -454,6 +463,15 @@ func (t *Tool) input(gtx layout.Context) {
 	}
 	if t.state == inspecting && t.rec {
 		t.hover = t.pickFrom(last, hits)
+	}
+	if t.report != nil {
+		// the report box's capture: the pick is what the pointer is over
+		// in the frame recorded; no press, drag or grab of its own
+		t.grabNow = false
+		if t.state == inspecting && t.rec {
+			t.reportPick(gtx)
+		}
+		return
 	}
 	if t.state == inspecting && in.pressed {
 		// the press: the report of what it's over now, while the frame
@@ -552,15 +570,20 @@ func (t *Tool) overlay(gtx layout.Context) {
 	}
 	src.Event(pointer.Filter{Target: &t.ptag, Kinds: pointerKinds})
 	m := op.Record(gtx.Ops)
+	capturing := t.Capturing() // the report box's: nothing drawn
 	switch t.state {
 	case inspecting, pressing, dragging:
-		t.drawHover(gtx)
+		if !capturing {
+			t.drawHover(gtx)
+		}
 	case reviewing:
 		t.drawReview(gtx)
 	}
 	pp := pointer.PassOp{}.Push(gtx.Ops)
 	ar := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
-	pointer.CursorCrosshair.Add(gtx.Ops)
+	if !capturing {
+		pointer.CursorCrosshair.Add(gtx.Ops)
+	}
 	event.Op(gtx.Ops, &t.ptag)
 	ar.Pop()
 	pp.Pop()
@@ -842,6 +865,15 @@ func (t *Tool) pickKeys(gtx layout.Context) {
 
 // key acts on one key press.
 func (t *Tool) key(gtx layout.Context, ke key.Event) {
+	if t.Capturing() {
+		// a report box capture: Esc or the shortcut drops it, nothing
+		// else is the tool's
+		if ke.Name == key.NameEscape || comboPress(t.combo, ke) {
+			t.stop()
+		}
+		t.host.Invalidate()
+		return
+	}
 	switch {
 	case t.state == reviewing:
 		t.reviewKey(ke)

@@ -22,6 +22,9 @@ func (a *App) release() {
 	if a.insp != nil {
 		a.insp.Close() // a tool left on stays among the shooter's wanters (inspect/shooter.go)
 	}
+	if a.rpt != nil {
+		a.rpt.Close() // the report box's (report_box.go)
+	}
 	// every package map keyed by *App (TestReleaseCoversAppMaps reads the
 	// package's files for them)
 	for _, m := range []*sync.Map{&wfRunStates, &wfTabs, &wfTabPending, &tabCtxTags, &tabsMoreState, &tabDrags, &canvasJumps, &canvasTabs,

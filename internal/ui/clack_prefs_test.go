@@ -27,7 +27,7 @@ func TestClackPrefsTab(t *testing.T) {
 	}
 	// three rows at most, no headings or notes: updates (the box, its
 	// step as the subtext, one button), Replay introduction (intro-motion's
-	// row, through clackIntroRow), live updates
+	// row, through clackIntroRow), Send crash reports (report_box.go)
 	a.opts.CheckUpdate = func(context.Context) (UpdateInfo, bool, error) { return UpdateInfo{}, false, nil }
 	rows := pageRows(t, a, p, clackTabID)
 	var got []string
@@ -46,7 +46,7 @@ func TestClackPrefsTab(t *testing.T) {
 	if clackIntroRow == nil {
 		t.Fatal("intro_prefs.go didn't hook prefsReplayIntroRow into clackIntroRow")
 	}
-	if w := "check Download updates automatically|legend Replay introduction"; strings.Join(got, "|") != w {
+	if w := "check Download updates automatically|legend Replay introduction|check Send crash reports"; strings.Join(got, "|") != w {
 		t.Errorf("Clack tab rows %q, want %q", got, w)
 	}
 	var buttons []string

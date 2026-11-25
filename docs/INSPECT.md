@@ -148,6 +148,10 @@ The drag is the way to capture any of these. Naming more of them means a boundar
 
 How it finds what is under the pointer: while a session records a frame, slackc puts a pass-through pointer area over every component it draws and every chrome element marked with a size, with a new tag each frame. Gio sends an Enter to each new area under the pointer, so Gio's own hit test (clips, and whatever is drawn over them) decides what counts. `internal/ui/slackc/inspect.go` has the details.
 
+## The report box
+
+Hyper+R makes the same pick at the pointer, with a shot of the whole window, and opens the report box to send it to Clack's developers. It works with the tool's gate off: the box runs a tool of its own (`StartReport`, `ReviewShot` in `internal/ui/inspect/reportmode.go`). Its screenshot can be blurred in this review before it's sent ([REPORTS.md](REPORTS.md)).
+
 ## Later
 
 - Coverage of the plain Gio widgets listed above, by naming more boundaries where Slack has a component.

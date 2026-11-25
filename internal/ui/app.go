@@ -32,6 +32,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/sentry"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
@@ -148,6 +149,11 @@ type Options struct {
 	// Control's Keep in Background the window starts hidden in the
 	// notification area (tray.go).
 	InvokedOnStartup bool
+	// Sentry is where the report box's reports (Hyper+R) and, with
+	// Preferences > Clack > Send crash reports on, the crash reports go
+	// (report_box.go; cmd/clack: sentry.Default, a release build's DSN).
+	// Nil: this build can't send, and the report box says so.
+	Sentry *sentry.Client
 }
 
 // SetLogin shows the sign-in screen, calling login on submit. On the
@@ -412,6 +418,15 @@ type App struct {
 	inspReset   bool
 	inspPresses []key.Event
 
+	// the report box (report_box.go): rptKey is its shortcut, rpt its
+	// inspect tool, made at the first Hyper+R whatever the inspect tool's
+	// gate says, rbox the box on screen; crashOn is Preferences > Clack >
+	// Send crash reports, for ReportCrash on any goroutine
+	rptKey  key.Filter
+	rpt     *inspect.Tool
+	rbox    *popups.ReportBox
+	crashOn atomic.Bool
+
 	// typeSteal's handler for typed text nothing has the focus for
 	// (type_steal.go; Gio patch 64), and the frame's text for it
 	stealTag  int
@@ -458,7 +473,11 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.sidebar.width = theme.SidebarW
 	a.secondary.width = 0 // auto: Slack's default secondary width (secondaryWidth)
 	a.keys = a.defaultShortcuts()
+	a.rptKey = reportFilter() // Hyper+R (report_box.go)
 	a.loadPrefs()
+	// Preferences > Clack > Send crash reports, for ReportCrash
+	// (report_box.go)
+	a.crashOn.Store(a.prefs.CrashReports)
 	a.initInspect()    // gated: CLACK_INSPECT=1, ui.json's inspect_tool or the Konami code (inspect_wire.go)
 	a.startDownloads() // downloads.go
 	a.loadSplitWidth()
