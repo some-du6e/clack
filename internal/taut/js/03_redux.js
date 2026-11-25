@@ -676,6 +676,9 @@ const THUNK_CHANGES = {
 /** per thunk, what its arguments become before they cross into Go (after every plugin's wrap) */
 const NATIVE_ARGS = {}
 const nativeArgs = (name, args) => (NATIVE_ARGS[name] ? NATIVE_ARGS[name](args) : args)
+// a search's AbortSignal stays in JS: the native gets the rest of its args
+const withoutSignal = (args) => args.map((a, i) => (i === 0 && a && typeof a === 'object' && 'signal' in a ? (({ signal, ...rest }) => rest)(a) : a))
+for (const n of ['autocompleteEmoji', 'autocompleteMembers', 'autocompleteChannels']) NATIVE_ARGS[n] = withoutSignal
 
 /** a thunk whose work is Clack's native implementation, run in Go */
 function nativeThunk(name) {
@@ -825,8 +828,14 @@ function patchedThunkNames() {
 }
 const tellGoThunks = batcher(() => goOr(null, 'patchedThunks', patchedThunkNames()))
 
+// Slack's TextyAutocomplete passes each search an AbortSignal and aborts it
+// as the next one starts: an abortable dispatch's (Go's AbortableThunks)
+// controller by its native's id, aborted when Go gives up on it
+const thunkAborts = new Map()
+T.abortThunk = (nativeId) => thunkAborts.get(nativeId)?.abort()
+
 /** Go → JS: runs thunk `name` through every patch, with Go's native work (callable `nativeId`) at the core */
-T.dispatchThunk = async (name, args, nativeId, sync) => {
+T.dispatchThunk = async (name, args, nativeId, sync, abortable) => {
   const native = sync
     ? withMeta(name, (...a) => () => decode(go('callNativeSync', nativeId, encode(nativeArgs(name, a)))))
     : withMeta(name, (...a) => async () => decode(await go('callNative', nativeId, await encodeAsync(nativeArgs(name, a)))))
@@ -843,8 +852,20 @@ T.dispatchThunk = async (name, args, nativeId, sync) => {
       error('a thunk patch threw', err)
     }
   }
-  const result = await dispatch(creator(...decode(args || [])))
-  return encode(await completeTier(result))
+  let callArgs = decode(args || [])
+  let controller = null
+  const first = callArgs[0]
+  if (abortable && first && typeof first === 'object' && !Array.isArray(first)) {
+    controller = new AbortController()
+    thunkAborts.set(nativeId, controller)
+    callArgs = [{ ...first, signal: controller.signal }, ...callArgs.slice(1)]
+  }
+  try {
+    const result = await dispatch(creator(...callArgs))
+    return encode(await completeTier(result))
+  } finally {
+    if (controller) thunkAborts.delete(nativeId)
+  }
 }
 
 /**

@@ -26,11 +26,13 @@ class InjectEmoji extends TautPlugin {
       const finish = (rows) => {
         if (!Array.isArray(rows) || a.query !== ':cat') return rows
         const cat = rows.find((r) => r && r.item && r.item.name === 'cat')
-        const asked = a.channelId === '` + channel + `' && !!cat && cat.id === 'cat' && cat.item.unicode === '1f431' &&
-          cat.emojiBestNameMatchCanonical === 'cat' && JSON.stringify(cat.emojiMatchIndices) === '[0,1,2]'
+        const asked = a.channelId === '` + channel + `' && a.isThread === false && !a.threadTs && !!cat && cat.id === 'cat' && cat.item.unicode === '1f431' &&
+          cat.item.name === 'cat' && cat.emojiBestNameMatchCanonical === 'cat' && JSON.stringify(cat.emojiMatchIndices) === '[0,1,2]'
         const name = asked ? 'hidden_cat' : 'not_as_slack_asks'
         const item = { name, updated: 1, url: 'https://emoji.example/lock.png', id: 'E' + name, keywords: [] }
-        return [{ ...JSON.parse(JSON.stringify(cat || {})), item, id: item.id, name, hmojiHidden: true }, ...rows]
+        // HMojis' buildNativeAutocompleteEntry: the template row, its own item and names
+        return [{ ...JSON.parse(JSON.stringify(cat || {})), item, id: item.id, name, emojiBestNameMatch: name,
+          emojiBestNameMatchCanonical: name, emojiBestNameMatchLocalized: name, hmojiHidden: true }, ...rows]
       }
       if (called && typeof called.then === 'function') return called.then(finish)
       if (typeof called === 'function') return async (...rest) => finish(await called(...rest))

@@ -109,6 +109,13 @@ var SyncThunks = map[string]bool{
 	"autocompleteChannels": true, "autocompleteMembers": true,
 }
 
+// AbortableThunks are the thunks Slack passes an AbortSignal: its
+// TextyAutocomplete gives each search searchAbortController.signal and
+// aborts it as the next search starts. Dispatched with a signal of their
+// own (the args' first object's signal), aborted when the dispatch's
+// context ends before its JS has answered.
+var AbortableThunks = map[string]bool{"autocompleteEmoji": true, "autocompleteMembers": true, "autocompleteChannels": true}
+
 // NativeFunc is a thunk's native implementation: Clack's own code for what
 // Slack's thunk does. args is the (possibly plugin-changed) JSON argument
 // list Slack passes (usually one object).
@@ -381,7 +388,24 @@ func (t *Taut) dispatchJS(ctx context.Context, name string, args []any, native N
 	tt := t.thunks
 	id := tt.add(ctx, native)
 	defer tt.drop(id)
-	return rt.rt.Call(ctx, "__taut.dispatchThunk", name, args, id, SyncThunks[name])
+	abortable := AbortableThunks[name]
+	if abortable {
+		// given up on (superseded, its deadline): its JS hears the signal
+		stop := context.AfterFunc(ctx, func() { rt.post("abortThunk", id) })
+		defer stop()
+	}
+	return rt.rt.Call(ctx, "__taut.dispatchThunk", name, args, id, SyncThunks[name], abortable)
+}
+
+// InFlightDispatches is how many Dispatch calls are waiting on their JS
+// (their natives registered for it to call back).
+func (t *Taut) InFlightDispatches() int {
+	if t == nil || t.thunks == nil {
+		return 0
+	}
+	t.thunks.mu.Lock()
+	defer t.thunks.mu.Unlock()
+	return len(t.thunks.calls)
 }
 
 // inOrder is ctx for a dispatch: the user's (UserAction) as it is, any

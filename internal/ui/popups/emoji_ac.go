@@ -23,6 +23,16 @@ func AutocompleteEmoji(h Host, query string, o acrank.Options) []EmojiMatch {
 	return epAutocomplete(x, epTone(h), query, o)
 }
 
+// EmojiRanker is AutocompleteEmoji over the index and skin tone in use
+// now. Take it on the UI goroutine (it may start the index's build); the
+// ranker runs on any (an index is never changed once built): a plugin's
+// autocompleteEmoji native ranks a query the plugin changed with it.
+func EmojiRanker(h Host) func(query string, o acrank.Options) []EmojiMatch {
+	x, _ := epIndexFor(h)
+	tone := epTone(h)
+	return func(query string, o acrank.Options) []EmojiMatch { return epAutocomplete(x, tone, query, o) }
+}
+
 // epAutocomplete is AutocompleteEmoji over index x at skin tone tone.
 // A custom alias is one of its target's names (epBuild), so its exact
 // name is an exact match there.
@@ -61,7 +71,7 @@ func epAutocomplete(x *emojiIndex, tone int, query string, o acrank.Options) []E
 		if name == "" {
 			name = x.names[id]
 		}
-		m := EmojiMatch{Name: name, URL: x.url(id, tone), Custom: x.custom(id), Toned: name}
+		m := EmojiMatch{Name: name, URL: x.url(id, tone), Custom: x.custom(id), Toned: name, Canon: x.canon(id)}
 		if tone >= 2 && x.hasSkins(id) {
 			m.Toned = name + "::skin-tone-" + strconv.Itoa(tone)
 		}
@@ -69,6 +79,10 @@ func epAutocomplete(x *emojiIndex, tone int, query string, o acrank.Options) []E
 	}
 	return out
 }
+
+// SkinTone is the skin tone the emoji lists insert at (1, none, to 6):
+// the picker's choice, else Slack's pref.
+func SkinTone(h Host) int { return epTone(h) }
 
 // epMayMatch is emojiMayMatchOnName's mask test: every query letter
 // (whitespace skipped, '-' as '_') appears in one of the names.

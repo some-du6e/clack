@@ -2,10 +2,12 @@ package composer
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/core"
@@ -23,12 +25,16 @@ import (
 // The first two are sync thunks: when patched, their native runs on the
 // JS thread, so it must be pure and quick. autocompleteEmoji answers with
 // a promise, as Slack's searcher does, and its native runs on a goroutine.
-// The composer shows its own rows at once, dispatches in the background
-// with a native that ranks a snapshot of the sources taken at dispatch
-// time (with the args the plugins pass, e.g. includeAllBroadcastKeywords),
-// and swaps in the plugins' answer on the UI goroutine. Rows map back by
-// id: rows the composer knows keep their avatars, presence and status;
-// new ones are built from the result's item.
+// The composer dispatches in the background with a native that ranks a
+// snapshot of the sources taken at dispatch time (with the args the
+// plugins pass, e.g. includeAllBroadcastKeywords), and puts the plugins'
+// answer in on the UI goroutine. As Slack's TextyAutocomplete, the list
+// keeps the rows it shows until the answer comes (acPluginHold, then the
+// composer's own), a Tab or Enter waits for it (acPluginWait), and each
+// query's dispatch ends the last's (its signal aborted), or its deadline
+// (acPluginTimeout). Rows map back by id: rows the composer knows keep
+// their avatars, presence and status; new ones are built from the
+// result's item.
 
 // memberSources is everything ranking an @ query needs, copied out from
 // under ac.mu so it can be ranked on any goroutine.
@@ -120,11 +126,13 @@ func sortedKeys[V any](m map[string]V) []string {
 
 // ---- Slack's shapes ----
 
-// membersArgs is autocompleteMembers' params.
+// membersArgs is autocompleteMembers' params, as TextyAutocomplete's
+// search passes them (isThread: !!threadTs).
 type membersArgs struct {
 	Query                       string `json:"query"`
 	ChannelID                   string `json:"channelId,omitempty"`
-	IsThread                    bool   `json:"isThread,omitempty"`
+	IsThread                    bool   `json:"isThread"`
+	ThreadTS                    string `json:"threadTs,omitempty"`
 	EnableBroadcastKeywords     *bool  `json:"enableBroadcastKeywords,omitempty"`
 	IncludeAllBroadcastKeywords bool   `json:"includeAllBroadcastKeywords,omitempty"`
 }
@@ -137,14 +145,58 @@ type channelsArgs struct {
 }
 
 // emojiArgs is autocompleteEmoji's params as TextyAutocomplete's search
-// passes them (the typed token, ":tu"; the thunk takes the colons off)
-// and the thunk's own (limit 25, standardEmojiOnly), which plugins pass.
+// passes them (the typed token, ":tu"; the thunk takes the colons off;
+// isThread: !!threadTs) and the thunk's own (limit 25,
+// standardEmojiOnly), which plugins pass, read as JS reads them.
 type emojiArgs struct {
-	Query             string `json:"query"`
-	ChannelID         string `json:"channelId,omitempty"`
-	IsThread          bool   `json:"isThread,omitempty"`
-	Limit             int    `json:"limit,omitempty"`
-	StandardEmojiOnly bool   `json:"standardEmojiOnly,omitempty"`
+	Query             string    `json:"query"`
+	ChannelID         string    `json:"channelId,omitempty"`
+	IsThread          bool      `json:"isThread"`
+	ThreadTS          string    `json:"threadTs,omitempty"`
+	Limit             looseInt  `json:"limit,omitempty"`
+	StandardEmojiOnly looseBool `json:"standardEmojiOnly,omitempty"`
+}
+
+// looseInt is a number as JS uses one: a numeric string too; anything
+// else 0 (the default).
+type looseInt int
+
+func (n *looseInt) UnmarshalJSON(b []byte) error {
+	var v any
+	if json.Unmarshal(b, &v) != nil {
+		return nil
+	}
+	switch x := v.(type) {
+	case float64:
+		*n = looseInt(x)
+	case string:
+		f, _ := strconv.ParseFloat(strings.TrimSpace(x), 64)
+		*n = looseInt(f)
+	}
+	return nil
+}
+
+// looseBool is JS's truthiness.
+type looseBool bool
+
+func (t *looseBool) UnmarshalJSON(b []byte) error {
+	var v any
+	if json.Unmarshal(b, &v) != nil {
+		return nil
+	}
+	switch x := v.(type) {
+	case bool:
+		*t = looseBool(x)
+	case float64:
+		*t = x != 0
+	case string:
+		*t = x != ""
+	case nil:
+		*t = false
+	default:
+		*t = true
+	}
+	return nil
 }
 
 // emojiRow is one of autocompleteEmoji's results as Slack's searcher
@@ -204,33 +256,57 @@ func toRow(it *acItem) acRow {
 }
 
 // rowKey is the id a composer row answers to in Slack's results: an
-// emoji's is its name (Slack's emoji have no id but a custom one's; the
-// skin tone goes on as it's inserted).
+// emoji's is its own name (Slack's id is item.id ?? item.name, and its
+// item is the emoji, an alias's target; the skin tone goes on as it's
+// inserted).
 func rowKey(it *acItem) string {
 	if it.IsBroadcast() {
 		return broadcastRowID(it.ID)
 	}
 	if it.Kind == acEmoji {
-		return it.Name
+		return emojiCanon(it)
 	}
 	return it.ID
 }
 
-// toEmojiRows turns the composer's ":" rows for query q into Slack's.
+// emojiCanon is an emoji row's own name (Slack's emojiBestNameMatchCanonical).
+func emojiCanon(it *acItem) string {
+	if it.Canon != "" {
+		return it.Canon
+	}
+	return it.Name
+}
+
+// toEmojiRows turns the composer's ":" rows for query q into Slack's
+// (formatEmojiResult): item is the emoji (its own name, a standard one's
+// unicode without the skin tone, a custom one's image), the name that
+// matched (an alias, say) its emojiBestNameMatch and its own name its
+// emojiBestNameMatchCanonical.
 func toEmojiRows(items []acItem, q string) []emojiRow {
 	rows := make([]emojiRow, 0, len(items))
 	for i := range items {
 		it := &items[i]
-		item := map[string]any{"name": it.Name}
+		canon := emojiCanon(it)
+		item := map[string]any{"name": canon}
 		if it.Uni != "" {
-			item["unicode"] = emojiHex(it.Uni)
+			item["unicode"] = emojiHex(untoned(it.Uni))
 		} else if it.Avatar != "" {
 			item["url"] = it.Avatar
 		}
-		rows = append(rows, emojiRow{ID: it.Name, Item: item, Score: float64(i), EmojiScore: float64(i),
-			EmojiBestNameMatch: it.Name, EmojiBestNameMatchCanonical: it.Name, EmojiMatchIndices: emojiMatchIndices(it.Name, q)})
+		rows = append(rows, emojiRow{ID: canon, Item: item, Score: float64(i), EmojiScore: float64(i),
+			EmojiBestNameMatch: it.Name, EmojiBestNameMatchCanonical: canon, EmojiMatchIndices: emojiMatchIndices(it.Name, q)})
 	}
 	return rows
+}
+
+// untoned is emoji text without its skin tone modifiers (U+1F3FB-1F3FF).
+func untoned(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 0x1f3fb && r <= 0x1f3ff {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // emojiHex is Slack's unicode field for emoji text: each code point in
@@ -274,12 +350,19 @@ func emojiMatchIndices(name, q string) []int {
 	return out
 }
 
+// acPluginMaxRows caps the rows a plugins' answer shows.
+const acPluginMaxRows = 200
+
 // fromRows maps the plugins' answer back to composer rows, in the
-// plugins' order. known holds every row the natives produced.
+// plugins' order, at most acPluginMaxRows. known holds every row the
+// natives produced.
 func fromRows(kind acKind, rows []acRow, known map[string]acItem) []acItem {
-	out := make([]acItem, 0, len(rows))
+	out := make([]acItem, 0, min(len(rows), acPluginMaxRows))
 	seen := map[string]bool{}
 	for _, r := range rows {
+		if len(out) == acPluginMaxRows {
+			break
+		}
 		id := r.ID
 		if id == "" {
 			id, _ = r.Item["id"].(string)
@@ -299,25 +382,106 @@ func fromRows(kind acKind, rows []acRow, known map[string]acItem) []acItem {
 	return out
 }
 
-// itemFromRow builds a row a plugin added (e.g. a private channel, a
-// hidden emoji with an image of its own).
+// emojiLooks is what a plugin's ":" row is drawn and inserted with, taken
+// on the UI goroutine: the skin tone the lists insert at, and the
+// workspace's custom emoji (nil without a core).
+type emojiLooks struct {
+	tone   int
+	custom func(name string) (url string, ok bool)
+}
+
+// fromEmojiRows maps the plugins' ":" answer back to composer rows, in
+// their order, at most acPluginMaxRows. A row the composer knows (by its
+// id: Slack's id, else item.id, else item.name) is its own, inserting the
+// plugins' emojiBestNameMatchCanonical when they changed it; any other is
+// built from the row (emojiRowItem).
+func fromEmojiRows(rows []emojiRow, known map[string]acItem, looks emojiLooks) []acItem {
+	out := make([]acItem, 0, min(len(rows), acPluginMaxRows))
+	seen := map[string]bool{}
+	for _, r := range rows {
+		if len(out) == acPluginMaxRows {
+			break
+		}
+		id := r.ID
+		for _, k := range []string{"id", "name"} {
+			if id == "" {
+				id, _ = r.Item[k].(string)
+			}
+		}
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if it, ok := known[id]; ok {
+			if c := r.EmojiBestNameMatchCanonical; c != "" && c != emojiCanon(&it) && !strings.ContainsAny(c, ": \t\n") {
+				it.Canon, it.ID = c, c
+				if it.Atom != nil {
+					a := *it.Atom
+					a.ID, a.Text = c, ":"+c+":"
+					it.Atom = &a
+				}
+			}
+			out = append(out, it)
+			continue
+		}
+		if it, ok := emojiRowItem(r, looks); ok {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// emojiRowItem builds a ":" row a plugin added (a hidden emoji) as Slack
+// inserts and draws one: it inserts :emojiBestNameMatchCanonical: (else
+// :item.name:), at the skin tone in use when the item has skin
+// variations, and draws that name as Slack's Emoji component does, from
+// the store (a plugin's upsert, the workspace's emoji), else item.url,
+// else the standard emoji's image.
+func emojiRowItem(r emojiRow, looks emojiLooks) (acItem, bool) {
+	str := func(k string) string { s, _ := r.Item[k].(string); return s }
+	bad := func(s string) bool { return s == "" || strings.ContainsAny(s, ": \t\n") }
+	name := r.EmojiBestNameMatchCanonical
+	if bad(name) {
+		name = str("name")
+	}
+	if bad(name) {
+		return acItem{}, false
+	}
+	shown := r.EmojiBestNameMatch // the bold name: what matched
+	if bad(shown) {
+		shown = name
+	}
+	ins, url, uni := name, "", ""
+	if looks.custom != nil {
+		url, _ = looks.custom(name)
+	}
+	if url == "" {
+		url = str("url")
+	}
+	if _, text, ok := emoji.Standard(name); ok {
+		if r.Item["skinVariations"] != nil && looks.tone >= 2 && looks.tone <= 6 {
+			ins = name + "::skin-tone-" + strconv.Itoa(looks.tone)
+			_, text, _ = emoji.Standard(ins)
+		}
+		uni = text
+		if url == "" {
+			url, _ = emoji.StandardURL(ins, "", "")
+		}
+	} else if url == "" {
+		uni = emojiFromHex(str("unicode"))
+	}
+	if url == "" && uni == "" {
+		return acItem{}, false
+	}
+	return acItem{Kind: acEmoji, ID: ins, Name: shown, Canon: name, Avatar: url, Uni: uni,
+		Atom: &Atom{Kind: AtomEmoji, ID: ins, Text: ":" + ins + ":", URL: url, Uni: uni}}, true
+}
+
+// itemFromRow builds a row a plugin added (e.g. a private channel).
 func itemFromRow(kind acKind, id string, r acRow) (acItem, bool) {
 	str := func(k string) string { s, _ := r.Item[k].(string); return s }
 	flag := func(k string) bool { b, _ := r.Item[k].(bool); return b }
 	name := str("name")
-	if kind == acEmoji {
-		if name == "" || strings.ContainsAny(name, ": \t\n") {
-			return acItem{}, false
-		}
-		url, uni := str("url"), emojiFromHex(str("unicode"))
-		if url == "" && uni == "" {
-			if _, text, ok := emoji.Standard(name); ok {
-				uni = text
-			}
-		}
-		return acItem{Kind: acEmoji, ID: name, Name: name, Avatar: url, Uni: uni,
-			Atom: &Atom{Kind: AtomEmoji, ID: name, Text: ":" + name + ":", URL: url, Uni: uni}}, true
-	}
 	if kind == acChannel {
 		if name == "" {
 			return acItem{}, false
@@ -352,10 +516,48 @@ func itemFromRow(kind acKind, id string, r acRow) (acItem, bool) {
 
 // ---- dispatch ----
 
-// pluginRank runs the patched thunk for t in the background and applies
-// the answer if the query is still t's. items are the rows just computed
-// (shown meanwhile). Called from Update on the UI goroutine.
-func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
+const (
+	// acPluginHold: while the plugins' answer for a query is out, the list
+	// keeps the rows it shows, as Slack's TextyAutocomplete keeps
+	// state.results until its search answers (one change a keystroke, no
+	// rows flickering out and back); past it the composer's own rows for
+	// the query show.
+	acPluginHold = 150 * time.Millisecond
+	// acPluginWait bounds a Tab or Enter's wait for that answer: Slack's
+	// possiblySelectFirstItem defers a pick made while a search is in
+	// flight (deferredSelection), so it takes the answered row 0.
+	acPluginWait = time.Second
+)
+
+// acPluginTimeout: the plugins' answer is given up on after it, as
+// Slack's search times out (docs/AUTOCOMPLETE-RULES.md). A var for tests.
+var acPluginTimeout = 10 * time.Second
+
+// acPluginCall is the plugins' answer out for one query. The UI goroutine
+// owns it, but for out and ok, which the dispatch sets before done closes.
+type acPluginCall struct {
+	trig   acTrigger
+	native []acItem // the composer's rows for trig
+	cancel context.CancelFunc
+	holdAt time.Time // when the composer's rows show if no answer came
+	hold   *time.Timer
+	done   chan struct{}
+	out    []acItem // the plugins' rows
+	ok     bool     // out is their answer (false: it failed, timed out or was cancelled)
+	over   bool     // applied (or given up): nothing more of it shows
+}
+
+// sameQuery: a and b are the same list's same query.
+func sameQuery(a, b acTrigger) bool { return a.Kind == b.Kind && a.Query == b.Query }
+
+// pluginRank sends the patched thunk out for t, its answer to replace the
+// rows when it comes. items are the composer's rows for t. It reports
+// whether it went out; the caller then keeps the rows shown. Slack's next
+// search aborts the last: so does this, whether it goes out or not.
+// Called from Update on the UI goroutine.
+func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) bool {
+	prev := ac.plug
+	ac.stopPlugin()
 	tt := currentTaut()
 	var name string
 	switch t.Kind {
@@ -367,7 +569,7 @@ func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
 		name = thACEmoji
 	}
 	if name == "" || !tt.ThunkPatched(name) || ac.later == nil {
-		return
+		return false
 	}
 	ac.mu.Lock()
 	var mem memberSources
@@ -382,7 +584,20 @@ func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
 		emojiOpts = ac.rankCtxLocked().opts(acrank.SourceTexty)
 	}
 	ac.mu.Unlock()
-	h, coreEmoji := ac.h, ac.coreEmoji()
+	// what ranks a query the plugins changed, and draws the rows they
+	// add, taken here: the emoji index and the skin tone are the UI
+	// goroutine's (popups.EmojiRanker)
+	var rankEmoji func(string, acrank.Options) []popups.EmojiMatch
+	var looks emojiLooks
+	if t.Kind == acEmoji && ac.coreEmoji() {
+		rankEmoji = popups.EmojiRanker(ac.h)
+		looks.tone = popups.SkinTone(ac.h)
+		app := ac.h.Core()
+		looks.custom = func(n string) (string, bool) {
+			u, text, ok := app.S.CustomEmoji.Resolve(n, "")
+			return u, ok && text == "" // the workspace's (or a plugin's), not a standard one
+		}
+	}
 
 	// Every row a native produced, so the answer maps back to full rows.
 	var mu sync.Mutex
@@ -395,14 +610,26 @@ func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
 		mu.Unlock()
 	}
 	remember(items)
-	channelID, isThread, later, includeAll := ac.channelID, ac.thread, ac.later, ac.ov.includeAll
+	channelID, isThread, threadTS, later, includeAll := ac.channelID, ac.thread || ac.threadTS != "", ac.threadTS, ac.later, ac.ov.includeAll
+
+	ctx, cancel := context.WithTimeout(ac.ctx, acPluginTimeout)
+	c := &acPluginCall{trig: t, native: items, cancel: cancel, done: make(chan struct{})}
+	// a dispatch again for the same query (async rows, the index) keeps the hold it had
+	c.holdAt = time.Now().Add(acPluginHold)
+	if prev != nil && sameQuery(prev.trig, t) {
+		c.holdAt = prev.holdAt
+	}
+	c.hold = time.AfterFunc(max(time.Until(c.holdAt), 0), func() { later(func() { ac.holdOver(c) }) })
+	ac.plug = c
 
 	go func() {
-		ctx := context.Background()
-		var rows []acRow
+		defer cancel()
+		var out []acItem
 		var err error
-		if t.Kind == acUser {
-			args := membersArgs{Query: t.Query, ChannelID: channelID, IsThread: isThread, IncludeAllBroadcastKeywords: includeAll}
+		switch t.Kind {
+		case acUser:
+			args := membersArgs{Query: t.Query, ChannelID: channelID, IsThread: isThread, ThreadTS: threadTS, IncludeAllBroadcastKeywords: includeAll}
+			var rows []acRow
 			rows, err = taut.Dispatch(ctx, tt, name, args, func(_ context.Context, a membersArgs) ([]acRow, error) {
 				q := strings.TrimPrefix(a.Query, "@")
 				var xs []acItem
@@ -417,30 +644,38 @@ func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
 				remember(xs)
 				return toRows(xs), nil
 			})
-		} else if t.Kind == acEmoji {
-			args := emojiArgs{Query: ":" + t.Query, ChannelID: channelID, IsThread: isThread}
+			if err == nil {
+				mu.Lock()
+				out = fromRows(t.Kind, rows, known)
+				mu.Unlock()
+			}
+		case acEmoji:
+			args := emojiArgs{Query: ":" + t.Query, ChannelID: channelID, IsThread: isThread, ThreadTS: threadTS}
 			var ers []emojiRow
 			ers, err = taut.Dispatch(ctx, tt, name, args, func(_ context.Context, a emojiArgs) ([]emojiRow, error) {
 				// the thunk's (query||"").replace(/:|\uFF1A/g, "")
 				q := strings.NewReplacer(":", "", "\uff1a", "").Replace(a.Query)
 				xs := items
-				if q != t.Query && coreEmoji {
-					xs = emojiMatchItems(popups.AutocompleteEmoji(h, q, emojiOpts))
+				if q != t.Query && rankEmoji != nil {
+					xs = emojiMatchItems(rankEmoji(q, emojiOpts))
 				}
 				if a.StandardEmojiOnly {
 					xs = slices.DeleteFunc(slices.Clone(xs), func(it acItem) bool { return it.Uni == "" })
 				}
-				if n := cmpOr(a.Limit, 25); len(xs) > n {
+				if n := cmpOr(int(a.Limit), 25); len(xs) > n {
 					xs = xs[:n]
 				}
 				remember(xs)
 				return toEmojiRows(xs, q), nil
 			})
-			for _, r := range ers {
-				rows = append(rows, acRow{ID: r.ID, Type: "emoji", Item: r.Item})
+			if err == nil {
+				mu.Lock()
+				out = fromEmojiRows(ers, known, looks)
+				mu.Unlock()
 			}
-		} else {
+		default:
 			args := channelsArgs{Query: "#" + t.Query, ChannelID: channelID}
+			var rows []acRow
 			rows, err = taut.Dispatch(ctx, tt, name, args, func(_ context.Context, a channelsArgs) ([]acRow, error) {
 				q := strings.TrimPrefix(strings.TrimSpace(a.Query), "#")
 				xs := items
@@ -450,15 +685,85 @@ func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
 				remember(xs)
 				return toRows(xs), nil
 			})
+			if err == nil {
+				mu.Lock()
+				out = fromRows(t.Kind, rows, known)
+				mu.Unlock()
+			}
 		}
-		if err != nil {
-			return // keep the native rows
-		}
-		mu.Lock()
-		out := fromRows(t.Kind, rows, known)
-		mu.Unlock()
-		later(func() { ac.applyPlugin(t, out) })
+		c.out, c.ok = out, err == nil
+		close(c.done)
+		later(func() { ac.applyPluginCall(c) })
 	}()
+	return true
+}
+
+// stopPlugin ends the plugins' answer out (the next query's dispatch,
+// Dismiss, the list closing): its dispatch returns and its JS hears its
+// signal abort (taut.AbortableThunks), as Slack's search abort does.
+func (ac *Autocomplete) stopPlugin() {
+	if c := ac.plug; c != nil {
+		ac.plug = nil
+		c.over = true
+		c.hold.Stop()
+		c.cancel()
+	}
+}
+
+// applyPluginCall puts c's answer in when it is still the list's (UI
+// goroutine): the plugins' rows; when it failed (an error, its deadline)
+// the composer's, unless the rows shown are this query's already.
+func (ac *Autocomplete) applyPluginCall(c *acPluginCall) {
+	if c != ac.plug || c.over {
+		return
+	}
+	select {
+	case <-c.done:
+	default:
+		return
+	}
+	c.over = true
+	ac.plug = nil
+	c.hold.Stop()
+	if !ac.active || !sameQuery(ac.trig, c.trig) {
+		return
+	}
+	switch {
+	case c.ok:
+		ac.setRows(c.out)
+	case !sameQuery(ac.rowsFor, c.trig):
+		ac.setRows(c.native)
+	}
+}
+
+// holdOver: c's hold ran out with no answer, so the composer's rows for
+// its query show, unless the rows shown are that query's already (a
+// dispatch again for it).
+func (ac *Autocomplete) holdOver(c *acPluginCall) {
+	if c != ac.plug || c.over || !ac.active || !sameQuery(ac.trig, c.trig) || sameQuery(ac.rowsFor, c.trig) {
+		return
+	}
+	ac.setRows(c.native)
+}
+
+// awaitPlugin is a Tab or Enter's wait for the plugins' rows for the open
+// query (Slack's deferredSelection), at most acPluginWait: then the
+// answer, else the composer's rows, is what it picks from.
+func (ac *Autocomplete) awaitPlugin() {
+	c := ac.plug
+	if c == nil || c.over || !ac.active || !sameQuery(ac.trig, c.trig) {
+		return
+	}
+	t := time.NewTimer(acPluginWait)
+	defer t.Stop()
+	select {
+	case <-c.done:
+		ac.applyPluginCall(c)
+	case <-t.C:
+		if !sameQuery(ac.rowsFor, c.trig) {
+			ac.setRows(c.native)
+		}
+	}
 }
 
 // cmpOr is n, or or when n isn't positive.
@@ -479,17 +784,15 @@ func withoutBroadcasts(xs []acItem) []acItem {
 	return out
 }
 
-// applyPlugin installs the plugins' rows for t if t is still the open
-// query (UI goroutine). The selected row stays selected when present.
-func (ac *Autocomplete) applyPlugin(t acTrigger, items []acItem) {
-	if !ac.active || ac.trig.Kind != t.Kind || ac.trig.Query != t.Query {
-		return
-	}
+// setRows shows items as the open query's rows (UI goroutine). The
+// selected row stays selected when present.
+func (ac *Autocomplete) setRows(items []acItem) {
 	selID := ""
 	if !ac.pseudo && ac.sel < len(ac.items) {
 		selID = ac.items[ac.sel].ID
 	}
 	ac.items = ac.ov.keep(items)
+	ac.rowsFor = ac.trig
 	ac.itemsVer++
 	ac.sel = 0
 	for i, it := range ac.items {
@@ -514,12 +817,13 @@ type acOverrides struct {
 	disallowed map[string]bool
 }
 
-// keep drops the disallowed rows (in place: items is freshly built).
+// keep drops the disallowed rows, into a slice of its own (a native's
+// rows are also its dispatch's).
 func (o *acOverrides) keep(items []acItem) []acItem {
 	if len(o.disallowed) == 0 {
 		return items
 	}
-	out := items[:0]
+	out := make([]acItem, 0, len(items))
 	for _, it := range items {
 		if !o.disallowed[it.ID] {
 			out = append(out, it)

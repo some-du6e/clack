@@ -334,6 +334,9 @@ on:
       - "internal/ui/messages/scroll_gaps_test.go"
       - "internal/ui/messages/compact_test.go"
       - "third_party/gioui.org/app/clack_bounds_darwin_test.go"
+      - "internal/ui/composer/autocomplete_taut.go"
+      - "internal/ui/composer/autocomplete_emoji_taut_test.go"
+      - "internal/ui/composer/autocomplete_hold_taut_test.go"
 
 permissions:
   contents: read
@@ -7335,6 +7338,10 @@ jobs:
   # with Slack's args and rows, and shows the answer, a plugin's own rows
   # drawn and inserted from their item; no plugins, no cost. COUNT runs
   # each. Dispatch with only=hmojis-autocomplete.
+  # Round 2 (the review's MAJORs): the list keeps its rows until the
+  # plugin's answer comes and Tab/Enter wait for it, as TextyAutocomplete;
+  # each query's dispatch aborts the last's signal, and one ends at its
+  # deadline; rows insert emojiBestNameMatchCanonical, at most 200.
   hmojis-autocomplete:
     if: ${{ !inputs.only || startsWith('hmojis-autocomplete', inputs.only) }}
     runs-on: ubuntu-latest
@@ -7354,7 +7361,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: the patched autocompleteEmoji, the ":" list, the no-plugin routing, COUNT runs each
-        run: go test -count="$COUNT" -timeout 10m -run '^(TestTautAutocompleteEmoji|TestAutocompleteSlackEmojiTu|TestAutocompleteSlackCommandsAndEmoji|TestRoutingNoPluginsNoAllocs)$' ./internal/ui/composer
+        run: go test -count="$COUNT" -timeout 10m -run '^(TestTautAutocompleteEmoji|TestTautAutocompleteEmojiHoldsRows|TestTautAutocompleteEmojiRowsAsSlack|TestTautAutocompleteEmojiAbortsAndTimesOut|TestAutocompleteSlackEmojiTu|TestAutocompleteSlackCommandsAndEmoji|TestRoutingNoPluginsNoAllocs)$' ./internal/ui/composer
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

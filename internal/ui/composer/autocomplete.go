@@ -62,6 +62,7 @@ type acItem struct {
 	Secondary  string // gray text: real name, usergroup name, broadcast hint, command description
 	Avatar     string // user avatar or emoji image URL
 	Uni        string // emoji: unicode text for standard emoji
+	Canon      string // emoji: its own name, an alias's target (Slack's emojiBestNameMatchCanonical); "" = Name
 	Presence   string // active | away | ""
 	IsBot      bool
 	Self       bool          // user: the viewer, drawn with "(you)"
@@ -169,6 +170,11 @@ type Autocomplete struct {
 	// ov is what a plugin changed on TextyAutocomplete (UI goroutine).
 	ov acOverrides
 
+	// plug is the plugins' answer out for the list (autocomplete_taut.go),
+	// rowsFor the query the rows shown are for (UI goroutine)
+	plug    *acPluginCall
+	rowsFor acTrigger
+
 	mu         sync.Mutex
 	gen        uint64               // bumped whenever async data lands
 	members    map[string]core.User // current conversation members
@@ -204,7 +210,8 @@ func newAutocomplete(h Host, channelID string) *Autocomplete {
 	}
 }
 
-// Close cancels in-flight loads.
+// Close cancels in-flight loads (and the plugins' answer out: its context
+// is ac.ctx's).
 func (ac *Autocomplete) Close() { ac.cancel() }
 
 // Open reports whether the popup is showing.
@@ -223,6 +230,7 @@ func (ac *Autocomplete) Dismiss() {
 		ac.dismissed, ac.hasDis = ac.trig, true
 	}
 	ac.active = false
+	ac.stopPlugin()
 }
 
 // Accepted returns the row picked since the last call, with the document
@@ -251,6 +259,11 @@ func (ac *Autocomplete) Key(name key.Name, mods key.Modifiers) bool {
 				ac.Update(d, caret)
 			}
 		}
+	}
+	if (name == key.NameTab || name == key.NameReturn || name == key.NameEnter) && !mods.Contain(key.ModShift) {
+		// a pick waits for the plugins' rows for this query (Slack's
+		// deferredSelection), the list perhaps not open until they come
+		ac.awaitPlugin()
 	}
 	if !ac.Open() {
 		return false
@@ -333,9 +346,11 @@ func (ac *Autocomplete) Update(d *Doc, caret int) {
 	}
 	if !ok {
 		ac.active = false
+		ac.stopPlugin()
 		ac.warmEmojiIndex(d, caret)
 		return
 	}
+	sameList := ac.active && t.Kind == ac.trig.Kind // the rows shown are this list's
 	if !ac.active || t.Query != ac.trig.Query || t.Kind != ac.trig.Kind {
 		ac.sel, ac.pseudo, ac.scroll = 0, true, true
 	}
@@ -357,10 +372,17 @@ func (ac *Autocomplete) Update(d *Doc, caret int) {
 	if !ac.pseudo && ac.sel < len(ac.items) {
 		selID = ac.items[ac.sel].ID
 	}
-	ac.items = ac.compute(t)
+	native := ac.compute(t)
 	ac.itemsVer++
+	switch {
+	case !ac.pluginRank(t, native):
+		ac.items, ac.rowsFor = native, t
+	case !sameList:
+		// the plugins' answer is coming (Slack keeps its results until
+		// its search answers): no rows of another list meanwhile
+		ac.items, ac.rowsFor = nil, acTrigger{}
+	}
 	ac.watchPresence()
-	ac.pluginRank(t, ac.items)
 	ac.itemsFor, ac.itemsGen, ac.itemsRank, ac.itemsOK = t, gen, rk, true
 	// async rows landed: keep the row the user picked selected
 	if selID != "" {
@@ -824,7 +846,7 @@ func emojiMatchItems(ms []popups.EmojiMatch) []acItem {
 			_, uni, _ = emoji.Standard(id)
 		}
 		out = append(out, acItem{
-			Kind: acEmoji, ID: id, Name: m.Name, Avatar: m.URL, Uni: uni,
+			Kind: acEmoji, ID: id, Name: m.Name, Canon: m.Canon, Avatar: m.URL, Uni: uni,
 			Atom: &Atom{Kind: AtomEmoji, ID: id, Text: ":" + id + ":", URL: m.URL, Uni: uni},
 		})
 	}

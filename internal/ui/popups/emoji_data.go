@@ -388,6 +388,10 @@ func (x *emojiIndex) allNames(id int32) []string {
 	return append(out, x.extra[id]...)
 }
 
+// canon is emoji id's own name (its primary: a custom alias is one of its
+// target's names).
+func (x *emojiIndex) canon(id int32) string { return x.names[id] }
+
 // lookup resolves a name (":x:", skin tone suffix allowed) to an id.
 func (x *emojiIndex) lookup(name string) (int32, bool) {
 	name = strings.Trim(name, ":")
@@ -759,6 +763,10 @@ func EnsureEmojiIndex(h Host, wait time.Duration) bool {
 type EmojiMatch struct {
 	Name, URL string
 	Custom    bool
+	// Canon is the emoji's own name (an alias's target, the first of a
+	// standard one's names): Slack's emojiBestNameMatchCanonical. Set by
+	// AutocompleteEmoji.
+	Canon string
 	// Toned is the name to insert: Name with the user's skin tone
 	// ("+1::skin-tone-3") when the emoji has tones and one is set, like
 	// Slack's emoji autocomplete; URL is that tone's image.
