@@ -133,6 +133,10 @@ func (l *lay) trimBelow(cut, f0, b0, i0, h0, n0 int) {
 	d.frags = d.frags[:k]
 	for i := f0; i < len(d.frags); i++ {
 		d.frags[i].target = -1
+		d.frags[i].bot = min(d.frags[i].bot, cut) // the card ends at the cut
+	}
+	if k > f0 {
+		d.fragCuts = append(d.fragCuts, cutRange{from: int32(f0), to: int32(k), bot: cut})
 	}
 	ls := d.lines[:n0]
 	for _, ln := range d.lines[n0:] {
@@ -161,6 +165,9 @@ func (l *lay) trimBelow(cut, f0, b0, i0, h0, n0 int) {
 			m.target = -1
 			im = append(im, m)
 		}
+	}
+	if len(im) > i0 {
+		d.imgCuts = append(d.imgCuts, cutRange{from: int32(i0), to: int32(len(im)), bot: cut})
 	}
 	d.imgs = im
 	d.hits = d.hits[:h0]

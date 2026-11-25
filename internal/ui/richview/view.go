@@ -779,7 +779,13 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		}
 	}
 	for i := range v.d.imgs {
-		if y := v.d.imgs[i].r.Max.Y; y > h {
+		y := v.d.imgs[i].r.Max.Y
+		for _, c := range v.d.imgCuts { // a preview's image ends at its cut
+			if i >= int(c.from) && i < int(c.to) {
+				y = min(y, c.bot)
+			}
+		}
+		if y > h {
 			h = y
 		}
 	}
@@ -904,7 +910,10 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 	if css && hp == 0 {
 		v.partBackgrounds(func(r image.Rectangle, c color.NRGBA) { fillRadii(ops, r, [4]int{}, c) }, comp)
 	}
+	icut := rangeClip{ops: ops, cuts: v.d.imgCuts}
+	defer icut.done()
 	for i := range v.d.imgs {
+		icut.at(i)
 		im := &v.d.imgs[i]
 		if im.comp != comp || im.hov != hp || !v.rectInClip(im.r) {
 			continue
@@ -914,6 +923,40 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 			continue
 		}
 		v.drawImg(ops, st, i, static)
+	}
+}
+
+// rangeClip pushes and pops the clips of cuts as a paint loop walks its
+// primitives in order: at(i) before primitive i opens the cut it's in
+// (nothing in between pushes or pops across primitives), done after the
+// loop closes the last.
+type rangeClip struct {
+	ops  *op.Ops
+	cuts []cutRange
+	k    int
+	open bool
+	st   clip.Stack
+}
+
+func (c *rangeClip) at(i int) {
+	if c.open && i >= int(c.cuts[c.k].to) {
+		c.st.Pop()
+		c.open = false
+		c.k++
+	}
+	for !c.open && c.k < len(c.cuts) && i >= int(c.cuts[c.k].to) {
+		c.k++
+	}
+	if !c.open && c.k < len(c.cuts) && i >= int(c.cuts[c.k].from) {
+		c.st = clip.Rect(image.Rect(-1<<24, -1<<24, 1<<24, c.cuts[c.k].bot)).Push(c.ops)
+		c.open = true
+	}
+}
+
+func (c *rangeClip) done() {
+	if c.open {
+		c.st.Pop()
+		c.open = false
 	}
 }
 
@@ -941,7 +984,9 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 	}
 	ul := uipref.Get().UnderlineLinks
+	cut := rangeClip{ops: ops, cuts: v.d.fragCuts}
 	for i := range v.d.frags {
+		cut.at(i)
 		f := &v.d.frags[i]
 		if f.comp != comp || f.hov != hp || f.ell && static {
 			continue // a clamp's "…" is recorded on its own (paintEllipses)
@@ -1007,6 +1052,7 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			v.paintText(ops, st, i, col, css, ul)
 		}
 	}
+	cut.done()
 	for i := range v.d.boxes {
 		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp && b.hov == hp && v.rectInClip(b.r) {
 			v.drawBox(ops, b, css)
@@ -1047,7 +1093,10 @@ func (v *View) paintText(ops *op.Ops, st *Style, i int, col color.NRGBA, css, ul
 // is hidden and isn't painted twice.
 func (v *View) paintEllipses(ops *op.Ops, st *Style) {
 	css := len(v.css.parts) > 0
+	cut := rangeClip{ops: ops, cuts: v.d.fragCuts}
+	defer cut.done()
 	for i := range v.d.frags {
+		cut.at(i)
 		if f := &v.d.frags[i]; staticEllipsis(f) {
 			col := f.col
 			if css && f.part != 0 {

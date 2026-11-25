@@ -366,14 +366,20 @@ type lineInfo struct {
 
 // display is the laid-out result of a Doc at one width.
 type display struct {
-	frags   []frag
-	boxes   []box
-	imgs    []imgPrim
-	targets []target
-	hits    []hit
-	lines   []lineInfo
-	plain   []byte
-	size    image.Point
+	frags []frag
+	boxes []box
+	imgs  []imgPrim
+	// fragCuts and imgCuts are where a canvas card's preview stops (its
+	// snippet's max-height under the pillow's overflow: hidden,
+	// canvasfile.go): the frags and images in [from, to) paint above y
+	// bot only, so a line the cut crosses shows its top half, as
+	// Chromium's clip draws it, and nothing goes past the card
+	fragCuts, imgCuts []cutRange
+	targets           []target
+	hits              []hit
+	lines             []lineInfo
+	plain             []byte
+	size              image.Point
 	// overhang is how far paint reaches left of the box: an ordered list's
 	// outside ::marker wider than the li's 20px margin ("10. ") overflows
 	// into the message gutter, which Slack doesn't clip.
@@ -452,6 +458,12 @@ func (h *hoverLayer) shown(t int16) bool {
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
+// cutRange clips primitives from..to-1 at y bot (display.fragCuts).
+type cutRange struct {
+	from, to int32
+	bot      int
+}
+
 type slot struct {
 	r   image.Rectangle
 	bs  []richtext.Button
@@ -462,6 +474,8 @@ func (d *display) reset() {
 	d.frags = d.frags[:0]
 	d.boxes = d.boxes[:0]
 	d.imgs = d.imgs[:0]
+	d.fragCuts = d.fragCuts[:0]
+	d.imgCuts = d.imgCuts[:0]
 	d.targets = d.targets[:0]
 	d.hits = d.hits[:0]
 	d.lines = d.lines[:0]
