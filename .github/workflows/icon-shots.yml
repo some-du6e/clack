@@ -75,8 +75,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/slack-icons
-          curl -sfL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors -o /tmp/slack-icons/icons.json https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/icons.json
-          curl -sfL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/meta.json | head -c 300; echo
+          curl -sfL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors -o /tmp/slack-icons/icons.json https://raw.githubusercontent.com/IzieStratt/sdmp/main/build/icons.json
+          curl -sfL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors https://raw.githubusercontent.com/IzieStratt/sdmp/main/build/meta.json | head -c 300; echo
           python3 -c "import json;d=json.load(open('/tmp/slack-icons/icons.json'));print(len(d['icons']),'icons')"
       - name: Slack's icon font and illustrations (public CDN)
         run: |

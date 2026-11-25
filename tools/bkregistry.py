@@ -3,7 +3,7 @@
 
 Reads the web client's boot-shared chunk (gantry-v2-async-client-boot-
 shared.<hash>.min.js, from Slack's public CDN: the chunk names are in
-github.com/IzieStratt/slack-datamine-plus build/chunks.txt, the CDN base in
+github.com/IzieStratt/sdmp build/chunks.txt, the CDN base in
 its build/meta.json) and slack.ts's block and element types
 (github.com/jollyroger182/slack.ts src/types/blocks/{blocks,elements}.ts),
 and writes internal/richtext/testdata/slack_block_types.json:
