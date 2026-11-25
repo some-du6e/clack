@@ -100,10 +100,10 @@ func TestRenderLinkCardMemberSettles(t *testing.T) {
 	t.Run("unknown member", func(t *testing.T) {
 		h, fs := newEnv(t, false)
 		cardEnvOn(t, h, fs, "https://fake.slack.com/team/U0NOSUCHUSR1", bareContainer(), cardTS, nil)
-		r, v := cardRig(t, h, Actions{}, 10*time.Second, func(v *View) bool { return fs.CallCount("users.info") > 0 })
+		r, v := cardRig(t, h, Actions{}, 10*time.Second, func(v *View) bool { return fs.CallCount("edge/users/info") > 0 })
 		frameFor(r, 2*time.Second)
-		if fs.CallCount("users.info") == 0 {
-			t.Error("users.info wasn't asked for the member")
+		if fs.CallCount("edge/users/info") == 0 {
+			t.Error("users/info wasn't asked for the member")
 		}
 		if k, _, _ := cardState(v); k != "member-none" {
 			t.Errorf("the card for a member users.info doesn't know is %q, want nothing in it (member-none)", k)
