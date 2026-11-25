@@ -35,8 +35,9 @@ chmod +x Clack-<ver>-x86_64.AppImage
 ```
 ## demo mode
 ```bash
-clack demo
-clack demo --help
+& "$env:LOCALAPPDATA\Programs\Clack\Clack.exe" demo
+/Applications/Clack.app/Contents/MacOS/clack demo
+./Clack-<ver>-x86_64.AppImage demo
 ```
 opens clack in a fake scripted workspace to try stuff out
 
