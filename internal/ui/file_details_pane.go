@@ -181,6 +181,7 @@ type fdDrawn struct {
 	header                  string
 	share, download, more   bool
 	previewW, previewH      int
+	contentW                int // the container's width inside its 16px padding
 	sharesShown, footerDraw bool
 }
 
@@ -355,6 +356,7 @@ func (p *fileDetailsPane) container(gtx layout.Context, f *richtext.File) layout
 	w := gtx.Constraints.Max.X
 	pad := gtx.Dp(16)
 	cw := max(w-2*pad, 1)
+	p.drawn.contentW = cw
 	y := pad
 	// maaT Name: 22px Black at the inherited 1.4 (30.8px), one line
 	name := fileDetailsName(f)

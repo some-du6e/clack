@@ -117,7 +117,7 @@ func TestFileDetailsPane(t *testing.T) {
 			if tc.name == "image" {
 				// thumb_480 of the 1600x900 original is 480x270, fitted to
 				// the pane's content (16px in each side)
-				cw := e.a.secondary.drawnW - 32
+				cw := d.contentW
 				if d.previewW != min(480, cw) || d.previewH < 270*min(480, cw)/480 {
 					t.Errorf("preview %dx%d in a %dpx content box, want thumb_480's 480x270 fitted to it", d.previewW, d.previewH, cw)
 				}

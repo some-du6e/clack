@@ -26,8 +26,6 @@ func TestCalendarDateOrNamedDay(t *testing.T) {
 		{"capitalized without the option", day(2026, 11, 24), NamedDayOpts{}, "Today", true},
 		{"this year: no year", day(2026, 11, 3), NamedDayOpts{UncapitalizedRelativeDay: true}, "November 3rd", false},
 		{"this year's first day", day(2026, 1, 1), NamedDayOpts{}, "January 1st", false},
-		{"last year, within 31 days: no year", time.Date(2025, 12, 31, 9, 0, 0, 0, time.UTC), NamedDayOpts{},
-			"December 31st", false},
 		{"last year, past 31 days: the year", day(2025, 11, 3), NamedDayOpts{}, "November 3rd, 2025", false},
 		{"a later year keeps it", day(2027, 2, 2), NamedDayOpts{}, "February 2nd, 2027", false},
 		{"excludeYear asked", day(2024, 5, 6), NamedDayOpts{ExcludeYear: true}, "May 6th", false},
@@ -55,5 +53,9 @@ func TestCalendarDateOrNamedDay(t *testing.T) {
 		if got := ShouldExcludeYear(c.t, jan); got != c.want {
 			t.Errorf("ShouldExcludeYear(%v, %v) = %v, want %v", c.t, jan, got, c.want)
 		}
+	}
+	// last year within 31 days (only possible in January): no year
+	if got := CalendarDateOrNamedDay(EnUS, time.Date(2026, 12, 31, 9, 0, 0, 0, time.UTC), jan, NamedDayOpts{}); got != "December 31st" {
+		t.Errorf("last year, within 31 days: CalendarDateOrNamedDay = %q, want %q", got, "December 31st")
 	}
 }
