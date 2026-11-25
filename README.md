@@ -6,7 +6,7 @@
 
 a slack client written in go and gio. what makes this different from any other slack client is that its really fucking fast. its __12x faster to open__ than taut[^1] and takes __4.8x less cpu__ than slack[^1]. it aims for 100% parity with real slack while maintaining low resource usage
 
-![screenshot of clack showcasing the slick and taut plugin integration shown by chattabs, idv status on](assets\clack_screenshot_showing_various_features.webp)
+![screenshot of clack showcasing the slick and taut plugin integration shown by chattabs, idv status on](assets/clack_screenshot_showing_various_features.webp)
 
 ## installation
 
