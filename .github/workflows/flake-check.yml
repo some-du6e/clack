@@ -7133,6 +7133,33 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # file-remove (2026-11-25, file-remove-tiles' review wf_0ab34521-333): a
+  # removable file's PreviewRemoveButton x on every tile, over a player
+  # (its click removes the file; the player under it gets no press) and
+  # inside the View at the right edge. Dispatch with only=file-remove.
+  file-remove:
+    if: ${{ !inputs.only || startsWith('file-remove', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the remove x, COUNT runs
+        run: go test -count=$COUNT -timeout 10m -v -run '^(TestFileRemoveButton|TestFileRemoveButtonOnEveryTile|TestFileRemoveButtonOverPlayerAndEdge|TestAudioCardSlot)$' ./internal/ui/richview
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # sent-thread (2026-11-24, msg-latency-sent's review wf_dcd747c5-297): a
   # reply confirmed while its thread pane's load is out (the pane's first,
   # or its slice reloading after a history change cleared it): the answer,
@@ -7495,6 +7522,7 @@ jobs:
       - entprefs
       - scroll-cpu
       - member-subs
+      - file-remove
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
