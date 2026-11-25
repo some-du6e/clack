@@ -4,6 +4,7 @@ import (
 	"image"
 	"strings"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
@@ -193,4 +194,40 @@ func (d *AppDM) HomeHash() string {
 		return ""
 	}
 	return d.surf.view.Hash
+}
+
+// ShowModalView opens v as view_opened would (tests).
+func ShowModalView(h Host, v *core.View) { appFor(h).openView(v) }
+
+// PressModalElement presses the element actionID of block blockID in the
+// open modal's top view, as a click on it does (tests); false if there's
+// no such element.
+func PressModalElement(h Host, blockID, actionID string) bool {
+	s := openStack(h)
+	if s == nil {
+		return false
+	}
+	sf := s.top()
+	for _, b := range allBlocks(sf.blocks) {
+		if b.BlockID != blockID {
+			continue
+		}
+		for i := range b.Elements {
+			if e := &b.Elements[i]; e.ActionID == actionID {
+				sf.widget(b, e).press()
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ModalBump reports the open modal's speed bump (the leave prompt or an
+// element's confirm): its header, and whether it's up.
+func ModalBump(h Host) (string, bool) {
+	s := openStack(h)
+	if s == nil || s.bump == nil {
+		return "", false
+	}
+	return s.bump.header, true
 }

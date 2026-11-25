@@ -19,32 +19,24 @@ import (
 func TestTextFileCards(t *testing.T) {
 	st := newTestStyle()
 	for _, c := range []struct {
-		f     *rt.File
-		tile  [3]uint8
-		glyph string
-		kind  string
+		f    *rt.File
+		art  string
+		kind string
 	}{
 		{&rt.File{ID: "F0BIN", Name: "information.txt", Type: "binary", PrettyType: "Binary", Mime: "application/octet-stream", Size: 244542, Mode: "hosted"},
-			[3]uint8{0x61, 0x60, 0x61}, "file-binary", "Binary"},
+			"fileicon-binary", "Binary"},
 		{&rt.File{ID: "F0TXT", Name: "notes.txt", Type: "text", PrettyType: "Plain Text", Mime: "text/plain", Size: 1820, Mode: "hosted"},
-			[3]uint8{0x1d, 0x9b, 0xd1}, "file-text", "Plain Text"},
+			"fileicon-file-snippet", "Plain Text"},
 	} {
 		v := layoutAt(st, doc(fileBlock(c.f)), Options{CompactFiles: true}, 600)
 		d := &v.d
 		if cards := boxesOf(d, bBorder); len(cards) != 1 || cards[0].r.Dx() != 426 || cards[0].r.Dy() != 62 {
 			t.Errorf("%s: cards %+v, want one 426x62 file card", c.f.Name, cards)
 		}
-		var tile *box
-		for i := range d.boxes {
-			if b := &d.boxes[i]; b.kind == bFill && b.r.Dx() == 36 && b.r.Dy() == 36 {
-				tile = b
-			}
-		}
-		if tile == nil || [3]uint8{tile.fill.R, tile.fill.G, tile.fill.B} != c.tile {
-			t.Errorf("%s: tile %+v, want the svgicon's %x", c.f.Name, tile, c.tile)
-		}
-		if !hasIcon(d, c.glyph) {
-			t.Errorf("%s: no %s glyph; icons %+v", c.f.Name, c.glyph, d.overlayIcons)
+		// the svgicon file as art: binary-4f9150d.svg's #616061 tile and
+		// 01, file-snippet-0a4c72a.svg's #1D9BD1 and T
+		if r, ok := artIcon(d, c.art); !ok || r.Dx() != 36 || r.Dy() != 36 {
+			t.Errorf("%s: no 36px %s; icons %+v", c.f.Name, c.art, d.overlayIcons)
 		}
 		for _, f := range textFrags(d) {
 			if f.sh.str == "BINA" || f.sh.str == "TEXT" {

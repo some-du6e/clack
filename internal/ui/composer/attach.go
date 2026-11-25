@@ -42,6 +42,7 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache" // registers WebP for image.DecodeConfig
 	"github.com/some-du6e/clack/internal/localimg"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
@@ -119,6 +120,10 @@ type attChip struct {
 	kind  attKind
 	// thumbURL is Slack's thumbnail of a restored file (draft_files.go).
 	thumbURL string
+	// server is a restored file's own (files.info, metaDone): Slack's
+	// PendingFile has the file object then, so its icon goes by its
+	// filetype (attIconArt). Guarded by attachments.mu.
+	server *richtext.File
 	// clip is a recorded voice clip's File fields (clips.go); nil for any
 	// other file.
 	clip *clipMeta
@@ -555,24 +560,13 @@ func (a *attachments) later(f func()) { laterFor(a.core, a.h, f) }
 
 // ---- file types ----
 
-// attKind is how a file is drawn: an image thumbnail or a card with a
-// colored type tile.
+// attKind is how a file is drawn: an image thumbnail, or a card with the
+// File's svgicon (attIconArt) over its type line.
 type attKind struct {
 	Label string // type line: "PDF", "Zip", "PNG"
-	Color uint32 // tile color
-	Icon  string // icons name for the tile
+	Icon  string // icons name for the in-app picker's row
 	Image bool   // decodable image: drawn as a thumbnail
 }
-
-const (
-	attBlue   = 0x1264a3
-	attRed    = 0xe01e5a
-	attGray   = 0x616061
-	attGreen  = 0x2bac76
-	attOrange = 0xe8912d
-	attPurple = 0x7c3085
-	attTeal   = 0x1d9bd1
-)
 
 var attLabels = map[string]string{
 	"pdf": "PDF", "zip": "Zip", "gz": "GZip", "tgz": "GZip", "jpg": "JPEG", "jpeg": "JPEG",
@@ -598,14 +592,10 @@ func attExtSet(s string) map[string]bool {
 var (
 	attImageExts   = attExtSet("png jpg jpeg gif webp bmp")
 	attPictureExts = attExtSet("heic heif tif tiff svg ico avif psd")
-	attArchiveExts = attExtSet("zip gz tgz tar 7z rar bz2 xz zst dmg iso")
-	attDocExts     = attExtSet("doc docx odt rtf pages")
 	attSheetExts   = attExtSet("xls xlsx ods csv tsv numbers")
-	attSlideExts   = attExtSet("ppt pptx odp key")
 	attVideoExts   = attExtSet("mp4 mov webm mkv avi m4v mpg mpeg wmv")
 	attAudioExts   = attExtSet("mp3 wav m4a ogg oga flac aac opus wma")
 	attCodeExts    = attExtSet("go py js mjs jsx ts tsx java c h cpp cc hpp cs rs rb php sh bash zsh swift kt sql json yaml yml toml xml html htm css")
-	attTextExts    = attExtSet("txt log md")
 )
 
 // attKindOf maps a file name (and its first bytes, for images with a wrong
@@ -619,34 +609,24 @@ func attKindOf(name string, data []byte) attKind {
 	if ext == "" {
 		label = "File"
 	}
-	k := attKind{Label: label, Color: attBlue, Icon: "files"}
+	k := attKind{Label: label, Icon: "files"}
 	switch {
 	case attImageExts[ext]:
-		k.Color, k.Icon, k.Image = attGreen, "image", true
+		k.Icon, k.Image = "image", true
 	case attPictureExts[ext]:
-		k.Color, k.Icon = attGreen, "image"
-	case ext == "pdf":
-		k.Color = attRed
-	case attArchiveExts[ext]:
-		k.Color = attGray
-	case attDocExts[ext]:
-		k.Color = attBlue
+		k.Icon = "image"
 	case attSheetExts[ext]:
-		k.Color, k.Icon = attGreen, "list-view"
-	case attSlideExts[ext]:
-		k.Color = attOrange
+		k.Icon = "list-view"
 	case attVideoExts[ext]:
-		k.Color, k.Icon = attPurple, "video"
+		k.Icon = "video"
 	case attAudioExts[ext]:
-		k.Color, k.Icon = attOrange, "volume"
+		k.Icon = "volume"
 	case attCodeExts[ext]:
-		k.Color, k.Icon = attTeal, "code"
-	case attTextExts[ext]:
-		k.Color = attGray
+		k.Icon = "code"
 	}
 	if !k.Image && len(data) > 0 {
 		if mt := http.DetectContentType(data[:min(len(data), 512)]); attDecodable(mt) {
-			k.Image, k.Color, k.Icon = true, attGreen, "image"
+			k.Image, k.Icon = true, "image"
 			if ext == "" {
 				k.Label = strings.ToUpper(strings.TrimPrefix(mt, "image/"))
 			}
@@ -1347,9 +1327,10 @@ func (w *attCapped) Write(p []byte) (int, error) {
 
 type attView struct {
 	c         *attChip
-	name      string // the file name it uploads under
-	title     string // the name the chip shows
-	typ       string // its File's type (attFileType)
+	name      string         // the file name it uploads under
+	title     string         // the name the chip shows
+	typ       string         // its File's type (attFileType)
+	server    *richtext.File // a restored file's own (attChip.server)
 	thumb     paint.ImageOp
 	thumbPx   int
 	preparing bool
@@ -1378,7 +1359,7 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 			c.thumbBusy = true
 			go a.makeThumb(c, px)
 		}
-		views[i] = attView{c: c, name: c.name, title: c.title, typ: c.fileTypeLocked(), thumb: c.thumb, thumbPx: c.thumbPx,
+		views[i] = attView{c: c, name: c.name, title: c.title, typ: c.fileTypeLocked(), server: c.server, thumb: c.thumb, thumbPx: c.thumbPx,
 			preparing: c.preparing, failed: c.prepErr != nil && c.prepared == nil,
 			asImage: c.kind.Image && !c.thumbBad && !c.loading && !c.gone, size: c.size(),
 			loading: c.loading, gone: c.gone}
@@ -1606,17 +1587,16 @@ func (a *attachments) drawCard(gtx layout.Context, th *theme.Theme, v attView, r
 	fillRRect(gtx, r, rad, th.C.Bg)
 	strokeRRect(gtx, r, rad, max(1, gtx.Dp(1)), th.C.Border)
 	pad := gtx.Dp(11)
-	tile := gtx.Dp(40)
+	tile := gtx.Dp(attIconPx) // FileEntityThumbnailIcon at medium (attach_icon.go)
 	if v.loading || v.gone {
 		a.drawMetaCard(gtx, th, v, pad, tile, r)
 		return
 	}
-	fillRRect(gtx, image.Rect(pad, pad, pad+tile, pad+tile), gtx.Dp(8), rgb(k.Color))
-	ic := gtx.Dp(22)
-	offset(gtx, pad+(tile-ic)/2, pad+(tile-ic)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get(k.Icon)(gtx, unit.Dp(22), rgb(0xffffff))
+	// the File's svgicon (its own rounded tile), centred down the card
+	offset(gtx, pad, (r.Dy()-tile)/2, func(gtx layout.Context) layout.Dimensions {
+		return icons.Art(gtx, attIconArt(v), tile)
 	})
-	tx := pad + tile + gtx.Dp(12)
+	tx := pad + tile + gtx.Dp(12) // c-base_entity--medium's avatar: margin-right 12px
 	tw := max(r.Dx()-tx-gtx.Dp(12), 0)
 	sh := th.Shaper
 	offset(gtx, tx, pad, func(gtx layout.Context) layout.Dimensions {
@@ -1953,6 +1933,9 @@ clicks:
 	return layout.Dimensions{Size: image.Pt(w, total)}
 }
 
+// attPickerCursor is the in-app picker's cursor row (Slack's blue).
+const attPickerCursor = 0x1264a3
+
 func (b *attBrowser) row(gtx layout.Context, th *theme.Theme, i, w, h int) layout.Dimensions {
 	e := b.entries[i]
 	click := &b.clicks[i]
@@ -1962,7 +1945,7 @@ func (b *attBrowser) row(gtx layout.Context, th *theme.Theme, i, w, h int) layou
 		fg, sub := th.C.Fg, th.C.FgMuted
 		switch {
 		case cur:
-			fillRect(gtx, r, rgb(attBlue))
+			fillRect(gtx, r, rgb(attPickerCursor))
 			fg, sub = rgb(0xffffff), rgb(0xffffff)
 		case click.Hovered():
 			fillRect(gtx, r, th.C.BgHover)
