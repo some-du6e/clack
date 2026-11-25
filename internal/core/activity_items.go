@@ -169,6 +169,11 @@ type activityRaw struct {
 	IsBot      bool   `json:"is_bot"`
 	FeedTS     string `json:"feed_ts"`
 	Key        string `json:"key"`
+
+	// IsBreakthrough is is_breakthrough: the entry breaks through focus
+	// mode (activityBreakthrough, manage.go)
+	IsBreakthrough bool `json:"is_breakthrough"`
+
 	// Priority is the entry's VIP priority (any truthy value: /29I
 	// isPriority: !!e.priority).
 	Priority json.RawMessage `json:"priority"`

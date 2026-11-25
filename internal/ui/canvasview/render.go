@@ -499,7 +499,11 @@ func (v *View) richDoc(d *core.CanvasDoc, b *canvas.Block) (richtext.Doc, bool) 
 		f := &richtext.File{ID: b.FileID, Name: b.Title, Title: b.Title, PrettyType: nsCanvas.T("File")}
 		if cf, ok := d.Files[b.FileID]; ok {
 			f.Name, f.Title, f.Mime, f.PrettyType, f.Permalink = cf.Name, cf.Title, cf.Mime, cf.PrettyType, cf.Permalink
+			f.Type, f.Mode, f.URL, f.Download = cf.Filetype, cf.Mode, cf.URL, cf.Download
 			f.IsImage = cf.IsImage
+			if cf.IsImage && cf.Thumb != "" {
+				f.Thumb = &richtext.Image{URL: cf.Thumb, W: cf.ThumbW, H: cf.ThumbH, Title: cf.Title, Proxy: true}
+			}
 		}
 		return one(richtext.Block{Kind: richtext.FileBlock, File: f})
 	case canvas.Embed: // a link card: drawn from Quip's model (linkcard.go), never the export's text
@@ -1021,7 +1025,23 @@ func (r *handler) OpenImage(img richtext.Image) {
 	r.v.h.OpenLightbox(img, core.Message{})
 }
 
+// OpenFile is a canvas's file card click: Quip's slack object asks for
+// "preview-file" (QuipSlackObjectUIProvider's previewFile_), Slack's
+// previewFile, the file's details flexpane, never a download. An image
+// opens the media viewer as its full-screen view does; Clack has no file
+// details, so any other file opens its page (the permalink), as before.
 func (r *handler) OpenFile(f *richtext.File) {
+	if f == nil {
+		return
+	}
+	if f.IsImage && f.Thumb != nil {
+		img := *f.Thumb
+		if f.URL != "" {
+			img.URL, img.Proxy = f.URL, true
+		}
+		r.v.h.OpenLightbox(img, core.Message{})
+		return
+	}
 	if f.Permalink != "" {
 		r.OpenURL(f.Permalink)
 	}

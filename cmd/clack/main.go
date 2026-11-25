@@ -367,10 +367,13 @@ func main() {
 		OnWindowEvent: func(e event.Event) {
 			desktop.SetWindowIcon(e, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512)
 		},
+		SetAppIcon:  func(png []byte) { desktop.SetAppIcon(png, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512) },
+		UserDefault: desktop.UserDefault,
 	}
 	if desktop.Released(version) || os.Getenv("CLACK_UPDATE_URL") != "" {
 		u := newUpdates(filepath.Join(cfg, "cache", "updates"))
 		opts.CheckUpdate, opts.DownloadUpdate, opts.InstallUpdate = u.check, u.download, u.install
+		opts.InstallUpdateOnQuit = u.installOnQuit
 	}
 	if desktop.LaunchOnLoginSupported() {
 		opts.LaunchOnLogin, opts.SetLaunchOnLogin = desktop.LaunchOnLogin, desktop.SetLaunchOnLogin
@@ -612,6 +615,15 @@ func main() {
 			code = 1
 			if !strings.Contains(why, err.Error()) { // the window's own error is in why already
 				why = fmt.Sprintf("%s (%v)", why, err)
+			}
+		}
+		// a downloaded update the user didn't restart into goes in now, as
+		// Slack's does on quit (ui.Options.InstallUpdateOnQuit)
+		if tag, err := a.InstallUpdateOnQuit(); tag != "" {
+			if err != nil {
+				log.Printf("update: install on quit %s: %v", tag, err)
+			} else {
+				log.Printf("update: %s installs as Clack quits", tag)
 			}
 		}
 		// the reason and the run record before the instance socket goes: a

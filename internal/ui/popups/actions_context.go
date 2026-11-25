@@ -11,6 +11,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
+	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/localimg"
@@ -292,7 +293,7 @@ func copyImage(h Host, src, alt string, proxy bool, ok string) {
 	}, func(smaller bool, err error) {
 		switch {
 		case err != nil:
-			h.Toast("Failed to copy image: " + errText(err))
+			h.Toast("Failed to copy image") // copyImageToClipboardWithToast's (Heql's neighbour): no error text
 		case smaller:
 			h.Toast(copiedSmaller)
 		case ok != "":
@@ -610,37 +611,20 @@ func ConfirmDeleteFile(h Host, f *richtext.File) {
 		}).OldDialog() // DeleteFileDialog: DeprecatedBaseDialog, focusOnPrimaryButton
 }
 
-// DownloadFile saves f to the Downloads folder, like the lightbox's
-// Download button.
-func DownloadFile(h Host, f *richtext.File) {
-	src := downloadSource(f)
-	if src == "" {
-		h.Toast("This file can't be downloaded")
-		return
-	}
-	name := f.Name
-	if name == "" {
-		name = f.Title
-	}
-	saveDownload(h, src, name, true, nil)
-}
+// DownloadFile is downloadFileAndClog for f (the file menu's Download,
+// FileActions' download, a file card's click): on the desktop the file
+// streams to the download folder with the download toast showing its
+// progress (StartDownload). Its URL is getFileDownloadUrl's:
+// url_private_download, never url_private or an audio file's aac
+// rendition (richtext.File.MediaURL); a file without one downloads
+// nothing ("No download URL").
+func DownloadFile(h Host, f *richtext.File) { StartDownload(h, f) }
 
-// downloadSource is what a file's Download fetches: its url_private (or
-// url_private_download); an audio file's url_private_download first, as
-// Slack's download does, never the aac rendition its player plays
-// (richtext.File.MediaURL).
-func downloadSource(f *richtext.File) string {
-	if f.IsAudio && f.Download != "" {
-		return f.Download
-	}
-	if f.URL != "" {
-		return f.URL
-	}
-	return f.Download
-}
-
-// saveDownload fetches src (through core when viaCore or on Slack's
-// hosts) into the Downloads folder and toasts where it went.
+// saveDownload fetches an image that isn't a Slack file (an attachment's
+// or an image block's, a pending upload's) into the download folder and
+// toasts where it went: an image, held in memory within Fetch's and the
+// image proxy's caps like any preview. A failure is only logged: Slack
+// shows no text of its own for it.
 func saveDownload(h Host, src, name string, viaCore bool, done func()) {
 	run(h, func(ctx context.Context) (string, error) {
 		data, err := fetchBytes(ctx, h, src, viaCore)
@@ -653,10 +637,10 @@ func saveDownload(h Host, src, name string, viaCore bool, done func()) {
 			done()
 		}
 		if errors.Is(err, ErrDownloadCanceled) {
-			return // the save dialog was closed
+			return // the folder chooser was closed
 		}
 		if err != nil {
-			h.Toast("Couldn't download: " + errText(err))
+			applog.Debugf("popups: image download: %v", err)
 			return
 		}
 		h.Toast("Saved to " + p)
@@ -761,18 +745,7 @@ func filePillowPreview(gtx layout.Context, h Host, f *richtext.File) layout.Dime
 		})
 	}
 	ht := maxInt(ic, nd.Size.Y+dp(gtx, 4)+dd.Size.Y) + 2*pad
-	label := strings.ToUpper(f.Type)
-	if len(label) > 4 {
-		label = label[:4]
-	}
-	if label == "" {
-		label = "FILE"
-	}
-	rrect(gtx, image.Rect(pad, pad, pad+ic, pad+ic), dp(gtx, 8), cl.Ring)
-	lc, ld := record(loose(gtx, image.Pt(ic, ic)), func(gtx layout.Context) layout.Dimensions {
-		return text(gtx, th, 10, theme.Black, cl.Muted, label)
-	})
-	macroAt(gtx, lc, image.Pt(pad+(ic-ld.Size.X)/2, pad+(ic-ld.Size.Y)/2))
+	fileIconTile(gtx, th, f, image.Pt(pad, pad), ic)
 	macroAt(gtx, nc, image.Pt(tx, pad-dp(gtx, 1)))
 	if detail != "" {
 		macroAt(gtx, dc, image.Pt(tx, pad+nd.Size.Y+dp(gtx, 4)))

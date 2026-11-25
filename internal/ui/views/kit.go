@@ -331,7 +331,11 @@ type base struct {
 	// messages' lone videos play in place, as in Slack's Threads, Unreads
 	// and Later views
 	mediaPane string
-	media     map[string]*viewMedia
+	// viewCtx is the view context Slack's list passes its messages
+	// (expandable.ViewThreads, …): their collapsible previews' keys end
+	// with it ("" where Clack hasn't matched the view's)
+	viewCtx string
+	media   map[string]*viewMedia
 	// bkView is this view's drawing of its messages' elements
 	// (blockkit.InView, elements.go)
 	bkView uint64
@@ -394,6 +398,10 @@ type base struct {
 }
 
 func newBase(h Host) base { return base{h: h, rich: richCache{}} }
+
+// newBaseIn is newBase for a view whose messages Slack's list passes
+// viewCtx.
+func newBaseIn(h Host, viewCtx string) base { return base{h: h, rich: richCache{}, viewCtx: viewCtx} }
 
 // frame refreshes per-frame state; call at the top of Layout.
 func (b *base) frame() {

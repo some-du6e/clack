@@ -86,6 +86,7 @@ type App struct {
 	countsReread bool           // refreshCounts' next read is the one after a merged answer (it doesn't ask again)
 	actBadges    map[string]int // client.counts activity_v2 (activity_badges.go)
 	actBadgesAt  uint64         // the store journal's position at their last change (setActivityBadgesSince)
+	actBadgesGen atomic.Uint64  // server badge sets installed (ActivityBadgesGen)
 	classic      classicBadges  // channel_badges and the alerts' counts (classic_badges.go)
 	savedOverdue int            // saved.list counts.uncompleted_overdue_count (app_badge.go)
 	cmdCache     []slack.Command
@@ -146,6 +147,7 @@ type App struct {
 	exp        *sidebarExp          // experiments the sidebar rules read (nil: defaults)
 	expGroups  map[string]string    // the groups every check reads (experiments.go)
 	icon       teamIconState        // the rail's workspace icon (team_icon.go)
+	expd       expandablesState     // Slack's expandables store: previews collapsed or expanded (expandables.go)
 	rxn        reactState           // the viewer's reactions in flight (reactions.go)
 	frec       frecencyState        // the frecency pref's save throttle and Frequently Used cache (frecency.go)
 	rec        recentsState         // recent searches and places: the recents pref, visits (search_recents.go)
@@ -1023,6 +1025,11 @@ func (a *App) Boot(ctx context.Context) error {
 // save still writing).
 func (a *App) Close() error {
 	a.side.wait() // History's side reads (StopTraffic, before it, cancelled them)
+	if v, ok := downloadStates.Load(a); ok {
+		// cancelInProgressDownloadsEpic: quitting cancels what's still
+		// downloading, and its partial files go
+		v.(*Downloads).CancelAll()
+	}
 	a.flushCanvasesOnQuit()
 	a.saves.Wait()
 	a.checkpointClosedCodeChannels() // the closed code channels' watermarks (codechannel_close.go)
@@ -1698,6 +1705,7 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	}
 	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
 	v.ReplyUserIcons = m.ReplyUserIcons
+	v.XFiles = m.XFiles
 	v.NoteFiles, v.Upload = a.noteFiles(m, false), m.Upload // note_files.go
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata

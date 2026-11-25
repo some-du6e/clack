@@ -418,10 +418,12 @@ func TestCanvasQuipNewBlocks(t *testing.T) {
 	if v.edit.finish(v) || v.edit.cur == nil || cantEdits(h) != 1 {
 		t.Errorf("a new list after a paragraph: editor %v, toasts %d", v.edit.cur != nil, cantEdits(h))
 	}
-	if v.edit.escape(v) || v.edit.cur == nil || cantEdits(h) != 2 { // Escape again keeps the text, and says so again
+	if !v.edit.escape(v) || v.edit.cur != nil || cantEdits(h) != 1 { // Escape again discards, as the toast says
 		t.Errorf("Escape after the refusal: closed %v, toasts %d", v.edit.cur == nil, cantEdits(h))
 	}
-	v.edit.discard(v)
+	if b := findBlk(v, func(b *canvas.Block) bool { return b.ID == quipFirstID }); b == nil || strings.Contains(b.b.Text(), "a list") {
+		t.Error("the discarded edit is still shown")
+	}
 	time.Sleep(200 * time.Millisecond)
 	if got := len(quipSaves(fs)); got != n {
 		t.Errorf("%d edit-document calls for a refused new list", got-n)

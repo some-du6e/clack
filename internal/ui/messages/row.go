@@ -23,6 +23,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/composer"
@@ -150,10 +151,9 @@ type row struct {
 	// group's emoji (pillBy) as Slack keys its Reaction elements: a pill
 	// pressed while another group comes or goes stays that emoji's, at
 	// the same address, so its release is its own click
-	pills         []*reactPill
-	pillBy        map[string]*reactPill
-	reactExpand   widget.Clickable // ReactionBar's "N more" / "Show less"
-	reactExpanded bool             // the bar's isExpanded (Slack keeps it per message)
+	pills       []*reactPill
+	pillBy      map[string]*reactPill
+	reactExpand widget.Clickable // ReactionBar's "N more" / "Show less"
 	// ReactionBar's own state (getDerivedStateFromProps, reactionCollapse):
 	// collapsed, the viewer's reactions when it last derived, and what it
 	// derived from (a change re-renders it: the reactions, isExpanded, the
@@ -190,6 +190,12 @@ type row struct {
 	addRect   image.Rectangle
 	height    int
 
+	// selW is the text column's width: Slack's rich_text sections are
+	// blocks across it, so a press anywhere right of the text, past the
+	// end of a line, starts a selection there (Chromium hit-tests the
+	// block: LayoutBlockFlow PositionForPoint, then the nearest line's
+	// end). bodyRect is only as wide as the widest line.
+	selW int
 	// plugin state (patched path only)
 	rc *rowCtx // this frame's inputs, for the natives
 	// truncate: in a thread pane, long Block Kit sections cut at "Show
@@ -546,15 +552,63 @@ func (r *row) setDoc() {
 // rvOpts are the body's richview options.
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
+	// the list's view context (MESSAGE_PANE, THREAD): its previews'
+	// expandables end with it (richview expander.go)
+	vc := expandable.ViewChannel
+	if r.truncate {
+		vc = expandable.ViewThread
+	}
 	o := richview.Options{Edited: displaysEdited(&r.m), Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own,
-		FindFocused: r.findFocused, CheckLists: true, Media: r.media}
+		FindFocused: r.findFocused, CheckLists: true, Media: r.media, ViewContext: vc, Sender: r.m.User}
 	if o.Edited {
 		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
 		o.EditedBy = r.editedBy()
 	} else if r.m.Stopped { // insertMessageLabelIntoBlocks: "(stopped)" only without "(edited)"
 		o.Stopped, o.StoppedBy = true, r.stoppedBy()
 	}
+	if own {
+		o.FileRemoves = richview.FileRemovesOf(fileRemoves(&r.m, r.rc.selfID))
+	}
 	return o
+}
+
+// fileRemoves is the gallery's removableFileIds for the viewer's own
+// message m (QD+H): every file, taken out of the message, when all of
+// them were uploaded with it (canRemoveFileFromMessage: x_files holds
+// each); else the files shared into it that the viewer owns, deleted
+// (deletableFileIds, DeleteFileDialog). Canvases, lists and surfaces
+// shared in (fileIsSharedNotUploaded) get none. nil when no file has one.
+func fileRemoves(m *core.Message, self string) map[string]bool {
+	var files []*richtext.File
+	for i := range m.Doc.Blocks {
+		if b := &m.Doc.Blocks[i]; b.Kind == richtext.FileBlock && b.File != nil && b.File.ID != "" {
+			files = append(files, b.File)
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	x := map[string]bool{}
+	for _, id := range m.XFiles {
+		x[id] = true
+	}
+	all := len(m.XFiles) > 0
+	for _, f := range files {
+		all = all && x[f.ID]
+	}
+	out := map[string]bool{}
+	for _, f := range files {
+		switch {
+		case all:
+			out[f.ID] = false
+		case !x[f.ID] && f.User == self && !core.IsCanvasFile(f.Type, f.Mode, f.PrettyType) && !core.IsListFile(f.Type, f.Mode, f.PrettyType):
+			out[f.ID] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // stoppedBy is the name in StoppedLabel's "(stopped by {name})" (J825):
@@ -1027,13 +1081,30 @@ func (r *row) senderProps() slackc.Props {
 	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "isInteractive": true, "visible": true, "viewContext": r.viewContext()})
 }
 
+// baseSenderProps are the connected MessageSender's (JA+h) props for
+// BaseMessageSender, the ones plugins patching it read: the sender's name
+// (a user-less bot's username override first: xbeB), its member and bot,
+// the bot_profile, and memberIsHuman (false for an app's or a user-less
+// sender: the APP label's rule; a username or icons override is never a
+// person's).
 func (r *row) baseSenderProps() slackc.Props {
-	p := slackc.Props{"$key": r.ts, "className": "c-message__sender c-message_kit__sender", "isInteractive": true, "msg": r.message()}
+	p := slackc.Props{"$key": r.ts, "className": "c-message__sender c-message_kit__sender", "isInteractive": true, "msg": r.message(),
+		"name": r.m.Name, "memberIsHuman": r.badge == ""}
 	if r.m.User != "" {
 		p["userId"] = r.m.User
 	}
-	if r.m.BotID != "" {
-		p["botId"] = r.m.BotID
+	if bot := r.senderBot(false); bot != "" {
+		p["botId"] = bot
+	}
+	if bp := r.m.BotProfile; bp != nil {
+		prof := slackc.Props{"id": bp.ID, "name": bp.Name}
+		if bp.AppID != "" {
+			prof["app_id"] = bp.AppID
+		}
+		if bp.UserID != "" {
+			prof["user_id"] = bp.UserID
+		}
+		p["botProfile"] = prof
 	}
 	return r.pane(p)
 }
@@ -1795,6 +1866,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 		})
 	}
 	r.bodyRect = image.Rectangle{Min: image.Pt(0, y), Max: image.Pt(body.Size.X, y+body.Size.Y)}.Add(r.col)
+	r.selW = cw
 	if inline {
 		// the sender sits on the body's first line, baselines together
 		dy := y
@@ -2920,7 +2992,7 @@ func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel 
 	n := len(gs)
 	if !r.rxInit { // the constructor's state
 		r.rxInit = true
-		r.rxCollapsed = !r.reactExpanded
+		r.rxCollapsed = !r.reactionsExpanded()
 		r.rxSel = r.ownReactions(0)
 	}
 	if len(r.m.Reactions) < 5 || w <= 0 {
@@ -2955,7 +3027,7 @@ func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel 
 	}
 	if sig := r.reactionSig(w); sig != r.rxSig {
 		r.rxSig = sig
-		closed := !r.reactExpanded
+		closed := !r.reactionsExpanded()
 		if !r.rxCollapsed || n <= limit {
 			r.rxCollapsed = closed
 		} else {
@@ -2980,6 +3052,18 @@ func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel 
 		}
 	}
 	return target, reactMore, sel
+}
+
+// reactionKey is the bar's reactionKey (KtEr J: makeReactionKey
+// "message-<ts>-<channel>"): its isExpanded lives in the expandables
+// store under it, the account's, so every view of the message (and the
+// next start) keeps a bar "N more" opened.
+func (r *row) reactionKey() string { return expandable.ReactionKey(r.m.TS, r.m.Channel) }
+
+// reactionsExpanded is the bar's isExpanded: !!getObjectById(reactionKey).
+func (r *row) reactionsExpanded() bool {
+	on, _ := richview.Expandable(r.reactionKey())
+	return on
 }
 
 // ownReactions is the names of the groups from index from on that hold
@@ -3009,7 +3093,7 @@ func (r *row) reactionSig(w int) string {
 		}
 		b.WriteByte(',')
 	}
-	b.WriteString(strconv.FormatBool(r.reactExpanded))
+	b.WriteString(strconv.FormatBool(r.reactionsExpanded()))
 	b.WriteByte('/')
 	b.WriteString(strconv.Itoa(w))
 	return b.String()
@@ -3024,7 +3108,8 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 	rc := r.rc
 	c := rc.c
 	if r.reactExpand.Clicked(gtx) {
-		r.reactExpanded = kind == reactMore
+		// onExpand / onCollapse: setExpanded on the bar's reactionKey
+		richview.SetExpandable(r.reactionKey(), kind == reactMore)
 		// the bar's state as the click leaves it: "Show less" after your
 		// own hidden reaction opened it (isExpanded still false, so
 		// nothing re-derives) collapses it too, as Slack's remounted bar
@@ -3588,6 +3673,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		return r.rv.Layout(gtx, rc.st, &r.handler)
 	})
 	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	r.selW = cw
 	// <time class="timestamp__bfLC8">: 12px inline after the text
 	// (margin-inline-end 8px), on its baseline
 	ts := clock(tsTime(m.TS))
@@ -3732,6 +3818,7 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 		return r.rv.Layout(gtx, rc.st, &r.handler)
 	})
 	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	r.selW = cw
 	y += max(body.Size.Y, dp(gtx, 20)) + dp(gtx, 4) + dp(gtx, 4)
 	if len(m.Reactions) > 0 {
 		y += r.reactionBar(gtx, image.Pt(cx, y), image.Point{}, cw)
@@ -3803,6 +3890,7 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	ty := y + (box-body.Size.Y)/2
 	placeCall(gtx, call, cx, ty)
 	r.bodyRect = image.Rectangle{Min: image.Pt(cx, ty), Max: image.Pt(cx+body.Size.X, ty+body.Size.Y)}
+	r.selW = cw
 	y += box
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
@@ -3848,6 +3936,7 @@ func (r *row) denseTombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimens
 	ty := y + (box-body.Size.Y)/2
 	placeCall(gtx, call, x, ty)
 	r.bodyRect = image.Rectangle{Min: image.Pt(x, ty), Max: image.Pt(x+body.Size.X, ty+body.Size.Y)}
+	r.selW = cw
 	y += box + dp(gtx, mt.bodyMarginBottom)
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}

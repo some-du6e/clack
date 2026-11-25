@@ -474,7 +474,9 @@ type Server struct {
 	histMu sync.Mutex
 	// delAtts: chat.deleteAttachment calls (embeds.go)
 	delAtts []DeletedAttachment
-	hist    map[string][]slack.Message // channel -> all messages, newest first
+	// removedFiles: chat.removeFile calls (embeds.go)
+	removedFiles []DeletedAttachment
+	hist         map[string][]slack.Message // channel -> all messages, newest first
 	// quietReplies: replies PostReplyQuiet added, by channel/root ts,
 	// oldest first (pins.go)
 	quietReplies map[string][]slack.Message
@@ -1663,6 +1665,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleGroupDMs(method, f); handled { // groupdms.go
 		return out
 	}
+	if out, handled := s.handleContacts(method, f); handled { // contacts.go
+		return out
+	}
+	if out, handled := s.handleCalendar(method, f); handled { // calendar_events.go
+		return out
+	}
 	// the bench threads' replies: ahead of the switch, whose
 	// conversations.replies answers every other thread with none
 	if method == "conversations.replies" && s.Size.PluginBench {
@@ -2001,6 +2009,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return s.bulkLeave(f)
 	case "chat.deleteAttachment":
 		return s.deleteAttachment(f)
+	case "chat.removeFile":
+		return s.removeFileFromMessage(f)
 	case "chat.postMessage":
 		ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().Nanosecond()/1000)
 		msg := map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")}
@@ -2199,6 +2209,9 @@ func (s *Server) userByIDRaw(id string) (slack.User, bool) {
 		if u.ID == id {
 			return u, true
 		}
+	}
+	if id == PromptAgentID { // prompt_agent.go
+		return s.promptAgentUser(), true
 	}
 	if s.Size.Identity {
 		for _, u := range s.identityUsers() {

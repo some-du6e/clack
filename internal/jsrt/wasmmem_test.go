@@ -74,10 +74,11 @@ func growJS(t *testing.T, heap bool, bufs int) growth {
 
 // The wasm memory grows in place: no copy (its base address stays), no Go
 // heap allocation and no Go collection for it, and a stop-the-world never
-// waits on a growth. The same growth with the memory in a Go slice grown
-// like wazero's own (the engine before wasmmem.go) is measured alongside:
-// it moves, allocates the memory's size several times over and holds a
-// stop-the-world for the length of each copy.
+// waits on a growth, nor on the first writes to the pages it commits
+// (populated in a read syscall: populate). The same growth with the memory
+// in a Go slice grown like wazero's own (the engine before wasmmem.go) is
+// measured alongside: it moves, allocates the memory's size several times
+// over and holds a stop-the-world for the length of each copy.
 func TestWasmMemoryGrowsInPlace(t *testing.T) {
 	if testing.Short() {
 		t.Skip("grows a JS heap by 512 MiB")

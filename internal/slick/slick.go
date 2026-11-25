@@ -104,6 +104,16 @@ type Options struct {
 	Dark bool
 	// NoUpdates turns off the URL-installed plugins' update checks.
 	NoUpdates bool
+	// SetAppIcon is Electron's app.dock.setIcon (macOS) and a window's
+	// setIcon (Windows, Linux) for main halves (CustomAppIcon): Clack's
+	// Dock or window icon becomes png, a PNG; nil puts Clack's own back.
+	// nil: main halves' calls change nothing.
+	SetAppIcon func(png []byte)
+	// UserDefault is Electron's systemPreferences.getUserDefault (macOS):
+	// key's value in the user's defaults as typ ("string", "boolean",
+	// "integer", "float", "double", "url", "array", "dictionary"), nil
+	// when unset or where there are none.
+	UserDefault func(key, typ string) any
 }
 
 // Slick is the plugin system. All methods are safe for concurrent use.
@@ -130,6 +140,7 @@ type Slick struct {
 	rt      *jsrt.Runtime   // the runtime the prelude is in (nil until a plugin needs JS)
 	panels  map[string]bool // api.settings.panel: the plugins with a panel (slick_panels)
 	route   [3]string       // team, channel, thread the UI shows
+	tabView [2]string       // a channel and its header tab's view (SetTabView)
 	dark    atomic.Bool
 	styled  string // the theme CSS last handed to the UI
 
@@ -139,6 +150,16 @@ type Slick struct {
 	styleMu   sync.Mutex  // serializes applyStyles' UI calls (sheet order)
 	switchMu  sync.Mutex  // switches.json (switches.go)
 	spellOff  atomic.Bool // a main half turned the session's spellchecker off
+
+	focused atomic.Bool // Clack's window has the focus (SetFocused)
+	// pickedMu guards picked: the files the user picked through each main
+	// half's dialog.openFile, which its nativeImage may read (imageFile)
+	pickedMu  sync.Mutex
+	picked    map[string]map[string]bool
+	resources struct {
+		once sync.Once
+		path string // the installed Slack's resources (slackResources)
+	}
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
@@ -302,10 +323,11 @@ func (s *Slick) js() (*jsrt.Runtime, error) {
 			p.inJS, p.mainInJS = false, false
 		}
 		team, ch, th := s.route[0], s.route[1], s.route[2]
+		tab := s.tabViewLocked(ch)
 		s.mu.Unlock()
 		s.setPage(rt)
 		if team != "" {
-			s.post(rt, "setRoute", team, ch, th)
+			s.post(rt, "setRoute", team, ch, th, tab)
 		}
 		return rt, nil
 	}
@@ -413,20 +435,69 @@ func (s *Slick) SetRoute(team, channel, thread string) {
 	changed := s.route != [3]string{team, channel, thread}
 	s.route = [3]string{team, channel, thread}
 	rt := s.rt
+	tab := s.tabViewLocked(channel)
 	s.mu.Unlock()
 	if changed && rt != nil {
-		s.post(rt, "setRoute", team, channel, thread)
+		s.post(rt, "setRoute", team, channel, thread, tab)
 	}
 	if moved {
 		go s.reconcileAll(context.Background()) // workspace restrictions
 	}
 }
 
+// SetTabView tells plugins which of channel's header tabs the window
+// shows: Slack's primary view for it as JSON (a Canvas or List view in the
+// channel's tab, inChannelTab; a Channel view with the tab's id,
+// toChannelTab: ChatTabs comes back to it), "" for the channel as a plain
+// navigation shows it. Cheap when no plugin runs.
+func (s *Slick) SetTabView(channel, view string) {
+	s.mu.Lock()
+	// what the channel's view becomes: a channel's first "" (a plain
+	// navigation, which SetRoute already told) posts nothing
+	changed := s.tabViewLocked(channel) != view
+	s.tabView = [2]string{channel, view}
+	route, rt := s.route, s.rt
+	s.mu.Unlock()
+	if changed && rt != nil && route[0] != "" && route[1] == channel {
+		s.post(rt, "setRoute", route[0], route[1], route[2], view)
+	}
+}
+
+// tabViewLocked is SetTabView's view when it's channel's (mu).
+func (s *Slick) tabViewLocked(channel string) string {
+	if s.tabView[0] == channel {
+		return s.tabView[1]
+	}
+	return ""
+}
+
 // SetDark tells Slick whether the UI is in dark mode (themes with a mode
-// apply only in that mode).
+// apply only in that mode). A change is nativeTheme's 'updated' for main
+// halves.
 func (s *Slick) SetDark(dark bool) {
 	if s.dark.Swap(dark) != dark {
 		s.applyStyles()
+		s.mainEvent("theme")
+	}
+}
+
+// SetFocused tells Slick whether Clack's window has the focus: taking it
+// is Electron's 'browser-window-focus' for main halves. Cheap when no
+// main half runs.
+func (s *Slick) SetFocused(on bool) {
+	if s.focused.Swap(on) != on && on {
+		s.mainEvent("focus")
+	}
+}
+
+// mainEvent posts one of the app's events to the main halves (S.mainEvent:
+// "theme", "focus"), when a runtime is up.
+func (s *Slick) mainEvent(what string) {
+	s.mu.Lock()
+	rt := s.rt
+	s.mu.Unlock()
+	if rt != nil {
+		s.post(rt, "mainEvent", what)
 	}
 }
 

@@ -230,7 +230,7 @@ func (h emailPaneHandler) OpenUser(id string, anchor image.Point) { h.a.OpenProf
 func (h emailPaneHandler) OpenChannel(id string)                  { h.a.Navigate("c/" + id) }
 func (h emailPaneHandler) OpenUsergroup(string, image.Point)      {}
 func (h emailPaneHandler) OpenImage(img richtext.Image)           { openURL(img.URL) }
-func (h emailPaneHandler) OpenFile(f *richtext.File)              { openURL(firstNonEmptyStr(f.Permalink, f.URL)) }
+func (h emailPaneHandler) OpenFile(f *richtext.File)              { popups.OpenFileCard(h.a, f, openURL) }
 func (h emailPaneHandler) Button(b richtext.Button) {
 	if b.URL != "" {
 		openURL(b.URL)

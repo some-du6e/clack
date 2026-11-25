@@ -16,14 +16,18 @@ import (
 
 // bk is a generic Block Kit block / element / rich_text node.
 type bk struct {
-	bkAgent                // plan, task_card (agent.go)
-	viz       *bkDataViz   // a data_visualization block's own keys (dataviz.go)
-	table     *bkDataTable // a data_table block's own keys (datatable.go)
-	timeline  *bkTimeline  // a timeline block's own keys (timeline.go)
-	Type      string       `json:"type"`
-	BlockID   string       `json:"block_id"`
-	Elements  []bk         `json:"elements"`
-	Rows      bkRows       `json:"rows"` // table
+	bkAgent                  // plan, task_card (agent.go)
+	viz       *bkDataViz     // a data_visualization block's own keys (dataviz.go)
+	table     *bkDataTable   // a data_table block's own keys (datatable.go)
+	timeline  *bkTimeline    // a timeline block's own keys (timeline.go)
+	contact   *bkContactCard // a contact_card block's own keys (contact.go)
+	prompt    *bkSharePrompt // a share_prompt block's own keys (shareprompt.go)
+	event     *bkEvent       // an event block's own keys (event.go)
+	carousel  *bkCarousel    // a carousel block's own keys (carousel.go)
+	Type      string         `json:"type"`
+	BlockID   string         `json:"block_id"`
+	Elements  []bk           `json:"elements"`
+	Rows      bkRows         `json:"rows"` // table
 	ColumnSet []struct {
 		Align     string `json:"align"`
 		IsWrapped bool   `json:"is_wrapped"`
@@ -64,9 +68,12 @@ type bk struct {
 	AltText     string          `json:"alt_text"`
 	Title       *textObj        `json:"title"`
 	ActionID    string          `json:"action_id"`
-	VisibleTo   []string        `json:"visible_to_user_ids"` // button, checkboxes, icon_button (actionHidden)
-	Checked     *bool           `json:"checked"`             // a check list's, or one of its items'
-	Checklist   bool            `json:"checklist"`
+	// PrimaryAction is a split_button's primary_action, read only by
+	// element (raw, so no other type's key can fail the decode)
+	PrimaryAction json.RawMessage `json:"primary_action"`
+	VisibleTo     []string        `json:"visible_to_user_ids"` // button, checkboxes, icon_button (actionHidden)
+	Checked       *bool           `json:"checked"`             // a check list's, or one of its items'
+	Checklist     bool            `json:"checklist"`
 	// a citation element's details.citation_type (either spelling): only
 	// then does Slack's Citation take it (unknownInline)
 	CitationType      json.RawMessage `json:"citation_type"`
@@ -533,7 +540,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", "card", "data_visualization", "data_table", "message_embed", "timeline", "contact_card", "share_prompt", "event", "carousel", badBlock:
 		return true
 	}
 	return false
@@ -646,7 +653,9 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			img.Title = unescape(b.Title.Text)
 		}
 		img.Bytes = b.ImageBytes
-		return append(out, Block{Kind: ImageBlock, Image: img})
+		// block_id: the image's expandable (getExpandableKey("blockImage",
+		// ts, {blockId}), richview's caret and /collapse alike)
+		return append(out, Block{Kind: ImageBlock, Image: img, BlockID: b.BlockID})
 	case "actions":
 		blk := Block{Kind: Actions}
 		self := c.r.SelfID()
@@ -665,7 +674,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		a := &Attachment{
 			ServiceName: b.ProviderName, ServiceIcon: SafeImage(b.ProviderIconURL), AuthorName: b.AuthorName,
 			TitleLink: SafeURL(b.TitleURL), VideoURL: SafeURL(b.VideoURL), IsUnfurl: true,
-			Image: image(b.ThumbnailURL, b.AltText, 0, 0),
+			Image:      image(b.ThumbnailURL, b.AltText, 0, 0),
+			VideoBlock: true, BlockID: b.BlockID,
 		}
 		if b.Title != nil {
 			a.Title = plainSpans(c.r, b.Title.Text)
@@ -713,6 +723,14 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return c.messageEmbed(out, b)
 	case "timeline":
 		return c.timelineBlock(out, b)
+	case "contact_card":
+		return append(out, c.contactCardBlock(b))
+	case "share_prompt":
+		return append(out, c.sharePromptBlock(b))
+	case "event":
+		return c.eventBlock(out, b)
+	case "carousel":
+		return c.carouselBlock(out, b)
 	case "data_visualization":
 		return append(out, c.dataVizBlock(b))
 	case "markdown":
@@ -924,10 +942,23 @@ func (c *builder) element(e *bk, blockID string) (Button, bool) {
 		if e.Placeholder != nil && e.Placeholder.Text != "" {
 			btn.Text = e.Placeholder.Text
 		}
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "rich_text_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "rich_text_input", "password":
 		btn.Kind = "input"
 		if e.Placeholder != nil {
 			btn.Text = e.Placeholder.Text
+		}
+	case "split_button":
+		// drawn by blockkit (splitbutton.go); elsewhere its primary
+		// action's button
+		btn.Kind = "button"
+		var pa struct {
+			Text *textObj `json:"text"`
+		}
+		if json.Unmarshal(e.PrimaryAction, &pa) == nil && pa.Text != nil {
+			btn.Text = PlainText(Doc{Blocks: []Block{{Kind: Paragraph, Spans: c.textSpans(pa.Text)}}})
+		}
+		if s := e.styleString(); s == "primary" || s == "danger" {
+			btn.Style = s
 		}
 	case "checkboxes", "radio_buttons":
 		var names []string

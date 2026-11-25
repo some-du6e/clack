@@ -99,6 +99,11 @@ type Options struct {
 	// update helper starts the new version; ErrUpdateManual: the system
 	// installer opened instead.
 	InstallUpdate func(u UpdateInfo) error
+	// InstallUpdateOnQuit installs the downloaded u as Clack quits, with
+	// no restart (App.InstallUpdateOnQuit, after Run): Slack desktop's
+	// downloaded update applies on quit, so a Clack that's quit and
+	// opened again runs it instead of downloading it once more.
+	InstallUpdateOnQuit func(u UpdateInfo) error
 	// LaunchOnLogin and SetLaunchOnLogin are Preferences > Advanced >
 	// "Launch app on login" (Slack's DesktopPref launchOnStartup; cmd/clack:
 	// desktop's autostart entry or Run key). nil: the row is greyed.
@@ -112,6 +117,13 @@ type Options struct {
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
+	// SetAppIcon is Clack's Dock or window icon from now on: png, a PNG,
+	// nil for Clack's own (cmd/clack: desktop.SetAppIcon). Slick's main
+	// halves set it (CustomAppIcon). nil: nothing changes it.
+	SetAppIcon func(png []byte)
+	// UserDefault reads the user's macOS defaults for Slick's main halves
+	// (systemPreferences.getUserDefault; cmd/clack: desktop.UserDefault).
+	UserDefault func(key, typ string) any
 	// shaperHold (tests): the startup shaper reaches the UI goroutine only
 	// once it's closed, so the fonts load late.
 	shaperHold <-chan struct{}
@@ -205,6 +217,7 @@ type App struct {
 	peek            railPeek             // the rail's More PeekTrigger (rail_peek.go)
 	ptrOK           bool
 	hover           profileHover // the profile hover card (hover_card.go)
+	wheelTag        int          // the window-wide wheel observer's (wheel_latch.go)
 	overlays        []Overlay
 	overlayLayers   map[Overlay]*shellLayer // the overlays' layers in the window's stack (overlay_layers.go)
 	slackc          slackcState
@@ -306,6 +319,7 @@ type App struct {
 	font             fontState             // Appearance > Font (prefs_font.go)
 	explorer         *explorer.Explorer    // native file chooser (set in onWindow)
 	dl               downloadPrefs         // Download location, for the savers' goroutines (downloads.go)
+	dlToast          downloadToastState    // the download toast (downloads.go)
 	tautGen          int                   // bumps when a (new) plugin runtime attaches
 	tautTabs         []taut.PreferencesTab // plugins' Preferences tabs
 	switchAt         time.Time             // navigation time, for the channel-switch latency log
@@ -411,6 +425,15 @@ type App struct {
 	// noMoveFocus: an open that keeps the focus where it is
 	// (PreventMoveFocus: Activity's option+up/down)
 	noMoveFocus bool
+
+	// chTabPicked: a tab of the channel was picked (its tab bar, a tab
+	// link), so Slack's view for it is the tab's, Messages' too
+	// (slackTabView); tabViewKey is the view last told to Slick, the
+	// instance tabViewTo (a new one after the backend restarts is told
+	// again)
+	chTabPicked map[string]bool
+	tabViewKey  string
+	tabViewTo   *slick.Slick
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -991,11 +1014,13 @@ func (a *App) frame(gtx layout.Context) {
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.layoutWorkflowRunToast(gtx)
-	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
+	a.layoutDownloadToast(gtx) // Slack's download toast (downloads.go)
+	a.layoutIntroOverlay(gtx)  // Replay introduction, over everything
 	// middle-click autoscroll's window-wide area: over everything but the
 	// tracker
 	a.autoscroll.End(gtx.Ops, gtx.Source, sz)
 	a.rootPointer(gtx)
+	a.wheelObserver(gtx)      // every wheel event, for the carousels' latch (wheel_latch.go)
 	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
 	slackc.RouteEscape(gtx)   // an Escape no widget took goes to the overlay layers (slackc layers.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took

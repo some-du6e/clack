@@ -1353,14 +1353,9 @@ func TestGenericFileCard(t *testing.T) {
 	if len(cards) != 1 || cards[0].r != image.Rect(0, 0, 426, 62) {
 		t.Fatalf("card %+v", cards)
 	}
-	var icon *box
-	for i := range d.boxes {
-		if d.boxes[i].kind == bFill && d.boxes[i].fill == p.FileIconPDF {
-			icon = &d.boxes[i]
-		}
-	}
-	if icon == nil || icon.r != image.Rect(12, 12, 48, 48) {
-		t.Fatalf("pdf icon %+v", icon)
+	// FileEntityThumbnailIcon's svgicon: the PDF file's art, 36px, 12px in
+	if r, ok := artIcon(d, "fileicon-file-pdf"); !ok || r != image.Rect(12, 12, 48, 48) {
+		t.Fatalf("pdf icon %v (%v); overlays %+v", r, ok, d.overlayIcons)
 	}
 	name := findFrag(t, d, "report.pdf")
 	if name.target != cards[0].target || name.x != 60 {
@@ -1382,28 +1377,39 @@ func TestGenericFileCard(t *testing.T) {
 		}
 	}
 
-	icons := func(f *rt.File) (color.NRGBA, []string) {
+	icons := func(f *rt.File) (string, []string) {
 		v := layoutAt(st, doc(fileBlock(f)), Options{CompactFiles: true}, 600)
-		for _, b := range v.d.boxes {
-			if b.kind == bFill && b.r.Dx() == 36 {
-				return b.fill, fragStrings(&v.d)
+		for _, o := range v.d.overlayIcons {
+			if o.art && o.r.Dx() == 36 {
+				return o.name, fragStrings(&v.d)
 			}
 		}
 		t.Fatalf("no icon for %+v", f)
-		return color.NRGBA{}, nil
+		return "", nil
 	}
-	if c, _ := icons(&rt.File{Name: "a.zip", Type: "zip"}); c != p.FileIconZip {
-		t.Errorf("zip icon %v", c)
+	if n, _ := icons(&rt.File{Name: "a.zip", Type: "zip"}); n != "fileicon-archive" {
+		t.Errorf("zip icon %s", n)
 	}
-	if c, strs := icons(&rt.File{Name: "notes"}); c != p.FileIconBg || strs[0] != "FILE" {
-		t.Errorf("untyped icon %v labels %q", c, strs)
-	}
-	if _, strs := icons(&rt.File{Name: "data", Type: "parquet"}); strs[0] != "PARQ" {
-		t.Errorf("long type label %q, want 4 chars", strs[0])
+	// no type, or one Slack has no svgicon for: the generic page, and no
+	// label tile ("FILE", "PARQ")
+	for _, f := range []*rt.File{{Name: "notes"}, {Name: "data", Type: "parquet"}} {
+		if n, strs := icons(f); n != "fileicon-generic" || len(strs) > 0 && (strs[0] == "FILE" || strs[0] == "PARQ") {
+			t.Errorf("%s: icon %s labels %q", f.Name, n, strs)
+		}
 	}
 	if _, strs := icons(&rt.File{}); !strings.Contains(strings.Join(strs, " "), "Untitled") {
 		t.Errorf("nameless file labels %q", strs)
 	}
+}
+
+// artIcon is the art name's box among d's overlay icons.
+func artIcon(d *display, name string) (image.Rectangle, bool) {
+	for _, o := range d.overlayIcons {
+		if o.art && o.name == name {
+			return o.r, true
+		}
+	}
+	return image.Rectangle{}, false
 }
 
 func TestTombstone(t *testing.T) {

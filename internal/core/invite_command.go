@@ -380,6 +380,9 @@ func (a *App) convInfo(ch string) (inviteConv, bool) {
 		c, ok = a.S.ExtConv(ch)
 	}
 	if !ok {
+		c, ok = a.S.ChannelHit(ch) // picked from the # list or a search (getChannelById finds Slack's upserted hits)
+	}
+	if !ok {
 		return inviteConv{}, false
 	}
 	other := false

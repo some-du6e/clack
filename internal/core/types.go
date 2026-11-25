@@ -19,15 +19,18 @@ import (
 // Message is a UI-ready message: metadata plus a structured document.
 type Message struct {
 	TS, Channel, User, BotID string
-	Name                     string       // the sender's name when it isn't a member's (user-less bots: username or the bot's name); sender.go
-	Avatar                   string       // the avatar of a user-less sender (icon_emoji, icons, the bot's, Slack's default); sender.go
-	Username                 string       // msg.username as sent (chat.postMessage username)
-	Icons                    *SenderIcons // msg.icons as sent (icon_emoji / icon_url)
-	Subtype, Text            string       // Text: raw mrkdwn (editing, copy, search)
-	ThreadTS, LatestReply    string
-	EditedTS                 string
-	EditedBy                 string // edited.user: who made the last edit (EditedLabel names them on a workflow message)
-	Permalink                string // set on search results
+	// XFiles are the files uploaded with the message (x_files: the ones
+	// its sender may remove from it)
+	XFiles                []string
+	Name                  string       // the sender's name when it isn't a member's (user-less bots: username or the bot's name); sender.go
+	Avatar                string       // the avatar of a user-less sender (icon_emoji, icons, the bot's, Slack's default); sender.go
+	Username              string       // msg.username as sent (chat.postMessage username)
+	Icons                 *SenderIcons // msg.icons as sent (icon_emoji / icon_url)
+	Subtype, Text         string       // Text: raw mrkdwn (editing, copy, search)
+	ThreadTS, LatestReply string
+	EditedTS              string
+	EditedBy              string // edited.user: who made the last edit (EditedLabel names them on a workflow message)
+	Permalink             string // set on search results
 	// Search results only (search.go): requestor_replied (the viewer
 	// replied in the thread) and the index of the first block that held a
 	// highlight marker (0 when none), compactCardBlocks' start
@@ -402,9 +405,12 @@ type Event struct {
 	User     *User
 	Conv     *Conv
 	Count    *Count // message, marked: the conversation's new unread state
-	Reply    bool   // message: a thread reply
-	Mention  bool   // message: mentions the viewer
-	ConvKind string // message: kind of the conversation
+	// BadgesGen (marked, thread_read): ActivityBadgesGen when the read
+	// came, for the Activity view's decrement (DecActivityBadges)
+	BadgesGen uint64
+	Reply     bool   // message: a thread reply
+	Mention   bool   // message: mentions the viewer
+	ConvKind  string // message: kind of the conversation
 	// Ahead (message, update): a top-level message past the end of a
 	// window whose end went stale at a slow connect (store
 	// UpsertHeard): the channel's lists don't draw it until the window is
@@ -488,6 +494,9 @@ type SendOpts struct {
 	// composer passes its own so its message list can find the message
 	// it jumps to (messages.ChannelView.JumpToOwnSend).
 	ClientMsgID string
+	// AgentMessageSourceType goes out as agent_message_source_type (a
+	// shared prompt sent to its agent).
+	AgentMessageSourceType string
 }
 
 // UploadOpts share one or more files (held in memory, never spooled to disk).

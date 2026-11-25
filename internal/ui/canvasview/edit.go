@@ -916,8 +916,11 @@ func (e *editState) finish(v *View) bool {
 			// edit-document saves a block's own text (formatting, links,
 			// line breaks, its mentions and emoji), the block emptied, and
 			// new blocks that keep the list they follow, for now: nothing
-			// else is sent, and the text stays
-			v.h.Toast(cantEdit)
+			// else is sent, and the text stays; Escape again discards it,
+			// as after the other refusals (else Escape would only refuse
+			// again, and the block couldn't be left but by undoing)
+			v.h.Toast(cantEdit + ". Remove it, or press Escape again to discard your changes")
+			s.refused = true
 			s.focus = true
 			return false
 		}

@@ -122,10 +122,12 @@ func openLinkDialog(h Host, f linkForm, done func(linkResult), onCancel func()) 
 		title = messageInputNS.T("Edit link")
 	}
 	d.modal = popups.NewModal(h, popups.ModalOpts{
-		Title:        title,
-		Body:         d.slackBody,
-		PadX:         24, // Slack's link dialog: 24px padding, 68px header → 472px fields
-		HeadH:        68,
+		Title: title,
+		Body:  d.slackBody,
+		// ComposerLinkModal's _FormDialog (boot-shared qph5) renders FlDO's
+		// DeprecatedDialog: c-dialog's 24px padding (472px fields) and 68px
+		// header, its close button first in the tab order at top 16px,
+		// right 16px, and the title cut on one line (OldDialog)
 		EnterSubmits: true,
 		FocusStops: func() []event.Tag {
 			if d.preview != nil {
@@ -142,7 +144,7 @@ func openLinkDialog(h Host, f linkForm, done func(linkResult), onCancel func()) 
 				onCancel()
 			}
 		},
-	})
+	}).OldDialog()
 	if linkDialogTap != nil {
 		linkDialogTap(d)
 	}

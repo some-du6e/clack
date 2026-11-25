@@ -26,12 +26,15 @@ type Message struct {
 	// and replies roots do; the socket's message_changed doesn't), which
 	// is what Slack's slurpThreadSubscriptions takes a thread's
 	// subscription from (store/thread_subs.go). Decoding sets it.
-	SubscribedSet bool            `json:"-"`
-	Edited        *Edited         `json:"edited,omitempty"`
-	Reactions     []Reaction      `json:"reactions,omitempty"`
-	Files         []File          `json:"files,omitempty"`
-	Blocks        json.RawMessage `json:"blocks,omitempty"`
-	Attachments   []Attachment    `json:"attachments,omitempty"`
+	SubscribedSet bool       `json:"-"`
+	Edited        *Edited    `json:"edited,omitempty"`
+	Reactions     []Reaction `json:"reactions,omitempty"`
+	Files         []File     `json:"files,omitempty"`
+	// XFiles are the files uploaded with the message (x_files), which
+	// its sender may take out of it (getRemovableFileIds: chat.removeFile)
+	XFiles      []string        `json:"x_files,omitempty"`
+	Blocks      json.RawMessage `json:"blocks,omitempty"`
+	Attachments []Attachment    `json:"attachments,omitempty"`
 	// DocumentUnfurl is a canvas link card's unfurl container's state
 	// (Quip's slack_unfurl message; fetchAndFormatUnfurlContainer reads it).
 	DocumentUnfurl *DocumentUnfurl `json:"document_unfurl,omitempty"`
@@ -637,6 +640,14 @@ type User struct {
 	// RestrictedUserType is "frontline_worker" for a frontline worker
 	// (Slack's u+N9 W), else empty.
 	RestrictedUserType string `json:"restricted_user_type,omitempty"`
+
+	// What a contact_card reads (DIay isActiveMember, and isProfileOnlyUser
+	// from IsProfileOnlyUser above; Mu7P's who_can_share_contact_card:
+	// EVERYONE, TEAM_MEMBERS or NO_ONE).
+	IsInvitedUser          bool   `json:"is_invited_user,omitempty"`
+	IsForgotten            bool   `json:"is_forgotten,omitempty"`
+	IsSlackSecurityBot     bool   `json:"is_slacksecuritybot,omitempty"`
+	WhoCanShareContactCard string `json:"who_can_share_contact_card,omitempty"`
 }
 
 type EnterpriseUser struct {

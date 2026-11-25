@@ -439,11 +439,24 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 			return
 		}
 	}
-	if f.Permalink != "" {
-		openURL(f.Permalink)
-	} else if f.URL != "" {
-		openURL(f.URL)
+	openFileAction(r.h, f)
+}
+
+// openFileAction is handleFileContainerClick's rest for a click the
+// viewers above didn't take (popups.OpenFileCard): an .exe, a zip or a
+// document downloads in the app; only a remote or external file's own
+// link, a PDF (openFileInNewWindow's fallback: Clack has no PDF viewer)
+// and a video where the host has no player open the browser. A playable
+// audio file has no click (MessageFile gives fileIsPlayableAudio none).
+func openFileAction(h Host, f *richtext.File) {
+	if f.IsAudio || f.IsImage {
+		return // the viewer's (or the player's) own
 	}
+	popups.OpenFileCardWith(f, openURL, func(f *richtext.File) {
+		if ph, ok := h.(popups.Host); ok {
+			downloadFile(ph, f)
+		}
+	}, nil) // the viewers above had their turn
 }
 
 // OpenAudioClipMenu is the audio player's More actions
@@ -606,6 +619,29 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 	}
 }
 
+// DownloadImageFile is an image's AttachmentImageActions Download
+// (richview.ImageDownloadHandler): the image's Slack file, downloaded as
+// its FileActions' Download does.
+func (r *richHandler) DownloadImageFile(f *richtext.File) {
+	if ph, ok := r.h.(popups.Host); ok && f != nil {
+		popups.DownloadFile(ph, f)
+	}
+}
+
+// ImageMenu is an image's AttachmentImageActions More actions
+// (richview.ImageMenuHandler): Copy link, Hide image.
+func (r *richHandler) ImageMenu(href, key string, btn image.Rectangle, closed func()) {
+	if r.anchor != nil {
+		min := r.anchor(btn.Min)
+		btn = image.Rectangle{Min: min, Max: min.Add(btn.Size())}
+	}
+	if ph, ok := r.h.(popups.Host); ok {
+		ph.ShowOverlay(popups.NewImageActionsMenu(ph, btn, href, key, closed))
+	} else if closed != nil {
+		closed()
+	}
+}
+
 // ChartAction is a data_visualization block's More actions
 // (richview.ChartActionHandler): its menu (popups.NewChartMenu) at the
 // button.
@@ -618,6 +654,29 @@ func (r *richHandler) DataTableAction(act string, c *richview.TableControl, btn 
 	}
 	if ph, ok := r.h.(popups.Host); ok {
 		popups.DataTableAction(ph, act, c, btn)
+	}
+}
+
+// ContactCardAction is a contact card's action
+// (richview.ContactCardHandler).
+func (r *richHandler) ContactCardAction(act string, c *richtext.ContactCard, _ image.Rectangle, _ bool) {
+	if ph, ok := r.h.(popups.Host); ok {
+		popups.ContactCardAction(ph, act, c)
+	}
+}
+
+// SharePromptSend is a share_prompt's Send to {agentName}
+// (richview.SharePromptHandler).
+func (r *richHandler) SharePromptSend(p *richtext.SharePrompt) {
+	if ph, ok := r.h.(popups.Host); ok {
+		popups.SharePromptSend(ph, p)
+	}
+}
+
+// EventAction is an event card's action (richview.EventHandler).
+func (r *richHandler) EventAction(act string, ev *richtext.Event, ch, ts string, btn image.Rectangle, window bool) {
+	if ph, ok := r.h.(popups.Host); ok {
+		popups.EventAction(ph, act, ev, ch, ts, popups.ActionAnchor(btn, window))
 	}
 }
 
@@ -693,6 +752,20 @@ func (r *richHandler) RemoveAttachment(id string) {
 		return
 	}
 	popups.ConfirmRemovePreview(r.h, m.Channel, m.TS, id)
+}
+
+// RemoveFile is a file card's x (richview.FileRemover, FileRemoveButton's
+// onRemove): DeleteFileDialog for a file shared into the message, else
+// removeFileFromMessage.
+func (r *richHandler) RemoveFile(f *richtext.File, deletion bool) {
+	if r.m == nil || f == nil {
+		return
+	}
+	if deletion {
+		popups.ConfirmDeleteFile(r.h, f)
+		return
+	}
+	popups.RemoveFileFromMessage(r.h, *r.m, f)
 }
 
 // Button is a click on a Block Kit element richview drew itself: only a

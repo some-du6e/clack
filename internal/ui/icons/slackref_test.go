@@ -340,6 +340,39 @@ var slackRef = map[string]string{
 	"hourglass":              "hourglass",
 	"status-slackbot-filled": "status-slackbot-filled",
 	"cloud-offline-filled":   "cloud-offline-filled", // the composer hint bar's offline notice
+	// the file types' icons (file_types.go: D0WB FileEntityIcon and the file surfaces)
+	"brand-adobe-ai-filled":        "brand-adobe-ai-filled",
+	"brand-adobe-fl-filled":        "brand-adobe-fl-filled",
+	"brand-adobe-id-filled":        "brand-adobe-id-filled",
+	"brand-adobe-ps-filled":        "brand-adobe-ps-filled",
+	"brand-adobe-swf-filled":       "brand-adobe-swf-filled",
+	"brand-android-filled":         "brand-android-filled",
+	"brand-apple-filled":           "brand-apple-filled",
+	"brand-dropbox-paper-filled":   "brand-dropbox-paper-filled",
+	"brand-lucid-chart-filled":     "brand-lucid-chart-filled",
+	"brand-lucid-press-filled":     "brand-lucid-press-filled",
+	"brand-lucid-spark-filled":     "brand-lucid-spark-filled",
+	"brand-markdown-filled":        "brand-markdown-filled",
+	"brand-microsoft-excel-filled": "brand-microsoft-excel-filled",
+	"brand-microsoft-ppt-filled":   "brand-microsoft-ppt-filled",
+	"brand-microsoft-word-filled":  "brand-microsoft-word-filled",
+	"brand-zoho-filled":            "brand-zoho-filled",
+	"database":                     "database",
+	"disc-image":                   "disc-image",
+	"gauge-filled":                 "gauge-filled",
+	"media-archive":                "media-archive",
+	"pdf-file-filled":              "pdf-file-filled",
+	"presentation":                 "presentation",
+	"quip":                         "quip",
+	"text":                         "text",
+	"three-d-graphic":              "three-d-graphic",
+	"zip":                          "zip",
+	// getFileTypeSvgIconName's outline glyphs (search's type filter, rich_text file slugs)
+	"binary":     "binary",
+	"document":   "document",
+	"gauge":      "gauge",
+	"pdf-file":   "pdf-file",
+	"transcript": "transcript",
 }
 
 // fontRef names, for each glyph of Slack's icon font the set draws (the
@@ -364,6 +397,7 @@ var fontRef = map[string]rune{
 	"real-checkbox-checked":   0xE323,
 	"circle-checkbox-checked": 0xE326, // the Add emoji dialog's installed pack (8DMj)
 	"form-checkbox-dash":      0xE706,
+	"exclamation-circle-font": 0xE210, // the files UnverifiedDisclosure's pillow (ljcx)
 	"pencil-glyph":            0xE024,
 	"scheduled-send-glyph":    0xE07A,
 	"arrow-up-medium":         0xE292,

@@ -65,10 +65,14 @@ type CanvasInfo struct {
 // CanvasFile is an embedded Slack file's display data (images, file cards).
 type CanvasFile struct {
 	ID, Name, Title, Mime, PrettyType string
-	Thumb                             string // best thumbnail (files.slack.com, needs the cookie)
-	ThumbW, ThumbH                    int
-	Permalink                         string
-	IsImage                           bool
+	// Filetype and Mode are files.info's; URL and Download its
+	// url_private and url_private_download (the file card's icon, click
+	// and download)
+	Filetype, Mode, URL, Download string
+	Thumb                         string // best thumbnail (files.slack.com, needs the cookie)
+	ThumbW, ThumbH                int
+	Permalink                     string
+	IsImage                       bool
 }
 
 // CanvasDoc is one fetched canvas.
@@ -97,6 +101,7 @@ type canvasFileJSON struct {
 	Editors         []string        `json:"editors"`
 	Permalink       string          `json:"permalink"`
 	URLPrivate      string          `json:"url_private"`
+	URLPrivDownload string          `json:"url_private_download"`
 	Channels        []string        `json:"channels"`
 	Groups          []string        `json:"groups"`
 	IMs             []string        `json:"ims"`
@@ -257,6 +262,7 @@ func (a *App) Canvas(ctx context.Context, id string) (*CanvasDoc, error) {
 				return
 			}
 			cf := CanvasFile{ID: ff.ID, Name: ff.Name, Title: ff.Title, Mime: ff.Mimetype, PrettyType: ff.PrettyType,
+				Filetype: ff.Filetype, Mode: ff.Mode, URL: ff.URLPrivate, Download: ff.URLPrivDownload,
 				Permalink: ff.Permalink, IsImage: strings.HasPrefix(ff.Mimetype, "image/")}
 			switch {
 			case ff.Thumb1024 != "":

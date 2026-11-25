@@ -30,12 +30,13 @@ import (
 // (internal/pluginlib), each built unmodified by its project's own build,
 // with one-click install and update. A plugin both systems have is one row
 // with both tags, under one name or names of their own (pluginlib.Pairs,
-// docs/PLUGINS.md's pair table); Install installs the variant the plugin
-// bench picked (internal/pluginbench, docs/PLUGIN-BENCH.md), the row says
-// which, and the chevron beside Install offers both, the pick first with
-// its reason (without bench data, Install asks which). Once either is
-// installed the row shows that one, whichever it is. An installed Library
-// plugin is an ordinary user plugin in that system's plugins/ dir.
+// docs/PLUGINS.md's pair table); Install installs the better version and
+// never asks (installPick: the one that works in Clack, then the plugin
+// bench's pick, internal/pluginbench and docs/PLUGIN-BENCH.md, then
+// Slick's), the row says which and why, and the chevron beside Install
+// offers both, the pick first. Once either is installed the row shows that
+// one, whichever it is. An installed Library plugin is an ordinary user
+// plugin in that system's plugins/ dir.
 //
 // Neither upstream has a library, so the page is drawn with Slick's
 // settings parts: category cards of hairline-separated rows, badges.
@@ -122,6 +123,11 @@ type libraryPage struct {
 	// groups is libraryGroups of groupsOf's entries, built once an index
 	groups   []libGroup
 	groupsOf *pluginlib.Index
+
+	// ptrIn, ptrDown: the pointer is over the Plugins pane, a press is
+	// down there (pluginsPage.trackPointer). A refreshed index waits
+	// while either holds (follow): rows never move under a click
+	ptrIn, ptrDown bool
 }
 
 // libStatesKey is what the install states were read under.
@@ -336,8 +342,12 @@ func (v *libraryPage) follow() {
 	if lib == nil {
 		return
 	}
-	if c := lib.Cached(); c != nil && c != v.ix {
-		v.ix = c
+	// a newer index (a refresh the page didn't start) is taken once the
+	// pointer is off the pane and no press is down: a row it adds above
+	// another, or an Update in a Settings button's place, would otherwise
+	// take a click meant for what was drawn there
+	if c := lib.Cached(); c != nil && c != v.ix && !v.ptrIn && !v.ptrDown {
+		v.ix, v.loadErr = c, "" // an earlier failure's notice goes with it
 		v.groups, v.states = nil, nil
 	}
 	v.load(false)
@@ -745,7 +755,11 @@ func (v *libraryPage) installPick(choices []pluginlib.Entry) (pluginlib.Entry, s
 	if p, ok := v.benchFor(tied); ok {
 		for _, e := range tied {
 			if e.System == p.Winner {
-				return e, benchCost(p) + " on the plugin bench"
+				why := benchCost(p) + " on the plugin bench"
+				if !p.Exact {
+					why += " (measured on an earlier build)"
+				}
+				return e, why
 			}
 		}
 	}
@@ -783,12 +797,14 @@ func (v *libraryPage) benchFor(choices []pluginlib.Entry) (pluginbench.Pick, boo
 
 // benchCost is what the bench's pick won on, its first clause that's a
 // cost ("3.0x faster to load", "smaller bundle (2.4 KB vs 6.1 KB)"), past
-// what says both work ("no behaviour checks", "both load", "costs within
-// noise"); else its reason as it is.
+// what says both work ("no behaviour checks", "both load", "works fully in
+// both", "same results (…)", "costs within noise"); else its reason as it
+// is.
 func benchCost(p pluginbench.Pick) string {
 	for _, part := range strings.Split(strings.ReplaceAll(p.Reason, "; ", ", "), ", ") {
 		switch c := strings.TrimSpace(part); {
-		case c == "", c == "no behaviour checks", c == "both load", c == "costs within noise", c == "works fully":
+		case c == "", c == "no behaviour checks", c == "both load", c == "costs within noise", c == "works fully",
+			c == "works fully in both", strings.HasPrefix(c, "same results ("):
 		default:
 			return c
 		}
@@ -1060,7 +1076,7 @@ type libAction struct {
 // action: Installing/Updating while busy; Update when an installed entry
 // has an update; Settings when one is installed; else Install. When the
 // plugin exists in both systems and both are running, Install installs the
-// bench's pick and its chevron offers both; with no bench data it asks.
+// better version (installPick) and its chevron offers both; it never asks.
 func (v *libraryPage) action(g libGroup) libAction {
 	installed, updates := v.groupStates(g)
 	for _, e := range g.Entries {
@@ -1153,10 +1169,6 @@ func (v *libraryPage) installMenuFor(choices []pluginlib.Entry, title pluginlib.
 	w, why := v.installPick(choices)
 	if why != "" {
 		sort.SliceStable(order, func(i, j int) bool { return order[i].System == w.System && order[j].System != w.System })
-		// the menu has room for the bench's caveat the row's line leaves out
-		if p, ok := v.benchFor(choices); ok && !p.Exact && p.Winner == w.System && strings.HasSuffix(why, " on the plugin bench") {
-			why += " (measured on an earlier build)"
-		}
 	}
 	for _, e := range order {
 		it := MenuItem{Label: systemName(e.System), Subtitle: systemBlurb(e.System), Do: func() { v.installEntry(e, false) }}

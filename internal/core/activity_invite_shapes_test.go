@@ -218,6 +218,21 @@ func TestActivityBadgeAgreesWithPagedList(t *testing.T) {
 			want++
 		}
 	}
+	// the badge counts system alerts (9OWn j, under
+	// generic_system_user_alert), which the All feed's types don't ask
+	// for (hgTi j): they come in live. The fixture's unread ones, read by
+	// their own type
+	if types["generic_system_alert"] {
+		p, err := a.Activity(ctx, ActivityOpts{Types: "generic_system_alert", Unread: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, it := range p.Items {
+			if it.Unread {
+				want++
+			}
+		}
+	}
 	if got := a.ActivityBadgeCount(); got != want || got < bulk {
 		t.Errorf("badge %d, the list's unread badged rows %d (bulk %d)", got, want, bulk)
 	}

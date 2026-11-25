@@ -167,7 +167,9 @@ func TestAttachments(t *testing.T) {
 			AuthorName: "Bot", AuthorIcon: "https://i.test/a.png", AuthorLink: "https://a.test",
 			Title: []Span{tx("T & "), em("smile")}, TitleLink: "https://t.test", Text: []Block{para(tx("body "), st("i", Italic))},
 			Image:  &Image{URL: "https://files.slack.com/files-pri/T1-F1/x.png", W: 800, H: 400, Proxy: true},
-			Footer: []Span{tx("foot "), user("U1", "@alice")}, FooterIcon: "https://i.test/f.png", TS: 1700000000},
+			Footer: []Span{tx("foot "), user("U1", "@alice")}, FooterIcon: "https://i.test/f.png", TS: 1700000000,
+			// no id: the image's URL keys its expandable (getExpandableKey)
+			MediaKey: "img_msg_1.0https://files.slack.com/files-pri/T1-F1/x.png"},
 			Fields:     [][]Span{{st("F1", Bold), br(), tx("v1")}, {st("F2", Bold), br(), st("v2", Bold)}},
 			FieldShort: []bool{true, false}},
 		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Index: 1, ServiceName: "Example", ServiceIcon: "https://ex.test/fav.ico", FromURL: "https://ex.test/page",

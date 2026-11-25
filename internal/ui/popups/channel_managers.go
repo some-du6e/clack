@@ -27,9 +27,9 @@ package popups
 //     Channel Managers. Give it another try in a few minutes."
 //
 // Neither focuses a button on open (BaseModal focuses the dialog). Their
-// titles wrap (.c-sk-modal_title_bar__text has no nowrap); a wrapped
-// MakeChannelManagerModal title shows the channel as text, without the
-// private channel's lock.
+// titles wrap (.c-sk-modal_title_bar__text has no nowrap), and a wrapped
+// MakeChannelManagerModal title keeps the channel entity's icon (the
+// private channel's lock) beside its name.
 
 import (
 	"context"
@@ -139,10 +139,9 @@ func OpenMakeChannelManagerModal(h Host, ch, member string) *ChannelManagerModal
 		}}
 	th := h.Theme()
 	d.Modal = NewModal(h, ModalOpts{
-		Title: pre, TitleIcon: ic, TitleAfter: name + post,
 		// a title too long for its line wraps (.c-sk-modal_title_bar__text),
-		// the channel then as text
-		TitleWrap: true, TitleWrapText: d.Heading,
+		// the channel entity with its icon
+		Title: pre, TitleIcon: ic, TitleAfter: name + post,
 		NoClose: true, // showCloseButton false
 		Class:   "p-make_channel_managers_modal",
 		Body:    func(gtx layout.Context) layout.Dimensions { return d.body(gtx, th) },
@@ -183,11 +182,10 @@ func OpenRemoveManagerModal(h Host, ch, member string) *ChannelManagerModal {
 		}}
 	th := h.Theme()
 	d.Modal = NewModal(h, ModalOpts{
-		Title:     d.Heading,
-		TitleWrap: true, // .c-sk-modal_title_bar__text wraps
-		Class:     "p-mpdm_add_people_modal",
-		Body:      func(gtx layout.Context) layout.Dimensions { return d.body(gtx, th) },
-		Buttons:   []*ModalButton{{Label: nsChDetails.T("Cancel"), Kind: BtnOutline}, d.Go},
+		Title:   d.Heading, // wraps (.c-sk-modal_title_bar__text)
+		Class:   "p-mpdm_add_people_modal",
+		Body:    func(gtx layout.Context) layout.Dimensions { return d.body(gtx, th) },
+		Buttons: []*ModalButton{{Label: nsChDetails.T("Cancel"), Kind: BtnOutline}, d.Go},
 	})
 	h.ShowOverlay(d)
 	return d

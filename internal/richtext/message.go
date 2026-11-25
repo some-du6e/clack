@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/some-du6e/clack/internal/expandable"
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -215,6 +216,9 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 	if bs := parseBlocks(blocks); len(bs) > 0 && !blocksDrawNothing(blocks, bs) {
 		d.Blocks = c.blocks(bs)
 		d.Jumbo = richOnlyEmoji(bs)
+		if len(d.Blocks) > 0 && m.Text != "" && !blocksHaveText(d.Blocks) {
+			d.Fallback = FromMrkdwn(r, m.Text) // plain-text readers' fallback (PlainTextWith)
+		}
 	}
 	// Slack draws the blocks instead of the text whenever the message has
 	// any (shouldRenderBlocksInsteadOfText), even if they draw nothing (a
@@ -267,6 +271,9 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 					at.ID = strconv.Itoa(a.ID)
 				}
 				at.Index = i
+				// the media's expandable (getExpandableKey("attachment"):
+				// the view's context ends it, richview appends it)
+				at.MediaKey = expandable.AttachmentKey(a, m.TS, "")
 				at.BotID = firstNonEmpty(a.BotID, m.BotID)
 				at.BotName = botName(r, m, at.BotID)
 				at.LinkedInText = a.FromURL != "" && linksURL(m, a.FromURL)

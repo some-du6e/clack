@@ -270,6 +270,9 @@ var experimentReads = map[string][]string{
 	// a data_visualization block's More actions: Copy as image
 	// (popups/chart_menu.go, canvas-data-visualization-block v4Jz)
 	"data_visualization_copy_image": on,
+	// a split_button's chevron and its Menu of the secondary actions
+	// (ui/blockkit/splitbutton.go, boot-shared wAPv); not the account's
+	"bk_refresh_split_button": on,
 	// sidebar (sidebar_rules.go, section menus, prefs)
 	"filter_dormant_channels": on, "improve_mute_pref": on, "dm_recency_sort_rollout": {"without_edu", "with_edu"},
 	"programmable_sidebar_dm_history": on, "vip_section_pref": on, "agents_in_dm_sidebar": on, "agents_in_dm_sidebar_pref": on,
@@ -324,8 +327,9 @@ var experimentReads = map[string][]string{
 	"slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
 	"slack_seasonal_delight":         on, // the picker's Halloween emoji pack call to action (emoji_pack_cta.go: nkcv k)
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
-	// /feedback's dialog and its note (composer/slash_local.go, popups/user_feedback.go: tCkD, VhHZ)
-	"slash_feedback_in_modal": on, "slash_feedback_modal_warning": on,
+	// /feedback's dialog and its note (composer/slash_local.go, popups/user_feedback.go: tCkD, VhHZ);
+	// feedback_disabled_orgs' treatment makes /feedback UNKNOWN_COMMAND (slash_local.go: P+cE, 9lMd)
+	"slash_feedback_in_modal": on, "slash_feedback_modal_warning": on, "feedback_disabled_orgs": {"treatment"},
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},
 	"emoji_exact_match_boost":                                  on,

@@ -9,6 +9,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/richtext"
@@ -37,6 +38,18 @@ func paintIconAt(ops *op.Ops, name string, r image.Rectangle, col color.NRGBA) {
 		Constraints: layout.Exact(r.Size())}
 	defer op.Offset(r.Min).Push(ops).Pop()
 	icons.GetSlack(name)(gtx, unit.Dp(r.Dx()), col)
+}
+
+// paintArtAt paints the art name in r (its width square), at opacity
+// alpha (0 or 1: opaque).
+func paintArtAt(ops *op.Ops, name string, r image.Rectangle, alpha float32) {
+	gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(r.Size())}
+	defer op.Offset(r.Min).Push(ops).Pop()
+	if alpha > 0 && alpha < 1 {
+		defer paint.PushOpacity(ops, alpha).Pop()
+	}
+	icons.Art(gtx, name, r.Dx())
 }
 
 // addIcon adds an inline icon of px at the flow's position.
