@@ -105,12 +105,12 @@ func TestNoInstallOnQuitAsTheSessionEnds(t *testing.T) {
 		"Windows is shutting down or restarting, forced " + desktop.SessionEndMark,
 		"an installer or update is replacing Clack's files (Windows Restart Manager closed it) " + desktop.SessionEndMark + " (render: device lost)",
 	} {
-		if err := quitInstallBlocked(why); !errors.Is(err, errNotOnQuit) {
+		if err := quitBlocked(why, false); !errors.Is(err, errNotOnQuit) {
 			t.Errorf("%q: %v, want errNotOnQuit", why, err)
 		}
 	}
 	for _, why := range []string{"Quit", "the window closed", "SIGTERM"} {
-		if err := quitInstallBlocked(why); err != nil {
+		if err := quitBlocked(why, false); err != nil {
 			t.Errorf("%q: %v, want it to install", why, err)
 		}
 	}
@@ -120,5 +120,17 @@ func TestNoInstallOnQuitAsTheSessionEnds(t *testing.T) {
 		if err := u.installOnQuit(ui.UpdateInfo{Tag: "v9.9.9"}); !errors.Is(err, errNotOnQuit) || !strings.Contains(err.Error(), "nothing staged") {
 			t.Errorf("%s, nothing staged: %v, want it to wait only for its stage", k, err)
 		}
+	}
+}
+
+// A session end that comes while a user's quit is already closing (its
+// exit reason the user's, "Quit") still installs nothing: the reason says
+// only the first quit, the session's end sets sessionEnding.
+func TestNoInstallWhenTheSessionEndsDuringAQuit(t *testing.T) {
+	if err := quitBlocked("Quit", true); !errors.Is(err, errNotOnQuit) {
+		t.Errorf("a session ending during a Quit: %v, want errNotOnQuit", err)
+	}
+	if err := quitBlocked("Quit", false); err != nil {
+		t.Errorf("a plain Quit: %v, want it to install", err)
 	}
 }

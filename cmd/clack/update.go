@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/desktop"
@@ -22,6 +23,8 @@ import (
 type updates struct {
 	inst desktop.Install
 	dl   *desktop.Updater
+
+	socket string // the instance socket: the helper skips the install while a Clack answers on it
 
 	mu    sync.Mutex
 	pkg   map[string]desktop.Package // verified downloads, by tag
@@ -187,15 +190,21 @@ func (u *updates) install(info ui.UpdateInfo) error {
 	return err
 }
 
+// sessionEnding is set the moment the session starts ending: Windows'
+// WM_ENDSESSION (the tray's OnSessionEnd), or SIGTERM / SIGHUP. It holds
+// even when that comes while a user's quit is already closing, which the
+// exit reason (the first quit's) doesn't say.
+var sessionEnding atomic.Bool
+
 // quitInstallBlocked is why a quit with exit reason why installs nothing,
-// or nil: a quit as Windows ends the session (desktop.SessionEndMark) may
-// have its installer or swap killed halfway, Clack left broken, so the
-// update waits for the next quit (or Install and restart). The quit then
-// gets 3 s before Windows ends the process; the helper would be ended
-// with the session too.
-func quitInstallBlocked(why string) error {
-	if strings.Contains(why, desktop.SessionEndMark) {
-		return fmt.Errorf("%w: Windows is ending the session", errNotOnQuit)
+// or nil: the session is ending (ending, or desktop.SessionEndMark in the
+// reason), so the installer or swap could be killed halfway and leave
+// Clack broken; the update waits for the next quit (or Install and
+// restart). The helper checks again before it installs (a session end
+// after the quit: SessionEnding in desktop's applyPlan).
+func quitInstallBlocked(why string, ending bool) error {
+	if ending || strings.Contains(why, desktop.SessionEndMark) {
+		return fmt.Errorf("%w: the session is ending", errNotOnQuit)
 	}
 	return nil
 }
@@ -221,6 +230,8 @@ func (u *updates) installOnQuit(info ui.UpdateInfo) error {
 		return fmt.Errorf("%w: nothing staged for it", errNotOnQuit)
 	}
 	plan.Relaunch = nil // quitting: the user starts Clack again
+	plan.OnQuit = true  // nothing may close a Clack started meanwhile (installPlan)
+	plan.Socket = u.socket
 	_, err := desktop.StartHelper(plan)
 	return err
 }

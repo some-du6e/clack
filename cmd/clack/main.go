@@ -372,6 +372,7 @@ func main() {
 	}
 	if desktop.Released(version) || os.Getenv("CLACK_UPDATE_URL") != "" {
 		u := newUpdates(filepath.Join(cfg, "cache", "updates"))
+		u.socket = desktop.SocketPath(cfg) // the helper asks it before installing on quit
 		opts.CheckUpdate, opts.DownloadUpdate, opts.InstallUpdate = u.check, u.download, u.install
 		opts.InstallUpdateOnQuit = u.installOnQuit
 	}
@@ -582,6 +583,7 @@ func main() {
 			// window's WM_ENDSESSION returns: the exit line goes first, then
 			// the quit it starts gets up to 3 s.
 			tray.OnSessionEnd(func(why string) {
+				sessionEnding.Store(true) // whatever quit is running: nothing installs (quitInstallBlocked)
 				quit(why)
 				select {
 				case <-runDone:
@@ -605,6 +607,11 @@ func main() {
 	go func() {
 		s := <-sigs
 		signal.Stop(sigs)
+		if s == syscall.SIGTERM || s == syscall.SIGHUP {
+			// a Linux (or macOS) session ending sends these: the AppImage
+			// swap mustn't start as the session goes (quitInstallBlocked)
+			sessionEnding.Store(true)
+		}
 		quit("signal: " + s.String())
 	}()
 	go func() {
@@ -621,7 +628,7 @@ func main() {
 		// Slack's does on quit (ui.Options.InstallUpdateOnQuit); not when
 		// Windows ends the session, which may kill the installer or the
 		// swap partway: the next quit installs it
-		if err := quitInstallBlocked(why); err != nil {
+		if err := quitInstallBlocked(why, sessionEnding.Load()); err != nil {
 			log.Printf("update: nothing installs on this quit: %v", err)
 		} else if tag, err := a.InstallUpdateOnQuit(); tag != "" {
 			switch {

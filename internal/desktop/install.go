@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,13 @@ type Plan struct {
 	Relaunch []string `json:"relaunch,omitempty"`
 	// Stage is the directory Prepare unpacked into, removed afterwards.
 	Stage string `json:"stage,omitempty"`
+	// OnQuit: an install as Clack quits (nobody asked to restart). The
+	// helper then skips it when the session is ending (SessionEnding) or a
+	// Clack answers on Socket again (the user reopened it), and the Windows
+	// installer runs with /NOCLOSEAPPLICATIONS, so nothing closes a Clack
+	// started meanwhile; the update waits for the next quit.
+	OnQuit bool   `json:"on_quit,omitempty"`
+	Socket string `json:"socket,omitempty"`
 }
 
 // Swap replaces Target with New.
@@ -365,6 +373,14 @@ func applyPlan(p Plan, wait time.Duration) error {
 	if p.PID > 0 && !waitExit(p.PID, wait) {
 		return fmt.Errorf("update: Clack (pid %d) didn't exit", p.PID)
 	}
+	if p.OnQuit {
+		if why := onQuitBlocked(p); why != "" {
+			if p.Stage != "" && strings.HasPrefix(filepath.Base(p.Stage), stagePrefix) {
+				os.RemoveAll(p.Stage)
+			}
+			return fmt.Errorf("update: %s isn't installing on this quit: %s", p.Tag, why)
+		}
+	}
 	err := installPlan(p)
 	if p.Stage != "" && strings.HasPrefix(filepath.Base(p.Stage), stagePrefix) {
 		os.RemoveAll(p.Stage)
@@ -377,11 +393,45 @@ func applyPlan(p Plan, wait time.Duration) error {
 	return err
 }
 
+// onQuitBlocked is why an on-quit install mustn't run now, or "".
+func onQuitBlocked(p Plan) string {
+	switch {
+	case sessionEnding():
+		return "the session is ending"
+	case p.Socket != "" && instanceAnswers(p.Socket):
+		return "Clack is running again"
+	}
+	return ""
+}
+
+var sessionEnding = SessionEnding
+
+// instanceAnswers reports whether a Clack listens on the instance socket.
+var instanceAnswers = func(socket string) bool {
+	c, err := net.DialTimeout("unix", socket, 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
+// runArgs is the plan's command, an on-quit Windows install with
+// /NOCLOSEAPPLICATIONS (clack.iss sets CloseApplications=force: its
+// Restart Manager would close a Clack reopened since, and nothing starts
+// it again).
+func runArgs(p Plan) []string {
+	if !p.OnQuit || len(p.Run) == 0 || p.Swap != nil {
+		return p.Run
+	}
+	return append(append([]string(nil), p.Run...), "/NOCLOSEAPPLICATIONS")
+}
+
 func installPlan(p Plan) error {
-	if len(p.Run) > 0 {
+	if run := runArgs(p); len(run) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		if err := runCmd(ctx, p.Run[0], p.Run[1:]...); err != nil {
+		if err := runCmd(ctx, run[0], run[1:]...); err != nil {
 			return err
 		}
 	}
@@ -488,13 +538,17 @@ func PrepareQuiet(ctx context.Context, in Install, pkg Package) (Plan, error) {
 // a disk image under /Volumes ("running from DMG").
 func UpdateUnsupported(in Install) string {
 	exe := in.Exe
-	if exe == "" {
+	if exe == "" || in.Kind == KindAppImage {
+		// an AppImage runs from its mount under $TMPDIR (.mount_*): the
+		// file that updates is $APPIMAGE, the target
 		exe = in.Target
 	}
 	switch {
 	case strings.Contains(in.Target, "/AppTranslocation/"):
 		return "running from a translocated copy"
-	case runtime.GOOS == "darwin" && strings.HasPrefix(exe, "/Volumes/"):
+	case runtime.GOOS == "darwin" && strings.Contains(exe, "/Volumes/Clack.app"):
+		// Slack's own check, execPath.includes("/Volumes/Slack.app"): an
+		// app on an external drive under /Volumes updates as any other
 		return "running from DMG"
 	}
 	if tmp := os.TempDir(); tmp != "" && strings.HasPrefix(filepath.Clean(exe), filepath.Clean(tmp)+string(filepath.Separator)) {
