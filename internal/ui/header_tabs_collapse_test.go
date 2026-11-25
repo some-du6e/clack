@@ -47,7 +47,7 @@ func TestHeaderTabsAndTopicFit(t *testing.T) {
 	e.waitReady()
 	size, scale := e.size, e.scale
 	t.Cleanup(func() {
-		e.a.prefs.Zoom, e.a.sidebar.hidden = 0, false
+		e.a.prefs.Zoom, e.a.sidebar.hidden, e.a.secondary.width = 0, false, 0
 		e.size, e.scale = size, scale
 		theme.LayoutHook = nil
 	})
@@ -72,6 +72,7 @@ func TestHeaderTabsAndTopicFit(t *testing.T) {
 					e.size = image.Pt(int(1920*base), int(1064*base))
 					e.a.sidebar.hidden = hidden
 					if thread {
+						e.a.secondary.width = 665 // Karim's: the thread pane from x 1080 to 1745 dp
 						e.a.OpenThread(ch, rootTS)
 					} else {
 						e.a.CloseSecondary()
@@ -93,11 +94,11 @@ func TestHeaderTabsAndTopicFit(t *testing.T) {
 					}
 					// the topic: the link is cut at a character, never to its scheme
 					var mu sync.Mutex
-					shown, cut, seen := 0, false, false
-					theme.LayoutHook = func(txt string, n int, c bool) {
+					shown, cut, seen, lw, box := 0, false, false, 0, 0
+					theme.LayoutHook = func(txt string, n int, c bool, w, maxW int) {
 						if txt == link {
 							mu.Lock()
-							shown, cut, seen = n, c, true
+							shown, cut, seen, lw, box = n, c, true, w, maxW
 							mu.Unlock()
 						}
 					}
@@ -111,6 +112,11 @@ func TestHeaderTabsAndTopicFit(t *testing.T) {
 					}
 					if cut && shown <= len("https://") {
 						t.Errorf("%s: the topic's link shows %d runes (%q…), cut at its scheme", tag, shown, link[:shown])
+					}
+					// text-overflow cuts at the character: the line fills its
+					// box but for less than one glyph, never at a word's end
+					if cut && box-lw > m.Sp(13) {
+						t.Errorf("%s: the topic's link (%q…) is cut %d px short of its %d px box: at a break opportunity, not a character", tag, link[:shown], box-lw, box)
 					}
 				}
 			}

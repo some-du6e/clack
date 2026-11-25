@@ -260,8 +260,9 @@ func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensi
 }
 
 // LayoutHook, when set (tests), sees each string Layout shapes, how many
-// of its runes were shown, and whether the truncator ("…") cut it there.
-var LayoutHook func(txt string, shown int, cut bool)
+// of its runes were shown, whether the truncator ("…") cut it there, and
+// the drawn width against the width it had (px).
+var LayoutHook func(txt string, shown int, cut bool, w, maxW int)
 
 // DrawHook, when set (tests: the "no English left" checks), sees every
 // string Text draws.
@@ -437,7 +438,7 @@ func drawTextSlots(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string,
 		}
 	}
 	if LayoutHook != nil {
-		LayoutHook(txt, shown, cut)
+		LayoutHook(txt, shown, cut, it.bounds.Dx(), cs.Max.X)
 	}
 	call := m.Stop()
 	viewport.Min = viewport.Min.Add(it.padding.Min)
