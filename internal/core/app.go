@@ -48,6 +48,7 @@ type App struct {
 	mu        sync.Mutex
 	connected bool
 	online    onlineState // isClientOnline: the machine has a network (online.go)
+	conn      connState   // the API queue's waits for the network and the service (connectivity.go)
 	inflight  map[string]*call
 	lookups   convLookups // LookupConv (channel_lookup.go)
 
@@ -274,16 +275,8 @@ func New(c *slack.Client, s *store.Store) *App {
 		}
 	}
 	a.RTM.OnTrouble = func(on bool) { a.emit(Event{Type: "connection_trouble", Trouble: on}) }
-	// the socket's WAIT_FOR_CONNECTIVITY: no dialling while the client is
-	// offline (online.go)
-	a.RTM.AwaitOnline = func(ctx context.Context) bool {
-		if a.ClientOnline() {
-			return false
-		}
-		a.awaitClientOnline(ctx)
-		return true
-	}
 	a.RTM.OnHello = a.onHello
+	a.wireConnectivity()            // the API counts and the socket's WAIT_FOR_CONNECTIVITY (connectivity.go)
 	s.SetMemberHit(a.memberHit)     // getMemberById's maybeRefetch (member_fresh.go)
 	a.RTM.OnDrop = a.onDroppedEvent // a dropped message's ts still goes into maxTs (maxts_heard.go)
 	s.SetMembersOnline(a.membersOnline)

@@ -158,6 +158,8 @@ type Client struct {
 	ent   string // https://<org>.enterprise.slack.com/api/
 	sem   chan struct{}
 
+	health apiHealth // the API queue's error counts (apihealth.go)
+
 	routeMu sync.RWMutex
 	learned map[string]bool // method -> use enterprise host
 
@@ -757,16 +759,19 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		resp, err := c.do(req, method, body)
 		if err != nil {
 			unanswered(ctx, u, err)
+			c.countNoAnswer(ctx, err) // apihealth.go
 			return &transportError{scrubErr(err)}
 		}
 		if resp.StatusCode == http.StatusTooManyRequests && slackRetrying(ctx) {
 			b := observedBody(ctx, resp) // Slack's queue's schedule, in post
 			answered(ctx, u, resp, b)
+			c.countAnswer(resp.StatusCode)
 			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: b,
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			answered(ctx, u, resp, observedBody(ctx, resp))
+			c.countAnswer(resp.StatusCode) // each 429 is a try of its own that the queue counts
 			if attempt >= 4 {
 				return RateLimited
 			}
@@ -792,9 +797,11 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		resp.Body.Close()
 		if err != nil {
 			unanswered(ctx, u, err) // cut off before the whole answer came
+			c.countNoAnswer(ctx, err)
 			return &transportError{scrubErr(err)}
 		}
 		answered(ctx, u, resp, data)
+		c.countAnswer(resp.StatusCode)
 		if resp.StatusCode >= 400 && resp.StatusCode != 200 {
 			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: kept(ctx, data),
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}

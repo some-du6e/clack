@@ -290,6 +290,9 @@ func (s *Server) asSlackHost(w http.ResponseWriter, r *http.Request) bool {
 	if s.serveSystemDMAsset(w, r, host) { // system_dm.go
 		return true
 	}
+	if s.serveConnectivity(w, r, host) { // connectivity.go
+		return true
+	}
 	name := path.Base(r.URL.Path)
 	switch {
 	case host == "files.slack.com":

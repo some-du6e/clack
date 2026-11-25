@@ -30,7 +30,6 @@ package core
 // RST until they are written to.
 
 import (
-	"context"
 	"log"
 	"net"
 	"sort"
@@ -60,10 +59,13 @@ type onlineState struct {
 	mu     sync.Mutex
 	on     bool
 	pinned bool // PinNetwork: the host's network is none of this App's business
-	// waiters are awaitClientOnline's, closed when clientOnline turns true
-	waiters []chan struct{}
+	// reading is the watcher's last reading (navigator.onLine): clientOnline
+	// follows it only when it changes, as the window's offline and online
+	// events fire only then; the API queue's waits set clientOnline too
+	// (connectivity.go)
+	reading bool
 	// changed is the connectivity store's lastClientConnection: set at
-	// start and whenever clientOnline changes
+	// start and at every setClientOnline, a value it had already included
 	changed time.Time
 }
 
@@ -78,8 +80,17 @@ func (a *App) PinNetwork() {
 	o := &a.online
 	o.once.Do(func() { o.changed = time.Now() }) // no first probe, no watcher
 	o.mu.Lock()
-	o.pinned, o.on = true, true
+	o.pinned, o.on, o.reading = true, true, true
 	o.mu.Unlock()
+}
+
+// watcherReading is navigator.onLine: the interface watcher's last
+// reading (online while PinNetwork pins it).
+func (a *App) watcherReading() bool {
+	o := &a.online
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.pinned || o.reading
 }
 
 // recentlyOnlineGrace is how long wasRecentlyOnline outlasts a lost
@@ -92,7 +103,11 @@ func (a *App) ClientOnline() bool {
 	o := &a.online
 	o.once.Do(func() {
 		o.on, o.changed = clientOnlineProbe(), time.Now()
+		o.reading = o.on
 		go a.watchOnline()
+		if !o.on {
+			go a.awaitNetwork(false) // the queue's first tick: clientOnline is false
+		}
 	})
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -159,8 +174,11 @@ func (a *App) watchOnline() {
 		if len(why) > 0 {
 			a.networkChanged(strings.Join(why, ", "))
 		}
+		a.online.mu.Lock()
+		was := a.online.reading
+		a.online.mu.Unlock()
 		on := probe()
-		if !on && a.ClientOnline() {
+		if !on && was {
 			// the offline event's throttle: a blip doesn't count
 			select {
 			case <-a.bg.Done():
@@ -169,52 +187,35 @@ func (a *App) watchOnline() {
 			}
 			on = probe()
 		}
+		if on == was {
+			continue // no offline or online event
+		}
+		a.online.mu.Lock()
+		a.online.reading = on
+		a.online.mu.Unlock()
 		a.setClientOnline(on)
+		if !on {
+			// the queue's next tick: clientOnline is false (it just set
+			// it: no second setClientOffline, no second event)
+			a.awaitNetwork(false)
+		}
 	}
 }
 
-// setClientOnline is setClientOnline: a change emits "client_online".
+// setClientOnline is the connectivity store's setClientOnline: every call
+// stamps lastClientConnection, the same value or not (the reducer does),
+// and emits "client_online", so the views re-read wasRecentlyOnline's
+// grace from its new start.
 func (a *App) setClientOnline(on bool) {
 	o := &a.online
 	o.once.Do(func() { o.changed = time.Now() }) // a test's value isn't overwritten by a first probe
 	o.mu.Lock()
 	was := o.on
-	o.on = on
-	if was != on {
-		o.changed = time.Now()
-	}
-	if on {
-		for _, w := range o.waiters {
-			close(w)
-		}
-		o.waiters = nil
-	}
+	o.on, o.changed = on, time.Now()
 	o.mu.Unlock()
-	if was != on {
-		a.emit(Event{Type: "client_online", Connected: on})
-		if on {
-			a.refetchOnline() // what failed while offline is asked for again
-		}
-	}
-}
-
-// awaitClientOnline returns once clientOnline is true (the socket's
-// WAIT_FOR_CONNECTIVITY), or ctx or the App ends.
-func (a *App) awaitClientOnline(ctx context.Context) {
-	a.ClientOnline() // the watcher runs
-	o := &a.online
-	o.mu.Lock()
-	if o.on {
-		o.mu.Unlock()
-		return
-	}
-	w := make(chan struct{})
-	o.waiters = append(o.waiters, w)
-	o.mu.Unlock()
-	select {
-	case <-w:
-	case <-ctx.Done():
-	case <-a.bg.Done():
+	a.emit(Event{Type: "client_online", Connected: on})
+	if on && !was {
+		a.refetchOnline() // what failed while offline is asked for again
 	}
 }
 

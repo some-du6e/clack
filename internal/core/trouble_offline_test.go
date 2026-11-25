@@ -23,6 +23,7 @@ func TestTroubleWaitsForTheNetworkLikeSlack(t *testing.T) {
 	t.Cleanup(func() { clientOnlineProbe, clientOnlinePoll, clientOfflineThrottle = oldProbe, oldPoll, oldThrottle })
 	t.Cleanup(setTroubleThresholds(0, 1)) // any failed connect would turn trouble on
 	a, fs, _ := rtApp(t)
+	stubNetworkProbe(t) // the socket's wait is the network wait: its pixel, loaded once the watcher says online
 	up.Store(false)
 	waitFor(t, "the client offline", 5*time.Second, func() bool { return !a.ClientOnline() })
 	fs.SetFault("ws", fakeslack.Fault{Status: 503})

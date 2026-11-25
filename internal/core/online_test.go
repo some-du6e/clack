@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -28,6 +29,14 @@ func TestClientOnline(t *testing.T) {
 	clientOnlineProbe = func() bool { probes.Add(1); return up.Load() }
 	clientOnlinePoll, clientOfflineThrottle = 20*time.Millisecond, 60*time.Millisecond
 	t.Cleanup(func() { clientOnlineProbe, clientOnlinePoll, clientOfflineThrottle = oldProbe, oldPoll, oldThrottle })
+	// the offline reading starts the network wait (connectivity.go): its
+	// tries stay out of this test's events and off the real CDN
+	oldCDN := cdnProbe
+	cdnProbe = func(context.Context) (time.Duration, error) {
+		return time.Second, errors.New("synthetic: no CDN in this test")
+	}
+	t.Cleanup(func() { cdnProbe = oldCDN })
+	scaleConnWaits(t, 100)
 
 	a := New(slack.New(slack.Creds{}), store.New(""))
 	t.Cleanup(a.Shutdown)

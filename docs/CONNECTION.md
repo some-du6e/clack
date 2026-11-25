@@ -2,12 +2,12 @@
 
 Karim, 2026-11-24: "you should put a warning or smth that says that your internet is dogshit so ppl dont blame clack". Slack's client has no slow-network notice. The only Slack text that blames a slow network is the desktop app's "Slack is having trouble loading" dialog, shown when the window hasn't loaded for 4 minutes, and Clack has no page load to time. What Slack has are two connection states, and Clack now shows both as Slack does: the realtime socket that keeps failing (troubleConnecting), and offline (wasRecentlyOnline, isClientOnline).
 
-This branch is part (a). Part (b) is Slack's offline detection itself: counting API attempts with no answer, the CDN pixel probe and the api.test rounds. Until then clientOnline comes only from the interface watcher (core/online.go).
+Part (a) is the states below. Part (b) is Slack's offline detection itself: counting API attempts with no answer, the CDN pixel probe and the api.test rounds ([CONNECTIVITY.md](CONNECTIVITY.md)).
 
 ## Trouble connecting (the realtime socket)
 
 - **The flag.** Slack's socket store (client-boot `5rVH`) `troubleConnecting` is set by the socket manager (boot-render `RpHI` `_maybeDispatchTroubleConnectingAction`), counting a connect attempt that ends in ERROR (`_leaveState`). Before any connection said hello it is the first failure; after one, the third failure in a row once 30 s have passed since the first of them (`_getConnectionTroubleThreshold` `3e4 * !!_hasConnected`, `_getConnectionAttemptCountTroubleThreshold` `_hasConnected ? 3 : 1`). CONNECTED clears it and the count, and so does the drop of a connected socket (`_handleDisconnectedSocket`); a failed connect doesn't. Clack: `slack.RTM.Trouble` and `OnTrouble`, core's `connection_trouble` event and `App.ConnectionTrouble`. Run's end clears it. With realtime off (Clack's default until the user opts in) there's no socket, so no trouble and no banner.
-- **WAIT_FOR_CONNECTIVITY** (`RpHI`). After a failure's backoff the socket connects only while isClientOnline; otherwise it waits for the client to be online again, and the wait clears the failures' count (not the flag). So with no network trouble can't newly turn on, and the offline states show alone, never beside the DegradedBanner. Clack: `RTM.AwaitOnline`, which core sets to wait for clientOnline (part (b) makes it the network wait itself).
+- **WAIT_FOR_CONNECTIVITY** (`RpHI`). After a failure's backoff the socket connects only while isClientOnline; otherwise it waits for the client to be online again, and the wait clears the failures' count (not the flag). So with no network trouble can't newly turn on, and the offline states show alone, never beside the DegradedBanner. Clack: `RTM.AwaitOnline`, which core sets to the network wait (awaitNetworkReconnection, connectivity.go).
 - **reconnectImmediately** (`zNCe`): a socket waiting out its backoff connects now. Clack: `RTM.ConnectNow`, which keeps the reconnect_url and does nothing while a socket connects or is up (`RTM.Reconnect` drops both).
 - **The DegradedBanner** (boot-shared `7JQN`, namespace ms) in the message pane's top banners, the Threads view's and the Unreads view's (`messages.DegradedBanner`):
   - It reads "Last updated less than a minute ago…" and "Load new messages". From its mount, every 60 s it reads "Last updated {timeAgo}…" with toTimeAgo of the mount. Slack renders it only while troubleConnecting, so each trouble period mounts it afresh (`RTM.TroubleSince`), and so does a view entered again (its remount): a view off screen when the last period ended doesn't carry that period's time into the next.
@@ -31,7 +31,7 @@ This branch is part (a). Part (b) is Slack's offline detection itself: counting 
 
 ## Not here
 
-- Part (b): API attempt counting, the CDN pixel probe, api.test. Then holding every API call while offline (`7quX` _tick).
+- Holding every API call while offline (`7quX` _tick).
 - The relatives:
   - the canvas offline and degraded banners;
   - presence away while not recently online;

@@ -475,8 +475,8 @@ func (a *App) rawUserName(id string) string {
 
 // membersOnline is mG45 isOnline for the members pass: clientOnline (the
 // machine has a network, online.go) and serviceOnline (the Slack API is
-// up: Slack sets it false when calls fail and true again at api.test;
-// Clack's nearest is a session that wasn't ended).
+// up: ten answers of 500 or more in a row set it false, api.test's answer
+// true again, connectivity.go), in a session that wasn't ended.
 func (a *App) membersOnline() bool {
-	return a.ClientOnline() && !a.C.SignedOut()
+	return a.ClientOnline() && a.serviceOnline() && !a.C.SignedOut()
 }

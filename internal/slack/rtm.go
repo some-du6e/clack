@@ -86,8 +86,8 @@ type RTM struct {
 	// AwaitOnline is the socket manager's WAIT_FOR_CONNECTIVITY (boot-render
 	// RpHI): after a failure's backoff the socket connects only while the
 	// client is online (isClientOnline); otherwise it awaits the network's
-	// return (awaitNetworkReconnection). It reports whether it waited, and
-	// returns at once (false) while online.
+	// return (awaitNetworkReconnection, the CDN probe core runs). It
+	// reports whether it waited, and returns at once (false) while online.
 	AwaitOnline func(ctx context.Context) bool
 
 	// dumps keeps the watchdog's goroutine dumps to one per 10 minutes
