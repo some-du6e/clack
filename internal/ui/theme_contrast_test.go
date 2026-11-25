@@ -342,7 +342,11 @@ type tcWin struct {
 func newTCWin(t *testing.T, a *App, draw func(gtx layout.Context)) *tcWin {
 	t.Helper()
 	w := &tcWin{t: t, a: a, size: image.Pt(52, 52), now: time.Now(), draw: draw}
-	a.winSize = w.size
+	// the window the strip sits in is a real one's: its tooltips (the
+	// focus button's, to the right) have room past the 52px the test
+	// draws, as the origin trackers now know where they are (theme's
+	// AreaOrigin) and keep a tip inside the window
+	a.winSize = image.Pt(800, 600)
 	w.frame()
 	return w
 }
