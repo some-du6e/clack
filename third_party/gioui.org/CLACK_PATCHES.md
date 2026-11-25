@@ -3479,3 +3479,48 @@ dragged out.
 Tests: `widget/clack_mask_copy_test.go`
 (`TestClackMaskedEditorCopiesNothing`: masked and plain, Shortcut+C and
 Shortcut+X), in ci's linux-gio.
+
+## 68. app: a button AppKit has up ends at the next press or mouseMoved: (macOS)
+
+`app/os_macos.go` (`gio_onMouse`), `app/os_macos.m` (`handleMouse`) and
+`app/clack_buttons.go`: Gio kept the mouse buttons it saw go down
+(`pointerBtns`): a press ORed its button in and a release cleared it. A
+modal loop AppKit runs inside the window takes mouse-ups the view never
+sees. A native context menu (Clack's `nativemenu`, which runs
+`popUpMenuPositioningItem:` from a main-queue block) takes the release of
+the right-click that opened it when the button is still down as the menu
+opens. ButtonSecondary then stayed down for good. Every later left press
+came as Primary|Secondary, which Clack's `ctxclick.Press` reads as a
+context click, so a left click in the composer opened its text menu again
+(Karim, 2026-11-24, α.165 on Apple silicon). And with the router's pointer
+still pressed, every move was a drag of a press that had ended.
+
+Chromium reads an event's buttons from `[NSEvent pressedMouseButtons]`
+(`ModifiersFromEvent`, components/input/web_input_event_builders_mac.mm).
+`handleMouse` now passes that mask with each event, and whether the event
+is a `mouseMoved:`, which AppKit sends only with no button down. At a
+press, a button Gio has down is stale when it's neither in the mask nor
+the one being pressed (a quick tap has its own up by the time its press is
+handled). At a `mouseMoved:`, every button Gio has down is stale. A stale
+button leaves `pointerBtns`, and a `pointer.Cancel` before the event ends
+its gesture. A Release instead could complete a Ctrl+click's press as a
+plain click once Ctrl is up. Drags keep the buttons Gio saw: a quick
+drag's last moves can be handled after its button is up, and its release
+follows.
+
+`handleMouse` also takes a left or right event's button from its type,
+as Chromium's `WebMouseEventBuilder::Build` does (only an other button's
+event reads `buttonNumber`). AppKit's own events agree, but one made with
+`mouseEventWithType:` (a test's) has `buttonNumber` 0 whatever its type,
+so a posted right press was a left one.
+
+Windows reads the buttons from each message's POINTER_INFO flags, so a
+release TrackPopupMenuEx takes can't leave one down there, and a capture
+change or WM_CANCELMODE cancels the gesture. X11 and Wayland show no
+native menus (`nativemenu.Supported` is false there; Clack draws its own).
+
+Tests: `app/clack_buttons_test.go` (`TestClackStaleButtons`) and
+`app/clack_buttons_darwin_test.go` (`TestClackLostReleaseMac`: on a real
+window, a posted right press with no release, then a left click and then
+a `mouseMoved:`; cocoatest's `PostButton` and `PostMoved`), in ci's macos
+job and flake-check's lost-release.

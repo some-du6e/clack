@@ -143,6 +143,49 @@ void cocoatest_post_mouse(uintptr_t view, int down, CGFloat x, CGFloat y, int cl
 	}
 }
 
+void cocoatest_post_button(uintptr_t view, int button, int down, CGFloat x, CGFloat y, int clicks) {
+	@autoreleasepool {
+		NSWindow *w = windowOf(view);
+		if (w == nil || button < 0 || button > 2) {
+			return;
+		}
+		NSEventType types[3][2] = {
+			{NSEventTypeLeftMouseUp, NSEventTypeLeftMouseDown},
+			{NSEventTypeRightMouseUp, NSEventTypeRightMouseDown},
+			{NSEventTypeOtherMouseUp, NSEventTypeOtherMouseDown},
+		};
+		NSEvent *e = [NSEvent mouseEventWithType:types[button][down ? 1 : 0]
+										location:NSMakePoint(x, NSHeight(w.frame) - y)
+								   modifierFlags:0
+									   timestamp:[[NSProcessInfo processInfo] systemUptime]
+									windowNumber:w.windowNumber
+										 context:nil
+									 eventNumber:0
+									  clickCount:clicks
+										pressure:down ? 1.0 : 0.0];
+		[NSApp postEvent:e atStart:NO];
+	}
+}
+
+void cocoatest_post_moved(uintptr_t view, CGFloat x, CGFloat y) {
+	@autoreleasepool {
+		NSWindow *w = windowOf(view);
+		if (w == nil) {
+			return;
+		}
+		NSEvent *e = [NSEvent mouseEventWithType:NSEventTypeMouseMoved
+										location:NSMakePoint(x, NSHeight(w.frame) - y)
+								   modifierFlags:0
+									   timestamp:[[NSProcessInfo processInfo] systemUptime]
+									windowNumber:w.windowNumber
+										 context:nil
+									 eventNumber:0
+									  clickCount:0
+										pressure:0];
+		[NSApp postEvent:e atStart:NO];
+	}
+}
+
 void cocoatest_press(uintptr_t view, int button) {
 	@autoreleasepool {
 		NSWindowButton kinds[3] = {NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton};

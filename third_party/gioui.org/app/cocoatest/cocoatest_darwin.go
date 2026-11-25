@@ -34,6 +34,8 @@ typedef struct {
 void cocoatest_state(uintptr_t view, cocoatest_window *s);
 int cocoatest_hit(uintptr_t view, CGFloat x, CGFloat y, char *cls, int n);
 void cocoatest_post_mouse(uintptr_t view, int down, CGFloat x, CGFloat y, int clicks);
+void cocoatest_post_button(uintptr_t view, int button, int down, CGFloat x, CGFloat y, int clicks);
+void cocoatest_post_moved(uintptr_t view, CGFloat x, CGFloat y);
 void cocoatest_press(uintptr_t view, int button);
 void cocoatest_order_front(uintptr_t view);
 void cocoatest_set_double_click(const char *v);
@@ -174,6 +176,30 @@ func HitTest(view uintptr, x, y float64) (Hit, string) {
 // loop to deliver through NSApp sendEvent:. Main thread.
 func PostMouse(view uintptr, down bool, x, y float64, clicks int) {
 	C.cocoatest_post_mouse(C.uintptr_t(view), cint(down), C.CGFloat(x), C.CGFloat(y), C.int(clicks))
+}
+
+// MouseButton is a mouse button for PostButton.
+type MouseButton int
+
+const (
+	LeftButton MouseButton = iota
+	RightButton
+	OtherButton
+)
+
+// PostButton queues a press (down) or release of mouse button b at (x,
+// y), window points from the top left, with the click count, for the run
+// loop to deliver through NSApp sendEvent: (rightMouseDown: and the
+// others). Posted events change no button's state in [NSEvent
+// pressedMouseButtons]. Main thread.
+func PostButton(view uintptr, b MouseButton, down bool, x, y float64, clicks int) {
+	C.cocoatest_post_button(C.uintptr_t(view), C.int(b), cint(down), C.CGFloat(x), C.CGFloat(y), C.int(clicks))
+}
+
+// PostMoved queues a mouseMoved: at (x, y), window points from the top
+// left: the pointer moving with no button down. Main thread.
+func PostMoved(view uintptr, x, y float64) {
+	C.cocoatest_post_moved(C.uintptr_t(view), C.CGFloat(x), C.CGFloat(y))
 }
 
 // Press clicks one of the window's standard buttons (performClick:), as
