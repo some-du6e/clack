@@ -496,10 +496,7 @@ func (a *App) joinPreview(c *convo, d core.TempJoin) {
 		return
 	}
 	c.jp.joining = true
-	svc, ch, name := a.data.core, c.ch, ""
-	if ci := a.convOf(ch); ci != nil {
-		name = ci.Name
-	}
+	svc, ch := a.data.core, c.ch
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -507,7 +504,9 @@ func (a *App) joinPreview(c *convo, d core.TempJoin) {
 		a.Post(func() {
 			c.jp.joining = false
 			if err != nil {
-				a.Toast("Couldn’t join #" + name + ": " + err.Error())
+				// ChannelPreviewJoinPane's joinAndFocusInput catches the join and
+				// returns: nothing on screen (build 83aff18a boot-shared)
+				log.Printf("ui: conversations.join %s: %v", logtag.ID(ch), err)
 				return
 			}
 			if ci := a.convOf(ch); ci != nil {

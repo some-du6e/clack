@@ -1018,7 +1018,7 @@ func (f *Files) createCanvasIn(id string) {
 			}
 		}
 		if err != nil && made.ID == "" {
-			f.h.Toast("Couldn't create the canvas: " + friendlyErr(err))
+			popups.FailedToast(f.h, "views: canvases.create", err)
 		}
 	})
 }
@@ -1046,7 +1046,7 @@ func (f *Files) createListIn(id string) {
 			}
 		}
 		if err != nil && made.ID == "" {
-			f.h.Toast("Couldn't create the list: " + friendlyErr(err))
+			popups.FailedToast(f.h, "views: lists create", err)
 		}
 	})
 }
@@ -1067,7 +1067,7 @@ func (f *Files) deleteSection(id string) {
 	confirm := &popups.ModalButton{Label: nsDialog.T("Confirm"), Kind: popups.BtnPrimary, Do: func() bool {
 		f.write(func(ctx context.Context, a *core.App) error { return a.DeleteFileCollection(ctx, id) }, func(err error) {
 			if err != nil {
-				f.h.Toast("Couldn’t delete the section: " + friendlyErr(err))
+				popups.FailedToast(f.h, "views: delete file section", err)
 			}
 		})
 		return true
@@ -1138,7 +1138,7 @@ func (f *Files) sectionModalThen(id string, created func(core.FileCollection)) {
 		}, func(err error) {
 			st.pending = false
 			if err != nil {
-				f.h.Toast("Couldn’t save the section: " + friendlyErr(err))
+				popups.FailedToast(f.h, "views: save file section", err)
 				return
 			}
 			m.Dismiss()

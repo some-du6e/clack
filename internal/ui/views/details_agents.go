@@ -428,7 +428,7 @@ func (d *ChannelDetails) updateAgentsTab(gtx C, cv core.Conv) {
 			uid := ag.adding
 			ag.adding = ""
 			if err != nil {
-				d.h.Toast(cdErr(err))
+				popups.FailedToast(d.h, "views: conversations.invite (agent)", err)
 			} else if u, ok := c.User(uid); ok {
 				ag.added = append([]core.User{u}, ag.added...) // a9: into the roster, out of the results
 			}

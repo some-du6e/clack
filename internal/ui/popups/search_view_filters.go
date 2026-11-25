@@ -22,6 +22,7 @@ package popups
 import (
 	"context"
 	"image"
+	"log"
 	"slices"
 	"strconv"
 	"strings"
@@ -467,7 +468,7 @@ func (v *SearchView) togglePref(name string) func() {
 		run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SetPref(ctx, name, val) },
 			func(_ struct{}, err error) {
 				if err != nil {
-					v.h.Toast("Couldn't save that preference: " + errText(err))
+					log.Printf("popups: users.prefs.set: %v", err) // setUserPrefByApi: optimistic, nothing on screen when it fails
 					return
 				}
 				v.search(1)
@@ -503,7 +504,7 @@ func (v *SearchView) resetFilters() {
 		return struct{}{}, nil
 	}, func(_ struct{}, err error) {
 		if err != nil {
-			v.h.Toast("Couldn't save that preference: " + errText(err))
+			log.Printf("popups: users.prefs.set: %v", err) // setUserPrefByApi: optimistic, nothing on screen when it fails
 		}
 		v.search(1)
 	})
@@ -904,7 +905,7 @@ func (v *SearchView) tabSortMenu(gtx layout.Context) {
 				run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SetPref(ctx, pref, val) },
 					func(_ struct{}, err error) {
 						if err != nil {
-							v.h.Toast("Couldn't save that preference: " + errText(err))
+							log.Printf("popups: users.prefs.set: %v", err) // setUserPrefByApi: optimistic, nothing on screen when it fails
 						}
 					})
 			}

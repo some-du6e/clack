@@ -23,6 +23,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"log"
 
 	"gioui.org/layout"
 	xdraw "golang.org/x/image/draw"
@@ -140,7 +141,8 @@ func DownloadChartData(h Host, dv *richtext.DataViz) {
 			return
 		}
 		if err != nil {
-			h.Toast("Couldn't download: " + errText(err))
+			log.Printf("popups: chart data download: %v", err)
+			h.Toast(nsFiles.T("Error downloading CSV, please try again")) // the file CSV download's failure toast
 			return
 		}
 		h.Toast("Saved to " + p)

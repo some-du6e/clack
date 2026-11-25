@@ -461,7 +461,11 @@ type Attachment struct {
 	// they are Text[KitFrom:].
 	Kit     bool
 	KitFrom int
-	MsgTS   string
+	// HasBlocks: the attachment's blocks field is set (JS-truthy, as
+	// MessageKitAttachments reads `t.blocks`: an empty list or blocks
+	// Clack draws nothing of count), whatever Kit drew of them.
+	HasBlocks bool
+	MsgTS     string
 	// Context is the card's second line: plain spans and at most one
 	// Channel span, drawn as Slack's InlineChannelEntity (hash or, with
 	// ContextLock, lock icon + name). ContextLink is where it links.

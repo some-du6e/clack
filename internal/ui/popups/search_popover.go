@@ -21,6 +21,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log"
 	"net/url"
 	"sort"
 	"strconv"
@@ -1392,7 +1393,7 @@ func (p *SearchPopover) activate(i int) {
 				return
 			}
 			if err != nil {
-				h.Toast("Couldn't open that conversation: " + errText(err))
+				log.Printf("popups: conversations.open: %v", err) // openConversation logs "failed to open conversation" and rethrows: nothing on screen
 				return
 			}
 			RecordRecentConversation(cv.ID)
