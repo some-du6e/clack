@@ -1365,6 +1365,13 @@ func (p *EmojiPicker) drawEmoji(gtx layout.Context, id int32, tone int, size flo
 	return layout.Dimensions{Size: sz}
 }
 
+// layoutAddEmoji is AddCustomEmojiButton's native: the picker's Add Emoji
+// (a small outline button, data-qa customize_emoji_add_button), whose
+// click closes the picker and opens Add custom emoji.
+func (p *EmojiPicker) layoutAddEmoji(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return Button(gtx, p.h.Theme(), &p.addBtn, BtnOutline, BtnSmall, nsEmojiPicker.T("Add Emoji"), "", 85)
+}
+
 func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colors, r image.Rectangle) {
 	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
 	w, h := r.Dx(), r.Dy()
@@ -1390,7 +1397,16 @@ func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colo
 		}
 		// .p-emoji_picker__add_custom_emoji: bottom 14.5px, left 14px
 		at(gtx, image.Pt(dp(gtx, 14), h-dp(gtx, 14.5)-dp(gtx, 28)), func(gtx layout.Context) layout.Dimensions {
-			return Button(gtx, th, &p.addBtn, BtnOutline, BtnSmall, nsEmojiPicker.T("Add Emoji"), "", 85)
+			if !slackc.Patched("AddCustomEmojiButton") {
+				return p.layoutAddEmoji(gtx, nil)
+			}
+			// Slack's EmojiPickerFooter: <AddCustomEmojiButton onClick
+			// isHuddlesEmojiPicker/> where no emoji is previewed (HMojis
+			// adds its "Add hidden emoji" beside it); onClick is the
+			// picker's, which closes it before the button opens the
+			// customize dialog
+			return slackc.Render(gtx, "AddCustomEmojiButton", slackc.Props{"$key": p.key + ":add-emoji",
+				"onClick": p.Dismiss, "isHuddlesEmojiPicker": false}, p.layoutAddEmoji)
 		})
 		return
 	}
