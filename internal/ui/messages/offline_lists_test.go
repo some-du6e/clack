@@ -54,7 +54,10 @@ func TestHistoryLoaderOfflineLikeSlack(t *testing.T) {
 	// offline, then at the window's top: the history loader's row, in the
 	// first frame there (before a page older could land)
 	online.Store(false)
-	e.v.s.list.Position = layout.Position{}
+	if len(e.v.s.items) == 0 || e.v.s.items[0].kind != itLoading {
+		t.Fatal("control: the window's first row isn't the history loader (the fake's history is one page?)")
+	}
+	e.v.s.list.Position = layout.Position{BeforeEnd: true, First: 0} // the oldest row at the top ({} is the newest end)
 	e.v.s.stopScroll()
 	ls := labelsIn(e.rt.frame)
 	if !hasLabelTrim(ls, "No connection.") || !hasLabelTrim(ls, "Go online to load more messages.") {
