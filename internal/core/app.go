@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -1801,14 +1802,56 @@ func (a *App) messagePtr(ch string, m *slack.Message) *Message {
 
 // timeline converts top-level messages (and thread broadcasts).
 func (a *App) timeline(ch string, msgs []slack.Message) []Message {
-	out := make([]Message, 0, len(msgs))
+	idx := make([]int, 0, len(msgs))
 	for i := range msgs {
 		m := &msgs[i]
 		if m.Subtype == "thread_broadcast" || m.ThreadTS == "" || m.ThreadTS == m.TS || m.ReplyBroadcast {
-			out = append(out, a.message(ch, m))
+			idx = append(idx, i)
 		}
 	}
+	out := make([]Message, len(idx))
+	a.convertEach(ch, msgs, idx, out)
 	return out
+}
+
+// convertEachMin is the page size (its messages' text and blocks) from
+// which convertEach converts on every core: a wall of text takes
+// FromMessageIn about 9 ms, and #giant-wall's page of 28 took 240 ms one
+// after another (TestGiantWallOpenSpans' CPU profile); an ordinary page is
+// a few hundred microseconds, quicker alone than handed out.
+const convertEachMin = 1 << 20
+
+// convertEach converts msgs[idx[k]] into out[k]: on every core for a
+// page past convertEachMin, each message on its own, so out is what the
+// conversions one by one would make.
+func (a *App) convertEach(ch string, msgs []slack.Message, idx []int, out []Message) {
+	size := 0
+	for _, i := range idx {
+		size += len(msgs[i].Text) + len(msgs[i].Blocks)
+	}
+	workers := min(runtime.GOMAXPROCS(0), len(idx))
+	if size < convertEachMin || workers < 2 {
+		for k, i := range idx {
+			out[k] = a.message(ch, &msgs[i])
+		}
+		return
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				k := int(next.Add(1) - 1)
+				if k >= len(idx) {
+					return
+				}
+				out[k] = a.message(ch, &msgs[idx[k]])
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func (a *App) messages(ch string, msgs []slack.Message) []Message {
