@@ -277,7 +277,7 @@ type tile struct {
 	// (useScrollDockTrigger's isIntersecting)
 	visible bool
 	// the controls' focus tags (keys.go) and the one focused (-1: none)
-	ftags [fN]int
+	ftags [fN]ctlTag
 	focus int
 	z     zones
 	// the frame it was last laid out in, and the close waiting for it

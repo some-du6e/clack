@@ -7,7 +7,7 @@ import (
 )
 
 // FileDetails' files.info is fetchFileById's {file, page 1, count 500,
-// truncate true, skip_shares true} (no public_shared); the answer's alt
+// truncate true, public_shared false, skip_shares true}; the answer's alt
 // text, username and canvas creator come along; Slack's refusals become
 // its file stubs (file_deleted a tombstone, file_not_found not_found),
 // and any other error stays one.
@@ -22,13 +22,13 @@ func TestFileDetailsFetch(t *testing.T) {
 		t.Fatalf("FileDetails: %v", err)
 	}
 	v := f.last("files.info")
-	want := map[string]string{"file": "F0DETAILS01", "page": "1", "count": "500", "truncate": "true", "skip_shares": "true"}
+	want := map[string]string{"file": "F0DETAILS01", "page": "1", "count": "500", "truncate": "true", "public_shared": "false", "skip_shares": "true"}
 	for k, w := range want {
 		if v.Get(k) != w {
 			t.Errorf("files.info %s=%q, want %q (fetchFileById's args); sent %v", k, v.Get(k), w, v)
 		}
 	}
-	for _, k := range []string{"public_shared", "include_transcription", "reason"} {
+	for _, k := range []string{"include_transcription", "reason"} {
 		if v.Has(k) {
 			t.Errorf("files.info sent %s=%q, which FileDetails' fetch leaves out", k, v.Get(k))
 		}

@@ -242,7 +242,7 @@ func TestMediaViewerDetailsTab(t *testing.T) {
 		t.Fatalf("media column %v with the sidebar closed, want the panel %v", media, want)
 	}
 	m := e.lb.moreMenu()
-	if got := ctxLabels(m); got != "Open in browser|View file details|-|Copy image link" {
+	if got := ctxLabels(m); got != "Open in browser|View file details|Copy image link" { // no thread: no separator (separator-view-thread-view-details)
 		t.Errorf("image More actions %q", got)
 	}
 	if it := menuItem(t, m, "View file details"); it.QA != "view_file_details" {
@@ -380,7 +380,7 @@ func TestMediaViewerDetailsGateOff(t *testing.T) {
 	if idx, _ := e.lb.Position(); idx != 2 {
 		t.Fatalf("at item %d", idx)
 	}
-	if got := ctxLabels(e.lb.moreMenu()); got != "Open in browser|-|Copy image link" {
+	if got := ctxLabels(e.lb.moreMenu()); got != "Open in browser|Copy image link" {
 		t.Errorf("More actions for an image that isn't a file %q", got)
 	}
 }

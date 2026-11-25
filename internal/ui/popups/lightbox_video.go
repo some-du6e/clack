@@ -394,8 +394,15 @@ func (lb *Lightbox) videoInput(gtx layout.Context, now time.Time) {
 // videoKeys are DBSG's: Space plays or pauses, m mutes.
 func (lb *Lightbox) videoKeys(gtx layout.Context) {
 	p := lb.vid.p
+	filters := []event.Filter{key.Filter{Focus: lb, Name: key.NameSpace}, key.Filter{Focus: lb, Name: "M"}}
+	if f := lb.focusIn; f != nil && f != event.Tag(lb) {
+		// M is bound on the document (EFy1: ignoreInputs only), so it
+		// mutes with any of the viewer's widgets focused; Space skips a
+		// BUTTON target (o9RR applyFilters): a focused button takes it
+		filters = append(filters, key.Filter{Focus: f, Name: "M"})
+	}
 	for {
-		e, ok := gtx.Event(key.Filter{Focus: lb, Name: key.NameSpace}, key.Filter{Focus: lb, Name: "M"})
+		e, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}
@@ -560,6 +567,12 @@ func (lb *Lightbox) videoChrome(gtx layout.Context, th *theme.Theme, panel image
 		defer o.Pop()
 		lb.arrows(gtx, panel)
 	}()
+	func() { // the close slides with the header (--slide_over_content)
+		o := paint.PushOpacity(gtx.Ops, a)
+		defer o.Pop()
+		defer op.Offset(image.Pt(0, -slide)).Push(gtx.Ops).Pop()
+		lb.mediaClose(gtx, th, panel)
+	}()
 	// the watch for the auto-hide, passing every event on
 	pass := pointer.PassOp{}.Push(gtx.Ops)
 	cl := clip.Rect(panel).Push(gtx.Ops)
@@ -708,6 +721,7 @@ func (lb *Lightbox) videoFooter(gtx layout.Context, th *theme.Theme, panel image
 		p := image.Pt(x, y)
 		d := at(gtx, p, func(gtx layout.Context) layout.Dimensions {
 			d := iconButton(gtx, c, ic, 36, 20, white, hover, 8)
+			lb.buttonRing(gtx, th, c, d.Size)
 			Tooltip(gtx, th, tip, c.Hovered(), d.Size, Above, label, "")
 			return d
 		})

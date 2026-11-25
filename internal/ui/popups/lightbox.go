@@ -33,6 +33,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
 // Measured from app.slack.com (2026-11, media viewer): a panel inset 28px
@@ -210,7 +211,7 @@ func lbSame(it lbItem, img richtext.Image) bool {
 func (it lbItem) displayURL() string {
 	if f := it.file; f != nil && f.URL != "" {
 		switch strings.ToLower(f.Mime) {
-		case "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp":
+		case "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp", "image/x-ms-bmp": // imgcache decodes them (decmem.go)
 			return f.URL
 		}
 	}
@@ -429,6 +430,7 @@ func (lb *Lightbox) Layout(gtx layout.Context) layout.Dimensions {
 	lb.header(gtx, th, media)
 	lb.footer(gtx, th, media)
 	lb.arrows(gtx, media)
+	lb.mediaClose(gtx, th, media)
 	if lb.side.shown {
 		lb.layoutSide(gtx, th, panel, side)
 	}
@@ -451,11 +453,23 @@ func (lb *Lightbox) keys(gtx layout.Context, top bool, ft event.Tag) {
 		key.Filter{Focus: lb, Name: "0"},
 	}
 	if f := lb.focusIn; f != nil && f == ft && f != event.Tag(lb) && f != event.Tag(&lb.side.tabFocus) {
-		filters = append(filters,
-			key.Filter{Focus: f, Name: key.NameEscape},
-			key.Filter{Focus: f, Name: key.NameLeftArrow},
-			key.Filter{Focus: f, Name: key.NameRightArrow},
-		)
+		filters = append(filters, key.Filter{Focus: f, Name: key.NameEscape})
+		if !isSliderTag(f) { // a slider keeps its own ←/→ (role="slider")
+			filters = append(filters,
+				key.Filter{Focus: f, Name: key.NameLeftArrow},
+				key.Filter{Focus: f, Name: key.NameRightArrow},
+			)
+		}
+		// ZoomControl's + = - 0 skip only while one of its own buttons
+		// or its slider has the focus
+		if !lb.zoomFocus(f) {
+			filters = append(filters,
+				key.Filter{Focus: f, Name: "+", Optional: key.ModShift},
+				key.Filter{Focus: f, Name: "=", Optional: key.ModShift},
+				key.Filter{Focus: f, Name: "-", Optional: key.ModShift},
+				key.Filter{Focus: f, Name: "0"},
+			)
+		}
 	}
 	for {
 		e, ok := gtx.Event(filters...)
@@ -579,7 +593,10 @@ func (lb *Lightbox) moreMenu() *Menu {
 		items = append(items, MenuItem{Label: "View file details", QA: "view_file_details",
 			Do: func() { lb.viewFileDetails(false) }}.In(nsFile))
 	}
-	items = append(items, Sep(),
+	if lb.m.Channel != "" && lb.m.TS != "" { // separator-view-thread-view-details: show !!onViewThread
+		items = append(items, Sep())
+	}
+	items = append(items,
 		MenuItem{Label: "Copy image link", Icon: "link", DoCtx: func(gtx layout.Context) {
 			copyText(gtx, link)
 			h.Toast("Link copied")
@@ -829,15 +846,39 @@ func (lb *Lightbox) header(gtx layout.Context, th *theme.Theme, panel image.Rect
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 18))}
 		return para(gtx, th, 13, 18, theme.Regular, white, lb.subLine(gtx), 1)
 	})
+}
+
+// mediaClose is the media column's close (bDav renderCloseButton while
+// the sidebar is closed: `!iU && renderCloseButton()`, after the media
+// and its controls in MediaViewerSidebarRow's media group), drawn after
+// the footer and the arrows so it is the group's last Tab stop, as in
+// Slack (whose first is the uploader's name). Its tooltip is the label
+// alone (Tooltip {tip: r, position: "bottom", delay: 300}).
+func (lb *Lightbox) mediaClose(gtx layout.Context, th *theme.Theme, panel image.Rectangle) {
 	if lb.side.shown {
 		return // the close button is the sidebar's (layoutSideClose)
 	}
 	cp := image.Pt(panel.Max.X-dp(gtx, 8)-dp(gtx, 36), panel.Min.Y+dp(gtx, 8))
 	at(gtx, cp, func(gtx layout.Context) layout.Dimensions {
 		d := iconButton(gtx, &lb.closeBtn, "close", 36, 20, white, rgba(0xffffff, .1), 8)
-		Tooltip(gtx, th, &lb.tips[8], lb.closeBtn.Hovered(), d.Size, Below, nsMediaViewer.T("Close"), "Esc")
+		lb.buttonRing(gtx, th, &lb.closeBtn, d.Size)
+		Tooltip(gtx, th, &lb.tips[8], lb.closeBtn.Hovered(), d.Size, Below, nsMediaViewer.T("Close"), "")
 		return d
 	})
+}
+
+// buttonRing is .c-button--focus-visible:focus on one of the viewer's
+// icon buttons: 1px otl-hgl-1 and its 5px halo at 30%, radius 8, while
+// the button has the key focus from the keyboard (lb.quiet: not after a
+// pointer's "Close details").
+func (lb *Lightbox) buttonRing(gtx layout.Context, th *theme.Theme, tag event.Tag, sz image.Point) {
+	if !lb.ringOn(gtx, tag) {
+		return
+	}
+	solid := theme.ButtonV2Focus(th)
+	halo := solid
+	halo.A = 0x4d
+	FocusRingColors(gtx, solid, halo, image.Rectangle{Max: sz}, dp(gtx, 8))
 }
 
 // pendingHeader is FileViewer's header (p-file_viewer__header): the
@@ -942,6 +983,7 @@ func (lb *Lightbox) footer(gtx layout.Context, th *theme.Theme, panel image.Rect
 		p := image.Pt(x, y)
 		d := at(gtx, p, func(gtx layout.Context) layout.Dimensions {
 			d := iconButton(gtx, c, ic, 36, 20, white, hover, 8)
+			lb.buttonRing(gtx, th, c, d.Size)
 			Tooltip(gtx, th, tip, c.Hovered(), d.Size, Above, label, sc)
 			return d
 		})
@@ -983,7 +1025,7 @@ func (lb *Lightbox) footer(gtx layout.Context, th *theme.Theme, panel image.Rect
 	lb.moreRect = btn(x, &lb.moreBtn, "more", &lb.tips[4], nsViewer.T("More actions"), "")
 	x -= step
 	btn(x, &lb.winBtn, "external", &lb.tips[5], nsViewer.T("Open in new window"), "")
-	if !compact {
+	if lb.m.Channel != "" && lb.m.TS != "" && !compact { // bDav toggleThread: e && i ? aC : void 0
 		x -= step
 		btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], lb.threadTip(), "")
 	}
@@ -1251,3 +1293,19 @@ func (lb *Lightbox) imageMenu(at image.Point) {
 	}
 	lb.h.ShowOverlay(NewImageMenuFrom(lb.h, at, shown, src, alt, it.hosted()))
 }
+
+// zoomFocus reports whether f is one of ZoomControl's own widgets (zoom
+// out, the slider, zoom in, the reset), whose keydown handler takes + = -
+// 0 for itself (useKeyCommands skips them there).
+func (lb *Lightbox) zoomFocus(f event.Tag) bool {
+	switch f {
+	case event.Tag(&lb.outBtn), event.Tag(&lb.inBtn), event.Tag(&lb.resetBtn), event.Tag(&lb.sliderTag):
+		return true
+	}
+	return false
+}
+
+// isSliderTag reports whether a focused tag is a slider (a player's
+// scrubber or volume: videoplayer.IsSlider), whose ←/→ the viewer leaves
+// to it as use_key_commands skips a role="slider" target (tests swap it).
+var isSliderTag = videoplayer.IsSlider

@@ -72,13 +72,10 @@ func TestFileDetailsPane(t *testing.T) {
 			if !ok {
 				t.Fatalf("no files.info for %s with skip_shares; sent %v", f.ID, e.fs.FilesForms("files.info")[n:])
 			}
-			for k, want := range map[string]string{"file": f.ID, "page": "1", "count": "500", "truncate": "true", "skip_shares": "true"} {
+			for k, want := range map[string]string{"file": f.ID, "page": "1", "count": "500", "truncate": "true", "public_shared": "false", "skip_shares": "true"} {
 				if got := form[k]; len(got) != 1 || got[0] != want {
 					t.Errorf("files.info %s=%v, want %q (fetchFileById: file-subscription.fetchFileInfo)", k, got, want)
 				}
-			}
-			if _, has := form["public_shared"]; has {
-				t.Errorf("files.info sent public_shared %v, which FileDetails leaves undefined", form["public_shared"])
 			}
 
 			fdShowAsTab(e, p)

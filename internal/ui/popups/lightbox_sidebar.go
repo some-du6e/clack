@@ -521,10 +521,7 @@ func (lb *Lightbox) layoutSideClose(gtx layout.Context, th *theme.Theme, panel i
 	s.closeR = image.Rectangle{Min: cp, Max: cp.Add(image.Pt(sz, sz))}
 	tip := lb.closeTip()
 	s.closeLabel = tip
-	sc := "Esc"
-	if lb.closeClosesDetails() {
-		sc = "" // Escape closes the viewer, not the details
-	}
+	sc := "" // renderCloseButton's Tooltip: the label alone
 	dark := th.Dark
 	at(gtx, cp, func(gtx layout.Context) layout.Dimensions {
 		d := clickBox(gtx, &lb.closeBtn, func(gtx layout.Context, bs image.Point, hovered bool) {

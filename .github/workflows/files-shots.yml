@@ -203,7 +203,7 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=1 -v -timeout 5m -run '^(TestMediaViewer|TestPendingViewerNoDetails|TestViewFile|TestRichFileFromCore|TestSearchOpenFileViewer|TestOpenFileCardActions|TestLightboxImageMenu)' ./internal/ui/popups/ || rc=1
+          go test -count=1 -v -timeout 5m -run '^(TestMediaViewer|TestPendingViewerNoDetails|TestViewFile|TestRichFileFromCore|TestSearchOpenFileViewer|TestOpenFileCardActions|TestLightboxImageMenu|TestViewerShowsBMPOriginal)' ./internal/ui/popups/ || rc=1
           go test -count=1 -v -timeout 5m -run '^(TestFileDetailsImagePreview|TestFileImage)' ./internal/ui/richview/ || rc=1
           go test -count=1 -v -timeout 5m -run '^TestFileDetailsFetch$' ./internal/core/ || rc=1
           go test -count=1 -v -timeout 5m -run '^TestCalendarDateOrNamedDay$' ./internal/i18n/ || rc=1

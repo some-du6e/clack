@@ -83,6 +83,18 @@ func (r *Row) focusAreas(gtx layout.Context, t *tile) {
 	pass.Pop()
 }
 
+// ctlTag is a control's key focus tag; slider marks the scrubber and the
+// volume slider (role="slider").
+type ctlTag struct{ slider bool }
+
+// IsSlider reports whether t is a player's scrubber or volume slider: the
+// tags whose own ←/→ a viewer around the player leaves to them, as
+// Slack's use_key_commands skips a role="slider" target.
+func IsSlider(t event.Tag) bool {
+	ct, ok := t.(*ctlTag)
+	return ok && ct.slider
+}
+
 var sliderKeys = []gkey.Name{gkey.NameRightArrow, gkey.NameUpArrow, gkey.NameLeftArrow, gkey.NameDownArrow, gkey.NamePageUp, gkey.NamePageDown, gkey.NameHome, gkey.NameEnd}
 
 // keyInput reads the controls' focus and keys; it reports what it pressed
@@ -90,6 +102,7 @@ var sliderKeys = []gkey.Name{gkey.NameRightArrow, gkey.NameUpArrow, gkey.NameLef
 func (r *Row) keyInput(gtx layout.Context, t *tile) (more, expand bool) {
 	c := r.c
 	for i := 0; i < fN; i++ {
+		t.ftags[i].slider = i == fScrub || i == fSlider
 		filters := []event.Filter{gkey.FocusFilter{Target: &t.ftags[i]}}
 		if i == fScrub || i == fSlider {
 			for _, k := range sliderKeys {

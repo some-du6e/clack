@@ -17,10 +17,11 @@ import (
 // file on mount and whenever its id changes, through 20Mt
 // fetchAndUpsertFileById's fetchFileById:
 //
-//	files.info {file, page: 1, count: 500, truncate: true, skip_shares: true}
+//	files.info {file, page: 1, count: 500, truncate: true, public_shared: false, skip_shares: true}
 //
 // (truncate is `undefined || null || true`, so true; public_shared is
-// undefined there and isn't sent). The call's reason,
+// FileSubscription's default publicShared false, which getFormData
+// appends as it does every non-null value). The call's reason,
 // "file-subscription.fetchFileInfo", is request metadata (_x_reason),
 // which Clack sends for no call. Concurrent fetches of one file share
 // the one request, as Slack's per-team, per-file promise cache does.
@@ -51,7 +52,7 @@ type FileDetailsInfo struct {
 
 // fileDetailsArgs is fetchFileById's args for FileDetails.
 func fileDetailsArgs(id string) url.Values {
-	return url.Values{"file": {id}, "page": {"1"}, "count": {"500"}, "truncate": {"true"}, "skip_shares": {"true"}}
+	return url.Values{"file": {id}, "page": {"1"}, "count": {"500"}, "truncate": {"true"}, "public_shared": {"false"}, "skip_shares": {"true"}}
 }
 
 // fileStubMode maps a files.info refusal to the stub's mode
