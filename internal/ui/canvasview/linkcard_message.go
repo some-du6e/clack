@@ -30,7 +30,10 @@ var nsMessage = i18n.NS("message")
 type msgCardData struct {
 	known  bool         // the store holds the message
 	gone   bool         // Slack said it doesn't exist (isMessageNonExistent)
+	gaveUp bool         // core's fetch of it failed (MessageGaveUp): nothing says it's gone
 	asked  bool         // fetched once (ensureMessages)
+	expand bool         // TruncatedBlocks' Show more was pressed
+	tier   int          // the width tier last drawn (getNextContainerSize's hysteresis)
 	m      core.Message // the message, when known
 	key    string       // what the views below are of
 	avatar string       // the sender's avatar
@@ -38,7 +41,7 @@ type msgCardData struct {
 	sub    *richview.View   // "channel | {date} at {time}"
 	blocks []richtext.Block // the body, before TruncatedBlocks' limits
 	body   *richview.View   // the body within them
-	limits [2]int           // the lines and blocks body was made for
+	limits [4]int           // the lines, blocks, characters and Show more state body was made for
 }
 
 // readMessage reads the route's message from the store: true when it
@@ -50,8 +53,12 @@ func (c *linkCard) readMessage(a *core.App) bool {
 		return false
 	}
 	d.m, d.known = a.HeldMessage(r.channel, r.ts)
+	d.gone, d.gaveUp = false, false
 	if ch, ok := a.MessageChange(r.channel, r.ts); ok && ch.Deleted {
 		d.known, d.gone = false, true
+	}
+	if !d.known && !d.gone {
+		d.gaveUp = a.MessageGaveUp(r.channel, r.ts)
 	}
 	if !d.known {
 		d.m = core.Message{}
@@ -60,16 +67,25 @@ func (c *linkCard) readMessage(a *core.App) bool {
 }
 
 // decideMessage is MessageUnfurl's own order: the skeleton while the
-// container unfurls and the message isn't known; EmptyUnfurl's
-// msg_non_existent with neither the message nor an attachment; else the
-// card (from the attachment when the message never arrives).
+// container unfurls and the message isn't known; with neither the message
+// nor an attachment, EmptyUnfurl's msg_non_existent once Slack said there
+// is no such message (isMessageNonExistent), the skeleton while it's
+// being fetched (Card's wait ends it), and EmptyUnfurl's plain line when
+// the fetch failed (nothing says it's gone); else the card (from the
+// attachment when the message never arrives).
 func (c *linkCard) decideMessage(loading bool, att *slack.Attachment) (cardKind, string) {
 	d := &c.mc
 	if loading && !d.known {
 		return cardMessageLoading, ""
 	}
-	if (!d.known || d.gone) && att == nil {
-		return cardEmpty, emptyLine("msg_non_existent")
+	if !d.known && att == nil {
+		switch {
+		case d.gone:
+			return cardEmpty, emptyLine("msg_non_existent")
+		case d.gaveUp || c.rt.channel == "" || c.rt.ts == "":
+			return cardEmpty, emptyLine("")
+		}
+		return cardMessageLoading, ""
 	}
 	return cardMessage, ""
 }
@@ -86,16 +102,9 @@ func (v *View) messageViews(c *linkCard) {
 	if c.held && len(c.msg.Attachments) > 0 {
 		att = &c.msg.Attachments[0]
 	}
-	key := strings.Join([]string{c.attKey, d.m.TS, d.m.EditedTS, d.m.Text, d.m.User, d.m.Name, d.m.Avatar}, "\x00")
-	if key == d.key && d.sub != nil {
-		return
-	}
-	d.key = key
-	para := func(sp ...richtext.Span) richtext.Doc {
-		return richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: sp}}}
-	}
 	// the author (from the attachment only when it unfurled the message
-	// itself: from_url === original_url)
+	// itself: from_url === original_url), read every frame: a sender who
+	// loads after the card fills in (getMemberById's stub, then users.info)
 	user, name, avatar := d.m.User, "", ""
 	sameURL := att != nil && att.FromURL == att.OriginalURL
 	if d.known {
@@ -116,6 +125,18 @@ func (v *View) messageViews(c *linkCard) {
 			}
 		}
 		avatar = firstNonEmpty(avatar, att.AuthorIcon)
+	}
+	if user != "" {
+		v.askCardUser(user)
+	}
+	key := strings.Join([]string{c.attKey, d.m.TS, d.m.EditedTS, d.m.Text, d.m.User, d.m.Name, d.m.Avatar, name, avatar,
+		boolStr(d.known), boolStr(d.expand)}, "\x00")
+	if key == d.key && d.sub != nil {
+		return
+	}
+	d.key = key
+	para := func(sp ...richtext.Span) richtext.Doc {
+		return richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: sp}}}
 	}
 	d.avatar = avatar
 	d.name = nil
@@ -193,7 +214,7 @@ func (v *View) messageViews(c *linkCard) {
 			blocks = []richtext.Block{{Kind: richtext.Paragraph, Spans: []richtext.Span{{Kind: richtext.Text, Text: att.Fallback}}}}
 		}
 	}
-	d.blocks, d.body, d.limits = blocks, nil, [2]int{}
+	d.blocks, d.body, d.limits = blocks, nil, [4]int{}
 }
 
 // messageLink is the message's archives permalink on the team's host, which
@@ -210,16 +231,79 @@ func (v *View) messageLink(ch, ts, thread string) string {
 	return u
 }
 
-// truncation is TruncatedBlocks' limits by the content's width: under 300
-// px 2 lines and 2 blocks, under 500 4 and 3, else 9 and 4.
-func truncation(gtx layout.Context, w int) (lines, blocks int) {
-	switch {
-	case w < gtx.Dp(300):
-		return 2, 2
-	case w < gtx.Dp(500):
-		return 4, 3
+// cardLimits are MessageContent's TruncatedBlocks limits by width tier
+// (under 300px, under 500, else): lines, blocks, characters; with
+// interactive blocks (actions, a section with a button) the larger set.
+var cardLimits = [2][3][3]int{
+	{{2, 2, 190}, {4, 3, 300}, {9, 4, 680}},
+	{{8, 5, 400}, {12, 7, 600}, {16, 9, 900}},
+}
+
+// cardTier is the content width's tier: 0 under 300px, 1 under 500, else
+// 2, moving up from prev (-1: none yet) only once the width is 40px past
+// the next threshold (getNextContainerSize).
+func cardTier(gtx layout.Context, w, prev int) int {
+	thr := [2]int{gtx.Dp(300), gtx.Dp(500)}
+	t := 0
+	for t < 2 && w >= thr[t] {
+		t++
 	}
-	return 9, 4
+	for prev >= 0 && t > prev && w < thr[t-1]+gtx.Dp(40) {
+		t--
+	}
+	return t
+}
+
+// interactiveBlocks: blocks with an actions block or a section with an
+// element accessory (not an image), which take the larger limits.
+func interactiveBlocks(bs []richtext.Block) bool {
+	for _, b := range bs {
+		if b.Kind == richtext.Actions || b.Kind == richtext.Section && len(b.Buttons) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// cardExpandURL marks a card's Show more / Show less link (never a real
+// URL): the view's link handler toggles the card's body (toggleCardExpand).
+const cardExpandURL = "clack-card-expand:"
+
+// truncatedBody is TruncatedBlocks over bs: the first blocks of the limit,
+// cut at the characters and lines (richview.TruncateBlocks), with " Show
+// more" when anything was cut; expanded, all of them with "Show less".
+func truncatedBody(bs []richtext.Block, lim [3]int, expand bool, link string) []richtext.Block {
+	short := bs[:min(lim[1], len(bs))]
+	short, cut := richview.TruncateBlocks(short, lim[2], lim[0])
+	cut = cut || len(bs) > lim[1]
+	if !cut {
+		return bs
+	}
+	if expand {
+		return withCardExpander(append([]richtext.Block(nil), bs...), false, link)
+	}
+	return withCardExpander(short, true, link)
+}
+
+// withCardExpander adds the " Show more" / "Show less" link: after the
+// last block's text, or in a paragraph of its own.
+func withCardExpander(bs []richtext.Block, more bool, u string) []richtext.Block {
+	label := "Show less" // richview's expander labels (truncate.go)
+	if more {
+		label = "Show more"
+	}
+	link := richtext.Span{Kind: richtext.Link, Text: label, URL: u}
+	if more && len(bs) > 0 {
+		last := &bs[len(bs)-1]
+		switch last.Kind {
+		case richtext.Paragraph, richtext.Section, richtext.Quote, richtext.Context:
+			if len(last.Children) == 0 {
+				last.Spans = append(append(last.Spans[:len(last.Spans):len(last.Spans)], richtext.Span{Kind: richtext.Text, Text: " "}), link)
+				return bs
+			}
+		}
+	}
+	return append(bs, richtext.Block{Kind: richtext.Paragraph, Spans: []richtext.Span{link}})
 }
 
 // layoutMessage draws MessageUnfurl w wide and returns its height: the
@@ -269,10 +353,15 @@ func (v *View) layoutMessage(gtx layout.Context, c *linkCard, w int) int {
 	h := max(y, pad+av*boolInt(!dense)) + pad
 	if len(d.blocks) > 0 {
 		bw := max(0, w-2*pad)
-		lines, n := truncation(gtx, bw)
-		if d.body == nil || d.limits != [2]int{lines, n} {
-			d.body = richview.New(richtext.Doc{Blocks: d.blocks[:min(n, len(d.blocks))]}, richview.Options{MaxLines: lines})
-			d.limits = [2]int{lines, n}
+		if d.body == nil {
+			d.tier = -1 // a new body: no tier to hold to
+		}
+		d.tier = cardTier(gtx, bw, d.tier)
+		lim := cardLimits[boolInt(interactiveBlocks(d.blocks))][d.tier]
+		if key := [4]int{lim[0], lim[1], lim[2], boolInt(d.expand)}; d.body == nil || d.limits != key {
+			bs := truncatedBody(d.blocks, lim, d.expand, cardExpandURL+c.url)
+			d.body = richview.New(richtext.Doc{Blocks: bs}, richview.Options{})
+			d.limits = key
 		}
 		func() {
 			defer op.Offset(image.Pt(pad, h)).Push(gtx.Ops).Pop()
@@ -310,4 +399,22 @@ func (v *View) layoutMessageSkeleton(gtx layout.Context, w int, now time.Time) i
 		y += lh + gtx.Dp(8)
 	}
 	return y + pad
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
+}
+
+// toggleCardExpand shows the whole body of the message cards for url, or
+// their truncated one again (TruncatedBlocks' isExpanded).
+func (v *View) toggleCardExpand(url string) {
+	for _, b := range cardBlocks(v.blocks) {
+		if c := b.card; c.url == url {
+			c.mc.expand = !c.mc.expand
+		}
+	}
+	v.h.Invalidate()
 }

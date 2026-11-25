@@ -9,8 +9,10 @@ package canvasview
 
 import (
 	"context"
+	"errors"
 	"image"
 	"image/color"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -32,7 +34,53 @@ import (
 type fileState struct {
 	done bool
 	f    slack.File
-	code string // file_not_found or file_deleted when files.info said so
+	// code is what files.info refused with: file_not_found, file_deleted,
+	// access_denied or not_visible (Slack's answer, kept for the view's
+	// life). A failure that says nothing about the file (the network, a
+	// timeout, ratelimited, a 5xx) isn't one: the file is asked for again
+	// after a backoff (tries, retry), and the card waits meanwhile.
+	code  string
+	tries int
+	retry time.Time
+}
+
+// fileRetry is the wait before files.info is asked again after the n-th
+// failure that says nothing about the file: 2 s, doubling, a minute at most.
+func fileRetry(n int) time.Duration {
+	d := 2 * time.Second << max(0, n-1)
+	if n > 6 || d > time.Minute {
+		d = time.Minute
+	}
+	return d
+}
+
+// fileCodeOf is the code a files.info failure keeps ("" with none: a
+// failure that says nothing about the file, asked again).
+func fileCodeOf(err error) string {
+	var se *slack.Error
+	switch {
+	case err == nil:
+		return ""
+	case core.IsAPIError(err, "file_deleted"):
+		return "file_deleted"
+	case core.IsAPIError(err, "access_denied", "not_allowed", "file_access_denied"):
+		return "access_denied"
+	case core.IsAPIError(err, "not_visible"):
+		return "not_visible"
+	case core.IsAPIError(err, "ratelimited", "internal_error", "fatal_error", "request_timeout", "service_unavailable", "team_added_to_org"):
+		return ""
+	case errors.As(err, &se):
+		return "file_not_found" // Slack refused it: the file isn't one the viewer can have
+	}
+	return ""
+}
+
+// fileEmptyLine is EmptyUnfurl's line for a file code.
+func fileEmptyLine(code string) string {
+	if code == "access_denied" || code == "not_visible" {
+		return emptyLine("file_private")
+	}
+	return emptyLine(code)
 }
 
 // fileCardData is what EmbeddedFileUnfurl reads, and its views.
@@ -88,6 +136,11 @@ func (v *View) readFile(c *linkCard) bool {
 	}
 	if st.done {
 		d.f, d.known, d.code = st.f, st.code == "", st.code
+		return false
+	}
+	if st.tries > 0 && !time.Now().Before(st.retry) { // a failure that said nothing: ask again
+		st.retry = time.Now().Add(time.Hour) // asked: no second fetch until it answers
+		return true
 	}
 	return false
 }
@@ -102,18 +155,28 @@ func (v *View) fetchFile(id string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		f, err := a.CardFileInfo(ctx, id)
-		code := ""
-		switch {
-		case core.IsAPIError(err, "file_deleted"):
-			code = "file_deleted"
-		case err != nil:
-			code = "file_not_found"
+		code := fileCodeOf(err)
+		transient := err != nil && code == ""
+		if transient {
+			log.Printf("canvas card file %s: files.info: %v", id, err)
 		}
 		v.post(func() {
-			if st := v.files[id]; st != nil {
-				st.done, st.f, st.code = true, f, code
+			st := v.files[id]
+			if st == nil {
+				return
 			}
-			v.refreshCards()
+			if !transient {
+				st.done, st.f, st.code = true, f, code
+				v.refreshCards()
+				return
+			}
+			st.tries++
+			wait := fileRetry(st.tries)
+			st.retry = time.Now().Add(wait)
+			go func() { // the cards read the store again then, and ask once more
+				time.Sleep(wait)
+				v.post(v.refreshCards)
+			}()
 		})
 	}()
 }
@@ -124,7 +187,7 @@ func (c *linkCard) decideFile(loading bool) (cardKind, string) {
 	f := &d.f
 	switch {
 	case d.code != "":
-		return cardEmpty, emptyLine(d.code)
+		return cardEmpty, fileEmptyLine(d.code)
 	case d.known && (f.IsDeleted || f.Mode == "tombstone"): // isFileDeleted || isTombstone
 		return cardEmpty, emptyLine("file_deleted")
 	case d.known && (f.Mode == "not_found" || f.FileAccess == "file_not_found"):

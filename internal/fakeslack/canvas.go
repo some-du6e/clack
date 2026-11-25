@@ -879,6 +879,16 @@ func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/files-pri/")
 	key, tail, _ := strings.Cut(rest, "/")
 	_, id, _ := strings.Cut(key, "-")
+	s.count("files-pri/" + id) // CallCount("files-pri/F…"): one file's GETs
+	// SetFault("files-pri/F…", …): that file's GETs fail
+	if f, ok := s.takeFault("files-pri/" + id); ok {
+		if f.Delay > 0 {
+			time.Sleep(f.Delay)
+		}
+		if s.applyFault(w, f) {
+			return
+		}
+	}
 	if kind, _, _ := strings.Cut(tail, "/"); kind == "csv" || kind == "json" {
 		if s.serveListDownload(w, r, id, kind) { // lists.go
 			return

@@ -77,6 +77,7 @@ type View struct {
 	queue []func() // post: run on the UI goroutine at the next frame
 
 	profiles  map[string]*profileSecs // member cards' sections (linkcard_member.go)
+	cardUsers map[string]bool         // message cards' senders asked for (askCardUser)
 	files     map[string]*fileState   // file cards' files.info (linkcard_file.go)
 	skelStill bool                    // the card being drawn has shimmered long enough (linkcard.go)
 
@@ -84,7 +85,11 @@ type View struct {
 	modelLd  atomic.Bool  // loadCardModel's load is out
 	peekWait atomic.Bool  // watchPeekModel is watching
 	lastSeen atomic.Int64 // unix ms of the last frame that drew the view
-	stop     context.CancelFunc
+	// cardsWait: a link card waits for a member, a message, a file or a
+	// preview the store doesn't hold (refreshCards); a "names" or "gone"
+	// then reads the cards again, once per burst (cardsQueued)
+	cardsWait, cardsQueued atomic.Bool
+	stop                   context.CancelFunc
 }
 
 // New returns a view of canvas id. It loads on its first frame.
@@ -277,6 +282,15 @@ func (v *View) goLive() {
 				}
 				if ev.Type == "canvas_viewers" && ev.ID == v.id {
 					v.h.Invalidate()
+				}
+				if (ev.Type == "names" || ev.Type == "gone") && v.cardsWait.Load() && v.cardsQueued.CompareAndSwap(false, true) {
+					// a member, a message, a file or a preview a card waits
+					// for may be in (users.info, messages.list by id, a
+					// canvas's export): the cards read the store again
+					v.post(func() {
+						v.cardsQueued.Store(false)
+						v.refreshCards()
+					})
 				}
 				if ev.Type == "canvas_model" && ev.ID == v.id { // what opens is checked against the model (blockEditable)
 					v.post(v.recheckEditable)

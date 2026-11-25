@@ -22,6 +22,12 @@ const (
 	shareMaxNewlines = 5
 )
 
+// TruncateBlocks is truncateBlocks, for TruncatedBlocks' limits drawn
+// outside richview (a canvas's message card).
+func TruncateBlocks(bs []richtext.Block, maxChars, maxNewlines int) ([]richtext.Block, bool) {
+	return truncateBlocks(bs, maxChars, maxNewlines)
+}
+
 // truncateBlocks cuts bs to maxChars runes or maxNewlines line breaks;
 // cut reports whether anything was dropped.
 func truncateBlocks(bs []richtext.Block, maxChars, maxNewlines int) (out []richtext.Block, cut bool) {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // ErrNotACanvas is returned by DownloadCanvasHTML for an HTML answer that
@@ -20,8 +21,28 @@ var ErrNotACanvas = errors.New("slack: not a canvas export")
 // redirect to sign-in; this is the one place HTML is expected, so it is
 // accepted only when the URL (and every redirect hop, see checkRedirect)
 // is a file URL and the body is the export (<div class="quip-canvas-content">).
-// The body is read up to max bytes; it is never written to disk.
+// The body is read up to max bytes; it is never written to disk. A GET
+// that keeps failing the same way backs off as a method call does (the
+// guard: the failure again, nothing sent), so a preview that fails isn't
+// fetched again until its backoff ends.
 func (c *Client) DownloadCanvasHTML(ctx context.Context, rawURL string, max int64) (string, error) {
+	k := reqKey(http.MethodGet, rawURL, nil)
+	if !skipBackoff(ctx) {
+		if err := c.blocked(k, time.Now()); err != nil {
+			return "", err
+		}
+	}
+	s, err := c.downloadCanvasHTML(ctx, rawURL, max)
+	if ctx.Err() != nil && err != nil { // cancelled by the caller: not a server failure
+		return "", err
+	}
+	if !errors.Is(err, ErrSignedOut) {
+		c.record(k, err, time.Now())
+	}
+	return s, err
+}
+
+func (c *Client) downloadCanvasHTML(ctx context.Context, rawURL string, max int64) (string, error) {
 	if c.SignedOut() {
 		return "", ErrSignedOut
 	}

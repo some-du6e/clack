@@ -63,6 +63,7 @@ const (
 	cardCanvas                         // EmbeddedCanvasUnfurl (linkcard_canvas.go): decideCanvas picks
 	cardCanvasShown                    // the entity row over the preview
 	cardCanvasNoAccess                 // NoAccessCanvas
+	cardMemberNone                     // UserProfileUnfurl with no member object yet: null, nothing in the card
 )
 
 // Card's waits: a fallback card stops waiting for its container's
@@ -107,10 +108,14 @@ type linkCard struct {
 	loadingNow bool           // decide's isLoading, for the view's own steps
 	dv         cardDerived    // decide's per-container reads (derive)
 	skelSince  time.Time      // when the card's skeleton began: it stops shimmering after Card's wait
-	bodyW      int            // the work object card's width as last drawn
-	hover      bool
-	tag        struct{ _ byte } // the hover area
-	size       image.Point      // the card as last drawn
+	// waitSince is when a routed card (a message, file or canvas) began
+	// loading: past Card's wait it ends in EmptyUnfurl, until what it
+	// waits for arrives or its container changes
+	waitSince time.Time
+	bodyW     int // the work object card's width as last drawn
+	hover     bool
+	tag       struct{ _ byte } // the hover area
+	size      image.Point      // the card as last drawn
 }
 
 // blockedStates are canvas_unfurl_state values that are an error state even
@@ -358,6 +363,8 @@ func (v *View) refreshCards() {
 	var fetch, again []core.CanvasCard
 	var msgs []core.MsgKey
 	var users, files []string
+	wait := false
+	defer func() { v.cardsWait.Store(wait) }()
 	for i, b := range bs {
 		c := b.card
 		c.modelOK = ok
@@ -376,7 +383,7 @@ func (v *View) refreshCards() {
 			c.attKey = string(k)
 		}
 		if c.attKey != oldKey { // Card's wait starts again with its container
-			c.since = time.Time{}
+			c.since, c.waitSince = time.Time{}, time.Time{}
 		}
 		if wasHeld && !c.held { // the store let it go: ask once more
 			c.asked = false
@@ -404,6 +411,7 @@ func (v *View) refreshCards() {
 		if v.readFile(c) || v.readCanvas(c) { // getFileById missed: files.info
 			files = append(files, c.rt.fileID)
 		}
+		wait = wait || c.waiting()
 	}
 	for _, id := range files {
 		v.fetchFile(id)
@@ -528,11 +536,30 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 		if k == cardEmpty {
 			line = emptyLine("")
 		}
-		if k == cardFileLoading && (c.skelSince.IsZero() || now.Before(c.skelSince.Add(cardTimeout))) {
-			// the preview may land meanwhile (a "names" event): look again
-			// soon, for as long as the skeleton shimmers
-			gtx.Execute(op.InvalidateCmd{At: now.Add(500 * time.Millisecond)})
+	}
+	// a routed card's skeleton (the message, the file, the canvas and its
+	// preview) waits Card's 20 s at most, then ends in EmptyUnfurl: a
+	// container that never unfurls, a pending card Quip left behind, a
+	// lookup that never answers would otherwise keep it loading for as
+	// long as it's on screen. It loads again when its container changes
+	// (refreshCards) or what it waits for arrives.
+	if k == cardMessageLoading || k == cardFileLoading {
+		if c.waitSince.IsZero() {
+			c.waitSince = now
 		}
+		end := c.waitSince.Add(cardTimeout)
+		switch {
+		case !now.Before(end):
+			k, line = cardEmpty, emptyLine("")
+		case c.rt.kind == "canvas":
+			// the preview lands in the store (a "names" event the view may
+			// not see): look again soon, within the wait
+			gtx.Execute(op.InvalidateCmd{At: minTime(end, now.Add(500*time.Millisecond))})
+		default:
+			gtx.Execute(op.InvalidateCmd{At: end})
+		}
+	} else {
+		c.waitSince = time.Time{}
 	}
 	c.kind, c.line = k, line
 	// a skeleton shimmers for Card's 20 s wait at most, then holds still:
@@ -572,6 +599,7 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 		h = v.layoutMemberSkeleton(gtx, w, now)
 	case c.kind == cardMember:
 		h = v.layoutMember(gtx, c, w)
+	case c.kind == cardMemberNone: // UserProfileUnfurl's null: CardContainer holds nothing (no padding)
 	case c.kind >= cardFileLoading && c.kind <= cardFileGeneric:
 		c.fileHit = image.Rectangle{}
 		h = v.layoutFile(gtx, c, w, now)
@@ -753,6 +781,30 @@ func (b *blk) hasSelection() bool {
 		if rv != nil && rv.HasSelection() {
 			return true
 		}
+	}
+	return false
+}
+
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
+}
+
+// waiting reports whether the card waits for something the store doesn't
+// hold yet: its member, its message (not known gone), its file or its
+// canvas's preview.
+func (c *linkCard) waiting() bool {
+	switch c.rt.kind {
+	case "user":
+		return c.rt.memberID != "" && !c.mb.known
+	case "message":
+		return c.rt.channel != "" && c.rt.ts != "" && !c.mc.known && !c.mc.gone
+	case "file":
+		return c.rt.fileID != "" && !c.fc.known && c.fc.code == ""
+	case "canvas":
+		return c.rt.fileID != "" && (!c.fc.known && c.fc.code == "" || c.fc.known && !c.cv.havePrev)
 	}
 	return false
 }

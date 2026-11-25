@@ -208,24 +208,29 @@ func (a *App) resolveCanvasSections(ctx context.Context, fid string, secs []stri
 
 // resolveCanvasPreview reads canvas id's HTML export (files.info's
 // url_private, as Canvas does, without the embedded files) for a message
-// card's preview (richtext canvasfile.go).
+// card's preview (richtext canvasfile.go) and a canvas link card's
+// (canvasview linkcard_canvas.go). A lookup that fails, whatever the
+// reason (files.info or the export GET: a network error, a 5xx, an answer
+// that isn't the export, one too big), leaves no preview, as Slack's
+// thumbnail with an error: the card draws without one and isn't asked
+// for again until the canvas changes (ForgetCanvas on an edit). Asking
+// again at once had the card's every frame fetch files.info and the
+// export (a canvas link card reads the preview each frame).
 func (a *App) resolveCanvasPreview(ctx context.Context, id string) bool {
 	f, err := a.canvasFileInfo(ctx, id)
 	if err != nil || f.URLPrivate == "" {
 		var se *slack.Error
-		if err == nil || errors.As(err, &se) {
-			a.S.PutCanvasPreview(id, nil) // no export to show: the card has no preview
-			return true
+		if err != nil && !errors.As(err, &se) {
+			log.Printf("canvas preview %s: %v", id, err)
 		}
-		log.Printf("canvas preview %s: %v", id, err)
-		a.S.ForgetCanvas(id)
-		return false
+		a.S.PutCanvasPreview(id, nil) // no export to show: the card has no preview
+		return true
 	}
 	src, err := a.downloadCanvas(ctx, f.URLPrivate)
 	if err != nil {
 		log.Printf("canvas preview %s: %v", id, err)
-		a.S.ForgetCanvas(id)
-		return false
+		a.S.PutCanvasPreview(id, nil)
+		return true
 	}
 	doc, err := canvas.Parse(src)
 	if err != nil {

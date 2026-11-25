@@ -35,7 +35,10 @@ type memberCardData struct {
 }
 
 // profileSecs is a member's sections as the view fetched them: done once
-// users.profile.getSections answered (Slack's skeleton waits for it).
+// users.profile.getSections answered (Slack's skeleton waits for it), or
+// failed (Slack's data stays undefined and its skeleton with it; Clack
+// draws the card without the location, as its profile pane falls back to
+// the member's legacy contact, so no skeleton is left without an end).
 type profileSecs struct {
 	done   bool
 	locale string // "City, State, Country"
@@ -79,10 +82,10 @@ func (v *View) memberSections(id string) *profileSecs {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		ps, err := a.ProfileSections(ctx, id)
-		if err != nil { // Slack's data stays undefined: the skeleton stays
-			return
+		loc := ""
+		if err == nil {
+			loc = profileLocale(ps)
 		}
-		loc := profileLocale(ps)
 		v.post(func() {
 			p.done, p.locale = true, loc
 			v.h.Invalidate()
@@ -112,12 +115,15 @@ func profileLocale(ps core.ProfileSections) string {
 	return ""
 }
 
-// decideMember is UserProfileUnfurl's rule: the skeleton until the
-// sections answer (at once for a deleted member), then the card.
+// decideMember is UserProfileUnfurl's rule: nothing without a member
+// object (while users.info answers, and for a member it says doesn't
+// exist: the card fills in when one arrives, a "names" event), the
+// skeleton until the sections answer (at once for a deleted member), then
+// the card.
 func (v *View) decideMember(c *linkCard) cardKind {
 	d := &c.mb
 	if !d.known {
-		return cardMemberLoading // Slack draws nothing until users.info answers
+		return cardMemberNone
 	}
 	if d.u.Deleted || v.memberSections(d.u.ID).done {
 		return cardMember
@@ -255,4 +261,27 @@ func (v *View) layoutMemberSkeleton(gtx layout.Context, w int, now time.Time) in
 		y += lh + gtx.Dp(8)
 	}
 	return y + pad
+}
+
+// askCardUser asks users.info for a message card's sender the store
+// doesn't hold, once per view (getMemberById's miss); the card draws it
+// when it's in.
+func (v *View) askCardUser(id string) {
+	a := v.h.Core()
+	if a == nil || v.cardUsers[id] {
+		return
+	}
+	if _, ok := a.User(id); ok {
+		return
+	}
+	if v.cardUsers == nil {
+		v.cardUsers = map[string]bool{}
+	}
+	v.cardUsers[id] = true
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		a.EnsureUsers(ctx, []string{id})
+		v.h.Invalidate()
+	}()
 }

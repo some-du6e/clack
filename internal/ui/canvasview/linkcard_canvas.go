@@ -107,11 +107,11 @@ func (v *View) canvasViews(c *linkCard) {
 			d.emoji = "fishing_pole_and_fish"
 			d.title = para(nsFiles.T("This canvas has gone fishing"))
 			d.subtitle = para(nsFiles.T("It’s been deleted by the owner."))
-		case c.fc.known && (f.Mode == "access_denied" || f.FileAccess == "access_denied"):
+		case c.fc.code == "access_denied" || c.fc.known && (f.Mode == "access_denied" || f.FileAccess == "access_denied"):
 			d.icon = "lock"
 			d.title = para(nsFiles.T("Need permission to view"))
 			d.subtitle = para(nsFiles.T("Another team owns this canvas. It’s only been shared with specific people in your organization."))
-		case c.fc.known && (f.Mode == "not_visible" || f.FileAccess == "not_visible"):
+		case c.fc.code == "not_visible" || c.fc.known && (f.Mode == "not_visible" || f.FileAccess == "not_visible"):
 			d.icon = "warning"
 			d.title = para(nsFiles.T("You don’t have access to this canvas."))
 		default:

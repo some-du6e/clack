@@ -974,6 +974,10 @@ type handler struct{ v *View }
 
 func (r *handler) OpenURL(u string) {
 	v := r.v
+	if strings.HasPrefix(u, cardExpandURL) { // a message card's Show more / Show less
+		v.toggleCardExpand(strings.TrimPrefix(u, cardExpandURL))
+		return
+	}
 	if id := CanvasLinkID(u); id != "" && v.act.Canvas != nil {
 		if sec := CanvasLinkSection(u); id == v.id && sec != "" {
 			v.FocusSection(sec) // openCanvas on the open canvas: focusSection
