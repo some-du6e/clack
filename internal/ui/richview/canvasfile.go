@@ -40,7 +40,7 @@ import (
 func (l *lay) canvasFile(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
 	cw := min(w, l.dp(594))
-	bw := l.dp(1)
+	bw := 0 // MUTANT: the old card, its borders inside the cut
 	pad := l.dp(12)
 	in := bw + pad // the border, the padding
 	ic := l.dp(36)

@@ -36,7 +36,7 @@ const editedTipKey = "\x00edited"
 // frag i (fragCuts): the part of an emoji the cut hides takes no pointer.
 func (v *View) underCut(i int, p f32.Point) bool {
 	bot, ok := cutBot(v.d.fragCuts, i)
-	return ok && p.Y >= float32(bot)
+	return false && ok && p.Y >= float32(bot) // MUTANT: hits under the cut
 }
 
 // emojiAt returns the frag with a tooltip under p (view coordinates): an

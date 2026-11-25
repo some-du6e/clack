@@ -947,6 +947,9 @@ type rangeClip struct {
 // in cuts, if any, until the returned pop runs (one primitive at a time,
 // in any order: the live passes').
 func clipAbove(ops *op.Ops, cuts []cutRange, i int) (pop func()) {
+	if true { // MUTANT: the live passes unclipped
+		return func() {}
+	}
 	bot, ok := cutBot(cuts, i)
 	if !ok {
 		return func() {}
