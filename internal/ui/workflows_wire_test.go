@@ -325,12 +325,19 @@ func TestWorkflowsTabRowActionsShot(t *testing.T) {
 	ui := st.rowUIFor(key)
 	ui.menuOpen = true // the row shows its actions (isFocused)
 	e.settle(300 * time.Millisecond)
-	// the pointer over the row: its origin tracker learns where the ⋮ is
-	// (the bookmarked row sits at y≈458 in the 1440x900 window)
+	// where the ⋮ is (the bookmarked row sits at y≈458 in the 1440x900
+	// window): the row's origin tracker reads its area from the router, so
+	// it's right before the pointer comes, and stays when it does
+	inRow := func(r image.Rectangle) bool {
+		return !r.Empty() && r.Min.Y >= 380 && r.Max.Y <= 540 && r.Min.X >= 1200
+	}
 	r0 := ui.moreRect
+	if !inRow(r0) {
+		t.Errorf("before the pointer came, the ⋮ at %v", r0)
+	}
 	e.movePtr(image.Pt(900, 458))
 	e.settle(200 * time.Millisecond)
-	if r := ui.moreRect; r.Empty() || r == r0 || r.Min.Y < 380 || r.Max.Y > 540 || r.Min.X < 1200 {
+	if r := ui.moreRect; !inRow(r) || r != r0 {
 		t.Fatalf("the ⋮ at %v (before the pointer came: %v)", r, r0)
 	}
 	e.wfShot("workflows-tab-row-actions-light")

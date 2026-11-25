@@ -249,7 +249,7 @@ var (
 // covered never learned, and a fallback stood in (the thread pane in the
 // Activity tab fell back to the pointer itself).
 func AreaOrigin(gtx layout.Context, tag event.Tag, local image.Rectangle) (image.Point, bool) {
-	full, _, ok := gtx.Source.AreaBounds(tag)
+	full, ok := areaBounds(gtx, tag)
 	if !ok || full.Empty() || local.Empty() {
 		return image.Point{}, false
 	}
