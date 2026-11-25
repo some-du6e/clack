@@ -237,9 +237,11 @@ var (
 
 // AreaOrigin is the window origin of the widget that registered tag's
 // area over local (its own coordinates) in the last frame, as the router
-// placed it: Clack patch 57's FollowArea, which asks for another frame
-// when the area moves, less FrameOrigin. ok is false without a router or
-// an area (headless tests drawing without one).
+// placed it (Clack patch 53's AreaBounds), less FrameOrigin. ok is false
+// without a router or an area (headless tests drawing without one). It
+// asks for no frame: an area that moved is a frame late, as the pointer's
+// origin was (FollowArea's frame on every area that appears woke an idle
+// window, which a tooltip's delay alone should).
 //
 // The origin trackers read this first. They used to learn their origin
 // only from pointer events, through a pass-through handler laid out under
@@ -247,7 +249,7 @@ var (
 // covered never learned, and a fallback stood in (the thread pane in the
 // Activity tab fell back to the pointer itself).
 func AreaOrigin(gtx layout.Context, tag event.Tag, local image.Rectangle) (image.Point, bool) {
-	full, _, ok := gtx.Source.FollowArea(tag)
+	full, _, ok := gtx.Source.AreaBounds(tag)
 	if !ok || full.Empty() || local.Empty() {
 		return image.Point{}, false
 	}

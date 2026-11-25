@@ -18,9 +18,9 @@ import (
 )
 
 // originTracker knows a widget's window position. Gio exposes no global
-// transform, so it reads where the router put its area last frame (Clack
-// patch 57's FollowArea, which asks for another frame when the area moves;
-// less FrameOrigin, Gio's own title bar). Without a router (some tests) it
+// transform, so it reads where the router put its area last frame
+// (theme.AreaOrigin: Clack patch 53's AreaBounds, less FrameOrigin, Gio's
+// own title bar). Without a router (some tests) it
 // falls back to pointer events: a pass-through handler sees the same
 // pointer event in local coordinates that the root tracker sees in window
 // coordinates, so origin = window - local. Pointer events alone weren't
