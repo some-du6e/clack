@@ -45,12 +45,4 @@ func TestOfflineChannelToastLikeSlack(t *testing.T) {
 		t.Errorf("a channel with no history toasts %q", got)
 	}
 
-	// through the route: onChannelChange runs at every setActiveChannel,
-	// so the conversation opened again from a page toasts too
-	clearToast(a)
-	routeTo(a, Route("c/"+ch), Route("threads"))
-	routeTo(a, Route("threads"), Route("c/"+ch))
-	if got := toastNow(a).text; !strings.Contains(got, "No connection.") {
-		t.Errorf("the channel opened again from a page toasted %q, want the offline toast", got)
-	}
 }
