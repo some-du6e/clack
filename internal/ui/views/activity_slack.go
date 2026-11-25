@@ -735,7 +735,9 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 	// channel's setting (getNotificationPrefDescription)
 	chanItem := (it.Type == "internal_channel_invite" || it.Type == "external_channel_invite" || it.Type == "channel") && it.Channel != "" && !isDM
 	if chanItem {
-		g1 = append(g1, popups.MenuItem{Key: "change_notifications", Label: nsActivity.T("Edit notifications"), Icon: "notifications",
+		// its SvgIcon has no size, and .p-activity_item_context_menu__item
+		// .c-menu_item__icon svg sets 18px
+		g1 = append(g1, popups.MenuItem{Key: "change_notifications", Label: nsActivity.T("Edit notifications"), Icon: "notifications", IconSize: 18,
 			Subtitle: v.notifyDescription(it.Channel, muted), Sub: popups.ChannelNotifyItems(ph, it.Channel)})
 	}
 	groups = append(groups, g1)

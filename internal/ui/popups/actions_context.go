@@ -666,11 +666,12 @@ func NewCodeMenu(h Host, at image.Point, code string, block bool) *Menu {
 // NewTextSelectionMenu is Slack's TextSelectionContextMenu: Copy text
 // (⌘C on macOS, Ctrl+C elsewhere) and Search in Slack. text is what Copy
 // puts on the clipboard. ("Explain this" needs Slack AI; the "Switch to
-// default menu" hint points at a preference Clack doesn't have.)
+// default menu" hint points at a preference Clack doesn't have.) Its
+// SvgIcons have no size: 1em of the row (MenuIcon1em).
 func NewTextSelectionMenu(h Host, at image.Point, text string) *Menu {
 	items := inAll(nsMessage, []MenuItem{
-		{Label: "Copy text", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) { copyText(gtx, text) }},
-		{Label: "Search in Slack", Icon: "search", Do: func() {
+		{Label: "Copy text", Icon: "text-format", IconSize: MenuIcon1em, Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) { copyText(gtx, text) }},
+		{Label: "Search in Slack", Icon: "search", IconSize: MenuIcon1em, Do: func() {
 			if q := ctxSearchQuery(text); q != "" {
 				h.Navigate("search?q=" + url.QueryEscape(q))
 			}

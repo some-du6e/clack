@@ -1483,12 +1483,25 @@ func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 	rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), lk.bg)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(s, s))
-	layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, lk.glyph, 20, lk.fg) })
+	layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, lk.glyph, tileGlyphSize(lk.glyph), lk.fg) })
 	return D{Size: image.Pt(s, s)}
 }
 
-// tileLook is what a file's tile draws: an svgicon (art), or a 20px glyph
-// on a filled tile (radius 8), over a video's frame (video).
+// tileGlyphSize is the size of a tile's glyph: QuipIcon's and
+// BaseListIcon's SvgIcons are size 20; MediaFileThumbnail's play-filled
+// and sound-filled have none, so they are 1em (Slack's [data-5jx]
+// {width:1em;height:1em;font-size:var(--s,inherit)}) of the 15px the row
+// inherits.
+func tileGlyphSize(glyph string) unit.Dp {
+	if glyph == "play-filled" || glyph == "sound-filled" {
+		return 15
+	}
+	return 20
+}
+
+// tileLook is what a file's tile draws: an svgicon (art), or a glyph
+// (tileGlyphSize) on a filled tile (radius 8), over a video's frame
+// (video).
 type tileLook struct {
 	art    string
 	bg, fg color.NRGBA

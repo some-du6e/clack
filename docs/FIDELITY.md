@@ -223,3 +223,26 @@ the windows-applog job's real OLE drag from another process
 (`clack_drop_windows_test.go`) and the linux job's XDND drag on Xvfb
 (`clack_drop_x11_test.go`). Screenshots: files-shots' `drop-*.png`.
 
+
+## SvgIcon sizes (branch `svgicon-size`, 2026-11-25)
+
+Slack's SvgIcon (SvgIconPrimitive) defaults `size` to `"inherit"` and sets `--s` only for another size. Its svg's rule, `[data-5jx]{width:1em;height:1em;font-size:var(--s,inherit)}` (client-boot-styles c687684120bd9c46), makes an icon with no size 1em of the font it sits in. The `className` a caller passes is dropped, and `.is-inline` is `vertical-align:-.125em`. Clack's kit drew 20 for none, and several native ports had drawn 20 or 16. Each site below was measured as a rebuilt DOM under Slack's live CSS in headless Chromium (no Slack page involved). The element's own classes matter: `.c-filter_input__reset_button` sets 18px, `.p-activity_item_context_menu__item .c-menu_item__icon svg` and `.p-message_actions_menu .c-menu_item__icon svg` set 18px.
+
+| Where | Slack | Was |
+|---|---|---|
+| kit SvgIcon, no size | 1em of the inherited font | 20 |
+| Files row MediaFileThumbnail play-filled / sound-filled | 15 (the row) | 20 |
+| Activity Mark Complete (small Button) | 13 | 16 |
+| Top bar search icon | 15, at the button's 12px padding; text at 35; Windows/Linux .6 opacity, 1px up | 16 at 10 |
+| Sidebar filter clear | 18 | 16 |
+| Menu link indicator (new-window) | 15 (`.c-menu_item__link_icon`) | 16 |
+| Menu item icons with no size (`MenuIcon1em`): chart, text selection, list link, create menu Workflow, Delete task | 15 | 18 (20 with a subtitle) |
+| Activity's Edit notifications | 18 | 20 |
+| Invite: Tag chips, guest billing warning, email errors, Add a message | 15, 13, 15, 15 | 20, 16, 16, 20 |
+| Share dialog Copy Link | 15 | 18 |
+| Huddles New Huddle, Drafts Edit, folder Add (small Buttons) | 13 | 20, 16, 16 |
+| Huddle sidebar count badge, huddle window title | 13 | 16 |
+| File chip remove (RemoveFileButton close-filled) | 12 | close at 14 |
+| Event guest check (`.p-event-avatar_badge`, 12px, bottom 1px right 1px) | 12 | 10 at -3px |
+
+Not done here: the composer's restored-video tile (DraftVideoFile's MediaFileThumbnail) and search's file tiles, which land with bk-file-thumbs-2; Slack's create menu's 40px tinted icon circles; the invite guest warning's 13px text (Clack draws 15); kit menus drop a template's element icon. 81 `icon` props across Slack pass an SvgIcon with no size; those in components Clack doesn't port weren't checked.

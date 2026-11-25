@@ -2,6 +2,7 @@ package kit
 
 import (
 	"image"
+	"math"
 	"strings"
 
 	"gioui.org/layout"
@@ -195,13 +196,19 @@ func clackIcon(name string) string {
 	return fallbackIcon
 }
 
-// SvgIcon: name (Slack's icon name), size (px, default 20), inline. Drawn
-// in currentColor (the inherited CSS color), like Slack's SVG icons.
+// SvgIcon: name (Slack's icon name), size, inline. Drawn in currentColor
+// (the inherited CSS color), like Slack's SVG icons.
+//
+// Slack's SvgIcon (SvgIconPrimitive) defaults size to "inherit" and sets
+// --s only for another size; its svg's rule, client-boot-styles
+// [data-5jx]{width:1em;height:1em;font-size:var(--s,inherit)}, makes it
+// its --s square, else 1em of the font it sits in (svgIconSize). With
+// inline it is svg.is-inline: inline-block at vertical-align -.125em.
 func svgIcon(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	th := thm()
-	size := float32(h.Props.IntOr("size", 20))
-	if size <= 0 {
-		size = 20
+	size := svgIconSize(h)
+	if size == 0 {
+		return layout.Dimensions{} // --s:0px: a 0×0 svg
 	}
 	c := th.C.Fg
 	if h.Style != nil && h.Style.Color.A > 0 {
@@ -209,10 +216,27 @@ func svgIcon(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	}
 	d := drawIcon(gtx, h.Props.StrOr("name", ""), size, c)
 	if h.Props.Bool("inline") {
-		// inline icons sit in the text line (vertical-align: text-bottom).
-		return layout.Dimensions{Size: d.Size, Baseline: d.Size.Y / 5}
+		// vertical-align -.125em of the icon's own font, its size: its
+		// bottom an eighth of it under the baseline
+		return layout.Dimensions{Size: d.Size, Baseline: int(math.Round(float64(d.Size.Y) / 8))}
 	}
 	return layout.Dimensions{Size: image.Pt(d.Size.X, d.Size.Y)}
+}
+
+// svgIconSize is the icon's square in CSS px: size as --s (a number, or
+// a string of one: Slack's "16"), else 1em, the font size the icon
+// inherits (size "inherit" or none, the way Slack's own components mostly
+// draw it: MediaFileThumbnail's play-filled is its row's 15px). A size
+// that isn't a number of px Slack leaves at 1em too (--s:abcpx is an
+// invalid font-size, which inherits).
+func svgIconSize(h *slackc.Host) float32 {
+	if v, ok := h.Props.Num("size"); ok && v >= 0 && !math.IsInf(v, 0) {
+		return float32(v)
+	}
+	if h.Style != nil && h.Style.FontSize > 0 {
+		return h.Style.FontSize
+	}
+	return 15 // body's --sk6-type-size-base
 }
 
 func init() { add(svgIcon, "SvgIcon") }

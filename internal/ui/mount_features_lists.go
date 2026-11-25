@@ -138,7 +138,7 @@ func listMenuItems(items []listview.MenuItem) []MenuItem {
 		if ext, ok := it.Ext.([]MenuItem); ok { // a submenu the shell built (SectionItems)
 			sub = ext
 		}
-		ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Subtitle: it.Subtitle, Disabled: it.Disabled, Divider: it.Divider,
+		ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, IconSize: it.IconSize, Subtitle: it.Subtitle, Disabled: it.Disabled, Divider: it.Divider,
 			Danger: it.Danger, Sub: sub, Do: it.Do})
 	}
 	return ms

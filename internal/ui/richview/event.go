@@ -420,8 +420,12 @@ func (l *lay) eventRow(y, x, tx, tw int, icon string, body func(ry int) int) int
 }
 
 // eventFaces draws the accepted guests' pictures at (x, y), eight at most,
-// each with its check (check-circle-filled, #007a5a, at bottom -3 right
-// -3), and returns the line's height.
+// each with its check, and returns the line's height. The check is
+// .p-event-avatar_badge's check-circle-filled, an SvgIcon with no size:
+// 1em of the badge's 12px, on its base-pry circle (border-radius 9999px),
+// at bottom 1px right 1px of the avatar's p-event-avatar_wrapper, an
+// inline span whose bottom is the 15px line's descent (3px) under the
+// avatar.
 func (l *lay) eventFaces(ev *richtext.Event, x, y int) int {
 	p := &l.st.Palette
 	g := l.dp(evGlyph)
@@ -456,9 +460,9 @@ func (l *lay) eventFaces(ev *richtext.Event, x, y int) int {
 			l.plainAdd("\n")
 			l.plainFlow(n, fx+(g-nw)/2, fy, nw+l.dp(2), &os, -1)
 		}
-		b := l.dp(10)
-		bx, by := r.Max.X+l.dp(3)-b, r.Max.Y+l.dp(3)-b
-		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(bx-1, by-1, bx+b+1, by+b+1), radius: b, fill: p.Panel, target: -1})
+		b := l.dp(12)
+		bx, by := r.Max.X-l.dp(1)-b, r.Max.Y+l.dp(3)-l.dp(1)-b
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(bx, by, bx+b, by+b), radius: b / 2, fill: p.Panel, target: -1})
 		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(bx, by, bx+b, by+b), url: iconURL + "check-circle-filled", target: -1, px: b, tint: evNowFg})
 	}
 	return l.dp(22)

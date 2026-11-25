@@ -905,7 +905,8 @@ func (v *Huddles) layoutHeader(gtx C) D {
 // newHuddleButton is HuddlesPageHeaderActions' New Huddle: a
 // ViewHeaderPrimaryButton (c-button small outline: 28px, padding 0 12px
 // 1px, 13px bold, 1px otl-sec border, radius 4) holding the plus icon
-// (4px before the label). Its click is useStartHuddleClick: without
+// (an SvgIcon with no size in a margin_right_25 div: 1em of the 13px, 4px
+// before the label). Its click is useStartHuddleClick: without
 // standalone huddles, HuddleInviteStartModal.
 func (v *Huddles) newHuddleButton(gtx C) D {
 	return v.outlineButton(gtx, v.clk("new"), "plus", nsHuddles.T("New Huddle"), true)
@@ -913,7 +914,8 @@ func (v *Huddles) newHuddleButton(gtx C) D {
 
 // outlineButton is Slack's c-button--outline: small (28px, 13px, radius
 // 4) or medium (36px, 15px, radius 8), padding 0 12px 1px, min-width
-// 56/80, an optional 20px icon 4px before the label.
+// 56/80, an optional icon 4px before the label, 1em of the label's size
+// (an SvgIcon with no size).
 func (v *Huddles) outlineButton(gtx C, c *widget.Clickable, icon, label string, small bool) D {
 	hgt, size, minW, rad := gtx.Dp(36), unit.Sp(15), gtx.Dp(80), gtx.Dp(8)
 	if small {
@@ -922,9 +924,9 @@ func (v *Huddles) outlineButton(gtx C, c *widget.Clickable, icon, label string, 
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		tw := v.th.Measure(gtx, size, wBold, label)
-		iw := 0
+		iw, is := 0, unit.Dp(size)
 		if icon != "" {
-			iw = gtx.Dp(20) + gtx.Dp(4)
+			iw = gtx.Dp(is) + gtx.Dp(4)
 		}
 		sz := image.Pt(max(minW, tw+iw+2*gtx.Dp(12)), hgt)
 		r := image.Rectangle{Max: sz}
@@ -938,8 +940,8 @@ func (v *Huddles) outlineButton(gtx C, c *widget.Clickable, icon, label string, 
 		x := (sz.X - tw - iw) / 2
 		if icon != "" {
 			func() {
-				defer opOffset(gtx, image.Pt(x, (hgt-gtx.Dp(20))/2)).Pop()
-				v.icon(gtx, icon, 20, fg)
+				defer opOffset(gtx, image.Pt(x, (hgt-gtx.Dp(is))/2)).Pop()
+				v.icon(gtx, icon, is, fg)
 			}()
 			x += iw
 		}

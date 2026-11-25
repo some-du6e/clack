@@ -481,8 +481,16 @@ func (v *FolderTab) kaLocked() bool {
 }
 
 func (v *FolderTab) kaAddWidth(gtx C) int {
-	return gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + v.th.Measure(gtx, 13, wBold, nsTabbed.T("Add Source")) + gtx.Dp(12)
+	return gtx.Dp(folderAddPad) + gtx.Dp(folderAddIcon) + gtx.Dp(4) + v.th.Measure(gtx, 13, wBold, nsTabbed.T("Add Source")) + gtx.Dp(folderAddPad)
 }
+
+// folderAddIcon and folderAddPad are FolderCreateMenu's labelled button
+// (a small Button: its 1px border and 12px sides): its plus is an SvgIcon
+// with no size, 1em of the 13px label, 4px (margin_left_25) before it.
+const (
+	folderAddIcon = 13
+	folderAddPad  = 1 + 12
+)
 
 // kaAddButton is FolderCreateMenu's labelled button (addFileLabel "Add
 // Source", size small), disabled with its tooltip when locked.
@@ -504,8 +512,8 @@ func (v *FolderTab) kaAddButton(gtx C) D {
 		if locked {
 			fg = v.p.Muted
 		}
-		dirAt(gtx, image.Pt(gtx.Dp(8), (bh-gtx.Dp(16))/2), func(gtx C) D { return v.icon(gtx, "plus", 16, fg) })
-		dirAt(gtx, image.Pt(gtx.Dp(28), 0), func(gtx C) D {
+		dirAt(gtx, image.Pt(gtx.Dp(folderAddPad), (bh-gtx.Dp(folderAddIcon))/2), func(gtx C) D { return v.icon(gtx, "plus", folderAddIcon, fg) })
+		dirAt(gtx, image.Pt(gtx.Dp(folderAddPad+folderAddIcon+4), 0), func(gtx C) D {
 			return vmid(gtx, bh, func(gtx C) D {
 				return v.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Weight: wBold, Color: fg, MaxLines: 1}, label)
 			})

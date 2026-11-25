@@ -472,16 +472,21 @@ func (v *Activity) markCompleteButton(gtx C, r *actRow) D {
 	})
 }
 
+// smallBtnIcon is smallButton's icon: 1em of its 13px label.
+const smallBtnIcon = 13
+
 // smallButton is c-button--small: 28px tall, padding 0 12px, min-width
-// 56px, radius 8, a 13px bold label after an optional 16px icon (4px gap,
-// margin_right_25).
+// 56px, radius 8, a 13px bold label after an optional icon (4px gap,
+// margin_right_25). The icon is an SvgIcon with no size, so 1em of the
+// button's 13px (Slack's [data-5jx]{width:1em;height:1em;font-size:
+// var(--s,inherit)}).
 func (v *Activity) smallButton(gtx C, c *widget.Clickable, kind btnKind, icon, label string) D {
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		tw := v.th.Measure(gtx, 13, wBold, label)
 		iw := 0
 		if icon != "" {
-			iw = gtx.Dp(16) + gtx.Dp(4)
+			iw = gtx.Dp(smallBtnIcon) + gtx.Dp(4)
 		}
 		sz := image.Pt(max(gtx.Dp(56), tw+iw+2*gtx.Dp(12)), gtx.Dp(28))
 		rr := image.Rectangle{Max: sz}
@@ -510,7 +515,7 @@ func (v *Activity) smallButton(gtx C, c *widget.Clickable, kind btnKind, icon, l
 					if icon == "" {
 						return D{}
 					}
-					return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(icon), 16, fg) })
+					return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(icon), smallBtnIcon, fg) })
 				}),
 				layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, fg, label) }),
 			)

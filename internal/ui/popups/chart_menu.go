@@ -42,14 +42,15 @@ import (
 var nsBlockKit = i18n.NS("block_kit")
 
 // NewChartMenu is the menu for dv's More actions button btn (window
-// coordinates).
+// coordinates). DataVisualizationBlock's items carry SvgIcons with no
+// size: 1em of the row (MenuIcon1em).
 func NewChartMenu(h Host, btn image.Rectangle, dv *richtext.DataViz) *Menu {
 	if dv == nil {
 		return nil
 	}
 	items := []MenuItem{
-		MenuItem{Label: "View as table", Icon: "table", Do: func() { OpenChartTable(h, dv) }}.In(nsBlockKit),
-		MenuItem{Label: "Download chart data", Icon: "download", Do: func() { DownloadChartData(h, dv) }}.In(nsBlockKit),
+		MenuItem{Label: "View as table", Icon: "table", IconSize: MenuIcon1em, Do: func() { OpenChartTable(h, dv) }}.In(nsBlockKit),
+		MenuItem{Label: "Download chart data", Icon: "download", IconSize: MenuIcon1em, Do: func() { DownloadChartData(h, dv) }}.In(nsBlockKit),
 	}
 	if c := h.Core(); c != nil && c.Experiment("data_visualization_copy_image") == "on" {
 		dark := false
@@ -59,7 +60,7 @@ func NewChartMenu(h Host, btn image.Rectangle, dv *richtext.DataViz) *Menu {
 			}
 		}
 		src := ChartPreview(dv, dark)
-		items = append(items, Sep(), MenuItem{Label: "Copy as image", Icon: "image", Disabled: src == "",
+		items = append(items, Sep(), MenuItem{Label: "Copy as image", Icon: "image", IconSize: MenuIcon1em, Disabled: src == "",
 			Do: func() { CopyChartImage(h, dv, dark) }}.In(nsBlockKit))
 	}
 	return NewMenuOpts(h, items, MenuOpts{Anchor: btn, Popover: "right-bottom", TryOpposite: true})

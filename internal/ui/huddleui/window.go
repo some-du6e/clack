@@ -324,6 +324,9 @@ const (
 	winPaneMaxH  = 222 // .p-huddle_compact_av_pane--footer_below_content
 	winBarH      = 48  // .toolbarContainerCompactMode: 40px buttons, padding 4px 0
 	winShareMinW = 550 // HuddleToolbar's eC: narrower, no screen share button (ed.aJ)
+	// winTitleIcon is HuddleMvaWindowTitle's headphones, an SvgIcon with
+	// no size: 1em of the title's 13px, 8px (the span's gap) before it
+	winTitleIcon = 13
 )
 
 func (w *window) layout(gtx C) {
@@ -377,7 +380,7 @@ func (w *window) layoutCall(gtx C) {
 	title, _ := w.c.windowTitle(st)
 	tink := theme.WithAlpha(ink.title, 0xcc)
 	tg := gtx
-	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, sz.X-gtx.Dp(24)-gtx.Dp(120)), titleH)}
+	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, sz.X-gtx.Dp(winTitleIcon+8)-gtx.Dp(120)), titleH)}
 	tm := op.Record(gtx.Ops)
 	td := slackc.Render(tg, "HuddleMvaWindowTitle", w.titleProps(s, st, title, ""), func(gtx C, p slackc.Props) D {
 		t := w.th.Label(gtx, 13, theme.Bold, tink, p.StrOr("title", title))
@@ -393,12 +396,13 @@ func (w *window) layoutCall(gtx C) {
 	})
 	tcall := tm.Stop()
 	ts := td.Size
-	ix := (sz.X - ts.X - gtx.Dp(24)) / 2
-	at(gtx, image.Pt(ix, (titleH-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx C) D {
-		iconAt(gtx, image.Pt(gtx.Dp(16), gtx.Dp(16)), "headphones", 16, tink)
-		return D{Size: image.Pt(gtx.Dp(16), gtx.Dp(16))}
+	hp := unit.Dp(winTitleIcon)
+	ix := (sz.X - ts.X - gtx.Dp(hp+8)) / 2
+	at(gtx, image.Pt(ix, (titleH-gtx.Dp(hp))/2), image.Pt(gtx.Dp(hp), gtx.Dp(hp)), func(gtx C) D {
+		iconAt(gtx, image.Pt(gtx.Dp(hp), gtx.Dp(hp)), "headphones", hp, tink)
+		return D{Size: image.Pt(gtx.Dp(hp), gtx.Dp(hp))}
 	})
-	tt := op.Offset(image.Pt(ix+gtx.Dp(24), (titleH-ts.Y)/2)).Push(gtx.Ops)
+	tt := op.Offset(image.Pt(ix+gtx.Dp(hp+8), (titleH-ts.Y)/2)).Push(gtx.Ops)
 	tcall.Add(gtx.Ops)
 	tt.Pop()
 	// No elapsed time here: Slack's huddle window shows none (its only

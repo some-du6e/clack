@@ -867,18 +867,19 @@ func (v *View) linkMenu(d *core.ListDoc, rec *lists.Record, c *lists.Column, f *
 	}
 	l := f.Link[0]
 	viewOnly := canEdit(d, c, f) != nil
-	items := []MenuItem{{Label: nsLists.T("Open link"), Icon: "external", Do: func() {
+	// LinkColumnMenu's SvgIcons have no size: 1em of the row
+	items := []MenuItem{{Label: nsLists.T("Open link"), Icon: "external", IconSize: popups.MenuIcon1em, Do: func() {
 		if v.act.OpenURL != nil {
 			v.act.OpenURL(l.OriginalURL)
 		}
 	}}}
 	if !viewOnly {
-		items = append(items, MenuItem{Label: nsLists.T("Edit link"), Icon: "edit", Do: func() {
+		items = append(items, MenuItem{Label: nsLists.T("Edit link"), Icon: "edit", IconSize: popups.MenuIcon1em, Do: func() {
 			v.edit.start(rec.ID, c, l.OriginalURL)
 			v.edit.done = v.editDone(c)
 		}})
 	}
-	items = append(items, MenuItem{Label: nsLists.T("Copy link"), Icon: "copy", Do: func() {
+	items = append(items, MenuItem{Label: nsLists.T("Copy link"), Icon: "copy", IconSize: popups.MenuIcon1em, Do: func() {
 		if v.act.Copy != nil {
 			v.act.Copy(l.OriginalURL)
 		}
@@ -888,14 +889,14 @@ func (v *View) linkMenu(d *core.ListDoc, rec *lists.Record, c *lists.Column, f *
 		if l.DisplayAsURL {
 			lbl = nsLists.T("Display as title")
 		}
-		items = append(items, MenuItem{Label: lbl, Icon: "link", Do: func() {
+		items = append(items, MenuItem{Label: lbl, Icon: "link", IconSize: popups.MenuIcon1em, Do: func() {
 			nl := l
 			nl.DisplayAsURL = !l.DisplayAsURL
 			v.save(lists.Edit{RowID: rec.ID, Column: c, Link: &nl})
 		}})
 	}
 	if !viewOnly {
-		items = append(items, MenuItem{Label: nsLists.T("Remove link"), Icon: "trash", Do: func() {
+		items = append(items, MenuItem{Label: nsLists.T("Remove link"), Icon: "trash", IconSize: popups.MenuIcon1em, Do: func() {
 			v.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true})
 		}})
 	}

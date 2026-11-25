@@ -109,7 +109,8 @@ func (a *App) openCreateMenu(anchor image.Rectangle) {
 		{Key: "create_list", Label: "List", Icon: "lists", Subtitle: "Track and manage projects", Do: a.CreateList},
 	}
 	if a.workflowBuilderEnabled() {
-		items = append(items, MenuItem{Key: "create-workflow", Label: "Workflow", Icon: "play", Subtitle: "Automate everyday tasks", Do: a.openWorkflowBuilder})
+		// the only row whose SvgIcon has no size (the others pass 20)
+		items = append(items, MenuItem{Key: "create-workflow", Label: "Workflow", Icon: "play", IconSize: popups.MenuIcon1em, Subtitle: "Automate everyday tasks", Do: a.openWorkflowBuilder})
 	}
 	if a.exp("meeting_assistant") == "on" {
 		items = append(items, MenuItem{Key: "create-notes", Label: "Notes", Icon: "microphone", Subtitle: "Record meeting notes",

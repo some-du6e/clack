@@ -98,16 +98,17 @@ func newShareFile(h Host, o ShareFileOpts) *actForward {
 
 // drawCopyLink is ShareDialogCopyLinkButton with renderAsLink: a link
 // button (c-link--button: link colour, underlined on hover) with the
-// link icon 4px before the label.
+// link icon 4px before the label. The icon is an SvgIcon with no size:
+// 1em of the button's 15px (c-link--button inherits the font).
 func (f *actForward) drawCopyLink(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, ring bool, grp grpSide) layout.Dimensions {
 	cl := colorsOf(th)
 	label := nsShare.T("Copy Link")
 	tw := textW(gtx, th, 15, theme.Regular, label)
-	is := dp(gtx, 18)
+	is := dp(gtx, 15)
 	h := dp(gtx, 36)
 	sz := image.Pt(is+dp(gtx, 4)+tw, h)
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		at(gtx, image.Pt(0, (h-is)/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "link", 18, cl.Link) })
+		at(gtx, image.Pt(0, (h-is)/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "link", 15, cl.Link) })
 		at(gtx, image.Pt(is+dp(gtx, 4), 0), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
 				return text(gtx, th, 15, theme.Regular, cl.Link, label)

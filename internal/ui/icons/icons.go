@@ -47,6 +47,10 @@ type def struct {
 // "missing").
 var DrawHook func(name string)
 
+// DrawSizeHook, when set (tests), sees each icon drawn as DrawHook does,
+// with the square it was drawn in, in px.
+var DrawSizeHook func(name string, px int)
+
 const view = 20
 
 var registry = map[string]*def{}
@@ -166,6 +170,9 @@ func (d *def) draw(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dim
 		}
 	})
 	px := gtx.Dp(size)
+	if DrawSizeHook != nil {
+		DrawSizeHook(d.name, px)
+	}
 	sc := float32(px) / view
 	gam := theme.StrokeGamma(col)
 	for i, p := range d.parts {

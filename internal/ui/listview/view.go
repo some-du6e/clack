@@ -102,6 +102,10 @@ type MenuItem struct {
 	Divider     bool       // a separator instead of a row
 	Danger      bool       // a destructive row ("Delete list")
 	Sub         []MenuItem // a submenu ("Download CSV" ▸)
+	// IconSize is the icon's px, 0 the menu row's own
+	// (popups.MenuItem.IconSize): popups.MenuIcon1em for an item whose
+	// Slack SvgIcon has no size.
+	IconSize float32
 	// Ext is a submenu the shell built (Actions.SectionItems), opaque
 	// here; it takes Sub's place.
 	Ext any

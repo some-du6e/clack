@@ -7334,6 +7334,48 @@ jobs:
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
   # in its needs (.github/scripts/expect_fail_wire.py adds it).
+  # svgicon-size (2026-11-25): an SvgIcon with no size is 1em of the font
+  # it sits in, as Slack's [data-5jx] rule makes it: kit's SvgIcon, and the
+  # native ports that drew sizes of their own (docs/FIDELITY.md)
+  svgicon-size:
+    if: ${{ !inputs.only || startsWith('svgicon-size', inputs.only) }}
+    name: "svgicon-size ${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: kit, test: "TestSvgIconSizeInherits", pkg: ./internal/ui/slackc/kit, gio: true }
+          - { name: views, test: "TestSvgIconSizesViews", pkg: ./internal/ui/views, gio: true }
+          - { name: ui, test: "TestSvgIconSizesTopBarAndFilter", pkg: ./internal/ui, gio: true }
+          - { name: popups, test: "TestSvgIconSizesPopups", pkg: ./internal/ui/popups, gio: true }
+          - { name: huddleui, test: "TestSvgIconSizesHuddles", pkg: ./internal/ui/huddleui, gio: true }
+          - { name: richview, test: "TestEventAvatarBadgeSize", pkg: ./internal/ui/richview, gio: true }
+          - { name: composer, test: "TestChipRemoveIconSize", pkg: ./internal/ui/composer, gio: true }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        if: ${{ matrix.gio }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.name }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   expect-fail:
     needs:
       - link-open-mac
@@ -7495,6 +7537,7 @@ jobs:
       - entprefs
       - scroll-cpu
       - member-subs
+      - svgicon-size
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)

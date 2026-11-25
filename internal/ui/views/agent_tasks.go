@@ -884,7 +884,8 @@ func (v *AgentTasks) moreItems(t core.AgentTask, self string) []popups.MenuItem 
 	if !t.CanDelete(self) {
 		return nil
 	}
-	return []popups.MenuItem{{Key: "delete_automation", Label: nsSlackbotAI.T("Delete task"), Icon: "trash", Danger: true,
+	// useDeleteAutomationMenuItem's trash has no size: 1em of the row
+	return []popups.MenuItem{{Key: "delete_automation", Label: nsSlackbotAI.T("Delete task"), Icon: "trash", IconSize: popups.MenuIcon1em, Danger: true,
 		Do: func() { v.confirmDelete(t) }}}
 }
 

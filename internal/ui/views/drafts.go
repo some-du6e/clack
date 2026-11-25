@@ -269,19 +269,22 @@ func (d *Drafts) layoutHeader(gtx C) D {
 	return D{Size: image.Pt(w, h)}
 }
 
-// editButton: outline small, h 28, radius 4, pencil + 13px bold "Edit".
+// editButton: outline small (c-button--small: h 28, its 1px border and
+// 12px sides), radius 4, pencil + 13px bold "Edit" 4px after it. The
+// pencil is an inline SvgIcon with no size (p-outbox_page_header__edit-icon
+// sets none): 1em of the button's 13px.
 func (d *Drafts) editButton(gtx C) D {
 	c := &d.editBtn
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		m := op.Record(gtx.Ops)
-		dims := layout.Inset{Left: 8, Right: 10}.Layout(gtx, func(gtx C) D {
+		dims := layout.Inset{Left: 1 + 12, Right: 12 + 1}.Layout(gtx, func(gtx C) D {
 			g := gtx
 			g.Constraints.Min.Y, g.Constraints.Max.Y = gtx.Dp(28), gtx.Dp(28)
 			return layout.W.Layout(g, func(gtx C) D {
 				gtx.Constraints.Min.Y = 0
 				return row(gtx, layout.Middle,
-					layout.Rigid(func(gtx C) D { return d.icon(gtx, "edit", 16, d.p.Text) }),
+					layout.Rigid(func(gtx C) D { return d.icon(gtx, "edit", 13, d.p.Text) }),
 					hgap(4),
 					layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.p.Text, nsOutbox.T("Edit")) }),
 				)

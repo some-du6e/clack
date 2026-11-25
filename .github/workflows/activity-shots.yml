@@ -121,7 +121,7 @@ jobs:
           python3 -m pip install --quiet pillow
           mkdir -p /tmp/slack-ref
           curl -sfL --compressed --retry 5 -o /tmp/slack-ref/client-boot-styles.css https://a.slack-edge.com/bv1-13-br/client-boot-styles.cf726c4f2eaecc74.min.css
-          curl -sfL --retry 5 -o /tmp/slack-ref/icons.json https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/icons.json
+          curl -sfL --retry 5 -o /tmp/slack-ref/icons.json https://raw.githubusercontent.com/IzieStratt/sdmp/main/build/icons.json
           python3 .github/scripts/activity_ref.py dist/shots /tmp/slack-ref/client-boot-styles.css internal/ui/slackc/css/slackvars.go /tmp/slack-ref/icons.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

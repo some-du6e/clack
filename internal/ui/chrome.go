@@ -253,9 +253,7 @@ func (a *App) layoutTopNav(gtx layout.Context, width int) {
 		}, func(gtx layout.Context) layout.Dimensions {
 			sz := image.Pt(sw, sh)
 			if a.searchBoxIcon() {
-				at(gtx, image.Pt(gtx.Dp(10), (sh-gtx.Dp(16))/2), sz, func(gtx layout.Context) layout.Dimensions {
-					return icons.Search(gtx, 16, c.SearchText)
-				})
+				searchBoxIconDraw(gtx, sz, sh, c.SearchText)
 			}
 			tx, tw := a.searchBoxTextX(gtx), sw-gtx.Dp(44)
 			if a.searchQuery != "" {

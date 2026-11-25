@@ -30,6 +30,21 @@ import (
 // the parent item (first row level with it) and flip left at the screen
 // edge, overlapping the parent by 2px.
 
+// MenuIcon1em is the size of a menu item's SvgIcon with no size: 1em
+// (Slack's [data-5jx]{width:1em;height:1em;font-size:var(--s,inherit)})
+// of the row's 15px (.c-menu_item__button; .c-menu_item__icon, the 20px
+// slot it sits in at the left, sets no font-size).
+const MenuIcon1em float32 = 15
+
+// iconSize is the item's icon size, def (the row's own) unless IconSize
+// is set.
+func (it *MenuItem) iconSize(def float32) float32 {
+	if it.IconSize > 0 {
+		return it.IconSize
+	}
+	return def
+}
+
 // MenuItem is one menu row.
 type MenuItem struct {
 	// Key is the row's MenuTemplateItem key ("sign-out"); "" derives one
@@ -37,7 +52,11 @@ type MenuItem struct {
 	Key   string
 	Label string
 	Icon  string // icons registry name ("" = no icon column)
-	Hint  string // right-aligned shortcut label: shortcut.Format("Mod+Shift+S"), "L"
+	// IconSize is Icon's size in px: 0 is the row's own (18, 20 with a
+	// Subtitle or on a radio row), what Slack's menus mostly pass their
+	// SvgIcons. An item whose Slack SvgIcon has no size takes MenuIcon1em.
+	IconSize float32
+	Hint     string // right-aligned shortcut label: shortcut.Format("Mod+Shift+S"), "L"
 	// Keys are the item's key ids while the menu is open (Slack's
 	// shortcut.key: "l", "mod+c"; see menu_keys.go). A press runs the
 	// item and closes the menu.
@@ -945,13 +964,17 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 			return m.radioRow(gtx, th, cl, it, sz, fg, hint, hl)
 		}
 		if it.Icon != "" && it.Subtitle != "" { // Slack's p-more_menu_icon: 20px
-			at(gtx, image.Pt(x, (sz.Y-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, it.Icon, 20, fg)
+			is := it.iconSize(20)
+			at(gtx, image.Pt(x, (sz.Y-dp(gtx, is))/2), func(gtx layout.Context) layout.Dimensions {
+				return icon(gtx, it.Icon, is, fg)
 			})
 			x += dp(gtx, 36)
 		} else if it.Icon != "" {
-			at(gtx, image.Pt(x, (sz.Y-dp(gtx, 18))/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, it.Icon, 18, fg)
+			// the 20px c-menu_item__icon slot and its 8px margin, the
+			// svg (display block) at the slot's left
+			is := it.iconSize(18)
+			at(gtx, image.Pt(x, (sz.Y-dp(gtx, is))/2), func(gtx layout.Context) layout.Dimensions {
+				return icon(gtx, it.Icon, is, fg)
 			})
 			x += dp(gtx, 28)
 		} else if it.IconURL != "" { // CallMenu's apps: img.p-classic_nav__call-menu_icon, 20×20
@@ -973,9 +996,11 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 			right -= dp(gtx, 8)
 		}
 		if it.External {
-			right -= dp(gtx, 16)
-			at(gtx, image.Pt(right, (sz.Y-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, "external", 16, hint)
+			// renderLinkIconMaybe: new-window, an SvgIcon with no size in
+			// .c-menu_item__link_icon (15px, margin-left 8px)
+			right -= dp(gtx, 15)
+			at(gtx, image.Pt(right, (sz.Y-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions {
+				return icon(gtx, "external", 15, hint)
 			})
 			right -= dp(gtx, 8)
 		}
@@ -1065,8 +1090,9 @@ func (m *Menu) radioRow(gtx layout.Context, th *theme.Theme, cl *Colors, it *Men
 		})
 		x += dp(gtx, 36)
 	case it.Icon != "":
+		is := it.iconSize(20)
 		at(gtx, image.Pt(x, top+dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
-			return icon(gtx, it.Icon, 20, fg)
+			return icon(gtx, it.Icon, is, fg)
 		})
 		x += dp(gtx, 36)
 	}

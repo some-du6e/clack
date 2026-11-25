@@ -1214,13 +1214,14 @@ func (m *InviteModal) recommendedRow(gtx layout.Context, th *theme.Theme, cl *Co
 		shim := theme.WithAlpha(cl.Fg, 0x21)
 		for i := 0; i < 3; i++ {
 			items = append(items, func(gtx layout.Context) layout.Dimensions {
-				// margin_left_25, the channel icon and a 120px missing-text bar
+				// margin_left_25, the channel icon (an SvgIcon with no
+				// size: 1em of the Tag's 15px) and a 120px missing-text bar
 				x := gap
-				sz := image.Pt(gap+pad+dp(gtx, 20)+dp(gtx, 4)+dp(gtx, 120)+pad, tagH)
+				sz := image.Pt(gap+pad+dp(gtx, tagIcon)+dp(gtx, 4)+dp(gtx, 120)+pad, tagH)
 				rrect(gtx, image.Rect(x, 0, sz.X, tagH), dp(gtx, 4), bg)
 				x += pad
-				at(gtx, image.Pt(x, (tagH-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "channel", 20, fg) })
-				x += dp(gtx, 20) + dp(gtx, 4)
+				at(gtx, image.Pt(x, (tagH-dp(gtx, tagIcon))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "channel", tagIcon, fg) })
+				x += dp(gtx, tagIcon) + dp(gtx, 4)
 				rrect(gtx, image.Rect(x, (tagH-dp(gtx, 8))/2, x+dp(gtx, 120), (tagH+dp(gtx, 8))/2), dp(gtx, 4), shim)
 				return layout.Dimensions{Size: sz}
 			})
@@ -1246,25 +1247,29 @@ func (m *InviteModal) recommendedRow(gtx layout.Context, th *theme.Theme, cl *Co
 	return layout.Dimensions{Size: image.Pt(w, y+lineH+dp(gtx, 4))} // margin_bottom_50
 }
 
+// tagIcon is an SvgIcon with no size in a Tag (Slack Kit's recipe:
+// height 6, 24px, fontSize base, 15px): 1em.
+const tagIcon = 15
+
 // invRecTag is one recommended channel: a clickable informative Tag with
-// plus-filled (20) and the channel (its inline icon, 1em in a 20px box,
-// and the name, truncated to the row).
+// plus-filled (tagIcon) and the channel (its inline icon, 1em in a 20px
+// box, and the name, truncated to the row).
 func invRecTag(gtx layout.Context, th *theme.Theme, btn *widget.Clickable, c core.Conv, bg, fg color.NRGBA, maxW int) layout.Dimensions {
 	tagH, pad, gap := dp(gtx, 24), dp(gtx, 4), dp(gtx, 4)
 	ic := "channel"
 	if c.Kind == "private" {
 		ic = "lock"
 	}
-	nameMax := maxInt(1, maxW-2*pad-2*dp(gtx, 20)-gap)
+	nameMax := maxInt(1, maxW-2*pad-dp(gtx, tagIcon)-dp(gtx, 20)-gap)
 	call, nd := record(loose(gtx, image.Pt(nameMax, tagH)), func(gtx layout.Context) layout.Dimensions {
 		return text(gtx, th, 15, theme.Regular, fg, c.Name)
 	})
-	sz := image.Pt(pad+dp(gtx, 20)+gap+dp(gtx, 20)+nd.Size.X+pad, tagH)
+	sz := image.Pt(pad+dp(gtx, tagIcon)+gap+dp(gtx, 20)+nd.Size.X+pad, tagH)
 	return clickBox(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
 		rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 4), bg)
 		x := pad
-		at(gtx, image.Pt(x, (tagH-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "plus-filled", 20, fg) })
-		x += dp(gtx, 20) + gap
+		at(gtx, image.Pt(x, (tagH-dp(gtx, tagIcon))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "plus-filled", tagIcon, fg) })
+		x += dp(gtx, tagIcon) + gap
 		at(gtx, image.Pt(x+(dp(gtx, 20)-dp(gtx, 15))/2, (tagH-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, ic, 15, fg) })
 		x += dp(gtx, 20)
 		macroAt(gtx, call, image.Pt(x, (tagH-nd.Size.Y)/2))
@@ -1442,7 +1447,9 @@ func inviteDashed(gtx layout.Context, r image.Rectangle, rad int, c color.NRGBA)
 }
 
 // errorLines are TokenizerEmailInput's MultiSelectErrorText lines (margin
-// top 12): the warning icon, the count, a Remove link.
+// top 12): the warning icon (an inline SvgIcon with no size, 1em of the
+// line's 15px, in an icon container with margin-right 4px), the count, a
+// Remove link.
 func (m *InviteModal) errorLines(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	st := m.Tokens()
 	type line struct {
@@ -1474,8 +1481,8 @@ func (m *InviteModal) errorLines(gtx layout.Context, th *theme.Theme, cl *Colors
 	y := dp(gtx, 12)
 	lh := dp(gtx, 22)
 	for _, l := range ls {
-		at(gtx, image.Pt(0, y+(lh-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "warning", 16, cl.Danger) })
-		x := dp(gtx, 20)
+		at(gtx, image.Pt(0, y+(lh-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "warning", 15, cl.Danger) })
+		x := dp(gtx, 15+4)
 		d := at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 15, theme.Regular, cl.Fg, l.copy) })
 		})
@@ -1587,14 +1594,16 @@ func (m *InviteModal) channelSuggestions(gtx layout.Context, th *theme.Theme, cl
 	return layout.Dimensions{Size: r.Max}
 }
 
-// guestWarning is ChannelSelect's maybeRenderGuestWarning.
+// guestWarning is ChannelSelect's maybeRenderGuestWarning. Its info icon
+// is an SvgIcon with no size in .p-channel_select--warning (13px): 1em,
+// 8px before the text (margin_right_50). (Slack's text is 13px too.)
 func (m *InviteModal) guestWarning(gtx layout.Context, th *theme.Theme, cl *Colors, w int) layout.Dimensions {
 	switch {
 	case len(m.chans) > 1:
 		y := dp(gtx, 8)
-		at(gtx, image.Pt(0, y+dp(gtx, 3)), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "info", 16, cl.Fg2) })
-		d := at(gtx, image.Pt(dp(gtx, 24), y), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 24), 1<<20)}
+		at(gtx, image.Pt(0, y+(dp(gtx, 22)-dp(gtx, 13))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "info", 13, cl.Fg2) })
+		d := at(gtx, image.Pt(dp(gtx, 13+8), y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 13+8), 1<<20)}
 			return richPara(gtx, th, cl.Fg, nsInviteWS.RT("<strong>Multi-channel guests</strong> will be billed as full members. Single channel guests are free but limited in quantity."))
 		})
 		return layout.Dimensions{Size: image.Pt(w, y+d.Size.Y)}
@@ -1689,18 +1698,20 @@ func (m *InviteModal) textBox(gtx layout.Context, th *theme.Theme, cl *Colors, e
 	return layout.Dimensions{Size: r.Max}
 }
 
-// customizeButton is CustomizeButton: the magic-wand and "Add a message",
-// a link button.
+// customizeButton is CustomizeButton: the magic-wand (an SvgIcon with no
+// size in the unstyled button: 1em of its 15px) and "Add a message" 8px
+// after it (.p-customize_button--toggle-cta's margin-left), a link
+// button.
 func (m *InviteModal) customizeButton(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	return clickBox(gtx, &m.custom, nil, func(gtx layout.Context) layout.Dimensions {
 		lh := dp(gtx, 22)
-		at(gtx, image.Pt(0, (lh-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "magic-wand", 20, cl.Link) })
-		d := at(gtx, image.Pt(dp(gtx, 26), 0), func(gtx layout.Context) layout.Dimensions {
+		at(gtx, image.Pt(0, (lh-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "magic-wand", 15, cl.Link) })
+		d := at(gtx, image.Pt(dp(gtx, 15+8), 0), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
 				return text(gtx, th, 15, theme.Regular, cl.Link, nsInviteWS.T("Add a message"))
 			})
 		})
-		return layout.Dimensions{Size: image.Pt(dp(gtx, 26)+d.Size.X, lh)}
+		return layout.Dimensions{Size: image.Pt(dp(gtx, 15+8)+d.Size.X, lh)}
 	})
 }
 

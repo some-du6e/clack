@@ -206,6 +206,9 @@ type MenuItem struct {
 	// font select draws each option in its font); Label stays the row's
 	// name.
 	LabelText func(gtx layout.Context, c color.NRGBA) layout.Dimensions
+	// IconSize is the icon's px; 0 is the row's own
+	// (popups.MenuItem.IconSize).
+	IconSize float32
 }
 
 func (a *App) menu(anchor image.Point, items []MenuItem) Overlay {

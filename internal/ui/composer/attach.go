@@ -1462,28 +1462,7 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 		offset(gtx, sz.X-d+over, -over, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(image.Pt(d, d))
 			return c.remove.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				ctr := image.Pt(d/2, d/2)
-				switch mode {
-				case 1:
-					fillCircle(gtx, ctr, d/2, th.C.Bg)
-					s := gtx.Dp(16)
-					offset(gtx, (d-s)/2, (d-s)/2, func(gtx layout.Context) layout.Dimensions {
-						attSpinner(gtx, s, th.C.Link, th.C.FgMuted)
-						return layout.Dimensions{Size: image.Pt(s, s)}
-					})
-				case 2:
-					fillCircle(gtx, ctr, d/2, th.C.Bg)
-					ic := gtx.Dp(20)
-					offset(gtx, (d-ic)/2, (d-ic)/2, func(gtx layout.Context) layout.Dimensions {
-						return icons.Get("warning-filled")(gtx, unit.Dp(20), th.C.Danger)
-					})
-				default:
-					fillCircle(gtx, ctr, gtx.Dp(10), th.C.Tooltip)
-					ic := gtx.Dp(14)
-					offset(gtx, (d-ic)/2, (d-ic)/2, func(gtx layout.Context) layout.Dimensions {
-						return icons.Get("close")(gtx, unit.Dp(14), th.C.TooltipText)
-					})
-				}
+				drawChipStatus(gtx, th, mode, d)
 				pointer.CursorPointer.Add(gtx.Ops)
 				return layout.Dimensions{Size: image.Pt(d, d)}
 			})
@@ -1518,6 +1497,35 @@ func attRemoveTip(subtype string) string {
 		return "Remove video clip"
 	}
 	return "Remove file"
+}
+
+// drawChipStatus draws a chip's status button, d px square, in mode: 1
+// the spinner, 2 the warning, else RemoveFileButton's remove (close-filled,
+// an SvgIcon with no size in .p-multi_file_upload__file_status_icon--remove
+// (20px, 12px): 1em, centred).
+func drawChipStatus(gtx layout.Context, th *theme.Theme, mode, d int) {
+	ctr := image.Pt(d/2, d/2)
+	switch mode {
+	case 1:
+		fillCircle(gtx, ctr, d/2, th.C.Bg)
+		s := gtx.Dp(16)
+		offset(gtx, (d-s)/2, (d-s)/2, func(gtx layout.Context) layout.Dimensions {
+			attSpinner(gtx, s, th.C.Link, th.C.FgMuted)
+			return layout.Dimensions{Size: image.Pt(s, s)}
+		})
+	case 2:
+		fillCircle(gtx, ctr, d/2, th.C.Bg)
+		ic := gtx.Dp(20)
+		offset(gtx, (d-ic)/2, (d-ic)/2, func(gtx layout.Context) layout.Dimensions {
+			return icons.Get("warning-filled")(gtx, unit.Dp(20), th.C.Danger)
+		})
+	default:
+		fillCircle(gtx, ctr, gtx.Dp(10), th.C.Tooltip)
+		ic := gtx.Dp(12)
+		offset(gtx, (d-ic)/2, (d-ic)/2, func(gtx layout.Context) layout.Dimensions {
+			return icons.Get("close-filled")(gtx, unit.Dp(12), th.C.TooltipText)
+		})
+	}
 }
 
 // attSpinner is Slack's InfiniteSpinner (s6So) in a d-pixel box: a

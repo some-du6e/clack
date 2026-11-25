@@ -19,6 +19,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"runtime"
 	"time"
 
@@ -54,13 +55,34 @@ func (a *App) searchBoxIcon() bool {
 	return a.searchQuery == "" || runtime.GOOS == "darwin"
 }
 
-// searchBoxTextX is where the text starts: after the icon (34), or at the
-// box's padding + the text's when the icon hides (20).
+// searchIconSize is BaseSearch's search icon: div.p-top_nav__search__icon
+// holds an SvgIcon with no size, 1em of the button's 15px (Slack's
+// [data-5jx]{width:1em;height:1em;font-size:var(--s,inherit)}).
+const searchIconSize = 15
+
+// searchBoxTextX is where the text starts: the button's 12px padding, the
+// icon and the text's 8px padding (35), or the paddings alone when the
+// icon hides (20).
 func (a *App) searchBoxTextX(gtx layout.Context) int {
 	if a.searchBoxIcon() {
-		return gtx.Dp(34)
+		return gtx.Dp(12 + searchIconSize + 8)
 	}
 	return gtx.Dp(20)
+}
+
+// searchBoxIconDraw draws the search icon in the sz box (sh tall) at the
+// current origin: after the button's 12px padding, centred, in col; on
+// Windows and Linux (p-top_nav__search--windows-linux's --advanced-search
+// icon) at .6 opacity and 1px up.
+func searchBoxIconDraw(gtx layout.Context, sz image.Point, sh int, col color.NRGBA) {
+	y := (sh - gtx.Dp(searchIconSize)) / 2
+	if runtime.GOOS != "darwin" {
+		y -= gtx.Dp(1)
+		col.A = uint8(float32(col.A)*.6 + .5)
+	}
+	at(gtx, image.Pt(gtx.Dp(12), y), sz, func(gtx layout.Context) layout.Dimensions {
+		return icons.Search(gtx, searchIconSize, col)
+	})
 }
 
 // searchBoxPress is onMouseDown over the box (sz at the current origin):

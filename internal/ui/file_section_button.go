@@ -78,7 +78,7 @@ func fromPopupItems(items []popups.MenuItem) []MenuItem {
 		if it.Sub != nil {
 			sub = fromPopupItems(it.Sub)
 		}
-		out = append(out, MenuItem{Key: it.Key, Label: it.Label, Icon: it.Icon, Hint: it.Hint, Subtitle: it.Subtitle,
+		out = append(out, MenuItem{Key: it.Key, Label: it.Label, Icon: it.Icon, IconSize: it.IconSize, Hint: it.Hint, Subtitle: it.Subtitle,
 			Right: it.Right, Danger: it.Danger, Disabled: it.Disabled, Checked: it.Checked, Radio: it.Radio, Sub: sub, Do: it.Do,
 			LabelText: it.LabelText, Indeterminate: it.Indeterminate, IconURL: it.IconURL})
 	}

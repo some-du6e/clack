@@ -1192,15 +1192,15 @@ func (v *FolderTab) peekEmpty(gtx C) D {
 		// the small "Add" button (plus, base-inv-hgl-2)
 		label := nsTabbed.T("Add")
 		lw := v.th.Measure(gtx, 13, wBold, label)
-		bw := gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lw + gtx.Dp(12)
+		bw := gtx.Dp(folderAddPad) + gtx.Dp(folderAddIcon) + gtx.Dp(4) + lw + gtx.Dp(folderAddPad)
 		bh := gtx.Dp(28)
 		dirAt(gtx, image.Pt((sz.X-bw)/2, y), func(gtx C) D {
 			return v.addBtn.Layout(gtx, func(gtx C) D {
 				pointerCursor(gtx)
 				bg := v.lt(rgb(0x1264a3), rgb(0x1d9bd1))
 				rrect(gtx, image.Rect(0, 0, bw, bh), gtx.Dp(8), bg)
-				dirAt(gtx, image.Pt(gtx.Dp(8), (bh-gtx.Dp(16))/2), func(gtx C) D { return v.icon(gtx, "plus", 16, rgb(0xffffff)) })
-				dirAt(gtx, image.Pt(gtx.Dp(28), 0), func(gtx C) D {
+				dirAt(gtx, image.Pt(gtx.Dp(folderAddPad), (bh-gtx.Dp(folderAddIcon))/2), func(gtx C) D { return v.icon(gtx, "plus", folderAddIcon, rgb(0xffffff)) })
+				dirAt(gtx, image.Pt(gtx.Dp(folderAddPad+folderAddIcon+4), 0), func(gtx C) D {
 					return vmid(gtx, bh, func(gtx C) D {
 						return v.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Weight: wBold, Color: rgb(0xffffff), MaxLines: 1}, label)
 					})
