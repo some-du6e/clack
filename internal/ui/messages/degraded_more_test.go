@@ -90,10 +90,12 @@ func TestDegradedBannerRereadsTheThreadLikeSlack(t *testing.T) {
 	})
 	tv := NewThreadView(e.h, ch, root)
 	rt := newRouted(&panes{list: e.v.Layout, thread: tv.Layout, split: 900}, 1400, 700)
+	rt.now = e.rt.now // the window's clock: the hub's frames are guardEnv's router's
 	b := paneBanner(e.v)
 	until(t, 10*time.Second, "the thread pane and the banner", rt.frame, func() bool {
 		return len(tv.s.items) > 3 && b.Text != "" && !b.LinkR.Empty()
 	})
+	rt.frame() // the thread pane drawn in the frame the click lands in
 	replies := fs.CallCount("conversations.replies")
 	rt.press(centre(b.LinkR), true)
 	until(t, 10*time.Second, "the open thread's replies asked for again", rt.frame, func() bool {
@@ -120,9 +122,19 @@ func TestThreadLoadingRowOfflineLikeSlack(t *testing.T) {
 	SetThreadStart(app, "C0OFFLINE3", root, replies[70]) // a jump far into the thread: the slice starts after the root
 	tv := NewThreadView(e.h, "C0OFFLINE3", root)
 	rt := newRouted(tv, 500, 700)
-	until(t, 10*time.Second, "the slice around the reply", rt.frame, func() bool {
-		return len(tv.s.items) > 0 && tv.s.items[0].kind == itLoading
-	})
+	rt.now = e.rt.now // the hub's frames are guardEnv's router's
+	for dl := time.Now().Add(10 * time.Second); !(len(tv.s.items) > 0 && tv.s.items[0].kind == itLoading); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(dl) {
+			var kinds []string
+			for i, it := range tv.s.items {
+				if i < 4 {
+					kinds = append(kinds, fmt.Sprintf("%d:%s", it.kind, it.key))
+				}
+			}
+			t.Fatalf("the slice around the reply never started short of the root: %d items, first %v (slice %v)", len(tv.s.items), kinds, tv.s.snap.th)
+		}
+		rt.frame()
+	}
 	t.Cleanup(setClientOnline(func(Host) bool { return false }))
 	tv.s.list.Position = layout.Position{BeforeEnd: true, First: 0} // the slice's top
 	tv.s.stopScroll()
