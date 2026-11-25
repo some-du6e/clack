@@ -166,7 +166,7 @@ func (a *App) chromeBase(p image.Point) color.NRGBA {
 
 // ---- top nav (40px) ----
 
-func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
+func (a *App) layoutTopNav(gtx layout.Context, width int) {
 	c := &a.th.C
 	h := gtx.Dp(theme.TopNavH)
 	tn := clsTopNav.Enter(gtx, 0, a.scopeMod())
@@ -180,30 +180,48 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	// of the right container
 	wco := a.wcoNavReserve(gtx)
 	a.wcoNavAreas(gtx, width, h, wco, true)
-	sx, sw := a.topNavSearch(gtx, primaryX, width, wco)
+	sx, sw, grown := a.topNavSearch(gtx, width, wco)
 	left := clsTopNavLeft.Enter(gtx, 0, 0)
 	a.appMenuButton(gtx, h) // appmenu.go: Linux and Windows
-	// history buttons: 26×26, 6px gaps, right-aligned 9px before the search.
+	// history buttons (CPmx's back and forward, then HistoryButtons'
+	// clock): 26×26 (a 20px SvgIcon, padding 3), 6px apart, at the end of
+	// .p-ia4_top_nav__left_container--end (justify-content flex-end, the
+	// left container's flex basis), whose margin_right_25 (4px) and the
+	// container's 8px :after come before the search. The :after shrinks
+	// with the container's basis (to about 3.9px: the clock's box ends 9px
+	// before the search) and keeps its 8px where the container grows
+	// (13px).
 	b := gtx.Dp(26)
 	gap := gtx.Dp(6)
 	y := (h - b) / 2
 	x := sx - gtx.Dp(9) - b
+	if grown {
+		x = sx - gtx.Dp(13) - b
+	}
+	var histR image.Rectangle
 	for i := 2; i >= 0; i-- {
 		name := [...]string{"back", "forward", "history"}[i]
+		icon := [...]string{"back", "forward", "clock"}[i] // arrow-left, arrow-right, clock
 		btn := a.clicks.get("nav." + name)
 		col := c.ChromeText
 		disabled := (i == 0 && !a.router.CanBack()) || (i == 1 && !a.router.CanForward())
-		if disabled { // [aria-disabled=true]: opacity .45, and no :hover tile
-			col = theme.WithAlpha(col, 0x73)
-		}
 		org := image.Pt(x, y)
+		if disabled {
+			// [aria-disabled=true]: opacity .45 (composited in sRGB, as
+			// Chrome does, over the chrome behind it), and no :hover tile
+			col = theme.Over(theme.WithAlpha(col, 0x73), a.chromeBase(org.Add(image.Pt(b/2, b/2))))
+		}
+		a.navBtns[i] = image.Rectangle{Min: org, Max: org.Add(image.Pt(b, b))}
+		if i == 2 {
+			histR = a.navBtns[i]
+		}
 		at(gtx, org, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
 			if i == 2 {
 				defer insNavHistory.Inspect(0).End(gtx, image.Pt(b, b))
 			} else {
 				defer insNavButton.Inspect(1<<i).End(gtx, image.Pt(b, b)) // -back, -forward
 			}
-			return a.chromeButtonHover(gtx, org, btn, name, 26, 18, col, 4, !disabled)
+			return a.chromeButtonHover(gtx, org, btn, icon, 26, 20, col, 4, !disabled)
 		})
 		x -= b + gap
 	}
@@ -213,11 +231,11 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	if clicked(a.clicks.get("nav.forward")) {
 		a.Forward()
 	}
-	slackc.InspectArea(gtx, image.Rect(0, 0, sx, h)) // the left container ends where the search box starts
+	// the left container: from the native UI spacer's end to the search
+	slackc.InspectArea(gtx, image.Rect(a.topNavSpacer(gtx), 0, sx, h))
 	left.Leave()
 	if clicked(a.clicks.get("nav.history")) { // the rightmost of the three
-		hx := sx - gtx.Dp(9) - b
-		a.openHistoryMenu(image.Rect(hx, y, hx+b, y+b))
+		a.openHistoryMenu(histR)
 	}
 
 	// search pill (topNavSearch)
@@ -277,42 +295,70 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	}
 }
 
-// topNavSearch is the search box's x and width (px). Slack's middle
-// container is flex 2 1 0 (min 40px, max 1000px) beside a right container
-// of flex 1 0 auto (~88px of buttons, and on Windows the 138px windows
-// controls, wco px): ⅔ of what's left after the nav's 4px right padding,
-// the left container and the right container's own width. The left
-// container is the sidebar's edge (flex none, flexBasis
-// leftContainerWidth) except in a window narrower than 668px (668 +
-// 138/zoom with the windows controls: TopNav's leftContainerInlineStyle)
-// or wider than 2000px, where it grows too (flex 1 0 0, never under the
-// history buttons it holds) after .p-ia4_top_nav__native_ui_spacer (2 ×
-// 12px + 52px / zoom).
-func (a *App) topNavSearch(gtx layout.Context, primaryX, width, wco int) (x, w int) {
+// topNavSearch is the search box's x and width (px), and whether the
+// left container grows. Slack's middle container is flex 2 1 0 (min 40px,
+// max 1000px) beside a right container of flex 1 0 auto (~88px of
+// buttons, and on Windows the 138px windows controls, wco px): ⅔ of
+// what's left after the nav's 4px right padding, the left container and
+// the right container's own width. The left container (flex none,
+// flexBasis leftContainerWidth: topNavLeftEnd) follows
+// .p-ia4_top_nav__native_ui_spacer, except in a window narrower than
+// 668px (668 + 138/zoom with the windows controls: TopNav's
+// leftContainerInlineStyle) or wider than 2000px, where it grows too
+// (flex 1 0 0, never under its min-content of 104px: the history
+// buttons' 92, margin_right_25's 4 and the :after's 8).
+func (a *App) topNavSearch(gtx layout.Context, width, wco int) (x, w int, grown bool) {
 	right := gtx.Dp(88) + wco
 	css := float32(width) / gtx.Metric.PxPerDp
 	narrowAt := float32(wcoNarrowW)
 	if wco > 0 {
 		narrowAt += wcoReserveW / a.zoomFactor()
 	}
-	x = primaryX
 	if css < narrowAt || css > wcoWideW {
-		spacer := gtx.Dp(wcoNativeUIPad) + int(math.Round(float64(wcoNativeUIW*a.wcoScale(gtx))))
+		spacer := a.topNavSpacer(gtx)
 		free := max(width-gtx.Dp(4)-spacer-right, 0)
 		left, mid := free/4, free/2 // grow 1 : 2 : 1
 		if mid > gtx.Dp(1000) {
 			mid = gtx.Dp(1000)
 			left = (free - mid) / 2
 		}
-		if minLeft := gtx.Dp(26*3 + 6*2 + 9); left < minLeft { // the history buttons
+		if minLeft := gtx.Dp(104); left < minLeft { // the history buttons
 			left = minLeft
 			mid = min((free-left)*2/3, gtx.Dp(1000))
 		}
-		x, w = spacer+left, mid
-	} else {
-		w = min((width-gtx.Dp(4)-primaryX-right)*2/3, gtx.Dp(1000))
+		return spacer + left, max(mid, gtx.Dp(200)), true
 	}
-	return x, max(w, gtx.Dp(200))
+	x = a.topNavLeftEnd(gtx, width)
+	w = min((width-gtx.Dp(4)-x-right)*2/3, gtx.Dp(1000))
+	return x, max(w, gtx.Dp(200)), false
+}
+
+// topNavSpacer is .p-ia4_top_nav__native_ui_spacer's width (px): 2 ×
+// 12px + 52px / zoom, on every platform (the macOS traffic lights sit in
+// it; Windows and Linux put the app menu button there).
+func (a *App) topNavSpacer(gtx layout.Context) int {
+	return gtx.Dp(wcoNativeUIPad) + int(math.Round(float64(wcoNativeUIW*a.wcoScale(gtx))))
+}
+
+// topNavLeftEnd is where the top nav's left container ends (px), in a
+// window between the narrow and wide breakpoints: the native UI spacer,
+// then the container's flex basis, useCalculateMainWindowClientLayout's
+// topNavLeftContainer.width = ef + eb + ex - 76 (boot-render 3/9m): the
+// workspace switcher (none in Clack), the tab rail, and ex, the
+// sidebar's automatic width, clamp(.24 × (max(window, minWindowWidth) -
+// switcher - rail - 4), 180, 450). It reads neither the sidebar's
+// collapsed state nor its dragged width, so hiding the sidebar
+// (Cmd+Shift+D) or dragging it leaves the history buttons and the search
+// where they are; at zoom 1 it is the default sidebar's edge. The -76 is
+// the spacer at zoom 1, not rescaled: zoom moves the nav by 52/zoom - 52.
+func (a *App) topNavLeftEnd(gtx layout.Context, width int) int {
+	css := float32(width) / gtx.Metric.PxPerDp
+	minW := float32(theme.RailW) + 320 + splitMinW + sbRightPad // minWindowWidth: rail + 320 + 300 (+ 300 with the split view) + 4
+	if a.splitOpen() {
+		minW += splitMinW
+	}
+	ex := clampF(sbWidthFrac*(max(css, minW)-theme.RailW-sbRightPad), sbWidthMin, sbWidthMax)
+	return a.topNavSpacer(gtx) + gtx.Dp(unit.Dp(float32(theme.RailW)+ex-(wcoNativeUIPad+wcoNativeUIW)))
 }
 
 // ---- tab rail (70px) ----

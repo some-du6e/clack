@@ -509,6 +509,22 @@ func (a *App) FeatureState(name string) (on, known bool) {
 	return f.on[name], f.known || f.cached
 }
 
+// SetFeatures takes on as a features.access.policies.list answer: it
+// merges into the store as every answer does (loadFeatures), and no read
+// starts for an hour (tests).
+func (a *App) SetFeatures(on map[string]bool) {
+	f := a.features()
+	f.mu.Lock()
+	f.known, f.at, f.loading = true, time.Now(), false
+	if f.on == nil {
+		f.on = make(map[string]bool, len(on))
+	}
+	for k, v := range on {
+		f.on[k] = v
+	}
+	f.mu.Unlock()
+}
+
 // featureRetryAt is when a failed read is tried again (tests).
 func (a *App) featureRetryAt() time.Time {
 	f := a.features()

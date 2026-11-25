@@ -42,3 +42,9 @@ func scCardHovered(v *SearchView, i int) bool { return v.cards[i].hov }
 // scPreviewSegs are the dialogs' message preview's segments
 // (actMsgPreview).
 func scPreviewSegs(h Host, m *core.Message) []srSeg { return actPreviewSegs(h, m) }
+
+// scNoAttachmentLimit: card c's views draw every attachment (no
+// MessageKitAttachments limit).
+func scNoAttachmentLimit(c *srCard) bool {
+	return c.rich.body != nil && c.rich.body.Options().NoAttachmentLimit
+}

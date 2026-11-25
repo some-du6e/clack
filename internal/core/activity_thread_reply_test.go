@@ -62,7 +62,7 @@ func TestActivityThreadReplyNotAMention(t *testing.T) {
 			for _, ev := range evs {
 				fs.Push(ev)
 			}
-			flush(t, fs, log)
+			flush(t, a, fs, log)
 			// let the activity items hydrate (activityItems fetches the messages)
 			log.wait(t, "the thread_v2 item", func(evs []Event) bool {
 				for _, ev := range evs {
@@ -72,7 +72,7 @@ func TestActivityThreadReplyNotAMention(t *testing.T) {
 				}
 				return false
 			})
-			flush(t, fs, log)
+			flush(t, a, fs, log)
 			rows := 0
 			for _, ev := range log.all() {
 				switch {

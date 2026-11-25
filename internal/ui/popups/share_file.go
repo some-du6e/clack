@@ -215,7 +215,7 @@ func (f *actForward) shareFile() {
 	run(f.h, func(ctx context.Context) (string, error) { return a.ShareFileTo(ctx, id, ch, note) },
 		func(ts string, err error) {
 			if err != nil {
-				f.h.Toast("Couldn't do that: " + errText(err)) // Clack's write error (do)
+				FailedToast(f.h, "popups: share file", err)
 				return
 			}
 			if done != nil {

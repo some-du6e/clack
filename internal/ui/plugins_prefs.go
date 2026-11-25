@@ -943,7 +943,7 @@ func (pp *pluginsPage) setEnabled(u unifiedPlugin, on bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		if err := t.SetEnabled(ctx, id, on); err != nil {
-			a.Post(func() { a.Toast(err.Error()) })
+			a.Post(func() { popups.FailedToast(a, "plugins: enable", err) })
 		}
 		a.Invalidate()
 	}()

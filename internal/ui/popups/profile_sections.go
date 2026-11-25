@@ -353,9 +353,7 @@ func (v *ProfileView) contactRow(e core.ProfileElement, ic, scheme string) layou
 		x := tw + dp(gtx, 8)
 		c := v.secs.btn("contact:" + e.ID)
 		if c.Clicked(gtx) {
-			if err := openurl.Open(scheme + e.Text); err != nil {
-				v.h.Toast("Couldn't open that: " + errText(err))
-			}
+			openurl.OpenExternal(scheme + e.Text)
 		}
 		at(gtx, image.Pt(x, (h-textH)/2), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-x), textH)}
@@ -399,9 +397,7 @@ func (v *ProfileView) valueRow(e core.ProfileElement) layout.Widget {
 			if uri == "" {
 				return
 			}
-			if err := openurl.Open(uri); err != nil {
-				v.h.Toast("Couldn't open that link: " + errText(err))
-			}
+			openurl.OpenExternal(uri)
 		}
 	case "ProfileTagsElement":
 		value = strings.Join(e.Tags, "   ")

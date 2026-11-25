@@ -21,9 +21,6 @@ import (
 // linked), its failure in getChannelTopicError's words. Both failures are
 // CUSTOM_ERROR: Slackbot shows the text as is.
 func (a *App) topicCommand(ctx context.Context, o CommandOpts, cmd string) (CommandResult, error) {
-	if o.ThreadTS != "" && !a.threadCommandOK(o.Channel, cmd, slack.Command{}) {
-		return CommandResult{}, &CommandError{Command: cmd, Kind: CmdUnsupportedInThread}
-	}
 	topic := o.Text
 	if topic == "" {
 		return CommandResult{}, nil

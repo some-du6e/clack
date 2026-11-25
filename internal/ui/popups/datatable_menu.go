@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"image"
+	"log"
 
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -111,7 +112,8 @@ func DownloadDataTable(h Host, t *richtext.DataTable) {
 			return
 		}
 		if err != nil {
-			h.Toast("Couldn't download: " + errText(err))
+			log.Printf("popups: data table download: %v", err)
+			h.Toast(nsFiles.T("Error downloading CSV, please try again")) // the file CSV download's failure toast
 			return
 		}
 		h.Toast("Saved to " + p)

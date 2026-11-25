@@ -464,7 +464,7 @@ func reportMessage(h Host, link string) {
 		base += "/"
 	}
 	if err := openReport(base + "help/requests/report-content?u=" + jsEncodeURI(link) + "&type=message"); err != nil {
-		h.Toast("Couldn't open the link: " + errText(err))
+		log.Printf("popups: refusing to open the report link: %v", err) // openExternal logs it, nothing on screen
 	}
 }
 
@@ -479,7 +479,7 @@ func reportSection(h Host, link string) {
 		base += "/"
 	}
 	if err := openReport(base + "help/requests/report-content?u=" + link + "&type=canvas_section"); err != nil {
-		h.Toast("Couldn't open the link: " + errText(err))
+		log.Printf("popups: refusing to open the report link: %v", err) // openExternal logs it, nothing on screen
 	}
 }
 

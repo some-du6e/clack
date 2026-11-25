@@ -681,7 +681,7 @@ func (it *Item) send() {
 		it.post(func() {
 			it.sending = false
 			if err != nil {
-				it.h.Toast("Couldn't post the comment: " + err.Error())
+				popups.FailedToast(it.h, "listview: Couldn't post the comment", err)
 				it.composer.SetText(txt)
 			}
 		})

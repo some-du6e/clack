@@ -110,15 +110,16 @@ func (u *updates) download(ctx context.Context, info ui.UpdateInfo, progress fun
 	return nil
 }
 
-// quietKinds are the installs that swap in silently, so they may go in
-// as Clack quits: never the system installer or a password prompt (a
-// .deb or .rpm waits for Install and restart).
+// quietKind reports the installs that may go in as Clack quits: only the
+// macOS app for now (alpha.166's gate). Windows' silent installer and
+// portable swap, and the AppImage's, wait until the gaps their review
+// found are fixed (wf_93ada698-e8a: a session end during the user's own
+// quit still starts the installer, and the installer's forced close takes
+// down a Clack reopened right after quitting); they keep Install and
+// restart. Never the system installer or a password prompt (a .deb or
+// .rpm waits for Install and restart).
 func quietKind(k desktop.InstallKind) bool {
-	switch k {
-	case desktop.KindMacApp, desktop.KindWinInstaller, desktop.KindWinPortable, desktop.KindAppImage:
-		return true
-	}
-	return false
+	return k == desktop.KindMacApp
 }
 
 // stageForQuit gets a verified download ready to install while Clack

@@ -386,9 +386,7 @@ func actOpen(h Host, u string) {
 	if u == "" {
 		return
 	}
-	if err := openurl.Open(u); err != nil {
-		h.Toast("Couldn't open the link: " + errText(err))
-	}
+	openurl.OpenExternal(u)
 }
 
 // calEvents handles the calendar rows and the step's link.
