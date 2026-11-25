@@ -55,31 +55,34 @@ func (b *treeBridge) deliver(t *testing.T) {
 	}
 }
 
-// In component mode a file's play button (PlayPauseAnimations, animations
-// off) and spinner (a pending pillow's PendingFilesSpinner) draw with
-// their MessageFile: over its fill when the native draws it (they hid
-// under it), and not at all when a plugin's tree replaces the file (they
-// drew over the replacement, from the static pass).
+// In component mode a play button (an attachment GIF's
+// PlayPauseAnimations, animations off) and a spinner (a pending pillow's
+// PendingFilesSpinner) draw with their component, MessageAttachment or
+// MessageFile: over its fill when the native draws it (they hid under
+// it), and not at all when a plugin's tree replaces it (they drew over
+// the replacement, from the static pass). A gallery's images aren't a
+// component, and their plays stay in the static pass.
 func TestPlaysAndSpinnersDrawWithTheirComponent(t *testing.T) {
 	uipref.Set(store.Prefs{NoAnimations: true})
 	t.Cleanup(uipref.Reset)
 	pending := &rt.File{ID: "F0PENDSPIN", Name: "game_scarlett_master.exe", Title: "game_scarlett_master.exe", Type: "exe", Mode: "hosted", Pending: true}
-	gif, _ := gifDoc()
+	const gifURL = "https://media.example.test/cat.gif"
 	cases := []struct {
 		name string
+		comp string // the component that draws it
 		d    rt.Doc
 		// mark is where the play or spinner draws (laid out), and how many
 		// of its pixels are its own ink (not the native card's)
 		mark func(v *View) image.Rectangle
 		ink  func(c, bg color.RGBA) bool
 	}{
-		{"pending pillow's spinner", doc(fileBlock(pending)), func(v *View) image.Rectangle {
+		{"pending pillow's spinner", "MessageFile", doc(fileBlock(pending)), func(v *View) image.Rectangle {
 			if len(v.d.spinners) == 0 {
 				return image.Rectangle{}
 			}
 			return v.d.spinners[0].r
 		}, func(c, _ color.RGBA) bool { return int(c.B) > int(c.R)+60 }}, // the arc's blue
-		{"GIF's play button", doc(gif.Blocks[0]), func(v *View) image.Rectangle {
+		{"attachment GIF's play button", "MessageAttachment", doc(rt.Block{Kind: rt.AttachmentBlock, Att: &rt.Attachment{Image: &rt.Image{URL: gifURL, W: 480, H: 270}}}), func(v *View) image.Rectangle {
 			if len(v.d.plays) == 0 {
 				return image.Rectangle{}
 			}
@@ -95,10 +98,10 @@ func TestPlaysAndSpinnersDrawWithTheirComponent(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				slackc.Styles.Set("test-comp-overlays", ".zz-test-comp-overlays{color:red}") // a theme sheet
-				slackc.SetPatched([]string{"MessageFile"})
+				slackc.SetPatched([]string{tc.comp})
 				b := &treeBridge{}
 				if replaced {
-					b.trees = map[string]string{"MessageFile": `[{"t":"div","k":1}]`}
+					b.trees = map[string]string{tc.comp: `[{"t":"div","k":1}]`}
 				}
 				slackc.SetBridge(b)
 				t.Cleanup(func() {
@@ -108,6 +111,7 @@ func TestPlaysAndSpinnersDrawWithTheirComponent(t *testing.T) {
 					slackc.Reset()
 				})
 				st := newTestStyle()
+				st.Images = newGIFImages(gifURL) // the GIF says it animates; drawn clear
 				bg := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
 				const w, h = 600, 500
 				v := New(tc.d, Options{Own: true, Channel: "C0COMPOVL", TS: "1795302540.000200"})
@@ -120,7 +124,7 @@ func TestPlaysAndSpinnersDrawWithTheirComponent(t *testing.T) {
 					b.deliver(t)
 				}
 				if len(v.d.comps) == 0 {
-					t.Fatal("not in component mode: no MessageFile component")
+					t.Fatalf("not in component mode: no %s component", tc.comp)
 				}
 				r := tc.mark(v)
 				if r.Empty() {
