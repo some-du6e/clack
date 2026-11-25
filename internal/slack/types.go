@@ -776,6 +776,25 @@ func (c *Conversation) Dormant() bool {
 	return p.IsDormant
 }
 
+// CanvasFileID is the channel's canvas, properties.canvas.file_id (uHmo's
+// channel canvas fileId; a C… id read as its F…), "" with none.
+func (c *Conversation) CanvasFileID() string {
+	if len(c.Properties) == 0 {
+		return ""
+	}
+	var p struct {
+		Canvas struct {
+			FileID string `json:"file_id"`
+		} `json:"canvas"`
+	}
+	_ = json.Unmarshal(c.Properties, &p)
+	id := p.Canvas.FileID
+	if len(id) > 0 && id[0] == 'C' {
+		id = "F" + id[1:]
+	}
+	return id
+}
+
 // HasCustomMpdmName reports a group DM renamed by its members
 // (properties.has_custom_mpdm_name): its name is the custom name, not
 // "mpdm-a--b--c-1".

@@ -78,6 +78,7 @@ type View struct {
 
 	profiles  map[string]*profileSecs // member cards' sections (linkcard_member.go)
 	cardUsers map[string]bool         // message cards' senders asked for (askCardUser)
+	lists     map[string]*listState   // list cards' lists (linkcard_list.go)
 	files     map[string]*fileState   // file cards' files.info (linkcard_file.go)
 	skelStill bool                    // the card being drawn has shimmered long enough (linkcard.go)
 

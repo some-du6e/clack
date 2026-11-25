@@ -29,8 +29,10 @@ import (
 type canvasCardData struct {
 	preview  []richtext.Block
 	havePrev bool // the store has the preview (or knows there is none)
-	key      string
-	rv       *richview.View // the entity row and the preview
+	// chanPending: a channel canvas link's channel is being looked up
+	chanPending bool
+	key         string
+	rv          *richview.View // the entity row and the preview
 	// NoAccessCanvas's
 	icon, emoji     string
 	title, subtitle string
@@ -43,8 +45,23 @@ func shouldShowFile(f *slack.File) bool {
 }
 
 // readCanvas reads the route's canvas: its file (the file cards' cache,
-// files.info) and its preview; it reports whether to fetch the file.
+// files.info) and its preview; it reports whether to fetch the file. A
+// /canvas/C… link's canvas is its channel's (gZnA's O: the channel's
+// properties.canvas.file_id), looked up (conversations.info) when the
+// store doesn't hold the channel.
 func (v *View) readCanvas(c *linkCard) bool {
+	c.cv.chanPending = false
+	if c.rt.kind == "canvas" && c.rt.fileID == "" && c.rt.channel != "" {
+		if a := v.h.Core(); a != nil {
+			if ch, ok := a.S.Conv(c.rt.channel); ok {
+				c.rt.fileID = ch.CanvasFileID()
+			} else if ch, ok := a.S.ExtConv(c.rt.channel); ok {
+				c.rt.fileID = ch.CanvasFileID()
+			} else {
+				c.cv.chanPending = a.LookupConv(c.rt.channel)
+			}
+		}
+	}
 	if c.rt.kind != "canvas" || c.rt.fileID == "" {
 		return false
 	}
@@ -62,7 +79,9 @@ func (v *View) readCanvas(c *linkCard) bool {
 func (v *View) decideCanvas(c *linkCard, loading bool, now time.Time) cardKind {
 	d := &c.fc
 	switch {
-	case c.rt.fileID == "": // a channel's canvas: its properties.canvas.file_id isn't read yet
+	case c.rt.fileID == "" && c.cv.chanPending: // the channel's being looked up: its canvas isn't known yet
+		return cardFileLoading
+	case c.rt.fileID == "": // a channel without a canvas, or one Slack doesn't know
 		return cardEmpty
 	case d.code != "" || !cardFileIDRe.MatchString(c.rt.fileID):
 		return cardCanvasNoAccess

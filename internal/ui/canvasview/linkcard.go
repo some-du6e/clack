@@ -64,6 +64,9 @@ const (
 	cardCanvasShown                    // the entity row over the preview
 	cardCanvasNoAccess                 // NoAccessCanvas
 	cardMemberNone                     // UserProfileUnfurl with no member object yet: null, nothing in the card
+	cardList                           // EmbeddedSlackList (linkcard_list.go): decideList picks; the entity
+	cardListLoading                    // its loading entity
+	cardListError                      // its error state (BaseListErrorState)
 )
 
 // Card's waits: a fallback card stops waiting for its container's
@@ -105,6 +108,7 @@ type linkCard struct {
 	fileHit    image.Rectangle // the image's or the video's click area
 	fileBtn    widget.Clickable
 	cv         canvasCardData // EmbeddedCanvasUnfurl's (linkcard_canvas.go)
+	ls         listCardData   // EmbeddedSlackList's (linkcard_list.go)
 	loadingNow bool           // decide's isLoading, for the view's own steps
 	dv         cardDerived    // decide's per-container reads (derive)
 	skelSince  time.Time      // when the card's skeleton began: it stops shimmering after Card's wait
@@ -206,6 +210,8 @@ func (c *linkCard) decide(now time.Time) (k cardKind, line string, at time.Time)
 		case "canvas":
 			c.loadingNow = loading
 			return cardCanvas, "", time.Time{} // layoutCard asks the view (decideCanvas)
+		case "list":
+			return cardList, "", time.Time{} // layoutCard asks the view (decideList)
 		}
 		// a channel's (Card has no case for it), and the cards Clack
 		// doesn't draw yet
@@ -362,7 +368,7 @@ func (v *View) refreshCards() {
 	}
 	var fetch, again []core.CanvasCard
 	var msgs []core.MsgKey
-	var users, files []string
+	var users, files, listIDs []string
 	wait := false
 	defer func() { v.cardsWait.Store(wait) }()
 	for i, b := range bs {
@@ -411,10 +417,16 @@ func (v *View) refreshCards() {
 		if v.readFile(c) || v.readCanvas(c) { // getFileById missed: files.info
 			files = append(files, c.rt.fileID)
 		}
+		if v.readList(c) { // the list isn't in: files.info and its records
+			listIDs = append(listIDs, c.rt.fileID)
+		}
 		wait = wait || c.waiting()
 	}
 	for _, id := range files {
 		v.fetchFile(id)
+	}
+	for _, id := range listIDs {
+		v.fetchList(id)
 	}
 	if len(users) > 0 {
 		go func() {
@@ -536,6 +548,11 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 		if k == cardEmpty {
 			line = emptyLine("")
 		}
+	case cardList:
+		k = v.decideList(c)
+		if k == cardEmpty {
+			line = emptyLine("")
+		}
 	}
 	// a routed card's skeleton (the message, the file, the canvas and its
 	// preview) waits Card's 20 s at most, then ends in EmptyUnfurl: a
@@ -605,6 +622,8 @@ func (v *View) layoutCard(gtx layout.Context, b *blk, w int) int {
 		h = v.layoutFile(gtx, c, w, now)
 	case c.kind == cardCanvasShown || c.kind == cardCanvasNoAccess:
 		h = v.layoutCanvas(gtx, c, w, now)
+	case c.kind == cardList || c.kind == cardListLoading || c.kind == cardListError:
+		h = v.layoutList(gtx, c, w)
 	case c.kind == cardPublic && c.pub != nil:
 		h = v.layoutPublic(gtx, c, w)
 	case c.kind == cardWorkObject && c.body != nil: // WorkObjectEntity fills the card (CardContainer's padding 0)
@@ -803,8 +822,10 @@ func (c *linkCard) waiting() bool {
 		return c.rt.channel != "" && c.rt.ts != "" && !c.mc.known && !c.mc.gone
 	case "file":
 		return c.rt.fileID != "" && !c.fc.known && c.fc.code == ""
+	case "list":
+		return c.rt.fileID != "" && c.ls.doc == nil && c.ls.code == ""
 	case "canvas":
-		return c.rt.fileID != "" && (!c.fc.known && c.fc.code == "" || c.fc.known && !c.cv.havePrev)
+		return c.cv.chanPending || c.rt.fileID != "" && (!c.fc.known && c.fc.code == "" || c.fc.known && !c.cv.havePrev)
 	}
 	return false
 }

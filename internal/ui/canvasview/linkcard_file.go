@@ -398,6 +398,8 @@ func (v *View) fileClick(gtx layout.Context, c *linkCard) {
 			if d.f.Permalink != "" {
 				v.handler.OpenURL(d.f.Permalink)
 			}
+		case cardList: // handleFileContainerClick: the list at its view, or the item
+			v.handler.OpenURL(c.url)
 		}
 	}
 	if c.fileHit.Empty() {
