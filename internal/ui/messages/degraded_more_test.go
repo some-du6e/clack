@@ -107,31 +107,14 @@ func TestDegradedBannerRereadsTheThreadLikeSlack(t *testing.T) {
 // over a slice short of the thread's start, G9yo) offline is
 // InlineOfflineIndicator, in place of "Loading replies…".
 func TestThreadLoadingRowOfflineLikeSlack(t *testing.T) {
-	var root string
-	var replies []string
-	e, _ := guardEnv(t, "C0OFFLINE3", nil, func(_ *core.App, fs *fakeslack.Server, tss []string) {
-		root = tss[100]
-		stem := strings.TrimSuffix(root, "000100")
-		for i := 1; i <= 80; i++ {
-			ts := fmt.Sprintf("%s%06d", stem, 100+i*100)
-			fs.ReplyAtQuiet("C0OFFLINE3", root, ts, "UBEN00001", fmt.Sprintf("synthetic reply %d", i))
-			replies = append(replies, ts)
-		}
-	})
-	app := e.h.Core()
-	SetThreadStart(app, "C0OFFLINE3", root, replies[70]) // a jump far into the thread: the slice starts after the root
-	tv := NewThreadView(e.h, "C0OFFLINE3", root)
+	app, fs := headerEnv(t)
+	th := fs.AddHugeThread("offline-row-fixture", 2000, 5)               // replies a page at a time, as Slack's server answers
+	SetThreadStart(app, th.Channel, th.Root, fs.HugeThreadReplyTS(1500)) // a jump far into the thread
+	tv := NewThreadView(coreHost{app: app, th: theme.New(false)}, th.Channel, th.Root)
 	rt := newRouted(tv, 500, 700)
-	rt.now = e.rt.now // the hub's frames are guardEnv's router's
 	for dl := time.Now().Add(10 * time.Second); !(len(tv.s.items) > 0 && tv.s.items[0].kind == itLoading); time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(dl) {
-			var kinds []string
-			for i, it := range tv.s.items {
-				if i < 4 {
-					kinds = append(kinds, fmt.Sprintf("%d:%s", it.kind, it.key))
-				}
-			}
-			t.Fatalf("the slice around the reply never started short of the root: %d items, first %v (slice %v)", len(tv.s.items), kinds, tv.s.snap.th)
+			t.Fatalf("the slice around the reply never started short of the root (%d items)", len(tv.s.items))
 		}
 		rt.frame()
 	}
