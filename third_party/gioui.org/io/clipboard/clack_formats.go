@@ -4,7 +4,7 @@ package clipboard
 
 import "encoding/binary"
 
-// Clack patch (CLACK_PATCHES.md §68): one write of several formats, as a
+// Clack patch (CLACK_PATCHES.md §69): one write of several formats, as a
 // browser's copy puts them on the clipboard (an image's PNG beside its
 // <img> markup and a bookmark of its URL), which the X11 and Wayland
 // windows offer each under its own MIME type.

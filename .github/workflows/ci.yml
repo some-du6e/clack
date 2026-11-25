@@ -471,7 +471,7 @@ jobs:
           sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
           # and patches 46/47 on X11: an unmapped window stops its frames and
           # lets its frame texture go; XSETTINGS from a real settings manager
-          # and patch 68: a write of several formats (Copy Image's), read
+          # and patch 69: a write of several formats (Copy Image's), read
           # back by python-xlib, a large one by INCR
           xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop|TestUnmappedStopsFramesX11|TestClackXSettingsX11|TestClackClipFormatsX11' gioui.org/app
           xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -v -timeout 5m -run '^TestFrameEventAskedX11$' gioui.org/app

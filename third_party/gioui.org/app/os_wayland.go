@@ -141,7 +141,7 @@ type wlSeat struct {
 	// content is the data belonging to source.
 	content []byte
 	// formats are source's when a clipboard.FormatsType write made it:
-	// each offered type's data (Clack patch, CLACK_PATCHES.md §68).
+	// each offered type's data (Clack patch, CLACK_PATCHES.md §69).
 	formats map[string][]byte
 	// drag is the file drag over one of the windows (Clack patch,
 	// CLACK_PATCHES.md §11).
@@ -326,7 +326,7 @@ func (d *wlDisplay) writeClipboard(content []byte) error {
 
 // writeClipboardFormats is writeClipboard for a clipboard.FormatsType
 // write: the data source offers each format's MIME type, and a paste of
-// one gets its data (Clack patch, CLACK_PATCHES.md §68).
+// one gets its data (Clack patch, CLACK_PATCHES.md §69).
 func (d *wlDisplay) writeClipboardFormats(fs []clipboard.Format) {
 	s := d.seat
 	if s == nil || len(fs) == 0 {
@@ -1233,7 +1233,7 @@ func (w *window) ReadClipboard() {
 }
 
 func (w *window) WriteClipboard(mime string, s []byte) {
-	if mime == clipboard.FormatsType { // Clack patch (CLACK_PATCHES.md §68)
+	if mime == clipboard.FormatsType { // Clack patch (CLACK_PATCHES.md §69)
 		if fs, ok := clipboard.DecodeFormats(s); ok {
 			w.disp.writeClipboardFormats(fs)
 		}
@@ -1954,7 +1954,7 @@ func gio_onDataSourceTarget(data unsafe.Pointer, source *C.struct_wl_data_source
 func gio_onDataSourceSend(data unsafe.Pointer, source *C.struct_wl_data_source, mime *C.char, fd C.int32_t) {
 	s := callbackLoad(data).(*wlSeat)
 	content := s.content
-	if s.formats != nil { // Clack patch (CLACK_PATCHES.md §68): the type asked for
+	if s.formats != nil { // Clack patch (CLACK_PATCHES.md §69): the type asked for
 		content = s.formats[C.GoString(mime)]
 	}
 	go func() {

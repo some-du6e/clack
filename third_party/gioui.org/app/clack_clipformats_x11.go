@@ -18,7 +18,7 @@ import (
 	"gioui.org/io/clipboard"
 )
 
-// Clack patch (CLACK_PATCHES.md §68): an X11 window's CLIPBOARD with
+// Clack patch (CLACK_PATCHES.md §69): an X11 window's CLIPBOARD with
 // several formats (a clipboard.FormatsType write), as Chromium's
 // selection owner offers them (ui/base/x/selection_owner.cc):
 //

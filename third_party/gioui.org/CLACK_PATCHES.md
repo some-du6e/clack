@@ -3482,7 +3482,7 @@ Tests: `widget/clack_mask_copy_test.go`
 (`TestClackMaskedEditorCopiesNothing`: masked and plain, Shortcut+C and
 Shortcut+X), in ci's linux-gio.
 
-## 68. app, io/clipboard: a clipboard write offers several formats (X11, Wayland)
+## 69. app, io/clipboard: a clipboard write offers several formats (X11, Wayland)
 
 `io/clipboard/clack_formats.go`, `app/clack_clipformats_x11.go`,
 `app/os_x11.go`, `app/os_wayland.go`: a `clipboard.WriteCmd` whose Type

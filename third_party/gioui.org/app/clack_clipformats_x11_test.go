@@ -25,7 +25,7 @@ import (
 	"gioui.org/op"
 )
 
-// Clack patch (CLACK_PATCHES.md §68) on a real X server (ci's linux job
+// Clack patch (CLACK_PATCHES.md §69) on a real X server (ci's linux job
 // runs it under Xvfb with CLACK_X11_DROP_TESTS set): a Gio window writes
 // three formats at once (clipboard.FormatsType), as Copy Image's are, and
 // python-xlib reads CLIPBOARD as another client would: TARGETS lists

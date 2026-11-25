@@ -116,7 +116,7 @@ type x11Window struct {
 	clipboard struct {
 		content []byte
 		// a clipboard.FormatsType write's formats, their INCR transfers
-		// and the INCR atom (Clack patch, CLACK_PATCHES.md §68)
+		// and the INCR atom (Clack patch, CLACK_PATCHES.md §69)
 		formats  []x11ClipFormat
 		incrs    []*x11Incr
 		incrAtom C.Atom
@@ -174,7 +174,7 @@ func (w *x11Window) ReadClipboard() {
 }
 
 func (w *x11Window) WriteClipboard(mime string, s []byte) {
-	if w.clackWriteFormats(mime, s) { // Clack patch (CLACK_PATCHES.md §68)
+	if w.clackWriteFormats(mime, s) { // Clack patch (CLACK_PATCHES.md §69)
 		return
 	}
 	w.clipboard.content = s
@@ -838,7 +838,7 @@ func (h *x11EventHandler) handleEvents() bool {
 				// Unsupported clipboard or obsolete requestor.
 				break
 			}
-			if w.clackServeFormats(cevt) { // Clack patch (CLACK_PATCHES.md §68)
+			if w.clackServeFormats(cevt) { // Clack patch (CLACK_PATCHES.md §69)
 				break
 			}
 			notify := func() {
@@ -881,9 +881,9 @@ func (h *x11EventHandler) handleEvents() bool {
 				)
 				notify()
 			}
-		case C.PropertyNotify: // an INCR transfer's requestor read a chunk (Clack patch §68)
+		case C.PropertyNotify: // an INCR transfer's requestor read a chunk (Clack patch §69)
 			w.clackIncrProperty((*C.XPropertyEvent)(unsafe.Pointer(xev)))
-		case C.SelectionClear: // another client owns the selection (Clack patch §68)
+		case C.SelectionClear: // another client owns the selection (Clack patch §69)
 			w.clackSelectionClear((*C.XSelectionClearEvent)(unsafe.Pointer(xev)))
 		case C.ClientMessage: // extensions
 			cevt := (*C.XClientMessageEvent)(unsafe.Pointer(xev))

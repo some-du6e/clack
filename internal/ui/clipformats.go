@@ -13,7 +13,7 @@ import (
 // owns the clipboard from its window and offers every format of a copy
 // at once (image/png, text/html, text/x-moz-url), so Clack's window
 // offers clipimg's formats through Gio (a clipboard.FormatsType write:
-// Gio patch 68), in the frame after they arrive, as copyText's text is
+// Gio patch 69), in the frame after they arrive, as copyText's text is
 // written. Windows and macOS write theirs natively; their windows never
 // get any.
 

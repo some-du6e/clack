@@ -17,7 +17,7 @@ import (
 // On Linux Electron's Chromium owns the clipboard from its own window
 // (ClipboardOzone) and offers every format of a copy at once: image/png,
 // text/html and text/x-moz-url for Copy Image (chromium.go). Clack's window
-// does the same through Gio (a clipboard.FormatsType write: Gio patch 68)
+// does the same through Gio (a clipboard.FormatsType write: Gio patch 69)
 // once the ui root has given clipimg its owner (SetOwner). Without one (no
 // window: tools, tests) the image goes to wl-copy or xclip, which offer
 // one type each: image/png alone.
