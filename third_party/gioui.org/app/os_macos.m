@@ -3,6 +3,7 @@
 //go:build darwin && !ios
 
 #import <AppKit/AppKit.h>
+#import <CoreServices/CoreServices.h> // kAEQuitReason (TerminateEvent.SessionEnd)
 #import <objc/message.h>
 #import <objc/runtime.h>
 
@@ -854,6 +855,35 @@ void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle) {
 	return gio_onShouldTerminate() ? NSTerminateLater : NSTerminateNow;
 }
 @end
+
+// gio_quitEndsSession reads the quit Apple Event AppKit is handling while
+// it asks applicationShouldTerminate: (Clack patch, CLACK_PATCHES.md §58):
+// its kAEQuitReason, which loginwindow sets when it logs out, restarts or
+// shuts down; the Dock's Quit and a scripted quit carry none.
+int gio_quitEndsSession(void) {
+	NSAppleEventDescriptor *e = [[NSAppleEventManager sharedAppleEventManager] currentAppleEvent];
+	if (e == nil || [e eventClass] != kCoreEventClass || [e eventID] != kAEQuitApplication) {
+		return 0;
+	}
+	NSAppleEventDescriptor *why = [e attributeDescriptorForKeyword:kAEQuitReason];
+	if (why == nil) {
+		return 0;
+	}
+	OSType r = [why enumCodeValue];
+	if (r == 0) {
+		r = [why typeCodeValue];
+	}
+	switch (r) {
+	case kAELogOut:
+	case kAEReallyLogOut:
+	case kAEShowRestartDialog:
+	case kAERestart:
+	case kAEShowShutdownDialog:
+	case kAEShutDown:
+		return 1;
+	}
+	return 0;
+}
 
 // gio_replyToTerminate answers the terminate: AppKit waits on (Clack
 // patch, CLACK_PATCHES.md §58).

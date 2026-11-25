@@ -3090,6 +3090,14 @@ a crash (review of karim-1118, 2026-11-19). Electron, Slack's shell,
 overrides `terminate:` so the app's own quit runs
 (shell/browser/mac/electron_application.mm).
 
+`TerminateEvent.SessionEnd` (2026-11-25, `gio_quitEndsSession` in
+`os_macos.m`) says whether the quit is the session's end: the quit Apple
+Event AppKit is handling carries `kAEQuitReason` (log out, restart, shut
+down, or their dialogs) when loginwindow sends it, and none for the Dock's
+Quit or a scripted quit. It is read in `applicationShouldTerminate:`,
+while that event is current, so the program's loop needn't call into
+AppKit (Clack installs no update as the session ends).
+
 Now the delegate asks the program: a program ranging over `app.Events`
 gets a `TerminateEvent` (delivered on the main thread, inside the
 callback, as `URLEvent`s are) and AppKit waits for it

@@ -227,8 +227,8 @@ func signalQuit(s os.Signal, goos string, quit func(string)) {
 
 // appleQuit is the quit macOS asks for (the app's TerminateEvent): the
 // session's end when the quit Apple Event says log out, restart or shut
-// down (desktop.QuitEndsSession, read while AppKit asks), else the Dock's
-// Quit or a scripted one.
+// down (app.TerminateEvent's SessionEnd, read while AppKit asks), else the
+// Dock's Quit or a scripted one.
 func appleQuit(endsSession bool, quit func(string)) {
 	const why = "macOS asked Clack to quit (the Dock's Quit, log out, restart or shut down, or a quit Apple Event)"
 	if endsSession {

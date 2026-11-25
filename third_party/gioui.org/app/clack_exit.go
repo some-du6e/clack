@@ -9,7 +9,13 @@ package app
 // (NSTerminateLater) and quits as its own Quit does, the process ending
 // when the program exits. A program that doesn't range over Events is
 // terminated at once, as before. Other systems don't send it.
-type TerminateEvent struct{}
+type TerminateEvent struct {
+	// SessionEnd: the quit Apple Event AppKit is handling says the
+	// session is ending (its kAEQuitReason: log out, restart or shut
+	// down), read while AppKit asks; false for the Dock's Quit and a
+	// scripted quit.
+	SessionEnd bool
+}
 
 func (TerminateEvent) ImplementsEvent() {}
 

@@ -185,7 +185,7 @@ func TestSignalQuitMarksTheSessionsEnd(t *testing.T) {
 }
 
 // macOS's log out, restart and shut down reach Clack as the quit Apple
-// Event (desktop.QuitEndsSession reads its reason): nothing installs; the
+// Event (Gio reads its reason into TerminateEvent.SessionEnd): nothing installs; the
 // Dock's Quit installs.
 func TestAppleQuitMarksTheSessionsEnd(t *testing.T) {
 	for _, ends := range []bool{false, true} {

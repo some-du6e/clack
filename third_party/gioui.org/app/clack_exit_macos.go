@@ -6,6 +6,7 @@ package app
 
 /*
 __attribute__ ((visibility ("hidden"))) void gio_replyToTerminate(int quit);
+__attribute__ ((visibility ("hidden"))) int gio_quitEndsSession(void);
 */
 import "C"
 
@@ -29,7 +30,7 @@ func gio_onShouldTerminate() C.int {
 	if yieldGlobalEvent == nil {
 		return 0
 	}
-	processGlobalEvent(TerminateEvent{})
+	processGlobalEvent(TerminateEvent{SessionEnd: C.gio_quitEndsSession() != 0})
 	if terminateTimer != nil {
 		terminateTimer.Stop()
 	}

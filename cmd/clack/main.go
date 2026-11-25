@@ -671,10 +671,9 @@ func main() {
 			// macOS asked Clack to quit (Gio patch 58): AppKit waits while
 			// Clack logs and records why and quits as its own Quit does;
 			// the process ends when Clack exits
-			// (the quit Apple Event's reason is read now, while AppKit
-			// asks: a log out, restart or shut down installs nothing)
-			ends := desktop.QuitEndsSession()
-			go appleQuit(ends, quit)
+			// (a log out, restart or shut down, the quit Apple Event's
+			// reason as Gio read it while AppKit asked, installs nothing)
+			go appleQuit(e.SessionEnd, quit)
 		}
 	}
 }
