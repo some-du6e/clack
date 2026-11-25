@@ -135,10 +135,29 @@ func TestInviteCommandLocal(t *testing.T) {
 		}
 	})
 	t.Run("not a member", func(t *testing.T) {
-		a, _ := inviteCmdApp(t)
+		// isSlashCommandEnabled refuses before inviteCommand runs (P+cE mE:
+		// crlq bl)
+		a, f := inviteCmdApp(t)
 		_, err := run(a, "C1", "<@"+invAlice+">")
-		if got := feedbackOf(err); got != "You don’t have permission to invite people from *Hack Club* to this channel." {
+		if got := feedbackOf(err); got != "You don’t have permission to invite people." {
 			t.Errorf("feedback %q (%v)", got, err)
+		}
+		if n := countCalls(f, "conversations.invite") + countCalls(f, "chat.command"); n != 0 {
+			t.Errorf("%d calls", n)
+		}
+	})
+	t.Run("a guest outside a private channel", func(t *testing.T) {
+		a, _ := inviteCmdApp(t)
+		u := a.S.Self
+		u.IsRestricted = true
+		a.S.PutUsers([]slack.User{u})
+		if _, err := run(a, "C2", "<@"+invAlice+">"); feedbackOf(err) != "You don’t have permission to invite people." {
+			t.Errorf("a guest in a public channel: %v", err)
+		}
+		u.IsUltraRestricted = true
+		a.S.PutUsers([]slack.User{u})
+		if _, err := run(a, "G3", "<@"+invAlice+">"); !isKind(err, CmdUnknown) {
+			t.Errorf("an ultra restricted guest: %v", err)
 		}
 	})
 	t.Run("nobody named: the invite modal", func(t *testing.T) {

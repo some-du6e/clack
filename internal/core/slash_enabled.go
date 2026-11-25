@@ -42,6 +42,9 @@ package core
 //     reason in getChannelTopicError's words (MgZJ Bw);
 //   - /rename needs canUserRenameChannelWithReasonById (kfQA be), its
 //     reason in the check's own words;
+//   - /invite is unknown to an ultra restricted guest, and refused ("You
+//     don’t have permission to invite people.") outside the channel, to a
+//     guest outside a private channel, or to one external limited there;
 //   - /invite_people needs canUserSeeInviteModal (0Y04 Lz): "You don’t
 //     have permission to invite people.";
 //   - /archive needs canUserArchiveChannel (2Uru Jz), else it's unknown;
@@ -55,7 +58,7 @@ package core
 // the channel's own views asked for when it opened; with none (yet, or a
 // failed ask) the read asks and the permission isn't allowed meanwhile,
 // as in Slack (mLk1: a miss starts the fetch, nnqv Jr of nothing is
-// false). The /invite rules are inviteCommand's own (invite_command.go).
+// false). inviteCommand's own rules come after these (invite_command.go).
 
 import (
 	"context"
@@ -167,6 +170,20 @@ func (a *App) slashEnabled(ctx context.Context, z slack.Command, cmd, ch string,
 	case "/archive":
 		if !a.canArchive(conv, grant) {
 			return unknown
+		}
+	case "/invite":
+		// an ultra restricted guest has no /invite; a viewer outside the
+		// channel (crlq bl: is_member), a guest in a channel that isn't
+		// private, or one external limited there (fNOP, which Clack
+		// doesn't load: never) may not invite. Slack's DM and group DM
+		// records carry is_member (inviteCommand goes on to handle them);
+		// Clack's DMs don't, so a DM counts as joined
+		if u, ok := a.S.User(a.S.SelfID()); ok && u.IsUltraRestricted {
+			return unknown
+		}
+		member := conv != nil && (conv.IsMember || conv.IsIM || conv.IsMPIM)
+		if !member || a.selfRestricted() && !privateChannel(conv) {
+			return customErr(cmd, "You don’t have permission to invite people.")
 		}
 	case "/invite_people":
 		if !a.CanSeeInviteModal() { // 0Y04 Lz canUserSeeInviteModal
