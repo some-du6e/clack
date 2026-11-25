@@ -1525,8 +1525,114 @@ const tellGoComposer = batcher(() =>
     linkTransforms: linkTransforms.size,
     inlineMarkup: !!activeMarkup,
     sendTransforms: sendTransforms.size,
+    clipboardPatched: clipboardPatched(),
   })
 )
+
+// ---- Slack's composer as Quill, for plugins that find it in the DOM ----
+// Slack's composer is a Quill editor (Texty): its .ql-container element
+// holds the editor as __quill, and the editor's clipboard module takes
+// every paste through preparePastedDelta({pastedDelta, formats}) before
+// it goes in (Texty's handleOnPaste). Plugins patch that module through
+// its class's prototype, which every composer's clipboard shares: Slick's
+// ClearURLs, when a composer takes the focus (focusin). Clack's composers
+// are native, so each kind (channel, thread, edit, other) has a stand-in
+// here: a .ql-container in a hidden holder in document.head (nothing draws
+// it), its .ql-editor focused while the native composer has the keyboard
+// focus (composerFocus), and its __quill's clipboard a QuillClipboard. A
+// native paste goes through the clipboard's preparePastedDelta
+// (preparePastedDelta below) only while a plugin has replaced it: the
+// prototype's methods are accessors, and a change tells Go
+// (clipboardPatched with the composer hooks).
+class QuillClipboard {
+  constructor(quill, options) {
+    this.quill = quill
+    this.options = options ?? {}
+  }
+}
+const clipboardOwn = {
+  /** Texty's step before the paste goes in; Clack's composer prepares the delta itself, after */
+  preparePastedDelta({ pastedDelta } = {}) {
+    return pastedDelta
+  },
+  /** Texty's Markdown paste check; Clack's composer has no Markdown paste to intercept */
+  maybeInterceptMarkdownPaste() {
+    return false
+  },
+}
+for (const [name, own] of Object.entries(clipboardOwn)) {
+  let fn = own
+  Object.defineProperty(QuillClipboard.prototype, name, {
+    configurable: true,
+    get: () => fn,
+    set(v) {
+      fn = v
+      tellGoComposer()
+    },
+  })
+}
+function clipboardPatched() {
+  return QuillClipboard.prototype.preparePastedDelta !== clipboardOwn.preparePastedDelta
+}
+const quillHosts = new Map()
+/** the stand-in Quill of a native composer of kind (made on first use) */
+function quillHost(kind) {
+  const have = quillHosts.get(kind)
+  if (have?.container.isConnected) return have
+  const doc = G.document
+  if (!doc?.head) return null
+  let holder = doc.getElementById('clack-quill-hosts')
+  if (!holder) {
+    holder = doc.createElement('div')
+    holder.id = 'clack-quill-hosts'
+    holder.hidden = true
+    doc.head.appendChild(holder)
+  }
+  const container = doc.createElement('div')
+  container.className = 'ql-container'
+  container.setAttribute('data-composer', kind)
+  const editor = doc.createElement('div')
+  editor.className = 'ql-editor'
+  editor.setAttribute('contenteditable', 'true')
+  editor.setAttribute('role', 'textbox')
+  container.appendChild(editor)
+  holder.appendChild(container)
+  const modules = {}
+  const quill = { container, root: editor, getModule: (name) => modules[name] }
+  modules.clipboard = new QuillClipboard(quill, {})
+  container.__quill = quill
+  const h = { container, editor, quill, clipboard: modules.clipboard }
+  quillHosts.set(kind, h)
+  return h
+}
+/** Go → JS: the native composer of kind took (on) or lost the keyboard focus */
+T.composerFocus = (kind, on) => {
+  const h = quillHost(kind)
+  if (!h) return
+  if (on) h.editor.focus()
+  else if (G.document.activeElement === h.editor) h.editor.blur()
+}
+/**
+ * Go → JS: a paste into a native composer of kind, as Texty's handleOnPaste
+ * hands it to the clipboard module: the pasted delta's ops and the caret's
+ * formats. Returns the ops to insert.
+ */
+T.preparePastedDelta = (kind, ops, formats) => {
+  const h = quillHost(kind)
+  if (!h || !Array.isArray(ops)) return null
+  try {
+    // null: unchanged, compared by this engine's own JSON (Go writes & < >
+    // and U+2028/U+2029 escaped, so its bytes never equal ours), from
+    // before the plugin ran (it may change the delta it's given in place)
+    const before = JSON.stringify(ops)
+    const out = h.clipboard.preparePastedDelta({ pastedDelta: new Delta(ops), formats: formats ?? {} })
+    if (!Array.isArray(out?.ops)) return null
+    return JSON.stringify(out.ops) === before ? null : out.ops
+  } catch (err) {
+    error('Paste preparation failed:', err)
+    return null
+  }
+}
 
 /** Go → JS: blocks after every send transform (idempotent by contract) */
 T.transformSendBlocks = (blocks) => {

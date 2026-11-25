@@ -14,16 +14,32 @@ package composer
 // {slackmention: {id: "BKhere", label: "@here"}}} (Slack's B7wc
 // isOpMention / getMentionOpIdText), because plugins read their ids.
 func (d *Doc) Delta() map[string]any {
+	ops, _ := d.deltaOps(false)
+	return map[string]any{"ops": ops}
+}
+
+// deltaOps is Delta's ops and, with spans, each op's runes in d: a text
+// run's [start, end), an embed's one rune, a line's "\n" its newline (the
+// closing one, which d has no rune for, [len, len)); a divider's embed has
+// none (its line's text isn't content).
+func (d *Doc) deltaOps(spans bool) ([]any, [][2]int) {
 	ops := make([]any, 0, 8)
+	var sp [][2]int
+	add := func(op any, start, end int) {
+		ops = append(ops, op)
+		if spans {
+			sp = append(sp, [2]int{start, end})
+		}
+	}
 	line := 0
-	lineOp := func() {
+	lineOp := func(nl int) {
 		var l Line
 		if line < len(d.Lines) {
 			l = d.Lines[line]
 		}
 		line++
 		if l.Kind == Divider {
-			ops = append(ops, map[string]any{"insert": map[string]any{"divider": true}})
+			add(map[string]any{"insert": map[string]any{"divider": true}}, nl, nl)
 		}
 		at := map[string]any{}
 		switch l.Kind {
@@ -52,12 +68,12 @@ func (d *Doc) Delta() map[string]any {
 		if len(at) > 0 {
 			op["attributes"] = at
 		}
-		ops = append(ops, op)
+		add(op, nl, min(nl+1, len(d.Runes)))
 	}
 	for i := 0; i < len(d.Runes); {
 		r := d.Runes[i]
 		if r == '\n' {
-			lineOp()
+			lineOp(i)
 			i++
 			continue
 		}
@@ -66,25 +82,25 @@ func (d *Doc) Delta() map[string]any {
 			// Slack's mention op: the label as text, slackmention says what
 			// it is (NativeAtChannel and bChannel look for id "BKchannel")
 			label := "@" + a.Atom.ID
-			ops = append(ops, map[string]any{"insert": label, "attributes": map[string]any{
-				"slackmention": map[string]any{"id": broadcastRowID(a.Atom.ID), "label": label}}})
+			add(map[string]any{"insert": label, "attributes": map[string]any{
+				"slackmention": map[string]any{"id": broadcastRowID(a.Atom.ID), "label": label}}}, i, i+1)
 			i++
 			continue
 		}
 		if a.Atom != nil && a.Atom.Kind == AtomMessage {
 			// Slack's message slug op: the label, slackslug says what it is
-			ops = append(ops, map[string]any{"insert": a.Atom.Text, "attributes": map[string]any{"slackslug": messageSlugDelta(a.Atom)}})
+			add(map[string]any{"insert": a.Atom.Text, "attributes": map[string]any{"slackslug": messageSlugDelta(a.Atom)}}, i, i+1)
 			i++
 			continue
 		}
 		if a.Atom != nil && a.Atom.Kind == AtomLink {
 			// a link slug op: the label, slackslug the link
-			ops = append(ops, map[string]any{"insert": a.Atom.Text, "attributes": map[string]any{"slackslug": linkSlugDelta(a.Atom)}})
+			add(map[string]any{"insert": a.Atom.Text, "attributes": map[string]any{"slackslug": linkSlugDelta(a.Atom)}}, i, i+1)
 			i++
 			continue
 		}
 		if a.Atom != nil {
-			ops = append(ops, map[string]any{"insert": deltaEmbed(a.Atom)})
+			add(map[string]any{"insert": deltaEmbed(a.Atom)}, i, i+1)
 			i++
 			continue
 		}
@@ -101,11 +117,11 @@ func (d *Doc) Delta() map[string]any {
 		if at := deltaAttrs(a); at != nil {
 			op["attributes"] = at
 		}
-		ops = append(ops, op)
+		add(op, i, j)
 		i = j
 	}
-	lineOp() // Quill documents always end with a newline
-	return map[string]any{"ops": ops}
+	lineOp(len(d.Runes)) // Quill documents always end with a newline
+	return ops, sp
 }
 
 func deltaAttrs(a Attr) map[string]any {

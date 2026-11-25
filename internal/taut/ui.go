@@ -117,6 +117,9 @@ type composerHooks struct {
 	LinkTransforms int  `json:"linkTransforms"`
 	InlineMarkup   bool `json:"inlineMarkup"`
 	SendTransforms int  `json:"sendTransforms"`
+	// ClipboardPatched: a plugin replaced the stand-in Quill clipboard's
+	// preparePastedDelta (05_slack.js), so pastes go through it.
+	ClipboardPatched bool `json:"clipboardPatched"`
 }
 
 type uiState struct {
@@ -940,6 +943,54 @@ func (t *Taut) TransformLink(ctx context.Context, url, source string) string {
 		return url
 	}
 	return out
+}
+
+// HasPasteClipboard reports whether pastes go through the composers'
+// stand-in Quill clipboard (PreparePastedDelta): a plugin patched its
+// preparePastedDelta, as Slick's ClearURLs patches Slack's.
+func (t *Taut) HasPasteClipboard() bool { h := t.composer(); return h != nil && h.ClipboardPatched }
+
+// PreparePastedDelta runs a paste into a native composer of kind (channel,
+// thread, edit or other) through its stand-in Quill clipboard, as Texty's
+// handleOnPaste hands the pasted delta to the clipboard module: ops are
+// the pasted delta's, formats the caret's (Quill's getFormat). It returns
+// the ops to insert, and false when they're the ones given (no plugin
+// changed them, or JS didn't answer). ctx bounds the plugin's call too,
+// not only its wait for the JS thread (jsrt.LeaveRunning): a paste whose
+// call runs past it goes in as it came, the call left to finish.
+func (t *Taut) PreparePastedDelta(ctx context.Context, kind string, ops json.RawMessage, formats map[string]any) (json.RawMessage, bool) {
+	if !t.HasPasteClipboard() {
+		return ops, false
+	}
+	rt, err := t.ensureRuntime()
+	if err != nil {
+		return ops, false
+	}
+	if formats == nil {
+		formats = map[string]any{}
+	}
+	var out json.RawMessage
+	if err := rt.call(jsrt.LeaveRunning(ctx), "preparePastedDelta", &out, kind, ops, formats); err != nil || len(out) == 0 || string(out) == "null" {
+		return ops, false
+	}
+	return out, !bytes.Equal(out, ops)
+}
+
+// ComposerFocus tells the stand-in Quill of the native composer of kind
+// that the composer took (on) or lost the keyboard focus: its .ql-editor
+// is document.activeElement while it has it, and takes focus and focusin
+// (blur and focusout) as Slack's does, for plugins that find the
+// composer's clipboard on focusin. In order with other events; a runtime
+// that starts later is told which composer has the focus.
+func (t *Taut) ComposerFocus(kind string, on bool) {
+	if on {
+		t.composerFocused.Store(&kind)
+	} else if k := t.composerFocused.Load(); k != nil && *k == kind {
+		t.composerFocused.CompareAndSwap(k, nil)
+	}
+	if rt := t.liveRuntime(); rt != nil {
+		rt.post("composerFocus", kind, on)
+	}
 }
 
 // HasInlineMarkup reports whether a plugin replaced the composer's inline

@@ -113,6 +113,7 @@ func richTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 
 	if st.ed == nil {
 		st.ed = composer.NewEditor()
+		st.ed.TautKind = func() string { return "other" } // Slack's is a Texty input: Quill's clipboard
 		if raw := blocksJSON(p["value"]); len(raw) > 0 {
 			if d, err := composer.DocFromBlocksJSON(raw, atomResolver()); err == nil && d != nil {
 				st.ed.SetDoc(d)

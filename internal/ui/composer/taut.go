@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"reflect"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -430,10 +432,26 @@ func syncHooks() {
 	case !on && installed.markup:
 		InlineMarkup, installed.markup = nil, false
 	}
+	on = t != nil && t.HasPasteClipboard()
+	switch {
+	case on && PreparePaste == nil:
+		PreparePaste, installed.paste = tautPreparePaste, true
+	case !on && installed.paste:
+		PreparePaste, installed.paste = nil, false
+	}
+	// the focus goes to the stand-in Quill whenever Taut runs: a plugin
+	// patches Slack's clipboard when it sees a composer take the focus
+	on = t != nil
+	switch {
+	case on && ComposerFocus == nil:
+		ComposerFocus, installed.focus = tautComposerFocus, true
+	case !on && installed.focus:
+		ComposerFocus, installed.focus = nil, false
+	}
 }
 
 // installed records which hook vars syncHooks set (UI goroutine only).
-var installed struct{ send, link, markup bool }
+var installed struct{ send, link, markup, paste, focus bool }
 
 // linkSource is Taut's addLinkTransform context source for the current
 // LinkTransforms call: "paste", or "link-dialog" while the dialog saves.
@@ -482,6 +500,155 @@ func tautLinkTransform(u string) string {
 	out := t.TransformLink(ctx, u, linkSource)
 	tautSyncDone(ctx, "link transform")
 	return out
+}
+
+// tautPreparePaste runs a paste through the stand-in Quill clipboard's
+// preparePastedDelta, which a plugin patched (ClearURLs).
+func tautPreparePaste(kind string, src *Doc, formats map[string]any) *Doc {
+	t := currentTaut()
+	if t == nil || !tautSyncAllowed() {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), tautSyncTimeout) // as tautLinkTransform
+	defer cancel()
+	d := pasteThroughDelta(src, func(ops json.RawMessage) (json.RawMessage, bool) {
+		return t.PreparePastedDelta(ctx, kind, ops, formats)
+	})
+	tautSyncDone(ctx, "paste")
+	return d
+}
+
+// pasteThroughDelta hands src to prepare as its Quill delta's ops (what
+// Slack's clipboard module is given) and reads the ops it returns back
+// into a Doc; nil when prepare leaves them as they were (src goes in as
+// it is) or returns ones that aren't a delta.
+//
+// The ops are compared as JSON values, not bytes: Go escapes & < > and
+// U+2028/U+2029 where QuickJS writes them as they are, so an untouched
+// paste with those in it must still be untouched. Only the ops a plugin
+// changed are rebuilt (changedOps): every other op's runes come from src
+// as they were, with what a delta can't carry (a custom emoji's image, the
+// paste's quoteTail). A plugin that changes the delta's shape (adds or
+// drops ops, rewrites a line, a mention or an embed) gets the whole delta
+// read back, in linear time, with src's emoji and quoteTail.
+func pasteThroughDelta(src *Doc, prepare func(ops json.RawMessage) (json.RawMessage, bool)) *Doc {
+	inOps, spans := src.deltaOps(true)
+	ops, err := json.Marshal(inOps)
+	if err != nil {
+		return nil
+	}
+	out, changed := prepare(ops)
+	if !changed {
+		return nil
+	}
+	var back []any
+	if err := json.Unmarshal(out, &back); err != nil || len(back) == 0 {
+		return nil
+	}
+	var in []any // the ops as JSON reads them (numbers float64), as back's are
+	if err := json.Unmarshal(ops, &in); err != nil {
+		return nil
+	}
+	if d, same, ok := changedOps(src, in, spans, back); ok {
+		if same {
+			return nil
+		}
+		return d
+	}
+	d, _ := qToDoc(qFromSlackDelta(map[string]any{"ops": back}))
+	keepEmoji(d, src)
+	d.quoteTail = src.quoteTail
+	return d
+}
+
+// keepEmoji gives d's emoji src's atoms of the same name: a delta's
+// slackemoji carries a name and its unicode, not a custom emoji's image.
+func keepEmoji(d, src *Doc) {
+	var byName map[string]*Atom
+	for _, a := range src.Attrs {
+		if a.Atom != nil && a.Atom.Kind == AtomEmoji {
+			if byName == nil {
+				byName = map[string]*Atom{}
+			}
+			byName[a.Atom.ID] = a.Atom
+		}
+	}
+	for i, a := range d.Attrs {
+		if a.Atom != nil && a.Atom.Kind == AtomEmoji && byName[a.Atom.ID] != nil {
+			d.Attrs[i].Atom = byName[a.Atom.ID]
+		}
+	}
+}
+
+// changedOps rebuilds src with out's ops where they differ from in's
+// (src's, each spans' runes of it): an unchanged op's runes, attrs and
+// line copied from src, a changed text run (no newline, mention, slug or
+// embed) read with its inline formats. same: no op changed. ok is false
+// when out isn't src's delta with some text changed (another count of
+// ops, a changed line, embed, mention or slug): read it whole then.
+func changedOps(src *Doc, in []any, spans [][2]int, out []any) (d *Doc, same, ok bool) {
+	if len(in) != len(out) || len(in) != len(spans) || len(src.Lines) == 0 {
+		return nil, false, false
+	}
+	d = &Doc{Runes: make([]rune, 0, len(src.Runes)), Attrs: make([]Attr, 0, len(src.Attrs)), Lines: make([]Line, 0, len(src.Lines)), quoteTail: src.quoteTail}
+	same = true
+	line := 0 // the src line the next newline ends: every one is in an unchanged op
+	last := len(out) - 1
+	for k := range out {
+		sp := spans[k]
+		if reflect.DeepEqual(in[k], out[k]) {
+			for i := sp[0]; i < sp[1]; i++ {
+				d.Runes = append(d.Runes, src.Runes[i])
+				d.Attrs = append(d.Attrs, src.Attrs[i])
+				if src.Runes[i] == '\n' && line < len(src.Lines) {
+					d.Lines = append(d.Lines, src.Lines[line])
+					line++
+				}
+			}
+			if k == last && sp[0] == sp[1] { // the closing "\n": the last line, no rune
+				d.Lines = append(d.Lines, src.Lines[len(src.Lines)-1])
+			}
+			continue
+		}
+		same = false
+		op, _ := out[k].(map[string]any)
+		ins, isText := op["insert"].(string)
+		if !isText || ins == "" || k == last || strings.ContainsAny(ins, "\n\r") {
+			return nil, false, false
+		}
+		raw, _ := op["attributes"].(map[string]any)
+		if raw["slackmention"] != nil || raw["slackslug"] != nil {
+			return nil, false, false
+		}
+		if was, _ := in[k].(map[string]any); was != nil {
+			if _, wasText := was["insert"].(string); !wasText || sp[1]-sp[0] == 0 || (sp[1]-sp[0] == 1 && src.Attrs[sp[0]].Atom != nil) {
+				return nil, false, false // an embed or atom became text: read it whole
+			}
+		}
+		a := qAttr(qAttrsFromJSON(raw))
+		for _, r := range ins {
+			if r == ObjRune {
+				r = ' '
+			}
+			d.Runes = append(d.Runes, r)
+			d.Attrs = append(d.Attrs, a)
+		}
+	}
+	if same {
+		return nil, true, true
+	}
+	if len(d.Lines) != len(src.Lines) {
+		return nil, false, false
+	}
+	return d, false, true
+}
+
+// tautComposerFocus tells Taut the composer of kind took or lost the
+// keyboard focus.
+func tautComposerFocus(kind string, on bool) {
+	if t := currentTaut(); t != nil {
+		t.ComposerFocus(kind, on)
+	}
 }
 
 // tautInlineMarkup runs composer.patchInlineMarkup's parse (RealMarkdown).

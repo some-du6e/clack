@@ -4,8 +4,8 @@ Clack runs Taut's and Slick's plugins natively, from the published plugin Librar
 
 | | Plugins |
 |---|---:|
-| ✅ Works fully | 76 |
-| ⚠️ Partly works | 15 |
+| ✅ Works fully | 77 |
+| ⚠️ Partly works | 14 |
 | ❌ Doesn't work yet | 7 |
 
 A plugin both systems ship (under the same name or not) is one row in Preferences › Plugins › Browse; here each version has its own line.
@@ -31,7 +31,6 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Anonymise File Names | Slick | Replace uploaded file names with a random string. Toggle individual names from the attachment preview. | renames uploads, but not in the edit-file dialog |
 | Better Message Menu | Slick | excuse me laddie but i organized your menu | no Vim keys; big buttons stay on top above the cursor |
 | Chat Tabs | Slick | Browser-like tabs for the real power users of Slack. Open channels, DMs, and threads in new tabs to keep organized. | thread tabs open beside their channel |
-| Clear URLs | Slick | Automatically removes tracking elements from URLs you send | cleans links when you send, not when you paste |
 | Click to Load | Taut | Holds Spotify, SoundCloud and other music embeds until you click to load them | Load shows Clack's media box, not a player |
 | Custom Sounds | Slick | Override Slack notification sounds with your own audio file. | Ogg Vorbis, FLAC or Linux AAC files play Slack's own sound |
 | Installed Apps | Slick | Show apps people authorized, who authorized an app, and its channel memberships. | the app marketplace page asks you to sign in |
@@ -61,6 +60,7 @@ Compatibility follows the newest Clack release. Each row comes from `internal/pl
 | Censorship | Taut | Masks words you choose in messages, only on your screen |
 | Channel List Typing | Slick | Show who’s typing next to each channel and DM in the sidebar |
 | Character Counter | Slick | Show how many characters your message has next to the send button |
+| Clear URLs | Slick | Automatically removes tracking elements from URLs you send |
 | Clear URLs | Taut | Strips tracking parameters from links you paste into messages (rules from <https://github.com/ClearURLs/Rules\|ClearURLs>) |
 | Copy Reacted | Slick | Copy the list of people who reacted to a message |
 | Copy Reacted | Taut | Copies the list of people who reacted to a message |

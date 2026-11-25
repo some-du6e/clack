@@ -620,7 +620,19 @@ func qStyleAttrs(a Attr) qAttrs {
 // into their atoms, embeds into emoji and dividers. back maps every Quill
 // index to a Doc position.
 func qToDoc(q qDelta) (*Doc, []int) {
+	n := 0 // d's runes are at most q's inserts: grown once, not op by op
+	for _, op := range q.ops {
+		switch op.k {
+		case qIns:
+			n += len(op.text)
+		case qEmb:
+			n++
+		}
+	}
 	d := &Doc{}
+	if n > 0 {
+		d.Runes, d.Attrs = make([]rune, 0, n), make([]Attr, 0, n)
+	}
 	back := make([]int, q.length()+1)
 	at := 0
 	var cur Line
@@ -723,7 +735,7 @@ func qAttr(at qAttrs) Attr {
 	for _, s := range [...]struct {
 		st Style
 		k  string
-	}{{Bold, "bold"}, {Italic, "italic"}, {Underline, "underline"}, {Strike, "strike"}, {Code, "code"}} {
+	}{{Bold, "bold"}, {Italic, "italic"}, {Underline, "underline"}, {Strike, "strike"}, {Code, "code"}, {Unlink, "unlink"}} {
 		if truthy(at[s.k]) {
 			a.Style |= s.st
 		}

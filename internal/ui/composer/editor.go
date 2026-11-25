@@ -158,6 +158,14 @@ const (
 // Editor is a rich text editor widget. Create it with NewEditor (the zero
 // value also works).
 type Editor struct {
+	// TautKind is the kind of composer this editor is for Taut's
+	// ComposerContext (chrome.tautKind; "draft" and "other" for the drafts
+	// list's editor and the Texty inputs), which PreparePaste is told: the
+	// editors that are Texty's Quill in Slack, whose clipboard module
+	// plugins patch. nil for one that isn't (a canvas's or a list cell's,
+	// Quip's editor in Slack), whose pastes no clipboard patch sees.
+	TautKind func() string
+
 	missed []event.Event // key events KeepFocus read while it wasn't drawn (editor_focus.go)
 	stolen stolenKeys    // shortcuts the window redirected here, run once focused (Composer.StealKeys)
 	// Intercept, if set, is offered Enter, Tab, Up, Down, Escape (with
@@ -1042,15 +1050,40 @@ func (e *Editor) pasteClip(s, html string, texty *Doc) {
 			rich = docFromPlainText(s, lo == d.LineStart(line))
 		}
 	}
+	ownDoc := e.clipDoc
+	if kind := e.tautKind(); PreparePaste != nil && kind != "" {
+		// Texty's handleOnPaste hands the pasted delta to the clipboard
+		// module's preparePastedDelta with the caret's formats before it
+		// goes in, whatever it came as; a plugin may have patched it. Only
+		// Slack's Texty inputs (TautKind) have it: a canvas or a list cell
+		// pastes as it is, never as a channel composer's paste
+		formats := pasteFormats(a, d.Lines[line])
+		switch {
+		case own:
+			if p := PreparePaste(kind, e.clipDoc.Clone(), formats); p != nil {
+				ownDoc = p
+			}
+		case rich != nil:
+			if p := PreparePaste(kind, rich, formats); p != nil {
+				rich = p
+			}
+		default: // text: in code, or a plain paste
+			src := NewDoc()
+			src.Insert(0, s, Attr{})
+			if p := PreparePaste(kind, src, formats); p != nil {
+				s = p.Text()
+			}
+		}
+	}
 	switch {
 	case own && e.textOnly:
-		end = d.InsertDoc(lo, textOnlyDoc(e.clipDoc))
+		end = d.InsertDoc(lo, textOnlyDoc(ownDoc))
 	case own && d.Lines[line].Kind == Quote:
 		// the composer's own copy is slack/texty in Slack: into a quote
 		// the same way as any other
-		end = d.pasteQuoted(lo, e.clipDoc.Clone(), lineHasText)
+		end = d.pasteQuoted(lo, ownDoc.Clone(), lineHasText)
 	case own:
-		end = d.InsertDoc(lo, e.clipDoc)
+		end = d.InsertDoc(lo, ownDoc)
 	case rich != nil:
 		end = e.pasteRich(lo, rich, lineHasText)
 		if LinkTransforms != nil {
@@ -1068,6 +1101,39 @@ func (e *Editor) pasteClip(s, html string, texty *Doc) {
 	if !plain {
 		e.notePastedLinks(lo, min(e.caret, e.doc.Len())) // Slack links → slugs (slugs.go)
 	}
+}
+
+// tautKind is TautKind's answer ("channel" when it gives none), "" for
+// an editor that isn't one of Slack's Texty inputs (no TautKind).
+func (e *Editor) tautKind() string {
+	if e.TautKind != nil {
+		if k := e.TautKind(); k != "" {
+			return k
+		}
+		return "channel"
+	}
+	return "" // not one of Slack's Texty inputs: no Quill, no clipboard module
+}
+
+// pasteFormats is Quill's getFormat at a paste's caret, as Texty's
+// handleOnPaste hands it to preparePastedDelta: the caret's inline code
+// and its line's block format.
+func pasteFormats(a Attr, l Line) map[string]any {
+	f := map[string]any{}
+	if a.Style&Code != 0 {
+		f["code"] = true
+	}
+	switch l.Kind {
+	case CodeBlock:
+		f["code-block"] = true
+	case Quote:
+		f["blockquote"] = true
+	case Bullet:
+		f["list"] = "bullet"
+	case Ordered:
+		f["list"] = "ordered"
+	}
+	return f
 }
 
 // edIsURL reports whether s is a single http(s) URL token.

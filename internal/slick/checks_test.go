@@ -111,6 +111,36 @@ func init() {
 		if !h.wasFetched("https://raw.githubusercontent.com/ClearURLs/Rules/") {
 			t.Errorf("the main half didn't fetch the rules")
 		}
+		// a paste: the plugin patches Slack's composer clipboard when a
+		// composer takes the focus (focusin), and the native paste goes
+		// through it
+		composerFocus(h.tt, "channel", true)
+		eventually(t, 5*time.Second, "the composer clipboard patched", func() bool { return pasteClipboardOn(h.tt) })
+		// the ops as the composer hands them over: Go's JSON (& < > escaped)
+		goOps := func(ops ...map[string]any) json.RawMessage {
+			b, err := json.Marshal(ops)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}
+		pasted := goOps(map[string]any{"insert": "see "},
+			map[string]any{"insert": "https://example.com/page?utm_source=news&id=7", "attributes": map[string]any{"link": "https://example.com/page?utm_source=news&id=7"}},
+			map[string]any{"insert": " or https://example.com/a?utm_medium=x&b=2\n"})
+		got, changed := preparePaste(h.ctx(), h.tt, "channel", pasted, nil)
+		if !changed || strings.Contains(string(got), "utm_") || !strings.Contains(string(got), "id=7") || !strings.Contains(string(got), "b=2") {
+			t.Errorf("pasted %s (changed %v), want the links' tracking parameters gone", got, changed)
+		}
+		// a paste with nothing to clean comes back unchanged, & < > and all
+		// (QuickJS writes them as they are: its bytes never equal Go's)
+		left := goOps(map[string]any{"insert": "R&D: a<b> -> c && d, see https://example.com/?a=1&b=2\n"})
+		if got, changed := preparePaste(h.ctx(), h.tt, "channel", left, nil); changed {
+			t.Errorf("a paste with nothing to clean changed: %s", got)
+		}
+		// pasted into code, as it is (its isCode check)
+		if got, changed := preparePaste(h.ctx(), h.tt, "channel", pasted, map[string]any{"code": true}); changed {
+			t.Errorf("a paste into code changed: %s", got)
+		}
 	}
 	checks["UserPronouns"] = func(t *testing.T, h *harness) {
 		text := h.renderText(2, "ThreadSenderAndTimestampGeneric", map[string]any{"msg": map[string]any{"user": aliceID, "ts": "1700000001.000100", "channel": chGen}})

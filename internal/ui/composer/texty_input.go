@@ -58,6 +58,7 @@ func NewTextyInput(h TextyHost, text, ph string, maxLen int) *TextyInput {
 	t := &TextyInput{h: h, ph: ph, maxLen: maxLen}
 	t.ed = NewEditor()
 	t.ed.textOnly, t.ed.plainText = true, true
+	t.ed.TautKind = func() string { return "other" } // a Texty input: Quill, its clipboard Slack's
 	var names TextyNames
 	if a := h.Core(); a != nil {
 		if a.S != nil {

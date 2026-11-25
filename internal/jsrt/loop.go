@@ -320,7 +320,8 @@ func (r *Runtime) do(t task, f func(js *Ctx) error) error {
 // doCtx is do bounded by ctx while the task waits its turn: when ctx ends
 // before it starts, it never runs and doCtx returns ctx's error, so a
 // synchronous caller's deadline (the composer's 150 ms for a plugin's
-// inline markup) caps its wait. Once the task runs, doCtx waits for it.
+// inline markup) caps its wait. Once the task runs, doCtx waits for it,
+// unless ctx is LeaveRunning's: then its deadline ends the wait there too.
 // Skipped, not run late, on purpose: a caller its deadline left with an
 // error has gone on without the call (the composer drew the native
 // markup, a dispatch ran its native), and the call run late applied its
@@ -353,6 +354,14 @@ func (r *Runtime) doCtx(ctx context.Context, t task, f func(js *Ctx) error) erro
 	case <-ctx.Done():
 		if state.CompareAndSwap(0, 2) {
 			return ctx.Err()
+		}
+		if IsLeaveRunning(ctx) {
+			select {
+			case err := <-ch: // done as the deadline passed: its answer
+				return err
+			default:
+				return ctx.Err() // it runs on, its answer dropped (ch holds it)
+			}
 		}
 		select { // running: it answers
 		case err := <-ch:
@@ -556,6 +565,24 @@ func NoChain(ctx context.Context) context.Context {
 // IsNoChain reports whether ctx came from NoChain.
 func IsNoChain(ctx context.Context) bool {
 	b, _ := ctx.Value(noHoldKey{}).(bool)
+	return b
+}
+
+type leaveRunningKey struct{}
+
+// LeaveRunning bounds ctx's calls by its deadline while they run too: a
+// Call whose ctx ends while its function runs returns ctx's error then,
+// and the function runs on to its end, its answer dropped. Only for a
+// call whose answer is its only effect, which its caller goes on without
+// (taut's PreparePastedDelta: the paste goes in as it came), never for one
+// that changes what the caller reads next (doCtx's rule for the others).
+func LeaveRunning(ctx context.Context) context.Context {
+	return context.WithValue(ctx, leaveRunningKey{}, true)
+}
+
+// IsLeaveRunning reports whether ctx came from LeaveRunning.
+func IsLeaveRunning(ctx context.Context) bool {
+	b, _ := ctx.Value(leaveRunningKey{}).(bool)
 	return b
 }
 

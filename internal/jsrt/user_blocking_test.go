@@ -580,3 +580,28 @@ func TestSendChainHoldsTheQueue(t *testing.T) {
 		}
 	}
 }
+
+// A Call with a LeaveRunning ctx ends at the ctx's deadline even while its
+// function runs, which runs on to its end, its answer dropped; without
+// LeaveRunning a running Call is waited for (doCtx: what it changed, its
+// caller may read next).
+func TestLeaveRunningEndsARunningCall(t *testing.T) {
+	r := newTest(t)
+	evalString(t, r, `globalThis.spin = (ms) => { const end = Date.now() + ms; while (Date.now() < end) {} globalThis.spun = (globalThis.spun || 0) + 1; return 'done' }; 'ok'`)
+	ctx, cancel := context.WithTimeout(LeaveRunning(context.Background()), 300*time.Millisecond)
+	start := time.Now()
+	out, err := r.Call(ctx, "spin", 2000)
+	took := time.Since(start)
+	cancel()
+	if err == nil || took > 1500*time.Millisecond {
+		t.Errorf("LeaveRunning: %s, %v after %v; want ctx's error at its deadline", out, err, took)
+	}
+	if got := evalString(t, r, `String(globalThis.spun)`); got != "1" { // after the call: it holds the JS thread
+		t.Errorf("the call left running ran %s times, want once, to its end", got)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if out, err := r.Call(ctx, "spin", 600); err != nil || string(out) != `"done"` {
+		t.Errorf("a running call without LeaveRunning: %s, %v; want its answer", out, err)
+	}
+}
