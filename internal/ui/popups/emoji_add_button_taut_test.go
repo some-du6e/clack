@@ -56,6 +56,9 @@ func TestTautAddCustomEmojiButton(t *testing.T) {
 
 	p := NewEmojiPicker(e.h, nil)
 	p.SetAnchorRect(image.Rect(20, 548, 60, 556))
+	// The plugin's own button is host-tree text, which slackc shapes
+	// itself (theme.DrawHook sees only theme.Text): its tree says it's
+	// there, and Slack's button, the native in it, draws through theme.Text.
 	var mu sync.Mutex
 	var drawn []string
 	frame := slFrame(p)
@@ -69,10 +72,10 @@ func TestTautAddCustomEmojiButton(t *testing.T) {
 	}, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return slices.Contains(drawn, "Add hidden emoji") && slices.Contains(drawn, "Add Emoji")
+		return strings.Contains(e.rec.raw("AddCustomEmojiButton"), "hmojis_add_hidden_emoji") && slices.Contains(drawn, "Add Emoji")
 	})
 	raw := e.rec.raw("AddCustomEmojiButton")
-	for _, want := range []string{`hmojis_add_hidden_emoji`, `"data-huddles":"false"`, `"data-onclick":"function"`} {
+	for _, want := range []string{`Add hidden emoji`, `"data-huddles":"false"`, `"data-onclick":"function"`} {
 		if !strings.Contains(raw, want) {
 			t.Errorf("the plugin's tree lacks %s (its props): %s", want, raw)
 		}
