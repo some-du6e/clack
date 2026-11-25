@@ -1,10 +1,11 @@
 package core
 
-// megaphoneSpaces is Object.values(xu), the megaphone spaces Slack's client
-// knows (client-boot oCWb, build 66e72b57ade1: 130 spaces).
+// megaphoneKnownSpaces is Object.values(xu), the megaphone spaces Slack's
+// client knows (client-boot oCWb, build 889ac449a32d: 128 spaces).
 // loadMegaphoneNotificationData (17Qm M) files only answered spaces in
-// it: `if(!m.includes(t))return`.
-var megaphoneSpaces = map[string]bool{
+// it (`if(!m.includes(t))return`), and so does the
+// megaphone_delayed_notification_ready handler.
+var megaphoneKnownSpaces = map[string]bool{
 	"activity_inbox_header":                         true,
 	"activity_tab_sidebar":                          true,
 	"add_salesforce_list_modal_header":              true,
@@ -51,7 +52,6 @@ var megaphoneSpaces = map[string]bool{
 	"lists_list_view":                               true,
 	"lists_synthetic_page":                          true,
 	"main_menu":                                     true,
-	"manage_apps_coachmark":                         true,
 	"message_actions_labels":                        true,
 	"message_composer":                              true,
 	"message_input":                                 true,
@@ -61,7 +61,6 @@ var megaphoneSpaces = map[string]bool{
 	"more_peek_menu":                                true,
 	"new_team_launchpad":                            true,
 	"org_dashboard_coachmarks":                      true,
-	"org_settings_coachmark":                        true,
 	"paid_benefits_footer":                          true,
 	"paid_benefits_header":                          true,
 	"passkey_settings":                              true,

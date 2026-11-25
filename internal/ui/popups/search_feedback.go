@@ -463,9 +463,7 @@ func srLinkPara(gtx layout.Context, th *theme.Theme, cl *Colors, segs []srLinkSe
 
 // srOpenLink opens a link in the browser (or the mail client).
 func srOpenLink(h Host, u string) {
-	if err := openurl.Open(u); err != nil {
-		h.Toast("Couldn't open the link: " + errText(err))
-	}
+	openurl.OpenExternal(u)
 }
 
 // srFeedbackDialog is search in channel's "Give feedback":

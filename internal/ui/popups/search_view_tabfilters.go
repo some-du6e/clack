@@ -27,6 +27,7 @@ package popups
 import (
 	"context"
 	"image"
+	"log"
 	"slices"
 	"sort"
 	"strings"
@@ -247,7 +248,7 @@ func (v *SearchView) setPrefs(prefs map[string]bool) {
 		return struct{}{}, nil
 	}, func(_ struct{}, err error) {
 		if err != nil {
-			v.h.Toast("Couldn't save that preference: " + errText(err))
+			log.Printf("popups: users.prefs.set: %v", err) // setUserPrefByApi: optimistic, nothing on screen when it fails
 			return
 		}
 		v.search(1)

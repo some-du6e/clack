@@ -93,8 +93,8 @@ func TestSlashRenameArchiveLeave(t *testing.T) {
 		c.ed.SetDoc(cmdDoc("/leave"))
 		c.submit()
 		waitUI(t, "#general's alert", func() bool {
-			m, ok := shown[*popups.Modal](h) // its title runs up to the channel entity
-			return ok && m.Title() == "Membership is required in "
+			m, ok := shown[*popups.Modal](h) // LeaveChannelError (popups/leave_error.go)
+			return ok && m.Title() == "Membership is required in #general"
 		})
 		if n := len(fs.called("conversations.leave")) + len(fs.called("chat.command")); n != 0 {
 			t.Errorf("%d calls for #general", n)

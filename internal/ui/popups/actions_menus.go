@@ -3,6 +3,7 @@ package popups
 import (
 	"context"
 	"image"
+	"log"
 	"strings"
 	"time"
 
@@ -362,7 +363,7 @@ func actToggleStar(h Host, ch, noun string) {
 	star := !cxStarred(h, ch)
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxStar(ctx, h, ch, star) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: stars.add/remove: %v", err) // updateStar: the local star reverts, no toast
 			return
 		}
 		cxNoteStar(ch, star)
@@ -383,7 +384,7 @@ func actToggleMute(h Host, ch, noun string) {
 	mute := !actIsMuted(h, ch)
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxMute(ctx, h, ch, mute) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: mute: %v", err) // setChannelNotificationOverrideAndCallApi: reverted and logged, no toast
 			return
 		}
 		actMuteSet[ch] = mute
@@ -762,7 +763,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			}
 			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetDND(ctx, 0) }, func(_ struct{}, err error) {
 				if err != nil {
-					h.Toast("Couldn't do that: " + errText(err))
+					log.Printf("popups: dnd.endSnooze: %v", err) // endDndSnooze logs "Failed to turn off DND (SNOOZE)", no toast
 					return
 				}
 				actDNDUntil = time.Time{}
@@ -833,7 +834,7 @@ func actSnooze(h Host, n int) {
 	}
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetDND(ctx, n) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: dnd.setSnooze: %v", err) // snoozeNotifications logs "Failed to snooze notifications", no toast
 			return
 		}
 		actDNDUntil = time.Now().Add(time.Duration(n) * time.Minute)

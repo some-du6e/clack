@@ -58,24 +58,48 @@ type unreadsState struct {
 	mu        sync.Mutex
 	lastRead  map[string]string // initial read cursors
 	calls     []UnreadsCall
-	dismissed map[string]bool   // channel -> join banner dismissed
-	noQueue   bool              // the boot load answers no join banner (QueueJoinBanner)
-	badges    []string          // generic_new_badge's notificationData.badges (SetNewBadges)
-	spaces    map[string]string // space -> notification any load answers (SetMegaphoneSpace)
+	dismissed map[string]bool           // channel -> join banner dismissed
+	noQueue   bool                      // the boot load answers no join banner (QueueJoinBanner)
+	badges    []string                  // generic_new_badge's notificationData.badges (SetNewBadges)
+	spaces    map[string]map[string]any // space -> the notification any load answers (SetMegaphoneSpace)
+	loads     []url.Values              // every megaphone.notifications.list's form (MegaphoneLoads)
+}
+
+// MegaphoneLoads returns the form of every megaphone.notifications.list
+// so far, in any fake, in order.
+func (s *Server) MegaphoneLoads() []url.Values {
+	u := s.unreads()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]url.Values(nil), u.loads...)
 }
 
 // SetMegaphoneSpace makes every megaphone.notifications.list that asks for
 // space answer notification name in it ("" puts it back to null).
 func (s *Server) SetMegaphoneSpace(space, name string) {
+	if name == "" {
+		s.setMegaphoneAnswer(space, nil)
+		return
+	}
+	s.setMegaphoneAnswer(space, map[string]any{"name": name, "data": map[string]any{}})
+}
+
+// SetMegaphoneNameless makes space answer a notification with data and no
+// name (Slack's loadMegaphoneNotificationData files it globally).
+func (s *Server) SetMegaphoneNameless(space string) {
+	s.setMegaphoneAnswer(space, map[string]any{"data": map[string]any{}})
+}
+
+func (s *Server) setMegaphoneAnswer(space string, n map[string]any) {
 	u := s.unreads()
 	u.mu.Lock()
 	if u.spaces == nil {
-		u.spaces = map[string]string{}
+		u.spaces = map[string]map[string]any{}
 	}
-	if name == "" {
+	if n == nil {
 		delete(u.spaces, space)
 	} else {
-		u.spaces[space] = name
+		u.spaces[space] = n
 	}
 	u.mu.Unlock()
 }
@@ -270,6 +294,12 @@ func (s *Server) PutUnreadMessage(ch string, m slack.Message) string {
 }
 
 func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
+	if method == "megaphone.notifications.list" {
+		u := s.unreads()
+		u.mu.Lock()
+		u.loads = append(u.loads, f)
+		u.mu.Unlock()
+	}
 	if !s.Size.Unreads {
 		// SetNewBadges answers the boot load's generic_new_badge in any
 		// fake, SetMegaphoneSpace its spaces
@@ -406,11 +436,11 @@ func (s *Server) setSpaces(f url.Values) map[string]any {
 	defer u.mu.Unlock()
 	var out map[string]any
 	for _, sp := range ev.Spaces {
-		if name := u.spaces[sp]; name != "" {
+		if n := u.spaces[sp]; n != nil {
 			if out == nil {
 				out = map[string]any{}
 			}
-			out[sp] = map[string]any{"name": name, "data": map[string]any{}}
+			out[sp] = n
 		}
 	}
 	return out

@@ -46,3 +46,34 @@ func TestImageFile(t *testing.T) {
 		}
 	}
 }
+
+// Slack reads an image url as new URL(url) does: the host lowercased, dot
+// segments resolved and %2F kept encoded. A path Go would read otherwise
+// names no file (the image fetched could be another file than Download
+// saves); an uppercase host is the files host (review of expand-more).
+func TestImageFileURLParsing(t *testing.T) {
+	a, _ := testApp(t)
+	mk := func(id string) slack.File {
+		return slack.File{ID: id, Name: "shot.png", Mimetype: "image/png", Filetype: "png",
+			URLPrivate: "https://files.slack.com/files-pri/T1-" + id + "/shot.png", URLPrivateDownload: "https://files.slack.com/files-pri/T1-" + id + "/download/shot.png"}
+	}
+	a.S.SetLatest("C1", []slack.Message{{Type: "message", TS: "1700000000.000100", User: "U1", Files: []slack.File{mk("F0AAAAAAAA"), mk("F0BBBBBBBB")}}}, false)
+	for u, want := range map[string]string{
+		"https://FILES.SLACK.COM/files-pri/T1-F0AAAAAAAA/shot.png":                                    "F0AAAAAAAA", // WHATWG lowercases the host
+		"https://files.slack.com/files-pri/T1-F0AAAAAAAA/my%20shot.png":                               "F0AAAAAAAA", // an ordinary escape
+		"https://files.slack.com/files-pri/T1-F0AAAAAAAA/../../files-pri/T1-F0BBBBBBBB/x.png":         "",           // Slack resolves the dots (to B)
+		"https://files.slack.com/files-pri/T1-F0AAAAAAAA/%2e%2e/%2e%2e/files-pri/T1-F0BBBBBBBB/x.png": "",
+		"https://files.slack.com/files-pri/./T1-F0AAAAAAAA/shot.png":                                  "",
+		"https://files.slack.com/files-pri%2FT1-F0AAAAAAAA/shot.png":                                  "", // Slack keeps %2F: no files-pri/ prefix
+		"https://files.slack.com/files-pri/T1-F0AAAAAAAA%5Cx/shot.png":                                "",
+	} {
+		f, ok := a.ImageFile(u)
+		got := ""
+		if ok {
+			got = f.ID
+		}
+		if got != want {
+			t.Errorf("ImageFile(%q) = %q, want %q", u, got, want)
+		}
+	}
+}

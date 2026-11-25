@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"image"
+	"log"
 	"slices"
 	"strings"
 	"sync"
@@ -1565,7 +1566,7 @@ func (c *Composer) submit() {
 			// plugin click after Enter comes after them
 			then(taut.UserAction(context.Background()), m.Channel, m.TS, text, blocks, nil, func(err error) {
 				if err != nil {
-					c.later(func() { c.h.Toast("Couldn't save your edit: " + err.Error()) })
+					c.later(func() { popups.EditMessageError(c.h, err) }) // saveMessageEdit: EditMessageErrorDialog
 				}
 			})
 			c.finishEdit()
@@ -1584,7 +1585,7 @@ func (c *Composer) submit() {
 				err = api.edit(ctx, m.Channel, m.TS, text, blocks)
 			}
 			if err != nil {
-				c.later(func() { c.h.Toast("Couldn't save your edit: " + err.Error()) })
+				c.later(func() { popups.EditMessageError(c.h, err) }) // saveMessageEdit: EditMessageErrorDialog
 			}
 		}()
 		c.finishEdit()
@@ -1761,7 +1762,9 @@ func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 				}
 			})
 		} else if err != nil && !isQuietSendStop(err) { // Slackbot already said why, or the warning was dismissed
-			c.later(func() { c.h.Toast("Message not sent: " + err.Error()) })
+			// the failed copy stays in the list with its Retry and Delete
+			// (core's Failed send), Slack's only word on it: no toast
+			log.Printf("composer: send: %v", err)
 		}
 		if err != nil {
 			c.restoreSend(o)
@@ -2236,7 +2239,7 @@ func (c *Composer) saveEditWithFiles(doc *Doc) {
 			}
 		}
 		if err != nil {
-			c.later(func() { c.h.Toast("Couldn't save your edit: " + err.Error()) })
+			c.later(func() { popups.EditMessageError(c.h, err) }) // saveMessageEdit: EditMessageErrorDialog
 		}
 	}()
 	c.finishEdit()

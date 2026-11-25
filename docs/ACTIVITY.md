@@ -1434,6 +1434,10 @@ Slack's code, build 66e72b57ade1: client-boot `tsND` (the activity reducer), `pE
 
 Not ported: `refreshCodeReviewRequestedChannel` (a code review request's channel refreshed once per entry), which needs code channels' review state.
 
+## Links in a row's preview (2026-11-23, branch `activity-preview-inert`)
+
+Karim (α.161, Windows): "u sure u can click from here", over a mention row whose #channel chip opened the channel hover card. Under activity_inbox Slack's ActivityList (`n17J`, build 66e72b57ade1) draws every dense row with ActivityRowContentSingleLine and every multi-line one with ActivityRowContentMultiLine, before its per-type rows, so for every item type, DMs and threads included. Both bodies call ActivityMessage (`69nH`) with `withFormat` left at its default of true, so the mentions and links are drawn as links (`c-link`), and make the whole message inert with CSS: `pointer-events:none` on `.activity_single_line_row_content__message` and `.activity_multi_line_row_content__entry_body` (client-boot-styles). Nothing in the preview takes the pointer: no hover card, no click, no emoji tooltip, no hand; a press is the row's. The per-type rows' dense `withFormat: false` branches (ActivityMentionWrapped, ActivityReaction, ActivityThread) sit behind the same activity_inbox flag, so they never run; without the inbox Slack's older rows keep the preview live. The Threads view draws whole messages and Saved's rows (`wviZ`) call ActivityMessage with the default outside those containers, so theirs stay links. Clack: `actRow.inertPreview` is the inbox; `richview.Options.NoLinking` takes the pointer from mentions, links and dates (their hit boxes and the hand too) and `NoEmojiTips` the emoji's tooltips; an inert preview is cached apart from a live one of the same message. `TestActivityDenseMentionPreviewIsInert`, `TestActivityPreviewInertUnderTheInbox`, `TestActivityPreviewInertKeyedApart`, `TestNoLinkingMentionsAreInert`, `TestNoLinkingTakesNoHand`.
+
 ## Not done
 
 - The channel accept's other workspaces, start-trial modal and other

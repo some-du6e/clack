@@ -5,7 +5,7 @@ package popups
 // channel menus' Leave and /leave alike):
 //
 //   - a refusal (canUserLeaveChannelWithReason) is LeaveChannelError's
-//     alert for its reason;
+//     alert for its reason (leave_error.go);
 //   - "leave" is leaveConversationApi (core.Leave: conversations.leave),
 //     whose failure with an error code is LeaveChannelError's alert for
 //     that code;
@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"image"
+	"log"
 
 	"gioui.org/layout"
 
@@ -71,7 +72,8 @@ func leaveChannel(h Host, convID string) {
 		}
 		switch d.action {
 		case "":
-			leaveChannelError(h, convID, d.reason)
+			_, name := leaveTitleEntity(h, convID)
+			h.ShowOverlay(LeaveChannelError(h, name, d.reason, func(ctx context.Context) error { return a.Leave(ctx, convID) }))
 		case core.LeaveNow:
 			actLeave(h, convID)
 		case core.LeaveClose:
@@ -100,112 +102,6 @@ func leaveTitleEntity(h Host, convID string) (icon, name string) {
 		icon = "lock"
 	}
 	return icon, name
-}
-
-// LeaveChannelErrorCopy is LeaveChannelError's text for a reason:
-// Title is the whole title (Entity: it runs up to the channel's entity,
-// TitleAfter after it), Paras the paragraphs, Points a list after them,
-// Retry the default error's Retry with Cancel (else OK).
-type LeaveChannelErrorCopy struct {
-	Title, TitleAfter string
-	Entity            bool
-	Paras, Points     []string
-	Retry             bool
-}
-
-// LeaveChannelErrorText is LeaveChannelError's render for reason (the
-// channels I18n); admin is the viewer being a workspace admin, team the
-// team's (or org's) name, frontline frontline_users' group being on.
-func LeaveChannelErrorText(reason string, admin bool, team string, frontline bool) LeaveChannelErrorCopy {
-	couldnt := func(paras ...string) LeaveChannelErrorCopy {
-		pre, post := entityTitle(nsChannels.RT("Couldn’t leave {channelName}", "channelName", "#"), "channelName")
-		return LeaveChannelErrorCopy{Title: pre, TitleAfter: post, Entity: true, Paras: paras}
-	}
-	required := func(p string) LeaveChannelErrorCopy {
-		pre, post := entityTitle(nsChannels.RT("Membership is required in {channelName}", "channelName", "#"), "channelName")
-		return LeaveChannelErrorCopy{Title: pre, TitleAfter: post, Entity: true, Paras: []string{p}}
-	}
-	switch reason {
-	case core.LeaveLastMember:
-		c := LeaveChannelErrorCopy{Title: nsChannels.T("To leave this channel, it needs to be unshared")}
-		if admin {
-			c.Paras = []string{nsChannels.T("Since you’re the last person from {teamName}, you’ll need to stop sharing this channel before you can leave it.", "teamName", team)}
-		} else {
-			c.Paras = []string{nsChannels.T("Since you’re the last person from {teamName}, you’ll need an admin’s help to leave. It’s just a couple steps:", "teamName", team)}
-			c.Points = []string{nsChannels.T("Invite an admin to this channel."), nsChannels.T("Ask them to unshare and archive the channel.")}
-		}
-		return c
-	case core.LeaveCantLeaveGeneral:
-		return required(nsChannels.T("Every workspace has one channel that contains all the members of this workspace — this is that channel for you."))
-	case core.LeaveCantLeaveMandatory:
-		return required(nsChannels.T("Everyone in {orgName} is required to be a member of this channel.", "orgName", team))
-	case core.LeaveUserIsRestricted:
-		return couldnt(nsChannels.T("As a guest you can leave private channels, but you’ll need to ask an admin to remove you from any public channels."))
-	case core.LeaveUserIsFrontline:
-		if frontline {
-			return couldnt(nsChannels.T("As a frontline member you’ll need to ask an admin to remove you from channels."))
-		}
-		return couldnt("")
-	case core.LeaveRestrictedLastChannel, core.LeaveUltraRestricted:
-		return couldnt(nsChannels.T("On a guest account, you need to be a member of at least one channel."))
-	}
-	c := couldnt(nsChannels.T("Hmm, something went wrong. Try again?"))
-	c.Retry = true
-	return c
-}
-
-// leaveChannelError shows LeaveChannelError for reason: renderAlert, a
-// DeprecatedDialog with truncateTitle false (c-dialog metrics, the close
-// button first, the title wrapping). The default error's Retry is
-// leaveConversationApi again (shouldCloseOnGo false, pending while it
-// runs), its failure the alert for the new code.
-func leaveChannelError(h Host, convID, reason string) {
-	a := h.Core()
-	admin, team, frontline := false, "", false
-	if a != nil {
-		admin, team, frontline = a.SelfIsWorkspaceAdmin(), a.LeaveErrorTeamName(), a.Experiment("frontline_users") == "on"
-	}
-	cp := LeaveChannelErrorText(reason, admin, team, frontline)
-	icon, name := leaveTitleEntity(h, convID)
-	opts := ModalOpts{Title: cp.Title, Name: "Connect(LeaveChannelError)", CDialog: true, CloseFirst: true, EnterSubmits: true,
-		Body: func(gtx layout.Context) layout.Dimensions { return leaveParas(gtx, h.Theme(), cp.Paras, cp.Points) }}
-	if cp.Entity {
-		opts.TitleIcon, opts.TitleAfter = icon, name+cp.TitleAfter
-	}
-	var self *Modal
-	if cp.Retry {
-		pending := false
-		retry := &ModalButton{Label: nsChannels.T("Retry"), Kind: BtnPrimary, Enabled: func() bool { return !pending },
-			Do: func() bool {
-				if a == nil || pending {
-					return false
-				}
-				pending = true
-				run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Leave(slack.NoBackoff(ctx), convID) },
-					func(_ struct{}, err error) {
-						pending = false
-						self.Dismiss()
-						if err != nil {
-							leaveChannelError(h, convID, leaveErrorCode(err))
-						}
-					})
-				return false
-			}}
-		opts.Buttons = []*ModalButton{{Label: nsDialog.T("Cancel"), Kind: BtnOutline}, retry}
-	} else {
-		opts.Buttons = []*ModalButton{{Label: nsDialog.T("OK"), Kind: BtnPrimary, Do: func() bool { return true }}}
-	}
-	self = NewModal(h, opts)
-	h.ShowOverlay(self)
-}
-
-// leaveErrorCode is a failed leave's reason: the API's error, else
-// "UNKNOWN" (onRetry's e?.data?.error || "UNKNOWN").
-func leaveErrorCode(err error) string {
-	if c := core.ErrCode(err); c != "" {
-		return c
-	}
-	return "UNKNOWN"
 }
 
 // leaveParas draws paragraphs and a bulleted list after them (15/22).
@@ -261,14 +157,13 @@ func leaveChannelConfirm(h Host, convID string) {
 				return false
 			}
 			pending = true
-			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Leave(slack.NoBackoff(ctx), convID) },
+			leave := func(ctx context.Context) error { return a.Leave(slack.NoBackoff(ctx), convID) }
+			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, leave(ctx) },
 				func(_ struct{}, err error) {
 					pending = false
 					self.Dismiss()
 					if err != nil {
-						if code := core.ErrCode(err); code != "" {
-							leaveChannelError(h, convID, code)
-						}
+						LeaveFailed(h, convID, name, err, leave) // the code's LeaveChannelError, else logged
 						return
 					}
 					leftView(h, convID)
@@ -306,7 +201,7 @@ func actClose(h Host, convID string) {
 			return // closeChannelApi's catch: nothing shows
 		}
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			log.Printf("popups: conversations.close: %v", err) // submitClose's failure: nothing catches it, no alert
 			return
 		}
 		h.Toast("Conversation closed")
@@ -315,7 +210,7 @@ func actClose(h Host, convID string) {
 }
 
 // actLeave is maybeLeaveChannel's leaveAndHandleErrors: leaveConversationApi,
-// and LeaveChannelError for a failure's code.
+// and LeaveChannelError for a failure's code (LeaveFailed, leave_error.go).
 func actLeave(h Host, convID string) {
 	a := h.Core()
 	if a == nil {
@@ -327,13 +222,10 @@ func actLeave(h Host, convID string) {
 	if icon == "lock" {
 		msg = "You left " + name
 	}
-	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Leave(ctx, convID) }, func(_ struct{}, err error) {
+	leave := func(ctx context.Context) error { return a.Leave(ctx, convID) }
+	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, leave(ctx) }, func(_ struct{}, err error) {
 		if err != nil {
-			if code := core.ErrCode(err); code != "" {
-				leaveChannelError(h, convID, code)
-				return
-			}
-			h.Toast("Couldn't do that: " + errText(err))
+			LeaveFailed(h, convID, name, err, leave) // the code's LeaveChannelError, else logged
 			return
 		}
 		h.Toast(msg)

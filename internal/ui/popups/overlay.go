@@ -248,7 +248,7 @@ func runFor[T any](h Host, d time.Duration, work func(ctx context.Context) (T, e
 func do(h Host, okMsg string, work func(ctx context.Context) error) {
 	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, work(ctx) }, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			FailedToast(h, "popups: write", err)
 			return
 		}
 		if okMsg != "" {

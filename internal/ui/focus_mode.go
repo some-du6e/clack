@@ -55,6 +55,7 @@ package ui
 import (
 	"context"
 	"image"
+	"log"
 	"sort"
 	"strconv"
 	"time"
@@ -293,7 +294,7 @@ func (a *App) setFocusExp(v int64) {
 		a.Post(func() {
 			f.pending = false
 			if err != nil {
-				a.Toast("Couldn't do that: " + err.Error())
+				log.Printf("ui: users.prefs.set focus_mode_expiration_ts: %v", err) // setUserPrefByApi: optimistic, nothing on screen when it fails
 			}
 			a.focusChanged()
 		})

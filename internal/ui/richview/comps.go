@@ -282,7 +282,7 @@ func (l *lay) compFile(b *richtext.Block, x, y, w int) int {
 	cs := l.compState(tag)
 	f0, b0, i0, o0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs), len(l.d.overlayIcons)
 	l.inAtt = true
-	h := l.file(b.File, x, y, w)
+	h := l.filePending(b.File, x, y, w, func() int { return l.file(b.File, x, y, w) })
 	l.inAtt = false
 	l.tagFrom(tag, f0, b0, i0, o0)
 	l.d.comps[tag-1].r = image.Rect(x, y, x+w, y+h)

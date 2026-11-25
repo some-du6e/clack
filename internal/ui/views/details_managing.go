@@ -181,7 +181,7 @@ func (d *ChannelDetails) unarchiveDone() {
 	}
 	d.x.unarchiving = false
 	if err != nil {
-		d.h.Toast("Couldn’t unarchive the channel: " + cdErrCode(err))
+		popups.FailedToast(d.h, "views: conversations.unarchive", err)
 		return
 	}
 	d.closed = true
