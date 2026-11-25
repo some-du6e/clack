@@ -20,29 +20,37 @@ func TestOfflineChannelToastLikeSlack(t *testing.T) {
 	a, ca, fs := fakeApp(t, nil)
 	ca.ClientOnline() // lastClientConnection: the start
 	online := true
-	prev := clientOnlineFor
-	clientOnlineFor = func(*core.App) bool { return online }
-	t.Cleanup(func() { clientOnlineFor = prev })
+	t.Cleanup(setClientOnlineFor(func(*core.App) bool { return online }))
 	ch, empty := fs.ChannelIDs()[1], fs.ChannelIDs()[2]
 	ca.S.SetLatest(ch, []slack.Message{{TS: "1762500000.000100", User: "U0FAKE00001", Text: "synthetic"}}, false)
 
-	a.offlineChannelToast(ch)
-	if a.toast.text != "" {
-		t.Fatalf("control: online, opening a channel toasted %q", a.toast.text)
+	offlineToast(a, ch)
+	if tt := toastNow(a); tt.text != "" {
+		t.Fatalf("control: online, opening a channel toasted %q", tt.text)
 	}
 	online = false
-	a.offlineChannelToast(ch)
-	if !a.toast.top || a.toast.icon != "cloud-offline" {
-		t.Errorf("the offline toast isn't top-right with cloud-offline (top %v, icon %q)", a.toast.top, a.toast.icon)
+	offlineToast(a, ch)
+	tt := toastNow(a)
+	if !tt.top || tt.icon != "cloud-offline" {
+		t.Errorf("the offline toast isn't top-right with cloud-offline (top %v, icon %q)", tt.top, tt.icon)
 	}
-	if p := a.toast.parts; len(p) < 3 || p[0].Text != "No connection." || p[0].Tag != "strong" {
+	if p := tt.parts; len(p) < 3 || p[0].Text != "No connection." || p[0].Tag != "strong" {
 		t.Errorf("the toast starts %+v, want the bold \"No connection.\"", p)
 	}
-	if got := i18n.Plain(a.toast.parts); !strings.Contains(got, "Last updated ") || !strings.HasSuffix(got, "ago.") {
+	if got := i18n.Plain(tt.parts); !strings.Contains(got, "Last updated ") || !strings.HasSuffix(got, "ago.") {
 		t.Errorf("a channel with history toasts %q, want \"Last updated … ago.\"", got)
 	}
-	a.offlineChannelToast(empty)
-	if got := i18n.Plain(a.toast.parts); got != "No connection. Go online to get the latest messages." {
+	offlineToast(a, empty)
+	if got := i18n.Plain(toastNow(a).parts); got != "No connection. Go online to get the latest messages." {
 		t.Errorf("a channel with no history toasts %q", got)
+	}
+
+	// through the route: onChannelChange runs at every setActiveChannel,
+	// so the conversation opened again from a page toasts too
+	clearToast(a)
+	routeTo(a, Route("c/"+ch), Route("threads"))
+	routeTo(a, Route("threads"), Route("c/"+ch))
+	if got := toastNow(a).text; !strings.Contains(got, "No connection.") {
+		t.Errorf("the channel opened again from a page toasted %q, want the offline toast", got)
 	}
 }

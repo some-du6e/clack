@@ -9,7 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"gioui.org/f32"
+	xdraw "golang.org/x/image/draw"
+
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -62,10 +63,13 @@ func StillLoading() string { return unreadNS.T("Still loading… sorry for the l
 
 var unreadNS = i18n.NS("unread")
 
-// gifPlayer draws an animated GIF frame by frame without holding every
-// frame composed: it keeps the decoded (paletted) frames and composes the
-// one asked for on one canvas, going on from the last it composed or
-// starting over when the animation wrapped.
+// gifPlayer draws an animated GIF frame by frame. It keeps the decoded
+// (paletted) frames and composes the one asked for on one canvas, going on
+// from the last it composed or starting over when the animation wrapped;
+// each frame, once composed, is kept at the size it's drawn (scaled once,
+// one image op each), so a loop re-uses its textures instead of making a
+// new 400x400 image and upload every GIF frame. The kept frames go a few
+// seconds after the loader stops drawing (gifKeep).
 type gifPlayer struct {
 	once   sync.Once
 	g      *gif.GIF
@@ -74,8 +78,16 @@ type gifPlayer struct {
 	canvas *image.RGBA
 	saved  *image.RGBA // the canvas before a DisposalPrevious frame
 	at     int         // the frame composed on canvas (-1: none)
-	img    paint.ImageOp
+
+	mu    sync.Mutex
+	size  image.Point     // the drawn size the kept frames are at
+	ops   []paint.ImageOp // the kept frames, by index (zero: not composed yet)
+	used  time.Time       // the last draw
+	sweep *time.Timer     // drops the kept frames once unused for gifKeep
 }
+
+// gifKeep is how long a player keeps its frames after its last draw.
+var gifKeep = 3 * time.Second
 
 var uvPlayers [2]gifPlayer // light, dark
 
@@ -105,10 +117,26 @@ func uvLoader(dark bool) *gifPlayer {
 	return p
 }
 
-// frame composes frame i on the canvas and returns it as an image op.
-func (p *gifPlayer) frame(i int) paint.ImageOp {
+// frame is frame i at size sz, composed and scaled the first time it's
+// asked for. p.mu held.
+func (p *gifPlayer) frame(i int, sz image.Point) paint.ImageOp {
+	if sz != p.size || len(p.ops) != len(p.g.Image) {
+		p.size, p.ops = sz, make([]paint.ImageOp, len(p.g.Image))
+	}
+	if op := p.ops[i]; op.Size() != (image.Point{}) {
+		return op
+	}
+	p.compose(i)
+	out := image.NewRGBA(image.Rectangle{Max: sz})
+	xdraw.ApproxBiLinear.Scale(out, out.Bounds(), p.canvas, p.canvas.Bounds(), xdraw.Src, nil)
+	p.ops[i] = paint.NewImageOp(out)
+	return p.ops[i]
+}
+
+// compose draws frame i on the canvas.
+func (p *gifPlayer) compose(i int) {
 	if i == p.at {
-		return p.img
+		return
 	}
 	b := p.canvas.Bounds()
 	if i < p.at {
@@ -136,10 +164,26 @@ func (p *gifPlayer) frame(i int) paint.ImageOp {
 		}
 		draw.Draw(p.canvas, f.Bounds(), f, f.Bounds().Min, draw.Over)
 	}
-	out := image.NewRGBA(b)
-	copy(out.Pix, p.canvas.Pix)
-	p.img = paint.NewImageOp(out)
-	return p.img
+}
+
+// keep notes a draw and has the kept frames dropped once unused for
+// gifKeep. p.mu held.
+func (p *gifPlayer) keep(now time.Time) {
+	p.used = now
+	if p.sweep != nil {
+		return
+	}
+	var check func()
+	check = func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if left := gifKeep - time.Since(p.used); left > 0 {
+			p.sweep = time.AfterFunc(left, check)
+			return
+		}
+		p.ops, p.size, p.sweep = nil, image.Point{}, nil
+	}
+	p.sweep = time.AfterFunc(gifKeep, check)
 }
 
 func (p *gifPlayer) disposal(i int) byte {
@@ -164,16 +208,15 @@ func (p *gifPlayer) draw(gtx layout.Context, r image.Rectangle, start time.Time)
 		el = 0
 	}
 	i := min(sort.Search(len(p.ends), func(i int) bool { return p.ends[i] > el }), len(p.g.Image)-1)
-	img := p.frame(i)
-	sz := img.Size()
+	p.mu.Lock()
+	img := p.frame(i, r.Size())
+	p.keep(time.Now())
+	p.mu.Unlock()
 	t := op.Offset(r.Min).Push(gtx.Ops)
-	sc := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(float32(r.Dx())/float32(sz.X), float32(r.Dy())/float32(sz.Y)))).Push(gtx.Ops)
-	img.Filter = paint.FilterLinear
 	img.Add(gtx.Ops)
-	cl := clip.Rect(image.Rectangle{Max: sz}).Push(gtx.Ops)
+	cl := clip.Rect(image.Rectangle{Max: r.Size()}).Push(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 	cl.Pop()
-	sc.Pop()
 	t.Pop()
 	gtx.Execute(op.InvalidateCmd{At: start.Add(now.Sub(start) - el + p.ends[i])})
 }

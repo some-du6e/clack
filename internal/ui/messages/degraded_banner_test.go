@@ -20,18 +20,20 @@ import (
 
 func TestDegradedBannerLikeSlack(t *testing.T) {
 	var trouble atomic.Bool
-	prev := connectionTrouble
-	connectionTrouble = func(Host) bool { return trouble.Load() }
-	t.Cleanup(func() { connectionTrouble = prev })
-	tick, hide := DegradedBannerTick, DegradedBannerHide
-	DegradedBannerTick, DegradedBannerHide = 200*time.Millisecond, 400*time.Millisecond
-	t.Cleanup(func() { DegradedBannerTick, DegradedBannerHide = tick, hide })
+	since := time.Now()
+	t.Cleanup(setConnectionTrouble(func(Host) time.Time {
+		if trouble.Load() {
+			return since
+		}
+		return time.Time{}
+	}))
+	t.Cleanup(setBannerTimings(200*time.Millisecond, 400*time.Millisecond))
 
 	const ch = "C0DEGRADE1"
 	e, fs := guardEnv(t, ch, nil, func(app *core.App, _ *fakeslack.Server, tss []string) {
 		app.S.SetCounts(&slack.Counts{Channels: []slack.CountEntry{{ID: ch, LastRead: tss[190], Latest: tss[239], HasUnreads: true}}})
 	})
-	b := e.v.DegradedBannerState()
+	b := paneBanner(e.v)
 	e.await(t, "control: the unread pill", func() bool { return e.v.s.ub.text != "" })
 	if b.Text != "" {
 		t.Fatalf("control: the banner shows with no trouble: %q", b.Text)
@@ -49,7 +51,7 @@ func TestDegradedBannerLikeSlack(t *testing.T) {
 		t.Errorf("the aria-live line is %q", b.Aria)
 	}
 	// the interval: toTimeAgo of the mount, a minute back
-	e.v.s.degraded.updated = e.v.s.degraded.updated.Add(-61 * time.Second)
+	backdateBanner(e.v, 61*time.Second)
 	e.await(t, "the interval's text", func() bool { return b.Text == "Last updated 1 minute ago…" })
 
 	hist, counts := fs.CallCount("conversations.history"), fs.CallCount("client.counts")

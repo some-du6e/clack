@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,7 @@ import (
 //     navigate to the status banner and click load new messages" in the
 //     desktop app (Aria).
 type DegradedBanner struct {
+	period      time.Time // the trouble period it was mounted for
 	on          bool      // mounted: drawn while trouble lasts
 	updated     time.Time // lastUpdatedTs
 	timeAgo     string    // the timeAgo state ("" before the first update)
@@ -81,24 +83,34 @@ var (
 
 var nsMS = i18n.NS("ms")
 
-// Layout draws the banner while trouble holds, at the top of a view
+// Reset unmounts the banner: the view left the screen (Slack's remount of
+// a view re-entered starts the banner over: resetLastUpdatedTs).
+func (b *DegradedBanner) Reset() {
+	b.on, b.timeAgo, b.hiddenUntil, b.period = false, "", time.Time{}, time.Time{}
+	b.Text, b.Link, b.R, b.LinkR, b.Aria = "", "", image.Rectangle{}, image.Rectangle{}, ""
+}
+
+// Layout draws the banner while trouble holds (since: when the trouble
+// going on began, zero while there's none), at the top of a view
 // width wide (y: the top banners' top, 14px in the message pane, 5px in
 // Threads, 23px in Unreads). load runs the click's loads and calls done
 // when they're over (it may return at once and call done later, from any
 // goroutine). It reports whether the banner is drawn: the unread pill
 // hides under it (.p-message_pane__banner + .p-message_pane__banner) and
 // the day pills stop sticking (useStickyDayDividers' !isDegradedMode).
-func (b *DegradedBanner) Layout(gtx layout.Context, th *theme.Theme, trouble bool, fit BannerFit, y, width int, load func(done func())) bool {
+func (b *DegradedBanner) Layout(gtx layout.Context, th *theme.Theme, since time.Time, fit BannerFit, y, width int, load func(done func())) bool {
 	now := gtx.Now
-	if !trouble {
-		if b.on { // unmounted (the mutex stays: a load may still hold it)
-			b.on, b.timeAgo, b.hiddenUntil = false, "", time.Time{}
-			b.Text, b.Link, b.R, b.LinkR, b.Aria = "", "", image.Rectangle{}, image.Rectangle{}, ""
+	if since.IsZero() || b.on && !b.period.Equal(since) {
+		// unmounted (the mutex stays: a load may still hold it); a new
+		// trouble period, met by a view that was off screen when the last
+		// one ended, mounts it afresh
+		b.Reset()
+		if since.IsZero() {
+			return false
 		}
-		return false
 	}
 	if !b.on {
-		b.on, b.updated, b.timeAgo, b.tick = true, now, "", now.Add(DegradedBannerTick)
+		b.on, b.period, b.updated, b.timeAgo, b.tick = true, since, now, "", now.Add(DegradedBannerTick)
 	}
 	b.mu.Lock()
 	loaded := b.loaded
@@ -156,8 +168,9 @@ func (b *DegradedBanner) Layout(gtx layout.Context, th *theme.Theme, trouble boo
 		// the band over the banner (:not(:empty):before, top -23px, 27px)
 		fill(gtx.Ops, image.Rect(side, y-dp(gtx, 23), width-side, y-dp(gtx, 23)+dp(gtx, 27)), band)
 		r = image.Rect(side, y, width-side, y+bh)
-		if room := r.Dx() - 2*pad - gap - lw; tw > room { // __banner_text ellipsizes
-			tw = max(0, room)
+		if room := r.Dx() - 2*pad - gap - lw; tw > room { // __banner_text ellipsizes (text-overflow: ellipsis)
+			text = bannerEllipsis(gtx, th, ts, text, max(0, room))
+			tw = min(measure(gtx, th, ts, text).X, max(0, room))
 		}
 	default:
 		bw := pad + tw + gap + lw + pad
@@ -186,6 +199,25 @@ func (b *DegradedBanner) Layout(gtx layout.Context, th *theme.Theme, trouble boo
 	})
 	b.Text, b.Link, b.R = text, link, r
 	return true
+}
+
+// bannerEllipsis is text cut to fit w with "…" after it, as
+// text-overflow: ellipsis draws it (whole glyphs only).
+func bannerEllipsis(gtx layout.Context, th *theme.Theme, ts textStyle, text string, w int) string {
+	rs := []rune(text)
+	lo, hi := 0, len(rs) // the longest prefix whose ellipsized form fits
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if measure(gtx, th, ts, string(rs[:mid])+"…").X <= w {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	if lo == 0 {
+		return ""
+	}
+	return strings.TrimRight(string(rs[:lo]), " ") + "…"
 }
 
 // degradedColors are the banner's background (sk_foreground_low_solid),

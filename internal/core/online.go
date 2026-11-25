@@ -30,6 +30,7 @@ package core
 // RST until they are written to.
 
 import (
+	"context"
 	"log"
 	"net"
 	"sort"
@@ -59,6 +60,8 @@ type onlineState struct {
 	mu     sync.Mutex
 	on     bool
 	pinned bool // PinNetwork: the host's network is none of this App's business
+	// waiters are awaitClientOnline's, closed when clientOnline turns true
+	waiters []chan struct{}
 	// changed is the connectivity store's lastClientConnection: set at
 	// start and whenever clientOnline changes
 	changed time.Time
@@ -180,12 +183,38 @@ func (a *App) setClientOnline(on bool) {
 	if was != on {
 		o.changed = time.Now()
 	}
+	if on {
+		for _, w := range o.waiters {
+			close(w)
+		}
+		o.waiters = nil
+	}
 	o.mu.Unlock()
 	if was != on {
 		a.emit(Event{Type: "client_online", Connected: on})
 		if on {
 			a.refetchOnline() // what failed while offline is asked for again
 		}
+	}
+}
+
+// awaitClientOnline returns once clientOnline is true (the socket's
+// WAIT_FOR_CONNECTIVITY), or ctx or the App ends.
+func (a *App) awaitClientOnline(ctx context.Context) {
+	a.ClientOnline() // the watcher runs
+	o := &a.online
+	o.mu.Lock()
+	if o.on {
+		o.mu.Unlock()
+		return
+	}
+	w := make(chan struct{})
+	o.waiters = append(o.waiters, w)
+	o.mu.Unlock()
+	select {
+	case <-w:
+	case <-ctx.Done():
+	case <-a.bg.Done():
 	}
 }
 

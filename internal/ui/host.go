@@ -249,7 +249,10 @@ func (a *App) afterRoute(prev, r Route) {
 		}
 	}
 	if ch != "" {
-		if ch != a.lastChannel {
+		// onChannelChange runs at every setActiveChannel: a conversation
+		// opened from a page or another conversation toasts, a thread or a
+		// permalink inside it doesn't
+		if ch != prev.Channel() {
 			a.offlineChannelToast(ch)
 		}
 		a.lastChannel = ch

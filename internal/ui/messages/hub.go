@@ -586,11 +586,13 @@ func (hb *hub) refresh(m *model) {
 func (hb *hub) degradedLoad(ch string, done func()) {
 	hb.mu.Lock()
 	chm := hb.chans[ch]
+	// the thread drawn beside it: in this frame or the one before (the
+	// click is handled in the channel list's overlays, before the thread
+	// pane lays out this frame)
 	var thm *model
 	for _, m := range hb.thread {
-		if m.drawn.Equal(hb.frame) {
+		if (m.drawn.Equal(hb.frame) || m.drawn.Equal(hb.prevFrame)) && (thm == nil || m.drawn.After(thm.drawn)) {
 			thm = m
-			break
 		}
 	}
 	hb.mu.Unlock()

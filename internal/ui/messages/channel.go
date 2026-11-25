@@ -238,6 +238,7 @@ func (v *ChannelView) LatestMessagesRect() image.Rectangle {
 // messages only when the conversation has unreads.
 func (v *ChannelView) Entered() {
 	v.s.noteViewHighlight("") // the view's uiState has no highlightTs
+	v.s.degraded.Reset()      // the remounted pane's banner starts over (resetLastUpdatedTs)
 	app := v.h.Core()
 	if app == nil || !app.Count(v.ch).Unread {
 		return // where it was left: the row on the anchor line, the window too

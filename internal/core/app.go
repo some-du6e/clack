@@ -274,6 +274,15 @@ func New(c *slack.Client, s *store.Store) *App {
 		}
 	}
 	a.RTM.OnTrouble = func(on bool) { a.emit(Event{Type: "connection_trouble", Trouble: on}) }
+	// the socket's WAIT_FOR_CONNECTIVITY: no dialling while the client is
+	// offline (online.go)
+	a.RTM.AwaitOnline = func(ctx context.Context) bool {
+		if a.ClientOnline() {
+			return false
+		}
+		a.awaitClientOnline(ctx)
+		return true
+	}
 	a.RTM.OnHello = a.onHello
 	s.SetMemberHit(a.memberHit)     // getMemberById's maybeRefetch (member_fresh.go)
 	a.RTM.OnDrop = a.onDroppedEvent // a dropped message's ts still goes into maxTs (maxts_heard.go)
@@ -327,6 +336,16 @@ func (a *App) SetRealtime(on bool) {
 // (slack.RTM.Trouble). The DegradedBanner shows while it holds; the UI
 // hears "connection_trouble" when it changes.
 func (a *App) ConnectionTrouble() bool { return a.RTM != nil && a.RTM.Trouble() }
+
+// ConnectionTroubleSince is when the trouble going on now began (zero while
+// there's none): Slack renders the DegradedBanner only while
+// troubleConnecting, so each period mounts it afresh.
+func (a *App) ConnectionTroubleSince() time.Time {
+	if a.RTM == nil {
+		return time.Time{}
+	}
+	return a.RTM.TroubleSince()
+}
 
 // ConnectNow is reconnectImmediately: a socket waiting out its backoff
 // connects now (the DegradedBanner's "Load new messages").

@@ -62,6 +62,7 @@ type RTM struct {
 	hasConnected bool
 	firstFail    time.Time
 	trouble      atomic.Bool
+	troubleSince atomic.Int64 // when trouble last turned on (unix ns; 0 while it's off)
 	// OnTrouble hears the flag change (on Run's goroutine).
 	OnTrouble func(on bool)
 	// fast: the current connection came from the gateway's reconnect_url
@@ -82,6 +83,12 @@ type RTM struct {
 	// OnDrop sees an event Events had no room for, on the reader
 	// goroutine, before it's gone (core notes a dropped message's ts).
 	OnDrop func(Event)
+	// AwaitOnline is the socket manager's WAIT_FOR_CONNECTIVITY (boot-render
+	// RpHI): after a failure's backoff the socket connects only while the
+	// client is online (isClientOnline); otherwise it awaits the network's
+	// return (awaitNetworkReconnection). It reports whether it waited, and
+	// returns at once (false) while online.
+	AwaitOnline func(ctx context.Context) bool
 
 	// dumps keeps the watchdog's goroutine dumps to one per 10 minutes
 	dumps stackdump.Limiter
@@ -125,10 +132,22 @@ func SetTroubleThresholds(window time.Duration, after int) (restore func()) {
 // said one ends it, and so does Run's end.
 func (r *RTM) Trouble() bool { return r.trouble.Load() }
 
+// TroubleSince is when the trouble going on now began (zero while there's
+// none): each period is its own DegradedBanner mount.
+func (r *RTM) TroubleSince() time.Time {
+	if n := r.troubleSince.Load(); n != 0 {
+		return time.Unix(0, n)
+	}
+	return time.Time{}
+}
+
 func (r *RTM) setTrouble(on bool) {
 	if r.trouble.Swap(on) != on {
 		if on {
+			r.troubleSince.Store(time.Now().UnixNano())
 			log.Printf("rtm: trouble connecting")
+		} else {
+			r.troubleSince.Store(0)
 		}
 		if r.OnTrouble != nil {
 			r.OnTrouble(on)
@@ -369,6 +388,16 @@ func (r *RTM) Run(ctx context.Context) {
 		case <-time.After(wait):
 		}
 		r.waiting.Store(false)
+		if r.AwaitOnline != nil && r.AwaitOnline(ctx) {
+			// WAIT_FOR_CONNECTIVITY clears the failures' count but not
+			// the trouble-connecting flag: with no network, trouble can't
+			// newly turn on (the offline states show alone, as Slack's)
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("rtm: the client was offline after %d failed connects; online again, connecting", r.fails)
+			r.fails = 0
+		}
 		if stale {
 			continue
 		}

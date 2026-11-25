@@ -321,8 +321,7 @@ type listState struct {
 	unreadTh    unreadThreads                // the reply bars' "Unread" marks (unread_threads.go)
 
 	// degraded is the pane's DegradedBanner (degraded_banner.go);
-	// degradedShown, whether the last frame drew it: the day pills don't
-	// stick then (useStickyDayDividers' !isDegradedMode)
+	// degradedShown, whether the last frame drew it
 	degraded      DegradedBanner
 	degradedShown bool
 
@@ -2255,7 +2254,9 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// there (the divider's own pill until it would pass the top, then
 	// the same pill, stuck, pushed up by the next day's)
 	stuck, stickyAt, stickyDay := -1, 0, time.Time{}
-	if !s.thread && !s.degradedShown {
+	// useStickyDayDividers' !isDegradedMode reads troubleConnecting, not
+	// the banner: the 10 s hide after a click keeps them unstuck
+	if !s.thread && connectionTrouble(h).IsZero() {
 		top := s.visible[0]
 		d := -1
 		for i := top; i >= 0 && i < len(s.items); i-- {

@@ -496,8 +496,8 @@ func (v *Threads) Layout(gtx C) D {
 // client.counts and reconnectImmediately (core.DegradedLoad).
 func (v *Threads) degradedBanner(gtx C, size image.Point) {
 	c := v.h.Core()
-	trouble := c != nil && c.ConnectionTrouble()
-	v.degraded.Layout(gtx, v.h.Theme(), trouble, messages.BannerPill, gtx.Dp(thrHeadH)+gtx.Dp(5), size.X, func(done func()) {
+	since := viewsTrouble(v.h)
+	v.degraded.Layout(gtx, v.h.Theme(), since, messages.BannerPill, gtx.Dp(thrHeadH)+gtx.Dp(5), size.X, func(done func()) {
 		v.reloadThreads()
 		go func() {
 			defer done()
@@ -656,6 +656,9 @@ func (v *Threads) fetch(mode actLoad, keep bool) {
 	}
 	named := v.namedNow(mode) // threads_order.go
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
+	if v.paging {
+		v.pagingSince = time.Time{} // each page's row starts its own 5 s
+	}
 	v.seq++
 	seq := v.seq
 	v.data.load(v.h, mode != actFresh || keep, func(ctx context.Context) (thrData, error) {
@@ -683,6 +686,7 @@ func (v *Threads) fetch(mode actLoad, keep bool) {
 // (clearThreadsFromManuallyMarkedUnreadArray).
 func (v *Threads) PageLeft() {
 	v.left = true
+	v.degraded.Reset() // the next visit's mount starts the banner over
 	if app := v.h.Core(); app != nil {
 		app.ForgetThreadMarkedUnread("", "")
 	}

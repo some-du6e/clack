@@ -973,7 +973,11 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvPasteLimit:
 			c.pasteLimitDialog(c.ed.RefusedPaste())
 		case EvSnippet:
-			if c.field == nil {
+			// onEnter checks the snippet shortcut inside its
+			// wasRecentlyOnline branch: offline, the toast, no dialog
+			if on, _ := recentlyOnline(c.h); !on && c.edit == nil {
+				c.offlineToast()
+			} else if c.field == nil {
 				c.openSnippet(true)
 			}
 		case EvCmdKSelected:

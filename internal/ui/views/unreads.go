@@ -681,8 +681,8 @@ func (v *Unreads) Layout(gtx C) D {
 	// Its click asks for no history (the view isn't a conversation), only
 	// client.counts and reconnectImmediately (core.DegradedLoad)
 	c := v.h.Core()
-	trouble := c != nil && c.ConnectionTrouble()
-	v.degraded.Layout(gtx, v.th, trouble, messages.BannerSpan, gtx.Dp(49)+gtx.Dp(23), size.X, func(done func()) {
+	since := viewsTrouble(v.h)
+	v.degraded.Layout(gtx, v.th, since, messages.BannerSpan, gtx.Dp(49)+gtx.Dp(23), size.X, func(done func()) {
 		go func() {
 			defer done()
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -693,6 +693,10 @@ func (v *Unreads) Layout(gtx C) D {
 	})
 	return D{Size: size}
 }
+
+// PageLeft is the route moving off the view: Slack unmounts it, and the
+// next visit's DegradedBanner starts over.
+func (v *Unreads) PageLeft() { v.degraded.Reset() }
 
 // known is unreadChannelsAreKnown: core has applied client.counts.
 func (v *Unreads) known() bool { return len(v.h.Core().Counts()) > 0 }

@@ -8,7 +8,7 @@ import (
 // troubleLog collects OnTrouble's changes.
 func troubleLog(r *RTM) chan bool {
 	ch := make(chan bool, 64)
-	r.OnTrouble = func(on bool) { ch <- on }
+	setOnTrouble(r, func(on bool) { ch <- on })
 	return ch
 }
 
@@ -47,7 +47,7 @@ func TestRTMTroubleConnectingLikeSlack(t *testing.T) {
 		trouble := troubleLog(r)
 		runRTM(t, r)
 		waitTrouble(t, trouble, true, "the first failure with no connection before")
-		if !r.Trouble() {
+		if !rtmTrouble(r) {
 			t.Error("Trouble() is false after OnTrouble(true)")
 		}
 		gc := g.next(t)
@@ -88,12 +88,12 @@ func TestRTMTroubleConnectingLikeSlack(t *testing.T) {
 		trouble := troubleLog(r)
 		runRTM(t, r)
 		waitTrouble(t, trouble, true, "the first failure")
-		for dl := time.Now().Add(5 * time.Second); !r.waiting.Load(); time.Sleep(5 * time.Millisecond) {
+		for dl := time.Now().Add(5 * time.Second); !rtmWaiting(r); time.Sleep(5 * time.Millisecond) {
 			if time.Now().After(dl) {
 				t.Fatal("Run never waited out its backoff")
 			}
 		}
-		r.ConnectNow()
+		connectNow(r)
 		g.next(t) // dialled at once, not an hour on
 	})
 }
