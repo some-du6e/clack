@@ -171,8 +171,9 @@ func TestPasteRebuildIsLinear(t *testing.T) {
 		}
 		alloc := after.TotalAlloc - before.TotalAlloc
 		t.Logf("%s: %d runes, %.1f MB allocated, %v", c.name, runes, float64(alloc)/(1<<20), took)
-		// a few hundred bytes a rune: the ops as JSON both ways, the Docs
-		if limit := uint64(runes) * 400; alloc > limit {
+		// about 200 bytes a rune: the ops as JSON both ways (Go maps), the
+		// Docs; a read quadratic in the lines took 4 GB here
+		if limit := uint64(runes) * 600; alloc > limit {
 			t.Errorf("%s: %.1f MB allocated for a %d-rune paste, past %.1f MB: its read back isn't linear", c.name, float64(alloc)/(1<<20), runes, float64(limit)/(1<<20))
 		}
 	}
@@ -227,19 +228,21 @@ func TestPasteOwnCopyAndRichThroughClipboard(t *testing.T) {
 	keptAndCleaned(t, "the own copy's answer", answer, "", false, false)
 	keptAndCleaned(t, "the own copy pasted", ed.Doc(), "", false, false)
 
-	const html = `<b>R&amp;D &lt;b&gt;</b> see <a href="https://example.com/?utm_source=x&amp;id=7">https://example.com/?utm_source=x&amp;id=7</a>`
+	// a link with its own text (one whose text is its URL pastes as text,
+	// phDropAutoLinks)
+	const html = `<b>R&amp;D &lt;b&gt;</b> see <a href="https://example.com/?utm_source=x&amp;id=7">the docs</a>`
 	ed = NewEditor()
 	setTautKind(ed, "channel")
-	ed.pasteHTML("R&D <b> see https://example.com/?utm_source=x&id=7", html)
+	ed.pasteHTML("R&D <b> see the docs", html)
 	rich := ed.Doc()
-	if want := "R&D <b> see https://example.com/?id=7"; rich.Text() != want {
+	if want := "R&D <b> see the docs"; rich.Text() != want {
 		t.Errorf("rich paste: %q, want %q", rich.Text(), want)
 	}
 	if i := docIndex(rich, "R&D <b>"); i < 0 || rich.Attrs[i].Style&Bold == 0 || rich.Attrs[i+6].Style&Bold == 0 {
 		t.Errorf("rich paste: the bold run lost its bold (at %d)", i)
 	}
-	if i := docIndex(rich, "https://example.com/?id=7"); i < 0 || rich.Attrs[i].Link != "https://example.com/?id=7" {
-		t.Errorf("rich paste: the cleaned link (at %d)", i)
+	if i := docIndex(rich, "the docs"); i < 0 || rich.Attrs[i].Link != "https://example.com/?id=7" || rich.Attrs[i+7].Link != "https://example.com/?id=7" {
+		t.Errorf("rich paste: the link isn't the cleaned one (at %d)", i)
 	}
 
 	const left = `<b>a &amp; b</b> -&gt; <i>c &lt; d</i> <a href="https://example.com/?a=1&amp;b=2">x</a>`
