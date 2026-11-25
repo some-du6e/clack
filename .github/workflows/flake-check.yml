@@ -7021,8 +7021,10 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: canvases whose title has an emoji, a mention, a link, a line break, a channel or a date, COUNT times
-        run: go test -count=$COUNT -run '^(TestCanvasRichTitleSaves|TestCanvasRichTitleChannel|TestCanvasRichTitleDateRefused|TestCanvasSaveTitleSaveable|TestCanvasSaveTitleBlock)$' ./internal/core
+      - name: canvases whose title has an emoji, a mention, a link, a line break or a channel, and the titles still refused, COUNT times
+        run: go test -count=$COUNT -run '^(TestCanvasRichTitleSaves|TestCanvasRichTitleChannel|TestCanvasRichTitleRefused|TestCanvasSaveTitleSaveable|TestCanvasSaveTitleBlock)$' ./internal/core
+      - name: the title metadata against Slack's modules (quip-save-title), COUNT times
+        run: go test -count=$COUNT -run '^TestQuipSaveTitleLikeSlack$' ./internal/quip
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

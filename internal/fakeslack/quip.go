@@ -93,9 +93,9 @@ func (cs *canvasStore) quipSync(s *Server, c *FakeCanvas, m *quipModel) {
 			if !ok {
 				return ""
 			}
-			if e := sec.Content.SlackEmoji; e != nil {
-				e.EmojiName = quip.Ptr(x.ID) // the editor's toPb writes the name
-			}
+			// an emoji is stored nameless, its id only, as Slack's rich-text
+			// import (30B3) and its :name: controlifier write it; the name
+			// is the emoji store's display name once its model loads
 			b, _ := json.Marshal(x)
 			titleCtls = append(titleCtls, derived{sec, "control:" + string(b)})
 			return id

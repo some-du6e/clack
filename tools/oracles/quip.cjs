@@ -28,11 +28,13 @@ const CHUNKS = (process.env.QUIP_CHUNKS || [
   SCRATCH + '/b2/gantry-v2-async-quip-collab-editor.2b9ea24acdaf8782.min.js',
 ].join(',')).split(',');
 const JSDOM_DIR = process.env.JSDOM || SCRATCH + '/npm';
-// Modules the collab chunks import but don't hold, taken from the client's
-// boot chunk (gantry-v2-async-client-boot-shared.29563e274bf72a20.min.js,
-// same CDN): e9rp is the emoji-name pattern 2U5W.parseSlackEmojiId tests an
-// emoji control's id with. Only these ids come from it; the rest stay stubs.
-const BOOT = process.env.QUIP_BOOT_CHUNK || SCRATCH + '/cdn-boot/gantry-v2-async-client-boot-shared.29563e274bf72a20.min.js';
+// Modules the collab chunks import but don't hold, taken from the same
+// build's boot chunk (gantry-v2-async-client-boot-shared.1230a1e0fc58f07b.min.js,
+// build 5718bdb1b28b's, same CDN), read only when one is first needed (the
+// title kind's emoji ids): e9rp is the emoji-name pattern
+// 2U5W.parseSlackEmojiId tests an emoji control's id with. Only these ids
+// come from it; the rest stay stubs. QUIP_BOOT_CHUNK names another copy.
+const BOOT = process.env.QUIP_BOOT_CHUNK || SCRATCH + '/b2boot/gantry-v2-async-client-boot-shared.1230a1e0fc58f07b.min.js';
 const BOOT_MODULES = ['e9rp'];
 
 // --- a browser for the modules: jsdom's window as the global scope
@@ -67,7 +69,10 @@ const starts = texts.map((t, fi) => {
   st.forEach(([, id], si) => { if (!where.has(id)) where.set(id, [fi, si]); });
   return st;
 });
-{
+let bootRead = false;
+function readBoot() {
+  if (bootRead) return;
+  bootRead = true;
   const t = fs.readFileSync(BOOT, 'utf8'), st = [];
   START.lastIndex = 0;
   let m;
@@ -124,6 +129,7 @@ function stub(id) {
 }
 function req(id) {
   if (cache.has(id)) return cache.get(id).exports;
+  if (!where.has(id) && BOOT_MODULES.includes(id)) readBoot();
   if (!where.has(id)) {
     const m = { exports: stub(id) };
     cache.set(id, m);
@@ -459,23 +465,33 @@ const titleFns = (() => {
 // control objects with what extractTitleMetadata and 30B3 read of each,
 // their altRtml as the editor's control contents write it (user and
 // channel: the rendered link, its label "user" / "channel" / "private
-// channel" when not for an external paste; emoji ":name:" of its stored
-// name; date dJkV.lC's text; broadcast "<!range>"). An emoji's k.info is
-// the emoji store's model of it (uu.U), absent while not loaded;
-// getEmojiInfo is emojiInfoOf over it, as the editor's emoji control does.
+// channel" when not for an external paste; date dJkV.lC's text; broadcast
+// "<!range>"). An emoji is the editor's um as renderToDom leaves it: its
+// model is uu.U.get(id), which for a well-formed id (2U5W.idType) always
+// exists, loaded when k.info is given (the store's model: team, display
+// name, unicode, url), else still loading (every field unset); name_ is
+// the stored emoji_name (k.name), the model's display name once it has
+// one; fallbackUrl_ the model's display url, else the stored
+// custom_emoji_url (k.customUrl); altRtml ":name_:"; getEmojiInfo
+// emojiInfoOf(model, name_, fallbackUrl_); a malformed id has no model
+// (the store's getterFn throws: placeholder text).
 function titleControl(id, k) {
   const kind = k.kind === 'usergroup' ? 'user' : k.kind;
   const is = want => () => kind === want;
-  const model = k.info && {
+  const wellFormed = kind === 'emoji' && !!req('2U5W').parseSlackEmojiId(k.slackEmojiId || '');
+  const loaded = wellFormed && !!(k.info && k.info.displayName);
+  const model = !wellFormed ? null : loaded ? {
     getTeamIdOrDefault: () => k.info.teamId || '', getDisplayName: () => k.info.displayName,
-    getUnicode: () => k.info.unicode, getDisplayUrl: () => k.info.displayUrl,
-  };
+    getUnicode: () => k.info.unicode || null, getDisplayUrl: () => k.info.displayUrl || null,
+  } : { getTeamIdOrDefault: () => '', getDisplayName: () => null, getUnicode: () => null, getDisplayUrl: () => null };
+  const name_ = loaded ? k.info.displayName : k.name;
+  const fallbackUrl_ = (loaded && k.info.displayUrl) || k.customUrl || null;
   const content = {
     altRtml(e, t, n) {
       switch (kind) {
         case 'user': return '<a href="https://example.slack.com/team/' + k.id + '">@user</a>';
         case 'channel': return '<a href="https://example.slack.com/archives/' + k.id + '">#' + (k.private ? 'private channel' : 'channel') + '</a>';
-        case 'emoji': return k.name ? ':' + k.name + ':' : '';
+        case 'emoji': return name_ ? ':' + name_ + ':' : '';
         case 'date': {
           const txt = req('dJkV').lC(k.ms, { verbose: false, dynamic: false, useExcludeYearHelper: true });
           return (n || e) && k.ms ? `<span data-slack-date-timestamp='${k.ms}'>${txt}</span>` : txt;
@@ -488,9 +504,9 @@ function titleControl(id, k) {
       return { slackUserId: () => k.id, slackChannelId: () => k.id, id: () => k.slackEmojiId || '' };
     },
     chipLabel() { return undefined; },
-    getEmojiInfo() { return model ? titleFns().emojiInfoOf(model, k.name, k.fallbackUrl) : null; },
+    getEmojiInfo() { return model ? titleFns().emojiInfoOf(model, name_, fallbackUrl_) : null; },
     getHeldEmojiInfo() { return null; },
-    getUnloadableEmojiName() { return null; },
+    getUnloadableEmojiName() { return k.slackEmojiId && !wellFormed ? name_ : null; },
     getPlaceholderText() { return null; },
     getUtcDateMs() { return k.ms; },
     getBroadcastRange() { return k.range; },
@@ -508,15 +524,22 @@ KINDS['quip-save-title'] = c => {
   const CITi = req('CITi'), W = req('W77Y');
   const controls = {};
   for (const [id, k] of Object.entries(c.in.controls || {})) controls[id] = titleControl(id, k);
+  // the title as Slack's editor draws it: a control not allowed in titles
+  // (a broadcast's allowInTitles is false) is replaced by an empty link
+  // and removed (maybeConvertToHyperlinkOnRender, getUrl "")
+  let rtml = c.in.rtml;
+  for (const [id, k] of Object.entries(c.in.controls || {})) {
+    if (k.kind === 'broadcast') rtml = rtml.split('<control id="' + id + '"></control>').join('<a href=""></a>');
+  }
   const lookup = { lookupControl: (node, id) => (controls[id] ? { id, control: controls[id] } : null) };
   const exportOf = target => {
     const o = { fromLocalDisplay: true, forExternalPaste: target === 1 || target === 6, dropEmojiControls: target === 6, forRichText: target === 5 };
     const h = new CITi.lE(o, false, null);
-    W.qg(c.in.rtml, h, lookup);
+    W.qg(rtml, h, lookup);
     return '<h1>' + h.output() + '</h1>';
   };
   const ids = new W.lz();
-  W.qg(c.in.rtml, ids, null);
+  W.qg(rtml, ids, null);
   const content = {
     exportToHtml: o => exportOf(o && o.exportTarget),
     referencedControls: () => ids.controlIds.map(id => controls[id]).filter(Boolean),

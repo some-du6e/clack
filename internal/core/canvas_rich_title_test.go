@@ -147,21 +147,38 @@ func TestCanvasRichTitleChannel(t *testing.T) {
 	}
 }
 
-// A date in the title is still refused (its title text is dJkV.lC's
-// date, which the oracle can't run), so the canvas says why and no save
-// goes out.
-func TestCanvasRichTitleDateRefused(t *testing.T) {
-	a, fs := canvasApp(t)
-	fs.SetCanvasRichTitle(fakeslack.CanvasShared, "Due Nov 7", []richtext.Span{{Kind: richtext.Text, Text: "Due "}, {Kind: richtext.Date, ID: "1762473600", Text: "{date_short}"}}, nil)
-	loadModel(t, a, fakeslack.CanvasShared)
-	if ok, why := a.CanvasTitleSaveable(fakeslack.CanvasShared); ok || !strings.Contains(why, "date") {
-		t.Errorf("a title with a date: %v (%q)", ok, why)
-	}
-	p := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
-	if err := a.SaveCanvas(context.Background(), fakeslack.CanvasShared, quip.Edit{Kind: quip.EditText, SectionID: *p.ID, RTML: "Weekly sync, edited"}); !errors.Is(err, quip.ErrUnsupported) {
-		t.Errorf("the body edit under a dated title: %v", err)
-	}
-	if n := len(saves(fs)); n != 0 {
-		t.Errorf("%d edit-document calls", n)
+// The titles still refused: a date (its title text is dJkV.lC's date,
+// which the oracle can't run); a broadcast (Slack's editor takes it out
+// of a title when it draws it, an edit Clack doesn't make); a usergroup
+// (its label depends on whether the mention draws a link); and an emoji
+// stored without a name whose info the title doesn't hold (Slack's text
+// for it is empty while its model loads: the save would drop the emoji
+// from the canvas's name). The canvas says why and no save goes out.
+func TestCanvasRichTitleRefused(t *testing.T) {
+	txt := func(s string) richtext.Span { return richtext.Span{Kind: richtext.Text, Text: s} }
+	for _, c := range []struct {
+		name, title, why string
+		spans            []richtext.Span
+	}{
+		{"date", "Due Nov 7", "date", []richtext.Span{txt("Due "), {Kind: richtext.Date, ID: "1762473600", Text: "{date_short}"}}},
+		{"broadcast", "Ping", "broadcast", []richtext.Span{txt("Ping "), {Kind: richtext.Broadcast, ID: "here", Text: "@here"}}},
+		{"usergroup", "For @user", "mention", []richtext.Span{txt("For "), {Kind: richtext.Usergroup, ID: "S0FAKE00001", Text: "@team"}}},
+		{"emoji not loaded", "Launch :tada:", "emoji", []richtext.Span{txt("Launch "), {Kind: richtext.Emoji, ID: "tada", Text: ":tada:"}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, fs := canvasApp(t)
+			fs.SetCanvasRichTitle(fakeslack.CanvasShared, c.title, c.spans, nil)
+			loadModel(t, a, fakeslack.CanvasShared)
+			if ok, why := a.CanvasTitleSaveable(fakeslack.CanvasShared); ok || !strings.Contains(why, c.why) {
+				t.Errorf("the title: saveable %v (%q), want refused for its %s", ok, why, c.why)
+			}
+			p := modelSection(t, a, fakeslack.CanvasShared, "Weekly sync")
+			if err := a.SaveCanvas(context.Background(), fakeslack.CanvasShared, quip.Edit{Kind: quip.EditText, SectionID: *p.ID, RTML: "Weekly sync, edited"}); !errors.Is(err, quip.ErrUnsupported) {
+				t.Errorf("the body edit under the title: %v", err)
+			}
+			if n := len(saves(fs)); n != 0 {
+				t.Errorf("%d edit-document calls", n)
+			}
+		})
 	}
 }

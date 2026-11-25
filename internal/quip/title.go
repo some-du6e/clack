@@ -52,10 +52,12 @@ type TitleControls struct {
 	// is refused.
 	Section func(id string) *Section
 	// EmojiInfo is the title section's emoji info (ContentTitle.EmojiInfo,
-	// as Slack's last save left it). Slack's editor takes an emoji's info
-	// from its emoji store (uu.U), which Clack doesn't have: an emoji whose
-	// name is there counts as one the store has loaded, with that info
-	// (emojiInfoOf's answer then), and any other as one it hasn't loaded.
+	// as Slack's last save left it, if the server keeps it: no client code
+	// is seen writing it). Slack's editor takes an emoji's info from its
+	// emoji store (uu.U), which Clack doesn't have: an emoji whose name is
+	// there counts as the model loaded, with that info (emojiInfoOf's
+	// answer then), and any other as the model still loading
+	// (emojiControl).
 	EmojiInfo []EmojiInfo
 	// ChannelPrivate is a channel's is_private, as Slack's channel store
 	// has it (known is false when Clack doesn't know the channel, or it's
@@ -78,9 +80,11 @@ func (d *Doc) TitleControls() TitleControls {
 // its text (W77Y.extractText of the export) trimmed and cut to
 // MaxTitleLength, "Untitled" when empty; the rich text 30B3 makes of the
 // rich-text export, cut to titleRichTextMax (truncateRichTextApiPb); and
-// the emoji info. Text, formatting, links, line breaks, mentions of users,
-// usergroups and channels, emoji and @here-style broadcasts are ported;
-// a date, any other control, link or markup is refused.
+// the emoji info. Text, formatting, links, line breaks, mentions of users
+// and channels and emoji are ported; a date, a broadcast, a usergroup, a
+// loading emoji with no name, any other control, link or markup is
+// refused. The mention labels are Slack's en-US strings ("user",
+// "channel", "private channel"): a client in another locale sends its own.
 func TitleMetadata(rtml string, tc TitleControls) (*TitleMeta, error) {
 	if _, _, ok := ParseRTML(rtml); !ok {
 		return nil, unsupported("the title's RTML doesn't parse")
@@ -211,11 +215,15 @@ func (h *titleHandler) flush() {
 
 func (h *titleHandler) text(s string) {
 	s = strings.NewReplacer("\u00a0", " ", "\u200b", "", "\ufeff", "").Replace(s)
+	s = EscapeText(s, false)
 	if h.inLink && !h.plainLink {
-		h.linkText.WriteString(EscapeText(s, false))
+		h.linkText.WriteString(s)
 		return
 	}
-	h.buf.WriteString(EscapeText(s, false))
+	if s == "" { // lE writes nothing: no text node of its own
+		return
+	}
+	h.buf.WriteString(s)
 	h.dirty = true
 }
 
@@ -252,9 +260,11 @@ func (h *titleHandler) control(id string) {
 		// a user or a usergroup (su:S…): the rendered link's label is
 		// "user" (not for an external paste); a display name stored is
 		// the chip label, kept only under keepSlackObjectMentions
+		// a usergroup's (su:S…) label depends on whether the mention
+		// draws a link (a profile url): refused for now
 		u := c.SlackUser
-		uid, ok := strings.CutPrefix(str(u.SlackUserID), "su:")
-		if !ok || uid == "" || str(u.DisplayName) != "" {
+		uid, ok := parseSlackSyncerID(str(u.SlackUserID), "su:")
+		if !ok || strings.HasPrefix(uid, "S") || str(u.DisplayName) != "" {
 			h.fail("the title's mention %s isn't one Clack saves", id)
 			return
 		}
@@ -262,8 +272,8 @@ func (h *titleHandler) control(id string) {
 		h.add("@user", &RichTextBlock{Type: Ptr("user"), UserID: Ptr(uid)})
 	case c.SlackChannel != nil:
 		ch := c.SlackChannel
-		cid, ok := strings.CutPrefix(str(ch.SlackChannelID), "sc:")
-		if !ok || cid == "" || str(ch.Name) != "" {
+		cid, ok := parseSlackSyncerID(str(ch.SlackChannelID), "sc:")
+		if !ok || str(ch.Name) != "" {
 			h.fail("the title's channel mention %s isn't one Clack saves", id)
 			return
 		}
@@ -284,14 +294,12 @@ func (h *titleHandler) control(id string) {
 	case c.SlackEmoji != nil:
 		h.emojiControl(id, c.SlackEmoji)
 	case c.SlackBroadcast != nil:
-		// altRtml is <!range>, which reads back as a comment, no text;
-		// richTextToApiPb keeps only the element's type
-		if str(c.SlackBroadcast.Range) == "" {
-			h.fail("the title's broadcast %s has no range", id)
-			return
-		}
-		h.flush()
-		h.add("", &RichTextBlock{Type: Ptr("broadcast")})
+		// a broadcast isn't allowed in a title (allowInTitles false):
+		// Slack's editor takes it out of the title when it draws it
+		// (maybeConvertToHyperlinkOnRender, an empty link, the control
+		// removed), so no save of Slack's carries one; refused, as Clack
+		// doesn't make that edit
+		h.fail("the title has a broadcast")
 	case c.SlackDate != nil:
 		h.fail("the title has a date")
 	default:
@@ -299,39 +307,94 @@ func (h *titleHandler) control(id string) {
 	}
 }
 
-// emojiControl is an emoji control: its altRtml ":name:" (the stored
-// emoji_name) in the title, and 30B3's element, from the emoji's info
-// when loaded, else from its id (parseSlackEmojiId).
+// emojiControl is an emoji control as Slack's editor has it (the
+// editor's emoji control content, um): its model is the emoji store's
+// for its id (uu.U.get, made loading when the store has none, so never
+// missing for a well-formed id). Clack has no emoji store: an emoji the
+// title section's stored info names (the stored emoji_name, else the
+// id's) is the model loaded, with that info; any other is the model
+// still loading. name_ is the stored emoji_name, the model's display name
+// once loaded; the title text is altRtml's ":name_:"; the info is
+// emojiInfoOf(model, name_, fallbackUrl_), fallbackUrl_ being the model's
+// display url or else the stored custom_emoji_url (a loading model's is
+// {team_id "", display_name name_, display_url fallbackUrl_}); 30B3's
+// element is built from that info. A loading emoji with no stored name
+// (Slack's text then is empty: the canvas would lose the emoji from its
+// name) and a malformed id are refused.
 func (h *titleHandler) emojiControl(id string, e *SlackEmoji) {
-	name := str(e.EmojiName)
-	text := ""
-	if name != "" {
-		text = ":" + name + ":"
+	idName, ok := parseSlackEmojiID(str(e.SlackEmojiID))
+	if !ok {
+		h.fail("the title's emoji %s isn't one Clack saves", id)
+		return
 	}
-	var info *EmojiInfo
-	if name != "" {
-		for i := range h.tc.EmojiInfo {
-			if str(h.tc.EmojiInfo[i].DisplayName) == name {
-				info = &h.tc.EmojiInfo[i]
-				break
-			}
+	name := str(e.EmojiName)
+	key := name
+	if key == "" {
+		key = idName
+	}
+	var info EmojiInfo
+	loaded := false
+	for _, x := range h.tc.EmojiInfo {
+		if dn := str(x.DisplayName); dn != "" && dn == key {
+			info, loaded = x, true
+			break
 		}
 	}
-	var el *RichTextBlock
-	if info != nil {
-		el = slackEmojiElement(str(info.DisplayName), str(info.Unicode), str(info.DisplayURL))
-	} else if n, ok := parseSlackEmojiID(str(e.SlackEmojiID)); ok {
-		el = slackEmojiElement(n, "", "")
+	if loaded {
+		name = str(info.DisplayName)
+	} else {
+		if name == "" {
+			h.fail("the title's emoji %s has no name, and its info isn't loaded", id)
+			return
+		}
+		info = EmojiInfo{TeamID: Ptr(""), DisplayName: Ptr(name)}
+		if u := str(e.CustomEmojiURL); u != "" {
+			info.DisplayURL = Ptr(u)
+		}
 	}
+	el := slackEmojiElement(firstOf(str(info.DisplayName), idName), str(info.Unicode), str(info.DisplayURL))
 	if el == nil {
 		h.fail("the title's emoji %s isn't one Clack saves", id)
 		return
 	}
 	h.flush()
-	h.add(text, el)
-	if info != nil && len(h.emoji) < titleEmojiMax {
-		h.emoji = append(h.emoji, *info)
+	h.add(":"+name+":", el)
+	if len(h.emoji) < titleEmojiMax {
+		h.emoji = append(h.emoji, info)
 	}
+}
+
+func firstOf(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// parseSlackSyncerID is 2U5W.parseSlackSyncerId: after prefix, the id
+// (the second part of a two-part one), of letters, digits, - and _.
+func parseSlackSyncerID(s, prefix string) (string, bool) {
+	rest, ok := strings.CutPrefix(s, prefix)
+	if !ok {
+		return "", false
+	}
+	parts := strings.Split(rest, "/")
+	n := ""
+	switch len(parts) {
+	case 1:
+		n = parts[0]
+	case 2:
+		n = parts[1]
+	}
+	if n == "" {
+		return "", false
+	}
+	for _, r := range n {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return "", false
+		}
+	}
+	return n, true
 }
 
 // emojiIDName is e9rp's emoji name pattern (Slack's boot chunk), which
@@ -431,7 +494,8 @@ func (h *titleHandler) linkStart(href string, nolink bool, fileID string) {
 	// the href as typed (urlAsTyped); a Slack user's or channel's page
 	// is a mention, a {{ a workflow variable's
 	if nolink || fileID != "" || !(strings.HasPrefix(href, "https://") || strings.HasPrefix(href, "http://")) ||
-		strings.Contains(href, "{{") || slackUserLink.MatchString(href) || slackChannelLink.MatchString(href) {
+		strings.Contains(href, "{{") || slackUserLink.MatchString(href) || slackChannelLink.MatchString(href) ||
+		strings.Contains(strings.ToLower(href), "slack.com") { // 30B3 matches the resolved href: any other spelling of a Slack page too
 		h.fail("the title has a link Clack doesn't save")
 		return
 	}
