@@ -7097,6 +7097,38 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # install-on-quit: what an update does as Clack quits: nothing while the
+  # session ends (cmd/clack), the helper's skip for a reopened Clack and
+  # its installer that never closes one, an AppImage that stages
+  # (desktop). Dispatch with only=install-on-quit.
+  install-on-quit:
+    if: ${{ !inputs.only || startsWith('install-on-quit', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps (cmd/clack's test binary links them)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: install on quit, COUNT runs (every package, then the verdict)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 5m -v -run '^(TestOnQuitInstallSkipsAReopenedClack|TestOnQuitInstallNeverClosesClack|TestUpdateUnsupportedAppImage|TestUpdateUnsupported|TestPrepareQuietNeverOpens|TestCleanStages)$' ./internal/desktop || rc=1
+          go test -count=$COUNT -timeout 8m -v -run '^(TestNoInstallWhenTheSessionEndsDuringAQuit|TestNoInstallOnQuitAsTheSessionEnds|TestInstallOnQuitNeedsAStage)$' ./cmd/clack || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7255,6 +7287,7 @@ jobs:
       - apt-stall
       - pagekey-day
       - files-card
+      - install-on-quit
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
