@@ -11,6 +11,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/inspect"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -302,6 +303,16 @@ func (h inspectHost) Frozen(on bool) {
 		h.a.inspReset = true
 	}
 	h.a.Invalidate()
+}
+
+// InspectMessage is the message the store holds for ch/ts, as Slack sent
+// it (inspect.MessageFinder: the report's message shape).
+func (h inspectHost) InspectMessage(ch, ts string) (slack.Message, bool) {
+	c := h.a.Core()
+	if c == nil || c.S == nil {
+		return slack.Message{}, false
+	}
+	return c.S.Find(ch, ts)
 }
 
 func (h inspectHost) ConvKind(id string) string {

@@ -55,6 +55,9 @@ type Report struct {
 	IDs    []string
 	Kinds  []string
 	Colors []string
+	// Message is the shape of the message the element was drawn for, as
+	// the store holds it (MessageShape: structure, no content).
+	Message []string
 	// Capture is "dragged region" for a region dragged out, "whole
 	// window" for the window grabbed to draw on (P), "" for an element
 	// picked; Redacted, how many rects the user blurred out of
@@ -109,6 +112,9 @@ func (r *Report) Lines() []Line {
 	add("page", r.Page)
 	add("ids", join(r.IDs, " · "))
 	add("kinds", join(r.Kinds, " · "))
+	for _, m := range r.Message {
+		add("message", m)
+	}
 	add("colors", join(r.Colors, " · "))
 	switch {
 	case r.Redacted == 1:

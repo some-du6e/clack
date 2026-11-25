@@ -263,6 +263,15 @@ func (t *Tool) fill(r *Report, red *Redactor, p *pick) {
 						kinds[red.ID(id)+" "+k] = true
 					}
 				}
+				if r.Message == nil {
+					if ch, ts := propMessage(pr); ch != "" && ts != "" {
+						if mf, ok := t.host.(MessageFinder); ok {
+							if m, ok := mf.InspectMessage(ch, ts); ok {
+								r.Message = red.MessageShape(&m)
+							}
+						}
+					}
+				}
 			}
 		case slackc.InspectElement:
 			switch {
