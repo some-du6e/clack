@@ -7012,6 +7012,13 @@ jobs:
   # storage/indexedDB.json): the JS suites, the key read back by a second
   # runtime and after a Taut restart, COUNT runs each. Dispatch with
   # only=jsrt-webcrypto-idb.
+  # Round 2 (2026-11-25, the review's MAJORs): a CryptoKey's bytes stay in
+  # webcrypto.go's key store, a stored key sealed with Taut's KeyWrap
+  # secret, and the host functions web.js uses are its own from boot;
+  # IndexedDB writes a record a key, under a quota (QuotaExceededError,
+  # and a failed commit leaves the database working); close() holds
+  # deleteDatabase and upgrades until its transactions finish; Taut's data
+  # store tries a failed write again and keeps an unreadable file aside.
   jsrt-webcrypto-idb:
     if: ${{ !inputs.only || startsWith('jsrt-webcrypto-idb', inputs.only) }}
     runs-on: ubuntu-latest
@@ -7027,12 +7034,12 @@ jobs:
         with:
           tests: ${{ inputs.expect_fail }}
           leg: ${{ github.job }}-${{ strategy.job-index }}
-      - name: Web Crypto, IndexedDB and the JS suites, the device key across runtimes and a Taut restart, COUNT runs each
+      - name: Web Crypto, IndexedDB and the JS suites, sealed keys, the quota, close, the device key across runtimes and a Taut restart, COUNT runs each
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 6m -run '^(TestJSSuites|TestIndexedDBPersists|TestAssetPackFresh)$' ./internal/jsrt || rc=1
-          go test -count="$COUNT" -timeout 6m -run '^TestHMojisCryptoKeptAcrossRestart$' ./internal/taut || rc=1
+          go test -count="$COUNT" -timeout 6m -run '^(TestJSSuites|TestIndexedDBPersists|TestIndexedDBQuota|TestIndexedDBCommitsWhatChanged|TestAESGCMTagLengths|TestAssetPackFresh)$' ./internal/jsrt || rc=1
+          go test -count="$COUNT" -timeout 6m -run '^(TestHMojisCryptoKeptAcrossRestart|TestDataFlushKeepsWhatFailed|TestDataUnreadableFileKept|TestDataFlushWaitsForOneWriting)$' ./internal/taut || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report

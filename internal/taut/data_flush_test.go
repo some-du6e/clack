@@ -2,6 +2,8 @@ package taut
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,5 +53,76 @@ func TestDataFlushWaitsForOneWriting(t *testing.T) {
 	}
 	if _, err := os.Stat(d.fileFor("plugin:p:storage")); err != nil {
 		t.Fatalf("after both flushes: %v", err)
+	}
+}
+
+// A write that fails stays to be written: the namespace stays dirty, the
+// next flush writes it (Close's too), and the debounce timer tries again
+// by itself. Before, the dirty set was cleared before writing, and one
+// failed rename (a Windows sharing violation, a full disk) left the data
+// off disk until something else in the namespace changed.
+func TestDataFlushKeepsWhatFailed(t *testing.T) {
+	d := newDataStore(t.TempDir())
+	path := d.fileFor("indexedDB")
+	// a directory where the file goes: the rename over it fails
+	if err := os.MkdirAll(filepath.Join(path, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d.write("indexedDB", `m["db"]`, "v1")
+	if err := d.flush(); err == nil {
+		t.Fatal("the flush over a directory succeeded")
+	}
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	// the retry timer's flush writes it, with nothing new written meanwhile
+	eventually(t, 5*time.Second, "the failed write tried again", func() bool {
+		b, err := os.ReadFile(path)
+		return err == nil && strings.Contains(string(b), "v1")
+	})
+	// after close nothing is scheduled: a failed write isn't tried again
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d.write("indexedDB", `m["db"]`, "v2")
+	if err := closeData(d); err == nil {
+		t.Fatal("close's flush over a directory succeeded")
+	}
+	d.mu.Lock()
+	timer := d.timer
+	d.mu.Unlock()
+	if timer != nil {
+		t.Error("close left a flush scheduled")
+	}
+}
+
+// A namespace file that can't be read is set aside as <file>.corrupt, not
+// written over: before, it read as empty and the next flush replaced it,
+// IndexedDB's taking every plugin's databases with it.
+func TestDataUnreadableFileKept(t *testing.T) {
+	dir := t.TempDir()
+	d := newDataStore(dir)
+	path := d.fileFor("indexedDB")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"m[\"db\"]": "half-writ`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if keys := d.list("indexedDB"); len(keys) != 0 {
+		t.Fatalf("an unreadable file read as %q", keys)
+	}
+	d.write("indexedDB", "new", "v")
+	if err := d.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(path + ".corrupt"); err != nil || !strings.Contains(string(b), "half-writ") {
+		t.Errorf("the unreadable file wasn't kept aside: %q, %v", b, err)
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != `{"new":"v"}` {
+		t.Errorf("the new file: %q, %v", b, err)
 	}
 }

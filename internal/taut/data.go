@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +50,8 @@ type dataStore struct {
 	secLoad bool
 	secDirt bool
 	timer   *time.Timer
+	retry   time.Duration // after a failed write, the wait before the next (doubling to 30 s)
+	closed  bool          // close's flush was the last: nothing is scheduled after it
 }
 
 func newDataStore(dir string) *dataStore {
@@ -106,7 +109,12 @@ func (d *dataStore) load(ns string) map[string]string {
 	}
 	m := map[string]string{}
 	if b, err := os.ReadFile(d.fileFor(ns)); err == nil {
-		_ = json.Unmarshal(b, &m)
+		if json.Unmarshal(b, &m) != nil || m == nil {
+			// unreadable: set aside as <file>.corrupt, not written over by
+			// the next flush (IndexedDB's holds every plugin's databases)
+			m = map[string]string{}
+			_ = os.Rename(d.fileFor(ns), d.fileFor(ns)+".corrupt")
+		}
 	}
 	d.ns[ns] = m
 	d.loaded[ns] = true
@@ -240,10 +248,10 @@ func (d *dataStore) secretNames(prefix string) []string {
 // ---- writing back ----
 
 func (d *dataStore) schedule() {
-	if d.timer != nil {
+	if d.timer != nil || d.closed {
 		return
 	}
-	d.timer = time.AfterFunc(flushDelay, func() { _ = d.flush() })
+	d.timer = time.AfterFunc(max(flushDelay, d.retry), func() { _ = d.flush() })
 }
 
 func (d *dataStore) flush() error {
@@ -254,20 +262,25 @@ func (d *dataStore) flush() error {
 		d.timer.Stop()
 		d.timer = nil
 	}
+	// copies of what changed, marshalled after mu is let go: a plugin's
+	// storage call meanwhile (localStorage during a render) waits for the
+	// copy, not for the encoding of a namespace as big as IndexedDB's
 	type job struct {
+		ns   string // "" for secrets.json
 		path string
-		data []byte
-		mode os.FileMode
+		m    map[string]string
 	}
 	var jobs []job
 	for ns := range d.dirty {
-		b, _ := json.Marshal(d.ns[ns])
-		jobs = append(jobs, job{d.fileFor(ns), b, 0o600})
+		m := maps.Clone(d.ns[ns])
+		if m == nil {
+			m = map[string]string{}
+		}
+		jobs = append(jobs, job{ns, d.fileFor(ns), m})
 	}
 	d.dirty = map[string]bool{}
 	if d.secDirt {
-		b, _ := json.MarshalIndent(d.secrets, "", "  ")
-		jobs = append(jobs, job{d.secretsPath(), b, 0o600})
+		jobs = append(jobs, job{"", d.secretsPath(), maps.Clone(d.secrets)})
 		d.secDirt = false
 	}
 	d.mu.Unlock()
@@ -275,12 +288,49 @@ func (d *dataStore) flush() error {
 		(*h)()
 	}
 	var errs []error
+	var failed []job
 	for _, j := range jobs {
-		if err := writeFileAtomic(j.path, j.data, j.mode); err != nil {
+		var b []byte
+		if j.ns == "" {
+			b, _ = json.MarshalIndent(j.m, "", "  ")
+		} else {
+			b, _ = json.Marshal(j.m)
+		}
+		if err := writeFileAtomic(j.path, b, 0o600); err != nil {
 			errs = append(errs, err)
+			failed = append(failed, j)
 		}
 	}
+	d.mu.Lock()
+	if len(failed) == 0 {
+		d.retry = 0
+	} else {
+		// what didn't reach the disk stays to be written (a sharing
+		// violation on Windows, a full disk): tried again later, and later
+		// still while it keeps failing
+		for _, j := range failed {
+			if j.ns == "" {
+				d.secDirt = true
+			} else {
+				d.dirty[j.ns] = true
+			}
+		}
+		d.retry = min(max(2*d.retry, time.Second), 30*time.Second)
+		d.schedule()
+	}
+	d.mu.Unlock()
 	return errors.Join(errs...)
+}
+
+// close is the last flush (Taut.Close): nothing is scheduled after it, a
+// write that fails isn't tried again and one that comes later stays in
+// memory, so nothing of the Taut's lands in its directory once Close
+// returns.
+func (d *dataStore) close() error {
+	d.mu.Lock()
+	d.closed = true
+	d.mu.Unlock()
+	return d.flush()
 }
 
 // dataFlushHook, set by tests, runs in each flush between taking the dirty

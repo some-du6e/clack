@@ -68,7 +68,9 @@ test('AES-GCM: import, export, generate and their errors', async () => {
   await assertThrows(() => subtle.importKey('jwk', { ...jwk, kty: 'EC' }, 'AES-GCM', false, ['encrypt']), 'DataError');
   await assertThrows(() => subtle.importKey('jwk', { ...jwk, k: 'AA==' }, 'AES-GCM', false, ['encrypt']), 'DataError');
   await assertThrows(() => subtle.importKey('jwk', new Uint8Array(16), 'AES-GCM', false, ['encrypt']), 'TypeError');
-  await assertThrows(() => subtle.importKey('raw', new Uint8Array(24), 'AES-GCM', false, ['encrypt']), 'DataError');
+  // Chromium leaves out 192-bit AES on purpose (crbug.com/533699): OperationError, not DataError
+  await assertThrows(() => subtle.importKey('raw', new Uint8Array(24), 'AES-GCM', false, ['encrypt']), 'OperationError');
+  await assertThrows(() => subtle.importKey('raw', new Uint8Array(20), 'AES-GCM', false, ['encrypt']), 'DataError');
   await assertThrows(() => subtle.importKey('raw', new Uint8Array(16), 'AES-GCM', false, ['sign']), 'SyntaxError');
   await assertThrows(() => subtle.importKey('raw', new Uint8Array(16), 'AES-GCM', false, []), 'SyntaxError');
   await assertThrows(() => subtle.importKey('raw', new Uint8Array(16), 'AES-GCM', false, ['bogus']), 'TypeError');
@@ -87,7 +89,7 @@ test('AES-GCM: import, export, generate and their errors', async () => {
   await assertThrows(() => subtle.generateKey({ name: 'AES-GCM' }, false, ['encrypt']), 'TypeError');
   await assertThrows(() => subtle.generateKey({ name: 'AES-GCM', length: 128 }, false, []), 'SyntaxError');
   let threw = false;
-  try { subtle.generateKey(); } catch { threw = true; }
+  try { subtle.generateKey().catch(() => {}); } catch { threw = true; }
   assert(!threw, 'a bad call rejects, never throws');
   await assertThrows(() => new CryptoKey(), 'TypeError');
 });
@@ -190,3 +192,32 @@ test('CryptoKey: structuredClone copies it whole, extractable or not', async () 
   const data = enc('x');
   assert(await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pair.publicKey, await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, copy.priv, data), data));
 });
+test('JWK: the dictionary read as WebIDL converts it, as Blink does', async () => {
+  const jwk = { kty: 'oct', k: 'AAAAAAAAAAAAAAAAAAAAAA', alg: 'A128GCM' };
+  // ext a boolean and key_ops a sequence of strings, converted; a name that is no usage ignored
+  const ops = { *[Symbol.iterator]() { yield 'encrypt'; yield 'bogus'; } };
+  const k1 = await subtle.importKey('jwk', { ...jwk, ext: 'yes', key_ops: ops }, 'AES-GCM', true, ['encrypt']);
+  assertEq([k1.extractable, k1.usages], [true, ['encrypt']]);
+  // a member inherited, or got by a getter
+  const k2 = await subtle.importKey('jwk', Object.create(jwk, { ext: { get: () => true } }), 'AES-GCM', true, ['encrypt']);
+  assertEq(hexOf(await subtle.exportKey('raw', k2)), '00000000000000000000000000000000');
+  await assertThrows(() => subtle.importKey('jwk', { ...jwk, key_ops: ['encrypt', 'encrypt'] }, 'AES-GCM', false, ['encrypt']), 'DataError');
+  await assertThrows(() => subtle.importKey('jwk', { ...jwk, key_ops: 'encrypt' }, 'AES-GCM', false, ['encrypt']), 'TypeError');
+  await assertThrows(() => subtle.importKey('jwk', { ...jwk, ext: 0 }, 'AES-GCM', true, ['encrypt']), 'DataError');
+  // null is an empty JsonWebKey (no kty), a string none at all
+  await assertThrows(() => subtle.importKey('jwk', null, 'AES-GCM', false, ['encrypt']), 'DataError');
+  await assertThrows(() => subtle.importKey('jwk', 'oct', 'AES-GCM', false, ['encrypt']), 'TypeError');
+  // the other review minors: an inherited curve name isn't one; an algorithm that's
+  // no object a name; a bad curve before bad usages; P-224 a DataError
+  await assertThrows(() => subtle.importKey('raw', new Uint8Array(65), { name: 'ECDSA', namedCurve: 'toString' }, false, ['verify']), 'NotSupportedError');
+  await assertThrows(() => subtle.importKey('raw', new Uint8Array(16), 42, false, ['encrypt']), 'NotSupportedError');
+  await assertThrows(() => subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-999' }, false, ['encrypt']), 'NotSupportedError');
+  const p224 = unhex('304e301006072a8648ce3d020106052b81040021033a0004' + 'b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21' + 'bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34');
+  await assertThrows(() => subtle.importKey('spki', p224, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']), 'DataError');
+  // encrypt with a this that isn't a SubtleCrypto rejects, never throws
+  const { encrypt } = subtle;
+  let threw = false;
+  try { await encrypt.call({}, { name: 'AES-GCM', iv: new Uint8Array(12) }, k1, new Uint8Array(1)).catch(() => {}); } catch { threw = true; }
+  assert(!threw, 'a foreign this rejects');
+});
+

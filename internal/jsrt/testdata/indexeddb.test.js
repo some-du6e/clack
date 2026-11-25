@@ -337,3 +337,157 @@ test('upgrade: stores and indexes, a unique index, an aborted upgrade', async ()
   assertEq([again.version, [...again.objectStoreNames]], [1, ['users']]);
   again.close();
 });
+
+// the review's findings (2026-11-25): a kept key's bytes, the host
+// functions a script reaches, close(), the quota, Web Crypto's timing
+const allStored = () => (__jr.host.storage('indexedDB', 'keys') || []).map((k) => [k, __jr.host.storage('indexedDB', 'get', k)]);
+const b64Of = (u8) => btoa(String.fromCharCode(...u8));
+const b64urlOf = (u8) => b64Of(u8).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const hexBytes = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
+// the forms bytes take in text: hex, raw, and base64 (and base64url) in each
+// of the three alignments it can sit at inside a longer run
+const textForms = (u8) => {
+  const out = [hexBytes(u8), String.fromCharCode(...u8)];
+  for (let s = 0; s < 3; s++) {
+    const chunk = u8.subarray(s, s + 3 * Math.floor((u8.length - s) / 3));
+    out.push(b64Of(chunk), b64urlOf(chunk));
+  }
+  return out;
+};
+const fromB64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0));
+const openAt = (name, version, upgrade) => new Promise((resolve, reject) => {
+  const r = indexedDB.open(name, version);
+  r.onupgradeneeded = (e) => upgrade && upgrade(r.result, e);
+  r.onsuccess = () => resolve(r.result);
+  r.onerror = () => reject(r.error);
+});
+
+test('a CryptoKey is kept sealed: what storage returns holds none of its bytes', async () => {
+  const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const priv = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const aesRaw = crypto.getRandomValues(new Uint8Array(32));
+  const aes = await crypto.subtle.importKey('raw', aesRaw, 'AES-GCM', false, ['encrypt']);
+  const db = await fresh((db) => db.createObjectStore('keys'));
+  const tx = db.transaction('keys', 'readwrite');
+  tx.objectStore('keys').put({ priv, aes }, 'device');
+  await done(tx);
+  const text = JSON.stringify(allStored());
+  assert(text.includes('device'), 'the record is stored');
+  for (const [what, bytes] of [['d', fromB64url(jwk.d)], ['the AES key', aesRaw]]) {
+    for (const form of textForms(bytes)) assert(!text.includes(form), what + ' shows in the stored records');
+  }
+  // read back: it still signs, and still won't export
+  const back = await req(db.transaction('keys').objectStore('keys').get('device'));
+  const data = new TextEncoder().encode('x');
+  assert(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pair.publicKey, await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, back.priv, data), data));
+  await assertThrows(() => crypto.subtle.exportKey('jwk', back.priv), 'InvalidAccessError');
+  await assertThrows(() => crypto.subtle.exportKey('raw', back.aes), 'InvalidAccessError');
+  db.close();
+});
+test('the host functions a script reaches: no key store or commit, no IndexedDB writes, and one replaced sees nothing', async () => {
+  const H = __jr.host;
+  assertEq([typeof H.webcrypto, typeof H.idbCommit], ['undefined', 'undefined']);
+  await assertThrows(() => H.storage('indexedDB', 'set', 'm["forged"]', '{}'), 'NotAllowedError');
+  await assertThrows(() => H.storage('indexedDB', 'del', 'm["forged"]'), 'NotAllowedError');
+  await assertThrows(() => H.storage('indexedDB', 'clear'), 'NotAllowedError');
+  const saved = { storage: H.storage, random: H.random, digest: H.digest, storageEstimate: H.storageEstimate };
+  const seen = [];
+  for (const k of Object.keys(saved)) H[k] = (...a) => { seen.push(k); return saved[k](...a); };
+  try {
+    const db = await fresh((db) => db.createObjectStore('s'));
+    const tx = db.transaction('s', 'readwrite');
+    tx.objectStore('s').put('v', 'k');
+    await done(tx);
+    assertEq(await req(db.transaction('s').objectStore('s').get('k')), 'v');
+    crypto.getRandomValues(new Uint8Array(16));
+    crypto.randomUUID();
+    await crypto.subtle.digest('SHA-256', new Uint8Array(1));
+    await crypto.subtle.generateKey({ name: 'AES-GCM', length: 128 }, false, ['encrypt']);
+    await navigator.storage.estimate();
+    db.close();
+  } finally {
+    Object.assign(H, saved);
+  }
+  assertEq(seen, []);
+});
+test('close() waits for its transactions: a deleteDatabase or an upgrade runs after them', async () => {
+  const log = [];
+  let name = 'closing-' + ++dbN;
+  let db = await openAt(name, 1, (db) => db.createObjectStore('s'));
+  let tx = db.transaction('s', 'readwrite');
+  tx.objectStore('s').put('written before the delete', 'k');
+  tx.oncomplete = () => log.push('complete');
+  db.close();
+  await assertThrows(() => db.transaction('s'), 'InvalidStateError');
+  await new Promise((resolve, reject) => {
+    const del = indexedDB.deleteDatabase(name);
+    del.onsuccess = () => { log.push('deleted'); resolve(); };
+    del.onerror = () => reject(del.error);
+  });
+  assertEq(log, ['complete', 'deleted']);
+  // deleted it stays: nothing stored under its name, and it opens new
+  assertEq(allStored().filter(([k]) => k.includes(JSON.stringify(name))), []);
+  assert(!(await indexedDB.databases()).some((d) => d.name === name), 'databases() lists it');
+  db = await openAt(name, 1, (db, e) => log.push('new ' + e.oldVersion + ' ' + db.objectStoreNames.length));
+  assertEq(log.at(-1), 'new 0 0');
+  db.close();
+
+  log.length = 0;
+  name = 'closing-' + ++dbN;
+  db = await openAt(name, 1, (db) => db.createObjectStore('s'));
+  tx = db.transaction('s', 'readwrite');
+  tx.objectStore('s').put('written before the upgrade', 'k');
+  tx.oncomplete = () => log.push('complete');
+  db.onversionchange = () => log.push('versionchange'); // not to a closing connection
+  db.close();
+  const up = await openAt(name, 2, (db, e) => { log.push('upgrade from ' + e.oldVersion); db.createObjectStore('t'); });
+  assertEq(log, ['complete', 'upgrade from 1']);
+  assertEq([up.version, [...up.objectStoreNames]], [2, ['s', 't']]);
+  assertEq(await req(up.transaction('s').objectStore('s').get('k')), 'written before the upgrade');
+  up.close();
+});
+test('stores renamed and made anew write what they hold, under their own names', async () => {
+  const name = 'names-' + ++dbN;
+  let db = await openAt(name, 1, (db) => { db.createObjectStore('a').put('in a', 1); db.createObjectStore('b').put('in b', 1); });
+  db.close();
+  // the two swap names; a third is dropped and made anew, empty
+  db = await openAt(name, 2, (db, e) => {
+    const t = e.target.transaction;
+    t.objectStore('a').name = 'tmp';
+    t.objectStore('b').name = 'a';
+    t.objectStore('tmp').name = 'b';
+    db.createObjectStore('c').put('old c', 1);
+  });
+  db.close();
+  db = await openAt(name, 3, (db) => { db.deleteObjectStore('c'); db.createObjectStore('c'); });
+  const get = (s) => req(db.transaction(s).objectStore(s).get(1));
+  assertEq([await get('a'), await get('b'), await get('c')], ['in b', 'in a', undefined]);
+  const stored = allStored().filter(([k]) => k.startsWith('r' + JSON.stringify([name]).slice(0, -1)));
+  assertEq(stored.map(([k, v]) => [k.slice(k.indexOf(',') + 1), v]).sort(), [['"a"]["n",1]', '"in b"'], ['"b"]["n",1]', '"in a"']]);
+  db.close();
+});
+test('navigator.storage.estimate(): what IndexedDB stores, and its quota', async () => {
+  const before = await navigator.storage.estimate();
+  assertEq(before.quota, 64 * 1024 * 1024);
+  const db = await fresh((db) => db.createObjectStore('s'));
+  const tx = db.transaction('s', 'readwrite');
+  tx.objectStore('s').put('x'.repeat(10000), 'big');
+  await done(tx);
+  const after = await navigator.storage.estimate();
+  assert(after.usage - before.usage >= 10000 && after.usage - before.usage < 10400, before.usage + ' then ' + after.usage);
+  db.close();
+});
+test("Web Crypto settles in a later task, as Chromium's: a transaction is inactive after the await", async () => {
+  const db = await fresh((db) => db.createObjectStore('s'));
+  const store = db.transaction('s', 'readwrite').objectStore('s');
+  await crypto.subtle.generateKey({ name: 'AES-GCM', length: 128 }, false, ['encrypt']);
+  await assertThrows(() => store.put('late', 'k'), 'TransactionInactiveError');
+  const order = [];
+  const p = crypto.subtle.digest('SHA-256', new Uint8Array(1)).then(() => order.push('digest'));
+  Promise.resolve().then(() => order.push('microtask'));
+  await p;
+  assertEq(order, ['microtask', 'digest']);
+  db.close();
+});
+

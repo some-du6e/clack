@@ -2,6 +2,8 @@ package taut
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -47,13 +49,17 @@ const hmojisKeyDB = `
 // was no indexedDB, so it could do neither. Here the group key opens what
 // it sealed, and the device key it kept signs after Clack restarts (a new
 // plugin system over the same folder), its records in their own file, not
-// in localStorage.
+// in localStorage. The file holds no key's bytes: a kept key is sealed
+// with a secret of secrets.json's (jsrt's KeyWrap), which no plugin reads,
+// and a plugin can't write IndexedDB's records through taut_kv.
 func TestHMojisCryptoKeptAcrossRestart(t *testing.T) {
 	h := newHarness(t)
 	var first struct {
-		Opened string `json:"opened"`
-		KeyID  string `json:"keyId"`
-		Before bool   `json:"before"`
+		Opened  string `json:"opened"`
+		KeyID   string `json:"keyId"`
+		Before  bool   `json:"before"`
+		D       string `json:"d"`
+		KVWrite string `json:"kvWrite"`
 	}
 	h.jsInto(hmojisKeyDB+`
 		// the group key: importGroupKey, encryptHmojiId, decryptPayload
@@ -68,9 +74,18 @@ func TestHMojisCryptoKeptAcrossRestart(t *testing.T) {
 		const jwk = { kty: 'EC', crv: 'P-256', x: j.x, y: j.y }
 		const keyId = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(jwk.x + '.' + jwk.y))))).slice(0, 22)
 		await idbPut('tag1', { priv: pair.privateKey, jwk, keyId })
-		return { opened, keyId, before }`, &first)
+		// a key whose bytes the test knows, kept the same way
+		const probe = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+		const probeJwk = await crypto.subtle.exportKey('jwk', probe.privateKey)
+		await idbPut('probe', await crypto.subtle.importKey('jwk', probeJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']))
+		let kvWrite = 'written'
+		try { __clack.taut_kv('write', 'indexedDB', 'm["forged"]', '{}') } catch (e) { kvWrite = 'refused' }
+		return { opened, keyId, before, d: probeJwk.d, kvWrite }`, &first)
 	if first.Opened != "hm_secret" || first.Before || first.KeyID == "" {
 		t.Fatalf("the first start: %+v", first)
+	}
+	if first.KVWrite != "refused" {
+		t.Errorf("taut_kv wrote into IndexedDB's namespace (%s); want it refused", first.KVWrite)
 	}
 	if err := h.tt.Close(); err != nil {
 		t.Fatal(err)
@@ -124,7 +139,37 @@ func TestHMojisCryptoKeptAcrossRestart(t *testing.T) {
 	if err != nil || !strings.Contains(string(b), "hmojis-device") {
 		t.Errorf("storage/indexedDB.json: %v, %d bytes", err, len(b))
 	}
+	if strings.Contains(string(b), "forged") {
+		t.Errorf("storage/indexedDB.json holds the record taut_kv was asked to write")
+	}
+	d, err := base64.RawURLEncoding.DecodeString(first.D)
+	if err != nil || len(d) != 32 {
+		t.Fatalf("d: %v (%d bytes)", err, len(d))
+	}
+	for _, form := range keyTextForms(d) {
+		if strings.Contains(string(b), form) {
+			t.Errorf("storage/indexedDB.json holds a kept key's d (as %q)", form)
+		}
+	}
+	var secrets map[string]string
+	if sb, err := os.ReadFile(filepath.Join(h.dir, "secrets.json")); err != nil || json.Unmarshal(sb, &secrets) != nil || len(secrets["jsrt:keywrap"]) == 0 {
+		t.Errorf("secrets.json has no jsrt:keywrap: %v", err)
+	} else if strings.Contains(string(b), secrets["jsrt:keywrap"]) {
+		t.Errorf("storage/indexedDB.json holds the KeyWrap secret")
+	}
 	if ls, err := os.ReadFile(filepath.Join(h.dir, "storage", "localStorage.json")); err == nil && strings.Contains(string(ls), "hmojis") {
 		t.Errorf("localStorage.json holds the IndexedDB records: %s", ls)
 	}
+}
+
+// keyTextForms are the ways b can show in stored text: hex, and base64 (and
+// base64url) in each of the three alignments it can sit at inside a longer
+// encoded run.
+func keyTextForms(b []byte) []string {
+	out := []string{hex.EncodeToString(b), string(b)}
+	for s := 0; s < 3; s++ {
+		chunk := b[s : s+3*((len(b)-s)/3)]
+		out = append(out, base64.StdEncoding.EncodeToString(chunk), base64.RawURLEncoding.EncodeToString(chunk))
+	}
+	return out
 }

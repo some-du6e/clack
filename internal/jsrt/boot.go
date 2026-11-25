@@ -260,7 +260,7 @@ func (r *Runtime) installHost() {
 		if len(a) == 0 {
 			return nil, &JSError{Name: "NotSupportedError", Message: "webcrypto: no operation"}
 		}
-		return webCrypto(a[0].String(), a[1:])
+		return r.webCrypto(a[0].String(), a[1:])
 	})
 	// zlib backs CompressionStream / DecompressionStream ("gzip", "deflate"
 	// = zlib, "deflate-raw"): Chromium's are native, and plugins (Slick's
@@ -314,25 +314,85 @@ func (r *Runtime) installHost() {
 		return nil, nil
 	})
 	def("storage", func(js *Ctx, _ Value, a []Value) (any, error) {
-		kv := r.kv(str(a, 0))
+		ns := str(a, 0)
+		kv := r.kv(ns)
 		key := str(a, 2)
-		switch str(a, 1) {
+		switch op := str(a, 1); op {
 		case "get":
 			v, ok := kv.Get(key)
 			if !ok {
 				return nil, nil
 			}
 			return v, nil
-		case "set":
-			kv.Set(key, str(a, 3))
-		case "del":
-			kv.Delete(key)
 		case "keys":
 			return kv.Keys(), nil
-		case "clear":
-			kv.Clear()
+		case "prefix": // [[key, value], …] of the keys starting with key
+			out := []any{}
+			for _, k := range kv.Keys() {
+				if strings.HasPrefix(k, key) {
+					if v, ok := kv.Get(k); ok {
+						out = append(out, []string{k, v})
+					}
+				}
+			}
+			return out, nil
+		case "set", "del", "clear":
+			if ns == idbNamespace {
+				// IndexedDB writes only through idbCommit, which keeps its
+				// usage for the quota
+				return nil, &JSError{Name: "NotAllowedError", Message: "storage: indexedDB is written through its transactions"}
+			}
+			switch op {
+			case "set":
+				kv.Set(key, str(a, 3))
+			case "del":
+				kv.Delete(key)
+			case "clear":
+				kv.Clear()
+			}
 		}
 		return nil, nil
+	})
+	// IndexedDB's commit (web.js commitTx): its writes, [[key, value or
+	// null], …], applied all together, or none and QuotaExceededError when
+	// they'd take the stored bytes past the quota (Options.IndexedDBQuota)
+	def("idbCommit", func(js *Ctx, _ Value, a []Value) (any, error) {
+		var ops [][2]*string
+		if err := json.Unmarshal([]byte(str(a, 0)), &ops); err != nil {
+			return nil, &JSError{Name: "UnknownError", Message: "idbCommit: " + err.Error()}
+		}
+		kv := r.kv(idbNamespace)
+		used := r.idbUsed()
+		var delta int64
+		for _, op := range ops {
+			if op[0] == nil {
+				continue
+			}
+			if old, ok := kv.Get(*op[0]); ok {
+				delta -= int64(len(*op[0]) + len(old))
+			}
+			if op[1] != nil {
+				delta += int64(len(*op[0]) + len(*op[1]))
+			}
+		}
+		if delta > 0 && used+delta > r.idbQuota() {
+			return nil, &JSError{Name: "QuotaExceededError", Message: "The quota has been exceeded."}
+		}
+		for _, op := range ops {
+			switch {
+			case op[0] == nil:
+			case op[1] == nil:
+				kv.Delete(*op[0])
+			default:
+				kv.Set(*op[0], *op[1])
+			}
+		}
+		r.idb.bytes = used + delta
+		return true, nil
+	})
+	// navigator.storage.estimate(): what IndexedDB stores, and its quota
+	def("storageEstimate", func(js *Ctx, _ Value, a []Value) (any, error) {
+		return map[string]any{"usage": r.idbUsed(), "quota": r.idbQuota()}, nil
 	})
 	def("fetch", func(js *Ctx, _ Value, a []Value) (any, error) {
 		id := int(num(a, 0))
@@ -442,6 +502,42 @@ func (r *Runtime) installHost() {
 }
 
 // ---- storage ----
+
+// idbNamespace is IndexedDB's storage namespace (web.js IDB_NS).
+const idbNamespace = "indexedDB"
+
+// defaultIDBQuota is IndexedDB's quota when Options.IndexedDBQuota is 0.
+const defaultIDBQuota = 64 << 20
+
+// idbUsage is what IndexedDB stores, in bytes, kept up as its commits go;
+// counted from the store on first use (known).
+type idbUsage struct {
+	known bool
+	bytes int64
+}
+
+func (r *Runtime) idbQuota() int64 {
+	if q := r.opts.IndexedDBQuota; q > 0 {
+		return q
+	}
+	return defaultIDBQuota
+}
+
+// idbUsed is what IndexedDB's namespace holds now: its keys' and values'
+// bytes (JS thread).
+func (r *Runtime) idbUsed() int64 {
+	if !r.idb.known {
+		kv := r.kv(idbNamespace)
+		var n int64
+		for _, k := range kv.Keys() {
+			if v, ok := kv.Get(k); ok {
+				n += int64(len(k) + len(v))
+			}
+		}
+		r.idb = idbUsage{known: true, bytes: n}
+	}
+	return r.idb.bytes
+}
 
 type memKV struct {
 	mu   sync.Mutex

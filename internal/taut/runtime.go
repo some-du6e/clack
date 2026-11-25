@@ -2,7 +2,9 @@ package taut
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,6 +80,7 @@ func (t *Taut) startRuntime() (*runtime, error) {
 		PickFiles:      t.opts.PickFiles,
 		Media:          t.opts.Media,
 		Audio:          t.opts.Audio,
+		KeyWrap:        t.keyWrap,
 	}
 	rt, err := jsrt.New(opts)
 	if err != nil {
@@ -196,6 +199,28 @@ func (r *runtime) postWith(fn string, argsAt func() []any) {
 			r.t.logf("taut: %s: %v", fn, err)
 		}
 	})
+}
+
+// keyWrapSecret names the secret (secrets.json) that seals the CryptoKeys
+// the plugins keep in IndexedDB (jsrt's Options.KeyWrap). No plugin's
+// secret has the name (theirs are "plugin:<id>:<key>"), and no namespace
+// taut_kv reads holds it, so a stored key is no key to a plugin that reads
+// the records.
+const keyWrapSecret = "jsrt:keywrap"
+
+// keyWrap is the KeyWrap secret: the one saved, else a new one, saved.
+func (t *Taut) keyWrap() ([]byte, error) {
+	if v, ok := t.data.readSecret(keyWrapSecret); ok {
+		if b, err := base64.StdEncoding.DecodeString(v); err == nil && len(b) == 32 {
+			return b, nil
+		}
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	t.data.writeSecret(keyWrapSecret, base64.StdEncoding.EncodeToString(b))
+	return b, nil
 }
 
 func (r *runtime) close() {

@@ -374,7 +374,7 @@ func (t *Taut) Close() error {
 		}
 	}
 	t.setPluginExperiments(nil) // no runtime, no patches: core reads the server's groups again
-	return t.data.flush()
+	return t.data.close()
 }
 
 // whileOpen runs f, a write into dir, unless Close came first (dirMu); it

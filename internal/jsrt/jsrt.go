@@ -39,9 +39,21 @@ type Options struct {
 	// default transport). Called on its own goroutine; ctx is cancelled
 	// by AbortSignal.
 	Fetch func(ctx context.Context, req *http.Request) (*http.Response, error)
-	// Storage returns the backing store for a namespace: "localStorage" or
-	// "sessionStorage". nil (or a nil KV) means an in-memory map.
+	// Storage returns the backing store for a namespace: "localStorage",
+	// "sessionStorage" or "indexedDB" (IndexedDB's databases, a record a
+	// key: give it a store of its own). nil (or a nil KV) means an
+	// in-memory map.
 	Storage func(namespace string) KV
+	// KeyWrap returns the 32-byte secret that seals the CryptoKeys IndexedDB
+	// keeps, the same at every start so stored keys open again, from a place
+	// no script can read (Taut's secret store). nil = a secret of the
+	// runtime's own: keys it stored open only in it.
+	KeyWrap func() ([]byte, error)
+	// IndexedDBQuota bounds what IndexedDB stores, in bytes (keys and
+	// values): a commit past it fails with QuotaExceededError, as past an
+	// origin's quota in Chromium, and navigator.storage.estimate() reports
+	// it. 0 = 64 MiB.
+	IndexedDBQuota int64
 	// Log receives console output. level is "log", "info", "warn", "error"
 	// or "debug". nil means log.Printf.
 	Log func(level, msg string)

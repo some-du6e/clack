@@ -7,7 +7,21 @@
 // Notification and WebSocket/EventSource stubs.
 (() => {
   'use strict';
-  const G = globalThis, jr = G.__jr, H = jr.host, def = jr.def;
+  const G = globalThis, jr = G.__jr, def = jr.def;
+  // the host functions as they were at boot (HB): a script that replaces
+  // one on the shared __jr.host later, a plugin, changes nothing here (it
+  // would see what other plugins hash, or choose their random bytes). Two
+  // web.js keeps to itself, taken off __jr.host before any other script
+  // runs: Web Crypto's key store (webcrypto.go: its handles stand for the
+  // keys' material) and IndexedDB's commit
+  const HB = Object.freeze({ ...jr.host });
+  // a later task (setTimeout as env.js made it: a plugin that replaces the
+  // global's can't stall IndexedDB or Web Crypto)
+  const bootTimeout = G.setTimeout;
+  const later = (fn) => bootTimeout(fn, 0);
+  const hostCrypto = HB.webcrypto, hostIdbCommit = HB.idbCommit, hostStorage = HB.storage, hostEstimate = HB.storageEstimate;
+  delete jr.host.webcrypto;
+  delete jr.host.idbCommit;
   const { DOMException, EventTarget, Event, MessageEvent, ProgressEvent } = G;
   const reportError = jr.reportError;
   const kToken = Symbol('internal');
@@ -343,13 +357,13 @@
   };
   def(G, 'btoa', function btoa(data) {
     need(arguments, 1, 'btoa', 'Window');
-    const r = H.btoa(String(data));
+    const r = HB.btoa(String(data));
     if (typeof r !== 'string') throw new DOMException("Failed to execute 'btoa' on 'Window': The string to be encoded contains characters outside of the Latin1 range.", 'InvalidCharacterError');
     return r;
   });
   def(G, 'atob', function atob(data) {
     need(arguments, 1, 'atob', 'Window');
-    const r = H.atob(String(data));
+    const r = HB.atob(String(data));
     if (typeof r !== 'string') throw new DOMException("Failed to execute 'atob' on 'Window': The string to be decoded is not correctly encoded.", 'InvalidCharacterError');
     return r;
   });
@@ -2351,7 +2365,7 @@
         let o = 0;
         for (const p of parts) { all.set(p, o); o += p.length; }
         parts.length = 0;
-        const out = toBytes(H.zlib(mode, format, all));
+        const out = toBytes(HB.zlib(mode, format, all));
         if (out && out.length) c.enqueue(new Uint8Array(out));
       },
     });
@@ -2852,7 +2866,7 @@
       const id = ++fetchSeq;
       const onAbort = () => {
         if (!pendingFetches.delete(id)) return;
-        try { H.fetchAbort(id); } catch {}
+        try { HB.fetchAbort(id); } catch {}
         reject(signal.reason);
       };
       const start = (bytes) => {
@@ -2860,7 +2874,7 @@
         pendingFetches.set(id, { resolve, reject, signal, onAbort, redirect: r.o.redirect, method: r.method });
         asOn(signal, onAbort);
         try {
-          H.fetch(id, JSON.stringify({ method: r.method, url, headers: hPairs(r.headers), redirect: r.o.redirect }), bytes);
+          HB.fetch(id, JSON.stringify({ method: r.method, url, headers: hPairs(r.headers), redirect: r.o.redirect }), bytes);
         } catch (e) {
           pendingFetches.delete(id);
           asOff(signal, onAbort);
@@ -3117,8 +3131,8 @@
   // ---- crypto ----
   let pool = null, poolPos = 0;
   const randBytes = (n) => {
-    if (n > 256) return H.random(n);
-    if (!pool || poolPos + n > pool.length) { pool = H.random(4096); poolPos = 0; }
+    if (n > 256) return HB.random(n);
+    if (!pool || poolPos + n > pool.length) { pool = HB.random(4096); poolPos = 0; }
     const out = pool.subarray(poolPos, poolPos + n);
     poolPos += n;
     return out;
@@ -3135,14 +3149,16 @@
   // that isn't a key, SyntaxError for usages a key can't have,
   // OperationError when the operation itself fails), and every method
   // settling its promise, never throwing. The arithmetic is Go's
-  // (webcrypto.go); a key's material lives in its internal slots, and
-  // structuredClone and IndexedDB copy keys whole, extractable or not, as
-  // Chromium serializes them. Not here: RSA, HMAC, AES-CBC/CTR/KW, ECDH,
+  // (webcrypto.go), and a key's material is there too, in the runtime's key
+  // store: a CryptoKey's internal slots hold its handle, never the bytes,
+  // and only exportKey of a key that may be exported brings them to JS.
+  // structuredClone copies a key (a new handle to the same key), and
+  // IndexedDB stores one sealed with the runtime's KeyWrap secret, so no
+  // script reading the storage gets a key's bytes. Not here: RSA, HMAC, AES-CBC/CTR/KW, ECDH,
   // Ed25519, X25519, PBKDF2 and HKDF, which reject with NotSupportedError
   // as a name Chromium doesn't know does.
   const KEY_USAGES = ['encrypt', 'decrypt', 'sign', 'verify', 'deriveKey', 'wrapKey', 'unwrapKey', 'deriveBits']; // Chromium's mask order
   const KEY_FORMATS = ['raw', 'spki', 'pkcs8', 'jwk'];
-  const EC_CODES = ['', 'P-256', 'P-384', 'P-521']; // webcrypto.go's curveCode
   const EC_BYTES = { 'P-256': 32, 'P-384': 48, 'P-521': 66 };
   const EC_JWK_ALG = { 'P-256': 'ES256', 'P-384': 'ES384', 'P-521': 'ES512' };
   const GCM_TAGS = [32, 64, 96, 104, 112, 120, 128];
@@ -3157,6 +3173,8 @@
     verify: ['ECDSA'],
   };
   const keySlots = new WeakMap();
+  // a collected CryptoKey's handle goes back to the key store
+  const keyFree = new FinalizationRegistry((h) => { try { hostCrypto('key-free', h); } catch {} });
   class CryptoKey {
     constructor(t) { if (t !== kToken) throw illegal(); }
     get type() { return keyOf(this).type; }
@@ -3167,16 +3185,26 @@
   const keyOf = (k) => { const s = keySlots.get(k); if (!s) throw new TypeError('Illegal invocation'); return s; };
   const inMaskOrder = (u) => KEY_USAGES.filter((x) => u.includes(x));
   // a CryptoKey: its type ("secret", "public", "private"), algorithm
-  // ({name, length} or {name, namedCurve}), usages and material, the bytes
-  // webcrypto.go takes (an AES key; an EC key's x||y, or d||x||y)
-  const makeKey = (type, extractable, algorithm, usages, material) => {
+  // ({name, length} or {name, namedCurve}), usages, and the handle of its
+  // material in webcrypto.go's key store
+  const makeKey = (type, extractable, algorithm, usages, handle) => {
     const k = new CryptoKey(kToken);
     const alg = { ...algorithm }, use = inMaskOrder(usages);
-    keySlots.set(k, { type, extractable: !!extractable, algorithm: alg, usages: use, material, algorithmView: { ...alg }, usagesView: use.slice() });
+    keySlots.set(k, { type, extractable: !!extractable, algorithm: alg, usages: use, handle, algorithmView: { ...alg }, usagesView: use.slice() });
+    keyFree.register(k, handle);
     return k;
   };
-  // structuredClone and IndexedDB (env.js, the IndexedDB section below)
-  const cloneKey = (k) => { const s = keyOf(k); return makeKey(s.type, s.extractable, s.algorithm, s.usages, s.material.slice()); };
+  const usageList = (usages) => inMaskOrder(usages).join(',');
+  // structuredClone (env.js): the same key, a handle of its own
+  const cloneKey = (k) => { const s = keyOf(k); return makeKey(s.type, s.extractable, s.algorithm, s.usages, wc('key-clone', s.handle)); };
+  // IndexedDB: a key sealed for storage, and back (the key's own record
+  // of what it is and may do, not what a stored value says)
+  const sealKey = (k) => toBytes(wc('key-seal', keyOf(k).handle));
+  const openKey = (sealed) => {
+    const m = wc('key-open', sealed);
+    const alg = m.a === 'AES-GCM' ? { name: 'AES-GCM', length: m.l } : { name: 'ECDSA', namedCurve: m.c };
+    return makeKey(m.t, m.e, alg, m.u, m.h);
+  };
   jr.cloneHook = (v) => (keySlots.has(v) ? cloneKey(v) : undefined);
   const failedOn = (method) => `Failed to execute '${method}' on 'SubtleCrypto': `;
   const cryptoErr = (name, message) => new DOMException(message, name);
@@ -3184,7 +3212,7 @@
   // OperationError's message may be empty, as Chromium's is)
   const wc = (...args) => {
     try {
-      return H.webcrypto(...args);
+      return hostCrypto(...args);
     } catch (e) {
       if (e instanceof DOMException) throw e;
       throw new DOMException(e && typeof e.message === 'string' ? e.message : String(e), e && e.name && e.name !== 'Error' ? e.name : 'OperationError');
@@ -3201,7 +3229,7 @@
     else if (isObj(algorithm)) {
       if (algorithm.name === undefined) throw new TypeError(failedOn(method) + 'Algorithm: name: Missing or not a string');
       name = String(algorithm.name);
-    } else throw new TypeError(failedOn(method) + 'Algorithm: Not an object');
+    } else name = String(algorithm); // AlgorithmIdentifier is (object or DOMString): a number, null or undefined is its string
     const known = OPS[op].find((n) => n.toUpperCase() === name.toUpperCase());
     if (!known) throw cryptoErr('NotSupportedError', failedOn(method) + 'Algorithm: Unrecognized name');
     return { name: known, params: typeof algorithm === 'string' ? {} : algorithm };
@@ -3283,15 +3311,16 @@
     return s;
   };
   const curveOf = (name) => {
-    if (!(name in EC_BYTES)) throw cryptoErr('NotSupportedError', 'Unrecognized namedCurve');
+    if (!Object.prototype.hasOwnProperty.call(EC_BYTES, name)) throw cryptoErr('NotSupportedError', 'Unrecognized namedCurve');
     return name;
   };
 
-  // AES-GCM's encrypt and decrypt (Web Crypto §27.3)
-  const gcm = (seal, p, material, data) => {
+  // AES-GCM's encrypt and decrypt (Web Crypto §27.3) with key handle h, for
+  // usage (encrypt, decrypt, wrapKey or unwrapKey)
+  const gcm = (usage, p, h, data) => {
     const tag = p.tagLength === undefined ? 128 : p.tagLength;
     if (!GCM_TAGS.includes(tag)) throw cryptoErr('OperationError', 'The tag length is invalid: Must be 32, 64, 96, 104, 112, 120, or 128 bits');
-    return toBytes(wc(seal ? 'aes-gcm-seal' : 'aes-gcm-open', material, p.iv, p.additionalData || EMPTY, tag, data));
+    return toBytes(wc('aes-gcm', h, usage, p.iv, p.additionalData || EMPTY, tag, data));
   };
   const aesLength = (n) => {
     if (n === 192) throw cryptoErr('OperationError', '192-bit AES keys are not supported');
@@ -3302,10 +3331,11 @@
   const jwkCheck = (jwk, extractable, usages, use) => {
     if (jwk.use !== undefined && jwk.use !== use) throw cryptoErr('DataError', `The JWK "use" member was not "${use}"`);
     if (jwk.key_ops !== undefined) {
-      if (!Array.isArray(jwk.key_ops) || jwk.key_ops.some((x) => typeof x !== 'string')) throw cryptoErr('DataError', 'The JWK "key_ops" member was not an array of strings');
-      if (usages.some((u) => !jwk.key_ops.includes(u))) throw cryptoErr('DataError', 'The JWK "key_ops" member was inconsistent with that specified by the Web Crypto call. The JWK usage must be a superset of those requested');
+      // a usage named twice is an error, a name that is no usage ignored (jwk.cc)
+      const ops = jwk.key_ops.filter((x) => KEY_USAGES.includes(x));
+      if (new Set(ops).size !== ops.length) throw cryptoErr('DataError', 'The "key_ops" member of the JWK dictionary contains duplicate usages.');
+      if (usages.some((u) => !ops.includes(u))) throw cryptoErr('DataError', 'The JWK "key_ops" member was inconsistent with that specified by the Web Crypto call. The JWK usage must be a superset of those requested');
     }
-    if (jwk.ext !== undefined && typeof jwk.ext !== 'boolean') throw cryptoErr('DataError', 'The JWK "ext" member was not a boolean');
     if (jwk.ext === false && extractable) throw cryptoErr('DataError', 'The JWK "ext" member was inconsistent with that specified by the Web Crypto call. The JWK key may not be extractable');
   };
   const jwkBytes = (jwk, member, n) => {
@@ -3322,72 +3352,65 @@
     else if (format === 'jwk') {
       if (data.kty !== 'oct') throw cryptoErr('DataError', 'The JWK "kty" member was not "oct"');
       raw = jwkBytes(data, 'k');
+      if (raw.length === 24) throw cryptoErr('OperationError', '192-bit AES keys are not supported');
       if (raw.length !== 16 && raw.length !== 32) throw cryptoErr('DataError', 'AES key data must be 128 or 256 bits');
       const alg = `A${raw.length * 8}GCM`;
       if (data.alg !== undefined && data.alg !== alg) throw cryptoErr('DataError', `The JWK "alg" member was not "${alg}"`);
       jwkCheck(data, extractable, usages, 'enc');
     } else throw cryptoErr('NotSupportedError', 'Unsupported import key format for algorithm');
+    if (raw.length === 24) throw cryptoErr('OperationError', '192-bit AES keys are not supported');
     if (raw.length !== 16 && raw.length !== 32) throw cryptoErr('DataError', 'AES key data must be 128 or 256 bits');
     notEmpty(usages);
-    return makeKey('secret', extractable, { name: 'AES-GCM', length: raw.length * 8 }, usages, raw.slice());
+    return makeKey('secret', extractable, { name: 'AES-GCM', length: raw.length * 8 }, usages, wc('aes-import', raw, !!extractable, usageList(usages)));
   };
   const importEC = (format, data, curve, extractable, usages) => {
     const n = EC_BYTES[curve];
     const alg = { name: 'ECDSA', namedCurve: curve };
-    const pub = (xy) => { onlyUsages(usages, ['verify']); wc('ec-check-point', curve, xy); return makeKey('public', extractable, alg, usages, xy); };
-    const priv = (dxy) => { onlyUsages(usages, ['sign']); notEmpty(usages); wc('ec-check-pair', curve, dxy); return makeKey('private', extractable, alg, usages, dxy); };
-    const sameCurve = (code) => { if (EC_CODES[code] !== curve) throw cryptoErr('DataError', "The key's namedCurve doesn't match the one requested"); };
+    // webcrypto.go parses and checks the key and keeps it; usages checked
+    // here first, as Blink does, by the type the format gives
+    const made = (f, bytes, type) => {
+      if (type === 'public') onlyUsages(usages, ['verify']);
+      else if (type === 'private') { onlyUsages(usages, ['sign']); notEmpty(usages); }
+      const [h, t] = wc('ec-import', f, curve, bytes, !!extractable, usageList(usages));
+      return makeKey(t, extractable, alg, usages, h);
+    };
     switch (format) {
-      case 'raw': {
-        if (data.length === 1 + 2 * n && data[0] === 4) return pub(data.slice(1));
-        if (data.length === 1 + n && (data[0] === 2 || data[0] === 3)) return pub(toBytes(wc('ec-decompress', curve, data)));
-        throw cryptoErr('DataError', 'Invalid keyData');
-      }
-      case 'spki': {
-        const out = toBytes(wc('ec-parse-spki', data));
-        sameCurve(out[0]);
-        return pub(out.slice(1));
-      }
-      case 'pkcs8': {
-        const out = toBytes(wc('ec-parse-pkcs8', data));
-        sameCurve(out[0]);
-        return priv(out.slice(1));
-      }
+      case 'raw': return made('raw', data, 'public');
+      case 'spki': return made('spki', data, 'public');
+      case 'pkcs8': return made('pkcs8', data, 'private');
       case 'jwk': {
         if (data.kty !== 'EC') throw cryptoErr('DataError', 'The JWK "kty" member was not "EC"');
         if (data.crv !== curve) throw cryptoErr('DataError', 'The JWK "crv" member did not match the expected value');
         if (data.alg !== undefined && data.alg !== EC_JWK_ALG[curve]) throw cryptoErr('DataError', `The JWK "alg" member was not "${EC_JWK_ALG[curve]}"`);
         jwkCheck(data, extractable, usages, 'sig');
         const xy = concat([jwkBytes(data, 'x', n), jwkBytes(data, 'y', n)]);
-        if (data.d === undefined) return pub(xy);
-        return priv(concat([jwkBytes(data, 'd', n), xy]));
+        if (data.d === undefined) return made('xy', xy, 'public');
+        return made('dxy', concat([jwkBytes(data, 'd', n), xy]), 'private');
       }
     }
     throw cryptoErr('NotSupportedError', 'Unsupported import key format for algorithm');
   };
-  // exportKey's work for a key the caller may export (Web Crypto §14.3.10)
+  // exportKey's work for a key the caller may export (Web Crypto §14.3.10):
+  // webcrypto.go hands over the bytes (and refuses a key that isn't
+  // extractable, whoever asks)
   const exportOf = (format, s) => {
     const { name } = s.algorithm;
     if (name === 'AES-GCM') {
-      if (format === 'raw') return toAB(s.material.slice());
-      if (format === 'jwk') return { alg: `A${s.material.length * 8}GCM`, ext: s.extractable, k: b64url(s.material), key_ops: s.usages.slice(), kty: 'oct' };
-      throw cryptoErr('NotSupportedError', 'Unsupported export key format for algorithm');
+      if (format !== 'raw' && format !== 'jwk') throw cryptoErr('NotSupportedError', 'Unsupported export key format for algorithm');
+      const raw = toBytes(wc('export', s.handle, format));
+      if (format === 'raw') return toAB(raw);
+      return { alg: `A${raw.length * 8}GCM`, ext: s.extractable, k: b64url(raw), key_ops: s.usages.slice(), kty: 'oct' };
     }
     const curve = s.algorithm.namedCurve, n = EC_BYTES[curve];
-    const xy = s.type === 'private' ? s.material.subarray(n) : s.material;
     switch (format) {
-      case 'raw':
-        if (s.type !== 'public') throw cryptoErr('InvalidAccessError', 'The key is not of the expected type');
-        return toAB(concat([new Uint8Array([4]), xy]));
-      case 'spki':
-        if (s.type !== 'public') throw cryptoErr('InvalidAccessError', 'The key is not of the expected type');
-        return toAB(toBytes(wc('ec-spki', curve, xy)));
-      case 'pkcs8':
-        if (s.type !== 'private') throw cryptoErr('InvalidAccessError', 'The key is not of the expected type');
-        return toAB(toBytes(wc('ec-pkcs8', curve, s.material)));
+      case 'raw': case 'spki': case 'pkcs8':
+        if ((format === 'pkcs8') !== (s.type === 'private')) throw cryptoErr('InvalidAccessError', 'The key is not of the expected type');
+        return toAB(toBytes(wc('export', s.handle, format)));
       case 'jwk': {
+        const f = toBytes(wc('export', s.handle, 'jwk'));
+        const xy = s.type === 'private' ? f.subarray(n) : f;
         const j = { crv: curve };
-        if (s.type === 'private') j.d = b64url(s.material.subarray(0, n));
+        if (s.type === 'private') j.d = b64url(f.subarray(0, n));
         Object.assign(j, { ext: s.extractable, key_ops: s.usages.slice(), kty: 'EC', x: b64url(xy.subarray(0, n)), y: b64url(xy.subarray(n)) });
         return j;
       }
@@ -3397,21 +3420,47 @@
   // importKey's work: p is the normalized algorithm's params
   const importOf = (format, keyData, p, extractable, usages) =>
     p.name === 'AES-GCM' ? importAES(format, keyData, extractable, usages) : importEC(format, keyData, curveOf(p.namedCurve), extractable, usages);
-  // importKey's keyData: a JsonWebKey for jwk, else BufferSource bytes (copied)
+  // a JsonWebKey as WebIDL converts the dictionary, as Blink does before
+  // components/webcrypto reads it: each member read in name order (an
+  // inherited one, a getter too), ext a boolean, key_ops a sequence of
+  // strings, the others strings (oth is RSA's, not here)
+  const JWK_MEMBERS = ['alg', 'crv', 'd', 'dp', 'dq', 'e', 'ext', 'k', 'key_ops', 'kty', 'n', 'oth', 'p', 'q', 'qi', 'use', 'x', 'y'];
+  const domString = (method, member, x) => {
+    if (typeof x === 'symbol') throw new TypeError(`${failedOn(method)}Failed to read the '${member}' property from 'JsonWebKey': Cannot convert a Symbol value to a string`);
+    return String(x);
+  };
+  const jwkDict = (method, v) => {
+    const out = {};
+    for (const m of JWK_MEMBERS) {
+      const x = v == null ? undefined : v[m];
+      if (x === undefined || m === 'oth') continue;
+      if (m === 'ext') out.ext = !!x;
+      else if (m === 'key_ops') {
+        if (!isObj(x) || typeof x[Symbol.iterator] !== 'function') throw new TypeError(`${failedOn(method)}Failed to read the 'key_ops' property from 'JsonWebKey': The provided value cannot be converted to a sequence.`);
+        out.key_ops = Array.from(x, (o) => domString(method, 'key_ops', o));
+      } else out[m] = domString(method, m, x);
+    }
+    return out;
+  };
+  // importKey's keyData: a JsonWebKey for jwk (null and undefined an empty
+  // one, as WebIDL's union has it), else BufferSource bytes (copied)
   const keyDataArg = (method, format, v) => {
     if (format === 'jwk') {
-      if (!isObj(v) || toBytes(v)) throw new TypeError(failedOn(method) + 'Key data must be an object for JWK import');
-      return { ...v };
+      if ((v != null && !isObj(v)) || toBytes(v)) throw new TypeError(failedOn(method) + 'Key data must be an object for JWK import');
+      return jwkDict(method, v);
     }
     const b = toBytes(v);
     if (!b) throw new TypeError(failedOn(method) + 'Key data must be a BufferSource for non-JWK formats');
     return b.slice();
   };
-  // the promise of work(), its synchronous part's errors a rejection
+  // the promise of work(), as Chromium's: the synchronous part's errors a
+  // rejection at once; the work done, and its promise settled, in a later
+  // task (Chromium's runs on its WebCrypto thread and posts the result
+  // back, so an IndexedDB transaction is no longer active after an await)
   const settle = (sync, work) => {
     let args;
     try { args = sync(); } catch (e) { return Promise.reject(e); }
-    return Promise.resolve().then(() => work(args));
+    return new Promise((resolve, reject) => later(() => { try { resolve(work(args)); } catch (e) { reject(e); } }));
   };
   class SubtleCrypto {
     constructor(t) { if (t !== kToken) throw illegal(); }
@@ -3425,8 +3474,8 @@
         const b = toBytes(data);
         if (!b) throw new TypeError("Failed to execute 'digest' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView.");
         const copy = b.slice();
-        return Promise.resolve().then(() => {
-          const out = toBytes(H.digest(alg, copy));
+        return settle(() => null, () => {
+          const out = toBytes(HB.digest(alg, copy));
           return out.byteOffset === 0 && out.byteLength === out.buffer.byteLength ? out.buffer : out.slice().buffer;
         });
       } catch (e) {
@@ -3443,17 +3492,18 @@
           onlyUsages(usages, AES_USAGES);
           const len = aesLength(p.length);
           notEmpty(usages);
-          return makeKey('secret', ext, { name: 'AES-GCM', length: len }, usages, randBytes(len / 8).slice());
+          return makeKey('secret', ext, { name: 'AES-GCM', length: len }, usages, wc('aes-generate', len, ext, usageList(usages)));
         }
+        // the curve first: Blink reads it as it normalizes the algorithm
+        const curve = curveOf(p.namedCurve);
         onlyUsages(usages, ['sign', 'verify']);
-        const curve = curveOf(p.namedCurve), n = EC_BYTES[curve];
-        const signs = usages.filter((u) => u === 'sign');
+        const signs = usages.filter((u) => u === 'sign'), verifies = usages.filter((u) => u === 'verify');
         notEmpty(signs);
-        const dxy = toBytes(wc('ec-generate', curve));
+        const [priv, pub] = wc('ec-generate', curve, ext, usageList(signs), usageList(verifies));
         const alg = { name: 'ECDSA', namedCurve: curve };
         return {
-          publicKey: makeKey('public', true, alg, usages.filter((u) => u === 'verify'), dxy.slice(n)),
-          privateKey: makeKey('private', ext, alg, signs, dxy.slice()),
+          publicKey: makeKey('public', true, alg, verifies, pub),
+          privateKey: makeKey('private', ext, alg, signs, priv),
         };
       });
     }
@@ -3476,13 +3526,14 @@
         return exportOf(f, s);
       });
     }
-    encrypt(algorithm, key, data) { return this.#cipher('encrypt', arguments, algorithm, key, data); }
-    decrypt(algorithm, key, data) { return this.#cipher('decrypt', arguments, algorithm, key, data); }
+    // a `this` that isn't a SubtleCrypto rejects, as WebIDL's Illegal invocation does
+    encrypt(algorithm, key, data) { try { return this.#cipher('encrypt', arguments, algorithm, key, data); } catch (e) { return Promise.reject(e); } }
+    decrypt(algorithm, key, data) { try { return this.#cipher('decrypt', arguments, algorithm, key, data); } catch (e) { return Promise.reject(e); } }
     #cipher(m, args, algorithm, key, data) {
       return settle(() => {
         need(args, 3, m, 'SubtleCrypto');
         return [params(m, m, normalize(m, m, algorithm)), keyArg(m, key, 2), dataArg(m, data)];
-      }, ([p, k, bytes]) => toAB(gcm(m === 'encrypt', p, keyFor(k, p.name, m).material, bytes)));
+      }, ([p, k, bytes]) => toAB(gcm(m, p, keyFor(k, p.name, m).handle, bytes)));
     }
     sign(algorithm, key, data) {
       const m = 'sign';
@@ -3492,7 +3543,7 @@
       }, ([p, k, bytes]) => {
         const s = keyFor(k, p.name, 'sign');
         if (s.type !== 'private') throw cryptoErr('InvalidAccessError', 'The requested operation is not valid for the provided key');
-        return toAB(toBytes(wc('ec-sign', s.algorithm.namedCurve, p.hash, s.material, bytes)));
+        return toAB(toBytes(wc('ec-sign', s.handle, p.hash, bytes)));
       });
     }
     verify(algorithm, key, signature, data) {
@@ -3503,7 +3554,7 @@
       }, ([p, k, sig, bytes]) => {
         const s = keyFor(k, p.name, 'verify');
         if (s.type !== 'public') throw cryptoErr('InvalidAccessError', 'The requested operation is not valid for the provided key');
-        return !!wc('ec-verify', s.algorithm.namedCurve, p.hash, s.material, sig, bytes);
+        return !!wc('ec-verify', s.handle, p.hash, sig, bytes);
       });
     }
     // wrapKey and unwrapKey: exportKey then encrypt, decrypt then importKey
@@ -3519,7 +3570,7 @@
         if (!s.extractable) throw cryptoErr('InvalidAccessError', 'key is not extractable');
         const out = exportOf(f, s);
         const bytes = f === 'jwk' ? utf8Encode(JSON.stringify(out)) : new Uint8Array(out);
-        return toAB(gcm(true, p, w.material, bytes));
+        return toAB(gcm('wrapKey', p, w.handle, bytes));
       });
     }
     unwrapKey(format, wrappedKey, unwrappingKey, unwrapAlgorithm, unwrappedKeyAlgorithm, extractable, keyUsages) {
@@ -3530,7 +3581,7 @@
           params(m, 'importKey', normalize(m, 'importKey', unwrappedKeyAlgorithm)), !!extractable, usagesArg(m, keyUsages)];
       }, ([f, wrapped, uk, p, ip, ext, usages]) => {
         const u = keyFor(uk, p.name, 'unwrapKey');
-        const bytes = gcm(false, p, u.material, wrapped);
+        const bytes = gcm('unwrapKey', p, u.handle, wrapped);
         let data = bytes;
         if (f === 'jwk') {
           try { data = JSON.parse(utf8Text(bytes)); } catch { throw cryptoErr('DataError', 'The JWK could not be parsed'); }
@@ -3582,8 +3633,8 @@
   // ---- Storage ----
   const storageNS = new WeakMap();
   const nsOf = (o) => { const n = storageNS.get(o); if (!n) throw new TypeError('Illegal invocation'); return n; };
-  const sKeys = (ns) => H.storage(ns, 'keys') || [];
-  const sGet = (ns, k) => { const v = H.storage(ns, 'get', k); return v === null || v === undefined ? null : v; };
+  const sKeys = (ns) => hostStorage(ns, 'keys') || [];
+  const sGet = (ns, k) => { const v = hostStorage(ns, 'get', k); return v === null || v === undefined ? null : v; };
   class Storage {
     constructor(t) { if (t !== kToken) throw illegal(); }
     get length() { return sKeys(nsOf(this)).length; }
@@ -3593,9 +3644,9 @@
       return k === undefined ? null : k;
     }
     getItem(key) { need(arguments, 1, 'getItem', 'Storage'); return sGet(nsOf(this), String(key)); }
-    setItem(key, value) { need(arguments, 2, 'setItem', 'Storage'); H.storage(nsOf(this), 'set', String(key), String(value)); }
-    removeItem(key) { need(arguments, 1, 'removeItem', 'Storage'); H.storage(nsOf(this), 'del', String(key)); }
-    clear() { H.storage(nsOf(this), 'clear'); }
+    setItem(key, value) { need(arguments, 2, 'setItem', 'Storage'); hostStorage(nsOf(this), 'set', String(key), String(value)); }
+    removeItem(key) { need(arguments, 1, 'removeItem', 'Storage'); hostStorage(nsOf(this), 'del', String(key)); }
+    clear() { hostStorage(nsOf(this), 'clear'); }
   }
   expose('Storage', Storage);
   const makeStorage = (ns) => {
@@ -3612,12 +3663,12 @@
       },
       set(t, k, v, r) {
         if (typeof k !== 'string') return Reflect.set(t, k, v, r);
-        H.storage(ns, 'set', k, String(v));
+        hostStorage(ns, 'set', k, String(v));
         return true;
       },
       has(t, k) { return k in t || (typeof k === 'string' && sGet(ns, k) !== null); },
       deleteProperty(t, k) {
-        if (named(t, k) && sGet(ns, k) !== null) { H.storage(ns, 'del', k); return true; }
+        if (named(t, k) && sGet(ns, k) !== null) { hostStorage(ns, 'del', k); return true; }
         return Reflect.deleteProperty(t, k);
       },
       ownKeys(t) {
@@ -3635,7 +3686,7 @@
       defineProperty(t, k, d) {
         if (typeof k !== 'string') return Reflect.defineProperty(t, k, d);
         if (!('value' in d)) return false;
-        H.storage(ns, 'set', k, String(d.value));
+        hostStorage(ns, 'set', k, String(d.value));
         return true;
       },
     });
@@ -3662,7 +3713,7 @@
   // back. Events take IndexedDB's path: request, transaction, database.
   const IDB_NS = 'indexedDB';
   const idbErr = (name, message) => new DOMException(message, name);
-  const idbLater = (fn) => G.setTimeout(fn, 0);
+  const idbLater = later;
 
   // keys (§2.3): {t: 'n' number, 'd' date, 's' string, 'b' binary, 'a' array, v}
   const KEY_RANK = { n: 0, d: 1, s: 2, b: 3, a: 4 };
@@ -3730,6 +3781,9 @@
     }
     return { t: e[0], v: e[1] };
   };
+  // a key as the text a stored record's name ends in, and back
+  const keyText = (k) => JSON.stringify(encKey(k));
+  const keyOfText = (t) => decKey(JSON.parse(t));
 
   // key ranges (§2.10)
   let rangeOf, makeRange;
@@ -3798,10 +3852,7 @@
       if (ids.has(v)) return ['R', ids.get(v)];
       const id = ids.size;
       ids.set(v, id);
-      if (keySlots.has(v)) {
-        const s = keyOf(v);
-        return ['K', id, s.type, s.extractable, s.algorithm, s.usages, b64encode(s.material)];
-      }
+      if (keySlots.has(v)) return ['K', id, b64encode(sealKey(v))];
       if (v instanceof Blob) {
         const b = b64encode(blobBytes(v));
         return v instanceof File ? ['F', id, b, v.type, v.name, v.lastModified] : ['BL', id, b, v.type];
@@ -3837,6 +3888,10 @@
     };
     return JSON.stringify(ser(value));
   };
+  const ownProp = (o, k, v) => {
+    if (k === '__proto__') Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true });
+    else o[k] = v;
+  };
   const idbDeserialize = (text) => {
     const ids = [];
     const num = (x) => (Array.isArray(x) ? Number(x[1]) : x);
@@ -3848,8 +3903,9 @@
         case 'N': return Number(x[1]);
         case 'I': return BigInt(x[1]);
         case 'R': return ids[x[1]];
-        case 'O': out = {}; ids[x[1]] = out; for (const [k, v] of x[2]) out[k] = de(v); return out;
-        case 'A': out = new Array(x[2]); ids[x[1]] = out; for (const [k, v] of x[3]) out[k] = de(v); return out;
+        // own properties, as structured clone defines them (an own __proto__ too)
+        case 'O': out = {}; ids[x[1]] = out; for (const [k, v] of x[2]) ownProp(out, k, de(v)); return out;
+        case 'A': out = new Array(x[2]); ids[x[1]] = out; for (const [k, v] of x[3]) ownProp(out, k, de(v)); return out;
         case 'M': out = new Map(); ids[x[1]] = out; for (const [k, v] of x[2]) out.set(de(k), de(v)); return out;
         case 'S': out = new Set(); ids[x[1]] = out; for (const v of x[2]) out.add(de(v)); return out;
         case 'D': out = new Date(num(x[2])); break;
@@ -3867,7 +3923,7 @@
         }
         case 'BL': out = blobMake(b64decode(x[2]).slice(), x[3]); break;
         case 'F': out = new File([b64decode(x[2])], x[4], { type: x[3], lastModified: x[5] }); break;
-        case 'K': out = makeKey(x[2], x[3], x[4], x[5], b64decode(x[6]).slice()); break;
+        case 'K': out = openKey(b64decode(x[2])); break;
         case 'E': {
           const C = ERROR_NAMES.includes(x[2]) ? G[x[2]] : Error;
           out = new C(x[3]);
@@ -3945,41 +4001,54 @@
 
   // the databases: {name, version, stores: Map(name → store), connections, queue, running, waiting}
   // a store: {name, keyPath, autoIncrement, current, indexes: Map(name → {name, keyPath, unique, multiEntry}), records}
+  //
+  // Stored a record a key, as LevelDB keeps Chromium's: a database's
+  // description at 'm' + JSON [db], each record at 'r' + JSON [db, store]
+  // + its encoded key (JSON names: no name runs into another). A commit
+  // writes the records its transaction changed (tx.dirty), all together or
+  // none (the host's idbCommit, which holds the quota: QuotaExceededError).
+  const IDB_FORMAT = 2;
   const idbData = new Map();
-  const dbKey = (name) => 'db\0' + name;
-  const storeKey = (db, store) => 'store\0' + db + '\0' + store;
+  const metaKey = (db) => 'm' + JSON.stringify([db]);
+  const recPrefix = (db, store) => 'r' + JSON.stringify([db, store]);
+  const dbPrefix = (db) => 'r' + JSON.stringify([db]).slice(0, -1) + ',';
   const loadDB = (name) => {
     let d = idbData.get(name);
     if (d) return d;
     d = { name, version: 0, stores: new Map(), connections: new Set(), queue: [], running: null, waiting: [] };
-    const raw = H.storage(IDB_NS, 'get', dbKey(name));
+    const raw = hostStorage(IDB_NS, 'get', metaKey(name));
     if (typeof raw === 'string') {
       try {
         const meta = JSON.parse(raw);
-        d.version = meta.version;
+        const stores = new Map();
         for (const s of meta.stores) {
-          d.stores.set(s.name, { name: s.name, keyPath: s.keyPath, autoIncrement: s.autoIncrement, current: s.current, records: null,
+          stores.set(s.name, { name: s.name, keyPath: s.keyPath, autoIncrement: s.autoIncrement, current: s.current, records: null,
             indexes: new Map(s.indexes.map((i) => [i.name, { ...i }])) });
         }
+        d.version = meta.version;
+        d.stores = stores;
       } catch {}
     }
     idbData.set(name, d);
     return d;
   };
+  // a store's records, read once, in key order; an unreadable one skipped
   const recordsOf = (d, s) => {
     if (s.records) return s.records;
-    s.records = [];
-    const raw = H.storage(IDB_NS, 'get', storeKey(d.name, s.name));
-    if (typeof raw === 'string') {
-      try { s.records = JSON.parse(raw).map(([k, v]) => ({ k: decKey(k), v })); } catch {}
+    const prefix = recPrefix(d.name, s.name), out = [];
+    for (const [k, v] of hostStorage(IDB_NS, 'prefix', prefix) || []) {
+      try { out.push({ k: keyOfText(k.slice(prefix.length)), v }); } catch {}
     }
-    return s.records;
+    out.sort((a, b) => cmpKey(a.k, b.k));
+    s.records = out;
+    return out;
   };
-  const saveMeta = (d) => {
+  const metaJSON = (d) => {
     const stores = [...d.stores.values()].map((s) => ({ name: s.name, keyPath: s.keyPath, autoIncrement: s.autoIncrement, current: s.current, indexes: [...s.indexes.values()] }));
-    H.storage(IDB_NS, 'set', dbKey(d.name), JSON.stringify({ version: d.version, stores }));
+    return JSON.stringify({ v: IDB_FORMAT, version: d.version, stores });
   };
-  const saveStore = (d, s) => H.storage(IDB_NS, 'set', storeKey(d.name, s.name), JSON.stringify(recordsOf(d, s).map((r) => [encKey(r.k), r.v])));
+  // the keys stored under prefix, to delete (a dropped store, a deleted database)
+  const storedKeys = (prefix) => (hostStorage(IDB_NS, 'prefix', prefix) || []).map(([k]) => k);
   // the first record at or after k (binary search)
   const findAt = (records, k) => {
     let lo = 0, hi = records.length;
@@ -4051,7 +4120,9 @@
       }
     }
     if (typeof prop === 'function' && !ev[jr.kImmediate]) {
-      try { prop.call(target, ev); } catch (e) { threw = true; reportError(e); }
+      // an event handler that returns false cancels the event (HTML's event
+      // handler processing, as env.js's jr.invoke has it)
+      try { if (prop.call(target, ev) === false && ev.cancelable) ev.preventDefault(); } catch (e) { threw = true; reportError(e); }
     }
     return threw;
   };
@@ -4212,14 +4283,45 @@
     const d = tx.d;
     d.queue = d.queue.filter((x) => x !== tx);
     if (d.running === tx) d.running = null;
+    if (tx.conn) closeWhenDone(tx.conn); // a closing connection's last transaction
     idbLater(() => idbPump(d));
   };
+  // what tx's commit writes: key → value, or null to delete. First what
+  // goes: whatever is stored under a name dropped, made anew, or renamed
+  // from or to (two stores can swap names); then the records written: a
+  // renamed store's whole, and the ones each other store changed
+  const commitOps = (tx) => {
+    const d = tx.d, ops = new Map();
+    if (tx.metaChanged || tx.mode === 'versionchange') ops.set(metaKey(d.name), metaJSON(d));
+    const gone = new Set(tx.dropped);
+    for (const [s, from] of tx.moved || []) { gone.add(from); gone.add(s.name); }
+    for (const name of gone) for (const k of storedKeys(recPrefix(d.name, name))) ops.set(k, null);
+    for (const [s] of tx.moved || []) {
+      if (d.stores.get(s.name) !== s) continue; // dropped since
+      const prefix = recPrefix(d.name, s.name);
+      for (const r of recordsOf(d, s)) ops.set(prefix + keyText(r.k), r.v);
+    }
+    for (const [s, keys] of tx.dirty || []) {
+      if (d.stores.get(s.name) !== s || (tx.moved && tx.moved.has(s))) continue; // dropped, or written whole
+      const records = recordsOf(d, s), prefix = recPrefix(d.name, s.name);
+      for (const [e, k] of keys) {
+        const i = findAt(records, k);
+        ops.set(prefix + e, i < records.length && cmpKey(records[i].k, k) === 0 ? records[i].v : null);
+      }
+    }
+    return ops;
+  };
   const commitTx = (tx) => {
-    const d = tx.d;
     if (tx.mode !== 'readonly') {
-      if (tx.metaChanged || tx.mode === 'versionchange') saveMeta(d);
-      for (const name of tx.dropped || []) H.storage(IDB_NS, 'del', storeKey(d.name, name));
-      for (const s of tx.written || []) if (d.stores.get(s.name) === s) saveStore(d, s);
+      try {
+        const ops = commitOps(tx);
+        if (ops.size) hostIdbCommit(JSON.stringify([...ops]));
+      } catch (e) {
+        // nothing written: the transaction aborts with the error (past the
+        // quota, QuotaExceededError), and the database goes on
+        abortTx(tx, e instanceof DOMException ? e : idbErr(e && e.name === 'QuotaExceededError' ? 'QuotaExceededError' : 'UnknownError', String((e && e.message) || e)));
+        return;
+      }
     }
     idbFinish(tx);
     idbFire([tx.object, tx.conn], new Event('complete'));
@@ -4246,9 +4348,12 @@
       if (tx.onDone) tx.onDone(false);
     });
   };
-  const idbTouch = (tx, s) => {
-    if (!tx.written) tx.written = new Set();
-    tx.written.add(s);
+  // key k of store s changed in tx: written (or deleted) when it commits
+  const idbMark = (tx, s, k) => {
+    if (!tx.dirty) tx.dirty = new Map();
+    let m = tx.dirty.get(s);
+    if (!m) tx.dirty.set(s, (m = new Map()));
+    m.set(keyText(k), k);
   };
 
   // object stores and indexes, as one transaction sees them
@@ -4304,7 +4409,7 @@
     }
     if (exists) records[i] = { k: key, v: value };
     else records.splice(i, 0, { k: key, v: value });
-    idbTouch(tx, s);
+    idbMark(tx, s, key);
     return fromKey(key);
   };
   const putOrAdd = (self, method, value, key, noOverwrite) => {
@@ -4348,11 +4453,11 @@
       if (tx.d.stores.has(v)) throw idbErr('ConstraintError', 'An object store with the specified name already exists.');
       recordsOf(tx.d, s);
       tx.d.stores.delete(s.name);
-      (tx.dropped = tx.dropped || new Set()).add(s.name);
+      if (!tx.moved) tx.moved = new Map();
+      if (!tx.moved.has(s)) tx.moved.set(s, s.name); // the name its records are stored under
       s.name = v;
       tx.d.stores.set(v, s);
       tx.metaChanged = true;
-      idbTouch(tx, s);
     }
     get keyPath() { return storeObjects.get(this).keyPathView; }
     get indexNames() { return stringList(storeObjects.get(this).s.indexes.keys()); }
@@ -4367,15 +4472,14 @@
       const r = queryOf(query, true);
       return queueOp(tx, this, () => {
         const records = recordsOf(tx.d, s);
-        s.records = records.filter((x) => !inRange(r, x.k));
-        idbTouch(tx, s);
+        s.records = records.filter((x) => !inRange(r, x.k) || (idbMark(tx, s, x.k), false));
         return undefined;
       });
     }
     clear() {
       const { tx, s } = storeOf(this);
       writable(tx);
-      return queueOp(tx, this, () => { recordsOf(tx.d, s); s.records = []; idbTouch(tx, s); return undefined; });
+      return queueOp(tx, this, () => { for (const x of recordsOf(tx.d, s)) idbMark(tx, s, x.k); s.records = []; return undefined; });
     }
     get(query) {
       need(arguments, 1, 'get', 'IDBObjectStore');
@@ -4573,7 +4677,7 @@
       if (!c.gotValue || c.done) throw idbErr('InvalidStateError', 'The cursor is being iterated or has iterated past its end.');
       if (!c.withValue) throw idbErr('InvalidStateError', 'The cursor is a key cursor.');
       const primary = c.primary, s = c.x.s, tx = c.x.tx;
-      return queueOp(tx, this, () => { s.records = recordsOf(tx.d, s).filter((r) => cmpKey(r.k, primary) !== 0); idbTouch(tx, s); return undefined; });
+      return queueOp(tx, this, () => { s.records = recordsOf(tx.d, s).filter((r) => cmpKey(r.k, primary) !== 0); idbMark(tx, s, primary); return undefined; });
     }
   }
   class IDBCursorWithValue extends IDBCursor {
@@ -4657,8 +4761,10 @@
       if (autoIncrement && (keyPath === '' || Array.isArray(keyPath))) throw idbErr('InvalidAccessError', 'The autoIncrement option was set but the keyPath option was empty or an array.');
       const s = { name, keyPath, autoIncrement, current: 1, indexes: new Map(), records: [] };
       c.d.stores.set(name, s);
+      // a new store starts empty: records left under its name (a description
+      // that couldn't be read) go when it commits
+      (tx.dropped = tx.dropped || new Set()).add(name);
       tx.metaChanged = true;
-      idbTouch(tx, s);
       return storeObject(tx, s);
     }
     deleteObjectStore(name) {
@@ -4685,13 +4791,23 @@
       if (!scope.length) throw idbErr('InvalidAccessError', 'The storeNames parameter was empty.');
       return newTx(this, c.d, scope, mode).object;
     }
+    // "close a database connection": no new transactions, and closed once
+    // the ones it has finish; an upgrade or deleteDatabase waits for that
     close() {
       const c = connOf(this);
+      if (c.closePending) return;
       c.closePending = true;
-      c.d.connections.delete(this);
-      for (const w of c.d.waiting.splice(0)) w();
+      closeWhenDone(this);
     }
   }
+  // conn, closing, is closed once none of its transactions is left
+  const closeWhenDone = (conn) => {
+    const c = conns.get(conn);
+    if (!c || !c.closePending || !c.d.connections.has(conn)) return;
+    if (c.d.queue.some((tx) => tx.conn === conn)) return;
+    c.d.connections.delete(conn);
+    for (const w of c.d.waiting.splice(0)) w();
+  };
   handlers(IDBDatabase.prototype, ['abort', 'close', 'error', 'versionchange']);
   const conns = new WeakMap();
   const connOf = (o) => { const c = conns.get(o); if (!c) throw new TypeError('Illegal invocation'); return c; };
@@ -4706,7 +4822,8 @@
   const whenAlone = (d, self, q, oldVersion, newVersion, run) => {
     const others = [...d.connections].filter((x) => x !== self);
     for (const o of others) if (!connOf(o).closePending) idbFire([o], new IDBVersionChangeEvent('versionchange', { oldVersion, newVersion }));
-    const open = () => [...d.connections].some((x) => x !== self && !connOf(x).closePending);
+    // a closing connection counts until its transactions have finished
+    const open = () => [...d.connections].some((x) => x !== self);
     if (!open()) { run(); return; }
     idbFire([q], new IDBVersionChangeEvent('blocked', { oldVersion, newVersion }));
     const wait = () => { if (open()) d.waiting.push(wait); else idbLater(run); };
@@ -4759,6 +4876,7 @@
             c.version = old;
             c.closePending = true;
             d.connections.delete(conn);
+            for (const w of d.waiting.splice(0)) w();
             idbLater(() => {
               q._r.result = undefined;
               q._r.tx = null;
@@ -4782,8 +4900,8 @@
         const d = loadDB(name);
         const old = d.version;
         whenAlone(d, null, q, old, null, () => {
-          for (const s of d.stores.keys()) H.storage(IDB_NS, 'del', storeKey(name, s));
-          H.storage(IDB_NS, 'del', dbKey(name));
+          const ops = [[metaKey(name), null], ...storedKeys(dbPrefix(name)).map((k) => [k, null])];
+          try { hostIdbCommit(JSON.stringify(ops)); } catch (e) { reportError(e); }
           idbData.delete(name);
           q._r.state = 'done';
           q._r.result = undefined;
@@ -4794,11 +4912,13 @@
     }
     databases() {
       const out = [];
-      for (const k of H.storage(IDB_NS, 'keys') || []) {
-        if (!k.startsWith('db\0')) continue;
-        const name = k.slice(3), d = idbData.get(name);
+      for (const k of hostStorage(IDB_NS, 'keys') || []) {
+        if (!k.startsWith('m[')) continue;
+        let name;
+        try { [name] = JSON.parse(k.slice(1)); } catch { continue; }
+        const d = idbData.get(name);
         if (d && d.version === 0) continue;
-        try { out.push({ name, version: d ? d.version : JSON.parse(H.storage(IDB_NS, 'get', k)).version }); } catch {}
+        try { out.push({ name, version: d ? d.version : JSON.parse(hostStorage(IDB_NS, 'get', k)).version }); } catch {}
       }
       return Promise.resolve(out);
     }
@@ -4904,12 +5024,12 @@
   expose('MessageChannel', MessageChannel);
 
   // ---- navigator ----
-  const platform = String(H.platform || 'Linux x86_64');
+  const platform = String(HB.platform || 'Linux x86_64');
   const uaOS = platform.startsWith('Mac') ? 'Macintosh; Intel Mac OS X 10_15_7' : platform.startsWith('Win') ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64';
   const uaPlatform = platform.startsWith('Mac') ? 'macOS' : platform.startsWith('Win') ? 'Windows' : 'Linux';
   const CHROME = '142';
   const userAgent = `Mozilla/5.0 (${uaOS}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME}.0.0.0 Safari/537.36`;
-  const language = String(H.language || 'en-US');
+  const language = String(HB.language || 'en-US');
   const languages = Object.freeze(language.includes('-') ? [language, language.split('-')[0]] : [language]);
   const brands = Object.freeze([
     Object.freeze({ brand: 'Chromium', version: CHROME }),
@@ -4947,10 +5067,10 @@
   class Clipboard extends EventTarget {
     constructor(t) { if (t !== kToken) throw illegal(); super(); }
     writeText(data) {
-      try { need(arguments, 1, 'writeText', 'Clipboard'); H.clipboardWrite(String(data)); return Promise.resolve(); } catch (e) { return Promise.reject(domErr(e, 'NotAllowedError')); }
+      try { need(arguments, 1, 'writeText', 'Clipboard'); HB.clipboardWrite(String(data)); return Promise.resolve(); } catch (e) { return Promise.reject(domErr(e, 'NotAllowedError')); }
     }
     readText() {
-      try { return Promise.resolve(String(H.clipboardRead() ?? '')); } catch (e) { return Promise.reject(domErr(e, 'NotAllowedError')); }
+      try { return Promise.resolve(String(HB.clipboardRead() ?? '')); } catch (e) { return Promise.reject(domErr(e, 'NotAllowedError')); }
     }
     write(items) {
       need(arguments, 1, 'write', 'Clipboard');
@@ -5074,7 +5194,10 @@
   }
   class StorageManager {
     constructor(t) { if (t !== kToken) throw illegal(); }
-    estimate() { return Promise.resolve({ quota: 2 ** 31, usage: 0, usageDetails: {} }); }
+    estimate() {
+      const e = hostEstimate();
+      return Promise.resolve({ quota: e.quota, usage: e.usage, usageDetails: e.usage ? { indexedDB: e.usage } : {} });
+    }
     persist() { return Promise.resolve(false); }
     persisted() { return Promise.resolve(false); }
   }
@@ -5167,7 +5290,7 @@
     const u = parseRelative(v);
     if (!u) throw new DOMException(`Failed to execute '${method}' on 'Location': '${v}' is not a valid URL.`, 'SyntaxError');
     if (u.scheme === 'javascript') return;
-    if (originOf(u) !== originOf(loc)) { H.openURL(serialize(u)); return; }
+    if (originOf(u) !== originOf(loc)) { HB.openURL(serialize(u)); return; }
     setLocation(u, replace, null);
   };
   const withLoc = (f) => { const u = new URL(kToken, copyRecord(loc)); f(u); navigate(u.href, false, 'assign'); };
@@ -5231,7 +5354,7 @@
   if (typeof G.open !== 'function') {
     def(G, 'open', function open(url = '') {
       const s = String(url);
-      if (s) { const u = parseRelative(s); if (u && u.scheme !== 'javascript') H.openURL(serialize(u)); }
+      if (s) { const u = parseRelative(s); if (u && u.scheme !== 'javascript') HB.openURL(serialize(u)); }
       return null;
     });
   }

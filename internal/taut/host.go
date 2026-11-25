@@ -190,6 +190,11 @@ func (t *Taut) installHost(r *runtime) {
 	// ---- data ----
 	sync("kv", func(a []json.RawMessage) (any, error) {
 		op, ns, key := strArg(a, 0), strArg(a, 1), strArg(a, 2)
+		if ns == "indexedDB" && op != "list" && op != "read" {
+			// IndexedDB's records change through its transactions alone:
+			// jsrt's commit keeps the count its quota is held to
+			return nil, fmt.Errorf("taut: kv %s: the indexedDB namespace is written by IndexedDB", op)
+		}
 		switch op {
 		case "list":
 			return t.data.list(ns), nil

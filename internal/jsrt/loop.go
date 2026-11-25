@@ -24,6 +24,9 @@ type Runtime struct {
 	ctx    context.Context // cancelled by Close
 	cancel context.CancelFunc
 
+	wcKeys *keyStore // Web Crypto's keys by handle (webcrypto.go; JS thread)
+	idb    idbUsage  // IndexedDB's stored bytes, for its quota (boot.go idbCommit)
+
 	// seq: the ExposeAsyncSeq calls waiting, run in order on one
 	// goroutine while seqOn
 	seqMu sync.Mutex
