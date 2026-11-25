@@ -31,7 +31,15 @@ func onQuitPlan(t *testing.T, socket string) Plan {
 // quit. The installer (clack.iss: CloseApplications=force,
 // RestartApplications=no) closed it and nothing started it again.
 func TestOnQuitInstallSkipsAReopenedClack(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "i.sock")
+	// a short directory: macOS's sun_path holds 104 bytes, and t.TempDir()
+	// under /var/folders with the test's name runs past it (the test
+	// skipped there); Clack's own socket is os.TempDir()/clack-….sock
+	dir, err := os.MkdirTemp("", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "i.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Skipf("no unix socket here: %v", err)

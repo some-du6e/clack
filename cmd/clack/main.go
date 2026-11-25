@@ -583,8 +583,7 @@ func main() {
 			// window's WM_ENDSESSION returns: the exit line goes first, then
 			// the quit it starts gets up to 3 s.
 			tray.OnSessionEnd(func(why string) {
-				sessionEnding.Store(true) // whatever quit is running: nothing installs (quitInstallBlocked)
-				quit(why)
+				sessionEnds(why, quit) // whatever quit is running: nothing installs (quitInstall)
 				select {
 				case <-runDone:
 				case <-time.After(3 * time.Second):
@@ -607,15 +606,14 @@ func main() {
 	go func() {
 		s := <-sigs
 		signal.Stop(sigs)
-		if s == syscall.SIGTERM || s == syscall.SIGHUP {
-			// a Linux (or macOS) session ending sends these: the AppImage
-			// swap mustn't start as the session goes (quitInstallBlocked)
-			sessionEnding.Store(true)
-		}
-		quit("signal: " + s.String())
+		signalQuit(s, runtime.GOOS, quit) // a session's end outside macOS installs nothing
 	}()
 	go func() {
 		err := a.Run()
+		// a launch from now on waits for this Clack to go rather than
+		// handing over to it (the helper's start and the logs take
+		// seconds)
+		inst.Quitting()
 		code, why := 0, a.ExitReason()
 		if err != nil {
 			log.Print(err)
@@ -625,11 +623,11 @@ func main() {
 			}
 		}
 		// a downloaded update the user didn't restart into goes in now, as
-		// Slack's does on quit (ui.Options.InstallUpdateOnQuit); not when
-		// Windows ends the session, which may kill the installer or the
-		// swap partway: the next quit installs it
-		if err := quitInstallBlocked(why, sessionEnding.Load()); err != nil {
-			log.Printf("update: nothing installs on this quit: %v", err)
+		// Slack's does on quit (ui.Options.InstallUpdateOnQuit); not as the
+		// session ends (sessionEnds), which may kill the installer or the
+		// swap partway, nor after a window error: the next quit installs it
+		if ierr := quitInstall(why, err); ierr != nil {
+			log.Printf("update: nothing installs on this quit: %v", ierr)
 		} else if tag, err := a.InstallUpdateOnQuit(); tag != "" {
 			switch {
 			case errors.Is(err, errNotOnQuit):
@@ -673,7 +671,10 @@ func main() {
 			// macOS asked Clack to quit (Gio patch 58): AppKit waits while
 			// Clack logs and records why and quits as its own Quit does;
 			// the process ends when Clack exits
-			go quit("macOS asked Clack to quit (the Dock's Quit, log out, restart or shut down, or a quit Apple Event)")
+			// (the quit Apple Event's reason is read now, while AppKit
+			// asks: a log out, restart or shut down installs nothing)
+			ends := desktop.QuitEndsSession()
+			go appleQuit(ends, quit)
 		}
 	}
 }

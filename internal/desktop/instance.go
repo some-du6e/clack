@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,6 +31,8 @@ var ErrAnotherInstance = errors.New("desktop: another instance is listening")
 type Instance struct {
 	ln   net.Listener
 	path string
+	// quitting: Run returned (Quitting); launches are told to wait
+	quitting atomic.Bool
 }
 
 // InstanceKey names configDir's instance: separate CLACK_HOME directories
@@ -80,19 +83,46 @@ func forward(path string, req Request) bool {
 	if path == "" {
 		return false
 	}
+	deadline := time.Now().Add(forwardQuitWait)
+	for {
+		switch forwardOnce(path, req) {
+		case "ok":
+			return true
+		case quittingReply:
+			// the running Clack is quitting: once its socket goes this
+			// launch is the Clack (Listen); a quit that takes longer
+			// than forwardQuitWait leaves it to Listen's own answer
+			if time.Now().Before(deadline) {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+		}
+		return false
+	}
+}
+
+// forwardQuitWait is how long a launch waits for a quitting Clack to go.
+var forwardQuitWait = 30 * time.Second
+
+// forwardOnce hands req to the instance on path once: its answer, or ""
+// when nobody answered.
+func forwardOnce(path string, req Request) string {
 	c, err := net.DialTimeout("unix", path, time.Second)
 	if err != nil {
-		return false
+		return ""
 	}
 	defer c.Close()
 	allowForeground() // let the running instance raise its window (Windows)
 	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
 	b, _ := json.Marshal(req)
 	if _, err := c.Write(append(b, '\n')); err != nil {
-		return false
+		return ""
 	}
 	line, err := bufio.NewReader(c).ReadString('\n')
-	return err == nil && strings.TrimSpace(line) == "ok"
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(line)
 }
 
 // Listen makes this process the primary instance: handle runs (on its own
@@ -145,9 +175,29 @@ func (in *Instance) serve(handle func(Request)) {
 			if json.Unmarshal([]byte(line), &req) != nil {
 				return
 			}
+			if in.quitting.Load() {
+				// quitting (Run returned): a launch now waits for the
+				// socket to go and starts on its own, rather than
+				// handing over to a Clack that won't show it
+				_, _ = c.Write([]byte(quittingReply + "\n"))
+				return
+			}
 			_, _ = c.Write([]byte("ok\n"))
 			handle(req)
 		}()
+	}
+}
+
+// quittingReply is a quitting instance's answer to a forwarded launch.
+const quittingReply = "quitting"
+
+// Quitting marks the instance as quitting: from now on a later launch is
+// told so, waits for this one to close the socket, and starts on its own
+// (an update installing on quit, the run record and the logs keep a
+// quitting Clack up for seconds after its window went).
+func (in *Instance) Quitting() {
+	if in != nil {
+		in.quitting.Store(true)
 	}
 }
 

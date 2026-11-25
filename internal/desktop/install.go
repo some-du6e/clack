@@ -17,8 +17,10 @@ import (
 	"time"
 )
 
-// Installing a downloaded update, only ever from the banner's "Install and
-// restart" click (ui.Options.InstallUpdate):
+// Installing a downloaded update, from the banner's "Install and restart"
+// click (ui.Options.InstallUpdate), or as Clack quits without one
+// (ui.Options.InstallUpdateOnQuit: the macOS app, Windows' silent installer
+// and portable exe and the AppImage, staged when the download finished):
 //
 //  1. Prepare runs while Clack is still open: it unpacks the package next
 //     to what it replaces (a .app from the dmg, Clack.exe from the zip),
@@ -27,7 +29,9 @@ import (
 //  2. StartHelper copies the running executable to a temp directory and
 //     starts it as `clack -apply-update plan.json`; Clack then quits.
 //  3. The helper (ApplyUpdate) waits for Clack to exit, swaps the new copy
-//     in (or runs the Windows installer silently), and starts Clack again.
+//     in (or runs the Windows installer silently, its hash checked again
+//     first), and starts Clack again after Install and restart; on a quit
+//     it starts nothing.
 
 // Package is a downloaded, verified update.
 type Package struct {
@@ -46,6 +50,10 @@ type Plan struct {
 	Swap *Swap `json:"swap,omitempty"`
 	// Run is a command to run and wait for (the Windows installer).
 	Run []string `json:"run,omitempty"`
+	// RunSHA256 is Run[0]'s SHA-256 (the downloaded installer, kept in
+	// the download cache): the helper checks it again just before running
+	// it, however long ago the download was verified.
+	RunSHA256 string `json:"run_sha256,omitempty"`
 	// Relaunch starts Clack again, whatever happened.
 	Relaunch []string `json:"relaunch,omitempty"`
 	// Stage is the directory Prepare unpacked into, removed afterwards.
@@ -120,6 +128,7 @@ func Prepare(ctx context.Context, in Install, pkg Package) (Plan, error) {
 	case KindWinInstaller:
 		p.Run = append([]string{pkg.Path}, WindowsSetupArgs...)
 		p.Run = append(p.Run, "/LOG="+pkg.Path+".log")
+		p.RunSHA256 = pkg.SHA256
 		p.Relaunch = []string{in.Exe}
 		return p, nil
 	case KindWinPortable:
@@ -176,9 +185,15 @@ func Prepare(ctx context.Context, in Install, pkg Package) (Plan, error) {
 }
 
 // stageNext makes a staging directory beside target (same volume, so the
-// swap is a rename).
+// swap is a rename), hidden on Windows, which shows dot-folders: a
+// portable Clack's stage waits beside Clack.exe from the download until
+// the quit.
 func stageNext(target string) (string, error) {
-	return os.MkdirTemp(filepath.Dir(target), stagePrefix)
+	d, err := os.MkdirTemp(filepath.Dir(target), stagePrefix)
+	if err == nil {
+		hidePath(d)
+	}
+	return d, err
 }
 
 func prepareMac(ctx context.Context, in Install, pkg Package, p Plan) (Plan, error) {
@@ -429,6 +444,11 @@ func runArgs(p Plan) []string {
 
 func installPlan(p Plan) error {
 	if run := runArgs(p); len(run) > 0 {
+		if p.RunSHA256 != "" {
+			if err := VerifyFile(run[0], p.RunSHA256); err != nil {
+				return fmt.Errorf("update: the installer changed since its download was checked: %w", err)
+			}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		if err := runCmd(ctx, run[0], run[1:]...); err != nil {
@@ -452,6 +472,7 @@ func installPlan(p Plan) error {
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("update: moving the old copy aside: %w", err)
 		}
+		hidePath(old) // a Clack reopened meanwhile runs from it, and it stays
 		if err := os.Rename(s.New, s.Target); err != nil {
 			_ = os.Rename(old, s.Target)
 			return fmt.Errorf("update: putting the new copy in place: %w", err)
@@ -535,7 +556,8 @@ func PrepareQuiet(ctx context.Context, in Install, pkg Package) (Plan, error) {
 // UpdateUnsupported is why Slack's getIsUpdateSupported (main.bundle.cjs
 // 4.53.276) would say this copy can't update itself in place, or "": it
 // runs from the temp directory (a translocated or unpacked copy) or from
-// a disk image under /Volumes ("running from DMG").
+// Clack's own disk image ("running from DMG": release.yml's dmg mounts as
+// /Volumes/Clack with Clack.app at its root).
 func UpdateUnsupported(in Install) string {
 	exe := in.Exe
 	if exe == "" || in.Kind == KindAppImage {
@@ -546,9 +568,10 @@ func UpdateUnsupported(in Install) string {
 	switch {
 	case strings.Contains(in.Target, "/AppTranslocation/"):
 		return "running from a translocated copy"
-	case runtime.GOOS == "darwin" && strings.Contains(exe, "/Volumes/Clack.app"):
-		// Slack's own check, execPath.includes("/Volumes/Slack.app"): an
-		// app on an external drive under /Volumes updates as any other
+	case runtime.GOOS == "darwin" && strings.Contains(exe, "/Volumes/Clack/Clack.app"):
+		// Slack's check, execPath.includes("/Volumes/Slack.app"), with
+		// Clack's dmg layout: an app on an external drive under /Volumes
+		// updates as any other
 		return "running from DMG"
 	}
 	if tmp := os.TempDir(); tmp != "" && strings.HasPrefix(filepath.Clean(exe), filepath.Clean(tmp)+string(filepath.Separator)) {

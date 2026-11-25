@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -105,14 +107,19 @@ func TestNoInstallOnQuitAsTheSessionEnds(t *testing.T) {
 		"Windows is shutting down or restarting, forced " + desktop.SessionEndMark,
 		"an installer or update is replacing Clack's files (Windows Restart Manager closed it) " + desktop.SessionEndMark + " (render: device lost)",
 	} {
-		if err := quitBlocked(why, false); !errors.Is(err, errNotOnQuit) {
+		if err := quitInstallBlocked(why, false); !errors.Is(err, errNotOnQuit) {
 			t.Errorf("%q: %v, want errNotOnQuit", why, err)
 		}
 	}
-	for _, why := range []string{"Quit", "the window closed", "SIGTERM"} {
-		if err := quitBlocked(why, false); err != nil {
+	// the user's quits: Quit, the window closed, Ctrl+C
+	for _, why := range []string{"Quit", "the window closed", "signal: interrupt"} {
+		if err := quitInstallBlocked(why, false); err != nil {
 			t.Errorf("%q: %v, want it to install", why, err)
 		}
+	}
+	// a SIGTERM outside macOS is the session's end (signalQuit)
+	if err := quitInstallBlocked("signal: terminated", true); !errors.Is(err, errNotOnQuit) {
+		t.Errorf("a SIGTERM as the session ends: %v, want errNotOnQuit", err)
 	}
 	// the kinds that swap in silently go on quit once staged
 	for _, k := range []desktop.InstallKind{desktop.KindMacApp, desktop.KindWinInstaller, desktop.KindWinPortable, desktop.KindAppImage} {
@@ -123,14 +130,83 @@ func TestNoInstallOnQuitAsTheSessionEnds(t *testing.T) {
 	}
 }
 
-// A session end that comes while a user's quit is already closing (its
-// exit reason the user's, "Quit") still installs nothing: the reason says
-// only the first quit, the session's end sets sessionEnding.
+// freshSession starts a test with the session not ending.
+func freshSession(t *testing.T) {
+	sessionEnding.Store(false)
+	t.Cleanup(func() { sessionEnding.Store(false) })
+}
+
+// A session end that comes while a user's quit is already closing still
+// installs nothing: Windows' WM_ENDSESSION (the tray's OnSessionEnd runs
+// sessionEnds) during a Quit whose exit reason stays the user's, "Quit".
 func TestNoInstallWhenTheSessionEndsDuringAQuit(t *testing.T) {
-	if err := quitBlocked("Quit", true); !errors.Is(err, errNotOnQuit) {
+	freshSession(t)
+	if err := quitInstall("Quit", nil); err != nil {
+		t.Fatalf("a plain Quit: %v, want it to install", err)
+	}
+	var started []string
+	sessionEnds("Windows is signing the user out "+desktop.SessionEndMark, func(why string) { started = append(started, why) })
+	if len(started) != 1 {
+		t.Errorf("the session's end started %d quits, want 1 (Clack's quit records the first reason)", len(started))
+	}
+	if err := quitInstall("Quit", nil); !errors.Is(err, errNotOnQuit) {
 		t.Errorf("a session ending during a Quit: %v, want errNotOnQuit", err)
 	}
-	if err := quitBlocked("Quit", false); err != nil {
-		t.Errorf("a plain Quit: %v, want it to install", err)
+}
+
+// A signal's quit: SIGTERM and SIGHUP end a Linux session (and are Go's for
+// a Windows console's sign-out and shut down), so nothing installs; on
+// macOS they're a plain kill, which installs as it did before the
+// Windows and AppImage kinds; Ctrl+C installs everywhere.
+func TestSignalQuitMarksTheSessionsEnd(t *testing.T) {
+	for _, c := range []struct {
+		goos    string
+		sig     os.Signal
+		blocked bool
+	}{
+		{"linux", syscall.SIGTERM, true},
+		{"linux", syscall.SIGHUP, true},
+		{"linux", os.Interrupt, false},
+		{"windows", syscall.SIGTERM, true},
+		{"darwin", syscall.SIGTERM, false},
+		{"darwin", syscall.SIGHUP, false},
+		{"darwin", os.Interrupt, false},
+	} {
+		freshSession(t)
+		var why string
+		signalQuit(c.sig, c.goos, func(w string) { why = w })
+		if want := "signal: " + c.sig.String(); why != want {
+			t.Errorf("%s %v: the quit's reason %q, want %q", c.goos, c.sig, why, want)
+		}
+		if err := quitInstall(why, nil); errors.Is(err, errNotOnQuit) != c.blocked {
+			t.Errorf("%s %v: %v, want blocked %v", c.goos, c.sig, err, c.blocked)
+		}
+	}
+}
+
+// macOS's log out, restart and shut down reach Clack as the quit Apple
+// Event (desktop.QuitEndsSession reads its reason): nothing installs; the
+// Dock's Quit installs.
+func TestAppleQuitMarksTheSessionsEnd(t *testing.T) {
+	for _, ends := range []bool{false, true} {
+		freshSession(t)
+		var why string
+		appleQuit(ends, func(w string) { why = w })
+		if !strings.HasPrefix(why, "macOS asked Clack to quit") {
+			t.Errorf("ends %v: the quit's reason %q", ends, why)
+		}
+		if err := quitInstall(why, nil); errors.Is(err, errNotOnQuit) != ends {
+			t.Errorf("a quit Apple Event that ends the session %v: %v", ends, err)
+		}
+	}
+}
+
+// A window that ended with an error installs nothing: on Wayland that is
+// the compositor going as the session ends ("display file descriptor
+// gone"), before any SIGTERM.
+func TestWindowErrorInstallsNothing(t *testing.T) {
+	freshSession(t)
+	if err := quitInstall("the window closed (wayland: display file descriptor gone)", errors.New("wayland: display file descriptor gone")); !errors.Is(err, errNotOnQuit) {
+		t.Errorf("the display went: %v, want errNotOnQuit", err)
 	}
 }

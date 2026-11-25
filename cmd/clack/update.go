@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/some-du6e/clack/internal/desktop"
@@ -194,11 +195,63 @@ func (u *updates) install(info ui.UpdateInfo) error {
 	return err
 }
 
-// sessionEnding is set the moment the session starts ending: Windows'
-// WM_ENDSESSION (the tray's OnSessionEnd), or SIGTERM / SIGHUP. It holds
-// even when that comes while a user's quit is already closing, which the
-// exit reason (the first quit's) doesn't say.
+// sessionEnding is set the moment the session starts ending (sessionEnds).
+// It holds even when that comes while a user's quit is already closing,
+// which the exit reason (the first quit's) doesn't say.
 var sessionEnding atomic.Bool
+
+// sessionEnds is the session's end reaching Clack: Windows' WM_ENDSESSION
+// (the tray's OnSessionEnd), a Linux or Windows SIGTERM or SIGHUP
+// (signalQuit), macOS's quit Apple Event of a log out, restart or shut
+// down (appleQuit). Nothing installs on whatever quit is running
+// (quitInstall), then quit(why) starts Clack's own, if none is.
+func sessionEnds(why string, quit func(string)) {
+	sessionEnding.Store(true)
+	quit(why)
+}
+
+// signalQuit is the quit a signal starts. SIGTERM and SIGHUP are how a
+// Linux session ends Clack (logind, the X or Wayland session's end, a
+// closed terminal), and Go's for a Windows console's close, sign-out and
+// shut down: a session's end. On macOS a session ends with the quit Apple
+// Event instead, and a SIGTERM is a plain kill, which installs as Quit
+// does. SIGINT (Ctrl+C) is the user's quit everywhere.
+func signalQuit(s os.Signal, goos string, quit func(string)) {
+	why := "signal: " + s.String()
+	if goos != "darwin" && (s == syscall.SIGTERM || s == syscall.SIGHUP) {
+		sessionEnds(why, quit)
+		return
+	}
+	quit(why)
+}
+
+// appleQuit is the quit macOS asks for (the app's TerminateEvent): the
+// session's end when the quit Apple Event says log out, restart or shut
+// down (desktop.QuitEndsSession, read while AppKit asks), else the Dock's
+// Quit or a scripted one.
+func appleQuit(endsSession bool, quit func(string)) {
+	const why = "macOS asked Clack to quit (the Dock's Quit, log out, restart or shut down, or a quit Apple Event)"
+	if endsSession {
+		sessionEnds(why+": the session is ending", quit)
+		return
+	}
+	quit(why)
+}
+
+// quitInstall decides, once Run returned with exit reason why and runErr,
+// whether a staged update installs now (nil) or waits (errNotOnQuit, and
+// why): not while the session ends, and not when the window ended with an
+// error, which on Linux is the display going (Wayland's "display file
+// descriptor gone" as the compositor exits with the session).
+func quitInstall(why string, runErr error) error {
+	if err := quitInstallBlocked(why, sessionEnding.Load()); err != nil {
+		return err
+	}
+	if runErr != nil {
+		return fmt.Errorf("%w: Clack's window ended with an error (%v)", errNotOnQuit, runErr)
+	}
+	return nil
+}
 
 // quitInstallBlocked is why a quit with exit reason why installs nothing,
 // or nil: the session is ending (ending, or desktop.SessionEndMark in the

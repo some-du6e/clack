@@ -29,9 +29,10 @@ func TestUpdateUnsupported(t *testing.T) {
 		cases = append(cases, struct {
 			in   Install
 			want string
-		}{Install{Target: "/Volumes/Clack.app", Exe: "/Volumes/Clack.app/Contents/MacOS/clack"}, "running from DMG"},
-			// Slack's check is "/Volumes/Slack.app" only: an app on an
-			// external drive updates (α.166 and α.167 did)
+		}{Install{Target: "/Volumes/Clack/Clack.app", Exe: "/Volumes/Clack/Clack.app/Contents/MacOS/clack"}, "running from DMG"},
+			// Clack's own dmg (release.yml: -volname Clack, Clack.app at
+			// its root) only: an app on an external drive updates (α.166
+			// and α.167 did)
 			struct {
 				in   Install
 				want string
