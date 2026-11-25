@@ -199,14 +199,14 @@ func (e *hcEnv) fence() {
 func TestHistoryChangedDropsCachedMessages(t *testing.T) {
 	e := newHCEnv(t)
 	n := len(e.tss)
-	gone := append([]string(nil), e.tss[n-30:n-20]...)
+	gone := append([]string(nil), e.tss[n-20:n-10]...) // in the newest page of 28
 	if g := ghosts(e.page(), gone); len(g) != len(gone) {
 		t.Fatalf("control: the cached page holds %d of the 10 messages to delete", len(g))
 	}
 	if d := e.fs.DeleteQuiet(e.ch, gone...); d != len(gone) {
 		t.Fatalf("control: the fake deleted %d of %d", d, len(gone))
 	}
-	e.fs.Push(fakeslack.HistoryChangedEvent("channel_history_changed", e.ch, e.tss[n-20], false))
+	e.fs.Push(fakeslack.HistoryChangedEvent("channel_history_changed", e.ch, e.tss[n-10], false))
 	e.fence()
 	if g := ghosts(e.page(), gone); len(g) > 0 {
 		t.Errorf("after channel_history_changed the cached page still holds %d deleted messages (%v)", len(g), g)

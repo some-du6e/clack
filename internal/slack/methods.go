@@ -110,10 +110,23 @@ type HistoryPage struct {
 	PinCount int       `json:"pin_count"`
 }
 
+// DefaultHistoryLimit is Slack's determineDefaultHistoryLimit (client-boot
+// rGEL): the page size of every conversations.history read the message
+// pane makes, its newest page, an older or a newer one and each half of a
+// jump (fetchChannelHistory passes no limit, so fetchHistory takes this),
+// and of the thread pane's conversations.replies reads (fetchReplies). It
+// is 3 for two of Slack's own conversations, 28 for every other.
+func DefaultHistoryLimit(ch string) int {
+	if ch == "C105M7SCQ" || ch == "G01A79C5B6E" {
+		return 3
+	}
+	return 28
+}
+
 func (c *Client) History(ctx context.Context, ch string, o HistoryOpts) (*HistoryPage, error) {
 	p := url.Values{"channel": {ch}, "include_pin_count": {"true"}, "include_all_metadata": {"true"}}
 	if o.Limit == 0 {
-		o.Limit = 50
+		o.Limit = DefaultHistoryLimit(ch)
 	}
 	p.Set("limit", strconv.Itoa(o.Limit))
 	if o.Latest != "" {

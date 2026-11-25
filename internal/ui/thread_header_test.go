@@ -15,6 +15,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -180,9 +181,11 @@ func TestThreadHeaderJumpsToRoot(t *testing.T) {
 		// plenty of newer messages, so the root is off screen at the newest
 		// (pushed too: a conversation the client already holds hears of
 		// them only from realtime)
+		var newest string
 		for n := 0; n < 40; n++ {
-			_, ev := e.fs.PostQuiet(c.Channel, users[n%len(users)], "a synthetic newer message")
+			ts, ev := e.fs.PostQuiet(c.Channel, users[n%len(users)], "a synthetic newer message")
 			e.fs.Push(ev)
+			newest = ts
 		}
 		e.settle(300 * time.Millisecond)
 		e.openChannel(c.Channel)
@@ -194,8 +197,8 @@ func TestThreadHeaderJumpsToRoot(t *testing.T) {
 			if !ok {
 				return false
 			}
-			msgs, loaded, _ := l.LayoutSig()
-			return loaded && msgs > 40
+			_, loaded, _ := l.LayoutSig()
+			return loaded && slices.Contains(l.LoadedTS(), newest) // the newest page (28) of them
 		})
 		// at the newest message (a DM opens at its first unread, which can
 		// sit next to the root)

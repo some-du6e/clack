@@ -1231,7 +1231,10 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	a.noteLoaded(ch)
 	pins, subs, live, gen := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq(), a.S.EndGen()
 	stale := a.staleMark()
-	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
+	// Slack's newest page: fetchHistory {limit: 28, inclusive: true}
+	// (slack.DefaultHistoryLimit). Clack read 50: on #giant-wall's shape
+	// (908k characters a message) about 90 MB where Slack's read 50
+	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: slack.DefaultHistoryLimit(ch), Inclusive: true})
 	if err != nil {
 		return err
 	}

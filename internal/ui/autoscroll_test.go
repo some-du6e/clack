@@ -33,7 +33,7 @@ func TestAutoscrollInClack(t *testing.T) {
 	e.waitReady()
 	ch := fs.ChannelIDs()[2]
 	e.openChannel(ch)
-	e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 30 })
+	e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) >= 20 }) // a newest page (28)
 	e.settle(500 * time.Millisecond)
 	// mid-channel, so there is room both ways (it may open at the top of
 	// what's loaded): the bottom, then 1200px up

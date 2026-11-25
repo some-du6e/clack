@@ -114,11 +114,11 @@ func TestHistoryChangedLists(t *testing.T) {
 		e := newUIHCEnv(t)
 		v := e.ownSendList(e.ch)
 		loaded := v.LoadedTS()
-		if len(loaded) < 30 {
+		if len(loaded) < 22 {
 			t.Fatalf("control: the list holds %d messages", len(loaded))
 		}
 		n := len(loaded)
-		gone, latest := append([]string(nil), loaded[n-25:n-15]...), loaded[n-15]
+		gone, latest := append([]string(nil), loaded[n-20:n-10]...), loaded[n-10] // in the newest page of 28
 		e.fs.DeleteQuiet(e.ch, gone...)
 		e.fs.Push(fakeslack.HistoryChangedEvent("channel_history_changed", e.ch, latest, false))
 		e.fence(v)

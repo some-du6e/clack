@@ -301,7 +301,7 @@ func TestSocketGapWake(t *testing.T) {
 func TestSocketGapJump(t *testing.T) {
 	e := newGapEnv(t, false)
 	ctx := context.Background()
-	for i := 0; i < 3; i++ { // page back to the channel's first messages
+	for i := 0; i < 10; i++ { // page back to the channel's first messages (pages of 28)
 		tl := e.a.S.Timeline(e.ch)
 		if tl == nil || !tl.HasMore {
 			break
@@ -335,9 +335,9 @@ func TestSocketGapMoreThanAPage(t *testing.T) {
 	missed := e.gap(60)
 	e.waitUp(ups + 1)
 	after := e.live("after the reconnect")
-	// the newest page (50) holds the gap's newest; the window has no hole
-	// from its oldest on
-	e.whole(append(missed[len(missed)-40:], after)...)
+	// the newest page (Slack's 28) holds the gap's newest; the window has
+	// no hole from its oldest on
+	e.whole(append(missed[len(missed)-20:], after)...)
 }
 
 // holdNewest holds the open conversation's next newest-page read

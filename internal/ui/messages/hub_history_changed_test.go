@@ -39,10 +39,10 @@ func TestHistoryChangeAcrossALoad(t *testing.T) {
 	e, fs := guardEnv(t, ch, nil, nil)
 	loaded := e.v.LoadedTS()
 	n := len(loaded)
-	if n < 30 {
+	if n < 22 {
 		t.Fatalf("control: the list holds %d messages", n)
 	}
-	gone, latest := append([]string(nil), loaded[n-25:n-15]...), loaded[n-15]
+	gone, latest := append([]string(nil), loaded[n-20:n-10]...), loaded[n-10] // in the newest page of 28
 	release := HoldLoad(ch, "")
 	defer release()
 	e.v.s.hb.refresh(e.v.s.m) // a reload out: its answer is core's history as it is now
