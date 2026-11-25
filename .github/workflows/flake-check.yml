@@ -7405,7 +7405,7 @@ jobs:
           rc=0
           for i in $(seq 1 "$COUNT"); do
             mkdir -p "$RUNNER_TEMP/giant-open/$i"
-            CLACK_GIANT_OUT="$RUNNER_TEMP/giant-open/$i" xvfb-run -a ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 8m -test.run '^TestGiantWallOpenSpans$' || rc=1
+            CLACK_GIANT_OUT="$RUNNER_TEMP/giant-open/$i" xvfb-run -a ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 8m -test.run '^(TestGiantWallOpenSpans|TestGiantWallReopenSpans)$' || rc=1
           done
           exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
