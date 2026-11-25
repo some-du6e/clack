@@ -282,15 +282,17 @@ func (s *Server) asSlackHost(w http.ResponseWriter, r *http.Request) bool {
 	if host == "" {
 		return false
 	}
+	// the connectivity checks (connectivity.go) aren't image loads: the
+	// photo tests' load log stays the pictures'
+	if s.serveConnectivity(w, r, host) {
+		return true
+	}
 	cookie := strings.Contains(r.Header.Get("Cookie"), "d=xoxd-fake")
 	ps := s.photos()
 	ps.mu.Lock()
 	ps.loads = append(ps.loads, PhotoLoad{URL: "https://" + host + r.URL.RequestURI(), Host: host, Cookie: cookie})
 	ps.mu.Unlock()
 	if s.serveSystemDMAsset(w, r, host) { // system_dm.go
-		return true
-	}
-	if s.serveConnectivity(w, r, host) { // connectivity.go
 		return true
 	}
 	name := path.Base(r.URL.Path)
