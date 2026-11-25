@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -18,7 +19,8 @@ func TestQuickReactionsFollowPrefs(t *testing.T) {
 	app, _ := newTestApp(t)
 	app.SetExperimentGroup("autocomplete_frequently_used_emojis_frecency", "") // emoji_use's counts (core's defaults hold the account's on)
 	h := coreHost{app: app, th: theme.New(false)}
-	r := &row{}
+	// a sent message, which takes reactions (quickReactionsShown)
+	r := &row{src: core.Message{Channel: tGen, TS: "1700000000.000100", User: "U000ALICE", Text: "hi"}}
 	var q quickBar
 	set := func(p store.Prefs, raw map[string]any) {
 		uipref.Set(p)
@@ -28,7 +30,7 @@ func TestQuickReactionsFollowPrefs(t *testing.T) {
 			m[k] = b
 		}
 		app.S.SetRawPrefs(m)
-		q.prepare(h, tGen, r)
+		q.prepare(h, tGen, r, false)
 	}
 	set(store.Prefs{}, nil)
 	if len(q.names) != 0 {

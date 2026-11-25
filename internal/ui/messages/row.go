@@ -1936,7 +1936,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 		y += r.tailParts(gtx, y, cw)
 	}
 	if isFailed(m) {
-		y += r.failedLine(gtx, rc, 0, y)
+		y += r.failedLine(gtx, rc, 0, y, cw)
 	}
 	if body.Size.Y == 0 && !rc.header {
 		y += dp(gtx, mt.nameLine)
@@ -3651,30 +3651,53 @@ func (pl *reactPill) count(gtx layout.Context, st slackc.Styled) layout.Dimensio
 
 // failedLine is MessageResend's footer under a failed send (boot-shared,
 // build 83aff18a; client-boot-styles .c-message_kit__resend__footer): a
-// 4x16 bar (foreground_low at .13, radius 2, 8px before the text), "Slack
+// flex row, its items centred: a 4x16 bar (foreground_low at .13, radius
+// 2, 8px before the text), then one block that wraps in the w left: "Slack
 // couldn’t send this message" in 13px at the resend's .7 foreground, an en
 // space's gap, then Try again and Cancel (removes the failed copy) with
-// "\u00a0|\u00a0" between them at .5; 4px under it.
-func (r *row) failedLine(gtx layout.Context, rc *rowCtx, x, y int) int {
+// "\u00a0|\u00a0" between them at .5, the links each kept whole; 4px
+// under it. In a narrow pane it takes more lines, so Cancel stays inside.
+func (r *row) failedLine(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 	c := rc.c
 	lh := dp(gtx, 20)
 	tint := func(col color.NRGBA, a float32) color.NRGBA {
 		col.A = uint8(float32(col.A)*a + .5)
 		return col
 	}
-	bh := dp(gtx, 16)
-	fill(gtx.Ops, image.Rect(x, y+(lh-bh)/2, x+dp(gtx, 4), y+(lh-bh)/2+bh), tint(c.Text, .13))
 	s := textStyle{size: 13, col: tint(c.Text, .7), lineH: 20}
-	xx := x + dp(gtx, 4) + dp(gtx, 8)
-	d := at(gtx, xx, y, func(gtx layout.Context) layout.Dimensions {
-		return label(gtx, rc.th, s, i18n.T("message", "Slack couldn’t send this message"))
-	})
-	xx += d.Size.X + dp(gtx, 6) // the en space after it (half of 13px)
-	link := func(btn *widget.Clickable, txt string) {
-		d := at(gtx, xx, y, func(gtx layout.Context) layout.Dimensions {
+	ls := textStyle{size: 13, weight: theme.Bold, col: c.Link, lineH: 20}
+	ss := textStyle{size: 13, col: tint(c.Text, .5), lineH: 20}
+	if r.retryBtn.Clicked(gtx) && rc.onRetry != nil {
+		rc.onRetry(r)
+	}
+	if r.discardBtn.Clicked(gtx) && rc.onDiscard != nil {
+		rc.onDiscard(r)
+	}
+	ps := failedFooterLayout(gtx, rc.th, s, ls, w)
+	btns := []*widget.Clickable{&r.retryBtn, &r.discardBtn}
+	lines := 1
+	for _, p := range ps {
+		lines = max(lines, p.l+1)
+	}
+	h := lines * lh
+	bh := dp(gtx, 16)
+	fill(gtx.Ops, image.Rect(x, y+(h-bh)/2, x+dp(gtx, 4), y+(h-bh)/2+bh), tint(c.Text, .13))
+	for i := range ps {
+		p := ps[i]
+		st := s
+		var btn *widget.Clickable
+		switch {
+		case p.link >= 0:
+			st, btn = ls, btns[p.link]
+		case p.sep:
+			st = ss
+		}
+		at(gtx, x+p.r.Min.X, y+p.r.Min.Y, func(gtx layout.Context) layout.Dimensions {
+			if btn == nil {
+				return label(gtx, rc.th, st, p.txt)
+			}
 			return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				ls := textStyle{size: 13, weight: theme.Bold, col: c.Link, lineH: 20}
-				dd := label(gtx, rc.th, ls, txt)
+				dd := label(gtx, rc.th, st, p.txt)
 				if btn.Hovered() {
 					base := dd.Size.Y - dd.Baseline
 					fill(gtx.Ops, image.Rect(0, base+dp(gtx, 1), dd.Size.X, base+dp(gtx, 2)), c.Link)
@@ -3682,21 +3705,67 @@ func (r *row) failedLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 				return dd
 			})
 		})
-		xx += d.Size.X
 	}
-	if r.retryBtn.Clicked(gtx) && rc.onRetry != nil {
-		rc.onRetry(r)
+	return h + dp(gtx, 4)
+}
+
+// footerPiece is one atom of failedLine's wrapping block: a word of the
+// text, a link (0 Try again, 1 Cancel; -1 none) or the separator, its
+// box from the footer's left and top, its line l.
+type footerPiece struct {
+	txt    string
+	link   int
+	sep    bool
+	cancel bool
+	r      image.Rectangle
+	l      int
+}
+
+// failedFooterLayout lays MessageResend's block out in a footer w wide:
+// after the 4px bar and its 8px, the text's words (a space between
+// them), an en space's gap (6px), Try again, the separator and Cancel,
+// each link kept whole, a word that doesn't fit going to the next 20px
+// line (s: the text's style, ls the links').
+func failedFooterLayout(gtx layout.Context, th *theme.Theme, s, ls textStyle, w int) []footerPiece {
+	lh := dp(gtx, 20)
+	space := measure(gtx, th, s, " ").X
+	type atom struct {
+		txt  string
+		st   textStyle
+		link int
+		sep  bool
+		gap  int
 	}
-	if r.discardBtn.Clicked(gtx) && rc.onDiscard != nil {
-		rc.onDiscard(r)
+	var as []atom
+	for i, wd := range strings.Fields(i18n.T("message", "Slack couldn’t send this message")) {
+		g := 0
+		if i > 0 {
+			g = space
+		}
+		as = append(as, atom{txt: wd, st: s, link: -1, gap: g})
 	}
-	link(&r.retryBtn, i18n.T("message", "Try again"))
-	d = at(gtx, xx, y, func(gtx layout.Context) layout.Dimensions {
-		return label(gtx, rc.th, textStyle{size: 13, col: tint(c.Text, .5), lineH: 20}, "\u00a0|\u00a0")
-	})
-	xx += d.Size.X
-	link(&r.discardBtn, i18n.T("message", "Cancel"))
-	return lh + dp(gtx, 4)
+	as = append(as, atom{txt: i18n.T("message", "Try again"), st: ls, link: 0, gap: dp(gtx, 6)}, // the en space
+		atom{txt: "\u00a0|\u00a0", st: s, link: -1, sep: true},
+		atom{txt: i18n.T("message", "Cancel"), st: ls, link: 1})
+	left := dp(gtx, 4) + dp(gtx, 8)
+	avail := max(w-left, 1)
+	cx, line := 0, 0
+	out := make([]footerPiece, 0, len(as))
+	for _, a := range as {
+		pw := measure(gtx, th, a.st, a.txt).X
+		g := a.gap
+		if cx > 0 && cx+g+pw > avail {
+			cx, line = 0, line+1
+		}
+		if cx == 0 {
+			g = 0
+		}
+		x0 := left + cx + g
+		out = append(out, footerPiece{txt: a.txt, link: a.link, sep: a.sep, cancel: a.link == 1, l: line,
+			r: image.Rect(x0, line*lh, x0+pw, line*lh+lh)})
+		cx += g + pw
+	}
+	return out
 }
 
 // systemLayout draws join/leave/topic messages: a 16px icon in the

@@ -3,6 +3,7 @@ package core
 import (
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/richtext"
@@ -37,13 +38,27 @@ func (a *App) ImageFile(u string) (*richtext.File, bool) {
 //   - files-tmb/<team>-<id>-<hash>/…;
 //
 // with id a file id (looksLikeFileId, oRye). "" for any other url.
+//
+// Slack reads new URL(url): the host lowercased, the pathname with its dot
+// segments resolved (%2e ones too), %2F kept encoded and a backslash read
+// as a slash. A path it reads otherwise than Go does (a "." or ".."
+// segment, an escaped dot, slash or backslash, a backslash) names no file
+// here: Slack's own file URLs carry none, and the image fetched would be
+// another file than the one Download saves.
 func (a *App) fileIDFromURL(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil || !slackHostName(u.Hostname()) {
+	if err != nil || !slackHostName(strings.ToLower(u.Hostname())) {
+		return ""
+	}
+	ep := strings.ToLower(u.EscapedPath())
+	if strings.Contains(ep, "%2e") || strings.Contains(ep, "%2f") || strings.Contains(ep, "%5c") || strings.ContainsRune(u.Path, '\\') {
 		return ""
 	}
 	p := strings.Trim(u.Path, "/")
 	seg := strings.Split(p, "/")
+	if slices.Contains(seg, ".") || slices.Contains(seg, "..") {
+		return ""
+	}
 	switch {
 	case strings.HasPrefix(p, "files/"):
 		if len(seg) < 3 || seg[1] == "" || !a.urlMember(seg[1]) {

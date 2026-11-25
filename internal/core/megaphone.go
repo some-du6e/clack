@@ -6,7 +6,7 @@ package core
 // channelOpenedEvent fRek, the RTM handlers in client-boot-render; CDN
 // build bv1-13):
 //
-//   - Two stores: the global spaces (megaphoneSpaces) and per channel
+//   - Two stores: the global spaces (megaphoneKnownSpaces) and per channel
 //     channelSpaces. A load made for a channel (REQUEST_SPACES or
 //     CHANNEL_OPEN with channelId) files its answers under that channel,
 //     except the spaces in megaphoneAlwaysGlobal; a load without one (the
@@ -136,6 +136,22 @@ func (a *App) MegaphoneNotification(space, ch string) string {
 	return m.global[space]
 }
 
+// megaphoneFile is setMegaphoneNotification for one answered (or pushed)
+// space: name in space's store (ch's, "" the global one), and the global
+// generic_new_badge's badges from its data.
+func (a *App) megaphoneFile(space, ch, name string, data json.RawMessage) {
+	a.megaphoneSet(space, ch, name)
+	if space == SpaceGenericNewBadge && ch == "" {
+		var d struct {
+			Badges []string `json:"badges"`
+		}
+		_ = json.Unmarshal(data, &d)
+		a.mega.mu.Lock()
+		a.mega.badges = d.Badges
+		a.mega.mu.Unlock()
+	}
+}
+
 // megaphoneSet is setMegaphoneNotification (G0).
 func (a *App) megaphoneSet(space, ch, name string) {
 	m := &a.mega
@@ -159,7 +175,7 @@ func (a *App) megaphoneSet(space, ch, name string) {
 
 // loadMegaphone is loadMegaphoneNotificationData: megaphone.notifications.list
 // {event, channel_id, reason} and each answered space filed as Slack
-// files it, the ones its client knows only (megaphoneSpaces). extra are
+// files it, the ones its client knows only (megaphoneKnownSpaces). extra are
 // more form fields (is_team_on_trial). It returns space -> notification
 // name as answered and filed.
 func (a *App) loadMegaphone(ctx context.Context, event map[string]any, ch, reason string, extra url.Values) (map[string]string, error) {
@@ -168,12 +184,16 @@ func (a *App) loadMegaphone(ctx context.Context, event map[string]any, ch, reaso
 	if ch != "" {
 		p.Set("channel_id", ch)
 	}
+	if a.bbm.Load() {
+		// criticalOnly: isBBMPrefOn && !isBBMUnsupported (WgP3 VA)
+		p.Set("critical_only", "true")
+	}
 	for k, v := range extra {
 		p[k] = v
 	}
 	var r struct {
 		Notifications map[string]*struct {
-			Name string          `json:"name"`
+			Name *string         `json:"name"`
 			Data json.RawMessage `json:"data"`
 		} `json:"notifications"`
 	}
@@ -182,33 +202,46 @@ func (a *App) loadMegaphone(ctx context.Context, event map[string]any, ch, reaso
 	}
 	out := make(map[string]string, len(r.Notifications))
 	for space, n := range r.Notifications {
-		if !megaphoneSpaces[space] {
+		if !megaphoneKnownSpaces[space] {
 			continue // a space Slack's client doesn't know (megaphone_spaces.go)
 		}
 		name := ""
-		if n != nil {
-			name = n.Name
+		if n != nil && n.Name != nil {
+			name = *n.Name
 		}
 		out[space] = name
 		at := ch
-		if megaphoneAlwaysGlobal[space] {
+		if megaphoneAlwaysGlobal[space] || n != nil && n.Name == nil {
+			// 17Qm files ze.SLACK_CONNECT_SPONSORED_CONNECTIONS_WELCOME_MODAL's
+			// and ze.AUTO_SLACK_RECORD_CHANNELS_INTRO_COACHMARK's globally;
+			// the desktop build's ze (oCWb) has neither name, so both
+			// compare with undefined: a notification answered with no
+			// name is the one filed globally (megaphone_spaces.go)
 			at = ""
 		}
-		a.megaphoneSet(space, at, name)
-		if space == SpaceGenericNewBadge && at == "" {
-			var d struct {
-				Badges []string `json:"badges"`
-			}
-			if n != nil {
-				_ = json.Unmarshal(n.Data, &d)
-			}
-			a.mega.mu.Lock()
-			a.mega.badges = d.Badges
-			a.mega.mu.Unlock()
+		var data json.RawMessage
+		if n != nil {
+			data = n.Data
 		}
+		a.megaphoneFile(space, at, name, data)
 	}
 	a.emit(Event{Type: "megaphone", Channel: ch})
 	return out, nil
+}
+
+// SetBBMMode tells core the simplified layout mode (BBM) is on and
+// supported (WgP3 VA): megaphone.notifications.list asks for the critical
+// notifications only then (critical_only).
+func (a *App) SetBBMMode(on bool) { a.bbm.Store(on) }
+
+// ClearAllMegaphoneSpaces is clearAllMegaphoneSpaces (mliN we), which
+// startBBM dispatches: the global spaces empty (the channels' stay).
+func (a *App) ClearAllMegaphoneSpaces() {
+	m := &a.mega
+	m.mu.Lock()
+	m.global, m.badges = nil, nil
+	m.mu.Unlock()
+	a.emit(Event{Type: "megaphone"})
 }
 
 // MegaphoneBoot is maybeFetchMegaphoneOnBootEvent's boot load, at most
@@ -350,14 +383,16 @@ func (a *App) onMegaphoneEvent(typ string, raw json.RawMessage) {
 	}
 	switch typ {
 	case "megaphone_delayed_notification_ready":
+		// a space xu lists only, its notification_data too, filed globally
 		var e struct {
-			Space string `json:"space"`
-			Name  string `json:"notification_name"`
+			Space string          `json:"space"`
+			Name  string          `json:"notification_name"`
+			Data  json.RawMessage `json:"notification_data"`
 		}
-		if json.Unmarshal(raw, &e) != nil || e.Space == "" {
+		if json.Unmarshal(raw, &e) != nil || !megaphoneKnownSpaces[e.Space] {
 			return
 		}
-		a.megaphoneSet(e.Space, "", e.Name)
+		a.megaphoneFile(e.Space, "", e.Name, e.Data)
 		a.emit(Event{Type: "megaphone"})
 	case "clear_megaphone_notification":
 		var e struct {
@@ -384,13 +419,15 @@ func (a *App) onMegaphoneEvent(typ string, raw json.RawMessage) {
 		m.mu.Unlock()
 		a.emit(Event{Type: "megaphone", Channel: e.Channel})
 	case "megaphone_notifications_user_refresh":
+		// a spaces list, even an empty one (a JS array is truthy), is
+		// one REQUEST_SPACES; none is the boot load
 		var e struct {
-			Spaces []string `json:"spaces"`
+			Spaces *[]string `json:"spaces"`
 		}
 		_ = json.Unmarshal(raw, &e)
 		load(func(ctx context.Context) {
-			if len(e.Spaces) > 0 {
-				_, _ = a.loadMegaphone(ctx, map[string]any{"type": megaphoneRequestSpaces, "spaces": e.Spaces,
+			if e.Spaces != nil {
+				_, _ = a.loadMegaphone(ctx, map[string]any{"type": megaphoneRequestSpaces, "spaces": *e.Spaces,
 					"is_app_store_build": false, "ia_version": 4}, "", megaphoneReasonUser, nil)
 				return
 			}

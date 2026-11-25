@@ -558,6 +558,9 @@ func (v *Threads) settle() {
 	if err != nil && v.mode == actFresh {
 		v.loadErr = err // loadThreads' errored, over whatever threads the view holds
 	}
+	if err != nil {
+		log.Printf("views: threads load: %v", err) // the error state shows no error text: it goes here, once per answer
+	}
 }
 
 // took is an answer landing (settle). A load that sorts the list ends the
@@ -932,7 +935,7 @@ func (v *Threads) body(gtx C) D {
 	}
 	switch {
 	case v.loadErr != nil: // errored: the view's error state, whatever threads it holds
-		return v.emptyState(gtx, "", nsThreads.T(thrErrText), "", &v.retry, nsThreads.T("Try Again")) // the error is logged, not shown
+		return v.emptyState(gtx, "", nsThreads.T(thrErrText), "", &v.retry, nsThreads.T("Try Again")) // the error is logged (settle), not shown
 	case n == 0 && (!loaded || reloading && (v.mounting || err != nil)):
 		// no threads to show while the first load, a mount's or Try
 		// Again's is out: the loading view, not a stale error's

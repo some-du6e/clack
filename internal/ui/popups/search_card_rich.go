@@ -386,6 +386,13 @@ func (h srCardHandler) ChartAction(dv *richtext.DataViz, btn image.Rectangle, wi
 	}
 }
 
+// The image hover group's Download and More actions: without these the
+// images here would lose them with no test going red.
+var (
+	_ richview.ImageDownloadHandler = srCardHandler{}
+	_ richview.ImageMenuHandler     = srCardHandler{}
+)
+
 // DownloadImageFile is an image's AttachmentImageActions Download on the
 // card: the image's Slack file.
 func (h srCardHandler) DownloadImageFile(f *richtext.File) {
