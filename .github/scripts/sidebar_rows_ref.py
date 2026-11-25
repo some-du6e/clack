@@ -57,7 +57,7 @@ from PIL import Image, ImageDraw
 CDN = "https://a.slack-edge.com/bv1-13-br/"
 CSS = "client-boot-styles.cf726c4f2eaecc74.min.css"
 LATO = ("lato-regular-ef8e44a.woff2", "lato-bold-78da5d4.woff2", "lato-black-7b284cf.woff2")  # its Singer-Lato 400/700/900
-ICONS = "https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/icons.json"
+ICONS = "https://raw.githubusercontent.com/IzieStratt/sdmp/main/build/icons.json"
 
 
 def fetch(root):
