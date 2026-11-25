@@ -27,7 +27,7 @@ func TestUploadPercentKeepsRowState(t *testing.T) {
 	pa := f32.Pt(a.x+1, float32(a.top+a.bot)/2)
 	pb := f32.Pt(b.x+b.w-1, float32(b.top+b.bot)/2)
 	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pa}, press(pa, 0),
-		pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pb, Time: 30 * time.Millisecond},
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pb, Time: 30 * time.Millisecond},
 		release(pb, 60*time.Millisecond))
 	sel := hs.v.SelectedText()
 	if !hs.v.HasSelection() || !strings.Contains(sel, "hello") {
