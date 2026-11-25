@@ -614,6 +614,25 @@ func (a *App) OpenEmojiGifPicker(anchor image.Rectangle, onPick func(name string
 	a.ShowOverlay(ov)
 }
 
+// OpenGifPickerSearch is /gif's picker (openGifPickerBySlashCommand): the
+// composer's emoji and GIF picker on its GIFs tab at anchor, the command's
+// words in its search and the search focused; a picked GIF goes to onGif.
+func (a *App) OpenGifPickerSearch(anchor image.Rectangle, onPick func(name string), onGif func(popups.Gif), query string) {
+	if mkEmojiPicker == nil {
+		a.Toast("Emoji picker arrives with ui-popups")
+		return
+	}
+	ov := mkEmojiPicker(a, anchor.Min, onPick)
+	if p, ok := ov.(*popups.EmojiPicker); ok {
+		p.SetGifHandler(onGif)
+		p.SetGifSearch(query)
+		if !anchor.Empty() {
+			p.SetAnchorRect(anchor)
+		}
+	}
+	a.ShowOverlay(ov)
+}
+
 // OpenProfile is a click on a person: an @mention, a message sender's
 // name or avatar, a member row. Slack opens the member's profile in the
 // secondary pane, not a card (web client, 2026-11): MemberSlug's onClick

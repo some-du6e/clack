@@ -42,8 +42,13 @@ package core
 //     reason in getChannelTopicError's words (MgZJ Bw);
 //   - /rename needs canUserRenameChannelWithReasonById (kfQA be), its
 //     reason in the check's own words;
+//   - /invite_people needs canUserSeeInviteModal (0Y04 Lz): "You don’t
+//     have permission to invite people.";
 //   - /archive needs canUserArchiveChannel (2Uru Jz), else it's unknown;
-//   - /feedback is unknown under feedback_disabled_orgs' treatment.
+//   - /feedback is unknown under feedback_disabled_orgs' treatment;
+//   - /gif needs allow_native_gif_picker (OesQ BH): "Attach a GIF is not
+//     enabled.", and under external_huddles no GIFs for an external guest
+//     or in a huddle's channel (M8Ke f).
 //
 // The permissions these read are getPermissionForChannel's
 // (permissions/info, chperms.go, ChannelGrant): the store's answer, which
@@ -163,10 +168,34 @@ func (a *App) slashEnabled(ctx context.Context, z slack.Command, cmd, ch string,
 		if !a.canArchive(conv, grant) {
 			return unknown
 		}
+	case "/invite_people":
+		if !a.CanSeeInviteModal() { // 0Y04 Lz canUserSeeInviteModal
+			return customErr(cmd, "You don’t have permission to invite people.")
+		}
 	case "/feedback":
 		return a.FeedbackCommandErr(cmd)
+	case "/gif":
+		if !a.teamPrefOn("allow_native_gif_picker") { // OesQ BH
+			return customErr(cmd, "Attach a GIF is not enabled.")
+		}
+		if a.gifsBlockedInHuddle(conv) {
+			return customErr(cmd, "GIFs can’t be shared in this huddle.")
+		}
 	}
 	return nil
+}
+
+// gifsBlockedInHuddle is M8Ke f: under external_huddles, the viewer is an
+// external guest (SfHq U: is_restricted, restricted_user_type
+// external_guest) or c is a huddle's channel.
+func (a *App) gifsBlockedInHuddle(c *slack.Conversation) bool {
+	if a.experiment("external_huddles") != "on" {
+		return false
+	}
+	if u, ok := a.S.User(a.S.SelfID()); ok && u.IsRestricted && u.RestrictedUserType == "external_guest" {
+		return true
+	}
+	return c != nil && propsOf(c).Huddles.IsHuddleChannel
 }
 
 // selfRestricted is p+Mq Ez for the viewer: is_restricted (a guest; an

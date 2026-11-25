@@ -433,7 +433,7 @@ const (
 // WRITES): the first of these sent is its api.
 var srWrites = map[string]bool{"conversations.leave": true, "conversations.close": true, "conversations.setTopic": true,
 	"conversations.kick": true, "conversations.rename": true, "conversations.archive": true, "conversations.join": true,
-	"conversations.invite": true, "conversations.open": true, "chat.postMessage": true}
+	"conversations.invite": true, "conversations.open": true, "chat.postMessage": true, "users.prefs.set": true}
 
 // srQueueEmpty reports that nothing waits for the composer's UI queue.
 func srQueueEmpty() bool {
@@ -550,7 +550,7 @@ func srLocalRan(h *cmdHost, fs *fakeSlack, ch string, from int, mark string) srL
 	}
 	writer := map[string]string{"conversations.setTopic": "/topic", "conversations.rename": "/rename", "conversations.archive": "/archive",
 		"conversations.leave": "/leave", "conversations.close": "/leave", "conversations.join": "/open", "conversations.kick": "/remove",
-		"conversations.invite": "/invite", "conversations.open": "/msg"}
+		"conversations.invite": "/invite", "conversations.open": "/msg", "users.prefs.set": "/color"}
 	for _, c := range calls {
 		switch {
 		case c.Method == "chat.postMessage" && c.Form.Get("channel") != ch:

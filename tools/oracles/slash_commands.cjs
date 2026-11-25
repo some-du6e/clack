@@ -78,16 +78,18 @@ let currentCase = null;
 // the ones whose answer comes from the store and the command's own rules
 // (Clack ports each as a decision: MsgCommand, OpenCommand, LeaveCommand
 // and maybeLeaveChannel, /rename and /archive's dialogs, topicCommand,
-// ExpandCommand, RemoveCommand, /feedback's dialog, /shortcuts' pane).
+// ExpandCommand, RemoveCommand, /feedback's dialog, /shortcuts' pane,
+// ColorCommand, /gif's picker, /invite_people's invite modal).
 // The others stop at the mark: /invite and /invite_people go on through
 // conversations.invite's answers, which the API exit doesn't model;
 // /search needs the Sonic client's search store; the rest open UI only.
-const FOLLOW = new Set(['/msg', '/open', '/leave', '/rename', '/archive', '/topic', '/collapse', '/expand', '/remove', '/feedback', '/shortcuts']);
+const FOLLOW = new Set(['/msg', '/open', '/leave', '/rename', '/archive', '/topic', '/collapse', '/expand', '/remove', '/feedback', '/shortcuts',
+  '/color', '/gif', '/invite_people']);
 // WRITES are the API calls a client command's answer names (api): the
 // first of these it sent. Reads on the way (a membership count) aren't
 // its answer.
 const WRITES = new Set(['conversations.leave', 'conversations.close', 'conversations.setTopic', 'conversations.kick', 'conversations.rename',
-  'conversations.archive', 'conversations.join', 'conversations.invite', 'conversations.open', 'chat.postMessage']);
+  'conversations.archive', 'conversations.join', 'conversations.invite', 'conversations.open', 'chat.postMessage', 'users.prefs.set']);
 const ACCOUNT_EXPERIMENTS = require('path').join(__dirname, '..', '..', 'internal', 'core', 'testdata', 'account_experiments.json');
 let kindSet;
 const kinds = () => kindSet || (kindSet = new Set(Object.values(rt.req('ZOnG').gu)));

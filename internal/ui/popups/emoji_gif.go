@@ -80,6 +80,15 @@ func (p *EmojiPicker) SetGifHandler(f func(g Gif)) { p.onGif = f }
 // selectedTabId GIFS: the composer's + menu GIF row).
 func (p *EmojiPicker) ShowGifs() { p.setGifMode(true) }
 
+// SetGifSearch opens the GIFs tab with q in its search
+// (openGifPickerBySlashCommand's searchQuery, /gif's words): its first
+// frame searches it, the search input focused.
+func (p *EmojiPicker) SetGifSearch(q string) {
+	p.setGifMode(true)
+	p.gif.ed.SetText(q)
+	p.gif.typed = strings.TrimSpace(q)
+}
+
 // SetGifTarget makes picking a GIF send it to channel (in threadTS's thread
 // when set) when no GIF handler is set.
 func (p *EmojiPicker) SetGifTarget(channel, threadTS string) {

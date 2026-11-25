@@ -192,6 +192,16 @@ func OpenInviteModal(h Host, source string) *InviteModal {
 	return openInvite(h, source, nil)
 }
 
+// OpenInviteModalEmails is openInviteModal with emails, its To field's
+// tokens (/invite_people's words: invitePeopleCommand).
+func OpenInviteModalEmails(h Host, source string, emails []string) *InviteModal {
+	m := openInvite(h, source, nil)
+	if len(emails) > 0 {
+		m.addEmails(emails)
+	}
+	return m
+}
+
 func openInvite(h Host, source string, chans []core.Conv) *InviteModal {
 	m := &InviteModal{h: h, source: source, typ: core.InviteMember, toFocus: true, chans: chans}
 	m.to.Submit = true

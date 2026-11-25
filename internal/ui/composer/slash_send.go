@@ -56,6 +56,10 @@ type commandUI struct {
 	archive func(ch string)
 	// remove is /remove's openRemoveMemberDialog for member in ch
 	remove func(ch, member string)
+	// gif is /gif's GIF picker with q in its search (false: no host for it)
+	gif func(q string) bool
+	// invitePeople is /invite_people's invite modal, emails in its To field
+	invitePeople func(emails []string)
 	// contents puts d in ch's composer (addEphemeralFeedback's
 	// inputDelta), when it is open
 	contents func(ch string, d *Doc)
@@ -123,6 +127,16 @@ func (c *Composer) commandUI() *commandUI {
 		archive: func(ch string) { c.later(func() { c.h.ShowOverlay(popups.NewArchiveChannelModal(c.h, ch)) }) },
 		remove: func(ch, member string) {
 			c.later(func() { popups.OpenRemoveMemberDialog(c.h, ch, member, nil) })
+		},
+		gif: func(q string) bool {
+			_, ok := c.h.(gifSearchHost)
+			if ok {
+				c.later(func() { c.openGifSearch(q) })
+			}
+			return ok
+		},
+		invitePeople: func(emails []string) {
+			c.later(func() { popups.OpenInviteModalEmails(c.h, "invite_people_slash_command", emails) })
 		},
 		contents: func(ch string, d *Doc) {
 			c.later(func() {

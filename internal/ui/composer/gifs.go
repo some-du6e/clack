@@ -383,6 +383,23 @@ func (c *Composer) openEmojiPicker(anchor image.Rectangle) {
 	c.h.OpenEmojiPicker(anchor.Min, onPick)
 }
 
+// gifSearchHost is the ui root's /gif picker (ui.App).
+type gifSearchHost interface {
+	OpenGifPickerSearch(anchor image.Rectangle, onPick func(name string), onGif func(popups.Gif), query string)
+}
+
+// openGifSearch is /gif (openGifPickerBySlashCommand, the
+// gif-picker-by-slash-command chunk): this composer's GIF picker with q
+// in its search; a picked GIF goes into the draft.
+func (c *Composer) openGifSearch(q string) {
+	gh, ok := c.h.(gifSearchHost)
+	if !ok {
+		return
+	}
+	at := c.Origin.Add(image.Pt(0, c.top))
+	gh.OpenGifPickerSearch(image.Rectangle{Min: at, Max: at}, func(name string) { c.InsertEmoji(name) }, c.pickGif, q)
+}
+
 // openGifPicker is the + menu's GIF row (onOpenGifPickerClick):
 // EmojiAndGIFPickerPopover on its GIFs tab at the menu's target (the +
 // button), openedBy plus_menu.

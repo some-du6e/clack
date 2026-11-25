@@ -3,6 +3,7 @@ package composer
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -61,6 +62,17 @@ import (
 //     input (convertContentsToStringForDisplay), or the channel's name.
 //   - /archive: archiveCommand (Oc3D) opens ArchiveChannelModal
 //     (popups/archive_channel.go).
+//   - /gif: openGifPickerBySlashCommand (rxyx): this composer's emoji and
+//     GIF picker on its GIFs tab, the command's words in its search
+//     (allow_native_gif_picker and the huddle rule are
+//     isSlashCommandEnabled's).
+//   - /color (/colour): colorCommand (qu1f, core.App.ColorCommand): the
+//     user_colors pref for the member mentioned, and Slackbot's word on
+//     it.
+//   - /invite_people: invitePeopleCommand (F6WW): the invite modal
+//     (openInviteModal, source invite_people_slash_command) with the
+//     command's words as its emails (canUserSeeInviteModal is
+//     isSlashCommandEnabled's).
 //   - /remove (/kick): removeCommand (p8LL, core.App.RemoveCommand) refuses
 //     in its own words, or opens the roster's Remove from channel
 //     confirmation for the person mentioned (openRemoveMemberDialog,
@@ -196,6 +208,26 @@ func (j *sendJob) runLocal(ctx context.Context, a prepareSendArgs, q qDelta, arg
 			j.ui.remove(ch, t.Member)
 		}
 		return true, nil
+	case "/gif":
+		if j.ui.gif == nil {
+			return false, nil
+		}
+		j.api.clearCommandFeedback(ts != "")
+		j.ui.gif(gifQuery(args.Params)) // with no picker to open, nothing: the command ran
+		return true, nil
+	case "/color":
+		j.api.clearCommandFeedback(ts != "")
+		if err := j.api.a.ColorCommand(ctx, args.Cmd, ch, ts, args.Params); err != nil {
+			return true, failed(err)
+		}
+		return true, nil
+	case "/invite_people":
+		if j.ui.invitePeople == nil {
+			return false, nil
+		}
+		j.api.clearCommandFeedback(ts != "")
+		j.ui.invitePeople(invitePeopleEmails(args.Rest))
+		return true, nil
 	case "/feedback":
 		if j.ui.feedback == nil || j.api.a.Experiment(popups.ExpSlashFeedbackInModal) != "on" {
 			return false, nil
@@ -258,6 +290,35 @@ func (j *sendJob) msgSend(ctx context.Context, ch string, msg, orig qDelta) {
 	j.api.commandFeedback(ch, "", "Hmm, something went wrong. Try again?")
 	od, _ := qToDoc(qNormalize(orig))
 	put(od)
+}
+
+// gifQuery is openGifPickerBySlashCommand's searchQuery: the parsed
+// arguments' words (the string ones), joined by single spaces.
+func gifQuery(params []core.CommandParam) string {
+	var words []string
+	for _, p := range params {
+		if p.Type == "string" {
+			words = append(words, p.Value)
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// inviteSplitRe is invitePeopleCommand's split: commas (with the spaces
+// around them) or runs of space.
+var inviteSplitRe = regexp.MustCompile(`\s*,\s*|\s+`)
+
+// invitePeopleEmails is invitePeopleCommand's emails: deltaWithoutCmd as
+// text (convertContentsToString), trimmed, split by commas and spaces,
+// the blanks dropped.
+func invitePeopleEmails(rest qDelta) []string {
+	var out []string
+	for _, e := range inviteSplitRe.Split(strings.TrimSpace(renameName(rest)), -1) {
+		if strings.TrimSpace(e) != "" {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // renameName is renameCommand's d: deltaWithoutCmd as display text
