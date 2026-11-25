@@ -85,6 +85,9 @@ let currentCase = null;
 // /search needs the Sonic client's search store; the rest open UI only.
 const FOLLOW = new Set(['/msg', '/open', '/leave', '/rename', '/archive', '/topic', '/collapse', '/expand', '/remove', '/feedback', '/shortcuts',
   '/color', '/gif', '/invite_people']);
+// (The cases' store holds no team object: canUserSeeInviteModal, and so
+// /invite_people's isSlashCommandEnabled, reads the current team's and
+// refuses without one, so no case types /invite_people.)
 // WRITES are the API calls a client command's answer names (api): the
 // first of these it sent. Reads on the way (a membership count) aren't
 // its answer.
