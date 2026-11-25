@@ -275,3 +275,51 @@ func remindShown(app *core.App, m *core.Message) bool {
 	}
 	return !m.Tombstone && !isEphemeral(app, m)
 }
+
+// msgFrecency are the message menus' rows' frecencyIds (each action's
+// selector, build 83aff18a1847b8e9: getMessageActionsFrecencyId "MA" + the
+// id it names, or a bare id). The follow row's and the pin row's follow
+// the state they show (thread_follow / thread_unfollow, pin / unpin).
+var msgFrecency = map[string]string{
+	"add_reaction": "MAadd_reaction", "comment": "MAthread_reply", "share_message": "MAshare",
+	"add_to_later_todos": "add_to_later_todos", "later": "later",
+	"mark_unread": "MAmark_unread", "mark_thread_unread": "MAmark_thread_unread", "remind": "MAremind_later",
+	"copy_link": "MAcopy_link", "copy_text": "MAcopy_text", "edit_message": "MAedit", "delete_message": "MAdelete",
+	"broadcast_message": "MAbroadcast_message", "remove_broadcast": "MAremove",
+	"flag_message": "MAflag_message", "report_message": "MAreport_message",
+	"view_workflow_details": "MAview_workflow_details", "copy_workflow_id": "MAcopy_workflow_id",
+}
+
+// withFrecency gives a message menu's rows their frecencyIds
+// (MenuItem.Frecency); a submenu's rows take their parent's (the reminder
+// presets are RemindSubmenu's, which records the reminder row's id) unless
+// they have their own (Organize ▸ Pin, Connect to apps' shortcuts).
+func withFrecency(items []MenuItem) []MenuItem {
+	for i := range items {
+		it := &items[i]
+		if it.Frecency == "" {
+			switch it.Action {
+			case "subscribe":
+				it.Frecency = "MAthread_follow"
+				if it.Icon == "bell-off" {
+					it.Frecency = "MAthread_unfollow"
+				}
+			case "pin": // a pin row built without one (the message menu sets it by m.Pinned)
+				it.Frecency = "MApin"
+			default:
+				it.Frecency = msgFrecency[it.Action]
+			}
+		}
+		if len(it.Sub) > 0 {
+			it.Sub = withFrecency(append([]MenuItem(nil), it.Sub...))
+			if it.Action == "remind" {
+				for j := range it.Sub {
+					if it.Sub[j].Frecency == "" && !it.Sub[j].Separator {
+						it.Sub[j].Frecency = it.Frecency
+					}
+				}
+			}
+		}
+	}
+	return items
+}
