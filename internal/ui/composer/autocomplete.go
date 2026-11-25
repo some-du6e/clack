@@ -181,8 +181,19 @@ type Autocomplete struct {
 	askedChans map[string]bool
 	commands   []core.Command
 	cmdLoading bool
-	emojiIdx   *emojiIndex
-	emoLoading bool
+	cmdVer     uint64 // bumped with commands
+	// cmdRanked is a long "/" list (Hack Club's 8,870 commands) ranked
+	// off the UI goroutine, for cmdRankFor; cmdRanking while a rank runs
+	// (one at a time: the next starts at the list's next compute)
+	cmdRanked  []acItem
+	cmdRankFor acCmdRank
+	cmdRankOK  bool
+	cmdRanking bool
+	// cmdRankSeq numbers the ranks as they start; cmdRankedSeq is the
+	// stored one's, so an older rank landing late never replaces a newer
+	cmdRankSeq, cmdRankedSeq uint64
+	emojiIdx                 *emojiIndex
+	emoLoading               bool
 	// the viewer's @channel/@everyone permissions here (permissions/info)
 	perms       core.BroadcastPerms
 	permLoading bool
@@ -247,6 +258,7 @@ func (ac *Autocomplete) Key(name key.Name, mods key.Modifiers) bool {
 			if d, caret := ac.Live(); d != nil {
 				if name == key.NameTab || name == key.NameReturn || name == key.NameEnter {
 					ac.awaitEmojiIndex(d, caret)
+					ac.awaitCommandRank(d, caret)
 				}
 				ac.Update(d, caret)
 			}
@@ -617,6 +629,30 @@ func (ac *Autocomplete) awaitEmojiIndex(d *Doc, caret int) {
 	popups.EnsureEmojiIndex(ac.h, acEmojiWait)
 }
 
+// awaitCommandRank lets a Tab or Enter on a "/" token take a row ranked
+// for it: a long command list whose rank for the live query hasn't
+// landed is ranked here (the key waits for it, as for the emoji index),
+// and the Update that follows shows it.
+func (ac *Autocomplete) awaitCommandRank(d *Doc, caret int) {
+	t, ok := detectTrigger(d, caret)
+	if !ok || t.Kind != acCommand || (ac.hasDis && t == ac.dismissed) {
+		return
+	}
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	cmds := ac.commands
+	if len(cmds) <= acSyncCommands {
+		return
+	}
+	key := acCmdRank{q: t.Query, ver: ac.cmdVer, rank: ac.rankKey(t)}
+	if ac.cmdRankOK && ac.cmdRankFor == key {
+		return
+	}
+	ac.cmdRankSeq++
+	ac.cmdRanked, ac.cmdRankFor, ac.cmdRankOK, ac.cmdRankedSeq = rankCommands(t.Query, cmds, ac.rankCtxLocked()), key, true, ac.cmdRankSeq
+	ac.gen++
+}
+
 // load starts the async loads trigger t needs.
 func (ac *Autocomplete) load(t acTrigger) {
 	if ac.h == nil || ac.h.Core() == nil {
@@ -702,7 +738,7 @@ func (ac *Autocomplete) load(t acTrigger) {
 				if cs == nil {
 					cs = []core.Command{}
 				}
-				ac.land(func() { ac.commands = cs })
+				ac.land(func() { ac.commands, ac.cmdVer = cs, ac.cmdVer+1 })
 			}()
 		}
 	}
@@ -782,9 +818,52 @@ func (ac *Autocomplete) compute(t acTrigger) []acItem {
 		}
 		return ac.emojiIdx.search(t.Query, acMaxItems)
 	case acCommand:
-		return rankCommands(t.Query, ac.commands, ac.rankCtxLocked())
+		return ac.rankCommandsLocked(t)
 	}
 	return nil
+}
+
+// acSyncCommands is the longest "/" list ranked on the UI goroutine;
+// a longer one is ranked off it (TestSlashMenuScale has the costs).
+const acSyncCommands = 1000
+
+// acCmdRank is what a ranked "/" list was ranked for: the query, the
+// command list and the ranking's inputs.
+type acCmdRank struct {
+	q    string
+	ver  uint64
+	rank acRankKey
+}
+
+// rankCommandsLocked is the "/" list for t (mu held). A short command
+// list ranks here; a long one (thousands of apps' commands) ranks on a
+// goroutine, one rank at a time, and until this query's lands the list
+// is the last one ranked, as Slack's TextyAutocomplete shows its rows
+// until the search it started answers.
+func (ac *Autocomplete) rankCommandsLocked(t acTrigger) []acItem {
+	cmds, rc := ac.commands, ac.rankCtxLocked()
+	if len(cmds) <= acSyncCommands {
+		return rankCommands(t.Query, cmds, rc)
+	}
+	key := acCmdRank{q: t.Query, ver: ac.cmdVer, rank: ac.rankKey(t)}
+	if ac.cmdRankOK && ac.cmdRankFor == key {
+		return ac.cmdRanked
+	}
+	if !ac.cmdRanking {
+		ac.cmdRanking = true
+		ac.cmdRankSeq++
+		seq := ac.cmdRankSeq
+		go func() {
+			items := rankCommands(key.q, cmds, rc)
+			ac.land(func() { // bumps gen: the next Update takes it, or ranks the newer query
+				ac.cmdRanking = false
+				if seq > ac.cmdRankedSeq {
+					ac.cmdRanked, ac.cmdRankFor, ac.cmdRankOK, ac.cmdRankedSeq = items, key, true, seq
+				}
+			})
+		}()
+	}
+	return ac.cmdRanked
 }
 
 // resolveStatusEmoji fills StatusURL for users whose status emoji came as
