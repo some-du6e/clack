@@ -789,11 +789,29 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			rd = io.LimitReader(resp.Body, MaxCanvasAnswer+1) // past quip's cap nothing would read it
 			hint = min(hint, MaxCanvasAnswer+1)
 		}
-		data, err := readBody(rd, hint)
-		resp.Body.Close()
-		if err != nil {
-			unanswered(ctx, u, err) // cut off before the whole answer came
-			return &transportError{scrubErr(err)}
+		var data []byte
+		if sa, ok := out.(streamedAnswer); ok && resp.StatusCode == http.StatusOK && observing(ctx) == nil {
+			// decoded as it comes (history_stream.go); a body the split
+			// can't vouch for comes back whole for the decode below
+			done, body, err := sa.readStreamed(rd, hint)
+			resp.Body.Close()
+			if err != nil {
+				unanswered(ctx, u, err) // cut off before the whole answer came
+				return &transportError{scrubErr(err)}
+			}
+			if done {
+				answered(ctx, u, resp, nil)
+				return nil
+			}
+			data = body
+		} else {
+			body, err := readBody(rd, hint)
+			resp.Body.Close()
+			if err != nil {
+				unanswered(ctx, u, err) // cut off before the whole answer came
+				return &transportError{scrubErr(err)}
+			}
+			data = body
 		}
 		received := time.Now()
 		answered(ctx, u, resp, data)
