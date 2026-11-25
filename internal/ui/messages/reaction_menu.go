@@ -39,7 +39,7 @@ func (s *listState) reactionMenu(h Host, r *row, i int, p f32.Point, at image.Po
 		if part.count || part.url == "" {
 			return nil, true
 		}
-		return popups.NewImageMenuOf(h, at, popups.ImageMenu{Src: part.url, Alt: part.alt}), true
+		return popups.NewImageMenuOf(h, at, popups.ImageMenu{Src: part.url, Alt: ":" + part.name + ":"}), true
 	}
 	pt := image.Pt(int(p.X), int(p.Y)-s.pos[i]) // row-local, as reactRects
 	for k, rect := range r.reactRects {
@@ -53,7 +53,7 @@ func (s *listState) reactionMenu(h Host, r *row, i int, p f32.Point, at image.Po
 		in := pt.Sub(rect.Min)
 		for _, e := range pl.emojiAt {
 			if in.In(e.r) && e.url != "" {
-				return popups.NewImageMenuOf(h, at, popups.ImageMenu{Src: e.url, Alt: e.alt}), true
+				return popups.NewImageMenuOf(h, at, popups.ImageMenu{Src: e.url, Alt: ":" + e.name + ":"}), true
 			}
 		}
 		if in.In(pl.countAt) {
