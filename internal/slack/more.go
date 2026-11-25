@@ -740,6 +740,10 @@ type Command struct {
 	RunnableFromThread bool `json:"is_runnable_from_thread,omitempty"`
 	// Teams are the workspaces the command is installed in (Grid).
 	Teams []string `json:"teams,omitempty"`
+	// WorkspaceAgnostic is is_workspace_agnostic: the command runs the same
+	// in every workspace (the store's isWorkspaceAgnostic; P+cE tY picks no
+	// workspace for it).
+	WorkspaceAgnostic bool `json:"is_workspace_agnostic,omitempty"`
 }
 
 // IconURL picks the best icon for a ~20-36 px command row.

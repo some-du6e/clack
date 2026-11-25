@@ -88,7 +88,10 @@ func (l *lay) videoBlock(b *richtext.Block, x, y, w int) int {
 			fs.col = p.Link
 		}
 		l.addSpansTarget(a.Title, &fs, tg)
-		h, _ := l.flow(x, y, w, &fs)
+		// the caret's 24dp kept free after the title, as kitImage does (Slack's
+		// trigger is inline after it and wraps with it): never past the View's
+		// right edge
+		h, _ := l.flow(x, y, max(w-l.dp(24), l.dp(40)), &fs)
 		if key != "" {
 			endX, top := l.lastLineEnd(x, y)
 			open := xp().AttachmentExpanded(key, 0, sender, ch)
@@ -151,7 +154,9 @@ func (l *lay) videoPlayer(a *richtext.Attachment, x, y, w int) int {
 	tg := l.d.addTarget(target{kind: tCard, url: a.VideoURL})
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, fill: rgb(0, 0, 0), radius: rad, target: -1})
 	if img := a.Image; img != nil && img.URL != "" {
-		l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, fit: true, radii: [4]int{rad, rad, rad, rad}, target: tg, px: max(pw, ph)})
+		// bare: the letterbox and the loading box are the player's black
+		// (.p-video_block__thumb{background-color:#000}), not the placeholder
+		l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, fit: true, bare: true, radii: [4]int{rad, rad, rad, rad}, target: tg, px: max(pw, ph)})
 	}
 	// VideoOverlay's controls: the pill 16px in from the bottom left
 	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Bold}, size: l.sp(15), lineH: l.dp(22), col: rgb(255, 255, 255), emoji: l.dp(22)}

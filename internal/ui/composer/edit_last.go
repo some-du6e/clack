@@ -14,6 +14,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // "/s/old/new": the edit-last-message command, ported from Slack's
@@ -580,7 +581,7 @@ func (c *Composer) editLast(cmd editLastCmd, doc *Doc) {
 		})
 		if err != nil {
 			c.restore(doc)
-			c.later(func() { c.h.Toast("Couldn't save your edit: " + err.Error()) })
+			c.later(func() { popups.EditMessageError(c.h, err) }) // saveMessageEdit: EditMessageErrorDialog
 		}
 	}()
 }

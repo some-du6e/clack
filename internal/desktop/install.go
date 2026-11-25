@@ -285,6 +285,9 @@ func has(name string) bool { _, err := lookPath(name); return err == nil }
 // software installer for a .deb/.rpm, Explorer for a folder) for the user
 // to finish, and returns ErrManual, or why it couldn't.
 func openManual(ctx context.Context, path string, why error) error {
+	if ctx.Value(quietKey{}) != nil {
+		return fmt.Errorf("%w: %v", ErrNeedsUser, why) // PrepareQuiet: nothing opens
+	}
 	log.Printf("update: installing by hand (%v)", why)
 	var err error
 	switch runtime.GOOS {
@@ -409,14 +412,89 @@ func installPlan(p Plan) error {
 }
 
 // CleanHelpers removes update-helper directories left in the temp dir by
-// earlier updates (a Windows helper can't delete its own exe).
+// earlier updates (a Windows helper can't delete its own exe), logging the
+// last lines of each one's update.log first: a helper that failed says
+// why only there.
 func CleanHelpers() {
 	m, _ := filepath.Glob(filepath.Join(os.TempDir(), "clack-update-helper-*"))
 	for _, d := range m {
 		if fi, err := os.Stat(d); err == nil && fi.IsDir() && time.Since(fi.ModTime()) > time.Hour {
+			if tail := logTail(filepath.Join(d, "update.log"), 4); tail != "" {
+				log.Printf("update: the update helper of %s logged: %s", fi.ModTime().Format(time.RFC3339), tail)
+			}
 			os.RemoveAll(d)
 		}
 	}
+}
+
+// logTail is the last n lines of the file at p (at most 4 KB of it),
+// joined with " | "; "" when it can't be read or is empty.
+func logTail(p string, n int) string {
+	f, err := os.Open(p)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Size() > 4096 {
+		_, _ = f.Seek(fi.Size()-4096, io.SeekStart)
+	}
+	b, _ := io.ReadAll(io.LimitReader(f, 4096))
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.TrimSpace(strings.Join(lines, " | "))
+}
+
+// CleanStages removes the .clack-update-* staging folders beside target
+// older than an hour: a stage an install never used (Clack quit before
+// the helper ran, or it failed), which would otherwise stay hidden beside
+// Clack.app for good. A newer one may be a helper's still swapping.
+func CleanStages(target string) {
+	if target == "" {
+		return
+	}
+	m, _ := filepath.Glob(filepath.Join(filepath.Dir(target), stagePrefix+"*"))
+	for _, d := range m {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() && time.Since(fi.ModTime()) > time.Hour {
+			log.Printf("update: removing an unused update stage, %s", filepath.Base(d))
+			os.RemoveAll(d)
+		}
+	}
+}
+
+// ErrNeedsUser: PrepareQuiet found the update needs the user (it would
+// have opened the package for them to install by hand).
+var ErrNeedsUser = errors.New("update: the user has to install this one")
+
+type quietKey struct{}
+
+// PrepareQuiet is Prepare that never opens anything for the user: where
+// Prepare would open the package in Finder, the installer or Explorer, it
+// returns ErrNeedsUser. Install-on-quit stages with it.
+func PrepareQuiet(ctx context.Context, in Install, pkg Package) (Plan, error) {
+	return Prepare(context.WithValue(ctx, quietKey{}, true), in, pkg)
+}
+
+// UpdateUnsupported is why Slack's getIsUpdateSupported (main.bundle.cjs
+// 4.53.276) would say this copy can't update itself in place, or "": it
+// runs from the temp directory (a translocated or unpacked copy) or from
+// a disk image under /Volumes ("running from DMG").
+func UpdateUnsupported(in Install) string {
+	exe := in.Exe
+	if exe == "" {
+		exe = in.Target
+	}
+	switch {
+	case strings.Contains(in.Target, "/AppTranslocation/"):
+		return "running from a translocated copy"
+	case runtime.GOOS == "darwin" && strings.HasPrefix(exe, "/Volumes/"):
+		return "running from DMG"
+	}
+	if tmp := os.TempDir(); tmp != "" && strings.HasPrefix(filepath.Clean(exe), filepath.Clean(tmp)+string(filepath.Separator)) {
+		return "running from Temp directory"
+	}
+	return ""
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {

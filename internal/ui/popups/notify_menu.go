@@ -33,6 +33,7 @@ package popups
 import (
 	"context"
 	"image"
+	"log"
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -194,7 +195,7 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetNotifyPrefs(ctx, ch, nn) },
 				func(_ struct{}, err error) {
 					if err != nil {
-						h.Toast("Couldn’t change notifications: " + errText(err))
+						log.Printf("popups: users.prefs.setNotifications: %v", err) // setChannelNotificationOverrideAndCallApi: reverted and logged, no toast
 						return
 					}
 					actMuteSet[ch] = false

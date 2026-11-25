@@ -870,7 +870,7 @@ func (it *Item) addSubtask(listID, parent string) {
 		r, err := a.CreateListRecord(ctx, listID, "", parent)
 		it.post(func() {
 			if err != nil {
-				it.h.Toast(err.Error())
+				popups.FailedToast(it.h, "listview: subtask", err)
 				return
 			}
 			it.mu.Lock()

@@ -140,7 +140,7 @@ func (v *View) write(f func(ctx context.Context, a *core.App) error) {
 		ctx, cancel := ctxTimeout(30 * time.Second)
 		defer cancel()
 		if err := f(ctx, a); err != nil {
-			v.h.Toast("Something went wrong: " + err.Error())
+			popups.FailedToast(v.h, "listview: Something went wrong", err)
 		}
 		v.h.Invalidate()
 	}()

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"log"
 	"runtime"
 	"strconv"
 	"strings"
@@ -885,7 +886,8 @@ func (p *prefsModal) launchOnLoginRow(f *prefsForm) {
 	on := *p.launchOn
 	f.option("launch_on_login", "Launch app on login", "", on, false, func() {
 		if err := a.setLaunchOnLogin(!on); err != nil {
-			a.Toast("Couldn’t change Launch app on login: " + err.Error())
+			log.Printf("ui: launch on login: %v", err)
+			a.Toast("Couldn’t change Launch app on login") // Clack's own: Slack's setLoginItemSettings has no failure
 			return
 		}
 		v := !on

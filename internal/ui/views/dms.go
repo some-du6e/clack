@@ -11,6 +11,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log"
 	"math/rand/v2"
 	"sort"
 	"strconv"
@@ -31,6 +32,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -756,7 +758,7 @@ func (d *DMs) apply() {
 	if v, ok, _ := d.save.get(); ok && v.seq != 0 && v.seq != d.saveApplied {
 		d.saveApplied = v.seq
 		if v.err != nil {
-			d.h.Toast("Couldn’t add a to-do: " + friendlyErr(v.err))
+			d.h.Toast(popups.TodoToast(core.TodoAdded, v.err)) // LaterTodoErrorToast
 		} else {
 			d.h.Toast(nsLater.T("To-do added")) // LaterTodoToast
 		}
@@ -764,7 +766,7 @@ func (d *DMs) apply() {
 	if v, ok, err := d.open.get(); ok && v.seq != 0 && v.seq != d.openApplied {
 		d.openApplied = v.seq
 		if err != nil {
-			d.h.Toast("Couldn’t open that conversation: " + friendlyErr(err))
+			log.Printf("views: conversations.open: %v", err) // openConversation logs "failed to open conversation" and rethrows: nothing on screen
 		} else if v.conv.ID != "" {
 			if _, have := d.index[v.conv.ID]; !have {
 				dm := core.DM{Channel: v.conv.ID, Conv: v.conv, Count: d.h.Core().Count(v.conv.ID)}

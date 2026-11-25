@@ -50,7 +50,7 @@ func TestBroadcastNewerRepliesParentCached(t *testing.T) {
 	p, _, _ := threadFixture(a, ch)
 	b := fmtTS(time.Now().Unix() - 30)
 	fs.Push(broadcastEvent(ch, b, p, 3, b))
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if newerOf(t, a, ch, b) {
 		t.Fatal("the thread's latest reply is the broadcast: no newer replies")
 	}
@@ -104,7 +104,7 @@ func TestBroadcastNewerRepliesRootOnly(t *testing.T) {
 	}
 	// an older message_replied than the root copy has is dropped
 	fs.Push(repliedEvent(ch, p, 1, []string{"U0FAKE00002"}, fmtTS(now-50)))
-	flush(t, fs, log)
+	flush(t, a, fs, log)
 	if !newerOf(t, a, ch, cur.TS) {
 		t.Error("a stale message_replied took the footer away")
 	}

@@ -638,7 +638,7 @@ func (a *App) moveMany(ids []string, insert, remove []core.SectionItems, run fun
 				for _, id := range unpicked {
 					a.sidebar.edit.setPicked(id, true)
 				}
-				a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error { return c.UndoSectionMove(ctx, mv) }, nil)
+				a.sectionRun(a.sectionFailed, func(ctx context.Context, c *core.App) error { return c.UndoSectionMove(ctx, mv) }, nil)
 			})
 		})
 	}()

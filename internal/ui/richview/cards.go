@@ -1311,7 +1311,8 @@ func (l *lay) pillowGrid(files []*richtext.File, x, y, w int) int {
 		if isListFile(f) {
 			h = l.listFile(f, cx, y, min(cell, x+w-cx), true) // listcard.go
 		} else {
-			h = l.genericFile(f, cx, y, min(cell, x+w-cx))
+			cw := min(cell, x+w-cx)
+			h = l.filePending(f, cx, y, cw, func() int { return l.genericFile(f, cx, y, cw) })
 		}
 		rowH = max(rowH, h)
 	}
