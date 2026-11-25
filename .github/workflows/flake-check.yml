@@ -343,6 +343,11 @@ on:
       - "internal/ui/messages/unread_slice_test.go"
       - "internal/ui/messages/page_limit.go"
       - "internal/ui/messages/page_limit_test.go"
+      # the history-stream job's own: the decoder, Call's streamed branch,
+      # the Message type both decode into
+      - "internal/slack/history_stream*.go"
+      - "internal/slack/client.go"
+      - "internal/slack/types.go"
 
 permissions:
   contents: read
@@ -7456,6 +7461,47 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # history-stream (2026-11-25): conversations.history decoded as it
+  # comes, its messages on every core (slack history_stream.go). The
+  # streamed decode against json.Unmarshal on hand-made answers and the
+  # fake's (#giant-wall's among them) in six chunkings, COUNT times; once
+  # under -race (the workers); then fuzzed for three minutes. Dispatch
+  # with only=history-stream.
+  history-stream:
+    if: ${{ !inputs.only || startsWith('history-stream', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: "the streamed decode against Call's, through Call, cut off and cancelled, COUNT runs, once with -race, then fuzzed"
+        shell: bash
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 9m -run '^TestHistoryStream' ./internal/slack || rc=1
+          go test -race -count=1 -v -timeout 10m -run '^(TestHistoryStream.*|TestHistoryPagesLikeSlack)$' ./internal/slack ./internal/core || rc=1
+          go test -run '^$' -fuzz '^FuzzHistoryStream$' -fuzztime 3m -timeout 6m ./internal/slack || rc=1
+          exit $rc
+      - name: the fuzzer's failing input (commit it as a seed)
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-history-stream
+          path: internal/slack/testdata/fuzz
+          if-no-files-found: ignore
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7624,6 +7670,7 @@ jobs:
       - history-limit
       - giant-open
       - history-limit-list
+      - history-stream
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
