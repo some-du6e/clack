@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/ui/composer"
@@ -293,6 +295,7 @@ type prefsSaver struct {
 	pending []byte
 	busy    bool
 	done    chan struct{} // closed when the writer goes idle
+	newer   chan struct{} // closed when bytes come for a write still retrying (retryWait)
 }
 
 func (s *prefsSaver) save(path string, b []byte) {
@@ -300,10 +303,14 @@ func (s *prefsSaver) save(path string, b []byte) {
 	if !s.busy && !uiguard.Marked() {
 		// no window (headless tests and tools): nothing to keep responsive
 		s.mu.Unlock()
-		writePrefsFile(path, b)
+		writePrefsFile(path, b, nil)
 		return
 	}
 	s.path, s.pending = path, b
+	if s.newer != nil {
+		close(s.newer)
+		s.newer = nil
+	}
 	if s.busy {
 		s.mu.Unlock()
 		return
@@ -326,8 +333,37 @@ func (s *prefsSaver) loop() {
 			return
 		}
 		s.mu.Unlock()
-		writePrefsFile(p, b)
+		writePrefsFile(p, b, s.retryWait)
 	}
+}
+
+// retryWait is the wait before a refused rename's next try (writePrefsFile):
+// d, or less once newer bytes are pending, and whether they are. They
+// replace the write still trying, so that write gives way to them at once,
+// and the flush at quit, which has 3 s when Windows ends the session,
+// waits out the newest write's tries alone.
+func (s *prefsSaver) retryWait(d time.Duration) (newer bool) {
+	s.mu.Lock()
+	if s.pending != nil {
+		s.mu.Unlock()
+		return true
+	}
+	ch := make(chan struct{})
+	s.newer = ch
+	s.mu.Unlock()
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ch:
+		return true
+	case <-t.C:
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.newer == ch {
+		s.newer = nil
+	}
+	return s.pending != nil
 }
 
 func (s *prefsSaver) flush() {
@@ -339,14 +375,57 @@ func (s *prefsSaver) flush() {
 	}
 }
 
-func writePrefsFile(p string, b []byte) {
+// writePrefsFile replaces ui.json with b through a rename of ui.json.tmp.
+// Windows refuses the rename while another handle has either file open
+// without FILE_SHARE_DELETE, as Go's os.Open opens it, and as a scanner may
+// that opens a file the moment it's written: the write was lost until the
+// next one. A test reading ui.json every 20 ms for the one write after its
+// window's restore waited 30 s for it (TestWindowBoundsOffScreenWindow,
+// windows-applog 45372867201). A refused rename (renameRefused, Windows
+// only) is tried again for a second and more, waiting with wait (nil: a
+// plain sleep), which gives way to newer bytes (prefsSaver.retryWait); any
+// other failure is logged at once, and a refusal that outlasts the tries
+// is logged too.
+func writePrefsFile(p string, b []byte, wait func(time.Duration) (newer bool)) {
 	uiguard.OffUI("ui.json write")
 	_ = os.MkdirAll(filepath.Dir(p), 0o700)
 	tmp := p + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		_ = os.Rename(tmp, p)
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		log.Printf("ui: writing %s: %v", tmp, err)
+		return
+	}
+	if wait == nil {
+		wait = func(d time.Duration) bool { time.Sleep(d); return false }
+	}
+	start, refused := time.Now(), 0
+	for d := 10 * time.Millisecond; ; d *= 2 {
+		err := os.Rename(tmp, p)
+		switch {
+		case err == nil:
+			if refused > 0 {
+				log.Printf("ui: replaced %s after %d refused renames in %v", p, refused, time.Since(start).Round(time.Millisecond))
+			}
+			return
+		case !renameRefused(p, err):
+			log.Printf("ui: replacing %s: %v", p, err)
+			return
+		}
+		refused++
+		prefsRenameRefusals.Add(1)
+		if d > 640*time.Millisecond {
+			log.Printf("ui: replacing %s: %v (%d tries in %v)", p, err, refused, time.Since(start).Round(time.Millisecond))
+			return
+		}
+		if wait(d) {
+			log.Printf("ui: replacing %s: %v; newer bytes go in instead", p, err)
+			return
+		}
 	}
 }
+
+// prefsRenameRefusals counts the renames of ui.json.tmp that were refused
+// and tried again (TestPrefsWriteWhileOpen).
+var prefsRenameRefusals atomic.Int64
 
 // savePrefsSoon coalesces saves after navigation.
 func (a *App) savePrefsSoon() {

@@ -7368,6 +7368,52 @@ jobs:
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
+  # prefs-write (2026-11-24): TestWindowBoundsOffScreenWindow waited 30 s
+  # for ui.json to take the window's restore (windows-applog 45372867201):
+  # Windows refuses the rename that replaces ui.json while another handle
+  # has it open without FILE_SHARE_DELETE (Go's os.Open: the test's 20 ms
+  # poll), and the one write after the restore was lost. writePrefsFile
+  # tries a refused rename again now, giving way to newer bytes. The
+  # TestPrefsWrite tests COUNT times (a held ui.json, a newer write, a
+  # refusal that lasts, a read-only ui.json), then the bounds tests COUNT
+  # rounds. Dispatch with only=prefs-write.
+  prefs-write:
+    if: ${{ !inputs.only || startsWith('prefs-write', inputs.only) }}
+    runs-on: windows-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: a ui.json write while a reader has it open, then the window's place, COUNT times
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_BOUNDS_TESTS: "1"
+        run: |
+          rc=0
+          go test -c -o "$RUNNER_TEMP/ui-bounds.test.exe" ./internal/ui || exit 1
+          cd internal/ui
+          # through expect-fail's wrapper, which judges a prebuilt binary run from its package's directory
+          ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui-bounds.test.exe" -test.v -test.count=$COUNT -test.timeout 5m -test.run '^TestPrefsWrite' || rc=1
+          n=$COUNT; [ "$n" -gt 20 ] && n=20
+          for i in $(seq 1 "$n"); do
+            for t in TestWindowBoundsWindow TestWindowBoundsOffScreenWindow; do
+              ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui-bounds.test.exe" -test.count=1 -test.timeout 2m -test.run "^$t\$" || rc=1
+            done
+          done
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
   # every listed test failed in some job and passed in none, nothing else
   # failed, every job that ran succeeded. Proof runs only. A new job goes
@@ -7534,6 +7580,7 @@ jobs:
       - scroll-cpu
       - member-subs
       - file-thumbs
+      - prefs-write
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
